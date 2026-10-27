@@ -66,7 +66,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D11 | The `own` parameter marker is renamed **`move`** and goes **before the parameter name**: `func (l *List) Push(move s string)`, `func (move b Builder) Finish() string`, `func Join(move parts ...string)` (updates D1). Parameters without it still borrow (D1.5 unchanged), so calls look like Go. Passing an owned local to a `move` parameter moves it automatically; a field, element or map value needs `move(x)` or `x.Clone()` (rule 3a unchanged). `&` and `*` keep their Go meanings. A Rust-style default (plain = take, `ref`/`&` = borrow) was discussed and rejected: it puts a mark on most functions and reuses Go's signs. | `list.Push(name)` · `list.Push(name.Clone())` · `list.Push(move(u.Name))` | D1.2 keywords (`own` → `move`), D1.4, D1.5, D1.7 example, every chapter; ADR-0003 |
 
-Still to review: notes #11–#42 (next: #11–#15).
+| D12 | Notes #11–#15 accepted as written (with D11 applied): `move` only on parameters, receivers and function types; methods with a `move` receiver are not in interface method sets (you can't use up a value through a shared interface box); `move`/`clone` are not function values; assignment builds the new value, then frees the old one, and `_ = f()` frees the result at once; re-slicing past the length panics (the items were already freed). | `b.Finish()` ✅ · `var f Finisher = b` ❌ · `s = s[:0]; s = s[:2]` → panic | `05-parameters.md:18`, `:63`; `06-expressions.md:27`; `07-statements.md:11`; `08-slices-and-range.md:47` |
+
+Still to review: notes #16–#42 (next: #16–#20).
 
 ## Notes / blockers
 
