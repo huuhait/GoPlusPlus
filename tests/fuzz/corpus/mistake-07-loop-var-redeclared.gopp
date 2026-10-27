@@ -1,0 +1,18 @@
+package p
+
+func f(us []U) {
+	for _, u := range us {
+		u := u
+		go func() { use(u) }()
+	}
+	for i := 0; i < 3; i++ {
+		var i = i
+		{
+			i := i
+		}
+	}
+	for _, v := range us {
+		w := v
+		use(w)
+	}
+}

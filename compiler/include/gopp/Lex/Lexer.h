@@ -53,6 +53,8 @@ private:
              llvm::ArrayRef<llvm::StringRef> Args = {});
   void errorWithFixIt(uint32_t Offs, diag::ID ID, llvm::StringRef Arg,
                       uint32_t Len, llvm::StringRef Replacement);
+  /// An error whose primary range is [Offs, End).
+  void errorRange(uint32_t Offs, uint32_t End, diag::ID ID);
   SourceLoc loc(uint32_t Offs) const {
     return Base.getLocWithOffset(static_cast<int64_t>(Offs));
   }

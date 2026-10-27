@@ -1,0 +1,5 @@
+// The recovery for `(a, move b int)` keeps a field `a` whose type is a BadExpr
+// covering only the name; it must not reach into the next parameter.
+package p
+
+func f(a, move b int) {}

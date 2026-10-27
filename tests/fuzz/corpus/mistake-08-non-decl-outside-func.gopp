@@ -1,0 +1,5 @@
+package p
+
+x := 1
+fmt.Println("hi")
+var ok = 2

@@ -1,0 +1,11 @@
+// The invariants of `gopp fmt` (see roundtrip.test) on the Go standard library
+// and its test data ($(go env GOROOT)/src, read at run time, ~7300 files), and
+// the comparison with gofmt: byte-identical except for the known classes
+// (doc comment reformatting, //go:build lines, non-idempotent gofmt, files that
+// use Go++ keywords as names).
+
+// REQUIRES: long
+// REQUIRES: go
+
+// RUN: %python %S/check-corpus.py %gopp --goroot --min 7000
+// RUN: %python %S/compare-gofmt.py %gopp --goroot

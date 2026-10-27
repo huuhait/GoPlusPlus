@@ -1,0 +1,7 @@
+package p
+
+func f() {
+	a := &T{1, 2}
+	b := &pkg.T{X: 1}
+	c := &x
+}

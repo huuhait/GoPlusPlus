@@ -1,0 +1,6 @@
+package p
+
+fn a() {}
+def b(x int) int { return x }
+function c() {}
+func d() {}

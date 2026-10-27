@@ -1,0 +1,84 @@
+// The flags of `gopp fmt`: -l, -w, -d, stdin, directories, errors.
+
+// RUN: rm -rf %t && mkdir -p %t/sub
+// RUN: printf 'package a\nfunc f( ){x:=1\n_=x}\n' > %t/bad-format.gopp
+// RUN: printf 'package b\n\nfunc g() {\n\treturn\n}\n' > %t/sub/good.gopp
+// RUN: printf 'package c\nfunc h( {\n' > %t/syntax-error.gopp
+
+// No flags: the result goes to stdout.
+// RUN: %gopp fmt %t/bad-format.gopp | FileCheck %s --check-prefix=OUT --match-full-lines
+// OUT: package a
+// OUT-EMPTY:
+// OUT-NEXT: func f() {
+// OUT-NEXT: {{^}}	x := 1
+// OUT-NEXT: {{^}}	_ = x
+// OUT-NEXT: }
+
+// -l lists the files that differ (and only those), directories are searched.
+// RUN: %gopp fmt -l %t/bad-format.gopp %t/sub | FileCheck %s --check-prefix=LIST --match-full-lines
+// LIST: {{.*}}bad-format.gopp
+// LIST-NOT: good.gopp
+
+// -d prints a unified diff; nothing for a formatted file.
+// RUN: %gopp fmt -d %t/bad-format.gopp | FileCheck %s --check-prefix=DIFF
+// DIFF: --- {{.*}}bad-format.gopp.orig
+// DIFF-NEXT: +++ {{.*}}bad-format.gopp
+// DIFF-NEXT: @@ -1,3 +1,6 @@
+// DIFF-NEXT:  package a
+// DIFF-NEXT: -func f( ){x:=1
+// DIFF-NEXT: -_=x}
+// DIFF-NEXT: +
+// DIFF-NEXT: +func f() {
+// DIFF-NEXT: +	x := 1
+// DIFF-NEXT: +	_ = x
+// DIFF-NEXT: +}
+// RUN: %gopp fmt -d %t/sub/good.gopp | count 0
+
+// -w rewrites the file; the second run changes nothing.
+// RUN: %gopp fmt -w %t/bad-format.gopp
+// RUN: %gopp fmt -l %t/bad-format.gopp | count 0
+// RUN: %gopp fmt %t/bad-format.gopp | diff - %t/bad-format.gopp
+
+// stdin to stdout.
+// RUN: printf 'package s\nvar  x=1\n' | %gopp fmt | FileCheck %s --check-prefix=STDIN
+// STDIN: var x = 1
+// RUN: printf 'package s\nvar  x=1\n' | %gopp fmt -d | FileCheck %s --check-prefix=STDIND
+// STDIND: --- <standard input>.orig
+
+// A syntax error: the diagnostic goes to stderr, exit status 2, no output, and
+// the other files are still formatted.
+// RUN: not %gopp fmt %t/syntax-error.gopp %t/sub/good.gopp > %t/out.txt 2> %t/err.txt
+// RUN: FileCheck %s --check-prefix=ERR < %t/err.txt
+// RUN: FileCheck %s --check-prefix=GOODOUT < %t/out.txt
+// ERR: syntax-error.gopp:2:9: error:
+// GOODOUT: package b
+// RUN: not %gopp fmt %t/syntax-error.gopp 2>/dev/null | count 0
+
+// -w needs file names.
+// RUN: printf 'package s\n' | not %gopp fmt -w 2>&1 | FileCheck %s --check-prefix=NEEDS
+// NEEDS: -w needs file names
+
+// -w with -d on a big file that shrinks: the diff is made before the file is
+// rewritten (the file is mapped; reading it after the rewrite crashed with
+// SIGBUS). The same holds for `gopp parse -fixit`.
+// RUN: %python -c "print('package p\n' + ''.join('var  v%%d   =   %%d\n' %% (i, i) for i in range(2000)))" > %t/big.gopp
+// RUN: %gopp fmt -w -d %t/big.gopp > %t/big.diff
+// RUN: FileCheck %s --check-prefix=BIG < %t/big.diff
+// RUN: %gopp fmt -l %t/big.gopp | count 0
+// BIG: --- {{.*}}big.gopp.orig
+// BIG: -var  v1999   =   1999
+// BIG: +var v1999 = 1999
+
+// gofmt names standard input "<standard input>" in -l, -d and diagnostics.
+// RUN: printf 'package s\nvar  x=1\n' | %gopp fmt -l | FileCheck %s --check-prefix=STDINL --match-full-lines
+// STDINL: <standard input>
+// RUN: printf 'package s\nfunc f( {\n' | not %gopp fmt 2>&1 | FileCheck %s --check-prefix=STDINE
+// STDINE: <standard input>:2:
+
+// A directory named x.gopp is skipped while walking (gofmt skips directories).
+// RUN: mkdir -p %t/walk/x.gopp
+// RUN: printf 'package w\nvar  y=1\n' > %t/walk/real.gopp
+// RUN: printf 'package w\nvar  z=1\n' > %t/walk/x.gopp/inner.gopp
+// RUN: %gopp fmt -l %t/walk | FileCheck %s --check-prefix=WALK
+// WALK: real.gopp
+// WALK: x.gopp/inner.gopp

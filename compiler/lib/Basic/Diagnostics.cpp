@@ -304,7 +304,12 @@ void TextDiagnosticPrinter::printSnippet(SourceLoc Loc, SourceRange Primary,
     if (BI < WB || BI > WE)
       continue; // outside the clipped window
     OS << std::string(Gutter, ' ') << " | "
-       << std::string(Pre + DL.ColOfByte[BI] - BaseCol, ' ') << FI.Text << '\n';
+       << std::string(Pre + DL.ColOfByte[BI] - BaseCol, ' ')
+       << (FI.Text.empty() ? "(remove)"
+           : llvm::StringRef(FI.Text).trim().empty()
+               ? "(space)"
+               : llvm::StringRef(FI.Text).rtrim())
+       << '\n';
   }
 }
 
@@ -414,4 +419,75 @@ void JSONDiagnosticPrinter::handleDiagnostic(const Diagnostic &D) {
     }
   });
   OS << '\n';
+}
+
+//===----------------------------------------------------------------------===//
+// Applying fix-its
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct Edit {
+  uint32_t Begin, End;
+  const std::string *Text;
+};
+} // namespace
+
+std::string gopp::applyFixIts(const SourceManager &SM, FileID File,
+                              llvm::ArrayRef<Diagnostic> Diags,
+                              unsigned *NumApplied) {
+  llvm::StringRef Src = SM.getBuffer(File);
+  std::vector<Edit> Accepted; // in acceptance order
+  unsigned Applied = 0;
+  for (const Diagnostic &D : Diags) {
+    std::vector<Edit> Mine;
+    bool Ok = !D.FixIts.empty();
+    for (const FixIt &FI : D.FixIts) {
+      if (!FI.Range.isValid() || SM.getFileID(FI.Range.getBegin()) != File ||
+          SM.getFileID(FI.Range.getEnd()) != File ||
+          FI.Range.getEnd() < FI.Range.getBegin()) {
+        Ok = false;
+        break;
+      }
+      Mine.push_back({SM.getFileOffset(FI.Range.getBegin()),
+                      SM.getFileOffset(FI.Range.getEnd()), &FI.Text});
+    }
+    // Two edits clash if their ranges intersect; two insertions at one point
+    // do not (they apply in order).
+    auto Clash = [](const Edit &A, const Edit &B) {
+      if (A.Begin == A.End && B.Begin == B.End)
+        return false;
+      return A.Begin < B.End && B.Begin < A.End;
+    };
+    for (size_t I = 0; Ok && I < Mine.size(); ++I) {
+      for (const Edit &E : Accepted)
+        if (Clash(Mine[I], E))
+          Ok = false;
+      for (size_t J = 0; Ok && J < I; ++J)
+        if (Clash(Mine[I], Mine[J]))
+          Ok = false;
+    }
+    if (!Ok)
+      continue;
+    Accepted.insert(Accepted.end(), Mine.begin(), Mine.end());
+    ++Applied;
+  }
+  std::stable_sort(Accepted.begin(), Accepted.end(),
+                   [](const Edit &A, const Edit &B) {
+                     if (A.Begin != B.Begin)
+                       return A.Begin < B.Begin;
+                     // an insertion goes before a replacement that starts at
+                     // the same place
+                     return (A.End == A.Begin) > (B.End == B.Begin);
+                   });
+  std::string Out;
+  uint32_t Pos = 0;
+  for (const Edit &E : Accepted) {
+    Out.append(Src.data() + Pos, E.Begin - Pos);
+    Out += *E.Text;
+    Pos = E.End;
+  }
+  Out.append(Src.data() + Pos, Src.size() - Pos);
+  if (NumApplied)
+    *NumApplied = Applied;
+  return Out;
 }

@@ -1,0 +1,44 @@
+// P02.07: tailored messages for common Go typos and habits from other
+// languages. The table is in tests/parse/README.md.
+package p
+
+import ("a", "b")
+
+x := 1
+a, b := 2, 3
+println("hi")
+function foo() {}
+var arr int[]
+var q := 5
+
+func g() {
+	if x = 1 {
+	}
+	for i := 0; i < 3; ++i {
+	}
+	y = i++
+	while x < 3 {
+	}
+	while (x < 3) {
+	}
+	for x in xs {
+	}
+	for i, x := range xs {
+	}
+	for i, x in xs {
+	}
+	int z = 5
+	if x > 0
+		return
+	if y {
+	}
+	else {
+	}
+	for i := 0; i < 3; i++
+	{
+	}
+	if y
+	{
+	}
+}
+// ---- golden: tests/update-goldens rewrites what follows

@@ -1,0 +1,18 @@
+// RUN: not %gopp parse -dump-ast %s 2>%t.err | FileCheck %s
+// RUN: FileCheck --check-prefix=ERR --input-file=%t.err %s
+// A `move` parameter shares its type with no one: in (a, move b int) the name
+// `a` has no type. The parser says so (once, with a fix-it) and gives `a` the
+// type of `b`, so the tree has no BadExpr (a follow-up of P02.06).
+// ERR: error: 'a' needs its own type
+// ERR: error: 'a' needs its own type
+// CHECK-NOT: BadExpr
+// CHECK: Names: Ident <{{.*}}> 'a'
+// CHECK-NEXT: Type: Ident <{{.*}}> 'int'
+// CHECK: Names: Ident <{{.*}}> 'b'
+// CHECK-NOT: BadExpr
+package p
+
+func f(a, move b int) {}
+// Found by the fuzzer (c3): the type of the `move` parameter must outlive the
+// typed parameter in front of it (the list is processed backwards).
+func g(c int, a, move b string) {}

@@ -12,7 +12,7 @@ Last updated: 2026-10-27
 
 - [~] P00 Foundations ([state](00-foundations/STATE.md))
 - [x] P01 Language specification v0 ([state](01-language-spec/STATE.md))
-- [~] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
+- [x] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
 - [ ] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
 - [ ] P04 GIR and LLVM codegen ([state](04-gir-and-llvm-codegen/STATE.md))
 - [ ] P05 Runtime and memory ([state](05-runtime-and-memory/STATE.md))
@@ -100,3 +100,4 @@ Last updated: 2026-10-27
 - 2026-10-27: D9 follow-up decided by the owner (option b): on a raw `*T` whose method set already has an `IsNil`, `p.IsNil()` is a compile error (fix-its `(*p).IsNil()` / `p == nil`); `Unique`/`Shared`/`Weak` keep their own `IsNil`. Applied to OWN-P5/P9, P01 D1.7 and ADR-0006 D9 (1 coder, fresh review CLEAN). P01.15 is done, so **P01 is complete**.
 - 2026-10-27: Owner decisions on the P03 open questions: Q1 numbered error codes (`error[E0042]`, `gopp explain`, internal names kept, strict stability promise from v0.1; D3.11); Q2 `vet` built into the checker, run by `gopp vet`, the LSP, and a small subset by `gopp test` (D3.12).
 - 2026-10-27: New task P03.14 (error codes & `gopp explain`, D3.11). 241 tasks.
+- 2026-10-27: P02.07–P02.11 (error recovery with 31 tailored messages and fix-its, `gopp parse -j/-fixit`, `gopp fmt` matching gofmt byte-for-byte on 7284/7354 GOROOT files, 28.7 CPU-hours of fuzzing with no crash, 4.57 M lines/s per core) built through the team workflow (3 coders, PM merge, review until a fresh reviewer returned CLEAN; ledger `.claude/team/p02-frontend-tools-ledger.md`, 15 findings, all fixed). **P02 is complete.**

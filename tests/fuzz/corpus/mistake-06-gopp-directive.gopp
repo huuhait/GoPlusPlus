@@ -1,0 +1,8 @@
+//gopp:build linux
+package p
+
+//gopp:cflags -O2 -Wall
+//gopp:cxxstd c++20
+//gopp:ldflags -lm
+//gopp:cflagsx fine
+func f() {}

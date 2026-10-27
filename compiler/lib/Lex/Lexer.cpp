@@ -231,6 +231,13 @@ void Lexer::errorWithFixIt(uint32_t Offs, diag::ID ID, llvm::StringRef Arg,
       << Arg;
 }
 
+void Lexer::errorRange(uint32_t Offs, uint32_t End, diag::ID ID) {
+  ++NumErrors;
+  if (Diags.limitReached())
+    return;
+  Diags.report(loc(Offs), ID).range(SourceRange(loc(Offs), loc(End)));
+}
+
 /// Reads the next character into Ch, reporting NUL, bad UTF-8 and BOMs.
 void Lexer::next() {
   if (RdOffset < Size) {
@@ -532,7 +539,7 @@ void Lexer::scanRune() {
     if (C == '\n' || C < 0) {
       // only report error if we don't have one already
       if (Valid) {
-        error(Offs, diag::err_lex_rune_unterminated);
+        errorRange(Offs, Offset, diag::err_lex_rune_unterminated);
         Valid = false;
       }
       break;
@@ -548,8 +555,22 @@ void Lexer::scanRune() {
     }
   }
 
-  if (Valid && N != 1)
-    error(Offs, diag::err_lex_rune_illegal);
+  if (Valid && N != 1) {
+    uint32_t End = Offset; // one past the closing quote
+    llvm::StringRef Body = Src.substr(Offs + 1, End - Offs - 2);
+    if (N > 1 && Body.find_first_of("\"\\") == llvm::StringRef::npos) {
+      // 'hello': a string written with single quotes (a habit from C, Python,
+      // JavaScript). Both quotes become double quotes.
+      ++NumErrors;
+      if (!Diags.limitReached())
+        Diags.report(loc(Offs), diag::err_lex_single_quote_string)
+            .range(SourceRange(loc(Offs), loc(End)))
+            .fixit(SourceRange(loc(Offs), loc(Offs + 1)), "\"")
+            .fixit(SourceRange(loc(End - 1), loc(End)), "\"");
+    } else {
+      error(Offs, diag::err_lex_rune_illegal);
+    }
+  }
 }
 
 void Lexer::scanString() {
@@ -558,7 +579,7 @@ void Lexer::scanString() {
   for (;;) {
     int32_t C = Ch;
     if (C == '\n' || C < 0) {
-      error(Offs, diag::err_lex_string_unterminated);
+      errorRange(Offs, Offset, diag::err_lex_string_unterminated);
       break;
     }
     next();
@@ -575,7 +596,7 @@ void Lexer::scanRawString() {
   for (;;) {
     int32_t C = Ch;
     if (C < 0) {
-      error(Offs, diag::err_lex_raw_string_unterminated);
+      errorRange(Offs, Offset, diag::err_lex_raw_string_unterminated);
       break;
     }
     next();
@@ -845,6 +866,8 @@ Token Lexer::lex() {
             errorWithFixIt(Start, diag::err_lex_curly_quote,
                            C == 0x201C ? "\xE2\x80\x9C" : "\xE2\x80\x9D", 3,
                            "\"");
+          } else if (C == '?') {
+            error(Start, diag::err_lex_ternary);
           } else {
             error(Start, diag::err_lex_illegal_char, {formatRune(C)});
           }

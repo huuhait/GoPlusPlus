@@ -1,0 +1,329 @@
+File <1:1, 78:1>
+  Name: Ident <1:9, 1:13> 'main'
+  Decl: GenDecl <3:1, 6:2> import grouped
+    Spec: ImportSpec <4:2, 4:7>
+      Path: BasicLit <4:2, 4:7> string_lit "fmt"
+    Spec: ImportSpec <5:2, 5:7>
+      Path: BasicLit <5:2, 5:7> string_lit "mem"
+  Decl: GenDecl <8:1, 11:2> const grouped
+    Spec: ValueSpec <9:2, 9:14>
+      Name: Ident <9:2, 9:10> 'minDepth'
+      Value: BasicLit <9:13, 9:14> int_lit 4
+    Spec: ValueSpec <10:2, 10:15>
+      Name: Ident <10:2, 10:10> 'maxDepth'
+      Value: BasicLit <10:13, 10:15> int_lit 10
+  Decl: GenDecl <14:1, 16:2> type
+    Spec: TypeSpec <14:6, 16:2>
+      Name: Ident <14:6, 14:10> 'Node'
+      Type: StructType <14:11, 16:2>
+        Fields: FieldList <14:18, 16:2>
+          Field: Field <15:2, 15:26>
+            Names: Ident <15:2, 15:6> 'Left'
+            Names: Ident <15:8, 15:13> 'Right'
+            Type: IndexExpr <15:14, 15:26>
+              X: Ident <15:14, 15:20> 'Unique'
+              Index: Ident <15:21, 15:25> 'Node'
+  Decl: FuncDecl <18:1, 24:2>
+    Name: Ident <18:6, 18:14> 'bottomUp'
+    Type: FuncType <18:1, 18:38>
+      Params: FieldList <18:14, 18:25>
+        Field: Field <18:15, 18:24>
+          Names: Ident <18:15, 18:20> 'depth'
+          Type: Ident <18:21, 18:24> 'int'
+      Results: FieldList <18:26, 18:38>
+        Field: Field <18:26, 18:38>
+          Type: IndexExpr <18:26, 18:38>
+            X: Ident <18:26, 18:32> 'Unique'
+            Index: Ident <18:33, 18:37> 'Node'
+    Body: BlockStmt <18:39, 24:2>
+      Stmt: IfStmt <19:2, 21:3>
+        Cond: BinaryExpr <19:5, 19:15> op='<='
+          X: Ident <19:5, 19:10> 'depth'
+          Y: BasicLit <19:14, 19:15> int_lit 0
+        Then: BlockStmt <19:16, 21:3>
+          Stmt: ReturnStmt <20:3, 20:28>
+            Result: CallExpr <20:10, 20:28>
+              Fun: Ident <20:10, 20:20> 'new_unique'
+              Args: CompositeLit <20:21, 20:27>
+                Type: Ident <20:21, 20:25> 'Node'
+      Stmt: ReturnStmt <23:2, 23:80>
+        Result: CallExpr <23:9, 23:80>
+          Fun: Ident <23:9, 23:19> 'new_unique'
+          Args: CompositeLit <23:20, 23:79>
+            Type: Ident <23:20, 23:24> 'Node'
+            Elts: KeyValueExpr <23:25, 23:50>
+              Key: Ident <23:25, 23:29> 'Left'
+              Value: CallExpr <23:31, 23:50>
+                Fun: Ident <23:31, 23:39> 'bottomUp'
+                Args: BinaryExpr <23:40, 23:49> op='-'
+                  X: Ident <23:40, 23:45> 'depth'
+                  Y: BasicLit <23:48, 23:49> int_lit 1
+            Elts: KeyValueExpr <23:52, 23:78>
+              Key: Ident <23:52, 23:57> 'Right'
+              Value: CallExpr <23:59, 23:78>
+                Fun: Ident <23:59, 23:67> 'bottomUp'
+                Args: BinaryExpr <23:68, 23:77> op='-'
+                  X: Ident <23:68, 23:73> 'depth'
+                  Y: BasicLit <23:76, 23:77> int_lit 1
+  Decl: FuncDecl <26:1, 31:2>
+    Recv: FieldList <26:6, 26:15>
+      Field: Field <26:7, 26:14>
+        Names: Ident <26:7, 26:8> 'n'
+        Type: StarExpr <26:9, 26:14>
+          X: Ident <26:10, 26:14> 'Node'
+    Name: Ident <26:16, 26:21> 'check'
+    Type: FuncType <26:1, 26:27>
+      Params: FieldList <26:21, 26:23>
+      Results: FieldList <26:24, 26:27>
+        Field: Field <26:24, 26:27>
+          Type: Ident <26:24, 26:27> 'int'
+    Body: BlockStmt <26:28, 31:2>
+      Stmt: IfStmt <27:2, 29:3>
+        Cond: BinaryExpr <27:5, 27:18> op='=='
+          X: SelectorExpr <27:5, 27:11>
+            X: Ident <27:5, 27:6> 'n'
+            Sel: Ident <27:7, 27:11> 'Left'
+          Y: Ident <27:15, 27:18> 'nil'
+        Then: BlockStmt <27:19, 29:3>
+          Stmt: ReturnStmt <28:3, 28:11>
+            Result: BasicLit <28:10, 28:11> int_lit 1
+      Stmt: ReturnStmt <30:2, 30:45>
+        Result: BinaryExpr <30:9, 30:45> op='+'
+          X: BinaryExpr <30:9, 30:27> op='+'
+            X: BasicLit <30:9, 30:10> int_lit 1
+            Y: CallExpr <30:13, 30:27>
+              Fun: SelectorExpr <30:13, 30:25>
+                X: SelectorExpr <30:13, 30:19>
+                  X: Ident <30:13, 30:14> 'n'
+                  Sel: Ident <30:15, 30:19> 'Left'
+                Sel: Ident <30:20, 30:25> 'check'
+          Y: CallExpr <30:30, 30:45>
+            Fun: SelectorExpr <30:30, 30:43>
+              X: SelectorExpr <30:30, 30:37>
+                X: Ident <30:30, 30:31> 'n'
+                Sel: Ident <30:32, 30:37> 'Right'
+              Sel: Ident <30:38, 30:43> 'check'
+  Decl: GenDecl <34:1, 36:2> type
+    Spec: TypeSpec <34:6, 36:2>
+      Name: Ident <34:6, 34:11> 'ANode'
+      Type: StructType <34:12, 36:2>
+        Fields: FieldList <34:19, 36:2>
+          Field: Field <35:2, 35:20>
+            Names: Ident <35:2, 35:6> 'Left'
+            Names: Ident <35:8, 35:13> 'Right'
+            Type: StarExpr <35:14, 35:20>
+              X: Ident <35:15, 35:20> 'ANode'
+  Decl: FuncDecl <38:1, 46:2>
+    Name: Ident <38:6, 38:19> 'bottomUpArena'
+    Type: FuncType <38:1, 38:51>
+      Params: FieldList <38:19, 38:44>
+        Field: Field <38:20, 38:32>
+          Names: Ident <38:20, 38:21> 'a'
+          Type: StarExpr <38:22, 38:32>
+            X: SelectorExpr <38:23, 38:32>
+              X: Ident <38:23, 38:26> 'mem'
+              Sel: Ident <38:27, 38:32> 'Arena'
+        Field: Field <38:34, 38:43>
+          Names: Ident <38:34, 38:39> 'depth'
+          Type: Ident <38:40, 38:43> 'int'
+      Results: FieldList <38:45, 38:51>
+        Field: Field <38:45, 38:51>
+          Type: StarExpr <38:45, 38:51>
+            X: Ident <38:46, 38:51> 'ANode'
+    Body: BlockStmt <38:52, 46:2>
+      Stmt: AssignStmt <39:2, 39:29> op=':='
+        Lhs: Ident <39:2, 39:3> 'n'
+        Rhs: CallExpr <39:7, 39:29>
+          Fun: IndexExpr <39:7, 39:26>
+            X: SelectorExpr <39:7, 39:19>
+              X: Ident <39:7, 39:10> 'mem'
+              Sel: Ident <39:11, 39:19> 'ArenaNew'
+            Index: Ident <39:20, 39:25> 'ANode'
+          Args: Ident <39:27, 39:28> 'a'
+      Stmt: AssignStmt <40:2, 40:28> op='='
+        Lhs: SelectorExpr <40:2, 40:8>
+          X: Ident <40:2, 40:3> 'n'
+          Sel: Ident <40:4, 40:8> 'Left'
+        Lhs: SelectorExpr <40:10, 40:17>
+          X: Ident <40:10, 40:11> 'n'
+          Sel: Ident <40:12, 40:17> 'Right'
+        Rhs: Ident <40:20, 40:23> 'nil'
+        Rhs: Ident <40:25, 40:28> 'nil'
+      Stmt: IfStmt <41:2, 44:3>
+        Cond: BinaryExpr <41:5, 41:14> op='>'
+          X: Ident <41:5, 41:10> 'depth'
+          Y: BasicLit <41:13, 41:14> int_lit 0
+        Then: BlockStmt <41:15, 44:3>
+          Stmt: AssignStmt <42:3, 42:37> op='='
+            Lhs: SelectorExpr <42:3, 42:9>
+              X: Ident <42:3, 42:4> 'n'
+              Sel: Ident <42:5, 42:9> 'Left'
+            Rhs: CallExpr <42:12, 42:37>
+              Fun: Ident <42:12, 42:25> 'bottomUpArena'
+              Args: Ident <42:26, 42:27> 'a'
+              Args: BinaryExpr <42:29, 42:36> op='-'
+                X: Ident <42:29, 42:34> 'depth'
+                Y: BasicLit <42:35, 42:36> int_lit 1
+          Stmt: AssignStmt <43:3, 43:38> op='='
+            Lhs: SelectorExpr <43:3, 43:10>
+              X: Ident <43:3, 43:4> 'n'
+              Sel: Ident <43:5, 43:10> 'Right'
+            Rhs: CallExpr <43:13, 43:38>
+              Fun: Ident <43:13, 43:26> 'bottomUpArena'
+              Args: Ident <43:27, 43:28> 'a'
+              Args: BinaryExpr <43:30, 43:37> op='-'
+                X: Ident <43:30, 43:35> 'depth'
+                Y: BasicLit <43:36, 43:37> int_lit 1
+      Stmt: ReturnStmt <45:2, 45:10>
+        Result: Ident <45:9, 45:10> 'n'
+  Decl: FuncDecl <48:1, 53:2>
+    Recv: FieldList <48:6, 48:16>
+      Field: Field <48:7, 48:15>
+        Names: Ident <48:7, 48:8> 'n'
+        Type: StarExpr <48:9, 48:15>
+          X: Ident <48:10, 48:15> 'ANode'
+    Name: Ident <48:17, 48:22> 'check'
+    Type: FuncType <48:1, 48:28>
+      Params: FieldList <48:22, 48:24>
+      Results: FieldList <48:25, 48:28>
+        Field: Field <48:25, 48:28>
+          Type: Ident <48:25, 48:28> 'int'
+    Body: BlockStmt <48:29, 53:2>
+      Stmt: IfStmt <49:2, 51:3>
+        Cond: BinaryExpr <49:5, 49:18> op='=='
+          X: SelectorExpr <49:5, 49:11>
+            X: Ident <49:5, 49:6> 'n'
+            Sel: Ident <49:7, 49:11> 'Left'
+          Y: Ident <49:15, 49:18> 'nil'
+        Then: BlockStmt <49:19, 51:3>
+          Stmt: ReturnStmt <50:3, 50:11>
+            Result: BasicLit <50:10, 50:11> int_lit 1
+      Stmt: ReturnStmt <52:2, 52:45>
+        Result: BinaryExpr <52:9, 52:45> op='+'
+          X: BinaryExpr <52:9, 52:27> op='+'
+            X: BasicLit <52:9, 52:10> int_lit 1
+            Y: CallExpr <52:13, 52:27>
+              Fun: SelectorExpr <52:13, 52:25>
+                X: SelectorExpr <52:13, 52:19>
+                  X: Ident <52:13, 52:14> 'n'
+                  Sel: Ident <52:15, 52:19> 'Left'
+                Sel: Ident <52:20, 52:25> 'check'
+          Y: CallExpr <52:30, 52:45>
+            Fun: SelectorExpr <52:30, 52:43>
+              X: SelectorExpr <52:30, 52:37>
+                X: Ident <52:30, 52:31> 'n'
+                Sel: Ident <52:32, 52:37> 'Right'
+              Sel: Ident <52:38, 52:43> 'check'
+  Decl: FuncDecl <55:1, 77:2>
+    Name: Ident <55:6, 55:10> 'main'
+    Type: FuncType <55:1, 55:12>
+      Params: FieldList <55:10, 55:12>
+    Body: BlockStmt <55:13, 77:2>
+      Stmt: BlockStmt <56:2, 59:3>
+        Stmt: AssignStmt <57:3, 57:36> op=':='
+          Lhs: Ident <57:3, 57:10> 'stretch'
+          Rhs: CallExpr <57:14, 57:36>
+            Fun: Ident <57:14, 57:22> 'bottomUp'
+            Args: BinaryExpr <57:23, 57:35> op='+'
+              X: Ident <57:23, 57:31> 'maxDepth'
+              Y: BasicLit <57:34, 57:35> int_lit 1
+        Stmt: ExprStmt <58:3, 58:84>
+          X: CallExpr <58:3, 58:84>
+            Fun: SelectorExpr <58:3, 58:13>
+              X: Ident <58:3, 58:6> 'fmt'
+              Sel: Ident <58:7, 58:13> 'Printf'
+            Args: BasicLit <58:14, 58:54> string_lit "stretch tree of depth %d\t check: %d\n"
+            Args: BinaryExpr <58:56, 58:66> op='+'
+              X: Ident <58:56, 58:64> 'maxDepth'
+              Y: BasicLit <58:65, 58:66> int_lit 1
+            Args: CallExpr <58:68, 58:83>
+              Fun: SelectorExpr <58:68, 58:81>
+                X: Ident <58:68, 58:75> 'stretch'
+                Sel: Ident <58:76, 58:81> 'check'
+      Stmt: AssignStmt <61:2, 61:28> op=':='
+        Lhs: Ident <61:2, 61:6> 'long'
+        Rhs: CallExpr <61:10, 61:28>
+          Fun: Ident <61:10, 61:18> 'bottomUp'
+          Args: Ident <61:19, 61:27> 'maxDepth'
+      Stmt: DeclStmt <63:2, 63:21>
+        Decl: GenDecl <63:2, 63:21> var
+          Spec: ValueSpec <63:6, 63:21>
+            Name: Ident <63:6, 63:11> 'arena'
+            Type: SelectorExpr <63:12, 63:21>
+              X: Ident <63:12, 63:15> 'mem'
+              Sel: Ident <63:16, 63:21> 'Arena'
+      Stmt: DeferStmt <64:2, 64:20>
+        Call: CallExpr <64:8, 64:20>
+          Fun: SelectorExpr <64:8, 64:18>
+            X: Ident <64:8, 64:13> 'arena'
+            Sel: Ident <64:14, 64:18> 'Free'
+      Stmt: ForStmt <66:2, 74:3>
+        Init: AssignStmt <66:6, 66:23> op=':='
+          Lhs: Ident <66:6, 66:11> 'depth'
+          Rhs: Ident <66:15, 66:23> 'minDepth'
+        Cond: BinaryExpr <66:25, 66:42> op='<='
+          X: Ident <66:25, 66:30> 'depth'
+          Y: Ident <66:34, 66:42> 'maxDepth'
+        Post: AssignStmt <66:44, 66:54> op='+='
+          Lhs: Ident <66:44, 66:49> 'depth'
+          Rhs: BasicLit <66:53, 66:54> int_lit 2
+        Body: BlockStmt <66:55, 74:3>
+          Stmt: AssignStmt <67:3, 67:51> op=':='
+            Lhs: Ident <67:3, 67:13> 'iterations'
+            Rhs: BinaryExpr <67:17, 67:51> op='<<'
+              X: BasicLit <67:17, 67:18> int_lit 1
+              Y: CallExpr <67:22, 67:51>
+                Fun: Ident <67:22, 67:26> 'uint'
+                Args: BinaryExpr <67:27, 67:50> op='+'
+                  X: BinaryExpr <67:27, 67:41> op='-'
+                    X: Ident <67:27, 67:35> 'maxDepth'
+                    Y: Ident <67:36, 67:41> 'depth'
+                  Y: Ident <67:42, 67:50> 'minDepth'
+          Stmt: AssignStmt <68:3, 68:13> op=':='
+            Lhs: Ident <68:3, 68:8> 'check'
+            Rhs: BasicLit <68:12, 68:13> int_lit 0
+          Stmt: ForStmt <69:3, 72:4>
+            Init: AssignStmt <69:7, 69:13> op=':='
+              Lhs: Ident <69:7, 69:8> 'i'
+              Rhs: BasicLit <69:12, 69:13> int_lit 0
+            Cond: BinaryExpr <69:15, 69:29> op='<'
+              X: Ident <69:15, 69:16> 'i'
+              Y: Ident <69:19, 69:29> 'iterations'
+            Post: IncDecStmt <69:31, 69:34> op='++'
+              X: Ident <69:31, 69:32> 'i'
+            Body: BlockStmt <69:35, 72:4>
+              Stmt: ExprStmt <70:4, 70:17>
+                X: CallExpr <70:4, 70:17>
+                  Fun: SelectorExpr <70:4, 70:15>
+                    X: Ident <70:4, 70:9> 'arena'
+                    Sel: Ident <70:10, 70:15> 'Reset'
+              Stmt: AssignStmt <71:4, 71:49> op='+='
+                Lhs: Ident <71:4, 71:9> 'check'
+                Rhs: CallExpr <71:13, 71:49>
+                  Fun: SelectorExpr <71:13, 71:47>
+                    X: CallExpr <71:13, 71:41>
+                      Fun: Ident <71:13, 71:26> 'bottomUpArena'
+                      Args: UnaryExpr <71:27, 71:33> op='&'
+                        X: Ident <71:28, 71:33> 'arena'
+                      Args: Ident <71:35, 71:40> 'depth'
+                    Sel: Ident <71:42, 71:47> 'check'
+          Stmt: ExprStmt <73:3, 73:79>
+            X: CallExpr <73:3, 73:79>
+              Fun: SelectorExpr <73:3, 73:13>
+                X: Ident <73:3, 73:6> 'fmt'
+                Sel: Ident <73:7, 73:13> 'Printf'
+              Args: BasicLit <73:14, 73:52> string_lit "%d\t trees of depth %d\t check: %d\n"
+              Args: Ident <73:54, 73:64> 'iterations'
+              Args: Ident <73:66, 73:71> 'depth'
+              Args: Ident <73:73, 73:78> 'check'
+      Stmt: ExprStmt <76:2, 76:81>
+        X: CallExpr <76:2, 76:81>
+          Fun: SelectorExpr <76:2, 76:12>
+            X: Ident <76:2, 76:5> 'fmt'
+            Sel: Ident <76:6, 76:12> 'Printf'
+          Args: BasicLit <76:13, 76:56> string_lit "long lived tree of depth %d\t check: %d\n"
+          Args: Ident <76:58, 76:66> 'maxDepth'
+          Args: CallExpr <76:68, 76:80>
+            Fun: SelectorExpr <76:68, 76:78>
+              X: Ident <76:68, 76:72> 'long'
+              Sel: Ident <76:73, 76:78> 'check'

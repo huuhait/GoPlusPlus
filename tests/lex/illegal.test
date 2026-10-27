@@ -26,7 +26,7 @@
 // ERR:{{.*}}illegal.test:39:3: error: illegal character U+0024 '$'
 // ERR-NEXT:   39 | x $ y
 // ERR-NEXT:      |   ^
-// ERR-NEXT:{{.*}}illegal.test:40:3: error: illegal character U+003F '?'
+// ERR-NEXT:{{.*}}illegal.test:40:3: error: Go++ has no '?:' operator: use an if statement
 // ERR-NEXT:   40 | a ? b
 // ERR-NEXT:      |   ^
 // ERR-NEXT:{{.*}}illegal.test:41:3: error: illegal character U+005C '\'
@@ -34,7 +34,7 @@
 // ERR-NEXT:      |   ^
 // ERR-NEXT:{{.*}}illegal.test:42:9: error: string literal not terminated
 // ERR-NEXT:   42 | e ` + "`" + ` unterminated
-// ERR-NEXT:      |         ^
+// ERR-NEXT:      |         ^~~~~~~~~~~~~~~~~~
 package p
 x $ y
 a ? b

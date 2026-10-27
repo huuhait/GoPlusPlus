@@ -681,6 +681,22 @@ struct Comment {
   uint32_t Length = 0;
 };
 
+/// A run of comments that belong together (the comment map of D2.3), built
+/// like go/parser does: comments with no blank line between them. The comments
+/// are File::Comments[First, First + Count).
+///   - Lead: the group ends on the line just above the token that follows it
+///     (a doc comment of the declaration, spec or field that starts there);
+///     Next is that token.
+///   - Line: the group starts on the line of the token before it and the next
+///     token is on a later line (a trailing comment of that line).
+struct CommentGroup {
+  uint32_t First = 0;
+  uint32_t Count = 0;
+  bool Lead = false;
+  bool Line = false;
+  SourceLoc Next; // the token after the group
+};
+
 class File : public Node {
 public:
   GOPP_NODE(File, Node)
@@ -690,6 +706,8 @@ public:
   llvm::ArrayRef<ImportSpec *> Imports; // all imports, in source order
   /// Every comment, in source order (the comment map of D2.3 is built from it).
   llvm::ArrayRef<Comment> Comments;
+  /// The same comments in groups.
+  llvm::ArrayRef<CommentGroup> CommentGroups;
 };
 
 #undef GOPP_NODE

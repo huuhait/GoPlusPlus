@@ -1,0 +1,12 @@
+package p
+
+func f() {
+	if x {
+	}
+	else {
+	}
+	if y {
+	}
+	else if z {
+	}
+}

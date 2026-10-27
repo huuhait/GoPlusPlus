@@ -1,0 +1,59 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <45:9, 45:10> 'p'
+// CHECK-NEXT:  Decl: MacroCallDecl <47:1, 47:15>
+// CHECK-NEXT:    Call: MacroInvocation <47:1, 47:15> name=Declare args=[x , y]
+// CHECK-NEXT:  Decl: MacroCallDecl <48:1, 48:16>
+// CHECK-NEXT:    Call: MacroInvocation <48:1, 48:16> name=pkg.Name args=[a , b]
+// CHECK-NEXT:  Decl: FuncDecl <50:1, 59:2>
+// CHECK-NEXT:    Name: Ident <50:6, 50:7> 'f'
+// CHECK-NEXT:    Type: FuncType <50:1, 50:9>
+// CHECK-NEXT:      Params: FieldList <50:7, 50:9>
+// CHECK-NEXT:    Body: BlockStmt <50:10, 59:2>
+// CHECK-NEXT:      Stmt: ExprStmt <51:2, 51:24>
+// CHECK-NEXT:        X: MacroInvocation <51:2, 51:24> name=Assert args=[a == b , "msg"]
+// CHECK-NEXT:      Stmt: AssignStmt <52:2, 52:24> op=':='
+// CHECK-NEXT:        Lhs: Ident <52:2, 52:3> 'x'
+// CHECK-NEXT:        Rhs: MacroInvocation <52:7, 52:24> name=Stringify args=[a + b]
+// CHECK-NEXT:      Stmt: ExprStmt <53:2, 53:27>
+// CHECK-NEXT:        X: CallExpr <53:2, 53:27>
+// CHECK-NEXT:          Fun: Ident <53:2, 53:3> 'g'
+// CHECK-NEXT:          Args: MacroInvocation <53:4, 53:12> name=Len args=[xs]
+// CHECK-NEXT:          Args: MacroInvocation <53:14, 53:26> name=pkg.Cap args=[ys]
+// CHECK-NEXT:      Stmt: ExprStmt <54:2, 54:10>
+// CHECK-NEXT:        X: MacroInvocation <54:2, 54:10> name=Empty args=[]
+// CHECK-NEXT:      Stmt: ExprStmt <55:2, 55:33>
+// CHECK-NEXT:        X: MacroInvocation <55:2, 55:33> name=Nested args=[f ( 1 , ( 2 , 3 ) ) , [ 4 ] , { 5 }]
+// CHECK-NEXT:      Stmt: ExprStmt <56:2, 56:42>
+// CHECK-NEXT:        X: MacroInvocation <56:2, 56:42> name=Repeat args=[3 , func ( ) { fmt . Println ( "hi" ) }]
+// CHECK-NEXT:      Stmt: ExprStmt <57:2, 57:30>
+// CHECK-NEXT:        X: MacroInvocation <57:2, 57:30> name=Each args=[xs , func ( ) { v := 1 }]
+// CHECK-NEXT:      Stmt: ExprStmt <58:2, 58:54>
+// CHECK-NEXT:        X: CallExpr <58:2, 58:54>
+// CHECK-NEXT:          Fun: SelectorExpr <58:2, 58:13>
+// CHECK-NEXT:            X: Ident <58:2, 58:5> 'fmt'
+// CHECK-NEXT:            Sel: Ident <58:6, 58:13> 'Println'
+// CHECK-NEXT:          Args: MacroInvocation <58:14, 58:36> name=Stringify args=[a . Equal ( b )]
+// CHECK-NEXT:          Args: BasicLit <58:38, 58:41> string_lit "="
+// CHECK-NEXT:          Args: CallExpr <58:43, 58:53>
+// CHECK-NEXT:            Fun: SelectorExpr <58:43, 58:50>
+// CHECK-NEXT:              X: Ident <58:43, 58:44> 'a'
+// CHECK-NEXT:              Sel: Ident <58:45, 58:50> 'Equal'
+// CHECK-NEXT:            Args: Ident <58:51, 58:52> 'b'
+package p
+
+#Declare(x, y)
+#pkg.Name(a, b)
+
+func f() {
+	#Assert(a == b, "msg")
+	x := #Stringify(a + b)
+	g(#Len(xs), #pkg.Cap(ys))
+	#Empty()
+	#Nested(f(1, (2, 3)), [4], {5})
+	#Repeat(3, func() { fmt.Println("hi") })
+	#Each(xs, func() { v := 1 })
+	fmt.Println(#Stringify(a.Equal(b)), "=", a.Equal(b))
+}

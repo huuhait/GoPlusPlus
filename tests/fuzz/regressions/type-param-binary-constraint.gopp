@@ -1,0 +1,2 @@
+package T
+type T[P(b*struct{})]t

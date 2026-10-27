@@ -1,0 +1,10 @@
+package p
+
+func f() {
+	# // why
+	M(x)
+	#P. /* c */ M(y)
+}
+
+@ /* a */ Attr /* b */ (1)
+func g() {}

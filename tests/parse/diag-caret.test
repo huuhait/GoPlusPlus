@@ -7,9 +7,9 @@
 // CHECK-NEXT:{{.*}}diag-caret.test:20:21: error: expected operand, found ';'
 // CHECK-NEXT:   20 |     世界 := "wide" + ;
 // CHECK-NEXT:      |                      ^
-// CHECK-NEXT:{{.*}}diag-caret.test:21:4: error: expected ';', found b
+// CHECK-NEXT:{{.*}}diag-caret.test:21:2: error: 'a b' is not a declaration: write 'var name Type' or 'name := value'
 // CHECK-NEXT:   21 |     a b
-// CHECK-NEXT:      |       ^
+// CHECK-NEXT:      |     ^~~
 // CHECK-NEXT:{{.*}}diag-caret.test:24:1: error: expected '}', found 'EOF'
 // CHECK-NEXT:   24 |{{ *}}
 // CHECK-NEXT:      | ^

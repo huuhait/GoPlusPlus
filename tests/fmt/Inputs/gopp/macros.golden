@@ -1,0 +1,19 @@
+package main
+
+macro Swap(a ident, b ident) {
+	return #Pair( a,b )
+}
+
+macro Sum(xs ...expr) { x := 1; _ = x }
+
+macro func Gen(name ident, body block) decl { return name }
+
+#Gen( Name , {  } )
+
+#Log("x=%d",   x)
+
+func f() {
+	#Swap( a,b )
+	y := #Max( 1,2 )
+	_ = y
+}

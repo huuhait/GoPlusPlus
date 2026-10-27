@@ -1,0 +1,4 @@
+package p
+
+func Map<T any>(x T) T { return x }
+func Pair<K comparable, V any>(k K, v V) {}

@@ -57,7 +57,7 @@
 // CHECK-NEXT:          Field: Field <122:17, 122:18>
 // CHECK-NEXT:            Type: Ident <122:17, 122:18> 'T'
 // CHECK-NEXT:          Field: Field <122:20, 122:25>
-// CHECK-NEXT:            Type: Ident <122:20, 122:25> 'error'
+// CHECK-NEXT:            Type: Ident <122:20, 122:25> 'Error'
 // CHECK-NEXT:  Decl: GenDecl <123:1, 123:19> var
 // CHECK-NEXT:    Spec: ValueSpec <123:5, 123:19>
 // CHECK-NEXT:      Name: Ident <123:5, 123:6> 'v'
@@ -119,7 +119,7 @@ func f!(x int) T { return x }
 func g!() {}
 func (r T) h!(x int) U { return x }
 type F func!(int) T
-type G func!() (T, error)
+type G func!() (T, Error)
 var v func!(int) T
 func main() {
 	a := f!(x)

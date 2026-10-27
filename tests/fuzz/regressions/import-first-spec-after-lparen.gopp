@@ -1,0 +1,13 @@
+package main
+
+// Header imports are never reordered: the order of C/C++ headers can matter.
+import ( "strings"
+	"byt=es" // duplicate
+)
+
+import (
+	"c/z.hh"
+	"c/a.hxx"
+)
+
+func main() {}

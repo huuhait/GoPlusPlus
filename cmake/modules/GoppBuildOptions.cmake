@@ -4,6 +4,14 @@ option(GOPP_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 set(GOPP_USE_SANITIZER "" CACHE STRING
   "Sanitizers for the compiler itself, e.g. \"Address;Undefined\"")
 
+# libFuzzer targets (P02.10, tests/fuzz). They need sanitizers and coverage
+# instrumentation in every library, so use a separate build directory:
+#   cmake -S . -B build-fuzz -DGOPP_BUILD_FUZZERS=ON && ninja -C build-fuzz gopp-fuzz-parse
+option(GOPP_BUILD_FUZZERS "Build the libFuzzer targets (sanitized build)" OFF)
+if(GOPP_BUILD_FUZZERS AND NOT GOPP_USE_SANITIZER)
+  set(GOPP_USE_SANITIZER "Address;Undefined" CACHE STRING "" FORCE)
+endif()
+
 add_compile_options(-Wall -Wextra -Wpedantic ${GOPP_RTTI_FLAG} -fno-exceptions)
 if(GOPP_WARNINGS_AS_ERRORS)
   add_compile_options(-Werror)
@@ -26,6 +34,13 @@ if(GOPP_USE_SANITIZER)
   add_compile_options(-fsanitize=${_san} -fno-omit-frame-pointer
                       -fno-sanitize-recover=all)
   add_link_options(-fsanitize=${_san})
+endif()
+
+if(GOPP_BUILD_FUZZERS)
+  # Coverage feedback for every library; the fuzz target itself adds the
+  # libFuzzer main with -fsanitize=fuzzer.
+  add_compile_options(-fsanitize=fuzzer-no-link)
+  add_link_options(-fsanitize=fuzzer-no-link)
 endif()
 
 # Compiler cache: sccache, else ccache, else none. Automatic, no flag needed.

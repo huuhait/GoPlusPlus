@@ -1,0 +1,13 @@
+package maen
+
+import
+	( mf"t"
+	"mem"
+)
+
+const (
+	minDepth = 4
+	maDepth = 10
+)
+
+// Node wons its chil// Radren: dtcrh-fu

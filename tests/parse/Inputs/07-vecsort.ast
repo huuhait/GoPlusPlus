@@ -1,0 +1,165 @@
+File <1:1, 34:1>
+  Name: Ident <1:9, 1:13> 'main'
+  Decl: GenDecl <3:1, 8:2> import grouped
+    Spec: ImportSpec <4:2, 4:7>
+      Path: BasicLit <4:2, 4:7> string_lit "fmt"
+    Spec: ImportSpec <6:2, 6:15>
+      Path: BasicLit <6:2, 6:15> string_lit "<algorithm>"
+    Spec: ImportSpec <7:2, 7:12>
+      Path: BasicLit <7:2, 7:12> string_lit "<vector>"
+  Decl: FuncDecl <10:1, 33:2>
+    Name: Ident <10:6, 10:10> 'main'
+    Type: FuncType <10:1, 10:12>
+      Params: FieldList <10:10, 10:12>
+    Body: BlockStmt <10:13, 33:2>
+      Stmt: DeclStmt <11:2, 11:28>
+        Decl: GenDecl <11:2, 11:28> var
+          Spec: ValueSpec <11:6, 11:28>
+            Name: Ident <11:6, 11:7> 'v'
+            Type: IndexExpr <11:8, 11:28>
+              X: SelectorExpr <11:8, 11:21>
+                X: Ident <11:8, 11:14> 'vector'
+                Sel: Ident <11:15, 11:21> 'vector'
+              Index: Ident <11:22, 11:27> 'int32'
+      Stmt: RangeStmt <12:2, 14:3> op=':='
+        Key: Ident <12:6, 12:7> '_'
+        Value: Ident <12:9, 12:10> 'x'
+        X: CompositeLit <12:20, 12:52>
+          Type: SliceType <12:20, 12:27>
+            Elt: Ident <12:22, 12:27> 'int32'
+          Elts: BasicLit <12:28, 12:30> int_lit 42
+          Elts: BasicLit <12:32, 12:33> int_lit 7
+          Elts: BasicLit <12:35, 12:37> int_lit 19
+          Elts: BasicLit <12:39, 12:40> int_lit 3
+          Elts: BasicLit <12:42, 12:44> int_lit 88
+          Elts: BasicLit <12:46, 12:47> int_lit 7
+          Elts: BasicLit <12:49, 12:51> int_lit 25
+        Body: BlockStmt <12:53, 14:3>
+          Stmt: ExprStmt <13:3, 13:17>
+            X: CallExpr <13:3, 13:17>
+              Fun: SelectorExpr <13:3, 13:14>
+                X: Ident <13:3, 13:4> 'v'
+                Sel: Ident <13:5, 13:14> 'push_back'
+              Args: Ident <13:15, 13:16> 'x'
+      Stmt: ExprStmt <15:2, 15:36>
+        X: CallExpr <15:2, 15:36>
+          Fun: SelectorExpr <15:2, 15:16>
+            X: Ident <15:2, 15:11> 'algorithm'
+            Sel: Ident <15:12, 15:16> 'sort'
+          Args: CallExpr <15:17, 15:26>
+            Fun: SelectorExpr <15:17, 15:24>
+              X: Ident <15:17, 15:18> 'v'
+              Sel: Ident <15:19, 15:24> 'begin'
+          Args: CallExpr <15:28, 15:35>
+            Fun: SelectorExpr <15:28, 15:33>
+              X: Ident <15:28, 15:29> 'v'
+              Sel: Ident <15:30, 15:33> 'end'
+      Stmt: AssignStmt <18:2, 18:40> op=':='
+        Lhs: Ident <18:2, 18:5> 'out'
+        Rhs: CallExpr <18:9, 18:40>
+          Fun: Ident <18:9, 18:13> 'make'
+          Args: SliceType <18:14, 18:21>
+            Elt: Ident <18:16, 18:21> 'int32'
+          Args: BasicLit <18:23, 18:24> int_lit 0
+          Args: CallExpr <18:26, 18:39>
+            Fun: Ident <18:26, 18:29> 'int'
+            Args: CallExpr <18:30, 18:38>
+              Fun: SelectorExpr <18:30, 18:36>
+                X: Ident <18:30, 18:31> 'v'
+                Sel: Ident <18:32, 18:36> 'size'
+      Stmt: RangeStmt <19:2, 21:3> op=':='
+        Key: Ident <19:6, 19:7> '_'
+        Value: Ident <19:9, 19:10> 'x'
+        X: Ident <19:20, 19:21> 'v'
+        Body: BlockStmt <19:22, 21:3>
+          Stmt: AssignStmt <20:3, 20:23> op='='
+            Lhs: Ident <20:3, 20:6> 'out'
+            Rhs: CallExpr <20:9, 20:23>
+              Fun: Ident <20:9, 20:15> 'append'
+              Args: Ident <20:16, 20:19> 'out'
+              Args: Ident <20:21, 20:22> 'x'
+      Stmt: ExprStmt <22:2, 22:29>
+        X: CallExpr <22:2, 22:29>
+          Fun: SelectorExpr <22:2, 22:13>
+            X: Ident <22:2, 22:5> 'fmt'
+            Sel: Ident <22:6, 22:13> 'Println'
+          Args: BasicLit <22:14, 22:23> string_lit "sorted:"
+          Args: Ident <22:25, 22:28> 'out'
+      Stmt: ExprStmt <24:2, 24:80>
+        X: CallExpr <24:2, 24:80>
+          Fun: SelectorExpr <24:2, 24:13>
+            X: Ident <24:2, 24:5> 'fmt'
+            Sel: Ident <24:6, 24:13> 'Println'
+          Args: BasicLit <24:14, 24:23> string_lit "has 19:"
+          Args: CallExpr <24:25, 24:79>
+            Fun: SelectorExpr <24:25, 24:48>
+              X: Ident <24:25, 24:34> 'algorithm'
+              Sel: Ident <24:35, 24:48> 'binary_search'
+            Args: CallExpr <24:49, 24:58>
+              Fun: SelectorExpr <24:49, 24:56>
+                X: Ident <24:49, 24:50> 'v'
+                Sel: Ident <24:51, 24:56> 'begin'
+            Args: CallExpr <24:60, 24:67>
+              Fun: SelectorExpr <24:60, 24:65>
+                X: Ident <24:60, 24:61> 'v'
+                Sel: Ident <24:62, 24:65> 'end'
+            Args: CallExpr <24:69, 24:78>
+              Fun: Ident <24:69, 24:74> 'int32'
+              Args: BasicLit <24:75, 24:77> int_lit 19
+      Stmt: ExprStmt <25:2, 25:80>
+        X: CallExpr <25:2, 25:80>
+          Fun: SelectorExpr <25:2, 25:13>
+            X: Ident <25:2, 25:5> 'fmt'
+            Sel: Ident <25:6, 25:13> 'Println'
+          Args: BasicLit <25:14, 25:23> string_lit "has 20:"
+          Args: CallExpr <25:25, 25:79>
+            Fun: SelectorExpr <25:25, 25:48>
+              X: Ident <25:25, 25:34> 'algorithm'
+              Sel: Ident <25:35, 25:48> 'binary_search'
+            Args: CallExpr <25:49, 25:58>
+              Fun: SelectorExpr <25:49, 25:56>
+                X: Ident <25:49, 25:50> 'v'
+                Sel: Ident <25:51, 25:56> 'begin'
+            Args: CallExpr <25:60, 25:67>
+              Fun: SelectorExpr <25:60, 25:65>
+                X: Ident <25:60, 25:61> 'v'
+                Sel: Ident <25:62, 25:65> 'end'
+            Args: CallExpr <25:69, 25:78>
+              Fun: Ident <25:69, 25:74> 'int32'
+              Args: BasicLit <25:75, 25:77> int_lit 20
+      Stmt: ExprStmt <27:2, 27:39>
+        X: CallExpr <27:2, 27:39>
+          Fun: SelectorExpr <27:2, 27:19>
+            X: Ident <27:2, 27:11> 'algorithm'
+            Sel: Ident <27:12, 27:19> 'reverse'
+          Args: CallExpr <27:20, 27:29>
+            Fun: SelectorExpr <27:20, 27:27>
+              X: Ident <27:20, 27:21> 'v'
+              Sel: Ident <27:22, 27:27> 'begin'
+          Args: CallExpr <27:31, 27:38>
+            Fun: SelectorExpr <27:31, 27:36>
+              X: Ident <27:31, 27:32> 'v'
+              Sel: Ident <27:33, 27:36> 'end'
+      Stmt: AssignStmt <28:2, 28:15> op='='
+        Lhs: Ident <28:2, 28:5> 'out'
+        Rhs: SliceExpr <28:8, 28:15>
+          X: Ident <28:8, 28:11> 'out'
+          Hi: BasicLit <28:13, 28:14> int_lit 0
+      Stmt: RangeStmt <29:2, 31:3> op=':='
+        Key: Ident <29:6, 29:7> '_'
+        Value: Ident <29:9, 29:10> 'x'
+        X: Ident <29:20, 29:21> 'v'
+        Body: BlockStmt <29:22, 31:3>
+          Stmt: AssignStmt <30:3, 30:23> op='='
+            Lhs: Ident <30:3, 30:6> 'out'
+            Rhs: CallExpr <30:9, 30:23>
+              Fun: Ident <30:9, 30:15> 'append'
+              Args: Ident <30:16, 30:19> 'out'
+              Args: Ident <30:21, 30:22> 'x'
+      Stmt: ExprStmt <32:2, 32:31>
+        X: CallExpr <32:2, 32:31>
+          Fun: SelectorExpr <32:2, 32:13>
+            X: Ident <32:2, 32:5> 'fmt'
+            Sel: Ident <32:6, 32:13> 'Println'
+          Args: BasicLit <32:14, 32:25> string_lit "reversed:"
+          Args: Ident <32:27, 32:30> 'out'

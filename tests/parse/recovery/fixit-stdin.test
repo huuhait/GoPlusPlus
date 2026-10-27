@@ -1,0 +1,8 @@
+// `gopp parse -fixit a.gopp -` fails because standard input cannot be
+// rewritten, and it fails before it rewrites a.gopp.
+// RUN: rm -rf %t && mkdir %t
+// RUN: printf 'package a\nfunc f() {\n\tlet x = 1\n\t_ = x\n}\n' > %t/a.gopp
+// RUN: cp %t/a.gopp %t/orig.gopp
+// RUN: printf 'package a\nfunc g() {\n\tlet y = 1\n\t_ = y\n}\n' | not %gopp parse -fixit %t/a.gopp - 2>&1 | FileCheck %s
+// RUN: diff %t/a.gopp %t/orig.gopp
+// CHECK: -fixit cannot write standard input

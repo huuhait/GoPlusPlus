@@ -1,0 +1,65 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <46:9, 46:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <48:1, 65:2>
+// CHECK-NEXT:    Name: Ident <48:6, 48:7> 'f'
+// CHECK-NEXT:    Type: FuncType <48:1, 48:9>
+// CHECK-NEXT:      Params: FieldList <48:7, 48:9>
+// CHECK-NEXT:    Body: BlockStmt <48:10, 65:2>
+// CHECK-NEXT:      Stmt: RangeStmt <49:2, 50:3>
+// CHECK-NEXT:        X: Ident <49:12, 49:14> 'ch'
+// CHECK-NEXT:        Body: BlockStmt <49:15, 50:3>
+// CHECK-NEXT:      Stmt: RangeStmt <51:2, 52:3> op=':='
+// CHECK-NEXT:        Key: Ident <51:6, 51:7> 'i'
+// CHECK-NEXT:        X: BasicLit <51:17, 51:19> int_lit 10
+// CHECK-NEXT:        Body: BlockStmt <51:20, 52:3>
+// CHECK-NEXT:      Stmt: RangeStmt <53:2, 54:3> op=':='
+// CHECK-NEXT:        Key: Ident <53:6, 53:7> 'i'
+// CHECK-NEXT:        X: Ident <53:17, 53:19> 'xs'
+// CHECK-NEXT:        Body: BlockStmt <53:20, 54:3>
+// CHECK-NEXT:      Stmt: RangeStmt <55:2, 56:3> op=':='
+// CHECK-NEXT:        Key: Ident <55:6, 55:7> 'i'
+// CHECK-NEXT:        Value: Ident <55:9, 55:10> 'v'
+// CHECK-NEXT:        X: Ident <55:20, 55:22> 'xs'
+// CHECK-NEXT:        Body: BlockStmt <55:23, 56:3>
+// CHECK-NEXT:      Stmt: RangeStmt <57:2, 58:3> op='='
+// CHECK-NEXT:        Key: Ident <57:6, 57:7> 'i'
+// CHECK-NEXT:        Value: Ident <57:9, 57:10> 'v'
+// CHECK-NEXT:        X: Ident <57:19, 57:21> 'xs'
+// CHECK-NEXT:        Body: BlockStmt <57:22, 58:3>
+// CHECK-NEXT:      Stmt: RangeStmt <59:2, 60:3> op=':=' alias=value
+// CHECK-NEXT:        Key: Ident <59:6, 59:7> 'i'
+// CHECK-NEXT:        Value: Ident <59:10, 59:11> 'v'
+// CHECK-NEXT:        X: Ident <59:21, 59:23> 'xs'
+// CHECK-NEXT:        Body: BlockStmt <59:24, 60:3>
+// CHECK-NEXT:      Stmt: RangeStmt <61:2, 62:3> op=':=' alias=key
+// CHECK-NEXT:        Key: Ident <61:7, 61:8> 'v'
+// CHECK-NEXT:        X: Ident <61:18, 61:20> 'xs'
+// CHECK-NEXT:        Body: BlockStmt <61:21, 62:3>
+// CHECK-NEXT:      Stmt: RangeStmt <63:2, 64:3> op=':=' alias=value
+// CHECK-NEXT:        Key: Ident <63:6, 63:7> '_'
+// CHECK-NEXT:        Value: Ident <63:10, 63:11> 'v'
+// CHECK-NEXT:        X: Ident <63:21, 63:22> 'm'
+// CHECK-NEXT:        Body: BlockStmt <63:23, 64:3>
+package p
+
+func f() {
+	for range ch {
+	}
+	for i := range 10 {
+	}
+	for i := range xs {
+	}
+	for i, v := range xs {
+	}
+	for i, v = range xs {
+	}
+	for i, &v := range xs {
+	}
+	for &v := range xs {
+	}
+	for _, &v := range m {
+	}
+}

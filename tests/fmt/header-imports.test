@@ -1,0 +1,31 @@
+// Header imports keep their order (D2.8). Without a gopp.mod a header is a
+// "<...>" path or a path that ends in .h, .hh, .hpp or .hxx. A group (lines
+// with no blank line between them) that has one is not sorted; others are.
+
+// RUN: %gopp fmt %S/Inputs/gopp/headers.input | FileCheck %s --match-full-lines
+// CHECK: import (
+// CHECK-NEXT: {{^}}	"zeta"
+// CHECK-NEXT: {{^}}	"alpha"
+// CHECK-NEXT: {{^}}	"<vector>"
+// CHECK-NEXT: {{^}}	"cxx/b.h"
+// CHECK-NEXT: {{^}}	"cxx/a.h"
+// CHECK-NEXT: {{^}}	"beta"
+// CHECK-NEXT: )
+
+// The group below has no header: sorted, the duplicate removed (its comment kept).
+// CHECK: {{^}}	"fmt"
+// CHECK-NEXT: {{^}}	"os"
+// CHECK-EMPTY:
+// CHECK-NEXT: {{^}}	"zz/second.hpp"
+// CHECK-NEXT: {{^}}	"aa/first.hpp"
+// CHECK-EMPTY:
+// CHECK-NEXT: {{^}}	"bytes" // duplicate
+// CHECK-NEXT: {{^}}	"net/http"
+// CHECK-NEXT: {{^}}	str "strings"
+// CHECK: {{^}}	"c/z.hh"
+// CHECK-NEXT: {{^}}	"c/a.hxx"
+
+// -no-sort-imports leaves every group alone.
+// RUN: %gopp fmt -no-sort-imports %S/Inputs/gopp/headers.input | FileCheck %s --check-prefix=NOSORT
+// NOSORT: "os"
+// NOSORT-NEXT: "fmt"

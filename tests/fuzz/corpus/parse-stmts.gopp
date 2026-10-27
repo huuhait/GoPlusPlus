@@ -1,0 +1,128 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <96:9, 96:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <98:1, 128:2>
+// CHECK-NEXT:    Name: Ident <98:6, 98:7> 'f'
+// CHECK-NEXT:    Type: FuncType <98:1, 98:9>
+// CHECK-NEXT:      Params: FieldList <98:7, 98:9>
+// CHECK-NEXT:    Body: BlockStmt <98:10, 128:2>
+// CHECK-NEXT:      Stmt: AssignStmt <99:2, 99:8> op=':='
+// CHECK-NEXT:        Lhs: Ident <99:2, 99:3> 'x'
+// CHECK-NEXT:        Rhs: BasicLit <99:7, 99:8> int_lit 1
+// CHECK-NEXT:      Stmt: AssignStmt <100:2, 100:7> op='='
+// CHECK-NEXT:        Lhs: Ident <100:2, 100:3> 'x'
+// CHECK-NEXT:        Rhs: BasicLit <100:6, 100:7> int_lit 2
+// CHECK-NEXT:      Stmt: AssignStmt <101:2, 101:8> op='+='
+// CHECK-NEXT:        Lhs: Ident <101:2, 101:3> 'x'
+// CHECK-NEXT:        Rhs: BasicLit <101:7, 101:8> int_lit 3
+// CHECK-NEXT:      Stmt: IncDecStmt <102:2, 102:5> op='++'
+// CHECK-NEXT:        X: Ident <102:2, 102:3> 'x'
+// CHECK-NEXT:      Stmt: IncDecStmt <103:2, 103:5> op='--'
+// CHECK-NEXT:        X: Ident <103:2, 103:3> 'y'
+// CHECK-NEXT:      Stmt: AssignStmt <104:2, 104:14> op=':='
+// CHECK-NEXT:        Lhs: Ident <104:2, 104:3> 'a'
+// CHECK-NEXT:        Lhs: Ident <104:5, 104:6> 'b'
+// CHECK-NEXT:        Rhs: BasicLit <104:10, 104:11> int_lit 1
+// CHECK-NEXT:        Rhs: BasicLit <104:13, 104:14> int_lit 2
+// CHECK-NEXT:      Stmt: AssignStmt <105:2, 105:13> op='='
+// CHECK-NEXT:        Lhs: Ident <105:2, 105:3> 'a'
+// CHECK-NEXT:        Lhs: Ident <105:5, 105:6> 'b'
+// CHECK-NEXT:        Rhs: Ident <105:9, 105:10> 'b'
+// CHECK-NEXT:        Rhs: Ident <105:12, 105:13> 'a'
+// CHECK-NEXT:      Stmt: SendStmt <106:2, 106:9>
+// CHECK-NEXT:        Chan: Ident <106:2, 106:4> 'ch'
+// CHECK-NEXT:        Value: Ident <106:8, 106:9> 'x'
+// CHECK-NEXT:      Stmt: GoStmt <107:2, 107:9>
+// CHECK-NEXT:        Call: CallExpr <107:5, 107:9>
+// CHECK-NEXT:          Fun: Ident <107:5, 107:6> 'g'
+// CHECK-NEXT:          Args: Ident <107:7, 107:8> 'x'
+// CHECK-NEXT:      Stmt: DeferStmt <108:2, 108:11>
+// CHECK-NEXT:        Call: CallExpr <108:8, 108:11>
+// CHECK-NEXT:          Fun: Ident <108:8, 108:9> 'h'
+// CHECK-NEXT:      Stmt: DeclStmt <109:2, 109:11>
+// CHECK-NEXT:        Decl: GenDecl <109:2, 109:11> var
+// CHECK-NEXT:          Spec: ValueSpec <109:6, 109:11>
+// CHECK-NEXT:            Name: Ident <109:6, 109:7> 'v'
+// CHECK-NEXT:            Type: Ident <109:8, 109:11> 'int'
+// CHECK-NEXT:      Stmt: DeclStmt <110:2, 110:13>
+// CHECK-NEXT:        Decl: GenDecl <110:2, 110:13> const
+// CHECK-NEXT:          Spec: ValueSpec <110:8, 110:13>
+// CHECK-NEXT:            Name: Ident <110:8, 110:9> 'k'
+// CHECK-NEXT:            Value: BasicLit <110:12, 110:13> int_lit 1
+// CHECK-NEXT:      Stmt: DeclStmt <111:2, 111:12>
+// CHECK-NEXT:        Decl: GenDecl <111:2, 111:12> type
+// CHECK-NEXT:          Spec: TypeSpec <111:7, 111:12>
+// CHECK-NEXT:            Name: Ident <111:7, 111:8> 'L'
+// CHECK-NEXT:            Type: Ident <111:9, 111:12> 'int'
+// CHECK-NEXT:      Stmt: BlockStmt <112:2, 114:3>
+// CHECK-NEXT:        Stmt: ExprStmt <113:3, 113:11>
+// CHECK-NEXT:          X: CallExpr <113:3, 113:11>
+// CHECK-NEXT:            Fun: Ident <113:3, 113:9> 'nested'
+// CHECK-NEXT:      Stmt: LabeledStmt <115:1, 119:3>
+// CHECK-NEXT:        Label: Ident <115:1, 115:4> 'lbl'
+// CHECK-NEXT:        Stmt: ForStmt <116:2, 119:3>
+// CHECK-NEXT:          Body: BlockStmt <116:6, 119:3>
+// CHECK-NEXT:            Stmt: BranchStmt <117:3, 117:12> break
+// CHECK-NEXT:              Label: Ident <117:9, 117:12> 'lbl'
+// CHECK-NEXT:            Stmt: BranchStmt <118:3, 118:15> continue
+// CHECK-NEXT:              Label: Ident <118:12, 118:15> 'lbl'
+// CHECK-NEXT:      Stmt: BranchStmt <120:2, 120:10> goto
+// CHECK-NEXT:        Label: Ident <120:7, 120:10> 'lbl'
+// CHECK-NEXT:      Stmt: ReturnStmt <121:2, 121:8>
+// CHECK-NEXT:      Stmt: ReturnStmt <122:2, 122:13>
+// CHECK-NEXT:        Result: Ident <122:9, 122:10> 'x'
+// CHECK-NEXT:        Result: Ident <122:12, 122:13> 'y'
+// CHECK-NEXT:      Stmt: BranchStmt <123:2, 123:13> fallthrough
+// CHECK-NEXT:      Stmt: EmptyStmt <124:2, 124:3>
+// CHECK-NEXT:      Stmt: AssignStmt <125:2, 125:10> op='='
+// CHECK-NEXT:        Lhs: Ident <125:2, 125:3> '_'
+// CHECK-NEXT:        Rhs: UnaryExpr <125:6, 125:10> op='<-'
+// CHECK-NEXT:          X: Ident <125:8, 125:10> 'ch'
+// CHECK-NEXT:      Stmt: AssignStmt <126:2, 126:8> op='='
+// CHECK-NEXT:        Lhs: StarExpr <126:2, 126:4>
+// CHECK-NEXT:          X: Ident <126:3, 126:4> 'p'
+// CHECK-NEXT:        Rhs: BasicLit <126:7, 126:8> int_lit 1
+// CHECK-NEXT:      Stmt: AssignStmt <127:2, 127:18> op='='
+// CHECK-NEXT:        Lhs: SelectorExpr <127:2, 127:5>
+// CHECK-NEXT:          X: Ident <127:2, 127:3> 'p'
+// CHECK-NEXT:          Sel: Ident <127:4, 127:5> 'x'
+// CHECK-NEXT:        Lhs: IndexExpr <127:7, 127:11>
+// CHECK-NEXT:          X: Ident <127:7, 127:8> 'q'
+// CHECK-NEXT:          Index: BasicLit <127:9, 127:10> int_lit 1
+// CHECK-NEXT:        Rhs: BasicLit <127:14, 127:15> int_lit 1
+// CHECK-NEXT:        Rhs: BasicLit <127:17, 127:18> int_lit 2
+package p
+
+func f() {
+	x := 1
+	x = 2
+	x += 3
+	x++
+	y--
+	a, b := 1, 2
+	a, b = b, a
+	ch <- x
+	go g(x)
+	defer h()
+	var v int
+	const k = 1
+	type L int
+	{
+		nested()
+	}
+lbl:
+	for {
+		break lbl
+		continue lbl
+	}
+	goto lbl
+	return
+	return x, y
+	fallthrough
+	;
+	_ = <-ch
+	*p = 1
+	p.x, q[1] = 1, 2
+}

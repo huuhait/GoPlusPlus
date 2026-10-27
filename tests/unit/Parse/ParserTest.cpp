@@ -227,7 +227,9 @@ const char *const GoppValids[] = {
 TEST(Parser, GoppValidPrograms) {
   for (const char *Body : GoppValids) {
     SCOPED_TRACE(Body);
-    Parsed P(wrap(Body));
+    ParseOptions Go;
+    Go.CheckLanguageRules = false; // some snippets are plain Go (&T{})
+    Parsed P(wrap(Body), Go);
     EXPECT_EQ(P.numErrors(), 0u) << ::testing::PrintToString(P.errors());
   }
 }
@@ -488,7 +490,9 @@ TEST(Parser, NodeRangesAreNested) {
   // each snippet individually, so a clash between snippets cannot matter
   for (const char *B : GoppValids) {
     SCOPED_TRACE(B);
-    Parsed P(wrap(B));
+    ParseOptions Go;
+    Go.CheckLanguageRules = false;
+    Parsed P(wrap(B), Go);
     ASSERT_EQ(P.numErrors(), 0u);
     std::function<void(const Node *)> Walk = [&](const Node *N) {
       EXPECT_TRUE(N->getBegin().isValid());
@@ -619,7 +623,7 @@ TEST(Parser, DiagnosticsComeInSourceOrder) {
   // Deciding `move G[` looks ahead for the `]` and lexes line 5 early. Its
   // lexical error must still follow the parser's errors on lines 3 and 4
   // (go/parser sorts its errors).
-  Parsed P("package p\nfunc f(move G[K\nfunc g() {\n\tx := 'ab'\n}\n");
+  Parsed P("package p\nfunc f(move G[K\nfunc g() {\n\tx := 'a\\tb'\n}\n");
   const auto &D = P.Src.Consumer.Diags;
   ASSERT_GE(D.size(), 2u);
   bool SawRune = false;
@@ -1023,6 +1027,87 @@ TEST(ParserRobustness, RandomTokenSoup) {
     }
     Parsed P(Src, {}, 10);
     ASSERT_NE(P.File, nullptr);
+  }
+}
+
+// Found by the fuzzer (c3): a type or a list that is cut off at the end of the
+// file (`func(move a,b s[ ~`) got an end one byte past the file, and a node
+// that starts at a token the parser did not consume ended before it began.
+TEST(ParserRobustness, NodeRangesStayInsideTheFileWhenTheTextIsCutOff) {
+  const std::string Full =
+      "package p\nimport \"fmt\"\n@Tag(x)\nfunc F[T any](move a, b T) (r "
+      "[]int, err error) {\n\tfor &d := range xs { m := map[string]struct{ a "
+      "int }{}\n\t\tx := #M(1, 2) + y[1:2] + z.(T)\n\t} }\nmacro Q(a expr) { a "
+      "}\n";
+  auto CheckText = [](llvm::StringRef Text) {
+    SCOPED_TRACE(Text.str());
+    Parsed P(Text, {}, 0);
+    std::function<void(const Node *)> Check = [&](const Node *N) {
+      for (SourceLoc L : {N->getBegin(), N->getEnd()})
+        if (L.isValid())
+          ASSERT_TRUE(P.Src.SM.getFileID(L).isValid())
+              << N->getKindName() << " leaves the file";
+      if (N->getBegin().isValid() && N->getEnd().isValid())
+        ASSERT_FALSE(N->getEnd() < N->getBegin())
+            << N->getKindName() << " ends at " << P.Src.offsetOf(N->getEnd())
+            << " before it starts at " << P.Src.offsetOf(N->getBegin());
+      forEachChild(N, [&](const char *, const Node *C) { Check(C); });
+    };
+    Check(P.File);
+  };
+  for (size_t Len = 0; Len <= Full.size(); ++Len)
+    CheckText(llvm::StringRef(Full).substr(0, Len));
+  CheckText("package} macro\n}\n");
+}
+
+// parseFiles: the trees of a package in input order, the diagnostics replayed
+// in file order, the same with one thread or several.
+TEST(ParseFiles, ParallelIsLikeSerial) {
+  SourceManager SM;
+  std::vector<FileID> Files;
+  for (int I = 0; I < 16; ++I) {
+    std::string Text = "package p\nvar v" + std::to_string(I) + " = " +
+                       (I % 3 ? "1\n" : ")\n");
+    llvm::Expected<FileID> F =
+        SM.addMemoryBuffer("f" + std::to_string(I) + ".gopp", Text);
+    ASSERT_TRUE(bool(F));
+    Files.push_back(*F);
+  }
+  auto Run = [&](unsigned Threads, unsigned Limit,
+                 std::vector<std::string> &Errors) {
+    CollectingDiagnosticConsumer C;
+    DiagnosticsEngine Diags(SM, C, Limit);
+    std::vector<ParsedFile> Out = parseFiles(SM, Files, Diags, {}, Threads);
+    for (const Diagnostic &D : C.Diags)
+      Errors.push_back(
+          (D.Loc.isValid() ? SM.getFilename(SM.getFileID(D.Loc)).str() : "") +
+          ": " + D.Message);
+    return Out;
+  };
+  std::vector<std::string> Serial, Parallel;
+  std::vector<ParsedFile> A = Run(1, 0, Serial), B = Run(8, 0, Parallel);
+  EXPECT_EQ(Serial, Parallel);
+  EXPECT_EQ(Serial.size(), 6u); // files 0, 3, 6, 9, 12, 15
+  ASSERT_EQ(A.size(), Files.size());
+  ASSERT_EQ(B.size(), Files.size());
+  for (size_t I = 0; I < Files.size(); ++I) {
+    ASSERT_NE(B[I].AST, nullptr);
+    ASSERT_EQ(B[I].AST->Decls.size(), 1u);
+    auto *G = llvm::cast<GenDecl>(B[I].AST->Decls[0]);
+    auto *V = llvm::cast<ValueSpec>(G->Specs[0]);
+    EXPECT_EQ(V->Names[0]->Name.str(), "v" + std::to_string(I));
+  }
+  // With an error limit the diagnostics are cut at the same place, and every
+  // tree is still built.
+  for (unsigned Limit : {1u, 2u, 4u}) {
+    std::vector<std::string> LimSerial, LimParallel;
+    Run(1, Limit, LimSerial);
+    std::vector<ParsedFile> P = Run(8, Limit, LimParallel);
+    EXPECT_EQ(LimSerial, LimParallel) << "limit " << Limit;
+    EXPECT_LT(LimSerial.size(), Serial.size()) << "limit " << Limit;
+    EXPECT_GE(LimSerial.size(), Limit) << "limit " << Limit;
+    for (const ParsedFile &F : P)
+      EXPECT_NE(F.AST, nullptr);
   }
 }
 

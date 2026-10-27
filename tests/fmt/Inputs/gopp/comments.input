@@ -1,0 +1,40 @@
+// Package doc.
+package main // trailing
+
+/* block
+   comment */
+import "fmt" // line
+
+// Doc of T.
+type T struct { // after brace
+	// doc of a
+	a int // line of a
+	/* before b */ b string
+	c int   @Json("c")   // c
+}
+
+func f(
+	a int, // first
+	move b string, /* second */
+	c ref []int,
+) /* result */ int {
+	// only a comment
+	return 1 // done
+}
+
+func g() {
+	x := []int{ // elements
+		1, // one
+		2,
+		// before closing
+	}
+	for i, &v := range x { // loop
+		_ = i /* i */
+		_ = v
+	}
+	/* last */
+}
+
+#Gen(a, /* kept */ b)
+
+// end of file

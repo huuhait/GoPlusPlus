@@ -1,0 +1,392 @@
+File <1:1, 88:1>
+  Name: Ident <1:9, 1:13> 'main'
+  Decl: GenDecl <3:1, 7:2> import grouped
+    Spec: ImportSpec <4:2, 4:7>
+      Path: BasicLit <4:2, 4:7> string_lit "fmt"
+    Spec: ImportSpec <5:2, 5:6>
+      Path: BasicLit <5:2, 5:6> string_lit "os"
+    Spec: ImportSpec <6:2, 6:11>
+      Path: BasicLit <6:2, 6:11> string_lit "strconv"
+  Decl: GenDecl <11:1, 16:2> type
+    Attr: Attribute <11:1, 11:5> name=Ref
+      Name: Ident <11:2, 11:5> 'Ref'
+    Spec: TypeSpec <12:6, 16:2>
+      Name: Ident <12:6, 12:11> 'Entry'
+      Type: StructType <12:12, 16:2>
+        Fields: FieldList <12:19, 16:2>
+          Field: Field <13:2, 13:18>
+            Names: Ident <13:2, 13:5> 'Key'
+            Type: RefType <13:8, 13:18>
+              Elem: Ident <13:12, 13:18> 'string'
+          Field: Field <14:2, 14:18>
+            Names: Ident <14:2, 14:7> 'Value'
+            Type: RefType <14:8, 14:18>
+              Elem: Ident <14:12, 14:18> 'string'
+          Field: Field <15:2, 15:11>
+            Names: Ident <15:2, 15:6> 'Line'
+            Type: Ident <15:8, 15:11> 'int'
+  Decl: FuncDecl <18:1, 18:72>
+    Name: Ident <18:6, 18:13> 'isSpace'
+    Type: FuncType <18:1, 18:26>
+      Params: FieldList <18:13, 18:21>
+        Field: Field <18:14, 18:20>
+          Names: Ident <18:14, 18:15> 'c'
+          Type: Ident <18:16, 18:20> 'byte'
+      Results: FieldList <18:22, 18:26>
+        Field: Field <18:22, 18:26>
+          Type: Ident <18:22, 18:26> 'bool'
+    Body: BlockStmt <18:27, 18:72>
+      Stmt: ReturnStmt <18:29, 18:70>
+        Result: BinaryExpr <18:36, 18:70> op='||'
+          X: BinaryExpr <18:36, 18:57> op='||'
+            X: BinaryExpr <18:36, 18:44> op='=='
+              X: Ident <18:36, 18:37> 'c'
+              Y: BasicLit <18:41, 18:44> char_lit ' '
+            Y: BinaryExpr <18:48, 18:57> op='=='
+              X: Ident <18:48, 18:49> 'c'
+              Y: BasicLit <18:53, 18:57> char_lit '\t'
+          Y: BinaryExpr <18:61, 18:70> op='=='
+            X: Ident <18:61, 18:62> 'c'
+            Y: BasicLit <18:66, 18:70> char_lit '\r'
+  Decl: FuncDecl <22:1, 30:2>
+    Name: Ident <22:6, 22:10> 'trim'
+    Type: FuncType <22:1, 22:31>
+      Params: FieldList <22:10, 22:20>
+        Field: Field <22:11, 22:19>
+          Names: Ident <22:11, 22:12> 's'
+          Type: Ident <22:13, 22:19> 'string'
+      Results: FieldList <22:21, 22:31>
+        Field: Field <22:21, 22:31>
+          Type: RefType <22:21, 22:31>
+            Elem: Ident <22:25, 22:31> 'string'
+    Body: BlockStmt <22:32, 30:2>
+      Stmt: ForStmt <23:2, 25:3>
+        Cond: BinaryExpr <23:6, 23:33> op='&&'
+          X: BinaryExpr <23:6, 23:16> op='>'
+            X: CallExpr <23:6, 23:12>
+              Fun: Ident <23:6, 23:9> 'len'
+              Args: Ident <23:10, 23:11> 's'
+            Y: BasicLit <23:15, 23:16> int_lit 0
+          Y: CallExpr <23:20, 23:33>
+            Fun: Ident <23:20, 23:27> 'isSpace'
+            Args: IndexExpr <23:28, 23:32>
+              X: Ident <23:28, 23:29> 's'
+              Index: BasicLit <23:30, 23:31> int_lit 0
+        Body: BlockStmt <23:34, 25:3>
+          Stmt: AssignStmt <24:3, 24:12> op='='
+            Lhs: Ident <24:3, 24:4> 's'
+            Rhs: SliceExpr <24:7, 24:12>
+              X: Ident <24:7, 24:8> 's'
+              Lo: BasicLit <24:9, 24:10> int_lit 1
+      Stmt: ForStmt <26:2, 28:3>
+        Cond: BinaryExpr <26:6, 26:40> op='&&'
+          X: BinaryExpr <26:6, 26:16> op='>'
+            X: CallExpr <26:6, 26:12>
+              Fun: Ident <26:6, 26:9> 'len'
+              Args: Ident <26:10, 26:11> 's'
+            Y: BasicLit <26:15, 26:16> int_lit 0
+          Y: CallExpr <26:20, 26:40>
+            Fun: Ident <26:20, 26:27> 'isSpace'
+            Args: IndexExpr <26:28, 26:39>
+              X: Ident <26:28, 26:29> 's'
+              Index: BinaryExpr <26:30, 26:38> op='-'
+                X: CallExpr <26:30, 26:36>
+                  Fun: Ident <26:30, 26:33> 'len'
+                  Args: Ident <26:34, 26:35> 's'
+                Y: BasicLit <26:37, 26:38> int_lit 1
+        Body: BlockStmt <26:41, 28:3>
+          Stmt: AssignStmt <27:3, 27:19> op='='
+            Lhs: Ident <27:3, 27:4> 's'
+            Rhs: SliceExpr <27:7, 27:19>
+              X: Ident <27:7, 27:8> 's'
+              Hi: BinaryExpr <27:10, 27:18> op='-'
+                X: CallExpr <27:10, 27:16>
+                  Fun: Ident <27:10, 27:13> 'len'
+                  Args: Ident <27:14, 27:15> 's'
+                Y: BasicLit <27:17, 27:18> int_lit 1
+      Stmt: ReturnStmt <29:2, 29:10>
+        Result: Ident <29:9, 29:10> 's'
+  Decl: FuncDecl <33:1, 40:2>
+    Name: Ident <33:6, 33:9> 'cut'
+    Type: FuncType <33:1, 33:68>
+      Params: FieldList <33:9, 33:29>
+        Field: Field <33:10, 33:18>
+          Names: Ident <33:10, 33:11> 's'
+          Type: Ident <33:12, 33:18> 'string'
+        Field: Field <33:20, 33:28>
+          Names: Ident <33:20, 33:23> 'sep'
+          Type: Ident <33:24, 33:28> 'byte'
+      Results: FieldList <33:30, 33:68>
+        Field: Field <33:31, 33:55>
+          Names: Ident <33:31, 33:37> 'before'
+          Names: Ident <33:39, 33:44> 'after'
+          Type: RefType <33:45, 33:55>
+            Elem: Ident <33:49, 33:55> 'string'
+        Field: Field <33:57, 33:67>
+          Names: Ident <33:57, 33:62> 'found'
+          Type: Ident <33:63, 33:67> 'bool'
+    Body: BlockStmt <33:69, 40:2>
+      Stmt: ForStmt <34:2, 38:3>
+        Init: AssignStmt <34:6, 34:12> op=':='
+          Lhs: Ident <34:6, 34:7> 'i'
+          Rhs: BasicLit <34:11, 34:12> int_lit 0
+        Cond: BinaryExpr <34:14, 34:24> op='<'
+          X: Ident <34:14, 34:15> 'i'
+          Y: CallExpr <34:18, 34:24>
+            Fun: Ident <34:18, 34:21> 'len'
+            Args: Ident <34:22, 34:23> 's'
+        Post: IncDecStmt <34:26, 34:29> op='++'
+          X: Ident <34:26, 34:27> 'i'
+        Body: BlockStmt <34:30, 38:3>
+          Stmt: IfStmt <35:3, 37:4>
+            Cond: BinaryExpr <35:6, 35:17> op='=='
+              X: IndexExpr <35:6, 35:10>
+                X: Ident <35:6, 35:7> 's'
+                Index: Ident <35:8, 35:9> 'i'
+              Y: Ident <35:14, 35:17> 'sep'
+            Then: BlockStmt <35:18, 37:4>
+              Stmt: ReturnStmt <36:4, 36:31>
+                Result: SliceExpr <36:11, 36:16>
+                  X: Ident <36:11, 36:12> 's'
+                  Hi: Ident <36:14, 36:15> 'i'
+                Result: SliceExpr <36:18, 36:25>
+                  X: Ident <36:18, 36:19> 's'
+                  Lo: BinaryExpr <36:20, 36:23> op='+'
+                    X: Ident <36:20, 36:21> 'i'
+                    Y: BasicLit <36:22, 36:23> int_lit 1
+                Result: Ident <36:27, 36:31> 'true'
+      Stmt: ReturnStmt <39:2, 39:21>
+        Result: Ident <39:9, 39:10> 's'
+        Result: BasicLit <39:12, 39:14> string_lit ""
+        Result: Ident <39:16, 39:21> 'false'
+  Decl: FuncDecl <44:1, 63:2> fails
+    Name: Ident <44:6, 44:11> 'parse'
+    Type: FuncType <44:1, 44:32> fails
+      Params: FieldList <44:12, 44:24>
+        Field: Field <44:13, 44:23>
+          Names: Ident <44:13, 44:16> 'src'
+          Type: Ident <44:17, 44:23> 'string'
+      Results: FieldList <44:25, 44:32>
+        Field: Field <44:25, 44:32>
+          Type: SliceType <44:25, 44:32>
+            Elt: Ident <44:27, 44:32> 'Entry'
+    Body: BlockStmt <44:33, 63:2>
+      Stmt: DeclStmt <45:2, 45:17>
+        Decl: GenDecl <45:2, 45:17> var
+          Spec: ValueSpec <45:6, 45:17>
+            Name: Ident <45:6, 45:9> 'out'
+            Type: SliceType <45:10, 45:17>
+              Elt: Ident <45:12, 45:17> 'Entry'
+      Stmt: AssignStmt <46:2, 46:11> op=':='
+        Lhs: Ident <46:2, 46:6> 'line'
+        Rhs: BasicLit <46:10, 46:11> int_lit 0
+      Stmt: AssignStmt <47:2, 47:16> op=':='
+        Lhs: Ident <47:2, 47:6> 'rest'
+        Rhs: SliceExpr <47:10, 47:16>
+          X: Ident <47:10, 47:13> 'src'
+      Stmt: ForStmt <48:2, 61:3>
+        Cond: BinaryExpr <48:6, 48:19> op='>'
+          X: CallExpr <48:6, 48:15>
+            Fun: Ident <48:6, 48:9> 'len'
+            Args: Ident <48:10, 48:14> 'rest'
+          Y: BasicLit <48:18, 48:19> int_lit 0
+        Body: BlockStmt <48:20, 61:3>
+          Stmt: DeclStmt <49:3, 49:22>
+            Decl: GenDecl <49:3, 49:22> var
+              Spec: ValueSpec <49:7, 49:22>
+                Name: Ident <49:7, 49:11> 'text'
+                Type: RefType <49:12, 49:22>
+                  Elem: Ident <49:16, 49:22> 'string'
+          Stmt: AssignStmt <50:3, 50:34> op='='
+            Lhs: Ident <50:3, 50:7> 'text'
+            Lhs: Ident <50:9, 50:13> 'rest'
+            Lhs: Ident <50:15, 50:16> '_'
+            Rhs: CallExpr <50:19, 50:34>
+              Fun: Ident <50:19, 50:22> 'cut'
+              Args: Ident <50:23, 50:27> 'rest'
+              Args: BasicLit <50:29, 50:33> char_lit '\n'
+          Stmt: IncDecStmt <51:3, 51:9> op='++'
+            X: Ident <51:3, 51:7> 'line'
+          Stmt: AssignStmt <52:3, 52:20> op='='
+            Lhs: Ident <52:3, 52:7> 'text'
+            Rhs: CallExpr <52:10, 52:20>
+              Fun: Ident <52:10, 52:14> 'trim'
+              Args: Ident <52:15, 52:19> 'text'
+          Stmt: IfStmt <53:3, 55:4>
+            Cond: BinaryExpr <53:6, 53:38> op='||'
+              X: BinaryExpr <53:6, 53:20> op='=='
+                X: CallExpr <53:6, 53:15>
+                  Fun: Ident <53:6, 53:9> 'len'
+                  Args: Ident <53:10, 53:14> 'text'
+                Y: BasicLit <53:19, 53:20> int_lit 0
+              Y: BinaryExpr <53:24, 53:38> op='=='
+                X: IndexExpr <53:24, 53:31>
+                  X: Ident <53:24, 53:28> 'text'
+                  Index: BasicLit <53:29, 53:30> int_lit 0
+                Y: BasicLit <53:35, 53:38> char_lit '#'
+            Then: BlockStmt <53:39, 55:4>
+              Stmt: BranchStmt <54:4, 54:12> continue
+          Stmt: AssignStmt <56:3, 56:35> op=':='
+            Lhs: Ident <56:3, 56:6> 'key'
+            Lhs: Ident <56:8, 56:13> 'value'
+            Lhs: Ident <56:15, 56:17> 'ok'
+            Rhs: CallExpr <56:21, 56:35>
+              Fun: Ident <56:21, 56:24> 'cut'
+              Args: Ident <56:25, 56:29> 'text'
+              Args: BasicLit <56:31, 56:34> char_lit '='
+          Stmt: IfStmt <57:3, 59:4>
+            Cond: UnaryExpr <57:6, 57:9> op='!'
+              X: Ident <57:7, 57:9> 'ok'
+            Then: BlockStmt <57:10, 59:4>
+              Stmt: ReturnStmt <58:4, 58:63>
+                Result: Ident <58:11, 58:14> 'nil'
+                Result: CallExpr <58:16, 58:63>
+                  Fun: SelectorExpr <58:16, 58:26>
+                    X: Ident <58:16, 58:19> 'fmt'
+                    Sel: Ident <58:20, 58:26> 'Errorf'
+                  Args: BasicLit <58:27, 58:56> string_lit "line %d: expected key=value"
+                  Args: Ident <58:58, 58:62> 'line'
+          Stmt: AssignStmt <60:3, 60:75> op='='
+            Lhs: Ident <60:3, 60:6> 'out'
+            Rhs: CallExpr <60:9, 60:75>
+              Fun: Ident <60:9, 60:15> 'append'
+              Args: Ident <60:16, 60:19> 'out'
+              Args: CompositeLit <60:21, 60:74>
+                Type: Ident <60:21, 60:26> 'Entry'
+                Elts: KeyValueExpr <60:27, 60:41>
+                  Key: Ident <60:27, 60:30> 'Key'
+                  Value: CallExpr <60:32, 60:41>
+                    Fun: Ident <60:32, 60:36> 'trim'
+                    Args: Ident <60:37, 60:40> 'key'
+                Elts: KeyValueExpr <60:43, 60:61>
+                  Key: Ident <60:43, 60:48> 'Value'
+                  Value: CallExpr <60:50, 60:61>
+                    Fun: Ident <60:50, 60:54> 'trim'
+                    Args: Ident <60:55, 60:60> 'value'
+                Elts: KeyValueExpr <60:63, 60:73>
+                  Key: Ident <60:63, 60:67> 'Line'
+                  Value: Ident <60:69, 60:73> 'line'
+      Stmt: ReturnStmt <62:2, 62:12>
+        Result: Ident <62:9, 62:12> 'out'
+  Decl: FuncDecl <65:1, 72:2>
+    Name: Ident <65:6, 65:12> 'lookup'
+    Type: FuncType <65:1, 65:60>
+      Params: FieldList <65:12, 65:41>
+        Field: Field <65:13, 65:28>
+          Names: Ident <65:13, 65:20> 'entries'
+          Type: SliceType <65:21, 65:28>
+            Elt: Ident <65:23, 65:28> 'Entry'
+        Field: Field <65:30, 65:40>
+          Names: Ident <65:30, 65:33> 'key'
+          Type: Ident <65:34, 65:40> 'string'
+      Results: FieldList <65:42, 65:60>
+        Field: Field <65:43, 65:53>
+          Type: RefType <65:43, 65:53>
+            Elem: Ident <65:47, 65:53> 'string'
+        Field: Field <65:55, 65:59>
+          Type: Ident <65:55, 65:59> 'bool'
+    Body: BlockStmt <65:61, 72:2>
+      Stmt: RangeStmt <66:2, 70:3> op=':='
+        Key: Ident <66:6, 66:7> 'i'
+        X: Ident <66:17, 66:24> 'entries'
+        Body: BlockStmt <66:25, 70:3>
+          Stmt: IfStmt <67:3, 69:4>
+            Cond: BinaryExpr <67:6, 67:27> op='=='
+              X: SelectorExpr <67:6, 67:20>
+                X: IndexExpr <67:6, 67:16>
+                  X: Ident <67:6, 67:13> 'entries'
+                  Index: Ident <67:14, 67:15> 'i'
+                Sel: Ident <67:17, 67:20> 'Key'
+              Y: Ident <67:24, 67:27> 'key'
+            Then: BlockStmt <67:28, 69:4>
+              Stmt: ReturnStmt <68:4, 68:33>
+                Result: SelectorExpr <68:11, 68:27>
+                  X: IndexExpr <68:11, 68:21>
+                    X: Ident <68:11, 68:18> 'entries'
+                    Index: Ident <68:19, 68:20> 'i'
+                  Sel: Ident <68:22, 68:27> 'Value'
+                Result: Ident <68:29, 68:33> 'true'
+      Stmt: ReturnStmt <71:2, 71:18>
+        Result: BasicLit <71:9, 71:11> string_lit ""
+        Result: Ident <71:13, 71:18> 'false'
+  Decl: FuncDecl <74:1, 87:2>
+    Name: Ident <74:6, 74:10> 'main'
+    Type: FuncType <74:1, 74:12>
+      Params: FieldList <74:10, 74:12>
+    Body: BlockStmt <74:13, 87:2>
+      Stmt: AssignStmt <75:2, 75:36> op=':='
+        Lhs: Ident <75:2, 75:6> 'data'
+        Rhs: CallExpr <75:10, 75:36> must
+          Fun: SelectorExpr <75:10, 75:21>
+            X: Ident <75:10, 75:12> 'os'
+            Sel: Ident <75:13, 75:21> 'ReadFile'
+          Args: BasicLit <75:23, 75:35> string_lit "config.txt"
+      Stmt: AssignStmt <76:2, 76:21> op=':='
+        Lhs: Ident <76:2, 76:5> 'src'
+        Rhs: CallExpr <76:9, 76:21>
+          Fun: Ident <76:9, 76:15> 'string'
+          Args: Ident <76:16, 76:20> 'data'
+      Stmt: AssignStmt <77:2, 77:24> op=':='
+        Lhs: Ident <77:2, 77:9> 'entries'
+        Rhs: CallExpr <77:13, 77:24> must
+          Fun: Ident <77:13, 77:18> 'parse'
+          Args: Ident <77:20, 77:23> 'src'
+      Stmt: RangeStmt <78:2, 80:3> op=':='
+        Key: Ident <78:6, 78:7> '_'
+        Value: Ident <78:9, 78:10> 'e'
+        X: Ident <78:20, 78:27> 'entries'
+        Body: BlockStmt <78:28, 80:3>
+          Stmt: ExprStmt <79:3, 79:54>
+            X: CallExpr <79:3, 79:54>
+              Fun: SelectorExpr <79:3, 79:13>
+                X: Ident <79:3, 79:6> 'fmt'
+                Sel: Ident <79:7, 79:13> 'Printf'
+              Args: BasicLit <79:14, 79:29> string_lit "%d: %s = %s\n"
+              Args: SelectorExpr <79:31, 79:37>
+                X: Ident <79:31, 79:32> 'e'
+                Sel: Ident <79:33, 79:37> 'Line'
+              Args: SelectorExpr <79:39, 79:44>
+                X: Ident <79:39, 79:40> 'e'
+                Sel: Ident <79:41, 79:44> 'Key'
+              Args: SelectorExpr <79:46, 79:53>
+                X: Ident <79:46, 79:47> 'e'
+                Sel: Ident <79:48, 79:53> 'Value'
+      Stmt: IfStmt <81:2, 84:3>
+        Init: AssignStmt <81:5, 81:37> op=':='
+          Lhs: Ident <81:5, 81:6> 'v'
+          Lhs: Ident <81:8, 81:10> 'ok'
+          Rhs: CallExpr <81:14, 81:37>
+            Fun: Ident <81:14, 81:20> 'lookup'
+            Args: Ident <81:21, 81:28> 'entries'
+            Args: BasicLit <81:30, 81:36> string_lit "port"
+        Cond: Ident <81:39, 81:41> 'ok'
+        Then: BlockStmt <81:42, 84:3>
+          Stmt: AssignStmt <82:3, 82:27> op=':='
+            Lhs: Ident <82:3, 82:7> 'port'
+            Rhs: CallExpr <82:11, 82:27> must
+              Fun: SelectorExpr <82:11, 82:23>
+                X: Ident <82:11, 82:18> 'strconv'
+                Sel: Ident <82:19, 82:23> 'Atoi'
+              Args: Ident <82:25, 82:26> 'v'
+          Stmt: ExprStmt <83:3, 83:36>
+            X: CallExpr <83:3, 83:36>
+              Fun: SelectorExpr <83:3, 83:14>
+                X: Ident <83:3, 83:6> 'fmt'
+                Sel: Ident <83:7, 83:14> 'Println'
+              Args: BasicLit <83:15, 83:27> string_lit "port + 1 ="
+              Args: BinaryExpr <83:29, 83:35> op='+'
+                X: Ident <83:29, 83:33> 'port'
+                Y: BasicLit <83:34, 83:35> int_lit 1
+      Stmt: AssignStmt <85:2, 85:43> op=':='
+        Lhs: Ident <85:2, 85:3> '_'
+        Lhs: Ident <85:5, 85:8> 'err'
+        Rhs: CallExpr <85:12, 85:43>
+          Fun: Ident <85:12, 85:17> 'parse'
+          Args: BasicLit <85:18, 85:42> string_lit "name=ok\nbroken line\n"
+      Stmt: ExprStmt <86:2, 86:28>
+        X: CallExpr <86:2, 86:28>
+          Fun: SelectorExpr <86:2, 86:13>
+            X: Ident <86:2, 86:5> 'fmt'
+            Sel: Ident <86:6, 86:13> 'Println'
+          Args: BasicLit <86:14, 86:22> string_lit "error:"
+          Args: Ident <86:24, 86:27> 'err'

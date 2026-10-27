@@ -1,12 +1,14 @@
 // RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file.
-// CHECK:{{.*}}range-alias-errors.test:13:9: error: '&' on a range variable is only allowed with ':='
-// CHECK-NEXT:   13 |     for i, &v = range xs {
+// CHECK:{{.*}}range-alias-errors.test:15:9: error: '&' on a range variable is only allowed with ':='
+// CHECK-NEXT:   15 |     for i, &v = range xs {
 // CHECK-NEXT:      |            ^
-// CHECK-NEXT:{{.*}}range-alias-errors.test:15:6: error: '&' is not allowed on the key variable of a range loop
-// CHECK-NEXT:   15 |     for &a, &b := range xs {
+// CHECK-NEXT:      |               :=
+// CHECK-NEXT:{{.*}}range-alias-errors.test:17:6: error: '&' is not allowed on the key variable of a range loop
+// CHECK-NEXT:   17 |     for &a, &b := range xs {
 // CHECK-NEXT:      |         ^
+// CHECK-NEXT:      |         (remove)
 package p
 
 func f() {

@@ -1,0 +1,19 @@
+// `while!(x)` and `while !(x)` call a function named `while` with the
+// unwrapping call (D1.8): valid Go++, not a C-style loop. `while !x {` and
+// `while !(x) {` are still loops.
+// RUN: %gopp parse %s
+// RUN: %gopp fmt %s | FileCheck %s
+// RUN: not %gopp parse -error-limit=0 %S/Inputs/while-bang-loop.gopp 2>&1 | FileCheck --check-prefix=LOOP %s
+// CHECK: {{^}}	while!(1)
+// CHECK: {{^}}	while!(2)
+// LOOP: error: Go++ has no 'while'
+// LOOP: error: Go++ has no 'while'
+// LOOP-NOT: error:
+package p
+
+func while!(x int) {}
+
+func g!() {
+	while!(1)
+	while !(2)
+}

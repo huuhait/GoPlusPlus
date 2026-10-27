@@ -1,0 +1,12 @@
+// `gopp parse -fixit` makes the fixed text of every file before it writes any
+// file. A file that shrinks is mapped, so writing it first would crash (SIGBUS)
+// the read of a hard link to the same file (the mapping is cut under it).
+// RUN: rm -rf %t && mkdir %t
+// RUN: %python -c "print('package p\n' + ''.join('func f%%d() -> int { return 1 }\n' %% i for i in range(1000)))" > %t/a.gopp
+// RUN: ln %t/a.gopp %t/b.gopp
+// RUN: %gopp parse -error-limit=0 -fixit %t/a.gopp %t/b.gopp 2>&1 | FileCheck %s
+// CHECK: gopp: applied 1000 fix-its to {{.*}}a.gopp
+// CHECK: gopp: applied 1000 fix-its to {{.*}}b.gopp
+// RUN: %gopp parse %t/a.gopp
+// RUN: FileCheck --check-prefix=FIXED --input-file=%t/a.gopp %s
+// FIXED: func f999() int { return 1 }

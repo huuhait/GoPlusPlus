@@ -67,6 +67,17 @@ struct FixIt {
   std::string Text;
 };
 
+struct Diagnostic;
+
+/// Applies the fix-its of Diags that lie in File to the file's text and
+/// returns the new text (`gopp parse -fixit`). The fix-its of one diagnostic
+/// are applied together or not at all; a diagnostic whose fix-its overlap an
+/// earlier one is skipped. NumApplied, if given, gets the number of
+/// diagnostics applied.
+std::string applyFixIts(const SourceManager &SM, FileID File,
+                        llvm::ArrayRef<Diagnostic> Diags,
+                        unsigned *NumApplied = nullptr);
+
 struct DiagNote {
   diag::ID ID = diag::custom;
   SourceLoc Loc;
@@ -202,6 +213,7 @@ public:
       : SM(SM), Consumer(Consumer), ErrorLimit(ErrorLimit) {}
 
   const SourceManager &getSourceManager() const { return SM; }
+  unsigned getErrorLimit() const { return ErrorLimit; }
 
   /// Reports diagnostic ID at Loc; `<<` on the result fills its arguments.
   DiagnosticBuilder report(SourceLoc Loc, diag::ID ID) {

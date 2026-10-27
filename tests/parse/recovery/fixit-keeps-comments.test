@@ -1,0 +1,60 @@
+// A fix-it never deletes a comment: where the text it replaces holds a
+// comment, the error is reported without the fix-it. Fix-its that replace
+// only tokens, or only blanks, keep the comments around them.
+// RUN: not %gopp parse -error-limit=0 -fixit-stdout %s 2>/dev/null > %t.fixed
+// RUN: FileCheck --input-file=%t.fixed %s
+// RUN: not %gopp parse -error-limit=0 %s 2>&1 | FileCheck --check-prefix=ERR %s
+package p
+
+func k1!() (int, /* keep1 */ error) { return 0, nil }
+// CHECK: {{^}}func k1!() (int, /* keep1 */ error)
+func k2!() ( /* keep2 */ error) { return nil }
+// CHECK: {{^}}func k2!() ( /* keep2 */ error)
+func k3() /* keep3 */ -> /* keep4 */ int { return 0 }
+// CHECK: {{^}}func k3() /* keep3 */ -> /* keep4 */ int
+func k4() -> /* keep5 */ int { return 0 }
+// CHECK: {{^}}func k4() -> /* keep5 */ int
+func k5!() (int, error /* keep6 */) { return 0, nil }
+// CHECK: {{^}}func k5!() (int /* keep6 */) { return 0, nil }
+
+func g() {
+	int /* keep7 */ y = 5
+// CHECK: {{^}}	int /* keep7 */ y = 5
+	int z = 5 // keep8
+// CHECK: {{^}}	var z int = 5 // keep8
+	for i /* keep9 */ in xs {
+	}
+// CHECK: {{^}}	for i /* keep9 */ in xs {
+}
+
+class /* keep10 */ C {
+}
+// CHECK: {{^}}class /* keep10 */ C {
+class /* keep11 */ D {}
+// CHECK: {{^}}class /* keep11 */ D {}
+class E { /* keep12 */ }
+// CHECK: {{^}}type E struct { /* keep12 */ }
+
+// `...T` is valid on the last parameter only: no fix-it copies it.
+func v(a, move b ...int) {}
+// CHECK: {{^}}func v(a, move b ...int) {}
+
+// An angle-bracket form with no exact square-bracket spelling has no fix-it.
+func G<T extends A & B>(x T) T { return x }
+// CHECK: {{^}}func G<T extends A & B>(x T) T { return x }
+func G1<in T>(x T) T { return x }
+// CHECK: {{^}}func G1<in T>(x T) T { return x }
+func G2<T: int, string>(x T) T { return x }
+// CHECK: {{^}}func G2<T: int, string>(x T) T { return x }
+func G3<const T>(x T) T { return x }
+// CHECK: {{^}}func G3<const T>(x T) T { return x }
+func G4<T: Foo Bar>(x T) T { return x }
+// CHECK: {{^}}func G4<T: Foo Bar>(x T) T { return x }
+func G5<T super Foo>(x T) T { return x }
+// CHECK: {{^}}func G5<T super Foo>(x T) T { return x }
+func G6<T: map>(x T) T { return x }
+// CHECK: {{^}}func G6<T: map>(x T) T { return x }
+func G7<T: func>(x T) T { return x }
+// CHECK: {{^}}func G7<T: func>(x T) T { return x }
+
+// ERR: 'a' needs its own type

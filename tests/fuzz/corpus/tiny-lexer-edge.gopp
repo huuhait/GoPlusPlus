@@ -1,0 +1,28 @@
+package p
+
+var (
+	a = 'x'
+	b = "s\né"
+	c = `raw
+string`
+	d = 0x1p-2i + 0b1_0 + 0o7 + 1_000.5e+3
+	e = 1 /* c */ + 2 // c
+)
+
+func f[T ~int | string](x ...T) (r T, err error) {
+	defer func() { recover() }()
+	switch y := any(x).(type) {
+	case int, string:
+		_ = y
+	default:
+	}
+	select {
+	case v, ok := <-ch:
+	case ch <- 1:
+	}
+L:
+	for i := range 10 {
+		goto L
+	}
+	return
+}

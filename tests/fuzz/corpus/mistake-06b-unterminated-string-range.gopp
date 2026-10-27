@@ -1,0 +1,5 @@
+// The range of "string literal not terminated" covers the text to the end of
+// the line (it used to be zero-width).
+package p
+
+var s = "abc

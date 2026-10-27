@@ -1,0 +1,8 @@
+package p
+
+func g(ok bool) {
+	while !ok {
+	}
+	while !(ok) {
+	}
+}

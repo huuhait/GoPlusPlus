@@ -1,0 +1,284 @@
+File <1:1, 72:1>
+  Name: Ident <1:9, 1:13> 'main'
+  Decl: GenDecl <3:1, 8:2> import grouped
+    Spec: ImportSpec <4:2, 4:7>
+      Path: BasicLit <4:2, 4:7> string_lit "cmp"
+    Spec: ImportSpec <5:2, 5:7>
+      Path: BasicLit <5:2, 5:7> string_lit "fmt"
+    Spec: ImportSpec <6:2, 6:10>
+      Path: BasicLit <6:2, 6:10> string_lit "slices"
+    Spec: ImportSpec <7:2, 7:8>
+      Path: BasicLit <7:2, 7:8> string_lit "sync"
+  Decl: GenDecl <10:1, 13:2> type
+    Spec: TypeSpec <10:6, 13:2>
+      Name: Ident <10:6, 10:9> 'Job'
+      Type: StructType <10:10, 13:2>
+        Fields: FieldList <10:17, 13:2>
+          Field: Field <11:2, 11:10>
+            Names: Ident <11:2, 11:4> 'ID'
+            Type: Ident <11:7, 11:10> 'int'
+          Field: Field <12:2, 12:13>
+            Names: Ident <12:2, 12:6> 'Text'
+            Type: Ident <12:7, 12:13> 'string'
+  Decl: GenDecl <15:1, 19:2> type
+    Spec: TypeSpec <15:6, 19:2>
+      Name: Ident <15:6, 15:12> 'Result'
+      Type: StructType <15:13, 19:2>
+        Fields: FieldList <15:20, 19:2>
+          Field: Field <16:2, 16:10>
+            Names: Ident <16:2, 16:4> 'ID'
+            Type: Ident <16:7, 16:10> 'int'
+          Field: Field <17:2, 17:13>
+            Names: Ident <17:2, 17:6> 'Text'
+            Type: Ident <17:7, 17:13> 'string'
+          Field: Field <18:2, 18:10>
+            Names: Ident <18:2, 18:5> 'Sum'
+            Type: Ident <18:7, 18:10> 'int'
+  Decl: FuncDecl <22:1, 31:2>
+    Name: Ident <22:6, 22:10> 'work'
+    Type: FuncType <22:1, 22:46>
+      Params: FieldList <22:10, 22:46>
+        Field: Field <22:11, 22:24>
+          Names: Ident <22:11, 22:15> 'jobs'
+          Type: ChanType <22:16, 22:24> both
+            Value: Ident <22:21, 22:24> 'Job'
+        Field: Field <22:26, 22:45>
+          Names: Ident <22:26, 22:33> 'results'
+          Type: ChanType <22:34, 22:45> both
+            Value: Ident <22:39, 22:45> 'Result'
+    Body: BlockStmt <22:47, 31:2>
+      Stmt: RangeStmt <23:2, 30:3> op=':='
+        Key: Ident <23:6, 23:9> 'job'
+        X: Ident <23:19, 23:23> 'jobs'
+        Body: BlockStmt <23:24, 30:3>
+          Stmt: AssignStmt <24:3, 24:11> op=':='
+            Lhs: Ident <24:3, 24:6> 'sum'
+            Rhs: BasicLit <24:10, 24:11> int_lit 0
+          Stmt: ForStmt <25:3, 27:4>
+            Init: AssignStmt <25:7, 25:13> op=':='
+              Lhs: Ident <25:7, 25:8> 'i'
+              Rhs: BasicLit <25:12, 25:13> int_lit 0
+            Cond: BinaryExpr <25:15, 25:32> op='<'
+              X: Ident <25:15, 25:16> 'i'
+              Y: CallExpr <25:19, 25:32>
+                Fun: Ident <25:19, 25:22> 'len'
+                Args: SelectorExpr <25:23, 25:31>
+                  X: Ident <25:23, 25:26> 'job'
+                  Sel: Ident <25:27, 25:31> 'Text'
+            Post: IncDecStmt <25:34, 25:37> op='++'
+              X: Ident <25:34, 25:35> 'i'
+            Body: BlockStmt <25:38, 27:4>
+              Stmt: AssignStmt <26:4, 26:27> op='+='
+                Lhs: Ident <26:4, 26:7> 'sum'
+                Rhs: CallExpr <26:11, 26:27>
+                  Fun: Ident <26:11, 26:14> 'int'
+                  Args: IndexExpr <26:15, 26:26>
+                    X: SelectorExpr <26:15, 26:23>
+                      X: Ident <26:15, 26:18> 'job'
+                      Sel: Ident <26:19, 26:23> 'Text'
+                    Index: Ident <26:24, 26:25> 'i'
+          Stmt: SendStmt <29:3, 29:64>
+            Chan: Ident <29:3, 29:10> 'results'
+            Value: CompositeLit <29:14, 29:64>
+              Type: Ident <29:14, 29:20> 'Result'
+              Elts: KeyValueExpr <29:21, 29:31>
+                Key: Ident <29:21, 29:23> 'ID'
+                Value: SelectorExpr <29:25, 29:31>
+                  X: Ident <29:25, 29:28> 'job'
+                  Sel: Ident <29:29, 29:31> 'ID'
+              Elts: KeyValueExpr <29:33, 29:53>
+                Key: Ident <29:33, 29:37> 'Text'
+                Value: CallExpr <29:39, 29:53>
+                  Fun: Ident <29:39, 29:43> 'move'
+                  Args: SelectorExpr <29:44, 29:52>
+                    X: Ident <29:44, 29:47> 'job'
+                    Sel: Ident <29:48, 29:52> 'Text'
+              Elts: KeyValueExpr <29:55, 29:63>
+                Key: Ident <29:55, 29:58> 'Sum'
+                Value: Ident <29:60, 29:63> 'sum'
+  Decl: FuncDecl <33:1, 71:2>
+    Name: Ident <33:6, 33:10> 'main'
+    Type: FuncType <33:1, 33:12>
+      Params: FieldList <33:10, 33:12>
+    Body: BlockStmt <33:13, 71:2>
+      Stmt: AssignStmt <34:2, 34:89> op=':='
+        Lhs: Ident <34:2, 34:7> 'words'
+        Rhs: CompositeLit <34:11, 34:89>
+          Type: SliceType <34:11, 34:19>
+            Elt: Ident <34:13, 34:19> 'string'
+          Elts: BasicLit <34:20, 34:27> string_lit "alpha"
+          Elts: BasicLit <34:29, 34:35> string_lit "beta"
+          Elts: BasicLit <34:37, 34:44> string_lit "gamma"
+          Elts: BasicLit <34:46, 34:53> string_lit "delta"
+          Elts: BasicLit <34:55, 34:64> string_lit "epsilon"
+          Elts: BasicLit <34:66, 34:72> string_lit "zeta"
+          Elts: BasicLit <34:74, 34:79> string_lit "eta"
+          Elts: BasicLit <34:81, 34:88> string_lit "theta"
+      Stmt: AssignStmt <36:2, 36:27> op=':='
+        Lhs: Ident <36:2, 36:6> 'jobs'
+        Rhs: CallExpr <36:10, 36:27>
+          Fun: Ident <36:10, 36:14> 'make'
+          Args: ChanType <36:15, 36:23> both
+            Value: Ident <36:20, 36:23> 'Job'
+          Args: BasicLit <36:25, 36:26> int_lit 4
+      Stmt: AssignStmt <37:2, 37:34> op=':='
+        Lhs: Ident <37:2, 37:9> 'results'
+        Rhs: CallExpr <37:13, 37:34>
+          Fun: Ident <37:13, 37:17> 'make'
+          Args: ChanType <37:18, 37:29> both
+            Value: Ident <37:23, 37:29> 'Result'
+          Args: BasicLit <37:31, 37:33> int_lit 16
+      Stmt: DeclStmt <39:2, 39:23>
+        Decl: GenDecl <39:2, 39:23> var
+          Spec: ValueSpec <39:6, 39:23>
+            Name: Ident <39:6, 39:8> 'wg'
+            Type: SelectorExpr <39:9, 39:23>
+              X: Ident <39:9, 39:13> 'sync'
+              Sel: Ident <39:14, 39:23> 'WaitGroup'
+      Stmt: ForStmt <40:2, 48:3>
+        Init: AssignStmt <40:6, 40:12> op=':='
+          Lhs: Ident <40:6, 40:7> 'w'
+          Rhs: BasicLit <40:11, 40:12> int_lit 0
+        Cond: BinaryExpr <40:14, 40:19> op='<'
+          X: Ident <40:14, 40:15> 'w'
+          Y: BasicLit <40:18, 40:19> int_lit 3
+        Post: IncDecStmt <40:21, 40:24> op='++'
+          X: Ident <40:21, 40:22> 'w'
+        Body: BlockStmt <40:25, 48:3>
+          Stmt: ExprStmt <41:3, 41:12>
+            X: CallExpr <41:3, 41:12>
+              Fun: SelectorExpr <41:3, 41:9>
+                X: Ident <41:3, 41:5> 'wg'
+                Sel: Ident <41:6, 41:9> 'Add'
+              Args: BasicLit <41:10, 41:11> int_lit 1
+          Stmt: GoStmt <44:3, 47:6>
+            Call: CallExpr <44:6, 47:6>
+              Fun: FuncLit <44:6, 47:4>
+                Type: FuncType <44:6, 44:12>
+                  Params: FieldList <44:10, 44:12>
+                Body: BlockStmt <44:13, 47:4>
+                  Stmt: DeferStmt <45:4, 45:19>
+                    Call: CallExpr <45:10, 45:19>
+                      Fun: SelectorExpr <45:10, 45:17>
+                        X: Ident <45:10, 45:12> 'wg'
+                        Sel: Ident <45:13, 45:17> 'Done'
+                  Stmt: ExprStmt <46:4, 46:23>
+                    X: CallExpr <46:4, 46:23>
+                      Fun: Ident <46:4, 46:8> 'work'
+                      Args: Ident <46:9, 46:13> 'jobs'
+                      Args: Ident <46:15, 46:22> 'results'
+      Stmt: GoStmt <49:2, 52:5>
+        Call: CallExpr <49:5, 52:5>
+          Fun: FuncLit <49:5, 52:3>
+            Type: FuncType <49:5, 49:11>
+              Params: FieldList <49:9, 49:11>
+            Body: BlockStmt <49:12, 52:3>
+              Stmt: ExprStmt <50:3, 50:12>
+                X: CallExpr <50:3, 50:12>
+                  Fun: SelectorExpr <50:3, 50:10>
+                    X: Ident <50:3, 50:5> 'wg'
+                    Sel: Ident <50:6, 50:10> 'Wait'
+              Stmt: ExprStmt <51:3, 51:17>
+                X: CallExpr <51:3, 51:17>
+                  Fun: Ident <51:3, 51:8> 'close'
+                  Args: Ident <51:9, 51:16> 'results'
+      Stmt: RangeStmt <54:2, 56:3> op=':='
+        Key: Ident <54:6, 54:7> 'i'
+        Value: Ident <54:9, 54:10> 'w'
+        X: CallExpr <54:20, 54:31>
+          Fun: Ident <54:20, 54:24> 'move'
+          Args: Ident <54:25, 54:30> 'words'
+        Body: BlockStmt <54:32, 56:3>
+          Stmt: SendStmt <55:3, 55:30>
+            Chan: Ident <55:3, 55:7> 'jobs'
+            Value: CompositeLit <55:11, 55:30>
+              Type: Ident <55:11, 55:14> 'Job'
+              Elts: KeyValueExpr <55:15, 55:20>
+                Key: Ident <55:15, 55:17> 'ID'
+                Value: Ident <55:19, 55:20> 'i'
+              Elts: KeyValueExpr <55:22, 55:29>
+                Key: Ident <55:22, 55:26> 'Text'
+                Value: Ident <55:28, 55:29> 'w'
+      Stmt: ExprStmt <57:2, 57:13>
+        X: CallExpr <57:2, 57:13>
+          Fun: Ident <57:2, 57:7> 'close'
+          Args: Ident <57:8, 57:12> 'jobs'
+      Stmt: DeclStmt <59:2, 59:18>
+        Decl: GenDecl <59:2, 59:18> var
+          Spec: ValueSpec <59:6, 59:18>
+            Name: Ident <59:6, 59:9> 'all'
+            Type: SliceType <59:10, 59:18>
+              Elt: Ident <59:12, 59:18> 'Result'
+      Stmt: RangeStmt <60:2, 62:3> op=':='
+        Key: Ident <60:6, 60:7> 'r'
+        X: Ident <60:17, 60:24> 'results'
+        Body: BlockStmt <60:25, 62:3>
+          Stmt: AssignStmt <61:3, 61:23> op='='
+            Lhs: Ident <61:3, 61:6> 'all'
+            Rhs: CallExpr <61:9, 61:23>
+              Fun: Ident <61:9, 61:15> 'append'
+              Args: Ident <61:16, 61:19> 'all'
+              Args: Ident <61:21, 61:22> 'r'
+      Stmt: ExprStmt <63:2, 63:80>
+        X: CallExpr <63:2, 63:80>
+          Fun: SelectorExpr <63:2, 63:17>
+            X: Ident <63:2, 63:8> 'slices'
+            Sel: Ident <63:9, 63:17> 'SortFunc'
+          Args: Ident <63:18, 63:21> 'all'
+          Args: FuncLit <63:23, 63:79>
+            Type: FuncType <63:23, 63:44>
+              Params: FieldList <63:27, 63:40>
+                Field: Field <63:28, 63:39>
+                  Names: Ident <63:28, 63:29> 'a'
+                  Names: Ident <63:31, 63:32> 'b'
+                  Type: Ident <63:33, 63:39> 'Result'
+              Results: FieldList <63:41, 63:44>
+                Field: Field <63:41, 63:44>
+                  Type: Ident <63:41, 63:44> 'int'
+            Body: BlockStmt <63:45, 63:79>
+              Stmt: ReturnStmt <63:47, 63:77>
+                Result: CallExpr <63:54, 63:77>
+                  Fun: SelectorExpr <63:54, 63:65>
+                    X: Ident <63:54, 63:57> 'cmp'
+                    Sel: Ident <63:58, 63:65> 'Compare'
+                  Args: SelectorExpr <63:66, 63:70>
+                    X: Ident <63:66, 63:67> 'a'
+                    Sel: Ident <63:68, 63:70> 'ID'
+                  Args: SelectorExpr <63:72, 63:76>
+                    X: Ident <63:72, 63:73> 'b'
+                    Sel: Ident <63:74, 63:76> 'ID'
+      Stmt: AssignStmt <65:2, 65:12> op=':='
+        Lhs: Ident <65:2, 65:7> 'total'
+        Rhs: BasicLit <65:11, 65:12> int_lit 0
+      Stmt: RangeStmt <66:2, 69:3> op=':='
+        Key: Ident <66:6, 66:7> '_'
+        Value: Ident <66:9, 66:10> 'r'
+        X: Ident <66:20, 66:23> 'all'
+        Body: BlockStmt <66:24, 69:3>
+          Stmt: ExprStmt <67:3, 67:54>
+            X: CallExpr <67:3, 67:54>
+              Fun: SelectorExpr <67:3, 67:13>
+                X: Ident <67:3, 67:6> 'fmt'
+                Sel: Ident <67:7, 67:13> 'Printf'
+              Args: BasicLit <67:14, 67:32> string_lit "%d %-8s sum=%d\n"
+              Args: SelectorExpr <67:34, 67:38>
+                X: Ident <67:34, 67:35> 'r'
+                Sel: Ident <67:36, 67:38> 'ID'
+              Args: SelectorExpr <67:40, 67:46>
+                X: Ident <67:40, 67:41> 'r'
+                Sel: Ident <67:42, 67:46> 'Text'
+              Args: SelectorExpr <67:48, 67:53>
+                X: Ident <67:48, 67:49> 'r'
+                Sel: Ident <67:50, 67:53> 'Sum'
+          Stmt: AssignStmt <68:3, 68:17> op='+='
+            Lhs: Ident <68:3, 68:8> 'total'
+            Rhs: SelectorExpr <68:12, 68:17>
+              X: Ident <68:12, 68:13> 'r'
+              Sel: Ident <68:14, 68:17> 'Sum'
+      Stmt: ExprStmt <70:2, 70:30>
+        X: CallExpr <70:2, 70:30>
+          Fun: SelectorExpr <70:2, 70:13>
+            X: Ident <70:2, 70:5> 'fmt'
+            Sel: Ident <70:6, 70:13> 'Println'
+          Args: BasicLit <70:14, 70:22> string_lit "total:"
+          Args: Ident <70:24, 70:29> 'total'

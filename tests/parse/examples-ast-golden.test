@@ -1,10 +1,25 @@
-// The -dump-ast output is stable (P02.04): the full dumps of two spec examples
-// are golden files. 08-derive has a macro declaration, an attribute, macro
-// invocations in statement and expression position and a `!` call; 09-orderedmap
-// has generic types and methods and `move` parameters. Regenerate after a
-// deliberate change to the tree or the dump format with:
-//   gopp parse -dump-ast docs/spec/examples/NN-name/main.gopp > tests/parse/Inputs/NN-name.ast
-// RUN: %gopp parse -dump-ast %examples/08-derive/main.gopp > %t.derive
+// The --dump-ast output is stable (P02.04, P02.08): the full dumps of all ten
+// spec examples are golden files, produced by `gopp parse --dump-ast`. After a
+// deliberate change to the tree or to the dump format, regenerate them all with
+//   tests/update-goldens ast
+// and read `git diff tests/parse/Inputs`.
+// RUN: %gopp parse --dump-ast %examples/01-hello/main.gopp > %t.hello
+// RUN: diff %S/Inputs/01-hello.ast %t.hello
+// RUN: %gopp parse --dump-ast %examples/02-wc/main.gopp > %t.wc
+// RUN: diff %S/Inputs/02-wc.ast %t.wc
+// RUN: %gopp parse --dump-ast %examples/03-kvparse/main.gopp > %t.kvparse
+// RUN: diff %S/Inputs/03-kvparse.ast %t.kvparse
+// RUN: %gopp parse --dump-ast %examples/04-binarytrees/main.gopp > %t.binarytrees
+// RUN: diff %S/Inputs/04-binarytrees.ast %t.binarytrees
+// RUN: %gopp parse --dump-ast %examples/05-workers/main.gopp > %t.workers
+// RUN: diff %S/Inputs/05-workers.ast %t.workers
+// RUN: %gopp parse --dump-ast %examples/06-zcrc/main.gopp > %t.zcrc
+// RUN: diff %S/Inputs/06-zcrc.ast %t.zcrc
+// RUN: %gopp parse --dump-ast %examples/07-vecsort/main.gopp > %t.vecsort
+// RUN: diff %S/Inputs/07-vecsort.ast %t.vecsort
+// RUN: %gopp parse --dump-ast %examples/08-derive/main.gopp > %t.derive
 // RUN: diff %S/Inputs/08-derive.ast %t.derive
-// RUN: %gopp parse -dump-ast %examples/09-orderedmap/main.gopp > %t.omap
-// RUN: diff %S/Inputs/09-orderedmap.ast %t.omap
+// RUN: %gopp parse --dump-ast %examples/09-orderedmap/main.gopp > %t.orderedmap
+// RUN: diff %S/Inputs/09-orderedmap.ast %t.orderedmap
+// RUN: %gopp parse --dump-ast %examples/10-minicalc/main.gopp > %t.minicalc
+// RUN: diff %S/Inputs/10-minicalc.ast %t.minicalc

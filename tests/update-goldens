@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Regenerates the golden files of the test suite from the current gopp binary.
+
+  tests/update-goldens ast            tests/parse/Inputs/NN-name.ast, one per
+                                      docs/spec/examples/NN-name/main.gopp
+                                      (made with `gopp parse -dump-ast`)
+  tests/update-goldens diag FILE...   the CHECK header of a self-golden
+                                      diagnostics test (tests/parse/recovery/)
+  tests/update-goldens fmt            tests/fmt/Inputs/*/NAME.golden, one per
+                                      NAME.input (made with `gopp fmt`; the
+                                      differences to gofmt are listed by
+                                      tests/fmt/compare-gofmt.py)
+
+Run it from anywhere; the binary is $GOPP, else build/bin/gopp of the source
+tree. Review `git diff` afterwards: a changed golden is a changed behaviour.
+"""
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GOPP = os.environ.get("GOPP") or os.path.join(ROOT, "build", "bin", "gopp")
+
+
+def run(args, stdin=None):
+    p = subprocess.run([GOPP] + args, capture_output=True, text=True, input=stdin)
+    return p.returncode, p.stdout, p.stderr
+
+
+def update_ast():
+    ex = os.path.join(ROOT, "docs", "spec", "examples")
+    out = os.path.join(ROOT, "tests", "parse", "Inputs")
+    for name in sorted(os.listdir(ex)):
+        src = os.path.join(ex, name, "main.gopp")
+        if not os.path.isfile(src):
+            continue
+        rc, so, se = run(["parse", "-dump-ast", src])
+        if rc != 0:
+            sys.exit("update-goldens: %s does not parse:\n%s" % (src, se))
+        with open(os.path.join(out, name + ".ast"), "w") as f:
+            f.write(so)
+        print("wrote", os.path.join("tests/parse/Inputs", name + ".ast"))
+
+
+def update_fmt():
+    base = os.path.join(ROOT, "tests", "fmt", "Inputs")
+    for d in sorted(os.listdir(base)):
+        for name in sorted(os.listdir(os.path.join(base, d))):
+            if not name.endswith(".input"):
+                continue
+            src = os.path.join(base, d, name)
+            rc, so, se = run(["fmt", src])
+            if rc != 0:
+                sys.exit("update-goldens: %s does not format:\n%s" % (src, se))
+            out = src[: -len(".input")] + ".golden"
+            with open(out, "w") as f:
+                f.write(so)
+            print("wrote", os.path.relpath(out, ROOT))
+
+
+HEADER = re.compile(r"^// (RUN:|Golden output first|follows, so positions|positions in this file|CHECK)")
+
+
+def update_diag(path):
+    lines = open(path).read().split("\n")
+    n = 0
+    while n < len(lines) and HEADER.match(lines[n]):
+        n += 1
+    header, body = lines[:n], lines[n:]
+    runs = [l for l in header if l.startswith("// RUN:")]
+    m = re.search(r"%gopp (parse[^|]*?) %s", runs[0])
+    if not m:
+        sys.exit("update-goldens: %s: cannot read the RUN line" % path)
+    flags = m.group(1).split()
+    notes = [l for l in header if not l.startswith("// CHECK") and not l.startswith("// RUN:")]
+    base = os.path.basename(path)
+    check = []
+    for _ in range(8):
+        # The header length fixes the line numbers in the output: repeat until
+        # the header is stable.
+        open(path, "w").write("\n".join(runs + notes + check + body))
+        rc, so, se = run(flags + [path])
+        new = []
+        for i, l in enumerate(se.rstrip("\n").split("\n")):
+            l = l.replace(path, "{{.*}}" + base)
+            # FileCheck lines lose trailing blanks; the printer's "  44 | " of
+            # an empty source line has one.
+            if l != l.rstrip():
+                l = l.rstrip() + "{{ *}}"
+            new.append(("// CHECK:" if i == 0 else "// CHECK-NEXT:") + l)
+        if new == check:
+            break
+        check = new
+    print("wrote", os.path.relpath(path, ROOT))
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    cmd = sys.argv[1]
+    if cmd == "ast":
+        update_ast()
+    elif cmd == "fmt":
+        update_fmt()
+    elif cmd == "diag":
+        for p in sys.argv[2:]:
+            update_diag(os.path.abspath(p))
+    else:
+        sys.exit(__doc__)
+
+
+main()

@@ -43,6 +43,7 @@ endfunction()
 gopp_add_stage_check(driver)
 gopp_add_stage_check(lex)
 gopp_add_stage_check(parse)
+gopp_add_stage_check(fmt)
 
 # GoogleTest binaries run through lit too (same parallelism and timing report).
 add_subdirectory(unit)
@@ -92,3 +93,8 @@ add_custom_target(check-suite-time-update
           --key ${GOPP_SUITE_TIME_KEY} --update ${GOPP_STAGE_DIRS}
   DEPENDS gopp GoppUnitTests
   USES_TERMINAL)
+
+# The libFuzzer target (off by default, see GOPP_BUILD_FUZZERS).
+if(GOPP_BUILD_FUZZERS)
+  add_subdirectory(fuzz)
+endif()

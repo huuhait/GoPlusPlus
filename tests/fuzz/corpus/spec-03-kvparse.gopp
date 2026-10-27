@@ -1,0 +1,87 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
+
+// Entry points into the source buffer. @Ref tells gopp vet that the
+// ref fields are on purpose.
+@Ref
+type Entry struct {
+	Key   ref string
+	Value ref string
+	Line  int
+}
+
+func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\r' }
+
+// trim returns a ref into s without leading and trailing spaces.
+// A borrowed string parameter can be re-pointed (it is a local ref).
+func trim(s string) ref string {
+	for len(s) > 0 && isSpace(s[0]) {
+		s = s[1:]
+	}
+	for len(s) > 0 && isSpace(s[len(s)-1]) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// cut splits s around the first sep. No allocation.
+func cut(s string, sep byte) (before, after ref string, found bool) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep {
+			return s[:i], s[i+1:], true
+		}
+	}
+	return s, "", false
+}
+
+// parse can fail. The entries it returns point into src, so src must
+// outlive them (not checked by the compiler).
+func parse!(src string) []Entry {
+	var out []Entry
+	line := 0
+	rest := src[:] // ref string
+	for len(rest) > 0 {
+		var text ref string
+		text, rest, _ = cut(rest, '\n')
+		line++
+		text = trim(text)
+		if len(text) == 0 || text[0] == '#' {
+			continue
+		}
+		key, value, ok := cut(text, '=')
+		if !ok {
+			return nil, fmt.Errorf("line %d: expected key=value", line) // explicit failure
+		}
+		out = append(out, Entry{Key: trim(key), Value: trim(value), Line: line}) // implicit move of out
+	}
+	return out
+}
+
+func lookup(entries []Entry, key string) (ref string, bool) {
+	for i := range entries {
+		if entries[i].Key == key {
+			return entries[i].Value, true // copying a ref out of an element is a trivial copy
+		}
+	}
+	return "", false
+}
+
+func main() {
+	data := os.ReadFile!("config.txt")
+	src := string(data) // the one buffer; every Entry points into it
+	entries := parse!(src)
+	for _, e := range entries {
+		fmt.Printf("%d: %s = %s\n", e.Line, e.Key, e.Value)
+	}
+	if v, ok := lookup(entries, "port"); ok {
+		port := strconv.Atoi!(v) // a ref passes to a string parameter at zero cost
+		fmt.Println("port + 1 =", port+1)
+	}
+	_, err := parse("name=ok\nbroken line\n") // the Go form still works
+	fmt.Println("error:", err)
+}

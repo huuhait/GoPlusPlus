@@ -1,0 +1,131 @@
+// Every fix-it of the tailored messages is machine-applicable: -fixit-stdout
+// prints the fixed text, which must parse without a single diagnostic (the
+// exit status of -fixit-stdout is that of the fixed text).
+// RUN: %gopp parse -error-limit=0 -fixit-stdout %s 2>/dev/null > %t.fixed
+// RUN: %gopp parse %t.fixed
+// RUN: FileCheck --input-file=%t.fixed %s
+// -fixit rewrites the file in place, with the same result.
+// RUN: cp %s %t.gopp
+// RUN: %gopp parse -error-limit=0 -fixit %t.gopp 2>%t.err
+// RUN: FileCheck --check-prefix=APPLIED --input-file=%t.err %s
+// RUN: diff %t.fixed %t.gopp
+// APPLIED: gopp: applied {{[0-9]+}} fix-its to {{.*}}.gopp
+package p
+
+import ("a", "b")
+// CHECK: import ("a"; "b")
+
+var q := 5
+// CHECK: var q = 5
+const c := 6
+// CHECK: const c = 6
+var v: int
+// CHECK: var v int
+var arr int[]
+// CHECK: var arr []int
+
+x := 1
+// CHECK: var x = 1
+
+function g0() {}
+// CHECK: func g0() {}
+func Map<T any>(xs []T) []T { return xs }
+// CHECK: func Map[T any](xs []T) []T { return xs }
+func A1<T>(x T) T { return x }
+// CHECK: func A1[T any](x T) T { return x }
+func A2<T, U>(x T) U { panic(0) }
+// CHECK: func A2[T any, U any](x T) U { panic(0) }
+func A3<T extends Foo>(x T) T { return x }
+// CHECK: func A3[T Foo](x T) T { return x }
+func A4<T: Foo, U: Bar>(x T) T { return x }
+// CHECK: func A4[T Foo, U Bar](x T) T { return x }
+func A5<T any,U comparable>(x T) T { return x }
+// CHECK: func A5[T any, U comparable](x T) T { return x }
+func A6<T, U extends Foo>(x T) T { return x }
+// CHECK: func A6[T any, U Foo](x T) T { return x }
+func A7<T, U: pkg.Foo, V>(x T) T { return x }
+// CHECK: func A7[T any, U pkg.Foo, V any](x T) T { return x }
+func g1() -> int { return 1 }
+// CHECK: func g1() int { return 1 }
+func g2(x:int) {}
+// CHECK: func g2(x int) {}
+func g3(y: string) {}
+// CHECK: func g3(y string) {}
+
+struct S {
+	a int
+}
+// CHECK: type S struct {
+
+func f1() { p := &Config{A: 1}; _ = p }
+// CHECK: p := new_unique(Config{A: 1})
+func f2!() error { return nil }
+// CHECK: func f2!() { return nil }
+func f3!() (int, error) { return 0, nil }
+// CHECK: func f3!() (int) { return 0, nil }
+func f4(own s string) {}
+// CHECK: func f4(move s string) {}
+func f5(t view string) {}
+// CHECK: func f5(t ref string) {}
+func f6(a, move b int) {}
+// CHECK: func f6(a int, move b int) {}
+macro lower(a expr) { a }
+// CHECK: macro Lower(a expr) { a }
+
+func f7() {
+	if x = 1 {
+	}
+// CHECK: if x == 1 {
+	for i := 0; i < 3; ++i {
+	}
+// CHECK: for i := 0; i < 3; i++ {
+	while x < 3 {
+	}
+// CHECK: for x < 3 {
+	for x in xs {
+	}
+// CHECK: for _, x := range xs {
+	for i, x in xs {
+	}
+// CHECK: for i, x := range xs {
+	for i, &v = range xs {
+	}
+// CHECK: for i, &v := range xs {
+	for &i, v := range xs {
+	}
+// CHECK: for i, v := range xs {
+	if y {
+	}
+	else {
+	}
+// CHECK: } else {
+	if y {
+	} elif z {
+	}
+// CHECK: } else if z {
+	if z
+	{
+	}
+// CHECK: if z {
+	for z
+	{
+	}
+// CHECK: for z {
+	var w := 1
+// CHECK: var w = 1
+	let k = 2
+// CHECK: var k = 2
+	int n = 3
+// CHECK: var n int = 3
+	m int
+// CHECK: var m int
+	s := 'hi'
+// CHECK: s := "hi"
+	++n
+// CHECK: n++
+}
+
+func f8()
+{
+}
+// CHECK: func f8() {

@@ -1,0 +1,32 @@
+package main
+
+// Header imports are never reordered: the order of C/C++ headers can matter.
+import (
+	"zeta"
+	"alpha"
+	"<vector>"
+	"cxx/b.h"
+	"cxx/a.h"
+	"beta"
+)
+
+// A group without a header import is sorted; the header group stays as it is.
+import (
+	"os"
+	"fmt"
+
+	"zz/second.hpp"
+	"aa/first.hpp"
+
+	"net/http"
+	"bytes"
+	str "strings"
+	"bytes" // duplicate
+)
+
+import (
+	"c/z.hh"
+	"c/a.hxx"
+)
+
+func main() {}

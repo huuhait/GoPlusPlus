@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 
 import lit.formats
@@ -25,6 +26,11 @@ config.environment["LC_ALL"] = "C"
 # Slow tests are opt-in: they say "REQUIRES: long" and run via `ninja check-long`.
 if lit_config.params.get("run_long"):
     config.available_features.add("long")
+
+# The Go tool chain, for the tests that compare `gopp fmt` with gofmt and run it
+# over the standard library (they also need "long").
+if shutil.which("go") and shutil.which("gofmt"):
+    config.available_features.add("go")
 
 # For test inputs that are generated (too big or too repetitive to check in).
 config.substitutions.append(("%python", sys.executable))

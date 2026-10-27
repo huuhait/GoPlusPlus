@@ -6,17 +6,21 @@ add_executable(GoppUnitTests
   Basic/DiagnosticsTest.cpp
   Basic/SourceManagerTest.cpp
   Basic/UnicodeTest.cpp
+  Format/FormatTest.cpp
+  Format/FuzzCorpusTest.cpp
   Lex/GoScannerPortTest.cpp
   Lex/LexerExtrasTest.cpp
   Parse/GoParserPortTest.cpp
   Parse/ParserTest.cpp
   Build/HostToolchainTest.cpp)
 target_link_libraries(GoppUnitTests PRIVATE
-  goppBasic goppLex goppAST goppParse goppBuild goppCodeGen goppImport
+  goppBasic goppLex goppAST goppParse goppFormat goppBuild goppCodeGen goppImport
   GTest::gtest_main)
 target_compile_definitions(GoppUnitTests PRIVATE
   GOPP_TEST_INPUTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Build/Inputs"
-  GOPP_EXAMPLES_DIR="${GOPP_SOURCE_DIR}/docs/spec/examples")
+  GOPP_EXAMPLES_DIR="${GOPP_SOURCE_DIR}/docs/spec/examples"
+  GOPP_FUZZ_CORPUS_DIR="${GOPP_SOURCE_DIR}/tests/fuzz/corpus"
+  GOPP_FUZZ_REGRESSIONS_DIR="${GOPP_SOURCE_DIR}/tests/fuzz/regressions")
 
 configure_file(lit.site.cfg.py.in lit.site.cfg.py @ONLY)
 

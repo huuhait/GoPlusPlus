@@ -8,13 +8,14 @@
 //
 // Every diagnostic the compiler reports (D2.5), in the style of Clang's
 // Diagnostic*Kinds.td: DIAG(Name, Severity, Text).
-//   - Name is stable: JSON output and tests refer to it. Prefixes: err_, warn_,
-//     note_.
+//   - Name is stable: JSON output and tests refer to it, and P03.14 attaches
+//     the numbered error codes to it (D3.11). Prefixes: err_, warn_, note_.
 //   - Text may use %0..%9 for the arguments given with `<<` and %% for a
 //     percent sign.
 // The lexer and parser messages are go/scanner's and go/parser's, so that Go
 // programmers see the errors they know (Copyright 2009 The Go Authors;
-// BSD-style license, see NOTICE). Tailored messages are P02.07.
+// BSD-style license, see NOTICE). The tailored messages of P02.07 have their
+// own section at the end.
 //
 //===----------------------------------------------------------------------===//
 
@@ -134,5 +135,96 @@ DIAG(err_unknown_macro_kind, Error, "unknown macro parameter kind '%0'")
 DIAG(err_attr_on_stmt, Error, "attributes are not allowed on statements")
 DIAG(err_attr_on_import, Error,
      "attributes are not allowed on import declarations")
+
+//===----------------------------------------------------------------------===//
+// Parser: tailored messages for common mistakes (P02.07)
+//===----------------------------------------------------------------------===//
+//
+// Go habits, habits from other languages and typos that the parser can see.
+// Each explains the Go++ way; a fix-it is given only where the fix is exact
+// (`gopp parse -fixit` applies them). The table, with one test per row, is
+// tests/parse/recovery/README.md. P03.14 attaches error codes to these names.
+
+// Go++ rules on syntax that is valid Go: reported only with
+// ParseOptions::CheckLanguageRules (`gopp fmt` turns it off).
+DIAG(err_addr_of_complit, Error,
+     "allocation is explicit in Go++: use new_unique(T{...}) instead of "
+     "&T{...}")
+DIAG(err_fails_returns_error, Error,
+     "'!' already adds the error result: remove 'error' from the result list")
+DIAG(err_loop_var_redeclared, Error,
+     "'%0' redeclares a loop variable: give the copy another name")
+DIAG(note_loop_var_declared_here, Note, "loop variable '%0' declared here")
+DIAG(err_gopp_directive_in_source, Error,
+     "'//gopp:%0' is not allowed in a source file: move it to gopp.mod")
+DIAG(note_gopp_mod_line, Note, "gopp.mod takes the line '%0 ...'")
+
+// Go++ words used the wrong way.
+DIAG(err_move_type_not_shared, Error,
+     "'%0' needs its own type: a 'move' parameter does not share its type with "
+     "the names before it")
+DIAG(err_view_for_ref, Error,
+     "there is no 'view' type: a borrowed string or slice is spelled 'ref'")
+DIAG(err_own_for_move, Error,
+     "there is no '%0' mark: a parameter that takes ownership is marked "
+     "'move'")
+DIAG(err_ref_bad_elem, Error,
+     "'ref' applies to 'string' and slices only (ref string, ref []T)")
+
+// Go habits and typos.
+DIAG(err_define_at_top_level, Error,
+     "':=' is not allowed outside a function: use 'var %0 = ...'")
+DIAG(err_stmt_outside_func, Error,
+     "non-declaration statement outside function body")
+DIAG(err_else_on_new_line, Error,
+     "'else' must be on the same line as the closing '}'")
+DIAG(err_newline_after_for_clause, Error,
+     "unexpected newline, expecting { after for clause")
+DIAG(err_expected_lbrace_after, Error, "expected '{' after %0, found %1")
+DIAG(err_assign_in_condition, Error,
+     "cannot use an assignment as %0: did you mean '=='?")
+DIAG(err_define_in_condition, Error,
+     "cannot use a short variable declaration as %0: put it before a ';'")
+DIAG(err_define_in_var_decl, Error,
+     "':=' is not allowed in a %0 declaration: use '='")
+DIAG(err_comma_between_imports, Error,
+     "imports are separated by a newline or ';', not by ','")
+
+// Habits from other languages.
+DIAG(err_lex_single_quote_string, Error,
+     "single quotes make a rune: use double quotes for a string")
+DIAG(err_lex_ternary, Error, "Go++ has no '?:' operator: use an if statement")
+DIAG(err_incdec_expression, Error,
+     "'%0' is a statement in Go++, not an expression")
+DIAG(err_prefix_incdec, Error,
+     "Go++ has no prefix '%0': write it after the operand")
+DIAG(err_while_loop, Error, "Go++ has no 'while': use 'for' with a condition")
+DIAG(err_for_in, Error,
+     "Go++ has no 'for ... in': write 'for _, x := range ...'")
+DIAG(err_elif, Error, "Go++ has no '%0': write 'else if'")
+DIAG(err_fn_keyword, Error, "functions are declared with 'func', not '%0'")
+DIAG(err_let_decl, Error,
+     "Go++ has no '%0': declare with 'var x = v' or 'x := v'")
+DIAG(err_decl_without_var, Error,
+     "'%0 %1' is not a declaration: write 'var name Type' or 'name := value'")
+DIAG(err_struct_decl, Error,
+     "Go++ has no '%0' declaration: write 'type %1 struct { ... }'")
+DIAG(err_angle_type_params, Error,
+     "type parameters use square brackets: 'func %0[T any](...)'")
+DIAG(err_arrow_before_result, Error,
+     "there is no '->' before the result type: write it after the parameters")
+DIAG(err_colon_before_type, Error,
+     "no ':' between a name and its type: write '%0 T'")
+DIAG(err_brackets_after_type, Error,
+     "array and slice brackets go before the element type: write '[]%0'")
+
+//===----------------------------------------------------------------------===//
+// gopp fmt
+//===----------------------------------------------------------------------===//
+
+// A tree with an error node that no diagnostic explains: a guard that should
+// never fire (the file is left as it is).
+DIAG(err_fmt_unreported_syntax_error, Error,
+     "cannot format: the file has a syntax error")
 
 #undef DIAG

@@ -1,0 +1,30 @@
+// P02.07: tailored messages for Go++ rules the parser can see. The table is in
+// tests/parse/README.md.
+package p
+
+func f1() {
+	p := &Config{A: 1}
+	_ = p
+}
+func f2!() error { return nil }
+func f3!() (int, error) { return 0, nil }
+func f4(own s string) {}
+func f5(t view string) {}
+func f6(u ref int) {}
+func f7() view []int { return nil }
+func f8(a, move b int) {}
+func f9(move a, b string) {}
+func f10() {
+	for _, u := range us {
+		u := u
+		var u = u.Clone()
+		go func() { use(u) }()
+	}
+	for i := 0; i < 3; i++ {
+		i := i + 1
+	}
+}
+//gopp:cflags -O2
+//gopp:cxxstd c++20
+//gopp:build linux
+// ---- golden: tests/update-goldens rewrites what follows

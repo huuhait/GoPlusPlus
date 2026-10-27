@@ -4,24 +4,24 @@
 // CHECK:{{.*}}bad-tokens.test:21:11: error: illegal character U+0024 '$'
 // CHECK-NEXT:   21 | var a = 1 $ 2
 // CHECK-NEXT:      |           ^
-// CHECK-NEXT:{{.*}}bad-tokens.test:22:9: error: illegal character U+003F '?'
+// CHECK-NEXT:{{.*}}bad-tokens.test:22:9: error: Go++ has no '?:' operator: use an if statement
 // CHECK-NEXT:   22 | var b = ?
 // CHECK-NEXT:      |         ^
 // CHECK-NEXT:{{.*}}bad-tokens.test:23:1: error: expected ';', found 'func'
 // CHECK-NEXT:   23 | func f() {
 // CHECK-NEXT:      | ^~~~
 // CHECK-NEXT:{{.*}}bad-tokens.test:24:7: error: illegal rune literal
-// CHECK-NEXT:   24 |     x := 'ab'
+// CHECK-NEXT:   24 |     x := 'a\tb'
 // CHECK-NEXT:      |          ^
 // CHECK-NEXT:{{.*}}bad-tokens.test:25:7: error: string literal not terminated
 // CHECK-NEXT:   25 |     y := "unterminated
-// CHECK-NEXT:      |          ^
+// CHECK-NEXT:      |          ^~~~~~~~~~~~~
 package p
 
 var a = 1 $ 2
 var b = ?
 func f() {
-	x := 'ab'
+	x := 'a\tb'
 	y := "unterminated
 	z := 1
 }

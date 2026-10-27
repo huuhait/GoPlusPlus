@@ -1,0 +1,49 @@
+// Golden tests of `gopp fmt`.
+//
+// goprinter/ and gofmt/: the inputs are the test data of Go's go/printer and
+// cmd/gofmt (Copyright 2009 The Go Authors, BSD-style license, see NOTICE). The
+// goldens are `gopp fmt` output; tests/fmt/compare-gofmt.py lists where it
+// differs from gofmt 1.25 (doc comment reformatting, //go:build lines, and
+// `switch (x.(type))`, which keeps its parentheses; see README.md).
+// gopp/: Go++ syntax (ref, move, !, &, attributes, macros), comments, and the
+// header import order.
+//
+// Regenerate with tests/update-goldens fmt and review the diff.
+
+// RUN: %gopp fmt %S/Inputs/goprinter/alignment.input | diff - %S/Inputs/goprinter/alignment.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/comments.input | diff - %S/Inputs/goprinter/comments.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/comments2.input | diff - %S/Inputs/goprinter/comments2.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/complit.input | diff - %S/Inputs/goprinter/complit.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/declarations.input | diff - %S/Inputs/goprinter/declarations.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/doc.input | diff - %S/Inputs/goprinter/doc.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/empty.input | diff - %S/Inputs/goprinter/empty.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/expressions.input | diff - %S/Inputs/goprinter/expressions.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/generics.input | diff - %S/Inputs/goprinter/generics.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/go2numbers.input | diff - %S/Inputs/goprinter/go2numbers.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild1.input | diff - %S/Inputs/goprinter/gobuild1.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild2.input | diff - %S/Inputs/goprinter/gobuild2.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild3.input | diff - %S/Inputs/goprinter/gobuild3.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild4.input | diff - %S/Inputs/goprinter/gobuild4.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild5.input | diff - %S/Inputs/goprinter/gobuild5.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild6.input | diff - %S/Inputs/goprinter/gobuild6.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/gobuild7.input | diff - %S/Inputs/goprinter/gobuild7.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/linebreaks.input | diff - %S/Inputs/goprinter/linebreaks.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/slow.input | diff - %S/Inputs/goprinter/slow.golden
+// RUN: %gopp fmt %S/Inputs/goprinter/statements.input | diff - %S/Inputs/goprinter/statements.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/comments.input | diff - %S/Inputs/gofmt/comments.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/crlf.input | diff - %S/Inputs/gofmt/crlf.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/go2numbers.input | diff - %S/Inputs/gofmt/go2numbers.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/import.input | diff - %S/Inputs/gofmt/import.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/issue28082.input | diff - %S/Inputs/gofmt/issue28082.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/tabs.input | diff - %S/Inputs/gofmt/tabs.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/typealias.input | diff - %S/Inputs/gofmt/typealias.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/typeparams.input | diff - %S/Inputs/gofmt/typeparams.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/typeswitch.input | diff - %S/Inputs/gofmt/typeswitch.golden
+// RUN: %gopp fmt %S/Inputs/gopp/comments.input | diff - %S/Inputs/gopp/comments.golden
+// RUN: %gopp fmt %S/Inputs/gopp/headers.input | diff - %S/Inputs/gopp/headers.golden
+// RUN: %gopp fmt %S/Inputs/gopp/macros.input | diff - %S/Inputs/gopp/macros.golden
+// RUN: %gopp fmt %S/Inputs/gopp/syntax.input | diff - %S/Inputs/gopp/syntax.golden
+
+// Every input and golden: the output parses to the same tree, the comments are
+// all there, and formatting twice gives the same text.
+// RUN: %python %S/check-corpus.py %gopp %S/Inputs --ext .input --ext .golden --min 50

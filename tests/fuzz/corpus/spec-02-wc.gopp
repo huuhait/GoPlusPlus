@@ -1,0 +1,68 @@
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+type Stats struct {
+	Lines, Words, Bytes int // trivial struct: copied freely
+}
+
+var inputs = []string{"input1.txt", "input2.txt"}
+
+func isSpace(c byte) bool {
+	return c == ' ' || c == '\n' || c == '\t' || c == '\r'
+}
+
+// nextWord skips spaces, then returns the next word and the rest of s.
+// s is a borrowed parameter. Both results are refs into s: no allocation.
+func nextWord(s string) (word, rest ref string) {
+	i := 0
+	for i < len(s) && isSpace(s[i]) {
+		i++
+	}
+	j := i
+	for j < len(s) && !isSpace(s[j]) {
+		j++
+	}
+	return s[i:j], s[j:]
+}
+
+// count can fail: callers see (Stats, string, error).
+func count!(name string) (Stats, string) {
+	data := os.ReadFile!(name) // on error, count returns it
+	text := string(data)       // explicit copy: bytes -> owned string
+	st := Stats{Bytes: len(data)}
+	for i := 0; i < len(text); i++ {
+		if text[i] == '\n' {
+			st.Lines++
+		}
+	}
+	var best ref string
+	rest := text[:] // ref string: no copy
+	for {
+		var w ref string
+		w, rest = nextWord(rest)
+		if len(w) == 0 {
+			break
+		}
+		st.Words++
+		if len(w) > len(best) {
+			best = w
+		}
+	}
+	return st, string(best) // text dies here, so copy the word out
+}
+
+func main() {
+	var total Stats
+	for _, name := range inputs { // name is borrowed from inputs
+		st, longest := count!(name) // main cannot return an error: `!` panics on failure
+		fmt.Printf("%-10s %d lines, %d words, %d bytes, longest %q\n", name, st.Lines, st.Words, st.Bytes, longest)
+		total.Lines += st.Lines
+		total.Words += st.Words
+		total.Bytes += st.Bytes
+	}
+	fmt.Printf("%-10s %d lines, %d words, %d bytes\n", "total", total.Lines, total.Words, total.Bytes)
+}

@@ -1,0 +1,45 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <34:9, 34:13> 'main'
+// CHECK-NEXT:  Decl: GenDecl <36:1, 36:13> import
+// CHECK-NEXT:    Spec: ImportSpec <36:8, 36:13>
+// CHECK-NEXT:      Path: BasicLit <36:8, 36:13> string_lit "fmt"
+// CHECK-NEXT:  Decl: GenDecl <37:1, 37:15> import
+// CHECK-NEXT:    Spec: ImportSpec <37:8, 37:15>
+// CHECK-NEXT:      Name: Ident <37:8, 37:9> 'f'
+// CHECK-NEXT:      Path: BasicLit <37:10, 37:15> string_lit "fmt"
+// CHECK-NEXT:  Decl: GenDecl <38:1, 38:19> import
+// CHECK-NEXT:    Spec: ImportSpec <38:8, 38:19>
+// CHECK-NEXT:      Name: Ident <38:8, 38:9> '.'
+// CHECK-NEXT:      Path: BasicLit <38:10, 38:19> string_lit "strings"
+// CHECK-NEXT:  Decl: GenDecl <39:1, 39:17> import
+// CHECK-NEXT:    Spec: ImportSpec <39:8, 39:17>
+// CHECK-NEXT:      Name: Ident <39:8, 39:9> '_'
+// CHECK-NEXT:      Path: BasicLit <39:10, 39:17> string_lit "embed"
+// CHECK-NEXT:  Decl: GenDecl <40:1, 43:2> import grouped
+// CHECK-NEXT:    Spec: ImportSpec <41:2, 41:6>
+// CHECK-NEXT:      Path: BasicLit <41:2, 41:6> string_lit "os"
+// CHECK-NEXT:    Spec: ImportSpec <42:2, 42:10>
+// CHECK-NEXT:      Name: Ident <42:2, 42:3> 'm'
+// CHECK-NEXT:      Path: BasicLit <42:4, 42:10> string_lit "math"
+// CHECK-NEXT:  Decl: GenDecl <44:1, 44:18> import
+// CHECK-NEXT:    Spec: ImportSpec <44:8, 44:18>
+// CHECK-NEXT:      Path: BasicLit <44:8, 44:18> string_lit "<vector>"
+// CHECK-NEXT:  Decl: GenDecl <45:1, 45:22> import
+// CHECK-NEXT:    Spec: ImportSpec <45:8, 45:22>
+// CHECK-NEXT:      Name: Ident <45:8, 45:10> 'cc'
+// CHECK-NEXT:      Path: BasicLit <45:11, 45:22> string_lit "<stdio.h>"
+package main
+
+import "fmt"
+import f "fmt"
+import . "strings"
+import _ "embed"
+import (
+	"os"
+	m "math"
+)
+import "<vector>"
+import cc "<stdio.h>"

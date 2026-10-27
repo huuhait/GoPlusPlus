@@ -1,0 +1,12 @@
+package main
+
+import (
+	"<zlib.h>"
+	"b"
+	"a"
+	"vendor/foo.h"
+)
+
+import (
+	"z"
+	"y")

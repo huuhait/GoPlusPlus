@@ -1,0 +1,8 @@
+package p
+
+func f() {
+	if x = 1 {
+	}
+	if y := g(); y = 2 {
+	}
+}

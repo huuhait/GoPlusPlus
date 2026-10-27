@@ -1,0 +1,16 @@
+// The invariants of `gopp fmt` on the Go++ sources of the repository:
+//   parse(print(parse(src))) == parse(src)  (imports unsorted; empty statements,
+//                                           redundant parentheses and number
+//                                           spelling excepted, as in gofmt)
+//   fmt(fmt(src)) == fmt(src)
+//   no comment is lost.
+// Files with syntax errors (the diagnostics tests) are skipped.
+
+// The ten spec examples.
+// RUN: %python %S/check-corpus.py %gopp %examples --min 10
+
+// Every test input that is a valid program: parse, lex, sema tests.
+// RUN: %python %S/check-corpus.py %gopp --ext .test --min 15 %S/../parse %S/../lex %S/../sema
+
+// The formatter's own goldens.
+// RUN: %python %S/check-corpus.py %gopp --ext .golden --min 10 %S/Inputs

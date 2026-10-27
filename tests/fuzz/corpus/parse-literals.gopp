@@ -1,0 +1,88 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <65:9, 65:10> 'p'
+// CHECK-NEXT:  Decl: GenDecl <67:1, 88:2> var grouped
+// CHECK-NEXT:    Spec: ValueSpec <68:2, 68:8>
+// CHECK-NEXT:      Name: Ident <68:2, 68:4> 'i1'
+// CHECK-NEXT:      Value: BasicLit <68:7, 68:8> int_lit 0
+// CHECK-NEXT:    Spec: ValueSpec <69:2, 69:11>
+// CHECK-NEXT:      Name: Ident <69:2, 69:4> 'i2'
+// CHECK-NEXT:      Value: BasicLit <69:7, 69:11> int_lit 0x1F
+// CHECK-NEXT:    Spec: ValueSpec <70:2, 70:12>
+// CHECK-NEXT:      Name: Ident <70:2, 70:4> 'i3'
+// CHECK-NEXT:      Value: BasicLit <70:7, 70:12> int_lit 0b101
+// CHECK-NEXT:    Spec: ValueSpec <71:2, 71:11>
+// CHECK-NEXT:      Name: Ident <71:2, 71:4> 'i4'
+// CHECK-NEXT:      Value: BasicLit <71:7, 71:11> int_lit 0o17
+// CHECK-NEXT:    Spec: ValueSpec <72:2, 72:10>
+// CHECK-NEXT:      Name: Ident <72:2, 72:4> 'i5'
+// CHECK-NEXT:      Value: BasicLit <72:7, 72:10> int_lit 017
+// CHECK-NEXT:    Spec: ValueSpec <73:2, 73:16>
+// CHECK-NEXT:      Name: Ident <73:2, 73:4> 'i6'
+// CHECK-NEXT:      Value: BasicLit <73:7, 73:16> int_lit 1_000_000
+// CHECK-NEXT:    Spec: ValueSpec <74:2, 74:10>
+// CHECK-NEXT:      Name: Ident <74:2, 74:4> 'f1'
+// CHECK-NEXT:      Value: BasicLit <74:7, 74:10> float_lit 1.5
+// CHECK-NEXT:    Spec: ValueSpec <75:2, 75:9>
+// CHECK-NEXT:      Name: Ident <75:2, 75:4> 'f2'
+// CHECK-NEXT:      Value: BasicLit <75:7, 75:9> float_lit .5
+// CHECK-NEXT:    Spec: ValueSpec <76:2, 76:11>
+// CHECK-NEXT:      Name: Ident <76:2, 76:4> 'f3'
+// CHECK-NEXT:      Value: BasicLit <76:7, 76:11> float_lit 1e10
+// CHECK-NEXT:    Spec: ValueSpec <77:2, 77:13>
+// CHECK-NEXT:      Name: Ident <77:2, 77:4> 'f4'
+// CHECK-NEXT:      Value: BasicLit <77:7, 77:13> float_lit 0x1p-2
+// CHECK-NEXT:    Spec: ValueSpec <78:2, 78:9>
+// CHECK-NEXT:      Name: Ident <78:2, 78:4> 'c1'
+// CHECK-NEXT:      Value: BasicLit <78:7, 78:9> imag_lit 1i
+// CHECK-NEXT:    Spec: ValueSpec <79:2, 79:11>
+// CHECK-NEXT:      Name: Ident <79:2, 79:4> 'c2'
+// CHECK-NEXT:      Value: BasicLit <79:7, 79:11> imag_lit 2.5i
+// CHECK-NEXT:    Spec: ValueSpec <80:2, 80:10>
+// CHECK-NEXT:      Name: Ident <80:2, 80:4> 'r1'
+// CHECK-NEXT:      Value: BasicLit <80:7, 80:10> char_lit 'a'
+// CHECK-NEXT:    Spec: ValueSpec <81:2, 81:11>
+// CHECK-NEXT:      Name: Ident <81:2, 81:4> 'r2'
+// CHECK-NEXT:      Value: BasicLit <81:7, 81:11> char_lit '\n'
+// CHECK-NEXT:    Spec: ValueSpec <82:2, 82:15>
+// CHECK-NEXT:      Name: Ident <82:2, 82:4> 'r3'
+// CHECK-NEXT:      Value: BasicLit <82:7, 82:15> char_lit '\u00e9'
+// CHECK-NEXT:    Spec: ValueSpec <83:2, 83:13>
+// CHECK-NEXT:      Name: Ident <83:2, 83:4> 'r4'
+// CHECK-NEXT:      Value: BasicLit <83:7, 83:13> char_lit '\x41'
+// CHECK-NEXT:    Spec: ValueSpec <84:2, 84:14>
+// CHECK-NEXT:      Name: Ident <84:2, 84:4> 's1'
+// CHECK-NEXT:      Value: BasicLit <84:7, 84:14> string_lit "hello"
+// CHECK-NEXT:    Spec: ValueSpec <85:2, 85:21>
+// CHECK-NEXT:      Name: Ident <85:2, 85:4> 's2'
+// CHECK-NEXT:      Value: BasicLit <85:7, 85:21> string_lit "esc \" \\ \t"
+// CHECK-NEXT:    Spec: ValueSpec <86:2, 87:8>
+// CHECK-NEXT:      Name: Ident <86:2, 86:4> 's3'
+// CHECK-NEXT:      Value: BasicLit <86:7, 87:8> string_lit `raw
+// CHECK-NEXT:string`
+package p
+
+var (
+	i1 = 0
+	i2 = 0x1F
+	i3 = 0b101
+	i4 = 0o17
+	i5 = 017
+	i6 = 1_000_000
+	f1 = 1.5
+	f2 = .5
+	f3 = 1e10
+	f4 = 0x1p-2
+	c1 = 1i
+	c2 = 2.5i
+	r1 = 'a'
+	r2 = '\n'
+	r3 = '\u00e9'
+	r4 = '\x41'
+	s1 = "hello"
+	s2 = "esc \" \\ \t"
+	s3 = `raw
+string`
+)

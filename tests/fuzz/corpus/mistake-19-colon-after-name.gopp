@@ -1,0 +1,6 @@
+package p
+
+func f(x: int, y: string) {}
+type S struct {
+	a: int
+}

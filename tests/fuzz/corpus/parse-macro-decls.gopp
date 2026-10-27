@@ -1,0 +1,74 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <58:9, 58:10> 'p'
+// CHECK-NEXT:  Decl: MacroDecl <60:1, 64:2>
+// CHECK-NEXT:    Name: Ident <60:7, 60:11> 'Swap'
+// CHECK-NEXT:    Param: MacroParam <60:12, 60:18> 'a' kind=expr
+// CHECK-NEXT:    Param: MacroParam <60:20, 60:26> 'b' kind=expr
+// CHECK-NEXT:    Body: BlockStmt <60:28, 64:2>
+// CHECK-NEXT:      Stmt: AssignStmt <61:2, 61:10> op=':='
+// CHECK-NEXT:        Lhs: Ident <61:2, 61:5> 'tmp'
+// CHECK-NEXT:        Rhs: Ident <61:9, 61:10> 'a'
+// CHECK-NEXT:      Stmt: AssignStmt <62:2, 62:7> op='='
+// CHECK-NEXT:        Lhs: Ident <62:2, 62:3> 'a'
+// CHECK-NEXT:        Rhs: Ident <62:6, 62:7> 'b'
+// CHECK-NEXT:      Stmt: AssignStmt <63:2, 63:9> op='='
+// CHECK-NEXT:        Lhs: Ident <63:2, 63:3> 'b'
+// CHECK-NEXT:        Rhs: Ident <63:6, 63:9> 'tmp'
+// CHECK-NEXT:  Decl: MacroDecl <65:1, 68:2>
+// CHECK-NEXT:    Name: Ident <65:7, 65:12> 'Twice'
+// CHECK-NEXT:    Param: MacroParam <65:13, 65:19> 'x' kind=expr
+// CHECK-NEXT:    Body: BlockStmt <65:21, 68:2>
+// CHECK-NEXT:      Stmt: ExprStmt <66:2, 66:8>
+// CHECK-NEXT:        X: MacroInvocation <66:2, 66:8> name=Do args=[x]
+// CHECK-NEXT:      Stmt: ExprStmt <67:2, 67:8>
+// CHECK-NEXT:        X: MacroInvocation <67:2, 67:8> name=Do args=[x]
+// CHECK-NEXT:  Decl: MacroDecl <69:1, 69:19>
+// CHECK-NEXT:    Name: Ident <69:7, 69:14> 'Nothing'
+// CHECK-NEXT:    Body: BlockStmt <69:17, 69:19>
+// CHECK-NEXT:  Decl: ProcMacroDecl <70:1, 72:2>
+// CHECK-NEXT:    Name: Ident <70:12, 70:18> 'Derive'
+// CHECK-NEXT:    Type: FuncType <70:7, 70:43>
+// CHECK-NEXT:      Params: FieldList <70:18, 70:34>
+// CHECK-NEXT:        Field: Field <70:19, 70:33>
+// CHECK-NEXT:          Names: Ident <70:19, 70:20> 't'
+// CHECK-NEXT:          Type: SelectorExpr <70:21, 70:33>
+// CHECK-NEXT:            X: Ident <70:21, 70:28> 'reflect'
+// CHECK-NEXT:            Sel: Ident <70:29, 70:33> 'Type'
+// CHECK-NEXT:      Results: FieldList <70:35, 70:43>
+// CHECK-NEXT:        Field: Field <70:35, 70:43>
+// CHECK-NEXT:          Type: SliceType <70:35, 70:43>
+// CHECK-NEXT:            Elt: Ident <70:37, 70:43> 'string'
+// CHECK-NEXT:    Body: BlockStmt <70:44, 72:2>
+// CHECK-NEXT:      Stmt: ReturnStmt <71:2, 71:12>
+// CHECK-NEXT:        Result: Ident <71:9, 71:12> 'nil'
+// CHECK-NEXT:  Decl: ProcMacroDecl <73:1, 74:2>
+// CHECK-NEXT:    Name: Ident <73:12, 73:15> 'Gen'
+// CHECK-NEXT:    Type: FuncType <73:7, 73:35>
+// CHECK-NEXT:      Params: FieldList <73:15, 73:35>
+// CHECK-NEXT:        Field: Field <73:16, 73:27>
+// CHECK-NEXT:          Names: Ident <73:16, 73:20> 'name'
+// CHECK-NEXT:          Type: Ident <73:21, 73:27> 'string'
+// CHECK-NEXT:        Field: Field <73:29, 73:34>
+// CHECK-NEXT:          Names: Ident <73:29, 73:30> 'n'
+// CHECK-NEXT:          Type: Ident <73:31, 73:34> 'int'
+// CHECK-NEXT:    Body: BlockStmt <73:36, 74:2>
+package p
+
+macro Swap(a expr, b expr) {
+	tmp := a
+	a = b
+	b = tmp
+}
+macro Twice(x expr) {
+	#Do(x)
+	#Do(x)
+}
+macro Nothing() {}
+macro func Derive(t reflect.Type) []string {
+	return nil
+}
+macro func Gen(name string, n int) {
+}

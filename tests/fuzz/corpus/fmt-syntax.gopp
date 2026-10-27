@@ -1,0 +1,32 @@
+package main
+
+import (
+	"zeta"
+	"<vector>"
+	"alpha"
+	"cxx/b.h"
+	"cxx/a.h"
+)
+
+import (
+	"z"
+	"a" // first
+	b "b"
+)
+
+@Derive(Eq,   Hash)
+@Inline
+type P struct { x int @Json("x") `tag`
+	name string
+}
+
+macro Max(a expr,b expr) { return a }
+
+macro func Gen(x expr) expr { return x }
+
+#Gen( a,b )
+
+func f[T any]!(move a, b int, c T) int { return 1 }
+
+func (r Buf) g!() ref string { x := f!(1); for i, &v := range xs { use(i,v) }; for &d := range seq { }; return x }
+func h(a ref []int , move  p *T) {}

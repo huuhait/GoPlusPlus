@@ -1,4 +1,4 @@
-// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// RUN: %gopp parse -language-rules=false -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file.
 // CHECK:File <{{.*}}>

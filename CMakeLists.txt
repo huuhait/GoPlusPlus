@@ -26,3 +26,4 @@ include(GoppFormat)
 
 add_subdirectory(compiler)
 add_subdirectory(tests)
+add_subdirectory(bench)

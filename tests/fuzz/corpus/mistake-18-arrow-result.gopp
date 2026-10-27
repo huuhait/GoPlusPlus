@@ -1,0 +1,4 @@
+package p
+
+func f() -> int { return 1 }
+func g(x int) -> (int, error) { return x, nil }

@@ -1,0 +1,17 @@
+package p
+
+func a()
+{
+}
+func b() {
+	for i := 0; i < 3; i++
+	{
+	}
+	for x < 3
+	{
+	}
+	switch x
+	{
+	}
+	if x == 1 return
+}

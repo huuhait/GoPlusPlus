@@ -1,0 +1,10 @@
+package p
+
+class Foo {
+	int x;
+	void m() {}
+};
+struct Bar {
+	int y;
+};
+func ok() {}

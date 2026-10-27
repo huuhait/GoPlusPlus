@@ -17,6 +17,18 @@ Files
     ported from go/scanner (scanner_test.go)
 - tests/unit/Parse/GoParserPortTest.cpp
     ported from go/parser (short_test.go and testdata)
+- compiler/lib/Format/Printer.cpp
+    ported from go/printer (printer.go, nodes.go)
+- compiler/lib/Format/TabWriter.cpp, TabWriter.h
+    ported from text/tabwriter (tabwriter.go)
+- compiler/lib/Format/Format.cpp (import sorting)
+    ported from go/ast (import.go, SortImports)
+- tests/fmt/Inputs/goprinter/*.input
+    copied from go/printer/testdata
+- tests/fmt/Inputs/gofmt/*.input
+    copied from cmd/gofmt/testdata
+- tests/fuzz/corpus/goprinter-*.go, tests/fuzz/corpus/gofmt-*.go
+    copied from go/printer/testdata and cmd/gofmt/testdata (fuzz seeds)
 
 License of the Go sources
 -------------------------

@@ -261,7 +261,9 @@ const Invalid Invalids[] = {
 TEST(GoParserPort, Valid) {
   for (const char *Src : Valids) {
     SCOPED_TRACE(Src);
-    Parsed P(Src);
+    ParseOptions Go; // valid Go: `&T{}` is only wrong in Go++
+    Go.CheckLanguageRules = false;
+    Parsed P(Src, Go);
     EXPECT_EQ(P.numErrors(), 0u) << ::testing::PrintToString(P.errors());
   }
 }

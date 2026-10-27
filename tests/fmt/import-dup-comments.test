@@ -1,0 +1,13 @@
+// Removing a duplicate import never loses a comment: the leading block
+// comment of one copy and the trailing comment of the other end up on one line.
+// RUN: printf 'package p\n\nimport (\n\t/* lead */ "a"\n\t"a" // dup\n\t"b"\n\t"c"\n\t/* l2 */ "c"\n\t"c"\n)\n' > %t.gopp
+// RUN: %gopp fmt %t.gopp | FileCheck %s --match-full-lines
+// CHECK: import (
+// CHECK-NEXT: {{^}}	/* lead */ "a" // dup
+// CHECK-NEXT: {{^}}	"b"
+// CHECK-NEXT: {{^}}	/* l2 */ "c"
+// CHECK-NEXT: )
+// A second run changes nothing.
+// RUN: %gopp fmt %t.gopp > %t.out
+// RUN: cp %t.out %t.2.gopp
+// RUN: %gopp fmt %t.2.gopp | diff - %t.out

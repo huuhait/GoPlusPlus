@@ -1,0 +1,26 @@
+// The Go++ rules that need only the syntax (`&T{}` OWN-P4, RNG-8, ERR-15,
+// `//gopp:cflags` LEX-11) are reported by default; -language-rules=false turns
+// them all off (Go sources), and `gopp fmt` formats such code (it never checks
+// them). Syntax errors are reported either way.
+// RUN: not %gopp parse %s 2>&1 | FileCheck --check-prefix=ON %s
+// RUN: %gopp parse -language-rules=false %s
+// RUN: %gopp fmt %s | FileCheck --check-prefix=FMT %s
+// ON: error: '//gopp:cflags' is not allowed in a source file
+// ON: error: '!' already adds the error result
+// ON: error: allocation is explicit in Go++
+// ON: error: 'u' redeclares a loop variable
+//gopp:cflags -O2
+package p
+
+func f!() error { return nil }
+func g() { x := &T{ A:1 }; _ = x }
+func h(us []int) {
+	for _, u := range us {
+		u := u
+		_ = u
+	}
+}
+// FMT: //gopp:cflags -O2
+// FMT: func f!() error { return nil }
+// FMT: x := &T{A: 1}
+// FMT: u := u

@@ -1,0 +1,117 @@
+File <1:1, 30:1>
+  Name: Ident <1:9, 1:13> 'main'
+  Decl: GenDecl <3:1, 8:2> import grouped
+    Spec: ImportSpec <4:2, 4:7>
+      Path: BasicLit <4:2, 4:7> string_lit "fmt"
+    Spec: ImportSpec <5:2, 5:6>
+      Path: BasicLit <5:2, 5:6> string_lit "os"
+    Spec: ImportSpec <7:2, 7:33>
+      Path: BasicLit <7:2, 7:33> string_lit "github.com/madler/zlib/zlib.h"
+  Decl: FuncDecl <10:1, 29:2>
+    Name: Ident <10:6, 10:10> 'main'
+    Type: FuncType <10:1, 10:12>
+      Params: FieldList <10:10, 10:12>
+    Body: BlockStmt <10:13, 29:2>
+      Stmt: AssignStmt <11:2, 11:35> op=':='
+        Lhs: Ident <11:2, 11:6> 'data'
+        Rhs: CallExpr <11:10, 11:35> must
+          Fun: SelectorExpr <11:10, 11:21>
+            X: Ident <11:10, 11:12> 'os'
+            Sel: Ident <11:13, 11:21> 'ReadFile'
+          Args: BasicLit <11:23, 11:34> string_lit "input.txt"
+      Stmt: ExprStmt <12:2, 12:46>
+        X: CallExpr <12:2, 12:46>
+          Fun: SelectorExpr <12:2, 12:12>
+            X: Ident <12:2, 12:5> 'fmt'
+            Sel: Ident <12:6, 12:12> 'Printf'
+          Args: BasicLit <12:13, 12:34> string_lit "size:    %d bytes\n"
+          Args: CallExpr <12:36, 12:45>
+            Fun: Ident <12:36, 12:39> 'len'
+            Args: Ident <12:40, 12:44> 'data'
+      Stmt: AssignStmt <16:2, 16:47> op=':='
+        Lhs: Ident <16:2, 16:5> 'crc'
+        Rhs: CallExpr <16:9, 16:47>
+          Fun: SelectorExpr <16:9, 16:19>
+            X: Ident <16:9, 16:13> 'zlib'
+            Sel: Ident <16:14, 16:19> 'crc32'
+          Args: BasicLit <16:20, 16:21> int_lit 0
+          Args: Ident <16:23, 16:27> 'data'
+          Args: CallExpr <16:29, 16:46>
+            Fun: Ident <16:29, 16:35> 'uint32'
+            Args: CallExpr <16:36, 16:45>
+              Fun: Ident <16:36, 16:39> 'len'
+              Args: Ident <16:40, 16:44> 'data'
+      Stmt: ExprStmt <17:2, 17:36>
+        X: CallExpr <17:2, 17:36>
+          Fun: SelectorExpr <17:2, 17:12>
+            X: Ident <17:2, 17:5> 'fmt'
+            Sel: Ident <17:6, 17:12> 'Printf'
+          Args: BasicLit <17:13, 17:30> string_lit "crc32:   %08x\n"
+          Args: Ident <17:32, 17:35> 'crc'
+      Stmt: DeclStmt <20:2, 20:20>
+        Decl: GenDecl <20:2, 20:20> var
+          Spec: ValueSpec <20:6, 20:20>
+            Name: Ident <20:6, 20:13> 'running'
+            Type: Ident <20:14, 20:20> 'uint64'
+      Stmt: ForStmt <21:2, 24:3>
+        Init: AssignStmt <21:6, 21:12> op=':='
+          Lhs: Ident <21:6, 21:7> 'i'
+          Rhs: BasicLit <21:11, 21:12> int_lit 0
+        Cond: BinaryExpr <21:14, 21:27> op='<'
+          X: Ident <21:14, 21:15> 'i'
+          Y: CallExpr <21:18, 21:27>
+            Fun: Ident <21:18, 21:21> 'len'
+            Args: Ident <21:22, 21:26> 'data'
+        Post: AssignStmt <21:29, 21:35> op='+='
+          Lhs: Ident <21:29, 21:30> 'i'
+          Rhs: BasicLit <21:34, 21:35> int_lit 7
+        Body: BlockStmt <21:36, 24:3>
+          Stmt: AssignStmt <22:3, 22:39> op=':='
+            Lhs: Ident <22:3, 22:8> 'chunk'
+            Rhs: SliceExpr <22:12, 22:39>
+              X: Ident <22:12, 22:16> 'data'
+              Lo: Ident <22:17, 22:18> 'i'
+              Hi: CallExpr <22:19, 22:38>
+                Fun: Ident <22:19, 22:22> 'min'
+                Args: BinaryExpr <22:23, 22:26> op='+'
+                  X: Ident <22:23, 22:24> 'i'
+                  Y: BasicLit <22:25, 22:26> int_lit 7
+                Args: CallExpr <22:28, 22:37>
+                  Fun: Ident <22:28, 22:31> 'len'
+                  Args: Ident <22:32, 22:36> 'data'
+          Stmt: AssignStmt <23:3, 23:59> op='='
+            Lhs: Ident <23:3, 23:10> 'running'
+            Rhs: CallExpr <23:13, 23:59>
+              Fun: SelectorExpr <23:13, 23:23>
+                X: Ident <23:13, 23:17> 'zlib'
+                Sel: Ident <23:18, 23:23> 'crc32'
+              Args: Ident <23:24, 23:31> 'running'
+              Args: Ident <23:33, 23:38> 'chunk'
+              Args: CallExpr <23:40, 23:58>
+                Fun: Ident <23:40, 23:46> 'uint32'
+                Args: CallExpr <23:47, 23:57>
+                  Fun: Ident <23:47, 23:50> 'len'
+                  Args: Ident <23:51, 23:56> 'chunk'
+      Stmt: ExprStmt <25:2, 25:40>
+        X: CallExpr <25:2, 25:40>
+          Fun: SelectorExpr <25:2, 25:12>
+            X: Ident <25:2, 25:5> 'fmt'
+            Sel: Ident <25:6, 25:12> 'Printf'
+          Args: BasicLit <25:13, 25:30> string_lit "chunked: %08x\n"
+          Args: Ident <25:32, 25:39> 'running'
+      Stmt: ExprStmt <28:2, 28:70>
+        X: CallExpr <28:2, 28:70>
+          Fun: SelectorExpr <28:2, 28:12>
+            X: Ident <28:2, 28:5> 'fmt'
+            Sel: Ident <28:6, 28:12> 'Printf'
+          Args: BasicLit <28:13, 28:30> string_lit "check:   %08x\n"
+          Args: CallExpr <28:32, 28:69>
+            Fun: SelectorExpr <28:32, 28:42>
+              X: Ident <28:32, 28:36> 'zlib'
+              Sel: Ident <28:37, 28:42> 'crc32'
+            Args: BasicLit <28:43, 28:44> int_lit 0
+            Args: CallExpr <28:46, 28:65>
+              Fun: SliceType <28:46, 28:52>
+                Elt: Ident <28:48, 28:52> 'byte'
+              Args: BasicLit <28:53, 28:64> string_lit "123456789"
+            Args: BasicLit <28:67, 28:68> int_lit 9

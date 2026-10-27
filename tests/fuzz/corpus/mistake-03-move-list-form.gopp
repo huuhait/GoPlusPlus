@@ -1,0 +1,4 @@
+package p
+
+func f(a, move b int) {}
+func g(move a T, move b T) {}
