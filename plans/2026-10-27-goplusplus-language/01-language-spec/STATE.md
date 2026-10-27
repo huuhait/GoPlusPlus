@@ -91,7 +91,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D24 | **#40 changed:** C/C++ settings move out of source files. `//gopp:cflags`, `//gopp:cxxstd` and `//gopp:ldflags` are removed. They become module-wide `gopp.mod` directives (`cxxstd c++20`, `cflags …`, `ldflags …`), set once per project, like Go's `go.mod`. cdeps keep taking their flags from their own CMake target (P11). `//gopp:build` stays, exactly like Go's `//go:build` (above `package`). | `gopp.mod`: `cxxstd c++20` · file: `//gopp:build linux` | D1.15, `14-foreign-surface.md:66`; P07, P10 (gopp.mod grammar), P11 |
 
-Still to review: notes #41–#42.
+| D25 | **#41 changed:** returning a `ref` into a local of the same function (or into an owned value that dies at return) is a compile error, like Rust. It is added to the list of cases D1.4 rule 8 catches; less obvious cases stay undefined behavior (`-asan`). #42 accepted: UB-7 to UB-12 (arena use after free, `unsafe`, C keeping pointers too long, C++ use after move, runtime-object misuse, `longjmp`/forced unwinding) stay listed as undefined behavior. | `func first() ref string { s := "hi"; return s[:1] }` ❌ | D1.4 rule 8, D1.6; `16-undefined-behavior.md:52`, `:115` |
+
+All 42 notes reviewed. Next: apply D1–D25 to `docs/spec/`, the plan READMEs/TODO and the ADRs (ADR-0003/0004 updates plus a new ADR for the decision changes), through the team workflow.
 
 ## Notes / blockers
 
