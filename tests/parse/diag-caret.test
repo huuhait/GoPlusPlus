@@ -1,0 +1,23 @@
+// RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:{{.*}}diag-caret.test:19:7: error: expected operand, found ';'
+// CHECK-NEXT:   19 |     x := ;
+// CHECK-NEXT:      |          ^
+// CHECK-NEXT:{{.*}}diag-caret.test:20:21: error: expected operand, found ';'
+// CHECK-NEXT:   20 |     世界 := "wide" + ;
+// CHECK-NEXT:      |                      ^
+// CHECK-NEXT:{{.*}}diag-caret.test:21:4: error: expected ';', found b
+// CHECK-NEXT:   21 |     a b
+// CHECK-NEXT:      |       ^
+// CHECK-NEXT:{{.*}}diag-caret.test:24:1: error: expected '}', found 'EOF'
+// CHECK-NEXT:   24 |{{ *}}
+// CHECK-NEXT:      | ^
+package p
+
+func f() {
+	x := ;
+	世界 := "wide" + ;
+	a b
+	c := [3]int{1, 2,
+}

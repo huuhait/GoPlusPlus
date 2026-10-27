@@ -1,0 +1,41 @@
+// RUN: not %gopp parse -dump-tokens -error-limit=0 %s > %t.out 2> %t.err
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=TOK --input-file=%t.out %s
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=ERR --input-file=%t.err %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// TOK:38:1 kw_package 'package'
+// TOK-NEXT:38:9 ident 'p'
+// TOK-NEXT:38:10 semi '\n'
+// TOK-NEXT:39:1 ident 'x'
+// TOK-NEXT:39:3 define ':='
+// TOK-NEXT:39:6 string_lit '"aÿb"'
+// TOK-NEXT:39:16 semi '\n'
+// TOK-NEXT:40:1 kw_var 'var'
+// TOK-NEXT:40:5 illegal 'Ã'
+// TOK-NEXT:40:6 l_paren '('
+// TOK-NEXT:40:8 assign '='
+// TOK-NEXT:40:10 int_lit '1'
+// TOK-NEXT:40:11 semi '\n'
+// TOK-NEXT:41:1 illegal 'ï»¿'
+// TOK-NEXT:41:4 ident 'y'
+// TOK-NEXT:41:5 semi '\n'
+// TOK-NEXT:42:1 eof
+// ERR:{{.*}}bad-bytes.test:39:8: error: illegal UTF-8 encoding
+// ERR-NEXT:   39 | x := "a<FF>b" // <FE>
+// ERR-NEXT:      |        ^
+// ERR-NEXT:{{.*}}bad-bytes.test:39:15: error: illegal UTF-8 encoding
+// ERR-NEXT:   39 | x := "a<FF>b" // <FE>
+// ERR-NEXT:      |                  ^
+// ERR-NEXT:{{.*}}bad-bytes.test:40:5: error: illegal UTF-8 encoding
+// ERR-NEXT:   40 | var <C3>( = 1
+// ERR-NEXT:      |     ^
+// ERR-NEXT:{{.*}}bad-bytes.test:40:5: error: illegal character U+FFFD 'ï¿½'
+// ERR-NEXT:   40 | var <C3>( = 1
+// ERR-NEXT:      |     ^
+// ERR-NEXT:{{.*}}bad-bytes.test:41:1: error: illegal byte order mark
+// ERR-NEXT:   41 | <U+FEFF>y
+// ERR-NEXT:      | ^
+package p
+x := "aÿb" // þ
+var Ã( = 1
+ï»¿y

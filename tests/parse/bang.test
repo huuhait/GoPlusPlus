@@ -1,0 +1,132 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <116:9, 116:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <118:1, 118:30> fails
+// CHECK-NEXT:    Name: Ident <118:6, 118:7> 'f'
+// CHECK-NEXT:    Type: FuncType <118:1, 118:17> fails
+// CHECK-NEXT:      Params: FieldList <118:8, 118:15>
+// CHECK-NEXT:        Field: Field <118:9, 118:14>
+// CHECK-NEXT:          Names: Ident <118:9, 118:10> 'x'
+// CHECK-NEXT:          Type: Ident <118:11, 118:14> 'int'
+// CHECK-NEXT:      Results: FieldList <118:16, 118:17>
+// CHECK-NEXT:        Field: Field <118:16, 118:17>
+// CHECK-NEXT:          Type: Ident <118:16, 118:17> 'T'
+// CHECK-NEXT:    Body: BlockStmt <118:18, 118:30>
+// CHECK-NEXT:      Stmt: ReturnStmt <118:20, 118:28>
+// CHECK-NEXT:        Result: Ident <118:27, 118:28> 'x'
+// CHECK-NEXT:  Decl: FuncDecl <119:1, 119:13> fails
+// CHECK-NEXT:    Name: Ident <119:6, 119:7> 'g'
+// CHECK-NEXT:    Type: FuncType <119:1, 119:10> fails
+// CHECK-NEXT:      Params: FieldList <119:8, 119:10>
+// CHECK-NEXT:    Body: BlockStmt <119:11, 119:13>
+// CHECK-NEXT:  Decl: FuncDecl <120:1, 120:36> fails
+// CHECK-NEXT:    Recv: FieldList <120:6, 120:11>
+// CHECK-NEXT:      Field: Field <120:7, 120:10>
+// CHECK-NEXT:        Names: Ident <120:7, 120:8> 'r'
+// CHECK-NEXT:        Type: Ident <120:9, 120:10> 'T'
+// CHECK-NEXT:    Name: Ident <120:12, 120:13> 'h'
+// CHECK-NEXT:    Type: FuncType <120:1, 120:23> fails
+// CHECK-NEXT:      Params: FieldList <120:14, 120:21>
+// CHECK-NEXT:        Field: Field <120:15, 120:20>
+// CHECK-NEXT:          Names: Ident <120:15, 120:16> 'x'
+// CHECK-NEXT:          Type: Ident <120:17, 120:20> 'int'
+// CHECK-NEXT:      Results: FieldList <120:22, 120:23>
+// CHECK-NEXT:        Field: Field <120:22, 120:23>
+// CHECK-NEXT:          Type: Ident <120:22, 120:23> 'U'
+// CHECK-NEXT:    Body: BlockStmt <120:24, 120:36>
+// CHECK-NEXT:      Stmt: ReturnStmt <120:26, 120:34>
+// CHECK-NEXT:        Result: Ident <120:33, 120:34> 'x'
+// CHECK-NEXT:  Decl: GenDecl <121:1, 121:20> type
+// CHECK-NEXT:    Spec: TypeSpec <121:6, 121:20>
+// CHECK-NEXT:      Name: Ident <121:6, 121:7> 'F'
+// CHECK-NEXT:      Type: FuncType <121:8, 121:20> fails
+// CHECK-NEXT:        Params: FieldList <121:13, 121:18>
+// CHECK-NEXT:          Field: Field <121:14, 121:17>
+// CHECK-NEXT:            Type: Ident <121:14, 121:17> 'int'
+// CHECK-NEXT:        Results: FieldList <121:19, 121:20>
+// CHECK-NEXT:          Field: Field <121:19, 121:20>
+// CHECK-NEXT:            Type: Ident <121:19, 121:20> 'T'
+// CHECK-NEXT:  Decl: GenDecl <122:1, 122:26> type
+// CHECK-NEXT:    Spec: TypeSpec <122:6, 122:26>
+// CHECK-NEXT:      Name: Ident <122:6, 122:7> 'G'
+// CHECK-NEXT:      Type: FuncType <122:8, 122:26> fails
+// CHECK-NEXT:        Params: FieldList <122:13, 122:15>
+// CHECK-NEXT:        Results: FieldList <122:16, 122:26>
+// CHECK-NEXT:          Field: Field <122:17, 122:18>
+// CHECK-NEXT:            Type: Ident <122:17, 122:18> 'T'
+// CHECK-NEXT:          Field: Field <122:20, 122:25>
+// CHECK-NEXT:            Type: Ident <122:20, 122:25> 'error'
+// CHECK-NEXT:  Decl: GenDecl <123:1, 123:19> var
+// CHECK-NEXT:    Spec: ValueSpec <123:5, 123:19>
+// CHECK-NEXT:      Name: Ident <123:5, 123:6> 'v'
+// CHECK-NEXT:      Type: FuncType <123:7, 123:19> fails
+// CHECK-NEXT:        Params: FieldList <123:12, 123:17>
+// CHECK-NEXT:          Field: Field <123:13, 123:16>
+// CHECK-NEXT:            Type: Ident <123:13, 123:16> 'int'
+// CHECK-NEXT:        Results: FieldList <123:18, 123:19>
+// CHECK-NEXT:          Field: Field <123:18, 123:19>
+// CHECK-NEXT:            Type: Ident <123:18, 123:19> 'T'
+// CHECK-NEXT:  Decl: FuncDecl <124:1, 132:2>
+// CHECK-NEXT:    Name: Ident <124:6, 124:10> 'main'
+// CHECK-NEXT:    Type: FuncType <124:1, 124:12>
+// CHECK-NEXT:      Params: FieldList <124:10, 124:12>
+// CHECK-NEXT:    Body: BlockStmt <124:13, 132:2>
+// CHECK-NEXT:      Stmt: AssignStmt <125:2, 125:12> op=':='
+// CHECK-NEXT:        Lhs: Ident <125:2, 125:3> 'a'
+// CHECK-NEXT:        Rhs: CallExpr <125:7, 125:12> must
+// CHECK-NEXT:          Fun: Ident <125:7, 125:8> 'f'
+// CHECK-NEXT:          Args: Ident <125:10, 125:11> 'x'
+// CHECK-NEXT:      Stmt: AssignStmt <126:2, 126:21> op=':='
+// CHECK-NEXT:        Lhs: Ident <126:2, 126:3> 'b'
+// CHECK-NEXT:        Rhs: CallExpr <126:7, 126:21> must
+// CHECK-NEXT:          Fun: IndexExpr <126:7, 126:17>
+// CHECK-NEXT:            X: Ident <126:7, 126:12> 'parse'
+// CHECK-NEXT:            Index: Ident <126:13, 126:16> 'int'
+// CHECK-NEXT:          Args: Ident <126:19, 126:20> 's'
+// CHECK-NEXT:      Stmt: AssignStmt <127:2, 127:24> op=':='
+// CHECK-NEXT:        Lhs: Ident <127:2, 127:3> 'c'
+// CHECK-NEXT:        Rhs: CallExpr <127:7, 127:24> must
+// CHECK-NEXT:          Fun: SelectorExpr <127:7, 127:17>
+// CHECK-NEXT:            X: Ident <127:7, 127:10> 'obj'
+// CHECK-NEXT:            Sel: Ident <127:11, 127:17> 'method'
+// CHECK-NEXT:          Args: BasicLit <127:19, 127:20> int_lit 1
+// CHECK-NEXT:          Args: BasicLit <127:22, 127:23> int_lit 2
+// CHECK-NEXT:      Stmt: AssignStmt <128:2, 128:11> op=':='
+// CHECK-NEXT:        Lhs: Ident <128:2, 128:3> 'd'
+// CHECK-NEXT:        Rhs: CallExpr <128:7, 128:11> must
+// CHECK-NEXT:          Fun: Ident <128:7, 128:8> 'g'
+// CHECK-NEXT:      Stmt: AssignStmt <129:2, 129:13> op=':='
+// CHECK-NEXT:        Lhs: Ident <129:2, 129:3> 'e'
+// CHECK-NEXT:        Rhs: BinaryExpr <129:7, 129:13> op='!='
+// CHECK-NEXT:          X: Ident <129:7, 129:8> 'x'
+// CHECK-NEXT:          Y: Ident <129:12, 129:13> 'y'
+// CHECK-NEXT:      Stmt: ExprStmt <130:2, 130:7>
+// CHECK-NEXT:        X: CallExpr <130:2, 130:7> must
+// CHECK-NEXT:          Fun: Ident <130:2, 130:3> 'h'
+// CHECK-NEXT:          Args: BasicLit <130:5, 130:6> int_lit 1
+// CHECK-NEXT:      Stmt: AssignStmt <131:2, 131:16> op='='
+// CHECK-NEXT:        Lhs: Ident <131:2, 131:3> '_'
+// CHECK-NEXT:        Rhs: CallExpr <131:6, 131:16> must
+// CHECK-NEXT:          Fun: CallExpr <131:6, 131:12> must
+// CHECK-NEXT:            Fun: Ident <131:6, 131:8> 'fn'
+// CHECK-NEXT:            Args: Ident <131:10, 131:11> 'a'
+// CHECK-NEXT:          Args: Ident <131:14, 131:15> 'b'
+package p
+
+func f!(x int) T { return x }
+func g!() {}
+func (r T) h!(x int) U { return x }
+type F func!(int) T
+type G func!() (T, error)
+var v func!(int) T
+func main() {
+	a := f!(x)
+	b := parse[int]!(s)
+	c := obj.method!(1, 2)
+	d := g!()
+	e := x != y
+	h!(1)
+	_ = fn!(a)!(b)
+}

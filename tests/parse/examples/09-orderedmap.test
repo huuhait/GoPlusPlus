@@ -1,0 +1,5 @@
+// RUN: %gopp parse %examples/09-orderedmap/main.gopp
+
+// The spec example must parse without a single diagnostic (exit code 0).
+// RUN: %gopp parse -dump-ast %examples/09-orderedmap/main.gopp | FileCheck --check-prefix=AST %s
+// AST: File <1:1,{{.*}}>

@@ -1,0 +1,123 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <99:9, 99:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <101:1, 123:2>
+// CHECK-NEXT:    Name: Ident <101:6, 101:7> 'f'
+// CHECK-NEXT:    Type: FuncType <101:1, 101:9>
+// CHECK-NEXT:      Params: FieldList <101:7, 101:9>
+// CHECK-NEXT:    Body: BlockStmt <101:10, 123:2>
+// CHECK-NEXT:      Stmt: IfStmt <102:2, 103:3>
+// CHECK-NEXT:        Cond: BinaryExpr <102:5, 102:16> op='=='
+// CHECK-NEXT:          X: Ident <102:5, 102:6> 'x'
+// CHECK-NEXT:          Y: ParenExpr <102:10, 102:16>
+// CHECK-NEXT:            X: CompositeLit <102:11, 102:15>
+// CHECK-NEXT:              Type: Ident <102:11, 102:12> 'T'
+// CHECK-NEXT:              Elts: BasicLit <102:13, 102:14> int_lit 1
+// CHECK-NEXT:        Then: BlockStmt <102:17, 103:3>
+// CHECK-NEXT:      Stmt: IfStmt <104:2, 105:3>
+// CHECK-NEXT:        Init: AssignStmt <104:5, 104:15> op=':='
+// CHECK-NEXT:          Lhs: Ident <104:5, 104:6> 'v'
+// CHECK-NEXT:          Rhs: ParenExpr <104:10, 104:15>
+// CHECK-NEXT:            X: CompositeLit <104:11, 104:14>
+// CHECK-NEXT:              Type: Ident <104:11, 104:12> 'T'
+// CHECK-NEXT:        Cond: SelectorExpr <104:17, 104:21>
+// CHECK-NEXT:          X: Ident <104:17, 104:18> 'v'
+// CHECK-NEXT:          Sel: Ident <104:19, 104:21> 'ok'
+// CHECK-NEXT:        Then: BlockStmt <104:22, 105:3>
+// CHECK-NEXT:      Stmt: RangeStmt <106:2, 107:3> op=':='
+// CHECK-NEXT:        Key: Ident <106:6, 106:7> '_'
+// CHECK-NEXT:        Value: Ident <106:9, 106:10> 'e'
+// CHECK-NEXT:        X: CompositeLit <106:20, 106:31>
+// CHECK-NEXT:          Type: SliceType <106:20, 106:25>
+// CHECK-NEXT:            Elt: Ident <106:22, 106:25> 'int'
+// CHECK-NEXT:          Elts: BasicLit <106:26, 106:27> int_lit 1
+// CHECK-NEXT:          Elts: BasicLit <106:29, 106:30> int_lit 2
+// CHECK-NEXT:        Body: BlockStmt <106:32, 107:3>
+// CHECK-NEXT:      Stmt: RangeStmt <108:2, 109:3> op=':='
+// CHECK-NEXT:        Key: Ident <108:6, 108:7> '_'
+// CHECK-NEXT:        Value: Ident <108:9, 108:10> 'e'
+// CHECK-NEXT:        X: ParenExpr <108:20, 108:25>
+// CHECK-NEXT:          X: CompositeLit <108:21, 108:24>
+// CHECK-NEXT:            Type: Ident <108:21, 108:22> 'T'
+// CHECK-NEXT:        Body: BlockStmt <108:26, 109:3>
+// CHECK-NEXT:      Stmt: SwitchStmt <110:2, 111:3>
+// CHECK-NEXT:        Tag: ParenExpr <110:9, 110:14>
+// CHECK-NEXT:          X: CompositeLit <110:10, 110:13>
+// CHECK-NEXT:            Type: Ident <110:10, 110:11> 'T'
+// CHECK-NEXT:        Body: BlockStmt <110:15, 111:3>
+// CHECK-NEXT:      Stmt: IfStmt <112:2, 113:3>
+// CHECK-NEXT:        Init: AssignStmt <112:5, 112:18> op=':='
+// CHECK-NEXT:          Lhs: Ident <112:5, 112:6> 'x'
+// CHECK-NEXT:          Rhs: CompositeLit <112:10, 112:18>
+// CHECK-NEXT:            Type: SliceType <112:10, 112:15>
+// CHECK-NEXT:              Elt: Ident <112:12, 112:15> 'int'
+// CHECK-NEXT:            Elts: BasicLit <112:16, 112:17> int_lit 1
+// CHECK-NEXT:        Cond: BinaryExpr <112:20, 112:28> op='!='
+// CHECK-NEXT:          X: Ident <112:20, 112:21> 'x'
+// CHECK-NEXT:          Y: Ident <112:25, 112:28> 'nil'
+// CHECK-NEXT:        Then: BlockStmt <112:29, 113:3>
+// CHECK-NEXT:      Stmt: AssignStmt <114:2, 114:14> op=':='
+// CHECK-NEXT:        Lhs: Ident <114:2, 114:3> 'y'
+// CHECK-NEXT:        Rhs: CompositeLit <114:7, 114:14>
+// CHECK-NEXT:          Type: Ident <114:7, 114:8> 'T'
+// CHECK-NEXT:          Elts: KeyValueExpr <114:9, 114:13>
+// CHECK-NEXT:            Key: Ident <114:9, 114:10> 'a'
+// CHECK-NEXT:            Value: BasicLit <114:12, 114:13> int_lit 1
+// CHECK-NEXT:      Stmt: IfStmt <115:2, 116:3>
+// CHECK-NEXT:        Cond: CallExpr <115:5, 115:12>
+// CHECK-NEXT:          Fun: Ident <115:5, 115:6> 'f'
+// CHECK-NEXT:          Args: CompositeLit <115:7, 115:11>
+// CHECK-NEXT:            Type: Ident <115:7, 115:8> 'T'
+// CHECK-NEXT:            Elts: BasicLit <115:9, 115:10> int_lit 1
+// CHECK-NEXT:        Then: BlockStmt <115:13, 116:3>
+// CHECK-NEXT:      Stmt: IfStmt <117:2, 118:3>
+// CHECK-NEXT:        Cond: IndexExpr <117:5, 117:12>
+// CHECK-NEXT:          X: Ident <117:5, 117:6> 'a'
+// CHECK-NEXT:          Index: CompositeLit <117:7, 117:11>
+// CHECK-NEXT:            Type: Ident <117:7, 117:8> 'T'
+// CHECK-NEXT:            Elts: BasicLit <117:9, 117:10> int_lit 1
+// CHECK-NEXT:        Then: BlockStmt <117:13, 118:3>
+// CHECK-NEXT:      Stmt: IfStmt <119:2, 120:3>
+// CHECK-NEXT:        Init: AssignStmt <119:5, 119:32> op=':='
+// CHECK-NEXT:          Lhs: Ident <119:5, 119:6> 'm'
+// CHECK-NEXT:          Rhs: CompositeLit <119:10, 119:32>
+// CHECK-NEXT:            Type: MapType <119:10, 119:24>
+// CHECK-NEXT:              Key: Ident <119:14, 119:20> 'string'
+// CHECK-NEXT:              Value: Ident <119:21, 119:24> 'int'
+// CHECK-NEXT:            Elts: KeyValueExpr <119:25, 119:31>
+// CHECK-NEXT:              Key: BasicLit <119:25, 119:28> string_lit "a"
+// CHECK-NEXT:              Value: BasicLit <119:30, 119:31> int_lit 1
+// CHECK-NEXT:        Cond: BinaryExpr <119:34, 119:42> op='!='
+// CHECK-NEXT:          X: Ident <119:34, 119:35> 'm'
+// CHECK-NEXT:          Y: Ident <119:39, 119:42> 'nil'
+// CHECK-NEXT:        Then: BlockStmt <119:43, 120:3>
+// CHECK-NEXT:      Stmt: IfStmt <121:2, 122:3>
+// CHECK-NEXT:        Cond: Ident <121:5, 121:6> 'x'
+// CHECK-NEXT:        Then: BlockStmt <121:7, 122:3>
+package p
+
+func f() {
+	if x == (T{1}) {
+	}
+	if v := (T{}); v.ok {
+	}
+	for _, e := range []int{1, 2} {
+	}
+	for _, e := range (T{}) {
+	}
+	switch (T{}) {
+	}
+	if x := []int{1}; x != nil {
+	}
+	y := T{a: 1}
+	if f(T{1}) {
+	}
+	if a[T{1}] {
+	}
+	if m := map[string]int{"a": 1}; m != nil {
+	}
+	if x {
+	}
+}

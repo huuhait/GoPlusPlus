@@ -1,0 +1,26 @@
+// RUN: not %gopp parse -dump-tokens -error-limit=0 %s > %t.out 2> %t.err
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=TOK --input-file=%t.out %s
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=ERR --input-file=%t.err %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// TOK:25:1 kw_package 'package'
+// TOK-NEXT:25:9 ident 'p'
+// TOK-NEXT:25:10 semi '\n'
+// TOK-NEXT:26:1 kw_var 'var'
+// TOK-NEXT:26:5 ident 's'
+// TOK-NEXT:26:7 assign '='
+// TOK-NEXT:26:9 illegal '“'
+// TOK-NEXT:26:12 ident 'hi'
+// TOK-NEXT:26:14 illegal '”'
+// TOK-NEXT:26:17 semi '\n'
+// TOK-NEXT:27:1 eof
+// ERR:{{.*}}curly-quotes.test:26:9: error: curly quotation mark '“' (use neutral '"')
+// ERR-NEXT:   26 | var s = “hi”
+// ERR-NEXT:      |         ^
+// ERR-NEXT:      |         "
+// ERR-NEXT:{{.*}}curly-quotes.test:26:14: error: curly quotation mark '”' (use neutral '"')
+// ERR-NEXT:   26 | var s = “hi”
+// ERR-NEXT:      |            ^
+// ERR-NEXT:      |            "
+package p
+var s = “hi”

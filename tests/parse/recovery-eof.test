@@ -1,0 +1,11 @@
+// RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:{{.*}}recovery-eof.test:12:1: error: expected '}', found 'EOF'
+// CHECK-NEXT:   12 |{{ *}}
+// CHECK-NEXT:      | ^
+package p
+
+func f() {
+	if x {
+		for {

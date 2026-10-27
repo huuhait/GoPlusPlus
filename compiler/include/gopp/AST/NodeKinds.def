@@ -1,0 +1,101 @@
+//===- NodeKinds.def - AST node kinds ---------------------------*- C++ -*-===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// EXPR(X)  expression or type node      STMT(X)  statement
+// DECL(X)  top-level declaration        SPEC(X)  import/value/type spec
+// MISC(X)  everything else
+// Each group is contiguous, so classof() is a range check.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef EXPR
+#define EXPR(X)
+#endif
+#ifndef STMT
+#define STMT(X)
+#endif
+#ifndef DECL
+#define DECL(X)
+#endif
+#ifndef SPEC
+#define SPEC(X)
+#endif
+#ifndef MISC
+#define MISC(X)
+#endif
+
+EXPR(BadExpr)
+EXPR(Ident)
+EXPR(BasicLit)
+EXPR(CompositeLit)
+EXPR(KeyValueExpr)
+EXPR(FuncLit)
+EXPR(ParenExpr)
+EXPR(SelectorExpr)
+EXPR(IndexExpr)
+EXPR(SliceExpr)
+EXPR(TypeAssertExpr)
+EXPR(CallExpr)
+EXPR(StarExpr)
+EXPR(UnaryExpr)
+EXPR(BinaryExpr)
+EXPR(MacroInvocation)
+EXPR(Ellipsis)
+EXPR(ArrayType)
+EXPR(SliceType)
+EXPR(StructType)
+EXPR(FuncType)
+EXPR(InterfaceType)
+EXPR(MapType)
+EXPR(ChanType)
+EXPR(RefType)
+
+STMT(BadStmt)
+STMT(DeclStmt)
+STMT(EmptyStmt)
+STMT(LabeledStmt)
+STMT(ExprStmt)
+STMT(SendStmt)
+STMT(IncDecStmt)
+STMT(AssignStmt)
+STMT(GoStmt)
+STMT(DeferStmt)
+STMT(ReturnStmt)
+STMT(BranchStmt)
+STMT(BlockStmt)
+STMT(IfStmt)
+STMT(CaseClause)
+STMT(SwitchStmt)
+STMT(TypeSwitchStmt)
+STMT(CommClause)
+STMT(SelectStmt)
+STMT(ForStmt)
+STMT(RangeStmt)
+
+DECL(BadDecl)
+DECL(GenDecl)
+DECL(FuncDecl)
+DECL(MacroDecl)
+DECL(ProcMacroDecl)
+DECL(MacroCallDecl)
+
+SPEC(ImportSpec)
+SPEC(ValueSpec)
+SPEC(TypeSpec)
+
+MISC(File)
+MISC(Field)
+MISC(FieldList)
+MISC(Attribute)
+MISC(MacroParam)
+
+#undef EXPR
+#undef STMT
+#undef DECL
+#undef SPEC
+#undef MISC

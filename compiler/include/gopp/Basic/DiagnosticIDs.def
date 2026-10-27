@@ -1,0 +1,138 @@
+//===- gopp/Basic/DiagnosticIDs.def - Diagnostic table ----------*- C++ -*-===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// Every diagnostic the compiler reports (D2.5), in the style of Clang's
+// Diagnostic*Kinds.td: DIAG(Name, Severity, Text).
+//   - Name is stable: JSON output and tests refer to it. Prefixes: err_, warn_,
+//     note_.
+//   - Text may use %0..%9 for the arguments given with `<<` and %% for a
+//     percent sign.
+// The lexer and parser messages are go/scanner's and go/parser's, so that Go
+// programmers see the errors they know (Copyright 2009 The Go Authors;
+// BSD-style license, see NOTICE). Tailored messages are P02.07.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef DIAG
+#define DIAG(Name, Sev, Text)
+#endif
+
+// A message given as a string (tests and tools); compiler code adds an entry.
+DIAG(custom, Error, "%0")
+
+//===----------------------------------------------------------------------===//
+// Engine
+//===----------------------------------------------------------------------===//
+
+DIAG(err_too_many_errors, Error, "too many errors")
+
+//===----------------------------------------------------------------------===//
+// Lexer (go/scanner)
+//===----------------------------------------------------------------------===//
+
+DIAG(err_lex_illegal_nul, Error, "illegal character NUL")
+DIAG(err_lex_utf16, Error, "illegal UTF-8 encoding (got UTF-16)")
+DIAG(err_lex_illegal_utf8, Error, "illegal UTF-8 encoding")
+DIAG(err_lex_illegal_bom, Error, "illegal byte order mark")
+DIAG(err_lex_illegal_char, Error, "illegal character %0")
+DIAG(err_lex_curly_quote, Error, "curly quotation mark '%0' (use neutral '\"')")
+DIAG(err_lex_comment_unterminated, Error, "comment not terminated")
+DIAG(err_lex_radix_point, Error, "invalid radix point in %0")
+DIAG(err_lex_no_digits, Error, "%0 has no digits")
+DIAG(err_lex_exponent_needs_decimal, Error,
+     "'%0' exponent requires decimal mantissa")
+DIAG(err_lex_exponent_needs_hex, Error,
+     "'%0' exponent requires hexadecimal mantissa")
+DIAG(err_lex_exponent_no_digits, Error, "exponent has no digits")
+DIAG(err_lex_hex_mantissa_needs_p, Error,
+     "hexadecimal mantissa requires a 'p' exponent")
+DIAG(err_lex_invalid_digit, Error, "invalid digit '%0' in %1")
+DIAG(err_lex_bad_separator, Error, "'_' must separate successive digits")
+DIAG(err_lex_escape_unterminated, Error, "escape sequence not terminated")
+DIAG(err_lex_escape_unknown, Error, "unknown escape sequence")
+DIAG(err_lex_escape_illegal_char, Error,
+     "illegal character %0 in escape sequence")
+DIAG(err_lex_escape_bad_code_point, Error,
+     "escape sequence is invalid Unicode code point")
+DIAG(err_lex_rune_unterminated, Error, "rune literal not terminated")
+DIAG(err_lex_rune_illegal, Error, "illegal rune literal")
+DIAG(err_lex_string_unterminated, Error, "string literal not terminated")
+DIAG(err_lex_raw_string_unterminated, Error,
+     "raw string literal not terminated")
+
+//===----------------------------------------------------------------------===//
+// Parser (go/parser, plus the Go++ grammar)
+//===----------------------------------------------------------------------===//
+
+// %0 is what was expected ("';'", "type", "1 expression", ...), %1 the token
+// that was found.
+DIAG(err_expected, Error, "expected %0")
+DIAG(err_expected_found, Error, "expected %0, found %1")
+DIAG(err_expected_found_complit, Error,
+     "expected %0, found %1 (missing parentheses around composite literal?)")
+// %0 is the list: "parameter list", "argument list", "composite literal", ...
+DIAG(err_missing_comma, Error, "missing ',' in %0")
+DIAG(err_missing_comma_newline, Error, "missing ',' before newline in %0")
+DIAG(err_nesting_too_deep, Error, "exceeded max nesting depth")
+DIAG(err_expression_too_deeply_nested, Error,
+     "expression too deeply nested (limit %0)")
+DIAG(err_unexpected_comma_rbrack, Error, "unexpected comma; expecting ]")
+DIAG(err_paren_embedded_type, Error, "cannot parenthesize embedded type")
+DIAG(err_paren_complit_type, Error,
+     "cannot parenthesize type in composite literal")
+DIAG(err_missing_type_constraint, Error, "missing type constraint")
+DIAG(err_missing_type_param_name, Error, "missing type parameter name")
+DIAG(err_missing_type_param_name_or_len, Error,
+     "missing type parameter name or invalid array length")
+DIAG(err_missing_param_type, Error, "missing parameter type")
+DIAG(err_missing_param_name, Error, "missing parameter name")
+DIAG(err_dots_not_final, Error, "can only use ... with final parameter")
+DIAG(err_dots_invalid, Error, "invalid use of ...")
+DIAG(err_empty_type_params, Error, "empty type parameter list")
+DIAG(err_func_type_type_params, Error,
+     "function type must have no type parameters")
+DIAG(err_method_type_params, Error, "method must have no type parameters")
+DIAG(err_interface_method_type_params, Error,
+     "interface method must have no type parameters")
+DIAG(err_slice3_middle_index, Error, "middle index required in 3-index slice")
+DIAG(err_slice3_final_index, Error, "final index required in 3-index slice")
+DIAG(err_illegal_label, Error, "illegal label declaration")
+// %0 is "go" or "defer".
+DIAG(err_call_parenthesized, Error,
+     "expression in %0 must not be parenthesized")
+DIAG(err_call_expected, Error, "expression in %0 must be function call")
+DIAG(err_missing_if_condition, Error, "missing condition in if statement")
+DIAG(err_var_in_if_init, Error, "var declaration not allowed in if initializer")
+DIAG(err_newline_after_if_clause, Error,
+     "unexpected newline, expecting { after if clause")
+DIAG(err_newline_before_lbrace, Error,
+     "unexpected semicolon or newline before {")
+DIAG(err_import_path_not_string, Error, "import path must be a string")
+DIAG(err_missing_import_path, Error, "missing import path")
+DIAG(err_import_after_decl, Error,
+     "imports must appear before other declarations")
+
+// Go++: range `&` (D1.21), macros and attributes (D1.14).
+DIAG(err_range_alias_assign, Error,
+     "'&' on a range variable is only allowed with ':='")
+DIAG(err_range_alias_key, Error,
+     "'&' is not allowed on the key variable of a range loop")
+DIAG(err_macro_args_unterminated, Error,
+     "unterminated macro arguments: expected ')'")
+DIAG(err_macro_args_mismatched, Error, "mismatched '%0' in macro arguments")
+DIAG(err_macro_args_mismatched_expected, Error,
+     "mismatched '%0' in macro arguments, expected '%1'")
+DIAG(note_to_match_this, Note, "to match this '%0'")
+DIAG(err_macro_name_lowercase, Error,
+     "macro name '%0' must start with an upper-case letter")
+DIAG(err_unknown_macro_kind, Error, "unknown macro parameter kind '%0'")
+DIAG(err_attr_on_stmt, Error, "attributes are not allowed on statements")
+DIAG(err_attr_on_import, Error,
+     "attributes are not allowed on import declarations")
+
+#undef DIAG

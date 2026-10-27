@@ -1,0 +1,31 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:27:1 kw_package 'package'
+// CHECK-NEXT:27:9 ident 'p'
+// CHECK-NEXT:27:10 semi '\n'
+// CHECK-NEXT:28:1 string_lit '""'
+// CHECK-NEXT:28:4 string_lit '"abc"'
+// CHECK-NEXT:28:10 string_lit '"a\\"b"'
+// CHECK-NEXT:28:17 string_lit '"\\n\\t\\\\"'
+// CHECK-NEXT:28:26 string_lit '"\\u00e9\\U0001F600\\x41\\101"'
+// CHECK-NEXT:28:53 string_lit '"日本"'
+// CHECK-NEXT:28:61 semi '\n'
+// CHECK-NEXT:29:1 string_lit '``'
+// CHECK-NEXT:29:4 string_lit '`raw`'
+// CHECK-NEXT:29:10 string_lit '`multi\nline`'
+// CHECK-NEXT:30:7 string_lit '`back\\slash`'
+// CHECK-NEXT:30:19 semi '\n'
+// CHECK-NEXT:31:1 char_lit ''a''
+// CHECK-NEXT:31:5 char_lit ''\\n''
+// CHECK-NEXT:31:10 char_lit ''\\'''
+// CHECK-NEXT:31:15 char_lit ''\\x41''
+// CHECK-NEXT:31:22 char_lit ''\\u1234''
+// CHECK-NEXT:31:31 char_lit ''日''
+// CHECK-NEXT:31:36 semi '\n'
+// CHECK-NEXT:32:1 eof
+package p
+"" "abc" "a\"b" "\n\t\\" "\u00e9\U0001F600\x41\101" "日本"
+`` `raw` `multi
+line` `back\slash`
+'a' '\n' '\'' '\x41' '\u1234' '日'

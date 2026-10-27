@@ -1,0 +1,8 @@
+package p
+// line comment
+/* block */ x /* between */ y
+/* multi
+   line */
+z // trailing
+//go:build ignore
+/**/ /***/ /* * / */

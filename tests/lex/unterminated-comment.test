@@ -1,0 +1,20 @@
+// RUN: not %gopp parse -dump-tokens -error-limit=0 %s > %t.out 2> %t.err
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=TOK --input-file=%t.out %s
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=ERR --input-file=%t.err %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// TOK:17:1 kw_package 'package'
+// TOK-NEXT:17:9 ident 'p'
+// TOK-NEXT:17:10 semi '\n'
+// TOK-NEXT:18:1 ident 'x'
+// TOK-NEXT:18:3 define ':='
+// TOK-NEXT:18:6 int_lit '1'
+// TOK-NEXT:18:7 semi '\n'
+// TOK-NEXT:21:1 eof
+// ERR:{{.*}}unterminated-comment.test:19:1: error: comment not terminated
+// ERR-NEXT:   19 | /* never closed
+// ERR-NEXT:      | ^
+package p
+x := 1
+/* never closed
+still comment

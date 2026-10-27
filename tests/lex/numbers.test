@@ -1,0 +1,37 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:34:1 kw_package 'package'
+// CHECK-NEXT:34:9 ident 'p'
+// CHECK-NEXT:34:10 semi '\n'
+// CHECK-NEXT:35:1 int_lit '0'
+// CHECK-NEXT:35:3 int_lit '1'
+// CHECK-NEXT:35:5 int_lit '123'
+// CHECK-NEXT:35:9 int_lit '0x0'
+// CHECK-NEXT:35:13 int_lit '0xDeadBeef'
+// CHECK-NEXT:35:24 int_lit '0b1010'
+// CHECK-NEXT:35:31 int_lit '0o777'
+// CHECK-NEXT:35:37 int_lit '0777'
+// CHECK-NEXT:35:42 int_lit '1_000'
+// CHECK-NEXT:35:48 int_lit '0x_1F'
+// CHECK-NEXT:35:53 semi '\n'
+// CHECK-NEXT:36:1 float_lit '1.5'
+// CHECK-NEXT:36:5 float_lit '.5'
+// CHECK-NEXT:36:8 float_lit '1.'
+// CHECK-NEXT:36:11 float_lit '1e10'
+// CHECK-NEXT:36:16 float_lit '1E-3'
+// CHECK-NEXT:36:21 float_lit '1.5e+10'
+// CHECK-NEXT:36:29 float_lit '0x1p3'
+// CHECK-NEXT:36:35 float_lit '0x1.8p-2'
+// CHECK-NEXT:36:44 float_lit '1_0.2_5'
+// CHECK-NEXT:36:51 semi '\n'
+// CHECK-NEXT:37:1 imag_lit '1i'
+// CHECK-NEXT:37:4 imag_lit '2.5i'
+// CHECK-NEXT:37:9 imag_lit '0x1p2i'
+// CHECK-NEXT:37:16 imag_lit '07i'
+// CHECK-NEXT:37:19 semi '\n'
+// CHECK-NEXT:38:1 eof
+package p
+0 1 123 0x0 0xDeadBeef 0b1010 0o777 0777 1_000 0x_1F
+1.5 .5 1. 1e10 1E-3 1.5e+10 0x1p3 0x1.8p-2 1_0.2_5
+1i 2.5i 0x1p2i 07i

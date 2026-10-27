@@ -1,0 +1,151 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <127:9, 127:10> 'p'
+// CHECK-NEXT:  Decl: GenDecl <129:1, 136:2> type
+// CHECK-NEXT:    Spec: TypeSpec <129:6, 136:2>
+// CHECK-NEXT:      Name: Ident <129:6, 129:7> 'S'
+// CHECK-NEXT:      Type: StructType <129:8, 136:2>
+// CHECK-NEXT:        Fields: FieldList <129:15, 136:2>
+// CHECK-NEXT:          Field: Field <130:2, 130:10>
+// CHECK-NEXT:            Names: Ident <130:2, 130:3> 'a'
+// CHECK-NEXT:            Names: Ident <130:5, 130:6> 'b'
+// CHECK-NEXT:            Type: Ident <130:7, 130:10> 'int'
+// CHECK-NEXT:          Field: Field <131:2, 131:20>
+// CHECK-NEXT:            Names: Ident <131:2, 131:3> 'c'
+// CHECK-NEXT:            Type: StarExpr <131:7, 131:9>
+// CHECK-NEXT:              X: Ident <131:8, 131:9> 'S'
+// CHECK-NEXT:            Tag: BasicLit <131:10, 131:20> string_lit `json:"c"`
+// CHECK-NEXT:          Field: Field <132:2, 132:3>
+// CHECK-NEXT:            Type: Ident <132:2, 132:3> 'T'
+// CHECK-NEXT:          Field: Field <133:2, 133:4>
+// CHECK-NEXT:            Type: StarExpr <133:2, 133:4>
+// CHECK-NEXT:              X: Ident <133:3, 133:4> 'U'
+// CHECK-NEXT:          Field: Field <134:2, 134:7>
+// CHECK-NEXT:            Type: SelectorExpr <134:2, 134:7>
+// CHECK-NEXT:              X: Ident <134:2, 134:5> 'pkg'
+// CHECK-NEXT:              Sel: Ident <134:6, 134:7> 'V'
+// CHECK-NEXT:          Field: Field <135:2, 135:8>
+// CHECK-NEXT:            Type: IndexExpr <135:2, 135:8>
+// CHECK-NEXT:              X: Ident <135:2, 135:3> 'G'
+// CHECK-NEXT:              Index: Ident <135:4, 135:7> 'int'
+// CHECK-NEXT:  Decl: GenDecl <137:1, 142:2> type
+// CHECK-NEXT:    Spec: TypeSpec <137:6, 142:2>
+// CHECK-NEXT:      Name: Ident <137:6, 137:7> 'I'
+// CHECK-NEXT:      Type: InterfaceType <137:8, 142:2>
+// CHECK-NEXT:        Methods: FieldList <137:18, 142:2>
+// CHECK-NEXT:          Field: Field <138:2, 138:17>
+// CHECK-NEXT:            Names: Ident <138:2, 138:3> 'M'
+// CHECK-NEXT:            Type: FuncType <138:3, 138:17>
+// CHECK-NEXT:              Params: FieldList <138:3, 138:10>
+// CHECK-NEXT:                Field: Field <138:4, 138:9>
+// CHECK-NEXT:                  Names: Ident <138:4, 138:5> 'x'
+// CHECK-NEXT:                  Type: Ident <138:6, 138:9> 'int'
+// CHECK-NEXT:              Results: FieldList <138:11, 138:17>
+// CHECK-NEXT:                Field: Field <138:11, 138:17>
+// CHECK-NEXT:                  Type: Ident <138:11, 138:17> 'string'
+// CHECK-NEXT:          Field: Field <139:2, 139:5>
+// CHECK-NEXT:            Names: Ident <139:2, 139:3> 'N'
+// CHECK-NEXT:            Type: FuncType <139:3, 139:5>
+// CHECK-NEXT:              Params: FieldList <139:3, 139:5>
+// CHECK-NEXT:          Field: Field <140:2, 140:14>
+// CHECK-NEXT:            Type: SelectorExpr <140:2, 140:14>
+// CHECK-NEXT:              X: Ident <140:2, 140:5> 'fmt'
+// CHECK-NEXT:              Sel: Ident <140:6, 140:14> 'Stringer'
+// CHECK-NEXT:          Field: Field <141:2, 141:16>
+// CHECK-NEXT:            Type: BinaryExpr <141:2, 141:16> op='|'
+// CHECK-NEXT:              X: UnaryExpr <141:2, 141:6> op='~'
+// CHECK-NEXT:                X: Ident <141:3, 141:6> 'int'
+// CHECK-NEXT:              Y: UnaryExpr <141:9, 141:16> op='~'
+// CHECK-NEXT:                X: Ident <141:10, 141:16> 'string'
+// CHECK-NEXT:  Decl: GenDecl <143:1, 143:25> type
+// CHECK-NEXT:    Spec: TypeSpec <143:6, 143:25>
+// CHECK-NEXT:      Name: Ident <143:6, 143:7> 'M'
+// CHECK-NEXT:      Type: MapType <143:8, 143:25>
+// CHECK-NEXT:        Key: Ident <143:12, 143:18> 'string'
+// CHECK-NEXT:        Value: SliceType <143:19, 143:25>
+// CHECK-NEXT:          Elt: StarExpr <143:21, 143:25>
+// CHECK-NEXT:            X: Ident <143:22, 143:25> 'int'
+// CHECK-NEXT:  Decl: GenDecl <144:1, 144:17> type
+// CHECK-NEXT:    Spec: TypeSpec <144:6, 144:17>
+// CHECK-NEXT:      Name: Ident <144:6, 144:8> 'C1'
+// CHECK-NEXT:      Type: ChanType <144:9, 144:17> both
+// CHECK-NEXT:        Value: Ident <144:14, 144:17> 'int'
+// CHECK-NEXT:  Decl: GenDecl <145:1, 145:19> type
+// CHECK-NEXT:    Spec: TypeSpec <145:6, 145:19>
+// CHECK-NEXT:      Name: Ident <145:6, 145:8> 'C2'
+// CHECK-NEXT:      Type: ChanType <145:9, 145:19> send
+// CHECK-NEXT:        Value: Ident <145:16, 145:19> 'int'
+// CHECK-NEXT:  Decl: GenDecl <146:1, 146:19> type
+// CHECK-NEXT:    Spec: TypeSpec <146:6, 146:19>
+// CHECK-NEXT:      Name: Ident <146:6, 146:8> 'C3'
+// CHECK-NEXT:      Type: ChanType <146:9, 146:19> recv
+// CHECK-NEXT:        Value: Ident <146:16, 146:19> 'int'
+// CHECK-NEXT:  Decl: GenDecl <147:1, 147:26> type
+// CHECK-NEXT:    Spec: TypeSpec <147:6, 147:26>
+// CHECK-NEXT:      Name: Ident <147:6, 147:8> 'C4'
+// CHECK-NEXT:      Type: ChanType <147:9, 147:26> both
+// CHECK-NEXT:        Value: ParenExpr <147:14, 147:26>
+// CHECK-NEXT:          X: ChanType <147:15, 147:25> recv
+// CHECK-NEXT:            Value: Ident <147:22, 147:25> 'int'
+// CHECK-NEXT:  Decl: GenDecl <148:1, 148:16> type
+// CHECK-NEXT:    Spec: TypeSpec <148:6, 148:16>
+// CHECK-NEXT:      Name: Ident <148:6, 148:9> 'Arr'
+// CHECK-NEXT:      Type: ArrayType <148:10, 148:16>
+// CHECK-NEXT:        Len: BasicLit <148:11, 148:12> int_lit 4
+// CHECK-NEXT:        Elt: Ident <148:13, 148:16> 'int'
+// CHECK-NEXT:  Decl: GenDecl <149:1, 149:22> type
+// CHECK-NEXT:    Spec: TypeSpec <149:6, 149:22>
+// CHECK-NEXT:      Name: Ident <149:6, 149:10> 'Arr2'
+// CHECK-NEXT:      Type: ArrayType <149:11, 149:22>
+// CHECK-NEXT:        Len: Ellipsis <149:12, 149:15>
+// CHECK-NEXT:        Elt: Ident <149:16, 149:22> 'string'
+// CHECK-NEXT:  Decl: GenDecl <150:1, 150:39> type
+// CHECK-NEXT:    Spec: TypeSpec <150:6, 150:39>
+// CHECK-NEXT:      Name: Ident <150:6, 150:7> 'F'
+// CHECK-NEXT:      Type: FuncType <150:8, 150:39>
+// CHECK-NEXT:        Params: FieldList <150:12, 150:25>
+// CHECK-NEXT:          Field: Field <150:13, 150:16>
+// CHECK-NEXT:            Type: Ident <150:13, 150:16> 'int'
+// CHECK-NEXT:          Field: Field <150:18, 150:24>
+// CHECK-NEXT:            Type: Ident <150:18, 150:24> 'string'
+// CHECK-NEXT:        Results: FieldList <150:26, 150:39>
+// CHECK-NEXT:          Field: Field <150:27, 150:31>
+// CHECK-NEXT:            Type: Ident <150:27, 150:31> 'bool'
+// CHECK-NEXT:          Field: Field <150:33, 150:38>
+// CHECK-NEXT:            Type: Ident <150:33, 150:38> 'error'
+// CHECK-NEXT:  Decl: GenDecl <151:1, 151:25> type
+// CHECK-NEXT:    Spec: TypeSpec <151:6, 151:25>
+// CHECK-NEXT:      Name: Ident <151:6, 151:8> 'Pt'
+// CHECK-NEXT:      Type: StarExpr <151:9, 151:25>
+// CHECK-NEXT:        X: StructType <151:10, 151:25>
+// CHECK-NEXT:          Fields: FieldList <151:16, 151:25>
+// CHECK-NEXT:            Field: Field <151:18, 151:23>
+// CHECK-NEXT:              Names: Ident <151:18, 151:19> 'x'
+// CHECK-NEXT:              Type: Ident <151:20, 151:23> 'int'
+package p
+
+type S struct {
+	a, b int
+	c    *S `json:"c"`
+	T
+	*U
+	pkg.V
+	G[int]
+}
+type I interface {
+	M(x int) string
+	N()
+	fmt.Stringer
+	~int | ~string
+}
+type M map[string][]*int
+type C1 chan int
+type C2 chan<- int
+type C3 <-chan int
+type C4 chan (<-chan int)
+type Arr [4]int
+type Arr2 [...]string
+type F func(int, string) (bool, error)
+type Pt *struct{ x int }

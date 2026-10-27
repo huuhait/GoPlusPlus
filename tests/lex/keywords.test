@@ -1,0 +1,37 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:34:1 kw_package 'package'
+// CHECK-NEXT:34:9 ident 'p'
+// CHECK-NEXT:34:10 semi '\n'
+// CHECK-NEXT:35:1 kw_break 'break'
+// CHECK-NEXT:35:7 kw_case 'case'
+// CHECK-NEXT:35:12 kw_chan 'chan'
+// CHECK-NEXT:35:17 kw_const 'const'
+// CHECK-NEXT:35:23 kw_continue 'continue'
+// CHECK-NEXT:35:32 kw_default 'default'
+// CHECK-NEXT:35:40 kw_defer 'defer'
+// CHECK-NEXT:35:46 kw_else 'else'
+// CHECK-NEXT:35:51 kw_fallthrough 'fallthrough'
+// CHECK-NEXT:35:63 kw_for 'for'
+// CHECK-NEXT:35:67 kw_func 'func'
+// CHECK-NEXT:35:72 kw_go 'go'
+// CHECK-NEXT:35:75 kw_goto 'goto'
+// CHECK-NEXT:36:1 kw_if 'if'
+// CHECK-NEXT:36:4 kw_import 'import'
+// CHECK-NEXT:36:11 kw_interface 'interface'
+// CHECK-NEXT:36:21 kw_map 'map'
+// CHECK-NEXT:36:25 kw_package 'package'
+// CHECK-NEXT:36:33 kw_range 'range'
+// CHECK-NEXT:36:39 kw_return 'return'
+// CHECK-NEXT:36:46 kw_select 'select'
+// CHECK-NEXT:36:53 kw_struct 'struct'
+// CHECK-NEXT:36:60 kw_switch 'switch'
+// CHECK-NEXT:36:67 kw_type 'type'
+// CHECK-NEXT:36:72 kw_var 'var'
+// CHECK-NEXT:37:1 kw_macro 'macro'
+// CHECK-NEXT:38:1 eof
+package p
+break case chan const continue default defer else fallthrough for func go goto
+if import interface map package range return select struct switch type var
+macro

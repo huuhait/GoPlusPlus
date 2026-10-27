@@ -1,0 +1,42 @@
+// RUN: not %gopp parse -dump-tokens -error-limit=0 %s > %t.out 2> %t.err
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=TOK --input-file=%t.out %s
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=ERR --input-file=%t.err %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// TOK:38:1 kw_package 'package'
+// TOK-NEXT:38:9 ident 'p'
+// TOK-NEXT:38:10 semi '\n'
+// TOK-NEXT:39:1 ident 'x'
+// TOK-NEXT:39:3 illegal '$'
+// TOK-NEXT:39:5 ident 'y'
+// TOK-NEXT:39:6 semi '\n'
+// TOK-NEXT:40:1 ident 'a'
+// TOK-NEXT:40:3 illegal '?'
+// TOK-NEXT:40:5 ident 'b'
+// TOK-NEXT:40:6 semi '\n'
+// TOK-NEXT:41:1 ident 'c'
+// TOK-NEXT:41:3 illegal '\\'
+// TOK-NEXT:41:5 ident 'd'
+// TOK-NEXT:41:6 semi '\n'
+// TOK-NEXT:42:1 ident 'e'
+// TOK-NEXT:42:3 string_lit '` + "`'
+// TOK-NEXT:42:9 string_lit '" + ` unterminated'
+// TOK-NEXT:42:27 semi '\n'
+// TOK-NEXT:43:1 eof
+// ERR:{{.*}}illegal.test:39:3: error: illegal character U+0024 '$'
+// ERR-NEXT:   39 | x $ y
+// ERR-NEXT:      |   ^
+// ERR-NEXT:{{.*}}illegal.test:40:3: error: illegal character U+003F '?'
+// ERR-NEXT:   40 | a ? b
+// ERR-NEXT:      |   ^
+// ERR-NEXT:{{.*}}illegal.test:41:3: error: illegal character U+005C '\'
+// ERR-NEXT:   41 | c \ d
+// ERR-NEXT:      |   ^
+// ERR-NEXT:{{.*}}illegal.test:42:9: error: string literal not terminated
+// ERR-NEXT:   42 | e ` + "`" + ` unterminated
+// ERR-NEXT:      |         ^
+package p
+x $ y
+a ? b
+c \ d
+e ` + "`" + ` unterminated

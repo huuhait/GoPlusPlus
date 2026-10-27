@@ -1,0 +1,259 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <232:9, 232:10> 'p'
+// CHECK-NEXT:  Decl: GenDecl <234:1, 259:2> var grouped
+// CHECK-NEXT:    Spec: ValueSpec <235:2, 235:21>
+// CHECK-NEXT:      Name: Ident <235:2, 235:3> 'a'
+// CHECK-NEXT:      Value: BinaryExpr <235:6, 235:21> op='-'
+// CHECK-NEXT:        X: BinaryExpr <235:6, 235:13> op='+'
+// CHECK-NEXT:          X: BasicLit <235:6, 235:7> int_lit 1
+// CHECK-NEXT:          Y: BinaryExpr <235:10, 235:13> op='*'
+// CHECK-NEXT:            X: BasicLit <235:10, 235:11> int_lit 2
+// CHECK-NEXT:            Y: BasicLit <235:12, 235:13> int_lit 3
+// CHECK-NEXT:        Y: BinaryExpr <235:16, 235:21> op='%'
+// CHECK-NEXT:          X: BinaryExpr <235:16, 235:19> op='/'
+// CHECK-NEXT:            X: BasicLit <235:16, 235:17> int_lit 4
+// CHECK-NEXT:            Y: BasicLit <235:18, 235:19> int_lit 5
+// CHECK-NEXT:          Y: BasicLit <235:20, 235:21> int_lit 6
+// CHECK-NEXT:    Spec: ValueSpec <236:2, 236:21>
+// CHECK-NEXT:      Name: Ident <236:2, 236:3> 'b'
+// CHECK-NEXT:      Value: BinaryExpr <236:6, 236:21> op='^'
+// CHECK-NEXT:        X: BinaryExpr <236:6, 236:17> op='|'
+// CHECK-NEXT:          X: BinaryExpr <236:6, 236:10> op='<<'
+// CHECK-NEXT:            X: Ident <236:6, 236:7> 'x'
+// CHECK-NEXT:            Y: BasicLit <236:9, 236:10> int_lit 1
+// CHECK-NEXT:          Y: BinaryExpr <236:13, 236:17> op='&^'
+// CHECK-NEXT:            X: Ident <236:13, 236:14> 'y'
+// CHECK-NEXT:            Y: Ident <236:16, 236:17> 'z'
+// CHECK-NEXT:        Y: Ident <236:20, 236:21> 'w'
+// CHECK-NEXT:    Spec: ValueSpec <237:2, 237:18>
+// CHECK-NEXT:      Name: Ident <237:2, 237:3> 'c'
+// CHECK-NEXT:      Value: BinaryExpr <237:6, 237:18> op='||'
+// CHECK-NEXT:        X: BinaryExpr <237:6, 237:12> op='&&'
+// CHECK-NEXT:          X: Ident <237:6, 237:7> 'a'
+// CHECK-NEXT:          Y: Ident <237:11, 237:12> 'b'
+// CHECK-NEXT:        Y: UnaryExpr <237:16, 237:18> op='!'
+// CHECK-NEXT:          X: Ident <237:17, 237:18> 'c'
+// CHECK-NEXT:    Spec: ValueSpec <238:2, 238:41>
+// CHECK-NEXT:      Name: Ident <238:2, 238:3> 'd'
+// CHECK-NEXT:      Value: BinaryExpr <238:6, 238:41> op='||'
+// CHECK-NEXT:        X: BinaryExpr <238:6, 238:22> op='&&'
+// CHECK-NEXT:          X: BinaryExpr <238:6, 238:12> op='=='
+// CHECK-NEXT:            X: Ident <238:6, 238:7> 'a'
+// CHECK-NEXT:            Y: Ident <238:11, 238:12> 'b'
+// CHECK-NEXT:          Y: BinaryExpr <238:16, 238:22> op='!='
+// CHECK-NEXT:            X: Ident <238:16, 238:17> 'c'
+// CHECK-NEXT:            Y: Ident <238:21, 238:22> 'd'
+// CHECK-NEXT:        Y: BinaryExpr <238:26, 238:41> op='&&'
+// CHECK-NEXT:          X: BinaryExpr <238:26, 238:31> op='<'
+// CHECK-NEXT:            X: Ident <238:26, 238:27> 'e'
+// CHECK-NEXT:            Y: Ident <238:30, 238:31> 'f'
+// CHECK-NEXT:          Y: BinaryExpr <238:35, 238:41> op='>='
+// CHECK-NEXT:            X: Ident <238:35, 238:36> 'g'
+// CHECK-NEXT:            Y: Ident <238:40, 238:41> 'h'
+// CHECK-NEXT:    Spec: ValueSpec <239:2, 239:18>
+// CHECK-NEXT:      Name: Ident <239:2, 239:3> 'e'
+// CHECK-NEXT:      Value: BinaryExpr <239:6, 239:18> op='-'
+// CHECK-NEXT:        X: BinaryExpr <239:6, 239:13> op='+'
+// CHECK-NEXT:          X: UnaryExpr <239:6, 239:8> op='-'
+// CHECK-NEXT:            X: Ident <239:7, 239:8> 'x'
+// CHECK-NEXT:          Y: UnaryExpr <239:11, 239:13> op='+'
+// CHECK-NEXT:            X: Ident <239:12, 239:13> 'y'
+// CHECK-NEXT:        Y: UnaryExpr <239:16, 239:18> op='^'
+// CHECK-NEXT:          X: Ident <239:17, 239:18> 'z'
+// CHECK-NEXT:    Spec: ValueSpec <240:2, 240:13>
+// CHECK-NEXT:      Name: Ident <240:2, 240:3> 'f'
+// CHECK-NEXT:      Value: BinaryExpr <240:6, 240:13> op='+'
+// CHECK-NEXT:        X: StarExpr <240:6, 240:8>
+// CHECK-NEXT:          X: Ident <240:7, 240:8> 'p'
+// CHECK-NEXT:        Y: UnaryExpr <240:11, 240:13> op='&'
+// CHECK-NEXT:          X: Ident <240:12, 240:13> 'q'
+// CHECK-NEXT:    Spec: ValueSpec <241:2, 241:10>
+// CHECK-NEXT:      Name: Ident <241:2, 241:3> 'g'
+// CHECK-NEXT:      Value: UnaryExpr <241:6, 241:10> op='<-'
+// CHECK-NEXT:        X: Ident <241:8, 241:10> 'ch'
+// CHECK-NEXT:    Spec: ValueSpec <242:2, 242:20>
+// CHECK-NEXT:      Name: Ident <242:2, 242:3> 'h'
+// CHECK-NEXT:      Value: CallExpr <242:6, 242:20> ellipsis
+// CHECK-NEXT:        Fun: Ident <242:6, 242:7> 'f'
+// CHECK-NEXT:        Args: BasicLit <242:8, 242:9> int_lit 1
+// CHECK-NEXT:        Args: BasicLit <242:11, 242:12> int_lit 2
+// CHECK-NEXT:        Args: Ident <242:14, 242:16> 'xs'
+// CHECK-NEXT:    Spec: ValueSpec <243:2, 243:34>
+// CHECK-NEXT:      Name: Ident <243:2, 243:3> 'i'
+// CHECK-NEXT:      Value: SliceExpr <243:6, 243:34> slice3
+// CHECK-NEXT:        X: SliceExpr <243:6, 243:27>
+// CHECK-NEXT:          X: SliceExpr <243:6, 243:23>
+// CHECK-NEXT:            X: SliceExpr <243:6, 243:19>
+// CHECK-NEXT:              X: IndexExpr <243:6, 243:14>
+// CHECK-NEXT:                X: SelectorExpr <243:6, 243:11>
+// CHECK-NEXT:                  X: SelectorExpr <243:6, 243:9>
+// CHECK-NEXT:                    X: Ident <243:6, 243:7> 'a'
+// CHECK-NEXT:                    Sel: Ident <243:8, 243:9> 'b'
+// CHECK-NEXT:                  Sel: Ident <243:10, 243:11> 'c'
+// CHECK-NEXT:                Index: BasicLit <243:12, 243:13> int_lit 1
+// CHECK-NEXT:              Lo: BasicLit <243:15, 243:16> int_lit 2
+// CHECK-NEXT:              Hi: BasicLit <243:17, 243:18> int_lit 3
+// CHECK-NEXT:            Hi: BasicLit <243:21, 243:22> int_lit 4
+// CHECK-NEXT:          Lo: BasicLit <243:24, 243:25> int_lit 5
+// CHECK-NEXT:        Lo: BasicLit <243:28, 243:29> int_lit 1
+// CHECK-NEXT:        Hi: BasicLit <243:30, 243:31> int_lit 2
+// CHECK-NEXT:        Max: BasicLit <243:32, 243:33> int_lit 3
+// CHECK-NEXT:    Spec: ValueSpec <244:2, 244:11>
+// CHECK-NEXT:      Name: Ident <244:2, 244:3> 'j'
+// CHECK-NEXT:      Value: TypeAssertExpr <244:6, 244:11>
+// CHECK-NEXT:        X: Ident <244:6, 244:7> 'x'
+// CHECK-NEXT:        Type: Ident <244:9, 244:10> 'T'
+// CHECK-NEXT:    Spec: ValueSpec <245:2, 245:15>
+// CHECK-NEXT:      Name: Ident <245:2, 245:3> 'k'
+// CHECK-NEXT:      Value: TypeAssertExpr <245:6, 245:15>
+// CHECK-NEXT:        X: Ident <245:6, 245:7> 'x'
+// CHECK-NEXT:        Type: Ident <245:9, 245:14> 'type_'
+// CHECK-NEXT:    Spec: ValueSpec <246:2, 246:17>
+// CHECK-NEXT:      Name: Ident <246:2, 246:3> 'l'
+// CHECK-NEXT:      Value: BinaryExpr <246:6, 246:17> op='*'
+// CHECK-NEXT:        X: ParenExpr <246:6, 246:13>
+// CHECK-NEXT:          X: BinaryExpr <246:7, 246:12> op='+'
+// CHECK-NEXT:            X: Ident <246:7, 246:8> 'a'
+// CHECK-NEXT:            Y: Ident <246:11, 246:12> 'b'
+// CHECK-NEXT:        Y: Ident <246:16, 246:17> 'c'
+// CHECK-NEXT:    Spec: ValueSpec <247:2, 247:20>
+// CHECK-NEXT:      Name: Ident <247:2, 247:3> 'm'
+// CHECK-NEXT:      Value: CompositeLit <247:6, 247:20>
+// CHECK-NEXT:        Type: SliceType <247:6, 247:11>
+// CHECK-NEXT:          Elt: Ident <247:8, 247:11> 'int'
+// CHECK-NEXT:        Elts: BasicLit <247:12, 247:13> int_lit 1
+// CHECK-NEXT:        Elts: BasicLit <247:15, 247:16> int_lit 2
+// CHECK-NEXT:        Elts: BasicLit <247:18, 247:19> int_lit 3
+// CHECK-NEXT:    Spec: ValueSpec <248:2, 248:33>
+// CHECK-NEXT:      Name: Ident <248:2, 248:3> 'n'
+// CHECK-NEXT:      Value: CompositeLit <248:6, 248:33>
+// CHECK-NEXT:        Type: ArrayType <248:6, 248:17>
+// CHECK-NEXT:          Len: Ellipsis <248:7, 248:10>
+// CHECK-NEXT:          Elt: Ident <248:11, 248:17> 'string'
+// CHECK-NEXT:        Elts: KeyValueExpr <248:18, 248:24>
+// CHECK-NEXT:          Key: BasicLit <248:18, 248:19> int_lit 0
+// CHECK-NEXT:          Value: BasicLit <248:21, 248:24> string_lit "a"
+// CHECK-NEXT:        Elts: KeyValueExpr <248:26, 248:32>
+// CHECK-NEXT:          Key: BasicLit <248:26, 248:27> int_lit 2
+// CHECK-NEXT:          Value: BasicLit <248:29, 248:32> string_lit "c"
+// CHECK-NEXT:    Spec: ValueSpec <249:2, 249:42>
+// CHECK-NEXT:      Name: Ident <249:2, 249:3> 'o'
+// CHECK-NEXT:      Value: CompositeLit <249:6, 249:42>
+// CHECK-NEXT:        Type: MapType <249:6, 249:22>
+// CHECK-NEXT:          Key: Ident <249:10, 249:16> 'string'
+// CHECK-NEXT:          Value: SliceType <249:17, 249:22>
+// CHECK-NEXT:            Elt: Ident <249:19, 249:22> 'int'
+// CHECK-NEXT:        Elts: KeyValueExpr <249:23, 249:31>
+// CHECK-NEXT:          Key: BasicLit <249:23, 249:26> string_lit "a"
+// CHECK-NEXT:          Value: CompositeLit <249:28, 249:31>
+// CHECK-NEXT:            Elts: BasicLit <249:29, 249:30> int_lit 1
+// CHECK-NEXT:        Elts: KeyValueExpr <249:33, 249:41>
+// CHECK-NEXT:          Key: BasicLit <249:33, 249:36> string_lit "b"
+// CHECK-NEXT:          Value: Ident <249:38, 249:41> 'nil'
+// CHECK-NEXT:    Spec: ValueSpec <250:2, 250:24>
+// CHECK-NEXT:      Name: Ident <250:2, 250:3> 'p'
+// CHECK-NEXT:      Value: CompositeLit <250:6, 250:24>
+// CHECK-NEXT:        Type: StructType <250:6, 250:21>
+// CHECK-NEXT:          Fields: FieldList <250:12, 250:21>
+// CHECK-NEXT:            Field: Field <250:14, 250:19>
+// CHECK-NEXT:              Names: Ident <250:14, 250:15> 'a'
+// CHECK-NEXT:              Type: Ident <250:16, 250:19> 'int'
+// CHECK-NEXT:        Elts: BasicLit <250:22, 250:23> int_lit 1
+// CHECK-NEXT:    Spec: ValueSpec <251:2, 251:22>
+// CHECK-NEXT:      Name: Ident <251:2, 251:3> 'q'
+// CHECK-NEXT:      Value: UnaryExpr <251:6, 251:22> op='&'
+// CHECK-NEXT:        X: CompositeLit <251:7, 251:22>
+// CHECK-NEXT:          Type: Ident <251:7, 251:8> 'T'
+// CHECK-NEXT:          Elts: KeyValueExpr <251:9, 251:13>
+// CHECK-NEXT:            Key: Ident <251:9, 251:10> 'a'
+// CHECK-NEXT:            Value: BasicLit <251:12, 251:13> int_lit 1
+// CHECK-NEXT:          Elts: KeyValueExpr <251:15, 251:21>
+// CHECK-NEXT:            Key: Ident <251:15, 251:16> 'b'
+// CHECK-NEXT:            Value: CompositeLit <251:18, 251:21>
+// CHECK-NEXT:              Elts: BasicLit <251:19, 251:20> int_lit 2
+// CHECK-NEXT:    Spec: ValueSpec <252:2, 252:15>
+// CHECK-NEXT:      Name: Ident <252:2, 252:3> 'r'
+// CHECK-NEXT:      Value: FuncLit <252:6, 252:15>
+// CHECK-NEXT:        Type: FuncType <252:6, 252:12>
+// CHECK-NEXT:          Params: FieldList <252:10, 252:12>
+// CHECK-NEXT:        Body: BlockStmt <252:13, 252:15>
+// CHECK-NEXT:    Spec: ValueSpec <253:2, 253:12>
+// CHECK-NEXT:      Name: Ident <253:2, 253:3> 's'
+// CHECK-NEXT:      Value: CallExpr <253:6, 253:12>
+// CHECK-NEXT:        Fun: Ident <253:6, 253:9> 'int'
+// CHECK-NEXT:        Args: Ident <253:10, 253:11> 'x'
+// CHECK-NEXT:    Spec: ValueSpec <254:2, 254:19>
+// CHECK-NEXT:      Name: Ident <254:2, 254:3> 't'
+// CHECK-NEXT:      Value: CallExpr <254:6, 254:19>
+// CHECK-NEXT:        Fun: SliceType <254:6, 254:12>
+// CHECK-NEXT:          Elt: Ident <254:8, 254:12> 'byte'
+// CHECK-NEXT:        Args: BasicLit <254:13, 254:18> string_lit "abc"
+// CHECK-NEXT:    Spec: ValueSpec <255:2, 255:15>
+// CHECK-NEXT:      Name: Ident <255:2, 255:3> 'u'
+// CHECK-NEXT:      Value: CallExpr <255:6, 255:15>
+// CHECK-NEXT:        Fun: ParenExpr <255:6, 255:10>
+// CHECK-NEXT:          X: StarExpr <255:7, 255:9>
+// CHECK-NEXT:            X: Ident <255:8, 255:9> 'T'
+// CHECK-NEXT:        Args: Ident <255:11, 255:14> 'nil'
+// CHECK-NEXT:    Spec: ValueSpec <256:2, 256:16>
+// CHECK-NEXT:      Name: Ident <256:2, 256:3> 'v'
+// CHECK-NEXT:      Value: CallExpr <256:6, 256:16>
+// CHECK-NEXT:        Fun: Ident <256:6, 256:7> 'f'
+// CHECK-NEXT:        Args: CallExpr <256:8, 256:15>
+// CHECK-NEXT:          Fun: Ident <256:8, 256:9> 'g'
+// CHECK-NEXT:          Args: CallExpr <256:10, 256:14>
+// CHECK-NEXT:            Fun: Ident <256:10, 256:11> 'h'
+// CHECK-NEXT:            Args: BasicLit <256:12, 256:13> int_lit 1
+// CHECK-NEXT:    Spec: ValueSpec <257:2, 257:31>
+// CHECK-NEXT:      Name: Ident <257:2, 257:3> 'w'
+// CHECK-NEXT:      Value: CompositeLit <257:6, 257:31>
+// CHECK-NEXT:        Type: ArrayType <257:6, 257:15>
+// CHECK-NEXT:          Len: BasicLit <257:7, 257:8> int_lit 2
+// CHECK-NEXT:          Elt: ArrayType <257:9, 257:15>
+// CHECK-NEXT:            Len: BasicLit <257:10, 257:11> int_lit 2
+// CHECK-NEXT:            Elt: Ident <257:12, 257:15> 'int'
+// CHECK-NEXT:        Elts: CompositeLit <257:16, 257:22>
+// CHECK-NEXT:          Elts: BasicLit <257:17, 257:18> int_lit 1
+// CHECK-NEXT:          Elts: BasicLit <257:20, 257:21> int_lit 2
+// CHECK-NEXT:        Elts: CompositeLit <257:24, 257:30>
+// CHECK-NEXT:          Elts: BasicLit <257:25, 257:26> int_lit 3
+// CHECK-NEXT:          Elts: BasicLit <257:28, 257:29> int_lit 4
+// CHECK-NEXT:    Spec: ValueSpec <258:2, 258:21>
+// CHECK-NEXT:      Name: Ident <258:2, 258:3> 'z'
+// CHECK-NEXT:      Value: CompositeLit <258:6, 258:21>
+// CHECK-NEXT:        Type: IndexExpr <258:6, 258:19>
+// CHECK-NEXT:          X: SelectorExpr <258:6, 258:14>
+// CHECK-NEXT:            X: Ident <258:6, 258:9> 'pkg'
+// CHECK-NEXT:            Sel: Ident <258:10, 258:14> 'Type'
+// CHECK-NEXT:          Index: Ident <258:15, 258:18> 'int'
+package p
+
+var (
+	a = 1 + 2*3 - 4/5%6
+	b = x<<1 | y&^z ^ w
+	c = a && b || !c
+	d = a == b && c != d || e < f && g >= h
+	e = -x + +y - ^z
+	f = *p + &q
+	g = <-ch
+	h = f(1, 2, xs...)
+	i = a.b.c[1][2:3][:4][5:][1:2:3]
+	j = x.(T)
+	k = x.(type_) 
+	l = (a + b) * c
+	m = []int{1, 2, 3}
+	n = [...]string{0: "a", 2: "c"}
+	o = map[string][]int{"a": {1}, "b": nil}
+	p = struct{ a int }{1}
+	q = &T{a: 1, b: {2}}
+	r = func() {}
+	s = int(x)
+	t = []byte("abc")
+	u = (*T)(nil)
+	v = f(g(h(1)))
+	w = [2][2]int{{1, 2}, {3, 4}}
+	z = pkg.Type[int]{}
+)

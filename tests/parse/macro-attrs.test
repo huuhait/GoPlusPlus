@@ -1,0 +1,80 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <59:9, 59:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <61:1, 62:12>
+// CHECK-NEXT:    Attr: Attribute <61:1, 61:6> name=Test
+// CHECK-NEXT:      Name: Ident <61:2, 61:6> 'Test'
+// CHECK-NEXT:    Name: Ident <62:6, 62:7> 'a'
+// CHECK-NEXT:    Type: FuncType <62:1, 62:9>
+// CHECK-NEXT:      Params: FieldList <62:7, 62:9>
+// CHECK-NEXT:    Body: BlockStmt <62:10, 62:12>
+// CHECK-NEXT:  Decl: FuncDecl <64:1, 66:12>
+// CHECK-NEXT:    Attr: Attribute <64:1, 64:8> name=Inline
+// CHECK-NEXT:      Name: Ident <64:2, 64:8> 'Inline'
+// CHECK-NEXT:    Attr: Attribute <65:1, 65:16> name=Export parens args=["name"]
+// CHECK-NEXT:      Name: Ident <65:2, 65:8> 'Export'
+// CHECK-NEXT:    Name: Ident <66:6, 66:7> 'b'
+// CHECK-NEXT:    Type: FuncType <66:1, 66:9>
+// CHECK-NEXT:      Params: FieldList <66:7, 66:9>
+// CHECK-NEXT:    Body: BlockStmt <66:10, 66:12>
+// CHECK-NEXT:  Decl: GenDecl <68:1, 74:2> type
+// CHECK-NEXT:    Attr: Attribute <68:1, 68:18> name=Derive parens args=[Eq , Hash]
+// CHECK-NEXT:      Name: Ident <68:2, 68:8> 'Derive'
+// CHECK-NEXT:    Spec: TypeSpec <69:6, 74:2>
+// CHECK-NEXT:      Name: Ident <69:6, 69:7> 'T'
+// CHECK-NEXT:      Type: StructType <69:8, 74:2>
+// CHECK-NEXT:        Fields: FieldList <69:15, 74:2>
+// CHECK-NEXT:          Field: Field <70:2, 70:13>
+// CHECK-NEXT:            Names: Ident <70:2, 70:3> 'x'
+// CHECK-NEXT:            Type: Ident <70:4, 70:7> 'int'
+// CHECK-NEXT:            Attrs: Attribute <70:8, 70:13> name=Skip
+// CHECK-NEXT:              Name: Ident <70:9, 70:13> 'Skip'
+// CHECK-NEXT:          Field: Field <71:2, 71:34>
+// CHECK-NEXT:            Names: Ident <71:2, 71:3> 'y'
+// CHECK-NEXT:            Type: Ident <71:4, 71:10> 'string'
+// CHECK-NEXT:            Attrs: Attribute <71:11, 71:23> name=Name parens args=["why"]
+// CHECK-NEXT:              Name: Ident <71:12, 71:16> 'Name'
+// CHECK-NEXT:            Tag: BasicLit <71:24, 71:34> string_lit `json:"y"`
+// CHECK-NEXT:          Field: Field <72:2, 72:18>
+// CHECK-NEXT:            Names: Ident <72:2, 72:3> 'z'
+// CHECK-NEXT:            Type: Ident <72:4, 72:7> 'int'
+// CHECK-NEXT:            Tag: BasicLit <72:8, 72:18> string_lit `json:"z"`
+// CHECK-NEXT:          Field: Field <73:2, 73:3>
+// CHECK-NEXT:            Type: Ident <73:2, 73:3> 'W'
+// CHECK-NEXT:  Decl: GenDecl <76:1, 77:10> var
+// CHECK-NEXT:    Attr: Attribute <76:1, 76:9> name=Wrapper
+// CHECK-NEXT:      Name: Ident <76:2, 76:9> 'Wrapper'
+// CHECK-NEXT:    Spec: ValueSpec <77:5, 77:10>
+// CHECK-NEXT:      Name: Ident <77:5, 77:6> 'v'
+// CHECK-NEXT:      Type: Ident <77:7, 77:10> 'int'
+// CHECK-NEXT:  Decl: GenDecl <79:1, 80:12> const
+// CHECK-NEXT:    Attr: Attribute <79:1, 79:18> name=pkg.Attr parens args=[1 , "x"]
+// CHECK-NEXT:      Pkg: Ident <79:2, 79:5> 'pkg'
+// CHECK-NEXT:      Name: Ident <79:6, 79:10> 'Attr'
+// CHECK-NEXT:    Spec: ValueSpec <80:7, 80:12>
+// CHECK-NEXT:      Name: Ident <80:7, 80:8> 'k'
+// CHECK-NEXT:      Value: BasicLit <80:11, 80:12> int_lit 1
+package p
+
+@Test
+func a() {}
+
+@Inline
+@Export("name")
+func b() {}
+
+@Derive(Eq, Hash)
+type T struct {
+	x int @Skip
+	y string @Name("why") `json:"y"`
+	z int `json:"z"`
+	W
+}
+
+@Wrapper
+var v int
+
+@pkg.Attr(1, "x")
+const k = 1

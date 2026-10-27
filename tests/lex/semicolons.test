@@ -1,0 +1,79 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:56:1 kw_package 'package'
+// CHECK-NEXT:56:9 ident 'p'
+// CHECK-NEXT:56:10 semi '\n'
+// CHECK-NEXT:57:1 ident 'x'
+// CHECK-NEXT:57:2 semi '\n'
+// CHECK-NEXT:58:1 ident 'y'
+// CHECK-NEXT:58:2 inc '++'
+// CHECK-NEXT:58:4 semi '\n'
+// CHECK-NEXT:59:1 ident 'z'
+// CHECK-NEXT:59:2 dec '--'
+// CHECK-NEXT:59:4 semi '\n'
+// CHECK-NEXT:60:1 kw_return 'return'
+// CHECK-NEXT:60:7 semi '\n'
+// CHECK-NEXT:61:1 kw_break 'break'
+// CHECK-NEXT:61:6 semi '\n'
+// CHECK-NEXT:62:1 kw_continue 'continue'
+// CHECK-NEXT:62:9 semi '\n'
+// CHECK-NEXT:63:1 kw_fallthrough 'fallthrough'
+// CHECK-NEXT:63:12 semi '\n'
+// CHECK-NEXT:64:1 ident 'f'
+// CHECK-NEXT:64:2 l_paren '('
+// CHECK-NEXT:64:3 r_paren ')'
+// CHECK-NEXT:64:4 semi '\n'
+// CHECK-NEXT:65:1 ident 'a'
+// CHECK-NEXT:65:2 l_brack '['
+// CHECK-NEXT:65:3 int_lit '1'
+// CHECK-NEXT:65:4 r_brack ']'
+// CHECK-NEXT:65:5 semi '\n'
+// CHECK-NEXT:66:1 ident 'b'
+// CHECK-NEXT:66:2 r_brace '}'
+// CHECK-NEXT:66:3 semi '\n'
+// CHECK-NEXT:67:1 string_lit '"s"'
+// CHECK-NEXT:67:4 semi '\n'
+// CHECK-NEXT:68:1 float_lit '1.5'
+// CHECK-NEXT:68:4 semi '\n'
+// CHECK-NEXT:69:1 char_lit ''c''
+// CHECK-NEXT:69:4 semi '\n'
+// CHECK-NEXT:70:1 string_lit '`r`'
+// CHECK-NEXT:70:4 semi '\n'
+// CHECK-NEXT:71:1 ident 'x'
+// CHECK-NEXT:71:13 semi '\n'
+// CHECK-NEXT:72:1 ident 'y'
+// CHECK-NEXT:72:10 semi '\n'
+// CHECK-NEXT:73:1 ident 'z'
+// CHECK-NEXT:73:11 semi '\n'
+// CHECK-NEXT:75:1 ident 'w'
+// CHECK-NEXT:75:2 semi '\n'
+// CHECK-NEXT:76:1 kw_func 'func'
+// CHECK-NEXT:77:1 l_brace '{'
+// CHECK-NEXT:78:1 comma ','
+// CHECK-NEXT:79:1 add '+'
+// CHECK-NEXT:80:1 eof
+package p
+x
+y++
+z--
+return
+break
+continue
+fallthrough
+f()
+a[1]
+b}
+"s"
+1.5
+'c'
+`r`
+x // comment
+y /* c */
+z /* multi
+line */
+w
+func
+{
+,
++

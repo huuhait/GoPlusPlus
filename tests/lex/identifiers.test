@@ -1,0 +1,22 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:21:1 kw_package 'package'
+// CHECK-NEXT:21:9 ident 'p'
+// CHECK-NEXT:21:10 semi '\n'
+// CHECK-NEXT:22:1 ident 'a'
+// CHECK-NEXT:22:3 ident '_'
+// CHECK-NEXT:22:5 ident '_x'
+// CHECK-NEXT:22:8 ident 'x1'
+// CHECK-NEXT:22:11 ident '日本語'
+// CHECK-NEXT:22:21 ident 'Ünï'
+// CHECK-NEXT:22:27 ident 'ref'
+// CHECK-NEXT:22:31 ident 'move'
+// CHECK-NEXT:22:36 ident 'unique'
+// CHECK-NEXT:22:43 ident 'Macro'
+// CHECK-NEXT:22:49 ident 'MACRO'
+// CHECK-NEXT:22:55 ident 'macros'
+// CHECK-NEXT:22:61 semi '\n'
+// CHECK-NEXT:23:1 eof
+package p
+a _ _x x1 日本語 Ünï ref move unique Macro MACRO macros

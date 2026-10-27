@@ -1,0 +1,13 @@
+// RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:{{.*}}diag-fixit.test:13:9: error: curly quotation mark '“' (use neutral '"')
+// CHECK-NEXT:   13 | var s = “hello”
+// CHECK-NEXT:      |         ^
+// CHECK-NEXT:      |         "
+// CHECK-NEXT:{{.*}}diag-fixit.test:13:17: error: curly quotation mark '”' (use neutral '"')
+// CHECK-NEXT:   13 | var s = “hello”
+// CHECK-NEXT:      |               ^
+// CHECK-NEXT:      |               "
+package p
+var s = “hello”

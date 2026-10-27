@@ -1,0 +1,10 @@
+// The -dump-ast output is stable (P02.04): the full dumps of two spec examples
+// are golden files. 08-derive has a macro declaration, an attribute, macro
+// invocations in statement and expression position and a `!` call; 09-orderedmap
+// has generic types and methods and `move` parameters. Regenerate after a
+// deliberate change to the tree or the dump format with:
+//   gopp parse -dump-ast docs/spec/examples/NN-name/main.gopp > tests/parse/Inputs/NN-name.ast
+// RUN: %gopp parse -dump-ast %examples/08-derive/main.gopp > %t.derive
+// RUN: diff %S/Inputs/08-derive.ast %t.derive
+// RUN: %gopp parse -dump-ast %examples/09-orderedmap/main.gopp > %t.omap
+// RUN: diff %S/Inputs/09-orderedmap.ast %t.omap

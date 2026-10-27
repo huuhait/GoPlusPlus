@@ -41,6 +41,8 @@ function(gopp_add_stage_check stage)
 endfunction()
 
 gopp_add_stage_check(driver)
+gopp_add_stage_check(lex)
+gopp_add_stage_check(parse)
 
 # GoogleTest binaries run through lit too (same parallelism and timing report).
 add_subdirectory(unit)

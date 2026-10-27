@@ -1,0 +1,156 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <112:9, 112:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <114:1, 156:2>
+// CHECK-NEXT:    Name: Ident <114:6, 114:7> 'f'
+// CHECK-NEXT:    Type: FuncType <114:1, 114:9>
+// CHECK-NEXT:      Params: FieldList <114:7, 114:9>
+// CHECK-NEXT:    Body: BlockStmt <114:10, 156:2>
+// CHECK-NEXT:      Stmt: IfStmt <115:2, 116:3>
+// CHECK-NEXT:        Cond: Ident <115:5, 115:6> 'x'
+// CHECK-NEXT:        Then: BlockStmt <115:7, 116:3>
+// CHECK-NEXT:      Stmt: IfStmt <117:2, 120:3>
+// CHECK-NEXT:        Init: AssignStmt <117:5, 117:13> op=':='
+// CHECK-NEXT:          Lhs: Ident <117:5, 117:6> 'x'
+// CHECK-NEXT:          Rhs: CallExpr <117:10, 117:13>
+// CHECK-NEXT:            Fun: Ident <117:10, 117:11> 'g'
+// CHECK-NEXT:        Cond: BinaryExpr <117:15, 117:20> op='>'
+// CHECK-NEXT:          X: Ident <117:15, 117:16> 'x'
+// CHECK-NEXT:          Y: BasicLit <117:19, 117:20> int_lit 0
+// CHECK-NEXT:        Then: BlockStmt <117:21, 118:3>
+// CHECK-NEXT:        Else: IfStmt <118:9, 120:3>
+// CHECK-NEXT:          Cond: Ident <118:12, 118:13> 'y'
+// CHECK-NEXT:          Then: BlockStmt <118:14, 119:3>
+// CHECK-NEXT:          Else: BlockStmt <119:9, 120:3>
+// CHECK-NEXT:      Stmt: ForStmt <121:2, 122:3>
+// CHECK-NEXT:        Body: BlockStmt <121:6, 122:3>
+// CHECK-NEXT:      Stmt: ForStmt <123:2, 124:3>
+// CHECK-NEXT:        Cond: Ident <123:6, 123:10> 'cond'
+// CHECK-NEXT:        Body: BlockStmt <123:11, 124:3>
+// CHECK-NEXT:      Stmt: ForStmt <125:2, 126:3>
+// CHECK-NEXT:        Init: AssignStmt <125:6, 125:12> op=':='
+// CHECK-NEXT:          Lhs: Ident <125:6, 125:7> 'i'
+// CHECK-NEXT:          Rhs: BasicLit <125:11, 125:12> int_lit 0
+// CHECK-NEXT:        Cond: BinaryExpr <125:14, 125:20> op='<'
+// CHECK-NEXT:          X: Ident <125:14, 125:15> 'i'
+// CHECK-NEXT:          Y: BasicLit <125:18, 125:20> int_lit 10
+// CHECK-NEXT:        Post: IncDecStmt <125:22, 125:25> op='++'
+// CHECK-NEXT:          X: Ident <125:22, 125:23> 'i'
+// CHECK-NEXT:        Body: BlockStmt <125:26, 126:3>
+// CHECK-NEXT:      Stmt: ForStmt <127:2, 128:3>
+// CHECK-NEXT:        Body: BlockStmt <127:10, 128:3>
+// CHECK-NEXT:      Stmt: ForStmt <129:2, 130:3>
+// CHECK-NEXT:        Init: AssignStmt <129:6, 129:12> op=':='
+// CHECK-NEXT:          Lhs: Ident <129:6, 129:7> 'i'
+// CHECK-NEXT:          Rhs: BasicLit <129:11, 129:12> int_lit 0
+// CHECK-NEXT:        Body: BlockStmt <129:16, 130:3>
+// CHECK-NEXT:      Stmt: SwitchStmt <131:2, 132:3>
+// CHECK-NEXT:        Body: BlockStmt <131:9, 132:3>
+// CHECK-NEXT:      Stmt: SwitchStmt <133:2, 139:3>
+// CHECK-NEXT:        Tag: Ident <133:9, 133:10> 'x'
+// CHECK-NEXT:        Body: BlockStmt <133:11, 139:3>
+// CHECK-NEXT:          Stmt: CaseClause <134:2, 135:6>
+// CHECK-NEXT:            Case: BasicLit <134:7, 134:8> int_lit 1
+// CHECK-NEXT:            Case: BasicLit <134:10, 134:11> int_lit 2
+// CHECK-NEXT:            Body: ExprStmt <135:3, 135:6>
+// CHECK-NEXT:              X: CallExpr <135:3, 135:6>
+// CHECK-NEXT:                Fun: Ident <135:3, 135:4> 'a'
+// CHECK-NEXT:          Stmt: CaseClause <136:2, 136:9>
+// CHECK-NEXT:            Case: BasicLit <136:7, 136:8> int_lit 3
+// CHECK-NEXT:          Stmt: CaseClause <137:2, 138:6> default
+// CHECK-NEXT:            Body: ExprStmt <138:3, 138:6>
+// CHECK-NEXT:              X: CallExpr <138:3, 138:6>
+// CHECK-NEXT:                Fun: Ident <138:3, 138:4> 'b'
+// CHECK-NEXT:      Stmt: SwitchStmt <140:2, 141:3>
+// CHECK-NEXT:        Init: AssignStmt <140:9, 140:17> op=':='
+// CHECK-NEXT:          Lhs: Ident <140:9, 140:10> 'y'
+// CHECK-NEXT:          Rhs: CallExpr <140:14, 140:17>
+// CHECK-NEXT:            Fun: Ident <140:14, 140:15> 'f'
+// CHECK-NEXT:        Tag: Ident <140:19, 140:20> 'y'
+// CHECK-NEXT:        Body: BlockStmt <140:21, 141:3>
+// CHECK-NEXT:      Stmt: TypeSwitchStmt <142:2, 146:3>
+// CHECK-NEXT:        Assign: AssignStmt <142:9, 142:22> op=':='
+// CHECK-NEXT:          Lhs: Ident <142:9, 142:10> 'v'
+// CHECK-NEXT:          Rhs: TypeAssertExpr <142:14, 142:22>
+// CHECK-NEXT:            X: Ident <142:14, 142:15> 'x'
+// CHECK-NEXT:        Body: BlockStmt <142:23, 146:3>
+// CHECK-NEXT:          Stmt: CaseClause <143:2, 143:19>
+// CHECK-NEXT:            Case: Ident <143:7, 143:10> 'int'
+// CHECK-NEXT:            Case: Ident <143:12, 143:18> 'string'
+// CHECK-NEXT:          Stmt: CaseClause <144:2, 144:11>
+// CHECK-NEXT:            Case: Ident <144:7, 144:10> 'nil'
+// CHECK-NEXT:          Stmt: CaseClause <145:2, 145:10> default
+// CHECK-NEXT:      Stmt: TypeSwitchStmt <147:2, 148:3>
+// CHECK-NEXT:        Assign: ExprStmt <147:9, 147:17>
+// CHECK-NEXT:          X: TypeAssertExpr <147:9, 147:17>
+// CHECK-NEXT:            X: Ident <147:9, 147:10> 'x'
+// CHECK-NEXT:        Body: BlockStmt <147:18, 148:3>
+// CHECK-NEXT:      Stmt: SelectStmt <149:2, 155:3>
+// CHECK-NEXT:        Body: BlockStmt <149:9, 155:3>
+// CHECK-NEXT:          Stmt: CommClause <150:2, 150:17>
+// CHECK-NEXT:            Comm: AssignStmt <150:7, 150:16> op=':='
+// CHECK-NEXT:              Lhs: Ident <150:7, 150:8> 'v'
+// CHECK-NEXT:              Rhs: UnaryExpr <150:12, 150:16> op='<-'
+// CHECK-NEXT:                X: Ident <150:14, 150:16> 'ch'
+// CHECK-NEXT:          Stmt: CommClause <151:2, 151:15>
+// CHECK-NEXT:            Comm: SendStmt <151:7, 151:14>
+// CHECK-NEXT:              Chan: Ident <151:7, 151:9> 'ch'
+// CHECK-NEXT:              Value: BasicLit <151:13, 151:14> int_lit 1
+// CHECK-NEXT:          Stmt: CommClause <152:2, 152:14>
+// CHECK-NEXT:            Comm: ExprStmt <152:7, 152:13>
+// CHECK-NEXT:              X: UnaryExpr <152:7, 152:13> op='<-'
+// CHECK-NEXT:                X: Ident <152:9, 152:13> 'done'
+// CHECK-NEXT:          Stmt: CommClause <153:2, 153:20>
+// CHECK-NEXT:            Comm: AssignStmt <153:7, 153:19> op='='
+// CHECK-NEXT:              Lhs: Ident <153:7, 153:8> 'v'
+// CHECK-NEXT:              Lhs: Ident <153:10, 153:12> 'ok'
+// CHECK-NEXT:              Rhs: UnaryExpr <153:15, 153:19> op='<-'
+// CHECK-NEXT:                X: Ident <153:17, 153:19> 'ch'
+// CHECK-NEXT:          Stmt: CommClause <154:2, 154:10>
+package p
+
+func f() {
+	if x {
+	}
+	if x := g(); x > 0 {
+	} else if y {
+	} else {
+	}
+	for {
+	}
+	for cond {
+	}
+	for i := 0; i < 10; i++ {
+	}
+	for ; ; {
+	}
+	for i := 0; ; {
+	}
+	switch {
+	}
+	switch x {
+	case 1, 2:
+		a()
+	case 3:
+	default:
+		b()
+	}
+	switch y := f(); y {
+	}
+	switch v := x.(type) {
+	case int, string:
+	case nil:
+	default:
+	}
+	switch x.(type) {
+	}
+	select {
+	case v := <-ch:
+	case ch <- 1:
+	case <-done:
+	case v, ok = <-ch:
+	default:
+	}
+}

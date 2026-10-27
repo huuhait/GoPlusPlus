@@ -1,0 +1,66 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:58:1 kw_package 'package'
+// CHECK-NEXT:58:9 ident 'p'
+// CHECK-NEXT:58:10 semi '\n'
+// CHECK-NEXT:59:1 hash '#'
+// CHECK-NEXT:59:2 ident 'Assert'
+// CHECK-NEXT:59:8 l_paren '('
+// CHECK-NEXT:59:9 ident 'x'
+// CHECK-NEXT:59:10 comma ','
+// CHECK-NEXT:59:12 string_lit '"m"'
+// CHECK-NEXT:59:15 r_paren ')'
+// CHECK-NEXT:59:16 semi '\n'
+// CHECK-NEXT:60:1 at '@'
+// CHECK-NEXT:60:2 ident 'Test'
+// CHECK-NEXT:60:6 semi '\n'
+// CHECK-NEXT:61:1 hash '#'
+// CHECK-NEXT:61:2 ident 'pkg'
+// CHECK-NEXT:61:5 period '.'
+// CHECK-NEXT:61:6 ident 'Name'
+// CHECK-NEXT:61:10 semi '\n'
+// CHECK-NEXT:62:1 ident 'f'
+// CHECK-NEXT:62:2 not_ '!'
+// CHECK-NEXT:62:3 l_paren '('
+// CHECK-NEXT:62:4 ident 'x'
+// CHECK-NEXT:62:5 r_paren ')'
+// CHECK-NEXT:62:7 ident 'a'
+// CHECK-NEXT:62:9 neq '!='
+// CHECK-NEXT:62:12 ident 'b'
+// CHECK-NEXT:62:14 ident 'parse'
+// CHECK-NEXT:62:19 l_brack '['
+// CHECK-NEXT:62:20 ident 'int'
+// CHECK-NEXT:62:23 r_brack ']'
+// CHECK-NEXT:62:24 not_ '!'
+// CHECK-NEXT:62:25 l_paren '('
+// CHECK-NEXT:62:26 ident 's'
+// CHECK-NEXT:62:27 r_paren ')'
+// CHECK-NEXT:62:28 semi '\n'
+// CHECK-NEXT:63:1 kw_func 'func'
+// CHECK-NEXT:63:6 ident 'f'
+// CHECK-NEXT:63:7 not_ '!'
+// CHECK-NEXT:63:8 l_paren '('
+// CHECK-NEXT:63:9 r_paren ')'
+// CHECK-NEXT:63:11 l_brace '{'
+// CHECK-NEXT:63:12 r_brace '}'
+// CHECK-NEXT:63:13 semi '\n'
+// CHECK-NEXT:64:1 ident 'ref'
+// CHECK-NEXT:64:5 ident 'string'
+// CHECK-NEXT:64:11 semi '\n'
+// CHECK-NEXT:65:1 ident 'move'
+// CHECK-NEXT:65:6 ident 'x'
+// CHECK-NEXT:65:7 semi '\n'
+// CHECK-NEXT:66:1 kw_macro 'macro'
+// CHECK-NEXT:66:7 ident 'Name'
+// CHECK-NEXT:66:11 semi '\n'
+// CHECK-NEXT:67:1 eof
+package p
+#Assert(x, "m")
+@Test
+#pkg.Name
+f!(x) a != b parse[int]!(s)
+func f!() {}
+ref string
+move x
+macro Name

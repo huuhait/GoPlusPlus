@@ -12,7 +12,7 @@ Last updated: 2026-10-27
 
 - [~] P00 Foundations ([state](00-foundations/STATE.md))
 - [~] P01 Language specification v0 ([state](01-language-spec/STATE.md))
-- [ ] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
+- [~] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
 - [ ] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
 - [ ] P04 GIR and LLVM codegen ([state](04-gir-and-llvm-codegen/STATE.md))
 - [ ] P05 Runtime and memory ([state](05-runtime-and-memory/STATE.md))
@@ -96,3 +96,4 @@ Last updated: 2026-10-27
 - 2026-10-27: P01.15 started. The owner made 8 decisions (D1–D8 in `01-language-spec/STATE.md`, "P01.15 owner decisions"). Main ones: `own ...T` for owning variadics; map insert during `range` always panics; `x.Clone()` with `clone(x)` as a short form; keyword `view` → `ref` (`@View` → `@Ref`); `case string:` also matches `ref string`; new `for _, &d := range xs` form that writes into the collection. Recorded only; they are applied to the spec, plan and ADRs when the whole review is done.
 - 2026-10-27: P01.15 applied through the team workflow (1 coder, review loop until a fresh reviewer returned CLEAN; ledger `.claude/team/p01-15-apply-ledger.md`, 46 findings, all closed). D1–D25 are in `docs/spec/` (227 rules, no Open notes left), the plan READMEs/TODO and ADR-0003/0004/0006. Main changes: `ref` (was `view`), `move` parameters (was `own`), `x.Clone()` with `[T Clone]` / `[T Copy]`, `for _, &d := range`, `defer` in loops like Go (lifetime extension), C/C++ flags in `gopp.mod`, `@Name(args)` field attributes, `#M(..., func(){…})` blocks.
 - 2026-10-27: Build profiles added to the plan through the team workflow (1 coder, review until a fresh reviewer returned CLEAN; ledger `.claude/team/build-profiles-ledger.md`, 10 findings, all closed). `profile` blocks in `gopp.mod` (built-in `debug`/`release`, `inherits`, `deps`), CLI `-release`/`-profile=`, the profile passed to CMake (`GOPP_PROFILE`, build type, flags; `link` is a preference unless a cdep sets `mode`), `#Profile()`/`#Setting()`/`@If`, `//gopp:build debug`, and `./target/<profile>/`. ADR-0007. 240 tasks.
+- 2026-10-27: P02.01–P02.06 (source manager, diagnostics with a diag-ID table, lexer, AST, parser core, macros & attributes) built through the team workflow (3 coders, PM merge, review until CLEAN; 2 findings, both fixed). `gopp parse --dump-ast/--dump-tokens` exists. P02 is in progress; P02.07–P02.11 remain.

@@ -1,0 +1,106 @@
+// RUN: not %gopp parse -dump-tokens -error-limit=0 %s > %t.out 2> %t.err
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=TOK --input-file=%t.out %s
+// RUN: FileCheck --match-full-lines --strict-whitespace --check-prefix=ERR --input-file=%t.err %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// TOK:94:1 kw_package 'package'
+// TOK-NEXT:94:9 ident 'p'
+// TOK-NEXT:94:10 semi '\n'
+// TOK-NEXT:95:1 ident 'x'
+// TOK-NEXT:95:3 define ':='
+// TOK-NEXT:95:6 int_lit '0x'
+// TOK-NEXT:95:8 semi '\n'
+// TOK-NEXT:96:1 ident 'y'
+// TOK-NEXT:96:3 define ':='
+// TOK-NEXT:96:6 int_lit '0b2'
+// TOK-NEXT:96:9 semi '\n'
+// TOK-NEXT:97:1 ident 'z'
+// TOK-NEXT:97:3 define ':='
+// TOK-NEXT:97:6 int_lit '08'
+// TOK-NEXT:97:8 semi '\n'
+// TOK-NEXT:98:1 ident 'w'
+// TOK-NEXT:98:3 define ':='
+// TOK-NEXT:98:6 float_lit '1e'
+// TOK-NEXT:98:8 semi '\n'
+// TOK-NEXT:99:1 ident 'a'
+// TOK-NEXT:99:3 define ':='
+// TOK-NEXT:99:6 char_lit ''ab''
+// TOK-NEXT:99:10 semi '\n'
+// TOK-NEXT:100:1 ident 'b'
+// TOK-NEXT:100:3 define ':='
+// TOK-NEXT:100:6 char_lit ''''
+// TOK-NEXT:100:8 semi '\n'
+// TOK-NEXT:101:1 ident 'c'
+// TOK-NEXT:101:3 define ':='
+// TOK-NEXT:101:6 string_lit '"bad \\q escape"'
+// TOK-NEXT:101:21 semi '\n'
+// TOK-NEXT:102:1 ident 'd'
+// TOK-NEXT:102:3 define ':='
+// TOK-NEXT:102:6 char_lit ''\\400''
+// TOK-NEXT:102:12 semi '\n'
+// TOK-NEXT:103:1 ident 'e'
+// TOK-NEXT:103:3 define ':='
+// TOK-NEXT:103:6 string_lit '"\\xZZ"'
+// TOK-NEXT:103:12 semi '\n'
+// TOK-NEXT:104:1 ident 'f'
+// TOK-NEXT:104:3 define ':='
+// TOK-NEXT:104:6 int_lit '1__0'
+// TOK-NEXT:104:10 semi '\n'
+// TOK-NEXT:105:1 ident 'g'
+// TOK-NEXT:105:3 define ':='
+// TOK-NEXT:105:6 float_lit '0b1.5'
+// TOK-NEXT:105:11 semi '\n'
+// TOK-NEXT:106:1 ident 'h'
+// TOK-NEXT:106:3 define ':='
+// TOK-NEXT:106:6 string_lit '"unterminated'
+// TOK-NEXT:106:19 semi '\n'
+// TOK-NEXT:107:1 eof
+// ERR:{{.*}}bad-literals.test:95:8: error: hexadecimal literal has no digits
+// ERR-NEXT:   95 | x := 0x
+// ERR-NEXT:      |        ^
+// ERR-NEXT:{{.*}}bad-literals.test:96:8: error: invalid digit '2' in binary literal
+// ERR-NEXT:   96 | y := 0b2
+// ERR-NEXT:      |        ^
+// ERR-NEXT:{{.*}}bad-literals.test:97:7: error: invalid digit '8' in octal literal
+// ERR-NEXT:   97 | z := 08
+// ERR-NEXT:      |       ^
+// ERR-NEXT:{{.*}}bad-literals.test:98:8: error: exponent has no digits
+// ERR-NEXT:   98 | w := 1e
+// ERR-NEXT:      |        ^
+// ERR-NEXT:{{.*}}bad-literals.test:99:6: error: illegal rune literal
+// ERR-NEXT:   99 | a := 'ab'
+// ERR-NEXT:      |      ^
+// ERR-NEXT:{{.*}}bad-literals.test:100:6: error: illegal rune literal
+// ERR-NEXT:  100 | b := ''
+// ERR-NEXT:      |      ^
+// ERR-NEXT:{{.*}}bad-literals.test:101:12: error: unknown escape sequence
+// ERR-NEXT:  101 | c := "bad \q escape"
+// ERR-NEXT:      |            ^
+// ERR-NEXT:{{.*}}bad-literals.test:102:8: error: escape sequence is invalid Unicode code point
+// ERR-NEXT:  102 | d := '\400'
+// ERR-NEXT:      |        ^
+// ERR-NEXT:{{.*}}bad-literals.test:103:9: error: illegal character U+005A 'Z' in escape sequence
+// ERR-NEXT:  103 | e := "\xZZ"
+// ERR-NEXT:      |         ^
+// ERR-NEXT:{{.*}}bad-literals.test:104:8: error: '_' must separate successive digits
+// ERR-NEXT:  104 | f := 1__0
+// ERR-NEXT:      |        ^
+// ERR-NEXT:{{.*}}bad-literals.test:105:9: error: invalid radix point in binary literal
+// ERR-NEXT:  105 | g := 0b1.5
+// ERR-NEXT:      |         ^
+// ERR-NEXT:{{.*}}bad-literals.test:106:6: error: string literal not terminated
+// ERR-NEXT:  106 | h := "unterminated
+// ERR-NEXT:      |      ^
+package p
+x := 0x
+y := 0b2
+z := 08
+w := 1e
+a := 'ab'
+b := ''
+c := "bad \q escape"
+d := '\400'
+e := "\xZZ"
+f := 1__0
+g := 0b1.5
+h := "unterminated

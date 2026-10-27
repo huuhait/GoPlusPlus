@@ -1,0 +1,31 @@
+// RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:{{.*}}recovery.test:22:7: error: expected operand, found '='
+// CHECK-NEXT:   22 |     x := = 1
+// CHECK-NEXT:      |          ^
+// CHECK-NEXT:{{.*}}recovery.test:24:4: error: expected type, found ':='
+// CHECK-NEXT:   24 |     z := 3
+// CHECK-NEXT:      |       ^~
+// CHECK-NEXT:{{.*}}recovery.test:26:1: error: expected operand, found '}'
+// CHECK-NEXT:   26 | }
+// CHECK-NEXT:      | ^
+// CHECK-NEXT:{{.*}}recovery.test:28:14: error: expected ';', found b
+// CHECK-NEXT:   28 | func g() { a b }
+// CHECK-NEXT:      |              ^
+// CHECK-NEXT:{{.*}}recovery.test:30:23: error: expected ';', found b
+// CHECK-NEXT:   30 | type T struct { a int b }
+// CHECK-NEXT:      |                       ^
+package p
+
+func f() {
+	x := = 1
+	var
+	z := 3
+	w := (1 +
+}
+var ok = 1
+func g() { a b }
+func h() int { return 1 }
+type T struct { a int b }
+var after = 2

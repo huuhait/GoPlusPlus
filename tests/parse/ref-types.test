@@ -1,0 +1,108 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <93:9, 93:10> 'p'
+// CHECK-NEXT:  Decl: GenDecl <95:1, 95:17> var
+// CHECK-NEXT:    Spec: ValueSpec <95:5, 95:17>
+// CHECK-NEXT:      Name: Ident <95:5, 95:6> 'a'
+// CHECK-NEXT:      Type: RefType <95:7, 95:17>
+// CHECK-NEXT:        Elem: Ident <95:11, 95:17> 'string'
+// CHECK-NEXT:  Decl: GenDecl <96:1, 96:16> var
+// CHECK-NEXT:    Spec: ValueSpec <96:5, 96:16>
+// CHECK-NEXT:      Name: Ident <96:5, 96:6> 'b'
+// CHECK-NEXT:      Type: RefType <96:7, 96:16>
+// CHECK-NEXT:        Elem: SliceType <96:11, 96:16>
+// CHECK-NEXT:          Elt: Ident <96:13, 96:16> 'int'
+// CHECK-NEXT:  Decl: GenDecl <97:1, 97:19> var
+// CHECK-NEXT:    Spec: ValueSpec <97:5, 97:19>
+// CHECK-NEXT:      Name: Ident <97:5, 97:6> 'c'
+// CHECK-NEXT:      Type: SliceType <97:7, 97:19>
+// CHECK-NEXT:        Elt: RefType <97:9, 97:19>
+// CHECK-NEXT:          Elem: Ident <97:13, 97:19> 'string'
+// CHECK-NEXT:  Decl: GenDecl <98:1, 98:23> var
+// CHECK-NEXT:    Spec: ValueSpec <98:5, 98:23>
+// CHECK-NEXT:      Name: Ident <98:5, 98:6> 'd'
+// CHECK-NEXT:      Type: RefType <98:7, 98:23>
+// CHECK-NEXT:        Elem: SliceType <98:11, 98:23>
+// CHECK-NEXT:          Elt: RefType <98:13, 98:23>
+// CHECK-NEXT:            Elem: Ident <98:17, 98:23> 'string'
+// CHECK-NEXT:  Decl: GenDecl <99:1, 99:28> var
+// CHECK-NEXT:    Spec: ValueSpec <99:5, 99:28>
+// CHECK-NEXT:      Name: Ident <99:5, 99:6> 'e'
+// CHECK-NEXT:      Type: MapType <99:7, 99:28>
+// CHECK-NEXT:        Key: Ident <99:11, 99:17> 'string'
+// CHECK-NEXT:        Value: RefType <99:18, 99:28>
+// CHECK-NEXT:          Elem: Ident <99:22, 99:28> 'string'
+// CHECK-NEXT:  Decl: GenDecl <100:1, 100:18> var
+// CHECK-NEXT:    Spec: ValueSpec <100:5, 100:18>
+// CHECK-NEXT:      Name: Ident <100:5, 100:6> 'f'
+// CHECK-NEXT:      Type: IndexExpr <100:7, 100:18>
+// CHECK-NEXT:        X: Ident <100:7, 100:13> 'Unique'
+// CHECK-NEXT:        Index: Ident <100:14, 100:17> 'int'
+// CHECK-NEXT:  Decl: GenDecl <101:1, 101:25> var
+// CHECK-NEXT:    Spec: ValueSpec <101:5, 101:25>
+// CHECK-NEXT:      Name: Ident <101:5, 101:6> 'g'
+// CHECK-NEXT:      Type: IndexExpr <101:7, 101:25>
+// CHECK-NEXT:        X: Ident <101:7, 101:13> 'Unique'
+// CHECK-NEXT:        Index: RefType <101:14, 101:24>
+// CHECK-NEXT:          Elem: Ident <101:18, 101:24> 'string'
+// CHECK-NEXT:  Decl: GenDecl <102:1, 102:12> var
+// CHECK-NEXT:    Spec: ValueSpec <102:5, 102:12>
+// CHECK-NEXT:      Name: Ident <102:5, 102:8> 'ref'
+// CHECK-NEXT:      Type: Ident <102:9, 102:12> 'int'
+// CHECK-NEXT:  Decl: GenDecl <103:1, 103:15> var
+// CHECK-NEXT:    Spec: ValueSpec <103:5, 103:15>
+// CHECK-NEXT:      Name: Ident <103:5, 103:9> 'move'
+// CHECK-NEXT:      Value: Ident <103:12, 103:15> 'ref'
+// CHECK-NEXT:  Decl: GenDecl <104:1, 107:2> type
+// CHECK-NEXT:    Spec: TypeSpec <104:6, 107:2>
+// CHECK-NEXT:      Name: Ident <104:6, 104:7> 'R'
+// CHECK-NEXT:      Type: StructType <104:8, 107:2>
+// CHECK-NEXT:        Fields: FieldList <104:15, 107:2>
+// CHECK-NEXT:          Field: Field <105:2, 105:14>
+// CHECK-NEXT:            Names: Ident <105:2, 105:3> 's'
+// CHECK-NEXT:            Type: RefType <105:4, 105:14>
+// CHECK-NEXT:              Elem: Ident <105:8, 105:14> 'string'
+// CHECK-NEXT:          Field: Field <106:2, 106:14>
+// CHECK-NEXT:            Names: Ident <106:2, 106:3> 't'
+// CHECK-NEXT:            Type: RefType <106:4, 106:14>
+// CHECK-NEXT:              Elem: SliceType <106:8, 106:14>
+// CHECK-NEXT:                Elt: Ident <106:10, 106:14> 'byte'
+// CHECK-NEXT:  Decl: FuncDecl <108:1, 108:60>
+// CHECK-NEXT:    Name: Ident <108:6, 108:7> 'h'
+// CHECK-NEXT:    Type: FuncType <108:1, 108:47>
+// CHECK-NEXT:      Params: FieldList <108:7, 108:32>
+// CHECK-NEXT:        Field: Field <108:8, 108:20>
+// CHECK-NEXT:          Names: Ident <108:8, 108:9> 'p'
+// CHECK-NEXT:          Type: RefType <108:10, 108:20>
+// CHECK-NEXT:            Elem: Ident <108:14, 108:20> 'string'
+// CHECK-NEXT:        Field: Field <108:22, 108:31>
+// CHECK-NEXT:          Names: Ident <108:22, 108:23> 'q'
+// CHECK-NEXT:          Type: RefType <108:24, 108:31>
+// CHECK-NEXT:            Elem: SliceType <108:28, 108:31>
+// CHECK-NEXT:              Elt: Ident <108:30, 108:31> 'T'
+// CHECK-NEXT:      Results: FieldList <108:33, 108:47>
+// CHECK-NEXT:        Field: Field <108:34, 108:46>
+// CHECK-NEXT:          Names: Ident <108:34, 108:35> 'r'
+// CHECK-NEXT:          Type: RefType <108:36, 108:46>
+// CHECK-NEXT:            Elem: Ident <108:40, 108:46> 'string'
+// CHECK-NEXT:    Body: BlockStmt <108:48, 108:60>
+// CHECK-NEXT:      Stmt: ReturnStmt <108:50, 108:58>
+// CHECK-NEXT:        Result: Ident <108:57, 108:58> 'p'
+package p
+
+var a ref string
+var b ref []int
+var c []ref string
+var d ref []ref string
+var e map[string]ref string
+var f Unique[int]
+var g Unique[ref string]
+var ref int
+var move = ref
+type R struct {
+	s ref string
+	t ref []byte
+}
+func h(p ref string, q ref []T) (r ref string) { return p }

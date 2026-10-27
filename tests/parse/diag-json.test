@@ -1,0 +1,14 @@
+// RUN: not %gopp parse -diag-format=json %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:{"severity":"error","id":"err_expected_found","message":"expected operand, found ')'","file":"{{.*}}diag-json.test","line":10,"column":9,"offset":{{[0-9]+}},"range":{"begin":{"line":10,"column":9,"offset":{{[0-9]+}}},"end":{"line":10,"column":10,"offset":{{[0-9]+}}}}}
+// CHECK-NEXT:{"severity":"error","id":"err_lex_rune_illegal","message":"illegal rune literal","file":"{{.*}}diag-json.test","line":12,"column":7,"offset":{{[0-9]+}},"range":{"begin":{"line":12,"column":7,"offset":{{[0-9]+}}},"end":{"line":12,"column":7,"offset":{{[0-9]+}}}}}
+// CHECK-NEXT:{"severity":"error","id":"err_lex_curly_quote","message":"curly quotation mark '“' (use neutral '\"')","file":"{{.*}}diag-json.test","line":13,"column":10,"offset":{{[0-9]+}},"range":{"begin":{"line":13,"column":10,"offset":{{[0-9]+}}},"end":{"line":13,"column":13,"offset":{{[0-9]+}}}},"fixits":[{"range":{"begin":{"line":13,"column":10,"offset":{{[0-9]+}}},"end":{"line":13,"column":13,"offset":{{[0-9]+}}}},"text":"\""}]}
+// CHECK-NEXT:{"severity":"error","id":"err_lex_curly_quote","message":"curly quotation mark '”' (use neutral '\"')","file":"{{.*}}diag-json.test","line":13,"column":15,"offset":{{[0-9]+}},"range":{"begin":{"line":13,"column":15,"offset":{{[0-9]+}}},"end":{"line":13,"column":18,"offset":{{[0-9]+}}}},"fixits":[{"range":{"begin":{"line":13,"column":15,"offset":{{[0-9]+}}},"end":{"line":13,"column":18,"offset":{{[0-9]+}}}},"text":"\""}]}
+package p
+
+var a = )
+func f() {
+	x := 'ab'
+	var s = “hi”
+}

@@ -1,0 +1,79 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <60:9, 60:10> 'p'
+// CHECK-NEXT:  Decl: GenDecl <62:1, 62:12> const
+// CHECK-NEXT:    Spec: ValueSpec <62:7, 62:12>
+// CHECK-NEXT:      Name: Ident <62:7, 62:8> 'a'
+// CHECK-NEXT:      Value: BasicLit <62:11, 62:12> int_lit 1
+// CHECK-NEXT:  Decl: GenDecl <63:1, 67:2> const grouped
+// CHECK-NEXT:    Spec: ValueSpec <64:2, 64:17>
+// CHECK-NEXT:      Name: Ident <64:2, 64:3> 'b'
+// CHECK-NEXT:      Name: Ident <64:5, 64:6> 'c'
+// CHECK-NEXT:      Type: Ident <64:7, 64:10> 'int'
+// CHECK-NEXT:      Value: BasicLit <64:13, 64:14> int_lit 1
+// CHECK-NEXT:      Value: BasicLit <64:16, 64:17> int_lit 2
+// CHECK-NEXT:    Spec: ValueSpec <65:2, 65:3>
+// CHECK-NEXT:      Name: Ident <65:2, 65:3> 'd'
+// CHECK-NEXT:    Spec: ValueSpec <66:2, 66:10>
+// CHECK-NEXT:      Name: Ident <66:2, 66:3> 'e'
+// CHECK-NEXT:      Value: Ident <66:6, 66:10> 'iota'
+// CHECK-NEXT:  Decl: GenDecl <68:1, 68:10> var
+// CHECK-NEXT:    Spec: ValueSpec <68:5, 68:10>
+// CHECK-NEXT:      Name: Ident <68:5, 68:6> 'x'
+// CHECK-NEXT:      Type: Ident <68:7, 68:10> 'int'
+// CHECK-NEXT:  Decl: GenDecl <69:1, 69:18> var
+// CHECK-NEXT:    Spec: ValueSpec <69:5, 69:18>
+// CHECK-NEXT:      Name: Ident <69:5, 69:6> 'y'
+// CHECK-NEXT:      Name: Ident <69:8, 69:9> 'z'
+// CHECK-NEXT:      Value: BasicLit <69:12, 69:13> int_lit 1
+// CHECK-NEXT:      Value: BasicLit <69:15, 69:18> string_lit "s"
+// CHECK-NEXT:  Decl: GenDecl <70:1, 73:2> var grouped
+// CHECK-NEXT:    Spec: ValueSpec <71:2, 71:10>
+// CHECK-NEXT:      Name: Ident <71:2, 71:4> 'v1'
+// CHECK-NEXT:      Type: SliceType <71:5, 71:10>
+// CHECK-NEXT:        Elt: Ident <71:7, 71:10> 'int'
+// CHECK-NEXT:    Spec: ValueSpec <72:2, 72:23>
+// CHECK-NEXT:      Name: Ident <72:2, 72:4> 'v2'
+// CHECK-NEXT:      Value: CompositeLit <72:7, 72:23>
+// CHECK-NEXT:        Type: MapType <72:7, 72:21>
+// CHECK-NEXT:          Key: Ident <72:11, 72:17> 'string'
+// CHECK-NEXT:          Value: Ident <72:18, 72:21> 'int'
+// CHECK-NEXT:  Decl: GenDecl <74:1, 74:11> type
+// CHECK-NEXT:    Spec: TypeSpec <74:6, 74:11>
+// CHECK-NEXT:      Name: Ident <74:6, 74:7> 'T'
+// CHECK-NEXT:      Type: Ident <74:8, 74:11> 'int'
+// CHECK-NEXT:  Decl: GenDecl <75:1, 75:13> type
+// CHECK-NEXT:    Spec: TypeSpec <75:6, 75:13> alias
+// CHECK-NEXT:      Name: Ident <75:6, 75:7> 'A'
+// CHECK-NEXT:      Type: Ident <75:10, 75:13> 'int'
+// CHECK-NEXT:  Decl: GenDecl <76:1, 79:2> type grouped
+// CHECK-NEXT:    Spec: TypeSpec <77:2, 77:12>
+// CHECK-NEXT:      Name: Ident <77:2, 77:3> 'U'
+// CHECK-NEXT:      Type: StructType <77:4, 77:12>
+// CHECK-NEXT:        Fields: FieldList <77:10, 77:12>
+// CHECK-NEXT:    Spec: TypeSpec <78:2, 78:7>
+// CHECK-NEXT:      Name: Ident <78:2, 78:3> 'V'
+// CHECK-NEXT:      Type: SliceType <78:4, 78:7>
+// CHECK-NEXT:        Elt: Ident <78:6, 78:7> 'U'
+package p
+
+const a = 1
+const (
+	b, c int = 1, 2
+	d
+	e = iota
+)
+var x int
+var y, z = 1, "s"
+var (
+	v1 []int
+	v2 = map[string]int{}
+)
+type T int
+type A = int
+type (
+	U struct{}
+	V []U
+)

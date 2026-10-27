@@ -1,18 +1,18 @@
 # P02 Front-end: STATE
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
-Phase status: `[ ] not_started`
+Phase status: `[~] in_progress`
 Last updated: 2026-10-27
 Task definitions: [../TODO.md](../TODO.md) (section P02) · Design: [README.md](README.md)
 
 ## Tasks
 
-- [ ] P02.01 Source manager
-- [ ] P02.02 Diagnostics engine
-- [ ] P02.03 Lexer
-- [ ] P02.04 AST & arenas
-- [ ] P02.05 Parser core
-- [ ] P02.06 Parser: macros & attributes
+- [x] P02.01 Source manager
+- [x] P02.02 Diagnostics engine
+- [x] P02.03 Lexer
+- [x] P02.04 AST & arenas
+- [x] P02.05 Parser core
+- [x] P02.06 Parser: macros & attributes
 - [ ] P02.07 Error recovery
 - [ ] P02.08 `gopp parse`
 - [ ] P02.09 `gopp fmt`
@@ -38,3 +38,4 @@ Task definitions: [../TODO.md](../TODO.md) (section P02) · Design: [README.md](
 ## Notes / blockers
 
 - Starts once P01.02 (lexical) and the grammar parts of P01.03–P01.11 are drafted. The lexer can start as soon as P01.02 is done.
+- 2026-10-27: P02.01–P02.06 done through the team workflow (3 coders, PM merge on c2 = go/scanner + go/parser ports, review until a fresh reviewer returned CLEAN; ledger `.claude/team/p02-frontend-core-ledger.md`). All 10 spec samples and all 6240 Go stdlib files parse. Robustness: MaxNesting 1000 and a total AST height limit of 1024 per declaration (documented in spec ch. 16). Text diagnostics clip long lines to 120 columns. Follow-ups for P02.07 are in the ledger notes.

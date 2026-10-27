@@ -1,0 +1,26 @@
+// R1: nesting 300 x chain 400 is a tree about 120000 tall. The parser rejects
+// it with one error instead of handing it to the recursive dumper (stack
+// overflow). Every output mode must stay safe, and the next declaration is
+// still parsed.
+// RUN: %python %S/Inputs/gen-deep-expr.py 300 400 > %t.gopp
+// RUN: not %gopp parse %t.gopp 2> %t.plain
+// RUN: FileCheck --check-prefix=ERR --input-file=%t.plain %s
+// RUN: not %gopp parse -dump-ast %t.gopp > %t.ast 2> %t.err1
+// RUN: FileCheck --check-prefix=ERR --input-file=%t.err1 %s
+// RUN: FileCheck --check-prefix=AST --input-file=%t.ast %s
+// -dump-tokens alone only lexes (no tree, no error); with -dump-ast it parses.
+// RUN: %gopp parse -dump-tokens %t.gopp > %t.tok
+// RUN: not %gopp parse -dump-tokens -dump-ast %t.gopp > %t.tok2 2> %t.err2
+// RUN: FileCheck --check-prefix=ERR --input-file=%t.err2 %s
+// RUN: not %gopp parse -diag-format=json %t.gopp 2> %t.json
+// RUN: FileCheck --check-prefix=JSON --input-file=%t.json %s
+// A long flat chain hits the same limit.
+// RUN: %python %S/Inputs/gen-deep-expr.py 1 5000 > %t.chain.gopp
+// RUN: not %gopp parse -dump-ast %t.chain.gopp 2>&1 | FileCheck --check-prefix=CHAIN %s
+// CHAIN: error: expression too deeply nested (limit 1024)
+// ERR: error: expression too deeply nested (limit 1024)
+// ERR-NOT: error:
+// AST: BadDecl
+// AST: ValueSpec
+// AST: Ident{{.*}}'ok'
+// JSON: {"severity":"error","id":"err_expression_too_deeply_nested","message":"expression too deeply nested (limit 1024)"

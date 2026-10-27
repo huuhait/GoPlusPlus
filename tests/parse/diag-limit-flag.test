@@ -1,0 +1,16 @@
+// RUN: not %gopp parse -error-limit=2 %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:{{.*}}diag-limit-flag.test:13:9: error: expected operand, found ')'
+// CHECK-NEXT:   13 | var a = )
+// CHECK-NEXT:      |         ^
+// CHECK-NEXT:{{.*}}diag-limit-flag.test:14:9: error: expected operand, found ')'
+// CHECK-NEXT:   14 | var b = )
+// CHECK-NEXT:      |         ^
+// CHECK-NEXT:error: too many errors
+package p
+
+var a = )
+var b = )
+var c = )
+var d = )

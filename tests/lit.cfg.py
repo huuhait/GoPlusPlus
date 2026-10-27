@@ -1,4 +1,5 @@
 import os
+import sys
 
 import lit.formats
 
@@ -25,7 +26,13 @@ config.environment["LC_ALL"] = "C"
 if lit_config.params.get("run_long"):
     config.available_features.add("long")
 
+# For test inputs that are generated (too big or too repetitive to check in).
+config.substitutions.append(("%python", sys.executable))
 config.substitutions.append(("%gopp", os.path.join(config.gopp_tools_dir, "gopp")))
+# The spec examples (docs/spec/examples/<name>/main.gopp) must always parse.
+config.substitutions.append(
+    ("%examples", os.path.join(config.gopp_source_dir, "docs", "spec", "examples"))
+)
 
 # Where the shared libLLVM.so / libclang-cpp.so of the configured LLVM live
 # (empty for a static build). A test checks that gopp loads exactly these.

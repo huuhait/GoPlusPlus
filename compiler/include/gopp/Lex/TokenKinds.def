@@ -1,0 +1,121 @@
+//===- TokenKinds.def - Go++ token kinds ------------------------*- C++ -*-===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// TOK(Name)           special token, no fixed spelling
+// LITERAL(Name)       literal token
+// PUNCT(Name, Spell)  operator or delimiter
+// KEYWORD(Name)       reserved word; spelling is the name
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef TOK
+#define TOK(Name)
+#endif
+#ifndef LITERAL
+#define LITERAL(Name) TOK(Name)
+#endif
+#ifndef PUNCT
+#define PUNCT(Name, Spell) TOK(Name)
+#endif
+#ifndef KEYWORD
+#define KEYWORD(Name) TOK(kw_##Name)
+#endif
+
+TOK(eof)
+TOK(illegal)
+TOK(comment)
+
+LITERAL(ident)
+LITERAL(int_lit)
+LITERAL(float_lit)
+LITERAL(imag_lit)
+LITERAL(char_lit)
+LITERAL(string_lit)
+
+PUNCT(add, "+")
+PUNCT(sub, "-")
+PUNCT(mul, "*")
+PUNCT(quo, "/")
+PUNCT(rem, "%")
+PUNCT(and_, "&")
+PUNCT(or_, "|")
+PUNCT(xor_, "^")
+PUNCT(shl, "<<")
+PUNCT(shr, ">>")
+PUNCT(and_not, "&^")
+PUNCT(add_assign, "+=")
+PUNCT(sub_assign, "-=")
+PUNCT(mul_assign, "*=")
+PUNCT(quo_assign, "/=")
+PUNCT(rem_assign, "%=")
+PUNCT(and_assign, "&=")
+PUNCT(or_assign, "|=")
+PUNCT(xor_assign, "^=")
+PUNCT(shl_assign, "<<=")
+PUNCT(shr_assign, ">>=")
+PUNCT(and_not_assign, "&^=")
+PUNCT(land, "&&")
+PUNCT(lor, "||")
+PUNCT(arrow, "<-")
+PUNCT(inc, "++")
+PUNCT(dec, "--")
+PUNCT(eql, "==")
+PUNCT(lss, "<")
+PUNCT(gtr, ">")
+PUNCT(assign, "=")
+PUNCT(not_, "!")
+PUNCT(neq, "!=")
+PUNCT(leq, "<=")
+PUNCT(geq, ">=")
+PUNCT(define, ":=")
+PUNCT(ellipsis, "...")
+PUNCT(l_paren, "(")
+PUNCT(l_brack, "[")
+PUNCT(l_brace, "{")
+PUNCT(comma, ",")
+PUNCT(period, ".")
+PUNCT(r_paren, ")")
+PUNCT(r_brack, "]")
+PUNCT(r_brace, "}")
+PUNCT(semi, ";")
+PUNCT(colon, ":")
+PUNCT(tilde, "~")
+PUNCT(hash, "#")
+PUNCT(at, "@")
+
+KEYWORD(break)
+KEYWORD(case)
+KEYWORD(chan)
+KEYWORD(const)
+KEYWORD(continue)
+KEYWORD(default)
+KEYWORD(defer)
+KEYWORD(else)
+KEYWORD(fallthrough)
+KEYWORD(for)
+KEYWORD(func)
+KEYWORD(go)
+KEYWORD(goto)
+KEYWORD(if)
+KEYWORD(import)
+KEYWORD(interface)
+KEYWORD(map)
+KEYWORD(package)
+KEYWORD(range)
+KEYWORD(return)
+KEYWORD(select)
+KEYWORD(struct)
+KEYWORD(switch)
+KEYWORD(type)
+KEYWORD(var)
+KEYWORD(macro)
+
+#undef TOK
+#undef LITERAL
+#undef PUNCT
+#undef KEYWORD

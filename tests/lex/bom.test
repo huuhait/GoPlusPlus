@@ -1,0 +1,11 @@
+﻿// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:10:1 kw_package 'package'
+// CHECK-NEXT:10:9 ident 'p'
+// CHECK-NEXT:10:10 semi '\n'
+// CHECK-NEXT:11:1 ident 'x'
+// CHECK-NEXT:11:2 semi '\n'
+// CHECK-NEXT:12:1 eof
+package p
+x

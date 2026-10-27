@@ -1,0 +1,13 @@
+// A source line longer than 120 columns is clipped around the caret, with "..."
+// at the cut ends; the caret stays under the offending token. JSON output is
+// not clipped (it has no snippet).
+// RUN: %python %S/Inputs/gen-long-lines.py > %t.gopp
+// RUN: not %gopp parse %t.gopp 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
+// RUN: not %gopp parse -diag-format=json %t.gopp 2>&1 | FileCheck --check-prefix=JSON %s
+// CHECK:{{.*}}.tmp.gopp:2:129: error: expected operand, found ')'
+// CHECK-NEXT:    2 | ...x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + ) + y + y + y + y + y + y + y + y + y + y + y + y + y + y + ...
+// CHECK-NEXT:      |                                                                ^
+// CHECK-NEXT:{{.*}}.tmp.gopp:3:409: error: expected operand, found ';'
+// CHECK-NEXT:    3 | ...q + q + q + q + q + q + q + q + q + q + q + q + q + q + q + ;
+// CHECK-NEXT:      |                                                                ^
+// JSON: "column":129

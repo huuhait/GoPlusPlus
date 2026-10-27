@@ -1,0 +1,151 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// Golden output first (generated); the source follows, so positions below are
+// positions in this file.
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <139:9, 139:10> 'p'
+// CHECK-NEXT:  Decl: FuncDecl <141:1, 141:9>
+// CHECK-NEXT:    Name: Ident <141:6, 141:7> 'a'
+// CHECK-NEXT:    Type: FuncType <141:1, 141:9>
+// CHECK-NEXT:      Params: FieldList <141:7, 141:9>
+// CHECK-NEXT:  Decl: FuncDecl <142:1, 142:17>
+// CHECK-NEXT:    Name: Ident <142:6, 142:7> 'b'
+// CHECK-NEXT:    Type: FuncType <142:1, 142:14>
+// CHECK-NEXT:      Params: FieldList <142:7, 142:14>
+// CHECK-NEXT:        Field: Field <142:8, 142:13>
+// CHECK-NEXT:          Names: Ident <142:8, 142:9> 'x'
+// CHECK-NEXT:          Type: Ident <142:10, 142:13> 'int'
+// CHECK-NEXT:    Body: BlockStmt <142:15, 142:17>
+// CHECK-NEXT:  Decl: FuncDecl <143:1, 143:58>
+// CHECK-NEXT:    Name: Ident <143:6, 143:7> 'c'
+// CHECK-NEXT:    Type: FuncType <143:1, 143:40>
+// CHECK-NEXT:      Params: FieldList <143:7, 143:27>
+// CHECK-NEXT:        Field: Field <143:8, 143:16>
+// CHECK-NEXT:          Names: Ident <143:8, 143:9> 'x'
+// CHECK-NEXT:          Names: Ident <143:11, 143:12> 'y'
+// CHECK-NEXT:          Type: Ident <143:13, 143:16> 'int'
+// CHECK-NEXT:        Field: Field <143:18, 143:26>
+// CHECK-NEXT:          Names: Ident <143:18, 143:19> 'z'
+// CHECK-NEXT:          Type: Ident <143:20, 143:26> 'string'
+// CHECK-NEXT:      Results: FieldList <143:28, 143:40>
+// CHECK-NEXT:        Field: Field <143:29, 143:32>
+// CHECK-NEXT:          Type: Ident <143:29, 143:32> 'int'
+// CHECK-NEXT:        Field: Field <143:34, 143:39>
+// CHECK-NEXT:          Type: Ident <143:34, 143:39> 'error'
+// CHECK-NEXT:    Body: BlockStmt <143:41, 143:58>
+// CHECK-NEXT:      Stmt: ReturnStmt <143:43, 143:56>
+// CHECK-NEXT:        Result: BasicLit <143:50, 143:51> int_lit 0
+// CHECK-NEXT:        Result: Ident <143:53, 143:56> 'nil'
+// CHECK-NEXT:  Decl: FuncDecl <144:1, 144:48>
+// CHECK-NEXT:    Name: Ident <144:6, 144:7> 'd'
+// CHECK-NEXT:    Type: FuncType <144:1, 144:37>
+// CHECK-NEXT:      Params: FieldList <144:7, 144:18>
+// CHECK-NEXT:        Field: Field <144:8, 144:17>
+// CHECK-NEXT:          Names: Ident <144:8, 144:10> 'xs'
+// CHECK-NEXT:          Type: Ellipsis <144:11, 144:17>
+// CHECK-NEXT:            Elt: Ident <144:14, 144:17> 'int'
+// CHECK-NEXT:      Results: FieldList <144:19, 144:37>
+// CHECK-NEXT:        Field: Field <144:20, 144:25>
+// CHECK-NEXT:          Names: Ident <144:20, 144:21> 'n'
+// CHECK-NEXT:          Type: Ident <144:22, 144:25> 'int'
+// CHECK-NEXT:        Field: Field <144:27, 144:36>
+// CHECK-NEXT:          Names: Ident <144:27, 144:30> 'err'
+// CHECK-NEXT:          Type: Ident <144:31, 144:36> 'error'
+// CHECK-NEXT:    Body: BlockStmt <144:38, 144:48>
+// CHECK-NEXT:      Stmt: ReturnStmt <144:40, 144:46>
+// CHECK-NEXT:  Decl: FuncDecl <145:1, 145:18>
+// CHECK-NEXT:    Recv: FieldList <145:6, 145:11>
+// CHECK-NEXT:      Field: Field <145:7, 145:10>
+// CHECK-NEXT:        Names: Ident <145:7, 145:8> 'r'
+// CHECK-NEXT:        Type: Ident <145:9, 145:10> 'T'
+// CHECK-NEXT:    Name: Ident <145:12, 145:13> 'm'
+// CHECK-NEXT:    Type: FuncType <145:1, 145:15>
+// CHECK-NEXT:      Params: FieldList <145:13, 145:15>
+// CHECK-NEXT:    Body: BlockStmt <145:16, 145:18>
+// CHECK-NEXT:  Decl: FuncDecl <146:1, 146:42>
+// CHECK-NEXT:    Recv: FieldList <146:6, 146:12>
+// CHECK-NEXT:      Field: Field <146:7, 146:11>
+// CHECK-NEXT:        Names: Ident <146:7, 146:8> 'r'
+// CHECK-NEXT:        Type: StarExpr <146:9, 146:11>
+// CHECK-NEXT:          X: Ident <146:10, 146:11> 'T'
+// CHECK-NEXT:    Name: Ident <146:13, 146:14> 'n'
+// CHECK-NEXT:    Type: FuncType <146:1, 146:26>
+// CHECK-NEXT:      Params: FieldList <146:14, 146:21>
+// CHECK-NEXT:        Field: Field <146:15, 146:20>
+// CHECK-NEXT:          Names: Ident <146:15, 146:16> 'a'
+// CHECK-NEXT:          Type: Ident <146:17, 146:20> 'int'
+// CHECK-NEXT:      Results: FieldList <146:22, 146:26>
+// CHECK-NEXT:        Field: Field <146:22, 146:26>
+// CHECK-NEXT:          Type: Ident <146:22, 146:26> 'bool'
+// CHECK-NEXT:    Body: BlockStmt <146:27, 146:42>
+// CHECK-NEXT:      Stmt: ReturnStmt <146:29, 146:40>
+// CHECK-NEXT:        Result: Ident <146:36, 146:40> 'true'
+// CHECK-NEXT:  Decl: FuncDecl <147:1, 147:16>
+// CHECK-NEXT:    Recv: FieldList <147:6, 147:9>
+// CHECK-NEXT:      Field: Field <147:7, 147:8>
+// CHECK-NEXT:        Type: Ident <147:7, 147:8> 'T'
+// CHECK-NEXT:    Name: Ident <147:10, 147:11> 'o'
+// CHECK-NEXT:    Type: FuncType <147:1, 147:13>
+// CHECK-NEXT:      Params: FieldList <147:11, 147:13>
+// CHECK-NEXT:    Body: BlockStmt <147:14, 147:16>
+// CHECK-NEXT:  Decl: FuncDecl <148:1, 148:26>
+// CHECK-NEXT:    Recv: FieldList <148:6, 148:19>
+// CHECK-NEXT:      Field: Field <148:7, 148:18>
+// CHECK-NEXT:        Names: Ident <148:7, 148:8> 'r'
+// CHECK-NEXT:        Type: IndexExpr <148:9, 148:18>
+// CHECK-NEXT:          X: Ident <148:9, 148:12> 'Gen'
+// CHECK-NEXT:          Index: Ident <148:13, 148:14> 'K'
+// CHECK-NEXT:          Index: Ident <148:16, 148:17> 'V'
+// CHECK-NEXT:    Name: Ident <148:20, 148:21> 'p'
+// CHECK-NEXT:    Type: FuncType <148:1, 148:23>
+// CHECK-NEXT:      Params: FieldList <148:21, 148:23>
+// CHECK-NEXT:    Body: BlockStmt <148:24, 148:26>
+// CHECK-NEXT:  Decl: FuncDecl <149:1, 149:23>
+// CHECK-NEXT:    Name: Ident <149:6, 149:7> 'e'
+// CHECK-NEXT:    Type: FuncType <149:1, 149:20>
+// CHECK-NEXT:      Params: FieldList <149:7, 149:20>
+// CHECK-NEXT:        Field: Field <149:8, 149:11>
+// CHECK-NEXT:          Type: Ident <149:8, 149:11> 'int'
+// CHECK-NEXT:        Field: Field <149:13, 149:19>
+// CHECK-NEXT:          Type: Ident <149:13, 149:19> 'string'
+// CHECK-NEXT:    Body: BlockStmt <149:21, 149:23>
+// CHECK-NEXT:  Decl: FuncDecl <150:1, 150:19>
+// CHECK-NEXT:    Name: Ident <150:6, 150:7> 'f'
+// CHECK-NEXT:    Type: FuncType <150:1, 150:16>
+// CHECK-NEXT:      Params: FieldList <150:7, 150:16>
+// CHECK-NEXT:        Field: Field <150:8, 150:9>
+// CHECK-NEXT:          Type: Ident <150:8, 150:9> 'a'
+// CHECK-NEXT:        Field: Field <150:11, 150:12>
+// CHECK-NEXT:          Type: Ident <150:11, 150:12> 'b'
+// CHECK-NEXT:        Field: Field <150:14, 150:15>
+// CHECK-NEXT:          Type: Ident <150:14, 150:15> 'c'
+// CHECK-NEXT:    Body: BlockStmt <150:17, 150:19>
+// CHECK-NEXT:  Decl: GenDecl <151:1, 151:43> var
+// CHECK-NEXT:    Spec: ValueSpec <151:5, 151:43>
+// CHECK-NEXT:      Name: Ident <151:5, 151:8> 'lit'
+// CHECK-NEXT:      Value: FuncLit <151:11, 151:43>
+// CHECK-NEXT:        Type: FuncType <151:11, 151:26>
+// CHECK-NEXT:          Params: FieldList <151:15, 151:22>
+// CHECK-NEXT:            Field: Field <151:16, 151:21>
+// CHECK-NEXT:              Names: Ident <151:16, 151:17> 'x'
+// CHECK-NEXT:              Type: Ident <151:18, 151:21> 'int'
+// CHECK-NEXT:          Results: FieldList <151:23, 151:26>
+// CHECK-NEXT:            Field: Field <151:23, 151:26>
+// CHECK-NEXT:              Type: Ident <151:23, 151:26> 'int'
+// CHECK-NEXT:        Body: BlockStmt <151:27, 151:43>
+// CHECK-NEXT:          Stmt: ReturnStmt <151:29, 151:41>
+// CHECK-NEXT:            Result: BinaryExpr <151:36, 151:41> op='*'
+// CHECK-NEXT:              X: Ident <151:36, 151:37> 'x'
+// CHECK-NEXT:              Y: BasicLit <151:40, 151:41> int_lit 2
+package p
+
+func a()
+func b(x int) {}
+func c(x, y int, z string) (int, error) { return 0, nil }
+func d(xs ...int) (n int, err error) { return }
+func (r T) m() {}
+func (r *T) n(a int) bool { return true }
+func (T) o() {}
+func (r Gen[K, V]) p() {}
+func e(int, string) {}
+func f(a, b, c) {}
+var lit = func(x int) int { return x * 2 }
