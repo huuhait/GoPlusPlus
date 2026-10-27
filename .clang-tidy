@@ -1,0 +1,17 @@
+# Curated set; extend deliberately (D0.11). Run: clang-tidy -p build <file>
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  misc-definitions-in-headers,
+  misc-unused-using-decls,
+  modernize-use-nullptr,
+  modernize-use-override,
+  performance-for-range-copy,
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  readability-container-size-empty,
+  readability-redundant-smartptr-get
+WarningsAsErrors: ''
+HeaderFilterRegex: 'compiler/(include|lib)/.*'

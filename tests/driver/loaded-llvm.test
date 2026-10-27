@@ -1,0 +1,7 @@
+// REQUIRES: shared-llvm
+// RUN: ldd %gopp | grep -E "libLLVM|libclang-cpp" | not grep -v -F %llvm_lib_dirs
+
+// The shared libLLVM and libclang-cpp that gopp loads must be the ones this
+// build was configured with. A second LLVM earlier on the library path (for
+// example the regular one in the assertions shell) makes gopp fail at startup.
+// Static (Release) builds load neither, so the test is unsupported there.

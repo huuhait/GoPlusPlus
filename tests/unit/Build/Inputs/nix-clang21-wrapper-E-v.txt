@@ -1,0 +1,23 @@
+clang version 21.1.8
+Target: x86_64-unknown-linux-gnu
+Thread model: posix
+InstalledDir: /nix/store/jskv39ga5njhv0hwv5yxjq56dmc5jjm8-clang-21.1.8/bin
+Found candidate GCC installation: /nix/store/s2f0mfx0iiap9yxmlfvq0psn26jsbind-gcc-15.3.0/lib/gcc/x86_64-unknown-linux-gnu/15.3.0
+Selected GCC installation: /nix/store/s2f0mfx0iiap9yxmlfvq0psn26jsbind-gcc-15.3.0/lib/gcc/x86_64-unknown-linux-gnu/15.3.0
+Candidate multilib: .;@m64
+Selected multilib: .;@m64
+ (in-process)
+clang -cc1 version 21.1.8 based upon LLVM 21.1.8 default target x86_64-unknown-linux-gnu
+#include "..." search starts here:
+#include <...> search starts here:
+ /nix/store/vdnbszmf97i2n8vcqgq8r362a9xnzjdm-llvm-21.1.8-dev/include
+ /nix/store/50b7yix86m67q11m1py3qdj8r9jan5sn-ncurses-6.6-dev/include
+ /nix/store/2k9dj65vyanlvq863ks3ii7cjx82kfng-zlib-1.3.2-dev/include
+ /nix/store/ban18xz9jqmig40x5wn6ryzwy5ggrc0v-clang-21.1.8-dev/include
+ /nix/store/0p4q4cf34c5sxng7iy8p7qr0hbyz1psz-lld-21.1.8-dev/include
+ /nix/store/rd8pd5ac6d6hyd613xz3w2ky61jv7pxp-python3-3.13.15-env/include
+ /nix/store/80xjqvdpbcz6g720dz1s8h4xnjd5lcvq-gtest-1.17.0-dev/include
+ /nix/store/m83p0g6bjz0d0xaix9052r22zh8x36l4-compiler-rt-libc-21.1.8-dev/include
+ /nix/store/injsp2brg9mjxljavd5idjyms18b5izy-clang-wrapper-21.1.8/resource-root/include
+ /nix/store/sr08dm9x0fsa1mrzjrlb3csdcmilsraz-glibc-2.42-100-dev/include
+End of search list.

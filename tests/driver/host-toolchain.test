@@ -1,0 +1,8 @@
+// RUN: %gopp host-toolchain | FileCheck %s
+
+// CHECK: source: {{compiler|nix-environment}}
+// CHECK: include-dir: /{{.+}}
+// CHECK: crt1: /{{.+}}/crt1.o
+// CHECK: crti: /{{.+}}/crti.o
+// CHECK: crtn: /{{.+}}/crtn.o
+// CHECK: dynamic-linker: /{{.+}}/ld-linux-{{.+}}.so.{{.+}}

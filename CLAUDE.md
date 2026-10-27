@@ -14,7 +14,7 @@ Budgets and design: plan P00 D0.13 (`plans/2026-10-27-goplusplus-language/00-fou
 - After an edit, run the narrowest test first (one file, or one stage target such as `check-parser`). Run the full suite once, before finishing the task.
 - If one command takes more than 2 minutes, stop and fix the slowness (a narrower target, a cache, a test that stops earlier) instead of waiting. Report it.
 - Run long jobs (full suite, cdep builds, benchmarks) in the background and keep working.
-- Never delete build folders. Each worktree has its own build folder; all of them share one ccache.
+- Never delete build folders. Each worktree has its own build folder; all of them share one sccache.
 - New tests stop as early as they can (AST/GIR dump + FileCheck). A test that needs more than 2 s is marked long.
 
 ## Definition of done
@@ -39,12 +39,16 @@ A task is not done until:
 ## Environment
 - OS: NixOS (Linux). Shell: bash for commands (the login shell is fish). Use Linux paths and commands.
 - Tools come from the project's Nix flake (P00.02 creates it): run commands as `nix develop -c <cmd>`.
-- Commands (fill in when P00.04 lands):
-  - Build: `...`
-  - Test (all): `...`
-  - Test (one file): `...`
-  - Lint/format: `...`
-  - Run locally: `...`
+- Commands (run from the repo root; the dev shell turns on sccache with a 100 GB cache; default build type `Dev` = `-O1 -g`, assertions on, shared LLVM/Clang):
+  - Configure (once per build dir): `nix develop -c cmake -S . -B build -G Ninja` (`-DCMAKE_BUILD_TYPE=Release` for static LLVM/Clang/LLD, `-DCMAKE_BUILD_TYPE=Debug -DGOPP_USE_SANITIZER="Address;Undefined"` for sanitizers)
+  - Build: `nix develop -c ninja -C build gopp`
+  - Test (all): `nix develop -c ninja -C build check` (every `check-<stage>` target plus the front-end include check; slow tests: `check-long`)
+  - Test (one stage): `nix develop -c ninja -C build check-driver` (or `check-unit`)
+  - Test (one file): `nix develop -c lit -sv build/tests/driver/version.test` (lit test), or `nix develop -c build/bin/GoppUnitTests --gtest_filter='HostToolchain.*'` (unit tests)
+  - Lint/format: `nix develop -c ninja -C build format-check` (fix with `... format`); header rule: `... check-includes`
+  - Suite-time gate: `nix develop -c ninja -C build check-suite-time` (fails if >10% slower than `tests/suite-time-baseline.json`; refresh with `nix develop -c ninja -C build check-suite-time-update`, key from `-DGOPP_SUITE_TIME_KEY`, default `dev`)
+  - Run locally: `nix develop -c build/bin/gopp version` (also `gopp host-toolchain`)
+  - Assertions-enabled LLVM (compiles LLVM/Clang/LLD from source the first time): `nix develop .#assertions -c ...` with its own build dir, e.g. `-B build-assert`
 
 ## Stack notes
 ### Ruby / Rails

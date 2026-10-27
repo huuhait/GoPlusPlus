@@ -1,0 +1,3 @@
+// RUN: not %gopp 2>&1 | FileCheck %s
+
+// CHECK: Go++ compiler driver

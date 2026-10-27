@@ -1,0 +1,57 @@
+# ADR-0004: Semantics of `!` (fallible functions and unwrapping calls)
+
+- **Status:** accepted (direction only; the rules are specified in P01)
+- **Date:** 2026-10-27
+- **Plan reference:** P01 D1.8
+
+## Context
+
+Go's `if err != nil { return ..., err }` is verbose, but Go++ must keep Go's
+error values and the familiar `val, err := call()` form working unchanged. We
+want a short form for the common "pass the error up" case without exceptions or
+hidden control flow that costs more than the hand-written code.
+
+## Decision
+
+- **Go error handling is unchanged.** `val, err := call()` plus
+  `if err != nil` works exactly as in Go.
+- **`func name!(...) T` declares a function that can fail.** It is the same
+  function as `func name(...) (T, error)`; callers see `(T, error)`. The `!`
+  sits right before the parameter list, for functions, methods, interface
+  methods, literals (`func!(x int) T {...}`) and function types.
+- **`call!(args)` unwraps a call whose last result is `error`.** The value is
+  the remaining results. On error:
+  - inside a function that can fail (declared with `!`, or whose last result
+    is `error`), the error is returned to the caller with zero values for the
+    other results, and the `!` site is added to the error's trace (the error
+    is never wrapped);
+  - anywhere else (`main`, a goroutine body, a function without an error
+    result), it panics with an `errors.MustError` value.
+- **Same behavior as `return <zero values>, err`**: named results are set, then
+  deferred calls run.
+- **Libraries do not panic on ordinary errors.** `gopp vet` flags a `!` that
+  would panic outside package `main`, and warns about `!` on `(n, err)` calls
+  such as `Read` and `Write`.
+- **Only for calls.** Map lookups and channel receives keep the comma-ok form.
+- **Cost.** One compare and a branch to a cold block, the same code as the
+  hand-written check; the trace entry is written only on the error path.
+
+## Consequences
+
+- Error handling reads like Go but is much shorter in the common case.
+- `errors.MustError` and error traces become part of the standard library
+  (P13) and runtime.
+- The lexer and parser need the extra grammar rule
+  `PrimaryExpr "!" Arguments` (P02).
+- `defer f!()` and `go f!()` need the special rules listed in D1.8.
+
+## Alternatives
+
+The plan text for D1.8 does not list rejected alternatives. The ones below are
+the obvious options this design avoids; they are not recorded owner decisions.
+
+- **Exceptions:** hidden control flow and a runtime cost; not Go-like.
+- **A `Result[T]` type or Rust-style `?` operator:** changes every signature
+  and breaks Go code and interop with Go-style APIs.
+- **Do nothing (keep only `if err != nil`):** keeps Go's verbosity, which the
+  language wants to reduce.

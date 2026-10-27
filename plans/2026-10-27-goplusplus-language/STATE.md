@@ -10,7 +10,7 @@ Last updated: 2026-10-27
 
 ## Phases
 
-- [ ] P00 Foundations ([state](00-foundations/STATE.md))
+- [~] P00 Foundations ([state](00-foundations/STATE.md))
 - [~] P01 Language specification v0 ([state](01-language-spec/STATE.md))
 - [ ] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
 - [ ] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
@@ -43,8 +43,8 @@ Last updated: 2026-10-27
 
 ## Current focus
 
-- Next: **P00.01 Initialize repository**. The owner is asked before the first commit.
-- Parallel tracks once P00 is done: P01 (spec) is the critical path. P00 CI/test-harness work can proceed alongside it.
+- P00 is done locally. What's left needs a push: the first GitHub CI run (P00.07, P00.08, P00.13 and the CI exit criteria), then CI suite-time baselines.
+- P01 (spec) is the critical path.
 
 ## Log
 
@@ -85,3 +85,7 @@ Last updated: 2026-10-27
   - P01 Q4: every owned slice and map stores its allocator, so owned slices are 4 words (new D1.22; replaces "slices stay 3 words"). Q5: generic methods allowed (D1.10). Q6: one-word interface inline storage (D1.12).
   - P01.12 is done, so P01 is in progress.
 - 2026-10-27: Fast dev loop for `gopp` itself (owner request): README principle 7; P00 D0.13 with budgets (edit → rebuilt ≤ 10 s, stage tests ≤ 10 s, full check ≤ 5 min, one test ≤ 2 s, clean build ≤ 2 min) and tasks P00.13–P00.14; P04 D4.14 fast test runner (batch compiles, ORC JIT in executor processes, Go outputs saved as golden files) and task P04.19; agent rules added to the repo's `CLAUDE.md`. 232 tasks.
+- 2026-10-27: P00 built through the team workflow (3 coders in parallel, PM merge on c3's LLVM-style base, review loop until a fresh reviewer returned CLEAN; ledger `.claude/team/p00-foundations-ledger.md`, 5 findings, all closed).
+  - Done locally: P00.01–P00.06, P00.09–P00.12, P00.14, plus the D0.13 budgets (edit → rebuild 0.2–1.7 s, clean build ~9–14 s, full `ninja check` < 1 s).
+  - Waiting on the first GitHub CI run (needs a push): P00.07, P00.08, P00.13.
+  - Decision changes (ADR-0002): sccache replaces ccache (owner request; automatic, 100 GB); LLVM 23.1.0 pinned; Release links LLVM, Clang and LLD fully statically.

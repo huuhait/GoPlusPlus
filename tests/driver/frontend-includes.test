@@ -1,0 +1,12 @@
+// The front-end include check accepts ADT/Support headers and rejects the rest.
+// RUN: rm -rf %t && mkdir -p %t/compiler/lib/Parse %t/compiler/lib/CodeGen
+// RUN: echo '#include "llvm/ADT/StringRef.h"' > %t/compiler/lib/Parse/A.cpp
+// RUN: echo '#include "llvm/IR/Module.h"' > %t/compiler/lib/CodeGen/B.cpp
+// RUN: %S/../../tools/check-frontend-includes.sh %t
+// RUN: echo '#include <llvm/IR/Module.h>' > %t/compiler/lib/Parse/C.cpp
+// RUN: not %S/../../tools/check-frontend-includes.sh %t 2>&1 | FileCheck %s
+// RUN: echo '#include "clang/Basic/Version.h"' > %t/compiler/lib/Parse/C.cpp
+// RUN: not %S/../../tools/check-frontend-includes.sh %t 2>&1 | FileCheck %s
+
+// CHECK: C.cpp:1:
+// CHECK: error: front-end libraries may include only llvm/ADT and llvm/Support headers

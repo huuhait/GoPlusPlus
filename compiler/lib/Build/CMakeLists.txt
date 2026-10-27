@@ -1,0 +1,1 @@
+add_gopp_library(Build HostToolchain.cpp LLVM_COMPONENTS support targetparser)

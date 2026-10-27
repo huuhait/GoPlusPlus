@@ -1,0 +1,5 @@
+// Example of an opt-in slow test: only runs under `ninja check-long`.
+// REQUIRES: long
+// RUN: %gopp version | FileCheck %s
+
+// CHECK: gopp version

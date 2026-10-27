@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Caching:
+#   * Nix store: magic-nix-cache keeps built Nix paths in the GitHub Actions
+#     cache. This matters most for the assertions job, which builds LLVM,
+#     Clang and LLD from source once and then reuses them.
+#   * Compiler: sccache with the GitHub Actions cache backend.
+env:
+  # sccache with the GitHub Actions cache backend (shared by all jobs).
+  # The 100G limit is for developer machines; runners use a small local limit
+  # (the dev shell keeps a SCCACHE_CACHE_SIZE that is already set).
+  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_CACHE_SIZE: 2G
+
+jobs:
+  release:
+    name: Release (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86-64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Configure
+        run: >
+          nix develop -c cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGOPP_SUITE_TIME_KEY=ci-${{ matrix.arch }}
+          -DGOPP_SUITE_TIME_ALLOW_MISSING=ON
+      - name: Build
+        run: nix develop -c ninja -C build gopp
+      - name: Test
+        run: nix develop -c ninja -C build check
+      - name: Format check
+        run: nix develop -c ninja -C build format-check
+      - name: Front-end include check (no LLVM IR or Clang headers)
+        run: nix develop -c tools/check-frontend-includes.sh
+      # Fails if the suite is >10% slower than tests/suite-time-baseline.json.
+      # Until a "ci-<arch>" baseline is committed it only warns and prints
+      # the command that creates it.
+      - name: Suite time gate
+        run: nix develop -c ninja -C build check-suite-time
+
+  asan-ubsan:
+    name: Debug + ASan/UBSan (x86-64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Configure
+        run: >
+          nix develop -c cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DGOPP_USE_SANITIZER="Address;Undefined"
+          -DGOPP_TEST_TIMEOUT=20
+      - name: Build
+        run: nix develop -c ninja -C build gopp
+      - name: Test
+        run: nix develop -c ninja -C build check
+      - name: Format check
+        run: nix develop -c ninja -C build format-check
+
+  assertions:
+    name: Assertions-enabled LLVM (x86-64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      # The first run compiles LLVM, Clang and LLD from source (long); later
+      # runs restore them from the Nix store cache.
+      - name: Build the assertions dev shell and check assertions are on
+        run: test "$(nix develop .#assertions -c llvm-config --assertion-mode)" = ON
+      # The default (Dev, shared LLVM) build must also run against the
+      # assertions LLVM; tests/driver/loaded-llvm.test checks which libs load.
+      - name: Dev build and driver tests in the assertions shell
+        run: |
+          nix develop .#assertions -c cmake -S . -B build-dev -G Ninja
+          nix develop .#assertions -c ninja -C build-dev check
+      - name: Configure
+        run: >
+          nix develop .#assertions -c cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: nix develop .#assertions -c ninja -C build gopp
+      - name: Test
+        run: nix develop .#assertions -c ninja -C build check
+      - name: Format check
+        run: nix develop .#assertions -c ninja -C build format-check

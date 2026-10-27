@@ -1,0 +1,7 @@
+// With no C compiler and no Nix variables the probe fails with a clear error
+// and a non-zero exit; it never guesses. (The bundled musl fallback of D0.12
+// does not exist yet.)
+// RUN: mkdir -p %t.empty
+// RUN: not env -u NIX_CFLAGS_COMPILE -u NIX_LDFLAGS PATH=%t.empty %gopp host-toolchain 2>&1 | FileCheck %s
+
+// CHECK: gopp: error: no C compiler ('cc') in PATH and no NIX_CFLAGS_COMPILE/NIX_LDFLAGS; the bundled musl fallback is not available yet

@@ -19,10 +19,10 @@
 
 **D0.2 — One pinned LLVM major.** Use the newest stable LLVM major available in the pinned nixpkgs, at least 21 (clang 21.1.8 is installed). Upgrade at most once per Go++ minor release, in a dedicated change that runs the full suite. LLVM/Clang API use stays inside `lib/CodeGen`, `lib/Import`, `lib/Build` and the LLVM bridge of `lib/GIR`, so upgrades touch a bounded area. Release builds link LLVM, Clang and LLD statically into `gopp`; dev builds may use LLVM's shared library for faster relinks.
 
-**D0.3 — Build the compiler with CMake + Ninja.** This is LLVM's own ecosystem (`find_package(LLVM)`, `find_package(Clang)`). Add ccache, and link with mold or lld. Match the pinned LLVM build: take the RTTI flag from `llvm-config --has-rtti` (nixpkgs LLVM 21 has RTTI on) and build without exceptions.
+**D0.3 — Build the compiler with CMake + Ninja.** This is LLVM's own ecosystem (`find_package(LLVM)`, `find_package(Clang)`). Add sccache (on automatically, 100 GB, shared by all worktrees; owner decision, ADR-0002), and link with mold or lld. Match the pinned LLVM build: take the RTTI flag from `llvm-config --has-rtti` (nixpkgs LLVM 21 has RTTI on) and build without exceptions.
 
 **D0.4 — The dev environment is a Nix flake.**
-- `flake.nix` pins the LLVM/Clang/LLD dev packages, CMake, Ninja, ccache, mold, Python 3 + lit, Go and GoogleTest. `flake.lock` is committed, so everyone gets the same tools.
+- `flake.nix` pins the LLVM/Clang/LLD dev packages, CMake, Ninja, sccache, mold, Python 3 + lit, Go and GoogleTest. `flake.lock` is committed, so everyone gets the same tools.
 - An optional `.envrc` (`use flake`) lets direnv load the shell on `cd`; editors pick it up too.
 - Scripts, CI and agents run commands as `nix develop -c <cmd>`.
 - An optional second dev shell has an **assertions-enabled** LLVM/Clang/LLD of the same major: a Release build with assertions on, never a Debug build (about 10× slower). Misuse of Clang's C++ API must fail loudly during development. A CI job uses it too (D0.7).
@@ -102,7 +102,7 @@ Every job runs `ninja check` and the format check.
   - Dev builds link LLVM and Clang as shared libraries (`libLLVM.so`, `libclang-cpp.so`) with mold. Release builds link them statically.
   - The front-end libraries (lexer, parser, type checker) may use LLVM's ADT/Support headers, but never LLVM IR or Clang headers. Only codegen and interop include those, through precompiled headers.
   - The dev build type is `-O1 -g` with assertions. `-O0` makes every test slower.
-  - Build folders are never deleted. Each worktree has its own build folder, and all of them share one ccache.
+  - Build folders are never deleted. Each worktree has its own build folder, and all of them share one sccache.
 - **Testing** (P00.14, P04.19):
   - Tests stop as early as they can: most check an AST or GIR dump with FileCheck and never generate code or link.
   - Each stage has its own target (`check-parser`, `check-sema`, `check-gir`, `check-codegen`, …); `check` runs them all on every core.

@@ -1,0 +1,8 @@
+// RUN: %gopp version | FileCheck %s
+
+// LLVM, Clang and LLD are linked into gopp and are one pinned version (D0.2).
+// CHECK: gopp version {{[0-9]+\.[0-9]+\.[0-9]+}}
+// CHECK-NEXT: LLVM version [[VER:[0-9]+\.[0-9]+\.[0-9]+]]
+// CHECK-NEXT: Default target: {{[a-z0-9_]+-[a-z0-9_.-]+}}
+// CHECK-NEXT: Clang: {{.*}}clang version [[VER]]{{$| }}
+// CHECK-NEXT: LLD: LLD [[VER]]{{$| }}

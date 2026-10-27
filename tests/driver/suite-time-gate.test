@@ -1,0 +1,13 @@
+// The suite-time gate (D0.13) passes within 10% of the baseline, fails above
+// it, and handles a missing baseline as configured.
+// RUN: echo '{"dev": {"seconds": 1.0}}' > %t.json
+// RUN: python3 %S/../../tools/check-suite-time.py --baseline %t.json --measured 1.09 | FileCheck --check-prefix=OK %s
+// RUN: not python3 %S/../../tools/check-suite-time.py --baseline %t.json --measured 1.11 | FileCheck --check-prefix=SLOW %s
+// RUN: not python3 %S/../../tools/check-suite-time.py --baseline %t.json --key ci --measured 1.0 | FileCheck --check-prefix=MISSING %s
+// RUN: python3 %S/../../tools/check-suite-time.py --baseline %t.json --key ci --measured 1.0 --allow-missing | FileCheck --check-prefix=WARN %s
+
+// OK: baseline 'dev': 1.000s, limit 1.100s, now +9.0%
+// OK-NOT: FAIL
+// SLOW: FAIL: the suite is 11.0% slower than the baseline (allowed 10%)
+// MISSING: FAIL: no baseline for key 'ci'
+// WARN: warning: no baseline for key 'ci'
