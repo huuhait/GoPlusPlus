@@ -238,6 +238,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - there is no allocation per hop.
 - **P05.15 Bootstrap std** (D5.12): minimal `fmt.Println`/`Printf`, `os.Args`/`Open`/`Exit`, `io.ReadAll`, `errors.New`, `errors.MustError`. *Done when:* the P04.14 differential corpus prints through it.
 - **P05.16 Spec-revision window**: after M2, check the ownership rules against the M2 programs, and update P01 through ADRs. *Done when:* the review notes are resolved.
+- **P05.17 Drop arena** (D5.3): `mem.DropArena` for any type; per-allocation drop records only for types that need drop; `Free`/`Reset` run them newest first; final API names. *Done when:* tests pass under ASan/LSan with no leaks, and a type without drop allocates as fast as in `mem.Arena` (benchmark).
 
 ## P06 — Build driver and compile speed ([README](06-build-driver-and-compile-speed/README.md))
 

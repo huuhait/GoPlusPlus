@@ -109,7 +109,7 @@ Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 
 **UB-4.** *`longjmp` across Go++ frames.* A C `longjmp` that jumps over Go++ frames skips destructors and deferred calls. UB ([PAN-9](09-errors-and-panics.md)). Also a C++ exception or a Go++ panic thrown through a frame marked `nounwind` by mistake.
 
-**UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` while slices, maps or raw pointers allocated in it are alive leaves them dangling ([SLC-3](08-slices-and-range.md), P05 D5.3).
+**UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` or `mem.DropArena` while slices, maps or raw pointers allocated in it are alive leaves them dangling ([SLC-3](08-slices-and-range.md), P05 D5.3).
 
 **UB-6.** *`@NoBounds`.* An out-of-range index in a function (or package) with bounds checks turned off.
 

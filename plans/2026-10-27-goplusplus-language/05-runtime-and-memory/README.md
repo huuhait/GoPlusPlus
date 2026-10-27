@@ -17,7 +17,8 @@
 **D5.3 — Arenas.**
 - `mem.Arena` is a chunked bump allocator with `Reset` and `Free`.
 - `mem.ArenaNew[T Copy](a *mem.Arena) *T` returns raw pointers owned by the arena.
-- In v0, `ArenaNew` accepts only `Copy` types, so no destructors need tracking. Arenas with registered destructors may come later.
+- `ArenaNew` accepts only `Copy` types, so `mem.Arena` never tracks destructors and `Free`/`Reset` are instant.
+- **`mem.DropArena`** (owner decision, decides Q1; task P05.17) accepts any type. For a type that needs drop, each allocation also records a (pointer, drop function) entry, about 16 bytes; `Free`/`Reset` run the recorded drops newest first, then release the chunks. A type with no drop records nothing, so it costs the same as in `mem.Arena` (the compiler knows this per type). Same idea as C++ Protobuf's `Arena`, nginx/APR pools and Rust's `typed-arena`; `mem.Arena` matches Zig's `ArenaAllocator`, Rust's `bumpalo` and LLVM's `BumpPtrAllocator`. Final names are set in P05.17.
 - **Allocator objects.** Owned slices and maps store one pointer to an allocator object (P01 D1.22). The object starts with its function table (alloc, resize, free); nil means the global allocator. `mem.Arena` is one such object.
 - `mem` functions create a slice or map in a given allocator (names set in P05.03). Resetting or freeing an arena while its slices or maps are alive leaves them dangling (P01.14).
 
@@ -137,6 +138,6 @@ P13's full packages replace them later.
 
 ## Open questions
 
-- **Q1** Arenas with destructors (D5.3)?
+- **Q1** (decided 2026-10-27) Arenas with destructors: support both. `mem.Arena` stays `Copy`-only; `mem.DropArena` records drops and runs them on `Free`/`Reset` (D5.3, P05.17).
 - **Q2** (deferred to P15 Q2) mimalloc as the default allocator (P15.10)?
 - **Q3** (decided 2026-10-27) Package-level variables are never destroyed at exit, not even as an opt-in (P01 D1.18).

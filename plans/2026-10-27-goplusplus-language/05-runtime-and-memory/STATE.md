@@ -23,10 +23,11 @@ Task definitions: [../TODO.md](../TODO.md) (section P05) · Design: [README.md](
 - [ ] P05.14 Errors: shared values and traces
 - [ ] P05.15 Bootstrap std
 - [ ] P05.16 Spec-revision window
+- [ ] P05.17 Drop arena
 
 ## Open questions
 
-- [ ] Q1 Arenas with destructors
+- [x] Q1 Arenas with destructors (decided: both, `mem.Arena` + `mem.DropArena`, D5.3)
 - [x] Q2 mimalloc as the default allocator: deferred to P15 (P15 Q2)
 - [x] Q3 Package-level destructors at exit: decided, never (P01 D1.18)
 
