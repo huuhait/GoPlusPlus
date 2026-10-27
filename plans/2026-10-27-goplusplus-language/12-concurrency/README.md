@@ -1,0 +1,113 @@
+# P12 — Concurrency
+
+**Goal:** Go's concurrency model (goroutines, channels, `select`, `sync`) without a GC. C/C++ code must be able to run on goroutine stacks, and races must be detectable with TSan.
+**Depends on:** P05, P07 (`ffi.Func` for callbacks from C threads) · **Unblocks:** P13 (net, os/exec, context) · **Size:** L · **Milestone:** M8
+
+## Decisions
+
+**D12.1 — Goroutines are stackful coroutines on fixed-size, non-moving stacks.**
+- Go grows stacks by copying them. We can't: raw pointers into stacks are legal, and C/C++ frames live on them.
+- Default reservation: 256 KiB (provisional), with pages committed lazily by the OS.
+- `runtime.SetDefaultStack(n)` changes the default. `runtime.GoStack(n, f)` spawns a goroutine with an explicit size.
+- The main goroutine runs on the main thread's stack.
+
+**D12.2 — Stack-overflow detection.**
+- Baseline: a guard page per stack, plus a SIGSEGV handler on an alternate signal stack that reports "goroutine stack overflow" with a trace.
+- The catch: Linux limits the number of memory mappings (`vm.max_map_count`, typically ≈ 65 k), and each guard page splits a mapping. That caps guarded stacks at about 32 k unless the limit is raised.
+- P12.02 decides by benchmark between:
+  - (a) guard pages, with the sysctl documented;
+  - (b) compiler-inserted prologue checks of SP against a per-goroutine limit (Go-style), with no guard pages and a headroom rule for calls into C;
+  - (c) a hybrid.
+- Guard pages need stack probes, so that a large frame can't jump over the guard page:
+  - `probe-stack=inline-asm` for Go++ functions;
+  - `-fstack-clash-protection` for C built by `gopp cc`.
+
+**D12.3 — Scheduler: M:N with work stealing (Go's G/M/P design).**
+- Per-P run queues plus a global queue, with work stealing.
+- A sysmon thread hands the P off from threads blocked in syscalls or long C calls.
+- The number of spinning threads is limited.
+- **Preemption:**
+  - Yield points are channel operations, `sync` blocking, I/O and `runtime.Gosched()`.
+  - Function prologues and loop back-edges also check a per-goroutine flag that sysmon sets (Go 1.13 style). So a tight loop can't starve other goroutines.
+  - No async signal preemption in v1.
+
+*Why:* Go added async preemption in Go 1.14 for two reasons: tight loops that starve other goroutines, and its GC. The flag checks handle tight loops, and Go++ has no GC.
+
+**D12.4 — Context switching is written in assembly, per ABI.**
+- x86-64 SysV and AArch64 AAPCS64 come first; Win64 later.
+- A switch saves the callee-saved registers and the FP control state.
+- A switch also saves and restores the C++ exception state (`__cxa_get_globals()`: the caught-exception stack and the uncaught count). Deferred calls run inside a catch handler (P04 D4.6), and one that blocks may resume on another thread.
+- Sanitizer fiber hooks (`__sanitizer_start_switch_fiber`, `__tsan_switch_to_fiber`) let ASan and TSan understand goroutines.
+
+**D12.5 — Channels keep Go's semantics, made ownership-aware.**
+- Go's semantics are kept as is: unbuffered rendezvous, buffered ring, close, blocking on nil channels, random choice among ready `select` cases, `for range ch`.
+- `chan T` is a shared handle: atomically refcounted, and copying it retains it.
+- Sending moves the value in; receiving moves it out.
+- In `select`, a send case moves its value only if that case is chosen (P01 D1.13).
+- Values still buffered when the last handle goes away are dropped.
+
+**D12.6 — The `go` statement.**
+- Arguments are evaluated, then moved or copied into the new goroutine's frame.
+- A closure used with `go` keeps its captured variables in shared cells (P01 D1.11). So the goroutine and the spawner see the same variables, as in Go.
+- `go f(x)` with a raw pointer or a view into a local is a compile error (P01 D1.13).
+
+**D12.7 — `sync` and atomics.**
+- `sync.Mutex`, `RWMutex`, `WaitGroup`, `Once` and `Cond` keep Go's API.
+- The `sync` types are `@Pinned`: moving or copying one after first use is a compile error (P01 D1.4 rule 10).
+- `sync.Scope` is an optional structured-concurrency helper. It waits for every function it spawned, so those closures may borrow without cells.
+- `sync/atomic` uses LLVM atomics, seq_cst like Go.
+- Blocking primitives park goroutines, not threads, via futex on Linux. ulock (macOS) and WaitOnAddress (Windows) come after v0.1.
+
+**D12.8 — I/O and timers.**
+- A netpoller is integrated with the scheduler: epoll on Linux. kqueue (macOS/BSD) and IOCP (Windows) come after v0.1.
+- Timers (`time.After`, `time.Ticker`, `select` timeouts) are integrated with the netpoller (P12.11).
+- Blocking file I/O uses thread handoff. io_uring comes after v1.
+
+**D12.9 — C, threads and TLS.**
+- `runtime.LockOSThread()` pins a goroutine to its thread, for C libraries with thread affinity (OpenGL, GUI toolkits).
+- **Every yield point is a thread-local barrier.** A goroutine may resume on another thread after a yield.
+  - The runtime never keeps thread-local addresses across yields.
+  - errno is read through a non-`const` accessor, because glibc declares `__errno_location` `const`.
+- **Pinning.** A goroutine is pinned to its thread while C/C++ frames are on its stack, including during C → Go++ callbacks. So C thread-locals such as `errno` stay valid during a C call.
+- **Foreign threads** that call Go++ are adopted (P07 D7.8).
+
+**D12.10 — Race detector.** `gopp build -race` instruments Go++ code and the rebuilt C/C++ deps with TSan, and adds the fiber annotations. The TSan details are in P05 D5.9.
+
+**D12.11 — Targets (provisional).**
+- 100 k idle goroutines fit in ≤ 1 GiB RSS with default settings.
+  - This assumes option (b) of P12.02 (no guard pages), or a raised `vm.max_map_count` (D12.2).
+  - Update this target after the P12.02 ADR.
+- 1 M goroutines are possible after tuning the stack size and the mapping limit.
+- Channel ping-pong and contended `Mutex` throughput are within 1.5× of Go on the same machine.
+
+**D12.12 — Stopping goroutines at exit** (P01 D1.18).
+- `main` returning, `os.Exit` and an unrecovered panic stop every other goroutine before C `exit()` runs.
+- Each goroutine parks at its next yield point or preemption check and never resumes. Its stack is not unwound and its locals are not dropped.
+- A thread inside a C call parks when the call returns.
+- Before the scheduler exists there is only one goroutine, so this step is a no-op (P05.02).
+
+## Deliverables
+
+- **Runtime:** coroutines, scheduler with preemption flags, channels and `select`, parking, netpoller and timers, `LockOSThread`, pinning during C calls, adoption of foreign threads, stopping goroutines at exit.
+- **Compiler:** `go` lowering with move semantics and shared cells, `select` lowering, preemption checks in prologues and loop back-edges, stack probes, TSan fiber integration.
+- **Std:** `sync` (including `sync.Scope`), `sync/atomic`, `time` timers integrated with the netpoller.
+- **Samples:** worker pool, pipeline, fan-in/fan-out, `select` with timeouts, TCP echo server.
+
+## Exit criteria
+
+- M8: the samples are correct, stress tests pass, and everything is TSan-clean.
+- `-race` detects seeded data races.
+- With one P, a spin loop on an atomic flag doesn't hang (D12.3). Timers fire while all Ps are busy (D12.8).
+- The D12.11 numbers are recorded and met, or an ADR explains each gap.
+
+## Risks
+
+- **Fixed stacks use more memory than Go's growable stacks** → lazy commit, tunable sizes, the trade-off documented.
+- **C code with large stack usage** → per-spawn stack sizes, `LockOSThread` plus dedicated threads, clear overflow diagnostics.
+- **Subtle scheduler bugs** → port the ideas behind Go's runtime tests, and run long stress tests under TSan in CI.
+
+## Open questions
+
+- **Q1** Default stack size, and guard pages vs prologue checks (P12.02).
+- **Q2** io_uring for file I/O (after v1).
+- **Q3** Async preemption for fairness (after v1, only if real workloads need it).
