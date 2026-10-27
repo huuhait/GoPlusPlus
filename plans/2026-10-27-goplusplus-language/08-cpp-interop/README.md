@@ -138,6 +138,6 @@ The work ships in five stages. Each stage is tested and usable before the next o
 Task P08.15 decides Q3 and Q4.
 
 - **Q1** (decided 2026-10-27) C++ identifiers that are Go++ keywords get a trailing underscore (`type_`, `range_`, `map_`), as for C (P07 D7.3).
-- **Q2** (moved to P07 Q2) Should `const` on methods and parameters show up in Go++ signatures? P07 Q2 now owns all constness questions.
+- **Q2** (moved to P07 Q2; decided 2026-10-27, ADR-0008) Should `const` on methods and parameters show up in Go++ signatures? No: it stays metadata and is enforced at the boundary (only `const` methods on borrowed values; no read-only value passed where C++ may change it).
 - **Q3** How to spell explicit template arguments for function templates, e.g. `memory.make_unique[Foo](args)`.
 - **Q4** Namespace flattening for deep hierarchies (e.g. should `boost::asio::ip::tcp` be `asio.tcp` or `asio.ip.tcp`?) and the wording of collision errors.

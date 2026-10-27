@@ -60,7 +60,7 @@
 | `float _Complex` / `double _Complex` | `complex64` / `complex128` |
 | `long double` | `ffi.LongDouble` (opaque; its size differs per target) |
 | `__int128` / `unsigned __int128` | `ffi.Int128` / `ffi.Uint128` |
-| `T*`, `const T*` | `*T` (constness recorded and enforced when strings and slices are passed) |
+| `T*`, `const T*` | `*T`; `const` is recorded as metadata and enforced at the boundary: a read-only Go++ value can't be passed where C may change it (Q2, ADR-0008) |
 | `void*` | `unsafe.Pointer` |
 | `T[N]` | `[N]T` |
 | struct | struct with Clang's exact layout (`ASTRecordLayout`), padding explicit |
@@ -68,7 +68,7 @@
 | bitfields | accessor methods |
 | enum | named integer type + constants |
 | typedef | alias in the header's package: `zlib.uLong` is `uint64` on Linux |
-| function pointer | `ffi.Func[func(…) R]`: no environment; spelling open (Q1) |
+| function pointer | `ffi.Func[func(…) R]`: no environment (Q1, ADR-0008); a C typedef name such as `c.cmp_fn` works too |
 | flexible array member | accessor returning a `ref []T` |
 
 There are no C-specific types such as `C.int`: every C type is a plain Go++ type, so values pass without conversions. Go's rule for numeric conversions still applies (`uint32(len(data))`). The few ABI-only types live in `ffi`, a small std package that most code never imports.
@@ -80,6 +80,7 @@ Several C types map to one Go++ type (on Linux, `long` and `long long` both beco
 **D7.5 — C macros.**
 - **Constants.** Object-like macros that evaluate to numeric constants become untyped Go++ constants. Their default type is the C type: `#define N 10u` defaults to `uint32`. String-literal macros become string constants.
 - **Aliases.** A macro that names another identifier becomes an alias: with `#define crc32 z_crc32`, `zlib.crc32` is `zlib.z_crc32`.
+- **Types.** A macro whose body is exactly one type becomes a type alias, like a typedef: `#define z_off_t long` makes `zlib.z_off_t` an alias of `int64` on 64-bit Linux (Q3, ADR-0008).
 - **Function-like macros** are translated when the body is an expression over the parameters (the Zig translate-c approach). Parameter types are inferred from the body.
 - **API notes.** Small per-library "API notes" files may add types that can't be inferred.
 - Any other macro is not imported. The diagnostic suggests a `static inline` wrapper in a package-local header.
@@ -169,6 +170,6 @@ Several C types map to one Go++ type (on Linux, `long` and `long long` both beco
 
 Task P07.17 decides Q1–Q3.
 
-- **Q1** How to spell C function pointer types when code must name them: `ffi.Func[F]`, or a dedicated type form.
-- **Q2** Constness: should `const` be surfaced in the Go++ type system (e.g. a read-only pointer), or stay metadata? This also covers `const` on C++ methods and parameters (merged from P08 Q2).
-- **Q3** Should type-defining macros be translated (`#define u8 unsigned char`)?
+- **Q1** (decided 2026-10-27, ADR-0008) C function pointer types are spelled `ffi.Func[func(…) R]`; no new syntax.
+- **Q2** (decided 2026-10-27, ADR-0008) Constness stays metadata (no `*const T`); it is enforced at the C/C++ boundary against Go++'s read-only bindings, including `const` C++ methods and parameters (merged from P08 Q2).
+- **Q3** (decided 2026-10-27, ADR-0008) Type-defining macros whose body is exactly one type are imported as type aliases (D7.5).

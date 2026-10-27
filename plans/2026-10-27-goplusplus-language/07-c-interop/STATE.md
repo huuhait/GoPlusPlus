@@ -23,13 +23,13 @@ Task definitions: [../TODO.md](../TODO.md) (section P07) · Design: [README.md](
 - [ ] P07.14 musl cross builds
 - [ ] P07.15 Header torture tests
 - [ ] P07.16 Struct tags & transparent unions
-- [ ] P07.17 Decide P07 Q1–Q3
+- [x] P07.17 Decide P07 Q1–Q3 (owner decisions, ADR-0008)
 
 ## Open questions
 
-- [ ] Q1 Spelling of C function pointer types (`ffi.Func[F]` or a dedicated form) (task P07.17)
-- [ ] Q2 Constness in the Go++ type system, including C++ methods and parameters (merged from P08 Q2) (task P07.17)
-- [ ] Q3 Translating type-defining macros (task P07.17)
+- [x] Q1 Spelling of C function pointer types (decided: `ffi.Func[F]`, ADR-0008)
+- [x] Q2 Constness in the Go++ type system, including C++ methods and parameters (decided: metadata, enforced at the boundary, ADR-0008)
+- [x] Q3 Translating type-defining macros (decided: yes, as type aliases, ADR-0008)
 
 ## Exit criteria
 
