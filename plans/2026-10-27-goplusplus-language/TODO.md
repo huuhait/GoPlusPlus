@@ -43,6 +43,8 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - fall back to bundled static musl.
 
   *Done when:* the same probe finds glibc headers and `crt1.o` on this NixOS machine and in a Debian container.
+- **P00.13 Fast compiler build** (D0.13): shared LLVM/Clang libraries in dev builds (static in release); precompiled headers for the codegen and interop libraries; dev build type `-O1 -g` + assertions; a CI check that front-end libraries include no LLVM IR or Clang headers. *Done when:* on the dev machine, editing one `.cpp` rebuilds `gopp` in ≤ 10 s, a clean build takes ≤ 2 min, and the header check runs in CI.
+- **P00.14 Fast test loop** (D0.13): per-stage `check-*` targets, lit on every core, `check-long` for opt-in slow tests, a slowest-20 report, and a CI gate on suite time. *Done when:* the targets exist, every run prints its slowest tests, and the gate fails on a seeded 10% slowdown.
 
 ## P01 — Language specification v0 ([README](01-language-spec/README.md))
 
@@ -173,7 +175,8 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - the harness compares stdout, normalized stderr and the exit code against Go 1.25;
   - a tagged "expected differences" list;
   - programs Go++ rejects are counted separately;
-  - the corpus includes `$GOROOT/test` run tests.
+  - the corpus includes `$GOROOT/test` run tests;
+  - Go's outputs are saved once as golden files (D4.10).
 
   *Done when:* M1 passes (≥ 100 programs match).
 - **P04.15 EH cost spike**:
@@ -186,10 +189,11 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P04.16 Bootstrap mode** (D4.11): source mode (all packages from source); host EH runtime until P08.10; the runtime's C/asm parts built by CMake with `gopp`. *Done when:* a three-package program builds in source mode and its panic test passes.
 - **P04.17 Symbol names** (D4.13): naming spec appendix, mangler and demangler. *Done when:* names are stable across packages and build orders, and the demangler round-trips them.
 - **P04.18 Internal calling convention**: Go++ → Go++ calls return aggregates in registers; C-ABI thunks for callbacks and `@Export` (D4.4). *Done when:* `(T, error)` returns stay in registers (FileCheck), and C callbacks still work.
+- **P04.19 Fast test runner** (D4.14): batch compiles in one process, ORC JIT runs in a pool of executor processes, and real binaries only for the linking and interop set. *Done when:* the M1 differential corpus runs in ≤ 30 s on the dev machine, and a crashing test doesn't stop the run.
 
 ## P05 — Runtime and memory ([README](05-runtime-and-memory/README.md))
 
-- **P05.01 Runtime skeleton**: Go++ + C sources, a per-target static archive in the cache. *Done when:* it is linked into every binary.
+- **P05.01 Runtime skeleton**: Go++ + C sources, a per-target static archive in the cache, also loadable by the JIT test runner (P04.19). *Done when:* it is linked into every binary.
 - **P05.02 Startup & exit**:
   - args/env and init order;
   - the exit sequence (D1.18): stop goroutines (a no-op until P12.12), drop `main`'s locals, C `exit()`;

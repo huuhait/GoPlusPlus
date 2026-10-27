@@ -25,6 +25,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.16 Bootstrap mode
 - [ ] P04.17 Symbol names
 - [ ] P04.18 Internal calling convention
+- [ ] P04.19 Fast test runner
 
 ## Open questions
 
@@ -48,3 +49,4 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - The M0 slice (P04.01–P04.03) can start as soon as P02/P03 handle the hello subset. It doesn't need to wait for those phases to finish.
 - P04.15 (EH cost spike) runs before P04.07.
 - P04.14 prints through the bootstrap std (P05.15), so P05.15 must be done before M1.
+- P04.19 (fast test runner) comes early, before the differential corpus grows.

@@ -25,7 +25,7 @@
 - `flake.nix` pins the LLVM/Clang/LLD dev packages, CMake, Ninja, ccache, mold, Python 3 + lit, Go and GoogleTest. `flake.lock` is committed, so everyone gets the same tools.
 - An optional `.envrc` (`use flake`) lets direnv load the shell on `cd`; editors pick it up too.
 - Scripts, CI and agents run commands as `nix develop -c <cmd>`.
-- An optional second dev shell has an **assertions-enabled** LLVM/Clang/LLD of the same major. Misuse of Clang's C++ API must fail loudly during development. A CI job uses it too (D0.7).
+- An optional second dev shell has an **assertions-enabled** LLVM/Clang/LLD of the same major: a Release build with assertions on, never a Debug build (about 10× slower). Misuse of Clang's C++ API must fail loudly during development. A CI job uses it too (D0.7).
 - Non-Nix contributors get documented apt/brew equivalents now and a devcontainer later.
 
 **D0.5 — Monorepo layout.**
@@ -88,10 +88,33 @@ Every job runs `ninja check` and the format check.
 - **Fallback:** bundled static musl.
 - M0 must build on NixOS and on a standard FHS distro (a Debian/Ubuntu container).
 
+**D0.13 — A fast dev loop for `gopp` itself.** Developing the compiler means a lot of code and thousands of tests, so waiting must stay short. A slow loop is a bug, fixed like any other bug.
+
+| Loop (on the dev machine) | Budget |
+|---|---|
+| Edit one `.cpp` → `gopp` rebuilt | ≤ 10 s |
+| One stage's tests (`check-parser`, …) | ≤ 10 s |
+| Full `ninja check` | ≤ 5 min |
+| One normal test | ≤ 2 s (longer only if marked long) |
+| Clean build of `gopp` (LLVM comes from Nix) | ≤ 2 min |
+
+- **Building `gopp`** (P00.13):
+  - Dev builds link LLVM and Clang as shared libraries (`libLLVM.so`, `libclang-cpp.so`) with mold. Release builds link them statically.
+  - The front-end libraries (lexer, parser, type checker) may use LLVM's ADT/Support headers, but never LLVM IR or Clang headers. Only codegen and interop include those, through precompiled headers.
+  - The dev build type is `-O1 -g` with assertions. `-O0` makes every test slower.
+  - Build folders are never deleted. Each worktree has its own build folder, and all of them share one ccache.
+- **Testing** (P00.14, P04.19):
+  - Tests stop as early as they can: most check an AST or GIR dump with FileCheck and never generate code or link.
+  - Each stage has its own target (`check-parser`, `check-sema`, `check-gir`, `check-codegen`, …); `check` runs them all on every core.
+  - Slow tests are opt-in: cdep CMake builds, fuzzing and big benchmarks run in `check-long`, nightly, or when their own code changes.
+  - Every run prints its 20 slowest tests, and CI fails when the suite gets more than 10% slower.
+- **Agents** follow these rules through the repo's `CLAUDE.md`: the narrowest test first, the full suite once before finishing, and never more than 2 minutes of waiting on one command.
+
 ## Deliverables
 
 - A git repository with the D0.5 layout, LICENSE, README, CONTRIBUTING stub, `.gitignore`, `.clang-format`, `.clang-tidy`.
 - A `flake.nix` dev shell, plus the optional assertions-enabled shell (D0.4).
+- Per-stage test targets, `check-long`, the slowest-tests report and the suite-time gate (D0.13).
 - A CMake build that produces `gopp` linked against LLVM, Clang and LLD, with a working `gopp version`.
 - A lit + FileCheck harness and a GoogleTest harness, each with a smoke test, run by `ninja check`.
 - A CI pipeline.
@@ -104,6 +127,7 @@ Every job runs `ninja check` and the format check.
 - `ninja check` passes locally and in CI.
 - The Debug+ASan/UBSan build of `gopp` passes CI.
 - The assertions-enabled CI job passes.
+- The D0.13 budgets are measured and met for the P00 build and tests.
 
 ## Risks
 

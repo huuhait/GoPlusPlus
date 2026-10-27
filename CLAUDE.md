@@ -9,6 +9,14 @@
 - Put throwaway test code (repros, experiments, one-off scripts) in `.scratch/`. It's gitignored. Tests worth keeping go in the real test suite.
 - Git worktrees live at `~/worktrees/GoPlusPlus/<name>`. Create them with `git worktree add`, not the Agent tool's worktree isolation.
 
+## Dev loop (speed)
+Budgets and design: plan P00 D0.13 (`plans/2026-10-27-goplusplus-language/00-foundations/README.md`). A slow loop is a bug.
+- After an edit, run the narrowest test first (one file, or one stage target such as `check-parser`). Run the full suite once, before finishing the task.
+- If one command takes more than 2 minutes, stop and fix the slowness (a narrower target, a cache, a test that stops earlier) instead of waiting. Report it.
+- Run long jobs (full suite, cdep builds, benchmarks) in the background and keep working.
+- Never delete build folders. Each worktree has its own build folder; all of them share one ccache.
+- New tests stop as early as they can (AST/GIR dump + FileCheck). A test that needs more than 2 s is marked long.
+
 ## Definition of done
 A task is not done until:
 1. It compiles / the app boots.

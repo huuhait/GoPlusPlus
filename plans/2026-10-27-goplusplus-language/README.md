@@ -36,6 +36,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 4. **Fast edit–build–run loop.** Debug builds favor compile speed and release builds favor runtime speed. Language semantics are identical in both.
 5. **Safe defaults when they are free.** Bounds checks, zero values, nil checks, defined integer overflow, and use-after-move errors. Sanitizers are one flag away. v1 has no borrow checker (see non-goals).
 6. **Reproducible, locked builds.** Every byte that goes into a build comes from a hashed input.
+7. **Fast loop for building Go++ itself.** Rebuilding `gopp` and running the tests for what you changed take seconds, not minutes, even as the code grows. A slow loop is a bug: fix it with narrower test targets, caches and tests that stop early, not by waiting (P00 D0.13).
 
 ## 3. Non-goals for v1
 
@@ -239,6 +240,8 @@ Update rules:
 8. Changes made **before the plan is accepted** are logged only in the root STATE.md log.
 
 Every "Decision" in a phase README is the plan's current position. It stays in force until an ADR changes it.
+
+**Dev loop:** keep the P00 D0.13 budgets. The working rules for agents are in the repo's `CLAUDE.md`.
 
 ## 9. Top risks
 

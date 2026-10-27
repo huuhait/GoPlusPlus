@@ -19,6 +19,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P00) · Design: [README.md](
 - [ ] P00.10 License
 - [ ] P00.11 Naming record
 - [ ] P00.12 Host sysroot discovery
+- [ ] P00.13 Fast compiler build
+- [ ] P00.14 Fast test loop
 
 ## Open questions
 
@@ -32,6 +34,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P00) · Design: [README.md](
 - [ ] `ninja check` (lit + unit tests) passes locally and in CI
 - [ ] Debug+ASan/UBSan build of `gopp` passes CI
 - [ ] Assertions-enabled CI job passes
+- [ ] D0.13 dev-loop budgets measured and met
 
 ## Decision changes
 

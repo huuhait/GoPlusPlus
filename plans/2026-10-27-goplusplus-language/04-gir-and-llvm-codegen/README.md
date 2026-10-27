@@ -102,6 +102,7 @@ Bounds, nil and division checks stay on in every mode unless explicitly disabled
 - A tagged "expected differences" list covers the places where Go++ differs on purpose (e.g. map insert during `range`, cooperative scheduling, a slice kept from an interface parameter (P01 D1.12)).
 - Programs that Go++ rejects are counted separately.
 - The corpus reuses the "run" tests in `$GOROOT/test`.
+- Go's outputs are made once and saved as golden files. They are regenerated only when the Go version or the test changes, so test runs never call `go run`.
 
 **D4.11 — Bootstrap mode.** It is used until P06, P07 and P08 exist. Task P04.16 builds it.
 - (a) **Source mode:** loads all packages from source and emits one object per package. The early LSP uses it too.
@@ -125,6 +126,12 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 - Readable in traces, gdb and perf.
 - A fixed prefix, so they never collide with C names.
 - Specified in a spec appendix, with a demangler.
+
+**D4.14 — A fast test runner** (P00 D0.13; task P04.19).
+- Run tests compile many programs in one `gopp` process, on every core, with the runtime and std from the cache.
+- Most run tests execute through LLVM's ORC JIT, with no linking. The code runs in a pool of executor processes (ORC supports running JIT code in another process), so a crash or `os.Exit` ends only that executor, which is restarted.
+- A smaller set builds real binaries: linking, C interop, exit codes and signals.
+- Stage tests stop early (`--dump-ast`, `--dump-gir`) and check the dump with FileCheck.
 
 ## From M0 to M1, in order
 
