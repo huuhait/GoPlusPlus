@@ -19,10 +19,11 @@
 - `gopp <language version>` and `toolchain gopp<version>`.
 - `cdep <path> <version> ( … )`: one block per C/C++ package.
   - The path is Go-style (`github.com/madler/zlib`) and is also the prefix of the package's header imports.
-  - Keys: `commit`, `url`, `tag`, `mode`, `cmake`, `provides`, `uses`, `option`, `patch`. `tag` is defined in D10.4; the others in P11.
+  - Keys: `commit`, `url`, `tag`, `mode`, `cmake`, `provides`, `uses`, `option`, `patch`, and the block `profile ( … )`. `tag` is defined in D10.4, `profile` in D10.11; the others in P11.
   - The `cdep` blocks of transitive dependencies carry `// indirect` (D10.3).
 - `cxxstdlib libc++|libstdc++`.
 - `cxxstd c++20`, `cflags <flags…>` and `ldflags <flags…>`: module-wide C/C++ settings, set once per project, like `go.mod` (P01 D1.15, ADR-0006). They replace the removed source directives `//gopp:cxxstd`, `//gopp:cflags` and `//gopp:ldflags`; only `//gopp:build` stays in source files. They apply to the C, C++ and header imports of the packages of the module that declares them, and flags are taken from the module of the **importing** package (each package has one Clang instance, P07/P08). A dependency's own `cxxstd` is a **minimum**: if the importer's is lower, the build fails with "module D needs c++23". The `ldflags` of all modules in the build are combined for the final link, in module order (the main module last). `cdep` blocks keep taking their flags from their own CMake target (P11).
+- `profile <name> ( … )`: build profiles, next to `cxxstd`, `cflags` and `ldflags` (D10.11). They are about *how* to build (optimization, debug info, sanitizers), where those three say *what flags* the C/C++ sources get.
 - `csystem <name> ( pkgconfig "<expr>" … )`: non-hermetic system libraries, recorded but never hashed. Each entry also names the headers it owns (P11 D11.11).
 
 ```
@@ -65,8 +66,8 @@ Go++ code imports these as `import "github.com/madler/zlib/zlib.h"` and `import 
 - **Listing.** The main gopp.mod lists every selected cdep. Transitive ones carry `// indirect`, and `gopp mod tidy` writes them.
 - **Rules across modules.** Several modules may declare the same cdep.
   - **Identity keys** (`commit`, `url`) must be equal everywhere for a version. Otherwise it is an error that names the modules.
-  - **Build keys** (`mode`, `option`, `patch`, `cmake`, `provides`, `uses`): the main module's own block (without `// indirect`) wins. An `// indirect` block is a copy that `tidy` refreshes from the declaring modules, which must agree. If they don't, `tidy` reports an error, and the main module settles it by writing its own block.
-  - **Main-module only:** `cxxstdlib`, `csystem` and `toolchain` count only in the main module. `cxxstd`, `cflags` and `ldflags` apply per module, to that module's own packages.
+  - **Build keys** (`mode`, `option`, `patch`, `cmake`, `provides`, `uses`, `profile`): the main module's own block (without `// indirect`) wins. An `// indirect` block is a copy that `tidy` refreshes from the declaring modules, which must agree. If they don't, `tidy` reports an error, and the main module settles it by writing its own block.
+  - **Main-module only:** `cxxstdlib`, `csystem`, `toolchain` and `profile` blocks count only in the main module (D10.11). `cxxstd`, `cflags` and `ldflags` apply per module, to that module's own packages.
   - **Files:** patch and local CMake files are read from the module that declares them. `gopp mod vendor` copies them.
 - **Verification** follows P06 D6.10.
   - Hashes are checked when downloading and extracting into the read-only cache. A mismatch is a hard "SECURITY ERROR", as in Go.
@@ -130,6 +131,49 @@ A dependency's own cdep blocks live in its gopp.mod, and its `/gopp.mod h1:` lin
 
 *Why:* Go's module zip drops symlinks and exec bits, skips submodules, filters `vendor/` and stops at 500 MiB. Many C/C++ source trees need all of these.
 
+**D10.11 — Build profiles in gopp.mod.** (ADR-0007; task P10.12.) What the settings mean, the defaults and the command line are in P06 D6.12; how they reach CMake is P11 D11.13.
+
+```
+ProfileBlock = "profile" ProfileName "(" { ProfileLine } ")" .
+ProfileLine  = "inherits" ProfileName
+             | Setting Value
+             | "deps" "(" { DepsRow } ")" .
+DepsRow      = ( ModulePath | "*" ) Setting Value .
+CdepPin      = "profile" "(" { Setting Value } ")" .        /* inside a cdep block */
+Setting      = "opt" | "debuginfo" | "lto" | "panic" | "sanitize" | "strip" | "cpu" | "pgo" | "link" .
+ProfileName  = lower-case letter, then lower-case letters, digits, "-" or "_" .
+```
+
+```
+profile debug (
+    deps (
+        *                     opt 2      // every dependency: Go++ modules and cdeps
+        github.com/acme/geom  opt 0      // this one stays at opt 0
+    )
+)
+
+profile fast (
+    inherits release
+    lto full
+    cpu native
+)
+
+cdep github.com/madler/zlib v1.3.1 (
+    commit <full commit hash that tag v1.3.1 resolved to>
+    profile (
+        opt 2                            // built at opt 2 in every profile, see P11 D11.13
+    )
+)
+```
+
+- **Built-in profiles.** `debug` and `release` exist without any block. Writing a block with one of these names changes only the lines it contains. They cannot use `inherits`.
+- **Custom profiles** must have an `inherits` line naming another profile. A cycle is an error.
+- **Setting values** are the ones in the P06 D6.12 table. A wrong value, a repeated setting in one block or a repeated block name is an error with a line number. Settings are written in the form `opt 2`, with no `=`, like every other gopp.mod directive.
+- **`deps` rows and cdep pins** accept only `opt` and `debuginfo`; the other settings are whole-program (P06 D6.12). A row names a module path from the build list or a cdep path, or `*` for all of them. An exact path beats `*`; the order of rows does not matter. A path that is not in the build list is an error (probably a typo). A cdep's `profile ( … )` pin beats a `deps` row for that cdep.
+- **A profile name must not equal a GOOS, GOARCH or build-tag word**, because profile names are also terms in `//gopp:build` (P06 D6.12).
+- **Only the main module's `profile` blocks count.** In a dependency's gopp.mod they are parsed (so the file still round-trips) and then ignored, without a warning. A `profile ( … )` pin inside a `cdep` block is a build key and follows the D10.3 rules for build keys.
+- `gopp mod edit -fmt` prints `profile` blocks in the canonical form, `inherits` first, then settings in the table's order, then `deps`.
+
 ## Deliverables
 
 - `compiler/lib/Mod`:
@@ -151,6 +195,7 @@ A dependency's own cdep blocks live in its gopp.mod, and its `/gopp.mod h1:` lin
 - Offline builds work from the cache and from `vendor/`.
 - `gopp mod edit -fmt` output is canonical.
 - A cdep tree with symlinks, exec bits and a submodule gets the same `/cdep h1:` hash from git and from a proxy (D10.10).
+- `profile` blocks round-trip and are ignored in dependency modules (D10.11).
 
 ## Risks
 

@@ -47,7 +47,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-5.** *Across packages.* A macro from another package is qualified like a function: `#pkg.Name(…)`, `@pkg.Name`.
 
-**MAC-6.** *Predeclared.* The std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable` and `@Derive` need no import.
+**MAC-6.** *Predeclared.* The std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting` and `@Derive` need no import.
 
 **MAC-7.** *`@Derive(X)`* finds `X` in std package `derive`, unless qualified: `@Derive(sql.Table)`. Several can be listed: `@Derive(JSON, Equal)`.
 
@@ -64,6 +64,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 | `@NoBounds` | function | turn bounds checks off ([EXP-7](06-expressions.md)) | P05 D5.8 |
 | `@Pinned` | type | cannot be moved or copied after first use ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) | this spec |
 | `@Unwind` | callback function | the callback may unwind through its C callers | P07 |
+| `@If(cond)` | type, func, method, var, const | the declaration is type-checked, but only emitted and exported when the constant `bool` `cond` is true ([MAC-15](#132-rules)) | P09 D9.12 |
 
 `@Derive(…)` is a std macro, not a built-in attribute (P09).
 
@@ -71,7 +72,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-10.** *`!` never means "macro".* This keeps `!` unambiguous as Must ([LEX-4](02-lexical.md)).
 
-**MAC-11.** *Not a conditional-compilation tool and no new syntax.* Macros only use the `#` and `@` forms (P09 D9.9). Use `//gopp:build` for conditional compilation.
+**MAC-11.** *Not a conditional-compilation tool and no new syntax.* Macros only use the `#` and `@` forms (P09 D9.9). Use `//gopp:build` to keep code from being parsed at all. `#Profile`, `#Setting` and `@If` ([MAC-15](#132-rules)) do not hide code: it is still type-checked.
 
 **MAC-12.** *Attributes on struct fields.* Attributes are allowed on struct fields in v0. They are written **after the field's type**, before any Go struct tag. Top-level attributes stay on the line before the declaration.
 - ``Name string @JSON("name") `db:"name"` ``: the attribute `@JSON("name")` first, then the tag.
@@ -81,6 +82,8 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 **MAC-13.** *Block arguments.* A `block` argument of `#Name(args)` is written like a func literal: `#Repeat(3, func() { fmt.Println("hi") })`. It is not a closure. The code is pasted inline where the macro uses it. So `return`, `break` and `continue` inside it are **compile errors**: they would leave or continue the code around the macro in a way the reader cannot see. The exception is a nested func literal within the block argument.
 
 **MAC-14.** *Compile-time arguments.* Arguments that a macro **reads as values** must be known while compiling: every argument of an attribute `@Name(args)`, and the arguments of a `#Name` macro for parameters of a value kind (`lit`): literals, names, types and constants. A runtime variable there is a compile error: `@Retry(n)` with a variable `n` is rejected, `@Retry(3)` is fine. Only `lit` parameters and `@` attribute arguments must be compile-time values. All other kinds (`expr`, `ident`, `stmt`, `block`, `decl`, `type`, `tokens`) are code fragments with no such limit: they are pasted into the program, so they may name runtime variables: `#Assert(len(data) > 0, "empty input")` and `#Swap(tmp, other)` are fine. How a procedural macro reads its arguments and returns code (the `gopp/macro` API) is designed in P09.
+
+**MAC-15.** *Build profile access.* `#Profile()` is a string constant: the name of the main module's active build profile, the same in every package. `#Setting("name")` is a string constant: the value of one profile setting for the package being compiled; its argument must be a string literal that names a setting. Both can be used in constant expressions, so `#Profile() == "debug"` is a constant `bool`. In an `if` with a constant condition, the branch that cannot run is removed from the generated code but is still type-checked. `@If(cond)` on a declaration needs a constant `bool` ([MAC-14](#132-rules)); when it is false the declaration is type-checked but not emitted or exported, and using it from live code is a compile error (using it from a removed branch or from another disabled declaration is fine). Profiles are defined in P06 D6.12, the details in P09 D9.12.
 
 > **Deferred to P09:** the exact procedural-macro API.
 
@@ -126,6 +129,15 @@ func demo() {
 type Account struct{ ID int }
 
 n := #Line()                                    // expression position
+
+@If(#Profile() == "debug")                       // type-checked in every profile, emitted only in `debug`
+func dump(s string) { println(s) }
+
+func trace(s string) {
+    if #Profile() == "debug" {                  // constant condition: dead in other profiles, still type-checked
+        dump(s)
+    }
+}
 ```
 
 Compared with Go: Go uses `go generate` and `reflect` for this. Go++ keeps everything inside the compiler, visible to tools (`gopp expand`).

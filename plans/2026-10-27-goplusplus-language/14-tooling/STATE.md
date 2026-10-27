@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-27 (build profiles added)
 Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](README.md)
 
 ## Tasks
@@ -17,6 +17,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](
 - [ ] P14.08 Editors
 - [ ] P14.09 `gopp doc`
 - [ ] P14.10 Distribution & `toolchain`
+- [ ] P14.11 `gopp new`
 
 ## Open questions
 
@@ -32,6 +33,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](
 ## Decision changes
 
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): `view` is renamed `ref` in hover text and pretty printers.
+- 2026-10-27 (ADR-0007, build profiles): D14.1 gets `gopp new`, which writes `target/` into the new project's `.gitignore`.
 
 ## Notes / blockers
 

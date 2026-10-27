@@ -73,7 +73,8 @@ func checksum(data []byte) uint32 {
 - the hash of all GIR the expansion executed (the macro and every function it called);
 - the hash of the input syntax;
 - the hash of any type information it queried;
-- the hashes of any files it embedded.
+- the hashes of any files it embedded;
+- the build profile name or setting it read (`#Profile()`, `#Setting`, D9.12).
 
 **D9.7 — Tooling sees expansions.**
 - `gopp expand <pkg|file>` prints the expanded source.
@@ -82,7 +83,7 @@ func checksum(data []byte) uint32 {
 - The LSP uses the same expansion (P14).
 
 **D9.8 — Standard macros.**
-- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `ref string`), `#Todo()`, `#Unreachable()`.
+- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `ref string`), `#Todo()`, `#Unreachable()`, and the two profile macros `#Profile()` and `#Setting("name")` (D9.12).
 - Derives are kept small, because without them:
   - printing works on every type;
   - `==` and map keys work on comparable types;
@@ -94,7 +95,7 @@ func checksum(data []byte) uint32 {
 - Tests keep Go's `TestXxx(t *testing.T)` convention; there is no `@Test`.
 
 **D9.9 — What macros are not.**
-- Not a conditional-compilation mechanism. Use `//gopp:build` and file suffixes.
+- Not a conditional-compilation mechanism that hides code from the compiler. Use `//gopp:build` and file suffixes for that. The profile macros and `@If` (D9.12) hide nothing: all code is parsed and type-checked in every profile.
 - Not a way to invent syntax beyond the `#`/`@` forms. This keeps `gopp fmt`, tree-sitter and third-party tools working on every file.
 
 **D9.10 — Budget (provisional).** `@Derive(JSON, Equal)` on 1,000 structs adds ≤ 200 ms cold and ≤ 20 ms warm.
@@ -102,6 +103,34 @@ func checksum(data []byte) uint32 {
 **D9.11 — Macro errors.**
 - A procedural macro declared with `!` (`macro func Name!(…)`) can return an error.
 - An error, or a panic inside a macro, becomes a compile error at the use site, with the macro backtrace (D9.7).
+
+**D9.12 — Build profile access: `#Profile()`, `#Setting("name")`, `@If(cond)`.** (ADR-0007; task P09.13.) Profiles are defined in P06 D6.12. All three follow MAC-14: their arguments are known while compiling, and so are their results.
+
+| Form | What it is | Example |
+|---|---|---|
+| `#Profile()` | a string constant: the name of the **main module's** active profile. It is the same in every package, also in dependencies | `"debug"`, `"release"`, `"fast"` |
+| `#Setting("opt")` | a string constant: the value of one setting for the **package being compiled**. The argument must be a string literal naming one of the nine settings; anything else is a compile error that lists them | `"0"`, `"line"`, `"unwind"`, `"address,undefined"`, `"none"` |
+| `@If(cond)` | a built-in attribute (MAC-8) on a declaration. `cond` must be a constant `bool` | `@If(#Profile() == "debug")` |
+
+- **Constants.** `#Profile()` and `#Setting(…)` expand (step 2 of D9.3) to string literals, so `#Profile() == "debug"` is a constant `bool` and can be used in `const` declarations and in `@If`. `#Setting` is per package because `deps` rows (P06 D6.12) can give a dependency another `opt` than the main module has.
+- **Dead branches stay type-checked.** In `if #Profile() == "debug" { … } else { … }`, the branch that cannot run is removed from the generated code, but it is still parsed and type-checked, so it cannot rot. Imports and variables used only there count as used.
+- **`@If(false)` on a declaration** (type, func, method, var or const) keeps the declaration type-checked, but it is not emitted and not exported. A use of it from live code is a compile error that names the `@If`. A use from dead code (a dead branch, or another disabled declaration) is fine. This makes the common pattern work:
+
+```go
+@If(#Profile() == "debug")
+func dump(s *State) { … }
+
+func step(s *State) {
+    if #Profile() == "debug" {
+        dump(s)                  // dead in release: removed, but still type-checked
+    }
+    …
+}
+```
+
+- **Not for hiding code.** For files that must not even be parsed in some profile (they use an API that only exists there), use `//gopp:build debug` (P06 D6.12).
+- **No new syntax.** The forms are `#` and `@` only (D9.9). `@If` on statements is not defined (P01 D1.14).
+- **Expansion cache.** An expansion that read the profile name or a setting records it in its key (D9.6), so switching profile re-expands only those packages. `gopp expand` prints the constant.
 
 ## Procedural macro sketch (the API is finalized in P09.04)
 
@@ -128,6 +157,7 @@ macro func Equal!(ctx *macro.Ctx, t macro.TypeDecl) []macro.Decl {
 - Procedural and attached macros.
 - The standard macros, and `@Derive(JSON, Equal)`.
 - The expansion cache, `gopp expand`, macro backtraces, and debug-info mapping.
+- `#Profile()`, `#Setting("name")` and `@If` (D9.12).
 
 ## Exit criteria
 

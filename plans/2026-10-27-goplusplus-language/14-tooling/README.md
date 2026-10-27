@@ -8,7 +8,8 @@
 **D14.1 — One binary with Go-style subcommands.**
 - `gopp` bundles the driver, the compiler, LLVM/Clang/LLD and the LSP server.
 - Subcommands:
-  - build and run: `build`, `run`, `check`, `clean`, `list`;
+  - new projects: `new` (creates the directory with gopp.mod, a `main.gopp` and a `.gitignore` that lists `target/`, P06 D6.12);
+  - build and run: `build`, `run`, `check`, `clean`, `list`. They take the build-profile flags (`-release`, `-profile=NAME`, one-off overrides; P06 D6.12);
   - quality: `test`, `vet`, `fmt`, `fix`;
   - inspection: `parse`, `expand`;
   - docs and modules: `doc`, `mod`, `get`, `cdep`;
@@ -64,7 +65,7 @@
 
 ## Deliverables
 
-- The CLI with help text.
+- The CLI with help text, including `gopp new`.
 - `gopp test` with bench, fuzz and cover support.
 - `gopp lsp`.
 - Debugger pretty printers.

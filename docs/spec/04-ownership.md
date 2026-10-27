@@ -213,7 +213,7 @@ all = append(all, move(more)...)   // elements of more move into all
 **OWN-R5.** *Zero values.*
 - Every type has a zero value (as in Go). A moved-from place holds it (C++ classes: see R9).
 - A `drop` method must accept the zero value. `gopp vet` checks this.
-- Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build mode.
+- Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build profile.
 
 ```go
 type Cache struct{ entries []string }

@@ -51,8 +51,8 @@ One path@version with different `url`s is an error (P10 D10.10).
 - **Generated toolchain file:**
   - `CMAKE_C_COMPILER`/`CMAKE_CXX_COMPILER` set to `gopp cc`/`gopp c++`;
   - target triple and sysroot;
-  - `CMAKE_BUILD_TYPE` mapped from the gopp build mode;
-  - `BUILD_SHARED_LIBS` from `mode` (D11.4), position-independent code on;
+  - the build profile: `GOPP_PROFILE`, `CMAKE_BUILD_TYPE`, the optimization, debug-info, CPU, PGO and sanitizer flags, LTO and `BUILD_SHARED_LIBS` (D11.13);
+  - position-independent code on;
   - `-ffile-prefix-map` for reproducibility;
   - the C++ stdlib from gopp.mod.
 - **Dependency provider.** Uses `cmake_language(SET_DEPENDENCY_PROVIDER …)` (CMake 3.24+), injected through `CMAKE_PROJECT_TOP_LEVEL_INCLUDES`. It intercepts every `find_package()` and `FetchContent_MakeAvailable()`.
@@ -85,7 +85,7 @@ One path@version with different `url`s is an error (P10 D10.10).
 - **Probe project.** For each set of imports, gopp generates a tiny consumer project that links the chosen targets. Through the CMake File API, gopp reads the probe's `compileGroups` (the full transitive usage flags) and its `link.commandFragments` (the full, ordered link line). Both exist since codemodel 2.0.
 - **Generated configs** (last resort). For a locked cdep with no installed config and no CMake Find module, gopp writes a `<Provides>Config.cmake` into its prefix. If the cdep installs no pkg-config `.pc` file, gopp writes one too, so downstream `pkg_check_modules` calls also resolve to gopp-built artifacts.
 
-**D11.4 — Imports, `mode static` (default) or `mode dynamic`, and the link line.**
+**D11.4 — Imports, `mode static` or `mode dynamic` (default: from the profile's `link`, D11.13), and the link line.**
 - **Full-path imports.** A header is imported by package path plus the header's path inside the package, exactly like a Go import path:
   - `import "github.com/madler/zlib/zlib.h"`
   - `import "github.com/fmtlib/fmt/include/fmt/format.h"`
@@ -95,18 +95,23 @@ One path@version with different `url`s is an error (P10 D10.10).
 - **Source paths, installed copies.** The path after the cdep's path is the header's path in the cdep's source tree, as shown on GitHub. gopp records a source → installed map at build time and parses the installed copy.
   - A generated header (such as OpenSSL's `ssl.h`) is named by its path in the build tree.
   - Headers are never parsed from the pristine cache.
-- **Static or dynamic.**
-  - `static` (default): configure with `BUILD_SHARED_LIBS=OFF` and link static archives into the binary, giving one self-contained binary like Go.
+- **Static or dynamic.** An explicit `mode` in the cdep block is **strict**: if the library cannot be built that way, it is an error. Without `mode`, the profile's `link` setting (D11.13; `dynamic` in `debug`, `static` in `release`) is only a **preference**: gopp uses that kind if the cdep builds it, and otherwise the kind it does build, with no error. On static-musl targets it is always static. Example: a library that builds only a static archive, in a `debug` build (`link dynamic`), links static.
+  - `static`: configure with `BUILD_SHARED_LIBS=OFF` and link static archives into the binary, giving one self-contained binary like Go.
   - `dynamic`: configure with `BUILD_SHARED_LIBS=ON` and link shared libraries. Use this for packages that only build shared libraries.
     - Build with `CMAKE_INSTALL_RPATH=$ORIGIN`.
     - gopp copies the libraries next to the output binary, under their SONAME.
-    - If a cdep is `dynamic`, every cdep it `uses` (D11.10) must be `dynamic` too.
+    - If a cdep is `dynamic`, every cdep it `uses` (D11.10) must be `dynamic` too. The kinds are settled in this order:
+      1. Cdeps with an explicit `mode` are fixed first.
+      2. A cdep without `mode` that an explicit `mode dynamic` cdep `uses` becomes `dynamic` if it can build a shared library. If it can't, it is an error that names both cdeps.
+      3. All other cdeps without `mode` follow the profile's `link` preference (with the fallback above), settled from the leaves up: if a cdep it `uses` ends up static, this one falls back to static.
+      4. The only direct mismatch error left is an explicit `mode static` cdep used by an explicit `mode dynamic` cdep.
+    - Example: `cdep A` has `mode dynamic` and `uses B`; `cdep B` has no `mode`. In a `release` build (`link static`), B is still `dynamic` by rule 2, so the chain builds in both profiles.
     - Unsupported on static-musl targets (D11.12).
 - **Target choice.** One fixed rule picks the library target to link:
   - keep only the non-INTERFACE library targets that match `mode` (STATIC for `static`, SHARED for `dynamic`);
   - among them, take the target named after the package, or else the only one left;
   - if the choice is still ambiguous, it is an error that lists the candidates. A local CMake file can narrow the choice (D11.2).
-  - If no target matches, the error says why, e.g. "github.com/x/y builds no static library; use `mode dynamic`".
+  - If no target matches an explicit `mode`, the error says why, e.g. "github.com/x/y builds no static library; use `mode dynamic`".
   - Example: zlib 1.3.1 builds `zlibstatic` and `zlib`, so `mode static` links `zlibstatic` and `mode dynamic` links `zlib`.
 - **Flags and link line** come from the probe project (D11.3): the full transitive usage flags, and the full, ordered link line.
 - **Language.** The header is parsed with the probe's include dirs and defines. It is parsed as C++ if the target compiles C++ or the header has a C++ extension (P01 D1.15), otherwise as C.
@@ -119,10 +124,10 @@ One path@version with different `url`s is an error (P10 D10.10).
   - a sysroot fingerprint;
   - the scrubbed environment, which is also recorded;
   - host tool versions (D11.3);
-  - target triple, build mode, C++ stdlib and sanitizer flags;
+  - target triple, C++ stdlib, the profile name (CMake sees it as `GOPP_PROFILE`) and the cdep's effective profile settings after its pin, sanitizers included (D11.13);
   - the `uses` edges (D11.10) and the build keys of the cdeps they point to.
 - Installs go through `DESTDIR` staging into a fixed virtual prefix, so outputs don't depend on where the cache lives.
-- Builds are shared across all projects on the machine.
+- Builds are shared across all projects on the machine. The profile name is in the key, so `debug` and `release` builds of a cdep are different entries.
 - Outputs are deterministic: `SOURCE_DATE_EPOCH`, deterministic archives, prefix maps.
 
 **D11.6 — One version per C/C++ library per binary.**
@@ -134,7 +139,7 @@ One path@version with different `url`s is an error (P10 D10.10).
   - `gopp get -c` detects bundled copies and suggests disabling them.
 
 **D11.7 — Build flags propagate.**
-- `-asan`, `-msan`, `-race` (TSan) and `-ubsan` rebuild cdeps with the same instrumentation, under separate cache keys.
+- The `sanitize` setting (P06 D6.12; the flags `-asan`, `-msan`, `-race` (TSan) and `-ubsan` are shorthands) rebuilds cdeps with the same instrumentation, under separate cache keys (D11.13).
 - `-msan` requires every C/C++ input to be instrumented.
 - A cdep takes its compile and link flags from its own CMake target. The module-wide `cxxstd`, `cflags` and `ldflags` directives of gopp.mod (P10, P01 D1.15) apply to the Go++ module's own C/C++ sources and header imports, not to cdeps.
 
@@ -169,12 +174,55 @@ One path@version with different `url`s is an error (P10 D10.10).
 - `CMAKE_CROSSCOMPILING_EMULATOR` (QEMU user mode) runs `try_run` checks.
 - `mode dynamic` and `csystem` are unsupported on static-musl targets.
 
+**D11.13 — Build profiles reach every cdep.** (ADR-0007; tasks P11.19, P11.20.) The settings and defaults are in P06 D6.12. gopp's generated toolchain file (D11.3) turns the cdep's **effective settings** (the profile, then the `deps` row, then the cdep's own pin, then command-line overrides) into CMake variables and flags. A cdep CMake project needs no change.
+
+| Profile setting | What the toolchain file does |
+|---|---|
+| (the profile's name) | sets `GOPP_PROFILE` (for example `debug`, `release`, `fast`). CMake files may read it; it is part of the cache key |
+| `opt`, `debuginfo` | sets `CMAKE_BUILD_TYPE` by the table below, and puts the exact flags into `CMAKE_<LANG>_FLAGS_<CONFIG>_INIT`, so CMake's own defaults (`-O3`, `-g`) do not fight them |
+| `opt` | `-O0` `-O1` `-O2` `-O3` `-Os` `-Oz` |
+| `debuginfo` | `none`: no flag; `line`: `-gline-tables-only`; `full`: `-g` |
+| `cpu` | `baseline`: no flag; `native` or a name: the matching `-march=` / `-mcpu=` flag (`native` is first turned into the real CPU name) |
+| `pgo` | `generate`: `-fprofile-instr-generate`; a file: `-fprofile-instr-use=<file>` |
+| `sanitize` | `-fsanitize=…` plus `-fno-omit-frame-pointer` for the same sanitizers as the Go++ code (P05 D5.9, D11.7), also at link time |
+| `lto` | `thin` or `full`: `CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON` with `-flto=thin` or `-flto=full`, so static cdeps hold bitcode that LLD can optimize together with the Go++ code. `off`: `OFF` |
+| `link` | the **preferred** library kind: `BUILD_SHARED_LIBS=ON` for `dynamic` (the `debug` default), `OFF` for `static` (the `release` default). It is a preference only: if the cdep builds just the other kind, gopp uses that kind with no error, and on static-musl targets it always uses static (D11.4). An explicit `mode` is strict and overrides it |
+| `strip` | `true` (= `symbols`: removes the symbol table and debug info) applies to the final binary and to shared libraries copied next to it (`cmake --install --strip`); static archives are not stripped |
+| `panic` | no CMake effect. C++ exceptions **stay on** in every profile, because cdeps may throw (`-fno-exceptions` is never added). Under `panic abort`, an exception that reaches Go++ frames ends the process (P04 D4.6) |
+
+`CMAKE_BUILD_TYPE` by the cdep's effective `opt` and `debuginfo`:
+
+| `opt` | `debuginfo` | `CMAKE_BUILD_TYPE` |
+|---|---|---|
+| `0` | any | `Debug` |
+| `1` `2` `3` | `none` | `Release` |
+| `1` `2` `3` | `line` or `full` | `RelWithDebInfo` |
+| `s` `z` | any | `MinSizeRel` |
+
+`-DNDEBUG` is added for every type except `Debug`, as CMake does.
+
+- **Per-cdep pin.** A cdep block can fix settings for that cdep in every profile:
+
+  ```
+  cdep github.com/madler/zlib v1.3.1 (
+      commit <full commit hash that tag v1.3.1 resolved to>
+      profile (
+          opt 2
+      )
+  )
+  ```
+
+  Only `opt` and `debuginfo` can be pinned (P10 D10.11). The pin beats a `deps` row for this cdep, but a command-line override (`-opt=0`) beats the pin (P06 D6.12). The pin is a build key (P10 D10.3).
+- **Cache key.** The profile name and the cdep's effective settings are part of its cache key (D11.5). The same cdep at the same settings is built again for each different profile name, because `GOPP_PROFILE` is visible to its CMake code.
+- **Where it builds.** Each profile builds its cdeps in `target/<profile>/cdeps/<name>-<version>/` (P06 D6.12). That folder is only the CMake build tree, used for debugging and `gopp cdep build -v`. The installed result goes to the global cache (D11.5), so a second project or worktree still gets a cache hit with no CMake run. Build trees must not change outputs: the paths are mapped away with `-ffile-prefix-map` (D11.3).
+- **Preference vs `mode`.** Only `mode` is strict. The profile's `link` and a `-link=` flag set the preference. A cdep that wants a fixed kind uses `mode`. The resolution order for `uses` chains is in D11.4: a cdep without `mode` that an explicit `mode dynamic` cdep uses becomes dynamic (error if it can't); only an explicit `mode static` under an explicit `mode dynamic` is a direct mismatch error.
+
 ## End-to-end example
 
 ```
 $ gopp get -c github.com/madler/zlib@v1.3.1
   resolved v1.3.1 → <commit>; tree h1:<…>
-  libraries: zlibstatic (static), zlib (shared) → mode static (default)
+  libraries: zlibstatic (static), zlib (shared) → link kind follows the profile (default: static in release)
   wrote cdep block to gopp.mod and 1 line to gopp.sum
 $ gopp build   # import "github.com/madler/zlib/zlib.h" → sandboxed configure/build (first time) → cached libz.a → linked
 $ gopp build   # cache hit; CMake does not run
@@ -201,7 +249,8 @@ $ gopp build   # cache hit; CMake does not run
 - Offline rebuilds work from the cache and from `vendor/`.
 - Tampering is detected: tree, archive, moved tag.
 - An unlocked REQUIRED `find_package`, or an unlocked `FetchContent` request, is blocked with an actionable error. An unlocked optional request answers "not found", and gopp.sum records it.
-- A second project using the same cdep version gets a cache hit, with no CMake run.
+- A second project using the same cdep version and profile settings gets a cache hit, with no CMake run.
+- Profiles: zlib built under `debug` and `release` gives two cache entries and two build trees under `target/`; a `profile ( opt 2 )` pin takes effect in `debug`; `lto thin` produces bitcode archives that link; `link dynamic` flips `BUILD_SHARED_LIBS` unless `mode` is set.
 
 ## Risks
 
@@ -214,3 +263,4 @@ $ gopp build   # cache hit; CMake does not run
 - **Q1** Build systems besides CMake (Meson, Autotools), after v1.
 - **Q2** Signed binary caches.
 - **Q3** A Windows sandbox.
+- **Q4** Which profile settings apply to host builds of generator tools (D11.12)? Proposed: the same `opt` and `debuginfo`, never `sanitize`, `lto` or `pgo`.

@@ -97,7 +97,7 @@ All 42 notes reviewed and applied (team workflow; ledger `.claude/team/p01-15-ap
 
 ## Notes / blockers
 
-- The spec is in `docs/spec/` (16 chapters + README, 227 numbered rules). The samples are in `docs/spec/examples/`. Each Go counterpart runs and matches `expected_output.txt` byte for byte.
+- The spec is in `docs/spec/` (16 chapters + README, 228 numbered rules). The samples are in `docs/spec/examples/`. Each Go counterpart runs and matches `expected_output.txt` byte for byte.
 - The `.gopp` samples can't be compiled until P02/P03 exist. They were checked by hand against the rules.
 - No `Open (P01 review)` notes are left in the spec; two points are `Deferred to P09/P12`. Open owner question: D9 `IsNil` tie-break.
 - Team-build ledger: `.claude/team/p01-language-spec-ledger.md` (58 findings over 20 rounds, all closed; 5 fresh final reviewers).

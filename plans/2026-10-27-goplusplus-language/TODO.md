@@ -127,7 +127,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
 ## P03 — Semantic analysis ([README](03-semantic-analysis/README.md))
 
-- **P03.01 Package loader**: directories, `//gopp:build`, `_os_arch` file suffixes, `_test.gopp`, `internal/`, import cycles. *Done when:* tests pass.
+- **P03.01 Package loader**: directories, `//gopp:build` (including profile names, P06 D6.12), `_os_arch` file suffixes, `_test.gopp`, `internal/`, import cycles. *Done when:* tests pass.
 - **P03.02 Constant arithmetic**: APInt plus a big-float spike (libbf vs alternatives). *Done when:* Go's constant test cases pass.
 - **P03.03 Scopes & resolution**: universe, package, file and block scopes; the export rule and its foreign exemption; unused variables and imports. *Done when:* tests pass.
 - **P03.04 Types core**: identity, assignability, conversions, method sets, embedding/promotion, interface satisfaction. *Done when:* ported types2 cases pass.
@@ -173,7 +173,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P04.10 `!` lowering**: on a cold path, return the error (functions that can fail) or panic with `errors.MustError` (elsewhere). *Done when:* both paths and the message format are tested.
 - **P04.11 C ABI via Clang**: classification through Clang's `CodeGenABITypes`, plus Go++'s own lowering for every `ABIArgInfo` kind (sized L). *Done when:* struct-by-value tests against Clang-built C pass on amd64 and arm64.
 - **P04.12 DWARF**: lines, variables, types. *Done when:* gdb and lldb can break and print locals.
-- **P04.13 Build modes**: debug/dev/release pipelines. *Done when:* flags select the pipelines and tests pass.
+- **P04.13 Codegen pipelines per `opt`**: the `opt 0` (dev), `opt 1`, `opt 2`, `opt 3`, `opt s`, `opt z` pipelines, plus the `-pipeline=fastisel` baseline (D4.8, P06 D6.6). *Done when:* the `opt` setting selects the pipelines and tests pass.
 - **P04.14 Differential tests vs Go**:
   - the harness compares stdout, normalized stderr and the exit code against Go 1.25;
   - a tagged "expected differences" list;
@@ -252,14 +252,17 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P06.03 Build graph & scheduler**: critical-path priority, thread pool, one LLVMContext and TargetMachine per thread, one Clang worker per package (D6.4). *Done when:* multi-package builds work, and two runs give identical outputs.
 - **P06.04 Content-addressed cache**: action IDs (including header dependency lists), outputs, trimming, `gopp clean -cache`; the module cache is kept separate. *Done when:* a no-op rebuild is all cache hits.
 - **P06.05 Pipelining**: dependents start once export data exists. *Done when:* a trace shows the overlap.
-- **P06.06 Generic instance homes**: one home per instance in debug/dev, keyed by a full fingerprint (D4.3). *Done when:* each repeated instance is compiled once (trace counter), and a layout change in a type argument invalidates it.
-- **P06.07 Parallel codegen**: module splitting in debug/dev; the partition count depends on code size. *Done when:* the speedup is recorded, and output is identical for `-p 1` and `-p 8`.
+- **P06.06 Generic instance homes**: one home per instance at `opt 0` and `opt 1`, keyed by a full fingerprint (D4.3). *Done when:* each repeated instance is compiled once (trace counter), and a layout change in a type argument invalidates it.
+- **P06.07 Parallel codegen**: module splitting at `opt 0` and `opt 1`; the partition count depends on code size. *Done when:* the speedup is recorded, and output is identical for `-p 1` and `-p 8`.
 - **P06.08 Dev pipeline tuning**. *Done when:* the D6.6 targets are met or an ADR documents the gap.
 - **P06.09 `-trace`**: Chrome trace including LLVM pass timings. *Done when:* traces load in Perfetto.
 - **P06.10 CLI parity**: `gopp build/run/test/clean/env` flags and behavior. *Done when:* CLI tests pass.
 - **P06.11 Budget gate in CI**. *Done when:* CI fails on a > 10% regression.
 - **P06.12 Verification model** (D6.10): verify on download/extract; per-build presence checks only; `gopp mod verify`; file-hash cache. *Done when:* presence checks and the file-hash cache are unit-tested, and a no-op build of a 10k-file project stays within the no-op budget. The end-to-end checks with a large cdep and `gopp mod verify` are in P11.14 and P10.08.
 - **P06.13 LSP overlays** (D6.11): unsaved editor buffers and a check-session API. *Done when:* an edit in an unsaved buffer of one package changes diagnostics in a dependent package.
+- **P06.14 Build profiles in the driver** (D6.12): the nine settings with the `debug` and `release` defaults; `inherits`, `deps` rows and the precedence order; only the main module's profiles; effective settings in every action ID; `opt` selects the codegen pipeline; `panic`, `strip`, `lto`, `pgo`, `cpu` and `link` reach codegen and the linker; profile terms in `//gopp:build`. *Done when:* tests show that `debug` and `release` of one project give different action IDs, that two profiles with equal settings share cache entries, that `deps ( * opt 2 )` changes only dependencies, and that `//gopp:build debug` selects a file only in `debug`.
+- **P06.15 Profile CLI flags** (D6.12): `-release`, `-profile=NAME`, the nine one-off overrides, and `-race`/`-asan`/`-ubsan`/`-msan` as `-sanitize` shorthands, on `build`, `run`, `test` and `check`. *Done when:* CLI tests cover each flag, the conflict errors and the unknown-profile error, and `-opt=0` overrides a `deps` row.
+- **P06.16 `target/` layout** (D6.12): `target/<profile>/` with the binary, `tests/` and `cdeps/`; `-target-dir`, `GOPPTARGETDIR`, `gopp env`, `gopp clean [-profile=]`; the cache stays in `$GOPPCACHE`. *Done when:* debug and release builds of one project sit side by side, deleting `target/` and rebuilding is all cache hits, and a second worktree builds from the same cache.
 
 ## P07 — C interop ([README](07-c-interop/README.md))
 
@@ -340,6 +343,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P09.10 Tooling hooks**: `gopp expand`, macro backtraces, debug-info mapping. *Done when:* tests pass.
 - **P09.11 Decide Q2–Q4**: ADRs. *Done when:* merged.
 - **P09.12 Overhead budget**. *Done when:* the D9.10 budget is met or an ADR documents the gap.
+- **P09.13 Profile macros and `@If`** (D9.12): `#Profile()` and `#Setting("name")` as string constants (the main module's profile name everywhere; per-package settings); `@If(cond)` on declarations; constant-condition `if` branches dropped from codegen but type-checked; the profile read recorded in the expansion key. *Done when:* tests show that a dead branch and an `@If(false)` function are absent from the object file but still produce type errors, that a live use of a disabled declaration is an error, and that switching profile re-expands only packages that read it.
 
 ## P10 — Modules: gopp.mod / gopp.sum ([README](10-modules-gopp-mod-sum/README.md))
 
@@ -359,6 +363,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P10.09 Modules reference doc**. *Done when:* `docs/modules.md` is merged.
 - **P10.10 cdep tree format** (D10.10): symlinks, exec bits, submodules, size limit, tar proxy format, URL conflicts. *Done when:* hashing a repo with symlinks and submodules is stable across machines.
 - **P10.11 cdep versions** (D10.4): the `tag` key or pattern, pseudo-versions for untagged repos, explicit pins for different majors. *Done when:* fmt `12.2.0`, `openssl-3.3.1` and untagged stb all resolve.
+- **P10.12 Build profile blocks** (D10.11): the `profile` block grammar (`inherits`, settings, `deps ( … )`), the `profile ( … )` pin inside `cdep` blocks, validation and canonical printing; ignored in dependency modules. *Done when:* round-trip and canonical-format tests pass, errors are tested (cycle, bad value, unknown `deps` path, `deps` row with a whole-program setting, profile name equal to `linux`), and a `profile` block in a dependency's gopp.mod changes nothing.
 
 ## P11 — C/C++ deps from the internet + CMake ([README](11-c-cpp-deps-and-cmake/README.md))
 
@@ -366,7 +371,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P11.02 Fetch & lock**: commit pin, archive `sha256:`, tree `h1:`, the version → tag mapping; `gopp get -c`. *Done when:* it writes gopp.mod + gopp.sum.
 - **P11.03 Local CMake files**: the `cmake ./path.cmake` key, the generated wrapper project, `GOPP_CDEP_SOURCE_DIR`, `include()`d files hashed into the key. *Done when:* Dear ImGui (git) and the sqlite amalgamation (archive) build from local CMake files.
 - **P11.04 CMake & Ninja provisioning**: pinned, verified, cached; the pinned CMake version is the minimum for `GOPPCMAKE`. *Done when:* it works on a clean machine.
-- **P11.05 Toolchain file**. *Done when:* zlib builds with `gopp cc`.
+- **P11.05 Toolchain file**. *Done when:* zlib builds with `gopp cc`. The profile part is P11.19.
 - **P11.06 Dependency provider**:
   - system packages;
   - `csystem` mappings;
@@ -400,6 +405,8 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P11.16 `csystem`**: pkg-config lookup, link flags, the headers each entry owns, `find_package` mappings (D11.11). *Done when:* a sample links a system library through `csystem`, and its `"<…>"` import links it.
 - **P11.17 `-hermetic`**: reject `csystem` entries and builds without Landlock. *Done when:* tests show both are rejected.
 - **P11.18 Transitive cdeps** (D11.10): `uses` edges, recorded by `get -c`/`tidy` and checked at configure; build order and cache keys from edges. *Done when:* a cached libpng + zlib rebuild runs no CMake, and an unrecorded `find_package` edge fails with a clear error.
+- **P11.19 Profile in the toolchain file** (D11.13): `GOPP_PROFILE`, the `CMAKE_BUILD_TYPE` table, the opt/debuginfo/cpu/pgo/sanitize flags, `CMAKE_INTERPROCEDURAL_OPTIMIZATION` for LTO, `BUILD_SHARED_LIBS` from `link` unless `mode` is set, C++ exceptions left on. *Done when:* a probe CMake project prints the expected variables and flags for `debug`, `release` and a custom profile, and zlib built with `lto thin` links into a Go++ binary.
+- **P11.20 Profile in cdep keys, pins and build trees** (D11.13): the profile name and the effective settings in the cdep cache key; the `profile ( opt 2 )` pin and its precedence; build trees in `target/<profile>/cdeps/`. *Done when:* `debug` and `release` builds of zlib are two cache entries, a pin changes only that cdep, a second worktree gets a cache hit with no CMake run, and moving the build tree does not change the output hash.
 
 ## P12 — Concurrency ([README](12-concurrency/README.md))
 
@@ -440,7 +447,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
 ## P14 — Tooling ([README](14-tooling/README.md))
 
-- **P14.01 CLI consolidation**: help text, `gopp env`, `gopp tool`, every subcommand in D14.1 (including `parse`, `cdep`, `list`, `fix`). *Done when:* CLI tests cover every subcommand's help.
+- **P14.01 CLI consolidation**: help text, `gopp env`, `gopp tool`, every subcommand in D14.1 (including `parse`, `cdep`, `list`, `fix`, `new`). *Done when:* CLI tests cover every subcommand's help.
 - **P14.02 `gopp test`**: runner, parallelism, `-run`/`-count`, examples. *Done when:* the std tests run through it.
 - **P14.03 Bench & fuzz**: libFuzzer integration. *Done when:* fuzzing finds a seeded bug.
 - **P14.04 Coverage**: LLVM source-based coverage, HTML report. *Done when:* a report is generated.
@@ -456,6 +463,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P14.08 Editors**: VS Code extension, tree-sitter grammar, configs for Neovim, Helix and Zed. *Done when:* the extension package builds, and the tree-sitter grammar parses the parser corpus.
 - **P14.09 `gopp doc`**: terminal + HTML. *Done when:* the std docs render.
 - **P14.10 Distribution & `toolchain`**: archives with prebuilt tier-1 toolchain parts, version switching. *Done when:* switching versions works.
+- **P14.11 `gopp new`** (D14.1): creates a project directory with `gopp.mod` (like `gopp mod init`), a hello-world `main.gopp` and a `.gitignore` containing `target/` (P06 D6.12). *Done when:* a CLI test runs `gopp new demo && cd demo && gopp build` and finds `target/` ignored by `git status`.
 
 ## P15 — Performance ([README](15-performance/README.md))
 

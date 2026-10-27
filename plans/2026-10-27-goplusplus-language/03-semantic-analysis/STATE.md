@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-27 (build profiles added)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -35,6 +35,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-27 (ADR-0007, build profiles): `//gopp:build` terms include the main module's active profile name (P06 D6.12).
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): constraints `Copy` and `Clone` (replace `trivial` and `clonable`), the `x.Clone()` method and `IsNil()` on every pointer kind, the `&d` range form, the loop-variable redeclaration error, `func f!() error` is an error, and returning a `ref` into a local is an error. Details in P01 D1.4, D1.8, D1.10, D1.21.
 
 ## Notes / blockers

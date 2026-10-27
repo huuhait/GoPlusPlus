@@ -23,13 +23,13 @@
    - Drop glue skips `drop` on all-zero values.
 4. Lower `!`, bounds checks and nil checks.
 5. Monomorphize generic calls.
-6. Run light GIR passes: constant folding, dead-block removal, trivial inlining (dev/release).
+6. Run light GIR passes: constant folding, dead-block removal, trivial inlining (at every `opt`; the `opt 0` pipeline keeps it small).
 7. Emit LLVM IR.
 
 **D4.3 — Monomorphization and where instances live.**
-- **Debug and dev builds:** each generic instance gets one home per build: one object file per instance (or per batch of instances), keyed by a full fingerprint and shared by all packages. Packages reference it instead of compiling their own copy.
-- **Release builds:** instances are emitted `linkonce_odr` in a COMDAT, so LTO can inline them. Duplicates fold at link time.
-- **Fingerprint** = the instance's GIR after substitution + the fingerprints of every type and function it references + build mode + target.
+- **Debug builds (`opt 0` or `opt 1`):** each generic instance gets one home per build: one object file per instance (or per batch of instances), keyed by a full fingerprint and shared by all packages. Packages reference it instead of compiling their own copy.
+- **Release builds (`opt 2` and up):** instances are emitted `linkonce_odr` in a COMDAT, so LTO can inline them. Duplicates fold at link time.
+- **Fingerprint** = the instance's GIR after substitution + the fingerprints of every type and function it references + the effective profile settings that affect codegen + target.
 - The instance homes live in the build cache (P06.06). Instance symbol names follow D4.13.
 
 *Why:* without one home, every package compiles its own copy of each instance, and debug builds pay for it many times.
@@ -71,6 +71,7 @@
 - **One unwinder per binary:** libunwind with libc++; libgcc_s with libstdc++.
 - Calls to functions known to be `nounwind` get no landing pad.
 - **Under `-panic=abort`:** Go++ code gets no cleanup landing pads. Calls to C++ functions that may throw get abort-on-unwind landing pads, and functions keep `uwtable`, so stack traces still work.
+- Under `-panic=abort` a panic prints the trace and exits with code 2, `recover()` returns nil and nothing unwinds. Whether deferred calls run on that path is decided in P01.06.
 - Windows support (MSVC EH with funclets) is tier-3 work (P16).
 
 *Why:*
@@ -82,12 +83,13 @@
 
 **D4.7 — DWARF 5 from day one.** M0 emits line tables; M1 adds variables and types. Type names use Go++ spelling (`main.Doc`, `[]string`). Pretty printers come in P14.
 
-**D4.8 — Three build modes, one semantics.**
-- `debug`: no GIR inlining, LLVM `-O0`, FastISel.
-- `dev`: the default for `gopp build`. GIR trivial inlining plus a small LLVM pass set, tuned in P06.
-- `release`: LLVM `-O2` (`-O3` opt-in), ThinLTO optional.
+**D4.8 — Build profiles, one semantics.** (Changed by ADR-0007; P06 D6.12 and D6.6 define the profiles and pipelines.)
+- `opt 0` (the default `debug` profile): GIR trivial inlining plus a small LLVM pass set, tuned in P06.
+- `opt 3` with `lto thin` (the default `release` profile): LLVM `-O3`; `opt 2` and `lto full` are settings you can choose.
+- The plain `-O0` + FastISel pipeline (no GIR inlining) stays as a measuring baseline (`-pipeline=fastisel`).
+- Where this document says "debug/dev build" it means `opt 0` or `opt 1`; "release build" means `opt 2` or higher.
 
-Bounds, nil and division checks stay on in every mode unless explicitly disabled with `@NoBounds` or a per-package flag.
+Bounds, nil and division checks stay on in every profile unless explicitly disabled with `@NoBounds` or a per-package flag.
 
 *Risk:* `invoke` and x86-64 FastISel. FastISel can't select `invoke`, so blocks that end in `invoke` fall back to the slower SelectionDAG. See the P04.15 spike.
 
@@ -170,4 +172,4 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 ## Open questions
 
 - **Q1** GIR serialization format details (coordinated with P06.02).
-- **Q2** (deferred to P06) One LLVM module per package, or per function group in debug mode? Decided by measurement in P06.07 (see P06 D6.5).
+- **Q2** (deferred to P06) One LLVM module per package, or per function group at `opt 0` (the debug profile)? Decided by measurement in P06.07 (see P06 D6.5).

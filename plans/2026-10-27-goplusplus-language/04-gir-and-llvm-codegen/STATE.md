@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-27 (build profiles added)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
@@ -19,7 +19,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.10 `!` lowering
 - [ ] P04.11 C ABI via Clang
 - [ ] P04.12 DWARF
-- [ ] P04.13 Build modes
+- [ ] P04.13 Codegen pipelines per `opt`
 - [ ] P04.14 Differential tests vs Go
 - [ ] P04.15 EH cost spike
 - [ ] P04.16 Bootstrap mode
@@ -42,6 +42,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-27 (ADR-0007, build profiles): D4.8's three build modes become the `opt` setting of build profiles (P06 D6.12); `dev` is now `opt 0`, the default of the `debug` profile.
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): the `view` types are renamed `ref` (layout table only; no layout change).
 
 ## Notes / blockers

@@ -291,9 +291,9 @@ func main() {
 - Arguments a macro reads as values must be known while compiling: every `@Name(args)` argument, and `#Name` parameters of a value kind (`lit`). A runtime variable there is a compile error (`@Retry(n)`). Code-fragment parameters (`expr`, `ident`, `block`, `stmt`) are pasted into the program and may name runtime variables (`#Assert(x > 0, "bad")`). The exact procedural-macro API is designed in P09.
 - Names: every macro and attribute name starts with a capital letter (`#Assert`, `@Derive`, `@Extern`), whether built-in or user-defined.
 - Across packages: a macro from another package is qualified like a function: `#pkg.Name(…)`, `@pkg.Name`.
-- Predeclared: the std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable` and `@Derive` need no import.
+- Predeclared: the std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting` and `@Derive` need no import (`#Profile` and `#Setting` are specified in P09 D9.12).
 - `@Derive(X)` finds `X` in std package `derive`, unless qualified (`@Derive(sql.Table)`).
-- Built-in attributes use the same syntax: `@Extern("C")`, `@Export("C")`, `@Inline`, `@NoInline`, `@Packed`, `@Align(N)`, `@Ref`, `@NoBounds`, `@Pinned`, `@Unwind`. `@Derive(…)` is a std macro (P09).
+- Built-in attributes use the same syntax: `@Extern("C")`, `@Export("C")`, `@Inline`, `@NoInline`, `@Packed`, `@Align(N)`, `@Ref`, `@NoBounds`, `@Pinned`, `@Unwind`, `@If(cond)` (P09 D9.12). `@Derive(…)` is a std macro (P09).
 - Errors: a macro's error or panic becomes a compile error at the use site (P09 D9.11).
 - `!` never means "macro", which keeps it unambiguous as Must.
 

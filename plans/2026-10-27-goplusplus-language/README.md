@@ -35,7 +35,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
    - passing a `ref string` or a borrowed `string` parameter to C (a temporary copy, on the stack when short).
 2. **Reuse, don't rewrite.** C and C++ libraries are first-class dependencies. When in doubt, Clang decides C/C++ semantics (layout, overloads, templates, ABI, mangling).
 3. **Go's simplicity.** Where Go has a construct, keep its syntax and, wherever GC isn't involved, its semantics. Add new syntax only where ownership or interop requires it.
-4. **Fast edit–build–run loop.** Debug builds favor compile speed and release builds favor runtime speed. Language semantics are identical in both.
+4. **Fast edit–build–run loop.** Debug builds favor compile speed and release builds favor runtime speed. Language semantics are identical in every profile; the one exception is `panic abort`, where `recover()` returns nil (P06 D6.12).
 5. **Safe defaults when they are free.** Bounds checks, zero values, nil checks, defined integer overflow, and use-after-move errors. Sanitizers are one flag away. v1 has no borrow checker (see non-goals).
 6. **Reproducible, locked builds.** Every byte that goes into a build comes from a hashed input.
 7. **Fast loop for building Go++ itself.** Rebuilding `gopp` and running the tests for what you changed take seconds, not minutes, even as the code grows. A slow loop is a bug: fix it with narrower test targets, caches and tests that stop early, not by waiting (P00 D0.13).

@@ -43,7 +43,7 @@
 **D5.5 — Drop glue and relocation.**
 - The compiler generates drop glue for every owning type: call `drop` (if defined), then destroy the owning fields in reverse order.
 - Glue is emitted `linkonce_odr` and is inlinable.
-- **All-zero skip:** drop glue skips the user `drop` when the value is all zero bytes. So dropping a zero value is a no-op in every build mode, and zero-on-move depends on it.
+- **All-zero skip:** drop glue skips the user `drop` when the value is all zero bytes. So dropping a zero value is a no-op in every profile, and zero-on-move depends on it.
 - **No unwinding:** drop glue is `nounwind`. A panic that escapes `drop` aborts the program with a clear message (P01 D1.9).
 - **Iterative drop:** `Unique[Self]` chains (linked lists) are dropped iteratively, and trees use a heap work list, so long lists don't overflow goroutine stacks.
 - **errno:** drop glue preserves errno, so a drop that runs right after a C call doesn't change the errno the caller reads (P07 D7.7).

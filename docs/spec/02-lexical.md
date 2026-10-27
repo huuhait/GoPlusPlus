@@ -63,7 +63,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 | functions | `move`, `clone`, `new_unique`, `new_shared`, `new_weak` |
 | generic types | `Unique[T]`, `Shared[T]`, `Weak[T]` |
 | constraints | `Copy`, `Clone` |
-| std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `@Derive` |
+| std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `@Derive` |
 
 - Like Go's predeclared names, these can be shadowed by a declaration in an inner scope. Do not do it.
 - The macro names live in their own namespace (they are only used after `#` or `@`).
@@ -76,7 +76,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 ### Directive comments
 
-**LEX-11.** A line comment that starts with `//gopp:` is a directive. The only directive is `//gopp:build`. To the lexer it is an ordinary comment. See [14](14-foreign-surface.md). (The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md).) A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error with the fix-it "move it to gopp.mod (`cflags …`)".
+**LEX-11.** A line comment that starts with `//gopp:` is a directive. The only directive is `//gopp:build`. To the lexer it is an ordinary comment. Besides OS, architecture and tags, a `//gopp:build` term can be the name of a build profile (`//gopp:build debug`, [FOR-10](14-foreign-surface.md)). See [14](14-foreign-surface.md). (The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md).) A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error with the fix-it "move it to gopp.mod (`cflags …`)".
 
 ### Contextual words
 

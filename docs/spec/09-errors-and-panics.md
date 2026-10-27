@@ -207,7 +207,7 @@ Compared with Go: the first loop example behaves exactly as in Go. All files sta
 
 **PAN-6.** *`move` arguments.* The callee owns its `move` arguments and drops them on every path, including panics.
 
-**PAN-7.** *`-panic=abort`* removes unwinding: panics print and abort. Binaries are smaller and compiles are faster.
+**PAN-7.** *`-panic=abort`* (the `panic abort` build profile setting, P06 D6.12) removes unwinding: panics print and abort. Binaries are smaller and compiles are faster.
 - `recover()` always returns nil in this mode, and `gopp vet` warns about it.
 - A C++ exception that reaches a Go++ frame aborts too.
 - Unwind tables are kept, so stack traces still work.

@@ -14,7 +14,7 @@
 
 **D3.3 — Package model = Go's.**
 - A directory is a package.
-- Build constraints come from `//gopp:build` and `_os_arch.gopp` file suffixes. `_test.gopp` files and the `internal/` rule work as in Go.
+- Build constraints come from `//gopp:build` (its terms include the main module's active build profile, e.g. `//gopp:build debug`, P06 D6.12) and `_os_arch.gopp` file suffixes. `_test.gopp` files and the `internal/` rule work as in Go.
 - Capitalized names are exported. Names from imported C/C++ headers are always accessible, whatever their case.
 - Unused imports and variables are errors, as in Go, which keeps dependency graphs (and builds) lean.
 

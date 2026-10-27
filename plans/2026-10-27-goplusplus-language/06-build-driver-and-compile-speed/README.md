@@ -10,7 +10,7 @@
 | Re-reading dependencies | export data | export data (`.gopx`), lazily decoded |
 | C/C++ headers | — (cgo is slow) | import units cached as PCH + binding export data (P07) |
 | Generic code | GC-shape stenciling | monomorphization + instance cache + COMDAT folding |
-| Backend | its own fast backend | LLVM: O0 + FastISel (debug), a tuned small pipeline (dev), parallel codegen |
+| Backend | its own fast backend | LLVM: a tuned small pipeline at `opt 0` (the default `debug` profile), full pipelines at higher `opt`, parallel codegen |
 | Rebuilds | action cache keyed on export data | same, but finer: dependents rebuild only when the API, or a body they used, changes (D6.2) |
 | Linking | its own linker | bundled LLD (multithreaded) |
 | Macros | — | sandboxed interpreter + expansion cache (P09) |
@@ -36,7 +36,8 @@
 
 **D6.3 — Content-addressed cache (`$GOPPCACHE`, default `~/.cache/gopp`).**
 - Action ID = SHA-256 of:
-  - the gopp version and build configuration;
+  - the gopp version;
+  - the package's **effective profile settings** (D6.12), not the profile's name: two profiles with the same settings share cache entries. The name is part of the key only when the package reads it (`#Profile()`, a `//gopp:build` profile term) and for cdeps (P11 D11.5);
   - the target and source hashes;
   - the dependencies' API fingerprints; for codegen, also the hashes of the dependency bodies that the package used (D6.2);
   - the hashes of the comptime GIR that the package's macro expansions executed (P09 D9.6), so editing a macro rebuilds the packages that expanded it;
@@ -44,6 +45,7 @@
   - the relevant environment.
 - Outputs are stored by content hash and trimmed LRU under a size cap.
 - The same cache holds C/C++ artifacts (P07/P11) and macro expansions (P09).
+- The cache is global and **not** part of `target/` (D6.12). All projects and worktrees on the machine share it.
 - The module cache is a separate directory (P10 D10.5). Trimming and `gopp clean -cache` never touch it.
 
 **D6.4 — In-process parallel scheduler.**
@@ -57,15 +59,16 @@
 
 **D6.5 — Parallelism inside a package.**
 - Function bodies are type-checked in parallel (P03 D3.4).
-- In debug/dev modes the LLVM module is split into partitions along call-graph clusters, and the partitions are compiled in parallel.
+- At `opt 0` (and `opt 1`) the LLVM module is split into partitions along call-graph clusters, and the partitions are compiled in parallel.
   - The partition count depends on code size, not on `-p`, so the output is deterministic.
   - All Clang-generated code goes into one partition.
-- Release builds keep one module per package to maximize inlining; ThinLTO handles cross-module inlining.
+- Builds at `opt 2` and above keep one module per package to maximize inlining; ThinLTO (`lto thin`) handles cross-module inlining.
 
-**D6.6 — Build modes are defined here.**
-- `debug`: O0 + FastISel.
-- `dev` (default): O0 codegen plus a small curated IR pass set (SROA/mem2reg, instcombine, simplifycfg, always-inline). Targets (provisional): ≤ 1.5× debug compile time, ≥ 3× debug runtime speed.
-- `release`: O2 (O3 opt-in), optional ThinLTO.
+**D6.6 — Codegen pipelines are defined here; the `opt` setting picks one.** The old "build modes" (`debug`, `dev`, `release`) are replaced by build profiles (D6.12). A profile's `opt` value selects the pipeline:
+- `opt 0` (default of the `debug` profile): O0 codegen plus a small curated IR pass set (SROA/mem2reg, instcombine, simplifycfg, always-inline). Targets (provisional): ≤ 1.5× the plain O0 + FastISel compile time, ≥ 3× its runtime speed. This is the old `dev` pipeline, which stays the default for `gopp build`.
+- `opt 1`, `opt 2`, `opt 3`, `opt s`, `opt z`: the matching LLVM `-O1`, `-O2`, `-O3`, `-Os`, `-Oz` pipelines. `opt 3` is the default of the `release` profile.
+- The plain **O0 + FastISel** pipeline (no GIR inlining, the old `debug` mode) is not a profile setting. It stays as the baseline for the D6.8 budgets and the D6.9 fallback, and is chosen with `-pipeline=fastisel` (a measuring and debugging flag).
+- Everywhere else in the plan, "debug/dev build" means `opt 0` or `opt 1`, and "release build" means `opt 2` or higher.
 
 **D6.7 — Measure, don't guess.**
 - `gopp build -trace=out.json` writes a Chrome trace with per-action and per-LLVM-pass timings (LLVM `TimeProfiler`).
@@ -75,7 +78,7 @@
 
 | Scenario | Budget |
 |---|---|
-| Clean `debug` build, 100 k-line generated project | ≤ 2× `go build` |
+| Clean `debug` profile build, 100 k-line generated project | ≤ 2× `go build` |
 | Clean `debug` build, generic-heavy generated project | set in P06.01 |
 | Clean `debug` build, C++-heavy project (100 packages using `<vector>`, `<string>`, `<map>`) | set and checked once P08 lands (P08.13) |
 | No-op rebuild | ≤ 100 ms |
@@ -92,7 +95,7 @@
 - Evaluate a baseline backend for **debug builds only**, e.g. direct GIR → machine code for x86-64/arm64.
 - Size: XL.
 - It must emit exception tables (LSDA), unwind info (CFI) and DWARF, and match Clang's C ABI, so panics, C++ exceptions, debuggers and C calls keep working.
-- LLVM remains the only backend for dev and release builds and stays mandatory (R11).
+- LLVM remains the only backend for every profile and stays mandatory (R11).
 - This work doesn't start unless P06 measurements (or the P04.15 spike) demand it.
 
 **D6.10 — Verification model.** Task P06.12 builds it.
@@ -108,10 +111,89 @@
 - **Overlays:** the driver can read unsaved editor buffers instead of the files on disk.
 - **Check sessions:** a "check session" API that the LSP uses to check packages with the overlays applied (P14 D14.3).
 
+**D6.12 — Build profiles.** (ADR-0007.) Tasks P06.14 to P06.16. The `profile` block grammar in gopp.mod is P10 D10.11; the CMake side is P11 D11.13; compile-time access is P09 D9.12.
+
+A **profile** is a named set of nine build settings. Two are built in. The settings of the `debug` and `release` profiles:
+
+| Setting | Values | `debug` | `release` |
+|---|---|---|---|
+| `opt` | `0` `1` `2` `3` `s` `z` | `0` | `3` |
+| `debuginfo` | `none` `line` `full` | `full` | `line` |
+| `lto` | `off` `thin` `full` | `off` | `thin` |
+| `panic` | `unwind` `abort` | `unwind` | `unwind` |
+| `sanitize` | `none`, or a list of `address` `undefined` `thread` (`memory` also) | `none` | `none` |
+| `strip` | `false` `true` (`true` = `symbols`: symbol table and debug info removed; finer value: `debuginfo`) | `false` | `true` |
+| `cpu` | `baseline` `native` or a CPU name | `baseline` | `baseline` |
+| `pgo` | `off` `generate` or the path of a `.profdata` file | `off` | `off` |
+| `link` | `static` `dynamic` | `dynamic` | `static` |
+
+- `baseline` is the target triple's default CPU, so a binary runs on every CPU of that architecture. `native` is turned into the real CPU name before it is used, and that name (not the word `native`) goes into cache keys.
+- `strip true` means `symbols`: it removes the symbol table and debug info from the binary, but does not remove the runtime line table that panic traces use (P05 D5.7).
+- `link` is for cdeps (P11 D11.13): `debug` prefers shared libraries (faster relinks), `release` static ones. It is a preference only: a cdep that builds just the other kind gets that kind, with no error. An explicit `mode` in a cdep block is strict. Go++ code is always linked into one binary.
+- A profile can set `sanitize` to a list. Combinations that the sanitizers do not support (for example `address` with `thread`) are an error (P05 D5.9).
+
+**Custom profiles.** A profile with another name must say `inherits NAME` and may change any setting; the rest comes from the parent. Writing a `debug` or `release` block changes only the lines it writes. Example (P10 D10.11 has the grammar; the built-in `release` already has `opt 3` and `lto thin`):
+
+```
+profile fast (
+    inherits release
+    lto full
+    cpu native
+)
+```
+
+**Dependencies.** `deps ( … )` rows inside a profile give dependencies other settings than your code gets. For example, the `debug` profile can build all dependencies at `opt 2`. Only `opt` and `debuginfo` may be set per dependency; every other setting is whole-program (a mixed `panic`, `sanitize`, `lto` or `link` would not work). Details: P10 D10.11.
+
+**Choosing a profile.**
+
+| Command | Profile |
+|---|---|
+| `gopp build` (also `run`, `test`, `check`) | `debug` |
+| `gopp build -release` | `release` (same as `-profile=release`) |
+| `gopp build -profile=fast` | the profile named `fast` from the main gopp.mod |
+| `gopp build -opt=2` | the chosen profile with `opt` changed for this command |
+
+- **One-off overrides:** every setting has a flag with its own name: `-opt=`, `-debuginfo=`, `-lto=`, `-panic=`, `-sanitize=`, `-strip=`, `-cpu=`, `-pgo=`, `-link=`. Nothing is written to gopp.mod.
+- **Existing flags:** `-panic=abort` is the `-panic=` override above. `-race`, `-asan`, `-ubsan` and `-msan` stay as shorthands that **add** `thread`, `address`, `undefined` or `memory` to `sanitize` (P05 D5.9). Their cache keys do not change shape: sanitizers are one of the profile settings in the key. `gopp test -race` and `-asan` work as before.
+- `-release` together with a different `-profile=` is an error. An unknown profile name is an error that lists the known ones.
+- **Order, weakest to strongest:** the built-in defaults, the `inherits` chain (parent first), the profile's own lines, its `deps` rows (for dependencies only), a cdep's own `profile ( … )` pin (P11 D11.13), then command-line overrides. A flag wins everywhere, also over `deps` rows and pins, so `-opt=0` really means `opt 0` for every package.
+- **Only the main module's profiles count.** `profile` blocks in dependencies' gopp.mod files are ignored. Dependencies are built with the main module's profile.
+
+**A profile never changes what a program means.** Language semantics are identical in every profile (README principle 4):
+- Bounds, nil, division and shift checks, zero values, defined integer overflow and ownership rules are the same in every profile (P04 D4.8, P05 D5.8). Only `@NoBounds` turns a check off, per function.
+- `opt`, `debuginfo`, `lto`, `strip`, `cpu`, `pgo` and `link` change speed, size and debuggability only.
+- **`panic abort` is the one exception.** A panic prints its trace and ends the process (exit code 2) without unwinding, so `recover()` always returns nil (P04 D4.6). Code that depends on `recover` behaves differently, and it is the only setting that can do this.
+- **`sanitize`** fits the principle because sanitizers only watch for undefined behavior (P01 D1.4 rule 8, spec chapter 16). A program without UB behaves the same, only slower and with more memory. A program with UB may now stop with a report (and the LSan leak check can change the exit code at exit): that is the point of the flag, and UB has no defined behavior to preserve.
+- The program can still ask: `#Profile()`, `#Setting("name")`, `@If` (P09 D9.12) and `//gopp:build debug` (below) let the author write different code per profile. That is the author's choice, not the compiler's.
+
+**Profile names in `//gopp:build`.** A term that equals a profile name is true when it is the main module's active profile: `//gopp:build debug` selects a file only in the `debug` profile, and `//gopp:build !debug` in all others. The expression syntax is Go's. A profile name that equals a GOOS, GOARCH or build-tag word (`linux`, `amd64`, `cgo`, …) is an error in gopp.mod. A custom profile `fast` makes `release` false, because only the exact active name matches. The loader (P03.01) evaluates the term, so the profile is known before any file is parsed, and the selected files are part of the package's source hash.
+
+**Output layout: `target/`.** Like Cargo, each profile gets its own folder in the main module's root (next to gopp.mod):
+
+```
+myapp/
+  gopp.mod
+  main.gopp
+  target/
+    debug/
+      myapp           the binary (and, for link dynamic, the shared libraries, P11 D11.4)
+      tests/          test binaries from gopp test
+      cdeps/          this profile's CMake build trees, one per cdep (P11 D11.13)
+    release/
+      …
+```
+
+- `-o` still names the binary yourself. `gopp run` runs the binary in `target/<profile>/`.
+- `-target-dir DIR` or the environment variable `GOPPTARGETDIR` replaces `./target` (the flag wins). `gopp env` prints it.
+- `gopp clean` deletes the target dir; `gopp clean -profile=NAME` only that profile's folder. `-cache` and `-modcache` are as before (D6.3, P10 D10.5).
+- `gopp new` adds `target/` to the new project's `.gitignore` (P14 D14.1).
+- **The cache stays global.** Compiled packages, export data, C/C++ artifacts and macro expansions live in `$GOPPCACHE` (`~/.cache/gopp`, D6.3), content-addressed and shared by all projects and all worktrees. `target/` only holds outputs for you (the linked binary, test binaries, CMake build trees). Nothing in `target/` is an input to a build, so deleting it is always safe, and a fresh worktree compiles nothing it has already seen: it only links.
+
 ## Deliverables
 
 - `compiler/lib/Build`: graph, scheduler, cache, `.gopx` writer and reader.
-- `gopp build/run/test/clean/env` with Go-compatible flags: `-o`, `-p`, `-v`, `-x`, `-tags`, `-trimpath`, and later `-race`.
+- `gopp build/run/test/clean/env` with Go-compatible flags: `-o`, `-p`, `-v`, `-x`, `-tags`, `-trimpath`, and later the sanitizer flags `-race`, `-asan`, `-ubsan`, `-msan` (shorthands for `-sanitize`, D6.12).
+- Build profiles (D6.12): the nine settings, `-release` / `-profile=` / one-off overrides, profile terms in `//gopp:build`, and the `target/<profile>/` layout.
 - `-trace`.
 - `bench/compile` with the generator, plus a CI budget job.
 
@@ -120,13 +202,14 @@
 - M3: the multi-package samples build, and a no-op rebuild is all cache hits.
 - Editing the body of a function that is neither generic nor exported for inlining doesn't rebuild dependents, unless a macro expansion in a dependent executed it.
 - The D6.8 budgets are met (the C++-heavy one is checked in P08.13), or an ADR documents each gap with a plan.
+- Profiles: `debug` and `release` builds of one project sit side by side in `target/`; changing one setting rebuilds only what depends on it; a second worktree of the same project builds from cache hits.
 
 ## Risks
 
 - **LLVM `-O0` still too slow** → D6.5 partitioning, leaner GIR, the D6.9 fallback.
 - **Export-data format churn** → a version field; a mismatch triggers a full rebuild.
 - **Cache staleness or poisoning** →
-  - action IDs include everything that can affect the output;
+  - action IDs include everything that can affect the output, including the effective profile settings;
   - `gopp build -a` forces a rebuild;
   - `GOPPCACHEVERIFY=1` re-runs actions and compares their outputs.
 - **Clang threading** (Clang's Sema is not thread-safe) → one Clang worker per package (D6.4, P07 D7.1).

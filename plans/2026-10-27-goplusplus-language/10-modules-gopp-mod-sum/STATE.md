@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-27 (build profiles added)
 Task definitions: [../TODO.md](../TODO.md) (section P10) · Design: [README.md](README.md)
 
 ## Tasks
@@ -18,6 +18,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P10) · Design: [README.md](
 - [ ] P10.09 Modules reference doc
 - [ ] P10.10 cdep tree format
 - [ ] P10.11 cdep versions
+- [ ] P10.12 Build profile blocks
 
 ## Open questions
 
@@ -33,10 +34,12 @@ Task definitions: [../TODO.md](../TODO.md) (section P10) · Design: [README.md](
 - [ ] Offline builds from cache and `vendor/`
 - [ ] Canonical `gopp mod edit -fmt` output
 - [ ] cdep tree with symlinks, exec bits and a submodule: same `/cdep h1:` from git and from a proxy
+- [ ] `profile` blocks round-trip; ignored in dependency modules
 
 ## Decision changes
 
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): gopp.mod gets the module-wide directives `cxxstd`, `cflags` and `ldflags` (replacing the removed source directives).
+- 2026-10-27 (ADR-0007, build profiles): gopp.mod gets `profile` blocks (with `inherits` and `deps ( … )`) and a `profile ( … )` pin inside `cdep` blocks (new D10.11). Only the main module's profiles count.
 
 ## Notes / blockers
 
