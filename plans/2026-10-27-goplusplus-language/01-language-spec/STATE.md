@@ -89,7 +89,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D23 | Both macro kinds stay (D1.14). `@Name(args)` on top of a declaration (type, func, field) receives the arguments in parentheses plus the declaration it sits on, and returns new code. `#Name(args)` inside code expands in place, and passes a code block as `func() { … }` (D22). Macro arguments must be known while compiling (literals, names, types, constants); runtime variables are a compile error (`@Retry(n)` ❌). The exact procedural-macro API is designed in P09. | `@Retry(3) func fetch!() []byte` · `@Route("GET", "/users") func listUsers(…)` | D1.14, `13-macros-surface.md`; P09 |
 
-Still to review: notes #40–#42.
+| D24 | **#40 changed:** C/C++ settings move out of source files. `//gopp:cflags`, `//gopp:cxxstd` and `//gopp:ldflags` are removed. They become module-wide `gopp.mod` directives (`cxxstd c++20`, `cflags …`, `ldflags …`), set once per project, like Go's `go.mod`. cdeps keep taking their flags from their own CMake target (P11). `//gopp:build` stays, exactly like Go's `//go:build` (above `package`). | `gopp.mod`: `cxxstd c++20` · file: `//gopp:build linux` | D1.15, `14-foreign-surface.md:66`; P07, P10 (gopp.mod grammar), P11 |
+
+Still to review: notes #41–#42.
 
 ## Notes / blockers
 
