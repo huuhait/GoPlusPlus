@@ -74,7 +74,27 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 - **Generic inference corner cases** → port types2's algorithm faithfully rather than redesign it.
 - **Interactions between ownership rules** (generics × refs × interfaces) → an exhaustive rule table with positive and negative tests, and a feedback loop into the P01 spec.
 
+**D3.11 — Numbered error codes with a strict promise** (owner decision; decides Q1).
+- Every compiler error shows a short numbered code, Rust style: `error[E0042]: name used after move`.
+- `gopp explain E0042` prints a longer explanation with a small example.
+- Inside the compiler each code keeps its readable name (the `DiagnosticIDs.def` names from P02); the JSON output carries both the number and the name.
+- **Promise, from v0.1:** a released code never changes meaning and is never reused. The message text may still be improved.
+- Codes cover errors from every phase (lexer and parser from P02 included), so one table holds them all.
+
+```
+main.gopp:12:5: error[E0042]: name used after move
+    fmt.Println(name)
+                ^~~~
+note: moved here (main.gopp:11:14)
+help: use name.Clone() before the move to keep a copy
+```
+
+**D3.12 — `vet` is built into the checker** (owner decision; decides Q2).
+- Vet checks run on the already type-checked code inside `gopp`; there is no separate tool that re-parses and re-checks.
+- `gopp vet` turns the hints on, and the LSP shows them live in the editor.
+- Like Go, `gopp test` also runs a small set of high-confidence vet checks. `gopp build` doesn't run them.
+
 ## Open questions
 
-- **Q1** Error-code scheme and its stability promise (D3.9).
-- **Q2** Is `vet` a separate pass (as in Go) or a mode of `check`? Proposed: built into `gopp`, run by `gopp vet` and the LSP.
+- **Q1** (decided 2026-10-27) Error codes: numbered `E0042`-style codes with `gopp explain`, internal names kept, strict stability promise from v0.1 (D3.11).
+- **Q2** (decided 2026-10-27) `vet` is built into the checker, run by `gopp vet`, the LSP, and a small subset by `gopp test` (D3.12).

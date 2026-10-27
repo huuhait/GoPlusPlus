@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27 (build profiles added)
+Last updated: 2026-10-27 (Q1, Q2 decided)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -23,8 +23,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 
 ## Open questions
 
-- [ ] Q1 Error-code scheme and its stability promise
-- [ ] Q2 `vet` as a separate pass or a mode of `check`
+- [x] Q1 Error-code scheme and its stability promise (decided: D3.11, numbered codes, strict promise)
+- [x] Q2 `vet` as a separate pass or a mode of `check` (decided: D3.12, built into the checker)
 
 ## Exit criteria
 
