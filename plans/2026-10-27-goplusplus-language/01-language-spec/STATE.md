@@ -68,7 +68,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D12 | Notes #11–#15 accepted as written (with D11 applied): `move` only on parameters, receivers and function types; methods with a `move` receiver are not in interface method sets (you can't use up a value through a shared interface box); `move`/`clone` are not function values; assignment builds the new value, then frees the old one, and `_ = f()` frees the result at once; re-slicing past the length panics (the items were already freed). | `b.Finish()` ✅ · `var f Finisher = b` ❌ · `s = s[:0]; s = s[:2]` → panic | `05-parameters.md:18`, `:63`; `06-expressions.md:27`; `07-statements.md:11`; `08-slices-and-range.md:47` |
 
-Still to review: notes #16–#42 (next: #16–#20).
+| D13 | Notes #16–#20 accepted (with D7 applied): a plain range over trivial elements gives copies (`&x` changes the real item); `range move(xs)` stopped early frees the unreached items in order; writing the current item and then reading the borrowed loop variable is a compile error; deleting the current map entry during `range` keeps `k`/`v` valid to the end of the turn. **Change to #19:** `move(v)` on a plain (read-only) map range variable stays an error (fix-its: `&v` or `v.Clone()`). Through `&v` it is allowed: it takes the value out and leaves the zero value in the map, and the key stays. Same for slices: `for _, &d := range xs { keep(move(d)) }` leaves the zero value in `xs[i]`. | `for k, &v := range m { keep(move(v)) }` → `m[k] == ""` | `08-slices-and-range.md:79`, `:83`, `:97`, `:101`, `:103` |
+
+Still to review: notes #21–#42 (next: #21–#25).
 
 ## Notes / blockers
 
