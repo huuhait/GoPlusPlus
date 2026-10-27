@@ -135,7 +135,7 @@ Each delta has EBNF, semantics, an example and a rationale.
 - `&T{…}` is a compile error with a fix-it ("allocation is explicit in Go++: use `new_unique(T{…})`"). In Go it allocated silently.
 - Field access and method calls auto-dereference every pointer kind.
 - `Unique[T]` and `Shared[T]` have the methods of both `T` and `*T`.
-- Every pointer kind (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`) has an `IsNil()` method, and `p == nil` keeps working. If `T` has its own `IsNil` method, the pointer's `IsNil` wins; call `T`'s as `(*p).IsNil()`. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed).
+- Every pointer kind (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`) has an `IsNil()` method, and `p == nil` keeps working. If `T` has its own `IsNil` method: on `Unique[T]`, `Shared[T]` and `Weak[T]` the pointer kind's `IsNil` wins (call `T`'s as `(*p).IsNil()`); on a raw `*T`, `p.IsNil()` is a compile error for ambiguity (fix-its: `(*p).IsNil()` for T's method, `p == nil` for the pointer). Without a `T.IsNil`, `p.IsNil()` checks the pointer. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed).
 - `Unique[T]` and `Shared[T]` convert implicitly to `*T` when borrowed from a place. They never convert from a temporary, because the target would be freed immediately.
 - `make([]T, n)`, `make(map[K]V)` and `make(chan T, n)` work as in Go.
 

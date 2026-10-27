@@ -11,7 +11,7 @@ Last updated: 2026-10-27
 ## Phases
 
 - [~] P00 Foundations ([state](00-foundations/STATE.md))
-- [~] P01 Language specification v0 ([state](01-language-spec/STATE.md))
+- [x] P01 Language specification v0 ([state](01-language-spec/STATE.md))
 - [~] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
 - [ ] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
 - [ ] P04 GIR and LLVM codegen ([state](04-gir-and-llvm-codegen/STATE.md))
@@ -44,7 +44,7 @@ Last updated: 2026-10-27
 ## Current focus
 
 - P00 is done locally. What's left needs a push: the first GitHub CI run (P00.07, P00.08, P00.13 and the CI exit criteria), then CI suite-time baselines.
-- P01: the spec is written, reviewed by the owner (D1–D25) and applied (ADR-0006). One owner question is open (D9 `IsNil` tie-break). P02 can start from the spec.
+- P01: the spec is written, reviewed by the owner (D1–D25) and applied (ADR-0006). P01 is complete.
 - Build profiles (owner request) are in the plan: P06 D6.12, P09 D9.12, P10 D10.11, P11 D11.13, ADR-0007; tasks P06.14–16, P09.13, P10.12, P11.19–20, P14.11 (240 tasks).
 
 ## Log
@@ -97,3 +97,4 @@ Last updated: 2026-10-27
 - 2026-10-27: P01.15 applied through the team workflow (1 coder, review loop until a fresh reviewer returned CLEAN; ledger `.claude/team/p01-15-apply-ledger.md`, 46 findings, all closed). D1–D25 are in `docs/spec/` (227 rules, no Open notes left), the plan READMEs/TODO and ADR-0003/0004/0006. Main changes: `ref` (was `view`), `move` parameters (was `own`), `x.Clone()` with `[T Clone]` / `[T Copy]`, `for _, &d := range`, `defer` in loops like Go (lifetime extension), C/C++ flags in `gopp.mod`, `@Name(args)` field attributes, `#M(..., func(){…})` blocks.
 - 2026-10-27: Build profiles added to the plan through the team workflow (1 coder, review until a fresh reviewer returned CLEAN; ledger `.claude/team/build-profiles-ledger.md`, 10 findings, all closed). `profile` blocks in `gopp.mod` (built-in `debug`/`release`, `inherits`, `deps`), CLI `-release`/`-profile=`, the profile passed to CMake (`GOPP_PROFILE`, build type, flags; `link` is a preference unless a cdep sets `mode`), `#Profile()`/`#Setting()`/`@If`, `//gopp:build debug`, and `./target/<profile>/`. ADR-0007. 240 tasks.
 - 2026-10-27: P02.01–P02.06 (source manager, diagnostics with a diag-ID table, lexer, AST, parser core, macros & attributes) built through the team workflow (3 coders, PM merge, review until CLEAN; 2 findings, both fixed). `gopp parse --dump-ast/--dump-tokens` exists. P02 is in progress; P02.07–P02.11 remain.
+- 2026-10-27: D9 follow-up decided by the owner (option b): on a raw `*T` whose method set already has an `IsNil`, `p.IsNil()` is a compile error (fix-its `(*p).IsNil()` / `p == nil`); `Unique`/`Shared`/`Weak` keep their own `IsNil`. Applied to OWN-P5/P9, P01 D1.7 and ADR-0006 D9 (1 coder, fresh review CLEAN). P01.15 is done, so **P01 is complete**.

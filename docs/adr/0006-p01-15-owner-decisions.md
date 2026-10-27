@@ -33,7 +33,7 @@ Before: `clone(x)` was a built-in function. Now every cloneable type has a
 method `Clone() T`, built-in types too (`string`, `[]T`, `map`, `Unique[T]`,
 numbers). `clone(x)` stays as a short form that calls it, and `move(x)` stays a
 built-in. A type whose `Clone` method has another signature is not cloneable
-(compile error). Examples and fix-its use `x.Clone()`. A hand-written `Clone` has a value receiver. `Unique[T]` and `Shared[T]` keep their own `Clone` when `T` also has one (same tie-break as `IsNil`, D9): `u.Clone()` deep-clones, `s.Clone()` retains. On a raw `*T` where `T` has a value-receiver `Clone() T`, `p.Clone()` is a compile error for ambiguity (fix-its: `(*p).Clone()` copies the T, `q := p` copies the pointer); without a `T.Clone` it copies the pointer. A `Clone` with another signature is legal but not cloneable. Changes D1.4 rule 6.
+(compile error). Examples and fix-its use `x.Clone()`. A hand-written `Clone` has a value receiver. `Unique[T]` and `Shared[T]` keep their own `Clone` when `T` also has one (same tie-break as `IsNil` on these kinds, D9): `u.Clone()` deep-clones, `s.Clone()` retains. On a raw `*T` where `T` has a value-receiver `Clone() T`, `p.Clone()` is a compile error for ambiguity (fix-its: `(*p).Clone()` copies the T, `q := p` copies the pointer); without a `T.Clone` it copies the pointer. A `Clone` with another signature is legal but not cloneable. Changes D1.4 rule 6.
 
 ### D5: `view` is renamed `ref`; `@View` is renamed `@Ref`
 `ref` is a contextual keyword: it is special only where a type is expected, so
@@ -59,9 +59,19 @@ collection in the loop stays a compile error. Changes D1.21, RNG-1, RNG-1a, the
 
 ### D9: `IsNil()` on every pointer kind
 Raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]` all have `IsNil() bool`.
-`p == nil` keeps working. If `T` has its own `IsNil` method, the pointer's
-wins; call `T`'s as `(*p).IsNil()`. For `Weak[T]` it is true when there is no
-target. New rule OWN-P9; changes D1.7.
+`p == nil` keeps working. For `Weak[T]` it is true when there is no target.
+New rule OWN-P9; changes D1.7.
+
+Follow-up decision (the tie-break): if `T` has its own `IsNil` method, then
+- on `Unique[T]`, `Shared[T]` and `Weak[T]` the pointer kind's `IsNil` wins; call `T`'s as `(*p).IsNil()`.
+- on a raw `*T` (method declared on `T` or on `*T`), `p.IsNil()` is a compile error for ambiguity. Fix-its: `(*p).IsNil()` calls T's method, `p == nil` checks the pointer.
+- if `T` has no `IsNil`, `p.IsNil()` checks the pointer.
+
+Why: in Go, `p.IsNil()` on a `*Opt` calls `Opt`'s method. Letting the
+pointer's check win would silently change what copied Go code does (`true` vs
+`false`, and a nil `p` that panics in Go would return `true`). Go has no
+`Unique`/`Shared`/`Weak`, so nothing changes silently there. This matches the
+raw `*T` `Clone` rule (D4, OWN-R6).
 
 ### D11: `own` is renamed `move` and goes before the parameter name
 `func (l *List) Push(move s string)`, `func (move b Builder) Finish() string`,
@@ -172,6 +182,7 @@ and UB-1.
 - **D4:** only the method `x.Clone()`, or only the function `clone(x)`. The owner chose the method as the main form (it works in generic code and for built-in types) and kept `clone(x)` as a short form.
 - **D6:** `case string:` does not match a `ref string` (the old D1.12). Changed by the owner: `case string:` matches both, and `case ref string:` is still allowed.
 - **D9:** only `p == nil`, or only `IsNil()`. The owner chose both: `== nil` keeps working as in Go, and `IsNil()` exists on every pointer kind.
+  Also rejected (tie-break): "the pointer's `IsNil` always wins, even on a raw `*T`", because it silently changes the meaning of copied Go code.
 - **D15:** allow `func f!() error` and read `return e` by operand count (the earlier draft). Changed by the owner: it is a compile error, to remove the ambiguity.
 - **D5/D11:** a Rust-style default, where a plain parameter takes ownership and
   `ref` or `&` borrows. Discussed and rejected: it puts a mark on most

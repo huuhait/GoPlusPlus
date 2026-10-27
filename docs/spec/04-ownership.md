@@ -237,7 +237,7 @@ a = Cache{}                // legal: a is usable again
 - Clone is structural when all fields are cloneable: the compiler provides `Clone` and calls the `Clone` of each field. A `Clone` written by hand replaces it. A hand-written `Clone` with the exact cloneable signature `Clone() T` has a **value receiver**: `func (h Handle) Clone() Handle`. The receiver is borrowed as usual ([PAR-1](05-parameters.md)), so it only reads. `func (h *Handle) Clone() Handle` is a compile error, fix-it "use a value receiver". This rule covers only the signature `Clone() T`.
 - Shared handles copy by retaining: `x.Clone()` on a `Shared[T]`, a channel, an interface value or a func value is the same as a copy.
 - A trivial `x` is cloneable: `x.Clone()` is a plain copy, unless its method set already has a `Clone` with another signature (for example `struct{ *tls.Config }`: trivial, but not cloneable). Numbers, bools and the other built-in trivial types are always cloneable. This lets generic code with `[T Clone]` take `int`.
-- **Pointer kinds and `Clone`.** `u.Clone()` on a `Unique[T]` allocates a new `Unique[T]` holding `(*u).Clone()` (it needs a cloneable `T`), and `s.Clone()` on a `Shared[T]` retains: for these two the pointer kind's own `Clone` wins over a promoted `T.Clone` (Go has no such types, so no Go code changes meaning). On a raw `*T` where `T` has a **value-receiver** `Clone() T` (which Go promotes into `*T`'s method set), `p.Clone()` is a **compile error** for ambiguity, because Go would call `T`'s. (A `Clone` declared on `*T` itself is not ambiguous: it is called.) Fix-its: "write `(*p).Clone()` to copy the T, or `q := p` to copy the pointer". If `T` has no `Clone` method, `p.Clone()` copies the pointer. `[T Clone]` with `T = *Handle` (where `Handle` has a value-receiver `Clone`) is satisfied by the pointer copy, while a direct `p.Clone()` is the ambiguity error. The difference is intended: generic code sees `*Handle`'s own method set.
+- **Pointer kinds and `Clone`.** `u.Clone()` on a `Unique[T]` allocates a new `Unique[T]` holding `(*u).Clone()` (it needs a cloneable `T`), and `s.Clone()` on a `Shared[T]` retains: for these two the pointer kind's own `Clone` wins over a promoted `T.Clone` (Go has no such types, so no Go code changes meaning). On a raw `*T` where `T` has a **value-receiver** `Clone() T` (which Go promotes into `*T`'s method set), `p.Clone()` is a **compile error** for ambiguity, because in Go `p.IsNil()` calls that method (the one `T` or `*T` declares), not a pointer check. (A `Clone` declared on `*T` itself is not ambiguous: it is called.) Fix-its: "write `(*p).Clone()` to copy the T, or `q := p` to copy the pointer". If `T` has no `Clone` method, `p.Clone()` copies the pointer. `[T Clone]` with `T = *Handle` (where `Handle` has a value-receiver `Clone`) is satisfied by the pointer copy, while a direct `p.Clone()` is the ambiguity error. The difference is intended: generic code sees `*Handle`'s own method set.
 - **Interface types.** On an interface type that declares a `Clone()` method, `x.Clone()` dispatches to the dynamic method, as in Go. The built-in retaining `Clone` applies only to interface types that do not declare `Clone`.
 - A type with a `drop` method is cloneable only if it defines `Clone() T`. This stops silent duplication of unique resources such as file descriptors. There is no `Clone` derive: a type with `drop` writes `Clone()` by hand, on purpose.
 - A type that mixes owning fields with raw `*T` fields needs a hand-written `Clone()`, because an automatic clone would copy the raw pointers (for example a tree `Node` with a parent pointer).
@@ -369,7 +369,7 @@ Every heap allocation is spelled out. Go's `new` is removed. (The runtime's own 
 
 **OWN-P4.** `&T{…}` is a compile error with a fix-it: "allocation is explicit in Go++: use `new_unique(T{…})`". In Go it allocated silently.
 
-**OWN-P5.** Field access and method calls **auto-dereference** every pointer kind. `Unique[T]` and `Shared[T]` get the methods of both `T` and `*T`, except `Clone` and `IsNil`, where the pointer kind's own method wins ([OWN-R6](#42-ownership-rules-d14), OWN-P9). On a raw `*T`, `p.Clone()` is an error if `T` has a value-receiver `Clone() T` (OWN-R6).
+**OWN-P5.** Field access and method calls **auto-dereference** every pointer kind. `Unique[T]` and `Shared[T]` get the methods of both `T` and `*T`, except `Clone` and `IsNil`, where the pointer kind's own method wins ([OWN-R6](#42-ownership-rules-d14), OWN-P9). On a raw `*T`, `p.Clone()` is an error if `T` has a value-receiver `Clone() T` (OWN-R6), and `p.IsNil()` is an error if `T` has an `IsNil` method (OWN-P9).
 
 **OWN-P6.** `Unique[T]` and `Shared[T]` convert **implicitly** to `*T` when borrowed from a place. They never convert from a temporary, because the target would be freed immediately.
 
@@ -378,8 +378,23 @@ Every heap allocation is spelled out. Go's `new` is removed. (The runtime's own 
 **OWN-P8.** `Unique[T]` is owning (move-only). `Shared[T]` and `Weak[T]` are shared handles: copies retain the strong or weak count. `Weak[T]` copies retain the weak count only.
 
 **OWN-P9.** *`IsNil()` and `nil`.* Every pointer kind has an `IsNil() bool` method: raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]`. `p == nil` and `p != nil` keep working, as in Go.
-- If `T` has its own `IsNil` method, the pointer's `IsNil` wins. Call `T`'s as `(*p).IsNil()`. `Clone` follows the same tie-break for `Unique[T]` and `Shared[T]`; for a raw `*T` with a value-receiver `T.Clone` it is an ambiguity error ([OWN-R6](#42-ownership-rules-d14)).
+- **`Unique[T]`, `Shared[T]`, `Weak[T]`:** if `T` has its own `IsNil` method, the pointer kind's `IsNil` wins (Go has no such types, so no Go code changes meaning). Call `T`'s as `(*p).IsNil()`. `Clone` follows the same tie-break for `Unique[T]` and `Shared[T]` ([OWN-R6](#42-ownership-rules-d14)).
+- **Raw `*T`:** if the method set of `*T` already has an `IsNil` method (declared on `T` or on `*T`), `p.IsNil()` is a **compile error** for ambiguity, because Go would call `T`'s. Fix-its: "write `(*p).IsNil()` to call T's method, or `p == nil` to check the pointer". If `T` has no `IsNil` method, `p.IsNil()` checks the pointer. Reason: making the pointer's check win would silently change copied Go code (`true` instead of `false`, and a nil `p` that panics in Go would return `true`). Same shape as the raw `*T` `Clone` rule in [OWN-R6](#42-ownership-rules-d14).
 - For `Weak[T]`, `IsNil()` is true when there is no target: it was never set, or the value is already freed.
+
+```go
+type Opt struct{ v *int }
+func (o Opt) IsNil() bool { return o.v == nil }
+
+p := &opt
+p.IsNil()        // error: ambiguous (Opt has IsNil)
+(*p).IsNil()     // Opt's method
+p == nil         // the pointer
+
+type Plain struct{ n int }
+q := &plain
+q.IsNil()        // fine: Plain has no IsNil, so this checks the pointer
+```
 
 ```go
 type Tree struct{ L, R Unique[Tree]; V int }

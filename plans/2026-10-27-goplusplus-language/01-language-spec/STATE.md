@@ -1,7 +1,7 @@
 # P01 Language specification v0: STATE
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
-Phase status: `[~] in_progress`
+Phase status: `[x] completed`
 Last updated: 2026-10-27
 Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](README.md)
 
@@ -21,7 +21,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 - [x] P01.12 Close open questions Q4, Q5, Q6
 - [x] P01.13 Ten sample programs
 - [x] P01.14 UB & implementation-defined list
-- [~] P01.15 Spec review (owner review of the `Open (P01 review)` notes; ADR-0003/0004 update). All 42 notes decided (D1–D25 below) and applied to the spec, plan and ADRs (ADR-0003/0004 updated, ADR-0006 new). One follow-up question is open: the `IsNil` tie-break on a raw `*T` whose `T` has its own `IsNil` (D9).
+- [x] P01.15 Spec review (owner review of the `Open (P01 review)` notes; ADR-0003/0004 update). All 42 notes decided (D1–D25 below, plus the D9 follow-up) and applied to the spec, plan and ADRs (ADR-0003/0004 updated, ADR-0006 new).
 - [x] P01.16 Slices and range chapter
 
 ## Open questions
@@ -61,7 +61,7 @@ Decided by the owner on 2026-10-27. Applied to `docs/spec/`, the plan READMEs/TO
 | D7 | New form `for _, &d := range xs`: `d` is the element itself, so writes change the collection. It works for slices, arrays and map values (`for k, &v := range m`). The key can't use `&`. Growing the collection inside the loop stays a compile error. The plain form `for _, d := range xs` stays read-only for owning elements, and its error message suggests `&d` first. `m[k].f = x` outside a loop stays illegal, as in Go. | `for _, &d := range docs { d.Title = "x" }` · `for k, &v := range m { v.Count++ }` | D1.21, RNG-1/OWN-R3b, EBNF for `RangeClause`; ADR-0003 |
 | D8 | Notes #1–#5 accepted as written (with D5/D6 applied): view/string comparison compares contents; type assertions borrow; type-switch rule per D6; re-pointing a borrowed `string`/`[]T` range variable; range variables over owning elements are read-only (like Rust `for d in &docs`). | | `03-types.md:37`, `:101`, `:140`; `04-ownership.md:141`, `:166` |
 
-| D9 | Every pointer kind has an `IsNil()` method: raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]`. `p == nil` keeps working, as in Go. If `T` has its own `IsNil` method, the pointer's `IsNil` wins; call `T`'s as `(*p).IsNil()`. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed). | `if u.IsNil() { … }` · `if u == nil { … }` | `04-ownership.md:373` (note #9); D1.7 |
+| D9 | Every pointer kind has an `IsNil()` method: raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]`. `p == nil` keeps working, as in Go. On `Unique`/`Shared`/`Weak`, the pointer kind's `IsNil` wins (call `T`'s as `(*p).IsNil()`). **Follow-up (owner, option b):** on a raw `*T` whose method set already has an `IsNil`, `p.IsNil()` is a compile error for ambiguity (fix-its `(*p).IsNil()` / `p == nil`), like the raw-`*T` `Clone` rule. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed). | `if u.IsNil() { … }` · `if u == nil { … }` | `04-ownership.md:373` (note #9); D1.7 |
 | D10 | Notes #6, #7, #8 and #10 accepted as written (with D4 applied): moving a variable a closure or pending `defer` still uses is an error; `m[k] = append(m[k], v)` works in place; `Clone` works on simple types; map keys are cloned only when a new entry is added. | | `04-ownership.md:195`, `:211`, `:241`, `:422` |
 
 | D11 | The `own` parameter marker is renamed **`move`** and goes **before the parameter name**: `func (l *List) Push(move s string)`, `func (move b Builder) Finish() string`, `func Join(move parts ...string)` (updates D1). Parameters without it still borrow (D1.5 unchanged), so calls look like Go. Passing an owned local to a `move` parameter moves it automatically; a field, element or map value needs `move(x)` or `x.Clone()` (rule 3a unchanged). `&` and `*` keep their Go meanings. A Rust-style default (plain = take, `ref`/`&` = borrow) was discussed and rejected: it puts a mark on most functions and reuses Go's signs. | `list.Push(name)` · `list.Push(name.Clone())` · `list.Push(move(u.Name))` | D1.2 keywords (`own` → `move`), D1.4, D1.5, D1.7 example, every chapter; ADR-0003 |
@@ -99,5 +99,5 @@ All 42 notes reviewed and applied (team workflow; ledger `.claude/team/p01-15-ap
 
 - The spec is in `docs/spec/` (16 chapters + README, 228 numbered rules). The samples are in `docs/spec/examples/`. Each Go counterpart runs and matches `expected_output.txt` byte for byte.
 - The `.gopp` samples can't be compiled until P02/P03 exist. They were checked by hand against the rules.
-- No `Open (P01 review)` notes are left in the spec; two points are `Deferred to P09/P12`. Open owner question: D9 `IsNil` tie-break.
+- No `Open (P01 review)` notes are left in the spec; two points are `Deferred to P09/P12`. The D9 `IsNil` follow-up is decided (option b, ADR-0006).
 - Team-build ledger: `.claude/team/p01-language-spec-ledger.md` (58 findings over 20 rounds, all closed; 5 fresh final reviewers).
