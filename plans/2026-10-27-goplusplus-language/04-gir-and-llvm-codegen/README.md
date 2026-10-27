@@ -94,7 +94,7 @@ Bounds, nil and division checks stay on in every profile unless explicitly disab
 *Risk:* `invoke` and x86-64 FastISel. FastISel can't select `invoke`, so blocks that end in `invoke` fall back to the slower SelectionDAG. See the P04.15 spike.
 
 **D4.9 — Linking with the bundled LLD.**
-- `ld.lld` runs as a subprocess; `ld64.lld` and `lld-link` follow later. Library-mode LLD only if measurements justify it.
+- `ld.lld` runs as a subprocess; `ld64.lld` and `lld-link` follow later. The LLD bundled inside `gopp` is started as `gopp lld …` (one file to ship; owner decision, P06 Q3). Library-mode LLD only if measurements justify it.
 - crt objects and the dynamic linker come from host sysroot discovery (P00 D0.12).
 - The runtime is a per-target static archive, built from source and cached (P05/P06).
 

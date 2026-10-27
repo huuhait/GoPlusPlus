@@ -28,7 +28,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P06) · Design: [README.md](
 
 - [x] Q1 Per-function incremental compilation: decided, not in v1
 - [x] Q2 Distributed or remote cache: decided, not in v1
-- [ ] Q3 In-process LLD vs a subprocess
+- [x] Q3 In-process LLD vs a subprocess (decided: subprocess, `gopp lld` self-exec)
 
 ## Exit criteria
 

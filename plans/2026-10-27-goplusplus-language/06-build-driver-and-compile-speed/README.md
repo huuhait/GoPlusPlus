@@ -219,4 +219,4 @@ myapp/
 
 - **Q1** (decided 2026-10-27) Per-function incremental compilation is not in v1; research after v1.
 - **Q2** (decided 2026-10-27) A distributed or remote cache is not in v1; it may come after v1.
-- **Q3** In-process LLD vs a subprocess (measure; see P04 D4.9).
+- **Q3** (decided 2026-10-27) In-process LLD vs a subprocess: a subprocess. `gopp` runs its own bundled LLD as a child process (`gopp lld …`), so there is still one file to ship. Each link is a fresh process: an LLD crash or fatal error cannot take `gopp` down, long-running `gopp` processes (LSP, watch, the test runner) keep no LLD state, and many links run in parallel (`gopp test`). The ~1–3 ms process start per link is accepted. Library-mode LLD is reconsidered only if the P06 measurements show the start cost matters (P04 D4.9).
