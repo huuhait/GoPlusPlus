@@ -83,7 +83,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D20 | #31 accepted: a closure that runs later (`go`, stored, returned) can't capture a borrowed loop variable. Fix-its never reuse the name: `go fetch(u.Clone())`, `mine := u.Clone()`, or `range move(users)`. **New rule:** declaring a variable with the same name as a loop variable inside that loop's body (`u := u`, `u := u.Clone()`) is a compile error, not just a vet warning. Old Go code that used `u := u` (before Go 1.22) must rename. | `for _, u := range users { u := u.Clone() }` ❌ | `11-closures.md:30`; new rule in statements/range chapter |
 
-Still to review: notes #32–#42 (next: #32–#35).
+| D21 | #32–#35 accepted as written (with D4/D11 applied): a method value with a value receiver on an owning type is an error (`s.Clone().Handle`; no silent copies); a borrowed `defer` argument written after the `defer` is an error (`defer show(d.Clone())` gives Go's snapshot); a closure that takes a captured outer variable needs `move(x)` or `x.Clone()`; `go f(x)` moves owned locals, while fields and borrowed variables need `.Clone()` or `move(...)`. | `h := srv.Clone().Hello` · `defer show(d.Clone())` · `go fetch(cfg.URL.Clone())` | `11-closures.md:51`, `:57`, `:63`; `12-concurrency.md:32` |
+
+Still to review: notes #36–#42 (next: #36–#40).
 
 ## Notes / blockers
 
