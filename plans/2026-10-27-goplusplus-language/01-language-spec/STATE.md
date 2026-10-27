@@ -87,7 +87,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D22 | #36 accepted: a channel and the values still buffered in it are freed automatically when nobody holds the channel (an explicit `ch.Destroy()` was rejected: forgetting it leaks, and calling it early crashes; use `sync.Scope` when goroutines must finish first). #37 accepted: the marker that lets `sync.Scope` goroutines borrow (e.g. `@Scoped` on `s.Go`'s parameter) is designed in P12. **#38 changed:** attributes are allowed on struct fields in v0, written after the field's type, before any Go tag; top-level attributes stay on the line before the declaration. **#39 decided now (not left to P09):** a `block` macro argument is written like a func literal, `#Repeat(3, func() { … })`; `return`, `break` and `continue` inside it are compile errors because the code is pasted inline. How `stmt`, `type` and `tokens` arguments are written is still left to P09. | `Name string @JSON("name") \`db:"name"\`` · `#Repeat(3, func() { fmt.Println("hi") })` | `12-concurrency.md:40`, `:52`; `13-macros-surface.md:33`, `:35`; D1.14 |
 
-Still to review: notes #40–#42 (next: #40, then #41–#42).
+| D23 | Both macro kinds stay (D1.14). `@Name(args)` on top of a declaration (type, func, field) receives the arguments in parentheses plus the declaration it sits on, and returns new code. `#Name(args)` inside code expands in place, and passes a code block as `func() { … }` (D22). Macro arguments must be known while compiling (literals, names, types, constants); runtime variables are a compile error (`@Retry(n)` ❌). The exact procedural-macro API is designed in P09. | `@Retry(3) func fetch!() []byte` · `@Route("GET", "/users") func listUsers(…)` | D1.14, `13-macros-surface.md`; P09 |
+
+Still to review: notes #40–#42.
 
 ## Notes / blockers
 
