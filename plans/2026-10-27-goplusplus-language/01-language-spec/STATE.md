@@ -64,6 +64,8 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 | D9 | Every pointer kind has an `IsNil()` method: raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]`. `p == nil` keeps working, as in Go. If `T` has its own `IsNil` method, the pointer's `IsNil` wins; call `T`'s as `(*p).IsNil()`. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed). | `if u.IsNil() { … }` · `if u == nil { … }` | `04-ownership.md:373` (note #9); D1.7 |
 | D10 | Notes #6, #7, #8 and #10 accepted as written (with D4 applied): moving a variable a closure or pending `defer` still uses is an error; `m[k] = append(m[k], v)` works in place; `Clone` works on simple types; map keys are cloned only when a new entry is added. | | `04-ownership.md:195`, `:211`, `:241`, `:422` |
 
+| D11 | The `own` parameter marker is renamed **`move`** and goes **before the parameter name**: `func (l *List) Push(move s string)`, `func (move b Builder) Finish() string`, `func Join(move parts ...string)` (updates D1). Parameters without it still borrow (D1.5 unchanged), so calls look like Go. Passing an owned local to a `move` parameter moves it automatically; a field, element or map value needs `move(x)` or `x.Clone()` (rule 3a unchanged). `&` and `*` keep their Go meanings. A Rust-style default (plain = take, `ref`/`&` = borrow) was discussed and rejected: it puts a mark on most functions and reuses Go's signs. | `list.Push(name)` · `list.Push(name.Clone())` · `list.Push(move(u.Name))` | D1.2 keywords (`own` → `move`), D1.4, D1.5, D1.7 example, every chapter; ADR-0003 |
+
 Still to review: notes #11–#42 (next: #11–#15).
 
 ## Notes / blockers
