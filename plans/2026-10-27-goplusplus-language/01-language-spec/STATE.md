@@ -77,9 +77,11 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 | D16 | #23 changed so range-over-func follows the slice-loop rules: `for x := range seq` borrows each value read-only (`x.Clone()` to keep it); `for &x := range seq` changes the real item, and is allowed only when the iterator yields the real items as pointers (`iter.Seq[*Doc]`), otherwise it's a compile error. Calling `yield` after the loop has ended panics, as in Go. | `for &d := range docs.All() { d.Title = "x" }` with `func (l *DocList) All() iter.Seq[*Doc]` | `08-slices-and-range.md:125` |
 
 | D17 | **#26 changed to "like Go":** `defer x.M()` inside a loop is legal. The loop-body variable is kept alive (moved into the pending deferred call) until the function ends, so the deferred calls run at function exit exactly as in Go. Other `defer` argument rules stay as written. #29 and #30 accepted (captured variables live as long as the closure; a closure stored in an outer variable keeps its captures alive). | `for _, n := range files { f := os.Open!(n); defer f.Close() }` | `09-errors-and-panics.md:171`; `11-closures.md:15`, `:26`; PAN-3, CLO-3b |
-| D18 | The `clonable` constraint becomes a normal std interface, **`Clone[T]`** (like Rust's `Clone` trait): `type Clone[T any] interface { Clone() T }`, used as `func Dup[T Clone[T]](x T) T`. Every clonable type satisfies it, numbers included (D4). The name for `trivial` is still open (see #27/#28 discussion). | `Dup("hi")`, `Dup(5)` | D1.10, `10-generics.md:19`, `:21` |
+| D18 | (Form replaced by D19.) The `clonable` constraint becomes a normal std interface, **`Clone[T]`** (like Rust's `Clone` trait): `type Clone[T any] interface { Clone() T }`, used as `func Dup[T Clone[T]](x T) T`. Every clonable type satisfies it, numbers included (D4). The name for `trivial` is still open (see #27/#28 discussion). | `Dup("hi")`, `Dup(5)` | D1.10, `10-generics.md:19`, `:21` |
 
-Still to review: notes #27–#28 (in discussion), #31–#42.
+| D19 | **Replaces D18's form.** `Clone` and `Copy` are built-in constraints, written like Go's `comparable`: `[T Clone]` means `T` has `Clone() T` (every clonable type, numbers included); `[T Copy]` means `T` copies for free, like numbers (the old `trivial`). No `[T Clone[T]]`; the short `[Clone[T]]` form was rejected because it isn't Go syntax (`go vet`: "missing type parameter name or invalid array length"). #27 accepted: they embed in constraint interfaces like any Go interface, and Go's own rule keeps them out of `\|` unions. #28 accepted: numbers satisfy `Clone`. | `func Dup[T Clone](x T) T` · `func Sum[T Copy](xs []T) T` | D1.2 (`trivial`, `clonable` names), D1.10, `10-generics.md:19`, `:21` |
+
+Still to review: notes #31–#42 (next: #31–#35).
 
 ## Notes / blockers
 
