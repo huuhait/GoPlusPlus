@@ -20,6 +20,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [ ] P03.11 Type serialization interface
 - [ ] P03.12 `gopp check` & `gopp vet` v0
 - [ ] P03.13 Check throughput
+- [ ] P03.14 Error codes & `gopp explain`
 
 ## Open questions
 

@@ -151,6 +151,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P03.11 Type serialization interface**: for export data (the format itself is P06). *Done when:* round-trip tests pass.
 - **P03.12 `gopp check` & `gopp vet` v0**: `check` runs the type-level checks (P04.09 adds the GIR checks). First lints: ref-typed fields, drop-on-zero heuristic, a `!` that would panic outside `main`. *Done when:* CLI tests pass.
 - **P03.13 Check throughput**: measure against the D3.10 budget. *Done when:* the budget is met or an ADR documents the gap.
+- **P03.14 Error codes & `gopp explain`** (D3.11): one table giving every diagnostic (lexer, parser, checker, vet) a numbered `E####` code next to its `DiagnosticIDs.def` name; codes in text and JSON output; `gopp explain E####` with a short example per code; a CI check that a released code is never removed, renumbered or reused. *Done when:* every error carries a code, `gopp explain` works for all of them, and the CI check fails on a seeded renumbering.
 
 ## P04 — GIR and LLVM codegen ([README](04-gir-and-llvm-codegen/README.md))
 
