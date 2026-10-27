@@ -74,7 +74,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D15 | #24 accepted: `x!()` follows the innermost function; if that function can return an error, the error is returned, otherwise it panics. **#25 changed:** a `!` function already adds the `error` result, so it can't also declare `error` as its last result: `func check!() error` is a compile error ("`!` already adds the error; remove it"). `func check!()` returns only an error. To return an error as a normal value, use the Go form `func check() (error, error)`. This removes the `return e` ambiguity. | `func load!() []byte` → `([]byte, error)` · `func check!() error` ❌ | `09-errors-and-panics.md:35`, `:42`; D1.8 |
 
-Still to review: notes #23, #26–#42 (next: #23, then #26–#30).
+| D16 | #23 changed so range-over-func follows the slice-loop rules: `for x := range seq` borrows each value read-only (`x.Clone()` to keep it); `for &x := range seq` changes the real item, and is allowed only when the iterator yields the real items as pointers (`iter.Seq[*Doc]`), otherwise it's a compile error. Calling `yield` after the loop has ended panics, as in Go. | `for &d := range docs.All() { d.Title = "x" }` with `func (l *DocList) All() iter.Seq[*Doc]` | `08-slices-and-range.md:125` |
+
+Still to review: notes #26–#42 (next: #26–#30).
 
 ## Notes / blockers
 
