@@ -81,7 +81,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D19 | **Replaces D18's form.** `Clone` and `Copy` are built-in constraints, written like Go's `comparable`: `[T Clone]` means `T` has `Clone() T` (every clonable type, numbers included); `[T Copy]` means `T` copies for free, like numbers (the old `trivial`). No `[T Clone[T]]`; the short `[Clone[T]]` form was rejected because it isn't Go syntax (`go vet`: "missing type parameter name or invalid array length"). #27 accepted: they embed in constraint interfaces like any Go interface, and Go's own rule keeps them out of `\|` unions. #28 accepted: numbers satisfy `Clone`. | `func Dup[T Clone](x T) T` · `func Sum[T Copy](xs []T) T` | D1.2 (`trivial`, `clonable` names), D1.10, `10-generics.md:19`, `:21` |
 
-Still to review: notes #31–#42 (next: #31–#35).
+| D20 | #31 accepted: a closure that runs later (`go`, stored, returned) can't capture a borrowed loop variable. Fix-its never reuse the name: `go fetch(u.Clone())`, `mine := u.Clone()`, or `range move(users)`. **New rule:** declaring a variable with the same name as a loop variable inside that loop's body (`u := u`, `u := u.Clone()`) is a compile error, not just a vet warning. Old Go code that used `u := u` (before Go 1.22) must rename. | `for _, u := range users { u := u.Clone() }` ❌ | `11-closures.md:30`; new rule in statements/range chapter |
+
+Still to review: notes #32–#42 (next: #32–#35).
 
 ## Notes / blockers
 
