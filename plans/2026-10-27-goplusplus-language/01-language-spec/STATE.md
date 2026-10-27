@@ -70,7 +70,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D13 | Notes #16–#20 accepted (with D7 applied): a plain range over trivial elements gives copies (`&x` changes the real item); `range move(xs)` stopped early frees the unreached items in order; writing the current item and then reading the borrowed loop variable is a compile error; deleting the current map entry during `range` keeps `k`/`v` valid to the end of the turn. **Change to #19:** `move(v)` on a plain (read-only) map range variable stays an error (fix-its: `&v` or `v.Clone()`). Through `&v` it is allowed: it takes the value out and leaves the zero value in the map, and the key stays. Same for slices: `for _, &d := range xs { keep(move(d)) }` leaves the zero value in `xs[i]`. | `for k, &v := range m { keep(move(v)) }` → `m[k] == ""` | `08-slices-and-range.md:79`, `:83`, `:97`, `:101`, `:103` |
 
-Still to review: notes #21–#42 (next: #21–#25).
+| D14 | #21 accepted: a range over an array of owning elements is not copied (cheaper; arrays of trivial elements are still copied, like Go). **#22 decided now instead of in P08:** a range over a C++ container works like a slice: `for _, x := range vec` is a read-only borrow of each element (no C++ copy constructor), and `for _, &x := range vec` changes the real element (like C++ `auto&`). | `for _, &x := range vec { x += 1 }` | `08-slices-and-range.md:121`, `:123`; P08 D8.6 |
+
+Still to review: notes #23–#42 (next: #23–#25, then #26–#30).
 
 ## Notes / blockers
 
