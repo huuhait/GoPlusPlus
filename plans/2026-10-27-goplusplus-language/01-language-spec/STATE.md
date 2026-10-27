@@ -85,7 +85,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D21 | #32–#35 accepted as written (with D4/D11 applied): a method value with a value receiver on an owning type is an error (`s.Clone().Handle`; no silent copies); a borrowed `defer` argument written after the `defer` is an error (`defer show(d.Clone())` gives Go's snapshot); a closure that takes a captured outer variable needs `move(x)` or `x.Clone()`; `go f(x)` moves owned locals, while fields and borrowed variables need `.Clone()` or `move(...)`. | `h := srv.Clone().Hello` · `defer show(d.Clone())` · `go fetch(cfg.URL.Clone())` | `11-closures.md:51`, `:57`, `:63`; `12-concurrency.md:32` |
 
-Still to review: notes #36–#42 (next: #36–#40).
+| D22 | #36 accepted: a channel and the values still buffered in it are freed automatically when nobody holds the channel (an explicit `ch.Destroy()` was rejected: forgetting it leaks, and calling it early crashes; use `sync.Scope` when goroutines must finish first). #37 accepted: the marker that lets `sync.Scope` goroutines borrow (e.g. `@Scoped` on `s.Go`'s parameter) is designed in P12. **#38 changed:** attributes are allowed on struct fields in v0, written after the field's type, before any Go tag; top-level attributes stay on the line before the declaration. **#39 decided now (not left to P09):** a `block` macro argument is written like a func literal, `#Repeat(3, func() { … })`; `return`, `break` and `continue` inside it are compile errors because the code is pasted inline. How `stmt`, `type` and `tokens` arguments are written is still left to P09. | `Name string @JSON("name") \`db:"name"\`` · `#Repeat(3, func() { fmt.Println("hi") })` | `12-concurrency.md:40`, `:52`; `13-macros-surface.md:33`, `:35`; D1.14 |
+
+Still to review: notes #40–#42 (next: #40, then #41–#42).
 
 ## Notes / blockers
 
