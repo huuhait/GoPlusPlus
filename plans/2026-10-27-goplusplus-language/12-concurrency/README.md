@@ -44,17 +44,17 @@
 - `chan T` is a shared handle: atomically refcounted, and copying it retains it.
 - Sending moves the value in; receiving moves it out.
 - In `select`, a send case moves its value only if that case is chosen (P01 D1.13).
-- Values still buffered when the last handle goes away are dropped.
+- A channel and the values still buffered in it are freed automatically when the last handle goes away (oldest first). There is no explicit `ch.Destroy()`: forgetting it would leak and calling it early would crash. Use `sync.Scope` when goroutines must finish first (P01 D1.13).
 
 **D12.6 — The `go` statement.**
 - Arguments are evaluated, then moved or copied into the new goroutine's frame.
 - A closure used with `go` keeps its captured variables in shared cells (P01 D1.11). So the goroutine and the spawner see the same variables, as in Go.
-- `go f(x)` with a raw pointer or a view into a local is a compile error (P01 D1.13).
+- `go f(x)` with a raw pointer or a ref into a local is a compile error (P01 D1.13).
 
 **D12.7 — `sync` and atomics.**
 - `sync.Mutex`, `RWMutex`, `WaitGroup`, `Once` and `Cond` keep Go's API.
 - The `sync` types are `@Pinned`: moving or copying one after first use is a compile error (P01 D1.4 rule 10).
-- `sync.Scope` is an optional structured-concurrency helper. It waits for every function it spawned, so those closures may borrow without cells.
+- `sync.Scope` is an optional structured-concurrency helper. It waits for every function it spawned, so those closures may borrow without cells. **Designed here:** the marker that tells the compiler a closure given to `s.Go` cannot outlive the scope (for example `@Scoped` on the parameter of `s.Go`), see P01 CON-9.
 - `sync/atomic` uses LLVM atomics, seq_cst like Go.
 - Blocking primitives park goroutines, not threads, via futex on Linux. ulock (macOS) and WaitOnAddress (Windows) come after v0.1.
 

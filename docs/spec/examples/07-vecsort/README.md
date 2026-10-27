@@ -8,7 +8,7 @@ Fills a C++ `std::vector<int32_t>`, sorts it with `std::sort`, searches it and r
 - [OWN-C2, OWN-R1](../../04-ownership.md): `vector.vector[int32]` is an owning C++ class; its destructor runs at the end of `main`.
 - [OWN-R9](../../04-ownership.md): the vector has a default constructor, so `var v vector.vector[int32]` is legal.
 - [SLC-9](../../08-slices-and-range.md): `out = out[:0]` resets the buffer and keeps its capacity.
-- [RNG-6](../../08-slices-and-range.md): `range` over a C++ container.
+- [RNG-6](../../08-slices-and-range.md): `for _, x := range v` over a C++ container works like a slice: each `int32` element is a trivial value, so `x` is a copy. (For a C++ class element it would be a read-only borrow, and `for _, &x := range v` would change the real element, like `auto&`.)
 - [FOR-6](../../14-foreign-surface.md): `int32(19)` is an ordinary Go++ conversion; no C-specific types.
 
 ## Differences from the Go version
@@ -18,6 +18,6 @@ Fills a C++ `std::vector<int32_t>`, sorts it with `std::sort`, searches it and r
 
 ## Assumptions about other phases (P08)
 
-- `for x := range v` yields the element value (`int32`), not a reference. P08 D8.6 says only that `range` works through `begin()`/`end()`.
+- `for _, x := range v` yields the element value (`int32`) as for a slice (RNG-6). P08 D8.6 lowers `range` to `begin()`/`end()` iterator calls.
 - `v.size()` returns `uint64` (`size_t` on Linux), hence `int(v.size())`.
 - `algorithm.binary_search` returns a Go++ `bool`.

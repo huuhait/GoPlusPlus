@@ -28,40 +28,41 @@ Syntax: none.
 
 ## 16.2 Undefined behavior
 
-**UB-1.** *Dangling views and raw pointers.* Using a `view string`, `view []T` or `*T` after its owner is destroyed or has been changed so the memory moved. This includes:
-- a view or pointer stored past the end of the owner's block;
-- a view into a slice element after `append` reallocated the slice;
-- a view into a `string` after the string was reassigned, appended to or dropped;
-- a view of a map key after the map grew;
+**UB-1.** *Dangling refs and raw pointers.* Using a `ref string`, `ref []T` or `*T` after its owner is destroyed or has been changed so the memory moved. This includes:
+- a ref or pointer stored past the end of the owner's block;
+- a ref into a slice element after `append` reallocated the slice;
+- a ref into a `string` after the string was reassigned, appended to or dropped;
+- a ref into a map key after the map grew;
 - a pointer to a `Unique[T]` target after the `Unique` was moved from, reassigned or dropped;
-- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, storing a borrow of a temporary, `defer`/`go` that borrow something that dies first, and use after move. Views may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-views-d16)); returning a view of a local is **not** caught.
+- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a `ref` into a local ([OWN-V7](04-ownership.md#44-refs-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. A ref or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Refs may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-refs-d16)); less obvious cases, such as a ref that comes out of a call, are **not** caught.
 
 ```go
-func bad(name string) view string {
-    s := "abc" + name
-    return s[:2]            // NOT caught: the view outlives s. UB when the result is used
-}
+func trimmed(s string) ref string { return s[1:] }   // ok: a ref into a borrowed parameter
 
-var keep view string
+func bad(name string) ref string {
+    s := "abc" + name
+    return trimmed(s)       // NOT caught: the ref outlives s. UB when the result is used
+}
+// func direct(name string) ref string { s := "abc" + name; return s[:2] }   // compile error (OWN-V7)
+
+var keep ref string
 func worse(items []string) {
     t := strings.ToUpper(items[0])
     keep = t[:1]            // NOT caught: keep outlives t. UB when used after worse returns
 }
 ```
 
-> **Open (P01 review):** a `gopp vet` warning for `return` of a view of a local (or of an owned parameter copy) would fit D1.6's "at the programmer's risk", but the plan does not list one. This spec adds no such check.
-
 **UB-2.** *Borrowed parameter whose owner the callee frees through another path.* A callee gets a borrowed parameter and then destroys or changes the owner through a different route. Not caught.
 
 ```go
 func (u *User) SetName(n string) {
-    u.Name = clone(n)                  // right side first; then the old u.Name is dropped (STM-1)
+    u.Name = n.Clone()                  // right side first; then the old u.Name is dropped (STM-1)
     u.Audit = "renamed to " + n        // n still points into the dropped old u.Name: UB
 }
 u.SetName(u.Name)       // n is a borrow of u.Name, which the callee frees through u
 ```
 
-Fix: `u.SetName(clone(u.Name))`.
+Fix: `u.SetName(u.Name.Clone())`.
 
 **UB-2a.** *Using a borrowed range variable after its element was written.* In `for _, s := range ss` over owning elements, `s` is a borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the element. Writing the current element or entry is itself defined (the old value is dropped, [RNG-3](08-slices-and-range.md)). Using `s` **after** the write reads the dropped value. When the compiler can see both the write and the later use in the body, it is a compile error. When the write happens where the compiler cannot see it (inside a call, through an alias), it is UB. Not caught.
 
@@ -76,13 +77,13 @@ for _, s := range ss {
 }
 ```
 
-Trivial elements are copies ([RNG-1](08-slices-and-range.md)), so the same code on `[]int` is defined and prints the old value, as in Go.
+Trivial elements are copies ([RNG-1](08-slices-and-range.md)), so the same code on `[]int` is defined and prints the old value, as in Go. An `&` range variable is an alias of the slot ([RNG-1a](08-slices-and-range.md)), so it sees the new value and is not affected.
 
 The same holds for a range over an array with owning elements (the range variable borrows the live element, [RNG-6](08-slices-and-range.md)).
 
 Also UB-2a, when not visible to the compiler: `m[k] = x` on the entry the loop is on (the old value that `v` borrows is dropped) and `copy(dst, …)` into the ranged slice, followed by a use of the range variable.
 
-Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value, [RNG-3](08-slices-and-range.md)). UB: keeping a view or pointer into any removed entry past its iteration or past the removal.
+Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value, [RNG-3](08-slices-and-range.md)). UB: keeping a ref or pointer into any removed entry past its iteration or past the removal.
 
 **UB-2b.** *Shared handle released through another path.* A shared-handle parameter is passed without a retain ([PAR-7](05-parameters.md)). If the callee drops the caller's last reference through another path and then uses the parameter, the value is freed. Not caught.
 
@@ -112,20 +113,20 @@ Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 
 **UB-6.** *`@NoBounds`.* An out-of-range index in a function (or package) with bounds checks turned off.
 
-> **Open (P01 review):** UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding) and should be confirmed in P01.15.
+UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding). The owner confirmed in P01.15 that they stay listed as undefined behavior.
 
 **UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory.
 
-**UB-8.** *Pinned values.* Using a pointer or view into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case.
+**UB-8.** *Pinned values.* Using a pointer or ref into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case.
 
 **UB-9.** *C interop lifetimes.*
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
-- Using the result of `ffi.String(p)` (a view over C memory) after the C memory is freed.
-- Passing a `view string` temporary copy to a callee that keeps the pointer (FOR-6).
+- Using the result of `ffi.String(p)` (a ref over C memory) after the C memory is freed.
+- Passing a `ref string` temporary copy to a callee that keeps the pointer (FOR-6).
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
-**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race (UB-3). The "map grew during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse, not for races.
+**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race (UB-3). The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse, not for races.
 
 **UB-12.** *Forced unwinding.* `pthread_exit` or thread cancellation through Go++ frames: `recover()` does not stop it, and destructors run only as far as the platform unwinder runs them ([PAN-9](09-errors-and-panics.md)).
 
@@ -147,16 +148,17 @@ Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 |---|---|---|---|---|
 | use after move | error | | | |
 | returning `&local` | error | | | |
+| returning a `ref` into a local of the same function ([OWN-V7](04-ownership.md#44-refs-d16)); a ref that comes out of a call is not caught (UB-1) | error | | yes, for the uncaught cases | |
 | `go f(&local)` | error | | | |
 | `defer` borrowing a dying variable | error | | | |
-| view/pointer kept past owner (UB-1) | not caught (only the D1.4 rule 8 list) | some | yes | |
+| ref/pointer kept past owner (UB-1) | not caught (only the D1.4 rule 8 list) | some | yes | |
 | borrowed parameter freed by callee (UB-2) | | | yes | |
 | shared handle released by callee through another path (UB-2b) | | | yes | |
 | hidden-alias write to a borrowed `defer` argument (UB-2c) | | | only when the write frees memory | |
 | `v` reassigned while a type-assertion binding still borrows its box, write not visible (UB-2d; a visible write is a compile error) | | | yes | |
 | ranged slice or owned string reallocated by a call in the loop body (UB-2e; visible cases are compile errors) | | | yes | |
 | borrowed range variable (slice, array or map) used after its element was written (UB-2a; a visible write then use is a compile error) | write and use both visible | | yes | |
-| view/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero value respectively) | | | yes | |
+| ref/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero value respectively) | | | yes | |
 | data race (UB-3) | | | | yes |
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5) | | | yes | |

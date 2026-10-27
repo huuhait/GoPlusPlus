@@ -13,31 +13,29 @@ Syntax: no change.
 - **shared handles** are copied, which retains them;
 - **owned temporaries** (call results, conversions, composite literals) are moved in;
 - **owned locals** are moved in (`go fetch(u)` with a local `u` moves `u`; later use of `u` is an error);
-- **owned places** (a field, element, map entry, package variable or pointer target) and **borrowed variables** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) are a **compile error**: a place read is only a borrow ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)) and a borrow cannot be handed to a goroutine that may outlive it. Fix-its: `clone(x)`; `move(x)` for owned places (never for a borrowed variable, except a slice range variable, [OWN-R3b](04-ownership.md#42-ownership-rules-d14)); for a borrowed parameter also making it `own`; and a closure ([CON-3](12-concurrency.md)) only for owned places of locals, because a closure cannot capture a borrowed variable ([CLO-3a](11-closures.md));
-- a **raw pointer or a view** into a local (or into the target of a local `Unique`) is a compile error ([CON-2](12-concurrency.md)).
+- **owned places** (a field, element, map entry, package variable or pointer target), **borrowed variables** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) and `&` range variables ([RNG-1a](08-slices-and-range.md)) are a **compile error**: a place read is only a borrow ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)) and a borrow cannot be handed to a goroutine that may outlive it. Fix-its: `x.Clone()`; `move(x)` for owned places and `&` range variables (never for a borrowed variable, [OWN-R3b](04-ownership.md#42-ownership-rules-d14)); for a borrowed parameter also making it `move`; and a closure ([CON-3](12-concurrency.md)) only for owned places of locals, because a closure cannot capture a borrowed variable ([CLO-3a](11-closures.md));
+- a **raw pointer or a ref** into a local (or into the target of a local `Unique`) is a compile error ([CON-2](12-concurrency.md)).
 
 ```go
 for _, u := range users {   // u borrows the element
-    go fetch(u)             // error: borrowed variable. Fix-it: go fetch(clone(u))
-}
+    go fetch(u)             // error: borrowed variable. Fix-it: go fetch(u.Clone())
+}                           // (a fix-it never reuses the name: not u := u.Clone(), RNG-8)
 for _, u := range move(users) {
     go fetch(u)             // ok: u is an owned local, moved into the goroutine
 }
-go fetch(cfg.Name)          // error: field. Fix-its: clone(cfg.Name) or move(cfg.Name)
+go fetch(cfg.Name)          // error: field. Fix-its: cfg.Name.Clone() or move(cfg.Name)
 if s, ok := v.(string); ok {
-    go log(s)               // error: s is a borrowed variable (assertion binding). Fix-it: go log(clone(s))
+    go log(s)               // error: s is a borrowed variable (assertion binding). Fix-it: go log(s.Clone())
 }
 ```
 
-> **Open (P01 review):** D1.13 says only "trivial arguments are copied and owned ones are moved". The case list above applies D1.4 rule 3a and rule 8 to `go`, the same way [PAN-3](09-errors-and-panics.md) does for `defer`. The one difference: a `defer` runs before its function returns, so it may *borrow* a variable that lives that long; a goroutine can outlive the function, so `go` never borrows an owned place or a borrowed variable.
+The case list above applies D1.4 rule 3a and rule 8 to `go`, the same way [PAN-3](09-errors-and-panics.md) does for `defer`. The one difference: a `defer` runs before its function returns, so it may *borrow* a variable that lives that long; a goroutine can outlive the function, so `go` never borrows an owned place or a borrowed variable. `go f(x)` moves owned locals. Fields and borrowed variables need `x.Clone()`, or `move(...)` for owned fields and `&` range variables (never for a borrowed variable).
 
-**CON-2.** *No borrows of locals across `go`.* A raw pointer or a view into a local, or into the target of a local `Unique`, passed to `go` is a **compile error** outside `unsafe`. Example: `go srv.Run()` with a local `Unique[Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells ([CON-3](#121-rules)).
+**CON-2.** *No borrows of locals across `go`.* A raw pointer or a ref into a local, or into the target of a local `Unique`, passed to `go` is a **compile error** outside `unsafe`. Example: `go srv.Run()` with a local `Unique[Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells ([CON-3](#121-rules)).
 
-**CON-3.** *Closures with `go`.* A closure used with `go` keeps its captured variables in shared cells ([CLO-3](11-closures.md)). The goroutine and the spawner see the same variables, as in Go. A **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) cannot be captured this way ([CLO-3a](11-closures.md)): `go func(){ fetch(u) }()` or `go func(){ log(s) }()` with such a `u` or `s` is a compile error. Fix-it: `u2 := clone(u)` first, or `range move(users)` so that `u` is owned.
+**CON-3.** *Closures with `go`.* A closure used with `go` keeps its captured variables in shared cells ([CLO-3](11-closures.md)). The goroutine and the spawner see the same variables, as in Go. A **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) cannot be captured this way ([CLO-3a](11-closures.md)): `go func(){ fetch(u) }()` or `go func(){ log(s) }()` with such a `u` or `s` is a compile error. Fix-its never reuse the name ([RNG-8](08-slices-and-range.md)): `mine := u.Clone()` first, or `go func(){ fetch(mine) }()`, or `range move(users)` so that `u` is owned.
 
-**CON-4.** *Channels move values.* Sending moves the value in; receiving moves it out. This includes `for v := range ch`: `v` is an owned local per iteration. A value still buffered when the last handle to the channel goes away is dropped.
-
-> **Open (P01 review):** the buffered-value drop rule comes from P12 D12.5; D1.13 does not state it. It is repeated here as the most consistent reading of rules R1 and C3 (the channel is a shared handle, and its buffer is owned by it). Drop order inside the buffer is not specified (reading: oldest first).
+**CON-4.** *Channels move values.* Sending moves the value in; receiving moves it out. This includes `for v := range ch`: `v` is an owned local per iteration. A channel, and the values still buffered in it, are freed automatically when nobody holds the channel any more (P12 D12.5). The buffer is owned by the channel, which is a shared handle ([OWN-R1](04-ownership.md#42-ownership-rules-d14), [OWN-C3](04-ownership.md#41-type-categories-d13)); buffered values are dropped oldest first. There is no explicit `ch.Destroy()`: forgetting it would leak, and calling it early would crash. When goroutines must finish before the channel goes away, use `sync.Scope` ([CON-9](#121-rules)).
 
 **CON-5.** *`select`.* A send case moves its value only if that case is **chosen**. A temporary send value is dropped if its case is not chosen. A receive case receives and moves as in CON-4. Random choice among ready cases is as in Go.
 
@@ -49,7 +47,7 @@ if s, ok := v.(string); ok {
 
 **CON-9.** *`sync` types.* `sync.Mutex`, `RWMutex`, `WaitGroup`, `Once` and `Cond` keep Go's API and are `@Pinned`: moving or copying one after first use is a compile error ([OWN-R10](04-ownership.md#42-ownership-rules-d14)). `sync.Scope` (P12 D12.7) is an optional helper that waits for every function it spawned; closures passed to it may borrow without cells.
 
-> **Open (P01 review):** the plan says closures given to `sync.Scope` "may borrow without cells" but does not say how the compiler knows the closure cannot outlive the scope. This spec leaves the exact rule (an attribute on the parameter) to P12.
+> **Deferred to P12:** how the compiler knows that a closure given to `sync.Scope` cannot outlive the scope. The marker is designed in P12 (for example an attribute such as `@Scoped` on the parameter of `s.Go`).
 
 **CON-10.** *Program exit with goroutines running.* Other goroutines are stopped before `main`'s locals are dropped; see [INI-2](15-program-init.md). A stopped goroutine's stack is not unwound.
 

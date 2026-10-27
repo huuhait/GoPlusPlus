@@ -136,6 +136,7 @@ One path@version with different `url`s is an error (P10 D10.10).
 **D11.7 — Build flags propagate.**
 - `-asan`, `-msan`, `-race` (TSan) and `-ubsan` rebuild cdeps with the same instrumentation, under separate cache keys.
 - `-msan` requires every C/C++ input to be instrumented.
+- A cdep takes its compile and link flags from its own CMake target. The module-wide `cxxstd`, `cflags` and `ldflags` directives of gopp.mod (P10, P01 D1.15) apply to the Go++ module's own C/C++ sources and header imports, not to cdeps.
 
 **D11.8 — Patches are locked too.** A `patch <file>` key applies a patch file from the module that declares the cdep (P10 D10.3), for small source fixes. The patch's hash is part of the cache key. To replace a package's build entirely, use a local CMake file (D11.2).
 

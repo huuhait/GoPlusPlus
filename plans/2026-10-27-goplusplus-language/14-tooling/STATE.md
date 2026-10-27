@@ -31,7 +31,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): `view` is renamed `ref` in hover text and pretty printers.
 
 ## Notes / blockers
 

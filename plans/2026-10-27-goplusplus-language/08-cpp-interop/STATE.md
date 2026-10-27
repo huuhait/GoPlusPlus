@@ -46,7 +46,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P08) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): `//gopp:cxxstd` is removed; `cxxstd` in gopp.mod replaces it. A range over a C++ container works like a slice loop (`for _, x := range c` borrows, `for _, &x := range c` changes the element). `clone(x)` is the short form of `x.Clone()`.
 
 ## Notes / blockers
 

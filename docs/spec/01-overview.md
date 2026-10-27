@@ -14,7 +14,7 @@ Go++ is Go with ownership instead of a garbage collector. This spec is written a
 - "Compile error" means the compiler must reject the program. "Panic" means a run-time panic. "Undefined behavior" (UB) is listed in [chapter 16](16-undefined-behavior.md).
 - `gopp vet` warnings are not errors. A rule says so when vet is involved.
 
-> **Open (P01 review):** text in a box like this marks a place where the plan is silent or unclear. The text gives the most consistent reading. The owner decides in P01.15.
+The P01 review (P01.15) is done. During the review, places where the plan was silent were marked with an `Open (P01 review)` note. The owner decided every one of them, and the notes are removed: the decided reading is now normal rule text. A point left to a later phase is marked `> **Deferred to Pxx:** …`.
 
 ## 1.2 Rule ID prefixes
 
@@ -22,7 +22,7 @@ Go++ is Go with ownership instead of a garbage collector. This spec is written a
 |---|---|
 | `LEX` | [02 lexical](02-lexical.md) |
 | `TYP` | [03 types](03-types.md) |
-| `OWN` | [04 ownership](04-ownership.md) (`OWN-C` categories, `OWN-R` rules 1 to 10 of D1.4, `OWN-P` pointers, `OWN-V` views) |
+| `OWN` | [04 ownership](04-ownership.md) (`OWN-C` categories, `OWN-R` rules 1 to 10 of D1.4, `OWN-P` pointers, `OWN-V` refs) |
 | `PAR` | [05 parameters](05-parameters.md) |
 | `EXP` | [06 expressions](06-expressions.md) |
 | `STM` | [07 statements](07-statements.md) |
@@ -55,12 +55,12 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | Area | Go | Go++ | Chapter |
 |---|---|---|---|
 | Memory | tracing GC | owners, moves, destructors | 04 |
-| `string`, `[]T`, `map` | shared references | owned values; `clone(x)` copies | 04, 08 |
-| Parameters | all copy | owning types borrow; `own` takes ownership | 05 |
+| `string`, `[]T`, `map` | shared references | owned values; `x.Clone()` copies (`clone(x)` is the short form) | 04, 08 |
+| Parameters | all copy | owning types borrow; `move` takes ownership | 05 |
 | `new`, `&T{}` | GC allocation | removed; `new_unique`, `new_shared`, `new_weak` | 04 |
 | Errors | `val, err := f()` | same, plus `func f!()` and `call!()` | 09 |
 | Closures | capture by reference | same; escaping closures use shared cells | 11 |
-| Generics | stenciling | monomorphization; `trivial`, `clonable`; generic methods | 10 |
+| Generics | stenciling | monomorphization; `Copy`, `Clone`; generic methods | 10 |
 | Data races | limited damage | undefined behavior | 12, 16 |
 | C interop | cgo | header imports `"<stdio.h>"` | 14 |
 | Macros | `go generate` | `#Name(...)`, `@Name`, `macro` | 13 |
@@ -74,7 +74,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | D1.3 | type categories | [04](04-ownership.md) (summary in [03](03-types.md)) |
 | D1.4 | ownership rules 1 to 10 | [04](04-ownership.md) |
 | D1.5 | parameters | [05](05-parameters.md) |
-| D1.6 | views | [04](04-ownership.md), [08](08-slices-and-range.md) |
+| D1.6 | refs | [04](04-ownership.md), [08](08-slices-and-range.md) |
 | D1.7 | pointers and heap allocation | [04](04-ownership.md) |
 | D1.8 | errors and `!` | [09](09-errors-and-panics.md) |
 | D1.9 | panic, defer, recover | [09](09-errors-and-panics.md) |
@@ -97,16 +97,16 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - **Owner**: the variable, field, element or temporary that holds a value and destroys it.
 - **Move**: give a value to a new owner. The old place becomes the zero value.
 - **Borrow**: use a value without taking it. A borrow does not destroy anything.
-- **View**: `view string` or `view []T`. A `(ptr, len)` borrow you can store.
+- **Ref**: `ref string` or `ref []T`. A `(ptr, len)` borrow you can store. `ref` is a contextual keyword ([LEX-12](02-lexical.md)).
 - **Shared handle**: a value whose copies share one thing through a reference count (`Shared[T]`, channels, interfaces, funcs).
-- **Trivial type**: copied bit by bit, no destructor.
+- **Trivial type**: copied bit by bit, no destructor. It satisfies the `Copy` constraint.
 - **Owning type**: has a destructor (directly or through fields). Move-only.
 - **Drop**: run the destructor (the `drop` method, then the fields).
 
 ## 1.7 Non-goals of v1
 
 - Source compatibility with Go code that relies on GC.
-- A borrow checker. Views and raw pointers can dangle (see [chapter 16](16-undefined-behavior.md)).
+- A borrow checker. Refs and raw pointers can dangle (see [chapter 16](16-undefined-behavior.md)).
 - A user-facing `reflect` package.
 - User-defined operator overloading, inheritance, exceptions as an error mechanism.
 

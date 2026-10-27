@@ -33,7 +33,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P02) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): `macro` is the only new reserved keyword; `ref` and `move` are contextual (`move` goes before the parameter name); `&` marks the value variable in a range clause; struct fields take attributes after the type; a `block` macro argument is a func literal. Details in P01 D1.2, D1.14, D1.21.
 
 ## Notes / blockers
 

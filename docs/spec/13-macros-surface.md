@@ -18,10 +18,12 @@ MacroRef       = [ PackageName "." ] MacroName .
 
 MacroInvocation = "#" MacroRef "(" [ MacroArgs ] ")" .
 Attribute       = "@" MacroRef [ "(" [ MacroArgs ] ")" ] .
-MacroArgs       = ExpressionList .               /* argument forms for stmt/block/type/tokens kinds: P09 */
+MacroArgs       = ExpressionList .               /* a `block` argument is a func literal, see MAC-13 */
 
 TopLevelDecl   = /* Go alternatives */ | MacroDecl | ProcMacroDecl | MacroInvocation | AttributedDecl .
 AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl ) .
+FieldDecl      = ( IdentifierList Type | EmbeddedField ) [ FieldAttributes ] [ Tag ] .   /* Go: without FieldAttributes */
+FieldAttributes = Attribute { Attribute } .
 Operand        = /* Go alternatives */ | MacroInvocation .
 ```
 
@@ -29,10 +31,9 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 - The optional `;` after an attribute is the semicolon that [semicolon insertion](02-lexical.md) adds at a line end.
 - `macro` is a keyword ([LEX-2](02-lexical.md)).
 - Fragment kinds and their meaning are in P09 D9.1.
+- Attributes are allowed before top-level declarations (type, func, method, var, const) and on struct fields ([MAC-12](#132-rules)). Attributes on statements are not defined in v0. The "Placed on" column of the attribute table in MAC-8 says where each built-in attribute is accepted.
 
-> **Open (P01 review):** D1.14 does not say where attributes are allowed besides "before a declaration". This spec allows them before top-level declarations (type, func, method, var, const). Attributes on struct fields or statements are not defined in v0. The "Placed on" column of the attribute table in MAC-8 is also this spec's reading; the plan only lists the names.
-
-> **Open (P01 review):** how a `stmt`, `block`, `type` or `tokens` argument is written at an invocation (`#Name({ … })`?) is not defined by D1.14. It is left to P09.
+> **Deferred to P09:** how a `stmt`, `type` or `tokens` argument is written at an invocation. Only the `block` kind is fixed here ([MAC-13](#132-rules)).
 
 ## 13.2 Rules
 
@@ -40,7 +41,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-2.** *Invocation.* `#Name(args)` can be used in expression, statement or declaration position. `#File()` with no arguments is written with empty parentheses.
 
-**MAC-3.** *Attachment.* `@Name` or `@Name(args)` before a declaration attaches a macro or attribute to it. An attached macro may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
+**MAC-3.** *Attachment.* `@Name` or `@Name(args)` on top of a declaration (a type, func, method, var or const) attaches a macro or attribute to it. An attribute after a struct field's type is different: it is data read by the enclosing type's attached macro ([MAC-12](#132-rules)), not a separately expanded macro. An attached macro receives its arguments in parentheses plus the declaration it sits on, and returns new code. It may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
 
 **MAC-4.** *Names.* Every macro and attribute name starts with a capital letter (`#Assert`, `@Derive`, `@Extern`), built-in or user-defined.
 
@@ -59,7 +60,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 | `@Inline`, `@NoInline` | function | inlining hint | P04 |
 | `@Packed` | struct type | no padding | P07 |
 | `@Align(N)` | type | minimum alignment `N` | P07 |
-| `@View` | struct type | the struct may hold view fields without a vet warning ([OWN-V5](04-ownership.md#44-views-d16)) | this spec |
+| `@Ref` | struct type | the struct may hold ref fields without a vet warning ([OWN-V5](04-ownership.md#44-refs-d16)) | this spec |
 | `@NoBounds` | function | turn bounds checks off ([EXP-7](06-expressions.md)) | P05 D5.8 |
 | `@Pinned` | type | cannot be moved or copied after first use ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) | this spec |
 | `@Unwind` | callback function | the callback may unwind through its C callers | P07 |
@@ -71,6 +72,17 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 **MAC-10.** *`!` never means "macro".* This keeps `!` unambiguous as Must ([LEX-4](02-lexical.md)).
 
 **MAC-11.** *Not a conditional-compilation tool and no new syntax.* Macros only use the `#` and `@` forms (P09 D9.9). Use `//gopp:build` for conditional compilation.
+
+**MAC-12.** *Attributes on struct fields.* Attributes are allowed on struct fields in v0. They are written **after the field's type**, before any Go struct tag. Top-level attributes stay on the line before the declaration.
+- ``Name string @JSON("name") `db:"name"` ``: the attribute `@JSON("name")` first, then the tag.
+- Several attributes are written one after the other on the same line: `Name string @A @B`.
+- A field attribute is read by the macro or attribute of the type (for example `@Derive(JSON)` reads `@JSON("name")`). Which attributes a macro accepts is defined by that macro (P09).
+
+**MAC-13.** *Block arguments.* A `block` argument of `#Name(args)` is written like a func literal: `#Repeat(3, func() { fmt.Println("hi") })`. It is not a closure. The code is pasted inline where the macro uses it. So `return`, `break` and `continue` inside it are **compile errors**: they would leave or continue the code around the macro in a way the reader cannot see. The exception is a nested func literal within the block argument.
+
+**MAC-14.** *Compile-time arguments.* Arguments that a macro **reads as values** must be known while compiling: every argument of an attribute `@Name(args)`, and the arguments of a `#Name` macro for parameters of a value kind (`lit`): literals, names, types and constants. A runtime variable there is a compile error: `@Retry(n)` with a variable `n` is rejected, `@Retry(3)` is fine. Only `lit` parameters and `@` attribute arguments must be compile-time values. All other kinds (`expr`, `ident`, `stmt`, `block`, `decl`, `type`, `tokens`) are code fragments with no such limit: they are pasted into the program, so they may name runtime variables: `#Assert(len(data) > 0, "empty input")` and `#Swap(tmp, other)` are fine. How a procedural macro reads its arguments and returns code (the `gopp/macro` API) is designed in P09.
+
+> **Deferred to P09:** the exact procedural-macro API.
 
 ## 13.3 Examples
 
@@ -96,9 +108,22 @@ type Config struct {
 @Packed                                         // two attributes: each line ends with an auto semicolon
 type Header struct{ A uint8; B uint32 }
 
+@Derive(JSON)
+type User struct {
+    ID   int
+    Name string @JSON("name") `db:"name"`     // field attribute after the type, before the Go tag
+}
+
+@Retry(3)                                       // compile-time argument; the macro gets the declaration and adds a retrying wrapper next to it
+func fetch!() []byte { … }
+
+func demo() {
+    #Repeat(3, func() { fmt.Println("hi") })    // a block argument: pasted inline, `return`/`break`/`continue` are errors
+}
+
 // (needs `import "example.com/mymacros"` in the import block at the top of the file)
 @mymacros.Table("users")                        // qualified attached macro
-type User struct{ ID int }
+type Account struct{ ID int }
 
 n := #Line()                                    // expression position
 ```

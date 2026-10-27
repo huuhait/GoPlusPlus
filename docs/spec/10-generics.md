@@ -8,24 +8,23 @@ Delta D1.10. Go's design is kept: type parameters, constraint interfaces with ty
 
 Only one grammar change: **methods may have type parameters** (generic methods). `MethodDecl` (with `TypeParameters` before the optional `!`) is defined in [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18).
 
-`trivial` and `clonable` are predeclared constraints, used like `comparable`: `[T trivial]`, `[T clonable]`.
+`Copy` and `Clone` are built-in constraints, written like Go's `comparable`: `[T Copy]`, `[T Clone]`. There is no type argument: `[T Clone[T]]` and the short `[Clone[T]]` are not used (the short form is not valid Go syntax; `go vet` reports "missing type parameter name or invalid array length").
 
 ## 10.2 Rules
 
-**GEN-1.** *`trivial`* is a predeclared constraint satisfied by bitwise-copyable types ([OWN-C1](04-ownership.md#41-type-categories-d13)).
+**GEN-1.** *`Copy`* is a predeclared constraint satisfied by types that copy for free, like numbers: bitwise-copyable types ([OWN-C1](04-ownership.md#41-type-categories-d13)). `Copy` does not imply `Clone` (see GEN-2).
 
-**GEN-2.** *`clonable`* is a predeclared constraint satisfied by the types that `clone` accepts ([OWN-R6](04-ownership.md#42-ownership-rules-d14)): trivial types, shared handles, owning types whose parts are clonable, types with `drop` that define `Clone() T`, and imported C++ types with a usable copy constructor. Both constraints can be embedded in a constraint interface: `interface{ clonable; cmp.Ordered }`. Neither can be part of a union.
+**GEN-2.** *`Clone`* is a predeclared constraint. `[T Clone]` means the method set of `T` includes a method `Clone() T` with a value receiver ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). It is satisfied by every type that can be cloned, **numbers included**: trivial types, shared handles, owning types whose parts are cloneable, types with `drop` that define `Clone() T`, and imported C++ types with a usable copy constructor. A type whose `Clone` method has another signature does not satisfy it (the method itself stays legal). The same holds for a `Clone` promoted from an embedded field: it makes the compiler provide none, and the outer type satisfies `Clone` only if the promoted or declared method has the signature `Clone() T` for the outer `T` ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). A `Clone` declared on `*T` itself, with signature `Clone() *T`, makes `*T` satisfy the constraint, and `x.Clone()` calls the user method. For `T = *Handle` where `Handle` has a value-receiver `Clone`, `[T Clone]` uses the pointer copy (instantiation is the only place where a raw `*T` uses it; `clone(p)` is the ambiguity error like `p.Clone()`), while a direct `p.Clone()` is the ambiguity error: generic code sees `*Handle`'s own method set. `Unique[T]` satisfies it only when `T` does. Pointer kinds satisfy it with their own `Clone` (a raw pointer copy, `Unique[T]` a deep clone, `Shared[T]` a retain), so `T = *Handle` works ([OWN-R6](04-ownership.md#42-ownership-rules-d14)).
+- Both constraints can be embedded in a constraint interface like any Go interface: `interface{ Clone; cmp.Ordered }`.
+- Go's own rule keeps them out of `|` unions, as it does for `comparable`.
+- A `Copy` type is also `Clone` (its `Clone()` is a plain copy), unless its method set already has a `Clone` with another signature ([OWN-R6](04-ownership.md#42-ownership-rules-d14)); then it is `Copy` but not `Clone`. Numbers, bools and the other built-in trivial types are always both. A generic body that needs both writes `[T interface{ Copy; Clone }]`. A `[T Copy]` body may not call `.Clone()` or pass `T` to a `[U Clone]` function, because GEN-5 checks the body once.
 
-> **Open (P01 review):** embedding `trivial`/`clonable` in a constraint interface and the ban on unions are this spec's readings; D1.10 only says they are predeclared constraints.
-
-> **Open (P01 review):** the plan does not say whether `trivial` types satisfy `clonable`. This spec reads it as yes (see the Open note at [OWN-R6](04-ownership.md#42-ownership-rules-d14)).
-
-**GEN-3.** *Copying a `T`.* A generic body may copy a value of type `T` only if `T` is `trivial`. Otherwise it may only:
+**GEN-3.** *Copying a `T`.* A generic body may copy a value of type `T` only if `T` is `Copy`. Otherwise it may only:
 - **borrow** it (a borrowed parameter, a read, a comparison);
-- **move** it (an `own` parameter, `move(x)`);
-- **`clone`** it (requires `T` to be `clonable`).
+- **move** it (a `move` parameter, `move(x)`);
+- **`Clone`** it (requires `T` to satisfy `Clone`).
 
-**GEN-4.** *Returning a borrowed value.* In a generic body, `return a` for a borrowed parameter of non-`trivial` `T` needs `clone(a)`, which requires `clonable` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). Without the constraint it is a compile error.
+**GEN-4.** *Returning a borrowed value.* In a generic body, `return a` for a borrowed parameter of non-`Copy` `T` needs `a.Clone()`, which requires `Clone` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). Without the constraint it is a compile error.
 
 **GEN-5.** *Monomorphization.* Every instantiation is compiled as its own function with the real types (P04). Consequences you can see:
 - there is no run-time dictionary and no boxing of type arguments;
@@ -38,7 +37,7 @@ Only one grammar change: **methods may have type parameters** (generic methods).
 
 **GEN-8.** *Calling.* Type arguments may be explicit or inferred: `s.Map[string](f)` or `s.Map(f)`.
 
-**GEN-9.** *Type arguments are checked against the constraints at the call.* `Swap[chan int](a, b)` with the `trivial` bound of `Swap` below is an error: a channel is a shared handle, not trivial.
+**GEN-9.** *Type arguments are checked against the constraints at the call.* `Swap[chan int](a, b)` with the `Copy` bound of `Swap` below is an error: a channel is a shared handle, not a `Copy` type.
 
 **GEN-10.** *Syntax of the failable generic method.* `!` comes after the type parameters: `func (s Set) Parse[T any]!(text string) T`, called `s.Parse[int]!("5")`.
 
@@ -53,16 +52,18 @@ func Index[T comparable](xs []T, v T) int {
     return -1
 }
 
-// A copy is needed to return a borrowed value, so clonable is required.
-func First[T clonable](xs []T) T {
-    return clone(xs[0])        // without clone: error (OWN-R3a); without clonable: error
+// A copy is needed to return a borrowed value, so Clone is required.
+func First[T Clone](xs []T) T {
+    return xs[0].Clone()        // without Clone(): error (OWN-R3a); without the Clone bound: error
 }
+func Dup[T Clone](x T) T { return x.Clone() }
+a, b := Dup("hi"), Dup(5)       // strings and numbers both satisfy Clone
 
 // Taking ownership: no clone, the caller moves in.
-func (s *Stack[T]) Push(v own T) { s.items = append(s.items, v) }
+func (s *Stack[T]) Push(move v T) { s.items = append(s.items, v) }
 
-// Trivial only: a plain copy is allowed.
-func Swap[T trivial](a, b *T) { *a, *b = *b, *a }
+// Copy only: a plain copy is allowed.
+func Swap[T Copy](a, b *T) { *a, *b = *b, *a }
 
 // Generic method.
 type Set struct{ items []int }
@@ -78,11 +79,11 @@ type Mapper interface{ Map(f func(int) string) []string }
 var _ Mapper = Set{}      // error: generic method Map does not satisfy an interface method
 ```
 
-Compared with Go: generic methods are new (Go forbids them). In Go, `First[T any]` would just copy `xs[0]`; in Go++ the `clonable` bound and the `clone` call say that a copy happens.
+Compared with Go: generic methods are new (Go forbids them). In Go, `First[T any]` would just copy `xs[0]`; in Go++ the `Clone` bound and the `Clone` call say that a copy happens.
 
 ## 10.4 Rationale
 
 - Borrowing parameters means most generic code needs no new syntax for owning types.
-- `trivial` and `clonable` make hidden copies visible in the signature.
+- `Copy` and `Clone` make hidden copies visible in the signature. They are written like `comparable`, so they are plain Go syntax.
 - Full monomorphization gives C++-class speed and lets each instance know its type's real destructor.
 - Generic methods were chosen by the owner (Q5). They need no dictionary because every use is monomorphized. They cannot satisfy interfaces, so dynamic dispatch stays simple.

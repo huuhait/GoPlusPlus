@@ -12,30 +12,35 @@ Syntax: no change (function literals are `func(…) { … }` or `func!(…) { �
 
 **CLO-2.** *Escaping closures share their variables.* An escaping closure keeps each captured variable in a shared, reference-counted **cell**. All closures and the enclosing function see the same variable, exactly like Go. A captured variable lives until the last reference to its cell goes away, and is destroyed then.
 
-> **Open (P01 review):** the plan does not say when an owned captured variable is destroyed. This spec reads it as: when its cell is released for the last time, not at the end of the block (otherwise the closure would see a destroyed value).
+A captured owned variable is destroyed when its cell is released for the last time, not at the end of the block. Otherwise the closure would see a destroyed value. So a captured variable lives as long as the closure that holds the cell.
 
 **CLO-3.** *What escapes.* A closure escapes when it is:
 - returned;
 - stored in a field, element, package variable, map or channel;
-- passed to an `own` parameter;
+- passed to a `move` parameter;
 - passed to a parameter that the callee may keep (store, return, or pass on to a place that keeps it), as in `http.HandleFunc("/", func(…) { … })`;
 - used with `go`;
 - captured by an escaping closure;
 - stored in a local variable declared in an outer scope than some variable it captures, so that the closure could be called after the captured variable has died.
 
-> **Open (P01 review):** the last bullet is not in D1.11, which only says that assigning to a local is not an escape. Without it, `var f func(); { s := "x"; f = func() { use(s) } }; f()` would call a closure whose captured `s` is already destroyed, and Go prints `x`. Treating it as an escape (a shared cell) keeps D1.11's rule that the choice of cell or reference never changes what the program does ([CLO-4](11-closures.md)). The same applies to `last = func() int { return i }` in a loop body, where `last` is declared outside the loop and `i` is per iteration ([CLO-8](11-closures.md)).
+The last bullet keeps the cell rule honest: a closure stored in an outer variable keeps its captures alive. Without it, `var f func(); { s := "x"; f = func() { use(s) } }; f()` would call a closure whose captured `s` is already destroyed, and Go prints `x`. Treating it as an escape (a shared cell) keeps the rule that the choice of cell or reference never changes what the program does ([CLO-4](11-closures.md)). The same applies to `last = func() int { return i }` in a loop body, where `last` is declared outside the loop and `i` is per iteration ([CLO-8](11-closures.md)).
 
-**CLO-3a.** *Closures that capture borrowed variables.* A borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) cannot be put in a shared cell, because the cell would outlive the borrow. If an **escaping** closure (CLO-3) captures one, it is a compile error. Fix-its: copy it into a local first (`g := clone(greeting)`, `u2 := clone(u)`), make a borrowed parameter `own`, or use `range move(xs)` so that the range variable is owned. Capturing a borrowed variable in a **non-escaping** closure is fine. Variables that are not borrowed variables (trivial or shared-handle copies) may be captured freely.
+**CLO-3a.** *Closures that capture borrowed variables.* A borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), or an `&` range variable ([RNG-1a](08-slices-and-range.md)), cannot be put in a shared cell, because the cell would outlive the borrow. A closure that runs later (used with `go`, stored, or returned; see CLO-3) cannot capture one: it is a compile error. Fix-its never reuse the loop variable's name ([RNG-8](08-slices-and-range.md)): copy it into a differently named local first (`mine := u.Clone()`), pass a clone (`go fetch(u.Clone())`), make a borrowed parameter `move`, or use `range move(xs)` so that the range variable is owned. Capturing a borrowed variable in a **non-escaping** closure is fine. Variables that are not borrowed variables (trivial or shared-handle copies) may be captured freely.
 
-> **Open (P01 review):** D1.11 and D1.4 rule 8 only list a `defer` or `go` that borrows something that dies first as caught. The general escaping-closure case is not stated; this spec applies the same principle.
+**CLO-3b.** *Deferred function literals.* A `defer` is not an escape in the sense of CLO-3, so a deferred closure captures by reference. A deferred literal may capture any variable declared at function level, including named results, and these may be assigned after the `defer` statement. Capture is by reference, so the closure sees the latest value when it runs, exactly like Go (`defer func() { if err != nil { rollback() } }(); err = work()` works).
 
-**CLO-3b.** *Deferred function literals.* A `defer` is not an escape in the sense of CLO-3, so a deferred closure captures by reference. D1.4 rule 8 says a `defer` that borrows something that dies first is caught. So a deferred function literal that captures a variable which dies before the function returns (a variable declared in a nested block or a loop body) is a **compile error**. Fix-its: pass the value as an argument (`defer func(f own File) { f.Close() }(move(f))`; `f` is an owned parameter there, so the pointer-receiver call is legal, unlike on a borrowed parameter, [PAR-3](05-parameters.md)), or drop the `defer` and let the destructor run at the end of the block. A deferred literal may capture any variable declared at function level, including named results, and these may be assigned after the `defer` statement. Capture is by reference, so the closure sees the latest value when it runs, exactly like Go (`defer func() { if err != nil { rollback() } }(); err = work()` works). The rule "not written after the `defer`" (CLO-7) applies only to *borrowed arguments* of a deferred call ([CLO-7](11-closures.md), [PAN-3](09-errors-and-panics.md)), because an argument is evaluated at the `defer` statement and a literal's captures are not.
+A deferred literal may also capture an owned local of a nested block or a loop body, as in Go. The compiler extends that variable's lifetime ([PAN-3](09-errors-and-panics.md)): it is not destroyed at the end of the block, but after the deferred call has run, at function exit. Nothing is moved or zeroed, and the literal sees the latest value. A variable that is **borrowed** cannot have its lifetime extended, so a deferred literal that captures one (for example a range variable over owning elements, which dies at the end of its iteration) is a compile error. Fix-it: capture a clone (`mine := d.Clone()`). A map alias can never be captured by a deferred literal ([RNG-1a](08-slices-and-range.md)). Other `&` variables may be captured only if the collection lives until the function returns and is not appended to or reassigned before then (visible: compile error; hidden: [UB-1](16-undefined-behavior.md)). The rule "not written after the `defer`" (CLO-7) applies only to *borrowed arguments* of a deferred call ([CLO-7](11-closures.md), [PAN-3](09-errors-and-panics.md)), because an argument is evaluated at the `defer` statement and a literal's captures are not.
 
 ```go
 func read(paths []string) {
     for _, p := range paths {
         f := os.Open!(p)
-        defer func() { f.Close() }()   // error: the deferred closure captures f, which dies at the end of the loop body
+        defer func() { f.Close() }()   // ok, as in Go: f lives until the function returns
+    }                                  //   and stays open until read returns
+}
+func each(docs []Doc) {
+    for _, d := range docs {
+        defer func() { show(d) }()     // error: d is a borrowed variable; capture mine := d.Clone()
     }
 }
 ```
@@ -44,23 +49,21 @@ func read(paths []string) {
 
 **CLO-5.** *Method values.* A method value (`f := s.Handle`) is a closure over its receiver.
 
-**CLO-5a.** *Value receivers of owning types.* In Go, `s.Handle` with a value receiver copies `s` when the method value is evaluated, so later changes to `s` are not seen. A Go++ closure that captured `s` would either see those changes (a silent difference from Go) or need a copy that is not written (a hidden allocation). So for a value-receiver method of an **owning** type, `s.Handle` as a method value is a compile error. Fix-its: `clone(s).Handle` (snapshot, the closure owns the clone) or `move(s).Handle` (the closure takes `s`).
+**CLO-5a.** *Value receivers of owning types.* In Go, `s.Handle` with a value receiver copies `s` when the method value is evaluated, so later changes to `s` are not seen. A Go++ closure that captured `s` would either see those changes (a silent difference from Go) or need a copy that is not written (a hidden allocation). So for a value-receiver method of an **owning** type, `s.Handle` as a method value is a compile error. Fix-its: `s.Clone().Handle` (snapshot, the closure owns the clone) or `move(s).Handle` (the closure takes `s`). There are no silent copies.
 
 For a pointer receiver, the variable is captured like any captured variable (as in Go, it binds `&s`; shared cell if the method value escapes). For a value receiver of a trivial type, the receiver is copied, as in Go.
 
-> **Open (P01 review):** D1.11 says only "a method value is a closure over its receiver". The owning value-receiver case is this spec's reading, chosen so that no behavior silently differs from Go (D1.11 rationale) and no allocation is hidden (principle 1).
-
 **CLO-6.** *Recursion.* A recursive escaping closure creates a reference cycle; `gopp vet` warns. Non-escaping recursive closures are fine.
 
-**CLO-7.** *`defer` arguments.* Deferred calls evaluate their arguments at the `defer` statement, as in Go. A borrowed owning *argument* whose variable is **written** after the `defer` (not a pointer receiver `&x`, which is evaluated as a pointer at the `defer`, [PAN-3](09-errors-and-panics.md)) is a compile error (fix-it: `clone(x)`). "Written" means any write the compiler can see to the borrowed variable or to anything it owns: assignment, a field or element write, `append`, a call of a pointer-receiver method on it, and **moving it** ([OWN-R3c](04-ownership.md#42-ownership-rules-d14)). This way Go++ never prints the new value where Go prints the old one. Writes through aliases the compiler cannot see are UB ([UB-2c](16-undefined-behavior.md)).
+**CLO-7.** *`defer` arguments.* Deferred calls evaluate their arguments at the `defer` statement, as in Go. A borrowed owning *argument* whose variable is **written** after the `defer` (not a pointer receiver `&x`, which is evaluated as a pointer at the `defer`, [PAN-3](09-errors-and-panics.md)) is a compile error (fix-it: `x.Clone()`). "Written" means any write the compiler can see to the borrowed variable or to anything it owns: assignment, a field or element write, `append`, a call of a pointer-receiver method on it, and **moving it** ([OWN-R3c](04-ownership.md#42-ownership-rules-d14)). This way Go++ never prints the new value where Go prints the old one. Writes through aliases the compiler cannot see are UB ([UB-2c](16-undefined-behavior.md)).
 
-> **Open (P01 review):** D1.11 says only "assigned after the `defer`". The wider definition is this spec's reading, so the borrow behaves like Go's copy (repro: Go prints `{old 1}` for a struct argument changed after the `defer`).
+The wide definition of "written" makes the borrow behave like Go's copy (Go prints `{old 1}` for a struct argument changed after the `defer`). A borrowed `defer` argument written after the `defer` is an error, and `defer show(d.Clone())` gives Go's snapshot.
 
 **CLO-8.** *Loop variables.* As in Go 1.22 and later, each iteration of a `for` loop has its own copy of the loop variable. A closure that captures it and escapes gets one cell per iteration.
 
-**CLO-9.** *Captured variables are "other places".* Inside a closure body, a captured owned variable is not a local of the closure, so [OWN-R3a](04-ownership.md#42-ownership-rules-d14) applies: using it as an operand or borrowed argument is fine; taking ownership of it needs `clone(x)` or `move(x)`. After `move(x)` the variable holds the zero value ([OWN-R5](04-ownership.md#42-ownership-rules-d14)), so calling the closure again is safe. The opposite direction, moving a variable in the enclosing function while a closure that captured it may still run, is a compile error: [OWN-R3c](04-ownership.md#42-ownership-rules-d14).
+**CLO-9.** *Captured variables are "other places".* Inside a closure body, a captured owned variable is not a local of the closure, so [OWN-R3a](04-ownership.md#42-ownership-rules-d14) applies: using it as an operand or borrowed argument is fine; taking ownership of it needs `x.Clone()` or `move(x)`. After `move(x)` the variable holds the zero value ([OWN-R5](04-ownership.md#42-ownership-rules-d14)), so calling the closure again is safe. The opposite direction, moving a variable in the enclosing function while a closure that captured it may still run, is a compile error: [OWN-R3c](04-ownership.md#42-ownership-rules-d14).
 
-> **Open (P01 review):** the plan does not say whether a closure body may move a captured variable. This spec reads rule R3a as applying, as described.
+So a closure that takes a captured outer variable needs `move(x)` or `x.Clone()`.
 
 ## 11.2 Examples (each compared with Go)
 
@@ -163,7 +166,7 @@ func f() {
 func g() {
     s := "a"
     defer fmt.Println(s)     // error: borrows s, and s is assigned after the defer
-    s = "b"                  // fix-it: defer fmt.Println(clone(s))
+    s = "b"                  // fix-it: defer fmt.Println(s.Clone())
 }
 ```
 Go: both compile; `g` prints `a`. Go++: `f` is the same. `g` is a compile error with a fix-it, because borrowing `s` would print `b`. **Different on purpose.**

@@ -19,7 +19,7 @@ func main() {
 	// the same checksum, fed in chunks of 7 bytes
 	var running uint64
 	for i := 0; i < len(data); i += 7 {
-		chunk := data[i:min(i+7, len(data))] // view []byte: no copy
+		chunk := data[i:min(i+7, len(data))] // ref []byte: no copy
 		running = zlib.crc32(running, chunk, uint32(len(chunk)))
 	}
 	fmt.Printf("chunked: %08x\n", running)

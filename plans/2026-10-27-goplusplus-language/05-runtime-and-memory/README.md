@@ -16,8 +16,8 @@
 
 **D5.3 — Arenas.**
 - `mem.Arena` is a chunked bump allocator with `Reset` and `Free`.
-- `mem.ArenaNew[T trivial](a *mem.Arena) *T` returns raw pointers owned by the arena.
-- In v0, `ArenaNew` accepts only `trivial` types, so no destructors need tracking. Arenas with registered destructors may come later.
+- `mem.ArenaNew[T Copy](a *mem.Arena) *T` returns raw pointers owned by the arena.
+- In v0, `ArenaNew` accepts only `Copy` types, so no destructors need tracking. Arenas with registered destructors may come later.
 - **Allocator objects.** Owned slices and maps store one pointer to an allocator object (P01 D1.22). The object starts with its function table (alloc, resize, free); nil means the global allocator. `mem.Arena` is one such object.
 - `mem` functions create a slice or map in a given allocator (names set in P05.03). Resetting or freeing an arena while its slices or maps are alive leaves them dangling (P01.14).
 
@@ -32,10 +32,10 @@
   - Re-slicing a slice into itself (`s = s[i:j]`) shrinks it in place: the cut elements are dropped and the capacity is kept (P01 D1.20).
 - **`map[K]V`:** an open-addressing Swiss table, as in Abseil and Go 1.24. The map header also stores its allocator (P01 D1.22).
   - The hash seed is random per process, and iteration starts at a random position, so iteration order is unspecified as in Go.
-  - Keys and values are dropped on delete, clear and destroy.
+  - Keys and values are dropped on delete, clear and destroy. Inside a `range`, the entry the loop is on is dropped at the end of that iteration, so `k` and `v` stay valid (P01 D1.21).
   - The compiler generates hash and equality functions per key type.
-  - Lookups accept a `view` key, so `counts[w]` with `w view string` doesn't allocate (P01 D1.6).
-  - Maps count their active iterators. If the table must grow while an iterator is active, the map panics with "map grew during iteration" (P01 D1.21).
+  - Lookups accept a `ref` key, so `counts[w]` with `w ref string` doesn't allocate (P01 D1.6).
+  - Maps count their active iterators. Inserting a new key while an iterator is active **always** panics with "map insert during iteration", whether or not the table has room (P01 D1.21, ADR-0006). Writing an existing key is allowed.
 - **`Unique[T]`** (`new_unique`): allocated on creation; the target is dropped and freed on destruction.
 - **`Shared[T]`** (`new_shared`): one allocation holding both the control block (atomic strong and weak counts) and the value.
 - **`Weak[T]`** (`new_weak`, from a `Shared[T]`): holds a weak count; `Lock()` upgrades it to a `Shared[T]`.

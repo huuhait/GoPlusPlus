@@ -9,7 +9,7 @@ Three worker goroutines read jobs from a channel and send results back. The resu
 - [CON-9](../../12-concurrency.md), [OWN-R10](../../04-ownership.md): `sync.WaitGroup` is `@Pinned`; it lives in a shared cell and is never moved.
 - [CLO-2, CLO-3](../../11-closures.md): the two `go func(){...}()` closures escape, so `wg`, `jobs` and `results` are in cells.
 - [RNG-2](../../08-slices-and-range.md): `range move(words)` moves each string out; `words` is the zero value afterwards.
-- [OWN-R3, OWN-R3a, OWN-R4](../../04-ownership.md): `Text: move(job.Text)` (a field needs `move`/`clone`); `Job{..., Text: w}` moves `w`; `all = append(all, r)` moves `r` and `all`.
+- [OWN-R3, OWN-R3a, OWN-R4](../../04-ownership.md): `Text: move(job.Text)` (a field needs `move(x)` or `x.Clone()`); `Job{..., Text: w}` moves `w`; `all = append(all, r)` moves `r` and `all`.
 - [PAR-1, PAR-7](../../05-parameters.md): `Result` parameters of the sort callback are borrowed; channels pass as shared handles.
 
 ## Differences from the Go version

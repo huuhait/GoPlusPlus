@@ -36,7 +36,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P09) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): `@Name(args)` on a declaration or struct field and `#Name(args)` in code are both kept; a `block` argument is a func literal (`return`/`break`/`continue` are errors); only `lit` parameters and `@` attribute arguments must be compile-time values (code-fragment parameters may name runtime variables); `stmt`, `type` and `tokens` argument syntax and the procedural-macro API are designed here.
 
 ## Notes / blockers
 

@@ -30,18 +30,17 @@ The `!` is always right before the parameter list. After type parameters: `func 
 
 **ERR-2.** *All function forms.* Methods, interface methods, function literals and function types use the same mark: `func (r *R) Read!(p []byte) int`, `interface{ Load!(path string) []byte }`, `func!(x int) T { … }`, `func!(int) T` (identical to `func(int) (T, error)`).
 
-A function **can fail** if it is declared with `!`, or if its last result has type `error`. This property belongs to the innermost function: a function literal is judged by its own signature, not by the function around it.
-
-> **Open (P01 review):** D1.8 says "the function the call is in" without naming the literal case. This spec takes the innermost function (so `x!()` in a plain closure inside a `!` function panics, and does not return from the outer function).
+A function **can fail** if it is declared with `!`, or if its last result has type `error`. This property belongs to the innermost function: a function literal is judged by its own signature, not by the function around it. So `x!()` follows the innermost function: if that function can return an error, the error is returned; otherwise it panics. A `x!()` in a plain closure inside a `!` function panics, and does not return from the outer function.
 
 **ERR-3.** *Returning from a `!` function.*
 - `return v` returns `v` with a nil error.
 - To fail explicitly, add the error as an extra last operand: `return nil, err`, or `return err` when there are no other results.
 - `return g()` is allowed when `g` returns the declared results plus `error`.
-
-> **Open (P01 review):** when the only declared result is itself of type `error` (`func f!() error`), `return e` is ambiguous (value, or failure?). This spec reads: operand count equal to the declared results means "value, nil error"; one more means "failure".
+- The operand count decides: as many operands as declared results means "value, nil error"; one more means "failure". This is never ambiguous, because a `!` function cannot declare `error` as its last result (ERR-15).
 
 **ERR-4.** *No named error result.* A `!` function cannot name its error result. When a deferred call must see the error, use the Go form `(T, err error)`.
+
+**ERR-15.** *No `error` as the last result of a `!` function.* A `!` function already adds the `error` result, so it cannot also declare `error` as its last result. `func check!() error` is a compile error: "`!` already adds the error; remove it". `func check!()` returns only an error. This applies to every `!` form (functions, methods, interface methods, literals and function types). To return an error as a normal value, use the Go form `func check() (error, error)`: the first `error` is the value, the second is the failure. This removes the `return e` ambiguity. For a generic `!` function instantiated with `T = error`, `return e` is success with the value `e`; failure is always `return zero, err`, so there is no ambiguity.
 
 ## 9.2 Unwrapping calls (D1.8)
 
@@ -162,24 +161,23 @@ Base: [Handling panics](https://go.dev/ref/spec#Handling_panics), [Defer stateme
 - **trivial** values are copied;
 - **shared handles** (channels, interfaces, funcs, `Shared[T]`) are copied, which retains them, as for `go` ([CON-1](12-concurrency.md));
 - **owned temporaries** (call results, conversions, composite literals) are moved into the deferred call, as `go` moves owned arguments (D1.13): `defer os.RemoveAll(filepath.Join(dir, "x"))` is fine;
-- **owned places** (an owned local, field or element) must be passed as `move(x)` or `clone(x)`, or be **borrowed**, only if the variable lives until the function returns and is not **written or moved** after the `defer` (assignment, field or element write, `append`, a pointer-receiver call on it or on anything it owns, or a move; [OWN-R3c](04-ownership.md#42-ownership-rules-d14), [CLO-7](11-closures.md)). A **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) is never passed with `move` (only a slice range variable may move): `for k, v := range m { defer log(v) }` accepts only `clone(v)`, or a borrow only if the variable lives until the function returns, which a loop-body variable never does, since `v` dies at the end of the iteration;
-- a **pointer-receiver deferred call** `defer x.M()` evaluates `&x` at the `defer` statement, as in Go. Later writes and pointer calls on `x` are allowed and are seen by the deferred call (`defer w.Flush(); w.WriteString(…)` works). It only needs `x` to live until the function returns (next bullet). **Moving** `x` while such a deferred call is pending is a compile error ([OWN-R3c](04-ownership.md#42-ownership-rules-d14)): the deferred call would read the zero value. Fix-it: `clone(x)`. The "written or moved" rule above is for *borrowed owning arguments*, not for `&x` receivers;
-- a **raw pointer or a view** into a local that dies before the function returns (a variable of a nested block or loop body), or into the target of such a local `Unique`, is a **compile error** (D1.4 rule 8; the same rule as [CON-2](12-concurrency.md) for `go`). This includes a pointer receiver on such a local: `defer (&f).Close()`, `defer unlock(&mu)` inside a loop. The same pointer to a function-level local is fine;
-- a deferred **function literal** that captures a dying variable is also an error ([CLO-3b](11-closures.md));
+- **owned places** (an owned local, field or element) must be passed as `move(x)` or `x.Clone()`, or be **borrowed**, only if the variable lives until the function returns and is not **written or moved** after the `defer` (assignment, field or element write, `append`, a pointer-receiver call on it or on anything it owns, or a move; [OWN-R3c](04-ownership.md#42-ownership-rules-d14), [CLO-7](11-closures.md)). A **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) is never passed with `move` (use the `&` range form, or `Clone`). It may be *borrowed* by a `defer` if it lives until the function returns: parameters and function-level borrowed variables, so `func handle(name string) { defer fmt.Println("done", name) }` is legal. It is a compile error for a borrowed variable that dies earlier (a borrowed loop range variable, an assertion binding in a nested block): `for k, v := range m { defer log(v) }` accepts only `v.Clone()`, because `v` is borrowed from the map and dies at the end of the iteration. An owned local of a loop body is different: see the next bullet;
+- **owned locals declared in a nested block or loop body** (they would die before the function returns) may be used by a pending deferred call: as the receiver of `defer x.M()`, as a borrowed argument, or as a capture of a deferred function literal. The compiler uses **lifetime extension**, in three parts. (1) *Storage:* the compiler sees statically which block-scoped locals a `defer` in their scope may use, and gives each one its own storage per execution of the block (like Go's per-iteration loop variables), so `&x` taken before or after the `defer` stays valid. (2) *The `defer` ran:* its defer record keeps the local alive, so the local is NOT destroyed at the end of its block. It is destroyed at function exit, after all deferred calls, in the order of [PAN-4](#94-panic-defer-recover-d19). (3) *The `defer` did not run on this path* (for example it sits in an `if` that was not taken): the local is destroyed at the end of its block as usual. The defer record is the only flag; there are no extra drop flags ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). Nothing is moved or zeroed at the `defer` statement: later reads, writes, pointer calls and `&x` refer to that same variable, and the deferred call sees its latest value, as in Go (`f := os.Open!(n); defer f.Close(); io.Copy(dst, f)` reads a valid file). A borrowed argument still follows the "not written or moved after the `defer`" rule above, because it is evaluated at the `defer` statement. The deferred calls therefore run at function exit exactly as in Go, also in a loop. Borrowed variables that die earlier keep their errors (see the bullets above). A `@Pinned` local can be extended too, because nothing is moved. `gopp vet` hints that with `defer f.Close()` in a loop body the files stay open until the function returns;
+- an **`&` range variable** ([RNG-1a](08-slices-and-range.md)) is an alias of an element, so it counts as a **place** (`xs[i]`), not as a loop-body local. The collection owns the element and the `defer` never destroys it. `defer f.Close()` evaluates `&xs[i]`, which is fine (except for map aliases, see [RNG-1a](08-slices-and-range.md): later inserts can rehash a map, so the map-alias ban covers every deferred use (method calls, arguments and captures): `for k, &v := range m { defer v.Flush() }` and `{ defer show(v) }` are errors) if the collection lives until the function returns and is not appended to or reassigned before then (visible: compile error; hidden: [UB-1](16-undefined-behavior.md)), and a compile error if the collection is itself a loop-body local. `defer show(f)` follows the borrowed-argument rule for places (the collection lives until return and `f` is not written after). A deferred literal that captures `f` follows [CLO-3b](11-closures.md);
+- a **pointer-receiver deferred call** `defer x.M()` evaluates `&x` at the `defer` statement, as in Go. Later writes and pointer calls on `x` are allowed and are seen by the deferred call (`defer w.Flush(); w.WriteString(…)` works). It only needs `x` to live until the function returns (next bullet). **Moving** `x` while such a deferred call is pending is a compile error ([OWN-R3c](04-ownership.md#42-ownership-rules-d14)): the deferred call would read the zero value. Fix-it: `x.Clone()`. The "written or moved" rule above is for *borrowed owning arguments*, not for `&x` receivers;
+- **A ref or address written directly in the `defer` statement** (`&x`, `&x.f`, `buf[:2]`) is a use of that local, so it is extended like any other use. `defer unlock(&mu)` and `defer write(buf[:2])` inside a loop body are legal, as in Go: each iteration's `mu` lives until function exit. A pointer or ref taken **earlier** and stored in another variable does NOT extend its target: `p := &mu; defer unlock(p)` in a loop body does not keep `mu` alive, and if `mu` dies first (at the end of its block) the later use is UB ([UB-1](16-undefined-behavior.md)). The compiler does not track which variable a stored pointer came from. A pointer into a function-level local is fine in both forms;
 - anything else is a compile error.
-
-> **Open (P01 review):** the plan states only the borrowed, `move`/`clone` and trivial cases. The shared-handle, owned-temporary and raw-pointer cases are read from CON-1, D1.13 and D1.4 rule 8.
 
 ```go
 func read(paths []string) {
     for _, p := range paths {
         f := os.Open!(p)
-        defer f.Close() // error: deferred call borrows f, which is destroyed at the end of the loop body
-    }                   //        (f's destructor already closes it; the defer is not needed)
+        defer f.Close() // ok, as in Go: f lives until read returns, and is closed then
+    }
 }
 ```
 
-How to write it correctly:
+If you want each file closed at the end of its iteration, do not defer. Let the destructor run:
 
 ```go
 func read(paths []string) {
@@ -197,17 +195,17 @@ func one(p string, done chan int) {
     var mu sync.Mutex
     mu.Lock()
     defer mu.Unlock()             // ok: &mu is a pointer to a function-level local
-    defer log.Println(clone(p))   // ok: owned value cloned at the defer
+    defer log.Println(p)          // ok: p is a borrowed parameter that lives until one returns
 }
 ```
 
-Compared with Go: in Go the loop example compiles and closes all files at function exit (a known trap). In Go++ it is rejected, and the destructor closes each file at the end of the iteration.
+Compared with Go: the first loop example behaves exactly as in Go. All files stay open until the function returns (a known Go trap). Go++ keeps that behavior on purpose, and the second form is the way to close each file early.
 
-**PAN-4.** *Function exit order.* Deferred calls run LIFO. Then function-scope locals are destroyed in reverse declaration order. Block-scoped locals are destroyed at the end of their block. `main` is the one exception: its locals are dropped after the other goroutines stop ([INI-2](15-program-init.md)).
+**PAN-4.** *Function exit order.* Deferred calls run LIFO. Then function-scope locals are destroyed in reverse declaration order. Block-scoped locals are destroyed at the end of their block, except locals extended by an executed `defer` ([PAN-3](09-errors-and-panics.md)). **Exit order:** (1) deferred calls run LIFO; (2) then the extended locals and the function-scope locals are destroyed **together, in reverse order of creation** (the latest iteration's variable first). A local used by several deferred calls (`defer f.A(); defer f.B()`) therefore lives until all of them have run. `main` is the one exception: its locals, extended ones included, are dropped after the other goroutines stop ([INI-2](15-program-init.md), D1.18).
 
 **PAN-5.** *Panics in `drop`.* A panic that escapes a `drop` method **aborts** the program with a clear message. Drop glue never unwinds.
 
-**PAN-6.** *`own` arguments.* The callee owns its `own` arguments and drops them on every path, including panics.
+**PAN-6.** *`move` arguments.* The callee owns its `move` arguments and drops them on every path, including panics.
 
 **PAN-7.** *`-panic=abort`* removes unwinding: panics print and abort. Binaries are smaller and compiles are faster.
 - `recover()` always returns nil in this mode, and `gopp vet` warns about it.
@@ -239,5 +237,5 @@ func safe() (err error) {
 - **Libraries return errors.** This is why `!` does not always panic.
 - **Errors keep Go semantics** by being shared handles, so existing error idioms keep working.
 - **Traces outside the error** keep `==` and type switches exact.
-- **Function-scoped `defer`** is Go's rule. The loop-defer error turns a famous Go bug into a compile error.
+- **Function-scoped `defer`** is Go's rule, also in a loop. The loop variable's lifetime is extended until the deferred call has run, so code that is valid Go keeps its meaning.
 - **Rejected:** postfix `call()!` (needed a special semicolon rule and a `!=` lexing caveat); a `!` that always panics (pushed libraries toward crashing); a `try` keyword or a `#Try(...)` macro (`!` already returns errors in failable functions).

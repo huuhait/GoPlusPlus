@@ -43,8 +43,11 @@
 
 - **Semicolon insertion:** Go's rule, unchanged (D1.2).
 - **Disambiguation:**
-  - `own` and `view` are keywords, so type parsing stays LL(1). `Unique[T]`, `Shared[T]` and `Weak[T]` are ordinary generic types.
-  - In a parameter list, `own` is a mode followed by a type (`v own T`).
+  - `macro` is the only new reserved keyword. `ref` and `move` are contextual (P01 LEX-12): `ref` is special only where a type is expected, so `ref := "main"` is a normal statement. `Unique[T]`, `Shared[T]` and `Weak[T]` are ordinary generic types.
+  - In a parameter list, `move` is a mark before the parameter name (`move v T`, `move parts ...T`), told apart from a parameter named `move` (`move T`) by scanning to the end of the type, to tell `move v T` from a parameter named `move` of type T (for example `move G[K]` vs `move s [K]E`). `move(x)` is an ordinary call.
+  - In a range clause, `&` may mark the value variable (`for _, &d := range xs`, P01 D1.21).
+  - A struct field may carry attributes after its type and before the tag (``Name string @JSON("name") `db:"name"` ``, P01 D1.14).
+  - A `block` macro argument is a func literal (`#Repeat(3, func() { … })`, P01 D1.14).
   - `!` right before a parameter or argument list — after a name, `]`, `)` or the keyword `func` — marks a function that can fail (`func f!(…)`, `func!(int) T`) or an unwrapping call (`f!(x)`, `parse[int]!(s)`), D1.8. In unary position it is logical not. Go never puts `!` after a name, `]`, `)` or `func`, so this is unambiguous.
 - **Token trees:** `#Assert(x > 0, "msg")` stores the tokens `x > 0 , "msg"` with their bracket structure. P09 decides how each fragment is parsed.
 - **Error recovery:**

@@ -53,9 +53,9 @@
 |---|---|
 | struct | declaration order, C alignment |
 | `string` | `{ptr, len, cap}`; a literal points into rodata with cap 0 and is never freed |
-| `view string` | `{ptr, len}` |
+| `ref string` | `{ptr, len}` |
 | `[]T` | `{ptr, len, cap}` |
-| `view []T` | `{ptr, len}` |
+| `ref []T` | `{ptr, len}` |
 | interface | `{itab*, data}` |
 | func value | `{code*, env*}` |
 | `*T`, `Unique[T]` | pointer |
@@ -65,6 +65,7 @@
 **D4.6 — Panics are native C++ exceptions (Itanium ABI).**
 - The runtime defines a `type_info` for the panic payload and throws with `__cxa_allocate_exception`/`__cxa_throw`. So a C++ `catch (...)` that swallows a panic still frees it correctly.
 - Go++ frames use `__gxx_personality_v0` with cleanup landing pads that run destructors.
+- **Defer-extended locals (P01 D1.9, ADR-0006 D17):** a block-scoped local used by a `defer` gets per-execution storage. The defer record owns the local. The block-end drop is skipped when the record exists, and the local is dropped after all deferred calls have run, with the function-scope locals.
 - Functions containing `defer` also get a catch-all. **Deferred calls run inside the catch handler,** so nested panics follow P01 D1.9. The handler implements `recover`, and rethrows if the panic was not recovered. A deferred call may block and resume on another thread, so goroutine switches save the C++ exception state (P12 D12.4). In `main.main`, a panic still active after the deferred calls first stops the other goroutines (P12 D12.12), so `main`'s locals are dropped last, as at a normal exit.
 - **Catch-all trampolines** at `main`, at goroutine entry and at C-callback entry print an unrecovered panic, stop the other goroutines (P12 D12.12) and exit with code 2.
 - **One unwinder per binary:** libunwind with libc++; libgcc_s with libstdc++.

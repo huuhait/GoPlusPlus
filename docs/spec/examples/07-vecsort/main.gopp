@@ -16,7 +16,7 @@ func main() {
 
 	// copy the C++ elements into a Go++ slice to print them
 	out := make([]int32, 0, int(v.size()))
-	for x := range v { // lowered to begin()/end() iterator calls (P08 D8.6)
+	for _, x := range v { // lowered to begin()/end() iterator calls; x is a copy of the int32 element (RNG-6, P08 D8.6)
 		out = append(out, x)
 	}
 	fmt.Println("sorted:", out)
@@ -26,7 +26,7 @@ func main() {
 
 	algorithm.reverse(v.begin(), v.end())
 	out = out[:0] // reset in place, capacity kept
-	for x := range v {
+	for _, x := range v {
 		out = append(out, x)
 	}
 	fmt.Println("reversed:", out)

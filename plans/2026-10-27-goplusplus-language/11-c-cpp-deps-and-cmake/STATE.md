@@ -54,7 +54,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P11) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): cdeps keep taking their flags from their own CMake target; the gopp.mod `cxxstd`/`cflags`/`ldflags` do not apply to them.
 
 ## Notes / blockers
 

@@ -25,7 +25,7 @@ func work(jobs chan Job, results chan Result) {
 		for i := 0; i < len(job.Text); i++ {
 			sum += int(job.Text[i]) // reading job.Text is a borrow
 		}
-		// job.Text is a field: taking ownership of it needs move (or clone).
+		// job.Text is a field: taking ownership of it needs move(x) (or x.Clone()).
 		results <- Result{ID: job.ID, Text: move(job.Text), Sum: sum}
 	}
 }

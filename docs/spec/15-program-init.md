@@ -17,7 +17,7 @@ Delta D1.18. Syntax: no change.
 
 **INI-2.** *Normal exit.* After `main.main` returns and its deferred calls have run, the runtime:
 1. stops all other goroutines (P12 D12.12);
-2. drops `main`'s locals;
+2. drops `main`'s locals, including locals kept alive by a `defer` ([PAN-3](09-errors-and-panics.md));
 3. calls C `exit()`, which runs atexit handlers, flushes stdio and runs C++ static destructors.
 
 This is safe because no Go++ code is running any more. A stopped goroutine parks at its next yield point and never resumes; its stack is not unwound and its locals are not dropped.

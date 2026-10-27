@@ -50,7 +50,7 @@ HeaderExt        = ".h" | ".hh" | ".hpp" | ".hxx" .
 **FOR-6.** *No conversions in human code.*
 - C types are plain Go++ types (`int32`, `uint64`, `byte`, …; P07 D7.4). There is no `C.int`.
 - String literals and owned strings pass to `const char*` parameters as they are: owned strings are kept NUL-terminated, so there is no copy.
-- A `view string`, a substring or a borrowed `string` parameter (which may be a substring) passes as a **temporary NUL-terminated copy**.
+- A `ref string`, a substring or a borrowed `string` parameter (which may be a substring) passes as a **temporary NUL-terminated copy**.
 - Slices pass to pointer parameters (P07 D7.7).
 
 **FOR-7.** *Header extensions* are `.h`, `.hh`, `.hpp` and `.hxx`. This is the one list every phase uses.
@@ -59,18 +59,33 @@ HeaderExt        = ".h" | ".hh" | ".hpp" | ".hxx" .
 - For package headers, C or C++ comes from the package's CMake target (P11).
 - For `<…>` headers, `.h` is C and anything else (`<vector>`, `.hpp`) is C++.
 
-**FOR-9.** *Headers inside a Go++ module* (yours or a dependency's) are header imports too. An import path inside a Go++ module that ends in a header extension names a header file, not a package (P10 D10.1). `.h` is C, the other extensions are C++. Flags come from the package's `//gopp:cflags` and `//gopp:cxxstd`.
+**FOR-9.** *Headers inside a Go++ module* (yours or a dependency's) are header imports too. An import path inside a Go++ module that ends in a header extension names a header file, not a package (P10 D10.1). `.h` is C, the other extensions are C++. Flags come from the `cflags` and `cxxstd` directives of the gopp.mod of the module of the **importing** package, because each package has one Clang instance (P07, P08). A dependency's own `cxxstd` is a **minimum**: if the importer's is lower, the build fails with "module D needs c++23" ([FOR-10](#142-rules)).
 
-**FOR-10.** *Directives.* File-level build metadata uses Go-style directive comments: `//gopp:build`, `//gopp:cflags`, `//gopp:ldflags`, `//gopp:cxxstd` ([LEX-11](02-lexical.md)). They are comments to the lexer; the build tool reads them.
+**FOR-10.** *Directives and settings.* C and C++ settings are **not** written in source files. They are module-wide directives of `gopp.mod`, set once per project, like Go's `go.mod` ([P10](../../plans/2026-10-27-goplusplus-language/10-modules-gopp-mod-sum/README.md)):
+- `cxxstd c++20` (the C++ standard);
+- `cflags …` (extra C/C++ compiler flags);
+- `ldflags …` (extra linker flags). The `ldflags` of all modules in the build are combined for the final link, in module order (the main module last).
 
-> **Open (P01 review):** D1.15 does not say where each `//gopp:` directive may appear. This spec reads it like Go's `//go:build`: `//gopp:build` before the package clause; the other three anywhere before the `import` declarations of the file.
+C/C++ dependencies (`cdep`) keep taking their flags from their own CMake target (P11). The only directive comment left in source files is `//gopp:build`, which works exactly like Go's `//go:build`: it goes above the `package` clause ([LEX-11](02-lexical.md)). It is a comment to the lexer; the build tool reads it.
 
 ## 14.3 Examples
 
-```go
-package main
+`gopp.mod` of the project (the C++ standard is set once for the module):
 
-//gopp:cxxstd c++20
+```
+module example.com/demo
+
+gopp 0.1
+
+cxxstd c++20
+```
+
+The source file:
+
+```go
+//gopp:build linux
+
+package main
 
 import (
     "fmt"

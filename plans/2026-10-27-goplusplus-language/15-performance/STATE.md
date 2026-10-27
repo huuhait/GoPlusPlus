@@ -34,7 +34,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): `own` parameters are now `move` parameters (the `noalias` row), and `view` is renamed `ref`.
 
 ## Notes / blockers
 

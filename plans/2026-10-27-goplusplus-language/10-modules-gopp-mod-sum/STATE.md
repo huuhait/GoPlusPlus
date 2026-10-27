@@ -36,7 +36,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P10) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): gopp.mod gets the module-wide directives `cxxstd`, `cflags` and `ldflags` (replacing the removed source directives).
 
 ## Notes / blockers
 

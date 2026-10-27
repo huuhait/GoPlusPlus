@@ -34,7 +34,7 @@
 - The early minimal LSP uses the P04 source mode (P04 D4.11), which loads all packages from source.
 - Features:
   - diagnostics, completion and formatting;
-  - hover with ownership info ("owned", "view", "moved at line 12");
+  - hover with ownership info ("owned", "ref", "moved at line 12");
   - go-to-definition, including into C/C++ headers;
   - references and rename;
   - code actions from fix-its;
@@ -43,7 +43,7 @@
 
 **D14.4 — Debugging.**
 - DWARF comes from P04.
-- LLDB and GDB pretty printers (Python) cover `string`, views, slices, maps, interfaces, `Unique`/`Shared`/`Weak` pointers and channels.
+- LLDB and GDB pretty printers (Python) cover `string`, refs, slices, maps, interfaces, `Unique`/`Shared`/`Weak` pointers and channels.
 - A `gopp goroutines` LLDB command lists goroutines through a runtime debug API.
 
 **D14.5 — Editors.**

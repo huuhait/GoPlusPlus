@@ -17,18 +17,18 @@ const (
 	Neg
 )
 
-// Node is trivial (numbers, a view and raw pointers), so the arena can own it.
-@View
+// Node is trivial (numbers, a ref and raw pointers), so the arena can own it.
+@Ref
 type Node struct {
 	Kind Kind
 	Val  int64
-	Text view string // the source text of a number: points into the source
+	Text ref string // the source text of a number: points into the source
 	L, R *Node
 }
 
-@View
+@Ref
 type Parser struct {
-	src   view string
+	src   ref string
 	pos   int
 	arena *mem.Arena
 }
@@ -118,7 +118,7 @@ func (p *Parser) factor!() *Node {
 		}
 		n := p.node(Num, nil, nil)
 		n.Val = v
-		n.Text = p.src[start:p.pos] // a view of the source: no copy
+		n.Text = p.src[start:p.pos] // a ref into the source: no copy
 		return n
 	}
 	return nil, p.fail("expected a number")

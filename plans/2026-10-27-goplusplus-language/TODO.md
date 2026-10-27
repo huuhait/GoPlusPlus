@@ -53,13 +53,13 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P01.03 Ownership chapter**:
   - type categories, including shared handles (D1.3);
   - owners, drop order, moves and `move`;
-  - reading from non-local places (rule 3a), zero values, `clone`;
+  - reading from non-local places (rule 3a), zero values, `Clone` (`x.Clone()`, short form `clone(x)`);
   - C++ class types (rule 9) and pinned values (rule 10);
   - heap allocation (`new_unique`, `new_shared`, `new_weak`; `&T{}` removed) and pointer kinds;
-  - views and the `append` rule.
+  - refs and the `append` rule.
 
   *Done when:* every rule is numbered and has an example and a rationale.
-- **P01.04 Parameter passing**: owning parameters borrow (read-only at top level); trivial parameters are copies; `own`; `*T`; receivers; `&param`; ABI notes; generic examples with an owning `T`. *Done when:* the chapter is complete.
+- **P01.04 Parameter passing**: owning parameters borrow (read-only at top level); trivial parameters are copies; `move` (before the name; owning variadics `move ...T`); `*T`; receivers; `&param`; ABI notes; generic examples with an owning `T`. *Done when:* the chapter is complete.
 - **P01.05 `!` and errors chapter**:
   - `func f!()` declarations, literals and function types;
   - `call!()`: returns the error inside functions that can fail, panics elsewhere;
@@ -73,14 +73,14 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P01.06 panic/defer/recover**:
   - unwinding with destructors;
   - Go-exact nested panics, and panics in `drop` (abort);
-  - `own` arguments on panic;
+  - `move` arguments on panic;
   - function-scoped defer and the defer-argument rule;
   - exit order;
   - forced unwinding and `longjmp`;
   - `-panic=abort`.
 
-  *Done when:* the chapter is complete, including the rejected loop-defer example.
-- **P01.07 Generics deltas**: `trivial` and `clonable` constraints, owning type arguments, `clone` in generic returns, generic methods (D1.10). *Done when:* the chapter is complete.
+  *Done when:* the chapter is complete, including the loop-defer example (legal, as in Go, D1.9).
+- **P01.07 Generics deltas**: `Copy` and `Clone` constraints (written like `comparable`), owning type arguments, `Clone` in generic returns, generic methods (D1.10). *Done when:* the chapter is complete.
 - **P01.08 Concurrency semantics**: `go` argument rules, closures used with `go`, channel and `select` moves, program exit with running goroutines (D1.18), Go's memory model, races as UB. *Done when:* the chapter is complete.
 - **P01.09 Closures chapter**: D1.11 — shared cells for escaping closures, method values, recursive closures, defer arguments. *Done when:* the rule has ≥ 6 examples, each compared with Go's behavior.
 - **P01.10 Macro & attribute surface**: syntax, the built-in attribute list, and naming across packages (`#pkg.Name`, predeclared std macros, how `@Derive(X)` finds X). *Done when:* the chapter is complete and points to P09 for semantics.
@@ -101,8 +101,8 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - `longjmp`.
 
   *Done when:* the chapter is complete.
-- **P01.15 Spec review**: owner review; update ADR-0003/0004. *Done when:* all review comments are resolved.
-- **P01.16 Slices and range chapter**: re-slicing owned slices in place (D1.20), allocators in slices and maps (D1.22), `container/deque` for queues, `dst own []T` for append-style functions, range loops (D1.21), and temporaries in statement headers (D1.6). *Done when:* the chapter is complete with examples.
+- **P01.15 Spec review**: owner review of the 42 notes (decisions D1–D25 are recorded in `01-language-spec/STATE.md`); apply them to the spec, the plan and the ADRs; update ADR-0003/0004 and add ADR-0006. *Done when:* all review comments are resolved.
+- **P01.16 Slices and range chapter**: re-slicing owned slices in place (D1.20), allocators in slices and maps (D1.22), `container/deque` for queues, `move dst []T` for append-style functions, range loops including the `&d` form (D1.21), and temporaries in statement headers (D1.6). *Done when:* the chapter is complete with examples.
 
 ## P02 — Front-end ([README](02-frontend/README.md))
 
@@ -112,13 +112,13 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P02.04 AST & arenas**: node set, arena allocation, identifier interning, dump printer. *Done when:* `--dump-ast` output is stable.
 - **P02.05 Parser core**:
   - declarations;
-  - types (`own`, `view`, `Unique[T]`/`Shared[T]`/`Weak[T]`);
+  - types (`ref`, `Unique[T]`/`Shared[T]`/`Weak[T]`), the `move` parameter mark, and the `&` mark in range clauses;
   - statements and expressions;
   - `!` functions, literals, function types and calls (`func f!(…)`, `func!(int) T`, `f!(…)`, `parse[int]!(s)`);
   - generics.
 
   *Done when:* grammar-coverage tests pass.
-- **P02.06 Parser: macros & attributes**: `#Name(...)`, `#pkg.Name(...)` and `@Name(...)` as token trees; `macro` definitions. *Done when:* tests pass.
+- **P02.06 Parser: macros & attributes**: `#Name(...)`, `#pkg.Name(...)` and `@Name(...)` as token trees; `macro` definitions; attributes after a struct field's type (before the Go tag). *Done when:* tests pass.
 - **P02.07 Error recovery**: sync points; tailored messages for the 20 most common mistakes, Go habits included. *Done when:* golden tests pass.
 - **P02.08 `gopp parse`**: `--dump-ast`, `--dump-tokens`. *Done when:* the lit suite's AST golden files are produced with `gopp parse --dump-ast`.
 - **P02.09 `gopp fmt`**: comment map, gofmt rules extended to the new syntax, `-l -w -d`. Header imports are never reordered. *Done when:* the round-trip invariant holds on the corpus, and a test shows header import order is kept.
@@ -135,11 +135,13 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P03.06 Generics**: type parameters, type sets, inference, instantiation checks, generic methods (P01 D1.10). *Done when:* ≥ 90% of the ported types2 generics cases pass.
 - **P03.07 Type-level ownership**:
   - type categories and shared handles;
-  - `own` mode, read-only owning parameters, trivial parameters as copies;
-  - reading from non-local places (rule 3a: borrow, or `clone`/`move` fix-its);
-  - view conversions and borrow-of-temporary errors;
-  - `move`/`clone` typing and the `append` rule;
-  - `trivial`/`clonable`;
+  - `move` mode (and `move ...T` for owning variadics), read-only owning parameters, trivial parameters as copies;
+  - reading from non-local places (rule 3a: borrow, or `x.Clone()`/`move(x)` fix-its);
+  - range variables: read-only borrows, the `&d` alias form, and the loop-variable redeclaration error;
+  - ref conversions and borrow-of-temporary errors;
+  - `move`/`clone` typing, `x.Clone()` and `IsNil()` method lookup, and the `append` rule;
+  - `Copy`/`Clone` constraints;
+  - returning a `ref` into a local;
   - `@Pinned`.
 
   *Done when:* rule-table tests pass.
@@ -147,7 +149,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P03.09 Foreign scope interface**: `ForeignScope` plus a mock. *Done when:* tests with fake C/C++ declarations pass.
 - **P03.10 Parallel body checking**. *Done when:* diagnostics are deterministic, and the speedup is measured and recorded.
 - **P03.11 Type serialization interface**: for export data (the format itself is P06). *Done when:* round-trip tests pass.
-- **P03.12 `gopp check` & `gopp vet` v0**: `check` runs the type-level checks (P04.09 adds the GIR checks). First lints: view-typed fields, drop-on-zero heuristic, a `!` that would panic outside `main`. *Done when:* CLI tests pass.
+- **P03.12 `gopp check` & `gopp vet` v0**: `check` runs the type-level checks (P04.09 adds the GIR checks). First lints: ref-typed fields, drop-on-zero heuristic, a `!` that would panic outside `main`. *Done when:* CLI tests pass.
 - **P03.13 Check throughput**: measure against the D3.10 budget. *Done when:* the budget is met or an ADR documents the gap.
 
 ## P04 — GIR and LLVM codegen ([README](04-gir-and-llvm-codegen/README.md))
@@ -156,10 +158,11 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P04.02 M0 hello**: `println` via `@Extern("C") write`; LLVM IR → object → LLD, using host sysroot discovery (P00.12). *Done when:* hello runs from a lit test on NixOS and on a Debian container.
 - **P04.03 Targets & linking**: triples, data layouts, TargetMachine, crt objects, LLD driver; linux/amd64 and linux/arm64, each built natively on its own CI runner (cross builds come with musl, P07.14). *Done when:* hello runs on both runners.
 - **P04.04 Lower core**: scalars, control flow, functions, structs, arrays, raw pointers, and the Go-semantics lowering table (D4.12). *Done when:* run tests pass, including `MinInt64 / -1`, shifts ≥ the bit width, and out-of-range float → int.
-- **P04.05 Lower strings/slices/views/maps**: maps use a temporary runtime until P05.06. *Done when:* run tests pass.
+- **P04.05 Lower strings/slices/refs/maps**: maps use a temporary runtime until P05.06. *Done when:* run tests pass.
 - **P04.06 Lower methods & interfaces**: static itabs, borrowed interfaces, shared interface values, type switches, assertions. *Done when:* run tests pass.
 - **P04.07 Lower closures, defer, panics**:
   - closures with shared cells for captured variables;
+  - defer-extended locals: per-execution storage, the defer record owns the local, the block-end drop is skipped when the record exists, and it is dropped after all deferred calls (P01 D1.9);
   - escape analysis decides cells vs. plain references, using the "callee keeps this parameter" bits from export data (P01 D1.11);
   - panics as native C++ exceptions, with catch-all trampolines (D4.6);
   - starts after the P04.15 spike.
@@ -203,7 +206,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P05.03 Allocators**: `mem.Allocator`, the default libc allocator, `mem.Arena`, allocator objects stored in slices and maps (P01 D1.22). *Done when:* tests pass under ASan.
 - **P05.04 Owned strings**: literals (cap 0), NUL-terminated buffers (capacity len+1), concatenation, conversions, UTF-8 helpers. *Done when:* tests and microbenchmarks pass.
 - **P05.05 Slices**: growth policy, append/copy/clear, element drops, in-place re-slicing (D1.20), the allocator word (D1.22). *Done when:* tests pass, and the append benchmark against `std::vector::push_back` is recorded.
-- **P05.06 Maps**: Swiss table, seeded hashing, randomized iteration start, drops, view-key lookups, the active-iterator count (D1.21), the allocator in the header (D1.22). *Done when:* tests pass, and the benchmark against absl::flat_hash_map is recorded.
+- **P05.06 Maps**: Swiss table, seeded hashing, randomized iteration start, drops, ref-key lookups, the active-iterator count (a new-key insert during `range` always panics, D1.21), the allocator in the header (D1.22). *Done when:* tests pass, and the benchmark against absl::flat_hash_map is recorded.
 - **P05.07 Pointer kinds**: `Unique[T]`, `Shared[T]` (single-allocation control block), `Weak[T]`, with `new_unique`, `new_shared`, `new_weak`. *Done when:* tests pass.
 - **P05.08 Type descriptors & glue**:
   - drop/clone/hash/eq glue;
@@ -272,7 +275,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P07.05 C macros**: untyped numeric constants, alias macros, simple function-like macros with inferred parameter types. *Done when:* tests on `limits.h`, `zlib.h` (with and without `Z_PREFIX`) and SDL2 constants pass.
 - **P07.06 Header inline functions**: Clang CodeGen into the package module. *Done when:* they are inlined in release builds (FileCheck).
 - **P07.07 Strings & memory helpers**:
-  - owned strings pass to C with no copy, views as temporaries;
+  - owned strings pass to C with no copy, refs as temporaries;
   - empty slices pass non-NULL;
   - inner-NUL check;
   - variadic rules;
@@ -286,7 +289,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - a panic in a callback exits with code 2 by default, and `@Unwind` opts in to unwinding through C.
 
   Foreign threads and pinning are P12.08. *Done when:* tests pass, including a panic inside a qsort callback, with and without `@Unwind`.
-- **P07.09 Package-local C/C++/asm and own-module headers**: `//gopp:cflags`, `//gopp:ldflags`; header imports from your own and dependency modules (D7.3). *Done when:* the sqlite amalgamation sample builds, with `sqlite3.h` imported from the package.
+- **P07.09 Package-local C/C++/asm and own-module headers**: the module's `cflags` and `ldflags` directives from gopp.mod (D1.15, P10.01); header imports from your own and dependency modules (D7.3). *Done when:* the sqlite amalgamation sample builds, with `sqlite3.h` imported from the package.
 - **P07.10 `gopp cc` / `c++` / `ar`**. *Done when:* they build a small C project.
 - **P07.11 Import unit caching**: PCH + binding export data. *Done when:* warm import overhead is ≤ 20 ms per package.
 - **P07.12 ABI fuzzing**: C signatures in both directions, amd64 and arm64. *Done when:* ≥ 10k signatures per target run with 0 mismatches.
@@ -304,7 +307,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P08.02 Stage 1: free functions & POD**: enums, overloads via Sema, the allowed implicit conversions (D8.4). *Done when:* tests pass, including a rejected narrowing conversion.
 - **P08.03 Stage 2: classes & lifetimes**:
   - methods, constructors, destructors;
-  - `clone`, moves, relocation (D8.3);
+  - `Clone`, moves, relocation (D8.3);
   - the no-zero-value rule.
 
   *Done when:*
@@ -312,7 +315,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - a growing `[]` of `std::string` stays valid.
 - **P08.04 Same-module C++ codegen**. *Done when:* the inlining FileCheck test passes.
 - **P08.05 Stage 3: templates**: class and function templates via Sema. *Done when:* vector/map/sort tests pass.
-- **P08.06 Stage 4: operators & iterators**: including `range` over `begin()`/`end()`. *Done when:* tests pass.
+- **P08.06 Stage 4: operators & iterators**: including `range` over `begin()`/`end()`: the `&x` form and the one-variable form (index for indexable containers, key for associative ones, error for `std::list`). *Done when:* tests pass.
 - **P08.07 References**: `T&`, `const T&`, `T&&`. *Done when:* tests pass.
 - **P08.08 Inheritance & virtuals**. *Done when:* tests pass.
 - **P08.09 Stage 5: exceptions ↔ panics**: native-exception panics (D4.6), `ffi.Exception`, `ffi.Try`, forced unwinding left alone. *Done when:* both directions work, and destructors are verified to run on both sides.
@@ -330,8 +333,8 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P09.03 GIR interpreter**: bytecode VM, fuel and memory limits, VM built-ins, the per-package comptime GIR artifact (D9.4, D9.5). *Done when:* GIR test programs run, and an `@Extern` call inside a macro gives a clear error.
 - **P09.04 `gopp/macro` API**: syntax types, quoting, diagnostics, type queries, naming across packages. *Done when:* the API doc and tests exist.
 - **P09.05 Procedural expression/statement macros**: including `macro func Name!` errors, and panics turned into compile errors (D9.11). *Done when:* tests pass, including the macro backtrace.
-- **P09.06 Attached macros**: declared names, type queries, the D9.3 ordering rule. *Done when:* tests pass, including rejected cycles and constraint checks that see the generated methods.
-- **P09.07 Built-in macros**: `#Assert` (no `fmt` needed), `#Stringify`, `#File`/`#Line`, `#Embed` (`view string`), `#Todo`, `#Unreachable`. *Done when:* tests pass.
+- **P09.06 Attached macros**: declared names, type queries, the D9.3 ordering rule; compile-time arguments are required only for `lit` parameters and `@` arguments (MAC-14). *Done when:* tests pass, including rejected cycles and constraint checks that see the generated methods.
+- **P09.07 Built-in macros**: `#Assert` (no `fmt` needed), `#Stringify`, `#File`/`#Line`, `#Embed` (`ref string`), `#Todo`, `#Unreachable`. *Done when:* tests pass.
 - **P09.08 `@Derive` set**: `JSON` (generated `MarshalJSON`/`UnmarshalJSON`) and `Equal` (for structs `==` can't compare). *Done when:* a P09 test package uses both. The `encoding/json` comparison is in P13.08.
 - **P09.09 Expansion cache**: keyed by all the GIR an expansion executed. *Done when:* ≥ 95% hits on a no-op rebuild, and editing a helper the macro calls invalidates it.
 - **P09.10 Tooling hooks**: `gopp expand`, macro backtraces, debug-info mapping. *Done when:* tests pass.
@@ -341,7 +344,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 ## P10 — Modules: gopp.mod / gopp.sum ([README](10-modules-gopp-mod-sum/README.md))
 
 - **P10.01 gopp.mod parser/printer**:
-  - the go.mod grammar plus `gopp`, `toolchain`, `cxxstdlib`, `csystem`;
+  - the go.mod grammar plus `gopp`, `toolchain`, `cxxstdlib`, `csystem`, and the module-wide `cxxstd`, `cflags` and `ldflags` (D10.2);
   - `cdep` blocks with `uses`, `tag` and `// indirect`;
   - classification by the longest prefix (D10.1).
 
@@ -421,7 +424,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
 ## P13 — Standard library v1 ([README](13-standard-library/README.md))
 
-- **P13.01 API conventions doc**: ownership in signatures, `!` functions, shared errors, `dst own []T`. *Done when:* `docs/std-conventions.md` is merged.
+- **P13.01 API conventions doc**: ownership in signatures, `!` functions, shared errors, `move dst []T`. *Done when:* `docs/std-conventions.md` is merged.
 - **P13.02 T1 core**: errors (shared values, `MustError`), unsafe, runtime, mem, math, math/bits, unicode/utf8. *Done when:* tests pass.
 - **P13.03 T1 text**: strings, bytes, strconv. *Done when:* ported tests pass.
 - **P13.04 T1 fmt**: Go-compatible `%v`/`%+v` on any type via field tables (D13.4); replaces the bootstrap `fmt`. *Done when:* output matches Go's `fmt` on the ported test cases.

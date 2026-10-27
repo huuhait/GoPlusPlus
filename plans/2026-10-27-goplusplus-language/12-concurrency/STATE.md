@@ -35,7 +35,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P12) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): a channel and its buffered values are freed automatically (no `ch.Destroy()`); the marker that lets `sync.Scope` goroutines borrow (for example `@Scoped`) is designed here.
 
 ## Notes / blockers
 

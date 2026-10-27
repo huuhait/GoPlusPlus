@@ -10,12 +10,12 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 
 | # | Requirement | Answer in this plan | Phases |
 |---|---|---|---|
-| R1 | Syntax like Go | The Go grammar is the base, with a small set of deltas: ownership words (`own`, `view`), owning pointers `Unique[T]`/`Shared[T]`/`Weak[T]`, `!` for errors (`func f!()`, `call!()`), `#Name(...)`, `@Name`, and header imports (`"github.com/madler/zlib/zlib.h"`, `"<vector>"`). `gopp fmt` is canonical, like gofmt. | P01, P02 |
+| R1 | Syntax like Go | The Go grammar is the base, with a small set of deltas: ownership words (`move`, `ref`), owning pointers `Unique[T]`/`Shared[T]`/`Weak[T]`, `!` for errors (`func f!()`, `call!()`), `#Name(...)`, `@Name`, and header imports (`"github.com/madler/zlib/zlib.h"`, `"<vector>"`). `gopp fmt` is canonical, like gofmt. | P01, P02 |
 | R2 | Macros | Hygienic declarative macros (`macro`), plus procedural macros written in Go++ and run at compile time by a sandboxed interpreter. Invoked as `#Name(...)`, attached as `@Name`. | P09 |
 | R3 | `!` for Must | `func load!(…) T` declares a function that can fail; callers see `(T, error)`. `val := call!()` unwraps the error: inside a function that can fail it returns the error to the caller, elsewhere (e.g. `main`) it panics with the source location. Go's `val, err := call()` still works. | P01, P03, P04 |
 | R4 | Compile fast like Go | Each package compiles separately, in parallel, from its dependencies' export data (no headers). The build is pipelined, outputs go in a content-addressed cache, and the debug pipeline is cheap. C/C++ imports are cached. | P06 (+P02–P04) |
 | R5 | Fast like C++ (or almost) | Value types, no GC, monomorphized generics, and LLVM O2/O3. C/C++ code is generated into the *same* LLVM module, so it inlines. LTO and PGO are available. | P04, P08, P15 |
-| R6 | No GC | Ownership with RAII destructors, moves, explicit `clone`, borrowed views and arenas. No tracing GC. Reference counting happens only on shared handles: `Shared`/`Weak`, channels, interface values (including errors) and func values. | P01, P05 |
+| R6 | No GC | Ownership with RAII destructors, moves, explicit `clone`, borrowed refs and arenas. No tracing GC. Reference counting happens only on shared handles: `Shared`/`Weak`, channels, interface values (including errors) and func values. | P01, P05 |
 | R7 | Import any C/C++ files and packages | Go-style header imports, used like Go packages: `import "github.com/madler/zlib/zlib.h"` → `zlib.crc32(…)`, `import "<vector>"` → `vector.vector[int32]`. No `C.` prefix and no C-specific types. Embedded Clang parses headers and declarations are translated lazily. Clang Sema handles overloads and templates, and Clang CodeGen emits inline code. | P07, P08, P11 |
 | R8 | Import any CMake project | gopp runs CMake with its own toolchain file and intercepts `find_package`/`FetchContent` through a dependency provider. Usage flags and link lines come from a small probe project, read through the CMake File API. CMake is the only build system in v1: a package without CMake gets a small local CMake file (`cmake ./cmake/X.cmake`), and `mode static`/`mode dynamic` picks the library type. | P11 |
 | R9 | `gopp.mod` / `gopp.sum` like Go | Go's module design (MVS, semantic import versioning, `h1:` hashes), extended with `cdep` blocks for C/C++. | P10 |
@@ -30,7 +30,9 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
    - putting a value into an interface variable, or a callee keeping a borrowed interface argument (P01 D1.12);
    - variables captured by a closure that outlives its function;
    - goroutine stacks and map growth;
-   - passing a `view string` or a borrowed `string` parameter to C (a temporary copy, on the stack when short).
+   - the key clone when a new entry is inserted into a map (any owning key: a `ref` key or a borrowed one; P01 D1.6, OWN-V4a);
+   - defer records for deferred calls in loops (they hold the extended locals, D1.9);
+   - passing a `ref string` or a borrowed `string` parameter to C (a temporary copy, on the stack when short).
 2. **Reuse, don't rewrite.** C and C++ libraries are first-class dependencies. When in doubt, Clang decides C/C++ semantics (layout, overloads, templates, ABI, mangling).
 3. **Go's simplicity.** Where Go has a construct, keep its syntax and, wherever GC isn't involved, its semantics. Add new syntax only where ownership or interop requires it.
 4. **Fast edit–build–run loop.** Debug builds favor compile speed and release builds favor runtime speed. Language semantics are identical in both.
@@ -41,7 +43,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 ## 3. Non-goals for v1
 
 - Source compatibility with Go. Go code that relies on GC won't compile unchanged; a migration helper comes after v1.
-- A borrow checker or fully lifetime-checked memory safety. The `view`/owned split keeps the door open for later.
+- A borrow checker or fully lifetime-checked memory safety. The `ref`/owned split keeps the door open for later.
 - A tracing GC, or automatic refcounting of everything.
 - User-defined operator overloading, class inheritance, or exceptions as an error mechanism. Imported C++ operators and exceptions *are* supported at the boundary.
 - A user-facing `reflect` package. `fmt` and `encoding/json` still work on any type, using small field tables the compiler emits (P01 D1.12).
@@ -92,7 +94,7 @@ func main() {
     fmt.Println("crc32:", checksum(data))
 
     var v vector.vector[int32]   // a real std::vector<int32_t>; destroyed at scope end
-    for _, b := range data[:min(8, len(data))] {      // slicing yields a view: no copy
+    for _, b := range data[:min(8, len(data))] {      // slicing yields a ref: no copy
         v.push_back(int32(b))
     }
     algorithm.sort(v.begin(), v.end())
@@ -130,10 +132,10 @@ github.com/madler/zlib v1.3.1/cdep h1:<sha256 hash of the source tree, base64>=
 |---|---|---|
 | Memory | Tracing GC | Ownership + deterministic destructors (RAII); no GC |
 | Allocators | One GC heap | Each owned slice and map stores its allocator, so it can live in an arena (`mem.Arena`) |
-| `string`, `[]T`, `map` | GC-shared references | Owned values. Assignment moves them; `clone(x)` copies |
+| `string`, `[]T`, `map` | GC-shared references | Owned values. Assignment moves them; `x.Clone()` copies |
 | Interfaces, errors, func values, channels | GC-shared references | Shared handles: copies share the same value through a reference count, as in Go (`err == io.EOF` works) |
 | Closures | Capture variables by reference | Same. A closure that outlives its function keeps captured variables in shared cells |
-| Borrowing | Everything is shared | Parameters borrow by default. `view string` / `view []T` store or return borrows |
+| Borrowing | Everything is shared | Parameters borrow by default; `move` before a parameter name takes ownership. `ref string` / `ref []T` store or return borrows |
 | `*T` | GC pointer | Raw non-owning pointer. `Unique[T]` owns; `Shared[T]` / `Weak[T]` are refcounted, opt-in |
 | `new(T)`, `&T{…}` | GC allocation | Removed. Allocation is explicit: `new_unique(v)` → `Unique[T]`, `new_shared(v)` → `Shared[T]`; `new_weak(s)` makes a `Weak[T]` from a `Shared[T]` |
 | Errors | `val, err := call()` + `if err != nil` | Same, plus `func f!(…) T` (can fail; returns `(T, error)`) and `val := call!()`, which returns the error from functions that can fail and panics elsewhere |
@@ -252,7 +254,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 | Panic cleanup turns most calls into `invoke`, which x86-64 FastISel can't handle | Slow debug builds (R4) | A spike (P04.15) measures it before the panic design is fixed. Options: patch FastISel, use GlobalISel, or the D6.9 fallback | P04, P06 |
 | Clang is single-threaded | Races, or all C++ work serialized | One Clang worker per package; packages share only PCH files (P07 D7.1) | P06, P07 |
 | Ownership model feels un-Go-like | Adoption | Write the sample programs before implementing; keep a spec-revision window after M2 | P01, P05 |
-| Dangling views/pointers without a borrow checker | Memory bugs | Compile errors for the obvious cases, lints, sanitizers behind one flag, `view` types that make borrows visible; lifetime-checker research after v1 | P01, P03, P05 |
+| Dangling refs/pointers without a borrow checker | Memory bugs | Compile errors for the obvious cases, lints, sanitizers behind one flag, `ref` types that make borrows visible; lifetime-checker research after v1 | P01, P03, P05 |
 | CMake builds run arbitrary code | Supply chain | Lock files, a Landlock sandbox (no network; writes only to a private source copy and the build dir), the dependency provider, and a hermetic mode | P11 |
 | Bundling LLVM/Clang/LLD | Huge binary, slow CI | Prebuilt LLVM via Nix, ccache, shared-library dev builds | P00 |
 | Scope (language + std + package manager + IDE) | Never ships | Milestones as vertical slices, a tiered std, strict non-goals | all |
@@ -265,7 +267,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 - **GIR**: Go++ IR, the typed CFG-based mid-level IR between the AST and LLVM IR.
 - **Export data (`.gopx`)**: a binary summary of a compiled package (types, generic and inlinable bodies, macros). Importers read it instead of sources.
 - **Owning type**: a type with a destructor, either directly (`drop`) or through its fields. It is move-only and copied with `clone`.
-- **Trivial type**: a type copied bit-for-bit, with no destructor (numbers, bools, raw pointers, views, aggregates of these).
+- **Trivial type**: a type copied bit-for-bit, with no destructor (numbers, bools, raw pointers, refs, aggregates of these).
 - **Shared handle**: a value whose copies all share one thing through a reference count: `Shared[T]`, `Weak[T]`, channels, interface values (including errors) and func values.
 - **Drop glue**: compiler-generated code that destroys a value (it calls `drop`, then destroys the fields). **Drop elaboration** is the compiler step that inserts these calls.
 - **Relocate**: moving a value to a new address (for example when a slice grows). It is `memcpy` for Go++ types, and the move constructor for C++ types that need one.
@@ -282,7 +284,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 - **Probe project**: a tiny generated CMake project that links a cdep's targets, so gopp can read the exact flags and link line a user needs.
 - **Landlock**: a Linux feature that limits which files a process may read and write, without needing root.
 - **Must**: the `!` operator's job: take the value, or deal with the error (return it, or panic).
-- **View**: a borrowed `(ptr, len)` sequence: `view string`, `view []T`.
+- **Ref**: a borrowed `(ptr, len)` sequence: `ref string`, `ref []T`.
 - **cdep**: a C/C++ dependency declared in `gopp.mod`.
 - **Header package**: an imported C/C++ header, used like a Go package named after the file (`zlib.crc32`, `vector.vector[int32]`).
 - **`!` function**: a function declared `func f!(…) T`. It returns `(T, error)`, and `call!()` inside it returns errors to its caller instead of panicking. A Go-style function whose last result is `error` behaves the same way.

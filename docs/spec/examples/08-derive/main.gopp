@@ -25,7 +25,7 @@ type Config struct {
 
 func main() {
 	a := Config{Name: "demo", Tags: []string{"a", "b"}, Limits: map[string]int{"cpu": 2, "mem": 512}}
-	b := clone(a) // structural clone: every field is clonable
+	b := a.Clone() // structural clone: every field is cloneable
 
 	#Assert(a.Equal(b), "configs should be equal") // panics with the expression text if false
 	fmt.Println(#Stringify(a.Equal(b)), "=", a.Equal(b))

@@ -17,7 +17,7 @@ The work ships in five stages. Each stage is tested and usable before the next o
 ## Decisions
 
 **D8.1 — Import surface: each header is a package.**
-- `import "<vector>"` (standard library) or a Go-style package path such as `import "github.com/fmtlib/fmt/include/fmt/format.h"` adds the header to the package's C++ import unit. The default standard is C++20. A package can override it with `//gopp:cxxstd`, and headers from cdeps use the standard of their CMake target. Different standards from two cdep targets in one package are an error (P07 D7.1).
+- `import "<vector>"` (standard library) or a Go-style package path such as `import "github.com/fmtlib/fmt/include/fmt/format.h"` adds the header to the package's C++ import unit. The default standard is C++20. The standard is set once per module with `cxxstd c++20` in gopp.mod (P10), and headers from cdeps use the standard of their CMake target. Different standards from two cdep targets in one package are an error (P07 D7.1).
 - The header becomes a package named after the file, as for C (P07 D7.3): `<vector>` → `vector`, `<algorithm>` → `algorithm`, `format.h` → `format`, `imgui.h` → `imgui`. A header whose name is a Go++ keyword or predeclared name must be renamed: `import stdmap "<map>"`, `import cppstr "<string>"`, `import stdany "<any>"`.
 - **Namespaces are flattened into the package.** Every name the header declares, in any namespace, is reachable directly:
   - `std::vector` → `vector.vector[int32]`, `std::sort` → `algorithm.sort(…)`, `ImGui::Begin` → `imgui.Begin(…)`, `fmt::vformat` → `format.vformat(…)`;
@@ -38,7 +38,7 @@ The work ships in five stages. Each stage is tested and usable before the next o
 - **Default construction.** `var v vector.vector[int32]` runs the default constructor. A type without one has no zero value (P01 D1.4 rule 9), so it must be initialized at its declaration.
 - **Other constructors.** Use conversion-call syntax: `cppstr.string("hi")` (with `import cppstr "<string>"`), `foo.Foo(1, 2)`. Sema picks the constructor.
 - **Destruction.** At scope end and during unwinding. Go++ drop glue calls the C++ destructor.
-- **Copy.** `clone(x)` calls the copy constructor. A type whose copy constructor is deleted is not `clonable`.
+- **Copy.** `x.Clone()` (and its short form `clone(x)`) calls the copy constructor. A type whose copy constructor is deleted does not satisfy `Clone`.
 - **Move.** Every Go++ move of a C++ value, implicit or `move(x)`, runs the move constructor. The source keeps the C++ "moved-from" state (not the zero value) and is destroyed at the end of its scope (C++ semantics).
 - **Relocation.** Containers (slice growth, map rehash) relocate elements with the type's relocate operation (P05 D5.5):
   - `memcpy` only for types Clang reports as trivially relocatable (e.g. `[[clang::trivial_abi]]`);
@@ -60,7 +60,8 @@ The work ships in five stages. Each stage is tested and usable before the next o
 
 **D8.6 — Operators and iterators.**
 - Imported C++ operator overloads work with Go++ operator syntax on C++ types: `a + b`, `v[i]`, `a == b`, `*it`.
-- `for x := range c` works on any type with `begin()`/`end()`; it is lowered to C++ iterator calls.
+- `for _, x := range c` works on any type with `begin()`/`end()`; it is lowered to C++ iterator calls. It works like a slice loop (P01 D1.21): `x` is a read-only borrow of each element (no C++ copy constructor runs; trivial element types are copied), and `for _, &x := range c { x += 1 }` changes the real element, like C++ `auto&`.
+- C++ containers work like a slice for the two-variable and `&` forms. The one-variable form `for x := range c` gives the index for indexable containers and the key for associative ones (`std::map`); for containers with neither (`std::list`) it is a compile error, so use `for _, x := range c`. For associative containers the two-variable form gives the key and the mapped value, like a Go map (`for k, v := range cppmap`; `&v` aliases the mapped value).
 - Native Go++ types still have no user-defined operators (P01).
 
 **D8.7 — References.**

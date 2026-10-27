@@ -10,14 +10,14 @@ Base: Go spec [Lexical elements](https://go.dev/ref/spec#Lexical_elements), [Tok
 
 ### Keywords
 
-**LEX-2.** Three new keywords are reserved: `own`, `view`, `macro`.
+**LEX-2.** One new keyword is reserved: `macro`. Two more words are *contextual*: `ref` and `move` ([LEX-12](#lex-12)). They are not reserved, so they stay usable as names.
 
 ```
-keyword = /* the 25 Go keywords */ | "own" | "view" | "macro" .
+keyword = /* the 25 Go keywords */ | "macro" .
 ```
 
 - A keyword cannot be used as an identifier.
-- Go code that uses `own`, `view` or `macro` as a name must be renamed. This is accepted: source compatibility with Go is a non-goal.
+- Go code that uses `macro` as a name must be renamed. This is accepted: source compatibility with Go is a non-goal.
 
 ### New tokens
 
@@ -62,7 +62,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 |---|---|
 | functions | `move`, `clone`, `new_unique`, `new_shared`, `new_weak` |
 | generic types | `Unique[T]`, `Shared[T]`, `Weak[T]` |
-| constraints | `trivial`, `clonable` |
+| constraints | `Copy`, `Clone` |
 | std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `@Derive` |
 
 - Like Go's predeclared names, these can be shadowed by a declaration in an inner scope. Do not do it.
@@ -76,7 +76,16 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 ### Directive comments
 
-**LEX-11.** A line comment that starts with `//gopp:` is a directive (`//gopp:build`, `//gopp:cflags`, `//gopp:ldflags`, `//gopp:cxxstd`). To the lexer it is an ordinary comment. See [14](14-foreign-surface.md).
+**LEX-11.** A line comment that starts with `//gopp:` is a directive. The only directive is `//gopp:build`. To the lexer it is an ordinary comment. See [14](14-foreign-surface.md). (The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md).) A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error with the fix-it "move it to gopp.mod (`cflags …`)".
+
+### Contextual words
+
+<a id="lex-12"></a>
+**LEX-12.** *`ref` and `move` are contextual.* They are special only in the places below. Everywhere else they are ordinary identifiers.
+- Wherever an expression or a type may appear, `ref` followed by `string`, or by `[` `]`, always starts a `RefType` ([3.1](03-types.md)). Examples: `Dup[ref string](w)` (type argument) and `(ref string)(x)` (conversion). In **name** positions (a struct field name, `ref := …`) the Go reading stays: `struct{ ref string }` is a field named `ref`. Parameter lists are decided by the next bullet. So `ref := "main"`, `ref.Name` and `func ref() {}` still work.
+- In a parameter or result list, an entry that starts with `ref` followed by `string` or by `[` and `]` (a slice type) is a `ref` type, so a parameter cannot be named `ref` when its type is `string` or a slice type; rename it. `func f(ref [3]int)` is a parameter named `ref` of an array type.
+- `move(x)` is a predeclared function ([EXP-1](06-expressions.md)). `move` is also the mark of a parameter or receiver ([PAR-5](05-parameters.md)), but only at the start of a parameter declaration, followed by a parameter name and then the type: `move s string`. A `move` followed by a type alone (`move T`, `move pkg.T`, `move G[K]`, `move []int`) is read as in Go: a parameter *named* `move` of that type. See the EBNF in [5.1](05-parameters.md#51-syntax).
+
 
 ## 2.2 Examples
 
@@ -98,8 +107,9 @@ func check(x int) {
 Invalid:
 
 ```go
-var own = 1       // error: `own` is a keyword
+var macro = 1     // error: `macro` is a keyword
 x := new(int)     // error: undefined: new (use new_unique(0))
+ref := "main"     // ok: `ref` is special only where a type is expected
 ```
 
 ## 2.3 Where the grammar is defined
@@ -109,14 +119,16 @@ Each changed production is defined in exactly one place:
 | Production | Defined in |
 |---|---|
 | `FunctionDecl`, `MethodDecl`, `FunctionLit`, `FunctionType`, `MethodElem`, `PrimaryExpr "!" Arguments` (the `!` forms and generic methods) | [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18) |
-| `ParameterDecl` (`own`) | [5.1](05-parameters.md) |
-| `Type`, `TypeLit`, `ViewType` (`view`) | [3.1](03-types.md) |
+| `ParameterDecl` (`move`) | [5.1](05-parameters.md) |
+| `RangeClause`, `RangeVars`, `RangeVar` (`&`) | [8.3](08-slices-and-range.md#83-range-loops-d121) |
+| `FieldDecl`, `FieldAttributes` | [13.1](13-macros-surface.md) |
+| `Type`, `TypeLit`, `RefType` (`ref`) | [3.1](03-types.md) |
 | `MacroDecl`, `ProcMacroDecl`, `MacroInvocation`, `Attribute`, `TopLevelDecl`, `Operand` | [13.1](13-macros-surface.md) |
 | `ImportPath` forms | [14.1](14-foreign-surface.md) |
 
 ## 2.4 Rationale
 
-- Only three keywords are added. Owning pointers are predeclared generic types, not keywords.
+- Only one keyword is reserved (`macro`). `ref` and `move` are contextual, and `move` must also stay a function name because `move(x)` is a built-in. Owning pointers are predeclared generic types, not keywords.
 - `#` and `@` were free in Go, so no old code changes meaning.
 - `!` stays near the function name where the reader looks first. An earlier draft used `call()!` and needed a special semicolon rule and a `!=` caveat (`f()!==y`). It was rejected.
 - `new_unique` uses snake case on purpose: it is a built-in that is not a Go name, so it is easy to spot.

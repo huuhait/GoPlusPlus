@@ -21,7 +21,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 - [x] P01.12 Close open questions Q4, Q5, Q6
 - [x] P01.13 Ten sample programs
 - [x] P01.14 UB & implementation-defined list
-- [~] P01.15 Spec review (owner review of the `Open (P01 review)` notes; ADR-0003/0004 update). Decisions so far: see "P01.15 owner decisions" below.
+- [~] P01.15 Spec review (owner review of the `Open (P01 review)` notes; ADR-0003/0004 update). All 42 notes decided (D1–D25 below) and applied to the spec, plan and ADRs (ADR-0003/0004 updated, ADR-0006 new). One follow-up question is open: the `IsNil` tie-break on a raw `*T` whose `T` has its own `IsNil` (D9).
 - [x] P01.16 Slices and range chapter
 
 ## Open questions
@@ -44,11 +44,11 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 
 ## Decision changes
 
-- None. Plan-silent points are written as the reading most consistent with the plan and marked `> **Open (P01 review):**` in `docs/spec/`, for the owner to confirm or change in P01.15.
+- 2026-10-27 (ADR-0006): the owner's P01.15 decisions D1–D25 change the plan; see the table below and ADR-0006. Further rulings made while applying them (macro value-kind args, `case string:` bindings always borrowed, value-receiver `Clone`, raw-`*T` `Clone` ambiguity, `&` range variables as places, defer lifetime extension, a dependency's `cxxstd` as a minimum, contextual `ref`/`move`) are recorded in ADR-0006 and `.claude/team/p01-15-apply-ledger.md`.
 
 ## P01.15 owner decisions
 
-Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this phase's README or the ADRs. They are applied together when the review of all Open notes is finished. "Note #N" refers to the numbered list in the review page (the Open notes in spec order).
+Decided by the owner on 2026-10-27. Applied to `docs/spec/`, the plan READMEs/TODO and the ADRs on 2026-10-27 (ADR-0006). "Note #N" refers to the numbered list in the review page (the Open notes in spec order).
 
 | # | Decision | Example | Changes |
 |---|---|---|---|
@@ -76,7 +76,7 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D16 | #23 changed so range-over-func follows the slice-loop rules: `for x := range seq` borrows each value read-only (`x.Clone()` to keep it); `for &x := range seq` changes the real item, and is allowed only when the iterator yields the real items as pointers (`iter.Seq[*Doc]`), otherwise it's a compile error. Calling `yield` after the loop has ended panics, as in Go. | `for &d := range docs.All() { d.Title = "x" }` with `func (l *DocList) All() iter.Seq[*Doc]` | `08-slices-and-range.md:125` |
 
-| D17 | **#26 changed to "like Go":** `defer x.M()` inside a loop is legal. The loop-body variable is kept alive (moved into the pending deferred call) until the function ends, so the deferred calls run at function exit exactly as in Go. Other `defer` argument rules stay as written. #29 and #30 accepted (captured variables live as long as the closure; a closure stored in an outer variable keeps its captures alive). | `for _, n := range files { f := os.Open!(n); defer f.Close() }` | `09-errors-and-panics.md:171`; `11-closures.md:15`, `:26`; PAN-3, CLO-3b |
+| D17 | **#26 changed to "like Go":** `defer x.M()` inside a loop is legal. The loop-body variable is kept alive by the pending deferred call (lifetime extension, PAN-3; nothing is moved or zeroed) until the function ends, so the deferred calls run at function exit exactly as in Go. Other `defer` argument rules stay as written. #29 and #30 accepted (captured variables live as long as the closure; a closure stored in an outer variable keeps its captures alive). | `for _, n := range files { f := os.Open!(n); defer f.Close() }` | `09-errors-and-panics.md:171`; `11-closures.md:15`, `:26`; PAN-3, CLO-3b |
 | D18 | (Form replaced by D19.) The `clonable` constraint becomes a normal std interface, **`Clone[T]`** (like Rust's `Clone` trait): `type Clone[T any] interface { Clone() T }`, used as `func Dup[T Clone[T]](x T) T`. Every clonable type satisfies it, numbers included (D4). The name for `trivial` is still open (see #27/#28 discussion). | `Dup("hi")`, `Dup(5)` | D1.10, `10-generics.md:19`, `:21` |
 
 | D19 | **Replaces D18's form.** `Clone` and `Copy` are built-in constraints, written like Go's `comparable`: `[T Clone]` means `T` has `Clone() T` (every clonable type, numbers included); `[T Copy]` means `T` copies for free, like numbers (the old `trivial`). No `[T Clone[T]]`; the short `[Clone[T]]` form was rejected because it isn't Go syntax (`go vet`: "missing type parameter name or invalid array length"). #27 accepted: they embed in constraint interfaces like any Go interface, and Go's own rule keeps them out of `\|` unions. #28 accepted: numbers satisfy `Clone`. | `func Dup[T Clone](x T) T` · `func Sum[T Copy](xs []T) T` | D1.2 (`trivial`, `clonable` names), D1.10, `10-generics.md:19`, `:21` |
@@ -93,11 +93,11 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D25 | **#41 changed:** returning a `ref` into a local of the same function (or into an owned value that dies at return) is a compile error, like Rust. It is added to the list of cases D1.4 rule 8 catches; less obvious cases stay undefined behavior (`-asan`). #42 accepted: UB-7 to UB-12 (arena use after free, `unsafe`, C keeping pointers too long, C++ use after move, runtime-object misuse, `longjmp`/forced unwinding) stay listed as undefined behavior. | `func first() ref string { s := "hi"; return s[:1] }` ❌ | D1.4 rule 8, D1.6; `16-undefined-behavior.md:52`, `:115` |
 
-All 42 notes reviewed. Next: apply D1–D25 to `docs/spec/`, the plan READMEs/TODO and the ADRs (ADR-0003/0004 updates plus a new ADR for the decision changes), through the team workflow.
+All 42 notes reviewed and applied (team workflow; ledger `.claude/team/p01-15-apply-ledger.md`, 46 findings, all closed).
 
 ## Notes / blockers
 
-- The spec is in `docs/spec/` (16 chapters + README, 216 numbered rules). The samples are in `docs/spec/examples/`. Each Go counterpart runs and matches `expected_output.txt` byte for byte.
+- The spec is in `docs/spec/` (16 chapters + README, 227 numbered rules). The samples are in `docs/spec/examples/`. Each Go counterpart runs and matches `expected_output.txt` byte for byte.
 - The `.gopp` samples can't be compiled until P02/P03 exist. They were checked by hand against the rules.
-- P01.15 is waiting on the owner. The spec has 47 `Open (P01 review)` notes; the reviewers flagged the variadic `...T` note (`05-parameters.md:20`) as the most important. More owner notes are in the ledger.
+- No `Open (P01 review)` notes are left in the spec; two points are `Deferred to P09/P12`. Open owner question: D9 `IsNil` tie-break.
 - Team-build ledger: `.claude/team/p01-language-spec-ledger.md` (58 findings over 20 rounds, all closed; 5 fresh final reviewers).

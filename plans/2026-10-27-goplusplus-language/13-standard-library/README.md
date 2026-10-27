@@ -10,8 +10,8 @@
 **D13.2 — Ownership conventions in APIs** (written up in `docs/std-conventions.md`).
 - **Parameters borrow.**
 - **Results that allocate are owned.**
-- **Results that alias an input are views, and the signature says so.** Example: `strings.Fields(s string) []view string` returns an owned slice of views into `s`.
-- **Zero-allocation paths append to a caller buffer** (`strconv.AppendInt`, `fmt.Appendf`), as Go already does. `Append*` functions take `dst own []T` (P01 D1.20), so `buf = strconv.AppendInt(buf, n, 10)` is written as in Go.
+- **Results that alias an input are refs, and the signature says so.** Example: `strings.Fields(s string) []ref string` returns an owned slice of refs into `s`.
+- **Zero-allocation paths append to a caller buffer** (`strconv.AppendInt`, `fmt.Appendf`), as Go already does. `Append*` functions take `move dst []T` (P01 D1.20), so `buf = strconv.AppendInt(buf, n, 10)` is written as in Go.
 - **Functions that can fail are declared with `!`** (e.g. `func Open!(name string) Unique[File]`, which returns `(Unique[File], error)`), so callers choose between `!` and Go-style handling. Std never panics on ordinary errors.
 - **Errors work like Go** (P01 D1.19). Sentinel errors are package-level `errors.New` values, compared with `==` (`err == io.EOF`).
 
@@ -63,7 +63,7 @@
 
 ## Risks
 
-- **Go APIs that assume a GC** → the explicit redesign list in D13.6, and views where Go returned aliasing slices.
+- **Go APIs that assume a GC** → the explicit redesign list in D13.6, and refs where Go returned aliasing slices.
 - **Scope creep** → strict tiers; T3 stays out of v1.
 
 ## Open questions

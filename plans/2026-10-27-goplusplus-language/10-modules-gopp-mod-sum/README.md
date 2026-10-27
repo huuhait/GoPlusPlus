@@ -22,6 +22,7 @@
   - Keys: `commit`, `url`, `tag`, `mode`, `cmake`, `provides`, `uses`, `option`, `patch`. `tag` is defined in D10.4; the others in P11.
   - The `cdep` blocks of transitive dependencies carry `// indirect` (D10.3).
 - `cxxstdlib libc++|libstdc++`.
+- `cxxstd c++20`, `cflags <flags…>` and `ldflags <flags…>`: module-wide C/C++ settings, set once per project, like `go.mod` (P01 D1.15, ADR-0006). They replace the removed source directives `//gopp:cxxstd`, `//gopp:cflags` and `//gopp:ldflags`; only `//gopp:build` stays in source files. They apply to the C, C++ and header imports of the packages of the module that declares them, and flags are taken from the module of the **importing** package (each package has one Clang instance, P07/P08). A dependency's own `cxxstd` is a **minimum**: if the importer's is lower, the build fails with "module D needs c++23". The `ldflags` of all modules in the build are combined for the final link, in module order (the main module last). `cdep` blocks keep taking their flags from their own CMake target (P11).
 - `csystem <name> ( pkgconfig "<expr>" … )`: non-hermetic system libraries, recorded but never hashed. Each entry also names the headers it owns (P11 D11.11).
 
 ```
@@ -65,7 +66,7 @@ Go++ code imports these as `import "github.com/madler/zlib/zlib.h"` and `import 
 - **Rules across modules.** Several modules may declare the same cdep.
   - **Identity keys** (`commit`, `url`) must be equal everywhere for a version. Otherwise it is an error that names the modules.
   - **Build keys** (`mode`, `option`, `patch`, `cmake`, `provides`, `uses`): the main module's own block (without `// indirect`) wins. An `// indirect` block is a copy that `tidy` refreshes from the declaring modules, which must agree. If they don't, `tidy` reports an error, and the main module settles it by writing its own block.
-  - **Main-module only:** `cxxstdlib`, `csystem` and `toolchain` count only in the main module.
+  - **Main-module only:** `cxxstdlib`, `csystem` and `toolchain` count only in the main module. `cxxstd`, `cflags` and `ldflags` apply per module, to that module's own packages.
   - **Files:** patch and local CMake files are read from the module that declares them. `gopp mod vendor` copies them.
 - **Verification** follows P06 D6.10.
   - Hashes are checked when downloading and extracting into the read-only cache. A mismatch is a hard "SECURITY ERROR", as in Go.

@@ -24,9 +24,12 @@
 
 **D3.5 — Ownership checks are split by what they need.**
 - **Type-level, in this phase:**
-  - type categories (D1.3) and `trivial`/`clonable` constraint satisfaction;
-  - `own` parameter mode and read-only parameter bindings;
-  - owned → view and `Unique[T]`/`Shared[T]` → `*T` conversions;
+  - type categories (D1.3) and `Copy`/`Clone` constraint satisfaction (`Clone() T` method lookup, `IsNil()` on every pointer kind);
+  - `move` parameter mode, `move ...T` for owning variadics, and read-only parameter bindings;
+  - range forms: read-only borrowed variables, the `&d` alias form, and the loop-variable redeclaration error (D1.21);
+  - `func f!() error` (a `!` function declaring `error` as its last result) is an error (D1.8);
+  - returning a `ref` into a local of the same function (D1.4 rule 8, D1.6);
+  - owned → ref and `Unique[T]`/`Shared[T]` → `*T` conversions;
   - borrowing a temporary into a longer-lived place;
   - `move`/`clone` typing and the `append` move rule.
 - **Flow-sensitive, in P04 on GIR:** use after move, `defer`/`go` borrowing something that dies first, and drop elaboration.
@@ -46,7 +49,9 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 - `&T{…}`: "allocation is explicit in Go++: use `new_unique(T{…})`";
 - assigning `new_unique(…)` to a `*T` field: "a `*T` field doesn't own: did you mean `Unique[T]`?";
 - using a moved variable: points at the move site;
-- `defer f.Close()` inside a loop: explains that the destructor already closes `f`.
+
+`gopp vet` hints (warnings, not errors):
+- with `defer f.Close()` in a loop body the files stay open until the function returns.
 
 **D3.10 — Budget (provisional): type-check ≥ 250 k lines/s per core** on the bench corpus, excluding foreign imports.
 
@@ -54,7 +59,7 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 
 - `compiler/lib/Sema`: scopes, objects, types, the checker, constant evaluation, generic instantiation validation, and the type-level ownership rules.
 - `gopp check` (parse + type-check; the GIR checks are added in P04.09).
-- `gopp vet` v0 with lints for: view-typed struct fields without `@View`; `drop` methods that may not handle the zero value (heuristic); a `!` that would panic outside package `main`.
+- `gopp vet` v0 with lints for: ref-typed struct fields without `@Ref`; `drop` methods that may not handle the zero value (heuristic); a `!` that would panic outside package `main`.
 - A conformance suite: a ported types2 subset, plus Go++ rule-table tests (one positive and one negative test per ownership rule).
 
 ## Exit criteria
@@ -67,7 +72,7 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 ## Risks
 
 - **Generic inference corner cases** → port types2's algorithm faithfully rather than redesign it.
-- **Interactions between ownership rules** (generics × views × interfaces) → an exhaustive rule table with positive and negative tests, and a feedback loop into the P01 spec.
+- **Interactions between ownership rules** (generics × refs × interfaces) → an exhaustive rule table with positive and negative tests, and a feedback loop into the P01 spec.
 
 ## Open questions
 

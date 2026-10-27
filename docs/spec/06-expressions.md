@@ -17,19 +17,18 @@ The expression grammar of Go is unchanged except for two additions, each defined
 | Call | Type | Meaning |
 |---|---|---|
 | `move(p)` | type of `p`; `p` must be a place (variable, field, element, map entry, pointer target) | take the value out, leave the zero value ([OWN-R4](04-ownership.md#42-ownership-rules-d14)) |
-| `clone(x)` | type of `x`; `x`'s type must be `clonable` | copy ([OWN-R6](04-ownership.md#42-ownership-rules-d14)) |
+| `clone(x)` | type of `x`; `x`'s type must satisfy `Clone` | short form of `x.Clone()`: copy ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). On a raw `*T` whose `T` has a value-receiver `Clone`, `clone(p)` is the same ambiguity error as `p.Clone()`; `[T Clone]` instantiation is the only place where `*T` uses the pointer copy |
 | `new_unique(v)` | `Unique[T]` where `v` has type `T` | allocate, move `v` in |
 | `new_shared(v)` | `Shared[T]` | allocate with counts, move `v` in |
 | `new_weak(s)` | `Weak[T]` where `s` is a `Shared[T]` | make a weak reference |
 
 - `move` and `clone` are not first-class values: they can only be called, not stored or passed (as `len` in Go).
-
-> **Open (P01 review):** that `move` and `clone` cannot be used as values, and that `min`/`max` on views return a view (EXP-5), are this spec's readings; the plan does not say.
+- `x.Clone()` is the form used in examples. Every cloneable type has the method, built-in types too ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). `move` has no method form.
 - `move(m[k])` removes the entry; `v, ok := move(m[k])` and `v, ok := clone(m[k])` are the comma-ok forms ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)).
-- `min`/`max` on views return a view (EXP-5).
+- `min`/`max` on refs return a ref (EXP-5).
 - Go's `new` does not exist ([LEX-8](02-lexical.md)).
 
-**EXP-2.** *Moving expressions.* An expression that gives ownership of a value (a call result, a conversion result, a composite literal, a `move(…)` or `clone(…)`) produces an owned **temporary**. A temporary used where ownership is needed moves; otherwise it is destroyed at the end of the full statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14)).
+**EXP-2.** *Moving expressions.* An expression that gives ownership of a value (a call result, a conversion result, a composite literal, a `move(…)` or `x.Clone()`) produces an owned **temporary**. A temporary used where ownership is needed moves; otherwise it is destroyed at the end of the full statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14)).
 
 **EXP-3.** *Order of evaluation.* As in Go ([Order of evaluation](https://go.dev/ref/spec#Order_of_evaluation)), with one addition: moves out of places (`move(p)`, the implicit move of `p = append(p, …)`) happen **after** all other arguments of the call are evaluated.
 
@@ -41,7 +40,7 @@ x.items = append(x.items, len(x.items))   // len(x.items) is evaluated before x.
 
 **EXP-4.** Operands of `==`, `<`, `+` and other operators on owning types are **borrowed**. `a + b` on strings allocates a new owned temporary. `+=` grows the left operand in place.
 
-**EXP-5.** Built-in `min` and `max` on owned strings return a copy ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). On views they return a view.
+**EXP-5.** Built-in `min` and `max` on owned strings return a copy ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). On refs they return a ref.
 
 ```go
 s := "a" + name        // new owned string; name is only borrowed
@@ -77,9 +76,9 @@ fmt.Println(int8(-8) >> s)     // -1
 ## 6.5 Conversions
 
 **EXP-9.** Conversions follow [Conversions](https://go.dev/ref/spec#Conversions) with these additions:
-- `string(v)` where `v` is a `view string`, and `[]T(v)` where `v` is a `view []T`: copy into a new owned value. `[]T(v)` needs `clonable` elements ([OWN-V3](04-ownership.md#44-views-d16)).
+- `string(v)` where `v` is a `ref string`, and `[]T(v)` where `v` is a `ref []T`: copy into a new owned value. `[]T(v)` needs elements that satisfy `Clone` ([OWN-V3](04-ownership.md#44-refs-d16)).
 - `string([]byte)` and `[]byte(string)` copy, as in Go.
-- Owned to view is implicit, never written as a conversion.
+- Owned to ref is implicit, never written as a conversion.
 - A `Unique[T]` or `Shared[T]` stored in a place converts implicitly to `*T`; from a temporary it is an error ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17)).
 
 ## 6.6 Composite literals and `&`
@@ -101,7 +100,7 @@ n := 7
 s := strconv.Itoa(n) + "!"                // owned temporary + literal -> new string
 
 u := new_unique(Config{Name: "x"})
-c := clone(u)                             // a new Unique holding a copy (needs clonable Config)
+c := u.Clone()                            // a new Unique holding a copy (needs a cloneable Config)
 p := u                                    // u moves into p; u is unusable until assigned again
 ```
 
@@ -109,4 +108,4 @@ p := u                                    // u moves into p; u is unusable until
 
 - Go semantics for overflow, shifts and division are kept so that ported code behaves the same. Some of them are UB in LLVM, so the compiler pays a small cost (a compare or a mask) to keep Go's answers.
 - Moves after other arguments make `append(move(p), p2...)`-like calls predictable.
-- `move` and `clone` are built-ins (not methods) so that they work on every type, including C++ classes.
+- `move` is a built-in (not a method) so that it works on every type, including C++ classes. `Clone` is a method that every cloneable type has, built-in types too, so `x.Clone()` works everywhere; `clone(x)` is the short form.

@@ -26,8 +26,8 @@ func (m *OrderedMap[K, V]) search(k K) (int, bool) {
 	return lo, lo < len(m.keys) && m.keys[lo] == k
 }
 
-// Put takes ownership of k and v: `own` parameters.
-func (m *OrderedMap[K, V]) Put(k own K, v own V) {
+// Put takes ownership of k and v: `move` parameters.
+func (m *OrderedMap[K, V]) Put(move k K, move v V) {
 	i, found := m.search(k) // k is borrowed by search: not moved
 	if found {
 		m.vals[i] = v // the old value is dropped, v moves in; k is dropped at return
@@ -67,7 +67,7 @@ func main() {
 		if p := counts.Get(w); p != nil {
 			*p++
 		} else {
-			counts.Put(clone(w), 1) // w is borrowed from words: clone it to own it
+			counts.Put(w.Clone(), 1) // w is borrowed from words: Clone it to own it
 		}
 	}
 	fmt.Println("distinct words:", counts.Len())

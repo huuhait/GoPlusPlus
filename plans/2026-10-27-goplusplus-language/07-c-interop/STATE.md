@@ -39,7 +39,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P07) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): `//gopp:cflags` and `//gopp:ldflags` are removed; the module-wide `cflags` and `ldflags` directives of gopp.mod replace them. `//gopp:build` stays (P01 D1.15).
 
 ## Notes / blockers
 

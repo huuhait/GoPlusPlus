@@ -15,7 +15,9 @@
   - Receives syntax (plus read-only type information, for attached macros) and returns syntax built with the `gopp/macro` API.
 - **Invocation:**
   - `#Name(args)` for expression, statement and declaration macros.
-  - `@Name` or `@Name(args)` attached to a declaration. An attached macro may *add* declarations (methods, functions, types). It never modifies or removes the declaration it is attached to.
+  - `@Name` or `@Name(args)` attached to a declaration. An attached macro receives its arguments plus the declaration it sits on, and returns new code. It may *add* declarations (methods, functions, types). It never modifies or removes the declaration it is attached to.
+  - Attributes may also follow a struct field's type, before the Go tag: ``Name string @JSON("name") `db:"name"` `` (P01 D1.14). `@Derive(JSON)` reads them.
+- **Arguments.** Arguments a macro reads as values must be known while compiling: every `@Name(args)` argument, and `#Name` parameters of a value kind (`lit`). A runtime variable there is a compile error (`@Retry(n)`). Code-fragment parameters (`expr`, `ident`, `block`, `stmt`) are pasted into the program and may name runtime variables (`#Assert(x > 0, "bad")`). A `block` argument is written as a func literal, `#Repeat(3, func() { … })`, and is pasted inline: `return`, `break` and `continue` inside it are compile errors. How `stmt`, `type` and `tokens` arguments are written, and the exact procedural-macro API, are designed in this phase.
 
 ```go
 macro Assert(cond expr, msg lit) {
@@ -80,11 +82,11 @@ func checksum(data []byte) uint32 {
 - The LSP uses the same expansion (P14).
 
 **D9.8 — Standard macros.**
-- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `view string`), `#Todo()`, `#Unreachable()`.
+- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `ref string`), `#Todo()`, `#Unreachable()`.
 - Derives are kept small, because without them:
   - printing works on every type;
   - `==` and map keys work on comparable types;
-  - `clone()` works on clonable types (P01 D1.4 rule 6).
+  - `x.Clone()` works on every cloneable type, and `clone(x)` is its short form (P01 D1.4 rule 6).
 - The derives:
   - `@Derive(JSON)` generates `MarshalJSON`/`UnmarshalJSON`. It is optional: `encoding/json` works on any type and prefers these methods when they exist (like `easyjson` in Go).
   - `@Derive(Equal)` generates `Equal(o T) bool` for structs that `==` can't compare (they contain slices or maps).

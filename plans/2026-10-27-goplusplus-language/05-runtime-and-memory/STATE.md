@@ -38,7 +38,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P05) · Design: [README.md](
 
 ## Decision changes
 
-- None.
+- 2026-10-27 (ADR-0006, P01.15 owner decisions): D5.4: inserting a new key into a map during `range` always panics ("map insert during iteration"), not only when the table must grow; the current entry is dropped at the end of its iteration; `ArenaNew` takes `T Copy`.
 
 ## Notes / blockers
 
