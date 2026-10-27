@@ -61,7 +61,10 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 | D7 | New form `for _, &d := range xs`: `d` is the element itself, so writes change the collection. It works for slices, arrays and map values (`for k, &v := range m`). The key can't use `&`. Growing the collection inside the loop stays a compile error. The plain form `for _, d := range xs` stays read-only for owning elements, and its error message suggests `&d` first. `m[k].f = x` outside a loop stays illegal, as in Go. | `for _, &d := range docs { d.Title = "x" }` · `for k, &v := range m { v.Count++ }` | D1.21, RNG-1/OWN-R3b, EBNF for `RangeClause`; ADR-0003 |
 | D8 | Notes #1–#5 accepted as written (with D5/D6 applied): view/string comparison compares contents; type assertions borrow; type-switch rule per D6; re-pointing a borrowed `string`/`[]T` range variable; range variables over owning elements are read-only (like Rust `for d in &docs`). | | `03-types.md:37`, `:101`, `:140`; `04-ownership.md:141`, `:166` |
 
-Still to review: notes #6–#42 (next: #6–#10).
+| D9 | Every pointer kind has an `IsNil()` method: raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]`. `p == nil` keeps working, as in Go. If `T` has its own `IsNil` method, the pointer's `IsNil` wins; call `T`'s as `(*p).IsNil()`. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed). | `if u.IsNil() { … }` · `if u == nil { … }` | `04-ownership.md:373` (note #9); D1.7 |
+| D10 | Notes #6, #7, #8 and #10 accepted as written (with D4 applied): moving a variable a closure or pending `defer` still uses is an error; `m[k] = append(m[k], v)` works in place; `Clone` works on simple types; map keys are cloned only when a new entry is added. | | `04-ownership.md:195`, `:211`, `:241`, `:422` |
+
+Still to review: notes #11–#42 (next: #11–#15).
 
 ## Notes / blockers
 
