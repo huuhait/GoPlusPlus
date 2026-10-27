@@ -1,0 +1,33 @@
+package main
+
+import (
+	"fmt"
+
+	"<algorithm>" // package algorithm: std::sort, std::reverse, std::binary_search
+	"<vector>"    // package vector: std::vector
+)
+
+func main() {
+	var v vector.vector[int32] // default constructor runs; destroyed at the end of main
+	for _, x := range []int32{42, 7, 19, 3, 88, 7, 25} {
+		v.push_back(x)
+	}
+	algorithm.sort(v.begin(), v.end()) // template arguments deduced from the iterators
+
+	// copy the C++ elements into a Go++ slice to print them
+	out := make([]int32, 0, int(v.size()))
+	for x := range v { // lowered to begin()/end() iterator calls (P08 D8.6)
+		out = append(out, x)
+	}
+	fmt.Println("sorted:", out)
+
+	fmt.Println("has 19:", algorithm.binary_search(v.begin(), v.end(), int32(19)))
+	fmt.Println("has 20:", algorithm.binary_search(v.begin(), v.end(), int32(20)))
+
+	algorithm.reverse(v.begin(), v.end())
+	out = out[:0] // reset in place, capacity kept
+	for x := range v {
+		out = append(out, x)
+	}
+	fmt.Println("reversed:", out)
+}

@@ -1,0 +1,71 @@
+package main
+
+import (
+	"cmp"
+	"fmt"
+	"slices"
+	"sync"
+)
+
+type Job struct {
+	ID   int
+	Text string // owning field: Job is move-only
+}
+
+type Result struct {
+	ID   int
+	Text string
+	Sum  int
+}
+
+// jobs and results are shared handles: passing them copies a handle, not the queue.
+func work(jobs chan Job, results chan Result) {
+	for job := range jobs { // each receive moves a Job out: job is an owned local
+		sum := 0
+		for i := 0; i < len(job.Text); i++ {
+			sum += int(job.Text[i]) // reading job.Text is a borrow
+		}
+		// job.Text is a field: taking ownership of it needs move (or clone).
+		results <- Result{ID: job.ID, Text: move(job.Text), Sum: sum}
+	}
+}
+
+func main() {
+	words := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"}
+
+	jobs := make(chan Job, 4)
+	results := make(chan Result, 16)
+
+	var wg sync.WaitGroup
+	for w := 0; w < 3; w++ {
+		wg.Add(1)
+		// `go work(jobs, results, &wg)` would be an error: raw pointer to a local.
+		// The closure keeps wg, jobs and results in shared cells instead.
+		go func() {
+			defer wg.Done()
+			work(jobs, results)
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for i, w := range move(words) { // w is owned in each iteration
+		jobs <- Job{ID: i, Text: w} // w moves into the literal, the literal into the channel
+	}
+	close(jobs)
+
+	var all []Result
+	for r := range results { // receive moves the Result out
+		all = append(all, r) // r moves into the slice; all moves implicitly
+	}
+	slices.SortFunc(all, func(a, b Result) int { return cmp.Compare(a.ID, b.ID) })
+
+	total := 0
+	for _, r := range all { // r is borrowed
+		fmt.Printf("%d %-8s sum=%d\n", r.ID, r.Text, r.Sum)
+		total += r.Sum
+	}
+	fmt.Println("total:", total)
+}

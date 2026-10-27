@@ -1,0 +1,140 @@
+# 3. Types
+
+Base: Go spec [Types](https://go.dev/ref/spec#Types), [Properties of types and values](https://go.dev/ref/spec#Properties_of_types_and_values), [Underlying types](https://go.dev/ref/spec#Underlying_types), [Type identity](https://go.dev/ref/spec#Type_identity), [Assignability](https://go.dev/ref/spec#Assignability), [Interface types](https://go.dev/ref/spec#Interface_types), [Implementing an interface](https://go.dev/ref/spec#Implementing_an_interface), [Method sets](https://go.dev/ref/spec#Method_sets), [Slice types](https://go.dev/ref/spec#Slice_types), [Map types](https://go.dev/ref/spec#Map_types), [Channel types](https://go.dev/ref/spec#Channel_types), [Function types](https://go.dev/ref/spec#Function_types).
+
+This chapter lists what changes in the type system: new types, type categories, interface values (D1.12) and layout (D1.17). The ownership rules themselves are in [chapter 4](04-ownership.md).
+
+## 3.1 Type syntax
+
+```
+Type      = TypeName [ TypeArgs ] | TypeLit | "(" Type ")" .
+TypeLit   = /* Go alternatives */ | ViewType .
+ViewType  = "view" ( "string" | SliceType ) .
+```
+
+- `own` is **not** a type. It is a mark on a parameter or receiver ([PAR-5](05-parameters.md)).
+- Predeclared generic types: `Unique[T]`, `Shared[T]`, `Weak[T]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)).
+- Types imported from C and C++ headers are plain Go++ types ([chapter 14](14-foreign-surface.md)).
+
+**TYP-1.** `view string` and `string` are different types. `view []T` and `[]T` are different types. Identity follows [Type identity](https://go.dev/ref/spec#Type_identity): `view string` is identical only to `view string`.
+
+**TYP-2.** *Assignability additions.* Besides Go's rules, a value `x` is assignable to type `V` if:
+- `x` is a `string` and `V` is `view string`; or `x` is a `[]T` and `V` is `view []T` (owned to view, borrowing, [OWN-V3](04-ownership.md#44-views-d16));
+- `x` is a `Unique[T]` or `Shared[T]` stored in a place and `V` is `*T` ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17));
+- the assignment follows the ownership rules ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): assigning an owning value moves it.
+
+A view is **not** assignable to an *owning destination*: an owned variable, field, element, result, `own` parameter or composite-literal field. Use `string(v)` or `[]T(v)` to copy. A **borrowed** `string` or `[]T` parameter is not an owning destination: it accepts a view (or an owned value, or a literal) at zero cost ([PAR-8, PAR-10](05-parameters.md)).
+
+```go
+func parse(s string) {}          // borrowed parameter
+v := name[:3]                    // view string
+parse(v)                         // ok: borrowed parameter accepts a view
+var t string = v                 // error: owned variable; write string(v)
+```
+
+**TYP-3.** *Comparison.* `==` on owning types such as `string` compares by value and borrows both operands. Slices, maps and funcs are comparable only with `nil`, as in Go. Structs and arrays are comparable when their fields are. A `view string` compares with a `string` by contents.
+
+> **Open (P01 review):** the plan does not list comparison rules for views or mixed `view string`/`string` operands. This spec reads them as comparing contents, with both operands borrowed.
+
+**TYP-4.** *Category summary.* The category of a type decides how it copies and ends its life. The full table and rules are in [OWN-C1 to OWN-C5](04-ownership.md#41-type-categories-d13).
+
+## 3.2 Interfaces and runtime type information (D1.12)
+
+Syntax: no change. Interfaces are Go's structural interfaces.
+
+**TYP-5.** *Shared handles.* An interface value is a shared handle. Copying it shares the same dynamic value: an immutable, reference-counted box, or the pointer it holds. So `==`, type switches and copies behave as in Go.
+
+**TYP-6.** *Boxing.* Converting an owned value into an interface **variable, field or element** moves it into a box. Storing a `*T` in an interface stores a borrow.
+
+```go
+var e any = name      // name (an owned string) moves into a box
+// fmt.Println(name)  // compile error: name used after move
+p := &point
+var q any = p         // stores a borrow of point: no box, no move
+```
+
+**TYP-7.** *Interface parameters.* An interface parameter (including `...any`) is a shared handle like any interface value, so the callee may keep it: store it, return it or send it.
+- Passing an interface value (such as `err`) passes the same box.
+- Passing a non-interface owned value does **not** consume it. The callee gets a borrowed `(itab, &value)`: no box and no allocation. Only if the callee keeps it, the value is cloned into a box at that moment. So `fmt.Println(name)` does not consume `name`.
+- A kept slice or map is then a copy that no longer shares elements with the caller's value. This is a listed difference from Go.
+- A value that is not `clonable` can be passed as it is only when the callee does not keep the parameter ([CLO-3](11-closures.md)). Otherwise it must be passed as `move(x)`.
+
+```go
+func Log(v any) { saved = v }         // keeps v: escapes
+n := "x"
+Log(n)             // ok: n is cloned into a box inside Log. n is still usable.
+f := File{...}     // has drop, no Clone()
+Log(f)             // error: Log keeps its parameter and File is not clonable; write Log(move(f))
+fmt.Println(f)     // ok: Println does not keep its parameter
+```
+
+**TYP-8.** *Inline values.* Trivial values up to one word (8 bytes: `int`, `float64`, raw pointers) are stored inline in the interface, with no box. Interface values stay 2 words.
+
+**TYP-9.** *Type switches and assertions* use compile-time type descriptors. `case string:` does **not** match a `view string`. Use `case view string:`.
+
+The box of an interface value is shared and immutable (TYP-5). So **every name-binding form** of an **owning** dynamic type binds a **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the boxed value:
+- `s := v.(string)`, `s, ok := v.(string)` and `switch x := v.(type)` are all legal for an owning `T`. Go code like `if s, ok := v.(string); ok { use(s) }` works unchanged;
+- the bound variable is read-only (the top-level rule of [OWN-R3b](04-ownership.md#42-ownership-rules-d14): it, and any part of it held by value, cannot be written, have its address taken, or get a pointer-receiver call, which would write into the immutable box) and can be used as an operand or a borrowed argument;
+- to get an owned copy, write `owned := clone(s)`, or `clone(v.(string))` in a single-value expression. There is no comma-ok `clone` form and no `move` fix-it, because a shared box cannot be moved from;
+- where ownership is required directly, `v.(T)` used as a place gets the [OWN-R3a](04-ownership.md#42-ownership-rules-d14) error with fix-it `clone(v.(T))`: an `own` argument, `return`, a send, a field store;
+- when the asserted operand is a **temporary** interface value (`name := ctx.Value(k).(string)`), the temporary lives until the end of the binding's scope (lifetime extension, like a C++ const-reference binding). So it is not "a borrow of a temporary stored" in the sense of [OWN-R8](04-ownership.md#42-ownership-rules-d14);
+- bindings of trivial dynamic types and of shared handles are copies (retained), not borrowed variables, and are writable;
+- if `v` is reassigned while the bound variable still borrows the old box, the box may be freed. A write to `v` that the compiler can see while the bound variable is still used afterwards is a compile error (like [RNG-3](08-slices-and-range.md)); writes it cannot see are UB ([UB-2d](16-undefined-behavior.md)).
+
+```go
+if s, ok := v.(string); ok {      // s borrows the box: no copy, no allocation
+    fmt.Println(len(s))           // ok
+    names = append(names, clone(s))   // ownership needed: clone
+}
+n := len(v.(string))              // ok: borrowed operand
+owned := clone(v.(string))        // ok: a copy
+return v.(string)                 // error: fix-it clone(v.(string))
+switch x := v.(type) {
+case string:
+    names = append(names, x)          // error: fix-it clone(x)
+    names = append(names, clone(x))   // ok
+case int:
+    total += x                        // ok: trivial, copied
+}
+```
+
+> **Open (P01 review):** the plan says interface values are shared handles with immutable boxes (D1.12) but not how an assertion hands the value out. Copying it would be a hidden allocation (principle 1) and moving out of a shared box is impossible, so this spec reads every binding as a borrow, with `clone` to own. The lifetime extension for a temporary operand is also this spec's reading: without it, very common Go such as `ctx.Value(k).(string)` would be rejected by OWN-R8. The compile error for a visible write to `v` is this spec's reading; the alternative is to retain the box in the binding (a counter increment, no allocation), which would remove UB-2d.
+
+```go
+switch v := x.(type) {
+case string:      fmt.Println("owned", v)
+case view string: fmt.Println("view", v)
+}
+```
+
+**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
+
+**TYP-11.** *No `reflect`.* There is no user-facing `reflect` package in v1.
+
+## 3.3 Layout (D1.17, D1.22)
+
+**TYP-12.** Struct layout is **declaration order with C alignment**. It is C-compatible, as C interop requires, so fields are never reordered automatically.
+
+**TYP-13.** Informative sizes on a 64-bit target (the normative source is P04 D4.5 and D1.22):
+
+| Type | Words | Content |
+|---|---|---|
+| `int`, `*T`, `Unique[T]` | 1 | `int` is 64-bit on 64-bit targets |
+| `string` | 3 | `{ptr, len, cap}` (always the global allocator) |
+| `view string`, `view []T` | 2 | `{ptr, len}` |
+| `[]T` | 4 | `{ptr, len, cap, allocator}` |
+| `map[K]V` | 1 | pointer to the runtime object; the header stores its allocator |
+| interface | 2 | `{itab*, data}` |
+| func value | 2 | `{code*, env*}` |
+
+**TYP-14.** `int` is 64-bit on 64-bit targets. Integer overflow wraps ([EXP-6](06-expressions.md)).
+
+## 3.4 Rationale
+
+- **Shared handles for interfaces** keep Go's `err == io.EOF`, `errors.Is`, `%w` and type switches working with no GC.
+- **Borrowed interface parameters** make `fmt.Println(name)` free and non-consuming. Boxing happens only when a callee really keeps the value.
+- **Field tables instead of `reflect`** give `fmt` and `json` what they need and nothing more.
+- **C layout** is required for C interop (P07) and costs nothing in practice.
+- **Rejected:** boxing every interface argument (hidden allocation); moving into every interface parameter (breaks `fmt.Println(x)` followed by a use of `x`).
+
+> **Open (P01 review):** the plan lists the type-switch rule for `view string` but not for `view []T`. This spec reads it the same way: `case []T:` does not match a `view []T`.

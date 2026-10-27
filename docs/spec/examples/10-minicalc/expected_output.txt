@@ -1,0 +1,8 @@
+answer: 42
+1 + 2 * 3          = 7
+(1 + 2) * 3        = 9
+10 / (5 - 5)       error: division by zero
+2 * (3 + 4) - -5   = 19
+7 +                error: col 4: expected a number
+8 $ 2              error: col 3: unexpected "$"
+100 / 7 / 2        = 7

@@ -1,0 +1,3 @@
+input1.txt 2 lines, 9 words, 44 bytes, longest "quick"
+input2.txt 4 lines, 13 words, 88 bytes, longest "extraordinarily"
+total      6 lines, 22 words, 132 bytes

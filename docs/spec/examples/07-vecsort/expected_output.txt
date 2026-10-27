@@ -1,0 +1,4 @@
+sorted: [3 7 7 19 25 42 88]
+has 19: true
+has 20: false
+reversed: [88 42 25 19 7 7 3]

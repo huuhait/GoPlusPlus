@@ -1,0 +1,43 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// A user-defined declarative macro (P09 D9.1). The `tmp` in the body is
+// renamed by hygiene, so it never clashes with a `tmp` at the call site.
+macro Swap(a expr, b expr) {
+	tmp := a
+	a = b
+	b = tmp
+}
+
+// @Derive finds JSON and Equal in the std package `derive`.
+// Equal is needed because Config has a slice and a map, so `==` does not work.
+// JSON is optional: encoding/json works on any type without it.
+@Derive(JSON, Equal)
+type Config struct {
+	Name   string
+	Tags   []string
+	Limits map[string]int
+}
+
+func main() {
+	a := Config{Name: "demo", Tags: []string{"a", "b"}, Limits: map[string]int{"cpu": 2, "mem": 512}}
+	b := clone(a) // structural clone: every field is clonable
+
+	#Assert(a.Equal(b), "configs should be equal") // panics with the expression text if false
+	fmt.Println(#Stringify(a.Equal(b)), "=", a.Equal(b))
+
+	b.Tags = append(b.Tags, "z") // implicit move of b.Tags
+	b.Limits["cpu"] = 4
+	fmt.Println(#Stringify(a.Equal(b)), "=", a.Equal(b))
+
+	data := json.Marshal!(a) // uses the derived MarshalJSON
+	fmt.Println(string(data))
+
+	tmp, other := 1, 2
+	#Swap(tmp, other)
+	fmt.Println("tmp, other =", tmp, other)
+}

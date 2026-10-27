@@ -1,0 +1,14 @@
+distinct words: 8
+brown  1
+dog    1
+fox    2
+jumps  1
+lazy   1
+over   1
+quick  1
+the    3
+fox = 2
+cat is absent
+apple [red]
+pear [green yellow]
+plum [purple]

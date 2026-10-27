@@ -44,7 +44,7 @@ Last updated: 2026-10-27
 ## Current focus
 
 - P00 is done locally. What's left needs a push: the first GitHub CI run (P00.07, P00.08, P00.13 and the CI exit criteria), then CI suite-time baselines.
-- P01 (spec) is the critical path.
+- P01: the spec is written and reviewed CLEAN. What's left is P01.15, the owner's review of the `Open (P01 review)` notes. P02 can start from the spec.
 
 ## Log
 
@@ -89,3 +89,6 @@ Last updated: 2026-10-27
   - Done locally: P00.01–P00.06, P00.09–P00.12, P00.14, plus the D0.13 budgets (edit → rebuild 0.2–1.7 s, clean build ~9–14 s, full `ninja check` < 1 s).
   - Waiting on the first GitHub CI run (needs a push): P00.07, P00.08, P00.13.
   - Decision changes (ADR-0002): sccache replaces ccache (owner request; automatic, 100 GB); LLVM 23.1.0 pinned; Release links LLVM, Clang and LLD fully statically.
+- 2026-10-27: P01 spec written through the team workflow (1 coder, no merge, review loop until a fresh reviewer returned CLEAN; ledger `.claude/team/p01-language-spec-ledger.md`, 58 findings over 20 rounds, all closed).
+  - Done: P01.01–P01.11, P01.13, P01.14, P01.16, and every exit criterion. `docs/spec/` has 16 chapters and 216 numbered rules; `docs/spec/examples/` has 10 samples whose Go versions match their expected output.
+  - Left: P01.15, the owner review of the 47 `Open (P01 review)` notes and the ADR-0003/0004 update.

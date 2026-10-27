@@ -1,0 +1,179 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"mem"
+)
+
+type Kind uint8
+
+const (
+	Num Kind = iota
+	Add
+	Sub
+	Mul
+	Div
+	Neg
+)
+
+// Node is trivial (numbers, a view and raw pointers), so the arena can own it.
+@View
+type Node struct {
+	Kind Kind
+	Val  int64
+	Text view string // the source text of a number: points into the source
+	L, R *Node
+}
+
+@View
+type Parser struct {
+	src   view string
+	pos   int
+	arena *mem.Arena
+}
+
+func (p *Parser) skipSpace() {
+	for p.pos < len(p.src) && p.src[p.pos] == ' ' {
+		p.pos++
+	}
+}
+
+func (p *Parser) peek() byte {
+	p.skipSpace()
+	if p.pos >= len(p.src) {
+		return 0
+	}
+	return p.src[p.pos]
+}
+
+// fail builds an error value. Its last result is `error`, so it is a plain Go-style function.
+func (p *Parser) fail(msg string) error {
+	return fmt.Errorf("col %d: %s", p.pos+1, msg)
+}
+
+func (p *Parser) node(k Kind, l, r *Node) *Node {
+	n := mem.ArenaNew[Node](p.arena)
+	*n = Node{Kind: k, L: l, R: r} // do not rely on the arena zeroing its memory
+	return n
+}
+
+// expr = term { ("+" | "-") term }
+func (p *Parser) expr!() *Node {
+	left := p.term!() // on error, expr returns it
+	for {
+		op := p.peek()
+		if op != '+' && op != '-' {
+			return left
+		}
+		p.pos++
+		right := p.term!()
+		k := Add
+		if op == '-' {
+			k = Sub
+		}
+		left = p.node(k, left, right)
+	}
+}
+
+// term = factor { ("*" | "/") factor }
+func (p *Parser) term!() *Node {
+	left := p.factor!()
+	for {
+		op := p.peek()
+		if op != '*' && op != '/' {
+			return left
+		}
+		p.pos++
+		right := p.factor!()
+		k := Mul
+		if op == '/' {
+			k = Div
+		}
+		left = p.node(k, left, right)
+	}
+}
+
+// factor = number | "(" expr ")" | "-" factor
+func (p *Parser) factor!() *Node {
+	c := p.peek()
+	switch {
+	case c == '-':
+		p.pos++
+		return p.node(Neg, p.factor!(), nil)
+	case c == '(':
+		p.pos++
+		n := p.expr!()
+		if p.peek() != ')' {
+			return nil, p.fail("expected ')'") // explicit failure: value, then error
+		}
+		p.pos++
+		return n
+	case c >= '0' && c <= '9':
+		start := p.pos
+		var v int64
+		for p.pos < len(p.src) && p.src[p.pos] >= '0' && p.src[p.pos] <= '9' {
+			v = v*10 + int64(p.src[p.pos]-'0')
+			p.pos++
+		}
+		n := p.node(Num, nil, nil)
+		n.Val = v
+		n.Text = p.src[start:p.pos] // a view of the source: no copy
+		return n
+	}
+	return nil, p.fail("expected a number")
+}
+
+func eval!(n *Node) int64 {
+	switch n.Kind {
+	case Num:
+		return n.Val
+	case Neg:
+		return -eval!(n.L)
+	}
+	a := eval!(n.L)
+	b := eval!(n.R)
+	switch n.Kind {
+	case Add:
+		return a + b
+	case Sub:
+		return a - b
+	case Mul:
+		return a * b
+	case Div:
+		if b == 0 {
+			return 0, errors.New("division by zero")
+		}
+		return a / b
+	}
+	panic("unknown node kind")
+}
+
+func calc!(arena *mem.Arena, src string) int64 {
+	p := Parser{src: src, arena: arena}
+	root := p.expr!()
+	p.skipSpace()
+	if p.pos < len(p.src) {
+		return 0, fmt.Errorf("col %d: unexpected %q", p.pos+1, p.src[p.pos:p.pos+1])
+	}
+	return eval!(root)
+}
+
+func main() {
+	var arena mem.Arena
+	defer arena.Free() // &arena is evaluated now; arena lives until main returns
+
+	// main cannot return an error, so `!` panics if this fails.
+	fmt.Println("answer:", calc!(&arena, "6 * 7"))
+
+	exprs := []string{"1 + 2 * 3", "(1 + 2) * 3", "10 / (5 - 5)", "2 * (3 + 4) - -5", "7 +", "8 $ 2", "100 / 7 / 2"}
+	for _, src := range exprs {
+		arena.Reset() // frees the previous tree at once
+		v, err := calc(&arena, src) // the Go form of a `!` function
+		if err != nil {
+			fmt.Printf("%-18s error: %v\n", src, err)
+			continue
+		}
+		fmt.Printf("%-18s = %d\n", src, v)
+	}
+}
