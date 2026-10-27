@@ -21,7 +21,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 - [x] P01.12 Close open questions Q4, Q5, Q6
 - [x] P01.13 Ten sample programs
 - [x] P01.14 UB & implementation-defined list
-- [ ] P01.15 Spec review (owner review of the `Open (P01 review)` notes; ADR-0003/0004 update)
+- [~] P01.15 Spec review (owner review of the `Open (P01 review)` notes; ADR-0003/0004 update). Decisions so far: see "P01.15 owner decisions" below.
 - [x] P01.16 Slices and range chapter
 
 ## Open questions
@@ -45,6 +45,23 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 ## Decision changes
 
 - None. Plan-silent points are written as the reading most consistent with the plan and marked `> **Open (P01 review):**` in `docs/spec/`, for the owner to confirm or change in P01.15.
+
+## P01.15 owner decisions
+
+Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this phase's README or the ADRs. They are applied together when the review of all Open notes is finished. "Note #N" refers to the numbered list in the review page (the Open notes in spec order).
+
+| # | Decision | Example | Changes |
+|---|---|---|---|
+| D1 | Variadic parameters of an owning type must be written `own ...T`; a plain `...T` with an owning `T` is a compile error. The caller writes `x.Clone()` to keep its value. | `func Join(parts own ...string) string` · `filepath.Join(dir.Clone(), "x")` | confirms `05-parameters.md:20` |
+| D2 | Inserting a new key into a map while a `range` over that map runs **always panics**, not only when the table must grow. Visible inserts stay a compile error. | `for k := range m { addKey(m) }` → panic every time | P05 D5.4, D1.21 wording; needs an ADR |
+| D3 | Growing a slice while a `range` over it runs, where the compiler can't see it, stays undefined behavior; `gopp -asan` finds it. | `for _, v := range w.queue { w.push(10) }` | confirms `08-slices-and-range.md:109` (UB-2e) |
+| D4 | Every clonable type has an `x.Clone()` method, built-in types too (`string`, `[]T`, `map`, `Unique[T]`, …). `clone(x)` stays as a short form that calls it. `move(x)` stays a built-in. A type whose `Clone` method has another signature is not clonable (compile error). | `s2 := s.Clone()` · `u := User{Name: name.Clone()}` | D1.4 rule 6, D1.10 `clonable`; ADR-0003 |
+| D5 | The keyword `view` is renamed **`ref`**, and the attribute `@View` is renamed **`@Ref`**. `ref` is special only where a type is expected, so `ref := "main"` still works as a variable name. | `func firstWord(s string) ref string` · `type Token struct { Text ref string }` | D1.2, D1.6, every chapter; ADR-0003 |
+| D6 | In a type switch or assertion, `case string:` also matches a `ref string` (and `case []T:` a `ref []T`). The bound value is a borrow either way. `case ref string:` is still allowed when the difference matters. | `switch x := v.(type) { case string: use(x) }` | D1.12 ("`case string:` doesn't match a `view string`") changes; ADR-0003 |
+| D7 | New form `for _, &d := range xs`: `d` is the element itself, so writes change the collection. It works for slices, arrays and map values (`for k, &v := range m`). The key can't use `&`. Growing the collection inside the loop stays a compile error. The plain form `for _, d := range xs` stays read-only for owning elements, and its error message suggests `&d` first. `m[k].f = x` outside a loop stays illegal, as in Go. | `for _, &d := range docs { d.Title = "x" }` · `for k, &v := range m { v.Count++ }` | D1.21, RNG-1/OWN-R3b, EBNF for `RangeClause`; ADR-0003 |
+| D8 | Notes #1–#5 accepted as written (with D5/D6 applied): view/string comparison compares contents; type assertions borrow; type-switch rule per D6; re-pointing a borrowed `string`/`[]T` range variable; range variables over owning elements are read-only (like Rust `for d in &docs`). | | `03-types.md:37`, `:101`, `:140`; `04-ownership.md:141`, `:166` |
+
+Still to review: notes #6–#42 (next: #6–#10).
 
 ## Notes / blockers
 
