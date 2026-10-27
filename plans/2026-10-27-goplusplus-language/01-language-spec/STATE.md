@@ -72,7 +72,9 @@ Decided by the owner on 2026-10-27. **Not yet applied** to `docs/spec/`, this ph
 
 | D14 | #21 accepted: a range over an array of owning elements is not copied (cheaper; arrays of trivial elements are still copied, like Go). **#22 decided now instead of in P08:** a range over a C++ container works like a slice: `for _, x := range vec` is a read-only borrow of each element (no C++ copy constructor), and `for _, &x := range vec` changes the real element (like C++ `auto&`). | `for _, &x := range vec { x += 1 }` | `08-slices-and-range.md:121`, `:123`; P08 D8.6 |
 
-Still to review: notes #23–#42 (next: #23–#25, then #26–#30).
+| D15 | #24 accepted: `x!()` follows the innermost function; if that function can return an error, the error is returned, otherwise it panics. **#25 changed:** a `!` function already adds the `error` result, so it can't also declare `error` as its last result: `func check!() error` is a compile error ("`!` already adds the error; remove it"). `func check!()` returns only an error. To return an error as a normal value, use the Go form `func check() (error, error)`. This removes the `return e` ambiguity. | `func load!() []byte` → `([]byte, error)` · `func check!() error` ❌ | `09-errors-and-panics.md:35`, `:42`; D1.8 |
+
+Still to review: notes #23, #26–#42 (next: #23, then #26–#30).
 
 ## Notes / blockers
 
