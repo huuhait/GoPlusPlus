@@ -136,6 +136,13 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 - A smaller set builds real binaries: linking, C interop, exit codes and signals.
 - Stage tests stop early (`--dump-ast`, `--dump-gir`) and check the dump with FileCheck.
 
+**D4.15 — GIR serialization format** (owner decision; decides Q1). How GIR bodies are saved in export data (`.gopx`, P06 D6.2), so importers can instantiate generics and inline without re-reading the source.
+- **Encoding: LLVM's bitstream container** (`llvm/Bitstream`), the format used by LLVM bitcode, Clang PCH/modules and Swift's `.swiftmodule`, which also stores generic and inlinable bodies. It is already in LLVM (no new dependency), compact, and blocks carry their length, so a reader jumps straight to one function through the index. It is only the container: LLVM tools cannot read GIR inside it (`llvm-bcanalyzer` still shows the block layout).
+- **Version: only the exact same compiler reads it.** The file header holds the compiler version; any mismatch means "rebuild", as in Go. No compatibility across versions.
+- **Deterministic:** the same input gives byte-identical output (stable ordering, no thread-order or pointer-order effects), because the cache hashes these bytes (P06 D6.2, D6.3).
+- **Text dump:** `gopp gir dump <file.gopx>` prints the GIR with the P04.01 printer; tests round-trip binary → text → binary and require identical bytes.
+- P04.01 provides the serialization hooks; P06.02 writes and reads the `.gopx` sections.
+
 ## From M0 to M1, in order
 
 1. `package main; func main() { println("hello") }`, with `println` written in Go++ on top of `@Extern("C") func write(fd int32, p *byte, n uint) int`.
@@ -171,5 +178,5 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 
 ## Open questions
 
-- **Q1** GIR serialization format details (coordinated with P06.02).
+- **Q1** (decided 2026-10-27) GIR serialization format: LLVM bitstream container, same-compiler-version only, deterministic bytes, `gopp gir dump` (D4.15).
 - **Q2** (deferred to P06) One LLVM module per package, or per function group at `opt 0` (the debug profile)? Decided by measurement in P06.07 (see P06 D6.5).

@@ -29,7 +29,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Open questions
 
-- [ ] Q1 GIR serialization format details
+- [x] Q1 GIR serialization format details (decided: D4.15, LLVM bitstream container)
 - [x] Q2 One LLVM module per package, or per function group: deferred to P06 (P06.07)
 
 ## Exit criteria

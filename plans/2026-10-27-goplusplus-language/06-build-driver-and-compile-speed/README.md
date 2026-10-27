@@ -25,6 +25,7 @@
 
 **D6.2 — Export data (`.gopx`).**
 - Versioned, binary and mmap-able, with an index so importers decode only the declarations they actually use (like Go's unified IR).
+- GIR bodies use the encoding fixed in P04 D4.15 (LLVM bitstream container, same compiler version only, deterministic bytes).
 - Three sections, each with its own hash:
   1. **Type API:** everything importers need to type-check (types, signatures, constants, ownership metadata, macro definitions, foreign-import references). No bodies, no positions. Its hash is the package's **API fingerprint**. It decides whether dependents are re-type-checked.
   2. **Bodies:** GIR for generic and inlinable functions. A dependent re-runs codegen only if a body it actually used changed. Each dependent records which bodies it used.
