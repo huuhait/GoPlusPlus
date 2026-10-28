@@ -16,7 +16,7 @@
 
 **D4.2 — Per-function pipeline.**
 1. Build GIR.
-2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows.
+2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows. For a type with no zero value, the value of a comma-ok lookup (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`) counts as moved on the paths where `ok` is false, and a borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in a nilable `@Required` field must be known non-nil on that path (a constructor, `&x`, `make`, a literal, or a variable narrowed by `if p != nil`); reads of such a field skip the nil check.
 3. Elaborate drops: destructor calls on normal *and* unwind paths, and zeroing on `move`.
    - Moving a Go++ value copies its bytes and zeroes the source.
    - Moving a C++ value, implicitly or with `move(x)`, runs its move constructor; the source keeps its moved-from state and is destroyed at the end of its scope (P01 D1.4 rule 9). Relocation (P05 D5.5) is used only inside containers.

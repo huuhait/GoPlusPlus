@@ -83,7 +83,7 @@ The same holds for a range over an array with owning elements (the range variabl
 
 Also UB-2a, when not visible to the compiler: `m[k] = x` on the entry the loop is on (the old value that `v` borrows is dropped) and `copy(dst, …)` into the ranged slice, followed by a use of the range variable.
 
-Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value, [RNG-3](08-slices-and-range.md)). UB: keeping a ref or pointer into any removed entry past its iteration or past the removal.
+Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value; for a type with no zero value, reading `v` after it is a compile error, [RNG-3](08-slices-and-range.md)). UB: keeping a ref or pointer into any removed entry past its iteration or past the removal.
 
 **UB-2b.** *Shared handle released through another path.* A shared-handle parameter is passed without a retain ([PAR-7](05-parameters.md)). If the callee drops the caller's last reference through another path and then uses the parameter, the value is freed. Not caught.
 
@@ -123,6 +123,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
 - Using the result of `ffi.String(p)` (a ref over C memory) after the C memory is freed.
 - Passing a `ref string` temporary copy to a callee that keeps the pointer (FOR-6).
+- C or C++ code that writes nil into a never-nil `@Required` field, or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code reads the field with no nil check.
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
@@ -160,11 +161,12 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | `v` reassigned while a type-assertion binding still borrows its box, write not visible (UB-2d; a visible write is a compile error) | | | yes | |
 | ranged slice or owned string reallocated by a call in the loop body (UB-2e; visible cases are compile errors) | | | yes | |
 | borrowed range variable (slice, array or map) used after its element was written (UB-2a; a visible write then use is a compile error) | write and use both visible | | yes | |
-| ref/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero value respectively) | | | yes | |
+| ref/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero bytes respectively) | | | yes | |
 | data race (UB-3) | | | | yes |
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5) | | | yes | |
 | C keeps a pointer (UB-9) | | known list | maybe | |
+| C writes nil into a never-nil `@Required` field (UB-9) | | | no (a nil read crashes like any nil dereference) | |
 
 ## 16.5 Rationale
 

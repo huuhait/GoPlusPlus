@@ -4,7 +4,34 @@ Base: Go spec [Variables](https://go.dev/ref/spec#Variables), [The zero value](h
 
 This is the core of Go++. Go has a GC, so every value can be shared. Go++ has no GC, so every value has **one owner** and is destroyed when its owner ends.
 
-Contents: [4.1 categories](#41-type-categories-d13) · [4.2 rules 1 to 10](#42-ownership-rules-d14) · [4.3 pointers and heap](#43-pointers-and-heap-allocation-d17) · [4.4 refs](#44-refs-d16) · [4.5 rationale](#45-rationale)
+Contents: [at a glance](#at-a-glance-pointers-and-borrows) · [4.1 categories](#41-type-categories-d13) · [4.2 rules 1 to 10](#42-ownership-rules-d14) · [4.3 pointers and heap](#43-pointers-and-heap-allocation-d17) · [4.4 refs](#44-refs-d16) · [4.5 rationale](#45-rationale)
+
+## At a glance: pointers and borrows
+
+Two questions decide which one you use: **do I own it?** and **one owner or many?** Rules are in the sections linked in the last column.
+
+| I want to… | Write | Owns? | Rule |
+|---|---|---|---|
+| read a value inside a function | a normal parameter `func show(u User)`; an owning value is borrowed automatically (read-only, no copy), a trivial one such as `int` is just copied | no | [PAR-1](05-parameters.md) |
+| change the caller's value | `func rename(u *User)`, called as `rename(&u)` | no | [OWN-P1](#43-pointers-and-heap-allocation-d17) |
+| look at part of a string or slice | `s[i:j]` gives a `ref string` / `ref []T`, with no copy | no | [OWN-V1, V2](#44-refs-d16) |
+| change every element in a loop | `for _, &u := range users { u.Age++ }` | no | [RNG-1a](08-slices-and-range.md) |
+| own a heap value, alone | `Unique[User]`, made with `new_unique(User{…})`; freed when its owner ends | yes | [OWN-P2](#43-pointers-and-heap-allocation-d17) |
+| share a heap value | `Shared[User]`, made with `new_shared(User{…})`; freed when the last copy ends | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
+| point at a shared value without keeping it alive | `Weak[User]`; read it with `if p := w.Lock(); p != nil { … }` | no | [OWN-P3, P5](#43-pointers-and-heap-allocation-d17) |
+| copy an owned value | `u.Clone()` (short form `clone(u)`) | — | [OWN-R6](#42-ownership-rules-d14) |
+| give an owned value away | `move(u)`; `u` is left as the zero value | — | [OWN-R4](#42-ownership-rules-d14) |
+
+```go
+func show(u User)            { fmt.Println(u.Name) }   // borrowed: read-only
+func rename(u *User)         { u.Name = "amy" }        // *T: changes the caller's User
+first := name[0:3]                                     // ref string: a view, no copy
+for _, &u := range users     { u.Age++ }               // & range: changes each element
+owner := new_unique(User{Name: "bob"})                 // Unique: freed when owner ends
+cfg   := new_shared(Config{})                          // Shared: freed when the last copy ends
+back  := new_weak(cfg)                                 // Weak: doesn't keep cfg alive
+if c := back.Lock(); c != nil { fmt.Println(c.Name) }  // the only way to read through a Weak
+```
 
 ## 4.1 Type categories (D1.3)
 
@@ -98,7 +125,7 @@ fmt.Println(len(a))
   For a borrowed parameter the fix-its are `p.Clone()` and "make the parameter `move`", because a borrowed parameter cannot be moved out of ([PAR-1](05-parameters.md)).
 - **Moving a borrowed variable.** `move(x)` of a borrowed variable is a compile error ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)). Fix-its: `x.Clone()`, or declare the range variable with `&` (`for _, &v := range xs`, `for k, &v := range m`), which may be moved from ([RNG-1a](08-slices-and-range.md)). For a map, `move(m[k])` also takes the value out ([RNG-3](08-slices-and-range.md)).
 - **Maps.**
-  - `move(m[k])` removes the entry and returns it.
+  - `move(m[k])` removes the entry and returns it. For a value type with no zero value ([R9](04-ownership.md#42-ownership-rules-d14)), its value may only be taken with `v, ok := move(m[k])`, because a missing key would give zero bytes; a bare `move(m[k])` statement just removes the entry.
   - `v, ok := clone(m[k])` and `v, ok := move(m[k])` keep the comma-ok form.
   - `m[k].f = x` stays illegal, as in Go.
 - **Swap.** A statement that reads and writes the same places (`a[i], a[j] = a[j], a[i]`) is allowed and moves the elements.
@@ -195,7 +222,7 @@ t := tag                             // error: tag is borrowed by a pending defe
 ```
 
 **OWN-R4.** *Explicit and implicit moves.*
-- `move(place)` takes the value out of any place and leaves the zero value.
+- `move(place)` takes the value out of any place and leaves the zero value. For a Go++ type with no zero value ([R9](04-ownership.md#42-ownership-rules-d14)), `move` out of a place other than a local variable is a compile error (the place would be left as zero bytes): use `mem.Replace(&place, v)`, `delete`, `move(m[k])`, `s = s[:n]` or `range move(xs)`. A *local* here is a variable declared in the function: `:=` and `var` variables, comma-ok results of a map or channel lookup (`v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`), owning range variables (`range move(xs)`) and `move` parameters. A type-assertion or type-switch binding is not one: it borrows the interface's box (OWN-R3b), so take a copy with `u.Clone()`. Inside a closure, a captured variable is not a local ([CLO-9](11-closures.md)), so moving it is an error for such a type (the next call would read zero bytes). The rule looks at the type of the place itself: `x.items = append(x.items, v)` moves a `[]User`, which has a zero value, so it is fine. A swap, or any assignment that refills every place it empties in the same statement, is allowed: `xs[i], xs[j] = xs[j], xs[i]`, `c.A, c.B = c.B, c.A`. In such a swap, all index, map-key and pointer operands and their bounds and nil checks are evaluated before any value is moved, so the statement can't panic halfway and leave a place empty.
 - The move is **implicit** when the same place is passed to a `move` parameter and also receives the result, in one statement: `p = append(p, …)`, `buf = strconv.AppendInt(buf, n, 10)`, `x.items = append(x.items, v)`.
 - Anywhere else, write `append(move(p), …)` or `append(p.Clone(), …)`.
 - **Map entries.** `m[k] = append(m[k], v)` takes the value **in place**: the slot holds the zero value until the result is stored back. The entry is never removed and re-inserted. If `k` is absent, the result is a normal insert (the key rule of [OWN-V4a](04-ownership.md#44-refs-d16)). Inside `range m`, any `m[x] = …`, `m[x]++`, `m[x] op= …` or `m[x] = append(m[x], …)` where `x` is **not the current range key variable, or is the range key variable but was written earlier in the body** (for a trivial key type the range key is a writable copy, so after `k++` the name `m[k]` no longer names the current entry) is a visible potential insert (the compiler cannot know whether `x` exists), so it is a compile error ([RNG-3](08-slices-and-range.md), D1.21). Only `m[k]` with `k` the range key variable, not written earlier in the body, is a write to the current entry (defined). Example: `for k := range m { m[k] = 1; k++; m[k] = 2 }` accepts the first write and rejects the second. Fix-it: collect the changes and apply them after the loop. Inserts the compiler cannot see panic at run time ([RNG-4](08-slices-and-range.md)).
@@ -211,8 +238,8 @@ all = append(all, move(more)...)   // elements of more move into all
 *Why (R4):* `p = append(p, …)` is the most common slice idiom in Go; the implicit move keeps it unchanged, while every other form that would hide a copy or a take must say `move` or `Clone`.
 
 **OWN-R5.** *Zero values.*
-- Every type has a zero value (as in Go). A moved-from place holds it (C++ classes: see R9).
-- A `drop` method must accept the zero value. `gopp vet` checks this.
+- Every type has a zero value (as in Go), except the types with none of [R9](04-ownership.md#42-ownership-rules-d14) (C++ classes without a default constructor, structs with a `@Required` field). A moved-from place holds the zero value; for C++ classes see R9, and a moved-from place of a `@Required` struct holds the all-zero bytes, which only drop and assignment touch (a read is a use after move).
+- A `drop` method must accept the zero value. `gopp vet` checks this. Drop glue skips an all-zero value, so a `drop` never sees a never-nil `@Required` field as nil ([TYP-15](03-types.md)).
 - Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build profile.
 
 ```go
@@ -227,7 +254,7 @@ b := move(a)               // b owns the entries; a is now the zero Cache
 a = Cache{}                // legal: a is usable again
 ```
 
-*Why (R5):* every type has a zero value in Go, so a moved-from place needs no drop flag. The same holds for extended locals ([PAN-3](09-errors-and-panics.md)): the defer record that was created when the `defer` ran is the only flag, and there are no extra drop flags. If no such `defer` ran on the path, the local is destroyed at the end of its block as usual: the existence of the defer record is what tells the block end whether to drop the local; no extra drop flag.
+*Why (R5):* a moved-from place always holds zero bytes (the zero value, where the type has one), so it needs no drop flag. The same holds for extended locals ([PAN-3](09-errors-and-panics.md)): the defer record that was created when the `defer` ran is the only flag, and there are no extra drop flags. If no such `defer` ran on the path, the local is destroyed at the end of its block as usual: the existence of the defer record is what tells the block end whether to drop the local; no extra drop flag.
 
 **OWN-R6.** *Copies are explicit: `x.Clone()`.*
 - Every type that can be cloned has a method `Clone() T`. Built-in types have it too: `string`, `[]T`, `map[K]V`, `Unique[T]`, numbers and the other types of [OWN-C1](#41-type-categories-d13). So `s2 := s.Clone()` and `u := User{Name: name.Clone()}` work for every cloneable `s` and `name`.
@@ -289,11 +316,12 @@ fmt.Println(s)             // NOT caught: dangling ref (UB-1). -asan finds it at
 
 *Why:* a borrow checker costs compile speed and simplicity; v1 keeps Go's look and relies on a small closed list of checks plus sanitizers.
 
-**OWN-R9.** *C++ class types.*
-- A C++ type has a zero value only if it has a default constructor.
-- Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)`, a missing map key, a receive from a closed channel, `var zero T` in generic code, named results, a failing `!`.
+**OWN-R9.** *C++ class types* (and other types with no zero value).
+- A C++ type has a zero value only if it has a default constructor. A struct with a `@Required` field has none either ([TYP-15](03-types.md)), nor has any struct or array that contains a type with no zero value.
+- Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is allowed: `make([]T, 0, c)` creates no value), `m[k]` and `<-ch` outside a comma-ok form (see below), `clear(s)` on a slice (use `s = s[:0]`; `clear(m)` on a map is fine), a receive from a closed channel, `var zero T` in generic code, named results, a failing `!`.
 - Every move of a C++ value, implicit or `move(x)`, runs its **move constructor**. The source keeps the C++ "moved-from" state (not zero) and is destroyed at the end of its scope.
 - Only containers relocate values, with the type's relocate operation (P05 D5.5): `memcpy` only for Go++ types and trivially relocatable C++ types.
+- **Lookups that can fail.** For a type with no zero value, a map index `m[k]` or a receive `<-ch` whose value type has no zero value may be used only in a comma-ok form (`v, ok := m[k]`, `v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`, `case v, ok := <-ch:` in a `select`), as the target of `m[k] = v`, in `delete(m, k)`, or as a bare `move(m[k])` statement that discards the value; every other use (`v := m[k]`, `u := clone(m[k])`, `u := move(m[k])`, `m[k].Email`, `f(m[k])`, `T{F: m[k]}`, `v := <-ch`, `case v := <-ch:`, `(<-ch).Email`) is an error, because a missing key or a closed channel would give zero bytes; the comma-ok forms (`u, ok := x.(T)`, `u, ok := m[k]`, `u, ok := clone(m[k])`, `u, ok := move(m[k])`, `u, ok := <-ch`) work, and `u` counts as moved on every path where `ok` is false, so the use-after-move check rejects reading it there (P04 flow checks). A type switch and the single-value `u := x.(T)` work as in Go.
 
 ```go
 var v vector.vector[int32]   // has a default constructor: zero value exists
@@ -369,7 +397,7 @@ Every heap allocation is spelled out. Go's `new` is removed. (The runtime's own 
 
 **OWN-P4.** `&T{…}` is a compile error with a fix-it: "allocation is explicit in Go++: use `new_unique(T{…})`". In Go it allocated silently.
 
-**OWN-P5.** Field access and method calls **auto-dereference** every pointer kind. `Unique[T]` and `Shared[T]` get the methods of both `T` and `*T`, except `Clone` and `IsNil`, where the pointer kind's own method wins ([OWN-R6](#42-ownership-rules-d14), OWN-P9). On a raw `*T`, `p.Clone()` is an error if `T` has a value-receiver `Clone() T` (OWN-R6), and `p.IsNil()` is an error if `T` has an `IsNil` method (OWN-P9).
+**OWN-P5.** Field access and method calls **auto-dereference** `*T`, `Unique[T]` and `Shared[T]`. `Weak[T]` does **not** (ADR-0017): its target can be freed at any moment, so `w.Name` or `w.Method()` is a compile error with the fix-it `if p := w.Lock(); p != nil { p.Name }`. A `Weak[T]` has only its own methods (`Lock`, `IsNil`). `Unique[T]` and `Shared[T]` get the methods of both `T` and `*T`, except `Clone` and `IsNil`, where the pointer kind's own method wins ([OWN-R6](#42-ownership-rules-d14), OWN-P9). On a raw `*T`, `p.Clone()` is an error if `T` has a value-receiver `Clone() T` (OWN-R6), and `p.IsNil()` is an error if `T` has an `IsNil` method (OWN-P9).
 
 **OWN-P6.** `Unique[T]` and `Shared[T]` convert **implicitly** to `*T` when borrowed from a place. They never convert from a temporary, because the target would be freed immediately.
 
@@ -378,7 +406,7 @@ Every heap allocation is spelled out. Go's `new` is removed. (The runtime's own 
 **OWN-P8.** `Unique[T]` is owning (move-only). `Shared[T]` and `Weak[T]` are shared handles: copies retain the strong or weak count. `Weak[T]` copies retain the weak count only.
 
 **OWN-P9.** *`IsNil()` and `nil`.* Every pointer kind has an `IsNil() bool` method: raw `*T`, `Unique[T]`, `Shared[T]` and `Weak[T]`. `p == nil` and `p != nil` keep working, as in Go.
-- **`Unique[T]`, `Shared[T]`, `Weak[T]`:** if `T` has its own `IsNil` method, the pointer kind's `IsNil` wins (Go has no such types, so no Go code changes meaning). Call `T`'s as `(*p).IsNil()`. `Clone` follows the same tie-break for `Unique[T]` and `Shared[T]` ([OWN-R6](#42-ownership-rules-d14)).
+- **`Unique[T]`, `Shared[T]`, `Weak[T]`:** if `T` has its own `IsNil` method, the pointer kind's `IsNil` wins (Go has no such types, so no Go code changes meaning). On `Unique[T]` and `Shared[T]`, call `T`'s as `(*p).IsNil()`. A `Weak[T]` can't be dereferenced (OWN-P5), so reach `T`'s through `Lock`: `if p := w.Lock(); p != nil { (*p).IsNil() }` (ADR-0017). `Clone` follows the same tie-break for `Unique[T]` and `Shared[T]` ([OWN-R6](#42-ownership-rules-d14)).
 - **Raw `*T`:** if the method set of `*T` already has an `IsNil` method (declared on `T` or on `*T`), `p.IsNil()` is a **compile error** for ambiguity, because Go would call `T`'s. Fix-its: "write `(*p).IsNil()` to call T's method, or `p == nil` to check the pointer". If `T` has no `IsNil` method, `p.IsNil()` checks the pointer. Reason: making the pointer's check win would silently change copied Go code (`true` instead of `false`, and a nil `p` that panics in Go would return `true`). Same shape as the raw `*T` `Clone` rule in [OWN-R6](#42-ownership-rules-d14).
 - For `Weak[T]`, `IsNil()` is true when there is no target: it was never set, or the value is already freed.
 

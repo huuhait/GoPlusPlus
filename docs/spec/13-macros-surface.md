@@ -63,6 +63,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 | `@Ref` | struct type | the struct may hold ref fields without a vet warning ([OWN-V5](04-ownership.md#44-refs-d16)) | this spec |
 | `@NoBounds` | function | turn bounds checks off ([EXP-7](06-expressions.md)) | P05 D5.8 |
 | `@Pinned` | type | cannot be moved or copied after first use ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) | this spec |
+| `@Required` | struct field | the field must be set in every literal; the struct has no zero value ([TYP-15](03-types.md)) | ADR-0016 |
 | `@Unwind` | callback function | the callback may unwind through its C callers | P07 |
 | `@If(cond)` | type, func, method, var, const | the declaration is type-checked, but only emitted and exported when the constant `bool` `cond` is true ([MAC-15](#132-rules)) | P09 D9.12 |
 
@@ -77,7 +78,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 **MAC-12.** *Attributes on struct fields.* Attributes are allowed on struct fields in v0. They are written **after the field's type**, before any Go struct tag. Top-level attributes stay on the line before the declaration.
 - ``Name string @JSON("name") `db:"name"` ``: the attribute `@JSON("name")` first, then the tag.
 - Several attributes are written one after the other on the same line: `Name string @A @B`.
-- A field attribute is read by the macro or attribute of the type (for example `@Derive(JSON)` reads `@JSON("name")`). Which attributes a macro accepts is defined by that macro (P09).
+- A field attribute is read by the macro or attribute of the type (for example `@Derive(JSON)` reads `@JSON("name")`). Which attributes a macro accepts is defined by that macro (P09). The exception is a built-in field attribute such as `@Required` (MAC-8), which the compiler itself handles.
 
 **MAC-13.** *Block arguments.* A `block` argument of `#Name(args)` is written like a func literal: `#Repeat(3, func() { fmt.Println("hi") })`. It is not a closure. The code is pasted inline where the macro uses it. So `return`, `break` and `continue` inside it are **compile errors**: they would leave or continue the code around the macro in a way the reader cannot see. The exception is a nested func literal within the block argument.
 

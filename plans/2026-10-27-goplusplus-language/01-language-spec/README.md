@@ -63,7 +63,7 @@ Each delta has EBNF, semantics, an example and a rationale.
    - Anywhere else, write `append(move(p), …)` or `append(p.Clone(), …)`.
    - Spread (`append(a, b...)`) and `copy(dst, src)` with non-trivial elements need `move` or `Clone` on the source: `move(b)` or `b.Clone()`, `move(src)` or `src.Clone()`.
    - Moves out of places happen after all other arguments are evaluated.
-5. **Zero values.** Every type has a zero value (Go), and a moved-from place holds it (for C++ class types, see rule 9). A `drop` method must therefore accept the zero value; `gopp vet` checks this. Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build mode.
+5. **Zero values.** Every type has a zero value (Go), except the types of rules 9 and 11. A moved-from place holds the zero value; for C++ class types see rule 9, and a moved-from place of a rule 11 type holds the all-zero bytes, which only drop and assignment may touch (use after move is an error). A `drop` method must therefore accept the zero value; `gopp vet` checks this. Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build mode.
 6. **Copies are explicit: `x.Clone()`.**
    - Every type that can be cloned has a method `Clone() T`, built-in types too (`string`, `[]T`, `map`, `Unique[T]`, numbers, …). `clone(x)` stays as a short form that calls it. `move(x)` stays a built-in.
    - A type whose `Clone` method has another signature is not cloneable (compile error).
@@ -79,13 +79,21 @@ Each delta has EBNF, semantics, an example and a rationale.
    - `-asan` catches the rest at runtime. The owner chose no extra safety layer for v1.
 9. **C++ class types.**
    - A C++ type has a zero value only if it has a default constructor.
-   - Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)`, a missing map key, a receive from a closed channel, `var zero T` in generic code, named results, a failing `!`.
+   - Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is fine: `make([]T, 0, c)` creates no value; ADR-0016), `m[k]` and `<-ch` outside a comma-ok form (Q9), a receive from a closed channel, `var zero T` in generic code, named results, a failing `!`.
    - Every move of a C++ value, implicit or `move(x)`, runs its move constructor and leaves the C++ "moved-from" state, not zero. The source is destroyed at the end of its scope.
    - Only containers relocate values, with the type's relocate operation (P05 D5.5): `memcpy` only for Go++ types and trivially relocatable C++ types.
 10. **Pinned values.**
     - `gopp vet` reports moving a local after its address, or a ref into it, has been stored.
     - Types marked `@Pinned` (the `sync` types) can't be moved or copied after first use: a compile error, like Go vet's copylocks.
     - `return local` builds the value in the caller's result slot, so it never moves.
+11. **Required fields** (owner decision; ADR-0016).
+    - `@Required` after a struct field's type (`ID int @Required`) means every composite literal of the struct must set it, by name or by position: `User{Email: "x"}` is a compile error. It is allowed only on struct fields (embedded ones too).
+    - A struct with a required field has **no zero value**, like the C++ types of rule 9, with the same errors: `var u User`, `make([]User, n)` (except a constant `0`), `var a [3]User`, array literals with missing elements (`[3]User{{…}}`), keyed slice literals with gaps (`[]User{5: {…}}`), `clear(s)` on a `[]User` (use `s = s[:0]`; `clear(m)` on a map is fine), named results, and so on.
+    - It spreads: a struct or array containing such a type has no zero value either, so a `User` field inside `Team` must be set in every `Team` literal. For a generic type it belongs to the instance: `Box[User]` has no zero value.
+    - **Never nil:** a `@Required` field whose type can be nil (`*T`, `Unique[T]`, `Shared[T]`, interfaces, funcs, maps, channels) is **never nil**, checked at compile time: a value stored in it (in a literal or an assignment) must be known non-nil (`new_unique(…)`, `new_shared(…)`, `&x`, `make(…)`, a map or func literal, a non-nil `@Required` field, or a variable inside an `if p != nil` check); storing `nil` or a maybe-nil value is an error; `move` out of the field is an error (use `mem.Replace(&c.Owner, v)`, which returns the old value; `v` must be known non-nil); `&c.Owner` is an error except as `mem.Replace`'s first argument; `@Required` on a `Weak[T]` field is an error (it can turn nil by itself); on a slice or a type-parameter field it only means "must be set" (a nil slice is empty). `drop` never sees such a field nil (a moved-from value is all zero and drop glue skips it).
+    - JSON decoding builds a new value (`json.Decode[User](data)`); there is no `json.Unmarshal` (P13 D13.4).
+    - **Lookups that can fail** (rules 9 and 11; Q9): a map index `m[k]` or a receive `<-ch` whose value type has no zero value may be used only in a comma-ok form (`v, ok := m[k]`, `v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`, `case v, ok := <-ch:` in a `select`), as the target of `m[k] = v`, in `delete(m, k)`, or as a bare `move(m[k])` statement that discards the value; every other use (`v := m[k]`, `u := clone(m[k])`, `u := move(m[k])`, `m[k].Email`, `f(m[k])`, `T{F: m[k]}`, `v := <-ch`, `case v := <-ch:`, `(<-ch).Email`) is an error, because a missing key or a closed channel would give zero bytes; the comma-ok forms (`u, ok := x.(T)`, `u, ok := m[k]`, `u, ok := clone(m[k])`, `u, ok := move(m[k])`, `u, ok := <-ch`) work, and `u` counts as moved on every path where `ok` is false, so the use-after-move check rejects reading it there. A type switch and `u := x.(T)` work as in Go.
+    - **Moves:** a moved-from local holds zero bytes and is tracked by use after move (rule 5). `move` out of any place other than a local variable is an error for a Go++ type with no zero value (a slice, array or map element, an `&` range alias, a struct field, `*p`), because the place would be left as zero bytes that later code reads as a real value; use `mem.Replace(&place, v)`, `delete(m, k)` or `move(m[k])` (which remove the entry), `s = s[:n]` (which drops elements), or `range move(xs)`. A moved local is tracked by the use-after-move check. C++ types are not affected: their moved-from state is a valid C++ object. Locals are declared variables, comma-ok results of map and channel lookups, owning range variables and `move` parameters, not type-assertion bindings (borrowed) or captured variables inside a closure; swaps (`xs[i], xs[j] = xs[j], xs[i]`) are allowed; in a map range, `v` counts as moved after `move(m[k])` of its entry (OWN-R4, RNG-3).
 
 *Why:* deterministic, GC-free memory with C++-compatible object semantics, which C++ interop (P08) needs anyway, while keeping Go's zero values. Zero-on-move means no drop flags and no partially dead variables; moved-from state is always defined.
 *Rejected:* tracing GC (excluded by the requirements); ARC everywhere (hidden cost, cycles); a Rust-style borrow checker (cost to compile speed and simplicity; reconsider after v1); C++-style implicit copies (hidden allocations).
@@ -133,9 +141,9 @@ Each delta has EBNF, semantics, an example and a rationale.
 - `new_unique` and `new_shared` take the initial value and move it in: `new_unique(Node{Name: "a"})`, or `new_unique(Node{})` for a zero value.
 - `new_weak` takes a `Shared[T]`. A weak pointer can't own a new object, because it would be freed at once.
 - `&T{…}` is a compile error with a fix-it ("allocation is explicit in Go++: use `new_unique(T{…})`"). In Go it allocated silently.
-- Field access and method calls auto-dereference every pointer kind.
+- Field access and method calls auto-dereference `*T`, `Unique[T]` and `Shared[T]`. `Weak[T]` doesn't (its target can vanish; ADR-0017): read it with `if p := w.Lock(); p != nil { … }`, and `w.Name` is a compile error.
 - `Unique[T]` and `Shared[T]` have the methods of both `T` and `*T`.
-- Every pointer kind (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`) has an `IsNil()` method, and `p == nil` keeps working. If `T` has its own `IsNil` method: on `Unique[T]`, `Shared[T]` and `Weak[T]` the pointer kind's `IsNil` wins (call `T`'s as `(*p).IsNil()`); on a raw `*T`, `p.IsNil()` is a compile error for ambiguity (fix-its: `(*p).IsNil()` for T's method, `p == nil` for the pointer). Without a `T.IsNil`, `p.IsNil()` checks the pointer. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed).
+- Every pointer kind (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`) has an `IsNil()` method, and `p == nil` keeps working. If `T` has its own `IsNil` method: on `Unique[T]`, `Shared[T]` and `Weak[T]` the pointer kind's `IsNil` wins (call `T`'s as `(*p).IsNil()` on `Unique`/`Shared`; on a `Weak`, through `Lock` first, ADR-0017); on a raw `*T`, `p.IsNil()` is a compile error for ambiguity (fix-its: `(*p).IsNil()` for T's method, `p == nil` for the pointer). Without a `T.IsNil`, `p.IsNil()` checks the pointer. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed).
 - `Unique[T]` and `Shared[T]` convert implicitly to `*T` when borrowed from a place. They never convert from a temporary, because the target would be freed immediately.
 - `make([]T, n)`, `make(map[K]V)` and `make(chan T, n)` work as in Go.
 
@@ -293,7 +301,7 @@ func main() {
 - Across packages: a macro from another package is qualified like a function: `#pkg.Name(…)`, `@pkg.Name`.
 - Predeclared: the std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting` and `@Derive` need no import (`#Profile` and `#Setting` are specified in P09 D9.12).
 - `@Derive(X)` finds `X` in std package `derive`, unless qualified (`@Derive(sql.Table)`).
-- Built-in attributes use the same syntax: `@Extern("C")`, `@Export("C")`, `@Inline`, `@NoInline`, `@Packed`, `@Align(N)`, `@Ref`, `@NoBounds`, `@Pinned`, `@Unwind`, `@If(cond)` (P09 D9.12). `@Derive(…)` is a std macro (P09).
+- Built-in attributes use the same syntax: `@Extern("C")`, `@Export("C")`, `@Inline`, `@NoInline`, `@Packed`, `@Align(N)`, `@Ref`, `@NoBounds`, `@Pinned`, `@Unwind`, `@If(cond)` (P09 D9.12), `@Required` (struct fields, rule 11). `@Derive(…)` is a std macro (P09).
 - Errors: a macro's error or panic becomes a compile error at the use site (P09 D9.11).
 - `!` never means "macro", which keeps it unambiguous as Must.
 
@@ -434,3 +442,4 @@ for _, d := range docs { u := d.Clone() }       // ok; `d := d` would be an erro
 - **Q6** (decided 2026-10-27) Interface inline storage: one word (8 bytes), trivial values only (D1.12).
 - **Q7** (decided 2026-10-27) Ranging over owning elements: `for _, x := range xs` borrows each element, and `for _, x := range move(xs)` moves them out (D1.21).
 - **Q8** (deferred to P15, P15 Q1) Small-string optimization for `string`? Proposed: no in v0. The layout is ABI, so P15 decides before v1.0.
+- **Q9** (decided 2026-10-27, ADR-0016) How is a map read (and a type assertion made) when the value type has no zero value? `m[k]` and `<-ch` may be used only in comma-ok forms, as a write target or in `delete`; the comma-ok forms work, and `u` counts as moved wherever `ok` is false, so the use-after-move check stops any read there (D1.4 rule 11).

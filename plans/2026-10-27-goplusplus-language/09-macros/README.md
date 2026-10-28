@@ -89,7 +89,7 @@ func checksum(data []byte) uint32 {
   - `==` and map keys work on comparable types;
   - `x.Clone()` works on every cloneable type, and `clone(x)` is its short form (P01 D1.4 rule 6).
 - The derives:
-  - `@Derive(JSON)` generates `MarshalJSON`/`UnmarshalJSON`. It is optional: `encoding/json` works on any type and prefers these methods when they exist (like `easyjson` in Go).
+  - `@Derive(JSON)` generates `MarshalJSON` and a decode function that builds a new value. It is optional: `encoding/json` works on any type and uses these when they exist (like `easyjson` in Go). There is no `UnmarshalJSON`: decoding always returns a fresh value (`json.Decode[T]`, P13 D13.4), and a missing `@Required` field (P01 D1.4 rule 11, ADR-0016) is an error.
   - `@Derive(Equal)` generates `Equal(o T) bool` for structs that `==` can't compare (they contain slices or maps).
   - No `Clone` derive: a type with `drop` writes `Clone()` by hand on purpose.
 - Tests keep Go's `TestXxx(t *testing.T)` convention; there is no `@Test`.

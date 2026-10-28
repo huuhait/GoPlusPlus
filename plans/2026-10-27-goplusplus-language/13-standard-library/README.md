@@ -22,7 +22,9 @@
 **D13.4 — `fmt` and `encoding/json` work on any type, as in Go, without a `reflect` package.**
 - Both read the compact field tables the compiler emits for types converted to an interface (P01 D1.12).
 - `fmt.Println(p)` prints `{1 2}` and `%+v` prints `{X:1 Y:2}`. `Stringer`, `Formatter` and `error` implementations take precedence, as in Go.
-- `@Derive(JSON)` is an optional fast path. It generates `MarshalJSON`/`UnmarshalJSON`, which `encoding/json` prefers (like `easyjson` in Go). Output is identical either way.
+- **Decoding returns a new value** (owner decision, ADR-0016): `u, err := json.Decode[User](data)`, or `dec.Decode[User]()` on a stream decoder. There is no `json.Unmarshal`, no `dec.Decode(&v)` and no `Unmarshaler` interface, because they need a value to exist before decoding. How a type supplies its own decoding (Go's `UnmarshalJSON`) is designed in P13.08.
+- `@Derive(JSON)` is an optional fast path. It generates `MarshalJSON` and a decode function, which `encoding/json` prefers (like `easyjson` in Go). Output is identical either way.
+- **Required fields.** Decoding a struct with a `@Required` field (P01 D1.4 rule 11) returns an error naming the field when the input doesn't have it, with or without `@Derive(JSON)`. The field table (TYP-10) records which fields are required.
 
 **D13.5 — Tiers, built in this order.**
 - **T1** (everything depends on these):
@@ -43,8 +45,9 @@
 **D13.6 — Port, don't rewrite.**
 - Port Go's implementations and tests (BSD-3; keep the notices) and adapt them to ownership.
 - Redesign the APIs that assume a GC:
-  - `sync.Pool` (Q2, ADR-0014): a generic `sync.Pool[T]` whose `Get` returns an owned value and whose `Put` takes one (`p.Put(move(b))`). A runtime goroutine drops objects not taken for a few seconds, like Go's GC clearing pools, and an optional `Max` caps how many it keeps;
-  - finalizers and `runtime.SetFinalizer` (removed; use `drop`).
+  - `sync.Pool` (Q2, ADR-0014): a generic `sync.Pool[T]` whose `Get` returns an owned value (a stored one or `New()`; a `T` with no zero value must have `New`) and whose `Put` takes one (`p.Put(move(b))`). A runtime goroutine drops objects not taken for a few seconds, like Go's GC clearing pools, and an optional `Max` caps how many it keeps;
+  - finalizers and `runtime.SetFinalizer` (removed; use `drop`);
+  - `json.Unmarshal` and the other fill-a-pointer decoders (replaced by `json.Decode[T]`, D13.4).
 
 **D13.7 — Allocator awareness only where it pays off.** Std uses the default allocator. Variants that accept an allocator or arena are added only where profiling shows a need, e.g. `strings.Builder`, `bytes.Buffer`.
 

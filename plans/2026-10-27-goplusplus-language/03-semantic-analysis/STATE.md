@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-27 (P03.01–P03.14 done)
+Last updated: 2026-10-27 (P03.01–P03.14 done; P03.15 `@Required` added, ADR-0016)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -21,6 +21,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.12 `gopp check` & `gopp vet` v0
 - [x] P03.13 Check throughput
 - [x] P03.14 Error codes & `gopp explain`
+- [ ] P03.15 `@Required` fields (ADR-0016)
+- [ ] P03.16 No auto-deref through `Weak` (OWN-P5, ADR-0017)
 
 ## Open questions
 

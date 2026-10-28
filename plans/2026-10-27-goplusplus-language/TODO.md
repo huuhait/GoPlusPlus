@@ -152,6 +152,8 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P03.12 `gopp check` & `gopp vet` v0**: `check` runs the type-level checks (P04.09 adds the GIR checks). First lints: ref-typed fields, drop-on-zero heuristic, a `!` that would panic outside `main`. *Done when:* CLI tests pass.
 - **P03.13 Check throughput**: measure against the D3.10 budget. *Done when:* the budget is met or an ADR documents the gap.
 - **P03.14 Error codes & `gopp explain`** (D3.11): one table giving every diagnostic (lexer, parser, checker, vet) a numbered `E####` code next to its `DiagnosticIDs.def` name; codes in text and JSON output; `gopp explain E####` with a short example per code; a CI check that a released code is never removed, renumbered or reused. *Done when:* every error carries a code, `gopp explain` works for all of them, and the CI check fails on a seeded renumbering.
+- **P03.15 `@Required` fields** (P01 D1.4 rule 11, TYP-15, ADR-0016): the built-in field attribute; the composite-literal check naming the missing fields; "no zero value" for such structs and for structs/arrays containing them, through the rule 9 errors; `make([]T, 0, c)` allowed for every type without a zero value; every new diagnostic gets an `E####` code, a `docs/errors/codes.lock` entry and a `gopp explain` example (P03.14); the type serialization (P03.11) records `@Required` per field and "no zero value" per type, so importing packages see them. *Done when:* rule-table tests show each error (`User{}` missing a field, `var u User`, `make([]User, n)`, `var a [3]User`, `[3]User{{…}}`, `[]User{5: {…}}`, a `Team` literal missing its `User` field, `var zero T` with `T = User`, `Box[User]` without its field, `@Required` outside a struct field, `v := m[k]`, `u := clone(m[k])`, `u := move(m[k])`, `m[k].Email` and `f(m[k])` with `User` values, `clear(users)` and `clear(a[:])`, `Owner: nil`, `move(c.Owner)` and `p := &c.Owner` on a never-nil field, `@Required` on a `Weak` field, `for _, &u := range users { move(u) }`, `move(team.Lead)`, `v := <-ch` and `select { case u := <-ch: }` on a `chan User`, `move(u)` of a captured `User` inside a closure), and that `make([]User, 0, 10)` plus `append`, positional literals, `Box[int]` zero values, comma-ok lookups, `clear(m)` on a map of `User`, `users = users[:0]`, `mem.Replace` on a never-nil field and on `&users[0]`, `range move(users)` with `move(u)` of its range variable, `if u, ok := x.(User); ok { keep(u.Clone()) }` (while `move(u)` there stays an error), `if u, ok := move(m[k]); ok { keep(move(u)) }`, swaps `users[i], users[j] = users[j], users[i]`, `x.items = append(x.items, v)`, a `@Required` slice set to `nil`, a type-parameter `@Required` field, moves of locals and C++ elements still compile; `ninja check-diag-codes` passes with the new codes; and a package that imports `User` from another package gets the same errors (round-tripped through serialization).
+- **P03.16 No auto-deref through `Weak`** (OWN-P5, ADR-0017): field access and method calls on a `Weak[T]` are a compile error with the fix-it `if p := w.Lock(); p != nil { … }`; only `Lock` and `IsNil` are found on it. Today the selector lookup (`compiler/lib/Sema/Call.cpp`, OWN-P5 block) looks through every pointer kind. *Done when:* rule-table tests show `w.Name` and `w.M()` rejected with the fix-it, `w.Lock()` and `w.IsNil()` accepted, and `Unique`/`Shared`/`*T` auto-deref unchanged.
 
 ## P04 — GIR and LLVM codegen ([README](04-gir-and-llvm-codegen/README.md))
 
@@ -170,7 +172,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
   *Done when:* run tests pass, including nested panics and a closure passed to a function that stores it (the `http.HandleFunc` pattern).
 - **P04.08 Monomorphization**: instantiate generics while lowering to GIR; in source mode, each instance is emitted once per build; release builds emit `linkonce_odr` + COMDAT (D4.3). Cached homes across packages are P06.06. *Done when:* generic run tests pass, and duplicates fold in release.
-- **P04.09 Flow-sensitive ownership**: use-after-move, defer/goroutine borrow checks, drop elaboration on normal and unwind paths; `gopp check` now runs these too. *Done when:* the ownership suite passes under ASan.
+- **P04.09 Flow-sensitive ownership**: use-after-move (including comma-ok values of types with no zero value, moved where `ok` is false; ADR-0016), defer/goroutine borrow checks, drop elaboration on normal and unwind paths; `gopp check` now runs these too. *Done when:* the ownership suite passes under ASan, including `u, ok := x.(User)` read before checking `ok` (error), in the `!ok` branch (error), and after `if !ok { return }` (OK), the same for `v, ok := <-ch` and `v, ok := m[k]`, and reading the range variable `v` after `move(m[k])` of its entry (error); and a maybe-nil value stored in a never-nil `@Required` field (error), the same value inside `if p != nil` (OK).
 - **P04.10 `!` lowering**: on a cold path, return the error (functions that can fail) or panic with `errors.MustError` (elsewhere). *Done when:* both paths and the message format are tested.
 - **P04.11 C ABI via Clang**: classification through Clang's `CodeGenABITypes`, plus Go++'s own lowering for every `ABIArgInfo` kind (sized L). *Done when:* struct-by-value tests against Clang-built C pass on amd64 and arm64.
 - **P04.12 DWARF**: lines, variables, types. *Done when:* gdb and lldb can break and print locals.
@@ -204,7 +206,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - `os.Exit` and exit codes.
 
   *Done when:* tests pass.
-- **P05.03 Allocators**: `mem.Allocator`, the default libc allocator, `mem.Arena`, allocator objects stored in slices and maps (P01 D1.22). *Done when:* tests pass under ASan.
+- **P05.03 Allocators**: `mem.Allocator`, the default libc allocator, `mem.Arena`, allocator objects stored in slices and maps (P01 D1.22), and `mem.Replace` (ADR-0016). *Done when:* tests pass under ASan.
 - **P05.04 Owned strings**: literals (cap 0), NUL-terminated buffers (capacity len+1), concatenation, conversions, UTF-8 helpers. *Done when:* tests and microbenchmarks pass.
 - **P05.05 Slices**: growth policy, append/copy/clear, element drops, in-place re-slicing (D1.20), the allocator word (D1.22). *Done when:* tests pass, and the append benchmark against `std::vector::push_back` is recorded.
 - **P05.06 Maps**: Swiss table, seeded hashing, randomized iteration start, drops, ref-key lookups, the active-iterator count (a new-key insert during `range` always panics, D1.21), the allocator in the header (D1.22). *Done when:* tests pass, and the benchmark against absl::flat_hash_map is recorded.
@@ -336,11 +338,11 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P09.01 Macro design doc**: `docs/design/macros.md`. *Done when:* the owner approves it and all review comments are resolved.
 - **P09.02 Declarative macros**: expansion + hygiene. *Done when:* the hygiene suite passes.
 - **P09.03 GIR interpreter**: bytecode VM, fuel and memory limits, VM built-ins, the per-package comptime GIR artifact (D9.4, D9.5). *Done when:* GIR test programs run, and an `@Extern` call inside a macro gives a clear error.
-- **P09.04 `gopp/macro` API**: syntax types and one constructor per node (no quoting in v0, ADR-0011), diagnostics, type queries, naming across packages. *Done when:* the API doc and tests exist.
+- **P09.04 `gopp/macro` API**: syntax types and one constructor per node (no quoting in v0, ADR-0011), diagnostics, type queries (including `field.Required()` and whether a type has a zero value, ADR-0016), naming across packages. *Done when:* the API doc and tests exist.
 - **P09.05 Procedural expression/statement macros**: including `macro func Name!` errors, and panics turned into compile errors (D9.11). *Done when:* tests pass, including the macro backtrace.
 - **P09.06 Attached macros**: declared names, type queries, the D9.3 ordering rule; compile-time arguments are required only for `lit` parameters and `@` arguments (MAC-14). *Done when:* tests pass, including rejected cycles and constraint checks that see the generated methods.
 - **P09.07 Built-in macros**: `#Assert` (no `fmt` needed), `#Stringify`, `#File`/`#Line`, `#Embed` (`ref string`), `#Todo`, `#Unreachable`. *Done when:* tests pass.
-- **P09.08 `@Derive` set**: `JSON` (generated `MarshalJSON`/`UnmarshalJSON`) and `Equal` (for structs `==` can't compare). *Done when:* a P09 test package uses both. The `encoding/json` comparison is in P13.08.
+- **P09.08 `@Derive` set**: `JSON` (generated `MarshalJSON` and a decode function used by `json.Decode[T]`; a missing `@Required` field is an error, ADR-0016) and `Equal` (for structs `==` can't compare). *Done when:* a P09 test package uses both. The `encoding/json` comparison is in P13.08.
 - **P09.09 Expansion cache**: keyed by all the GIR an expansion executed. *Done when:* ≥ 95% hits on a no-op rebuild, and editing a helper the macro calls invalidates it.
 - **P09.10 Tooling hooks**: `gopp expand`, macro backtraces, debug-info mapping. *Done when:* tests pass.
 - **P09.11 Decide Q2–Q4**: ADRs. *Done when:* merged.
@@ -441,7 +443,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P13.05 T1 collections**: slices, maps, sort, `container/deque`. *Done when:* tests pass.
 - **P13.06 T1 I/O & OS**: io, bufio, os, path, path/filepath, flag. *Done when:* tests pass.
 - **P13.07 T1 time & testing**: including the tz data rules of D13.8 (ADR-0015). *Done when:* tests pass, including `LoadLocation` with no OS data (embedded copy used), the OS copy winning when present, `-tags notzdata`, and a program without `LoadLocation` that carries no tz data.
-- **P13.08 T2 encoding, hash, crypto**: includes `encoding/json`. *Done when:* tests pass, and `encoding/json` output is identical with and without `@Derive(JSON)`.
+- **P13.08 T2 encoding, hash, crypto**: includes `encoding/json` with `json.Decode[T]` / `dec.Decode[T]()` instead of `Unmarshal`, custom per-type decoding designed here, and a missing `@Required` field reported as an error (D13.4, ADR-0016). *Done when:* tests pass, and `encoding/json` output (and the missing-field error) is identical with and without `@Derive(JSON)`.
 - **P13.09 T2 context, log, exec, signal, net**. *Done when:* tests pass.
 - **P13.10 T2 regexp, compress, container**. *Done when:* tests pass.
 - **P13.11 First `x/` interop packages**. *Done when:* the cdep-backed `x/zstd` round-trips its test files.
@@ -461,7 +463,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - per-snapshot offsets.
 
   *Done when:* VS Code works on the samples, and completion p95 is < 100 ms on a 100k-line workspace.
-- **P14.06 LSP advanced**: references, rename, code actions, expansion view, ownership hints, go-to-definition into C/C++. *Done when:* tests pass.
+- **P14.06 LSP advanced**: references, rename, code actions (including "add missing required fields", which inserts `ID: , Email: ` for the user to fill in, ADR-0016), expansion view, ownership hints, go-to-definition into C/C++. *Done when:* tests pass.
 - **P14.07 Debugger support**: LLDB/GDB pretty printers, goroutine listing. *Done when:* batch-mode tests pass.
 - **P14.08 Editors**: VS Code extension, tree-sitter grammar, configs for Neovim, Helix and Zed. *Done when:* the extension package builds, and the tree-sitter grammar parses the parser corpus.
 - **P14.09 `gopp doc`**: terminal + HTML. *Done when:* the std docs render.

@@ -34,17 +34,20 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 - [x] Q6 Interface inline storage: one word (decided: D1.12)
 - [x] Q7 Range over owning elements / consuming range (decided: D1.21)
 - [x] Q8 Small-string optimization (deferred to P15, P15 Q1)
+- [x] Q9 Map reads and type assertions when the value type has no zero value (decided: comma-ok with `u` moved where `ok` is false, ADR-0016)
 
 ## Exit criteria
 
 - [x] Every delta D1.2–D1.21 has grammar, semantics, an example and a rationale in `docs/spec/`
 - [x] Ten samples written with expected output and compared against Go versions
-- [x] Q1–Q8 decided or explicitly deferred
+- [x] Q1–Q9 decided or explicitly deferred (Q9 added and decided by ADR-0016)
 - [x] UB / implementation-defined list written
 
 ## Decision changes
 
 - 2026-10-27 (ADR-0006): the owner's P01.15 decisions D1–D25 change the plan; see the table below and ADR-0006. Further rulings made while applying them (macro value-kind args, `case string:` bindings always borrowed, value-receiver `Clone`, raw-`*T` `Clone` ambiguity, `&` range variables as places, defer lifetime extension, a dependency's `cxxstd` as a minimum, contextual `ref`/`move`) are recorded in ADR-0006 and `.claude/team/p01-15-apply-ledger.md`.
+- 2026-10-27 (ADR-0016, owner decision): required struct fields. New D1.4 rule 11 (`@Required`, strict: such a struct has no zero value, spreading to containing types); rule 9's `make` error allows a constant length `0`; new open question Q9 (map reads of types with no zero value); new checker task P03.15. Follow-ups from review: rule 5, OWN-R5, CON-6 and GEN-5 now name these types; JSON decoding is `json.Decode[T]` and `json.Unmarshal` is removed; Q9 decided (comma-ok lookups, `u` counts as moved where `ok` is false; `v := m[k]` is an error).
+- 2026-10-28 (ADR-0017, owner decision, pointer review): `Weak[T]` no longer auto-dereferences (OWN-P5), and `T`'s `IsNil` on a `Weak` is reached through `Lock` (changes one clause of ADR-0006); spec chapter 4 gets an "at a glance" table of pointers and borrows. New checker task P03.16.
 
 ## P01.15 owner decisions
 

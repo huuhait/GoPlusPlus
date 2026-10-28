@@ -29,7 +29,7 @@ Only one grammar change: **methods may have type parameters** (generic methods).
 **GEN-5.** *Monomorphization.* Every instantiation is compiled as its own function with the real types (P04). Consequences you can see:
 - there is no run-time dictionary and no boxing of type arguments;
 - ownership checks run on the generic body once (with the rules above), and the instance has the real category of each type argument;
-- `var zero T` is a compile error if `T` may be a C++ class without a default constructor ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). Constrain `T` or use `*T`.
+- `var zero T` is a compile error if `T` may be a type with no zero value (a C++ class without a default constructor, a struct with a `@Required` field) ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). Constrain `T` or use `*T`.
 
 **GEN-6.** *Generic methods are allowed.* A method may have its own type parameters, as in `func (s Set) Map[U any](f func(int) U) []U`. Each use is monomorphized like a generic function. The receiver's own type parameters (for example `func (l *List[T]) …`) work as in Go.
 

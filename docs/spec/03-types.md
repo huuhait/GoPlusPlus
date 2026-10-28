@@ -106,7 +106,7 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 }
 ```
 
-**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
+**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are `@Required`, [TYP-15](#34-required-fields-d14-rule-11)), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
 
 **TYP-11.** *No `reflect`.* There is no user-facing `reflect` package in v1.
 
@@ -128,10 +128,37 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 
 **TYP-14.** `int` is 64-bit on 64-bit targets. Integer overflow wraps ([EXP-6](06-expressions.md)).
 
-## 3.4 Rationale
+## 3.4 Required fields (D1.4 rule 11)
+
+**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (embedded fields too). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field whose type can be nil, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil (`new_unique(…)`, `&x`, `make(…)`, a literal, or a variable inside an `if p != nil` check), `move` out of the field and `&` of it (except as `mem.Replace`'s first argument) are errors, and `@Required` on `Weak[T]` is an error; on a slice or a type-parameter field it only means "must be set". `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
+
+```go
+type User struct {
+    ID    int    @Required
+    Email string @Required
+    Age   int
+}
+
+u := User{ID: 1, Email: "a@b.c"}     // OK; Age is 0
+u := User{Email: "a@b.c"}            // error: missing required field ID
+var v User                           // error: User has no zero value
+users := make([]User, 0, 10)         // OK: no User is created
+users = append(users, User{ID: 2, Email: "c@d.e"})
+users := make([]User, 10)            // error: would create Users without ID
+u, err := json.Decode[User](data)    // a fresh User; error if "ID" is missing in data
+if w, ok := x.(User); ok { … }       // OK: w is used only where ok is true
+
+type Car struct{ Owner Unique[User] @Required }   // never nil
+c := Car{Owner: new_unique(u)}       // OK
+c := Car{Owner: nil}                 // error: Owner can't be nil
+old := mem.Replace(&c.Owner, new_unique(w))   // OK; move(c.Owner) is an error
+```
+
+## 3.5 Rationale
 
 - **Shared handles for interfaces** keep Go's `err == io.EOF`, `errors.Is`, `%w` and type switches working with no GC.
 - **Borrowed interface parameters** make `fmt.Println(name)` free and non-consuming. Boxing happens only when a callee really keeps the value.
 - **Field tables instead of `reflect`** give `fmt` and `json` what they need and nothing more.
 - **C layout** is required for C interop (P07) and costs nothing in practice.
+- **`@Required` as an attribute**, not a keyword: no new grammar, and the "no zero value" rule already exists for C++ types (ADR-0016).
 - **Rejected:** boxing every interface argument (hidden allocation); moving into every interface parameter (breaks `fmt.Println(x)` followed by a use of `x`).

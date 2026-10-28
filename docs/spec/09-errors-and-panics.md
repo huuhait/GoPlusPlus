@@ -71,7 +71,7 @@ followed by the error's trace. `MustError` is not predeclared ([LEX-9](02-lexica
 - `defer f!()` inside a function that can fail keeps the other results and sets the error only if it is still nil. While the function is panicking, the deferred error is ignored.
 - Anywhere else, `defer f!()` panics on error.
 
-**ERR-11b.** *Only for calls.* Map lookups and channel receives keep Go's comma-ok form: `v, ok := m[k]`, `v, ok := <-ch`. There is no `!` for them.
+**ERR-11b.** *Only for calls.* Map lookups and channel receives keep Go's comma-ok form: `v, ok := m[k]`, `v, ok := <-ch`. There is no `!` for them. For a value type with no zero value, `v` exists only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
 
 ### Examples
 

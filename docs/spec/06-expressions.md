@@ -16,7 +16,7 @@ The expression grammar of Go is unchanged except for two additions, each defined
 
 | Call | Type | Meaning |
 |---|---|---|
-| `move(p)` | type of `p`; `p` must be a place (variable, field, element, map entry, pointer target) | take the value out, leave the zero value ([OWN-R4](04-ownership.md#42-ownership-rules-d14)) |
+| `move(p)` | type of `p`; `p` must be a place (variable, field, element, map entry, pointer target) | take the value out, leave the zero value ([OWN-R4](04-ownership.md#42-ownership-rules-d14)); for a type with no zero value only from a local, or from a map as `v, ok := move(m[k])` (or a bare `move(m[k])` statement) |
 | `clone(x)` | type of `x`; `x`'s type must satisfy `Clone` | short form of `x.Clone()`: copy ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). On a raw `*T` whose `T` has a value-receiver `Clone`, `clone(p)` is the same ambiguity error as `p.Clone()`; `[T Clone]` instantiation is the only place where `*T` uses the pointer copy |
 | `new_unique(v)` | `Unique[T]` where `v` has type `T` | allocate, move `v` in |
 | `new_shared(v)` | `Shared[T]` | allocate with counts, move `v` in |
@@ -24,7 +24,7 @@ The expression grammar of Go is unchanged except for two additions, each defined
 
 - `move` and `clone` are not first-class values: they can only be called, not stored or passed (as `len` in Go).
 - `x.Clone()` is the form used in examples. Every cloneable type has the method, built-in types too ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). `move` has no method form.
-- `move(m[k])` removes the entry; `v, ok := move(m[k])` and `v, ok := clone(m[k])` are the comma-ok forms ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)).
+- `move(m[k])` removes the entry; `v, ok := move(m[k])` and `v, ok := clone(m[k])` are the comma-ok forms ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). For a value type with no zero value only the comma-ok forms may produce a value ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
 - `min`/`max` on refs return a ref (EXP-5).
 - Go's `new` does not exist ([LEX-8](02-lexical.md)).
 

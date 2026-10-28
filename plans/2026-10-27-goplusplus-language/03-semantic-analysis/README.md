@@ -31,8 +31,9 @@
   - returning a `ref` into a local of the same function (D1.4 rule 8, D1.6);
   - owned → ref and `Unique[T]`/`Shared[T]` → `*T` conversions;
   - borrowing a temporary into a longer-lived place;
-  - `move`/`clone` typing and the `append` move rule.
-- **Flow-sensitive, in P04 on GIR:** use after move, `defer`/`go` borrowing something that dies first, and drop elaboration.
+  - `move`/`clone` typing and the `append` move rule;
+  - types with no zero value (D1.4 rules 9 and 11): C++ types without a default constructor and structs with a `@Required` field, spread to the structs and arrays that contain them; every composite literal must set each `@Required` field (by name or by position); every place where Go makes a zero value is an error (`var x T`, `make([]T, n)` unless `n` is the constant `0`, `var a [N]T`, array literals with missing elements, keyed slice literals with gaps, named results, `var zero T` in generic code, `m[k]` and `<-ch` outside comma-ok forms, a write or `delete`, `clear(s)` on a slice); for generic types, per instance. The comma-ok lookups stay legal; P04 checks that their value is read only where `ok` is true. `move` out of a non-local place of a Go++ type with no zero value is an error. A nilable `@Required` field is never nil: storing `nil`, `move` out of it and `&` of it (except in `mem.Replace`) are errors here, `@Required` on `Weak[T]` is an error, and P04 checks that every other stored value is known non-nil. Task P03.15, ADR-0016. The `@Required` flags and "no zero value" are part of a type's serialized description (D3.8), so they hold across packages.
+- **Flow-sensitive, in P04 on GIR:** use after move (including a comma-ok value of a type with no zero value, treated as moved where `ok` is false; ADR-0016), `defer`/`go` borrowing something that dies first, and drop elaboration.
 
 In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive checks on GIR; after that, `gopp check` runs both.
 
@@ -49,6 +50,8 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 - `&T{…}`: "allocation is explicit in Go++: use `new_unique(T{…})`";
 - assigning `new_unique(…)` to a `*T` field: "a `*T` field doesn't own: did you mean `Unique[T]`?";
 - using a moved variable: points at the move site;
+- a missing `@Required` field: "missing required fields ID, Email in User literal", naming every missing field (no fix-it that fills in a zero, which would defeat the rule);
+- `make([]User, n)` for a type with no zero value: "`User` has no zero value: use `make([]User, 0, n)` and `append`"; `clear(users)`: "use `users = users[:0]`";
 
 `gopp vet` hints (warnings, not errors):
 - with `defer f.Close()` in a loop body the files stay open until the function returns.

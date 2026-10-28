@@ -39,7 +39,7 @@ The case list above applies D1.4 rule 3a and rule 8 to `go`, the same way [PAN-3
 
 **CON-5.** *`select`.* A send case moves its value only if that case is **chosen**. A temporary send value is dropped if its case is not chosen. A receive case receives and moves as in CON-4. Random choice among ready cases is as in Go.
 
-**CON-6.** *Receive from a closed channel* gives the zero value. For a C++ type without a default constructor this is a compile error ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
+**CON-6.** *Receive from a closed channel* gives the zero value. For a type with no zero value (a C++ type without a default constructor, a struct with a `@Required` field), a receive is allowed only in the comma-ok form (`v, ok := <-ch`, or `case v, ok := <-ch:` in a `select`); `v := <-ch`, `case v := <-ch:` and `(<-ch).f` are compile errors. The comma-ok form works, with `v` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
 
 **CON-7.** *Memory model.* Go's happens-before model. A channel send happens before the matching receive completes; `sync` types give the usual edges.
 
