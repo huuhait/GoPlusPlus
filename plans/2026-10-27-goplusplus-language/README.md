@@ -10,7 +10,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 
 | # | Requirement | Answer in this plan | Phases |
 |---|---|---|---|
-| R1 | Syntax like Go | The Go grammar is the base, with a small set of deltas: ownership words (`move`, `ref`), owning pointers `Unique[T]`/`Shared[T]`/`Weak[T]`, `!` for errors (`func f!()`, `call!()`), `#Name(...)`, `@Name`, and header imports (`"github.com/madler/zlib/zlib.h"`, `"<vector>"`). `gopp fmt` is canonical, like gofmt. | P01, P02 |
+| R1 | Syntax like Go | The Go grammar is the base, with a small set of deltas: ownership words (`move`, `ref`), owning pointers `Unique[*T]`/`Shared[*T]`/`Weak[*T]`, pointers that are never nil with `Option[T]` for "maybe" (ADR-0018), `!` for errors (`func f!()`, `call!()`), `#Name(...)`, `@Name`, and header imports (`"github.com/madler/zlib/zlib.h"`, `"<vector>"`). `gopp fmt` is canonical, like gofmt. | P01, P02 |
 | R2 | Macros | Hygienic declarative macros (`macro`), plus procedural macros written in Go++ and run at compile time by a sandboxed interpreter. Invoked as `#Name(...)`, attached as `@Name`. | P09 |
 | R3 | `!` for Must | `func load!(…) T` declares a function that can fail; callers see `(T, error)`. `val := call!()` unwraps the error: inside a function that can fail it returns the error to the caller, elsewhere (e.g. `main`) it panics with the source location. Go's `val, err := call()` still works. | P01, P03, P04 |
 | R4 | Compile fast like Go | Each package compiles separately, in parallel, from its dependencies' export data (no headers). The build is pipelined, outputs go in a content-addressed cache, and the debug pipeline is cheap. C/C++ imports are cached. | P06 (+P02–P04) |
@@ -42,7 +42,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 
 ## 3. Non-goals for v1
 
-- Source compatibility with Go. Go code that relies on GC won't compile unchanged; a migration helper comes after v1.
+- Source compatibility with Go. Go code that relies on GC won't compile unchanged, and neither will Go code that uses nil pointers (pointers are never nil; "maybe" is `Option[T]`, ADR-0018); a migration helper comes after v1.
 - Binary caches for C/C++ dependencies, signed or not (never, P11 Q2): cdeps are always built from source.
 - Consuming Go modules. Importing a Go module is an error in v1; after v1.0 it needs a dual engine (Go semantics with GC next to Go++) (P10 Q2).
 - A borrow checker or fully lifetime-checked memory safety. The `ref`/owned split keeps the door open for later.
@@ -76,7 +76,7 @@ type Point struct{ X, Y int }
 type Doc struct {
     Title string                 // owned: freed when the Doc is destroyed
     Tags  []string               // owned growable array of owned strings
-    Next  Unique[Doc]            // owning pointer (a plain *Doc would not own)
+    Next  Unique[*Doc]            // owning pointer (a plain *Doc would not own)
 }
 
 // `!` after the name: load can fail, so callers get ([]byte, error).
@@ -138,8 +138,8 @@ github.com/madler/zlib v1.3.1/cdep h1:<sha256 hash of the source tree, base64>=
 | Interfaces, errors, func values, channels | GC-shared references | Shared handles: copies share the same value through a reference count, as in Go (`err == io.EOF` works) |
 | Closures | Capture variables by reference | Same. A closure that outlives its function keeps captured variables in shared cells |
 | Borrowing | Everything is shared | Parameters borrow by default; `move` before a parameter name takes ownership. `ref string` / `ref []T` store or return borrows |
-| `*T` | GC pointer | Raw non-owning pointer. `Unique[T]` owns; `Shared[T]` / `Weak[T]` are refcounted, opt-in |
-| `new(T)`, `&T{…}` | GC allocation | Removed. Allocation is explicit: `new_unique(v)` → `Unique[T]`, `new_shared(v)` → `Shared[T]`; `new_weak(s)` makes a `Weak[T]` from a `Shared[T]` |
+| `*T` | GC pointer | Raw non-owning pointer. `Unique[*T]` owns; `Shared[*T]` / `Weak[*T]` are refcounted, opt-in |
+| `new(T)`, `&T{…}` | GC allocation | Removed. Allocation is explicit: `new_unique(v)` → `Unique[*T]`, `new_shared(v)` → `Shared[*T]`; `new_weak(s)` makes a `Weak[*T]` from a `Shared[*T]` |
 | Errors | `val, err := call()` + `if err != nil` | Same, plus `func f!(…) T` (can fail; returns `(T, error)`) and `val := call!()`, which returns the error from functions that can fail and panics elsewhere |
 | Metaprogramming | `go generate`, `reflect` | `macro`, `#Name(…)`, `@Name`; no `reflect` package (`fmt`/`json` read compiler-emitted field tables) |
 | C interop | cgo (`C.` prefix, comment preamble, costly calls) | `import "github.com/madler/zlib/zlib.h"` or `"<stdio.h>"`, used as `zlib.crc32(…)`; plain Go++ types, zero-overhead calls, `gopp cc` |
@@ -270,7 +270,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 - **Export data (`.gopx`)**: a binary summary of a compiled package (types, generic and inlinable bodies, macros). Importers read it instead of sources.
 - **Owning type**: a type with a destructor, either directly (`drop`) or through its fields. It is move-only and copied with `clone`.
 - **Trivial type**: a type copied bit-for-bit, with no destructor (numbers, bools, raw pointers, refs, aggregates of these).
-- **Shared handle**: a value whose copies all share one thing through a reference count: `Shared[T]`, `Weak[T]`, channels, interface values (including errors) and func values.
+- **Shared handle**: a value whose copies all share one thing through a reference count: `Shared[*T]`, `Weak[*T]`, channels, interface values (including errors) and func values.
 - **Drop glue**: compiler-generated code that destroys a value (it calls `drop`, then destroys the fields). **Drop elaboration** is the compiler step that inserts these calls.
 - **Relocate**: moving a value to a new address (for example when a slice grows). It is `memcpy` for Go++ types, and the move constructor for C++ types that need one.
 - **Itab**: the table of methods an interface value uses for one concrete type.

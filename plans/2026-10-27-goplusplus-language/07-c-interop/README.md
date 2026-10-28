@@ -60,7 +60,7 @@
 | `float _Complex` / `double _Complex` | `complex64` / `complex128` |
 | `long double` | `ffi.LongDouble` (opaque; its size differs per target) |
 | `__int128` / `unsigned __int128` | `ffi.Int128` / `ffi.Uint128` |
-| `T*`, `const T*` | `*T`; `const` is recorded as metadata and enforced at the boundary: a read-only Go++ value can't be passed where C may change it (Q2, ADR-0008) |
+| `T*`, `const T*` | `Option[*T]`, because C may pass or return NULL; a pointer Clang knows is non-null (`_Nonnull`, `__attribute__((nonnull))`, `returns_nonnull`) is `*T`. A `*T` converts to `Option[*T]` automatically when passed to C (ADR-0018). `const` is recorded as metadata and enforced at the boundary: a read-only Go++ value can't be passed where C may change it (Q2, ADR-0008) |
 | `void*` | `unsafe.Pointer` |
 | `T[N]` | `[N]T` |
 | struct | struct with Clang's exact layout (`ASTRecordLayout`), padding explicit |
@@ -68,7 +68,7 @@
 | bitfields | accessor methods |
 | enum | named integer type + constants |
 | typedef | alias in the header's package: `zlib.uLong` is `uint64` on Linux |
-| function pointer | `ffi.Func[func(…) R]`: no environment (Q1, ADR-0008); a C typedef name such as `c.cmp_fn` works too |
+| function pointer | `Option[ffi.Func[func(…) R]]` (`ffi.Func[…]` when non-null, as for `T*`): no environment (Q1, ADR-0008); a C typedef name such as `c.cmp_fn` works too |
 | flexible array member | accessor returning a `ref []T` |
 
 There are no C-specific types such as `C.int`: every C type is a plain Go++ type, so values pass without conversions. Go's rule for numeric conversions still applies (`uint32(len(data))`). The few ABI-only types live in `ffi`, a small std package that most code never imports.

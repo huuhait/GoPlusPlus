@@ -61,7 +61,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 | Kind | Names |
 |---|---|
 | functions | `move`, `clone`, `new_unique`, `new_shared`, `new_weak` |
-| generic types | `Unique[T]`, `Shared[T]`, `Weak[T]` |
+| generic types | `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]` |
 | constraints | `Copy`, `Clone` |
 | std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `#Run`, `@Derive` |
 

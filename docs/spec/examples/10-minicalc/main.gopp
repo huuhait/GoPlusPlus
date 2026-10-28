@@ -17,13 +17,14 @@ const (
 	Neg
 )
 
-// Node is trivial (numbers, a ref and raw pointers), so the arena can own it.
+// Node is trivial (numbers, a ref and Option raw pointers), so the arena can own it.
+// Pointers are never nil, so a missing child is an Option.
 @Ref
 type Node struct {
 	Kind Kind
 	Val  int64
 	Text ref string // the source text of a number: points into the source
-	L, R *Node
+	L, R Option[*Node]
 }
 
 @Ref
@@ -52,7 +53,7 @@ func (p *Parser) fail(msg string) error {
 	return fmt.Errorf("col %d: %s", p.pos+1, msg)
 }
 
-func (p *Parser) node(k Kind, l, r *Node) *Node {
+func (p *Parser) node(k Kind, l, r Option[*Node]) *Node {
 	n := mem.ArenaNew[Node](p.arena)
 	*n = Node{Kind: k, L: l, R: r} // do not rely on the arena zeroing its memory
 	return n
@@ -105,7 +106,7 @@ func (p *Parser) factor!() *Node {
 		p.pos++
 		n := p.expr!()
 		if p.peek() != ')' {
-			return nil, p.fail("expected ')'") // explicit failure: value, then error
+			return nil, p.fail("expected ')'") // explicit failure: nil stands for the unset *Node result, then the error
 		}
 		p.pos++
 		return n
@@ -129,10 +130,10 @@ func eval!(n *Node) int64 {
 	case Num:
 		return n.Val
 	case Neg:
-		return -eval!(n.L)
+		return -operand!(n.L)
 	}
-	a := eval!(n.L)
-	b := eval!(n.R)
+	a := operand!(n.L)
+	b := operand!(n.R)
 	switch n.Kind {
 	case Add:
 		return a + b
@@ -147,6 +148,14 @@ func eval!(n *Node) int64 {
 		return a / b
 	}
 	panic("unknown node kind")
+}
+
+// operand evaluates a child that must be there.
+func operand!(o Option[*Node]) int64 {
+	if o == nil {
+		return 0, errors.New("missing operand")
+	}
+	return eval!(o) // o is a *Node after the check
 }
 
 func calc!(arena *mem.Arena, src string) int64 {

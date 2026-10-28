@@ -14,14 +14,15 @@ RefType   = "ref" ( "string" | SliceType ) .
 
 - `move` is **not** a type. It is a mark on a parameter or receiver ([PAR-5](05-parameters.md)).
 - `ref` is a contextual keyword: special only where a type is expected ([LEX-12](02-lexical.md#lex-12)).
-- Predeclared generic types: `Unique[T]`, `Shared[T]`, `Weak[T]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)).
+- Predeclared generic types: `Unique[*T]`, `Shared[*T]`, `Weak[*T]` and `Option[T]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)). The argument of `Unique`, `Shared` and `Weak` must be a pointer type `*T`.
 - Types imported from C and C++ headers are plain Go++ types ([chapter 14](14-foreign-surface.md)).
 
 **TYP-1.** `ref string` and `string` are different types. `ref []T` and `[]T` are different types. Identity follows [Type identity](https://go.dev/ref/spec#Type_identity): `ref string` is identical only to `ref string`.
 
 **TYP-2.** *Assignability additions.* Besides Go's rules, a value `x` is assignable to type `V` if:
 - `x` is a `string` and `V` is `ref string`; or `x` is a `[]T` and `V` is `ref []T` (owned to ref, borrowing, [OWN-V3](04-ownership.md#44-refs-d16));
-- `x` is a `Unique[T]` or `Shared[T]` stored in a place and `V` is `*T` ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17));
+- `x` is a `Unique[*T]` or `Shared[*T]` stored in a place and `V` is `*T` or `Option[*T]` ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17));
+- `x` has type `T` and `V` is `Option[T]`, or `x` is `nil` and `V` is an `Option` ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an `Option[T]` is assignable to `T` only where it is checked ([OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17));
 - the assignment follows the ownership rules ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): assigning an owning value moves it.
 
 A ref is **not** assignable to an *owning destination*: an owned variable, field, element, result, `move` parameter or composite-literal field. Use `string(v)` or `[]T(v)` to copy. A **borrowed** `string` or `[]T` parameter is not an owning destination: it accepts a ref (or an owned value, or a literal) at zero cost ([PAR-8, PAR-10](05-parameters.md)).
@@ -33,7 +34,7 @@ parse(v)                         // ok: borrowed parameter accepts a ref
 var t string = v                 // error: owned variable; write string(v)
 ```
 
-**TYP-3.** *Comparison.* `==` on owning types such as `string` compares by value and borrows both operands. Slices, maps and funcs are comparable only with `nil`, as in Go. Structs and arrays are comparable when their fields are. A `ref string` compares with a `string` by contents, with both operands borrowed.
+**TYP-3.** *Comparison.* `==` on owning types such as `string` compares by value and borrows both operands. Slices, maps and funcs are comparable only with `nil`, as in Go. An `Option[T]` is comparable with `nil`; a pointer is not, because it is never nil (`p == nil` is an error). Structs and arrays are comparable when their fields are. A `ref string` compares with a `string` by contents, with both operands borrowed.
 
 **TYP-4.** *Category summary.* The category of a type decides how it copies and ends its life. The full table and rules are in [OWN-C1 to OWN-C5](04-ownership.md#41-type-categories-d13).
 
@@ -118,7 +119,7 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 
 | Type | Words | Content |
 |---|---|---|
-| `int`, `*T`, `Unique[T]` | 1 | `int` is 64-bit on 64-bit targets |
+| `int`, `*T`, `Unique[*T]` | 1 | `int` is 64-bit on 64-bit targets |
 | `string` | 3 | `{ptr, len, cap}` (always the global allocator) |
 | `ref string`, `ref []T` | 2 | `{ptr, len}` |
 | `[]T` | 4 | `{ptr, len, cap, allocator}` |
@@ -130,7 +131,7 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 
 ## 3.4 Required fields (D1.4 rule 11)
 
-**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (embedded fields too). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field whose type can be nil, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil (`new_unique(…)`, `&x`, `make(…)`, a literal, or a variable inside an `if p != nil` check), `move` out of the field and `&` of it (except as `mem.Replace`'s first argument) are errors, and `@Required` on `Weak[T]` is an error; on a slice or a type-parameter field it only means "must be set". `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
+**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (embedded fields too). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field of an interface, func, map or channel type, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil (`make(…)`, a literal, a func or method value, a non-nil concrete value converted to the interface, or a variable inside an `if v != nil` check), and `move` out of the field and `&` of it (except as `mem.Replace`'s first argument) are errors; on a slice, an `Option` or a type-parameter field it only means "must be set". On a pointer field (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`) it is a compile error, because pointers are never nil anyway ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), ADR-0018). `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
 
 ```go
 type User struct {
@@ -148,10 +149,12 @@ users := make([]User, 10)            // error: would create Users without ID
 u, err := json.Decode[User](data)    // a fresh User; error if "ID" is missing in data
 if w, ok := x.(User); ok { … }       // OK: w is used only where ok is true
 
-type Car struct{ Owner Unique[User] @Required }   // never nil
+type Car struct{ Owner Unique[*User] }       // a pointer field: never nil, no @Required needed
 c := Car{Owner: new_unique(u)}       // OK
-c := Car{Owner: nil}                 // error: Owner can't be nil
+c := Car{Owner: nil}                 // error: Unique[*User] is never nil
 old := mem.Replace(&c.Owner, new_unique(w))   // OK; move(c.Owner) is an error
+
+type Server struct{ Log io.Writer @Required }   // an interface field: @Required makes it never nil
 ```
 
 ## 3.5 Rationale

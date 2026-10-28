@@ -24,15 +24,16 @@
 
 **D3.5 — Ownership checks are split by what they need.**
 - **Type-level, in this phase:**
-  - type categories (D1.3) and `Copy`/`Clone` constraint satisfaction (`Clone() T` method lookup, `IsNil()` on every pointer kind);
+  - type categories (D1.3) and `Copy`/`Clone` constraint satisfaction (`Clone() T` method lookup; `IsNil()` and `Get()` on `Option`);
+  - never-nil pointers and `Option[T]` (D1.7, ADR-0018): the pointer kinds have no zero value and can't be compared with `nil`; `nil` is assignable only to `Option` and the Go nilable types; `T` converts to `Option[T]`; `Unique[T]` without `*` is an error; **flow typing** for `Option`: after `o != nil`, `!o.IsNil()`, an early exit on `o == nil`, or in a `for o != nil` body, a local or parameter `o` has type `T` (this is in the type checker, because `o.Name` type-checks only after the check). Task P03.17;
   - `move` parameter mode, `move ...T` for owning variadics, and read-only parameter bindings;
   - range forms: read-only borrowed variables, the `&d` alias form, and the loop-variable redeclaration error (D1.21);
   - `func f!() error` (a `!` function declaring `error` as its last result) is an error (D1.8);
   - returning a `ref` into a local of the same function (D1.4 rule 8, D1.6);
-  - owned → ref and `Unique[T]`/`Shared[T]` → `*T` conversions;
+  - owned → ref and `Unique[*T]`/`Shared[*T]` → `*T` conversions;
   - borrowing a temporary into a longer-lived place;
   - `move`/`clone` typing and the `append` move rule;
-  - types with no zero value (D1.4 rules 9 and 11): C++ types without a default constructor and structs with a `@Required` field, spread to the structs and arrays that contain them; every composite literal must set each `@Required` field (by name or by position); every place where Go makes a zero value is an error (`var x T`, `make([]T, n)` unless `n` is the constant `0`, `var a [N]T`, array literals with missing elements, keyed slice literals with gaps, named results, `var zero T` in generic code, `m[k]` and `<-ch` outside comma-ok forms, a write or `delete`, `clear(s)` on a slice); for generic types, per instance. The comma-ok lookups stay legal; P04 checks that their value is read only where `ok` is true. `move` out of a non-local place of a Go++ type with no zero value is an error. A nilable `@Required` field is never nil: storing `nil`, `move` out of it and `&` of it (except in `mem.Replace`) are errors here, `@Required` on `Weak[T]` is an error, and P04 checks that every other stored value is known non-nil. Task P03.15, ADR-0016. The `@Required` flags and "no zero value" are part of a type's serialized description (D3.8), so they hold across packages.
+  - types with no zero value (D1.4 rules 9 and 11): C++ types without a default constructor and structs with a `@Required` field, spread to the structs and arrays that contain them; every composite literal must set each `@Required` field (by name or by position); every place where Go makes a zero value is an error (`var x T`, `make([]T, n)` unless `n` is the constant `0`, `var a [N]T`, array literals with missing elements, keyed slice literals with gaps, named results, `var zero T` in generic code, `m[k]` and `<-ch` outside comma-ok forms, a write or `delete`, `clear(s)` on a slice); for generic types, per instance. The comma-ok lookups stay legal; P04 checks that their value is read only where `ok` is true. `move` out of a non-local place of a Go++ type with no zero value is an error. A nilable `@Required` field is never nil: storing `nil`, `move` out of it and `&` of it (except in `mem.Replace`) are errors here, `@Required` on `Weak[*T]` is an error, and P04 checks that every other stored value is known non-nil. Task P03.15, ADR-0016. The `@Required` flags and "no zero value" are part of a type's serialized description (D3.8), so they hold across packages.
 - **Flow-sensitive, in P04 on GIR:** use after move (including a comma-ok value of a type with no zero value, treated as moved where `ok` is false; ADR-0016), `defer`/`go` borrowing something that dies first, and drop elaboration.
 
 In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive checks on GIR; after that, `gopp check` runs both.
@@ -48,7 +49,7 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 
 **D3.9 — Diagnostics are a product feature.** Every error gets a stable code and, where possible, a fix-it. Go habits that become errors get tailored messages:
 - `&T{…}`: "allocation is explicit in Go++: use `new_unique(T{…})`";
-- assigning `new_unique(…)` to a `*T` field: "a `*T` field doesn't own: did you mean `Unique[T]`?";
+- assigning `new_unique(…)` to a `*T` field: "a `*T` field doesn't own: did you mean `Unique[*T]`?";
 - using a moved variable: points at the move site;
 - a missing `@Required` field: "missing required fields ID, Email in User literal", naming every missing field (no fix-it that fills in a zero, which would defeat the rule);
 - `make([]User, n)` for a type with no zero value: "`User` has no zero value: use `make([]User, 0, n)` and `append`"; `clear(users)`: "use `users = users[:0]`";

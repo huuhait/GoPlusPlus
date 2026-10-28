@@ -4,18 +4,19 @@ Allocation-heavy benchmark (from the Benchmarks Game), with small sizes so the o
 
 ## Spec rules exercised
 
-- [OWN-P2, OWN-P5](../../04-ownership.md): `new_unique(Node{...})` moves the value in; `Unique[Node]` has the methods of `*Node`, so `n.Left.check()` works.
-- [OWN-P8, OWN-R1, OWN-R2](../../04-ownership.md): `Unique[Node]` is owning; the block that holds `stretch` ends, and the whole tree is freed. `long` is dropped when `main` ends.
+- [OWN-P2, OWN-P5](../../04-ownership.md): `new_unique(Node{...})` moves the value in; `Unique[*Node]` has the methods of `*Node`, so `n.Left.check()` works.
+- [OWN-P8, OWN-R1, OWN-R2](../../04-ownership.md): `Unique[*Node]` is owning; the block that holds `stretch` ends, and the whole tree is freed. `long` is dropped when `main` ends.
 - [OWN-R3](../../04-ownership.md), [EXP-10](../../06-expressions.md): `Node{Left: bottomUp(...), ...}` moves the temporaries into the literal.
-- [OWN-P9](../../04-ownership.md): `n.Left == nil` compares a `Unique` with `nil`; `n.Left.IsNil()` is the same test.
+- [OWN-P9, OWN-P10, OWN-P6](../../04-ownership.md): pointers are never nil, so a leaf's links are `Option[Unique[*Node]]` (`nil` for no child). `check` borrows them as `Option[*Node]`, and after `if l == nil || r == nil { return 1 }` both are `*Node` (ADR-0018).
 - [SLC-3](../../08-slices-and-range.md), [UB-5](../../16-undefined-behavior.md): the arena variant; `arena.Reset()` makes older nodes dangle, but none are used.
 - [PAN-3](../../09-errors-and-panics.md): `defer arena.Free()` evaluates `&arena` at the `defer`, and `arena` lives to the end of `main`; later `arena.Reset()` calls are legal and seen by the deferred call.
-- [OWN-C1](../../04-ownership.md): `ANode` has only raw pointers, so it is trivial, as `mem.ArenaNew[T Copy]` requires (P05 D5.3).
+- [OWN-C1](../../04-ownership.md): `ANode` has only `Option` raw pointers, so it is trivial, as `mem.ArenaNew[T Copy]` requires (P05 D5.3).
 - [INI-6](../../15-program-init.md): at the end of `main` the deferred `Free` runs first, then `long` is dropped.
 
 ## Differences from the Go version
 
 - `main.go` uses `&Node{}` and the GC for everything. Go++ rejects `&Node{}`.
+- `main.go` uses nil pointers for missing children; Go++ uses `Option` links, because its pointers are never nil.
 - The Go version has no arena variant; it uses `bottomUp` in the loop.
 - Output is identical.
 

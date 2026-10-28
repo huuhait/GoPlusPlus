@@ -43,7 +43,7 @@
 
 - **Semicolon insertion:** Go's rule, unchanged (D1.2).
 - **Disambiguation:**
-  - `macro` is the only new reserved keyword. `ref` and `move` are contextual (P01 LEX-12): `ref` is special only where a type is expected, so `ref := "main"` is a normal statement. `Unique[T]`, `Shared[T]` and `Weak[T]` are ordinary generic types.
+  - `macro` is the only new reserved keyword. `ref` and `move` are contextual (P01 LEX-12): `ref` is special only where a type is expected, so `ref := "main"` is a normal statement. `Unique[*T]`, `Shared[*T]` and `Weak[*T]` are ordinary generic types.
   - In a parameter list, `move` is a mark before the parameter name (`move v T`, `move parts ...T`), told apart from a parameter named `move` (`move T`) by scanning to the end of the type, to tell `move v T` from a parameter named `move` of type T (for example `move G[K]` vs `move s [K]E`). `move(x)` is an ordinary call.
   - In a range clause, `&` may mark the value variable (`for _, &d := range xs`, P01 D1.21).
   - A struct field may carry attributes after its type and before the tag (``Name string @JSON("name") `db:"name"` ``, P01 D1.14).
@@ -52,7 +52,7 @@
 - **Token trees:** `#Assert(x > 0, "msg")` stores the tokens `x > 0 , "msg"` with their bracket structure. P09 decides how each fragment is parsed.
 - **Error recovery:**
   - Resynchronize on `;`, `}`, and keywords that start statements and declarations (the technique Go's parser uses).
-  - Tailored messages explain Go habits that are errors in Go++. For example, "a `*T` field doesn't own: did you mean `Unique[T]`?" is reported by P03 through hooks the parser provides.
+  - Tailored messages explain Go habits that are errors in Go++. For example, "a `*T` field doesn't own: did you mean `Unique[*T]`?" is reported by P03 through hooks the parser provides.
 
 ## Deliverables
 

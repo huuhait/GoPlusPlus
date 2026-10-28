@@ -31,7 +31,7 @@
    |---|---|---|
    | `nonnull`, `dereferenceable`, `noundef` | hidden pointers | the compiler creates them, and they always point at valid memory |
    | `readonly` | hidden pointers of borrowed owning parameters, and `string` data | P01 D1.5 forbids top-level writes and `&param`, and string bytes never change. Never on `[]T` data: its elements stay mutable |
-   | `noalias` | **never** on `Unique[T]` | raw aliases are legal |
+   | `noalias` | **never** on `Unique[*T]` | raw aliases are legal |
    | `noalias` | `move` parameters, only when the caller passes a fresh value | otherwise other pointers to the value can exist |
    | `captures(none)` (formerly `nocapture`) | only where no ref to the parameter can escape (not for functions that return refs) | a returned ref lets the parameter escape |
 

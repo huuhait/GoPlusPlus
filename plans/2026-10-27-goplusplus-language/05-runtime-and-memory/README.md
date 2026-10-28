@@ -38,16 +38,16 @@
   - The compiler generates hash and equality functions per key type.
   - Lookups accept a `ref` key, so `counts[w]` with `w ref string` doesn't allocate (P01 D1.6).
   - Maps count their active iterators. Inserting a new key while an iterator is active **always** panics with "map insert during iteration", whether or not the table has room (P01 D1.21, ADR-0006). Writing an existing key is allowed.
-- **`Unique[T]`** (`new_unique`): allocated on creation; the target is dropped and freed on destruction.
-- **`Shared[T]`** (`new_shared`): one allocation holding both the control block (atomic strong and weak counts) and the value.
-- **`Weak[T]`** (`new_weak`, from a `Shared[T]`): holds a weak count; `Lock()` upgrades it to a `Shared[T]`.
+- **`Unique[*T]`** (`new_unique`): allocated on creation; the target is dropped and freed on destruction.
+- **`Shared[*T]`** (`new_shared`): one allocation holding both the control block (atomic strong and weak counts) and the value.
+- **`Weak[*T]`** (`new_weak`, from a `Shared[*T]`): holds a weak count; `Lock()` upgrades it to an `Option[Shared[*T]]`, `nil` once the value is gone (ADR-0018).
 
 **D5.5 — Drop glue and relocation.**
 - The compiler generates drop glue for every owning type: call `drop` (if defined), then destroy the owning fields in reverse order.
 - Glue is emitted `linkonce_odr` and is inlinable.
 - **All-zero skip:** drop glue skips the user `drop` when the value is all zero bytes. So dropping a zero value is a no-op in every profile, and zero-on-move depends on it.
 - **No unwinding:** drop glue is `nounwind`. A panic that escapes `drop` aborts the program with a clear message (P01 D1.9).
-- **Iterative drop:** `Unique[Self]` chains (linked lists) are dropped iteratively, and trees use a heap work list, so long lists don't overflow goroutine stacks.
+- **Iterative drop:** `Option[Unique[*Self]]` chains (linked lists) are dropped iteratively, and trees use a heap work list, so long lists don't overflow goroutine stacks.
 - **errno:** drop glue preserves errno, so a drop that runs right after a C call doesn't change the errno the caller reads (P07 D7.7).
 - **Relocate:** each type has a relocate operation that moves a value to a new address. Containers use it, for example when a slice grows or a map rehashes.
   - `memcpy` for Go++ types and trivially relocatable C++ types;
@@ -68,7 +68,7 @@
 - **Trampolines:** the catch-all trampolines from P04 D4.6 (at `main`, goroutine entry and C-callback entry) print an unrecovered panic, stop the other goroutines (P12 D12.12) and exit with code 2.
 
 **D5.8 — Explicit safety checks.**
-- Bounds, nil dereference, integer division by zero and negative shift counts are checked with a compare plus a branch to a cold panic call.
+- Bounds, nil dereference (maps, channels, funcs and interfaces only: the pointer kinds are never nil, ADR-0018), integer division by zero and negative shift counts are checked with a compare plus a branch to a cold panic call.
 - No SIGSEGV tricks for nil checks. Signal handling stays free for the C code that needs it.
 - `@NoBounds` (per function) and a per-package flag turn bounds checks off.
 
@@ -134,7 +134,7 @@ P13's full packages replace them later.
 
 - **Code size from drop glue and descriptors** → `linkonce_odr`, outlined drops for large types, descriptors emitted only when used.
 - **Unwinding cost** → `nounwind` inference, `-panic=abort`.
-- **Deep recursive drops** (long linked lists) overflowing the stack → handled by iterative drop glue: `Unique[Self]` chains are dropped in a loop, and trees use a heap work list (D5.5).
+- **Deep recursive drops** (long linked lists) overflowing the stack → handled by iterative drop glue: `Option[Unique[*Self]]` chains are dropped in a loop, and trees use a heap work list (D5.5).
 - **Static binaries with glibc are impractical** → fully static musl builds (P07.14).
 
 ## Open questions

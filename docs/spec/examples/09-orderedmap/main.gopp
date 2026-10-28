@@ -41,9 +41,10 @@ func (m *OrderedMap[K, V]) Put(move k K, move v V) {
 	}
 }
 
-// Get returns a raw pointer to the value, or nil if k is absent.
-// The pointer is valid until the next Put (not checked by the compiler).
-func (m *OrderedMap[K, V]) Get(k K) *V {
+// Get returns a raw pointer to the value, or nil if k is absent: pointers are
+// never nil, so "maybe" is an Option. The pointer is valid until the next Put
+// (not checked by the compiler).
+func (m *OrderedMap[K, V]) Get(k K) Option[*V] {
 	i, found := m.search(k)
 	if !found {
 		return nil
@@ -65,7 +66,7 @@ func main() {
 	var counts OrderedMap[string, int] // the zero value is an empty map
 	for _, w := range words {
 		if p := counts.Get(w); p != nil {
-			*p++
+			*p++ // p is a *int here: checked
 		} else {
 			counts.Put(w.Clone(), 1) // w is borrowed from words: Clone it to own it
 		}

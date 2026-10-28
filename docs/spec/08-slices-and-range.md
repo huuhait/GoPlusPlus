@@ -83,7 +83,7 @@ RangeVar    = [ "&" ] identifier .
 
 **RNG-1.** `for i, x := range xs` gives `x` the element in the cheapest safe way:
 - **trivial elements** are copied into `x`, as in Go and as for trivial parameters ([PAR-4](05-parameters.md)). Changing the element later does not change `x`. Use `&x` to change the real item;
-- **shared-handle elements** (`[]func()`, `[]error`, `[]chan T`, `[]Shared[T]`) are copied with a retain, as in Go and as D1.3 says ("implicit; copying retains"). So `handlers[0] = nil; f()` works inside the loop and `x` can be captured by an escaping closure. Because the range variable is a retained copy, it cannot dangle ([UB-2a](16-undefined-behavior.md) and [CLO-3a](11-closures.md) apply to owning elements only);
+- **shared-handle elements** (`[]func()`, `[]error`, `[]chan T`, `[]Shared[*T]`) are copied with a retain, as in Go and as D1.3 says ("implicit; copying retains"). So `handlers[0] = nil; f()` works inside the loop and `x` can be captured by an escaping closure. Because the range variable is a retained copy, it cannot dangle ([UB-2a](16-undefined-behavior.md) and [CLO-3a](11-closures.md) apply to owning elements only);
 - **owning elements** are **borrowed**: `x` is a borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), read-only, like Rust's `for d in &docs`. To keep it, write `x.Clone()` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). To change it, use the `&` form (RNG-1a). The error message for a write to a plain range variable suggests `&x` first.
 
 **RNG-1a.** *The `&` form: the element itself.* In `for _, &d := range xs`, `d` is **the element itself**, not a copy and not a read-only borrow. It works for every element category.

@@ -16,12 +16,12 @@
 
 **D4.2 — Per-function pipeline.**
 1. Build GIR.
-2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows. For a type with no zero value, the value of a comma-ok lookup (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`) counts as moved on the paths where `ok` is false, and a borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in a nilable `@Required` field must be known non-nil on that path (a constructor, `&x`, `make`, a literal, or a variable narrowed by `if p != nil`); reads of such a field skip the nil check.
+2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows. For a type with no zero value, the value of a comma-ok lookup (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`) counts as moved on the paths where `ok` is false, and a borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in an interface, func, map or channel `@Required` field must be known non-nil on that path (`make`, a literal, a func value, a non-nil value converted to the interface, or a variable narrowed by `if v != nil`). After a failing `!` call in the Go form `v, err := f()`, `v` counts as moved where `err != nil` when its type has no zero value (ADR-0018).; reads of such a field skip the nil check.
 3. Elaborate drops: destructor calls on normal *and* unwind paths, and zeroing on `move`.
    - Moving a Go++ value copies its bytes and zeroes the source.
    - Moving a C++ value, implicitly or with `move(x)`, runs its move constructor; the source keeps its moved-from state and is destroyed at the end of its scope (P01 D1.4 rule 9). Relocation (P05 D5.5) is used only inside containers.
    - Drop glue skips `drop` on all-zero values.
-4. Lower `!`, bounds checks and nil checks.
+4. Lower `!`, bounds checks and nil checks. Nil checks are only for maps, channels, funcs and interfaces: the pointer kinds are never nil, so their dereferences have none (ADR-0018).
 5. Monomorphize generic calls.
 6. Run light GIR passes: constant folding, dead-block removal, trivial inlining (at every `opt`; the `opt 0` pipeline keeps it small).
 7. Emit LLVM IR.
@@ -58,8 +58,10 @@
 | `ref []T` | `{ptr, len}` |
 | interface | `{itab*, data}` |
 | func value | `{code*, env*}` |
-| `*T`, `Unique[T]` | pointer |
-| `Shared[T]`, `Weak[T]` | pointer to the control block |
+| `*T`, `Unique[*T]` | pointer |
+| `Shared[*T]`, `Weak[*T]` | pointer to the control block |
+| `Option[P]` for a pointer kind `P` | the same as `P`; the null bit pattern is `nil` |
+| `Option[T]` for other `T` | `T` followed by a one-byte "is set" flag (padded to `T`'s alignment) |
 | `map[K]V`, `chan T` | pointer to the runtime object |
 
 **D4.6 — Panics are native C++ exceptions (Itanium ABI).**

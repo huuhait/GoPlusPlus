@@ -12,7 +12,7 @@
 - **Results that allocate are owned.**
 - **Results that alias an input are refs, and the signature says so.** Example: `strings.Fields(s string) []ref string` returns an owned slice of refs into `s`.
 - **Zero-allocation paths append to a caller buffer** (`strconv.AppendInt`, `fmt.Appendf`), as Go already does. `Append*` functions take `move dst []T` (P01 D1.20), so `buf = strconv.AppendInt(buf, n, 10)` is written as in Go.
-- **Functions that can fail are declared with `!`** (e.g. `func Open!(name string) Unique[File]`, which returns `(Unique[File], error)`), so callers choose between `!` and Go-style handling. Std never panics on ordinary errors.
+- **Functions that can fail are declared with `!`** (e.g. `func Open!(name string) Unique[*File]`, which returns `(Unique[*File], error)`), so callers choose between `!` and Go-style handling. Std never panics on ordinary errors.
 - **Errors work like Go** (P01 D1.19). Sentinel errors are package-level `errors.New` values, compared with `==` (`err == io.EOF`).
 
 **D13.3 — Std is pure Go++ plus libc.**
@@ -24,6 +24,7 @@
 - `fmt.Println(p)` prints `{1 2}` and `%+v` prints `{X:1 Y:2}`. `Stringer`, `Formatter` and `error` implementations take precedence, as in Go.
 - **Decoding returns a new value** (owner decision, ADR-0016): `u, err := json.Decode[User](data)`, or `dec.Decode[User]()` on a stream decoder. There is no `json.Unmarshal`, no `dec.Decode(&v)` and no `Unmarshaler` interface, because they need a value to exist before decoding. How a type supplies its own decoding (Go's `UnmarshalJSON`) is designed in P13.08.
 - `@Derive(JSON)` is an optional fast path. It generates `MarshalJSON` and a decode function, which `encoding/json` prefers (like `easyjson` in Go). Output is identical either way.
+- **`Option` fields.** An `Option[T]` field encodes as `null` when it is nil; decoding gives `nil` for a missing or `null` field. A pointer field (`Unique[*T]`, never nil) must be present in the input (ADR-0018).
 - **Required fields.** Decoding a struct with a `@Required` field (P01 D1.4 rule 11) returns an error naming the field when the input doesn't have it, with or without `@Derive(JSON)`. The field table (TYP-10) records which fields are required.
 
 **D13.5 — Tiers, built in this order.**
@@ -47,7 +48,8 @@
 - Redesign the APIs that assume a GC:
   - `sync.Pool` (Q2, ADR-0014): a generic `sync.Pool[T]` whose `Get` returns an owned value (a stored one or `New()`; a `T` with no zero value must have `New`) and whose `Put` takes one (`p.Put(move(b))`). A runtime goroutine drops objects not taken for a few seconds, like Go's GC clearing pools, and an optional `Max` caps how many it keeps;
   - finalizers and `runtime.SetFinalizer` (removed; use `drop`);
-  - `json.Unmarshal` and the other fill-a-pointer decoders (replaced by `json.Decode[T]`, D13.4).
+  - `json.Unmarshal` and the other fill-a-pointer decoders (replaced by `json.Decode[T]`, D13.4);
+  - every API and data structure that uses a nil pointer (pointers are never nil, ADR-0018): a result that may be missing becomes `Option[*T]` (or `Option[T]`), and linked structures use `Option` links (`container/list`, `container/heap` users, trees in the ports).
 
 **D13.7 — Allocator awareness only where it pays off.** Std uses the default allocator. Variants that accept an allocator or arena are added only where profiling shows a need, e.g. `strings.Builder`, `bytes.Buffer`.
 

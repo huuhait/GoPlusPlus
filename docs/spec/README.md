@@ -34,7 +34,7 @@ Each sample has `main.gopp`, a Go counterpart `main.go`, `expected_output.txt` a
 | 1 | [hello](examples/01-hello/) | the minimal program |
 | 2 | [wc](examples/02-wc/) | files, `!`, owned strings, refs |
 | 3 | [kvparse](examples/03-kvparse/) | refs into one buffer, `@Ref` |
-| 4 | [binarytrees](examples/04-binarytrees/) | `Unique[T]`, `new_unique`, arenas |
+| 4 | [binarytrees](examples/04-binarytrees/) | `Unique[*T]`, `new_unique`, arenas |
 | 5 | [workers](examples/05-workers/) | goroutines, channels, moves |
 | 6 | [zcrc](examples/06-zcrc/) | zlib through a header import |
 | 7 | [vecsort](examples/07-vecsort/) | `std::vector` and `std::sort` |

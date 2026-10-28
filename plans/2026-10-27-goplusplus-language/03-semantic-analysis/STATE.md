@@ -23,6 +23,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.14 Error codes & `gopp explain`
 - [ ] P03.15 `@Required` fields (ADR-0016)
 - [ ] P03.16 No auto-deref through `Weak` (OWN-P5, ADR-0017)
+- [ ] P03.17 Never-nil pointers and `Option[T]` (ADR-0018)
 
 ## Open questions
 

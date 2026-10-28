@@ -69,10 +69,10 @@ The work ships in five stages. Each stage is tested and usable before the next o
 - Native Go++ types still have no user-defined operators (P01).
 
 **D8.7 — References.**
-- A `T&` parameter takes a Go++ `*T`, or an addressable value (the `&` is inserted automatically).
+- A `T&` parameter takes a Go++ `*T` (never nil, like a C++ reference; ADR-0018), or an addressable value (the `&` is inserted automatically). A C++ `T*` is `Option[*T]` (P07 D7.4).
 - A `const T&` parameter takes a borrowed value; temporaries are materialized when needed.
 - A `T&&` parameter takes `move(x)`.
-- A returned `T&` becomes a raw `*T`.
+- A returned `T&` becomes a raw `*T` (never nil); a returned `T*` becomes `Option[*T]`.
 
 **D8.8 — Inheritance and virtual functions.**
 - Derived → base pointer conversion is implicit.

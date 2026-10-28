@@ -98,7 +98,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - **Move**: give a value to a new owner. The old place becomes the zero value.
 - **Borrow**: use a value without taking it. A borrow does not destroy anything.
 - **Ref**: `ref string` or `ref []T`. A `(ptr, len)` borrow you can store. `ref` is a contextual keyword ([LEX-12](02-lexical.md)).
-- **Shared handle**: a value whose copies share one thing through a reference count (`Shared[T]`, channels, interfaces, funcs).
+- **Shared handle**: a value whose copies share one thing through a reference count (`Shared[*T]`, channels, interfaces, funcs).
 - **Trivial type**: copied bit by bit, no destructor. It satisfies the `Copy` constraint.
 - **Owning type**: has a destructor (directly or through fields). Move-only.
 - **Drop**: run the destructor (the `drop` method, then the fields).

@@ -33,7 +33,7 @@ Syntax: none.
 - a ref into a slice element after `append` reallocated the slice;
 - a ref into a `string` after the string was reassigned, appended to or dropped;
 - a ref into a map key after the map grew;
-- a pointer to a `Unique[T]` target after the `Unique` was moved from, reassigned or dropped;
+- a pointer to a `Unique[*T]` target after the `Unique` was moved from, reassigned or dropped;
 - the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a `ref` into a local ([OWN-V7](04-ownership.md#44-refs-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. A ref or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Refs may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-refs-d16)); less obvious cases, such as a ref that comes out of a call, are **not** caught.
 
 ```go
@@ -115,7 +115,7 @@ Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 
 UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding). The owner confirmed in P01.15 that they stay listed as undefined behavior.
 
-**UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory.
+**UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory, or converting a nil `unsafe.Pointer` to a `*T` (pointers are never nil; convert to `Option[*T]` instead).
 
 **UB-8.** *Pinned values.* Using a pointer or ref into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case.
 
@@ -123,7 +123,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
 - Using the result of `ffi.String(p)` (a ref over C memory) after the C memory is freed.
 - Passing a `ref string` temporary copy to a callee that keeps the pointer (FOR-6).
-- C or C++ code that writes nil into a never-nil `@Required` field, or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code reads the field with no nil check.
+- C or C++ code that writes NULL into a Go++ pointer (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, all never nil) or a never-nil `@Required` field, or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code dereferences pointers with no nil check (ADR-0018). A C pointer that may be NULL imports as `Option[*T]`, so this needs a lie in a header (`_Nonnull` on a pointer that can be NULL) or a write through memory.
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
@@ -166,7 +166,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5) | | | yes | |
 | C keeps a pointer (UB-9) | | known list | maybe | |
-| C writes nil into a never-nil `@Required` field (UB-9) | | | no (a nil read crashes like any nil dereference) | |
+| C writes NULL into a Go++ pointer or a never-nil `@Required` field (UB-9) | | | no (a NULL read crashes like any NULL dereference) | |
 
 ## 16.5 Rationale
 

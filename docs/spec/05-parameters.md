@@ -74,7 +74,7 @@ var f Finisher = b      // error (with interface Finisher{ Finish() string }): F
 
 **PAR-6.** *`*T` mutates.* `*T` parameters and receivers mutate the target, as in Go. A call `v.M()` on an addressable variable `v` where `M` has a `*T` receiver passes `&v` automatically, as in Go.
 
-**PAR-7.** *Shared handles work like Go.* Parameters of shared-handle types (`Shared[T]`, `Weak[T]`, `chan`, interfaces including `error`, funcs) can be copied, stored and returned by the callee. Each copy retains, so `return err` works as in Go. The call itself passes them without a retain. A callee that releases the caller's last reference through another path and then uses the parameter reads freed memory: [UB-2b](16-undefined-behavior.md).
+**PAR-7.** *Shared handles work like Go.* Parameters of shared-handle types (`Shared[*T]`, `Weak[*T]`, `chan`, interfaces including `error`, funcs) can be copied, stored and returned by the callee. Each copy retains, so `return err` works as in Go. The call itself passes them without a retain. A callee that releases the caller's last reference through another path and then uses the parameter reads freed memory: [UB-2b](16-undefined-behavior.md).
 
 **PAR-8.** *Arguments at a call.*
 - A local passed to a borrowed parameter is **not** moved.

@@ -11,11 +11,12 @@ const (
 )
 
 // Node owns its children: dropping the root frees the whole tree.
+// A leaf has no children: pointers are never nil, so the links are Options.
 type Node struct {
-	Left, Right Unique[Node]
+	Left, Right Option[Unique[*Node]]
 }
 
-func bottomUp(depth int) Unique[Node] {
+func bottomUp(depth int) Unique[*Node] {
 	if depth <= 0 {
 		return new_unique(Node{})
 	}
@@ -24,15 +25,17 @@ func bottomUp(depth int) Unique[Node] {
 }
 
 func (n *Node) check() int {
-	if n.Left == nil {
+	// The fields are borrowed as Option[*Node] (no move), then checked.
+	var l, r Option[*Node] = n.Left, n.Right
+	if l == nil || r == nil {
 		return 1
 	}
-	return 1 + n.Left.check() + n.Right.check() // Unique[Node] has the methods of *Node
+	return 1 + l.check() + r.check() // l and r are *Node here
 }
 
 // ANode lives in an arena. Raw pointers are trivial, so the arena can own it.
 type ANode struct {
-	Left, Right *ANode
+	Left, Right Option[*ANode]
 }
 
 func bottomUpArena(a *mem.Arena, depth int) *ANode {
@@ -46,10 +49,11 @@ func bottomUpArena(a *mem.Arena, depth int) *ANode {
 }
 
 func (n *ANode) check() int {
-	if n.Left == nil {
+	l, r := n.Left, n.Right // trivial: plain copies
+	if l == nil || r == nil {
 		return 1
 	}
-	return 1 + n.Left.check() + n.Right.check()
+	return 1 + l.check() + r.check()
 }
 
 func main() {

@@ -27,7 +27,7 @@ Each delta has EBNF, semantics, an example and a rationale.
 - New keyword: `macro`. Two contextual words: `ref` (special only where a type is expected, so `ref := "main"` still works) and `move` (the parameter mark, as in `func Push(move s string)`; it is also the function `move(x)`, D1.5).
 - New predeclared identifiers:
   - the functions `move`, `clone`, `new_unique`, `new_shared`, `new_weak`;
-  - the generic types `Unique[T]`, `Shared[T]`, `Weak[T]`;
+  - the generic types `Unique[*T]`, `Shared[*T]`, `Weak[*T]`;
   - the built-in constraints `Copy` and `Clone`, written like `comparable`: `[T Copy]`, `[T Clone]` (D1.10);
   - the std macros, such as `#Assert` and `@Derive` (D1.14).
 - Go's `new` is removed.
@@ -40,8 +40,8 @@ Each delta has EBNF, semantics, an example and a rationale.
 | Category | Types | Copy | End of life |
 |---|---|---|---|
 | Trivial | bool, numbers, raw `*T`, `unsafe.Pointer`, `ref string`, `ref []T`, arrays/structs of trivial types | implicit, bitwise | nothing |
-| Owning | `string`, `[]T`, `map[K]V`, `Unique[T]`, types with a `drop` method, arrays/structs containing an owning type, C++ classes with a non-trivial copy/move/destructor | move-only; `x.Clone()` copies | drop glue runs |
-| Shared handle | `Shared[T]`, `Weak[T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
+| Owning | `string`, `[]T`, `map[K]V`, `Unique[*T]`, types with a `drop` method, arrays/structs containing an owning type, C++ classes with a non-trivial copy/move/destructor | move-only; `x.Clone()` copies | drop glue runs |
+| Shared handle | `Shared[*T]`, `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
 
 **D1.4 — Ownership rules.**
 1. **One owner.** Every value has exactly one owner: a variable, field, element or temporary. When the owner's lifetime ends, the value is destroyed: its `drop` method runs (if any), then its owning fields are destroyed in reverse declaration order.
@@ -63,11 +63,11 @@ Each delta has EBNF, semantics, an example and a rationale.
    - Anywhere else, write `append(move(p), …)` or `append(p.Clone(), …)`.
    - Spread (`append(a, b...)`) and `copy(dst, src)` with non-trivial elements need `move` or `Clone` on the source: `move(b)` or `b.Clone()`, `move(src)` or `src.Clone()`.
    - Moves out of places happen after all other arguments are evaluated.
-5. **Zero values.** Every type has a zero value (Go), except the types of rules 9 and 11. A moved-from place holds the zero value; for C++ class types see rule 9, and a moved-from place of a rule 11 type holds the all-zero bytes, which only drop and assignment may touch (use after move is an error). A `drop` method must therefore accept the zero value; `gopp vet` checks this. Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build mode.
+5. **Zero values.** Every type has a zero value (Go), except the pointer kinds (D1.7: they are never nil) and the types of rules 9 and 11. A moved-from place holds the zero value; for C++ class types see rule 9, and a moved-from place of a rule 11 type holds the all-zero bytes, which only drop and assignment may touch (use after move is an error). A `drop` method must therefore accept the zero value; `gopp vet` checks this. Drop glue skips a type's `drop` when the value is all zero bytes, so dropping a zero value behaves the same in every build mode.
 6. **Copies are explicit: `x.Clone()`.**
-   - Every type that can be cloned has a method `Clone() T`, built-in types too (`string`, `[]T`, `map`, `Unique[T]`, numbers, …). `clone(x)` stays as a short form that calls it. `move(x)` stays a built-in.
+   - Every type that can be cloned has a method `Clone() T`, built-in types too (`string`, `[]T`, `map`, `Unique[*T]`, numbers, …). `clone(x)` stays as a short form that calls it. `move(x)` stays a built-in.
    - A type whose `Clone` method has another signature is not cloneable (compile error).
-   - Clone is structural when all fields are cloneable. A trivial `x` clones as a plain copy, and `u.Clone()` of a `Unique[T]` allocates a new `T` holding `(*u).Clone()`.
+   - Clone is structural when all fields are cloneable. A trivial `x` clones as a plain copy, and `u.Clone()` of a `Unique[*T]` allocates a new `T` holding `(*u).Clone()`.
    - Shared handles (D1.3) copy by retaining.
    - A type with a `drop` method is cloneable only if it defines `Clone() T`, which prevents silently duplicating unique resources such as file descriptors. There is no `Clone` derive: a type with `drop` writes `Clone()` by hand on purpose.
    - A type that mixes owning fields with raw `*T` fields needs a hand-written `Clone()`, because an automatic clone would copy the raw pointers (for example, tree nodes with parent pointers, like `Node` in D1.7).
@@ -79,7 +79,7 @@ Each delta has EBNF, semantics, an example and a rationale.
    - `-asan` catches the rest at runtime. The owner chose no extra safety layer for v1.
 9. **C++ class types.**
    - A C++ type has a zero value only if it has a default constructor.
-   - Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is fine: `make([]T, 0, c)` creates no value; ADR-0016), `m[k]` and `<-ch` outside a comma-ok form (Q9), a receive from a closed channel, `var zero T` in generic code, named results, a failing `!`.
+   - Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is fine: `make([]T, 0, c)` creates no value; ADR-0016), `m[k]` and `<-ch` outside a comma-ok form (Q9), a receive from a closed channel, `var zero T` in generic code, named results. A failing `!` leaves such results unset, and `v, err := f()` can use `v` only where `err == nil` (ADR-0018).
    - Every move of a C++ value, implicit or `move(x)`, runs its move constructor and leaves the C++ "moved-from" state, not zero. The source is destroyed at the end of its scope.
    - Only containers relocate values, with the type's relocate operation (P05 D5.5): `memcpy` only for Go++ types and trivially relocatable C++ types.
 10. **Pinned values.**
@@ -90,7 +90,7 @@ Each delta has EBNF, semantics, an example and a rationale.
     - `@Required` after a struct field's type (`ID int @Required`) means every composite literal of the struct must set it, by name or by position: `User{Email: "x"}` is a compile error. It is allowed only on struct fields (embedded ones too).
     - A struct with a required field has **no zero value**, like the C++ types of rule 9, with the same errors: `var u User`, `make([]User, n)` (except a constant `0`), `var a [3]User`, array literals with missing elements (`[3]User{{…}}`), keyed slice literals with gaps (`[]User{5: {…}}`), `clear(s)` on a `[]User` (use `s = s[:0]`; `clear(m)` on a map is fine), named results, and so on.
     - It spreads: a struct or array containing such a type has no zero value either, so a `User` field inside `Team` must be set in every `Team` literal. For a generic type it belongs to the instance: `Box[User]` has no zero value.
-    - **Never nil:** a `@Required` field whose type can be nil (`*T`, `Unique[T]`, `Shared[T]`, interfaces, funcs, maps, channels) is **never nil**, checked at compile time: a value stored in it (in a literal or an assignment) must be known non-nil (`new_unique(…)`, `new_shared(…)`, `&x`, `make(…)`, a map or func literal, a non-nil `@Required` field, or a variable inside an `if p != nil` check); storing `nil` or a maybe-nil value is an error; `move` out of the field is an error (use `mem.Replace(&c.Owner, v)`, which returns the old value; `v` must be known non-nil); `&c.Owner` is an error except as `mem.Replace`'s first argument; `@Required` on a `Weak[T]` field is an error (it can turn nil by itself); on a slice or a type-parameter field it only means "must be set" (a nil slice is empty). `drop` never sees such a field nil (a moved-from value is all zero and drop glue skips it).
+    - **Never nil:** on a pointer field `@Required` is an error, because pointers are never nil (D1.7, ADR-0018). A `@Required` field whose type can be nil (interfaces, funcs, maps, channels) is **never nil**, checked at compile time: a value stored in it (in a literal or an assignment) must be known non-nil (`make(…)`, a map or func literal, a non-nil value converted to the interface, a non-nil `@Required` field, or a variable inside an `if p != nil` check); storing `nil` or a maybe-nil value is an error; `move` out of the field is an error (use `mem.Replace(&c.Owner, v)`, which returns the old value; `v` must be known non-nil); `&c.Log` is an error except as `mem.Replace`'s first argument; on a slice, an `Option` or a type-parameter field it only means "must be set" (a nil slice is empty). `drop` never sees such a field nil (a moved-from value is all zero and drop glue skips it).
     - JSON decoding builds a new value (`json.Decode[User](data)`); there is no `json.Unmarshal` (P13 D13.4).
     - **Lookups that can fail** (rules 9 and 11; Q9): a map index `m[k]` or a receive `<-ch` whose value type has no zero value may be used only in a comma-ok form (`v, ok := m[k]`, `v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`, `case v, ok := <-ch:` in a `select`), as the target of `m[k] = v`, in `delete(m, k)`, or as a bare `move(m[k])` statement that discards the value; every other use (`v := m[k]`, `u := clone(m[k])`, `u := move(m[k])`, `m[k].Email`, `f(m[k])`, `T{F: m[k]}`, `v := <-ch`, `case v := <-ch:`, `(<-ch).Email`) is an error, because a missing key or a closed channel would give zero bytes; the comma-ok forms (`u, ok := x.(T)`, `u, ok := m[k]`, `u, ok := clone(m[k])`, `u, ok := move(m[k])`, `u, ok := <-ch`) work, and `u` counts as moved on every path where `ok` is false, so the use-after-move check rejects reading it there. A type switch and `u := x.(T)` work as in Go.
     - **Moves:** a moved-from local holds zero bytes and is tracked by use after move (rule 5). `move` out of any place other than a local variable is an error for a Go++ type with no zero value (a slice, array or map element, an `&` range alias, a struct field, `*p`), because the place would be left as zero bytes that later code reads as a real value; use `mem.Replace(&place, v)`, `delete(m, k)` or `move(m[k])` (which remove the entry), `s = s[:n]` (which drops elements), or `range move(xs)`. A moved local is tracked by the use-after-move check. C++ types are not affected: their moved-from state is a valid C++ object. Locals are declared variables, comma-ok results of map and channel lookups, owning range variables and `move` parameters, not type-assertion bindings (borrowed) or captured variables inside a closure; swaps (`xs[i], xs[j] = xs[j], xs[i]`) are allowed; in a map range, `v` counts as moved after `move(m[k])` of its entry (OWN-R4, RNG-3).
@@ -110,7 +110,7 @@ Each delta has EBNF, semantics, an example and a rationale.
   - A variadic parameter of an owning type must be written `move ...T`; a plain `...T` with an owning `T` is a compile error. The caller writes `x.Clone()` to keep its value: `filepath.Join(dir.Clone(), "x")`.
   - `&` and `*` keep their Go meanings.
 - **`*T` mutates.** `*T` parameters and receivers mutate, as in Go.
-- **Shared handles work like Go.** Parameters of shared-handle types (`Shared[T]`, `Weak[T]`, `chan`, interfaces including `error`, funcs) can be copied, stored and returned by the callee, and each copy retains (`return err` works as in Go). The call itself passes them without a retain.
+- **Shared handles work like Go.** Parameters of shared-handle types (`Shared[*T]`, `Weak[*T]`, `chan`, interfaces including `error`, funcs) can be copied, stored and returned by the callee, and each copy retains (`return err` works as in Go). The call itself passes them without a retain.
 - **ABI.**
   - Trivial parameters follow the C ABI (copies).
   - Borrowed owning parameters pass by hidden pointer.
@@ -133,18 +133,21 @@ Each delta has EBNF, semantics, an example and a rationale.
 
 | Type | Created with | Meaning |
 |---|---|---|
-| `*T` | `&x` (address of a variable) | raw, nullable, non-owning (Go syntax, no GC) |
-| `Unique[T]` | `new_unique(v)` | single owner; the value is dropped and freed when the pointer is destroyed; nullable (zero value `nil`) |
-| `Shared[T]` | `new_shared(v)` | shared ownership, atomically refcounted; one allocation holds the counts and the value (like `make_shared`) |
-| `Weak[T]` | `new_weak(s)`, from a `Shared[T]` | doesn't own and doesn't allocate; `w.Lock()` returns a `Shared[T]`, or `nil` if the value is gone |
+| `*T` | `&x` (address of a variable) | raw, non-owning, **never nil** (Go syntax, no GC) |
+| `Unique[*T]` | `new_unique(v)` | single owner; the value is dropped and freed when the pointer is destroyed; never nil |
+| `Shared[*T]` | `new_shared(v)` | shared ownership, atomically refcounted; one allocation holds the counts and the value (like `make_shared`) |
+| `Weak[*T]` | `new_weak(s)`, from a `Shared[*T]` | doesn't own and doesn't allocate; `w.Lock()` returns an `Option[Shared[*T]]`, `nil` if the value is gone |
+| `Option[T]` | `nil`, or any `T` (converts automatically) | "maybe nothing", for **any** type; zero value `nil` |
+
+**Pointers are never nil** (owner decision, ADR-0018). `*T`, `Unique[*T]`, `Shared[*T]` and `Weak[*T]` always hold a target and have no zero value (`var p *User` and `p == nil` are errors). Owning pointers name their pointer type: `Unique[*User]` (`Unique[User]` is an error). "Maybe nothing" is `Option[T]` for any type: zero value `nil`; for pointer kinds it has the size of a pointer; it has only `IsNil()` and `Get() (T, bool)`. An `Option` is used as its value only after a check: `if o != nil { o.Name }`, `if !o.IsNil() { … }`, an early `return` on `o == nil`, a `for o != nil` loop, or `v, ok := o.Get()`; narrowing works on locals and parameters. Interfaces, maps, slices, channels and funcs stay nilable as in Go (`if err != nil` is unchanged). C pointers import as `Option[*T]` (`*T` when Clang knows they are non-null); a C++ `T&` is a `*T`.
 
 - `new_unique` and `new_shared` take the initial value and move it in: `new_unique(Node{Name: "a"})`, or `new_unique(Node{})` for a zero value.
-- `new_weak` takes a `Shared[T]`. A weak pointer can't own a new object, because it would be freed at once.
+- `new_weak` takes a `Shared[*T]`. A weak pointer can't own a new object, because it would be freed at once.
 - `&T{…}` is a compile error with a fix-it ("allocation is explicit in Go++: use `new_unique(T{…})`"). In Go it allocated silently.
-- Field access and method calls auto-dereference `*T`, `Unique[T]` and `Shared[T]`. `Weak[T]` doesn't (its target can vanish; ADR-0017): read it with `if p := w.Lock(); p != nil { … }`, and `w.Name` is a compile error.
-- `Unique[T]` and `Shared[T]` have the methods of both `T` and `*T`.
-- Every pointer kind (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`) has an `IsNil()` method, and `p == nil` keeps working. If `T` has its own `IsNil` method: on `Unique[T]`, `Shared[T]` and `Weak[T]` the pointer kind's `IsNil` wins (call `T`'s as `(*p).IsNil()` on `Unique`/`Shared`; on a `Weak`, through `Lock` first, ADR-0017); on a raw `*T`, `p.IsNil()` is a compile error for ambiguity (fix-its: `(*p).IsNil()` for T's method, `p == nil` for the pointer). Without a `T.IsNil`, `p.IsNil()` checks the pointer. For `Weak[T]`, `IsNil()` is true when there is no target (never set, or already freed).
-- `Unique[T]` and `Shared[T]` convert implicitly to `*T` when borrowed from a place. They never convert from a temporary, because the target would be freed immediately.
+- Field access and method calls auto-dereference `*T`, `Unique[*T]` and `Shared[*T]`. `Weak[*T]` doesn't (its target can vanish; ADR-0017): read it with `if p := w.Lock(); p != nil { … }` (`Lock` returns an `Option`), and `w.Name` is a compile error.
+- `Unique[*T]` and `Shared[*T]` have the methods of both `T` and `*T`.
+- Pointers have no `IsNil()` method (they are never nil); `IsNil()` and `Get()` belong to `Option` (ADR-0018).
+- `Unique[*T]` and `Shared[*T]` convert implicitly to `*T` (and so to `Option[*T]`) when borrowed from a place. They never convert from a temporary, because the target would be freed immediately.
 - `make([]T, n)`, `make(map[K]V)` and `make(chan T, n)` work as in Go.
 
 Ownership on one screen:
@@ -152,15 +155,15 @@ Ownership on one screen:
 ```go
 type Node struct {
     Name     string          // owned
-    Children []Unique[Node]  // owned slice of owning pointers
-    Parent   *Node           // raw back-pointer: does not own
+    Children []Unique[*Node]  // owned slice of owning pointers
+    Parent   Option[*Node]   // raw back-pointer: does not own; nil for the root
 }
 
-func NewNode(name string, parent *Node) Unique[Node] {
+func NewNode(name string, parent Option[*Node]) Unique[*Node] {
     return new_unique(Node{Name: name.Clone(), Parent: parent}) // name is borrowed: Clone it to own it
 }
 
-func (n *Node) Add(move child Unique[Node]) {       // `move`: Add takes ownership
+func (n *Node) Add(move child Unique[*Node]) {       // `move`: Add takes ownership
     child.Parent = n
     n.Children = append(n.Children, child)         // child moves into the slice
 }
@@ -180,7 +183,7 @@ func main() {
 - **Go error handling is unchanged.** `val, err := call()` followed by `if err != nil { … }` works exactly as in Go.
 - **`func name!(…)` declares a function that can fail.** `func load!(path string) []byte` is the same function as `func load(path string) ([]byte, error)`, and callers see `([]byte, error)`. Methods and interface methods use the same form. The `!` sits right before the parameter list, as in calls: `func parse[T any]!(s string) T` is called as `parse[int]!(s)`.
 - **`call!(args)` unwraps a call whose last result is `error`.** The value is the other results, without the error (zero, one or several). What happens on error depends on the function the call is in:
-  - **inside a function that can fail** (declared with `!`, or whose last result is `error`; the innermost function counts, so a plain closure inside a `!` function panics), the error is returned to the caller, with zero values for the other results. The `!` site is added to the error's trace. The trace never wraps the error (D1.19);
+  - **inside a function that can fail** (declared with `!`, or whose last result is `error`; the innermost function counts, so a plain closure inside a `!` function panics), the error is returned to the caller, with zero values for the other results (results with no zero value are left unset; `return nil, err` writes `nil` for them). The `!` site is added to the error's trace. The trace never wraps the error (D1.19);
   - **anywhere else** (`main`, a goroutine body, any function without an error result), it panics with an `errors.MustError` value (fields `Err`, `Expr`, `Pos`; method `Unwrap()`). The message reads `panic: must: os.Open(path) at main.gopp:12:9: open /nope: no such file or directory`, followed by the error's trace.
 - **Failure semantics.** On failure, `call!()` does exactly what `return <zero values>, err` does: named results are set, then deferred calls run. A `!` function can't name its error result; use the Go form `(T, err error)` when a deferred call must see the error.
 - **Returning from a `!` function.** `return v` returns `v` with a nil error. To fail explicitly, add the error: `return nil, err`, or `return err` when there are no other results. The operand count decides: as many operands as declared results is a success; one more is a failure.
@@ -285,7 +288,7 @@ func main() {
 - There is no user-facing `reflect` package in v1.
 
 **D1.13 — Concurrency semantics.** `go`, `chan` and `select` work as in Go.
-- `go f(a, b)`: trivial arguments are copied and owned ones are moved into the new goroutine. A raw pointer or ref into a local, or into the target of a local `Unique`, is a compile error outside `unsafe`. For example, `go srv.Run()` with a local `Unique[Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells (D1.11).
+- `go f(a, b)`: trivial arguments are copied and owned ones are moved into the new goroutine. A raw pointer or ref into a local, or into the target of a local `Unique`, is a compile error outside `unsafe`. For example, `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells (D1.11).
 - Sending on a channel moves the value in; receiving moves it out. A channel and the values still buffered in it are freed automatically when nobody holds the channel; there is no `ch.Destroy()` (use `sync.Scope` when goroutines must finish first, P12).
 - `go f(x)` moves owned locals; fields and borrowed variables need `x.Clone()` or `move(...)`.
 - A send case in `select` moves its value only if that case is chosen. A temporary send value is dropped if its case is not chosen.
@@ -330,7 +333,7 @@ func main() {
 | 1 | `hello` | the minimal program |
 | 2 | `wc` | files, `!`, owned strings, refs |
 | 3 | `kvparse` | parser that stores refs into one buffer; a `@Ref` token struct |
-| 4 | `binarytrees` | allocation-heavy code; `Unique[T]`, `new_unique`, arenas |
+| 4 | `binarytrees` | allocation-heavy code; `Unique[*T]`, `new_unique`, arenas |
 | 5 | `workers` | goroutine pool, channels, moves |
 | 6 | `zcrc` | zlib through `import "github.com/madler/zlib/zlib.h"` |
 | 7 | `vecsort` | `std::vector` + `std::sort` through `import "<vector>"` and `import "<algorithm>"` |
@@ -436,7 +439,7 @@ for _, d := range docs { u := d.Clone() }       // ok; `d := d` would be an erro
 
 - **Q1** (decided 2026-10-27) Closure capture rule: non-escaping closures capture by reference; escaping closures keep captured variables in shared cells, like Go (D1.11).
 - **Q2** (decided 2026-10-27) Map element access with owning values: `m[k]` borrows where a borrow is enough; taking ownership needs `clone(m[k])` or `move(m[k])`, both with a comma-ok form (`v, ok := clone(m[k])`); `m[k].f = x` stays illegal, as in Go (D1.4 rule 3a).
-- **Q3** (decided 2026-10-27) Owning pointers are predeclared generic types `Unique[T]`, `Shared[T]`, `Weak[T]`, created with `new_unique`, `new_shared`, `new_weak` (D1.7).
+- **Q3** (decided 2026-10-27) Owning pointers are predeclared generic types `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, created with `new_unique`, `new_shared`, `new_weak` (D1.7).
 - **Q4** (decided 2026-10-27) Allocators for `[]T`/`map`: every owned slice and map stores its allocator; nil means the global one (D1.22).
 - **Q5** (decided 2026-10-27) Generic methods on concrete types: allowed; they can't satisfy interface methods (D1.10).
 - **Q6** (decided 2026-10-27) Interface inline storage: one word (8 bytes), trivial values only (D1.12).

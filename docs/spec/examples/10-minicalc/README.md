@@ -5,9 +5,10 @@ A recursive-descent calculator. The AST lives in an arena, number nodes keep ref
 ## Spec rules exercised
 
 - [ERR-1, ERR-2, ERR-5, ERR-6](../../09-errors-and-panics.md): `func (p *Parser) expr!() *Node`, methods that can fail; `p.term!()` returns the error to the caller; `calc!(&arena, "6 * 7")` in `main` panics on failure; `calc(&arena, src)` is the Go form.
-- [ERR-3](../../09-errors-and-panics.md): `return n` is a success; `return nil, p.fail(...)` and `return 0, errors.New(...)` fail explicitly.
+- [ERR-3](../../09-errors-and-panics.md): `return n` is a success; `return nil, p.fail(...)` and `return 0, errors.New(...)` fail explicitly. The `nil` in `return nil, p.fail(...)` stands for the unset `*Node` result, which no caller can read (pointers are never nil, ADR-0018).
+- [OWN-P9, OWN-P10](../../04-ownership.md): `L, R Option[*Node]` (a missing child is `nil`); `operand!` checks `o == nil` and then uses `o` as a `*Node`.
 - [ERR-2](../../09-errors-and-panics.md): `fail` returns `error` as its last result, so it is a normal function that returns an error value.
-- [OWN-C1, OWN-V5](../../04-ownership.md): `Node` and `Parser` are trivial; their ref fields need `@Ref`.
+- [OWN-C1, OWN-V5](../../04-ownership.md): `Node` and `Parser` are trivial (`Option[*Node]` is trivial too); their ref fields need `@Ref`.
 - [OWN-V2](../../04-ownership.md): `p.src[start:p.pos]` is a ref; `p.src[p.pos:p.pos+1]` is a ref for `%q`.
 - [PAR-2, PAR-10](../../05-parameters.md): `src string` is borrowed, so string literals and borrowed range strings pass without copies; the `Parser` keeps a ref to it in a `@Ref` struct.
 - [SLC-3](../../08-slices-and-range.md), [UB-5](../../16-undefined-behavior.md): the arena owns every `Node`; `arena.Reset()` makes the previous tree dangle (it is not used again).
@@ -19,6 +20,7 @@ A recursive-descent calculator. The AST lives in an arena, number nodes keep ref
 - Go allocates nodes with `&Node{}` and the GC frees them. Go++ uses `mem.ArenaNew[Node]` and one `Reset`.
 - `Text` is a `string` in Go and a `ref string` in Go++.
 - Go returns `(*Node, error)` and checks `err` after every call; Go++ uses `!`.
+- Go uses nil child pointers; Go++ uses `Option[*Node]` and an `operand!` helper that checks them.
 - Output is identical.
 
 ## Assumptions about other phases
