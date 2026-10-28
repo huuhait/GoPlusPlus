@@ -106,7 +106,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 ## 1.7 Non-goals of v1
 
 - Source compatibility with Go code that relies on GC.
-- A borrow checker. Views and raw pointers can dangle (see [chapter 16](16-undefined-behavior.md)).
+- Rust-style lifetime annotations. Go++ checks borrows by flow and liveness without annotations ([4.5](04-ownership.md#45-borrow-checking-adr-0021)); what is left undefined is in [chapter 16](16-undefined-behavior.md).
 - A user-facing `reflect` package.
 - User-defined operator overloading, inheritance, exceptions as an error mechanism.
 

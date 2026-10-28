@@ -2,7 +2,7 @@
 
 Base: Go spec [Run-time panics](https://go.dev/ref/spec#Run_time_panics), [Integer overflow](https://go.dev/ref/spec#Integer_overflow), [Arithmetic operators](https://go.dev/ref/spec#Arithmetic_operators), [Conversions](https://go.dev/ref/spec#Conversions), [Package unsafe](https://go.dev/ref/spec#Package_unsafe), [Size and alignment guarantees](https://go.dev/ref/spec#Size_and_alignment_guarantees).
 
-Go++ has no borrow checker (D1.4 rule 8). This chapter is the complete list of what the compiler does **not** protect you from, and of the places where the result depends on the implementation.
+Go++ has a borrow checker with no lifetime annotations ([OWN-B1 to B7](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021). It turns most "used after it was thrown away" cases into compile errors. This chapter is the complete list of what the compiler does **not** protect you from, and of the places where the result depends on the implementation. Where a rule below was once fully undefined, it now says what is an error and what small residue is left.
 
 Terms:
 - **Undefined behavior (UB):** the program can do anything. The compiler and the runtime promise nothing.
@@ -28,64 +28,57 @@ Syntax: none.
 
 ## 16.2 Undefined behavior
 
-**UB-1.** *Dangling views and raw pointers.* Using a `View[…]`, a borrowed `[]T` made by slicing, or a `*T` after its owner is destroyed or has been changed so the memory moved. This includes:
-- a view or pointer stored past the end of the owner's block, including a view boxed into an interface or `any` that outlives the view's owner (ADR-0021 will add the compile-time rule);
-- a view into a slice element after `append` reallocated the slice;
-- a view into a `string` after the string was reassigned, appended to or dropped;
-- a view into a map key after the map grew;
-- a pointer to a `Unique[*T]` target after the `Unique` was moved from, reassigned or dropped;
-- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a view into a local ([OWN-V7](04-ownership.md#44-views-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. Use after move includes a use through a pointer or view taken before the move (`p := &x.In; take(move(x)); p.P.V`) when the pointer was taken in the same function; when it comes from elsewhere it is UB-8. A view or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Views may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-views-d16)); less obvious cases, such as a view that comes out of a call, are **not** caught.
+**UB-1.** *Dangling views and raw pointers.* Using a `View[…]`, a borrowed `[]T` made by slicing, or a `*T` after its owner is destroyed or has been changed so the memory moved is a **compile error** ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). This includes a view stored past the end of the owner's block, a view into a slice element after `append`, a view into a `string` after it was reassigned, appended to or dropped, a view into a map after it grew, a pointer into an owner that was moved from, and a view boxed into an interface that outlives its owner. Borrows that leave the places the checker can follow (a global, a heap container, a channel, an escaping closure, a `go` statement) are errors too ([OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)), and so is returning `&local` or a view into a local ([OWN-V7](04-ownership.md#44-views-d16)). A view that comes out of a call borrows from the call's arguments ([OWN-B3](04-ownership.md#45-borrow-checking-adr-0021)).
+
+*Residue (still UB):* a borrow created or kept through `unsafe` or raw memory (UB-7), through C or C++ code (UB-9, UB-10), or through aliasing the compiler cannot see (UB-2).
 
 ```go
 func trimmed(s string) View[string] { return s[1:] }   // ok: a view into a borrowed parameter
 
 func bad(name string) View[string] {
     s := "abc" + name
-    return trimmed(s)       // NOT caught: the view outlives s. UB when the result is used
+    return trimmed(s)       // compile error: the result borrows from s, which dies at return (OWN-B3, OWN-V7)
 }
-// func direct(name string) View[string] { s := "abc" + name; return s[:2] }   // compile error (OWN-V7)
 
 var keep View[string]
 func worse(items []string) {
     t := strings.ToUpper(items[0])
-    keep = t[:1]            // NOT caught: keep outlives t. UB when used after worse returns
+    keep = t[:1]            // compile error: a borrow stored in a global (OWN-B5)
 }
 ```
 
-**UB-2.** *Borrowed parameter whose owner the callee frees through another path.* A callee gets a borrowed parameter and then destroys or changes the owner through a different route. Not caught.
+**UB-2.** *Aliasing the compiler cannot see.* The visible case is a compile error: at a call, one argument is writable and another borrows the same or an overlapping place ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021)).
 
 ```go
 func (u *User) SetName(n string) {
-    u.Name = n.Clone()                  // right side first; then the old u.Name is dropped (STM-1)
-    u.Audit = "renamed to " + n        // n still points into the dropped old u.Name: UB
+    u.Name = n.Clone()
+    u.Audit = "renamed to " + n        // n borrows the old u.Name, which was dropped
 }
-u.SetName(u.Name)       // n is a borrow of u.Name, which the callee frees through u
+u.SetName(u.Name)       // compile error: n borrows u.Name, and the receiver can write it
 ```
 
 Fix: `u.SetName(u.Name.Clone())`.
 
-**UB-2a.** *Using a borrowed range variable after its element was written.* In `for _, s := range ss` over owning elements, `s` is a borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the element. Writing the current element or entry is itself defined (the old value is dropped, [RNG-3](08-slices-and-range.md)). Using `s` **after** the write reads the dropped value. When the compiler can see both the write and the later use in the body, it is a compile error. When the write happens where the compiler cannot see it (inside a call, through an alias), it is UB. Not caught.
+*Residue (still UB):* two pointer variables that point to the same object but come from different sources (a lookup, a call result, a global), so that the compiler sees two unrelated places. A callee that frees the owner of a borrowed parameter through such a hidden pointer is UB.
+
+**UB-2a.** *Using a borrowed range variable after its element was written.* In `for _, s := range ss` over owning elements, `s` is a borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the element. Writing the current element or entry is itself defined (the old value is dropped, [RNG-3](08-slices-and-range.md)). Using `s` **after** the write is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)): the write frees the old value, and `s` is still live. A write of a pointer-free Copy value, and a write after the last use of `s`, are fine.
 
 ```go
 for _, s := range ss {      // ss is []string: s borrows ss[0]
     ss[0] = "z"             // defined: the old string is dropped
-    fmt.Println(s)          // visible write then use: compile error
-}
-for _, s := range ss {
-    reset(ss)               // writes ss[0] inside the call: not visible
-    fmt.Println(s)          // UB: s dangles
+    fmt.Println(s)          // compile error: s is live and its element was freed
 }
 ```
 
+*Residue (still UB):* the write happens where the compiler cannot see it, through an alias of UB-2 (for example a pointer to the slice from another source).
+
 Trivial elements are copies ([RNG-1](08-slices-and-range.md)), so the same code on `[]int` is defined and prints the old value, as in Go. An `&` range variable is an alias of the slot ([RNG-1a](08-slices-and-range.md)), so it sees the new value and is not affected.
 
-The same holds for a range over an array with owning elements (the range variable borrows the live element, [RNG-6](08-slices-and-range.md)).
+The same holds for a range over an array with owning elements (the range variable borrows the live element, [RNG-6](08-slices-and-range.md)), and for `m[k] = x` on the entry the loop is on and `copy(dst, …)` into the ranged slice, followed by a use of the range variable.
 
-Also UB-2a, when not visible to the compiler: `m[k] = x` on the entry the loop is on (the old value that `v` borrows is dropped) and `copy(dst, …)` into the ranged slice, followed by a use of the range variable.
+Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value; for a type with no zero value, reading `v` after it is a compile error, [RNG-3](08-slices-and-range.md)). A view or pointer into a removed entry that is used past its iteration or past the removal is a compile error under OWN-B2.
 
-Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value; for a type with no zero value, reading `v` after it is a compile error, [RNG-3](08-slices-and-range.md)). UB: keeping a view or pointer into any removed entry past its iteration or past the removal.
-
-**UB-2b.** *Shared handle released through another path.* A shared-handle parameter is passed without a retain ([PAR-7](05-parameters.md)). If the callee drops the caller's last reference through another path and then uses the parameter, the value is freed. Not caught.
+**UB-2b.** *Shared handle released through another path.* A shared-handle parameter is passed without a retain ([PAR-7](05-parameters.md)). If the callee drops the caller's last reference through another path and then uses the parameter, the value is freed. The visible case, where the argument and the writable receiver or argument are the same place (`s.fail(s.err)`), is a compile error ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021)). Only a path the compiler cannot see stays UB.
 
 ```go
 func (s *Server) fail(err error) {
@@ -99,17 +92,17 @@ func run(reg *Registry, cb func()) { reg.cb = noop; cb() }  // same with run(reg
 
 Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 
-**UB-2c.** *Writes to a borrowed `defer` argument through an alias the compiler cannot see* change what the deferred call reads, where Go would have copied the value ([CLO-7](11-closures.md)).
+**UB-2c.** *Writes to a borrowed `defer` argument through an alias the compiler cannot see* change what the deferred call reads, where Go would have copied the value ([CLO-7](11-closures.md)). Visible writes are compile errors (CLO-7).
 
-**UB-2d.** *Interface reassigned while a binding borrows its box.* After `s, ok := v.(string)` or `switch x := v.(type)`, the binding `s`/`x` borrows the box ([TYP-9](03-types.md)). If `v` is reassigned or cleared through a path the compiler cannot see (another goroutine is a race, UB-3; an alias `*p = w` where `p` points to `v`; a callee that sets the field `v` lives in) while `s` is still used, the box may be freed and `s` dangles. A visible assignment to `v` while `s` is used afterwards is a compile error.
+**UB-2d.** *Interface reassigned while a binding borrows its box.* After `s, ok := v.(string)` or `switch x := v.(type)`, the binding `s`/`x` borrows the box ([TYP-9](03-types.md)). A visible assignment to `v` (or to a prefix of it) while `s` is used afterwards is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). *Residue (still UB):* the change goes through an alias the compiler cannot see (an alias `*p = w` where `p` points to `v`, from another source; a callee that sets the field `v` lives in, through such a pointer). Another goroutine is a race (UB-3).
 
-**UB-2e.** *Ranged slice or string reallocated where the compiler cannot see it.* `range` takes `(ptr, len)` once ([RNG-3a](08-slices-and-range.md)). If a call in the body appends to, reassigns or re-slices the ranged slice (`for _, v := range w.queue { w.push(10) }`), the old buffer is freed and the loop reads freed memory, even for a slice of `int`. The same holds for an owned string that a call in the body grows (`+=`) or reassigns. Go keeps the old array alive, so the same code is safe there. Not caught (visible cases are compile errors, [RNG-3](08-slices-and-range.md)).
+**UB-2e.** *Ranged slice or string reallocated.* `range` takes `(ptr, len)` once ([RNG-3a](08-slices-and-range.md)) and borrows the collection for the whole loop ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021)). A call in the body that appends to, reassigns or re-slices the ranged slice (`for _, v := range w.queue { w.push(10) }`), or grows an owned string, is now a compile error when the call's receiver or argument overlaps the ranged place ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021)); the old buffer would be freed and the loop would read freed memory, even for a slice of `int`. Go keeps the old array alive, so the same code is safe there. *Residue (still UB):* the call reaches the ranged slice through an alias the compiler cannot see ([RNG-3](08-slices-and-range.md) lists the visible cases).
 
 **UB-3.** *Data races.* Two goroutines access the same memory, at least one writes, and there is no happens-before edge between them ([CON-7](12-concurrency.md), [Go memory model](https://go.dev/ref/mem)). Unlike Go, this is UB. `-race` (TSan) detects them.
 
 **UB-4.** *`longjmp` across Go++ frames.* A C `longjmp` that jumps over Go++ frames skips destructors and deferred calls. UB ([PAN-9](09-errors-and-panics.md)). Also a C++ exception or a Go++ panic thrown through a frame marked `nounwind` by mistake.
 
-**UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` or `mem.DropArena` while slices, maps or raw pointers allocated in it are alive leaves them dangling ([SLC-3](08-slices-and-range.md), P05 D5.3).
+**UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` or `mem.DropArena` while a value allocated in it is still used later is a compile error: a value from an arena borrows the arena ([OWN-B1, B2](04-ownership.md#45-borrow-checking-adr-0021), [SLC-3](08-slices-and-range.md), P05 D5.3). Fix: finish with the value before `Reset`, or copy it out to the normal heap with an explicit copy-out function (illustrative `mem.CloneTo[User](u, mem.Heap)`; `Clone` does not help, a clone stays in the arena, SLC-3). *Residue (still UB):* arena memory reached through `unsafe` or raw pointers, or from C.
 
 **UB-6.** *`@NoBounds`.* An out-of-range index in a function (or package) with bounds checks turned off.
 
@@ -117,7 +110,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 **UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory, or converting a nil `unsafe.Pointer` to a `*T` (pointers are never nil; convert to `Option[*T]` instead).
 
-**UB-8.** *Pinned values.* Using a pointer or view into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case. A use through a pointer taken in the same function is a compile error ([OWN-R8](04-ownership.md#42-ownership-rules-d14), P04.09), so only a pointer that comes from elsewhere (a call, a field) is UB.
+**UB-8.** *Pinned values.* Using a pointer or view into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) is a compile error, wherever the pointer came from in the same function, and also when it came through a call ([OWN-B3](04-ownership.md#45-borrow-checking-adr-0021)): `move(x)` is a change that borrows may not survive ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). *Residue (still UB):* a pointer kept through `unsafe`, C or an alias the compiler cannot see.
 
 **UB-9.** *C interop lifetimes.*
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
@@ -151,25 +144,26 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 |---|---|---|---|---|
 | use after move | error | | | |
 | returning `&local` | error | | | |
-| returning a view into a local of the same function ([OWN-V7](04-ownership.md#44-views-d16)); a view that comes out of a call is not caught (UB-1) | error | | yes, for the uncaught cases | |
+| returning a view into a local, or a view that comes out of a call and borrows a local ([OWN-V7](04-ownership.md#44-views-d16), OWN-B3) | error | | | |
 | `go f(&local)` | error | | | |
 | `defer` borrowing a dying variable | error | | | |
-| view/pointer kept past owner (UB-1) | not caught (only the D1.4 rule 8 list) | some | yes | |
-| borrowed parameter freed by callee (UB-2) | | | yes | |
-| shared handle released by callee through another path (UB-2b) | | | yes | |
+| view/pointer used after its owner changed or died (UB-1, OWN-B2) | error | | residue only | |
+| borrow stored in a global, a heap container, a channel, an escaping closure or a `go` (OWN-B5) | error | | | |
+| writable argument and a borrow of the same place at one call (UB-2, OWN-B4) | error | | | |
+| two pointers to one object from different sources (UB-2 residue) | | | yes | |
+| shared handle released by callee: visible same place at the call (`s.fail(s.err)`) is an error (OWN-B4); through a path the compiler cannot see (UB-2b) | error when visible | | yes, for the residue | |
 | hidden-alias write to a borrowed `defer` argument (UB-2c) | | | only when the write frees memory | |
-| `v` reassigned while a type-assertion binding still borrows its box, write not visible (UB-2d; a visible write is a compile error) | | | yes | |
-| ranged slice or owned string reallocated by a call in the loop body (UB-2e; visible cases are compile errors) | | | yes | |
-| borrowed range variable (slice, array or map) used after its element was written (UB-2a; a visible write then use is a compile error) | write and use both visible | | yes | |
-| view/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero bytes respectively) | | | yes | |
+| `v` reassigned while a type-assertion binding borrows its box (UB-2d; visible write is an error) | error when visible | | yes, for the residue | |
+| ranged slice or owned string changed in the loop body (UB-2e; visible or through an overlapping call argument is an error) | error | | yes, for the residue | |
+| borrowed range variable used after its element was written (UB-2a) | error | | yes, for the residue | |
 | data race (UB-3) | | | | yes |
 | `longjmp` (UB-4) | | | maybe | |
-| arena reset with live data (UB-5) | | | yes | |
+| arena reset with live data (UB-5, OWN-B1) | error | | residue only | |
 | C keeps a pointer (UB-9) | | known list | maybe | |
 | C writes NULL into a Go++ pointer, a func, an interface with methods or a never-nil `@Required` / `@Strict` field (UB-9) | | | no (a NULL read crashes like any NULL dereference) | |
 
 ## 16.5 Rationale
 
-- v1 chose no extra safety layer beyond Go's defaults: bounds checks, nil checks, zero values, use-after-move errors, and sanitizers one flag away. A borrow checker costs compile speed and simplicity, and can be reconsidered after v1.
+- The owner chose (2026-10-28, ADR-0021) a borrow check without lifetime annotations: bounds checks, nil checks, zero values, use-after-move and use-after-change errors, and sanitizers one flag away for the residue. It is conservative, so a `.Clone()` is the usual fix for a false error.
 - Keeping Go's results for overflow, division and shifts means ported code behaves the same, even though LLVM would allow UB there.
-- Races are UB because defining them would cost every shared access.
+- Races are UB because defining them would cost every shared access. Data races stay the programmer's job: mutex or channels, and `-race` tests.

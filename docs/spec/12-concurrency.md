@@ -31,7 +31,7 @@ if s, ok := v.(string); ok {
 
 The case list above applies D1.4 rule 3a and rule 8 to `go`, the same way [PAN-3](09-errors-and-panics.md) does for `defer`. The one difference: a `defer` runs before its function returns, so it may *borrow* a variable that lives that long; a goroutine can outlive the function, so `go` never borrows an owned place or a borrowed variable. `go f(x)` moves owned locals. Fields and borrowed variables need `x.Clone()`, or `move(...)` for owned fields and `&` range variables (never for a borrowed variable).
 
-**CON-2.** *No borrows of locals across `go`.* A raw pointer, a view or a borrowed slice into a local, or into the target of a local `Unique`, passed to `go` is a **compile error** outside `unsafe`. Example: `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells ([CON-3](#121-rules)).
+**CON-2.** *No borrows of locals across `go`.* This is the `go` case of [OWN-B5](04-ownership.md#45-borrow-checking-adr-0021): any borrow in a `go` argument or capture is an error, because the goroutine may outlive the owner. A raw pointer, a view or a borrowed slice into a local, or into the target of a local `Unique`, passed to `go` is a **compile error** outside `unsafe`. Example: `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells ([CON-3](#121-rules)).
 
 **CON-3.** *Closures with `go`.* A closure used with `go` keeps its captured variables in shared cells ([CLO-3](11-closures.md)). The goroutine and the spawner see the same variables, as in Go. A **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) cannot be captured this way ([CLO-3a](11-closures.md)): `go func(){ fetch(u) }()` or `go func(){ log(s) }()` with such a `u` or `s` is a compile error. Fix-its never reuse the name ([RNG-8](08-slices-and-range.md)): `mine := u.Clone()` first, or `go func(){ fetch(mine) }()`, or `range move(users)` so that `u` is owned.
 
@@ -88,5 +88,5 @@ Compared with Go: the programs look the same. Go++ rejects `go worker(&wg)` on a
 ## 12.3 Rationale
 
 - Moving through channels makes "who owns this value now?" a compile-time answer and avoids copies.
-- Banning borrows of locals in `go` removes the most common dangling bug in a language without a borrow checker. The closure fix-it keeps the code short.
+- Banning borrows of locals in `go` removes the most common dangling bug in a language without lifetime annotations. The closure fix-it keeps the code short.
 - Races are UB because making them defined would cost every memory access. TSan finds them in tests.
