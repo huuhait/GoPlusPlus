@@ -155,22 +155,18 @@ private:
     return dyn_cast_or_null<Var>(S->second.Obj);
   }
 
-  /// A field whose zero value fails when it is used: an interface or func
-  /// value. Pointers are never nil (ADR-0018), an Option cannot be used
-  /// unchecked, a nil map can be read and a nil slice has length 0, so none of
-  /// those count; neither does a `@Required` field, which is never nil (drop
-  /// glue skips a moved-from value, ADR-0016 point 8).
+  /// A field whose zero value fails when it is used: an `error` (its Error
+  /// method). Pointers, funcs and interfaces with methods are never nil
+  /// (ADR-0018 and its amendment), an Option cannot be used unchecked, `any`
+  /// has no methods to call, a nil map can be read and a nil slice has length
+  /// 0, so none of those count; neither does a `@Required` field, which is
+  /// never nil (drop glue skips a moved-from value, ADR-0016 point 8).
   static bool mayBeNil(const Var *F) {
     Type *T = F->Ty;
     if (!T || F->Required)
       return false;
-    switch (under(T)->getKind()) {
-    case Type::Kind::Signature:
-    case Type::Kind::Interface:
-      return true;
-    default:
-      return false;
-    }
+    auto *N = dyn_cast<NamedType>(T);
+    return N && N->Obj && !N->Obj->Pkg && N->Obj->Name == "error";
   }
 
   static bool isNilIdent(const ast::Expr *E) {

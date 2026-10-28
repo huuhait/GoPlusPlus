@@ -1,0 +1,415 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.18 review round 3 (OWN-P10, ERR-3, ADR-0018 point 4). A loop head or a
+// goto label comes before the assignments of the loop or body are checked:
+// only the checker's own classification of each typed assignment decides
+// whether it is a checked form, whatever its callee (declared inside the
+// loop, an element, a generic instance, a method of a narrowed Option). And
+// handing a checked form on as it is (`return f()`, `return o.Get()`,
+// `h(o.Get())`, in a plain or a `!` function) needs a receiver that is the
+// same kind of checked form. Functions named positive* have no error; every
+// negative function has a positive twin nearby.
+package main
+
+type Node struct{ V int }
+
+type P struct{ n *Node }
+
+func (p P) pair() (*Node, bool)  { return p.n, true }
+func (p P) load() (*Node, error) { return p.n, nil }
+
+type Store struct{ m map[string]*Node }
+
+func (s *Store) Get(k string) (*Node, error)
+
+type S struct{ err error }
+
+func mkP() P
+func mkN() *Node
+func useN(n *Node) {}
+func pick() bool   { return true }
+func loadN() (*Node, error)
+func pairInt() (*Node, int)
+func pairG[T any]() (*Node, bool)  { return mkN(), true }
+func loadG[T any]() (*Node, error) { return mkN(), nil }
+
+// R8: plain calls (no error result, not a comma-ok form) whose callee the
+// loop or label scan cannot see: the value is always valid.
+func positiveInnerRoot(xs []int) {
+	a := mkN()
+	var ok bool
+	for range xs {
+		useN(a)
+		p := mkP()
+		a, ok = p.pair()
+		_ = ok
+	}
+}
+
+func positiveIndexed(fns []func() (*Node, bool)) {
+	a := mkN()
+	var ok bool
+	for i := range fns {
+		useN(a)
+		a, ok = fns[i]()
+		_ = ok
+	}
+}
+
+func positiveGeneric(xs []int) {
+	a := mkN()
+	var ok bool
+	for range xs {
+		useN(a)
+		a, ok = pairG[int]()
+		_ = ok
+	}
+}
+
+func positiveGotoInner() {
+	a := mkN()
+	var ok bool
+L:
+	useN(a)
+	p := mkP()
+	a, ok = p.pair()
+	if ok {
+		goto L
+	}
+}
+
+func positiveBlankGuard(xs []int) {
+	a := mkN()
+	for range xs {
+		useN(a)
+		p := mkP()
+		a, _ = p.pair()
+	}
+}
+
+func positivePost(fns []func() (*Node, bool)) {
+	a := mkN()
+	var ok bool
+	for i := 0; i < len(fns); a, ok = fns[0]() {
+		useN(a)
+		i++
+	}
+	_ = ok
+}
+
+func positiveLabeled(xs []int, fns []func() (*Node, bool)) {
+	a := mkN()
+	var ok bool
+outer:
+	for range xs {
+		useN(a)
+		for range xs {
+			a, ok = fns[0]()
+			continue outer
+		}
+	}
+	_ = ok
+}
+
+func positiveForwardGoto(fns []func() (*Node, bool)) {
+	a := mkN()
+	var ok bool
+	if pick() {
+		goto L
+	}
+	a, ok = fns[0]()
+L:
+	useN(a)
+	_ = ok
+}
+
+func positiveAfterLoop(xs []int) {
+	a := mkN()
+	var ok bool
+	for range xs {
+		p := mkP()
+		a, ok = p.pair()
+	}
+	useN(a)
+	_ = ok
+}
+
+func positiveIntGuard(xs []int) {
+	n := mkN()
+	var i int
+	for range xs {
+		useN(n)
+		n, i = pairInt()
+	}
+	_ = i
+}
+
+// n is pending on ok before the loop; the plain rebinding (its last target is
+// an int, so it is never a checked form) leaves ok guarding n.
+func positiveKeepsGuard(mp map[string]*Node, xs []int) {
+	n, ok := mp["k"]
+	var i int
+	for range xs {
+		if ok {
+			useN(n)
+		}
+		n, i = pairInt()
+	}
+	_ = i
+}
+
+func negativeKeepsGuard(mp map[string]*Node, xs []int) {
+	n, ok := mp["k"]
+	var i int
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		n, i = pairInt()
+	}
+	_, _ = i, ok
+}
+
+// R11: T converts to Option[T] (ADR-0018 point 3), so an Option[bool], a
+// named Option of a bool or an Option[IE] guard receives the ok or the error:
+// the form is a checked one.
+type IE interface{ Error() string }
+type B bool
+type OB Option[B]
+
+func pairOpt() (*Node, Option[bool])
+
+func negativeOptionOkGuard(m map[string]*Node, keys []string) {
+	n := mkN()
+	var ok Option[bool]
+	for _, k := range keys {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		n, ok = m[k]
+		_ = ok
+	}
+}
+
+func negativeNamedOptionGuard(m map[string]*Node, keys []string) {
+	n := mkN()
+	var ok OB
+	for _, k := range keys {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		n, ok = m[k]
+		_ = ok
+	}
+}
+
+func negativeOptionErrGuard(xs []int) {
+	n := mkN()
+	var e Option[IE]
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		n, e = loadN()
+		_ = e
+	}
+}
+
+// The same Option[bool] guard filled by a plain call: no checked form.
+func positiveOptionGuardPlain(xs []int) {
+	n := mkN()
+	var ok Option[bool]
+	for range xs {
+		useN(n)
+		n, ok = pairOpt()
+		_ = ok
+	}
+}
+
+// A real checked form whose guard is checked before the use at the head.
+func positiveTied(xs []int) error {
+	n := mkN()
+	var err error
+	for range xs {
+		if err != nil {
+			return err
+		}
+		useN(n)
+		p := mkP()
+		n, err = p.load()
+	}
+	return nil
+}
+
+// The same loops with a checked form: a later pass reads a value that
+// nothing checked.
+func negativeInnerRoot(xs []int) {
+	a := mkN()
+	var err error
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: a may be unset here
+		useN(a)
+		p := mkP()
+		a, err = p.load()
+	}
+	_ = err
+}
+
+func negativeIndexed(fns []func() (*Node, error)) {
+	a := mkN()
+	var err error
+	for i := range fns {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: a may be unset here
+		useN(a)
+		a, err = fns[i]()
+	}
+	_ = err
+}
+
+func negativeGeneric(xs []int) {
+	a := mkN()
+	var err error
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: a may be unset here
+		useN(a)
+		a, err = loadG[int]()
+	}
+	_ = err
+}
+
+func negativeGotoInner() {
+	a := mkN()
+	var err error
+L:
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: a may be unset here
+	useN(a)
+	p := mkP()
+	a, err = p.load()
+	if err == nil {
+		goto L
+	}
+}
+
+func negativePost(fns []func() (*Node, error)) {
+	a := mkN()
+	var err error
+	for i := 0; i < len(fns); a, err = fns[0]() {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: a may be unset here
+		useN(a)
+		i++
+	}
+	_ = err
+}
+
+func negativeLabeled(xs []int) {
+	n := mkN()
+	var err error
+outer:
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		for range xs {
+			p := mkP()
+			n, err = p.load()
+			_ = err
+			continue outer
+		}
+	}
+}
+
+func negativeAfterLoop(xs []int) {
+	a := mkN()
+	var err error
+	for range xs {
+		p := mkP()
+		a, err = p.load()
+		_ = err
+	}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: a may be unset here
+	useN(a)
+}
+
+func negativeNested(xs []int) {
+	n := mkN()
+	var err error
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		for range xs {
+			n, err = loadN()
+			if err != nil {
+				break
+			}
+		}
+	}
+}
+
+// An inner loop of plain calls, then a checked form of the outer loop: the
+// form decides the use after it.
+func negativeInnerThenOuter(xs []int, fns []func() (*Node, bool)) {
+	n := mkN()
+	var ok bool
+	var err error
+	for range xs {
+		n = mkN()
+		for range xs {
+			useN(n)
+			n, ok = fns[0]()
+		}
+		n, err = loadN()
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+	}
+	_, _ = ok, err
+}
+
+// R10: st is narrowed to *Store, so st.Get(k) is Store.Get (ends in error),
+// not the Option's own Get.
+func negativeNarrowedGet(st Option[*Store], s *S, keys []string) {
+	if st == nil {
+		return
+	}
+	n := mkN()
+	for _, k := range keys {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		n, s.err = st.Get(k)
+	}
+}
+
+func positiveNarrowedGet(st Option[*Store], keys []string) error {
+	if st == nil {
+		return nil
+	}
+	n := mkN()
+	var err error
+	for _, k := range keys {
+		if err != nil {
+			return err
+		}
+		useN(n)
+		n, err = st.Get(k)
+	}
+	return nil
+}
+
+// R6, R9: forwarding. Into a result list that ends in `error` (or the
+// failure of a `!` function) an error-ending call stays checked; a comma-ok
+// value with no zero value has no such receiver.
+func positiveForwardInt(o Option[int]) (int, bool) { return o.Get() }
+func both(n *Node, ok bool)                         { useN(n) }
+func bothInt(n int, ok bool)                        {}
+func positiveSpreadInt(o Option[int])               { bothInt(o.Get()) }
+func positiveBangFail!() *Node                      { return loadN() }
+func positiveBangPlain!() (*Node, int)              { return pairInt() }
+
+// CHECK-DAG: [[@LINE+1]]:65: error{{\[E0351\]}}: cannot store the result of o.Get() in the results of this function: its type has no zero value, so it is valid only where ok is true
+func negativeForwardGet(o Option[*Node]) (*Node, bool) { return o.Get() }
+
+func negativeSpreadGet(o Option[*Node]) {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0351\]}}: cannot store the result of o.Get() in the arguments of the call: its type has no zero value, so it is valid only where ok is true
+	both(o.Get())
+}
+
+// CHECK-DAG: [[@LINE+1]]:51: error{{\[E0351\]}}: cannot store the result of loadN() in the results of this function (they do not end in error): its type has no zero value, so it is valid only where err == nil
+func negativeBangForward!() (*Node, any) { return loadN() }
+
+// CHECK-DAG: [[@LINE+1]]:69: error{{\[E0351\]}}: cannot store the result of o.Get() in the results of this function: its type has no zero value, so it is valid only where ok is true
+func negativeBangForwardGet!(o Option[*Node]) (*Node, any) { return o.Get() }
+
+func main() {}

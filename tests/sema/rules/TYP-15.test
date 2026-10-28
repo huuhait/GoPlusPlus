@@ -72,9 +72,12 @@ func notAField2() {}
 
 type Log interface{ Write(s string) }
 
+type Fail struct{}
+
+func (Fail) Error() string { return "fail" }
+
 type Server struct {
-	Out  Log            @Required
-	Hook func()         @Required
+	Out  error          @Required
 	Tags map[string]int @Required
 	Done chan int       @Required
 	Buf  []byte         @Required
@@ -132,7 +135,9 @@ func positive(move users []User, pm map[string]Plain, m map[string]User, ch chan
 	select {
 	case <-ch:
 	case u, ok := <-ch:
-		_, _ = u, ok
+		if ok {
+			_ = u
+		}
 	default:
 	}
 	clear(m)
@@ -144,7 +149,7 @@ func positive(move users []User, pm map[string]Plain, m map[string]User, ch chan
 	two[0], two[1] = two[1], two[0]
 	var plains [2]Plain
 	clear(plains[:])
-	_ = Server{Out: lg, Hook: func() {}, Tags: map[string]int{}, Done: make(chan int), Buf: nil, Anon: 1}
+	_ = Server{Out: Fail{}, Tags: map[string]int{}, Done: make(chan int), Buf: nil, Anon: 1}
 	_ = Gen[int]{V: 0}
 	_ = Gen[[]int]{V: nil}
 	loc := User{ID: 1, Email: "a"}
@@ -180,8 +185,8 @@ func negative(users []User, m map[string]User, ch chan User, n int, lg Log, t *T
 	_ = Pair{A: 1}
 	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: missing required field Plain in EmbReq literal (TYP-15)
 	_ = EmbReq{N: 1}
-	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: missing required fields Hook, Tags, Done, Buf, Anon in Server literal (TYP-15)
-	_ = Server{Out: lg}
+	// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: missing required fields Tags, Done, Buf, Anon in Server literal (TYP-15)
+	_ = Server{Out: Fail{}}
 	// CHECK-DAG: [[@LINE+1]]:33: error{{\[E[0-9]+\]}}: array literal with missing elements: User has no zero value (field ID is @Required)
 	_ = [3]User{{ID: 1, Email: "a"}}
 	// CHECK-DAG: [[@LINE+1]]:35: error{{\[E[0-9]+\]}}: slice literal with gaps: User has no zero value (field ID is @Required)
@@ -213,25 +218,25 @@ func negative(users []User, m map[string]User, ch chan User, n int, lg Log, t *T
 	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
 	v := m["k"]
 	_ = v
-	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
 	_ = m["k"].Email
-	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
 	keep(m["k"])
-	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
 	_ = clone(m["k"])
-	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
 	_ = move(m["k"])
-	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
 	_ = Team{Lead: m["k"]}
 	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := <-ch`
 	x := <-ch
 	_ = x
-	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := <-ch`
 	keep(<-ch)
-	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := <-ch`
 	_ = (<-ch).Email
 	select {
-	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: <-ch may not exist: {{.*}}
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := <-ch`
 	case y := <-ch:
 		_ = y
 	}
@@ -289,15 +294,15 @@ func ZeroOpt[T any]() Option[T] {
 	return z
 }
 
-// CHECK-DAG: [[@LINE+1]]:46: error{{\[E[0-9]+\]}}: make([]T, n) creates zero values: T has no zero value ({{.*}}; use make([]T, 0, n) and append)
+// CHECK-DAG: [[@LINE+1]]:46: error{{\[E[0-9]+\]}}: make([]T, n) creates zero values: T has no zero value (its constraint allows types with none (GEN-5); constrain T, or use Option[T]; use make([]T, 0, n) and append)
 func Mk[T any](n int) []T { return make([]T, n) }
 
 func MkOK[T any](n int) []T { return make([]T, 0, n) }
 
-// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: named result r starts as a zero value: T has no zero value ({{.*}})
+// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: named result r starts as a zero value: T has no zero value (its constraint allows types with none (GEN-5); constrain T, or use Option[T])
 func NamedT[T any]() (r T) { return }
 
-// CHECK-DAG: [[@LINE+1]]:32: error{{\[E[0-9]+\]}}: clear(s) would zero the elements: T has no zero value ({{.*}}; use s = s[:0] to drop them)
+// CHECK-DAG: [[@LINE+1]]:32: error{{\[E[0-9]+\]}}: clear(s) would zero the elements: T has no zero value (its constraint allows types with none (GEN-5); constrain T, or use Option[T]; use s = s[:0] to drop them)
 func Clr[T any](s []T) { clear(s) }
 
 func ClrOK[T ~int](s []T) { clear(s) }

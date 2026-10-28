@@ -161,7 +161,10 @@ APInt BigFloat::truncToInt() const {
 }
 
 bool BigFloat::toInt(APInt &Out) const {
-  if (!isInt())
+  // An integer of more than 2^22 bits is far beyond every integer type, and
+  // building it would take megabytes: it does not convert (truncated, as in
+  // go/constant's ToInt of a huge value).
+  if (!isInt() || Exp > (1 << 22))
     return false;
   Out = truncToInt();
   return true;
@@ -307,6 +310,19 @@ static bool scanFloatLit(llvm::StringRef Text, APInt &D, bool &Hex,
   return true;
 }
 
+/// 10^N as a 512-bit BigFloat by squaring (the exact integer power of a large
+/// N would take gigabytes).
+static BigFloat bigPow10(uint64_t N) {
+  BigFloat P = BigFloat::fromInt(APInt(64, 1)),
+           B = BigFloat::fromInt(APInt(64, 10));
+  for (; N; N >>= 1) {
+    if (N & 1)
+      P = BigFloat::mul(P, B);
+    B = BigFloat::mul(B, B);
+  }
+  return P;
+}
+
 bool BigFloat::parse(llvm::StringRef Text, BigFloat &Out) {
   APInt D;
   bool Hex;
@@ -322,12 +338,21 @@ bool BigFloat::parse(llvm::StringRef Text, BigFloat &Out) {
     return true;
   }
   int64_t E10 = E;
-  if (E10 > 400000) { // far beyond any representable value
+  // Beyond 10^700000000 the value is far outside the exponent range.
+  constexpr int64_t FarExp = 700000000;
+  if (E10 > FarExp) {
     Out = round(false, APInt(2, 1), BigFloat::MaxExp * 4);
     return true;
   }
-  if (E10 < -400000) {
+  if (E10 < -FarExp) {
     Out = BigFloat();
+    return true;
+  }
+  if (E10 > 400000 || E10 < -400000) {
+    // 10^|E10| in 512 bits (the integer power would be huge).
+    BigFloat P = bigPow10(static_cast<uint64_t>(E10 < 0 ? -E10 : E10));
+    BigFloat M = round(false, D, 0);
+    Out = E10 < 0 ? quo(M, P) : mul(M, P);
     return true;
   }
   if (E10 >= 0) {
@@ -368,7 +393,7 @@ std::string BigFloat::str() const {
   }
   // Outside the range of double: scale by a power of ten.
   int64_t E10 = static_cast<int64_t>(std::floor(Mag * 0.30102999566398120));
-  BigFloat P = fromInt(pow10(static_cast<unsigned>(std::abs(E10))));
+  BigFloat P = bigPow10(static_cast<uint64_t>(std::abs(E10)));
   BigFloat Scaled = E10 < 0 ? mul(abs(), P) : quo(abs(), P);
   double M = Scaled.toDouble();
   while (M >= 10) {
@@ -610,6 +635,8 @@ ConstValue ConstValue::makeInt64(int64_t X) {
 ConstValue ConstValue::makeUint64(uint64_t X) { return makeInt(APInt(65, X)); }
 ConstValue ConstValue::makeFloat(Real Fv) {
   ConstValue V;
+  if (Fv.overflows()) // go/constant: an infinite big.Float is unknown
+    return V;
   V.K = Float;
   V.F = std::move(Fv);
   return V;

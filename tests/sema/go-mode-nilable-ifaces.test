@@ -1,0 +1,40 @@
+// P03.18: `--go` keeps Go's rules. A func and an interface with methods may
+// be nil, `l == nil` and `var l Logger` are fine, and (v, err) results are
+// not guarded. Go++ mode (the default) rejects the same code (the other side).
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp %s %t/a.go
+// RUN: %gopp check --go %t/a.go
+// RUN: cp %s %t/a.gopp
+// RUN: not %gopp check --check-error-limit=0 %t/a.gopp 2>&1 | FileCheck %s
+package main
+
+type Logger interface{ Log(s string) }
+
+type MyErr error
+
+type U struct{ n int }
+
+func load() (*U, error) { return nil, nil }
+
+func main() {
+	var l Logger
+	var f func()
+	var m MyErr
+	if l == nil || f == nil || m == nil {
+		l = nil
+		f = nil
+	}
+	u, err := load()
+	println(u.n)
+	if err != nil {
+		return
+	}
+}
+
+// CHECK-DAG: error{{\[E[0-9]+\]}}: cannot declare l without a value: Logger has no zero value
+// CHECK-DAG: error{{\[E[0-9]+\]}}: cannot declare f without a value: func() has no zero value
+// CHECK-DAG: error{{\[E[0-9]+\]}}: cannot declare m without a value: MyErr has no zero value
+// CHECK-DAG: error{{\[E[0-9]+\]}}: Logger is never nil
+// CHECK-DAG: error{{\[E[0-9]+\]}}: func() is never nil
+// CHECK-DAG: error{{\[E[0-9]+\]}}: MyErr is never nil
+// CHECK-DAG: error{{\[E[0-9]+\]}}: u may be unset here

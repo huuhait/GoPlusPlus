@@ -310,8 +310,9 @@ Type *Checker::maxType(Type *X, Type *Y) {
 
 bool Checker::hasNil(Type *T) {
   if (own()) {
-    // ADR-0018: pointers are never nil; Option[T] is the "maybe".
-    if (isPointerKind(T))
+    // ADR-0018: pointers, funcs and interfaces with methods are never nil;
+    // Option[T] is the "maybe".
+    if (neverNilKind(T))
       return false;
     if (isa<OptionType>(T))
       return true;
@@ -339,6 +340,28 @@ bool Checker::hasNil(Type *T) {
   default:
     return false;
   }
+}
+
+const char *Checker::neverNilKind(Type *T) {
+  if (!own() || !T)
+    return nullptr;
+  if (isPointerKind(T))
+    return "a pointer has no nil";
+  if (isTypeParam(T))
+    return nullptr;
+  Type *U = under(T);
+  if (isa<SignatureType>(U))
+    return "a func has no nil";
+  if (auto *I = dyn_cast<InterfaceType>(U)) {
+    // `error` and its aliases are the one interface with methods that keeps
+    // nil; a defined `type MyErr error` is a new type and is never nil. The
+    // empty interface (any, interface{}, named or not) keeps nil too.
+    if (T == Ctx.errorType())
+      return nullptr;
+    if (!typeSet(I)->Methods.empty())
+      return "an interface with methods has no nil";
+  }
+  return nullptr;
 }
 
 bool Checker::isPointerKind(Type *T) {
@@ -604,66 +627,4 @@ Type *Checker::coreType(Type *T) {
     return false;
   });
   return Ok ? Su : nullptr;
-}
-
-unsigned long long Checker::sizeofType(Type *T) {
-  DepthGuard DG(RecDepth);
-  if (RecDepth > MaxRecDepth)
-    return 8;
-  Type *U = under(T);
-  switch (U->getKind()) {
-  case Type::Kind::Basic:
-    switch (cast<BasicType>(U)->BK) {
-    case BasicKind::Bool:
-    case BasicKind::Int8:
-    case BasicKind::Uint8:
-      return 1;
-    case BasicKind::Int16:
-    case BasicKind::Uint16:
-      return 2;
-    case BasicKind::Int32:
-    case BasicKind::Uint32:
-    case BasicKind::Float32:
-      return 4;
-    case BasicKind::Complex128:
-    case BasicKind::String:
-      return 16;
-    default:
-      return 8;
-    }
-  case Type::Kind::Slice:
-    return 24;
-  case Type::Kind::Interface:
-    return 16;
-  case Type::Kind::Array: {
-    auto *A = cast<ArrayType>(U);
-    return A->Len < 0 ? 0 : sizeofType(A->Elem) * A->Len;
-  }
-  case Type::Kind::Option: {
-    // ADR-0018: a pointer kind's nil is its empty bit pattern; any other T
-    // gets a hidden "is set" flag.
-    auto *O = cast<OptionType>(U);
-    unsigned long long ES = sizeofType(O->Elem);
-    if (O->usesNiche())
-      return ES;
-    unsigned long long A = std::min<unsigned long long>(ES, 8);
-    A = A == 0 ? 1 : A;
-    return (ES + 1 + A - 1) / A * A;
-  }
-  case Type::Kind::Struct: {
-    unsigned long long Off = 0, MaxA = 1;
-    for (Var *F : cast<StructType>(U)->Fields) {
-      unsigned long long FS = sizeofType(F->Ty);
-      unsigned long long A = std::min<unsigned long long>(FS, 8);
-      A = A == 0 ? 1 : A;
-      if (isa<StructType>(under(F->Ty)) || isa<ArrayType>(under(F->Ty)))
-        A = 1; // approximation: alignment of aggregates is not tracked
-      Off = (Off + A - 1) / A * A + FS;
-      MaxA = std::max(MaxA, A);
-    }
-    return (Off + MaxA - 1) / MaxA * MaxA;
-  }
-  default:
-    return 8;
-  }
 }

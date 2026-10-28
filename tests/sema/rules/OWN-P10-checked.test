@@ -1,0 +1,656 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10 for checked results (P03.18, ADR-0018 amendment point 4, ERR-3,
+// OWN-R9): in `v, err := f()` the value v is usable only where err == nil is
+// known, and in `v, ok := m[k]`, `<-ch`, `o.Get()` and `x.(T)` only where ok
+// is true, when v's type has no zero value. A value type with a zero value is
+// not guarded (`n, err := r.Read(buf)` keeps n). The audit of every way err,
+// ok and v can change is in Flow.cpp; each case below has its positive next
+// to the negative.
+package main
+
+type U struct {
+	Name string @Required
+}
+
+type Src interface{ Next() (U, error) }
+
+func load() (U, error)     { return U{Name: "x"}, nil }
+func count() (int, error)  { return 0, nil }
+func use(u U)              {}
+func pick() bool           { return true }
+func take(u U, err error)  {}
+func chn() chan U          { return nil }
+
+// --- the forms: direct call, func value, interface method
+func positiveForms(s Src, f func() (U, error)) error {
+	a, err := s.Next()
+	if err != nil {
+		return err
+	}
+	b, err := f()
+	if err != nil {
+		return err
+	}
+	c, err := load()
+	if err != nil {
+		return err
+	}
+	use(a)
+	use(b)
+	use(c)
+	return nil
+}
+
+func negativeForms(s Src, f func() (U, error)) {
+	a, _ := s.Next()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be unset here: U has no zero value, and its error result is dropped: keep it in a variable and check it (OWN-P10)
+	use(a)
+	b, err := f()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: b may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(b)
+	_ = err
+	c, err := load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: c may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(c)
+	_ = err
+}
+
+// --- a value type with a zero value is not guarded
+func positiveZeroValue() int {
+	n, err := count()
+	_ = err
+	return n
+}
+
+// --- early exits, if / else, && / ||
+func positiveBranches() {
+	if u, err := load(); err == nil {
+		use(u)
+	}
+	if u, err := load(); err != nil {
+		return
+	} else {
+		use(u)
+	}
+	u, err := load()
+	if err == nil && u.Name == "a" {
+		use(u)
+	}
+	if err != nil || u.Name == "b" {
+		return
+	}
+	use(u)
+}
+
+func negativeBranches() {
+	u, err := load()
+	if err == nil {
+		use(u)
+	} else {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(u)
+	}
+	if err != nil {
+		_ = err
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(u)
+	w, err := load()
+	if pick() {
+		if err != nil {
+			return
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(w)
+}
+
+func positivePanicsAndSwitch() {
+	u, err := load()
+	if err != nil {
+		panic(err)
+	}
+	use(u)
+	w, err2 := load()
+	switch {
+	case err2 != nil:
+		return
+	case pick():
+	}
+	use(w)
+}
+
+func negativeTagSwitch() {
+	u, err := load()
+	switch err {
+	case nil:
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(u)
+	}
+}
+
+// --- err or v assigned again, redeclared, reset to nil
+func positiveReassign() error {
+	a, err := load()
+	if err != nil {
+		return err
+	}
+	b, err := load()
+	if err != nil {
+		return err
+	}
+	use(a)
+	use(b)
+	a = U{Name: "y"}
+	use(a)
+	return nil
+}
+
+func negativeReassign() error {
+	a, err := load()
+	if err != nil {
+		return err
+	}
+	b, err := load()
+	use(a)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: b may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(b)
+	a, err = load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(a)
+	return err
+}
+
+func negativeErrReset() {
+	u, err := load()
+	err = nil
+	if err == nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and err was assigned again, so it no longer tells whether u is valid: check err before that (OWN-P10)
+		use(u)
+	}
+}
+
+func negativeOpAssign() {
+	u, err := load()
+	_ = err
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	u.Name += "x"
+}
+
+// --- shadowing: a variable of the same name is another variable
+func positiveShadow() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+	{
+		u, err := load()
+		if err != nil {
+			return
+		}
+		use(u)
+	}
+	use(u)
+}
+
+func negativeShadow() {
+	u, err := load()
+	_ = err
+	{
+		err := error(nil)
+		if err != nil {
+			return
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(u)
+}
+
+// --- function literals, defer, go: a literal can run at any time, so a
+// captured checked result is never known valid in it (CLO-9, as for an
+// Option); a copy made after the check is a plain local
+func positiveClosure() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+	v := u
+	f := func() { use(v) }
+	defer func() { use(v) }()
+	defer use(u)
+	go use(u)
+	f()
+}
+
+func negativeClosureChecked() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := u`) and use the copy (OWN-P10)
+	f := func() { use(u) }
+	// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := u`) and use the copy (OWN-P10)
+	defer func() { use(u) }()
+	f()
+}
+
+// The literal is made before u becomes a checked result.
+func negativeClosureMadeBefore() {
+	u := U{Name: "x"}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := u`) and use the copy (OWN-P10)
+	f := func() { use(u) }
+	var err error
+	u, err = load()
+	f()
+	_ = err
+}
+
+func negativeClosure() {
+	u, err := load()
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := u`) and use the copy (OWN-P10)
+	f := func() { use(u) }
+	if err != nil {
+		return
+	}
+	f()
+}
+
+func negativeClosureReassigned() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := u`) and use the copy (OWN-P10)
+	f := func() { use(u) }
+	u, err = load()
+	f()
+	_ = err
+}
+
+func negativeClosureAssigns() {
+	u, err := load()
+	// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: cannot store the result of load() in u: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	g := func() { u, err = load() }
+	g()
+	if err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and nothing can check it: its error goes into err, which is not a local error variable that only this function assigns (OWN-P10)
+	use(u)
+}
+
+func negativeDefer() {
+	u, err := load()
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	defer use(u)
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	go use(u)
+	_ = err
+}
+
+// --- address taken
+func negativeAddress() {
+	u, err := load()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	p := &u.Name
+	_, _ = p, err
+	if err != nil {
+		return
+	}
+	q := &u
+	_ = q
+}
+
+// --- loops
+func positiveLoops() {
+	for u, err := load(); err == nil; u, err = load() {
+		use(u)
+	}
+	for i := 0; i < 3; i++ {
+		u, err := load()
+		if err != nil {
+			continue
+		}
+		use(u)
+	}
+	for {
+		u, err := load()
+		if err != nil {
+			break
+		}
+		use(u)
+	}
+outer:
+	for {
+		for {
+			u, err := load()
+			if err != nil {
+				break outer
+			}
+			use(u)
+		}
+	}
+	w, err := load()
+	if err != nil {
+		return
+	}
+	for i := 0; i < 3; i++ {
+		use(w)
+	}
+}
+
+func negativeLoops() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+	for i := 0; i < 3; i++ {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(u)
+		u, err = load()
+	}
+	w, err3 := load()
+	for err3 == nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: w may be unset here: U has no zero value, and err3 is assigned again in the loop, so it no longer tells whether w is valid: check err3 before that (OWN-P10)
+		use(w)
+		err3 = nil
+	}
+}
+
+// A variable that becomes a checked result only inside the loop: a later
+// pass reads what a failed call left.
+func negativeLoopRebinds(m map[string]U) {
+	u := U{Name: "x"}
+	var err error
+	for i := 0; i < 3; i++ {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(u)
+		u, err = load()
+	}
+	_ = err
+	w := U{Name: "y"}
+	var ok bool
+	for range 3 {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: w may be unset here: U has no zero value, and it is valid only where ok is true: check `if !ok { return }` first (OWN-P10)
+		use(w)
+		w, ok = clone(m["a"])
+	}
+	_ = ok
+}
+
+func positiveLoopRebinds() {
+	u := U{Name: "x"}
+	var err error
+	for i := 0; i < 3; i++ {
+		if err != nil {
+			return
+		}
+		use(u)
+		u, err = load()
+	}
+	// A plain assignment in a loop stores a valid value.
+	w := U{Name: "y"}
+	for i := 0; i < 3; i++ {
+		use(w)
+		w = U{Name: "z"}
+	}
+}
+
+// A form in the loop that rebinds u with an inner err: the loop condition
+// checks the outer err, which says nothing about the new u.
+func negativeLoopInnerGuard() {
+	u, err := load()
+	for err == nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and the loop assigns it again from a call that can fail or a comma-ok form, so a later pass may read a value that nothing checked: check it right after that assignment (OWN-P10)
+		use(u)
+		if pick() {
+			var err error
+			u, err = load()
+			_ = err
+		}
+	}
+}
+
+// An inner err of its own, and an inner u of its own, change nothing outside.
+func positiveLoopInnerNames() {
+	u, err := load()
+	for err == nil {
+		use(u)
+		if n, err := count(); err == nil {
+			_ = n
+		}
+		u, err = load()
+	}
+	w, err2 := load()
+	if err2 != nil {
+		return
+	}
+	for i := 0; i < 3; i++ {
+		use(w)
+		w, err3 := load()
+		if err3 == nil {
+			use(w)
+		}
+	}
+}
+
+func next(u U) (U, error) { return U{Name: u.Name.Clone()}, nil }
+
+// The post statement runs after the body: what the body rebinds comes back
+// unchecked there.
+func negativePost() {
+	// CHECK-DAG: [[@LINE+1]]:50: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	for u, err := load(); err == nil; u, err = next(u) {
+		u, err = load()
+	}
+}
+
+func positivePost() {
+	for u, err := load(); err == nil; u, err = next(u) {
+		use(u)
+	}
+}
+
+// A join after a rebinding that was checked on its path.
+func positiveJoin(c bool) {
+	u := U{Name: "x"}
+	if c {
+		var err error
+		u, err = load()
+		if err != nil {
+			return
+		}
+	}
+	use(u)
+}
+
+// --- an `&` range alias is the element itself: a place, not a local
+func negativeAlias(xs []U) error {
+	for _, &d := range xs {
+		var err error
+		// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot store the result of load() in d: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+		d, err = load()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func positiveAlias(xs []U) error {
+	for _, &d := range xs {
+		n, err := load()
+		if err != nil {
+			return err
+		}
+		d = n
+	}
+	return nil
+}
+
+// --- a reference into u kept across a form that binds u again
+func (u *U) Save() {}
+func keepRef(p *U)  {}
+
+func negativeReference() {
+	u := U{Name: "a"}
+	p := &u
+	var err error
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot store the result of load() in u (a reference into u is kept at line [[@LINE-2]]): its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	u, err = load()
+	_ = err
+	keepRef(p)
+	w, err2 := load()
+	if err2 != nil {
+		return
+	}
+	defer w.Save()
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot store the result of load() in w (a reference into w is kept at line [[@LINE-1]]): its type has no zero value, so it is valid only where err2 == nil; bind it to a new local variable and check that first (OWN-P10)
+	w, err2 = load()
+	_ = err2
+}
+
+func positiveReference() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+	keepRef(&u) // u is never bound again
+	defer u.Save()
+	for i := 0; i < 2; i++ {
+		w, err := load() // a new w in each pass
+		if err != nil {
+			return
+		}
+		keepRef(&w)
+	}
+}
+
+// --- goto
+func negativeGotoRebinds() {
+	u := U{Name: "x"}
+	var err error
+L:
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a goto can come back to the label above with a value that a call that can fail or a comma-ok form gave it: check it after the label (OWN-P10)
+	use(u)
+	u, err = load()
+	if pick() {
+		goto L
+	}
+	_ = err
+}
+
+func negativeGoto() {
+	u, err := load()
+	if err != nil {
+		return
+	}
+L:
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and a goto can come back to the label above with a value that a call that can fail or a comma-ok form gave it: check it after the label (OWN-P10)
+	use(u)
+	u, err = load()
+	if pick() {
+		goto L
+	}
+	_ = err
+}
+
+// --- the guard is dropped, or the value is stored where nothing can check it
+type Box struct{ In U }
+
+func negativeStores(b *Box) error {
+	u, _ := load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and its error result is dropped: keep it in a variable and check it (OWN-P10)
+	use(u)
+	var err error
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot store the result of load() in b.In: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	b.In, err = load()
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot store the result of load() in the arguments of the call: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	take(load())
+	return err
+}
+
+func positiveForward() (U, error) { return load() }
+
+// --- comma-ok: channel, map, Get, type assertion
+func positiveCommaOk(ch chan U, m map[string]U, x any, o Option[U]) {
+	u, ok := <-ch
+	if !ok {
+		return
+	}
+	use(u)
+	v, ok2 := clone(m["a"])
+	if ok2 {
+		use(v)
+	}
+	w, ok3 := x.(U)
+	if !ok3 || w.Name == "" {
+		return
+	}
+	use(w)
+	y, ok4 := o.Get()
+	if ok4 && y.Name != "" {
+		use(y)
+	}
+	z, ok5 := <-chn()
+	if !(ok5 && z.Name != "") {
+		return
+	}
+	use(z)
+	select {
+	case s, ok6 := <-ch:
+		if !ok6 {
+			return
+		}
+		use(s)
+	default:
+	}
+}
+
+func negativeCommaOk(ch chan U, m map[string]U, x any, o Option[U]) {
+	u, ok := <-ch
+	_ = ok
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where ok is true: check `if !ok { return }` first (OWN-P10)
+	use(u)
+	v, ok2 := clone(m["a"])
+	if !ok2 {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: v may be unset here: U has no zero value, and it is valid only where ok2 is true: check `if !ok2 { return }` first (OWN-P10)
+		use(v)
+	}
+	w, ok3 := x.(U)
+	_ = ok3
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: U has no zero value, and it is valid only where ok3 is true: check `if !ok3 { return }` first (OWN-P10)
+	use(w)
+	y, ok4 := o.Get()
+	_ = ok4
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: y may be unset here: U has no zero value, and it is valid only where ok4 is true: check `if !ok4 { return }` first (OWN-P10)
+	use(y)
+	select {
+	case s, ok6 := <-ch:
+		_ = ok6
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: s may be unset here: U has no zero value, and it is valid only where ok6 is true: check `if !ok6 { return }` first (OWN-P10)
+		use(s)
+	default:
+	}
+}
+
+func positiveRange(ch chan U) {
+	for u := range ch {
+		use(u)
+	}
+}
+
+func positiveVarDecl() {
+	var u, err = load()
+	if err != nil {
+		return
+	}
+	use(u)
+}
+
+func negativeVarDecl() {
+	var u, err = load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(u)
+	_ = err
+}

@@ -444,6 +444,19 @@ struct ZeroQuery {
       if (Why)
         *Why = "pointers are never nil";
       return false;
+    case Type::Kind::Signature:
+      if (Why)
+        *Why = "funcs are never nil";
+      return false;
+    case Type::Kind::Interface:
+      // An interface with methods other than `error` is never nil (ADR-0018
+      // point 3); the empty interface and `error` keep nil.
+      if (C.neverNilKind(T)) {
+        if (Why)
+          *Why = "interfaces with methods are never nil";
+        return false;
+      }
+      return true;
     case Type::Kind::Array: {
       auto *A = cast<sema::ArrayType>(T);
       if (A->Len == 0)
@@ -523,6 +536,14 @@ struct ZeroQuery {
           *Why = "pointers are never nil";
         return false;
       }
+      if (isa<InterfaceType>(C.under(N))) {
+        if (C.neverNilKind(N)) {
+          if (Why)
+            *Why = "interfaces with methods are never nil";
+          return false;
+        }
+        return true;
+      }
       // A C++ type has a zero value exactly when it has a default
       // constructor (OWN-R9); the move rule ignores C++ types.
       if (N->Obj && N->Obj->Pkg && N->Obj->Pkg->Foreign) {
@@ -597,7 +618,9 @@ bool Checker::isNeverNilField(const Var *F) {
   if (isa<TypeParamType>(F->Ty) || F->RequiredSetOnly)
     return false;
   Type *U = under(F->Ty);
-  return isa<InterfaceType>(U) || isa<SignatureType>(U) ||
+  // `error`, `any` and the other empty interfaces, maps and channels; a func
+  // and an interface with methods are never nil without the attribute.
+  return (isa<InterfaceType>(U) && !neverNilKind(F->Ty)) ||
          isa<sema::MapType>(U) || isa<sema::ChanType>(U);
 }
 
@@ -612,7 +635,10 @@ const Var *Checker::selectedField(const ast::Expr *Ex) {
 }
 
 bool Checker::isMemReplace(const ast::Expr *Fun) {
-  auto *Sel = dyn_cast<SelectorExpr>(unparen(Fun));
+  Fun = unparen(Fun);
+  if (auto *Inst = dyn_cast<IndexExpr>(Fun)) // mem.Replace[T](...)
+    Fun = unparen(Inst->X);
+  auto *Sel = dyn_cast<SelectorExpr>(Fun);
   if (!Sel || name(Sel->Sel) != "Replace")
     return false;
   auto *Id = dyn_cast<ast::Ident>(unparen(Sel->X));
@@ -1159,6 +1185,12 @@ void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
     err(Ex, diag::err_required_addr, {str(Inner)});
   else if (ReplaceNil)
     err(ReplaceNil, diag::err_required_nil_store, {str(Inner)});
+  else {
+    // The new value must be known non-nil too: callExpr checks it once the
+    // arguments are (TYP-15).
+    ReplaceField = F;
+    ReplacePlace = str(Inner);
+  }
 }
 
 void Checker::checkPtrRecvCall(const SelectorExpr *Sel, Func *M) {

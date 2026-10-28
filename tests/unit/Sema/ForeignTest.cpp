@@ -519,6 +519,50 @@ func main() {
   EXPECT_EQ(Errs2.size(), 1u);
 }
 
+TEST(Foreign, CFunctionPointersAreOptionOfFfiFuncAndNonnullOnesAreNot) {
+  Fixture F;
+  Package *P = F.header("cb.h");
+  MockForeignScope &S = F.Prov.scopeOf("cb.h");
+  // `ffi.Func[func(int32) int32]` stands for the type of a C function
+  // pointer; the real one is P08's.
+  NamedType *Fn = F.klass(P, "Callback");
+  S.add(Fn->Obj);
+  Type *Maybe = ForeignScope::cFuncPointer(F.Ctx, Fn, /*NonNull=*/false);
+  Type *Never = ForeignScope::cFuncPointer(F.Ctx, Fn, /*NonNull=*/true);
+  EXPECT_EQ(Maybe, F.Ctx.option(Fn));
+  EXPECT_EQ(Never, Fn);
+  S.add(F.func(P, "on_event", {Maybe}, {}));
+  S.add(F.func(P, "get_handler", {}, {Maybe}));
+  S.add(F.func(P, "must_handler", {}, {Never}));
+  EXPECT_TRUE(F.check(R"(package main
+import "cb.h"
+func main() {
+	cb.on_event(nil)                    // NULL
+	h := cb.get_handler()
+	if h != nil {
+		cb.on_event(h)
+	}
+	var o Option[cb.Callback] = cb.must_handler()
+	_ = o
+}
+)")
+                  .empty());
+  auto Errs = F.check(R"(package main
+import "cb.h"
+func main() {
+	h := cb.get_handler()
+	cb.on_event(h)           // fine: both are Option
+	m := cb.must_handler()
+	_ = m == nil             // a non-null C function pointer is never nil
+	var o Option[cb.Callback] = cb.get_handler()
+	_ = o.IsNil()
+}
+)");
+  EXPECT_TRUE(mentions(Errs, "cannot convert nil") || mentions(Errs, "nil"))
+      << (Errs.empty() ? "" : Errs[0]);
+  EXPECT_EQ(Errs.size(), 1u) << (Errs.empty() ? "" : Errs[0]);
+}
+
 TEST(Foreign, ACppTypeWithoutADefaultConstructorHasNoZeroValue) {
   Fixture F;
   Package *P = F.header("<conn>");

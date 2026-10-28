@@ -3039,17 +3039,17 @@ type Token struct {
 )X")
 EXPLAIN(warn_vet_drop_zero,
         "A drop method also runs on the zero value of its type (after a "
-        "move, or for a value that was never filled). Using an interface "
-        "or function field without a nil check can crash (pointers are "
-        "never nil, ADR-0018). This lint is a heuristic: a nil check of "
-        "the field (f == nil or f != nil) anywhere in the method "
-        "silences it.",
+        "move, or for a value that was never filled). Calling a method of "
+        "an error field without a nil check can crash (pointers, funcs and "
+        "interfaces with methods are never nil, and any has no method to "
+        "call, ADR-0018). This lint is a heuristic: a nil check of the "
+        "field (f == nil or f != nil) anywhere in the method silences it.",
         R"X(package p
 
-type Res struct{ f func() }
+type Res struct{ f error }
 
 func (r *Res) drop() {
-	r.f()
+	_ = r.f.Error()
 }
 )X")
 EXPLAIN(warn_vet_bang_panics,
@@ -3096,7 +3096,7 @@ func f(o Option[*N]) int {
 }
 )X")
 EXPLAIN(err_option_bad_arg,
-        "Option[T] adds a maybe to a type that has none. Interfaces, maps, slices, channels and funcs already have nil, and an Option cannot hold another Option, so these are not valid arguments.",
+        "Option[T] adds a maybe to a type that has none. error, any (an interface without methods), maps, slices, channels and unsafe.Pointer already have nil, and an Option cannot hold another Option, so these are not valid arguments. A func and an interface with methods are never nil, so Option[func()] and Option[Logger] are fine.",
         R"X(package p
 
 func f(e Option[error]) {}
@@ -3116,7 +3116,7 @@ func f(p *int) bool {
 }
 )X")
 EXPLAIN(err_no_zero_value,
-        "This type has no zero value (a pointer, a @Required struct, a C++ class without a default constructor, or a type containing one), so a place where Go would create a zero value is an error. Give the value explicitly, or use Option[T] for maybe. In generic code a type parameter has a zero value only if every type its constraint allows has one (GEN-5).",
+        "This type has no zero value (a pointer, a func, an interface with methods other than error, a @Required struct, a C++ class without a default constructor, or a type containing one), so a place where Go would create a zero value is an error. Give the value explicitly, or use Option[T] for maybe. In generic code a type parameter has a zero value only if every type its constraint allows has one (GEN-5).",
         R"X(package p
 
 func f() {
@@ -3125,7 +3125,7 @@ func f() {
 }
 )X")
 EXPLAIN(err_no_zero_lookup,
-        "A map lookup or channel receive of a type with no zero value would give zero bytes when the key is missing or the channel is closed. Use the comma-ok form, `v, ok := m[k]`, and use v only when ok is true.",
+        "A map lookup or channel receive of a type with no zero value (a pointer, a func, an interface with methods, a @Required struct, ...) would give zero bytes when the key is missing or the channel is closed. Use the comma-ok form, `v, ok := m[k]`, and use v only where ok is true.",
         R"X(package p
 
 func f(m map[string]*int) {
@@ -3162,11 +3162,11 @@ type T struct {
 }
 )X")
 EXPLAIN(err_required_nil_store,
-        "A @Required field of interface, func, map or channel type is never nil, so storing nil in it is an error.",
+        "A @Required field of type error, any, a map or a channel is never nil, so storing nil in it is an error.",
         R"X(package p
 
 type C struct {
-	F func() @Required
+	F error @Required
 }
 
 func f(c *C) {
@@ -3178,7 +3178,7 @@ EXPLAIN(err_required_move,
         R"X(package p
 
 type C struct {
-	F func() @Required
+	F error @Required
 }
 
 func f(c *C) {
@@ -3191,7 +3191,7 @@ EXPLAIN(err_required_addr,
         R"X(package p
 
 type C struct {
-	F func() @Required
+	F error @Required
 }
 
 func f(c *C) {
@@ -3259,5 +3259,86 @@ func f(o Option[S]) {
 	if v, ok := o.Get(); ok {
 		v.n = nil
 	}
+}
+)X")
+EXPLAIN(err_nil_never_nil,
+        "A func, and an interface with methods other than error, always holds a value: a nil one would crash on its first use, like a nil pointer. So comparing one with nil, or storing nil in it, is an error. Use Option[Logger] or Option[func()] where maybe is meant. error, the empty interface any, maps, slices, channels and unsafe.Pointer keep nil.",
+        R"X(package p
+
+type Logger interface{ Log(s string) }
+
+func f(l Logger) bool {
+	return l == nil
+}
+)X")
+EXPLAIN(err_required_never_nil,
+        "@Required means never nil, and a func or an interface with methods (other than error) is never nil already, so the attribute says nothing there. Remove it. On error, any, map and channel fields it keeps its never-nil meaning.",
+        R"X(package p
+
+type S struct {
+	F func() @Required
+}
+)X")
+EXPLAIN(err_required_maybe_nil,
+        "A @Required error, any, map or channel field is never nil, so the value stored in it must be known non-nil: a literal, make(...), a local checked with != nil, a value of a type that has no nil converted to the field's interface, or another never-nil field. A plain error or map variable that was not checked may be nil.",
+        R"X(package p
+
+type S struct {
+	Err error @Required
+}
+
+func f(s *S, e error) {
+	s.Err = e
+}
+)X")
+EXPLAIN(err_unchecked_value,
+        "A value whose type has no zero value (a pointer, a func, an interface with methods, a @Required struct, ...) that comes from a call ending in error (`v, err := f()`) or from a comma-ok form (`v, ok := m[k]`, `<-ch`, `x.(T)`, `o.Get()`) is unset when the call failed or ok is false. Use it only where err == nil or ok is known: after `if err != nil { return err }`, inside `if ok { ... }`, and the like. A function literal can run at any time, so it cannot use such a value: copy it into a local after the check. A value whose type has a zero value (`n, err := r.Read(buf)`) is not checked.",
+        R"X(package p
+
+type U struct {
+	Name string @Required
+}
+
+func load() (U, error) {
+	return U{Name: "a"}, nil
+}
+
+func f() string {
+	u, err := load()
+	n := u.Name
+	_ = err
+	return n
+}
+)X")
+EXPLAIN(err_unchecked_store,
+        "The value of a call that can fail, or of a comma-ok form, is unset when the call failed or ok is false. When its type has no zero value it can be checked only in a local variable of the function, so storing it straight into a field, an element, a package variable or a variable captured by a function literal, or handing it on as it is (the arguments of another call `h(f())` or `h(o.Get())`, or `return o.Get()` / `return f()` from a function whose results do not end in `error` at the same place), is an error. Bind it to a new local (`v, err := f()`), check err, then store v.",
+        R"X(package p
+
+type U struct {
+	Name string @Required
+}
+
+type Box struct {
+	In U
+}
+
+func load() (U, error) {
+	return U{Name: "a"}, nil
+}
+
+func f(b *Box) error {
+	var err error
+	b.In, err = load()
+	return err
+}
+)X")
+EXPLAIN(err_maybe_nil_to_never_nil,
+        "An error may be nil. A defined `type MyErr error`, or another interface with methods that error implements, is never nil, so an error converts to it only where it is known non-nil: after `if err != nil`.",
+        R"X(package p
+
+type MyErr error
+
+func f(e error) MyErr {
+	return e
 }
 )X")

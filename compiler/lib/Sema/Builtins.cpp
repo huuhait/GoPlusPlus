@@ -330,13 +330,11 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
   }
   case BuiltinId::Clear: {
     bool Ok = underIs(X.Ty, [&](Type *U) {
-      if (!U)
-        return false;
       // `clear(a[:])`: slicing an array gives a ref []T (SLC-8).
-      if (own())
+      if (U && own())
         if (auto *Rf = dyn_cast<RefType>(U))
           U = under(Rf->Elem);
-      if (isa<sema::MapType>(U) || isa<SliceType>(U))
+      if (U && (isa<sema::MapType>(U) || isa<SliceType>(U)))
         return true;
       err(X, diag::err_sema_builtin,
           {"invalid argument: cannot clear " + str(X) +
@@ -879,11 +877,17 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     assignment(X, nullptr, std::string("argument to ") + Bin.Name);
     if (X.M == Mode::Invalid)
       return false;
-    unsigned long long Sz = sizeofType(X.Ty);
-    X.M = Mode::Constant;
-    if (Id == BuiltinId::Alignof)
-      Sz = Sz >= 8 ? 8 : (Sz == 0 ? 1 : Sz);
-    X.Val = ConstValue::makeUint64(Sz);
+    if (hasVarSize(X.Ty)) {
+      X.M = Mode::Value;
+    } else {
+      int64_t Sz = Id == BuiltinId::Alignof ? gcAlignof(X.Ty) : gcSizeof(X.Ty);
+      if (Sz < 0) {
+        err(X, diag::err_sema_builtin, {str(X) + " is too large"});
+        return false;
+      }
+      X.M = Mode::Constant;
+      X.Val = ConstValue::makeUint64(static_cast<uint64_t>(Sz));
+    }
     X.Ty = typ(BasicKind::Uintptr);
     break;
   }
@@ -901,14 +905,34 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       return false;
     Type *Base = derefStructPtr(X.Ty);
     LookupResult LR = lookupFieldOrMethod(Base, false, S.Pkg, name(Selx->Sel));
-    if (!LR.Obj || isa<Func>(LR.Obj)) {
-      err(Arg0, diag::err_sema_builtin,
-          {"invalid argument: " + str(Arg0) + " has no single field " +
+    if (!LR.Obj) {
+      err(X, diag::err_sema_builtin,
+          {"invalid argument: " + str(Base) + " has no single field " +
            std::string(name(Selx->Sel))});
       return false;
     }
-    X.M = Mode::Constant;
-    X.Val = ConstValue::makeUint64(0);
+    if (isa<Func>(LR.Obj)) {
+      err(Arg0, diag::err_sema_builtin,
+          {"invalid argument: " + str(Arg0) + " is a method value"});
+      return false;
+    }
+    if (LR.Indirect) {
+      err(X, diag::err_sema_builtin,
+          {"invalid argument: field " + std::string(name(Selx->Sel)) +
+           " is embedded via a pointer in " + str(Base)});
+      return false;
+    }
+    if (hasVarSize(Base)) {
+      X.M = Mode::Value;
+    } else {
+      int64_t Offs = gcOffsetof(Base, LR.Index);
+      if (Offs < 0) {
+        err(X, diag::err_sema_builtin, {str(X) + " is too large"});
+        return false;
+      }
+      X.M = Mode::Constant;
+      X.Val = ConstValue::makeUint64(static_cast<uint64_t>(Offs));
+    }
     X.Ty = typ(BasicKind::Uintptr);
     break;
   }

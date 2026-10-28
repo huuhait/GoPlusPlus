@@ -46,9 +46,15 @@ std::string ForeignScope::describe(const Type *) const { return {}; }
 
 bool ForeignScope::hasDefaultConstructor(const Type *) const { return true; }
 
+Type *ForeignScope::rangeElem(const Type *, Type **) const { return nullptr; }
+
 Type *ForeignScope::cPointer(TypeContext &Ctx, Type *Pointee, bool NonNull) {
   Type *P = Ctx.pointer(Pointee);
   return NonNull ? P : static_cast<Type *>(Ctx.option(P));
+}
+
+Type *ForeignScope::cFuncPointer(TypeContext &Ctx, Type *Func, bool NonNull) {
+  return NonNull ? Func : static_cast<Type *>(Ctx.option(Func));
 }
 
 Type *ForeignScope::cxxReference(TypeContext &Ctx, Type *Pointee) {
@@ -122,6 +128,10 @@ bool accepts(Type *P, const ForeignArg &A) {
           return llvm::isa<BasicType>(under(O->Elem));
     return A.Ty == P || A.Ty == O->Elem;
   }
+  // A `ref T` parameter (a C `const T*` that is only read) takes a T or a
+  // ref T: an owned value converts to a ref at zero cost (TYP-2).
+  if (auto *R = llvm::dyn_cast<RefType>(P))
+    return A.Ty == P || A.Ty == R->Elem;
   return A.Ty == P;
 }
 } // namespace
@@ -167,9 +177,11 @@ ForeignCall MockForeignScope::checkCall(Object *Callee,
         P = llvm::cast<SliceType>(Ps.back())->Elem;
       Ok = accepts(P, Args[K]);
       if (!Ok)
-        R.Notes.push_back("candidate rejected: " + typeString(O.Sig) +
-                          ": argument " + std::to_string(K + 1) +
-                          " does not convert to " + typeString(P));
+        R.Notes.push_back(
+            "candidate rejected: " + typeString(O.Sig) + ": argument " +
+            std::to_string(K + 1) + " does not convert to " + typeString(P) +
+            (Args[K].Ty ? " (it is " + typeString(Args[K].Ty) + ")"
+                        : std::string()));
     }
     if (!Ok)
       continue;

@@ -1,0 +1,46 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// The size model is gc's for amd64 (types2 gcsizes.go): sizes, alignment and
+// field offsets are constants; a type larger than the address space is an
+// error (the unsafe.Sizeof/Offsetof tests of types2).
+package main
+
+import "unsafe"
+
+type S struct {
+	a bool
+	b int64
+	c int16
+}
+
+// Each line is 0 when the size is right; uint(-1) is an error, so a wrong
+// model shows up as an unexpected error.
+const (
+	_ = uint(unsafe.Sizeof(S{}) - 24)          // size 24: padded to 8
+	_ = uint(unsafe.Offsetof(S{}.c) - 16)      // offset of c is 16
+	_ = uint(unsafe.Alignof(S{}) - 8)          // the largest field alignment
+	_ = uint(unsafe.Sizeof([3]int16{}) - 6)    // elements are packed
+	_ = uint(unsafe.Sizeof("") - 16)           // a string is two words
+	_ = uint(unsafe.Sizeof(complex64(0)) - 8)  // aligned like two float32
+	_ = uint(unsafe.Alignof(complex64(0)) - 4) // not like a word
+	_ = uint(unsafe.Sizeof(S{}) - 25)          // positive control: -1 fails
+	// Go++: Option[*T] uses the nil bit pattern; another T gets a flag.
+	_ = uint(unsafe.Sizeof(Option[*S](nil)) - 8)
+	_ = uint(unsafe.Sizeof(Option[int64](nil)) - 16)
+)
+
+// CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
+// CHECK: error[E{{[0-9]+}}]: huge {{.*}} is too large
+type Big [1 << 30]complex128
+
+var huge [1 << 30]Big
+
+var _ = unsafe.Sizeof(huge)
+
+// The size of an Option of a type parameter depends on the instance.
+func gen[T any](o Option[T]) uintptr {
+	// CHECK: error[E{{[0-9]+}}]: unsafe.Sizeof(o) {{.*}}is not constant
+	const c = unsafe.Sizeof(o)
+	return unsafe.Sizeof(o)
+}
+
+func main() {}

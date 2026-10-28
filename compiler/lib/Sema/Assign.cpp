@@ -53,6 +53,12 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
     return;
   }
   if (isUntyped(X.Ty)) {
+    if (own() && X.isNil() && T && !isPointerKind(T))
+      if (const char *Why = neverNilKind(T)) {
+        err(X, diag::err_nil_never_nil, {str(T), Why});
+        X.M = Mode::Invalid;
+        return;
+      }
     Type *Target = T;
     if (!T || isNonTypeParamInterface(T)) {
       if (!T && X.Ty == typ(BasicKind::UntypedNil)) {
@@ -72,6 +78,12 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
         X.M = Mode::Invalid;
         return;
       }
+      if (own() && X.isNil() && T)
+        if (const char *Why = neverNilKind(T)) {
+          err(X, diag::err_nil_never_nil, {str(T), Why});
+          X.M = Mode::Invalid;
+          return;
+        }
       std::string Msg = "cannot use " + str(X) + " as " + str(Target) +
                         " value in " + std::string(Context);
       if (Code == ReprCode::Truncated)
@@ -120,7 +132,22 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
       Msg += ": " + Cause;
     err(X, diag::err_sema_assign, {Msg});
     X.M = Mode::Invalid;
+    return;
   }
+  // An `error` (which may be nil) converts to `type MyErr error`, an
+  // interface with methods that is never nil, only where it is known set.
+  checkNilableToNeverNil(X, T);
+}
+
+bool Checker::checkNilableToNeverNil(Operand &X, Type *T) {
+  if (!own() || !X.E || X.M == Mode::Invalid || !X.Ty || !T || isTypeParam(T) ||
+      !isa<InterfaceType>(under(T)) || !neverNilKind(T) || isUntyped(X.Ty) ||
+      !isa<InterfaceType>(under(X.Ty)) || isTypeParam(X.Ty) ||
+      neverNilKind(X.Ty) || knownNonNil(X.E, T, X.Ty))
+    return false;
+  err(X, diag::err_maybe_nil_to_never_nil, {str(X.E), str(T)});
+  X.M = Mode::Invalid;
+  return true;
 }
 
 void Checker::initConst(Const *Lhs, Operand &X) {
@@ -214,7 +241,10 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
   Operand X;
   markLookupOk(Lhs); // `m[k] = v` writes the entry; it reads no value
   markNoNarrow(Lhs); // the variable itself is written, not its value
+  const ast::Expr *SavedNoGuard = NoGuardExpr;
+  NoGuardExpr = AssignReadsLhs ? nullptr : unparen(Lhs);
   expr(X, Lhs);
+  NoGuardExpr = SavedNoGuard;
   // Narrowing ends at the assignment (ADR-0018 point 4), after the statement:
   // `n = n.Next` reads n first.
   if (own() && V)
@@ -251,7 +281,9 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
 
 Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
                          Operand *X, StringRef Context) {
+  AssignReadsLhs = Context == "assignment operation";
   Type *T = lhsVar(Lhs); // nullptr for the blank identifier
+  AssignReadsLhs = false;
   if (T && !isValid(T)) {
     if (X)
       X->M = Mode::Invalid;
@@ -275,6 +307,9 @@ Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
   if (own() && X->isNil() && Lhs)
     if (const Var *F = selectedField(Lhs); F && isNeverNilField(F))
       err(*X, diag::err_required_nil_store, {str(Lhs)});
+  if (own() && !X->isNil() && Lhs && Context != "assignment operation")
+    if (const Var *F = selectedField(Lhs))
+      checkNeverNilStore(*X, F, str(Lhs));
   bool OpAssign = Context == "assignment operation";
   // PAR-2: a borrowed string / []T variable is a local ref, so it can be
   // re-pointed at a ref.
@@ -371,26 +406,20 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
     return;
   }
   if (R != 1) {
-    unsigned Before = NumErrors;
-    for (Var *V : Lhs)
-      if (V->Ty && !isValid(V->Ty))
-        ++Before; // do not report a mismatch when the lhs is already broken
-    unsigned B2 = NumErrors;
-    useExprs(OrigRhs);
-    bool OkRhs = NumErrors == B2;
-    if (Before == NumErrors && OkRhs && !OrigRhs.empty()) {
-      if (ReturnStmt) {
-        SmallVector<Operand, 4> Ops;
-        for (const ast::Expr *Ex : OrigRhs) {
-          Operand O;
-          O.E = Ex;
-          O.Ty = I.typeOf(Ex);
-          Ops.push_back(O);
-        }
+    // Only report a mismatch error if there are no other errors on the rhs.
+    if (ReturnStmt) {
+      SmallVector<Operand, 4> Ops;
+      exprList(OrigRhs, Ops);
+      bool OkRhs = !OrigRhs.empty();
+      for (Operand &O : Ops)
+        OkRhs &= O.M != Mode::Invalid;
+      if (OkRhs)
         returnError(ReturnStmt, Lhs, Ops);
-      } else {
+    } else {
+      unsigned B2 = NumErrors;
+      useExprs(OrigRhs);
+      if (NumErrors == B2 && !OrigRhs.empty())
         assignError(OrigRhs, L, R);
-      }
     }
     for (Var *V : Lhs)
       if (!V->Ty)
@@ -404,6 +433,13 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
   if (L == R) {
     for (size_t K = 0; K < L; ++K)
       initVar(Lhs[K], Rhs[K], Context);
+    if (own() && ReturnStmt && L >= 2)
+      checkForwarded(OrigRhs[0], Rhs, Lhs.back()->Ty,
+                     "the results of this function");
+    if (own() && !ReturnStmt && L >= 2) {
+      SmallVector<const ast::Expr *, 4> NoPlaces(L, nullptr);
+      noteGuardedForm(Lhs, NoPlaces, OrigRhs[0], Rhs, CommaOk);
+    }
     // ADR-0018 point 11: `v, ok := o.Get()` borrows an owning T from the
     // place o; `move(o).Get()` takes it (and leaves o nil).
     if (own() && !ReturnStmt && L == 2 && Lhs[0]->Ty && isOwning(Lhs[0]->Ty)) {
@@ -502,6 +538,25 @@ void Checker::assignVars(ArrayRef<ast::Expr *> Lhs,
   if (L == R) {
     for (size_t K = 0; K < L; ++K)
       assignVar(Lhs[K], nullptr, &Rhs[K], "assignment");
+    if (own() && L >= 2) {
+      // The targets: a local variable, the blank identifier (null, no
+      // place), or a place that cannot be checked later (null with a place).
+      SmallVector<Var *, 4> Vs;
+      SmallVector<const ast::Expr *, 4> Places;
+      for (const ast::Expr *Ex : Lhs) {
+        Var *V = nullptr;
+        const ast::Expr *Pl = unparen(Ex);
+        if (auto *Id = dyn_cast<ast::Ident>(Pl)) {
+          if (name(Id) == "_")
+            Pl = nullptr;
+          else if (auto *O = dyn_cast_or_null<Var>(I.Uses.lookup(Id)))
+            V = O;
+        }
+        Vs.push_back(V);
+        Places.push_back(V ? nullptr : Pl);
+      }
+      noteGuardedForm(Vs, Places, OrigRhs[0], Rhs, CommaOk);
+    }
     return;
   }
   if (Rhs[0].M != Mode::Invalid)

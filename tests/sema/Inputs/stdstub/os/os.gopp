@@ -1,0 +1,4 @@
+// Test-only stand-in for the standard package os (P13).
+package os
+
+func ReadFile!(name string) []byte

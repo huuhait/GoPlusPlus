@@ -1,0 +1,324 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10 for checked results (P03.18, ADR-0018 amendment 4): a value v
+// of a type with no zero value that comes out of `v, err := f()` (any call
+// whose type ends in error: direct, through a func value, through an
+// interface method) is usable only where err == nil is known, and out of
+// `v, ok := m[k]`, `<-ch`, `o.Get()`, `x.(T)` only where ok is true. A type
+// with a zero value (`n, err := r.Read(buf)`) is not checked. The facts are
+// those of Option narrowing: conditions, early exits, && and ||, loops. The
+// guard assigned again, captured by a literal, or address-taken guards
+// nothing. Functions named positive* have no error.
+package main
+
+type Node struct{ V int }
+
+var global Node
+
+type Reader interface{ Read() (int, error) }
+
+type Loader interface{ Load!() *Node }
+
+func load!() *Node { return &global }
+
+func count() (int, error) { return 0, nil }
+
+func use(n *Node) {}
+
+func fail() error { return nil }
+
+func positiveErr(r Reader, l Loader, f func() (*Node, error), p func() (*Node, int, error)) error {
+	n, err := load()
+	if err != nil {
+		return err
+	}
+	use(n)
+	m, err := load()
+	if err == nil {
+		use(m)
+	}
+	k, err2 := l.Load()
+	if err2 != nil {
+		panic(err2)
+	}
+	use(k)
+	h, err3 := f()
+	if err3 == nil {
+		use(h)
+	} else {
+		return err3
+	}
+	c, d, err4 := p()
+	if err4 != nil {
+		return err4
+	}
+	use(c)
+	_ = d
+	// An int has a zero value: n keeps its use.
+	cnt, err5 := count()
+	_ = cnt + 1
+	_ = err5
+	o := &global
+	var e error
+	o, e = load()
+	if e != nil {
+		return e
+	}
+	use(o)
+	return nil
+}
+
+func positiveIfInit() {
+	if n, err := load(); err == nil {
+		use(n)
+	}
+	if n, err := load(); err != nil {
+		return
+	} else {
+		use(n)
+	}
+	if n, err := load(); err == nil && n.V > 0 {
+		use(n)
+	}
+	if n, err := load(); err != nil || n.V > 0 {
+		return
+	}
+}
+
+func positiveFlow(c bool) error {
+	n, err := load()
+	if c {
+		if err != nil {
+			return err
+		}
+		use(n)
+	} else {
+		if err != nil {
+			return err
+		}
+	}
+	use(n) // both paths checked
+	a, err := load()
+	switch {
+	case err != nil:
+		return err
+	}
+	use(a)
+	b, err := load()
+	for err != nil {
+		return err
+	}
+	use(b)
+	// A plain assignment stores a real value.
+	n = &global
+	use(n)
+	z, errz := load()
+	if errz != nil {
+		return errz
+	}
+	for i := 0; i < 2; i++ {
+		use(z)
+		z = &global
+	}
+	use(z)
+	return nil
+}
+
+func positiveCommaOk(m map[string]*Node, ch chan *Node, x any, o Option[*Node], cl map[string]Node) {
+	if u, ok := m["a"]; ok {
+		use(u)
+	}
+	u, ok := m["b"]
+	if !ok {
+		return
+	}
+	use(u)
+	v, ok2 := <-ch
+	if !ok2 {
+		return
+	}
+	use(v)
+	w, ok3 := x.(*Node)
+	if ok3 && w.V > 0 {
+		use(w)
+	}
+	g, ok4 := o.Get()
+	if !ok4 {
+		return
+	}
+	use(g)
+	select {
+	case s, ok5 := <-ch:
+		if ok5 {
+			use(s)
+		}
+	default:
+	}
+	// A type with a zero value is not checked.
+	q, ok6 := cl["a"]
+	_ = q.V
+	_ = ok6
+}
+
+func negativeErr(l Loader, f func() (*Node, error)) {
+	n, err := load()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: n may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(n)
+	_ = err
+	v, err2 := load()
+	if err2 != nil {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where err2 == nil: check `if err2 != nil { return err2 }` first (OWN-P10)
+		use(v)
+		return
+	}
+	k, err3 := l.Load()
+	if err3 == nil {
+	}
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: k may be unset here: *Node has no zero value, and it is valid only where err3 == nil: check `if err3 != nil { return err3 }` first (OWN-P10)
+	use(k)
+	h, err4 := f()
+	if err4 == nil {
+		use(h)
+	}
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: h may be unset here: *Node has no zero value, and it is valid only where err4 == nil: check `if err4 != nil { return err4 }` first (OWN-P10)
+	use(h)
+	// `_` binds no error: the value is never usable.
+	b, _ := load()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: b may be unset here: *Node has no zero value, and its error result is dropped: keep it in a variable and check it (OWN-P10)
+	use(b)
+}
+
+func negativeCommaOk(m map[string]*Node, ch chan *Node, x any, o Option[*Node]) {
+	u, ok := m["a"]
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: u may be unset here: *Node has no zero value, and it is valid only where ok is true: check `if !ok { return }` first (OWN-P10)
+	use(u)
+	if !ok {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: u may be unset here: *Node has no zero value, and it is valid only where ok is true: check `if !ok { return }` first (OWN-P10)
+		use(u)
+	}
+	v, ok2 := <-ch
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where ok2 is true: check `if !ok2 { return }` first (OWN-P10)
+	use(v)
+	_ = ok2
+	w, ok3 := x.(*Node)
+	_ = ok3
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: w may be unset here: *Node has no zero value, and it is valid only where ok3 is true: check `if !ok3 { return }` first (OWN-P10)
+	use(w)
+	g, ok4 := o.Get()
+	_ = ok4
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: g may be unset here: *Node has no zero value, and it is valid only where ok4 is true: check `if !ok4 { return }` first (OWN-P10)
+	use(g)
+	c, ok5 := clone(m["a"])
+	_ = ok5
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: c may be unset here: *Node has no zero value, and it is valid only where ok5 is true: check `if !ok5 { return }` first (OWN-P10)
+	use(c)
+}
+
+// The soundness audit (Flow.cpp): each way the guard or the value can change.
+func negativeAudit(c bool) error {
+	// The guard is assigned again before the check.
+	a, err := load()
+	err = nil
+	if err == nil {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: a may be unset here: *Node has no zero value, and err was assigned again, so it no longer tells whether a is valid: check err before that (OWN-P10)
+		use(a)
+	}
+	// The guard is assigned in a branch, then checked.
+	b, errb := load()
+	if c {
+		errb = nil
+	}
+	if errb == nil {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: b may be unset here: *Node has no zero value, and errb was assigned again, so it no longer tells whether b is valid: check errb before that (OWN-P10)
+		use(b)
+	}
+	// The guard is assigned later in the loop: a later iteration is stale.
+	d, errd := load()
+	for i := 0; i < 2; i++ {
+		if errd == nil {
+			// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: d may be unset here: *Node has no zero value, and errd is assigned again in the loop, so it no longer tells whether d is valid: check errd before that (OWN-P10)
+			use(d)
+		}
+		errd = fail()
+	}
+	// The value is rebound by a call again, unchecked.
+	e, erre := load()
+	if erre != nil {
+		return erre
+	}
+	use(e)
+	e, erre = load()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: e may be unset here: *Node has no zero value, and it is valid only where erre == nil: check `if erre != nil { return erre }` first (OWN-P10)
+	use(e)
+	// Only one path checks.
+	f, errf := load()
+	if c {
+		if errf != nil {
+			return errf
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: f may be unset here: *Node has no zero value, and it is valid only where errf == nil: check `if errf != nil { return errf }` first (OWN-P10)
+	use(f)
+	// The guard is captured and assigned by a function literal.
+	g, errg := load()
+	fix := func() { errg = nil }
+	fix()
+	if errg == nil {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: g may be unset here: *Node has no zero value, and nothing can check it: its error goes into errg, which is not a local error variable that only this function assigns (OWN-P10)
+		use(g)
+	}
+	// The guard's address is taken.
+	h, errh := load()
+	p := &errh
+	_ = p
+	if errh == nil {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: h may be unset here: *Node has no zero value, and nothing can check it: its error goes into errh, which is not a local error variable that only this function assigns (OWN-P10)
+		use(h)
+	}
+	// A shadowing err is another variable.
+	i, erri := load()
+	_ = erri
+	{
+		erri := fail()
+		if erri == nil {
+			// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: i may be unset here: *Node has no zero value, and it is valid only where erri == nil: check `if erri != nil { return erri }` first (OWN-P10)
+			use(i)
+		}
+	}
+	// A function literal does not see the check (CLO-9): copy first.
+	j, errj := load()
+	if errj != nil {
+		return errj
+	}
+	go func() {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: j may be unset here: *Node has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := j`) and use the copy (OWN-P10)
+		use(j)
+	}()
+	// A check in the wrong direction.
+	k, errk := load()
+	if errk == nil {
+		return nil
+	}
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: k may be unset here: *Node has no zero value, and it is valid only where errk == nil: check `if errk != nil { return errk }` first (OWN-P10)
+	use(k)
+	// A check in || that can skip.
+	l, errl := load()
+	if errl != nil || c {
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: l may be unset here: *Node has no zero value, and it is valid only where errl == nil: check `if errl != nil { return errl }` first (OWN-P10)
+		use(l)
+	}
+	// goto: a label starts with nothing known.
+	m, errm := load()
+	if errm != nil {
+		return errm
+	}
+again:
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: m may be unset here: *Node has no zero value, and a goto can come back to the label above with a value that a call that can fail or a comma-ok form gave it: check it after the label (OWN-P10)
+	use(m)
+	if c {
+		m, errm = load()
+		goto again
+	}
+	return nil
+}
+
+func main() {}

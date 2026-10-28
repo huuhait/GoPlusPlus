@@ -146,7 +146,8 @@ func (t *Tree[K, V]) Get(k K) bool {
          std::string(I % 2 ? "int" : "[]string") + "]{})\n";
     S += "\t_ = tr.Get(b)\n";
     S += "\tch := make(chan Shape, 1)\n\tch <- Sq{2}\n";
-    S += "\tselect {\n\tcase v := <-ch:\n\t\t_ = v.Area()\n\tdefault:\n\t}\n";
+    S += "\tselect {\n\tcase v, ok := <-ch:\n\t\tif ok {\n\t\t\t_ = "
+         "v.Area()\n\t\t}\n\tdefault:\n\t}\n";
     S +=
         "\tswitch v := sh.(type) {\n\tcase Sq:\n\t\t_ = v.side\n\tcase Named:\n"
         "\t\t_ = v.Name()\n\t}\n";
@@ -365,6 +366,66 @@ TEST(ParallelCheck, NoZeroValueTypesAndOptionFlowDoNotDependOnTheThreadCount) {
     }
 }
 
+TEST(ParallelCheck,
+     NeverNilInterfacesAndCheckedResultsDoNotDependOnTheThreadCount) {
+  // P03.18: funcs and interfaces with methods have no zero value (the answer
+  // is cached per named type and shared by every body), and the err / ok
+  // flow typing is per body (loops, the uses of function literals reported
+  // at the end of the body). Many bodies ask about the same named types, in
+  // any order, with good and bad code side by side.
+  std::string Src = "package p\n\ntype Logger interface{ Log(s string) }\n"
+                    "type MyErr error\n"
+                    "type Holder struct{ L Logger }\n"
+                    "type Wrap struct{ H Holder }\n"
+                    "type Opt struct{ L Option[Logger]; F Option[func()] }\n"
+                    "type U struct{ N string @Required }\n"
+                    "func load() (U, error) { return U{N: \"a\"}, nil }\n"
+                    "func use(u U) {}\n";
+  const unsigned Funcs = 120;
+  for (unsigned I = 0; I < Funcs; ++I) {
+    std::string N = std::to_string(I);
+    Src += "func good" + N +
+           "(m map[string]U, ch chan U, e error, o Opt) error {\n"
+           "\tu, err := load()\n\tif err != nil {\n\t\treturn err\n\t}\n"
+           "\tuse(u)\n\tif v, ok := <-ch; ok {\n\t\tuse(v)\n\t}\n"
+           "\tfor w, err := load(); err == nil; w, err = load() {\n"
+           "\t\tuse(w)\n\t}\n"
+           "\tc := u\n\tdefer func() { use(c) }()\n"
+           "\tif f := o.F; f != nil {\n\t\tf()\n\t}\n"
+           "\tvar x any\n\t_ = x == nil\n\treturn e\n}\n";
+    if (I % 3 == 0)
+      Src += "func bad" + N +
+             "(l Logger, e error) {\n\tvar w Wrap\n\t_ = w\n"
+             "\tu, err := load()\n\tuse(u)\n\t_ = err\n"
+             "\tif err != nil {\n\t\treturn\n\t}\n"
+             "\tgo func() { use(u) }()\n"
+             "\tfor i := 0; i < 2; i++ {\n\t\tuse(u)\n"
+             "\t\tu, err = load()\n\t}\n"
+             "\t_ = l == nil\n\tvar m MyErr = e\n\t_ = m\n}\n";
+  }
+  Output Ref = run(Src, 1);
+  for (const char *Msg :
+       {"Wrap has no zero value", "u may be unset here",
+        "a function literal can run at any time", "Logger is never nil",
+        "e may be nil; MyErr is never nil"})
+    EXPECT_NE(Ref.Diags.find(Msg), std::string::npos)
+        << Msg << "\n"
+        << Ref.Diags.substr(0, 3000);
+  // Only the planted errors: six in each bad function, none in good ones.
+  unsigned Errors = 0;
+  for (size_t Pos = 0;
+       (Pos = Ref.Diags.find(": error: ", Pos)) != std::string::npos; ++Pos)
+    ++Errors;
+  EXPECT_EQ(Errors, 6u * ((Funcs + 2) / 3)) << Ref.Diags.substr(0, 3000);
+  for (unsigned Threads : {2u, 8u, 16u})
+    for (int Rep = 0; Rep < 2; ++Rep) {
+      Output O = run(Src, Threads);
+      ASSERT_EQ(O.Diags, Ref.Diags) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads, run " << Rep;
+    }
+}
+
 TEST(ParallelCheck, SmallPackagesStayOnTheCallingThread) {
   // MinBodiesPerThread keeps a tiny package serial; the result is the same.
   std::string Src = makeSource(3);
@@ -563,9 +624,9 @@ TEST(ParallelCheck, DeepGenericInterfaceChainsAreNotCutByTheFirstAsker) {
       Src += "type I" + std::to_string(K) + "[T any] interface{ I" +
              std::to_string(K - 1) + "[T] }\n";
     for (int K = 0; K < 64; ++K)
-      Src += "func f" + std::to_string(K) + "() {\n\tvar x I" +
+      Src += "func f" + std::to_string(K) + "(x I" +
              std::to_string(K % 2 == 0 ? Depth - 1 : Depth / 5) +
-             "[int]\n\tif x != nil {\n\t\t_ = x.M0()\n\t}\n}\n";
+             "[int]) {\n\t_ = x.M0()\n}\n";
     EXPECT_EQ(run(Src, 1).Diags, "") << Depth;
     // The 300-deep chain is slow under a sanitizer: fewer runs.
     for (unsigned Threads : {2u, 8u, 16u})

@@ -1,0 +1,17 @@
+// P03 exit criterion: "All P01 samples except `derive` type-check (C/C++
+// imports mocked)". With the TEST-ONLY stand-ins of the hidden `gopp check
+// --test-stubs` (the declaration-only standard packages of Inputs/stdstub,
+// and mocks of zlib.h, <vector> and <algorithm>), the nine examples give no
+// error and no warning at all. 08-derive needs the macros of P09 and stays
+// out. tests/sema/spec-examples.test checks the same examples WITHOUT the
+// stand-ins and lists every error that remains, so together the two show that
+// the stand-ins are the only difference.
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/01-hello 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/02-wc 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/03-kvparse 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/04-binarytrees 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/05-workers 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/06-zcrc 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/07-vecsort 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/09-orderedmap 2>&1 | count 0
+// RUN: %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/stdstub %examples/10-minicalc 2>&1 | count 0

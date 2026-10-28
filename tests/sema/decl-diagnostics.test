@@ -1,0 +1,41 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Declaration diagnostics ported from types2 (P03 conformance, tests/sema/
+// conformance): a name that is not a type is reported before its declaration
+// is checked, `var a, b = 1, 2, 3` reports only the arity, a function literal
+// in a local `var` cannot see the variable, and the lookup hints. Each negative case
+// has a positive form next to it.
+package main
+
+const C = 1
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0137]: C is not a type
+type T1 C
+
+type S struct {
+	Value int
+	other int
+}
+
+func positive() {
+	var a, b = 1, 2
+	_, _ = a, b
+	var f = func() int { return 1 }
+	_ = f()
+	var t S
+	_ = t.Value
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0213]: extra init expr 3
+	var a, b = 1, 2, 3
+	_, _ = a, b
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0212]: missing init expr for e
+	var c, d, e = 1, 2
+	_, _, _ = c, d, e
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0111]: undefined: h
+	var h = func() int { return h }()
+	_ = h
+	var t S
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0178]: t.value undefined (type S has no field or method value, but does have field Value)
+	_ = t.value
+}

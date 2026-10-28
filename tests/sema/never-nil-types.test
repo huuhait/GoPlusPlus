@@ -1,0 +1,234 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.18 (ADR-0018 amendment point 3, TYP-2, TYP-3, TYP-15): a func and an
+// interface with methods other than `error` are never nil and have no zero
+// value. `error` and its aliases, the empty interface (named or not),
+// unsafe.Pointer, maps, slices and channels keep nil. A defined `type MyErr
+// error` and `interface{ error; Code() int }` are interfaces with methods, so
+// never nil. Functions named positive* have no error; each negative line
+// has a positive form of the same thing nearby.
+package main
+
+import "unsafe"
+
+type Logger interface{ Log(s string) }
+type Thing interface{}
+type E = error
+type MyErr error
+type Coded interface {
+	error
+	Code() int
+}
+type Fn func(int) int
+
+type logImpl struct{}
+
+func (logImpl) Log(s string) {}
+
+type codeErr struct{}
+
+func (codeErr) Error() string { return "" }
+func (codeErr) Code() int     { return 1 }
+
+type Server struct {
+	Log    Logger
+	OnStop Option[func()]
+	Maybe  Option[Logger]
+}
+
+type Plain struct {
+	Err error
+	Any any
+	M   map[string]int
+	S   []int
+	C   chan int
+	P   unsafe.Pointer
+	T   Thing
+	A   E
+}
+
+func takeLog(l Logger)        {}
+func takeFn(f func())         {}
+func takeOptLog(l Option[Logger]) {}
+func takeErr(e error)         {}
+func takeAny(x any)           {}
+
+func positive(l Logger, f func(), e error, e2 E, x any, th Thing, m map[string]int, s []int, ch chan int, p unsafe.Pointer, ol Option[Logger], of Option[func()], on Option[*int]) {
+	// The types that keep nil.
+	var v1 error
+	var v2 E
+	var v3 any
+	var v4 interface{}
+	var v5 Thing
+	var v6 map[string]int
+	var v7 []int
+	var v8 chan int
+	var v9 unsafe.Pointer
+	_ = v1 == nil && v2 != nil && v3 == nil && v4 != nil && v5 == nil
+	_ = v6 == nil && v7 == nil && v8 == nil && v9 == nil
+	_, _, _ = e == nil, e2 != nil, x == nil
+	takeErr(nil)
+	takeAny(nil)
+	_ = Plain{}
+	var pl Plain
+	_ = pl
+	_ = make([]error, 3)
+	_ = make([]any, 3)
+	_ = map[string]any{"a": nil}
+	// Option[Logger] and Option[func()] are the "maybe" forms.
+	var o1 Option[Logger]
+	var o2 Option[func()]
+	o1 = nil
+	o2 = nil
+	o1 = l
+	o2 = f
+	takeOptLog(nil)
+	takeOptLog(l)
+	_ = Server{Log: l}
+	_ = Server{Log: logImpl{}, OnStop: f}
+	_ = o1 == nil
+	_ = o2 != nil
+	// A checked Option[func()] is a func; Option[Logger] a Logger.
+	if of != nil {
+		of()
+	}
+	if ol != nil {
+		ol.Log("x")
+		takeLog(ol)
+	}
+	if of == nil {
+		return
+	}
+	takeFn(of)
+	// A nil Option[T] converts to a nil any / error; a set one boxes T.
+	var an any = on
+	var er error = nil
+	_, _ = an, er
+	takeAny(ol)
+	takeAny(of)
+	// recover() returns any; panic(nil) is as in Go.
+	defer func() {
+		r := recover()
+		_ = r == nil
+	}()
+	panic(nil)
+}
+
+func positiveConvert(on Option[logImpl], oc Option[codeErr]) {
+	// An Option[T] converts to Option[I] for an interface I with methods.
+	var ol Option[Logger] = on
+	takeOptLog(on)
+	// ... and to any / error (a nil Option is a nil interface).
+	var a any = on
+	var e error = oc
+	_, _, _ = ol, a, e
+}
+
+func negative(l Logger, f func(), my MyErr, co Coded, ol Option[Logger], of Option[func()]) {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare v1 without a value: Logger has no zero value (interfaces with methods are never nil)
+	var v1 Logger
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare v2 without a value: func() has no zero value (funcs are never nil)
+	var v2 func()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare v3 without a value: MyErr has no zero value (interfaces with methods are never nil)
+	var v3 MyErr
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare v4 without a value: Coded has no zero value (interfaces with methods are never nil)
+	var v4 Coded
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare v5 without a value: Fn has no zero value (funcs are never nil)
+	var v5 Fn
+	_, _, _, _, _ = v1, v2, v3, v4, v5
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Logger is never nil: an interface with methods has no nil; use Option[Logger] for "maybe" (OWN-P9)
+	_ = l == nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: func() is never nil: a func has no nil; use Option[func()] for "maybe" (OWN-P9)
+	_ = f == nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: MyErr is never nil: an interface with methods has no nil; use Option[MyErr] for "maybe" (OWN-P9)
+	_ = my != nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Coded is never nil: an interface with methods has no nil; use Option[Coded] for "maybe" (OWN-P9)
+	_ = co == nil
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: Logger is never nil: an interface with methods has no nil; use Option[Logger] for "maybe" (OWN-P9)
+	_ = nil == l
+	// Funcs are not comparable at all.
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: f == f (a func is never nil and cannot be compared (TYP-3))
+	_ = f == f
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: Logger is never nil: an interface with methods has no nil; use Option[Logger] for "maybe" (OWN-P9)
+	takeLog(nil)
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: func() is never nil: a func has no nil; use Option[func()] for "maybe" (OWN-P9)
+	takeFn(nil)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Logger is never nil: an interface with methods has no nil; use Option[Logger] for "maybe" (OWN-P9)
+	l = nil
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: Logger is never nil: an interface with methods has no nil; use Option[Logger] for "maybe" (OWN-P9)
+	_ = Server{Log: nil, OnStop: f, Maybe: nil}
+	// An unchecked Option[func()] cannot be called, an Option[Logger] cannot be used.
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: of may be nil; check of != nil first (OWN-P10)
+	of()
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: ol may be nil; check ol != nil first (OWN-P10)
+	ol.Log("x")
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: ol may be nil; check ol != nil first (OWN-P10)
+	takeLog(ol)
+	// An Option[T] does not convert to the never-nil interface itself.
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: ol may be nil; check ol != nil first (OWN-P10)
+	var xx Logger = ol
+	_ = xx
+}
+
+func options() {
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use any as the type argument of Option: it already has a nil (OWN-P9)
+	var a Option[any]
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option: it already has a nil (OWN-P9)
+	var b Option[error]
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option: it already has a nil (OWN-P9)
+	var c Option[E]
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use Thing as the type argument of Option: it already has a nil (OWN-P9)
+	var d Option[Thing]
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use unsafe.Pointer as the type argument of Option: it already has a nil (OWN-P9)
+	var e Option[unsafe.Pointer]
+	_, _, _, _, _ = a, b, c, d, e
+}
+
+func holes(n int, ch chan Logger, fs chan func(), m map[string]Logger) {
+	// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: make([]Logger, n) creates zero values: Logger has no zero value (interfaces with methods are never nil; use make([]Logger, 0, n) and append)
+	_ = make([]Logger, n)
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a Logger, which has no zero value (interfaces with methods are never nil); use the comma-ok form `v, ok := <-ch`
+	x := <-ch
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-fs may not exist: a missing key or a closed channel would give a func(), which has no zero value (funcs are never nil); use the comma-ok form `v, ok := <-fs`
+	y := <-fs
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["a"] may not exist: a missing key or a closed channel would give a Logger, which has no zero value (interfaces with methods are never nil); use the comma-ok form `v, ok := m["a"]`
+	z := m["a"]
+	_, _, _ = x, y, z
+}
+
+// A failing return in a function that is not declared with !.
+func load() (Logger, error) {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return nil for the Logger result of a function not declared with !: declare it with ! or return Option[Logger]
+	return nil, nil
+}
+
+func loadFn() (func(), error) {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return nil for the func() result of a function not declared with !: declare it with ! or return Option[func()]
+	return nil, nil
+}
+
+func loadOk!() Logger {
+	return nil, ErrNo
+}
+
+var ErrNo error = codeErr{}
+
+// @Required: error / any / map / chan keep their meaning; a func or an
+// interface with methods are never nil already.
+type Fields struct {
+	E error          @Required
+	A any            @Required
+	M map[string]int @Required
+	C chan int       @Required
+	S []int          @Required
+	P unsafe.Pointer @Required
+	O Option[*int]   @Required
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: func() is never nil (a func has no nil); @Required isn't needed on field F
+	F func()         @Required
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: Logger is never nil (an interface with methods has no nil); @Required isn't needed on field L
+	L Logger         @Required
+}
+
+func moveOut(s *Server) {
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot move s.Log: the place would be left as zero bytes, and Logger has no zero value; use mem.Replace(&s.Log, v)
+	_ = move(s.Log)
+}

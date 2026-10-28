@@ -473,9 +473,24 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
       } else if (assignableTo(X, To->Elem, Cause)) {
         return true;
       }
+      // An Option[T] converts to an Option[I] for an interface I with
+      // methods that T implements: nil stays nil, a set value boxes (OWN-P9).
+      if (auto *From = dyn_cast<OptionType>(Vu))
+        if (neverNilKind(To->Elem) && isa<InterfaceType>(under(To->Elem)) &&
+            implements(X.pos(), From->Elem, To->Elem, false, nullptr))
+          return true;
     }
     if (auto *From = dyn_cast<OptionType>(Vu))
       if (isa<InterfaceType>(Tu)) {
+        // A nil Option becomes a nil interface, which only `error` and the
+        // empty interface have; an interface with methods is never nil, so
+        // the target there is an Option[I].
+        if (neverNilKind(T)) {
+          if (Cause)
+            *Cause = "an Option may be nil, and " + str(T) +
+                     " is never nil: convert it to Option[" + str(T) + "]";
+          return false;
+        }
         if (implements(X.pos(), From->Elem, T, false, Cause))
           return true;
         return false;
@@ -724,6 +739,13 @@ bool Checker::constConvertibleTo(Operand &X, Type *T, ConstValue *Val) {
 }
 
 void Checker::conversion(Operand &X, Type *T) {
+  // An interface type still being declared has no methods yet: anything
+  // converts to it (types2: an incomplete interface).
+  if (auto *N = dyn_cast<NamedType>(T); N && N->ResolvingInterface) {
+    X.M = Mode::Value;
+    X.Ty = T;
+    return;
+  }
   bool ConstArg = X.M == Mode::Constant;
   bool Ok = false;
   std::string Cause;
@@ -771,6 +793,8 @@ void Checker::conversion(Operand &X, Type *T) {
     X.M = Mode::Invalid;
     return;
   }
+  if (checkNilableToNeverNil(X, T))
+    return;
   if (isUntyped(X.Ty)) {
     Type *Final = T;
     if (isNonTypeParamInterface(T) || (ConstArg && !isConstType(T)))

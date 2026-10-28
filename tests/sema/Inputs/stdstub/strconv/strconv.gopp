@@ -1,0 +1,4 @@
+// Test-only stand-in for the standard package strconv (P13).
+package strconv
+
+func Atoi!(s string) int

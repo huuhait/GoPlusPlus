@@ -457,6 +457,7 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
       // into the payload of a checked Option.
       if (!isa<ast::Ident>(Inner))
         rejectPayloadAddress(Inner, "an `&` expression");
+      noteReference(Inner);
       checkAddressOf(Ex, X);
     }
     X.M = Mode::Value;
@@ -515,6 +516,10 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
 bool Checker::mayConvert(Operand &X, Operand &Y) {
   if (isTyped(X.Ty) && isTyped(Y.Ty))
     return false;
+  // `l == nil` for a never-nil type is reported by comparison().
+  if (own() &&
+      ((X.isNil() && neverNilKind(Y.Ty)) || (Y.isNil() && neverNilKind(X.Ty))))
+    return false;
   if (isNonTypeParamInterface(X.Ty) || isNonTypeParamInterface(Y.Ty))
     return true;
   if (allBoolean(X.Ty) != allBoolean(Y.Ty))
@@ -559,6 +564,11 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
       X.M = Mode::Invalid;
       return;
     }
+    if (const char *Why = neverNilKind(T)) {
+      err(X.isNil() ? Y : X, diag::err_nil_never_nil, {str(T), Why});
+      X.M = Mode::Invalid;
+      return;
+    }
   }
   bool Ok = assignableTo(X, Y.Ty, nullptr);
   if (!Ok)
@@ -571,6 +581,9 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
   auto IncomparableCause = [&](Type *T) {
     Type *U = under(T);
     if (isa<SliceType>(U) || isa<SignatureType>(U) || isa<MapType>(U)) {
+      if (own() && isa<SignatureType>(U))
+        return std::string(
+            "a func is never nil and cannot be compared (TYP-3)");
       const char *K = isa<SliceType>(U) ? "slice"
                       : isa<MapType>(U) ? "map"
                                         : "func";

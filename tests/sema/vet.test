@@ -58,35 +58,35 @@ func local() int {
 
 // OWN-R5: drop runs on the zero value too.
 type Res struct {
-	f func()
+	f error
 	n int
 }
 
 func (r *Res) drop() {
 	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field f is used without a nil check (OWN-R5)
-	r.f()
+	r.f.Error()
 }
 
 // A method that is not named drop is not a drop method.
-func (r *Res) release() { r.f() }
+func (r *Res) release() { r.f.Error() }
 
 type Guarded struct {
-	f func()
+	f error
 }
 
 func (r *Guarded) drop() {
 	if r.f != nil {
-		r.f()
+		r.f.Error()
 	}
 }
 
-type Guarded2 struct{ f func() }
+type Guarded2 struct{ f error }
 
 func (g *Guarded2) drop() {
 	if g.f == nil {
 		return
 	}
-	g.f()
+	g.f.Error()
 }
 
 // A pointer is never nil (ADR-0018), so a pointer field needs no check.
@@ -94,30 +94,33 @@ type Ptr struct{ f *File }
 
 func (p *Ptr) drop() { p.f.Stop() }
 
-type Owner struct{ f func() }
+type Owner struct{ f error }
 
 func (o *Owner) drop() {
 	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field f is used without a nil check (OWN-R5)
-	o.f()
+	o.f.Error()
 }
 
-// A @Required func or interface field is never nil (ADR-0016 point 8, drop
-// glue skips a moved-from value), so it needs no check either.
+// A @Required error field is never nil (ADR-0016 point 8, drop glue skips a
+// moved-from value), so it needs no check either. A func or an interface with
+// methods is never nil by its type (ADR-0018 amendment point 3).
 type Req struct {
-	f func()                     @Required
-	c interface{ Close() error } @Required
+	e error                      @Required
+	f func()
+	c interface{ Close() error }
 }
 
 func (r *Req) drop() {
+	_ = r.e.Error()
 	r.f()
 	_ = r.c.Close()
 }
 
-type Iface struct{ c interface{ Close() error } }
+type Iface struct{ c error }
 
 func (i *Iface) drop() {
 	// CHECK: vet.test:[[@LINE+1]]:6: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field c is used without a nil check (OWN-R5)
-	_ = i.c.Close()
+	_ = i.c.Error()
 }
 
 type Plain struct {

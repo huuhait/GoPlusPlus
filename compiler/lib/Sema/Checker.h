@@ -256,6 +256,12 @@ public:
   DiagnosticsEngine &Diags;
   unsigned NumErrors = 0;
   bool FirstErr = false;
+  /// types2's errpos: while an inherited constant initializer is checked, its
+  /// errors are reported at the constant's name.
+  SourceLoc ErrPos;
+  /// types2's arity check of a constant declaration.
+  void constArity(const ast::ValueSpec *VS, const ast::ValueSpec *Src,
+                  bool Inherited);
   bool Bodies = false; // body checker (phase 2)
 
   /// Per function environment (types2's `environment`).
@@ -322,6 +328,9 @@ public:
   bool comparableType(Type *T, bool Dynamic, SmallVector<const Type *, 4> *Seen,
                       std::string *Cause = nullptr);
   bool hasNil(Type *T);
+  /// Why T is never nil in Go++ mode (ADR-0018 points 1 and 3: a pointer kind,
+  /// a func, an interface with methods other than `error` itself), or null.
+  const char *neverNilKind(Type *T);
   /// `*T`, a type with underlying `*T`, or Unique/Shared/Weak (ADR-0018).
   bool isPointerKind(Type *T);
   Type *under(Type *T);    // expands instances
@@ -385,7 +394,17 @@ public:
   Type *sliceElem(const Operand &X, std::string &Err);
   bool typeParamIs(TypeParamType *P,
                    const std::function<bool(const Term *)> &F);
+  /// The size of T in bytes for the layout code and the width of unsigned
+  /// constants; 8 when T is too large.
   unsigned long long sizeofType(Type *T);
+  /// The gc sizes for amd64 (a port of types2's gcsizes.go); a negative size
+  /// or offset means the type is too large.
+  int64_t gcSizeof(Type *T);
+  int64_t gcAlignof(Type *T);
+  void gcOffsetsof(const StructType *S, llvm::SmallVectorImpl<int64_t> &Offs);
+  int64_t gcOffsetof(Type *T, llvm::ArrayRef<int> Index);
+  /// Whether the size of T depends on a type parameter (builtins.go).
+  bool hasVarSize(Type *T, llvm::DenseMap<NamedType *, bool> *Seen = nullptr);
 
   /// Recursion guard for checks that can chase infinitely expanding generic
   /// types (invalid programs); past the limit they give up quietly.
@@ -544,7 +563,8 @@ public:
   void exprList(ArrayRef<ast::Expr *> Es, SmallVector<Operand, 4> &Out);
   std::string tupleString(TupleType *T, bool Variadic);
   std::string typesSummary(ArrayRef<Type *> List, bool Variadic, bool HasDots);
-  std::string lookupError(Type *T, StringRef Sel, Object *Alt);
+  std::string lookupError(Type *T, StringRef Sel, Object *Alt,
+                          bool StructLit = false);
   Func *syntheticMethod(StringRef Name, ArrayRef<Type *> Results,
                         SourceLoc Pos);
   /// Whether a value of type T (the value of a checked Option) has a field
@@ -817,6 +837,11 @@ public:
   /// that may name a never-nil field), and its second argument when it is the
   /// literal nil.
   const ast::Expr *ReplaceArg = nullptr, *ReplaceNil = nullptr;
+  /// The never-nil field whose address that call takes (when its second
+  /// argument is not the literal nil), and how to name it: the new value
+  /// must be known non-nil (TYP-15).
+  const Var *ReplaceField = nullptr;
+  std::string ReplacePlace;
   /// True if Fun is `mem.Replace` (package path "mem"; the package is P05's,
   /// a module may provide it until then).
   bool isMemReplace(const ast::Expr *Fun);
@@ -838,6 +863,19 @@ public:
   // literal starts empty.
   struct FlowState {
     llvm::SmallPtrSet<const Var *, 8> N;
+    /// Checked results and comma-ok values (P03.18, ADR-0018 point 4): the
+    /// locals whose value may be invalid right now (their type has no zero
+    /// value and the `err` / `ok` that came with them is not known good),
+    /// each with the guard variable whose good state makes them valid
+    /// (null: nothing can, until the variable is assigned again).
+    llvm::DenseMap<const Var *, const Var *> Pend;
+    /// The tentative entries of Pend: put there at a loop head or a goto
+    /// label for a variable that a multi-value assignment of the loop or body
+    /// binds again, before that assignment is checked. The entry is real if
+    /// one of the regions (indices into FlowRegions) holds an assignment that
+    /// the checker classifies as a checked form binding the variable
+    /// (RealForms); a use of it is decided at the end of the body (TentUses).
+    llvm::DenseMap<const Var *, SmallVector<unsigned, 2>> Tent;
     bool Dead = false; // unreachable: everything counts as known
   };
   struct FlowFacts {
@@ -851,6 +889,116 @@ public:
     bool HasBreak = false;
   };
   FlowState Cur;
+  /// Checked results (P03.18, Flow.cpp): the locals of the outermost body
+  /// being checked that a checked-result or comma-ok form bound, and how to
+  /// say what makes each valid.
+  llvm::SmallPtrSet<const Var *, 8> GuardedVars;
+  llvm::DenseMap<const Var *, std::string> GuardText;
+  /// Variables given a guard by the statement being checked (applied at its
+  /// end, after the kills of the variables it assigns).
+  SmallVector<std::pair<const Var *, const Var *>, 4> PendingGuards;
+  /// Uses of captured variables with no zero value in function literals of
+  /// the outermost body: errors if a form binds the variable anywhere.
+  SmallVector<std::pair<const ast::Ident *, const Var *>, 4> CapturedUses;
+  /// The locals of the outermost body that a reference into their storage
+  /// was taken of (`&v`, `&v.F`, a pointer-receiver method value, ...), where
+  /// first; and the forms that bind an existing local again. A form that can
+  /// fail must not bind a variable a reference can still see.
+  llvm::DenseMap<const Var *, SourceLoc> RefTaken;
+  struct Rebinding {
+    const ast::Expr *At;
+    const Var *V;
+    std::string Rhs, What;
+  };
+  SmallVector<Rebinding, 2> Rebindings;
+  /// A reference into the storage of the place Ex is made (it can outlive
+  /// the statement).
+  void noteReference(const ast::Expr *Ex);
+  /// The value names of the multi-value assignments of the body being
+  /// checked, when it has a goto (a label may be reached again after any of
+  /// them), and the region of those assignments (-1: none).
+  SmallVector<std::string, 4> LabelForms;
+  int LabelRegion = -1;
+  /// The right sides of the multi-value assignments of each loop or label
+  /// region of the outermost body (see FlowState::Tent).
+  SmallVector<llvm::SmallPtrSet<const ast::Expr *, 4>, 4> FlowRegions;
+  /// (right side, local) for every checked form that bound a local: the
+  /// checker's own classification (noteGuardedForm).
+  llvm::DenseSet<std::pair<const ast::Expr *, const Var *>> RealForms;
+  /// A read of a tentatively pending value, with the regions that decide it.
+  struct TentUse {
+    const ast::Ident *Id;
+    const Var *V;
+    std::string Why;
+    SmallVector<unsigned, 2> Regions;
+  };
+  SmallVector<TentUse, 4> TentUses;
+  /// Report the TentUses from Top on whose variable a checked form of one of
+  /// their regions binds (the end of a body, when every form is checked).
+  void flowDecideTentative(size_t Top);
+  /// Selector names used on each plain name in the body (`x.M`): a
+  /// pointer-receiver method among them takes the address of x implicitly.
+  llvm::StringMap<llvm::StringSet<>> MethodSels;
+  bool takesImplicitAddress(const Var *V);
+  /// `return f()` / `h(f())`: the values Ops of a checked form Call handed on
+  /// as they are, into Into. LastInto is the type of the receiving slot of
+  /// the form's guard (null for the arguments of a call).
+  void checkForwarded(const ast::Expr *Call, ArrayRef<Operand> Ops,
+                      Type *LastInto, const char *Into);
+  /// The identifier written (not read) by the assignment being checked.
+  const ast::Expr *NoGuardExpr = nullptr;
+  const ast::Ident *LastGuardErr = nullptr;
+  bool AssignReadsLhs = false; // `x op= y` reads x
+  enum class GuardKind { None, Err, Ok };
+  void checkSpreadCall(const ast::Expr *Ex, ArrayRef<Operand> Ops);
+  /// An `error` (maybe nil) converted to an interface with methods (never
+  /// nil), where it is not known set: report it, return true.
+  bool checkNilableToNeverNil(Operand &X, Type *T);
+  /// What kind of checked form `v, x := Rhs` (operands Ops) is.
+  GuardKind guardKindOf(const ast::Expr *Rhs, ArrayRef<Operand> Ops,
+                        bool CommaOk);
+  /// Bind the value targets of a checked form to their guard (end of the
+  /// statement), or report a value stored where nothing can check it. Vars[k]
+  /// is the local target k (null for a blank or a place); Places[k] its
+  /// expression (null when unknown).
+  void noteGuardedForm(ArrayRef<Var *> Vars, ArrayRef<const ast::Expr *> Places,
+                       const ast::Expr *Rhs, ArrayRef<Operand> Ops,
+                       bool CommaOk);
+  /// "it is valid only where G == nil: check ... first" for the guard G.
+  std::string guardHint(const Var *G);
+  /// Report a read of a local whose value may be invalid here.
+  void guardedUse(const ast::Ident *Id, Var *V);
+  /// The checks that need every form of the outermost body (at its end): the
+  /// CapturedUses of checked results and the Rebindings of referenced ones.
+  void flowEndBody();
+  /// The narrowable local of type error or bool Ex names (a guard).
+  Var *guardVarOf(const ast::Expr *Ex);
+  /// The local of this function that Name denotes at Pos if its type has no
+  /// zero value (it can hold a checked result), or null.
+  Var *checkableLocal(StringRef Name, SourceLoc Pos);
+  /// The narrowable local of a nilable type (error, any, map, channel) or
+  /// Option Ex names: `x != nil` makes it known non-nil.
+  Var *nilCheckVarOf(const ast::Expr *Ex);
+  /// Ex is known to be non-nil as the value of a never-nil @Required error,
+  /// any, map or channel field (TYP-15's list). Target is the field's type.
+  bool knownNonNil(const ast::Expr *Ex, Type *Target, Type *SrcTy = nullptr);
+  /// A store of X into the never-nil @Required field Fld (Place names it).
+  void checkNeverNilStore(const Operand &X, const Var *Fld,
+                          const std::string &Place);
+  /// The values that a condition on the guard G is a fact about.
+  void addGuarded(const Var *G, llvm::SmallPtrSetImpl<const Var *> &Into);
+  void flowAddTo(FlowState &S, const llvm::SmallPtrSetImpl<const Var *> &Vars);
+  /// The state after a label that a goto names (at Pos): nothing is known.
+  void flowReset(SourceLoc Pos);
+  /// The loop head: what is known before the loop minus what it assigns.
+  void flowLoopHead(const ast::Node *Loop, SourceLoc BodyPos);
+  /// The values that the statements Ns rebind with a multi-value assignment
+  /// are pending (tentatively, until it is known which are checked forms)
+  /// when control comes back to Pos from their end (a loop head, a post
+  /// statement).
+  void flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos);
+  /// GuardText of V when its guard G stops guarding it ("G <What>, so ...").
+  void untieText(const Var *V, const Var *G, StringRef What);
   SmallVector<FlowTarget, 4> Targets;
   /// The label of the statement about to be checked (for `break L`).
   std::string PendingLabel;

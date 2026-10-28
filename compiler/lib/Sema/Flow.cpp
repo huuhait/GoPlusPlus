@@ -31,8 +31,10 @@
 // Info::Types holds T for a narrowed use of `o` (Info::Uses still maps it to
 // the Var, whose type is Option[T]); see Info::narrowedType. GIR lowering
 // (P04) and the language server (P14) read it from there. The same machinery
-// (facts of a condition, kill on assignment, meet at joins) is what P04.09's
-// flow checks need for comma-ok (`!ok` is a move) and for `v, err := f()`.
+// (facts of a condition, kill on assignment, meet at joins) checks the values
+// of `v, err := f()` and of the comma-ok forms (P03.18, at the end of this
+// file), and a local of type error, any, map or channel checked with `!= nil`
+// is a fact too (TYP-15's known non-nil values).
 //
 // References into the payload. `o = nil` or `move(o)` leaves zero bytes in
 // the payload storage, and for a T with no zero value (a never-nil pointer
@@ -62,6 +64,7 @@ using namespace gopp::sema;
 using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
 using llvm::isa;
+using llvm::isa_and_nonnull;
 
 static const ast::Expr *unparen(const ast::Expr *E) {
   while (auto *P = dyn_cast<ParenExpr>(E))
@@ -93,7 +96,25 @@ bool Checker::narrowable(const Var *V) {
   // it is a place too. A trivial element is a copy and narrows.
   return V && !V->IsPackageLevel && !V->IsField && V->Mode != Var::Alias &&
          !(V->LoopVar && V->Mode == Var::Borrowed) &&
-         V->FuncOwner == E.FuncId && !NoNarrowNames.count(V->Name);
+         V->FuncOwner == E.FuncId && !NoNarrowNames.count(V->Name) &&
+         !takesImplicitAddress(V);
+}
+
+/// `x.M()` / `x.M` / `go x.M()` with a pointer-receiver M takes the address of
+/// the variable x as `&x` does (the callee can write x). The scan of the body
+/// (AssignScan) records the selector names used on each name; the type of x,
+/// known here, tells which of them are pointer-receiver methods.
+bool Checker::takesImplicitAddress(const Var *V) {
+  auto It = MethodSels.find(V->Name);
+  if (It == MethodSels.end() || !V->Ty || !isValid(V->Ty) ||
+      isa<PointerType>(under(V->Ty)))
+    return false;
+  for (auto &Sel : It->second) {
+    LookupResult R = lookupFieldOrMethod(V->Ty, true, S.Pkg, Sel.first());
+    if (auto *F = dyn_cast_or_null<Func>(R.Obj); F && F->HasPtrRecv)
+      return true;
+  }
+  return false;
 }
 
 Type *Checker::narrowedType(const ast::Ident *Id, Var *V, Type *T) {
@@ -113,6 +134,33 @@ Var *Checker::optionVarOf(const ast::Expr *Ex) {
   if (!V || !V->Ty || !isa<OptionType>(under(V->Ty)) || !narrowable(V))
     return nullptr;
   return V;
+}
+
+Var *Checker::guardVarOf(const ast::Expr *Ex) {
+  auto *Id = dyn_cast<ast::Ident>(unparen(Ex));
+  if (!Id)
+    return nullptr;
+  auto *V = dyn_cast_or_null<Var>(I.Uses.lookup(Id));
+  if (!V || !V->Ty || !narrowable(V))
+    return nullptr;
+  if (identical(V->Ty, Ctx.errorType()) || allBoolean(V->Ty))
+    return V;
+  return nullptr;
+}
+
+Var *Checker::nilCheckVarOf(const ast::Expr *Ex) {
+  if (Var *V = optionVarOf(Ex))
+    return V;
+  auto *Id = dyn_cast<ast::Ident>(unparen(Ex));
+  if (!Id)
+    return nullptr;
+  auto *V = dyn_cast_or_null<Var>(I.Uses.lookup(Id));
+  if (!V || !V->Ty || !narrowable(V) || !hasNil(V->Ty))
+    return nullptr;
+  Type *U = under(V->Ty);
+  if (isa<InterfaceType>(U) || isa<sema::MapType>(U) || isa<sema::ChanType>(U))
+    return V;
+  return nullptr;
 }
 
 Var *Checker::payloadOption(const ast::Expr *Ex) {
@@ -189,12 +237,57 @@ Checker::FlowState Checker::flowJoin(const FlowState &A, const FlowState &B) {
   for (const Var *V : A.N)
     if (B.N.count(V))
       R.N.insert(V);
+  // A value that may be invalid on either path may be invalid after. Where
+  // the paths name different guards, no guard makes it valid.
+  for (auto &KV : A.Pend) {
+    auto It = B.Pend.find(KV.first);
+    R.Pend[KV.first] =
+        It == B.Pend.end() || It->second == KV.second ? KV.second : nullptr;
+  }
+  for (auto &KV : B.Pend)
+    if (!A.Pend.count(KV.first))
+      R.Pend[KV.first] = KV.second;
+  // A value is tentative after the join only if it is tentative on every path
+  // where it is pending; it is real if any of their regions makes it real.
+  for (auto &KV : R.Pend) {
+    const Var *V = KV.first;
+    auto TA = A.Tent.find(V), TB = B.Tent.find(V);
+    bool InA = A.Pend.count(V), InB = B.Pend.count(V);
+    if ((InA && TA == A.Tent.end()) || (InB && TB == B.Tent.end()))
+      continue;
+    SmallVector<unsigned, 2> Rs;
+    if (InA)
+      Rs.append(TA->second.begin(), TA->second.end());
+    if (InB)
+      Rs.append(TB->second.begin(), TB->second.end());
+    llvm::sort(Rs);
+    Rs.erase(std::unique(Rs.begin(), Rs.end()), Rs.end());
+    R.Tent[V] = std::move(Rs);
+  }
   return R;
 }
 
+void Checker::flowAddTo(FlowState &S,
+                        const llvm::SmallPtrSetImpl<const Var *> &Vars) {
+  for (const Var *V : Vars) {
+    // A checked result named by a fact is valid; an Option or a nilable local
+    // is known set.
+    if (S.Pend.erase(V))
+      S.Tent.erase(V);
+    else
+      S.N.insert(V);
+  }
+}
+
 void Checker::flowAdd(const llvm::SmallPtrSetImpl<const Var *> &Vars) {
-  for (const Var *V : Vars)
-    Cur.N.insert(V);
+  flowAddTo(Cur, Vars);
+}
+
+void Checker::addGuarded(const Var *G,
+                         llvm::SmallPtrSetImpl<const Var *> &Into) {
+  for (auto &KV : Cur.Pend)
+    if (KV.second == G)
+      Into.insert(KV.first);
 }
 
 void Checker::flowFacts(const ast::Expr *Cond, FlowFacts &Out) {
@@ -219,6 +312,12 @@ void Checker::flowFacts(const ast::Expr *Cond, FlowFacts &Out) {
 
 void Checker::flowFactsRec(const ast::Expr *Cond, FlowFacts &Out) {
   Cond = unparen(Cond);
+  // `ok`: the values that came with ok are valid when it is true.
+  if (isa<ast::Ident>(Cond)) {
+    if (Var *G = guardVarOf(Cond); G && allBoolean(G->Ty))
+      addGuarded(G, Out.True);
+    return;
+  }
   if (auto *U = dyn_cast<UnaryExpr>(Cond)) {
     if (U->Op == tok::not_) {
       FlowFacts In;
@@ -236,9 +335,13 @@ void Checker::flowFactsRec(const ast::Expr *Cond, FlowFacts &Out) {
         Other = B->X;
       else if (isNilLit(B->X))
         Other = B->Y;
-      if (Other)
-        if (Var *V = optionVarOf(Other))
+      if (Other) {
+        if (Var *V = nilCheckVarOf(Other))
           (B->Op == tok::neq ? Out.True : Out.False).insert(V);
+        // The values that came with err are valid where `err == nil`.
+        if (Var *G = guardVarOf(Other); G && !allBoolean(G->Ty))
+          addGuarded(G, B->Op == tok::eql ? Out.True : Out.False);
+      }
       return;
     }
     if (B->Op == tok::land || B->Op == tok::lor) {
@@ -296,6 +399,52 @@ struct AssignScan {
   llvm::StringSet<> AddrTaken; // &name anywhere
   llvm::StringSet<> Gotos;     // goto targets
   llvm::StringSet<> Moved;     // move(name): the variable is nil afterwards
+  /// Selector names used on a plain name: `x.M` (see takesImplicitAddress).
+  llvm::StringMap<llvm::StringSet<>> MethodSels;
+  /// `a, b, g = rhs` with one right-hand side: a possible checked-result or
+  /// comma-ok form (values Vals, guard Guard = the last target; "_" for a
+  /// target that is not a plain name, a field, an element, `*p`). Whether it
+  /// is one is known only when the checker classifies the typed statement
+  /// (noteGuardedForm records it in RealForms under the right side Rhs).
+  /// Define: a `:=` (it can rebind a variable only in its own scope);
+  /// InClosure: inside a function literal. ValInner / GuardInner: the name
+  /// was declared earlier inside the scanned statements, in a scope around
+  /// the form, so the form binds that inner variable and not the one of the
+  /// same name outside.
+  struct Form {
+    SmallVector<std::string, 2> Vals;
+    SmallVector<bool, 2> ValInner;
+    std::string Guard;
+    bool GuardInner = false;
+    bool Define = false, InClosure = false;
+    const ast::Expr *Rhs = nullptr; // unparenthesized
+    /// The form assigns the variable Nm from outside the scanned statements.
+    bool bindsOuter(StringRef Nm) const {
+      if (Define)
+        return false;
+      for (size_t K = 0; K < Vals.size(); ++K)
+        if (Vals[K] == Nm && !ValInner[K])
+          return true;
+      return false;
+    }
+  };
+  SmallVector<Form, 4> Forms;
+  llvm::StringSet<> Other; // assigned outside the roles of a form
+  /// The names declared inside the scanned statements, one set per open
+  /// scope.
+  SmallVector<llvm::StringSet<>, 8> Scopes;
+  bool declaredInside(StringRef Nm) const {
+    for (const llvm::StringSet<> &Sc : Scopes)
+      if (Sc.count(Nm))
+        return true;
+    return false;
+  }
+  void declare(const ast::Expr *E) {
+    while (auto *P = dyn_cast_or_null<ParenExpr>(E))
+      E = P->X;
+    if (auto *Id = dyn_cast_or_null<ast::Ident>(E); Id && !Scopes.empty())
+      Scopes.back().insert(Id->Name.str());
+  }
   void addLhs(const ast::Expr *E, llvm::StringSet<> &Into) {
     while (auto *P = dyn_cast_or_null<ParenExpr>(E))
       E = P->X;
@@ -305,20 +454,57 @@ struct AssignScan {
   void walk(const ast::Node *N, unsigned ClosureDepth) {
     if (!N)
       return;
+    bool Scope = isa<BlockStmt>(N) || isa<IfStmt>(N) || isa<ForStmt>(N) ||
+                 isa<RangeStmt>(N) || isa<SwitchStmt>(N) ||
+                 isa<TypeSwitchStmt>(N) || isa<CaseClause>(N) ||
+                 isa<CommClause>(N);
+    if (Scope)
+      Scopes.emplace_back();
     if (auto *AS = dyn_cast<AssignStmt>(N)) {
+      bool IsForm = AS->Lhs.size() >= 2 && AS->Rhs.size() == 1 &&
+                    (AS->Op == tok::assign || AS->Op == tok::define);
+      if (IsForm) {
+        Form F;
+        F.Define = AS->Op == tok::define;
+        F.InClosure = ClosureDepth != 0;
+        F.Rhs = unparen(AS->Rhs[0]);
+        for (size_t K = 0; K < AS->Lhs.size(); ++K) {
+          auto *Id = dyn_cast<ast::Ident>(unparen(AS->Lhs[K]));
+          std::string Nm = Id ? std::string(Id->Name.str()) : std::string("_");
+          bool Inner = Id && declaredInside(Nm);
+          if (K + 1 == AS->Lhs.size()) {
+            F.Guard = Nm;
+            F.GuardInner = Inner;
+          } else {
+            F.Vals.push_back(Nm);
+            F.ValInner.push_back(Inner);
+          }
+        }
+        Forms.push_back(std::move(F));
+      }
       for (const ast::Expr *L : AS->Lhs) {
+        // (A form that is not a checked one stores valid values: it is
+        // counted as a possible form, which is the cautious side.)
+        if (!IsForm)
+          addLhs(L, Other);
         addLhs(L, Assigned);
         if (ClosureDepth)
           addLhs(L, InClosure);
       }
     } else if (auto *ID = dyn_cast<IncDecStmt>(N)) {
       addLhs(ID->X, Assigned);
+      addLhs(ID->X, Other);
       if (ClosureDepth)
         addLhs(ID->X, InClosure);
     } else if (auto *RS = dyn_cast<RangeStmt>(N)) {
-      if (RS->Op != tok::define) {
+      if (RS->Op == tok::define) {
+        declare(RS->Key);
+        declare(RS->Value);
+      } else {
         addLhs(RS->Key, Assigned);
         addLhs(RS->Value, Assigned);
+        addLhs(RS->Key, Other);
+        addLhs(RS->Value, Other);
         if (ClosureDepth) {
           addLhs(RS->Key, InClosure);
           addLhs(RS->Value, InClosure);
@@ -329,6 +515,7 @@ struct AssignScan {
       if (U->Op == tok::and_) {
         addLhs(U->X, Assigned);
         addLhs(U->X, AddrTaken);
+        addLhs(U->X, Other);
       }
     } else if (auto *C = dyn_cast<CallExpr>(N)) {
       if (auto *F = dyn_cast<ast::Ident>(unparen(C->Fun));
@@ -339,29 +526,73 @@ struct AssignScan {
         if (ClosureDepth)
           addLhs(C->Args[0], InClosure);
       }
+    } else if (auto *Sx = dyn_cast<SelectorExpr>(N)) {
+      if (auto *Id = dyn_cast<ast::Ident>(unparen(Sx->X)); Id && Sx->Sel)
+        MethodSels[Id->Name.str()].insert(Sx->Sel->Name.str());
     } else if (auto *Br = dyn_cast<BranchStmt>(N)) {
       if (Br->Keyword == tok::kw_goto && Br->Label)
         Gotos.insert(Br->Label->Name.str());
     }
     unsigned D = ClosureDepth + (isa<FuncLit>(N) ? 1 : 0);
     ast::forEachChild(N, [&](const char *, const ast::Node *C) { walk(C, D); });
+    // A declaration is in scope after its statement.
+    if (auto *AS = dyn_cast<AssignStmt>(N); AS && AS->Op == tok::define)
+      for (const ast::Expr *L : AS->Lhs)
+        declare(L);
+    if (auto *DS = dyn_cast<DeclStmt>(N))
+      if (auto *GD = dyn_cast<GenDecl>(DS->D))
+        for (const ast::Spec *Sp : GD->Specs)
+          if (auto *VS = dyn_cast<ValueSpec>(Sp))
+            for (const ast::Ident *Id : VS->Names)
+              declare(Id);
+    if (Scope)
+      Scopes.pop_back();
   }
 };
 } // namespace
 
 void Checker::flowBeginBody(const BlockStmt *Body) {
   NoNarrowNames.clear();
+  MethodSels.clear();
   GotoLabels.clear();
   if (!own() || !Body)
     return;
   AssignScan Scan;
   Scan.walk(Body, 0);
+  // The checked results belong to the outermost body (a function literal sees
+  // them as captured variables). E is still the enclosing function's here.
+  if (!E.FuncId) {
+    GuardedVars.clear();
+    GuardText.clear();
+    CapturedUses.clear();
+    RefTaken.clear();
+    Rebindings.clear();
+    FlowRegions.clear();
+    RealForms.clear();
+  }
   for (auto &KV : Scan.InClosure)
     NoNarrowNames.insert(KV.first());
   for (auto &KV : Scan.AddrTaken)
     NoNarrowNames.insert(KV.first());
   for (auto &KV : Scan.Gotos)
     GotoLabels.insert(KV.first());
+  for (auto &KV : Scan.MethodSels)
+    for (auto &Sel : KV.second)
+      MethodSels[KV.first()].insert(Sel.first());
+  // A goto can bring back any value that a form of this body binds.
+  LabelForms.clear();
+  LabelRegion = -1;
+  if (Scan.Gotos.empty())
+    return;
+  llvm::SmallPtrSet<const ast::Expr *, 4> Region;
+  for (const AssignScan::Form &F : Scan.Forms)
+    if (!F.InClosure) {
+      Region.insert(F.Rhs);
+      for (const std::string &V : F.Vals)
+        LabelForms.push_back(V);
+    }
+  LabelRegion = static_cast<int>(FlowRegions.size());
+  FlowRegions.push_back(std::move(Region));
 }
 
 void Checker::collectAssigned(const ast::Node *N, llvm::StringSet<> &Names) {
@@ -377,7 +608,7 @@ void Checker::collectAssigned(const ast::Node *N, llvm::StringSet<> &Names) {
 void Checker::flowMoved(const ast::Expr *Arg) {
   if (!own())
     return;
-  if (Var *V = optionVarOf(Arg)) {
+  if (Var *V = nilCheckVarOf(Arg)) {
     MoveLog.push_back(V);
     if (!Cur.Dead)
       Cur.N.erase(V);
@@ -403,9 +634,27 @@ void Checker::flowKillNames(const llvm::StringSet<> &Names) {
 }
 
 void Checker::flowFlushKills() {
-  for (const Var *V : PendingKills)
+  for (const Var *V : PendingKills) {
     Cur.N.erase(V);
+    // What V guarded is not tied to it any more; V itself is a fresh value.
+    Cur.Pend.erase(V);
+    Cur.Tent.erase(V);
+    for (auto &KV : Cur.Pend)
+      if (KV.second == V) {
+        KV.second = nullptr;
+        // (A value this statement binds again keeps the text of its form.)
+        if (!llvm::any_of(PendingGuards,
+                          [&](const auto &PG) { return PG.first == KV.first; }))
+          untieText(KV.first, V, "was assigned again");
+      }
+  }
   PendingKills.clear();
+  for (auto &PG : PendingGuards) {
+    GuardedVars.insert(PG.first);
+    Cur.Pend[PG.first] = PG.second;
+    Cur.Tent.erase(PG.first);
+  }
+  PendingGuards.clear();
 }
 
 //===----------------------------------------------------------------------===//
@@ -443,4 +692,492 @@ void Checker::flowBranch(const ast::BranchStmt *B) {
   // what holds on every path (see forStmt); the label a goto names resets
   // the state.
   flowDead();
+}
+
+//===----------------------------------------------------------------------===//
+// Checked results and comma-ok values (P03.18, ADR-0018 amendment point 4)
+//
+// `v, err := f()` for a call whose type ends in `error`, and the comma-ok
+// forms `v, ok := m[k]`, `<-ch`, `x.(T)` and `o.Get()`, give v a value that is
+// valid only where err is nil / ok is true, when v's type has no zero value
+// (a failing call leaves nothing in v; a missing key or a closed channel has
+// nothing to give). This is the Option machinery read the other way round:
+// FlowState::Pend holds the locals that may be invalid here, each with the
+// guard (its err / ok) whose good state makes it valid. A condition on the
+// guard is a fact about those values (flowFactsRec), so early exits, `&&` and
+// `||`, switches, loops and joins work as they do for an Option; after a
+// join a value is pending if it is pending on either path.
+//
+// Every way to break the rule (lesson 3), each handled in one place:
+//  1. v assigned again: a plain assignment stores a valid value; a form makes
+//     v pending again, tied to its new guard (flowFlushKills: the kills of
+//     the statement, then its guards).
+//  2. The guard assigned again (`err = nil`, `x, err := g()`, `err++`, a
+//     range clause): the kill unties every value pending on it, so a check
+//     of the new err says nothing about an old v (flowFlushKills).
+//  3. The guard assigned in a function literal, or its address taken: it is
+//     not narrowable, so no fact comes out of it (guardVarOf) and a form ties
+//     nothing to it (noteGuardedForm).
+//  4. Shadowing: facts and ties are by Var; the scans of 5 and 6 go by name,
+//     and a loop scan knows which names the loop declares itself.
+//  5. A loop: a later pass comes back to the head (and to a for loop's post
+//     statement) with what the loop rebinds in a form, so each such value is
+//     pending there, tied to its guard only if every form that binds it names
+//     that guard and nothing else assigns it; a pending value whose guard the
+//     loop assigns otherwise is untied (flowRebound). This also covers a
+//     variable that becomes a checked result only inside the loop (`v := &x;
+//     for { use(v); v, err = f() }`).
+//  6. A goto: the label starts with nothing known, and every value that a
+//     form of the body binds is pending with no guard (flowReset).
+//     In 5 and 6 the head or label comes before the forms are checked, so
+//     which multi-value assignments are checked forms is not known yet: the
+//     scan takes every one as possible, and the value is pending there
+//     tentatively (FlowState::Tent, one region per loop or label). Only the
+//     checker's own classification of the typed statement decides
+//     (noteGuardedForm records it in RealForms); at the end of the body a
+//     read of a tentative value is reported if a checked form of its region
+//     binds that variable (flowDecideTentative), in body order.
+//  7. A function literal may run at any time: a captured checked result is
+//     never known valid in it (CLO-9, as for an Option), whether the form
+//     that binds it comes before or after the literal. Such uses are
+//     reported at the end of the outermost body, when every form has been
+//     seen (flowEndBody).
+//  8. A reference into v's storage that outlives its statement (`&v`, `&v.F`,
+//     a pointer-receiver method value or go / defer call, a slice of an array
+//     in v, an `&` range variable over one: noteReference, at the places
+//     that also guard an Option's payload) would see the value a failed form
+//     leaves when v is bound again: such a form is an error (flowEndBody, in
+//     either order; a form that declares v makes a new variable).
+//  9. v stored where nothing can check it (a field, an element, a package or
+//     a captured variable: `s.F, err = f()`), or handed on as they are (the
+//     arguments of a call `h(f())`, the results of a function `return f()`,
+//     `return o.Get()`, in a plain or a `!` function) into a receiver that is
+//     not the same kind of checked form: an error at the store
+//     (noteGuardedForm, checkForwarded).
+// 10. The error or ok dropped (`v, _ := f()`), or kept where it cannot be
+//     checked (a package variable, a variable of another type): v is pending
+//     with no guard until it is assigned again.
+// 11. `&v`, `move(v)`, `v.F = x` and `v.F += x` read v and are checked like
+//     any use; only the variable itself as an assignment target is not a
+//     read (NoGuardExpr). The place is empty after `move(v)`, which is the
+//     use-after-move rule of P04.09.
+//===----------------------------------------------------------------------===//
+
+Checker::GuardKind Checker::guardKindOf(const ast::Expr *Rhs,
+                                        ArrayRef<Operand> Ops, bool CommaOk) {
+  if (!own() || !Rhs || Ops.size() < 2)
+    return GuardKind::None;
+  if (CommaOk)
+    return GuardKind::Ok;
+  auto *Call = dyn_cast<CallExpr>(unparen(Rhs));
+  if (!Call)
+    return GuardKind::None;
+  // Only a last result identical to `error` is a guard. A type parameter
+  // that is instantiated with `error` (`call[error](loadN)`) is not seen here:
+  // the P04.08 per-instance check (also run by `gopp check`) covers it.
+  if (Ops.back().Ty && identical(Ops.back().Ty, Ctx.errorType()))
+    return GuardKind::Err;
+  // `v, ok := o.Get()` of an Option.
+  if (Ops.size() == 2)
+    if (auto *Sel = dyn_cast<SelectorExpr>(unparen(Call->Fun))) {
+      auto It = I.Selections.find(Sel);
+      if (It != I.Selections.end())
+        if (auto *F = dyn_cast_or_null<Func>(It->second.Obj);
+            F && F->IsBuiltinMethod && F->Name == "Get")
+          return GuardKind::Ok;
+    }
+  return GuardKind::None;
+}
+
+/// `return f()`, `return o.Get()` and `h(f())` hand the values of a checked
+/// form on as they are. That is safe only when the receiver is itself the
+/// same kind of checked form for them: a result list whose last result is
+/// `error`, at the place of the call's error, so that the caller's
+/// `v, err :=` (or `v := f!()`) checks them. No receiver is a comma-ok form,
+/// and the parameters of a call are plain variables of the callee. Otherwise
+/// a value that nothing checked is handed on as valid (ERR-3, OWN-P10).
+void Checker::checkForwarded(const ast::Expr *Call, ArrayRef<Operand> Ops,
+                             Type *LastInto, const char *Into) {
+  GuardKind K = guardKindOf(Call, Ops, false);
+  if (K == GuardKind::None)
+    return;
+  if (K == GuardKind::Err && LastInto && identical(LastInto, Ctx.errorType()))
+    return;
+  bool Err = K == GuardKind::Err;
+  std::string Place(Into);
+  if (Err && LastInto)
+    Place += " (they do not end in error)";
+  for (size_t Kx = 0; Kx + 1 < Ops.size(); ++Kx)
+    if (Ops[Kx].Ty && isValid(Ops[Kx].Ty) && !hasZeroValue(Ops[Kx].Ty)) {
+      err(Call, diag::err_unchecked_store,
+          {str(Call), Place, Err ? "err == nil" : "ok is true"});
+      return;
+    }
+}
+
+void Checker::noteGuardedForm(ArrayRef<Var *> Vars,
+                              ArrayRef<const ast::Expr *> Places,
+                              const ast::Expr *Rhs, ArrayRef<Operand> Ops,
+                              bool CommaOk) {
+  GuardKind K = guardKindOf(Rhs, Ops, CommaOk);
+  if (K == GuardKind::None || Vars.size() != Ops.size() ||
+      Places.size() != Ops.size())
+    return;
+  size_t N = Ops.size();
+  Var *G = Vars[N - 1];
+  bool Err = K == GuardKind::Err;
+  bool GoodGuard =
+      G && G->Name != "_" && !G->IsPackageLevel && narrowable(G) &&
+      (Err ? identical(G->Ty, Ctx.errorType()) : G->Ty && allBoolean(G->Ty));
+  for (size_t Kx = 0; Kx + 1 < N; ++Kx) {
+    Type *T = Ops[Kx].Ty;
+    if (!T || !isValid(T) || hasZeroValue(T))
+      continue;
+    Var *V = Vars[Kx];
+    bool Blank = V ? V->Name == "_" : !Places[Kx];
+    if (Blank)
+      continue;
+    std::string What = Err ? "err == nil" : "ok is true";
+    if (G && GoodGuard)
+      What = Err ? std::string(G->Name) + " == nil"
+                 : std::string(G->Name) + " is true";
+    // Only a local can be checked later; an `&` range alias is the element
+    // itself (RNG-1a), so it is a place too.
+    if (!V || V->IsPackageLevel || V->FuncOwner != E.FuncId ||
+        V->Mode == Var::Alias) {
+      std::string Place = Places[Kx] ? str(Places[Kx]) : std::string(V->Name);
+      err(Places[Kx] ? Places[Kx] : Rhs, diag::err_unchecked_store,
+          {str(Rhs), Place, What});
+      continue;
+    }
+    PendingGuards.push_back({V, GoodGuard ? G : nullptr});
+    RealForms.insert({unparen(Rhs), V});
+    // The form binds an existing variable again (not one it declares): a
+    // reference into it taken anywhere could see the value after a failure.
+    // (A read-only binding cannot be assigned at all; that is reported.)
+    if (!V->OptionBinding && V->Mode != Var::Borrowed &&
+        E.Sc->lookup(V->Name, Rhs->getBegin()) == V)
+      Rebindings.push_back({Rhs, V, str(Rhs), What});
+    if (GoodGuard)
+      GuardText[V] = guardHint(G);
+    else if (G && G->Name != "_")
+      GuardText[V] = std::string("nothing can check it: its ") +
+                     (Err ? "error" : "ok") + " goes into " +
+                     std::string(G->Name) + ", which is not a local " +
+                     (Err ? "error" : "bool") +
+                     " variable that only this function assigns";
+    else
+      GuardText[V] = std::string("its ") + (Err ? "error" : "ok") +
+                     " result is dropped: keep it in a variable and check it";
+  }
+}
+
+std::string Checker::guardHint(const Var *G) {
+  std::string GN(G->Name);
+  if (allBoolean(G->Ty))
+    return "it is valid only where " + GN + " is true: check `if !" + GN +
+           " { return }` first";
+  return "it is valid only where " + GN + " == nil: check `if " + GN +
+         " != nil { return " + GN + " }` first";
+}
+
+void Checker::guardedUse(const ast::Ident *Id, Var *V) {
+  if (!own() || Id == NoGuardExpr || !V || V->IsPackageLevel || V->IsField)
+    return;
+  if (V->FuncOwner != E.FuncId) {
+    // Captured by a function literal: decided at the end of the outermost
+    // body, when every form is known (point 7).
+    if (V->Ty && isValid(V->Ty) && !hasZeroValue(V->Ty))
+      CapturedUses.push_back({Id, V});
+    return;
+  }
+  if (Cur.Dead || !Cur.Pend.count(V))
+    return;
+  // `x.f op= y` checks x twice.
+  if (Id == LastGuardErr)
+    return;
+  LastGuardErr = Id;
+  std::string Why = GuardText.lookup(V);
+  if (Why.empty())
+    Why = "check it first";
+  // Pending only if a form of the loop or label region turns out to be a
+  // checked one: decided at the end of the body (points 5, 6).
+  if (auto It = Cur.Tent.find(V); It != Cur.Tent.end()) {
+    TentUses.push_back({Id, V, std::move(Why), It->second});
+    return;
+  }
+  err(Id, diag::err_unchecked_value, {std::string(V->Name), str(V->Ty), Why});
+}
+
+void Checker::noteReference(const ast::Expr *Ex) {
+  if (!own() || !Ex)
+    return;
+  bool Through = false;
+  if (Var *V = rootVar(Ex, Through); V && !Through && !V->IsPackageLevel)
+    RefTaken.try_emplace(V, Ex->getBegin());
+}
+
+void Checker::flowEndBody() {
+  for (const Rebinding &R : Rebindings)
+    if (auto It = RefTaken.find(R.V); It != RefTaken.end()) {
+      std::string Name(R.V->Name);
+      err(R.At, diag::err_unchecked_store,
+          {R.Rhs,
+           Name + " (a reference into " + Name + " is kept at line " +
+               std::to_string(S.SM.getLineNumber(It->second)) + ")",
+           R.What});
+    }
+  Rebindings.clear();
+  RefTaken.clear();
+  for (auto &[Id, V] : CapturedUses)
+    if (GuardedVars.count(V)) {
+      std::string Name(V->Name);
+      const char *Copy = Name == "x" ? "v" : "x";
+      err(Id, diag::err_unchecked_value,
+          {Name, str(V->Ty),
+           "a function literal can run at any time, so a checked result is "
+           "never known valid in it (CLO-9): after the check, copy it into a "
+           "local (`" +
+               std::string(Copy) + " := " + Name + "`) and use the copy"});
+    }
+  CapturedUses.clear();
+}
+
+void Checker::flowDecideTentative(size_t Top) {
+  for (size_t K = Top; K < TentUses.size(); ++K) {
+    const TentUse &U = TentUses[K];
+    bool Real = llvm::any_of(U.Regions, [&](unsigned R) {
+      return llvm::any_of(FlowRegions[R], [&](const ast::Expr *Rhs) {
+        return RealForms.count({Rhs, U.V}) != 0;
+      });
+    });
+    if (Real)
+      err(U.Id, diag::err_unchecked_value,
+          {std::string(U.V->Name), str(U.V->Ty), U.Why});
+  }
+  TentUses.resize(Top);
+}
+
+Var *Checker::checkableLocal(StringRef Name, SourceLoc Pos) {
+  auto *V = dyn_cast_or_null<Var>(E.Sc->lookup(Name, Pos));
+  if (!V || V->IsPackageLevel || V->IsField || V->FuncOwner != E.FuncId ||
+      !V->Ty || !isValid(V->Ty) || hasZeroValue(V->Ty))
+    return nullptr;
+  return V;
+}
+
+void Checker::untieText(const Var *V, const Var *G, StringRef What) {
+  std::string GN(G->Name);
+  GuardText[V] = GN + " " + What.str() + ", so it no longer tells whether " +
+                 std::string(V->Name) + " is valid: check " + GN +
+                 " before that";
+}
+
+void Checker::flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos) {
+  if (!own() || Cur.Dead)
+    return;
+  AssignScan Scan;
+  for (const ast::Node *N : Ns)
+    Scan.walk(N, 0);
+  if (Scan.Forms.empty() && Cur.Pend.empty())
+    return;
+  // Which multi-value assignments of Ns are checked forms is known only when
+  // the checker classifies them (noteGuardedForm). One thing is sure before:
+  // when the last target is a variable of a declared type that neither an
+  // `error` value nor an untyped bool ok is assignable to (the checker's own
+  // assignability, so `Option[bool]` or `Option[IE]` takes one, ADR-0018
+  // point 3), the assignment is a plain one: a checked form there is a type
+  // error, reported at the assignment. Its targets are assigned otherwise.
+  llvm::erase_if(Scan.Forms, [&](const AssignScan::Form &F) {
+    if (F.Guard == "_" || F.GuardInner)
+      return false;
+    auto *G = dyn_cast_or_null<Var>(E.Sc->lookup(F.Guard, Pos));
+    if (!G || !G->Ty || !isValid(G->Ty) || isa<TypeParamType>(G->Ty))
+      return false;
+    Operand ErrV, OkV;
+    ErrV.M = OkV.M = Mode::Value;
+    ErrV.Ty = Ctx.errorType();
+    OkV.Ty = typ(BasicKind::UntypedBool);
+    if (assignableTo(ErrV, G->Ty, nullptr) || assignableTo(OkV, G->Ty, nullptr))
+      return false;
+    for (const std::string &Nm : F.Vals)
+      Scan.Other.insert(Nm);
+    Scan.Other.insert(F.Guard);
+    return true;
+  });
+  // Every other one may be a checked form: a value it binds from outside is
+  // pending here tentatively, for the region of these forms (point 5). A
+  // `:=` there, or a name declared inside, binds an inner variable; a form
+  // inside a function literal binds no local of this body (an error, E0351).
+  llvm::StringSet<> Rebound;
+  llvm::SmallPtrSet<const ast::Expr *, 4> Region;
+  for (const AssignScan::Form &F : Scan.Forms)
+    if (!F.InClosure) {
+      Region.insert(F.Rhs);
+      for (const std::string &Nm : F.Vals)
+        if (Nm != "_" && F.bindsOuter(Nm))
+          Rebound.insert(Nm);
+    }
+  int RegionIdx = -1;
+  // A pending value whose guard N assigns, and that N does not rebind: the
+  // new guard says nothing about it.
+  for (auto &KV : Cur.Pend)
+    if (KV.second && Scan.Assigned.count(KV.second->Name) &&
+        !Rebound.count(KV.first->Name)) {
+      untieText(KV.first, KV.second, "is assigned again in the loop");
+      KV.second = nullptr;
+    }
+  for (auto &Entry : Rebound) {
+    StringRef Nm = Entry.first();
+    Var *V = checkableLocal(Nm, Pos);
+    if (!V)
+      continue;
+    // Tied to the guard only if every form that binds v names that same
+    // guard from outside, no form binds that guard without v or as a value,
+    // and nothing else assigns it.
+    std::string Guard;
+    bool Conflict = false;
+    for (const AssignScan::Form &F : Scan.Forms)
+      if (!F.InClosure && F.bindsOuter(Nm)) {
+        Conflict = Conflict || F.GuardInner;
+        if (Guard.empty())
+          Guard = F.Guard;
+        else if (Guard != F.Guard)
+          Conflict = true;
+      }
+    const Var *GV = nullptr;
+    if (!Conflict && Guard != "_" && !Scan.Other.count(Guard)) {
+      bool Stable = true;
+      for (const AssignScan::Form &F : Scan.Forms)
+        if ((F.Guard == Guard && !F.GuardInner && !F.Define &&
+             !F.bindsOuter(Nm)) ||
+            F.bindsOuter(Guard))
+          Stable = false;
+      auto *O = dyn_cast_or_null<Var>(E.Sc->lookup(Guard, Pos));
+      if (Stable && O && narrowable(O) &&
+          (identical(O->Ty, Ctx.errorType()) || allBoolean(O->Ty)))
+        GV = O;
+    }
+    // Pending before with another guard: no one guard makes it valid.
+    auto It = Cur.Pend.find(V);
+    bool Was = It != Cur.Pend.end();
+    if (Was && It->second != GV)
+      GV = nullptr;
+    Cur.Pend[V] = GV;
+    // A value pending for real before stays real; a new or tentative one is
+    // tentative for this region too.
+    if (!Was || Cur.Tent.count(V)) {
+      if (RegionIdx < 0) {
+        RegionIdx = static_cast<int>(FlowRegions.size());
+        FlowRegions.push_back(Region);
+      }
+      SmallVector<unsigned, 2> &Rs = Cur.Tent[V];
+      if (!llvm::is_contained(Rs, unsigned(RegionIdx)))
+        Rs.push_back(unsigned(RegionIdx));
+    }
+    GuardText[V] =
+        GV ? guardHint(GV)
+           : "the loop assigns it again from a call that can fail or a "
+             "comma-ok form, so a later pass may read a value that nothing "
+             "checked: check it right after that assignment";
+  }
+}
+
+void Checker::flowLoopHead(const ast::Node *Loop, SourceLoc BodyPos) {
+  if (!own())
+    return;
+  llvm::StringSet<> Assigned;
+  collectAssigned(Loop, Assigned);
+  flowKillNames(Assigned);
+  // A for loop's init statement runs once, before the head.
+  if (auto *F = dyn_cast<ForStmt>(Loop))
+    flowRebound({F->Cond, F->Post, F->Body}, BodyPos);
+  else
+    flowRebound({Loop}, BodyPos);
+}
+
+void Checker::flowReset(SourceLoc Pos) {
+  Cur = FlowState();
+  for (const Var *V : GuardedVars)
+    Cur.Pend[V] = nullptr;
+  // A value that a multi-value assignment of the body binds is pending
+  // tentatively, until the checker knows which of them are checked forms
+  // (point 6).
+  for (const std::string &Val : LabelForms)
+    if (Var *V = checkableLocal(Val, Pos);
+        V && LabelRegion >= 0 && !Cur.Pend.count(V)) {
+      Cur.Pend[V] = nullptr;
+      Cur.Tent[V] = {unsigned(LabelRegion)};
+    }
+  for (auto &KV : Cur.Pend)
+    GuardText[KV.first] =
+        "a goto can come back to the label above with a value that a call "
+        "that can fail or a comma-ok form gave it: check it after the label";
+}
+
+//===----------------------------------------------------------------------===//
+// Never-nil @Required fields (TYP-15's list of known non-nil values)
+//===----------------------------------------------------------------------===//
+
+bool Checker::knownNonNil(const ast::Expr *Ex, Type *Target, Type *SrcTy) {
+  Ex = unparen(Ex);
+  Type *S = SrcTy ? SrcTy : I.typeOf(Ex);
+  if (!S || !isValid(S))
+    return true; // reported elsewhere
+  // One result of a call: a call says nothing about its results.
+  if (SrcTy && isa<CallExpr>(Ex) && !isBuiltinCall(Ex, BuiltinId::Make)) {
+    const TypeAndValue *CT = I.lookup(Ex);
+    if (CT && isa<TupleType>(CT->Ty))
+      return false;
+  }
+  Type *TU = Target ? under(Target) : nullptr;
+  bool ToIface = TU && isa<InterfaceType>(TU);
+  // A literal, make(...), a function literal.
+  if (isa<CompositeLit>(Ex) || isa<FuncLit>(Ex))
+    return true;
+  if (auto *C = dyn_cast<CallExpr>(Ex)) {
+    if (isBuiltinCall(Ex, BuiltinId::Make))
+      return true;
+    // A conversion keeps the question for its operand.
+    const TypeAndValue *FT = I.lookup(C->Fun);
+    if (FT && FT->M == Mode::TypeExpr && C->Args.size() == 1) {
+      Type *CT = I.typeOf(Ex);
+      if (CT && isa<InterfaceType>(under(CT)))
+        return knownNonNil(C->Args[0], CT);
+    }
+  }
+  // A read of another never-nil field.
+  if (const Var *F = selectedField(Ex); F && isNeverNilField(F))
+    return true;
+  // A local checked with != nil.
+  if (auto *Id = dyn_cast<ast::Ident>(Ex)) {
+    auto *V = dyn_cast_or_null<Var>(I.Uses.lookup(Id));
+    if (V && narrowable(V) && Cur.N.count(V))
+      return true;
+    if (V && Cur.Dead && narrowable(V))
+      return true;
+  }
+  // Any value of a type that has no nil of its own, converted to an
+  // interface (error, any): a pointer, a func, an interface with methods, or
+  // a concrete value (a nil slice or map inside an interface is not a nil
+  // interface).
+  if (ToIface) {
+    Type *SU = under(S);
+    if (isa<OptionType>(SU) || S == typ(BasicKind::UntypedNil))
+      return false;
+    if (isa<InterfaceType>(SU))
+      return neverNilKind(S) != nullptr;
+    return true;
+  }
+  return false;
+}
+
+void Checker::checkNeverNilStore(const Operand &X, const Var *Fld,
+                                 const std::string &Place) {
+  if (!own() || !X.E || X.M == Mode::Invalid || X.isNil() ||
+      !isNeverNilField(Fld))
+    return;
+  if (knownNonNil(X.E, Fld->Ty, X.Ty))
+    return;
+  err(X, diag::err_required_maybe_nil, {str(X.E), Place, nilCheckHint(X.E)});
 }

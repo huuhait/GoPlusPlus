@@ -1,0 +1,5 @@
+// RUN: not %gopp check --check-error-limit=0 %S/../Inputs/nonnil-fields 2>&1 | FileCheck "--implicit-check-not=error[E" %S/../Inputs/nonnil-fields/main.gopp
+// Rule TYP-15 (P03.18): the values a never-nil @Required error, any, map or
+// channel field accepts (the one list of known non-nil values), and the
+// @Required attribute on fields that are never nil already; the expected
+// errors are the CHECK lines of Inputs/nonnil-fields/main.gopp.

@@ -373,6 +373,25 @@ TEST(Constant, Precision) {
   EXPECT_EQ(lit("1000000.5", tok::float_lit).str(), "1.0000005e+06");
 }
 
+TEST(Constant, HugeExponents) {
+  // The exponent range of big.Float (2^31): 1e100000000 is a finite float
+  // that prints at once (10^n in 512 bits, not as an exact integer) and does
+  // not convert to an integer: no integer type holds it, and the exact value
+  // would take megabytes (`var i int = 1e100000000` is "truncated", as in Go).
+  ConstValue X = lit("1e100000000", tok::float_lit);
+  EXPECT_EQ(X.kind(), ConstValue::Float);
+  EXPECT_EQ(X.str(), "1e+100000000");
+  EXPECT_EQ(X.toInt().kind(), ConstValue::Unknown);
+  EXPECT_EQ(lit("1e-100000000", tok::float_lit).str(), "1e-100000000");
+  // A product past the range is infinite, which go/constant makes unknown.
+  ConstValue Y = ConstValue::binaryOp(X, tok::mul, X);
+  for (int I = 0; I < 30 && Y.kind() == ConstValue::Float; ++I)
+    Y = ConstValue::binaryOp(Y, tok::mul, Y);
+  EXPECT_EQ(Y.kind(), ConstValue::Unknown);
+  // 1e2000 is still exact enough to be an integer.
+  EXPECT_EQ(lit("1e2000", tok::float_lit).toInt().kind(), ConstValue::Int);
+}
+
 TEST(Constant, RoundingToFloat32AndFloat64) {
   // Correctly rounded once, also for float32 (no double rounding through
   // float64) and for subnormals.

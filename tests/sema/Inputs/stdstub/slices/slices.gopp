@@ -1,0 +1,4 @@
+// Test-only stand-in for the standard package slices (P13).
+package slices
+
+func SortFunc[S ~[]E, E any](x S, cmp func(a, b E) int) { panic("stub") }

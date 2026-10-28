@@ -249,14 +249,7 @@ void Checker::collectObjects() {
               DI->IotaVal = Iota;
               DeclarePkg(Id, C, DI);
             }
-            // Arity errors.
-            size_t NN = VS->Names.size(), NV = Src->Values.size();
-            if (NV > NN && !Inherited)
-              err(Src->Values[NN], diag::err_extra_init_expr,
-                  {str(Src->Values[NN])});
-            else if (NV < NN && (NV > 0 || Inherited || !Src->Type))
-              err(VS->Names[NV], diag::err_missing_init_expr,
-                  {std::string(name(VS->Names[NV]))});
+            constArity(VS, Src, Inherited);
             ++Iota;
             break;
           }
@@ -270,8 +263,13 @@ void Checker::collectObjects() {
             }
             ArrayRef<Var *> VarsRef = Mem.copy(ArrayRef<Var *>(Vars));
             bool N1 = VS->Values.size() == 1 && VS->Names.size() > 1;
+            // `var a, b = f()`: one declaration info for all names, so the
+            // dependencies of f belong to every one of them (types2).
+            DeclInfo *Shared = nullptr;
             for (size_t K = 0; K < VS->Names.size(); ++K) {
-              DeclInfo *DI = S.newDecl();
+              DeclInfo *DI = N1 && Shared ? Shared : S.newDecl();
+              if (N1 && !Shared)
+                Shared = DI;
               DI->FileScope = F.FileScope;
               DI->VType = VS->Type;
               if (N1) {
@@ -569,6 +567,10 @@ void Checker::objDecl(Object *O, NamedType *Def) {
     typeDecl(cast<TypeName>(O), D->TDecl, Def, D->Pinned);
     break;
   case Object::Kind::Func:
+    // Names used in a signature are no initialization dependencies of the
+    // function, only those in its body are (types2: objDecl sets no decl
+    // for a func).
+    E.Cur = nullptr;
     funcDecl(cast<Func>(O), D);
     break;
   default:
@@ -600,15 +602,15 @@ void Checker::constDecl(Const *O, const ast::Expr *Typ, const ast::Expr *Init,
     }
   }
   Operand X;
-  if (Init) {
-    if (Inherited) {
-      // Errors in an inherited expression are reported at the name.
-      SourceLoc Saved = E.Pos;
-      (void)Saved;
-    }
+  // Errors in an inherited expression are reported at the name (types2's
+  // errpos).
+  SourceLoc SavedPos = ErrPos;
+  if (Init && Inherited)
+    ErrPos = O->Pos;
+  if (Init)
     expr(X, Init);
-  }
   initConst(O, X);
+  ErrPos = SavedPos;
   E.Iota = SavedIota;
 }
 
@@ -691,8 +693,10 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
     N->TParams = Mem.copy(ArrayRef<TypeParamType *>(TPs));
   }
   N->Resolving = true;
+  N->ResolvingInterface = isa<ast::InterfaceType>(TD->Type);
   Type *Rhs = definedType(TD->Type, N);
   N->Resolving = false;
+  N->ResolvingInterface = false;
   E.Sc = Saved;
   if (isa<TypeParamType>(Rhs)) {
     err(TD->Type, diag::err_cannot_use_type_param_as_rhs);
@@ -1060,6 +1064,11 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
   Sc->IsFunc = true;
   Scope *Saved = E.Sc;
   E.Sc = Sc;
+  // A use of the function in its own signature sees an empty signature
+  // (types2: guard against cycles).
+  // (Not for a generic function: its type parameters are collected later.)
+  if (!(FD->Type->TypeParams && FD->Type->TypeParams->numFields()))
+    O->Ty = Ctx.signature(Ctx.tuple({}), Ctx.tuple({}), false, false, 0, {});
   NamedType *RecvNamed = nullptr;
   if (FD->Recv) {
     collectRecv(O, FD->Recv, Sc, D, FD, RecvNamed);
@@ -1105,6 +1114,24 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
 // Local declarations
 //===----------------------------------------------------------------------===//
 
+/// types2's arity for a constant declaration: every name needs an init
+/// expression.
+void Checker::constArity(const ValueSpec *VS, const ValueSpec *Src,
+                         bool Inherited) {
+  size_t NN = VS->Names.size(), NV = Src->Values.size();
+  if (NN < NV) {
+    if (Inherited)
+      err(VS->Names[0], diag::err_extra_init_expr,
+          {"at line " +
+           std::to_string(S.SM.getLineNumber(Src->Values[NN]->getBegin()))});
+    else
+      err(Src->Values[NN], diag::err_extra_init_expr, {str(Src->Values[NN])});
+  } else if (NN > NV) {
+    err(VS->Names[NV], diag::err_missing_init_expr,
+        {std::string(name(VS->Names[NV]))});
+  }
+}
+
 void Checker::declStmt(const DeclStmt *DS) {
   auto *GD = dyn_cast<GenDecl>(DS->D);
   if (!GD)
@@ -1125,6 +1152,7 @@ void Checker::declStmt(const DeclStmt *DS) {
       }
       IotaStore.push_back(ConstValue::makeInt64(Iota));
       const ConstValue *IotaV = &IotaStore.back();
+      size_t DelayedTop = Delayed.size();
       SmallVector<Const *, 4> Cs;
       for (size_t K = 0; K < VS->Names.size(); ++K) {
         const ast::Ident *Id = VS->Names[K];
@@ -1134,12 +1162,9 @@ void Checker::declStmt(const DeclStmt *DS) {
                   IotaV);
         Cs.push_back(C);
       }
-      size_t NN = VS->Names.size(), NV = Src->Values.size();
-      if (NV > NN && !Inherited)
-        err(Src->Values[NN], diag::err_extra_init_expr, {str(Src->Values[NN])});
-      else if (NV < NN)
-        err(VS->Names[NV], diag::err_missing_init_expr,
-            {std::string(name(VS->Names[NV]))});
+      constArity(VS, Src, Inherited);
+      // Function literals in the initializers must not see the new names.
+      processDelayed(DelayedTop);
       for (size_t K = 0; K < Cs.size(); ++K)
         declare(E.Sc, VS->Names[K], Cs[K], VS->getEnd());
       ++Iota;
@@ -1147,6 +1172,7 @@ void Checker::declStmt(const DeclStmt *DS) {
     }
     case tok::kw_var: {
       auto *VS = cast<ValueSpec>(Sp);
+      size_t DelayedTop = Delayed.size();
       SmallVector<Var *, 4> Vars;
       for (const ast::Ident *Id : VS->Names)
         Vars.push_back(newVar(name(Id), nullptr, Id->getBegin()));
@@ -1155,16 +1181,32 @@ void Checker::declStmt(const DeclStmt *DS) {
         for (Var *V : Vars)
           V->Ty = T;
       if (!VS->Values.empty()) {
-        if (VS->Values.size() == VS->Names.size()) {
+        if (VS->Values.size() == 1 && VS->Names.size() > 1) {
+          // One multi-valued expression.
+          initVars(Vars, VS->Values, nullptr);
+        } else {
+          // n:n, or a count mismatch: each variable takes the value in its
+          // position, the others have none (types2: arity reports the
+          // mismatch, no assignment-mismatch error on top of it).
           for (size_t K = 0; K < Vars.size(); ++K) {
+            if (K >= VS->Values.size()) {
+              if (!T)
+                Vars[K]->Ty = invalid();
+              continue;
+            }
             Operand X;
             ReverseDesc = std::string(Vars[K]->Name);
             exprWithHint(X, VS->Values[K], T);
             ReverseDesc.clear();
             initVar(Vars[K], X, "variable declaration");
           }
-        } else {
-          initVars(Vars, VS->Values, nullptr);
+          size_t NN = VS->Names.size(), NV = VS->Values.size();
+          if (NV > NN)
+            err(VS->Values[NN], diag::err_extra_init_expr,
+                {str(VS->Values[NN])});
+          else if (NV < NN)
+            err(VS->Names[NV], diag::err_missing_init_expr,
+                {std::string(name(VS->Names[NV]))});
         }
       } else if (!T) {
         for (Var *V : Vars)
@@ -1176,11 +1218,17 @@ void Checker::declStmt(const DeclStmt *DS) {
                         "cannot declare " + std::string(Vars[K]->Name) +
                             " without a value");
       }
+      // Function literals in the values are checked before the variables are
+      // declared: they cannot see them.
+      processDelayed(DelayedTop);
       for (size_t K = 0; K < Vars.size(); ++K) {
         recordDef(VS->Names[K], Vars[K]);
         declare(E.Sc, VS->Names[K], Vars[K], VS->getEnd());
         LocalVars.push_back(Vars[K]);
       }
+      // A later spec of the same group sees this one's checked results as
+      // pending, as after a separate `var` statement (OWN-P10).
+      flowFlushKills();
       break;
     }
     case tok::kw_type: {

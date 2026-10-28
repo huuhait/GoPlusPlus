@@ -38,6 +38,12 @@ struct LoadOptions {
   std::string Root = ".";
   /// Import path of Root ("" means paths are relative to Root).
   std::string ModulePath;
+  /// TEST ONLY until P13 ships the standard library. A directory searched for
+  /// an import path that is not a package of the module (the module wins):
+  /// the tests point it at declaration-only stubs of the few standard
+  /// packages they need (tests/sema/Inputs/stdstub, the hidden `gopp check
+  /// --test-stubs`). Empty, so unused, in every normal run.
+  std::string StdRoot;
   std::string OS = "linux";
   std::string Arch = "amd64";
   /// Build profile name (`dev`, `release`, ...): true in `//gopp:build`.

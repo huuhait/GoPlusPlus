@@ -143,6 +143,12 @@ public:
   /// empty for the default Go++ spelling.
   virtual std::string describe(const Type *T) const;
 
+  /// The element type of a C++ container T that has `begin()` / `end()`
+  /// (RNG-6, P08 D8.6): the type of `x` in `for _, x := range c`. Key is set
+  /// to the key type of an associative container (`std::map`) and left null
+  /// for the index of an indexable one. Null when T is not a container.
+  virtual Type *rangeElem(const Type *T, Type **Key) const;
+
   /// Whether the C++ type T can be default-constructed. A foreign type that
   /// cannot has no zero value: `var x T`, `make([]T, n)` and the other places
   /// that need one are errors (OWN-R9). The default says yes.
@@ -151,6 +157,11 @@ public:
   /// The Go++ type of a C pointer `Pointee*`: Option[*Pointee], or *Pointee
   /// when the header says it is never null.
   static Type *cPointer(TypeContext &Ctx, Type *Pointee, bool NonNull);
+  /// The Go++ type of a C function pointer, whose `ffi.Func[...]` type is
+  /// Func: Option[Func], or Func when the header says it is never null
+  /// (ADR-0018 point 8; a Go++ func is never nil, so a C function pointer that
+  /// may be NULL is an Option, like every C pointer).
+  static Type *cFuncPointer(TypeContext &Ctx, Type *Func, bool NonNull);
   /// The Go++ type of a C++ reference `Pointee&` (it cannot be null).
   static Type *cxxReference(TypeContext &Ctx, Type *Pointee);
 };
@@ -182,6 +193,19 @@ public:
   bool hasDefaultConstructor(const Type *T) const override {
     return !NoDefault.count(T);
   }
+  /// Declares the C++ container T rangeable with elements of type Elem (and
+  /// keys of type Key for an associative one).
+  void setRangeElem(const Type *T, Type *Elem, Type *Key = nullptr) {
+    RangeElems[T] = {Elem, Key};
+  }
+  Type *rangeElem(const Type *T, Type **Key) const override {
+    auto It = RangeElems.find(T);
+    if (It == RangeElems.end())
+      return nullptr;
+    if (Key)
+      *Key = It->second.second;
+    return It->second.first;
+  }
   /// The spelling of a type in messages.
   void setSpelling(const Type *T, std::string Text) {
     Spellings[T] = std::move(Text);
@@ -203,6 +227,7 @@ private:
   llvm::DenseMap<const Object *, TemplateFn> Templates;
   llvm::DenseMap<const Type *, std::string> Spellings;
   llvm::DenseSet<const Type *> NoDefault;
+  llvm::DenseMap<const Type *, std::pair<Type *, Type *>> RangeElems;
 };
 
 /// Provides the packages made from C/C++ headers (P03.09).

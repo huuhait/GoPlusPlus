@@ -25,7 +25,9 @@ func negativeRebind(move f Option[Big], move g Option[Mid], x any, nd *Node) int
 	n := 0
 	if f != nil {
 		v, ok := f.Sub.Get()
-		_ = ok
+		if !ok {
+			return n
+		}
 		// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: f may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
 		n += sum(v.A[:])
 		// CHECK: [[@LINE+2]]:3: error[E0346]: cannot assign to v: it borrows the value of an Option through Get and is read-only (OWN-P9)
@@ -69,7 +71,9 @@ func positiveRebind(move f Option[Big], move g Option[Mid], x any, nd *Node) int
 	n := 0
 	if f != nil {
 		v, ok := f.Sub.Get()
-		_, _ = v, ok
+		if ok {
+			_ = v
+		}
 		w, ok2 := g.Get()
 		if ok2 {
 			n += sum(w.A[:])

@@ -511,4 +511,16 @@ DIAG(err_weak_no_indirect, 344, Error, "cannot indirect %0: a Weak pointer is no
 DIAG(err_required_args, 345, Error, "@Required takes no arguments")
 DIAG(err_own_get_binding_read_only, 346, Error, "cannot %0 %1: it borrows the value of an Option through Get and is read-only (OWN-P9)")
 
+//===----------------------------------------------------------------------===//
+// Never-nil funcs and interfaces; checked `err` and comma-ok values (P03.18,
+// ADR-0018 amendment points 3 and 4)
+//===----------------------------------------------------------------------===//
+
+DIAG(err_nil_never_nil, 347, Error, "%0 is never nil: %1; use Option[%0] for \"maybe\" (OWN-P9)")
+DIAG(err_required_never_nil, 348, Error, "%1 is never nil (%2); @Required isn't needed on field %0")
+DIAG(err_required_maybe_nil, 349, Error, "cannot store %0 in %1: the field is @Required and never nil, and %0 may be nil; %2 (TYP-15)")
+DIAG(err_unchecked_value, 350, Error, "%0 may be unset here: %1 has no zero value, and %2 (OWN-P10)")
+DIAG(err_unchecked_store, 351, Error, "cannot store the result of %0 in %1: its type has no zero value, so it is valid only where %2; bind it to a new local variable and check that first (OWN-P10)")
+DIAG(err_maybe_nil_to_never_nil, 352, Error, "%0 may be nil; %1 is never nil: check %0 != nil first (OWN-P9)")
+
 #undef DIAG

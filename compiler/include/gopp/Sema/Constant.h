@@ -37,7 +37,7 @@ class BigFloat {
 public:
   static constexpr unsigned Prec = 512;
   /// Exponents beyond this are "infinite" (overflow in the checker).
-  static constexpr int64_t MaxExp = 1 << 20;
+  static constexpr int64_t MaxExp = 0x7fffffff; // big.Float: math.MaxInt32
 
   BigFloat() : Mant(1, 0) {}
   static BigFloat fromInt(const llvm::APInt &SignedInt);

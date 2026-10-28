@@ -40,7 +40,7 @@ type Owner struct {
 type Box struct {
 	Owner Option[Unique[*User]]
 	Back  Option[*User]
-	Cb    func()
+	Cb    Option[func()]
 	Err   error
 	M     map[string]int
 	C     chan int
@@ -89,7 +89,7 @@ func positive(p *Plain, u Unique[*Plain], s Shared[*Plain], w Weak[*Plain], o Op
 	var borrowed Option[*Plain] = ow.Item
 	takeOpt(ow.Item)
 	// Go's nilable types keep nil.
-	_ = e != nil && m != nil && f != nil && ch != nil && sl != nil
+	_ = e != nil && m != nil && ch != nil && sl != nil
 	m2 := map[string]int(nil)
 	var s2 []int = nil
 	e = nil
@@ -100,7 +100,6 @@ func positive(p *Plain, u Unique[*Plain], s Shared[*Plain], w Weak[*Plain], o Op
 	takeAny(o)
 	u0 := User{}
 	var iface Opaque = &u0
-	iface = nil
 	var b Box
 	var nd Node
 	var c Cycle
@@ -173,13 +172,11 @@ func options(o Option[*Plain]) {
 	var mp Option[map[string]int]
 	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use chan int as the type argument of Option: it already has a nil (OWN-P9)
 	var cn Option[chan int]
-	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use func() as the type argument of Option: it already has a nil (OWN-P9)
-	var fn Option[func()]
 	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use any as the type argument of Option: it already has a nil (OWN-P9)
 	var an Option[any]
 	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use unsafe.Pointer as the type argument of Option: it already has a nil (OWN-P9)
 	var up Option[unsafe.Pointer]
-	_, _, _, _, _, _, _, _ = e, oo, sl, mp, cn, fn, an, up
+	_, _, _, _, _, _, _ = e, oo, sl, mp, cn, an, up
 	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o.Other undefined (type Option[*Plain] has no field or method Other (an Option has IsNil and Get only))
 	_ = o.Other()
 	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
@@ -194,8 +191,8 @@ func perInstance() {
 	var mb MaybeBox[error]
 	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use []int as the type argument of Option: it already has a nil (in Outer{{\[\[}}]int]) (OWN-P9)
 	var ob Outer[[]int]
-	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use Option[int] as the type argument of Option: an Option already has a nil (in Iface[Option[int]]) (OWN-P9)
-	var oi Iface[Option[int]]
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot use Option[int] as the type argument of Option: an Option already has a nil (in Iface[Option[int]]) (OWN-P9)
+	var oi []Iface[Option[int]]
 	_, _, _ = mb, ob, oi
 	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option: it already has a nil (in func() Option[error]) (OWN-P9)
 	_ = maybe[error]()

@@ -18,7 +18,7 @@ func two() (int, string, error)          { return 0, "", nil }
 func onlyErr() error                     { return nil }
 func pair() (int, int)                   { return 1, 2 }
 func gen[T Copy](x T) (T, error)         { return x, nil }
-func fn() func() (int, error)            { return nil }
+func fn() func() (int, error)            { return func() (int, error) { return 0, nil } }
 func fails!() int                        { return 1 }
 
 type Iface interface{ Get!() string }

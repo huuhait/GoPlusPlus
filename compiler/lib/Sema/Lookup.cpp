@@ -76,7 +76,7 @@ Checker::LookupResult Checker::lookupFieldOrMethod(Type *T, bool Addressable,
   // pointer, and drop a method found there.
   if (auto *N = dyn_cast<NamedType>(T)) {
     if (auto *P = dyn_cast<PointerType>(under(N))) {
-      R = lookupImpl(P, false, Pkg, Name, false);
+      R = lookupImpl(P, false, Pkg, Name, FoldCase);
       if (R.Obj && isa<Func>(R.Obj))
         return LookupResult();
       return R;

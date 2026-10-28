@@ -1,0 +1,7 @@
+// Test-only stand-in for the standard package fmt (P13): declarations only,
+// with the Go signatures of what the spec examples call.
+package fmt
+
+func Println(a ...any) (n int, err error)
+func Printf(format string, a ...any) (n int, err error)
+func Errorf(format string, a ...any) error

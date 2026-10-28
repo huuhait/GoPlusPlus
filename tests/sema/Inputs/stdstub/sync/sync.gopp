@@ -1,0 +1,8 @@
+// Test-only stand-in for the standard package sync (P12, P13).
+package sync
+
+type WaitGroup struct{ n int }
+
+func (wg *WaitGroup) Add(delta int)
+func (wg *WaitGroup) Done()
+func (wg *WaitGroup) Wait()

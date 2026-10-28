@@ -1,0 +1,11 @@
+// Test-only stand-in for the package mem (P05): the arena the spec examples
+// use. A generic function needs a body in Go++, so this one panics; nothing
+// runs it.
+package mem
+
+type Arena struct{ used int }
+
+func (a *Arena) Free()
+func (a *Arena) Reset()
+
+func ArenaNew[T any](a *Arena) *T { panic("stub") }

@@ -27,7 +27,7 @@ In a review of the pointer design (2026-10-28), the owner chose **maximum safety
 4. **Checking.** An `Option` is usable as its value only where the compiler knows it is set:
    - after `o != nil` or `!o.IsNil()` (in the `if` body, after an early `return`/`break`/`continue` on `o == nil`, and in a `for o != nil` loop body);
    - or through `v, ok := o.Get()`; when `T` has no zero value, `v` is usable only where `ok` is true (the comma-ok rule of ADR-0016).
-   Narrowing works on local variables and parameters; a field or an element is copied into a local first (`if o := c.Owner; o != nil { … }`), because it could change between the check and the use. Using an unchecked `Option` as its value is a compile error ("`o` may be nil; check `o != nil` first").
+   Narrowing works on local variables and parameters; a field or an element is copied into a local first (`if o := c.Owner; o != nil { … }`), because it could change between the check and the use. A variable captured by a function literal is not narrowed inside the literal (spec CLO-9, OWN-P10), neither by a check outside nor inside it; it is copied into a local first. Using an unchecked `Option` as its value is a compile error ("`o` may be nil; check `o != nil` first").
 
    ```go
    type Node struct{ Val int; Next Option[*Node] }

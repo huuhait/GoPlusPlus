@@ -55,6 +55,16 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
       markUsed(It->second);
   }
 
+  // A type is wanted but the name is not one: stop before the declaration is
+  // checked (a cycle there would hide this more useful error; types2,
+  // go.dev/issue/65344).
+  if (WantType && !isa<TypeName>(Obj)) {
+    err(Id, diag::err_not_a_type, {std::string(Obj->Name)});
+    if (auto *V = dyn_cast<Var>(Obj); V && !V->IsPackageLevel)
+      V->Used = true;
+    return;
+  }
+
   // Package-level objects are resolved lazily (D3.4).
   if (S.ObjMap.count(Obj) || Obj->Color >= 2) {
     objDecl(Obj, Def);
@@ -81,7 +91,9 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
     } else if (C->Val) {
       X.Val = *C->Val;
     } else {
-      return;
+      // A constant whose declaration failed has a type but no value (types2
+      // gives it the unknown value): uses are still checked.
+      X.Val = ConstValue();
     }
     X.M = Mode::Constant;
     break;
@@ -106,6 +118,7 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
     // Flow typing (ADR-0018): an Option known to be set has the type of its
     // value here. The side table records this narrowed type for the use.
     T = narrowedType(Id, V, T);
+    guardedUse(Id, V);
     break;
   }
   case Object::Kind::Func:
@@ -125,7 +138,6 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
   default:
     return;
   }
-  (void)WantType;
   if (!T) {
     X.M = Mode::Invalid;
     return;
@@ -424,12 +436,15 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
     FS.Tag = Tag;
     FS.Required = ReqAttr && own();
     if (ReqAttr && own() && isValid(T)) {
-      // ADR-0018 point 7: a pointer is never nil, so @Required says nothing.
+      // ADR-0018 point 7 and amendment point 3: a pointer, a func and an
+      // interface with methods are never nil, so @Required says nothing.
       SourceLoc AtPos = ReqAttr->AtLoc;
       std::string FName(N);
       later([this, AtPos, FName, T]() {
         if (isPointerKind(T))
           err(AtPos, diag::err_required_pointer, {FName, str(T)});
+        else if (const char *Why = neverNilKind(T))
+          err(AtPos, diag::err_required_never_nil, {FName, str(T), Why});
       });
     }
     Fields.push_back(FS);

@@ -359,6 +359,12 @@ Package *Loader::import(StringRef Path, std::string &Error) {
     return nullptr;
   }
   std::string Dir = dirOf(Path);
+  if (!llvm::sys::fs::is_directory(Dir) && !LO.StdRoot.empty()) {
+    llvm::SmallString<128> Std(LO.StdRoot);
+    llvm::sys::path::append(Std, Path);
+    if (llvm::sys::fs::is_directory(Std))
+      Dir = std::string(Std);
+  }
   if (!llvm::sys::fs::is_directory(Dir)) {
     Error = formatDiagnostic(getDiagFormat(diag::err_load_no_such_package),
                              {Path.str(), Dir});

@@ -64,8 +64,13 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   FlowState SavedCur = std::move(Cur);
   auto SavedTargets = std::move(Targets);
   auto SavedKills = std::move(PendingKills);
+  auto SavedGuards = std::move(PendingGuards);
+  const ast::Expr *SavedNoGuard = NoGuardExpr;
   auto SavedNoNarrow = std::move(NoNarrowNames);
+  auto SavedMethodSels = std::move(MethodSels);
   auto SavedGotos = std::move(GotoLabels);
+  auto SavedLabelForms = std::move(LabelForms);
+  int SavedLabelRegion = LabelRegion;
   std::string SavedPendingLabel = std::move(PendingLabel);
   const ast::Expr *SavedNoNarrowExpr = NoNarrowExpr;
   auto SavedRefill = std::move(RefillLhs);
@@ -73,11 +78,16 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   Cur = FlowState();
   Targets.clear();
   PendingKills.clear();
+  PendingGuards.clear();
+  NoGuardExpr = nullptr;
   PendingLabel.clear();
   NoNarrowExpr = nullptr;
   RefillLhs.clear();
   RefillMoved.clear();
+  LabelForms.clear();
+  LabelRegion = -1;
   flowBeginBody(Body);
+  size_t TentTop = TentUses.size();
   E = Env();
   E.Cur = D;
   E.Sc = Sc;
@@ -113,6 +123,12 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   if (!Results.empty() && !isTerminating(Body, ""))
     err(Body->Rbrace, diag::err_missing_return);
   processDelayed(Top);
+  // Every form of this body is checked now (Flow.cpp, points 5, 6).
+  if (own())
+    flowDecideTentative(TentTop);
+  // Every form of the outermost body is known now (Flow.cpp, points 7, 8).
+  if (own() && !Saved.FuncId)
+    flowEndBody();
   // Unused variables.
   std::stable_sort(LocalVars.begin(), LocalVars.end(),
                    [](Var *A, Var *B) { return A->Pos < B->Pos; });
@@ -124,8 +140,13 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   Cur = std::move(SavedCur);
   Targets = std::move(SavedTargets);
   PendingKills = std::move(SavedKills);
+  PendingGuards = std::move(SavedGuards);
+  NoGuardExpr = SavedNoGuard;
   NoNarrowNames = std::move(SavedNoNarrow);
+  MethodSels = std::move(SavedMethodSels);
   GotoLabels = std::move(SavedGotos);
+  LabelForms = std::move(SavedLabelForms);
+  LabelRegion = SavedLabelRegion;
   PendingLabel = std::move(SavedPendingLabel);
   NoNarrowExpr = SavedNoNarrowExpr;
   RefillLhs = std::move(SavedRefill);
@@ -245,13 +266,14 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
     return;
   case K::DeclStmt:
     declStmt(cast<DeclStmt>(S0));
+    flowFlushKills(); // `var u, err = f()` binds u to err
     return;
   case K::LabeledStmt: {
     E.HasLabel = true;
     auto *LS = cast<LabeledStmt>(S0);
     // A goto may arrive here from anywhere: nothing is known.
     if (own() && GotoLabels.count(name(LS->Label)))
-      Cur = FlowState();
+      flowReset(LS->getBegin());
     PendingLabel = name(LS->Label).str();
     stmt(Ctx, LS->Body);
     PendingLabel.clear();
@@ -450,11 +472,7 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   simpleStmt(S0->Init);
   // The loop head: what is known before the loop, minus what the loop
   // assigns (a later iteration comes back here).
-  if (own()) {
-    llvm::StringSet<> Assigned;
-    collectAssigned(S0, Assigned);
-    flowKillNames(Assigned);
-  }
+  flowLoopHead(S0, S0->Body->getBegin());
   FlowState Head = Cur;
   flowPushTarget();
   FlowFacts Facts;
@@ -479,6 +497,8 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
     Cur = Head;
     flowAdd(Facts.True);
     flowKillNames(BodyAssigned);
+    // The checked results the body rebinds come back unchecked (Flow.cpp).
+    flowRebound(S0->Body, S0->Body->getBegin());
     simpleStmt(S0->Post);
   }
   // The body shares the loop scope for scoping purposes of RNG-8 only.
@@ -490,7 +510,7 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   FlowState Exit;
   if (S0->Cond) {
     Exit = Head;
-    Exit.N.insert(Facts.False.begin(), Facts.False.end());
+    flowAddTo(Exit, Facts.False);
   } else {
     Exit.Dead = true;
   }
@@ -595,6 +615,11 @@ void Checker::failsReturn(const ReturnStmt *S0) {
       ArrayRef<Var *> Lhs = Rhs.size() == N ? Res : ArrayRef<Var *>(Ext);
       for (size_t K = 0; K < Lhs.size(); ++K)
         initVar(Lhs[K], Rhs[K], "return statement");
+      // With N values the call's last value is a declared result, not the
+      // failure (a `!` function cannot declare `error` last, ERR-15).
+      if (own() && Rhs.size() >= 2)
+        checkForwarded(S0->Results[0], Rhs, Lhs.back()->Ty,
+                       "the results of this function");
       if (own() && Rhs.size() == 1)
         checkReturnRef(S0->Results[0], Lhs[0]->Ty);
       return;
@@ -806,7 +831,7 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
     // No case matched.
     FlowState NoCase = SwBase;
     if (!S0->Tag)
-      NoCase.N.insert(PrevFalse.False.begin(), PrevFalse.False.end());
+      flowAddTo(NoCase, PrevFalse.False);
     SwOut = flowJoin(SwOut, NoCase);
   }
   if (Done.HasBreak)
@@ -1041,6 +1066,17 @@ static RangeTypes rangeKeyVal(Checker &C, Type *T) {
       &Why);
   if (!U)
     return Bad(Why);
+  // An imported C++ container with begin() / end() ranges like a slice.
+  if (auto *N = dyn_cast<NamedType>(T))
+    if (N->Obj && N->Obj->Pkg && N->Obj->Pkg->Foreign) {
+      Type *Key = nullptr;
+      if (Type *Elem = N->Obj->Pkg->Foreign->rangeElem(N, &Key)) {
+        R.Key = Key ? Key : C.typ(BasicKind::Int);
+        R.Val = Elem;
+        R.Ok = true;
+        return R;
+      }
+    }
   if (auto *P = dyn_cast<PointerType>(U))
     if (auto *A = dyn_cast<sema::ArrayType>(C.under(P->Elem))) {
       R.Key = C.typ(BasicKind::Int);
@@ -1190,9 +1226,11 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
       if (Var *BV = borrowedRoot(S0->X))
         err(S0->AliasLoc, diag::err_own_range_alias_borrowed,
             {str(S0->X), std::string(BV->Name)});
-      else
+      else {
         rejectPayloadAddress(S0->X, "an `&` range variable over an array "
                                     "held by value");
+        noteReference(S0->X);
+      }
     }
   }
   // RNG-2 / RNG-6: `range move(xs)` and `range ch` give owned variables.
@@ -1310,11 +1348,7 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
   // Flow (ADR-0018 point 4): the body may run zero times or many; it starts
   // from what is known minus what the loop assigns.
   flowFlushKills(); // `for k, v = range xs` assigned k and v
-  if (own()) {
-    llvm::StringSet<> Assigned;
-    collectAssigned(S0, Assigned);
-    flowKillNames(Assigned);
-  }
+  flowLoopHead(S0, S0->Body->getBegin());
   FlowState Head = Cur;
   flowPushTarget();
   stmt(Ctx, S0->Body);

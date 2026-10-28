@@ -14,7 +14,7 @@ func positive(nums []int, fns []func(), docs []Doc) int {
 		n += x
 	}
 	for _, f := range fns {
-		f = nil
+		f = func() {}
 		_ = f
 	}
 	for _, d := range docs {

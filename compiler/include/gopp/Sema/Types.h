@@ -403,6 +403,10 @@ public:
   Type *FromRHS = nullptr;        // the declared right hand side
   NamedType *DirectRhs = nullptr; // `type A B`: the defined type B
   bool Resolving = false;
+  /// Set with Resolving when the right hand side is an interface literal: the
+  /// type is then an interface without methods yet (types2: an incomplete
+  /// interface), so `T.m` inside its own method signatures is "undefined".
+  bool ResolvingInterface = false;
   bool Pinned = false; // @Pinned (OWN-R10)
   /// The predeclared generic `Option` (instances are OptionType, not Named).
   bool IsOption = false;

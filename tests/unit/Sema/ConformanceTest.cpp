@@ -79,6 +79,8 @@ public:
                                 "time"};
     if (std::find(std::begin(Std), std::end(Std), Path) == std::end(Std))
       return nullptr;
+    if (Package *Stub = loadStub(Path))
+      return Stub;
     auto &P = Pkgs[Path.str()];
     if (!P) {
       P = std::make_unique<Package>();
@@ -96,6 +98,48 @@ public:
   }
 
 private:
+  /// The API of a Go standard library package the files use, written as Go
+  /// source in tests/sema/conformance/stdstub (test-only; the real standard
+  /// library is P13). Null when there is no stub for Path.
+  Package *loadStub(llvm::StringRef Path) {
+    auto It = Stubs.find(Path.str());
+    if (It != Stubs.end())
+      return It->second ? It->second->Checked->Pkg : nullptr;
+    Stubs[Path.str()] = nullptr;
+    std::string File =
+        std::string(GOPP_CONFORMANCE_DIR) + "/stdstub/" + Path.str() + ".go";
+    if (!llvm::sys::fs::exists(File))
+      return nullptr;
+    auto S = std::make_unique<Stub>();
+    auto F = S->SM.addFile(File);
+    if (!F) {
+      llvm::consumeError(F.takeError());
+      return nullptr;
+    }
+    S->Diags = std::make_unique<DiagnosticsEngine>(S->SM, S->Collect, 0);
+    ParseOptions PO;
+    PO.CheckLanguageRules = false;
+    PO.AllowGenericMethods = false;
+    PO.AllowNamespaceTypes = false;
+    ast::File *AST = parseFile(S->AC, S->SM, *F, *S->Diags, PO);
+    CheckOptions CO;
+    CO.GoCompat = true;
+    CO.Ownership = false;
+    const ast::File *Files[] = {AST};
+    S->Checked = checkPackage(Ctx, S->SM, Path, Files, *this, *S->Diags, CO);
+    Package *Result = S->Checked->Pkg;
+    Stubs[Path.str()] = std::move(S);
+    return Result;
+  }
+
+  struct Stub {
+    SourceManager SM;
+    CollectingDiagnosticConsumer Collect;
+    std::unique_ptr<DiagnosticsEngine> Diags;
+    ast::ASTContext AC;
+    std::unique_ptr<CheckedPackage> Checked;
+  };
+  std::map<std::string, std::unique_ptr<Stub>> Stubs;
   TypeContext &Ctx;
   Arena Mem;
   std::map<std::string, std::unique_ptr<Package>> Pkgs;

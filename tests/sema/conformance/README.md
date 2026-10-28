@@ -17,6 +17,10 @@ methods).
   A file passes when every annotation matches and no other error is reported.
 - **Imports:** the Go standard library packages the files import exist as
   empty packages; any other import path fails, as with Go's test importer.
+  The packages whose names the files look up (`math/big`, `go/ast`, `io`, `os`,
+  `context`, `database/sql`, `math`, `strings`, `sort`) have a small stub in
+  `stdstub/<path>.go` (Go source with the API the files use, checked by the
+  harness itself). The stubs are test-only; the real standard library is P13.
 - **Expected failures:** `expected-failures.txt`, one line per file:
   - `path | xfail | reason`: a gap of the checker. A listed file that passes,
     and an unlisted file that fails, are both test failures, so the list can
@@ -36,13 +40,14 @@ methods).
 
 | Measure (counted files only) | Result |
 |---|---|
-| Files passing | 262 / 305 (85.9%) |
-| Annotations matched | 2514 / 2699 (93.1%) |
-| Generics files passing | 154 / 167 (92.2%) |
-| Generics annotations matched | 754 / 799 (94.4%) |
+| Files passing | 285 / 305 (93.4%) |
+| Annotations matched | 2648 / 2699 (98.1%) |
+| Generics files passing | 157 / 167 (94.0%) |
+| Generics annotations matched | 783 / 799 (98.0%) |
 | Excluded files (not counted) | 34 (8 of them pass anyway) |
 
-The P03.06 goal (at least 90% of the generics cases) is met.
+The P03.06 goal (at least 90% of the generics cases) and the P03 exit
+criterion (at least 90% of the counted files) are met.
 
 ## Exclusions by design (the Go++ rule that makes them differ)
 
@@ -56,15 +61,9 @@ The P03.06 goal (at least 90% of the generics cases) is met.
 
 Every `xfail` line names its reason. The families:
 
-- **Cycle diagnostics** (10 files): some `invalid recursive type` and
-  `initialization cycle` reports differ in position or wording from types2
-  (the validType and initorder ports).
-- **Go std packages** (7 files): the files look up fields and methods of
-  `math/big`, `io`, `os`, ... which the harness has only as empty packages.
-- **Size model** (4 files): `unsafe.Sizeof`/`Offsetof` differ from Go's gc
-  sizes for some structs, and types that are too large are not reported.
-- **Constants** (4 files): some conversion and overflow messages; the binary
-  exponent of float constants is limited to 2^20 (Go: 2^31).
+- **Cycle diagnostics** (4 files): some `invalid recursive type` reports
+  differ in position from types2, and a generic type whose constraint and
+  method both mention it is reported once (types2: twice).
 - **Instantiation cycles** (3 files): the monomorphization cycle check of
   types2 (`mono.go`) is not ported.
 - **Parser messages** (3 files): the Go++ parser reports some Go mistakes
@@ -72,11 +71,23 @@ Every `xfail` line names its reason. The families:
 - **Alias spelling** (2 files): Go++ resolves an alias at once (there is no
   `Alias` type), so messages print the aliased type where types2 prints the
   alias name (`A`, not `int`).
-- **Function type strings have no parameter names** (2 files): `TupleType`
+- **Function type strings have no parameter names** (3 files): `TupleType`
   stores only types, so `func(n T, _ List[T]) T` prints as
-  `func(T, List[T]) T`.
+  `func(T, List[T]) T`. Types are uniqued, so names cannot be stored there
+  without making the text depend on which declaration was seen first.
 - A tail of single-message differences in statements, labels and `goto`,
-  declarations, expressions and return counts (8 files).
+  expressions and the "declared at" inference note (5 files).
+
+Closed in P03 (P03.18 batch): the size model (`Sizes.cpp` ports types2's
+`gcsizes.go` for amd64, so `unsafe.Sizeof/Alignof/Offsetof` match gc and "is
+too large" is reported), constants (float exponents up to 2^31 as in
+`big.Float`, with 10^n in 512 bits so a huge exponent stays fast; constant
+arity and the position of errors in inherited initializers), the cycle
+diagnostics that came from declaration order (`var a, b = f()` shares one
+declaration, a function's signature is no initialization dependency, an
+interface type being declared has no methods yet, "is not a type" before a
+cycle), `n:m` variable declarations, types2's `lookupError` wording, and the
+std packages the files import (`stdstub/`).
 
 ## Not covered
 

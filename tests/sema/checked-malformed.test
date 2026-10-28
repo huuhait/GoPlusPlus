@@ -1,0 +1,72 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Malformed and odd input around checked results and comma-ok values: every
+// problem is reported once at its own place, nothing crashes or hangs, and a
+// broken form never makes a later use report a second error.
+package main
+
+type U struct {
+	Name string @Required
+}
+
+type B bool
+
+type MyErr error
+
+func load() (U, error) { return U{Name: "x"}, nil }
+func use(u U)           {}
+
+func malformed(ch chan U, m map[string]U, x any) {
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: undefined: undefinedFn
+	a, err := undefinedFn()
+	use(a)
+	_ = err
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: assignment mismatch: 3 variables but load returns 2 values
+	b, c, d := load()
+	use(b)
+	_, _, _ = b, c, d
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: multiple-value load() (value of type (U, error)) in single-value context
+	var e, f = load(), 1
+	_, _ = e, f
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: assignment mismatch: 2 variables but 1 value
+	g, h := 1
+	_, _ = g, h
+	_, _ = load()
+	var ok B
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare u without a value: U has no zero value (field Name is @Required)
+	var u U
+	u, ok = <-ch
+	_ = ok
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare me without a value: MyErr has no zero value (interfaces with methods are never nil)
+	var me MyErr
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: load() may be nil; MyErr is never nil: check load() != nil first (OWN-P9)
+	u, me = load()
+	_ = me
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: undefined: chn
+	i, j := <-chn
+	use(i)
+	_ = j
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: undefined: UndefinedT
+	k, l := x.(UndefinedT)
+	use(k)
+	_ = l
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: cannot use 3 (untyped int constant) as string value in map index
+	n, ok2 := clone(m[3])
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: n may be unset here: U has no zero value, and it is valid only where ok2 is true: check `if !ok2 { return }` first (OWN-P10)
+	use(n)
+	_ = ok2
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot store the result of load() in m["a"]: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	m["a"], err = load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: u may be unset here: U has no zero value, and nothing can check it: its error goes into me, which is not a local error variable that only this function assigns (OWN-P10)
+	use(u)
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: label Missing not declared
+	goto Missing
+}
+
+func chn2() {
+	p, q := load()
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: no new variables on left side of :=
+	p, q := load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: p may be unset here: U has no zero value, and it is valid only where q == nil: check `if q != nil { return q }` first (OWN-P10)
+	use(p)
+	_ = q
+}

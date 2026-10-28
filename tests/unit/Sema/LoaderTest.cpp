@@ -219,6 +219,26 @@ TEST(Loader, ForeignHeaderPackagesComeFromTheProvider) {
   EXPECT_NE(R.Errors[0].find("cannot use"), std::string::npos);
 }
 
+// P03 exit criterion: the standard library root is an option of the loader.
+// A path that is not a package of the module is looked up there; the module
+// wins; without the option nothing is found.
+TEST(Loader, StdRootIsTheFallbackForImportPaths) {
+  Tree T, Std;
+  T.write("main.gopp", "package main\nimport (\n\t\"fmt\"\n\t\"local\"\n)\n"
+                       "func main() { fmt.Println(local.N) }\n");
+  T.write("local/local.gopp", "package local\nconst N = 1\n");
+  Std.write("fmt/fmt.gopp",
+            "package fmt\nfunc Println(a ...any) (int, error)\n");
+  Std.write("local/local.gopp", "package local\nconst N = \"shadowed\"\n");
+  Result Without = load(T);
+  EXPECT_TRUE(Without.has("could not import fmt"));
+  LoadOptions LO;
+  LO.StdRoot = Std.Root;
+  Result With = load(T, LO);
+  EXPECT_TRUE(With.Loaded);
+  EXPECT_TRUE(With.Errors.empty()) << With.Errors[0];
+}
+
 TEST(Loader, ForeignHeaderWithoutProviderIsAnError) {
   Tree T;
   T.write("main.gopp", "package main\nimport \"<vec>\"\nvar _ = vec.X\n");

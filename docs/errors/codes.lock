@@ -349,3 +349,9 @@ E0343 err_fail_return_nil
 E0344 err_weak_no_indirect
 E0345 err_required_args
 E0346 err_own_get_binding_read_only
+E0347 err_nil_never_nil
+E0348 err_required_never_nil
+E0349 err_required_maybe_nil
+E0350 err_unchecked_value
+E0351 err_unchecked_store
+E0352 err_maybe_nil_to_never_nil

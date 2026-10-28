@@ -98,7 +98,7 @@ var Shared1 Option[Shared[*List[int]]]
 var Weak1 Option[Weak[*Point]]
 var Anyval any
 var Err error
-var Callback func(int, ...int) (bool, error)
+var Callback = func(int, ...int) (bool, error) { return false, nil }
 var Embedded struct {
 	Point
 	Extra []Shape
@@ -115,7 +115,7 @@ type Team struct {
 }
 type Box[T any] struct{ V T }
 type Gate struct {
-	Open func() @Required
+	Open error @Required
 }
 
 type Alias = Point
@@ -359,12 +359,14 @@ func f() {
 )";
   const char *Good = R"(package main
 import "lib"
+type nope struct{}
+func (nope) Error() string { return "" }
 func f() {
 	u := lib.User{ID: 1}
 	t := lib.Team{Lead: u, Size: 2}
 	var b lib.Box[int]
 	var p lib.Point
-	g := lib.Gate{Open: func() {}}
+	g := lib.Gate{Open: nope{}}
 	_, _, _, _, _ = u, t, b, p, g
 }
 )";

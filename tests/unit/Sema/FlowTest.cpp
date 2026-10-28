@@ -160,7 +160,7 @@ type N struct{ V int }
 
 func f(a Option[*N]) func() int {
 	if a == nil {
-		return nil
+		return func() int { return 0 }
 	}
 	return func() int {
 		if a != nil {

@@ -1,0 +1,233 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.18 review round 2 (OWN-P10, ADR-0018 point 4): the loop and goto scans
+// decide "is this a checked form" from the right side, as the checker does,
+// and accept any target; a grouped `var` flushes each spec; a pointer-receiver
+// method call is `&x`; `return f()` forwards an error-ending call only into a
+// result list that ends in `error`. Functions named positive* have no error;
+// every negative line has a positive form nearby.
+package main
+
+type Node struct{ V int }
+
+type U struct {
+	Name string @Required
+}
+
+type S struct{ err error }
+
+type B bool
+
+func (b *B) Set() { *b = true }
+
+type C bool
+
+func (c C) Get() bool { return bool(c) }
+
+type M map[string]int
+
+func (m *M) Reset() { *m = nil }
+func (m M) Len() int { return len(m) }
+
+type Box struct {
+	Items M @Required
+}
+
+func load() (U, error)
+func loadN() (*Node, error)
+func mkU() U
+func mkN() *Node
+func use(u U)       {}
+func useN(n *Node)  {}
+func pick() bool    { return true }
+func pair() (*Node, bool)
+func pairI() (*Node, any)
+func get() M
+
+// R8: a call that is not a checked form is a plain assignment, whatever the
+// type of its last target.
+func positiveNames() {
+	a := mkN()
+	var b bool
+	for i := 0; i < 3; i++ {
+		useN(a)
+		a, b = pair()
+		_ = b
+	}
+	c := mkN()
+	var d any
+	for i := 0; i < 3; i++ {
+		useN(c)
+		c, d = pairI()
+		_ = d
+	}
+}
+
+// R3, the good side: a form checked right after it, and no use before.
+func positiveTargets(s *S) error {
+	u := mkU()
+	for i := 0; i < 3; i++ {
+		var err error
+		u, err = load()
+		if err != nil {
+			return err
+		}
+		use(u)
+	}
+	_, s.err = load()
+	return s.err
+}
+
+// R3: the guard is a field, an element or a deref, or a select receive.
+func negativeTargets(s *S, errs []error, pe *error, xs []int, ch chan *Node, sok *struct{ ok bool }) {
+	u := mkU()
+	for i := 0; i < 3; i++ {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: u may be unset here
+		use(u)
+		u, s.err = load()
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: u may be unset here
+		use(u)
+		u, errs[0] = load()
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: u may be unset here
+		use(u)
+		u, *pe = load()
+	}
+	n := mkN()
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+		select {
+		case n, sok.ok = <-ch:
+		}
+	}
+	m := mkN()
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: m may be unset here
+		useN(m)
+		m, errs[1] = loadN()
+	}
+}
+
+func negativeGoto(s *S) {
+	u := mkU()
+L:
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E0350\]}}: u may be unset here
+	use(u)
+	u, s.err = load()
+	if pick() {
+		goto L
+	}
+}
+
+// R4: each spec of a group sees the checked results of the earlier ones.
+func positiveVarGroup() {
+	var (
+		n, err = loadN()
+		k      = 2
+	)
+	_ = k
+	if err != nil {
+		return
+	}
+	useN(n)
+	var p, err2 = loadN()
+	if err2 != nil {
+		return
+	}
+	m := p
+	useN(m)
+}
+
+func negativeVarGroup() {
+	var (
+		n, err = loadN()
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here
+		m = n
+	)
+	_ = err
+	useN(m)
+}
+
+// R5: a pointer-receiver method call is `&x`: the callee can write x.
+func positivePtrMethod(mp map[string]*Node, mm M) Box {
+	var ok C
+	n := mkN()
+	n, ok = mp["k"]
+	_ = ok.Get()
+	if ok {
+		useN(n)
+	}
+	m := get()
+	if m == nil {
+		return Box{Items: M{}}
+	}
+	_ = m.Len()
+	return Box{Items: m}
+}
+
+func negativePtrMethod(mp map[string]*Node) {
+	var ok B
+	n := mkN()
+	n, ok = mp["k"]
+	ok.Set()
+	if ok {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+	}
+}
+
+func negativePtrMethodValue(mp map[string]*Node) {
+	var ok B
+	n := mkN()
+	n, ok = mp["k"]
+	f := ok.Set
+	f()
+	if ok {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here
+		useN(n)
+	}
+}
+
+func negativeNilMethod() Box {
+	m := get()
+	if m == nil {
+		return Box{Items: M{}}
+	}
+	m.Reset()
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E0349\]}}: cannot store m in Box.Items
+	return Box{Items: m}
+}
+
+// R6: `return f()` into a result list that ends in `error` is a checked form
+// for the caller; into any other list it hides the error.
+func positiveForward() (*Node, error) { return loadN() }
+func positiveForwardU() (U, error)     { return load() }
+func positiveForwardLit() {
+	f := func() (*Node, error) { return loadN() }
+	n, err := f()
+	if err != nil {
+		return
+	}
+	useN(n)
+}
+func positiveForwardLeft() (int, any) {
+	return loadI()
+}
+func loadI() (int, error)
+func loadFails!() *Node
+func positiveForwardFails!() *Node { return loadN() }
+
+// CHECK-DAG: [[@LINE+1]]:46: error{{\[E0351\]}}: cannot store the result of loadN() in the results of this function
+func negativeForward() (*Node, any) { return loadN() }
+
+func negativeForwardLit() {
+	// CHECK-DAG: [[@LINE+1]]:36: error{{\[E0351\]}}: cannot store the result of loadN() in the results of this function
+	g := func() (*Node, any) { return loadN() }
+	k, _ := g()
+	useN(k)
+}
+
+func main() {}

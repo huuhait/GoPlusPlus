@@ -588,7 +588,9 @@ func positiveMove(move o Option[Unique[*UNode]], move p Option[Unique[*UNode]]) 
 	}
 	// Option's own Get on a moved Option.
 	v, ok := move(o).Get()
-	_, _ = v, ok
+	if ok {
+		_ = v
+	}
 	if o != nil {
 		useU(o)
 	}
@@ -622,7 +624,9 @@ func negativeMove(move o Option[Unique[*UNode]], move p Option[Unique[*UNode]]) 
 	}
 	if o != nil {
 		v, ok := move(o).Get()
-		_, _ = v, ok
+		if ok {
+			_ = v
+		}
 		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
 		useU(o)
 	}

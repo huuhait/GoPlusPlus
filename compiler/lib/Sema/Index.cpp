@@ -377,6 +377,7 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
       X.Ty = Ctx.ref(X.Ty);
       // The ref points into the array itself (OWN-P10).
       rejectPayloadAddress(Ex->X, "slicing an array held by value");
+      noteReference(Ex->X);
     }
     break;
   }
@@ -595,14 +596,8 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
             Alt = static_cast<int>(I);
         }
         if (Idx < 0) {
-          std::string Msg = "unknown field " + std::string(name(Key)) +
-                            " in struct literal of type " + str(Base);
-          if (Alt >= 0 && Fields[Alt]->Name == name(Key))
-            // Same name, so the field is unexported in another package.
-            Msg = "cannot refer to unexported field " + std::string(name(Key)) +
-                  " in struct literal of type " + str(Base);
-          else if (Alt >= 0)
-            Msg += ", but does have " + std::string(Fields[Alt]->Name);
+          std::string Msg = lookupError(Base, name(Key),
+                                        Alt >= 0 ? Fields[Alt] : nullptr, true);
           err(KV->Key, diag::err_sema_index, {Msg});
           continue;
         }
@@ -611,6 +606,8 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         if (V.isNil() && isNeverNilField(Fld))
           err(V, diag::err_required_nil_store,
               {str(Base) + "." + std::string(Fld->Name)});
+        else
+          checkNeverNilStore(V, Fld, str(Base) + "." + std::string(Fld->Name));
         if (!checkPointerField(V, Fld->Ty)) {
           assignment(V, Fld->Ty, "struct literal");
           storeLiteralElem(V, Fld->Ty);
@@ -643,6 +640,8 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         if (V.isNil() && isNeverNilField(Fld))
           err(V, diag::err_required_nil_store,
               {str(Base) + "." + std::string(Fld->Name)});
+        else
+          checkNeverNilStore(V, Fld, str(Base) + "." + std::string(Fld->Name));
         if (!checkPointerField(V, Fld->Ty)) {
           assignment(V, Fld->Ty, "struct literal");
           storeLiteralElem(V, Fld->Ty);
@@ -689,8 +688,9 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
       if (K.M == Mode::Constant) {
         bool Dup = false;
         for (auto &[V, T] : Visited)
-          if (V.kind() == K.Val.kind() &&
-              ConstValue::compare(V, tok::eql, K.Val) &&
+          // compare matches the kinds, so 1, 1.0 and 1+0i are the same key
+          // (types2's keyVal), as when the key is a type parameter.
+          if (ConstValue::compare(V, tok::eql, K.Val) &&
               (!KeyIsInterface || identical(T, K.Ty))) {
             Dup = true;
             break;

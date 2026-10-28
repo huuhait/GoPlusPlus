@@ -65,6 +65,8 @@ static bool isFollowOn(const Diagnostic &D) {
 }
 
 void Checker::emit(Diagnostic D) {
+  if (ErrPos.isValid() && D.Sev == Severity::Error)
+    D.Loc = ErrPos;
   if (D.Sev == Severity::Error) {
     if (FirstErr && isFollowOn(D))
       return;

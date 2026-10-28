@@ -1,0 +1,423 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.18 (ADR-0018 amendment point 4, OWN-P10, ERR-3): `v, err := f()` for a
+// call that ends in `error`, and the comma-ok forms `m[k]`, `<-ch`, `x.(T)`
+// and `o.Get()`: when v's type has no zero value, v is usable only where
+// `err == nil` / `ok` is known. Same machinery as Option narrowing (early
+// exits, && / ||, loops, switches; a function literal never sees a check,
+// CLO-9). Functions named positive* have no error; every negative line has a
+// positive form nearby.
+package main
+
+type Node struct{ V int }
+type Logger interface{ Log(s string) }
+type Reader interface {
+	Read(b []byte) (int, error)
+	Load() (*Node, error)
+	Check() error
+}
+type User struct {
+	ID   int @Required
+	Name string
+}
+
+func load() (*Node, error)
+func use(n *Node)          {}
+func useL(l Logger)        {}
+func useU(u User)          {}
+func two() (*Node, *Node, error)
+func loadLog!() Logger
+func mk() *Node
+
+// Direct calls, func values and interface methods all count.
+func positiveErr(r Reader, f func() (*Node, error)) error {
+	v, err := load()
+	if err != nil {
+		return err
+	}
+	use(v)
+	w, err := f()
+	if err != nil {
+		return err
+	}
+	use(w)
+	x, err := r.Load()
+	if err != nil {
+		return err
+	}
+	use(x)
+	return nil
+}
+
+func positiveForms(r Reader, buf []byte) error {
+	// An int has a zero value: n is usable whatever err says.
+	n, err := r.Read(buf)
+	_ = n + 1
+	if err != nil {
+		return err
+	}
+	if v, err := load(); err == nil {
+		use(v)
+	}
+	if v, err := load(); err != nil {
+		return err
+	} else {
+		use(v)
+	}
+	a, b, err := two()
+	if err != nil {
+		return err
+	}
+	use(a)
+	use(b)
+	var e error
+	c, e := load()
+	if e == nil {
+		use(c)
+	}
+	d, err := load()
+	if err == nil && d.V > 0 {
+		use(d)
+	}
+	g, err := load()
+	if err != nil || g.V == 0 {
+		return err
+	}
+	use(g)
+	h, err := load()
+	switch {
+	case err != nil:
+		return err
+	default:
+		use(h)
+	}
+	return nil
+}
+
+func positiveLoops(r Reader) error {
+	for i := 0; i < 3; i++ {
+		v, err := load()
+		if err != nil {
+			continue
+		}
+		use(v)
+	}
+	for {
+		v, err := load()
+		if err != nil {
+			break
+		}
+		use(v)
+	}
+	v, err := load()
+	for err == nil {
+		use(v)
+		v, err = load()
+	}
+	for v3, e3 := load(); e3 == nil; v3, e3 = load() {
+		use(v3)
+	}
+	// The link comes back at the head: the post statement or the end of the
+	// body sets both again.
+	w, err2 := load()
+	for i := 0; i < 2; i++ {
+		if err2 != nil {
+			return err2
+		}
+		use(w)
+		w, err2 = load()
+	}
+	return err
+}
+
+func positiveClosure() error {
+	v, err := load()
+	if err != nil {
+		return err
+	}
+	// A literal can run at any time: it uses a copy made after the check.
+	c := v
+	f := func() { use(c) }
+	f()
+	go func() { use(c) }()
+	defer func() { use(c) }()
+	return nil
+}
+
+func positiveAssign() {
+	v, err := load()
+	_ = err
+	// A plain assignment stores a valid value.
+	v = mk()
+	use(v)
+	w, err := load()
+	if err != nil {
+		return
+	}
+	use(w)
+}
+
+func positiveOk(m map[string]*Node, ch chan Logger, x any, o Option[*Node], um map[string]User) {
+	v, ok := m["a"]
+	if !ok {
+		return
+	}
+	use(v)
+	l, ok := <-ch
+	if ok {
+		useL(l)
+	}
+	n, ok := x.(*Node)
+	if ok && n.V > 0 {
+		use(n)
+	}
+	p, ok := o.Get()
+	if !ok {
+		return
+	}
+	use(p)
+	if u, ok := clone(um["k"]); ok {
+		useU(u)
+	}
+	select {
+	case l, ok := <-ch:
+		if ok {
+			useL(l)
+		}
+	default:
+	}
+	// A discarded ok, a value with a zero value, a blank value.
+	_, _ = m["b"]
+	k, ok := x.(int)
+	_, _ = k, ok
+	_, ok = m["c"]
+}
+
+func positiveBang!() Logger {
+	l := loadLog!()
+	return l
+}
+
+func negativeErr(r Reader, f func() (*Node, error)) {
+	v, err := load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(v)
+	if err != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(v)
+	}
+	w, err := f()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(w)
+	x, err := r.Load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: x may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(x)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: x may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	_ = x.V
+	y, _ := load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: y may be unset here: *Node has no zero value, and its error result is dropped: keep it in a variable and check it (OWN-P10)
+	use(y)
+	z, err := load()
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: z may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	if err == nil || z.V == 0 {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: z may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(z)
+	}
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: z may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	z.V = 1
+}
+
+// Ways to lose the link between v and err.
+func negativeRelink(r Reader) {
+	// err assigned again before the check: the new value says nothing about v.
+	v, err := load()
+	err = nil
+	if err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and err was assigned again, so it no longer tells whether v is valid: check err before that (OWN-P10)
+	use(v)
+	// err shadowed: the inner err checks another call.
+	w, err := load()
+	if err := r.Check(); err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(w)
+	// A new tuple assignment starts over.
+	a, err := load()
+	if err != nil {
+		return
+	}
+	use(a)
+	a, err = load()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(a)
+	// A check of a different call's error.
+	b, err1 := load()
+	c, err2 := load()
+	if err2 != nil {
+		return
+	}
+	use(c)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: b may be unset here: *Node has no zero value, and it is valid only where err1 == nil: check `if err1 != nil { return err1 }` first (OWN-P10)
+	use(b)
+	_, _ = err1, err2
+}
+
+
+func negativeJoin(c bool) {
+	v, err := load()
+	if c {
+		if err != nil {
+			return
+		}
+	}
+	// Only one path checked err.
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	use(v)
+	// err is set again without w: a check in the next pass proves nothing.
+	for w, err := load(); err == nil; err = nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: w may be unset here: *Node has no zero value, and err is assigned again in the loop, so it no longer tells whether w is valid: check err before that (OWN-P10)
+		use(w)
+	}
+	x, err := load()
+	for i := 0; i < 2; i++ {
+		if err != nil {
+			return
+		}
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: x may be unset here: *Node has no zero value, and err is assigned again in the loop, so it no longer tells whether x is valid: check err before that (OWN-P10)
+		use(x)
+		err = nil
+	}
+	// y and err are only ever assigned together, so the link survives the
+	// `continue` too (positive).
+	y, err := load()
+	for i := 0; i < 2; i++ {
+		if err != nil {
+			return
+		}
+		if i == 0 {
+			continue
+		}
+		use(y)
+		y, err = load()
+	}
+}
+
+func negativeClosure() {
+	v, err := load()
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := v`) and use the copy (OWN-P10)
+	f := func() { use(v) }
+	f()
+	if err != nil {
+		return
+	}
+	w, err := load()
+	if err != nil {
+		return
+	}
+	// A literal that assigns w as a tuple can make it invalid at any time.
+	// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: cannot store the result of load() in w: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	g := func() { w, err = load() }
+	g()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: *Node has no zero value, and nothing can check it: its error goes into err, which is not a local error variable that only this function assigns (OWN-P10)
+	use(w)
+	x, err := load()
+	if err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: x may be unset here: *Node has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`v := x`) and use the copy (OWN-P10)
+	h := func() { use(x) }
+	// The tuple statement after the literal is made would invalidate x.
+	x, err = load()
+	h()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: x may be unset here: *Node has no zero value, and nothing can check it: its error goes into err, which is not a local error variable that only this function assigns (OWN-P10)
+	use(x)
+}
+
+// err / ok captured and assigned by a literal is not trusted.
+func negativeGuardClosure() {
+	v, err := load()
+	f := func() { err = nil }
+	f()
+	if err != nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and nothing can check it: its error goes into err, which is not a local error variable that only this function assigns (OWN-P10)
+	use(v)
+	w, err2 := load()
+	p := &err2
+	if err2 != nil {
+		return
+	}
+	*p = nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: *Node has no zero value, and nothing can check it: its error goes into err2, which is not a local error variable that only this function assigns (OWN-P10)
+	use(w)
+}
+
+func negativeOk(m map[string]*Node, ch chan Logger, x any, o Option[*Node], um map[string]User) {
+	v, ok := m["a"]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where ok is true: check `if !ok { return }` first (OWN-P10)
+	use(v)
+	if !ok {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: v may be unset here: *Node has no zero value, and it is valid only where ok is true: check `if !ok { return }` first (OWN-P10)
+		use(v)
+		return
+	}
+	l, ok2 := <-ch
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: l may be unset here: Logger has no zero value, and it is valid only where ok2 is true: check `if !ok2 { return }` first (OWN-P10)
+	useL(l)
+	if ok2 {
+	} else {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: l may be unset here: Logger has no zero value, and it is valid only where ok2 is true: check `if !ok2 { return }` first (OWN-P10)
+		useL(l)
+	}
+	n, ok3 := x.(*Node)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: n may be unset here: *Node has no zero value, and it is valid only where ok3 is true: check `if !ok3 { return }` first (OWN-P10)
+	use(n)
+	p, ok4 := o.Get()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: p may be unset here: *Node has no zero value, and it is valid only where ok4 is true: check `if !ok4 { return }` first (OWN-P10)
+	use(p)
+	u, ok5 := clone(um["k"])
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: u may be unset here: User has no zero value, and it is valid only where ok5 is true: check `if !ok5 { return }` first (OWN-P10)
+	useU(u)
+	_, _, _, _ = ok3, ok4, ok5, ok
+	q, _ := m["z"]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: q may be unset here: *Node has no zero value, and its ok result is dropped: keep it in a variable and check it (OWN-P10)
+	use(q)
+	select {
+	case s, ok6 := <-ch:
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: s may be unset here: Logger has no zero value, and it is valid only where ok6 is true: check `if !ok6 { return }` first (OWN-P10)
+		useL(s)
+		_ = ok6
+	default:
+	}
+	// ok is reassigned: the new value says nothing about v2.
+	v2, ok7 := m["b"]
+	ok7 = true
+	if !ok7 {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: v2 may be unset here: *Node has no zero value, and ok7 was assigned again, so it no longer tells whether v2 is valid: check ok7 before that (OWN-P10)
+	use(v2)
+}
+
+// The result must go into a local variable that is checked.
+type Holder struct{ N *Node }
+
+func negativeTarget(h *Holder, m map[string]*Node, arr []*Node) {
+	var ok bool
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot store the result of m["a"] in h.N: its type has no zero value, so it is valid only where ok is true; bind it to a new local variable and check that first (OWN-P10)
+	h.N, ok = m["a"]
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot store the result of load() in arr[0]: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+	arr[0], _ = load()
+	_ = ok
+	// A local, then a plain store, is the fix.
+	if v, ok := m["c"]; ok {
+		h.N = v
+	}
+}
+
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot store the result of load() in pv: its type has no zero value, so it is valid only where err == nil; bind it to a new local variable and check that first (OWN-P10)
+var pv, perr = load()
+

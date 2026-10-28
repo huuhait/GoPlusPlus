@@ -22,6 +22,7 @@
 #include "gopp/Import/ClangInfo.h"
 #include "gopp/Lex/Lexer.h"
 #include "gopp/Parse/Parser.h"
+#include "gopp/Sema/ExampleMocks.h"
 #include "gopp/Sema/Loader.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -132,6 +133,16 @@ static cl::opt<DiagFormat> CheckDiagFormat(
     cl::values(clEnumValN(DiagFormat::Text, "text", "Clang-style text"),
                clEnumValN(DiagFormat::JSON, "json", "JSON lines")),
     cl::init(DiagFormat::Text), cl::sub(CheckCmd), cl::sub(VetCmd));
+
+// TEST ONLY, hidden: the stand-ins for the standard library (P13) and for the
+// C/C++ headers the spec examples import (P07, P08), for
+// tests/sema/spec-examples-stubs.test. A normal `gopp check` has neither.
+static cl::opt<std::string> CheckTestStubs(
+    "test-stubs",
+    cl::desc("TEST ONLY: look up the standard packages in this directory "
+             "(declaration-only stubs) and mock zlib.h, <vector> and "
+             "<algorithm>"),
+    cl::Hidden, cl::sub(CheckCmd), cl::sub(VetCmd));
 
 static cl::opt<unsigned> CheckJobs(
     "check-j",
@@ -376,6 +387,7 @@ static int runCheck(bool Vet) {
   LO.Tags.assign(CheckTags.begin(), CheckTags.end());
   LO.IncludeTests = CheckTests;
   LO.LanguageRules = !CheckGoMode;
+  LO.StdRoot = CheckTestStubs;
   gopp::sema::CheckOptions CO;
   CO.GoCompat = CheckGoMode;
   CO.Ownership = !CheckGoMode;
@@ -385,6 +397,9 @@ static int runCheck(bool Vet) {
 
   gopp::sema::CheckedPackage *CP = nullptr;
   gopp::sema::MockForeignProvider Foreign;
+  std::unique_ptr<gopp::sema::ExampleHeaderMocks> TestMocks;
+  if (!CheckTestStubs.empty())
+    TestMocks = std::make_unique<gopp::sema::ExampleHeaderMocks>(Ctx, Foreign);
   if (CheckInputs.size() == 1 && llvm::sys::fs::is_directory(CheckInputs[0])) {
     LO.Root = CheckInputs[0];
     gopp::sema::Loader L(SM, Diags, Ctx, LO, CO);

@@ -140,8 +140,20 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       }
     }
     if (!Exp) {
-      if (!P->Fake && Sel != "_")
-        err(Ex->Sel, diag::err_undefined, {str(Ex)});
+      if (!P->Fake && Sel != "_") {
+        // A better message when Sel matches an exported name ignoring case
+        // (the first in name order, so the result does not depend on the
+        // scope's hash order).
+        Object *Have = nullptr;
+        if (P->PkgScope && !P->IsForeign)
+          for (auto &KV : P->PkgScope->Elems)
+            if (KV.second->exported() && KV.first.equals_insensitive(Sel) &&
+                (!Have || KV.first < Have->Name))
+              Have = KV.second;
+        err(Ex->Sel, diag::err_undefined,
+            {str(Ex) +
+             (Have ? " (but have " + std::string(Have->Name) + ")" : "")});
+      }
       return Error();
     }
     if (!Exp->exported() && !P->IsForeign) {
@@ -361,7 +373,15 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     }
   }
   if (!Obj) {
-    if (!isValid(under(X.Ty)))
+    // An interface type still being declared has no methods yet: `T.m` in
+    // its own method signatures is "undefined" (types2).
+    bool Building = false;
+    {
+      bool IsPtr;
+      if (auto *N = dyn_cast<NamedType>(deref(X.Ty, IsPtr)))
+        Building = N->ResolvingInterface;
+    }
+    if (!isValid(under(X.Ty)) && !Building)
       return Error();
     if (LR.Ambiguous) {
       err(Ex->Sel, diag::err_ambiguous_selector,
@@ -464,9 +484,11 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       // not narrowed there (an immediate call `o.M()` is fine). A method of
       // Option[*T] has an indirect receiver and copies the pointer.
       if (own() && F->HasPtrRecv && !LR.Indirect &&
-          (Ex != CalleeSel || CalleeSuspended))
+          (Ex != CalleeSel || CalleeSuspended)) {
         rejectPayloadAddress(Ex->X, "a method value or `go` / `defer` call "
                                     "with a pointer receiver");
+        noteReference(Ex->X);
+      }
       // A method value (not the callee of a call) binds, so moves, the
       // receiver; a call is checked in arguments().
       if (own() && F->MoveRecv && Ex != CalleeSel)
@@ -478,16 +500,75 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
   X.E = Ex;
 }
 
-std::string Checker::lookupError(Type *T, StringRef Sel, Object *Alt) {
-  std::string TS = str(T);
-  if (!Alt)
-    return "type " + TS + " has no field or method " + std::string(Sel);
-  const char *What = isa<Func>(Alt) ? "method" : "field";
-  if (Alt->Name == Sel) // unexported name from another package
-    return "cannot refer to unexported " + std::string(What) + " " +
-           std::string(Sel);
-  return "type " + TS + " has no field or method " + std::string(Sel) +
-         ", but does have " + What + " " + std::string(Alt->Name);
+std::string Checker::lookupError(Type *T, StringRef Sel, Object *Alt,
+                                 bool StructLit) {
+  // A port of types2's lookupError (errsupport.go): the message depends on
+  // whether Alt (the object found with case folding) is in this package and
+  // how its spelling differs from Sel.
+  enum { Missing, Misspelled, Unexported, Inaccessible } E = Missing;
+  // types2's tail: the name without its first UTF-8 character; a name of one
+  // character is returned whole (so `g` and `G` are no misspelling).
+  auto Tail = [](StringRef S) {
+    for (size_t I = 1; I < S.size(); ++I)
+      if ((static_cast<unsigned char>(S[I]) & 0xC0) != 0x80)
+        return S.substr(I);
+    return S;
+  };
+  StringRef AltName = Alt ? StringRef(Alt->Name) : StringRef();
+  if (Alt) {
+    // The package of an exported struct field is not stored (see sameId):
+    // the fields of a defined type belong to the package of that type.
+    Package *AltPkg = Alt->Pkg;
+    if (!AltPkg) {
+      bool IsPtr;
+      Type *Base = deref(T, IsPtr);
+      AltPkg = isa<NamedType>(Base) && cast<NamedType>(Base)->Obj
+                   ? cast<NamedType>(Base)->Obj->Pkg
+                   : S.Pkg;
+    }
+    if (AltPkg == S.Pkg) {
+      E = Misspelled;
+    } else if (isExportedName(Sel)) {
+      if (isExportedName(AltName))
+        E = Misspelled;
+      else if (Tail(Sel) == Tail(AltName))
+        E = Unexported;
+    } else if (isExportedName(AltName)) {
+      if (Tail(Sel) == Tail(AltName))
+        E = Misspelled;
+    } else if (Sel == AltName) {
+      E = Inaccessible;
+    }
+  }
+  std::string TS = str(T), S = Sel.str(), A = AltName.str();
+  if (StructLit) {
+    std::string Base =
+        "unknown field " + S + " in struct literal of type " + TS;
+    switch (E) {
+    case Missing:
+      return Base;
+    case Misspelled:
+      return Base + ", but does have " + A;
+    case Unexported:
+      return Base + ", but does have unexported " + A;
+    case Inaccessible:
+      return "cannot refer to unexported field " + A +
+             " in struct literal of type " + TS;
+    }
+  }
+  const char *What = !Alt ? "object" : isa<Func>(Alt) ? "method" : "field";
+  std::string Base = "type " + TS + " has no field or method " + S;
+  switch (E) {
+  case Missing:
+    return Base;
+  case Misspelled:
+    return Base + ", but does have " + What + " " + A;
+  case Unexported:
+    return Base + ", but does have unexported " + What + " " + A;
+  case Inaccessible:
+    return "cannot refer to unexported " + std::string(What) + " " + A;
+  }
+  return Base;
 }
 
 //===----------------------------------------------------------------------===//
@@ -623,10 +704,19 @@ void Checker::funcInst(Operand &X, SourceLoc Pos, const IndexExpr *Inst,
 // Calls
 //===----------------------------------------------------------------------===//
 
+/// `h(f())` / `h(o.Get())` hands the values of a checked form on, with no way
+/// to check the error or ok first (P03.18): the parameters are plain
+/// variables of the callee.
+void Checker::checkSpreadCall(const ast::Expr *Ex, ArrayRef<Operand> Ops) {
+  if (own() && Ops.size() >= 2)
+    checkForwarded(Ex, Ops, nullptr, "the arguments of the call");
+}
+
 void Checker::exprList(ArrayRef<ast::Expr *> Es, SmallVector<Operand, 4> &Out) {
   if (Es.size() == 1) {
     bool CommaOk;
     multiExpr(Out, Es[0], false, &CommaOk);
+    checkSpreadCall(Es[0], Out);
     return;
   }
   for (const ast::Expr *Ex : Es) {
@@ -669,6 +759,7 @@ void Checker::genericExprList(ArrayRef<ast::Expr *> Es,
           O.Ty = Et;
           Out.push_back(O);
         }
+        checkSpreadCall(Ex, Out);
         return;
       }
     Out.push_back(X);
@@ -677,6 +768,10 @@ void Checker::genericExprList(ArrayRef<ast::Expr *> Es,
   for (const ast::Expr *Ex : Es) {
     Operand X;
     Eval(X, Ex);
+    if (!isa<IndexExpr>(Ex))
+      exclude(X, (1u << static_cast<unsigned>(Mode::NoValue)) |
+                     (1u << static_cast<unsigned>(Mode::Builtin)) |
+                     (1u << static_cast<unsigned>(Mode::TypeExpr)));
     Out.push_back(X);
   }
 }
@@ -825,11 +920,16 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
   struct ReplaceRestore {
     Checker &C;
     const ast::Expr *Arg, *Nil;
+    const Var *Field;
+    std::string Place;
     ~ReplaceRestore() {
       C.ReplaceArg = Arg;
       C.ReplaceNil = Nil;
+      C.ReplaceField = Field;
+      C.ReplacePlace = std::move(Place);
     }
-  } ReplaceGuard{*this, ReplaceArg, ReplaceNil};
+  } ReplaceGuard{*this, ReplaceArg, ReplaceNil, ReplaceField, ReplacePlace};
+  ReplaceField = nullptr; // set by checkAddressOf for this call's `&place`
   if (own() && !Call->Args.empty() && isMemReplace(Call->Fun)) {
     ReplaceArg = unparen(Call->Args[0]);
     ReplaceNil = Call->Args.size() == 2 && isNilLit(Call->Args[1])
@@ -952,6 +1052,16 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
       },
       &CallWhy));
   if (!Sig) {
+    // `f()` on an Option[func()] that is not known to be set (OWN-P10).
+    if (own() && X.E)
+      if (auto *Op = dyn_cast_or_null<OptionType>(under(X.Ty)))
+        if (isa<SignatureType>(under(Op->Elem))) {
+          err(X, diag::err_option_maybe_nil, {str(X.E), nilCheckHint(X.E)});
+          UseArgs();
+          X.M = Mode::Invalid;
+          X.E = Call;
+          return ExprKind::Statement;
+        }
     err(X, diag::err_sema_call,
         {"invalid operation: cannot call " + str(X) + ": " + CallWhy});
     UseArgs();
@@ -990,6 +1100,10 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
 
   SmallVector<Operand, 4> Args;
   genericExprList(Call->Args, Args);
+  // `mem.Replace(&c.F, v)` of a never-nil error, any, map or channel field:
+  // v must be known non-nil (TYP-15).
+  if (ReplaceField && Args.size() == 2)
+    checkNeverNilStore(Args[1], ReplaceField, ReplacePlace);
 
   // A call into a C/C++ header: the foreign scope resolves overloads and
   // template arguments and says what the callee may change (D3.7, ADR-0008).
@@ -1034,6 +1148,8 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
   SignatureType *Out = Sig;
   arguments(Call, Sig, TArgs, ArgPos, Args, Call->EllipsisLoc.isValid(), Out);
   Sig = Out;
+  // A call is not a constant (len/cap of an array containing it, builtins.go).
+  E.HasCallOrRecv = true;
   if (own() && FC.Sig) {
     for (size_t K = 0; K < FArgs.size() && K < 64; ++K)
       if (((FC.MutableParams >> K) & 1) && FArgs[K].ReadOnly)

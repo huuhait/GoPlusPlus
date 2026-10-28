@@ -1,0 +1,4 @@
+// Test-only stand-in for the standard package errors (P13).
+package errors
+
+func New(text string) error

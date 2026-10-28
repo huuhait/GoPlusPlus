@@ -1,0 +1,142 @@
+// Rule TYP-15 (P03.18): a value stored in a never-nil @Required error, any,
+// map or channel field must be known non-nil. The one list: a literal,
+// make(...), a local checked with != nil, a value of a type that has no nil
+// converted to error / any (a pointer kind, a func, an interface with methods,
+// a concrete value), and a read of another such field. @Required on a func
+// field or a field of an interface with methods is an error (never nil
+// already); on a slice, unsafe.Pointer, Option or type-parameter field it only
+// means "must be set".
+package main
+
+import (
+	"mem"
+	"unsafe"
+)
+
+type Boom struct{}
+
+func (Boom) Error() string { return "boom" }
+
+type Logger interface{ Log(s string) }
+type Plain struct{ n int }
+
+func (p Plain) Log(s string) {}
+
+type Cfg struct {
+	Err  error          @Required
+	Any  any            @Required
+	M    map[string]int @Required
+	C    chan int       @Required
+	P    unsafe.Pointer @Required
+	S    []int          @Required
+	O    Option[int]    @Required
+	Unit struct{}
+}
+
+type Bad struct {
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: func() is never nil (a func has no nil); @Required isn't needed on field F
+	F func()    @Required
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: Logger is never nil (an interface with methods has no nil); @Required isn't needed on field L
+	L Logger    @Required
+	E error     @Required
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field T of type *Plain
+	T *Plain    @Required
+}
+
+func newErr() error { return nil }
+func newMap() map[string]int { return nil }
+
+func positiveStores(c *Cfg, e error, a any, move m map[string]int, l Logger, p Plain, f func(), ch chan int) {
+	// a literal, make, a composite literal, a concrete value
+	c.Err = Boom{}
+	c.Any = 1
+	c.Any = "s"
+	c.Any = []int(nil) // a nil slice inside any is not a nil any
+	c.M = map[string]int{}
+	c.M = make(map[string]int)
+	c.C = make(chan int)
+	// a value of a never-nil type, converted to error / any
+	c.Any = l
+	c.Any = f
+	c.Any = p
+	c.Any = &p
+	c.Any = Option[int](nil) == nil
+	// a checked local
+	if e != nil {
+		c.Err = e
+		c.Any = e
+	}
+	if a != nil {
+		c.Any = a
+	}
+	if m != nil {
+		c.M = m
+	}
+	if ch != nil {
+		c.C = ch
+	}
+	if v := newErr(); v != nil {
+		c.Err = v
+	}
+	if e == nil {
+		return
+	}
+	c.Err = e
+	// another never-nil field of the same kind
+
+	c.Any = c.Err
+	_ = mem.Replace(&c.Err, error(Boom{}))
+	if e != nil {
+		_ = mem.Replace(&c.Err, e)
+	}
+	// "must be set" only
+	c.S = nil
+	c.P = nil
+	c.O = nil
+	_ = Cfg{Err: Boom{}, Any: 1, M: map[string]int{}, C: make(chan int), P: nil, S: nil, O: nil}
+	if e != nil {
+		_ = Cfg{Err: e, Any: e, M: map[string]int{}, C: make(chan int), P: nil, S: nil, O: nil}
+	}
+}
+
+func negativeStores(c *Cfg, e error, a any, move m map[string]int, ch chan int) {
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store e in c.Err: the field is @Required and never nil, and e may be nil; check a local copy: `if v := e; v != nil { ... }` (TYP-15)
+	c.Err = e
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store a in c.Any: the field is @Required and never nil, and a may be nil; check a != nil first (TYP-15)
+	c.Any = a
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot store m in c.M: the field is @Required and never nil, and m may be nil; check m != nil first (TYP-15)
+	c.M = m
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot store ch in c.C: the field is @Required and never nil, and ch may be nil; check ch != nil first (TYP-15)
+	c.C = ch
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store newErr() in c.Err: the field is @Required and never nil, and newErr() may be nil; check a local copy: `if v := newErr(); v != nil { ... }` (TYP-15)
+	c.Err = newErr()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot store newMap() in c.M: the field is @Required and never nil, and newMap() may be nil; check a local copy: `if v := newMap(); v != nil { ... }` (TYP-15)
+	c.M = newMap()
+	// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot store e in c.Err: the field is @Required and never nil, and e may be nil; check a local copy: `if v := e; v != nil { ... }` (TYP-15)
+	_ = mem.Replace(&c.Err, e)
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot store e in Cfg.Err: the field is @Required and never nil, and e may be nil; check a local copy: `if v := e; v != nil { ... }` (TYP-15)
+	_ = Cfg{Err: e, Any: 1, M: map[string]int{}, C: make(chan int), P: nil, S: nil, O: nil}
+	// CHECK-DAG: [[@LINE+3]]:28: error{{\[E[0-9]+\]}}: cannot store a in Cfg.Any: the field is @Required and never nil, and a may be nil; check a != nil first (TYP-15)
+	// CHECK-DAG: [[@LINE+2]]:34: error{{\[E[0-9]+\]}}: cannot store m in Cfg.M: the field is @Required and never nil, and m may be nil; check m != nil first (TYP-15)
+	// CHECK-DAG: [[@LINE+1]]:40: error{{\[E[0-9]+\]}}: cannot store ch in Cfg.C: the field is @Required and never nil, and ch may be nil; check ch != nil first (TYP-15)
+	_ = Cfg{Err: Boom{}, Any: a, M: m, C: ch, P: nil, S: nil, O: nil}
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store nil in c.Err: the field is @Required, so it is never nil
+	c.Err = nil
+	if e != nil {
+		e = newErr()
+		// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot store e in c.Err: the field is @Required and never nil, and e may be nil; check a local copy: `if v := e; v != nil { ... }` (TYP-15)
+		c.Err = e
+	}
+	if e != nil {
+		g := func() { e = nil }
+		g()
+		// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot store e in c.Err: the field is @Required and never nil, and e may be nil; check a local copy: `if v := e; v != nil { ... }` (TYP-15)
+		c.Err = e
+	}
+	if e != nil {
+		x := move(e)
+		_ = x
+		// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot store e in c.Err: the field is @Required and never nil, and e may be nil; check a local copy: `if v := e; v != nil { ... }` (TYP-15)
+		c.Err = e
+	}
+}

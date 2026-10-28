@@ -7,6 +7,7 @@ add_gopp_library(Sema
   Loader.cpp
   Decl.cpp
   Expr.cpp
+  ExampleMocks.cpp
   Foreign.cpp
   ExprString.cpp
   Flow.cpp
@@ -18,6 +19,7 @@ add_gopp_library(Sema
   Ownership.cpp
   Predicates.cpp
   Serialize.cpp
+  Sizes.cpp
   Stmt.cpp
   TypeSet.cpp
   TypeString.cpp
