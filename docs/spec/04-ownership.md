@@ -19,7 +19,7 @@ Two questions decide which one you use: **do I own it?** and **one owner or many
 | promise to change nothing, deeply | a `View[T]` parameter, e.g. `func show(u View[User])`; fields, elements, map entries and pointer targets are all read-only | no | [OWN-V1](#44-views-d16) |
 | change every element in a loop | `for _, &u := range users { u.Age++ }` | no | [RNG-1a](08-slices-and-range.md) |
 | own a heap value, alone | `Unique[*User]`, made with `new_unique(User{…})`; freed when its owner ends | yes | [OWN-P2](#43-pointers-and-heap-allocation-d17) |
-| share a heap value | `Shared[*User]`, made with `new_shared(User{…})`; freed when the last copy ends | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
+| share a heap value | `Shared[*User]`, made with `new_shared(User{…})`; freed when the last copy ends; read-only except cell-typed parts (`mem.Cell`, `Mutex`, `RWMutex`, `Atomic`), used through their own methods ([OWN-B9](#45-borrow-checking-adr-0021)) | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
 | point at a shared value without keeping it alive | `Weak[*User]`; read it with `if p := w.Lock(); p != nil { … }` | no | [OWN-P3, P5](#43-pointers-and-heap-allocation-d17) |
 | say "maybe nothing" | `Option[*User]`, `Option[int]`, `Option[Logger]`, `Option[func()]`, …; pointers, funcs and interfaces with methods (all but `error` and `any`) are never nil; check with `o != nil`, `!o.IsNil()` or `v, ok := o.Get()`; compare two with `==` when `T` is comparable | — | [OWN-P9, P10](#43-pointers-and-heap-allocation-d17) |
 | copy an owned value | `u.Clone()` (short form `clone(u)`) | — | [OWN-R6](#42-ownership-rules-d14) |
@@ -46,9 +46,9 @@ Every type is in exactly one of three categories.
 |---|---|---|---|
 | Trivial | `bool`, numbers, raw `*T`, `unsafe.Pointer`, `View[T]` (every view, whatever `T`), arrays/structs of trivial types | implicit, bitwise | nothing |
 | Owning | `string`, `[]T`, `map[K]V`, `Unique[*T]`, types with a `drop` method, arrays/structs that contain an owning type, C++ classes with a non-trivial copy, move or destructor | move-only; `x.Clone()` copies | drop glue runs |
-| Shared handle | `Shared[*T]` (`Send`/`Sync` only if `T` is `Sync`, [CON-19](12-concurrency.md)), `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
+| Shared handle | `Shared[*T]` (read-only except cell-typed parts (`mem.Cell`, `Mutex`, `RWMutex`, `Atomic`), used through their own methods, [OWN-B9](#45-borrow-checking-adr-0021); `Send`/`Sync` only if `T` is `Sync`, [CON-19](12-concurrency.md)), `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
 
-**OWN-C1.** *Trivial.* A trivial value is copied with `=`, as in Go. It has no destructor. A trivial type satisfies the `Copy` constraint ([GEN-1](10-generics.md)). Examples: `int`, `*Node`, `View[string]`, `struct{ X, Y int }`.
+**OWN-C1.** *Trivial.* A trivial value is copied with `=`, as in Go. It has no destructor. A trivial type satisfies the `Copy` constraint ([GEN-1](10-generics.md)). Examples: `int`, `*Node`, `View[string]`, `struct{ X, Y int }`. Copying a *writable* `*T` (or an interface or struct that holds one) is a reborrow, not a free copy: the source may not be used while the copy is live ([OWN-B9](#45-borrow-checking-adr-0021) rule 2). Read-only pointers and views copy freely.
 
 **OWN-C2.** *Owning.* An owning value is **move-only**. Copying needs `x.Clone()` (or its short form `clone(x)`, [OWN-R6](#42-ownership-rules-d14)). When its owner ends, drop glue runs.
 
@@ -185,7 +185,7 @@ for i, d := range docs {          // d is a borrowed variable
     p := &d                       // error
     q := &d.Buf                   // error: a field held by value
     d.Buf.Reset()                 // error: implicit &d.Buf
-    d.Ptr.Reset()                 // ok: goes through a pointer field
+    d.Owner.Reset()               // ok: goes through a Unique[*Owner] field (a pointer kind, not a raw *T)
     d.Tags[0] = "y"               // ok: goes through a slice
 }
 for _, &d := range docs { d.Title = "x" }            // ok: d is the element itself
@@ -275,7 +275,7 @@ a = Cache{}                // legal: a is usable again
 - **Pointer kinds and `Clone`.** `u.Clone()` on a `Unique[*T]` allocates a new `Unique[*T]` holding `(*u).Clone()` (it needs a cloneable `T`), and `s.Clone()` on a `Shared[*T]` retains: for these two the pointer kind's own `Clone` wins over a promoted `T.Clone` (Go has no such types, so no Go code changes meaning). On a raw `*T` where `T` has a **value-receiver** `Clone() T` (which Go promotes into `*T`'s method set), `p.Clone()` is a **compile error** for ambiguity, because in Go `p.Clone()` calls that method (the one `T` or `*T` declares), not a pointer copy. (A `Clone` declared on `*T` itself is not ambiguous: it is called.) Fix-its: "write `(*p).Clone()` to copy the T, or `q := p` to copy the pointer". If `T` has no `Clone` method, `p.Clone()` copies the pointer. `[T Clone]` with `T = *Handle` (where `Handle` has a value-receiver `Clone`) is satisfied by the pointer copy, while a direct `p.Clone()` is the ambiguity error. The difference is intended: generic code sees `*Handle`'s own method set.
 - **Interface types.** On an interface type that declares a `Clone()` method, `x.Clone()` dispatches to the dynamic method, as in Go. The built-in retaining `Clone` applies only to interface types that do not declare `Clone`.
 - A type with a `drop` method is cloneable only if it defines `Clone() T`. This stops silent duplication of unique resources such as file descriptors. There is no `Clone` derive: a type with `drop` writes `Clone()` by hand, on purpose.
-- A type that mixes owning fields with raw `*T` fields needs a hand-written `Clone()`, because an automatic clone would copy the raw pointers (for example a tree `Node` with a parent pointer).
+- A type that mixes owning fields with `Weak[*T]` fields (for example a tree `Node` with a parent pointer) clones the `Weak` by retaining the weak count, so the clone points at the same parent; write `Clone()` by hand if the copy must point somewhere else. A normal struct has no raw `*T` fields ([OWN-B9](#45-borrow-checking-adr-0021) rule 4).
 - Imported C++ types clone through their copy constructor.
 
 ```go
@@ -309,8 +309,8 @@ func (f *File) drop() {
 
 *Why (R7):* a method named `drop` is found by the compiler like `init`; forbidding direct calls prevents double destruction.
 
-**OWN-R8.** *Borrow checking without annotations.* Views and pointers into storage that can move or be freed are checked by flow and liveness ([OWN-B1 to B7](#45-borrow-checking-adr-0021), ADR-0021). The compiler also catches: returning `&local`; returning a view into a local ([OWN-V7](#44-views-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move, including a use through a pointer or view taken before the move in the same function (`p := &x.In; take(move(x)); p.P.V`; taken elsewhere it is [UB-8](16-undefined-behavior.md)).
-- What is left undefined is listed in [chapter 16](16-undefined-behavior.md): `unsafe`, C and C++ interop, aliasing the compiler cannot see, data races in `unsafe`, C and C++ code, `longjmp`.
+**OWN-R8.** *Borrow checking without annotations.* Views and pointers into storage that can move or be freed are checked by flow and liveness ([OWN-B1 to B9](#45-borrow-checking-adr-0021), ADR-0021). The compiler also catches: returning `&local`; returning a view into a local ([OWN-V7](#44-views-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move, including a use through a pointer or view taken before the move in the same function (`p := &x.In; take(move(x)); p.P.V`; taken elsewhere it is [UB-8](16-undefined-behavior.md)).
+- What is left undefined is listed in [chapter 16](16-undefined-behavior.md): `unsafe`, C and C++ interop, data races in `unsafe`, C and C++ code, `longjmp`. Hidden aliasing is a compile error ([OWN-B9](#45-borrow-checking-adr-0021)).
 - `-asan` catches the rest at run time.
 
 ```go
@@ -360,29 +360,30 @@ func mk() Big { r := Big{}; return r }   // r is built in the caller's slot: nev
 
 ```go
 type Node struct {
-    Name     string          // owned
-    Children []Unique[*Node]  // owned slice of owning pointers
-    Parent   Option[*Node]   // raw back-pointer: does not own; nil for the root
+    Name     string                         // owned
+    Children mem.Cell[[]Shared[*Node]]      // illustrative cell (P05.07): a Shared node is read-only, so the list sits in a cell
+    Parent   Option[Weak[*Node]]            // back-pointer: does not own; nil for the root
 }
 
-func NewNode(name string, parent Option[*Node]) Unique[*Node] {
-    return new_unique(Node{Name: name.Clone(), Parent: parent}) // name is borrowed: Clone it to own it
+func NewNode(name string, parent Option[Weak[*Node]]) Shared[*Node] {
+    return new_shared(Node{Name: name.Clone(), Parent: parent}) // name is borrowed: Clone it to own it
 }
 
-func (n *Node) Add(move child Unique[*Node]) {
-    child.Parent = n
-    n.Children = append(n.Children, child)   // child moves into the slice (R3, R4)
+func Add(parent Shared[*Node], move child Shared[*Node]) {   // `move`: Add takes the handle
+    parent.Children.With(func(c *[]Shared[*Node]) { *c = append(*c, child.Clone()) })   // retain; run-time borrow check
 }
 
 func main() {
     root := NewNode("root", nil)
-    root.Add(NewNode("a", root))   // root (a Unique place) converts to *Node, then to Option[*Node]; the temporary moves into Add
-    b := NewNode("b", root)
-    root.Add(b)                    // b moves
-    // fmt.Println(b.Name)         // compile error: b used after move
-    head := root.Name[:2]          // View[string]: a borrow, no allocation
-    fmt.Println(head, len(root.Children))
-}                                  // root is dropped: the whole tree is freed
+    Add(root, NewNode("a", new_weak(root)))   // new_weak(root) is root's weak handle; a Weak converts to Option[Weak[*Node]]
+    b := NewNode("b", new_weak(root))
+    Add(root, b.Clone())                      // b is a Shared: Clone retains, b stays usable
+    if w, ok := b.Parent.Get(); ok {
+        if p := w.Lock(); p != nil { fmt.Println(p.Name) }   // Lock gives an Option[Shared[*Node]]
+    }
+    head := root.Name[:2]                     // View[string]: a borrow, no allocation
+    fmt.Println(head)
+}                                             // the last handle ends: the whole tree is freed
 ```
 
 ## 4.3 Pointers and heap allocation (D1.7)
@@ -393,7 +394,7 @@ Every heap allocation is spelled out. Go's `new` is removed. (The runtime's own 
 |---|---|---|
 | `*T` | `&x` (address of a variable) | raw, non-owning, **never nil** (Go syntax, no GC) |
 | `Unique[*T]` | `new_unique(v)` | single owner; the value is dropped and freed when the pointer is destroyed; never nil |
-| `Shared[*T]` | `new_shared(v)` | shared ownership, atomically refcounted; one allocation holds the counts and the value (like `make_shared`) |
+| `Shared[*T]` | `new_shared(v)` | shared ownership, atomically refcounted; one allocation holds the counts and the value (like `make_shared`); read-only except cell-typed parts (OWN-P8) |
 | `Weak[*T]` | `new_weak(s)`, from a `Shared[*T]` | does not own, does not allocate; `w.Lock()` returns an `Option[Shared[*T]]`, `nil` if the value is gone |
 | `Option[T]` | `nil`, or any `T` (converts automatically) | "maybe nothing", for any type; zero value `nil`; the only nilable form of a pointer, a func or an interface with methods (other than `error`) |
 
@@ -413,7 +414,7 @@ No pointer kind is ever nil, and none has a zero value ([OWN-P9](#43-pointers-an
 
 **OWN-P7.** `make([]T, n)`, `make(map[K]V)` and `make(chan T, n)` work as in Go (with the allocator rules of [SLC-2](08-slices-and-range.md)).
 
-**OWN-P8.** `Unique[*T]` is owning (move-only). `Shared[*T]` and `Weak[*T]` are shared handles: copies retain the strong or weak count. `Weak[*T]` copies retain the weak count only.
+**OWN-P8.** `Unique[*T]` is owning (move-only). `Shared[*T]` and `Weak[*T]` are shared handles: copies retain the strong or weak count. `Weak[*T]` copies retain the weak count only. A `Shared[*T]` is **read-only**: fields and elements reached through it cannot be written, and a pointer-receiver call on it is an error, except its cell-typed parts (`mem.Cell[T]`, `Mutex[T]`, `RWMutex[T]`, `Atomic[T]`), which are used through their own methods and check at run time ([OWN-B9](#45-borrow-checking-adr-0021) rule 5, [CON-19](12-concurrency.md)). A `View` never changes anything, not even through a cell ([OWN-V1](#44-views-d16)). `Weak[*T].Lock()` gives a read-only `Shared`. A `Unique[*T]` is writable, and a writable borrow through it is a writable borrow of the handle (OWN-B9).
 
 **OWN-P9.** *Never nil, and `Option[T]`* (ADR-0018). `*T`, `Unique[*T]`, `Shared[*T]` and `Weak[*T]` always hold a target and have no zero value ([OWN-R9](#42-ownership-rules-d14)): `var p *User` and `p == nil` on a pointer are compile errors. The same holds for all `func` types and for every interface type with at least one method, because calling a nil one crashes like a nil pointer: `var l Logger`, `var f func()`, `l == nil` and `f == nil` are compile errors, and a struct with such a field has no zero value unless the field is an `Option`. **Two interfaces keep Go's `nil`: `error`, and the empty interface** (`any`, `interface{}`, or any interface type whose method set is empty, named or not, such as `type Thing interface{}`). So `var err error`, `if err != nil { return err }`, `var x any`, `make([]any, n)`, `m[k]` on a `map[string]any` and `x == nil` work as in Go. The `error` exception covers `error` and its aliases (`type E = error`) only: a defined `type MyErr error` and an interface that embeds `error` and adds methods (`interface{ error; Code() int }`) are interfaces with methods, so they are never nil. `unsafe.Pointer` keeps Go's `nil` too (it stands for a C `void*`, which may be NULL). "Maybe nothing" is `Option[T]`, for **any** other type `T`:
 - its zero value is `nil`, and `o = nil` empties it; two `Option[T]` compare equal when both are nil or both are set and equal, if `T` is comparable (`Option[*T]` by address), so `Option[T]` can be a map key and `o == 5` means `o == Option[int](5)` (TYP-3); a `T` converts to `Option[T]` automatically (`var o Option[*User] = &bob`, `var n Option[int] = 5`);
@@ -536,7 +537,7 @@ The key is cloned only when a new entry is added. Without this rule, `counts[w]+
 - **Lifetime extension.** In a `:=` or `var` declaration (`w := strings.ToUpper(s)[0:3]`, `var w = …`) the compiler keeps the temporary in a hidden local until the end of the enclosing block, like Rust and C++ temporary lifetime extension. Only `:=` and `var` declarations get this.
 - Storing a view or a borrow of a temporary into a longer-lived place (a field, a global, an outer variable, a return) is still a compile error ([OWN-R8](#42-ownership-rules-d14)).
 
-**OWN-V7.** *Returning a view into a local.* `return` of a view that points into a local variable of the same function, or into an owned value that dies at the return (an owned `move` parameter, a temporary), is a **compile error**. A view into a *borrowed* parameter or receiver is fine, because the caller still owns it ([PAR-9](05-parameters.md)). It is an error only when the returned view points into an **owned** local (or an owned value that dies at the return). The compiler checks only what it can see in the function: the owned local or `move` parameter itself, converted to a view at the `return` (implicit owned-to-view conversion), so `func f() View[string] { s := "hi"; return s }` and `func g(move s string) View[string] { return s }` are compile errors; a view made by slicing a temporary, or a temporary converted to a view at the `return` (`return load()[:2]`, or `return strings.Repeat("a", 3)` as a `View[string]`); a view made by slicing an owned local (`return s[:1]`), or by indexing or slicing an owned local's field held by value. A view-typed local or parameter that holds a view into a borrowed parameter or into the caller's data is fine (`s = s[1:]; return s` in `trim(s string) View[string]`, where `s` is a borrowed parameter, [PAR-2](05-parameters.md)). A view that comes out of a call borrows from the call's arguments ([OWN-B3](#45-borrow-checking-adr-0021)), so returning it is checked the same way. A function also cannot return a writable borrowed part of a slice (`return xs[1:3]` with a `[]T` result is an error, see [PAR-9](05-parameters.md)): to return a part without copying, the result type is `View[…]`, which is read-only.
+**OWN-V7.** *Returning a view into a local.* `return` of a view that points into a local variable of the same function, or into an owned value that dies at the return (an owned `move` parameter, a temporary), is a **compile error**. A view into a *borrowed* parameter or receiver is fine, because the caller still owns it ([PAR-9](05-parameters.md)). It is an error only when the returned view points into an **owned** local (or an owned value that dies at the return). The compiler checks only what it can see in the function: the owned local or `move` parameter itself, converted to a view at the `return` (implicit owned-to-view conversion), so `func f() View[string] { s := "hi"; return s }` and `func g(move s string) View[string] { return s }` are compile errors; a view made by slicing a temporary, or a temporary converted to a view at the `return` (`return load()[:2]`, or `return strings.Repeat("a", 3)` as a `View[string]`); a view made by slicing an owned local (`return s[:1]`), or by indexing or slicing an owned local's field held by value. A view-typed local or parameter that holds a view into a borrowed parameter or into the caller's data is fine (`s = s[1:]; return s` in `trim(s string) View[string]`, where `s` is a borrowed parameter, [PAR-2](05-parameters.md)). A view that comes out of a call borrows from the arguments the callee's borrow summary names ([OWN-B3](#45-borrow-checking-adr-0021)), so returning it is checked the same way. A function also cannot return a writable borrowed part of a slice (`return xs[1:3]` with a `[]T` result is an error, see [PAR-9](05-parameters.md)): to return a part without copying, the result type is `View[…]`, which is read-only.
 
 ```go
 func bad() View[string] { s := "hi"; return s[:1] }   // error: view into the local s
@@ -595,12 +596,12 @@ func rename(u View[User]) {
 
 ## 4.5 Borrow checking (ADR-0021)
 
-Go++ has no lifetime annotations. The compiler finds borrows from the code and reports a **use after the borrowed thing was thrown away** as a compile error. It uses flow and liveness, like Rust's non-lexical lifetimes, but you never write a lifetime. The check runs in `gopp build` and in `gopp check` (P04.20). Data races are a separate check on the same flow graph ([CON-12 to CON-20](12-concurrency.md), ADR-0022); [OWN-B8](#45-borrow-checking-adr-0021) links the two.
+Go++ has no lifetime annotations. The compiler finds borrows from the code and reports a **use after the borrowed thing was thrown away** as a compile error. It uses flow and liveness, like Rust's non-lexical lifetimes, but you never write a lifetime. The check runs in `gopp build` and in `gopp check` (P04.20). Data races are a separate check on the same flow graph ([CON-12 to CON-20](12-concurrency.md), ADR-0022); [OWN-B8](#45-borrow-checking-adr-0021) links the two. OWN-B2 is about changes that free or move memory; [OWN-B9](#45-borrow-checking-adr-0021) is about writable borrows (ADR-0021 amendment).
 
 **OWN-B1.** *What is a borrow.* A borrow is any of these:
 - a view (`View[T]`, [OWN-V1](#44-views-d16));
 - a borrowed `[]T` made by slicing ([OWN-V2](#44-views-d16));
-- a pointer made by `&x` of a local variable (the local is freed at the end of its scope, or moved), or by `&` of a field or element of owned storage that can move or be freed: a slice or map element, or a field of a local that can be moved;
+- a pointer made by `&x` of a local variable (the local is freed at the end of its scope, or moved), or by `&` of a field or element of owned storage that can move or be freed: a slice or map element, or a field of a local that can be moved. A `*T` got from a `Unique` or `Shared` place ([OWN-P6](#43-pointers-and-heap-allocation-d17)) is a borrow of that handle. A raw `*T` can only come from `&`, from a handle, or from `unsafe`, so every raw `*T` is a tracked borrow ([OWN-B9](#45-borrow-checking-adr-0021) rule 3);
 - a range loop over a collection: it borrows the collection for the whole loop ([RNG-3](08-slices-and-range.md));
 - a value allocated from an arena (`mem.NewIn(&arena)` and the like, `mem.Arena`, `mem.DropArena`; illustrative names, P05.03 sets the real ones): it borrows the arena;
 - a mutex guard (from `Lock` / `RLock`): it borrows the mutex ([CON-15](12-concurrency.md));
@@ -655,18 +656,26 @@ println(u.Name)
 
 *Interaction with `s = s[i:j]` ([SLC-6](08-slices-and-range.md)).* That statement assigns the slice `s`, and `s` is a prefix of any borrow of `s[k]`. So it is an error while such a borrow is live, and inside a range loop over `s` ([RNG-3](08-slices-and-range.md)). When no borrow is live, SLC-6 is unchanged.
 
-**OWN-B3.** *Across function calls, with no annotations (elision).*
-- A call result that is a borrow (a view, a borrowed slice, a pointer, a `@View` struct, or a value holding one) borrows from **every** borrow-capable argument and from the receiver: views, borrowed parameters, pointers and borrowed slices passed in.
-- A method that returns a view borrows from its receiver.
-- The compiler may be more conservative than the real code. That is allowed, and the error message names the argument.
+**OWN-B3.** *Across function calls: the result borrows what the body says (inference, no annotations).*
+- **Borrow summary.** For every function whose result is a borrow or holds one (a view, a borrowed slice, a pointer, a `@View` struct, a boxed view), the compiler reads the body and computes which parameters and receiver the result may borrow from: one bit per parameter, the union over all return paths.
+- **Recursion.** Mutually recursive functions iterate to a fixpoint: start empty, repeat until nothing changes. This is linear in practice.
+- **Storage.** The summary is stored with the function and in export data (P03.11 serialization, extended by P04.20), so other packages use it. The same mechanism carries P04.09's "writes this parameter" bit; both are per-function summaries in export data.
+- **At a call,** the result borrows only from the arguments the summary names. A method that returns a view of its receiver has the receiver bit set.
+- **Fallback.** The conservative rule "the result borrows from every borrow-capable argument and the receiver" applies only where there is no body to read: a call through an interface method, a func value of unknown origin, a C or C++ function, an extern or assembly function. The error message names the argument.
+- **API stability.** A new version of a package that changes a function's borrow summary is an API change. `gopp vet` and the API diff report it (P14.01, unchecked item).
+- There is no lifetime syntax, not even optional.
 
 ```go
-func first(a, b View[string]) View[string] { return a }
-w := first(x, y)           // w borrows from both x and y
-x = "new"                  // error while w is used later, even if first only returns a
+func first(a, b View[string]) View[string] { return a[0:1] }
+
+r := first(x, y)           // the summary of first says: the result borrows from a only
+y = "new"                  // ok: y is not borrowed
+x = "new"                  // error while r is live
 ```
 
-**OWN-B4.** *The same thing passed twice.* At a call, if one argument (or the receiver) is writable (a `*T`, a pointer receiver, a writable borrowed `[]T`, or a map the callee may write), then passing a borrow of the same place, or an overlapping place, as another argument is a compile error. Overlapping means the same variable, a part of it, or a prefix of it.
+*Was (before the amendment of 2026-10-28):* every call result borrowed from every borrow-capable argument, so `y = "new"` was an error too.
+
+**OWN-B4.** *The same thing passed twice.* This is the call case of [OWN-B9](#45-borrow-checking-adr-0021). At a call, if one argument (or the receiver) is writable (a `*T`, a pointer receiver, a writable borrowed `[]T`, or a map the callee may write), then passing a borrow of the same place, or an overlapping place, as another argument is a compile error. Overlapping means the same variable, a part of it, or a prefix of it.
 
 ```go
 func rename(t *Team, old View[string]) { t.Name = "new"; println(old) }
@@ -676,24 +685,75 @@ old := team.Name.Clone()
 rename(&team, old)                   // ok: old is an owned copy
 ```
 
-Two pointer variables that point to the same object, got from different sources, are not seen. That stays undefined ([UB-2](16-undefined-behavior.md)).
+Two pointers to one object that the compiler cannot prove different are no longer hidden: every raw `*T` is a tracked borrow, so two writable ones to overlapping places are an error by [OWN-B9](#45-borrow-checking-adr-0021) (`swapNames(list[i], list[j])`).
 
 **OWN-B5.** *Escapes.* A borrow may live only where the checker can follow it: in locals, in parameters, in results (by OWN-B3), and in the fields of a `@View` struct value that follows these rules. These are compile errors:
 - storing a borrow into a global, into a heap container (a slice, map or channel element, or a field of a struct that is not `@View`), or sending it on a channel;
 - an escaping closure that captures a borrow ([CLO-3a](11-closures.md));
 - a `go` statement whose argument or captured variable is a borrow ([CON-2](12-concurrency.md)): the goroutine may outlive the owner. The closure given to `s.Go` of a `sync.Scope` is not a `go` statement: the goroutine ends before the scope returns, so it may borrow ([CON-16](12-concurrency.md));
 - boxing a borrow into an interface that escapes.
+- a raw `*T` in a normal struct field, a slice or array element, a map key or value, a channel element or a global: use `Unique[*T]`, `Shared[*T]` or `Weak[*T]` ([OWN-B9](#45-borrow-checking-adr-0021) rule 4). Fields of a `@View` struct may hold a raw `*T`.
 
-**OWN-B6.** *What is still not checked.* [Chapter 16](16-undefined-behavior.md) lists it: `unsafe` and raw memory, C and C++ interop, aliasing the compiler cannot see (OWN-B4), data races in `unsafe`, C and C++ code (in normal code they are compile errors, [CON-12 to CON-20](12-concurrency.md)), and `longjmp` or forced unwinding.
+**OWN-B6.** *What is still not checked.* [Chapter 16](16-undefined-behavior.md) lists it: `unsafe` and raw memory, C and C++ interop, data races in `unsafe`, C and C++ code (in normal code they are compile errors, [CON-12 to CON-20](12-concurrency.md)), and `longjmp` or forced unwinding. Hidden aliasing is not in the list any more: in normal code it is a compile error ([OWN-B9](#45-borrow-checking-adr-0021)). *Was: "aliasing the compiler cannot see (OWN-B4)".*
 
 **OWN-B7.** *Go mode* (`.go` files). The checker is the same. A `.go` file uses the same ownership model, so borrowed slices, `&` of elements, range loops and calls are checked with the same rules. The names `View` and the arena API do not exist there unless imported, so those parts of OWN-B1 do not occur. (Open point: the plan does not yet say this in so many words; see ADR-0021.)
 
 **OWN-B8.** *Borrows and concurrency (ADR-0022).* Three links to [chapter 12](12-concurrency.md):
 - A `Mutex[T]` guard is a borrow of the mutex ([CON-15](12-concurrency.md)). The mutex may not be moved or dropped while the guard is live (OWN-B2), and the guard may not escape the function through a `go`, a channel or a global (OWN-B5).
 - `ch <- v` moves `v` ([CON-14](12-concurrency.md), [OWN-R4](#42-ownership-rules-d14)); a borrow cannot be sent (OWN-B5), and the element type must be `Send`.
-- Inside a `sync.Scope`, a goroutine may borrow locals. Two goroutines may not both get a writable borrow of the same place (like OWN-B4 for one call); `Split` gives disjoint parts ([CON-16](12-concurrency.md)).
+- Inside a `sync.Scope`, a goroutine may borrow locals. Two goroutines may not both get a writable borrow of the same place (OWN-B9); `Split` gives disjoint parts ([CON-16](12-concurrency.md)).
 
-*Why (B1 to B7):* the danger of a borrow is one thing, "the owner changed while I still look at it". Flow and liveness find it in one pass without annotations. Reading the code never needs a lifetime name, and the cost is a few false errors, which a `.Clone()` removes.
+**OWN-B9.** *Exclusive writable access: one writable borrow at a time (ADR-0021, Amendment B).* This closes the hidden-aliasing hole. It is like Rust's `&mut` rule.
+
+```go
+func swapNames(a, b *Node) { old := a.Name; b.Name = "x"; println(old) }
+
+swapNames(list[i], list[j])   // error: i may equal j, so a and b may be one Node
+```
+
+1. **Exclusive writable borrow.** While a writable borrow of a place is live, no other borrow of that place or of an overlapping place may be live. The other borrow may be writable or a view (this extends OWN-B2 and OWN-B4). The writable borrows are:
+   - a `*T` made by `&` and used for writing;
+   - a writable borrowed `[]T` from slicing ([OWN-V2](#44-views-d16));
+   - a pointer-receiver call in progress;
+   - a `Mutex` write guard ([CON-15](12-concurrency.md)).
+2. **Overlap is conservative.** Two places overlap unless the compiler can prove they are disjoint. It proves this for: different variables, different fields, different constant indexes, and the two results of a `Split`. `list[i]` and `list[j]` with non-constant indexes overlap. Fixes: `list.Split(k)`, constant indexes, or the built-in safe `list.Swap(i, j)` (P12.13).
+3. **A writable pointer is not freely copyable.** `q := p`, where `p` is a writable `*T`, is a reborrow: `p` may not be used while `q` is live. It is non-lexical: `q := p; use(q); use(p)` is fine, because `q` has no later use. This is Rust's reborrowing. Copying an interface value or a struct that holds a writable pointer follows the same rule. Read-only pointers and views copy freely.
+4. **Raw `*T` values are always tracked borrows, and live only where the checker can follow them.** A raw `*T` can only be made by `&` (a borrow), from a `Unique` or `Shared` place (a borrow of the handle), or by `unsafe`. It is allowed only in parameters, results (by the [OWN-B3](#45-borrow-checking-adr-0021) summary), local variables, and fields of `@View` structs. It is a compile error in a normal struct field, a slice or array element, a map key or value, a channel element, or a global ([OWN-B5](#45-borrow-checking-adr-0021)). So no raw pointer can hide in data, and that is why rule 1 needs no run-time check. Pointer fields use the pointer kinds, chosen by meaning:
+
+   | Kind | Meaning | Use |
+   |---|---|---|
+   | `Unique[*T]` (preferred) | "I own it, only me" | children, next node |
+   | `Shared[*T]` | "we own it together" | read-only, or with `mem.Cell` / `Mutex` to write |
+   | `Weak[*T]` | "I point at it but don't own it" | back-pointers, caches, observers; always allowed, check `.Lock()` before use |
+
+5. **`Shared[*T]` is read-only, except its cell-typed parts.** Two handles can name the same object, as with Rust's `Rc` and `Arc`. Through a `Shared` handle everything is read-only (a plain field write `parent.Name = "x"` is a compile error) **except** parts whose type is a cell type: `mem.Cell[T]` (one goroutine), `Mutex[T]`, `RWMutex[T]` and `Atomic[T]` (many goroutines, [CON-19](12-concurrency.md)). A cell part is used through its own methods, which do their own checks at run time, like Rust's `Rc<Node>` with a `RefCell` field: `parent.Children.With(...)` is valid. `mem.Cell[T]` panics on overlapping access ("cell already borrowed") and is not `Sync`. A value taken from inside a cell (through `With` or a borrow method) is tied to a run-time cell guard: while the guard is live, a write to that cell panics. So freeing the last `Shared` through a cell while it is in use is a clear run-time panic, not UB. The names are illustrative; P05.07 and P12.13 set the real ones. `Weak[*T]` upgrades to a read-only `Shared`. A `View` stays strict: it never changes anything, not even through a cell ([OWN-V1](#44-views-d16)).
+6. **`Unique[*T]` gives exclusive access** by construction. A writable borrow through it is a writable borrow of the handle. Linked lists and trees use `Option[Unique[*Node]]`. Graphs with cycles use `Shared` plus `Weak` plus `mem.Cell`.
+7. **Interface boxes that hold a pointer kind.** The binding is a reborrow of the pointer the box carries ([TYP-9](03-types.md)). Two interface copies that carry the same writable pointer follow rule 3.
+8. **Allowances of OWN-B2 that stay,** because they do not create two live writable borrows of one place:
+   - writing a pointer-free Copy element or field while a *view* of other elements is live (`nums[0] = 5` with `v := nums[1:3]`);
+   - writing elements inside a range loop (the loop itself is a read borrow).
+
+   Where an allowance meets rule 1 the rule wins: `nums[i] = 5` (non-constant `i`) while a writable borrowed `[]T` such as `t := nums[1:3]` is live and used later is an error, and so is a write through `xs[i]` while an `&` range variable of the same element is live ([RNG-1a](08-slices-and-range.md)). `nums[0] = 5` with `t := nums[1:3]` is fine: constant index 0 is provably outside `1:3`. (Decided by the owner, ADR-0021 amendment.)
+
+```go
+swapNames(list[0], list[1])                 // ok: constant indexes, provably different
+a, b := list.Split(k)                       // ok: disjoint parts
+swapNames(a[0], b[0])
+list.Swap(i, j)                             // ok: built-in, checks i == j at run time
+
+p := &x
+q := p                                      // q reborrows p
+use(q)
+use(p)                                      // ok: q is not used later
+q2 := p; use(p); use(q2)                    // error: p used while q2 is live
+
+s := new_shared(Config{})
+s.Count++                                   // error: Shared is read-only
+c := new_shared(mem.Cell[Config]{})         // illustrative; P05.07 sets the name
+c.With(func(p *Config) { p.Count++ })       // ok: run-time borrow check
+```
+
+*Why (B1 to B9):* the danger of a borrow is one thing, "the owner changed while I still look at it". Flow and liveness find it in one pass without annotations. Reading the code (the borrow summary of B3) never needs a lifetime name, and the cost is a few false errors, which a `.Clone()` removes. B9 adds the second danger, "two writers to one place", with Rust's rule and no run-time check.
 
 ## 4.6 Rationale
 

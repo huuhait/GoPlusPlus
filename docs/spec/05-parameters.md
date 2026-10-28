@@ -73,9 +73,9 @@ l.Push(move(u.Name))    // a field: needs move(x) or x.Clone()
 var f Finisher = b      // error (with interface Finisher{ Finish() string }): Finish has a move receiver, so Builder does not satisfy Finisher
 ```
 
-**PAR-6.** *`*T` mutates.* `*T` parameters and receivers mutate the target, as in Go. A call `v.M()` on an addressable variable `v` where `M` has a `*T` receiver passes `&v` automatically, as in Go.
+**PAR-6.** *`*T` mutates.* `*T` parameters and receivers mutate the target, as in Go. A call `v.M()` on an addressable variable `v` where `M` has a `*T` receiver passes `&v` automatically, as in Go. A `*T` parameter is a writable borrow ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)): two arguments of one call that may name the same or an overlapping place are an error (`swapNames(list[i], list[j])`), and a callee that copies the pointer (`q := p`) reborrows it, so `p` may not be used while `q` is live.
 
-**PAR-7.** *Shared handles work like Go.* Parameters of shared-handle types (`Shared[*T]`, `Weak[*T]`, `chan`, interfaces including `error`, funcs) can be copied, stored and returned by the callee. Each copy retains, so `return err` works as in Go. The call itself passes them without a retain. A callee that releases the caller's last reference through another path and then uses the parameter reads freed memory: [UB-2b](16-undefined-behavior.md).
+**PAR-7.** *Shared handles work like Go.* Parameters of shared-handle types (`Shared[*T]`, `Weak[*T]`, `chan`, interfaces including `error`, funcs) can be copied, stored and returned by the callee. A `Shared[*T]` parameter is read-only through the handle except cell-typed parts (`mem.Cell`, `Mutex`, `RWMutex`, `Atomic`), used through their own methods ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). Each copy retains, so `return err` works as in Go. The call itself passes them without a retain. A callee that releases the caller's last reference through another path and then uses the parameter reads freed memory: [UB-2b](16-undefined-behavior.md).
 
 **PAR-8.** *Arguments at a call.*
 - A local passed to a borrowed parameter is **not** moved.

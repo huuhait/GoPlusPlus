@@ -45,6 +45,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0021 amendment, owner decisions): (A) a call result borrows what the callee's body says (per-function borrow summary, fixpoint over recursion, stored in export data with the "writes this parameter" bit; fallback to "all borrow-capable arguments" only with no body; no lifetime syntax; a changed summary is an API change for P14); (B) one writable borrow of a place at a time (Rust's `&mut` rule, spec OWN-B9): conservative overlap, writable `*T` copies are reborrows, every raw `*T` is a tracked borrow, `Shared[*T]` read-only unless a cell type (`mem.Cell` / `Mutex`). Hidden aliasing leaves UB. P04.20 extended, D4.16 updated; no new task.
 - 2026-10-28 (ADR-0022, owner decision): new task P04.21 and design D4.17, race-free concurrency checks (`Send` / `Sync` labels, `go` and channel rules, globals, shared handles, deadlock check) on the flow graph of P04.09 and P04.20.
 - 2026-10-28 (ADR-0021, owner decision): new task P04.20, a borrow checker without lifetime annotations on P04.09's flow graph; P04.09's "use through a pointer taken in the same function" item moves into it.
 - 2026-10-27 (ADR-0007, build profiles): D4.8's three build modes become the `opt` setting of build profiles (P06 D6.12); `dev` is now `opt 0`, the default of the `debug` profile.

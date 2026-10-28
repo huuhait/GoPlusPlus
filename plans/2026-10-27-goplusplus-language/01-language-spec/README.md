@@ -73,10 +73,10 @@ Each delta has EBNF, semantics, an example and a rationale.
    - A type that mixes owning fields with raw `*T` fields needs a hand-written `Clone()`, because an automatic clone would copy the raw pointers (for example, tree nodes with parent pointers, like `Node` in D1.7).
    - Imported C++ types clone through their copy constructor.
 7. **Destructors are a method named `drop`** with a pointer receiver: `func (f *File) drop()`. It can't be called directly (like `init`).
-8. **Borrow checking without annotations** (changed by ADR-0021; was "no borrow checker"). Borrows are checked by flow and liveness; `unsafe`, C interop, hidden aliases, races in `unsafe`/C/C++ and `longjmp` stay undefined.
+8. **Borrow checking without annotations** (changed by ADR-0021; was "no borrow checker"). Borrows are checked by flow and liveness; `unsafe`, C interop, races in `unsafe`/C/C++ and `longjmp` stay undefined. Hidden aliasing is a compile error (one writable borrow of a place at a time, ADR-0021 amendment).
    - The compiler does catch: returning `&local`; returning a view into a local of the same function (D1.6); storing a borrow of a temporary; a `defer` or `go` that borrows something that dies first (D1.9, D1.13); use after move. (A borrowed parameter lives until return, so a `defer` may borrow it.)
-   - It also catches, by flow and liveness (OWN-B1 to OWN-B5, ADR-0021): a borrow used after the borrowed thing was assigned, appended to, moved, cleared or freed (an arena `Reset`); a call that gets a writable argument and a borrow of the same place (`u.SetName(u.Name)`); a borrow stored where the checker cannot follow it (a global, a heap container, a channel, an escaping closure, a `go` statement, an escaping interface box). A call result borrows from its arguments.
-   - What stays undefined is listed in the UB chapter (P01.14): `unsafe` and raw memory, C and C++ interop, aliasing the compiler cannot see, data races in `unsafe`, C and C++ code (ADR-0022; in normal code they are compile errors), `longjmp` and forced unwinding. `-asan` and `-race` catch these at runtime.
+   - It also catches, by flow and liveness (OWN-B1 to OWN-B9, ADR-0021 and its amendment): a borrow used after the borrowed thing was assigned, appended to, moved, cleared or freed (an arena `Reset`); a call that gets a writable argument and a borrow of the same place (`u.SetName(u.Name)`); a borrow stored where the checker cannot follow it (a global, a heap container, a channel, an escaping closure, a `go` statement, an escaping interface box). A call result borrows what the callee's body says (inferred borrow summaries, with a fallback to all arguments only where there is no body); only one writable borrow of a place may be live (OWN-B9).
+   - What stays undefined is listed in the UB chapter (P01.14): `unsafe` and raw memory, C and C++ interop, data races in `unsafe`, C and C++ code (ADR-0022; in normal code they are compile errors), `longjmp` and forced unwinding. `-asan` and `-race` catch these at runtime.
 9. **C++ class types.**
    - A C++ type has a zero value only if it has a default constructor.
    - Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is fine: `make([]T, 0, c)` creates no value; ADR-0016), `m[k]` and `<-ch` outside a comma-ok form (Q9), a receive from a closed channel, `var zero T` in generic code, named results. A failing `!` leaves such results unset, and `v, err := f()` can then use `v` only where `err == nil` is known (flow typing in P03, ADR-0018 amendment point 4).
@@ -155,29 +155,30 @@ Ownership on one screen:
 
 ```go
 type Node struct {
-    Name     string          // owned
-    Children []Unique[*Node]  // owned slice of owning pointers
-    Parent   Option[*Node]   // raw back-pointer: does not own; nil for the root
+    Name     string                         // owned
+    Children mem.Cell[[]Shared[*Node]]      // illustrative cell (P05.07): a Shared node is read-only, so the list sits in a cell
+    Parent   Option[Weak[*Node]]            // back-pointer: does not own; nil for the root
 }
 
-func NewNode(name string, parent Option[*Node]) Unique[*Node] {
-    return new_unique(Node{Name: name.Clone(), Parent: parent}) // name is borrowed: Clone it to own it
+func NewNode(name string, parent Option[Weak[*Node]]) Shared[*Node] {
+    return new_shared(Node{Name: name.Clone(), Parent: parent}) // name is borrowed: Clone it to own it
 }
 
-func (n *Node) Add(move child Unique[*Node]) {       // `move`: Add takes ownership
-    child.Parent = n
-    n.Children = append(n.Children, child)         // child moves into the slice
+func Add(parent Shared[*Node], move child Shared[*Node]) {   // `move`: Add takes the handle
+    parent.Children.With(func(c *[]Shared[*Node]) { *c = append(*c, child.Clone()) })   // retain; run-time borrow check
 }
 
 func main() {
     root := NewNode("root", nil)
-    root.Add(NewNode("a", root))   // the temporary moves into Add
-    b := NewNode("b", root)
-    root.Add(b)                    // b moves
-    // fmt.Println(b.Name)         // compile error: b used after move
-    head := root.Name[:2]          // View[string]: a borrow, no allocation
-    fmt.Println(head, len(root.Children))
-}                                  // root is dropped → the whole tree is freed
+    Add(root, NewNode("a", new_weak(root)))   // new_weak(root) is root's weak handle; a Weak converts to Option[Weak[*Node]]
+    b := NewNode("b", new_weak(root))
+    Add(root, b.Clone())                      // b is a Shared: Clone retains, b stays usable
+    if w, ok := b.Parent.Get(); ok {
+        if p := w.Lock(); p != nil { fmt.Println(p.Name) }   // Lock gives an Option[Shared[*Node]]
+    }
+    head := root.Name[:2]                     // View[string]: a borrow, no allocation
+    fmt.Println(head)
+}                                             // the last handle ends: the whole tree is freed
 ```
 
 **D1.8 — Errors and `!`.**
