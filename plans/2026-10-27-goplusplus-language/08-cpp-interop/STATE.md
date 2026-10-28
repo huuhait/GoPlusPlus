@@ -29,14 +29,14 @@ Task definitions: [../TODO.md](../TODO.md) (section P08) · Design: [README.md](
 - [ ] P08.12 Interop samples
 - [ ] P08.13 Performance parity
 - [ ] P08.14 C++ ABI fuzzing
-- [ ] P08.15 Decide P08 Q3–Q4
+- [x] P08.15 Decide P08 Q3–Q4 (owner decisions, ADR-0010)
 
 ## Open questions
 
 - [x] Q1 Escaping C++ names that are Go++ keywords: decided, trailing underscore (P07 D7.3)
 - [x] Q2 `const` in Go++ signatures: moved to P07 Q2
-- [ ] Q3 Explicit template arguments for function templates (task P08.15)
-- [ ] Q4 Namespace flattening for deep hierarchies, and collision error wording (task P08.15)
+- [x] Q3 Explicit template arguments for function templates (decided: `f[T](args)`, ADR-0010)
+- [x] Q4 Namespace flattening for deep hierarchies, and collision error wording (decided: short form when unique, full path always works, ADR-0010)
 
 ## Exit criteria
 

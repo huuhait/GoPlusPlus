@@ -25,7 +25,10 @@ The work ships in five stages. Each stage is tested and usable before the next o
   - when a name exists at several depths, the shallowest wins and the others keep their namespace path: `std::pmr::vector` → `vector.pmr.vector[int32]`;
   - global C names never hide names in the root namespace: `cmath.abs(-2.5)` is `std::abs`, not C's `abs(int)`;
   - inline namespaces (libc++'s `std::__1`, fmt's `v11`) are invisible;
-  - a name found in two unrelated places, such as two namespaces at the same depth, is an error that lists the candidates. Qualify it to choose: `pkg.ns.name`.
+  - a name found in two unrelated places, such as two namespaces at the same depth, is an error that lists the candidates. Qualify it to choose: `pkg.ns.name`. The error is reported only where the short name is used;
+  - **deep names** (Q4, ADR-0010): only the first name after `pkg.` is flattened, and the rest is normal member lookup. `boost::asio::ip::tcp::socket` is `asio.tcp.socket` while `tcp` is unique, and the full path `asio.ip.tcp.socket` always works;
+  - the root of an umbrella header such as `<boost/asio.hpp>` is the deepest namespace that holds all of the declarations from the library's own files (`boost::asio`);
+  - names in `detail`, `impl` or `internal` namespaces, and reserved names (`__x`, `_Upper`), get no short form; they are reached only by their full path.
 - **Stable resolution.** Export data records the entity each name resolved to. A dependency upgrade that changes it is an error.
 
 **D8.2 — Classes become Go++ named types.**
@@ -53,8 +56,9 @@ The work ships in five stages. Each stage is tested and usable before the next o
 **D8.5 — Templates.**
 - Instantiation syntax: `vector.vector[int32]`.
 - Function templates such as `algorithm.sort(...)` are deduced by Sema from the argument types.
+- **Explicit template arguments** use the same brackets (Q3, ADR-0010): `memory.make_unique[Foo](1, 2)`, `tuple.get[0](t)`, `j.get[int32]()`, `type_traits.is_same_v[A, B]`. They give the first arguments, and Sema deduces the rest. With brackets only templates are candidates. In v0 a function template instance is only used in a call (`fn := algorithm.max[int32]` is an error).
 - Instantiation is requested through Sema, and Clang CodeGen emits the member functions that are needed.
-- Template arguments allowed in v0: C-compatible Go++ types, C++ types, and integer constants.
+- Template arguments allowed in v0: C-compatible Go++ types, C++ types, and integer, `bool` and enum constants.
 - In v0, a Go++ generic function may not instantiate a C++ template over its own type parameters: `vector.vector[T]` inside `func f[T any]()` is an error.
 - Arbitrary owning Go++ types as template arguments come in v1.x. They need synthesized C++ shims for Go++ drop and clone.
 
@@ -106,7 +110,7 @@ The work ships in five stages. Each stage is tested and usable before the next o
 - C++ templates instantiated over a Go++ generic function's own type parameters (D8.5);
 - explicitly requested partial specializations;
 - `std::function` wrapping Go++ closures (v1.x);
-- overload sets that need C++ syntax to disambiguate.
+- overload sets that need C++ syntax to disambiguate, such as `f<>()` (Go++ has no `f[]()`).
 
 ## Deliverables
 
@@ -139,5 +143,5 @@ Task P08.15 decides Q3 and Q4.
 
 - **Q1** (decided 2026-10-27) C++ identifiers that are Go++ keywords get a trailing underscore (`type_`, `range_`, `map_`), as for C (P07 D7.3).
 - **Q2** (moved to P07 Q2; decided 2026-10-27, ADR-0008) Should `const` on methods and parameters show up in Go++ signatures? No: it stays metadata and is enforced at the boundary (only `const` methods on borrowed values; no read-only value passed where C++ may change it).
-- **Q3** How to spell explicit template arguments for function templates, e.g. `memory.make_unique[Foo](args)`.
-- **Q4** Namespace flattening for deep hierarchies (e.g. should `boost::asio::ip::tcp` be `asio.tcp` or `asio.ip.tcp`?) and the wording of collision errors.
+- **Q3** (decided 2026-10-27, ADR-0010) Explicit template arguments use Go's generic brackets: `memory.make_unique[Foo](1, 2)` (D8.5).
+- **Q4** (decided 2026-10-27, ADR-0010) Deep names: `asio.tcp` while it is unique, and the full path `asio.ip.tcp` always works; collisions are errors on use, listing each candidate with its C++ name and location (D8.1).
