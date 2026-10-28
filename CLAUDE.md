@@ -87,4 +87,4 @@ A task is not done until:
 
 ## Lessons learned
 <!-- Add one line every time Claude makes a mistake you had to correct. This is the "memory" part of the harness. -->
-- 
+- When you fix a checker bug, test both sides: the bad code now fails, AND the nearby good code still passes. A fix that breaks good code is a new bug and must be fixed too.
