@@ -1,0 +1,16 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.17 (ADR-0018 point 2): Unique[T], Shared[T] and Weak[T] without `*` are
+// errors with a fix-it that inserts the `*`. The new spellings are fine.
+package main
+
+type T struct{ n int }
+
+func good(u Unique[*T], s Shared[*T], w Weak[*T]) {}
+
+// CHECK: [[@LINE+6]]:19: error{{\[E[0-9]+\]}}: Unique[T] needs a pointer type argument: write Unique[*T] (OWN-P9)
+// CHECK-NEXT: | func bad(u Unique[T], s Shared[T], w Weak[T]) {}
+// CHECK-NEXT: | {{ *}}^
+// CHECK-NEXT: | {{ *}}*
+// CHECK: [[@LINE+2]]:32: error{{\[E[0-9]+\]}}: Shared[T] needs a pointer type argument: write Shared[*T] (OWN-P9)
+// CHECK: [[@LINE+1]]:43: error{{\[E[0-9]+\]}}: Weak[T] needs a pointer type argument: write Weak[*T] (OWN-P9)
+func bad(u Unique[T], s Shared[T], w Weak[T]) {}

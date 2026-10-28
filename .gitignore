@@ -10,3 +10,6 @@ compile_commands.json
 .direnv/
 result
 result-*
+
+# Python bytecode (lit helpers such as tests/sema/check-exact-errors.py)
+__pycache__/

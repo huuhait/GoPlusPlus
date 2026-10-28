@@ -166,7 +166,8 @@ TEST(Foreign, CNamesCallsAndConstantsResolveThroughTheScope) {
   EXPECT_TRUE(F.check(R"(package main
 import "zlib.h"
 func main() {
-	var p *byte
+	b := byte(0)
+	p := &b
 	var crc uint32 = zlib.crc32(0, p, 3)
 	var ok int32 = zlib.Z_OK
 	var n zlib.uLong = 7
@@ -183,7 +184,8 @@ TEST(Foreign, CCallsAreCheckedAgainstTheDeclaredSignature) {
   auto Errs = F.check(R"(package main
 import "zlib.h"
 func main() {
-	var p *byte
+	b := byte(0)
+	p := &b
 	_ = zlib.crc32(0, p)
 	var s string = zlib.crc32(0, p, 3)
 	_ = s
@@ -455,6 +457,112 @@ func main() { _ = a }
       mentions(Errs, "candidate asio.ip.endpoint (boost::asio::ip::endpoint"));
   EXPECT_TRUE(
       mentions(Errs, "help: write the full path, e.g. asio.ip.endpoint"));
+}
+
+//===----------------------------------------------------------------------===//
+// Pointers and constructors (ADR-0018 point 8, OWN-R9)
+//===----------------------------------------------------------------------===//
+
+TEST(Foreign, CPointersAreOptionAndNonnullPointersAreNeverNil) {
+  Fixture F;
+  Package *P = F.header("ptr.h");
+  MockForeignScope &S = F.Prov.scopeOf("ptr.h");
+  Type *Byte = F.Ctx.byteType();
+  Type *Maybe = ForeignScope::cPointer(F.Ctx, Byte, /*NonNull=*/false);
+  Type *Never = ForeignScope::cPointer(F.Ctx, Byte, /*NonNull=*/true);
+  // `T*` is Option[*T]; `_Nonnull` and a C++ `T&` are *T.
+  EXPECT_EQ(Maybe, F.Ctx.option(F.Ctx.pointer(Byte)));
+  EXPECT_EQ(Never, F.Ctx.pointer(Byte));
+  EXPECT_EQ(ForeignScope::cxxReference(F.Ctx, Byte), F.Ctx.pointer(Byte));
+  S.add(F.func(P, "find", {Maybe}, {Maybe}));
+  S.add(F.func(P, "first", {Never}, {Never}));
+  EXPECT_TRUE(F.check(R"(package main
+import "ptr.h"
+func main() {
+	b := byte(1)
+	p := &b
+	var m Option[*byte] = ptr.find(nil)   // nil is the NULL pointer
+	m = ptr.find(p)                        // a *byte converts to the Option
+	if m != nil {
+		_ = *m                             // narrowed to *byte
+	}
+	q := ptr.first(p)
+	_ = *q
+}
+)")
+                  .empty());
+  auto Errs = F.check(R"(package main
+import "ptr.h"
+func main() {
+	b := byte(1)
+	p := &b
+	m := ptr.find(p)
+	_ = *m                  // may be NULL: the check is forced
+	_ = ptr.first(nil)      // a Nonnull parameter takes no nil
+	q := ptr.first(p)
+	_ = q == nil            // and its result is never nil
+}
+)");
+  EXPECT_TRUE(mentions(Errs, "m may be nil"));
+  EXPECT_TRUE(mentions(Errs, "never nil"));
+  EXPECT_GE(Errs.size(), 3u);
+  // An Option does not go where a non-null pointer is expected.
+  auto Errs2 = F.check(R"(package main
+import "ptr.h"
+func main() {
+	var m Option[*byte] = ptr.find(nil)
+	_ = ptr.first(m)
+}
+)");
+  EXPECT_TRUE(mentions(Errs2, "cannot call ptr.first: no matching function"))
+      << (Errs2.empty() ? "" : Errs2[0]);
+  EXPECT_EQ(Errs2.size(), 1u);
+}
+
+TEST(Foreign, ACppTypeWithoutADefaultConstructorHasNoZeroValue) {
+  Fixture F;
+  Package *P = F.header("<conn>");
+  MockForeignScope &S = F.Prov.scopeOf("<conn>");
+  NamedType *Conn = F.klass(P, "Conn");
+  NamedType *Plain = F.klass(P, "Plain");
+  S.add(Conn->Obj);
+  S.add(Plain->Obj);
+  S.setNoDefaultConstructor(Conn);
+  // Both sides: Plain keeps its zero value; Conn and a struct holding one
+  // have none, and the places that need one are errors.
+  EXPECT_TRUE(F.check(R"(package main
+import "<conn>"
+type Pool struct{ p conn.Plain }
+func main() {
+	var p conn.Plain
+	var q Pool
+	xs := make([]conn.Conn, 0, 4)   // a constant length 0 creates nothing
+	ys := make([]conn.Plain, 3)
+	_, _, _, _ = p, q, xs, ys
+}
+// A moved-from C++ object is a valid object (its move constructor ran), so
+// moving out of an element or a field is fine (ADR-0016 point 5).
+type Holder struct{ c conn.Conn }
+func take(move c conn.Conn) {}
+func moves(cs []conn.Conn, h *Holder) {
+	take(move(cs[0]))
+	take(move(h.c))
+}
+)")
+                  .empty());
+  auto Errs = F.check(R"(package main
+import "<conn>"
+type Holder struct{ c conn.Conn }
+func f(n int) {
+	var c conn.Conn
+	var h Holder
+	xs := make([]conn.Conn, n)
+	_, _, _ = c, h, xs
+}
+)");
+  EXPECT_TRUE(mentions(Errs, "conn.Conn has no zero value"));
+  EXPECT_TRUE(mentions(Errs, "Holder has no zero value"));
+  EXPECT_EQ(Errs.size(), 3u);
 }
 
 } // namespace

@@ -1,0 +1,7 @@
+// A stand-in for the mem package of P05 (only what OWN-R9.test needs): the
+// checker recognizes mem.Replace by its package path and name.
+package mem
+
+// Replace stores v in *p and returns what was there: the way to take a value
+// out of a place whose type has no zero value (ADR-0016).
+func Replace[T any](p *T, move v T) T { return v }

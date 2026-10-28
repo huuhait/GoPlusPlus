@@ -61,6 +61,9 @@ const std::map<std::string, const char *> Unchecked = {
     {"err_go_defer_needs_call", "the parser reports err_call_expected first"},
     {"err_invalid_use_of_dots", "the parser reports it first"},
     {"err_dots_not_last", "the parser reports err_dots_not_final first"},
+    {"err_own_isnil_ambiguous", "retired by ADR-0018: pointers have no IsNil, "
+                                "so there is no clash; the code stays "
+                                "reserved"},
     {"err_invalid_method_type_params", "the parser reports "
                                        "err_interface_method_type_params and "
                                        "drops the list first"},

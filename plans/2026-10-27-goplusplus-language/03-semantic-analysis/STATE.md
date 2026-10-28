@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-27 (P03.01–P03.14 done; P03.15 `@Required` added, ADR-0016)
+Last updated: 2026-10-28 (P03.01–P03.17 done)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -21,9 +21,10 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.12 `gopp check` & `gopp vet` v0
 - [x] P03.13 Check throughput
 - [x] P03.14 Error codes & `gopp explain`
-- [ ] P03.15 `@Required` fields (ADR-0016)
-- [ ] P03.16 No auto-deref through `Weak` (OWN-P5, ADR-0017)
-- [ ] P03.17 Never-nil pointers and `Option[T]` (ADR-0018)
+- [x] P03.15 `@Required` fields (ADR-0016)
+- [x] P03.16 No auto-deref through `Weak` (OWN-P5, ADR-0017)
+- [x] P03.17 Never-nil pointers and `Option[T]` (ADR-0018)
+- [ ] P03.18 Never-nil interfaces and funcs; checked `err` and comma-ok values (owner decisions 2026-10-28)
 
 ## Open questions
 
@@ -38,6 +39,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] D3.10 budget met (or ADR records the gap)
 
 ## Decision changes
+
+- 2026-10-28 (P03.17 review, owner decisions, ADR-0018 amendment): `Option[T]` is comparable when `T` is (both nil, or both set and equal; `Option[*T]` by address; `comparable`, struct fields and map keys follow; a non-comparable `T` allows only `== nil`; `o == 5` means `o == Option[int](5)`). A copy of a narrowed `Option` takes the value type (`if a != nil { p := a }` gives `*Node`; `var p Option[*Node] = a` stays an `Option`). Amendment points 3 and 4 (task P03.18): funcs and interfaces with methods are never nil like pointers (`error` and its aliases, `any`, `unsafe.Pointer`, maps, slices and channels keep `nil`; `Option[Logger]` / `Option[func()]` are the maybe forms; `@Required` on a func or method-interface field is an error), and flow typing also covers `v, err := f()` and the comma-ok forms when the value type has no zero value, and the known-non-nil stores into `error`/`any`/map/chan `@Required` fields.
 
 - 2026-10-27 (ADR-0009, P03.02 spike): constant floats are exact rationals on `APInt` with a 512-bit binary float past 4096 bits, like `go/constant`; libbf is not vendored (D3.2).
 - 2026-10-27 (P03.07 review, manager decisions): a field or element of an owned temporary is itself a temporary and can move out; through a `Shared[T]` temporary it is a place, and a ref into it is a ref into a temporary. A conversion that shares storage (same underlying owning type ignoring tags, to an interface, or through a type parameter) is checked as its operand; slice→array of owning elements needs ownership. Spec: EXP-2.
@@ -55,5 +58,6 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - Error codes: the 117 dynamic messages of the checker (`diag::custom`) now use one named entry per part of the checker (`err_sema_assign`, `err_sema_builtin`, ...), each with its own code. They share a code inside a part, so a code names the kind of mistake, and the message says exactly what is wrong. Splitting a family into one code per message is possible later: add rows, never renumber.
 - Before v0.1 (D3.11): the 10 family codes E0314–E0323 (`err_sema_*`, about 115 distinct messages) must be split into specific codes. Splitting after the v0.1 stability promise would change what a released code means (a user who matched E0314 would see it replaced by several codes), and a code never changes. `gopp explain` prints typical messages for them until then (`Families` in `DiagnosticExplain.cpp`); remove an entry there when its code is split.
 - For P04 (GEN-5): a pinned value copied inside a generic body through a type parameter (`struct{state int}(*x)` with `x *T`) is seen only per instance.
+- P03.15–P03.17 (done, team build `p03-never-nil`, merged from three coders): "has a zero value" is one query (`ZeroQuery`, Ownership.cpp), a function of the type alone; each named type caches its answer in `NamedType::ZeroState` (0 unknown, 1 has, 2 none) only when nothing below it was cut short, and every package-level type is asked once after declaration checking, so neither the errors nor the serialized bytes depend on which body asks first (ParallelTest compares diagnostics, types and export bytes on 1/2/8/16 threads, with a 60-deep struct chain and 45-deep generic instances). In a generic body a type parameter has a zero value only if every term of its constraint has one (GEN-5: `var zero T` with `T any` is an error, `var zero Option[T]` is fine). `Option[T]` is a uniqued `OptionType` (`REC_OPTION`; `usesNiche()` is the P04 layout note, also used by `unsafe.Sizeof`); its value type is checked where it is written and per instance of generic types and function signatures. Flow typing (Flow.cpp) keeps the set of Option locals and parameters known to be set; paths meet after if/switch/select/loops and at break targets, return/break/continue/goto/panic end a path, a goto label resets it, a function literal starts empty, and a captured variable never narrows inside a literal (CLO-9: copy it first); the narrowed type of each use is in `Info::Types` and `Info::narrowedType(Id)` reads it back (P04, P14). A copy of a checked Option takes the value type (owner decision, OWN-P10 updated). `m[k]` and `<-ch` of a type with no zero value are errors unless a comma-ok form, an `m[k] = v` target or a bare `move(m[k])` / `<-ch` statement marks them. `mem.Replace` is known by package path and name; `import "mem"` still fails until P05 (tests use a stand-in package, `tests/sema/Inputs/never-nil-fields`). Codes E0329–E0345; `err_own_isnil_ambiguous` (E0269) is retired and stays reserved. Moved to P03.18 (from P04.09): reading a comma-ok value where `ok` is false, `v, err := f()` only where `err == nil` (when `v`'s type has no zero value), and a maybe-nil `error`/`any`/map/chan value stored in a never-nil field (only literal `nil` is caught so far). Left to P04: the general use-after-move of a value (P04.09; `move(o)` of an Option already ends its narrowing in P03, OWN-P10), and an `Option[T]` written only inside a generic function body with a nilable `T` (`h[Option[int]]` builds `Option[Option[int]]` in the body): P03 checks the body once and cannot see it, so P04.08 must report it when it instantiates the body (listed in P04.08 and in the D4.3 monomorphization notes).
 - P03.08–P03.14 team build: ledger `.claude/team/p03-sema-tools-ledger.md` (8 findings fixed; two were nondeterminism under parallel checking: type-set errors of shared generic interface instances, and a depth cut-off published to every body).
 - Known limits (deterministic, valid code only, for later throughput work, P15): a generic interface chain deeper than `MaxTypeSetDepth` (1000) can give a wrong "undefined" error; `substImpl` stops at depth 64, so a type nested more than 64 deep inside a generic (e.g. a field `*`×70 `T`) is not substituted (also before P03.10); a generic interface DAG `I_k[T] interface{ J_k[T]; I_{k-1}[T] }` with `J_k[T] interface{ I_{k-1}[T] }` takes exponential time in phase 1 (0.6 s at 20 levels, over 60 s at 400; the non-generic form is linear).

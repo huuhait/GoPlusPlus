@@ -1,0 +1,4 @@
+// RUN: not %gopp check --check-error-limit=0 %S/../Inputs/never-nil-fields 2>&1 | FileCheck "--implicit-check-not=error[E" %S/../Inputs/never-nil-fields/main.gopp
+// Rules OWN-R4 and OWN-R9 across two packages (main and a `mem` with Replace,
+// which the checker knows by its package path); the expected errors are the
+// CHECK lines of Inputs/never-nil-fields/main.gopp.

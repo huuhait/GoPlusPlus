@@ -36,13 +36,27 @@ void Checker::recordSelection(const SelectorExpr *Ex, const Selection &Sel) {
 // Selectors
 //===----------------------------------------------------------------------===//
 
-Func *Checker::syntheticMethod(StringRef Name, Type *Result, SourceLoc Pos) {
+Func *Checker::syntheticMethod(StringRef Name, ArrayRef<Type *> Results,
+                               SourceLoc Pos) {
   Func *F = newFunc(Name, nullptr, Pos);
   F->Pkg = nullptr;
-  Type *Res[] = {Result};
-  F->Ty = Ctx.signature(Ctx.tuple({}), Ctx.tuple(Res), false, false, 0);
+  F->Ty = Ctx.signature(Ctx.tuple({}), Ctx.tuple(Results), false, false, 0);
   F->IsBuiltinMethod = true;
   return F;
+}
+
+bool Checker::valueHasMember(Type *T, StringRef Sel) {
+  PtrKind PK;
+  Type *PElem;
+  if (hasPtrKind(T, &PK, &PElem)) {
+    if (PK == PtrKind::Weak)
+      return Sel == "Lock";
+    if (Sel == "Clone")
+      return true;
+    T = Ctx.pointer(PElem);
+  }
+  LookupResult LR = lookupFieldOrMethod(T, true, S.Pkg, Sel);
+  return LR.Obj || LR.Ambiguous;
 }
 
 /// PAR-5: a `move` receiver takes ownership of the receiver, so a call or a
@@ -169,6 +183,23 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     return;
   }
 
+  // Flow typing: a receiver that is known to be set has the type of its value
+  // here, so `l.Get(k)` after `l != nil` calls the method of T. Option's own
+  // IsNil and Get stay reachable on it when T has no member of that name.
+  if (own() && (Sel == "IsNil" || Sel == "Get")) {
+    // `move(o).Get()` takes the Option o itself (ADR-0018 point 11).
+    const ast::Expr *Rcv = unparen(Ex->X);
+    if (auto *C = dyn_cast<CallExpr>(Rcv))
+      if (auto *F = dyn_cast<ast::Ident>(unparen(C->Fun));
+          F && name(F) == "move" && C->Args.size() == 1 &&
+          llvm::isa_and_nonnull<Builtin>(lookup(name(F))))
+        Rcv = unparen(C->Args[0]);
+    if (auto *Id = dyn_cast<ast::Ident>(Rcv))
+      if (auto *V = dyn_cast_or_null<Var>(lookup(name(Id))))
+        if (auto *Op = V->Ty ? dyn_cast<OptionType>(under(V->Ty)) : nullptr)
+          if (!isNarrowed(V) || !valueHasMember(Op->Elem, Sel))
+            markNoNarrow(Id);
+  }
   exprOrType(X, Ex->X, false);
   switch (X.M) {
   case Mode::TypeExpr:
@@ -195,17 +226,81 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     return Error();
   }
 
-  // Go++ (OWN-P5, OWN-R6, OWN-P9): the pointer kinds and Clone / IsNil.
+  // Go++ (OWN-P5, OWN-R6, ADR-0017, ADR-0018): Option, the pointer kinds, and
+  // Clone.
   Type *LookupT = X.Ty;
   bool Addressable = X.M == Mode::Variable;
+  auto Synth = [&](Func *B) {
+    Selection SelInfo;
+    SelInfo.K = Selection::MethodVal;
+    SelInfo.Recv = X.Ty;
+    SelInfo.Obj = B;
+    recordSelection(Ex, SelInfo);
+    X.M = Mode::Value;
+    X.Ty = B->Ty;
+    X.E = Ex;
+  };
   if (own() && X.M != Mode::TypeExpr) {
+    auto *Op = dyn_cast_or_null<OptionType>(under(X.Ty));
+    // A defined type over an Option keeps its own methods.
+    if (Op && isa<NamedType>(X.Ty) &&
+        lookupFieldOrMethod(X.Ty, Addressable, S.Pkg, Sel).Obj)
+      Op = nullptr;
+    if (Op) {
+      // An Option has exactly two methods, IsNil and Get (ADR-0018 point 3).
+      if (Sel == "IsNil") {
+        Type *Res[] = {typ(BasicKind::Bool)};
+        Synth(syntheticMethod("IsNil", Res, Ex->Sel->getBegin()));
+        return;
+      }
+      if (Sel == "Get") {
+        Type *Res[] = {Op->Elem, typ(BasicKind::Bool)};
+        Synth(syntheticMethod("Get", Res, Ex->Sel->getBegin()));
+        return;
+      }
+      // The value's own fields and methods are reached only after a check.
+      if (isValid(Op->Elem) && valueHasMember(Op->Elem, Sel)) {
+        err(Ex->X, diag::err_option_maybe_nil,
+            {str(Ex->X), nilCheckHint(Ex->X)});
+        return Error();
+      }
+      err(Ex->Sel, diag::err_undefined_field_or_method,
+          {str(Ex->X), std::string(Sel),
+           "type " + str(X.Ty) + " has no field or method " + std::string(Sel) +
+               " (an Option has IsNil and Get only)"});
+      return Error();
+    }
     PtrKind PK;
     Type *PElem;
     if (hasPtrKind(X.Ty, &PK, &PElem)) {
-      Func *B = nullptr;
-      if (Sel == "IsNil")
-        B = syntheticMethod("IsNil", typ(BasicKind::Bool), Ex->Sel->getBegin());
-      else if (Sel == "Clone" && PK != PtrKind::Weak) {
+      if (PK == PtrKind::Weak) {
+        // ADR-0017: only Lock is found on a Weak pointer.
+        if (Sel == "Lock") {
+          Object *SharedObj = Ctx.universe()->lookupLocal("Shared");
+          Type *PtrT = Ctx.pointer(PElem);
+          Type *SharedT = instantiateNamed(cast<NamedType>(SharedObj->Ty),
+                                           ArrayRef<Type *>(&PtrT, 1));
+          Type *Res[] = {Ctx.option(SharedT)};
+          Synth(syntheticMethod("Lock", Res, Ex->Sel->getBegin()));
+          return;
+        }
+        LookupResult Inner =
+            lookupFieldOrMethod(Ctx.pointer(PElem), true, S.Pkg, Sel);
+        if (Inner.Obj || Inner.Ambiguous) {
+          Err Er = err(Ex->Sel, diag::err_weak_no_deref,
+                       {str(Ex->X), std::string(Sel)});
+          Er.note(Ex->Sel->getBegin(), "fix-it: if c := " + str(Ex->X) +
+                                           ".Lock(); c != nil { c." +
+                                           std::string(Sel) + " }");
+          return Error();
+        }
+        err(Ex->Sel, diag::err_undefined_field_or_method,
+            {str(Ex->X), std::string(Sel),
+             "type " + str(X.Ty) + " has no field or method " +
+                 std::string(Sel) + " (a Weak pointer has Lock only)"});
+        return Error();
+      }
+      if (Sel == "Clone") {
         if (PK == PtrKind::Unique) {
           std::string Why;
           if (!satisfiesClone(PElem, &Why)) {
@@ -214,23 +309,8 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
             return Error();
           }
         }
-        B = syntheticMethod("Clone", X.Ty, Ex->Sel->getBegin());
-      }
-      if (Sel == "Lock" && PK == PtrKind::Weak) {
-        Object *SharedObj = Ctx.universe()->lookupLocal("Shared");
-        Type *SharedT = instantiateNamed(cast<NamedType>(SharedObj->Ty),
-                                         ArrayRef<Type *>(&PElem, 1));
-        B = syntheticMethod("Lock", SharedT, Ex->Sel->getBegin());
-      }
-      if (B) {
-        Selection SelInfo;
-        SelInfo.K = Selection::MethodVal;
-        SelInfo.Recv = X.Ty;
-        SelInfo.Obj = B;
-        recordSelection(Ex, SelInfo);
-        X.M = Mode::Value;
-        X.Ty = B->Ty;
-        X.E = Ex;
+        Type *Res[] = {X.Ty};
+        Synth(syntheticMethod("Clone", Res, Ex->Sel->getBegin()));
         return;
       }
       LookupT = Ctx.pointer(PElem);
@@ -267,7 +347,8 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
             {str(Ex->X), str(X.Ty), Why.empty() ? "" : ": " + Why});
         return Error();
       }
-      Func *B = syntheticMethod("Clone", X.Ty, Ex->Sel->getBegin());
+      Type *Res[] = {X.Ty};
+      Func *B = syntheticMethod("Clone", Res, Ex->Sel->getBegin());
       Selection SelInfo;
       SelInfo.K = Selection::MethodVal;
       SelInfo.Recv = X.Ty;
@@ -279,33 +360,6 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       return;
     }
   }
-  // Go++ (OWN-P9): `p.IsNil()` on a raw pointer.
-  if (own() && Sel == "IsNil" && X.M != Mode::TypeExpr && X.Ty) {
-    if (auto *P = dyn_cast<PointerType>(X.Ty)) {
-      if (Obj && isa<Func>(Obj)) {
-        err(Ex->Sel, diag::err_own_isnil_ambiguous, {str(X.Ty), str(P->Elem)})
-            .note(Ex->Sel->getBegin(), "write (*" + str(Ex->X) +
-                                           ").IsNil() to call " + str(P->Elem) +
-                                           "'s method, or " + str(Ex->X) +
-                                           " == nil to check the pointer");
-        return Error();
-      }
-      if (!Obj && !LR.Ambiguous && !LR.Indirect) {
-        Func *B =
-            syntheticMethod("IsNil", typ(BasicKind::Bool), Ex->Sel->getBegin());
-        Selection SelInfo;
-        SelInfo.K = Selection::MethodVal;
-        SelInfo.Recv = X.Ty;
-        SelInfo.Obj = B;
-        recordSelection(Ex, SelInfo);
-        X.M = Mode::Value;
-        X.Ty = B->Ty;
-        X.E = Ex;
-        return;
-      }
-    }
-  }
-
   if (!Obj) {
     if (!isValid(under(X.Ty)))
       return Error();
@@ -404,6 +458,15 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       recordUse(Ex->Sel, F);
       if (own() && F->HasPtrRecv && !LR.Indirect)
         checkPtrRecvCall(Ex, F);
+      // A pointer-receiver method value, or a `go` / `defer` call, on a
+      // checked Option binds &o and outlives the statement: `o = nil` could
+      // then empty the payload under it. It is an implicit `&o`, so o is
+      // not narrowed there (an immediate call `o.M()` is fine). A method of
+      // Option[*T] has an indirect receiver and copies the pointer.
+      if (own() && F->HasPtrRecv && !LR.Indirect &&
+          (Ex != CalleeSel || CalleeSuspended))
+        rejectPayloadAddress(Ex->X, "a method value or `go` / `defer` call "
+                                    "with a pointer receiver");
       // A method value (not the callee of a call) binds, so moves, the
       // receiver; a call is checked in arguments().
       if (own() && F->MoveRecv && Ex != CalleeSel)
@@ -477,7 +540,7 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
   SmallVector<Type *, 4> TA(TArgs.begin(), TArgs.end());
   SmallVector<SourceLoc, 4> AP(ArgPos.begin(), ArgPos.end());
   SmallVector<TypeParamType *, 4> TP(Sig->TParams.begin(), Sig->TParams.end());
-  later([this, Pos, TP, TA, AP]() {
+  later([this, Pos, TP, TA, AP, Inst]() {
     std::string Cause;
     int Bad = verify(Pos, TP, TA, &Cause);
     if (Bad >= 0) {
@@ -485,6 +548,8 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
       if (static_cast<size_t>(Bad) < AP.size() && AP[Bad].isValid())
         At = AP[Bad];
       err(At, diag::err_sema_call, {Cause});
+    } else {
+      checkOptionArgs(Pos, Inst, TA);
     }
   });
   return Inst;
@@ -582,6 +647,8 @@ void Checker::genericExprList(ArrayRef<ast::Expr *> Es,
         if (X.M != Mode::Invalid)
           recordTypeAndValue(IE, X.M, X.Ty, nullptr);
       }
+      if (X.M != Mode::Invalid)
+        X.E = IE; // the element, not the container, is the argument
       return;
     }
     rawExpr(X, Ex, nullptr, true);
@@ -742,7 +809,10 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     CalleeSel = Call->Fun;
     while (auto *Pa = dyn_cast<ParenExpr>(CalleeSel))
       CalleeSel = Pa->X;
+    bool SavedSusp = CalleeSuspended;
+    CalleeSuspended = Call == GoCall || Call == DeferCall;
     exprOrType(X, Call->Fun, true);
+    CalleeSuspended = SavedSusp;
     CalleeSel = SavedCallee;
   }
 
@@ -750,6 +820,22 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     for (const ast::Expr *A : Call->Args)
       use(A);
   };
+  // `mem.Replace(&c.Owner, v)` may take the address of a never-nil field
+  // (ADR-0016 point 8), when v is not nil.
+  struct ReplaceRestore {
+    Checker &C;
+    const ast::Expr *Arg, *Nil;
+    ~ReplaceRestore() {
+      C.ReplaceArg = Arg;
+      C.ReplaceNil = Nil;
+    }
+  } ReplaceGuard{*this, ReplaceArg, ReplaceNil};
+  if (own() && !Call->Args.empty() && isMemReplace(Call->Fun)) {
+    ReplaceArg = unparen(Call->Args[0]);
+    ReplaceNil = Call->Args.size() == 2 && isNilLit(Call->Args[1])
+                     ? Call->Args[1]
+                     : nullptr;
+  }
 
   switch (X.M) {
   case Mode::Invalid:
@@ -820,6 +906,10 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     if (X.M != Mode::Invalid && X.M != Mode::Constant)
       E.HasCallOrRecv = true;
     switch (Id) {
+    case BuiltinId::Move:
+      // `move(m[k])` on its own removes the entry and drops the value
+      // (ADR-0016 point 9); any other move must use its result.
+      return X.M == Mode::CommaOk ? ExprKind::Statement : ExprKind::Expression;
     case BuiltinId::Append:
     case BuiltinId::Cap:
     case BuiltinId::Complex:
@@ -830,7 +920,6 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     case BuiltinId::Min:
     case BuiltinId::New:
     case BuiltinId::Real:
-    case BuiltinId::Move:
     case BuiltinId::Clone:
     case BuiltinId::NewUnique:
     case BuiltinId::NewShared:

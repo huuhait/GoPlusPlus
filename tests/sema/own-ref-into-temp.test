@@ -7,12 +7,12 @@ type Doc struct {
 	Title string
 	Tags  []string
 }
-type H struct{ U Unique[Doc] }
+type H struct{ U Unique[*Doc] }
 
 func mk() string       { return "a" }
 func mkDoc() Doc       { return Doc{} }
 func mkS() []string    { return nil }
-func mkH() H           { return H{} }
+func mkH() H           { return H{U: new_unique(Doc{})} }
 func use(s ref string) {}
 
 func t1() {
@@ -49,7 +49,7 @@ func t4(ch chan ref string) {
 	ch <- mk()[:1]
 }
 
-func mkSh() Shared[Doc] { return new_shared(Doc{}) }
+func mkSh() Shared[*Doc] { return new_shared(Doc{}) }
 
 // R19: a ref into a Shared[T] temporary dangles too.
 func t5() {

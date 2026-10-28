@@ -1,0 +1,308 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-15 (P03.15, ADR-0016, ADR-0018): a struct field marked @Required
+// must be set in every composite literal; a struct with such a field has no
+// zero value, and neither has a struct or array that contains one (also per
+// generic instance: Box[User] has none, Box[int] has one). Every place that
+// would make a zero value is an error. `positive` and the generic functions
+// without CHECK lines are error-free; each negative line is checked.
+// Never-nil @Required fields and mem.Replace: OWN-R9.test.
+package main
+
+type User struct {
+	ID    int    @Required
+	Email string @Required
+	Name  string
+}
+
+type Team struct {
+	Lead User
+	Size int
+}
+
+type Box[T any] struct{ V T }
+
+type Plain struct{ N int }
+
+type Pair struct {
+	A, B int @Required
+}
+
+type Wrap struct {
+	User // an embedded struct holding required fields
+	X    int
+}
+
+type EmbReq struct {
+	Plain @Required
+	N     int
+}
+
+type Bad1 struct {
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field P of type *Plain
+	P *Plain @Required
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field U of type Unique[*Plain]
+	U Unique[*Plain] @Required
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field S of type Shared[*Plain]
+	S Shared[*Plain] @Required
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field W of type Weak[*Plain]
+	W Weak[*Plain] @Required
+}
+
+type BadArgs struct {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Required takes no arguments
+	A int @Required(1)
+}
+
+// On an Option it only means "must be set" (nil is a value).
+type OptReq struct {
+	O Option[*Plain] @Required
+}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Required is only allowed on a struct field, not on a type declaration
+@Required
+type NotAField struct{ A int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Required is only allowed on a struct field, not on a variable declaration
+@Required
+var notAField int
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Required is only allowed on a struct field, not on a function
+@Required
+func notAField2() {}
+
+type Log interface{ Write(s string) }
+
+type Server struct {
+	Out  Log            @Required
+	Hook func()         @Required
+	Tags map[string]int @Required
+	Done chan int       @Required
+	Buf  []byte         @Required
+	Anon any            @Required
+}
+
+type Gen[T any] struct {
+	V T @Required
+}
+
+type Bag struct{ items []User }
+
+func keep(move u User) {}
+
+func positive(move users []User, pm map[string]Plain, m map[string]User, ch chan User, x any, lg Log, n int, b *Bag) {
+	_ = User{ID: 1, Email: "a"}
+	_ = User{1, "a", "n"}
+	_ = Team{Lead: User{ID: 1, Email: "a"}, Size: 2}
+	_ = Team{User{1, "a", ""}, 2}
+	_ = Box[int]{}
+	_ = Box[User]{V: User{ID: 1, Email: "a"}}
+	var bi Box[int]
+	var pl Plain
+	var arr [3]Plain
+	var none [0]User
+	_, _, _, _ = bi, pl, arr, none
+	us := make([]User, 0, 10)
+	us = append(us, User{ID: 2, Email: "b"})
+	_ = us
+	_ = make([]User, 0)
+	_ = make([]Plain, n)
+	_ = [2]User{{ID: 1, Email: "a"}, {ID: 2, Email: "b"}}
+	_ = []User{0: {ID: 1, Email: "a"}, 1: {ID: 2, Email: "b"}}
+	_ = [...]User{{ID: 1, Email: "a"}}
+	if p, ok := pm["k"]; ok {
+		_ = p
+	}
+	_ = pm["k"].N // a Plain has a zero value: a missing key is fine
+	if u, ok := <-ch; ok {
+		keep(move(u))
+	}
+	if u, ok := x.(User); ok {
+		keep(u.Clone())
+	}
+	if u, ok := clone(m["k"]); ok {
+		keep(move(u))
+	}
+	if u, ok := move(m["k"]); ok {
+		keep(move(u))
+	}
+	m["k"] = User{ID: 1, Email: "a"}
+	delete(m, "k")
+	move(m["gone"]) // removes the entry, reads nothing
+	<-ch            // drops what it receives
+	select {
+	case <-ch:
+	case u, ok := <-ch:
+		_, _ = u, ok
+	default:
+	}
+	clear(m)
+	users = users[:0]
+	for _, u := range move(users) {
+		keep(move(u))
+	}
+	two := []User{{ID: 1, Email: "a"}, {ID: 2, Email: "b"}}
+	two[0], two[1] = two[1], two[0]
+	var plains [2]Plain
+	clear(plains[:])
+	_ = Server{Out: lg, Hook: func() {}, Tags: map[string]int{}, Done: make(chan int), Buf: nil, Anon: 1}
+	_ = Gen[int]{V: 0}
+	_ = Gen[[]int]{V: nil}
+	loc := User{ID: 1, Email: "a"}
+	keep(move(loc))
+	_ = Wrap{User: User{ID: 1, Email: "a"}, X: 2}
+	_ = Pair{A: 1, B: 2}
+	_ = Pair{1, 2}
+	_ = EmbReq{Plain: Plain{}, N: 1}
+	_ = OptReq{O: nil}
+	b.items = append(b.items, User{ID: 3, Email: "c"})
+}
+
+func negative(users []User, m map[string]User, ch chan User, n int, lg Log, t *Team) {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare arr without a value: [2]User has no zero value (its element type User has none: field ID is @Required)
+	var arr [2]User
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: missing required fields ID, Email in User literal (TYP-15)
+	_ = User{}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: missing required fields ID, Email in User literal (TYP-15)
+	_ = User{Name: "x"}
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: missing required field Email in User literal (TYP-15)
+	_ = User{ID: 1}
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: too few values in struct literal of type User
+	_ = User{1}
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: missing required field Lead in Team literal (TYP-15)
+	_ = Team{}
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: missing required field Lead in Team literal (TYP-15)
+	_ = Team{Size: 1}
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: missing required field V in Box[User] literal (TYP-15)
+	_ = Box[User]{}
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: missing required field User in Wrap literal (TYP-15)
+	_ = Wrap{X: 1}
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: missing required field B in Pair literal (TYP-15)
+	_ = Pair{A: 1}
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: missing required field Plain in EmbReq literal (TYP-15)
+	_ = EmbReq{N: 1}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: missing required fields Hook, Tags, Done, Buf, Anon in Server literal (TYP-15)
+	_ = Server{Out: lg}
+	// CHECK-DAG: [[@LINE+1]]:33: error{{\[E[0-9]+\]}}: array literal with missing elements: User has no zero value (field ID is @Required)
+	_ = [3]User{{ID: 1, Email: "a"}}
+	// CHECK-DAG: [[@LINE+1]]:35: error{{\[E[0-9]+\]}}: slice literal with gaps: User has no zero value (field ID is @Required)
+	_ = []User{5: {ID: 1, Email: "a"}}
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: missing required field V in Gen[*Plain] literal (TYP-15)
+	_ = Gen[*Plain]{}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare u without a value: User has no zero value (field ID is @Required)
+	var u User
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare tm without a value: Team has no zero value (field Lead of type User has none: field ID is @Required)
+	var tm Team
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare a without a value: [3]User has no zero value (its element type User has none: field ID is @Required)
+	var a [3]User
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare b without a value: Box[User] has no zero value (field V of type User has none: field ID is @Required)
+	var b Box[User]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare w without a value: Wrap has no zero value (field User of type User has none: field ID is @Required)
+	var w Wrap
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare sv without a value: Server has no zero value (field Out is @Required)
+	var sv Server
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare g without a value: Gen[User] has no zero value (field V is @Required)
+	var g Gen[User]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare p without a value: *Plain has no zero value (pointers are never nil)
+	var p *Plain
+	_, _, _, _, _, _, _, _ = u, tm, a, b, w, sv, g, p
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: make([]User, n) creates zero values: User has no zero value (field ID is @Required; use make([]User, 0, n) and append)
+	_ = make([]User, n)
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: make([]Team, 2, 4) creates zero values: Team has no zero value (field Lead of type User has none: field ID is @Required; use make([]Team, 0, n) and append)
+	_ = make([]Team, 2, 4)
+	// Lookups that can fail: only the comma-ok forms.
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
+	v := m["k"]
+	_ = v
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	_ = m["k"].Email
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	keep(m["k"])
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	_ = clone(m["k"])
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	_ = move(m["k"])
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: m["k"] may not exist: {{.*}}
+	_ = Team{Lead: m["k"]}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := <-ch`
+	x := <-ch
+	_ = x
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: {{.*}}
+	keep(<-ch)
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: {{.*}}
+	_ = (<-ch).Email
+	select {
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: <-ch may not exist: {{.*}}
+	case y := <-ch:
+		_ = y
+	}
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: clear(users) would zero the elements: User has no zero value (field ID is @Required; use users = users[:0] to drop them)
+	clear(users)
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: clear(arr[:]) would zero the elements: User has no zero value (field ID is @Required; re-slice to [:0] to drop the elements)
+	clear(arr[:])
+	// Moves out of places that are not locals.
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot move t.Lead: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&t.Lead, v)
+	keep(move(t.Lead))
+	for _, &al := range users {
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot move al: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&al, v)
+		keep(move(al))
+	}
+	own := User{ID: 1, Email: "a"}
+	f := func() {
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot move own: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&own, v)
+		keep(move(own))
+	}
+	f()
+}
+
+// Named results start as zero values.
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: named result u starts as a zero value: User has no zero value (field ID is @Required)
+func named() (u User) {
+	return User{ID: 1, Email: "a"}
+}
+
+func namedOK() (p Plain) {
+	return
+}
+
+// GEN-5: a generic body is checked once, so making a zero value of T is an
+// error when T may be a type with no zero value (here: User, or any pointer);
+// a constraint whose terms all have one, and Option[T], are fine.
+func Zero[T any]() T {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare z without a value: T has no zero value (its constraint allows types with none (GEN-5); constrain T, or use Option[T])
+	var z T
+	return z
+}
+
+func ZeroUser[T User | int]() T {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare z without a value: T has no zero value (its constraint allows types with none (GEN-5); constrain T, or use Option[T])
+	var z T
+	return z
+}
+
+func ZeroOK[T ~int | ~string | Plain]() T {
+	var z T
+	return z
+}
+
+func ZeroOpt[T any]() Option[T] {
+	var z Option[T]
+	return z
+}
+
+// CHECK-DAG: [[@LINE+1]]:46: error{{\[E[0-9]+\]}}: make([]T, n) creates zero values: T has no zero value ({{.*}}; use make([]T, 0, n) and append)
+func Mk[T any](n int) []T { return make([]T, n) }
+
+func MkOK[T any](n int) []T { return make([]T, 0, n) }
+
+// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: named result r starts as a zero value: T has no zero value ({{.*}})
+func NamedT[T any]() (r T) { return }
+
+// CHECK-DAG: [[@LINE+1]]:32: error{{\[E[0-9]+\]}}: clear(s) would zero the elements: T has no zero value ({{.*}}; use s = s[:0] to drop them)
+func Clr[T any](s []T) { clear(s) }
+
+func ClrOK[T ~int](s []T) { clear(s) }
+
+// CHECK-DAG: [[@LINE+1]]:43: error{{\[E[0-9]+\]}}: missing required field V in Box[T] literal (TYP-15)
+func BoxT[T any]() Box[T] { return Box[T]{} }
+
+func BoxOK[T ~int]() Box[T] { return Box[T]{} }

@@ -44,6 +44,17 @@ ForeignInstance ForeignScope::instantiate(Object *Tmpl,
 
 std::string ForeignScope::describe(const Type *) const { return {}; }
 
+bool ForeignScope::hasDefaultConstructor(const Type *) const { return true; }
+
+Type *ForeignScope::cPointer(TypeContext &Ctx, Type *Pointee, bool NonNull) {
+  Type *P = Ctx.pointer(Pointee);
+  return NonNull ? P : static_cast<Type *>(Ctx.option(P));
+}
+
+Type *ForeignScope::cxxReference(TypeContext &Ctx, Type *Pointee) {
+  return Ctx.pointer(Pointee);
+}
+
 //===----------------------------------------------------------------------===//
 // MockForeignScope
 //===----------------------------------------------------------------------===//
@@ -87,7 +98,7 @@ namespace {
 bool accepts(Type *P, const ForeignArg &A) {
   if (A.Nil) {
     switch (under(P)->getKind()) {
-    case Type::Kind::Pointer:
+    case Type::Kind::Option: // a C `T*` is Option[*T]: nil is NULL
     case Type::Kind::Slice:
     case Type::Kind::Map:
     case Type::Kind::Chan:
@@ -102,6 +113,14 @@ bool accepts(Type *P, const ForeignArg &A) {
     if (auto *B = llvm::dyn_cast<BasicType>(A.Ty))
       if (B->Info & IsUntyped)
         return llvm::isa<BasicType>(under(P));
+  }
+  // A *T (or a T) passed for an Option parameter converts automatically.
+  if (auto *O = llvm::dyn_cast<OptionType>(under(P))) {
+    if (A.Constant && A.Ty)
+      if (auto *B = llvm::dyn_cast<BasicType>(A.Ty))
+        if (B->Info & IsUntyped)
+          return llvm::isa<BasicType>(under(O->Elem));
+    return A.Ty == P || A.Ty == O->Elem;
   }
   return A.Ty == P;
 }

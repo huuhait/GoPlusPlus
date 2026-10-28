@@ -8,7 +8,7 @@ Contents: [at a glance](#at-a-glance-pointers-and-borrows) · [4.1 categories](#
 
 ## At a glance: pointers and borrows
 
-Two questions decide which one you use: **do I own it?** and **one owner or many?** A pointer is never nil; "maybe nothing" is written `Option[T]` (ADR-0018). Rules are in the sections linked in the last column.
+Two questions decide which one you use: **do I own it?** and **one owner or many?** A pointer, a func and an interface with methods are never nil (`error` and `any` keep Go's `nil`); "maybe nothing" is written `Option[T]` (ADR-0018). Rules are in the sections linked in the last column.
 
 | I want to… | Write | Owns? | Rule |
 |---|---|---|---|
@@ -19,7 +19,7 @@ Two questions decide which one you use: **do I own it?** and **one owner or many
 | own a heap value, alone | `Unique[*User]`, made with `new_unique(User{…})`; freed when its owner ends | yes | [OWN-P2](#43-pointers-and-heap-allocation-d17) |
 | share a heap value | `Shared[*User]`, made with `new_shared(User{…})`; freed when the last copy ends | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
 | point at a shared value without keeping it alive | `Weak[*User]`; read it with `if p := w.Lock(); p != nil { … }` | no | [OWN-P3, P5](#43-pointers-and-heap-allocation-d17) |
-| say "maybe nothing" | `Option[*User]`, `Option[int]`, …; pointers themselves are never nil; check with `o != nil`, `!o.IsNil()` or `v, ok := o.Get()` | — | [OWN-P9, P10](#43-pointers-and-heap-allocation-d17) |
+| say "maybe nothing" | `Option[*User]`, `Option[int]`, `Option[Logger]`, `Option[func()]`, …; pointers, funcs and interfaces with methods (all but `error` and `any`) are never nil; check with `o != nil`, `!o.IsNil()` or `v, ok := o.Get()`; compare two with `==` when `T` is comparable | — | [OWN-P9, P10](#43-pointers-and-heap-allocation-d17) |
 | copy an owned value | `u.Clone()` (short form `clone(u)`) | — | [OWN-R6](#42-ownership-rules-d14) |
 | give an owned value away | `move(u)`; `u` is left as the zero value | — | [OWN-R4](#42-ownership-rules-d14) |
 
@@ -163,7 +163,7 @@ v, ok := move(m["k"])          // removes "k"; ok reports it was there
 Trivial and shared-handle range variables and bindings are **not** borrowed variables: they are copies (a shared handle is copied with a retain) and stay writable. The variables of `range move(xs)` and `range ch` are owned locals. A variable declared with `&` in a range clause (`for _, &d := range xs`) is an **alias** of the element, not a borrowed variable: it is writable and changes the collection, and for `defer` and `go` it counts as a place in the collection ([RNG-1a](08-slices-and-range.md)). Every other rule that says "borrowed variable" means exactly the list above.
 
 A borrowed variable is **read-only at the top level**. This is the one rule for all kinds, and PAR-1 and PAR-2 refer to it. These are compile errors:
-- assigning the variable itself, or assigning its own fields (the fields of the struct value it holds), and `append` to it;
+- assigning the variable itself, or assigning its own fields (the fields of the struct value it holds), and `append` to it. In the same scope, a `:=` that reuses the name `v` assigns to `v`, so it is an error; use a new name;
 - taking its address (`&d`), or calling a method with a pointer receiver on it (an implicit `&d`). This covers the variable **and any part of it reached without going through a slice, map or pointer**: its fields, fields of fields, and array elements held by value (`&d.Buf`, `d.Buf.Reset()`). The line is the same "top level" line as PAR-1: going through a slice, map or pointer is allowed; staying inside the value is not;
 - `move(x)` of it. A range variable can never be moved from in the plain form, because moving a key would corrupt the map and moving a value is ambiguous with `move(m[k])`. Fix-its: `&v` (the `&` form can be moved from, [RNG-1a](08-slices-and-range.md)) or `v.Clone()`.
 
@@ -305,7 +305,7 @@ func (f *File) drop() {
 *Why (R7):* a method named `drop` is found by the compiler like `init`; forbidding direct calls prevents double destruction.
 
 **OWN-R8.** *No borrow checker.* Refs and raw pointers can dangle, as in C++.
-- The compiler **does** catch: returning `&local`; returning a `ref` into a local ([OWN-V7](#44-refs-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move.
+- The compiler **does** catch: returning `&local`; returning a `ref` into a local ([OWN-V7](#44-refs-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move, including a use through a pointer or ref taken before the move in the same function (`p := &x.In; take(move(x)); p.P.V`; taken elsewhere it is [UB-8](16-undefined-behavior.md)).
 - The cases it does **not** catch are listed in [chapter 16](16-undefined-behavior.md): refs or raw pointers kept past their owner, and a borrowed parameter whose owner the callee frees through another path (`u.SetName(u.Name)`).
 - `-asan` catches the rest at run time. v1 has no extra safety layer.
 
@@ -320,11 +320,11 @@ fmt.Println(s)             // NOT caught: dangling ref (UB-1). -asan finds it at
 *Why:* a borrow checker costs compile speed and simplicity; v1 keeps Go's look and relies on a small closed list of checks plus sanitizers.
 
 **OWN-R9.** *C++ class types* (and other types with no zero value).
-- A C++ type has a zero value only if it has a default constructor. The pointer kinds `*T`, `Unique[*T]`, `Shared[*T]` and `Weak[*T]` have none (they are never nil, [OWN-P9](#43-pointers-and-heap-allocation-d17)). A struct with a `@Required` field has none either ([TYP-15](03-types.md)), nor has any struct or array that contains a type with no zero value. `Option[T]` always has one: `nil`.
-- Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is allowed: `make([]T, 0, c)` creates no value), `m[k]` and `<-ch` outside a comma-ok form (see below), `clear(s)` on a slice (use `s = s[:0]`; `clear(m)` on a map is fine), a receive from a closed channel, `var zero T` in generic code, named results. A failing `!` function leaves such results unset ([ERR-3](09-errors-and-panics.md)), and a caller's `v, err := f()` can use `v` only where `err == nil`.
+- A C++ type has a zero value only if it has a default constructor. The pointer kinds `*T`, `Unique[*T]`, `Shared[*T]` and `Weak[*T]` have none, and neither have `func` types nor interface types with methods other than `error` (they are never nil, [OWN-P9](#43-pointers-and-heap-allocation-d17)): `var l Logger` and `var f func()` are errors. `error` and the empty interface `any` keep their zero value `nil`, as do `unsafe.Pointer`, maps, slices and channels. A struct with a `@Required` field has none either ([TYP-15](03-types.md)), nor has any struct or array that contains a type with no zero value. `Option[T]` always has one: `nil`.
+- Where Go needs a zero value and there is none, it is a compile error: `make([]T, n)` (a constant length `0` is allowed: `make([]T, 0, c)` creates no value), `m[k]` and `<-ch` outside a comma-ok form (see below), `clear(s)` on a slice (use `s = s[:0]`; `clear(m)` on a map is fine), a receive from a closed channel, `var zero T` in generic code, named results. A failing `!` function leaves such results unset ([ERR-3](09-errors-and-panics.md)), and a caller's `v, err := f()` can then use `v` only where `err == nil` is known ([OWN-P10](#43-pointers-and-heap-allocation-d17)).
 - Every move of a C++ value, implicit or `move(x)`, runs its **move constructor**. The source keeps the C++ "moved-from" state (not zero) and is destroyed at the end of its scope.
 - Only containers relocate values, with the type's relocate operation (P05 D5.5): `memcpy` only for Go++ types and trivially relocatable C++ types.
-- **Lookups that can fail.** For a type with no zero value, a map index `m[k]` or a receive `<-ch` whose value type has no zero value may be used only in a comma-ok form (`v, ok := m[k]`, `v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`, `case v, ok := <-ch:` in a `select`), as the target of `m[k] = v`, in `delete(m, k)`, or as a bare `move(m[k])` statement that discards the value; every other use (`v := m[k]`, `u := clone(m[k])`, `u := move(m[k])`, `m[k].Email`, `f(m[k])`, `T{F: m[k]}`, `v := <-ch`, `case v := <-ch:`, `(<-ch).Email`) is an error, because a missing key or a closed channel would give zero bytes; the comma-ok forms (`u, ok := x.(T)`, `u, ok := m[k]`, `u, ok := clone(m[k])`, `u, ok := move(m[k])`, `u, ok := <-ch`) work, and `u` counts as moved on every path where `ok` is false, so the use-after-move check rejects reading it there (P04 flow checks). A type switch and the single-value `u := x.(T)` work as in Go.
+- **Lookups that can fail.** For a type with no zero value, a map index `m[k]` or a receive `<-ch` whose value type has no zero value may be used only in a comma-ok form (`v, ok := m[k]`, `v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`, `case v, ok := <-ch:` in a `select`), as the target of `m[k] = v`, in `delete(m, k)`, or as a bare `move(m[k])` statement that discards the value; every other use (`v := m[k]`, `u := clone(m[k])`, `u := move(m[k])`, `m[k].Email`, `f(m[k])`, `T{F: m[k]}`, `v := <-ch`, `case v := <-ch:`, `(<-ch).Email`) is an error, because a missing key or a closed channel would give zero bytes; the comma-ok forms (`u, ok := x.(T)`, `u, ok := m[k]`, `u, ok := clone(m[k])`, `u, ok := move(m[k])`, `u, ok := <-ch`) work, and `u` is usable only where `ok` is known to be true (flow typing, [OWN-P10](#43-pointers-and-heap-allocation-d17)): reading it where `ok` may be false is an error. A type switch and the single-value `u := x.(T)` work as in Go.
 
 ```go
 var v vector.vector[int32]   // has a default constructor: zero value exists
@@ -335,7 +335,7 @@ xs := make([]Foo, 3)         // compile error if Foo (a C++ class) has no defaul
 *Why:* C++ classes keep their own move and destroy rules, so interop needs no wrapper and no surprise zero values.
 
 **OWN-R10.** *Pinned values.*
-- `gopp vet` reports moving a local after its address, or a ref into it, has been stored.
+- `gopp vet` reports moving a local after its address, or a ref into it, has been stored. A use through a pointer or ref taken in the same function before the move is a compile error ([OWN-R8](#42-ownership-rules-d14), P04.09); one taken elsewhere is [UB-8](16-undefined-behavior.md).
 - Types marked `@Pinned` (the `sync` types) cannot be moved or copied after first use: a compile error, like Go vet's copylocks.
 - `return local` builds the value in the caller's result slot, so it does not move (see the escaping-closure case in [OWN-R3c](04-ownership.md#42-ownership-rules-d14)). When different locals are returned on different paths, at most one is built in the result slot; returning the others moves them, and OWN-R3c then applies to them. The tie-break is fixed: a local that a pending deferred call (or a non-escaping closure) still uses gets the slot. If two returned locals both have pending users, returning the second one is an OWN-R3c error, fix-it `.Clone()`. Otherwise the choice does not change behaviour, because the others just move. Example: `a := f(); b := g(); defer log.Println(a); if c { return a }; return b`. Here `a` gets the slot, and `return b` moves `b` (fine, nothing pending uses `b`).
 
@@ -391,7 +391,7 @@ Every heap allocation is spelled out. Go's `new` is removed. (The runtime's own 
 | `Unique[*T]` | `new_unique(v)` | single owner; the value is dropped and freed when the pointer is destroyed; never nil |
 | `Shared[*T]` | `new_shared(v)` | shared ownership, atomically refcounted; one allocation holds the counts and the value (like `make_shared`) |
 | `Weak[*T]` | `new_weak(s)`, from a `Shared[*T]` | does not own, does not allocate; `w.Lock()` returns an `Option[Shared[*T]]`, `nil` if the value is gone |
-| `Option[T]` | `nil`, or any `T` (converts automatically) | "maybe nothing", for any type; zero value `nil`; the only nilable form of a pointer |
+| `Option[T]` | `nil`, or any `T` (converts automatically) | "maybe nothing", for any type; zero value `nil`; the only nilable form of a pointer, a func or an interface with methods (other than `error`) |
 
 No pointer kind is ever nil, and none has a zero value ([OWN-P9](#43-pointers-and-heap-allocation-d17), ADR-0018). Owning pointers name their pointer type: `Unique[*User]`, not `Unique[User]` (that is an error with the fix-it).
 
@@ -411,19 +411,25 @@ No pointer kind is ever nil, and none has a zero value ([OWN-P9](#43-pointers-an
 
 **OWN-P8.** `Unique[*T]` is owning (move-only). `Shared[*T]` and `Weak[*T]` are shared handles: copies retain the strong or weak count. `Weak[*T]` copies retain the weak count only.
 
-**OWN-P9.** *Never nil, and `Option[T]`* (ADR-0018). `*T`, `Unique[*T]`, `Shared[*T]` and `Weak[*T]` always hold a target and have no zero value ([OWN-R9](#42-ownership-rules-d14)): `var p *User` and `p == nil` on a pointer are compile errors. "Maybe nothing" is `Option[T]`, for **any** type `T`:
-- its zero value is `nil`, and `o = nil` empties it; a `T` converts to `Option[T]` automatically (`var o Option[*User] = &bob`, `var n Option[int] = 5`);
-- for the pointer kinds, `nil` uses the pointer's empty bit pattern, so `Option[*T]` has the size and layout of a C pointer; for other types it adds a hidden "is set" flag;
+**OWN-P9.** *Never nil, and `Option[T]`* (ADR-0018). `*T`, `Unique[*T]`, `Shared[*T]` and `Weak[*T]` always hold a target and have no zero value ([OWN-R9](#42-ownership-rules-d14)): `var p *User` and `p == nil` on a pointer are compile errors. The same holds for all `func` types and for every interface type with at least one method, because calling a nil one crashes like a nil pointer: `var l Logger`, `var f func()`, `l == nil` and `f == nil` are compile errors, and a struct with such a field has no zero value unless the field is an `Option`. **Two interfaces keep Go's `nil`: `error`, and the empty interface** (`any`, `interface{}`, or any interface type whose method set is empty, named or not, such as `type Thing interface{}`). So `var err error`, `if err != nil { return err }`, `var x any`, `make([]any, n)`, `m[k]` on a `map[string]any` and `x == nil` work as in Go. The `error` exception covers `error` and its aliases (`type E = error`) only: a defined `type MyErr error` and an interface that embeds `error` and adds methods (`interface{ error; Code() int }`) are interfaces with methods, so they are never nil. `unsafe.Pointer` keeps Go's `nil` too (it stands for a C `void*`, which may be NULL). "Maybe nothing" is `Option[T]`, for **any** other type `T`:
+- its zero value is `nil`, and `o = nil` empties it; two `Option[T]` compare equal when both are nil or both are set and equal, if `T` is comparable (`Option[*T]` by address), so `Option[T]` can be a map key and `o == 5` means `o == Option[int](5)` (TYP-3); a `T` converts to `Option[T]` automatically (`var o Option[*User] = &bob`, `var n Option[int] = 5`);
+- for the pointer kinds, funcs and interfaces with methods, `nil` uses the value's own nil bit pattern, so `Option[*T]` has the size and layout of a C pointer and `Option[Logger]` / `Option[func()]` cost nothing extra; for other types it adds a hidden "is set" flag;
 - it has exactly two methods, `IsNil() bool` and `Get() (T, bool)`, and no fields: the value's fields and methods are reached only after a check (OWN-P10), so no name of `T` can clash with them;
-- interfaces, maps, slices, channels and funcs stay nilable as in Go, so `if err != nil` is unchanged. Because they already have `nil`, `Option[T]` is a compile error when `T` is one of them or is itself an `Option` (`Option[error]`, `Option[Option[int]]`); in generic code this is checked per instance;
-- converting an `Option[T]` to an interface gives a nil interface when it is nil, and the boxed `T` when it is set, so `fmt.Println(o)` prints the value or `<nil>`, and a type switch never sees an `Option`;
-- ownership follows `T` ([OWN-R3](#42-ownership-rules-d14)): a checked `o` is used like any variable of type `T`. `v, ok := o.Get()` on an owning `T` (`Option[string]`, `Option[Unique[*T]]`) **borrows**: `v` is a read-only borrowed variable while `o` is unchanged. `v, ok := move(o).Get()` takes the value and leaves `o` nil, and `clone(o).Get()` copies it. A checked owning `o` can be moved out with `move(o)`, which leaves it nil.
+- `error`, `any` (the empty interface), `unsafe.Pointer`, maps, slices and channels keep Go's `nil` (a nil slice is empty, a nil map can be read, a nil channel blocks). Because they already have `nil`, `Option[T]` is a compile error when `T` is one of them or is itself an `Option` (`Option[error]`, `Option[any]`, `Option[unsafe.Pointer]`, `Option[[]int]`, `Option[Option[int]]`); in generic code this is checked per instance. `Option[Logger]` and `Option[func()]` are the "maybe" forms of an interface and a func;
+- converting an `Option[T]` to `any` or `error` gives a nil interface when it is nil and the boxed `T` when it is set, so `fmt.Println(o)` prints `<nil>` or the value, and a type switch never sees an `Option`. An interface with methods is never nil, so for such an `I` the conversion is to `Option[I]`: nil when `o` is nil, the boxed `T` when it is set;
+- ownership follows `T` ([OWN-R3](#42-ownership-rules-d14)): a checked `o` is used like any variable of type `T`. `v, ok := o.Get()` on an owning `T` (`Option[string]`, `Option[Unique[*T]]`) **borrows**: `v` is a read-only borrowed variable while `o` is unchanged. In the same scope, a `:=` that reuses the name `v` assigns to `v`, so it is an error; use a new name. `v, ok := move(o).Get()` takes the value and leaves `o` nil, and `clone(o).Get()` copies it. A checked owning `o` can be moved out with `move(o)`, which leaves it nil.
 
 **OWN-P10.** *Checking an `Option`.* An `Option[T]` is usable as a `T` only where the compiler knows it is set:
 - after `o != nil` or `!o.IsNil()`: in the `if` body, after an early `return`, `break` or `continue` on `o == nil` / `o.IsNil()`, and in the body of `for …; o != nil; …`; checks joined with `&&` (`a != nil && b != nil`), or an early exit on checks joined with `||` (`if a == nil || b == nil { return }`), narrow each operand; in `for n := head; n != nil; n = n.Next`, the body **and the post statement** see `n` as checked, unless the body assigns `n`;
-- or through `v, ok := o.Get()`, where `v` is usable only where `ok` is true.
+- or through `v, ok := o.Get()`: when `T` has no zero value, `v` is usable only where `ok` is true (the comma-ok rule below).
 
-Narrowing works on local variables and parameters. A field or element is copied into a local first (`if o := c.Owner; o != nil { … }`), because it could change between the check and the use. An assignment to `o` ends the narrowing. Using an unchecked `Option` as its value is a compile error: "`o` may be nil; check `o != nil` first".
+The same flow typing checks two more kinds of value:
+- `v, err := f()` for every call whose result list ends in `error`, when `v`'s type has no zero value: `v` is usable only where `err == nil` is known (after `if err != nil { return err }`, inside `if err == nil { … }`) ([ERR-3](09-errors-and-panics.md));
+- the comma-ok forms `v, ok := m[k]`, `v, ok := <-ch`, `v, ok := o.Get()` and `v, ok := x.(T)` when the value type has no zero value: `v` is usable only where `ok` is known to be true (after `if !ok { return }`) ([OWN-R9](#42-ownership-rules-d14)).
+
+A value stored in a never-nil `@Required` `error`, `any`, map or channel field must be known non-nil; [TYP-15](03-types.md) has the full list (a literal, `make(…)`, a local checked with `!= nil`, a value of a never-nil type converted to `error` / `any`, …).
+
+Narrowing works on local variables and parameters. A field or element is copied into a local first (`if o := c.Owner; o != nil { … }`), because it could change between the check and the use. An assignment to `o` ends the narrowing, and so does `move(o)`, which leaves `o` nil (after it, using `o` as a `T` again, including `move(o)` into a `T`, is an error until `o` is checked again). Where `o` is checked it simply is a `T`, so a copy made there is a `T` too: after `if a != nil`, `p := a` (or `var p = a`) gives `p` the type `*Node`, which is never nil, while `var p Option[*Node] = a` keeps the declared `Option`. Using an unchecked `Option` as its value is a compile error: "`o` may be nil; check `o != nil` first". Where `o` is checked, taking a reference into its value's own storage is a compile error too, even for a use within the statement (`sum(o.Arr[:])`), because the reference could be kept past `o = nil`, which leaves zero bytes under it: `&o.F`, a pointer-receiver method value `o.M` or `go` / `defer o.M()`, `o.Arr[:]` of an array held by value, `for _, &e := range o.Arr`, and the same made from a variable that borrows a part of the value (a range variable over owning array elements, a `Get` binding). Copy `o` first (`v := o`). Not affected: an immediate call `o.M()` (it borrows the receiver for the call only), storage reached through a pointer (`Option[*T]`, a pointer field), and a buffer the value owns (`o.Items[:]` of a slice, `o.Name[1:]`; a ref into it after `o = nil` dangles, [UB-1](16-undefined-behavior.md), as for any owned local).
 
 ```go
 func greet(u Option[*User]) {
@@ -443,6 +449,14 @@ use(n)                               // error: n may be nil; check n != nil firs
 var p *User                          // error: *User has no zero value (it is never nil)
 p := &bob
 p == nil                             // error: *User is never nil
+
+var l Logger                         // error: Logger has no zero value (it is never nil)
+var onStop Option[func()]            // an optional callback: nil until set
+if onStop != nil { onStop() }        // onStop is a func() here
+var err error                        // fine: error keeps Go's nil (so does any)
+u, err := load()
+if err != nil { return err }
+fmt.Println(u.Name)                  // OK: err is nil here
 ```
 
 ```go

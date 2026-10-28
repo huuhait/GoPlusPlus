@@ -15,7 +15,7 @@ func positive() {
 
 func negative() {
 	u := new_unique(Config{})
-	// CHECK: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: new_weak needs a Shared[T] argument, have Unique[Config] (OWN-P3)
+	// CHECK: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: new_weak needs a Shared[*T] argument, have Unique[*Config] (OWN-P3)
 	w := new_weak(u)
 	_ = w
 }

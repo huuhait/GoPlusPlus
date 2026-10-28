@@ -6,6 +6,8 @@ Delta D1.11 (decides Q1). The goal: **closures behave exactly like Go**. Go++ on
 
 Syntax: no change (function literals are `func(…) { … }` or `func!(…) { … }`).
 
+A func value is never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)): `var f func()` and `f == nil` are compile errors. An optional callback is an `Option[func()]`, checked before the call: `if f := s.OnStop; f != nil { f() }`.
+
 ## 11.1 Rules
 
 **CLO-1.** *Non-escaping closures capture by reference.* A closure that is only called locally, or passed to a parameter the callee does not keep, does not escape. Assigning it to a local variable is **not** an escape, as long as that variable does not outlive any variable the closure captures (see CLO-3). Apart from `defer`, a closure is only non-escaping if it cannot outlive its captured variables. A function literal in a `defer` statement is **never** an escape and never gets a cell: it always captures by reference, and [CLO-3b](11-closures.md) decides whether that is legal.
@@ -23,7 +25,7 @@ A captured owned variable is destroyed when its cell is released for the last ti
 - captured by an escaping closure;
 - stored in a local variable declared in an outer scope than some variable it captures, so that the closure could be called after the captured variable has died.
 
-The last bullet keeps the cell rule honest: a closure stored in an outer variable keeps its captures alive. Without it, `var f func(); { s := "x"; f = func() { use(s) } }; f()` would call a closure whose captured `s` is already destroyed, and Go prints `x`. Treating it as an escape (a shared cell) keeps the rule that the choice of cell or reference never changes what the program does ([CLO-4](11-closures.md)). The same applies to `last = func() int { return i }` in a loop body, where `last` is declared outside the loop and `i` is per iteration ([CLO-8](11-closures.md)).
+The last bullet keeps the cell rule honest: a closure stored in an outer variable keeps its captures alive. Without it, `var f Option[func()]; { s := "x"; f = func() { use(s) } }; if f != nil { f() }` would call a closure whose captured `s` is already destroyed, and Go prints `x`. Treating it as an escape (a shared cell) keeps the rule that the choice of cell or reference never changes what the program does ([CLO-4](11-closures.md)). The same applies to `last = func() int { return i }` in a loop body, where `last` is declared outside the loop and `i` is per iteration ([CLO-8](11-closures.md)).
 
 **CLO-3a.** *Closures that capture borrowed variables.* A borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), or an `&` range variable ([RNG-1a](08-slices-and-range.md)), cannot be put in a shared cell, because the cell would outlive the borrow. A closure that runs later (used with `go`, stored, or returned; see CLO-3) cannot capture one: it is a compile error. Fix-its never reuse the loop variable's name ([RNG-8](08-slices-and-range.md)): copy it into a differently named local first (`mine := u.Clone()`), pass a clone (`go fetch(u.Clone())`), make a borrowed parameter `move`, or use `range move(xs)` so that the range variable is owned. Capturing a borrowed variable in a **non-escaping** closure is fine. Variables that are not borrowed variables (trivial or shared-handle copies) may be captured freely.
 
@@ -139,20 +141,22 @@ Go: `g.Hello` binds `&g`. Go++: the same. If `h` is returned, `g` goes to a cell
 ### Example 6: recursion
 
 ```go
-var fib func(int) int
+var fib Option[func(int) int]                  // a func is never nil: Option until it is set
 fib = func(n int) int {                        // not escaping: fine
-    if n < 2 { return n }
-    return fib(n-1) + fib(n-2)
+    f, ok := fib.Get()
+    if n < 2 || !ok { return n }
+    return f(n-1) + f(n-2)
 }
-fmt.Println(fib(10))                           // 55
+if fib != nil { fmt.Println(fib(10)) }         // 55
 
 func makeFib() func(int) int {
-    var fib func(int) int
-    fib = func(n int) int { if n < 2 { return n }; return fib(n-1) + fib(n-2) }
-    return fib                                 // escaping: fib is captured by itself -> cycle
+    var fib Option[func(int) int]
+    f := func(n int) int { g, ok := fib.Get(); if n < 2 || !ok { return n }; return g(n-1) + g(n-2) }
+    fib = f
+    return f                                   // escaping: f captures fib, which holds f -> cycle
 }                                              // gopp vet warns: the cell is never freed
 ```
-Go: both work (the GC collects the cycle). Go++: the first works. The second works too but leaks; vet warns. **Different only in memory use.**
+Go (with plain `var fib func(int) int`): both work (the GC collects the cycle). Go++: the first works. The second works too but leaks; vet warns. **Different only in memory use.**
 
 ### Example 7: `defer` arguments are evaluated at the `defer`
 

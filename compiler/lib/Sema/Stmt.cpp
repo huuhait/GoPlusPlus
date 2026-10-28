@@ -50,11 +50,34 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   (void)Recv;
   (void)FT;
   Env Saved = E;
+  // The borrowers of payloads belong to one outermost body; a function
+  // literal inside it keeps them (it may use a captured borrower).
+  if (!Saved.FuncId)
+    PayloadBorrows.clear();
   // A function literal in a header is an ordinary body, not the header.
   bool SavedHeader = InHeaderInit;
   InHeaderInit = false;
   auto SavedLocals = std::move(LocalVars);
   LocalVars.clear();
+  // Option flow typing starts with nothing known in every function (a
+  // function literal runs later, ADR-0018 point 4).
+  FlowState SavedCur = std::move(Cur);
+  auto SavedTargets = std::move(Targets);
+  auto SavedKills = std::move(PendingKills);
+  auto SavedNoNarrow = std::move(NoNarrowNames);
+  auto SavedGotos = std::move(GotoLabels);
+  std::string SavedPendingLabel = std::move(PendingLabel);
+  const ast::Expr *SavedNoNarrowExpr = NoNarrowExpr;
+  auto SavedRefill = std::move(RefillLhs);
+  auto SavedRefillMoved = std::move(RefillMoved);
+  Cur = FlowState();
+  Targets.clear();
+  PendingKills.clear();
+  PendingLabel.clear();
+  NoNarrowExpr = nullptr;
+  RefillLhs.clear();
+  RefillMoved.clear();
+  flowBeginBody(Body);
   E = Env();
   E.Cur = D;
   E.Sc = Sc;
@@ -77,6 +100,13 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
       V->FuncOwner = Body;
   if (Recv && Recv->FuncOwner != Body)
     Recv->FuncOwner = Body;
+  // A named result starts as a zero value (TYP-15, OWN-R9).
+  if (own())
+    for (Var *V : Results)
+      if (!V->Name.empty() && V->Ty)
+        needZeroValue(V->Pos, V->Ty,
+                      "named result " + std::string(V->Name) +
+                          " starts as a zero value");
   stmtList(0, Body->List);
   if (E.HasLabel)
     labels(Body);
@@ -91,6 +121,15 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
       if (!V->Used && V->Name != "_" && !V->Name.empty())
         err(V->Pos, diag::err_declared_not_used, {std::string(V->Name)});
   LocalVars = std::move(SavedLocals);
+  Cur = std::move(SavedCur);
+  Targets = std::move(SavedTargets);
+  PendingKills = std::move(SavedKills);
+  NoNarrowNames = std::move(SavedNoNarrow);
+  GotoLabels = std::move(SavedGotos);
+  PendingLabel = std::move(SavedPendingLabel);
+  NoNarrowExpr = SavedNoNarrowExpr;
+  RefillLhs = std::move(SavedRefill);
+  RefillMoved = std::move(SavedRefillMoved);
   InHeaderInit = SavedHeader;
   E = Saved;
 }
@@ -209,13 +248,26 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
     return;
   case K::LabeledStmt: {
     E.HasLabel = true;
-    stmt(Ctx, cast<LabeledStmt>(S0)->Body);
+    auto *LS = cast<LabeledStmt>(S0);
+    // A goto may arrive here from anywhere: nothing is known.
+    if (own() && GotoLabels.count(name(LS->Label)))
+      Cur = FlowState();
+    PendingLabel = name(LS->Label).str();
+    stmt(Ctx, LS->Body);
+    PendingLabel.clear();
     return;
   }
   case K::ExprStmt: {
     auto *ES = cast<ExprStmt>(S0);
     Operand X;
+    // A bare `move(m[k])` removes the entry and a bare `<-ch` drops what it
+    // receives: neither reads a value that may not exist (ADR-0016 point 9).
+    markLookupOk(ES->X, /*MoveOnly=*/true);
+    if (auto *U = dyn_cast<UnaryExpr>(unparen(ES->X)); U && U->Op == tok::arrow)
+      markLookupOk(U);
     ExprKind Kind = rawExpr(X, ES->X, nullptr, false);
+    if (own() && isTerminating(S0, ""))
+      flowDead(); // a call of panic
     if (X.M == Mode::Invalid)
       return;
     const char *Msg = nullptr;
@@ -265,16 +317,19 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
       return;
     }
     assignVar(ID->X, nullptr, &X, "assignment");
+    flowFlushKills();
     return;
   }
   case K::AssignStmt: {
     auto *AS = cast<AssignStmt>(S0);
     if (AS->Op == tok::assign) {
       assignVars(AS->Lhs, AS->Rhs);
+      flowFlushKills();
       return;
     }
     if (AS->Op == tok::define) {
       shortVarDecl(AS->OpLoc, AS->Lhs, AS->Rhs);
+      flowFlushKills();
       return;
     }
     if (AS->Lhs.size() != 1 || AS->Rhs.size() != 1) {
@@ -286,6 +341,7 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
     binary(X, nullptr, AS->Lhs[0], AS->Rhs[0], assignOpToBinary(AS->Op),
            AS->OpLoc);
     assignVar(AS->Lhs[0], nullptr, &X, "assignment operation");
+    flowFlushKills();
     return;
   }
   case K::GoStmt:
@@ -296,9 +352,12 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
     return;
   case K::ReturnStmt:
     returnStmt(cast<ReturnStmt>(S0));
+    flowDead();
     return;
   case K::BranchStmt: {
     auto *B = cast<BranchStmt>(S0);
+    if (own())
+      flowBranch(B);
     if (B->Label) {
       E.HasLabel = true;
       return; // checked by labels()
@@ -371,30 +430,73 @@ void Checker::ifStmt(unsigned Ctx, const IfStmt *S0) {
   if (X.M != Mode::Invalid && !allBoolean(X.Ty))
     err(S0->Cond, diag::err_sema_stmt,
         {"non-boolean condition in if statement"});
+  // ADR-0018 point 4: each branch knows what the condition says.
+  FlowFacts Facts;
+  flowFacts(S0->Cond, Facts);
+  FlowState Base = Cur;
+  flowAdd(Facts.True);
   blockStmt(Ctx, S0->Then);
+  FlowState ThenOut = std::move(Cur);
+  Cur = std::move(Base);
+  flowAdd(Facts.False);
   if (S0->Else)
     stmt(Ctx, S0->Else);
+  Cur = flowJoin(ThenOut, Cur);
   closeScope();
 }
 
 void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   openScope(S0->getRange(), "for");
   simpleStmt(S0->Init);
+  // The loop head: what is known before the loop, minus what the loop
+  // assigns (a later iteration comes back here).
+  if (own()) {
+    llvm::StringSet<> Assigned;
+    collectAssigned(S0, Assigned);
+    flowKillNames(Assigned);
+  }
+  FlowState Head = Cur;
+  flowPushTarget();
+  FlowFacts Facts;
   if (S0->Cond) {
     Operand X;
     expr(X, S0->Cond);
     if (X.M != Mode::Invalid && !allBoolean(X.Ty))
       err(S0->Cond, diag::err_sema_stmt,
           {"non-boolean condition in for statement"});
+    flowFacts(S0->Cond, Facts);
   }
   if (S0->Post) {
     if (auto *AS = dyn_cast<AssignStmt>(S0->Post); AS && AS->Op == tok::define)
       err(S0->Post, diag::err_sema_stmt,
           {"cannot declare in post statement of for loop"});
+    // The post statement runs after the body, where the condition held,
+    // unless the body assigned the variable (`for n := head; n != nil; n =
+    // n.Next`, ADR-0018 point 11).
+    llvm::StringSet<> BodyAssigned;
+    if (own())
+      collectAssigned(S0->Body, BodyAssigned);
+    Cur = Head;
+    flowAdd(Facts.True);
+    flowKillNames(BodyAssigned);
     simpleStmt(S0->Post);
   }
   // The body shares the loop scope for scoping purposes of RNG-8 only.
+  Cur = Head;
+  flowAdd(Facts.True);
   blockStmt(Ctx, S0->Body);
+  FlowTarget Done = flowPopTarget();
+  // After the loop: the condition was false, or a break left it.
+  FlowState Exit;
+  if (S0->Cond) {
+    Exit = Head;
+    Exit.N.insert(Facts.False.begin(), Facts.False.end());
+  } else {
+    Exit.Dead = true;
+  }
+  if (Done.HasBreak)
+    Exit = flowJoin(Exit, Done.Break);
+  Cur = std::move(Exit);
   closeScope();
 }
 
@@ -427,6 +529,26 @@ void Checker::returnStmt(const ReturnStmt *S0) {
             {typesSummary(Have, false, false), "()"});
       }
       return;
+    }
+    // ERR-3, ADR-0018 point 10: a Go-style function `(*T, error)` that is not
+    // declared with `!` cannot leave a result unset, so it cannot return nil
+    // for one.
+    if (own() && Res.size() == S0->Results.size() && Res.size() > 1 &&
+        Res.back()->Ty && isa<NamedType>(Res.back()->Ty) &&
+        Res.back()->Ty == Ctx.errorType()) {
+      bool Reported = false;
+      for (size_t K = 0; K + 1 < Res.size(); ++K) {
+        const ast::Expr *Ex = S0->Results[K];
+        if (isNilLit(Ex) && !hasZeroValue(Res[K]->Ty)) {
+          err(Ex, diag::err_fail_return_nil,
+              {str(Res[K]->Ty), str(Res[K]->Ty)});
+          Reported = true;
+        }
+      }
+      if (Reported) {
+        useExprs(S0->Results);
+        return;
+      }
     }
     initVars(Res, S0->Results, S0);
     if (own() && Res.size() == S0->Results.size())
@@ -485,7 +607,34 @@ void Checker::failsReturn(const ReturnStmt *S0) {
   }
   if (R == N || R == N + 1) {
     ArrayRef<Var *> Lhs = R == N ? Res : ArrayRef<Var *>(Ext);
-    initVars(Lhs, S0->Results, S0);
+    // In a failing return, a result with no zero value is written nil and
+    // left unset (ERR-3): the nil is accepted for it.
+    SmallVector<Var *, 4> LhsKept;
+    SmallVector<ast::Expr *, 4> RhsKept;
+    bool Dropped = false;
+    if (own() && R == N + 1) {
+      for (size_t K = 0; K < N; ++K) {
+        ast::Expr *Ex = S0->Results[K];
+        if (isNilLit(Ex) && !hasZeroValue(Res[K]->Ty)) {
+          Operand NilOp;
+          expr(NilOp, Ex);
+          if (NilOp.M != Mode::Invalid && NilOp.isNil())
+            updateExprType(Ex, Res[K]->Ty, false);
+          Dropped = true;
+          continue;
+        }
+        LhsKept.push_back(Lhs[K]);
+        RhsKept.push_back(Ex);
+      }
+      if (Dropped) {
+        LhsKept.push_back(Lhs[N]);
+        RhsKept.push_back(S0->Results[N]);
+      }
+    }
+    if (Dropped)
+      initVars(LhsKept, RhsKept, S0);
+    else
+      initVars(Lhs, S0->Results, S0);
     if (own())
       for (size_t K = 0; K < R; ++K)
         checkReturnRef(S0->Results[K], Lhs[K]->Ty);
@@ -571,6 +720,14 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
   SmallVector<std::pair<ConstValue, Type *>, 8> Seen;
   SmallVector<SourceLoc, 8> SeenPos;
   auto Clauses = S0->Body->List;
+  // Flow (ADR-0018 point 4): every clause starts from the state at the
+  // switch; in a tagless switch it also knows what its case says, and that
+  // the earlier cases were false. A fallthrough joins the next clause.
+  FlowState SwBase = Cur, SwOut, PrevFall;
+  SwOut.Dead = true;
+  FlowFacts PrevFalse;
+  bool PrevFell = false;
+  flowPushTarget();
   for (size_t K = 0; K < Clauses.size(); ++K) {
     auto *CC = dyn_cast<CaseClause>(Clauses[K]);
     if (!CC) {
@@ -587,11 +744,32 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
       Inner |= FallthroughOk;
     else
       Inner |= FinalSwitchCase;
+    // A case is evaluated when the earlier ones were false.
+    Cur = SwBase;
+    flowAdd(PrevFalse.False);
+    // `case a, b:` holds when a || b does.
+    FlowFacts ClauseFacts;
     if (!S0->Tag) {
       // `switch { case cond: }` compares each value with true.
+      bool First = true;
       for (const ast::Expr *Ex : CC->List) {
         Operand V;
         expr(V, Ex);
+        FlowFacts F;
+        flowFacts(Ex, F);
+        flowAdd(F.False); // b is evaluated only when a is false
+        if (First) {
+          ClauseFacts = F;
+          First = false;
+        } else {
+          FlowFacts Merged;
+          Merged.False = ClauseFacts.False;
+          Merged.False.insert(F.False.begin(), F.False.end());
+          for (const Var *Vr : ClauseFacts.True)
+            if (F.True.count(Vr) || ClauseFacts.False.count(Vr))
+              Merged.True.insert(Vr);
+          ClauseFacts = std::move(Merged);
+        }
         if (V.M == Mode::Invalid)
           continue;
         if (!allBoolean(V.Ty)) {
@@ -605,10 +783,35 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
     } else {
       caseValues(X, CC->List, Seen, SeenPos);
     }
+    Cur = SwBase;
+    flowAdd(PrevFalse.False);
+    flowAdd(ClauseFacts.True);
+    if (!CC->IsDefault)
+      PrevFalse.False.insert(ClauseFacts.False.begin(),
+                             ClauseFacts.False.end());
+    if (PrevFell)
+      Cur = flowJoin(Cur, PrevFall);
+    HasFall = false;
     openScope(CC->getRange(), "case");
     stmtList(Inner, CC->Body);
     closeScope();
+    PrevFell = HasFall;
+    if (HasFall)
+      PrevFall = FallState;
+    HasFall = false;
+    SwOut = flowJoin(SwOut, Cur);
   }
+  FlowTarget Done = flowPopTarget();
+  if (!SeenDefault) {
+    // No case matched.
+    FlowState NoCase = SwBase;
+    if (!S0->Tag)
+      NoCase.N.insert(PrevFalse.False.begin(), PrevFalse.False.end());
+    SwOut = flowJoin(SwOut, NoCase);
+  }
+  if (Done.HasBreak)
+    SwOut = flowJoin(SwOut, Done.Break);
+  Cur = std::move(SwOut);
   closeScope();
 }
 
@@ -663,10 +866,15 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
   bool SeenDefault = false;
   SmallVector<Var *, 4> LhsVars;
   SmallVector<std::pair<Type *, SourceLoc>, 8> Seen;
+  // Flow: every clause starts from the state at the switch.
+  FlowState TsBase = Cur, TsOut;
+  TsOut.Dead = true;
+  flowPushTarget();
   for (const Stmt *Cl : S0->Body->List) {
     auto *CC = dyn_cast<CaseClause>(Cl);
     if (!CC)
       continue;
+    Cur = TsBase;
     if (CC->IsDefault) {
       if (SeenDefault)
         err(CC, diag::err_misplaced_default);
@@ -725,6 +933,15 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
     }
     stmtList(Ctx, CC->Body);
     closeScope();
+    TsOut = flowJoin(TsOut, Cur);
+  }
+  {
+    FlowTarget Done = flowPopTarget();
+    if (!SeenDefault)
+      TsOut = flowJoin(TsOut, TsBase);
+    if (Done.HasBreak)
+      TsOut = flowJoin(TsOut, Done.Break);
+    Cur = std::move(TsOut);
   }
   if (Lhs) {
     bool Used = false;
@@ -744,10 +961,16 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
 
 void Checker::selectStmt(unsigned Ctx, const SelectStmt *S0) {
   bool SeenDefault = false;
+  // Flow: every clause starts from the state at the select; `select {}`
+  // blocks forever.
+  FlowState SelBase = Cur, SelOut;
+  SelOut.Dead = true;
+  flowPushTarget();
   for (const Stmt *Cl : S0->Body->List) {
     auto *CC = dyn_cast<CommClause>(Cl);
     if (!CC)
       continue;
+    Cur = SelBase;
     if (!CC->Comm) {
       if (SeenDefault)
         err(CC, diag::err_misplaced_default);
@@ -774,7 +997,12 @@ void Checker::selectStmt(unsigned Ctx, const SelectStmt *S0) {
       stmt(Ctx, CC->Comm);
     stmtList(Ctx, CC->Body);
     closeScope();
+    SelOut = flowJoin(SelOut, Cur);
   }
+  FlowTarget Done = flowPopTarget();
+  if (Done.HasBreak)
+    SelOut = flowJoin(SelOut, Done.Break);
+  Cur = std::move(SelOut);
 }
 
 //===----------------------------------------------------------------------===//
@@ -962,6 +1190,9 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
       if (Var *BV = borrowedRoot(S0->X))
         err(S0->AliasLoc, diag::err_own_range_alias_borrowed,
             {str(S0->X), std::string(BV->Name)});
+      else
+        rejectPayloadAddress(S0->X, "an `&` range variable over an array "
+                                    "held by value");
     }
   }
   // RNG-2 / RNG-6: `range move(xs)` and `range ch` give owned variables.
@@ -1018,10 +1249,14 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
           err(Lhs[K], diag::err_own_pinned_copy,
               {str(S0->X) + " element", str(Obj->Ty)});
         if (own() && Obj->Ty && isValid(Obj->Ty)) {
-          if (IsAlias)
+          if (IsAlias) {
             Obj->Mode = Var::Alias;
-          else if (!OwnedVars && isOwning(Obj->Ty))
+          } else if (!OwnedVars && isOwning(Obj->Ty)) {
             Obj->Mode = Var::Borrowed;
+            // It borrows the live element of an array (RNG-6).
+            if (Type *XU = coreType(X.Ty); XU && isa<sema::ArrayType>(XU))
+              notePayloadBorrow(Obj, S0->X);
+          }
         }
       }
     }
@@ -1072,7 +1307,21 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
       F.Key = dyn_cast_or_null<Var>(identObj(SKey));
     RangeStack.push_back(std::move(F));
   }
+  // Flow (ADR-0018 point 4): the body may run zero times or many; it starts
+  // from what is known minus what the loop assigns.
+  flowFlushKills(); // `for k, v = range xs` assigned k and v
+  if (own()) {
+    llvm::StringSet<> Assigned;
+    collectAssigned(S0, Assigned);
+    flowKillNames(Assigned);
+  }
+  FlowState Head = Cur;
+  flowPushTarget();
   stmt(Ctx, S0->Body);
+  {
+    FlowTarget Done = flowPopTarget();
+    Cur = Done.HasBreak ? flowJoin(Head, Done.Break) : Head;
+  }
   if (Frame)
     RangeStack.pop_back();
   closeScope();

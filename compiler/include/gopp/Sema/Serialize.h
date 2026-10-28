@@ -116,6 +116,8 @@ enum RecordCode : unsigned {
   REC_OBJ_VAR,
   REC_OBJ_FUNC,
   REC_PKG_END,
+  /// `Option[T]`: one operand, the type id of T.
+  REC_OPTION,
   /// Codes from here on belong to the user of the stream (GIR bodies).
   REC_FIRST_USER = 64,
 };

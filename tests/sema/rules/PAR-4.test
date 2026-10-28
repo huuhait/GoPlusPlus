@@ -12,9 +12,9 @@ func gcd(a, b int) int {
 	return a
 }
 
-func positive(p Pt, q *int) int {
+func positive(p Pt, q *int, r *int) int {
 	p.X++
-	q = nil
+	q = r
 	_ = q
 	return gcd(p.X, p.Y)
 }

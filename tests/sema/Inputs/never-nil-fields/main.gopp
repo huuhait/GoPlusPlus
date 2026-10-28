@@ -1,0 +1,149 @@
+// Rules OWN-R4 and OWN-R9 (P03.15, ADR-0016 points 5 and 8, ADR-0018 point 9):
+// `move` out of a place that is not a local is an error for a Go++ type with
+// no zero value (swaps and assignments that refill the place are fine); a
+// @Required interface, func, map or channel field is never nil: storing nil,
+// `move` out of it and `&` of it (except as the first argument of mem.Replace)
+// are errors. mem.Replace (package mem here is a stand-in for P05's) is the
+// fix. Checked by tests/sema/rules/OWN-R9.test; `positive` has no error.
+package main
+
+import "mem"
+
+type User struct {
+	ID    int    @Required
+	Email string @Required
+}
+
+type Writer interface{ Write(s string) }
+
+type nop struct{}
+
+func (nop) Write(s string) {}
+
+type Team struct {
+	Lead    User
+	Other   User
+	Members []User
+	Out     Writer         @Required
+	Hook    func()         @Required
+	Tags    map[string]int @Required
+	Done    chan int       @Required
+	Opts    []int          @Required
+	Maybe   Writer
+}
+
+type Wrap[T any] struct {
+	Val T @Required
+}
+
+func keep(move u User) {}
+
+func peek(u User) {}
+
+func fresh() User { return User{ID: 1, Email: "a"} }
+
+func newTeam(w Writer) Team {
+	return Team{Lead: fresh(), Other: fresh(), Out: w, Hook: func() {}, Tags: map[string]int{}, Done: make(chan int), Opts: nil}
+}
+
+func positive(move users []User, t *Team, w Writer, f func(), x any, m map[string]User, i, j int) {
+	// mem.Replace takes a value out of any place and leaves a valid one.
+	old := mem.Replace(&t.Lead, fresh())
+	keep(move(old))
+	keep(mem.Replace(&users[0], fresh()))
+	mem.Replace(&t.Other, fresh()) // a bare call: the old value is dropped
+	// A never-nil field: replace its value, set it, read it.
+	_ = mem.Replace(&t.Out, w)
+	_ = mem.Replace(&t.Out, Writer(nop{}))
+	_ = mem.Replace(&t.Hook, f)
+	_ = mem.Replace(&t.Tags, map[string]int{})
+	t.Out = w
+	t.Out = nop{}
+	t.Hook = func() {}
+	t.Tags = make(map[string]int)
+	t.Maybe = nil
+	t.Opts = nil // a slice field only means "must be set"
+	_ = &t.Opts
+	t.Out.Write("x")
+	t.Hook()
+	// Swaps refill every place they empty.
+	t.Lead, t.Other = t.Other, t.Lead
+	t.Lead, t.Other = move(t.Other), move(t.Lead)
+	users[i], users[j] = users[j], users[i]
+	users[i], users[j] = move(users[j]), move(users[i])
+	sw := fresh()
+	t.Lead, sw = sw, t.Lead
+	keep(move(sw))
+	t.Members = append(t.Members, fresh())
+	if u, ok := x.(User); ok {
+		keep(u.Clone())
+	}
+	local := fresh()
+	keep(move(local))
+	for _, u := range move(users) {
+		keep(move(u))
+	}
+	if u, ok := move(m["k"]); ok {
+		keep(move(u))
+	}
+	c := newTeam(w)
+	c.Hook()
+	g := func() { keep(fresh()) }
+	g()
+	_ = Wrap[int]{Val: 1}
+	_ = Wrap[Writer]{Val: nil} // a type-parameter field only means "must be set"
+}
+
+func negative(users []User, t *Team, p *User, w Writer, x any, m map[string]User) {
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot move t.Lead: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&t.Lead, v)
+	keep(move(t.Lead))
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot move users[0]: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&users[0], v)
+	keep(move(users[0]))
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot move *p: the place would be left as zero bytes, and User has no zero value; use mem.Replace(p, v)
+	keep(move(*p))
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot move t.Other: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&t.Other, v)
+	t.Lead = move(t.Other)
+	// CHECK-DAG: [[@LINE+1]]:40: error{{\[E[0-9]+\]}}: t.Other is moved twice in one statement: the second move would read the zero bytes the first one left (OWN-R4)
+	t.Lead, t.Other = move(t.Other), move(t.Other)
+	// CHECK-DAG: [[@LINE+1]]:44: error{{\[E[0-9]+\]}}: users[1] is moved twice in one statement: the second move would read the zero bytes the first one left (OWN-R4)
+	users[0], users[1] = move(users[1]), move(users[1])
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of t.Out: the field is @Required and never nil; only mem.Replace(&t.Out, v) may
+	_ = &t.Out
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of t.Hook: the field is @Required and never nil; only mem.Replace(&t.Hook, v) may
+	_ = &t.Hook
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot take the address of t.Tags: the field is @Required and never nil; only mem.Replace(&t.Tags, v) may
+	q := &t.Tags
+	_ = q
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot move out of t.Out: the field is @Required and would be left nil; use mem.Replace(&t.Out, v)
+	_ = move(t.Out)
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot move out of t.Tags: the field is @Required and would be left nil; use mem.Replace(&t.Tags, v)
+	_ = move(t.Tags)
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot store nil in Team.Out: the field is @Required, so it is never nil
+	_ = Team{Out: nil, Hook: func() {}, Tags: map[string]int{}, Done: make(chan int), Lead: fresh(), Other: fresh(), Opts: nil}
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store nil in t.Out: the field is @Required, so it is never nil
+	t.Out = nil
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot store nil in t.Hook: the field is @Required, so it is never nil
+	t.Hook = nil
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot store nil in t.Done: the field is @Required, so it is never nil
+	t.Done = nil
+	// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot store nil in t.Out: the field is @Required, so it is never nil
+	_ = mem.Replace(&t.Out, nil)
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a User, which has no zero value (field ID is @Required); use the comma-ok form `v, ok := m["k"]`
+	peek(m["k"])
+	if u, ok := x.(User); ok {
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot move u: it is a borrowed variable (OWN-R3b)
+		keep(move(u))
+	}
+	cp := fresh()
+	f := func() {
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot move cp: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&cp, v)
+		keep(move(cp))
+	}
+	f()
+	for _, &u := range users {
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot move u: the place would be left as zero bytes, and User has no zero value; use mem.Replace(&u, v)
+		keep(move(u))
+	}
+}
+
+func main() {}

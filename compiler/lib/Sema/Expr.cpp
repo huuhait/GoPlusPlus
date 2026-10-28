@@ -258,6 +258,8 @@ void Checker::exprOrType(Operand &X, const ast::Expr *Ex, bool AllowGeneric) {
 void Checker::multiExpr(SmallVector<Operand, 4> &Out, const ast::Expr *Ex,
                         bool AllowCommaOk, bool *CommaOk) {
   Operand X;
+  if (AllowCommaOk)
+    markLookupOk(Ex); // `v, ok := m[k]` reads no value that may not exist
   rawExpr(X, Ex, nullptr, false);
   exclude(X, bit(Mode::NoValue) | bit(Mode::Builtin) | bit(Mode::TypeExpr));
   if (CommaOk)
@@ -432,6 +434,10 @@ static bool opAllowed(Checker &C, tok::Kind Op, Type *T, bool Unary) {
 }
 
 void Checker::unary(Operand &X, const UnaryExpr *Ex) {
+  // `&o` of an Option points at the Option itself (and o is never narrowed:
+  // see narrowable).
+  if (Ex->Op == tok::and_)
+    markNoNarrow(Ex->X);
   expr(X, Ex->X);
   if (X.M == Mode::Invalid)
     return;
@@ -446,8 +452,13 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
       X.M = Mode::Invalid;
       return;
     }
-    if (own() && X.M == Mode::Variable)
+    if (own() && X.M == Mode::Variable) {
+      // `&o` is handled by narrowable (o is never narrowed); `&o.In` points
+      // into the payload of a checked Option.
+      if (!isa<ast::Ident>(Inner))
+        rejectPayloadAddress(Inner, "an `&` expression");
       checkAddressOf(Ex, X);
+    }
     X.M = Mode::Value;
     X.Ty = Ctx.pointer(X.Ty);
     return;
@@ -455,6 +466,10 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
   case tok::arrow: {
     Type *Elem = chanElem(X.pos(), X, true);
     if (!Elem) {
+      X.M = Mode::Invalid;
+      return;
+    }
+    if (!checkLookupZero(Ex, Elem)) {
       X.M = Mode::Invalid;
       return;
     }
@@ -536,6 +551,15 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
   Operand *ErrOp = &X;
   std::string Cause;
   bool Fail = false;
+  // ADR-0018: `p == nil` on a pointer kind.
+  if (own() && (Op == tok::eql || Op == tok::neq) && (X.isNil() || Y.isNil())) {
+    Type *T = X.isNil() ? Y.Ty : X.Ty;
+    if (isPointerKind(T)) {
+      err(X.isNil() ? Y : X, diag::err_ptr_never_nil, {str(T)});
+      X.M = Mode::Invalid;
+      return;
+    }
+  }
   bool Ok = assignableTo(X, Y.Ty, nullptr);
   if (!Ok)
     Ok = assignableTo(Y, X.Ty, nullptr);
@@ -735,8 +759,30 @@ void Checker::shift(Operand &X, Operand &Y, const ast::Expr *Ex, tok::Kind Op) {
 void Checker::binary(Operand &X, const ast::Expr *Ex, const ast::Expr *L,
                      const ast::Expr *R, tok::Kind Op, SourceLoc OpLoc) {
   Operand Y;
+  // Flow typing: `o == nil` and `o != nil` look at the Option itself.
+  if (own() && (Op == tok::eql || Op == tok::neq)) {
+    if (isNilLit(R))
+      markNoNarrow(L);
+    else if (isNilLit(L))
+      markNoNarrow(R);
+  }
   expr(X, L);
-  expr(Y, R);
+  if (own() && (Op == tok::land || Op == tok::lor)) {
+    // The right operand of `a && b` runs only if a is true, that of `a || b`
+    // only if a is false: `o != nil && o.f` uses o as its value.
+    FlowFacts F;
+    flowFacts(L, F);
+    FlowState Saved = Cur;
+    size_t Logged = MoveLog.size();
+    flowAdd(Op == tok::land ? F.True : F.False);
+    expr(Y, R);
+    Cur = std::move(Saved);
+    // A move in the right operand may have run: o is nil (not known set).
+    for (size_t K = Logged; K < MoveLog.size(); ++K)
+      Cur.N.erase(MoveLog[K]);
+  } else {
+    expr(Y, R);
+  }
   if (X.M == Mode::Invalid)
     return;
   if (Y.M == Mode::Invalid) {
@@ -943,9 +989,18 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
       PtrKind PK;
       Type *PElem;
       if (hasPtrKind(X.Ty, &PK, &PElem)) {
+        if (PK == PtrKind::Weak) {
+          // ADR-0017: `*w` is not defined; Lock() asks if the target lives.
+          err(X, diag::err_weak_no_indirect, {str(X.E)});
+          return Error();
+        }
         X.M = Mode::Variable;
         X.Ty = PElem;
         break;
+      }
+      if (own() && isa<OptionType>(under(X.Ty)) && X.E) {
+        err(X, diag::err_option_maybe_nil, {str(X.E), nilCheckHint(X.E)});
+        return Error();
       }
       Type *Base = nullptr;
       bool Ok = underIs(X.Ty, [&](Type *U) {

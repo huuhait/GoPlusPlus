@@ -38,10 +38,16 @@ bool Checker::hasPtrKind(Type *T, PtrKind *K, Type **Elem) {
   auto *N = dyn_cast_or_null<NamedType>(T);
   if (!N || N->Ptr == PtrKind::None || N->TArgs.size() != 1)
     return false;
+  // Unique[*T], Shared[*T], Weak[*T] (ADR-0018): Elem is the target T. An
+  // instance written without the `*` is an error at its declaration and has
+  // no pointer kind.
+  auto *P = dyn_cast<PointerType>(N->TArgs[0]);
+  if (!P)
+    return false;
   if (K)
     *K = N->Ptr;
   if (Elem)
-    *Elem = N->TArgs[0];
+    *Elem = P->Elem;
   return true;
 }
 
@@ -61,6 +67,8 @@ bool Checker::isPinned(Type *T) {
   }
   case Type::Kind::Array:
     return isPinned(cast<sema::ArrayType>(T)->Elem);
+  case Type::Kind::Option:
+    return isPinned(cast<OptionType>(T)->Elem);
   case Type::Kind::Struct:
     for (Var *F : cast<StructType>(T)->Fields)
       if (isPinned(F->Ty))
@@ -99,6 +107,9 @@ static Category categoryRec(Checker &C, Type *T, unsigned Depth) {
   case Type::Kind::Pointer:
   case Type::Kind::Ref:
     return Category::Trivial;
+  case Type::Kind::Option:
+    // Ownership follows T (ADR-0018).
+    return categoryRec(C, cast<OptionType>(T)->Elem, Depth + 1);
   case Type::Kind::Slice:
   case Type::Kind::Map:
     return Category::Owning;
@@ -223,6 +234,8 @@ bool Checker::satisfiesClone(Type *T, std::string *Why) {
     case Type::Kind::Signature:
     case Type::Kind::Interface:
       return true;
+    case Type::Kind::Option:
+      return Rec(cast<OptionType>(U)->Elem, D + 1);
     case Type::Kind::Slice:
       return Rec(cast<SliceType>(U)->Elem, D + 1);
     case Type::Kind::Map:
@@ -254,6 +267,422 @@ bool Checker::satisfiesClone(Type *T, std::string *Why) {
     }
   };
   return Rec(T, 0);
+}
+
+//===----------------------------------------------------------------------===//
+// Zero values (D1.4 rule 9, TYP-15, ADR-0016, ADR-0018)
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// Does T have a zero value? One definition for every site that needs it:
+/// pointer kinds (never nil), structs with a `@Required` field, C++ types
+/// without a default constructor, and whatever contains such a type. The
+/// answer is a function of the type alone: no position, no error and no
+/// limit of the asking body is part of it. Each named type met on the way
+/// caches its answer in NamedType::ZeroState, but only when nothing below it
+/// was cut short (an invalid recursive type, or a nesting deeper than
+/// MaxDepth), so the cache holds exact answers only: a cached answer and a
+/// fresh one are the same, whichever body (thread) asks first.
+struct ZeroQuery {
+  ZeroQuery(Checker &C, bool IgnoreForeign)
+      : C(C), IgnoreForeign(IgnoreForeign) {}
+  Checker &C;
+  /// Treat a foreign (C++) type as having a zero value: the "Go++ type with
+  /// no zero value" of the move rule (ADR-0016 point 5). Such a query reads
+  /// only the "has one" answers of the cache and writes none.
+  bool IgnoreForeign;
+  SmallVector<const NamedType *, 8> InProgress;
+  unsigned Depth = 0;
+  bool Cut = false;
+  static constexpr unsigned MaxDepth = 1000;
+
+  /// Depth at which a long chain is resolved iteratively / its reason is
+  /// summarized (both are functions of the type and the query root only).
+  static constexpr unsigned PrewarmDepth = 64;
+  static constexpr unsigned SummaryDepth = 16;
+
+  /// The named types a type body mentions directly (not through another
+  /// named type's body).
+  void directNamed(Type *T, llvm::SmallVectorImpl<NamedType *> &Out,
+                   unsigned D) {
+    if (!T || D > 200)
+      return;
+    if (auto *N = dyn_cast<NamedType>(T)) {
+      Out.push_back(N);
+      return;
+    }
+    if (auto *St = dyn_cast<StructType>(T)) {
+      for (Var *F : St->Fields)
+        directNamed(F->Ty, Out, D + 1);
+    } else if (auto *A = dyn_cast<sema::ArrayType>(T)) {
+      directNamed(A->Elem, Out, D + 1);
+    }
+  }
+
+  /// Fill the cache for N and the named types below it, bottom up, with an
+  /// explicit stack. Each answer is computed by a fresh shallow query whose
+  /// inner named types are already cached, so it is exact.
+  void prewarm(NamedType *Root) {
+    struct Frame {
+      NamedType *N;
+      SmallVector<NamedType *, 4> Deps;
+      size_t Next = 0;
+    };
+    SmallVector<Frame, 16> Stack;
+    SmallVector<const NamedType *, 16> OnStack;
+    auto Push = [&](NamedType *N) {
+      if (N->origin()->Ptr != PtrKind::None || N->Obj == nullptr)
+        return;
+      if (N->Obj->Pkg && N->Obj->Pkg->Foreign)
+        return;
+      if (N->ZeroState.load(std::memory_order_acquire) != 0 ||
+          llvm::is_contained(OnStack, N))
+        return;
+      Type *U = C.under(N);
+      if (!C.isValid(U))
+        return;
+      Frame F;
+      F.N = N;
+      directNamed(U, F.Deps, 0);
+      OnStack.push_back(N);
+      Stack.push_back(std::move(F));
+    };
+    Push(Root);
+    while (!Stack.empty()) {
+      Frame &F = Stack.back();
+      if (F.Next < F.Deps.size()) {
+        NamedType *D = F.Deps[F.Next++];
+        Push(D); // invalidates F
+        continue;
+      }
+      NamedType *N = F.N;
+      Stack.pop_back();
+      OnStack.pop_back();
+      ZeroQuery Q(C, false);
+      Q.has(N, nullptr); // writes N->ZeroState when the answer is exact
+    }
+  }
+
+  /// The reason for a long chain: the number of nested fields and the leaf
+  /// cause, found by following the first field without a zero value.
+  std::string deepWhy(Type *T) {
+    unsigned Hops = 0;
+    std::string Last = C.str(T);
+    std::string Leaf;
+    auto Lacks = [&](Type *X) {
+      ZeroQuery Q(C, false);
+      return !Q.has(X, nullptr);
+    };
+    for (unsigned Guard = 0; Guard < 1000000; ++Guard) {
+      Type *U = T;
+      if (isa<NamedType>(T))
+        U = C.under(T);
+      Type *Next = nullptr;
+      if (auto *St = dyn_cast<StructType>(U)) {
+        for (Var *F : St->Fields) {
+          if (F->Required) {
+            Leaf = "field " + std::string(F->Name) + " of " + Last +
+                   " is @Required";
+            break;
+          }
+          if (Lacks(F->Ty)) {
+            Next = F->Ty;
+            Leaf = "field " + std::string(F->Name) + " of " + Last;
+            break;
+          }
+        }
+      } else if (auto *A = dyn_cast<sema::ArrayType>(U)) {
+        if (Lacks(A->Elem))
+          Next = A->Elem;
+      }
+      if (!Next || !isa<NamedType>(Next)) {
+        if (Next) {
+          // A pointer or other leaf type: ask it directly.
+          std::string Inner;
+          ZeroQuery Q(C, false);
+          Q.has(Next, &Inner);
+          Leaf += " has none: " + Inner;
+        }
+        break;
+      }
+      auto *NN = cast<NamedType>(Next);
+      if (NN->origin()->Ptr != PtrKind::None ||
+          (NN->Obj && NN->Obj->Pkg && NN->Obj->Pkg->Foreign)) {
+        std::string Inner;
+        ZeroQuery Q(C, false);
+        Q.has(Next, &Inner);
+        Leaf += " has none: " + Inner;
+        break;
+      }
+      T = Next;
+      Last = C.str(T);
+      ++Hops;
+    }
+    return "it contains " + std::to_string(Hops) +
+           " more nested types down to " + Last + ": " + Leaf;
+  }
+
+  bool has(Type *T, std::string *Why) {
+    if (!T || !C.isValid(T))
+      return true;
+    if (Depth >= MaxDepth) {
+      // Never answer "has a zero value" from a cut (the unsafe side). Cut
+      // keeps the answer out of the cache.
+      Cut = true;
+      if (Why)
+        *Why = "the type is nested more than " + std::to_string(MaxDepth) +
+               " levels deep, too deep to check";
+      return false;
+    }
+    struct G {
+      unsigned &D;
+      explicit G(unsigned &D) : D(D) { ++D; }
+      ~G() { --D; }
+    } Guard(Depth);
+    switch (T->getKind()) {
+    case Type::Kind::Pointer:
+      if (Why)
+        *Why = "pointers are never nil";
+      return false;
+    case Type::Kind::Array: {
+      auto *A = cast<sema::ArrayType>(T);
+      if (A->Len == 0)
+        return true;
+      if (Why && Depth >= SummaryDepth) {
+        // A long run of nested arrays: walk it in a loop and report the
+        // innermost type (the text stays short and the stack small).
+        unsigned Layers = 0;
+        Type *Leaf = A;
+        while (auto *AA = dyn_cast<sema::ArrayType>(Leaf)) {
+          if (AA->Len == 0)
+            break;
+          Leaf = AA->Elem;
+          ++Layers;
+        }
+        if (Depth + Layers >= MaxDepth) {
+          Cut = true;
+          *Why = "the type is nested more than " + std::to_string(MaxDepth) +
+                 " levels deep, too deep to check";
+          return false;
+        }
+        std::string Inner;
+        if (has(Leaf, &Inner))
+          return true;
+        *Why = "it nests " + std::to_string(Layers) +
+               " array levels, and the innermost type " + C.str(Leaf) +
+               " has none: " + Inner;
+        return false;
+      }
+      std::string Inner;
+      if (has(A->Elem, Why ? &Inner : nullptr))
+        return true;
+      if (Why)
+        *Why = "its element type " + C.str(A->Elem) + " has none: " + Inner;
+      return false;
+    }
+    case Type::Kind::Struct: {
+      for (Var *F : cast<StructType>(T)->Fields) {
+        if (F->Required) {
+          if (Why)
+            *Why = "field " + std::string(F->Name) + " is @Required";
+          return false;
+        }
+        std::string Inner;
+        if (!has(F->Ty, Why ? &Inner : nullptr)) {
+          if (Why)
+            *Why = "field " + std::string(F->Name) + " of type " +
+                   C.str(F->Ty) + " has none: " + Inner;
+          return false;
+        }
+      }
+      return true;
+    }
+    case Type::Kind::TypeParam: {
+      // A generic body is checked once: T may be anything its constraint
+      // allows. Only a constraint whose terms all have a zero value says so.
+      auto *I = dyn_cast_or_null<InterfaceType>(C.under(T));
+      if (I) {
+        TypeSet *TS = C.typeSet(I);
+        if (TS->hasTerms() && !TS->Terms.empty()) {
+          bool All = true;
+          for (const Term &Tm : TS->Terms)
+            All &= has(Tm.T, nullptr);
+          if (All)
+            return true;
+        }
+      }
+      if (Why)
+        *Why = "its constraint allows types with none (GEN-5); constrain " +
+               C.str(T) + ", or use Option[" + C.str(T) + "]";
+      return false;
+    }
+    case Type::Kind::Named: {
+      auto *N = cast<NamedType>(T);
+      if (N->origin()->Ptr != PtrKind::None) {
+        if (Why)
+          *Why = "pointers are never nil";
+        return false;
+      }
+      // A C++ type has a zero value exactly when it has a default
+      // constructor (OWN-R9); the move rule ignores C++ types.
+      if (N->Obj && N->Obj->Pkg && N->Obj->Pkg->Foreign) {
+        if (IgnoreForeign || N->Obj->Pkg->Foreign->hasDefaultConstructor(N))
+          return true;
+        if (Why)
+          *Why = "it has no default constructor";
+        return false;
+      }
+      uint8_t St = N->ZeroState.load(std::memory_order_acquire);
+      // A long chain of named types is resolved from the bottom up on the
+      // heap, so no depth limit decides the answer (and the stack stays
+      // small).
+      if (St == 0 && Depth >= PrewarmDepth && !IgnoreForeign) {
+        prewarm(N);
+        St = N->ZeroState.load(std::memory_order_acquire);
+      }
+      if (St == 1 || (St == 2 && !Why && !IgnoreForeign))
+        return St == 1;
+      if (St == 2 && Why && !IgnoreForeign && Depth >= SummaryDepth) {
+        *Why = deepWhy(N);
+        return false;
+      }
+      if (llvm::is_contained(InProgress, N)) {
+        Cut = true; // an invalid recursive type, reported elsewhere
+        return true;
+      }
+      Type *U = C.under(N);
+      if (!C.isValid(U)) {
+        // An invalid type counts as having one (its error is reported
+        // elsewhere); for a type still being declared (phase 1) the answer
+        // is not known yet. Instances are expanded by under().
+        if (!N->Orig && !N->Underlying)
+          Cut = true;
+        return true;
+      }
+      InProgress.push_back(N);
+      bool SavedCut = Cut;
+      Cut = false;
+      bool R = has(U, Why);
+      if (!Cut && !IgnoreForeign)
+        N->ZeroState.store(R ? 1 : 2, std::memory_order_release);
+      Cut = Cut || SavedCut;
+      InProgress.pop_back();
+      return R;
+    }
+    default:
+      return true;
+    }
+  }
+};
+} // namespace
+
+bool Checker::hasZeroValue(Type *T, std::string *Why) {
+  if (!own() || !T || !isValid(T))
+    return true;
+  ZeroQuery Q(*this, false);
+  return Q.has(T, Why);
+}
+
+bool Checker::lacksGoZeroValue(Type *T) {
+  if (!own() || !T || !isValid(T))
+    return false;
+  ZeroQuery Q(*this, true);
+  return !Q.has(T, nullptr);
+}
+
+bool Checker::isNeverNilField(const Var *F) {
+  if (!own() || !F || !F->Required || !F->Ty)
+    return false;
+  // A type-parameter field only means "must be set" (ADR-0016 point 8).
+  if (isa<TypeParamType>(F->Ty) || F->RequiredSetOnly)
+    return false;
+  Type *U = under(F->Ty);
+  return isa<InterfaceType>(U) || isa<SignatureType>(U) ||
+         isa<sema::MapType>(U) || isa<sema::ChanType>(U);
+}
+
+const Var *Checker::selectedField(const ast::Expr *Ex) {
+  auto *Sel = dyn_cast<SelectorExpr>(unparen(Ex));
+  if (!Sel)
+    return nullptr;
+  auto It = I.Selections.find(Sel);
+  if (It == I.Selections.end() || It->second.K != Selection::FieldVal)
+    return nullptr;
+  return dyn_cast_or_null<Var>(It->second.Obj);
+}
+
+bool Checker::isMemReplace(const ast::Expr *Fun) {
+  auto *Sel = dyn_cast<SelectorExpr>(unparen(Fun));
+  if (!Sel || name(Sel->Sel) != "Replace")
+    return false;
+  auto *Id = dyn_cast<ast::Ident>(unparen(Sel->X));
+  if (!Id)
+    return false;
+  auto *PN = dyn_cast_or_null<PkgName>(E.Sc->lookup(name(Id), E.Pos));
+  return PN && PN->Imported && PN->Imported->Path == "mem";
+}
+
+/// The builtin an identifier names, by scope (before the call is checked).
+static Builtin *builtinNamed(Checker &C, const ast::Expr *Fun) {
+  auto *Id = dyn_cast<ast::Ident>(unparen(Fun));
+  if (!Id)
+    return nullptr;
+  return dyn_cast_or_null<Builtin>(C.lookup(C.name(Id)));
+}
+
+void Checker::markLookupOk(const ast::Expr *Ex, bool MoveOnly) {
+  if (!own() || !Ex)
+    return;
+  Ex = unparen(Ex);
+  if (isa<IndexExpr>(Ex)) {
+    if (!MoveOnly)
+      ZeroLookupOk.insert(Ex);
+    return;
+  }
+  if (auto *U = dyn_cast<UnaryExpr>(Ex)) {
+    if (U->Op == tok::arrow && !MoveOnly)
+      ZeroLookupOk.insert(Ex);
+    return;
+  }
+  // `v, ok := clone(m[k])`, `v, ok := move(m[k])`, a bare `move(m[k])`.
+  if (auto *Call = dyn_cast<CallExpr>(Ex))
+    if (Call->Args.size() == 1)
+      if (Builtin *B = builtinNamed(*this, Call->Fun))
+        if (B->Id == BuiltinId::Move ||
+            (B->Id == BuiltinId::Clone && !MoveOnly))
+          markLookupOk(Call->Args[0], false);
+}
+
+bool Checker::checkLookupZero(const ast::Expr *Ex, Type *Elem) {
+  if (!own() || !Elem || !isValid(Elem) || ZeroLookupOk.count(Ex) ||
+      hasZeroValue(Elem))
+    return true;
+  std::string Why;
+  hasZeroValue(Elem, &Why);
+  err(Ex, diag::err_no_zero_lookup, {str(Ex), str(Elem), Why});
+  return false;
+}
+
+void Checker::needZeroValue(SourceLoc Pos, Type *T, std::string What,
+                            std::string Hint) {
+  if (!own() || !T)
+    return;
+  auto Check = [this, Pos, T, What = std::move(What),
+                Hint = std::move(Hint)]() {
+    if (hasZeroValue(T))
+      return;
+    std::string Why;
+    hasZeroValue(T, &Why);
+    if (!Hint.empty())
+      Why += (Why.empty() ? "" : "; ") + Hint;
+    err(Pos, diag::err_no_zero_value, {What, str(T), Why});
+  };
+  // Package-level declarations are checked in phase 1, while types may still
+  // be unresolved; the check waits for the end of the phase.
+  if (Bodies)
+    Check();
+  else
+    later(Check);
 }
 
 //===----------------------------------------------------------------------===//
@@ -554,16 +983,22 @@ void Checker::needOwnership(const Operand &X, const char *What, Type *Dst) {
   }
   if (category(X.Ty) != Category::Owning || PK == PlaceKind::Local)
     return;
-  // OWN-P6: a Unique[T] / Shared[T] held in a place converts to *T as a
+  // OWN-P6: a Unique[*T] / Shared[*T] held in a place converts to *T as a
   // borrow; only a destination that owns needs ownership.
-  if (Dst && isValid(Dst) && isa<PointerType>(under(Dst)))
-    return;
+  if (Dst && isValid(Dst)) {
+    Type *DU = under(Dst);
+    if (auto *DO = dyn_cast<OptionType>(DU))
+      DU = under(DO->Elem); // Option[*T]: a borrow that may be nil
+    if (isa<PointerType>(DU))
+      return;
+  }
   bool Through = false;
   Var *Root = rootVar(Ex, Through);
   if (Through)
     Root = nullptr;
   // TYP-9: the value of v.(T), or a binding of it, lives in a shared box.
-  if (isa<TypeAssertExpr>(Ex) || (Root && isBinding(Root))) {
+  if (isa<TypeAssertExpr>(Ex) ||
+      (Root && isBinding(Root) && !Root->OptionBinding)) {
     Err E1 = err(X, diag::err_own_box_needs_ownership, {What, S0});
     E1.note(X.pos(), diag::note_own_fix_clone, {S0});
     E1.fixit(SourceRange(Ex->getEnd(), Ex->getEnd()), ".Clone()");
@@ -585,7 +1020,11 @@ void Checker::needOwnership(const Operand &X, const char *What, Type *Dst) {
   }
   std::string Desc = "a value in another place";
   bool Part = !isa<ast::Ident>(Ex);
-  if (PK == PlaceKind::BorrowedVar && Root) {
+  if (Root && Root->OptionBinding) {
+    // ADR-0018 point 11: `v, ok := o.Get()` borrows an owning T.
+    Desc = std::string(Part ? "part of " : "") + "the value that " +
+           std::string(Root->Name) + " borrows from an Option (Get)";
+  } else if (PK == PlaceKind::BorrowedVar && Root) {
     const char *K = Root->IsParam   ? "borrowed parameter"
                     : Root->LoopVar ? "borrowed range variable"
                                     : "borrowed variable";
@@ -618,7 +1057,7 @@ void Checker::needOwnership(const Operand &X, const char *What, Type *Dst) {
 // Borrowed variables (OWN-R3b) and range mutations (RNG-3)
 //===----------------------------------------------------------------------===//
 
-void Checker::checkWrite(const ast::Expr *Lhs, bool Repoint) {
+void Checker::checkWrite(const ast::Expr *Lhs, bool Repoint, bool Redeclare) {
   if (!own())
     return;
   const ast::Expr *U = unparen(Lhs);
@@ -635,20 +1074,34 @@ void Checker::checkWrite(const ast::Expr *Lhs, bool Repoint) {
   if (Repoint && isa<ast::Ident>(U))
     return;
   std::string S0 = str(U);
+  // `v, ok2 := g.Get()` that reuses v assigns it: the fix is a new name.
+  std::string NewName =
+      "fix-it: use a new name instead of redeclaring " + S0 + " with :=";
   if (V->LoopVar) {
     err(Lhs, diag::err_own_range_var_write, {S0})
-        .note(Lhs->getBegin(), "write through the element with the & form: "
-                               "for _, &" +
-                                   std::string(V->Name) + " := range ...");
+        .note(Lhs->getBegin(),
+              Redeclare ? NewName
+                        : "write through the element with the & "
+                          "form: for _, &" +
+                              std::string(V->Name) + " := range ...");
     return;
   }
   if (isBinding(V)) {
-    err(Lhs, diag::err_own_binding_read_only, {"assign to", S0})
-        .note(Lhs->getBegin(), diag::note_own_fix_binding_copy,
+    // ADR-0018 point 11: a Get binding borrows from the Option, not a box.
+    Err E1 = err(Lhs,
+                 V->OptionBinding ? diag::err_own_get_binding_read_only
+                                  : diag::err_own_binding_read_only,
+                 {"assign to", S0});
+    if (Redeclare)
+      E1.note(Lhs->getBegin(), NewName);
+    else
+      E1.note(Lhs->getBegin(), diag::note_own_fix_binding_copy,
               {std::string(V->Name)});
     return;
   }
-  err(Lhs, diag::err_own_borrowed_read_only, {"assign to", S0});
+  Err E2 = err(Lhs, diag::err_own_borrowed_read_only, {"assign to", S0});
+  if (Redeclare)
+    E2.note(Lhs->getBegin(), NewName);
 }
 
 void Checker::checkRangeMutation(const ast::Expr *Lhs, const char *What) {
@@ -693,8 +1146,19 @@ void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
     return;
   (void)X;
   const ast::Expr *Inner = unparen(Ex->X);
-  if (borrowedRoot(Inner))
+  if (borrowedRoot(Inner)) {
     err(Ex, diag::err_own_borrowed_address, {str(Inner)});
+    return;
+  }
+  // ADR-0016 point 8: nil could be written through the pointer; only
+  // mem.Replace(&c.F, v) may take it, and v must not be nil either.
+  const Var *F = selectedField(Inner);
+  if (!F || !isNeverNilField(F))
+    return;
+  if (unparen(Ex) != ReplaceArg)
+    err(Ex, diag::err_required_addr, {str(Inner)});
+  else if (ReplaceNil)
+    err(ReplaceNil, diag::err_required_nil_store, {str(Inner)});
 }
 
 void Checker::checkPtrRecvCall(const SelectorExpr *Sel, Func *M) {
@@ -781,13 +1245,16 @@ void Checker::checkRefStore(const ast::Expr *X, Type *Dst, Type *SrcTy) {
 bool Checker::checkPointerField(Operand &X, Type *FieldTy) {
   if (!own() || X.M == Mode::Invalid || !X.E || !FieldTy)
     return false;
-  auto *P = dyn_cast<PointerType>(under(FieldTy));
+  // An Option[*T] field is a *T field that may be empty (ADR-0018).
+  auto *Opt = dyn_cast<OptionType>(under(FieldTy));
+  auto *P = dyn_cast<PointerType>(Opt ? under(Opt->Elem) : under(FieldTy));
   PtrKind K;
   Type *El;
   if (!P || !hasPtrKind(X.Ty, &K, &El) || K == PtrKind::Weak ||
       !identical(El, P->Elem) || placeKind(X.E) != PlaceKind::Temp)
     return false;
-  err(X, diag::err_own_pointer_field, {str(FieldTy), str(X.Ty)});
+  err(X, diag::err_own_pointer_field,
+      {str(FieldTy), Opt ? "Option[" + str(X.Ty) + "]" : str(X.Ty)});
   X.M = Mode::Invalid;
   return true;
 }

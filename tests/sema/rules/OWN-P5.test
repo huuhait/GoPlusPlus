@@ -1,24 +1,60 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
-// Rule OWN-P5: field access and method calls auto-dereference every pointer
-// kind; on a raw *T, p.Clone() is ambiguous if T has a value-receiver Clone.
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P5 (also P03.16, ADR-0017): field access and method calls
+// auto-dereference *T, Unique[*T] and Shared[*T]; a Weak[*T] is not
+// dereferenced: only Lock is found on it, and Lock returns
+// Option[Shared[*T]]. The errors come with the fix-it note. On a raw *T,
+// p.Clone() is ambiguous if T has a value-receiver Clone.
 package main
 
-type Node struct{ Name string }
+type Node struct{ N int }
 
-func (n *Node) Rename(s string) { n.Name = s.Clone() }
-func (n Node) Len() int          { return len(n.Name) }
+func (n *Node) Rename(s ref string) { n.N = len(s) }
+func (n Node) Len() int             { return n.N }
 
 type T struct{ x int }
 
 func (t T) Clone() T { return t }
 
-func positive(u Unique[Node], s Shared[Node]) int {
+func positive(u Unique[*Node], s Shared[*Node], p *Node, w Weak[*Node]) int {
 	u.Rename("a")
 	s.Rename("b")
-	return len(u.Name) + s.Len()
+	p.Rename("c")
+	n := u.N + s.Len() + p.N + u.Len() + s.N + p.Len()
+	if c := w.Lock(); c != nil {
+		c.Rename("d") // the Option[Shared[*Node]] is a Shared[*Node] here
+		n += c.N + c.Len()
+	}
+	var back Option[Shared[*Node]] = w.Lock()
+	_ = back
+	_ = w.Lock().IsNil()
+	w2 := w
+	_ = w2
+	return n
 }
 
-func negative(p *T) {
-	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: p.Clone is ambiguous on pointer *T: T has a value-receiver Clone method (OWN-R6)
+func negative(p *T, w Weak[*Node]) {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: p.Clone is ambiguous on pointer *T: T has a value-receiver Clone method (OWN-R6)
 	_ = p.Clone()
+	// CHECK-DAG: [[@LINE+2]]:8: error{{\[E[0-9]+\]}}: cannot use w.N: a Weak pointer is not dereferenced (OWN-P5); use `if c := w.Lock(); c != nil { ... }`
+	// CHECK-DAG: [[@LINE+1]]:8: note: fix-it: if c := w.Lock(); c != nil { c.N }
+	_ = w.N
+	// CHECK-DAG: [[@LINE+2]]:4: error{{\[E[0-9]+\]}}: cannot use w.Rename: a Weak pointer is not dereferenced (OWN-P5); use `if c := w.Lock(); c != nil { ... }`
+	// CHECK-DAG: [[@LINE+1]]:4: note: fix-it: if c := w.Lock(); c != nil { c.Rename }
+	w.Rename("x")
+	// CHECK-DAG: [[@LINE+2]]:8: error{{\[E[0-9]+\]}}: cannot use w.Len: a Weak pointer is not dereferenced (OWN-P5); use `if c := w.Lock(); c != nil { ... }`
+	// CHECK-DAG: [[@LINE+1]]:8: note: fix-it: if c := w.Lock(); c != nil { c.Len }
+	_ = w.Len()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: w.IsNil undefined (type Weak[*Node] has no field or method IsNil (a Weak pointer has Lock only))
+	_ = w.IsNil()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: w.Other undefined (type Weak[*Node] has no field or method Other (a Weak pointer has Lock only))
+	_ = w.Other
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot indirect w: a Weak pointer is not dereferenced (OWN-P5); use `if c := w.Lock(); c != nil { *c }`
+	_ = *w
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w.Lock() may be nil; check a local copy: `if v := w.Lock(); v != nil { ... }` (OWN-P10)
+	_ = w.Lock().N
+	// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: w.Lock() may be nil; check a local copy: `if v := w.Lock(); v != nil { ... }` (OWN-P10)
+	var l Shared[*Node] = w.Lock()
+	_ = l
 }
+
+func main() {}

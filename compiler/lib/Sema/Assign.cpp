@@ -66,6 +66,12 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
     ReprCode Code;
     Type *NewT = implicitTypeAndValue(X, Target, &NV, &Code);
     if (!NewT) {
+      // ADR-0018: nil goes only into an Option and Go's nilable types.
+      if (own() && X.isNil() && isPointerKind(Target)) {
+        err(X, diag::err_ptr_never_nil, {str(Target)});
+        X.M = Mode::Invalid;
+        return;
+      }
       std::string Msg = "cannot use " + str(X) + " as " + str(Target) +
                         " value in " + std::string(Context);
       if (Code == ReprCode::Truncated)
@@ -97,6 +103,17 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
     return;
   std::string Cause;
   if (!assignableTo(X, T, &Cause)) {
+    // ADR-0018 point 4: an unchecked Option used where its value is expected.
+    if (own() && X.E)
+      if (auto *Op = dyn_cast<OptionType>(under(X.Ty))) {
+        Operand Val = X;
+        Val.Ty = Op->Elem;
+        if (assignableTo(Val, T, nullptr)) {
+          err(X, diag::err_option_maybe_nil, {str(X.E), nilCheckHint(X.E)});
+          X.M = Mode::Invalid;
+          return;
+        }
+      }
     std::string Msg = "cannot use " + str(X) + " as " + str(T) + " value in " +
                       std::string(Context);
     if (!Cause.empty())
@@ -195,7 +212,13 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
       }
   }
   Operand X;
+  markLookupOk(Lhs); // `m[k] = v` writes the entry; it reads no value
+  markNoNarrow(Lhs); // the variable itself is written, not its value
   expr(X, Lhs);
+  // Narrowing ends at the assignment (ADR-0018 point 4), after the statement:
+  // `n = n.Next` reads n first.
+  if (own() && V)
+    PendingKills.push_back(V);
   if (V)
     // RNG-1a: a write to an `&` alias is the point of the loop: it counts as
     // a use.
@@ -248,6 +271,10 @@ Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
     assignment(*X, nullptr, Context);
     return nullptr;
   }
+  // ADR-0016 point 8: a never-nil @Required field is never set to nil.
+  if (own() && X->isNil() && Lhs)
+    if (const Var *F = selectedField(Lhs); F && isNeverNilField(F))
+      err(*X, diag::err_required_nil_store, {str(Lhs)});
   bool OpAssign = Context == "assignment operation";
   // PAR-2: a borrowed string / []T variable is a local ref, so it can be
   // re-pointed at a ref.
@@ -377,6 +404,22 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
   if (L == R) {
     for (size_t K = 0; K < L; ++K)
       initVar(Lhs[K], Rhs[K], Context);
+    // ADR-0018 point 11: `v, ok := o.Get()` borrows an owning T from the
+    // place o; `move(o).Get()` takes it (and leaves o nil).
+    if (own() && !ReturnStmt && L == 2 && Lhs[0]->Ty && isOwning(Lhs[0]->Ty)) {
+      auto *Call = dyn_cast<CallExpr>(unparen(OrigRhs[0]));
+      auto *Sel = Call ? dyn_cast<SelectorExpr>(unparen(Call->Fun)) : nullptr;
+      auto It = Sel ? I.Selections.find(Sel) : I.Selections.end();
+      if (It != I.Selections.end())
+        if (auto *F = dyn_cast_or_null<Func>(It->second.Obj);
+            F && F->IsBuiltinMethod && F->Name == "Get" &&
+            !isBuiltinCall(Sel->X, BuiltinId::Move) &&
+            placeKind(Sel->X) != PlaceKind::Temp) {
+          Lhs[0]->Mode = Var::Borrowed;
+          Lhs[0]->OptionBinding = true;
+          notePayloadBorrow(Lhs[0], Sel->X);
+        }
+    }
     return;
   }
   if (Rhs[0].M != Mode::Invalid) {
@@ -394,6 +437,21 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
 
 void Checker::assignVars(ArrayRef<ast::Expr *> Lhs,
                          ArrayRef<ast::Expr *> OrigRhs) {
+  // The places written by this statement refill what a `move` in it empties
+  // (ADR-0016 point 5: a swap).
+  SmallVector<const ast::Expr *, 4> SavedRefill = std::move(RefillLhs);
+  RefillLhs.assign(Lhs.begin(), Lhs.end());
+  SmallVector<const ast::Expr *, 4> SavedMoved = std::move(RefillMoved);
+  RefillMoved.clear();
+  struct RefillRestore {
+    Checker &C;
+    SmallVector<const ast::Expr *, 4> &Saved;
+    SmallVector<const ast::Expr *, 4> &SavedMoved;
+    ~RefillRestore() {
+      C.RefillLhs = std::move(Saved);
+      C.RefillMoved = std::move(SavedMoved);
+    }
+  } RefillGuard{*this, SavedRefill, SavedMoved};
   size_t L = Lhs.size(), R = OrigRhs.size();
   bool IsCall = R == 1 && isa<CallExpr>(unparen(OrigRhs[0]));
   if (own() && L == R) {
@@ -480,9 +538,18 @@ void Checker::shortVarDecl(SourceLoc Pos, ArrayRef<ast::Expr *> Lhs,
     }
     if (Object *Alt = Sc->lookupLocal(N); Alt && N != "_") {
       recordUse(Id, Alt);
-      if (auto *V = dyn_cast<Var>(Alt))
+      if (auto *V = dyn_cast<Var>(Alt)) {
         LhsVars[K] = V;
-      else {
+        if (own()) { // `o, err := f()` assigns the existing o
+          PendingKills.push_back(V);
+          // A read-only binding (TYP-9, Get, OWN-R3b) cannot be assigned
+          // this way either. After the error, forget what it borrowed.
+          if (borrowedRoot(Id)) {
+            checkWrite(Id, false, true);
+            PayloadBorrows.erase(V);
+          }
+        }
+      } else {
         err(Lhs[K], diag::err_cannot_assign_to, {str(Lhs[K])});
         HasErr = true;
       }

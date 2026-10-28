@@ -9,6 +9,7 @@ add_gopp_library(Sema
   Expr.cpp
   Foreign.cpp
   ExprString.cpp
+  Flow.cpp
   Index.cpp
   Infer.cpp
   InitOrder.cpp

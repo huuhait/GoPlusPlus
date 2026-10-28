@@ -1,6 +1,6 @@
 # ADR-0017: `Weak[T]` has no auto-dereference
 
-- **Status:** accepted
+- **Status:** accepted; parts changed by ADR-0018 (`IsNil` on `Weak` removed; `Lock()` returns `Option[Shared[*T]]`; spelled `Weak[*T]`)
 - **Date:** 2026-10-28
 - **Plan reference:** spec OWN-P5, OWN-P9; P01 D1.7; new task P03.16. Changes one clause of ADR-0006 (the `IsNil` tie-break on `Weak[T]`).
 
@@ -13,9 +13,9 @@ The owner decided in a review of the pointer design (2026-10-28) that a `Weak` m
 ## Decision
 
 - Auto-dereference applies to `*T`, `Unique[T]` and `Shared[T]` only. On a `Weak[T]`, `w.Name` and `w.Method()` are compile errors with the fix-it `if p := w.Lock(); p != nil { p.Name }`.
-- A `Weak[T]` has exactly two methods: `Lock()` (returns a `Shared[T]`, or `nil` when the value is gone) and `IsNil()` (true when there is no target). `*w` is not defined.
+- A `Weak[T]` has exactly two methods: `Lock()` (returns a `Shared[T]`, or `nil` when the value is gone) and `IsNil()` (true when there is no target). `*w` is not defined. (Changed by ADR-0018: the type is spelled `Weak[*T]`, it has only `Lock()`, which returns an `Option[Shared[*T]]`, and there is no `IsNil()`, because a `Weak` always points at its target's control block.)
 - This replaces the `Weak[T]` part of ADR-0006's `IsNil` tie-break. `T`'s own `IsNil` is reached through `Lock`: `if p := w.Lock(); p != nil { p.IsNil() }`, where the `Shared[T]` rule applies (`(*p).IsNil()`). The rules for `Unique[T]`, `Shared[T]` and raw `*T` don't change.
-- `IsNil()` and the name `new_weak` stay as they are (owner decision in the same review).
+- `IsNil()` and the name `new_weak` stay as they are (owner decision in the same review). (Changed by ADR-0018: `IsNil()` is removed from `Weak`; `new_weak` stays.)
 
 ## Consequences
 

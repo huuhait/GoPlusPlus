@@ -2456,18 +2456,10 @@ func f(p *T) T {
 }
 )X")
 EXPLAIN(err_own_isnil_ambiguous,
-        "p.IsNil() is built in for pointers, and the pointed-to type has "
-        "its own IsNil method. Rename the method, or call it as "
-        "(*p).IsNil().",
+        "Retired (ADR-0018): pointers have no IsNil method any more, only "
+        "Option[T] has one, so p.IsNil() can no longer clash with a method "
+        "of the pointed-to type. The code stays reserved.",
         R"X(package p
-
-type T struct{ n int }
-
-func (t T) IsNil() bool { return false }
-
-func f(p *T) bool {
-	return p.IsNil()
-}
 )X")
 EXPLAIN(err_duplicate_method_iface,
         "An interface lists the same method twice (also through embedded "
@@ -2774,8 +2766,8 @@ func id[T any](x T) T {
 }
 )X")
 EXPLAIN(err_own_weak_arg,
-        "new_weak makes a weak reference to a value owned by Shared[T]. "
-        "Its argument must be a Shared[T].",
+        "new_weak makes a weak reference to a value owned by Shared[*T]. "
+        "Its argument must be a Shared[*T].",
         R"X(package p
 
 func f() {
@@ -2783,7 +2775,7 @@ func f() {
 }
 )X")
 EXPLAIN(err_own_pointer_field,
-        "A raw pointer field does not own what it points to, so a new owned value cannot be stored in it: it would be freed at once. If the struct should own it, make the field Unique[T] (one owner) or Shared[T] (several).",
+        "A raw pointer field does not own what it points to, so a new owned value cannot be stored in it: it would be freed at once. If the struct should own it, make the field Unique[*T] (one owner) or Shared[*T] (several).",
         R"X(package p
 
 type Node struct {
@@ -2792,7 +2784,7 @@ type Node struct {
 }
 
 func f(n *Node) {
-	n.Parent = new_unique(Node{})
+	n.Parent = new_unique(Node{Parent: n})
 }
 )X")
 EXPLAIN(note_own_new_removed,
@@ -3047,21 +3039,17 @@ type Token struct {
 )X")
 EXPLAIN(warn_vet_drop_zero,
         "A drop method also runs on the zero value of its type (after a "
-        "move, or for a value that was never filled). Using a pointer, "
-        "interface, function or Unique/Shared/Weak field without a nil "
-        "check can crash. This lint is a heuristic: a nil check of the "
-        "field (f == nil, f != nil or f.IsNil()) anywhere in the method "
+        "move, or for a value that was never filled). Using an interface "
+        "or function field without a nil check can crash (pointers are "
+        "never nil, ADR-0018). This lint is a heuristic: a nil check of "
+        "the field (f == nil or f != nil) anywhere in the method "
         "silences it.",
         R"X(package p
 
-type File struct{ n int }
-
-func (f *File) Close() {}
-
-type Res struct{ f *File }
+type Res struct{ f func() }
 
 func (r *Res) drop() {
-	r.f.Close()
+	r.f()
 }
 )X")
 EXPLAIN(warn_vet_bang_panics,
@@ -3094,6 +3082,182 @@ func f(names []string) {
 	for _, n := range names {
 		file, _ := open(n)
 		defer file.Close()
+	}
+}
+)X")
+EXPLAIN(err_option_maybe_nil,
+        "An Option[T] may be empty, so it cannot be used as its value until the compiler knows it is set. Check it first with `o != nil`, `!o.IsNil()` or `v, ok := o.Get()`, or return early when it is nil. Only a local variable or parameter of the function is narrowed: copy a field, an element, a call result or a variable captured by a function literal into a local first (`if v := c.Owner; v != nil { ... }`).",
+        R"X(package p
+
+type N struct{ V int }
+
+func f(o Option[*N]) int {
+	return o.V
+}
+)X")
+EXPLAIN(err_option_bad_arg,
+        "Option[T] adds a maybe to a type that has none. Interfaces, maps, slices, channels and funcs already have nil, and an Option cannot hold another Option, so these are not valid arguments.",
+        R"X(package p
+
+func f(e Option[error]) {}
+)X")
+EXPLAIN(err_ptr_arg_not_pointer,
+        "Unique, Shared and Weak take the pointer type as their argument, so every pointer type shows a `*`. Write Unique[*T], not Unique[T].",
+        R"X(package p
+
+func f(u Unique[int]) {}
+)X")
+EXPLAIN(err_ptr_never_nil,
+        "A pointer (*T, Unique[*T], Shared[*T], Weak[*T]) is never nil, so comparing it with nil, or storing nil in it, is an error. Use Option[*T] where maybe is meant.",
+        R"X(package p
+
+func f(p *int) bool {
+	return p == nil
+}
+)X")
+EXPLAIN(err_no_zero_value,
+        "This type has no zero value (a pointer, a @Required struct, a C++ class without a default constructor, or a type containing one), so a place where Go would create a zero value is an error. Give the value explicitly, or use Option[T] for maybe. In generic code a type parameter has a zero value only if every type its constraint allows has one (GEN-5).",
+        R"X(package p
+
+func f() {
+	var p *int
+	_ = p
+}
+)X")
+EXPLAIN(err_no_zero_lookup,
+        "A map lookup or channel receive of a type with no zero value would give zero bytes when the key is missing or the channel is closed. Use the comma-ok form, `v, ok := m[k]`, and use v only when ok is true.",
+        R"X(package p
+
+func f(m map[string]*int) {
+	v := m["a"]
+	_ = v
+}
+)X")
+EXPLAIN(err_required_missing,
+        "A composite literal of a struct must set every @Required field (and every field whose type has no zero value). The message names all of the missing fields.",
+        R"X(package p
+
+type U struct {
+	ID   int @Required
+	Name string
+}
+
+func f() U {
+	return U{Name: "x"}
+}
+)X")
+EXPLAIN(err_required_placement,
+        "@Required is a field attribute: it is only allowed on a struct field, not on a type, function or variable.",
+        R"X(package p
+
+@Required
+type T struct{ n int }
+)X")
+EXPLAIN(err_required_pointer,
+        "A pointer is never nil, so @Required has nothing to add on a field of pointer type. Remove it.",
+        R"X(package p
+
+type T struct {
+	P *int @Required
+}
+)X")
+EXPLAIN(err_required_nil_store,
+        "A @Required field of interface, func, map or channel type is never nil, so storing nil in it is an error.",
+        R"X(package p
+
+type C struct {
+	F func() @Required
+}
+
+func f(c *C) {
+	c.F = nil
+}
+)X")
+EXPLAIN(err_required_move,
+        "A @Required field is never nil, so it cannot be moved out (that would leave nil). Use mem.Replace(&c.F, v), which stores a new value and returns the old one.",
+        R"X(package p
+
+type C struct {
+	F func() @Required
+}
+
+func f(c *C) {
+	g := move(c.F)
+	_ = g
+}
+)X")
+EXPLAIN(err_required_addr,
+        "Taking the address of a @Required field would let nil be written through the pointer. Only mem.Replace(&c.F, v) may take it.",
+        R"X(package p
+
+type C struct {
+	F func() @Required
+}
+
+func f(c *C) {
+	p := &c.F
+	_ = p
+}
+)X")
+EXPLAIN(err_move_nonlocal,
+        "Moving out of an element, a field, *p, an & range variable or a variable captured by a function literal leaves zero bytes behind, and a type with no zero value must never be read as zero. Use mem.Replace(&place, v), a swap (an assignment that refills the place), s = s[:n], or range move(xs); move(m[k]) and delete(m, k) remove a map entry instead.",
+        R"X(package p
+
+type U struct {
+	ID int @Required
+}
+
+func f(xs []U) U {
+	return move(xs[0])
+}
+)X")
+EXPLAIN(err_weak_no_deref,
+        "A Weak pointer is not dereferenced: its target may be gone. Only Lock is found on it, and it returns an Option[Shared[*T]] to check.",
+        R"X(package p
+
+type N struct{ V int }
+
+func f(w Weak[*N]) int {
+	return w.V
+}
+)X")
+EXPLAIN(err_fail_return_nil,
+        "Only a function declared with ! can leave a result unset on failure. In an ordinary (T, error) function a result with no zero value, like a pointer, cannot be nil: declare the function with !, or return Option[T].",
+        R"X(package p
+
+func f(e error) (*int, error) {
+	return nil, e
+}
+)X")
+EXPLAIN(err_weak_no_indirect,
+        "A Weak pointer has no `*`: its target may be gone. Lock it and check the result: `if c := w.Lock(); c != nil { use(*c) }`.",
+        R"X(package p
+
+type N struct{ V int }
+
+func f(w Weak[*N]) N {
+	return *w
+}
+)X")
+EXPLAIN(err_required_args,
+        "@Required is a marker: it takes no arguments. Write `ID int @Required`.",
+        R"X(package p
+
+type T struct {
+	ID int @Required(true)
+}
+)X")
+EXPLAIN(err_own_get_binding_read_only,
+        "`v, ok := o.Get()` on an Option of an owning type borrows the "
+        "value inside o, so v is read-only. Copy it with Clone() to change "
+        "the copy, or take the value with `v, ok := move(o).Get()`.",
+        R"X(package p
+
+type S struct{ n []int }
+
+func f(o Option[S]) {
+	if v, ok := o.Get(); ok {
+		v.n = nil
 	}
 }
 )X")

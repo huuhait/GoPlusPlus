@@ -444,7 +444,7 @@ DIAG(err_own_pinned_move, 294, Error, "cannot move %0: type %1 is @Pinned (OWN-R
 DIAG(err_own_generic_copy, 295, Error, "cannot copy a value of type %0 in generic code: %0 is not constrained by Copy (GEN-3)")
 DIAG(err_own_generic_return, 296, Error, "cannot return %0 of type %1: it is borrowed, and %1 is not constrained by Copy (GEN-4)")
 DIAG(note_own_generic_return_fix, 297, Note, "fix-it: %0.Clone() with a Clone constraint, or make the parameter `move`")
-DIAG(err_own_weak_arg, 298, Error, "new_weak needs a Shared[T] argument, have %0 (OWN-P3)")
+DIAG(err_own_weak_arg, 298, Error, "new_weak needs a Shared[*T] argument, have %0 (OWN-P3)")
 DIAG(err_own_pointer_field, 299, Error, "a %0 field doesn't own: did you mean %1? (OWN-P6)")
 DIAG(note_own_new_removed, 300, Note, "Go's new is not predeclared in Go++ (LEX-8): use new_unique(T{}) or new_shared(T{})")
 DIAG(err_own_move_range_borrowed, 301, Error, "cannot move %0: use the & form of the range variable, or %0.Clone() (RNG-1a)")
@@ -486,5 +486,29 @@ DIAG(warn_vet_ref_field, 324, Warning, "struct field %0 has a ref type, but %1 i
 DIAG(warn_vet_drop_zero, 325, Warning, "drop may run on a zero value: %0 is used without a nil check (OWN-R5)")
 DIAG(warn_vet_bang_panics, 326, Warning, "this ! panics if the call fails: the enclosing function cannot return an error, and package %0 is not main")
 DIAG(warn_vet_defer_in_loop, 327, Warning, "defer in a loop body runs when the function returns, not at the end of each iteration: the resources stay open (PAN-4)")
+
+//===----------------------------------------------------------------------===//
+// Never-nil pointers, Option[T] and @Required (P03.15, P03.16, P03.17;
+// ADR-0016, ADR-0017, ADR-0018)
+//===----------------------------------------------------------------------===//
+
+DIAG(err_option_maybe_nil, 329, Error, "%0 may be nil; %1 (OWN-P10)")
+DIAG(err_option_bad_arg, 330, Error, "cannot use %0 as the type argument of Option: %1 (OWN-P9)")
+DIAG(err_ptr_arg_not_pointer, 331, Error, "%0[%1] needs a pointer type argument: write %0[*%1] (OWN-P9)")
+DIAG(err_ptr_never_nil, 332, Error, "%0 is never nil: a pointer has no nil; use Option[%0] for \"maybe\" (OWN-P9)")
+DIAG(err_no_zero_value, 333, Error, "%0: %1 has no zero value (%2)")
+DIAG(err_no_zero_lookup, 334, Error, "%0 may not exist: a missing key or a closed channel would give a %1, which has no zero value (%2); use the comma-ok form `v, ok := %0`")
+DIAG(err_required_missing, 335, Error, "missing required %0 in %1 literal (TYP-15)")
+DIAG(err_required_placement, 336, Error, "@Required is only allowed on a struct field, not on %0")
+DIAG(err_required_pointer, 337, Error, "pointers are never nil; @Required isn't needed on field %0 of type %1")
+DIAG(err_required_nil_store, 338, Error, "cannot store nil in %0: the field is @Required, so it is never nil")
+DIAG(err_required_move, 339, Error, "cannot move out of %0: the field is @Required and would be left nil; use mem.Replace(&%0, v)")
+DIAG(err_required_addr, 340, Error, "cannot take the address of %0: the field is @Required and never nil; only mem.Replace(&%0, v) may")
+DIAG(err_move_nonlocal, 341, Error, "cannot move %0: the place would be left as zero bytes, and %1 has no zero value; use mem.Replace(%2, v)")
+DIAG(err_weak_no_deref, 342, Error, "cannot use %0.%1: a Weak pointer is not dereferenced (OWN-P5); use `if c := %0.Lock(); c != nil { ... }`")
+DIAG(err_fail_return_nil, 343, Error, "cannot return nil for the %0 result of a function not declared with !: declare it with ! or return Option[%1]")
+DIAG(err_weak_no_indirect, 344, Error, "cannot indirect %0: a Weak pointer is not dereferenced (OWN-P5); use `if c := %0.Lock(); c != nil { *c }`")
+DIAG(err_required_args, 345, Error, "@Required takes no arguments")
+DIAG(err_own_get_binding_read_only, 346, Error, "cannot %0 %1: it borrows the value of an Option through Get and is read-only (OWN-P9)")
 
 #undef DIAG

@@ -61,6 +61,11 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
     Type *E2 = Rec(P->Elem);
     return E2 == P->Elem ? T : Ctx.ref(E2);
   }
+  case Type::Kind::Option: {
+    auto *P = cast<OptionType>(T);
+    Type *E2 = Rec(P->Elem);
+    return E2 == P->Elem ? T : Ctx.option(E2);
+  }
   case Type::Kind::Array: {
     auto *P = cast<ArrayType>(T);
     Type *E2 = Rec(P->Elem);
@@ -103,7 +108,11 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
     for (Var *F : P->Fields) {
       Type *Y = Rec(F->Ty);
       Changed |= Y != F->Ty;
-      Fs.push_back({F->Name, F->Pkg, Y, F->Embedded, F->Tag});
+      // `Val T @Required` stays "must be set" only in every instance.
+      bool SetOnly =
+          F->Required && (F->RequiredSetOnly || isa<TypeParamType>(F->Ty));
+      Fs.push_back(
+          {F->Name, F->Pkg, Y, F->Embedded, F->Tag, F->Required, SetOnly});
     }
     return Changed ? Ctx.structOf(Fs) : T;
   }
@@ -499,6 +508,10 @@ bool Unifier::nify(Type *X, Type *Y, unsigned Mode, unsigned Depth) {
     if (auto *B = dyn_cast<RefType>(Y))
       return nify(cast<RefType>(X)->Elem, B->Elem, EMode, Depth + 1);
     return false;
+  case Type::Kind::Option:
+    if (auto *B = dyn_cast<OptionType>(Y))
+      return nify(cast<OptionType>(X)->Elem, B->Elem, EMode, Depth + 1);
+    return false;
   case Type::Kind::Struct: {
     auto *A = cast<StructType>(X);
     auto *B = dyn_cast<StructType>(Y);
@@ -609,6 +622,8 @@ static bool mentionsAny(Checker &C, Type *T, ArrayRef<TypeParamType *> TPs,
     return mentionsAny(C, cast<SliceType>(T)->Elem, TPs, Depth + 1);
   case Type::Kind::Ref:
     return mentionsAny(C, cast<RefType>(T)->Elem, TPs, Depth + 1);
+  case Type::Kind::Option:
+    return mentionsAny(C, cast<OptionType>(T)->Elem, TPs, Depth + 1);
   case Type::Kind::Array:
     return mentionsAny(C, cast<ArrayType>(T)->Elem, TPs, Depth + 1);
   case Type::Kind::Map:
@@ -733,6 +748,9 @@ static void killCycles(ArrayRef<TypeParamType *> TPs,
       break;
     case Type::Kind::Ref:
       Walk(cast<RefType>(T)->Elem);
+      break;
+    case Type::Kind::Option:
+      Walk(cast<OptionType>(T)->Elem);
       break;
     case Type::Kind::Struct:
       for (Var *F : cast<StructType>(T)->Fields)

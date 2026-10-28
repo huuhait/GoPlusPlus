@@ -1,0 +1,88 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// OWN-P9 / OWN-R3b (R11, R14): a `:=` that reuses a read-only binding assigns
+// it, so it is the same error as `v = …`: E0346 for a Get binding, E0260 for
+// a type-switch or assertion binding (TYP-9), E0259 for a borrowed parameter.
+// The fix is a new name. A plain owned local is redeclared as in Go. A Get
+// binding of a checked payload still counts as a reference into it.
+package main
+
+type Node struct{ V int }
+
+type Inner struct{ P *Node }
+
+type Mid struct {
+	A [2]Inner
+	S string
+}
+
+type Big struct{ Sub Option[Mid] }
+
+func sum(xs ref []Inner) int { return len(xs) }
+
+func mkMid(n *Node) (Mid, int) { return Mid{A: [2]Inner{{P: n}, {P: n}}}, 1 }
+
+func negativeRebind(move f Option[Big], move g Option[Mid], x any, nd *Node) int {
+	n := 0
+	if f != nil {
+		v, ok := f.Sub.Get()
+		_ = ok
+		// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: f may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+		n += sum(v.A[:])
+		// CHECK: [[@LINE+2]]:3: error[E0346]: cannot assign to v: it borrows the value of an Option through Get and is read-only (OWN-P9)
+		// CHECK: [[@LINE+1]]:3: note: fix-it: use a new name instead of redeclaring v with :=
+		v, ok2 := g.Get()
+		if ok2 {
+			n += sum(v.A[:])
+		}
+	}
+	w, ok3 := g.Get()
+	_ = ok3
+	// CHECK: [[@LINE+2]]:2: error[E0346]: cannot assign to w: it borrows the value of an Option through Get and is read-only (OWN-P9)
+	// CHECK: note: fix-it: use a new name instead of redeclaring w with :=
+	w, k0 := mkMid(nd)
+	n += k0 + len(w.S)
+	switch t := x.(type) {
+	case Mid:
+		// CHECK: [[@LINE+2]]:3: error[E0260]: cannot assign to t: the binding borrows the shared box of an interface value and is read-only (TYP-9)
+		// CHECK: note: fix-it: use a new name instead of redeclaring t with :=
+		t, k := mkMid(nd)
+		n += k + len(t.S)
+	}
+	a, ok := x.(Mid)
+	// CHECK: [[@LINE+2]]:2: error[E0260]: cannot assign to a: the binding borrows the shared box of an interface value and is read-only (TYP-9)
+	// CHECK: note: fix-it: use a new name instead of redeclaring a with :=
+	a, k := mkMid(nd)
+	_ = ok
+	return n + k + len(a.S)
+}
+
+func negativeParam(m Mid, nd *Node) int {
+	// CHECK: [[@LINE+2]]:2: error[E0259]: cannot assign to m: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	// CHECK: note: fix-it: use a new name instead of redeclaring m with :=
+	m, k := mkMid(nd)
+	return k + len(m.S)
+}
+
+// The fixes: new names. A plain owned local is redeclared as in Go, and a
+// Get binding of an Option that is not checked borrows no checked payload.
+func positiveRebind(move f Option[Big], move g Option[Mid], x any, nd *Node) int {
+	n := 0
+	if f != nil {
+		v, ok := f.Sub.Get()
+		_, _ = v, ok
+		w, ok2 := g.Get()
+		if ok2 {
+			n += sum(w.A[:])
+		}
+	}
+	switch t := x.(type) {
+	case Mid:
+		t2, k := mkMid(nd)
+		n += k + len(t.S) + len(t2.S)
+	}
+	o, k := mkMid(nd)
+	o, j := mkMid(nd)
+	return n + k + j + len(o.S)
+}
+
+func main() {}

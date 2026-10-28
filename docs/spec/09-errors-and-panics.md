@@ -8,7 +8,7 @@ Contents: [9.1 `!` functions](#91-functions-that-can-fail-d18) · [9.2 `call!()`
 
 ## 9.1 Functions that can fail (D1.8)
 
-**Go error handling is unchanged.** `val, err := call()` followed by `if err != nil { … }` works exactly as in Go.
+**Go error handling is unchanged.** `val, err := call()` followed by `if err != nil { … }` works exactly as in Go. `error` keeps Go's `nil`, like the empty interface `any` (every interface with methods, and every func, is never nil, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)), so `var err error` and `return nil` for an `error` result are unchanged.
 
 ### Syntax
 
@@ -36,8 +36,8 @@ A function **can fail** if it is declared with `!`, or if its last result has ty
 - `return v` returns `v` with a nil error.
 - To fail explicitly, add the error as an extra last operand: `return nil, err`, or `return err` when there are no other results.
 - `return g()` is allowed when `g` returns the declared results plus `error`.
-- In a failing return, a result whose type has no zero value (a pointer, a `@Required` struct, …) is written `nil`: `return nil, p.fail("x")` for a `func p.parse!() *Node`. That result is left unset, and no caller can read it. A failing `x!()` inside such a function does the same. A Go-style function whose last result is `error` but that is not declared with `!` can't leave a result unset: there `return nil, err` with a `*Node` result is a compile error with the fix-its "declare it with `!`" or "return `Option[*Node]`" (ADR-0018).
-- A caller that uses the Go form `v, err := f()` may use `v` only where `err == nil` whenever `v`'s type has no zero value: `v` counts as moved where `err != nil`, the same rule as comma-ok ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). This holds for **every** call whose function type ends in `error`, whether the callee was declared with `!` or not, and whether it is called directly, through a func value or through an interface method, because `func!() T` and `func() (T, error)` are the same type (ERR-2) and the caller can't tell how a failure was written.
+- In a failing return, a result whose type has no zero value (a pointer, a func, an interface with methods other than `error`, a `@Required` struct, …) is written `nil`: `return nil, p.fail("x")` for a `func p.parse!() *Node`. That result is left unset, and no caller can read it. A failing `x!()` inside such a function does the same. A Go-style function whose last result is `error` but that is not declared with `!` can't leave a result unset: there `return nil, err` with a `*Node` result is a compile error with the fix-its "declare it with `!`" or "return `Option[*Node]`" (ADR-0018).
+- A caller that uses the Go form `v, err := f()` may use `v` only where `err == nil` is known whenever `v`'s type has no zero value, for example after `if err != nil { return err }` or inside `if err == nil { … }`: the same flow typing as for an `Option` and for comma-ok ([OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17)). Reading such a `v` where `err` may be set is a compile error. A `v` whose type has a zero value stays usable, as in Go: `n, err := r.Read(buf)` uses `n` even when `err != nil`. This holds for **every** call whose function type ends in `error`, whether the callee was declared with `!` or not, and whether it is called directly, through a func value or through an interface method, because `func!() T` and `func() (T, error)` are the same type (ERR-2) and the caller can't tell how a failure was written.
 - The operand count decides: as many operands as declared results means "value, nil error"; one more means "failure". This is never ambiguous, because a `!` function cannot declare `error` as its last result (ERR-15).
 
 **ERR-4.** *No named error result.* A `!` function cannot name its error result. When a deferred call must see the error, use the Go form `(T, err error)`.
@@ -155,7 +155,7 @@ fmt.Println(err == ErrNotFound)                    // true, as in Go
 
 Base: [Handling panics](https://go.dev/ref/spec#Handling_panics), [Defer statements](https://go.dev/ref/spec#Defer_statements).
 
-**PAN-1.** *Same API as Go.* `panic(v)` unwinds with the platform unwinder (P04 D4.6), running destructors and deferred calls. `recover()` inside a deferred call stops the panic.
+**PAN-1.** *Same API as Go.* `panic(v)` unwinds with the platform unwinder (P04 D4.6), running destructors and deferred calls. `recover()` inside a deferred call stops the panic. `recover()` returns an `any` (which keeps Go's `nil`), so `if r := recover(); r != nil { … }` works as in Go, and `panic(nil)` panics with a `*runtime.PanicNilError`, as in Go 1.21 and later.
 
 **PAN-2.** *Nested panics follow Go exactly.* A panic raised in a deferred call replaces the current panic. A later deferred `recover()` can recover it. An unrecovered chain prints every panic and exits with code 2.
 

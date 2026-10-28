@@ -237,6 +237,8 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
     return Emit(REC_SLICE, {type(cast<SliceType>(T)->Elem)});
   case Type::Kind::Ref:
     return Emit(REC_REF, {type(cast<RefType>(T)->Elem)});
+  case Type::Kind::Option:
+    return Emit(REC_OPTION, {type(cast<OptionType>(T)->Elem)});
   case Type::Kind::Array: {
     auto *A = cast<ArrayType>(T);
     uint64_t E = type(A->Elem);
@@ -279,6 +281,8 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
       Ops.push_back(Ty);
       Ops.push_back(F->Embedded);
       Ops.push_back(string(F->Tag));
+      Ops.push_back(F->Required);
+      Ops.push_back(F->RequiredSetOnly);
     }
     return Emit(REC_STRUCT, Ops);
   }
@@ -341,7 +345,8 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
     }
     uint64_t DeclOps[] = {package(N->Obj ? N->Obj->Pkg : nullptr),
                           string(N->Obj ? N->Obj->Name : StringRef()),
-                          static_cast<uint64_t>(N->Ptr), N->Pinned};
+                          static_cast<uint64_t>(N->Ptr), N->Pinned,
+                          N->ZeroState.load(std::memory_order_acquire)};
     W.write(REC_NAMED_DECL, DeclOps);
     uint64_t Id = Ids[T] = NextType++;
     std::vector<uint64_t> Ops{Id, 0, N->TParams.size()};
@@ -710,6 +715,10 @@ bool TypeReader::record(const Record &Rec) {
     Type *E = Ty();
     return Produce(E ? Ctx.ref(E) : nullptr);
   }
+  case REC_OPTION: {
+    Type *E = Ty();
+    return Produce(E ? Ctx.option(E) : nullptr);
+  }
   case REC_ARRAY: {
     Type *E = Ty();
     int64_t Len = static_cast<int64_t>(Next());
@@ -760,6 +769,8 @@ bool TypeReader::record(const Record &Rec) {
       F.Ty = Ty();
       F.Embedded = Flag();
       F.Tag = Str();
+      F.Required = Flag();
+      F.RequiredSetOnly = Flag();
       if (!F.Ty)
         Bad = true;
       Fs.push_back(F);
@@ -812,7 +823,8 @@ bool TypeReader::record(const Record &Rec) {
     StringRef Name = Str();
     uint64_t Ptr = Next();
     bool Pinned = Flag();
-    if (Bad || Ptr > static_cast<uint64_t>(PtrKind::Weak))
+    uint64_t Zero = Next();
+    if (Bad || Ptr > static_cast<uint64_t>(PtrKind::Weak) || Zero > 2)
       return fail("malformed named type");
     TypeName *TN = Mem.make<TypeName>();
     TN->Name = Mem.copy(Name);
@@ -820,6 +832,7 @@ bool TypeReader::record(const Record &Rec) {
     NamedType *N = Ctx.newNamed(TN);
     N->Ptr = static_cast<PtrKind>(Ptr);
     N->Pinned = Pinned;
+    N->ZeroState.store(static_cast<uint8_t>(Zero), std::memory_order_release);
     Undefined.insert(N);
     return Produce(N);
   }

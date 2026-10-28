@@ -1,4 +1,4 @@
-File <1:1, 93:1>
+File <1:1, 94:1>
   Name: Ident <1:9, 1:13> 'main'
   Decl: GenDecl <3:1, 6:2> import grouped
     Spec: ImportSpec <4:2, 4:7>
@@ -234,310 +234,312 @@ File <1:1, 93:1>
                 X: Ident <40:41, 40:42> 'm'
                 Sel: Ident <40:43, 40:47> 'vals'
               Index: Ident <40:48, 40:49> 'j'
-  Decl: FuncDecl <46:1, 52:2>
-    Recv: FieldList <46:6, 46:27>
-      Field: Field <46:7, 46:26>
-        Names: Ident <46:7, 46:8> 'm'
-        Type: StarExpr <46:9, 46:26>
-          X: IndexExpr <46:10, 46:26>
-            X: Ident <46:10, 46:20> 'OrderedMap'
-            Index: Ident <46:21, 46:22> 'K'
-            Index: Ident <46:24, 46:25> 'V'
-    Name: Ident <46:28, 46:31> 'Get'
-    Type: FuncType <46:1, 46:39>
-      Params: FieldList <46:31, 46:36>
-        Field: Field <46:32, 46:35>
-          Names: Ident <46:32, 46:33> 'k'
-          Type: Ident <46:34, 46:35> 'K'
-      Results: FieldList <46:37, 46:39>
-        Field: Field <46:37, 46:39>
-          Type: StarExpr <46:37, 46:39>
-            X: Ident <46:38, 46:39> 'V'
-    Body: BlockStmt <46:40, 52:2>
-      Stmt: AssignStmt <47:2, 47:25> op=':='
-        Lhs: Ident <47:2, 47:3> 'i'
-        Lhs: Ident <47:5, 47:10> 'found'
-        Rhs: CallExpr <47:14, 47:25>
-          Fun: SelectorExpr <47:14, 47:22>
-            X: Ident <47:14, 47:15> 'm'
-            Sel: Ident <47:16, 47:22> 'search'
-          Args: Ident <47:23, 47:24> 'k'
-      Stmt: IfStmt <48:2, 50:3>
-        Cond: UnaryExpr <48:5, 48:11> op='!'
-          X: Ident <48:6, 48:11> 'found'
-        Then: BlockStmt <48:12, 50:3>
-          Stmt: ReturnStmt <49:3, 49:13>
-            Result: Ident <49:10, 49:13> 'nil'
-      Stmt: ReturnStmt <51:2, 51:19>
-        Result: UnaryExpr <51:9, 51:19> op='&'
-          X: IndexExpr <51:10, 51:19>
-            X: SelectorExpr <51:10, 51:16>
-              X: Ident <51:10, 51:11> 'm'
-              Sel: Ident <51:12, 51:16> 'vals'
-            Index: Ident <51:17, 51:18> 'i'
-  Decl: FuncDecl <54:1, 54:60>
-    Recv: FieldList <54:6, 54:27>
-      Field: Field <54:7, 54:26>
-        Names: Ident <54:7, 54:8> 'm'
-        Type: StarExpr <54:9, 54:26>
-          X: IndexExpr <54:10, 54:26>
-            X: Ident <54:10, 54:20> 'OrderedMap'
-            Index: Ident <54:21, 54:22> 'K'
-            Index: Ident <54:24, 54:25> 'V'
-    Name: Ident <54:28, 54:31> 'Len'
-    Type: FuncType <54:1, 54:37>
-      Params: FieldList <54:31, 54:33>
-      Results: FieldList <54:34, 54:37>
-        Field: Field <54:34, 54:37>
-          Type: Ident <54:34, 54:37> 'int'
-    Body: BlockStmt <54:38, 54:60>
-      Stmt: ReturnStmt <54:40, 54:58>
-        Result: CallExpr <54:47, 54:58>
-          Fun: Ident <54:47, 54:50> 'len'
-          Args: SelectorExpr <54:51, 54:57>
-            X: Ident <54:51, 54:52> 'm'
-            Sel: Ident <54:53, 54:57> 'keys'
-  Decl: FuncDecl <56:1, 60:2>
-    Recv: FieldList <56:6, 56:27>
-      Field: Field <56:7, 56:26>
-        Names: Ident <56:7, 56:8> 'm'
-        Type: StarExpr <56:9, 56:26>
-          X: IndexExpr <56:10, 56:26>
-            X: Ident <56:10, 56:20> 'OrderedMap'
-            Index: Ident <56:21, 56:22> 'K'
-            Index: Ident <56:24, 56:25> 'V'
-    Name: Ident <56:28, 56:32> 'Each'
-    Type: FuncType <56:1, 56:50>
-      Params: FieldList <56:32, 56:50>
-        Field: Field <56:33, 56:49>
-          Names: Ident <56:33, 56:34> 'f'
-          Type: FuncType <56:35, 56:49>
-            Params: FieldList <56:39, 56:49>
-              Field: Field <56:40, 56:43>
-                Names: Ident <56:40, 56:41> 'k'
-                Type: Ident <56:42, 56:43> 'K'
-              Field: Field <56:45, 56:48>
-                Names: Ident <56:45, 56:46> 'v'
-                Type: Ident <56:47, 56:48> 'V'
-    Body: BlockStmt <56:51, 60:2>
-      Stmt: RangeStmt <57:2, 59:3> op=':='
-        Key: Ident <57:6, 57:7> 'i'
-        X: SelectorExpr <57:17, 57:23>
-          X: Ident <57:17, 57:18> 'm'
-          Sel: Ident <57:19, 57:23> 'keys'
-        Body: BlockStmt <57:24, 59:3>
-          Stmt: ExprStmt <58:3, 58:26>
-            X: CallExpr <58:3, 58:26>
-              Fun: Ident <58:3, 58:4> 'f'
-              Args: IndexExpr <58:5, 58:14>
-                X: SelectorExpr <58:5, 58:11>
-                  X: Ident <58:5, 58:6> 'm'
-                  Sel: Ident <58:7, 58:11> 'keys'
-                Index: Ident <58:12, 58:13> 'i'
-              Args: IndexExpr <58:16, 58:25>
-                X: SelectorExpr <58:16, 58:22>
-                  X: Ident <58:16, 58:17> 'm'
-                  Sel: Ident <58:18, 58:22> 'vals'
-                Index: Ident <58:23, 58:24> 'i'
-  Decl: FuncDecl <62:1, 92:2>
-    Name: Ident <62:6, 62:10> 'main'
-    Type: FuncType <62:1, 62:12>
-      Params: FieldList <62:10, 62:12>
-    Body: BlockStmt <62:13, 92:2>
-      Stmt: AssignStmt <63:2, 63:104> op=':='
-        Lhs: Ident <63:2, 63:7> 'words'
-        Rhs: CompositeLit <63:11, 63:104>
-          Type: SliceType <63:11, 63:19>
-            Elt: Ident <63:13, 63:19> 'string'
-          Elts: BasicLit <63:20, 63:25> string_lit "the"
-          Elts: BasicLit <63:27, 63:34> string_lit "quick"
-          Elts: BasicLit <63:36, 63:43> string_lit "brown"
-          Elts: BasicLit <63:45, 63:50> string_lit "fox"
-          Elts: BasicLit <63:52, 63:59> string_lit "jumps"
-          Elts: BasicLit <63:61, 63:67> string_lit "over"
-          Elts: BasicLit <63:69, 63:74> string_lit "the"
-          Elts: BasicLit <63:76, 63:82> string_lit "lazy"
-          Elts: BasicLit <63:84, 63:89> string_lit "dog"
-          Elts: BasicLit <63:91, 63:96> string_lit "the"
-          Elts: BasicLit <63:98, 63:103> string_lit "fox"
-      Stmt: DeclStmt <65:2, 65:36>
-        Decl: GenDecl <65:2, 65:36> var
-          Spec: ValueSpec <65:6, 65:36>
-            Name: Ident <65:6, 65:12> 'counts'
-            Type: IndexExpr <65:13, 65:36>
-              X: Ident <65:13, 65:23> 'OrderedMap'
-              Index: Ident <65:24, 65:30> 'string'
-              Index: Ident <65:32, 65:35> 'int'
-      Stmt: RangeStmt <66:2, 72:3> op=':='
-        Key: Ident <66:6, 66:7> '_'
-        Value: Ident <66:9, 66:10> 'w'
-        X: Ident <66:20, 66:25> 'words'
-        Body: BlockStmt <66:26, 72:3>
-          Stmt: IfStmt <67:3, 71:4>
-            Init: AssignStmt <67:6, 67:24> op=':='
-              Lhs: Ident <67:6, 67:7> 'p'
-              Rhs: CallExpr <67:11, 67:24>
-                Fun: SelectorExpr <67:11, 67:21>
-                  X: Ident <67:11, 67:17> 'counts'
-                  Sel: Ident <67:18, 67:21> 'Get'
-                Args: Ident <67:22, 67:23> 'w'
-            Cond: BinaryExpr <67:26, 67:34> op='!='
-              X: Ident <67:26, 67:27> 'p'
-              Y: Ident <67:31, 67:34> 'nil'
-            Then: BlockStmt <67:35, 69:4>
-              Stmt: IncDecStmt <68:4, 68:8> op='++'
-                X: StarExpr <68:4, 68:6>
-                  X: Ident <68:5, 68:6> 'p'
-            Else: BlockStmt <69:10, 71:4>
-              Stmt: ExprStmt <70:4, 70:28>
-                X: CallExpr <70:4, 70:28>
-                  Fun: SelectorExpr <70:4, 70:14>
-                    X: Ident <70:4, 70:10> 'counts'
-                    Sel: Ident <70:11, 70:14> 'Put'
-                  Args: CallExpr <70:15, 70:24>
-                    Fun: SelectorExpr <70:15, 70:22>
-                      X: Ident <70:15, 70:16> 'w'
-                      Sel: Ident <70:17, 70:22> 'Clone'
-                  Args: BasicLit <70:26, 70:27> int_lit 1
-      Stmt: ExprStmt <73:2, 73:46>
-        X: CallExpr <73:2, 73:46>
-          Fun: SelectorExpr <73:2, 73:13>
-            X: Ident <73:2, 73:5> 'fmt'
-            Sel: Ident <73:6, 73:13> 'Println'
-          Args: BasicLit <73:14, 73:31> string_lit "distinct words:"
-          Args: CallExpr <73:33, 73:45>
-            Fun: SelectorExpr <73:33, 73:43>
-              X: Ident <73:33, 73:39> 'counts'
-              Sel: Ident <73:40, 73:43> 'Len'
-      Stmt: ExprStmt <74:2, 76:4>
-        X: CallExpr <74:2, 76:4>
+  Decl: FuncDecl <47:1, 53:2>
+    Recv: FieldList <47:6, 47:27>
+      Field: Field <47:7, 47:26>
+        Names: Ident <47:7, 47:8> 'm'
+        Type: StarExpr <47:9, 47:26>
+          X: IndexExpr <47:10, 47:26>
+            X: Ident <47:10, 47:20> 'OrderedMap'
+            Index: Ident <47:21, 47:22> 'K'
+            Index: Ident <47:24, 47:25> 'V'
+    Name: Ident <47:28, 47:31> 'Get'
+    Type: FuncType <47:1, 47:47>
+      Params: FieldList <47:31, 47:36>
+        Field: Field <47:32, 47:35>
+          Names: Ident <47:32, 47:33> 'k'
+          Type: Ident <47:34, 47:35> 'K'
+      Results: FieldList <47:37, 47:47>
+        Field: Field <47:37, 47:47>
+          Type: IndexExpr <47:37, 47:47>
+            X: Ident <47:37, 47:43> 'Option'
+            Index: StarExpr <47:44, 47:46>
+              X: Ident <47:45, 47:46> 'V'
+    Body: BlockStmt <47:48, 53:2>
+      Stmt: AssignStmt <48:2, 48:25> op=':='
+        Lhs: Ident <48:2, 48:3> 'i'
+        Lhs: Ident <48:5, 48:10> 'found'
+        Rhs: CallExpr <48:14, 48:25>
+          Fun: SelectorExpr <48:14, 48:22>
+            X: Ident <48:14, 48:15> 'm'
+            Sel: Ident <48:16, 48:22> 'search'
+          Args: Ident <48:23, 48:24> 'k'
+      Stmt: IfStmt <49:2, 51:3>
+        Cond: UnaryExpr <49:5, 49:11> op='!'
+          X: Ident <49:6, 49:11> 'found'
+        Then: BlockStmt <49:12, 51:3>
+          Stmt: ReturnStmt <50:3, 50:13>
+            Result: Ident <50:10, 50:13> 'nil'
+      Stmt: ReturnStmt <52:2, 52:19>
+        Result: UnaryExpr <52:9, 52:19> op='&'
+          X: IndexExpr <52:10, 52:19>
+            X: SelectorExpr <52:10, 52:16>
+              X: Ident <52:10, 52:11> 'm'
+              Sel: Ident <52:12, 52:16> 'vals'
+            Index: Ident <52:17, 52:18> 'i'
+  Decl: FuncDecl <55:1, 55:60>
+    Recv: FieldList <55:6, 55:27>
+      Field: Field <55:7, 55:26>
+        Names: Ident <55:7, 55:8> 'm'
+        Type: StarExpr <55:9, 55:26>
+          X: IndexExpr <55:10, 55:26>
+            X: Ident <55:10, 55:20> 'OrderedMap'
+            Index: Ident <55:21, 55:22> 'K'
+            Index: Ident <55:24, 55:25> 'V'
+    Name: Ident <55:28, 55:31> 'Len'
+    Type: FuncType <55:1, 55:37>
+      Params: FieldList <55:31, 55:33>
+      Results: FieldList <55:34, 55:37>
+        Field: Field <55:34, 55:37>
+          Type: Ident <55:34, 55:37> 'int'
+    Body: BlockStmt <55:38, 55:60>
+      Stmt: ReturnStmt <55:40, 55:58>
+        Result: CallExpr <55:47, 55:58>
+          Fun: Ident <55:47, 55:50> 'len'
+          Args: SelectorExpr <55:51, 55:57>
+            X: Ident <55:51, 55:52> 'm'
+            Sel: Ident <55:53, 55:57> 'keys'
+  Decl: FuncDecl <57:1, 61:2>
+    Recv: FieldList <57:6, 57:27>
+      Field: Field <57:7, 57:26>
+        Names: Ident <57:7, 57:8> 'm'
+        Type: StarExpr <57:9, 57:26>
+          X: IndexExpr <57:10, 57:26>
+            X: Ident <57:10, 57:20> 'OrderedMap'
+            Index: Ident <57:21, 57:22> 'K'
+            Index: Ident <57:24, 57:25> 'V'
+    Name: Ident <57:28, 57:32> 'Each'
+    Type: FuncType <57:1, 57:50>
+      Params: FieldList <57:32, 57:50>
+        Field: Field <57:33, 57:49>
+          Names: Ident <57:33, 57:34> 'f'
+          Type: FuncType <57:35, 57:49>
+            Params: FieldList <57:39, 57:49>
+              Field: Field <57:40, 57:43>
+                Names: Ident <57:40, 57:41> 'k'
+                Type: Ident <57:42, 57:43> 'K'
+              Field: Field <57:45, 57:48>
+                Names: Ident <57:45, 57:46> 'v'
+                Type: Ident <57:47, 57:48> 'V'
+    Body: BlockStmt <57:51, 61:2>
+      Stmt: RangeStmt <58:2, 60:3> op=':='
+        Key: Ident <58:6, 58:7> 'i'
+        X: SelectorExpr <58:17, 58:23>
+          X: Ident <58:17, 58:18> 'm'
+          Sel: Ident <58:19, 58:23> 'keys'
+        Body: BlockStmt <58:24, 60:3>
+          Stmt: ExprStmt <59:3, 59:26>
+            X: CallExpr <59:3, 59:26>
+              Fun: Ident <59:3, 59:4> 'f'
+              Args: IndexExpr <59:5, 59:14>
+                X: SelectorExpr <59:5, 59:11>
+                  X: Ident <59:5, 59:6> 'm'
+                  Sel: Ident <59:7, 59:11> 'keys'
+                Index: Ident <59:12, 59:13> 'i'
+              Args: IndexExpr <59:16, 59:25>
+                X: SelectorExpr <59:16, 59:22>
+                  X: Ident <59:16, 59:17> 'm'
+                  Sel: Ident <59:18, 59:22> 'vals'
+                Index: Ident <59:23, 59:24> 'i'
+  Decl: FuncDecl <63:1, 93:2>
+    Name: Ident <63:6, 63:10> 'main'
+    Type: FuncType <63:1, 63:12>
+      Params: FieldList <63:10, 63:12>
+    Body: BlockStmt <63:13, 93:2>
+      Stmt: AssignStmt <64:2, 64:104> op=':='
+        Lhs: Ident <64:2, 64:7> 'words'
+        Rhs: CompositeLit <64:11, 64:104>
+          Type: SliceType <64:11, 64:19>
+            Elt: Ident <64:13, 64:19> 'string'
+          Elts: BasicLit <64:20, 64:25> string_lit "the"
+          Elts: BasicLit <64:27, 64:34> string_lit "quick"
+          Elts: BasicLit <64:36, 64:43> string_lit "brown"
+          Elts: BasicLit <64:45, 64:50> string_lit "fox"
+          Elts: BasicLit <64:52, 64:59> string_lit "jumps"
+          Elts: BasicLit <64:61, 64:67> string_lit "over"
+          Elts: BasicLit <64:69, 64:74> string_lit "the"
+          Elts: BasicLit <64:76, 64:82> string_lit "lazy"
+          Elts: BasicLit <64:84, 64:89> string_lit "dog"
+          Elts: BasicLit <64:91, 64:96> string_lit "the"
+          Elts: BasicLit <64:98, 64:103> string_lit "fox"
+      Stmt: DeclStmt <66:2, 66:36>
+        Decl: GenDecl <66:2, 66:36> var
+          Spec: ValueSpec <66:6, 66:36>
+            Name: Ident <66:6, 66:12> 'counts'
+            Type: IndexExpr <66:13, 66:36>
+              X: Ident <66:13, 66:23> 'OrderedMap'
+              Index: Ident <66:24, 66:30> 'string'
+              Index: Ident <66:32, 66:35> 'int'
+      Stmt: RangeStmt <67:2, 73:3> op=':='
+        Key: Ident <67:6, 67:7> '_'
+        Value: Ident <67:9, 67:10> 'w'
+        X: Ident <67:20, 67:25> 'words'
+        Body: BlockStmt <67:26, 73:3>
+          Stmt: IfStmt <68:3, 72:4>
+            Init: AssignStmt <68:6, 68:24> op=':='
+              Lhs: Ident <68:6, 68:7> 'p'
+              Rhs: CallExpr <68:11, 68:24>
+                Fun: SelectorExpr <68:11, 68:21>
+                  X: Ident <68:11, 68:17> 'counts'
+                  Sel: Ident <68:18, 68:21> 'Get'
+                Args: Ident <68:22, 68:23> 'w'
+            Cond: BinaryExpr <68:26, 68:34> op='!='
+              X: Ident <68:26, 68:27> 'p'
+              Y: Ident <68:31, 68:34> 'nil'
+            Then: BlockStmt <68:35, 70:4>
+              Stmt: IncDecStmt <69:4, 69:8> op='++'
+                X: StarExpr <69:4, 69:6>
+                  X: Ident <69:5, 69:6> 'p'
+            Else: BlockStmt <70:10, 72:4>
+              Stmt: ExprStmt <71:4, 71:28>
+                X: CallExpr <71:4, 71:28>
+                  Fun: SelectorExpr <71:4, 71:14>
+                    X: Ident <71:4, 71:10> 'counts'
+                    Sel: Ident <71:11, 71:14> 'Put'
+                  Args: CallExpr <71:15, 71:24>
+                    Fun: SelectorExpr <71:15, 71:22>
+                      X: Ident <71:15, 71:16> 'w'
+                      Sel: Ident <71:17, 71:22> 'Clone'
+                  Args: BasicLit <71:26, 71:27> int_lit 1
+      Stmt: ExprStmt <74:2, 74:46>
+        X: CallExpr <74:2, 74:46>
           Fun: SelectorExpr <74:2, 74:13>
-            X: Ident <74:2, 74:8> 'counts'
-            Sel: Ident <74:9, 74:13> 'Each'
-          Args: FuncLit <74:14, 76:3>
-            Type: FuncType <74:14, 74:35>
-              Params: FieldList <74:18, 74:35>
-                Field: Field <74:19, 74:27>
-                  Names: Ident <74:19, 74:20> 'k'
-                  Type: Ident <74:21, 74:27> 'string'
-                Field: Field <74:29, 74:34>
-                  Names: Ident <74:29, 74:30> 'v'
-                  Type: Ident <74:31, 74:34> 'int'
-            Body: BlockStmt <74:36, 76:3>
-              Stmt: ExprStmt <75:3, 75:32>
-                X: CallExpr <75:3, 75:32>
-                  Fun: SelectorExpr <75:3, 75:13>
-                    X: Ident <75:3, 75:6> 'fmt'
-                    Sel: Ident <75:7, 75:13> 'Printf'
-                  Args: BasicLit <75:14, 75:25> string_lit "%-6s %d\n"
-                  Args: Ident <75:27, 75:28> 'k'
-                  Args: Ident <75:30, 75:31> 'v'
-      Stmt: IfStmt <77:2, 79:3>
-        Init: AssignStmt <77:5, 77:27> op=':='
-          Lhs: Ident <77:5, 77:6> 'p'
-          Rhs: CallExpr <77:10, 77:27>
-            Fun: SelectorExpr <77:10, 77:20>
-              X: Ident <77:10, 77:16> 'counts'
-              Sel: Ident <77:17, 77:20> 'Get'
-            Args: BasicLit <77:21, 77:26> string_lit "fox"
-        Cond: BinaryExpr <77:29, 77:37> op='!='
-          X: Ident <77:29, 77:30> 'p'
-          Y: Ident <77:34, 77:37> 'nil'
-        Then: BlockStmt <77:38, 79:3>
-          Stmt: ExprStmt <78:3, 78:27>
-            X: CallExpr <78:3, 78:27>
-              Fun: SelectorExpr <78:3, 78:14>
-                X: Ident <78:3, 78:6> 'fmt'
-                Sel: Ident <78:7, 78:14> 'Println'
-              Args: BasicLit <78:15, 78:22> string_lit "fox ="
-              Args: StarExpr <78:24, 78:26>
-                X: Ident <78:25, 78:26> 'p'
-      Stmt: IfStmt <80:2, 82:3>
-        Cond: BinaryExpr <80:5, 80:29> op='=='
-          X: CallExpr <80:5, 80:22>
-            Fun: SelectorExpr <80:5, 80:15>
-              X: Ident <80:5, 80:11> 'counts'
-              Sel: Ident <80:12, 80:15> 'Get'
-            Args: BasicLit <80:16, 80:21> string_lit "cat"
-          Y: Ident <80:26, 80:29> 'nil'
-        Then: BlockStmt <80:30, 82:3>
-          Stmt: ExprStmt <81:3, 81:31>
-            X: CallExpr <81:3, 81:31>
-              Fun: SelectorExpr <81:3, 81:14>
-                X: Ident <81:3, 81:6> 'fmt'
-                Sel: Ident <81:7, 81:14> 'Println'
-              Args: BasicLit <81:15, 81:30> string_lit "cat is absent"
-      Stmt: DeclStmt <84:2, 84:41>
-        Decl: GenDecl <84:2, 84:41> var
-          Spec: ValueSpec <84:6, 84:41>
-            Name: Ident <84:6, 84:12> 'colors'
-            Type: IndexExpr <84:13, 84:41>
-              X: Ident <84:13, 84:23> 'OrderedMap'
-              Index: Ident <84:24, 84:30> 'string'
-              Index: SliceType <84:32, 84:40>
-                Elt: Ident <84:34, 84:40> 'string'
-      Stmt: ExprStmt <85:2, 85:49>
-        X: CallExpr <85:2, 85:49>
-          Fun: SelectorExpr <85:2, 85:12>
-            X: Ident <85:2, 85:8> 'colors'
-            Sel: Ident <85:9, 85:12> 'Put'
-          Args: BasicLit <85:13, 85:19> string_lit "pear"
-          Args: CompositeLit <85:21, 85:48>
-            Type: SliceType <85:21, 85:29>
-              Elt: Ident <85:23, 85:29> 'string'
-            Elts: BasicLit <85:30, 85:37> string_lit "green"
-            Elts: BasicLit <85:39, 85:47> string_lit "yellow"
-      Stmt: ExprStmt <86:2, 86:47>
-        X: CallExpr <86:2, 86:47>
+            X: Ident <74:2, 74:5> 'fmt'
+            Sel: Ident <74:6, 74:13> 'Println'
+          Args: BasicLit <74:14, 74:31> string_lit "distinct words:"
+          Args: CallExpr <74:33, 74:45>
+            Fun: SelectorExpr <74:33, 74:43>
+              X: Ident <74:33, 74:39> 'counts'
+              Sel: Ident <74:40, 74:43> 'Len'
+      Stmt: ExprStmt <75:2, 77:4>
+        X: CallExpr <75:2, 77:4>
+          Fun: SelectorExpr <75:2, 75:13>
+            X: Ident <75:2, 75:8> 'counts'
+            Sel: Ident <75:9, 75:13> 'Each'
+          Args: FuncLit <75:14, 77:3>
+            Type: FuncType <75:14, 75:35>
+              Params: FieldList <75:18, 75:35>
+                Field: Field <75:19, 75:27>
+                  Names: Ident <75:19, 75:20> 'k'
+                  Type: Ident <75:21, 75:27> 'string'
+                Field: Field <75:29, 75:34>
+                  Names: Ident <75:29, 75:30> 'v'
+                  Type: Ident <75:31, 75:34> 'int'
+            Body: BlockStmt <75:36, 77:3>
+              Stmt: ExprStmt <76:3, 76:32>
+                X: CallExpr <76:3, 76:32>
+                  Fun: SelectorExpr <76:3, 76:13>
+                    X: Ident <76:3, 76:6> 'fmt'
+                    Sel: Ident <76:7, 76:13> 'Printf'
+                  Args: BasicLit <76:14, 76:25> string_lit "%-6s %d\n"
+                  Args: Ident <76:27, 76:28> 'k'
+                  Args: Ident <76:30, 76:31> 'v'
+      Stmt: IfStmt <78:2, 80:3>
+        Init: AssignStmt <78:5, 78:27> op=':='
+          Lhs: Ident <78:5, 78:6> 'p'
+          Rhs: CallExpr <78:10, 78:27>
+            Fun: SelectorExpr <78:10, 78:20>
+              X: Ident <78:10, 78:16> 'counts'
+              Sel: Ident <78:17, 78:20> 'Get'
+            Args: BasicLit <78:21, 78:26> string_lit "fox"
+        Cond: BinaryExpr <78:29, 78:37> op='!='
+          X: Ident <78:29, 78:30> 'p'
+          Y: Ident <78:34, 78:37> 'nil'
+        Then: BlockStmt <78:38, 80:3>
+          Stmt: ExprStmt <79:3, 79:27>
+            X: CallExpr <79:3, 79:27>
+              Fun: SelectorExpr <79:3, 79:14>
+                X: Ident <79:3, 79:6> 'fmt'
+                Sel: Ident <79:7, 79:14> 'Println'
+              Args: BasicLit <79:15, 79:22> string_lit "fox ="
+              Args: StarExpr <79:24, 79:26>
+                X: Ident <79:25, 79:26> 'p'
+      Stmt: IfStmt <81:2, 83:3>
+        Cond: BinaryExpr <81:5, 81:29> op='=='
+          X: CallExpr <81:5, 81:22>
+            Fun: SelectorExpr <81:5, 81:15>
+              X: Ident <81:5, 81:11> 'counts'
+              Sel: Ident <81:12, 81:15> 'Get'
+            Args: BasicLit <81:16, 81:21> string_lit "cat"
+          Y: Ident <81:26, 81:29> 'nil'
+        Then: BlockStmt <81:30, 83:3>
+          Stmt: ExprStmt <82:3, 82:31>
+            X: CallExpr <82:3, 82:31>
+              Fun: SelectorExpr <82:3, 82:14>
+                X: Ident <82:3, 82:6> 'fmt'
+                Sel: Ident <82:7, 82:14> 'Println'
+              Args: BasicLit <82:15, 82:30> string_lit "cat is absent"
+      Stmt: DeclStmt <85:2, 85:41>
+        Decl: GenDecl <85:2, 85:41> var
+          Spec: ValueSpec <85:6, 85:41>
+            Name: Ident <85:6, 85:12> 'colors'
+            Type: IndexExpr <85:13, 85:41>
+              X: Ident <85:13, 85:23> 'OrderedMap'
+              Index: Ident <85:24, 85:30> 'string'
+              Index: SliceType <85:32, 85:40>
+                Elt: Ident <85:34, 85:40> 'string'
+      Stmt: ExprStmt <86:2, 86:49>
+        X: CallExpr <86:2, 86:49>
           Fun: SelectorExpr <86:2, 86:12>
             X: Ident <86:2, 86:8> 'colors'
             Sel: Ident <86:9, 86:12> 'Put'
-          Args: BasicLit <86:13, 86:20> string_lit "apple"
-          Args: CompositeLit <86:22, 86:46>
-            Type: SliceType <86:22, 86:30>
-              Elt: Ident <86:24, 86:30> 'string'
-            Elts: BasicLit <86:31, 86:36> string_lit "red"
-            Elts: BasicLit <86:38, 86:45> string_lit "green"
-      Stmt: ExprStmt <87:2, 87:40>
-        X: CallExpr <87:2, 87:40>
+          Args: BasicLit <86:13, 86:19> string_lit "pear"
+          Args: CompositeLit <86:21, 86:48>
+            Type: SliceType <86:21, 86:29>
+              Elt: Ident <86:23, 86:29> 'string'
+            Elts: BasicLit <86:30, 86:37> string_lit "green"
+            Elts: BasicLit <86:39, 86:47> string_lit "yellow"
+      Stmt: ExprStmt <87:2, 87:47>
+        X: CallExpr <87:2, 87:47>
           Fun: SelectorExpr <87:2, 87:12>
             X: Ident <87:2, 87:8> 'colors'
             Sel: Ident <87:9, 87:12> 'Put'
-          Args: BasicLit <87:13, 87:19> string_lit "plum"
-          Args: CompositeLit <87:21, 87:39>
-            Type: SliceType <87:21, 87:29>
-              Elt: Ident <87:23, 87:29> 'string'
-            Elts: BasicLit <87:30, 87:38> string_lit "purple"
-      Stmt: ExprStmt <88:2, 88:38>
-        X: CallExpr <88:2, 88:38>
+          Args: BasicLit <87:13, 87:20> string_lit "apple"
+          Args: CompositeLit <87:22, 87:46>
+            Type: SliceType <87:22, 87:30>
+              Elt: Ident <87:24, 87:30> 'string'
+            Elts: BasicLit <87:31, 87:36> string_lit "red"
+            Elts: BasicLit <87:38, 87:45> string_lit "green"
+      Stmt: ExprStmt <88:2, 88:40>
+        X: CallExpr <88:2, 88:40>
           Fun: SelectorExpr <88:2, 88:12>
             X: Ident <88:2, 88:8> 'colors'
             Sel: Ident <88:9, 88:12> 'Put'
-          Args: BasicLit <88:13, 88:20> string_lit "apple"
-          Args: CompositeLit <88:22, 88:37>
-            Type: SliceType <88:22, 88:30>
-              Elt: Ident <88:24, 88:30> 'string'
-            Elts: BasicLit <88:31, 88:36> string_lit "red"
-      Stmt: ExprStmt <89:2, 91:4>
-        X: CallExpr <89:2, 91:4>
-          Fun: SelectorExpr <89:2, 89:13>
+          Args: BasicLit <88:13, 88:19> string_lit "plum"
+          Args: CompositeLit <88:21, 88:39>
+            Type: SliceType <88:21, 88:29>
+              Elt: Ident <88:23, 88:29> 'string'
+            Elts: BasicLit <88:30, 88:38> string_lit "purple"
+      Stmt: ExprStmt <89:2, 89:38>
+        X: CallExpr <89:2, 89:38>
+          Fun: SelectorExpr <89:2, 89:12>
             X: Ident <89:2, 89:8> 'colors'
-            Sel: Ident <89:9, 89:13> 'Each'
-          Args: FuncLit <89:14, 91:3>
-            Type: FuncType <89:14, 89:40>
-              Params: FieldList <89:18, 89:40>
-                Field: Field <89:19, 89:27>
-                  Names: Ident <89:19, 89:20> 'k'
-                  Type: Ident <89:21, 89:27> 'string'
-                Field: Field <89:29, 89:39>
-                  Names: Ident <89:29, 89:30> 'v'
-                  Type: SliceType <89:31, 89:39>
-                    Elt: Ident <89:33, 89:39> 'string'
-            Body: BlockStmt <89:41, 91:3>
-              Stmt: ExprStmt <90:3, 90:20>
-                X: CallExpr <90:3, 90:20>
-                  Fun: SelectorExpr <90:3, 90:14>
-                    X: Ident <90:3, 90:6> 'fmt'
-                    Sel: Ident <90:7, 90:14> 'Println'
-                  Args: Ident <90:15, 90:16> 'k'
-                  Args: Ident <90:18, 90:19> 'v'
+            Sel: Ident <89:9, 89:12> 'Put'
+          Args: BasicLit <89:13, 89:20> string_lit "apple"
+          Args: CompositeLit <89:22, 89:37>
+            Type: SliceType <89:22, 89:30>
+              Elt: Ident <89:24, 89:30> 'string'
+            Elts: BasicLit <89:31, 89:36> string_lit "red"
+      Stmt: ExprStmt <90:2, 92:4>
+        X: CallExpr <90:2, 92:4>
+          Fun: SelectorExpr <90:2, 90:13>
+            X: Ident <90:2, 90:8> 'colors'
+            Sel: Ident <90:9, 90:13> 'Each'
+          Args: FuncLit <90:14, 92:3>
+            Type: FuncType <90:14, 90:40>
+              Params: FieldList <90:18, 90:40>
+                Field: Field <90:19, 90:27>
+                  Names: Ident <90:19, 90:20> 'k'
+                  Type: Ident <90:21, 90:27> 'string'
+                Field: Field <90:29, 90:39>
+                  Names: Ident <90:29, 90:30> 'v'
+                  Type: SliceType <90:31, 90:39>
+                    Elt: Ident <90:33, 90:39> 'string'
+            Body: BlockStmt <90:41, 92:3>
+              Stmt: ExprStmt <91:3, 91:20>
+                X: CallExpr <91:3, 91:20>
+                  Fun: SelectorExpr <91:3, 91:14>
+                    X: Ident <91:3, 91:6> 'fmt'
+                    Sel: Ident <91:7, 91:14> 'Println'
+                  Args: Ident <91:15, 91:16> 'k'
+                  Args: Ident <91:18, 91:19> 'v'

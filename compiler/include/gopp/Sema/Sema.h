@@ -110,6 +110,23 @@ struct Info {
     const TypeAndValue *TV = lookup(E);
     return TV ? TV->Ty : nullptr;
   }
+  /// Flow typing (ADR-0018 point 4): the narrowed type of a use of an Option
+  /// local or parameter. Types[Id] holds the type of the value T at a place
+  /// where the variable is known to be set, while Uses[Id] is the Var, whose
+  /// type is Option[T]. Returns T for such a use, null otherwise.
+  Type *narrowedType(const ast::Ident *Id) const {
+    auto U = Uses.find(Id);
+    auto T = Types.find(static_cast<const ast::Expr *>(Id));
+    if (U == Uses.end() || T == Types.end() || !U->second->Ty ||
+        !T->second.Ty || T->second.Ty == U->second->Ty)
+      return nullptr;
+    // Option[T], or a defined type over one.
+    Type *VT = U->second->Ty;
+    if (auto *N = llvm::dyn_cast<NamedType>(VT); N && !N->Orig)
+      VT = N->Underlying;
+    return llvm::isa_and_nonnull<OptionType>(VT) ? T->second.Ty : nullptr;
+  }
+
   /// Adds all entries of the Others (tables of disjoint AST nodes).
   void merge(llvm::ArrayRef<Info *> Others);
 };

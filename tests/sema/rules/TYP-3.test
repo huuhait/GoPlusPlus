@@ -1,6 +1,8 @@
 // RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule TYP-3: == on owning types compares by value and borrows; a ref string
-// compares with a string; slices, maps and funcs compare only with nil.
+// compares with a string; slices, maps and funcs compare only with nil. An
+// Option[T] compares like T (both nil, or both set and equal), so it can be a
+// map key; with a non-comparable T it compares only with nil (ADR-0018).
 package main
 
 type Pt struct{ X, Y int }
@@ -12,4 +14,45 @@ func positive(a, b string, r ref string, p, q Pt, xs []int) bool {
 func negative(a, b []int) bool {
 	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: invalid operation: a == b (slice can only be compared to nil)
 	return a == b
+}
+
+type OptFields struct {
+	N int
+	O Option[int]
+}
+
+type Hold struct{ s []int }
+
+type OptHold struct{ O Option[Hold] }
+
+type Node struct{ V int }
+
+func eq[T comparable](a, b T) bool { return a == b }
+
+func positiveOption(a, b Option[int], s1, s2 OptFields, p, q Option[*Node],
+	u, v Option[Unique[*Node]], m Option[string], h Option[Hold]) bool {
+	_ = map[Option[string]]int{}
+	_ = map[OptFields]int{}
+	_ = map[[2]Option[int]]bool{}
+	_ = [2]Option[int]{} == [2]Option[int]{}
+	_ = eq[Option[int]](a, b)
+	_ = eq(s1, s2)
+	_ = eq(p, q)
+	_ = h == nil
+	_ = m == nil
+	return a == b || a != b || s1 == s2 || p == q || u == v || a == 5 ||
+		5 == a || m == "x"
+}
+
+func negativeOption(h1, h2 Option[Hold], o1, o2 OptHold) {
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: h1 == h2 (Option[Hold] cannot be compared: Hold is not comparable)
+	_ = h1 == h2
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: o1 == o2 (struct containing Option[Hold] cannot be compared)
+	_ = o1 == o2
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid map key type Option[Hold]
+	_ = map[Option[Hold]]int{}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid map key type OptHold
+	_ = map[OptHold]int{}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Option[Hold] does not satisfy comparable
+	_ = eq[Option[Hold]](h1, h2)
 }

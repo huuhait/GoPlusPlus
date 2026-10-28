@@ -200,6 +200,24 @@ void Checker::collectObjects() {
       err(File->Name, diag::err_sema_decl, {"invalid package name _"});
     F.FileScope = Mem.newScope(PkgScope, File->getRange(), "file");
     for (const ast::Decl *D : File->Decls) {
+      // @Required is a field attribute only (MAC-8).
+      if (own()) {
+        ArrayRef<Attribute *> Attrs;
+        const char *What = "";
+        if (auto *GD0 = dyn_cast<GenDecl>(D)) {
+          Attrs = GD0->Attrs;
+          What = GD0->Keyword == tok::kw_type    ? "a type declaration"
+                 : GD0->Keyword == tok::kw_var   ? "a variable declaration"
+                 : GD0->Keyword == tok::kw_const ? "a constant declaration"
+                                                 : "an import";
+        } else if (auto *FD0 = dyn_cast<FuncDecl>(D)) {
+          Attrs = FD0->Attrs;
+          What = FD0->Recv ? "a method" : "a function";
+        }
+        for (const Attribute *A : Attrs)
+          if (!A->Pkg && A->Name && name(A->Name) == "Required")
+            err(A->AtLoc, diag::err_required_placement, {What});
+      }
       if (auto *GD = dyn_cast<GenDecl>(D)) {
         const ConstValue *IotaPtr = nullptr;
         (void)IotaPtr;
@@ -607,6 +625,10 @@ void Checker::varDecl(Var *O, ArrayRef<Var *> Lhs, const ast::Expr *Typ,
   if (!Init) {
     if (!Typ)
       O->Ty = invalid();
+    else
+      needZeroValue(O->Pos, O->Ty,
+                    "cannot declare " + std::string(O->Name) +
+                        " without a value");
     return;
   }
   if (Lhs.empty() || Lhs.size() == 1) {
@@ -1147,6 +1169,12 @@ void Checker::declStmt(const DeclStmt *DS) {
       } else if (!T) {
         for (Var *V : Vars)
           V->Ty = invalid();
+      } else {
+        // TYP-15, OWN-R9: `var u User` creates a zero value.
+        for (size_t K = 0; K < Vars.size(); ++K)
+          needZeroValue(VS->Names[K]->getBegin(), T,
+                        "cannot declare " + std::string(Vars[K]->Name) +
+                            " without a value");
       }
       for (size_t K = 0; K < Vars.size(); ++K) {
         recordDef(VS->Names[K], Vars[K]);
@@ -1191,6 +1219,10 @@ bool Checker::validTypeRec(Type *T, SmallVector<NamedType *, 8> &Nest,
   switch (T->getKind()) {
   case Type::Kind::Array:
     return validTypeRec(cast<ArrayType>(T)->Elem, Nest, Path);
+  case Type::Kind::Option:
+    // An Option holds its value (plus a flag): `next Option[L]` in L is a
+    // cycle, `next Option[*L]` is not (ADR-0018).
+    return validTypeRec(cast<OptionType>(T)->Elem, Nest, Path);
   case Type::Kind::Struct:
     for (Var *F : cast<StructType>(T)->Fields)
       if (!validTypeRec(F->Ty, Nest, Path))

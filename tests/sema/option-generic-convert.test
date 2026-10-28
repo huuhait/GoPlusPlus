@@ -1,0 +1,40 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// ADR-0018 point 3: a value of a type parameter T converts to Option[T], so a
+// generic "first or nothing" works. Option[T] must still be valid for the
+// type argument, and Option[int] still takes no string.
+package main
+
+func First[T Copy](xs []T) Option[T] {
+	if len(xs) == 0 {
+		return nil
+	}
+	return xs[0]
+}
+
+func Some[T any](move x T) Option[T] {
+	var o Option[T] = x
+	return o
+}
+
+func SomeRet[T ~int | ~string](move x T) Option[T] { return x }
+
+func None[T any]() Option[T] { return nil }
+
+func take[T any](move o Option[T]) {}
+
+func pass[T any](move x T) { take[T](x) }
+
+func main() {
+	_ = First[int]([]int{1})
+	_ = Some[string]("a")
+	_ = SomeRet[int](3)
+	_ = None[int]()
+	pass[int](1)
+	var n Option[int] = 5
+	_ = n
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option
+	_ = None[error]()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use "s" (untyped string constant) as Option[int] value in variable declaration
+	var bad Option[int] = "s"
+	_ = bad
+}

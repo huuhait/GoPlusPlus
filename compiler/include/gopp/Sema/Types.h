@@ -168,6 +168,7 @@ public:
     Union,
     Named,
     TypeParam,
+    Option,
   };
   Kind getKind() const { return K; }
 
@@ -194,6 +195,27 @@ public:
   explicit PointerType(Type *Elem) : Type(Kind::Pointer), Elem(Elem) {}
   static bool classof(const Type *T) { return T->getKind() == Kind::Pointer; }
   void Profile(llvm::FoldingSetNodeID &ID) const { ID.AddPointer(Elem); }
+  Type *Elem;
+};
+
+/// `Option[T]` (ADR-0018): the one "maybe" of Go++, for any T that does not
+/// already have a nil (interfaces, funcs, maps, slices, channels) and is not an
+/// Option. Its zero value is nil. A real type, uniqued like a pointer type, so
+/// two Option[T] are identical exactly when the pointers are equal; there is
+/// no NamedType behind it.
+///
+/// Layout note for P04: for a pointer kind (`*T`, `Unique[*T]`, `Shared[*T]`,
+/// `Weak[*T]`, see usesNiche) the nil Option is the pointer's own empty bit
+/// pattern, so Option[*T] has the size and layout of a C pointer; for every
+/// other T it is T plus a hidden "is set" flag. Flow typing never changes this
+/// type: a narrowed use is recorded in Info::Types as the type of T.
+class OptionType : public Type, public llvm::FoldingSetNode {
+public:
+  explicit OptionType(Type *Elem) : Type(Kind::Option), Elem(Elem) {}
+  static bool classof(const Type *T) { return T->getKind() == Kind::Option; }
+  void Profile(llvm::FoldingSetNodeID &ID) const { ID.AddPointer(Elem); }
+  /// True if nil is a pointer's empty bit pattern (no hidden flag).
+  bool usesNiche() const;
   Type *Elem;
 };
 
@@ -382,6 +404,12 @@ public:
   NamedType *DirectRhs = nullptr; // `type A B`: the defined type B
   bool Resolving = false;
   bool Pinned = false; // @Pinned (OWN-R10)
+  /// The predeclared generic `Option` (instances are OptionType, not Named).
+  bool IsOption = false;
+  /// "Has a zero value" (TYP-15, OWN-R9): 0 not known, 1 yes, 2 no. Stored
+  /// only when exact (ZeroQuery in Ownership.cpp): the answer is a function
+  /// of the type alone, so every thread that stores it stores the same value.
+  std::atomic<uint8_t> ZeroState{0};
   /// Instance: Underlying is set. Written once, with release order, after
   /// Underlying: another body thread may read it (P03.10).
   std::atomic<bool> Expanded{false};
@@ -469,6 +497,11 @@ public:
   bool IsField = false;
   bool Embedded = false;
   bool IsParam = false;
+  bool Required = false; // a struct field marked `@Required` (TYP-15)
+  /// The field of an instance whose declared type is a type parameter
+  /// (`Val T @Required`): its @Required only means "must be set", never "never
+  /// nil", since the generic code may store a nil T (ADR-0016 point 8).
+  bool RequiredSetOnly = false;
   bool Used = false;
   bool IsPackageLevel = false;
   /// Ownership (P03.07): how the variable relates to its value.
@@ -478,7 +511,8 @@ public:
     Alias,    // the `&d` range alias (RNG-1a)
     MoveParam // `move` parameter: an ordinary owned local
   } Mode = Owned;
-  bool LoopVar = false; // declared by a range/for clause (RNG-8)
+  bool LoopVar = false;       // declared by a range/for clause (RNG-8)
+  bool OptionBinding = false; // `v, ok := o.Get()` borrows from the Option
   bool Result = false;
   llvm::StringRef Tag; // struct field tag
   Var *Origin = nullptr;
@@ -637,6 +671,7 @@ public:
   PointerType *pointer(Type *Elem);
   SliceType *slice(Type *Elem);
   RefType *ref(Type *Elem);
+  OptionType *option(Type *Elem);
   ArrayType *array(Type *Elem, int64_t Len);
   MapType *map(Type *Key, Type *Elem);
   ChanType *chan(ChanType::Dir D, Type *Elem);
@@ -651,6 +686,8 @@ public:
     Type *Ty;
     bool Embedded;
     llvm::StringRef Tag;
+    bool Required = false;
+    bool RequiredSetOnly = false;
     /// No position: a struct is uniqued, so a Var in it cannot belong to one
     /// body (see the rule at TypeContext::unique in Types.cpp).
   };
@@ -710,6 +747,7 @@ private:
   Table<PointerType> Pointers;
   Table<SliceType> Slices;
   Table<RefType> Refs;
+  Table<OptionType> Options;
   Table<ArrayType> Arrays;
   Table<MapType> Maps;
   Table<ChanType> Chans;

@@ -148,6 +148,9 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     X.M = Mode::MapIndex;
     X.Ty = M->Elem;
     X.E = Ex;
+    // ADR-0016 point 9: a missing key would give zero bytes.
+    if (!checkLookupZero(Ex, M->Elem))
+      X.M = Mode::Invalid;
   };
   switch (U->getKind()) {
   case Type::Kind::Basic:
@@ -252,6 +255,8 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
         X.M = Mode::MapIndex;
         X.Ty = Elem;
         X.E = Ex;
+        if (!checkLookupZero(Ex, Elem))
+          X.M = Mode::Invalid;
         return false;
       }
       Valid = true;
@@ -368,8 +373,11 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
       return;
     }
     X.Ty = Ctx.slice(A->Elem);
-    if (own())
+    if (own()) {
       X.Ty = Ctx.ref(X.Ty);
+      // The ref points into the array itself (OWN-P10).
+      rejectPayloadAddress(Ex->X, "slicing an array held by value");
+    }
     break;
   }
   case Type::Kind::Pointer:
@@ -429,7 +437,7 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
 }
 
 int64_t Checker::indexedElts(ArrayRef<ast::Expr *> Elts, Type *Elem,
-                             int64_t Length) {
+                             int64_t Length, int64_t *NumSet) {
   std::set<int64_t> Visited;
   int64_t Index = 0, Max = 0;
   for (const ast::Expr *Ex : Elts) {
@@ -464,6 +472,8 @@ int64_t Checker::indexedElts(ArrayRef<ast::Expr *> Elts, Type *Elem,
     assignment(X, Elem, "array or slice literal");
     storeLiteralElem(X, Elem);
   }
+  if (NumSet)
+    *NumSet = static_cast<int64_t>(Visited.size());
   return Max;
 }
 
@@ -528,11 +538,42 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
   };
   if (CoreT && isa<StructType>(CoreT)) {
     auto *St = cast<StructType>(CoreT);
-    if (Ex->Elts.empty())
-      return Done();
     ArrayRef<Var *> Fields = St->Fields;
+    // TYP-15: every field without a zero value (a `@Required` field, a
+    // pointer, a nested type with none) must be set, by name or by position.
+    auto CheckRequired = [&](std::vector<bool> Set) {
+      if (!own() || !isValid(Typ))
+        return;
+      SourceLoc At = Ex->Rbrace;
+      auto Run = [this, Fields, Set, At, Base]() {
+        std::string Names;
+        unsigned N = 0;
+        for (size_t I = 0; I < Fields.size(); ++I) {
+          if (I < Set.size() && Set[I])
+            continue;
+          if (!Fields[I]->Required && hasZeroValue(Fields[I]->Ty))
+            continue;
+          Names += (N++ ? ", " : "") + std::string(Fields[I]->Name);
+        }
+        if (N)
+          err(At, diag::err_required_missing,
+              {std::string(N == 1 ? "field " : "fields ") + Names, str(Base)});
+      };
+      if (Bodies)
+        Run();
+      else
+        later(Run);
+    };
+    if (Ex->Elts.empty()) {
+      CheckRequired(std::vector<bool>(Fields.size()));
+      return Done();
+    }
     if (isa<KeyValueExpr>(Ex->Elts[0])) {
       std::vector<bool> Visited(Fields.size());
+      struct Finish {
+        std::function<void()> F;
+        ~Finish() { F(); }
+      } Fin{[&]() { CheckRequired(Visited); }};
       for (const ast::Expr *El : Ex->Elts) {
         auto *KV = dyn_cast<KeyValueExpr>(El);
         if (!KV) {
@@ -567,6 +608,9 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         }
         Var *Fld = Fields[Idx];
         recordUse(Key, Fld);
+        if (V.isNil() && isNeverNilField(Fld))
+          err(V, diag::err_required_nil_store,
+              {str(Base) + "." + std::string(Fld->Name)});
         if (!checkPointerField(V, Fld->Ty)) {
           assignment(V, Fld->Ty, "struct literal");
           storeLiteralElem(V, Fld->Ty);
@@ -596,6 +640,9 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
               {std::string(Fld->Name), str(Base)});
           continue;
         }
+        if (V.isNil() && isNeverNilField(Fld))
+          err(V, diag::err_required_nil_store,
+              {str(Base) + "." + std::string(Fld->Name)});
         if (!checkPointerField(V, Fld->Ty)) {
           assignment(V, Fld->Ty, "struct literal");
           storeLiteralElem(V, Fld->Ty);
@@ -606,14 +653,23 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
     }
   } else if (CoreT && isa<ArrayType>(CoreT)) {
     auto *A = cast<ArrayType>(CoreT);
-    int64_t N = indexedElts(Ex->Elts, A->Elem, A->Len);
+    int64_t NumSet = 0;
+    int64_t N = indexedElts(Ex->Elts, A->Elem, A->Len, &NumSet);
+    // A literal that leaves elements out makes zero values for them.
+    if (own() && NumSet < (A->Len < 0 ? N : A->Len))
+      needZeroValue(Ex->Rbrace, A->Elem, "array literal with missing elements");
     if (A->Len < 0) {
       Typ = Ctx.array(A->Elem, N);
       if (OpenArr && Ex->Type)
         recordTypeAndValue(Ex->Type, Mode::TypeExpr, Typ, nullptr);
     }
   } else if (CoreT && isa<SliceType>(CoreT)) {
-    indexedElts(Ex->Elts, cast<SliceType>(CoreT)->Elem, -1);
+    int64_t NumSet = 0;
+    int64_t N =
+        indexedElts(Ex->Elts, cast<SliceType>(CoreT)->Elem, -1, &NumSet);
+    if (own() && NumSet < N)
+      needZeroValue(Ex->Rbrace, cast<SliceType>(CoreT)->Elem,
+                    "slice literal with gaps");
   } else if (CoreT && isa<MapType>(CoreT)) {
     auto *M = cast<MapType>(CoreT);
     bool KeyIsInterface = isNonTypeParamInterface(M->Key);

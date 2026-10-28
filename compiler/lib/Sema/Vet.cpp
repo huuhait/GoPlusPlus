@@ -155,17 +155,16 @@ private:
     return dyn_cast_or_null<Var>(S->second.Obj);
   }
 
-  /// A field whose zero value fails when it is used: a pointer, interface or
-  /// func value, or a Unique/Shared/Weak handle. A nil map can be read and a
-  /// nil slice has length 0, so they do not count.
-  static bool mayBeNil(Type *T) {
-    if (!T)
+  /// A field whose zero value fails when it is used: an interface or func
+  /// value. Pointers are never nil (ADR-0018), an Option cannot be used
+  /// unchecked, a nil map can be read and a nil slice has length 0, so none of
+  /// those count; neither does a `@Required` field, which is never nil (drop
+  /// glue skips a moved-from value, ADR-0016 point 8).
+  static bool mayBeNil(const Var *F) {
+    Type *T = F->Ty;
+    if (!T || F->Required)
       return false;
-    if (auto *N = dyn_cast<NamedType>(T);
-        N && N->origin()->Ptr != PtrKind::None)
-      return true;
     switch (under(T)->getKind()) {
-    case Type::Kind::Pointer:
     case Type::Kind::Signature:
     case Type::Kind::Interface:
       return true;
@@ -225,7 +224,7 @@ private:
         Through = X->Fun;
       }
       if (Through)
-        if (const Var *V = receiverField(Through, Recv); V && mayBeNil(V->Ty))
+        if (const Var *V = receiverField(Through, Recv); V && mayBeNil(V))
           Uses.push_back({V, Through->getBegin()});
       forEachChild(N, [&](const ast::Node *C) { Self(Self, C); });
     };

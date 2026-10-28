@@ -233,6 +233,14 @@ void Checker::checkFiles(ArrayRef<const ast::File *> Files) {
   collectObjects();
   packageObjects();
   processDelayed();
+  // Ask every package-level type once, so the "has a zero value" cache that
+  // serialization writes is filled the same way whatever the bodies ask later
+  // (it is a function of the type alone, see ZeroQuery).
+  for (auto &KV : S.Pkg->PkgScope->Elems)
+    if (auto *TN = dyn_cast<TypeName>(KV.second))
+      if (auto *N = llvm::dyn_cast_or_null<NamedType>(TN->Ty);
+          N && !TN->IsAlias && N->TParams.empty())
+        hasZeroValue(N, nullptr);
   recordUntyped();
 }
 

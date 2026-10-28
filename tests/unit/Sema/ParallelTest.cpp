@@ -18,6 +18,7 @@
 #include "gopp/AST/ASTContext.h"
 #include "gopp/Parse/Parser.h"
 #include "gopp/Sema/Sema.h"
+#include "gopp/Sema/Serialize.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/FileSystem.h"
@@ -99,19 +100,22 @@ func Sum[N Number](xs []N) N {
 }
 
 type Tree[K comparable, V any] struct {
-	left, right *Tree[K, V]
+	left, right Option[*Tree[K, V]]
 	key         K
 	val         V
 }
 
 func (t *Tree[K, V]) Get(k K) bool {
-	if t == nil {
-		return false
-	}
 	if t.key == k {
 		return true
 	}
-	return t.left.Get(k) || t.right.Get(k)
+	if l := t.left; l != nil && l.Get(k) {
+		return true
+	}
+	if r := t.right; r != nil {
+		return r.Get(k)
+	}
+	return false
 }
 
 )";
@@ -138,8 +142,8 @@ func (t *Tree[K, V]) Get(k K) bool {
     S += "\td := Derived{}\n\td.Push(a)\n\t_ = d.ID() + d.Len()\n";
     S += "\t_ = Sum([]int{1, 2, a}) + int(Sum([]int64{3}))\n\t_ = "
          "Sum([]float64{1.5, 2})\n";
-    S += "\tvar tr *Tree[string, " + std::string(I % 2 ? "int" : "[]string") +
-         "]\n";
+    S += "\ttr := new_unique(Tree[string, " +
+         std::string(I % 2 ? "int" : "[]string") + "]{})\n";
     S += "\t_ = tr.Get(b)\n";
     S += "\tch := make(chan Shape, 1)\n\tch <- Sq{2}\n";
     S += "\tselect {\n\tcase v := <-ch:\n\t\t_ = v.Area()\n\tdefault:\n\t}\n";
@@ -164,6 +168,9 @@ func (t *Tree[K, V]) Get(k K) bool {
 struct Output {
   std::string Diags;
   std::string Types;
+  /// The package written by the type serializer (P03.11): it records "has
+  /// no zero value" per named type, which bodies fill lazily.
+  std::string Export;
   unsigned NumBodies = 0;
 };
 
@@ -199,6 +206,9 @@ Output run(const std::string &Src, unsigned Threads, unsigned ErrorLimit = 0,
   }
   llvm::raw_string_ostream OS(O.Types);
   dumpTypes(OS, SM, *CP, Files);
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*CP->Pkg);
+  O.Export = Stream.toBytes();
   return O;
 }
 
@@ -235,6 +245,124 @@ TEST(ParallelCheck, TheGeneratedInputHasOnlyThePlantedErrors) {
   for (char C : O.Diags)
     Lines += C == '\n';
   EXPECT_EQ(Lines, 3u + 2u + 2u + 1u + 2u) << O.Diags;
+}
+
+/// Many bodies that use types with no zero value (P03.15), Option flow typing
+/// (P03.17) and the errors of both. Function I plants an error for each of
+/// the divisors 3, 4, 5, 6, 7, 8, 9, 10, 11 that divides I, and two for 13;
+/// every body also contains the matching good code, which must stay clean.
+/// C0 .. C59 is a chain of structs, and W[W[...[*Node]]] a chain of generic
+/// instances, deeper than any depth limit of the zero-value query used to be:
+/// whichever body asks first, every link has no zero value. The instances in
+/// the signature of Keep are asked about by bodies only; their "no zero
+/// value" is in the serialized package, which must not depend on the threads
+/// either.
+constexpr unsigned ChainLen = 60, InstDepth = 45;
+std::string nestedW(unsigned Depth) {
+  std::string T = "*Node";
+  for (unsigned K = 0; K < Depth; ++K)
+    T = "W[" + T + "]";
+  return T;
+}
+std::string makeNoZeroSource(unsigned Funcs) {
+  std::string Chain;
+  for (unsigned K = 0; K + 1 < ChainLen; ++K)
+    Chain += "type C" + std::to_string(K) + " struct{ c C" +
+             std::to_string(K + 1) + " }\n";
+  Chain += "type C" + std::to_string(ChainLen - 1) + " struct{ p *Node }\n";
+  Chain += "type W[T any] struct{ v T }\n\n";
+  std::string S = Chain + R"(
+
+type User struct {
+	ID   int @Required
+	Name string
+}
+type Team struct {
+	Lead User
+	N    int
+}
+type Box[T any] struct{ V T }
+type Node struct {
+	Val  int
+	Next Option[*Node]
+}
+
+func mk(id int) User { return User{ID: id} }
+
+func Keep(b Box[Team], w W[W[Team]]) {}
+
+)";
+  for (unsigned I = 0; I < Funcs; ++I) {
+    std::string N = std::to_string(I);
+    S += "func g" + N + "(head Option[*Node], move u User, n int) int {\n";
+    S += "\tt := Team{Lead: mk(" + N + "), N: " + N + "}\n";
+    S += "\tb := Box[User]{V: u}\n\tvar bi Box[int]\n\t_, _ = b, bi\n";
+    S += "\txs := make([]User, 0, 4)\n\txs = append(xs, mk(" + N + "))\n";
+    S += "\ttotal := t.N + len(xs)\n";
+    S += "\tfor p := head; p != nil; p = p.Next {\n\t\ttotal += p.Val\n\t}\n";
+    S += "\tif head == nil {\n\t\treturn total\n\t}\n";
+    S += "\ttotal += head.Val\n";
+    S += "\tif q := head.Next; q != nil && q.Val > 0 {\n\t\ttotal += "
+         "q.Val\n\t}\n";
+    S += "\tm := map[string]User{}\n\tif w, ok := move(m[\"a\"]); ok {\n\t\t_ "
+         "= w\n\t}\n";
+    if (I % 3 == 0)
+      S += "\tvar bu User\n\t_ = bu\n";
+    if (I % 4 == 0)
+      S += "\t_ = User{Name: \"x\"}\n";
+    if (I % 5 == 0)
+      S += "\to := head.Next\n\t_ = o.Val\n";
+    if (I % 6 == 0)
+      S += "\tys := make([]User, n)\n\t_ = ys\n";
+    if (I % 7 == 0)
+      S += "\tvar pp *Node\n\t_ = pp\n";
+    if (I % 8 == 0)
+      S += "\tv := m[\"a\"]\n\t_ = v\n";
+    if (I % 9 == 0)
+      S += "\tvar bb Box[User]\n\t_ = bb\n";
+    if (I % 10 == 0)
+      S += "\tvar cc C" + std::to_string(I % ChainLen) + "\n\t_ = cc\n";
+    if (I % 11 == 0)
+      S += "\tvar ww " + nestedW(InstDepth - I % 7) + "\n\t_ = ww\n";
+    if (I % 13 == 0)
+      S += "\tvar bt Box[Team]\n\tvar wt W[W[Team]]\n\t_, _ = bt, wt\n";
+    S += "\treturn total\n}\n\n";
+  }
+  return "package nz\n\n" + S;
+}
+
+TEST(ParallelCheck, NoZeroValueTypesAndOptionFlowDoNotDependOnTheThreadCount) {
+  const unsigned Funcs = 120;
+  std::string Src = makeNoZeroSource(Funcs);
+  Output Ref = run(Src, 1);
+  ASSERT_GT(Ref.NumBodies, Funcs);
+  // The planted errors are all there, and only they (both sides: the good
+  // code in every body stays clean).
+  unsigned Want = 0;
+  for (unsigned I = 0; I < Funcs; ++I)
+    for (unsigned D : {3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 13u, 13u})
+      Want += I % D == 0;
+  unsigned Errors = 0;
+  for (size_t Pos = 0;
+       (Pos = Ref.Diags.find(": error: ", Pos)) != std::string::npos; ++Pos)
+    ++Errors;
+  EXPECT_EQ(Errors, Want) << Ref.Diags.substr(0, 3000);
+  std::string Deep = nestedW(InstDepth) + " has no zero value";
+  for (const char *Msg :
+       {"User has no zero value", "missing required field ID in User literal",
+        "o may be nil", "*Node has no zero value",
+        "Box[User] has no zero value", "may not exist", "C0 has no zero value",
+        "C50 has no zero value", Deep.c_str()})
+    EXPECT_NE(Ref.Diags.find(Msg), std::string::npos)
+        << Msg << "\n"
+        << Ref.Diags.substr(0, 3000);
+  for (unsigned Threads : {2u, 8u, 16u})
+    for (int Rep = 0; Rep < 2; ++Rep) {
+      Output O = run(Src, Threads);
+      ASSERT_EQ(O.Diags, Ref.Diags) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads, run " << Rep;
+    }
 }
 
 TEST(ParallelCheck, SmallPackagesStayOnTheCallingThread) {

@@ -1,6 +1,6 @@
 # ADR-0016: Required struct fields (`@Required`)
 
-- **Status:** accepted
+- **Status:** accepted; parts changed by ADR-0018 (point 8 for pointer, func and interface fields; point 9 and the consequences: the checks move from P04 to the P03 flow typing, task P03.18)
 - **Date:** 2026-10-27
 - **Plan reference:** P01 D1.4 rules 9 and 11 (decision change to the completed P01); spec TYP-15, OWN-R9, MAC-8, MAC-12; new task P03.15; P09.08, P13.08. Decides P01 Q9.
 
@@ -33,7 +33,7 @@ On 2026-10-27 the owner chose a built-in field attribute, `@Required`, over new 
    ```
 6. **JSON decoding returns a new value; there is no `json.Unmarshal`** (owner decision). `u, err := json.Decode[User](data)` builds a fresh `User` from the input, and a stream decoder has the generic method `dec.Decode[User]()`. A required field missing from the input is an error that names it. Go's fill-a-pointer forms (`json.Unmarshal(data, &u)`, `dec.Decode(&u)`, the `Unmarshaler` interface) are removed for every type, because they need a value to exist before decoding. `@Derive(JSON)` (P09.08) generates `MarshalJSON` and a decode function that `json.Decode` uses as its fast path (P13.08).
 7. This ADR also fixes the `make` rule of D1.4 rule 9 for C++ types: a constant length `0` is allowed there too.
-8. **Never nil** (owner decision): a `@Required` field whose type can be nil (`*T`, `Unique[T]`, `Shared[T]`, interfaces, funcs, maps, channels) is **never nil**, checked at compile time: a value stored in it (in a literal or an assignment) must be known non-nil (`new_unique(…)`, `new_shared(…)`, `&x`, `make(…)`, a map or func literal, a non-nil `@Required` field, or a variable inside an `if p != nil` check); storing `nil` or a maybe-nil value is an error; `move` out of the field is an error (use `mem.Replace(&c.Owner, v)`, which returns the old value; `v` must be known non-nil too); `&c.Owner` is an error except as the first argument of `mem.Replace`, so nil can't be written through a pointer (`p := &c.Owner; *p = nil`); `@Required` on a `Weak[T]` field is an error (it can turn nil by itself); on a slice, and on a field whose type is a type parameter (`Val T @Required`), it only means "must be set", because a generic body can't know whether its instance is nilable. Reads of such a field need no nil check. `drop` never sees it nil: a moved-from value is all zero bytes and drop glue skips it (OWN-R5), and the field alone can't be moved out. C or C++ code that writes nil into the field is undefined behavior.
+8. **Never nil** (owner decision): a `@Required` field whose type can be nil (`*T`, `Unique[T]`, `Shared[T]`, interfaces, funcs, maps, channels) is **never nil**, checked at compile time: a value stored in it (in a literal or an assignment) must be known non-nil (`new_unique(…)`, `new_shared(…)`, `&x`, `make(…)`, a map or func literal, a non-nil `@Required` field, or a variable inside an `if p != nil` check); storing `nil` or a maybe-nil value is an error; `move` out of the field is an error (use `mem.Replace(&c.Owner, v)`, which returns the old value; `v` must be known non-nil too); `&c.Owner` is an error except as the first argument of `mem.Replace`, so nil can't be written through a pointer (`p := &c.Owner; *p = nil`); `@Required` on a `Weak[T]` field is an error (it can turn nil by itself); on a slice, and on a field whose type is a type parameter (`Val T @Required`), it only means "must be set", because a generic body can't know whether its instance is nilable. Reads of such a field need no nil check. `drop` never sees it nil: a moved-from value is all zero bytes and drop glue skips it (OWN-R5), and the field alone can't be moved out. C or C++ code that writes nil into the field is undefined behavior. (Changed by ADR-0018 point 7 and amendment point 3: pointers, funcs and interfaces with methods are never nil by type, so `@Required` on such a field is an error; the never-nil meaning stays for `error`, `any`, map and channel fields. The known-non-nil list is in spec TYP-15.)
 
    ```go
    type Car struct{ Owner Unique[User] @Required }
@@ -57,7 +57,7 @@ On 2026-10-27 the owner chose a built-in field attribute, `@Required`, over new 
    v, ok2 := x.(User)
    use(v)                                     // error: v may not exist; check ok2 first
    ```
-   The check is the P04 flow-sensitive use-after-move check (P04 D4.2), with the `!ok` branch treated as a move of `u`. When `ok` is false, `u`'s storage holds zero bytes that nothing reads.
+   The check is the P04 flow-sensitive use-after-move check (P04 D4.2), with the `!ok` branch treated as a move of `u`. When `ok` is false, `u`'s storage holds zero bytes that nothing reads. (Changed by ADR-0018 amendment point 4: the check is the P03 flow typing, task P03.18: `u` is usable only where `ok` is known to be true.)
 
 ## Consequences
 
@@ -65,8 +65,8 @@ On 2026-10-27 the owner chose a built-in field attribute, `@Required`, over new 
 - The checker reuses rule 9's "no zero value" machinery; P03.15 adds the attribute, the literal check, the spreading rule and the `make(…, 0)` exception.
 - Code that relies on zero values for such a struct needs `make([]T, 0, n)` plus `append`, or a literal.
 - Generic code that writes `var zero T` can't be instantiated with these types (the same as for C++ types today).
-- "Known non-nil" uses the same P04 flow check as comma-ok (an `if p != nil` narrows `p`). A value the compiler can't prove non-nil (a function result, a package variable such as `os.Stdout`) needs an explicit `if v != nil` first.
-- Comma-ok lookups need no new analysis: P04.09's use-after-move check treats the `!ok` paths as moves.
+- "Known non-nil" uses the same P04 flow check as comma-ok (an `if p != nil` narrows `p`). (Changed by ADR-0018 amendment point 4: both are P03 flow typing, task P03.18.) A value the compiler can't prove non-nil (a function result, a package variable such as `os.Stdout`) needs an explicit `if v != nil` first.
+- Comma-ok lookups need no new analysis: P04.09's use-after-move check treats the `!ok` paths as moves. (Changed by ADR-0018 amendment point 4: P03 flow typing, task P03.18; P04.09 keeps them as GIR regression cases.)
 - Ported Go code that calls `json.Unmarshal` must switch to `json.Decode[T]`. How a type supplies custom decoding (Go's `UnmarshalJSON`) is designed in P13.08.
 
 ## Alternatives

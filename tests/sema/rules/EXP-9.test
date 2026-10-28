@@ -3,7 +3,7 @@
 // stored in a place converts to *T.
 package main
 
-func positive(r ref []int, s string, u Unique[int]) {
+func positive(r ref []int, s string, u Unique[*int]) {
 	a := []int(r)
 	b := []byte(s)
 	p := (*int)(u)

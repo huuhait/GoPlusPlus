@@ -332,6 +332,10 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     bool Ok = underIs(X.Ty, [&](Type *U) {
       if (!U)
         return false;
+      // `clear(a[:])`: slicing an array gives a ref []T (SLC-8).
+      if (own())
+        if (auto *Rf = dyn_cast<RefType>(U))
+          U = under(Rf->Elem);
       if (isa<sema::MapType>(U) || isa<SliceType>(U))
         return true;
       err(X, diag::err_sema_builtin,
@@ -341,6 +345,21 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     });
     if (!Ok)
       return false;
+    if (own()) {
+      // `clear(s)` keeps the length and zeroes the elements (ADR-0016).
+      underIs(X.Ty, [&](Type *U) {
+        if (auto *Rf = U ? dyn_cast<RefType>(U) : nullptr)
+          U = under(Rf->Elem);
+        if (auto *Sl = U ? dyn_cast<SliceType>(U) : nullptr)
+          needZeroValue(X.pos(), Sl->Elem,
+                        "clear(" + str(X.E) + ") would zero the elements",
+                        isa<ast::SliceExpr>(unparen(X.E))
+                            ? "re-slice to [:0] to drop the elements"
+                            : "use " + str(X.E) + " = " + str(X.E) +
+                                  "[:0] to drop them");
+        return true;
+      });
+    }
     if (X.E)
       checkRangeMutation(X.E, "clear");
     X.M = Mode::NoValue;
@@ -621,11 +640,21 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       return false;
     }
     SmallVector<int64_t, 2> Sizes;
+    bool ZeroLen = false;
     for (size_t K = 1; K < NArgs; ++K) {
       int64_t Sz = index(Call->Args[K], -1);
       if (Sz >= 0)
         Sizes.push_back(Sz);
+      if (K == 1 && Sz == 0)
+        ZeroLen = true;
     }
+    // TYP-15, OWN-R9: `make([]T, n)` creates n zero values; only a constant
+    // length 0 (`make([]T, 0, c)`) creates none.
+    if (own() && !ZeroLen)
+      if (auto *Sl = dyn_cast<SliceType>(C))
+        needZeroValue(Call->Args[1]->getBegin(), Sl->Elem,
+                      str(Call) + " creates zero values",
+                      "use make(" + str(Arg0) + ", 0, n) and append");
     if (Sizes.size() == 2 && Sizes[0] > Sizes[1])
       err(Call->Args[1], diag::err_sema_builtin,
           {"invalid argument: length and capacity swapped"});
@@ -735,7 +764,46 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         err(Arg, diag::err_own_pinned_move, {str(Arg), str(X.Ty)});
         return false;
       }
+      if (X.M == Mode::Variable) {
+        const ast::Expr *A0 = unparen(Arg);
+        // A swap, or any assignment that refills every place it empties in
+        // the same statement, leaves nothing empty (ADR-0016 point 5).
+        bool Refilled = false;
+        for (const ast::Expr *L : RefillLhs)
+          Refilled = Refilled || samePlace(L, A0);
+        // The second move of the same place in one statement would read the
+        // zero bytes the first one left: the moved places must be distinct.
+        if (Refilled) {
+          for (const ast::Expr *Prev : RefillMoved)
+            if (samePlace(Prev, A0)) {
+              err(Arg, diag::err_sema_expr,
+                  {str(Arg) + " is moved twice in one statement: the second "
+                              "move would read the zero bytes the first one "
+                              "left (OWN-R4)"});
+              return false;
+            }
+          RefillMoved.push_back(A0);
+        }
+        if (const Var *F = selectedField(A0);
+            F && isNeverNilField(F) && !Refilled) {
+          err(Arg, diag::err_required_move, {str(Arg)});
+          return false;
+        }
+        // ADR-0016 point 5: moving out of a non-local place of a type with
+        // no zero value would leave zero bytes that later code reads as a
+        // real value.
+        if (!Refilled && placeKind(A0) == PlaceKind::OtherPlace &&
+            lacksGoZeroValue(X.Ty)) {
+          // `*p` is replaced through p itself.
+          std::string Place = "&" + str(A0);
+          if (auto *St = dyn_cast<StarExpr>(A0))
+            Place = str(St->X);
+          err(Arg, diag::err_move_nonlocal, {str(Arg), str(X.Ty), Place});
+          return false;
+        }
+      }
     }
+    flowMoved(Arg);
     bool Comma = X.M == Mode::MapIndex;
     X.M = Comma ? Mode::CommaOk : Mode::Value;
     break;
@@ -775,7 +843,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       return false;
     Object *O = Ctx.universe()->lookupLocal(
         Id == BuiltinId::NewUnique ? "Unique" : "Shared");
-    Type *El = X.Ty;
+    Type *El = Ctx.pointer(X.Ty); // Unique[*T] (ADR-0018)
     needOwnership(X, "allocate from");
     X.M = Mode::Value;
     X.Ty = instantiateNamed(cast<NamedType>(O->Ty), ArrayRef<Type *>(&El, 1));
@@ -789,8 +857,10 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       return false;
     }
     Object *O = Ctx.universe()->lookupLocal("Weak");
+    Type *PtrEl = Ctx.pointer(El);
     X.M = Mode::Value;
-    X.Ty = instantiateNamed(cast<NamedType>(O->Ty), ArrayRef<Type *>(&El, 1));
+    X.Ty =
+        instantiateNamed(cast<NamedType>(O->Ty), ArrayRef<Type *>(&PtrEl, 1));
     break;
   }
   // --- unsafe

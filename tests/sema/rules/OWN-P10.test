@@ -1,0 +1,1054 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10 (P03.17, ADR-0018 point 4): an Option is usable as its value
+// only where the compiler knows it is set: after `o != nil` or `!o.IsNil()`,
+// after an early exit on `o == nil`, in the body (and the post statement) of
+// `for o != nil`, through `&&` / `||`, and through `v, ok := o.Get()`. Only
+// locals and parameters of the function being checked narrow; an assignment
+// ends it; paths meet where an if, a switch, a select or a loop ends. A copy
+// made where `o` is checked has the value type. Functions named positive* have
+// no error; every negative line sits next to a positive form of the check.
+package main
+
+type Node struct {
+	V    int
+	Next Option[*Node]
+}
+
+type Cell struct{ Items Option[*Node] }
+
+// Lookup has its own Get and IsNil: a checked Option of it calls them.
+type Lookup struct{ n int }
+
+func (l *Lookup) Get(k string) int { return l.n }
+func (l *Lookup) IsNil() bool      { return false }
+
+func use(n *Node) {}
+
+func src() Option[*Node] { return nil }
+
+func test() bool { return true }
+
+func positiveIf(a, b Option[*Node], n Option[int]) {
+	if a != nil {
+		use(a)
+		_ = a.V
+	}
+	if !a.IsNil() {
+		use(a)
+	}
+	if a == nil {
+	} else {
+		use(a)
+	}
+	if a.IsNil() {
+	} else {
+		use(a)
+	}
+	if a != nil {
+		if b != nil {
+			use(a)
+			use(b)
+		}
+		use(a)
+	}
+	if a != nil && b != nil {
+		use(a)
+		use(b)
+	}
+	if a != nil && a.V > 0 {
+		use(a)
+	}
+	if a == nil || a.V > 0 {
+	}
+	if !(a == nil) {
+		use(a)
+	}
+	if !(a == nil || b == nil) {
+		use(a)
+		use(b)
+	}
+	if n != nil {
+		_ = n + 1
+	}
+	if nil != a {
+		use(a)
+	}
+	// A checked Option still has IsNil and Get.
+	if a != nil {
+		_ = a.IsNil()
+		if v, ok := a.Get(); ok {
+			use(v)
+		}
+	}
+}
+
+func positiveEarlyExit(a, b, c Option[*Node]) {
+	if a == nil {
+		return
+	}
+	use(a)
+	if b == nil || c == nil {
+		return
+	}
+	use(a)
+	use(b)
+	use(c)
+}
+
+func positiveElseIf(a, b Option[*Node]) {
+	if a == nil {
+		return
+	} else if b == nil {
+		return
+	}
+	use(a)
+	use(b)
+}
+
+func positiveLoops(head Option[*Node], xs []Option[*Node]) int {
+	total := 0
+	for n := head; n != nil; n = n.Next {
+		use(n)
+	}
+	for p := src(); p != nil && p.V > 0; p = p.Next {
+		total += p.V
+	}
+	o := head
+	for o != nil {
+		use(o)
+		o = o.Next
+	}
+	for _, x := range xs {
+		if x == nil {
+			continue
+		}
+		use(x)
+	}
+	for _, x := range xs {
+		if x == nil {
+			break
+		}
+		use(x)
+	}
+	for {
+		p := src()
+		if p == nil {
+			break
+		}
+		use(p)
+	}
+	for i := 0; i < 3; i++ {
+		q := src()
+		if q.IsNil() {
+			continue
+		}
+		use(q)
+	}
+	// The only way out of this loop is the break where w is set.
+	w := src()
+	for {
+		if w != nil {
+			break
+		}
+		w = src()
+	}
+	use(w)
+	return total
+}
+
+func positiveLabels(a Option[*Node]) {
+Outer:
+	for {
+		for {
+			p := src()
+			if p == nil {
+				break Outer
+			}
+			use(p)
+			if test() {
+				continue Outer
+			}
+		}
+	}
+	_ = a
+}
+
+func positiveSwitch(a Option[*Node], k int) {
+	switch {
+	case a != nil:
+		use(a)
+	default:
+	}
+	switch {
+	case a == nil:
+		return
+	default:
+		use(a)
+	}
+	switch {
+	case a == nil:
+	case a.V > 0: // the earlier case was false
+		use(a)
+	}
+	switch k {
+	case 1:
+		if a == nil {
+			return
+		}
+		use(a)
+	}
+}
+
+func positiveSelect(ch chan Option[*Node]) {
+	select {
+	case v := <-ch:
+		if v != nil {
+			use(v)
+		}
+	}
+}
+
+func positiveShadow(a Option[*Node]) {
+	if a != nil {
+		a := new_unique(Node{})
+		use(a)
+	}
+}
+
+func positiveClosure(a Option[*Node]) {
+	f := func(p Option[*Node]) {
+		if p != nil {
+			use(p)
+		}
+	}
+	f(a)
+	if a != nil {
+		g := func() int { return 1 }
+		_ = g()
+		use(a)
+	}
+	// Inside a function literal a captured variable is copied first (CLO-9).
+	h := func() {
+		if c := a; c != nil {
+			use(c)
+		}
+	}
+	h()
+}
+
+func positiveCopyFromField(n *Node, xs []Option[*Node], c *Cell) {
+	nx := n.Next
+	if nx != nil {
+		use(nx)
+	}
+	x0 := xs[0]
+	if x0 != nil {
+		use(x0)
+	}
+	if it := c.Items; it != nil {
+		use(it)
+	}
+}
+
+// Where a is known to be set it is a *Node, and so is a copy made there; an
+// explicitly typed copy stays an Option.
+func positiveCopyOfChecked(a Option[*Node]) {
+	if a != nil {
+		p := a
+		_ = p.V
+		var q = a
+		use(q)
+	}
+	if a == nil {
+		return
+	}
+	r := a
+	_ = r.V
+	var o Option[*Node] = a
+	if o != nil {
+		use(o)
+	}
+}
+
+func positiveValueMethods(l Option[*Lookup]) int {
+	if l != nil {
+		return l.Get("k") // Lookup's Get, not Option's
+	}
+	return 0
+}
+
+func positiveGet(a Option[*Node], name Option[string], k Option[int]) {
+	if v, ok := a.Get(); ok {
+		use(v)
+	}
+	if s, ok := name.Get(); ok {
+		_ = len(s)
+	}
+	var five Option[int] = 5
+	if v, ok := five.Get(); ok {
+		_ = v + 1
+	}
+	_ = k
+}
+
+func negativeUnchecked(a Option[*Node], n *Node, xs []Option[*Node], c *Cell) {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	use(a)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	_ = a.V
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	_ = a.Next
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	a.V = 1
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	_ = *a
+	if a != nil {
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	use(a)
+	if a == nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+	if a != nil {
+	} else {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+	if n.Next != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: n.Next may be nil; check a local copy: `if v := n.Next; v != nil { ... }` (OWN-P10)
+		use(n.Next)
+	}
+	if xs[0] != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: xs[0] may be nil; check a local copy: `if v := xs[0]; v != nil { ... }` (OWN-P10)
+		use(xs[0])
+	}
+	if c.Items != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: c.Items may be nil; check a local copy: `if v := c.Items; v != nil { ... }` (OWN-P10)
+		_ = c.Items.V
+	}
+}
+
+func negativeCopyOfUnchecked(a Option[*Node]) {
+	p := a
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: p may be nil; check p != nil first (OWN-P10)
+	_ = p.V
+	if a != nil {
+		q := a
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: *Node is never nil: a pointer has no nil; use Option[*Node] for "maybe" (OWN-P9)
+		_ = q == nil
+		var o Option[*Node] = a
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		_ = o.V
+	}
+}
+
+// After an early return a copy of a is a *Node too: never nil.
+func negativeCopyIsNeverNil(a Option[*Node]) {
+	if a == nil {
+		return
+	}
+	r := a
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: *Node is never nil: a pointer has no nil; use Option[*Node] for "maybe" (OWN-P9)
+	_ = r == nil
+	var s = a
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: *Node is never nil: a pointer has no nil; use Option[*Node] for "maybe" (OWN-P9)
+	_ = s != nil
+}
+
+func negativeLogic(a, b Option[*Node]) {
+	if a != nil || b != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: b may be nil; check b != nil first (OWN-P10)
+		use(b)
+	}
+	if a == nil && b == nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	use(a)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: b may be nil; check b != nil first (OWN-P10)
+	use(b)
+	if a != nil && b == nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: b may be nil; check b != nil first (OWN-P10)
+		use(b)
+	}
+	if !(a != nil) {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+}
+
+func negativeAssign(a, b Option[*Node]) {
+	if a != nil {
+		a = nil
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+	if b != nil {
+		b = src()
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: b may be nil; check b != nil first (OWN-P10)
+		use(b)
+	}
+}
+
+func negativeLoops(head Option[*Node]) {
+	// CHECK-DAG: [[@LINE+1]]:31: error{{\[E[0-9]+\]}}: n may be nil; check n != nil first (OWN-P10)
+	for n := head; n != nil; n = n.Next {
+		n = src()
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: n may be nil; check n != nil first (OWN-P10)
+		use(n)
+	}
+	o := head
+	for o != nil {
+		o = o.Next
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		use(o)
+	}
+	for {
+		p := src()
+		if p == nil {
+			continue
+		}
+		break
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: head may be nil; check head != nil first (OWN-P10)
+	use(head)
+}
+
+func negativeLabels() {
+	var p Option[*Node]
+Outer:
+	for {
+		for {
+			p = src()
+			if p == nil {
+				break Outer
+			}
+			use(p)
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: p may be nil; check p != nil first (OWN-P10)
+	use(p)
+}
+
+func negativeSwitch(a Option[*Node], k int) {
+	switch k {
+	case 1:
+		if a == nil {
+			return
+		}
+	case 2:
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	use(a)
+	switch {
+	case a != nil:
+		use(a)
+		fallthrough
+	default:
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+}
+
+func negativeLeaks(o Option[*Node], xs []int, x any, ch chan int) {
+	switch {
+	case test():
+		if o == nil {
+			return
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	use(o)
+	for range xs {
+		if o == nil {
+			return
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	use(o)
+	switch x.(type) {
+	case int:
+		if o == nil {
+			return
+		}
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	use(o)
+	select {
+	case <-ch:
+		if o == nil {
+			return
+		}
+	default:
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	use(o)
+}
+
+func negativeShadow(a Option[*Node]) {
+	if a != nil {
+		a := src()
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+		use(a)
+	}
+}
+
+func negativeClosure(a, b Option[*Node]) {
+	if a == nil {
+		return
+	}
+	f := func() {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a local copy: `if v := a; v != nil { ... }` (OWN-P10)
+		use(a)
+	}
+	f()
+	set := func() { b = src() }
+	set()
+	if b != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: b may be nil; check a local copy: `if v := b; v != nil { ... }` (OWN-P10)
+		use(b)
+	}
+	g := func() {
+		if a != nil {
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: a may be nil; check a local copy: `if v := a; v != nil { ... }` (OWN-P10)
+			use(a)
+		}
+	}
+	g()
+}
+
+func negativeAddress(a Option[*Node]) {
+	p := &a
+	_ = p
+	if a != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a may be nil; check a local copy: `if v := a; v != nil { ... }` (OWN-P10)
+		use(a)
+	}
+}
+
+var global Option[*Node]
+
+func negativeGlobal() {
+	if global != nil {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: global may be nil; check a local copy: `if v := global; v != nil { ... }` (OWN-P10)
+		use(global)
+	}
+}
+
+func negativeGoto(a Option[*Node]) {
+	if a == nil {
+		return
+	}
+	use(a)
+	i := 0
+L:
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a may be nil; check a != nil first (OWN-P10)
+	use(a)
+	i++
+	if i < 3 {
+		goto L
+	}
+}
+
+// move(o) of an Option local leaves o nil (ADR-0018 point 11): the narrowing
+// ends right after the move expression, in every position.
+type UNode struct{ V int }
+
+func takeU(move u Unique[*UNode])      {}
+func takeB(move u Unique[*UNode]) bool { return true }
+func useU(n *UNode)                    {}
+
+func positiveMove(move o Option[Unique[*UNode]], move p Option[Unique[*UNode]]) {
+	// A move of a different variable keeps o narrowed.
+	if o != nil && p != nil {
+		takeU(move(p))
+		useU(o)
+	}
+	// Refilled, then checked again.
+	if o != nil {
+		takeU(move(o))
+		o = new_unique(UNode{})
+		if o != nil {
+			useU(o)
+		}
+	}
+	// A check inside the loop body sees each iteration afresh.
+	for i := 0; i < 3; i++ {
+		if p != nil {
+			takeU(move(p))
+		}
+	}
+	// A condition that moves o and then does not use it.
+	if o != nil && takeB(move(o)) {
+	}
+	// Option's own Get on a moved Option.
+	v, ok := move(o).Get()
+	_, _ = v, ok
+	if o != nil {
+		useU(o)
+	}
+}
+
+func negativeMove(move o Option[Unique[*UNode]], move p Option[Unique[*UNode]]) {
+	if o != nil {
+		takeU(move(o))
+		// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: move(o) may be nil;{{.*}}(OWN-P10)
+		takeU(move(o))
+	}
+	if o != nil {
+		takeU(move(o))
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		useU(o)
+	}
+	if o != nil {
+		x := move(o)
+		_ = x
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		_ = o.V
+	}
+	if o != nil && takeB(move(o)) {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		useU(o)
+	}
+	if o == nil || takeB(move(o)) {
+	} else {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		useU(o)
+	}
+	if o != nil {
+		v, ok := move(o).Get()
+		_, _ = v, ok
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+		useU(o)
+	}
+	// The next iteration finds o nil.
+	if o != nil {
+		for i := 0; i < 3; i++ {
+			// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: move(o) may be nil;{{.*}}(OWN-P10)
+			takeU(move(o))
+		}
+	}
+	if p != nil {
+		for p != nil {
+			takeU(move(p))
+		}
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: p may be nil; check p != nil first (OWN-P10)
+		useU(p)
+	}
+}
+
+func takeO(move o Option[Unique[*UNode]]) {}
+
+// A function literal that moves or assigns o may run at any time (CLO-9): o
+// is not narrowed anywhere in the function, before or after the literal.
+func negativeClosureMove(move o Option[Unique[*UNode]], move p Option[Unique[*UNode]]) {
+	if o != nil {
+		f := func() { takeO(move(o)) }
+		f()
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil;{{.*}}(OWN-P10)
+		useU(o)
+	}
+	if p != nil {
+		go func() { takeO(move(p)) }()
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: p may be nil;{{.*}}(OWN-P10)
+		useU(p)
+	}
+}
+
+func negativeClosureBefore(move o Option[Unique[*UNode]]) {
+	f := func() { takeO(move(o)) }
+	if o == nil {
+		return
+	}
+	f()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil;{{.*}}(OWN-P10)
+	_ = o.V
+}
+
+// Good side: a closure that only reads o, and a deferred move, keep working.
+func positiveClosureMove(move o Option[Unique[*UNode]], move p Option[Unique[*UNode]]) {
+	if o != nil {
+		f := func() { _ = o }
+		f()
+		useU(o)
+	}
+	if p != nil {
+		defer takeO(move(p))
+	}
+}
+
+// An `&` range variable is the element itself (RNG-1a), so it is a place and
+// does not narrow; a plain range variable is a copy and does.
+func clearAll(xs []Option[*Node]) {
+	for i := range xs {
+		xs[i] = nil
+	}
+}
+
+func negativeAlias(xs []Option[*Node], m map[string]Option[*Node]) {
+	for _, &o := range xs {
+		if o != nil {
+			clearAll(xs)
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; check a local copy:{{.*}}(OWN-P10)
+			use(o)
+		}
+	}
+	for k, &v := range m {
+		if v != nil {
+			m[k] = nil
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: v may be nil; check a local copy: `if x := v; x != nil { ... }` (OWN-P10)
+			use(v)
+		}
+	}
+}
+
+func positiveRange(xs []Option[*Node]) {
+	for _, o := range xs {
+		if o != nil {
+			use(o)
+		}
+	}
+	for _, &o := range xs {
+		if v := o; v != nil {
+			use(v)
+		}
+	}
+}
+
+// A pointer-receiver method value, or a `go` / `defer` call, on a checked
+// Option binds &o and outlives the statement.
+type Big struct{ P *Node }
+
+func (b *Big) M() int  { return b.P.V }
+func (b Big) Val() int { return b.P.V }
+
+func negativeMethodValue(move o Option[Big], move q Option[Big]) {
+	if o != nil {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; a method value or `go` / `defer` call with a pointer receiver{{.*}}(OWN-P10)
+		f := o.M
+		o = nil
+		_ = f
+	}
+	if q != nil {
+		// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: q may be nil; a method value or `go` / `defer` call with a pointer receiver{{.*}}(OWN-P10)
+		defer q.M()
+		q = nil
+	}
+}
+
+// Good side: an immediate call, a value-receiver method value, and a method
+// value on an Option[*T] (it copies the pointer).
+func positiveMethodValue(move o Option[Big], p Option[*Big]) int {
+	n := 0
+	if o != nil {
+		n += o.M()
+		f := o.Val
+		n += f()
+	}
+	if p != nil {
+		g := p.M
+		defer p.M()
+		n += g()
+	}
+	return n
+}
+
+// A plain range variable over OWNING elements borrows the element, and
+// move(xs[i]) (also inside a call) leaves the zero value there (RNG-3): it
+// does not narrow. A trivial element is a copy and still narrows.
+func takeAt(xs []Option[Unique[*UNode]], i int) Option[Unique[*UNode]] {
+	return move(xs[i])
+}
+
+func negativeBorrowedRange(xs []Option[Unique[*UNode]], m map[string]Option[Unique[*UNode]],
+	seq func(yield func(Option[Unique[*UNode]]) bool)) {
+	for i, o := range xs {
+		if o != nil {
+			x := move(xs[i])
+			_ = x
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: o may be nil; the range variable borrows its element{{.*}}clone(o){{.*}}(OWN-P10)
+			useU(o)
+		}
+	}
+	for i, o := range xs {
+		if o != nil {
+			x := takeAt(xs, i)
+			_ = x
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: o may be nil; the range variable borrows its element{{.*}}(OWN-P10)
+			useU(o)
+		}
+	}
+	for k, x := range m {
+		if x != nil {
+			y, ok := move(m[k])
+			_, _ = y, ok
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: x may be nil; the range variable borrows its element{{.*}}if v := clone(x); v != nil{{.*}}(OWN-P10)
+			useU(x)
+		}
+	}
+	for o := range seq {
+		if o != nil {
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: o may be nil; the range variable borrows its element{{.*}}(OWN-P10)
+			useU(o)
+		}
+	}
+}
+
+// The fix-its type-check: own the elements with move(xs), or copy one.
+func positiveBorrowedRange(move xs []Option[Unique[*UNode]], ys []Option[Unique[*UNode]],
+	zs []Option[*Node], ns []Option[int]) {
+	for _, o := range move(xs) {
+		if o != nil {
+			useU(o)
+		}
+	}
+	for _, o := range ys {
+		if x := clone(o); x != nil {
+			useU(x)
+		}
+	}
+	for _, o := range zs {
+		if o != nil {
+			use(o)
+		}
+	}
+	for _, n := range ns {
+		if n != nil {
+			_ = n + 1
+		}
+	}
+}
+
+// Binding an address inside the payload of a checked Option, through fields
+// and array elements held by value, keeps it past `o = nil`.
+type Inner struct{ P *Node }
+
+func (in *Inner) M() int { return in.P.V }
+
+type Outer struct {
+	In  Inner
+	Arr [1]Inner
+	Ptr *Inner
+}
+
+func negativePayloadAddress(move o Option[Outer], move p Option[Outer], move q Option[Outer]) {
+	if o != nil {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o may be nil; a method value or `go` / `defer` call with a pointer receiver keeps the address of the payload{{.*}}(OWN-P10)
+		f := o.In.M
+		o = nil
+		_ = f
+	}
+	if p != nil {
+		// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: p may be nil; an `&` expression keeps the address of the payload{{.*}}(OWN-P10)
+		a := &p.In
+		p = nil
+		_ = a
+	}
+	if q != nil {
+		// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: q may be nil; a method value or `go` / `defer` call with a pointer receiver keeps the address of the payload{{.*}}(OWN-P10)
+		defer q.Arr[0].M()
+		q = nil
+	}
+}
+
+// Good side: an immediate call, and a field reached through a pointer (other
+// storage).
+func positivePayloadAddress(move o Option[Outer]) int {
+	n := 0
+	if o != nil {
+		n += o.In.M()
+		f := o.Ptr.M
+		defer o.Ptr.M()
+		n += f()
+	}
+	return n
+}
+
+// Every other construct that keeps a reference into the payload storage
+// itself (not a buffer it owns): slicing an array held by value, an `&` range
+// variable over such an array, and the same made from a variable that borrows
+// a part of the payload (a plain range variable over owning elements, a Get
+// binding).
+type Elem struct {
+	U   Unique[*UNode]
+	Arr [1]Inner
+}
+
+type Holder struct {
+	Arr [2]Inner
+	Els [1]Elem
+	Sl  []Inner
+	Es  []Elem
+	Sub Option[Elem]
+	Ptr *Holder
+}
+
+func negativePayloadRef(move a Option[Holder], move b Option[[2]Inner], move c Option[Holder],
+	move d Option[[2]Inner], move e Option[Holder], move f Option[Holder]) int {
+	n := 0
+	if a != nil {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: a may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+		s := a.Arr[0:1:2]
+		a = nil
+		n += s[0].P.V
+	}
+	if b != nil {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: b may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+		s := b[1:]
+		b = nil
+		n += s[0].P.V
+	}
+	if c != nil {
+		// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: c may be nil; an `&` range variable over an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+		for _, &x := range c.Arr {
+			c = nil
+			n += x.P.V
+		}
+	}
+	if d != nil {
+		// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: d may be nil; an `&` range variable over an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+		for _, &x := range d {
+			n += x.P.V
+		}
+	}
+	var r ref []Inner
+	if e != nil {
+		for _, x := range e.Els {
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: e may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+			r = x.Arr[:]
+		}
+		e = nil
+		n += r[0].P.V
+	}
+	if f != nil {
+		if v, ok := f.Sub.Get(); ok {
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: f may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+			s := v.Arr[:]
+			f = nil
+			n += s[0].P.V
+		}
+	}
+	return n
+}
+
+func sumInner(s ref []Inner) int { return len(s) }
+
+// Good side: storage reached through a pointer (Option[*T], a pointer
+// field), a slice field's buffer, an element read or a trivial plain range
+// variable (copies), a copy of the payload, and an Option that is not
+// narrowed (the Get binding borrows a plain local).
+func positivePayloadRef(move a Option[Holder], p Option[*Holder], u Option[Unique[*Holder]],
+	x Option[Elem]) int {
+	n := 0
+	if a != nil {
+		n += len(a.Arr) + a.Arr[0].P.V
+		n += sumInner(a.Sl[:]) + sumInner(a.Ptr.Arr[:])
+		for _, y := range a.Arr {
+			n += y.P.V
+		}
+		for _, &y := range a.Sl {
+			n += y.P.V
+		}
+		for _, &y := range a.Ptr.Arr {
+			n += y.P.V
+		}
+		for _, y := range a.Es {
+			n += sumInner(y.Arr[:])
+		}
+	}
+	if p != nil {
+		n += sumInner(p.Arr[:])
+		for _, &y := range p.Arr {
+			n += y.P.V
+		}
+	}
+	if u != nil {
+		n += sumInner(u.Arr[:])
+	}
+	if v, ok := x.Get(); ok {
+		n += sumInner(v.Arr[:])
+	}
+	return n
+}
+
+// A borrower still points into the payload where the loop head no longer
+// knows o is set (the body assigns o): the reference is rejected there too.
+// Through a pointer, or into a slice's buffer, it is other storage.
+type Mid struct {
+	A  [2]Inner
+	S  string
+	P  *Holder
+	Sl []Inner
+}
+
+type Big2 struct {
+	M   [2]Mid
+	Sub Option[Mid]
+}
+
+func negativeBorrowLoop(move o Option[Big2], move f Option[Big2]) int {
+	if o != nil {
+		for _, m := range o.M {
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: o may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+			s := m.A[:]
+			o = nil
+			return s[0].P.V
+		}
+	}
+	if f != nil {
+		if v, ok := f.Sub.Get(); ok {
+			for i := 0; i < 1; i++ {
+				// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: f may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+				s := v.A[:]
+				f = nil
+				return s[0].P.V
+			}
+		}
+	}
+	return 0
+}
+
+// The same inside a function literal that captures the borrower (o itself
+// is never narrowed there, CLO-9).
+func negativeBorrowLit(move o Option[Big2]) int {
+	n := 0
+	if o != nil {
+		for _, m := range o.M {
+			func() {
+				// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: o may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
+				s := m.A[:]
+				n += len(s)
+			}()
+		}
+	}
+	return n
+}
+
+func positiveBorrowLoop(move o Option[Big2]) int {
+	n := 0
+	if o != nil {
+		for _, m := range o.M {
+			n += sumInner(m.P.Arr[:]) + sumInner(m.Sl[:]) + m.A[0].P.V
+			o = nil
+		}
+	}
+	return n
+}
+
+// The fix-it: a copy of a trivial payload is a plain local.
+func positivePayloadCopy(move o Option[[2]Inner]) int {
+	if o != nil {
+		h := o
+		s := h[:]
+		o = nil
+		return s[0].P.V
+	}
+	return 0
+}
+
+func main() {}

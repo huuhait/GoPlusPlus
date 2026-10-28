@@ -1,0 +1,40 @@
+// P03.15-17: `--go` keeps Go's rules. Pointers are nilable and have a zero
+// value, Unique[T] is not special, and @Required is an unknown attribute.
+// Go++ mode (the default) rejects the same code (the other side).
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp %s %t/a.go
+// RUN: %gopp check --go %t/a.go
+// RUN: cp %s %t/a.gopp
+// RUN: not %gopp check --check-error-limit=0 %t/a.gopp 2>&1 | FileCheck %s
+package main
+
+type T struct{ n int }
+
+type List struct {
+	val  int
+	next *List
+}
+
+func length(l *List) int {
+	n := 0
+	for ; l != nil; l = l.next {
+		n++
+	}
+	return n
+}
+
+func main() {
+	var p *T
+	if p == nil {
+		p = &T{}
+	}
+	var l *List
+	_ = length(l)
+	_ = p
+}
+
+// CHECK: a.gopp:29:7: error{{\[E[0-9]+\]}}: allocation is explicit in Go++
+// CHECK: a.gopp:20:8: error{{\[E[0-9]+\]}}: *List is never nil
+// CHECK: a.gopp:27:6: error{{\[E[0-9]+\]}}: cannot declare p without a value: *T has no zero value
+// CHECK: a.gopp:28:5: error{{\[E[0-9]+\]}}: *T is never nil
+// CHECK: a.gopp:31:6: error{{\[E[0-9]+\]}}: cannot declare l without a value: *List has no zero value

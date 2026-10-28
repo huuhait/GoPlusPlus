@@ -1,21 +1,32 @@
 // RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --allow-empty "--implicit-check-not=error[E" %s
-// OWN-P6, TYP-2: a Unique[T] held in a place converts to *T as a borrow;
-// ownership is needed only when the destination type owns.
+// OWN-P6, TYP-2, ADR-0018: a Unique[*T] held in a place converts to *T as a
+// borrow, an Option[Unique[*T]] place to Option[*T]; ownership is needed only
+// when the destination type owns.
 package main
 
 type Tree struct {
-	L, R Unique[Tree]
+	L, R Option[Unique[*Tree]]
 	V    int
 }
-type Holder struct{ P *Tree }
+type Holder struct{ P Option[*Tree] }
+type Owner struct{ U Unique[*Tree] }
+type Viewer struct{ P *Tree }
 
-func left(t *Tree) *Tree {
-	var p *Tree = t.L
+func left(t *Tree) Option[*Tree] {
+	var p Option[*Tree] = t.L
 	p = t.R
 	h := Holder{P: t.L}
 	_ = h
 	_ = p
 	return t.L
+}
+
+func owned(o *Owner) *Tree {
+	var p *Tree = o.U
+	v := Viewer{P: o.U}
+	_ = v
+	_ = p
+	return o.U
 }
 
 func main() {}

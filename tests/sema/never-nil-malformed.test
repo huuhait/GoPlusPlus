@@ -1,0 +1,113 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Malformed and odd input around @Required, Option and the pointer kinds: every
+// problem is reported once at its own place, nothing crashes or hangs, and
+// nothing is reported twice. (The expected list is the whole error output.)
+package main
+
+type User struct {
+	ID int @Required
+}
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid recursive type: Rec refers to itself
+type Rec struct {
+	r Rec @Required
+}
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid recursive type A
+type A struct{ b B }
+type B struct {
+	a A @Required
+}
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid recursive type: Grow refers to itself
+type Grow[T any] struct{ g Grow[Grow[T]] }
+
+type Deep[T any] struct{ v T @Required }
+
+func malformed(n int) {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use generic type Option[T any] without instantiation
+	var a Option
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: too many type arguments for type Option: have 2, want 1
+	var c Option[int, int]
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: undefined: undefinedType
+	var e Option[undefinedType]
+	// CHECK-DAG: [[@LINE+3]]:29: error{{\[E[0-9]+\]}}: cannot use Option[int] as the type argument of Option: an Option already has a nil (OWN-P9)
+	// CHECK-DAG: [[@LINE+2]]:22: error{{\[E[0-9]+\]}}: cannot use Option[Option[int]] as the type argument of Option: an Option already has a nil (OWN-P9)
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use Option[Option[Option[int]]] as the type argument of Option: an Option already has a nil (OWN-P9)
+	var f Option[Option[Option[Option[int]]]]
+	var h [0]User
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: invalid array length n
+	var i [n]User
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: invalid array length -1 (untyped int constant)
+	var j [-1]User
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare k without a value: Deep[Deep[Deep[User]]] has no zero value (field v is @Required)
+	var k Deep[Deep[Deep[User]]]
+	var l Grow[int]
+	var m Rec
+	var o A
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: make([]User) expects 2 or 3 arguments; found 1
+	_ = make([]User)
+	// CHECK-DAG: [[@LINE+2]]:19: error{{\[E[0-9]+\]}}: cannot convert "a" (untyped string constant) to type int
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: make([]User, "a") creates zero values: User has no zero value (field ID is @Required; use make([]User, 0, n) and append)
+	_ = make([]User, "a")
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot convert "b" (untyped string constant) to type int
+	_ = make([]User, 0, "b")
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: not enough arguments for clear() (expected 1, found 0)
+	clear()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid argument: cannot clear 1 (untyped int constant): argument must be (or constrained by) map or slice
+	clear(1)
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: not enough arguments for move() (expected 1, found 0)
+	_ = move()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: undefined: undefinedFn
+	_ = undefinedFn[User]()
+	_ = Option[User](nil)
+	_ = Option[*int](nil)
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot convert nil to type Unique[*int]
+	_ = Unique[*int](nil)
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: undefined: undefinedValue
+	_ = User{ID: undefinedValue}
+	// CHECK-DAG: [[@LINE+2]]:11: error{{\[E[0-9]+\]}}: unknown field Nope in struct literal of type User
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: missing required field ID in User literal (TYP-15)
+	_ = User{Nope: 1}
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: too many values in struct literal of type User
+	_ = User{1, 2, 3}
+	// CHECK-DAG: [[@LINE+3]]:14: error{{\[E[0-9]+\]}}: invalid argument: index 3 out of bounds [0:2]
+	// CHECK-DAG: [[@LINE+2]]:18: error{{\[E[0-9]+\]}}: missing required field ID in User literal (TYP-15)
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: array literal with missing elements: User has no zero value (field ID is @Required)
+	_ = [2]User{3: {}}
+	// CHECK-DAG: [[@LINE+3]]:13: error{{\[E[0-9]+\]}}: invalid argument: index -1 (constant of type int) must not be negative
+	// CHECK-DAG: [[@LINE+2]]:18: error{{\[E[0-9]+\]}}: missing required field ID in User literal (TYP-15)
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: slice literal with gaps: User has no zero value (field ID is @Required)
+	_ = []User{-1: {}}
+	// CHECK-DAG: [[@LINE+1]]:28: error{{\[E[0-9]+\]}}: missing required field ID in User literal (TYP-15)
+	_ = map[string]User{"a": {}}
+	_ = h
+	_, _, _, _, _, _, _, _, _, _, _ = a, c, e, f, i, j, k, l, m, o, n
+}
+
+func flowMalformed(head Option[*A], undefinedHead int) {
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: undefined: undef
+	for x := undef; x != nil; x = x.next {
+		_ = x
+	}
+	// CHECK-DAG: [[@LINE+1]]:33: error{{\[E[0-9]+\]}}: n.zzz undefined (type *A has no field or method zzz)
+	for n := head; n != nil; n = n.zzz {
+	}
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: undefined: undef
+	if head != nil && undef != nil {
+		_ = head
+	}
+	select {}
+L:
+	goto L
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: label M not declared
+	goto M
+	for {
+		// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: label Q not declared
+		break Q
+	}
+	// CHECK-DAG: [[@LINE+2]]:14: error{{\[E[0-9]+\]}}: head (variable of type *A) is not an interface
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: declared and not used: x
+	switch x := head.(type) {
+	}
+}

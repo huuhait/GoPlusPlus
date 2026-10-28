@@ -103,6 +103,9 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
     if (!T || !isValid(T))
       return;
     X.M = Mode::Variable;
+    // Flow typing (ADR-0018): an Option known to be set has the type of its
+    // value here. The side table records this narrowed type for the use.
+    T = narrowedType(Id, V, T);
     break;
   }
   case Object::Kind::Func:
@@ -405,6 +408,8 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
   SmallVector<const ast::Ident *, 8> Idents;
   SmallVector<const ast::Expr *, 8> EmbExprs;
   llvm::StringSet<> Seen;
+  // The `@Required` attribute of the field being added (TYP-15), if any.
+  const Attribute *ReqAttr = nullptr;
   auto Add = [&](const ast::Ident *Id, StringRef N, Type *T, bool Emb,
                  StringRef Tag, SourceLoc Pos, const ast::Expr *EmbE) {
     if (N != "_" && !Seen.insert(N).second) {
@@ -417,6 +422,16 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
     FS.Ty = T;
     FS.Embedded = Emb;
     FS.Tag = Tag;
+    FS.Required = ReqAttr && own();
+    if (ReqAttr && own() && isValid(T)) {
+      // ADR-0018 point 7: a pointer is never nil, so @Required says nothing.
+      SourceLoc AtPos = ReqAttr->AtLoc;
+      std::string FName(N);
+      later([this, AtPos, FName, T]() {
+        if (isPointerKind(T))
+          err(AtPos, diag::err_required_pointer, {FName, str(T)});
+      });
+    }
     Fields.push_back(FS);
     Idents.push_back(Id);
     EmbExprs.push_back(EmbE);
@@ -432,6 +447,13 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
           err(F->Tag, diag::err_sema_typexpr, {"invalid struct tag"});
       }
       StringRef TagRef = Mem.copy(Tag);
+      ReqAttr = nullptr;
+      for (const Attribute *A : F->Attrs)
+        if (!A->Pkg && A->Name && name(A->Name) == "Required") {
+          if (own() && A->HasArgs)
+            err(A->AtLoc, diag::err_required_args);
+          ReqAttr = A;
+        }
       if (F->Names.empty()) {
         // Embedded field: T, *T, pkg.T or T[args].
         const ast::Expr *TE = F->Type;
@@ -745,6 +767,29 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     recordInstance(Ix, TArgs, Bad);
     return Bad;
   }
+  if (N->IsOption) {
+    // Option[T] (ADR-0018) is a type of its own, not an instance of a struct.
+    Type *Arg = TArgs[0];
+    OptionType *Opt = Ctx.option(Arg);
+    recordInstance(Ix, TArgs, Opt);
+    if (isValid(Arg)) {
+      SourceLoc ArgPos = Ix->Indices[0]->getBegin();
+      later([this, Arg, ArgPos]() {
+        if (const char *Why = badOptionArg(Arg))
+          err(ArgPos, diag::err_option_bad_arg, {str(Arg), Why});
+      });
+    }
+    return Opt;
+  }
+  if (N->Ptr != PtrKind::None && own() && isValid(TArgs[0]) &&
+      !isa<PointerType>(TArgs[0])) {
+    // Unique[T] without the `*` (ADR-0018 point 2).
+    const ast::Expr *A = Ix->Indices[0];
+    Err Er = err(A, diag::err_ptr_arg_not_pointer,
+                 {std::string(N->Obj->Name), str(TArgs[0])});
+    Er.fixit(SourceRange(A->getBegin(), A->getBegin()), "*");
+    return invalid();
+  }
   NamedType *Inst = instantiateNamed(N, TArgs);
   recordInstance(Ix, TArgs, Inst);
   SmallVector<SourceLoc, 4> Locs;
@@ -752,14 +797,114 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     Locs.push_back(A->getBegin());
   SmallVector<TypeParamType *, 4> TPs(N->TParams.begin(), N->TParams.end());
   SourceLoc Pos = Ix->getBegin();
-  later([this, Pos, TPs, TArgs, Locs]() {
+  later([this, Pos, TPs, TArgs, Locs, Inst]() {
     std::string Why;
     int Bad = verify(Pos, TPs, TArgs, &Why);
     if (Bad >= 0)
       err(static_cast<size_t>(Bad) < Locs.size() ? Locs[Bad] : Pos,
           diag::err_sema_typexpr, {Why});
+    else
+      checkOptionArgs(Pos, Inst, TArgs);
   });
   return Inst;
+}
+
+const char *Checker::badOptionArg(Type *Arg) {
+  if (!own() || !Arg || isTypeParam(Arg) || !isValid(under(Arg)))
+    return nullptr;
+  if (isa<OptionType>(under(Arg)))
+    return "an Option already has a nil";
+  if (hasNil(Arg))
+    return "it already has a nil";
+  return nullptr;
+}
+
+namespace {
+/// The first Option inside T (an instance) whose value type is one of Args
+/// and cannot be an Option's value: Option[T] of the generic declaration
+/// with T = error, say. The Options written with such a type are reported
+/// where they are written.
+struct BadOptionWalk {
+  BadOptionWalk(Checker &C, ArrayRef<Type *> Args) : C(C), Args(Args) {}
+  Checker &C;
+  ArrayRef<Type *> Args;
+  llvm::SmallPtrSet<const Type *, 16> Seen;
+  unsigned Depth = 0;
+
+  OptionType *walk(Type *T) {
+    if (!T || Depth > Checker::MaxRecDepth || !Seen.insert(T).second)
+      return nullptr;
+    Checker::DepthGuard DG(Depth);
+    switch (T->getKind()) {
+    case Type::Kind::Option: {
+      auto *O = cast<OptionType>(T);
+      for (Type *A : Args)
+        if (C.identical(A, O->Elem) && C.badOptionArg(O->Elem))
+          return O;
+      return walk(O->Elem);
+    }
+    case Type::Kind::Pointer:
+      return walk(cast<PointerType>(T)->Elem);
+    case Type::Kind::Slice:
+      return walk(cast<SliceType>(T)->Elem);
+    case Type::Kind::Ref:
+      return walk(cast<RefType>(T)->Elem);
+    case Type::Kind::Array:
+      return walk(cast<sema::ArrayType>(T)->Elem);
+    case Type::Kind::Chan:
+      return walk(cast<sema::ChanType>(T)->Elem);
+    case Type::Kind::Map: {
+      auto *M = cast<sema::MapType>(T);
+      if (OptionType *O = walk(M->Key))
+        return O;
+      return walk(M->Elem);
+    }
+    case Type::Kind::Struct:
+      for (Var *F : cast<StructType>(T)->Fields)
+        if (OptionType *O = walk(F->Ty))
+          return O;
+      return nullptr;
+    case Type::Kind::Tuple:
+      for (Type *E : cast<TupleType>(T)->Elems)
+        if (OptionType *O = walk(E))
+          return O;
+      return nullptr;
+    case Type::Kind::Signature: {
+      auto *S = cast<SignatureType>(T);
+      if (OptionType *O = walk(S->Params))
+        return O;
+      return walk(S->Results);
+    }
+    case Type::Kind::Interface:
+      for (Func *M : cast<InterfaceType>(T)->Methods)
+        if (OptionType *O = walk(M->Ty))
+          return O;
+      return nullptr;
+    case Type::Kind::Named: {
+      // Only an instance holds the arguments; under() expands it.
+      auto *N = cast<NamedType>(T);
+      if (!N->Orig || N->TArgs.empty())
+        return nullptr;
+      return walk(C.under(N));
+    }
+    default:
+      return nullptr;
+    }
+  }
+};
+} // namespace
+
+void Checker::checkOptionArgs(SourceLoc Pos, Type *Inst,
+                              ArrayRef<Type *> TArgs) {
+  // OWN-P9: in generic code an Option's value type is checked per instance.
+  // Only arguments that cannot be an Option's value can make one invalid.
+  if (!own() || llvm::none_of(TArgs, [&](Type *A) { return badOptionArg(A); }))
+    return;
+  BadOptionWalk W(*this, TArgs);
+  if (OptionType *O = W.walk(Inst))
+    err(Pos, diag::err_option_bad_arg,
+        {str(O->Elem),
+         std::string(badOptionArg(O->Elem)) + " (in " + str(Inst) + ")"});
 }
 
 //===----------------------------------------------------------------------===//

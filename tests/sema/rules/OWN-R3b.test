@@ -24,9 +24,9 @@ func positive(s string, d D) int {
 	return d.Buf.Len() + len(s)
 }
 
-func negative(d D) {
+func negative(d D, p *Buf) {
 	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to d: it is a borrowed variable and read-only at the top level (OWN-R3b)
-	d = D{}
+	d = D{Ptr: p}
 	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to d.N: it is a borrowed variable and read-only at the top level (OWN-R3b)
 	d.N = 1
 	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of d: it is a borrowed variable (OWN-R3b)

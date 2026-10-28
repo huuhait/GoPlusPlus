@@ -1,0 +1,60 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule ERR-3 and ADR-0018 point 10: a failing return in a `!` function writes
+// nil for a result with no zero value; a function without `!` cannot return nil
+// for a never-nil result. Both forms are next to each other.
+package main
+
+type T struct{ n int }
+
+type MyErr struct{}
+
+func (MyErr) Error() string { return "e" }
+
+type User struct {
+	ID int @Required
+}
+
+func get!() *T { return nil, MyErr{} }
+
+func other(t *T) (*T, error) { return t, nil }
+
+func fresh() User { return User{ID: 1} }
+
+// A `!` function writes nil for a result with no zero value on failure.
+func okPtr!(t *T) *T            { return nil, MyErr{} }
+func okUser!() User              { return nil, MyErr{} }
+func okUserValue!() User         { return fresh() }
+func okPtrValue!(t *T) *T        { return t }
+func okInt!() int                { return 0, MyErr{} }
+func okOption!() Option[*T]      { return nil, MyErr{} }
+func okPlainReturn(t *T) (Option[*T], error) { return nil, MyErr{} }
+func okGoStyleNilErr(t *T) (*T, error) { return t, nil }
+func okGoStyleErrOnly() (int, error) { return 0, MyErr{} }
+
+func notFailing() (*T, error) {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return nil for the *T result of a function not declared with !: declare it with ! or return Option[*T]
+	return nil, MyErr{}
+}
+
+func notFailingUser() (User, error) {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return nil for the User result of a function not declared with !: declare it with ! or return Option[User]
+	return nil, MyErr{}
+}
+
+func notFailingTwo(t *T) (*T, User, error) {
+	// CHECK-DAG: [[@LINE+2]]:9: error{{\[E[0-9]+\]}}: cannot return nil for the *T result of a function not declared with !: declare it with ! or return Option[*T]
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot return nil for the User result of a function not declared with !: declare it with ! or return Option[User]
+	return nil, nil, MyErr{}
+}
+
+func inClosure() {
+	f := func() (*T, error) {
+		// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot return nil for the *T result of a function not declared with !: declare it with ! or return Option[*T]
+		return nil, MyErr{}
+	}
+	_ = f
+}
+
+func fromCall!() *T {
+	return get!()
+}

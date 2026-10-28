@@ -6,7 +6,7 @@ package main
 type Set struct{}
 
 func (s Set) Map[U any](f func(int) U) U { return f(0) }
-func (s Set) Zero[U any]() U          { var z U; return z }
+func (s Set) Zero[U any]() Option[U]  { var z Option[U]; return z }
 
 func positive(s Set) {
 	_ = s.Map[string](func(int) string { return "" })

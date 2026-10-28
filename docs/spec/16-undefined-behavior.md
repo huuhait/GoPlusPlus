@@ -23,7 +23,7 @@ Syntax: none.
 | shift by ≥ bit width | `0`; `-1` for `>>` of a negative signed value |
 | integer division by zero | panics |
 | out-of-range float to int conversion | saturates; the exact value is implementation-defined, never UB |
-| bounds and nil dereference | panic (checks are on) |
+| bounds and nil dereference | panic (checks are on); pointers, funcs and interfaces with methods (all but `error`) are never nil, so a nil func call or a nil method call cannot happen in safe code (a method call on a nil `error` panics, as in Go; `any` has no methods) |
 | use after move | compile error, not UB |
 
 ## 16.2 Undefined behavior
@@ -34,7 +34,7 @@ Syntax: none.
 - a ref into a `string` after the string was reassigned, appended to or dropped;
 - a ref into a map key after the map grew;
 - a pointer to a `Unique[*T]` target after the `Unique` was moved from, reassigned or dropped;
-- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a `ref` into a local ([OWN-V7](04-ownership.md#44-refs-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. A ref or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Refs may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-refs-d16)); less obvious cases, such as a ref that comes out of a call, are **not** caught.
+- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a `ref` into a local ([OWN-V7](04-ownership.md#44-refs-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. Use after move includes a use through a pointer or ref taken before the move (`p := &x.In; take(move(x)); p.P.V`) when the pointer was taken in the same function; when it comes from elsewhere it is UB-8. A ref or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Refs may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-refs-d16)); less obvious cases, such as a ref that comes out of a call, are **not** caught.
 
 ```go
 func trimmed(s string) ref string { return s[1:] }   // ok: a ref into a borrowed parameter
@@ -94,14 +94,14 @@ func (s *Server) fail(err error) {
 }
 s.fail(s.err)
 
-func run(reg *Registry, cb func()) { reg.cb = nil; cb() }   // same with run(reg, reg.cb)
+func run(reg *Registry, cb func()) { reg.cb = noop; cb() }  // same with run(reg, reg.cb): the old func is released
 ```
 
 Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 
 **UB-2c.** *Writes to a borrowed `defer` argument through an alias the compiler cannot see* change what the deferred call reads, where Go would have copied the value ([CLO-7](11-closures.md)).
 
-**UB-2d.** *Interface reassigned while a binding borrows its box.* After `s, ok := v.(string)` or `switch x := v.(type)`, the binding `s`/`x` borrows the box ([TYP-9](03-types.md)). If `v` is reassigned or cleared through a path the compiler cannot see (another goroutine is a race, UB-3; an alias `*p = nil` where `p` points to `v`; a callee that sets the field `v` lives in) while `s` is still used, the box may be freed and `s` dangles. A visible assignment to `v` while `s` is used afterwards is a compile error.
+**UB-2d.** *Interface reassigned while a binding borrows its box.* After `s, ok := v.(string)` or `switch x := v.(type)`, the binding `s`/`x` borrows the box ([TYP-9](03-types.md)). If `v` is reassigned or cleared through a path the compiler cannot see (another goroutine is a race, UB-3; an alias `*p = w` where `p` points to `v`; a callee that sets the field `v` lives in) while `s` is still used, the box may be freed and `s` dangles. A visible assignment to `v` while `s` is used afterwards is a compile error.
 
 **UB-2e.** *Ranged slice or string reallocated where the compiler cannot see it.* `range` takes `(ptr, len)` once ([RNG-3a](08-slices-and-range.md)). If a call in the body appends to, reassigns or re-slices the ranged slice (`for _, v := range w.queue { w.push(10) }`), the old buffer is freed and the loop reads freed memory, even for a slice of `int`. The same holds for an owned string that a call in the body grows (`+=`) or reassigns. Go keeps the old array alive, so the same code is safe there. Not caught (visible cases are compile errors, [RNG-3](08-slices-and-range.md)).
 
@@ -117,13 +117,13 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 **UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory, or converting a nil `unsafe.Pointer` to a `*T` (pointers are never nil; convert to `Option[*T]` instead).
 
-**UB-8.** *Pinned values.* Using a pointer or ref into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case.
+**UB-8.** *Pinned values.* Using a pointer or ref into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case. A use through a pointer taken in the same function is a compile error ([OWN-R8](04-ownership.md#42-ownership-rules-d14), P04.09), so only a pointer that comes from elsewhere (a call, a field) is UB.
 
 **UB-9.** *C interop lifetimes.*
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
 - Using the result of `ffi.String(p)` (a ref over C memory) after the C memory is freed.
 - Passing a `ref string` temporary copy to a callee that keeps the pointer (FOR-6).
-- C or C++ code that writes NULL into a Go++ pointer (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, all never nil) or a never-nil `@Required` field, or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code dereferences pointers with no nil check (ADR-0018). A C pointer that may be NULL imports as `Option[*T]`, so this needs a lie in a header (`_Nonnull` on a pointer that can be NULL) or a write through memory.
+- C or C++ code that writes NULL into a Go++ pointer (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, all never nil), a func or an interface with methods other than `error` (never nil too), or a never-nil `@Required` field, or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code dereferences pointers and calls funcs and interface methods with no nil check (ADR-0018); this, and `unsafe` (UB-7), are the only ways a nil one can reach safe code. A C pointer that may be NULL imports as `Option[*T]`, so this needs a lie in a header (`_Nonnull` on a pointer that can be NULL) or a write through memory.
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
@@ -166,7 +166,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5) | | | yes | |
 | C keeps a pointer (UB-9) | | known list | maybe | |
-| C writes NULL into a Go++ pointer or a never-nil `@Required` field (UB-9) | | | no (a NULL read crashes like any NULL dereference) | |
+| C writes NULL into a Go++ pointer, a func, an interface with methods or a never-nil `@Required` field (UB-9) | | | no (a NULL read crashes like any NULL dereference) | |
 
 ## 16.5 Rationale
 

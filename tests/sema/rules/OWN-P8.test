@@ -4,9 +4,9 @@
 package main
 
 type H struct {
-	un Unique[int]
-	sh Shared[int]
-	wk Weak[int]
+	un Unique[*int]
+	sh Shared[*int]
+	wk Weak[*int]
 }
 
 func positive(h *H) {

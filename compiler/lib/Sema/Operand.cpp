@@ -354,6 +354,13 @@ Type *Checker::implicitTypeAndValue(Operand &X, Type *Target,
     return Fail();
   }
   Type *U = under(Target);
+  if (auto *Op = dyn_cast<OptionType>(U)) {
+    // `var n Option[int] = 5`: the constant takes the type of T; the
+    // assignment then converts T to Option[T] (ADR-0018 point 3).
+    if (!own())
+      return Fail();
+    return implicitTypeAndValue(X, Op->Elem, NewVal, Code);
+  }
   if (auto *Rf = dyn_cast<RefType>(U)) {
     // A string constant is a ref string; a nil/untyped slice cannot be.
     if (isString(Rf->Elem) && X.Ty == typ(BasicKind::UntypedString))
@@ -438,6 +445,43 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
   if (identical(Vu, Tu) && (!hasName(V) || !hasName(T)) && !Vp && !Tp)
     return true;
 
+  // Go++ (ADR-0018): T converts to Option[T] (also a Unique/Shared place to
+  // Option[*T], a borrow); an Option[Unique[*T]] place borrows as Option[*T];
+  // an Option converts to an interface through its T (nil stays nil).
+  // A type parameter T converts to Option[T] (a generic "first or nothing");
+  // whether Option[T] is valid for T is checked at the instantiation.
+  if (own() && Vp && !Tp)
+    if (auto *To = dyn_cast<OptionType>(Tu))
+      if (identical(V, To->Elem))
+        return true;
+  if (own() && !Vp && !Tp) {
+    if (auto *To = dyn_cast<OptionType>(Tu)) {
+      if (auto *From = dyn_cast<OptionType>(Vu)) {
+        PtrKind K;
+        Type *Elem;
+        if (hasPtrKind(From->Elem, &K, &Elem) && K != PtrKind::Weak &&
+            isa<PointerType>(To->Elem) &&
+            identical(Elem, cast<PointerType>(To->Elem)->Elem)) {
+          if (X.E && placeKind(X.E) == PlaceKind::Temp) {
+            if (Cause)
+              *Cause = "cannot borrow a temporary " + str(V) +
+                       ": the target would be freed immediately (OWN-P6)";
+            return false;
+          }
+          return true;
+        }
+      } else if (assignableTo(X, To->Elem, Cause)) {
+        return true;
+      }
+    }
+    if (auto *From = dyn_cast<OptionType>(Vu))
+      if (isa<InterfaceType>(Tu)) {
+        if (implements(X.pos(), From->Elem, T, false, Cause))
+          return true;
+        return false;
+      }
+  }
+
   if ((isa<InterfaceType>(Tu) && !Tp) || isInterfacePtr(Tu)) {
     if (implements(X.pos(), V, T, false, Cause))
       return true;
@@ -473,7 +517,8 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
     if (auto *Vr = dyn_cast<RefType>(Vu))
       if (!Tp && identical(Vr->Elem, T))
         return true;
-  // Go++ (OWN-P6, TYP-2): Unique[T] / Shared[T] to *T, borrowed from a place.
+  // Go++ (OWN-P6, TYP-2): Unique[*T] / Shared[*T] to *T, borrowed from a
+  // place.
   if (own())
     if (auto *Tptr = dyn_cast<PointerType>(Tu)) {
       PtrKind K;
@@ -489,6 +534,15 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
         return true;
       }
     }
+  if (own() && !Tp && !Vp && X.E)
+    if (auto *From = dyn_cast<OptionType>(Vu))
+      if (Cause && !isa<InterfaceType>(Tu) &&
+          (identical(From->Elem, T) ||
+           (isa<PointerType>(Tu) &&
+            hasPtrKind(From->Elem, nullptr, nullptr)))) {
+        *Cause = str(X.E) + " may be nil; " + nilCheckHint(X.E);
+        return false;
+      }
   if (own() && isa<RefType>(Vu) && !isa<RefType>(Tu) && !Tp && !Vp &&
       identical(cast<RefType>(Vu)->Elem, Tu) && Cause)
     *Cause = "a ref is not an owning value: write " + str(T) + "(" + str(X.E) +

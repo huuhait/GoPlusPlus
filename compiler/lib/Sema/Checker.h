@@ -322,6 +322,8 @@ public:
   bool comparableType(Type *T, bool Dynamic, SmallVector<const Type *, 4> *Seen,
                       std::string *Cause = nullptr);
   bool hasNil(Type *T);
+  /// `*T`, a type with underlying `*T`, or Unique/Shared/Weak (ADR-0018).
+  bool isPointerKind(Type *T);
   Type *under(Type *T);    // expands instances
   Type *coreType(Type *T); // nil if none
   bool isBasic(Type *T, unsigned Info);
@@ -507,7 +509,8 @@ public:
   void compositeLit(Operand &X, const CompositeLit *E, Type *Hint);
   /// A value stored in a composite literal (OWN-R3a, OWN-V6).
   void storeLiteralElem(Operand &X, Type *T);
-  int64_t indexedElts(ArrayRef<ast::Expr *> Elts, Type *Elem, int64_t Length);
+  int64_t indexedElts(ArrayRef<ast::Expr *> Elts, Type *Elem, int64_t Length,
+                      int64_t *NumSet = nullptr);
 
   // --- calls (Call.cpp)
   ExprKind callExpr(Operand &X, const CallExpr *E);
@@ -542,7 +545,12 @@ public:
   std::string tupleString(TupleType *T, bool Variadic);
   std::string typesSummary(ArrayRef<Type *> List, bool Variadic, bool HasDots);
   std::string lookupError(Type *T, StringRef Sel, Object *Alt);
-  Func *syntheticMethod(StringRef Name, Type *Result, SourceLoc Pos);
+  Func *syntheticMethod(StringRef Name, ArrayRef<Type *> Results,
+                        SourceLoc Pos);
+  /// Whether a value of type T (the value of a checked Option) has a field
+  /// or method Sel, through the auto-dereference of Unique / Shared (OWN-P5);
+  /// a Weak has Lock only.
+  bool valueHasMember(Type *T, StringRef Sel);
   void renameTParams(ArrayRef<TypeParamType *> TPs, TupleType *Params,
                      SmallVector<TypeParamType *, 4> &NewTPs,
                      TupleType **NewParams);
@@ -738,8 +746,10 @@ public:
   void needOwnership(const Operand &X, const char *What, Type *Dst = nullptr);
   bool isTempOrSharedTempPart(const ast::Expr *Ex);
   bool isOwnedTempPart(const ast::Expr *Base);
-  /// Lhs is written; Repoint: a borrowed string / []T is re-pointed (PAR-2).
-  void checkWrite(const ast::Expr *Lhs, bool Repoint = false);
+  /// Lhs is written; Repoint: a borrowed string / []T is re-pointed (PAR-2);
+  /// Redeclare: by a `:=` that reuses the variable (the fix is a new name).
+  void checkWrite(const ast::Expr *Lhs, bool Repoint = false,
+                  bool Redeclare = false);
   void checkAddressOf(const UnaryExpr *E, Operand &X);
   void checkPtrRecvCall(const SelectorExpr *Sel, Func *M);
   void checkSigOwnership(const ast::FuncType *FT, SignatureType *Sig,
@@ -755,6 +765,19 @@ public:
   /// and returns true.
   bool checkPointerField(Operand &X, Type *FieldTy);
   bool isPinned(Type *T);
+  /// Zero values (TYP-15, OWN-R9): false for a pointer kind, a struct with a
+  /// `@Required` field or a C++ type without a default constructor, and for
+  /// anything that contains one; for a type parameter, false unless every
+  /// term of its constraint has one (GEN-5). Why gets the reason. True when
+  /// not in Go++ mode.
+  bool hasZeroValue(Type *T, std::string *Why = nullptr);
+  /// Like !hasZeroValue, but a foreign (C++) type counts as having one: the
+  /// types the move rule of ADR-0016 point 5 is about.
+  bool lacksGoZeroValue(Type *T);
+  /// Reports "What: T has no zero value (why[; Hint])" at Pos unless T has
+  /// one.
+  void needZeroValue(SourceLoc Pos, Type *T, std::string What,
+                     std::string Hint = "");
   /// The ranges being checked (RNG-3): the range expression and the key
   /// variable, and whether the body wrote the key already.
   struct RangeFrame {
@@ -766,6 +789,143 @@ public:
   SmallVector<RangeFrame, 4> RangeStack;
   /// RNG-3: What is "assign to", "append to", ...; Lhs the place written.
   void checkRangeMutation(const ast::Expr *Lhs, const char *What);
+
+  /// A struct field marked `@Required` whose type can be nil (interface,
+  /// func, map, channel): never nil, checked at compile time (ADR-0016
+  /// point 8). Slices and type parameters only mean "must be set".
+  bool isNeverNilField(const Var *F);
+  /// The selected field of a selector expression Ex, or null.
+  const Var *selectedField(const ast::Expr *Ex);
+  /// Lookups that can fail (ADR-0016 point 9): `m[k]` and `<-ch` of a type
+  /// with no zero value are allowed only where the caller marked them before
+  /// checking them (a comma-ok form, the target of `m[k] = v`, the argument
+  /// of clone / move in a comma-ok form, a bare `move(m[k])` or `<-ch`
+  /// statement); everything else is an error, reported where the lookup is
+  /// checked.
+  llvm::SmallPtrSet<const ast::Expr *, 8> ZeroLookupOk;
+  /// MoveOnly: only a `move(m[k])` call is marked (a bare statement).
+  void markLookupOk(const ast::Expr *Ex, bool MoveOnly = false);
+  /// False (after the error) if the lookup Ex of a value of type Elem is
+  /// not allowed here.
+  bool checkLookupZero(const ast::Expr *Ex, Type *Elem);
+  /// The places written by the assignment being checked: a `move` out of one
+  /// of them is refilled in the same statement (a swap, ADR-0016 point 5).
+  SmallVector<const ast::Expr *, 4> RefillLhs;
+  /// The places moved so far by the statement (each at most once).
+  SmallVector<const ast::Expr *, 4> RefillMoved;
+  /// The first argument of the mem.Replace call being checked (the `&place`
+  /// that may name a never-nil field), and its second argument when it is the
+  /// literal nil.
+  const ast::Expr *ReplaceArg = nullptr, *ReplaceNil = nullptr;
+  /// True if Fun is `mem.Replace` (package path "mem"; the package is P05's,
+  /// a module may provide it until then).
+  bool isMemReplace(const ast::Expr *Fun);
+  /// Why Arg cannot be the value type of an Option (it has a nil already, or
+  /// is an Option), or null (OWN-P9).
+  const char *badOptionArg(Type *Arg);
+  /// OWN-P9 per instance: an instance Inst of a generic type or function with
+  /// the type arguments TArgs must not hold an Option of one of them that
+  /// cannot be (Option[T] with T = error). Reported at Pos.
+  void checkOptionArgs(SourceLoc Pos, Type *Inst, ArrayRef<Type *> TArgs);
+
+  // --- flow typing of Option (Flow.cpp, ADR-0018 point 4)
+  // The state is the set of Option locals and parameters known to be set at
+  // the point being checked, per checker (so per body and thread). A use of
+  // one is recorded with the type T instead of Option[T] (Info::narrowedType).
+  // An assignment ends it (PendingKills, applied at the end of the
+  // statement); where paths meet, only what every path knows is kept; a loop
+  // starts from the state before it minus what the loop assigns; a function
+  // literal starts empty.
+  struct FlowState {
+    llvm::SmallPtrSet<const Var *, 8> N;
+    bool Dead = false; // unreachable: everything counts as known
+  };
+  struct FlowFacts {
+    llvm::SmallPtrSet<const Var *, 4> True, False;
+  };
+  /// A for, switch or select statement that `break` can leave: the state
+  /// after it joins the states at its breaks.
+  struct FlowTarget {
+    std::string Label;
+    FlowState Break;
+    bool HasBreak = false;
+  };
+  FlowState Cur;
+  SmallVector<FlowTarget, 4> Targets;
+  /// The label of the statement about to be checked (for `break L`).
+  std::string PendingLabel;
+  /// The state at a `fallthrough` into the next case.
+  FlowState FallState;
+  bool HasFall = false;
+  SmallVector<const Var *, 4> PendingKills;
+  /// Names assigned inside a function literal, or whose address is taken,
+  /// anywhere in the function: never narrowed, a call may change them.
+  llvm::StringSet<> NoNarrowNames;
+  /// Labels that a goto names: nothing is known where they are.
+  llvm::StringSet<> GotoLabels;
+  /// The identifier that must be evaluated as the Option itself (the operand
+  /// of `== nil`, the receiver of IsNil / Get, an assignment target, the
+  /// operand of `&`).
+  const ast::Expr *NoNarrowExpr = nullptr;
+  static FlowState flowJoin(const FlowState &A, const FlowState &B);
+  void flowAdd(const llvm::SmallPtrSetImpl<const Var *> &Vars);
+  /// What Cond says about the Option variables when it is true / false.
+  void flowFacts(const ast::Expr *Cond, FlowFacts &Out);
+  void flowFactsRec(const ast::Expr *Cond, FlowFacts &Out);
+  /// Names passed to `move(name)` in a subtree.
+  void collectMoved(const ast::Node *N, llvm::StringSet<> &Names);
+  /// `move(o)` of an Option local: o is nil again, so narrowing ends right
+  /// after the move expression (ADR-0018 point 11).
+  void flowMoved(const ast::Expr *Arg);
+  /// The Option locals moved so far in this body, in order (an operand of
+  /// `&&` / `||` restores the state; the moves in it are applied again).
+  SmallVector<const Var *, 4> MoveLog;
+  /// The narrowable Option local or parameter Ex names (after it is checked).
+  Var *optionVarOf(const ast::Expr *Ex);
+  /// The checked Option local o when the place Ex is stored inside o's
+  /// payload: o itself, or a part reached by fields and array elements held
+  /// by value (not through a pointer, slice, map or string: that is other
+  /// storage), also through a variable that borrows such a part (see
+  /// PayloadBorrows; then o need not be narrowed any more). Else null.
+  Var *payloadOption(const ast::Expr *Ex);
+  /// Borrowed variables (a plain range variable over an array held by value,
+  /// a `v, ok := o.F.Get()` binding) -> the checked Option whose payload
+  /// they borrow from, so a reference made from them is one into it.
+  /// Recorded only while o is narrowed; cleared at each outermost body.
+  llvm::DenseMap<const Var *, Var *> PayloadBorrows;
+  /// Borrower borrows the place Ex: record it if Ex is in a payload.
+  void notePayloadBorrow(Var *Borrower, const ast::Expr *Ex);
+  /// A construct makes a reference to the storage of the place Ex that can
+  /// outlive the statement (OWN-P10; the audit is at the top of Flow.cpp):
+  /// `&Ex`, a pointer-receiver method value or go / defer call on Ex, `Ex[i:j]`
+  /// of an array, an `&` range variable over the array Ex. If Ex is in the
+  /// payload of a checked Option o, `o = nil` would leave zero bytes under the
+  /// reference: report E0329 and return true.
+  bool rejectPayloadAddress(const ast::Expr *Ex, const char *What);
+  /// Whether V (an Option variable) may be narrowed here: a local or
+  /// parameter of the function being checked (not a captured variable,
+  /// CLO-9) that no function literal assigns and whose address is not taken.
+  bool narrowable(const Var *V);
+  /// The type of a use Id of V (type T): the value type where V is known to
+  /// be set, T otherwise.
+  Type *narrowedType(const ast::Ident *Id, Var *V, Type *T);
+  /// How to check Ex (an unchecked Option) before using its value: `check o
+  /// != nil first` for a local that narrows, else a local copy to check.
+  std::string nilCheckHint(const ast::Expr *Ex);
+  /// V is known to be set at this point.
+  bool isNarrowed(const Var *V) {
+    return narrowable(V) && (Cur.Dead || Cur.N.count(V));
+  }
+  bool isNilLit(const ast::Expr *Ex);
+  void collectAssigned(const ast::Node *N, llvm::StringSet<> &Names);
+  void flowKillNames(const llvm::StringSet<> &Names);
+  void flowFlushKills();
+  void flowDead() { Cur.Dead = true; }
+  void flowBranch(const ast::BranchStmt *B);
+  void flowPushTarget();
+  FlowTarget flowPopTarget();
+  void flowBeginBody(const BlockStmt *Body);
+  void markNoNarrow(const ast::Expr *Ex);
 
   // --- scopes
   Object *lookup(StringRef Name) { return E.Sc->lookup(Name, E.Pos); }
@@ -781,6 +941,8 @@ public:
   void headerInit(const ast::Stmt *Init);
   /// The selector being evaluated as the callee of a call.
   const ast::Expr *CalleeSel = nullptr;
+  /// The callee is the call of a `go` or `defer` statement: it runs later.
+  bool CalleeSuspended = false;
   /// Call -> the place its result is assigned to (OWN-R4 implicit moves).
   llvm::DenseMap<const ast::Expr *, const ast::Expr *> AppendTargets;
   llvm::DenseSet<const NamedType *> ValidTypes, ReportedCycle;

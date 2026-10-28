@@ -1,4 +1,4 @@
-File <1:1, 180:1>
+File <1:1, 189:1>
   Name: Ident <1:9, 1:13> 'main'
   Decl: GenDecl <3:1, 7:2> import grouped
     Spec: ImportSpec <4:2, 4:10>
@@ -26,763 +26,797 @@ File <1:1, 180:1>
       Name: Ident <16:2, 16:5> 'Div'
     Spec: ValueSpec <17:2, 17:5>
       Name: Ident <17:2, 17:5> 'Neg'
-  Decl: GenDecl <21:1, 27:2> type
-    Attr: Attribute <21:1, 21:5> name=Ref
-      Name: Ident <21:2, 21:5> 'Ref'
-    Spec: TypeSpec <22:6, 27:2>
-      Name: Ident <22:6, 22:10> 'Node'
-      Type: StructType <22:11, 27:2>
-        Fields: FieldList <22:18, 27:2>
-          Field: Field <23:2, 23:11>
-            Names: Ident <23:2, 23:6> 'Kind'
-            Type: Ident <23:7, 23:11> 'Kind'
-          Field: Field <24:2, 24:12>
-            Names: Ident <24:2, 24:5> 'Val'
-            Type: Ident <24:7, 24:12> 'int64'
-          Field: Field <25:2, 25:17>
-            Names: Ident <25:2, 25:6> 'Text'
-            Type: RefType <25:7, 25:17>
-              Elem: Ident <25:11, 25:17> 'string'
-          Field: Field <26:2, 26:12>
-            Names: Ident <26:2, 26:3> 'L'
-            Names: Ident <26:5, 26:6> 'R'
-            Type: StarExpr <26:7, 26:12>
-              X: Ident <26:8, 26:12> 'Node'
-  Decl: GenDecl <29:1, 34:2> type
-    Attr: Attribute <29:1, 29:5> name=Ref
-      Name: Ident <29:2, 29:5> 'Ref'
-    Spec: TypeSpec <30:6, 34:2>
-      Name: Ident <30:6, 30:12> 'Parser'
-      Type: StructType <30:13, 34:2>
-        Fields: FieldList <30:20, 34:2>
-          Field: Field <31:2, 31:18>
-            Names: Ident <31:2, 31:5> 'src'
-            Type: RefType <31:8, 31:18>
-              Elem: Ident <31:12, 31:18> 'string'
-          Field: Field <32:2, 32:11>
-            Names: Ident <32:2, 32:5> 'pos'
-            Type: Ident <32:8, 32:11> 'int'
-          Field: Field <33:2, 33:18>
-            Names: Ident <33:2, 33:7> 'arena'
-            Type: StarExpr <33:8, 33:18>
-              X: SelectorExpr <33:9, 33:18>
-                X: Ident <33:9, 33:12> 'mem'
-                Sel: Ident <33:13, 33:18> 'Arena'
-  Decl: FuncDecl <36:1, 40:2>
-    Recv: FieldList <36:6, 36:17>
-      Field: Field <36:7, 36:16>
-        Names: Ident <36:7, 36:8> 'p'
-        Type: StarExpr <36:9, 36:16>
-          X: Ident <36:10, 36:16> 'Parser'
-    Name: Ident <36:18, 36:27> 'skipSpace'
-    Type: FuncType <36:1, 36:29>
-      Params: FieldList <36:27, 36:29>
-    Body: BlockStmt <36:30, 40:2>
-      Stmt: ForStmt <37:2, 39:3>
-        Cond: BinaryExpr <37:6, 37:47> op='&&'
-          X: BinaryExpr <37:6, 37:24> op='<'
-            X: SelectorExpr <37:6, 37:11>
-              X: Ident <37:6, 37:7> 'p'
-              Sel: Ident <37:8, 37:11> 'pos'
-            Y: CallExpr <37:14, 37:24>
-              Fun: Ident <37:14, 37:17> 'len'
-              Args: SelectorExpr <37:18, 37:23>
-                X: Ident <37:18, 37:19> 'p'
-                Sel: Ident <37:20, 37:23> 'src'
-          Y: BinaryExpr <37:28, 37:47> op='=='
-            X: IndexExpr <37:28, 37:40>
-              X: SelectorExpr <37:28, 37:33>
-                X: Ident <37:28, 37:29> 'p'
-                Sel: Ident <37:30, 37:33> 'src'
-              Index: SelectorExpr <37:34, 37:39>
-                X: Ident <37:34, 37:35> 'p'
-                Sel: Ident <37:36, 37:39> 'pos'
-            Y: BasicLit <37:44, 37:47> char_lit ' '
-        Body: BlockStmt <37:48, 39:3>
-          Stmt: IncDecStmt <38:3, 38:10> op='++'
-            X: SelectorExpr <38:3, 38:8>
-              X: Ident <38:3, 38:4> 'p'
-              Sel: Ident <38:5, 38:8> 'pos'
-  Decl: FuncDecl <42:1, 48:2>
-    Recv: FieldList <42:6, 42:17>
-      Field: Field <42:7, 42:16>
-        Names: Ident <42:7, 42:8> 'p'
-        Type: StarExpr <42:9, 42:16>
-          X: Ident <42:10, 42:16> 'Parser'
-    Name: Ident <42:18, 42:22> 'peek'
-    Type: FuncType <42:1, 42:29>
-      Params: FieldList <42:22, 42:24>
-      Results: FieldList <42:25, 42:29>
-        Field: Field <42:25, 42:29>
-          Type: Ident <42:25, 42:29> 'byte'
-    Body: BlockStmt <42:30, 48:2>
-      Stmt: ExprStmt <43:2, 43:15>
-        X: CallExpr <43:2, 43:15>
-          Fun: SelectorExpr <43:2, 43:13>
-            X: Ident <43:2, 43:3> 'p'
-            Sel: Ident <43:4, 43:13> 'skipSpace'
-      Stmt: IfStmt <44:2, 46:3>
-        Cond: BinaryExpr <44:5, 44:24> op='>='
-          X: SelectorExpr <44:5, 44:10>
-            X: Ident <44:5, 44:6> 'p'
-            Sel: Ident <44:7, 44:10> 'pos'
-          Y: CallExpr <44:14, 44:24>
-            Fun: Ident <44:14, 44:17> 'len'
-            Args: SelectorExpr <44:18, 44:23>
-              X: Ident <44:18, 44:19> 'p'
-              Sel: Ident <44:20, 44:23> 'src'
-        Then: BlockStmt <44:25, 46:3>
-          Stmt: ReturnStmt <45:3, 45:11>
-            Result: BasicLit <45:10, 45:11> int_lit 0
-      Stmt: ReturnStmt <47:2, 47:21>
-        Result: IndexExpr <47:9, 47:21>
-          X: SelectorExpr <47:9, 47:14>
-            X: Ident <47:9, 47:10> 'p'
-            Sel: Ident <47:11, 47:14> 'src'
-          Index: SelectorExpr <47:15, 47:20>
-            X: Ident <47:15, 47:16> 'p'
-            Sel: Ident <47:17, 47:20> 'pos'
-  Decl: FuncDecl <51:1, 53:2>
-    Recv: FieldList <51:6, 51:17>
-      Field: Field <51:7, 51:16>
-        Names: Ident <51:7, 51:8> 'p'
-        Type: StarExpr <51:9, 51:16>
-          X: Ident <51:10, 51:16> 'Parser'
-    Name: Ident <51:18, 51:22> 'fail'
-    Type: FuncType <51:1, 51:40>
-      Params: FieldList <51:22, 51:34>
-        Field: Field <51:23, 51:33>
-          Names: Ident <51:23, 51:26> 'msg'
-          Type: Ident <51:27, 51:33> 'string'
-      Results: FieldList <51:35, 51:40>
-        Field: Field <51:35, 51:40>
-          Type: Ident <51:35, 51:40> 'error'
-    Body: BlockStmt <51:41, 53:2>
-      Stmt: ReturnStmt <52:2, 52:47>
-        Result: CallExpr <52:9, 52:47>
-          Fun: SelectorExpr <52:9, 52:19>
-            X: Ident <52:9, 52:12> 'fmt'
-            Sel: Ident <52:13, 52:19> 'Errorf'
-          Args: BasicLit <52:20, 52:32> string_lit "col %d: %s"
-          Args: BinaryExpr <52:34, 52:41> op='+'
-            X: SelectorExpr <52:34, 52:39>
-              X: Ident <52:34, 52:35> 'p'
-              Sel: Ident <52:36, 52:39> 'pos'
-            Y: BasicLit <52:40, 52:41> int_lit 1
-          Args: Ident <52:43, 52:46> 'msg'
-  Decl: FuncDecl <55:1, 59:2>
-    Recv: FieldList <55:6, 55:17>
-      Field: Field <55:7, 55:16>
-        Names: Ident <55:7, 55:8> 'p'
-        Type: StarExpr <55:9, 55:16>
-          X: Ident <55:10, 55:16> 'Parser'
-    Name: Ident <55:18, 55:22> 'node'
-    Type: FuncType <55:1, 55:48>
-      Params: FieldList <55:22, 55:42>
-        Field: Field <55:23, 55:29>
-          Names: Ident <55:23, 55:24> 'k'
-          Type: Ident <55:25, 55:29> 'Kind'
-        Field: Field <55:31, 55:41>
-          Names: Ident <55:31, 55:32> 'l'
-          Names: Ident <55:34, 55:35> 'r'
-          Type: StarExpr <55:36, 55:41>
-            X: Ident <55:37, 55:41> 'Node'
-      Results: FieldList <55:43, 55:48>
-        Field: Field <55:43, 55:48>
-          Type: StarExpr <55:43, 55:48>
-            X: Ident <55:44, 55:48> 'Node'
-    Body: BlockStmt <55:49, 59:2>
-      Stmt: AssignStmt <56:2, 56:34> op=':='
-        Lhs: Ident <56:2, 56:3> 'n'
-        Rhs: CallExpr <56:7, 56:34>
-          Fun: IndexExpr <56:7, 56:25>
-            X: SelectorExpr <56:7, 56:19>
-              X: Ident <56:7, 56:10> 'mem'
-              Sel: Ident <56:11, 56:19> 'ArenaNew'
-            Index: Ident <56:20, 56:24> 'Node'
-          Args: SelectorExpr <56:26, 56:33>
-            X: Ident <56:26, 56:27> 'p'
-            Sel: Ident <56:28, 56:33> 'arena'
-      Stmt: AssignStmt <57:2, 57:32> op='='
-        Lhs: StarExpr <57:2, 57:4>
-          X: Ident <57:3, 57:4> 'n'
-        Rhs: CompositeLit <57:7, 57:32>
-          Type: Ident <57:7, 57:11> 'Node'
-          Elts: KeyValueExpr <57:12, 57:19>
-            Key: Ident <57:12, 57:16> 'Kind'
-            Value: Ident <57:18, 57:19> 'k'
-          Elts: KeyValueExpr <57:21, 57:25>
-            Key: Ident <57:21, 57:22> 'L'
-            Value: Ident <57:24, 57:25> 'l'
-          Elts: KeyValueExpr <57:27, 57:31>
-            Key: Ident <57:27, 57:28> 'R'
-            Value: Ident <57:30, 57:31> 'r'
-      Stmt: ReturnStmt <58:2, 58:10>
-        Result: Ident <58:9, 58:10> 'n'
-  Decl: FuncDecl <62:1, 77:2> fails
-    Recv: FieldList <62:6, 62:17>
-      Field: Field <62:7, 62:16>
-        Names: Ident <62:7, 62:8> 'p'
-        Type: StarExpr <62:9, 62:16>
-          X: Ident <62:10, 62:16> 'Parser'
-    Name: Ident <62:18, 62:22> 'expr'
-    Type: FuncType <62:1, 62:31> fails
-      Params: FieldList <62:23, 62:25>
-      Results: FieldList <62:26, 62:31>
-        Field: Field <62:26, 62:31>
-          Type: StarExpr <62:26, 62:31>
-            X: Ident <62:27, 62:31> 'Node'
-    Body: BlockStmt <62:32, 77:2>
-      Stmt: AssignStmt <63:2, 63:19> op=':='
-        Lhs: Ident <63:2, 63:6> 'left'
-        Rhs: CallExpr <63:10, 63:19> must
-          Fun: SelectorExpr <63:10, 63:16>
-            X: Ident <63:10, 63:11> 'p'
-            Sel: Ident <63:12, 63:16> 'term'
-      Stmt: ForStmt <64:2, 76:3>
-        Body: BlockStmt <64:6, 76:3>
-          Stmt: AssignStmt <65:3, 65:17> op=':='
-            Lhs: Ident <65:3, 65:5> 'op'
-            Rhs: CallExpr <65:9, 65:17>
-              Fun: SelectorExpr <65:9, 65:15>
-                X: Ident <65:9, 65:10> 'p'
-                Sel: Ident <65:11, 65:15> 'peek'
-          Stmt: IfStmt <66:3, 68:4>
-            Cond: BinaryExpr <66:6, 66:28> op='&&'
-              X: BinaryExpr <66:6, 66:15> op='!='
-                X: Ident <66:6, 66:8> 'op'
-                Y: BasicLit <66:12, 66:15> char_lit '+'
-              Y: BinaryExpr <66:19, 66:28> op='!='
-                X: Ident <66:19, 66:21> 'op'
-                Y: BasicLit <66:25, 66:28> char_lit '-'
-            Then: BlockStmt <66:29, 68:4>
-              Stmt: ReturnStmt <67:4, 67:15>
-                Result: Ident <67:11, 67:15> 'left'
-          Stmt: IncDecStmt <69:3, 69:10> op='++'
-            X: SelectorExpr <69:3, 69:8>
-              X: Ident <69:3, 69:4> 'p'
-              Sel: Ident <69:5, 69:8> 'pos'
-          Stmt: AssignStmt <70:3, 70:21> op=':='
-            Lhs: Ident <70:3, 70:8> 'right'
-            Rhs: CallExpr <70:12, 70:21> must
-              Fun: SelectorExpr <70:12, 70:18>
-                X: Ident <70:12, 70:13> 'p'
-                Sel: Ident <70:14, 70:18> 'term'
-          Stmt: AssignStmt <71:3, 71:11> op=':='
-            Lhs: Ident <71:3, 71:4> 'k'
-            Rhs: Ident <71:8, 71:11> 'Add'
-          Stmt: IfStmt <72:3, 74:4>
-            Cond: BinaryExpr <72:6, 72:15> op='=='
-              X: Ident <72:6, 72:8> 'op'
-              Y: BasicLit <72:12, 72:15> char_lit '-'
-            Then: BlockStmt <72:16, 74:4>
-              Stmt: AssignStmt <73:4, 73:11> op='='
-                Lhs: Ident <73:4, 73:5> 'k'
-                Rhs: Ident <73:8, 73:11> 'Sub'
-          Stmt: AssignStmt <75:3, 75:32> op='='
-            Lhs: Ident <75:3, 75:7> 'left'
-            Rhs: CallExpr <75:10, 75:32>
-              Fun: SelectorExpr <75:10, 75:16>
-                X: Ident <75:10, 75:11> 'p'
-                Sel: Ident <75:12, 75:16> 'node'
-              Args: Ident <75:17, 75:18> 'k'
-              Args: Ident <75:20, 75:24> 'left'
-              Args: Ident <75:26, 75:31> 'right'
-  Decl: FuncDecl <80:1, 95:2> fails
-    Recv: FieldList <80:6, 80:17>
-      Field: Field <80:7, 80:16>
-        Names: Ident <80:7, 80:8> 'p'
-        Type: StarExpr <80:9, 80:16>
-          X: Ident <80:10, 80:16> 'Parser'
-    Name: Ident <80:18, 80:22> 'term'
-    Type: FuncType <80:1, 80:31> fails
-      Params: FieldList <80:23, 80:25>
-      Results: FieldList <80:26, 80:31>
-        Field: Field <80:26, 80:31>
-          Type: StarExpr <80:26, 80:31>
-            X: Ident <80:27, 80:31> 'Node'
-    Body: BlockStmt <80:32, 95:2>
-      Stmt: AssignStmt <81:2, 81:21> op=':='
-        Lhs: Ident <81:2, 81:6> 'left'
-        Rhs: CallExpr <81:10, 81:21> must
-          Fun: SelectorExpr <81:10, 81:18>
-            X: Ident <81:10, 81:11> 'p'
-            Sel: Ident <81:12, 81:18> 'factor'
-      Stmt: ForStmt <82:2, 94:3>
-        Body: BlockStmt <82:6, 94:3>
-          Stmt: AssignStmt <83:3, 83:17> op=':='
-            Lhs: Ident <83:3, 83:5> 'op'
-            Rhs: CallExpr <83:9, 83:17>
-              Fun: SelectorExpr <83:9, 83:15>
-                X: Ident <83:9, 83:10> 'p'
-                Sel: Ident <83:11, 83:15> 'peek'
-          Stmt: IfStmt <84:3, 86:4>
-            Cond: BinaryExpr <84:6, 84:28> op='&&'
-              X: BinaryExpr <84:6, 84:15> op='!='
-                X: Ident <84:6, 84:8> 'op'
-                Y: BasicLit <84:12, 84:15> char_lit '*'
-              Y: BinaryExpr <84:19, 84:28> op='!='
-                X: Ident <84:19, 84:21> 'op'
-                Y: BasicLit <84:25, 84:28> char_lit '/'
-            Then: BlockStmt <84:29, 86:4>
-              Stmt: ReturnStmt <85:4, 85:15>
-                Result: Ident <85:11, 85:15> 'left'
-          Stmt: IncDecStmt <87:3, 87:10> op='++'
-            X: SelectorExpr <87:3, 87:8>
-              X: Ident <87:3, 87:4> 'p'
-              Sel: Ident <87:5, 87:8> 'pos'
-          Stmt: AssignStmt <88:3, 88:23> op=':='
-            Lhs: Ident <88:3, 88:8> 'right'
-            Rhs: CallExpr <88:12, 88:23> must
-              Fun: SelectorExpr <88:12, 88:20>
-                X: Ident <88:12, 88:13> 'p'
-                Sel: Ident <88:14, 88:20> 'factor'
-          Stmt: AssignStmt <89:3, 89:11> op=':='
-            Lhs: Ident <89:3, 89:4> 'k'
-            Rhs: Ident <89:8, 89:11> 'Mul'
-          Stmt: IfStmt <90:3, 92:4>
-            Cond: BinaryExpr <90:6, 90:15> op='=='
-              X: Ident <90:6, 90:8> 'op'
-              Y: BasicLit <90:12, 90:15> char_lit '/'
-            Then: BlockStmt <90:16, 92:4>
-              Stmt: AssignStmt <91:4, 91:11> op='='
-                Lhs: Ident <91:4, 91:5> 'k'
-                Rhs: Ident <91:8, 91:11> 'Div'
-          Stmt: AssignStmt <93:3, 93:32> op='='
-            Lhs: Ident <93:3, 93:7> 'left'
-            Rhs: CallExpr <93:10, 93:32>
-              Fun: SelectorExpr <93:10, 93:16>
-                X: Ident <93:10, 93:11> 'p'
-                Sel: Ident <93:12, 93:16> 'node'
-              Args: Ident <93:17, 93:18> 'k'
-              Args: Ident <93:20, 93:24> 'left'
-              Args: Ident <93:26, 93:31> 'right'
-  Decl: FuncDecl <98:1, 125:2> fails
-    Recv: FieldList <98:6, 98:17>
-      Field: Field <98:7, 98:16>
-        Names: Ident <98:7, 98:8> 'p'
-        Type: StarExpr <98:9, 98:16>
-          X: Ident <98:10, 98:16> 'Parser'
-    Name: Ident <98:18, 98:24> 'factor'
-    Type: FuncType <98:1, 98:33> fails
-      Params: FieldList <98:25, 98:27>
-      Results: FieldList <98:28, 98:33>
-        Field: Field <98:28, 98:33>
-          Type: StarExpr <98:28, 98:33>
-            X: Ident <98:29, 98:33> 'Node'
-    Body: BlockStmt <98:34, 125:2>
-      Stmt: AssignStmt <99:2, 99:15> op=':='
-        Lhs: Ident <99:2, 99:3> 'c'
-        Rhs: CallExpr <99:7, 99:15>
-          Fun: SelectorExpr <99:7, 99:13>
-            X: Ident <99:7, 99:8> 'p'
-            Sel: Ident <99:9, 99:13> 'peek'
-      Stmt: SwitchStmt <100:2, 123:3>
-        Body: BlockStmt <100:9, 123:3>
-          Stmt: CaseClause <101:2, 103:39>
-            Case: BinaryExpr <101:7, 101:15> op='=='
-              X: Ident <101:7, 101:8> 'c'
-              Y: BasicLit <101:12, 101:15> char_lit '-'
-            Body: IncDecStmt <102:3, 102:10> op='++'
-              X: SelectorExpr <102:3, 102:8>
-                X: Ident <102:3, 102:4> 'p'
-                Sel: Ident <102:5, 102:8> 'pos'
-            Body: ReturnStmt <103:3, 103:39>
-              Result: CallExpr <103:10, 103:39>
-                Fun: SelectorExpr <103:10, 103:16>
-                  X: Ident <103:10, 103:11> 'p'
-                  Sel: Ident <103:12, 103:16> 'node'
-                Args: Ident <103:17, 103:20> 'Neg'
-                Args: CallExpr <103:22, 103:33> must
-                  Fun: SelectorExpr <103:22, 103:30>
-                    X: Ident <103:22, 103:23> 'p'
-                    Sel: Ident <103:24, 103:30> 'factor'
-                Args: Ident <103:35, 103:38> 'nil'
-          Stmt: CaseClause <104:2, 111:11>
-            Case: BinaryExpr <104:7, 104:15> op='=='
-              X: Ident <104:7, 104:8> 'c'
-              Y: BasicLit <104:12, 104:15> char_lit '('
-            Body: IncDecStmt <105:3, 105:10> op='++'
-              X: SelectorExpr <105:3, 105:8>
-                X: Ident <105:3, 105:4> 'p'
-                Sel: Ident <105:5, 105:8> 'pos'
-            Body: AssignStmt <106:3, 106:17> op=':='
-              Lhs: Ident <106:3, 106:4> 'n'
-              Rhs: CallExpr <106:8, 106:17> must
-                Fun: SelectorExpr <106:8, 106:14>
-                  X: Ident <106:8, 106:9> 'p'
-                  Sel: Ident <106:10, 106:14> 'expr'
-            Body: IfStmt <107:3, 109:4>
-              Cond: BinaryExpr <107:6, 107:21> op='!='
-                X: CallExpr <107:6, 107:14>
-                  Fun: SelectorExpr <107:6, 107:12>
-                    X: Ident <107:6, 107:7> 'p'
-                    Sel: Ident <107:8, 107:12> 'peek'
-                Y: BasicLit <107:18, 107:21> char_lit ')'
-              Then: BlockStmt <107:22, 109:4>
-                Stmt: ReturnStmt <108:4, 108:38>
-                  Result: Ident <108:11, 108:14> 'nil'
-                  Result: CallExpr <108:16, 108:38>
-                    Fun: SelectorExpr <108:16, 108:22>
-                      X: Ident <108:16, 108:17> 'p'
-                      Sel: Ident <108:18, 108:22> 'fail'
-                    Args: BasicLit <108:23, 108:37> string_lit "expected ')'"
-            Body: IncDecStmt <110:3, 110:10> op='++'
-              X: SelectorExpr <110:3, 110:8>
-                X: Ident <110:3, 110:4> 'p'
-                Sel: Ident <110:5, 110:8> 'pos'
-            Body: ReturnStmt <111:3, 111:11>
-              Result: Ident <111:10, 111:11> 'n'
-          Stmt: CaseClause <112:2, 122:11>
-            Case: BinaryExpr <112:7, 112:27> op='&&'
-              X: BinaryExpr <112:7, 112:15> op='>='
-                X: Ident <112:7, 112:8> 'c'
-                Y: BasicLit <112:12, 112:15> char_lit '0'
-              Y: BinaryExpr <112:19, 112:27> op='<='
-                X: Ident <112:19, 112:20> 'c'
-                Y: BasicLit <112:24, 112:27> char_lit '9'
-            Body: AssignStmt <113:3, 113:17> op=':='
-              Lhs: Ident <113:3, 113:8> 'start'
-              Rhs: SelectorExpr <113:12, 113:17>
-                X: Ident <113:12, 113:13> 'p'
-                Sel: Ident <113:14, 113:17> 'pos'
-            Body: DeclStmt <114:3, 114:14>
-              Decl: GenDecl <114:3, 114:14> var
-                Spec: ValueSpec <114:7, 114:14>
-                  Name: Ident <114:7, 114:8> 'v'
-                  Type: Ident <114:9, 114:14> 'int64'
-            Body: ForStmt <115:3, 118:4>
-              Cond: BinaryExpr <115:7, 115:71> op='&&'
-                X: BinaryExpr <115:7, 115:48> op='&&'
-                  X: BinaryExpr <115:7, 115:25> op='<'
-                    X: SelectorExpr <115:7, 115:12>
-                      X: Ident <115:7, 115:8> 'p'
-                      Sel: Ident <115:9, 115:12> 'pos'
-                    Y: CallExpr <115:15, 115:25>
-                      Fun: Ident <115:15, 115:18> 'len'
-                      Args: SelectorExpr <115:19, 115:24>
-                        X: Ident <115:19, 115:20> 'p'
-                        Sel: Ident <115:21, 115:24> 'src'
-                  Y: BinaryExpr <115:29, 115:48> op='>='
-                    X: IndexExpr <115:29, 115:41>
-                      X: SelectorExpr <115:29, 115:34>
-                        X: Ident <115:29, 115:30> 'p'
-                        Sel: Ident <115:31, 115:34> 'src'
-                      Index: SelectorExpr <115:35, 115:40>
-                        X: Ident <115:35, 115:36> 'p'
-                        Sel: Ident <115:37, 115:40> 'pos'
-                    Y: BasicLit <115:45, 115:48> char_lit '0'
-                Y: BinaryExpr <115:52, 115:71> op='<='
-                  X: IndexExpr <115:52, 115:64>
-                    X: SelectorExpr <115:52, 115:57>
-                      X: Ident <115:52, 115:53> 'p'
-                      Sel: Ident <115:54, 115:57> 'src'
-                    Index: SelectorExpr <115:58, 115:63>
-                      X: Ident <115:58, 115:59> 'p'
-                      Sel: Ident <115:60, 115:63> 'pos'
-                  Y: BasicLit <115:68, 115:71> char_lit '9'
-              Body: BlockStmt <115:72, 118:4>
-                Stmt: AssignStmt <116:4, 116:38> op='='
-                  Lhs: Ident <116:4, 116:5> 'v'
-                  Rhs: BinaryExpr <116:8, 116:38> op='+'
-                    X: BinaryExpr <116:8, 116:12> op='*'
-                      X: Ident <116:8, 116:9> 'v'
-                      Y: BasicLit <116:10, 116:12> int_lit 10
-                    Y: CallExpr <116:15, 116:38>
-                      Fun: Ident <116:15, 116:20> 'int64'
-                      Args: BinaryExpr <116:21, 116:37> op='-'
-                        X: IndexExpr <116:21, 116:33>
-                          X: SelectorExpr <116:21, 116:26>
-                            X: Ident <116:21, 116:22> 'p'
-                            Sel: Ident <116:23, 116:26> 'src'
-                          Index: SelectorExpr <116:27, 116:32>
-                            X: Ident <116:27, 116:28> 'p'
-                            Sel: Ident <116:29, 116:32> 'pos'
-                        Y: BasicLit <116:34, 116:37> char_lit '0'
-                Stmt: IncDecStmt <117:4, 117:11> op='++'
-                  X: SelectorExpr <117:4, 117:9>
-                    X: Ident <117:4, 117:5> 'p'
-                    Sel: Ident <117:6, 117:9> 'pos'
-            Body: AssignStmt <119:3, 119:29> op=':='
-              Lhs: Ident <119:3, 119:4> 'n'
-              Rhs: CallExpr <119:8, 119:29>
-                Fun: SelectorExpr <119:8, 119:14>
-                  X: Ident <119:8, 119:9> 'p'
-                  Sel: Ident <119:10, 119:14> 'node'
-                Args: Ident <119:15, 119:18> 'Num'
-                Args: Ident <119:20, 119:23> 'nil'
-                Args: Ident <119:25, 119:28> 'nil'
-            Body: AssignStmt <120:3, 120:12> op='='
-              Lhs: SelectorExpr <120:3, 120:8>
-                X: Ident <120:3, 120:4> 'n'
-                Sel: Ident <120:5, 120:8> 'Val'
-              Rhs: Ident <120:11, 120:12> 'v'
-            Body: AssignStmt <121:3, 121:30> op='='
-              Lhs: SelectorExpr <121:3, 121:9>
+  Decl: GenDecl <22:1, 28:2> type
+    Attr: Attribute <22:1, 22:5> name=Ref
+      Name: Ident <22:2, 22:5> 'Ref'
+    Spec: TypeSpec <23:6, 28:2>
+      Name: Ident <23:6, 23:10> 'Node'
+      Type: StructType <23:11, 28:2>
+        Fields: FieldList <23:18, 28:2>
+          Field: Field <24:2, 24:11>
+            Names: Ident <24:2, 24:6> 'Kind'
+            Type: Ident <24:7, 24:11> 'Kind'
+          Field: Field <25:2, 25:12>
+            Names: Ident <25:2, 25:5> 'Val'
+            Type: Ident <25:7, 25:12> 'int64'
+          Field: Field <26:2, 26:17>
+            Names: Ident <26:2, 26:6> 'Text'
+            Type: RefType <26:7, 26:17>
+              Elem: Ident <26:11, 26:17> 'string'
+          Field: Field <27:2, 27:20>
+            Names: Ident <27:2, 27:3> 'L'
+            Names: Ident <27:5, 27:6> 'R'
+            Type: IndexExpr <27:7, 27:20>
+              X: Ident <27:7, 27:13> 'Option'
+              Index: StarExpr <27:14, 27:19>
+                X: Ident <27:15, 27:19> 'Node'
+  Decl: GenDecl <30:1, 35:2> type
+    Attr: Attribute <30:1, 30:5> name=Ref
+      Name: Ident <30:2, 30:5> 'Ref'
+    Spec: TypeSpec <31:6, 35:2>
+      Name: Ident <31:6, 31:12> 'Parser'
+      Type: StructType <31:13, 35:2>
+        Fields: FieldList <31:20, 35:2>
+          Field: Field <32:2, 32:18>
+            Names: Ident <32:2, 32:5> 'src'
+            Type: RefType <32:8, 32:18>
+              Elem: Ident <32:12, 32:18> 'string'
+          Field: Field <33:2, 33:11>
+            Names: Ident <33:2, 33:5> 'pos'
+            Type: Ident <33:8, 33:11> 'int'
+          Field: Field <34:2, 34:18>
+            Names: Ident <34:2, 34:7> 'arena'
+            Type: StarExpr <34:8, 34:18>
+              X: SelectorExpr <34:9, 34:18>
+                X: Ident <34:9, 34:12> 'mem'
+                Sel: Ident <34:13, 34:18> 'Arena'
+  Decl: FuncDecl <37:1, 41:2>
+    Recv: FieldList <37:6, 37:17>
+      Field: Field <37:7, 37:16>
+        Names: Ident <37:7, 37:8> 'p'
+        Type: StarExpr <37:9, 37:16>
+          X: Ident <37:10, 37:16> 'Parser'
+    Name: Ident <37:18, 37:27> 'skipSpace'
+    Type: FuncType <37:1, 37:29>
+      Params: FieldList <37:27, 37:29>
+    Body: BlockStmt <37:30, 41:2>
+      Stmt: ForStmt <38:2, 40:3>
+        Cond: BinaryExpr <38:6, 38:47> op='&&'
+          X: BinaryExpr <38:6, 38:24> op='<'
+            X: SelectorExpr <38:6, 38:11>
+              X: Ident <38:6, 38:7> 'p'
+              Sel: Ident <38:8, 38:11> 'pos'
+            Y: CallExpr <38:14, 38:24>
+              Fun: Ident <38:14, 38:17> 'len'
+              Args: SelectorExpr <38:18, 38:23>
+                X: Ident <38:18, 38:19> 'p'
+                Sel: Ident <38:20, 38:23> 'src'
+          Y: BinaryExpr <38:28, 38:47> op='=='
+            X: IndexExpr <38:28, 38:40>
+              X: SelectorExpr <38:28, 38:33>
+                X: Ident <38:28, 38:29> 'p'
+                Sel: Ident <38:30, 38:33> 'src'
+              Index: SelectorExpr <38:34, 38:39>
+                X: Ident <38:34, 38:35> 'p'
+                Sel: Ident <38:36, 38:39> 'pos'
+            Y: BasicLit <38:44, 38:47> char_lit ' '
+        Body: BlockStmt <38:48, 40:3>
+          Stmt: IncDecStmt <39:3, 39:10> op='++'
+            X: SelectorExpr <39:3, 39:8>
+              X: Ident <39:3, 39:4> 'p'
+              Sel: Ident <39:5, 39:8> 'pos'
+  Decl: FuncDecl <43:1, 49:2>
+    Recv: FieldList <43:6, 43:17>
+      Field: Field <43:7, 43:16>
+        Names: Ident <43:7, 43:8> 'p'
+        Type: StarExpr <43:9, 43:16>
+          X: Ident <43:10, 43:16> 'Parser'
+    Name: Ident <43:18, 43:22> 'peek'
+    Type: FuncType <43:1, 43:29>
+      Params: FieldList <43:22, 43:24>
+      Results: FieldList <43:25, 43:29>
+        Field: Field <43:25, 43:29>
+          Type: Ident <43:25, 43:29> 'byte'
+    Body: BlockStmt <43:30, 49:2>
+      Stmt: ExprStmt <44:2, 44:15>
+        X: CallExpr <44:2, 44:15>
+          Fun: SelectorExpr <44:2, 44:13>
+            X: Ident <44:2, 44:3> 'p'
+            Sel: Ident <44:4, 44:13> 'skipSpace'
+      Stmt: IfStmt <45:2, 47:3>
+        Cond: BinaryExpr <45:5, 45:24> op='>='
+          X: SelectorExpr <45:5, 45:10>
+            X: Ident <45:5, 45:6> 'p'
+            Sel: Ident <45:7, 45:10> 'pos'
+          Y: CallExpr <45:14, 45:24>
+            Fun: Ident <45:14, 45:17> 'len'
+            Args: SelectorExpr <45:18, 45:23>
+              X: Ident <45:18, 45:19> 'p'
+              Sel: Ident <45:20, 45:23> 'src'
+        Then: BlockStmt <45:25, 47:3>
+          Stmt: ReturnStmt <46:3, 46:11>
+            Result: BasicLit <46:10, 46:11> int_lit 0
+      Stmt: ReturnStmt <48:2, 48:21>
+        Result: IndexExpr <48:9, 48:21>
+          X: SelectorExpr <48:9, 48:14>
+            X: Ident <48:9, 48:10> 'p'
+            Sel: Ident <48:11, 48:14> 'src'
+          Index: SelectorExpr <48:15, 48:20>
+            X: Ident <48:15, 48:16> 'p'
+            Sel: Ident <48:17, 48:20> 'pos'
+  Decl: FuncDecl <52:1, 54:2>
+    Recv: FieldList <52:6, 52:17>
+      Field: Field <52:7, 52:16>
+        Names: Ident <52:7, 52:8> 'p'
+        Type: StarExpr <52:9, 52:16>
+          X: Ident <52:10, 52:16> 'Parser'
+    Name: Ident <52:18, 52:22> 'fail'
+    Type: FuncType <52:1, 52:40>
+      Params: FieldList <52:22, 52:34>
+        Field: Field <52:23, 52:33>
+          Names: Ident <52:23, 52:26> 'msg'
+          Type: Ident <52:27, 52:33> 'string'
+      Results: FieldList <52:35, 52:40>
+        Field: Field <52:35, 52:40>
+          Type: Ident <52:35, 52:40> 'error'
+    Body: BlockStmt <52:41, 54:2>
+      Stmt: ReturnStmt <53:2, 53:47>
+        Result: CallExpr <53:9, 53:47>
+          Fun: SelectorExpr <53:9, 53:19>
+            X: Ident <53:9, 53:12> 'fmt'
+            Sel: Ident <53:13, 53:19> 'Errorf'
+          Args: BasicLit <53:20, 53:32> string_lit "col %d: %s"
+          Args: BinaryExpr <53:34, 53:41> op='+'
+            X: SelectorExpr <53:34, 53:39>
+              X: Ident <53:34, 53:35> 'p'
+              Sel: Ident <53:36, 53:39> 'pos'
+            Y: BasicLit <53:40, 53:41> int_lit 1
+          Args: Ident <53:43, 53:46> 'msg'
+  Decl: FuncDecl <56:1, 60:2>
+    Recv: FieldList <56:6, 56:17>
+      Field: Field <56:7, 56:16>
+        Names: Ident <56:7, 56:8> 'p'
+        Type: StarExpr <56:9, 56:16>
+          X: Ident <56:10, 56:16> 'Parser'
+    Name: Ident <56:18, 56:22> 'node'
+    Type: FuncType <56:1, 56:56>
+      Params: FieldList <56:22, 56:50>
+        Field: Field <56:23, 56:29>
+          Names: Ident <56:23, 56:24> 'k'
+          Type: Ident <56:25, 56:29> 'Kind'
+        Field: Field <56:31, 56:49>
+          Names: Ident <56:31, 56:32> 'l'
+          Names: Ident <56:34, 56:35> 'r'
+          Type: IndexExpr <56:36, 56:49>
+            X: Ident <56:36, 56:42> 'Option'
+            Index: StarExpr <56:43, 56:48>
+              X: Ident <56:44, 56:48> 'Node'
+      Results: FieldList <56:51, 56:56>
+        Field: Field <56:51, 56:56>
+          Type: StarExpr <56:51, 56:56>
+            X: Ident <56:52, 56:56> 'Node'
+    Body: BlockStmt <56:57, 60:2>
+      Stmt: AssignStmt <57:2, 57:34> op=':='
+        Lhs: Ident <57:2, 57:3> 'n'
+        Rhs: CallExpr <57:7, 57:34>
+          Fun: IndexExpr <57:7, 57:25>
+            X: SelectorExpr <57:7, 57:19>
+              X: Ident <57:7, 57:10> 'mem'
+              Sel: Ident <57:11, 57:19> 'ArenaNew'
+            Index: Ident <57:20, 57:24> 'Node'
+          Args: SelectorExpr <57:26, 57:33>
+            X: Ident <57:26, 57:27> 'p'
+            Sel: Ident <57:28, 57:33> 'arena'
+      Stmt: AssignStmt <58:2, 58:32> op='='
+        Lhs: StarExpr <58:2, 58:4>
+          X: Ident <58:3, 58:4> 'n'
+        Rhs: CompositeLit <58:7, 58:32>
+          Type: Ident <58:7, 58:11> 'Node'
+          Elts: KeyValueExpr <58:12, 58:19>
+            Key: Ident <58:12, 58:16> 'Kind'
+            Value: Ident <58:18, 58:19> 'k'
+          Elts: KeyValueExpr <58:21, 58:25>
+            Key: Ident <58:21, 58:22> 'L'
+            Value: Ident <58:24, 58:25> 'l'
+          Elts: KeyValueExpr <58:27, 58:31>
+            Key: Ident <58:27, 58:28> 'R'
+            Value: Ident <58:30, 58:31> 'r'
+      Stmt: ReturnStmt <59:2, 59:10>
+        Result: Ident <59:9, 59:10> 'n'
+  Decl: FuncDecl <63:1, 78:2> fails
+    Recv: FieldList <63:6, 63:17>
+      Field: Field <63:7, 63:16>
+        Names: Ident <63:7, 63:8> 'p'
+        Type: StarExpr <63:9, 63:16>
+          X: Ident <63:10, 63:16> 'Parser'
+    Name: Ident <63:18, 63:22> 'expr'
+    Type: FuncType <63:1, 63:31> fails
+      Params: FieldList <63:23, 63:25>
+      Results: FieldList <63:26, 63:31>
+        Field: Field <63:26, 63:31>
+          Type: StarExpr <63:26, 63:31>
+            X: Ident <63:27, 63:31> 'Node'
+    Body: BlockStmt <63:32, 78:2>
+      Stmt: AssignStmt <64:2, 64:19> op=':='
+        Lhs: Ident <64:2, 64:6> 'left'
+        Rhs: CallExpr <64:10, 64:19> must
+          Fun: SelectorExpr <64:10, 64:16>
+            X: Ident <64:10, 64:11> 'p'
+            Sel: Ident <64:12, 64:16> 'term'
+      Stmt: ForStmt <65:2, 77:3>
+        Body: BlockStmt <65:6, 77:3>
+          Stmt: AssignStmt <66:3, 66:17> op=':='
+            Lhs: Ident <66:3, 66:5> 'op'
+            Rhs: CallExpr <66:9, 66:17>
+              Fun: SelectorExpr <66:9, 66:15>
+                X: Ident <66:9, 66:10> 'p'
+                Sel: Ident <66:11, 66:15> 'peek'
+          Stmt: IfStmt <67:3, 69:4>
+            Cond: BinaryExpr <67:6, 67:28> op='&&'
+              X: BinaryExpr <67:6, 67:15> op='!='
+                X: Ident <67:6, 67:8> 'op'
+                Y: BasicLit <67:12, 67:15> char_lit '+'
+              Y: BinaryExpr <67:19, 67:28> op='!='
+                X: Ident <67:19, 67:21> 'op'
+                Y: BasicLit <67:25, 67:28> char_lit '-'
+            Then: BlockStmt <67:29, 69:4>
+              Stmt: ReturnStmt <68:4, 68:15>
+                Result: Ident <68:11, 68:15> 'left'
+          Stmt: IncDecStmt <70:3, 70:10> op='++'
+            X: SelectorExpr <70:3, 70:8>
+              X: Ident <70:3, 70:4> 'p'
+              Sel: Ident <70:5, 70:8> 'pos'
+          Stmt: AssignStmt <71:3, 71:21> op=':='
+            Lhs: Ident <71:3, 71:8> 'right'
+            Rhs: CallExpr <71:12, 71:21> must
+              Fun: SelectorExpr <71:12, 71:18>
+                X: Ident <71:12, 71:13> 'p'
+                Sel: Ident <71:14, 71:18> 'term'
+          Stmt: AssignStmt <72:3, 72:11> op=':='
+            Lhs: Ident <72:3, 72:4> 'k'
+            Rhs: Ident <72:8, 72:11> 'Add'
+          Stmt: IfStmt <73:3, 75:4>
+            Cond: BinaryExpr <73:6, 73:15> op='=='
+              X: Ident <73:6, 73:8> 'op'
+              Y: BasicLit <73:12, 73:15> char_lit '-'
+            Then: BlockStmt <73:16, 75:4>
+              Stmt: AssignStmt <74:4, 74:11> op='='
+                Lhs: Ident <74:4, 74:5> 'k'
+                Rhs: Ident <74:8, 74:11> 'Sub'
+          Stmt: AssignStmt <76:3, 76:32> op='='
+            Lhs: Ident <76:3, 76:7> 'left'
+            Rhs: CallExpr <76:10, 76:32>
+              Fun: SelectorExpr <76:10, 76:16>
+                X: Ident <76:10, 76:11> 'p'
+                Sel: Ident <76:12, 76:16> 'node'
+              Args: Ident <76:17, 76:18> 'k'
+              Args: Ident <76:20, 76:24> 'left'
+              Args: Ident <76:26, 76:31> 'right'
+  Decl: FuncDecl <81:1, 96:2> fails
+    Recv: FieldList <81:6, 81:17>
+      Field: Field <81:7, 81:16>
+        Names: Ident <81:7, 81:8> 'p'
+        Type: StarExpr <81:9, 81:16>
+          X: Ident <81:10, 81:16> 'Parser'
+    Name: Ident <81:18, 81:22> 'term'
+    Type: FuncType <81:1, 81:31> fails
+      Params: FieldList <81:23, 81:25>
+      Results: FieldList <81:26, 81:31>
+        Field: Field <81:26, 81:31>
+          Type: StarExpr <81:26, 81:31>
+            X: Ident <81:27, 81:31> 'Node'
+    Body: BlockStmt <81:32, 96:2>
+      Stmt: AssignStmt <82:2, 82:21> op=':='
+        Lhs: Ident <82:2, 82:6> 'left'
+        Rhs: CallExpr <82:10, 82:21> must
+          Fun: SelectorExpr <82:10, 82:18>
+            X: Ident <82:10, 82:11> 'p'
+            Sel: Ident <82:12, 82:18> 'factor'
+      Stmt: ForStmt <83:2, 95:3>
+        Body: BlockStmt <83:6, 95:3>
+          Stmt: AssignStmt <84:3, 84:17> op=':='
+            Lhs: Ident <84:3, 84:5> 'op'
+            Rhs: CallExpr <84:9, 84:17>
+              Fun: SelectorExpr <84:9, 84:15>
+                X: Ident <84:9, 84:10> 'p'
+                Sel: Ident <84:11, 84:15> 'peek'
+          Stmt: IfStmt <85:3, 87:4>
+            Cond: BinaryExpr <85:6, 85:28> op='&&'
+              X: BinaryExpr <85:6, 85:15> op='!='
+                X: Ident <85:6, 85:8> 'op'
+                Y: BasicLit <85:12, 85:15> char_lit '*'
+              Y: BinaryExpr <85:19, 85:28> op='!='
+                X: Ident <85:19, 85:21> 'op'
+                Y: BasicLit <85:25, 85:28> char_lit '/'
+            Then: BlockStmt <85:29, 87:4>
+              Stmt: ReturnStmt <86:4, 86:15>
+                Result: Ident <86:11, 86:15> 'left'
+          Stmt: IncDecStmt <88:3, 88:10> op='++'
+            X: SelectorExpr <88:3, 88:8>
+              X: Ident <88:3, 88:4> 'p'
+              Sel: Ident <88:5, 88:8> 'pos'
+          Stmt: AssignStmt <89:3, 89:23> op=':='
+            Lhs: Ident <89:3, 89:8> 'right'
+            Rhs: CallExpr <89:12, 89:23> must
+              Fun: SelectorExpr <89:12, 89:20>
+                X: Ident <89:12, 89:13> 'p'
+                Sel: Ident <89:14, 89:20> 'factor'
+          Stmt: AssignStmt <90:3, 90:11> op=':='
+            Lhs: Ident <90:3, 90:4> 'k'
+            Rhs: Ident <90:8, 90:11> 'Mul'
+          Stmt: IfStmt <91:3, 93:4>
+            Cond: BinaryExpr <91:6, 91:15> op='=='
+              X: Ident <91:6, 91:8> 'op'
+              Y: BasicLit <91:12, 91:15> char_lit '/'
+            Then: BlockStmt <91:16, 93:4>
+              Stmt: AssignStmt <92:4, 92:11> op='='
+                Lhs: Ident <92:4, 92:5> 'k'
+                Rhs: Ident <92:8, 92:11> 'Div'
+          Stmt: AssignStmt <94:3, 94:32> op='='
+            Lhs: Ident <94:3, 94:7> 'left'
+            Rhs: CallExpr <94:10, 94:32>
+              Fun: SelectorExpr <94:10, 94:16>
+                X: Ident <94:10, 94:11> 'p'
+                Sel: Ident <94:12, 94:16> 'node'
+              Args: Ident <94:17, 94:18> 'k'
+              Args: Ident <94:20, 94:24> 'left'
+              Args: Ident <94:26, 94:31> 'right'
+  Decl: FuncDecl <99:1, 126:2> fails
+    Recv: FieldList <99:6, 99:17>
+      Field: Field <99:7, 99:16>
+        Names: Ident <99:7, 99:8> 'p'
+        Type: StarExpr <99:9, 99:16>
+          X: Ident <99:10, 99:16> 'Parser'
+    Name: Ident <99:18, 99:24> 'factor'
+    Type: FuncType <99:1, 99:33> fails
+      Params: FieldList <99:25, 99:27>
+      Results: FieldList <99:28, 99:33>
+        Field: Field <99:28, 99:33>
+          Type: StarExpr <99:28, 99:33>
+            X: Ident <99:29, 99:33> 'Node'
+    Body: BlockStmt <99:34, 126:2>
+      Stmt: AssignStmt <100:2, 100:15> op=':='
+        Lhs: Ident <100:2, 100:3> 'c'
+        Rhs: CallExpr <100:7, 100:15>
+          Fun: SelectorExpr <100:7, 100:13>
+            X: Ident <100:7, 100:8> 'p'
+            Sel: Ident <100:9, 100:13> 'peek'
+      Stmt: SwitchStmt <101:2, 124:3>
+        Body: BlockStmt <101:9, 124:3>
+          Stmt: CaseClause <102:2, 104:39>
+            Case: BinaryExpr <102:7, 102:15> op='=='
+              X: Ident <102:7, 102:8> 'c'
+              Y: BasicLit <102:12, 102:15> char_lit '-'
+            Body: IncDecStmt <103:3, 103:10> op='++'
+              X: SelectorExpr <103:3, 103:8>
+                X: Ident <103:3, 103:4> 'p'
+                Sel: Ident <103:5, 103:8> 'pos'
+            Body: ReturnStmt <104:3, 104:39>
+              Result: CallExpr <104:10, 104:39>
+                Fun: SelectorExpr <104:10, 104:16>
+                  X: Ident <104:10, 104:11> 'p'
+                  Sel: Ident <104:12, 104:16> 'node'
+                Args: Ident <104:17, 104:20> 'Neg'
+                Args: CallExpr <104:22, 104:33> must
+                  Fun: SelectorExpr <104:22, 104:30>
+                    X: Ident <104:22, 104:23> 'p'
+                    Sel: Ident <104:24, 104:30> 'factor'
+                Args: Ident <104:35, 104:38> 'nil'
+          Stmt: CaseClause <105:2, 112:11>
+            Case: BinaryExpr <105:7, 105:15> op='=='
+              X: Ident <105:7, 105:8> 'c'
+              Y: BasicLit <105:12, 105:15> char_lit '('
+            Body: IncDecStmt <106:3, 106:10> op='++'
+              X: SelectorExpr <106:3, 106:8>
+                X: Ident <106:3, 106:4> 'p'
+                Sel: Ident <106:5, 106:8> 'pos'
+            Body: AssignStmt <107:3, 107:17> op=':='
+              Lhs: Ident <107:3, 107:4> 'n'
+              Rhs: CallExpr <107:8, 107:17> must
+                Fun: SelectorExpr <107:8, 107:14>
+                  X: Ident <107:8, 107:9> 'p'
+                  Sel: Ident <107:10, 107:14> 'expr'
+            Body: IfStmt <108:3, 110:4>
+              Cond: BinaryExpr <108:6, 108:21> op='!='
+                X: CallExpr <108:6, 108:14>
+                  Fun: SelectorExpr <108:6, 108:12>
+                    X: Ident <108:6, 108:7> 'p'
+                    Sel: Ident <108:8, 108:12> 'peek'
+                Y: BasicLit <108:18, 108:21> char_lit ')'
+              Then: BlockStmt <108:22, 110:4>
+                Stmt: ReturnStmt <109:4, 109:38>
+                  Result: Ident <109:11, 109:14> 'nil'
+                  Result: CallExpr <109:16, 109:38>
+                    Fun: SelectorExpr <109:16, 109:22>
+                      X: Ident <109:16, 109:17> 'p'
+                      Sel: Ident <109:18, 109:22> 'fail'
+                    Args: BasicLit <109:23, 109:37> string_lit "expected ')'"
+            Body: IncDecStmt <111:3, 111:10> op='++'
+              X: SelectorExpr <111:3, 111:8>
+                X: Ident <111:3, 111:4> 'p'
+                Sel: Ident <111:5, 111:8> 'pos'
+            Body: ReturnStmt <112:3, 112:11>
+              Result: Ident <112:10, 112:11> 'n'
+          Stmt: CaseClause <113:2, 123:11>
+            Case: BinaryExpr <113:7, 113:27> op='&&'
+              X: BinaryExpr <113:7, 113:15> op='>='
+                X: Ident <113:7, 113:8> 'c'
+                Y: BasicLit <113:12, 113:15> char_lit '0'
+              Y: BinaryExpr <113:19, 113:27> op='<='
+                X: Ident <113:19, 113:20> 'c'
+                Y: BasicLit <113:24, 113:27> char_lit '9'
+            Body: AssignStmt <114:3, 114:17> op=':='
+              Lhs: Ident <114:3, 114:8> 'start'
+              Rhs: SelectorExpr <114:12, 114:17>
+                X: Ident <114:12, 114:13> 'p'
+                Sel: Ident <114:14, 114:17> 'pos'
+            Body: DeclStmt <115:3, 115:14>
+              Decl: GenDecl <115:3, 115:14> var
+                Spec: ValueSpec <115:7, 115:14>
+                  Name: Ident <115:7, 115:8> 'v'
+                  Type: Ident <115:9, 115:14> 'int64'
+            Body: ForStmt <116:3, 119:4>
+              Cond: BinaryExpr <116:7, 116:71> op='&&'
+                X: BinaryExpr <116:7, 116:48> op='&&'
+                  X: BinaryExpr <116:7, 116:25> op='<'
+                    X: SelectorExpr <116:7, 116:12>
+                      X: Ident <116:7, 116:8> 'p'
+                      Sel: Ident <116:9, 116:12> 'pos'
+                    Y: CallExpr <116:15, 116:25>
+                      Fun: Ident <116:15, 116:18> 'len'
+                      Args: SelectorExpr <116:19, 116:24>
+                        X: Ident <116:19, 116:20> 'p'
+                        Sel: Ident <116:21, 116:24> 'src'
+                  Y: BinaryExpr <116:29, 116:48> op='>='
+                    X: IndexExpr <116:29, 116:41>
+                      X: SelectorExpr <116:29, 116:34>
+                        X: Ident <116:29, 116:30> 'p'
+                        Sel: Ident <116:31, 116:34> 'src'
+                      Index: SelectorExpr <116:35, 116:40>
+                        X: Ident <116:35, 116:36> 'p'
+                        Sel: Ident <116:37, 116:40> 'pos'
+                    Y: BasicLit <116:45, 116:48> char_lit '0'
+                Y: BinaryExpr <116:52, 116:71> op='<='
+                  X: IndexExpr <116:52, 116:64>
+                    X: SelectorExpr <116:52, 116:57>
+                      X: Ident <116:52, 116:53> 'p'
+                      Sel: Ident <116:54, 116:57> 'src'
+                    Index: SelectorExpr <116:58, 116:63>
+                      X: Ident <116:58, 116:59> 'p'
+                      Sel: Ident <116:60, 116:63> 'pos'
+                  Y: BasicLit <116:68, 116:71> char_lit '9'
+              Body: BlockStmt <116:72, 119:4>
+                Stmt: AssignStmt <117:4, 117:38> op='='
+                  Lhs: Ident <117:4, 117:5> 'v'
+                  Rhs: BinaryExpr <117:8, 117:38> op='+'
+                    X: BinaryExpr <117:8, 117:12> op='*'
+                      X: Ident <117:8, 117:9> 'v'
+                      Y: BasicLit <117:10, 117:12> int_lit 10
+                    Y: CallExpr <117:15, 117:38>
+                      Fun: Ident <117:15, 117:20> 'int64'
+                      Args: BinaryExpr <117:21, 117:37> op='-'
+                        X: IndexExpr <117:21, 117:33>
+                          X: SelectorExpr <117:21, 117:26>
+                            X: Ident <117:21, 117:22> 'p'
+                            Sel: Ident <117:23, 117:26> 'src'
+                          Index: SelectorExpr <117:27, 117:32>
+                            X: Ident <117:27, 117:28> 'p'
+                            Sel: Ident <117:29, 117:32> 'pos'
+                        Y: BasicLit <117:34, 117:37> char_lit '0'
+                Stmt: IncDecStmt <118:4, 118:11> op='++'
+                  X: SelectorExpr <118:4, 118:9>
+                    X: Ident <118:4, 118:5> 'p'
+                    Sel: Ident <118:6, 118:9> 'pos'
+            Body: AssignStmt <120:3, 120:29> op=':='
+              Lhs: Ident <120:3, 120:4> 'n'
+              Rhs: CallExpr <120:8, 120:29>
+                Fun: SelectorExpr <120:8, 120:14>
+                  X: Ident <120:8, 120:9> 'p'
+                  Sel: Ident <120:10, 120:14> 'node'
+                Args: Ident <120:15, 120:18> 'Num'
+                Args: Ident <120:20, 120:23> 'nil'
+                Args: Ident <120:25, 120:28> 'nil'
+            Body: AssignStmt <121:3, 121:12> op='='
+              Lhs: SelectorExpr <121:3, 121:8>
                 X: Ident <121:3, 121:4> 'n'
-                Sel: Ident <121:5, 121:9> 'Text'
-              Rhs: SliceExpr <121:12, 121:30>
-                X: SelectorExpr <121:12, 121:17>
-                  X: Ident <121:12, 121:13> 'p'
-                  Sel: Ident <121:14, 121:17> 'src'
-                Lo: Ident <121:18, 121:23> 'start'
-                Hi: SelectorExpr <121:24, 121:29>
-                  X: Ident <121:24, 121:25> 'p'
-                  Sel: Ident <121:26, 121:29> 'pos'
-            Body: ReturnStmt <122:3, 122:11>
-              Result: Ident <122:10, 122:11> 'n'
-      Stmt: ReturnStmt <124:2, 124:41>
-        Result: Ident <124:9, 124:12> 'nil'
-        Result: CallExpr <124:14, 124:41>
-          Fun: SelectorExpr <124:14, 124:20>
-            X: Ident <124:14, 124:15> 'p'
-            Sel: Ident <124:16, 124:20> 'fail'
-          Args: BasicLit <124:21, 124:40> string_lit "expected a number"
-  Decl: FuncDecl <127:1, 150:2> fails
-    Name: Ident <127:6, 127:10> 'eval'
-    Type: FuncType <127:1, 127:26> fails
-      Params: FieldList <127:11, 127:20>
-        Field: Field <127:12, 127:19>
-          Names: Ident <127:12, 127:13> 'n'
-          Type: StarExpr <127:14, 127:19>
-            X: Ident <127:15, 127:19> 'Node'
-      Results: FieldList <127:21, 127:26>
-        Field: Field <127:21, 127:26>
-          Type: Ident <127:21, 127:26> 'int64'
-    Body: BlockStmt <127:27, 150:2>
-      Stmt: SwitchStmt <128:2, 133:3>
-        Tag: SelectorExpr <128:9, 128:15>
-          X: Ident <128:9, 128:10> 'n'
-          Sel: Ident <128:11, 128:15> 'Kind'
-        Body: BlockStmt <128:16, 133:3>
-          Stmt: CaseClause <129:2, 130:15>
-            Case: Ident <129:7, 129:10> 'Num'
-            Body: ReturnStmt <130:3, 130:15>
-              Result: SelectorExpr <130:10, 130:15>
-                X: Ident <130:10, 130:11> 'n'
-                Sel: Ident <130:12, 130:15> 'Val'
-          Stmt: CaseClause <131:2, 132:21>
-            Case: Ident <131:7, 131:10> 'Neg'
-            Body: ReturnStmt <132:3, 132:21>
-              Result: UnaryExpr <132:10, 132:21> op='-'
-                X: CallExpr <132:11, 132:21> must
-                  Fun: Ident <132:11, 132:15> 'eval'
-                  Args: SelectorExpr <132:17, 132:20>
-                    X: Ident <132:17, 132:18> 'n'
-                    Sel: Ident <132:19, 132:20> 'L'
-      Stmt: AssignStmt <134:2, 134:17> op=':='
-        Lhs: Ident <134:2, 134:3> 'a'
-        Rhs: CallExpr <134:7, 134:17> must
-          Fun: Ident <134:7, 134:11> 'eval'
-          Args: SelectorExpr <134:13, 134:16>
-            X: Ident <134:13, 134:14> 'n'
-            Sel: Ident <134:15, 134:16> 'L'
-      Stmt: AssignStmt <135:2, 135:17> op=':='
-        Lhs: Ident <135:2, 135:3> 'b'
-        Rhs: CallExpr <135:7, 135:17> must
-          Fun: Ident <135:7, 135:11> 'eval'
-          Args: SelectorExpr <135:13, 135:16>
-            X: Ident <135:13, 135:14> 'n'
-            Sel: Ident <135:15, 135:16> 'R'
-      Stmt: SwitchStmt <136:2, 148:3>
-        Tag: SelectorExpr <136:9, 136:15>
-          X: Ident <136:9, 136:10> 'n'
-          Sel: Ident <136:11, 136:15> 'Kind'
-        Body: BlockStmt <136:16, 148:3>
-          Stmt: CaseClause <137:2, 138:15>
-            Case: Ident <137:7, 137:10> 'Add'
-            Body: ReturnStmt <138:3, 138:15>
-              Result: BinaryExpr <138:10, 138:15> op='+'
-                X: Ident <138:10, 138:11> 'a'
-                Y: Ident <138:14, 138:15> 'b'
-          Stmt: CaseClause <139:2, 140:15>
-            Case: Ident <139:7, 139:10> 'Sub'
-            Body: ReturnStmt <140:3, 140:15>
-              Result: BinaryExpr <140:10, 140:15> op='-'
-                X: Ident <140:10, 140:11> 'a'
-                Y: Ident <140:14, 140:15> 'b'
-          Stmt: CaseClause <141:2, 142:15>
-            Case: Ident <141:7, 141:10> 'Mul'
-            Body: ReturnStmt <142:3, 142:15>
-              Result: BinaryExpr <142:10, 142:15> op='*'
-                X: Ident <142:10, 142:11> 'a'
-                Y: Ident <142:14, 142:15> 'b'
-          Stmt: CaseClause <143:2, 147:15>
-            Case: Ident <143:7, 143:10> 'Div'
-            Body: IfStmt <144:3, 146:4>
-              Cond: BinaryExpr <144:6, 144:12> op='=='
-                X: Ident <144:6, 144:7> 'b'
-                Y: BasicLit <144:11, 144:12> int_lit 0
-              Then: BlockStmt <144:13, 146:4>
-                Stmt: ReturnStmt <145:4, 145:44>
-                  Result: BasicLit <145:11, 145:12> int_lit 0
-                  Result: CallExpr <145:14, 145:44>
-                    Fun: SelectorExpr <145:14, 145:24>
-                      X: Ident <145:14, 145:20> 'errors'
-                      Sel: Ident <145:21, 145:24> 'New'
-                    Args: BasicLit <145:25, 145:43> string_lit "division by zero"
-            Body: ReturnStmt <147:3, 147:15>
-              Result: BinaryExpr <147:10, 147:15> op='/'
-                X: Ident <147:10, 147:11> 'a'
-                Y: Ident <147:14, 147:15> 'b'
-      Stmt: ExprStmt <149:2, 149:28>
-        X: CallExpr <149:2, 149:28>
-          Fun: Ident <149:2, 149:7> 'panic'
-          Args: BasicLit <149:8, 149:27> string_lit "unknown node kind"
-  Decl: FuncDecl <152:1, 160:2> fails
-    Name: Ident <152:6, 152:10> 'calc'
-    Type: FuncType <152:1, 152:47> fails
-      Params: FieldList <152:11, 152:41>
-        Field: Field <152:12, 152:28>
-          Names: Ident <152:12, 152:17> 'arena'
-          Type: StarExpr <152:18, 152:28>
-            X: SelectorExpr <152:19, 152:28>
-              X: Ident <152:19, 152:22> 'mem'
-              Sel: Ident <152:23, 152:28> 'Arena'
-        Field: Field <152:30, 152:40>
-          Names: Ident <152:30, 152:33> 'src'
-          Type: Ident <152:34, 152:40> 'string'
-      Results: FieldList <152:42, 152:47>
-        Field: Field <152:42, 152:47>
-          Type: Ident <152:42, 152:47> 'int64'
-    Body: BlockStmt <152:48, 160:2>
-      Stmt: AssignStmt <153:2, 153:37> op=':='
-        Lhs: Ident <153:2, 153:3> 'p'
-        Rhs: CompositeLit <153:7, 153:37>
-          Type: Ident <153:7, 153:13> 'Parser'
-          Elts: KeyValueExpr <153:14, 153:22>
-            Key: Ident <153:14, 153:17> 'src'
-            Value: Ident <153:19, 153:22> 'src'
-          Elts: KeyValueExpr <153:24, 153:36>
-            Key: Ident <153:24, 153:29> 'arena'
-            Value: Ident <153:31, 153:36> 'arena'
-      Stmt: AssignStmt <154:2, 154:19> op=':='
-        Lhs: Ident <154:2, 154:6> 'root'
-        Rhs: CallExpr <154:10, 154:19> must
-          Fun: SelectorExpr <154:10, 154:16>
-            X: Ident <154:10, 154:11> 'p'
-            Sel: Ident <154:12, 154:16> 'expr'
-      Stmt: ExprStmt <155:2, 155:15>
-        X: CallExpr <155:2, 155:15>
-          Fun: SelectorExpr <155:2, 155:13>
-            X: Ident <155:2, 155:3> 'p'
-            Sel: Ident <155:4, 155:13> 'skipSpace'
-      Stmt: IfStmt <156:2, 158:3>
-        Cond: BinaryExpr <156:5, 156:23> op='<'
-          X: SelectorExpr <156:5, 156:10>
-            X: Ident <156:5, 156:6> 'p'
-            Sel: Ident <156:7, 156:10> 'pos'
-          Y: CallExpr <156:13, 156:23>
-            Fun: Ident <156:13, 156:16> 'len'
-            Args: SelectorExpr <156:17, 156:22>
-              X: Ident <156:17, 156:18> 'p'
-              Sel: Ident <156:19, 156:22> 'src'
-        Then: BlockStmt <156:24, 158:3>
-          Stmt: ReturnStmt <157:3, 157:79>
-            Result: BasicLit <157:10, 157:11> int_lit 0
-            Result: CallExpr <157:13, 157:79>
-              Fun: SelectorExpr <157:13, 157:23>
-                X: Ident <157:13, 157:16> 'fmt'
-                Sel: Ident <157:17, 157:23> 'Errorf'
-              Args: BasicLit <157:24, 157:47> string_lit "col %d: unexpected %q"
-              Args: BinaryExpr <157:49, 157:56> op='+'
-                X: SelectorExpr <157:49, 157:54>
-                  X: Ident <157:49, 157:50> 'p'
-                  Sel: Ident <157:51, 157:54> 'pos'
-                Y: BasicLit <157:55, 157:56> int_lit 1
-              Args: SliceExpr <157:58, 157:78>
-                X: SelectorExpr <157:58, 157:63>
-                  X: Ident <157:58, 157:59> 'p'
-                  Sel: Ident <157:60, 157:63> 'src'
-                Lo: SelectorExpr <157:64, 157:69>
-                  X: Ident <157:64, 157:65> 'p'
-                  Sel: Ident <157:66, 157:69> 'pos'
-                Hi: BinaryExpr <157:70, 157:77> op='+'
-                  X: SelectorExpr <157:70, 157:75>
-                    X: Ident <157:70, 157:71> 'p'
-                    Sel: Ident <157:72, 157:75> 'pos'
-                  Y: BasicLit <157:76, 157:77> int_lit 1
-      Stmt: ReturnStmt <159:2, 159:20>
-        Result: CallExpr <159:9, 159:20> must
-          Fun: Ident <159:9, 159:13> 'eval'
-          Args: Ident <159:15, 159:19> 'root'
-  Decl: FuncDecl <162:1, 179:2>
-    Name: Ident <162:6, 162:10> 'main'
-    Type: FuncType <162:1, 162:12>
-      Params: FieldList <162:10, 162:12>
-    Body: BlockStmt <162:13, 179:2>
-      Stmt: DeclStmt <163:2, 163:21>
-        Decl: GenDecl <163:2, 163:21> var
-          Spec: ValueSpec <163:6, 163:21>
-            Name: Ident <163:6, 163:11> 'arena'
-            Type: SelectorExpr <163:12, 163:21>
-              X: Ident <163:12, 163:15> 'mem'
-              Sel: Ident <163:16, 163:21> 'Arena'
-      Stmt: DeferStmt <164:2, 164:20>
-        Call: CallExpr <164:8, 164:20>
-          Fun: SelectorExpr <164:8, 164:18>
-            X: Ident <164:8, 164:13> 'arena'
-            Sel: Ident <164:14, 164:18> 'Free'
-      Stmt: ExprStmt <167:2, 167:48>
-        X: CallExpr <167:2, 167:48>
-          Fun: SelectorExpr <167:2, 167:13>
-            X: Ident <167:2, 167:5> 'fmt'
-            Sel: Ident <167:6, 167:13> 'Println'
-          Args: BasicLit <167:14, 167:23> string_lit "answer:"
-          Args: CallExpr <167:25, 167:47> must
-            Fun: Ident <167:25, 167:29> 'calc'
-            Args: UnaryExpr <167:31, 167:37> op='&'
-              X: Ident <167:32, 167:37> 'arena'
-            Args: BasicLit <167:39, 167:46> string_lit "6 * 7"
-      Stmt: AssignStmt <169:2, 169:114> op=':='
-        Lhs: Ident <169:2, 169:7> 'exprs'
-        Rhs: CompositeLit <169:11, 169:114>
-          Type: SliceType <169:11, 169:19>
-            Elt: Ident <169:13, 169:19> 'string'
-          Elts: BasicLit <169:20, 169:31> string_lit "1 + 2 * 3"
-          Elts: BasicLit <169:33, 169:46> string_lit "(1 + 2) * 3"
-          Elts: BasicLit <169:48, 169:62> string_lit "10 / (5 - 5)"
-          Elts: BasicLit <169:64, 169:82> string_lit "2 * (3 + 4) - -5"
-          Elts: BasicLit <169:84, 169:89> string_lit "7 +"
-          Elts: BasicLit <169:91, 169:98> string_lit "8 $ 2"
-          Elts: BasicLit <169:100, 169:113> string_lit "100 / 7 / 2"
-      Stmt: RangeStmt <170:2, 178:3> op=':='
-        Key: Ident <170:6, 170:7> '_'
-        Value: Ident <170:9, 170:12> 'src'
-        X: Ident <170:22, 170:27> 'exprs'
-        Body: BlockStmt <170:28, 178:3>
-          Stmt: ExprStmt <171:3, 171:16>
-            X: CallExpr <171:3, 171:16>
-              Fun: SelectorExpr <171:3, 171:14>
-                X: Ident <171:3, 171:8> 'arena'
-                Sel: Ident <171:9, 171:14> 'Reset'
-          Stmt: AssignStmt <172:3, 172:30> op=':='
-            Lhs: Ident <172:3, 172:4> 'v'
-            Lhs: Ident <172:6, 172:9> 'err'
-            Rhs: CallExpr <172:13, 172:30>
-              Fun: Ident <172:13, 172:17> 'calc'
-              Args: UnaryExpr <172:18, 172:24> op='&'
-                X: Ident <172:19, 172:24> 'arena'
-              Args: Ident <172:26, 172:29> 'src'
-          Stmt: IfStmt <173:3, 176:4>
-            Cond: BinaryExpr <173:6, 173:16> op='!='
-              X: Ident <173:6, 173:9> 'err'
-              Y: Ident <173:13, 173:16> 'nil'
-            Then: BlockStmt <173:17, 176:4>
-              Stmt: ExprStmt <174:4, 174:45>
-                X: CallExpr <174:4, 174:45>
-                  Fun: SelectorExpr <174:4, 174:14>
-                    X: Ident <174:4, 174:7> 'fmt'
-                    Sel: Ident <174:8, 174:14> 'Printf'
-                  Args: BasicLit <174:15, 174:34> string_lit "%-18s error: %v\n"
-                  Args: Ident <174:36, 174:39> 'src'
-                  Args: Ident <174:41, 174:44> 'err'
-              Stmt: BranchStmt <175:4, 175:12> continue
-          Stmt: ExprStmt <177:3, 177:37>
-            X: CallExpr <177:3, 177:37>
-              Fun: SelectorExpr <177:3, 177:13>
-                X: Ident <177:3, 177:6> 'fmt'
-                Sel: Ident <177:7, 177:13> 'Printf'
-              Args: BasicLit <177:14, 177:28> string_lit "%-18s = %d\n"
-              Args: Ident <177:30, 177:33> 'src'
-              Args: Ident <177:35, 177:36> 'v'
+                Sel: Ident <121:5, 121:8> 'Val'
+              Rhs: Ident <121:11, 121:12> 'v'
+            Body: AssignStmt <122:3, 122:30> op='='
+              Lhs: SelectorExpr <122:3, 122:9>
+                X: Ident <122:3, 122:4> 'n'
+                Sel: Ident <122:5, 122:9> 'Text'
+              Rhs: SliceExpr <122:12, 122:30>
+                X: SelectorExpr <122:12, 122:17>
+                  X: Ident <122:12, 122:13> 'p'
+                  Sel: Ident <122:14, 122:17> 'src'
+                Lo: Ident <122:18, 122:23> 'start'
+                Hi: SelectorExpr <122:24, 122:29>
+                  X: Ident <122:24, 122:25> 'p'
+                  Sel: Ident <122:26, 122:29> 'pos'
+            Body: ReturnStmt <123:3, 123:11>
+              Result: Ident <123:10, 123:11> 'n'
+      Stmt: ReturnStmt <125:2, 125:41>
+        Result: Ident <125:9, 125:12> 'nil'
+        Result: CallExpr <125:14, 125:41>
+          Fun: SelectorExpr <125:14, 125:20>
+            X: Ident <125:14, 125:15> 'p'
+            Sel: Ident <125:16, 125:20> 'fail'
+          Args: BasicLit <125:21, 125:40> string_lit "expected a number"
+  Decl: FuncDecl <128:1, 151:2> fails
+    Name: Ident <128:6, 128:10> 'eval'
+    Type: FuncType <128:1, 128:26> fails
+      Params: FieldList <128:11, 128:20>
+        Field: Field <128:12, 128:19>
+          Names: Ident <128:12, 128:13> 'n'
+          Type: StarExpr <128:14, 128:19>
+            X: Ident <128:15, 128:19> 'Node'
+      Results: FieldList <128:21, 128:26>
+        Field: Field <128:21, 128:26>
+          Type: Ident <128:21, 128:26> 'int64'
+    Body: BlockStmt <128:27, 151:2>
+      Stmt: SwitchStmt <129:2, 134:3>
+        Tag: SelectorExpr <129:9, 129:15>
+          X: Ident <129:9, 129:10> 'n'
+          Sel: Ident <129:11, 129:15> 'Kind'
+        Body: BlockStmt <129:16, 134:3>
+          Stmt: CaseClause <130:2, 131:15>
+            Case: Ident <130:7, 130:10> 'Num'
+            Body: ReturnStmt <131:3, 131:15>
+              Result: SelectorExpr <131:10, 131:15>
+                X: Ident <131:10, 131:11> 'n'
+                Sel: Ident <131:12, 131:15> 'Val'
+          Stmt: CaseClause <132:2, 133:24>
+            Case: Ident <132:7, 132:10> 'Neg'
+            Body: ReturnStmt <133:3, 133:24>
+              Result: UnaryExpr <133:10, 133:24> op='-'
+                X: CallExpr <133:11, 133:24> must
+                  Fun: Ident <133:11, 133:18> 'operand'
+                  Args: SelectorExpr <133:20, 133:23>
+                    X: Ident <133:20, 133:21> 'n'
+                    Sel: Ident <133:22, 133:23> 'L'
+      Stmt: AssignStmt <135:2, 135:20> op=':='
+        Lhs: Ident <135:2, 135:3> 'a'
+        Rhs: CallExpr <135:7, 135:20> must
+          Fun: Ident <135:7, 135:14> 'operand'
+          Args: SelectorExpr <135:16, 135:19>
+            X: Ident <135:16, 135:17> 'n'
+            Sel: Ident <135:18, 135:19> 'L'
+      Stmt: AssignStmt <136:2, 136:20> op=':='
+        Lhs: Ident <136:2, 136:3> 'b'
+        Rhs: CallExpr <136:7, 136:20> must
+          Fun: Ident <136:7, 136:14> 'operand'
+          Args: SelectorExpr <136:16, 136:19>
+            X: Ident <136:16, 136:17> 'n'
+            Sel: Ident <136:18, 136:19> 'R'
+      Stmt: SwitchStmt <137:2, 149:3>
+        Tag: SelectorExpr <137:9, 137:15>
+          X: Ident <137:9, 137:10> 'n'
+          Sel: Ident <137:11, 137:15> 'Kind'
+        Body: BlockStmt <137:16, 149:3>
+          Stmt: CaseClause <138:2, 139:15>
+            Case: Ident <138:7, 138:10> 'Add'
+            Body: ReturnStmt <139:3, 139:15>
+              Result: BinaryExpr <139:10, 139:15> op='+'
+                X: Ident <139:10, 139:11> 'a'
+                Y: Ident <139:14, 139:15> 'b'
+          Stmt: CaseClause <140:2, 141:15>
+            Case: Ident <140:7, 140:10> 'Sub'
+            Body: ReturnStmt <141:3, 141:15>
+              Result: BinaryExpr <141:10, 141:15> op='-'
+                X: Ident <141:10, 141:11> 'a'
+                Y: Ident <141:14, 141:15> 'b'
+          Stmt: CaseClause <142:2, 143:15>
+            Case: Ident <142:7, 142:10> 'Mul'
+            Body: ReturnStmt <143:3, 143:15>
+              Result: BinaryExpr <143:10, 143:15> op='*'
+                X: Ident <143:10, 143:11> 'a'
+                Y: Ident <143:14, 143:15> 'b'
+          Stmt: CaseClause <144:2, 148:15>
+            Case: Ident <144:7, 144:10> 'Div'
+            Body: IfStmt <145:3, 147:4>
+              Cond: BinaryExpr <145:6, 145:12> op='=='
+                X: Ident <145:6, 145:7> 'b'
+                Y: BasicLit <145:11, 145:12> int_lit 0
+              Then: BlockStmt <145:13, 147:4>
+                Stmt: ReturnStmt <146:4, 146:44>
+                  Result: BasicLit <146:11, 146:12> int_lit 0
+                  Result: CallExpr <146:14, 146:44>
+                    Fun: SelectorExpr <146:14, 146:24>
+                      X: Ident <146:14, 146:20> 'errors'
+                      Sel: Ident <146:21, 146:24> 'New'
+                    Args: BasicLit <146:25, 146:43> string_lit "division by zero"
+            Body: ReturnStmt <148:3, 148:15>
+              Result: BinaryExpr <148:10, 148:15> op='/'
+                X: Ident <148:10, 148:11> 'a'
+                Y: Ident <148:14, 148:15> 'b'
+      Stmt: ExprStmt <150:2, 150:28>
+        X: CallExpr <150:2, 150:28>
+          Fun: Ident <150:2, 150:7> 'panic'
+          Args: BasicLit <150:8, 150:27> string_lit "unknown node kind"
+  Decl: FuncDecl <154:1, 159:2> fails
+    Name: Ident <154:6, 154:13> 'operand'
+    Type: FuncType <154:1, 154:37> fails
+      Params: FieldList <154:14, 154:31>
+        Field: Field <154:15, 154:30>
+          Names: Ident <154:15, 154:16> 'o'
+          Type: IndexExpr <154:17, 154:30>
+            X: Ident <154:17, 154:23> 'Option'
+            Index: StarExpr <154:24, 154:29>
+              X: Ident <154:25, 154:29> 'Node'
+      Results: FieldList <154:32, 154:37>
+        Field: Field <154:32, 154:37>
+          Type: Ident <154:32, 154:37> 'int64'
+    Body: BlockStmt <154:38, 159:2>
+      Stmt: IfStmt <155:2, 157:3>
+        Cond: BinaryExpr <155:5, 155:13> op='=='
+          X: Ident <155:5, 155:6> 'o'
+          Y: Ident <155:10, 155:13> 'nil'
+        Then: BlockStmt <155:14, 157:3>
+          Stmt: ReturnStmt <156:3, 156:42>
+            Result: BasicLit <156:10, 156:11> int_lit 0
+            Result: CallExpr <156:13, 156:42>
+              Fun: SelectorExpr <156:13, 156:23>
+                X: Ident <156:13, 156:19> 'errors'
+                Sel: Ident <156:20, 156:23> 'New'
+              Args: BasicLit <156:24, 156:41> string_lit "missing operand"
+      Stmt: ReturnStmt <158:2, 158:17>
+        Result: CallExpr <158:9, 158:17> must
+          Fun: Ident <158:9, 158:13> 'eval'
+          Args: Ident <158:15, 158:16> 'o'
+  Decl: FuncDecl <161:1, 169:2> fails
+    Name: Ident <161:6, 161:10> 'calc'
+    Type: FuncType <161:1, 161:47> fails
+      Params: FieldList <161:11, 161:41>
+        Field: Field <161:12, 161:28>
+          Names: Ident <161:12, 161:17> 'arena'
+          Type: StarExpr <161:18, 161:28>
+            X: SelectorExpr <161:19, 161:28>
+              X: Ident <161:19, 161:22> 'mem'
+              Sel: Ident <161:23, 161:28> 'Arena'
+        Field: Field <161:30, 161:40>
+          Names: Ident <161:30, 161:33> 'src'
+          Type: Ident <161:34, 161:40> 'string'
+      Results: FieldList <161:42, 161:47>
+        Field: Field <161:42, 161:47>
+          Type: Ident <161:42, 161:47> 'int64'
+    Body: BlockStmt <161:48, 169:2>
+      Stmt: AssignStmt <162:2, 162:37> op=':='
+        Lhs: Ident <162:2, 162:3> 'p'
+        Rhs: CompositeLit <162:7, 162:37>
+          Type: Ident <162:7, 162:13> 'Parser'
+          Elts: KeyValueExpr <162:14, 162:22>
+            Key: Ident <162:14, 162:17> 'src'
+            Value: Ident <162:19, 162:22> 'src'
+          Elts: KeyValueExpr <162:24, 162:36>
+            Key: Ident <162:24, 162:29> 'arena'
+            Value: Ident <162:31, 162:36> 'arena'
+      Stmt: AssignStmt <163:2, 163:19> op=':='
+        Lhs: Ident <163:2, 163:6> 'root'
+        Rhs: CallExpr <163:10, 163:19> must
+          Fun: SelectorExpr <163:10, 163:16>
+            X: Ident <163:10, 163:11> 'p'
+            Sel: Ident <163:12, 163:16> 'expr'
+      Stmt: ExprStmt <164:2, 164:15>
+        X: CallExpr <164:2, 164:15>
+          Fun: SelectorExpr <164:2, 164:13>
+            X: Ident <164:2, 164:3> 'p'
+            Sel: Ident <164:4, 164:13> 'skipSpace'
+      Stmt: IfStmt <165:2, 167:3>
+        Cond: BinaryExpr <165:5, 165:23> op='<'
+          X: SelectorExpr <165:5, 165:10>
+            X: Ident <165:5, 165:6> 'p'
+            Sel: Ident <165:7, 165:10> 'pos'
+          Y: CallExpr <165:13, 165:23>
+            Fun: Ident <165:13, 165:16> 'len'
+            Args: SelectorExpr <165:17, 165:22>
+              X: Ident <165:17, 165:18> 'p'
+              Sel: Ident <165:19, 165:22> 'src'
+        Then: BlockStmt <165:24, 167:3>
+          Stmt: ReturnStmt <166:3, 166:79>
+            Result: BasicLit <166:10, 166:11> int_lit 0
+            Result: CallExpr <166:13, 166:79>
+              Fun: SelectorExpr <166:13, 166:23>
+                X: Ident <166:13, 166:16> 'fmt'
+                Sel: Ident <166:17, 166:23> 'Errorf'
+              Args: BasicLit <166:24, 166:47> string_lit "col %d: unexpected %q"
+              Args: BinaryExpr <166:49, 166:56> op='+'
+                X: SelectorExpr <166:49, 166:54>
+                  X: Ident <166:49, 166:50> 'p'
+                  Sel: Ident <166:51, 166:54> 'pos'
+                Y: BasicLit <166:55, 166:56> int_lit 1
+              Args: SliceExpr <166:58, 166:78>
+                X: SelectorExpr <166:58, 166:63>
+                  X: Ident <166:58, 166:59> 'p'
+                  Sel: Ident <166:60, 166:63> 'src'
+                Lo: SelectorExpr <166:64, 166:69>
+                  X: Ident <166:64, 166:65> 'p'
+                  Sel: Ident <166:66, 166:69> 'pos'
+                Hi: BinaryExpr <166:70, 166:77> op='+'
+                  X: SelectorExpr <166:70, 166:75>
+                    X: Ident <166:70, 166:71> 'p'
+                    Sel: Ident <166:72, 166:75> 'pos'
+                  Y: BasicLit <166:76, 166:77> int_lit 1
+      Stmt: ReturnStmt <168:2, 168:20>
+        Result: CallExpr <168:9, 168:20> must
+          Fun: Ident <168:9, 168:13> 'eval'
+          Args: Ident <168:15, 168:19> 'root'
+  Decl: FuncDecl <171:1, 188:2>
+    Name: Ident <171:6, 171:10> 'main'
+    Type: FuncType <171:1, 171:12>
+      Params: FieldList <171:10, 171:12>
+    Body: BlockStmt <171:13, 188:2>
+      Stmt: DeclStmt <172:2, 172:21>
+        Decl: GenDecl <172:2, 172:21> var
+          Spec: ValueSpec <172:6, 172:21>
+            Name: Ident <172:6, 172:11> 'arena'
+            Type: SelectorExpr <172:12, 172:21>
+              X: Ident <172:12, 172:15> 'mem'
+              Sel: Ident <172:16, 172:21> 'Arena'
+      Stmt: DeferStmt <173:2, 173:20>
+        Call: CallExpr <173:8, 173:20>
+          Fun: SelectorExpr <173:8, 173:18>
+            X: Ident <173:8, 173:13> 'arena'
+            Sel: Ident <173:14, 173:18> 'Free'
+      Stmt: ExprStmt <176:2, 176:48>
+        X: CallExpr <176:2, 176:48>
+          Fun: SelectorExpr <176:2, 176:13>
+            X: Ident <176:2, 176:5> 'fmt'
+            Sel: Ident <176:6, 176:13> 'Println'
+          Args: BasicLit <176:14, 176:23> string_lit "answer:"
+          Args: CallExpr <176:25, 176:47> must
+            Fun: Ident <176:25, 176:29> 'calc'
+            Args: UnaryExpr <176:31, 176:37> op='&'
+              X: Ident <176:32, 176:37> 'arena'
+            Args: BasicLit <176:39, 176:46> string_lit "6 * 7"
+      Stmt: AssignStmt <178:2, 178:114> op=':='
+        Lhs: Ident <178:2, 178:7> 'exprs'
+        Rhs: CompositeLit <178:11, 178:114>
+          Type: SliceType <178:11, 178:19>
+            Elt: Ident <178:13, 178:19> 'string'
+          Elts: BasicLit <178:20, 178:31> string_lit "1 + 2 * 3"
+          Elts: BasicLit <178:33, 178:46> string_lit "(1 + 2) * 3"
+          Elts: BasicLit <178:48, 178:62> string_lit "10 / (5 - 5)"
+          Elts: BasicLit <178:64, 178:82> string_lit "2 * (3 + 4) - -5"
+          Elts: BasicLit <178:84, 178:89> string_lit "7 +"
+          Elts: BasicLit <178:91, 178:98> string_lit "8 $ 2"
+          Elts: BasicLit <178:100, 178:113> string_lit "100 / 7 / 2"
+      Stmt: RangeStmt <179:2, 187:3> op=':='
+        Key: Ident <179:6, 179:7> '_'
+        Value: Ident <179:9, 179:12> 'src'
+        X: Ident <179:22, 179:27> 'exprs'
+        Body: BlockStmt <179:28, 187:3>
+          Stmt: ExprStmt <180:3, 180:16>
+            X: CallExpr <180:3, 180:16>
+              Fun: SelectorExpr <180:3, 180:14>
+                X: Ident <180:3, 180:8> 'arena'
+                Sel: Ident <180:9, 180:14> 'Reset'
+          Stmt: AssignStmt <181:3, 181:30> op=':='
+            Lhs: Ident <181:3, 181:4> 'v'
+            Lhs: Ident <181:6, 181:9> 'err'
+            Rhs: CallExpr <181:13, 181:30>
+              Fun: Ident <181:13, 181:17> 'calc'
+              Args: UnaryExpr <181:18, 181:24> op='&'
+                X: Ident <181:19, 181:24> 'arena'
+              Args: Ident <181:26, 181:29> 'src'
+          Stmt: IfStmt <182:3, 185:4>
+            Cond: BinaryExpr <182:6, 182:16> op='!='
+              X: Ident <182:6, 182:9> 'err'
+              Y: Ident <182:13, 182:16> 'nil'
+            Then: BlockStmt <182:17, 185:4>
+              Stmt: ExprStmt <183:4, 183:45>
+                X: CallExpr <183:4, 183:45>
+                  Fun: SelectorExpr <183:4, 183:14>
+                    X: Ident <183:4, 183:7> 'fmt'
+                    Sel: Ident <183:8, 183:14> 'Printf'
+                  Args: BasicLit <183:15, 183:34> string_lit "%-18s error: %v\n"
+                  Args: Ident <183:36, 183:39> 'src'
+                  Args: Ident <183:41, 183:44> 'err'
+              Stmt: BranchStmt <184:4, 184:12> continue
+          Stmt: ExprStmt <186:3, 186:37>
+            X: CallExpr <186:3, 186:37>
+              Fun: SelectorExpr <186:3, 186:13>
+                X: Ident <186:3, 186:6> 'fmt'
+                Sel: Ident <186:7, 186:13> 'Printf'
+              Args: BasicLit <186:14, 186:28> string_lit "%-18s = %d\n"
+              Args: Ident <186:30, 186:33> 'src'
+              Args: Ident <186:35, 186:36> 'v'

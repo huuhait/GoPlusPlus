@@ -34,7 +34,21 @@ void StructType::Profile(llvm::FoldingSetNodeID &ID) const {
     ID.AddPointer(F->Ty);
     ID.AddBoolean(F->Embedded);
     ID.AddString(F->Tag);
+    ID.AddBoolean(F->Required);
+    ID.AddBoolean(F->RequiredSetOnly);
   }
+}
+
+bool OptionType::usesNiche() const {
+  if (llvm::isa<PointerType>(Elem))
+    return true;
+  auto *N = llvm::dyn_cast<NamedType>(Elem);
+  if (!N)
+    return false;
+  // A defined pointer type (`type P *T`; its underlying type is set before
+  // bodies are checked), or Unique / Shared / Weak.
+  return N->Ptr != PtrKind::None ||
+         (!N->Orig && N->Underlying && llvm::isa<PointerType>(N->Underlying));
 }
 
 void NamedType::Profile(llvm::FoldingSetNodeID &ID) const {
@@ -216,6 +230,8 @@ PointerType *TypeContext::pointer(Type *Elem){
                 Elem)} SliceType *TypeContext::slice(Type *Elem){
     GOPP_UNIQUE(Slices, SliceType, Elem)} RefType *TypeContext::ref(Type *Elem){
     GOPP_UNIQUE(Refs, RefType,
+                Elem)} OptionType *TypeContext::option(Type *Elem){
+    GOPP_UNIQUE(Options, OptionType,
                 Elem)} ArrayType *TypeContext::array(Type *Elem, int64_t Len){
     GOPP_UNIQUE(Arrays, ArrayType, Elem,
                 Len)} MapType *TypeContext::map(Type *Key, Type *Elem){
@@ -255,6 +271,8 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields) {
     ID.AddPointer(F.Ty);
     ID.AddBoolean(F.Embedded);
     ID.AddString(F.Tag);
+    ID.AddBoolean(F.Required);
+    ID.AddBoolean(F.RequiredSetOnly);
   }
   return unique(Structs, ID, [&](llvm::BumpPtrAllocator &A) {
     llvm::SmallVector<Var *, 8> Vars;
@@ -269,6 +287,8 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields) {
       V->IsField = true;
       V->Embedded = F.Embedded;
       V->Tag = copyIn(A, F.Tag);
+      V->Required = F.Required;
+      V->RequiredSetOnly = F.RequiredSetOnly;
       Vars.push_back(V);
     }
     return new (A.Allocate<StructType>())
@@ -420,7 +440,7 @@ void TypeContext::initUniverse(bool GoCompat) {
   if (!GoCompat) {
     CopyType = Special("Copy", InterfaceType::Copy);
     CloneType = Special("Clone", InterfaceType::Clone);
-    // Unique[T], Shared[T], Weak[T] (D1.7).
+    // Unique[*T], Shared[*T], Weak[*T] (D1.7, ADR-0018).
     const std::pair<const char *, PtrKind> PK[] = {{"Unique", PtrKind::Unique},
                                                    {"Shared", PtrKind::Shared},
                                                    {"Weak", PtrKind::Weak}};
@@ -429,6 +449,22 @@ void TypeContext::initUniverse(bool GoCompat) {
       TN->Name = Name;
       NamedType *N = newNamed(TN);
       N->Ptr = Kind;
+      TypeName *PTN = Objs.make<TypeName>();
+      PTN->Name = "T";
+      TypeParamType *TP = newTypeParam(PTN, 0, AnyType);
+      TypeParamType *TPs[] = {TP};
+      N->TParams =
+          ArrayRef<TypeParamType *>(Objs.copy(ArrayRef<TypeParamType *>(TPs)));
+      N->Underlying = structOf({});
+      Def(TN);
+    }
+    // Option[T] (ADR-0018): an instance is an OptionType, built by
+    // Checker::instantiatedType.
+    {
+      TypeName *TN = Objs.make<TypeName>();
+      TN->Name = "Option";
+      NamedType *N = newNamed(TN);
+      N->IsOption = true;
       TypeName *PTN = Objs.make<TypeName>();
       PTN->Name = "T";
       TypeParamType *TP = newTypeParam(PTN, 0, AnyType);

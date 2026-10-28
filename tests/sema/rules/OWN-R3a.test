@@ -24,6 +24,9 @@ func positive(p *P, a []string, m map[string]string) (string, int) {
 	a[0], a[1] = a[1], a[0] // a swap moves the elements
 	_, _, _ = x, y, t
 	take(move(p.name))
+	ys := []string{"a"}
+	take(ys[0].Clone())
+	take(move(ys[0]))
 	n := len(p.name) + len(global)
 	if ok {
 		n++
@@ -46,6 +49,11 @@ func negative(p *P, a []string, m map[string]string, c chan string, s string) st
 	_, _, _, _ = x, y, q, g
 	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot pass as a `move` argument s: it is a borrowed parameter, and this needs ownership (OWN-R3a)
 	take(s)
+	// An element of a local slice is another place too (the argument is
+	// ys[0], not ys).
+	ys := []string{"a"}
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot pass as a `move` argument ys[0]: it is a value in another place, and this needs ownership (OWN-R3a)
+	take(ys[0])
 	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return m["a"]: it is a value in another place, and this needs ownership (OWN-R3a)
 	return m["a"]
 }

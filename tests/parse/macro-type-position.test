@@ -1,0 +1,22 @@
+// RUN: not %gopp parse %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// MAC-2 (ADR-0011): a macro call cannot stand where a type goes, in v0.
+// `var x #Bits(12)` is a parse error. Macro calls in expression, statement
+// and declaration position still parse (the lines before each error).
+package main
+
+#Decl(1)
+
+func ok() {
+	var a = #Expr(1)
+	#Stmt(2)
+	_ = a
+}
+
+// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: expected type, found '#'
+var x #Bits(12)
+
+// CHECK: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: expected type, found '#'
+var y [3]#Bits(2)
+
+// CHECK: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: expected type, found '#'
+type T struct{ f #Bits(2) }

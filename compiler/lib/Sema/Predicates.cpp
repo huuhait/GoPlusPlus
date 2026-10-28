@@ -309,15 +309,25 @@ Type *Checker::maxType(Type *X, Type *Y) {
 }
 
 bool Checker::hasNil(Type *T) {
-  if (auto *N = dyn_cast<NamedType>(T))
+  if (own()) {
+    // ADR-0018: pointers are never nil; Option[T] is the "maybe".
+    if (isPointerKind(T))
+      return false;
+    if (isa<OptionType>(T))
+      return true;
+  } else if (auto *N = dyn_cast<NamedType>(T)) {
     if (N->origin()->Ptr != PtrKind::None)
       return true;
+  }
   Type *U = under(T);
   switch (U->getKind()) {
   case Type::Kind::Basic:
     return cast<BasicType>(U)->BK == BasicKind::UnsafePointer;
-  case Type::Kind::Slice:
+  case Type::Kind::Option:
+    return own();
   case Type::Kind::Pointer:
+    return !own();
+  case Type::Kind::Slice:
   case Type::Kind::Signature:
   case Type::Kind::Map:
   case Type::Kind::Chan:
@@ -329,6 +339,13 @@ bool Checker::hasNil(Type *T) {
   default:
     return false;
   }
+}
+
+bool Checker::isPointerKind(Type *T) {
+  if (auto *N = dyn_cast<NamedType>(T))
+    if (N->origin()->Ptr != PtrKind::None)
+      return true;
+  return isa<PointerType>(under(T));
 }
 
 bool Checker::comparableType(Type *T, bool Dynamic,
@@ -351,6 +368,16 @@ bool Checker::comparableType(Type *T, bool Dynamic,
   case Type::Kind::Pointer:
   case Type::Kind::Chan:
   case Type::Kind::Ref:
+    return true;
+  case Type::Kind::Option:
+    // ADR-0018: Option[T] compares like T (both nil, or both set and equal).
+    if (!comparableType(cast<OptionType>(U)->Elem, Dynamic, Seen)) {
+      if (Cause)
+        *Cause = str(T) +
+                 " cannot be compared: " + str(cast<OptionType>(U)->Elem) +
+                 " is not comparable";
+      return false;
+    }
     return true;
   case Type::Kind::Struct:
     for (Var *F : cast<StructType>(U)->Fields)
@@ -424,6 +451,8 @@ bool Checker::identicalImpl(const Type *X0, const Type *Y0, bool IgnoreTags,
     return Rec(cast<SliceType>(X)->Elem, cast<SliceType>(Y)->Elem);
   case Type::Kind::Ref:
     return Rec(cast<RefType>(X)->Elem, cast<RefType>(Y)->Elem);
+  case Type::Kind::Option:
+    return Rec(cast<OptionType>(X)->Elem, cast<OptionType>(Y)->Elem);
   case Type::Kind::Pointer:
     return Rec(cast<PointerType>(X)->Elem, cast<PointerType>(Y)->Elem);
   case Type::Kind::Map: {
@@ -467,8 +496,10 @@ bool Checker::identicalImpl(const Type *X0, const Type *Y0, bool IgnoreTags,
       return false;
     for (size_t I = 0; I < A->Fields.size(); ++I) {
       Var *F = A->Fields[I], *G = B->Fields[I];
-      if (F->Embedded != G->Embedded || (!IgnoreTags && F->Tag != G->Tag) ||
-          F->Name != G->Name ||
+      // `@Required` is part of the identity even where tags are ignored
+      // (conversions): `User(struct{ID int}{})` would skip the field.
+      if (F->Embedded != G->Embedded || F->Required != G->Required ||
+          (!IgnoreTags && F->Tag != G->Tag) || F->Name != G->Name ||
           (!isExportedName(F->Name) && F->Pkg != G->Pkg) || !Rec(F->Ty, G->Ty))
         return false;
     }
@@ -607,6 +638,17 @@ unsigned long long Checker::sizeofType(Type *T) {
   case Type::Kind::Array: {
     auto *A = cast<ArrayType>(U);
     return A->Len < 0 ? 0 : sizeofType(A->Elem) * A->Len;
+  }
+  case Type::Kind::Option: {
+    // ADR-0018: a pointer kind's nil is its empty bit pattern; any other T
+    // gets a hidden "is set" flag.
+    auto *O = cast<OptionType>(U);
+    unsigned long long ES = sizeofType(O->Elem);
+    if (O->usesNiche())
+      return ES;
+    unsigned long long A = std::min<unsigned long long>(ES, 8);
+    A = A == 0 ? 1 : A;
+    return (ES + 1 + A - 1) / A * A;
   }
   case Type::Kind::Struct: {
     unsigned long long Off = 0, MaxA = 1;

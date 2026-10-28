@@ -1,0 +1,6 @@
+// Every test that FileChecks a gopp run with --implicit-check-not=error[E
+// expects exactly its CHECK diagnostics: no extra error or warning, even one
+// that sits between two CHECK-DAG matches (which FileCheck does not see), and
+// none missing. The script finds those tests by scanning tests/, so a new test
+// is covered without a new RUN line.
+// RUN: %python %S/check-exact-errors.py --gopp %gopp --examples %examples --root %S/..

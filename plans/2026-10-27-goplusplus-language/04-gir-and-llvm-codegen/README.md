@@ -16,17 +16,18 @@
 
 **D4.2 — Per-function pipeline.**
 1. Build GIR.
-2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows. For a type with no zero value, the value of a comma-ok lookup (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`) counts as moved on the paths where `ok` is false, and a borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in an interface, func, map or channel `@Required` field must be known non-nil on that path (`make`, a literal, a func value, a non-nil value converted to the interface, or a variable narrowed by `if v != nil`). After a failing `!` call in the Go form `v, err := f()`, `v` counts as moved where `err != nil` when its type has no zero value (ADR-0018).; reads of such a field skip the nil check.
+2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows. A borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). The comma-ok reads (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`, `<-ch`, `o.Get()` for a type with no zero value, used only where `ok` is true), the `v, err := f()` reads (only where `err == nil` when `v`'s type has no zero value) and the known-non-nil stores are checked by the type checker's flow typing (P03.18, ADR-0018 amendment point 4); here they are only GIR regression cases. A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in an `error`, `any`, map or channel `@Required` field is known non-nil (spec TYP-15's list), so reads of such a field skip the nil check.
 3. Elaborate drops: destructor calls on normal *and* unwind paths, and zeroing on `move`.
    - Moving a Go++ value copies its bytes and zeroes the source.
    - Moving a C++ value, implicitly or with `move(x)`, runs its move constructor; the source keeps its moved-from state and is destroyed at the end of its scope (P01 D1.4 rule 9). Relocation (P05 D5.5) is used only inside containers.
    - Drop glue skips `drop` on all-zero values.
-4. Lower `!`, bounds checks and nil checks. Nil checks are only for maps, channels, funcs and interfaces: the pointer kinds are never nil, so their dereferences have none (ADR-0018).
+4. Lower `!`, bounds checks and nil checks. Nil checks are only for maps, channels and `error` / `any` values: the pointer kinds, funcs and interfaces with methods are never nil, so their uses have none (ADR-0018 and its amendment point 3).
 5. Monomorphize generic calls.
 6. Run light GIR passes: constant folding, dead-block removal, trivial inlining (at every `opt`; the `opt 0` pipeline keeps it small).
 7. Emit LLVM IR.
 
 **D4.3 — Monomorphization and where instances live.**
+- **Per-instance `Option` check (ADR-0018 point 11):** the type checker checks a generic body once, so an `Option[T]` written or inferred inside it (`First[U](xs)` giving `Option[U]`) is not validated for a nilable or `Option` type argument. Substitution must re-check every `Option[X]` it creates and report the instantiation as an error. `gopp check` (P04.09) must run the same per-instance validation for the instances it sees, so a check-only run does not miss the error.
 - **Debug builds (`opt 0` or `opt 1`):** each generic instance gets one home per build: one object file per instance (or per batch of instances), keyed by a full fingerprint and shared by all packages. Packages reference it instead of compiling their own copy.
 - **Release builds (`opt 2` and up):** instances are emitted `linkonce_odr` in a COMDAT, so LTO can inline them. Duplicates fold at link time.
 - **Fingerprint** = the instance's GIR after substitution + the fingerprints of every type and function it references + the effective profile settings that affect codegen + target.
@@ -61,8 +62,11 @@
 | `*T`, `Unique[*T]` | pointer |
 | `Shared[*T]`, `Weak[*T]` | pointer to the control block |
 | `Option[P]` for a pointer kind `P` | the same as `P`; the null bit pattern is `nil` |
+| `Option[I]` for an interface `I` with methods (not `error`; `any` keeps `nil` and has no `Option`), `Option[F]` for a func type `F` | the same as `I` / `F`; the nil bit pattern (null `itab*` / null `code*`) is `nil` (ADR-0018 amendment point 3) |
 | `Option[T]` for other `T` | `T` followed by a one-byte "is set" flag (padded to `T`'s alignment) |
 | `map[K]V`, `chan T` | pointer to the runtime object |
+
+`Option[T]` is comparable when `T` is (ADR-0018 amendment point 1): GIR `==` on it is "both nil, or both set and `T`'s equality"; for a pointer kind it is the plain pointer compare, and for an `Option[I]` the nil bit pattern (null `itab*`) is nil. The flag byte and its padding must not take part in the comparison or the hash (P05 D5.4, map keys).
 
 **D4.6 — Panics are native C++ exceptions (Itanium ABI).**
 - The runtime defines a `type_info` for the panic payload and throws with `__cxa_allocate_exception`/`__cxa_throw`. So a C++ `catch (...)` that swallows a panic still frees it correctly.

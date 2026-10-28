@@ -19,7 +19,7 @@
 - `mem.ArenaNew[T Copy](a *mem.Arena) *T` returns raw pointers owned by the arena.
 - `ArenaNew` accepts only `Copy` types, so `mem.Arena` never tracks destructors and `Free`/`Reset` are instant.
 - **`mem.DropArena`** (owner decision, decides Q1; task P05.17) accepts any type. For a type that needs drop, each allocation also records a (pointer, drop function) entry, about 16 bytes; `Free`/`Reset` run the recorded drops newest first, then release the chunks. A type with no drop records nothing, so it costs the same as in `mem.Arena` (the compiler knows this per type). Same idea as C++ Protobuf's `Arena`, nginx/APR pools and Rust's `typed-arena`; `mem.Arena` matches Zig's `ArenaAllocator`, Rust's `bumpalo` and LLVM's `BumpPtrAllocator`. Final names are set in P05.17.
-- **Allocator objects.** Owned slices and maps store one pointer to an allocator object (P01 D1.22). The object starts with its function table (alloc, resize, free); nil means the global allocator. `mem.Arena` is one such object.
+- **Allocator objects.** Owned slices and maps store one pointer to an allocator object (P01 D1.22). The object starts with its function table (alloc, resize, free); nil means the global allocator. That nil is the hidden header word, not a Go++ value: in Go++ code `mem.Allocator` is an interface with methods, so it is never nil (ADR-0018 amendment point 3), and an optional allocator parameter or field is an `Option[mem.Allocator]` (nil: the global allocator). `mem.Arena` is one such object.
 - `func Replace[T any](p *T, v T) T` (`mem.Replace(&place, v)`) puts `v` in `place` and returns the old value, for any `T` (no `Copy` constraint, and it works for types with no zero value). It is the only call that may take `&` of a never-nil `@Required` field, and then `v` must be known non-nil. It is the way to take a value out of a `@Required` field that must never be nil (ADR-0016).
 - `mem` functions create a slice or map in a given allocator (names set in P05.03). Resetting or freeing an arena while its slices or maps are alive leaves them dangling (P01.14).
 
@@ -35,7 +35,7 @@
 - **`map[K]V`:** an open-addressing Swiss table, as in Abseil and Go 1.24. The map header also stores its allocator (P01 D1.22).
   - The hash seed is random per process, and iteration starts at a random position, so iteration order is unspecified as in Go.
   - Keys and values are dropped on delete, clear and destroy. Inside a `range`, the entry the loop is on is dropped at the end of that iteration, so `k` and `v` stay valid (P01 D1.21).
-  - The compiler generates hash and equality functions per key type.
+  - The compiler generates hash and equality functions per key type. An `Option[T]` key (comparable when `T` is, ADR-0018 amendment) hashes as one fixed value when nil and as the hash of `T` when set; the "is set" flag and padding bytes are not hashed (`Option` of a pointer kind, a func or an interface with methods has no flag: nil is the value's own nil bit pattern, ADR-0018 amendment point 3), and equality is "both nil, or both set and `T` equal".
   - Lookups accept a `ref` key, so `counts[w]` with `w ref string` doesn't allocate (P01 D1.6).
   - Maps count their active iterators. Inserting a new key while an iterator is active **always** panics with "map insert during iteration", whether or not the table has room (P01 D1.21, ADR-0006). Writing an existing key is allowed.
 - **`Unique[*T]`** (`new_unique`): allocated on creation; the target is dropped and freed on destruction.
@@ -62,13 +62,14 @@
 **D5.7 — Panics and stack traces.**
 - The exception object is a native C++ exception (P04 D4.6). It carries the panic value (`any`, moved in), a backtrace captured at panic time (`_Unwind_Backtrace`) and a recovered flag.
 - **Go-exact nesting** (P01 D1.9): a panic in a deferred call replaces the current one, and a later `recover()` can recover it. An unrecovered chain prints all panics and exits with code 2.
+- **`panic(nil)`** panics with a `*runtime.PanicNilError`, as in Go 1.21 and later, so `recover()` (which returns `any`) is never nil for a real panic (spec PAN-1).
 - **Trace data:** a compact runtime line table (like Go's), which survives `strip`. It counts in the P15 size target.
 - Symbolization happens lazily, only when a trace is printed.
 - Traces look like Go's: `main.load(...)` followed by `\t/src/main.gopp:12 +0x1c`.
 - **Trampolines:** the catch-all trampolines from P04 D4.6 (at `main`, goroutine entry and C-callback entry) print an unrecovered panic, stop the other goroutines (P12 D12.12) and exit with code 2.
 
 **D5.8 — Explicit safety checks.**
-- Bounds, nil dereference (maps, channels, funcs and interfaces only: the pointer kinds are never nil, ADR-0018), integer division by zero and negative shift counts are checked with a compare plus a branch to a cold panic call.
+- Bounds, nil dereference (maps, channels and `error` / `any` values only: the pointer kinds, funcs and interfaces with methods are never nil, ADR-0018 and its amendment point 3), integer division by zero and negative shift counts are checked with a compare plus a branch to a cold panic call.
 - No SIGSEGV tricks for nil checks. Signal handling stays free for the C code that needs it.
 - `@NoBounds` (per function) and a per-package flag turn bounds checks off.
 

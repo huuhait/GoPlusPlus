@@ -58,50 +58,59 @@ func local() int {
 
 // OWN-R5: drop runs on the zero value too.
 type Res struct {
-	f *File
+	f func()
 	n int
 }
 
 func (r *Res) drop() {
 	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field f is used without a nil check (OWN-R5)
-	r.f.Close()
+	r.f()
 }
 
 // A method that is not named drop is not a drop method.
-func (r *Res) release() { r.f.Close() }
+func (r *Res) release() { r.f() }
 
 type Guarded struct {
-	f *File
+	f func()
 }
 
 func (r *Guarded) drop() {
 	if r.f != nil {
-		r.f.Close()
+		r.f()
 	}
 }
 
-type Guarded2 struct{ f *File }
+type Guarded2 struct{ f func() }
 
 func (g *Guarded2) drop() {
 	if g.f == nil {
 		return
 	}
-	g.f.Close()
+	g.f()
 }
 
-type Guarded3 struct{ f Unique[File] }
+// A pointer is never nil (ADR-0018), so a pointer field needs no check.
+type Ptr struct{ f *File }
 
-func (g *Guarded3) drop() {
-	if !g.f.IsNil() {
-		g.f.Stop()
-	}
-}
+func (p *Ptr) drop() { p.f.Stop() }
 
-type Owner struct{ f Unique[File] }
+type Owner struct{ f func() }
 
 func (o *Owner) drop() {
 	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field f is used without a nil check (OWN-R5)
-	o.f.Stop()
+	o.f()
+}
+
+// A @Required func or interface field is never nil (ADR-0016 point 8, drop
+// glue skips a moved-from value), so it needs no check either.
+type Req struct {
+	f func()                     @Required
+	c interface{ Close() error } @Required
+}
+
+func (r *Req) drop() {
+	r.f()
+	_ = r.c.Close()
 }
 
 type Iface struct{ c interface{ Close() error } }

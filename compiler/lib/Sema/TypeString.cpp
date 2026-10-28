@@ -42,6 +42,11 @@ public:
       OS << '*';
       type(llvm::cast<PointerType>(T)->Elem, Depth);
       break;
+    case Type::Kind::Option:
+      OS << "Option[";
+      type(llvm::cast<OptionType>(T)->Elem, Depth);
+      OS << ']';
+      break;
     case Type::Kind::Slice:
       OS << "[]";
       type(llvm::cast<SliceType>(T)->Elem, Depth);
@@ -105,6 +110,8 @@ public:
         if (!F->Embedded)
           OS << F->Name << ' ';
         type(F->Ty, Depth);
+        if (F->Required) // MAC-12: the attribute comes before the tag
+          OS << " @Required";
         if (!F->Tag.empty())
           OS << " \"" << F->Tag << '"';
       }

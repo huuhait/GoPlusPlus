@@ -54,7 +54,7 @@ const (
 type Point struct {
 	X, Y int
 	tag  string `json:"t"`
-	Next *Point
+	Next Option[*Point]
 }
 
 func (p Point) Dist() float64 { return 0 }
@@ -66,12 +66,12 @@ type Shape interface {
 }
 type Number interface{ ~int | ~float64 }
 type Opt interface{ Rec | int }
-type Rec struct{ next *Rec }
+type Rec struct{ next Option[*Rec] }
 
-type List[T any] struct{ head *node[T] }
+type List[T any] struct{ head Option[*node[T]] }
 type node[T any] struct {
 	val  T
-	next *node[T]
+	next Option[*node[T]]
 }
 
 func (l *List[T]) Push(v T) {}
@@ -93,15 +93,29 @@ var Handles map[string][]Point
 var Ch chan<- int
 var Arr [4]byte
 var Runes []rune
-var Owner Unique[Point]
-var Shared1 Shared[List[int]]
-var Weak1 Weak[Point]
+var Owner Option[Unique[*Point]]
+var Shared1 Option[Shared[*List[int]]]
+var Weak1 Option[Weak[*Point]]
 var Anyval any
 var Err error
 var Callback func(int, ...int) (bool, error)
 var Embedded struct {
 	Point
 	Extra []Shape
+}
+
+// P03.15: a @Required field, and the types with no zero value that follow.
+type User struct {
+	ID   int @Required
+	Name string
+}
+type Team struct {
+	Lead User
+	Size int
+}
+type Box[T any] struct{ V T }
+type Gate struct {
+	Open func() @Required
 }
 
 type Alias = Point
@@ -197,16 +211,16 @@ TEST(Serialize, RoundTripIntoAFreshContextKeepsTheAPI) {
            "const Neg int64 = -9223372036854775808",
            "const Yes untyped bool = true",
            "type Point struct{X int; Y int; tag string \"json:\"t\"\"; "
-           "Next *Point}",
+           "Next Option[*Point]}",
            "func (*Point) Move(int)",
            "func (Point) Dist() float64",
-           "type List[T any] struct{head *node[T]}",
+           "type List[T any] struct{head Option[*node[T]]}",
            "func (*List[T any]) Push(T)",
            "type Number interface{~int | ~float64}",
            "func Map[T, U any]([]T, func(T) U) []U",
            "func Parse!(string) int",
-           "var Owner Unique[Point]",
-           "var Shared1 Shared[List[int]]",
+           "var Owner Option[Unique[*Point]]",
+           "var Shared1 Option[Shared[*List[int]]]",
            "var Ch chan<- int",
            "func Take(ref string, Point) int",
            "type Alias = Point",
@@ -264,10 +278,114 @@ TEST(Serialize, ReadingIntoTheSameContextGivesTheSameUniquedTypes) {
     EXPECT_EQ(A->Ty, B->Ty) << Name;
   }
   // A named type is decoded to a new object, and so is every type that
-  // contains it, even `Unique[Point]` (its origin is the universe's).
+  // contains it, even `Option[Unique[*Point]]` (its origin is the universe's).
   Object *Own = P2->PkgScope->lookupLocal("Owner");
   ASSERT_NE(Own, nullptr);
   EXPECT_NE(Own->Ty, L.CP->Pkg->PkgScope->lookupLocal("Owner")->Ty);
+}
+
+/// An importer that hands out one package.
+struct OnePackage : Importer {
+  OnePackage(llvm::StringRef Path, Package *P) : Path(Path.str()), P(P) {}
+  Package *import(llvm::StringRef Want, std::string &) override {
+    return Want == Path ? P : nullptr;
+  }
+  std::string Path;
+  Package *P;
+};
+
+/// The error messages of main, a package that imports Lib.
+std::vector<std::string> checkMain(TypeContext &Ctx, Package *Lib,
+                                   llvm::StringRef Text) {
+  ParseOptions PO;
+  test::Parsed Pr(Text, PO);
+  OnePackage Imp("lib", Lib);
+  CheckOptions CO;
+  CO.Ownership = true;
+  const ast::File *Files[] = {Pr.File};
+  checkPackage(Ctx, Pr.Src.SM, "main", Files, Imp, Pr.Src.Diags, CO);
+  return Pr.errors();
+}
+
+bool anyHas(const std::vector<std::string> &Errs, llvm::StringRef Sub) {
+  return std::any_of(Errs.begin(), Errs.end(), [&](const std::string &E) {
+    return E.find(Sub) != std::string::npos;
+  });
+}
+
+// P03.15: an importing package gets the same errors from a package read back
+// from bytes as from the one that was just checked. The writer records
+// @Required per field and "no zero value" per type.
+TEST(Serialize, RequiredFieldsAndNoZeroValueSurviveTheRoundTripAcrossPackages) {
+  Loaded L;
+  ASSERT_NE(L.CP, nullptr);
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  // The text of a struct shows the attribute, so the dump compares it.
+  EXPECT_NE(dump(*P2).find("type User struct{ID int @Required; Name string}"),
+            std::string::npos)
+      << dump(*P2);
+
+  // "No zero value" is recorded per type (1 = has one, 2 = has none) before
+  // anything asks the copy.
+  auto State = [&](const char *Name) {
+    auto *N = llvm::cast<NamedType>(P2->PkgScope->lookupLocal(Name)->Ty);
+    return N->ZeroState.load();
+  };
+  EXPECT_EQ(State("User"), 2);
+  EXPECT_EQ(State("Team"), 2);
+  EXPECT_EQ(State("Gate"), 2);
+  EXPECT_EQ(State("Point"), 1);
+
+  const char *Bad = R"(package main
+import "lib"
+func f() {
+	_ = lib.User{Name: "x"}
+	var u lib.User
+	var t lib.Team
+	var b lib.Box[lib.User]
+	_ = lib.Gate{}
+	_, _, _ = u, t, b
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+func f() {
+	u := lib.User{ID: 1}
+	t := lib.Team{Lead: u, Size: 2}
+	var b lib.Box[int]
+	var p lib.Point
+	g := lib.Gate{Open: func() {}}
+	_, _, _, _, _ = u, t, b, p, g
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "missing required field ID in lib.User literal"))
+      << Decoded.size();
+  EXPECT_TRUE(anyHas(Decoded, "lib.User has no zero value"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Team has no zero value"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Box[lib.User] has no zero value"));
+  EXPECT_TRUE(
+      anyHas(Decoded, "missing required field Open in lib.Gate literal"));
+  EXPECT_EQ(Decoded.size(), 5u);
+  // Both sides: the good code is clean in both.
+  EXPECT_TRUE(checkMain(L.Ctx, L.CP->Pkg, Good).empty());
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+  // And the bytes of the copy are the bytes of the original.
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
 }
 
 //===----------------------------------------------------------------------===//

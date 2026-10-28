@@ -7,8 +7,8 @@ type H struct {
 	ch  chan int
 	fn  func()
 	err error
-	sh  Shared[int]
-	wk  Weak[int]
+	sh  Shared[*int]
+	wk  Weak[*int]
 }
 
 func cp[T Copy](x T) T { return x }

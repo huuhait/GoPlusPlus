@@ -1,19 +1,288 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
-// Rule OWN-P9: every pointer kind has IsNil(); on a raw *T it is ambiguous
-// when T has its own IsNil method.
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P9 (P03.17, ADR-0018): the pointer kinds are never nil and have no
+// zero value, so `var p *T`, `p == nil` and storing nil are errors; Option[T]
+// is the only "maybe" (any T, but not a type that already has nil, also per
+// generic instance); it has IsNil and Get and nothing else. T converts to
+// Option[T], a Unique / Shared place to Option[*T]; the pointer kinds have no
+// IsNil method, so there is no tie-break with a method of T. Ownership
+// follows T (point 11): `v, ok := o.Get()` borrows an owning T. Functions
+// named positive* have no error.
 package main
 
-type Opt struct{ v *int }
+import "unsafe"
 
-func (o Opt) IsNil() bool { return o.v == nil }
+type User struct{ Name string }
+
+func (u *User) Do() {}
 
 type Plain struct{ n int }
 
-func positive(q *Plain, u Unique[int], s Shared[int], w Weak[int], p *Opt) bool {
-	return q.IsNil() || u.IsNil() || s.IsNil() || w.IsNil() || (*p).IsNil() || p == nil
+// A value-receiver IsNil on T is reached through the pointer: pointers have
+// no IsNil of their own, so there is no tie-break.
+type Opt struct{ v Option[*int] }
+
+func (o Opt) IsNil() bool { return o.v == nil }
+
+type Holder struct {
+	P *Plain
+	U Unique[*Plain]
 }
 
-func negative(p *Opt) bool {
-	// CHECK: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: p.IsNil() is ambiguous on pointer *Opt: Opt has an IsNil method (OWN-P9)
-	return p.IsNil()
+type Node struct {
+	Val  int
+	Next Option[*Node]
 }
+
+type Owner struct {
+	Item Option[Unique[*Plain]]
+}
+
+type Box struct {
+	Owner Option[Unique[*User]]
+	Back  Option[*User]
+	Cb    func()
+	Err   error
+	M     map[string]int
+	C     chan int
+	S     []int
+}
+
+type Opaque interface{ Do() }
+
+type MaybeBox[T any] struct{ o Option[T] }
+
+type Outer[T any] struct{ b MaybeBox[T] }
+
+type Iface[T any] interface{ M() Option[T] }
+
+type Cycle struct {
+	v    int
+	next Option[*Cycle]
+}
+
+func takeOpt(p Option[*Plain]) {}
+func takePtr(p *Plain)         {}
+func takeAny(v any)            {}
+func takeStr(s Option[string]) {}
+
+func maybe[T any]() Option[T] { return nil }
+
+func positive(p *Plain, u Unique[*Plain], s Shared[*Plain], w Weak[*Plain], o Option[*Plain], pp *Opt, e error, m map[string]int, f func(), ch chan int, sl []int, ow *Owner, h *Holder) bool {
+	_ = pp.IsNil() || (*pp).IsNil()
+	// The zero value of an Option is nil; nil empties it.
+	var z Option[*Plain]
+	z = nil
+	// T converts to Option[T].
+	var a Option[*Plain] = p
+	var n Option[int] = 5
+	var str Option[string] = "x"
+	a = p
+	a = u // a Unique[*T] place borrows as Option[*T]
+	a = s
+	takeOpt(p)
+	takeOpt(u)
+	takeOpt(h.U) // a field: borrowed, not moved
+	takeOpt(nil)
+	takeStr("x")
+	takeStr(nil)
+	// An Option[Unique[*T]] place converts to Option[*T].
+	var borrowed Option[*Plain] = ow.Item
+	takeOpt(ow.Item)
+	// Go's nilable types keep nil.
+	_ = e != nil && m != nil && f != nil && ch != nil && sl != nil
+	m2 := map[string]int(nil)
+	var s2 []int = nil
+	e = nil
+	var ptr unsafe.Pointer = nil
+	_, _, _ = m2, s2, ptr
+	// An Option goes into an interface (nil, or the boxed value).
+	var any1 any = o
+	takeAny(o)
+	u0 := User{}
+	var iface Opaque = &u0
+	iface = nil
+	var b Box
+	var nd Node
+	var c Cycle
+	_, _, _, _, _, _, _, _, _ = z, a, n, str, borrowed, any1, iface, b, nd
+	_ = c
+	takePtr(u)
+	if l := new_weak(new_shared(Plain{})).Lock(); l != nil {
+		takePtr(l)
+	}
+	// Per instance: these value types may be in an Option.
+	var mb MaybeBox[int]
+	var ob Outer[*User]
+	_, _ = mb, ob
+	_ = maybe[*Plain]()
+	_ = maybe[Plain]()
+	_ = unsafe.Sizeof(o) // the size of a C pointer
+	return o.IsNil()
+}
+
+func negative(p *Plain, u Unique[*Plain], s Shared[*Plain], w Weak[*Plain], o Option[*Plain]) {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare q without a value: *Plain has no zero value (pointers are never nil)
+	var q *Plain
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	_ = p == nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	_ = p != nil
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	_ = nil != p
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Unique[*Plain] is never nil: a pointer has no nil; use Option[Unique[*Plain]] for "maybe" (OWN-P9)
+	_ = u == nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Shared[*Plain] is never nil: a pointer has no nil; use Option[Shared[*Plain]] for "maybe" (OWN-P9)
+	_ = s != nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Weak[*Plain] is never nil: a pointer has no nil; use Option[Weak[*Plain]] for "maybe" (OWN-P9)
+	_ = w == nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	p = nil
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	var r *Plain = nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare h without a value: Holder has no zero value (field P of type *Plain has none: pointers are never nil)
+	var h Holder
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: Unique[Plain] needs a pointer type argument: write Unique[*Plain] (OWN-P9)
+	var uu Unique[Plain]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: Shared[int] needs a pointer type argument: write Shared[*int] (OWN-P9)
+	var ss Shared[int]
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: Weak[Plain] needs a pointer type argument: write Weak[*Plain] (OWN-P9)
+	var ww Weak[Plain]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare u2 without a value: Unique[*Plain] has no zero value (pointers are never nil)
+	var u2 Unique[*Plain]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare s3 without a value: Shared[*Plain] has no zero value (pointers are never nil)
+	var s3 Shared[*Plain]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare w3 without a value: Weak[*Plain] has no zero value (pointers are never nil)
+	var w3 Weak[*Plain]
+	_, _, _, _, _, _, _, _, _ = q, r, h, uu, ss, ww, u2, s3, w3
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	takePtr(nil)
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	_ = Holder{P: nil, U: new_unique(Plain{})}
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	takePtr(o)
+}
+
+func options(o Option[*Plain]) {
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option: it already has a nil (OWN-P9)
+	var e Option[error]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use Option[int] as the type argument of Option: an Option already has a nil (OWN-P9)
+	var oo Option[Option[int]]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use []int as the type argument of Option: it already has a nil (OWN-P9)
+	var sl Option[[]int]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use map[string]int as the type argument of Option: it already has a nil (OWN-P9)
+	var mp Option[map[string]int]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use chan int as the type argument of Option: it already has a nil (OWN-P9)
+	var cn Option[chan int]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use func() as the type argument of Option: it already has a nil (OWN-P9)
+	var fn Option[func()]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use any as the type argument of Option: it already has a nil (OWN-P9)
+	var an Option[any]
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use unsafe.Pointer as the type argument of Option: it already has a nil (OWN-P9)
+	var up Option[unsafe.Pointer]
+	_, _, _, _, _, _, _, _ = e, oo, sl, mp, cn, fn, an, up
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: o.Other undefined (type Option[*Plain] has no field or method Other (an Option has IsNil and Get only))
+	_ = o.Other()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	_ = o.n
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: o may be nil; check o != nil first (OWN-P10)
+	o.n = 1
+}
+
+// OWN-P9: in generic code the value type of an Option is checked per instance.
+func perInstance() {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option: it already has a nil (in MaybeBox[error]) (OWN-P9)
+	var mb MaybeBox[error]
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use []int as the type argument of Option: it already has a nil (in Outer{{\[\[}}]int]) (OWN-P9)
+	var ob Outer[[]int]
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use Option[int] as the type argument of Option: an Option already has a nil (in Iface[Option[int]]) (OWN-P9)
+	var oi Iface[Option[int]]
+	_, _, _ = mb, ob, oi
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use error as the type argument of Option: it already has a nil (in func() Option[error]) (OWN-P9)
+	_ = maybe[error]()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use Option[int] as the type argument of Option: an Option already has a nil (in func() Option[Option[int]]) (OWN-P9)
+	_ = maybe[Option[int]]()
+}
+
+func results() *Plain {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: *Plain is never nil: a pointer has no nil; use Option[*Plain] for "maybe" (OWN-P9)
+	return nil
+}
+
+func noIsNil(q *Plain, u Unique[*Plain], s Shared[*Plain], w Weak[*Plain]) {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: q.IsNil undefined (type *Plain has no field or method IsNil)
+	_ = q.IsNil()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: u.IsNil undefined (type Unique[*Plain] has no field or method IsNil)
+	_ = u.IsNil()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: s.IsNil undefined (type Shared[*Plain] has no field or method IsNil)
+	_ = s.IsNil()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: w.IsNil undefined (type Weak[*Plain] has no field or method IsNil (a Weak pointer has Lock only))
+	_ = w.IsNil()
+}
+
+// ADR-0018 point 11: ownership follows T. `v, ok := o.Get()` borrows an
+// owning T; `move(o).Get()` takes it; `clone(o).Get()` copies it.
+func keep(move s string)            {}
+func keepNode(move u Unique[*Node]) {}
+func read(s string) int             { return len(s) }
+func readNode(n *Node) int          { return n.Val }
+func srcStr() Option[string]        { return "x" }
+
+func positiveGet(name Option[string], owner Option[Unique[*Node]], p Option[*Node], k Option[int]) int {
+	n := 0
+	if s, ok := name.Get(); ok {
+		n += read(s)
+	}
+	if s, ok := srcStr().Get(); ok {
+		keep(s)
+	}
+	if u, ok := owner.Get(); ok {
+		n += readNode(u)
+	}
+	if q, ok := p.Get(); ok {
+		n += readNode(q)
+	}
+	if v, ok := k.Get(); ok {
+		n += v
+	}
+	if s, ok := clone(name).Get(); ok {
+		keep(s)
+	}
+	return n
+}
+
+func positiveMove(move name Option[string], move owner Option[Unique[*Node]]) {
+	if s, ok := move(name).Get(); ok {
+		keep(s)
+	}
+	if u, ok := move(owner).Get(); ok {
+		keepNode(u)
+	}
+}
+
+func positiveMoveChecked(move name Option[string]) {
+	if name != nil {
+		keep(move(name))
+	}
+}
+
+func negativeGet(name Option[string], owner Option[Unique[*Node]]) {
+	if s, ok := name.Get(); ok {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot pass as a `move` argument s: it is the value that s borrows from an Option (Get), and this needs ownership (OWN-R3a)
+		keep(s)
+		// It is read-only, and the message names the Option, not an interface box.
+		// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to s: it borrows the value of an Option through Get and is read-only (OWN-P9)
+		s = "x"
+	}
+	if u, ok := owner.Get(); ok {
+		// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot pass as a `move` argument u: it is the value that u borrows from an Option (Get), and this needs ownership (OWN-R3a)
+		keepNode(u)
+	}
+	// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: too many arguments in call to name.Get
+	if s, ok := name.Get(1); ok {
+		_ = s
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: assignment mismatch: 1 variable but name.Get returns 2 values
+	_ = name.Get()
+}
+
+func main() {}

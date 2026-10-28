@@ -21,6 +21,15 @@
 //               tells which arguments the callee may change (ADR-0008 Q2).
 //   instantiate `pkg.vec[int32]` in a type: C++ class template instances.
 //   describe    how a foreign type is spelled in messages.
+//   hasDefaultConstructor
+//               whether a C++ type has a zero value (D1.4 rule 9): a type
+//               without a default constructor is a type with no zero value,
+//               like a struct with a `@Required` field (ADR-0016).
+// Pointers (ADR-0018 point 8): a C `T*` is imported as Option[*T], a pointer
+// the header marks non-null (`_Nonnull`, `nonnull`, `returns_nonnull`) as *T,
+// and a C++ `T&` as *T; a C++ `T*` is Option[*T]. The importer builds these
+// types with cPointer() and cxxReference() below, so the mapping is in one
+// place.
 // The objects a scope returns are owned by it; their types are made in the
 // TypeContext of the checker (types are uniqued, so identity works across
 // packages). A scope that needs more (a template instance made by Clang)
@@ -37,6 +46,7 @@
 #include "gopp/Sema/Types.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 
 #include <functional>
@@ -132,6 +142,17 @@ public:
   /// How a type of this scope is spelled in messages (`std::vector<int>`);
   /// empty for the default Go++ spelling.
   virtual std::string describe(const Type *T) const;
+
+  /// Whether the C++ type T can be default-constructed. A foreign type that
+  /// cannot has no zero value: `var x T`, `make([]T, n)` and the other places
+  /// that need one are errors (OWN-R9). The default says yes.
+  virtual bool hasDefaultConstructor(const Type *T) const;
+
+  /// The Go++ type of a C pointer `Pointee*`: Option[*Pointee], or *Pointee
+  /// when the header says it is never null.
+  static Type *cPointer(TypeContext &Ctx, Type *Pointee, bool NonNull);
+  /// The Go++ type of a C++ reference `Pointee&` (it cannot be null).
+  static Type *cxxReference(TypeContext &Ctx, Type *Pointee);
 };
 
 /// A ForeignScope with declarations added by hand, for tests.
@@ -156,6 +177,11 @@ public:
   void addTemplate(Object *Tmpl, TemplateFn Make);
   /// Two objects of one name in different namespaces (short-name ambiguity).
   void addAmbiguous(llvm::StringRef Name, std::vector<ForeignCandidate> Cands);
+  /// Marks a C++ type as having no default constructor.
+  void setNoDefaultConstructor(const Type *T) { NoDefault.insert(T); }
+  bool hasDefaultConstructor(const Type *T) const override {
+    return !NoDefault.count(T);
+  }
   /// The spelling of a type in messages.
   void setSpelling(const Type *T, std::string Text) {
     Spellings[T] = std::move(Text);
@@ -176,6 +202,7 @@ private:
   llvm::DenseMap<const Object *, std::vector<Overload>> Overloads;
   llvm::DenseMap<const Object *, TemplateFn> Templates;
   llvm::DenseMap<const Type *, std::string> Spellings;
+  llvm::DenseSet<const Type *> NoDefault;
 };
 
 /// Provides the packages made from C/C++ headers (P03.09).
