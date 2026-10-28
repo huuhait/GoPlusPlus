@@ -7,6 +7,7 @@ Three worker goroutines read jobs from a channel and send results back. The resu
 - [CON-1, CON-3, CON-4](../../12-concurrency.md): `jobs <- Job{...}` moves the job in; `range jobs` and `range results` move values out; closures used with `go` share their variables.
 - [CON-2](../../12-concurrency.md): `go work(jobs, results, &wg)` would be rejected (raw pointer to a local), so the program uses closures.
 - [CON-9](../../12-concurrency.md), [OWN-R10](../../04-ownership.md): `sync.WaitGroup` is `@Pinned`; it lives in a shared cell and is never moved.
+- [CON-12, CON-13](../../12-concurrency.md): the closures capture only `wg`, `jobs` and `results`, which are `Sync` (a `WaitGroup` and channels), so they are shared with no race. `Job` and `Result` are `Send` (a `string` and numbers) and move through the channels ([CON-14](../../12-concurrency.md)). The program has no plain `sync.Mutex` and no writable captured variable, so it needs no change for ADR-0022.
 - [CLO-2, CLO-3](../../11-closures.md): the two `go func(){...}()` closures escape, so `wg`, `jobs` and `results` are in cells.
 - [RNG-2](../../08-slices-and-range.md): `range move(words)` moves each string out; `words` is the zero value afterwards.
 - [OWN-R3, OWN-R3a, OWN-R4](../../04-ownership.md): `Text: move(job.Text)` (a field needs `move(x)` or `x.Clone()`); `Job{..., Text: w}` moves `w`; `all = append(all, r)` moves `r` and `all`.

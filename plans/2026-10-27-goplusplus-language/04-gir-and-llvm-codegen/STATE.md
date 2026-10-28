@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-28 (P04.20 borrow checker added)
+Last updated: 2026-10-28 (P04.21 concurrency checks added)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
@@ -27,11 +27,12 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.18 Internal calling convention
 - [ ] P04.19 Fast test runner
 - [ ] P04.20 Borrow checker (ADR-0021)
+- [ ] P04.21 Concurrency checks (ADR-0022)
 
 ## Open questions
 
 - [x] Q1 GIR serialization format details (decided: D4.15, LLVM bitstream container)
-- [ ] Q3 `.go` files and the borrow checker (decide before P04.20)
+- [ ] Q3 `.go` files and the borrow checker and concurrency checks (decide before P04.20 and P04.21)
 - [x] Q2 One LLVM module per package, or per function group: deferred to P06 (P06.07)
 
 ## Exit criteria
@@ -44,6 +45,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0022, owner decision): new task P04.21 and design D4.17, race-free concurrency checks (`Send` / `Sync` labels, `go` and channel rules, globals, shared handles, deadlock check) on the flow graph of P04.09 and P04.20.
 - 2026-10-28 (ADR-0021, owner decision): new task P04.20, a borrow checker without lifetime annotations on P04.09's flow graph; P04.09's "use through a pointer taken in the same function" item moves into it.
 - 2026-10-27 (ADR-0007, build profiles): D4.8's three build modes become the `opt` setting of build profiles (P06 D6.12); `dev` is now `opt 0`, the default of the `debug` profile.
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): the `view` types are renamed `ref` (layout table only; no layout change).

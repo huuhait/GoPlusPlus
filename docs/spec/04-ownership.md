@@ -46,7 +46,7 @@ Every type is in exactly one of three categories.
 |---|---|---|---|
 | Trivial | `bool`, numbers, raw `*T`, `unsafe.Pointer`, `View[T]` (every view, whatever `T`), arrays/structs of trivial types | implicit, bitwise | nothing |
 | Owning | `string`, `[]T`, `map[K]V`, `Unique[*T]`, types with a `drop` method, arrays/structs that contain an owning type, C++ classes with a non-trivial copy, move or destructor | move-only; `x.Clone()` copies | drop glue runs |
-| Shared handle | `Shared[*T]`, `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
+| Shared handle | `Shared[*T]` (`Send`/`Sync` only if `T` is `Sync`, [CON-19](12-concurrency.md)), `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
 
 **OWN-C1.** *Trivial.* A trivial value is copied with `=`, as in Go. It has no destructor. A trivial type satisfies the `Copy` constraint ([GEN-1](10-generics.md)). Examples: `int`, `*Node`, `View[string]`, `struct{ X, Y int }`.
 
@@ -310,7 +310,7 @@ func (f *File) drop() {
 *Why (R7):* a method named `drop` is found by the compiler like `init`; forbidding direct calls prevents double destruction.
 
 **OWN-R8.** *Borrow checking without annotations.* Views and pointers into storage that can move or be freed are checked by flow and liveness ([OWN-B1 to B7](#45-borrow-checking-adr-0021), ADR-0021). The compiler also catches: returning `&local`; returning a view into a local ([OWN-V7](#44-views-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move, including a use through a pointer or view taken before the move in the same function (`p := &x.In; take(move(x)); p.P.V`; taken elsewhere it is [UB-8](16-undefined-behavior.md)).
-- What is left undefined is listed in [chapter 16](16-undefined-behavior.md): `unsafe`, C and C++ interop, aliasing the compiler cannot see, data races, `longjmp`.
+- What is left undefined is listed in [chapter 16](16-undefined-behavior.md): `unsafe`, C and C++ interop, aliasing the compiler cannot see, data races in `unsafe`, C and C++ code, `longjmp`.
 - `-asan` catches the rest at run time.
 
 ```go
@@ -340,12 +340,12 @@ xs := make([]Foo, 3)         // compile error if Foo (a C++ class) has no defaul
 
 **OWN-R10.** *Pinned values.*
 - `gopp vet` reports moving a local after its address, or a view into it, has been stored. A use through a pointer or view taken in the same function before the move is a compile error ([OWN-R8](#42-ownership-rules-d14), P04.09); one taken elsewhere is [UB-8](16-undefined-behavior.md).
-- Types marked `@Pinned` (the `sync` types) cannot be moved or copied after first use: a compile error, like Go vet's copylocks.
+- Types marked `@Pinned` (the `sync` types, including `Mutex[T]`) cannot be moved or copied after first use: a compile error, like Go vet's copylocks.
 - `return local` builds the value in the caller's result slot, so it does not move (see the escaping-closure case in [OWN-R3c](04-ownership.md#42-ownership-rules-d14)). When different locals are returned on different paths, at most one is built in the result slot; returning the others moves them, and OWN-R3c then applies to them. The tie-break is fixed: a local that a pending deferred call (or a non-escaping closure) still uses gets the slot. If two returned locals both have pending users, returning the second one is an OWN-R3c error, fix-it `.Clone()`. Otherwise the choice does not change behaviour, because the others just move. Example: `a := f(); b := g(); defer log.Println(a); if c { return a }; return b`. Here `a` gets the slot, and `return b` moves `b` (fine, nothing pending uses `b`).
 
 ```go
-var mu sync.Mutex          // @Pinned
-mu.Lock()
+mu := sync.NewMutex(0)     // @Pinned
+g := mu.Lock()
 m2 := mu                   // compile error: a Pinned value cannot be copied after first use
 
 p := &local
@@ -423,7 +423,7 @@ No pointer kind is ever nil, and none has a zero value ([OWN-P9](#43-pointers-an
 - **Where a nil map is created (ADR-0018 amendment point 5).** The first write to a nil map creates it **in place** when the map is held in a *place*: a local or package variable; a field (of an owned value, or reached through a pointer); an element or map entry; an `&` range alias; a borrowed parameter or a borrowed range variable. Creating a nil map anywhere inside a borrowed variable (the variable itself, or a field or array element of it held by value) is the one header change a borrowed variable may make ([OWN-R3b](#42-ownership-rules-d14)): `func f(d Doc) { d.Index["x"] = 1 }` with a nil `Index` creates the map in the caller's `Doc`. It works because borrowed owning parameters pass by hidden pointer ([PAR-10](05-parameters.md)) and range variables refer to the element in place. Creating an empty map doesn't change what any reader sees; the entry the write adds is an ordinary map-entry write. A map reached through an interface is read-only and not a place (next bullet).
   - **Map inside a map:** `mm[k1][k2] = v` on a writable outer map. If `k1` is absent, the write **inserts** `k1` with a new inner map, then writes `k2`. If `k1` is present with a nil inner map, the inner map is created in the entry. Inserting a new key counts as an insert into `mm` for the active-iterator rule ([RNG-4](08-slices-and-range.md)).
   - **Not in a place: a compile error, never a panic.** Writing into a map **held in a temporary** (the result of a call that returns a value, an assertion, or a field or element of one) is an error, nil or not: `f()["a"] = 1`, `f()["a"]++`, `delete(f(), "a")`, `f()["k1"]["k2"] = v`, and `f().Index["a"] = 1` where `f` returns a struct by value. The owned result is dropped at the end of the statement, so the write is always lost; store it first: `m := f(); m["a"] = 1`. If `f` returns `*Doc`, `f().Index["a"] = 1` is allowed (a pointer target is a place). A map **inside an interface** is read-only, because the box is shared and immutable ([TYP-5](03-types.md)): through a type-switch binding or an assertion, reading, `len` and `range` are allowed, but `v["b"] = 2`, `v["b"]++`, `delete(v, "a")`, `clear(v)` and `x.(map[string]int)["b"] = 2` are errors. The elements of a slice in the box are read-only too (`v[0] = 1` on a `[]int` binding is an error). Inside an interface means everything the box holds **by value**, all the way down until a pointer: the map or slice itself, and the maps and slices in struct fields and array elements of the boxed value. So `v.(Doc).Index["x"] = 1`, `case Doc:` with `d.Index["x"] = 1`, and `d.Tags[0] = 1` are errors. A `*T` field in the boxed struct still gives a writable pointee. Fixes: `m := v.Clone(); m["b"] = 2`, or store a pointer in the interface (`var x any = &myMap`, then `(*p)["b"] = 2` through `case *map[string]int`; a pointer is never nil, so the write creates a nil map in place). So Go++ has no run-time nil-map panic.
-  - **Concurrency:** two goroutines doing the first write to the same nil map is a data race on the map header, like any unsynchronized map write ([UB-11](16-undefined-behavior.md)).
+  - **Concurrency:** two goroutines doing the first write to the same nil map is a data race on the map header, like any unsynchronized map write. In normal code it is a compile error: a map is `Sync` only for reading, so it cannot be shared and written ([CON-12](12-concurrency.md), [UB-11](16-undefined-behavior.md)).
 - converting an `Option[T]` to `any` or `error` gives a nil interface when it is nil and the boxed `T` when it is set, so `fmt.Println(o)` prints `<nil>` or the value, and a type switch never sees an `Option`. An interface with methods is never nil, so for such an `I` the conversion is to `Option[I]`: nil when `o` is nil, the boxed `T` when it is set;
 - ownership follows `T` ([OWN-R3](#42-ownership-rules-d14)): a checked `o` is used like any variable of type `T`. `v, ok := o.Get()` on an owning `T` (`Option[string]`, `Option[Unique[*T]]`) **borrows**: `v` is a read-only borrowed variable while `o` is unchanged. In the same scope, a `:=` that reuses the name `v` assigns to `v`, so it is an error; use a new name. `v, ok := move(o).Get()` takes the value and leaves `o` nil, and `clone(o).Get()` copies it. A checked owning `o` can be moved out with `move(o)`, which leaves it nil.
 
@@ -595,7 +595,7 @@ func rename(u View[User]) {
 
 ## 4.5 Borrow checking (ADR-0021)
 
-Go++ has no lifetime annotations. The compiler finds borrows from the code and reports a **use after the borrowed thing was thrown away** as a compile error. It uses flow and liveness, like Rust's non-lexical lifetimes, but you never write a lifetime. The check runs in `gopp build` and in `gopp check` (P04.20). Data races are not part of it ([UB-3](16-undefined-behavior.md)).
+Go++ has no lifetime annotations. The compiler finds borrows from the code and reports a **use after the borrowed thing was thrown away** as a compile error. It uses flow and liveness, like Rust's non-lexical lifetimes, but you never write a lifetime. The check runs in `gopp build` and in `gopp check` (P04.20). Data races are a separate check on the same flow graph ([CON-12 to CON-20](12-concurrency.md), ADR-0022); [OWN-B8](#45-borrow-checking-adr-0021) links the two.
 
 **OWN-B1.** *What is a borrow.* A borrow is any of these:
 - a view (`View[T]`, [OWN-V1](#44-views-d16));
@@ -603,6 +603,7 @@ Go++ has no lifetime annotations. The compiler finds borrows from the code and r
 - a pointer made by `&x` of a local variable (the local is freed at the end of its scope, or moved), or by `&` of a field or element of owned storage that can move or be freed: a slice or map element, or a field of a local that can be moved;
 - a range loop over a collection: it borrows the collection for the whole loop ([RNG-3](08-slices-and-range.md));
 - a value allocated from an arena (`mem.NewIn(&arena)` and the like, `mem.Arena`, `mem.DropArena`; illustrative names, P05.03 sets the real ones): it borrows the arena;
+- a mutex guard (from `Lock` / `RLock`): it borrows the mutex ([CON-15](12-concurrency.md));
 - a `@View` struct value: it borrows whatever its view fields borrow ([OWN-V5](#44-views-d16));
 - an interface value that holds a boxed view: it carries that borrow ([TYP-9](03-types.md)).
 
@@ -616,6 +617,8 @@ Go++ has no lifetime annotations. The compiler finds borrows from the code and r
 - an arena `Reset` or `Free`;
 - writing an element or field whose type owns heap memory (that frees the old value);
 - the end of its scope while the borrow escapes (already [OWN-V7](#44-views-d16) and OWN-B5).
+
+`Split` on a borrowed slice (`head, tail := rest.Split(n); rest = tail`, [CON-16](12-concurrency.md)) consumes the receiver's borrow (a moving reborrow): the assignment to `rest` is allowed, and the two results are disjoint places.
 
 The borrow made by a range loop (OWN-B1) allows element writes: only a live borrow of that element (such as the range variable of an owning element) blocks writing it.
 
@@ -678,12 +681,17 @@ Two pointer variables that point to the same object, got from different sources,
 **OWN-B5.** *Escapes.* A borrow may live only where the checker can follow it: in locals, in parameters, in results (by OWN-B3), and in the fields of a `@View` struct value that follows these rules. These are compile errors:
 - storing a borrow into a global, into a heap container (a slice, map or channel element, or a field of a struct that is not `@View`), or sending it on a channel;
 - an escaping closure that captures a borrow ([CLO-3a](11-closures.md));
-- a `go` statement whose argument or captured variable is a borrow ([CON-2](12-concurrency.md)): the goroutine may outlive the owner;
+- a `go` statement whose argument or captured variable is a borrow ([CON-2](12-concurrency.md)): the goroutine may outlive the owner. The closure given to `s.Go` of a `sync.Scope` is not a `go` statement: the goroutine ends before the scope returns, so it may borrow ([CON-16](12-concurrency.md));
 - boxing a borrow into an interface that escapes.
 
-**OWN-B6.** *What is still not checked.* [Chapter 16](16-undefined-behavior.md) lists it: `unsafe` and raw memory, C and C++ interop, aliasing the compiler cannot see (OWN-B4), data races, and `longjmp` or forced unwinding.
+**OWN-B6.** *What is still not checked.* [Chapter 16](16-undefined-behavior.md) lists it: `unsafe` and raw memory, C and C++ interop, aliasing the compiler cannot see (OWN-B4), data races in `unsafe`, C and C++ code (in normal code they are compile errors, [CON-12 to CON-20](12-concurrency.md)), and `longjmp` or forced unwinding.
 
 **OWN-B7.** *Go mode* (`.go` files). The checker is the same. A `.go` file uses the same ownership model, so borrowed slices, `&` of elements, range loops and calls are checked with the same rules. The names `View` and the arena API do not exist there unless imported, so those parts of OWN-B1 do not occur. (Open point: the plan does not yet say this in so many words; see ADR-0021.)
+
+**OWN-B8.** *Borrows and concurrency (ADR-0022).* Three links to [chapter 12](12-concurrency.md):
+- A `Mutex[T]` guard is a borrow of the mutex ([CON-15](12-concurrency.md)). The mutex may not be moved or dropped while the guard is live (OWN-B2), and the guard may not escape the function through a `go`, a channel or a global (OWN-B5).
+- `ch <- v` moves `v` ([CON-14](12-concurrency.md), [OWN-R4](#42-ownership-rules-d14)); a borrow cannot be sent (OWN-B5), and the element type must be `Send`.
+- Inside a `sync.Scope`, a goroutine may borrow locals. Two goroutines may not both get a writable borrow of the same place (like OWN-B4 for one call); `Split` gives disjoint parts ([CON-16](12-concurrency.md)).
 
 *Why (B1 to B7):* the danger of a borrow is one thing, "the owner changed while I still look at it". Flow and liveness find it in one pass without annotations. Reading the code never needs a lifetime name, and the cost is a few false errors, which a `.Clone()` removes.
 

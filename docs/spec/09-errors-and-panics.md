@@ -194,9 +194,9 @@ func one(p string, done chan int) {
     defer f.Close()               // ok: pointer receiver, so &f is evaluated now; f lives until one returns
     defer close(done)             // ok: a channel is a shared handle: copied (retained)
     defer os.Remove(p + ".tmp")   // ok: the temporary string moves into the deferred call
-    var mu sync.Mutex
-    mu.Lock()
-    defer mu.Unlock()             // ok: &mu is a pointer to a function-level local
+    var wg sync.WaitGroup
+    wg.Add(1)
+    defer wg.Done()               // ok: &wg is a pointer to a function-level local
     defer log.Println(p)          // ok: p is a borrowed parameter that lives until one returns
 }
 ```

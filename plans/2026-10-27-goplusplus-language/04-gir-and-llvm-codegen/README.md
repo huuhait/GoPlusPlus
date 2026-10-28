@@ -16,7 +16,7 @@
 
 **D4.2 — Per-function pipeline.**
 1. Build GIR.
-2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows, then the borrow checker (D4.16, P04.20). A borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). The comma-ok reads (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`, `<-ch`, `o.Get()` for a type with no zero value, used only where `ok` is true), the `v, err := f()` reads (only where `err == nil` when `v`'s type has no zero value) and the known-non-nil stores are checked by the type checker's flow typing (P03.18, ADR-0018 amendment point 4); here they are only GIR regression cases. A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in an `error`, `any`, map or channel `@Required` field is known non-nil (spec TYP-15's list), so reads of such a field skip the nil check.
+2. Run the flow-sensitive ownership checks: use after move, `defer`/`go` borrows, then the borrow checker (D4.16, P04.20), then the concurrency checks (D4.17, P04.21). A borrowed map range variable counts as moved after `move(m[k])` of its entry (P01 D1.4 rule 11, ADR-0016). The comma-ok reads (`u, ok := x.(T)`, `clone(m[k])`, `move(m[k])`, `<-ch`, `o.Get()` for a type with no zero value, used only where `ok` is true), the `v, err := f()` reads (only where `err == nil` when `v`'s type has no zero value) and the known-non-nil stores are checked by the type checker's flow typing (P03.18, ADR-0018 amendment point 4); here they are only GIR regression cases. A swap of places evaluates every index, key and pointer operand, with its bounds and nil checks, before it moves any value (OWN-R4). A value stored in an `error`, `any`, map or channel `@Required` field is known non-nil (spec TYP-15's list), so reads of such a field skip the nil check.
 3. Elaborate drops: destructor calls on normal *and* unwind paths, and zeroing on `move`.
    - Moving a Go++ value copies its bytes and zeroes the source.
    - Moving a C++ value, implicitly or with `move(x)`, runs its move constructor; the source keeps its moved-from state and is destroyed at the end of its scope (P01 D1.4 rule 9). Relocation (P05 D5.5) is used only inside containers.
@@ -186,7 +186,7 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 
 - **Q1** (decided 2026-10-27) GIR serialization format: LLVM bitstream container, same-compiler-version only, deterministic bytes, `gopp gir dump` (D4.15).
 - **Q2** (deferred to P06) One LLVM module per package, or per function group at `opt 0` (the debug profile)? Decided by measurement in P06.07 (see P06 D6.5).
-- **Q3** (open, decide before P04.20 is built) Do `.go` files get the borrow checker? They have no GC in Go++ either, so the assumption is yes, with the same rules (ADR-0021 open point 3).
+- **Q3** (open, decide before P04.20 and P04.21 are built) Do `.go` files get the borrow checker and the concurrency checks (ADR-0022)? They have no GC in Go++ either, so the assumption is yes, with the same rules (ADR-0021 open point 3, ADR-0022 open point 4).
 
 **D4.16 — Borrow checker** (ADR-0021; task P04.20).
 - It runs on the same flow graph as the use-after-move check (D4.2 step 2), after it, in the same per-function pass. No lifetime annotations: borrows are found from the code, and liveness is computed backwards from the uses (non-lexical lifetimes).
@@ -195,3 +195,12 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 - Escapes (a global, a heap container, a channel, an escaping closure, `go`, an escaping interface box) are checked where the borrow is stored or captured.
 - Cost: one backward liveness pass and one forward pass per function, linear in function size. A test measures it on a large generated function.
 - `gopp check` runs it. `.go` files use the same pass (open point in ADR-0021).
+
+**D4.17 — Concurrency checks** (ADR-0022; task P04.21).
+- They run on the same flow graph, after the borrow checker (D4.16), in the same per-function pass, because they use its borrows (a guard is a borrow of its mutex, a `sync.Scope` goroutine borrows locals).
+- **Labels.** `Send` and `Sync` are computed per type, once, from the parts of the type (a struct has a label only if all fields have it), and cached in the type table. They go into export data with the type (P03.11, P06), so a package that imports a type gets the same label. They are not written by hand and cannot be implemented by the user. They also act as the predeclared constraints `[T Send]` and `[T Sync]` (checked per instance, like D4.3).
+- **`go` and `s.Go`.** For each argument and each captured variable the pass decides: moved in (the variable is dead in the spawner after the `go`), copied in (`Send`), or shared (`Sync`). A writable captured variable that is live in the spawner or captured by another goroutine is an error. In a `sync.Scope`, closures given to `s.Go` may also borrow; two writable borrows of one place across goroutines of one scope are an error (the same overlap test as OWN-B4); the two results of `Split` are disjoint places.
+- **Globals.** A write to a package variable outside `init` and its initializer needs a `Sync` type.
+- **Deadlock check.** Locks are identified by lock class (like Linux lockdep): the same field of the same type, or the same package variable. The pass records, per function, the ordered pairs "a lock of class A was taken while the guard of class B was live". The pairs go into export data. Two functions with the pairs (A,B) and (B,A) are an error; so is locking the same mutex while its own guard is live, and so is taking two locks of the same class with both guards live (`sync.LockAll` is the fix; it is known to the pass). Locks behind interfaces or function values are not recorded.
+- Cost: linear in function size, like D4.16; plus one pass over the recorded pairs per package. A test measures it on a large generated function.
+- `gopp check` runs it.

@@ -36,6 +36,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P13) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0022, owner decision): std packages that used a plain `sync.Mutex` or `atomic.Add*` are ported to `Mutex[T]` / `Atomic[T]` and get `Send` / `Sync` labels (D13.6; P13.01 conventions doc, P12.13 library).
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): `view` is renamed `ref`; append-style functions take `move dst []T`.
 
 ## Notes / blockers

@@ -36,7 +36,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 2. **Reuse, don't rewrite.** C and C++ libraries are first-class dependencies. When in doubt, Clang decides C/C++ semantics (layout, overloads, templates, ABI, mangling).
 3. **Go's simplicity.** Where Go has a construct, keep its syntax and, wherever GC isn't involved, its semantics. Add new syntax only where ownership or interop requires it.
 4. **Fast edit–build–run loop.** Debug builds favor compile speed and release builds favor runtime speed. Language semantics are identical in every profile; the one exception is `panic abort`, where `recover()` returns nil (P06 D6.12).
-5. **Safe defaults when they are free.** Bounds checks, zero values, nil checks, defined integer overflow, and use-after-move errors, and a borrow check without lifetime annotations (ADR-0021). Sanitizers are one flag away for what is left undefined.
+5. **Safe defaults when they are free.** Bounds checks, zero values, nil checks, defined integer overflow, and use-after-move errors, a borrow check without lifetime annotations (ADR-0021), and data races as compile errors in normal code (`Send` / `Sync` labels, mutexes that hold their data, scoped goroutines; ADR-0022). Sanitizers are one flag away for what is left undefined.
 6. **Reproducible, locked builds.** Every byte that goes into a build comes from a hashed input.
 7. **Fast loop for building Go++ itself.** Rebuilding `gopp` and running the tests for what you changed take seconds, not minutes, even as the code grows. A slow loop is a bug: fix it with narrower test targets, caches and tests that stop early, not by waiting (P00 D0.13).
 
@@ -45,7 +45,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 - Source compatibility with Go. Go code that relies on GC won't compile unchanged, and neither will Go code that uses nil pointers, nil funcs or nil interfaces with methods (they are never nil; "maybe" is `Option[T]`, ADR-0018 and its amendment; `error` and `any` keep `nil`); a migration helper comes after v1.
 - Binary caches for C/C++ dependencies, signed or not (never, P11 Q2): cdeps are always built from source.
 - Consuming Go modules. Importing a Go module is an error in v1; after v1.0 it needs a dual engine (Go semantics with GC next to Go++) (P10 Q2).
-- Rust-style lifetime annotations, and full memory safety: `unsafe`, C and C++ interop, hidden aliases, data races and `longjmp` stay undefined. Borrows are checked by flow and liveness without annotations (ADR-0021).
+- Rust-style lifetime annotations, and full memory safety: `unsafe`, C and C++ interop, hidden aliases, data races in `unsafe` or C and C++ threads, and `longjmp` stay undefined. Borrows are checked by flow and liveness without annotations (ADR-0021). Data races in normal code are compile errors (ADR-0022); logic races and deadlocks the compiler cannot see are not covered.
 - A tracing GC, or automatic refcounting of everything.
 - User-defined operator overloading, class inheritance, or exceptions as an error mechanism. Imported C++ operators and exceptions *are* supported at the boundary.
 - A user-facing `reflect` package. `fmt` and `encoding/json` still work on any type, using small field tables the compiler emits (P01 D1.12).
@@ -148,7 +148,7 @@ github.com/madler/zlib v1.3.1/cdep h1:<sha256 hash of the source tree, base64>=
 | Goroutines | Growable moving stacks, async preemption | Fixed non-moving stacks (so C can run on them); cooperative scheduling with yield points in function prologues and loop back-edges |
 | Generics | GC-shape stenciling + dictionaries | Full monomorphization with cross-package dedupe |
 | Generic methods | Not allowed | Allowed; they can't satisfy interface methods |
-| Data races | Memory model limits damage | Undefined behavior, detected with `-race` (TSan) |
+| Data races | Memory model limits damage | Compile-time checks in normal code (ADR-0022); `-race` (TSan) only for `unsafe` and C/C++ |
 | Toolchain | gc compiler + own linker | LLVM + embedded Clang + LLD in one `gopp` binary |
 | Dependencies | `go.mod` / `go.sum` | `gopp.mod` / `gopp.sum` plus `cdep` blocks (commit in mod, hashes in sum) |
 
@@ -257,6 +257,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 | Clang is single-threaded | Races, or all C++ work serialized | One Clang worker per package; packages share only PCH files (P07 D7.1) | P06, P07 |
 | Ownership model feels un-Go-like | Adoption | Write the sample programs before implementing; keep a spec-revision window after M2 | P01, P05 |
 | Dangling views/pointers | Memory bugs | Borrow checker without annotations (ADR-0021, P04.20), view types that make borrows visible, sanitizers behind one flag for the residue (`unsafe`, C interop, hidden aliases) | P01, P03, P05 |
+| Data races | Memory bugs; Go code with a plain `sync.Mutex` must be rewritten | `Send` / `Sync` labels, mutexes that hold their data, `sync.Scope` with `Split`, a simple deadlock check (ADR-0022, P04.21, P12.13); `-race` for `unsafe` and C/C++ threads | P01, P04, P12 |
 | CMake builds run arbitrary code | Supply chain | Lock files, a Landlock sandbox (no network; writes only to a private source copy and the build dir), the dependency provider, and a hermetic mode | P11 |
 | Bundling LLVM/Clang/LLD | Huge binary, slow CI | Prebuilt LLVM via Nix, ccache, shared-library dev builds | P00 |
 | Scope (language + std + package manager + IDE) | Never ships | Milestones as vertical slices, a tiered std, strict non-goals | all |

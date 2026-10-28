@@ -42,16 +42,18 @@
 - A channel and the values still buffered in it are freed automatically when the last handle goes away (oldest first). There is no explicit `ch.Destroy()`: forgetting it would leak and calling it early would crash. Use `sync.Scope` when goroutines must finish first (P01 D1.13).
 
 **D12.6 — The `go` statement.**
-- Arguments are evaluated, then moved or copied into the new goroutine's frame.
-- A closure used with `go` keeps its captured variables in shared cells (P01 D1.11). So the goroutine and the spawner see the same variables, as in Go.
+- Arguments are evaluated, then moved or copied into the new goroutine's frame. What may be passed or captured is decided by the compile-time race rules (CON-13, ADR-0022, P04.21): moved in, `Send` copied, or `Sync` shared.
+- A closure used with `go` keeps its captured variables in shared cells (P01 D1.11). A captured writable variable that the spawner or another goroutine can still touch is a compile error (ADR-0022); `Sync` values (`Mutex[T]`, `Atomic[T]`, channels, `WaitGroup`) are shared through the cell.
 - `go f(x)` with a raw pointer or a view into a local is a compile error (P01 D1.13).
 
-**D12.7 — `sync` and atomics.**
-- `sync.Mutex`, `RWMutex`, `WaitGroup`, `Once` and `Cond` keep Go's API.
+**D12.7 — `sync` and atomics (race-free, ADR-0022).**
+- `WaitGroup`, `Once` keep Go's API. `Cond` waits on a guard: `cond.Wait(&g)`. `Pool[T]` is `Sync` when `T` is `Send`; `sync.Map[K, V]` when `K` and `V` are `Send`. `sync.LockAll(&a.mu, &b.mu)` takes locks in a fixed (address) order. Names are illustrative.
+- **`Mutex[T]` and `RWMutex[T]` hold the data.** `Lock()` returns a guard that is used like a `*T` and unlocks when dropped (end of block, early return, panic). `With(func(p *T){...})` is the short form. `RWMutex[T].RLock()` returns a read guard (read-only with the same deep rules as a view, but not a `View[T]` value). A guard is its own type, never a `View`: a non-`Copy` borrow that cannot be copied or sent. A guard is a borrow of the mutex and is not `Send`. `Mutex[struct{}]` is the lock-only form. Plain `sync.Mutex`, `sync.RWMutex` and manual `Unlock` are removed. Blocking parks goroutines, not threads (futex on Linux).
 - The `sync` types are `@Pinned`: moving or copying one after first use is a compile error (P01 D1.4 rule 10).
-- `sync.Scope` is an optional structured-concurrency helper. It waits for every function it spawned, so those closures may borrow without cells. **Designed here:** the marker that tells the compiler a closure given to `s.Go` cannot outlive the scope (for example `@Scoped` on the parameter of `s.Go`), see P01 CON-9.
-- `sync/atomic` uses LLVM atomics, seq_cst like Go.
-- Blocking primitives park goroutines, not threads, via futex on Linux. ulock (macOS) and WaitOnAddress (Windows) come after v0.1.
+- **`Atomic[T]`** (always `Sync`) for integer, bool and pointer kinds, sequentially consistent only (LLVM `seq_cst`; no weaker orderings are exposed). The `atomic.AddInt64(&x, 1)` style functions are removed.
+- **`sync.Scope`** runs goroutines that use local data: `s.Go(...)` goroutines finish before `Scope` returns, so they may borrow locals under the borrow checker and the labels. Two goroutines may not both get writable access to the same place; `Split` gives disjoint parts (`left, right := nums.Split(500)`). **Designed here:** the marker that tells the compiler a closure given to `s.Go` cannot outlive the scope (for example `@Scoped` on the parameter of `s.Go`), see P01 CON-9, CON-16.
+- The compile-time rules (labels, `go` capture, globals, shared handles, deadlock check) are built in P04.21; this phase builds the library and runtime (P12.13).
+- Blocking primitives: futex on Linux. ulock (macOS) and WaitOnAddress (Windows) come after v0.1.
 
 **D12.8 — I/O and timers.**
 - A netpoller is integrated with the scheduler: epoll on Linux. kqueue (macOS/BSD) and IOCP (Windows) come after v0.1.
@@ -72,7 +74,7 @@
 - 100 k idle goroutines fit in ≤ 1 GiB RSS with default settings.
   - This holds with the default sysctl: past the mapping budget, new stacks skip the guard page (D12.2, ADR-0013).
 - 1 M goroutines are possible after tuning the stack size and the mapping limit.
-- Channel ping-pong and contended `Mutex` throughput are within 1.5× of Go on the same machine.
+- Channel ping-pong and contended `Mutex[T]` throughput are within 1.5× of Go (`sync.Mutex`) on the same machine.
 
 **D12.12 — Stopping goroutines at exit** (P01 D1.18).
 - `main` returning, `os.Exit` and an unrecovered panic stop every other goroutine before C `exit()` runs.
@@ -84,13 +86,13 @@
 
 - **Runtime:** coroutines, scheduler with preemption flags, channels and `select`, parking, netpoller and timers, `LockOSThread`, pinning during C calls, adoption of foreign threads, stopping goroutines at exit.
 - **Compiler:** `go` lowering with move semantics and shared cells, `select` lowering, preemption checks in prologues and loop back-edges, stack probes, TSan fiber integration.
-- **Std:** `sync` (including `sync.Scope`), `sync/atomic`, `time` timers integrated with the netpoller.
+- **Std:** `sync` (`Mutex[T]`, `RWMutex[T]`, guards, `With`, `Atomic[T]`, `sync.Scope` with `Split`, `WaitGroup`, `Once`), `time` timers integrated with the netpoller.
 - **Samples:** worker pool, pipeline, fan-in/fan-out, `select` with timeouts, TCP echo server.
 
 ## Exit criteria
 
 - M8: the samples are correct, stress tests pass, and everything is TSan-clean.
-- `-race` detects seeded data races.
+- `-race` detects seeded data races in `unsafe` and C/C++ code (in normal code they are compile errors, P04.21).
 - With one P, a spin loop on an atomic flag doesn't hang (D12.3). Timers fire while all Ps are busy (D12.8).
 - The D12.11 numbers are recorded and met, or an ADR explains each gap.
 
@@ -105,3 +107,4 @@
 - **Q1** (decided 2026-10-27, ADR-0013) Default stack size, and guard pages vs prologue checks (P12.02): both, prologue checks always and guard pages while the mapping budget allows (D12.2); a 1 MiB default reservation on 64-bit (D12.1).
 - **Q2** (decided 2026-10-27) io_uring for file I/O: not in v1. File I/O uses thread handoff, as in Go (D12.8), on every OS. io_uring may come after v1 as an optional Linux-only speedup with the thread path kept as the fallback (it is Linux only, and often disabled, e.g. by Docker's default seccomp profile). User code doesn't change either way.
 - **Q3** (decided 2026-10-27) Async preemption for fairness: no. The prologue and loop back-edge checks (D12.3) are the preemption mechanism, placed smartly: none in loops with a small known trip count, and once every 1024 iterations in other tight loops. Signal-based preemption could stop a goroutine inside C/C++ code (for example inside `malloc`, holding its lock) and deadlock the thread, and Go++ calls C/C++ everywhere. Async preemption is not planned.
+- **Q4** (decided 2026-10-28, ADR-0022) The details of race-free concurrency: interfaces are labeled only by embedding `Send` / `Sync` (`error` has both); func labels come from captures; `Shared[*T]` and `Mutex[T]` follow Rust's `Arc` and `Mutex` rules; `Cond` waits on a guard; locks are classed by field and type; `Split` consumes its receiver's borrow. Still open: a way to write a `Send` func type (P04.21), the guard surface (P12.13), and whether `.go` files get these checks (that is P04 Q3).

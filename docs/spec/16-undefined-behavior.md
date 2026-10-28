@@ -2,7 +2,7 @@
 
 Base: Go spec [Run-time panics](https://go.dev/ref/spec#Run_time_panics), [Integer overflow](https://go.dev/ref/spec#Integer_overflow), [Arithmetic operators](https://go.dev/ref/spec#Arithmetic_operators), [Conversions](https://go.dev/ref/spec#Conversions), [Package unsafe](https://go.dev/ref/spec#Package_unsafe), [Size and alignment guarantees](https://go.dev/ref/spec#Size_and_alignment_guarantees).
 
-Go++ has a borrow checker with no lifetime annotations ([OWN-B1 to B7](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021). It turns most "used after it was thrown away" cases into compile errors. This chapter is the complete list of what the compiler does **not** protect you from, and of the places where the result depends on the implementation. Where a rule below was once fully undefined, it now says what is an error and what small residue is left.
+Go++ has a borrow checker with no lifetime annotations ([OWN-B1 to B7](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021). It turns most "used after it was thrown away" cases into compile errors. Data races are compile errors in normal code too ([CON-12 to CON-20](12-concurrency.md), ADR-0022). This chapter is the complete list of what the compiler does **not** protect you from, and of the places where the result depends on the implementation. Where a rule below was once fully undefined, it now says what is an error and what small residue is left.
 
 Terms:
 - **Undefined behavior (UB):** the program can do anything. The compiler and the runtime promise nothing.
@@ -94,11 +94,24 @@ Fix: copy the handle first (`e := err` retains), or pass it as a retained copy.
 
 **UB-2c.** *Writes to a borrowed `defer` argument through an alias the compiler cannot see* change what the deferred call reads, where Go would have copied the value ([CLO-7](11-closures.md)). Visible writes are compile errors (CLO-7).
 
-**UB-2d.** *Interface reassigned while a binding borrows its box.* After `s, ok := v.(string)` or `switch x := v.(type)`, the binding `s`/`x` borrows the box ([TYP-9](03-types.md)). A visible assignment to `v` (or to a prefix of it) while `s` is used afterwards is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). *Residue (still UB):* the change goes through an alias the compiler cannot see (an alias `*p = w` where `p` points to `v`, from another source; a callee that sets the field `v` lives in, through such a pointer). Another goroutine is a race (UB-3).
+**UB-2d.** *Interface reassigned while a binding borrows its box.* After `s, ok := v.(string)` or `switch x := v.(type)`, the binding `s`/`x` borrows the box ([TYP-9](03-types.md)). A visible assignment to `v` (or to a prefix of it) while `s` is used afterwards is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). *Residue (still UB):* the change goes through an alias the compiler cannot see (an alias `*p = w` where `p` points to `v`, from another source; a callee that sets the field `v` lives in, through such a pointer). Another goroutine is a data race: a compile error in normal code ([CON-13](12-concurrency.md)), UB-3 in the residue.
 
 **UB-2e.** *Ranged slice or string reallocated.* `range` takes `(ptr, len)` once ([RNG-3a](08-slices-and-range.md)) and borrows the collection for the whole loop ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021)). A call in the body that appends to, reassigns or re-slices the ranged slice (`for _, v := range w.queue { w.push(10) }`), or grows an owned string, is now a compile error when the call's receiver or argument overlaps the ranged place ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021)); the old buffer would be freed and the loop would read freed memory, even for a slice of `int`. Go keeps the old array alive, so the same code is safe there. *Residue (still UB):* the call reaches the ranged slice through an alias the compiler cannot see ([RNG-3](08-slices-and-range.md) lists the visible cases).
 
-**UB-3.** *Data races.* Two goroutines access the same memory, at least one writes, and there is no happens-before edge between them ([CON-7](12-concurrency.md), [Go memory model](https://go.dev/ref/mem)). Unlike Go, this is UB. `-race` (TSan) detects them.
+**UB-3.** *Data races.* Two goroutines access the same memory, at least one writes, and there is no happens-before edge between them ([CON-7](12-concurrency.md), [Go memory model](https://go.dev/ref/mem)). In normal code this is a **compile error**: `go` may pass or capture only moved, `Send` copied or `Sync` shared values ([CON-12, CON-13](12-concurrency.md)), data is reached through `Mutex[T]` guards ([CON-15](12-concurrency.md)), and package variables written after init must be `Sync` ([CON-18](12-concurrency.md)).
+
+*Residue (still UB):*
+- a race in `unsafe` code or through raw memory (UB-7);
+- a race with C or C++ threads, or in C and C++ callbacks into Go++ (UB-9, UB-10).
+
+`-race` (TSan) detects the residue. Logic races (check-then-act across two lock sections) and deadlocks the compiler cannot see are not UB, because the memory stays valid, but nothing catches them either ([CON-21](12-concurrency.md)).
+
+```go
+x := 0
+go func() { x++ }()          // compile error (CON-13): was UB-3
+var n sync.Atomic[int]
+go func() { n.Add(1) }()     // ok
+```
 
 **UB-4.** *`longjmp` across Go++ frames.* A C `longjmp` that jumps over Go++ frames skips destructors and deferred calls. UB ([PAN-9](09-errors-and-panics.md)). Also a C++ exception or a Go++ panic thrown through a frame marked `nounwind` by mistake.
 
@@ -120,7 +133,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
-**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race (UB-3). The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse, not for races. Two goroutines doing the first write to the same nil map is also a data race on the map header: "a write creates the map" ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)) is not thread-safe.
+**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race. In normal code it is a **compile error**: a map is `Sync` only for reading ([CON-12](12-concurrency.md)): no goroutine may write it while it is shared; wrap it in `Mutex[map[K]V]` ([CON-15](12-concurrency.md)). The same holds for the first write to a nil map by two goroutines (a write creates the map, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), and the map is not `Sync`), and for slices and strings shared with a writer. The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse. *Residue (still UB):* the same access from `unsafe` code or from C and C++ threads (UB-3).
 
 **UB-12.** *Forced unwinding.* `pthread_exit` or thread cancellation through Go++ frames: `recover()` does not stop it, and destructors run only as far as the platform unwinder runs them ([PAN-9](09-errors-and-panics.md)).
 
@@ -156,7 +169,10 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | `v` reassigned while a type-assertion binding borrows its box (UB-2d; visible write is an error) | error when visible | | yes, for the residue | |
 | ranged slice or owned string changed in the loop body (UB-2e; visible or through an overlapping call argument is an error) | error | | yes, for the residue | |
 | borrowed range variable used after its element was written (UB-2a) | error | | yes, for the residue | |
-| data race (UB-3) | | | | yes |
+| data race in normal code (UB-3, CON-12 to CON-19) | error | | | residue only |
+| data race in `unsafe`, C or C++ code (UB-3 residue) | | | | yes |
+| opposite lock order, or a lock taken twice with the guard live (CON-20) | error when visible | | | |
+| logic race, or a deadlock the compiler cannot see (CON-21) | | | | no |
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5, OWN-B1) | error | | residue only | |
 | C keeps a pointer (UB-9) | | known list | maybe | |
@@ -166,4 +182,4 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 - The owner chose (2026-10-28, ADR-0021) a borrow check without lifetime annotations: bounds checks, nil checks, zero values, use-after-move and use-after-change errors, and sanitizers one flag away for the residue. It is conservative, so a `.Clone()` is the usual fix for a false error.
 - Keeping Go's results for overflow, division and shifts means ported code behaves the same, even though LLVM would allow UB there.
-- Races are UB because defining them would cost every shared access. Data races stay the programmer's job: mutex or channels, and `-race` tests.
+- The owner chose (2026-10-28, ADR-0022) that data races are compile errors in normal code, with the automatic labels `Send` and `Sync`, mutexes that hold their data, and scoped goroutines. Defining races would cost every shared access, so the residue (`unsafe`, C and C++ threads) stays UB and `-race` stays one flag away.

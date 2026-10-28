@@ -61,7 +61,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | Errors | `val, err := f()` | same, plus `func f!()` and `call!()` | 09 |
 | Closures | capture by reference | same; escaping closures use shared cells | 11 |
 | Generics | stenciling | monomorphization; `Copy`, `Clone`; generic methods | 10 |
-| Data races | limited damage | undefined behavior | 12, 16 |
+| Data races | limited damage | compile error in normal code; UB only in `unsafe` and C/C++ (UB-3) | 12, 16 |
 | C interop | cgo | header imports `"<stdio.h>"` | 14 |
 | Macros | `go generate` | `#Name(...)`, `@Name`, `macro` | 13 |
 

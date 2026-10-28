@@ -15,7 +15,7 @@ for _, name := range names { names = nil; println(name) }   // 3: loop over a sl
 var arena mem.Arena; u := mem.NewIn[User](&arena); arena.Reset(); println(u.Name)   // 5 (illustrative names, P05.03): value from an arena after Reset
 ```
 
-On 2026-10-28 the owner decided that these must be compile errors, but without Rust-style lifetime annotations. Data races stay the programmer's job (mutex or channels, plus `-race` tests): UB-3 does not change.
+On 2026-10-28 the owner decided that these must be compile errors, but without Rust-style lifetime annotations. Data races stay the programmer's job (mutex or channels, plus `-race` tests): UB-3 does not change. (Update 2026-10-28: ADR-0022 later made data races compile errors in normal code and narrowed UB-3.)
 
 ## Decision
 

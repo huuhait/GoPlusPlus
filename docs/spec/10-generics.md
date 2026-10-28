@@ -44,6 +44,8 @@ Only one grammar change: **methods may have type parameters** (generic methods).
 
 **GEN-10.** *Syntax of the failable generic method.* `!` comes after the type parameters: `func (s Set) Parse[T any]!(text string) T`, called `s.Parse[int]!("5")`.
 
+**GEN-11.** *`Send` and `Sync`* are predeclared constraints, written like `Copy` and `Clone`: `[T Send]`, `[T Sync]`. There is no type argument. They are computed by the compiler for every type ([CON-12](12-concurrency.md), ADR-0022) and cannot be implemented by hand. `[T Send]` means a `T` may be moved to another goroutine (for example in `go` or on a channel); `[T Sync]` means a `T` may be shared between goroutines. They can be embedded in a constraint interface like `Copy` and `Clone`: `interface{ Send; Clone }`. A generic body that moves or shares a `T` across goroutines needs the constraint; the check is once per body (GEN-5), and the instance is checked again with the real type (P04.08). An interface that embeds them (`interface{ Send }`) is itself `Send`; `error` is declared with both. Example: `func Spawn[T Send](x T, f func(T)) { go f(x) }`; `Spawn[View[string]]` is an error.
+
 ## 10.3 Examples
 
 ```go

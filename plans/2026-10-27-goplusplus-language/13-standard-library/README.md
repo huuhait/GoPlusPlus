@@ -35,7 +35,7 @@
   - text: strings, bytes, strconv, fmt;
   - collections: slices, maps, sort, container/deque (fast FIFO queues; owner decision, see P01 D1.20);
   - I/O and OS: io, bufio, os, path, path/filepath, flag;
-  - time, sync, sync/atomic, testing.
+  - time, sync, sync/atomic, testing. (`sync` and `sync/atomic` follow ADR-0022: `Mutex[T]`, `RWMutex[T]`, `Atomic[T]`, `sync.Scope`; see D13.6.)
 - **T2:**
   - containers: container/list, container/heap;
   - hashes and crypto: hash/fnv, hash/crc32, hash/maphash, crypto/sha256, crypto/sha512, crypto/md5, crypto/rand;
@@ -49,6 +49,7 @@
 - Port Go's implementations and tests (BSD-3; keep the notices) and adapt them to ownership.
 - Redesign the APIs that assume a GC:
   - `sync.Pool` (Q2, ADR-0014): a generic `sync.Pool[T]` whose `Get` returns an owned value (a stored one or `New()`; a `T` with no zero value must have `New`) and whose `Put` takes one (`p.Put(move(b))`). A runtime goroutine drops objects not taken for a few seconds, like Go's GC clearing pools, and an optional `Max` caps how many it keeps;
+  - plain mutexes and atomics on plain variables (ADR-0022, P12.13): `sync.Mutex`, `sync.RWMutex`, manual `Unlock` and `atomic.Add*` are removed. Every std package that kept a mutex next to its data (for example `log`, `context`, `net`, `testing`, `time` timers) is ported to `Mutex[T]` (data inside) or `Atomic[T]`, and its public types get the right `Send` / `Sync` labels (ADR-0022 open points 1 and 5). A std API that took a callback and a lock together is redesigned with `With`;
   - finalizers and `runtime.SetFinalizer` (removed; use `drop`);
   - `json.Unmarshal` and the other fill-a-pointer decoders (replaced by `json.Decode[T]`, D13.4);
   - every API and data structure that uses a nil pointer (pointers are never nil, ADR-0018): a result that may be missing becomes `Option[*T]` (or `Option[T]`), and linked structures use `Option` links (`container/list`, `container/heap` users, trees in the ports).

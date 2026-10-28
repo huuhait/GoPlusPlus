@@ -27,7 +27,7 @@ A captured owned variable is destroyed when its cell is released for the last ti
 
 The last bullet keeps the cell rule honest: a closure stored in an outer variable keeps its captures alive. Without it, `var f Option[func()]; { s := "x"; f = func() { use(s) } }; if f != nil { f() }` would call a closure whose captured `s` is already destroyed, and Go prints `x`. Treating it as an escape (a shared cell) keeps the rule that the choice of cell or reference never changes what the program does ([CLO-4](11-closures.md)). The same applies to `last = func() int { return i }` in a loop body, where `last` is declared outside the loop and `i` is per iteration ([CLO-8](11-closures.md)).
 
-**CLO-3a.** *Closures that capture borrowed variables.* A borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), or an `&` range variable ([RNG-1a](08-slices-and-range.md)), cannot be put in a shared cell, because the cell would outlive the borrow. A closure that runs later (used with `go`, stored, or returned; see CLO-3) cannot capture one: it is a compile error. Fix-its never reuse the loop variable's name ([RNG-8](08-slices-and-range.md)): copy it into a differently named local first (`mine := u.Clone()`), pass a clone (`go fetch(u.Clone())`), make a borrowed parameter `move`, or use `range move(xs)` so that the range variable is owned. Capturing a borrowed variable in a **non-escaping** closure is fine. Variables that are not borrowed variables (trivial or shared-handle copies) may be captured freely.
+**CLO-3a.** *Closures that capture borrowed variables.* A borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), or an `&` range variable ([RNG-1a](08-slices-and-range.md)), cannot be put in a shared cell, because the cell would outlive the borrow. A closure that runs later (used with `go`, stored, or returned; see CLO-3) cannot capture one: it is a compile error. Fix-its never reuse the loop variable's name ([RNG-8](08-slices-and-range.md)): copy it into a differently named local first (`mine := u.Clone()`), pass a clone (`go fetch(u.Clone())`), make a borrowed parameter `move`, or use `range move(xs)` so that the range variable is owned. Capturing a borrowed variable in a **non-escaping** closure is fine. A closure given to `s.Go` of a `sync.Scope` is also not escaping for this rule: its goroutine ends before the scope returns, so it may capture borrowed variables, subject to [CON-16](12-concurrency.md). Variables that are not borrowed variables (trivial or shared-handle copies) may be captured freely.
 
 **CLO-3b.** *Deferred function literals.* A `defer` is not an escape in the sense of CLO-3, so a deferred closure captures by reference. A deferred literal may capture any variable declared at function level, including named results, and these may be assigned after the `defer` statement. Capture is by reference, so the closure sees the latest value when it runs, exactly like Go (`defer func() { if err != nil { rollback() } }(); err = work()` works).
 
@@ -107,23 +107,22 @@ fmt.Println(total > 0)
 ```
 Go: `total` stays on the stack (escape analysis). Go++: same idea, same result. **Same behavior.**
 
-### Example 4: `go` shares variables with the spawner
+### Example 4: `go` and shared state
 
 ```go
 var wg sync.WaitGroup
-sum := 0
-var mu sync.Mutex
+sum := sync.NewMutex(0)                        // the mutex holds the data (CON-15)
 for i := 1; i <= 3; i++ {
     wg.Add(1)
-    go func() {                                // `go` always escapes: wg, mu, sum live in cells
+    go func() {                                // `go` always escapes: wg and sum live in cells
         defer wg.Done()
-        mu.Lock(); sum += i; mu.Unlock()
+        sum.With(func(p *int) { *p += i })     // i is a Copy value, copied in (CON-13)
     }()
 }
 wg.Wait()
-fmt.Println(sum)                               // 6
+fmt.Println(*sum.Lock())                       // 6
 ```
-Go: same. Go++: same. The `sync` types are `@Pinned` ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); a cell never moves them, so this is legal. **Same behavior.**
+Go: same result, but there `sum` is a plain `int` and `mu.Lock()` is a separate call; Go++ does not allow that (a plain captured `sum` written by the goroutines is an error, [CON-13](12-concurrency.md)). The `sync` types are `@Pinned` ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); a cell never moves them, so this is legal. **Different code, same output.**
 
 ### Example 5: a method value is a closure over its receiver
 
