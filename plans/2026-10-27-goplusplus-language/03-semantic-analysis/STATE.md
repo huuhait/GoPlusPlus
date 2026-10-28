@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-28 (P03.01–P03.18 done; P03.19 open)
+Last updated: 2026-10-28 (P03.01–P03.18 done; P03.19 and P03.20 open)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -26,6 +26,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.17 Never-nil pointers and `Option[T]` (ADR-0018)
 - [x] P03.18 Never-nil interfaces and funcs; checked `err` and comma-ok values (owner decisions 2026-10-28)
 - [ ] P03.19 Nil-safety leftovers: `close` of a known-nil channel (CON-6a); writes into a temporary map; writes into a map or slice inside an interface (ADR-0018 amendment point 5); a loop fixpoint for narrowing (the cursor loop `for { use(n); n, err = next(n); if err != nil { return err } }` and its Option equivalent pass when the guard is known on every path into the loop top)
+- [ ] P03.20 `@Strict` structs and `@Option` fields (ADR-0019)
 
 ## Open questions
 

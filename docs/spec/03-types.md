@@ -108,7 +108,7 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 }
 ```
 
-**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are `@Required`, [TYP-15](#34-required-fields-d14-rule-11)), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
+**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are required, by `@Required` or by `@Strict` ([TYP-15](#34-required-fields-d14-rule-11), [TYP-15a](#34-required-fields-d14-rule-11)); the table holds the effective bit), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
 
 **TYP-11.** *No `reflect`.* There is no user-facing `reflect` package in v1.
 
@@ -132,7 +132,7 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 
 ## 3.4 Required fields (D1.4 rule 11)
 
-**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (embedded fields too). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field of type `error`, `any` (the empty interface), a map or a channel type, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil. This is the one list of known non-nil values (other rules link here): a literal, `make(…)`, a local checked with `!= nil` (flow typing, [OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17)), any value of a never-nil type converted to `error` or `any` (a pointer kind, a func, an interface with methods, or a concrete non-interface value, such as a `*MyErr` or a `Logger` stored into an `error` or `any` field), and a read of another never-nil `@Required` field of the same kind. `move` out of such a field and `&` of it (except as `mem.Replace`'s first argument) are errors; on a slice, an `unsafe.Pointer`, an `Option` or a type-parameter field it only means "must be set". On a pointer field (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), a func field, or a field of an interface with methods other than `error`, it is a compile error, because those are never nil anyway ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), ADR-0018). `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
+**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (embedded fields too). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field of type `error`, `any` (the empty interface), a map or a channel type, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil. This is the one list of known non-nil values (other rules link here): a literal, `make(…)`, a local checked with `!= nil` (flow typing, [OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17)), any value of a never-nil type converted to `error` or `any` (a pointer kind, a func, an interface with methods, or a concrete non-interface value, such as a `*MyErr` or a `Logger` stored into an `error` or `any` field), and a read of another never-nil `@Required` field of the same kind. `move` out of such a field and `&` of it (except as `mem.Replace`'s first argument) are errors (a required `error`, `any`, map or channel field of a `@Strict` struct is such a field too, [TYP-15a](#34-required-fields-d14-rule-11)); on a slice, an `unsafe.Pointer`, an `Option` or a type-parameter field it only means "must be set". On a pointer field (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), a func field, or a field of an interface with methods other than `error`, it is a compile error, because those are never nil anyway ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), ADR-0018). `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct (a `@Required` or `@Strict` one) is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
 
 ```go
 type User struct {
@@ -159,11 +159,41 @@ type Server struct{ Log io.Writer }  // an interface field: never nil, must be s
 type Job struct{ Done chan bool @Required }   // a channel field: @Required makes it never nil
 ```
 
+**TYP-15a.** *`@Strict` structs and `@Option` fields* (ADR-0019). `@Strict` is a built-in attribute on a struct type, written on the line before `type` ([MAC-3](13-macros-surface.md#132-rules), generic struct types too). On a non-struct type, a func, a var or a field it is an error. In a `@Strict` struct every field counts as `@Required`, with all of the meaning of [TYP-15](#34-required-fields-d14-rule-11): it must be set in every literal, the struct has no zero value, this spreads to containing types, and the field is never nil for `error`, `any`, map and channel types ("must be set" only for slices, `unsafe.Pointer` and type-parameter fields). Embedded fields count like any field. Three kinds of field are **not** required: a field of type `Option[T]`, a field marked `@Option`, and a blank `_` field. Pointer, func and method-interface fields are required in every struct already, so in a `@Strict` struct they are simply required as before (no error, unlike `@Required` on them).
+
+`@Option` is a built-in field attribute, written after the field's type ([MAC-12](13-macros-surface.md#132-rules)). It means "this field may be left out of a literal and gets its zero value". The field is a plain Go field: an `error`, map or `any` field marked `@Option` may be nil, so `Err: nil` is fine. These are compile errors:
+- `@Option` in a struct that is not `@Strict` (the message says fields are optional there by default);
+- `@Option` on a field whose type has no zero value (a pointer kind, a func, an interface with methods, a struct with required fields, a C++ type without a default constructor), because it can't be left out; use `Option[T]`;
+- `@Option` on an `Option[T]` field (redundant);
+- `@Option` on a blank `_` field (redundant: `_` is never required);
+- `@Option` together with `@Required`;
+- `@Required` on a field of a `@Strict` struct that `@Strict` already requires (redundant; the fix-it removes it).
+
+`@Required` on an `Option[T]` field of a `@Strict` struct is allowed and keeps its TYP-15 meaning "must be set": the literal must name the field, and `Note: nil` is fine. `@Option` on an embedded field is allowed and means the same as on any field; if the embedded type has no zero value, it is the error above. For a type from another package the effective bits come from the serialized export data, as for `@Required`.
+
+A `@Strict` struct with at least one required field has no zero value. If no field is required (all are `Option`, `@Option` or `_`), `@Strict` changes nothing and `gopp vet` warns about it. The required bit of each field is part of what must match in a struct conversion ([EXP-9](06-expressions.md#65-conversions)): a `@Strict` struct and a non-strict struct with the same fields don't convert into each other unless their effective required bits are equal. The effective bits are exported with the type, shown in the field table ([TYP-10](#32-interfaces-and-runtime-type-information-d112)), and used by JSON decoding (a missing required field is an error naming it; a missing `@Option` field gets its zero value; a missing `Option` field gets nil), by the macro API and by the LSP. Attributes are not Go syntax, so `.go` files are not affected.
+
+```go
+@Strict
+type Payment struct {
+    ID      int
+    Amount  int64
+    Note    Option[string]   // may be left out: nil
+    Retries int @Option      // may be left out: 0
+}
+
+p := Payment{ID: 1, Amount: 500}   // OK
+p := Payment{ID: 1}                // error: Amount not set
+var q Payment                      // error: Payment has no zero value
+type Bad struct{ N int @Option }   // error: Bad is not @Strict; fields are optional already
+```
+
 ## 3.5 Rationale
 
 - **Shared handles for interfaces** keep Go's `err == io.EOF`, `errors.Is`, `%w` and type switches working with no GC.
 - **Borrowed interface parameters** make `fmt.Println(name)` free and non-consuming. Boxing happens only when a callee really keeps the value.
 - **Field tables instead of `reflect`** give `fmt` and `json` what they need and nothing more.
 - **C layout** is required for C interop (P07) and costs nothing in practice.
+- **`@Strict` as an opt-in on the type**, not required-by-default: Go code and partial literals such as `http.Server{Addr: ":80"}` keep working, and adding a field to a library struct breaks nobody (ADR-0019).
 - **`@Required` as an attribute**, not a keyword: no new grammar, and the "no zero value" rule already exists for C++ types (ADR-0016).
 - **Rejected:** boxing every interface argument (hidden allocation); moving into every interface parameter (breaks `fmt.Println(x)` followed by a use of `x`).

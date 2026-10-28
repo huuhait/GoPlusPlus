@@ -1,6 +1,6 @@
 # ADR-0016: Required struct fields (`@Required`)
 
-- **Status:** accepted; parts changed by ADR-0018 (point 8 for pointer, func and interface fields; point 9 and the consequences: the checks move from P04 to the P03 flow typing, task P03.18)
+- **Status:** accepted; extended by ADR-0019 (`@Strict` and `@Option`); parts changed by ADR-0018 (point 8 for pointer, func and interface fields; point 9 and the consequences: the checks move from P04 to the P03 flow typing, task P03.18)
 - **Date:** 2026-10-27
 - **Plan reference:** P01 D1.4 rules 9 and 11 (decision change to the completed P01); spec TYP-15, OWN-R9, MAC-8, MAC-12; new task P03.15; P09.08, P13.08. Decides P01 Q9.
 

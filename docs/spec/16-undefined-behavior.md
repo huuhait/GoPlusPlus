@@ -123,7 +123,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
 - Using the result of `ffi.String(p)` (a ref over C memory) after the C memory is freed.
 - Passing a `ref string` temporary copy to a callee that keeps the pointer (FOR-6).
-- C or C++ code that writes NULL into a Go++ pointer (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, all never nil), a func or an interface with methods other than `error` (never nil too), or a never-nil `@Required` field, or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code dereferences pointers and calls funcs and interface methods with no nil check (ADR-0018); this, and `unsafe` (UB-7), are the only ways a nil one can reach safe code. A C pointer that may be NULL imports as `Option[*T]`, so this needs a lie in a header (`_Nonnull` on a pointer that can be NULL) or a write through memory.
+- C or C++ code that writes NULL into a Go++ pointer (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, all never nil), a func or an interface with methods other than `error` (never nil too), or a never-nil `@Required` field (or a required field of a `@Strict` struct), or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code dereferences pointers and calls funcs and interface methods with no nil check (ADR-0018); this, and `unsafe` (UB-7), are the only ways a nil one can reach safe code. A C pointer that may be NULL imports as `Option[*T]`, so this needs a lie in a header (`_Nonnull` on a pointer that can be NULL) or a write through memory.
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
@@ -166,7 +166,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5) | | | yes | |
 | C keeps a pointer (UB-9) | | known list | maybe | |
-| C writes NULL into a Go++ pointer, a func, an interface with methods or a never-nil `@Required` field (UB-9) | | | no (a NULL read crashes like any NULL dereference) | |
+| C writes NULL into a Go++ pointer, a func, an interface with methods or a never-nil `@Required` / `@Strict` field (UB-9) | | | no (a NULL read crashes like any NULL dereference) | |
 
 ## 16.5 Rationale
 

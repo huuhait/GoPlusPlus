@@ -25,7 +25,7 @@
 - **Decoding returns a new value** (owner decision, ADR-0016): `u, err := json.Decode[User](data)`, or `dec.Decode[User]()` on a stream decoder. There is no `json.Unmarshal`, no `dec.Decode(&v)` and no `Unmarshaler` interface, because they need a value to exist before decoding. How a type supplies its own decoding (Go's `UnmarshalJSON`) is designed in P13.08.
 - `@Derive(JSON)` is an optional fast path. It generates `MarshalJSON` and a decode function, which `encoding/json` prefers (like `easyjson` in Go). Output is identical either way.
 - **`Option` fields.** An `Option[T]` field encodes as `null` when it is nil; decoding gives `nil` for a missing or `null` field. A pointer field (`Unique[*T]`, never nil) must be present in the input (ADR-0018).
-- **Required fields.** Decoding a struct with a `@Required` field (P01 D1.4 rule 11) returns an error naming the field when the input doesn't have it, with or without `@Derive(JSON)`. The field table (TYP-10) records which fields are required.
+- **Required fields.** Decoding a struct with a `@Required` field (P01 D1.4 rule 11) returns an error naming the field when the input doesn't have it, with or without `@Derive(JSON)`. The field table (TYP-10) records which fields are required. This includes the fields required by `@Strict` (ADR-0019): a missing `@Option` field gets its zero value, and a missing `Option` field gets nil.
 
 **D13.5 — Tiers, built in this order.**
 - **T1** (everything depends on these):

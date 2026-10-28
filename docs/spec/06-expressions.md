@@ -84,6 +84,7 @@ fmt.Println(int8(-8) >> s)     // -1
 **EXP-9.** Conversions follow [Conversions](https://go.dev/ref/spec#Conversions) with these additions:
 - `string(v)` where `v` is a `ref string`, and `[]T(v)` where `v` is a `ref []T`: copy into a new owned value. `[]T(v)` needs elements that satisfy `Clone` ([OWN-V3](04-ownership.md#44-refs-d16)).
 - `string([]byte)` and `[]byte(string)` copy, as in Go.
+- Between struct types, the required bit of each field must match too, as the field names and types do ([TYP-15a](03-types.md)): the effective required bits (by `@Required` or `@Strict`) must be equal, so `U(Raw{…})` is an error if `U` and `Raw` differ in the bit of any field, in either direction. A `@Strict` struct and a non-strict struct with the same fields convert into each other only if their effective required bits are equal.
 - Owned to ref is implicit, never written as a conversion.
 - A `Unique[*T]` or `Shared[*T]` stored in a place converts implicitly to `*T`; from a temporary it is an error ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17)).
 
