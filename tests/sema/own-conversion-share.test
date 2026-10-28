@@ -1,0 +1,68 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// OWN-R3a, TYP-6: a conversion whose result shares storage with its operand
+// (same underlying type, or a conversion to an interface) is checked as its
+// operand. Conversions that copy are new values.
+package main
+
+type Doc struct{ Tags []string }
+type L []string
+
+var sink any
+
+// CHECK: [[@LINE+1]]:41: error: cannot return s: {{.*}}(OWN-R3a)
+func f(s string) string { return string(s) }
+
+// CHECK: [[@LINE+1]]:28: error: cannot return d.Tags: {{.*}}(OWN-R3a)
+func g(d Doc) L { return L(d.Tags) }
+
+// CHECK: [[@LINE+1]]:29: error: cannot assign from p.Tags: {{.*}}(OWN-R3a)
+func h(p *Doc) { sink = any(p.Tags) }
+
+// CHECK: [[@LINE+1]]:33: error: cannot return *p: {{.*}}(OWN-R3a)
+func k(p *Doc) Doc { return Doc(*p) }
+
+// These copy or share nothing: no error.
+func ok(bs []byte, s string, r ref string, n int, d Doc) (string, []byte, int64, string, L) {
+	return string(bs), []byte(s), int64(n), string(r), L(d.Tags.Clone())
+}
+
+// Struct tags are ignored by conversions; a type parameter shares unless every
+// term of its type set copies; a slice converted to an array copies owning
+// elements bitwise.
+type A struct {
+	S string `json:"a"`
+}
+type B struct{ S string }
+type P struct {
+	Tags []string
+	T    string
+}
+
+var sinkArr [2]string
+
+// CHECK: [[@LINE+1]]:43: error: cannot return s: {{.*}}(OWN-R3a)
+func g1[T ~string](s string) T { return T(s) }
+
+// CHECK: [[@LINE+1]]:48: error: cannot return x of type T{{.*}}(GEN-4)
+func g2[T ~string](x T) string { return string(x) }
+
+// CHECK: [[@LINE+1]]:27: error: cannot return a: {{.*}}(OWN-R3a)
+func g3(a A) B { return B(a) }
+
+// CHECK: [[@LINE+1]]:37: error: cannot assign from p.Tags: {{.*}}(OWN-R3a)
+func g4(p *P) { sinkArr = [2]string(p.Tags) }
+
+// Copying conversions through type parameters, and a slice of trivial
+// elements to an array, stay legal.
+func ok1[T ~[]byte](x T) string { return string(x) }
+func ok2(p *P, ns []int) [2]int  { return [2]int(ns) }
+
+// Numbers are trivial: converting them shares nothing, in generic code too.
+type Number interface{ ~int | ~int64 | ~float64 }
+
+func toF[T ~int | ~float64](x T) float64 { return float64(x) }
+func conv[T Number](x T) int64           { var n int64 = int64(x); return n }
+func widen[T ~int32](x T) T              { return T(int64(x) * 2) }
+func bytesOf[T ~string](s T) []byte      { return []byte(s) }
+
+func main() {}

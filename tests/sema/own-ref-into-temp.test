@@ -1,0 +1,114 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// OWN-V6, OWN-V7, OWN-P6, EXP-2: a borrow of a temporary (or of a part of
+// one) must not outlive the statement.
+package main
+
+type Doc struct {
+	Title string
+	Tags  []string
+}
+type H struct{ U Unique[Doc] }
+
+func mk() string       { return "a" }
+func mkDoc() Doc       { return Doc{} }
+func mkS() []string    { return nil }
+func mkH() H           { return H{} }
+func use(s ref string) {}
+
+func t1() {
+	// CHECK: [[@LINE+1]]:21: error: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
+	var r ref string = mk()
+	use(r)
+	var r2 ref string
+	// CHECK: [[@LINE+1]]:7: error: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
+	r2 = mk()
+	use(r2)
+}
+
+func t2() {
+	// CHECK: [[@LINE+1]]:7: error: cannot store mkDoc().Title[:1] in a longer-lived place{{.*}}(OWN-V6)
+	r := mkDoc().Title[:1]
+	use(r)
+	// CHECK: [[@LINE+1]]:8: error: cannot store mkS()[0][:1] in a longer-lived place{{.*}}(OWN-V6)
+	r3 := mkS()[0][:1]
+	use(r3)
+	// CHECK: [[@LINE+1]]:15: error: cannot use mkH().U {{.*}}(OWN-P6)
+	var p *Doc = mkH().U
+	_ = p
+}
+
+// CHECK: [[@LINE+1]]:31: error: cannot return a ref into a temporary{{.*}}(OWN-V7)
+func t3() ref string { return mkDoc().Title }
+
+var refs []ref string
+
+func t4(ch chan ref string) {
+	// CHECK: [[@LINE+1]]:22: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	refs = append(refs, mk()[:1])
+	// CHECK: [[@LINE+1]]:8: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	ch <- mk()[:1]
+}
+
+func mkSh() Shared[Doc] { return new_shared(Doc{}) }
+
+// R19: a ref into a Shared[T] temporary dangles too.
+func t5() {
+	// CHECK: [[@LINE+1]]:7: error: cannot store mkSh().Title[:1] in a longer-lived place{{.*}}(OWN-V6)
+	r := mkSh().Title[:1]
+	use(r)
+	use(mkSh().Title[:1]) // a borrowed argument is fine
+}
+
+// R18: temporaries of an if / switch header live to the end of the statement,
+// so a variable declared in the header may hold a ref into one.
+func t6() {
+	if r := mk()[:1]; r != "" {
+		use(r)
+	}
+	switch r := mkDoc().Title[:1]; r {
+	case "a":
+		use(r)
+	}
+	var outer ref string
+	// An outer variable outlives the header: still an error.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	if outer = mk()[:1]; outer != "" {
+		use(outer)
+	}
+}
+
+// A function literal written in a header is an ordinary body, and a
+// three-clause for init is not extended (STM-4): both are errors.
+func t8() {
+	if g := func() {
+		// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
+		var r ref string = mk()
+		use(r)
+	}; true {
+		g()
+	}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	for r := mk()[:1]; len(r) > 0; r = r[1:] {
+		use(r)
+	}
+}
+
+// R15: a multi-value call that returns refs is not a ref into a temporary,
+// but an owned result stored in a ref is.
+func cut(s string) (before, after ref string, found bool) { return s[:1], s[1:], true }
+func pair() (string, bool)                                 { return "a", true }
+
+func t7(src string) {
+	var a, b ref string
+	a, b, _ = cut(src)
+	c, d, ok := cut(src)
+	use(a)
+	use(b)
+	use(c)
+	use(d)
+	_ = ok
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store pair() in a longer-lived place{{.*}}(OWN-V6)
+	a, _ = pair()
+}
+
+func main() {}

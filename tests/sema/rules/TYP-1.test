@@ -1,0 +1,18 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule TYP-1: `ref string` and `string` (and `ref []T` and `[]T`) are
+// different types; identity follows Go.
+package main
+
+func takesRef(r ref string) {}
+
+func positive(r ref string) {
+	var a ref string = r
+	var f func(ref string) = takesRef
+	f(a)
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:23: error: cannot use takesRef (value of type func(ref string)) as func(string) value in variable declaration
+	var f func(string) = takesRef
+	_ = f
+}

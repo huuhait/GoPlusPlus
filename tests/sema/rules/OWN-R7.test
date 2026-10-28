@@ -1,0 +1,28 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-R7: a destructor is a method `func (x *T) drop()`; it cannot be
+// called directly.
+package main
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Sock struct{ fd int }
+
+// CHECK: [[@LINE+1]]:15: error: drop must be declared as func (x *T) drop(): a pointer receiver, no parameters and no results (OWN-R7)
+func (s Sock) drop() {}
+
+type Conn struct{ fd int }
+
+// CHECK: [[@LINE+1]]:16: error: drop must be declared as func (x *T) drop(): a pointer receiver, no parameters and no results (OWN-R7)
+func (c *Conn) drop(n int) {}
+
+func positive() {
+	f := File{fd: 3}
+	_ = f.fd
+}
+
+func negative(f *File) {
+	// CHECK: [[@LINE+1]]:4: error: cannot use f.drop: a drop method runs only when its owner ends, it cannot be called directly (OWN-R7)
+	f.drop()
+}

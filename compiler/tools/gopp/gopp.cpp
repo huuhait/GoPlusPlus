@@ -21,6 +21,7 @@
 #include "gopp/Import/ClangInfo.h"
 #include "gopp/Lex/Lexer.h"
 #include "gopp/Parse/Parser.h"
+#include "gopp/Sema/Loader.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -82,6 +83,44 @@ static cl::opt<DiagFormat>
 static cl::opt<unsigned> ErrorLimit(
     "error-limit", cl::desc("Stop after this many errors (0 = no limit)"),
     cl::init(gopp::DiagnosticsEngine::DefaultErrorLimit), cl::sub(ParseCmd));
+
+static cl::SubCommand CheckCmd("check",
+                               "Type-check Go++ files or a package directory");
+static cl::list<std::string> CheckInputs(cl::Positional,
+                                         cl::desc("<files or directory>"),
+                                         cl::sub(CheckCmd));
+static cl::opt<bool>
+    CheckDumpTypes("dump-types",
+                   cl::desc("Print the type of every expression and object"),
+                   cl::sub(CheckCmd));
+static cl::opt<bool>
+    CheckGoMode("go",
+                cl::desc("Check Go sources: Go's built-ins, no ownership "
+                         "rules, no Go++ language rules"),
+                cl::sub(CheckCmd));
+static cl::opt<std::string> CheckOS("os",
+                                    cl::desc("Target OS for build constraints"),
+                                    cl::init("linux"), cl::sub(CheckCmd));
+static cl::opt<std::string>
+    CheckArch("arch", cl::desc("Target architecture for build constraints"),
+              cl::init("amd64"), cl::sub(CheckCmd));
+static cl::opt<std::string>
+    CheckProfile("profile",
+                 cl::desc("Build profile name (true in //gopp:build)"),
+                 cl::init("dev"), cl::sub(CheckCmd));
+static cl::list<std::string> CheckTags("tags", cl::CommaSeparated,
+                                       cl::desc("Extra build tags"),
+                                       cl::sub(CheckCmd));
+static cl::opt<bool> CheckTests("test", cl::desc("Include _test.gopp files"),
+                                cl::sub(CheckCmd));
+static cl::opt<unsigned> CheckErrorLimit(
+    "check-error-limit", cl::desc("Stop after this many errors (0 = no limit)"),
+    cl::init(gopp::DiagnosticsEngine::DefaultErrorLimit), cl::sub(CheckCmd));
+static cl::opt<DiagFormat> CheckDiagFormat(
+    "check-diag-format", cl::desc("Diagnostic output format"),
+    cl::values(clEnumValN(DiagFormat::Text, "text", "Clang-style text"),
+               clEnumValN(DiagFormat::JSON, "json", "JSON lines")),
+    cl::init(DiagFormat::Text), cl::sub(CheckCmd));
 
 static cl::SubCommand
     FmtCmd("fmt", "Format Go++ files (gofmt's rules, extended to Go++)");
@@ -278,6 +317,58 @@ static int runParse() {
   return HadErrors ? 1 : 0;
 }
 
+/// `gopp check <files|dir>`: loads the package (and what it imports from the
+/// directory of the input), type-checks it and exits 1 on errors.
+static int runCheck() {
+  if (CheckInputs.empty()) {
+    errs() << "gopp: error: check: no input files\n";
+    return 1;
+  }
+  gopp::SourceManager SM;
+  std::unique_ptr<gopp::DiagnosticConsumer> Printer;
+  if (CheckDiagFormat == DiagFormat::JSON)
+    Printer = std::make_unique<gopp::JSONDiagnosticPrinter>(errs(), SM);
+  else
+    Printer = std::make_unique<gopp::TextDiagnosticPrinter>(errs(), SM);
+  gopp::DiagnosticsEngine Diags(SM, *Printer, CheckErrorLimit);
+
+  gopp::sema::LoadOptions LO;
+  LO.OS = CheckOS;
+  LO.Arch = CheckArch;
+  LO.Profile = CheckProfile;
+  LO.Tags.assign(CheckTags.begin(), CheckTags.end());
+  LO.IncludeTests = CheckTests;
+  LO.LanguageRules = !CheckGoMode;
+  gopp::sema::CheckOptions CO;
+  CO.GoCompat = CheckGoMode;
+  CO.Ownership = !CheckGoMode;
+  gopp::sema::TypeContext Ctx(CheckGoMode);
+
+  gopp::sema::CheckedPackage *CP = nullptr;
+  gopp::sema::MockForeignProvider Foreign;
+  if (CheckInputs.size() == 1 && llvm::sys::fs::is_directory(CheckInputs[0])) {
+    LO.Root = CheckInputs[0];
+    gopp::sema::Loader L(SM, Diags, Ctx, LO, CO);
+    L.setForeignProvider(&Foreign);
+    CP = L.loadDir(CheckInputs[0], "");
+    if (CP && CheckDumpTypes)
+      gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
+    Diags.finish();
+    return (!CP || Diags.hasErrors()) ? 1 : 0;
+  }
+  LO.Root = llvm::sys::path::parent_path(CheckInputs[0]).str();
+  if (LO.Root.empty())
+    LO.Root = ".";
+  gopp::sema::Loader L(SM, Diags, Ctx, LO, CO);
+  L.setForeignProvider(&Foreign);
+  CP = L.loadFiles(
+      std::vector<std::string>(CheckInputs.begin(), CheckInputs.end()));
+  if (CP && CheckDumpTypes)
+    gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
+  Diags.finish();
+  return (!CP || Diags.hasErrors()) ? 1 : 0;
+}
+
 /// The .gopp files below Dir, sorted; as gofmt, files whose name starts with
 /// a dot are left out. Returns false (after a message) if Dir cannot be read.
 static bool collectFiles(const std::string &Dir,
@@ -383,6 +474,8 @@ int main(int argc, char **argv) {
     return runHostToolchain();
   if (ParseCmd)
     return runParse();
+  if (CheckCmd)
+    return runCheck();
   if (FmtCmd)
     return runFmt();
 

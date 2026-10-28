@@ -1,0 +1,51 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-R3a: reading an owned value from another place (field, element,
+// map entry, package variable, pointer target, borrowed variable) borrows it;
+// where ownership is needed it is an error with the fix-its x.Clone() and
+// move(x) (for a borrowed parameter: make the parameter `move`).
+package main
+
+type P struct {
+	name string
+	tags []string
+}
+
+var global = "g"
+
+func take(move s string) {}
+
+func mk() string { return "a" }
+
+func positive(p *P, a []string, m map[string]string) (string, int) {
+	x := p.name.Clone()
+	y := move(p.tags)
+	v, ok := move(m["k"])
+	t := mk()
+	a[0], a[1] = a[1], a[0] // a swap moves the elements
+	_, _, _ = x, y, t
+	take(move(p.name))
+	n := len(p.name) + len(global)
+	if ok {
+		n++
+	}
+	return v, n
+}
+
+func negative(p *P, a []string, m map[string]string, c chan string, s string) string {
+	// CHECK: [[@LINE+1]]:7: error: cannot initialize from p.name: it is a value in another place, and this needs ownership (OWN-R3a)
+	x := p.name
+	var y string
+	// CHECK: [[@LINE+1]]:6: error: cannot assign from a[0]: it is a value in another place, and this needs ownership (OWN-R3a)
+	y = a[0]
+	// CHECK: [[@LINE+1]]:7: error: cannot send a[1]: it is a value in another place, and this needs ownership (OWN-R3a)
+	c <- a[1]
+	// CHECK: [[@LINE+1]]:15: error: cannot store p.name: it is a value in another place, and this needs ownership (OWN-R3a)
+	q := P{name: p.name}
+	// CHECK: [[@LINE+1]]:7: error: cannot initialize from global: it is a package variable, and this needs ownership (OWN-R3a)
+	g := global
+	_, _, _, _ = x, y, q, g
+	// CHECK: [[@LINE+1]]:7: error: cannot pass as a `move` argument s: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	take(s)
+	// CHECK: [[@LINE+1]]:9: error: cannot return m["a"]: it is a value in another place, and this needs ownership (OWN-R3a)
+	return m["a"]
+}

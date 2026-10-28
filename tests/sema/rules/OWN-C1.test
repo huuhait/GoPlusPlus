@@ -1,0 +1,25 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-C1: a trivial value (numbers, raw pointers, refs, structs and
+// arrays of those) is copied with `=` and satisfies Copy.
+package main
+
+type P struct{ X, Y int }
+
+type Doc struct{ Title string }
+
+func cp[T Copy](x T) T { return x }
+
+func positive(q *P, r ref string, arr *[2]P) P {
+	a := *q
+	b := q.X
+	c := arr[1]
+	_, _ = cp(&a), cp(r)
+	_ = cp(P{1, 2})
+	_ = b + c.Y
+	return a
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:6: error: Doc does not satisfy Copy
+	_ = cp(Doc{})
+}

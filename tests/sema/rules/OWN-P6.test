@@ -1,0 +1,26 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-P6: Unique[T] and Shared[T] borrow as *T from a place, never from
+// a temporary. A new Unique stored in a *T field gets the D3.9 message.
+package main
+
+type Node struct {
+	V      int
+	Parent *Node
+}
+
+func sum(t *Node) int { return t.V }
+
+func positive() int {
+	u := new_unique(Node{V: 1})
+	var p *Node = u
+	s := new_shared(Node{V: 2})
+	return sum(u) + sum(s) + p.V
+}
+
+func negative(n *Node) {
+	// CHECK: [[@LINE+1]]:15: error: cannot use new_unique(1) (value of struct type Unique[int]) as *int value in variable declaration: cannot borrow a temporary Unique[int]: the target would be freed immediately (OWN-P6)
+	var p *int = new_unique(1)
+	_ = p
+	// CHECK: [[@LINE+1]]:13: error: a *Node field doesn't own: did you mean Unique[Node]? (OWN-P6)
+	n.Parent = new_unique(Node{})
+}

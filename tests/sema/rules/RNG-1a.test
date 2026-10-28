@@ -1,0 +1,64 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule RNG-1a: in `for _, &d := range xs` d is the element itself: writable
+// and movable. It covers slices, arrays and map values; strings, integers and
+// channels have no element; the index cannot be aliased; an array held by
+// value in a borrowed variable cannot be aliased.
+package main
+
+type Doc struct {
+	Title string
+	N     int
+}
+
+type Grid struct{ Cells [4]Doc }
+
+func keep(move d Doc) {}
+
+func positive(docs []Doc, m map[string]Doc, g *Grid) {
+	for _, &d := range docs {
+		d.Title = "x"
+		d.N++
+	}
+	for k, &v := range m {
+		v.N++
+		_ = k
+	}
+	for _, &d := range docs {
+		keep(move(d))
+	}
+	var a [4]Doc
+	for _, &d := range a {
+		d.N++
+	}
+	for _, &d := range g.Cells {
+		d.N++
+	}
+}
+
+func negative(docs []Doc, s string, ch chan int, g Grid) {
+	// CHECK: [[@LINE+1]]:6: error: cannot use & when ranging over a string: there is no element to alias (RNG-1a)
+	for &c := range s {
+		_ = c
+	}
+	// CHECK: [[@LINE+1]]:6: error: cannot use & when ranging over a channel: there is no element to alias (RNG-1a)
+	for &v := range ch {
+		_ = v
+	}
+	// CHECK: [[@LINE+1]]:6: error: cannot use & on the index or key of docs: & marks the element variable (RNG-1a)
+	for &i := range docs {
+		_ = i
+	}
+	// CHECK: [[@LINE+1]]:9: error: cannot use & on the elements of g.Cells: the array is held by value in borrowed variable g (RNG-1a)
+	for _, &d := range g.Cells {
+		d.N++
+	}
+}
+
+type Rec struct{ Title string }
+
+// Writing an & alias is its use ("declared and not used" must not fire).
+func writeOnly(recs []Rec) {
+	for _, &d := range recs {
+		d = Rec{}
+	}
+}

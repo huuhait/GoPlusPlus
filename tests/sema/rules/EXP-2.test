@@ -1,0 +1,54 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule EXP-2: a call result, conversion, composite literal, move(...) or
+// x.Clone() is an owned temporary; move needs a place.
+package main
+
+type T struct{ S string }
+
+func mk() string { return "" }
+
+type User struct {
+	Name string
+	Tags []string
+}
+type Box struct{ U Unique[User] }
+
+func get() User     { return User{} }
+func all() []User   { return nil }
+func mkBox() Box    { return Box{} }
+func ptr() *User    { return nil }
+func use(s ref string) {}
+
+// A field or element of an owned temporary is a temporary: it moves out.
+func parts() (string, []string, string) {
+	n := get().Name
+	t := all()[0].Tags
+	_ = t
+	u := mkBox().U.Name
+	_ = u
+	return n, get().Tags, ptr().Name.Clone()
+}
+
+func positive(p *T) {
+	a := mk()
+	b := T{S: mk()}
+	c := move(p.S)
+	d := p.S.Clone()
+	e := string([]byte{'a'})
+	_, _, _, _, _ = a, b, c, d, e
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:12: error: move argument 1 + 2 is not a place (variable, field, element, map entry or pointer target)
+	x := move(1 + 2)
+	// CHECK: [[@LINE+1]]:12: error: move argument mk() is not a place (variable, field, element, map entry or pointer target)
+	y := move(mk())
+	_, _ = x, y
+}
+
+// Through a raw pointer it is a place in someone else's storage.
+func throughPointer() string {
+	// CHECK: [[@LINE+1]]:7: error: cannot initialize from ptr().Name: it is a value in another place, and this needs ownership (OWN-R3a)
+	x := ptr().Name
+	return x
+}

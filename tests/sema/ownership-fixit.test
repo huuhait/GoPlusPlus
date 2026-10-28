@@ -1,0 +1,28 @@
+// RUN: not %gopp check --check-diag-format=json %s 2>&1 | FileCheck %s
+// OWN-R3a and TYP-9 errors carry the fix-its of the spec (D3.9): insert
+// .Clone(), plus move(x) for a place, "make the parameter move" for a
+// borrowed parameter, the & form for a range variable, and Clone only for a
+// value borrowed from an interface box.
+package main
+
+type P struct{ name string }
+
+func f(p *P, s string, xs []string, v any) {
+	// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+3]],"column":7,
+	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{.*}}{"id":"note_own_fix_move",
+	// CHECK-SAME: "fixits":[{"range":{"begin":{"line":[[@LINE+1]],"column":13,{{.*}}"text":".Clone()"}]
+	x := p.name
+	// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],"column":7,
+	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{.*}}{"id":"note_own_fix_move_param",
+	y := s
+	for _, e := range xs {
+		// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],"column":8,
+		// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{.*}}{"id":"note_own_fix_alias",
+		z := e
+		_ = z
+	}
+	// CHECK: {"severity":"error","id":"err_own_box_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],
+	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{[^]]*}}],"fixits":[{{.*}}"text":".Clone()"}]}
+	p.name = v.(string)
+	_, _ = x, y
+}

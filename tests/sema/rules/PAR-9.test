@@ -1,0 +1,19 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule PAR-9: results are owned: `return a` of a borrowed parameter needs
+// a.Clone() or a move parameter. A ref result may point into a borrowed
+// parameter, not into a move parameter that dies at the return.
+package main
+
+func positive(a string, move b string, src string) (string, string, ref string) {
+	return a.Clone(), b, src[:1]
+}
+
+func negative1(a string) string {
+	// CHECK: [[@LINE+1]]:9: error: cannot return a: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	return a
+}
+
+func negative2(move xs []int) ref []int {
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local xs: it dies at the return (OWN-V7)
+	return xs[1:]
+}

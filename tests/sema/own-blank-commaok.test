@@ -1,0 +1,13 @@
+// RUN: %gopp check %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error: %s
+// OWN-R3a: the blank identifier keeps nothing, so `_, ok := m[k]` and
+// `var _ = m[k]` take no ownership of the value.
+package main
+
+func a(m map[string]string, k string, ch chan string) bool {
+	_, ok := m[k]
+	_ = m[k]
+	_, ok2 := <-ch
+	var _ = m[k]
+	return ok && ok2
+}
+func main() {}

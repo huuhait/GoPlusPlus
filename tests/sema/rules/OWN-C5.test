@@ -1,0 +1,14 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-C5: inside a generic body a type parameter is owning unless it is
+// constrained by Copy.
+package main
+
+func positive[T Copy](p *struct{ v T }) T {
+	x := p.v
+	return x
+}
+
+func negative[T any](p *struct{ v T }) T {
+	// CHECK: [[@LINE+1]]:9: error: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+	return p.v
+}

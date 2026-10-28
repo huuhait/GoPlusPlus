@@ -1,0 +1,20 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule EXP-1: move(p) has the type of p and needs a place; clone(x) has the
+// type of x and needs Clone; both can only be called, not used as values.
+package main
+
+func positive(move xs []int, m map[string]string) {
+	ys := move(xs)
+	zs := clone(ys)
+	v, ok := move(m["k"])
+	w, ok2 := clone(m["j"])
+	_, _, _, _, _ = zs, v, ok, w, ok2
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:6: error: move (built-in) must be called
+	_ = move
+	// CHECK: [[@LINE+1]]:7: error: clone (built-in) must be called
+	f := clone
+	_ = f
+}

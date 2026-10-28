@@ -1,0 +1,72 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-R10: a value of a @Pinned type (or a struct holding one by value)
+// cannot be copied or moved.
+package main
+
+@Pinned
+type Mutex struct{ state int }
+
+func (m *Mutex) Lock() {}
+
+type Guarded struct {
+	mu Mutex
+	n  int
+}
+
+func positive() {
+	var mu Mutex
+	mu.Lock()
+	p := &mu
+	p.Lock()
+	var g Guarded
+	g.mu.Lock()
+}
+
+func negative(g *Guarded) {
+	var mu Mutex
+	// CHECK: [[@LINE+1]]:8: error: cannot copy mu: type Mutex is @Pinned (OWN-R10)
+	m2 := mu
+	// CHECK: [[@LINE+1]]:13: error: cannot move mu: type Mutex is @Pinned (OWN-R10)
+	m3 := move(mu)
+	// CHECK: [[@LINE+1]]:7: error: cannot copy *g: type Guarded is @Pinned (OWN-R10)
+	h := *g
+	_, _, _ = m2, m3, h
+}
+
+func (m Mutex) Peek() int { return m.state }
+
+func byval(m Mutex) {}
+
+func byptr(m *Mutex) {}
+
+func copies() {
+	var mu Mutex
+	byptr(&mu)
+	byval(Mutex{}) // a temporary is built in place
+	// CHECK: [[@LINE+1]]:8: error: cannot copy mu: type Mutex is @Pinned (OWN-R10)
+	byval(mu)
+	// CHECK: [[@LINE+1]]:6: error: cannot copy mu: type Mutex is @Pinned (OWN-R10)
+	_ = mu.Peek()
+	var arr [2]Mutex
+	// CHECK: [[@LINE+1]]:9: error: cannot copy arr element: type Mutex is @Pinned (OWN-R10)
+	for _, m := range arr {
+		_ = m
+	}
+}
+
+type M2 Mutex
+type Wrap2 struct {
+	mu Mutex
+	n  int
+}
+
+func conversions(pm *Mutex, w *Guarded) {
+	var mu Mutex
+	// CHECK: [[@LINE+1]]:10: error: cannot copy mu: type Mutex is @Pinned (OWN-R10)
+	a := M2(mu)
+	// CHECK: [[@LINE+1]]:13: error: cannot copy *pm: type Mutex is @Pinned (OWN-R10)
+	b := Mutex(*pm)
+	// CHECK: [[@LINE+1]]:13: error: cannot copy *w: type Guarded is @Pinned (OWN-R10)
+	c := Wrap2(*w)
+	_, _, _ = a, b, c
+}

@@ -1,0 +1,5 @@
+// RUN: %gopp check %S/Inputs/dir
+// RUN: not %gopp check %S/Inputs/cycle 2>&1 | FileCheck %s
+// A directory is loaded with the packages it imports; an import cycle is an
+// error.
+// CHECK: error: import cycle not allowed: a -> b -> a

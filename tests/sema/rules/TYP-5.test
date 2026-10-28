@@ -1,0 +1,20 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule TYP-5: an interface value is a shared handle: copies share the box
+// (implicit, also out of other places); it is not Copy.
+package main
+
+type H struct{ err error }
+
+func cp[T Copy](x T) T { return x }
+
+func positive(h *H, v any) error {
+	e := h.err
+	w := v
+	_ = w
+	return e
+}
+
+func negative(e error) {
+	// CHECK: [[@LINE+1]]:6: error: error does not satisfy Copy
+	_ = cp(e)
+}

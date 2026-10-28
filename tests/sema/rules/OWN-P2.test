@@ -1,0 +1,20 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-P2: new_unique(v) and new_shared(v) take the initial value and
+// move it in.
+package main
+
+type Node struct{ Name string }
+
+func positive(name string) {
+	a := new_unique(Node{Name: name.Clone()})
+	d := Node{Name: "d"}
+	b := new_shared(d)
+	c := new_unique(Node{})
+	_, _, _ = a, b, c
+}
+
+func negative(n *Node) {
+	// CHECK: [[@LINE+1]]:18: error: cannot allocate from n.Name: it is a value in another place, and this needs ownership (OWN-R3a)
+	u := new_unique(n.Name)
+	_ = u
+}

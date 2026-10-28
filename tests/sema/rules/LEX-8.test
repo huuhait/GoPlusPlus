@@ -1,0 +1,14 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule LEX-8: Go's new is not predeclared; the error suggests new_unique or
+// new_shared.
+package main
+
+func positive() {
+	p := new_unique(0)
+	_ = p
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:6: error: undefined: new
+	_ = new(int)
+}

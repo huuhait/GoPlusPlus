@@ -1,0 +1,38 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule RNG-6: strings (runes), integers and channels range as in Go; ranging
+// over a channel receives, so its variable is an owned local. An array of
+// trivial elements is copied as in Go; owning elements are borrowed live.
+package main
+
+type Doc struct{ Title string }
+
+func keep(move d Doc) {}
+
+func positive(ch chan Doc, s string, nums [3]int) int {
+	n := 0
+	for _, x := range nums {
+		x++
+		n += x
+	}
+	for v := range ch {
+		keep(v)
+	}
+	for i := range 10 {
+		n += i
+	}
+	for _, r := range s {
+		n += int(r)
+	}
+	return n
+}
+
+func negative(ch chan<- Doc, docs [2]Doc) {
+	// CHECK: [[@LINE+1]]:17: error: cannot range over ch (variable of type chan<- Doc): receive from send-only channel
+	for v := range ch {
+		_ = v
+	}
+	for _, d := range docs {
+		// CHECK: [[@LINE+1]]:3: error: cannot assign to d.Title: range variable is a borrowed read-only variable (RNG-1)
+		d.Title = "x"
+	}
+}

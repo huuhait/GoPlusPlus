@@ -1,0 +1,25 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule PAR-4: parameters of trivial types are ordinary copies; the callee may
+// change its copy. Owning parameters are not copies (PAR-1).
+package main
+
+type Pt struct{ X, Y int }
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func positive(p Pt, q *int) int {
+	p.X++
+	q = nil
+	_ = q
+	return gcd(p.X, p.Y)
+}
+
+func negative(s string) {
+	// CHECK: [[@LINE+1]]:2: error: cannot assign to s: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	s += "x"
+}

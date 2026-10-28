@@ -1,0 +1,19 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-V3: owned to ref is implicit; ref to owned is an explicit copy,
+// string(v) or []T(v); []T(v) needs elements that satisfy Clone.
+package main
+
+type H struct{ fd int }
+
+func (h *H) drop() {}
+
+func positive(s string, r ref string, rs ref []int) (string, []int) {
+	var v ref string = s
+	_ = v
+	return string(r), []int(rs)
+}
+
+func negative(r ref []H) []H {
+	// CHECK: [[@LINE+1]]:13: error: cannot convert r (variable of type ref []H) to type []H: element type H does not satisfy Clone (OWN-V3)
+	return []H(r)
+}

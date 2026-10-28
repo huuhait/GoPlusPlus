@@ -1,0 +1,980 @@
+//===- Call.cpp - Selectors, calls and instantiation ----------------------===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// Ported from types2's call.go (BSD-style license, Copyright The Go Authors),
+// with the Go++ typing of `x.Clone()`, `IsNil()`, `move` parameters and `f!()`.
+//
+//===----------------------------------------------------------------------===//
+
+#include "Checker.h"
+
+using namespace gopp;
+using namespace gopp::sema;
+using llvm::cast;
+using llvm::dyn_cast;
+using llvm::dyn_cast_or_null;
+using llvm::isa;
+
+void Checker::recordSelection(const SelectorExpr *Ex, const Selection &Sel) {
+  I.Selections[Ex] = Sel;
+}
+
+//===----------------------------------------------------------------------===//
+// Selectors
+//===----------------------------------------------------------------------===//
+
+Func *Checker::syntheticMethod(StringRef Name, Type *Result, SourceLoc Pos) {
+  Func *F = newFunc(Name, nullptr, Pos);
+  F->Pkg = nullptr;
+  Type *Res[] = {Result};
+  F->Ty = Ctx.signature(Ctx.tuple({}), Ctx.tuple(Res), false, false, 0);
+  F->IsBuiltinMethod = true;
+  return F;
+}
+
+/// PAR-5: a `move` receiver takes ownership of the receiver, so a call or a
+/// method value is legal only on an owned value (a local or a temporary), or
+/// on move(x) / x.Clone().
+void Checker::checkMoveRecvUse(const SelectorExpr *Sel, const char *What) {
+  Operand R;
+  R.M = Mode::Variable;
+  R.E = Sel->X;
+  R.Ty = I.typeOf(Sel->X);
+  if (!R.Ty || !isValid(R.Ty))
+    return;
+  if (isa<PointerType>(under(R.Ty))) {
+    // `p.Finish()` copies *p out of the pointer target.
+    err(R, diag::err_own_r3a_needs_ownership,
+        {What, "*" + str(Sel->X), "a value in another place"})
+        .note(R.pos(), diag::note_own_fix_clone, {"(*" + str(Sel->X) + ")"});
+  } else {
+    needOwnership(R, What);
+  }
+}
+
+void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
+                       NamedType *Def) {
+  StringRef Sel = name(Ex->Sel);
+  auto Error = [&]() {
+    X.M = Mode::Invalid;
+    X.E = Ex;
+  };
+  // Package-qualified identifier.
+  if (auto *Id = dyn_cast<ast::Ident>(Ex->X)) {
+    Object *O = E.Sc->lookup(name(Id), E.Pos);
+    if (auto *PN = dyn_cast_or_null<PkgName>(O)) {
+      recordUse(Id, PN);
+      PN->Used = true;
+      Package *P = PN->Imported;
+      Object *Exp = P->PkgScope ? P->PkgScope->lookupLocal(Sel) : nullptr;
+      if (!Exp && P->Foreign)
+        Exp = P->Foreign->lookup(Sel);
+      if (!Exp) {
+        if (!P->Fake && Sel != "_")
+          err(Ex->Sel, diag::err_undefined, {str(Ex)});
+        return Error();
+      }
+      if (!Exp->exported() && !P->IsForeign) {
+        err(Ex->Sel, diag::err_unexported_name,
+            {std::string(Sel), std::string(P->Name)});
+      }
+      recordUse(Ex->Sel, Exp);
+      switch (Exp->getKind()) {
+      case Object::Kind::Const:
+        X.M = Mode::Constant;
+        X.Ty = Exp->Ty;
+        X.Val = cast<Const>(Exp)->Val ? *cast<Const>(Exp)->Val : ConstValue();
+        break;
+      case Object::Kind::TypeName:
+        X.M = Mode::TypeExpr;
+        X.Ty = Exp->Ty;
+        break;
+      case Object::Kind::Var:
+        X.M = Mode::Variable;
+        X.Ty = Exp->Ty;
+        break;
+      case Object::Kind::Func:
+        X.M = Mode::Value;
+        X.Ty = Exp->Ty;
+        break;
+      case Object::Kind::Builtin:
+        X.M = Mode::Builtin;
+        X.Ty = Exp->Ty;
+        X.BId = cast<Builtin>(Exp)->Id;
+        break;
+      default:
+        return Error();
+      }
+      X.E = Ex;
+      return;
+    }
+  }
+
+  exprOrType(X, Ex->X, false);
+  switch (X.M) {
+  case Mode::TypeExpr:
+    // `type T T.x` (go.dev/issue/51509).
+    if (Def && X.Ty == Def) {
+      Object *Cycle[] = {Def->Obj};
+      cycleError(Cycle, 0);
+      return Error();
+    }
+    break;
+  case Mode::Builtin:
+    err(Ex, diag::custom,
+        {"invalid use of " + str(X) + " in selector expression"});
+    return Error();
+  case Mode::Invalid:
+    return Error();
+  default:
+    break;
+  }
+  // Only a package-qualified name can be a type (types2,
+  // go.dev/issue/57522).
+  if (WantType) {
+    err(Ex->Sel, diag::err_not_a_type, {str(Ex)});
+    return Error();
+  }
+
+  // Go++ (OWN-P5, OWN-R6, OWN-P9): the pointer kinds and Clone / IsNil.
+  Type *LookupT = X.Ty;
+  bool Addressable = X.M == Mode::Variable;
+  if (own() && X.M != Mode::TypeExpr) {
+    PtrKind PK;
+    Type *PElem;
+    if (hasPtrKind(X.Ty, &PK, &PElem)) {
+      Func *B = nullptr;
+      if (Sel == "IsNil")
+        B = syntheticMethod("IsNil", typ(BasicKind::Bool), Ex->Sel->getBegin());
+      else if (Sel == "Clone" && PK != PtrKind::Weak) {
+        if (PK == PtrKind::Unique) {
+          std::string Why;
+          if (!satisfiesClone(PElem, &Why)) {
+            err(Ex->Sel, diag::err_own_clone_not_cloneable,
+                {str(Ex->X), str(PElem), Why.empty() ? "" : ": " + Why});
+            return Error();
+          }
+        }
+        B = syntheticMethod("Clone", X.Ty, Ex->Sel->getBegin());
+      }
+      if (Sel == "Lock" && PK == PtrKind::Weak) {
+        Object *SharedObj = Ctx.universe()->lookupLocal("Shared");
+        Type *SharedT = instantiateNamed(cast<NamedType>(SharedObj->Ty),
+                                         ArrayRef<Type *>(&PElem, 1));
+        B = syntheticMethod("Lock", SharedT, Ex->Sel->getBegin());
+      }
+      if (B) {
+        Selection SelInfo;
+        SelInfo.K = Selection::MethodVal;
+        SelInfo.Recv = X.Ty;
+        SelInfo.Obj = B;
+        recordSelection(Ex, SelInfo);
+        X.M = Mode::Value;
+        X.Ty = B->Ty;
+        X.E = Ex;
+        return;
+      }
+      LookupT = Ctx.pointer(PElem);
+      Addressable = true;
+    }
+  }
+
+  LookupResult LR = lookupFieldOrMethod(LookupT, Addressable, S.Pkg, Sel);
+  Object *Obj = LR.Obj;
+  if (Obj && !Obj->Ty)
+    objDecl(Obj, nullptr);
+  if (Obj && isa<Func>(Obj))
+    addDeclDep(Obj);
+
+  // Go++ (OWN-R6): `x.Clone()` exists for every cloneable type.
+  if (own() && Sel == "Clone" && X.M != Mode::TypeExpr) {
+    bool Declared = Obj && isa<Func>(Obj);
+    if (Declared) {
+      // A raw *T whose T has a value-receiver Clone: ambiguous (OWN-R6).
+      if (isa<PointerType>(X.Ty) && !cast<Func>(Obj)->HasPtrRecv) {
+        auto *Fn = cast<Func>(Obj);
+        objDecl(Fn, nullptr);
+        err(Ex->Sel, diag::err_own_clone_ambiguous,
+            {str(Ex), str(X.Ty), str(cast<PointerType>(X.Ty)->Elem), "Clone"})
+            .note(Ex->Sel->getBegin(), "write (*" + str(Ex->X) +
+                                           ").Clone() to copy the T, or q := " +
+                                           str(Ex->X) + " to copy the pointer");
+        return Error();
+      }
+    } else if (!Obj && !LR.Ambiguous && !LR.Indirect) {
+      std::string Why;
+      if (!satisfiesClone(X.Ty, &Why)) {
+        err(Ex->Sel, diag::err_own_clone_not_cloneable,
+            {str(Ex->X), str(X.Ty), Why.empty() ? "" : ": " + Why});
+        return Error();
+      }
+      Func *B = syntheticMethod("Clone", X.Ty, Ex->Sel->getBegin());
+      Selection SelInfo;
+      SelInfo.K = Selection::MethodVal;
+      SelInfo.Recv = X.Ty;
+      SelInfo.Obj = B;
+      recordSelection(Ex, SelInfo);
+      X.M = Mode::Value;
+      X.Ty = B->Ty;
+      X.E = Ex;
+      return;
+    }
+  }
+  // Go++ (OWN-P9): `p.IsNil()` on a raw pointer.
+  if (own() && Sel == "IsNil" && X.M != Mode::TypeExpr && X.Ty) {
+    if (auto *P = dyn_cast<PointerType>(X.Ty)) {
+      if (Obj && isa<Func>(Obj)) {
+        err(Ex->Sel, diag::err_own_isnil_ambiguous, {str(X.Ty), str(P->Elem)})
+            .note(Ex->Sel->getBegin(), "write (*" + str(Ex->X) +
+                                           ").IsNil() to call " + str(P->Elem) +
+                                           "'s method, or " + str(Ex->X) +
+                                           " == nil to check the pointer");
+        return Error();
+      }
+      if (!Obj && !LR.Ambiguous && !LR.Indirect) {
+        Func *B =
+            syntheticMethod("IsNil", typ(BasicKind::Bool), Ex->Sel->getBegin());
+        Selection SelInfo;
+        SelInfo.K = Selection::MethodVal;
+        SelInfo.Recv = X.Ty;
+        SelInfo.Obj = B;
+        recordSelection(Ex, SelInfo);
+        X.M = Mode::Value;
+        X.Ty = B->Ty;
+        X.E = Ex;
+        return;
+      }
+    }
+  }
+
+  if (!Obj) {
+    if (!isValid(under(X.Ty)))
+      return Error();
+    if (LR.Ambiguous) {
+      err(Ex->Sel, diag::err_ambiguous_selector,
+          {str(Ex->X) + "." + std::string(Sel)});
+      return Error();
+    }
+    if (LR.Indirect) {
+      if (X.M == Mode::TypeExpr)
+        err(Ex->Sel, diag::err_method_expr_ptr_recv,
+            {str(X.Ty) + "." + std::string(Sel), str(X.Ty), std::string(Sel)});
+      else
+        err(Ex->Sel, diag::custom,
+            {"cannot call pointer method " + std::string(Sel) + " on " +
+             str(X.Ty)});
+      return Error();
+    }
+    std::string Why;
+    if (isInterfacePtr(X.Ty)) {
+      bool TP = isTypeParam(cast<PointerType>(under(X.Ty))->Elem);
+      Why = "type " + str(X.Ty) + " is pointer to " +
+            (TP ? "type parameter, not type parameter"
+                : "interface, not interface");
+    } else {
+      LookupResult Alt =
+          lookupFieldOrMethod(LookupT, Addressable, S.Pkg, Sel, true);
+      Why = lookupError(X.Ty, Sel, Alt.Obj);
+    }
+    err(Ex->Sel, diag::err_undefined_field_or_method,
+        {str(Ex->X), std::string(Sel), Why});
+    return Error();
+  }
+
+  if (auto *M = dyn_cast<Func>(Obj)) {
+    objDecl(M, nullptr);
+    // OWN-R7: drop glue calls `drop`; code cannot (like `init`).
+    if (own() && M->Recv && M->Name == "drop") {
+      err(Ex->Sel, diag::err_own_drop_called, {str(Ex)});
+      return Error();
+    }
+  }
+
+  if (X.M == Mode::TypeExpr) {
+    auto *M = dyn_cast<Func>(Obj);
+    if (!M) {
+      err(Ex->Sel, diag::err_undefined_field_or_method,
+          {str(Ex->X), std::string(Sel),
+           "type " + str(X.Ty) + " has no method " + std::string(Sel)});
+      return Error();
+    }
+    Selection SelInfo;
+    SelInfo.K = Selection::MethodExpr;
+    SelInfo.Recv = X.Ty;
+    SelInfo.Obj = M;
+    SelInfo.Index = Mem.copy(ArrayRef<int>(LR.Index));
+    SelInfo.Indirect = LR.Indirect;
+    recordSelection(Ex, SelInfo);
+    auto *Sig = dyn_cast_or_null<SignatureType>(M->Ty);
+    if (!Sig) {
+      err(Ex, diag::custom, {"illegal cycle in method declaration"});
+      return Error();
+    }
+    SmallVector<Type *, 4> Params;
+    Params.push_back(X.Ty);
+    Params.append(Sig->Params->Elems.begin(), Sig->Params->Elems.end());
+    uint64_t Mask = Sig->MoveMask << 1;
+    X.M = Mode::Value;
+    X.Ty = Ctx.signature(Ctx.tuple(Params), Sig->Results, Sig->Variadic,
+                         Sig->Fails, Mask, Sig->TParams);
+    SelInfo.Ty = X.Ty;
+  } else {
+    if (auto *V = dyn_cast<Var>(Obj)) {
+      Selection SelInfo;
+      SelInfo.K = Selection::FieldVal;
+      SelInfo.Recv = X.Ty;
+      SelInfo.Obj = V;
+      SelInfo.Index = Mem.copy(ArrayRef<int>(LR.Index));
+      SelInfo.Indirect = LR.Indirect;
+      recordSelection(Ex, SelInfo);
+      if (X.M == Mode::Variable || LR.Indirect)
+        X.M = Mode::Variable;
+      else
+        X.M = Mode::Value;
+      X.Ty = V->Ty;
+      recordUse(Ex->Sel, V);
+    } else {
+      auto *F = cast<Func>(Obj);
+      Selection SelInfo;
+      SelInfo.K = Selection::MethodVal;
+      SelInfo.Recv = X.Ty;
+      SelInfo.Obj = F;
+      SelInfo.Index = Mem.copy(ArrayRef<int>(LR.Index));
+      SelInfo.Indirect = LR.Indirect;
+      recordSelection(Ex, SelInfo);
+      recordUse(Ex->Sel, F);
+      if (own() && F->HasPtrRecv && !LR.Indirect)
+        checkPtrRecvCall(Ex, F);
+      // A method value (not the callee of a call) binds, so moves, the
+      // receiver; a call is checked in arguments().
+      if (own() && F->MoveRecv && Ex != CalleeSel)
+        checkMoveRecvUse(Ex, "bind a `move` method value to");
+      X.M = Mode::Value;
+      X.Ty = F->Ty;
+    }
+  }
+  X.E = Ex;
+}
+
+std::string Checker::lookupError(Type *T, StringRef Sel, Object *Alt) {
+  std::string TS = str(T);
+  if (!Alt)
+    return "type " + TS + " has no field or method " + std::string(Sel);
+  const char *What = isa<Func>(Alt) ? "method" : "field";
+  if (Alt->Name == Sel) // unexported name from another package
+    return "cannot refer to unexported " + std::string(What) + " " +
+           std::string(Sel);
+  return "type " + TS + " has no field or method " + std::string(Sel) +
+         ", but does have " + What + " " + std::string(Alt->Name);
+}
+
+//===----------------------------------------------------------------------===//
+// Instantiation of generic functions
+//===----------------------------------------------------------------------===//
+
+std::string Checker::typesSummary(ArrayRef<Type *> List, bool Variadic,
+                                  bool HasDots) {
+  std::string Res = "(";
+  for (size_t I = 0; I < List.size(); ++I) {
+    Type *T = List[I];
+    std::string S;
+    if (!T || !isValid(T))
+      S = "unknown type";
+    else if (isUntyped(T)) {
+      if (isNumeric(T))
+        S = "number";
+      else {
+        S = cast<BasicType>(T)->Name;
+        if (StringRef(S).starts_with("untyped "))
+          S = S.substr(8);
+      }
+    } else {
+      S = str(T);
+    }
+    if (I + 1 == List.size()) {
+      if (Variadic) {
+        if (auto *Sl = dyn_cast<SliceType>(T))
+          S = "..." + str(Sl->Elem);
+        else
+          S = "..." + S;
+      } else if (HasDots) {
+        S += "...";
+      }
+    }
+    if (I)
+      Res += ", ";
+    Res += S;
+  }
+  return Res + ")";
+}
+
+Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
+                                    ArrayRef<Type *> TArgs,
+                                    ArrayRef<SourceLoc> ArgPos,
+                                    const ast::Expr *Ex) {
+  SignatureType *Inst = instantiateFuncSig(Sig, TArgs);
+  if (Ex)
+    recordInstance(Ex, TArgs, Inst);
+  SmallVector<Type *, 4> TA(TArgs.begin(), TArgs.end());
+  SmallVector<SourceLoc, 4> AP(ArgPos.begin(), ArgPos.end());
+  SmallVector<TypeParamType *, 4> TP(Sig->TParams.begin(), Sig->TParams.end());
+  later([this, Pos, TP, TA, AP]() {
+    std::string Cause;
+    int Bad = verify(Pos, TP, TA, &Cause);
+    if (Bad >= 0) {
+      SourceLoc At = Pos;
+      if (static_cast<size_t>(Bad) < AP.size() && AP[Bad].isValid())
+        At = AP[Bad];
+      err(At, diag::custom, {Cause});
+    }
+  });
+  return Inst;
+}
+
+void Checker::funcInst(Operand &X, SourceLoc Pos, const IndexExpr *Inst,
+                       bool Infer, Type *Hint) {
+  if (Inst)
+    X.E = Inst;
+  SmallVector<Type *, 4> TArgs;
+  SmallVector<SourceLoc, 4> ArgPos;
+  if (Inst) {
+    if (!typeList(Inst->Indices, TArgs)) {
+      X.M = Mode::Invalid;
+      return;
+    }
+    for (const ast::Expr *Ex : Inst->Indices)
+      ArgPos.push_back(Ex->getBegin());
+  }
+  auto *Sig = cast<SignatureType>(X.Ty);
+  size_t Got = TArgs.size(), Want = Sig->TParams.size();
+  if (Got > Want) {
+    err(Inst->Indices[Got - 1], diag::err_got_n_type_args_func,
+        {num(Got), str(X.E), num(Want)});
+    X.M = Mode::Invalid;
+    return;
+  }
+  if (Got < Want) {
+    if (!Infer) {
+      // The remaining type arguments are inferred by the caller.
+      X.PartialTArgs = Mem.copy(ArrayRef<Type *>(TArgs));
+      return;
+    }
+    // Reverse inference (types2 funcInst): an uninstantiated function used
+    // where a function type is expected is treated like the call g(v) of the
+    // synthetic generic function g(func_type_of_x) with v of the target type.
+    SmallVector<Operand, 4> Args;
+    SmallVector<TypeParamType *, 4> TPs;
+    TupleType *Params = Ctx.tuple({});
+    bool Reverse = false;
+    auto *Target = Hint ? dyn_cast<SignatureType>(under(Hint)) : nullptr;
+    if (Target && Target->TParams.empty()) {
+      SignatureType *G = Ctx.signature(Sig->Params, Sig->Results, Sig->Variadic,
+                                       Sig->Fails, Sig->MoveMask);
+      Params = Ctx.tuple({G});
+      Operand A;
+      A.M = Mode::Value;
+      A.E = X.E;
+      A.Ty = Target;
+      Args.push_back(A);
+      Reverse = true;
+    }
+    TupleType *Params2 = nullptr;
+    renameTParams(Sig->TParams, Params, TPs, &Params2);
+    InferError IE;
+    SmallVector<Type *, 4> Inferred =
+        infer(Pos, TPs, TArgs, Params2, Args, Reverse, &IE);
+    if (Inferred.empty()) {
+      if (!IE.Msg.empty())
+        err(IE.Pos, diag::custom, {IE.Msg});
+      X.M = Mode::Invalid;
+      return;
+    }
+    TArgs.assign(Inferred.begin(), Inferred.end());
+  }
+  X.Ty = instantiateSignature(X.pos(), Sig, TArgs, ArgPos, X.E);
+  X.M = Mode::Value;
+}
+
+//===----------------------------------------------------------------------===//
+// Calls
+//===----------------------------------------------------------------------===//
+
+void Checker::exprList(ArrayRef<ast::Expr *> Es, SmallVector<Operand, 4> &Out) {
+  if (Es.size() == 1) {
+    bool CommaOk;
+    multiExpr(Out, Es[0], false, &CommaOk);
+    return;
+  }
+  for (const ast::Expr *Ex : Es) {
+    Operand X;
+    expr(X, Ex);
+    Out.push_back(X);
+  }
+}
+
+void Checker::genericExprList(ArrayRef<ast::Expr *> Es,
+                              SmallVector<Operand, 4> &Out) {
+  // A generic function may be partially instantiated (`f[int]`): its type
+  // arguments are kept in the operand and the rest is inferred by the call.
+  auto Eval = [&](Operand &X, const ast::Expr *Ex) {
+    if (auto *IE = dyn_cast<IndexExpr>(Ex)) {
+      if (indexExpr(X, IE)) {
+        funcInst(X, IE->getBegin(), IE, false, nullptr);
+        if (X.M != Mode::Invalid)
+          recordTypeAndValue(IE, X.M, X.Ty, nullptr);
+      }
+      return;
+    }
+    rawExpr(X, Ex, nullptr, true);
+  };
+  if (Es.size() == 1) {
+    const ast::Expr *Ex = Es[0];
+    Operand X;
+    Eval(X, Ex);
+    exclude(X, (1u << static_cast<unsigned>(Mode::NoValue)) |
+                   (1u << static_cast<unsigned>(Mode::Builtin)) |
+                   (1u << static_cast<unsigned>(Mode::TypeExpr)));
+    if (X.M != Mode::Invalid)
+      if (auto *T = dyn_cast<TupleType>(X.Ty)) {
+        for (Type *Et : T->Elems) {
+          Operand O;
+          O.M = Mode::Value;
+          O.E = Ex;
+          O.Ty = Et;
+          Out.push_back(O);
+        }
+        return;
+      }
+    Out.push_back(X);
+    return;
+  }
+  for (const ast::Expr *Ex : Es) {
+    Operand X;
+    Eval(X, Ex);
+    Out.push_back(X);
+  }
+}
+
+void Checker::renameTParams(ArrayRef<TypeParamType *> TPs, TupleType *Params,
+                            SmallVector<TypeParamType *, 4> &NewTPs,
+                            TupleType **NewParams) {
+  llvm::DenseMap<const Type *, Type *> Map;
+  for (TypeParamType *P : TPs) {
+    TypeName *TN = newTypeName(P->Obj->Name, nullptr, P->Obj->Pos);
+    TypeParamType *N = Ctx.newTypeParam(TN, P->Index, nullptr);
+    NewTPs.push_back(N);
+    Map[P] = N;
+  }
+  for (size_t K = 0; K < TPs.size(); ++K)
+    NewTPs[K]->Bound =
+        TPs[K]->Bound ? substImpl(TPs[K]->Bound, Map, 0) : nullptr;
+  if (NewParams)
+    *NewParams = cast<TupleType>(substImpl(Params, Map, 0));
+}
+
+std::string Checker::tupleString(TupleType *T, bool Variadic) {
+  return typesSummary(T->Elems, Variadic, false);
+}
+
+ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
+  const IndexExpr *Inst = nullptr;
+  if (auto *IE = dyn_cast<IndexExpr>(Call->Fun)) {
+    if (indexExpr(X, IE))
+      Inst = IE;
+    X.E = IE;
+    // record
+    if (X.M != Mode::Invalid && !Inst)
+      recordTypeAndValue(IE, X.M, X.Ty, nullptr);
+  } else {
+    const ast::Expr *SavedCallee = CalleeSel;
+    CalleeSel = Call->Fun;
+    while (auto *Pa = dyn_cast<ParenExpr>(CalleeSel))
+      CalleeSel = Pa->X;
+    exprOrType(X, Call->Fun, true);
+    CalleeSel = SavedCallee;
+  }
+
+  auto UseArgs = [&]() {
+    for (const ast::Expr *A : Call->Args)
+      use(A);
+  };
+
+  switch (X.M) {
+  case Mode::Invalid:
+    UseArgs();
+    X.E = Call;
+    return ExprKind::Statement;
+  case Mode::TypeExpr: {
+    if (isGeneric(X.Ty)) {
+      err(Call->Fun, diag::err_generic_without_instantiation,
+          {"type", str(Call->Fun), ""});
+      X.M = Mode::Invalid;
+      return ExprKind::Conversion;
+    }
+    Type *T = X.Ty;
+    X.M = Mode::Invalid;
+    switch (Call->Args.size()) {
+    case 0:
+      err(Call, diag::custom, {"missing argument in conversion to " + str(T)});
+      break;
+    case 1: {
+      expr(X, Call->Args[0]);
+      if (X.M != Mode::Invalid) {
+        if (auto *It = dyn_cast<InterfaceType>(under(T));
+            It && !isTypeParam(T)) {
+          TypeSet *TS = typeSet(It);
+          if (TS->hasTerms() || TS->Comparable) {
+            err(Call, diag::custom,
+                {"cannot use interface " + str(T) +
+                 " in conversion (contains specific type constraints or is "
+                 "comparable)"});
+            break;
+          }
+        }
+        if (Call->EllipsisLoc.isValid()) {
+          err(Call->Args[0], diag::custom,
+              {"invalid use of ... in conversion to " + str(T)});
+          break;
+        }
+        conversion(X, T);
+      }
+      break;
+    }
+    default:
+      UseArgs();
+      err(Call->Args.back(), diag::custom,
+          {"too many arguments in conversion to " + str(T)});
+    }
+    if (Call->isMust() && X.M != Mode::Invalid) {
+      err(Call, diag::err_bang_on_conversion, {str(Call->Fun)});
+      X.M = Mode::Invalid;
+    }
+    X.E = Call;
+    return ExprKind::Conversion;
+  }
+  case Mode::Builtin: {
+    BuiltinId Id = X.BId;
+    if (Call->isMust()) {
+      err(Call, diag::err_bang_on_conversion, {str(Call->Fun)});
+      UseArgs();
+      X.M = Mode::Invalid;
+      X.E = Call;
+      return ExprKind::Statement;
+    }
+    if (!builtin(X, Call, Id))
+      X.M = Mode::Invalid;
+    X.E = Call;
+    if (X.M != Mode::Invalid && X.M != Mode::Constant)
+      E.HasCallOrRecv = true;
+    switch (Id) {
+    case BuiltinId::Append:
+    case BuiltinId::Cap:
+    case BuiltinId::Complex:
+    case BuiltinId::Imag:
+    case BuiltinId::Len:
+    case BuiltinId::Make:
+    case BuiltinId::Max:
+    case BuiltinId::Min:
+    case BuiltinId::New:
+    case BuiltinId::Real:
+    case BuiltinId::Move:
+    case BuiltinId::Clone:
+    case BuiltinId::NewUnique:
+    case BuiltinId::NewShared:
+    case BuiltinId::NewWeak:
+    case BuiltinId::Alignof:
+    case BuiltinId::Offsetof:
+    case BuiltinId::Sizeof:
+    case BuiltinId::Add:
+    case BuiltinId::Slice:
+    case BuiltinId::SliceData:
+    case BuiltinId::String:
+    case BuiltinId::StringData:
+      return ExprKind::Expression;
+    default:
+      return ExprKind::Statement;
+    }
+  }
+  default:
+    break;
+  }
+
+  // Ordinary function or method call.
+  std::string CallWhy;
+  auto *Sig = dyn_cast_or_null<SignatureType>(commonUnder(
+      X.Ty,
+      [&](Type *T, Type *U) -> std::string {
+        if (U && !isa<SignatureType>(U))
+          return str(T) + " is not a function";
+        return "";
+      },
+      &CallWhy));
+  if (!Sig) {
+    err(X, diag::custom,
+        {"invalid operation: cannot call " + str(X) + ": " + CallWhy});
+    UseArgs();
+    X.M = Mode::Invalid;
+    X.E = Call;
+    return ExprKind::Statement;
+  }
+  bool WasGeneric = !Sig->TParams.empty();
+  SmallVector<Type *, 4> TArgs;
+  SmallVector<SourceLoc, 4> ArgPos;
+  if (Inst) {
+    if (!typeList(Inst->Indices, TArgs)) {
+      UseArgs();
+      X.M = Mode::Invalid;
+      X.E = Call;
+      return ExprKind::Statement;
+    }
+    for (const ast::Expr *Ex : Inst->Indices)
+      ArgPos.push_back(Ex->getBegin());
+    size_t Got = TArgs.size(), Want = Sig->TParams.size();
+    if (Got > Want) {
+      err(Inst->Indices[Want], diag::err_got_n_type_args_func,
+          {num(Got), str(Call->Fun), num(Want)});
+      UseArgs();
+      X.M = Mode::Invalid;
+      X.E = Call;
+      return ExprKind::Statement;
+    }
+    if (Got == Want && Want > 0) {
+      Sig = cast<SignatureType>(
+          instantiateSignature(Inst->getBegin(), Sig, TArgs, ArgPos, Inst));
+      TArgs.clear();
+      ArgPos.clear();
+    }
+  }
+
+  SmallVector<Operand, 4> Args;
+  genericExprList(Call->Args, Args);
+  SignatureType *Out = Sig;
+  arguments(Call, Sig, TArgs, ArgPos, Args, Call->EllipsisLoc.isValid(), Out);
+  Sig = Out;
+  if (WasGeneric && Sig->TParams.empty())
+    recordTypeAndValue(Call->Fun, Mode::Value, Sig, nullptr);
+
+  // Result.
+  TupleType *Res = Sig->Results;
+  size_t NRes = Res->size();
+  if (Call->isMust()) {
+    // D3.6: f!(...) drops the trailing error.
+    if (!Sig->Fails &&
+        !(NRes > 0 && identical(Res->Elems.back(), Ctx.errorType()))) {
+      err(Call, diag::err_bang_no_error_result, {str(Call->Fun)});
+      X.M = Mode::Invalid;
+      X.E = Call;
+      return ExprKind::Statement;
+    }
+    SmallVector<Type *, 4> Kept(Res->Elems.begin(), Res->Elems.end() - 1);
+    Res = Ctx.tuple(Kept);
+    NRes = Res->size();
+  }
+  switch (NRes) {
+  case 0:
+    X.M = Mode::NoValue;
+    X.Ty = Ctx.tuple({});
+    break;
+  case 1:
+    X.M = Mode::Value;
+    X.Ty = Res->Elems[0];
+    break;
+  default:
+    X.M = Mode::Value;
+    X.Ty = Res;
+  }
+  X.E = Call;
+  if (X.M == Mode::Value && !Sig->TParams.empty())
+    X.M = Mode::Invalid;
+  return ExprKind::Statement;
+}
+
+void Checker::arguments(const CallExpr *Call, SignatureType *Sig,
+                        ArrayRef<Type *> TArgs0, ArrayRef<SourceLoc> ArgPos,
+                        SmallVector<Operand, 4> &Args, bool HasDots,
+                        SignatureType *&Out) {
+  Out = Sig;
+  size_t NArgs = Args.size();
+  size_t NPars = Sig->Params->size();
+  SmallVector<Type *, 8> SigParams(Sig->Params->Elems.begin(),
+                                   Sig->Params->Elems.end());
+  SmallVector<bool, 8> ParamMove;
+  for (size_t K = 0; K < NPars; ++K)
+    ParamMove.push_back(Sig->isMove(K));
+  bool Adjusted = false;
+  for (Operand &A : Args)
+    if (A.M == Mode::Invalid)
+      ; // errors were reported already
+  if (Sig->Variadic) {
+    if (HasDots) {
+      if (Call->Args.size() == 1 && NArgs > 1) {
+        err(Call, diag::err_cannot_use_ellipsis_with_multi,
+            {str(Call->Args[0])});
+        return;
+      }
+    } else if (NArgs + 1 >= NPars) {
+      Type *Last = SigParams.back();
+      Type *Elem = cast<SliceType>(Last)->Elem;
+      bool LastMove = ParamMove.back();
+      SigParams.pop_back();
+      ParamMove.pop_back();
+      while (SigParams.size() < NArgs) {
+        SigParams.push_back(Elem);
+        ParamMove.push_back(LastMove);
+      }
+      Adjusted = true;
+      NPars = NArgs;
+    } else {
+      --NPars;
+    }
+  } else if (HasDots) {
+    err(Call, diag::err_cannot_use_ellipsis, {str(Call->Fun)});
+    return;
+  }
+  if (NArgs != NPars) {
+    const ast::Expr *At = Call;
+    bool TooMany = NArgs > NPars;
+    if (TooMany)
+      At = Args[NPars].E;
+    else if (NArgs > 0)
+      At = Args[NArgs - 1].E;
+    SmallVector<Type *, 4> Have;
+    for (Operand &A : Args)
+      Have.push_back(A.Ty);
+    err(At,
+        TooMany ? diag::err_too_many_arguments : diag::err_not_enough_arguments,
+        {str(Call->Fun), typesSummary(Have, false, HasDots),
+         typesSummary(Sig->Params->Elems, Sig->Variadic, false)});
+    return;
+  }
+
+  // Type parameters of the callee, renamed against recursive calls.
+  SmallVector<TypeParamType *, 4> TPs;
+  SmallVector<Type *, 4> TArgs(TArgs0.begin(), TArgs0.end());
+  size_t N = Sig->TParams.size();
+  TupleType *ParamTuple = Ctx.tuple(SigParams);
+  if (N > 0) {
+    TupleType *NewParams = nullptr;
+    renameTParams(Sig->TParams, ParamTuple, TPs, &NewParams);
+    SigParams.assign(NewParams->Elems.begin(), NewParams->Elems.end());
+    ParamTuple = NewParams;
+    while (TArgs.size() < TPs.size())
+      TArgs.push_back(nullptr);
+  }
+  // Generic function arguments get their own type parameters.
+  SmallVector<size_t, 2> GenericArgs;
+  for (size_t K = 0; K < Args.size(); ++K) {
+    auto *ASig = dyn_cast_or_null<SignatureType>(Args[K].Ty);
+    if (ASig && !ASig->TParams.empty() && Args[K].M != Mode::Invalid) {
+      SmallVector<TypeParamType *, 4> ATPs;
+      TupleType *AParams = nullptr;
+      renameTParams(ASig->TParams, ASig->Params, ATPs, &AParams);
+      llvm::DenseMap<const Type *, Type *> Map;
+      for (size_t J = 0; J < ATPs.size(); ++J)
+        Map[ASig->TParams[J]] = ATPs[J];
+      auto *NewSig = cast<SignatureType>(substImpl(ASig, Map, 0));
+      Args[K].Ty =
+          Ctx.signature(NewSig->Params, NewSig->Results, NewSig->Variadic,
+                        NewSig->Fails, NewSig->MoveMask, ATPs);
+      size_t Base = TPs.size();
+      TPs.append(ATPs.begin(), ATPs.end());
+      while (TArgs.size() < TPs.size())
+        TArgs.push_back(nullptr);
+      for (size_t J = 0; J < Args[K].PartialTArgs.size() && J < ATPs.size();
+           ++J)
+        TArgs[Base + J] = Args[K].PartialTArgs[J];
+      GenericArgs.push_back(K);
+    }
+  }
+  if (!TPs.empty()) {
+    InferError IE;
+    SmallVector<Type *, 4> Inferred =
+        infer(Call->Lparen, TPs, TArgs, ParamTuple, Args, false, &IE);
+    if (Inferred.empty()) {
+      if (!IE.Msg.empty())
+        err(IE.Pos, diag::custom,
+            {"in call to " + str(Call->Fun) + ", " + IE.Msg});
+      return;
+    }
+    // Instantiate the generic function arguments first: a type parameter of
+    // the callee inferred as such an argument's (generic) signature is its
+    // instance (`f(g)` with f[P any](P), g[Q int](Q): P is func(int)).
+    size_t J = N;
+    for (size_t K : GenericArgs) {
+      auto *ASig = cast<SignatureType>(Args[K].Ty);
+      size_t End = J + ASig->TParams.size();
+      ArrayRef<Type *> Part(Inferred.data() + J, End - J);
+      Args[K].Ty =
+          instantiateSignature(Call->getBegin(), ASig, Part, {}, Args[K].E);
+      recordTypeAndValue(Args[K].E, Mode::Value, Args[K].Ty, nullptr);
+      for (size_t P = 0; P < N; ++P)
+        if (auto *IS = dyn_cast_or_null<SignatureType>(Inferred[P]);
+            IS && !IS->TParams.empty() && IS->TParams == ASig->TParams)
+          Inferred[P] = Args[K].Ty;
+      J = End;
+    }
+    if (N > 0) {
+      ArrayRef<Type *> First(Inferred.data(), N);
+      Out = cast<SignatureType>(instantiateSignature(Call->getBegin(), Sig,
+                                                     First, ArgPos, Call->Fun));
+      llvm::DenseMap<const Type *, Type *> Map;
+      for (size_t K = 0; K < N; ++K)
+        Map[TPs[K]] = Inferred[K];
+      for (Type *&P : SigParams)
+        P = substImpl(P, Map, 0);
+      (void)Adjusted;
+    }
+  }
+
+  // PAR-5: a `move` receiver takes ownership of the receiver, so the call is
+  // legal only on an owned value (a local), or on move(x) / x.Clone().
+  const ast::Expr *Callee = Call->Fun;
+  while (auto *Pa = dyn_cast<ParenExpr>(Callee))
+    Callee = Pa->X;
+  if (own())
+    if (auto *Sel = dyn_cast<SelectorExpr>(Callee)) {
+      auto It = I.Selections.find(Sel);
+      if (It != I.Selections.end() && It->second.K == Selection::MethodVal)
+        if (auto *MF = dyn_cast_or_null<Func>(It->second.Obj);
+            MF && MF->MoveRecv && !isImplicitMove(Sel->X, Call)) {
+          checkMoveRecvUse(Sel, "call a `move` method on");
+        }
+      // OWN-R10: a value receiver of a @Pinned type copies the receiver.
+      if (It != I.Selections.end() && It->second.K == Selection::MethodVal)
+        if (auto *MF = dyn_cast_or_null<Func>(It->second.Obj);
+            MF && !MF->HasPtrRecv && !MF->MoveRecv && MF->Recv &&
+            isPinned(MF->Recv->Ty)) {
+          Type *RT = I.typeOf(Sel->X);
+          bool ViaPtr = RT && isa<PointerType>(under(RT));
+          if (ViaPtr || placeKind(Sel->X) != PlaceKind::Temp)
+            err(Sel->X, diag::err_own_pinned_copy,
+                {ViaPtr ? "*" + str(Sel->X) : str(Sel->X), str(MF->Recv->Ty)});
+        }
+    }
+  // Check the arguments.
+  std::string Context = "argument to " + str(Call->Fun);
+  for (size_t K = 0; K < Args.size(); ++K) {
+    Operand &A = Args[K];
+    bool Mv = own() && ParamMove[K];
+    bool Saved = RefToOwnedOk;
+    // A borrowed string / []T parameter takes a ref at zero cost (PAR-8).
+    RefToOwnedOk = own() && !Mv;
+    assignment(A, SigParams[K], Context);
+    RefToOwnedOk = Saved;
+    if (Mv && A.M != Mode::Invalid && !isImplicitMove(A.E, Call))
+      needOwnership(A, "pass as a `move` argument");
+    // OWN-R10: a by-value parameter of a @Pinned type copies the argument.
+    else if (own() && !Mv && A.M != Mode::Invalid && A.E && A.Ty &&
+             isPinned(SigParams[K]) && placeKind(A.E) != PlaceKind::Temp)
+      err(A, diag::err_own_pinned_copy, {str(A.E), str(A.Ty)});
+  }
+  // Spread: append-like `move ...T` of owning elements needs ownership too.
+  if (own() && HasDots && Sig->Variadic && !Args.empty() && ParamMove.back() &&
+      Args.back().M != Mode::Invalid)
+    needOwnership(Args.back(), "spread into a `move` parameter");
+}

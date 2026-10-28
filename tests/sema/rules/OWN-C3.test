@@ -1,0 +1,28 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-C3: a shared handle (chan, func, interface, Shared[T], Weak[T])
+// is copied implicitly (a retain), also out of other places; it is not Copy.
+package main
+
+type H struct {
+	ch  chan int
+	fn  func()
+	err error
+	sh  Shared[int]
+	wk  Weak[int]
+}
+
+func cp[T Copy](x T) T { return x }
+
+func positive(h *H) {
+	c := h.ch
+	f := h.fn
+	e := h.err
+	s := h.sh
+	w := h.wk
+	_, _, _, _, _ = c, f, e, s, w
+}
+
+func negative(h *H) {
+	// CHECK: [[@LINE+1]]:6: error: chan int does not satisfy Copy
+	_ = cp(h.ch)
+}

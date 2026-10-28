@@ -1,0 +1,29 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule RNG-2: `for _, x := range move(xs)` moves the elements out: x is an
+// owned local per iteration. In the plain form x is borrowed.
+package main
+
+type Job struct {
+	ID   int
+	Text string
+}
+
+func mk() []string { return nil }
+
+func positive(jobs chan Job) {
+	names := []string{"a", "b"}
+	for i, n := range move(names) {
+		jobs <- Job{ID: i, Text: n}
+	}
+}
+
+func negative(jobs chan Job, names []string) {
+	for i, n := range names {
+		// CHECK: [[@LINE+1]]:28: error: cannot store n: it is a borrowed range variable, and this needs ownership (OWN-R3a)
+		jobs <- Job{ID: i, Text: n}
+	}
+	// CHECK: [[@LINE+1]]:25: error: move argument mk() is not a place (variable, field, element, map entry or pointer target)
+	for _, n := range move(mk()) {
+		_ = n
+	}
+}

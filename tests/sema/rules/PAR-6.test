@@ -1,0 +1,19 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule PAR-6: *T parameters and receivers mutate the target; a call v.M()
+// with a *T receiver passes &v automatically, but not on a borrowed variable.
+package main
+
+type D struct{ T string }
+
+func (d *D) M() { d.T = "x" }
+
+func positive(p *D) {
+	var d D
+	d.M()
+	p.M()
+}
+
+func negative(d D) {
+	// CHECK: [[@LINE+1]]:2: error: cannot call pointer method M on d: it is a borrowed variable (OWN-R3b)
+	d.M()
+}

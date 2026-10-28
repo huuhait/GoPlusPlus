@@ -1,0 +1,24 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-P5: field access and method calls auto-dereference every pointer
+// kind; on a raw *T, p.Clone() is ambiguous if T has a value-receiver Clone.
+package main
+
+type Node struct{ Name string }
+
+func (n *Node) Rename(s string) { n.Name = s.Clone() }
+func (n Node) Len() int          { return len(n.Name) }
+
+type T struct{ x int }
+
+func (t T) Clone() T { return t }
+
+func positive(u Unique[Node], s Shared[Node]) int {
+	u.Rename("a")
+	s.Rename("b")
+	return len(u.Name) + s.Len()
+}
+
+func negative(p *T) {
+	// CHECK: [[@LINE+1]]:8: error: p.Clone is ambiguous on pointer *T: T has a value-receiver Clone method (OWN-R6)
+	_ = p.Clone()
+}

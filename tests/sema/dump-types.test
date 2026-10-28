@@ -1,0 +1,14 @@
+// RUN: %gopp check -dump-types %s | FileCheck --match-full-lines %s
+// -dump-types prints "line:col def|use|expr" for every object and expression.
+package main
+
+func main() {
+	x := 1 + 2
+	_ = x
+}
+// CHECK:5:6 def main func()
+// CHECK-NEXT:6:2 def x int
+// CHECK-NEXT:6:7 expr `1` constant untyped int = 1
+// CHECK-NEXT:6:7 expr `1 + 2` constant int = 3
+// CHECK-NEXT:6:11 expr `2` constant untyped int = 2
+// CHECK-NEXT:7:6 expr `x` variable int

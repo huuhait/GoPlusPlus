@@ -1,0 +1,19 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-P4 (and EXP-11): &T{...} is an error, allocation is explicit;
+// &x on a variable is allowed. Reported by the parser.
+package main
+
+type D struct{ N int }
+
+func positive() {
+	x := D{1}
+	p := &x
+	u := new_unique(D{1})
+	_, _ = p, u
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:7: error: allocation is explicit in Go++: use new_unique(T{...}) instead of &T{...}
+	p := &D{}
+	_ = p
+}

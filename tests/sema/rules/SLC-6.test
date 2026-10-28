@@ -1,0 +1,27 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule SLC-6: `s = s[i:j]` on the same owned slice shrinks it in place; a
+// string has no in-place re-slice.
+package main
+
+type Queue struct{ items []string }
+
+func (q *Queue) Pop() string {
+	first := move(q.items[0])
+	q.items = q.items[1:]
+	return first
+}
+
+func positive(move xs []string) []string {
+	xs = xs[1:]
+	buf := make([]byte, 0, 64)
+	buf = buf[:0]
+	_ = buf
+	return xs
+}
+
+func negative() {
+	s := "abc"
+	// CHECK: [[@LINE+1]]:6: error: cannot use s[1:] (value of type ref string) as string value in assignment: a ref is not an owning value: write string(s[1:]) to copy (TYP-2)
+	s = s[1:]
+	_ = s
+}

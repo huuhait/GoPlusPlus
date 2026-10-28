@@ -1,0 +1,40 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-R3b (also PAR-1, PAR-3): a borrowed variable is read-only at the
+// top level: no assignment to it or its fields, no &, no pointer-receiver
+// call, no move. Data reached through a slice, map or pointer stays mutable.
+package main
+
+type Buf struct{ B []int }
+
+func (b *Buf) Reset()  {}
+func (b Buf) Len() int { return len(b.B) }
+
+type D struct {
+	Buf  Buf
+	N    int
+	Tags []string
+	Ptr  *Buf
+}
+
+func positive(s string, d D) int {
+	s = s[1:]       // PAR-2: re-pointing a local ref
+	d.Buf.B[0] = 1  // through a slice
+	d.Tags[0] = "x" // through a slice
+	d.Ptr.Reset()   // through a pointer
+	return d.Buf.Len() + len(s)
+}
+
+func negative(d D) {
+	// CHECK: [[@LINE+1]]:2: error: cannot assign to d: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	d = D{}
+	// CHECK: [[@LINE+1]]:2: error: cannot assign to d.N: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	d.N = 1
+	// CHECK: [[@LINE+1]]:6: error: cannot take the address of d: it is a borrowed variable (OWN-R3b)
+	_ = &d
+	// CHECK: [[@LINE+1]]:6: error: cannot take the address of d.Buf: it is a borrowed variable (OWN-R3b)
+	_ = &d.Buf
+	// CHECK: [[@LINE+1]]:2: error: cannot call pointer method Reset on d.Buf: it is a borrowed variable (OWN-R3b)
+	d.Buf.Reset()
+	// CHECK: [[@LINE+1]]:11: error: cannot move d: it is a borrowed variable (OWN-R3b)
+	_ = move(d)
+}

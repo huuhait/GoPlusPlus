@@ -29,6 +29,14 @@ Files
     copied from cmd/gofmt/testdata
 - tests/fuzz/corpus/goprinter-*.go, tests/fuzz/corpus/gofmt-*.go
     copied from go/printer/testdata and cmd/gofmt/testdata (fuzz seeds)
+- compiler/lib/Sema/*.cpp, compiler/lib/Sema/Checker.h,
+  compiler/include/gopp/Sema/*.h
+    the checker is ported from cmd/compile/internal/types2 and the constants
+    follow go/constant; the files say which parts
+- tests/sema/conformance/testdata/{check,fixedbugs,spec,examples}/*.go
+    copied from internal/types/testdata (the types2 conformance suite)
+- tests/unit/Sema/ConstantTest.cpp
+    ported from go/constant (value_test.go)
 
 License of the Go sources
 -------------------------

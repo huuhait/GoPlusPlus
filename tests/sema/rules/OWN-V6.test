@@ -1,0 +1,25 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-V6: a ref into a temporary lives until the end of the full
+// statement (or the whole for/if/switch for its header); storing it in a
+// longer-lived place is an error.
+package main
+
+func load() string  { return "hello" }
+func items() []int { return nil }
+
+func positive() int {
+	n := len(load()[1:3])
+	for _, c := range load()[:3] {
+		n += int(c)
+	}
+	return n
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:7: error: cannot store load()[:3] in a longer-lived place: it is a ref into a temporary that is freed at the end of the statement (OWN-V6)
+	h := load()[:3]
+	var r ref []int
+	// CHECK: [[@LINE+1]]:6: error: cannot store items()[1:] in a longer-lived place: it is a ref into a temporary that is freed at the end of the statement (OWN-V6)
+	r = items()[1:]
+	_, _ = h, r
+}

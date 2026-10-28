@@ -1,0 +1,31 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-6: a method may have its own type parameters (generic method);
+// the receiver's type parameters work as in Go.
+package main
+
+type Set struct{ items []int }
+
+func (s Set) Map[U any](f func(int) U) []U {
+	out := make([]U, 0, len(s.items))
+	for _, x := range s.items {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+type List[T any] struct{ items []T }
+
+func (l *List[T]) Len() int { return len(l.items) }
+
+func positive() int {
+	s := Set{items: []int{1, 2}}
+	a := s.Map(func(i int) string { return "" })
+	b := s.Map[int](func(i int) int { return i })
+	var l List[string]
+	return len(a) + len(b) + l.Len()
+}
+
+func negative(s Set) {
+	// CHECK: [[@LINE+1]]:17: error: got 2 type arguments but s.Map[int, int] has 1 type parameters
+	_ = s.Map[int, int](func(i int) int { return i })
+}

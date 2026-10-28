@@ -1,0 +1,88 @@
+// Regression guard: the spec examples (docs/spec/examples/*/main.gopp: 02-wc,
+// 03-kvparse, 10-minicalc, ...) are valid Go++ programs. R15 was a regression
+// found only by these files: every ref result of a multi-value call (02-wc:46,
+// 03-kvparse:50/56/81) was reported as a ref into a temporary.
+//
+// Each example is checked with --implicit-check-not=error:, so ANY error that
+// is not listed below fails the test. The listed errors are the known ones,
+// grouped by the task that removes them. When that task lands, the test must be
+// updated (delete the lines), which is intended:
+//   - P13  standard library: `import "fmt"`, "os", "strconv", "cmp", ... and
+//          everything that follows from a missing import (08-derive, 09).
+//   - P03.08 the `!` fallible return form (`return nil, err` in `func f!()`).
+//   - P07  C imports (06-zcrc: zlib.h).
+//   - P08  C++ imports (07-vecsort: <vector>, <algorithm>).
+//   - P09  macros (08-derive: #Derive... invocations and the methods they add).
+
+// RUN: not %gopp check --check-error-limit=0 %examples/01-hello 2>&1 | FileCheck --check-prefix=EX01 --implicit-check-not=error: %s
+// 01-hello -- P13: fmt
+// EX01: main.gopp:3:8: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+
+// RUN: not %gopp check --check-error-limit=0 %examples/02-wc 2>&1 | FileCheck --check-prefix=EX02 --implicit-check-not=error: %s
+// 02-wc -- P13: fmt, os
+// EX02: main.gopp:4:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX02: main.gopp:5:2: error: could not import os (package os is not in the module: no directory {{.*}}
+
+// RUN: not %gopp check --check-error-limit=0 %examples/03-kvparse 2>&1 | FileCheck --check-prefix=EX03 --implicit-check-not=error: %s
+// 03-kvparse -- P13: fmt, os, strconv; P03.08: `return nil, err` in a `!` function
+// EX03: main.gopp:4:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX03: main.gopp:5:2: error: could not import os (package os is not in the module: no directory {{.*}}
+// EX03: main.gopp:6:2: error: could not import strconv (package strconv is not in the module: no directory {{.*}}
+// EX03: main.gopp:58:16: error: too many return values
+
+// RUN: not %gopp check --check-error-limit=0 %examples/04-binarytrees 2>&1 | FileCheck --check-prefix=EX04 --implicit-check-not=error: %s
+// 04-binarytrees -- P13: fmt; P05/P13: the mem package
+// EX04: main.gopp:4:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX04: main.gopp:5:2: error: could not import mem (package mem is not in the module: no directory {{.*}}
+
+// RUN: not %gopp check --check-error-limit=0 %examples/05-workers 2>&1 | FileCheck --check-prefix=EX05 --implicit-check-not=error: %s
+// 05-workers -- P13: cmp, fmt, slices, sync
+// EX05: main.gopp:4:2: error: could not import cmp (package cmp is not in the module: no directory {{.*}}
+// EX05: main.gopp:5:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX05: main.gopp:6:2: error: could not import slices (package slices is not in the module: no directory {{.*}}
+// EX05: main.gopp:7:2: error: could not import sync (package sync is not in the module: no directory {{.*}}
+
+// RUN: not %gopp check --check-error-limit=0 %examples/06-zcrc 2>&1 | FileCheck --check-prefix=EX06 --implicit-check-not=error: %s
+// 06-zcrc -- P13: fmt, os; P07: the zlib.h import and what follows from it
+// EX06: main.gopp:4:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX06: main.gopp:5:2: error: could not import os (package os is not in the module: no directory {{.*}}
+// EX06: main.gopp:16:9: error: undefined: zlib
+// EX06: main.gopp:23:13: error: undefined: zlib
+// EX06: main.gopp:28:32: error: undefined: zlib
+// EX06: main.gopp:7:2: error: "github.com/madler/zlib/zlib.h" imported as github and not used
+
+// RUN: not %gopp check --check-error-limit=0 %examples/07-vecsort 2>&1 | FileCheck --check-prefix=EX07 --implicit-check-not=error: %s
+// 07-vecsort -- P13: fmt; P08: <vector> and <algorithm> (the names they would define)
+// EX07: main.gopp:4:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX07: main.gopp:11:15: error: undefined: vector.vector
+// EX07: main.gopp:15:12: error: undefined: algorithm.sort
+// EX07: main.gopp:24:35: error: undefined: algorithm.binary_search
+// EX07: main.gopp:25:35: error: undefined: algorithm.binary_search
+// EX07: main.gopp:27:12: error: undefined: algorithm.reverse
+
+// RUN: not %gopp check --check-error-limit=0 %examples/08-derive 2>&1 | FileCheck --check-prefix=EX08 --implicit-check-not=error: %s
+// 08-derive -- P13: encoding/json, fmt; P09: the #Derive macros and the methods they add (Equal)
+// EX08: main.gopp:4:2: error: could not import encoding/json (package encoding/json is not in the module: no directory {{.*}}
+// EX08: main.gopp:5:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX08: main.gopp:30:2: error: macro invocations are expanded by P09
+// EX08: main.gopp:31:14: error: macro invocations are expanded by P09
+// EX08: main.gopp:31:45: error: a.Equal undefined (type Config has no field or method Equal)
+// EX08: main.gopp:35:14: error: macro invocations are expanded by P09
+// EX08: main.gopp:35:45: error: a.Equal undefined (type Config has no field or method Equal)
+// EX08: main.gopp:41:2: error: macro invocations are expanded by P09
+
+// RUN: not %gopp check --check-error-limit=0 %examples/09-orderedmap 2>&1 | FileCheck --check-prefix=EX09 --implicit-check-not=error: %s
+// 09-orderedmap -- P13: cmp, fmt; the incomparable error follows from the missing cmp.Ordered
+// EX09: main.gopp:4:2: error: could not import cmp (package cmp is not in the module: no directory {{.*}}
+// EX09: main.gopp:5:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX09: main.gopp:26:33: error: invalid operation: m.keys[lo] == k (incomparable types in type set)
+
+// RUN: not %gopp check --check-error-limit=0 %examples/10-minicalc 2>&1 | FileCheck --check-prefix=EX10 --implicit-check-not=error: %s
+// 10-minicalc -- P13: errors, fmt, mem; P03.08: `return nil, err` in `!` functions
+// EX10: main.gopp:4:2: error: could not import errors (package errors is not in the module: no directory {{.*}}
+// EX10: main.gopp:5:2: error: could not import fmt (package fmt is not in the module: no directory {{.*}}
+// EX10: main.gopp:6:2: error: could not import mem (package mem is not in the module: no directory {{.*}}
+// EX10: main.gopp:145:14: error: too many return values
+// EX10: main.gopp:157:13: error: too many return values
+// EX10: main.gopp:108:16: error: too many return values
+// EX10: main.gopp:124:14: error: too many return values

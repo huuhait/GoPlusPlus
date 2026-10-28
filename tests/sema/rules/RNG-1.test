@@ -1,0 +1,34 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule RNG-1: `for i, x := range xs` copies trivial and shared-handle
+// elements into a writable x, and borrows owning elements read-only.
+package main
+
+type Doc struct{ Title string }
+
+func keep(move d Doc) {}
+
+func positive(nums []int, fns []func(), docs []Doc) int {
+	n := 0
+	for _, x := range nums {
+		x *= 2
+		n += x
+	}
+	for _, f := range fns {
+		f = nil
+		_ = f
+	}
+	for _, d := range docs {
+		n += len(d.Title)
+		keep(d.Clone())
+	}
+	return n
+}
+
+func negative(docs []Doc) {
+	for _, d := range docs {
+		// CHECK: [[@LINE+1]]:3: error: cannot assign to d.Title: range variable is a borrowed read-only variable (RNG-1)
+		d.Title = "x"
+		// CHECK: [[@LINE+1]]:8: error: cannot pass as a `move` argument d: it is a borrowed range variable, and this needs ownership (OWN-R3a)
+		keep(d)
+	}
+}

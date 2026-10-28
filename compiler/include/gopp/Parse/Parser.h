@@ -52,6 +52,9 @@ struct ParseOptions {
   /// They do not change the tree, so tools that read code that may break them
   /// (`gopp fmt`, Go corpora) turn them off.
   bool CheckLanguageRules = true;
+  /// Accept type parameters on methods (generic methods, GEN-6, D1.10). Go
+  /// rejects them; the types2 conformance suite (Go mode) turns this off.
+  bool AllowGenericMethods = true;
 };
 
 /// Parses File (a file of SM) into Ctx. The returned File lives in Ctx; it

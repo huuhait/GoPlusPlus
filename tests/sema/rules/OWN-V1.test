@@ -1,0 +1,22 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-V1: `ref string` and `ref []T` are (ptr, len) borrows: trivial,
+// copied freely, with a fixed length (no append).
+package main
+
+func cp[T Copy](x T) T { return x }
+
+func positive(s string, xs []int) int {
+	r := s[1:]
+	r2 := r
+	q := xs[1:]
+	q[0] = 5
+	_ = cp(r2)
+	return len(r) + len(q)
+}
+
+func negative(xs []int) {
+	r := xs[1:]
+	// CHECK: [[@LINE+1]]:13: error: cannot append to r: a ref has a fixed length; copy it into an owned slice first (OWN-V1)
+	r = append(r, 1)
+	_ = r
+}

@@ -1,0 +1,3 @@
+package b
+import "a"
+var Y = a.X

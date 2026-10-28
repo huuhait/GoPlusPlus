@@ -1,0 +1,16 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule EXP-9: conversions follow Go; string(ref) and []T(ref) copy; a Unique
+// stored in a place converts to *T.
+package main
+
+func positive(r ref []int, s string, u Unique[int]) {
+	a := []int(r)
+	b := []byte(s)
+	p := (*int)(u)
+	_, _, _ = a, b, p
+}
+
+func negative(s string) {
+	// CHECK: [[@LINE+1]]:10: error: cannot convert s (variable of type string) to type int
+	_ = int(s)
+}

@@ -1,0 +1,11 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck %s
+// Type errors: exit status 1 and one diagnostic per error, in source order.
+package main
+
+func main() {
+	// CHECK: check-errors.test:[[@LINE+1]]:14: error: cannot use "s" (untyped string constant) as int value in variable declaration
+	var n int = "s"
+	// CHECK: check-errors.test:[[@LINE+1]]:6: error: undefined: y
+	_ = y
+	_ = n
+}

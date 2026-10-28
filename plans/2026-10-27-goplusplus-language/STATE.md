@@ -13,7 +13,7 @@ Last updated: 2026-10-27
 - [~] P00 Foundations ([state](00-foundations/STATE.md))
 - [x] P01 Language specification v0 ([state](01-language-spec/STATE.md))
 - [x] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
-- [ ] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
+- [~] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
 - [ ] P04 GIR and LLVM codegen ([state](04-gir-and-llvm-codegen/STATE.md))
 - [ ] P05 Runtime and memory ([state](05-runtime-and-memory/STATE.md))
 - [ ] P06 Build driver and compile speed ([state](06-build-driver-and-compile-speed/STATE.md))
@@ -106,3 +106,4 @@ Last updated: 2026-10-27
 - 2026-10-27: Owner decision on P06 Q3: link with LLD as a subprocess (`gopp` starts its own bundled LLD as `gopp lld …`), for crash safety, no leftover LLD state in long-running processes, and parallel links in `gopp test`; the ~1–3 ms start cost per link is accepted (P06 Q3, P04 D4.9).
 - 2026-10-27: Owner decisions on P07 Q1–Q3 (ADR-0008; P07.17 done): C function pointer types are `ffi.Func[func(…) R]` (no new syntax); `const` stays metadata, enforced at the C/C++ boundary against read-only bindings (no `*const T`; also P08 Q2); type-defining macros (`#define z_off_t long`) import as type aliases.
 - 2026-10-27: Owner decisions on P08 Q3–Q4 (ADR-0010; P08.15 done): explicit template arguments use Go's generic brackets (`memory.make_unique[Foo](1, 2)`; first arguments given, the rest deduced; `bool` and enum constants allowed; call-only in v0); deep namespaces use the short form while it is unique (`asio.tcp`), and the full path (`asio.ip.tcp`) always works; collisions are errors on use, listing the candidates.
+- 2026-10-27: P03.01–P03.07 done (team build, 25 review findings fixed): package loader, exact constants (ADR-0009, no libbf), scopes, types core, statements, generics (154/167 types2 generics files, 92.2%) and type-level ownership (63 rule-table tests). Overall types2 conformance 262/305 (85.9%), below the phase exit's 90%. Manager decisions in spec EXP-2: parts of an owned temporary are temporaries; conversions that share storage are checked as their operand. P03 in progress (P03.08–P03.14 left).

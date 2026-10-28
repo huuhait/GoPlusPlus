@@ -1,0 +1,308 @@
+//===- TypeSet.cpp - Type sets of interfaces and constraints --------------===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// Ported from types2's typeset.go, typeterm.go and termlist.go (BSD-style
+// license, Copyright The Go Authors).
+//
+//===----------------------------------------------------------------------===//
+
+#include "Checker.h"
+
+#include <algorithm>
+
+using namespace gopp;
+using namespace gopp::sema;
+using llvm::cast;
+using llvm::dyn_cast;
+using llvm::isa;
+
+bool Checker::termIncludes(const Term &T, Type *V) {
+  Type *U = V;
+  if (T.Tilde)
+    U = under(V);
+  return identical(T.T, U);
+}
+
+bool Checker::termDisjoint(const Term &X, const Term &Y) {
+  Type *UX = X.T;
+  if (Y.Tilde)
+    UX = under(UX);
+  Type *UY = Y.T;
+  if (X.Tilde)
+    UY = under(UY);
+  return !identical(UX, UY);
+}
+
+bool Checker::termSubsetOf(const Term &X, const Term &Y) {
+  if (termDisjoint(X, Y))
+    return false;
+  return !X.Tilde || Y.Tilde;
+}
+
+static bool intersectTerm(Checker &C, const Term &X, const Term &Y, Term &Out) {
+  if (C.termDisjoint(X, Y))
+    return false;
+  Out = (!X.Tilde || Y.Tilde) ? X : Y;
+  return true;
+}
+
+static void normalize(Checker &C, TermList &L) {
+  SmallVector<Term, 4> Out;
+  for (size_t I = 0; I < L.Terms.size(); ++I) {
+    bool Redundant = false;
+    for (size_t J = 0; J < L.Terms.size() && !Redundant; ++J) {
+      if (I == J)
+        continue;
+      if (C.termSubsetOf(L.Terms[I], L.Terms[J])) {
+        // Keep the first of two equal terms.
+        bool Equal = C.termSubsetOf(L.Terms[J], L.Terms[I]);
+        Redundant = !Equal || J < I;
+      }
+    }
+    if (!Redundant)
+      Out.push_back(L.Terms[I]);
+  }
+  L.Terms = std::move(Out);
+}
+
+TermList Checker::unionTerms(const TermList &A, const TermList &B) {
+  TermList R;
+  if (A.All || B.All)
+    return R;
+  R.All = false;
+  R.Terms = A.Terms;
+  R.Terms.append(B.Terms.begin(), B.Terms.end());
+  normalize(*this, R);
+  return R;
+}
+
+TermList Checker::intersectTerms(const TermList &A, const TermList &B) {
+  if (A.All)
+    return B;
+  if (B.All)
+    return A;
+  TermList R;
+  R.All = false;
+  for (const Term &X : A.Terms)
+    for (const Term &Y : B.Terms) {
+      Term Z;
+      if (intersectTerm(*this, X, Y, Z))
+        R.Terms.push_back(Z);
+    }
+  normalize(*this, R);
+  return R;
+}
+
+bool Checker::termListIncludes(const TermList &L, Type *V) {
+  if (L.All)
+    return true;
+  for (const Term &T : L.Terms)
+    if (termIncludes(T, V))
+      return true;
+  return false;
+}
+
+bool Checker::typeSetSubsetOf(TypeSet *A, TypeSet *B) {
+  if (B->AllTerms)
+    return true;
+  if (A->AllTerms)
+    return false;
+  for (const Term &X : A->Terms) {
+    bool Found = false;
+    for (const Term &Y : B->Terms)
+      if (termSubsetOf(X, Y)) {
+        Found = true;
+        break;
+      }
+    if (!Found)
+      return false;
+  }
+  return true;
+}
+
+std::string Checker::termsString(ArrayRef<Term> Ts) {
+  std::string S;
+  for (size_t I = 0; I < Ts.size(); ++I) {
+    if (I)
+      S += " | ";
+    if (Ts[I].Tilde)
+      S += "~";
+    // types2 prints a term list with every type qualified.
+    S += typeString(Ts[I].T, nullptr);
+  }
+  return S.empty() ? "∅" : S;
+}
+
+bool Checker::typeSetIsComparable(TypeSet *TS) {
+  if (TS->AllTerms)
+    return TS->Comparable;
+  if (TS->Terms.empty())
+    return false;
+  for (const Term &T : TS->Terms)
+    if (!comparableType(T.T, false, nullptr))
+      return false;
+  return true;
+}
+
+Func *Checker::lookupMethodInSet(TypeSet *TS, Package *P, StringRef N,
+                                 bool Fold, int *Idx) {
+  for (size_t I = 0; I < TS->Methods.size(); ++I) {
+    Func *M = TS->Methods[I];
+    if (sameId(M, P, N, Fold)) {
+      if (Idx)
+        *Idx = static_cast<int>(I);
+      return M;
+    }
+  }
+  return nullptr;
+}
+
+TypeSet *Checker::typeSet(InterfaceType *I) {
+  if (!I->Set)
+    computeTypeSet(I, SourceLoc());
+  return I->Set;
+}
+
+TypeSet *Checker::typeSetOf(Type *T) {
+  Type *U = T;
+  if (auto *P = dyn_cast<TypeParamType>(T)) {
+    U = P->Bound ? P->Bound : Ctx.anyType();
+    U = under(U);
+  } else {
+    U = under(T);
+  }
+  if (auto *I = dyn_cast<InterfaceType>(U))
+    return typeSet(I);
+  return nullptr;
+}
+
+static bool lessFunc(const Func *A, const Func *B) {
+  if (A->Name != B->Name)
+    return A->Name < B->Name;
+  return A->Pkg < B->Pkg;
+}
+
+void Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
+  std::lock_guard<std::recursive_mutex> G(Ctx.lock());
+  if (I->Set)
+    return;
+  TypeSet *TS = Ctx.arena().make<TypeSet>();
+  DepthGuard DG(RecDepth);
+  if (I->Computing || RecDepth > MaxRecDepth) {
+    I->Set = TS; // recursive interface: treat as the universe for now
+    return;
+  }
+  I->Computing = true;
+  SmallVector<Func *, 8> Methods;
+  auto AddMethod = [&](Func *M, SourceLoc At, bool Explicit) {
+    for (Func *Old : Methods)
+      if (sameId(Old, M->Pkg, M->Name, false)) {
+        if (Old == M)
+          return;
+        if (!Explicit && identical(Old->Ty, M->Ty))
+          return;
+        if (At.isValid() || M->Pos.isValid())
+          err(At.isValid() ? At : M->Pos, diag::err_duplicate_method_iface,
+              {std::string(M->Name)});
+        return;
+      }
+    Methods.push_back(M);
+  };
+  for (Func *M : I->Methods)
+    AddMethod(M, M->Pos, true);
+
+  TermList Terms;
+  bool Comparable = false, Copy = false, Clone = false;
+  switch (I->Sp) {
+  case InterfaceType::Comparable:
+    Comparable = true;
+    break;
+  case InterfaceType::Copy:
+    Copy = true;
+    break;
+  case InterfaceType::Clone:
+    Clone = true;
+    break;
+  default:
+    break;
+  }
+  for (size_t K = 0; K < I->Embeddeds.size(); ++K) {
+    Type *E = I->Embeddeds[K];
+    SourceLoc At = K < I->EmbedLocs.size() ? I->EmbedLocs[K] : SourceLoc();
+    Type *U = under(E);
+    TermList Cur;
+    if (auto *EI = dyn_cast<InterfaceType>(U)) {
+      TypeSet *ES = typeSet(EI);
+      for (Func *M : ES->Methods)
+        AddMethod(M, At, false);
+      Comparable |= ES->Comparable;
+      Copy |= ES->Copy;
+      Clone |= ES->Clone;
+      Cur.All = ES->AllTerms;
+      if (!ES->AllTerms)
+        Cur.Terms.assign(ES->Terms.begin(), ES->Terms.end());
+    } else if (auto *UT = dyn_cast<UnionType>(U)) {
+      TermList Acc;
+      Acc.All = false;
+      for (const Term &T : UT->Terms) {
+        TermList One;
+        Type *TU = under(T.T);
+        if (auto *TI = dyn_cast<InterfaceType>(TU)) {
+          TypeSet *TTS = typeSet(TI);
+          One.All = TTS->AllTerms;
+          if (!TTS->AllTerms)
+            One.Terms.assign(TTS->Terms.begin(), TTS->Terms.end());
+        } else if (isValid(TU)) {
+          // ~T with T not an underlying type is the empty set (types2).
+          One.All = false;
+          if (!T.Tilde || identical(T.T, TU))
+            One.Terms.push_back(T);
+        } else {
+          continue;
+        }
+        Acc = unionTerms(Acc, One);
+        if (Acc.All)
+          break;
+      }
+      // types2 computeUnionTypeSet: the normalized union is limited too.
+      if (!Acc.All && Acc.Terms.size() > 100) {
+        if (At.isValid())
+          err(At, diag::custom,
+              {"cannot handle more than 100 union terms (implementation "
+               "limitation)"});
+        Acc.All = true;
+        Acc.Terms.clear();
+      }
+      Cur = Acc;
+    } else if (!isValid(U)) {
+      continue;
+    } else {
+      Cur.All = false;
+      Cur.Terms.push_back(Term{false, E});
+    }
+    Terms = intersectTerms(Terms, Cur);
+  }
+  // types2 intersectTermLists: with comparable and specific terms, only the
+  // strictly comparable terms remain, and the bit is dropped.
+  if (Comparable && !Terms.All) {
+    llvm::erase_if(Terms.Terms, [&](const Term &T) {
+      return !comparableType(T.T, false, nullptr);
+    });
+    Comparable = false;
+  }
+  std::sort(Methods.begin(), Methods.end(), lessFunc);
+  TS->Methods = Ctx.arena().copy(ArrayRef<Func *>(Methods));
+  TS->AllTerms = Terms.All;
+  if (!Terms.All)
+    TS->Terms = Ctx.arena().copy(ArrayRef<Term>(Terms.Terms));
+  TS->Comparable = Comparable;
+  TS->Copy = Copy;
+  TS->Clone = Clone;
+  I->Computing = false;
+  I->Set = TS;
+}

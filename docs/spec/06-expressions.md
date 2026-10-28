@@ -28,7 +28,13 @@ The expression grammar of Go is unchanged except for two additions, each defined
 - `min`/`max` on refs return a ref (EXP-5).
 - Go's `new` does not exist ([LEX-8](02-lexical.md)).
 
-**EXP-2.** *Moving expressions.* An expression that gives ownership of a value (a call result, a conversion result, a composite literal, a `move(…)` or `x.Clone()`) produces an owned **temporary**. A temporary used where ownership is needed moves; otherwise it is destroyed at the end of the full statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14)).
+**EXP-2.** *Moving expressions.* An expression that gives ownership of a value (a call result, a conversion that copies, a composite literal, a `move(…)` or `x.Clone()`) produces an owned **temporary**. A temporary used where ownership is needed moves; otherwise it is destroyed at the end of the full statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14)).
+
+- **Parts of a temporary.** A field or element of an owned temporary is also a temporary. It moves out, and the rest of the temporary is destroyed at the end of the full statement. This holds for a struct field, an array element, an element of an owned slice or map, and a part reached through a `Unique[T]` the temporary owns.
+- **Exceptions.** Through a raw pointer, a `Shared[T]` or a ref, a part is a place in someone else's storage. To take it, write `x.Clone()` or `move(x)` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). A ref into a part of a `Shared[T]` temporary is still a ref into a temporary: the handle may release the last strong reference at the end of the statement. Storing such a ref longer than the statement is an error ([OWN-V6](04-ownership.md#44-refs-d16)).
+- **Conversions that share.** These are not new values. They are checked as their operand, so `string(p.Name)` needs `p.Name.Clone()` or `move(p.Name)`. Only conversions between owning types can share a buffer; a number or another trivial value shares nothing (a `@Pinned` value is never copied, [OWN-R10](04-ownership.md#42-ownership-rules-d14)). The cases are: the same underlying type (struct tags are ignored); a conversion to an interface; a conversion to or from a type parameter, unless every type in its type set copies.
+- **Slice to array.** `[N]T(s)` with owning elements does not share storage: it duplicates the elements bitwise, which would leave two owners. So it is checked as its operand too, and needs `s.Clone()` or `move(s)`. With trivial elements it is a plain copy.
+- **Conversions that copy.** `string(bytes)`, `[]byte(s)`, a ref to an owned type, and a number to a number. Each gives a temporary.
 
 **EXP-3.** *Order of evaluation.* As in Go ([Order of evaluation](https://go.dev/ref/spec#Order_of_evaluation)), with one addition: moves out of places (`move(p)`, the implicit move of `p = append(p, …)`) happen **after** all other arguments of the call are evaluated.
 

@@ -1,0 +1,21 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule SLC-10: append-style functions take `move dst []T`, and
+// `buf = f(buf, ...)` moves buf implicitly, also from a field.
+package main
+
+type W struct{ buf []byte }
+
+func appendInt(move dst []byte, n int) []byte { return append(dst, byte(n)) }
+
+func positive(w *W) {
+	buf := make([]byte, 0, 8)
+	buf = appendInt(buf, 1)
+	w.buf = appendInt(w.buf, 2)
+	_ = buf
+}
+
+func negative(w *W) {
+	// CHECK: [[@LINE+1]]:17: error: cannot pass as a `move` argument w.buf: it is a value in another place, and this needs ownership (OWN-R3a)
+	b := appendInt(w.buf, 1)
+	_ = b
+}

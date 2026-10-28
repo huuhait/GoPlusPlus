@@ -1,0 +1,48 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule TYP-9: a type switch or assertion binding of an owning type borrows
+// the shared box: it is read-only and needs .Clone() where ownership is
+// needed. `case ref string:` must come before `case string:`.
+package main
+
+func use(s string) {}
+
+func positive(v any, move names []string) ([]string, string) {
+	if s, ok := v.(string); ok {
+		use(s)
+		names = append(names, s.Clone())
+	}
+	n := len(v.(string))
+	owned := v.(string).Clone()
+	switch x := v.(type) {
+	case ref string:
+		_ = x
+	case string:
+		_ = len(x) + n
+	case int:
+		x++
+	}
+	return names, owned
+}
+
+func negative(v any, move names []string) string {
+	if s, ok := v.(string); ok {
+		// CHECK: [[@LINE+1]]:3: error: cannot assign to s: the binding borrows the shared box of an interface value and is read-only (TYP-9)
+		s = "x"
+		_ = s
+	}
+	switch x := v.(type) {
+	case string:
+		// CHECK: [[@LINE+1]]:3: error: cannot assign to x: the binding borrows the shared box of an interface value and is read-only (TYP-9)
+		x = "y"
+		// CHECK: [[@LINE+1]]:25: error: cannot append x: it borrows the shared box of an interface value, and this needs ownership (TYP-9)
+		names = append(names, x)
+	}
+	switch v.(type) {
+	case string:
+	// CHECK: [[@LINE+1]]:7: error: unreachable case ref string: case string above also matches a ref string (TYP-9)
+	case ref string:
+	}
+	_ = names
+	// CHECK: [[@LINE+1]]:9: error: cannot return v.(string): it borrows the shared box of an interface value, and this needs ownership (TYP-9)
+	return v.(string)
+}

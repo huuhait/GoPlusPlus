@@ -1,0 +1,20 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-8: type arguments of a generic method may be explicit or
+// inferred: s.Map[string](f) or s.Map(f).
+package main
+
+type Set struct{}
+
+func (s Set) Map[U any](f func(int) U) U { return f(0) }
+func (s Set) Zero[U any]() U          { var z U; return z }
+
+func positive(s Set) {
+	_ = s.Map[string](func(int) string { return "" })
+	_ = s.Map(func(int) string { return "" })
+	_ = s.Zero[int]()
+}
+
+func negative(s Set) {
+	// CHECK: [[@LINE+1]]:12: error: in call to s.Zero, cannot infer U (declared at {{.*}}GEN-8.test:9:19)
+	_ = s.Zero()
+}

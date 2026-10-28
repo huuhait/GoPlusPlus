@@ -1,0 +1,82 @@
+# The types2 conformance files that do not pass (see README.md).
+# path | xfail | reason    a gap of the checker: the test fails when the file
+#                          passes, so remove the line then
+# path | exclude | reason  tests what Go++ does not have by design; it still
+#                          runs but is not counted
+check/builtins0.go | xfail | size model: unsafe.Offsetof/Sizeof of some structs differ from Go's gc sizes (field alignment)
+check/builtins1.go | xfail | size model: unsafe.Sizeof in constant asserts differs from Go's gc sizes for some struct and generic types
+check/const0.go | xfail | constants: "mismatched types" not reported for some mixed untyped constant operations
+check/const1.go | xfail | harness: the file uses math.SmallestNonzeroFloat64 and math.MaxFloat64, but math is an empty package here, so those constants are undefined and their "truncated" / "cannot convert" errors never appear
+check/constdecl.go | xfail | constants: an overflowing iota const in a group is reported once per name, and an invalid array length with iota
+check/cycles2.go | xfail | cycle diagnostics: a cycle through a method of an interface gives another error than types2's "undefined"
+check/cycles4.go | xfail | cycle diagnostics: an "undefined" inside a cyclic declaration is not reported
+check/cycles5.go | exclude | -gotypesalias=0 selects the pre-1.23 non-alias mode; Go++ has only the alias mode
+check/cycles5a.go | xfail | cycle diagnostics: "r is not a type", "not a type" for a parameter named like its function, and "no value" are not reported; extra "invalid cycle" / "initialization cycle" reports
+check/decls0.go | exclude | Go version flag -lang=go1.17: Go++ has one language version, version-gated errors do not exist
+check/decls1.go | xfail | declaration diagnostics: a package name used as a type and n:m var declarations are worded differently
+check/expr3.go | xfail | expression diagnostics: "final index required" for 3-index slices and unexported struct literal fields are worded differently
+check/go1_12.go | exclude | Go version flag -lang=go1.12: Go++ has one language version, version-gated errors do not exist
+check/go1_13.go | exclude | Go version flag -lang=go1.13: Go++ has one language version, version-gated errors do not exist
+check/go1_16.go | exclude | Go version flag -lang=go1.16: Go++ has one language version, version-gated errors do not exist
+check/go1_19.go | exclude | Go version flag -lang=go1.19: Go++ has one language version, version-gated errors do not exist
+check/go1_19_20.go | exclude | Go version flag -lang=go1.19: Go++ has one language version, version-gated errors do not exist
+check/go1_20_19.go | exclude | Go version flag -lang=go1.20: Go++ has one language version, version-gated errors do not exist
+check/go1_21_19.go | exclude | Go version flag -lang=go1.21: Go++ has one language version, version-gated errors do not exist
+check/go1_21_22.go | exclude | Go version flag -lang=go1.21: Go++ has one language version, version-gated errors do not exist
+check/go1_22_21.go | exclude | Go version flag -lang=go1.22: Go++ has one language version, version-gated errors do not exist
+check/go1_8.go | exclude | Go version flag -lang=go1.8: Go++ has one language version, version-gated errors do not exist
+check/gotos.go | xfail | goto checks: the declaration a goto jumps over and jumps into blocks are reported differently
+check/importC.go | exclude | cgo import "C": Go++ imports C/C++ headers by path (D3.7, docs/spec/14-foreign-surface.md)
+check/init0.go | xfail | initialization order: one initialization cycle through a closure is not found
+check/issues0.go | exclude | Go version flag -lang=go1.17: Go++ has one language version, version-gated errors do not exist
+check/labels.go | xfail | label checks: jumps into blocks and blank labels are reported differently; a label is not reported unused
+check/lookup1.go | xfail | needs Go std package math/big (the harness has empty fake std packages); the "but does have field x" hint is missing
+check/lookup2.go | xfail | needs Go std package math/big (the harness has empty fake std packages)
+check/stmt0.go | xfail | statement diagnostics: select and switch case errors and one unused variable are worded differently
+check/typeinst0.go | xfail | the Go++ parser reports T[] with its own P02.07 message ("array and slice brackets go before the element type")
+check/vardecl.go | xfail | declaration diagnostics: "undefined" inside invalid var declarations is not reported
+examples/inference.go | exclude | Go version flag -lang=go1.20: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue20583.go | xfail | constants: the binary exponent of float constants is limited to 2^20 (Go: 2^31), so 1e100000000 is malformed here
+fixedbugs/issue39634.go | xfail | cycle diagnostics: an initialization cycle is reported where types2 reports "is not a type" / "must be called"
+fixedbugs/issue43190.go | xfail | the Go++ parser reports import placement and empty import paths with its own messages
+fixedbugs/issue45635.go | xfail | the Go++ parser reports T[] with its own P02.07 message ("array and slice brackets go before the element type")
+fixedbugs/issue46090.go | exclude | Go version flag -lang=go1.17: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue46461.go | exclude | -gotypesalias=0 selects the pre-1.23 non-alias mode; Go++ has only the alias mode
+fixedbugs/issue46461a.go | xfail | cycle diagnostics: a generic type whose constraint and method both mention itself is reported once, types2 reports it twice
+fixedbugs/issue46583.go | xfail | function type strings have no parameter names (TupleType stores only types)
+fixedbugs/issue47818.go | exclude | Go version flag -lang=go1.17: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue48018.go | xfail | instantiation cycles: the monomorphization cycle check of types2 (mono.go) is not ported
+fixedbugs/issue48656.go | xfail | instantiation cycles: the monomorphization cycle check of types2 (mono.go) is not ported
+fixedbugs/issue48974.go | xfail | instantiation cycles: the monomorphization cycle check of types2 (mono.go) is not ported
+fixedbugs/issue49276.go | xfail | cycle diagnostics: invalid recursive types are reported at another position
+fixedbugs/issue49736.go | xfail | needs Go std package math/big (the harness has empty fake std packages)
+fixedbugs/issue50779.go | exclude | -gotypesalias=0 selects the pre-1.23 non-alias mode; Go++ has only the alias mode
+fixedbugs/issue51610.go | xfail | duplicate constant keys of a map with a type parameter key are not detected
+fixedbugs/issue52031.go | exclude | Go version flag -lang=go1.12: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue52915.go | xfail | cycle diagnostics: an invalid recursive type is reported at another position; a "not constant" error is missing
+fixedbugs/issue54942.go | xfail | needs Go std packages context and database/sql (the harness has empty fake std packages)
+fixedbugs/issue56351.go | exclude | Go version flag -lang=go1.20: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue56665.go | xfail | cycle diagnostics: invalid recursive types are reported at another position
+fixedbugs/issue58611.go | xfail | inference messages lack the "declared at" position of type parameters; needs Go std package strings
+fixedbugs/issue58742.go | xfail | return count errors are not reported when a result type is invalid ("unknown type")
+fixedbugs/issue59190.go | xfail | size model: unsafe.Sizeof/Offsetof does not report types that are too large
+fixedbugs/issue59207.go | xfail | size model: unsafe.Sizeof does not report types that are too large
+fixedbugs/issue59338a.go | exclude | Go version flag -lang=go1.20: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue59639.go | exclude | Go version flag -lang=go1.17: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue59740.go | xfail | function type strings have no parameter names (TupleType stores only types)
+fixedbugs/issue60346.go | exclude | Go version flag -lang=go1.20: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue60933.go | xfail | needs Go std packages io and os (the harness has empty fake std packages)
+fixedbugs/issue61822.go | exclude | Go version flag -lang=go1.19: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue61903.go | exclude | Go version flag -lang=go1.20: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue64704.go | exclude | Go version flag -lang=go1.21: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue65344.go | xfail | cycle diagnostics: a type declared through a constant is reported as an invalid recursive type, not "is not a type"
+fixedbugs/issue66064.go | exclude | Go version flag -lang=go1.16: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue66285.go | exclude | Go version flag -lang=go1.13: Go++ has one language version, version-gated errors do not exist
+fixedbugs/issue67628.go | xfail | alias spelling: Go++ resolves an alias at once (no Alias type), so a message prints int where types2 prints the alias name A
+fixedbugs/issue69955.go | xfail | alias spelling: messages print the aliased type (S, int) instead of the alias name (A, B, C); big.Word is not in the empty math/big package
+fixedbugs/issue70549.go | xfail | needs Go std package math (the harness has empty fake std packages)
+spec/comparable1.19.go | exclude | Go version flag -lang=go1.19: Go++ has one language version, version-gated errors do not exist
+spec/typeAliases1.22.go | exclude | Go version flag -lang=go1.22: Go++ has one language version, version-gated errors do not exist
+spec/typeAliases1.23a.go | exclude | Go version flag -lang=go1.23: Go++ has one language version, version-gated errors do not exist; -gotypesalias=0 selects the pre-1.23 non-alias mode; Go++ has only the alias mode
+spec/typeAliases1.23b.go | exclude | Go version flag -lang=go1.23: Go++ has one language version, version-gated errors do not exist; -gotypesalias=1 selects a Go mode by flag (Go++ has no Go version or alias flags); Go experiment flag -goexperiment=aliastypeparams: Go++ has no experiments
+spec/typeAliases1.8.go | exclude | Go version flag -lang=go1.8: Go++ has one language version, version-gated errors do not exist

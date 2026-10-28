@@ -1,0 +1,84 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule PAR-5: a `move` parameter or receiver takes ownership: an owned local
+// passed to it moves, a field needs move(x) or x.Clone(). A method with a
+// move receiver is in no method set. A variadic parameter of an owning type
+// is written `move ...T` (5.1), also for a type parameter without Copy.
+package main
+
+type Builder struct{ buf []byte }
+
+func (move b Builder) Finish() []byte { return move(b.buf) }
+
+type Finisher interface{ Finish() []byte }
+
+type User struct{ Name string }
+
+type List struct{ items []string }
+
+func (l *List) Push(move s string) { l.items = append(l.items, s) }
+
+func Join(move parts ...string) int { return len(parts) }
+
+func Sum[T Copy](xs ...T) int { return len(xs) }
+
+// CHECK: [[@LINE+1]]:10: error: a variadic parameter of the owning type string must be written `move ...string` (PAR-5)
+func Bad(parts ...string) {}
+
+// CHECK: [[@LINE+1]]:18: error: variadic parameter of type parameter T needs `move` or a Copy constraint (PAR-5)
+func BadT[T any](xs ...T) {}
+
+func positive(l *List, u *User) {
+	name := "n"
+	l.Push(name)
+	other := "o"
+	l.Push(other.Clone())
+	l.Push(move(u.Name))
+	b := Builder{}
+	_ = b.Finish()
+	_ = Join("a", "b") + Sum(1, 2)
+}
+
+func negative(l *List, u *User) {
+	// CHECK: [[@LINE+1]]:9: error: cannot pass as a `move` argument u.Name: it is a value in another place, and this needs ownership (OWN-R3a)
+	l.Push(u.Name)
+	// CHECK: [[@LINE+1]]:19: error: cannot use Builder{} (value of struct type Builder) as Finisher value in variable declaration: Builder does not implement Finisher (method Finish has a move receiver, PAR-5)
+	var f Finisher = Builder{}
+	_ = f
+}
+
+type Wrapper struct{ b Builder }
+
+func (move b Builder) With() Builder { return b }
+
+func receivers(w *Wrapper, b Builder, bs []Builder, p *Builder) {
+	w.b = w.b.With() // the same place receives the result: an implicit move
+	_ = move(w.b).Finish()
+	_ = w.b.Clone().Finish()
+	var l Builder
+	_ = l.Finish() // an owned local moves
+	// CHECK: [[@LINE+1]]:6: error: cannot call a `move` method on w.b: it is a value in another place, and this needs ownership (OWN-R3a)
+	_ = w.b.Finish()
+	// CHECK: [[@LINE+1]]:6: error: cannot call a `move` method on b: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	_ = b.Finish()
+	for _, x := range bs {
+		// CHECK: [[@LINE+1]]:7: error: cannot call a `move` method on x: it is a borrowed range variable, and this needs ownership (OWN-R3a)
+		_ = x.Finish()
+	}
+	// CHECK: [[@LINE+1]]:6: error: cannot call a `move` method on *p: it is a value in another place, and this needs ownership (OWN-R3a)
+	_ = p.Finish()
+	// CHECK: [[@LINE+1]]:6: error: cannot call a `move` method on bs[0]: it is a value in another place, and this needs ownership (OWN-R3a)
+	_ = bs[0].Finish()
+}
+
+// A method value of a `move` receiver binds, so moves, its receiver.
+func methodValues(w *Wrapper, b Builder) {
+	var l Builder
+	f1 := l.Finish
+	f2 := move(w.b).Finish
+	f3 := w.b.Clone().Finish
+	// CHECK: [[@LINE+1]]:8: error: cannot bind a `move` method value to w.b: it is a value in another place, and this needs ownership (OWN-R3a)
+	f4 := w.b.Finish
+	// CHECK: [[@LINE+1]]:8: error: cannot bind a `move` method value to b: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	f5 := b.Finish
+	_, _, _, _, _ = f1, f2, f3, f4, f5
+}

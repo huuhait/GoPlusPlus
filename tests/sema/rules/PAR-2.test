@@ -1,0 +1,24 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule PAR-2: a borrowed string or []T parameter is a local ref, so it can
+// be re-pointed (`p = p[n:]`), but not assigned another value or appended to.
+package main
+
+func skipSpaces(s string) int {
+	n := len(s)
+	for len(s) > 0 && s[0] == ' ' {
+		s = s[1:]
+	}
+	return n - len(s)
+}
+
+func positive(xs []int) int {
+	xs = xs[1:]
+	return len(xs) + skipSpaces(" a")
+}
+
+func negative(s string, xs []int) {
+	// CHECK: [[@LINE+1]]:2: error: cannot assign to s: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	s = "x"
+	// CHECK: [[@LINE+1]]:14: error: cannot append to xs: it is a borrowed variable (PAR-1)
+	xs = append(xs, 1)
+}

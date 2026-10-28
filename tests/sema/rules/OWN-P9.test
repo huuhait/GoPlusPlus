@@ -1,0 +1,19 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-P9: every pointer kind has IsNil(); on a raw *T it is ambiguous
+// when T has its own IsNil method.
+package main
+
+type Opt struct{ v *int }
+
+func (o Opt) IsNil() bool { return o.v == nil }
+
+type Plain struct{ n int }
+
+func positive(q *Plain, u Unique[int], s Shared[int], w Weak[int], p *Opt) bool {
+	return q.IsNil() || u.IsNil() || s.IsNil() || w.IsNil() || (*p).IsNil() || p == nil
+}
+
+func negative(p *Opt) bool {
+	// CHECK: [[@LINE+1]]:11: error: p.IsNil() is ambiguous on pointer *Opt: Opt has an IsNil method (OWN-P9)
+	return p.IsNil()
+}

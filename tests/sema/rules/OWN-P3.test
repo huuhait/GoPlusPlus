@@ -1,0 +1,21 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-P3: new_weak(s) takes a Shared[T]; a weak pointer cannot own a new
+// object.
+package main
+
+type Config struct{ Name string }
+
+func positive() {
+	s := new_shared(Config{Name: "x"})
+	w := new_weak(s)
+	if p := w.Lock(); p != nil {
+		_ = p.Name
+	}
+}
+
+func negative() {
+	u := new_unique(Config{})
+	// CHECK: [[@LINE+1]]:16: error: new_weak needs a Shared[T] argument, have Unique[Config] (OWN-P3)
+	w := new_weak(u)
+	_ = w
+}

@@ -1,0 +1,8 @@
+package main
+
+import "lib"
+
+func main() {
+	var n int = lib.Double(21)
+	_ = n
+}

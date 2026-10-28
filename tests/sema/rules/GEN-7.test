@@ -1,0 +1,24 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-7: interfaces cannot declare generic methods, so a generic method
+// never satisfies an interface method.
+package main
+
+type Set struct{}
+
+func (s Set) Map[U any](f func(int) U) []U { return nil }
+func (s Set) Len() int                     { return 0 }
+
+type Mapper interface{ Map(f func(int) string) []string }
+
+type Lener interface{ Len() int }
+
+func positive() {
+	var l Lener = Set{}
+	_ = l
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:17: error: cannot use Set{} (value of struct type Set) as Mapper value in variable declaration: Set does not implement Mapper (method Map is generic: a generic method never satisfies an interface method, GEN-7)
+	var m Mapper = Set{}
+	_ = m
+}

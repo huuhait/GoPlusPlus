@@ -1,0 +1,15 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule TYP-3: == on owning types compares by value and borrows; a ref string
+// compares with a string; slices, maps and funcs compare only with nil.
+package main
+
+type Pt struct{ X, Y int }
+
+func positive(a, b string, r ref string, p, q Pt, xs []int) bool {
+	return a == b || r == a || p == q || xs == nil
+}
+
+func negative(a, b []int) bool {
+	// CHECK: [[@LINE+1]]:9: error: invalid operation: a == b (slice can only be compared to nil)
+	return a == b
+}

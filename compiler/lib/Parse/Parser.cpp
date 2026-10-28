@@ -3733,9 +3733,9 @@ private:
     FT->FuncLoc = Pos;
     if (is(tok::l_brack)) {
       FieldList *TParams = parseTypeParameters();
-      if (Recv && TParams) {
-        // Method declarations do not have type parameters. We parse them for a
-        // better error message and improved error recovery.
+      if (Recv && TParams && !Opts.AllowGenericMethods) {
+        // Go: method declarations do not have type parameters. We parse them
+        // for a better error message and improved error recovery.
         error(TParams->Opening, diag::err_method_type_params);
         TParams = nullptr;
       }

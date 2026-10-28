@@ -1,0 +1,8 @@
+// RUN: %gopp check %s
+// A well-typed file: exit status 0, no output.
+package main
+
+func main() {
+	x := 1 + 2
+	_ = x
+}

@@ -1,0 +1,61 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-V7: returning a ref into a local, a move parameter or a temporary
+// is an error; a ref into a borrowed parameter is fine.
+package main
+
+func load() string { return "a" }
+
+func positive(s string) ref string {
+	s = s[1:] // a ref into the caller's data
+	return s
+}
+
+func head(src string) ref string { return src[:1] }
+
+func negative1() ref string {
+	s := "hi"
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local s: it dies at the return (OWN-V7)
+	return s
+}
+
+func negative2(move s string) ref string {
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local s: it dies at the return (OWN-V7)
+	return s
+}
+
+func negative3() ref string {
+	s := "hi"
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local s: it dies at the return (OWN-V7)
+	return s[:1]
+}
+
+func negative4() ref string {
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into a temporary: it is freed at the return (OWN-V7)
+	return load()[:1]
+}
+
+type Page struct{ Tags []string }
+
+func elem1() ref string {
+	d := Page{Tags: []string{"a"}}
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local d: it dies at the return (OWN-V7)
+	return d.Tags[0]
+}
+
+func elem2() ref string {
+	xs := []string{"a"}
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local xs: it dies at the return (OWN-V7)
+	return xs[0]
+}
+
+func elem3() ref string {
+	xs := []string{"a"}
+	// CHECK: [[@LINE+1]]:9: error: cannot return a ref into local xs: it dies at the return (OWN-V7)
+	return xs[0][:1]
+}
+
+// An element of a borrowed parameter outlives the call.
+func elemOk(d Page, xs []string) ref string {
+	_ = d.Tags[0]
+	return xs[0]
+}

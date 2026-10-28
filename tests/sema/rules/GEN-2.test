@@ -1,0 +1,32 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-2: Clone needs a method Clone() T with a value receiver, or a
+// structural clone: numbers, strings, slices of cloneable types, structs of
+// those. A Clone with another signature, or a type with drop and no Clone,
+// does not satisfy it.
+package main
+
+type Bad struct{ N int }
+
+func (b *Bad) Clone() *Bad { return b }
+
+type Good struct{ S string }
+
+type Res struct{ fd int }
+
+func (r *Res) drop() {}
+
+func dup[T Clone](x T) T { return x.Clone() }
+
+func positive() {
+	_ = dup(1)
+	_ = dup("s")
+	_ = dup([]string{"a"})
+	_ = dup(Good{"a"})
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:6: error: Bad does not satisfy Clone (its Clone method does not have the signature Clone() Bad)
+	_ = dup(Bad{})
+	// CHECK: [[@LINE+1]]:6: error: Res does not satisfy Clone (Res has a drop method but no Clone() Res)
+	_ = dup(Res{})
+}

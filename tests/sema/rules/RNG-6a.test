@@ -1,0 +1,29 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule RNG-6a: range over a function follows the slice rules: the yielded
+// owning value is borrowed read-only; `for &x := range seq` needs an iterator
+// that yields pointers, and x is then the pointed-to value.
+package main
+
+type Doc struct{ Title string }
+
+func positive(ptrs func(yield func(*Doc) bool), vals func(yield func(Doc) bool)) int {
+	n := 0
+	for &d := range ptrs {
+		d.Title = "x"
+	}
+	for d := range vals {
+		n += len(d.Title)
+	}
+	return n
+}
+
+func negative(vals func(yield func(Doc) bool)) {
+	// CHECK: [[@LINE+1]]:6: error: `&` needs an iterator that yields pointers (RNG-6a)
+	for &d := range vals {
+		_ = d
+	}
+	for d := range vals {
+		// CHECK: [[@LINE+1]]:3: error: cannot assign to d.Title: range variable is a borrowed read-only variable (RNG-1)
+		d.Title = "x"
+	}
+}

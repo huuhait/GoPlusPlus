@@ -1,0 +1,16 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-9: type arguments are checked against the constraints at the
+// call: a channel is a shared handle, not Copy.
+package main
+
+func Swap[T Copy](a, b *T) { *a, *b = *b, *a }
+
+func positive(a, b *int) {
+	Swap[int](a, b)
+	Swap(a, b)
+}
+
+func negative(a, b *chan int) {
+	// CHECK: [[@LINE+1]]:7: error: chan int does not satisfy Copy
+	Swap[chan int](a, b)
+}

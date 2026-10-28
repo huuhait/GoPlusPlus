@@ -1,0 +1,17 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// A generic type whose right-hand side is an instance of itself (directly or
+// through another generic type) has no underlying type (types2 Named.under).
+package main
+
+// CHECK: [[@LINE+1]]:6: error: invalid recursive type: G refers to itself
+type G[T any] G[T]
+
+// CHECK: [[@LINE+1]]:6: error: invalid recursive type A
+type A[T any] B[T]
+type B[T any] A[T]
+
+type Ok[T any] struct{ next *Ok[T] }
+type Wrap[T any] Ok[T]
+
+func f(y G[int], w Wrap[int]) { _ = y + 1; _ = w.next }
+func main() {}

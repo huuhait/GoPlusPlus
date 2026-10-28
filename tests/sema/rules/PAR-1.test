@@ -1,0 +1,21 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule PAR-1: a parameter or receiver of an owning type borrows its argument
+// and is read-only at the top level; data reached through slices, maps and
+// pointers stays mutable.
+package main
+
+type Doc struct{ Title string }
+
+func positive(xs []int, m map[string]int, d *Doc, doc2 Doc) string {
+	xs[0] = 1
+	m["a"] = 2
+	d.Title = "x"
+	return doc2.Title.Clone()
+}
+
+func negative(xs []int, doc2 Doc) {
+	// CHECK: [[@LINE+1]]:14: error: cannot append to xs: it is a borrowed variable (PAR-1)
+	xs = append(xs, 1)
+	// CHECK: [[@LINE+1]]:2: error: cannot assign to doc2.Title: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	doc2.Title = "y"
+}

@@ -12,13 +12,18 @@ add_executable(GoppUnitTests
   Lex/LexerExtrasTest.cpp
   Parse/GoParserPortTest.cpp
   Parse/ParserTest.cpp
+  Sema/ConformanceTest.cpp
+  Sema/ConstantTest.cpp
+  Sema/CorpusTest.cpp
+  Sema/LoaderTest.cpp
   Build/HostToolchainTest.cpp)
 target_link_libraries(GoppUnitTests PRIVATE
-  goppBasic goppLex goppAST goppParse goppFormat goppBuild goppCodeGen goppImport
+  goppBasic goppLex goppAST goppParse goppSema goppFormat goppBuild goppCodeGen goppImport
   GTest::gtest_main)
 target_compile_definitions(GoppUnitTests PRIVATE
   GOPP_TEST_INPUTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Build/Inputs"
   GOPP_EXAMPLES_DIR="${GOPP_SOURCE_DIR}/docs/spec/examples"
+  GOPP_CONFORMANCE_DIR="${GOPP_SOURCE_DIR}/tests/sema/conformance"
   GOPP_FUZZ_CORPUS_DIR="${GOPP_SOURCE_DIR}/tests/fuzz/corpus"
   GOPP_FUZZ_REGRESSIONS_DIR="${GOPP_SOURCE_DIR}/tests/fuzz/regressions")
 

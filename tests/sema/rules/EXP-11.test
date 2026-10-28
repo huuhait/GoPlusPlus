@@ -1,0 +1,21 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule EXP-11: &x on a variable gives a raw pointer; &local must not escape
+// the function by return.
+package main
+
+type D struct{ N int }
+
+var global D
+
+func positive(d *D) (*D, *int) {
+	x := D{1}
+	p := &x
+	_ = p
+	return &global, &d.N
+}
+
+func negative() *int {
+	x := 1
+	// CHECK: [[@LINE+1]]:9: error: cannot return the address of local x: it dies at the return (EXP-11)
+	return &x
+}

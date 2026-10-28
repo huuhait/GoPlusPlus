@@ -10,7 +10,7 @@
 
 **D3.2 — Arbitrary-precision constants.** The Go spec requires at least 256-bit integers and 256-bit float mantissas for untyped constants.
 - Integers use LLVM `APInt`, widened as needed.
-- Floats use a small vendored big-float library. libbf (MIT) is the candidate, to be confirmed by the P03.02 spike.
+- Floats are exact rationals on `APInt`, with a 512-bit binary float when they grow past 4096 bits, as in Go's `go/constant`. No vendored library: the P03.02 spike rejected libbf ([ADR-0009](../../../docs/adr/0009-big-float.md)).
 
 **D3.3 — Package model = Go's.**
 - A directory is a package.

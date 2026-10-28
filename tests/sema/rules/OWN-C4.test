@@ -1,0 +1,37 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule OWN-C4: the category of a struct or array comes from its fields: any
+// owning field makes it owning, else a shared-handle field makes it a shared
+// handle. A drop method makes a type owning whatever its fields.
+package main
+
+type Ev struct{ Done chan int }
+
+type Mix struct {
+	Title string
+	Done  chan int
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Holder struct {
+	ev  Ev
+	mix Mix
+	arr [2]Ev
+	f   File
+}
+
+func positive(h *Holder) {
+	e := h.ev
+	a := h.arr
+	_, _ = e, a
+}
+
+func negative(h *Holder) {
+	// CHECK: [[@LINE+1]]:7: error: cannot initialize from h.mix: it is a value in another place, and this needs ownership (OWN-R3a)
+	m := h.mix
+	// CHECK: [[@LINE+1]]:7: error: cannot initialize from h.f: it is a value in another place, and this needs ownership (OWN-R3a)
+	f := h.f
+	_, _ = m, f
+}

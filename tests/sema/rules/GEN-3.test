@@ -1,0 +1,24 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-3: a generic body copies a T only if T is Copy; otherwise it
+// borrows, moves or clones it.
+package main
+
+func positive[T Copy](x T) T {
+	y := x
+	return y
+}
+
+func borrow[T comparable](xs []T, v T) int {
+	for i := range xs {
+		if xs[i] == v {
+			return i
+		}
+	}
+	return -1
+}
+
+func negative[T any](x []T) {
+	// CHECK: [[@LINE+1]]:7: error: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+	z := x[0]
+	_ = z
+}

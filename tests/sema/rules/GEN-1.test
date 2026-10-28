@@ -1,0 +1,22 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-1: Copy is satisfied by trivial (bitwise-copyable) types only.
+package main
+
+type Pt struct{ X, Y int }
+
+func id[T Copy](x T) T { return x }
+
+func positive(p *Pt) {
+	_ = id(1)
+	_ = id(1.5)
+	_ = id(true)
+	_ = id(Pt{})
+	_ = id(p)
+}
+
+func negative() {
+	// CHECK: [[@LINE+1]]:6: error: string does not satisfy Copy
+	_ = id("s")
+	// CHECK: [[@LINE+1]]:6: error: []int does not satisfy Copy
+	_ = id([]int{1})
+}

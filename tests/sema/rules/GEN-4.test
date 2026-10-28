@@ -1,0 +1,20 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// Rule GEN-4: in a generic body, `return a` of a borrowed parameter of a
+// non-Copy T needs a.Clone() (with a Clone constraint) or a move parameter.
+package main
+
+func First[T Clone](xs []T) T { return xs[0].Clone() }
+
+func Pick[T Clone](a, b T, first bool) T {
+	if first {
+		return a.Clone()
+	}
+	return b.Clone()
+}
+
+func Take[T any](move a T) T { return a }
+
+func negative[T any](a T) T {
+	// CHECK: [[@LINE+1]]:9: error: cannot return a of type T: it is borrowed, and T is not constrained by Copy (GEN-4)
+	return a
+}

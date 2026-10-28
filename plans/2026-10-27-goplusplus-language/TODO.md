@@ -147,7 +147,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   *Done when:* rule-table tests pass.
 - **P03.08 `!` typing**: signatures, calls, literals and function types, return forms. *Done when:* tests pass, diagnostics included.
 - **P03.09 Foreign scope interface**: `ForeignScope` plus a mock. *Done when:* tests with fake C/C++ declarations pass.
-- **P03.10 Parallel body checking**. *Done when:* diagnostics are deterministic, and the speedup is measured and recorded.
+- **P03.10 Parallel body checking**. *Done when:* diagnostics are deterministic, and the speedup is measured and recorded. Note: bodies write `PkgName::Used` (shared package-level state), so that write must be thread safe (atomic, or per-body sets merged after) before bodies run in parallel.
 - **P03.11 Type serialization interface**: for export data (the format itself is P06). *Done when:* round-trip tests pass.
 - **P03.12 `gopp check` & `gopp vet` v0**: `check` runs the type-level checks (P04.09 adds the GIR checks). First lints: ref-typed fields, drop-on-zero heuristic, a `!` that would panic outside `main`. *Done when:* CLI tests pass.
 - **P03.13 Check throughput**: measure against the D3.10 budget. *Done when:* the budget is met or an ADR documents the gap.
