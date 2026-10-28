@@ -8,33 +8,32 @@ This chapter lists what changes in the type system: new types, type categories, 
 
 ```
 Type      = TypeName [ TypeArgs ] | TypeLit | "(" Type ")" .
-TypeLit   = /* Go alternatives */ | RefType .
-RefType   = "ref" ( "string" | SliceType ) .
+TypeLit   = /* Go alternatives */ .
 ```
 
 - `move` is **not** a type. It is a mark on a parameter or receiver ([PAR-5](05-parameters.md)).
-- `ref` is a contextual keyword: special only where a type is expected ([LEX-12](02-lexical.md#lex-12)).
-- Predeclared generic types: `Unique[*T]`, `Shared[*T]`, `Weak[*T]` and `Option[T]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)). The argument of `Unique`, `Shared` and `Weak` must be a pointer type `*T`.
+- `View[X]` is an ordinary `TypeName TypeArgs`: a predeclared generic type, not a keyword and not new syntax ([LEX-7](02-lexical.md#predeclared-identifiers), [OWN-V1](04-ownership.md#44-views-d16)). It is a read-only borrow of an `X`. `X` may be any type except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]`: `View[string]`, `View[[]byte]`, `View[User]` and `View[Bytes]` are fine; the others are a compile error that names the allowed forms.
+- Predeclared generic types: `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]` and `View[X]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)). The argument of `Unique`, `Shared` and `Weak` must be a pointer type `*T`.
 - Types imported from C and C++ headers are plain Go++ types ([chapter 14](14-foreign-surface.md)).
 
-**TYP-1.** `ref string` and `string` are different types. `ref []T` and `[]T` are different types. Identity follows [Type identity](https://go.dev/ref/spec#Type_identity): `ref string` is identical only to `ref string`.
+**TYP-1.** `View[T]` and `T` are different types for every `T` (`View[string]` and `string`, `View[[]T]` and `[]T`). Identity follows [Type identity](https://go.dev/ref/spec#Type_identity): `View[string]` is identical only to `View[string]`.
 
 **TYP-2.** *Assignability additions.* `nil` is assignable only to `error`, `any` (the empty interface), `unsafe.Pointer`, slices, maps, channels and `Option` types, not to a pointer kind, a func or an interface with methods, which are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Besides Go's rules, a value `x` is assignable to type `V` if:
-- `x` is a `string` and `V` is `ref string`; or `x` is a `[]T` and `V` is `ref []T` (owned to ref, borrowing, [OWN-V3](04-ownership.md#44-refs-d16));
+- `x` has type `T` (owned or borrowed) and `V` is `View[T]` (owned to view, borrowing, [OWN-V3](04-ownership.md#44-views-d16));
 - `x` is a `Unique[*T]` or `Shared[*T]` stored in a place and `V` is `*T` or `Option[*T]` ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17));
 - `x` has type `T` and `V` is `Option[T]`, or `x` is `nil` and `V` is an `Option` ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an `Option[T]` is assignable to `T` only where it is checked ([OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17));
 - the assignment follows the ownership rules ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): assigning an owning value moves it.
 
-A ref is **not** assignable to an *owning destination*: an owned variable, field, element, result, `move` parameter or composite-literal field. Use `string(v)` or `[]T(v)` to copy. A **borrowed** `string` or `[]T` parameter is not an owning destination: it accepts a ref (or an owned value, or a literal) at zero cost ([PAR-8, PAR-10](05-parameters.md)).
+A view is **not** assignable to an *owning destination*: an owned variable, field, element, result, `move` parameter or composite-literal field. Use `string(v)` or `[]T(v)` to copy. A **borrowed** `string` or `[]T` parameter is not an owning destination: it accepts an owned value or a literal at zero cost, and a `View[string]` for a `string` parameter (immutable bytes), and an interface with no methods such as `any` (boxing keeps the dynamic type `View[T]`). `View[T]` has no methods except the built-in `Clone` (OWN-R6), which makes an owned copy, so it never satisfies an interface with methods (`error`, `fmt.Stringer`): `var s fmt.Stringer = view` is an error. A view, or a part of one, is **not** accepted by any other non-view parameter (a `[]T`, a map, a `*T`, a plain `T`), because that parameter could write through it ([OWN-V1](04-ownership.md#44-views-d16), [PAR-8, PAR-10](05-parameters.md)).
 
 ```go
 func parse(s string) {}          // borrowed parameter
-v := name[:3]                    // ref string
-parse(v)                         // ok: borrowed parameter accepts a ref
+v := name[:3]                    // View[string]
+parse(v)                         // ok: borrowed parameter accepts a view
 var t string = v                 // error: owned variable; write string(v)
 ```
 
-**TYP-3.** *Comparison.* `==` on owning types such as `string` compares by value and borrows both operands. Slices and maps are comparable only with `nil`, as in Go. Funcs are not comparable at all: a func is never nil, so `f == nil` is an error. An interface with methods (other than `error`) is never nil either, so `l == nil` is an error, while `err == nil`, `err != nil` and `x == nil` for an `x any` work as in Go ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). An `Option[T]` is comparable with `nil`, and two `Option[T]` values compare equal when both are nil, or both are set and their values are equal (`Option[*T]` compares by address); this needs a comparable `T`, so a struct with `Option` fields stays comparable and can be a map key (`var a, b Option[int]; a == b`, `map[Option[string]]int`). An `Option[T]` with a non-comparable `T` (`Option[struct{ s []int }]`) compares only with `nil`. Comparing an `Option[T]` with a plain `T` is allowed: `o == 5` means `o == Option[int](5)`. A pointer is not comparable with `nil`, because it is never nil (`p == nil` is an error). Structs and arrays are comparable when their fields are. A `ref string` compares with a `string` by contents, with both operands borrowed.
+**TYP-3.** *Comparison.* `==` on owning types such as `string` compares by value and borrows both operands. Slices and maps are comparable only with `nil`, as in Go. Funcs are not comparable at all: a func is never nil, so `f == nil` is an error. An interface with methods (other than `error`) is never nil either, so `l == nil` is an error, while `err == nil`, `err != nil` and `x == nil` for an `x any` work as in Go ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). An `Option[T]` is comparable with `nil`, and two `Option[T]` values compare equal when both are nil, or both are set and their values are equal (`Option[*T]` compares by address); this needs a comparable `T`, so a struct with `Option` fields stays comparable and can be a map key (`var a, b Option[int]; a == b`, `map[Option[string]]int`). An `Option[T]` with a non-comparable `T` (`Option[struct{ s []int }]`) compares only with `nil`. Comparing an `Option[T]` with a plain `T` is allowed: `o == 5` means `o == Option[int](5)`. A pointer is not comparable with `nil`, because it is never nil (`p == nil` is an error). Structs and arrays are comparable when their fields are. A `View[string]` compares with a `string` by contents, with both operands borrowed.
 
 **TYP-4.** *Category summary.* The category of a type decides how it copies and ends its life. The full table and rules are in [OWN-C1 to OWN-C5](04-ownership.md#41-type-categories-d13).
 
@@ -70,9 +69,9 @@ fmt.Println(f)     // ok: Println does not keep its parameter
 
 **TYP-8.** *Inline values.* Trivial values up to one word (8 bytes: `int`, `float64`, raw pointers) are stored inline in the interface, with no box. Interface values stay 2 words.
 
-**TYP-9.** *Type switches and assertions* use compile-time type descriptors. `case string:` matches a `string` **and** a `ref string`; `case []T:` matches a `[]T` and a `ref []T`. The same holds for the assertions `v.(string)` and `v.([]T)`. The binding is **always** a borrowed read-only variable (see below), whatever the dynamic type, because it may point into someone else's buffer. `case ref string:` is still allowed when the difference matters. It matches only a `ref string`, so it must come before `case string:` to be reached. A `case ref string:` placed after `case string:` is a compile error (an unreachable case, like Go's duplicate cases).
+**TYP-9.** *Type switches and assertions* use compile-time type descriptors. `View[T]` and `T` are **different dynamic types**, for every `T`, `string` and slices included. `case T:` (and `v.(T)`) never matches a stored `View[T]`; only `case View[T]:` (and `v.(View[T])`) does. The binding is **always** a borrowed read-only variable (see below), whatever the dynamic type, because it may point into someone else's buffer; for a stored `View[T]` it is read-only all the way down ([OWN-V1](04-ownership.md#44-views-d16)): `case View[Doc]: d.Tags[0] = x` and `x.(View[Doc]).Tags[0] = x` are errors. Boxing a view into `any` or another interface with no methods is allowed (a `View[T]` has no methods except the built-in `Clone`, so boxing it into `error`, `fmt.Stringer` or any interface with methods is an error); the box keeps the dynamic type `View[T]`, and it may not outlive the view's owner (UB-1 for now, ADR-0021).
 
-Interface `==` compares dynamic types, so a boxed `ref string` is not equal to a boxed `string` with the same bytes (`v == any("x")` is false when `v` holds a `ref string`); a type switch still matches both with `case string:`.
+Interface `==` compares dynamic types, so a boxed `View[string]` is not equal to a boxed `string` with the same bytes (`v == any("x")` is false when `v` holds a `View[string]`). A type switch tells them apart: `case string:` does not match a stored `View[string]`.
 
 The box of an interface value is shared and immutable (TYP-5). So **every name-binding form** of an **owning** dynamic type binds a **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the boxed value:
 - `s := v.(string)`, `s, ok := v.(string)` and `switch x := v.(type)` are all legal for an owning `T`. Go code like `if s, ok := v.(string); ok { use(s) }` works unchanged;
@@ -81,7 +80,7 @@ The box of an interface value is shared and immutable (TYP-5). So **every name-b
 - to get an owned copy, write `owned := s.Clone()`, or `v.(string).Clone()` in a single-value expression. There is no comma-ok `Clone` form and no `move` fix-it, because a shared box cannot be moved from;
 - where ownership is required directly, `v.(T)` used as a place gets the [OWN-R3a](04-ownership.md#42-ownership-rules-d14) error with fix-it `v.(T).Clone()`: a `move` argument, `return`, a send, a field store;
 - when the asserted operand is a **temporary** interface value (`name := ctx.Value(k).(string)`), the temporary lives until the end of the binding's scope (lifetime extension, like a C++ const-reference binding). So it is not "a borrow of a temporary stored" in the sense of [OWN-R8](04-ownership.md#42-ownership-rules-d14);
-- only a binding whose case type is a **Copy** type (numbers and the like) or a shared handle is a copy (retained), not a borrowed variable, and is writable. A `string` or `[]T` binding is never one of those, even when the value inside was a `ref`;
+- only a binding whose case type is a **Copy** type (numbers and the like) or a shared handle is a copy (retained), not a borrowed variable, and is writable. A `string` or `[]T` binding is never one of those, even when the value inside was a view;
 - if `v` is reassigned while the bound variable still borrows the old box, the box may be freed. A write to `v` that the compiler can see while the bound variable is still used afterwards is a compile error (like [RNG-3](08-slices-and-range.md)); writes it cannot see are UB ([UB-2d](16-undefined-behavior.md)).
 
 ```go
@@ -103,8 +102,8 @@ case int:
 
 ```go
 switch v := x.(type) {
-case ref string:  fmt.Println("ref", v)      // only a ref string; first, so it is reachable
-case string:      fmt.Println("string", v)   // a string (a ref string was caught above)
+case View[string]: fmt.Println("view", v)      // only a stored View[string]
+case string:       fmt.Println("string", v)    // only a string, never a stored View[string]
 }
 ```
 
@@ -122,7 +121,8 @@ case string:      fmt.Println("string", v)   // a string (a ref string was caugh
 |---|---|---|
 | `int`, `*T`, `Unique[*T]` | 1 | `int` is 64-bit on 64-bit targets |
 | `string` | 3 | `{ptr, len, cap}` (always the global allocator) |
-| `ref string`, `ref []T` | 2 | `{ptr, len}` |
+| `View[T]` where the underlying type of `T` is `string` or a slice (`View[string]`, `View[[]T]`, `View[Bytes]`, `View[S]` for `type S string`) | 2 | `{ptr, len}` |
+| `View[T]` for every other `T` (map, chan, func, interface, `Option` and structs included) | 1 | `{ptr}` |
 | `[]T` | 4 | `{ptr, len, cap, allocator}` |
 | `map[K]V` | 1 | pointer to the runtime object; the header stores its allocator |
 | interface | 2 | `{itab*, data}` |

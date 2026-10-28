@@ -14,7 +14,7 @@ Syntax: no change.
 - **owned temporaries** (call results, conversions, composite literals) are moved in;
 - **owned locals** are moved in (`go fetch(u)` with a local `u` moves `u`; later use of `u` is an error);
 - **owned places** (a field, element, map entry, package variable or pointer target), **borrowed variables** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) and `&` range variables ([RNG-1a](08-slices-and-range.md)) are a **compile error**: a place read is only a borrow ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)) and a borrow cannot be handed to a goroutine that may outlive it. Fix-its: `x.Clone()`; `move(x)` for owned places and `&` range variables (never for a borrowed variable, [OWN-R3b](04-ownership.md#42-ownership-rules-d14)); for a borrowed parameter also making it `move`; and a closure ([CON-3](12-concurrency.md)) only for owned places of locals, because a closure cannot capture a borrowed variable ([CLO-3a](11-closures.md));
-- a **raw pointer or a ref** into a local (or into the target of a local `Unique`) is a compile error ([CON-2](12-concurrency.md)).
+- a **raw pointer, a view or a borrowed slice** into a local (or into the target of a local `Unique`) is a compile error ([CON-2](12-concurrency.md)).
 
 ```go
 for _, u := range users {   // u borrows the element
@@ -31,7 +31,7 @@ if s, ok := v.(string); ok {
 
 The case list above applies D1.4 rule 3a and rule 8 to `go`, the same way [PAN-3](09-errors-and-panics.md) does for `defer`. The one difference: a `defer` runs before its function returns, so it may *borrow* a variable that lives that long; a goroutine can outlive the function, so `go` never borrows an owned place or a borrowed variable. `go f(x)` moves owned locals. Fields and borrowed variables need `x.Clone()`, or `move(...)` for owned fields and `&` range variables (never for a borrowed variable).
 
-**CON-2.** *No borrows of locals across `go`.* A raw pointer or a ref into a local, or into the target of a local `Unique`, passed to `go` is a **compile error** outside `unsafe`. Example: `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells ([CON-3](#121-rules)).
+**CON-2.** *No borrows of locals across `go`.* A raw pointer, a view or a borrowed slice into a local, or into the target of a local `Unique`, passed to `go` is a **compile error** outside `unsafe`. Example: `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells ([CON-3](#121-rules)).
 
 **CON-3.** *Closures with `go`.* A closure used with `go` keeps its captured variables in shared cells ([CLO-3](11-closures.md)). The goroutine and the spawner see the same variables, as in Go. A **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) cannot be captured this way ([CLO-3a](11-closures.md)): `go func(){ fetch(u) }()` or `go func(){ log(s) }()` with such a `u` or `s` is a compile error. Fix-its never reuse the name ([RNG-8](08-slices-and-range.md)): `mine := u.Clone()` first, or `go func(){ fetch(mine) }()`, or `range move(users)` so that `u` is owned.
 

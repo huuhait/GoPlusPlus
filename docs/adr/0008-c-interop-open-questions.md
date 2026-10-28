@@ -1,6 +1,6 @@
 # ADR-0008: C interop open questions (function pointer types, constness, type macros)
 
-- **Status:** accepted
+- **Status:** accepted (changed by ADR-0020: the `ref` type is now `View[…]`, `@Ref` is `@View`, `ref` is no longer a contextual word, and `case T:` no longer matches a stored view)
 - **Date:** 2026-10-27
 - **Plan reference:** P07 Q1, Q2, Q3 (task P07.17); P07 D7.4, D7.5; P08 Q2 (merged into P07 Q2).
 

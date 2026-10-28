@@ -36,7 +36,7 @@
   - The hash seed is random per process, and iteration starts at a random position, so iteration order is unspecified as in Go.
   - Keys and values are dropped on delete, clear and destroy. Inside a `range`, the entry the loop is on is dropped at the end of that iteration, so `k` and `v` stay valid (P01 D1.21).
   - The compiler generates hash and equality functions per key type. An `Option[T]` key (comparable when `T` is, ADR-0018 amendment) hashes as one fixed value when nil and as the hash of `T` when set; the "is set" flag and padding bytes are not hashed (`Option` of a pointer kind, a func or an interface with methods has no flag: nil is the value's own nil bit pattern, ADR-0018 amendment point 3), and equality is "both nil, or both set and `T` equal".
-  - Lookups accept a `ref` key, so `counts[w]` with `w ref string` doesn't allocate (P01 D1.6).
+  - Lookups accept a view key, so `counts[w]` with `w View[string]` doesn't allocate (P01 D1.6).
   - Maps count their active iterators. Inserting a new key while an iterator is active **always** panics with "map insert during iteration", whether or not the table has room (P01 D1.21, ADR-0006). Writing an existing key is allowed.
 - **`Unique[*T]`** (`new_unique`): allocated on creation; the target is dropped and freed on destruction.
 - **`Shared[*T]`** (`new_shared`): one allocation holding both the control block (atomic strong and weak counts) and the value.

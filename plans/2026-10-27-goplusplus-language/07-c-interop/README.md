@@ -69,7 +69,7 @@
 | enum | named integer type + constants |
 | typedef | alias in the header's package: `zlib.uLong` is `uint64` on Linux |
 | function pointer | `Option[ffi.Func[func(…) R]]` (`ffi.Func[…]` when non-null, as for `T*`): no environment (Q1, ADR-0008); a C typedef name such as `c.cmp_fn` works too |
-| flexible array member | accessor returning a `ref []T` |
+| flexible array member | accessor returning a `View[[]T]` |
 
 There are no C-specific types such as `C.int`: every C type is a plain Go++ type, so values pass without conversions. Go's rule for numeric conversions still applies (`uint32(len(data))`). The few ABI-only types live in `ffi`, a small std package that most code never imports.
 
@@ -90,19 +90,19 @@ Several C types map to one Go++ type (on Linux, `long` and `long long` both beco
 **D7.7 — Calls, strings and memory: no conversions in human code.**
 - Calls are direct and use the exact C ABI (D4.4). Variadic functions get C's default argument promotions.
 - **Owned strings to C.** Owned strings are kept NUL-terminated (capacity len+1). So string literals and owned strings pass to a `const char*` parameter with no copy.
-- **Refs and borrowed parameters to C.** A `ref string`, a substring or a borrowed `string` parameter (which may be a substring) passes as a temporary NUL-terminated copy that lives for the call (on the stack when short).
+- **Views and borrowed parameters to C.** A `View[string]`, a substring or a borrowed `string` parameter (which may be a substring) passes as a temporary NUL-terminated copy that lives for the call (on the stack when short).
 - **Inner NUL.** A string with an inner NUL panics when passed to C. For a constant string, it is a compile error.
-- **Slices to C.** A `[]T` or `ref []T` argument passes to a `T*`, `const T*` or `void*` parameter as its data pointer: `zlib.crc32(0, data, uint32(len(data)))`.
+- **Slices to C.** A `[]T` (owned, or borrowed from slicing) argument passes to a `T*`, `const T*` or `void*` parameter as its data pointer; a `View[[]T]` passes only to a `const T*` or `const void*` parameter (a view is read-only): `zlib.crc32(0, data, uint32(len(data)))`.
   - An empty slice passes a valid non-NULL pointer. Only a literal `nil` passes NULL.
   - *Why:* zlib's `crc32` returns its initial value when given NULL, so an empty slice must not become NULL.
 - **Variadic arguments.** Strings pass as `const char*` (as above), slices pass as their data pointer, and other values get C's default promotions.
-- **`std::string_view`.** A `ref string` maps directly to a `std::string_view` parameter.
+- **`std::string_view`.** A `View[string]` maps directly to a `std::string_view` parameter.
 - **Vet.** `gopp vet` has a list of C functions that keep pointers after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). It warns when one of them gets a Go++ string or slice.
 - **errno** works as in cgo. In a two-value assignment, `n, err := unistd.read(fd, buf, uint64(len(buf)))` clears errno before the call and reads it right after, on the same thread, as an `error`.
   - `!` works on it: `n := unistd.read!(…)`.
   - Drop glue preserves errno.
 - **What stays explicit.** Reading a string from C, and handing C a string it will keep, stay explicit, because a `char*` doesn't say how long it lives:
-  - `ffi.String(p) ref string` wraps a C string without copying; its lifetime is unchecked.
+  - `ffi.String(p) View[string]` wraps a C string without copying; its lifetime is unchecked.
   - `ffi.CString(s)` returns an owned copy allocated with `malloc`, for C APIs that keep the pointer. It is freed on drop, or handed over to C with `.Release()`.
 
 **D7.8 — Callbacks and panics across C.**

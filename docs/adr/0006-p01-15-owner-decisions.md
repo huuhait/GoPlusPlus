@@ -1,6 +1,6 @@
 # ADR-0006: P01.15 owner decisions that changed the plan
 
-- **Status:** accepted
+- **Status:** accepted (changed by ADR-0020: the `ref` type is now `View[…]`, `@Ref` is `@View`, `ref` is no longer a contextual word, and `case T:` no longer matches a stored view)
 - **Date:** 2026-10-27
 - **Plan reference:** P01 D1.2, D1.4, D1.5, D1.6, D1.7, D1.8, D1.9, D1.10, D1.11, D1.12, D1.14, D1.15, D1.21. Also P05 D5.4, P07 D7.3 and D7.9, P08 D8.1, D8.3 and D8.6, P10 D10.2, P04 D4.6 (D17), P09 (D22, D23) and P12 D12.5 and D12.7 (D22).
 - **Related:** ADR-0003 (memory model) and ADR-0004 (`!`) were updated to the final text. The full list of decisions D1 to D25, each with an example, is in `plans/2026-10-27-goplusplus-language/01-language-spec/STATE.md` ("P01.15 owner decisions").

@@ -1,6 +1,6 @@
 # ADR-0003: Memory model: ownership without a GC or borrow checker
 
-- **Status:** accepted. Updated to the final text in P01.15 (the rules are in `docs/spec/`; the owner decisions that changed the plan are in ADR-0006).
+- **Status:** accepted. Updated to the final text in P01.15 (the rules are in `docs/spec/`; the owner decisions that changed the plan are in ADR-0006). (changed by ADR-0020: the `ref` type is now `View[…]`, `@Ref` is `@View`, `ref` is no longer a contextual word, and `case T:` no longer matches a stored view)
 - **Date:** 2026-10-27
 - **Plan reference:** P01 D1.3 to D1.7, D1.21
 

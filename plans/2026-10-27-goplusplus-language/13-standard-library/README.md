@@ -9,8 +9,10 @@
 
 **D13.2 — Ownership conventions in APIs** (written up in `docs/std-conventions.md`).
 - **Parameters borrow.**
+- **Functions that only read a slice or a string take `View[…]` parameters** (for example `View[[]byte]`), so views can be passed to them: a `View[[]T]` cannot go to a writable `[]T` parameter (ADR-0020). Owned values pass to `[]T` and to `View[…]` parameters implicitly at a call.
+- **`fmt` and other std code that prints or inspects values handle `View[...]` cases explicitly:** `View[T]` and `T` are different dynamic types (TYP-9), so a type switch needs a `case View[string]:` next to `case string:`. `fmt` prints a boxed view's contents directly and never calls the underlying type's `String` or `Error` methods.
 - **Results that allocate are owned.**
-- **Results that alias an input are refs, and the signature says so.** Example: `strings.Fields(s string) []ref string` returns an owned slice of refs into `s`.
+- **Results that alias an input are views, and the signature says so.** Example: `strings.Fields(s string) []View[string]` returns an owned slice of views into `s`.
 - **Zero-allocation paths append to a caller buffer** (`strconv.AppendInt`, `fmt.Appendf`), as Go already does. `Append*` functions take `move dst []T` (P01 D1.20), so `buf = strconv.AppendInt(buf, n, 10)` is written as in Go.
 - **Functions that can fail are declared with `!`** (e.g. `func Open!(name string) Unique[*File]`, which returns `(Unique[*File], error)`), so callers choose between `!` and Go-style handling. Std never panics on ordinary errors.
 - **Errors work like Go** (P01 D1.19). Sentinel errors are package-level `errors.New` values, compared with `==` (`err == io.EOF`).
@@ -73,7 +75,7 @@
 
 ## Risks
 
-- **Go APIs that assume a GC** → the explicit redesign list in D13.6, and refs where Go returned aliasing slices.
+- **Go APIs that assume a GC** → the explicit redesign list in D13.6, and views where Go returned aliasing slices.
 - **Scope creep** → strict tiers; T3 stays out of v1.
 
 ## Open questions

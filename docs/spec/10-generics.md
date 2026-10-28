@@ -20,6 +20,8 @@ Only one grammar change: **methods may have type parameters** (generic methods).
 - `Option[T]` satisfies `comparable` when `T` does (`eq[Option[int]](a, b)`); `Option[struct{ s []int }]` does not.
 - A `Copy` type is also `Clone` (its `Clone()` is a plain copy), unless its method set already has a `Clone` with another signature ([OWN-R6](04-ownership.md#42-ownership-rules-d14)); then it is `Copy` but not `Clone`. Numbers, bools and the other built-in trivial types are always both. A generic body that needs both writes `[T interface{ Copy; Clone }]`. A `[T Copy]` body may not call `.Clone()` or pass `T` to a `[U Clone]` function, because GEN-5 checks the body once.
 
+**GEN-2a.** *`View[T]` in generic code.* `View[T]` with a type parameter `T` is allowed, and `View[T]` is `Copy` and trivial for every `T` ([OWN-C1](04-ownership.md#41-type-categories-d13)). An instance where `T` is a pointer kind (`*U`, `Unique[*U]`, `Shared[*U]`, `Weak[*U]`), `unsafe.Pointer` or a `View` is a compile error, checked per instance (P04.08), as for `Option[T]` with a nilable `T` ([OWN-V1](04-ownership.md#44-views-d16)).
+
 **GEN-3.** *Copying a `T`.* A generic body may copy a value of type `T` only if `T` is `Copy`. Otherwise it may only:
 - **borrow** it (a borrowed parameter, a read, a comparison);
 - **move** it (a `move` parameter, `move(x)`);

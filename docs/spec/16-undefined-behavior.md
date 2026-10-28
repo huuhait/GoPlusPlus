@@ -28,24 +28,24 @@ Syntax: none.
 
 ## 16.2 Undefined behavior
 
-**UB-1.** *Dangling refs and raw pointers.* Using a `ref string`, `ref []T` or `*T` after its owner is destroyed or has been changed so the memory moved. This includes:
-- a ref or pointer stored past the end of the owner's block;
-- a ref into a slice element after `append` reallocated the slice;
-- a ref into a `string` after the string was reassigned, appended to or dropped;
-- a ref into a map key after the map grew;
+**UB-1.** *Dangling views and raw pointers.* Using a `View[…]`, a borrowed `[]T` made by slicing, or a `*T` after its owner is destroyed or has been changed so the memory moved. This includes:
+- a view or pointer stored past the end of the owner's block, including a view boxed into an interface or `any` that outlives the view's owner (ADR-0021 will add the compile-time rule);
+- a view into a slice element after `append` reallocated the slice;
+- a view into a `string` after the string was reassigned, appended to or dropped;
+- a view into a map key after the map grew;
 - a pointer to a `Unique[*T]` target after the `Unique` was moved from, reassigned or dropped;
-- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a `ref` into a local ([OWN-V7](04-ownership.md#44-refs-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. Use after move includes a use through a pointer or ref taken before the move (`p := &x.In; take(move(x)); p.P.V`) when the pointer was taken in the same function; when it comes from elsewhere it is UB-8. A ref or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Refs may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-refs-d16)); less obvious cases, such as a ref that comes out of a call, are **not** caught.
+- the compiler catches only the closed list of D1.4 rule 8: returning `&local`, returning a view into a local ([OWN-V7](04-ownership.md#44-views-d16)), storing a borrow of a temporary, a `go` that borrows something that dies first, a `defer` that borrows something that dies before the function returns, and use after move. Use after move includes a use through a pointer or view taken before the move (`p := &x.In; take(move(x)); p.P.V`) when the pointer was taken in the same function; when it comes from elsewhere it is UB-8. A view or address written directly in a `defer` (`&x`) extends `x` ([PAN-3](09-errors-and-panics.md)), so it is not an error. A pointer stored earlier does not extend its target, and that case is UB-1. Views may be stored and returned at the programmer's risk ([OWN-V5](04-ownership.md#44-views-d16)); less obvious cases, such as a view that comes out of a call, are **not** caught.
 
 ```go
-func trimmed(s string) ref string { return s[1:] }   // ok: a ref into a borrowed parameter
+func trimmed(s string) View[string] { return s[1:] }   // ok: a view into a borrowed parameter
 
-func bad(name string) ref string {
+func bad(name string) View[string] {
     s := "abc" + name
-    return trimmed(s)       // NOT caught: the ref outlives s. UB when the result is used
+    return trimmed(s)       // NOT caught: the view outlives s. UB when the result is used
 }
-// func direct(name string) ref string { s := "abc" + name; return s[:2] }   // compile error (OWN-V7)
+// func direct(name string) View[string] { s := "abc" + name; return s[:2] }   // compile error (OWN-V7)
 
-var keep ref string
+var keep View[string]
 func worse(items []string) {
     t := strings.ToUpper(items[0])
     keep = t[:1]            // NOT caught: keep outlives t. UB when used after worse returns
@@ -83,7 +83,7 @@ The same holds for a range over an array with owning elements (the range variabl
 
 Also UB-2a, when not visible to the compiler: `m[k] = x` on the entry the loop is on (the old value that `v` borrows is dropped) and `copy(dst, …)` into the ranged slice, followed by a use of the range variable.
 
-Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value; for a type with no zero value, reading `v` after it is a compile error, [RNG-3](08-slices-and-range.md)). UB: keeping a ref or pointer into any removed entry past its iteration or past the removal.
+Not UB: `delete(m, k)`, `move(m[k])` and `v, ok := move(m[k])` of the entry the loop is on (the key, and for `delete` the value, are dropped at the end of the iteration; after `move(m[k])` a borrowed `v` reads the zero value, not the moved-out value; for a type with no zero value, reading `v` after it is a compile error, [RNG-3](08-slices-and-range.md)). UB: keeping a view or pointer into any removed entry past its iteration or past the removal.
 
 **UB-2b.** *Shared handle released through another path.* A shared-handle parameter is passed without a retain ([PAR-7](05-parameters.md)). If the callee drops the caller's last reference through another path and then uses the parameter, the value is freed. Not caught.
 
@@ -117,12 +117,12 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 **UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory, or converting a nil `unsafe.Pointer` to a `*T` (pointers are never nil; convert to `Option[*T]` instead).
 
-**UB-8.** *Pinned values.* Using a pointer or ref into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case. A use through a pointer taken in the same function is a compile error ([OWN-R8](04-ownership.md#42-ownership-rules-d14), P04.09), so only a pointer that comes from elsewhere (a call, a field) is UB.
+**UB-8.** *Pinned values.* Using a pointer or view into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); `gopp vet` reports the case where the address was stored, but not every case. A use through a pointer taken in the same function is a compile error ([OWN-R8](04-ownership.md#42-ownership-rules-d14), P04.09), so only a pointer that comes from elsewhere (a call, a field) is UB.
 
 **UB-9.** *C interop lifetimes.*
 - Passing a Go++ string or slice to a C function that keeps the pointer after the call (`openlog`, `putenv`, `sqlite3_bind_text` with `SQLITE_STATIC`). `gopp vet` has a list of known functions.
-- Using the result of `ffi.String(p)` (a ref over C memory) after the C memory is freed.
-- Passing a `ref string` temporary copy to a callee that keeps the pointer (FOR-6).
+- Using the result of `ffi.String(p)` (a view over C memory) after the C memory is freed.
+- Passing a `View[string]` temporary copy to a callee that keeps the pointer (FOR-6).
 - C or C++ code that writes NULL into a Go++ pointer (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, all never nil), a func or an interface with methods other than `error` (never nil too), or a never-nil `@Required` field (or a required field of a `@Strict` struct), or zero bytes over a struct with no zero value ([TYP-15](03-types.md)), for example through a pointer passed to C. Go++ code dereferences pointers and calls funcs and interface methods with no nil check (ADR-0018); this, and `unsafe` (UB-7), are the only ways a nil one can reach safe code. A C pointer that may be NULL imports as `Option[*T]`, so this needs a lie in a header (`_Nonnull` on a pointer that can be NULL) or a write through memory.
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
@@ -151,17 +151,17 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 |---|---|---|---|---|
 | use after move | error | | | |
 | returning `&local` | error | | | |
-| returning a `ref` into a local of the same function ([OWN-V7](04-ownership.md#44-refs-d16)); a ref that comes out of a call is not caught (UB-1) | error | | yes, for the uncaught cases | |
+| returning a view into a local of the same function ([OWN-V7](04-ownership.md#44-views-d16)); a view that comes out of a call is not caught (UB-1) | error | | yes, for the uncaught cases | |
 | `go f(&local)` | error | | | |
 | `defer` borrowing a dying variable | error | | | |
-| ref/pointer kept past owner (UB-1) | not caught (only the D1.4 rule 8 list) | some | yes | |
+| view/pointer kept past owner (UB-1) | not caught (only the D1.4 rule 8 list) | some | yes | |
 | borrowed parameter freed by callee (UB-2) | | | yes | |
 | shared handle released by callee through another path (UB-2b) | | | yes | |
 | hidden-alias write to a borrowed `defer` argument (UB-2c) | | | only when the write frees memory | |
 | `v` reassigned while a type-assertion binding still borrows its box, write not visible (UB-2d; a visible write is a compile error) | | | yes | |
 | ranged slice or owned string reallocated by a call in the loop body (UB-2e; visible cases are compile errors) | | | yes | |
 | borrowed range variable (slice, array or map) used after its element was written (UB-2a; a visible write then use is a compile error) | write and use both visible | | yes | |
-| ref/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero bytes respectively) | | | yes | |
+| view/pointer into a removed map entry, or `m[k] = x` / `copy` over a borrowed element (UB-2a; removing the current entry with `delete` or `move(m[k])` is defined; a borrowed `v` then reads the old value or the zero bytes respectively) | | | yes | |
 | data race (UB-3) | | | | yes |
 | `longjmp` (UB-4) | | | maybe | |
 | arena reset with live data (UB-5) | | | yes | |

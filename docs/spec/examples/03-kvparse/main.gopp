@@ -6,20 +6,20 @@ import (
 	"strconv"
 )
 
-// Entry points into the source buffer. @Ref tells gopp vet that the
-// ref fields are on purpose.
-@Ref
+// Entry points into the source buffer. @View allows the view fields
+// (without it they are a compile error).
+@View
 type Entry struct {
-	Key   ref string
-	Value ref string
+	Key   View[string]
+	Value View[string]
 	Line  int
 }
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\r' }
 
-// trim returns a ref into s without leading and trailing spaces.
-// A borrowed string parameter can be re-pointed (it is a local ref).
-func trim(s string) ref string {
+// trim returns a view into s without leading and trailing spaces.
+// A borrowed string parameter can be re-pointed (it is a local view).
+func trim(s string) View[string] {
 	for len(s) > 0 && isSpace(s[0]) {
 		s = s[1:]
 	}
@@ -30,7 +30,7 @@ func trim(s string) ref string {
 }
 
 // cut splits s around the first sep. No allocation.
-func cut(s string, sep byte) (before, after ref string, found bool) {
+func cut(s string, sep byte) (before, after View[string], found bool) {
 	for i := 0; i < len(s); i++ {
 		if s[i] == sep {
 			return s[:i], s[i+1:], true
@@ -44,9 +44,9 @@ func cut(s string, sep byte) (before, after ref string, found bool) {
 func parse!(src string) []Entry {
 	var out []Entry
 	line := 0
-	rest := src[:] // ref string
+	rest := src[:] // View[string]
 	for len(rest) > 0 {
-		var text ref string
+		var text View[string]
 		text, rest, _ = cut(rest, '\n')
 		line++
 		text = trim(text)
@@ -62,10 +62,10 @@ func parse!(src string) []Entry {
 	return out
 }
 
-func lookup(entries []Entry, key string) (ref string, bool) {
+func lookup(entries []Entry, key string) (View[string], bool) {
 	for i := range entries {
 		if entries[i].Key == key {
-			return entries[i].Value, true // copying a ref out of an element is a trivial copy
+			return entries[i].Value, true // copying a view out of an element is a trivial copy
 		}
 	}
 	return "", false
@@ -79,7 +79,7 @@ func main() {
 		fmt.Printf("%d: %s = %s\n", e.Line, e.Key, e.Value)
 	}
 	if v, ok := lookup(entries, "port"); ok {
-		port := strconv.Atoi!(v) // a ref passes to a string parameter at zero cost
+		port := strconv.Atoi!(v) // a view passes to a string parameter at zero cost
 		fmt.Println("port + 1 =", port+1)
 	}
 	_, err := parse("name=ok\nbroken line\n") // the Go form still works

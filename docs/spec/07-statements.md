@@ -14,7 +14,7 @@ t := "two"
 s = t            // "one" is dropped; t moved into s; t unusable until assigned
 ```
 
-**STM-2.** *Short variable declarations.* `x := e` declares an owner. If `e` is a place that is not a local, the ownership rules apply ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)): `x := p.name` is an error, `x := p.name.Clone()` is fine, `x := p.name[:2]` is a ref.
+**STM-2.** *Short variable declarations.* `x := e` declares an owner. If `e` is a place that is not a local, the ownership rules apply ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)): `x := p.name` is an error, `x := p.name.Clone()` is fine, `x := p.name[:2]` is a view.
 
 **STM-3.** *Blocks end lives.* When control leaves a block by any path (fall-through, `break`, `continue`, `goto`, `return`, panic), the block's locals are destroyed in reverse declaration order ([OWN-R1, OWN-R2](04-ownership.md#42-ownership-rules-d14)), except locals kept alive by an executed `defer` ([PAN-3](09-errors-and-panics.md)), which are destroyed at function exit ([PAN-4](09-errors-and-panics.md)).
 

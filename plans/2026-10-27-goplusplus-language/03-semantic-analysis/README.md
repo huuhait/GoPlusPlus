@@ -29,8 +29,8 @@
   - `move` parameter mode, `move ...T` for owning variadics, and read-only parameter bindings;
   - range forms: read-only borrowed variables, the `&d` alias form, and the loop-variable redeclaration error (D1.21);
   - `func f!() error` (a `!` function declaring `error` as its last result) is an error (D1.8);
-  - returning a `ref` into a local of the same function (D1.4 rule 8, D1.6);
-  - owned → ref and `Unique[*T]`/`Shared[*T]` → `*T` conversions;
+  - returning a view into a local of the same function (D1.4 rule 8, D1.6);
+  - owned → view and `Unique[*T]`/`Shared[*T]` → `*T` conversions;
   - borrowing a temporary into a longer-lived place;
   - `move`/`clone` typing and the `append` move rule;
   - `@Strict` structs and `@Option` fields (D1.4 rule 11, ADR-0019, spec TYP-15a): the effective required bit of each field, the attribute placement and combination errors, the `@Strict`-without-required-field vet warning, and the required bits in struct conversions and in serialization; task P03.20;
@@ -64,7 +64,7 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 
 - `compiler/lib/Sema`: scopes, objects, types, the checker, constant evaluation, generic instantiation validation, and the type-level ownership rules.
 - `gopp check` (parse + type-check; the GIR checks are added in P04.09).
-- `gopp vet` v0 with lints for: ref-typed struct fields without `@Ref`; `drop` methods that may not handle the zero value (heuristic); a `!` that would panic outside package `main`.
+- `gopp vet` v0 with lints for: `drop` methods that may not handle the zero value (heuristic); a `!` that would panic outside package `main`.
 - A conformance suite: a ported types2 subset, plus Go++ rule-table tests (one positive and one negative test per ownership rule).
 
 ## Exit criteria
@@ -77,7 +77,7 @@ In P03, `gopp check` runs the type-level checks. P04.09 adds the flow-sensitive 
 ## Risks
 
 - **Generic inference corner cases** → port types2's algorithm faithfully rather than redesign it.
-- **Interactions between ownership rules** (generics × refs × interfaces) → an exhaustive rule table with positive and negative tests, and a feedback loop into the P01 spec.
+- **Interactions between ownership rules** (generics × views × interfaces) → an exhaustive rule table with positive and negative tests, and a feedback loop into the P01 spec.
 
 **D3.11 — Numbered error codes with a strict promise** (owner decision; decides Q1).
 - Every compiler error shows a short numbered code, Rust style: `error[E0042]: name used after move`.

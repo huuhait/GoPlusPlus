@@ -43,7 +43,7 @@
 
 - **Semicolon insertion:** Go's rule, unchanged (D1.2).
 - **Disambiguation:**
-  - `macro` is the only new reserved keyword. `ref` and `move` are contextual (P01 LEX-12): `ref` is special only where a type is expected, so `ref := "main"` is a normal statement. `Unique[*T]`, `Shared[*T]` and `Weak[*T]` are ordinary generic types.
+  - `macro` is the only new reserved keyword. `move` is contextual (P01 LEX-12). `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]` and `View[X]` are ordinary generic types, so the parser needs no special case for them; `ref` is an ordinary identifier (ADR-0020).
   - In a parameter list, `move` is a mark before the parameter name (`move v T`, `move parts ...T`), told apart from a parameter named `move` (`move T`) by scanning to the end of the type, to tell `move v T` from a parameter named `move` of type T (for example `move G[K]` vs `move s [K]E`). `move(x)` is an ordinary call.
   - In a range clause, `&` may mark the value variable (`for _, &d := range xs`, P01 D1.21).
   - A struct field may carry attributes after its type and before the tag (``Name string @JSON("name") `db:"name"` ``, P01 D1.14).

@@ -44,7 +44,7 @@
 **D12.6 — The `go` statement.**
 - Arguments are evaluated, then moved or copied into the new goroutine's frame.
 - A closure used with `go` keeps its captured variables in shared cells (P01 D1.11). So the goroutine and the spawner see the same variables, as in Go.
-- `go f(x)` with a raw pointer or a ref into a local is a compile error (P01 D1.13).
+- `go f(x)` with a raw pointer or a view into a local is a compile error (P01 D1.13).
 
 **D12.7 — `sync` and atomics.**
 - `sync.Mutex`, `RWMutex`, `WaitGroup`, `Once` and `Cond` keep Go's API.

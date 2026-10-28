@@ -34,7 +34,7 @@ func fill(xs []int, m map[string]int, d *Doc, doc2 Doc) {
 }
 ```
 
-**PAR-2.** *Re-pointing refs.* A borrowed `string` or `[]T` parameter is a local ref, so it can be re-pointed (`p = p[n:]`). It still cannot be appended to. (The same exception applies to other borrowed `string`/`[]T` variables, see [OWN-R3b](04-ownership.md#42-ownership-rules-d14).)
+**PAR-2.** *Re-pointing borrows.* A borrowed `string` or `[]T` parameter is a local borrow, so it can be re-pointed (`p = p[n:]`). It still cannot be appended to. (The same exception applies to other borrowed `string`/`[]T` variables, see [OWN-R3b](04-ownership.md#42-ownership-rules-d14).)
 
 ```go
 func skipSpaces(s string) int {
@@ -81,14 +81,14 @@ var f Finisher = b      // error (with interface Finisher{ Finish() string }): F
 - A local passed to a borrowed parameter is **not** moved.
 - A local passed to a `move` parameter is moved ([OWN-R3](04-ownership.md#42-ownership-rules-d14)).
 - A temporary passed to a `move` parameter moves into it. A temporary passed to a borrowed parameter lives until the end of the full statement.
-- A ref or a string literal can be passed to a `string` parameter, and a ref to a `[]T` parameter, at zero cost (see ABI).
+- A `View[string]` or a string literal can be passed to a `string` parameter at zero cost (see ABI). A view, or a part of one that is not a copy-out value, cannot be passed to any other non-view parameter: a `[]T`, a map, a `*T`, a struct containing these, or a plain `T` (a plain `T` parameter is read-only only at the top level, PAR-1, so it could write `u.Tags[0]`). A value-receiver method call on a view part and a method value are errors too ([OWN-V1](04-ownership.md#44-views-d16)). Two exceptions: a `string` parameter (immutable bytes), and an `any` (or other method-less interface) parameter, where boxing a view is allowed and the box keeps the dynamic type `View[T]` (`fmt.Println(w)`); the box may not outlive the view's owner (UB-1, ADR-0021). A `View[T]` has no methods except the built-in `Clone`, so passing a view to an `error`, `fmt.Stringer` or other interface-with-methods parameter is an error. Write any other parameter as `View[T]`. This is conservative: P04.09 may relax it with a "writes this parameter" bit.
 
-**PAR-9.** *Results are owned.* A function result of owning type is a new owner. `return a` of a borrowed parameter needs `a.Clone()` or a `move` parameter ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). A result of type `ref string` or `ref []T` may point into a *borrowed* parameter (programmer's risk, [OWN-V5](04-ownership.md#44-refs-d16)). A ref into a local, or into a `move` parameter that dies at the return, is a compile error ([OWN-V7](04-ownership.md#44-refs-d16)).
+**PAR-9.** *Results are owned.* A function result of owning type is a new owner. `return a` of a borrowed parameter needs `a.Clone()` or a `move` parameter ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). A result of type `View[…]` may point into a *borrowed* parameter (programmer's risk, [OWN-V5](04-ownership.md#44-views-d16)). A view into a local, or into a `move` parameter that dies at the return, is a compile error ([OWN-V7](04-ownership.md#44-views-d16)). A function cannot return a writable borrowed part of a slice (`return xs[1:3]` with a `[]T` result is an error: a result of owning type is a new owner). To return a part without copying, the result type is `View[…]`, which is read-only.
 
 **PAR-10.** *ABI (informative here, normative in P04 D4.4).*
 - Trivial parameters follow the C ABI (copies).
 - Borrowed owning parameters pass by hidden pointer. For a map, the pointer points at the owner's map header. This is one reason: the first write to a nil borrowed map creates the map in the caller's variable ([PAR-1](#52-rules)).
-- `string` and `[]T` pass as `(ptr, len)`, so callers can pass owned values, refs and literals at zero cost.
+- `string` and `[]T` pass as `(ptr, len)`, so callers can pass owned values, borrowed slices and literals at zero cost (and views, where the rules allow). A `View[…]` parameter passes the same way.
 - A `move` `[]T` parameter passes all 4 words ([SLC-4](08-slices-and-range.md)).
 - Go++ to Go++ calls may use the internal convention.
 

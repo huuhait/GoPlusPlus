@@ -25,16 +25,16 @@ The expression grammar of Go is unchanged except for two additions, each defined
 - `move` and `clone` are not first-class values: they can only be called, not stored or passed (as `len` in Go).
 - `x.Clone()` is the form used in examples. Every cloneable type has the method, built-in types too ([OWN-R6](04-ownership.md#42-ownership-rules-d14)). `move` has no method form.
 - `move(m[k])` removes the entry; `v, ok := move(m[k])` and `v, ok := clone(m[k])` are the comma-ok forms ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). For a value type with no zero value only the comma-ok forms may produce a value ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
-- `min`/`max` on refs return a ref (EXP-5).
+- `min`/`max` on views return a view (EXP-5).
 - Go's `new` does not exist ([LEX-8](02-lexical.md)).
 
 **EXP-2.** *Moving expressions.* An expression that gives ownership of a value (a call result, a conversion that copies, a composite literal, a `move(…)` or `x.Clone()`) produces an owned **temporary**. A temporary used where ownership is needed moves; otherwise it is destroyed at the end of the full statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14)).
 
 - **Parts of a temporary.** A field or element of an owned temporary is also a temporary. It moves out, and the rest of the temporary is destroyed at the end of the full statement. This holds for a struct field, an array element, an element of an owned slice or map, and a part reached through a `Unique[*T]` the temporary owns.
-- **Exceptions.** Through a raw pointer, a `Shared[*T]` or a ref, a part is a place in someone else's storage. To take it, write `x.Clone()` or `move(x)` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). A ref into a part of a `Shared[*T]` temporary is still a ref into a temporary: the handle may release the last strong reference at the end of the statement. Storing such a ref longer than the statement is an error ([OWN-V6](04-ownership.md#44-refs-d16)).
+- **Exceptions.** Through a raw pointer, a `Shared[*T]` or a view, a part is a place in someone else's storage. To take it, write `x.Clone()` or `move(x)` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). A view into a part of a `Shared[*T]` temporary is still a view into a temporary: the handle may release the last strong reference at the end of the statement. Storing such a view longer than the statement is an error ([OWN-V6](04-ownership.md#44-views-d16)).
 - **Conversions that share.** These are not new values. They are checked as their operand, so `string(p.Name)` needs `p.Name.Clone()` or `move(p.Name)`. Only conversions between owning types can share a buffer; a number or another trivial value shares nothing (a `@Pinned` value is never copied, [OWN-R10](04-ownership.md#42-ownership-rules-d14)). The cases are: the same underlying type (struct tags are ignored); a conversion to an interface; a conversion to or from a type parameter, unless every type in its type set copies.
 - **Slice to array.** `[N]T(s)` with owning elements does not share storage: it duplicates the elements bitwise, which would leave two owners. So it is checked as its operand too, and needs `s.Clone()` or `move(s)`. With trivial elements it is a plain copy.
-- **Conversions that copy.** `string(bytes)`, `[]byte(s)`, a ref to an owned type, and a number to a number. Each gives a temporary.
+- **Conversions that copy.** `string(bytes)`, `[]byte(s)`, a view to an owned type, and a number to a number. Each gives a temporary.
 
 **EXP-3.** *Order of evaluation.* As in Go ([Order of evaluation](https://go.dev/ref/spec#Order_of_evaluation)), with one addition: moves out of places (`move(p)`, the implicit move of `p = append(p, …)`) happen **after** all other arguments of the call are evaluated.
 
@@ -46,7 +46,7 @@ x.items = append(x.items, len(x.items))   // len(x.items) is evaluated before x.
 
 **EXP-4.** Operands of `==`, `<`, `+` and other operators on owning types are **borrowed**. `a + b` on strings allocates a new owned temporary. `+=` grows the left operand in place.
 
-**EXP-5.** Built-in `min` and `max` on owned strings return a copy ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). On refs they return a ref.
+**EXP-5.** Built-in `min` and `max` on owned strings return a copy ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). On views they return a view.
 
 ```go
 s := "a" + name        // new owned string; name is only borrowed
@@ -82,10 +82,10 @@ fmt.Println(int8(-8) >> s)     // -1
 ## 6.5 Conversions
 
 **EXP-9.** Conversions follow [Conversions](https://go.dev/ref/spec#Conversions) with these additions:
-- `string(v)` where `v` is a `ref string`, and `[]T(v)` where `v` is a `ref []T`: copy into a new owned value. `[]T(v)` needs elements that satisfy `Clone` ([OWN-V3](04-ownership.md#44-refs-d16)).
+- `string(v)` where `v` is a `View[string]`, and `[]T(v)` where `v` is a `View[[]T]`: copy into a new owned value. `[]T(v)` needs elements that satisfy `Clone` ([OWN-V3](04-ownership.md#44-views-d16)).
 - `string([]byte)` and `[]byte(string)` copy, as in Go.
 - Between struct types, the required bit of each field must match too, as the field names and types do ([TYP-15a](03-types.md)): the effective required bits (by `@Required` or `@Strict`) must be equal, so `U(Raw{…})` is an error if `U` and `Raw` differ in the bit of any field, in either direction. A `@Strict` struct and a non-strict struct with the same fields convert into each other only if their effective required bits are equal.
-- Owned to ref is implicit, never written as a conversion.
+- Owned to view is implicit, never written as a conversion.
 - A `Unique[*T]` or `Shared[*T]` stored in a place converts implicitly to `*T`; from a temporary it is an error ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17)).
 
 ## 6.6 Composite literals and `&`

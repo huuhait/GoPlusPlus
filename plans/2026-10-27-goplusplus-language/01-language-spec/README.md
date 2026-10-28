@@ -24,7 +24,7 @@ Each delta has EBNF, semantics, an example and a rationale.
 
 **D1.2 — Lexical deltas.**
 - Source files are `.gopp`, UTF-8.
-- New keyword: `macro`. Two contextual words: `ref` (special only where a type is expected, so `ref := "main"` still works) and `move` (the parameter mark, as in `func Push(move s string)`; it is also the function `move(x)`, D1.5).
+- New keyword: `macro`. One contextual word: `move` (the parameter mark, as in `func Push(move s string)`; it is also the function `move(x)`, D1.5). The borrow type is the predeclared generic `View[string]` / `View[[]T]`, and `ref` is an ordinary identifier (changed by ADR-0020).
 - New predeclared identifiers:
   - the functions `move`, `clone`, `new_unique`, `new_shared`, `new_weak`;
   - the generic types `Unique[*T]`, `Shared[*T]`, `Weak[*T]`;
@@ -39,7 +39,7 @@ Each delta has EBNF, semantics, an example and a rationale.
 
 | Category | Types | Copy | End of life |
 |---|---|---|---|
-| Trivial | bool, numbers, raw `*T`, `unsafe.Pointer`, `ref string`, `ref []T`, arrays/structs of trivial types | implicit, bitwise | nothing |
+| Trivial | bool, numbers, raw `*T`, `unsafe.Pointer`, `View[T]` (every view), arrays/structs of trivial types | implicit, bitwise | nothing |
 | Owning | `string`, `[]T`, `map[K]V`, `Unique[*T]`, types with a `drop` method, arrays/structs containing an owning type, C++ classes with a non-trivial copy/move/destructor | move-only; `x.Clone()` copies | drop glue runs |
 | Shared handle | `Shared[*T]`, `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
 
@@ -73,9 +73,9 @@ Each delta has EBNF, semantics, an example and a rationale.
    - A type that mixes owning fields with raw `*T` fields needs a hand-written `Clone()`, because an automatic clone would copy the raw pointers (for example, tree nodes with parent pointers, like `Node` in D1.7).
    - Imported C++ types clone through their copy constructor.
 7. **Destructors are a method named `drop`** with a pointer receiver: `func (f *File) drop()`. It can't be called directly (like `init`).
-8. **No borrow checker.** Refs and raw pointers can dangle, as in C++.
-   - The compiler does catch: returning `&local`; returning a `ref` into a local of the same function (D1.6); storing a borrow of a temporary; a `defer` or `go` that borrows something that dies first (D1.9, D1.13); use after move. (A borrowed parameter lives until return, so a `defer` may borrow it.)
-   - The cases it doesn't catch are listed in the UB chapter (P01.14). They include refs or raw pointers kept past their owner, and a borrowed parameter whose owner the callee frees through another path (`u.SetName(u.Name)`).
+8. **No borrow checker.** Views and raw pointers can dangle, as in C++.
+   - The compiler does catch: returning `&local`; returning a view into a local of the same function (D1.6); storing a borrow of a temporary; a `defer` or `go` that borrows something that dies first (D1.9, D1.13); use after move. (A borrowed parameter lives until return, so a `defer` may borrow it.)
+   - The cases it doesn't catch are listed in the UB chapter (P01.14). They include views or raw pointers kept past their owner, and a borrowed parameter whose owner the callee frees through another path (`u.SetName(u.Name)`).
    - `-asan` catches the rest at runtime. The owner chose no extra safety layer for v1.
 9. **C++ class types.**
    - A C++ type has a zero value only if it has a default constructor.
@@ -83,7 +83,7 @@ Each delta has EBNF, semantics, an example and a rationale.
    - Every move of a C++ value, implicit or `move(x)`, runs its move constructor and leaves the C++ "moved-from" state, not zero. The source is destroyed at the end of its scope.
    - Only containers relocate values, with the type's relocate operation (P05 D5.5): `memcpy` only for Go++ types and trivially relocatable C++ types.
 10. **Pinned values.**
-    - `gopp vet` reports moving a local after its address, or a ref into it, has been stored.
+    - `gopp vet` reports moving a local after its address, or a view into it, has been stored.
     - Types marked `@Pinned` (the `sync` types) can't be moved or copied after first use: a compile error, like Go vet's copylocks.
     - `return local` builds the value in the caller's result slot, so it never moves.
 11. **Required fields** (owner decision; ADR-0016).
@@ -101,7 +101,7 @@ Each delta has EBNF, semantics, an example and a rationale.
 
 **D1.5 — Parameters: owning types borrow, trivial types copy.**
 - **Borrowing.** Parameters and receivers of **owning** types *borrow* their argument. They are read-only at the top level: you can't assign them (or their fields), move out of them, or append to them. Data reached through slices, maps and pointers stays mutable, as in Go: elements of `[]T`, map entries, pointer targets.
-- **Re-pointing refs.** One exception: a borrowed `string`/`[]T` parameter is a local ref, so it can be re-pointed (`p = p[n:]`). It still can't be appended to.
+- **Re-pointing views.** One exception: a borrowed `string`/`[]T` parameter is a local view, so it can be re-pointed (`p = p[n:]`). It still can't be appended to.
 - **No `&param`.** `&param` on a borrowed owning parameter is a compile error (fix-it: take a `*T` parameter).
 - **Trivial parameters are copies.** Trivial parameters (`int`, raw pointers, trivial structs) are ordinary copies, as in Go; the callee may change them. The compiler may skip the copy only when nothing can write through an alias.
 - **`move` takes ownership.** `move` goes before the parameter name: `func (l *List[T]) Push(move v T)`, `func (move b Builder) Finish() string`, `func Join(move parts ...string)`. Parameters without it still borrow, so calls look like Go.
@@ -115,20 +115,20 @@ Each delta has EBNF, semantics, an example and a rationale.
 - **ABI.**
   - Trivial parameters follow the C ABI (copies).
   - Borrowed owning parameters pass by hidden pointer.
-  - `string` and `[]T` pass as `(ptr, len)`, so callers can pass owned values, refs and literals at zero cost.
+  - `string` and `[]T` pass as `(ptr, len)`, so callers can pass owned values, views and literals at zero cost.
   - Go++ → Go++ calls may use the internal convention (P04 D4.4).
 
 *Why:* generic code such as `func Index[T comparable](xs []T, v T) int` works for owning `T` with no moves or clones, and call sites look exactly like Go. This is the C++ `const T&` / Swift / Mojo convention. Trivial parameters stay real copies, so Go code such as `for b != 0 { a, b = b, a%b }` works unchanged.
 *Rejected:* move-by-default parameters (Rust without `&`, hostile to Go-style generic APIs); copy-by-default owning parameters (hidden allocations); read-only trivial parameters (they reject ordinary Go code, and passing large ones by pointer gives wrong results when an argument aliases memory the callee writes).
 
-**D1.6 — Refs.**
-- `ref string` (immutable bytes) and `ref []T` (mutable elements, fixed length) are `(ptr, len)` borrows.
-- Slicing produces a ref without allocating: `s[i:j]` gives a `ref string`, `xs[i:j]` a `ref []T`, and `:=` infers that. The exception is re-slicing an owned slice into itself (`s = s[i:j]`), which shrinks it in place (D1.20).
-- Owned → ref conversion is implicit wherever a ref is expected. Ref → owned is explicit and copies: `string(v)`, `[]T(v)` (`[]T(v)` needs elements that satisfy `Clone`). Unlike Go, where slice conversions never copy, the copy is how you get ownership.
-- Maps accept a `ref` key for lookups, so `counts[w]` with `w ref string` doesn't allocate. Inserting a new entry clones the key, whether it is a `ref` key or a borrowed one (OWN-V4a).
+**D1.6 — Views.** (Spelling changed by ADR-0020: `ref string` became `View[string]`; the rules are the same.)
+- `View[T]` is a read-only borrow, all the way down (like Rust's `&T`): nothing can be changed through it (fields, elements, map entries, pointer targets); a value read through a view is a view, except a Copy value (an `int` field), which is copied out. `X` may be any type except the pointer kinds, `unsafe.Pointer` and `View[…]`. For `string` and slices it is a `(ptr, len)` borrow.
+- Slicing does not allocate. A `string` or a view gives a view (`s[i:j]` is a `View[string]`). A slice or array that may be written gives a borrowed `[]T` (writable elements, cannot grow, cannot outlive its owner), like a borrowed `[]T` parameter. `:=` infers the type. The exception is re-slicing an owned slice into itself (`s = s[i:j]`), which shrinks it in place (D1.20).
+- Owned → view conversion is implicit wherever a view is expected. View → owned is explicit and copies: `string(v)`, `[]T(v)` (`[]T(v)` needs elements that satisfy `Clone`). Unlike Go, where slice conversions never copy, the copy is how you get ownership.
+- Maps accept a view key for lookups, so `counts[w]` with `w View[string]` doesn't allocate. Inserting a new entry clones the key, whether it is a view key or a borrowed one (OWN-V4a).
 - Temporaries live until the end of the full statement. In the header of a `for … range`, `if` or `switch`, they live until the end of the whole statement, body included.
-- Refs may be stored and returned at the programmer's risk, like C++ `string_view`/`span`. `gopp vet` warns about ref-typed struct fields unless the struct is marked `@Ref` (for example, tokens pointing into a source buffer).
-- Returning a `ref` into a local of the same function, or into an owned value that dies at the return, is a compile error (`func first() ref string { s := "hi"; return s[:1] }`). A ref into a borrowed parameter is fine. Less obvious cases stay undefined behavior (`-asan` finds them).
+- Views may be stored and returned at the programmer's risk, like C++ `string_view`/`span`. A view-typed struct field is a compile error (`err_view_field_without_attr`) unless the struct is marked `@View` (for example, tokens pointing into a source buffer). `w := f()[0:3]` keeps the temporary alive until the end of the block (temporary lifetime extension, OWN-V6).
+- Returning a view into a local of the same function, or into an owned value that dies at the return, is a compile error (`func first() View[string] { s := "hi"; return s[:1] }`). A view into a borrowed parameter is fine. Less obvious cases stay undefined behavior (`-asan` finds them).
 
 **D1.7 — Pointers and heap allocation.** Every heap allocation is spelled out; Go's `new` is removed. (The runtime's own allocations are not spelled in source: for example the defer records of deferred calls in loops, which hold extended locals.)
 
@@ -175,7 +175,7 @@ func main() {
     b := NewNode("b", root)
     root.Add(b)                    // b moves
     // fmt.Println(b.Name)         // compile error: b used after move
-    head := root.Name[:2]          // ref string: a borrow, no allocation
+    head := root.Name[:2]          // View[string]: a borrow, no allocation
     fmt.Println(head, len(root.Children))
 }                                  // root is dropped → the whole tree is freed
 ```
@@ -284,12 +284,12 @@ func main() {
   - A kept slice or map is then a copy that no longer shares elements with the caller's value. This is a listed difference from Go (P04 D4.10).
   - A value that can't be cloned (no `Clone`) can be passed as it is only when the callee doesn't keep the parameter (D1.11). Otherwise it must be passed with `move(x)`.
 - **Inline values** (owner decision; decides Q6). Trivial values up to one word (8 bytes: `int`, `float64`, raw pointers) are stored inline, with no box, so interface values stay 2 words.
-- **Type switches** and assertions use compile-time type descriptors. `case string:` also matches a `ref string` (and `case []T:` a `ref []T`); the bound value is a borrow either way. `case ref string:` is still allowed when the difference matters. Every name-binding form of an owning dynamic type binds a borrowed variable; `x.Clone()` gives an owned copy.
+- **Type switches** and assertions use compile-time type descriptors. `View[T]` and `T` are different dynamic types (ADR-0020): `case string:` never matches a stored `View[string]`; only `case View[string]:` does. The bound value is a borrow either way. Every name-binding form of an owning dynamic type binds a borrowed variable; `x.Clone()` gives an owned copy.
 - For every type converted to an interface, the descriptor also carries a compact field table (field names, offsets, types, struct tags), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type as in Go.
 - There is no user-facing `reflect` package in v1.
 
 **D1.13 — Concurrency semantics.** `go`, `chan` and `select` work as in Go.
-- `go f(a, b)`: trivial arguments are copied and owned ones are moved into the new goroutine. A raw pointer or ref into a local, or into the target of a local `Unique`, is a compile error outside `unsafe`. For example, `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells (D1.11).
+- `go f(a, b)`: trivial arguments are copied and owned ones are moved into the new goroutine. A raw pointer or view into a local, or into the target of a local `Unique`, is a compile error outside `unsafe`. For example, `go srv.Run()` with a local `Unique[*Server]` is an error. Fix-it: `go func(){ srv.Run() }()`, whose captured variables live in shared cells (D1.11).
 - Sending on a channel moves the value in; receiving moves it out. A channel and the values still buffered in it are freed automatically when nobody holds the channel; there is no `ch.Destroy()` (use `sync.Scope` when goroutines must finish first, P12).
 - `go f(x)` moves owned locals; fields and borrowed variables need `x.Clone()` or `move(...)`.
 - A send case in `select` moves its value only if that case is chosen. A temporary send value is dropped if its case is not chosen.
@@ -305,7 +305,7 @@ func main() {
 - Across packages: a macro from another package is qualified like a function: `#pkg.Name(…)`, `@pkg.Name`.
 - Predeclared: the std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting` and `@Derive` need no import (`#Profile` and `#Setting` are specified in P09 D9.12).
 - `@Derive(X)` finds `X` in std package `derive`, unless qualified (`@Derive(sql.Table)`).
-- Built-in attributes use the same syntax: `@Extern("C")`, `@Export("C")`, `@Inline`, `@NoInline`, `@Packed`, `@Align(N)`, `@Ref`, `@NoBounds`, `@Pinned`, `@Unwind`, `@If(cond)` (P09 D9.12), `@Required` (struct fields, rule 11). `@Derive(…)` is a std macro (P09).
+- Built-in attributes use the same syntax: `@Extern("C")`, `@Export("C")`, `@Inline`, `@NoInline`, `@Packed`, `@Align(N)`, `@View`, `@NoBounds`, `@Pinned`, `@Unwind`, `@If(cond)` (P09 D9.12), `@Required` (struct fields, rule 11). `@Derive(…)` is a std macro (P09).
 - Errors: a macro's error or panic becomes a compile error at the use site (P09 D9.11).
 - `!` never means "macro", which keeps it unambiguous as Must.
 
@@ -321,7 +321,7 @@ func main() {
 - **Order.** Header imports keep their source order. `gopp fmt` never reorders them, because C header order can matter. `import _ "<…>"` is allowed for order-only or side-effect imports.
 - **No conversions in human code.**
   - C types are plain Go++ types (`int32`, `uint64`, `byte`, …; P07 D7.4).
-  - String literals and owned strings pass to `const char*` parameters as they are: owned strings are kept NUL-terminated, so there is no copy. A `ref string`, a substring or a borrowed `string` parameter (which may be a substring) passes as a temporary NUL-terminated copy. Slices pass to pointer parameters (P07 D7.7).
+  - String literals and owned strings pass to `const char*` parameters as they are: owned strings are kept NUL-terminated, so there is no copy. A `View[string]`, a substring or a borrowed `string` parameter (which may be a substring) passes as a temporary NUL-terminated copy. Slices pass to pointer parameters (P07 D7.7).
 - **Header extensions** are `.h`, `.hh`, `.hpp` and `.hxx`. This is the one list every phase uses.
 - **Language.** For package headers, C or C++ comes from the package's CMake target (P11). For `<…>` headers, `.h` is C and anything else (`<vector>`, `.hpp`) is C++.
 - **Headers inside a Go++ module** (yours or a dependency's) are header imports too: an import path inside a Go++ module that ends in a header extension names a header file, not a package (P10 D10.1). `.h` is C, the other extensions are C++. Flags come from the `cflags` and `cxxstd` directives in the gopp.mod of the module of the importing package (one Clang instance per package). A dependency's own `cxxstd` is a minimum: if the importer's is lower, the build fails with "module D needs c++23".
@@ -332,15 +332,15 @@ func main() {
 | # | Program | What it exercises |
 |---|---|---|
 | 1 | `hello` | the minimal program |
-| 2 | `wc` | files, `!`, owned strings, refs |
-| 3 | `kvparse` | parser that stores refs into one buffer; a `@Ref` token struct |
+| 2 | `wc` | files, `!`, owned strings, views |
+| 3 | `kvparse` | parser that stores views into one buffer; a `@View` token struct |
 | 4 | `binarytrees` | allocation-heavy code; `Unique[*T]`, `new_unique`, arenas |
 | 5 | `workers` | goroutine pool, channels, moves |
 | 6 | `zcrc` | zlib through `import "github.com/madler/zlib/zlib.h"` |
 | 7 | `vecsort` | `std::vector` + `std::sort` through `import "<vector>"` and `import "<algorithm>"` |
 | 8 | `derive` | `@Derive`, `#Assert`, a user-defined `macro` |
 | 9 | `orderedmap` | generic container with an owning `T` |
-| 10 | `minicalc` | arena-allocated AST, refs into the source, `!` error handling |
+| 10 | `minicalc` | arena-allocated AST, views into the source, `!` error handling |
 
 Sample 8 (`derive`) needs P09 macros. P03 and M2 check the other samples.
 
@@ -410,7 +410,7 @@ for _, d := range docs { u := d.Clone() }       // ok; `d := d` would be an erro
 - A nil allocator means the global allocator, so zero values stay valid. `make`, `append`, literals and conversions use the global allocator unless told otherwise. This nil is the hidden allocator word of the header, which Go++ code never sees. In Go++ code an allocator is a `mem.Allocator`, an interface with methods, so it is never nil (ADR-0018 amendment point 3); an allocator parameter or field that may be absent is written `Option[mem.Allocator]`, nil meaning the global allocator.
 - `mem` functions create a slice or map in another allocator, such as a `mem.Arena` (P05 D5.3).
 - Growth (`append`), `Clone` and drop use the value's own allocator; a clone stays in the same allocator.
-- Refs and borrowed `[]T` parameters stay `(ptr, len)`: reading and writing elements needs no allocator. A `move` `[]T` parameter passes all 4 words.
+- Views and borrowed `[]T` parameters stay `(ptr, len)`: reading and writing elements needs no allocator. A `move` `[]T` parameter passes all 4 words.
 - `string` always uses the global allocator, so strings stay 3 words.
 - The allocator word points to an allocator object whose first word is its function table, so one pointer is enough.
 
@@ -434,7 +434,7 @@ for _, d := range docs { u := d.Clone() }       // ok; `d := d` would be an erro
 
 - **The ownership model reads poorly in real code** → write the samples first. After M2 there is a spec-revision window (P05) before v1 freezes anything.
 - **Spec ambiguities found during implementation** → the spec is versioned (`gopp 0.1` in gopp.mod), and fixes go through ADRs.
-- **Too many new keywords** → only `macro` is a reserved keyword (`ref` and `move` are contextual); owning pointers are predeclared generic types (D1.7).
+- **Too many new keywords** → only `macro` is a reserved keyword (`move` is contextual); owning pointers and `View` are predeclared generic types (D1.7).
 
 ## Open questions (close in P01.12 unless noted)
 

@@ -10,7 +10,7 @@ Base: Go spec [Lexical elements](https://go.dev/ref/spec#Lexical_elements), [Tok
 
 ### Keywords
 
-**LEX-2.** One new keyword is reserved: `macro`. Two more words are *contextual*: `ref` and `move` ([LEX-12](#lex-12)). They are not reserved, so they stay usable as names.
+**LEX-2.** One new keyword is reserved: `macro`. One more word is *contextual*: `move` ([LEX-12](#lex-12)). It is not reserved, so it stays usable as a name. `ref` is not special at all: it is an ordinary identifier.
 
 ```
 keyword = /* the 25 Go keywords */ | "macro" .
@@ -61,11 +61,13 @@ Old uses stay: unary `!x` and the operator `!=`.
 | Kind | Names |
 |---|---|
 | functions | `move`, `clone`, `new_unique`, `new_shared`, `new_weak` |
-| generic types | `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]` |
+| generic types | `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]`, `View[X]` |
 | constraints | `Copy`, `Clone` |
 | std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `#Run`, `@Derive` |
 
-- Like Go's predeclared names, these can be shadowed by a declaration in an inner scope. Do not do it.
+- Like Go's predeclared names, these can be redeclared in any scope, package level included (`type Option int` is accepted). The declaration hides the predeclared name in its scope. Do not do it. This holds for `View` as for `Option`.
+- `View` is a generic type name, not a keyword. `View[X]` is valid for every type `X` except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]` itself; those are compile errors that name the allowed forms ([OWN-V1](04-ownership.md#44-views-d16)). Named types are fine (`View[User]`, `View[Bytes]`).
+- In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `View`, `Copy`, `Clone`, `move`, `clone`, `new_unique`, `new_shared` and `new_weak` are ordinary names there (`Option[int]` is "undefined: Option").
 - The macro names live in their own namespace (they are only used after `#` or `@`).
 
 **LEX-8.** Go's `new` is not predeclared. Using it is a compile error "undefined: new" with a fix-it that suggests `new_unique(T{})` or `new_shared(T{})`.
@@ -81,9 +83,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 ### Contextual words
 
 <a id="lex-12"></a>
-**LEX-12.** *`ref` and `move` are contextual.* They are special only in the places below. Everywhere else they are ordinary identifiers.
-- Wherever an expression or a type may appear, `ref` followed by `string`, or by `[` `]`, always starts a `RefType` ([3.1](03-types.md)). Examples: `Dup[ref string](w)` (type argument) and `(ref string)(x)` (conversion). In **name** positions (a struct field name, `ref := …`) the Go reading stays: `struct{ ref string }` is a field named `ref`. Parameter lists are decided by the next bullet. So `ref := "main"`, `ref.Name` and `func ref() {}` still work.
-- In a parameter or result list, an entry that starts with `ref` followed by `string` or by `[` and `]` (a slice type) is a `ref` type, so a parameter cannot be named `ref` when its type is `string` or a slice type; rename it. `func f(ref [3]int)` is a parameter named `ref` of an array type.
+**LEX-12.** *`move` is contextual.* It is special only in the places below. Everywhere else it is an ordinary identifier. (`ref` was contextual before ADR-0020. It is now an ordinary identifier everywhere, in `.gopp` and in `.go` files.)
 - `move(x)` is a predeclared function ([EXP-1](06-expressions.md)). `move` is also the mark of a parameter or receiver ([PAR-5](05-parameters.md)), but only at the start of a parameter declaration, followed by a parameter name and then the type: `move s string`. A `move` followed by a type alone (`move T`, `move pkg.T`, `move G[K]`, `move []int`) is read as in Go: a parameter *named* `move` of that type. See the EBNF in [5.1](05-parameters.md#51-syntax).
 
 
@@ -109,7 +109,7 @@ Invalid:
 ```go
 var macro = 1     // error: `macro` is a keyword
 x := new(int)     // error: undefined: new (use new_unique(0))
-ref := "main"     // ok: `ref` is special only where a type is expected
+ref := "main"     // ok: `ref` is an ordinary identifier
 ```
 
 ## 2.3 Where the grammar is defined
@@ -122,13 +122,13 @@ Each changed production is defined in exactly one place:
 | `ParameterDecl` (`move`) | [5.1](05-parameters.md) |
 | `RangeClause`, `RangeVars`, `RangeVar` (`&`) | [8.3](08-slices-and-range.md#83-range-loops-d121) |
 | `FieldDecl`, `FieldAttributes` | [13.1](13-macros-surface.md) |
-| `Type`, `TypeLit`, `RefType` (`ref`) | [3.1](03-types.md) |
+| `Type`, `TypeLit` | [3.1](03-types.md) |
 | `MacroDecl`, `ProcMacroDecl`, `MacroInvocation`, `Attribute`, `TopLevelDecl`, `Operand` | [13.1](13-macros-surface.md) |
 | `ImportPath` forms | [14.1](14-foreign-surface.md) |
 
 ## 2.4 Rationale
 
-- Only one keyword is reserved (`macro`). `ref` and `move` are contextual, and `move` must also stay a function name because `move(x)` is a built-in. Owning pointers are predeclared generic types, not keywords.
+- Only one keyword is reserved (`macro`). `move` is contextual, and it must also stay a function name because `move(x)` is a built-in. Owning pointers, `Option` and `View` are predeclared generic types, not keywords.
 - `#` and `@` were free in Go, so no old code changes meaning.
 - `!` stays near the function name where the reader looks first. An earlier draft used `call()!` and needed a special semicolon rule and a `!=` caveat (`f()!==y`). It was rejected.
 - `new_unique` uses snake case on purpose: it is a built-in that is not a Go name, so it is easy to spot.

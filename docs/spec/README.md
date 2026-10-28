@@ -11,7 +11,7 @@ Start with the [overview](01-overview.md).
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
 | 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names | D1.2 |
 | 3 | [Types](03-types.md) | type syntax, interfaces, layout | D1.12, D1.17 |
-| 4 | [Ownership](04-ownership.md) | categories, rules 1 to 10, pointers, refs | D1.3, D1.4, D1.6, D1.7 |
+| 4 | [Ownership](04-ownership.md) | categories, rules 1 to 10, pointers, views | D1.3, D1.4, D1.6, D1.7 |
 | 5 | [Parameters](05-parameters.md) | borrow, `move`, receivers, ABI | D1.5 |
 | 6 | [Expressions](06-expressions.md) | `move`, `clone`, safety defaults | D1.17 |
 | 7 | [Statements](07-statements.md) | assignment, blocks, headers | D1.4, D1.6 |
@@ -32,15 +32,15 @@ Each sample has `main.gopp`, a Go counterpart `main.go`, `expected_output.txt` a
 | # | Sample | Shows |
 |---|---|---|
 | 1 | [hello](examples/01-hello/) | the minimal program |
-| 2 | [wc](examples/02-wc/) | files, `!`, owned strings, refs |
-| 3 | [kvparse](examples/03-kvparse/) | refs into one buffer, `@Ref` |
+| 2 | [wc](examples/02-wc/) | files, `!`, owned strings, views |
+| 3 | [kvparse](examples/03-kvparse/) | views into one buffer, `@View` |
 | 4 | [binarytrees](examples/04-binarytrees/) | `Unique[*T]`, `new_unique`, arenas |
 | 5 | [workers](examples/05-workers/) | goroutines, channels, moves |
 | 6 | [zcrc](examples/06-zcrc/) | zlib through a header import |
 | 7 | [vecsort](examples/07-vecsort/) | `std::vector` and `std::sort` |
 | 8 | [derive](examples/08-derive/) | `@Derive`, `#Assert`, user macro |
 | 9 | [orderedmap](examples/09-orderedmap/) | generic container with owning `T` |
-| 10 | [minicalc](examples/10-minicalc/) | arena AST, refs, `!` |
+| 10 | [minicalc](examples/10-minicalc/) | arena AST, views, `!` |
 
 ## Conventions
 

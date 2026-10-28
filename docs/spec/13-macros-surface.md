@@ -60,7 +60,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 | `@Inline`, `@NoInline` | function | inlining hint | P04 |
 | `@Packed` | struct type | no padding | P07 |
 | `@Align(N)` | type | minimum alignment `N` | P07 |
-| `@Ref` | struct type | the struct may hold ref fields without a vet warning ([OWN-V5](04-ownership.md#44-refs-d16)) | this spec |
+| `@View` | struct type | the struct may hold view fields; without it a view field is a compile error (`err_view_field_without_attr`) ([OWN-V5](04-ownership.md#44-views-d16)) | this spec |
 | `@NoBounds` | function | turn bounds checks off ([EXP-7](06-expressions.md)) | P05 D5.8 |
 | `@Pinned` | type | cannot be moved or copied after first use ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) | this spec |
 | `@Required` | struct field | the field must be set in every literal; the struct has no zero value ([TYP-15](03-types.md)) | ADR-0016 |

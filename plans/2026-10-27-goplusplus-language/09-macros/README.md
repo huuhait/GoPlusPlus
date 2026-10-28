@@ -83,7 +83,7 @@ func checksum(data []byte) uint32 {
 - The LSP uses the same expansion (P14).
 
 **D9.8 — Standard macros.**
-- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `ref string`), `#Todo()`, `#Unreachable()`, the two profile macros `#Profile()` and `#Setting("name")` (D9.12), and `#Run(f(args))` (D9.13).
+- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `View[string]`), `#Todo()`, `#Unreachable()`, the two profile macros `#Profile()` and `#Setting("name")` (D9.12), and `#Run(f(args))` (D9.13).
 - Derives are kept small, because without them:
   - printing works on every type;
   - `==` and map keys work on comparable types;

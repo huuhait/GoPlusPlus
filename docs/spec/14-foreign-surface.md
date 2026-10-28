@@ -50,7 +50,7 @@ HeaderExt        = ".h" | ".hh" | ".hpp" | ".hxx" .
 **FOR-6.** *No conversions in human code.*
 - C types are plain Go++ types (`int32`, `uint64`, `byte`, …; P07 D7.4). There is no `C.int`.
 - String literals and owned strings pass to `const char*` parameters as they are: owned strings are kept NUL-terminated, so there is no copy.
-- A `ref string`, a substring or a borrowed `string` parameter (which may be a substring) passes as a **temporary NUL-terminated copy**.
+- A `View[string]`, a substring or a borrowed `string` parameter (which may be a substring) passes as a **temporary NUL-terminated copy**.
 - Slices pass to pointer parameters (P07 D7.7).
 
 **FOR-7.** *Header extensions* are `.h`, `.hh`, `.hpp` and `.hxx`. This is the one list every phase uses.

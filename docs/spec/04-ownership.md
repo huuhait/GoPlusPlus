@@ -4,7 +4,7 @@ Base: Go spec [Variables](https://go.dev/ref/spec#Variables), [The zero value](h
 
 This is the core of Go++. Go has a GC, so every value can be shared. Go++ has no GC, so every value has **one owner** and is destroyed when its owner ends.
 
-Contents: [at a glance](#at-a-glance-pointers-and-borrows) · [4.1 categories](#41-type-categories-d13) · [4.2 rules 1 to 10](#42-ownership-rules-d14) · [4.3 pointers and heap](#43-pointers-and-heap-allocation-d17) · [4.4 refs](#44-refs-d16) · [4.5 rationale](#45-rationale)
+Contents: [at a glance](#at-a-glance-pointers-and-borrows) · [4.1 categories](#41-type-categories-d13) · [4.2 rules 1 to 10](#42-ownership-rules-d14) · [4.3 pointers and heap](#43-pointers-and-heap-allocation-d17) · [4.4 views](#44-views-d16) · [4.5 rationale](#45-rationale)
 
 ## At a glance: pointers and borrows
 
@@ -14,7 +14,9 @@ Two questions decide which one you use: **do I own it?** and **one owner or many
 |---|---|---|---|
 | read a value inside a function | a normal parameter `func show(u User)`; an owning value is borrowed automatically (read-only, no copy), a trivial one such as `int` is just copied | no | [PAR-1](05-parameters.md) |
 | change the caller's value | `func rename(u *User)`, called as `rename(&u)` | no | [OWN-P1](#43-pointers-and-heap-allocation-d17) |
-| look at part of a string or slice | `s[i:j]` gives a `ref string` / `ref []T`, with no copy | no | [OWN-V1, V2](#44-refs-d16) |
+| look at part of a string or a view | `s[i:j]` gives a `View[string]` / `View[[]T]`, with no copy | no | [OWN-V1, V2](#44-views-d16) |
+| use part of a slice you may write | `xs[i:j]` gives a borrowed `[]T`: elements can be written, it cannot grow or outlive `xs` | no | [OWN-V2](#44-views-d16) |
+| promise to change nothing, deeply | a `View[T]` parameter, e.g. `func show(u View[User])`; fields, elements, map entries and pointer targets are all read-only | no | [OWN-V1](#44-views-d16) |
 | change every element in a loop | `for _, &u := range users { u.Age++ }` | no | [RNG-1a](08-slices-and-range.md) |
 | own a heap value, alone | `Unique[*User]`, made with `new_unique(User{…})`; freed when its owner ends | yes | [OWN-P2](#43-pointers-and-heap-allocation-d17) |
 | share a heap value | `Shared[*User]`, made with `new_shared(User{…})`; freed when the last copy ends | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
@@ -26,7 +28,7 @@ Two questions decide which one you use: **do I own it?** and **one owner or many
 ```go
 func show(u User)            { fmt.Println(u.Name) }   // borrowed: read-only
 func rename(u *User)         { u.Name = "amy" }        // *T: changes the caller's User
-first := name[0:3]                                     // ref string: a view, no copy
+first := name[0:3]                                     // View[string]: a view, no copy
 for _, &u := range users     { u.Age++ }               // & range: changes each element
 owner := new_unique(User{Name: "bob"})                 // Unique: freed when owner ends
 cfg   := new_shared(Config{})                          // Shared: freed when the last copy ends
@@ -42,11 +44,11 @@ Every type is in exactly one of three categories.
 
 | Category | Types | Copy | End of life |
 |---|---|---|---|
-| Trivial | `bool`, numbers, raw `*T`, `unsafe.Pointer`, `ref string`, `ref []T`, arrays/structs of trivial types | implicit, bitwise | nothing |
+| Trivial | `bool`, numbers, raw `*T`, `unsafe.Pointer`, `View[T]` (every view, whatever `T`), arrays/structs of trivial types | implicit, bitwise | nothing |
 | Owning | `string`, `[]T`, `map[K]V`, `Unique[*T]`, types with a `drop` method, arrays/structs that contain an owning type, C++ classes with a non-trivial copy, move or destructor | move-only; `x.Clone()` copies | drop glue runs |
 | Shared handle | `Shared[*T]`, `Weak[*T]`, `chan T`, interface values (including `error`), func values, arrays/structs whose non-trivial fields are all shared handles | implicit; copying retains (atomic) | release; the last strong reference frees |
 
-**OWN-C1.** *Trivial.* A trivial value is copied with `=`, as in Go. It has no destructor. A trivial type satisfies the `Copy` constraint ([GEN-1](10-generics.md)). Examples: `int`, `*Node`, `ref string`, `struct{ X, Y int }`.
+**OWN-C1.** *Trivial.* A trivial value is copied with `=`, as in Go. It has no destructor. A trivial type satisfies the `Copy` constraint ([GEN-1](10-generics.md)). Examples: `int`, `*Node`, `View[string]`, `struct{ X, Y int }`.
 
 **OWN-C2.** *Owning.* An owning value is **move-only**. Copying needs `x.Clone()` (or its short form `clone(x)`, [OWN-R6](#42-ownership-rules-d14)). When its owner ends, drop glue runs.
 
@@ -71,7 +73,7 @@ type Mix struct{ Title string; Done chan int }  // owning
 
 ## 4.2 Ownership rules (D1.4)
 
-Syntax: no change in this chapter. `move(place)` and `clone(x)` are predeclared function calls (typing in [EXP-1](06-expressions.md)); `x.Clone()` is an ordinary method call ([OWN-R6](#42-ownership-rules-d14)). The `ref` type is in [3.1](03-types.md), the `move` parameter mark in [5.1](05-parameters.md), and the `&d` range form in [8.3](08-slices-and-range.md).
+Syntax: no change in this chapter. `move(place)` and `clone(x)` are predeclared function calls (typing in [EXP-1](06-expressions.md)); `x.Clone()` is an ordinary method call ([OWN-R6](#42-ownership-rules-d14)). The `View` type is in [3.1](03-types.md), the `move` parameter mark in [5.1](05-parameters.md), and the `&d` range form in [8.3](08-slices-and-range.md).
 
 **OWN-R1.** *One owner.* Every value has exactly one owner: a variable, field, element or temporary. When the owner's life ends, the value is destroyed:
 1. its `drop` method runs, if any;
@@ -92,7 +94,7 @@ func (c *Conn) drop() { println("closing", c.fd) }   // runs first
 **OWN-R2.** *Destruction order.*
 - Locals are destroyed at the end of their block, in reverse declaration order. One exception: a block-scoped local that an executed `defer` uses lives until function exit ([PAN-3](09-errors-and-panics.md), [PAN-4](09-errors-and-panics.md)).
 - Temporaries are destroyed at the end of the full statement.
-- In the header of a `for … range`, `if` or `switch`, temporaries live until the end of the whole statement, body included (see [OWN-V6](#44-refs-d16)).
+- In the header of a `for … range`, `if` or `switch`, temporaries live until the end of the whole statement, body included (see [OWN-V6](#44-views-d16)).
 
 ```go
 {
@@ -120,7 +122,7 @@ fmt.Println(len(a))
 
 *Why (R3):* a by-value use that moves makes ownership visible without extra syntax, and a use-after-move error is cheaper than a hidden copy.
 
-**OWN-R3a.** *Reading from other places.* The key of a map index on the left side is not a place read that needs ownership ([OWN-V4a](04-ownership.md#44-refs-d16)). "Other places" are fields, elements, map entries, package variables, pointer targets, borrowed variables ([OWN-R3b](04-ownership.md#42-ownership-rules-d14): borrowed parameters, owning range variables, owning assertion bindings) and captured variables ([CLO-9](11-closures.md)).
+**OWN-R3a.** *Reading from other places.* The key of a map index on the left side is not a place read that needs ownership ([OWN-V4a](04-ownership.md#44-views-d16)). "Other places" are fields, elements, map entries, package variables, pointer targets, borrowed variables ([OWN-R3b](04-ownership.md#42-ownership-rules-d14): borrowed parameters, owning range variables, owning assertion bindings) and captured variables ([CLO-9](11-closures.md)).
 - **Borrow where a borrow is enough.** Reading an owned value from such a place borrows it when used as an operand, a borrowed argument (including interface parameters), a receiver or the `range` source.
 - **Ownership needed means compile error.** These need ownership: `:=`, `=`, a `move` argument, `return`, a channel send, a composite literal. The error has two fix-its:
   - `p.Clone()` (copy it);
@@ -157,8 +159,9 @@ v, ok := move(m["k"])          // removes "k"; ok reports it was there
 1. borrowed owning parameters and receivers ([PAR-1](05-parameters.md));
 2. range variables over **owning** elements of a slice, an array or a C++ container, written in the plain form `for _, d := range xs` ([RNG-1](08-slices-and-range.md));
 3. map range variables whose key type or value type is **owning**, in the plain form (each such variable);
-4. bindings of a type assertion or type switch whose case type is **owning**, including `case string:`, `case []T:`, `v.(string)` and `v.([]T)`, which also match a dynamic `ref string` / `ref []T`: the binding is always borrowed and read-only, and so is what it holds by value: map entries and slice elements are read-only too (a pointee reached through a pointer stays writable), because it may point into someone else's buffer ([TYP-9](03-types.md));
-5. the range variable of a range-over-func loop in the plain form, when the yielded type is **owning** ([RNG-6a](08-slices-and-range.md)).
+4. bindings of a type assertion or type switch whose case type is **owning**, including `case string:`, `case []T:`, `v.(string)` and `v.([]T)` (they do not match a stored `View[T]`; only `case View[T]:` does, [TYP-9](03-types.md)): the binding is always borrowed and read-only, and so is what it holds by value: map entries and slice elements are read-only too (a pointee reached through a pointer stays writable), because it may point into someone else's buffer ([TYP-9](03-types.md));
+5. the range variable of a range-over-func loop in the plain form, when the yielded type is **owning** ([RNG-6a](08-slices-and-range.md));
+6. a local made by slicing a slice or array that may be written, `t := xs[i:j]` or `var t = xs[i:j]` (a borrowed `[]T`, [OWN-V2](#44-views-d16)). Its elements can be written; it cannot grow, cannot be moved and cannot outlive `xs`.
 
 Trivial and shared-handle range variables and bindings are **not** borrowed variables: they are copies (a shared handle is copied with a retain) and stay writable. The variables of `range move(xs)` and `range ch` are owned locals. A variable declared with `&` in a range clause (`for _, &d := range xs`) is an **alias** of the element, not a borrowed variable: it is writable and changes the collection, and for `defer` and `go` it counts as a place in the collection ([RNG-1a](08-slices-and-range.md)). Every other rule that says "borrowed variable" means exactly the list above.
 
@@ -167,7 +170,7 @@ A borrowed variable is **read-only at the top level**. This is the one rule for 
 - taking its address (`&d`), or calling a method with a pointer receiver on it (an implicit `&d`). This covers the variable **and any part of it reached without going through a slice, map or pointer**: its fields, fields of fields, and array elements held by value (`&d.Buf`, `d.Buf.Reset()`). The line is the same "top level" line as PAR-1: going through a slice, map or pointer is allowed; staying inside the value is not;
 - `move(x)` of it. A range variable can never be moved from in the plain form, because moving a key would corrupt the map and moving a value is ambiguous with `move(m[k])`. Fix-its: `&v` (the `&` form can be moved from, [RNG-1a](08-slices-and-range.md)) or `v.Clone()`.
 
-These stay allowed: data reached **through** slices, maps and pointers, as in Go and PAR-1. Elements of a `[]T`, map entries and pointer targets are mutable (except through an assertion or type-switch binding, whose box is immutable: see below and [TYP-9](03-types.md)). For example `row[j] = 0` for `row` in `range grid`, and `d.Tags[0] = "x"` for `d` in `range docs`, write through the shared slice and change the collection, exactly as Go does (Go's copy shares the backing array). Also allowed: **re-pointing** a borrowed `string` or `[]T` variable as a local ref (`s = s[1:]`, [PAR-2](05-parameters.md)); it still cannot be appended to. Re-pointing holds for parameters, range variables and assertion bindings alike, because it only changes the local ref. The data-mutability rule above holds for parameters and range variables alike.
+These stay allowed: data reached **through** slices, maps and pointers, as in Go and PAR-1. Elements of a `[]T`, map entries and pointer targets are mutable (except through an assertion or type-switch binding, whose box is immutable: see below and [TYP-9](03-types.md)). For example `row[j] = 0` for `row` in `range grid`, and `d.Tags[0] = "x"` for `d` in `range docs`, write through the shared slice and change the collection, exactly as Go does (Go's copy shares the backing array). Also allowed: **re-pointing** a borrowed `string` or `[]T` variable as a local borrow (`s = s[1:]`, [PAR-2](05-parameters.md)); it still cannot be appended to. Re-pointing holds for parameters, range variables and assertion bindings alike, because it only changes the local borrow. The data-mutability rule above holds for parameters and range variables alike.
 
 One exception: the first write to a **nil** borrowed map creates the map in the owner's variable (`m[k] = v` where `m` is nil). A borrowed map parameter or map range variable refers to the owner's map header in place, so the owner sees the new map. The same holds for a map field, or an array element held by value, inside a borrowed variable (`func f(d Doc) { d.Index["x"] = 1 }` with a nil `Index` creates the map in the caller's `Doc`). Creating a nil map anywhere inside a borrowed variable is the one header change a borrowed variable may make. Creating an empty map doesn't change what any reader sees; the entry the write adds is an ordinary map-entry write, so the read-only rule keeps its purpose. A type-switch or assertion binding is different: the map lives in the interface's shared, immutable box, so the map is read-only through it. Writes (`v[k] = x`, `v[k]++`, `delete(v, k)`, `clear(v)`) are compile errors, nil or not, and so are writes to the elements of a slice binding (`v[0] = 1`). Fixes: `m := v.Clone()`, or store a pointer in the interface ([OWN-P9](#43-pointers-and-heap-allocation-d17), [TYP-5](03-types.md), ADR-0018 amendment point 5).
 
@@ -230,7 +233,7 @@ t := tag                             // error: tag is borrowed by a pending defe
 - `move(place)` takes the value out of any place and leaves the zero value. For a Go++ type with no zero value ([R9](04-ownership.md#42-ownership-rules-d14)), `move` out of a place other than a local variable is a compile error (the place would be left as zero bytes): use `mem.Replace(&place, v)`, `delete`, `move(m[k])`, `s = s[:n]` or `range move(xs)`. A *local* here is a variable declared in the function: `:=` and `var` variables, comma-ok results of a map or channel lookup (`v, ok := clone(m[k])`, `v, ok := move(m[k])`, `v, ok := <-ch`), owning range variables (`range move(xs)`) and `move` parameters. A type-assertion or type-switch binding is not one: it borrows the interface's box (OWN-R3b), so take a copy with `u.Clone()`. Inside a closure, a captured variable is not a local ([CLO-9](11-closures.md)), so moving it is an error for such a type (the next call would read zero bytes). The rule looks at the type of the place itself: `x.items = append(x.items, v)` moves a `[]User`, which has a zero value, so it is fine. A swap, or any assignment that refills every place it empties in the same statement, is allowed: `xs[i], xs[j] = xs[j], xs[i]`, `c.A, c.B = c.B, c.A`. In such a swap, all index, map-key and pointer operands and their bounds and nil checks are evaluated before any value is moved, so the statement can't panic halfway and leave a place empty.
 - The move is **implicit** when the same place is passed to a `move` parameter and also receives the result, in one statement: `p = append(p, …)`, `buf = strconv.AppendInt(buf, n, 10)`, `x.items = append(x.items, v)`.
 - Anywhere else, write `append(move(p), …)` or `append(p.Clone(), …)`.
-- **Map entries.** `m[k] = append(m[k], v)` takes the value **in place**: the slot holds the zero value until the result is stored back. The entry is never removed and re-inserted. If `k` is absent, the result is a normal insert (the key rule of [OWN-V4a](04-ownership.md#44-refs-d16)). Inside `range m`, any `m[x] = …`, `m[x]++`, `m[x] op= …` or `m[x] = append(m[x], …)` where `x` is **not the current range key variable, or is the range key variable but was written earlier in the body** (for a trivial key type the range key is a writable copy, so after `k++` the name `m[k]` no longer names the current entry) is a visible potential insert (the compiler cannot know whether `x` exists), so it is a compile error ([RNG-3](08-slices-and-range.md), D1.21). Only `m[k]` with `k` the range key variable, not written earlier in the body, is a write to the current entry (defined). Example: `for k := range m { m[k] = 1; k++; m[k] = 2 }` accepts the first write and rejects the second. Fix-it: collect the changes and apply them after the loop. Inserts the compiler cannot see panic at run time ([RNG-4](08-slices-and-range.md)).
+- **Map entries.** `m[k] = append(m[k], v)` takes the value **in place**: the slot holds the zero value until the result is stored back. The entry is never removed and re-inserted. If `k` is absent, the result is a normal insert (the key rule of [OWN-V4a](04-ownership.md#44-views-d16)). Inside `range m`, any `m[x] = …`, `m[x]++`, `m[x] op= …` or `m[x] = append(m[x], …)` where `x` is **not the current range key variable, or is the range key variable but was written earlier in the body** (for a trivial key type the range key is a writable copy, so after `k++` the name `m[k]` no longer names the current entry) is a visible potential insert (the compiler cannot know whether `x` exists), so it is a compile error ([RNG-3](08-slices-and-range.md), D1.21). Only `m[k]` with `k` the range key variable, not written earlier in the body, is a write to the current entry (defined). Example: `for k := range m { m[k] = 1; k++; m[k] = 2 }` accepts the first write and rejects the second. Fix-it: collect the changes and apply them after the loop. Inserts the compiler cannot see panic at run time ([RNG-4](08-slices-and-range.md)).
 - Spread (`append(a, b...)`) and `copy(dst, src)` with non-trivial elements need `move` or `Clone` on the **source**: `append(a, move(b)...)`, `append(a, b.Clone()...)`, `copy(dst, src.Clone())`.
 - Moves out of places happen **after** all other arguments are evaluated.
 
@@ -306,17 +309,17 @@ func (f *File) drop() {
 
 *Why (R7):* a method named `drop` is found by the compiler like `init`; forbidding direct calls prevents double destruction.
 
-**OWN-R8.** *No borrow checker.* Refs and raw pointers can dangle, as in C++.
-- The compiler **does** catch: returning `&local`; returning a `ref` into a local ([OWN-V7](#44-refs-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move, including a use through a pointer or ref taken before the move in the same function (`p := &x.In; take(move(x)); p.P.V`; taken elsewhere it is [UB-8](16-undefined-behavior.md)).
-- The cases it does **not** catch are listed in [chapter 16](16-undefined-behavior.md): refs or raw pointers kept past their owner, and a borrowed parameter whose owner the callee frees through another path (`u.SetName(u.Name)`).
+**OWN-R8.** *No borrow checker.* Views and raw pointers can dangle, as in C++.
+- The compiler **does** catch: returning `&local`; returning a view into a local ([OWN-V7](#44-views-d16)); storing a borrow of a temporary; a `go` or a `defer` that borrows something that dies before the function returns (a borrowed parameter lives until return, so `defer fmt.Println("done", name)` is legal; a borrowed loop variable does not) ([PAN-3](09-errors-and-panics.md), [CON-2](12-concurrency.md)); use after move, including a use through a pointer or view taken before the move in the same function (`p := &x.In; take(move(x)); p.P.V`; taken elsewhere it is [UB-8](16-undefined-behavior.md)).
+- The cases it does **not** catch are listed in [chapter 16](16-undefined-behavior.md): views or raw pointers kept past their owner, and a borrowed parameter whose owner the callee frees through another path (`u.SetName(u.Name)`).
 - `-asan` catches the rest at run time. v1 has no extra safety layer.
 
 ```go
 p := &local                // allowed
 return &local              // compile error: caught
-s := name[:2]              // ref
+s := name[:2]              // view
 dropName()                 // frees name's buffer
-fmt.Println(s)             // NOT caught: dangling ref (UB-1). -asan finds it at run time
+fmt.Println(s)             // NOT caught: dangling view (UB-1). -asan finds it at run time
 ```
 
 *Why:* a borrow checker costs compile speed and simplicity; v1 keeps Go's look and relies on a small closed list of checks plus sanitizers.
@@ -337,7 +340,7 @@ xs := make([]Foo, 3)         // compile error if Foo (a C++ class) has no defaul
 *Why:* C++ classes keep their own move and destroy rules, so interop needs no wrapper and no surprise zero values.
 
 **OWN-R10.** *Pinned values.*
-- `gopp vet` reports moving a local after its address, or a ref into it, has been stored. A use through a pointer or ref taken in the same function before the move is a compile error ([OWN-R8](#42-ownership-rules-d14), P04.09); one taken elsewhere is [UB-8](16-undefined-behavior.md).
+- `gopp vet` reports moving a local after its address, or a view into it, has been stored. A use through a pointer or view taken in the same function before the move is a compile error ([OWN-R8](#42-ownership-rules-d14), P04.09); one taken elsewhere is [UB-8](16-undefined-behavior.md).
 - Types marked `@Pinned` (the `sync` types) cannot be moved or copied after first use: a compile error, like Go vet's copylocks.
 - `return local` builds the value in the caller's result slot, so it does not move (see the escaping-closure case in [OWN-R3c](04-ownership.md#42-ownership-rules-d14)). When different locals are returned on different paths, at most one is built in the result slot; returning the others moves them, and OWN-R3c then applies to them. The tie-break is fixed: a local that a pending deferred call (or a non-escaping closure) still uses gets the slot. If two returned locals both have pending users, returning the second one is an OWN-R3c error, fix-it `.Clone()`. Otherwise the choice does not change behaviour, because the others just move. Example: `a := f(); b := g(); defer log.Println(a); if c { return a }; return b`. Here `a` gets the slot, and `return b` moves `b` (fine, nothing pending uses `b`).
 
@@ -378,7 +381,7 @@ func main() {
     b := NewNode("b", root)
     root.Add(b)                    // b moves
     // fmt.Println(b.Name)         // compile error: b used after move
-    head := root.Name[:2]          // ref string: a borrow, no allocation
+    head := root.Name[:2]          // View[string]: a borrow, no allocation
     fmt.Println(head, len(root.Children))
 }                                  // root is dropped: the whole tree is freed
 ```
@@ -437,7 +440,7 @@ Such a value can be checked only in a local variable of the function. Storing it
 
 A value stored in a never-nil `@Required` `error`, `any`, map or channel field must be known non-nil; [TYP-15](03-types.md) has the full list (a literal, `make(…)`, a local checked with `!= nil`, a value of a never-nil type converted to `error` / `any`, …).
 
-Narrowing works on local variables and parameters. A field or element is copied into a local first (`if o := c.Owner; o != nil { … }`), because it could change between the check and the use. A variable captured by a function literal is not a local of the literal ([CLO-9](11-closures.md)): the literal can run at any time, so inside it a captured `Option` or checked result is never known set, neither from a check outside the literal nor from one inside it; copy it into a local first (`v := o; go func() { use(v) }()`, or `if v := o; v != nil { … }` inside the literal). An assignment to `o` ends the narrowing, and so does `move(o)`, which leaves `o` nil (after it, using `o` as a `T` again, including `move(o)` into a `T`, is an error until `o` is checked again). Where `o` is checked it simply is a `T`, so a copy made there is a `T` too: after `if a != nil`, `p := a` (or `var p = a`) gives `p` the type `*Node`, which is never nil, while `var p Option[*Node] = a` keeps the declared `Option`. Using an unchecked `Option` as its value is a compile error: "`o` may be nil; check `o != nil` first". Where `o` is checked, taking a reference into its value's own storage is a compile error too, even for a use within the statement (`sum(o.Arr[:])`), because the reference could be kept past `o = nil`, which leaves zero bytes under it: `&o.F`, a pointer-receiver method value `o.M` or `go` / `defer o.M()`, `o.Arr[:]` of an array held by value, `for _, &e := range o.Arr`, and the same made from a variable that borrows a part of the value (a range variable over owning array elements, a `Get` binding). Copy `o` first (`v := o`). Not affected: an immediate call `o.M()` (it borrows the receiver for the call only), storage reached through a pointer (`Option[*T]`, a pointer field), and a buffer the value owns (`o.Items[:]` of a slice, `o.Name[1:]`; a ref into it after `o = nil` dangles, [UB-1](16-undefined-behavior.md), as for any owned local).
+Narrowing works on local variables and parameters. A field or element is copied into a local first (`if o := c.Owner; o != nil { … }`), because it could change between the check and the use. A variable captured by a function literal is not a local of the literal ([CLO-9](11-closures.md)): the literal can run at any time, so inside it a captured `Option` or checked result is never known set, neither from a check outside the literal nor from one inside it; copy it into a local first (`v := o; go func() { use(v) }()`, or `if v := o; v != nil { … }` inside the literal). An assignment to `o` ends the narrowing, and so does `move(o)`, which leaves `o` nil (after it, using `o` as a `T` again, including `move(o)` into a `T`, is an error until `o` is checked again). Where `o` is checked it simply is a `T`, so a copy made there is a `T` too: after `if a != nil`, `p := a` (or `var p = a`) gives `p` the type `*Node`, which is never nil, while `var p Option[*Node] = a` keeps the declared `Option`. Using an unchecked `Option` as its value is a compile error: "`o` may be nil; check `o != nil` first". Where `o` is checked, taking a reference into its value's own storage is a compile error too, even for a use within the statement (`sum(o.Arr[:])`), because the reference could be kept past `o = nil`, which leaves zero bytes under it: `&o.F`, a pointer-receiver method value `o.M` or `go` / `defer o.M()`, `o.Arr[:]` of an array held by value, `for _, &e := range o.Arr`, and the same made from a variable that borrows a part of the value (a range variable over owning array elements, a `Get` binding). Copy `o` first (`v := o`). Not affected: an immediate call `o.M()` (it borrows the receiver for the call only), storage reached through a pointer (`Option[*T]`, a pointer field), and a buffer the value owns (`o.Items[:]` of a slice, `o.Name[1:]`; a view into it after `o = nil` dangles, [UB-1](16-undefined-behavior.md), as for any owned local).
 
 ```go
 func greet(u Option[*User]) {
@@ -489,22 +492,34 @@ bad := &Tree{V: 1}               // error: use new_unique(Tree{V: 1})
 
 *Why (P1 to P10):* every allocation is spelled `new_unique` or `new_shared`, so nothing allocates behind a Go-looking `&T{}`; `*T` stays a raw, Go-looking pointer for C interop, but it is never nil, so a function that takes a `*User` always gets a `User`, and "maybe" is visible in the type as `Option[T]` (ADR-0018).
 
-## 4.4 Refs (D1.6)
+## 4.4 Views (D1.6)
 
-Syntax: `RefType` is defined in [3.1](03-types.md). `ref` is allowed in front of `string` and slice types only: `ref string`, `ref []byte`.
+Syntax: `View[X]` is a predeclared generic type ([3.1](03-types.md)). `X` may be any type except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]` itself. So `View[string]`, `View[[]byte]`, `View[User]`, `View[Bytes]` (a named type) and `View[map[K]V]` are fine, and `View[*T]`, `View[Unique[*T]]`, `View[unsafe.Pointer]` and `View[View[…]]` are compile errors that name the allowed forms. `View` is not a keyword; `ref` is an ordinary identifier ([LEX-12](02-lexical.md#lex-12)).
 
-**OWN-V1.** `ref string` (immutable bytes) and `ref []T` (mutable elements, fixed length) are `(ptr, len)` borrows. They are trivial ([OWN-C1](#41-type-categories-d13)).
+**OWN-V1.** *A `View[T]` is a read-only borrow, all the way down.* It is like Rust's `&T`. For `string` and slice types it is a `(ptr, len)` pair. A view is trivial ([OWN-C1](#41-type-categories-d13)). There is no write path through a view.
+- **Nothing can be changed through a `View[T]`:** not its fields, not slice elements, not map entries, and not the target of a pointer reached through it.
+- **Reading.** A value read out of a view is copied out as a plain value **only if its type is Copy and contains no pointer kind** (no `*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `unsafe.Pointer`, and no struct or array holding one). So `n := v.Count` gives an `int`, `x := vs[0]` on a `View[[]int]` gives an `int`, and a pointer-free Copy struct is copied. **Everything else read through a view is a view:** `v.Name` is a `View[string]`, `v.Tags` is a `View[[]string]`, a struct field of struct type is a `View[Inner]`, `v.Owner` (a `*User`) is a `View[User]` of the target, and a Copy struct with a pointer field is a `View[S]`.
+- **Writes are compile errors** on a view or on any part of it: assignment, `++`, `op=`, `delete`, `clear`, `copy` into it, `append`, `&` of a part, calling a pointer-receiver method, and `for _, &e := range v` (it is `&` of a part, [RNG-1a](08-slices-and-range.md#83-range-loops-d121)).
+- **A view never converts to a non-view type,** except by the copy-out above or by `.Clone()`, `string(v)` or `[]T(v)`. So passing a view, or a part of one that is not a copy-out value, is a compile error for any parameter whose type is not a `View`: a `[]T` parameter, a map, a `*T`, a struct containing these, and a plain `T` parameter (which [PAR-1](05-parameters.md) makes read-only only at the top level: a borrowed `User` could still write `u.Tags[0]`). A value-receiver method call on a view part and a method value are errors for the same reason. There are two exceptions. A `string` parameter has immutable bytes and so no write path ([PAR-8](05-parameters.md)). Boxing a view into an interface with no methods (`any`, `interface{}`) is allowed (`fmt.Println(w)`, `var a any = w`): the box keeps the dynamic type `View[T]`, and a type-switch or assertion binding to `View[T]` is a view, read-only all the way down ([TYP-9](03-types.md)). `View[T]` has no methods except the built-in `Clone` ([OWN-R6](04-ownership.md#42-ownership-rules-d14)), which every type has; it makes an owned copy. So a view can be boxed only into an interface with no methods (`any`, `interface{}`); boxing it into `error`, `fmt.Stringer` or any interface with methods is a compile error, and `v.String()` on a `View[User]` is an error. The box may not outlive the view's owner; for now that escape rule is part of UB-1 ([UB-1](16-undefined-behavior.md)) and comes with ADR-0021.
+- **Methods.** `View[T]` has no methods except the built-in `Clone` ([OWN-R6](04-ownership.md#42-ownership-rules-d14)), which every type has; it makes an owned copy (see above); P04.09 may relax this with the "writes this parameter" bit.
+- **Range variables.** A range variable over a view (`View[[]T]`, `View[map[K]V]`, or a view part) is itself a view, read-only all the way down, with the same copy-out rule for pointer-free Copy elements ([RNG-1](08-slices-and-range.md)). So `for _, d := range viewOfDocs { d.Tags[0] = "x" }` is an error.
+- This is conservative for now. A later pass (P04.09) may relax it with a "writes this parameter" bit: a call would be allowed when the callee never writes through that parameter or receiver.
 
-**OWN-V2.** *Slicing makes refs.* `s[i:j]` on a `string` gives a `ref string`. `xs[i:j]` on a slice or array gives a `ref []T`. No allocation. `:=` infers the ref type. The one exception is re-slicing an owned slice into itself: `s = s[i:j]` shrinks it in place ([SLC-6](08-slices-and-range.md)).
+**OWN-V2.** *Slicing.* No allocation. `:=` infers the type. The result depends on what is sliced:
+- Slicing a `string` or a view gives a **view**: `s[i:j]` on a `string` gives a `View[string]`, on a `View[[]T]` a `View[[]T]`.
+- Slicing a slice or array that you may write (owned, or a borrowed writable one) gives a **borrowed `[]T`**. This is the same thing as a borrowed `[]T` parameter ([PAR-1](05-parameters.md), [PAR-2](05-parameters.md), [OWN-R3b](#42-ownership-rules-d14)): its elements can be written, but it cannot grow (`append` is an error), cannot be moved, and cannot outlive its owner.
+- So `sort.Ints(nums[1:3])`, `r.Read(buf[n:])`, `copy(dst[2:], src)` and `s := nums[1:3]; s[0] = 9` all work.
+- The one exception is re-slicing an owned slice into itself: `s = s[i:j]` shrinks it in place ([SLC-6](08-slices-and-range.md)).
 
 **OWN-V3.** *Conversions.*
-- Owned to ref is implicit wherever a ref is expected (an argument, an assignment to a ref variable, a comparison).
-- Ref to owned is explicit and **copies**: `string(v)`, `[]T(v)`. `[]T(v)` needs elements that satisfy `Clone` ([GEN-2](10-generics.md)).
+- Owned (or borrowed) to view is implicit wherever a view is expected (an argument, an assignment to a view variable, a comparison).
+- View to owned is explicit and **copies**: `string(v)`, `[]T(v)`, and `v.Clone()` for any view (an owned copy; `string(v)` stays the form for a `View[string]`). `[]T(v)` needs elements that satisfy `Clone` ([GEN-2](10-generics.md)).
+- A view never converts to a non-view type, except by the copy-out or by `.Clone()`, `string(v)` or `[]T(v)` (OWN-V1). A `View[[]T]` is not accepted by a `[]T` parameter. Two exceptions: a `string` parameter, and boxing into `any` or another interface with no methods (the box keeps the dynamic type `View[T]`, [OWN-V1](#44-views-d16), [TYP-9](03-types.md)).
 - Unlike Go, where converting between slice types never copies, here the copy is how you get ownership.
 
-**OWN-V4.** *Map keys.* Maps accept a `ref` key for lookups, so `counts[w]` with `w ref string` does not allocate. Inserting a new entry clones the key, whether it is a `ref` key or a borrowed one (OWN-V4a).
+**OWN-V4.** *Map keys.* Maps accept a view key for lookups, so `counts[w]` with `w View[string]` does not allocate. Inserting a new entry clones the key, whether it is a view key or a borrowed one (OWN-V4a).
 
-**OWN-V4a.** *Map index on the left side.* `m[k] = v`, `m[k]++` and `m[k] op= v` **never consume** the key expression `k`. The key is borrowed for the lookup, and cloned only if a **new** entry is inserted. This holds for any key, ref or not. So `for _, w := range words { counts[w]++ }` works as in Go (`w` is a borrowed range variable), and `m[s] = 1; fmt.Println(s)` is fine (`s` is not moved). The allocation (the key clone) happens only on insert, as for ref keys. Inside a `range` over the same map, the rule of OWN-R4 "Map entries" applies: only `m[k]` with `k` the range key variable, not written earlier in the body, is allowed.
+**OWN-V4a.** *Map index on the left side.* `m[k] = v`, `m[k]++` and `m[k] op= v` **never consume** the key expression `k`. The key is borrowed for the lookup, and cloned only if a **new** entry is inserted. This holds for any key, view or not. So `for _, w := range words { counts[w]++ }` works as in Go (`w` is a borrowed range variable), and `m[s] = 1; fmt.Println(s)` is fine (`s` is not moved). The allocation (the key clone) happens only on insert, as for view keys. Inside a `range` over the same map, the rule of OWN-R4 "Map entries" applies: only `m[k]` with `k` the range key variable, not written earlier in the body, is allowed.
 
 ```go
 counts := map[string]int{}
@@ -516,23 +531,25 @@ fmt.Println(s)                            // ok: s was not moved
 
 The key is cloned only when a new entry is added. Without this rule, `counts[w]++` over a borrowed range variable would need `counts[w.Clone()]++` and allocate on every update. The key clone on a map insert is part of the allocation list of principle 1.
 
-**OWN-V5.** *Storing refs.* Refs may be stored and returned at the programmer's risk, like C++ `string_view` and `span`. `gopp vet` warns about a struct field of ref type unless the struct is marked `@Ref` (for example tokens that point into a source buffer).
+**OWN-V5.** *Storing views.* Views may be stored and returned at the programmer's risk, like C++ `string_view` and `span`. A struct field of view type is a **compile error** (diagnostic `err_view_field_without_attr`, a new code) unless the struct is marked `@View` (for example tokens that point into a source buffer). The same holds for a field whose type contains a view: `[]View[string]`, `map[K]View[…]`, an array of views, and an embedded view.
 
-**OWN-V6.** *Temporaries.* A ref into a temporary (`f()[1:3]`) lives only as long as the temporary: until the end of the full statement. In the header of a `for … range`, `if` or `switch` it lives until the end of the whole statement. Storing a borrow of a temporary in a longer-lived place is a compile error ([OWN-R8](#42-ownership-rules-d14)).
+**OWN-V6.** *Temporaries.* A view or a borrow into a temporary (`f()[1:3]`) lives only as long as the temporary: until the end of the full statement. In the header of a `for … range`, `if` or `switch` it lives until the end of the whole statement.
+- **Lifetime extension.** In a `:=` or `var` declaration (`w := strings.ToUpper(s)[0:3]`, `var w = …`) the compiler keeps the temporary in a hidden local until the end of the enclosing block, like Rust and C++ temporary lifetime extension. Only `:=` and `var` declarations get this.
+- Storing a view or a borrow of a temporary into a longer-lived place (a field, a global, an outer variable, a return) is still a compile error ([OWN-R8](#42-ownership-rules-d14)).
 
-**OWN-V7.** *Returning a ref into a local.* `return` of a ref that points into a local variable of the same function, or into an owned value that dies at the return (an owned `move` parameter, a temporary), is a **compile error**. A ref into a *borrowed* parameter or receiver is fine, because the caller still owns it ([PAR-9](05-parameters.md)). It is an error only when the returned ref points into an **owned** local (or an owned value that dies at the return). The compiler checks only what it can see in the function: the owned local or `move` parameter itself, converted to a ref at the `return` (implicit owned-to-ref conversion), so `func f() ref string { s := "hi"; return s }` and `func g(move s string) ref string { return s }` are compile errors; a ref made by slicing a temporary, or a temporary converted to a ref at the `return` (`return load()[:2]`, or `return strings.Repeat("a", 3)` as a `ref string`); a ref made by slicing an owned local (`return s[:1]`), or by indexing or slicing an owned local's field held by value. A ref-typed local or parameter that holds a ref into a borrowed parameter or into the caller's data is fine (`s = s[1:]; return s` in `trim(s string) ref string`, where `s` is a borrowed parameter, [PAR-2](05-parameters.md)). Less obvious cases, such as a ref that comes out of a call, stay undefined behavior and `-asan` finds them ([UB-1](16-undefined-behavior.md)).
+**OWN-V7.** *Returning a view into a local.* `return` of a view that points into a local variable of the same function, or into an owned value that dies at the return (an owned `move` parameter, a temporary), is a **compile error**. A view into a *borrowed* parameter or receiver is fine, because the caller still owns it ([PAR-9](05-parameters.md)). It is an error only when the returned view points into an **owned** local (or an owned value that dies at the return). The compiler checks only what it can see in the function: the owned local or `move` parameter itself, converted to a view at the `return` (implicit owned-to-view conversion), so `func f() View[string] { s := "hi"; return s }` and `func g(move s string) View[string] { return s }` are compile errors; a view made by slicing a temporary, or a temporary converted to a view at the `return` (`return load()[:2]`, or `return strings.Repeat("a", 3)` as a `View[string]`); a view made by slicing an owned local (`return s[:1]`), or by indexing or slicing an owned local's field held by value. A view-typed local or parameter that holds a view into a borrowed parameter or into the caller's data is fine (`s = s[1:]; return s` in `trim(s string) View[string]`, where `s` is a borrowed parameter, [PAR-2](05-parameters.md)). Less obvious cases, such as a view that comes out of a call, stay undefined behavior and `-asan` finds them ([UB-1](16-undefined-behavior.md)). A function also cannot return a writable borrowed part of a slice (`return xs[1:3]` with a `[]T` result is an error, see [PAR-9](05-parameters.md)): to return a part without copying, the result type is `View[…]`, which is read-only.
 
 ```go
-func bad() ref string { s := "hi"; return s[:1] }   // error: ref into the local s
-func head(src string) ref string { return src[:1] }   // ok: src is borrowed from the caller
+func bad() View[string] { s := "hi"; return s[:1] }   // error: view into the local s
+func head(src string) View[string] { return src[:1] }   // ok: src is borrowed from the caller
 
-@Ref
+@View
 type Token struct {
-    Text ref string      // points into the source buffer; no vet warning thanks to @Ref
+    Text View[string]      // points into the source buffer; allowed only because of @View
     Line int
 }
 
-func first(src string) ref string {     // result is a ref into src
+func first(src string) View[string] {     // result is a view into src
     i := 0
     for i < len(src) && src[i] != ' ' { i++ }
     return src[:i]
@@ -540,23 +557,47 @@ func first(src string) ref string {     // result is a ref into src
 
 func main() {
     text := "alpha beta"
-    w := first(text)             // ref: no allocation
+    w := first(text)             // view: no allocation
     owned := string(w)           // explicit copy: now independent of text
     counts := map[string]int{}
-    counts[w]++                  // ref key: lookup is free; the first insert clones the key
+    counts[w]++                  // view key: lookup is free; the first insert clones the key
     fmt.Println(w, owned, counts)
 
     for _, c := range strings.ToUpper(text)[:3] { _ = c } // the temporary lives for the whole loop
-    // h := strings.ToUpper(text)[:3]  // error: ref into a temporary stored in h
+    h := strings.ToUpper(text)[:3]  // ok: the temporary is kept until the end of the block (OWN-V6)
+    var tok Token
+    // tok.Text = strings.ToUpper(text)[:3]  // error: view of a temporary stored in a longer-lived place
+    fmt.Println(h, tok.Line)
+
+    nums := []int{3, 1, 2}
+    sort.Ints(nums[1:3])         // ok: nums[1:3] is a borrowed []int, its elements can be written
+    t := nums[1:3]
+    t[0] = 9                     // ok: writes nums[1]
+    // t = append(t, 1)          // error: a borrowed slice cannot grow
+}
+
+func total(xs View[[]int]) int {
+    n := 0
+    for _, x := range xs { n += x }      // ok: reading
+    // xs[0] = 0                         // error: a View is read-only
+    return n
+}
+
+func rename(u View[User]) {
+    _ = u.Name                           // ok: u.Name is a View[string]
+    // u.Name = "amy"                    // error: assignment through a View
+    // u.Tags[0] = "x"                   // error: u.Tags is a View[[]string]
+    // u.Owner.Age++                     // error: the target of a pointer field is read-only too
+    // u.Reset()                         // error: pointer-receiver method
 }
 ```
 
-*Why (V1 to V7):* a ref is a borrow you can see in the type, so `s[i:j]` is free and a copy is always a visible `string(v)`; the dangling risk is the same as C++ `string_view` and is listed in chapter 16.
+*Why (V1 to V7):* a view is a read-only borrow you can see in the type, so `s[i:j]` is free and a copy is always a visible `string(v)`; read-only all the way down means a `View[T]` parameter is a promise that the callee changes nothing, like Rust's `&T`; the dangling risk is the same as C++ `string_view` and is listed in chapter 16.
 
 ## 4.5 Rationale
 
 - **Why ownership?** Deterministic, GC-free memory with C++-compatible object semantics, which C++ interop needs anyway, while keeping Go's zero values.
 - **Why zero-on-move?** No drop flags and no partially dead variables. Moved-from state is always defined.
 - **Why explicit `Clone`?** Hidden copies are hidden allocations. `x.Clone()` is a method, so it works the same for built-in types, user types and generic code (`[T Clone]`), and `clone(x)` stays as the short form.
-- **Why refs?** They make borrows visible in types and let `s[i:j]` stay free.
+- **Why views?** They make borrows visible in types and let `s[i:j]` stay free.
 - **Rejected:** tracing GC (excluded by requirements); ARC everywhere (hidden cost, cycles); a Rust-style borrow checker (cost in compile speed and simplicity; reconsider after v1); C++-style implicit copies.

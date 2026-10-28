@@ -22,7 +22,7 @@ The P01 review (P01.15) is done. During the review, places where the plan was si
 |---|---|
 | `LEX` | [02 lexical](02-lexical.md) |
 | `TYP` | [03 types](03-types.md) |
-| `OWN` | [04 ownership](04-ownership.md) (`OWN-C` categories, `OWN-R` rules 1 to 10 of D1.4, `OWN-P` pointers, `OWN-V` refs) |
+| `OWN` | [04 ownership](04-ownership.md) (`OWN-C` categories, `OWN-R` rules 1 to 10 of D1.4, `OWN-P` pointers, `OWN-V` views) |
 | `PAR` | [05 parameters](05-parameters.md) |
 | `EXP` | [06 expressions](06-expressions.md) |
 | `STM` | [07 statements](07-statements.md) |
@@ -74,7 +74,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | D1.3 | type categories | [04](04-ownership.md) (summary in [03](03-types.md)) |
 | D1.4 | ownership rules 1 to 10 | [04](04-ownership.md) |
 | D1.5 | parameters | [05](05-parameters.md) |
-| D1.6 | refs | [04](04-ownership.md), [08](08-slices-and-range.md) |
+| D1.6 | views | [04](04-ownership.md), [08](08-slices-and-range.md) |
 | D1.7 | pointers and heap allocation | [04](04-ownership.md) |
 | D1.8 | errors and `!` | [09](09-errors-and-panics.md) |
 | D1.9 | panic, defer, recover | [09](09-errors-and-panics.md) |
@@ -97,7 +97,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - **Owner**: the variable, field, element or temporary that holds a value and destroys it.
 - **Move**: give a value to a new owner. The old place becomes the zero value.
 - **Borrow**: use a value without taking it. A borrow does not destroy anything.
-- **Ref**: `ref string` or `ref []T`. A `(ptr, len)` borrow you can store. `ref` is a contextual keyword ([LEX-12](02-lexical.md)).
+- **View**: `View[T]`, for example `View[string]` or `View[[]T]`. A read-only borrow, deep, like Rust's `&T`; for strings and slices a `(ptr, len)` pair you can store. `View` is a predeclared generic type ([LEX-7](02-lexical.md#predeclared-identifiers)).
 - **Shared handle**: a value whose copies share one thing through a reference count (`Shared[*T]`, channels, interfaces, funcs).
 - **Trivial type**: copied bit by bit, no destructor. It satisfies the `Copy` constraint.
 - **Owning type**: has a destructor (directly or through fields). Move-only.
@@ -106,7 +106,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 ## 1.7 Non-goals of v1
 
 - Source compatibility with Go code that relies on GC.
-- A borrow checker. Refs and raw pointers can dangle (see [chapter 16](16-undefined-behavior.md)).
+- A borrow checker. Views and raw pointers can dangle (see [chapter 16](16-undefined-behavior.md)).
 - A user-facing `reflect` package.
 - User-defined operator overloading, inheritance, exceptions as an error mechanism.
 

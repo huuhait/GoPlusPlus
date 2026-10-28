@@ -54,9 +54,9 @@
 |---|---|
 | struct | declaration order, C alignment |
 | `string` | `{ptr, len, cap}`; a literal points into rodata with cap 0 and is never freed |
-| `ref string` | `{ptr, len}` |
+| `View[T]` where `T`'s underlying type is `string` or a slice (`View[string]`, `View[Bytes]`) | `{ptr, len}` |
 | `[]T` | `{ptr, len, cap}` |
-| `ref []T` | `{ptr, len}` |
+| `View[T]` (every other `T`, including map, chan, func, interface, `Option`, structs) | `{ptr}` |
 | interface | `{itab*, data}` |
 | func value | `{code*, env*}` |
 | `*T`, `Unique[*T]` | pointer |

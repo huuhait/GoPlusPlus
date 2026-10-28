@@ -11,7 +11,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.02 M0 hello
 - [ ] P04.03 Targets & linking
 - [ ] P04.04 Lower core
-- [ ] P04.05 Lower strings/slices/refs/maps
+- [ ] P04.05 Lower strings/slices/views/maps
 - [ ] P04.06 Lower methods & interfaces
 - [ ] P04.07 Lower closures, defer, panics
 - [ ] P04.08 Monomorphization
