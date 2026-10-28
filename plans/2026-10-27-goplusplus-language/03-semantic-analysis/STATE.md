@@ -25,6 +25,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.16 No auto-deref through `Weak` (OWN-P5, ADR-0017)
 - [x] P03.17 Never-nil pointers and `Option[T]` (ADR-0018)
 - [ ] P03.18 Never-nil interfaces and funcs; checked `err` and comma-ok values (owner decisions 2026-10-28)
+- [ ] P03.19 Nil-safety leftovers: `close` of a known-nil channel (CON-6a); writes into a temporary map; writes into a map or slice inside an interface (ADR-0018 amendment point 5)
 
 ## Open questions
 

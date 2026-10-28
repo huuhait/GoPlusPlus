@@ -21,7 +21,7 @@
    - Moving a Go++ value copies its bytes and zeroes the source.
    - Moving a C++ value, implicitly or with `move(x)`, runs its move constructor; the source keeps its moved-from state and is destroyed at the end of its scope (P01 D1.4 rule 9). Relocation (P05 D5.5) is used only inside containers.
    - Drop glue skips `drop` on all-zero values.
-4. Lower `!`, bounds checks and nil checks. Nil checks are only for maps, channels and `error` / `any` values: the pointer kinds, funcs and interfaces with methods are never nil, so their uses have none (ADR-0018 and its amendment point 3).
+4. Lower `!`, bounds checks and nil checks. Nil checks are only for channels and `error` / `any` values: the pointer kinds, funcs and interfaces with methods are never nil, so their uses have none (ADR-0018 and its amendment point 3). Map writes need no nil check, because P04 passes the address of the owning map header and a write to a nil map creates it there (amendment point 5). There is no exception: a write into a temporary map or into a map inside an interface is a compile error (P03.19), so P04 never lowers one.
 5. Monomorphize generic calls.
 6. Run light GIR passes: constant folding, dead-block removal, trivial inlining (at every `opt`; the `opt 0` pipeline keeps it small).
 7. Emit LLVM IR.

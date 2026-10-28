@@ -69,7 +69,7 @@
 - **Trampolines:** the catch-all trampolines from P04 D4.6 (at `main`, goroutine entry and C-callback entry) print an unrecovered panic, stop the other goroutines (P12 D12.12) and exit with code 2.
 
 **D5.8 — Explicit safety checks.**
-- Bounds, nil dereference (maps, channels and `error` / `any` values only: the pointer kinds, funcs and interfaces with methods are never nil, ADR-0018 and its amendment point 3), integer division by zero and negative shift counts are checked with a compare plus a branch to a cold panic call.
+- Bounds, nil dereference (channels and `error` / `any` values only: the pointer kinds, funcs and interfaces with methods are never nil, ADR-0018 and its amendment point 3; map writes need no nil check because P04 passes the address of the owning map header, and there is no run-time nil-map panic: writes into temporary maps and maps inside interfaces are compile errors, P03.19, amendment point 5), integer division by zero and negative shift counts are checked with a compare plus a branch to a cold panic call.
 - No SIGSEGV tricks for nil checks. Signal handling stays free for the C code that needs it.
 - `@NoBounds` (per function) and a per-package flag turn bounds checks off.
 

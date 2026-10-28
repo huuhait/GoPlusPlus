@@ -42,7 +42,7 @@ var t string = v                 // error: owned variable; write string(v)
 
 Syntax: no change. Interfaces are Go's structural interfaces.
 
-**TYP-5.** *Shared handles.* An interface value is a shared handle. Copying it shares the same dynamic value: an immutable, reference-counted box, or the pointer it holds. So `==`, type switches and copies behave as in Go.
+**TYP-5.** *Shared handles.* An interface value is a shared handle. Copying it shares the same dynamic value: an immutable, reference-counted box, or the pointer it holds. The box is immutable all the way down: a map or slice inside it is read-only through the interface (see the binding rules below). So `==`, type switches and copies behave as in Go.
 
 **TYP-6.** *Boxing.* Converting an owned value into an interface **variable, field or element** moves it into a box. Storing a `*T` in an interface stores a borrow.
 
@@ -76,6 +76,7 @@ Interface `==` compares dynamic types, so a boxed `ref string` is not equal to a
 
 The box of an interface value is shared and immutable (TYP-5). So **every name-binding form** of an **owning** dynamic type binds a **borrowed variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the boxed value:
 - `s := v.(string)`, `s, ok := v.(string)` and `switch x := v.(type)` are all legal for an owning `T`. Go code like `if s, ok := v.(string); ok { use(s) }` works unchanged;
+- the data in the box is read-only **all the way down**: through a binding or an assertion, a map or a slice inside the interface can be read, measured (`len`) and ranged over, but not written. `v["b"] = 2`, `v["b"]++`, `delete(v, k)`, `clear(v)`, `x.(map[string]int)["b"] = 2` and `v[0] = 1` (on a `[]int` binding) are compile errors, nil or not, because the box is immutable and so is what it owns. "Inside an interface" means everything the box holds **by value**, all the way down until a pointer: the map or slice itself, and the maps and slices in struct fields and array elements of the boxed value. So `v.(Doc).Index["x"] = 1`, `case Doc:` with `d.Index["x"] = 1`, and `d.Tags[0] = 1` are errors. A `*T` field in the boxed struct still gives a writable pointee. Fixes: copy it out (`m := v.Clone(); m["b"] = 2`), or store a pointer in the interface (`var x any = &myMap`, then `(*p)["b"] = 2` through `case *map[string]int`; [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17));
 - the bound variable is read-only (the top-level rule of [OWN-R3b](04-ownership.md#42-ownership-rules-d14): it, and any part of it held by value, cannot be written, have its address taken, or get a pointer-receiver call, which would write into the immutable box) and can be used as an operand or a borrowed argument. In the same scope, a `:=` that reuses the name `v` assigns to `v`, so it is an error; use a new name;
 - to get an owned copy, write `owned := s.Clone()`, or `v.(string).Clone()` in a single-value expression. There is no comma-ok `Clone` form and no `move` fix-it, because a shared box cannot be moved from;
 - where ownership is required directly, `v.(T)` used as a place gets the [OWN-R3a](04-ownership.md#42-ownership-rules-d14) error with fix-it `v.(T).Clone()`: a `move` argument, `return`, a send, a field store;

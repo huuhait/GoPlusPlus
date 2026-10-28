@@ -41,6 +41,8 @@ The case list above applies D1.4 rule 3a and rule 8 to `go`, the same way [PAN-3
 
 **CON-6.** *Receive from a closed channel* gives the zero value. For a type with no zero value (a pointer kind, a func, an interface with methods other than `error`, a C++ type without a default constructor, a struct with a `@Required` field), a receive is allowed only in the comma-ok form (`v, ok := <-ch`, or `case v, ok := <-ch:` in a `select`); `v := <-ch`, `case v := <-ch:` and `(<-ch).f` are compile errors. The comma-ok form works, with `v` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
 
+**CON-6a.** *Nil channels.* A nil channel works as in Go: a send or receive on it blocks forever, so a `select` case on a nil channel never fires. `close(ch)` of a channel the compiler knows is nil is a compile error. "Known nil" means a **local** channel variable (not a package variable, not a field, not a parameter) that is nil on every path to the `close`: declared with no value or assigned `nil`, never assigned a non-nil value on any path before the close, and not captured by a function literal or address-taken. So `var ch chan int; close(ch)` and `ch = nil; close(ch)` are errors. A package-level `var ch chan int` is not checked: `close` panics at run time, as in Go. Every other `close` of a nil channel panics as in Go (ADR-0018 amendment point 5).
+
 **CON-7.** *Memory model.* Go's happens-before model. A channel send happens before the matching receive completes; `sync` types give the usual edges.
 
 **CON-8.** *Data races are undefined behavior* (as in C++). `-race` (TSan) detects them. See [UB-3](16-undefined-behavior.md).

@@ -59,7 +59,7 @@ These follow Go.
 
 **EXP-6.** *Integer overflow wraps.* See [Integer overflow](https://go.dev/ref/spec#Integer_overflow). `int` is 64-bit on 64-bit targets.
 
-**EXP-7.** *Checks are on.* Bounds checks and nil checks are always on (nil checks apply to maps, channels, `error` and `any` (empty-interface) values; the pointer kinds, funcs and interfaces with methods are never nil, so their uses need none, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)), unless turned off with `@NoBounds` (per function) or a per-package flag. Integer division by zero panics ([Run-time panics](https://go.dev/ref/spec#Run_time_panics)).
+**EXP-7.** *Checks are on.* Bounds checks and nil checks are always on. Nil checks apply to channels, `error` and `any` (empty-interface) values. A nil map is empty and a write creates it, so map writes need no nil check. A write into a temporary map or into a map inside an interface is a compile error, so there is no run-time nil-map panic ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Pointers, funcs and interfaces with methods are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)), so their uses need none. The checks can be turned off with `@NoBounds` (per function) or a per-package flag. Integer division by zero panics ([Run-time panics](https://go.dev/ref/spec#Run_time_panics)).
 
 **EXP-8.** *Operations Go defines but LLVM does not.* Go++ gives them Go's results (P04 D4.12 lowers them). None of them is UB.
 

@@ -123,7 +123,7 @@ If the loop stops early (`break`, `return`, `goto` out, panic), the moved-out sl
 **RNG-3.** Inside the loop body, a statement that can reallocate the ranged slice, map or owned string is a **compile error** when the compiler can see it. This holds for the plain form and the `&` form:
 - appending to it, or growing an owned string with `+=` (STM-8 grows in place and can free the buffer);
 - assigning it, or (slices only) re-slicing it in place (`s = s[i:j]`);
-- inserting into the map: inside `range m`, any `m[x] = …`, `m[x]++`, `m[x] op= …` or `m[x] = append(m[x], …)` where `x` is not the current range key variable (or is `k` but `k` was written earlier in the body, e.g. `k++` on a trivial key) counts as a visible potential insert (the compiler cannot know whether `x` exists). Only `m[k]` with `k` the range key variable, not written earlier in the body, is a write to the current entry. Fix-it: collect the changes and apply them after the loop;
+- inserting into the map: inside `range m`, any `m[x] = …`, `m[x]++`, `m[x] op= …` or `m[x] = append(m[x], …)` where `x` is not the current range key variable (or is `k` but `k` was written earlier in the body, e.g. `k++` on a trivial key) counts as a visible potential insert (the compiler cannot know whether `x` exists). Only `m[k]` with `k` the range key variable, not written earlier in the body, is a write to the current entry. `mm[x][y] = …` also counts as an insert into `mm` when `x` may be absent, because the write inserts `x` with a new inner map ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Fix-it: collect the changes and apply them after the loop;
 - calling `clear` on it.
 
 For an owned string: `for _, r := range s { s += "x" }` is a compile error. Fix-its: range over `s.Clone()`, or build into a new variable.
@@ -140,7 +140,7 @@ Other operations on the ranged collection: `append`, assigning the collection, i
 
 In Go the old array stays alive, so the same loop is safe there. In Go++ the old buffer is freed (D1.20, P05 D5.4). A run-time check like the map iterator count (RNG-4) would cost a counter in every slice header or a check per iteration, so there is none. The visible cases are already compile errors (RNG-3).
 
-**RNG-4.** Maps count their active iterators. In the cases the compiler cannot see, inserting a **new key** into a map while any `range` over that map is running **always panics**, with "map insert during iteration". It does not depend on the table's size or capacity, so it behaves the same on every run. Writing a key that already exists is not an insert and is allowed. The visible inserts are compile errors ([RNG-3](#83-range-loops-d121)).
+**RNG-4.** Maps count their active iterators. In the cases the compiler cannot see, inserting a **new key** into a map while any `range` over that map is running **always panics**, with "map insert during iteration". It does not depend on the table's size or capacity, so it behaves the same on every run. Writing a key that already exists is not an insert and is allowed. A write `mm[k1][k2] = v` with an absent `k1` inserts `k1`, so it panics too ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). The visible inserts are compile errors ([RNG-3](#83-range-loops-d121)).
 
 ```go
 for k := range m { addKey(m) }     // addKey inserts a new key: panics every time
