@@ -114,19 +114,21 @@
 
 **D6.12 — Build profiles.** (ADR-0007.) Tasks P06.14 to P06.16. The `profile` block grammar in gopp.mod is P10 D10.11; the CMake side is P11 D11.13; compile-time access is P09 D9.12.
 
-A **profile** is a named set of nine build settings. Two are built in. The settings of the `debug` and `release` profiles:
+A **profile** is a named set of nine build settings. Three are built in: `debug`, `release`, and `host`, which is used only for host builds of generator tools (P11 D11.12, ADR-0012). Their settings:
 
-| Setting | Values | `debug` | `release` |
-|---|---|---|---|
-| `opt` | `0` `1` `2` `3` `s` `z` | `0` | `3` |
-| `debuginfo` | `none` `line` `full` | `full` | `line` |
-| `lto` | `off` `thin` `full` | `off` | `thin` |
-| `panic` | `unwind` `abort` | `unwind` | `unwind` |
-| `sanitize` | `none`, or a list of `address` `undefined` `thread` (`memory` also) | `none` | `none` |
-| `strip` | `false` `true` (`true` = `symbols`: symbol table and debug info removed; finer value: `debuginfo`) | `false` | `true` |
-| `cpu` | `baseline` `native` or a CPU name | `baseline` | `baseline` |
-| `pgo` | `off` `generate` or the path of a `.profdata` file | `off` | `off` |
-| `link` | `static` `dynamic` | `dynamic` | `static` |
+| Setting | Values | `debug` | `release` | `host` |
+|---|---|---|---|---|
+| `opt` | `0` `1` `2` `3` `s` `z` | `0` | `3` | `2` |
+| `debuginfo` | `none` `line` `full` | `full` | `line` | `none` |
+| `lto` | `off` `thin` `full` | `off` | `thin` | `off` |
+| `panic` | `unwind` `abort` | `unwind` | `unwind` | `unwind` |
+| `sanitize` | `none`, or a list of `address` `undefined` `thread` (`memory` also) | `none` | `none` | `none` |
+| `strip` | `false` `true` (`true` = `symbols`: symbol table and debug info removed; finer value: `debuginfo`) | `false` | `true` | `false` |
+| `cpu` | `baseline` `native` or a CPU name | `baseline` | `baseline` | `baseline` (of the host) |
+| `pgo` | `off` `generate` or the path of a `.profdata` file | `off` | `off` | `off` |
+| `link` | `static` `dynamic` | `dynamic` | `static` | `static` |
+
+- `host` can be changed with a `profile host ( … )` block like the other two, but it can't be selected with `-profile=host` or used in `inherits`.
 
 - `baseline` is the target triple's default CPU, so a binary runs on every CPU of that architecture. `native` is turned into the real CPU name before it is used, and that name (not the word `native`) goes into cache keys.
 - `strip true` means `symbols`: it removes the symbol table and debug info from the binary, but does not remove the runtime line table that panic traces use (P05 D5.7).

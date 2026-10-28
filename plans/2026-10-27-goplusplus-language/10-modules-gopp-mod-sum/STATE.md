@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27 (build profiles added)
+Last updated: 2026-10-27 (Q2 decided)
 Task definitions: [../TODO.md](../TODO.md) (section P10) · Design: [README.md](README.md)
 
 ## Tasks
@@ -23,7 +23,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P10) · Design: [README.md](
 ## Open questions
 
 - [x] Q1 Default cache dirs (decided for Linux, D10.5)
-- [ ] Q2 Consuming Go modules (proposed: no)
+- [x] Q2 Consuming Go modules (decided: not in v1; after v1.0, needs a dual engine)
 
 ## Exit criteria
 

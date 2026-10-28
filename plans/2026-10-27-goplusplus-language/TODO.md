@@ -336,7 +336,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P09.01 Macro design doc**: `docs/design/macros.md`. *Done when:* the owner approves it and all review comments are resolved.
 - **P09.02 Declarative macros**: expansion + hygiene. *Done when:* the hygiene suite passes.
 - **P09.03 GIR interpreter**: bytecode VM, fuel and memory limits, VM built-ins, the per-package comptime GIR artifact (D9.4, D9.5). *Done when:* GIR test programs run, and an `@Extern` call inside a macro gives a clear error.
-- **P09.04 `gopp/macro` API**: syntax types, quoting, diagnostics, type queries, naming across packages. *Done when:* the API doc and tests exist.
+- **P09.04 `gopp/macro` API**: syntax types and one constructor per node (no quoting in v0, ADR-0011), diagnostics, type queries, naming across packages. *Done when:* the API doc and tests exist.
 - **P09.05 Procedural expression/statement macros**: including `macro func Name!` errors, and panics turned into compile errors (D9.11). *Done when:* tests pass, including the macro backtrace.
 - **P09.06 Attached macros**: declared names, type queries, the D9.3 ordering rule; compile-time arguments are required only for `lit` parameters and `@` arguments (MAC-14). *Done when:* tests pass, including rejected cycles and constraint checks that see the generated methods.
 - **P09.07 Built-in macros**: `#Assert` (no `fmt` needed), `#Stringify`, `#File`/`#Line`, `#Embed` (`ref string`), `#Todo`, `#Unreachable`. *Done when:* tests pass.
@@ -346,6 +346,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P09.11 Decide Q2–Q4**: ADRs. *Done when:* merged.
 - **P09.12 Overhead budget**. *Done when:* the D9.10 budget is met or an ADR documents the gap.
 - **P09.13 Profile macros and `@If`** (D9.12): `#Profile()` and `#Setting("name")` as string constants (the main module's profile name everywhere; per-package settings); `@If(cond)` on declarations; constant-condition `if` branches dropped from codegen but type-checked; the profile read recorded in the expansion key. *Done when:* tests show that a dead branch and an `@If(false)` function are absent from the object file but still produce type errors, that a live use of a disabled declaration is an error, and that switching profile re-expands only packages that read it.
+- **P09.14 `#Run` compile-time calls** (D9.13): one call from another package, run in the D9.4 sandbox; `bool`/numeric/string results are typed constants; array/struct results only as package-level `var` initializers, stored as static data; cached with the D9.6 key. *Done when:* tests show a `#Run` constant used as a `case` and an array size, a `#Run` table with no init code in the object file, and compile errors for a same-package function, a runtime argument, a slice/pointer result, a panic and an exceeded fuel limit.
 
 ## P10 — Modules: gopp.mod / gopp.sum ([README](10-modules-gopp-mod-sum/README.md))
 
@@ -400,7 +401,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - the ambiguity error is tested.
 - **P11.10 Cache keys & reuse**: the full key from D11.5 (tools, sysroot, environment, edges), DESTDIR staging, reproducibility flags. *Done when:* a cross-project cache hit is verified, and changing the CMake version misses the cache.
 - **P11.11 Version uniqueness**: one version per library; duplicate-symbol scan before linking; bundled-copy detection. *Done when:* tests pass, including OpenCV-style bundled zlib next to a zlib cdep.
-- **P11.12 Cross-compilation**: host builds for generator tools; `CMAKE_CROSSCOMPILING_EMULATOR` for `try_run`. *Done when:* the matrix runs on arm64 under QEMU.
+- **P11.12 Cross-compilation**: host builds for generator tools with the `host` profile (D11.12, ADR-0012); `CMAKE_CROSSCOMPILING_EMULATOR` for `try_run`. *Done when:* the matrix runs on arm64 under QEMU, `debug` and `release` cross builds reuse one cached host build of protoc, and a `profile host ( opt 0 )` block rebuilds it at `opt 0`.
 - **P11.13 Commands**: `gopp cdep targets|build`, discovery mode, vendoring with cdeps (patch and CMake files included). *Done when:* CLI tests pass.
 - **P11.14 M7 matrix in CI**. *Done when:* green, and a no-op build with the matrix's largest cdep stays within the P06 no-op budget (P06.12).
 - **P11.15 `mode dynamic` runtime**: copy shared libraries next to the binary under their SONAME; RPATH `$ORIGIN`; the rule for mixed chains. *Done when:* a `mode dynamic` libpng + zlib sample runs from its output directory on Linux.
@@ -414,7 +415,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
 - **P12.01 Context switch**: amd64 SysV and arm64 assembly plus a coroutine primitive; switches save the C++ exception state (D12.4). *Done when:* the ping-pong microbenchmark runs, and a deferred call that blocks during a panic resumes on another thread with the panic intact.
 - **P12.02 Stack strategy ADR**: guard pages (with stack probes) vs prologue checks, sizes, VMA limits. *Done when:* the ADR is merged.
-- **P12.03 Scheduler**: G/M/P, work stealing, sysmon handoff, preemption flags checked in prologues and on loop back-edges. *Done when:* stress tests pass, and a spin loop on an atomic flag no longer hangs with one P.
+- **P12.03 Scheduler**: G/M/P, work stealing, sysmon handoff, preemption flags checked in prologues and on loop back-edges, placed smartly (none in loops with a small known trip count, once every 1024 iterations in other tight loops; D12.3). *Done when:* stress tests pass, a spin loop on an atomic flag no longer hangs with one P, and a tight summing loop is within 1% of the same loop without checks.
 - **P12.04 `go` lowering**: argument moves and copies, closures with shared cells, the error for pointers into locals. *Done when:* tests pass, including the classic worker pool written as in Go.
 - **P12.05 Channels & select**: send cases move only when chosen. *Done when:* semantics tests derived from Go pass.
 - **P12.06 sync & atomics**: parking via futex; `sync.Scope`; `@Pinned` sync types. *Done when:* tests pass, and the contention benchmark is recorded.
@@ -427,7 +428,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
   *Done when:* tests pass, including errno read after a yield and a callback from a thread created in C.
 - **P12.09 Sanitizers with goroutines**: ASan fibers, LSan stack roots, TSan `no_sync` fiber switches, `-race` (P05 D5.9). *Done when:* seeded races and goroutine-stack bugs are caught, and the samples are clean.
-- **P12.10 Benchmarks vs Go**. *Done when:* numbers are recorded against the D12.11 targets.
+- **P12.10 Benchmarks vs Go**. *Done when:* numbers are recorded against the D12.11 targets, including the prologue-check call overhead and the RSS per idle goroutine with the 1 MiB default (ADR-0013).
 - **P12.11 Timers**: `time.After`, `time.Ticker`, `select` timeouts integrated with the netpoller. *Done when:* the timer tests pass with all Ps busy.
 - **P12.12 Stop at exit** (D12.12): `main` returning, `os.Exit` and unrecovered panics stop the other goroutines before C `exit()`. *Done when:* a program whose `main` returns while 1,000 goroutines run (some inside C calls) exits cleanly, and its atexit handlers and C++ static destructors run with no Go++ code running.
 
@@ -439,7 +440,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P13.04 T1 fmt**: Go-compatible `%v`/`%+v` on any type via field tables (D13.4); replaces the bootstrap `fmt`. *Done when:* output matches Go's `fmt` on the ported test cases.
 - **P13.05 T1 collections**: slices, maps, sort, `container/deque`. *Done when:* tests pass.
 - **P13.06 T1 I/O & OS**: io, bufio, os, path, path/filepath, flag. *Done when:* tests pass.
-- **P13.07 T1 time & testing**: including Q3 (tz data). *Done when:* tests pass.
+- **P13.07 T1 time & testing**: including the tz data rules of D13.8 (ADR-0015). *Done when:* tests pass, including `LoadLocation` with no OS data (embedded copy used), the OS copy winning when present, `-tags notzdata`, and a program without `LoadLocation` that carries no tz data.
 - **P13.08 T2 encoding, hash, crypto**: includes `encoding/json`. *Done when:* tests pass, and `encoding/json` output is identical with and without `@Derive(JSON)`.
 - **P13.09 T2 context, log, exec, signal, net**. *Done when:* tests pass.
 - **P13.10 T2 regexp, compress, container**. *Done when:* tests pass.

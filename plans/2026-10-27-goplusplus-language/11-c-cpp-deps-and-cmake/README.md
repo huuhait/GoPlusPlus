@@ -170,7 +170,7 @@ One path@version with different `url`s is an error (P10 D10.10).
 - `-hermetic` rejects `csystem` entries. It also refuses to build without Landlock (D11.3).
 
 **D11.12 — Cross builds.**
-- Generator tools that run during the build (protoc, tblgen) get a host build of their cdep.
+- Generator tools that run during the build (protoc, tblgen) get a host build of their cdep. It always uses the built-in `host` profile (`opt 2`, no debug info, no sanitizers, LTO or PGO, the host's baseline CPU; P06 D6.12), whatever the main profile is, so `debug` and `release` share one cached tool build. A `profile host ( … )` block changes it (Q4, ADR-0012).
 - `CMAKE_CROSSCOMPILING_EMULATOR` (QEMU user mode) runs `try_run` checks.
 - `mode dynamic` and `csystem` are unsupported on static-musl targets.
 
@@ -256,11 +256,11 @@ $ gopp build   # cache hit; CMake does not run
 
 - **CMake projects with hard-coded compilers or flags** → `option` overrides, locked `patch` files, or replacing the package's build with a local CMake file.
 - **Sandbox portability** → Landlock works on Linux ≥ 5.13 without privileges. Ubuntu 24.04 restricts unprivileged user namespaces, so namespaces are only an extra layer, used when available. Without Landlock, gopp builds with a loud warning, and `-hermetic` refuses to build (D11.11).
-- **Build time of large C++ dependencies** → the shared cache. Binary caches are *not* in v1 because they are a supply-chain risk; a signed binary cache could come later (Q2).
+- **Build time of large C++ dependencies** → the shared cache. There are no binary caches, signed or not: they are a supply-chain risk, and cdeps are always built from source (Q2).
 
 ## Open questions
 
-- **Q1** Build systems besides CMake (Meson, Autotools), after v1.
-- **Q2** Signed binary caches.
-- **Q3** A Windows sandbox.
-- **Q4** Which profile settings apply to host builds of generator tools (D11.12)? Proposed: the same `opt` and `debuginfo`, never `sanitize`, `lto` or `pgo`.
+- **Q1** (decided 2026-10-27) Build systems besides CMake (Meson, Autotools): not in v1. CMake is the only build system; a package without CMake gets a small local CMake file. Other build systems are reconsidered after v1.
+- **Q2** (decided 2026-10-27) Signed binary caches: no, not in v1 and not later. Every cdep is built from source whose hash is in `gopp.sum`; the local cache (and a CI cache folder) covers rebuilds. Reusing the ecosystem means reusing its source.
+- **Q3** (decided 2026-10-27) A Windows sandbox: no. On Windows, cdep builds run without a sandbox, like Linux without Landlock (D11.3: a warning, and `-hermetic` refuses). Checking what a dependency's build scripts do is the user's job. `find_package`/`FetchContent` are still locked through the dependency provider.
+- **Q4** (decided 2026-10-27, ADR-0012) Which profile settings apply to host builds of generator tools (D11.12)? Those of a third built-in profile, `host` (`opt 2`, `debuginfo none`, nothing else), never the main profile's. `profile host ( … )` in gopp.mod changes it.

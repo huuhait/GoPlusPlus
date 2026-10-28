@@ -43,10 +43,15 @@
 **D13.6 — Port, don't rewrite.**
 - Port Go's implementations and tests (BSD-3; keep the notices) and adapt them to ownership.
 - Redesign the APIs that assume a GC:
-  - `sync.Pool` (Q2);
+  - `sync.Pool` (Q2, ADR-0014): a generic `sync.Pool[T]` whose `Get` returns an owned value and whose `Put` takes one (`p.Put(move(b))`). A runtime goroutine drops objects not taken for a few seconds, like Go's GC clearing pools, and an optional `Max` caps how many it keeps;
   - finalizers and `runtime.SetFinalizer` (removed; use `drop`).
 
 **D13.7 — Allocator awareness only where it pays off.** Std uses the default allocator. Variants that accept an allocator or arena are added only where profiling shows a need, e.g. `strings.Builder`, `bytes.Buffer`.
+
+**D13.8 — Time zone data: the OS first, an embedded copy as an automatic fallback.** (Q3, ADR-0015.)
+- `time.LoadLocation` reads `$ZONEINFO`, then `/usr/share/zoneinfo` (and Go's other Linux locations).
+- When the OS has no data (`scratch` or distroless images), it uses an embedded copy of the tzdata release bundled with gopp. The copy (~450 KB) is linked only into programs that can reach `LoadLocation`.
+- `-tags notzdata` leaves the copy out. `import _ "time/tzdata"` is accepted for Go compatibility and does nothing extra.
 
 ## Deliverables
 
@@ -69,5 +74,5 @@
 ## Open questions
 
 - **Q1** (decided 2026-10-27) `%v` works on every struct, as in Go, through compiler-emitted field tables (D13.4).
-- **Q2** What replaces `sync.Pool`? Open; task P13.13 decides it.
-- **Q3** Should the time zone database be embedded, or taken from the OS? Open; task P13.13 decides it.
+- **Q2** (decided 2026-10-27, ADR-0014) What replaces `sync.Pool`? `sync.Pool[T]` with ownership, automatic cleanup of idle objects, and an optional `Max` (D13.6).
+- **Q3** (decided 2026-10-27, ADR-0015) Should the time zone database be embedded, or taken from the OS? Both: the OS first, and an embedded copy as an automatic fallback, only in programs that use named zones; `-tags notzdata` opts out (D13.8).

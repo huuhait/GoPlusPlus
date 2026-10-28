@@ -2,13 +2,13 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-27 (Q1–Q3 decided)
 Task definitions: [../TODO.md](../TODO.md) (section P12) · Design: [README.md](README.md)
 
 ## Tasks
 
 - [ ] P12.01 Context switch
-- [ ] P12.02 Stack strategy ADR
+- [x] P12.02 Stack strategy ADR (owner decision, ADR-0013)
 - [ ] P12.03 Scheduler
 - [ ] P12.04 `go` lowering
 - [ ] P12.05 Channels & select
@@ -22,9 +22,9 @@ Task definitions: [../TODO.md](../TODO.md) (section P12) · Design: [README.md](
 
 ## Open questions
 
-- [ ] Q1 Default stack size; guard pages vs prologue checks (P12.02)
-- [ ] Q2 io_uring for file I/O (after v1)
-- [ ] Q3 Async preemption (after v1, only if needed)
+- [x] Q1 Default stack size; guard pages vs prologue checks (decided: hybrid, 1 MiB, ADR-0013)
+- [x] Q2 io_uring for file I/O: decided, not in v1 (thread handoff like Go); maybe after v1 as a Linux-only speedup
+- [x] Q3 Async preemption: decided, no; smart compiler-placed checks only (D12.3: none in short known loops, every 1024 iterations in tight loops)
 
 ## Exit criteria
 

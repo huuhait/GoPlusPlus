@@ -63,7 +63,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 | functions | `move`, `clone`, `new_unique`, `new_shared`, `new_weak` |
 | generic types | `Unique[T]`, `Shared[T]`, `Weak[T]` |
 | constraints | `Copy`, `Clone` |
-| std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `@Derive` |
+| std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `#Run`, `@Derive` |
 
 - Like Go's predeclared names, these can be shadowed by a declaration in an inner scope. Do not do it.
 - The macro names live in their own namespace (they are only used after `#` or `@`).

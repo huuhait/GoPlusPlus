@@ -77,4 +77,4 @@
 ## Open questions
 
 - **Q1** (decided 2026-10-27) A full CST for the LSP? No: the LSP uses the AST plus re-lexing (D2.3).
-- **Q2** Macros in type position (`var x #Vec(int)`)? Owned by P09 (P09 Q3).
+- **Q2** Macros in type position (`var x #Vec(int)`)? Owned by P09 (P09 Q3); decided 2026-10-27: not in v0, a `#` call where a type goes is a parse error (ADR-0011).

@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-27 (Q2–Q3 decided)
 Task definitions: [../TODO.md](../TODO.md) (section P13) · Design: [README.md](README.md)
 
 ## Tasks
@@ -19,13 +19,13 @@ Task definitions: [../TODO.md](../TODO.md) (section P13) · Design: [README.md](
 - [ ] P13.10 T2 regexp, compress, container
 - [ ] P13.11 First `x/` interop packages
 - [ ] P13.12 Examples
-- [ ] P13.13 Decide P13 Q2–Q3
+- [x] P13.13 Decide P13 Q2–Q3 (owner decisions, ADR-0014, ADR-0015)
 
 ## Open questions
 
 - [x] Q1 `%v` for any struct: decided, field tables as in Go (D13.4)
-- [ ] Q2 `sync.Pool` replacement (task P13.13)
-- [ ] Q3 Time zone database source (task P13.13)
+- [x] Q2 `sync.Pool` replacement (decided: `sync.Pool[T]` with auto cleanup and optional `Max`, ADR-0014)
+- [x] Q3 Time zone database source (decided: OS first, automatic embedded fallback, ADR-0015)
 
 ## Exit criteria
 

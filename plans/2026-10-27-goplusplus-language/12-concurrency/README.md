@@ -7,20 +7,14 @@
 
 **D12.1 — Goroutines are stackful coroutines on fixed-size, non-moving stacks.**
 - Go grows stacks by copying them. We can't: raw pointers into stacks are legal, and C/C++ frames live on them.
-- Default reservation: 256 KiB (provisional), with pages committed lazily by the OS.
+- Default reservation: 1 MiB on 64-bit targets (Q1, ADR-0013), with pages committed lazily by the OS, so a small goroutine uses only the pages it touches. Stacks use `MADV_NOHUGEPAGE`; a stack returned to the pool releases its touched pages beyond a small cached amount. 32-bit targets get a smaller default when they are added.
 - `runtime.SetDefaultStack(n)` changes the default. `runtime.GoStack(n, f)` spawns a goroutine with an explicit size.
 - The main goroutine runs on the main thread's stack.
 
-**D12.2 — Stack-overflow detection.**
-- Baseline: a guard page per stack, plus a SIGSEGV handler on an alternate signal stack that reports "goroutine stack overflow" with a trace.
-- The catch: Linux limits the number of memory mappings (`vm.max_map_count`, typically ≈ 65 k), and each guard page splits a mapping. That caps guarded stacks at about 32 k unless the limit is raised.
-- P12.02 decides by benchmark between:
-  - (a) guard pages, with the sysctl documented;
-  - (b) compiler-inserted prologue checks of SP against a per-goroutine limit (Go-style), with no guard pages and a headroom rule for calls into C;
-  - (c) a hybrid.
-- Guard pages need stack probes, so that a large frame can't jump over the guard page:
-  - `probe-stack=inline-asm` for Go++ functions;
-  - `-fstack-clash-protection` for C built by `gopp cc`.
+**D12.2 — Stack-overflow detection: prologue checks plus guard pages (hybrid; Q1, ADR-0013).**
+- **Prologue checks.** Every Go++ function compares `SP − frame size` with the goroutine's stack limit. It is the same compare as the D12.3 preemption check (sysmon sets the limit to a value that always fails, and the slow path tells preemption from overflow, as in Go), so it costs no extra instruction. Small leaf functions that fit in a fixed red zone skip it. An overflow panics with "goroutine stack overflow" and a trace.
+- **Guard pages while the mapping budget allows.** Linux limits the number of memory mappings (`vm.max_map_count`, typically ≈ 65 k), and each guard page splits one, which caps guarded stacks at about 32 k. The runtime adds a guard page below each stack while its mappings stay under half the limit; past that, new stacks have none (Go++ code is still checked; only C overflows on those stacks are missed). Raising the sysctl brings them back. A SIGSEGV handler on an alternate signal stack reports a guard-page hit as "goroutine stack overflow".
+- **C/C++ code.** A call into C or C++ needs at least 64 KiB (provisional) of stack left, or it panics before C runs. C/C++ built by gopp uses `-fstack-clash-protection`, so a large frame can't jump over a guard page. Go++ functions need no stack probes: the prologue check includes the frame size.
 
 **D12.3 — Scheduler: M:N with work stealing (Go's G/M/P design).**
 - Per-P run queues plus a global queue, with work stealing.
@@ -29,9 +23,10 @@
 - **Preemption:**
   - Yield points are channel operations, `sync` blocking, I/O and `runtime.Gosched()`.
   - Function prologues and loop back-edges also check a per-goroutine flag that sysmon sets (Go 1.13 style). So a tight loop can't starve other goroutines.
-  - No async signal preemption in v1.
+  - **Smart placement (Q3).** The compiler leaves the back-edge check out of loops with a small known trip count, and in other tight loops it checks only once every 1024 iterations (a counter in a register), so the cost in hot loops is close to zero. A goroutine may yield a few microseconds later; that's fine for fairness.
+  - No async signal preemption (Q3): a goroutine only stops at these compiler-placed checks, never in the middle of C/C++ code.
 
-*Why:* Go added async preemption in Go 1.14 for two reasons: tight loops that starve other goroutines, and its GC. The flag checks handle tight loops, and Go++ has no GC.
+*Why:* Go added async preemption in Go 1.14 for two reasons: tight loops that starve other goroutines, and its GC. The flag checks handle tight loops, and Go++ has no GC. Go's signal preemption also relies on telling Go code from C code at every instruction; in Go++, C++ code is inlined into Go++ functions (P08 D8.10), so a signal could stop a goroutine inside C++ code (for example holding `malloc`'s lock) and deadlock the thread. Erlang and GHC also use compiler/runtime checks rather than signals.
 
 **D12.4 — Context switching is written in assembly, per ABI.**
 - x86-64 SysV and AArch64 AAPCS64 come first; Win64 later.
@@ -75,8 +70,7 @@
 
 **D12.11 — Targets (provisional).**
 - 100 k idle goroutines fit in ≤ 1 GiB RSS with default settings.
-  - This assumes option (b) of P12.02 (no guard pages), or a raised `vm.max_map_count` (D12.2).
-  - Update this target after the P12.02 ADR.
+  - This holds with the default sysctl: past the mapping budget, new stacks skip the guard page (D12.2, ADR-0013).
 - 1 M goroutines are possible after tuning the stack size and the mapping limit.
 - Channel ping-pong and contended `Mutex` throughput are within 1.5× of Go on the same machine.
 
@@ -108,6 +102,6 @@
 
 ## Open questions
 
-- **Q1** Default stack size, and guard pages vs prologue checks (P12.02).
-- **Q2** io_uring for file I/O (after v1).
-- **Q3** Async preemption for fairness (after v1, only if real workloads need it).
+- **Q1** (decided 2026-10-27, ADR-0013) Default stack size, and guard pages vs prologue checks (P12.02): both, prologue checks always and guard pages while the mapping budget allows (D12.2); a 1 MiB default reservation on 64-bit (D12.1).
+- **Q2** (decided 2026-10-27) io_uring for file I/O: not in v1. File I/O uses thread handoff, as in Go (D12.8), on every OS. io_uring may come after v1 as an optional Linux-only speedup with the thread path kept as the fallback (it is Linux only, and often disabled, e.g. by Docker's default seccomp profile). User code doesn't change either way.
+- **Q3** (decided 2026-10-27) Async preemption for fairness: no. The prologue and loop back-edge checks (D12.3) are the preemption mechanism, placed smartly: none in loops with a small known trip count, and once every 1024 iterations in other tight loops. Signal-based preemption could stop a goroutine inside C/C++ code (for example inside `malloc`, holding its lock) and deadlock the thread, and Go++ calls C/C++ everywhere. Async preemption is not planned.

@@ -22,7 +22,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P02) · Design: [README.md](
 ## Open questions
 
 - [x] Q1 Full CST for the LSP: decided, no (D2.3)
-- [x] Q2 Macros in type position: deferred to P09 (P09 Q3)
+- [x] Q2 Macros in type position: deferred to P09 (P09 Q3); decided: not in v0 (ADR-0011)
 
 ## Exit criteria
 

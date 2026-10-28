@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27 (build profiles added)
+Last updated: 2026-10-27 (Q1–Q4 decided)
 Task definitions: [../TODO.md](../TODO.md) (section P11) · Design: [README.md](README.md)
 
 ## Tasks
@@ -42,10 +42,10 @@ Task definitions: [../TODO.md](../TODO.md) (section P11) · Design: [README.md](
 
 ## Open questions
 
-- [ ] Q1 Build systems besides CMake (Meson, Autotools), after v1
-- [ ] Q2 Signed binary caches
-- [ ] Q3 Windows sandbox
-- [ ] Q4 Profile settings for host builds of generator tools
+- [x] Q1 Build systems besides CMake (Meson, Autotools): decided, CMake only in v1; others after v1
+- [x] Q2 Signed binary caches: decided, never; cdeps are always built from source
+- [x] Q3 Windows sandbox: decided, no (unsandboxed like Linux without Landlock)
+- [x] Q4 Profile settings for host builds of generator tools: decided, built-in `host` profile (ADR-0012)
 
 ## Exit criteria
 

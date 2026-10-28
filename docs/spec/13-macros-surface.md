@@ -39,7 +39,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-1.** *Definitions.* `macro Name(p kind, …) { … }` defines a **declarative** macro. `macro func Name(…) …` defines a **procedural** macro, written in Go++. A procedural macro that can fail is declared `macro func Name!(…)` (P09 D9.11).
 
-**MAC-2.** *Invocation.* `#Name(args)` can be used in expression, statement or declaration position. `#File()` with no arguments is written with empty parentheses.
+**MAC-2.** *Invocation.* `#Name(args)` can be used in expression, statement or declaration position. `#File()` with no arguments is written with empty parentheses. It cannot be used where a type goes: `var x #Bits(12)` is a parse error in v0 (P09 Q3, ADR-0011).
 
 **MAC-3.** *Attachment.* `@Name` or `@Name(args)` on top of a declaration (a type, func, method, var or const) attaches a macro or attribute to it. An attribute after a struct field's type is different: it is data read by the enclosing type's attached macro ([MAC-12](#132-rules)), not a separately expanded macro. An attached macro receives its arguments in parentheses plus the declaration it sits on, and returns new code. It may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
 
@@ -47,7 +47,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-5.** *Across packages.* A macro from another package is qualified like a function: `#pkg.Name(…)`, `@pkg.Name`.
 
-**MAC-6.** *Predeclared.* The std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting` and `@Derive` need no import.
+**MAC-6.** *Predeclared.* The std macros `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `#Run` and `@Derive` need no import.
 
 **MAC-7.** *`@Derive(X)`* finds `X` in std package `derive`, unless qualified: `@Derive(sql.Table)`. Several can be listed: `@Derive(JSON, Equal)`.
 
@@ -84,6 +84,8 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 **MAC-14.** *Compile-time arguments.* Arguments that a macro **reads as values** must be known while compiling: every argument of an attribute `@Name(args)`, and the arguments of a `#Name` macro for parameters of a value kind (`lit`): literals, names, types and constants. A runtime variable there is a compile error: `@Retry(n)` with a variable `n` is rejected, `@Retry(3)` is fine. Only `lit` parameters and `@` attribute arguments must be compile-time values. All other kinds (`expr`, `ident`, `stmt`, `block`, `decl`, `type`, `tokens`) are code fragments with no such limit: they are pasted into the program, so they may name runtime variables: `#Assert(len(data) > 0, "empty input")` and `#Swap(tmp, other)` are fine. How a procedural macro reads its arguments and returns code (the `gopp/macro` API) is designed in P09.
 
 **MAC-15.** *Build profile access.* `#Profile()` is a string constant: the name of the main module's active build profile, the same in every package. `#Setting("name")` is a string constant: the value of one profile setting for the package being compiled; its argument must be a string literal that names a setting. Both can be used in constant expressions, so `#Profile() == "debug"` is a constant `bool`. In an `if` with a constant condition, the branch that cannot run is removed from the generated code but is still type-checked. `@If(cond)` on a declaration needs a constant `bool` ([MAC-14](#132-rules)); when it is false the declaration is type-checked but not emitted or exported, and using it from live code is a compile error (using it from a removed branch or from another disabled declaration is fine). Profiles are defined in P06 D6.12, the details in P09 D9.12.
+
+**MAC-16.** *Compile-time calls.* `#Run(f(args))` runs one call to a function from another package while compiling. Its arguments must be compile-time values ([MAC-14](#132-rules)). A `bool`, numeric or string result is a constant of the function's result type (`const Seed = #Run(gen.Hash("crc32"))`). An array or struct made only of those may initialize a package-level `var`, and is stored in the binary. A call without `#Run` never runs at compile time. Details in P09 D9.13.
 
 > **Deferred to P09:** the exact procedural-macro API.
 

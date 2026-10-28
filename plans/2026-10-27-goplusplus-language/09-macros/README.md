@@ -12,9 +12,9 @@
   - Expanded right after parsing (D9.3); no code runs.
 - **Procedural:** `macro func Name(ctx *macro.Ctx, …) …`.
   - Written in Go++, compiled to GIR, and executed by the compile-time interpreter.
-  - Receives syntax (plus read-only type information, for attached macros) and returns syntax built with the `gopp/macro` API.
+  - Receives syntax (plus read-only type information, for attached macros) and returns syntax built with the `gopp/macro` API: one constructor per syntax node (`macro.If`, `macro.Call`, …), with no format strings or quote syntax in v0 (Q2, ADR-0011).
 - **Invocation:**
-  - `#Name(args)` for expression, statement and declaration macros.
+  - `#Name(args)` for expression, statement and declaration macros. Not where a type goes (`var x #Bits(12)` is a parse error in v0); a declaration macro that declares a named type covers those cases (Q3, ADR-0011).
   - `@Name` or `@Name(args)` attached to a declaration. An attached macro receives its arguments plus the declaration it sits on, and returns new code. It may *add* declarations (methods, functions, types). It never modifies or removes the declaration it is attached to.
   - Attributes may also follow a struct field's type, before the Go tag: ``Name string @JSON("name") `db:"name"` `` (P01 D1.14). `@Derive(JSON)` reads them.
 - **Arguments.** Arguments a macro reads as values must be known while compiling: every `@Name(args)` argument, and `#Name` parameters of a value kind (`lit`). A runtime variable there is a compile error (`@Retry(n)`). Code-fragment parameters (`expr`, `ident`, `block`, `stmt`) are pasted into the program and may name runtime variables (`#Assert(x > 0, "bad")`). A `block` argument is written as a func literal, `#Repeat(3, func() { … })`, and is pasted inline: `return`, `break` and `continue` inside it are compile errors. How `stmt`, `type` and `tokens` arguments are written, and the exact procedural-macro API, are designed in this phase.
@@ -83,7 +83,7 @@ func checksum(data []byte) uint32 {
 - The LSP uses the same expansion (P14).
 
 **D9.8 — Standard macros.**
-- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `ref string`), `#Todo()`, `#Unreachable()`, and the two profile macros `#Profile()` and `#Setting("name")` (D9.12).
+- Expression and statement macros: `#Assert(cond, msg)`, `#Stringify(expr)`, `#File()`, `#Line()`, `#Embed("path")` (a static, immutable `ref string`), `#Todo()`, `#Unreachable()`, the two profile macros `#Profile()` and `#Setting("name")` (D9.12), and `#Run(f(args))` (D9.13).
 - Derives are kept small, because without them:
   - printing works on every type;
   - `==` and map keys work on comparable types;
@@ -132,21 +132,45 @@ func step(s *State) {
 - **No new syntax.** The forms are `#` and `@` only (D9.9). `@If` on statements is not defined (P01 D1.14).
 - **Expansion cache.** An expansion that read the profile name or a setting records it in its key (D9.6), so switching profile re-expands only those packages. `gopp expand` prints the constant.
 
+**D9.13 — `#Run(f(args))`: run a call while compiling.** (Q4, ADR-0011; task P09.14.)
+- The argument is one call to a function from **another package** (the D9.5 rule). Its arguments are compile-time values (MAC-14).
+- It runs in the interpreter with the D9.4 sandbox and limits. A panic or an exceeded limit is a compile error at the `#Run`, with the backtrace (D9.11).
+- A `bool`, numeric or string result is a constant of the function's result type. An array or struct made only of those may initialize a package-level `var`; the value is stored in the binary, and nothing runs at program start. Other result types are an error.
+- The checker evaluates it when it checks the declaration (it needs types), not at step 2 of D9.3. The result is cached with the D9.6 key.
+- A call without `#Run` never runs at compile time.
+
+```go
+import "crc/gen"
+
+var table  = #Run(gen.MakeTable())   // [256]uint32, computed while compiling
+const Seed = #Run(gen.Hash("crc32"))   // uint32 constant: usable in case, array sizes, other constants
+```
+
 ## Procedural macro sketch (the API is finalized in P09.04)
 
 ```go
 // package derive (std), used as @Derive(Equal)
 macro func Equal!(ctx *macro.Ctx, t macro.TypeDecl) []macro.Decl {
-    st := t.Struct!()                                    // not a struct → returns the error; compile error at the @Derive site (D9.11)
-    b := macro.NewFuncBuilder(ctx, t, "Equal", "func(o "+t.Name()+") bool")
+    st := t.Struct!()                        // not a struct → returns the error; compile error at the @Derive site (D9.11)
+    x, o := ctx.Fresh("x"), ctx.Fresh("o")   // hidden names (D9.2)
+    fieldEqual := macro.Ref(ctx, "derive.FieldEqual") // == for comparable fields, element by element for slices and maps
+
+    var body []macro.Stmt
     for _, f := range st.Fields() {
-        // derive.FieldEqual: == for comparable fields, element by element for slices and maps
-        b.Line(`if !derive.FieldEqual(x.%s, o.%s) {`, f.Name(), f.Name())
-        b.Line(`    return false`)
-        b.Line(`}`)
+        body = append(body, macro.If(
+            macro.Not(macro.Call(fieldEqual, macro.Sel(x, f.Ident()), macro.Sel(o, f.Ident()))),
+            macro.Block(macro.Return(macro.False())),
+        ))
     }
-    b.Line(`return true`)
-    return b.Decls()
+    body = append(body, macro.Return(macro.True()))
+
+    return []macro.Decl{macro.Method(
+        macro.Recv(x, t.Type()),
+        macro.Ident(ctx, "Equal"),           // visible at the use site, declared by @Derive (D9.3)
+        macro.Params(macro.Param(o, t.Type())),
+        macro.Results(macro.BoolType()),
+        macro.Block(body...),
+    )}
 }
 ```
 
@@ -158,6 +182,7 @@ macro func Equal!(ctx *macro.Ctx, t macro.TypeDecl) []macro.Decl {
 - The standard macros, and `@Derive(JSON, Equal)`.
 - The expansion cache, `gopp expand`, macro backtraces, and debug-info mapping.
 - `#Profile()`, `#Setting("name")` and `@If` (D9.12).
+- `#Run` (D9.13).
 
 ## Exit criteria
 
@@ -175,6 +200,6 @@ macro func Equal!(ctx *macro.Ctx, t macro.TypeDecl) []macro.Decl {
 ## Open questions
 
 - **Q1** (decided 2026-10-27) No `#Try` macro: `call!()` already returns the error inside functions that can fail (P01 D1.8).
-- **Q2** Quoting API: a builder with format strings (as sketched) or syntax quasi-quotes (`macro.Quote { … $x … }`)?
-- **Q3** Should macros be allowed in type position (`var x #Vec(int)`)? Proposed: not in v0. (Moved here from P02 Q2.)
-- **Q4** Compile-time function evaluation for constants (`const N = #Run(f())`)?
+- **Q2** (decided 2026-10-27, ADR-0011) Procedural macros build syntax with one constructor per node (`macro.If`, `macro.Call`, …). No format-string builder and no quotes in v0; `#Quote` may come in v1 as a layer on top (D9.1).
+- **Q3** (decided 2026-10-27, ADR-0011) No macros where a type goes in v0; use a declaration macro that declares a named type (D9.1). (Moved here from P02 Q2.)
+- **Q4** (decided 2026-10-27, ADR-0011) Yes, explicitly: `#Run(f(args))` runs one call from another package while compiling; nothing runs automatically (D9.13).

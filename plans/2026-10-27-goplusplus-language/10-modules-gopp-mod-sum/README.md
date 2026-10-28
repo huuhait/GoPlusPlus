@@ -166,7 +166,7 @@ cdep github.com/madler/zlib v1.3.1 (
 )
 ```
 
-- **Built-in profiles.** `debug` and `release` exist without any block. Writing a block with one of these names changes only the lines it contains. They cannot use `inherits`.
+- **Built-in profiles.** `debug`, `release` and `host` (host builds of generator tools only, P11 D11.12, ADR-0012) exist without any block. Writing a block with one of these names changes only the lines it contains. They cannot use `inherits`.
 - **Custom profiles** must have an `inherits` line naming another profile. A cycle is an error.
 - **Setting values** are the ones in the P06 D6.12 table. A wrong value, a repeated setting in one block or a repeated block name is an error with a line number. Settings are written in the form `opt 2`, with no `=`, like every other gopp.mod directive.
 - **`deps` rows and cdep pins** accept only `opt` and `debuginfo`; the other settings are whole-program (P06 D6.12). A row names a module path from the build list or a cdep path, or `*` for all of them. An exact path beats `*`; the order of rows does not matter. A path that is not in the build list is an error (probably a typo). A cdep's `profile ( … )` pin beats a `deps` row for that cdep.
@@ -205,4 +205,4 @@ cdep github.com/madler/zlib v1.3.1 (
 ## Open questions
 
 - **Q1** (decided 2026-10-27) Default cache dirs on Linux, the only v0.1 platform: the module cache is `~/.local/share/gopp/mod` (D10.5). macOS and Windows get theirs when those platforms are added (P16).
-- **Q2** Should `gopp` ever consume Go modules? Proposed: no, since it is a different language; a conversion tool might come later.
+- **Q2** (decided 2026-10-27) Should `gopp` ever consume Go modules? Not in v1: a `require` or import of a Go module (a `go.mod` and no `gopp.mod`) is an error that says so. Revisit after v1.0; it needs a dual engine (Go code compiled with Go's semantics, GC included, next to Go++), and a conversion tool may come with it.

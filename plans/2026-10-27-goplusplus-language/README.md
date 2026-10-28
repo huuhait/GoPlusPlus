@@ -43,6 +43,8 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 ## 3. Non-goals for v1
 
 - Source compatibility with Go. Go code that relies on GC won't compile unchanged; a migration helper comes after v1.
+- Binary caches for C/C++ dependencies, signed or not (never, P11 Q2): cdeps are always built from source.
+- Consuming Go modules. Importing a Go module is an error in v1; after v1.0 it needs a dual engine (Go semantics with GC next to Go++) (P10 Q2).
 - A borrow checker or fully lifetime-checked memory safety. The `ref`/owned split keeps the door open for later.
 - A tracing GC, or automatic refcounting of everything.
 - User-defined operator overloading, class inheritance, or exceptions as an error mechanism. Imported C++ operators and exceptions *are* supported at the boundary.
