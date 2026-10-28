@@ -1,11 +1,11 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule ERR-15 (D3.5): a `!` function must not declare error as its last
 // result: the `!` already adds it. Reported by the parser.
 package main
 
 func ok!() int { return 1 }
 
-// CHECK: [[@LINE+1]]:13: error: '!' already adds the error result: remove 'error' from the result list
+// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: '!' already adds the error result: remove 'error' from the result list
 func bad!() error { return nil }
 
 func main() {}

@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule GEN-2: Clone needs a method Clone() T with a value receiver, or a
 // structural clone: numbers, strings, slices of cloneable types, structs of
 // those. A Clone with another signature, or a type with drop and no Clone,
@@ -25,8 +25,8 @@ func positive() {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:6: error: Bad does not satisfy Clone (its Clone method does not have the signature Clone() Bad)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Bad does not satisfy Clone (its Clone method does not have the signature Clone() Bad)
 	_ = dup(Bad{})
-	// CHECK: [[@LINE+1]]:6: error: Res does not satisfy Clone (Res has a drop method but no Clone() Res)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Res does not satisfy Clone (Res has a drop method but no Clone() Res)
 	_ = dup(Res{})
 }

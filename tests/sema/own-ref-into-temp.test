@@ -1,4 +1,4 @@
-// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // OWN-V6, OWN-V7, OWN-P6, EXP-2: a borrow of a temporary (or of a part of
 // one) must not outlive the statement.
 package main
@@ -16,36 +16,36 @@ func mkH() H           { return H{} }
 func use(s ref string) {}
 
 func t1() {
-	// CHECK: [[@LINE+1]]:21: error: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
 	var r ref string = mk()
 	use(r)
 	var r2 ref string
-	// CHECK: [[@LINE+1]]:7: error: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
 	r2 = mk()
 	use(r2)
 }
 
 func t2() {
-	// CHECK: [[@LINE+1]]:7: error: cannot store mkDoc().Title[:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot store mkDoc().Title[:1] in a longer-lived place{{.*}}(OWN-V6)
 	r := mkDoc().Title[:1]
 	use(r)
-	// CHECK: [[@LINE+1]]:8: error: cannot store mkS()[0][:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot store mkS()[0][:1] in a longer-lived place{{.*}}(OWN-V6)
 	r3 := mkS()[0][:1]
 	use(r3)
-	// CHECK: [[@LINE+1]]:15: error: cannot use mkH().U {{.*}}(OWN-P6)
+	// CHECK: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use mkH().U {{.*}}(OWN-P6)
 	var p *Doc = mkH().U
 	_ = p
 }
 
-// CHECK: [[@LINE+1]]:31: error: cannot return a ref into a temporary{{.*}}(OWN-V7)
+// CHECK: [[@LINE+1]]:31: error{{\[E[0-9]+\]}}: cannot return a ref into a temporary{{.*}}(OWN-V7)
 func t3() ref string { return mkDoc().Title }
 
 var refs []ref string
 
 func t4(ch chan ref string) {
-	// CHECK: [[@LINE+1]]:22: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
 	refs = append(refs, mk()[:1])
-	// CHECK: [[@LINE+1]]:8: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
 	ch <- mk()[:1]
 }
 
@@ -53,7 +53,7 @@ func mkSh() Shared[Doc] { return new_shared(Doc{}) }
 
 // R19: a ref into a Shared[T] temporary dangles too.
 func t5() {
-	// CHECK: [[@LINE+1]]:7: error: cannot store mkSh().Title[:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot store mkSh().Title[:1] in a longer-lived place{{.*}}(OWN-V6)
 	r := mkSh().Title[:1]
 	use(r)
 	use(mkSh().Title[:1]) // a borrowed argument is fine
@@ -71,7 +71,7 @@ func t6() {
 	}
 	var outer ref string
 	// An outer variable outlives the header: still an error.
-	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
 	if outer = mk()[:1]; outer != "" {
 		use(outer)
 	}
@@ -81,13 +81,13 @@ func t6() {
 // three-clause for init is not extended (STM-4): both are errors.
 func t8() {
 	if g := func() {
-		// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
+		// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot store mk() in a longer-lived place{{.*}}(OWN-V6)
 		var r ref string = mk()
 		use(r)
 	}; true {
 		g()
 	}
-	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot store mk()[:1] in a longer-lived place{{.*}}(OWN-V6)
 	for r := mk()[:1]; len(r) > 0; r = r[1:] {
 		use(r)
 	}
@@ -107,7 +107,7 @@ func t7(src string) {
 	use(c)
 	use(d)
 	_ = ok
-	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error: cannot store pair() in a longer-lived place{{.*}}(OWN-V6)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot store pair() in a longer-lived place{{.*}}(OWN-V6)
 	a, _ = pair()
 }
 

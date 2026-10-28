@@ -16,10 +16,12 @@
 #ifndef GOPP_SEMA_CHECKER_H
 #define GOPP_SEMA_CHECKER_H
 
+#include "gopp/Sema/Foreign.h"
 #include "gopp/Sema/Sema.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <deque>
@@ -270,7 +272,9 @@ public:
     bool HasCallOrRecv = false;
     bool InTParamList = false;
     const void *FuncId = nullptr;
-    bool InGoDefer = false;
+    /// The implicit `error` result of a `!` function (a `return` can fail
+    /// with it, ERR-3).
+    Var *FailsErr = nullptr;
   } E;
 
   SmallVector<std::function<void()>, 16> Delayed;
@@ -390,6 +394,12 @@ public:
   };
   static constexpr unsigned MaxRecDepth = 64;
   unsigned RecDepth = 0;
+  /// Nesting of computeTypeSet on this thread (interface embedding chains,
+  /// which are bounded by the declarations unless the program is an invalid
+  /// cycle). A set cut at the limit is never published; see computeTypeSet.
+  static constexpr unsigned MaxTypeSetDepth = 1000;
+  unsigned TypeSetDepth = 0;
+  bool TypeSetCut = false;
   /// Stable storage for the iota values that delayed function literals use.
   std::deque<ConstValue> IotaStore;
   /// What the target of reverse type inference is called in error messages.
@@ -406,7 +416,7 @@ public:
                           int *Idx = nullptr);
   std::string termsString(ArrayRef<Term> Ts);
   bool typeSetIsComparable(TypeSet *TS);
-  void computeTypeSet(InterfaceType *I, SourceLoc Pos);
+  TypeSet *computeTypeSet(InterfaceType *I, SourceLoc Pos);
   TermList intersectTerms(const TermList &A, const TermList &B);
   TermList unionTerms(const TermList &A, const TermList &B);
   bool termListIncludes(const TermList &L, Type *V);
@@ -503,6 +513,23 @@ public:
   ExprKind callExpr(Operand &X, const CallExpr *E);
   void selector(Operand &X, const SelectorExpr *E, bool WantType,
                 NamedType *Def = nullptr);
+  /// The package an expression like `pkg` or `pkg.ns` denotes (marking the
+  /// import used), or null.
+  Package *qualifierPackage(const ast::Expr *X);
+  // --- foreign (C/C++ header) packages (Call.cpp, D3.7)
+  Object *foreignTemplateOf(const IndexExpr *IE);
+  Object *foreignCallee(const ast::Expr *Fun, const ast::Expr *&Recv);
+  bool foreignTemplateArgs(ArrayRef<ast::Expr *> Idx,
+                           SmallVector<ForeignTemplateArg, 4> &Out);
+  /// `pkg.vec[int32]` as a type; null if IE is not a foreign template.
+  Type *foreignInstantiate(const IndexExpr *IE);
+  /// A read-only Go++ value (ADR-0008 Q2): a borrowed variable or part of
+  /// one, a `ref` value.
+  bool isReadOnlyValue(const ast::Expr *Ex, Type *Ty);
+  /// Marks an import used. Body checkers collect the imports in UsedImports
+  /// (the set of their worker) instead of writing PkgName::Used.
+  void markUsed(PkgName *PN);
+  llvm::SmallPtrSetImpl<PkgName *> *UsedImports = nullptr;
   bool builtin(Operand &X, const CallExpr *E, BuiltinId Id);
   void arguments(const CallExpr *Call, SignatureType *Sig,
                  ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos,
@@ -614,7 +641,14 @@ public:
   void ifStmt(unsigned Ctx, const IfStmt *S);
   void forStmt(unsigned Ctx, const ForStmt *S);
   void returnStmt(const ReturnStmt *S);
+  void failsReturn(const ReturnStmt *S);
   void goDeferStmt(const ast::Expr *Call, const char *What);
+  /// True if the function being checked returns errors: it is declared with
+  /// `!` or its last result is `error` (ERR-2). A package-level initializer
+  /// is in no function.
+  bool enclosingCanFail() const;
+  /// The `go` / `defer` call being checked: its `!` panics / sets the error.
+  const CallExpr *GoCall = nullptr, *DeferCall = nullptr;
   void suspendedCall(const char *What, const ast::Expr *Call);
   void labels(const BlockStmt *Body);
   bool isTerminating(const Stmt *S, StringRef Label);

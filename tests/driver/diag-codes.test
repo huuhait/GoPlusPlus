@@ -1,0 +1,71 @@
+// P03.14: tools/check-diag-codes.py compares the table of DiagnosticIDs.def
+// with the lock file. Both sides: the real table passes; a removal, a
+// renumbering, a reused number and a missing lock line each fail.
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: %python %S/../../tools/check-diag-codes.py --def %S/../../compiler/include/gopp/Basic/DiagnosticIDs.def --lock %S/../../docs/errors/codes.lock
+
+// A small table and its lock.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG(err_b, 2, Error,\n     "b")\n' > %t/ok.def
+// RUN: printf 'E0001 err_a\nE0002 err_b\n' > %t/ok.lock
+// RUN: %python %S/../../tools/check-diag-codes.py --def %t/ok.def --lock %t/ok.lock
+
+// A removed row.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\n' > %t/removed.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/removed.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=REMOVED %s
+// REMOVED: error: E0002 err_b was removed from the table
+
+// A renumbered row.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG(err_b, 3, Error, "b")\n' > %t/renum.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/renum.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=RENUM %s
+// RENUM: error: err_b was E0002 and is now E0003: a code never changes
+
+// Swapped numbers are renumberings too.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 2, Error, "a")\nDIAG(err_b, 1, Error, "b")\n' > %t/swap.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/swap.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=SWAP %s
+// SWAP: error: err_a was E0001 and is now E0002
+// SWAP: error: err_b was E0002 and is now E0001
+
+// A number taken by a new name.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG(err_c, 2, Error, "c")\n' > %t/reuse.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/reuse.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=REUSE %s
+// REUSE: error: E0002 err_b was removed from the table
+// REUSE: error: E0002 belonged to err_b and is reused by err_c
+
+// A number twice in the table, and a row without a number.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG(err_b, 1, Error, "b")\nDIAG(err_z, 0, Error, "z")\n' > %t/dup.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/dup.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=DUP %s
+// DUP: error: E0001 is given to err_a and to err_b
+// DUP: error: err_z has no code
+
+// A new row that the lock file does not list: fails, then --update appends it.
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG(err_b, 2, Error, "b")\nDIAG(err_c, 3, Error, "c")\n' > %t/new.def
+// RUN: cp %t/ok.lock %t/new.lock
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/new.def --lock %t/new.lock 2>&1 | FileCheck --check-prefix=NEW %s
+// NEW: error: E0003 err_c is not in the lock file
+// NEW: the next free code is E0004
+// RUN: %python %S/../../tools/check-diag-codes.py --def %t/new.def --lock %t/new.lock --update
+// RUN: %python %S/../../tools/check-diag-codes.py --def %t/new.def --lock %t/new.lock
+// RUN: FileCheck --check-prefix=LOCK --input-file=%t/new.lock %s
+// LOCK: E0001 err_a
+// LOCK-NEXT: E0002 err_b
+// LOCK-NEXT: E0003 err_c
+
+// The real table, with one number seeded to another value, fails.
+// RUN: sed 's/^DIAG(err_undefined, \([0-9]*\),/DIAG(err_undefined, 9999,/' %S/../../compiler/include/gopp/Basic/DiagnosticIDs.def > %t/seeded.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/seeded.def --lock %S/../../docs/errors/codes.lock 2>&1 | FileCheck --check-prefix=SEEDED %s
+// SEEDED: error: err_undefined was E{{[0-9]+}} and is now E9999: a code never changes
+
+// A row that the script cannot read must fail, not slip past the lock check:
+// split before the number, extra spaces, a macro wrapper. Preprocessor lines,
+// comments and strings that mention DIAG( stay fine (the real table has them).
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG(err_b,\n     2, Error, "b")\n' > %t/split.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/split.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=SPLIT %s
+// SPLIT: split.def:3: error: cannot parse this DIAG row
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nDIAG( err_b, 2, Error, "b")\n' > %t/space.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/space.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=SPACE %s
+// SPACE: space.def:3: error: cannot parse this DIAG row
+// RUN: printf 'DIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a")\nMY_DIAG(err_b, 2, Error, "b")\nX(DIAG(err_b, 2, Error, "b"))\n' > %t/macro.def
+// RUN: not %python %S/../../tools/check-diag-codes.py --def %t/macro.def --lock %t/ok.lock 2>&1 | FileCheck --check-prefix=MACRO %s
+// MACRO: macro.def:4: error: cannot parse this DIAG row
+// RUN: printf '// DIAG(x, 9, Error, "c")\n#define DIAG(Name, Code, Sev, Text)\nDIAG(custom, 0, Error, "x")\nDIAG(err_a, 1, Error, "a: DIAG(q")\nDIAG(err_b, 2, Error, "b")\n/* DIAG(\n */\n#undef DIAG\n' > %t/fine.def
+// RUN: %python %S/../../tools/check-diag-codes.py --def %t/fine.def --lock %t/ok.lock

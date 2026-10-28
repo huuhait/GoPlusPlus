@@ -1,0 +1,35 @@
+// R5: a duplicate method that comes from embedding two instances of a generic
+// interface is reported once, at the declaration, however many bodies use an
+// instance of it. A valid generic interface used the same way gives no error.
+// RUN: not %gopp check -check-j=1 %s 2>&1 | FileCheck %s
+// RUN: not %gopp check -check-j=8 %s 2>&1 | FileCheck %s
+package main
+
+type A[T any] interface{ M() T }
+
+type C[T, U any] interface {
+	A[T]
+	A[U]
+}
+
+type D[T, U any] interface {
+	A[T]
+	N() U
+}
+
+func f() {
+	var c C[int, string]
+	_ = c
+	var d D[int, string]
+	_ = d
+}
+
+func g() {
+	var c C[int, string]
+	_ = c
+}
+
+func main() {}
+
+// CHECK: error[E0270]: duplicate method M
+// CHECK-NOT: duplicate method

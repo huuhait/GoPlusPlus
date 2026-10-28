@@ -1,0 +1,66 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not="error[" %s
+// Rules ERR-1, ERR-2 (D1.8, D3.6): `func f!(...) R` has the type
+// `func(...) (R, error)`; the mark works on methods, interface methods,
+// function literals and function types. Good code passes, bad code fails.
+package main
+
+type myErr struct{}
+
+func (myErr) Error() string { return "x" }
+
+type S struct{}
+
+func (s *S) Send!(msg string) int { return len(msg) }
+
+type Loader interface{ Load!(path string) []byte }
+type PlainLoader interface {
+	Load(path string) ([]byte, error)
+}
+
+type impl struct{}
+
+func (impl) Load!(path string) []byte { return nil }
+
+func f!(n int) string { return "x" }
+
+func use(l Loader, p PlainLoader, s *S) {
+	// A `!` function and its Go form are the same type.
+	var a func(int) (string, error) = f
+	var b func!(int) string = f
+	var c func!(int) string = a
+	var d func(int) (string, error) = b
+	_, _, _, _ = a, b, c, d
+	// An interface with a `!` method is the Go form.
+	var l2 Loader = impl{}
+	var p2 PlainLoader = impl{}
+	var l3 Loader = p2
+	var p3 PlainLoader = l2
+	_, _, _, _ = l2, p2, l3, p3
+	// Literals.
+	g := func!(n int) string { return "x" }
+	var g2 func(int) (string, error) = g
+	_ = g2
+	// Calls with the Go form of the result.
+	v, err := f(1)
+	_, _ = v, err
+	n, err2 := s.Send("a")
+	_, _ = n, err2
+	data, err3 := l.Load("p")
+	_, _ = data, err3
+}
+
+// A `!` function differs from the one without `!`.
+func bad() {
+	var x func(int) string = f
+	_ = x
+	// CHECK: [[@LINE-2]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use f (value of type func!(int) string) as func(int) string value in variable declaration
+	var y func!(int) string = func(n int) string { return "x" }
+	_ = y
+	// CHECK: [[@LINE-2]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use func(n int) string {…} (value of type func(int) string) as func!(int) string value in variable declaration
+	f2 := f
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: multiple-value f2(1) (value of type (string, error)) in single-value context
+	var z string = f2(1)
+	_ = z
+}
+
+func main() {}

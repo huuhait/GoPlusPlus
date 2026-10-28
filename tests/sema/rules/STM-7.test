@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule STM-7: `ch <- a` moves a into the channel: an owned local moves, a
 // value in another place needs Clone or move.
 package main
@@ -13,6 +13,6 @@ func positive(ch chan Doc, p *Doc) {
 }
 
 func negative(ch chan string, p *Doc) {
-	// CHECK: [[@LINE+1]]:8: error: cannot send p.Title: it is a value in another place, and this needs ownership (OWN-R3a)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot send p.Title: it is a value in another place, and this needs ownership (OWN-R3a)
 	ch <- p.Title
 }

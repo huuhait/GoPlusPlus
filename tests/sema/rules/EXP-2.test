@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule EXP-2: a call result, conversion, composite literal, move(...) or
 // x.Clone() is an owned temporary; move needs a place.
 package main
@@ -39,16 +39,16 @@ func positive(p *T) {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:12: error: move argument 1 + 2 is not a place (variable, field, element, map entry or pointer target)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: move argument 1 + 2 is not a place (variable, field, element, map entry or pointer target)
 	x := move(1 + 2)
-	// CHECK: [[@LINE+1]]:12: error: move argument mk() is not a place (variable, field, element, map entry or pointer target)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: move argument mk() is not a place (variable, field, element, map entry or pointer target)
 	y := move(mk())
 	_, _ = x, y
 }
 
 // Through a raw pointer it is a place in someone else's storage.
 func throughPointer() string {
-	// CHECK: [[@LINE+1]]:7: error: cannot initialize from ptr().Name: it is a value in another place, and this needs ownership (OWN-R3a)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot initialize from ptr().Name: it is a value in another place, and this needs ownership (OWN-R3a)
 	x := ptr().Name
 	return x
 }

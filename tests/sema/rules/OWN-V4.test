@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rules OWN-V4 and OWN-V4a: a map lookup borrows the key, so a ref key or a
 // borrowed variable works (`counts[w]++`); `m[k] = v` never consumes k, but
 // the stored value needs ownership.
@@ -20,7 +20,7 @@ func positive(words []string, text string) map[string]int {
 func negative(words []string) map[string]string {
 	c := map[string]string{}
 	for _, w := range words {
-		// CHECK: [[@LINE+1]]:12: error: cannot assign from w: it is a borrowed range variable, and this needs ownership (OWN-R3a)
+		// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot assign from w: it is a borrowed range variable, and this needs ownership (OWN-R3a)
 		c["k"] = w
 	}
 	return c

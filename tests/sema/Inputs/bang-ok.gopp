@@ -1,0 +1,33 @@
+package main
+
+func g() (int, error) { return 1, nil }
+
+func run!() int {
+	return g!()
+}
+
+func plainErr() error {
+	g!()
+	return nil
+}
+
+func noErr() {
+	go func() { g!() }()
+	defer g!()
+	_ = func() {
+		g!()
+	}
+}
+
+func canFail!() {
+	defer g!()
+	go g!()
+	h := func() { g!() }
+	h()
+	k := func!() { g!() }
+	_ = k
+}
+
+var pkg = func() int { return g!() }
+
+func main() {}

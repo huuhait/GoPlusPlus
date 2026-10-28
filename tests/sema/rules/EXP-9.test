@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule EXP-9: conversions follow Go; string(ref) and []T(ref) copy; a Unique
 // stored in a place converts to *T.
 package main
@@ -11,6 +11,6 @@ func positive(r ref []int, s string, u Unique[int]) {
 }
 
 func negative(s string) {
-	// CHECK: [[@LINE+1]]:10: error: cannot convert s (variable of type string) to type int
+	// CHECK: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot convert s (variable of type string) to type int
 	_ = int(s)
 }

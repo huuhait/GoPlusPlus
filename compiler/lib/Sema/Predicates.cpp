@@ -169,9 +169,9 @@ Type *Checker::chanElem(SourceLoc Pos, const Operand &X, bool Recv) {
   std::string Verb = Recv ? "invalid operation: cannot receive from "
                           : "invalid operation: cannot send to ";
   if (isTypeParam(X.Ty))
-    err(Pos, diag::custom, {Verb + str(X) + ": " + Cause});
+    err(Pos, diag::err_sema_predicate, {Verb + str(X) + ": " + Cause});
   else
-    err(Pos, diag::custom, {Verb + Cause + " " + str(X)});
+    err(Pos, diag::err_sema_predicate, {Verb + Cause + " " + str(X)});
   return nullptr;
 }
 

@@ -17,10 +17,10 @@
 // A long flat chain hits the same limit.
 // RUN: %python %S/Inputs/gen-deep-expr.py 1 5000 > %t.chain.gopp
 // RUN: not %gopp parse -dump-ast %t.chain.gopp 2>&1 | FileCheck --check-prefix=CHAIN %s
-// CHAIN: error: expression too deeply nested (limit 1024)
-// ERR: error: expression too deeply nested (limit 1024)
-// ERR-NOT: error:
+// CHAIN: error{{\[E[0-9]+\]}}: expression too deeply nested (limit 1024)
+// ERR: error{{\[E[0-9]+\]}}: expression too deeply nested (limit 1024)
+// ERR-NOT: error{{\[E[0-9]+\]}}:
 // AST: BadDecl
 // AST: ValueSpec
 // AST: Ident{{.*}}'ok'
-// JSON: {"severity":"error","id":"err_expression_too_deeply_nested","message":"expression too deeply nested (limit 1024)"
+// JSON: {"severity":"error","id":"err_expression_too_deeply_nested","code":"E0031","message":"expression too deeply nested (limit 1024)"

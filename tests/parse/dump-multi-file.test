@@ -16,8 +16,8 @@
 // AST: ==> {{.*}}.b.gopp <==
 // AST-NEXT: File
 // AST: Name: Ident <1:9, 1:10> 'b'
-// ERR: .a.gopp:2:9: error: expected operand, found ')'
-// ERR: .b.gopp:4:1: error: expected operand, found 'EOF'
+// ERR: .a.gopp:2:9: error{{\[E[0-9]+\]}}: expected operand, found ')'
+// ERR: .b.gopp:4:1: error{{\[E[0-9]+\]}}: expected operand, found 'EOF'
 // TOK: ==> {{.*}}.a.gopp <==
 // TOK-NEXT: 1:1 kw_package 'package'
 // TOK: ==> {{.*}}.b.gopp <==

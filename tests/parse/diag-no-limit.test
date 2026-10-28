@@ -1,13 +1,13 @@
 // RUN: not %gopp parse -error-limit=0 %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file.
-// CHECK:{{.*}}diag-no-limit.test:15:9: error: expected operand, found ')'
+// CHECK:{{.*}}diag-no-limit.test:15:9: error{{\[E[0-9]+\]}}: expected operand, found ')'
 // CHECK-NEXT:   15 | var a = )
 // CHECK-NEXT:      |         ^
-// CHECK-NEXT:{{.*}}diag-no-limit.test:16:9: error: expected operand, found ')'
+// CHECK-NEXT:{{.*}}diag-no-limit.test:16:9: error{{\[E[0-9]+\]}}: expected operand, found ')'
 // CHECK-NEXT:   16 | var b = )
 // CHECK-NEXT:      |         ^
-// CHECK-NEXT:{{.*}}diag-no-limit.test:17:9: error: expected operand, found ')'
+// CHECK-NEXT:{{.*}}diag-no-limit.test:17:9: error{{\[E[0-9]+\]}}: expected operand, found ')'
 // CHECK-NEXT:   17 | var c = )
 // CHECK-NEXT:      |         ^
 package p

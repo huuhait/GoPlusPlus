@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule STM-8: `s += "x"` on an owned string grows it in place, also on a
 // field; IncDec and op-assign work as in Go. A borrowed string cannot grow.
 package main
@@ -17,8 +17,8 @@ func positive(p *P) {
 }
 
 func negative(s string, p P) {
-	// CHECK: [[@LINE+1]]:2: error: cannot assign to s: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to s: it is a borrowed variable and read-only at the top level (OWN-R3b)
 	s += "x"
-	// CHECK: [[@LINE+1]]:2: error: cannot assign to p.n: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to p.n: it is a borrowed variable and read-only at the top level (OWN-R3b)
 	p.n++
 }

@@ -52,7 +52,7 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
   if (Found && !isa<PkgName>(Obj) && StringRef(Found->Comment) == "file") {
     auto It = S.DotImportMap.find({Found, N});
     if (It != S.DotImportMap.end())
-      It->second->Used = true;
+      markUsed(It->second);
   }
 
   // Package-level objects are resolved lazily (D3.4).
@@ -66,7 +66,7 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
   switch (Obj->getKind()) {
   case Object::Kind::PkgName:
     err(Id, diag::err_package_without_selector, {std::string(N)});
-    cast<PkgName>(Obj)->Used = true;
+    markUsed(cast<PkgName>(Obj));
     return;
   case Object::Kind::Const: {
     auto *C = cast<Const>(Obj);
@@ -89,7 +89,7 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
   case Object::Kind::TypeName:
     if (auto *TN = cast<TypeName>(Obj);
         TN->IsAlias && !TN->AliasTParams.empty() && !E.GenericOk) {
-      err(Id, diag::custom,
+      err(Id, diag::err_sema_typexpr,
           {"cannot use generic type " + std::string(N) +
            " without instantiation"});
       return;
@@ -169,7 +169,7 @@ Type *Checker::definedType(const ast::Expr *Ex, NamedType *Def) {
   if (!T)
     T = invalid();
   if (isGeneric(T)) {
-    err(Ex, diag::custom,
+    err(Ex, diag::err_sema_typexpr,
         {"cannot use generic type " + str(T) + " without instantiation"});
     T = invalid();
   }
@@ -248,7 +248,7 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
     case Mode::Invalid:
       return invalid();
     case Mode::NoValue:
-      err(Ex, diag::custom, {str(Ex) + " used as type"});
+      err(Ex, diag::err_sema_typexpr, {str(Ex) + " used as type"});
       return invalid();
     default:
       err(Ex, diag::err_not_a_type, {str(Ex)});
@@ -275,7 +275,7 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
   case K::ArrayType: {
     auto *AT = cast<ast::ArrayType>(Ex);
     if (isa<Ellipsis>(AT->Len)) {
-      err(AT->Len, diag::custom,
+      err(AT->Len, diag::err_sema_typexpr,
           {"invalid use of [...] array (outside a composite literal)"});
       varType(AT->Elt);
       return invalid();
@@ -295,7 +295,7 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
       return invalid();
     Type *U = under(El);
     if (!(El == typ(BasicKind::String) || isa<SliceType>(U))) {
-      err(R, diag::custom,
+      err(R, diag::err_sema_typexpr,
           {"invalid use of ref: " + str(El) + " is not a string or slice"});
       return invalid();
     }
@@ -338,7 +338,7 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
     err(Ex, diag::err_invalid_use_of_dots);
     return invalid();
   case K::MacroInvocation:
-    err(Ex, diag::custom, {"macro invocations are expanded by P09"});
+    err(Ex, diag::err_sema_typexpr, {"macro invocations are expanded by P09"});
     return invalid();
   default: {
     // types2: report, then evaluate the expression for its own errors.
@@ -355,13 +355,14 @@ int64_t Checker::arrayLength(const ast::Expr *Ex) {
   if (auto *Id = dyn_cast<ast::Ident>(Ex)) {
     Object *O = E.Sc->lookup(name(Id), E.Pos);
     if (!O) {
-      err(Id, diag::custom,
+      err(Id, diag::err_sema_typexpr,
           {"undefined array length " + std::string(name(Id)) +
            " or missing type constraint"});
       return -1;
     }
     if (!isa<Const>(O)) {
-      err(Id, diag::custom, {"invalid array length " + std::string(name(Id))});
+      err(Id, diag::err_sema_typexpr,
+          {"invalid array length " + std::string(name(Id))});
       return -1;
     }
   }
@@ -416,7 +417,6 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
     FS.Ty = T;
     FS.Embedded = Emb;
     FS.Tag = Tag;
-    FS.Pos = Pos;
     Fields.push_back(FS);
     Idents.push_back(Id);
     EmbExprs.push_back(EmbE);
@@ -429,7 +429,7 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
         if (unquoteString(F->Tag->Text, Out))
           Tag = Out;
         else
-          err(F->Tag, diag::custom, {"invalid struct tag"});
+          err(F->Tag, diag::err_sema_typexpr, {"invalid struct tag"});
       }
       StringRef TagRef = Mem.copy(Tag);
       if (F->Names.empty()) {
@@ -449,7 +449,8 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
         else if (auto *Sel = dyn_cast<SelectorExpr>(Base))
           N = name(Sel->Sel);
         else {
-          err(TE, diag::custom, {"invalid embedded field type " + str(TE)});
+          err(TE, diag::err_sema_typexpr,
+              {"invalid embedded field type " + str(TE)});
           continue;
         }
         Add(nullptr, N, T, true, TagRef, TE->getBegin(), TE);
@@ -521,7 +522,7 @@ Type *Checker::unionTypeExpr(const ast::Expr *Ex) {
     // (go.dev/issue/47127).
     if (isTypeParam(T.T)) {
       if (T.Tilde)
-        err(TE, diag::custom,
+        err(TE, diag::err_sema_typexpr,
             {"type in term ~" + str(TE) + " cannot be a type parameter"});
       else
         err(TE, diag::err_union_type_param);
@@ -531,7 +532,7 @@ Type *Checker::unionTypeExpr(const ast::Expr *Ex) {
       return T.T;
     if (Terms.size() >= MaxTermCount) {
       if (!TooMany)
-        err(TE, diag::custom,
+        err(TE, diag::err_sema_typexpr,
             {"cannot handle more than 100 union terms (implementation "
              "limitation)"});
       TooMany = true;
@@ -571,7 +572,7 @@ Type *Checker::unionTypeExpr(const ast::Expr *Ex) {
         else if (It->Sp == InterfaceType::Comparable)
           err(TE, diag::err_union_comparable);
         else if (TS->Comparable)
-          err(TE, diag::custom,
+          err(TE, diag::err_sema_typexpr,
               {"cannot use " + TermStr(T) + " in union (" + TermStr(T) +
                " embeds comparable)"});
         continue; // interface terms are not subject to the no-overlap rule
@@ -600,11 +601,12 @@ Type *Checker::interfaceTypeExpr(const ast::InterfaceType *It, NamedType *Def) {
         StringRef N = name(Id);
         auto *FT = dyn_cast_or_null<ast::FuncType>(F->Type);
         if (N == "_") {
-          err(Id, diag::custom, {"methods must have a unique non-blank name"});
+          err(Id, diag::err_sema_typexpr,
+              {"methods must have a unique non-blank name"});
           continue;
         }
         if (!FT) {
-          err(F->Type, diag::custom, {"invalid method signature"});
+          err(F->Type, diag::err_sema_typexpr, {"invalid method signature"});
           continue;
         }
         Func *M = newFunc(N, nullptr, Id->getBegin());
@@ -681,13 +683,15 @@ Type *Checker::boundType(const ast::Expr *Ex, bool) {
 
 Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   (void)Def;
+  if (Type *Foreign = foreignInstantiate(Ix))
+    return Foreign;
   std::string Cause;
   TypeName *Alias = nullptr;
   Type *G = genericType(Ix->X, &Cause, &Alias);
   if (!isValid(G)) {
     // types2: the type arguments are not evaluated.
     if (!Cause.empty())
-      err(Ix->X, diag::custom,
+      err(Ix->X, diag::err_sema_typexpr,
           {"invalid operation: " + str(Ix) + " (" + Cause + ")"});
     return invalid();
   }
@@ -698,7 +702,7 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     size_t AGot = AArgs.size(), AWant = Alias->AliasTParams.size();
     if (AGot != AWant) {
       err(AGot < AWant ? Ix->Rbrack : Ix->Indices[AWant]->getBegin(),
-          diag::custom,
+          diag::err_sema_typexpr,
           {std::string(AGot < AWant ? "not enough" : "too many") +
            " type arguments for type " + std::string(Alias->Name) + ": have " +
            num(AGot) + ", want " + num(AWant)});
@@ -715,7 +719,7 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
       int Bad = verify(APos, ATPs, AArgs, &Why);
       if (Bad >= 0)
         err(static_cast<size_t>(Bad) < ALocs.size() ? ALocs[Bad] : APos,
-            diag::custom, {Why});
+            diag::err_sema_typexpr, {Why});
     });
     return subst(G, Alias->AliasTParams, AArgs);
   }
@@ -732,7 +736,8 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     // types2: the instance still exists (with an invalid underlying type),
     // so `var x T[int]` has a type and follow-on errors are precise.
     const char *Which = Got < Want ? "not enough" : "too many";
-    err(Got < Want ? Ix->Rbrack : Ix->Indices[Want]->getBegin(), diag::custom,
+    err(Got < Want ? Ix->Rbrack : Ix->Indices[Want]->getBegin(),
+        diag::err_sema_typexpr,
         {std::string(Which) + " type arguments for type " +
          std::string(N->Obj->Name) + ": have " + num(Got) + ", want " +
          num(Want)});
@@ -752,7 +757,7 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     int Bad = verify(Pos, TPs, TArgs, &Why);
     if (Bad >= 0)
       err(static_cast<size_t>(Bad) < Locs.size() ? Locs[Bad] : Pos,
-          diag::custom, {Why});
+          diag::err_sema_typexpr, {Why});
   });
   return Inst;
 }

@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-P8: Unique[T] is owning (move-only); Shared[T] and Weak[T] are
 // shared handles (copies retain).
 package main
@@ -16,7 +16,7 @@ func positive(h *H) {
 }
 
 func negative(h *H) {
-	// CHECK: [[@LINE+1]]:7: error: cannot initialize from h.un: it is a value in another place, and this needs ownership (OWN-R3a)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot initialize from h.un: it is a value in another place, and this needs ownership (OWN-R3a)
 	u := h.un
 	_ = u
 }

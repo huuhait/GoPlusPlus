@@ -867,3 +867,11 @@ void Checker::checkSpecialMethod(Func *F, const FuncDecl *FD) {
     err(FD->Name, diag::err_own_clone_ptr_receiver)
         .note(FD->Name->getBegin(), "use a value receiver");
 }
+
+bool Checker::isReadOnlyValue(const ast::Expr *Ex, Type *Ty) {
+  if (!own())
+    return false;
+  if (Ty && isa<RefType>(under(Ty)))
+    return true;
+  return Ex && borrowedRoot(Ex) != nullptr;
+}

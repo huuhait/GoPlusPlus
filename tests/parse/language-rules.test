@@ -5,10 +5,10 @@
 // RUN: not %gopp parse %s 2>&1 | FileCheck --check-prefix=ON %s
 // RUN: %gopp parse -language-rules=false %s
 // RUN: %gopp fmt %s | FileCheck --check-prefix=FMT %s
-// ON: error: '//gopp:cflags' is not allowed in a source file
-// ON: error: '!' already adds the error result
-// ON: error: allocation is explicit in Go++
-// ON: error: 'u' redeclares a loop variable
+// ON: error{{\[E[0-9]+\]}}: '//gopp:cflags' is not allowed in a source file
+// ON: error{{\[E[0-9]+\]}}: '!' already adds the error result
+// ON: error{{\[E[0-9]+\]}}: allocation is explicit in Go++
+// ON: error{{\[E[0-9]+\]}}: 'u' redeclares a loop variable
 //gopp:cflags -O2
 package p
 

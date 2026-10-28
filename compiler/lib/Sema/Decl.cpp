@@ -68,7 +68,8 @@ void Checker::importPackage(const ImportSpec *Spec, FileState &F) {
   if (NameId)
     N = name(NameId);
   if (N == "init") {
-    err(NameId ? NameId->getBegin() : Spec->Path->getBegin(), diag::custom,
+    err(NameId ? NameId->getBegin() : Spec->Path->getBegin(),
+        diag::err_sema_decl,
         {"cannot import package as init - init must be a func"});
     return;
   }
@@ -177,11 +178,12 @@ void Checker::collectObjects() {
       return;
     if (N == "init") {
       if (!isa<Func>(O))
-        err(O->Pos, diag::custom, {"cannot declare init - must be func"});
+        err(O->Pos, diag::err_sema_decl,
+            {"cannot declare init - must be func"});
       return; // init functions are not declared
     }
     if (N == "main" && S.Pkg->Name == "main" && !isa<Func>(O)) {
-      err(O->Pos, diag::custom, {"cannot declare main - must be func"});
+      err(O->Pos, diag::err_sema_decl, {"cannot declare main - must be func"});
       return;
     }
     if (Object *Old = PkgScope->insert(O)) {
@@ -195,7 +197,7 @@ void Checker::collectObjects() {
   for (FileState &F : S.Files) {
     const ast::File *File = F.AST;
     if (File->Name && File->Name->Name.str() == "_")
-      err(File->Name, diag::custom, {"invalid package name _"});
+      err(File->Name, diag::err_sema_decl, {"invalid package name _"});
     F.FileScope = Mem.newScope(PkgScope, File->getRange(), "file");
     for (const ast::Decl *D : File->Decls) {
       if (auto *GD = dyn_cast<GenDecl>(D)) {
@@ -272,7 +274,8 @@ void Checker::collectObjects() {
                     {std::string(name(VS->Names[NV]))});
             }
             if (NV == 0 && !VS->Type)
-              err(VS->Names[0], diag::custom, {"missing type or init expr"});
+              err(VS->Names[0], diag::err_sema_decl,
+                  {"missing type or init expr"});
             break;
           }
           case tok::kw_type: {
@@ -336,7 +339,7 @@ void Checker::collectObjects() {
   for (FileState &F : S.Files) {
     for (auto &KV : F.FileScope->Elems) {
       if (Object *Alt = PkgScope->lookupLocal(KV.first)) {
-        err(Alt->Pos, diag::custom,
+        err(Alt->Pos, diag::err_sema_decl,
             {std::string(KV.first) +
              " already declared through import of package " +
              std::string(cast<PkgName>(KV.second)->Imported->Name)});
@@ -516,7 +519,11 @@ void Checker::objDecl(Object *O, NamedType *Def) {
   }
   auto It = S.ObjMap.find(O);
   if (It == S.ObjMap.end()) {
-    O->Color = 1;
+    // An object without declaration info (an interface method, a universe
+    // object) needs no resolving. Body checkers share it, so only phase 1
+    // marks it.
+    if (!Bodies)
+      O->Color = 1;
     return;
   }
   DeclInfo *D = It->second;
@@ -901,7 +908,7 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
           err(TE, diag::err_generic_without_instantiation,
               {"type", str(TE), ""});
         } else {
-          err(BaseE, diag::custom,
+          err(BaseE, diag::err_sema_decl,
               {"cannot define new methods on generic alias type " +
                genericAliasString(BaseTN)});
           // The receiver type parameters stay declared (bound any), so the
@@ -921,7 +928,7 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
       } else if (!Ix) {
         if (const ast::Expr *Inst = instantiatedAliasTarget(BaseTN)) {
           Rejected = true;
-          err(BaseE, diag::custom,
+          err(BaseE, diag::err_sema_decl,
               {"cannot define new methods on instantiated type " + str(Inst)});
         }
       }
@@ -963,7 +970,7 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
               for (const ast::Expr *A : Ix->Indices) {
                 auto *Id = dyn_cast<ast::Ident>(A);
                 if (!Id) {
-                  err(A, diag::custom,
+                  err(A, diag::err_sema_decl,
                       {"receiver type parameter " + str(A) +
                        " must be an identifier"});
                   RecvT = invalid();
@@ -1047,7 +1054,7 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
     checkSpecialMethod(O, FD);
   }
   if (!FD->Body && FD->Type->TypeParams && FD->Type->TypeParams->numFields())
-    err(FD, diag::custom, {"generic function is missing function body"});
+    err(FD, diag::err_sema_decl, {"generic function is missing function body"});
   if (FD->Body && S.Opts.CheckBodies) {
     BodyJob J;
     J.F = O;
@@ -1059,6 +1066,14 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
     J.Params = FI.Params;
     J.Results = FI.Results;
     J.Recv = O->Recv;
+    // The parameters belong to this body. Set here, in phase 1, so that body
+    // checkers never write the shared parameter objects (P03.10).
+    for (Var *V : J.Params)
+      V->FuncOwner = FD->Body;
+    for (Var *V : J.Results)
+      V->FuncOwner = FD->Body;
+    if (J.Recv)
+      J.Recv->FuncOwner = FD->Body;
     S.Bodies.push_back(J);
   }
   (void)RecvNamed;

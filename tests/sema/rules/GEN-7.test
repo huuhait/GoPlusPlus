@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule GEN-7: interfaces cannot declare generic methods, so a generic method
 // never satisfies an interface method.
 package main
@@ -18,7 +18,7 @@ func positive() {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:17: error: cannot use Set{} (value of struct type Set) as Mapper value in variable declaration: Set does not implement Mapper (method Map is generic: a generic method never satisfies an interface method, GEN-7)
+	// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use Set{} (value of struct type Set) as Mapper value in variable declaration: Set does not implement Mapper (method Map is generic: a generic method never satisfies an interface method, GEN-7)
 	var m Mapper = Set{}
 	_ = m
 }

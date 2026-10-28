@@ -1,0 +1,50 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.08, ERR-3: `return` in a `!` function lists the declared results (nil
+// error) or the declared results plus an error (failure). Both sides: the
+// good forms pass, the bad ones are reported once each.
+package main
+
+type MyErr struct{}
+
+func (MyErr) Error() string { return "e" }
+
+func g() (int, error) { return 1, nil }
+func two() (int, string, error) { return 1, "a", nil }
+
+// Good forms.
+func okValue!() int             { return 1 }
+func okFail!() int              { return 0, MyErr{} }
+func okNone!()                  {}
+func okNoneReturn!()            { return }
+func okNoneFail!()              { return MyErr{} }
+func okCall!() int              { return g() }
+func okCallFail!() (int, string) { return two() }
+func okCallUnwrap!() int        { return g!() }
+func okNamed!() (n int)         { return }
+func okNamedValue!() (n int)    { return 3 }
+func okNamedFail!() (n int)     { return 3, MyErr{} }
+func okNilErr!() int            { return 1, nil }
+
+// Bad forms.
+func badNotEnough!() (int, string) {
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: wrong number of return values in a '!' function: have (number), want (int, string) or (int, string, error)
+	return 1
+}
+func badTooMany!() int {
+	// CHECK: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: wrong number of return values in a '!' function: have (number, MyErr, number), want (int) or (int, error)
+	return 1, MyErr{}, 3
+}
+func badNotAnError!() int {
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot use 2 (constant of type int) as error value in return statement: int does not implement error (missing method Error)
+	return 1, 2
+}
+func badEmpty!() int {
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: not enough return values
+	return
+}
+func badCall!() int {
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: wrong number of return values in a '!' function: have (int, string, error), want (int) or (int, error)
+	return two()
+}
+
+func main() {}

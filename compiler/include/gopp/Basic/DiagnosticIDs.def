@@ -7,9 +7,15 @@
 //===----------------------------------------------------------------------===//
 //
 // Every diagnostic the compiler reports (D2.5), in the style of Clang's
-// Diagnostic*Kinds.td: DIAG(Name, Severity, Text).
-//   - Name is stable: JSON output and tests refer to it, and P03.14 attaches
-//     the numbered error codes to it (D3.11). Prefixes: err_, warn_, note_.
+// Diagnostic*Kinds.td: DIAG(Name, Code, Severity, Text).
+//   - Name is stable: JSON output and tests refer to it. Prefixes: err_,
+//     warn_, note_.
+//   - Code is the number of the error code E<Code> (D3.11), printed as
+//     `error[E0042]: ...` and explained by `gopp explain E0042`. A code never
+//     changes and is never reused: docs/errors/codes.lock holds the table and
+//     the `check-diag-codes` test fails when an entry is removed, renumbered
+//     or its number is taken by another name. A new entry takes the next free
+//     number (the test prints it); `custom` has no code (0).
 //   - Text may use %0..%9 for the arguments given with `<<` and %% for a
 //     percent sign.
 // The lexer and parser messages are go/scanner's and go/parser's, so that Go
@@ -20,50 +26,50 @@
 //===----------------------------------------------------------------------===//
 
 #ifndef DIAG
-#define DIAG(Name, Sev, Text)
+#define DIAG(Name, Code, Sev, Text)
 #endif
 
 // A message given as a string (tests and tools); compiler code adds an entry.
-DIAG(custom, Error, "%0")
+DIAG(custom, 0, Error, "%0")
 
 //===----------------------------------------------------------------------===//
 // Engine
 //===----------------------------------------------------------------------===//
 
-DIAG(err_too_many_errors, Error, "too many errors")
+DIAG(err_too_many_errors, 1, Error, "too many errors")
 
 //===----------------------------------------------------------------------===//
 // Lexer (go/scanner)
 //===----------------------------------------------------------------------===//
 
-DIAG(err_lex_illegal_nul, Error, "illegal character NUL")
-DIAG(err_lex_utf16, Error, "illegal UTF-8 encoding (got UTF-16)")
-DIAG(err_lex_illegal_utf8, Error, "illegal UTF-8 encoding")
-DIAG(err_lex_illegal_bom, Error, "illegal byte order mark")
-DIAG(err_lex_illegal_char, Error, "illegal character %0")
-DIAG(err_lex_curly_quote, Error, "curly quotation mark '%0' (use neutral '\"')")
-DIAG(err_lex_comment_unterminated, Error, "comment not terminated")
-DIAG(err_lex_radix_point, Error, "invalid radix point in %0")
-DIAG(err_lex_no_digits, Error, "%0 has no digits")
-DIAG(err_lex_exponent_needs_decimal, Error,
+DIAG(err_lex_illegal_nul, 2, Error, "illegal character NUL")
+DIAG(err_lex_utf16, 3, Error, "illegal UTF-8 encoding (got UTF-16)")
+DIAG(err_lex_illegal_utf8, 4, Error, "illegal UTF-8 encoding")
+DIAG(err_lex_illegal_bom, 5, Error, "illegal byte order mark")
+DIAG(err_lex_illegal_char, 6, Error, "illegal character %0")
+DIAG(err_lex_curly_quote, 7, Error, "curly quotation mark '%0' (use neutral '\"')")
+DIAG(err_lex_comment_unterminated, 8, Error, "comment not terminated")
+DIAG(err_lex_radix_point, 9, Error, "invalid radix point in %0")
+DIAG(err_lex_no_digits, 10, Error, "%0 has no digits")
+DIAG(err_lex_exponent_needs_decimal, 11, Error,
      "'%0' exponent requires decimal mantissa")
-DIAG(err_lex_exponent_needs_hex, Error,
+DIAG(err_lex_exponent_needs_hex, 12, Error,
      "'%0' exponent requires hexadecimal mantissa")
-DIAG(err_lex_exponent_no_digits, Error, "exponent has no digits")
-DIAG(err_lex_hex_mantissa_needs_p, Error,
+DIAG(err_lex_exponent_no_digits, 13, Error, "exponent has no digits")
+DIAG(err_lex_hex_mantissa_needs_p, 14, Error,
      "hexadecimal mantissa requires a 'p' exponent")
-DIAG(err_lex_invalid_digit, Error, "invalid digit '%0' in %1")
-DIAG(err_lex_bad_separator, Error, "'_' must separate successive digits")
-DIAG(err_lex_escape_unterminated, Error, "escape sequence not terminated")
-DIAG(err_lex_escape_unknown, Error, "unknown escape sequence")
-DIAG(err_lex_escape_illegal_char, Error,
+DIAG(err_lex_invalid_digit, 15, Error, "invalid digit '%0' in %1")
+DIAG(err_lex_bad_separator, 16, Error, "'_' must separate successive digits")
+DIAG(err_lex_escape_unterminated, 17, Error, "escape sequence not terminated")
+DIAG(err_lex_escape_unknown, 18, Error, "unknown escape sequence")
+DIAG(err_lex_escape_illegal_char, 19, Error,
      "illegal character %0 in escape sequence")
-DIAG(err_lex_escape_bad_code_point, Error,
+DIAG(err_lex_escape_bad_code_point, 20, Error,
      "escape sequence is invalid Unicode code point")
-DIAG(err_lex_rune_unterminated, Error, "rune literal not terminated")
-DIAG(err_lex_rune_illegal, Error, "illegal rune literal")
-DIAG(err_lex_string_unterminated, Error, "string literal not terminated")
-DIAG(err_lex_raw_string_unterminated, Error,
+DIAG(err_lex_rune_unterminated, 21, Error, "rune literal not terminated")
+DIAG(err_lex_rune_illegal, 22, Error, "illegal rune literal")
+DIAG(err_lex_string_unterminated, 23, Error, "string literal not terminated")
+DIAG(err_lex_raw_string_unterminated, 24, Error,
      "raw string literal not terminated")
 
 //===----------------------------------------------------------------------===//
@@ -72,68 +78,68 @@ DIAG(err_lex_raw_string_unterminated, Error,
 
 // %0 is what was expected ("';'", "type", "1 expression", ...), %1 the token
 // that was found.
-DIAG(err_expected, Error, "expected %0")
-DIAG(err_expected_found, Error, "expected %0, found %1")
-DIAG(err_expected_found_complit, Error,
+DIAG(err_expected, 25, Error, "expected %0")
+DIAG(err_expected_found, 26, Error, "expected %0, found %1")
+DIAG(err_expected_found_complit, 27, Error,
      "expected %0, found %1 (missing parentheses around composite literal?)")
 // %0 is the list: "parameter list", "argument list", "composite literal", ...
-DIAG(err_missing_comma, Error, "missing ',' in %0")
-DIAG(err_missing_comma_newline, Error, "missing ',' before newline in %0")
-DIAG(err_nesting_too_deep, Error, "exceeded max nesting depth")
-DIAG(err_expression_too_deeply_nested, Error,
+DIAG(err_missing_comma, 28, Error, "missing ',' in %0")
+DIAG(err_missing_comma_newline, 29, Error, "missing ',' before newline in %0")
+DIAG(err_nesting_too_deep, 30, Error, "exceeded max nesting depth")
+DIAG(err_expression_too_deeply_nested, 31, Error,
      "expression too deeply nested (limit %0)")
-DIAG(err_unexpected_comma_rbrack, Error, "unexpected comma; expecting ]")
-DIAG(err_paren_embedded_type, Error, "cannot parenthesize embedded type")
-DIAG(err_paren_complit_type, Error,
+DIAG(err_unexpected_comma_rbrack, 32, Error, "unexpected comma; expecting ]")
+DIAG(err_paren_embedded_type, 33, Error, "cannot parenthesize embedded type")
+DIAG(err_paren_complit_type, 34, Error,
      "cannot parenthesize type in composite literal")
-DIAG(err_missing_type_constraint, Error, "missing type constraint")
-DIAG(err_missing_type_param_name, Error, "missing type parameter name")
-DIAG(err_missing_type_param_name_or_len, Error,
+DIAG(err_missing_type_constraint, 35, Error, "missing type constraint")
+DIAG(err_missing_type_param_name, 36, Error, "missing type parameter name")
+DIAG(err_missing_type_param_name_or_len, 37, Error,
      "missing type parameter name or invalid array length")
-DIAG(err_missing_param_type, Error, "missing parameter type")
-DIAG(err_missing_param_name, Error, "missing parameter name")
-DIAG(err_dots_not_final, Error, "can only use ... with final parameter")
-DIAG(err_dots_invalid, Error, "invalid use of ...")
-DIAG(err_empty_type_params, Error, "empty type parameter list")
-DIAG(err_func_type_type_params, Error,
+DIAG(err_missing_param_type, 38, Error, "missing parameter type")
+DIAG(err_missing_param_name, 39, Error, "missing parameter name")
+DIAG(err_dots_not_final, 40, Error, "can only use ... with final parameter")
+DIAG(err_dots_invalid, 41, Error, "invalid use of ...")
+DIAG(err_empty_type_params, 42, Error, "empty type parameter list")
+DIAG(err_func_type_type_params, 43, Error,
      "function type must have no type parameters")
-DIAG(err_method_type_params, Error, "method must have no type parameters")
-DIAG(err_interface_method_type_params, Error,
+DIAG(err_method_type_params, 44, Error, "method must have no type parameters")
+DIAG(err_interface_method_type_params, 45, Error,
      "interface method must have no type parameters")
-DIAG(err_slice3_middle_index, Error, "middle index required in 3-index slice")
-DIAG(err_slice3_final_index, Error, "final index required in 3-index slice")
-DIAG(err_illegal_label, Error, "illegal label declaration")
+DIAG(err_slice3_middle_index, 46, Error, "middle index required in 3-index slice")
+DIAG(err_slice3_final_index, 47, Error, "final index required in 3-index slice")
+DIAG(err_illegal_label, 48, Error, "illegal label declaration")
 // %0 is "go" or "defer".
-DIAG(err_call_parenthesized, Error,
+DIAG(err_call_parenthesized, 49, Error,
      "expression in %0 must not be parenthesized")
-DIAG(err_call_expected, Error, "expression in %0 must be function call")
-DIAG(err_missing_if_condition, Error, "missing condition in if statement")
-DIAG(err_var_in_if_init, Error, "var declaration not allowed in if initializer")
-DIAG(err_newline_after_if_clause, Error,
+DIAG(err_call_expected, 50, Error, "expression in %0 must be function call")
+DIAG(err_missing_if_condition, 51, Error, "missing condition in if statement")
+DIAG(err_var_in_if_init, 52, Error, "var declaration not allowed in if initializer")
+DIAG(err_newline_after_if_clause, 53, Error,
      "unexpected newline, expecting { after if clause")
-DIAG(err_newline_before_lbrace, Error,
+DIAG(err_newline_before_lbrace, 54, Error,
      "unexpected semicolon or newline before {")
-DIAG(err_import_path_not_string, Error, "import path must be a string")
-DIAG(err_missing_import_path, Error, "missing import path")
-DIAG(err_import_after_decl, Error,
+DIAG(err_import_path_not_string, 55, Error, "import path must be a string")
+DIAG(err_missing_import_path, 56, Error, "missing import path")
+DIAG(err_import_after_decl, 57, Error,
      "imports must appear before other declarations")
 
 // Go++: range `&` (D1.21), macros and attributes (D1.14).
-DIAG(err_range_alias_assign, Error,
+DIAG(err_range_alias_assign, 58, Error,
      "'&' on a range variable is only allowed with ':='")
-DIAG(err_range_alias_key, Error,
+DIAG(err_range_alias_key, 59, Error,
      "'&' is not allowed on the key variable of a range loop")
-DIAG(err_macro_args_unterminated, Error,
+DIAG(err_macro_args_unterminated, 60, Error,
      "unterminated macro arguments: expected ')'")
-DIAG(err_macro_args_mismatched, Error, "mismatched '%0' in macro arguments")
-DIAG(err_macro_args_mismatched_expected, Error,
+DIAG(err_macro_args_mismatched, 61, Error, "mismatched '%0' in macro arguments")
+DIAG(err_macro_args_mismatched_expected, 62, Error,
      "mismatched '%0' in macro arguments, expected '%1'")
-DIAG(note_to_match_this, Note, "to match this '%0'")
-DIAG(err_macro_name_lowercase, Error,
+DIAG(note_to_match_this, 63, Note, "to match this '%0'")
+DIAG(err_macro_name_lowercase, 64, Error,
      "macro name '%0' must start with an upper-case letter")
-DIAG(err_unknown_macro_kind, Error, "unknown macro parameter kind '%0'")
-DIAG(err_attr_on_stmt, Error, "attributes are not allowed on statements")
-DIAG(err_attr_on_import, Error,
+DIAG(err_unknown_macro_kind, 65, Error, "unknown macro parameter kind '%0'")
+DIAG(err_attr_on_stmt, 66, Error, "attributes are not allowed on statements")
+DIAG(err_attr_on_import, 67, Error,
      "attributes are not allowed on import declarations")
 
 //===----------------------------------------------------------------------===//
@@ -143,79 +149,79 @@ DIAG(err_attr_on_import, Error,
 // Go habits, habits from other languages and typos that the parser can see.
 // Each explains the Go++ way; a fix-it is given only where the fix is exact
 // (`gopp parse -fixit` applies them). The table, with one test per row, is
-// tests/parse/recovery/README.md. P03.14 attaches error codes to these names.
+// tests/parse/recovery/README.md.
 
 // Go++ rules on syntax that is valid Go: reported only with
 // ParseOptions::CheckLanguageRules (`gopp fmt` turns it off).
-DIAG(err_addr_of_complit, Error,
+DIAG(err_addr_of_complit, 68, Error,
      "allocation is explicit in Go++: use new_unique(T{...}) instead of "
      "&T{...}")
-DIAG(err_fails_returns_error, Error,
+DIAG(err_fails_returns_error, 69, Error,
      "'!' already adds the error result: remove 'error' from the result list")
-DIAG(err_loop_var_redeclared, Error,
+DIAG(err_loop_var_redeclared, 70, Error,
      "'%0' redeclares a loop variable: give the copy another name")
-DIAG(note_loop_var_declared_here, Note, "loop variable '%0' declared here")
-DIAG(err_gopp_directive_in_source, Error,
+DIAG(note_loop_var_declared_here, 71, Note, "loop variable '%0' declared here")
+DIAG(err_gopp_directive_in_source, 72, Error,
      "'//gopp:%0' is not allowed in a source file: move it to gopp.mod")
-DIAG(note_gopp_mod_line, Note, "gopp.mod takes the line '%0 ...'")
+DIAG(note_gopp_mod_line, 73, Note, "gopp.mod takes the line '%0 ...'")
 
 // Go++ words used the wrong way.
-DIAG(err_move_type_not_shared, Error,
+DIAG(err_move_type_not_shared, 74, Error,
      "'%0' needs its own type: a 'move' parameter does not share its type with "
      "the names before it")
-DIAG(err_view_for_ref, Error,
+DIAG(err_view_for_ref, 75, Error,
      "there is no 'view' type: a borrowed string or slice is spelled 'ref'")
-DIAG(err_own_for_move, Error,
+DIAG(err_own_for_move, 76, Error,
      "there is no '%0' mark: a parameter that takes ownership is marked "
      "'move'")
-DIAG(err_ref_bad_elem, Error,
+DIAG(err_ref_bad_elem, 77, Error,
      "'ref' applies to 'string' and slices only (ref string, ref []T)")
 
 // Go habits and typos.
-DIAG(err_define_at_top_level, Error,
+DIAG(err_define_at_top_level, 78, Error,
      "':=' is not allowed outside a function: use 'var %0 = ...'")
-DIAG(err_stmt_outside_func, Error,
+DIAG(err_stmt_outside_func, 79, Error,
      "non-declaration statement outside function body")
-DIAG(err_else_on_new_line, Error,
+DIAG(err_else_on_new_line, 80, Error,
      "'else' must be on the same line as the closing '}'")
-DIAG(err_newline_after_for_clause, Error,
+DIAG(err_newline_after_for_clause, 81, Error,
      "unexpected newline, expecting { after for clause")
-DIAG(err_expected_lbrace_after, Error, "expected '{' after %0, found %1")
-DIAG(err_assign_in_condition, Error,
+DIAG(err_expected_lbrace_after, 82, Error, "expected '{' after %0, found %1")
+DIAG(err_assign_in_condition, 83, Error,
      "cannot use an assignment as %0: did you mean '=='?")
-DIAG(err_define_in_condition, Error,
+DIAG(err_define_in_condition, 84, Error,
      "cannot use a short variable declaration as %0: put it before a ';'")
-DIAG(err_define_in_var_decl, Error,
+DIAG(err_define_in_var_decl, 85, Error,
      "':=' is not allowed in a %0 declaration: use '='")
-DIAG(err_comma_between_imports, Error,
+DIAG(err_comma_between_imports, 86, Error,
      "imports are separated by a newline or ';', not by ','")
 
 // Habits from other languages.
-DIAG(err_lex_single_quote_string, Error,
+DIAG(err_lex_single_quote_string, 87, Error,
      "single quotes make a rune: use double quotes for a string")
-DIAG(err_lex_ternary, Error, "Go++ has no '?:' operator: use an if statement")
-DIAG(err_incdec_expression, Error,
+DIAG(err_lex_ternary, 88, Error, "Go++ has no '?:' operator: use an if statement")
+DIAG(err_incdec_expression, 89, Error,
      "'%0' is a statement in Go++, not an expression")
-DIAG(err_prefix_incdec, Error,
+DIAG(err_prefix_incdec, 90, Error,
      "Go++ has no prefix '%0': write it after the operand")
-DIAG(err_while_loop, Error, "Go++ has no 'while': use 'for' with a condition")
-DIAG(err_for_in, Error,
+DIAG(err_while_loop, 91, Error, "Go++ has no 'while': use 'for' with a condition")
+DIAG(err_for_in, 92, Error,
      "Go++ has no 'for ... in': write 'for _, x := range ...'")
-DIAG(err_elif, Error, "Go++ has no '%0': write 'else if'")
-DIAG(err_fn_keyword, Error, "functions are declared with 'func', not '%0'")
-DIAG(err_let_decl, Error,
+DIAG(err_elif, 93, Error, "Go++ has no '%0': write 'else if'")
+DIAG(err_fn_keyword, 94, Error, "functions are declared with 'func', not '%0'")
+DIAG(err_let_decl, 95, Error,
      "Go++ has no '%0': declare with 'var x = v' or 'x := v'")
-DIAG(err_decl_without_var, Error,
+DIAG(err_decl_without_var, 96, Error,
      "'%0 %1' is not a declaration: write 'var name Type' or 'name := value'")
-DIAG(err_struct_decl, Error,
+DIAG(err_struct_decl, 97, Error,
      "Go++ has no '%0' declaration: write 'type %1 struct { ... }'")
-DIAG(err_angle_type_params, Error,
+DIAG(err_angle_type_params, 98, Error,
      "type parameters use square brackets: 'func %0[T any](...)'")
-DIAG(err_arrow_before_result, Error,
+DIAG(err_arrow_before_result, 99, Error,
      "there is no '->' before the result type: write it after the parameters")
-DIAG(err_colon_before_type, Error,
+DIAG(err_colon_before_type, 100, Error,
      "no ':' between a name and its type: write '%0 T'")
-DIAG(err_brackets_after_type, Error,
+DIAG(err_brackets_after_type, 101, Error,
      "array and slice brackets go before the element type: write '[]%0'")
 
 //===----------------------------------------------------------------------===//
@@ -224,7 +230,7 @@ DIAG(err_brackets_after_type, Error,
 
 // A tree with an error node that no diagnostic explains: a guard that should
 // never fire (the file is left as it is).
-DIAG(err_fmt_unreported_syntax_error, Error,
+DIAG(err_fmt_unreported_syntax_error, 102, Error,
      "cannot format: the file has a syntax error")
 
 //===----------------------------------------------------------------------===//
@@ -233,217 +239,252 @@ DIAG(err_fmt_unreported_syntax_error, Error,
 //===----------------------------------------------------------------------===//
 
 // Packages and loading (P03.01)
-DIAG(err_load_no_such_package, Error, "package %0 is not in the module: no directory %1")
-DIAG(err_load_no_go_files, Error, "no Go++ source files in %0")
-DIAG(err_load_mixed_packages, Error, "found packages %0 and %1 in %2")
-DIAG(err_load_import_cycle, Error, "import cycle not allowed: %0")
-DIAG(err_load_internal_import, Error, "use of internal package %0 not allowed")
-DIAG(err_load_bad_build_constraint, Error, "malformed //gopp:build constraint: %0")
-DIAG(err_load_bad_import_path, Error, "invalid import path %0")
-DIAG(err_load_cannot_read, Error, "cannot read %0: %1")
+DIAG(err_load_no_such_package, 103, Error, "package %0 is not in the module: no directory %1")
+DIAG(err_load_no_go_files, 104, Error, "no Go++ source files in %0")
+DIAG(err_load_mixed_packages, 105, Error, "found packages %0 and %1 in %2")
+DIAG(err_load_import_cycle, 106, Error, "import cycle not allowed: %0")
+DIAG(err_load_internal_import, 107, Error, "use of internal package %0 not allowed")
+DIAG(err_load_bad_build_constraint, 108, Error, "malformed //gopp:build constraint: %0")
+DIAG(err_load_bad_import_path, 109, Error, "invalid import path %0")
+DIAG(err_load_cannot_read, 110, Error, "cannot read %0: %1")
 
 // Declarations and scopes (P03.03)
-DIAG(err_undefined, Error, "undefined: %0")
-DIAG(err_redeclared, Error, "%0 redeclared in this block")
-DIAG(note_other_declaration, Note, "other declaration of %0")
-DIAG(err_declared_not_used, Error, "declared and not used: %0")
-DIAG(err_label_not_used, Error, "label %0 declared and not used")
-DIAG(err_label_redeclared, Error, "label %0 already declared")
-DIAG(err_label_undeclared, Error, "label %0 not declared")
-DIAG(err_invalid_break_label, Error, "invalid break label %0")
-DIAG(err_invalid_continue_label, Error, "invalid continue label %0")
-DIAG(err_goto_jumps_over, Error, "goto %0 jumps over variable declaration at line %1")
-DIAG(err_goto_jumps_into, Error, "goto %0 jumps into block")
-DIAG(err_not_in_loop_break, Error, "break not in for, switch, or select statement")
-DIAG(err_not_in_loop_continue, Error, "continue not in for statement")
-DIAG(err_fallthrough_misplaced, Error, "fallthrough statement out of place")
-DIAG(err_fallthrough_final, Error, "cannot fallthrough final case in switch")
-DIAG(err_fallthrough_type_switch, Error, "cannot fallthrough in type switch")
-DIAG(err_unexported_name, Error, "name %0 not exported by package %1")
-DIAG(err_package_without_selector, Error, "use of package %0 without selector")
-DIAG(err_cannot_use_blank, Error, "cannot use _ as value")
-DIAG(err_cannot_use_blank_type, Error, "cannot use _ as value or type")
-DIAG(err_init_signature, Error, "func %0 must have no arguments and no return values")
-DIAG(err_init_with_body, Error, "missing function body")
-DIAG(err_init_type_params, Error, "func %0 must have no type parameters")
-DIAG(err_duplicate_method, Error, "method %0.%1 already declared at %2")
-DIAG(err_field_and_method, Error, "field and method with the same name %0")
-DIAG(err_import_unresolved, Error, "could not import %0 (%1)")
+DIAG(err_undefined, 111, Error, "undefined: %0")
+DIAG(err_redeclared, 112, Error, "%0 redeclared in this block")
+DIAG(note_other_declaration, 113, Note, "other declaration of %0")
+DIAG(err_declared_not_used, 114, Error, "declared and not used: %0")
+DIAG(err_label_not_used, 115, Error, "label %0 declared and not used")
+DIAG(err_label_redeclared, 116, Error, "label %0 already declared")
+DIAG(err_label_undeclared, 117, Error, "label %0 not declared")
+DIAG(err_invalid_break_label, 118, Error, "invalid break label %0")
+DIAG(err_invalid_continue_label, 119, Error, "invalid continue label %0")
+DIAG(err_goto_jumps_over, 120, Error, "goto %0 jumps over variable declaration at line %1")
+DIAG(err_goto_jumps_into, 121, Error, "goto %0 jumps into block")
+DIAG(err_not_in_loop_break, 122, Error, "break not in for, switch, or select statement")
+DIAG(err_not_in_loop_continue, 123, Error, "continue not in for statement")
+DIAG(err_fallthrough_misplaced, 124, Error, "fallthrough statement out of place")
+DIAG(err_fallthrough_final, 125, Error, "cannot fallthrough final case in switch")
+DIAG(err_fallthrough_type_switch, 126, Error, "cannot fallthrough in type switch")
+DIAG(err_unexported_name, 127, Error, "name %0 not exported by package %1")
+DIAG(err_package_without_selector, 128, Error, "use of package %0 without selector")
+DIAG(err_cannot_use_blank, 129, Error, "cannot use _ as value")
+DIAG(err_cannot_use_blank_type, 130, Error, "cannot use _ as value or type")
+DIAG(err_init_signature, 131, Error, "func %0 must have no arguments and no return values")
+DIAG(err_init_with_body, 132, Error, "missing function body")
+DIAG(err_init_type_params, 133, Error, "func %0 must have no type parameters")
+DIAG(err_duplicate_method, 134, Error, "method %0.%1 already declared at %2")
+DIAG(err_field_and_method, 135, Error, "field and method with the same name %0")
+DIAG(err_import_unresolved, 136, Error, "could not import %0 (%1)")
 
 // Types and declarations (P03.04)
-DIAG(err_not_a_type, Error, "%0 is not a type")
-DIAG(err_not_an_expression, Error, "%0 is not an expression")
-DIAG(err_invalid_recursive_type, Error, "invalid recursive type %0")
-DIAG(err_invalid_recursive_type_self, Error, "invalid recursive type: %0 refers to itself")
-DIAG(err_invalid_cycle, Error, "invalid cycle in declaration of %0")
-DIAG(err_init_cycle, Error, "initialization cycle for %0")
-DIAG(err_init_cycle_self, Error, "initialization cycle: %0 refers to itself")
-DIAG(err_invalid_array_length, Error, "invalid array length %0")
-DIAG(err_array_length_not_constant, Error, "array length %0 must be constant")
-DIAG(err_array_length_negative, Error, "invalid array length %0")
-DIAG(err_array_length_untyped, Error, "array length %0 must be integer")
-DIAG(err_invalid_map_key, Error, "invalid map key type %0%1")
-DIAG(err_embedded_field_pointer_iface, Error, "embedded field type cannot be a pointer to an interface")
-DIAG(err_embedded_field_pointer, Error, "embedded field type cannot be a pointer")
-DIAG(err_embedded_field_unsafe_pointer, Error, "embedded field type cannot be unsafe.Pointer")
-DIAG(err_embedded_field_type_param, Error, "embedded field type cannot be a (pointer to a) type parameter")
-DIAG(err_duplicate_field, Error, "%0 redeclared")
-DIAG(err_invalid_receiver, Error, "invalid receiver type %0")
-DIAG(err_receiver_method_pkg, Error, "cannot define new methods on non-local type %0")
-DIAG(err_receiver_count, Error, "method has multiple receivers")
-DIAG(err_receiver_missing, Error, "method has no receiver")
-DIAG(err_invalid_method_type_params, Error, "interface method must have no type parameters")
-DIAG(err_use_of_untyped_nil, Error, "use of untyped nil in %0")
-DIAG(err_cannot_convert, Error, "cannot convert %0 to type %1")
-DIAG(err_cannot_convert_cause, Error, "cannot convert %0 to type %1: %2")
-DIAG(err_constant_overflows, Error, "constant %0 overflows %1")
-DIAG(err_value_truncated, Error, "%0 truncated to %1")
-DIAG(err_value_overflows, Error, "%0 overflows %1")
-DIAG(err_generic_without_instantiation, Error, "cannot use generic %0 %1 without instantiation%2")
+DIAG(err_not_a_type, 137, Error, "%0 is not a type")
+DIAG(err_not_an_expression, 138, Error, "%0 is not an expression")
+DIAG(err_invalid_recursive_type, 139, Error, "invalid recursive type %0")
+DIAG(err_invalid_recursive_type_self, 140, Error, "invalid recursive type: %0 refers to itself")
+DIAG(err_invalid_cycle, 141, Error, "invalid cycle in declaration of %0")
+DIAG(err_init_cycle, 142, Error, "initialization cycle for %0")
+DIAG(err_init_cycle_self, 143, Error, "initialization cycle: %0 refers to itself")
+DIAG(err_invalid_array_length, 144, Error, "invalid array length %0")
+DIAG(err_array_length_not_constant, 145, Error, "array length %0 must be constant")
+DIAG(err_array_length_negative, 146, Error, "invalid array length %0")
+DIAG(err_array_length_untyped, 147, Error, "array length %0 must be integer")
+DIAG(err_invalid_map_key, 148, Error, "invalid map key type %0%1")
+DIAG(err_embedded_field_pointer_iface, 149, Error, "embedded field type cannot be a pointer to an interface")
+DIAG(err_embedded_field_pointer, 150, Error, "embedded field type cannot be a pointer")
+DIAG(err_embedded_field_unsafe_pointer, 151, Error, "embedded field type cannot be unsafe.Pointer")
+DIAG(err_embedded_field_type_param, 152, Error, "embedded field type cannot be a (pointer to a) type parameter")
+DIAG(err_duplicate_field, 153, Error, "%0 redeclared")
+DIAG(err_invalid_receiver, 154, Error, "invalid receiver type %0")
+DIAG(err_receiver_method_pkg, 155, Error, "cannot define new methods on non-local type %0")
+DIAG(err_receiver_count, 156, Error, "method has multiple receivers")
+DIAG(err_receiver_missing, 157, Error, "method has no receiver")
+DIAG(err_invalid_method_type_params, 158, Error, "interface method must have no type parameters")
+DIAG(err_use_of_untyped_nil, 159, Error, "use of untyped nil in %0")
+DIAG(err_cannot_convert, 160, Error, "cannot convert %0 to type %1")
+DIAG(err_cannot_convert_cause, 161, Error, "cannot convert %0 to type %1: %2")
+DIAG(err_constant_overflows, 162, Error, "constant %0 overflows %1")
+DIAG(err_value_truncated, 163, Error, "%0 truncated to %1")
+DIAG(err_value_overflows, 164, Error, "%0 overflows %1")
+DIAG(err_generic_without_instantiation, 165, Error, "cannot use generic %0 %1 without instantiation%2")
 
 // Expressions (P03.05)
-DIAG(err_operator_not_defined, Error, "invalid operation: operator %0 not defined on %1")
-DIAG(err_mismatched_types, Error, "invalid operation: %0 (mismatched types %1 and %2)")
-DIAG(err_cannot_compare, Error, "invalid operation: %0 (%1)")
-DIAG(err_division_by_zero, Error, "invalid operation: division by zero")
-DIAG(err_shift_count_negative, Error, "negative shift count %0")
-DIAG(err_shift_operand_invalid, Error, "invalid operation: shifted operand %0 must be integer")
-DIAG(err_shift_too_large, Error, "invalid shift count %0")
-DIAG(err_constant_expression_overflow, Error, "constant %0overflow")
-DIAG(err_not_constant, Error, "%0 is not constant")
-DIAG(err_no_value, Error, "%0 (no value) used as value")
-DIAG(err_multi_value_in_single, Error, "multiple-value %0 (value of type %1) in single-value context")
-DIAG(err_builtin_not_used_as_value, Error, "%0 (built-in) must be called")
-DIAG(err_undefined_field_or_method, Error, "%0.%1 undefined (%2)")
-DIAG(err_not_enough_arguments, Error, "not enough arguments in call to %0\n\thave %1\n\twant %2")
-DIAG(err_too_many_arguments, Error, "too many arguments in call to %0\n\thave %1\n\twant %2")
-DIAG(err_not_enough_arguments_return, Error, "not enough return values\n\thave %0\n\twant %1")
-DIAG(err_too_many_arguments_return, Error, "too many return values\n\thave %0\n\twant %1")
-DIAG(err_cannot_index, Error, "invalid operation: cannot index %0")
-DIAG(err_cannot_slice, Error, "cannot slice %0")
-DIAG(err_cannot_slice_unaddressable, Error, "invalid operation: %0 (slice of unaddressable value)")
-DIAG(err_slice_3_string, Error, "invalid operation: 3-index slice of string")
-DIAG(err_slice_indices_inverted, Error, "invalid slice indices: %0 < %1")
-DIAG(err_index_out_of_bounds, Error, "invalid argument: index %0 out of bounds [0:%1]")
-DIAG(err_literal_too_few, Error, "too few values in struct literal of type %0")
-DIAG(err_literal_too_many, Error, "too many values in struct literal of type %0")
-DIAG(err_literal_mixture, Error, "mixture of field:value and value elements in struct literal")
-DIAG(err_literal_duplicate_field, Error, "duplicate field name %0 in struct literal")
-DIAG(err_literal_missing_key, Error, "missing key in map literal")
-DIAG(err_literal_duplicate_key, Error, "duplicate key %0 in map literal")
-DIAG(err_literal_duplicate_index, Error, "duplicate index %0 in array or slice literal")
-DIAG(err_literal_index_not_constant, Error, "index %0 must be integer constant")
-DIAG(err_literal_unexported_field, Error, "implicit assignment to unexported field %0 in struct literal of type %1")
-DIAG(err_literal_invalid_field_name, Error, "invalid field name %0 in struct literal")
-DIAG(err_literal_array_too_long, Error, "index %0 is out of bounds (>= %1)")
-DIAG(err_literal_missing_type, Error, "invalid composite literal type: missing type")
-DIAG(err_type_assertion_non_interface, Error, "invalid operation: %0 is not an interface")
-DIAG(err_type_assertion_impossible, Error, "impossible type assertion: %0\n\t%1 does not implement %2 %3")
-DIAG(err_type_switch_outside, Error, "invalid syntax tree: use of .(type) outside type switch")
-DIAG(err_deref_non_pointer, Error, "invalid operation: cannot indirect %0")
-DIAG(err_address_of_unaddressable, Error, "invalid operation: cannot take address of %0")
-DIAG(err_cannot_assign, Error, "cannot assign to %0 (neither addressable nor a map index expression)")
-DIAG(err_cannot_assign_to, Error, "cannot assign to %0")
-DIAG(err_assign_mismatch, Error, "assignment mismatch: %0 but %1")
-DIAG(err_returns_mismatch, Error, "assignment mismatch: %0 but %1 returns %2")
-DIAG(err_define_no_new_vars, Error, "no new variables on left side of :=")
-DIAG(err_non_name_on_left_of_define, Error, "non-name %0 on left side of :=")
-DIAG(err_missing_init_expr, Error, "missing init expr for %0")
-DIAG(err_extra_init_expr, Error, "extra init expr %0")
-DIAG(err_missing_return, Error, "missing return")
-DIAG(err_misplaced_default, Error, "multiple defaults in switch")
-DIAG(err_duplicate_case, Error, "duplicate case %0 in expression switch")
-DIAG(err_duplicate_type_case, Error, "duplicate case %0 in type switch")
-DIAG(err_switch_tag_not_comparable, Error, "cannot switch on %0")
-DIAG(err_select_case_invalid, Error, "select case must be receive, send or assign recv")
-DIAG(err_range_cannot, Error, "cannot range over %0")
-DIAG(err_go_defer_needs_call, Error, "expression in %0 must be function call")
-DIAG(err_inc_dec_non_numeric, Error, "invalid operation: %0 (non-numeric type %1)")
-DIAG(err_builtin_not_enough_args, Error, "not enough arguments for %0 (expected %1, found %2)")
-DIAG(err_builtin_too_many_args, Error, "too many arguments for %0 (expected %1, found %2)")
-DIAG(err_builtin_invalid_arg, Error, "invalid argument: %0")
-DIAG(err_builtin_invalid_arg_type, Error, "invalid argument: %0 for built-in %1")
-DIAG(err_cannot_use_ellipsis, Error, "cannot use ... in call to non-variadic %0")
-DIAG(err_cannot_use_ellipsis_builtin, Error, "invalid use of ... with built-in %0")
-DIAG(err_cannot_use_ellipsis_with_multi, Error, "cannot use ... with multi-valued expression %0")
-DIAG(err_invalid_use_of_dots, Error, "invalid use of ...")
-DIAG(err_dots_not_last, Error, "can only use ... with final parameter in list")
-DIAG(err_unexpected_type_switch, Error, "%0 is not an interface")
-DIAG(err_not_a_generic_type, Error, "%0 is not a generic type")
-DIAG(err_shadowed_result, Error, "result parameter %0 not in scope at return")
-DIAG(err_iota_outside_const, Error, "cannot use iota outside constant declaration")
-DIAG(err_invalid_constant_type, Error, "invalid constant type %0")
-DIAG(err_method_expr_ptr_recv, Error, "invalid method expression %0 (needs pointer receiver (*%1).%2)")
-DIAG(err_ambiguous_selector, Error, "ambiguous selector %0")
+DIAG(err_operator_not_defined, 166, Error, "invalid operation: operator %0 not defined on %1")
+DIAG(err_mismatched_types, 167, Error, "invalid operation: %0 (mismatched types %1 and %2)")
+DIAG(err_cannot_compare, 168, Error, "invalid operation: %0 (%1)")
+DIAG(err_division_by_zero, 169, Error, "invalid operation: division by zero")
+DIAG(err_shift_count_negative, 170, Error, "negative shift count %0")
+DIAG(err_shift_operand_invalid, 171, Error, "invalid operation: shifted operand %0 must be integer")
+DIAG(err_shift_too_large, 172, Error, "invalid shift count %0")
+DIAG(err_constant_expression_overflow, 173, Error, "constant %0overflow")
+DIAG(err_not_constant, 174, Error, "%0 is not constant")
+DIAG(err_no_value, 175, Error, "%0 (no value) used as value")
+DIAG(err_multi_value_in_single, 176, Error, "multiple-value %0 (value of type %1) in single-value context")
+DIAG(err_builtin_not_used_as_value, 177, Error, "%0 (built-in) must be called")
+DIAG(err_undefined_field_or_method, 178, Error, "%0.%1 undefined (%2)")
+DIAG(err_not_enough_arguments, 179, Error, "not enough arguments in call to %0\n\thave %1\n\twant %2")
+DIAG(err_too_many_arguments, 180, Error, "too many arguments in call to %0\n\thave %1\n\twant %2")
+DIAG(err_not_enough_arguments_return, 181, Error, "not enough return values\n\thave %0\n\twant %1")
+DIAG(err_too_many_arguments_return, 182, Error, "too many return values\n\thave %0\n\twant %1")
+DIAG(err_cannot_index, 183, Error, "invalid operation: cannot index %0")
+DIAG(err_cannot_slice, 184, Error, "cannot slice %0")
+DIAG(err_cannot_slice_unaddressable, 185, Error, "invalid operation: %0 (slice of unaddressable value)")
+DIAG(err_slice_3_string, 186, Error, "invalid operation: 3-index slice of string")
+DIAG(err_slice_indices_inverted, 187, Error, "invalid slice indices: %0 < %1")
+DIAG(err_index_out_of_bounds, 188, Error, "invalid argument: index %0 out of bounds [0:%1]")
+DIAG(err_literal_too_few, 189, Error, "too few values in struct literal of type %0")
+DIAG(err_literal_too_many, 190, Error, "too many values in struct literal of type %0")
+DIAG(err_literal_mixture, 191, Error, "mixture of field:value and value elements in struct literal")
+DIAG(err_literal_duplicate_field, 192, Error, "duplicate field name %0 in struct literal")
+DIAG(err_literal_missing_key, 193, Error, "missing key in map literal")
+DIAG(err_literal_duplicate_key, 194, Error, "duplicate key %0 in map literal")
+DIAG(err_literal_duplicate_index, 195, Error, "duplicate index %0 in array or slice literal")
+DIAG(err_literal_index_not_constant, 196, Error, "index %0 must be integer constant")
+DIAG(err_literal_unexported_field, 197, Error, "implicit assignment to unexported field %0 in struct literal of type %1")
+DIAG(err_literal_invalid_field_name, 198, Error, "invalid field name %0 in struct literal")
+DIAG(err_literal_array_too_long, 199, Error, "index %0 is out of bounds (>= %1)")
+DIAG(err_literal_missing_type, 200, Error, "invalid composite literal type: missing type")
+DIAG(err_type_assertion_non_interface, 201, Error, "invalid operation: %0 is not an interface")
+DIAG(err_type_assertion_impossible, 202, Error, "impossible type assertion: %0\n\t%1 does not implement %2 %3")
+DIAG(err_type_switch_outside, 203, Error, "invalid syntax tree: use of .(type) outside type switch")
+DIAG(err_deref_non_pointer, 204, Error, "invalid operation: cannot indirect %0")
+DIAG(err_address_of_unaddressable, 205, Error, "invalid operation: cannot take address of %0")
+DIAG(err_cannot_assign, 206, Error, "cannot assign to %0 (neither addressable nor a map index expression)")
+DIAG(err_cannot_assign_to, 207, Error, "cannot assign to %0")
+DIAG(err_assign_mismatch, 208, Error, "assignment mismatch: %0 but %1")
+DIAG(err_returns_mismatch, 209, Error, "assignment mismatch: %0 but %1 returns %2")
+DIAG(err_define_no_new_vars, 210, Error, "no new variables on left side of :=")
+DIAG(err_non_name_on_left_of_define, 211, Error, "non-name %0 on left side of :=")
+DIAG(err_missing_init_expr, 212, Error, "missing init expr for %0")
+DIAG(err_extra_init_expr, 213, Error, "extra init expr %0")
+DIAG(err_missing_return, 214, Error, "missing return")
+DIAG(err_misplaced_default, 215, Error, "multiple defaults in switch")
+DIAG(err_duplicate_case, 216, Error, "duplicate case %0 in expression switch")
+DIAG(err_duplicate_type_case, 217, Error, "duplicate case %0 in type switch")
+DIAG(err_switch_tag_not_comparable, 218, Error, "cannot switch on %0")
+DIAG(err_select_case_invalid, 219, Error, "select case must be receive, send or assign recv")
+DIAG(err_range_cannot, 220, Error, "cannot range over %0")
+DIAG(err_go_defer_needs_call, 221, Error, "expression in %0 must be function call")
+DIAG(err_inc_dec_non_numeric, 222, Error, "invalid operation: %0 (non-numeric type %1)")
+DIAG(err_builtin_not_enough_args, 223, Error, "not enough arguments for %0 (expected %1, found %2)")
+DIAG(err_builtin_too_many_args, 224, Error, "too many arguments for %0 (expected %1, found %2)")
+DIAG(err_builtin_invalid_arg, 225, Error, "invalid argument: %0")
+DIAG(err_builtin_invalid_arg_type, 226, Error, "invalid argument: %0 for built-in %1")
+DIAG(err_cannot_use_ellipsis, 227, Error, "cannot use ... in call to non-variadic %0")
+DIAG(err_cannot_use_ellipsis_builtin, 228, Error, "invalid use of ... with built-in %0")
+DIAG(err_cannot_use_ellipsis_with_multi, 229, Error, "cannot use ... with multi-valued expression %0")
+DIAG(err_invalid_use_of_dots, 230, Error, "invalid use of ...")
+DIAG(err_dots_not_last, 231, Error, "can only use ... with final parameter in list")
+DIAG(err_unexpected_type_switch, 232, Error, "%0 is not an interface")
+DIAG(err_not_a_generic_type, 233, Error, "%0 is not a generic type")
+DIAG(err_shadowed_result, 234, Error, "result parameter %0 not in scope at return")
+DIAG(err_iota_outside_const, 235, Error, "cannot use iota outside constant declaration")
+DIAG(err_invalid_constant_type, 236, Error, "invalid constant type %0")
+DIAG(err_method_expr_ptr_recv, 237, Error, "invalid method expression %0 (needs pointer receiver (*%1).%2)")
+DIAG(err_ambiguous_selector, 238, Error, "ambiguous selector %0")
 
 // Generics (P03.06)
-DIAG(err_got_n_type_args, Error, "%0 type arguments for type %1: have %2, want %3")
-DIAG(err_got_n_type_args_func, Error, "got %0 type arguments but %1 has %2 type parameters")
-DIAG(err_cannot_use_constraint_outside, Error, "cannot use type %0 outside a type constraint: %1")
-DIAG(err_interface_contains_type_constraints, Error, "cannot use type %0 outside a type constraint: interface contains type constraints")
-DIAG(err_interface_is_comparable, Error, "cannot use type %0 outside a type constraint: interface is (or embeds) comparable")
-DIAG(err_union_with_interface, Error, "cannot use %0 in union (%1 contains methods)")
-DIAG(err_union_comparable, Error, "cannot use comparable in union")
-DIAG(err_union_type_param, Error, "term cannot be a type parameter")
-DIAG(err_union_overlapping, Error, "overlapping terms %0 and %1")
-DIAG(err_union_tilde_underlying, Error, "invalid use of ~ (underlying type of %0 is %1)")
-DIAG(err_union_tilde_interface, Error, "invalid use of ~ (%0 is an interface)")
-DIAG(err_type_param_bound_not_interface, Error, "cannot use a type parameter as constraint")
-DIAG(err_invalid_receiver_type_params, Error, "receiver declares %0, but receiver base type declares %1")
-DIAG(err_cannot_use_type_param_as_rhs, Error, "cannot use a type parameter as RHS in type declaration")
+DIAG(err_got_n_type_args, 239, Error, "%0 type arguments for type %1: have %2, want %3")
+DIAG(err_got_n_type_args_func, 240, Error, "got %0 type arguments but %1 has %2 type parameters")
+DIAG(err_cannot_use_constraint_outside, 241, Error, "cannot use type %0 outside a type constraint: %1")
+DIAG(err_interface_contains_type_constraints, 242, Error, "cannot use type %0 outside a type constraint: interface contains type constraints")
+DIAG(err_interface_is_comparable, 243, Error, "cannot use type %0 outside a type constraint: interface is (or embeds) comparable")
+DIAG(err_union_with_interface, 244, Error, "cannot use %0 in union (%1 contains methods)")
+DIAG(err_union_comparable, 245, Error, "cannot use comparable in union")
+DIAG(err_union_type_param, 246, Error, "term cannot be a type parameter")
+DIAG(err_union_overlapping, 247, Error, "overlapping terms %0 and %1")
+DIAG(err_union_tilde_underlying, 248, Error, "invalid use of ~ (underlying type of %0 is %1)")
+DIAG(err_union_tilde_interface, 249, Error, "invalid use of ~ (%0 is an interface)")
+DIAG(err_type_param_bound_not_interface, 250, Error, "cannot use a type parameter as constraint")
+DIAG(err_invalid_receiver_type_params, 251, Error, "receiver declares %0, but receiver base type declares %1")
+DIAG(err_cannot_use_type_param_as_rhs, 252, Error, "cannot use a type parameter as RHS in type declaration")
 
 // Go++ ownership (P03.07). The rule ID at the end names the spec rule.
-DIAG(err_own_r3a_needs_ownership, Error, "cannot %0 %1: it is %2, and this needs ownership (OWN-R3a)")
-DIAG(err_own_box_needs_ownership, Error, "cannot %0 %1: it borrows the shared box of an interface value, and this needs ownership (TYP-9)")
-DIAG(note_own_fix_clone, Note, "fix-it: %0.Clone() (copy it)")
-DIAG(note_own_fix_move, Note, "or move(%0) (take it, leave the zero value)")
-DIAG(note_own_fix_move_param, Note, "or make the parameter `move` (a borrowed parameter cannot be moved out of)")
-DIAG(note_own_fix_alias, Note, "or declare the range variable with &: for _, &%0 := range ...")
-DIAG(err_own_borrowed_read_only, Error, "cannot %0 %1: it is a borrowed variable and read-only at the top level (OWN-R3b)")
-DIAG(err_own_binding_read_only, Error, "cannot %0 %1: the binding borrows the shared box of an interface value and is read-only (TYP-9)")
-DIAG(note_own_fix_binding_copy, Note, "fix-it: c := %0.Clone(), then change the copy")
-DIAG(err_own_borrowed_address, Error, "cannot take the address of %0: it is a borrowed variable (OWN-R3b)")
-DIAG(err_own_borrowed_ptr_call, Error, "cannot call pointer method %0 on %1: it is a borrowed variable (OWN-R3b)")
-DIAG(err_own_borrowed_move, Error, "cannot move %0: it is a borrowed variable (OWN-R3b)")
-DIAG(err_own_borrowed_append, Error, "cannot append to %0: it is a borrowed variable (PAR-1)")
-DIAG(err_own_move_not_place, Error, "move argument %0 is not a place (variable, field, element, map entry or pointer target)")
-DIAG(err_own_clone_not_cloneable, Error, "cannot clone %0: type %1 does not satisfy Clone%2 (OWN-R6)")
-DIAG(err_own_clone_ambiguous, Error, "%0 is ambiguous on pointer %1: %2 has a value-receiver %3 method (OWN-R6)")
-DIAG(err_own_isnil_ambiguous, Error, "p.IsNil() is ambiguous on pointer %0: %1 has an IsNil method (OWN-P9)")
-DIAG(err_duplicate_method_iface, Error, "duplicate method %0")
-DIAG(err_own_clone_ptr_receiver, Error, "Clone() T must have a value receiver (OWN-R6)")
-DIAG(err_own_drop_signature, Error, "drop must be declared as func (x *T) drop(): a pointer receiver, no parameters and no results (OWN-R7)")
-DIAG(err_own_drop_called, Error, "cannot use %0: a drop method runs only when its owner ends, it cannot be called directly (OWN-R7)")
-DIAG(err_own_variadic_owning, Error, "a variadic parameter of the owning type %0 must be written `move ...%0` (PAR-5)")
-DIAG(err_own_variadic_generic, Error, "variadic parameter of type parameter %0 needs `move` or a Copy constraint (PAR-5)")
-DIAG(err_own_return_ref_local, Error, "cannot return a ref into local %0: it dies at the return (OWN-V7)")
-DIAG(err_own_return_ref_temp, Error, "cannot return a ref into a temporary: it is freed at the return (OWN-V7)")
-DIAG(err_own_return_addr_local, Error, "cannot return the address of local %0: it dies at the return (EXP-11)")
-DIAG(err_own_ref_into_temp, Error, "cannot store %0 in %1: it is a ref into a temporary that is freed at the end of the statement (OWN-V6)")
-DIAG(err_own_range_var_write, Error, "cannot assign to %0: range variable is a borrowed read-only variable (RNG-1)")
-DIAG(err_own_range_alias_invalid, Error, "cannot use & when ranging over %0: there is no element to alias (RNG-1a)")
-DIAG(err_own_range_alias_index, Error, "cannot use & on the index or key of %0: & marks the element variable (RNG-1a)")
-DIAG(err_own_range_alias_borrowed, Error, "cannot use & on the elements of %0: the array is held by value in borrowed variable %1 (RNG-1a)")
-DIAG(err_own_range_alias_func, Error, "`&` needs an iterator that yields pointers (RNG-6a)")
-DIAG(err_own_range_mutation, Error, "cannot %0 %1 inside a range over it: it can reallocate the ranged collection (RNG-3)")
-DIAG(err_own_range_map_insert, Error, "cannot write %0 inside a range over %1: it may insert a key; only %1[k] with the range key k writes the current entry (RNG-3)")
-DIAG(note_own_range_collect, Note, "fix-it: collect the changes and apply them after the loop")
-DIAG(err_own_case_ref_unreachable, Error, "unreachable case %0: case %1 above also matches a %0 (TYP-9)")
-DIAG(err_own_append_borrowed, Error, "append to %0 needs ownership: write append(%1.Clone(), ...) or append(move(%1), ...) (OWN-R4)")
-DIAG(err_own_append_ref, Error, "cannot append to %0: a ref has a fixed length; copy it into an owned slice first (OWN-V1)")
-DIAG(err_own_append_spread, Error, "append(a, b...) with non-trivial elements needs move(b) or b.Clone() on the source (OWN-R4)")
-DIAG(err_own_copy_source, Error, "copy(dst, src) with non-trivial elements needs src.Clone() (OWN-R4)")
-DIAG(err_own_pinned_copy, Error, "cannot copy %0: type %1 is @Pinned (OWN-R10)")
-DIAG(err_own_pinned_move, Error, "cannot move %0: type %1 is @Pinned (OWN-R10)")
-DIAG(err_own_generic_copy, Error, "cannot copy a value of type %0 in generic code: %0 is not constrained by Copy (GEN-3)")
-DIAG(err_own_generic_return, Error, "cannot return %0 of type %1: it is borrowed, and %1 is not constrained by Copy (GEN-4)")
-DIAG(note_own_generic_return_fix, Note, "fix-it: %0.Clone() with a Clone constraint, or make the parameter `move`")
-DIAG(err_own_weak_arg, Error, "new_weak needs a Shared[T] argument, have %0 (OWN-P3)")
-DIAG(err_own_pointer_field, Error, "a %0 field doesn't own: did you mean %1? (OWN-P6)")
-DIAG(note_own_new_removed, Note, "Go's new is not predeclared in Go++ (LEX-8): use new_unique(T{}) or new_shared(T{})")
-DIAG(err_own_move_range_borrowed, Error, "cannot move %0: use the & form of the range variable, or %0.Clone() (RNG-1a)")
-DIAG(err_bang_no_error_result, Error, "cannot use ! on %0: it has no trailing error result")
-DIAG(err_bang_on_conversion, Error, "cannot use ! on a conversion or built-in %0")
-DIAG(err_foreign_unsupported, Error, "C/C++ header package %0 is not available (P03.09)")
+DIAG(err_own_r3a_needs_ownership, 253, Error, "cannot %0 %1: it is %2, and this needs ownership (OWN-R3a)")
+DIAG(err_own_box_needs_ownership, 254, Error, "cannot %0 %1: it borrows the shared box of an interface value, and this needs ownership (TYP-9)")
+DIAG(note_own_fix_clone, 255, Note, "fix-it: %0.Clone() (copy it)")
+DIAG(note_own_fix_move, 256, Note, "or move(%0) (take it, leave the zero value)")
+DIAG(note_own_fix_move_param, 257, Note, "or make the parameter `move` (a borrowed parameter cannot be moved out of)")
+DIAG(note_own_fix_alias, 258, Note, "or declare the range variable with &: for _, &%0 := range ...")
+DIAG(err_own_borrowed_read_only, 259, Error, "cannot %0 %1: it is a borrowed variable and read-only at the top level (OWN-R3b)")
+DIAG(err_own_binding_read_only, 260, Error, "cannot %0 %1: the binding borrows the shared box of an interface value and is read-only (TYP-9)")
+DIAG(note_own_fix_binding_copy, 261, Note, "fix-it: c := %0.Clone(), then change the copy")
+DIAG(err_own_borrowed_address, 262, Error, "cannot take the address of %0: it is a borrowed variable (OWN-R3b)")
+DIAG(err_own_borrowed_ptr_call, 263, Error, "cannot call pointer method %0 on %1: it is a borrowed variable (OWN-R3b)")
+DIAG(err_own_borrowed_move, 264, Error, "cannot move %0: it is a borrowed variable (OWN-R3b)")
+DIAG(err_own_borrowed_append, 265, Error, "cannot append to %0: it is a borrowed variable (PAR-1)")
+DIAG(err_own_move_not_place, 266, Error, "move argument %0 is not a place (variable, field, element, map entry or pointer target)")
+DIAG(err_own_clone_not_cloneable, 267, Error, "cannot clone %0: type %1 does not satisfy Clone%2 (OWN-R6)")
+DIAG(err_own_clone_ambiguous, 268, Error, "%0 is ambiguous on pointer %1: %2 has a value-receiver %3 method (OWN-R6)")
+DIAG(err_own_isnil_ambiguous, 269, Error, "p.IsNil() is ambiguous on pointer %0: %1 has an IsNil method (OWN-P9)")
+DIAG(err_duplicate_method_iface, 270, Error, "duplicate method %0")
+DIAG(err_own_clone_ptr_receiver, 271, Error, "Clone() T must have a value receiver (OWN-R6)")
+DIAG(err_own_drop_signature, 272, Error, "drop must be declared as func (x *T) drop(): a pointer receiver, no parameters and no results (OWN-R7)")
+DIAG(err_own_drop_called, 273, Error, "cannot use %0: a drop method runs only when its owner ends, it cannot be called directly (OWN-R7)")
+DIAG(err_own_variadic_owning, 274, Error, "a variadic parameter of the owning type %0 must be written `move ...%0` (PAR-5)")
+DIAG(err_own_variadic_generic, 275, Error, "variadic parameter of type parameter %0 needs `move` or a Copy constraint (PAR-5)")
+DIAG(err_own_return_ref_local, 276, Error, "cannot return a ref into local %0: it dies at the return (OWN-V7)")
+DIAG(err_own_return_ref_temp, 277, Error, "cannot return a ref into a temporary: it is freed at the return (OWN-V7)")
+DIAG(err_own_return_addr_local, 278, Error, "cannot return the address of local %0: it dies at the return (EXP-11)")
+DIAG(err_own_ref_into_temp, 279, Error, "cannot store %0 in %1: it is a ref into a temporary that is freed at the end of the statement (OWN-V6)")
+DIAG(err_own_range_var_write, 280, Error, "cannot assign to %0: range variable is a borrowed read-only variable (RNG-1)")
+DIAG(err_own_range_alias_invalid, 281, Error, "cannot use & when ranging over %0: there is no element to alias (RNG-1a)")
+DIAG(err_own_range_alias_index, 282, Error, "cannot use & on the index or key of %0: & marks the element variable (RNG-1a)")
+DIAG(err_own_range_alias_borrowed, 283, Error, "cannot use & on the elements of %0: the array is held by value in borrowed variable %1 (RNG-1a)")
+DIAG(err_own_range_alias_func, 284, Error, "`&` needs an iterator that yields pointers (RNG-6a)")
+DIAG(err_own_range_mutation, 285, Error, "cannot %0 %1 inside a range over it: it can reallocate the ranged collection (RNG-3)")
+DIAG(err_own_range_map_insert, 286, Error, "cannot write %0 inside a range over %1: it may insert a key; only %1[k] with the range key k writes the current entry (RNG-3)")
+DIAG(note_own_range_collect, 287, Note, "fix-it: collect the changes and apply them after the loop")
+DIAG(err_own_case_ref_unreachable, 288, Error, "unreachable case %0: case %1 above also matches a %0 (TYP-9)")
+DIAG(err_own_append_borrowed, 289, Error, "append to %0 needs ownership: write append(%1.Clone(), ...) or append(move(%1), ...) (OWN-R4)")
+DIAG(err_own_append_ref, 290, Error, "cannot append to %0: a ref has a fixed length; copy it into an owned slice first (OWN-V1)")
+DIAG(err_own_append_spread, 291, Error, "append(a, b...) with non-trivial elements needs move(b) or b.Clone() on the source (OWN-R4)")
+DIAG(err_own_copy_source, 292, Error, "copy(dst, src) with non-trivial elements needs src.Clone() (OWN-R4)")
+DIAG(err_own_pinned_copy, 293, Error, "cannot copy %0: type %1 is @Pinned (OWN-R10)")
+DIAG(err_own_pinned_move, 294, Error, "cannot move %0: type %1 is @Pinned (OWN-R10)")
+DIAG(err_own_generic_copy, 295, Error, "cannot copy a value of type %0 in generic code: %0 is not constrained by Copy (GEN-3)")
+DIAG(err_own_generic_return, 296, Error, "cannot return %0 of type %1: it is borrowed, and %1 is not constrained by Copy (GEN-4)")
+DIAG(note_own_generic_return_fix, 297, Note, "fix-it: %0.Clone() with a Clone constraint, or make the parameter `move`")
+DIAG(err_own_weak_arg, 298, Error, "new_weak needs a Shared[T] argument, have %0 (OWN-P3)")
+DIAG(err_own_pointer_field, 299, Error, "a %0 field doesn't own: did you mean %1? (OWN-P6)")
+DIAG(note_own_new_removed, 300, Note, "Go's new is not predeclared in Go++ (LEX-8): use new_unique(T{}) or new_shared(T{})")
+DIAG(err_own_move_range_borrowed, 301, Error, "cannot move %0: use the & form of the range variable, or %0.Clone() (RNG-1a)")
+DIAG(err_bang_no_error_result, 302, Error, "cannot use ! on %0: it has no trailing error result")
+DIAG(err_bang_on_conversion, 303, Error, "cannot use ! on a conversion or built-in %0")
+DIAG(err_bang_return_count, 328, Error, "wrong number of return values in a '!' function: have %0, want %1 or %2")
+DIAG(err_foreign_unsupported, 304, Error, "C/C++ header package %0 is not available (P03.09)")
+DIAG(err_foreign_ambiguous, 305, Error, "\"%0\" is ambiguous in package %1")
+DIAG(err_foreign_call, 306, Error, "cannot call %0: %1")
+DIAG(err_foreign_readonly_arg, 307, Error, "cannot pass %0 to %1: it is read-only here and parameter %2 may be changed by the callee (ADR-0008)")
+DIAG(err_foreign_readonly_recv, 308, Error, "cannot call a non-const method on %0: it is read-only here (%1; ADR-0008)")
+DIAG(err_foreign_template_value, 309, Error, "cannot use %0 as a value: a C++ function template instance can only be called; wrap it in a closure")
+DIAG(err_foreign_template_arg, 310, Error, "template argument %0 must be a type or a constant")
+DIAG(err_foreign_instantiate, 311, Error, "cannot instantiate %0: %1")
+
+DIAG(err_unused_import, 312, Error, "%0 imported and not used")
+DIAG(err_unused_import_as, 313, Error, "%0 imported as %1 and not used")
+
+// A type error of one part of the checker whose message is built from the
+// operands (types2's wording, as "invalid argument: cannot make T"). One
+// numbered code per part of the checker; the message says exactly what is
+// wrong. P03.14.
+DIAG(err_sema_assign, 314, Error, "%0")
+DIAG(err_sema_builtin, 315, Error, "%0")
+DIAG(err_sema_call, 316, Error, "%0")
+DIAG(err_sema_decl, 317, Error, "%0")
+DIAG(err_sema_expr, 318, Error, "%0")
+DIAG(err_sema_index, 319, Error, "%0")
+DIAG(err_sema_predicate, 320, Error, "%0")
+DIAG(err_sema_stmt, 321, Error, "%0")
+DIAG(err_sema_typeset, 322, Error, "%0")
+DIAG(err_sema_typexpr, 323, Error, "%0")
+
+//===----------------------------------------------------------------------===//
+// gopp vet (P03.12): findings are warnings
+//===----------------------------------------------------------------------===//
+
+DIAG(warn_vet_ref_field, 324, Warning, "struct field %0 has a ref type, but %1 is not marked @Ref (OWN-V5)")
+DIAG(warn_vet_drop_zero, 325, Warning, "drop may run on a zero value: %0 is used without a nil check (OWN-R5)")
+DIAG(warn_vet_bang_panics, 326, Warning, "this ! panics if the call fails: the enclosing function cannot return an error, and package %0 is not main")
+DIAG(warn_vet_defer_in_loop, 327, Warning, "defer in a loop body runs when the function returns, not at the end of each iteration: the resources stay open (PAN-4)")
 
 #undef DIAG

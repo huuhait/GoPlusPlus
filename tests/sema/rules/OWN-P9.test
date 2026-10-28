@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-P9: every pointer kind has IsNil(); on a raw *T it is ambiguous
 // when T has its own IsNil method.
 package main
@@ -14,6 +14,6 @@ func positive(q *Plain, u Unique[int], s Shared[int], w Weak[int], p *Opt) bool 
 }
 
 func negative(p *Opt) bool {
-	// CHECK: [[@LINE+1]]:11: error: p.IsNil() is ambiguous on pointer *Opt: Opt has an IsNil method (OWN-P9)
+	// CHECK: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: p.IsNil() is ambiguous on pointer *Opt: Opt has an IsNil method (OWN-P9)
 	return p.IsNil()
 }

@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule TYP-2: owned string / []T converts to ref implicitly; a ref is not
 // assignable to an owning destination (copy with string(v)), but a borrowed
 // string / []T parameter takes a ref at zero cost (PAR-8).
@@ -15,9 +15,9 @@ func positive(s string) int {
 
 func negative(r ref string) {
 	var s string
-	// CHECK: [[@LINE+1]]:6: error: cannot use r (variable of type ref string) as string value in assignment: a ref is not an owning value: write string(r) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use r (variable of type ref string) as string value in assignment: a ref is not an owning value: write string(r) to copy (TYP-2)
 	s = r
-	// CHECK: [[@LINE+1]]:17: error: cannot use r (variable of type ref string) as string value in variable declaration: a ref is not an owning value: write string(r) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use r (variable of type ref string) as string value in variable declaration: a ref is not an owning value: write string(r) to copy (TYP-2)
 	var t string = r
 	_, _ = s, t
 }

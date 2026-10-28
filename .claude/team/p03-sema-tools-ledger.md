@@ -1,0 +1,15 @@
+# Findings ledger: p03-sema-tools
+
+Task: P03.08–P03.14 (`!` typing, foreign scope interface, parallel body checking, type serialization interface, `gopp check` & `gopp vet` v0, check throughput, error codes & `gopp explain`). 3 coders → PM merge (base c3; parallel-body runtime from c2 plus sharded type tables; serialization tests and vet fixes from c2).
+Branch: `task/p03-sema-tools-merged`
+
+| ID | Severity | Finding | Repro | Coder | Reviewer | Round |
+|---|---|---|---|---|---|---|
+| R1 | minor | (manager, from reviewer note) parser accepts `pkg.T.X` in type position in Go mode too; `gopp parse` exits 0 where Go reports a syntax error, then Sema gives an odd "unsafe.Pointer.Y undefined" message. Gate the deep type name to Go++ mode (Parser.cpp:813-828) | .scratch/p1.gopp | FIXED | CONFIRMED-FIXED | 1→2 |
+| R2 | minor | (manager, from reviewer note) ~115 messages share 10 catch-all codes (E0314–E0323) and `gopp explain` prints `Message: %0`; print a useful family description instead, and record in P03 STATE that the families must be split into specific codes before the v0.1 promise (D3.11) | none | FIXED | CONFIRMED-FIXED | 1→2 |
+| R3 | minor | (manager, from reviewer note) tools/check-diag-codes.py only sees rows matching `^DIAG(Name, N,` on one line; a row in another layout escapes the lock check. Make it fail on any DIAG row it cannot parse, with a test | none | FIXED | CONFIRMED-FIXED | 1→2 |
+| R4 | minor | (manager, from reviewer note) struct uniquing stores the field `Pos` of whichever body creates the struct first, which depends on thread timing; no diagnostic reads it today, but a future one would leak nondeterminism. Make it deterministic or keep positions out of uniqued types, and document it | none | FIXED (sameId fold ignores Pkg, as types2) | CONFIRMED-FIXED (regression filed as R7) | 1→2→3 |
+| R5 | blocker | type set of a shared generic interface instance is computed by whichever body asks first and its errors go into that body's list: -check-j=1 vs -j8 differ; also "duplicate method M" reported twice (declaration + instance). Instances made by subst must not report type-set errors | .scratch/nondet-typeset.sh | FIXED | CONFIRMED-FIXED | 2→3 |
+| R6 | minor | (process) R1–R4 fixes were unstaged/untracked; a commit of the index alone would drop them. Manager staged everything (`git add -A`) | none | FIXED (manager) | | 2 |
+| R7 | minor | (regression from R4) struct literal `a.T{f: 1}` with unexported `f` of another package says "unknown field f …, but does have f"; types2 says "cannot refer to unexported field f in struct literal of type a.T" | .scratch/fold-otherpkg.sh | FIXED | CONFIRMED-FIXED | 3→4 (CLEAN) |
+| R8 | blocker | TypeSet.cpp:207-210 `RecDepth > MaxRecDepth` early publish: depth is the asking checker's, so a truncated (empty) type set is published depending on which body comes first; an 80-deep valid interface chain gives 64 bogus "M0 undefined" with -j1 (also on master) and 0 with -j8 | .scratch/nondet-recdepth.sh | FIXED | CONFIRMED-FIXED | 3→4 (CLEAN) |

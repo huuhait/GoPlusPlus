@@ -55,42 +55,42 @@
 // TOK-NEXT:108:6 string_lit '"unterminated'
 // TOK-NEXT:108:19 semi '\n'
 // TOK-NEXT:109:1 eof
-// ERR:{{.*}}bad-literals.test:97:8: error: hexadecimal literal has no digits
+// ERR:{{.*}}bad-literals.test:97:8: error{{\[E[0-9]+\]}}: hexadecimal literal has no digits
 // ERR-NEXT:   97 | x := 0x
 // ERR-NEXT:      |        ^
-// ERR-NEXT:{{.*}}bad-literals.test:98:8: error: invalid digit '2' in binary literal
+// ERR-NEXT:{{.*}}bad-literals.test:98:8: error{{\[E[0-9]+\]}}: invalid digit '2' in binary literal
 // ERR-NEXT:   98 | y := 0b2
 // ERR-NEXT:      |        ^
-// ERR-NEXT:{{.*}}bad-literals.test:99:7: error: invalid digit '8' in octal literal
+// ERR-NEXT:{{.*}}bad-literals.test:99:7: error{{\[E[0-9]+\]}}: invalid digit '8' in octal literal
 // ERR-NEXT:   99 | z := 08
 // ERR-NEXT:      |       ^
-// ERR-NEXT:{{.*}}bad-literals.test:100:8: error: exponent has no digits
+// ERR-NEXT:{{.*}}bad-literals.test:100:8: error{{\[E[0-9]+\]}}: exponent has no digits
 // ERR-NEXT:  100 | w := 1e
 // ERR-NEXT:      |        ^
-// ERR-NEXT:{{.*}}bad-literals.test:101:6: error: single quotes make a rune: use double quotes for a string
+// ERR-NEXT:{{.*}}bad-literals.test:101:6: error{{\[E[0-9]+\]}}: single quotes make a rune: use double quotes for a string
 // ERR-NEXT:  101 | a := 'ab'
 // ERR-NEXT:      |      ^~~~
 // ERR-NEXT:      |      "
 // ERR-NEXT:      |         "
-// ERR-NEXT:{{.*}}bad-literals.test:102:6: error: illegal rune literal
+// ERR-NEXT:{{.*}}bad-literals.test:102:6: error{{\[E[0-9]+\]}}: illegal rune literal
 // ERR-NEXT:  102 | b := ''
 // ERR-NEXT:      |      ^
-// ERR-NEXT:{{.*}}bad-literals.test:103:12: error: unknown escape sequence
+// ERR-NEXT:{{.*}}bad-literals.test:103:12: error{{\[E[0-9]+\]}}: unknown escape sequence
 // ERR-NEXT:  103 | c := "bad \q escape"
 // ERR-NEXT:      |            ^
-// ERR-NEXT:{{.*}}bad-literals.test:104:8: error: escape sequence is invalid Unicode code point
+// ERR-NEXT:{{.*}}bad-literals.test:104:8: error{{\[E[0-9]+\]}}: escape sequence is invalid Unicode code point
 // ERR-NEXT:  104 | d := '\400'
 // ERR-NEXT:      |        ^
-// ERR-NEXT:{{.*}}bad-literals.test:105:9: error: illegal character U+005A 'Z' in escape sequence
+// ERR-NEXT:{{.*}}bad-literals.test:105:9: error{{\[E[0-9]+\]}}: illegal character U+005A 'Z' in escape sequence
 // ERR-NEXT:  105 | e := "\xZZ"
 // ERR-NEXT:      |         ^
-// ERR-NEXT:{{.*}}bad-literals.test:106:8: error: '_' must separate successive digits
+// ERR-NEXT:{{.*}}bad-literals.test:106:8: error{{\[E[0-9]+\]}}: '_' must separate successive digits
 // ERR-NEXT:  106 | f := 1__0
 // ERR-NEXT:      |        ^
-// ERR-NEXT:{{.*}}bad-literals.test:107:9: error: invalid radix point in binary literal
+// ERR-NEXT:{{.*}}bad-literals.test:107:9: error{{\[E[0-9]+\]}}: invalid radix point in binary literal
 // ERR-NEXT:  107 | g := 0b1.5
 // ERR-NEXT:      |         ^
-// ERR-NEXT:{{.*}}bad-literals.test:108:6: error: string literal not terminated
+// ERR-NEXT:{{.*}}bad-literals.test:108:6: error{{\[E[0-9]+\]}}: string literal not terminated
 // ERR-NEXT:  108 | h := "unterminated
 // ERR-NEXT:      |      ^~~~~~~~~~~~~
 package p

@@ -28,21 +28,21 @@ bool Checker::isValidIndex(Operand &X, const char *What, bool AllowNegative) {
   if (X.M == Mode::Invalid)
     return false;
   if (!allInteger(X.Ty)) {
-    err(X, diag::custom,
+    err(X, diag::err_sema_index,
         {std::string("invalid argument: ") + What + " " + str(X) +
          " must be integer"});
     return false;
   }
   if (X.M == Mode::Constant) {
     if (!AllowNegative && X.Val.sign() < 0) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_index,
           {std::string("invalid argument: ") + What + " " + str(X) +
            " must not be negative"});
       return false;
     }
     ConstValue R;
     if (!representableConst(X.Val, typ(BasicKind::Int), &R)) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_index,
           {std::string("invalid argument: ") + What + " " + str(X) +
            " overflows int"});
       return false;
@@ -73,6 +73,22 @@ int64_t Checker::index(const ast::Expr *Idx, int64_t Max) {
 }
 
 bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
+  // `pkg.vec[int32]`: a C++ template of a foreign package (ADR-0010 Q3).
+  if (Object *T = foreignTemplateOf(Ex)) {
+    X.E = Ex;
+    X.M = Mode::Invalid;
+    X.Ty = invalid();
+    if (isa<TypeName>(T)) {
+      if (Type *Inst = foreignInstantiate(Ex); Inst && isValid(Inst)) {
+        X.M = Mode::TypeExpr;
+        X.Ty = Inst;
+      }
+    } else {
+      // In v0 a function template instance is only used in a call.
+      err(Ex, diag::err_foreign_template_value, {str(Ex)});
+    }
+    return false;
+  }
   exprOrType(X, Ex->X, true);
   switch (X.M) {
   case Mode::Invalid:
@@ -108,11 +124,11 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     U = under(Rf->Elem);
   auto SingleIndex = [&]() -> const ast::Expr * {
     if (Ex->Indices.empty()) {
-      err(Ex, diag::custom, {"missing index for " + str(X.E)});
+      err(Ex, diag::err_sema_index, {"missing index for " + str(X.E)});
       return nullptr;
     }
     if (Ex->Indices.size() > 1)
-      err(Ex->Indices[1], diag::custom,
+      err(Ex->Indices[1], diag::err_sema_index,
           {"invalid operation: more than one index"});
     return Ex->Indices[0];
   };
@@ -307,7 +323,7 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
       return true;
     });
     if (!Why.empty() || !CU) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_index,
           {"cannot slice " + str(X) + ": " +
            (Why.empty() ? "no specific type in " + str(X.Ty) : Why)});
       X.M = Mode::Invalid;
@@ -379,7 +395,8 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
   X.M = Mode::Value;
   const ast::Expr *Idx[3] = {Ex->Lo, Ex->Hi, Ex->Max};
   if (Ex->Slice3 && (!Ex->Hi || !Ex->Max)) {
-    err(Ex, diag::custom, {"2nd and 3rd index required in 3-index slice"});
+    err(Ex, diag::err_sema_index,
+        {"2nd and 3rd index required in 3-index slice"});
     X.M = Mode::Invalid;
     return;
   }
@@ -474,7 +491,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
     } else {
       Typ = typ(Ex->Type);
       if (auto *NT = dyn_cast<NamedType>(Typ);
-          NT && !NT->Underlying && !NT->Orig && NT->Obj &&
+          NT && !NT->Orig && !NT->Underlying && NT->Obj &&
           NT->Obj->Color >= 2 &&
           static_cast<size_t>(NT->Obj->Color - 2) < ObjPath.size()) {
         // `type T [len(T{})]int`: the literal needs the type being declared.
@@ -539,9 +556,13 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         if (Idx < 0) {
           std::string Msg = "unknown field " + std::string(name(Key)) +
                             " in struct literal of type " + str(Base);
-          if (Alt >= 0)
+          if (Alt >= 0 && Fields[Alt]->Name == name(Key))
+            // Same name, so the field is unexported in another package.
+            Msg = "cannot refer to unexported field " + std::string(name(Key)) +
+                  " in struct literal of type " + str(Base);
+          else if (Alt >= 0)
             Msg += ", but does have " + std::string(Fields[Alt]->Name);
-          err(KV->Key, diag::custom, {Msg});
+          err(KV->Key, diag::err_sema_index, {Msg});
           continue;
         }
         Var *Fld = Fields[Idx];
@@ -636,7 +657,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
       use(El);
     }
     if (!CoreT || isValid(CoreT)) {
-      err(Ex, diag::custom,
+      err(Ex, diag::err_sema_index,
           {std::string("invalid composite literal") +
            (IsElem ? " element" : "") + " type " + str(Typ) +
            (CoreT ? "" : " (no common underlying type)")});

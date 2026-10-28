@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule CLO-9: inside a closure a captured owned variable is another place:
 // using it is fine, taking ownership needs x.Clone() or move(x).
 package main
@@ -13,6 +13,6 @@ func positive() (func() string, func() int, func() string) {
 
 func negative() func() string {
 	s := "a"
-	// CHECK: [[@LINE+1]]:32: error: cannot return s: it is a captured variable (CLO-9), and this needs ownership (OWN-R3a)
+	// CHECK: [[@LINE+1]]:32: error{{\[E[0-9]+\]}}: cannot return s: it is a captured variable (CLO-9), and this needs ownership (OWN-R3a)
 	return func() string { return s }
 }

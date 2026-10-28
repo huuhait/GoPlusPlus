@@ -1,0 +1,70 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not="error[" %s
+// Rule ERR-3 (D1.8, D3.6): `return` in a `!` function lists the declared
+// results (a nil error) or the declared results and an error (a failure). The
+// operand count decides. Both sides: the good forms pass, the bad ones fail.
+package main
+
+type myErr struct{}
+
+func (myErr) Error() string { return "x" }
+
+var ErrX error = myErr{}
+
+func g() (int, error)  { return 1, nil }
+func h() error         { return nil }
+func one() int         { return 1 }
+func two() (int, string) { return 1, "s" }
+
+// Good forms.
+func ok1!() int            { return 1 }
+func ok2!() int            { return 0, ErrX }
+func ok3!() int            { return g() }
+func ok4!()                { return }
+func ok5!()                { return ErrX }
+func ok6!()                { return h() }
+func ok7!() (int, string)  { return 1, "s" }
+func ok8!() (int, string)  { return 1, "s", ErrX }
+func ok9!() (int, string)  { return 0, "", ErrX }
+func ok10!() (x int)       { x = 2; return }
+func ok11!() (x int)       { return 3, ErrX }
+func ok12!() int           { return 0, nil }
+func ok13!() (int, string) { v, _ := g(); return v, "a" }
+func ok14!() int           { return one() }
+func ok15!() (int, string) { return two() }
+
+// Bad forms.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: wrong number of return values in a '!' function: have (number), want (int, string) or (int, string, error)
+func bad1!() (int, string) { return 1 }
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: wrong number of return values in a '!' function: have (number, string, error, number), want (int, string) or (int, string, error)
+func bad2!() (int, string) { return 1, "s", ErrX, 4 }
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: wrong number of return values in a '!' function: have (number, number, number), want (int) or (int, error)
+func bad3!() int { return 1, 2, 3 }
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use ErrX (variable of interface type error) as int value in return statement
+func bad4!() int { return ErrX }
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use "s" (untyped string constant) as int value in return statement
+func bad5!() int { return "s", ErrX }
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use 2 (constant of type int) as error value in return statement: int does not implement error (missing method Error)
+func bad6!() int { return 1, 2 }
+// A call with the wrong shape.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: wrong number of return values in a '!' function: have (int, error), want () or (error)
+func bad7!() { return g() }
+// A bare return with unnamed results.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: not enough return values
+func bad8!() int { return }
+// Without `!` the old rule stays: an error operand is just a result.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: too many return values
+func plain() int { return 1, ErrX }
+func plain2() (int, error) { return 1, ErrX }
+
+// Function literals and function types are judged by their own marks.
+func lits() {
+	f := func!(n int) string { return "x" }
+	f2 := func!(n int) (string, int) { return "x", n, ErrX }
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: wrong number of return values in a '!' function: have (string, int, error, error), want (string, int) or (string, int, error)
+	f3 := func!(n int) (string, int) { return "x", n, ErrX, ErrX }
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: too many return values
+	f4 := func(n int) string { return "x", nil }
+	_, _, _, _ = f, f2, f3, f4
+}
+
+func main() {}

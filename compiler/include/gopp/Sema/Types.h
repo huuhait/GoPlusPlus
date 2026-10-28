@@ -14,10 +14,13 @@
 //     are identical exactly when the pointers are equal. Only interfaces and
 //     unions (type sets) need a structural comparison (Checker::identical).
 //   - A TypeContext can be shared by many checkers (one per package, and one
-//     per function body when bodies are checked in parallel, P03.10): every
-//     operation that creates a type takes the context's lock; reading a type
+//     per function body when bodies are checked in parallel, P03.10): each
+//     uniquing table is split in shards by hash, each with its own lock and
+//     memory, and the other allocations have their own lock; reading a type
 //     needs no lock because a type never changes after its creation, except
-//     for the lazily resolved parts documented on NamedType.
+//     for the lazily resolved parts documented on NamedType and InterfaceType
+//     (they are completed under TypeContext::lock() and published
+//     atomically).
 //   - Objects (variables, functions, ...) and scopes are not shared state:
 //     a checker allocates them in its own arena (class Arena).
 //
@@ -38,6 +41,7 @@
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Casting.h"
 
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -333,10 +337,18 @@ public:
   llvm::ArrayRef<Type *> Embeddeds; // embedded types and unions
   llvm::ArrayRef<SourceLoc> EmbedLocs;
   Special Sp = None;
-  bool Implicit = false;  // `[T int|string]` wrapped into an interface
-  bool IsAny = false;     // the predeclared `any` (printed as such)
-  TypeSet *Set = nullptr; // computed on demand (see Checker::typeSet)
-  bool Computing = false;
+  bool Implicit = false; // `[T int|string]` wrapped into an interface
+  bool IsAny = false;    // the predeclared `any` (printed as such)
+  /// Made by substitution (an instance of a generic interface): its type set
+  /// reports no errors. Which body computes it first is a matter of timing, so
+  /// the error would land in a different place on each run; the declaration
+  /// reports it, once, in phase 1 (types2 uses nopos for instances too).
+  bool Substituted = false;
+  /// Computed on demand (see Checker::typeSet) and published once complete,
+  /// so that body threads read it without the lock.
+  std::atomic<TypeSet *> Set{nullptr};
+  bool Computing = false;     // under the context's lock
+  TypeSet *Pending = nullptr; // the stand-in a recursive request gets
 };
 
 class TypeParamType : public Type {
@@ -369,8 +381,11 @@ public:
   Type *FromRHS = nullptr;        // the declared right hand side
   NamedType *DirectRhs = nullptr; // `type A B`: the defined type B
   bool Resolving = false;
-  bool Pinned = false;   // @Pinned (OWN-R10)
-  bool Expanded = false; // instance: Underlying is set
+  bool Pinned = false; // @Pinned (OWN-R10)
+  /// Instance: Underlying is set. Written once, with release order, after
+  /// Underlying: another body thread may read it (P03.10).
+  std::atomic<bool> Expanded{false};
+  bool Expanding = false; // under the context's lock: a re-entrant expansion
   /// Declared methods (of the origin), in declaration order.
   llvm::SmallVector<Func *, 0> *Methods = nullptr;
   /// Instance: methods instantiated so far, parallel to Orig->Methods.
@@ -406,6 +421,10 @@ public:
   SourceLoc ScopePos;
   uint32_t Order = 0; // package-level declaration order
   uint8_t Color = 0;  // white=0, black=1 (resolved), >=2 grey (in progress)
+  /// A C++ class template, or a function name with a template among its
+  /// candidates (a foreign object only): `pkg.vec[int32]`, `pkg.f[T](x)`
+  /// (ADR-0010 Q3).
+  bool IsTemplate = false;
   bool exported() const;
 
 protected:
@@ -575,16 +594,8 @@ public:
   bool isPackageScope() const;
 };
 
-/// The foreign (C/C++ header) hook point of D3.7. P03.09 implements it with
-/// Clang; P03 ships a mock. A foreign package's names are accessible whatever
-/// their case.
-class ForeignScope {
-public:
-  virtual ~ForeignScope() = default;
-  /// Looks Name up in the header package; null if absent. The returned object
-  /// is owned by the scope.
-  virtual Object *lookup(llvm::StringRef Name) = 0;
-};
+/// The foreign (C/C++ header) hook point of D3.7: see gopp/Sema/Foreign.h.
+class ForeignScope;
 
 class Package {
 public:
@@ -640,7 +651,8 @@ public:
     Type *Ty;
     bool Embedded;
     llvm::StringRef Tag;
-    SourceLoc Pos;
+    /// No position: a struct is uniqued, so a Var in it cannot belong to one
+    /// body (see the rule at TypeContext::unique in Types.cpp).
   };
   StructType *structOf(llvm::ArrayRef<FieldSpec> Fields);
   /// Not uniqued: interfaces and unions are compared by their type sets.
@@ -659,27 +671,52 @@ public:
   llvm::SmallVector<Func *, 0> *newMethodList();
   /// Objects the context itself makes (universe, struct fields).
   Arena &arena() { return Objs; }
-  /// Guards the creation of types and the lazy completion of instances.
+  /// Guards the lazy completion of instances and type sets (expandNamed,
+  /// computeTypeSet, instantiatedMethod). Creating a type needs no lock from
+  /// the caller: the tables and the allocator have their own (leaf) locks.
   std::recursive_mutex &lock() { return Mu; }
+  /// The lock of the allocator behind arena(): held by the code that makes
+  /// objects in it from several threads.
+  std::mutex &allocLock() { return AllocMu; }
 
 private:
   void initUniverse(bool GoCompat);
   std::deque<llvm::SmallVector<Func *, 0>> MethodLists;
 
+  llvm::ArrayRef<Type *> copyTypesLocked(llvm::ArrayRef<Type *> Ts);
+
+  /// One part of a uniquing table: the types whose profile hash falls in it,
+  /// the lock that guards them and the memory they are made in. Every table
+  /// has NumShards shards, so threads that make or look up different types
+  /// rarely take the same lock (P03.10).
+  template <class T> struct alignas(64) Shard {
+    std::mutex Mu;
+    llvm::FoldingSet<T> Set;
+    llvm::BumpPtrAllocator Alloc;
+  };
+  static constexpr unsigned NumShards = 16;
+  template <class T> using Table = Shard<T>[NumShards];
+  /// The node of Tab equal to ID, made with Make(allocator of its shard) if
+  /// there is none (Types.cpp).
+  template <class T, class MakeFn>
+  T *unique(Table<T> &Tab, const llvm::FoldingSetNodeID &ID, MakeFn Make);
+
   llvm::BumpPtrAllocator Alloc;
   std::recursive_mutex Mu;
+  /// Lock order: Mu, then a shard's lock, then AllocMu.
+  std::mutex AllocMu; // Alloc, Objs, MethodLists
   Arena Objs;
   BasicType Basics[static_cast<unsigned>(BasicKind::NumBasicKinds)];
-  llvm::FoldingSet<PointerType> Pointers;
-  llvm::FoldingSet<SliceType> Slices;
-  llvm::FoldingSet<RefType> Refs;
-  llvm::FoldingSet<ArrayType> Arrays;
-  llvm::FoldingSet<MapType> Maps;
-  llvm::FoldingSet<ChanType> Chans;
-  llvm::FoldingSet<TupleType> Tuples;
-  llvm::FoldingSet<SignatureType> Signatures;
-  llvm::FoldingSet<StructType> Structs;
-  llvm::FoldingSet<NamedType> Instances;
+  Table<PointerType> Pointers;
+  Table<SliceType> Slices;
+  Table<RefType> Refs;
+  Table<ArrayType> Arrays;
+  Table<MapType> Maps;
+  Table<ChanType> Chans;
+  Table<TupleType> Tuples;
+  Table<SignatureType> Signatures;
+  Table<StructType> Structs;
+  Table<NamedType> Instances;
   Type *ErrorType = nullptr, *AnyType = nullptr, *ComparableType = nullptr,
        *CopyType = nullptr, *CloneType = nullptr, *ByteType = nullptr,
        *RuneType = nullptr;

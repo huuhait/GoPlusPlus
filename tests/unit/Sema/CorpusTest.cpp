@@ -41,6 +41,7 @@ void check(llvm::StringRef Text, bool GoMode) {
   ParseOptions PO;
   PO.CheckLanguageRules = !GoMode;
   PO.AllowGenericMethods = !GoMode;
+  PO.AllowNamespaceTypes = !GoMode;
   test::Parsed P(Text, PO);
   sema::TypeContext Ctx(GoMode);
   NoImporter Imp;

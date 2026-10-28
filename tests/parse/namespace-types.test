@@ -1,0 +1,37 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck %s
+// RUN: %gopp fmt %s | FileCheck --check-prefix=FMT %s
+// ADR-0010 Q4: a type may name a nested namespace of a C++ header,
+// `pkg.ns.Name`, also as an embedded field. The parser reads the dots as a
+// chain of selectors starting at the package name; the checker decides what
+// each name is. A plain `pkg.Name` is unchanged.
+package p
+
+var s asio.ip.tcp.socket
+
+type T struct {
+	asio.ip.endpoint
+	x asio.tcp.port
+	y fmt.Stringer
+}
+
+// CHECK:      Name: Ident {{.*}} 's'
+// CHECK-NEXT: Type: SelectorExpr <9:7, 9:25>
+// CHECK-NEXT:   X: SelectorExpr <9:7, 9:18>
+// CHECK-NEXT:     X: SelectorExpr <9:7, 9:14>
+// CHECK-NEXT:       X: Ident <9:7, 9:11> 'asio'
+// CHECK-NEXT:       Sel: Ident <9:12, 9:14> 'ip'
+// CHECK-NEXT:     Sel: Ident <9:15, 9:18> 'tcp'
+// CHECK-NEXT:   Sel: Ident <9:19, 9:25> 'socket'
+// CHECK:      Field: Field <12:2, 12:18>
+// CHECK-NEXT:   Type: SelectorExpr <12:2, 12:18>
+// CHECK-NEXT:     X: SelectorExpr <12:2, 12:9>
+// CHECK:      Names: Ident <13:2, 13:3> 'x'
+// CHECK-NEXT: Type: SelectorExpr <13:4, 13:17>
+// CHECK:      Names: Ident <14:2, 14:3> 'y'
+// CHECK-NEXT: Type: SelectorExpr <14:4, 14:16>
+// CHECK-NEXT:   X: Ident <14:4, 14:7> 'fmt'
+// CHECK-NEXT:   Sel: Ident <14:8, 14:16> 'Stringer'
+
+// FMT: var s asio.ip.tcp.socket
+// FMT: asio.ip.endpoint
+// FMT: x asio.tcp.port

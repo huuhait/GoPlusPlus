@@ -13,10 +13,13 @@
 // depend on files on disk. Lexing and parsing are done once, outside the timed
 // region.
 //
-//   gopp-bench-check [-funcs N] [-runs N]
+//   gopp-bench-check [-funcs N] [-runs N] [-threads=1,2,4,8,16]
 //
-// The result is the best of N runs of checkPackage (CPU time, one thread). Only
-// a Release build counts: the Dev build has -O1 and assertions.
+// The first result is the best of N runs of checkPackage on one thread (CPU
+// time): the number of the D3.10 budget. -threads then measures phase 2 (the
+// function bodies) on that many threads, as wall-clock time, and prints the
+// speedup over one thread (P03.10). Only a Release build counts: the Dev build
+// has -O1 and assertions.
 //
 //===----------------------------------------------------------------------===//
 
@@ -32,6 +35,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <string>
 
@@ -41,6 +45,8 @@ static cl::opt<unsigned> Funcs("funcs", cl::desc("Number of generated blocks"),
                                cl::init(3000));
 static cl::opt<unsigned> Runs("runs", cl::desc("Runs; the best counts"),
                               cl::init(5));
+static cl::list<unsigned> Threads("threads", cl::CommaSeparated,
+                                  cl::desc("Thread counts to measure"));
 
 namespace {
 
@@ -91,6 +97,12 @@ double cpuSeconds() {
   return std::chrono::duration<double>(User + Sys).count();
 }
 
+double wallSeconds() {
+  return std::chrono::duration<double>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -119,22 +131,29 @@ int main(int argc, char **argv) {
   }
   const gopp::ast::File *Files[] = {AST};
 
-  double Best = 1e30;
+  // One run of checkPackage with the given number of body threads.
   uint64_t Errors = 0;
-  for (unsigned R = 0; R < Runs; ++R) {
+  auto Once = [&](unsigned Threads, double (*Clock)()) {
     gopp::CollectingDiagnosticConsumer Sink;
     gopp::DiagnosticsEngine Diags(SM, Sink, 0);
     gopp::sema::TypeContext Ctx;
     NoImports Imp;
-    double T0 = cpuSeconds();
-    auto CP = gopp::sema::checkPackage(Ctx, SM, "bench", Files, Imp, Diags);
-    Best = std::min(Best, cpuSeconds() - T0);
+    gopp::sema::CheckOptions Opts;
+    Opts.BodyThreads = Threads;
+    double T0 = Clock();
+    auto CP =
+        gopp::sema::checkPackage(Ctx, SM, "bench", Files, Imp, Diags, Opts);
+    double T = Clock() - T0;
     Errors = Sink.Diags.size();
     if (!CP) {
       errs() << "gopp-bench-check: checkPackage failed\n";
-      return 1;
+      exit(1);
     }
-  }
+    return T;
+  };
+  double Best = 1e30;
+  for (unsigned R = 0; R < Runs; ++R)
+    Best = std::min(Best, Once(1, cpuSeconds));
   if (Errors) {
     errs() << "gopp-bench-check: the generated source has " << Errors
            << " type errors\n";
@@ -144,5 +163,20 @@ int main(int argc, char **argv) {
   outs() << format(
       "check (1 thread): best of %u: %.3f s  %.0f k lines/s/core\n",
       Runs.getValue(), Best, Lines / Best / 1e3);
+  if (Threads.empty())
+    return 0;
+  // Wall-clock time per thread count; the speedup is over the same function
+  // run with one thread.
+  double Base = 0;
+  for (unsigned T : Threads) {
+    double W = 1e30;
+    for (unsigned R = 0; R < Runs; ++R)
+      W = std::min(W, Once(T, wallSeconds));
+    if (!Base)
+      Base = W;
+    outs() << format("check (%u threads): wall %.4f s  %.0f k lines/s  "
+                     "speedup %.2fx\n",
+                     T, W, Lines / W / 1e3, Base / W);
+  }
   return 0;
 }

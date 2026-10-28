@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule EXP-11: &x on a variable gives a raw pointer; &local must not escape
 // the function by return.
 package main
@@ -16,6 +16,6 @@ func positive(d *D) (*D, *int) {
 
 func negative() *int {
 	x := 1
-	// CHECK: [[@LINE+1]]:9: error: cannot return the address of local x: it dies at the return (EXP-11)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return the address of local x: it dies at the return (EXP-11)
 	return &x
 }

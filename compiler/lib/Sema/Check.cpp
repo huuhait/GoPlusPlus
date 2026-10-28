@@ -8,9 +8,11 @@
 
 #include "Checker.h"
 
+#include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <atomic>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -211,12 +213,12 @@ void Checker::unusedImports() {
         size_t Slash = Elem.find_last_of('/');
         if (Slash != StringRef::npos)
           Elem = Elem.substr(Slash + 1);
-        std::string Msg = "\"" + std::string(PN->Imported->Path) + "\"";
+        std::string Quoted = "\"" + std::string(PN->Imported->Path) + "\"";
         if (PN->Name != Elem && PN->Name != ".")
-          Msg += " imported as " + std::string(PN->Name) + " and not used";
+          err(PN->ImportLoc, diag::err_unused_import_as,
+              {Quoted, std::string(PN->Name)});
         else
-          Msg += " imported and not used";
-        err(PN->ImportLoc, diag::custom, {Msg});
+          err(PN->ImportLoc, diag::err_unused_import, {Quoted});
       }
 }
 
@@ -238,24 +240,95 @@ void Checker::checkFiles(ArrayRef<const ast::File *> Files) {
 // Info
 //===----------------------------------------------------------------------===//
 
-void Info::merge(Info &&O) {
-  for (auto &KV : O.Types)
-    Types[KV.first] = KV.second;
-  for (auto &KV : O.Defs)
-    Defs[KV.first] = KV.second;
-  for (auto &KV : O.Uses)
-    Uses[KV.first] = KV.second;
-  for (auto &KV : O.Implicits)
-    Implicits[KV.first] = KV.second;
-  for (auto &KV : O.Selections)
-    Selections[KV.first] = KV.second;
-  for (auto &KV : O.Instances)
-    Instances[KV.first] = KV.second;
+void Info::merge(ArrayRef<Info *> Others) {
+  // Each map is reserved once for all entries: copying a big table into a
+  // smaller one that grows on the way is several times slower (the source is
+  // walked in hash order, so the entries pile up in the growing table).
+  auto One = [&](auto Member) {
+    auto &To = this->*Member;
+    size_t N = To.size();
+    for (const Info *O : Others)
+      N += (O->*Member).size();
+    To.reserve(N);
+    for (const Info *O : Others)
+      for (auto &KV : O->*Member)
+        To[KV.first] = KV.second;
+  };
+  One(&Info::Types);
+  One(&Info::Defs);
+  One(&Info::Uses);
+  One(&Info::Implicits);
+  One(&Info::Selections);
+  One(&Info::Instances);
+  One(&Info::Bangs);
 }
 
 //===----------------------------------------------------------------------===//
 // checkPackage
 //===----------------------------------------------------------------------===//
+
+namespace {
+/// One thread of phase 2. The bodies it checks share its arena, its side
+/// table and its set of used imports: a body records entries only for its own
+/// AST nodes, so the tables of the workers never overlap and are merged after
+/// the bodies. With one thread the worker writes into the package's table.
+struct BodyWorker {
+  std::unique_ptr<Arena> Mem = std::make_unique<Arena>();
+  Info Table;
+  Info *Out = &Table;
+  llvm::SmallPtrSet<PkgName *, 8> Used;
+};
+} // namespace
+
+/// The number of threads phase 2 uses for N bodies.
+static unsigned bodyThreads(const CheckOptions &O, size_t N) {
+  unsigned Threads = O.BodyThreads;
+  if (!Threads)
+    Threads = std::min(llvm::hardware_concurrency().compute_thread_count(),
+                       CheckOptions::MaxAutoBodyThreads);
+  // A thread must have enough work to pay for itself.
+  size_t PerThread = std::max<size_t>(1, O.MinBodiesPerThread);
+  return static_cast<unsigned>(std::max<size_t>(
+      1, std::min<size_t>(Threads, (N + PerThread - 1) / PerThread)));
+}
+
+/// Checks every body; Diags[K] gets the diagnostics of S.Bodies[K]. Workers
+/// take the next body from a shared counter: the order of the bodies in time
+/// is free, their diagnostics go to their own slots.
+static void runBodies(PackageState &S, const SourceManager &SM,
+                      std::vector<BodyWorker> &Workers,
+                      std::vector<std::vector<Diagnostic>> &Diags) {
+  size_t N = S.Bodies.size();
+  std::atomic<size_t> Next{0};
+  auto Run = [&](BodyWorker &W) {
+    for (size_t K = Next.fetch_add(1, std::memory_order_relaxed); K < N;
+         K = Next.fetch_add(1, std::memory_order_relaxed)) {
+      CollectingDiagnosticConsumer Collect;
+      DiagnosticsEngine BDiags(SM, Collect, 0);
+      Checker BC(S, *W.Out, *W.Mem, BDiags);
+      BC.Bodies = true;
+      BC.UsedImports = &W.Used;
+      BC.checkBody(S.Bodies[K]);
+      BC.recordUntyped();
+      Diags[K] = std::move(Collect.Diags);
+    }
+  };
+  if (Workers.size() == 1) {
+    Run(Workers[0]);
+    return;
+  }
+  if (llvm::ThreadPoolInterface *Pool = S.Opts.Pool) {
+    llvm::ThreadPoolTaskGroup Group(*Pool);
+    for (BodyWorker &W : Workers)
+      Group.async([&Run, &W] { Run(W); });
+    Group.wait();
+    return;
+  }
+  llvm::DefaultThreadPool Pool(llvm::hardware_concurrency(Workers.size()));
+  for (BodyWorker &W : Workers)
+    Pool.async([&Run, &W] { Run(W); });
+  Pool.wait();
+}
 
 std::unique_ptr<CheckedPackage>
 sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
@@ -277,20 +350,17 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   Checker C(S, CP->I, Mem, Diags);
   C.checkFiles(Files);
 
-  // Phase 2: one checker per body. Their diagnostics are replayed in
-  // declaration order, whatever order the bodies ran in.
+  // Phase 2: one checker per body, on one or more threads. A body writes only
+  // to its worker; the diagnostics are replayed in declaration order, so the
+  // output does not depend on the order or the thread the bodies ran on.
   CP->NumBodies = S.Bodies.size();
-  for (const BodyJob &J : S.Bodies) {
-    CP->Mem.push_back(std::make_unique<Arena>());
-    Arena &BMem = *CP->Mem.back();
-    Info BI;
-    CollectingDiagnosticConsumer Collect;
-    DiagnosticsEngine BDiags(SM, Collect, 0);
-    Checker BC(S, BI, BMem, BDiags);
-    BC.Bodies = true;
-    BC.checkBody(J);
-    BC.recordUntyped();
-    for (Diagnostic &D : Collect.Diags) {
+  std::vector<BodyWorker> Workers(bodyThreads(Opts, S.Bodies.size()));
+  if (Workers.size() == 1)
+    Workers[0].Out = &CP->I;
+  std::vector<std::vector<Diagnostic>> BodyDiags(S.Bodies.size());
+  runBodies(S, SM, Workers, BodyDiags);
+  for (std::vector<Diagnostic> &DL : BodyDiags)
+    for (Diagnostic &D : DL) {
       if (D.Sev == Severity::Error) {
         // Earlier bodies may have reported the first error.
         if (C.NumErrors > 0 && isFollowOn(D))
@@ -299,12 +369,21 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
       }
       Diags.emit(std::move(D));
     }
-    CP->I.merge(std::move(BI));
+  SmallVector<Info *, 8> Tables;
+  for (BodyWorker &W : Workers) {
+    for (PkgName *PN : W.Used)
+      PN->Used = true;
+    if (W.Out != &CP->I)
+      Tables.push_back(&W.Table);
+    CP->Mem.push_back(std::move(W.Mem));
   }
+  CP->I.merge(Tables);
   C.FirstErr = C.NumErrors > 0;
   C.checkInitOrder();
   C.unusedImports();
   Pkg->Complete = true;
+  if (Opts.Vet)
+    vetPackage(SM, *CP, Files, Diags);
   return CP;
 }
 
@@ -367,6 +446,14 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
                     (O->Ty ? typeString(O->Ty, Pkg) : std::string("<nil>"));
     Entries.push_back(
         {KV.first->getBegin().getRaw(), KV.first->getEnd().getRaw(), 0, L});
+  }
+  for (auto &KV : P.I.Bangs) {
+    const char *Kind = KV.second == BangKind::Return  ? "returns the error"
+                       : KV.second == BangKind::Panic ? "panics"
+                                                      : "sets the error";
+    const ast::CallExpr *C = KV.first;
+    Entries.push_back({C->BangLoc.getRaw(), C->BangLoc.getRaw(), 2,
+                       Loc(C->BangLoc) + " bang `" + Text(C) + "` " + Kind});
   }
   std::stable_sort(Entries.begin(), Entries.end(),
                    [](const DumpEntry &A, const DumpEntry &B) {

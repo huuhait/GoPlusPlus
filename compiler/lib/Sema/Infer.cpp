@@ -103,7 +103,7 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
     for (Var *F : P->Fields) {
       Type *Y = Rec(F->Ty);
       Changed |= Y != F->Ty;
-      Fs.push_back({F->Name, F->Pkg, Y, F->Embedded, F->Tag, F->Pos});
+      Fs.push_back({F->Name, F->Pkg, Y, F->Embedded, F->Tag});
     }
     return Changed ? Ctx.structOf(Fs) : T;
   }
@@ -144,10 +144,11 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
     }
     if (!Changed)
       return T;
-    InterfaceType *N = Ctx.newInterface(Mem.copy(ArrayRef<Func *>(Ms)),
-                                        Mem.copy(ArrayRef<Type *>(Es)),
-                                        P->EmbedLocs, P->Implicit);
+    InterfaceType *N =
+        Ctx.newInterface(Mem.copy(ArrayRef<Func *>(Ms)),
+                         Mem.copy(ArrayRef<Type *>(Es)), {}, P->Implicit);
     N->Sp = P->Sp;
+    N->Substituted = true;
     return N;
   }
   case Type::Kind::Named: {
@@ -175,17 +176,23 @@ void Checker::expandNamed(NamedType *N) {
   std::lock_guard<std::recursive_mutex> G(Ctx.lock());
   if (N->Expanded || !N->Orig)
     return;
+  // A recursive type asks for its own expansion while it is expanded: the
+  // outer call finishes it. (Only the thread holding the lock sees this.)
+  if (N->Expanding)
+    return;
   NamedType *O = N->Orig;
   if (!O->Underlying && O->Obj && S.ObjMap.count(O->Obj))
     objDecl(O->Obj, nullptr);
   if (!O->Underlying)
     return; // still being declared: retry later
-  N->Expanded = true;
-  if (O->TParams.size() != N->TArgs.size()) {
-    N->Underlying = invalid();
-    return;
-  }
-  N->Underlying = under(subst(O->Underlying, O->TParams, N->TArgs));
+  N->Expanding = true;
+  Type *U = invalid();
+  if (O->TParams.size() == N->TArgs.size())
+    U = under(subst(O->Underlying, O->TParams, N->TArgs));
+  N->Underlying = U;
+  N->Expanding = false;
+  // Publishes Underlying to the other body threads.
+  N->Expanded.store(true, std::memory_order_release);
 }
 
 Func *Checker::instantiatedMethod(NamedType *Inst, unsigned I) {
@@ -201,7 +208,11 @@ Func *Checker::instantiatedMethod(NamedType *Inst, unsigned I) {
     return IM[I];
   if (!M->Ty)
     objDecl(M, nullptr);
-  Func *N = Ctx.arena().make<Func>(*M);
+  Func *N;
+  {
+    std::lock_guard<std::mutex> A(Ctx.allocLock());
+    N = Ctx.arena().make<Func>(*M);
+  }
   N->Origin = M;
   if (M->Ty) {
     ArrayRef<TypeParamType *> From = M->RecvTParams;

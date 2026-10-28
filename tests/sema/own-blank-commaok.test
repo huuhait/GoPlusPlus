@@ -1,4 +1,4 @@
-// RUN: %gopp check %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error: %s
+// RUN: %gopp check %s 2>&1 | FileCheck --allow-empty "--implicit-check-not=error[E" %s
 // OWN-R3a: the blank identifier keeps nothing, so `_, ok := m[k]` and
 // `var _ = m[k]` take no ownership of the value.
 package main

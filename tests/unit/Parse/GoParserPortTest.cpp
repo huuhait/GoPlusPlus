@@ -289,6 +289,7 @@ TEST(GoParserPort, Invalid) {
     SCOPED_TRACE(I.Src);
     ParseOptions Go; // Go rejects type parameters on methods (Go++ GEN-6)
     Go.AllowGenericMethods = false;
+    Go.AllowNamespaceTypes = false;
     Parsed P(I.Src, Go);
     std::vector<std::string> Errs = P.errors();
     ASSERT_FALSE(Errs.empty()) << "no error reported";

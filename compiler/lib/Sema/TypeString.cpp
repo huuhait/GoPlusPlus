@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "gopp/Sema/Foreign.h"
 #include "gopp/Sema/Types.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -126,6 +127,14 @@ public:
     }
     case Type::Kind::Named: {
       auto *N = llvm::cast<NamedType>(T);
+      // A C/C++ type is spelled by its header scope (D3.7).
+      if (N->Obj && N->Obj->Pkg && N->Obj->Pkg->Foreign) {
+        std::string D = N->Obj->Pkg->Foreign->describe(N);
+        if (!D.empty()) {
+          OS << D;
+          break;
+        }
+      }
       if (N->Obj) {
         if (N->Obj->Pkg && N->Obj->Pkg != Qual)
           OS << N->Obj->Pkg->Name << '.';

@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule SLC-6: `s = s[i:j]` on the same owned slice shrinks it in place; a
 // string has no in-place re-slice.
 package main
@@ -21,7 +21,7 @@ func positive(move xs []string) []string {
 
 func negative() {
 	s := "abc"
-	// CHECK: [[@LINE+1]]:6: error: cannot use s[1:] (value of type ref string) as string value in assignment: a ref is not an owning value: write string(s[1:]) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use s[1:] (value of type ref string) as string value in assignment: a ref is not an owning value: write string(s[1:]) to copy (TYP-2)
 	s = s[1:]
 	_ = s
 }

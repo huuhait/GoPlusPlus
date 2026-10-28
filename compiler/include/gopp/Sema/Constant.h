@@ -105,6 +105,18 @@ public:
   static bool parse(llvm::StringRef Text, Real &Out);
 
   bool isRat() const { return Rat; }
+  /// The exact representation, for serialization (Serialize.h): Num / Den
+  /// when isRat(), else bigValue(). fromRat and fromBig are the inverses.
+  const llvm::APInt &ratNum() const { return Num; }
+  const llvm::APInt &ratDen() const { return Den; }
+  const BigFloat &bigValue() const { return F; }
+  static Real fromRat(llvm::APInt Num, llvm::APInt Den) {
+    Real R;
+    R.Num = std::move(Num);
+    R.Den = std::move(Den);
+    return R;
+  }
+  static Real fromBig(const BigFloat &F) { return big(F); }
   bool isZero() const { return Rat ? Num.isZero() : F.isZero(); }
   int sign() const;
   bool isInt() const;

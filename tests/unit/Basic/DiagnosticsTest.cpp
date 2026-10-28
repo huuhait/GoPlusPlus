@@ -164,7 +164,7 @@ TEST(Diagnostics, ErrorLimit) {
                      "f.gopp:1:1: error: e1\n"
                      "    1 | a\n"
                      "      | ^\n"
-                     "error: too many errors\n");
+                     "error[E0001]: too many errors\n");
 }
 
 TEST(Diagnostics, WarningsAreNotLimited) {
@@ -291,6 +291,62 @@ TEST(DiagnosticTable, NamesAreUniqueAndMatchTheSeverity) {
   }
 }
 
+TEST(DiagnosticTable, EveryEntryHasItsOwnCode) {
+  std::set<unsigned> Codes;
+  for (unsigned I = 0; I < diag::NUM_DIAGS; ++I) {
+    auto ID = static_cast<diag::ID>(I);
+    std::string Name = getDiagName(ID).str();
+    if (ID == diag::custom) {
+      EXPECT_EQ(getDiagCode(ID), 0u);
+      EXPECT_EQ(getDiagCodeString(ID), "");
+      EXPECT_EQ(lookupDiagCode("E0000"), diag::NUM_DIAGS);
+      continue;
+    }
+    unsigned C = getDiagCode(ID);
+    EXPECT_NE(C, 0u) << Name;
+    EXPECT_TRUE(Codes.insert(C).second) << Name << " shares E" << C;
+    std::string S = getDiagCodeString(ID);
+    EXPECT_EQ(S.size(), 5u) << Name;
+    EXPECT_EQ(lookupDiagCode(S), ID) << Name;
+  }
+  EXPECT_EQ(getDiagCodeString(diag::err_too_many_errors), "E0001");
+  EXPECT_EQ(lookupDiagCode("e1"), diag::err_too_many_errors);
+  EXPECT_EQ(lookupDiagCode("1"), diag::err_too_many_errors);
+  EXPECT_EQ(lookupDiagCode("E99999"), diag::NUM_DIAGS);
+  EXPECT_EQ(lookupDiagCode("Eabc"), diag::NUM_DIAGS);
+  EXPECT_EQ(lookupDiagCode(""), diag::NUM_DIAGS);
+}
+
+TEST(Diagnostics, CodeInTextAndJSON) {
+  TextFixture T("x := 1\n");
+  T.Diags.report(T.at(0), diag::err_too_many_errors);
+  T.Diags.report(T.at(0), Severity::Error, "free text");
+  EXPECT_NE(T.str().find("error[E0001]: too many errors"), std::string::npos)
+      << T.str();
+  // A message given as a string has no code.
+  EXPECT_NE(T.str().find("error: free text"), std::string::npos) << T.str();
+
+  SourceManager SM;
+  std::string Out;
+  llvm::raw_string_ostream OS(Out);
+  JSONDiagnosticPrinter P(OS, SM);
+  Diagnostic D;
+  D.ID = diag::err_too_many_errors;
+  D.Message = "too many errors";
+  P.handleDiagnostic(D);
+  Diagnostic C;
+  C.ID = diag::custom;
+  C.Message = "x";
+  P.handleDiagnostic(C);
+  OS.flush();
+  EXPECT_NE(Out.find("\"id\":\"err_too_many_errors\",\"code\":\"E0001\""),
+            std::string::npos)
+      << Out;
+  // custom has no code field.
+  EXPECT_NE(Out.find("\"id\":\"custom\",\"message\":\"x\""), std::string::npos)
+      << Out;
+}
+
 TEST(DiagnosticTable, FormatFillsPlaceholders) {
   EXPECT_EQ(formatDiagnostic("expected %0, found %1", {"';'", "'}'"}),
             "expected ';', found '}'");
@@ -306,14 +362,15 @@ TEST(Diagnostics, TableDiagnosticWithArgumentsAndNote) {
   T.Diags.report(T.at(8), diag::err_macro_args_mismatched_expected)
           .note(T.at(6), diag::note_to_match_this, {"["})
       << ")" << "]";
-  EXPECT_EQ(T.str(),
-            "f.gopp:1:9: error: mismatched ')' in macro arguments, expected "
-            "']'\n"
-            "    1 | #M(a, [b)\n"
-            "      |         ^\n"
-            "f.gopp:1:7: note: to match this '['\n"
-            "    1 | #M(a, [b)\n"
-            "      |       ^\n");
+  EXPECT_EQ(
+      T.str(),
+      "f.gopp:1:9: error[E0062]: mismatched ')' in macro arguments, expected "
+      "']'\n"
+      "    1 | #M(a, [b)\n"
+      "      |         ^\n"
+      "f.gopp:1:7: note: to match this '['\n"
+      "    1 | #M(a, [b)\n"
+      "      |       ^\n");
 }
 
 TEST(Diagnostics, JSONNamesTheDiagnosticAndItsNotes) {

@@ -22,6 +22,7 @@
 #define GOPP_SEMA_LOADER_H
 
 #include "gopp/Parse/Parser.h"
+#include "gopp/Sema/Foreign.h"
 #include "gopp/Sema/Sema.h"
 
 #include <map>
@@ -46,40 +47,6 @@ struct LoadOptions {
   bool IncludeTests = false;
   /// Turn the parser's Go++ language rules off (for Go sources).
   bool LanguageRules = true;
-};
-
-/// Provides the packages made from C/C++ headers (P03.09).
-class ForeignProvider {
-public:
-  virtual ~ForeignProvider() = default;
-  /// The package for the header path (e.g. `<vector>`), or null with Error.
-  virtual Package *header(llvm::StringRef Path, Arena &Mem,
-                          std::string &Error) = 0;
-};
-
-/// A ForeignScope with objects added by hand, for tests.
-class MockForeignScope : public ForeignScope {
-public:
-  Object *lookup(llvm::StringRef Name) override {
-    auto It = Objs.find(Name);
-    return It == Objs.end() ? nullptr : It->second;
-  }
-  void add(Object *O) { Objs[O->Name] = O; }
-
-private:
-  llvm::StringMap<Object *> Objs;
-};
-
-/// Makes foreign packages with a MockForeignScope per header.
-class MockForeignProvider : public ForeignProvider {
-public:
-  Package *header(llvm::StringRef Path, Arena &Mem,
-                  std::string &Error) override;
-  /// The scope of a header (created on demand), to add objects to.
-  MockForeignScope &scopeOf(llvm::StringRef Path);
-
-private:
-  std::map<std::string, std::unique_ptr<MockForeignScope>> Scopes;
 };
 
 class Loader : public Importer {

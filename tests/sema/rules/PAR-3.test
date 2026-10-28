@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule PAR-3: no &param on a borrowed owning parameter, or on a part of it
 // held by value (`&param.Buf`, `param.Buf.Reset()`); take a *T parameter.
 package main
@@ -19,10 +19,10 @@ func positive(d *D, n int) (*D, int) {
 }
 
 func negative(d D) {
-	// CHECK: [[@LINE+1]]:6: error: cannot take the address of d: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of d: it is a borrowed variable (OWN-R3b)
 	_ = &d
-	// CHECK: [[@LINE+1]]:6: error: cannot take the address of d.Buf: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of d.Buf: it is a borrowed variable (OWN-R3b)
 	_ = &d.Buf
-	// CHECK: [[@LINE+1]]:2: error: cannot call pointer method Reset on d.Buf: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot call pointer method Reset on d.Buf: it is a borrowed variable (OWN-R3b)
 	d.Buf.Reset()
 }

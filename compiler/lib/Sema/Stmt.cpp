@@ -63,13 +63,19 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   E.Results = Results;
   E.FuncId = Body;
   E.Pos = SourceLoc();
+  if (Sig && Sig->Fails)
+    E.FailsErr = newParam("", Ctx.errorType(), Body->getBegin());
   size_t Top = Delayed.size();
-  // Parameters belong to this function.
+  // Parameters belong to this function. The parameters of a declared function
+  // are marked in phase 1 (they are shared with the other body checkers, so a
+  // body must not write them); those of a function literal are private.
   for (Var *V : Params)
-    V->FuncOwner = Body;
+    if (V->FuncOwner != Body)
+      V->FuncOwner = Body;
   for (Var *V : Results)
-    V->FuncOwner = Body;
-  if (Recv)
+    if (V->FuncOwner != Body)
+      V->FuncOwner = Body;
+  if (Recv && Recv->FuncOwner != Body)
     Recv->FuncOwner = Body;
   stmtList(0, Body->List);
   if (E.HasLabel)
@@ -173,7 +179,9 @@ void Checker::suspendedCall(const char *What, const ast::Expr *Call) {
     return;
   }
   Operand X;
+  (What[0] == 'g' ? GoCall : DeferCall) = C;
   ExprKind K = rawExpr(X, Call, nullptr, false);
+  (What[0] == 'g' ? GoCall : DeferCall) = nullptr;
   const char *Msg = nullptr;
   switch (K) {
   case ExprKind::Conversion:
@@ -185,7 +193,7 @@ void Checker::suspendedCall(const char *What, const ast::Expr *Call) {
   case ExprKind::Statement:
     return;
   }
-  err(X, diag::custom, {std::string(What) + " " + Msg + " " + str(X)});
+  err(X, diag::err_sema_stmt, {std::string(What) + " " + Msg + " " + str(X)});
 }
 
 void Checker::stmt(unsigned Ctx, const Stmt *S0) {
@@ -223,7 +231,7 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
         return;
       Msg = "is not used";
     }
-    err(X, diag::custom, {str(X) + " " + Msg});
+    err(X, diag::err_sema_stmt, {str(X) + " " + Msg});
     return;
   }
   case K::SendStmt: {
@@ -270,7 +278,7 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
       return;
     }
     if (AS->Lhs.size() != 1 || AS->Rhs.size() != 1) {
-      err(AS->OpLoc, diag::custom,
+      err(AS->OpLoc, diag::err_sema_stmt,
           {"assignment operation requires single-valued expressions"});
       return;
     }
@@ -315,7 +323,7 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
       }
       break;
     default:
-      err(S0, diag::custom, {"invalid goto"});
+      err(S0, diag::err_sema_stmt, {"invalid goto"});
     }
     return;
   }
@@ -341,7 +349,7 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
     rangeStmt(Inner | BreakOk | ContinueOk, cast<RangeStmt>(S0));
     return;
   default:
-    err(S0, diag::custom, {"invalid statement"});
+    err(S0, diag::err_sema_stmt, {"invalid statement"});
   }
 }
 
@@ -361,7 +369,8 @@ void Checker::ifStmt(unsigned Ctx, const IfStmt *S0) {
   Operand X;
   expr(X, S0->Cond);
   if (X.M != Mode::Invalid && !allBoolean(X.Ty))
-    err(S0->Cond, diag::custom, {"non-boolean condition in if statement"});
+    err(S0->Cond, diag::err_sema_stmt,
+        {"non-boolean condition in if statement"});
   blockStmt(Ctx, S0->Then);
   if (S0->Else)
     stmt(Ctx, S0->Else);
@@ -375,11 +384,12 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
     Operand X;
     expr(X, S0->Cond);
     if (X.M != Mode::Invalid && !allBoolean(X.Ty))
-      err(S0->Cond, diag::custom, {"non-boolean condition in for statement"});
+      err(S0->Cond, diag::err_sema_stmt,
+          {"non-boolean condition in for statement"});
   }
   if (S0->Post) {
     if (auto *AS = dyn_cast<AssignStmt>(S0->Post); AS && AS->Op == tok::define)
-      err(S0->Post, diag::custom,
+      err(S0->Post, diag::err_sema_stmt,
           {"cannot declare in post statement of for loop"});
     simpleStmt(S0->Post);
   }
@@ -402,6 +412,10 @@ void Checker::returnStmt(const ReturnStmt *S0) {
     return;
   }
   if (!S0->Results.empty()) {
+    if (E.FailsErr) {
+      failsReturn(S0);
+      return;
+    }
     if (Res.empty()) {
       unsigned B = NumErrors;
       useExprs(S0->Results);
@@ -427,6 +441,68 @@ void Checker::returnStmt(const ReturnStmt *S0) {
     err(S0, diag::err_not_enough_arguments_return,
         {"()", typesSummary(Want, false, false)});
   }
+}
+
+/// `return` in a `!` function (ERR-3): the operands are the declared results
+/// (the error is nil), or the declared results plus the error (a failure). A
+/// single call may supply either list. The operand count decides, and it is
+/// never ambiguous because a `!` function cannot declare `error` last.
+void Checker::failsReturn(const ReturnStmt *S0) {
+  ArrayRef<Var *> Res = E.Results;
+  size_t N = Res.size(), R = S0->Results.size();
+  SmallVector<Var *, 4> Ext(Res.begin(), Res.end());
+  Ext.push_back(E.FailsErr);
+  // D3.6: a wrong count names both lists the function accepts.
+  auto Mismatch = [&](ArrayRef<Type *> Have, SourceLoc At) {
+    SmallVector<Type *, 4> Want;
+    for (Var *V : Res)
+      Want.push_back(V->Ty);
+    std::string Plain = typesSummary(Want, false, false);
+    Want.push_back(Ctx.errorType());
+    err(At, diag::err_bang_return_count,
+        {typesSummary(Have, false, false), Plain,
+         typesSummary(Want, false, false)});
+  };
+  if (R == 1 && isa<CallExpr>(unparen(S0->Results[0]))) {
+    // `return g()`: g supplies N values (success) or N+1 (failure).
+    SmallVector<Operand, 4> Rhs;
+    multiExpr(Rhs, S0->Results[0], false, nullptr);
+    if (Rhs.empty() || Rhs[0].M == Mode::Invalid)
+      return;
+    if (Rhs.size() == N || Rhs.size() == N + 1) {
+      ArrayRef<Var *> Lhs = Rhs.size() == N ? Res : ArrayRef<Var *>(Ext);
+      for (size_t K = 0; K < Lhs.size(); ++K)
+        initVar(Lhs[K], Rhs[K], "return statement");
+      if (own() && Rhs.size() == 1)
+        checkReturnRef(S0->Results[0], Lhs[0]->Ty);
+      return;
+    }
+    SmallVector<Type *, 4> Have;
+    for (const Operand &O : Rhs)
+      Have.push_back(O.Ty);
+    Mismatch(Have, Rhs.size() > N + 1 ? Rhs[N + 1].pos() : Rhs.back().pos());
+    return;
+  }
+  if (R == N || R == N + 1) {
+    ArrayRef<Var *> Lhs = R == N ? Res : ArrayRef<Var *>(Ext);
+    initVars(Lhs, S0->Results, S0);
+    if (own())
+      for (size_t K = 0; K < R; ++K)
+        checkReturnRef(S0->Results[K], Lhs[K]->Ty);
+    return;
+  }
+  // A wrong count: the operands report their own errors first.
+  unsigned Before = NumErrors;
+  SmallVector<Type *, 4> Have;
+  for (const ast::Expr *Ex : S0->Results) {
+    SmallVector<Operand, 4> Ops;
+    multiExpr(Ops, Ex, false, nullptr);
+    for (const Operand &O : Ops)
+      Have.push_back(O.Ty);
+  }
+  if (Before == NumErrors)
+    Mismatch(Have,
+             (R > N + 1 ? S0->Results[N + 1] : S0->Results.back())->getBegin());
 }
 
 //===----------------------------------------------------------------------===//
@@ -498,7 +574,7 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
   for (size_t K = 0; K < Clauses.size(); ++K) {
     auto *CC = dyn_cast<CaseClause>(Clauses[K]);
     if (!CC) {
-      err(Clauses[K], diag::custom, {"invalid case clause"});
+      err(Clauses[K], diag::err_sema_stmt, {"invalid case clause"});
       continue;
     }
     if (CC->IsDefault) {
@@ -519,7 +595,7 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
         if (V.M == Mode::Invalid)
           continue;
         if (!allBoolean(V.Ty)) {
-          err(Ex, diag::custom,
+          err(Ex, diag::err_sema_stmt,
               {"invalid case " + str(Ex) + " in switch (mismatched types " +
                str(V.Ty) + " and bool)"});
         } else {
@@ -562,7 +638,7 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
   }
   if (Lhs) {
     if (name(Lhs) == "_") {
-      err(Lhs, diag::custom, {"no new variable on left side of :="});
+      err(Lhs, diag::err_sema_stmt, {"no new variable on left side of :="});
       Lhs = nullptr;
     } else {
       recordDef(Lhs, nullptr);
@@ -575,7 +651,7 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
     expr(X, Guard->X);
     if (X.M != Mode::Invalid) {
       if (isTypeParam(X.Ty))
-        err(X, diag::custom,
+        err(X, diag::err_sema_stmt,
             {"cannot use type switch on type parameter value " + str(X)});
       else if (isInterface(X.Ty)) {
         SX = X;
@@ -841,18 +917,19 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
     RT = rangeKeyVal(*this, X.Ty);
     IsInt = RT.IsInt;
     if (!RT.Ok && !RT.Cause.empty())
-      err(X, diag::custom, {"cannot range over " + str(X) + ": " + RT.Cause});
+      err(X, diag::err_sema_stmt,
+          {"cannot range over " + str(X) + ": " + RT.Cause});
     else if (!RT.Ok)
       err(X, diag::err_range_cannot, {str(X)});
     else if (RT.IsFunc && ((!RT.Key && SKey) || (!RT.Val && SValue))) {
       if (!RT.Key)
-        err(SKey, diag::custom,
+        err(SKey, diag::err_sema_stmt,
             {"range over " + str(X) + " permits no iteration variables"});
       else
-        err(SValue, diag::custom,
+        err(SValue, diag::err_sema_stmt,
             {"range over " + str(X) + " permits only one iteration variable"});
     } else if (SValue && !RT.Val)
-      err(SValue, diag::custom,
+      err(SValue, diag::err_sema_stmt,
           {"range over " + str(X) + " permits only one iteration variable"});
     Key = RT.Key;
     Val = RT.Val;
@@ -906,7 +983,7 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
         if (name(Id) != "_")
           Vars.push_back(Obj);
       } else {
-        err(Lhs[K], diag::custom, {"cannot declare " + str(Lhs[K])});
+        err(Lhs[K], diag::err_sema_stmt, {"cannot declare " + str(Lhs[K])});
         Obj = newVar("_", nullptr, Lhs[K]->getBegin());
       }
       Obj->LoopVar = true;
@@ -966,7 +1043,7 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
       if (IsInt) {
         assignVar(Lhs[K], nullptr, &X, "range clause");
         if (X.M != Mode::Invalid && !isInteger(X.Ty))
-          err(Lhs[K], diag::custom,
+          err(Lhs[K], diag::err_sema_stmt,
               {"cannot use iteration variable of type " + str(X.Ty)});
       } else {
         Operand Y;

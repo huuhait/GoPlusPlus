@@ -1,0 +1,65 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not="error[" %s
+// Rule ERR-5 (D1.8, D3.6): `call!(args)` unwraps a call whose last result is
+// an error: the value is the other results. Both sides: the good calls pass,
+// the bad ones (no trailing error, a conversion, a built-in) give a targeted
+// message.
+package main
+
+type myErr struct{}
+
+func (myErr) Error() string { return "x" }
+
+type File struct{}
+
+func (File) Close() error { return nil }
+
+func open(p string) (File, error)        { return File{}, nil }
+func two() (int, string, error)          { return 0, "", nil }
+func onlyErr() error                     { return nil }
+func pair() (int, int)                   { return 1, 2 }
+func gen[T Copy](x T) (T, error)         { return x, nil }
+func fn() func() (int, error)            { return nil }
+func fails!() int                        { return 1 }
+
+type Iface interface{ Get!() string }
+
+func good(i Iface, f func() (int, error)) {
+	var a int = fails!()
+	var f2 File = open!("p")
+	b, c := two!()
+	onlyErr!()
+	d := gen[int]!(3)
+	e := gen!(4)
+	open!("p").Close!()
+	var s string = i.Get!()
+	g := f!()
+	h := fn()!()
+	_, _, _, _, _, _, _, _, _ = a, f2, b, c, d, e, s, g, h
+	// `!` on a call used as a statement, in a go and a defer.
+	defer onlyErr!()
+	go onlyErr!()
+}
+
+func bad(i Iface) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use ! on pair: it has no trailing error result
+	_, _ = pair!()
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use ! on a conversion or built-in int
+	_ = int!(3)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use ! on a conversion or built-in len
+	_ = len!("s")
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use ! on a conversion or built-in append
+	_ = append!([]int{}, 1)
+	// `!` removes the error, so two results with it are not one value.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: assignment mismatch: 1 variable but two returns 2 values
+	x := two!()
+	_ = x
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: assignment mismatch: 2 variables but open returns 1 value
+	y, z := open!("p")
+	_, _ = y, z
+	// A conversion to a named type.
+	type MyInt int
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E{{[0-9]+}}]: cannot use ! on a conversion or built-in MyInt
+	_ = MyInt!(3)
+}
+
+func main() {}

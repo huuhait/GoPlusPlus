@@ -1,0 +1,20 @@
+// R1: `a.b.c` as a type name is Go++ only (ADR-0010 Q4). Go mode (`--go`) gives
+// Go's syntax error; Go++ mode parses it (Sema then judges the names), and a
+// plain `pkg.Name` works in both.
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp %s %t/a.gopp
+// RUN: not %gopp check --go %t/a.gopp 2>&1 | FileCheck --check-prefix=GO %s
+// RUN: not %gopp check %t/a.gopp 2>&1 | FileCheck --check-prefix=GOPP %s
+// GO: error[E0026]: expected ';', found '.'
+// GO-NOT: is not a type
+// GOPP-NOT: expected ';'
+// GOPP: error[E0137]: unsafe.Pointer.Foo is not a type
+package main
+
+import "unsafe"
+
+var ok unsafe.Pointer
+
+var a unsafe.Pointer.Foo
+
+func main() { _ = ok }

@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-R4: `p = append(p, ...)` moves p implicitly (the same place
 // receives the result); anywhere else append(move(p), ...) or
 // append(p.Clone(), ...). Spread and copy with non-trivial elements need move
@@ -22,12 +22,12 @@ func positive(x *X, move a []string, move b []string, dst []string, src []string
 }
 
 func negative(x *X, move a []string, b []string, dst []string) {
-	// CHECK: [[@LINE+1]]:14: error: append to x.items needs ownership: write append(x.items.Clone(), ...) or append(move(x.items), ...) (OWN-R4)
+	// CHECK: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: append to x.items needs ownership: write append(x.items.Clone(), ...) or append(move(x.items), ...) (OWN-R4)
 	y := append(x.items, "v")
 	_ = y
-	// CHECK: [[@LINE+1]]:16: error: append(a, b...) with non-trivial elements needs move(b) or b.Clone() on the source (OWN-R4)
+	// CHECK: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: append(a, b...) with non-trivial elements needs move(b) or b.Clone() on the source (OWN-R4)
 	a = append(a, b...)
-	// CHECK: [[@LINE+1]]:12: error: copy(dst, src) with non-trivial elements needs src.Clone() (OWN-R4)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: copy(dst, src) with non-trivial elements needs src.Clone() (OWN-R4)
 	copy(dst, b)
 	_ = a
 }

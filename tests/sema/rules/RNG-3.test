@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule RNG-3: inside a range body, a visible statement that can reallocate
 // the ranged slice, map or owned string is an error: append, assignment,
 // in-place re-slice, a map write that may insert, clear, +=. Writing the
@@ -23,31 +23,31 @@ func positive(xs []int, m map[string]int) {
 func negative(m map[string]int, mi map[int]int) {
 	xs := []string{"a"}
 	for range xs {
-		// CHECK: [[@LINE+1]]:3: error: cannot assign to xs inside a range over it: it can reallocate the ranged collection (RNG-3)
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to xs inside a range over it: it can reallocate the ranged collection (RNG-3)
 		xs = append(xs, "b")
-		// CHECK: [[@LINE+1]]:3: error: cannot assign to xs inside a range over it: it can reallocate the ranged collection (RNG-3)
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to xs inside a range over it: it can reallocate the ranged collection (RNG-3)
 		xs = nil
 	}
 	for k := range m {
-		// CHECK: [[@LINE+1]]:3: error: cannot write m[k + "!"] inside a range over m: it may insert a key; only m[k] with the range key k writes the current entry (RNG-3)
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot write m[k + "!"] inside a range over m: it may insert a key; only m[k] with the range key k writes the current entry (RNG-3)
 		m[k+"!"] = 1
-		// CHECK: [[@LINE+1]]:9: error: cannot clear m inside a range over it: it can reallocate the ranged collection (RNG-3)
+		// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot clear m inside a range over it: it can reallocate the ranged collection (RNG-3)
 		clear(m)
 	}
 	for k := range mi {
 		mi[k] = 1
 		k++
-		// CHECK: [[@LINE+1]]:3: error: cannot write mi[k] inside a range over mi: it may insert a key; only mi[k] with the range key k writes the current entry (RNG-3)
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot write mi[k] inside a range over mi: it may insert a key; only mi[k] with the range key k writes the current entry (RNG-3)
 		mi[k] = 2
 	}
 	s := "abc"
 	for range s {
-		// CHECK: [[@LINE+1]]:3: error: cannot grow s inside a range over it: it can reallocate the ranged collection (RNG-3)
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot grow s inside a range over it: it can reallocate the ranged collection (RNG-3)
 		s += "x"
 	}
 	ys := []string{"a", "b"}
 	for range ys {
-		// CHECK: [[@LINE+1]]:3: error: cannot re-slice ys inside a range over it: it can reallocate the ranged collection (RNG-3)
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot re-slice ys inside a range over it: it can reallocate the ranged collection (RNG-3)
 		ys = ys[1:]
 	}
 }

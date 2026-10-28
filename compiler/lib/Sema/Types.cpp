@@ -135,7 +135,7 @@ TypeContext::TypeContext(bool GoCompat)
   initUniverse(GoCompat);
 }
 
-ArrayRef<Type *> TypeContext::copyTypes(ArrayRef<Type *> Ts) {
+ArrayRef<Type *> TypeContext::copyTypesLocked(ArrayRef<Type *> Ts) {
   if (Ts.empty())
     return {};
   Type **Mem = Alloc.Allocate<Type *>(Ts.size());
@@ -143,23 +143,73 @@ ArrayRef<Type *> TypeContext::copyTypes(ArrayRef<Type *> Ts) {
   return ArrayRef<Type *>(Mem, Ts.size());
 }
 
+ArrayRef<Type *> TypeContext::copyTypes(ArrayRef<Type *> Ts) {
+  std::lock_guard<std::mutex> G(AllocMu);
+  return copyTypesLocked(Ts);
+}
+
 llvm::SmallVector<Func *, 0> *TypeContext::newMethodList() {
-  std::lock_guard<std::recursive_mutex> G(Mu);
+  std::lock_guard<std::mutex> G(AllocMu);
   MethodLists.emplace_back();
   return &MethodLists.back();
 }
 
-#define GOPP_UNIQUE(Set, Cls, ...)                                             \
-  std::lock_guard<std::recursive_mutex> G(Mu);                                 \
+namespace {
+/// Memory in the allocator of a shard (struct fields and the arrays of a
+/// type live next to the type).
+template <class T>
+ArrayRef<T> copyIn(llvm::BumpPtrAllocator &A, ArrayRef<T> Elts) {
+  if (Elts.empty())
+    return {};
+  T *Mem = A.Allocate<T>(Elts.size());
+  std::uninitialized_copy(Elts.begin(), Elts.end(), Mem);
+  return ArrayRef<T>(Mem, Elts.size());
+}
+llvm::StringRef copyIn(llvm::BumpPtrAllocator &A, llvm::StringRef S) {
+  char *Mem = A.Allocate<char>(S.size() + 1);
+  std::copy(S.begin(), S.end(), Mem);
+  Mem[S.size()] = 0;
+  return llvm::StringRef(Mem, S.size());
+}
+} // namespace
+
+/// RULE: a uniqued type must not carry body-specific data. Bodies are checked
+/// in parallel and the first one to create a type owns the object that all the
+/// others get back, so anything stored in it that is not in the profile (a
+/// source position, a name written at one place, the package of an exported
+/// field) would depend on thread timing and could leak into a diagnostic.
+/// Keep such data in the side table (Info::Defs maps the identifier of a
+/// struct field to the field's Var), never in the type. Today that is checked
+/// for every uniqued type: pointers, slices, refs, arrays, maps, channels and
+/// tuples hold types and numbers only; signatures hold no parameter names (they
+/// live in the declaration) and type parameters are fresh per declaration;
+/// instances hold the generic and its arguments; struct fields keep no Pos.
+/// Test: ParallelCheck.UniquedStructsCarryNoBodyData.
+///
+/// Only the one shard the hash selects is locked. A FoldingSet picks its
+/// bucket from the low bits of the same hash, so the shard comes from the high
+/// bits.
+template <class T, class MakeFn>
+T *TypeContext::unique(Table<T> &Tab, const llvm::FoldingSetNodeID &ID,
+                       MakeFn Make) {
+  static_assert((NumShards & (NumShards - 1)) == 0, "a power of two");
+  Shard<T> &Sh = Tab[(ID.ComputeHash() >> 24) & (NumShards - 1)];
+  std::lock_guard<std::mutex> G(Sh.Mu);
+  void *Pos;
+  if (T *Found = Sh.Set.FindNodeOrInsertPos(ID, Pos))
+    return Found;
+  T *N = Make(Sh.Alloc);
+  Sh.Set.InsertNode(N, Pos);
+  return N;
+}
+
+#define GOPP_UNIQUE(Tab, Cls, ...)                                             \
   Cls Probe(__VA_ARGS__);                                                      \
   llvm::FoldingSetNodeID ID;                                                   \
   Probe.Profile(ID);                                                           \
-  void *Pos;                                                                   \
-  if (Cls *Found = Set.FindNodeOrInsertPos(ID, Pos))                           \
-    return Found;                                                              \
-  Cls *N = new (Alloc.Allocate<Cls>()) Cls(Probe);                             \
-  Set.InsertNode(N, Pos);                                                      \
-  return N;
+  return unique(Tab, ID, [&](llvm::BumpPtrAllocator &A) {                      \
+    return new (A.Allocate<Cls>()) Cls(Probe);                                 \
+  });
 
 PointerType *TypeContext::pointer(Type *Elem){
     GOPP_UNIQUE(Pointers, PointerType,
@@ -174,90 +224,78 @@ PointerType *TypeContext::pointer(Type *Elem){
     GOPP_UNIQUE(Chans, ChanType, D, Elem)}
 
 TupleType *TypeContext::tuple(ArrayRef<Type *> Elems) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
   TupleType Probe(Elems);
   llvm::FoldingSetNodeID ID;
   Probe.Profile(ID);
-  void *Pos;
-  if (TupleType *Found = Tuples.FindNodeOrInsertPos(ID, Pos))
-    return Found;
-  TupleType *N = new (Alloc.Allocate<TupleType>()) TupleType(copyTypes(Elems));
-  Tuples.InsertNode(N, Pos);
-  return N;
+  return unique(Tuples, ID, [&](llvm::BumpPtrAllocator &A) {
+    return new (A.Allocate<TupleType>()) TupleType(copyIn(A, Elems));
+  });
 }
 
 SignatureType *TypeContext::signature(TupleType *Params, TupleType *Results,
                                       bool Variadic, bool Fails,
                                       uint64_t MoveMask,
                                       ArrayRef<TypeParamType *> TParams) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
   SignatureType Probe(Params, Results, Variadic, Fails, MoveMask, TParams);
   llvm::FoldingSetNodeID ID;
   Probe.Profile(ID);
-  void *Pos;
-  if (SignatureType *Found = Signatures.FindNodeOrInsertPos(ID, Pos))
-    return Found;
-  ArrayRef<TypeParamType *> TP;
-  if (!TParams.empty()) {
-    TypeParamType **Mem = Alloc.Allocate<TypeParamType *>(TParams.size());
-    std::uninitialized_copy(TParams.begin(), TParams.end(), Mem);
-    TP = ArrayRef<TypeParamType *>(Mem, TParams.size());
-  }
-  SignatureType *N = new (Alloc.Allocate<SignatureType>())
-      SignatureType(Params, Results, Variadic, Fails, MoveMask, TP);
-  Signatures.InsertNode(N, Pos);
-  return N;
+  return unique(Signatures, ID, [&](llvm::BumpPtrAllocator &A) {
+    return new (A.Allocate<SignatureType>()) SignatureType(
+        Params, Results, Variadic, Fails, MoveMask, copyIn(A, TParams));
+  });
 }
 
 StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
-  // Build the fields first (they are needed for the profile); drop them again
-  // from the arena's point of view if an equal struct exists (the memory stays
-  // in the bump allocator, which is acceptable for the rare duplicates).
-  llvm::SmallVector<Var *, 8> Vars;
-  for (const FieldSpec &F : Fields) {
-    Var *V = Objs.make<Var>();
-    V->Name = Objs.copy(F.Name);
-    V->Pkg = F.Pkg;
-    V->Ty = F.Ty;
-    V->IsField = true;
-    V->Embedded = F.Embedded;
-    V->Tag = Objs.copy(F.Tag);
-    V->Pos = F.Pos;
-    Vars.push_back(V);
-  }
-  StructType Probe(Vars);
+  // The profile is computed from the specs (the same as StructType::Profile
+  // of the fields), so that a struct that exists already allocates nothing.
   llvm::FoldingSetNodeID ID;
-  Probe.Profile(ID);
-  void *Pos;
-  if (StructType *Found = Structs.FindNodeOrInsertPos(ID, Pos))
-    return Found;
-  StructType *N = new (Alloc.Allocate<StructType>())
-      StructType(Objs.copy(ArrayRef<Var *>(Vars)));
-  Structs.InsertNode(N, Pos);
-  return N;
+  for (const FieldSpec &F : Fields) {
+    ID.AddString(F.Name);
+    ID.AddPointer(isExportedName(F.Name) ? nullptr : F.Pkg);
+    ID.AddPointer(F.Ty);
+    ID.AddBoolean(F.Embedded);
+    ID.AddString(F.Tag);
+  }
+  return unique(Structs, ID, [&](llvm::BumpPtrAllocator &A) {
+    llvm::SmallVector<Var *, 8> Vars;
+    for (const FieldSpec &F : Fields) {
+      static_assert(std::is_trivially_destructible_v<Var>);
+      Var *V = new (A.Allocate<Var>()) Var();
+      V->Name = copyIn(A, F.Name);
+      // Only what the profile has (see the rule at unique()): the package of
+      // an exported field is not part of the identity, so it is not kept.
+      V->Pkg = isExportedName(F.Name) ? nullptr : F.Pkg;
+      V->Ty = F.Ty;
+      V->IsField = true;
+      V->Embedded = F.Embedded;
+      V->Tag = copyIn(A, F.Tag);
+      Vars.push_back(V);
+    }
+    return new (A.Allocate<StructType>())
+        StructType(copyIn(A, ArrayRef<Var *>(Vars)));
+  });
 }
 
 InterfaceType *TypeContext::newInterface(ArrayRef<Func *> Methods,
                                          ArrayRef<Type *> Embeddeds,
                                          ArrayRef<SourceLoc> EmbedLocs,
                                          bool Implicit) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
+  std::lock_guard<std::mutex> G(AllocMu);
   InterfaceType *I = new (Alloc.Allocate<InterfaceType>()) InterfaceType();
   I->Methods = Objs.copy(Methods);
-  I->Embeddeds = copyTypes(Embeddeds);
+  I->Embeddeds = copyTypesLocked(Embeddeds);
   I->EmbedLocs = Objs.copy(EmbedLocs);
   I->Implicit = Implicit;
   return I;
 }
 
 UnionType *TypeContext::newUnion(ArrayRef<Term> Terms) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
+  std::lock_guard<std::mutex> G(AllocMu);
   return new (Alloc.Allocate<UnionType>()) UnionType(Objs.copy(Terms));
 }
 
 NamedType *TypeContext::newNamed(TypeName *Obj, Type *Underlying) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
+  std::lock_guard<std::mutex> G(AllocMu);
   NamedType *N = new (Alloc.Allocate<NamedType>()) NamedType(Obj);
   N->Underlying = Underlying;
   if (Obj && !Obj->Ty)
@@ -267,7 +305,7 @@ NamedType *TypeContext::newNamed(TypeName *Obj, Type *Underlying) {
 
 TypeParamType *TypeContext::newTypeParam(TypeName *Obj, unsigned Index,
                                          Type *Bound) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
+  std::lock_guard<std::mutex> G(AllocMu);
   TypeParamType *T =
       new (Alloc.Allocate<TypeParamType>()) TypeParamType(Obj, Index);
   T->Bound = Bound;
@@ -277,21 +315,18 @@ TypeParamType *TypeContext::newTypeParam(TypeName *Obj, unsigned Index,
 }
 
 NamedType *TypeContext::instance(NamedType *Orig, ArrayRef<Type *> TArgs) {
-  std::lock_guard<std::recursive_mutex> G(Mu);
   NamedType Probe(Orig->Obj);
   Probe.Orig = Orig;
   Probe.TArgs = TArgs;
   llvm::FoldingSetNodeID ID;
   Probe.Profile(ID);
-  void *Pos;
-  if (NamedType *Found = Instances.FindNodeOrInsertPos(ID, Pos))
-    return Found;
-  NamedType *N = new (Alloc.Allocate<NamedType>()) NamedType(Orig->Obj);
-  N->Orig = Orig;
-  N->TArgs = copyTypes(TArgs);
-  N->Ptr = Orig->Ptr;
-  Instances.InsertNode(N, Pos);
-  return N;
+  return unique(Instances, ID, [&](llvm::BumpPtrAllocator &A) {
+    NamedType *N = new (A.Allocate<NamedType>()) NamedType(Orig->Obj);
+    N->Orig = Orig;
+    N->TArgs = copyIn(A, TArgs);
+    N->Ptr = Orig->Ptr;
+    return N;
+  });
 }
 
 Type *sema::under(Type *T) {

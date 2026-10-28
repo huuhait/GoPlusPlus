@@ -13,14 +13,17 @@
 //     table `Info` keyed by AST node, and the arena that owns the objects.
 //   - Phase 1 (single threaded) collects the package-level objects and checks
 //     their declarations and signatures lazily, with cycle detection (D3.4).
-//     After it the package-level objects and their types are fixed, but not
-//     all package-level state: a body marks an imported package as used
-//     (PkgName::Used). P03.10 must make that write thread safe (an atomic
-//     flag, or a per-body set merged after the bodies).
-//   - Phase 2 checks every function body with a fresh body checker: its own
-//     arena, own side-table fragment, own diagnostics. The diagnostics are
-//     replayed in declaration order, so the output does not depend on the
-//     order or the thread the bodies ran on (P03.10 runs them in parallel).
+//     After it the package-level objects and their types are fixed.
+//   - Phase 2 checks every function body with a fresh body checker, on
+//     CheckOptions::BodyThreads threads (D3.4, P03.10). The checker writes to
+//     its thread's worker: an arena, a side table and a set of the imports it
+//     used (one thread writes straight into the package's table). Each body's
+//     diagnostics are kept apart and replayed in declaration order, so the
+//     output does not depend on the order or the thread the bodies ran on.
+//     A body writes nothing that another body can read: shared state (the
+//     TypeContext, the SourceManager's line tables, the lazily completed
+//     parts of types) is internally locked, and everything else a body writes
+//     is its own.
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,6 +38,10 @@
 
 #include <memory>
 #include <string>
+
+namespace llvm {
+class ThreadPoolInterface;
+}
 
 namespace gopp {
 namespace sema {
@@ -76,6 +83,14 @@ struct Instance {
   Type *Ty = nullptr;
 };
 
+/// What a `call!()` does when the call fails (ERR-6, ERR-11a). Decided by the
+/// innermost enclosing function: GIR lowering (P04) and `gopp vet` read it.
+enum class BangKind : uint8_t {
+  Return,   // the enclosing function can fail: it returns the error
+  Panic,    // anywhere else: panic with errors.MustError
+  DeferSet, // `defer f!()` in a function that can fail: sets the error if nil
+};
+
 /// The typed side table (D3.4): the AST stays immutable.
 struct Info {
   llvm::DenseMap<const ast::Expr *, TypeAndValue> Types;
@@ -84,6 +99,8 @@ struct Info {
   llvm::DenseMap<const ast::Node *, Object *> Implicits;
   llvm::DenseMap<const ast::SelectorExpr *, Selection> Selections;
   llvm::DenseMap<const ast::Expr *, Instance> Instances;
+  /// Every `f!(...)` call that type-checked, and what it does on failure.
+  llvm::DenseMap<const ast::CallExpr *, BangKind> Bangs;
 
   const TypeAndValue *lookup(const ast::Expr *E) const {
     auto It = Types.find(E);
@@ -93,8 +110,8 @@ struct Info {
     const TypeAndValue *TV = lookup(E);
     return TV ? TV->Ty : nullptr;
   }
-  /// Moves all entries of Other into this table.
-  void merge(Info &&Other);
+  /// Adds all entries of the Others (tables of disjoint AST nodes).
+  void merge(llvm::ArrayRef<Info *> Others);
 };
 
 struct CheckOptions {
@@ -105,10 +122,23 @@ struct CheckOptions {
   bool Ownership = true;
   /// Check function bodies (phase 2).
   bool CheckBodies = true;
-  /// Threads for phase 2 (1 = on the calling thread; P03.10 raises this).
+  /// Threads for phase 2: 1 = on the calling thread, 0 = one per core up to
+  /// MaxAutoBodyThreads. The diagnostics and the side table are the same for
+  /// every value (D3.4).
   unsigned BodyThreads = 1;
+  /// The most threads BodyThreads = 0 picks: more threads are slower, because
+  /// new types are created under the type tables' locks (bench/README.md).
+  static constexpr unsigned MaxAutoBodyThreads = 8;
+  /// Packages with fewer bodies than MinBodiesPerThread per extra thread use
+  /// fewer threads: a thread costs more than a few small bodies.
+  unsigned MinBodiesPerThread = 16;
+  /// A pool shared with other work (the build driver's); null: phase 2 makes
+  /// its own pool of BodyThreads threads.
+  llvm::ThreadPoolInterface *Pool = nullptr;
   /// Report unused variables and imports.
   bool ReportUnused = true;
+  /// Run the `gopp vet` lints after checking (P03.12). Findings are warnings.
+  bool Vet = false;
   /// `-lang`-like switch of the conformance suite: language version 1.N for
   /// the checks that depend on it (0 = latest).
   unsigned GoVersion = 0;
@@ -141,6 +171,14 @@ std::unique_ptr<CheckedPackage>
 checkPackage(TypeContext &Ctx, const SourceManager &SM, llvm::StringRef PkgPath,
              llvm::ArrayRef<const ast::File *> Files, Importer &Imp,
              DiagnosticsEngine &Diags, const CheckOptions &Opts = {});
+
+/// The `gopp vet` lints (P03.12), run by checkPackage when CheckOptions::Vet
+/// is set: ref-typed struct fields without `@Ref`, `drop` methods that may
+/// run on a zero value (a heuristic), a `!` that panics outside package main,
+/// and `defer` in a loop body. Reports warnings in source order.
+void vetPackage(const SourceManager &SM, const CheckedPackage &P,
+                llvm::ArrayRef<const ast::File *> Files,
+                DiagnosticsEngine &Diags);
 
 /// Prints the type of every expression and the object of every identifier of
 /// the files, one per line (`gopp check -dump-types`).

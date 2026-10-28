@@ -1,0 +1,42 @@
+// RUN: %gopp explain E0111 | FileCheck --check-prefix=ONE %s
+// RUN: %gopp explain E0314 | FileCheck --check-prefix=FAMILY %s
+// RUN: %gopp explain E0111 E0001 | FileCheck --check-prefix=TWO %s
+// RUN: %gopp explain e111 | FileCheck --check-prefix=ONE %s
+// RUN: not %gopp explain E9999 2>&1 | FileCheck --check-prefix=BAD %s
+// RUN: not %gopp explain 2>&1 | FileCheck --check-prefix=NONE %s
+// RUN: not %gopp explain custom 2>&1 | FileCheck --check-prefix=BAD2 %s
+// RUN: %gopp explain -list | FileCheck --check-prefix=LIST %s
+// RUN: not %gopp check %s 2>&1 | FileCheck --check-prefix=TEXT %s
+// RUN: not %gopp check --check-diag-format=json %s 2>&1 | FileCheck --check-prefix=JSON %s
+// P03.14: `gopp explain E0111` prints the explanation and an example; the text
+// diagnostics show the code (error[E0111]) and the JSON has the code next to
+// the name. Both sides: a known code explains, an unknown one fails.
+package main
+
+func main() {
+	undefinedName()
+}
+
+// ONE: E0111 (err_undefined): error
+// ONE: Message: undefined: %0
+// ONE: Example:
+// ONE: package p
+// ONE: return count
+
+// FAMILY: E0314 (err_sema_assign): error
+// FAMILY-NOT: Message: %0
+// FAMILY: Message: varies; this code covers a family of messages
+// FAMILY: cannot use "text" (untyped string constant) as int value
+
+// TWO: E0111 (err_undefined): error
+// TWO: E0001 (err_too_many_errors): error
+
+// BAD: gopp: error: explain: E9999 is not an error code
+// NONE: gopp: error: explain: give an error code
+// BAD2: gopp: error: explain: custom is not an error code
+
+// LIST: E0001 err_too_many_errors  too many errors
+// LIST: E0111 err_undefined  undefined: %0
+
+// TEXT: explain.test:{{[0-9]+}}:2: error[E0111]: undefined: undefinedName
+// JSON: {"severity":"error","id":"err_undefined","code":"E0111","message":"undefined: undefinedName"

@@ -1,4 +1,4 @@
-// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error: %s
+// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --allow-empty "--implicit-check-not=error[E" %s
 // OWN-P6, TYP-2: a Unique[T] held in a place converts to *T as a borrow;
 // ownership is needed only when the destination type owns.
 package main

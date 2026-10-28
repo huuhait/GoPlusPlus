@@ -105,8 +105,10 @@ uint32_t SourceManager::getFileOffset(SourceLoc Loc) const {
 }
 
 void SourceManager::buildLines(const FileEntry &E) const {
-  if (E.LinesBuilt)
-    return;
+  std::call_once(*E.LinesOnce, [&E] { buildLinesOnce(E); });
+}
+
+void SourceManager::buildLinesOnce(const FileEntry &E) {
   E.LineStarts.clear();
   E.LineStarts.push_back(0);
   llvm::StringRef Data = E.Buf->getBuffer();
@@ -119,7 +121,6 @@ void SourceManager::buildLines(const FileEntry &E) const {
     P = static_cast<const char *>(NL) + 1;
     E.LineStarts.push_back(static_cast<uint32_t>(P - Begin));
   }
-  E.LinesBuilt = true;
 }
 
 PresumedLoc SourceManager::getPresumedLoc(SourceLoc Loc) const {

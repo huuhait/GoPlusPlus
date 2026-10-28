@@ -1,20 +1,20 @@
 // RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file.
-// CHECK:{{.*}}recovery.test:23:7: error: expected operand, found '='
+// CHECK:{{.*}}recovery.test:23:7: error{{\[E[0-9]+\]}}: expected operand, found '='
 // CHECK-NEXT:   23 |     x := = 1
 // CHECK-NEXT:      |          ^
-// CHECK-NEXT:{{.*}}recovery.test:25:4: error: ':=' is not allowed in a var declaration: use '='
+// CHECK-NEXT:{{.*}}recovery.test:25:4: error{{\[E[0-9]+\]}}: ':=' is not allowed in a var declaration: use '='
 // CHECK-NEXT:   25 |     z := 3
 // CHECK-NEXT:      |       ^~
 // CHECK-NEXT:      |       =
-// CHECK-NEXT:{{.*}}recovery.test:27:1: error: expected operand, found '}'
+// CHECK-NEXT:{{.*}}recovery.test:27:1: error{{\[E[0-9]+\]}}: expected operand, found '}'
 // CHECK-NEXT:   27 | }
 // CHECK-NEXT:      | ^
-// CHECK-NEXT:{{.*}}recovery.test:29:14: error: expected ';', found b
+// CHECK-NEXT:{{.*}}recovery.test:29:14: error{{\[E[0-9]+\]}}: expected ';', found b
 // CHECK-NEXT:   29 | func g() { a b }
 // CHECK-NEXT:      |              ^
-// CHECK-NEXT:{{.*}}recovery.test:31:23: error: expected ';', found b
+// CHECK-NEXT:{{.*}}recovery.test:31:23: error{{\[E[0-9]+\]}}: expected ';', found b
 // CHECK-NEXT:   31 | type T struct { a int b }
 // CHECK-NEXT:      |                       ^
 package p

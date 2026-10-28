@@ -46,7 +46,7 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
   case Mode::CommaErr:
     break;
   default:
-    err(X, diag::custom,
+    err(X, diag::err_sema_assign,
         {"cannot assign " + str(X) + " to " + (T ? str(T) : std::string("_")) +
          " in " + std::string(Context)});
     X.M = Mode::Invalid;
@@ -72,7 +72,7 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
         Msg += " (truncated)";
       else if (Code == ReprCode::Overflow)
         Msg += " (overflows)";
-      err(X, diag::custom, {Msg});
+      err(X, diag::err_sema_assign, {Msg});
       X.M = Mode::Invalid;
       return;
     }
@@ -87,7 +87,7 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
   }
   if (auto *Sg = dyn_cast_or_null<SignatureType>(under(X.Ty)))
     if (!Sg->TParams.empty()) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_assign,
           {"cannot use generic function " + str(X.E) +
            " without instantiation in " + std::string(Context)});
       X.M = Mode::Invalid;
@@ -101,7 +101,7 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
                       std::string(Context);
     if (!Cause.empty())
       Msg += ": " + Cause;
-    err(X, diag::custom, {Msg});
+    err(X, diag::err_sema_assign, {Msg});
     X.M = Mode::Invalid;
   }
 }
@@ -214,7 +214,7 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
       // x.f = v with x a non-addressable map element / call result.
       const TypeAndValue *TV = I.lookup(Sel->X);
       if (TV && TV->M == Mode::MapIndex) {
-        err(Lhs, diag::custom,
+        err(Lhs, diag::err_sema_assign,
             {"cannot assign to struct field " + str(Lhs) + " in map"});
         return invalid();
       }
@@ -472,7 +472,7 @@ void Checker::shortVarDecl(SourceLoc Pos, ArrayRef<ast::Expr *> Lhs,
     StringRef N = name(Id);
     if (N != "_") {
       if (!Seen.insert(N).second) {
-        err(Lhs[K], diag::custom,
+        err(Lhs[K], diag::err_sema_assign,
             {std::string(N) + " repeated on left side of :="});
         HasErr = true;
         continue;

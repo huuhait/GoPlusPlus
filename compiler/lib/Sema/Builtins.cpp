@@ -209,7 +209,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       Type *Elem = sliceElem(X, Why);
       if (!Elem) {
         if (isValid(under(S0)))
-          err(X, diag::custom, {"invalid append: " + Why});
+          err(X, diag::err_sema_builtin, {"invalid append: " + Why});
         return false;
       }
       Type *Ps[] = {S0, Ctx.slice(Elem)};
@@ -334,7 +334,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         return false;
       if (isa<sema::MapType>(U) || isa<SliceType>(U))
         return true;
-      err(X, diag::custom,
+      err(X, diag::err_sema_builtin,
           {"invalid argument: cannot clear " + str(X) +
            ": argument must be (or constrained by) map or slice"});
       return false;
@@ -350,12 +350,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     bool Ok = underIs(X.Ty, [&](Type *U) {
       auto *Ch = dyn_cast_or_null<sema::ChanType>(U);
       if (!Ch) {
-        err(X, diag::custom,
+        err(X, diag::err_sema_builtin,
             {"invalid operation: cannot close non-channel " + str(X)});
         return false;
       }
       if (Ch->D == sema::ChanType::Recv) {
-        err(X, diag::custom,
+        err(X, diag::err_sema_builtin,
             {"invalid operation: cannot close receive-only channel " + str(X)});
         return false;
       }
@@ -410,12 +410,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
                (B->BK == BasicKind::Float32 || B->BK == BasicKind::Float64);
       });
       if (!Ok) {
-        err(X, diag::custom,
+        err(X, diag::err_sema_builtin,
             {"invalid argument: arguments have type " + str(X.Ty) +
              ", expected floating-point"});
         return false;
       }
-      err(X, diag::custom,
+      err(X, diag::err_sema_builtin,
           {str(X) + " not supported as argument to built-in complex for go1.18 "
                     "(see go.dev/issue/50937)"});
       X.M = Mode::Value;
@@ -438,7 +438,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       }
     }
     if (!Res) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_builtin,
           {"invalid argument: arguments have type " + str(X.Ty) +
            ", expected floating-point"});
       return false;
@@ -472,12 +472,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
                      B->BK == BasicKind::Complex128);
       });
       if (!Ok) {
-        err(X, diag::custom,
+        err(X, diag::err_sema_builtin,
             {"invalid argument: argument has type " + str(X.Ty) +
              ", expected complex type"});
         return false;
       }
-      err(X, diag::custom,
+      err(X, diag::err_sema_builtin,
           {str(X) + " not supported as argument to built-in " +
            (Id == BuiltinId::Real ? "real" : "imag") +
            " for go1.18 (see go.dev/issue/50937)"});
@@ -501,7 +501,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       }
     }
     if (!Res) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_builtin,
           {"invalid argument: argument has type " + str(X.Ty) +
            ", expected complex type"});
       return false;
@@ -537,19 +537,19 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       std::string Why;
       Type *Dst = sliceElem(X, Why);
       if (!Dst) {
-        err(X, diag::custom, {"invalid copy: " + Why});
+        err(X, diag::err_sema_builtin, {"invalid copy: " + Why});
         return false;
       }
       Src = sliceElem(Y, Why);
       if (!Src) {
         if (!allString(Y.Ty)) {
-          err(Y, diag::custom, {"invalid copy: " + Why});
+          err(Y, diag::err_sema_builtin, {"invalid copy: " + Why});
           return false;
         }
         Src = Ctx.byteType();
       }
       if (!identical(Dst, Src)) {
-        err(X, diag::custom,
+        err(X, diag::err_sema_builtin,
             {"invalid copy: arguments " + str(X) + " and " + str(Y) +
              " have different element types " + str(Dst) + " and " + str(Src)});
         return false;
@@ -568,11 +568,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     bool Ok = underIs(MapT, [&](Type *U) {
       auto *M = dyn_cast_or_null<sema::MapType>(U);
       if (!M) {
-        err(X, diag::custom, {"invalid argument: " + str(X) + " is not a map"});
+        err(X, diag::err_sema_builtin,
+            {"invalid argument: " + str(X) + " is not a map"});
         return false;
       }
       if (Key && !identical(M->Key, Key)) {
-        err(X, diag::custom,
+        err(X, diag::err_sema_builtin,
             {"invalid argument: maps of " + str(X) +
              " must have identical key types"});
         return false;
@@ -608,13 +609,13 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         },
         &Why);
     if (!C) {
-      err(Arg0, diag::custom,
+      err(Arg0, diag::err_sema_builtin,
           {"invalid argument: cannot make " + str(Arg0) + ": " + Why});
       return false;
     }
     Min = isa<SliceType>(C) ? 2 : 1;
     if (NArgs < Min || Min + 1 < NArgs) {
-      err(Call, diag::custom,
+      err(Call, diag::err_sema_builtin,
           {str(Call) + " expects " + num(Min) + " or " + num(Min + 1) +
            " arguments; found " + num(NArgs)});
       return false;
@@ -626,7 +627,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         Sizes.push_back(Sz);
     }
     if (Sizes.size() == 2 && Sizes[0] > Sizes[1])
-      err(Call->Args[1], diag::custom,
+      err(Call->Args[1], diag::err_sema_builtin,
           {"invalid argument: length and capacity swapped"});
     X.M = Mode::Value;
     X.Ty = T;
@@ -640,7 +641,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       if (A.M == Mode::Invalid)
         return false;
       if (!allOrdered(A.Ty)) {
-        err(A, diag::custom,
+        err(A, diag::err_sema_builtin,
             {"invalid argument: " + str(A) + " cannot be ordered"});
         return false;
       }
@@ -649,7 +650,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         if (X.M == Mode::Invalid)
           return false;
         if (!identical(X.Ty, A.Ty)) {
-          err(A, diag::custom,
+          err(A, diag::err_sema_builtin,
               {"invalid argument: mismatched types " + str(X.Ty) +
                " (previous argument) and " + str(A.Ty) + " (type of " +
                str(A.E) + ")"});
@@ -705,12 +706,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
   case BuiltinId::Assert:
     // types2 self-test builtin: the result is the (constant) predicate.
     if (X.M != Mode::Constant || !isBoolean(X.Ty)) {
-      err(X.E, diag::custom,
+      err(X.E, diag::err_sema_builtin,
           {"invalid argument: " + str(X.E) + " is not a boolean constant"});
       return false;
     }
     if (!X.Val.boolVal())
-      err(Call, diag::custom, {str(Call) + " failed"});
+      err(Call, diag::err_sema_builtin, {str(Call) + " failed"});
     break;
   case BuiltinId::Trace:
     // The result is the value of the first argument.
@@ -820,7 +821,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     const ast::Expr *Arg0 = Call->Args[0];
     auto *Selx = dyn_cast<SelectorExpr>(unparen(Arg0));
     if (!Selx) {
-      err(Arg0, diag::custom,
+      err(Arg0, diag::err_sema_builtin,
           {"invalid argument: " + str(Arg0) + " is not a selector expression"});
       use(Arg0);
       return false;
@@ -831,7 +832,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     Type *Base = derefStructPtr(X.Ty);
     LookupResult LR = lookupFieldOrMethod(Base, false, S.Pkg, name(Selx->Sel));
     if (!LR.Obj || isa<Func>(LR.Obj)) {
-      err(Arg0, diag::custom,
+      err(Arg0, diag::err_sema_builtin,
           {"invalid argument: " + str(Arg0) + " has no single field " +
            std::string(name(Selx->Sel))});
       return false;
@@ -844,7 +845,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
   case BuiltinId::Slice: {
     auto *P = dyn_cast_or_null<PointerType>(coreType(X.Ty));
     if (!P) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_builtin,
           {"invalid argument: " + str(X) + " is not a pointer"});
       return false;
     }
@@ -857,7 +858,8 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
   case BuiltinId::SliceData: {
     auto *Sl = dyn_cast_or_null<SliceType>(coreType(X.Ty));
     if (!Sl) {
-      err(X, diag::custom, {"invalid argument: " + str(X) + " is not a slice"});
+      err(X, diag::err_sema_builtin,
+          {"invalid argument: " + str(X) + " is not a slice"});
       return false;
     }
     X.M = Mode::Value;

@@ -50,7 +50,7 @@
 // RUN: not %gopp fmt %t/syntax-error.gopp %t/sub/good.gopp > %t/out.txt 2> %t/err.txt
 // RUN: FileCheck %s --check-prefix=ERR < %t/err.txt
 // RUN: FileCheck %s --check-prefix=GOODOUT < %t/out.txt
-// ERR: syntax-error.gopp:2:9: error:
+// ERR: syntax-error.gopp:2:9: error{{\[E[0-9]+\]}}:
 // GOODOUT: package b
 // RUN: not %gopp fmt %t/syntax-error.gopp 2>/dev/null | count 0
 

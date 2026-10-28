@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-C2: an owning value (string, []T, map, Unique[T], a type with
 // drop, or a struct holding one) is move-only: copying needs x.Clone().
 package main
@@ -13,10 +13,10 @@ func positive(q *Doc) (Doc, string) {
 }
 
 func negative(q *Doc) {
-	// CHECK: [[@LINE+1]]:7: error: cannot initialize from q.Title: it is a value in another place, and this needs ownership (OWN-R3a)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot initialize from q.Title: it is a value in another place, and this needs ownership (OWN-R3a)
 	t := q.Title
 	_ = t
-	// CHECK: [[@LINE+1]]:7: error: cannot initialize from *q: it is a value in another place, and this needs ownership (OWN-R3a)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot initialize from *q: it is a value in another place, and this needs ownership (OWN-R3a)
 	d := *q
 	_ = d
 }

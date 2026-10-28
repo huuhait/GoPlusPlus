@@ -4,6 +4,7 @@ add_executable(GoppUnitTests
   Basic/VersionTest.cpp
   AST/ASTTest.cpp
   Basic/DiagnosticsTest.cpp
+  Basic/ExplainTest.cpp
   Basic/SourceManagerTest.cpp
   Basic/UnicodeTest.cpp
   Format/FormatTest.cpp
@@ -15,7 +16,10 @@ add_executable(GoppUnitTests
   Sema/ConformanceTest.cpp
   Sema/ConstantTest.cpp
   Sema/CorpusTest.cpp
+  Sema/ForeignTest.cpp
+  Sema/SerializeTest.cpp
   Sema/LoaderTest.cpp
+  Sema/ParallelTest.cpp
   Build/HostToolchainTest.cpp)
 target_link_libraries(GoppUnitTests PRIVATE
   goppBasic goppLex goppAST goppParse goppSema goppFormat goppBuild goppCodeGen goppImport

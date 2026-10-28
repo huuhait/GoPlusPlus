@@ -1,0 +1,14 @@
+// Package main may panic on a failing `!` (ERR-10): gopp vet is silent.
+package main
+
+func fails() error { return nil }
+
+func run() {
+	fails!()
+	go fails!()
+}
+
+func main() {
+	fails!()
+	run()
+}

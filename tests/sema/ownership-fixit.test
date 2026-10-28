@@ -8,21 +8,21 @@ package main
 type P struct{ name string }
 
 func f(p *P, s string, xs []string, v any) {
-	// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+3]],"column":7,
-	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{.*}}{"id":"note_own_fix_move",
+	// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","code":"E0253","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+3]],"column":7,
+	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone","code":"E0255",{{.*}}{"id":"note_own_fix_move","code":"E0256",
 	// CHECK-SAME: "fixits":[{"range":{"begin":{"line":[[@LINE+1]],"column":13,{{.*}}"text":".Clone()"}]
 	x := p.name
-	// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],"column":7,
-	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{.*}}{"id":"note_own_fix_move_param",
+	// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","code":"E0253","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],"column":7,
+	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone","code":"E0255",{{.*}}{"id":"note_own_fix_move_param","code":"E0257",
 	y := s
 	for _, e := range xs {
-		// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],"column":8,
-		// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{.*}}{"id":"note_own_fix_alias",
+		// CHECK: {"severity":"error","id":"err_own_r3a_needs_ownership","code":"E0253","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],"column":8,
+		// CHECK-SAME: "notes":[{"id":"note_own_fix_clone","code":"E0255",{{.*}}{"id":"note_own_fix_alias","code":"E0258",
 		z := e
 		_ = z
 	}
-	// CHECK: {"severity":"error","id":"err_own_box_needs_ownership","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],
-	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone",{{[^]]*}}],"fixits":[{{.*}}"text":".Clone()"}]}
+	// CHECK: {"severity":"error","id":"err_own_box_needs_ownership","code":"E0254","message":"{{[^"]*}}","file":"{{[^"]*}}","line":[[@LINE+2]],
+	// CHECK-SAME: "notes":[{"id":"note_own_fix_clone","code":"E0255",{{[^]]*}}],"fixits":[{{.*}}"text":".Clone()"}]}
 	p.name = v.(string)
 	_, _ = x, y
 }

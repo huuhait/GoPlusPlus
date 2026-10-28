@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule RNG-2: `for _, x := range move(xs)` moves the elements out: x is an
 // owned local per iteration. In the plain form x is borrowed.
 package main
@@ -19,10 +19,10 @@ func positive(jobs chan Job) {
 
 func negative(jobs chan Job, names []string) {
 	for i, n := range names {
-		// CHECK: [[@LINE+1]]:28: error: cannot store n: it is a borrowed range variable, and this needs ownership (OWN-R3a)
+		// CHECK: [[@LINE+1]]:28: error{{\[E[0-9]+\]}}: cannot store n: it is a borrowed range variable, and this needs ownership (OWN-R3a)
 		jobs <- Job{ID: i, Text: n}
 	}
-	// CHECK: [[@LINE+1]]:25: error: move argument mk() is not a place (variable, field, element, map entry or pointer target)
+	// CHECK: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: move argument mk() is not a place (variable, field, element, map entry or pointer target)
 	for _, n := range move(mk()) {
 		_ = n
 	}

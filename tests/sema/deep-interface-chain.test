@@ -1,0 +1,100 @@
+// R8: a valid chain of 80 generic interfaces, each embedding the one before,
+// checks clean: the type set of an instance is not cut at a depth that
+// depends on which body asked first. Both sides: a method that is not in the
+// chain is still an error.
+// RUN: %gopp check -check-j=1 %s 2>&1 | FileCheck --check-prefix=OK --allow-empty %s
+// RUN: %gopp check -check-j=8 %s 2>&1 | FileCheck --check-prefix=OK --allow-empty %s
+// RUN: not %gopp check %S/Inputs/deep-chain-bad.gopp 2>&1 | FileCheck --check-prefix=BAD %s
+// OK-NOT: error
+// BAD: error{{.*}}: x.Nope undefined
+package main
+
+type I0[T any] interface{ M0() T }
+type I1[T any] interface{ I0[T] }
+type I2[T any] interface{ I1[T] }
+type I3[T any] interface{ I2[T] }
+type I4[T any] interface{ I3[T] }
+type I5[T any] interface{ I4[T] }
+type I6[T any] interface{ I5[T] }
+type I7[T any] interface{ I6[T] }
+type I8[T any] interface{ I7[T] }
+type I9[T any] interface{ I8[T] }
+type I10[T any] interface{ I9[T] }
+type I11[T any] interface{ I10[T] }
+type I12[T any] interface{ I11[T] }
+type I13[T any] interface{ I12[T] }
+type I14[T any] interface{ I13[T] }
+type I15[T any] interface{ I14[T] }
+type I16[T any] interface{ I15[T] }
+type I17[T any] interface{ I16[T] }
+type I18[T any] interface{ I17[T] }
+type I19[T any] interface{ I18[T] }
+type I20[T any] interface{ I19[T] }
+type I21[T any] interface{ I20[T] }
+type I22[T any] interface{ I21[T] }
+type I23[T any] interface{ I22[T] }
+type I24[T any] interface{ I23[T] }
+type I25[T any] interface{ I24[T] }
+type I26[T any] interface{ I25[T] }
+type I27[T any] interface{ I26[T] }
+type I28[T any] interface{ I27[T] }
+type I29[T any] interface{ I28[T] }
+type I30[T any] interface{ I29[T] }
+type I31[T any] interface{ I30[T] }
+type I32[T any] interface{ I31[T] }
+type I33[T any] interface{ I32[T] }
+type I34[T any] interface{ I33[T] }
+type I35[T any] interface{ I34[T] }
+type I36[T any] interface{ I35[T] }
+type I37[T any] interface{ I36[T] }
+type I38[T any] interface{ I37[T] }
+type I39[T any] interface{ I38[T] }
+type I40[T any] interface{ I39[T] }
+type I41[T any] interface{ I40[T] }
+type I42[T any] interface{ I41[T] }
+type I43[T any] interface{ I42[T] }
+type I44[T any] interface{ I43[T] }
+type I45[T any] interface{ I44[T] }
+type I46[T any] interface{ I45[T] }
+type I47[T any] interface{ I46[T] }
+type I48[T any] interface{ I47[T] }
+type I49[T any] interface{ I48[T] }
+type I50[T any] interface{ I49[T] }
+type I51[T any] interface{ I50[T] }
+type I52[T any] interface{ I51[T] }
+type I53[T any] interface{ I52[T] }
+type I54[T any] interface{ I53[T] }
+type I55[T any] interface{ I54[T] }
+type I56[T any] interface{ I55[T] }
+type I57[T any] interface{ I56[T] }
+type I58[T any] interface{ I57[T] }
+type I59[T any] interface{ I58[T] }
+type I60[T any] interface{ I59[T] }
+type I61[T any] interface{ I60[T] }
+type I62[T any] interface{ I61[T] }
+type I63[T any] interface{ I62[T] }
+type I64[T any] interface{ I63[T] }
+type I65[T any] interface{ I64[T] }
+type I66[T any] interface{ I65[T] }
+type I67[T any] interface{ I66[T] }
+type I68[T any] interface{ I67[T] }
+type I69[T any] interface{ I68[T] }
+type I70[T any] interface{ I69[T] }
+type I71[T any] interface{ I70[T] }
+type I72[T any] interface{ I71[T] }
+type I73[T any] interface{ I72[T] }
+type I74[T any] interface{ I73[T] }
+type I75[T any] interface{ I74[T] }
+type I76[T any] interface{ I75[T] }
+type I77[T any] interface{ I76[T] }
+type I78[T any] interface{ I77[T] }
+type I79[T any] interface{ I78[T] }
+func f0(x I79[int]) int { return x.M0() }
+func f1(x I15[int]) int { return x.M0() }
+func f2(x I79[int]) int { return x.M0() }
+func f3(x I15[int]) int { return x.M0() }
+func f4(x I79[int]) int { return x.M0() }
+func f5(x I15[int]) int { return x.M0() }
+func f6(x I79[int]) int { return x.M0() }
+func f7(x I15[int]) int { return x.M0() }
+func main() {}

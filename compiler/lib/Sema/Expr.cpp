@@ -312,7 +312,10 @@ void Checker::useLHS(ArrayRef<const ast::Expr *> Es) {
       if (auto *V = dyn_cast_or_null<Var>(O)) {
         bool Used = V->Used;
         use(Ex);
-        V->Used = Used;
+        // Not an unconditional store: V may be a package-level variable that
+        // the other body threads read (P03.10).
+        if (V->Used != Used)
+          V->Used = Used;
         continue;
       }
     }
@@ -349,7 +352,7 @@ void Checker::basicLit(Operand &X, const BasicLit *Lit) {
 
 void Checker::overflow(Operand &X, SourceLoc OpLoc) {
   if (X.Val.isUnknown()) {
-    err(OpLoc, diag::custom, {"constant result is not representable"});
+    err(OpLoc, diag::err_sema_expr, {"constant result is not representable"});
     return;
   }
   if (isTyped(X.Ty)) {
@@ -462,12 +465,12 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
   }
   case tok::tilde:
     if (!allInteger(X.Ty)) {
-      err(Ex, diag::custom,
+      err(Ex, diag::err_sema_expr,
           {"cannot use ~ outside of interface or type constraint"});
       X.M = Mode::Invalid;
       return;
     }
-    err(Ex, diag::custom,
+    err(Ex, diag::err_sema_expr,
         {"cannot use ~ outside of interface or type constraint (use ^ for "
          "bitwise complement)"});
     Op = tok::xor_;
@@ -631,7 +634,7 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
       }
     }
     if (SwitchCaseCmp) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_expr,
           {"invalid case " + str(X.E) + " in switch on " + str(Y.E) + " (" +
            Cause + ")"});
     } else {
@@ -686,7 +689,7 @@ void Checker::shift(Operand &X, Operand &Y, const ast::Expr *Ex, tok::Kind Op) {
         return;
       }
     } else {
-      err(Y, diag::custom,
+      err(Y, diag::err_sema_expr,
           {"invalid operation: shift count " + str(Y) + " must be integer"});
       X.M = Mode::Invalid;
       return;
@@ -851,7 +854,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     if (L->Text.size() > 10000 &&
         (L->LitKind == tok::int_lit || L->LitKind == tok::float_lit ||
          L->LitKind == tok::imag_lit)) {
-      err(Ex, diag::custom,
+      err(Ex, diag::err_sema_expr,
           {"excessively long constant: " + L->Text.substr(0, 10).str() +
            "... (" + std::to_string(L->Text.size()) + " chars)"});
       return Error();
@@ -860,7 +863,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     if (X.M == Mode::Invalid) {
       if (L->LitKind == tok::int_lit || L->LitKind == tok::float_lit ||
           L->LitKind == tok::imag_lit)
-        err(Ex, diag::custom, {"malformed constant: " + L->Text.str()});
+        err(Ex, diag::err_sema_expr, {"malformed constant: " + L->Text.str()});
       return Error();
     }
     X.E = Ex;
@@ -906,7 +909,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
       return Error();
     }
     if (isTypeParam(X.Ty)) {
-      err(X, diag::custom,
+      err(X, diag::err_sema_expr,
           {"invalid operation: cannot use type assertion on type parameter "
            "value " +
            str(X)});
@@ -952,7 +955,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
           return false;
         }
         if (Base && !identical(P->Elem, Base)) {
-          err(X, diag::custom,
+          err(X, diag::err_sema_expr,
               {"invalid operation: pointers of " + str(X) +
                " must have identical base types"});
           return false;
@@ -987,7 +990,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     break;
   }
   case K::KeyValueExpr:
-    err(Ex, diag::custom, {"no key:value expected"});
+    err(Ex, diag::err_sema_expr, {"no key:value expected"});
     return Error();
   case K::ArrayType:
   case K::SliceType:
@@ -1001,7 +1004,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     X.Ty = typ(Ex);
     break;
   case K::MacroInvocation:
-    err(Ex, diag::custom, {"macro invocations are expanded by P09"});
+    err(Ex, diag::err_sema_expr, {"macro invocations are expanded by P09"});
     return Error();
   default:
     return Error();
@@ -1016,7 +1019,7 @@ void Checker::typeAssertion(const ast::Expr *Ex, Operand &X, Type *T,
   if (assertableTo(X.Ty, T, &Cause))
     return;
   if (TypeSwitch) {
-    err(Ex, diag::custom,
+    err(Ex, diag::err_sema_expr,
         {"impossible type switch case: " + str(Ex) + "\n\t" + str(X) +
          " cannot have dynamic type " + str(T) + " " + Cause});
     return;

@@ -1,0 +1,53 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: %gopp check -dump-types %S/Inputs/bang-ok.gopp | FileCheck --check-prefix=DUMP %s
+// P03.08 (D3.6, ERR-1, ERR-2, ERR-5): the type of `!` functions, function
+// literals and function types, and the calls that unwrap them.
+package main
+
+func g() (int, error)  { return 1, nil }
+func three!() (int, string) { return 1, "a" }
+func none!() {}
+func plain() int { return 1 }
+
+type Loader interface {
+	Load!(path string) []byte
+}
+
+func main() {
+	// `func f!() R` is `func f() (R, error)`; identical types.
+	var f func!() int = func() (int, error) { return 1, nil }
+	var f2 func() (int, error) = f
+	_ = f2
+	var l func!(x int) string = func!(x int) string { return "s" }
+	_ = l!(1)
+
+	a := g!()           // int
+	var b int = a
+	n, s := three!()    // the tuple loses the error
+	var _ string = s
+	_ = n
+	none!()             // no results left
+	var e error = none()
+	_ = e
+	_, _ = b, f
+
+	// The targeted errors.
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use ! on plain: it has no trailing error result
+	_ = plain!()
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use ! on a conversion or built-in int
+	_ = int!(3)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use ! on a conversion or built-in len
+	_ = len!("abc")
+}
+
+// ERR-6, ERR-11a: the innermost function decides what a failing `!` does.
+// DUMP: 6:10 bang `g!()` returns the error
+// DUMP: 10:3 bang `g!()` returns the error
+// DUMP: 15:15 bang `g!()` panics
+// DUMP: 16:9 bang `g!()` panics
+// DUMP: 18:4 bang `g!()` panics
+// DUMP: 23:9 bang `g!()` sets the error
+// DUMP: 24:6 bang `g!()` panics
+// DUMP: 25:17 bang `g!()` panics
+// DUMP: 27:18 bang `g!()` returns the error
+// DUMP: 31:32 bang `g!()` panics

@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -151,15 +152,18 @@ private:
     std::unique_ptr<llvm::MemoryBuffer> Buf;
     std::string Name;
     uint32_t Base = 0; // global offset of byte 0
-    // Offsets of line starts; built on demand.
+    // Offsets of line starts; built on demand, once, by whichever thread asks
+    // first (the checker's body threads share the SourceManager).
     mutable std::vector<uint32_t> LineStarts;
-    mutable bool LinesBuilt = false;
+    std::unique_ptr<std::once_flag> LinesOnce =
+        std::make_unique<std::once_flag>();
     uint32_t size() const { return Buf->getBufferSize(); }
   };
 
   const FileEntry &entry(FileID F) const;
   const FileEntry *lookup(SourceLoc Loc) const;
   void buildLines(const FileEntry &E) const;
+  static void buildLinesOnce(const FileEntry &E);
 
   std::vector<FileEntry> Files;
   uint64_t NextBase = 1; // offset 0 is reserved for the invalid location

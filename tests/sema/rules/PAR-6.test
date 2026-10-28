@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule PAR-6: *T parameters and receivers mutate the target; a call v.M()
 // with a *T receiver passes &v automatically, but not on a borrowed variable.
 package main
@@ -14,6 +14,6 @@ func positive(p *D) {
 }
 
 func negative(d D) {
-	// CHECK: [[@LINE+1]]:2: error: cannot call pointer method M on d: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot call pointer method M on d: it is a borrowed variable (OWN-R3b)
 	d.M()
 }

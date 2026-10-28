@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gopp/AST/ASTDumper.h"
+#include "gopp/Basic/DiagnosticExplain.h"
 #include "gopp/Basic/Diagnostics.h"
 #include "gopp/Basic/SourceManager.h"
 #include "gopp/Basic/Version.h"
@@ -86,41 +87,65 @@ static cl::opt<unsigned> ErrorLimit(
 
 static cl::SubCommand CheckCmd("check",
                                "Type-check Go++ files or a package directory");
+static cl::SubCommand
+    VetCmd("vet", "Type-check like `check`, then report the vet warnings "
+                  "(ref fields without @Ref, drop on a zero value, a ! that "
+                  "panics outside main, defer in a loop)");
+static cl::opt<bool>
+    VetWerror("Werror", cl::desc("Exit with status 1 if there are warnings"),
+              cl::sub(VetCmd));
 static cl::list<std::string> CheckInputs(cl::Positional,
                                          cl::desc("<files or directory>"),
-                                         cl::sub(CheckCmd));
+                                         cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::opt<bool>
     CheckDumpTypes("dump-types",
                    cl::desc("Print the type of every expression and object"),
-                   cl::sub(CheckCmd));
+                   cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::opt<bool>
     CheckGoMode("go",
                 cl::desc("Check Go sources: Go's built-ins, no ownership "
                          "rules, no Go++ language rules"),
-                cl::sub(CheckCmd));
+                cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::opt<std::string> CheckOS("os",
                                     cl::desc("Target OS for build constraints"),
-                                    cl::init("linux"), cl::sub(CheckCmd));
+                                    cl::init("linux"), cl::sub(CheckCmd),
+                                    cl::sub(VetCmd));
 static cl::opt<std::string>
     CheckArch("arch", cl::desc("Target architecture for build constraints"),
-              cl::init("amd64"), cl::sub(CheckCmd));
+              cl::init("amd64"), cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::opt<std::string>
     CheckProfile("profile",
                  cl::desc("Build profile name (true in //gopp:build)"),
-                 cl::init("dev"), cl::sub(CheckCmd));
+                 cl::init("dev"), cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::list<std::string> CheckTags("tags", cl::CommaSeparated,
                                        cl::desc("Extra build tags"),
-                                       cl::sub(CheckCmd));
+                                       cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::opt<bool> CheckTests("test", cl::desc("Include _test.gopp files"),
-                                cl::sub(CheckCmd));
-static cl::opt<unsigned> CheckErrorLimit(
-    "check-error-limit", cl::desc("Stop after this many errors (0 = no limit)"),
-    cl::init(gopp::DiagnosticsEngine::DefaultErrorLimit), cl::sub(CheckCmd));
+                                cl::sub(CheckCmd), cl::sub(VetCmd));
+static cl::opt<unsigned>
+    CheckErrorLimit("check-error-limit",
+                    cl::desc("Stop after this many errors (0 = no limit)"),
+                    cl::init(gopp::DiagnosticsEngine::DefaultErrorLimit),
+                    cl::sub(CheckCmd), cl::sub(VetCmd));
 static cl::opt<DiagFormat> CheckDiagFormat(
     "check-diag-format", cl::desc("Diagnostic output format"),
     cl::values(clEnumValN(DiagFormat::Text, "text", "Clang-style text"),
                clEnumValN(DiagFormat::JSON, "json", "JSON lines")),
-    cl::init(DiagFormat::Text), cl::sub(CheckCmd));
+    cl::init(DiagFormat::Text), cl::sub(CheckCmd), cl::sub(VetCmd));
+
+static cl::opt<unsigned> CheckJobs(
+    "check-j",
+    cl::desc("Threads that check function bodies (0 = one per core, at most "
+             "8; 1 = the calling thread). The output does not depend on it."),
+    cl::init(0), cl::sub(CheckCmd), cl::sub(VetCmd));
+
+static cl::SubCommand ExplainCmd("explain",
+                                 "Explain an error code: gopp explain E0042");
+static cl::list<std::string>
+    ExplainCodes(cl::Positional, cl::desc("<E0000 ...>"), cl::sub(ExplainCmd));
+static cl::opt<bool> ExplainList("list",
+                                 cl::desc("List every code with its message"),
+                                 cl::sub(ExplainCmd));
 
 static cl::SubCommand
     FmtCmd("fmt", "Format Go++ files (gofmt's rules, extended to Go++)");
@@ -317,11 +342,23 @@ static int runParse() {
   return HadErrors ? 1 : 0;
 }
 
+/// The exit status of `gopp check` and `gopp vet`: 1 on errors, and for
+/// `gopp vet -Werror` on warnings too.
+static int checkStatus(const gopp::sema::CheckedPackage *CP,
+                       const gopp::DiagnosticsEngine &Diags, bool Vet) {
+  if (!CP || Diags.hasErrors())
+    return 1;
+  return Vet && VetWerror && Diags.getNumWarnings() ? 1 : 0;
+}
+
 /// `gopp check <files|dir>`: loads the package (and what it imports from the
-/// directory of the input), type-checks it and exits 1 on errors.
-static int runCheck() {
+/// directory of the input), type-checks it and exits 1 on errors. `gopp vet`
+/// is the same plus the vet lints on that package, which are warnings: they
+/// leave the exit status alone unless -Werror is given.
+static int runCheck(bool Vet) {
   if (CheckInputs.empty()) {
-    errs() << "gopp: error: check: no input files\n";
+    errs() << "gopp: error: " << (Vet ? "vet" : "check")
+           << ": no input files\n";
     return 1;
   }
   gopp::SourceManager SM;
@@ -342,6 +379,8 @@ static int runCheck() {
   gopp::sema::CheckOptions CO;
   CO.GoCompat = CheckGoMode;
   CO.Ownership = !CheckGoMode;
+  CO.BodyThreads = CheckJobs;
+  CO.Vet = Vet;
   gopp::sema::TypeContext Ctx(CheckGoMode);
 
   gopp::sema::CheckedPackage *CP = nullptr;
@@ -354,7 +393,7 @@ static int runCheck() {
     if (CP && CheckDumpTypes)
       gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
     Diags.finish();
-    return (!CP || Diags.hasErrors()) ? 1 : 0;
+    return checkStatus(CP, Diags, Vet);
   }
   LO.Root = llvm::sys::path::parent_path(CheckInputs[0]).str();
   if (LO.Root.empty())
@@ -366,7 +405,36 @@ static int runCheck() {
   if (CP && CheckDumpTypes)
     gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
   Diags.finish();
-  return (!CP || Diags.hasErrors()) ? 1 : 0;
+  return checkStatus(CP, Diags, Vet);
+}
+
+/// `gopp explain E0042`: what the error means and an example. `-list` prints
+/// every code. Exit status 1 for a code that does not exist.
+static int runExplain() {
+  if (ExplainList) {
+    gopp::printDiagCodeList(outs());
+    return 0;
+  }
+  if (ExplainCodes.empty()) {
+    errs() << "gopp: error: explain: give an error code (E0042) or -list\n";
+    return 1;
+  }
+  int Status = 0;
+  bool First = true;
+  for (const std::string &C : ExplainCodes) {
+    gopp::diag::ID ID = gopp::lookupDiagCode(C);
+    if (ID == gopp::diag::NUM_DIAGS) {
+      errs() << "gopp: error: explain: " << C
+             << " is not an error code (see gopp explain -list)\n";
+      Status = 1;
+      continue;
+    }
+    if (!First)
+      outs() << "\n";
+    First = false;
+    gopp::printDiagExplanation(outs(), ID);
+  }
+  return Status;
 }
 
 /// The .gopp files below Dir, sorted; as gofmt, files whose name starts with
@@ -475,7 +543,11 @@ int main(int argc, char **argv) {
   if (ParseCmd)
     return runParse();
   if (CheckCmd)
-    return runCheck();
+    return runCheck(false);
+  if (VetCmd)
+    return runCheck(true);
+  if (ExplainCmd)
+    return runExplain();
   if (FmtCmd)
     return runFmt();
 

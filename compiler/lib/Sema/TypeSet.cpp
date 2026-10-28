@@ -163,9 +163,9 @@ Func *Checker::lookupMethodInSet(TypeSet *TS, Package *P, StringRef N,
 }
 
 TypeSet *Checker::typeSet(InterfaceType *I) {
-  if (!I->Set)
-    computeTypeSet(I, SourceLoc());
-  return I->Set;
+  if (TypeSet *TS = I->Set.load(std::memory_order_acquire))
+    return TS;
+  return computeTypeSet(I, SourceLoc());
 }
 
 TypeSet *Checker::typeSetOf(Type *T) {
@@ -187,15 +187,45 @@ static bool lessFunc(const Func *A, const Func *B) {
   return A->Pkg < B->Pkg;
 }
 
-void Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
+TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
   std::lock_guard<std::recursive_mutex> G(Ctx.lock());
-  if (I->Set)
-    return;
-  TypeSet *TS = Ctx.arena().make<TypeSet>();
-  DepthGuard DG(RecDepth);
-  if (I->Computing || RecDepth > MaxRecDepth) {
-    I->Set = TS; // recursive interface: treat as the universe for now
-    return;
+  if (TypeSet *Done = I->Set.load(std::memory_order_acquire))
+    return Done;
+  TypeSet *TS;
+  {
+    std::lock_guard<std::mutex> A(Ctx.allocLock());
+    TS = Ctx.arena().make<TypeSet>();
+  }
+  if (I->Computing) {
+    // A recursive interface asks for its own set: it gets the universe for
+    // now. Not published: the other threads wait for the real one.
+    if (!I->Pending)
+      I->Pending = TS;
+    return I->Pending;
+  }
+  // What is published here is seen by every body, so it must not depend on
+  // who asked first. The cut-off is the nesting of this computation only (not
+  // the caller's RecDepth), and a set that was cut, or that was built from a
+  // cut one, is returned but never published: the next request computes it
+  // again (that only happens for an invalid, endlessly expanding program,
+  // which the declaration check has reported already).
+  struct Level {
+    Checker &C;
+    unsigned SavedRec;
+    explicit Level(Checker &C) : C(C), SavedRec(C.RecDepth) {
+      ++C.TypeSetDepth;
+      C.RecDepth = 0;
+    }
+    ~Level() {
+      --C.TypeSetDepth;
+      C.RecDepth = SavedRec;
+      if (C.TypeSetDepth == 0)
+        C.TypeSetCut = false;
+    }
+  } Lvl(*this);
+  if (TypeSetDepth > MaxTypeSetDepth) {
+    TypeSetCut = true;
+    return TS;
   }
   I->Computing = true;
   SmallVector<Func *, 8> Methods;
@@ -206,7 +236,7 @@ void Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
           return;
         if (!Explicit && identical(Old->Ty, M->Ty))
           return;
-        if (At.isValid() || M->Pos.isValid())
+        if (!I->Substituted && (At.isValid() || M->Pos.isValid()))
           err(At.isValid() ? At : M->Pos, diag::err_duplicate_method_iface,
               {std::string(M->Name)});
         return;
@@ -271,8 +301,8 @@ void Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
       }
       // types2 computeUnionTypeSet: the normalized union is limited too.
       if (!Acc.All && Acc.Terms.size() > 100) {
-        if (At.isValid())
-          err(At, diag::custom,
+        if (At.isValid() && !I->Substituted)
+          err(At, diag::err_sema_typeset,
               {"cannot handle more than 100 union terms (implementation "
                "limitation)"});
         Acc.All = true;
@@ -296,6 +326,7 @@ void Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
     Comparable = false;
   }
   std::sort(Methods.begin(), Methods.end(), lessFunc);
+  std::unique_lock<std::mutex> A(Ctx.allocLock());
   TS->Methods = Ctx.arena().copy(ArrayRef<Func *>(Methods));
   TS->AllTerms = Terms.All;
   if (!Terms.All)
@@ -304,5 +335,8 @@ void Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
   TS->Copy = Copy;
   TS->Clone = Clone;
   I->Computing = false;
-  I->Set = TS;
+  if (TypeSetCut)
+    return TS;
+  I->Set.store(TS, std::memory_order_release);
+  return TS;
 }

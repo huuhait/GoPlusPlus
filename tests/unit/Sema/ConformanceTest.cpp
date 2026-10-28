@@ -158,6 +158,7 @@ Result runFile(const std::string &Path) {
   ParseOptions PO;
   PO.CheckLanguageRules = false;
   PO.AllowGenericMethods = false;
+  PO.AllowNamespaceTypes = false;
   ast::File *AST = parseFile(AC, SM, *F, Diags, PO);
 
   // Expectations from the comments.

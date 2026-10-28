@@ -1,0 +1,12 @@
+package main
+
+import "a"
+
+func main() {
+	_ = a.T{f: 1}
+	_ = a.T{g: 1}
+	_ = a.T{h: 1}
+	var t a.T
+	_ = t.f
+	_ = t.g
+}

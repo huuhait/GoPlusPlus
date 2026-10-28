@@ -3,9 +3,9 @@
 package main
 
 func main() {
-	// CHECK: check-errors.test:[[@LINE+1]]:14: error: cannot use "s" (untyped string constant) as int value in variable declaration
+	// CHECK: check-errors.test:[[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot use "s" (untyped string constant) as int value in variable declaration
 	var n int = "s"
-	// CHECK: check-errors.test:[[@LINE+1]]:6: error: undefined: y
+	// CHECK: check-errors.test:[[@LINE+1]]:6: error{{\[E[0-9]+\]}}: undefined: y
 	_ = y
 	_ = n
 }

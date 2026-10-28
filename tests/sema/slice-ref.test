@@ -1,4 +1,4 @@
-// RUN: %gopp check %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error: %s
+// RUN: %gopp check %s 2>&1 | FileCheck --allow-empty "--implicit-check-not=error[E" %s
 // SLC-8, OWN-V1: a `ref string` / `ref []T` (variable, parameter or field)
 // can be sliced; the result is a ref again.
 package main

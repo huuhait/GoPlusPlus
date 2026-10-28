@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-P4 (and EXP-11): &T{...} is an error, allocation is explicit;
 // &x on a variable is allowed. Reported by the parser.
 package main
@@ -13,7 +13,7 @@ func positive() {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:7: error: allocation is explicit in Go++: use new_unique(T{...}) instead of &T{...}
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: allocation is explicit in Go++: use new_unique(T{...}) instead of &T{...}
 	p := &D{}
 	_ = p
 }

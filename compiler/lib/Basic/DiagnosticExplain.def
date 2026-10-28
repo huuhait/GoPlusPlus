@@ -1,0 +1,3099 @@
+//===- DiagnosticExplain.def - Explanations of the error codes --*- C++ -*-===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// EXPLAIN(Name, Text, Example) for every row of DiagnosticIDs.def except
+// `custom` (P03.14). `gopp explain E0042` prints Text and Example. The
+// unit test ExplainTest.cpp checks that every row has one entry and that the
+// Example makes the compiler report that row (the few that cannot are listed
+// in the test, with the reason). Example is a whole file: `gopp check` it.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef EXPLAIN
+#define EXPLAIN(Name, Text, Example)
+#endif
+
+//===----------------------------------------------------------------------===//
+// Engine
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_too_many_errors,
+        "The compiler stops after 10 errors in one package (change it with "
+        "-error-limit=N, 0 means no limit). The errors after the first are "
+        "often follow-on errors of the first one: fix the first, then run "
+        "again.",
+        R"X(// With -error-limit=1 the second error is replaced by this one.
+package p
+
+var a int = "x"
+var b int = "y"
+)X")
+
+//===----------------------------------------------------------------------===//
+// Lexer
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_lex_illegal_nul,
+        "The file contains a NUL byte (0x00). Source files are text; remove "
+        "the byte. An editor or a copy that went wrong usually put it there.",
+        R"X(// the byte 0x00 after the name:  package p<NUL>
+)X")
+EXPLAIN(err_lex_utf16,
+        "The file is encoded as UTF-16. Go++ sources are UTF-8: save the file "
+        "again as UTF-8 (without a byte order mark).",
+        R"X(// the file starts with the bytes FF FE or FE FF (a UTF-16 byte order mark)
+)X")
+EXPLAIN(err_lex_illegal_utf8,
+        "A byte sequence in the file is not valid UTF-8. This is an error "
+        "even inside a comment or a string. Save the file as UTF-8, or write "
+        "the byte as an escape (\\xff) in a string.",
+        R"X(// the byte 0xFF inside a string:  var s = "<FF>"
+)X")
+EXPLAIN(err_lex_illegal_bom,
+        "A byte order mark (U+FEFF) is only allowed as the very first "
+        "character of a file. In the middle of a file it is an error.",
+        R"X(// U+FEFF after the first character:  var a = 1<U+FEFF>
+)X")
+EXPLAIN(err_lex_illegal_char,
+        "The character is not part of the language outside strings and "
+        "comments. It is often a character copied from a web page or a "
+        "word processor; type it again.",
+        R"X(package p
+
+var a = 1 $ 2
+)X")
+EXPLAIN(err_lex_curly_quote,
+        "A curly (typographic) quotation mark was used where Go++ needs the "
+        "plain quote. They look alike but are different characters, often "
+        "pasted from a web page or a chat. Replace each with a plain \" "
+        "(or ').",
+        "package p\n\nvar s = \xE2\x80\x9Chello\xE2\x80\x9D\n")
+EXPLAIN(err_lex_comment_unterminated,
+        "A /* comment was opened and the file ended before the closing */. "
+        "Add the */ (comments of this kind do not nest).",
+        R"X(package p
+
+/* this comment never ends
+var a = 1
+)X")
+EXPLAIN(err_lex_radix_point,
+        "Only a decimal or a hexadecimal floating-point literal has a "
+        "radix point. Binary and octal literals are integers.",
+        R"X(package p
+
+var a = 0b1.1
+)X")
+EXPLAIN(err_lex_no_digits,
+        "A number prefix (0x, 0b, 0o) must be followed by at least one "
+        "digit of that base.",
+        R"X(package p
+
+var a = 0x
+)X")
+EXPLAIN(err_lex_exponent_needs_decimal,
+        "The exponent letters e and E belong to decimal floating-point "
+        "literals. A hexadecimal literal uses p; a binary or octal literal "
+        "has no exponent.",
+        R"X(package p
+
+var a = 0b1e3
+)X")
+EXPLAIN(err_lex_exponent_needs_hex,
+        "The exponent letters p and P belong to hexadecimal floating-point "
+        "literals only. A decimal literal uses e.",
+        R"X(package p
+
+var a = 1p3
+)X")
+EXPLAIN(err_lex_exponent_no_digits,
+        "An exponent (e, E, p, P) needs digits after it, with an optional "
+        "sign: 1e3, 2.5e-4.",
+        R"X(package p
+
+var a = 1e+
+)X")
+EXPLAIN(err_lex_hex_mantissa_needs_p,
+        "A hexadecimal floating-point literal such as 0x1.8 must have a p "
+        "exponent: 0x1.8p0.",
+        R"X(package p
+
+var a = 0x1.8
+)X")
+EXPLAIN(err_lex_invalid_digit,
+        "The digit does not exist in the base of the literal: a binary "
+        "literal has only 0 and 1, an octal literal 0 to 7.",
+        R"X(package p
+
+var a = 0b102
+var b = 089
+)X")
+EXPLAIN(err_lex_bad_separator,
+        "The underscore in a number may only stand between two digits (or "
+        "after a base prefix): 1_000, 0x_ff. Not at the end, not twice.",
+        R"X(package p
+
+var a = 1__0
+var b = 10_
+)X")
+EXPLAIN(err_lex_escape_unterminated,
+        "A backslash escape in a string or rune ended too early (the "
+        "line or the file ended). \\x needs 2 hex digits, \\u needs 4, "
+        "\\U needs 8, an octal escape needs 3.",
+        "package p\n\nvar s = \"\\x4")
+EXPLAIN(err_lex_escape_unknown,
+        "The character after the backslash does not start an escape. The "
+        "escapes are \\a \\b \\f \\n \\r \\t \\v \\\\ \\' \\\" (\\' only in a "
+        "rune, \\\" only in a string), \\x, \\u, \\U and octal.",
+        "package p\n\nvar s = \"a\\qb\"\n")
+EXPLAIN(err_lex_escape_illegal_char,
+        "An escape sequence contains a character that is not a digit of "
+        "its base: \\x needs hexadecimal digits, an octal escape needs "
+        "digits 0 to 7.",
+        "package p\n\nvar s = \"\\xzz\"\n")
+EXPLAIN(err_lex_escape_bad_code_point,
+        "\\u and \\U must name a valid Unicode code point: not a surrogate "
+        "(U+D800 to U+DFFF) and not above U+10FFFF. An octal escape must "
+        "be at most \\377.",
+        "package p\n\nvar s = \"\\uD800\"\n")
+EXPLAIN(err_lex_rune_unterminated,
+        "A rune literal (single quotes) was opened and the line ended. A "
+        "rune holds one character: 'a', '\\n'. For text use double quotes.",
+        "package p\n\nvar r = 'a\n")
+EXPLAIN(err_lex_rune_illegal,
+        "A rune literal holds exactly one character (or one escape). Empty "
+        "'' and several characters 'ab' are errors. For several characters "
+        "use a string in double quotes.",
+        "package p\n\nvar r = ''\n")
+EXPLAIN(err_lex_string_unterminated,
+        "A string in double quotes ended at the end of the line. Close it "
+        "with \", or use a raw string in backquotes for several lines.",
+        "package p\n\nvar s = \"hello\n")
+EXPLAIN(err_lex_raw_string_unterminated,
+        "A raw string (backquotes) was opened and the file ended before "
+        "the closing backquote.",
+        "package p\n\nvar s = `hello\n")
+
+//===----------------------------------------------------------------------===//
+// Parser
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_expected,
+        "The parser needed a certain token here (the message says which) "
+        "and the file ended or the line stopped. Look at the line above the "
+        "reported position as well: a missing closing bracket there is a "
+        "common cause.",
+        R"X(package p
+
+func f(xs []int) {
+	for a, b, c := range xs {
+	}
+}
+)X")
+EXPLAIN(err_expected_found,
+        "The parser needed one thing (the first part of the message) and "
+        "found another. Check the spelling, and a missing operand, comma, "
+        "or bracket just before the reported token.",
+        R"X(package p
+
+var a = 1 +
+)X")
+EXPLAIN(err_expected_found_complit,
+        "The header of an if, for or switch must be an expression (the condition), and the parser found a statement such as x++ instead. If you meant a composite literal in the header, put it in parentheses: if x == (T{1}) { ... }.",
+        R"X(package p
+
+func f(x int) {
+	if x++ {
+	}
+}
+)X")
+EXPLAIN(err_missing_comma,
+        "Items in a list (arguments, parameters, literal elements) are "
+        "separated by commas. One is missing between two items.",
+        R"X(package p
+
+func f(a int, b int) {}
+
+func g() {
+	f(1 2)
+}
+)X")
+EXPLAIN(err_missing_comma_newline,
+        "In a multi-line list, every item including the last one must be "
+        "followed by a comma, because a newline would otherwise end the "
+        "statement.",
+        R"X(package p
+
+var xs = []int{
+	1,
+	2
+}
+)X")
+EXPLAIN(err_nesting_too_deep,
+        "Blocks or types are nested deeper than the parser accepts (a "
+        "protection against stack overflow on generated or hostile input). "
+        "Split the code into functions.",
+        R"X(// thousands of nested blocks:  if true { if true { if true { ...
+)X")
+EXPLAIN(err_expression_too_deeply_nested,
+        "One expression nests more than 1024 levels (a very long chain of "
+        "parentheses or operators, usually generated code). Split it into "
+        "several statements.",
+        R"X(// 1025 levels:  x := ((((((( ... 1 ... )))))))
+)X")
+EXPLAIN(err_unexpected_comma_rbrack,
+        "A comma stands before the closing ] of an array type. Only type parameter lists accept a trailing comma.",
+        R"X(package p
+
+func f() {
+	var x [3,]int
+	_ = x
+}
+)X")
+EXPLAIN(err_paren_embedded_type,
+        "An embedded field is written as a plain type name. Parentheses "
+        "are not allowed around it.",
+        R"X(package p
+
+type A struct{}
+
+type B struct {
+	(A)
+}
+)X")
+EXPLAIN(err_paren_complit_type,
+        "The type of a composite literal cannot be parenthesized. Write "
+        "T{...}, not (T){...}.",
+        R"X(package p
+
+type T struct{ n int }
+
+var x = (T){1}
+)X")
+EXPLAIN(err_missing_type_constraint,
+        "A type parameter needs a constraint: [T any] for no restriction, "
+        "[T comparable], [T int | string], or an interface.",
+        R"X(package p
+
+func f[T]() {}
+)X")
+EXPLAIN(err_missing_type_param_name,
+        "A type parameter list entry needs a name before its constraint.",
+        R"X(package p
+
+func f[P any, []int]() {}
+)X")
+EXPLAIN(err_missing_type_param_name_or_len,
+        "After `type T[` the parser did not find a type parameter name, "
+        "and what it found is not a valid array length either.",
+        R"X(package p
+
+func f[*int]() {}
+)X")
+EXPLAIN(err_missing_param_type,
+        "A parameter has a name but no type. Either every parameter has a "
+        "name and a type, or none has a name.",
+        R"X(package p
+
+func f(a int, b) {}
+)X")
+EXPLAIN(err_missing_param_name,
+        "Some parameters of the list have names and some have only types. "
+        "Give all parameters a name, or none.",
+        R"X(package p
+
+func f(a int, []int) {}
+)X")
+EXPLAIN(err_dots_not_final,
+        "Only the last parameter can be variadic (`...T`).",
+        R"X(package p
+
+func f(a ...int, b int) {}
+)X")
+EXPLAIN(err_dots_invalid,
+        "`...` is only valid before the type of the last parameter, or "
+        "after the last argument of a call (`f(xs...)`).",
+        R"X(package p
+
+func f() (a ...int) {
+	return
+}
+)X")
+EXPLAIN(err_empty_type_params,
+        "A type parameter list [] must contain at least one parameter. "
+        "Remove the brackets for a function that is not generic.",
+        R"X(package p
+
+func f[]() {}
+)X")
+EXPLAIN(err_func_type_type_params,
+        "A function type (the type of a variable or parameter) cannot have "
+        "type parameters. Only a declared function can be generic.",
+        R"X(package p
+
+var f func[T any](x T)
+)X")
+EXPLAIN(err_method_type_params,
+        "In Go a method cannot declare type parameters of its own. (Go++ allows them; this error is reported in Go mode, gopp check -go.) Declare the type parameters on the receiver type, or write a generic function that takes the value as its first argument.",
+        R"X(// gopp check -go
+package p
+
+type T struct{}
+
+func (t T) M[U any](u U) {}
+)X")
+EXPLAIN(err_interface_method_type_params,
+        "A method in an interface cannot have type parameters of its own. "
+        "Put the type parameters on the interface.",
+        R"X(package p
+
+type I interface {
+	M[T any](x T)
+}
+)X")
+EXPLAIN(err_slice3_middle_index,
+        "A slice expression with a capacity a[lo:hi:max] needs all of its "
+        "indices: the middle one cannot be left out.",
+        R"X(package p
+
+func f(a []int) []int {
+	return a[1::3]
+}
+)X")
+EXPLAIN(err_slice3_final_index,
+        "A slice expression with a capacity a[lo:hi:max] needs the last "
+        "index too.",
+        R"X(package p
+
+func f(a []int) []int {
+	return a[1:2:]
+}
+)X")
+EXPLAIN(err_illegal_label,
+        "A label is a plain name followed by a colon in front of a "
+        "statement. It cannot be anything else.",
+        R"X(package p
+
+func f() {
+	1:
+	return
+}
+)X")
+EXPLAIN(err_call_parenthesized,
+        "The expression after go or defer must be a call without "
+        "parentheses around it: `defer f()`, not `defer (f())`.",
+        R"X(package p
+
+func f() {
+	defer (f())
+}
+)X")
+EXPLAIN(err_call_expected,
+        "go and defer start a function call. The expression after them "
+        "must be a call, such as `go work(x)` or `defer f.Close()`.",
+        R"X(package p
+
+func f() {
+	defer 1
+}
+)X")
+EXPLAIN(err_missing_if_condition,
+        "An if statement needs a condition between `if` and `{`.",
+        R"X(package p
+
+func f() {
+	if {
+	}
+}
+)X")
+EXPLAIN(err_var_in_if_init,
+        "The init statement of an if is a simple statement (`x := f()`, "
+        "an assignment, or a call). A var declaration is not a simple "
+        "statement: declare the variable before the if.",
+        R"X(package p
+
+func f() {
+	if var x = 1; x > 0 {
+	}
+}
+)X")
+EXPLAIN(err_newline_after_if_clause,
+        "The { of an if statement must be on the same line as the "
+        "condition. A newline there ends the statement.",
+        R"X(package p
+
+func f(x int) {
+	if x > 0
+	{
+	}
+}
+)X")
+EXPLAIN(err_newline_before_lbrace,
+        "A semicolon or a newline stands where the { of a block is "
+        "expected. Put the { on the same line as the keyword or the "
+        "signature.",
+        R"X(package p
+
+func f()
+{
+}
+)X")
+EXPLAIN(err_import_path_not_string,
+        "An import path is a string literal: import \"fmt\".",
+        R"X(package p
+
+import 3
+)X")
+EXPLAIN(err_missing_import_path,
+        "An import declaration needs a path after the optional name.",
+        R"X(package p
+
+import x
+)X")
+EXPLAIN(err_import_after_decl,
+        "All imports must come first in the file, before any other "
+        "declaration. Move the import up.",
+        R"X(package p
+
+var a = 1
+
+import "unsafe"
+)X")
+EXPLAIN(err_range_alias_assign,
+        "The & on a range variable makes it an alias of the element, and "
+        "needs a new variable: `for _, &x := range xs`. It does not "
+        "combine with `=` (assigning to existing variables).",
+        R"X(package p
+
+func f(xs []int) {
+	var x int
+	for _, &x = range xs {
+	}
+}
+)X")
+EXPLAIN(err_range_alias_key,
+        "The & marks the element variable. It is not allowed on the key "
+        "or index variable of a range loop.",
+        R"X(package p
+
+func f(xs []int) {
+	for &i, v := range xs {
+		_, _ = i, v
+	}
+}
+)X")
+EXPLAIN(err_macro_args_unterminated,
+        "The arguments of a macro invocation #M(...) end at the matching "
+        "closing parenthesis. The file ended before it.",
+        R"X(package p
+
+var a = #M(1, 2
+)X")
+EXPLAIN(err_macro_args_mismatched,
+        "A closing bracket in macro arguments does not match any opening "
+        "bracket inside them.",
+        R"X(package p
+
+var a = #M(1, 2]
+)X")
+EXPLAIN(err_macro_args_mismatched_expected,
+        "A closing bracket in macro arguments is of another kind than the "
+        "one it closes (see the note).",
+        R"X(package p
+
+var a = #M(1, [2)
+)X")
+EXPLAIN(note_to_match_this,
+        "This note points at the opening bracket that a mismatched "
+        "closing bracket should have closed.",
+        R"X(package p
+
+var a = #M(1, [2)
+)X")
+EXPLAIN(err_macro_name_lowercase,
+        "Macro names start with an upper-case letter (they are exported "
+        "like Go names): macro Debug(...), invoked as #Debug(...).",
+        R"X(package p
+
+macro debug(x expr) {
+}
+)X")
+EXPLAIN(err_unknown_macro_kind,
+        "The kind of a macro parameter is one of expr, stmt, block, type, "
+        "ident, lit, decl, tokens.",
+        R"X(package p
+
+macro Debug(x thing) {
+}
+)X")
+EXPLAIN(err_attr_on_stmt,
+        "Attributes (@Name) go on declarations: types, functions, fields. "
+        "They cannot be put on a statement.",
+        R"X(package p
+
+func f() {
+	@Inline
+	x := 1
+	_ = x
+}
+)X")
+EXPLAIN(err_attr_on_import,
+        "Attributes cannot be put on an import declaration.",
+        R"X(package p
+
+@Inline
+import "unsafe"
+)X")
+
+//===----------------------------------------------------------------------===//
+// Parser: Go++ rules and tailored messages for common mistakes
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_addr_of_complit,
+        "Go++ makes allocation explicit: &T{...} does not allocate. Use "
+        "new_unique(T{...}) for one owner, new_shared(T{...}) for several, "
+        "or keep the value in a variable. (This rule is only checked with "
+        "language rules on; `gopp fmt` leaves Go code alone.)",
+        R"X(package p
+
+type T struct{ n int }
+
+var x = &T{1}
+)X")
+EXPLAIN(err_fails_returns_error,
+        "A function marked with ! (`func f!() int`) returns its error "
+        "implicitly: the compiler adds the trailing error result. "
+        "Do not write `error` in the result list yourself.",
+        R"X(package p
+
+func f!() (int, error) {
+	return 1, nil
+}
+)X")
+EXPLAIN(err_loop_var_redeclared,
+        "Every iteration of a for loop has its own copy of the loop "
+        "variable, so the Go habit `x := x` is not needed (and is "
+        "rejected). Give a copy another name if you need one.",
+        R"X(package p
+
+func f(xs []int) {
+	for _, x := range xs {
+		x := x
+		_ = x
+	}
+}
+)X")
+EXPLAIN(note_loop_var_declared_here,
+        "This note shows the loop variable that was redeclared.",
+        R"X(package p
+
+func f(xs []int) {
+	for _, x := range xs {
+		x := x
+		_ = x
+	}
+}
+)X")
+EXPLAIN(err_gopp_directive_in_source,
+        "Build settings (//gopp:cflags, //gopp:cxxstd, //gopp:ldflags) "
+        "belong in the gopp.mod file of the module, not in a source file, "
+        "so that one place says how C and C++ code is built.",
+        R"X(//gopp:cflags -O2
+package p
+)X")
+EXPLAIN(note_gopp_mod_line,
+        "This note shows the line to put into gopp.mod instead of the "
+        "directive in the source file.",
+        R"X(//gopp:cflags -O2
+package p
+)X")
+EXPLAIN(err_move_type_not_shared,
+        "In a parameter list, `a, b int` gives both names the type int. A "
+        "`move` parameter does not share: `func f(a, move b int)` would "
+        "leave `a` without a type. Write the type after `a`.",
+        R"X(package p
+
+func f(a, move b int) {}
+)X")
+EXPLAIN(err_view_for_ref,
+        "Go++ has no `view` type. A borrowed string or slice is written "
+        "with ref: `ref string`, `ref []T`.",
+        R"X(package p
+
+func f(s view string) {}
+)X")
+EXPLAIN(err_own_for_move,
+        "A parameter that takes ownership of its argument is marked "
+        "`move`: `func f(move s string)`. There is no `own` or `owned` "
+        "mark.",
+        R"X(package p
+
+func f(own s string) {}
+)X")
+EXPLAIN(err_ref_bad_elem,
+        "`ref` makes a borrowed view of a string or of a slice and "
+        "nothing else: `ref string`, `ref []T`. For other types borrow "
+        "with a pointer or pass the value as a parameter.",
+        R"X(package p
+
+func f(x ref int) {}
+)X")
+EXPLAIN(err_define_at_top_level,
+        "Short variable declarations (:=) are statements and can only be "
+        "used inside functions. At the top level, declare with var.",
+        R"X(package p
+
+x := 1
+)X")
+EXPLAIN(err_stmt_outside_func,
+        "Only declarations (import, const, var, type, func) may appear at "
+        "the top level of a file. Statements belong inside a function.",
+        R"X(package p
+
+println("hi")
+)X")
+EXPLAIN(err_else_on_new_line,
+        "else must start on the same line as the } that closes the if "
+        "block. A newline there ends the if statement.",
+        R"X(package p
+
+func f(x bool) {
+	if x {
+	}
+	else {
+	}
+}
+)X")
+EXPLAIN(err_newline_after_for_clause,
+        "The { of a for statement must be on the same line as its "
+        "clause. A newline there ends the statement.",
+        R"X(package p
+
+func f(x bool) {
+	for x
+	{
+	}
+}
+)X")
+EXPLAIN(err_expected_lbrace_after,
+        "The block of an if, for or switch must be in braces, also when "
+        "it holds one statement.",
+        R"X(package p
+
+func f(x int) int {
+	if x == 1 return 0
+	return x
+}
+)X")
+EXPLAIN(err_assign_in_condition,
+        "A condition is an expression. `x = 1` is an assignment: "
+        "to compare, write `x == 1`.",
+        R"X(package p
+
+func f(x int) {
+	if x = 1 {
+	}
+}
+)X")
+EXPLAIN(err_define_in_condition,
+        "A short variable declaration is not an expression and cannot be "
+        "the condition. Put it first, followed by a semicolon: "
+        "`if v := f(); v > 0 { ... }`.",
+        R"X(package p
+
+func f(x int) {
+	if x := 1 {
+	}
+}
+)X")
+EXPLAIN(err_define_in_var_decl,
+        "A var or const declaration uses =, not :=. Use `var x = 1` or "
+        "just `x := 1` inside a function.",
+        R"X(package p
+
+var x := 1
+)X")
+EXPLAIN(err_comma_between_imports,
+        "Imports in a group are separated by newlines (or semicolons), "
+        "not by commas.",
+        R"X(package p
+
+import ("unsafe", "unsafe")
+)X")
+EXPLAIN(err_lex_single_quote_string,
+        "Single quotes make one rune (a character) in Go++. A string "
+        "uses double quotes.",
+        "package p\n\nvar s = 'hello'\n")
+EXPLAIN(err_lex_ternary,
+        "Go++ has no `cond ? a : b` operator. Use an if statement with an "
+        "assignment, or a small function.",
+        R"X(package p
+
+func f(c bool) int {
+	return c ? 1 : 2
+}
+)X")
+EXPLAIN(err_incdec_expression,
+        "x++ and x-- are statements, not expressions. They cannot be used "
+        "inside another expression or assignment. Increment on its own "
+        "line.",
+        R"X(package p
+
+func f(i int) int {
+	x := i++
+	return x
+}
+)X")
+EXPLAIN(err_prefix_incdec,
+        "There is no prefix ++ or --. Write the operator after the "
+        "operand: `i++`.",
+        R"X(package p
+
+func f(i int) {
+	++i
+}
+)X")
+EXPLAIN(err_while_loop,
+        "Go++ has one loop keyword. A while loop is `for cond { ... }`.",
+        R"X(package p
+
+func f(x int) {
+	while x < 3 {
+		x++
+	}
+}
+)X")
+EXPLAIN(err_for_in,
+        "Loops over a collection use range: `for _, x := range xs { ... }`. "
+        "There is no `for x in xs`.",
+        R"X(package p
+
+func f(xs []int) {
+	for x in xs {
+	}
+}
+)X")
+EXPLAIN(err_elif,
+        "Write `else if` as two words.",
+        R"X(package p
+
+func f(a bool, b bool) {
+	if a {
+	} elif b {
+	}
+}
+)X")
+EXPLAIN(err_fn_keyword,
+        "Functions are declared with the keyword func.",
+        R"X(package p
+
+fn f() {}
+)X")
+EXPLAIN(err_let_decl,
+        "Variables are declared with `var x = v` or, inside functions, "
+        "with `x := v`. There is no let, auto or val.",
+        R"X(package p
+
+func f() {
+	let x = 1
+}
+)X")
+EXPLAIN(err_decl_without_var,
+        "The type comes after the name, and a declaration starts with "
+        "var: `var x int`. `int x = 5` is the order of C and Java.",
+        R"X(package p
+
+func f() {
+	int x = 5
+}
+)X")
+EXPLAIN(err_struct_decl,
+        "A struct is declared as a type: `type S struct { ... }`. There is "
+        "no `struct S` or `class C` declaration.",
+        R"X(package p
+
+class C {
+	a int
+}
+)X")
+EXPLAIN(err_angle_type_params,
+        "Type parameters are written in square brackets, with a "
+        "constraint for each: `func Map[T any, U any](...)`.",
+        R"X(package p
+
+func Map<T>(x T) {}
+)X")
+EXPLAIN(err_arrow_before_result,
+        "The result type follows the parameter list directly: "
+        "`func f() int`. There is no ->.",
+        R"X(package p
+
+func f() -> int {
+	return 1
+}
+)X")
+EXPLAIN(err_colon_before_type,
+        "A name is followed by its type without a colon: `x int`, not "
+        "`x: int`.",
+        R"X(package p
+
+func f(x: int) {}
+)X")
+EXPLAIN(err_brackets_after_type,
+        "Array and slice brackets go before the element type: `[]int`, "
+        "`[4]string`. The form `int[]` is from C and Java.",
+        R"X(package p
+
+var a int[]
+)X")
+
+//===----------------------------------------------------------------------===//
+// gopp fmt
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_fmt_unreported_syntax_error,
+        "`gopp fmt` found a syntax error in the tree for which the parser "
+        "gave no message. This is a bug in the compiler: the file is left "
+        "unchanged. Please report it with the file.",
+        R"X(// no source text triggers this: it is a guard that should never fire
+)X")
+
+//===----------------------------------------------------------------------===//
+// Packages and loading
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_load_no_such_package,
+        "An imported package was not found in the module or in a "
+        "dependency: no directory with that path exists. The message is "
+        "the cause shown by 'could not import' (E0136). Check the import "
+        "path and the module path in gopp.mod.",
+        R"X(package p
+
+import "nothere"
+)X")
+EXPLAIN(err_load_no_go_files,
+        "The directory of an imported package has no .gopp file that the build constraints select for this operating system and architecture.",
+        R"X(package main
+
+import "empty"
+//--- empty/readme.txt
+no .gopp files here
+)X")
+EXPLAIN(err_load_mixed_packages,
+        "All files of one directory must declare the same package name. "
+        "Move a file to another directory, or fix its package clause. "
+        "(Files ending in _test may use name_test.)",
+        R"X(package a
+//--- b.gopp
+package b
+)X")
+EXPLAIN(err_load_import_cycle,
+        "Package A imports B and B imports A, directly or through other "
+        "packages. Move the shared declarations into a third package that "
+        "both import.",
+        R"X(package main
+
+import "a"
+//--- a/a.gopp
+package a
+
+import "b"
+//--- b/b.gopp
+package b
+
+import "a"
+)X")
+EXPLAIN(err_load_internal_import,
+        "A package whose path has an internal element can only be imported "
+        "by packages in the tree rooted at the parent of internal.",
+        R"X(package main
+
+import "lib/internal/h"
+
+var _ = h.V
+//--- lib/internal/h/h.gopp
+package h
+
+var V = 1
+)X")
+EXPLAIN(err_load_bad_build_constraint,
+        "The //gopp:build line above the package clause is not a valid "
+        "constraint: use tags joined by && and ||, with ! and parentheses.",
+        R"X(//gopp:build linux &&
+package p
+)X")
+EXPLAIN(err_load_bad_import_path,
+        "An import path must be a non-empty string without spaces, "
+        "backslashes or control characters.",
+        R"X(package p
+
+import ""
+)X")
+EXPLAIN(err_load_cannot_read,
+        "The compiler could not read a source file or directory (it does "
+        "not exist, or there is no permission). The message adds the "
+        "operating system's reason.",
+        R"X(// gopp check missing-dir/
+)X")
+
+//===----------------------------------------------------------------------===//
+// Declarations and scopes
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_undefined,
+        "The name is not declared in this scope. Check the spelling and the "
+        "case (a name from another package must be exported: upper-case "
+        "first letter), or declare it. Note that := declares a variable only "
+        "inside a function.",
+        R"X(package p
+
+func f() int {
+	return count
+}
+)X")
+EXPLAIN(err_redeclared,
+        "A name can be declared only once in a block. Rename one, or use = "
+        "instead of := to assign to the existing variable.",
+        R"X(package p
+
+var a int
+var a string
+)X")
+EXPLAIN(note_other_declaration,
+        "This note points at the first declaration of a name that was "
+        "declared again.",
+        R"X(package p
+
+var a int
+var a string
+)X")
+EXPLAIN(err_declared_not_used,
+        "A local variable is declared and its value never read. Remove it, "
+        "use it, or assign it to the blank identifier: `_ = x`.",
+        R"X(package p
+
+func f() {
+	x := 1
+}
+)X")
+EXPLAIN(err_label_not_used,
+        "A label is declared but no goto, break or continue refers to it. "
+        "Remove the label.",
+        R"X(package p
+
+func f() {
+L:
+	for {
+	}
+}
+)X")
+EXPLAIN(err_label_redeclared,
+        "Labels are unique in a function. Rename one of them.",
+        R"X(package p
+
+func f() {
+L:
+	for {
+		break L
+	}
+L:
+	for {
+		break L
+	}
+}
+)X")
+EXPLAIN(err_label_undeclared,
+        "goto, break or continue names a label that is not declared in this "
+        "function.",
+        R"X(package p
+
+func f() {
+	goto M
+}
+)X")
+EXPLAIN(err_invalid_break_label,
+        "break with a label needs the label of an enclosing for, switch or "
+        "select statement.",
+        R"X(package p
+
+func f() {
+M:
+	x := 1
+	_ = x
+	for {
+		break M
+	}
+}
+)X")
+EXPLAIN(err_invalid_continue_label,
+        "continue with a label needs the label of an enclosing for "
+        "statement.",
+        R"X(package p
+
+func f() {
+M:
+	x := 1
+	_ = x
+	for {
+		continue M
+	}
+}
+)X")
+EXPLAIN(err_goto_jumps_over,
+        "A goto may not jump forward over a variable declaration in the same "
+        "block: the variable would be in scope but not initialized.",
+        R"X(package p
+
+func f() {
+	goto L
+	x := 1
+	_ = x
+L:
+}
+)X")
+EXPLAIN(err_goto_jumps_into,
+        "A goto may not jump into a block from outside of it.",
+        R"X(package p
+
+func f() {
+	goto L
+	{
+	L:
+	}
+}
+)X")
+EXPLAIN(err_not_in_loop_break,
+        "break only ends a for, switch or select statement. Outside of "
+        "them it has nothing to end.",
+        R"X(package p
+
+func f() {
+	break
+}
+)X")
+EXPLAIN(err_not_in_loop_continue,
+        "continue only works inside a for statement.",
+        R"X(package p
+
+func f() {
+	continue
+}
+)X")
+EXPLAIN(err_fallthrough_misplaced,
+        "fallthrough must be the last statement of a case clause of an "
+        "expression switch.",
+        R"X(package p
+
+func f(x int) {
+	switch x {
+	case 1:
+		fallthrough
+		x++
+	case 2:
+	}
+}
+)X")
+EXPLAIN(err_fallthrough_final,
+        "The last case of a switch has no next case to fall through to.",
+        R"X(package p
+
+func f(x int) {
+	switch x {
+	case 1:
+		fallthrough
+	}
+}
+)X")
+EXPLAIN(err_fallthrough_type_switch,
+        "fallthrough is not allowed in a type switch, because each case "
+        "binds a different type.",
+        R"X(package p
+
+func f(x any) {
+	switch x.(type) {
+	case int:
+		fallthrough
+	case string:
+	}
+}
+)X")
+EXPLAIN(err_unexported_name,
+        "Only names that start with an upper-case letter are visible "
+        "outside their package. Export the name in its package, or add an "
+        "exported function that gives access.",
+        R"X(package main
+
+import "lib"
+
+var _ = lib.hidden
+//--- lib/lib.gopp
+package lib
+
+var hidden = 1
+)X")
+EXPLAIN(err_package_without_selector,
+        "An imported package name is not a value. Name something inside "
+        "it: unsafe.Sizeof, not unsafe.",
+        R"X(package p
+
+import "unsafe"
+
+var _ = unsafe
+)X")
+EXPLAIN(err_cannot_use_blank,
+        "The blank identifier _ can be assigned to, but not read.",
+        R"X(package p
+
+var a = _
+)X")
+EXPLAIN(err_cannot_use_blank_type,
+        "The blank identifier _ is not a type, and it cannot be used as "
+        "a value either.",
+        R"X(package p
+
+var a _
+)X")
+EXPLAIN(err_init_signature,
+        "init and main take no arguments and return nothing. Use a global "
+        "variable or a function that main calls to pass data around.",
+        R"X(package main
+
+func main(args []string) {}
+)X")
+EXPLAIN(err_init_with_body,
+        "init and main need a body: they run the program.",
+        R"X(package p
+
+func init()
+)X")
+EXPLAIN(err_init_type_params,
+        "init and main are not generic.",
+        R"X(package main
+
+func main[T any]() {}
+)X")
+EXPLAIN(err_duplicate_method,
+        "A type has at most one method of a given name. Rename one, or "
+        "remove it.",
+        R"X(package p
+
+type T struct{}
+
+func (T) M() {}
+func (T) M() {}
+)X")
+EXPLAIN(err_field_and_method,
+        "A struct type cannot have a field and a method with the same name. "
+        "Rename one.",
+        R"X(package p
+
+type T struct{ M int }
+
+func (T) M() {}
+)X")
+EXPLAIN(err_import_unresolved,
+        "The compiler could not find the imported package. The text in "
+        "parentheses says why (no directory with the path, a header that "
+        "was not found, ...).",
+        R"X(package p
+
+import "nothere"
+)X")
+
+//===----------------------------------------------------------------------===//
+// Types and declarations
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_not_a_type,
+        "A name that is not a type was used where a type is needed (after a "
+        "variable name, in a conversion, as a type argument). Check that "
+        "the name is a type, not a variable or a function.",
+        R"X(package p
+
+var x int
+var y x
+)X")
+EXPLAIN(err_not_an_expression,
+        "A type was used where a value is needed. A type is only a value "
+        "inside a conversion T(x) or a composite literal T{...}.",
+        R"X(package p
+
+var x = int
+)X")
+EXPLAIN(err_invalid_recursive_type,
+        "A type contains itself by value, through other types, so it "
+        "would have infinite size. Break the cycle with a pointer, a "
+        "slice or a map.",
+        R"X(package p
+
+type A struct{ b B }
+type B struct{ a A }
+)X")
+EXPLAIN(err_invalid_recursive_type_self,
+        "A struct or array type contains itself by value, which would "
+        "have infinite size. Use a pointer, a slice or a map for the "
+        "recursion.",
+        R"X(package p
+
+type T struct{ next T }
+)X")
+EXPLAIN(err_invalid_cycle,
+        "The declaration of a type, constant or variable depends on "
+        "itself through its own type or value in a way that cannot be "
+        "resolved.",
+        R"X(package p
+
+const c = len(T{})
+
+type T [c]int
+)X")
+EXPLAIN(err_init_cycle,
+        "Package-level variables depend on each other in a cycle through "
+        "their initializers, so there is no order in which to initialize "
+        "them. Break the cycle, for example by assigning in an init "
+        "function.",
+        R"X(package p
+
+var a = f()
+
+func f() int { return b }
+
+var b = a
+)X")
+EXPLAIN(err_init_cycle_self,
+        "The initializer of a package-level variable refers to the "
+        "variable itself (directly or through a function).",
+        R"X(package p
+
+var a = a + 1
+)X")
+EXPLAIN(err_invalid_array_length,
+        "An array length must be a constant integer that fits in an int.",
+        R"X(package p
+
+var a [1 << 70]int
+)X")
+EXPLAIN(err_array_length_not_constant,
+        "An array length must be a constant expression: a literal, a "
+        "constant, or an expression of constants. For a size known at run "
+        "time use a slice.",
+        R"X(package p
+
+var n = 3
+var a [n+1]int
+)X")
+EXPLAIN(err_array_length_negative,
+        "An array length is not negative.",
+        R"X(package p
+
+const n = -2
+
+var a [n]int
+)X")
+EXPLAIN(err_array_length_untyped,
+        "An array length must be an integer (or a constant that can be "
+        "represented as one).",
+        R"X(package p
+
+var a [1.5]int
+)X")
+EXPLAIN(err_invalid_map_key,
+        "A map key type must be comparable with ==: not a slice, a map or "
+        "a function, and not a struct that holds one.",
+        R"X(package p
+
+var m map[[]int]string
+)X")
+EXPLAIN(err_embedded_field_pointer_iface,
+        "An embedded field can be T or *T where T is a type name that is "
+        "not an interface. A pointer to an interface cannot be embedded.",
+        R"X(package p
+
+type I interface{ M() }
+
+type S struct{ *I }
+)X")
+EXPLAIN(err_embedded_field_pointer,
+        "An embedded field of pointer type must point to a type name that "
+        "is not itself a pointer type.",
+        R"X(package p
+
+type P *int
+
+type S struct{ P }
+)X")
+EXPLAIN(err_embedded_field_unsafe_pointer,
+        "unsafe.Pointer cannot be an embedded field.",
+        R"X(package p
+
+import "unsafe"
+
+type S struct{ unsafe.Pointer }
+)X")
+EXPLAIN(err_embedded_field_type_param,
+        "A type parameter, or a pointer to one, cannot be embedded in a "
+        "struct.",
+        R"X(package p
+
+type S[T any] struct{ T }
+)X")
+EXPLAIN(err_duplicate_field,
+        "A struct cannot have two fields with the same name (an embedded "
+        "field is named after its type).",
+        R"X(package p
+
+type S struct {
+	a int
+	a string
+}
+)X")
+EXPLAIN(err_invalid_receiver,
+        "A method receiver must be a defined type (or a pointer to one) that is not itself a pointer or an interface type.",
+        R"X(package p
+
+type I interface{ M() }
+
+func (x I) M() {}
+)X")
+EXPLAIN(err_receiver_method_pkg,
+        "Methods can only be declared on types of the same package. "
+        "Define a new type (type MyInt int) or write a plain function.",
+        R"X(package p
+
+import "unsafe"
+
+func (p unsafe.Pointer) M() {}
+)X")
+EXPLAIN(err_receiver_count,
+        "A method has exactly one receiver.",
+        R"X(package p
+
+type T struct{}
+
+func (a T, b T) M() {}
+)X")
+EXPLAIN(err_receiver_missing,
+        "A method declaration needs a receiver in the parentheses before "
+        "its name.",
+        R"X(package p
+
+type T struct{}
+
+func () M() {}
+)X")
+EXPLAIN(err_invalid_method_type_params,
+        "Methods of an interface cannot have type parameters. Put them on "
+        "the interface itself.",
+        R"X(package p
+
+type I interface {
+	M[T any](x T)
+}
+)X")
+EXPLAIN(err_use_of_untyped_nil,
+        "nil needs a context that gives it a type (a pointer, slice, map, "
+        "channel, function or interface). With := or var and no type, "
+        "there is none.",
+        R"X(package p
+
+func f() {
+	x := nil
+	_ = x
+}
+)X")
+EXPLAIN(err_cannot_convert,
+        "The conversion T(x) is not allowed between these types. Numbers "
+        "convert to numbers, strings to byte and rune slices, and types "
+        "with identical underlying types convert to each other. Nothing "
+        "else does.",
+        R"X(package p
+
+var s = []int("x")
+)X")
+EXPLAIN(err_cannot_convert_cause,
+        "The conversion T(x) is not allowed. The text after the colon says "
+        "why, for example that a constant does not fit the target type.",
+        R"X(package p
+
+func f[T ~int8]() T {
+	return T(1000)
+}
+)X")
+EXPLAIN(err_constant_overflows,
+        "A constant converted to a type does not fit it: for example 1000 as an int8 (-128 to 127). Use a larger type or a smaller value.",
+        R"X(package p
+
+var x = int8(1000)
+)X")
+EXPLAIN(err_value_truncated,
+        "A constant with a fractional part is used together with an integer, so the fraction would be lost. Write the integer value, or convert explicitly when the operand is a variable.",
+        R"X(package p
+
+func f(i int) int {
+	return i + 1.5
+}
+)X")
+EXPLAIN(err_value_overflows,
+        "A constant used together with a value of a smaller type does not fit that type: 300 does not fit a byte.",
+        R"X(package p
+
+func f(b byte) byte {
+	return b + 300
+}
+)X")
+EXPLAIN(err_generic_without_instantiation,
+        "A generic function or type must be given its type arguments (f[int], List[string]), unless they can be inferred from the arguments of a call.",
+        R"X(package p
+
+func f[T any](x T) {}
+
+var g = f
+)X")
+
+//===----------------------------------------------------------------------===//
+// Expressions
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_operator_not_defined,
+        "The operator does not work on values of this type: for example "
+        "+ on booleans, or && on numbers, or < on structs.",
+        R"X(package p
+
+func f(a, b bool) bool {
+	return a + b
+}
+)X")
+EXPLAIN(err_mismatched_types,
+        "A binary operation needs operands of the same type. Go++ does "
+        "not convert between numeric types by itself: convert one operand "
+        "explicitly, int64(x).",
+        R"X(package p
+
+func f(a int, b int64) int {
+	return a + b
+}
+)X")
+EXPLAIN(err_cannot_compare,
+        "These values cannot be compared with == or !=. Slices, maps and "
+        "functions can only be compared with nil; structs and arrays are "
+        "comparable only if all their fields or elements are.",
+        R"X(package p
+
+func f(a, b []int) bool {
+	return a == b
+}
+)X")
+EXPLAIN(err_division_by_zero,
+        "The divisor is the constant zero. This is an error at compile "
+        "time for integers and constants.",
+        R"X(package p
+
+func f(a int) int {
+	return a / 0
+}
+)X")
+EXPLAIN(err_shift_count_negative,
+        "A shift count must not be negative.",
+        R"X(package p
+
+func f(a int) int {
+	return a << -1
+}
+)X")
+EXPLAIN(err_shift_operand_invalid,
+        "The left operand of a shift must be an integer (or an untyped "
+        "constant that can be one).",
+        R"X(package p
+
+func f(a float64) float64 {
+	return a << 2
+}
+)X")
+EXPLAIN(err_shift_too_large,
+        "The shift count is larger than the compiler can handle for a "
+        "constant shift.",
+        R"X(package p
+
+const c = 1 << 100000000
+)X")
+EXPLAIN(err_constant_expression_overflow,
+        "The result of a constant expression is too large to represent "
+        "(constants have a limit of several hundred bits of precision).",
+        R"X(package p
+
+const huge = 1 << 600
+const worse = huge * huge * huge
+)X")
+EXPLAIN(err_not_constant,
+        "A constant declaration needs a constant expression: literals, "
+        "other constants, and operations or some built-ins on them. A "
+        "function call or a variable is not constant.",
+        R"X(package p
+
+func f() int { return 1 }
+
+const c = f()
+)X")
+EXPLAIN(err_no_value,
+        "The expression has no value: a call of a function without results "
+        "was used where a value is needed.",
+        R"X(package p
+
+func f() {}
+
+var x = f()
+)X")
+EXPLAIN(err_multi_value_in_single,
+        "A call returns several values but only one is used. Assign them "
+        "all: `a, b := f()`, or pass the call as the only argument of "
+        "another call.",
+        R"X(package p
+
+func f() (int, int) { return 1, 2 }
+
+var x = f() + 1
+)X")
+EXPLAIN(err_builtin_not_used_as_value,
+        "A built-in function such as len or append can only be called. It "
+        "is not a value.",
+        R"X(package p
+
+var f = len
+)X")
+EXPLAIN(err_undefined_field_or_method,
+        "The type has no field or method with this name. The text in "
+        "parentheses says what exists: a field or method with another "
+        "capitalization, a method on the pointer type, or nothing.",
+        R"X(package p
+
+type T struct{ a int }
+
+func f(t T) int {
+	return t.b
+}
+)X")
+EXPLAIN(err_not_enough_arguments,
+        "The call has fewer arguments than the function has parameters. The "
+        "message shows what was given (have) and what is needed (want).",
+        R"X(package p
+
+func add(a, b int) int { return a + b }
+
+var x = add(1)
+)X")
+EXPLAIN(err_too_many_arguments,
+        "The call has more arguments than the function has parameters.",
+        R"X(package p
+
+func add(a, b int) int { return a + b }
+
+var x = add(1, 2, 3)
+)X")
+EXPLAIN(err_not_enough_arguments_return,
+        "A return statement gives fewer values than the function returns. "
+        "In a function marked with !, return the results and optionally "
+        "an error.",
+        R"X(package p
+
+func f() (int, string) {
+	return 1
+}
+)X")
+EXPLAIN(err_too_many_arguments_return,
+        "A return statement gives more values than the function returns.",
+        R"X(package p
+
+func f() int {
+	return 1, 2
+}
+)X")
+EXPLAIN(err_cannot_index,
+        "Only arrays, slices, strings, maps, pointers to arrays and "
+        "type parameters constrained by them can be indexed.",
+        R"X(package p
+
+func f(x int) int {
+	return x[0]
+}
+)X")
+EXPLAIN(err_cannot_slice,
+        "Only strings, arrays, pointers to arrays and slices can be "
+        "sliced with a[i:j].",
+        R"X(package p
+
+func f(m map[int]int) {
+	_ = m[1:2]
+}
+)X")
+EXPLAIN(err_cannot_slice_unaddressable,
+        "Slicing an array needs an addressable array (a variable, not the "
+        "result of a call or a literal). Store the array in a variable "
+        "first.",
+        R"X(package p
+
+func g() [3]int { return [3]int{} }
+
+func f() []int {
+	return g()[:]
+}
+)X")
+EXPLAIN(err_slice_3_string,
+        "The 3-index form a[i:j:k] is for arrays and slices. A string has "
+        "no capacity.",
+        R"X(package p
+
+func f(s string) string {
+	return s[0:1:2]
+}
+)X")
+EXPLAIN(err_slice_indices_inverted,
+        "The lower index of a slice expression is larger than the upper "
+        "index (both constants).",
+        R"X(package p
+
+func f(a []int) []int {
+	return a[3:1]
+}
+)X")
+EXPLAIN(err_index_out_of_bounds,
+        "A constant index is outside the array or constant string: valid "
+        "indices are 0 to len-1.",
+        R"X(package p
+
+var a [3]int
+var x = a[5]
+)X")
+EXPLAIN(err_literal_too_few,
+        "A struct literal without field names must give a value for every "
+        "field, in order. Use field names (T{a: 1}) to leave fields out.",
+        R"X(package p
+
+type T struct{ a, b int }
+
+var x = T{1}
+)X")
+EXPLAIN(err_literal_too_many,
+        "A struct literal has more values than the struct has fields.",
+        R"X(package p
+
+type T struct{ a int }
+
+var x = T{1, 2}
+)X")
+EXPLAIN(err_literal_mixture,
+        "In one struct literal either all elements are field:value pairs "
+        "or none is.",
+        R"X(package p
+
+type T struct{ a, b int }
+
+var x = T{a: 1, 2}
+)X")
+EXPLAIN(err_literal_duplicate_field,
+        "A field is given twice in a struct literal.",
+        R"X(package p
+
+type T struct{ a int }
+
+var x = T{a: 1, a: 2}
+)X")
+EXPLAIN(err_literal_missing_key,
+        "Every element of a map literal needs a key: {key: value}.",
+        R"X(package p
+
+var m = map[string]int{"a"}
+)X")
+EXPLAIN(err_literal_duplicate_key,
+        "A constant key is given twice in a map literal.",
+        R"X(package p
+
+var m = map[string]int{"a": 1, "a": 2}
+)X")
+EXPLAIN(err_literal_duplicate_index,
+        "An index is given twice in an array or slice literal.",
+        R"X(package p
+
+var a = []int{0: 1, 0: 2}
+)X")
+EXPLAIN(err_literal_index_not_constant,
+        "An index in an array or slice literal must be a constant "
+        "integer.",
+        R"X(package p
+
+var i = 1
+var a = []int{i: 1}
+)X")
+EXPLAIN(err_literal_unexported_field,
+        "A struct literal without field names cannot set the unexported "
+        "fields of a type from another package.",
+        R"X(package main
+
+import "lib"
+
+var x = lib.T{1}
+//--- lib/lib.gopp
+package lib
+
+type T struct{ a int }
+)X")
+EXPLAIN(err_literal_invalid_field_name,
+        "In a struct literal the key of a field:value pair must be the "
+        "name of a field.",
+        R"X(package p
+
+type T struct{ a int }
+
+var x = T{1: 2}
+)X")
+EXPLAIN(err_literal_array_too_long,
+        "The array literal has more elements than the length of the array "
+        "type.",
+        R"X(package p
+
+var a = [2]int{1, 2, 3}
+)X")
+EXPLAIN(err_literal_missing_type,
+        "Reserved: a composite literal without a type is only valid inside another composite literal, and the parser does not produce one anywhere else, so this is not reported at present. Write the type: T{...}.",
+        R"X(package p
+
+type T struct{ a int }
+
+var x = []T{{1}, {2}}   // fine: the element type is inferred
+)X")
+EXPLAIN(err_type_assertion_non_interface,
+        "x.(T) asserts the dynamic type of an interface value. x must have "
+        "an interface type.",
+        R"X(package p
+
+func f(x int) {
+	_ = x.(string)
+}
+)X")
+EXPLAIN(err_type_assertion_impossible,
+        "The type can never be the dynamic type of the interface value, "
+        "because it lacks one of the interface's methods (see the lines "
+        "below the message).",
+        R"X(package p
+
+type I interface{ M() }
+type T struct{}
+
+func f(x I) {
+	_ = x.(T)
+}
+)X")
+EXPLAIN(err_type_switch_outside,
+        "The form x.(type) is only valid as the subject of a type switch.",
+        R"X(package p
+
+func f(x any) {
+	_ = x.(type)
+}
+)X")
+EXPLAIN(err_deref_non_pointer,
+        "The * operator needs a pointer, or a type (to make a pointer "
+        "type).",
+        R"X(package p
+
+func f(x int) int {
+	return *x
+}
+)X")
+EXPLAIN(err_address_of_unaddressable,
+        "& needs an addressable operand: a variable, a field of one, an "
+        "element of a slice or an addressable array, or a composite "
+        "literal. A call result or a map element has no address.",
+        R"X(package p
+
+func g() int { return 1 }
+
+var p = &g()
+)X")
+EXPLAIN(err_cannot_assign,
+        "The left side of an assignment must be a variable, a field of a "
+        "variable, an element of a slice or an addressable array, a "
+        "pointer target, or a map entry.",
+        R"X(package p
+
+func g() int { return 1 }
+
+func f() {
+	g() = 2
+}
+)X")
+EXPLAIN(err_cannot_assign_to,
+        "In a short variable declaration, a name that already exists in the same scope is assigned to, and only a variable can be assigned to. A constant, a type or a function of that name is an error.",
+        R"X(package p
+
+func f() {
+	const c = 1
+	c, d := 2, 3
+	_ = d
+}
+)X")
+EXPLAIN(err_assign_mismatch,
+        "The number of variables on the left differs from the number of "
+        "values on the right.",
+        R"X(package p
+
+func f() {
+	a, b := 1
+	_, _ = a, b
+}
+)X")
+EXPLAIN(err_returns_mismatch,
+        "A function call returns a different number of results than the "
+        "assignment has variables.",
+        R"X(package p
+
+func g() (int, int) { return 1, 2 }
+
+func f() {
+	a := g()
+	_ = a
+}
+)X")
+EXPLAIN(err_define_no_new_vars,
+        ":= must declare at least one new variable on its left side. Use "
+        "= to assign to existing variables.",
+        R"X(package p
+
+func f() {
+	a := 1
+	a := 2
+	_ = a
+}
+)X")
+EXPLAIN(err_non_name_on_left_of_define,
+        ":= declares names. Something else (a field, an element) cannot "
+        "be on its left side: use = instead.",
+        R"X(package p
+
+type T struct{ a int }
+
+func f(t T) {
+	t.a := 1
+}
+)X")
+EXPLAIN(err_missing_init_expr,
+        "A constant or variable declaration lists more names than values.",
+        R"X(package p
+
+const a, b = 1
+)X")
+EXPLAIN(err_extra_init_expr,
+        "A var declaration lists more values than names.",
+        R"X(package p
+
+var a = 1, 2
+)X")
+EXPLAIN(err_missing_return,
+        "A function with results must end in a return statement (or a "
+        "statement that never finishes, such as panic or an endless "
+        "for). Some path leaves the function without a value.",
+        R"X(package p
+
+func f(x int) int {
+	if x > 0 {
+		return 1
+	}
+}
+)X")
+EXPLAIN(err_misplaced_default,
+        "A switch or select has at most one default clause.",
+        R"X(package p
+
+func f(x int) {
+	switch x {
+	default:
+	default:
+	}
+}
+)X")
+EXPLAIN(err_duplicate_case,
+        "The same constant is used in two cases of one switch.",
+        R"X(package p
+
+func f(x int) {
+	switch x {
+	case 1:
+	case 1:
+	}
+}
+)X")
+EXPLAIN(err_duplicate_type_case,
+        "The same type is used in two cases of one type switch.",
+        R"X(package p
+
+func f(x any) {
+	switch x.(type) {
+	case int:
+	case int:
+	}
+}
+)X")
+EXPLAIN(err_switch_tag_not_comparable,
+        "The value of a switch must be comparable with ==. A struct that holds a slice, a map or a function is not (and neither is a slice, a map or a function without nil).",
+        R"X(package p
+
+type S struct{ a []int }
+
+func f(s S) {
+	switch s {
+	}
+}
+)X")
+EXPLAIN(err_select_case_invalid,
+        "Every case of a select is a send, a receive, or an assignment "
+        "of a receive.",
+        R"X(package p
+
+func f(c chan int) {
+	select {
+	case 1:
+	}
+}
+)X")
+EXPLAIN(err_range_cannot,
+        "Only arrays, slices, strings, maps, channels, integers and "
+        "iterator functions can be ranged over.",
+        R"X(package p
+
+func f(x float64) {
+	for range x {
+	}
+}
+)X")
+EXPLAIN(err_go_defer_needs_call,
+        "go and defer need a function call as their operand. The parser reports this first, as E0045 (expression in go must be function call); this code is the checker's guard for trees that did not come from the parser.",
+        R"X(package p
+
+func f(g func()) {
+	go g
+}
+)X")
+EXPLAIN(err_inc_dec_non_numeric,
+        "++ and -- work on numbers only.",
+        R"X(package p
+
+func f(s string) {
+	s++
+}
+)X")
+EXPLAIN(err_builtin_not_enough_args,
+        "A built-in function was called with too few arguments.",
+        R"X(package p
+
+func f() {
+	_ = len()
+}
+)X")
+EXPLAIN(err_builtin_too_many_args,
+        "A built-in function was called with too many arguments.",
+        R"X(package p
+
+func f(a []int) {
+	_ = len(a, a)
+}
+)X")
+EXPLAIN(err_builtin_invalid_arg,
+        "Reserved: not reported by this version of the compiler, which reports an invalid argument of a built-in function with E0316 (\"invalid argument: ...\"), or E0226 when the type is wrong.",
+        R"X(package p
+
+func f() {
+	_ = cap(1)
+}
+)X")
+
+EXPLAIN(err_builtin_invalid_arg_type,
+        "The argument of a built-in function has a type the built-in "
+        "does not accept.",
+        R"X(package p
+
+func f(x int) {
+	_ = len(x)
+}
+)X")
+EXPLAIN(err_cannot_use_ellipsis,
+        "`f(xs...)` passes a slice as the variadic arguments, so the "
+        "function must be variadic.",
+        R"X(package p
+
+func g(a int) {}
+
+func f(xs []int) {
+	g(xs...)
+}
+)X")
+EXPLAIN(err_cannot_use_ellipsis_builtin,
+        "The ... after the last argument is not valid for this built-in "
+        "function (it works with append and copy only).",
+        R"X(package p
+
+func f(xs []int) {
+	_ = len(xs...)
+}
+)X")
+EXPLAIN(err_cannot_use_ellipsis_with_multi,
+        "`...` applies to one slice argument, not to a call that returns "
+        "several values.",
+        R"X(package p
+
+func g() ([]int, int) { return nil, 0 }
+func h(a ...int)      {}
+
+func f() {
+	h(g()...)
+}
+)X")
+EXPLAIN(err_invalid_use_of_dots,
+        "`...` is only valid before the type of the last parameter, or after the last argument of a call. The parser reports most misuses first (E0041); this code is the checker's guard for trees that did not come from the parser.",
+        R"X(package p
+
+func f(a ...) {}
+)X")
+EXPLAIN(err_dots_not_last,
+        "Only the last parameter can be variadic. The parser reports this first, as E0040; this code is the checker's guard for trees that did not come from the parser.",
+        R"X(package p
+
+func f(a ...int, b int) {}
+)X")
+EXPLAIN(err_unexpected_type_switch,
+        "The value in a type switch must have an interface type.",
+        R"X(package p
+
+func f(x int) {
+	switch x.(type) {
+	}
+}
+)X")
+EXPLAIN(err_not_a_generic_type,
+        "Type arguments in brackets can only follow a generic type or function. In a method receiver, the type must itself have type parameters.",
+        R"X(package p
+
+type T struct{}
+
+func (t T[P]) M() {}
+)X")
+EXPLAIN(err_shadowed_result,
+        "A bare `return` returns the named results, but one of them is "
+        "hidden by another variable of the same name in an inner scope. "
+        "Rename the inner variable or return the values explicitly.",
+        R"X(package p
+
+func f() (x int) {
+	{
+		x := 2
+		_ = x
+		return
+	}
+}
+)X")
+EXPLAIN(err_iota_outside_const,
+        "iota is only meaningful in a constant declaration.",
+        R"X(package p
+
+var x = iota
+)X")
+EXPLAIN(err_invalid_constant_type,
+        "A constant has a basic type: a boolean, a number or a string. "
+        "Slices, structs and pointers cannot be constants.",
+        R"X(package p
+
+const c []int = nil
+)X")
+EXPLAIN(err_method_expr_ptr_recv,
+        "A method expression T.M needs a method with a value receiver. "
+        "For a pointer-receiver method write (*T).M.",
+        R"X(package p
+
+type T struct{}
+
+func (t *T) M() {}
+
+var f = T.M
+)X")
+EXPLAIN(err_ambiguous_selector,
+        "Two embedded types at the same depth both have a field or "
+        "method with this name. Name the embedded field in the "
+        "selector: x.A.Name.",
+        R"X(package p
+
+type A struct{ Name string }
+type B struct{ Name string }
+type C struct {
+	A
+	B
+}
+
+func f(c C) string {
+	return c.Name
+}
+)X")
+
+//===----------------------------------------------------------------------===//
+// Generics
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_got_n_type_args,
+        "Reserved: not reported by this version of the compiler, which "
+        "reports a wrong number of type arguments of a function with E0240 "
+        "and of a type with a message of E0323.",
+        R"X(package p
+
+type Pair[K comparable, V any] struct{}
+
+var x Pair[int]
+)X")
+EXPLAIN(err_got_n_type_args_func,
+        "A generic function was given more type arguments than it has "
+        "type parameters.",
+        R"X(package p
+
+func f[T any](x T) {}
+
+func g() {
+	f[int, string](1)
+}
+)X")
+EXPLAIN(err_cannot_use_constraint_outside,
+        "Some interfaces are constraints only: the ones with type terms (int | string), the ones that are or embed comparable, Copy or Clone. They can bound a type parameter, but a variable, field or parameter cannot have such a type.",
+        R"X(package p
+
+var x Copy
+)X")
+EXPLAIN(err_interface_contains_type_constraints,
+        "An interface with type terms (int | string) is a constraint "
+        "only, and cannot be the type of a variable.",
+        R"X(package p
+
+type Number interface{ int | float64 }
+
+func f(n Number) {}
+)X")
+EXPLAIN(err_interface_is_comparable,
+        "An interface that is or embeds `comparable` is a constraint "
+        "only. A variable cannot have it as its type.",
+        R"X(package p
+
+var x comparable
+)X")
+EXPLAIN(err_union_with_interface,
+        "A union (A | B) of constraint terms cannot include an interface "
+        "that has methods.",
+        R"X(package p
+
+type S interface{ String() string }
+
+type U interface{ int | S }
+)X")
+EXPLAIN(err_union_comparable,
+        "`comparable` cannot be a term of a union.",
+        R"X(package p
+
+type U interface{ comparable | int }
+)X")
+EXPLAIN(err_union_type_param,
+        "A term of a union cannot be a type parameter.",
+        R"X(package p
+
+func f[T any, U int | T]() {}
+)X")
+EXPLAIN(err_union_overlapping,
+        "Two terms of a union overlap: both allow some type. Remove the "
+        "one that is included in the other.",
+        R"X(package p
+
+type U interface{ int | ~int }
+)X")
+EXPLAIN(err_union_tilde_underlying,
+        "~T means all types whose underlying type is T, so T itself must "
+        "be an underlying type, not a defined type.",
+        R"X(package p
+
+type MyInt int
+
+type U interface{ ~MyInt }
+)X")
+EXPLAIN(err_union_tilde_interface,
+        "~ cannot be applied to an interface type.",
+        R"X(package p
+
+type I interface{ M() }
+
+type U interface{ ~I }
+)X")
+EXPLAIN(err_type_param_bound_not_interface,
+        "The constraint of a type parameter must be an interface (or a "
+        "union of types), not another type parameter.",
+        R"X(package p
+
+func f[T any, U T]() {}
+)X")
+EXPLAIN(err_invalid_receiver_type_params,
+        "The receiver of a method of a generic type must declare as many "
+        "type parameters as the type does: `func (l List[T]) Len()`.",
+        R"X(package p
+
+type List[T any] struct{}
+
+func (l List[A, B]) Len() int { return 0 }
+)X")
+EXPLAIN(err_cannot_use_type_param_as_rhs,
+        "A type declaration cannot define a type as one of the type "
+        "parameters: `type T[P any] P` is not allowed.",
+        R"X(package p
+
+type T[P any] P
+)X")
+
+//===----------------------------------------------------------------------===//
+// Ownership
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_own_r3a_needs_ownership,
+        "A borrowed value (a parameter, a range variable, a field read "
+        "through a borrowed value) cannot be moved or stored: the owner "
+        "still needs it. Copy it with Clone(), or take it with move(x) "
+        "where the language allows it (see the notes under the message).",
+        R"X(package p
+
+func keep(move s string) {}
+
+func f(s string) {
+	keep(s)
+}
+)X")
+EXPLAIN(err_own_box_needs_ownership,
+        "A value taken out of an interface box is borrowed from the shared "
+        "box, so it cannot be moved or stored. Copy it with Clone().",
+        R"X(package p
+
+type S struct{ names []string }
+
+func keep(move s S) {}
+
+func f(x any) {
+	switch v := x.(type) {
+	case S:
+		keep(v)
+	}
+}
+)X")
+EXPLAIN(note_own_fix_clone,
+        "This note suggests copying the value with Clone().",
+        R"X(package p
+
+func keep(move s string) {}
+
+func f(s string) {
+	keep(s)
+}
+)X")
+EXPLAIN(note_own_fix_move,
+        "This note suggests move(x): take the value and leave the zero "
+        "value in x.",
+        R"X(package p
+
+type T struct{ names []string }
+
+func keep(move s []string) {}
+
+func f(t *T) {
+	keep(t.names)
+}
+)X")
+EXPLAIN(note_own_fix_move_param,
+        "This note suggests marking the parameter `move`: a borrowed "
+        "parameter cannot be moved out of, but a parameter that owns its "
+        "argument can.",
+        R"X(package p
+
+func keep(move s string) {}
+
+func f(s string) {
+	keep(s)
+}
+)X")
+EXPLAIN(note_own_fix_alias,
+        "This note suggests the & form of the range variable, which "
+        "aliases the element instead of borrowing a copy.",
+        R"X(package p
+
+func keep(move s string) {}
+
+func f(xs []string) {
+	for _, x := range xs {
+		keep(x)
+	}
+}
+)X")
+EXPLAIN(err_own_borrowed_read_only,
+        "A borrowed variable (such as a parameter) is read-only at the top "
+        "level: you cannot assign to it or to its fields, because the "
+        "caller owns it. Take the parameter with `move`, or work on a "
+        "copy.",
+        R"X(package p
+
+type T struct{ names []string }
+
+func f(t T) {
+	t.names = nil
+}
+)X")
+EXPLAIN(err_own_binding_read_only,
+        "A variable bound by a type switch or a type assertion refers to "
+        "the shared box of the interface value, so it is read-only. Copy "
+        "it with Clone() if you need to change it.",
+        R"X(package p
+
+type S struct{ n []int }
+
+func f(x any) {
+	if v, ok := x.(S); ok {
+		v.n = nil
+	}
+}
+)X")
+EXPLAIN(note_own_fix_binding_copy,
+        "This note shows how to get a copy that can be changed.",
+        R"X(package p
+
+type S struct{ n []int }
+
+func f(x any) {
+	if v, ok := x.(S); ok {
+		v.n = nil
+	}
+}
+)X")
+EXPLAIN(err_own_borrowed_address,
+        "You cannot take the address of a borrowed variable: the pointer "
+        "could outlive the owner or allow writes to it.",
+        R"X(package p
+
+type T struct{ names []string }
+
+func f(t T) *T {
+	p := &t
+	return p
+}
+)X")
+EXPLAIN(err_own_borrowed_ptr_call,
+        "A method with a pointer receiver may change its receiver, so it "
+        "cannot be called on a borrowed (read-only) variable.",
+        R"X(package p
+
+type T struct{ n []int }
+
+func (t *T) Add() {}
+
+func f(t T) {
+	t.Add()
+}
+)X")
+EXPLAIN(err_own_borrowed_move,
+        "move(x) takes the value out of x and leaves the zero value. A "
+        "borrowed variable belongs to the caller, so it cannot be moved "
+        "from. Make the parameter `move`, or copy with Clone().",
+        R"X(package p
+
+func f(s string) string {
+	return move(s)
+}
+)X")
+EXPLAIN(err_own_borrowed_append,
+        "append may reallocate and change the slice, so it needs an "
+        "owned slice. A borrowed one belongs to the caller.",
+        R"X(package p
+
+func f(xs []int) {
+	xs = append(xs, 1)
+}
+)X")
+EXPLAIN(err_own_move_not_place,
+        "move(x) takes a value out of a place that can hold the zero "
+        "value: a variable, field, element, map entry or pointer target. "
+        "A call result or a literal is not a place.",
+        R"X(package p
+
+func g() string { return "a" }
+
+func f() string {
+	return move(g())
+}
+)X")
+EXPLAIN(err_own_clone_not_cloneable,
+        "Clone() is available for types that can be copied: built-in "
+        "types and types with a Clone method. This type has a drop method "
+        "or holds something that cannot be cloned.",
+        R"X(package p
+
+type R struct{ id int }
+
+func (r *R) drop() {}
+
+func f(r R) R {
+	return r.Clone()
+}
+)X")
+EXPLAIN(err_own_clone_ambiguous,
+        "x.Clone() on a pointer is ambiguous: the pointer has Clone "
+        "(copying the pointer) and the pointed-to type has a value "
+        "receiver Clone. Call it through the dereferenced value.",
+        R"X(package p
+
+type T struct{ n []int }
+
+func (t T) Clone() T { return t }
+
+func f(p *T) T {
+	return p.Clone()
+}
+)X")
+EXPLAIN(err_own_isnil_ambiguous,
+        "p.IsNil() is built in for pointers, and the pointed-to type has "
+        "its own IsNil method. Rename the method, or call it as "
+        "(*p).IsNil().",
+        R"X(package p
+
+type T struct{ n int }
+
+func (t T) IsNil() bool { return false }
+
+func f(p *T) bool {
+	return p.IsNil()
+}
+)X")
+EXPLAIN(err_duplicate_method_iface,
+        "An interface lists the same method twice (also through embedded "
+        "interfaces) with different signatures.",
+        R"X(package p
+
+type I interface {
+	M()
+	M()
+}
+)X")
+EXPLAIN(err_own_clone_ptr_receiver,
+        "The method `Clone() T` is the copy operation of Go++. It must "
+        "have a value receiver, so that it can be called on borrowed "
+        "values.",
+        R"X(package p
+
+type T struct{ n []int }
+
+func (t *T) Clone() T { return *t }
+)X")
+EXPLAIN(err_own_drop_signature,
+        "A drop method runs when the owner of the value ends. It has the "
+        "fixed shape `func (x *T) drop()`: a pointer receiver, no "
+        "parameters and no results.",
+        R"X(package p
+
+type T struct{ n int }
+
+func (t T) drop() {}
+)X")
+EXPLAIN(err_own_drop_called,
+        "drop runs by itself when the owner ends. Code cannot call it, "
+        "because the value would be dropped twice.",
+        R"X(package p
+
+type T struct{ n int }
+
+func (t *T) drop() {}
+
+func f(t *T) {
+	t.drop()
+}
+)X")
+EXPLAIN(err_own_variadic_owning,
+        "A variadic parameter of an owning type takes ownership of the "
+        "elements: write `move ...T`.",
+        R"X(package p
+
+func f(xs ...[]int) {}
+)X")
+EXPLAIN(err_own_variadic_generic,
+        "A variadic parameter of a type parameter type must say how the "
+        "elements are passed: `move ...T`, or constrain T with Copy.",
+        R"X(package p
+
+func f[T any](xs ...T) {}
+)X")
+EXPLAIN(err_own_return_ref_local,
+        "A ref points into the value it was made from. A local variable "
+        "dies at the return, so a ref into it would dangle.",
+        R"X(package p
+
+func f() ref string {
+	s := "hi"
+	return s[:1]
+}
+)X")
+EXPLAIN(err_own_return_ref_temp,
+        "A ref into a temporary value would point to freed memory after "
+        "the return.",
+        R"X(package p
+
+func load() string { return "abc" }
+
+func f() ref string {
+	return load()[:2]
+}
+)X")
+EXPLAIN(err_own_return_addr_local,
+        "The address of a local variable cannot be returned in Go++: the "
+        "variable does not escape to the heap. Return the value, or make "
+        "an owned allocation with new_unique.",
+        R"X(package p
+
+type T struct{ n int }
+
+func f() *T {
+	t := T{1}
+	return &t
+}
+)X")
+EXPLAIN(err_own_ref_into_temp,
+        "A ref into a temporary lives only to the end of the statement. "
+        "Storing it in a longer-lived variable would leave it dangling.",
+        R"X(package p
+
+func load() string { return "abc" }
+
+func f() {
+	var r ref string
+	r = load()[1:]
+	_ = r
+}
+)X")
+EXPLAIN(err_own_range_var_write,
+        "The variable of a range loop is a read-only borrowed copy of the "
+        "element. To change elements use the & form, "
+        "`for _, &x := range xs`, which aliases the element.",
+        R"X(package p
+
+func f(xs []string) {
+	for _, x := range xs {
+		x = "a"
+	}
+}
+)X")
+EXPLAIN(err_own_range_alias_invalid,
+        "The & form of the range variable aliases an element. Some range "
+        "sources (a string, an integer) have no element to alias.",
+        R"X(package p
+
+func f(s string) {
+	for _, &c := range s {
+		_ = c
+	}
+}
+)X")
+EXPLAIN(err_own_range_alias_index,
+        "& marks the element variable. It cannot be applied to the index "
+        "or key.",
+        R"X(package p
+
+func f(xs []string) {
+	for &i, x := range xs {
+		_, _ = i, x
+	}
+}
+)X")
+EXPLAIN(err_own_range_alias_borrowed,
+        "An array held by value in a borrowed variable is read-only, so "
+        "its elements cannot be aliased with &.",
+        R"X(package p
+
+func f(a [3]string) {
+	for _, &x := range a {
+		_ = x
+	}
+}
+)X")
+EXPLAIN(err_own_range_alias_func,
+        "Ranging over an iterator function with & needs an iterator that "
+        "yields pointers.",
+        R"X(package p
+
+func f(seq func(yield func(int) bool)) {
+	for &x := range seq {
+		_ = x
+	}
+}
+)X")
+EXPLAIN(err_own_range_mutation,
+        "Appending to or reassigning the collection that a range loop "
+        "walks can reallocate it under the loop. Collect the changes and "
+        "apply them after the loop.",
+        R"X(package p
+
+func f(xs []int) {
+	for _, x := range xs {
+		xs = append(xs, x)
+	}
+}
+)X")
+EXPLAIN(err_own_range_map_insert,
+        "Writing to a map while ranging over it may add a key. Only "
+        "m[k] with the range key k (changing the current entry) is "
+        "allowed.",
+        R"X(package p
+
+func f(m map[string]int) {
+	for k := range m {
+		m[k+"x"] = 1
+	}
+}
+)X")
+EXPLAIN(note_own_range_collect,
+        "This note suggests collecting the changes in a list and applying "
+        "them after the loop.",
+        R"X(package p
+
+func f(xs []int) {
+	for _, x := range xs {
+		xs = append(xs, x)
+	}
+}
+)X")
+EXPLAIN(err_own_case_ref_unreachable,
+        "`case string` also matches a ref string, so a later `case ref string` can never be reached. Put the ref case first, or remove it.",
+        R"X(package p
+
+func f(x any) {
+	switch x.(type) {
+	case string:
+	case ref string:
+	}
+}
+)X")
+EXPLAIN(err_own_append_borrowed,
+        "append gives back a slice that owns its elements. Appending to "
+        "a borrowed slice would need a copy: append(xs.Clone(), ...), or "
+        "take it with move: append(move(xs), ...).",
+        R"X(package p
+
+type X struct{ items []string }
+
+func f(x *X) []string {
+	y := append(x.items, "v")
+	return y
+}
+)X")
+EXPLAIN(err_own_append_ref,
+        "A ref has a fixed length and no capacity. Copy it into an owned "
+        "slice before appending.",
+        R"X(package p
+
+func f(xs ref []int) {
+	_ = append(xs, 1)
+}
+)X")
+EXPLAIN(err_own_append_spread,
+        "append(a, b...) copies the elements of b. For elements that own "
+        "something this would share them, so give the source with "
+        "move(b) or b.Clone().",
+        R"X(package p
+
+func f(a, b [][]int) [][]int {
+	return append(a, b...)
+}
+)X")
+EXPLAIN(err_own_copy_source,
+        "copy(dst, src) copies elements. For elements that own something "
+        "pass src.Clone() so that the elements are not shared.",
+        R"X(package p
+
+func f(dst, src [][]int) {
+	copy(dst, src)
+}
+)X")
+EXPLAIN(err_own_pinned_copy,
+        "A @Pinned type must not move in memory (it may hold addresses of "
+        "itself), so it can not be copied. Use a pointer or new_unique.",
+        R"X(package p
+
+@Pinned
+type T struct{ n int }
+
+func f(a T) {
+	b := a
+	_ = b
+}
+)X")
+EXPLAIN(err_own_pinned_move,
+        "A @Pinned type must not move in memory, so move(x) is not "
+        "allowed for it.",
+        R"X(package p
+
+@Pinned
+type T struct{ n int }
+
+func f() {
+	a := T{}
+	b := move(a)
+	_ = b
+}
+)X")
+EXPLAIN(err_own_generic_copy,
+        "In generic code a value of type parameter T can only be copied "
+        "if T is constrained by Copy. Add Copy to the constraint, or "
+        "take the value with move.",
+        R"X(package p
+
+func f[T any](x T) {
+	y := x
+	_ = y
+}
+)X")
+EXPLAIN(err_own_generic_return,
+        "A borrowed parameter of type parameter T cannot be returned "
+        "unless T is constrained by Copy (a copy is then free). Return "
+        "x.Clone() with a Clone constraint, or make the parameter move.",
+        R"X(package p
+
+func id[T any](x T) T {
+	return x
+}
+)X")
+EXPLAIN(note_own_generic_return_fix,
+        "This note shows how to fix returning a borrowed value of a type "
+        "parameter.",
+        R"X(package p
+
+func id[T any](x T) T {
+	return x
+}
+)X")
+EXPLAIN(err_own_weak_arg,
+        "new_weak makes a weak reference to a value owned by Shared[T]. "
+        "Its argument must be a Shared[T].",
+        R"X(package p
+
+func f() {
+	_ = new_weak(1)
+}
+)X")
+EXPLAIN(err_own_pointer_field,
+        "A raw pointer field does not own what it points to, so a new owned value cannot be stored in it: it would be freed at once. If the struct should own it, make the field Unique[T] (one owner) or Shared[T] (several).",
+        R"X(package p
+
+type Node struct {
+	V      int
+	Parent *Node
+}
+
+func f(n *Node) {
+	n.Parent = new_unique(Node{})
+}
+)X")
+EXPLAIN(note_own_new_removed,
+        "Go's new(T) does not exist in Go++. This note shows its "
+        "replacements: new_unique(T{}) for one owner, new_shared(T{}) for "
+        "several.",
+        R"X(package p
+
+func f() {
+	p := new(int)
+	_ = p
+}
+)X")
+EXPLAIN(err_own_move_range_borrowed,
+        "A range variable is borrowed; you cannot move out of it. Use "
+        "the & form (`for _, &x := range xs`) to move out of the element "
+        "itself, or copy with x.Clone().",
+        R"X(package p
+
+func keep(move s string) {}
+
+func f(xs []string) {
+	for _, x := range xs {
+		keep(move(x))
+	}
+}
+)X")
+EXPLAIN(err_bang_no_error_result,
+        "f!(...) unwraps the trailing error of f: it returns the other "
+        "results, and passes the error up (or panics). The function must "
+        "return a trailing error.",
+        R"X(package p
+
+func g() int { return 1 }
+
+func f!() int {
+	return g!()
+}
+)X")
+EXPLAIN(err_bang_on_conversion,
+        "The ! after a name applies to calls of functions. A conversion "
+        "or a built-in has no error to unwrap.",
+        R"X(package p
+
+func f(x float64) int {
+	return int!(x)
+}
+)X")
+EXPLAIN(err_bang_return_count,
+        "A return in a function declared with ! lists either the declared "
+        "results (the error is nil) or the declared results and then the "
+        "error (the function fails). Any other number of values is an "
+        "error. return g() works when g returns one of the two lists.",
+        R"X(package p
+
+func parse!(s string) (int, string) {
+	return 1
+}
+)X")
+
+//===----------------------------------------------------------------------===//
+// Foreign (C and C++) packages
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_foreign_unsupported,
+        "The import names a C or C++ header, but this build has no C/C++ "
+        "importer (it is part of a later phase). Headers can be imported "
+        "once the Clang importer is available.",
+        R"X(package main
+
+import "zlib.h"
+)X")
+EXPLAIN(err_foreign_ambiguous,
+        "A short name from a C++ header matches several declarations "
+        "(for example in two namespaces). Write the namespace path: "
+        "pkg.ns.Name.",
+        R"X(// import "<vector>" where both std::a::f and std::b::f are visible
+package main
+)X")
+EXPLAIN(err_foreign_call,
+        "No overload of the C or C++ function accepts these arguments "
+        "(the text says why). Check the number and types of arguments.",
+        R"X(// zlib.crc32("x")  with the wrong argument types
+package main
+)X")
+EXPLAIN(err_foreign_readonly_arg,
+        "The value is read-only here (it is borrowed), and the C or C++ "
+        "parameter is not const: the callee may change it. Pass a copy "
+        "(x.Clone()) or an owned value.",
+        R"X(// zlib.fill(buf)  with buf a borrowed []byte and fill(char *)
+package main
+)X")
+EXPLAIN(err_foreign_readonly_recv,
+        "A C++ method that is not const may change the object, so it "
+        "cannot be called on a read-only (borrowed) value.",
+        R"X(// s.push_back(1)  with s a borrowed std::vector<int>
+package main
+)X")
+EXPLAIN(err_foreign_template_value,
+        "A C++ function template is instantiated by a call. A template "
+        "instance cannot be used as a value (stored or passed around). "
+        "Wrap the call in a function literal: func(x int) { f[int](x) }.",
+        R"X(// g := vec.max[int]  (use the instance without calling it)
+package main
+)X")
+EXPLAIN(err_foreign_template_arg,
+        "A template argument written in brackets must be a type or a "
+        "constant.",
+        R"X(// std.max[x](1, 2)  with a variable x as template argument
+package main
+)X")
+EXPLAIN(err_foreign_instantiate,
+        "The C++ template cannot be instantiated with these arguments "
+        "(the text says why).",
+        R"X(// std.vector[void]()
+package main
+)X")
+
+//===----------------------------------------------------------------------===//
+// Unused imports and the checker's own families
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(err_unused_import,
+        "A package is imported and never used in the file. Remove the "
+        "import, or use the package. (To import only for its side "
+        "effects write `import _ \"path\"`.)",
+        R"X(package main
+
+import "unsafe"
+)X")
+EXPLAIN(err_unused_import_as,
+        "A package imported under another name is never used. Remove the "
+        "import or use it by that name.",
+        R"X(package main
+
+import u "unsafe"
+)X")
+EXPLAIN(err_sema_assign,
+        "Assignment, initialization or declaration of a value of the wrong "
+        "type: the value cannot be used as the target's type. The message "
+        "says which types and why (the value overflows, is truncated, "
+        "does not implement an interface, ...).",
+        R"X(package p
+
+var a int = "text"
+)X")
+EXPLAIN(err_sema_builtin,
+        "A built-in function (append, copy, make, len, complex, close, "
+        "clear, ...) was called with arguments it does not accept. The "
+        "message names the built-in and the problem.",
+        R"X(package p
+
+func f() {
+	_ = make(int)
+}
+)X")
+EXPLAIN(err_sema_call,
+        "A call or a conversion is not valid. The message says what is "
+        "wrong: the callee is not a function, the conversion has the wrong "
+        "number of arguments, a method needs a pointer, ...",
+        R"X(package p
+
+func f(x int) {
+	x()
+}
+)X")
+EXPLAIN(err_sema_decl,
+        "A declaration is not valid: a wrong name or signature for init "
+        "or main, a method on a generic alias, a missing body, a name "
+        "imported twice, ... The message says which.",
+        R"X(package main
+
+var main = 1
+)X")
+EXPLAIN(err_sema_expr,
+        "An expression is not valid: a bad shift count, a constant that "
+        "is too large, a case that cannot match, a type assertion on a "
+        "type parameter, ... The message says which.",
+        R"X(package p
+
+func f(x float64) {
+	_ = 1 << x
+}
+)X")
+EXPLAIN(err_sema_index,
+        "An index, slice or composite literal is not valid: the wrong "
+        "kind of index, a missing index, a slice of a non-sliceable "
+        "value, a bad composite literal type, ... The message says which.",
+        R"X(package p
+
+func f(xs []int) {
+	_ = xs[1, 2]
+}
+)X")
+EXPLAIN(err_sema_predicate,
+        "A channel operation (send or receive) is not valid for the "
+        "value. The message says which: not a channel, receive from a "
+        "send-only channel, ...",
+        R"X(package p
+
+func f(c chan<- int) {
+	<-c
+}
+)X")
+EXPLAIN(err_sema_stmt,
+        "A statement is not valid: a condition that is not boolean, a "
+        "bad case clause, a := with no new variable, a bad range "
+        "target, ... The message says which.",
+        R"X(package p
+
+func f(x int) {
+	if x {
+	}
+}
+)X")
+EXPLAIN(err_sema_typeset,
+        "A union in a type constraint has too many terms for the "
+        "compiler (more than 100).",
+        R"X(// a constraint with more than 100 terms:  interface{ int | int8 | ... }
+package p
+)X")
+EXPLAIN(err_sema_typexpr,
+        "A type expression is not valid: an array length that is not "
+        "constant, a generic type without its type arguments, a bad "
+        "embedded field, an invalid struct tag, ... The message says "
+        "which.",
+        R"X(package p
+
+func f() {
+	n := 3
+	var a [n]int
+	_ = a
+}
+)X")
+
+//===----------------------------------------------------------------------===//
+// gopp vet
+//===----------------------------------------------------------------------===//
+
+EXPLAIN(warn_vet_ref_field,
+        "A struct field of ref type points into data owned elsewhere "
+        "and nothing keeps that data alive. It is allowed at the "
+        "programmer's risk (like std::string_view), but gopp vet asks "
+        "you to say so by marking the struct type declaration @Ref (an "
+        "anonymous struct cannot be marked: declare a type).",
+        R"X(package p
+
+type Token struct {
+	Text ref string
+	Line int
+}
+)X")
+EXPLAIN(warn_vet_drop_zero,
+        "A drop method also runs on the zero value of its type (after a "
+        "move, or for a value that was never filled). Using a pointer, "
+        "interface, function or Unique/Shared/Weak field without a nil "
+        "check can crash. This lint is a heuristic: a nil check of the "
+        "field (f == nil, f != nil or f.IsNil()) anywhere in the method "
+        "silences it.",
+        R"X(package p
+
+type File struct{ n int }
+
+func (f *File) Close() {}
+
+type Res struct{ f *File }
+
+func (r *Res) drop() {
+	r.f.Close()
+}
+)X")
+EXPLAIN(warn_vet_bang_panics,
+        "Outside package main, f!() in a function that cannot return an "
+        "error panics when f fails. Library code should return the "
+        "error: mark the function with ! too, or handle the error. "
+        "In package main a panic is often what you want.",
+        R"X(package p
+
+func g() (int, error) { return 1, nil }
+
+func f() int {
+	return g!()
+}
+)X")
+EXPLAIN(warn_vet_defer_in_loop,
+        "A deferred call runs when the function returns, not at the end "
+        "of the loop body. With `defer f.Close()` in a loop, all the files "
+        "stay open until the function ends. Move the body into a function, "
+        "or close explicitly.",
+        R"X(package p
+
+type File struct{ n int }
+
+func (f *File) Close() error { return nil }
+
+func open(name string) (File, error) { return File{}, nil }
+
+func f(names []string) {
+	for _, n := range names {
+		file, _ := open(n)
+		defer file.Close()
+	}
+}
+)X")

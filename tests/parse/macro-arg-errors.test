@@ -2,28 +2,28 @@
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file. A wrong closing bracket in macro arguments gets a
 // note at the bracket it should close; unclosed arguments are reported at '('.
-// CHECK:{{.*}}macro-arg-errors.test:32:10: error: mismatched ')' in macro arguments, expected ']'
+// CHECK:{{.*}}macro-arg-errors.test:32:10: error{{\[E[0-9]+\]}}: mismatched ')' in macro arguments, expected ']'
 // CHECK-NEXT:   32 |     #M(a, [b)
 // CHECK-NEXT:      |             ^
 // CHECK-NEXT:{{.*}}macro-arg-errors.test:32:8: note: to match this '['
 // CHECK-NEXT:   32 |     #M(a, [b)
 // CHECK-NEXT:      |           ^
-// CHECK-NEXT:{{.*}}macro-arg-errors.test:36:10: error: mismatched ')' in macro arguments, expected '}'
+// CHECK-NEXT:{{.*}}macro-arg-errors.test:36:10: error{{\[E[0-9]+\]}}: mismatched ')' in macro arguments, expected '}'
 // CHECK-NEXT:   36 |     #N(c, {d)
 // CHECK-NEXT:      |             ^
 // CHECK-NEXT:{{.*}}macro-arg-errors.test:36:8: note: to match this '{'
 // CHECK-NEXT:   36 |     #N(c, {d)
 // CHECK-NEXT:      |           ^
-// CHECK-NEXT:{{.*}}macro-arg-errors.test:39:4: error: mismatched ']' in macro arguments
+// CHECK-NEXT:{{.*}}macro-arg-errors.test:39:4: error{{\[E[0-9]+\]}}: mismatched ']' in macro arguments
 // CHECK-NEXT:   39 | #T(]
 // CHECK-NEXT:      |    ^
 // CHECK-NEXT:{{.*}}macro-arg-errors.test:39:3: note: to match this '('
 // CHECK-NEXT:   39 | #T(]
 // CHECK-NEXT:      |   ^
-// CHECK-NEXT:{{.*}}macro-arg-errors.test:41:3: error: unterminated macro arguments: expected ')'
+// CHECK-NEXT:{{.*}}macro-arg-errors.test:41:3: error{{\[E[0-9]+\]}}: unterminated macro arguments: expected ')'
 // CHECK-NEXT:   41 | #U(x
 // CHECK-NEXT:      |   ^
-// CHECK-NEXT:{{.*}}macro-arg-errors.test:42:1: error: expected ';', found 'EOF'
+// CHECK-NEXT:{{.*}}macro-arg-errors.test:42:1: error{{\[E[0-9]+\]}}: expected ';', found 'EOF'
 // CHECK-NEXT:   42 |{{ *}}
 // CHECK-NEXT:      | ^
 package p

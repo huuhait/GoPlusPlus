@@ -1,16 +1,16 @@
 // RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file.
-// CHECK:{{.*}}diag-caret.test:19:7: error: expected operand, found ';'
+// CHECK:{{.*}}diag-caret.test:19:7: error{{\[E[0-9]+\]}}: expected operand, found ';'
 // CHECK-NEXT:   19 |     x := ;
 // CHECK-NEXT:      |          ^
-// CHECK-NEXT:{{.*}}diag-caret.test:20:21: error: expected operand, found ';'
+// CHECK-NEXT:{{.*}}diag-caret.test:20:21: error{{\[E[0-9]+\]}}: expected operand, found ';'
 // CHECK-NEXT:   20 |     世界 := "wide" + ;
 // CHECK-NEXT:      |                      ^
-// CHECK-NEXT:{{.*}}diag-caret.test:21:2: error: 'a b' is not a declaration: write 'var name Type' or 'name := value'
+// CHECK-NEXT:{{.*}}diag-caret.test:21:2: error{{\[E[0-9]+\]}}: 'a b' is not a declaration: write 'var name Type' or 'name := value'
 // CHECK-NEXT:   21 |     a b
 // CHECK-NEXT:      |     ^~~
-// CHECK-NEXT:{{.*}}diag-caret.test:24:1: error: expected '}', found 'EOF'
+// CHECK-NEXT:{{.*}}diag-caret.test:24:1: error{{\[E[0-9]+\]}}: expected '}', found 'EOF'
 // CHECK-NEXT:   24 |{{ *}}
 // CHECK-NEXT:      | ^
 package p

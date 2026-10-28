@@ -6,9 +6,9 @@
 // RUN: not %gopp parse -error-limit=0 %S/Inputs/while-bang-loop.gopp 2>&1 | FileCheck --check-prefix=LOOP %s
 // CHECK: {{^}}	while!(1)
 // CHECK: {{^}}	while!(2)
-// LOOP: error: Go++ has no 'while'
-// LOOP: error: Go++ has no 'while'
-// LOOP-NOT: error:
+// LOOP: error{{\[E[0-9]+\]}}: Go++ has no 'while'
+// LOOP: error{{\[E[0-9]+\]}}: Go++ has no 'while'
+// LOOP-NOT: error{{\[E[0-9]+\]}}:
 package p
 
 func while!(x int) {}

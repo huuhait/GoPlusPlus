@@ -1,0 +1,168 @@
+// RUN: %gopp vet --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=warning[E" "--implicit-check-not=error[E" %s
+// RUN: %gopp vet --check-diag-format=json %s 2>&1 | FileCheck --check-prefix=JSON %s
+// RUN: %gopp check %s 2>&1 | not grep warning
+// RUN: %gopp vet %s
+// RUN: not %gopp vet -Werror %s 2>/dev/null
+// P03.12: `gopp vet` reports four lints as warnings (the exit status stays 0
+// unless -Werror); `gopp check` reports none. Both sides: the flagged forms
+// warn, the nearby good forms are silent (--implicit-check-not).
+package lib
+
+type File struct{ n int }
+
+func (f *File) Close() error { return nil }
+func (f *File) Stop()        {}
+
+func open(name string) (File, error) { return File{}, nil }
+
+// OWN-V5: a ref field needs @Ref on the struct.
+type Tok struct {
+	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: struct field Text has a ref type, but struct Tok is not marked @Ref (OWN-V5)
+	Text ref string
+	N    int
+}
+
+@Ref
+type OkTok struct {
+	Text ref string
+	N    int
+	// A struct nested in a @Ref declaration is covered by the mark.
+	Inner struct{ Rest ref []byte }
+}
+
+type Owned struct {
+	Text string // an owning field: no warning
+	Next []string
+}
+
+type Two struct {
+	// CHECK: vet.test:[[@LINE+2]]:2: warning{{\[E[0-9]+\]}}: struct field A has a ref type, but struct Two is not marked @Ref (OWN-V5)
+	// CHECK: vet.test:[[@LINE+1]]:5: warning{{\[E[0-9]+\]}}: struct field B has a ref type, but struct Two is not marked @Ref (OWN-V5)
+	A, B ref []int
+}
+
+// CHECK: vet.test:[[@LINE+1]]:20: warning{{\[E[0-9]+\]}}: struct field p has a ref type, but the anonymous struct is not marked @Ref (OWN-V5)
+var global struct{ p ref []int }
+
+// A ref parameter or result is not a field: no warning.
+func first(s string) ref string { return s[:1] }
+
+func local() int {
+	type tok struct {
+		// CHECK: vet.test:[[@LINE+1]]:3: warning{{\[E[0-9]+\]}}: struct field s has a ref type, but struct tok is not marked @Ref (OWN-V5)
+		s ref string
+	}
+	var t tok
+	return len(t.s)
+}
+
+// OWN-R5: drop runs on the zero value too.
+type Res struct {
+	f *File
+	n int
+}
+
+func (r *Res) drop() {
+	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field f is used without a nil check (OWN-R5)
+	r.f.Close()
+}
+
+// A method that is not named drop is not a drop method.
+func (r *Res) release() { r.f.Close() }
+
+type Guarded struct {
+	f *File
+}
+
+func (r *Guarded) drop() {
+	if r.f != nil {
+		r.f.Close()
+	}
+}
+
+type Guarded2 struct{ f *File }
+
+func (g *Guarded2) drop() {
+	if g.f == nil {
+		return
+	}
+	g.f.Close()
+}
+
+type Guarded3 struct{ f Unique[File] }
+
+func (g *Guarded3) drop() {
+	if !g.f.IsNil() {
+		g.f.Stop()
+	}
+}
+
+type Owner struct{ f Unique[File] }
+
+func (o *Owner) drop() {
+	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field f is used without a nil check (OWN-R5)
+	o.f.Stop()
+}
+
+type Iface struct{ c interface{ Close() error } }
+
+func (i *Iface) drop() {
+	// CHECK: vet.test:[[@LINE+1]]:6: warning{{\[E[0-9]+\]}}: drop may run on a zero value: field c is used without a nil check (OWN-R5)
+	_ = i.c.Close()
+}
+
+type Plain struct {
+	n int
+	m map[string]int
+}
+
+// An int field has a harmless zero value, and a nil map can be read.
+func (p *Plain) drop() {
+	p.n = 0
+	_ = p.m["k"]
+}
+
+type NoField struct{ n int }
+
+func (n *NoField) drop() {}
+
+// ERR-10: a ! that panics, outside package main (more in vet-bang.test).
+func g() (int, error) { return 1, nil }
+
+func cannotFail() int {
+	// CHECK: vet.test:[[@LINE+1]]:8: warning{{\[E[0-9]+\]}}: this ! panics if the call fails: the enclosing function cannot return an error, and package lib is not main
+	x := g!()
+	return x
+}
+
+func canFail!() int {
+	x := g!()
+	return x
+}
+
+// D3.9: defer in a loop body.
+func inLoop(names []string) {
+	for _, n := range names {
+		f, _ := open(n)
+		// CHECK: vet.test:[[@LINE+1]]:3: warning{{\[E[0-9]+\]}}: defer in a loop body runs when the function returns
+		defer f.Close()
+	}
+	for i := 0; i < 3; i++ {
+		f, _ := open("x")
+		// CHECK: vet.test:[[@LINE+1]]:3: warning{{\[E[0-9]+\]}}: defer in a loop body runs when the function returns
+		defer f.Close()
+	}
+	h, _ := open("x")
+	defer h.Close()
+	for range names {
+		func() {
+			k, _ := open("y")
+			defer k.Close()
+		}()
+	}
+}
+
+// JSON: {"severity":"warning","id":"warn_vet_ref_field","code":"E{{[0-9]+}}"
+// JSON: {"severity":"warning","id":"warn_vet_drop_zero","code":"E{{[0-9]+}}"
+// JSON: {"severity":"warning","id":"warn_vet_bang_panics","code":"E{{[0-9]+}}"
+// JSON: {"severity":"warning","id":"warn_vet_defer_in_loop","code":"E{{[0-9]+}}"

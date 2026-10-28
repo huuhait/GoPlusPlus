@@ -13,12 +13,20 @@
 
 #include "Checker.h"
 
+#include "gopp/Sema/Foreign.h"
+
 using namespace gopp;
 using namespace gopp::sema;
 using llvm::cast;
 using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
 using llvm::isa;
+
+static const ast::Expr *unparen(const ast::Expr *E) {
+  while (auto *P = dyn_cast<ParenExpr>(E))
+    E = P->X;
+  return E;
+}
 
 void Checker::recordSelection(const SelectorExpr *Ex, const Selection &Sel) {
   I.Selections[Ex] = Sel;
@@ -57,6 +65,39 @@ void Checker::checkMoveRecvUse(const SelectorExpr *Sel, const char *What) {
   }
 }
 
+Package *Checker::qualifierPackage(const ast::Expr *X) {
+  if (auto *Id = dyn_cast<ast::Ident>(X)) {
+    auto *PN = dyn_cast_or_null<PkgName>(E.Sc->lookup(name(Id), E.Pos));
+    if (!PN)
+      return nullptr;
+    recordUse(Id, PN);
+    markUsed(PN);
+    return PN->Imported;
+  }
+  // `pkg.ns.Name`: a namespace of a foreign package is a PkgName again.
+  auto *Sel = dyn_cast<SelectorExpr>(X);
+  if (!Sel)
+    return nullptr;
+  Package *P = qualifierPackage(Sel->X);
+  if (!P || !P->Foreign)
+    return nullptr;
+  auto *PN = dyn_cast_or_null<PkgName>(P->Foreign->lookup(name(Sel->Sel)).Obj);
+  if (!PN)
+    return nullptr;
+  recordUse(Sel->Sel, PN);
+  return PN->Imported;
+}
+
+void Checker::markUsed(PkgName *PN) {
+  // A body checker only records the import in the set of its worker;
+  // checkPackage sets the flags after the bodies, so bodies never write
+  // shared objects (P03.10).
+  if (UsedImports)
+    UsedImports->insert(PN);
+  else
+    PN->Used = true;
+}
+
 void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
                        NamedType *Def) {
   StringRef Sel = name(Ex->Sel);
@@ -64,55 +105,68 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     X.M = Mode::Invalid;
     X.E = Ex;
   };
-  // Package-qualified identifier.
-  if (auto *Id = dyn_cast<ast::Ident>(Ex->X)) {
-    Object *O = E.Sc->lookup(name(Id), E.Pos);
-    if (auto *PN = dyn_cast_or_null<PkgName>(O)) {
-      recordUse(Id, PN);
-      PN->Used = true;
-      Package *P = PN->Imported;
-      Object *Exp = P->PkgScope ? P->PkgScope->lookupLocal(Sel) : nullptr;
-      if (!Exp && P->Foreign)
-        Exp = P->Foreign->lookup(Sel);
-      if (!Exp) {
-        if (!P->Fake && Sel != "_")
-          err(Ex->Sel, diag::err_undefined, {str(Ex)});
+  // Package-qualified identifier (`pkg.Name`), or a name in a namespace of a
+  // C++ header (`pkg.ns.Name`, ADR-0010 Q4).
+  if (Package *P = qualifierPackage(Ex->X)) {
+    Object *Exp = P->PkgScope ? P->PkgScope->lookupLocal(Sel) : nullptr;
+    if (!Exp && P->Foreign) {
+      ForeignLookup FL = P->Foreign->lookup(Sel);
+      Exp = FL.Obj;
+      if (!Exp && !FL.Ambiguous.empty()) {
+        // Reported where the name is used (ADR-0010 Q4); the full path
+        // always works.
+        Err Er = err(Ex->Sel, diag::err_foreign_ambiguous,
+                     {std::string(Sel), std::string(P->Name)});
+        for (const ForeignCandidate &C : FL.Ambiguous)
+          Er.note(Ex->Sel->getBegin(),
+                  "candidate " + C.Spelling + " (" + C.Origin + ")");
+        Er.note(Ex->Sel->getBegin(), "help: write the full path, e.g. " +
+                                         FL.Ambiguous.front().Spelling);
         return Error();
       }
-      if (!Exp->exported() && !P->IsForeign) {
-        err(Ex->Sel, diag::err_unexported_name,
-            {std::string(Sel), std::string(P->Name)});
-      }
-      recordUse(Ex->Sel, Exp);
-      switch (Exp->getKind()) {
-      case Object::Kind::Const:
-        X.M = Mode::Constant;
-        X.Ty = Exp->Ty;
-        X.Val = cast<Const>(Exp)->Val ? *cast<Const>(Exp)->Val : ConstValue();
-        break;
-      case Object::Kind::TypeName:
-        X.M = Mode::TypeExpr;
-        X.Ty = Exp->Ty;
-        break;
-      case Object::Kind::Var:
-        X.M = Mode::Variable;
-        X.Ty = Exp->Ty;
-        break;
-      case Object::Kind::Func:
-        X.M = Mode::Value;
-        X.Ty = Exp->Ty;
-        break;
-      case Object::Kind::Builtin:
-        X.M = Mode::Builtin;
-        X.Ty = Exp->Ty;
-        X.BId = cast<Builtin>(Exp)->Id;
-        break;
-      default:
-        return Error();
-      }
-      X.E = Ex;
-      return;
     }
+    if (!Exp) {
+      if (!P->Fake && Sel != "_")
+        err(Ex->Sel, diag::err_undefined, {str(Ex)});
+      return Error();
+    }
+    if (!Exp->exported() && !P->IsForeign) {
+      err(Ex->Sel, diag::err_unexported_name,
+          {std::string(Sel), std::string(P->Name)});
+    }
+    recordUse(Ex->Sel, Exp);
+    switch (Exp->getKind()) {
+    case Object::Kind::Const:
+      X.M = Mode::Constant;
+      X.Ty = Exp->Ty;
+      X.Val = cast<Const>(Exp)->Val ? *cast<Const>(Exp)->Val : ConstValue();
+      break;
+    case Object::Kind::TypeName:
+      X.M = Mode::TypeExpr;
+      X.Ty = Exp->Ty;
+      break;
+    case Object::Kind::Var:
+      X.M = Mode::Variable;
+      X.Ty = Exp->Ty;
+      break;
+    case Object::Kind::Func:
+      X.M = Mode::Value;
+      X.Ty = Exp->Ty;
+      break;
+    case Object::Kind::Builtin:
+      X.M = Mode::Builtin;
+      X.Ty = Exp->Ty;
+      X.BId = cast<Builtin>(Exp)->Id;
+      break;
+    case Object::Kind::PkgName:
+      // A namespace of a C++ header used on its own.
+      err(Ex, diag::err_package_without_selector, {str(Ex)});
+      return Error();
+    default:
+      return Error();
+    }
+    X.E = Ex;
+    return;
   }
 
   exprOrType(X, Ex->X, false);
@@ -126,7 +180,7 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     }
     break;
   case Mode::Builtin:
-    err(Ex, diag::custom,
+    err(Ex, diag::err_sema_call,
         {"invalid use of " + str(X) + " in selector expression"});
     return Error();
   case Mode::Invalid:
@@ -265,7 +319,7 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
         err(Ex->Sel, diag::err_method_expr_ptr_recv,
             {str(X.Ty) + "." + std::string(Sel), str(X.Ty), std::string(Sel)});
       else
-        err(Ex->Sel, diag::custom,
+        err(Ex->Sel, diag::err_sema_call,
             {"cannot call pointer method " + std::string(Sel) + " on " +
              str(X.Ty)});
       return Error();
@@ -312,7 +366,7 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     recordSelection(Ex, SelInfo);
     auto *Sig = dyn_cast_or_null<SignatureType>(M->Ty);
     if (!Sig) {
-      err(Ex, diag::custom, {"illegal cycle in method declaration"});
+      err(Ex, diag::err_sema_call, {"illegal cycle in method declaration"});
       return Error();
     }
     SmallVector<Type *, 4> Params;
@@ -430,7 +484,7 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
       SourceLoc At = Pos;
       if (static_cast<size_t>(Bad) < AP.size() && AP[Bad].isValid())
         At = AP[Bad];
-      err(At, diag::custom, {Cause});
+      err(At, diag::err_sema_call, {Cause});
     }
   });
   return Inst;
@@ -490,7 +544,7 @@ void Checker::funcInst(Operand &X, SourceLoc Pos, const IndexExpr *Inst,
         infer(Pos, TPs, TArgs, Params2, Args, Reverse, &IE);
     if (Inferred.empty()) {
       if (!IE.Msg.empty())
-        err(IE.Pos, diag::custom, {IE.Msg});
+        err(IE.Pos, diag::err_sema_call, {IE.Msg});
       X.M = Mode::Invalid;
       return;
     }
@@ -581,9 +635,102 @@ std::string Checker::tupleString(TupleType *T, bool Variadic) {
   return typesSummary(T->Elems, Variadic, false);
 }
 
+bool Checker::enclosingCanFail() const {
+  if (!E.Sig)
+    return false;
+  if (E.Sig->Fails)
+    return true;
+  const auto &R = E.Sig->Results->Elems;
+  return !R.empty() && R.back() == Ctx.errorType();
+}
+
+/// `pkg.Name[args]` where Name is a C++ template of a foreign package
+/// (ADR-0010 Q3), or null.
+Object *Checker::foreignTemplateOf(const IndexExpr *IE) {
+  const ast::Expr *Fun = IE->X;
+  while (auto *P = dyn_cast<ParenExpr>(Fun))
+    Fun = P->X;
+  auto *Sel = dyn_cast<SelectorExpr>(Fun);
+  if (!Sel)
+    return nullptr;
+  Package *P = qualifierPackage(Sel->X);
+  if (!P || !P->Foreign)
+    return nullptr;
+  Object *O = P->Foreign->lookup(name(Sel->Sel)).Obj;
+  if (!O || !O->IsTemplate)
+    return nullptr;
+  recordUse(Sel->Sel, O);
+  return O;
+}
+
+bool Checker::foreignTemplateArgs(ArrayRef<ast::Expr *> Idx,
+                                  SmallVector<ForeignTemplateArg, 4> &Out) {
+  bool Ok = true;
+  for (const ast::Expr *A : Idx) {
+    Operand Z;
+    exprOrType(Z, A, false);
+    if (Z.M == Mode::TypeExpr) {
+      Out.push_back({Z.Ty, nullptr});
+    } else if (Z.M == Mode::Constant) {
+      Out.push_back({Z.Ty, Mem.constant(Z.Val)});
+    } else {
+      if (Z.M != Mode::Invalid)
+        err(A, diag::err_foreign_template_arg, {str(A)});
+      Ok = false;
+    }
+  }
+  return Ok;
+}
+
+Type *Checker::foreignInstantiate(const IndexExpr *IE) {
+  Object *T = foreignTemplateOf(IE);
+  if (!T || !isa<TypeName>(T))
+    return nullptr;
+  SmallVector<ForeignTemplateArg, 4> Args;
+  if (!foreignTemplateArgs(IE->Indices, Args))
+    return invalid();
+  ForeignInstance R = T->Pkg->Foreign->instantiate(T, Args);
+  if (!R.Obj || !R.Obj->Ty) {
+    err(IE, diag::err_foreign_instantiate, {str(IE), R.Error});
+    return invalid();
+  }
+  return R.Obj->Ty;
+}
+
+/// The foreign function or method a call goes to, and the receiver
+/// expression of a selector call.
+Object *Checker::foreignCallee(const ast::Expr *Fun, const ast::Expr *&Recv) {
+  auto *Sel = dyn_cast<SelectorExpr>(unparen(Fun));
+  if (!Sel)
+    return nullptr;
+  Object *O = nullptr;
+  auto It = I.Selections.find(Sel);
+  if (It != I.Selections.end() && It->second.K == Selection::MethodVal) {
+    O = It->second.Obj;
+  } else {
+    auto U = I.Uses.find(Sel->Sel);
+    O = U == I.Uses.end() ? nullptr : U->second;
+  }
+  if (!O || !isa<Func>(O) || !O->Pkg || !O->Pkg->Foreign)
+    return nullptr;
+  Recv = Sel->X;
+  return O;
+}
+
 ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
   const IndexExpr *Inst = nullptr;
-  if (auto *IE = dyn_cast<IndexExpr>(Call->Fun)) {
+  Object *FTmpl = nullptr; // a C++ function template called as f[T](x)
+  SmallVector<ForeignTemplateArg, 4> FTArgs;
+  auto *CalleeIE = dyn_cast<IndexExpr>(Call->Fun);
+  if (CalleeIE && (FTmpl = foreignTemplateOf(CalleeIE)) && isa<Func>(FTmpl)) {
+    X.M = foreignTemplateArgs(CalleeIE->Indices, FTArgs) ? Mode::Value
+                                                         : Mode::Invalid;
+    X.Ty = FTmpl->Ty;
+    X.E = CalleeIE;
+    if (X.M == Mode::Value)
+      recordTypeAndValue(CalleeIE, X.M, X.Ty, nullptr);
+  } else if (auto *IE = CalleeIE) {
+    FTmpl = nullptr;
     if (indexExpr(X, IE))
       Inst = IE;
     X.E = IE;
@@ -620,7 +767,8 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     X.M = Mode::Invalid;
     switch (Call->Args.size()) {
     case 0:
-      err(Call, diag::custom, {"missing argument in conversion to " + str(T)});
+      err(Call, diag::err_sema_call,
+          {"missing argument in conversion to " + str(T)});
       break;
     case 1: {
       expr(X, Call->Args[0]);
@@ -629,7 +777,7 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
             It && !isTypeParam(T)) {
           TypeSet *TS = typeSet(It);
           if (TS->hasTerms() || TS->Comparable) {
-            err(Call, diag::custom,
+            err(Call, diag::err_sema_call,
                 {"cannot use interface " + str(T) +
                  " in conversion (contains specific type constraints or is "
                  "comparable)"});
@@ -637,7 +785,7 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
           }
         }
         if (Call->EllipsisLoc.isValid()) {
-          err(Call->Args[0], diag::custom,
+          err(Call->Args[0], diag::err_sema_call,
               {"invalid use of ... in conversion to " + str(T)});
           break;
         }
@@ -647,7 +795,7 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     }
     default:
       UseArgs();
-      err(Call->Args.back(), diag::custom,
+      err(Call->Args.back(), diag::err_sema_call,
           {"too many arguments in conversion to " + str(T)});
     }
     if (Call->isMust() && X.M != Mode::Invalid) {
@@ -715,7 +863,7 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
       },
       &CallWhy));
   if (!Sig) {
-    err(X, diag::custom,
+    err(X, diag::err_sema_call,
         {"invalid operation: cannot call " + str(X) + ": " + CallWhy});
     UseArgs();
     X.M = Mode::Invalid;
@@ -753,9 +901,59 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
 
   SmallVector<Operand, 4> Args;
   genericExprList(Call->Args, Args);
+
+  // A call into a C/C++ header: the foreign scope resolves overloads and
+  // template arguments and says what the callee may change (D3.7, ADR-0008).
+  SmallVector<ForeignArg, 4> FArgs;
+  ForeignArg FRecv;
+  ForeignCall FC;
+  const ast::Expr *RecvExpr = nullptr;
+  Object *FCallee = FTmpl;
+  if (!FCallee)
+    FCallee = foreignCallee(Call->Fun, RecvExpr);
+  if (FCallee && FCallee->Pkg && FCallee->Pkg->Foreign) {
+    bool Method = !FTmpl && RecvExpr &&
+                  I.Selections.count(cast<SelectorExpr>(unparen(Call->Fun)));
+    for (const Operand &A : Args) {
+      ForeignArg FA;
+      FA.Ty = A.isNil() ? nullptr : A.Ty;
+      FA.Pos = A.pos();
+      FA.Constant = A.M == Mode::Constant;
+      FA.Nil = A.isNil();
+      FA.Val = FA.Constant ? Mem.constant(A.Val) : nullptr;
+      FA.ReadOnly = isReadOnlyValue(A.E, A.Ty);
+      FArgs.push_back(FA);
+    }
+    if (Method) {
+      FRecv.Ty = I.typeOf(RecvExpr);
+      FRecv.Pos = RecvExpr->getBegin();
+      FRecv.ReadOnly = isReadOnlyValue(RecvExpr, FRecv.Ty);
+    }
+    FC = FCallee->Pkg->Foreign->checkCall(FCallee, FTArgs,
+                                          Method ? &FRecv : nullptr, FArgs);
+    if (!FC.Sig) {
+      Err Er = err(Call, diag::err_foreign_call, {str(Call->Fun), FC.Error});
+      for (const std::string &N : FC.Notes)
+        Er.note(Call->getBegin(), N);
+      X.M = Mode::Invalid;
+      X.E = Call;
+      return ExprKind::Statement;
+    }
+    Sig = FC.Sig;
+  }
+
   SignatureType *Out = Sig;
   arguments(Call, Sig, TArgs, ArgPos, Args, Call->EllipsisLoc.isValid(), Out);
   Sig = Out;
+  if (own() && FC.Sig) {
+    for (size_t K = 0; K < FArgs.size() && K < 64; ++K)
+      if (((FC.MutableParams >> K) & 1) && FArgs[K].ReadOnly)
+        err(FArgs[K].Pos, diag::err_foreign_readonly_arg,
+            {str(Args[K].E), str(Call->Fun), num(K + 1)});
+    if (FC.MutableRecv && FRecv.ReadOnly)
+      err(FRecv.Pos, diag::err_foreign_readonly_recv,
+          {str(RecvExpr), str(Call->Fun)});
+  }
   if (WasGeneric && Sig->TParams.empty())
     recordTypeAndValue(Call->Fun, Mode::Value, Sig, nullptr);
 
@@ -774,6 +972,11 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     SmallVector<Type *, 4> Kept(Res->Elems.begin(), Res->Elems.end() - 1);
     Res = Ctx.tuple(Kept);
     NRes = Res->size();
+    // ERR-6, ERR-11a: the innermost function decides what a failure does.
+    BangKind BK = BangKind::Panic;
+    if (Call != GoCall && enclosingCanFail())
+      BK = Call == DeferCall ? BangKind::DeferSet : BangKind::Return;
+    I.Bangs[Call] = BK;
   }
   switch (NRes) {
   case 0:
@@ -897,7 +1100,7 @@ void Checker::arguments(const CallExpr *Call, SignatureType *Sig,
         infer(Call->Lparen, TPs, TArgs, ParamTuple, Args, false, &IE);
     if (Inferred.empty()) {
       if (!IE.Msg.empty())
-        err(IE.Pos, diag::custom,
+        err(IE.Pos, diag::err_sema_call,
             {"in call to " + str(Call->Fun) + ", " + IE.Msg});
       return;
     }

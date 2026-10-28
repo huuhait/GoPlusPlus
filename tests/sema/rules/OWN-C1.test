@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-C1: a trivial value (numbers, raw pointers, refs, structs and
 // arrays of those) is copied with `=` and satisfies Copy.
 package main
@@ -20,6 +20,6 @@ func positive(q *P, r ref string, arr *[2]P) P {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:6: error: Doc does not satisfy Copy
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Doc does not satisfy Copy
 	_ = cp(Doc{})
 }

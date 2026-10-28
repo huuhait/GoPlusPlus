@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-V2 (and SLC-8): slicing a string, slice or array gives a ref; `:=`
 // infers the ref type. Slicing into a different owned variable is an error
 // (copy with []T(v)).
@@ -15,7 +15,7 @@ func positive(s string, xs []int) int {
 
 func negative(xs []int) {
 	ys := []int{1}
-	// CHECK: [[@LINE+1]]:7: error: cannot use xs[1:] (value of type ref []int) as []int value in assignment: a ref is not an owning value: write []int(xs[1:]) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use xs[1:] (value of type ref []int) as []int value in assignment: a ref is not an owning value: write []int(xs[1:]) to copy (TYP-2)
 	ys = xs[1:]
 	_ = ys
 }

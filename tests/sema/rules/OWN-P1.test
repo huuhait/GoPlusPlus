@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-P1: *T is a raw pointer: &x of an addressable operand, trivial,
 // copied freely, never frees anything.
 package main
@@ -17,7 +17,7 @@ func positive(n *Node) *Node {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:8: error: invalid operation: cannot take address of val() (value of type int)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid operation: cannot take address of val() (value of type int)
 	p := &val()
 	_ = p
 }

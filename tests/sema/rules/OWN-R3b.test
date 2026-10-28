@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-R3b (also PAR-1, PAR-3): a borrowed variable is read-only at the
 // top level: no assignment to it or its fields, no &, no pointer-receiver
 // call, no move. Data reached through a slice, map or pointer stays mutable.
@@ -25,16 +25,16 @@ func positive(s string, d D) int {
 }
 
 func negative(d D) {
-	// CHECK: [[@LINE+1]]:2: error: cannot assign to d: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to d: it is a borrowed variable and read-only at the top level (OWN-R3b)
 	d = D{}
-	// CHECK: [[@LINE+1]]:2: error: cannot assign to d.N: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to d.N: it is a borrowed variable and read-only at the top level (OWN-R3b)
 	d.N = 1
-	// CHECK: [[@LINE+1]]:6: error: cannot take the address of d: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of d: it is a borrowed variable (OWN-R3b)
 	_ = &d
-	// CHECK: [[@LINE+1]]:6: error: cannot take the address of d.Buf: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of d.Buf: it is a borrowed variable (OWN-R3b)
 	_ = &d.Buf
-	// CHECK: [[@LINE+1]]:2: error: cannot call pointer method Reset on d.Buf: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot call pointer method Reset on d.Buf: it is a borrowed variable (OWN-R3b)
 	d.Buf.Reset()
-	// CHECK: [[@LINE+1]]:11: error: cannot move d: it is a borrowed variable (OWN-R3b)
+	// CHECK: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot move d: it is a borrowed variable (OWN-R3b)
 	_ = move(d)
 }

@@ -14,8 +14,8 @@ only where the fix is exact.
 ## The tailored messages
 
 One table for all of them. Every row has its own entry in
-`compiler/include/gopp/Basic/DiagnosticIDs.def` (P03.14 attaches the numbered
-error codes to these names, D3.11). "Rule" rows are valid Go that is always an
+`compiler/include/gopp/Basic/DiagnosticIDs.def` (each also has a numbered error
+code, D3.11: `gopp explain E0087`). "Rule" rows are valid Go that is always an
 error in Go++; they are reported only with `ParseOptions::CheckLanguageRules`
 (the default; `gopp parse -language-rules=false` and `gopp fmt` turn it off,
 so that Go sources can be read and such code can be formatted). None of the

@@ -14,11 +14,11 @@
 // TOK-NEXT:26:14 illegal '”'
 // TOK-NEXT:26:17 semi '\n'
 // TOK-NEXT:27:1 eof
-// ERR:{{.*}}curly-quotes.test:26:9: error: curly quotation mark '“' (use neutral '"')
+// ERR:{{.*}}curly-quotes.test:26:9: error{{\[E[0-9]+\]}}: curly quotation mark '“' (use neutral '"')
 // ERR-NEXT:   26 | var s = “hi”
 // ERR-NEXT:      |         ^
 // ERR-NEXT:      |         "
-// ERR-NEXT:{{.*}}curly-quotes.test:26:14: error: curly quotation mark '”' (use neutral '"')
+// ERR-NEXT:{{.*}}curly-quotes.test:26:14: error{{\[E[0-9]+\]}}: curly quotation mark '”' (use neutral '"')
 // ERR-NEXT:   26 | var s = “hi”
 // ERR-NEXT:      |            ^
 // ERR-NEXT:      |            "

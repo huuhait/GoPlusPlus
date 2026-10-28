@@ -37,12 +37,13 @@ llvm::StringRef gopp::getSeverityName(Severity S) {
 namespace {
 struct DiagInfo {
   const char *Name;
+  unsigned Code;
   Severity Sev;
   const char *Format;
 };
 
 const DiagInfo DiagTable[] = {
-#define DIAG(Name, Sev, Text) {#Name, Severity::Sev, Text},
+#define DIAG(Name, Code, Sev, Text) {#Name, Code, Severity::Sev, Text},
 #include "gopp/Basic/DiagnosticIDs.def"
 };
 static_assert(std::size(DiagTable) == diag::NUM_DIAGS);
@@ -54,6 +55,29 @@ const DiagInfo &info(diag::ID ID) {
 } // namespace
 
 llvm::StringRef gopp::getDiagName(diag::ID ID) { return info(ID).Name; }
+
+unsigned gopp::getDiagCode(diag::ID ID) { return info(ID).Code; }
+
+std::string gopp::getDiagCodeString(diag::ID ID) {
+  unsigned C = getDiagCode(ID);
+  if (C == 0)
+    return "";
+  char Buf[16];
+  snprintf(Buf, sizeof Buf, "E%04u", C);
+  return Buf;
+}
+
+diag::ID gopp::lookupDiagCode(llvm::StringRef Code) {
+  if (Code.starts_with("E") || Code.starts_with("e"))
+    Code = Code.drop_front();
+  unsigned N;
+  if (Code.empty() || Code.getAsInteger(10, N) || N == 0)
+    return diag::NUM_DIAGS;
+  for (unsigned I = 0; I < diag::NUM_DIAGS; ++I)
+    if (DiagTable[I].Code == N)
+      return static_cast<diag::ID>(I);
+  return diag::NUM_DIAGS;
+}
 
 Severity gopp::getDiagSeverity(diag::ID ID) { return info(ID).Sev; }
 
@@ -314,16 +338,21 @@ void TextDiagnosticPrinter::printSnippet(SourceLoc Loc, SourceRange Primary,
 }
 
 void TextDiagnosticPrinter::handleDiagnostic(const Diagnostic &D) {
-  auto Header = [&](SourceLoc Loc, Severity S, llvm::StringRef Msg) {
+  auto Header = [&](SourceLoc Loc, Severity S, llvm::StringRef Code,
+                    llvm::StringRef Msg) {
     PresumedLoc P = SM.getPresumedLoc(Loc);
     if (P.isValid())
       OS << P.Filename << ':' << P.Line << ':' << P.Column << ": ";
-    OS << getSeverityName(S) << ": " << Msg << '\n';
+    OS << getSeverityName(S);
+    if (!Code.empty())
+      OS << '[' << Code << ']';
+    OS << ": " << Msg << '\n';
   };
-  Header(D.Loc, D.Sev, D.Message);
+  // Notes carry no code: they belong to the diagnostic above them.
+  Header(D.Loc, D.Sev, getDiagCodeString(D.ID), D.Message);
   printSnippet(D.Loc, D.Primary, D.Secondary, D.FixIts);
   for (const DiagNote &N : D.Notes) {
-    Header(N.Loc, Severity::Note, N.Message);
+    Header(N.Loc, Severity::Note, "", N.Message);
     if (N.Loc.isValid())
       printSnippet(N.Loc, N.Range, {}, {});
   }
@@ -363,6 +392,8 @@ void JSONDiagnosticPrinter::handleDiagnostic(const Diagnostic &D) {
   J.object([&] {
     J.attribute("severity", getSeverityName(D.Sev));
     J.attribute("id", getDiagName(D.ID));
+    if (D.ID != diag::custom)
+      J.attribute("code", getDiagCodeString(D.ID));
     J.attribute("message", llvm::json::fixUTF8(D.Message));
     PresumedLoc P = SM.getPresumedLoc(D.Loc);
     if (P.isValid()) {
@@ -388,6 +419,8 @@ void JSONDiagnosticPrinter::handleDiagnostic(const Diagnostic &D) {
         for (const DiagNote &N : D.Notes) {
           J.object([&] {
             J.attribute("id", getDiagName(N.ID));
+            if (N.ID != diag::custom)
+              J.attribute("code", getDiagCodeString(N.ID));
             J.attribute("message", llvm::json::fixUTF8(N.Message));
             PresumedLoc NP = SM.getPresumedLoc(N.Loc);
             if (NP.isValid()) {

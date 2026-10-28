@@ -1,12 +1,12 @@
 // `for i in range(10)` (Python): `range` is already written. The fix-it keeps
 // it (`for i := range(10)` is an integer range) and the parse reports one
 // error, not a follow-on "expected '{'".
-// RUN: not %gopp parse -error-limit=0 %s 2>&1 | FileCheck %s --implicit-check-not=error:
+// RUN: not %gopp parse -error-limit=0 %s 2>&1 | FileCheck %s --implicit-check-not="error[E"
 // RUN: %gopp parse -error-limit=0 -fixit-stdout %s 2>/dev/null > %t.fixed
 // RUN: %gopp parse %t.fixed
 // RUN: FileCheck --check-prefix=FIXED --input-file=%t.fixed %s
-// CHECK: for-in-range.test:[[#@LINE+5]]:6: error: Go++ has no 'for ... in'
-// CHECK: for-in-range.test:[[#@LINE+6]]:6: error: Go++ has no 'for ... in'
+// CHECK: for-in-range.test:[[#@LINE+5]]:6: error{{\[E[0-9]+\]}}: Go++ has no 'for ... in'
+// CHECK: for-in-range.test:[[#@LINE+6]]:6: error{{\[E[0-9]+\]}}: Go++ has no 'for ... in'
 package p
 
 func h(xs []int) {

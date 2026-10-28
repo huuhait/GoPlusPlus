@@ -24,8 +24,12 @@ using llvm::dyn_cast;
 using llvm::isa;
 
 bool Checker::sameId(const Object *O, Package *Pkg, StringRef Name, bool Fold) {
-  bool NameEq = Fold ? O->Name.equals_insensitive(Name) : O->Name == Name;
-  if (!NameEq)
+  // As in types2: when the case does not matter, the package does not either.
+  // (The package of an exported struct field is not stored: uniqued types
+  // carry no body-specific data, see TypeContext::unique.)
+  if (Fold && O->Name.equals_insensitive(Name))
+    return true;
+  if (O->Name != Name)
     return false;
   // Exported names and names of foreign packages do not depend on the package.
   if (isExportedName(Name))

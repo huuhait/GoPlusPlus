@@ -13,6 +13,10 @@
 //
 //   Diags.report(Loc, diag::err_expected_found) << "';'" << Found;
 //
+// Each entry also has an error code (D3.11): the text output shows it as
+// `error[E0042]: message` and the JSON output as "code":"E0042" next to the
+// name; `gopp explain E0042` tells more (DiagnosticExplain.h).
+//
 // The engine counts errors, applies the error limit (default 10 per package,
 // as in Go) and hands the diagnostics to a consumer:
 //   - TextDiagnosticPrinter: Clang-style text with source line and carets;
@@ -44,7 +48,7 @@ llvm::StringRef getSeverityName(Severity S);
 
 namespace diag {
 enum ID : unsigned {
-#define DIAG(Name, Sev, Text) Name,
+#define DIAG(Name, Code, Sev, Text) Name,
 #include "gopp/Basic/DiagnosticIDs.def"
   NUM_DIAGS
 };
@@ -52,6 +56,14 @@ enum ID : unsigned {
 
 /// The stable name of a diagnostic ("err_expected"); JSON output shows it.
 llvm::StringRef getDiagName(diag::ID ID);
+/// The number of the error code of the diagnostic (E0042 is 42); 0 for
+/// `custom`, which has none.
+unsigned getDiagCode(diag::ID ID);
+/// "E0042" for a diagnostic with a code, "" for `custom`.
+std::string getDiagCodeString(diag::ID ID);
+/// The diagnostic that has the code Code ("E0042", "e42" and "42" are
+/// accepted); NUM_DIAGS if there is none.
+diag::ID lookupDiagCode(llvm::StringRef Code);
 /// The severity the table gives the diagnostic.
 Severity getDiagSeverity(diag::ID ID);
 /// The message text of the table, with its %0..%9 placeholders.

@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule RNG-8: a loop body (or a block or function literal in it) must not
 // redeclare a loop variable: `u := u`, `var u = u.Clone()`, a parameter
 // named u. Reported by the parser.
@@ -17,22 +17,22 @@ func positive(users []User) {
 
 func negative(users []User) {
 	for _, u := range users {
-		// CHECK: [[@LINE+1]]:3: error: 'u' redeclares a loop variable: give the copy another name
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: 'u' redeclares a loop variable: give the copy another name
 		u := u.Clone()
 		_ = u
 	}
 	for _, u := range users {
-		// CHECK: [[@LINE+1]]:7: error: 'u' redeclares a loop variable: give the copy another name
+		// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: 'u' redeclares a loop variable: give the copy another name
 		var u = u.Clone()
 		_ = u
 	}
 	for _, u := range users {
-		// CHECK: [[@LINE+1]]:11: error: 'u' redeclares a loop variable: give the copy another name
+		// CHECK: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: 'u' redeclares a loop variable: give the copy another name
 		go func(u User) {}(u.Clone())
 	}
 	for i := 0; i < 3; i++ {
 		{
-			// CHECK: [[@LINE+1]]:4: error: 'i' redeclares a loop variable: give the copy another name
+			// CHECK: [[@LINE+1]]:4: error{{\[E[0-9]+\]}}: 'i' redeclares a loop variable: give the copy another name
 			i := 1
 			_ = i
 		}

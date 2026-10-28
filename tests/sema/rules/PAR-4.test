@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule PAR-4: parameters of trivial types are ordinary copies; the callee may
 // change its copy. Owning parameters are not copies (PAR-1).
 package main
@@ -20,6 +20,6 @@ func positive(p Pt, q *int) int {
 }
 
 func negative(s string) {
-	// CHECK: [[@LINE+1]]:2: error: cannot assign to s: it is a borrowed variable and read-only at the top level (OWN-R3b)
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to s: it is a borrowed variable and read-only at the top level (OWN-R3b)
 	s += "x"
 }

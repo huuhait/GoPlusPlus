@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule GEN-6: a method may have its own type parameters (generic method);
 // the receiver's type parameters work as in Go.
 package main
@@ -26,6 +26,6 @@ func positive() int {
 }
 
 func negative(s Set) {
-	// CHECK: [[@LINE+1]]:17: error: got 2 type arguments but s.Map[int, int] has 1 type parameters
+	// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: got 2 type arguments but s.Map[int, int] has 1 type parameters
 	_ = s.Map[int, int](func(i int) int { return i })
 }

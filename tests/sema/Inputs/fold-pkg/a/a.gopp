@@ -1,0 +1,6 @@
+package a
+
+type T struct {
+	f int
+	G int
+}

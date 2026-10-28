@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error: %s
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-R6: copies are explicit, x.Clone() exists for every cloneable
 // type; a hand-written Clone() T has a value receiver; a type with drop is
 // cloneable only with its own Clone(); an owning struct with raw pointer
@@ -34,12 +34,12 @@ func positive(h Handle, s string, xs []string, m map[string]int) {
 	_, _, _, _, _ = a, b, c, n, m.Clone()
 }
 
-// CHECK: [[@LINE+1]]:13: error: Clone() T must have a value receiver (OWN-R6)
+// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: Clone() T must have a value receiver (OWN-R6)
 func (c *C) Clone() C { return *c }
 
 func negative(f File, t Tree) {
-	// CHECK: [[@LINE+1]]:12: error: cannot clone f: type File does not satisfy Clone: File has a drop method but no Clone() File (OWN-R6)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone f: type File does not satisfy Clone: File has a drop method but no Clone() File (OWN-R6)
 	_ = clone(f)
-	// CHECK: [[@LINE+1]]:8: error: cannot clone t: type Tree does not satisfy Clone: it mixes owning fields with the raw pointer field Up: write Clone() by hand (OWN-R6)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone t: type Tree does not satisfy Clone: it mixes owning fields with the raw pointer field Up: write Clone() by hand (OWN-R6)
 	_ = t.Clone()
 }

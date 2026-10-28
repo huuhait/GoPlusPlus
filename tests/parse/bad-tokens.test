@@ -1,19 +1,19 @@
 // RUN: not %gopp parse %s 2>&1 | FileCheck --match-full-lines --strict-whitespace %s
 // Golden output first (generated); the source follows, so positions below are
 // positions in this file.
-// CHECK:{{.*}}bad-tokens.test:21:11: error: illegal character U+0024 '$'
+// CHECK:{{.*}}bad-tokens.test:21:11: error{{\[E[0-9]+\]}}: illegal character U+0024 '$'
 // CHECK-NEXT:   21 | var a = 1 $ 2
 // CHECK-NEXT:      |           ^
-// CHECK-NEXT:{{.*}}bad-tokens.test:22:9: error: Go++ has no '?:' operator: use an if statement
+// CHECK-NEXT:{{.*}}bad-tokens.test:22:9: error{{\[E[0-9]+\]}}: Go++ has no '?:' operator: use an if statement
 // CHECK-NEXT:   22 | var b = ?
 // CHECK-NEXT:      |         ^
-// CHECK-NEXT:{{.*}}bad-tokens.test:23:1: error: expected ';', found 'func'
+// CHECK-NEXT:{{.*}}bad-tokens.test:23:1: error{{\[E[0-9]+\]}}: expected ';', found 'func'
 // CHECK-NEXT:   23 | func f() {
 // CHECK-NEXT:      | ^~~~
-// CHECK-NEXT:{{.*}}bad-tokens.test:24:7: error: illegal rune literal
+// CHECK-NEXT:{{.*}}bad-tokens.test:24:7: error{{\[E[0-9]+\]}}: illegal rune literal
 // CHECK-NEXT:   24 |     x := 'a\tb'
 // CHECK-NEXT:      |          ^
-// CHECK-NEXT:{{.*}}bad-tokens.test:25:7: error: string literal not terminated
+// CHECK-NEXT:{{.*}}bad-tokens.test:25:7: error{{\[E[0-9]+\]}}: string literal not terminated
 // CHECK-NEXT:   25 |     y := "unterminated
 // CHECK-NEXT:      |          ^~~~~~~~~~~~~
 package p

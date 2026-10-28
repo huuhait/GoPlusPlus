@@ -7,6 +7,7 @@ add_gopp_library(Sema
   Loader.cpp
   Decl.cpp
   Expr.cpp
+  Foreign.cpp
   ExprString.cpp
   Index.cpp
   Infer.cpp
@@ -15,10 +16,12 @@ add_gopp_library(Sema
   Operand.cpp
   Ownership.cpp
   Predicates.cpp
+  Serialize.cpp
   Stmt.cpp
   TypeSet.cpp
   TypeString.cpp
   Typexpr.cpp
+  Vet.cpp
   Types.cpp
   LLVM_COMPONENTS support
   LINK_LIBS goppParse goppAST goppLex goppBasic)

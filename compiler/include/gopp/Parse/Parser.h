@@ -55,6 +55,9 @@ struct ParseOptions {
   /// Accept type parameters on methods (generic methods, GEN-6, D1.10). Go
   /// rejects them; the types2 conformance suite (Go mode) turns this off.
   bool AllowGenericMethods = true;
+  /// Accept `a.b.c` as a type name, for the nested namespaces of a C++ header
+  /// (ADR-0010 Q4). Go allows only `pkg.Name`; Go mode turns this off.
+  bool AllowNamespaceTypes = true;
 };
 
 /// Parses File (a file of SM) into Ctx. The returned File lives in Ctx; it

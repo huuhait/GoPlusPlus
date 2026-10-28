@@ -11,7 +11,7 @@
 // TOK-NEXT:18:6 int_lit '1'
 // TOK-NEXT:18:7 semi '\n'
 // TOK-NEXT:21:1 eof
-// ERR:{{.*}}unterminated-comment.test:19:1: error: comment not terminated
+// ERR:{{.*}}unterminated-comment.test:19:1: error{{\[E[0-9]+\]}}: comment not terminated
 // ERR-NEXT:   19 | /* never closed
 // ERR-NEXT:      | ^
 package p

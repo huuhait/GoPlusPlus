@@ -813,16 +813,21 @@ private:
   Expr *parseTypeName(Ident *I) {
     if (!I)
       I = parseIdent();
-    if (is(tok::period)) {
-      // I is a package name
+    // I is a package name. In Go++ more names may follow for the nested
+    // namespaces of a C++ header: `asio.ip.tcp.socket` (ADR-0010 Q4). Go mode
+    // reads only `pkg.Name`; a further `.X` is then a syntax error as in Go.
+    Expr *T = I;
+    while (is(tok::period)) {
       next();
       Ident *Sel = parseIdent();
       SelectorExpr *S = mk<SelectorExpr>(I->Begin);
-      S->X = I;
+      S->X = T;
       S->Sel = Sel;
-      return S;
+      T = S;
+      if (!Opts.AllowNamespaceTypes)
+        break;
     }
-    return I;
+    return T;
   }
 
   Expr *makeArrayOrSlice(SourceLoc Lbrack, Expr *Len, Expr *Elt) {

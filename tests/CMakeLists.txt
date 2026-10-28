@@ -55,8 +55,16 @@ add_custom_target(check-includes
   COMMAND ${GOPP_SOURCE_DIR}/tools/check-frontend-includes.sh ${GOPP_SOURCE_DIR}
   USES_TERMINAL)
 
+# check-diag-codes: the error codes of the diagnostics never change (P03.14):
+# the table in DiagnosticIDs.def must agree with docs/errors/codes.lock.
+add_custom_target(check-diag-codes
+  COMMAND ${GOPP_PYTHON} ${GOPP_SOURCE_DIR}/tools/check-diag-codes.py
+          --def ${GOPP_SOURCE_DIR}/compiler/include/gopp/Basic/DiagnosticIDs.def
+          --lock ${GOPP_SOURCE_DIR}/docs/errors/codes.lock
+  USES_TERMINAL)
+
 # check runs every stage target.
-add_custom_target(check DEPENDS ${GOPP_CHECK_TARGETS} check-includes)
+add_custom_target(check DEPENDS ${GOPP_CHECK_TARGETS} check-includes check-diag-codes)
 
 # check-long: opt-in slow tests (named *.long.test, "REQUIRES: long").
 add_custom_target(check-long

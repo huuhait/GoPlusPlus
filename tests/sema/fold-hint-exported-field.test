@@ -1,0 +1,28 @@
+// R4 (round 2): struct fields are uniqued and keep no package for an exported
+// name, but the case-fold hints of types2 must stay: `t.foo` and `T{foo: 1}`
+// name the field `Foo`. A field that really does not exist gets no hint.
+// RUN: not %gopp check %s 2>&1 | FileCheck %s
+// RUN: not %gopp check %S/Inputs/fold-pkg 2>&1 | FileCheck --check-prefix=PKG %s
+package main
+
+type T struct{ Foo int }
+
+func main() {
+	var t T
+	_ = t.foo
+	_ = T{foo: 1}
+	_ = t.bar
+}
+
+// CHECK: t.foo undefined {{.*}}but does have field Foo
+// CHECK: unknown field foo in struct literal{{.*}}but does have Foo
+// CHECK: t.bar undefined
+// CHECK-NOT: but does have
+
+// An unexported field of ANOTHER package with the very same name is not a
+// case-fold hint: types2 says "cannot refer to unexported field".
+// PKG: error{{.*}}: cannot refer to unexported field f in struct literal of type a.T
+// PKG: error{{.*}}: unknown field g in struct literal of type a.T, but does have G
+// PKG: error{{.*}}: unknown field h in struct literal of type a.T{{$}}
+// PKG: error{{.*}}: t.f undefined (cannot refer to unexported field f)
+// PKG: error{{.*}}: t.g undefined (type a.T has no field or method g, but does have field G)

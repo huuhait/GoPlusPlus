@@ -223,37 +223,6 @@ bool Loader::matchFile(StringRef Name, StringRef Content, bool &Selected,
 }
 
 //===----------------------------------------------------------------------===//
-// Foreign packages (mock)
-//===----------------------------------------------------------------------===//
-
-MockForeignScope &MockForeignProvider::scopeOf(StringRef Path) {
-  auto &P = Scopes[Path.str()];
-  if (!P)
-    P = std::make_unique<MockForeignScope>();
-  return *P;
-}
-
-Package *MockForeignProvider::header(StringRef Path, Arena &Mem,
-                                     std::string &Error) {
-  (void)Error;
-  Package *P = Mem.make<Package>();
-  P->Path = Mem.copy(Path);
-  std::string N;
-  for (char C : Path) {
-    if (std::isalnum(static_cast<unsigned char>(C)) || C == '_')
-      N += C;
-    else if (C == '.')
-      break;
-  }
-  P->Name = Mem.copy(N);
-  P->IsForeign = true;
-  P->PkgScope = Mem.newScope(nullptr, {}, "package");
-  P->Foreign = &scopeOf(Path);
-  P->Complete = true;
-  return P;
-}
-
-//===----------------------------------------------------------------------===//
 // Loading
 //===----------------------------------------------------------------------===//
 
@@ -443,6 +412,7 @@ CheckedPackage *Loader::loadFilesImpl(std::vector<std::string> Paths,
   ParseOptions PO;
   PO.CheckLanguageRules = LO.LanguageRules;
   PO.AllowGenericMethods = !CO.GoCompat;
+  PO.AllowNamespaceTypes = !CO.GoCompat;
   E->Parsed = parseFiles(SM, Ids, Diags, PO, 1);
   for (ParsedFile &PF : E->Parsed)
     E->Files.push_back(PF.AST);
@@ -462,9 +432,12 @@ CheckedPackage *Loader::loadFilesImpl(std::vector<std::string> Paths,
   }
   Entry *Raw = E.get();
   Loaded[ImportPath.str()] = std::move(E);
+  // Vet looks at the package that was asked for, not at what it imports.
+  CheckOptions PkgCO = CO;
+  PkgCO.Vet = CO.Vet && Stack.empty();
   Stack.push_back(ImportPath.str());
   Raw->Checked =
-      checkPackage(Ctx, SM, ImportPath, Raw->Files, *this, Diags, CO);
+      checkPackage(Ctx, SM, ImportPath, Raw->Files, *this, Diags, PkgCO);
   Stack.pop_back();
   Order.push_back(Raw->Checked.get());
   return Raw->Checked.get();

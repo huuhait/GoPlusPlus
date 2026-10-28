@@ -1,0 +1,65 @@
+// RUN: %gopp check --dump-types %s 2>&1 | FileCheck --implicit-check-not="error[" %s
+// P03.08 (D3.6, ERR-6, ERR-11a): what the failure of a `call!(...)` does. The
+// innermost function decides: a function that can fail (declared with `!`, or
+// with a last result of type error) gets the error returned; any other
+// function, a goroutine body and a package-level initializer panic. `defer` in
+// a function that can fail sets its error; `go` always panics.
+package main
+
+func g() (int, error)  { return 1, nil }
+func h() error         { return nil }
+func gen[T Copy](x T) (T, error) { return x, nil }
+
+type R struct{}
+
+func (R) Self() (R, error) { return R{}, nil }
+
+func fails!() int { return 1 }
+
+func inFail!() int {
+	a := g!()
+	// CHECK: bang `g!()` returns the error
+	b := fails!()
+	// CHECK: bang `fails!()` returns the error
+	c := gen[int]!(3)
+	// CHECK: bang `gen[int]!(3)` returns the error
+	h!()
+	// CHECK: bang `h!()` returns the error
+	defer h!()
+	// CHECK: bang `h!()` sets the error
+	go h!()
+	// CHECK: bang `h!()` panics
+	f := func() {
+		h!()
+		// CHECK: bang `h!()` panics
+	}
+	f()
+	// A literal that can fail is judged by its own signature.
+	k := func!() { h!() }
+	// CHECK: bang `h!()` returns the error
+	k()
+	return a + b + c
+}
+
+func lastErr() (int, error) {
+	x := g!()
+	// CHECK: bang `g!()` returns the error
+	defer h!()
+	// CHECK: bang `h!()` sets the error
+	return x, nil
+}
+
+func plain() {
+	x := g!()
+	// CHECK: bang `g!()` panics
+	_ = x
+	defer h!()
+	// CHECK: bang `h!()` panics
+	r := R{}
+	_ = r.Self!().Self!()
+	// CHECK: bang `r.Self!()` panics
+	// CHECK: bang `r.Self!().Self!()` panics
+}
+
+var global = fails!()
+// CHECK: bang `fails!()` panics

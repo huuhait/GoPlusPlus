@@ -1,0 +1,58 @@
+// RUN: %gopp vet %s 2>&1 | FileCheck "--implicit-check-not=warning[E" "--implicit-check-not=error[E" %s
+// RUN: %gopp vet %S/Inputs/vet-main.gopp 2>&1 | count 0
+// Vet looks at the package it is given, not at the packages it imports.
+// RUN: rm -rf %t && mkdir -p %t/sub
+// RUN: printf 'package sub\n\nfunc g() error { return nil }\n\nfunc F() { g!() }\n' > %t/sub/sub.gopp
+// RUN: printf 'package lib\n\nimport "sub"\n\nfunc G() { sub.F() }\n' > %t/lib.gopp
+// RUN: %gopp vet %t 2>&1 | count 0
+// RUN: %gopp vet %t/sub 2>&1 | FileCheck --check-prefix=SUB %s
+// SUB: sub.gopp:5:13: warning{{\[E[0-9]+\]}}: this ! panics if the call fails
+// ERR-10 (P03.12): a `!` that would panic outside package main. The innermost
+// function decides: a function that can fail returns the error, anything else
+// (a plain function, a goroutine, a package-level initializer, a closure that
+// cannot fail) panics. In package main nothing is reported (Inputs/).
+package lib
+
+func fails() error   { return nil }
+func failsBang!() int { return 1 }
+
+func plain() {
+	// CHECK: [[@LINE+1]]:7: warning{{\[E[0-9]+\]}}: this ! panics if the call fails
+	fails!()
+}
+
+func canFail!() int {
+	fails!() // returns the error
+	return 1
+}
+
+func lastErr() error {
+	fails!() // the last result is error: returns it
+	return nil
+}
+
+func inGo!() {
+	// CHECK: [[@LINE+1]]:10: warning{{\[E[0-9]+\]}}: this ! panics if the call fails
+	go fails!()
+	defer fails!() // sets the error of inGo
+}
+
+func deferPlain() {
+	// CHECK: [[@LINE+1]]:13: warning{{\[E[0-9]+\]}}: this ! panics if the call fails
+	defer fails!()
+}
+
+// CHECK: [[@LINE+1]]:24: warning{{\[E[0-9]+\]}}: this ! panics if the call fails
+var initial = failsBang!()
+
+func closure!() {
+	f := func() {
+		// CHECK: [[@LINE+1]]:8: warning{{\[E[0-9]+\]}}: this ! panics if the call fails
+		fails!() // the closure cannot fail, whatever the outer function is
+	}
+	g := func!() {
+		fails!() // returns the error of the closure
+	}
+	f()
+	_ = g
+}
