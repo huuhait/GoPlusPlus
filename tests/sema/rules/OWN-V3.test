@@ -7,13 +7,13 @@ type H struct{ fd int }
 
 func (h *H) drop() {}
 
-func positive(s string, r ref string, rs ref []int) (string, []int) {
-	var v ref string = s
+func positive(s string, r View[string], rs View[[]int]) (string, []int) {
+	var v View[string] = s
 	_ = v
 	return string(r), []int(rs)
 }
 
-func negative(r ref []H) []H {
-	// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert r (variable of type ref []H) to type []H: element type H does not satisfy Clone (OWN-V3)
+func negative(r View[[]H]) []H {
+	// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert r (variable of type View{{\[}}[]H]) to type []H: element type H does not satisfy Clone (OWN-V3)
 	return []H(r)
 }

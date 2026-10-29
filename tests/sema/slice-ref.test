@@ -1,20 +1,22 @@
 // RUN: %gopp check %s 2>&1 | FileCheck --allow-empty "--implicit-check-not=error[E" %s
-// SLC-8, OWN-V1: a `ref string` / `ref []T` (variable, parameter or field)
+// SLC-8, OWN-V1: a `View[string]` / `View[[]T]` (variable, parameter or field)
 // can be sliced; the result is a ref again.
 package main
 
-type N struct{ Text ref string }
-type P struct{ src ref string }
+@View
+type N struct{ Text View[string] }
+@View
+type P struct{ src View[string] }
 
-func a(src ref string, xs ref []int, p *P) {
+func a(src View[string], xs View[[]int], p *P) {
 	_ = src[1:]
 	_ = xs[1:]
-	var r ref string = src
+	var r View[string] = src
 	_ = r[1:]
 	n := N{}
 	n.Text = p.src[1:2]
 	_ = p.src[1:]
-	var t ref []int = xs[1:2]
+	var t View[[]int] = xs[1:2]
 	_ = t
 }
 func main() {}

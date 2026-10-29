@@ -15,46 +15,8 @@ func (f *File) Stop()        {}
 
 func open(name string) (File, error) { return File{}, nil }
 
-// OWN-V5: a ref field needs @Ref on the struct.
-type Tok struct {
-	// CHECK: vet.test:[[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: struct field Text has a ref type, but struct Tok is not marked @Ref (OWN-V5)
-	Text ref string
-	N    int
-}
-
-@Ref
-type OkTok struct {
-	Text ref string
-	N    int
-	// A struct nested in a @Ref declaration is covered by the mark.
-	Inner struct{ Rest ref []byte }
-}
-
-type Owned struct {
-	Text string // an owning field: no warning
-	Next []string
-}
-
-type Two struct {
-	// CHECK: vet.test:[[@LINE+2]]:2: warning{{\[E[0-9]+\]}}: struct field A has a ref type, but struct Two is not marked @Ref (OWN-V5)
-	// CHECK: vet.test:[[@LINE+1]]:5: warning{{\[E[0-9]+\]}}: struct field B has a ref type, but struct Two is not marked @Ref (OWN-V5)
-	A, B ref []int
-}
-
-// CHECK: vet.test:[[@LINE+1]]:20: warning{{\[E[0-9]+\]}}: struct field p has a ref type, but the anonymous struct is not marked @Ref (OWN-V5)
-var global struct{ p ref []int }
-
-// A ref parameter or result is not a field: no warning.
-func first(s string) ref string { return s[:1] }
-
-func local() int {
-	type tok struct {
-		// CHECK: vet.test:[[@LINE+1]]:3: warning{{\[E[0-9]+\]}}: struct field s has a ref type, but struct tok is not marked @Ref (OWN-V5)
-		s ref string
-	}
-	var t tok
-	return len(t.s)
-}
+// OWN-V5 is a check error now (err_view_field_without_attr, OWN-V5.test).
+func first(s string) View[string] { return s[:1] }
 
 // OWN-R5: drop runs on the zero value too.
 type Res struct {
@@ -174,7 +136,6 @@ func inLoop(names []string) {
 	}
 }
 
-// JSON: {"severity":"warning","id":"warn_vet_ref_field","code":"E{{[0-9]+}}"
 // JSON: {"severity":"warning","id":"warn_vet_drop_zero","code":"E{{[0-9]+}}"
 // JSON: {"severity":"warning","id":"warn_vet_bang_panics","code":"E{{[0-9]+}}"
 // JSON: {"severity":"warning","id":"warn_vet_defer_in_loop","code":"E{{[0-9]+}}"

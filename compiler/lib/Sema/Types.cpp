@@ -231,9 +231,10 @@ T *TypeContext::unique(Table<T> &Tab, const llvm::FoldingSetNodeID &ID,
 PointerType *TypeContext::pointer(Type *Elem){
     GOPP_UNIQUE(Pointers, PointerType,
                 Elem)} SliceType *TypeContext::slice(Type *Elem){
-    GOPP_UNIQUE(Slices, SliceType, Elem)} RefType *TypeContext::ref(Type *Elem){
-    GOPP_UNIQUE(Refs, RefType,
-                Elem)} OptionType *TypeContext::option(Type *Elem){
+    GOPP_UNIQUE(Slices, SliceType,
+                Elem)} RefType *TypeContext::ref(Type *Elem, bool Borrowed){
+    GOPP_UNIQUE(Refs, RefType, Elem,
+                Borrowed)} OptionType *TypeContext::option(Type *Elem){
     GOPP_UNIQUE(Options, OptionType,
                 Elem)} ArrayType *TypeContext::array(Type *Elem, int64_t Len){
     GOPP_UNIQUE(Arrays, ArrayType, Elem,
@@ -488,6 +489,22 @@ void TypeContext::initUniverse(bool GoCompat) {
       TN->Name = "Option";
       NamedType *N = newNamed(TN);
       N->IsOption = true;
+      TypeName *PTN = Objs.make<TypeName>();
+      PTN->Name = "T";
+      TypeParamType *TP = newTypeParam(PTN, 0, AnyType);
+      TypeParamType *TPs[] = {TP};
+      N->TParams =
+          ArrayRef<TypeParamType *>(Objs.copy(ArrayRef<TypeParamType *>(TPs)));
+      N->Underlying = structOf({});
+      Def(TN);
+    }
+    // View[T] (ADR-0020): an instance is a RefType, built by
+    // Checker::instantiatedType.
+    {
+      TypeName *TN = Objs.make<TypeName>();
+      TN->Name = "View";
+      NamedType *N = newNamed(TN);
+      N->IsView = true;
       TypeName *PTN = Objs.make<TypeName>();
       PTN->Name = "T";
       TypeParamType *TP = newTypeParam(PTN, 0, AnyType);

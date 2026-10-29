@@ -1,0 +1,14 @@
+// CHECK: error[E0140]: invalid recursive type: N0 refers to itself
+package main
+
+type N1[P any] struct{ f0 [2]N1[P] }
+type N0[P any] struct{ f1 N0[P]; f0 N1[int] }
+
+func main() {}
+
+func use1(a N1[int]) {
+	b := a
+	_ = b
+	c := a.Clone()
+	_ = c
+}

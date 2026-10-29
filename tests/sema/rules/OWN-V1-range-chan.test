@@ -1,0 +1,45 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21 review (R4), OWN-V1: a channel behind a view is not a channel: a
+// receive, a send, a close and a select case through it are errors, and so is
+// `for x := range c`, which receives. The range statement asks the same
+// question as `<-c` (rangeKeyVal); a channel that is not behind a view (or
+// ref) ranges as before.
+package main
+
+type Pipe struct{ c chan int }
+
+func views(c View[chan int], p View[Pipe]) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid operation: cannot receive from non-channel View[chan int] c
+	_ = <-c
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot range over c (variable of type View[chan int]): non-channel View[chan int]
+	for x := range c {
+		_ = x
+	}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot range over p.c (variable of type View[chan int]): non-channel View[chan int]
+	for x := range p.c {
+		_ = x
+	}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot range over c (variable of type View[chan int]): non-channel View[chan int]
+	for range c {
+	}
+}
+
+func fine(c chan int, p Pipe, d <-chan int, s View[[]int], m View[map[string]int]) {
+	for x := range c {
+		_ = x
+	}
+	for x := range p.c {
+		_ = x
+	}
+	for x := range d {
+		_ = x
+	}
+	for _, x := range s {
+		_ = x
+	}
+	for k, v := range m {
+		_, _ = k, v
+	}
+}
+
+func main() {}

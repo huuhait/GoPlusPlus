@@ -307,7 +307,8 @@ static unsigned bodyThreads(const CheckOptions &O, size_t N) {
 /// is free, their diagnostics go to their own slots.
 static void runBodies(PackageState &S, const SourceManager &SM,
                       std::vector<BodyWorker> &Workers,
-                      std::vector<std::vector<Diagnostic>> &Diags) {
+                      std::vector<std::vector<Diagnostic>> &Diags,
+                      std::vector<std::vector<Checker::MonoInst>> &Monos) {
   size_t N = S.Bodies.size();
   std::atomic<size_t> Next{0};
   auto Run = [&](BodyWorker &W) {
@@ -321,6 +322,7 @@ static void runBodies(PackageState &S, const SourceManager &SM,
       BC.checkBody(S.Bodies[K]);
       BC.recordUntyped();
       Diags[K] = std::move(Collect.Diags);
+      Monos[K] = std::move(BC.MonoInsts);
     }
   };
   if (Workers.size() == 1) {
@@ -368,7 +370,8 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   if (Workers.size() == 1)
     Workers[0].Out = &CP->I;
   std::vector<std::vector<Diagnostic>> BodyDiags(S.Bodies.size());
-  runBodies(S, SM, Workers, BodyDiags);
+  std::vector<std::vector<Checker::MonoInst>> BodyMonos(S.Bodies.size());
+  runBodies(S, SM, Workers, BodyDiags, BodyMonos);
   for (std::vector<Diagnostic> &DL : BodyDiags)
     for (Diagnostic &D : DL) {
       if (D.Sev == Severity::Error) {
@@ -391,6 +394,15 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   C.FirstErr = C.NumErrors > 0;
   C.checkInitOrder();
   C.unusedImports();
+  // Instantiation cycles, of the declarations and the bodies (taken in
+  // declaration order): reported, as by Go, only when the package has no
+  // other error (types2 check.go runs monomorph last, if firstErr is nil).
+  if (C.NumErrors == 0) {
+    for (std::vector<Checker::MonoInst> &MB : BodyMonos)
+      for (Checker::MonoInst &M : MB)
+        C.MonoInsts.push_back(std::move(M));
+    C.monoCheck(C.MonoInsts, /*Report=*/true);
+  }
   Pkg->Complete = true;
   if (Opts.Vet)
     vetPackage(SM, *CP, Files, Diags);

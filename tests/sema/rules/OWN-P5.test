@@ -8,7 +8,7 @@ package main
 
 type Node struct{ N int }
 
-func (n *Node) Rename(s ref string) { n.N = len(s) }
+func (n *Node) Rename(s View[string]) { n.N = len(s) }
 func (n Node) Len() int             { return n.N }
 
 type T struct{ x int }

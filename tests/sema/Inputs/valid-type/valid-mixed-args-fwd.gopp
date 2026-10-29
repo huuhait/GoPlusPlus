@@ -1,0 +1,14 @@
+package main
+
+type G0[P, Q any] struct{ a G1[P,int]; b G1[int,Q] }
+type G1[P, Q any] struct{ a G2[P,int]; b G2[int,Q] }
+type G2[P, Q any] struct{ x P; y Q }
+
+func main() {}
+
+func use0(a G0[int,string]) {
+	c := a.Clone()
+	_ = c
+	var z G0[int,string]
+	_ = z
+}

@@ -1,12 +1,14 @@
 // RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // A generic type whose right-hand side is an instance of itself (directly or
 // through another generic type) has no underlying type (types2 Named.under).
+// The ring is reported where Go's walk meets it, at the instance that comes
+// round again (go build prints the same lines, R22).
 package main
 
-// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid recursive type: G refers to itself
+// CHECK: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: invalid recursive type: G refers to itself
 type G[T any] G[T]
 
-// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid recursive type A
+// CHECK: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: invalid recursive type B
 type A[T any] B[T]
 type B[T any] A[T]
 

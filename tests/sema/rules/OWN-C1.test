@@ -9,7 +9,7 @@ type Doc struct{ Title string }
 
 func cp[T Copy](x T) T { return x }
 
-func positive(q *P, r ref string, arr *[2]P) P {
+func positive(q *P, r View[string], arr *[2]P) P {
 	a := *q
 	b := q.X
 	c := arr[1]

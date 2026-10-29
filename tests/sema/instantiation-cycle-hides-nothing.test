@@ -1,0 +1,26 @@
+// RUN: not timeout 3 %gopp check --go -check-j=1 --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.23 review (R15): the generic types on an instantiation cycle are only
+// marked before the bodies are checked (so no walk follows their instances
+// without end), never made invalid, so every other error is reported as Go
+// reports it, and the cycle itself is not (Go reports it only for a package
+// without other errors). go build (1.25) prints exactly these two errors.
+package p
+
+type I[P any] interface{ M() I[[]P] }
+
+// CHECK: [[@LINE+1]]:16: error{{\[E0149\]}}: embedded field type cannot be a pointer to an interface
+type S struct{ *I[int] }
+
+// CHECK: [[@LINE+1]]:26: error{{\[E0178\]}}: i.M().N undefined (type I{{\[}}[]int] has no field or method N)
+func f(i I[int]) { i.M().N() }
+
+// A cycle through a generic alias is the same cycle (R13). (Go names the
+// type A[int]: it keeps alias names.)
+type A[P any] = T[[]P]
+
+type T[P any] struct{ s []A[P] }
+
+func g(t T[int]) {
+	// CHECK: [[@LINE+1]]:13: error{{\[E0178\]}}: t.s[0].x undefined (type {{.*}} has no field or method x)
+	_ = t.s[0].x
+}

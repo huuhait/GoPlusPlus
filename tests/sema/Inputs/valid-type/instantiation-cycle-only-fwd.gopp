@@ -1,0 +1,19 @@
+// CHECK: error[E0366]: instantiation cycle
+package main
+
+type N0[P any] struct {
+	f0 []N0[N0[P]]
+	f1 P
+}
+type N1 struct {
+	f0 N0[int]
+}
+
+func main() {}
+
+func use0(a N1) {
+	c := a.Clone()
+	_ = c
+	var z N1
+	_ = z
+}

@@ -1,0 +1,38 @@
+// CHECK: error[E0140]: invalid recursive type: N0 refers to itself
+// CHECK: error[E0139]: invalid recursive type N2
+package main
+
+type N0[P any] struct{ f0 [2]N0[int]; f1 P }
+type N1[P any] struct{ f0 N0[N0[N2]] }
+type N2 struct{ f0 N3[int] }
+type N3[P any] N2
+
+func main() {}
+
+func use0(a N0[int]) {
+	c := a.Clone()
+	_ = c
+	var z N0[int]
+	_ = z
+}
+
+func use1(a N1[int]) {
+	c := a.Clone()
+	_ = c
+	var z N1[int]
+	_ = z
+}
+
+func use2(a N2) {
+	c := a.Clone()
+	_ = c
+	var z N2
+	_ = z
+}
+
+func use3(a N3[int]) {
+	c := a.Clone()
+	_ = c
+	var z N3[int]
+	_ = z
+}

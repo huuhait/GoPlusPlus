@@ -17,19 +17,19 @@ const (
 	Neg
 )
 
-// Node is trivial (numbers, a ref and Option raw pointers), so the arena can own it.
+// Node is trivial (numbers, a view and Option raw pointers), so the arena can own it.
 // Pointers are never nil, so a missing child is an Option.
-@Ref
+@View
 type Node struct {
 	Kind Kind
 	Val  int64
-	Text ref string // the source text of a number: points into the source
+	Text View[string] // the source text of a number: points into the source
 	L, R Option[*Node]
 }
 
-@Ref
+@View
 type Parser struct {
-	src   ref string
+	src   View[string]
 	pos   int
 	arena *mem.Arena
 }
@@ -119,7 +119,7 @@ func (p *Parser) factor!() *Node {
 		}
 		n := p.node(Num, nil, nil)
 		n.Val = v
-		n.Text = p.src[start:p.pos] // a ref into the source: no copy
+		n.Text = p.src[start:p.pos] // a view into the source: no copy
 		return n
 	}
 	return nil, p.fail("expected a number")

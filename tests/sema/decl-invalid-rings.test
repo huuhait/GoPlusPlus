@@ -1,0 +1,20 @@
+// P03.23: an invalid ring is found however long it is (the old check gave up
+// after 64 levels and called it valid, and a later query then recursed
+// without end), in near-linear time (each plain or generic type is walked
+// once after the first error). One error per ring, E0139/E0140 text
+// unchanged, in one generated file:
+//  - L: 10000 plain types holding the next by value (30000 in decl-chains.long.test);
+//  - M: `type M0 M1` ... a ring of 1000 defined types;
+//  - G: 1000 generic types holding the next instance by value;
+//  - I and E: `type I struct{ i I }`, then a ring of 1000 held by value next
+//    to an I field: Go's walk stops at I and reports only I; the ring is still
+//    broken (made invalid without a second error), so the copy and the
+//    Clone() of E0 end (they ran forever before).
+// RUN: %python %S/Inputs/gen-decl-stress.py invalid 10000 > %t.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: FileCheck --implicit-check-not=error %s < %t.out
+// CHECK-DAG: :10003:6: error[E0139]: invalid recursive type M0
+// CHECK-DAG: :3:6: error[E0139]: invalid recursive type L0
+// CHECK-DAG: :11004:6: error[E0139]: invalid recursive type G1
+// CHECK-DAG: :12003:6: error[E0140]: invalid recursive type: I refers to itself
+package main

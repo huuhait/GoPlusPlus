@@ -28,6 +28,9 @@ Type *Checker::under(Type *T) {
       auto *N = cast<NamedType>(T);
       if (N->Orig && !N->Expanded)
         expandNamed(N);
+      if (!N->Underlying && !N->DirectRhs && !PendingDecl.empty() && N->Obj &&
+          PendingDecl.count(N->Obj))
+        declarePending(N->Obj); // deferred by objDecl, needed now
       if (!N->Underlying) {
         if (!N->DirectRhs)
           return invalid();
@@ -473,7 +476,8 @@ bool Checker::identicalImpl(const Type *X0, const Type *Y0, bool IgnoreTags,
   case Type::Kind::Slice:
     return Rec(cast<SliceType>(X)->Elem, cast<SliceType>(Y)->Elem);
   case Type::Kind::Ref:
-    return Rec(cast<RefType>(X)->Elem, cast<RefType>(Y)->Elem);
+    return cast<RefType>(X)->Borrowed == cast<RefType>(Y)->Borrowed &&
+           Rec(cast<RefType>(X)->Elem, cast<RefType>(Y)->Elem);
   case Type::Kind::Option:
     return Rec(cast<OptionType>(X)->Elem, cast<OptionType>(Y)->Elem);
   case Type::Kind::Pointer:

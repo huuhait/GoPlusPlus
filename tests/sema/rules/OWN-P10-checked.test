@@ -17,6 +17,7 @@ type Src interface{ Next() (U, error) }
 func load() (U, error)     { return U{Name: "x"}, nil }
 func count() (int, error)  { return 0, nil }
 func use(u U)              {}
+func useView(u View[U])    {}
 func pick() bool           { return true }
 func take(u U, err error)  {}
 func chn() chan U          { return nil }
@@ -587,7 +588,7 @@ func positiveCommaOk(ch chan U, m map[string]U, x any, o Option[U]) {
 	if !ok3 || w.Name == "" {
 		return
 	}
-	use(w)
+	useView(w)
 	y, ok4 := o.Get()
 	if ok4 && y.Name != "" {
 		use(y)
@@ -619,8 +620,8 @@ func negativeCommaOk(ch chan U, m map[string]U, x any, o Option[U]) {
 	}
 	w, ok3 := x.(U)
 	_ = ok3
-	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: w may be unset here: U has no zero value, and it is valid only where ok3 is true: check `if !ok3 { return }` first (OWN-P10)
-	use(w)
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: w may be unset here: View[U] has no zero value, and it is valid only where ok3 is true: check `if !ok3 { return }` first (OWN-P10)
+	useView(w)
 	y, ok4 := o.Get()
 	_ = ok4
 	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: y may be unset here: U has no zero value, and it is valid only where ok4 is true: check `if !ok4 { return }` first (OWN-P10)

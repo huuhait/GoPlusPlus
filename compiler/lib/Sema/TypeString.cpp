@@ -52,8 +52,14 @@ public:
       type(llvm::cast<SliceType>(T)->Elem, Depth);
       break;
     case Type::Kind::Ref:
-      OS << "ref ";
-      type(llvm::cast<RefType>(T)->Elem, Depth);
+      if (llvm::cast<RefType>(T)->Borrowed) {
+        OS << "borrowed ";
+        type(llvm::cast<RefType>(T)->Elem, Depth); // a borrowed []T
+      } else {
+        OS << "View[";
+        type(llvm::cast<RefType>(T)->Elem, Depth);
+        OS << ']';
+      }
       break;
     case Type::Kind::Array: {
       auto *A = llvm::cast<ArrayType>(T);

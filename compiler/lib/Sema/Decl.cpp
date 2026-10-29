@@ -136,6 +136,19 @@ static bool hasDeclAttr(const GenDecl *GD, StringRef Name) {
   return false;
 }
 
+/// `@Ref` was renamed `@View` (ADR-0020, MAC-8): it is an unknown attribute
+/// now. Reported once per declaration group.
+void Checker::rejectRefAttr(const GenDecl *GD) {
+  if (!own())
+    return;
+  for (const Attribute *A : GD->Attrs)
+    if (!A->Pkg && A->Name && A->Name->Name.str() == "Ref" &&
+        RefAttrReported.insert(A).second)
+      err(A->Name, diag::err_unknown_attribute,
+          {"Ref", "it was renamed @View (ADR-0020); mark a struct that holds "
+                  "a view @View (OWN-V5)"});
+}
+
 /// `@Pinned` before a type declaration (OWN-R10).
 static bool hasPinnedAttr(const GenDecl *GD) {
   return hasDeclAttr(GD, "Pinned");
@@ -344,6 +357,8 @@ void Checker::collectObjects() {
             DI->TDecl = TS;
             DI->Pinned = hasPinnedAttr(GD);
             DI->Strict = hasDeclAttr(GD, "Strict");
+            DI->ViewOk = hasDeclAttr(GD, "View");
+            rejectRefAttr(GD);
             DeclarePkg(TS->Name, TN, DI);
             break;
           }
@@ -454,6 +469,8 @@ TypeName *Checker::resolveRecvBase(const ast::Expr *R, bool &Ptr) {
 }
 
 void Checker::packageObjects() {
+  std::vector<NamedType *> Insts;
+  ExpandedInsts = &Insts;
   // Non-alias types first, then aliases, then everything else (types2).
   SmallVector<Object *, 32> Types, Aliases, Others;
   for (Object *O : S.PkgObjects) {
@@ -479,6 +496,26 @@ void Checker::packageObjects() {
     if (auto *F = dyn_cast<Func>(O))
       if (F->Decl && F->Decl->Recv)
         objDecl(F, nullptr);
+  // Every package-level type is declared: check for by-value cycles (Go
+  // reports the recursion and no instantiation cycle then), and mark the
+  // generic types on an instantiation cycle before the delayed checks expand
+  // instances, so no walk follows an instance graph that never ends
+  // (onInstCycle; nothing is reported or made invalid here).
+  for (size_t K = 0; K < WalkQueue.size(); ++K)
+    validType(WalkQueue[K]);
+  flushDeclRings();
+  monoCheck(MonoInsts, /*Report=*/false);
+  ExpandedInsts = nullptr;
+  if (ByValueCycle) {
+    // The instances expanded so far too: the declarations of a cycle are
+    // invalid by now and no longer lead to the instances that kept a copy
+    // of their fields.
+    WalkQueue.insert(WalkQueue.end(), CycleSeeds.begin(), CycleSeeds.end());
+    WalkQueue.insert(WalkQueue.end(), Insts.begin(), Insts.end());
+    invalidateByValueCycles(WalkQueue);
+  }
+  WalkQueue.clear();
+  CycleSeeds.clear();
   processDelayed();
 }
 
@@ -509,7 +546,14 @@ bool Checker::validCycle(Object *Start, bool &Nval, bool &Ndef) {
   return false;
 }
 
-void Checker::cycleError(ArrayRef<Object *> Cycle, int Start) {
+void Checker::cycleError(ArrayRef<Object *> Cycle, int Start,
+                         ArrayRef<SourceLoc> At) {
+  // At (if given): where each member is written, for an instance its
+  // instantiation, as types2 names it (Go's instance objects have that
+  // position).
+  auto PosOf = [&](size_t K) {
+    return K < At.size() && At[K].isValid() ? At[K] : Cycle[K]->Pos;
+  };
   // Report at the object Start, by default the first one in source order.
   size_t First = 0;
   if (Start >= 0) {
@@ -521,29 +565,40 @@ void Checker::cycleError(ArrayRef<Object *> Cycle, int Start) {
   }
   Object *O = Cycle[First];
   bool IsType = isa<TypeName>(O);
+  if (IsType)
+    ByValueCycle = true; // invalidateByValueCycles looks for what is left
   if (Cycle.size() == 1) {
     if (IsType)
-      err(O->Pos, diag::err_invalid_recursive_type_self,
+      err(PosOf(First), diag::err_invalid_recursive_type_self,
           {std::string(O->Name)});
     else
-      err(O->Pos, diag::err_invalid_cycle, {std::string(O->Name)});
+      err(PosOf(First), diag::err_invalid_cycle, {std::string(O->Name)});
     return;
   }
-  Err E2 = IsType
-               ? err(O->Pos, diag::err_invalid_recursive_type,
-                     {std::string(O->Name)})
-               : err(O->Pos, diag::err_invalid_cycle, {std::string(O->Name)});
+  Err E2 = IsType ? err(PosOf(First), diag::err_invalid_recursive_type,
+                        {std::string(O->Name)})
+                  : err(PosOf(First), diag::err_invalid_cycle,
+                        {std::string(O->Name)});
   for (size_t K = 0; K < Cycle.size(); ++K) {
     Object *A = Cycle[(First + K) % Cycle.size()];
     Object *B = Cycle[(First + K + 1) % Cycle.size()];
-    E2.note(A->Pos,
+    E2.note(PosOf((First + K) % Cycle.size()),
             std::string(A->Name) + " refers to " + std::string(B->Name));
   }
 }
 
 void Checker::objDecl(Object *O, NamedType *Def) {
-  if (O->Color == 1)
-    return;
+  if (O->Color == 1) {
+    // A type whose declaration was deferred (see below) is declared when
+    // declarePending asks for it; any other reference sees it pending, like
+    // a type being resolved, so a chain stays off the stack however often
+    // each type names the next.
+    auto *TN = dyn_cast<TypeName>(O);
+    if (!TN || TN != ForcePending || !PendingDecl.count(TN))
+      return;
+    ForcePending = nullptr;
+    O->Color = 0;
+  }
   if (O->Color >= 2) {
     // A cycle: O is on the object path.
     bool Nval, Ndef;
@@ -588,6 +643,57 @@ void Checker::objDecl(Object *O, NamedType *Def) {
     return;
   }
   DeclInfo *D = It->second;
+  // Resolving a type's right-hand side recurses once per level of type
+  // expression and once per declaration reached from it, so a ring or chain
+  // of named types that refer to each other would use the thread's stack
+  // (P03.23). Past a fixed depth (a count, so the answer never depends on the
+  // thread or its stack) a plain named type only gets its NamedType now: its
+  // right-hand side is resolved from a work list when the declaration that
+  // started the chain is done, or at once when something asks for its
+  // underlying type (Checker::under). Whoever refers to it in between sees
+  // the same thing as a reference to a type that is being resolved. A generic
+  // type gets its type parameters now (an instantiation needs them); only its
+  // right-hand side waits.
+  //
+  // The same for a defined type named in the right-hand side of an alias
+  // (InAliasRhs): an alias has no type until its right-hand side is done, so
+  // a defined type declared from there that names the alias again would see
+  // nothing (`type N0 [1]N5[int]; type N1 N5[int]; type N5[P any] = N1`: N1
+  // is N1 itself, which Go reports in any order). Declared after the alias,
+  // it sees what the alias stands for, as it does when it comes first.
+  if (DeclNest >= MaxDeclNest || InAliasRhs)
+    if (auto *TN = dyn_cast<TypeName>(O);
+        TN && !TN->IsAlias && D->TDecl && !PendingDecl.count(TN)) {
+      NamedType *N = Ctx.newNamed(TN);
+      N->Pinned = D->Pinned; // OWN-R10
+      TN->Ty = N;
+      PendingDecl[TN] = N;
+      DeferredDecls.push_back(TN);
+      if (D->TDecl->TypeParams && D->TDecl->TypeParams->numFields()) {
+        // As typeDecl does it, with TN on the object path (a bound that
+        // names TN is a valid cycle, not a new declaration).
+        ObjPath.push_back(TN);
+        TN->Color =
+            static_cast<uint8_t>(std::min<size_t>(ObjPath.size() + 1, 250));
+        Env SavedEnv = E;
+        E = Env();
+        E.Sc = D->FileScope;
+        E.Cur = D;
+        Scope *Sc = openScope(D->TDecl->getRange(), "type parameters");
+        E.Sc = Sc;
+        E.InTParamList = true;
+        auto TPs = collectTypeParams(
+            D->TDecl->TypeParams, Sc,
+            [&](ArrayRef<TypeParamType *> Ps) { N->TParams = Mem.copy(Ps); });
+        N->TParams = Mem.copy(ArrayRef<TypeParamType *>(TPs));
+        PendingTParamScope[TN] = Sc;
+        E = SavedEnv;
+        ObjPath.pop_back();
+      }
+      TN->Color = 1;
+      return;
+    }
+  ++DeclNest;
   ObjPath.push_back(O);
   O->Color = static_cast<uint8_t>(std::min<size_t>(ObjPath.size() + 1, 250));
   Env Saved = E;
@@ -609,7 +715,7 @@ void Checker::objDecl(Object *O, NamedType *Def) {
     varDecl(cast<Var>(O), D->Lhs, D->VType, D->Init);
     break;
   case Object::Kind::TypeName:
-    typeDecl(cast<TypeName>(O), D->TDecl, Def, D->Pinned, D->Strict);
+    typeDecl(cast<TypeName>(O), D->TDecl, Def, D->Pinned, D->Strict, D->ViewOk);
     break;
   case Object::Kind::Func:
     // Names used in a signature are no initialization dependencies of the
@@ -623,7 +729,29 @@ void Checker::objDecl(Object *O, NamedType *Def) {
   }
   E = Saved;
   ObjPath.pop_back();
+  --DeclNest;
   O->Color = 1;
+  if (ObjPath.empty() && !DrainingDecls)
+    drainDeferredDecls();
+}
+
+/// Declares the types objDecl deferred, first come first served, until none
+/// is left (a declaration may defer more).
+void Checker::drainDeferredDecls() {
+  DrainingDecls = true;
+  for (size_t K = 0; K < DeferredDecls.size(); ++K)
+    declarePending(DeferredDecls[K]);
+  DeferredDecls.clear();
+  DrainingDecls = false;
+}
+
+void Checker::declarePending(TypeName *TN) {
+  if (!PendingDecl.count(TN))
+    return;
+  TypeName *Saved = ForcePending;
+  ForcePending = TN;
+  objDecl(TN, nullptr);
+  ForcePending = Saved;
 }
 
 void Checker::constDecl(Const *O, const ast::Expr *Typ, const ast::Expr *Init,
@@ -695,7 +823,7 @@ void Checker::varDecl(Var *O, ArrayRef<Var *> Lhs, const ast::Expr *Typ,
 }
 
 void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
-                       bool Pinned, bool Strict) {
+                       bool Pinned, bool Strict, bool ViewOk) {
   (void)Def;
   if (TD->AssignLoc.isValid()) {
     // Alias, possibly generic (Go 1.24).
@@ -715,18 +843,48 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
       cast<TypeName>(O)->AliasTParams = TPs;
     }
     O->Ty = invalid(); // while resolving
+    ++InAliasRhs;
     Type *T = definedType(TD->Type, nullptr);
+    --InAliasRhs;
     E.Sc = SavedSc;
     O->Ty = T;
     return;
   }
-  NamedType *N = Ctx.newNamed(O);
-  N->Pinned = Pinned; // OWN-R10
-  O->Ty = N;
-  // Checked in declaration order, after the right hand side is known.
-  later([this, N]() { validType(N); });
+  NamedType *N;
+  if (auto PIt = PendingDecl.find(O); PIt != PendingDecl.end()) {
+    N = PIt->second; // deferred by objDecl: the NamedType exists already
+    PendingDecl.erase(PIt);
+  } else {
+    N = Ctx.newNamed(O);
+    N->Pinned = Pinned; // OWN-R10
+    O->Ty = N;
+  }
+  // Checked in declaration order, after the right hand side is known. A
+  // package-level type waits until every package-level type is declared
+  // (packageObjects): the walk of one may reach an instance of another that
+  // is not expanded yet.
+  if (S.ObjMap.count(O))
+    WalkQueue.push_back(N);
+  else
+    later([this, N]() {
+      // A local type is walked once it is declared, after every type it can
+      // reach: what its walk found silently is cut at once (packageObjects
+      // does it for the package-level types when they are all walked).
+      size_t From = CycleSeeds.size();
+      validType(N);
+      flushDeclRings();
+      if (CycleSeeds.size() > From) {
+        std::vector<NamedType *> Seeds(CycleSeeds.begin() + From,
+                                       CycleSeeds.end());
+        CycleSeeds.resize(From);
+        invalidateByValueCycles(Seeds);
+      }
+    });
   Scope *Saved = E.Sc;
-  if (TD->TypeParams && TD->TypeParams->numFields()) {
+  if (auto SIt = PendingTParamScope.find(O); SIt != PendingTParamScope.end()) {
+    E.Sc = SIt->second; // the type parameters were declared by objDecl
+    PendingTParamScope.erase(SIt);
+  } else if (TD->TypeParams && TD->TypeParams->numFields()) {
     Scope *Sc = openScope(TD->getRange(), "type parameters");
     E.Sc = Sc;
     bool SavedTP = E.InTParamList;
@@ -745,7 +903,21 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
   if (Strict && own())
     if (auto *St = dyn_cast<ast::StructType>(unparen(TD->Type)))
       StrictStructExpr = St;
+  const ast::StructType *SavedView = ViewStructExpr;
+  ViewStructExpr = nullptr;
+  if (ViewOk)
+    if (auto *St = dyn_cast<ast::StructType>(unparen(TD->Type))) {
+      ViewStructExpr = St;
+      N->ViewAttr = true;
+    }
+  const ast::StructType *SavedDecl = DeclStructExpr;
+  StringRef SavedDeclName = DeclStructName;
+  DeclStructExpr = dyn_cast<ast::StructType>(unparen(TD->Type));
+  DeclStructName = O->Name;
   Type *Rhs = definedType(TD->Type, N);
+  DeclStructExpr = SavedDecl;
+  DeclStructName = SavedDeclName;
+  ViewStructExpr = SavedView;
   StrictStructExpr = SavedStrict;
   N->Resolving = false;
   N->ResolvingInterface = false;
@@ -761,9 +933,13 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
     // underlying type (types2: Named.under).
     if (RN->Orig && !ReportedCycle.count(N)) {
       SmallVector<Object *, 4> Chain{N->Obj};
+      SmallVector<std::pair<NamedType *, NamedType *>, 4> Links{{N, RN}};
       NamedType *P = RN;
       NamedType *Back = nullptr;
-      while (P && Chain.size() < 1000) {
+      // Every link once, however long the chain (a length cap would call a
+      // long ring valid).
+      llvm::SmallPtrSet<const NamedType *, 16> Linked;
+      while (P && Linked.insert(P->origin()).second) {
         NamedType *PO = P->origin();
         if (PO == N) {
           Back = PO;
@@ -771,45 +947,58 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
         }
         Chain.push_back(PO->Obj);
         P = PO->DirectRhs ? dyn_cast<NamedType>(PO->DirectRhs) : nullptr;
+        Links.push_back({PO, P});
       }
       if (Back) {
         for (Object *C : Chain)
           if (auto *CN = dyn_cast_or_null<NamedType>(C->Ty))
             ReportedCycle.insert(CN);
-        cycleError(Chain);
+        noteDeclRing(Links);
         N->Underlying = invalid();
         N->FromRHS = invalid();
         collectMethods(O);
         return;
       }
     }
-    if (RN->Orig && !RN->Expanded)
+    if (RN->Orig && !RN->Expanded) {
+      // Expanding RN may declare a type deferred from an alias's right-hand
+      // side (InAliasRhs) whose own right-hand side leads back to N: N's is
+      // known by now, so that type's ring check above finds the ring through
+      // N (`type N0[P any] A[P]; type N1[P any] N0[int]; type A[P any] =
+      // N1[P]`), as it does when N1 is declared first.
+      NamedType *SavedRhs = N->DirectRhs;
+      N->DirectRhs = RN;
       expandNamed(RN);
+      N->DirectRhs = SavedRhs;
+    }
     if (RN->Orig && !RN->Expanded) {
       // An instance of a generic type that is still being declared
       // (`type Bar[Q any] Foo[Q]` inside Foo's declaration): under() follows
       // DirectRhs until the instance can expand (types2: lazy Named.under).
       N->DirectRhs = RN;
-      later([this, N, RN]() {
-        if (!N->Underlying)
-          N->Underlying = under(RN);
-      });
+      PendingUnder.push_back({N, RN});
     }
     if (!RN->Orig) {
       // `type A B; type B A`: a cycle of defined types without a type
       // literal in between (types2: Named.under).
       N->DirectRhs = RN;
       SmallVector<Object *, 4> Chain{N->Obj};
+      SmallVector<std::pair<NamedType *, NamedType *>, 4> Links{{N, RN}};
       NamedType *P = RN;
-      while (P && P != N && Chain.size() < 1000) {
-        Chain.push_back(P->Obj);
-        P = P->DirectRhs;
+      llvm::SmallPtrSet<const NamedType *, 16> Linked;
+      // A link may be an instance of a generic type (`type N2 N1[int]` with
+      // `type N1[P any] N2`): it leads on through its origin.
+      while (P && P->origin() != N && Linked.insert(P->origin()).second) {
+        Chain.push_back(P->origin()->Obj);
+        NamedType *PO = P->origin();
+        P = PO->DirectRhs ? dyn_cast<NamedType>(PO->DirectRhs) : nullptr;
+        Links.push_back({PO, P});
       }
-      if (P == N && !ReportedCycle.count(N)) {
+      if (P && P->origin() == N && !ReportedCycle.count(N)) {
         for (Object *C : Chain)
           if (auto *CN = dyn_cast_or_null<NamedType>(C->Ty))
             ReportedCycle.insert(CN);
-        cycleError(Chain);
+        noteDeclRing(Links);
         N->DirectRhs = nullptr;
         RN->Underlying = RN->Underlying ? RN->Underlying : invalid();
       }
@@ -1023,7 +1212,9 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
                      : diag::err_invalid_receiver,
             {str(BaseTN->IsAlias ? BaseTN->Ty : BT)});
     } else {
-      Type *U = BN->Underlying;
+      // Through a defined type that names another (`type N2[P any] N3`):
+      // its own Underlying waits for N3's when N3 was declared after it.
+      Type *U = under(BN);
       if (U && (isa<PointerType>(U) || isa<InterfaceType>(U))) {
         err(BaseE, diag::err_invalid_receiver,
             {str(BN) + " (pointer or interface type)"});
@@ -1069,6 +1260,10 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
                       subst(BN->TParams[J]->Bound, BN->TParams, Args);
                 RecvT = instantiateNamed(BN, Args);
                 recordTypeAndValue(Ix, Mode::TypeExpr, RecvT, nullptr);
+                // A method's type parameter is its type's (instantiation
+                // cycles, Mono.cpp).
+                for (size_t J = 0; J < RTPs.size(); ++J)
+                  MonoCanon.push_back({RTPs[J], BN->TParams[J]});
               }
             }
           }
@@ -1125,7 +1320,14 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
   if (FD->Recv) {
     collectRecv(O, FD->Recv, Sc, D, FD, RecvNamed);
   }
+  // The signature of a method does not instantiate anything for the cycle
+  // check (types2: `func (List[P]) m() List[List[P]]` is fine; only a body
+  // is instantiated per type argument, go.dev/issue/48703).
+  if (FD->Recv)
+    ++NoMono;
   FuncInfo FI = funcSignature(FD->Type, Sc, O);
+  if (FD->Recv)
+    --NoMono;
   E.Sc = Saved;
   O->Ty = FI.Sig;
   O->Params = FI.Params;
@@ -1298,7 +1500,9 @@ void Checker::declStmt(const DeclStmt *DS) {
       ObjPath.push_back(TN);
       TN->Color =
           static_cast<uint8_t>(std::min<size_t>(ObjPath.size() + 1, 250));
-      typeDecl(TN, TS, nullptr, hasPinnedAttr(GD));
+      rejectRefAttr(GD);
+      typeDecl(TN, TS, nullptr, hasPinnedAttr(GD), false,
+               hasDeclAttr(GD, "View"));
       ObjPath.pop_back();
       TN->Color = 1;
       break;
@@ -1313,92 +1517,728 @@ void Checker::declStmt(const DeclStmt *DS) {
 // Valid recursive types
 //===----------------------------------------------------------------------===//
 
-bool Checker::validTypeRec(Type *T, SmallVector<NamedType *, 8> &Nest,
-                           SmallVector<NamedType *, 8> &Path) {
-  // types2 validtype.go: Nest is the stack of types containing (or, for
-  // interfaces, embedding) other types; Path is the full path, for errors.
-  if (!T)
-    return true;
-  DepthGuard DG(RecDepth);
-  if (RecDepth > MaxRecDepth)
-    return true;
-  switch (T->getKind()) {
-  case Type::Kind::Array:
-    return validTypeRec(cast<ArrayType>(T)->Elem, Nest, Path);
-  case Type::Kind::Option:
-    // An Option holds its value (plus a flag): `next Option[L]` in L is a
-    // cycle, `next Option[*L]` is not (ADR-0018).
-    return validTypeRec(cast<OptionType>(T)->Elem, Nest, Path);
-  case Type::Kind::Struct:
-    for (Var *F : cast<StructType>(T)->Fields)
-      if (!validTypeRec(F->Ty, Nest, Path))
-        return false;
-    return true;
-  case Type::Kind::Union:
-    for (const Term &Tm : cast<UnionType>(T)->Terms)
-      if (!validTypeRec(Tm.T, Nest, Path))
-        return false;
-    return true;
-  case Type::Kind::Interface:
-    for (Type *Em : cast<InterfaceType>(T)->Embeddeds)
-      if (!validTypeRec(Em, Nest, Path))
-        return false;
-    return true;
-  case Type::Kind::Named: {
-    auto *N = cast<NamedType>(T);
-    NamedType *O = N->origin();
-    if (!isValid(under(N)))
-      return false;
-    bool Plain = !N->Orig && N->TParams.empty();
-    if (Plain && ValidTypes.count(N))
-      return true;
-    for (NamedType *Ne : Nest) {
-      if (!identical(Ne, N))
+/// types2 validtype.go with an explicit stack, so a chain or ring of any
+/// length is checked exactly (no depth limit that would call a cycle valid,
+/// P03.23). Nest is the stack of types containing (or, for interfaces,
+/// embedding) other types; Path is the full path, for errors. NestByOrigin
+/// indexes Nest by generic origin, so "does N occur in its own definition"
+/// looks at the few entries of N's own origin instead of the whole stack.
+///
+/// Go stops at the first problem (a cycle, reported, or a type already
+/// known to be invalid) and reports nothing more. This walk reports the same
+/// thing, but then goes on silently, so every by-value cycle is found and
+/// noted (CycleSeeds, ByValueCycle) and none is left without an invalid type
+/// behind an earlier error (`type I struct{ i I }` reported, then `E` and `A`
+/// holding each other next to an I field): invalidateByValueCycles cuts them
+/// all once every walk is done, and no later walk (zero values, categories,
+/// clones) goes round one forever. A cycle found silently changes nothing
+/// else: its types stay as they are until then, so the walk of another type
+/// that meets it first reports it as Go does, whatever the declaration order
+/// (`type A struct{ a A; b B[int] }` reports A, then B's own walk reports B).
+///
+/// A finished walk of a type is remembered (ValidKeys, FailedKeys), by key:
+/// the type, and for an instance the type arguments as they are where the
+/// walk sees them. A type parameter in an argument stands for what the
+/// instance it belongs to was given (the walk resolves it down the nest, as
+/// types2 does), so two instances written differently, in different places
+/// (`G[P, int]` inside G1 and `G[Q, int]` inside G2), have the same key when
+/// the arguments resolve to the same types (what the walk never looks into,
+/// a pointer, a slice, a basic type or a free type parameter, counts as one
+/// type). The walk of a type is a function of its key alone: what it reaches
+/// below it does not depend on anything above, and if it reached something
+/// above, that is a cycle through the type, found below it as well. So a
+/// finished walk is valid or failed for every place it is asked in, and each
+/// key is walked once: n types in a chain or ring, and the shapes that made
+/// Go drop its own cache (go.dev/issue/65711), cost n steps in all. An
+/// argument is turned into a number without building the resolved type
+/// (ArgId), so an argument that grows with the depth costs its written size
+/// only. (An argument that grows through a named type, `G[W[P]]` inside
+/// `G[P]`, has a new key at each depth: polynomial, not exponential.)
+///
+/// What a walk reports is what Go's walk reports, whatever was walked before
+/// (review R12): a valid key has no problem below it in any context, and a
+/// walk that has failed reports nothing more, so both skip freely. A walk
+/// that has not failed yet skips a failed key only if no by-value cycle was
+/// met below it (the stored flag): then its first problem is an invalid
+/// type, silent in any context. With a cycle below, the problem Go meets
+/// first may be another one (the key may reach a type on the walk's own
+/// path before its own first problem, R12b, R12c), so the key is walked
+/// again and its entry stored anew: once the cycle is reported its types
+/// are invalid, the new walk meets that first, and the flag is clear from
+/// then on, so each cycle costs one more walk of the keys that reach it.
+bool Checker::validTypeWalk(Type *Root) {
+  // Every right-hand side must be known before a type is walked: an instance
+  // whose generic type is still waiting for its underlying type would look
+  // invalid (and be cached so), whatever order the declarations came in.
+  resolvePendingUnder();
+  struct NestEntry {
+    NamedType *N;
+    SmallVector<unsigned, 4> Args; // the ids of N's type arguments (ArgId)
+    unsigned Env;                  // the id of Args
+  };
+  SmallVector<NestEntry, 16> Nest;
+  SmallVector<NamedType *, 16> Path;
+  llvm::DenseMap<const NamedType *, SmallVector<NamedType *, 2>> NestByOrigin;
+  auto NestPush = [&](NestEntry E) {
+    NestByOrigin[E.N->origin()].push_back(E.N);
+    Nest.push_back(std::move(E));
+  };
+  auto NestPop = [&]() {
+    NestEntry E = Nest.pop_back_val();
+    NestByOrigin[E.N->origin()].pop_back();
+    return E;
+  };
+  enum class FK : uint8_t { Composite, Named, Param };
+  struct Frame {
+    Type *T;
+    NamedType *N; // Named: the type; Param: the instance it was seen inside
+    Type *Child;  // Named / Param: the one child
+    size_t Next;
+    FK Kind;
+    unsigned Key;            // Named: the key of the walk
+    unsigned ProblemsBefore; // Problems when the frame started
+    NestEntry Saved;         // Param: the instance taken off the nest
+    bool CycleBelow = false; // a by-value cycle was met below this frame
+  };
+  SmallVector<Frame, 32> St;
+  // Problems met so far (a frame whose subtree met one is not valid), and
+  // whether the walk has failed (then nothing more is reported).
+  unsigned Problems = 0;
+  bool Failed = false;
+  auto Problem = [&]() {
+    ++Problems;
+    Failed = true;
+  };
+
+  // Ids: equal ids, equal types (where the walk sees them).
+  auto Intern = [&](ArrayRef<uint64_t> K) -> unsigned {
+    auto [It, New] = WalkIds.try_emplace(
+        std::vector<uint64_t>(K.begin(), K.end()), WalkIds.size() + 1);
+    return It->second;
+  };
+  enum : uint64_t {
+    TagLeaf = 1,
+    TagInert,
+    TagComp,
+    TagInst,
+    TagOpaque,
+    TagEnv,
+    TagKey
+  };
+  // Does the type mention a type parameter? (Cached: types are uniqued.)
+  auto MentionsParam = [&](Type *Root) {
+    SmallVector<Type *, 8> W{Root};
+    llvm::SmallPtrSet<const Type *, 8> Met;
+    while (!W.empty()) {
+      Type *X = W.pop_back_val();
+      if (!X || !Met.insert(X).second)
         continue;
-      // N occurs inside its own definition (after expansion): invalid, no
-      // matter how it is instantiated.
-      N->Underlying = invalid();
-      O->Underlying = invalid();
-      for (size_t Start = 0; Start < Path.size(); ++Start)
-        if (identical(Path[Start], N)) {
-          SmallVector<Object *, 4> Cycle;
-          for (size_t J = Start; J < Path.size(); ++J)
-            Cycle.push_back(Path[J]->Obj);
-          cycleError(Cycle, 0);
+      switch (X->getKind()) {
+      case Type::Kind::TypeParam:
+        return true;
+      case Type::Kind::Pointer:
+        W.push_back(cast<PointerType>(X)->Elem);
+        break;
+      case Type::Kind::Slice:
+        W.push_back(cast<SliceType>(X)->Elem);
+        break;
+      case Type::Kind::Ref:
+        W.push_back(cast<RefType>(X)->Elem);
+        break;
+      case Type::Kind::Option:
+        W.push_back(cast<OptionType>(X)->Elem);
+        break;
+      case Type::Kind::Array:
+        W.push_back(cast<sema::ArrayType>(X)->Elem);
+        break;
+      case Type::Kind::Chan:
+        W.push_back(cast<sema::ChanType>(X)->Elem);
+        break;
+      case Type::Kind::Map:
+        W.push_back(cast<sema::MapType>(X)->Key);
+        W.push_back(cast<sema::MapType>(X)->Elem);
+        break;
+      case Type::Kind::Tuple:
+        for (Type *E : cast<TupleType>(X)->Elems)
+          W.push_back(E);
+        break;
+      case Type::Kind::Signature:
+        W.push_back(cast<SignatureType>(X)->Params);
+        W.push_back(cast<SignatureType>(X)->Results);
+        break;
+      case Type::Kind::Struct:
+        for (Var *F : cast<StructType>(X)->Fields)
+          W.push_back(F->Ty);
+        break;
+      case Type::Kind::Union:
+        for (const Term &Tm : cast<UnionType>(X)->Terms)
+          W.push_back(Tm.T);
+        break;
+      case Type::Kind::Interface:
+        for (Func *M : cast<InterfaceType>(X)->Methods)
+          W.push_back(M->Ty);
+        for (Type *E : cast<InterfaceType>(X)->Embeddeds)
+          W.push_back(E);
+        break;
+      case Type::Kind::Named:
+        for (Type *A : cast<NamedType>(X)->TArgs)
+          W.push_back(A);
+        break;
+      default:
+        break;
+      }
+    }
+    return false;
+  };
+  // The id of the type argument A as written where the walk now is: a type
+  // parameter of the enclosing instance is the id of the argument that
+  // instance was given. What the walk does with an argument depends only on
+  // the types it holds by value (arrays, Options, structs, named types):
+  // pointers, slices, maps, channels, funcs and the basic types are never
+  // walked into, and a type parameter nothing gives a type to stands for
+  // nothing. All of those have one id, Inert, so `G[P, int]`, `G[int, Q]`,
+  // `G[[]P, *Q]` and `G[[1]P, string]` are the same walk. Iterative, each
+  // type once.
+  const unsigned Inert = Intern({TagInert});
+  auto ArgId = [&](Type *Root) -> unsigned {
+    const NestEntry *Inst = Nest.empty() ? nullptr : &Nest.back();
+    llvm::DenseMap<const Type *, unsigned> Ids;
+    SmallVector<std::pair<Type *, bool>, 16> W{{Root, false}};
+    // The parts of X an id is made of, and what kind of id it is.
+    auto Parts = [&](Type *X, llvm::SmallVectorImpl<Type *> &Out,
+                     llvm::SmallVectorImpl<uint64_t> &Head) {
+      Out.clear();
+      switch (X->getKind()) {
+      case Type::Kind::Array:
+        Out.push_back(cast<sema::ArrayType>(X)->Elem);
+        Head.assign(
+            {TagComp, 1, static_cast<uint64_t>(cast<sema::ArrayType>(X)->Len)});
+        return true;
+      case Type::Kind::Option:
+        Out.push_back(cast<OptionType>(X)->Elem);
+        Head.assign({TagComp, 2, 0});
+        return true;
+      case Type::Kind::Named: {
+        auto *N = cast<NamedType>(X);
+        if (!N->Orig)
           return false;
+        Head.assign({TagInst, reinterpret_cast<uint64_t>(N->Orig)});
+        Out.assign(N->TArgs.begin(), N->TArgs.end());
+        return true;
+      }
+      default:
+        return false;
+      }
+    };
+    while (!W.empty()) {
+      auto [X, Ready] = W.pop_back_val();
+      if (!X || Ids.count(X))
+        continue;
+      SmallVector<Type *, 4> Ks;
+      SmallVector<uint64_t, 8> Key;
+      switch (X->getKind()) {
+      case Type::Kind::TypeParam: {
+        unsigned Id = Inert;
+        if (Inst) {
+          ArrayRef<TypeParamType *> TPs = Inst->N->origin()->TParams;
+          for (size_t I = 0; I < TPs.size(); ++I)
+            if (TPs[I] == X && I < Inst->Args.size()) {
+              Id = Inst->Args[I];
+              break;
+            }
         }
+        Ids[X] = Id;
+        continue;
+      }
+      case Type::Kind::Array:
+      case Type::Kind::Option:
+      case Type::Kind::Named:
+        break;
+      case Type::Kind::Struct:
+      case Type::Kind::Union:
+      case Type::Kind::Interface:
+        // Walked into: itself, and where it is seen when it mentions a type
+        // parameter.
+        Ids[X] = MentionsParam(X)
+                     ? Intern({TagOpaque, reinterpret_cast<uint64_t>(X),
+                               Inst ? Inst->Env : 0})
+                     : Intern({TagLeaf, reinterpret_cast<uint64_t>(X)});
+        continue;
+      default:
+        Ids[X] = Inert;
+        continue;
+      }
+      if (!Parts(X, Ks, Key)) {
+        Ids[X] = Intern({TagLeaf, reinterpret_cast<uint64_t>(X)}); // plain
+        continue;
+      }
+      if (!Ready) {
+        W.push_back({X, true});
+        for (Type *K : Ks)
+          W.push_back({K, false});
+        continue;
+      }
+      bool AllInert = X->getKind() != Type::Kind::Named;
+      for (Type *K : Ks) {
+        unsigned Id = Ids.lookup(K);
+        AllInert = AllInert && Id == Inert;
+        Key.push_back(Id);
+      }
+      Ids[X] = AllInert ? Inert : Intern(Key);
+    }
+    return Ids.lookup(Root);
+  };
+
+  // 0: a frame was pushed, 1: done (a problem, if any, is counted).
+  auto Enter = [&](Type *T) -> int {
+    if (!T)
+      return 1;
+    switch (T->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+    case Type::Kind::Struct:
+    case Type::Kind::Union:
+    case Type::Kind::Interface:
+      // An Option holds its value (plus a flag): `next Option[L]` in L is a
+      // cycle, `next Option[*L]` is not (ADR-0018).
+      St.push_back({T, nullptr, nullptr, 0, FK::Composite, 0, Problems, {}});
+      return 0;
+    case Type::Kind::Named: {
+      auto *N = cast<NamedType>(T);
+      NamedType *O = N->origin();
+      // A ring of right-hand sides found at its declaration is reported by
+      // the first walk that meets it, as Go's walk does (R22).
+      if (!Failed && !PendingRings.empty())
+        reportDeclRing(N);
+      // Don't report a 2nd error for a type known to be invalid.
+      if (!isValid(under(N))) {
+        Problem();
+        return 1;
+      }
+      // The key: the type, and for an instance (or a generic type walked for
+      // itself) its type arguments.
+      NestEntry Entry{N, {}, 0};
+      SmallVector<uint64_t, 8> KeyOps{TagKey, reinterpret_cast<uint64_t>(O)};
+      if (N->Orig || !N->TParams.empty()) {
+        if (N->Orig)
+          for (Type *A : N->TArgs)
+            Entry.Args.push_back(ArgId(A));
+        else
+          Entry.Args.assign(N->TParams.size(), Inert);
+        for (unsigned A : Entry.Args)
+          KeyOps.push_back(A);
+        SmallVector<uint64_t, 8> EnvOps{TagEnv};
+        EnvOps.append(Entry.Args.begin(), Entry.Args.end());
+        Entry.Env = Intern(EnvOps);
+      }
+      unsigned Key = Intern(KeyOps);
+      if (ValidKeys.count(Key))
+        return 1;
+      if (auto FIt = FailedKeys.find(Key);
+          FIt != FailedKeys.end() && (Failed || !FIt->second)) {
+        if (FIt->second && !St.empty())
+          St.back().CycleBelow = true;
+        Problem();
+        return 1;
+      }
+      auto It = NestByOrigin.find(O);
+      if (It != NestByOrigin.end())
+        for (NamedType *Ne : It->second) {
+          if (!identical(Ne, N))
+            continue;
+          // N occurs inside its own definition (after expansion): invalid,
+          // no matter how it is instantiated. Found silently, it is left to
+          // invalidateByValueCycles (see above).
+          if (!Failed) {
+            N->Underlying = invalid();
+            O->Underlying = invalid();
+          }
+          ByValueCycle = true;
+          if (!St.empty())
+            St.back().CycleBelow = true;
+          for (size_t Start = 0; Start < Path.size(); ++Start)
+            if (identical(Path[Start], N)) {
+              SmallVector<Object *, 4> Cycle;
+              for (size_t J = Start; J < Path.size(); ++J) {
+                Cycle.push_back(Path[J]->Obj);
+                CycleSeeds.push_back(Path[J]); // see invalidateByValueCycles
+              }
+              if (!Failed)
+                cycleError(Cycle, 0);
+              break;
+            }
+          Problem();
+          return 1;
+        }
+      NestPush(std::move(Entry));
+      Path.push_back(N);
+      St.push_back({T, N, O->FromRHS, 0, FK::Named, Key, Problems, {}});
+      return 0;
+    }
+    case Type::Kind::TypeParam: {
+      // A type parameter stands for the type argument it was instantiated
+      // with.
+      if (Nest.empty())
+        return 1;
+      NamedType *Inst = Nest.back().N;
+      ArrayRef<TypeParamType *> TPs = Inst->origin()->TParams;
+      for (size_t I = 0; I < TPs.size(); ++I)
+        if (TPs[I] == T && I < Inst->TArgs.size()) {
+          // The argument must be valid where Inst was instantiated.
+          Frame F{T, Inst, Inst->TArgs[I], 0, FK::Param, 0, Problems, {}};
+          F.Saved = NestPop();
+          St.push_back(std::move(F));
+          return 0;
+        }
+      return 1;
+    }
+    default:
+      return 1;
+    }
+  };
+  // The Next-th child of a frame, or false when there is none left.
+  auto NextChild = [&](Frame &F, Type *&Out) -> bool {
+    switch (F.Kind) {
+    case FK::Named:
+    case FK::Param:
+      if (F.Next++)
+        return false;
+      Out = F.Child;
+      return true;
+    case FK::Composite:
+      break;
+    }
+    size_t K = F.Next++;
+    switch (F.T->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+      if (K)
+        return false;
+      Out = F.T->getKind() == Type::Kind::Array
+                ? cast<sema::ArrayType>(F.T)->Elem
+                : cast<OptionType>(F.T)->Elem;
+      return true;
+    case Type::Kind::Struct: {
+      auto &Fs = cast<StructType>(F.T)->Fields;
+      if (K >= Fs.size())
+        return false;
+      Out = Fs[K]->Ty;
+      return true;
+    }
+    case Type::Kind::Union: {
+      auto &Ts = cast<UnionType>(F.T)->Terms;
+      if (K >= Ts.size())
+        return false;
+      Out = Ts[K].T;
+      return true;
+    }
+    case Type::Kind::Interface: {
+      auto &Es = cast<InterfaceType>(F.T)->Embeddeds;
+      if (K >= Es.size())
+        return false;
+      Out = Es[K];
+      return true;
+    }
+    default:
       return false;
     }
-    Nest.push_back(N);
-    Path.push_back(N);
-    bool Ok = validTypeRec(O->FromRHS, Nest, Path);
-    Nest.pop_back();
-    Path.pop_back();
-    if (Ok && Plain)
-      ValidTypes.insert(N);
-    return Ok;
-  }
-  case Type::Kind::TypeParam: {
-    // A type parameter stands for the type argument it was instantiated with.
-    if (Nest.empty())
-      return true;
-    size_t D = Nest.size() - 1;
-    NamedType *Inst = Nest[D];
-    ArrayRef<TypeParamType *> TPs = Inst->origin()->TParams;
-    for (size_t I = 0; I < TPs.size(); ++I)
-      if (TPs[I] == T && I < Inst->TArgs.size()) {
-        // The argument must be valid where Inst was instantiated.
-        SmallVector<NamedType *, 8> Outer(Nest.begin(), Nest.begin() + D);
-        return validTypeRec(Inst->TArgs[I], Outer, Path);
+  };
+  if (Enter(Root) != 0)
+    return !Failed;
+  while (!St.empty()) {
+    Type *Child = nullptr;
+    if (!NextChild(St.back(), Child)) {
+      Frame Done = std::move(St.back());
+      St.pop_back();
+      if (Done.CycleBelow && !St.empty())
+        St.back().CycleBelow = true;
+      if (Done.Kind == FK::Named) {
+        NestPop();
+        Path.pop_back();
+        if (Done.ProblemsBefore == Problems)
+          ValidKeys.insert(Done.Key);
+        else
+          FailedKeys[Done.Key] = Done.CycleBelow;
+      } else if (Done.Kind == FK::Param) {
+        NestPush(std::move(Done.Saved));
       }
-    return true;
+      continue;
+    }
+    Enter(Child);
   }
-  default:
-    return true;
+  return !Failed;
+}
+
+void Checker::validType(NamedType *T) { validTypeWalk(T); }
+
+/// A ring of right-hand sides (`type A B; type B A`, or through instances,
+/// `type N0[P any] N1; type N1 N0[int]`) is found when its last type is
+/// declared, which depends on the declaration order. Go reports it where a
+/// walk of the types first meets it (types2 validtype.go, or Named.under):
+/// the cycle starts at the first type that comes round again. So it is only
+/// noted here, with the right-hand side each type leads to; the types are
+/// invalid at once (nothing follows the ring), and the walk reports it
+/// (reportDeclRing), so the name does not depend on the order (R22).
+void Checker::noteDeclRing(
+    ArrayRef<std::pair<NamedType *, NamedType *>> Links) {
+  unsigned Id = DeclRings.size();
+  DeclRings.emplace_back();
+  for (auto [From, To] : Links) {
+    RingNext[From] = To;
+    RingOf[From] = Id;
+    DeclRings.back().push_back(From);
+  }
+  PendingRings.insert(Id);
+  ByValueCycle = true;
+}
+
+/// Reports the ring the walk meets at N (if N's type is on one not reported
+/// yet): from N along the right-hand sides to the first type that comes
+/// round again, as Go's walk names it.
+void Checker::reportDeclRing(NamedType *N) {
+  auto It = RingOf.find(N->origin());
+  if (It == RingOf.end() || !PendingRings.count(It->second))
+    return;
+  PendingRings.erase(It->second);
+  // Each type with where it is written: an instance at the right-hand side
+  // that names it (an origin at its own declaration).
+  SmallVector<NamedType *, 8> Seq{N};
+  SmallVector<SourceLoc, 8> Where{SourceLoc()};
+  for (NamedType *Prev = N, *Cur = RingNext.lookup(N->origin()); Cur;
+       Prev = Cur, Cur = RingNext.lookup(Cur->origin())) {
+    auto Again = llvm::find_if(
+        Seq, [&](NamedType *X) { return X == Cur || identical(X, Cur); });
+    if (Again != Seq.end()) {
+      SmallVector<Object *, 8> Cycle;
+      SmallVector<SourceLoc, 8> At;
+      for (auto J = Again; J != Seq.end(); ++J) {
+        Cycle.push_back((*J)->Obj);
+        At.push_back(Where[J - Seq.begin()]);
+      }
+      cycleError(Cycle, 0, At);
+      return;
+    }
+    if (Seq.size() > RingNext.size()) // not a ring after all: cannot happen
+      break;
+    SourceLoc W;
+    if (Cur->Orig)
+      if (DeclInfo *D = S.ObjMap.lookup(Prev->origin()->Obj);
+          D && D->TDecl && D->TDecl->Type)
+        W = D->TDecl->Type->getBegin();
+    Seq.push_back(Cur);
+    Where.push_back(W);
+  }
+  SmallVector<Object *, 8> Cycle;
+  for (NamedType *X : DeclRings[It->second])
+    Cycle.push_back(X->Obj);
+  cycleError(Cycle);
+}
+
+/// The rings no walk met (a type only reached in a body, say): reported in
+/// the order they were found, each at its first type in source order.
+void Checker::flushDeclRings() {
+  for (unsigned Id = 0; Id < DeclRings.size(); ++Id) {
+    if (!PendingRings.count(Id))
+      continue;
+    PendingRings.erase(Id);
+    SmallVector<Object *, 8> Cycle;
+    for (NamedType *X : DeclRings[Id])
+      Cycle.push_back(X->Obj);
+    cycleError(Cycle);
   }
 }
 
-void Checker::validType(NamedType *T) {
-  SmallVector<NamedType *, 8> Nest, Path;
-  validTypeRec(T, Nest, Path);
+/// Gives the types typeDecl left waiting (`type Bar[Q any] Foo[Q]` inside
+/// Foo's declaration) their underlying types, in declaration order, once the
+/// declarations they wait for are done.
+void Checker::resolvePendingUnder() {
+  for (size_t K = 0; K < PendingUnder.size(); ++K) {
+    auto [N, RN] = PendingUnder[K];
+    if (!N->Underlying)
+      N->Underlying = under(RN);
+  }
+  PendingUnder.clear();
+}
+
+/// After a by-value cycle was reported: makes every type on a by-value cycle
+/// of the types reachable from Roots invalid. The walk (validTypeWalk) finds
+/// each cycle but marks only the types it passes through, in the shape of the
+/// declarations; an instance expanded before keeps its own copy of the
+/// fields, so a cycle can survive among instances (`type N0[P any]
+/// N1[...]` with `N1` holding `N0[int]`), and then anything that follows the
+/// fields of a type (zero values, clones, categories) would never end. Here
+/// the cycles of the real graph are found (strongly connected components,
+/// iteratively, each type once) and no cycle is left without an invalid type.
+/// The graph has an edge from each instance to its generic declaration as
+/// well: queries answer an instance from the declaration, so a cycle through
+/// a declaration (it holds, deep down, an instance of itself) must be cut
+/// too.
+void Checker::invalidateByValueCycles(ArrayRef<NamedType *> Roots) {
+  // The named types reachable from Roots through anything (fields of any
+  // kind, type arguments), in discovery order. Types made invalid are not
+  // opened, nor an instance of a generic type on an instantiation cycle
+  // (onInstCycle) that is not expanded yet: its instances grow without end,
+  // so the walk expands none of them (one expanded already holds a copy of
+  // its fields, which may close a cycle, so it is opened). Every other
+  // instance graph is finite (types2 mono.go), so the walk ends.
+  std::vector<NamedType *> Nodes;
+  llvm::DenseMap<const NamedType *, unsigned> Index;
+  llvm::SmallPtrSet<const Type *, 32> Seen;
+  SmallVector<Type *, 32> Work;
+  // The named types held by value by T's underlying type: through arrays,
+  // options and struct fields, not through a named type.
+  auto ByValueKids = [&](NamedType *N,
+                         llvm::SmallVectorImpl<NamedType *> &Out) {
+    if (N->Ptr != PtrKind::None || (onInstCycle(N) && !N->Expanded) ||
+        (N->Obj && N->Obj->Pkg && N->Obj->Pkg->Foreign))
+      return;
+    if (N->Orig && !N->TArgs.empty() && !N->Expanded &&
+        llvm::all_of(N->TArgs, [](Type *A) { return isa<TypeParamType>(A); }))
+      return; // not opened above: see the reachability loop
+    SmallVector<Type *, 16> W{under(N)};
+    llvm::SmallPtrSet<const Type *, 16> Local;
+    while (!W.empty()) {
+      Type *X = W.pop_back_val();
+      if (!X || !Local.insert(X).second)
+        continue;
+      switch (X->getKind()) {
+      case Type::Kind::Named:
+        Out.push_back(cast<NamedType>(X));
+        break;
+      case Type::Kind::Array:
+        W.push_back(cast<sema::ArrayType>(X)->Elem);
+        break;
+      case Type::Kind::Option:
+        W.push_back(cast<OptionType>(X)->Elem);
+        break;
+      case Type::Kind::Struct:
+        for (Var *F : cast<StructType>(X)->Fields)
+          W.push_back(F->Ty);
+        break;
+      default:
+        break;
+      }
+    }
+  };
+  for (NamedType *R : Roots)
+    Work.push_back(R);
+  while (!Work.empty()) {
+    Type *X = Work.pop_back_val();
+    if (!X || !Seen.insert(X).second)
+      continue;
+    switch (X->getKind()) {
+    case Type::Kind::Named: {
+      auto *N = cast<NamedType>(X);
+      Index.try_emplace(N, Nodes.size());
+      Nodes.push_back(N);
+      for (Type *A : N->TArgs)
+        Work.push_back(A);
+      if (N->Orig)
+        Work.push_back(N->Orig);
+      // An instance whose arguments are all bare type parameters (`G1[T]`
+      // in the declaration of `G0[T]`) holds nothing a parameter could
+      // change: a parameter is a leaf. Unless it was expanded already (its
+      // copy of the fields may be stale), its edge to its generic
+      // declaration says all there is, and not opening it keeps a ring of n
+      // generic types from making n^2 such instances.
+      bool Opaque = N->Orig && !N->TArgs.empty() && !N->Expanded;
+      for (Type *A : N->TArgs)
+        Opaque = Opaque && isa<TypeParamType>(A);
+      if (!Opaque && !(onInstCycle(N) && !N->Expanded) && isValid(under(N)))
+        Work.push_back(under(N));
+      break;
+    }
+    case Type::Kind::Pointer:
+      Work.push_back(cast<PointerType>(X)->Elem);
+      break;
+    case Type::Kind::Slice:
+      Work.push_back(cast<SliceType>(X)->Elem);
+      break;
+    case Type::Kind::Ref:
+      Work.push_back(cast<RefType>(X)->Elem);
+      break;
+    case Type::Kind::Option:
+      Work.push_back(cast<OptionType>(X)->Elem);
+      break;
+    case Type::Kind::Array:
+      Work.push_back(cast<sema::ArrayType>(X)->Elem);
+      break;
+    case Type::Kind::Chan:
+      Work.push_back(cast<sema::ChanType>(X)->Elem);
+      break;
+    case Type::Kind::Map:
+      Work.push_back(cast<sema::MapType>(X)->Key);
+      Work.push_back(cast<sema::MapType>(X)->Elem);
+      break;
+    case Type::Kind::Struct:
+      for (Var *F : cast<StructType>(X)->Fields)
+        Work.push_back(F->Ty);
+      break;
+    default:
+      break;
+    }
+  }
+  // Tarjan over the by-value edges.
+  size_t NN = Nodes.size();
+  std::vector<std::vector<unsigned>> Adj(NN);
+  for (size_t V = 0; V < NN; ++V) {
+    SmallVector<NamedType *, 8> Kids;
+    ByValueKids(Nodes[V], Kids);
+    // An instance rests on its generic declaration too (zero values and
+    // categories of an instance are answered from it).
+    if (Nodes[V]->Orig)
+      Kids.push_back(Nodes[V]->Orig);
+    for (NamedType *K : Kids)
+      if (auto It = Index.find(K); It != Index.end())
+        Adj[V].push_back(It->second);
+  }
+  constexpr unsigned None = ~0u;
+  std::vector<unsigned> Idx(NN, None), Low(NN, 0), Next(NN, 0), Stk, Path;
+  std::vector<bool> OnStk(NN, false);
+  unsigned Counter = 0;
+  std::vector<unsigned> Bad;
+  for (unsigned R = 0; R < NN; ++R) {
+    if (Idx[R] != None)
+      continue;
+    Idx[R] = Low[R] = Counter++;
+    Stk.push_back(R);
+    OnStk[R] = true;
+    Path.push_back(R);
+    while (!Path.empty()) {
+      unsigned V = Path.back();
+      if (Next[V] < Adj[V].size()) {
+        unsigned To = Adj[V][Next[V]++];
+        if (Idx[To] == None) {
+          Idx[To] = Low[To] = Counter++;
+          Stk.push_back(To);
+          OnStk[To] = true;
+          Path.push_back(To);
+        } else if (OnStk[To]) {
+          Low[V] = std::min(Low[V], Idx[To]);
+        }
+        continue;
+      }
+      Path.pop_back();
+      if (!Path.empty())
+        Low[Path.back()] = std::min(Low[Path.back()], Low[V]);
+      if (Low[V] != Idx[V])
+        continue;
+      size_t Start = Stk.size();
+      unsigned W;
+      do {
+        W = Stk[--Start];
+        OnStk[W] = false;
+      } while (W != V);
+      bool Loop = Stk.size() - Start > 1 || llvm::is_contained(Adj[V], V);
+      if (Loop)
+        Bad.insert(Bad.end(), Stk.begin() + Start, Stk.end());
+      Stk.resize(Start);
+    }
+  }
+  for (unsigned V : Bad) {
+    NamedType *N = Nodes[V];
+    N->Underlying = invalid();
+    if (N->Orig)
+      N->Expanded.store(true, std::memory_order_release);
+  }
 }

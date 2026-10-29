@@ -119,7 +119,9 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
   bool Valid = false;
   int64_t Length = -1;
   Type *U = under(X.Ty);
-  // Go++ (OWN-V1): a ref string / ref []T indexes like the string / slice.
+  // Go++ (OWN-V1): a View[string] / View[[]T] indexes like the string / slice;
+  // what is read through a view is copied out or is a view again (viewRead).
+  const bool BaseView = own() && isViewType(X.Ty);
   if (auto *Rf = dyn_cast<RefType>(U))
     U = under(Rf->Elem);
   auto SingleIndex = [&]() -> const ast::Expr * {
@@ -141,12 +143,13 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     Operand Key;
     expr(Key, Idx);
     // OWN-V4: a lookup borrows the key, so a ref key costs nothing.
-    bool Saved = RefToOwnedOk;
-    RefToOwnedOk = own();
+    bool Saved = RefToOwnedOk, SavedKey = ViewKeyLookup;
+    RefToOwnedOk = ViewKeyLookup = own();
     assignment(Key, M->Key, "map index");
     RefToOwnedOk = Saved;
+    ViewKeyLookup = SavedKey;
     X.M = Mode::MapIndex;
-    X.Ty = M->Elem;
+    X.Ty = BaseView ? viewRead(M->Elem) : M->Elem;
     X.E = Ex;
     // ADR-0016 point 9: a missing key would give zero bytes.
     if (!checkLookupZero(Ex, M->Elem))
@@ -168,7 +171,7 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     Length = A->Len;
     if (X.M != Mode::Variable)
       X.M = Mode::Value;
-    X.Ty = A->Elem;
+    X.Ty = BaseView ? viewRead(A->Elem) : A->Elem;
     break;
   }
   case Type::Kind::Pointer:
@@ -182,7 +185,8 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
   case Type::Kind::Slice:
     Valid = true;
     X.M = Mode::Variable;
-    X.Ty = cast<SliceType>(U)->Elem;
+    X.Ty = BaseView ? viewRead(cast<SliceType>(U)->Elem)
+                    : cast<SliceType>(U)->Elem;
     break;
   case Type::Kind::Map:
     MapKey(cast<MapType>(U));
@@ -298,6 +302,8 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
   int64_t Length = -1;
   Type *Orig = X.Ty;
   bool OrigIsRef = isa<RefType>(Orig);
+  // The operand may not be written: a View, or a part of one (OWN-V2).
+  const bool ReadOnlySrc = own() && (isViewType(Orig) || viewPlace(Ex->X));
   Type *U = nullptr;
   if (auto *TP = dyn_cast<TypeParamType>(X.Ty)) {
     // types2: all types of the type set slice alike; a string counts as a
@@ -374,7 +380,7 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
     }
     X.Ty = Ctx.slice(A->Elem);
     if (own()) {
-      X.Ty = Ctx.ref(X.Ty);
+      X.Ty = Ctx.ref(X.Ty, !ReadOnlySrc);
       // The ref points into the array itself (OWN-P10).
       rejectPayloadAddress(Ex->X, "slicing an array held by value");
       noteReference(Ex->X);
@@ -391,7 +397,7 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
   case Type::Kind::Slice:
     Valid = true;
     if (own() && (isa<SliceType>(X.Ty) || OrigIsRef))
-      X.Ty = Ctx.ref(cast<SliceType>(U));
+      X.Ty = Ctx.ref(cast<SliceType>(U), !ReadOnlySrc);
     break;
   default:
     break;

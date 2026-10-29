@@ -1,0 +1,15 @@
+// CHECK: error[E0139]: invalid recursive type N2
+package main
+
+type N2 N1[**int,N0]
+type N1[P, Q any] N2
+type N0 struct{ f0 int }
+
+func main() {}
+
+func use0(a N2) {
+	c := a.Clone()
+	_ = c
+	var z N2
+	_ = z
+}

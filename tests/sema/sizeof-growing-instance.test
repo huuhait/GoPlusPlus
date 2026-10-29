@@ -1,0 +1,53 @@
+// RUN: not timeout 3 %gopp check --go -check-j=1 --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03 review (R23, fuzz s1820000_100): unsafe.Sizeof of a type that holds an
+// instance growing by value (N0[P] holds N0[[0]P]) is evaluated while N1 is
+// declared, before any cycle check has run. The variable-size question
+// answers an instance from its generic declaration (the type parameters it
+// holds by value; one that holds itself counts as variable size) and never
+// expands it, so it ends; the declaration's walk reports the recursion. (go build 1.25 does not end on this program.) The
+// second part shows the answer is exact: what is variable-sized matches Go.
+package p
+
+import "unsafe"
+
+var _ = unsafe.Sizeof(0)
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E0140\]}}: invalid recursive type: N0 refers to itself
+type N0[P any] [1][0]N0[[0]P]
+
+// A type that holds itself by value has a variable size (as in Go's
+// hasVarSize), so this is no constant.
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E0145\]}}: array length unsafe.Sizeof(N2{}) (value of type uintptr) must be constant
+type N1 [unsafe.Sizeof(N2{})]int
+type N2 struct{ f0 N0[N2] }
+
+func (x N0[P]) m0() { var y N0[struct{ f P }]; _ = y }
+func g[P any](n int) {
+	if n > 0 {
+		g[[]P](n - 1)
+	}
+}
+
+var v0 N0[int]
+var v1 N1
+
+type L[P any] struct{ v P }
+type W[T any] struct{ a L[L[T]] }
+type R[P any] struct {
+	x [2]P
+	r *R[P]
+}
+type M[P, Q any] struct{ a M2[Q, P] }
+type M2[P, Q any] struct{ b P }
+
+func f[T any](w W[T], r R[T], m M[T, int], n M[int, T]) {
+	// CHECK: [[@LINE+1]]:12: error{{\[E0174\]}}: unsafe.Sizeof(w) (value of type uintptr) is not constant
+	const a = unsafe.Sizeof(w)
+	// CHECK: [[@LINE+1]]:12: error{{\[E0174\]}}: unsafe.Sizeof(r) (value of type uintptr) is not constant
+	const b = unsafe.Sizeof(r)
+	const c = unsafe.Sizeof(m)
+	// CHECK: [[@LINE+1]]:12: error{{\[E0174\]}}: unsafe.Sizeof(n) (value of type uintptr) is not constant
+	const d = unsafe.Sizeof(n)
+}
+
+const e = unsafe.Sizeof(W[int]{})

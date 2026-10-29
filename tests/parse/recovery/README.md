@@ -22,7 +22,7 @@ so that Go sources can be read and such code can be formatted). None of the
 messages fires on valid Go or valid Go++ (`while`, `let` are ordinary names; `while!(x)` is an unwrapping call): of the 7354 files of `$GOROOT/src` (Go 1.25.14,
 `gopp parse -language-rules=false`), the parser rejects exactly the 44 that
 gofmt rejects too (test data with syntax errors on purpose, an empty file) and
-the 2 that use the Go++ words `macro` and `ref string` as names.
+the 2 that use the Go++ words `macro` and `View[string]` as names.
 
 | # | Mistake | Message | Fix-it | Diagnostic ID | Test |
 |---|---------|---------|--------|---------------|------|
@@ -31,9 +31,8 @@ the 2 that use the Go++ words `macro` and `ref string` as names.
 | 3 | `u := u`, `var u = u`, a closure parameter `u` inside the loop of `u` (rule, RNG-8) | 'u' redeclares a loop variable: give the copy another name, plus a note at the loop variable | none (the spec forbids reusing the name) | err_loop_var_redeclared | loop-redeclare |
 | 4 | `//gopp:cflags`, `//gopp:cxxstd`, `//gopp:ldflags` in a source file (rule, LEX-11) | '//gopp:cflags' is not allowed in a source file: move it to gopp.mod, plus a note with the gopp.mod line | none (deleting the line would lose the flags) | err_gopp_directive_in_source | gopp-directive |
 | 5 | `func f(a, move b int)` | 'a' needs its own type: a 'move' parameter does not share its type with the names before it (the tree gives `a` the type: no BadExpr) | insert the type after `a` (none when the type is `...T`) | err_move_type_not_shared | move-after-names, ../move-type-not-shared-ast |
-| 6 | `s view string`, `view []T` | there is no 'view' type: a borrowed string or slice is spelled 'ref' | `view` -> `ref` | err_view_for_ref | view-own |
+| 6 | `s view string`, `view []T` | there is no 'view' type: a read-only borrow is spelled View[T] | none (the type after `view` is read) | err_view_for_ref | view-own |
 | 7 | `own s T`, `owned s T` | there is no 'own' mark: a parameter that takes ownership is marked 'move' | `own` -> `move` | err_own_for_move | view-own |
-| 8 | `ref int`, `ref *T` | 'ref' applies to 'string' and slices only | none | err_ref_bad_elem | ref-bad-elem |
 | 9 | `x := 1` at the top level | ':=' is not allowed outside a function: use 'var x = ...' | insert `var `, `:=` -> `=` | err_define_at_top_level | top-level-define |
 | 10 | `println("hi")`, `if x {…}`, `x = 1` at the top level | non-declaration statement outside function body (Go's message; the statement is skipped as a whole) | none | err_stmt_outside_func | top-level-stmt |
 | 11 | `}` newline `else` | 'else' must be on the same line as the closing '}' | join the lines | err_else_on_new_line | else-new-line |

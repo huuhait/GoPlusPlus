@@ -1,0 +1,23 @@
+// CHECK: error[E0139]: invalid recursive type N1
+package main
+
+type N3[P, Q any] struct {
+	f0 N1[N2[N2[int]]]
+	f1 N2[int]
+}
+type N2[P any] struct {
+	f0 *N2[[]P]
+	f1 []N0[N3[P, int]]
+}
+type N1[P any] [1]N3[[]P, N3[int, map[string]int]]
+type N0[P any] N2[map[string][]P]
+
+func main() {}
+
+func use0(a N0[int], b N1[int], c N2[int], d N3[int, int]) {
+	e := a.Clone()
+	f := b.Clone()
+	g := c.Clone()
+	h := d.Clone()
+	_, _, _, _ = e, f, g, h
+}

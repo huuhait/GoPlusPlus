@@ -19,8 +19,8 @@ cdep github.com/madler/zlib v1.3.1 (
 ## Spec rules exercised
 
 - [FOR-1, FOR-2, FOR-3](../../14-foreign-surface.md): `import "github.com/madler/zlib/zlib.h"` is a header import; the package is `zlib`; names keep their C spelling (`zlib.crc32`).
-- [FOR-6](../../14-foreign-surface.md): no conversions. C types are plain Go++ types (`uLong` is `uint64`, `uInt` is `uint32`). A `[]byte` and a `ref []byte` pass to a pointer parameter (P07 D7.7).
-- [OWN-V1, OWN-V2](../../04-ownership.md): `data[i:j]` is a `ref []byte`.
+- [FOR-6](../../14-foreign-surface.md): no conversions. C types are plain Go++ types (`uLong` is `uint64`, `uInt` is `uint32`). A `[]byte` and a borrowed `[]byte` pass to a pointer parameter; a `View[[]byte]` passes only to a `const` pointer parameter (P07 D7.7).
+- [OWN-V1, OWN-V2](../../04-ownership.md): `data[i:j]` is a borrowed `[]byte` (elements writable, cannot grow).
 - [OWN-R2](../../04-ownership.md): the `[]byte("123456789")` temporary lives to the end of the statement, so the pointer stays valid during the call.
 - [ERR-6](../../09-errors-and-panics.md): `os.ReadFile!` panics in `main` on error.
 

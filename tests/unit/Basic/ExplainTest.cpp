@@ -34,6 +34,12 @@ namespace {
 
 /// Rows whose example is not compiled here, and why.
 const std::map<std::string, const char *> Unchecked = {
+    {"warn_vet_ref_field", "retired: err_view_field_without_attr (a check "
+                           "error) replaced the lint (OWN-V5)"},
+    {"err_own_case_ref_unreachable",
+     "retired: a type switch case on a view is an ordinary case (OWN-V1)"},
+    {"err_ref_bad_elem", "retired: `ref` is an ordinary name; a bad View "
+                         "argument is err_view_bad_arg (ADR-0020)"},
     {"err_too_many_errors", "needs -error-limit=N; DiagnosticsTest.ErrorLimit"},
     {"err_lex_illegal_nul", "the example is a description (a NUL byte)"},
     {"err_lex_utf16", "the example is a description (UTF-16 bytes)"},

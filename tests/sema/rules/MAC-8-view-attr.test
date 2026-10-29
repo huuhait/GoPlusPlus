@@ -1,0 +1,24 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21 (a), MAC-8, ADR-0020 point 9: the struct attribute `@Ref` was renamed
+// `@View`; `@Ref` is an unknown attribute. `@View` lets the struct hold views
+// (OWN-V5). (A local declaration takes no attribute at all, E0066.)
+package main
+
+@View
+type Token struct {
+	Text View[string]
+	Line int
+}
+
+// CHECK: [[@LINE+1]]:2: error{{\[E0372\]}}: unknown attribute @Ref: it was renamed @View (ADR-0020); mark a struct that holds a view @View (OWN-V5)
+@Ref
+type Old struct{ Line int }
+
+// CHECK: [[@LINE+1]]:2: error{{\[E0372\]}}: unknown attribute @Ref: it was renamed @View
+@Ref
+type (
+	A struct{ Line int }
+	B struct{ Line int }
+)
+
+func main() {}

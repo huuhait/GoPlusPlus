@@ -1,61 +1,61 @@
 // RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
-// Rule OWN-V7: returning a ref into a local, a move parameter or a temporary
-// is an error; a ref into a borrowed parameter is fine.
+// Rule OWN-V7: returning a view into a local, a move parameter or a temporary
+// is an error; a view into a borrowed parameter is fine.
 package main
 
 func load() string { return "a" }
 
-func positive(s string) ref string {
-	s = s[1:] // a ref into the caller's data
+func positive(s string) View[string] {
+	s = s[1:] // a view into the caller's data
 	return s
 }
 
-func head(src string) ref string { return src[:1] }
+func head(src string) View[string] { return src[:1] }
 
-func negative1() ref string {
+func negative1() View[string] {
 	s := "hi"
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local s: it dies at the return (OWN-V7)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local s: it dies at the return (OWN-V7)
 	return s
 }
 
-func negative2(move s string) ref string {
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local s: it dies at the return (OWN-V7)
+func negative2(move s string) View[string] {
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local s: it dies at the return (OWN-V7)
 	return s
 }
 
-func negative3() ref string {
+func negative3() View[string] {
 	s := "hi"
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local s: it dies at the return (OWN-V7)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local s: it dies at the return (OWN-V7)
 	return s[:1]
 }
 
-func negative4() ref string {
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into a temporary: it is freed at the return (OWN-V7)
+func negative4() View[string] {
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into a temporary: it is freed at the return (OWN-V7)
 	return load()[:1]
 }
 
 type Page struct{ Tags []string }
 
-func elem1() ref string {
+func elem1() View[string] {
 	d := Page{Tags: []string{"a"}}
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local d: it dies at the return (OWN-V7)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local d: it dies at the return (OWN-V7)
 	return d.Tags[0]
 }
 
-func elem2() ref string {
+func elem2() View[string] {
 	xs := []string{"a"}
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local xs: it dies at the return (OWN-V7)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local xs: it dies at the return (OWN-V7)
 	return xs[0]
 }
 
-func elem3() ref string {
+func elem3() View[string] {
 	xs := []string{"a"}
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local xs: it dies at the return (OWN-V7)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local xs: it dies at the return (OWN-V7)
 	return xs[0][:1]
 }
 
 // An element of a borrowed parameter outlives the call.
-func elemOk(d Page, xs []string) ref string {
+func elemOk(d Page, xs []string) View[string] {
 	_ = d.Tags[0]
 	return xs[0]
 }

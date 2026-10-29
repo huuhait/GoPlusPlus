@@ -1,0 +1,88 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-V1 (ADR-0020, P03.21): a View[T] is read-only all the way down.
+// Every write, address, method call and hand-off to a writable parameter
+// below is an error; the second function is the good code next to it and must
+// stay accepted (both sides of the rule).
+package main
+
+type Inner struct{ M map[string]int }
+
+type User struct {
+	Name  string
+	Count int
+	Tags  []string
+	In    Inner
+	Owner *User
+}
+
+func (u *User) Bump()     {}
+func (u User) Total() int { return u.Count }
+
+func takeP(p *User)          {}
+func takeS(s []string)       {}
+func takeM(m map[string]int) {}
+func takeU(u User)           {}
+
+func negative(v View[User]) {
+	_ = v.Count
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.Count: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	v.Count = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.Count: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	v.Count++
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.Tags[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	v.Tags[0] = "x"
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.In.M["k"]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	v.In.M["k"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.In.M: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	delete(v.In.M, "k")
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.Tags: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	clear(v.Tags)
+	// CHECK: [[@LINE+1]]:13: error{{\[E0290\]}}: cannot append to v.Tags: {{.*}}
+	_ = append(v.Tags, "a")
+	// CHECK: [[@LINE+1]]:6: error{{\[E0368\]}}: cannot write v.Count: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	_ = &v.Count
+	// CHECK: [[@LINE+1]]:4: error{{\[E0369\]}}: cannot call v.Bump on View[User]: {{.*}}
+	v.Bump()
+	// CHECK: [[@LINE+1]]:8: error{{\[E0369\]}}: cannot call v.Total on View[User]: {{.*}}
+	_ = v.Total()
+	// CHECK: [[@LINE+1]]:9: error{{\[E0369\]}}: cannot call v.Bump on View[User]: {{.*}}
+	f := v.Bump
+	_ = f
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write v.Owner.Count: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	v.Owner.Count = 3
+	// CHECK: [[@LINE+1]]:21: error{{\[E0368\]}}: cannot write v.Tags: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	for _, &e := range v.Tags {
+		_ = e
+	}
+	// CHECK: [[@LINE+1]]:8: error{{\[E0314\]}}: cannot use v.Owner (variable of type View[User]) as *User value in argument to takeP{{.*}}
+	takeP(v.Owner)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0314\]}}: cannot use v.Tags (variable of type View{{\[}}[]string]) as []string value in argument to takeS{{.*}}
+	takeS(v.Tags)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0314\]}}: cannot use v.In.M (variable of type View[map[string]int]) as map[string]int value in argument to takeM{{.*}}
+	takeM(v.In.M)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0314\]}}: cannot use v (variable of type View[User]) as User value in argument to takeU{{.*}}
+	takeU(v)
+}
+
+type Plain struct {
+	Name  string
+	Count int
+	Tags  []string
+}
+
+func positive(v View[Plain], vs View[[]Plain]) int {
+	c := v.Clone()
+	c.Count = 2
+	c.Tags = append(c.Tags, "y")
+	n := v.Count + vs[0].Count
+	for _, p := range vs {
+		n += p.Count
+		_ = p.Name
+		_ = p.Tags
+	}
+	takeS([]string(v.Tags))
+	var s View[string] = v.Name
+	return n + len(s) + len(string(v.Name))
+}
+
+func main() {}

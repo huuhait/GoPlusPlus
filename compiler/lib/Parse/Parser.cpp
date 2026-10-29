@@ -693,16 +693,6 @@ private:
   // Lookahead predicates for the contextual words (LEX-12)
   //===--------------------------------------------------------------------===//
 
-  /// At `ref` followed by `string` or by `[` `]`: a RefType starts here.
-  bool isRefTypeStart() {
-    if (!isWord(Tok, "ref"))
-      return false;
-    const Token &T1 = peek(1);
-    if (isWord(T1, "string"))
-      return true;
-    return T1.is(tok::l_brack) && peek(2).is(tok::r_brack);
-  }
-
   /// At `move` in a parameter declaration: is it the mark (`move v T`) or a
   /// parameter named `move` (`move T`, `move pkg.T`, `move G[K]`)? Decided by
   /// scanning to the end of the type that would follow the name.
@@ -712,13 +702,6 @@ private:
     Token T1 = peek(1);
     if (!T1.is(tok::ident))
       return false; // move []int, move *T, move ...T, move func(): a name
-    // `move ref string`: the parameter `move` of type `ref string`
-    if (isWord(T1, "ref")) {
-      const Token &T2 = peek(2);
-      if (isWord(T2, "string") ||
-          (T2.is(tok::l_brack) && peek(3).is(tok::r_brack)))
-        return false;
-    }
     Token T2 = peek(2);
     switch (T2.Kind) {
     case tok::comma:
@@ -1067,23 +1050,6 @@ private:
     return E;
   }
 
-  /// `ref string` or `ref []T`; the `ref` word is current.
-  Expr *parseRefType() {
-    SourceLoc Pos = Tok.Loc;
-    next(); // ref
-    Expr *Elem;
-    if (is(tok::ident)) {
-      Elem = parseIdent(); // string
-    } else {
-      SourceLoc Lbrack = expect(tok::l_brack);
-      Elem = parseArrayType(Lbrack, nullptr);
-    }
-    RefType *R = mk<RefType>(Pos);
-    R->RefLoc = Pos;
-    R->Elem = Elem;
-    return R;
-  }
-
   //===--------------------------------------------------------------------===//
   // Parameters
   //===--------------------------------------------------------------------===//
@@ -1097,14 +1063,6 @@ private:
     } else if (TypeSetsOK && is(tok::tilde)) {
       // "~" ...
       F.Type = embeddedElem(nullptr);
-      return F;
-    }
-
-    // `ref string` / `ref []T` at the start of an entry is a type (LEX-12).
-    if (!Forced && PTok == tok::ident && isRefTypeStart()) {
-      F.Type = parseType();
-      if (TypeSetsOK && is(tok::or_))
-        F.Type = embeddedElem(F.Type);
       return F;
     }
 
@@ -1720,59 +1678,23 @@ private:
     return packIndexExpr(Type, Opening, List, Closing);
   }
 
-  /// Tailored recovery for the words that look like `ref` (P02.07). `view
-  /// string` and `view []T` are read as `ref ...` after the error; `ref int`
-  /// (and other elements) keep their element type. Returns null if neither
-  /// applies. Only called where a type is expected, so a type named `ref` or
-  /// `view` (followed by something that cannot start a type) is not touched.
-  Expr *tailoredRefType() {
-    bool IsView = isWord(Tok, "view");
-    bool IsRef = isWord(Tok, "ref");
-    if (!IsView && !IsRef)
-      return nullptr;
-    const Token &T1 = peek(1);
-    if (IsView) {
-      if (!(isWord(T1, "string") ||
-            (T1.is(tok::l_brack) && peek(2).is(tok::r_brack))))
-        return nullptr;
-      if (shouldReport(Tok.Loc))
-        Diags.report(Tok.Loc, diag::err_view_for_ref)
-            .range(Tok.getRange())
-            .fixit(Tok.getRange(), "ref");
-      return parseRefType();
-    }
-    // `ref` followed by a type that is not string or a slice
-    switch (T1.Kind) {
-    case tok::ident:
-    case tok::mul:
-    case tok::kw_map:
-    case tok::kw_chan:
-    case tok::kw_func:
-    case tok::kw_struct:
-    case tok::kw_interface:
-      break;
-    default:
-      return nullptr;
-    }
-    error(Tok.Loc, diag::err_ref_bad_elem);
-    SourceLoc Pos = Tok.Loc;
-    next(); // ref
-    Expr *Elem = parseType();
-    RefType *R = mk<RefType>(Pos);
-    R->RefLoc = Pos;
-    R->Elem = Elem;
-    return R;
-  }
-
   /// Returns null if no type starts here.
   Expr *tryIdentOrType() {
     NestGuard G(*this);
     switch (Tok.Kind) {
     case tok::ident: {
-      if (isRefTypeStart())
-        return parseRefType();
-      if (Expr *R = tailoredRefType())
-        return R;
+      // `view string` / `view []T`: there is no `view` type (recovery: the
+      // type after the word is read).
+      if (isWord(Tok, "view")) {
+        const Token &T1 = peek(1);
+        if (isWord(T1, "string") ||
+            (T1.is(tok::l_brack) && peek(2).is(tok::r_brack))) {
+          if (shouldReport(Tok.Loc))
+            Diags.report(Tok.Loc, diag::err_view_for_ref).range(Tok.getRange());
+          next();
+          return parseType();
+        }
+      }
       Expr *T = parseTypeName(nullptr);
       if (is(tok::l_brack))
         T = parseTypeInstance(T);
@@ -1967,8 +1889,6 @@ private:
   Expr *parseOperand() {
     switch (Tok.Kind) {
     case tok::ident:
-      if (isRefTypeStart())
-        return parseRefType();
       return parseIdent();
     case tok::int_lit:
     case tok::float_lit:
@@ -3603,7 +3523,6 @@ private:
     case Node::Kind::InterfaceType:
     case Node::Kind::MapType:
     case Node::Kind::ChanType:
-    case Node::Kind::RefType:
       return true;
     case Node::Kind::BinaryExpr: {
       auto *B = cast<BinaryExpr>(X);

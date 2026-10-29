@@ -1,5 +1,5 @@
 // RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
-// Rule OWN-V1: `ref string` and `ref []T` are (ptr, len) borrows: trivial,
+// Rule OWN-V1: `View[string]` and `View[[]T]` are (ptr, len) borrows: trivial,
 // copied freely, with a fixed length (no append).
 package main
 
@@ -16,7 +16,7 @@ func positive(s string, xs []int) int {
 
 func negative(xs []int) {
 	r := xs[1:]
-	// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot append to r: a ref has a fixed length; copy it into an owned slice first (OWN-V1)
+	// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot append to r: a view has a fixed length; copy it into an owned slice first (OWN-V1)
 	r = append(r, 1)
 	_ = r
 }

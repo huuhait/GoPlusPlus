@@ -1,0 +1,7 @@
+package main
+
+type G2[P any] struct{ x P }
+type G1[P any] struct{ x G2[[1]P] }
+type G0[P any] struct{ x G1[[1]P] }
+
+func main() {}

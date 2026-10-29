@@ -1,0 +1,83 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03 review (R21), GEN-1, GEN-2, GEN-3: a type parameter whose every type
+// in its type set is Copy is Copy, and one whose every type is cloneable is
+// Clone, decided on the real type set in one place (Checker::paramIs), so
+// copying, returning, cloning and passing it on agree. `any`, `comparable`
+// and a method-only constraint have no types listed and stay neither. Copy
+// says nothing about pointers: `[T int | *int]` is Copy but is still read
+// through a view as a view (copiesOut, OWN-V1).
+package main
+
+type N int
+
+type G[T any] struct{ x T }
+
+func inc[T ~int](v View[[]T]) T {
+	x := v[0]
+	x++
+	return x
+}
+
+func useInc(a []N) N { return inc(a) }
+
+func arr[T int | float64](v View[[][2]T]) [2]T { return v[0] }
+
+func inst[T int | float64](v View[[]G[T]]) G[T] { return v[0] }
+
+func dbl[T int | float64](v View[[]T]) []T {
+	var out []T
+	for _, x := range v {
+		x *= 2
+		out = append(out, x)
+	}
+	return out
+}
+
+func copyIt[T int | *int](t T) (T, T) {
+	u := t
+	return u, t
+}
+
+func needCopy[T Copy](t T) T { return t }
+
+func needClone[T Clone](t T) T { return t.Clone() }
+
+func passOn[T ~int | ~float64](t T) (T, T) { return needCopy(t), needClone(t) }
+
+func cloneStr[T ~string | ~int](t T) T { return clone(t) }
+
+// The other side: no types listed means not Copy (and not Clone).
+func anyCopy[T any](t T) T {
+	// CHECK: [[@LINE+1]]:7: error{{\[E0295\]}}: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+	u := t
+	return u
+}
+
+func cmpCopy[T comparable](t T) T {
+	// CHECK: [[@LINE+1]]:7: error{{\[E0295\]}}: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+	u := t
+	return u
+}
+
+type Stringer interface{ String() string }
+
+func methCopy[T Stringer](t T) T {
+	// CHECK: [[@LINE+1]]:7: error{{\[E0295\]}}: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+	u := t
+	return u
+}
+
+// A string is Clone but not Copy: a ~string type set is Clone only.
+func strCopy[T ~string](t T) T {
+	// CHECK: [[@LINE+1]]:7: error{{\[E0295\]}}: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+	u := t
+	return u
+}
+
+// Copy, but it may be a pointer: read through a view it is a view.
+func ptrElem[T int | *int](v View[[]T]) T {
+	// CHECK: [[@LINE+1]]:9: error{{\[E0314\]}}: cannot use v[0] (variable of type View[T]) as T value in return statement
+	return v[0]
+}
+
+func main() {}

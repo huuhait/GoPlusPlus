@@ -9,6 +9,8 @@
 
 #include "llvm/ADT/DenseMap.h"
 
+#include <functional>
+
 using namespace gopp;
 using namespace gopp::sema;
 using llvm::ArrayRef;
@@ -41,6 +43,7 @@ int64_t Checker::gcAlignof(Type *T) {
   }
   case Type::Kind::Slice:
   case Type::Kind::Interface:
+  case Type::Kind::Ref:
     return WordSize;
   case Type::Kind::Basic:
     if (cast<BasicType>(U)->BK == BasicKind::String)
@@ -123,6 +126,16 @@ int64_t Checker::gcSizeof(Type *T) {
   }
   case Type::Kind::Slice:
     return WordSize * 3;
+  case Type::Kind::Ref: {
+    // ADR-0020 point 7: a view of a string or a slice (named or not, and the
+    // borrowed []T of slicing) is (ptr, len); every other view is one
+    // pointer.
+    Type *EU = under(cast<RefType>(U)->Elem);
+    bool PtrLen =
+        isa<SliceType>(EU) ||
+        (isa<BasicType>(EU) && cast<BasicType>(EU)->BK == BasicKind::String);
+    return PtrLen ? WordSize * 2 : WordSize;
+  }
   case Type::Kind::Struct: {
     auto *St = cast<StructType>(U);
     if (St->Fields.empty())
@@ -183,9 +196,23 @@ unsigned long long Checker::sizeofType(Type *T) {
 
 bool Checker::hasVarSize(Type *T, llvm::DenseMap<NamedType *, bool> *Seen) {
   // Cycles are only possible through named types: Seen detects them and
-  // records the results of the types seen before.
+  // records the results of the types seen before. An instance is answered
+  // from its generic declaration (varParams: the type parameters it holds by
+  // value) and its arguments, never expanded: an instance that holds
+  // another instance of its own generic type by value (`type N0[P any]
+  // [1][0]N0[[0]P]`) grows without end, and the declaration check may ask
+  // before any cycle check has run (review R23).
   llvm::DenseMap<NamedType *, bool> Local;
   NamedType *Named = dyn_cast<NamedType>(T);
+  if (Named && Named->Orig) {
+    uint64_t Mask = varParams(Named->Orig);
+    if (Mask >> 63)
+      return true;
+    for (unsigned J = 0; J < Named->TArgs.size() && J < 63; ++J)
+      if ((Mask & (uint64_t(1) << J)) && hasVarSize(Named->TArgs[J], Seen))
+        return true;
+    return false;
+  }
   if (Named) {
     if (!Seen)
       Seen = &Local;
@@ -219,4 +246,74 @@ bool Checker::hasVarSize(Type *T, llvm::DenseMap<NamedType *, bool> *Seen) {
   if (Named)
     (*Seen)[Named] = Var;
   return Var;
+}
+
+/// The type parameters of generic type O (bit per index below 63) that its
+/// right-hand side holds by value, through arrays, structs, Options and the
+/// parameters other generic types hold; bit 63 means "of variable size
+/// whatever the arguments": a parameter at index 63 or more, a type
+/// parameter of something else, or a generic type that holds an instance of
+/// itself by value, directly or through others (`type T[P any] struct{
+/// T[P] }`): a cycle counts as variable size, as in Go's hasVarSize. Each
+/// declaration is walked once per query, with no expansion.
+uint64_t Checker::varParams(NamedType *O) {
+  constexpr uint64_t Always = uint64_t(1) << 63;
+  llvm::DenseMap<NamedType *, uint64_t> Done;
+  llvm::SmallPtrSet<NamedType *, 8> Busy;
+  std::function<uint64_t(NamedType *)> Decl = [&](NamedType *G) -> uint64_t {
+    if (auto It = Done.find(G); It != Done.end())
+      return It->second;
+    if (!Busy.insert(G).second)
+      return Always; // G holds an instance of itself by value
+    uint64_t M = 0;
+    llvm::SmallPtrSet<const Type *, 16> Met;
+    SmallVector<Type *, 16> W{G->Underlying};
+    while (!W.empty() && !(M & Always)) {
+      Type *X = W.pop_back_val();
+      if (!X || !isValid(X) || !Met.insert(X).second)
+        continue;
+      switch (X->getKind()) {
+      case Type::Kind::TypeParam: {
+        auto *P = cast<TypeParamType>(X);
+        bool Own = P->Index < 63 && P->Index < G->TParams.size() &&
+                   G->TParams[P->Index] == P;
+        M |= Own ? uint64_t(1) << P->Index : Always;
+        break;
+      }
+      case Type::Kind::Array:
+        W.push_back(cast<ArrayType>(X)->Elem);
+        break;
+      case Type::Kind::Option:
+        W.push_back(cast<OptionType>(X)->Elem);
+        break;
+      case Type::Kind::Struct:
+        for (sema::Var *F : cast<StructType>(X)->Fields)
+          W.push_back(F->Ty);
+        break;
+      case Type::Kind::Named: {
+        auto *N = cast<NamedType>(X);
+        if (!N->Orig) {
+          if (N->TParams.empty())
+            M |= hasVarSize(N) ? Always : 0;
+          break;
+        }
+        uint64_t Sub = Decl(N->Orig);
+        if (Sub & Always) {
+          M |= Always;
+          break;
+        }
+        for (unsigned J = 0; J < N->TArgs.size() && J < 63; ++J)
+          if (Sub & (uint64_t(1) << J))
+            W.push_back(N->TArgs[J]);
+        break;
+      }
+      default:
+        break;
+      }
+    }
+    Busy.erase(G);
+    Done[G] = M;
+    return M;
+  };
+  return Decl(O);
 }

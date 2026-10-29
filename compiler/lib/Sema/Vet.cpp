@@ -8,10 +8,8 @@
 //
 // `gopp vet` v0 (P03.12, D3.12). A pass over the checked files that reads the
 // AST and the side table; every finding is a warning, and each lint prefers a
-// missed finding to a false alarm. The lints:
-//   - a struct field of ref type in a struct type that is not part of a type
-//     declaration marked @Ref (OWN-V5), in package-level and local
-//     declarations and anonymous structs;
+// missed finding to a false alarm. (A view field without @View is a check
+// error now, err_view_field_without_attr, OWN-V5.) The lints:
 //   - a `drop` method that uses a pointer, interface, func or
 //     Unique/Shared/Weak field of its receiver without comparing that field
 //     with nil or asking IsNil(): `drop` also runs on the zero value (OWN-R5).
@@ -75,7 +73,6 @@ public:
     // Findings of a file are sorted by position before they are reported.
     Pending.clear();
     for (const ast::Decl *Dl : F->Decls) {
-      structs(Dl, nullptr);
       strictWithoutRequired(Dl);
       if (auto *FD = dyn_cast<ast::FuncDecl>(Dl))
         dropMethod(FD);
@@ -105,40 +102,6 @@ private:
     for (StringRef A : Args)
       Fd.Args.push_back(A.str());
     Pending.push_back(std::move(Fd));
-  }
-
-  // --- OWN-V5 -------------------------------------------------------------
-
-  /// Every struct type below N. Named is the name of the type declaration
-  /// whose type N is (for the message); the type of a declaration marked
-  /// @Ref is skipped with all the struct types nested in it.
-  void structs(const ast::Node *N, const ast::Ident *Named) {
-    if (auto *GD = dyn_cast<ast::GenDecl>(N);
-        GD && GD->Keyword == tok::kw_type) {
-      bool RefOk = hasAttr(GD, "Ref");
-      for (const ast::Spec *S : GD->Specs)
-        if (auto *TS = dyn_cast<ast::TypeSpec>(S); TS && TS->Type && !RefOk)
-          structs(TS->Type, TS->Name);
-      return;
-    }
-    if (auto *ST = dyn_cast<ast::StructType>(N); ST && ST->Fields)
-      refFields(ST, Named);
-    forEachChild(N, [&](const ast::Node *C) { structs(C, nullptr); });
-  }
-
-  void refFields(const ast::StructType *ST, const ast::Ident *Named) {
-    std::string Struct = Named ? "struct " + Named->Name.str().str()
-                               : std::string("the anonymous struct");
-    for (const ast::Field *Fd : ST->Fields->List) {
-      Type *T = I.typeOf(Fd->Type);
-      if (!T || !isa<sema::RefType>(under(T)))
-        continue;
-      if (Fd->Names.empty())
-        add(Fd->Type->getBegin(), diag::warn_vet_ref_field,
-            {"<embedded>", Struct});
-      for (const ast::Ident *Nm : Fd->Names)
-        add(Nm->getBegin(), diag::warn_vet_ref_field, {Nm->Name.str(), Struct});
-    }
   }
 
   // --- @Strict without a required field (TYP-15a) -------------------------

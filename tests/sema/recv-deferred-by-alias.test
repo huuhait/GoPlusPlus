@@ -1,0 +1,17 @@
+// RUN: not %gopp check --go -check-j=1 --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.23 review round 3: a defined type named in an alias's right-hand side
+// is declared after the alias (R14), so its underlying type may still wait
+// for the type it names when its methods are collected; the receiver check
+// asks for the underlying type through that chain (go build reports this).
+package p
+
+type N0[P any] []N5[[]int, chan P]
+type N2[P, Q any] N3
+type N3 interface{ M() []string }
+type N4[P any] = N0[[1]N3]
+type N5[P, Q any] = N2[*[2]int, N4[N4[string]]]
+
+// CHECK: [[@LINE+1]]:9: error{{\[E0154\]}}: invalid receiver type N2[P, Q any] (pointer or interface type)
+func (x N2[P, Q]) m2() {}
+
+var v5 N5[int, int]

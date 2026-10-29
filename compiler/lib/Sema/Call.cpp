@@ -255,6 +255,65 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     X.Ty = B->Ty;
     X.E = Ex;
   };
+  if (own() && X.M != Mode::TypeExpr && isViewType(X.Ty)) {
+    // A View[T] (OWN-V1): the fields of T are read through it, and only
+    // Clone is a method.
+    Type *Elem = cast<RefType>(under(X.Ty))->Elem;
+    if (Sel == "Clone") {
+      std::string Why;
+      if (!satisfiesClone(Elem, &Why)) {
+        err(Ex->Sel, diag::err_own_clone_not_cloneable,
+            {str(Ex->X), str(Elem), Why.empty() ? "" : ": " + Why});
+        return Error();
+      }
+      if (viewCopyHasPointer(Elem)) {
+        err(Ex->Sel, diag::err_view_copy_pointer, {str(Ex->X), str(Elem)});
+        return Error();
+      }
+      Type *Res[] = {Elem};
+      Synth(syntheticMethod("Clone", Res, Ex->Sel->getBegin()));
+      return;
+    }
+    // An Option read through a view: IsNil and Get, which gives a view of
+    // the value (ADR-0018 point 11, TYP-9).
+    if (auto *Op = dyn_cast<OptionType>(under(Elem))) {
+      if (Sel == "IsNil") {
+        Type *Res[] = {typ(BasicKind::Bool)};
+        Synth(syntheticMethod("IsNil", Res, Ex->Sel->getBegin()));
+        return;
+      }
+      if (Sel == "Get") {
+        Type *Res[] = {viewRead(Op->Elem), typ(BasicKind::Bool)};
+        Synth(syntheticMethod("Get", Res, Ex->Sel->getBegin()));
+        return;
+      }
+    }
+    LookupResult VR = lookupFieldOrMethod(Elem, true, S.Pkg, Sel);
+    if (auto *F = dyn_cast_or_null<Var>(VR.Obj)) {
+      if (!F->Ty)
+        objDecl(F, nullptr);
+      Selection SelInfo;
+      SelInfo.K = Selection::FieldVal;
+      SelInfo.Recv = X.Ty;
+      SelInfo.Obj = F;
+      SelInfo.Index = Mem.copy(ArrayRef<int>(VR.Index));
+      SelInfo.Indirect = VR.Indirect;
+      recordSelection(Ex, SelInfo);
+      recordUse(Ex->Sel, F);
+      X.M = Mode::Variable;
+      X.Ty = viewRead(F->Ty);
+      X.E = Ex;
+      return;
+    }
+    if (VR.Obj) {
+      err(Ex->Sel, diag::err_view_no_methods, {str(Ex), str(X.Ty)});
+      return Error();
+    }
+    err(Ex->Sel, diag::err_undefined_field_or_method,
+        {str(Ex->X), std::string(Sel),
+         "type " + str(X.Ty) + " has no field or method " + std::string(Sel)});
+    return Error();
+  }
   if (own() && X.M != Mode::TypeExpr) {
     auto *Op = dyn_cast_or_null<OptionType>(under(X.Ty));
     // A defined type over an Option keeps its own methods.
@@ -362,7 +421,11 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
             {str(Ex->X), str(X.Ty), Why.empty() ? "" : ": " + Why});
         return Error();
       }
+      // A clone of a borrowed slice made by slicing is an owned slice
+      // (OWN-V2).
       Type *Res[] = {X.Ty};
+      if (auto *Rf = dyn_cast<RefType>(X.Ty); Rf && Rf->Borrowed)
+        Res[0] = Rf->Elem;
       Func *B = syntheticMethod("Clone", Res, Ex->Sel->getBegin());
       Selection SelInfo;
       SelInfo.K = Selection::MethodVal;
@@ -621,6 +684,7 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
   SignatureType *Inst = instantiateFuncSig(Sig, TArgs);
   if (Ex)
     recordInstance(Ex, TArgs, Inst);
+  recordMono(Pos, nullptr, Sig->TParams, TArgs);
   SmallVector<Type *, 4> TA(TArgs.begin(), TArgs.end());
   SmallVector<SourceLoc, 4> AP(ArgPos.begin(), ArgPos.end());
   SmallVector<TypeParamType *, 4> TP(Sig->TParams.begin(), Sig->TParams.end());

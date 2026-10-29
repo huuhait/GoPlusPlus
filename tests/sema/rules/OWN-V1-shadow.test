@@ -1,0 +1,18 @@
+// RUN: %gopp check --check-error-limit=0 %s
+// P03.21 (a): View is a predeclared name, not a keyword: a package-level type
+// named View hides it in the whole package (LEX-7, as for Option), and `ref`
+// is an ordinary identifier (a function, a parameter, a field, a variable).
+package main
+
+type View struct{ X int }
+
+type R struct{ ref int }
+
+func ref(ref int) int { return ref }
+
+func main() {
+	var v View
+	v.X = 1
+	ref := ref(v.X)
+	_ = R{ref: ref}
+}

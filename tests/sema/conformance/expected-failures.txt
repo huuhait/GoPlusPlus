@@ -30,9 +30,6 @@ fixedbugs/issue46461.go | exclude | -gotypesalias=0 selects the pre-1.23 non-ali
 fixedbugs/issue46461a.go | xfail | cycle diagnostics: a generic type whose constraint and method both mention itself is reported once, types2 reports it twice
 fixedbugs/issue46583.go | xfail | function type strings have no parameter names (TupleType stores only types)
 fixedbugs/issue47818.go | exclude | Go version flag -lang=go1.17: Go++ has one language version, version-gated errors do not exist
-fixedbugs/issue48018.go | xfail | instantiation cycles: the monomorphization cycle check of types2 (mono.go) is not ported
-fixedbugs/issue48656.go | xfail | instantiation cycles: the monomorphization cycle check of types2 (mono.go) is not ported
-fixedbugs/issue48974.go | xfail | instantiation cycles: the monomorphization cycle check of types2 (mono.go) is not ported
 fixedbugs/issue49276.go | xfail | cycle diagnostics: invalid recursive types are reported at another position
 fixedbugs/issue50779.go | exclude | -gotypesalias=0 selects the pre-1.23 non-alias mode; Go++ has only the alias mode
 fixedbugs/issue52031.go | exclude | Go version flag -lang=go1.12: Go++ has one language version, version-gated errors do not exist

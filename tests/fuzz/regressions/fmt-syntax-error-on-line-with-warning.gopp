@@ -27,5 +27,5 @@ macro func Gen(x expr) expr { return x }
 #Gen( a,b )
 
 func f[T any]!(move a, b int, c T) int { return 1 }O
-func (r Buf) g!() ref string { x := f!(1); for i, &v := range xs { use(i,v) }; for &d := range seq { }; return x }
-func h(a ref []int , move  p *T) {}
+func (r Buf) g!() View[string] { x := f!(1); for i, &v := range xs { use(i,v) }; for &d := range seq { }; return x }
+func h(a View[[]int] , move  p *T) {}

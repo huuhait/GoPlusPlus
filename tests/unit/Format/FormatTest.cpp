@@ -124,9 +124,9 @@ TEST(Format, CarriageReturnsAreRemoved) {
 
 TEST(Format, RefMoveBangAndRangeAlias) {
   EXPECT_EQ(
-      fmtStable("package p\nfunc f!(move a   int,s ref string)ref string{\n"
+      fmtStable("package p\nfunc f!(move a   int,s View[string])View[string]{\n"
                 "for i,&v:=range xs{use(i,v)}\nx:=g!(1)\nreturn s}\n"),
-      "package p\n\nfunc f!(move a int, s ref string) ref string {\n"
+      "package p\n\nfunc f!(move a int, s View[string]) View[string] {\n"
       "\tfor i, &v := range xs {\n\t\tuse(i, v)\n\t}\n\tx := g!(1)\n"
       "\treturn s\n}\n");
 }

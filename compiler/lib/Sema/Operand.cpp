@@ -524,13 +524,23 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
   // Go++ (TYP-2): owned string / []T to ref string / ref []T.
   if (own())
     if (auto *Tr = dyn_cast<RefType>(Tu))
-      if (!Tp && identical(Vu, Tr->Elem))
+      if (!Tp && (identical(Vu, Tr->Elem) || identical(V, Tr->Elem)))
         return true;
+  // A borrowed slice (writable) is read as a View of the same slice.
+  if (own())
+    if (auto *Tr = dyn_cast<RefType>(Tu))
+      if (auto *Vr = dyn_cast<RefType>(Vu))
+        if (!Tr->Borrowed && Vr->Borrowed && !Tp && !Vp &&
+            identical(Vr->Elem, Tr->Elem))
+          return true;
   // Go++ (PAR-8, OWN-V4): a borrowed string / []T parameter, and a map key
   // used for a lookup, take a ref at zero cost.
+  // A View converts to a non-view type only here: a string parameter, or a map
+  // key lookup (OWN-V1, OWN-V3); a borrowed slice may be passed on.
   if (own() && RefToOwnedOk)
     if (auto *Vr = dyn_cast<RefType>(Vu))
-      if (!Tp && identical(Vr->Elem, T))
+      if (!Tp && identical(Vr->Elem, T) &&
+          (Vr->Borrowed || ViewKeyLookup || isString(under(T))))
         return true;
   // Go++ (OWN-P6, TYP-2): Unique[*T] / Shared[*T] to *T, borrowed from a
   // place.
@@ -560,7 +570,9 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
       }
   if (own() && isa<RefType>(Vu) && !isa<RefType>(Tu) && !Tp && !Vp &&
       identical(cast<RefType>(Vu)->Elem, Tu) && Cause)
-    *Cause = "a ref is not an owning value: write " + str(T) + "(" + str(X.E) +
+    *Cause = std::string(cast<RefType>(Vu)->Borrowed ? "a borrowed slice"
+                                                     : "a view") +
+             " is not an owning value: write " + str(T) + "(" + str(X.E) +
              ") to copy (TYP-2)";
 
   if (!Vp && !Tp)
@@ -645,7 +657,10 @@ bool Checker::convertibleTo(Operand &X, Type *T, std::string *Cause) {
         if (identical(S->Elem, A->Elem))
           return true;
   }
-  // Go++ (EXP-9): string(v) / []T(v) copy a ref into a new owned value.
+  // Go++ (EXP-9, OWN-V3): string(v), []T(v) and T(v) copy a view into a new
+  // owned value. Apart from the bytes of a string, the copy is a clone: a
+  // value that cannot be cloned (a drop type without Clone) would get two
+  // owners.
   if (own())
     if (auto *Vr = dyn_cast<RefType>(Vu)) {
       Type *E = Vr->Elem;
@@ -658,6 +673,14 @@ bool Checker::convertibleTo(Operand &X, Type *T, std::string *Cause) {
                        " does not satisfy Clone (OWN-V3)";
             return false;
           }
+        } else if (!isString(Tu)) {
+          std::string Why;
+          if (!satisfiesClone(E, &Why)) {
+            if (Cause)
+              *Cause = str(E) + " does not satisfy Clone" +
+                       (Why.empty() ? "" : ": " + Why) + " (OWN-V3)";
+            return false;
+          }
         }
         return true;
       }
@@ -665,6 +688,19 @@ bool Checker::convertibleTo(Operand &X, Type *T, std::string *Cause) {
         return true;
       if (isBytesOrRunes(E) && isString(Tu))
         return true;
+      // `[N]T(v)` of a view of a slice copies the elements out.
+      if (auto *Sl = dyn_cast<SliceType>(under(E)))
+        if (auto *A = dyn_cast<ArrayType>(Tu);
+            A && !Tp && identical(Sl->Elem, A->Elem)) {
+          std::string Why;
+          if (!satisfiesClone(Sl->Elem, &Why)) {
+            if (Cause)
+              *Cause = "element type " + str(Sl->Elem) +
+                       " does not satisfy Clone (OWN-V3)";
+            return false;
+          }
+          return true;
+        }
     }
 
   if (!Vp && !Tp)
@@ -803,6 +839,16 @@ void Checker::conversion(Operand &X, Type *T) {
   }
   if (checkNilableToNeverNil(X, T))
     return;
+  // OWN-V3: `[]T(v)`, `[N]T(v)` and `T(v)` of a view are an owned copy; it
+  // must not share a raw pointer target with the view (viewCopyHasPointer).
+  if (own() && !ConstArg && isViewType(X.Ty) && !isViewType(T) &&
+      !isNonTypeParamInterface(T))
+    if (viewCopyHasPointer(cast<RefType>(under(X.Ty))->Elem)) {
+      err(X, diag::err_view_copy_pointer,
+          {X.E ? str(X.E) : str(X), str(cast<RefType>(under(X.Ty))->Elem)});
+      X.M = Mode::Invalid;
+      return;
+    }
   // P03.19: `(*[N]T)(s)` points into s's storage, so it is a pointer into
   // the box when s is a part of one (as `&s[0]` is): making it is the error.
   if (own() && X.E && !ConstArg)

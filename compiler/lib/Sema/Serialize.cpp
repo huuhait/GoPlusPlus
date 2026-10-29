@@ -236,7 +236,9 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
   case Type::Kind::Slice:
     return Emit(REC_SLICE, {type(cast<SliceType>(T)->Elem)});
   case Type::Kind::Ref:
-    return Emit(REC_REF, {type(cast<RefType>(T)->Elem)});
+    // A View[X] (0), or the borrowed []T of slicing (1, OWN-V2).
+    return Emit(REC_REF, {type(cast<RefType>(T)->Elem),
+                          cast<RefType>(T)->Borrowed ? uint64_t(1) : 0});
   case Type::Kind::Option:
     return Emit(REC_OPTION, {type(cast<OptionType>(T)->Elem)});
   case Type::Kind::Array: {
@@ -355,7 +357,9 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
       Zero = 0;
     uint64_t DeclOps[] = {package(N->Obj ? N->Obj->Pkg : nullptr),
                           string(N->Obj ? N->Obj->Name : StringRef()),
-                          static_cast<uint64_t>(N->Ptr), N->Pinned, Zero};
+                          static_cast<uint64_t>(N->Ptr),
+                          uint64_t(N->Pinned) | uint64_t(N->ViewAttr) << 1,
+                          Zero};
     W.write(REC_NAMED_DECL, DeclOps);
     uint64_t Id = Ids[T] = NextType++;
     std::vector<uint64_t> Ops{Id, 0, N->TParams.size()};
@@ -722,7 +726,8 @@ bool TypeReader::record(const Record &Rec) {
   }
   case REC_REF: {
     Type *E = Ty();
-    return Produce(E ? Ctx.ref(E) : nullptr);
+    uint64_t Borrowed = Next();
+    return Produce(E && Borrowed <= 1 ? Ctx.ref(E, Borrowed == 1) : nullptr);
   }
   case REC_OPTION: {
     Type *E = Ty();
@@ -834,16 +839,18 @@ bool TypeReader::record(const Record &Rec) {
     Package *P = Pk();
     StringRef Name = Str();
     uint64_t Ptr = Next();
-    bool Pinned = Flag();
+    uint64_t Flags = Next(); // bit 0 @Pinned, bit 1 @View
     uint64_t Zero = Next();
-    if (Bad || Ptr > static_cast<uint64_t>(PtrKind::Weak) || Zero > 2)
+    if (Bad || Ptr > static_cast<uint64_t>(PtrKind::Weak) || Flags > 3 ||
+        Zero > 2)
       return fail("malformed named type");
     TypeName *TN = Mem.make<TypeName>();
     TN->Name = Mem.copy(Name);
     TN->Pkg = P;
     NamedType *N = Ctx.newNamed(TN);
     N->Ptr = static_cast<PtrKind>(Ptr);
-    N->Pinned = Pinned;
+    N->Pinned = Flags & 1;
+    N->ViewAttr = Flags & 2;
     N->ZeroState.store(static_cast<uint8_t>(Zero), std::memory_order_release);
     Undefined.insert(N);
     return Produce(N);

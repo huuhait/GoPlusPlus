@@ -1,0 +1,16 @@
+// P03.23, in one generated file (nothing is reported):
+//  - a forward and a backward chain of 5000 named structs (a copy and a
+//    Clone() of the last), and a chain of 10000 that names each next type
+//    twice (a pending type named again stays pending: no recursion);
+//  - a chain of 1250 generic types (a generic type deferred past the depth
+//    limit gets its type parameters first), a zero value and a Clone() of an
+//    instance;
+//  - a ring of 15000 named types, each holding the next under a slice, 100
+//    with 40 levels of slices each and 300 with 5.
+// Resolving the declarations, the valid recursive type check, the
+// pinned-type, zero-value and clone queries all keep their own stacks and
+// cost near-linear time. The Done-when sizes (200000-type chains, a ring of 30000) are
+// decl-chains.long.test (more than 2 s under ASan).
+// RUN: %python %S/Inputs/gen-decl-stress.py valid 5000 > %t.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+package main

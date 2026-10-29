@@ -184,9 +184,6 @@ void ast::forEachChild(const Node *N, Visit Callback) {
   case Node::Kind::ChanType:
     F("Value", cast<ChanType>(N)->Value);
     break;
-  case Node::Kind::RefType:
-    F("Elem", cast<RefType>(N)->Elem);
-    break;
   case Node::Kind::Attribute: {
     auto *A = cast<Attribute>(N);
     F("Pkg", A->Pkg);

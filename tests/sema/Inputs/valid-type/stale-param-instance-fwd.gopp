@@ -1,0 +1,15 @@
+// CHECK: error[E0139]: invalid recursive type N0
+package main
+
+type N0[P any] [1]N4[N0[P]]
+type N1[P any] N0[P]
+type N4[P any] struct{ f P }
+
+func main() {}
+
+func use1(a N1[int]) {
+	var z N1[int]
+	_ = z
+	c := a.Clone()
+	_ = c
+}

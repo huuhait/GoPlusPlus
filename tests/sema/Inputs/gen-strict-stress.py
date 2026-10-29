@@ -138,11 +138,8 @@ if mode == "walk":
         calls = "; ".join(["needCopy(x); _ = x.Clone()"] * 1000)
         out.append("func f[T any](x G%d[interface{ Get() T }]) { %s }" % (n, calls))
     elif case == "runaway":
-        # T[int] reaches T[Option[int]], T[Option[Option[int]]], ... without
-        # end (Go: an instantiation cycle; not reported here yet): the walk
-        # stops at its instance bound with "not cloneable".
-        # The capped answer is stored for the root, so 100 queries cost one
-        # walk.
+        # T[int] would reach T[Option[int]], T[Option[Option[int]]], ... without
+        # end: an instantiation cycle, one error (P03.23).
         out += ["type T[P any] struct {", "\ts []T[Option[P]]", "\tn int", "}"]
         out += ["func f%d(t T[int]) { _ = t.Clone() }" % k for k in range(100)]
     elif case == "slices":

@@ -170,7 +170,7 @@ DIAG(err_move_type_not_shared, 74, Error,
      "'%0' needs its own type: a 'move' parameter does not share its type with "
      "the names before it")
 DIAG(err_view_for_ref, 75, Error,
-     "there is no 'view' type: a borrowed string or slice is spelled 'ref'")
+     "there is no 'view' type: a read-only borrow is spelled View[T]")
 DIAG(err_own_for_move, 76, Error,
      "there is no '%0' mark: a parameter that takes ownership is marked "
      "'move'")
@@ -422,10 +422,10 @@ DIAG(err_own_drop_signature, 272, Error, "drop must be declared as func (x *T) d
 DIAG(err_own_drop_called, 273, Error, "cannot use %0: a drop method runs only when its owner ends, it cannot be called directly (OWN-R7)")
 DIAG(err_own_variadic_owning, 274, Error, "a variadic parameter of the owning type %0 must be written `move ...%0` (PAR-5)")
 DIAG(err_own_variadic_generic, 275, Error, "variadic parameter of type parameter %0 needs `move` or a Copy constraint (PAR-5)")
-DIAG(err_own_return_ref_local, 276, Error, "cannot return a ref into local %0: it dies at the return (OWN-V7)")
-DIAG(err_own_return_ref_temp, 277, Error, "cannot return a ref into a temporary: it is freed at the return (OWN-V7)")
+DIAG(err_own_return_ref_local, 276, Error, "cannot return a view into local %0: it dies at the return (OWN-V7)")
+DIAG(err_own_return_ref_temp, 277, Error, "cannot return a view into a temporary: it is freed at the return (OWN-V7)")
 DIAG(err_own_return_addr_local, 278, Error, "cannot return the address of local %0: it dies at the return (EXP-11)")
-DIAG(err_own_ref_into_temp, 279, Error, "cannot store %0 in %1: it is a ref into a temporary that is freed at the end of the statement (OWN-V6)")
+DIAG(err_own_ref_into_temp, 279, Error, "cannot store %0 in %1: it is a view into a temporary that is freed at the end of the statement (OWN-V6)")
 DIAG(err_own_range_var_write, 280, Error, "cannot assign to %0: range variable is a borrowed read-only variable (RNG-1)")
 DIAG(err_own_range_alias_invalid, 281, Error, "cannot use & when ranging over %0: there is no element to alias (RNG-1a)")
 DIAG(err_own_range_alias_index, 282, Error, "cannot use & on the index or key of %0: & marks the element variable (RNG-1a)")
@@ -436,7 +436,7 @@ DIAG(err_own_range_map_insert, 286, Error, "cannot write %0 inside a range over 
 DIAG(note_own_range_collect, 287, Note, "fix-it: collect the changes and apply them after the loop")
 DIAG(err_own_case_ref_unreachable, 288, Error, "unreachable case %0: case %1 above also matches a %0 (TYP-9)")
 DIAG(err_own_append_borrowed, 289, Error, "append to %0 needs ownership: write append(%1.Clone(), ...) or append(move(%1), ...) (OWN-R4)")
-DIAG(err_own_append_ref, 290, Error, "cannot append to %0: a ref has a fixed length; copy it into an owned slice first (OWN-V1)")
+DIAG(err_own_append_ref, 290, Error, "cannot append to %0: a view has a fixed length; copy it into an owned slice first (OWN-V1)")
 DIAG(err_own_append_spread, 291, Error, "append(a, b...) with non-trivial elements needs move(b) or b.Clone() on the source (OWN-R4)")
 DIAG(err_own_copy_source, 292, Error, "copy(dst, src) with non-trivial elements needs src.Clone() (OWN-R4)")
 DIAG(err_own_pinned_copy, 293, Error, "cannot copy %0: type %1 is @Pinned (OWN-R10)")
@@ -482,7 +482,7 @@ DIAG(err_sema_typexpr, 323, Error, "%0")
 // gopp vet (P03.12): findings are warnings
 //===----------------------------------------------------------------------===//
 
-DIAG(warn_vet_ref_field, 324, Warning, "struct field %0 has a ref type, but %1 is not marked @Ref (OWN-V5)")
+DIAG(warn_vet_ref_field, 324, Warning, "struct field %0 has a view type, but %1 is not marked @View (OWN-V5)")
 DIAG(warn_vet_drop_zero, 325, Warning, "drop may run on a zero value: %0 is used without a nil check (OWN-R5)")
 DIAG(warn_vet_bang_panics, 326, Warning, "this ! panics if the call fails: the enclosing function cannot return an error, and package %0 is not main")
 DIAG(warn_vet_defer_in_loop, 327, Warning, "defer in a loop body runs when the function returns, not at the end of each iteration: the resources stay open (PAN-4)")
@@ -540,5 +540,13 @@ DIAG(err_option_redundant, 362, Error, "@Option on field %0 is redundant: %1 (TY
 DIAG(err_option_and_required, 363, Error, "field %0 has both @Option and @Required: @Option lets it be left out, @Required says it must be set (TYP-15a)")
 DIAG(err_required_redundant, 364, Error, "@Required on field %0 is redundant: @Strict already requires it (TYP-15a); remove @Required")
 DIAG(warn_vet_strict_no_required, 365, Warning, "struct %0 is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)")
+DIAG(err_instantiation_cycle, 366, Error, "instantiation cycle")
+DIAG(err_view_field_without_attr, 367, Error, "field %0 of %1 holds a view (%2): a view lives only as long as its owner, so a struct that stores one must be marked @View (OWN-V5)")
+DIAG(err_view_write, 368, Error, "cannot write %1: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter")
+DIAG(err_view_no_methods, 369, Error, "cannot call %0 on %1: a View has no methods except Clone (OWN-V1)")
+DIAG(err_view_to_owned, 370, Error, "cannot use %0 (a view) as an owned %1 in %2: a View never converts to a non-view type except by .Clone(), string(v) or a copy-out (OWN-V3)")
+DIAG(err_view_bad_arg, 371, Error, "cannot use View[%0]: %1 (OWN-V1, ADR-0020)")
+DIAG(err_unknown_attribute, 372, Error, "unknown attribute @%0: %1")
+DIAG(err_view_copy_pointer, 373, Error, "cannot copy %0 out of a view: %1 holds a raw pointer by value (a *T, a named pointer type, unsafe.Pointer, or a type parameter that may be one), and the copy would share its target, so it could write what the view only reads (OWN-V3); hold the target as Unique[*T] (cloned deeply) or Shared[*T] (read-only), or keep reading it through the view")
 
 #undef DIAG

@@ -1,0 +1,25 @@
+// RUN: %gopp parse %s
+// RUN: %gopp parse -dump-ast %s | FileCheck --implicit-check-not=RefType %s
+// P03.21: `View[...]` is a normal generic type expression (an IndexExpr); the
+// word `ref` is an ordinary identifier again, also where `ref string` used to
+// be a type.
+// CHECK: IndexExpr
+package p
+
+var a View[string]
+var b View[[]int]
+var c []View[string]
+var e map[string]View[string]
+var g Unique[View[string]]
+var ref int
+var move = ref
+
+type R struct {
+	s View[string]
+	t View[[]byte]
+	ref int
+}
+
+func h(p View[string], q View[[]T]) (r View[string]) { return p }
+func ref2(ref int, move ref2) {}
+func ref() {}

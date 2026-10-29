@@ -190,9 +190,9 @@ checkPackage(TypeContext &Ctx, const SourceManager &SM, llvm::StringRef PkgPath,
              DiagnosticsEngine &Diags, const CheckOptions &Opts = {});
 
 /// The `gopp vet` lints (P03.12), run by checkPackage when CheckOptions::Vet
-/// is set: ref-typed struct fields without `@Ref`, `drop` methods that may
-/// run on a zero value (a heuristic), a `!` that panics outside package main,
-/// and `defer` in a loop body. Reports warnings in source order.
+/// is set: `drop` methods that may run on a zero value (a heuristic), a `!`
+/// that panics outside package main, and `defer` in a loop body. Reports
+/// warnings in source order.
 void vetPackage(const SourceManager &SM, const CheckedPackage &P,
                 llvm::ArrayRef<const ast::File *> Files,
                 DiagnosticsEngine &Diags);

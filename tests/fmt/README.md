@@ -41,7 +41,7 @@ Of the 7354 Go files below `$GOROOT/src`, 7284 are byte-identical to gofmt
 |---|---|---|
 | comments | 18 | only comment lines differ: go/doc/comment's reformatting of doc comments (lists, code blocks, `//text` to `// text`, directives) and the `//go:build` / `// +build` line fixes are not ported (Go++ has `//gopp:build`) |
 | fixed point | 6 | gofmt is not idempotent there (a one-line function body behind a header that was split over lines). `gopp fmt` formats until the text is stable (`settle` in Format.cpp): gofmt's second pass is the result |
-| Go++ syntax | 2 | `macro` is a keyword (`cmd/asm/internal/lex/input.go`); `(ref string, ok bool)` reads as the type `ref string` (`codehost/git.go`) |
+| Go++ syntax | 2 | `macro` is a keyword (`cmd/asm/internal/lex/input.go`); `(View[string], ok bool)` reads as the type `View[string]` (`codehost/git.go`) |
 | both reject | 44 | test data with syntax errors, and an empty file |
 
 Other differences, found by fuzzing and in the testdata, all on invalid

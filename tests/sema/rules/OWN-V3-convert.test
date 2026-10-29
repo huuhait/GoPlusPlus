@@ -1,0 +1,48 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21, OWN-V3: a view converts to an owned value only by an explicit copy.
+// `string(v)` copies bytes; `[]T(v)`, `[N]T(v)` and `T(v)` (to the view's
+// type, or one with the same underlying type) are clones, so the copied type
+// must satisfy Clone: a type with a drop method and no Clone() would get two
+// owners (a double drop).
+package main
+
+type User struct{ Name string }
+type Named map[string]int
+type Ints []int
+
+func ok(s View[string], xs View[[]int], m View[map[string]int], u View[User], n View[Named], is View[Ints]) {
+	_ = string(s)
+	_ = []int(xs)
+	_ = [2]int(xs)
+	_ = map[string]int(m)
+	_ = User(u)
+	_ = Named(n)
+	_ = Ints(is)
+	_ = Ints(xs)
+}
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Holder struct {
+	F    File
+	Name string
+}
+
+func bad(v View[File], h View[Holder], fs View[[]File]) {
+	// CHECK: [[@LINE+1]]:12: error{{\[E0161\]}}: cannot convert v (variable of type View[File]) to type File: File does not satisfy Clone: File has a drop method but no Clone() (OWN-V3)
+	x := File(v)
+	_ = x
+	// CHECK: [[@LINE+1]]:14: error{{\[E0161\]}}: cannot convert h (variable of type View[Holder]) to type Holder: Holder does not satisfy Clone: field F (File) has a drop method but no Clone() (OWN-V3)
+	y := Holder(h)
+	_ = y
+	// CHECK: [[@LINE+1]]:14: error{{\[E0161\]}}: cannot convert fs (variable of type View{{\[}}[]File]) to type []File: element type File does not satisfy Clone (OWN-V3)
+	z := []File(fs)
+	_ = z
+	// CHECK: [[@LINE+1]]:9: error{{\[E0267\]}}: cannot clone v: File can't be cloned: File has a drop method but no Clone() (OWN-R6)
+	w := v.Clone()
+	_ = w
+}
+
+func main() {}

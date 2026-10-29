@@ -1,0 +1,32 @@
+// P03.23 review (R2): the check for a type that holds itself by value is
+// near-linear when the type arguments are mixed (a type parameter next to a
+// concrete type). A walk of every instance as it is written took 2^n steps
+// (22 s at n = 26; Go is as slow); a finished walk is now kept by the
+// instance and its resolved type arguments, so `G[P, int]` seen in one type
+// and `G[Q, int]` seen in another are one walk. Each case below is 2000
+// generic types deep (the n = 26 exponential case is 26 deep), under
+// `timeout 3`, and reports nothing; each ends with a copy, a Clone() and a
+// zero value of an instance:
+//  - mixed: G_i[P, Q] { a G_{i+1}[P, int]; b G_{i+1}[int, Q] };
+//  - swap: both arguments swapped on one branch;
+//  - named: a plain struct instead of int;
+//  - wrap: the argument grows with the depth, G_{i+1}[[1]P];
+//  - nested: the argument grows through a generic struct (polynomial, so 200);
+//  - bad: 1000 copies of the program of go.dev/issue/65711: 1000 errors, and
+//    no walk is cached as valid that was not.
+// RUN: %python %S/Inputs/gen-valid-stress.py mixed 2000 > %t.mixed.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.mixed.gopp
+// RUN: %python %S/Inputs/gen-valid-stress.py swap 2000 > %t.swap.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.swap.gopp
+// RUN: %python %S/Inputs/gen-valid-stress.py named 2000 > %t.named.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.named.gopp
+// RUN: %python %S/Inputs/gen-valid-stress.py wrap 1000 > %t.wrap.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.wrap.gopp
+// RUN: %python %S/Inputs/gen-valid-stress.py nested 200 > %t.nested.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.nested.gopp
+// RUN: %python %S/Inputs/gen-valid-stress.py bad 1000 > %t.bad.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.bad.gopp > %t.bad.out 2>&1
+// RUN: grep -c "error\[E0139\]: invalid recursive type C" %t.bad.out | FileCheck --check-prefix=BAD %s
+// RUN: grep -c "error\[" %t.bad.out | FileCheck --check-prefix=BAD %s
+// BAD: {{^1000$}}
+package main

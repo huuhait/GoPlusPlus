@@ -1,0 +1,95 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03 review (R24), GEN-1, GEN-2: a type parameter that is Copy (Clone) only
+// because of a type set with a ~T term carries that as a requirement on
+// every instantiation, checked where the constraint is (one place: explicit,
+// inferred, through another generic, from another package): ~int also holds
+// a defined int type with a drop method, which must not be duplicated.
+// Exact terms (`N | int`) are judged as written.
+package main
+
+type N int
+
+func (n *N) drop() {}
+
+type S []int
+
+func (s *S) drop() {}
+
+type D struct{ a int }
+
+func (d *D) drop() {}
+
+type A [2]int
+
+func (a *A) drop() {}
+
+func (n N) M() {}
+
+func dup[T ~int](x T) (T, T)                    { return x, x }
+func dupM[T interface{ ~int; M() }](x T) (T, T) { return x, x }
+func cl[T ~[]int](x T) T                        { return x.Clone() }
+func dupS[T ~struct{ a int }](x T) (T, T)       { return x, x }
+func dupA[T ~[2]int](x T) (T, T)                { return x, x }
+func first[T ~int](v View[[]T]) T               { return v[0] }
+func outer[U ~int](u U) (U, U)                  { return dup(u) }
+
+func bad(n N, s S, d D, a A, v View[[]N]) {
+	// CHECK: [[@LINE+1]]:12: error{{\[E0316\]}}: N does not satisfy Copy, which the type set of T (~int) implies: N has a drop method (GEN-1)
+	x1, x2 := dup(n)
+	// CHECK: [[@LINE+1]]:12: error{{\[E0316\]}}: N does not satisfy Copy, which the type set of T (interface{M(); ~int}) implies: N has a drop method (GEN-1)
+	x3, x4 := dupM(n)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0316\]}}: S does not satisfy Clone, which the type set of T (~[]int) implies: S has a drop method but no Clone() (GEN-2)
+	x5 := cl(s)
+	// CHECK: [[@LINE+1]]:12: error{{\[E0316\]}}: D does not satisfy Copy, which the type set of T (~struct{a int}) implies: D has a drop method (GEN-1)
+	x6, x7 := dupS(d)
+	// CHECK: [[@LINE+1]]:12: error{{\[E0316\]}}: A does not satisfy Copy, which the type set of T (~[2]int) implies: A has a drop method (GEN-1)
+	x8, x9 := dupA(a)
+	// CHECK: [[@LINE+1]]:7: error{{\[E0316\]}}: N does not satisfy Copy, which the type set of T (~int) implies: N has a drop method (GEN-1)
+	y := first(v)
+	// An outer parameter carries the same requirement, checked at its own
+	// instantiation.
+	// CHECK: [[@LINE+1]]:12: error{{\[E0316\]}}: N does not satisfy Copy, which the type set of U (~int) implies: N has a drop method (GEN-1)
+	y1, y2 := outer(n)
+	// Explicit instantiation too.
+	// CHECK: [[@LINE+1]]:16: error{{\[E0316\]}}: N does not satisfy Copy, which the type set of T (~int) implies: N has a drop method (GEN-1)
+	y3, y4 := dup[N](n)
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _ = x1, x2, x3, x4, x5, x6, x7, x8, x9, y, y1, y2, y3, y4
+}
+
+// An exact term is judged as written: N is not Copy, so T is not either.
+func exact[T N | int](x T) T {
+	// CHECK: [[@LINE+1]]:7: error{{\[E0295\]}}
+	u := x
+	return u
+}
+
+// The other side: plain named ints and numeric generic code compile.
+type Celsius float64
+type Count int
+
+type Number interface{ ~int | ~int64 | ~float64 }
+
+func Max[T Number](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Sum[T Number](v View[[]T]) T {
+	var s T
+	for _, x := range v {
+		s += x
+	}
+	return s
+}
+
+func good(c Count, t Celsius, cs []Count, ts []Celsius) (Count, Celsius, Count, Celsius, Count, Count) {
+	a, b := dup(c)
+	_ = b
+	m := Max(t, 3.5)
+	o, _ := outer(c)
+	return a, m, Sum(cs), Sum(ts), o, Max[Count](c, 2)
+}
+
+func main() {}

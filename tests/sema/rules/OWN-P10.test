@@ -920,7 +920,7 @@ func negativePayloadRef(move a Option[Holder], move b Option[[2]Inner], move c O
 			n += x.P.V
 		}
 	}
-	var r ref []Inner
+	var r View[[]Inner]
 	if e != nil {
 		for _, x := range e.Els {
 			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: e may be nil; slicing an array held by value keeps the address of the payload{{.*}}(OWN-P10)
@@ -940,7 +940,7 @@ func negativePayloadRef(move a Option[Holder], move b Option[[2]Inner], move c O
 	return n
 }
 
-func sumInner(s ref []Inner) int { return len(s) }
+func sumInner(s View[[]Inner]) int { return len(s) }
 
 // Good side: storage reached through a pointer (Option[*T], a pointer
 // field), a slice field's buffer, an element read or a trivial plain range

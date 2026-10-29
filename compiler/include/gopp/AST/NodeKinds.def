@@ -53,7 +53,6 @@ EXPR(FuncType)
 EXPR(InterfaceType)
 EXPR(MapType)
 EXPR(ChanType)
-EXPR(RefType)
 
 STMT(BadStmt)
 STMT(DeclStmt)

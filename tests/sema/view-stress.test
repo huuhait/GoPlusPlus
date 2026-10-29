@@ -1,0 +1,22 @@
+// P03.21: generated stress cases for the view analysis (OWN-V1, TYP-9), in
+// one file, under `timeout 3` (a quadratic walk fails it), with exactly the
+// errors counted here (one view error per write, one box error per direct
+// box write, never two for one write):
+//  - 1500 functions reading through a View (copy-out, views of parts, a
+//    pointer target, range, len) with a field write and a write through a
+//    range variable each: 3000 E0368;
+//  - a read and a write 150 fields deep through a View: one E0368 (the depth
+//    of one selector chain is bounded by the checker's recursion over the
+//    expression itself, which is not part of this analysis);
+//  - 1500 type switches, each with a direct write into the box (E0354) and a
+//    write behind a pointer the box holds (E0368).
+// The same output, in the same order, with 8 threads checking the bodies.
+// RUN: %python %S/Inputs/gen-view-stress.py all 1500 > %t.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: grep -o "error\[E[0-9]*\]" %t.out | sort | uniq -c | FileCheck --implicit-check-not=error %s
+// RUN: not %gopp check -check-j=8 --check-error-limit=0 %t.gopp > %t.8.out 2>&1
+// RUN: diff %t.out %t.8.out
+// CHECK: {{^ *}}1500 error{{\[}}E0354]
+// CHECK-NEXT: {{^ *}}4501 error{{\[}}E0368]
+// CHECK-EMPTY:
+package main

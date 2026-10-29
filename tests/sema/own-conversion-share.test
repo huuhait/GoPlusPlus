@@ -22,7 +22,7 @@ func h(p *Doc) { sink = any(p.Tags) }
 func k(p *Doc) Doc { return Doc(*p) }
 
 // These copy or share nothing: no error.
-func ok(bs []byte, s string, r ref string, n int, d Doc) (string, []byte, int64, string, L) {
+func ok(bs []byte, s string, r View[string], n int, d Doc) (string, []byte, int64, string, L) {
 	return string(bs), []byte(s), int64(n), string(r), L(d.Tags.Clone())
 }
 

@@ -6,7 +6,7 @@ package main
 
 func positive(s string, xs []int) int {
 	r := s[1:3]
-	var r2 ref string = r
+	var r2 View[string] = r
 	q := xs[1:]
 	var a [3]int
 	t := a[:]
@@ -15,7 +15,7 @@ func positive(s string, xs []int) int {
 
 func negative(xs []int) {
 	ys := []int{1}
-	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use xs[1:] (value of type ref []int) as []int value in assignment: a ref is not an owning value: write []int(xs[1:]) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use xs[1:] (value of type borrowed []int) as []int value in assignment: a borrowed slice is not an owning value: write []int(xs[1:]) to copy (TYP-2)
 	ys = xs[1:]
 	_ = ys
 }

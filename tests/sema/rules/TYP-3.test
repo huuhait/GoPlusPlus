@@ -1,5 +1,5 @@
 // RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
-// Rule TYP-3: == on owning types compares by value and borrows; a ref string
+// Rule TYP-3: == on owning types compares by value and borrows; a View[string]
 // compares with a string; slices, maps and funcs compare only with nil. An
 // Option[T] compares like T (both nil, or both set and equal), so it can be a
 // map key; with a non-comparable T it compares only with nil (ADR-0018).
@@ -7,7 +7,7 @@ package main
 
 type Pt struct{ X, Y int }
 
-func positive(a, b string, r ref string, p, q Pt, xs []int) bool {
+func positive(a, b string, r View[string], p, q Pt, xs []int) bool {
 	return a == b || r == a || p == q || xs == nil
 }
 

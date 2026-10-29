@@ -4,7 +4,7 @@
 // parameter, not into a move parameter that dies at the return.
 package main
 
-func positive(a string, move b string, src string) (string, string, ref string) {
+func positive(a string, move b string, src string) (string, string, View[string]) {
 	return a.Clone(), b, src[:1]
 }
 
@@ -13,7 +13,7 @@ func negative1(a string) string {
 	return a
 }
 
-func negative2(move xs []int) ref []int {
-	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a ref into local xs: it dies at the return (OWN-V7)
+func negative2(move xs []int) View[[]int] {
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local xs: it dies at the return (OWN-V7)
 	return xs[1:]
 }

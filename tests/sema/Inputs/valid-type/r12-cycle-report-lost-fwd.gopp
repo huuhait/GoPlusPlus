@@ -1,0 +1,20 @@
+// CHECK: error[E0140]: invalid recursive type: A refers to itself
+// CHECK: error[E0140]: invalid recursive type: B refers to itself
+package main
+
+type A struct {
+	a A
+	b B[int]
+}
+
+type B[P any] struct{ b B[P] }
+
+func main() {}
+
+func use0(a A, b B[int]) {
+	c := a.Clone()
+	d := b.Clone()
+	_, _ = c, d
+	var z A
+	_ = z
+}

@@ -176,48 +176,117 @@ Type *Checker::canonicalParams(Type *T) {
 /// Exact is cleared when an answer rests on a type that is not declared yet
 /// (an invalid underlying type): such an answer is not cached. A named type
 /// caches the rest in NamedType::PinnedState, so a chain of n nested named
-/// types costs n steps in all, not n per query.
-bool Checker::isPinnedRec(Type *T, bool &Exact) {
-  if (!T)
-    return false;
-  switch (T->getKind()) {
-  case Type::Kind::Named: {
-    auto *N = cast<NamedType>(T);
-    if (N->origin()->Pinned)
+/// types costs n steps in all, not n per query. The walk keeps its own stack
+/// (P03.23): a chain of 200000 nested named structs must not use the thread's
+/// stack.
+bool Checker::isPinnedRec(Type *Root, bool &Exact) {
+  struct Frame {
+    NamedType *N; // the named type this frame decides, or null
+    Type *U;      // the struct, array or Option whose parts are walked
+    size_t Next;
+    bool Own; // every answer below is exact
+  };
+  SmallVector<Frame, 16> St;
+  bool R = false;   // the result of the last finished type
+  bool ROwn = true; // ... and whether it is exact
+  // Decides T at once (R, ROwn) and returns true, or pushes a frame.
+  auto Start = [&](Type *T) -> bool {
+    ROwn = true;
+    R = false;
+    if (!T)
       return true;
-    // A struct or array type that holds a pinned value by value is pinned.
-    if (N->Ptr != PtrKind::None)
-      return false;
-    uint8_t St = N->PinnedState.load(std::memory_order_acquire);
-    if (St != 0)
-      return St == 2;
-    Type *U = under(N);
-    if (!isValid(U)) {
-      Exact = false;
-      return false;
-    }
-    if (!isa<StructType>(U) && !isa<sema::ArrayType>(U)) {
-      N->PinnedState.store(1, std::memory_order_release);
-      return false;
-    }
-    bool Own = true;
-    bool R = isPinnedRec(U, Own);
-    if (Own)
-      N->PinnedState.store(R ? 2 : 1, std::memory_order_release);
-    Exact = Exact && Own;
-    return R;
-  }
-  case Type::Kind::Array:
-    return isPinnedRec(cast<sema::ArrayType>(T)->Elem, Exact);
-  case Type::Kind::Option:
-    return isPinnedRec(cast<OptionType>(T)->Elem, Exact);
-  case Type::Kind::Struct:
-    for (Var *F : cast<StructType>(T)->Fields)
-      if (isPinnedRec(F->Ty, Exact))
+    switch (T->getKind()) {
+    case Type::Kind::Named: {
+      auto *N = cast<NamedType>(T);
+      if (N->origin()->Pinned) {
+        R = true;
         return true;
-    return false;
-  default:
-    return false;
+      }
+      // A struct or array type that holds a pinned value by value is pinned.
+      // An instance on an instantiation cycle is a leaf (onInstCycle): its
+      // instances may grow without end by value.
+      if (N->Ptr != PtrKind::None || onInstCycle(N))
+        return true;
+      uint8_t PS = N->PinnedState.load(std::memory_order_acquire);
+      if (PS != 0) {
+        R = PS == 2;
+        return true;
+      }
+      Type *U = under(N);
+      if (!isValid(U)) {
+        ROwn = false;
+        return true;
+      }
+      if (!isa<StructType>(U) && !isa<sema::ArrayType>(U)) {
+        N->PinnedState.store(1, std::memory_order_release);
+        return true;
+      }
+      St.push_back({N, U, 0, true});
+      return false;
+    }
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+    case Type::Kind::Struct:
+      St.push_back({nullptr, T, 0, true});
+      return false;
+    default:
+      return true;
+    }
+  };
+  auto Child = [](const Frame &F) -> Type * {
+    switch (F.U->getKind()) {
+    case Type::Kind::Array:
+      return F.Next == 0 ? cast<sema::ArrayType>(F.U)->Elem : nullptr;
+    case Type::Kind::Option:
+      return F.Next == 0 ? cast<OptionType>(F.U)->Elem : nullptr;
+    default: {
+      auto &Fs = cast<StructType>(F.U)->Fields;
+      return F.Next < Fs.size() ? Fs[F.Next]->Ty : nullptr;
+    }
+    }
+  };
+  auto HasChild = [](const Frame &F) {
+    switch (F.U->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+      return F.Next == 0;
+    default:
+      return F.Next < cast<StructType>(F.U)->Fields.size();
+    }
+  };
+  bool Have = Start(Root);
+  for (;;) {
+    if (Have) {
+      if (St.empty()) {
+        Exact = Exact && ROwn;
+        return R;
+      }
+      Frame &P = St.back();
+      P.Own = P.Own && ROwn;
+      if (R) {
+        // One pinned part decides the whole type.
+        Frame F = St.pop_back_val();
+        if (F.N && F.Own)
+          F.N->PinnedState.store(2, std::memory_order_release);
+        R = true;
+        ROwn = F.Own;
+        continue;
+      }
+      Have = false;
+    }
+    Frame &F = St.back();
+    if (!HasChild(F)) {
+      Frame Done = St.pop_back_val();
+      if (Done.N && Done.Own)
+        Done.N->PinnedState.store(1, std::memory_order_release);
+      R = false;
+      ROwn = Done.Own;
+      Have = true;
+      continue;
+    }
+    Type *C = Child(F);
+    ++F.Next;
+    Have = Start(C);
   }
 }
 
@@ -237,13 +306,6 @@ static Category worse(Category A, Category B) {
     return Category::SharedHandle;
   return Category::Trivial;
 }
-
-/// More generic instances of one generic type than this in one clone walk
-/// means an instance graph that never ends (`type T[P any] struct{ s
-/// []T[Option[P]] }` reaches T[int], T[Option[int]], ...: Go reports an
-/// instantiation cycle; this checker does not yet). The walk stops with the
-/// safe answer and stores nothing. Finite code does not come near it.
-static constexpr unsigned MaxInstancesPerWalk = 100000;
 
 /// The category of T (OWN-C1..C5): the worst category of what T holds by
 /// value (struct fields, array and Option elements, the underlying type of a
@@ -344,8 +406,7 @@ Category Checker::category(Type *T) {
       auto *P = cast<TypeParamType>(X);
       if (Gen && P->Index < Gen->TParams.size() && Gen->TParams[P->Index] == P)
         return Val{Category::Trivial, BitOf(P->Index)}; // left open
-      auto *I = dyn_cast_or_null<InterfaceType>(under(X));
-      if (I && typeSet(I)->Copy)
+      if (paramIs(P, /*Clone=*/false))
         return Val{Category::Trivial};
       return Val{Category::Owning}; // OWN-C5
     }
@@ -481,11 +542,52 @@ Category Checker::category(Type *T) {
 bool Checker::isCopyType(Type *T) {
   if (!T || !isValid(T))
     return true;
-  if (auto *P = dyn_cast<TypeParamType>(T)) {
-    auto *I = dyn_cast_or_null<InterfaceType>(under(P));
-    return I && typeSet(I)->Copy;
-  }
+  if (auto *P = dyn_cast<TypeParamType>(T))
+    return paramIs(P, /*Clone=*/false);
   return category(T) == Category::Trivial && !isPinned(T);
+}
+
+/// The ONE answer to "is type parameter P Copy" (Clone=false) or "is it
+/// Clone" (GEN-1, GEN-2, GEN-3): its constraint says so, or every type in its
+/// type set is (`[T int | float64]`, `[T ~int]`; `[T int | *int]` is Copy,
+/// though not copied out of a view, copiesOut). Decided on the real type
+/// set: `any`, `comparable` and a constraint with only methods have no terms
+/// and are neither. A Copy parameter is also Clone (its Clone is a copy).
+bool Checker::paramIs(TypeParamType *P, bool Clone, bool *Implicit) {
+  if (Implicit)
+    *Implicit = false;
+  auto *I = dyn_cast_or_null<InterfaceType>(under(P));
+  if (!I)
+    return false;
+  TypeSet *TS = typeSet(I);
+  if (TS->Copy || (Clone && TS->Clone))
+    return true;
+  if (!TS->hasTerms() || TS->Terms.empty())
+    return false;
+  bool Tilde = false;
+  for (const Term &Tm : TS->Terms) {
+    if (Clone ? !satisfiesClone(Tm.T, nullptr) : !isCopyType(Tm.T))
+      return false;
+    Tilde |= Tm.Tilde;
+  }
+  // A ~T term also holds every defined type over T, and one of those may
+  // have a drop method (or be @Pinned, or lack Clone()): the answer holds
+  // for the body only if every instantiation is Copy (Clone) too, which
+  // satisfies() checks (R24). Exact terms are exact.
+  if (Implicit)
+    *Implicit = Tilde;
+  return true;
+}
+
+/// Why T is not Copy, for the instantiation error of an implicit Copy
+/// requirement (paramIs).
+std::string Checker::notCopyWhy(Type *T) {
+  auto *N = dyn_cast<NamedType>(T);
+  if (N && hasDropMethod(N))
+    return str(T) + " has a drop method";
+  if (isPinned(T))
+    return str(T) + " is @Pinned";
+  return str(T) + " is not trivially copyable";
 }
 
 /// Is T cloneable (OWN-R6, GEN-2)? The ONE place that decides it, for
@@ -516,9 +618,10 @@ bool Checker::isCopyType(Type *T) {
 /// wants the reason goes into a stored "no" to find it, and skips a stored
 /// "yes" (nothing below it blocks), so the reason does not depend on what is
 /// stored either. Nothing is stored before that, or once the walk met a type
-/// whose declaration is not finished (a local type being declared) or a
-/// runaway instance graph (MaxInstancesPerWalk: answered "no", the safe
-/// side); each query still visits each type once.
+/// whose declaration is not finished (a local type being declared); each
+/// query still visits each type once. The instance graph is finite: an
+/// instance of a generic type on an instantiation cycle (`T[P]` using
+/// `T[[]P]`, an error, Mono.cpp) is a leaf (onInstCycle).
 bool Checker::satisfiesClone(Type *T, std::string *Why) {
   if (!T || !isValid(T))
     return true;
@@ -532,26 +635,10 @@ bool Checker::satisfiesClone(Type *T, std::string *Why) {
 }
 
 bool Checker::cloneWalk(Type *T, std::string *Why) {
-  // 3 ("capped") is read for the root only: see Capped below.
   auto Stored = [&](Type *X) -> uint8_t {
     auto *N = dyn_cast<NamedType>(X);
-    uint8_t St = N ? N->CloneState.load(std::memory_order_acquire) : 0;
-    return St == 3 ? 0 : St;
+    return N ? N->CloneState.load(std::memory_order_acquire) : 0;
   };
-  // The reason of a walk that reached MaxInstancesPerWalk: about the root,
-  // so a stored "capped" answer gives the same text as a fresh walk.
-  auto CapReason = [&] {
-    return str(T) +
-           " reaches instances of a generic type with ever larger "
-           "type arguments (more than " +
-           num(MaxInstancesPerWalk) + " of one), too many to check";
-  };
-  if (auto *N = dyn_cast<NamedType>(T);
-      N && N->CloneState.load(std::memory_order_acquire) == 3) {
-    if (Why)
-      *Why = CapReason();
-    return false;
-  }
   if (uint8_t St = Stored(T); St == 1 || (St == 2 && !Why))
     return St == 1;
 
@@ -575,13 +662,6 @@ bool Checker::cloneWalk(Type *T, std::string *Why) {
   // Cleared once an answer may rest on an unfinished declaration or a cut:
   // from then on nothing is stored (what finished before is still exact).
   bool Exact = true;
-  // The walk reached MaxInstancesPerWalk: the root is not cloneable (the
-  // safe side). Whether a walk from the root gets there is a function of
-  // the root alone (nothing in a runaway instance graph is ever stored as
-  // cloneable), so that answer is stored for the root, as 3, unless a
-  // declaration on the way was unfinished; never for the types in between.
-  bool Capped = false, Unfinished = false;
-  llvm::DenseMap<const NamedType *, unsigned> Instances;
   auto CanStore = [&] { return Exact && typesFinal(); };
 
   // Starts X: its own rule either decides it or lists the edges it rests on.
@@ -603,20 +683,17 @@ bool Checker::cloneWalk(Type *T, std::string *Why) {
     };
     if (auto *N = dyn_cast<NamedType>(X)) {
       if (!declFinished(N))
-        Exact = false, Unfinished = true;
-      if (N->Orig && ++Instances[N->Orig] > MaxInstancesPerWalk) {
         Exact = false;
-        Capped = true;
-        return Block(N->Orig, "");
-      }
     }
+    if (onInstCycle(X))
+      return;
     if (isPinned(X))
       return Block(X, "is @Pinned");
     if (auto *P = dyn_cast<TypeParamType>(X)) {
       auto *I = dyn_cast_or_null<InterfaceType>(under(P));
       if (I) {
         TypeSet *TS = typeSet(I);
-        if (TS->Clone || TS->Copy)
+        if (paramIs(P, /*Clone=*/true))
           return;
         // GEN-2: a method of the constraint counts only as `Clone() T`, T
         // being this very parameter (`Clone() int` clones nothing).
@@ -700,13 +777,6 @@ bool Checker::cloneWalk(Type *T, std::string *Why) {
   };
   // The walk stopped at a blocker: every type still open reaches it.
   auto Blocked = [&] {
-    if (Capped) {
-      if (auto *N = dyn_cast<NamedType>(T); N && !Unfinished && typesFinal())
-        N->CloneState.store(3, std::memory_order_release);
-      if (Why)
-        *Why = CapReason();
-      return false;
-    }
     if (CanStore())
       for (Type *Y : Open)
         if (auto *N = dyn_cast<NamedType>(Y))
@@ -734,7 +804,7 @@ bool Checker::cloneWalk(Type *T, std::string *Why) {
       continue;
     }
     if (F.Leaf) {
-      if (Why && !Capped) {
+      if (Why) {
         // The field names on the path, outermost first. A very long path is
         // shortened in the middle; the blocking type is always named.
         constexpr size_t ReasonDepth = 200;
@@ -847,14 +917,13 @@ struct ZeroQuery {
       size_t Next = 0;
     };
     SmallVector<Frame, 16> Stack;
-    SmallVector<const NamedType *, 16> OnStack;
+    llvm::DenseSet<const NamedType *> OnStack; // O(1) membership (P03.23)
     auto Push = [&](NamedType *N) {
       if (N->origin()->Ptr != PtrKind::None || N->Obj == nullptr)
         return;
       if (N->Obj->Pkg && N->Obj->Pkg->Foreign)
         return;
-      if (N->ZeroState.load(std::memory_order_acquire) != 0 ||
-          llvm::is_contained(OnStack, N))
+      if (N->ZeroState.load(std::memory_order_acquire) != 0 || OnStack.count(N))
         return;
       Type *U = C.under(N);
       if (!C.isValid(U))
@@ -862,7 +931,7 @@ struct ZeroQuery {
       Frame F;
       F.N = N;
       directNamed(U, F.Deps, 0);
-      OnStack.push_back(N);
+      OnStack.insert(N);
       Stack.push_back(std::move(F));
     };
     Push(Root);
@@ -875,7 +944,7 @@ struct ZeroQuery {
       }
       NamedType *N = F.N;
       Stack.pop_back();
-      OnStack.pop_back();
+      OnStack.erase(N);
       ZeroQuery Q(C, false);
       Q.has(N, nullptr); // writes N->ZeroState when the answer is exact
     }
@@ -1048,6 +1117,13 @@ struct ZeroQuery {
         *Why = FirstWhy;
       return !PolyFail;
     }
+    case Type::Kind::Ref:
+      // A View[T] stands for a T that is there: a view of a type with no zero
+      // value has none either (a binding of such a value is unset until the
+      // check, OWN-P10).
+      if (!cast<RefType>(T)->Borrowed)
+        return has(cast<RefType>(T)->Elem, Why);
+      return true;
     case Type::Kind::TypeParam: {
       // A generic body is checked once: T may be anything its constraint
       // allows. Only a constraint whose terms all have a zero value says so.
@@ -1093,6 +1169,12 @@ struct ZeroQuery {
           *Why = "it has no default constructor";
         return false;
       }
+      // An invalid instance counts as having a zero value (its error is
+      // reported elsewhere); its generic type may be valid, or be on the
+      // same cycle, so it is not asked. So does an instance on an
+      // instantiation cycle (a leaf, onInstCycle).
+      if (N->Orig && (Checker::onInstCycle(N) || !C.isValid(C.under(N))))
+        return true;
       // An instance of a generic type is answered from the declaration: its
       // field types mention the type parameters, and the answer for the
       // arguments follows from the parameters it rests on (PolyMask). So a
@@ -1105,7 +1187,13 @@ struct ZeroQuery {
         NamedType *O = N->Orig;
         uint8_t OSt = O->ZeroState.load(std::memory_order_acquire);
         if (OSt == 0) {
+          // The query for the declaration goes on at this depth, so a chain
+          // of generic types is prewarmed (iteratively, bottom up) like a
+          // chain of plain ones instead of recursing once per type (P03.23).
+          // The depth only decides when the prewarm starts: a stored answer
+          // is exact either way.
           ZeroQuery Q(C, false);
+          Q.Depth = Depth;
           Q.has(O, nullptr); // writes O->ZeroState when the answer is exact
           OSt = O->ZeroState.load(std::memory_order_acquire);
         }
@@ -1447,7 +1535,9 @@ Var *Checker::rootVar(const ast::Expr *Ex, bool &Through, bool OwnedParts) {
       auto It = I.Selections.find(Sel);
       if (It == I.Selections.end() || It->second.K != Selection::FieldVal)
         return nullptr;
-      if (It->second.Indirect)
+      // Behind a pointer: an implicit dereference, or a pointer field read
+      // through a view (a View of its target, ADR-0020).
+      if (It->second.Indirect || declaredPointerPart(Sel->X))
         Through = true;
       Ex = Sel->X;
       continue;
@@ -1460,7 +1550,8 @@ Var *Checker::rootVar(const ast::Expr *Ex, bool &Through, bool OwnedParts) {
       // the slice or map is itself owned by the root (not a ref).
       bool Owned = OwnedParts && U && !isa<RefType>(T) &&
                    (isa<SliceType>(U) || isa<sema::MapType>(U));
-      if ((!U || !isa<sema::ArrayType>(U)) && !Owned)
+      if ((!U || !isa<sema::ArrayType>(U) || declaredPointerPart(Ix->X)) &&
+          !Owned)
         Through = true;
       Ex = Ix->X;
       continue;
@@ -1723,8 +1814,12 @@ void Checker::checkWrite(const ast::Expr *Lhs, bool Repoint, bool Redeclare) {
       if (F.Key == KV)
         F.KeyWritten = true;
   Var *V = borrowedRoot(U);
-  if (!V)
+  if (!V) {
+    // (A write into the box itself is reported as TYP-9 by rejectBoxWrite.)
+    if (boxPlace(U) == BoxKind::None)
+      rejectViewWrite(Lhs, U, "assign to " + str(U));
     return;
+  }
   // PAR-2: re-pointing a borrowed string / []T variable at a ref.
   if (Repoint && isa<ast::Ident>(U))
     return;
@@ -1798,6 +1893,37 @@ bool Checker::boxBinding(const Var *V) {
   return (isBinding(V) && !V->OptionBinding) || BoxGetBindings.count(V);
 }
 
+/// Is the part Ex a pointer kind in the boxed value itself? A box binding is
+/// a view (ADR-0020), and a pointer read through a view is a view of its
+/// target, so the recorded type of `d.In` (a `*Inner` field) is View[Inner];
+/// whether a place is behind a pointer is decided from the declared types: a
+/// field's type, a container's element type (lesson: the checker's real
+/// types).
+bool Checker::declaredPointerPart(const ast::Expr *Ex) {
+  Ex = unparen(Ex);
+  Type *T = nullptr;
+  if (auto *Sel = dyn_cast<SelectorExpr>(Ex)) {
+    auto It = I.Selections.find(Sel);
+    if (It == I.Selections.end() || It->second.K != Selection::FieldVal)
+      return false;
+    if (auto *F = dyn_cast_or_null<Var>(It->second.Obj))
+      T = F->Ty;
+  } else if (auto *Ix = dyn_cast<IndexExpr>(Ex)) {
+    Type *CT = I.typeOf(unparen(Ix->X));
+    Type *U = CT ? coreType(CT) : nullptr;
+    if (U && isa<RefType>(U))
+      U = under(cast<RefType>(U)->Elem);
+    if (auto *Sl = dyn_cast_or_null<SliceType>(U))
+      T = Sl->Elem;
+    else if (auto *A = dyn_cast_or_null<sema::ArrayType>(U))
+      T = A->Elem;
+    else if (auto *M = dyn_cast_or_null<sema::MapType>(U))
+      T = M->Elem;
+  }
+  return T && isValid(T) &&
+         (isa<PointerType>(under(T)) || hasPtrKind(T, nullptr, nullptr));
+}
+
 Checker::BoxKind Checker::boxPlace(const ast::Expr *Ex) {
   Ex = unparen(Ex);
   if (const ast::Expr *Arg = sharedConversionArg(Ex))
@@ -1807,14 +1933,18 @@ Checker::BoxKind Checker::boxPlace(const ast::Expr *Ex) {
     auto *V = dyn_cast_or_null<Var>(identObj(Ex));
     return V && boxBinding(V) ? BoxKind::Direct : BoxKind::None;
   }
-  case ast::Node::Kind::TypeAssertExpr:
-    return BoxKind::Direct;
+  case ast::Node::Kind::TypeAssertExpr: {
+    // A box that holds a view holds no part of what it looks at (OWN-V1
+    // decides a write through it, as for a `case View[T]:` binding).
+    Type *T = I.typeOf(Ex);
+    return T && isViewType(T) ? BoxKind::None : BoxKind::Direct;
+  }
   case ast::Node::Kind::SelectorExpr: {
     // A field by value; behind a pointer it is no part of the box.
     auto *Sel = cast<SelectorExpr>(Ex);
     auto It = I.Selections.find(Sel);
     if (It == I.Selections.end() || It->second.K != Selection::FieldVal ||
-        It->second.Indirect)
+        It->second.Indirect || declaredPointerPart(Sel->X))
       return BoxKind::None;
     return boxPlace(Sel->X);
   }
@@ -1824,7 +1954,7 @@ Checker::BoxKind Checker::boxPlace(const ast::Expr *Ex) {
     Type *U = T ? coreType(T) : nullptr;
     if (U && isa<RefType>(U))
       U = under(cast<RefType>(U)->Elem);
-    if (U && isa<PointerType>(U))
+    if ((U && isa<PointerType>(U)) || declaredPointerPart(Ix->X))
       return BoxKind::None;
     BoxKind K = boxPlace(Ix->X);
     if (K == BoxKind::None)
@@ -1874,9 +2004,11 @@ bool Checker::rejectBoxWrite(const ast::Expr *At, const ast::Expr *Place,
                              bool AnyDepth, const std::string &What) {
   if (!own())
     return false;
+  // A write rooted at the box itself is the TYP-9 error below; any other
+  // write through a view is the OWN-V1 error.
   BoxKind K = boxPlace(Place);
   if (K == BoxKind::None || (!AnyDepth && K != BoxKind::Via))
-    return false;
+    return K == BoxKind::None && rejectViewWrite(At, Place, What, AnyDepth);
   std::string Root = str(placeRoot(*this, Place));
   // What kind of container the write goes into: the nearest map or slice.
   std::string Kind = "a map or slice";
@@ -1995,7 +2127,13 @@ void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
   }
   // P03.19: a pointer into a map or slice of an interface box could write
   // into it (a binding itself and its by-value parts are the case above).
-  if (rejectBoxWrite(Ex, Inner, true, "through " + str(Ex)))
+  // A pointer to a view variable that is no part of a view or a box only
+  // re-points that variable (as `s = s[1:]` does); what it looks at stays
+  // read-only by its type (OWN-V1).
+  Type *IT = I.typeOf(Inner);
+  bool ViewVar = IT && isViewType(IT) && !viewPlace(Inner) &&
+                 boxPlace(Inner) == BoxKind::None;
+  if (!ViewVar && rejectBoxWrite(Ex, Inner, true, "through " + str(Ex)))
     return;
   // ADR-0016 point 8: nil could be written through the pointer; only
   // mem.Replace(&c.F, v) may take it, and v must not be nil either.
@@ -2067,6 +2205,12 @@ void Checker::checkReturnRef(const ast::Expr *R, Type *Want) {
   }
   if (!isa<RefType>(Want))
     return;
+  // OWN-V6: a local that holds a view into a kept temporary (`w :=
+  // f()[0:3]`): the temporary dies at the end of the block.
+  if (tempViewVar(U)) {
+    err(R, diag::err_own_return_ref_temp);
+    return;
+  }
   const ast::Expr *Base = refBase(*this, U, Want);
   if (!Base)
     return;
@@ -2086,16 +2230,34 @@ void Checker::checkReturnRef(const ast::Expr *R, Type *Want) {
   err(R, diag::err_own_return_ref_local, {std::string(V->Name)});
 }
 
+bool Checker::refIntoTemp(const ast::Expr *X, Type *Dst, Type *SrcTy) {
+  if (!own() || !Dst || !isa<RefType>(Dst))
+    return false;
+  const ast::Expr *Base = refBase(*this, X, Dst, SrcTy);
+  if (!Base || !isTempOrSharedTempPart(Base))
+    return false;
+  // A string constant has static storage.
+  const TypeAndValue *TV = I.lookup(Base);
+  return !(TV && TV->M == Mode::Constant);
+}
+
+const Var *Checker::tempViewVar(const ast::Expr *R) {
+  if (TempViews.empty())
+    return nullptr;
+  R = unparen(R);
+  while (auto *Sl = dyn_cast<SliceExpr>(R))
+    R = unparen(Sl->X);
+  auto *V = dyn_cast_or_null<Var>(identObj(R));
+  return V && TempViews.count(V) ? V : nullptr;
+}
+
 void Checker::checkRefStore(const ast::Expr *X, Type *Dst, Type *SrcTy) {
   if (!own() || !Dst || !isa<RefType>(Dst))
     return;
-  const ast::Expr *Base = refBase(*this, X, Dst, SrcTy);
-  if (!Base || !isTempOrSharedTempPart(Base))
-    return;
-  const TypeAndValue *TV = I.lookup(Base);
-  if (TV && TV->M == Mode::Constant)
-    return;
-  err(X, diag::err_own_ref_into_temp, {str(X), "a longer-lived place"});
+  // OWN-V6: a view into a temporary, or a local that holds one (its
+  // temporary lives to the end of that local's block only).
+  if (refIntoTemp(X, Dst, SrcTy) || tempViewVar(X))
+    err(X, diag::err_own_ref_into_temp, {str(X), "a longer-lived place"});
 }
 
 bool Checker::checkPointerField(Operand &X, Type *FieldTy) {
@@ -2197,4 +2359,338 @@ bool Checker::isReadOnlyValue(const ast::Expr *Ex, Type *Ty) {
   if (Ty && isa<RefType>(under(Ty)))
     return true;
   return Ex && borrowedRoot(Ex) != nullptr;
+}
+
+//===----------------------------------------------------------------------===//
+// Views are read-only (ADR-0020, OWN-V1)
+//===----------------------------------------------------------------------===//
+
+/// Does Root reach a type that blocks (Visit says so, or lists the types X
+/// rests on in Kids)? The ONE walk behind pointerFree and viewCopyHasPointer.
+/// An iterative depth-first search that finds the strongly connected
+/// components (Tarjan), as cloneWalk does: a finished component reaches no
+/// blocker, so its types do not; when the walk meets a blocker, every type
+/// still on Tarjan's stack reaches it. Both answers are exact, a function of
+/// the type alone, and once the types are final each named type stores its
+/// own in Slot(N) (1 no, 2 yes; every thread stores the same value), so a
+/// query costs the types it has not seen answered before: n queries along a
+/// chain of n types cost n steps in all. No recursion, no depth cut.
+bool Checker::reachesBlocker(
+    Type *Root, llvm::function_ref<std::atomic<uint8_t> &(NamedType *)> Slot,
+    llvm::function_ref<bool(Type *, llvm::SmallVectorImpl<Type *> &)> Visit) {
+  if (!Root || !isValid(Root))
+    return false;
+  auto Stored = [&](Type *X) -> uint8_t {
+    auto *N = dyn_cast<NamedType>(X);
+    return N ? Slot(N).load(std::memory_order_acquire) : 0;
+  };
+  if (uint8_t St = Stored(Root))
+    return St == 2;
+  struct Frame {
+    Type *X;
+    unsigned Idx, Low;
+    SmallVector<Type *, 4> Kids;
+    size_t Next = 0;
+  };
+  std::vector<Frame> Stack;
+  SmallVector<Type *, 16> Open;
+  llvm::DenseMap<Type *, unsigned> Seen;
+  std::vector<bool> Done;
+  // Cleared once an answer may rest on an unfinished declaration.
+  bool Exact = true;
+  auto Store = [&](Type *X, uint8_t V) {
+    if (auto *N = dyn_cast<NamedType>(X); N && Exact && typesFinal())
+      Slot(N).store(V, std::memory_order_release);
+  };
+  auto Yes = [&] {
+    for (Type *Y : Open)
+      Store(Y, 2);
+    return true;
+  };
+  // Starts X; true if it blocks by itself.
+  auto Start = [&](Type *X) {
+    if (auto *N = dyn_cast<NamedType>(X); N && !declFinished(N))
+      Exact = false;
+    unsigned Idx = Done.size();
+    Seen[X] = Idx;
+    Done.push_back(false);
+    Open.push_back(X);
+    Frame &F = Stack.emplace_back();
+    F.X = X;
+    F.Idx = F.Low = Idx;
+    return Visit(X, F.Kids);
+  };
+  if (Start(Root))
+    return Yes();
+  while (!Stack.empty()) {
+    Frame &F = Stack.back();
+    if (F.Next < F.Kids.size()) {
+      Type *Y = F.Kids[F.Next++];
+      if (!Y || !isValid(Y))
+        continue;
+      if (auto It = Seen.find(Y); It != Seen.end()) {
+        if (!Done[It->second]) // open: on a cycle through the path
+          F.Low = std::min(F.Low, It->second);
+        continue;
+      }
+      if (uint8_t St = Stored(Y)) {
+        if (St == 2)
+          return Yes();
+        continue;
+      }
+      if (Start(Y)) // invalidates F
+        return Yes();
+      continue;
+    }
+    unsigned Idx = F.Idx, Low = F.Low;
+    Type *X = F.X;
+    Stack.pop_back();
+    if (!Stack.empty())
+      Stack.back().Low = std::min(Stack.back().Low, Low);
+    if (Low != Idx)
+      continue;
+    Type *W;
+    do {
+      W = Open.pop_back_val();
+      Done[Seen[W]] = true;
+      Store(W, 1);
+    } while (W != X);
+  }
+  return false;
+}
+
+/// Is T DEFINITELY pointer-free (OWN-V1)? Numbers, bool, string, and arrays,
+/// structs and Options of those. Not: a pointer (`*T` or a named pointer
+/// type), a pointer kind (Unique, Shared, Weak), unsafe.Pointer, a slice, map,
+/// chan, func, interface or view, or anything that holds one by value. A
+/// type parameter is pointer-free only if every type in its type set is (so
+/// `[T int | float64]` is, `[T Copy]` and `[T any]` are not). Decided on the
+/// checker's real types; a pure function of T (reachesBlocker).
+bool Checker::pointerFree(Type *T) {
+  return !reachesBlocker(
+      T, [](NamedType *N) -> std::atomic<uint8_t> & { return N->PtrFreeState; },
+      [&](Type *X, llvm::SmallVectorImpl<Type *> &Kids) {
+        if (auto *P = dyn_cast<TypeParamType>(X)) {
+          TypeSet *TS = typeSetOf(P);
+          if (!TS || !TS->hasTerms())
+            return true;
+          for (const Term &Tm : TS->Terms)
+            Kids.push_back(Tm.T);
+          return false;
+        }
+        if (hasPtrKind(X, nullptr, nullptr))
+          return true;
+        if (auto *N = dyn_cast<NamedType>(X)) {
+          if (N->Ptr != PtrKind::None)
+            return true;
+          Kids.push_back(under(N));
+          return false;
+        }
+        switch (X->getKind()) {
+        case Type::Kind::Basic:
+          return isUnsafePointer(X) || X == typ(BasicKind::UntypedNil);
+        case Type::Kind::Array:
+          Kids.push_back(cast<sema::ArrayType>(X)->Elem);
+          return false;
+        case Type::Kind::Option:
+          Kids.push_back(cast<OptionType>(X)->Elem);
+          return false;
+        case Type::Kind::Struct:
+          for (Var *F : cast<StructType>(X)->Fields)
+            Kids.push_back(F->Ty);
+          return false;
+        default:
+          return true;
+        }
+      });
+}
+
+bool Checker::copiesOut(Type *T) {
+  if (!T || !isValid(T))
+    return true;
+  if (auto *P = dyn_cast<TypeParamType>(T)) {
+    TypeSet *TS = typeSetOf(P);
+    if (!TS || !TS->hasTerms())
+      return false;
+    for (const Term &Tm : TS->Terms)
+      if (!copiesOut(Tm.T))
+        return false;
+    return true;
+  }
+  if (!pointerFree(T))
+    return false;
+  // A composite of type parameters (`[2]T`, `G[T]`): a parameter whose every
+  // type copies out is a Copy, pointer-free leaf, as `int` is, so the
+  // composite is asked about with `int` in its place (exact: Copy and
+  // pointer-free are all its part in the answer); any other parameter stays
+  // and keeps the composite from being Copy.
+  SmallVector<TypeParamType *, 4> From;
+  forEachTypeParam(T, [&](TypeParamType *P, bool) {
+    if (!llvm::is_contained(From, P) && copiesOut(P))
+      From.push_back(P);
+  });
+  if (From.empty())
+    return isCopyType(T);
+  SmallVector<Type *, 4> To(From.size(), typ(BasicKind::Int));
+  return isCopyType(subst(T, From, To));
+}
+
+/// Would an owned copy of a view of T share a raw pointer (`*T`, a named
+/// pointer type, unsafe.Pointer, or a type parameter that may be one) with
+/// the view (OWN-V1, OWN-V3)? A copy (`.Clone()`, `[]T(v)`, `T(v)`) clones
+/// what T holds by value: fields, array, slice, map and Option elements, the
+/// target of a Unique (a deep copy). It stops at a Shared or Weak handle
+/// (read-only), at a type with its own Clone method (that method decides how
+/// deep the copy is) and at an instance on an instantiation cycle. The one
+/// place that decides it; a pure function of T (reachesBlocker).
+bool Checker::viewCopyHasPointer(Type *T) {
+  return reachesBlocker(
+      T, [](NamedType *N) -> std::atomic<uint8_t> & { return N->CopyPtrState; },
+      [&](Type *X, llvm::SmallVectorImpl<Type *> &Kids) {
+        if (onInstCycle(X))
+          return false;
+        if (auto *P = dyn_cast<TypeParamType>(X)) {
+          TypeSet *TS = typeSetOf(P);
+          if (!TS || !TS->hasTerms())
+            return true;
+          for (const Term &Tm : TS->Terms)
+            Kids.push_back(Tm.T);
+          return false;
+        }
+        if (auto *N = dyn_cast<NamedType>(X)) {
+          PtrKind K;
+          Type *El;
+          if (hasPtrKind(X, &K, &El)) {
+            if (K == PtrKind::Unique)
+              Kids.push_back(El);
+            return false;
+          }
+          if (!isa<PointerType>(under(N))) {
+            LookupResult LR = lookupFieldOrMethod(X, false, S.Pkg, "Clone");
+            if (auto *M = dyn_cast_or_null<Func>(LR.Obj); M && !M->HasPtrRecv) {
+              if (!M->Ty)
+                objDecl(M, nullptr);
+              auto *Sg = dyn_cast_or_null<SignatureType>(M->Ty);
+              if (Sg && Sg->Params->size() == 0 && Sg->Results->size() == 1 &&
+                  identical(Sg->Results->Elems[0], X))
+                return false;
+            }
+          }
+          Kids.push_back(under(N));
+          return false;
+        }
+        switch (X->getKind()) {
+        case Type::Kind::Pointer:
+          return true;
+        case Type::Kind::Basic:
+          return isUnsafePointer(X);
+        case Type::Kind::Array:
+          Kids.push_back(cast<sema::ArrayType>(X)->Elem);
+          return false;
+        case Type::Kind::Slice:
+          Kids.push_back(cast<SliceType>(X)->Elem);
+          return false;
+        case Type::Kind::Option:
+          Kids.push_back(cast<OptionType>(X)->Elem);
+          return false;
+        case Type::Kind::Map:
+          Kids.push_back(cast<sema::MapType>(X)->Key);
+          Kids.push_back(cast<sema::MapType>(X)->Elem);
+          return false;
+        case Type::Kind::Struct:
+          for (Var *F : cast<StructType>(X)->Fields)
+            Kids.push_back(F->Ty);
+          return false;
+        default:
+          return false;
+        }
+      });
+}
+
+Type *Checker::viewTarget(Type *T) {
+  if (!T || !isValid(T) || isViewType(T))
+    return T;
+  return badViewArg(T) ? T : static_cast<Type *>(Ctx.ref(T));
+}
+
+Type *Checker::viewRead(Type *T) {
+  if (!T || !isValid(T) || isViewType(T))
+    return T;
+  PtrKind K;
+  Type *Elem;
+  if (hasPtrKind(T, &K, &Elem))
+    return K == PtrKind::Weak ? T : viewTarget(Elem);
+  // A pointer read through a view is a view of its target, a plain or a
+  // named pointer type alike.
+  if (auto *P = dyn_cast<PointerType>(under(T)))
+    return viewTarget(P->Elem);
+  if (copiesOut(T))
+    return T;
+  return badViewArg(T) ? T : static_cast<Type *>(Ctx.ref(T));
+}
+
+bool Checker::viewPlace(const ast::Expr *Ex) {
+  for (;;) {
+    Ex = unparen(Ex);
+    if (const ast::Expr *Arg = sharedConversionArg(Ex)) {
+      Ex = Arg;
+      continue;
+    }
+    const ast::Expr *Base = nullptr;
+    if (auto *Sel = dyn_cast<SelectorExpr>(Ex)) {
+      auto It = I.Selections.find(Sel);
+      if (It == I.Selections.end() || It->second.K != Selection::FieldVal)
+        return false;
+      Base = Sel->X;
+    } else if (auto *Ix = dyn_cast<IndexExpr>(Ex)) {
+      Base = Ix->X;
+    } else if (auto *Sl = dyn_cast<SliceExpr>(Ex)) {
+      Base = Sl->X;
+    } else if (auto *St = dyn_cast<StarExpr>(Ex)) {
+      Base = St->X;
+    } else {
+      return false;
+    }
+    Type *T = I.typeOf(Base);
+    if (T && isViewType(T))
+      return true;
+    Ex = Base;
+  }
+}
+
+bool Checker::rejectViewWrite(const ast::Expr *At, const ast::Expr *Place,
+                              const std::string &What, bool Self) {
+  if (!own())
+    return false;
+  // Self: the operation writes the operand itself (clear, copy, delete,
+  // append), not only its parts.
+  Type *PT = Self ? I.typeOf(unparen(Place)) : nullptr;
+  if (!viewPlace(Place) && !(PT && isViewType(PT)))
+    return false;
+  if (ViewWriteReported.insert(At).second)
+    err(At, diag::err_view_write, {What, str(unparen(Place))});
+  return true;
+}
+
+/// The type of a type switch, assertion or Option-Get binding of a value held
+/// by value in an interface box (TYP-9, ADR-0020): a view of it, read-only all
+/// the way down, unless it is a plain copy (copiesOut), a handle the box
+/// holds itself (boxHandle: the target is not in the box) or an interface. A
+/// type parameter that may be owning keeps its type (a borrowed binding: what
+/// it holds is reached only by the operations of its core type, and a direct
+/// write is the TYP-9 error); a Copy one that may hold a pointer (`[T Copy]`, T
+/// = *int or a struct with a pointer field) is a view.
+Type *Checker::boxBindingType(Type *T) {
+  if (!own() || !T || !isValid(T))
+    return T;
+  if (isTypeParam(T))
+    return isCopyType(T) && !copiesOut(T) ? viewRead(T) : T;
+  if (isInterface(T) || boxHandle(T))
+    return T;
+  return viewRead(T);
+}
+
+bool Checker::isViewType(Type *T) {
+  auto *R = T ? dyn_cast<RefType>(under(T)) : nullptr;
+  return R && !R->Borrowed;
 }

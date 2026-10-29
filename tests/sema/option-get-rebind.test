@@ -17,7 +17,7 @@ type Mid struct {
 
 type Big struct{ Sub Option[Mid] }
 
-func sum(xs ref []Inner) int { return len(xs) }
+func sum(xs View[[]Inner]) int { return len(xs) }
 
 func mkMid(n *Node) (Mid, int) { return Mid{A: [2]Inner{{P: n}, {P: n}}}, 1 }
 

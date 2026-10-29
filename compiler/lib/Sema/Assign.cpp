@@ -216,16 +216,25 @@ void Checker::initVar(Var *Lhs, Operand &X, StringRef Context) {
   if (!IsReturn && !Lhs->Parent && isa<TypeAssertExpr>(unparen(X.E)) &&
       bindsBox(Lhs->Ty)) {
     Lhs->Mode = Var::Borrowed;
+    Lhs->Ty = boxBindingType(Lhs->Ty); // OWN-V1: a view of the boxed value
     return;
   }
   // A ref destination borrows: no ownership is taken (TYP-2), but the ref
   // must not point into a temporary (OWN-V6; returns: checkReturnRef).
   if (isa<RefType>(Lhs->Ty)) {
-    // A variable declared in a statement header lives no longer than the
-    // header's temporaries (OWN-R2, STM-4).
-    bool DeclaredInHeader = InHeaderInit && !Lhs->Parent;
-    if (!IsReturn && !DeclaredInHeader)
-      checkRefStore(X.E, Lhs->Ty, X.Ty);
+    bool ReboundBinding = Lhs->Parent && Lhs->Mode == Var::Borrowed &&
+                          !Lhs->IsParam && !Lhs->LoopVar; // TYP-9 reports it
+    if (!IsReturn && !ReboundBinding) {
+      // OWN-V6: `w := f()[0:3]` and `var w = f()[0:3]` keep the temporary
+      // in a hidden local until the end of the block; w (and a local it is
+      // copied into) may not be stored anywhere that lives longer. In an if
+      // or switch header the block is the whole statement (its scope).
+      if (!Lhs->Parent && !Lhs->IsPackageLevel && !InForInit &&
+          (tempViewVar(X.E) || refIntoTemp(X.E, Lhs->Ty, X.Ty)))
+        TempViews.insert(Lhs);
+      else
+        checkRefStore(X.E, Lhs->Ty, X.Ty);
+    }
     return;
   }
   // The blank identifier keeps nothing: `_, ok := m[k]` moves no value.
@@ -374,10 +383,28 @@ Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
                                      : "assign to");
   if (X->M == Mode::Invalid || Repoint || Shrink || OpAssign)
     return T;
-  if (isa<RefType>(T))
-    checkRefStore(X->E, T, X->Ty);
-  else
+  if (isa<RefType>(T)) {
+    // (A write to a binding of the box is reported by checkWrite.)
+    Var *BV = nullptr;
+    if (auto *Id = dyn_cast<ast::Ident>(unparen(Lhs)))
+      BV = dyn_cast_or_null<Var>(E.Sc->lookup(name(Id), E.Pos));
+    if (!(BV && BV->Mode == Var::Borrowed && !BV->IsParam && !BV->LoopVar)) {
+      // OWN-V6: a view into a temporary kept to the end of its block may be
+      // stored in a local of that block or an inner one (which then holds
+      // one too); anywhere else it would outlive the temporary.
+      const Var *TV = tempViewVar(X->E);
+      bool Inner = false;
+      if (TV && BV && !BV->IsPackageLevel && BV->FuncOwner == TV->FuncOwner)
+        for (const Scope *Sc = BV->Parent; Sc && !Inner; Sc = Sc->Parent)
+          Inner = Sc == TV->Parent;
+      if (Inner)
+        TempViews.insert(BV);
+      else
+        checkRefStore(X->E, T, X->Ty);
+    }
+  } else {
     needOwnership(*X, "assign from", T);
+  }
   return T;
 }
 
@@ -479,8 +506,22 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
           Lhs[0]->OptionBinding = true;
           notePayloadBorrow(Lhs[0], Sel->X);
           noteBoxGet(Lhs[0], Sel->X); // TYP-9: an Option in a box
+          if (BoxGetBindings.count(Lhs[0]))
+            Lhs[0]->Ty = boxBindingType(Lhs[0]->Ty); // OWN-V1
         }
     }
+    // `d, ok := w.Get()` with w a box binding of an Option (a view of it,
+    // ADR-0020): d is a view too, and a direct write into the box through d
+    // stays the TYP-9 error.
+    if (own() && !ReturnStmt && L == 2 && Lhs[0]->Ty && isViewType(Lhs[0]->Ty))
+      if (auto *Call = dyn_cast<CallExpr>(unparen(OrigRhs[0])))
+        if (auto *Sel = dyn_cast<SelectorExpr>(unparen(Call->Fun))) {
+          auto It = I.Selections.find(Sel);
+          if (It != I.Selections.end())
+            if (auto *F = dyn_cast_or_null<Func>(It->second.Obj);
+                F && F->IsBuiltinMethod && F->Name == "Get")
+              noteBoxGet(Lhs[0], Sel->X);
+        }
     return;
   }
   if (Rhs[0].M != Mode::Invalid) {

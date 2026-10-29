@@ -16,8 +16,8 @@ func isSpace(c byte) bool {
 }
 
 // nextWord skips spaces, then returns the next word and the rest of s.
-// s is a borrowed parameter. Both results are refs into s: no allocation.
-func nextWord(s string) (word, rest ref string) {
+// s is a borrowed parameter. Both results are views into s: no allocation.
+func nextWord(s string) (word, rest View[string]) {
 	i := 0
 	for i < len(s) && isSpace(s[i]) {
 		i++
@@ -39,10 +39,10 @@ func count!(name string) (Stats, string) {
 			st.Lines++
 		}
 	}
-	var best ref string
-	rest := text[:] // ref string: no copy
+	var best View[string]
+	rest := text[:] // View[string]: no copy
 	for {
-		var w ref string
+		var w View[string]
 		w, rest = nextWord(rest)
 		if len(w) == 0 {
 			break

@@ -1,0 +1,81 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21 (b): View[X] takes every type except the pointer kinds (*T,
+// Unique[*T], Shared[*T], Weak[*T], also through a defined type),
+// unsafe.Pointer and a View; the message names the allowed forms (E0371).
+// Accepted: named types (View[User], View[Bytes], View[S] for `type S
+// string`), maps, arrays, Option, any, a type parameter in a generic function,
+// and a local type named View that hides the predeclared one. `View` without
+// a type argument is an error. The layout of each view is pinned below.
+package main
+
+import "unsafe"
+
+type User struct{ Name string }
+type Bytes []byte
+type S string
+type P *User
+
+func ok(a View[User], b View[Bytes], c View[S], d View[map[string]int], e View[[]byte], f View[string], g View[[2]int], h View[Option[User]], i View[any]) {
+}
+
+func gen[T any](v View[T]) int { return 0 }
+
+func useGen(u User) int { return gen[User](u) }
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[*User]: a View holds a value, not a pointer; allowed: any type except *T, Unique[*T], Shared[*T], Weak[*T], unsafe.Pointer and a View (OWN-V1, ADR-0020)
+func bad1(a View[*User]) {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[Unique[*User]]: a View holds a value, not a pointer; allowed: {{.*}}
+func bad2(a View[Unique[*User]]) {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[Shared[*User]]: a View holds a value, not a pointer; allowed: {{.*}}
+func bad3(a View[Shared[*User]]) {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[Weak[*User]]: a View holds a value, not a pointer; allowed: {{.*}}
+func bad4(a View[Weak[*User]]) {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[unsafe.Pointer]: a View holds a value, not a pointer; allowed: {{.*}}
+func bad5(a View[unsafe.Pointer]) {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[View{{\[\[}}]int]]: a View of a View is the same as one View, write View[T] once; allowed: any type except *T, Unique[*T], Shared[*T], Weak[*T], unsafe.Pointer and a View (OWN-V1, ADR-0020)
+func bad6(a View[View[[]int]]) {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E0371\]}}: cannot use View[P]: a View holds a value, not a pointer; allowed: {{.*}}
+func bad7(a View[P]) {}
+
+// CHECK: [[@LINE+1]]:11: error{{\[E0323\]}}: cannot use generic type View[T any] without instantiation
+var noArg View
+
+type LUser struct {
+	Name string
+	Age  int
+}
+
+// ADR-0020 point 7 (layout): a View of a string or a slice, named or not,
+// and the borrowed []T of slicing are (ptr, len), 16 bytes on a 64-bit
+// target; every other View is one pointer, 8 bytes. unsafe.Sizeof is a
+// constant, so the array lengths pin each size; the last two lines show a
+// wrong guess is an error.
+func sizes(a View[string], b View[[]int], c View[Bytes], d View[S], e View[LUser], g View[map[string]int], h View[int], xs []int) {
+	const sa, sb, sc, sd = unsafe.Sizeof(a), unsafe.Sizeof(b), unsafe.Sizeof(c), unsafe.Sizeof(d)
+	const se, sg, sh = unsafe.Sizeof(e), unsafe.Sizeof(g), unsafe.Sizeof(h)
+	const sx = unsafe.Sizeof(xs[1:])
+	var _ [sa]int = [16]int{}
+	var _ [sb]int = [16]int{}
+	var _ [sc]int = [16]int{}
+	var _ [sd]int = [16]int{}
+	var _ [se]int = [8]int{}
+	var _ [sg]int = [8]int{}
+	var _ [sh]int = [8]int{}
+	var _ [sx]int = [16]int{}
+	// CHECK: [[@LINE+1]]:18: error{{\[E0314\]}}: cannot use [8]int{} (value of type [8]int) as [16]int value in variable declaration
+	var _ [sc]int = [8]int{}
+	// CHECK: [[@LINE+1]]:18: error{{\[E0314\]}}: cannot use [16]int{} (value of type [16]int) as [8]int value in variable declaration
+	var _ [se]int = [16]int{}
+}
+
+func main() {
+	type View int
+	var x View = 3
+	_ = x
+}

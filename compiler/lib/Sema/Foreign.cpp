@@ -130,8 +130,13 @@ bool accepts(Type *P, const ForeignArg &A) {
   }
   // A `ref T` parameter (a C `const T*` that is only read) takes a T or a
   // ref T: an owned value converts to a ref at zero cost (TYP-2).
-  if (auto *R = llvm::dyn_cast<RefType>(P))
+  // A borrowed slice (writable) is read as a View of the same slice.
+  if (auto *R = llvm::dyn_cast<RefType>(P)) {
+    if (auto *AR = llvm::dyn_cast_or_null<RefType>(A.Ty))
+      if (AR->Borrowed && !R->Borrowed && AR->Elem == R->Elem)
+        return true;
     return A.Ty == P || A.Ty == R->Elem;
+  }
   return A.Ty == P;
 }
 } // namespace

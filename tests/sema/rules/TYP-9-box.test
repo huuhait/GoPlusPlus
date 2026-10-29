@@ -9,8 +9,8 @@
 // variable, a slice to array pointer conversion and `unsafe.SliceData`; also
 // through an Option Get binding of a part of the box. Only DIRECT writes are
 // checked here (rooted at the binding or assertion); a write through a
-// variable or call result that stands for a part is accepted until P03.21
-// makes the bindings views (TYP-9-box-views-later.test). Reads, `len`,
+// variable or call result that stands for a part is E0368, because the
+// bindings are views (OWN-V1; TYP-9-box-views.test). Reads, `len`,
 // `range`, a clone, and anything behind a pointer are unchanged.
 package main
 
@@ -57,7 +57,8 @@ func negativeMapBinding(v any) {
 	case Named:
 		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write b["b"]: it is part of a map inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := b.Clone()`, then write c), or put a pointer in the interface
 		b["b"] = 2
-		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write Named(b)["c"]: it is part of a map inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := b.Clone()`, then write c), or put a pointer in the interface
+		// ADR-0020: b is a view of the box; Named(b) copies it, so the write lands in a temporary.
+		// CHECK: [[@LINE+1]]:3: error{{\[E0353\]}}: cannot write Named(b)["c"]: this map is a temporary; the write is lost: store it first (`m := Named(b)`, then write m) (OWN-P9)
 		Named(b)["c"] = 3
 	case map[string]map[string]int:
 		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write b["a"]["b"]: it is part of a map inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := b.Clone()`, then write c), or put a pointer in the interface
@@ -112,10 +113,10 @@ func negativeSliceBinding(v any) {
 			e = 1
 		}
 		s := b[1:]
-		// Accepted until P03.21 (box bindings become views, ADR-0020): a write through a variable that stands for a part of the box is not a direct write.
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write s[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		s[0] = 1
 	case Slice:
-		// CHECK: [[@LINE+1]]:3: error{{\[E0263\]}}: cannot call pointer method Add on b: it is a borrowed variable (OWN-R3b)
+		// CHECK: [[@LINE+1]]:5: error{{\[E0369\]}}: cannot call b.Add on View{{\[}}Slice]: a View has no methods except Clone (OWN-V1)
 		b.Add(1)
 	}
 }
@@ -190,7 +191,7 @@ func negativeDocBinding(v any) {
 	switch d := v.(type) {
 	case Doc:
 		// An array held by value in the binding: one error, RNG-1a's.
-		// CHECK: [[@LINE+1]]:10: error{{\[E0283\]}}: cannot use & on the elements of d.Arr: the array is held by value in borrowed variable d (RNG-1a)
+		// CHECK: [[@LINE+1]]:24: error{{\[E0354\]}}: cannot write through the `&` range variable over d.Arr: {{.*}}
 		for _, &row := range d.Arr {
 			row = nil
 		}
@@ -213,7 +214,7 @@ func negativeDocBinding(v any) {
 		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write copy(d.Tags, d.Tags): it is part of a slice inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := d.Clone()`, then write c), or put a pointer in the interface
 		copy(d.Tags, d.Tags)
 		for _, it := range d.Items {
-			// Accepted until P03.21 (box bindings become views, ADR-0020): a write through a variable that stands for a part of the box is not a direct write.
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write it.M["k"]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 			it.M["k"] = 1
 		}
 		for i := range d.Items {
@@ -228,8 +229,14 @@ func positiveDocBinding(v any) int {
 	switch d := v.(type) {
 	case Doc:
 		n += d.Tags[0] + d.Index["x"] + d.Arr[0][1] + d.Nested.M["k"]
+		// OWN-V1: a pointer read through the binding is a view of its target.
+		// The target is not in the box (In is a *Inner field), so these are
+		// the view error, not the box error (TYP-9).
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write d.In.M["k"]: it is read-only, it is reached through a View (OWN-V1)
 		d.In.M["k"] = 1
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write d.In.M["k"]: it is read-only, it is reached through a View (OWN-V1)
 		d.In.M["k"]++
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write d.In.M: it is read-only, it is reached through a View (OWN-V1)
 		delete(d.In.M, "k")
 		for _, it := range d.Items {
 			n += len(it.M)
@@ -294,12 +301,12 @@ func positiveOrdinary(m map[string]int, s []int, d Doc) {
 func negativeAliases(v any, w Wrap) {
 	switch b := v.(type) {
 	case []int:
-		var r ref []int = b[0:1]
-		// Accepted until P03.21 (box bindings become views, ADR-0020): a write through a variable that stands for a part of the box is not a direct write.
+		var r View[[]int] = b[0:1]
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		r[0] = 1
-		var r2 ref []int
+		var r2 View[[]int]
 		r2 = b[1:]
-		// Accepted until P03.21 (box bindings become views, ADR-0020): a write through a variable that stands for a part of the box is not a direct write.
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write r2[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		r2[0] = 2
 		for i := range b {
 			// CHECK: [[@LINE+1]]:4: error{{\[E0354\]}}: cannot write b[i]: it is part of a slice inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := b.Clone()`, then write c), or put a pointer in the interface
@@ -307,7 +314,7 @@ func negativeAliases(v any, w Wrap) {
 		}
 	case map[string]map[string]int:
 		for _, inner := range b {
-			// Accepted until P03.21 (box bindings become views, ADR-0020): a write through a variable that stands for a part of the box is not a direct write.
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write inner["a"]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 			inner["a"] = 1
 		}
 		for k := range b {
@@ -316,7 +323,7 @@ func negativeAliases(v any, w Wrap) {
 		}
 	case [][]int:
 		for _, row := range b {
-			// Accepted until P03.21 (box bindings become views, ADR-0020): a write through a variable that stands for a part of the box is not a direct write.
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write row[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 			row[0] = 1
 		}
 	}
@@ -330,7 +337,7 @@ func positiveAliases(v any, w Wrap) int {
 	n := 0
 	switch b := v.(type) {
 	case []int:
-		var r ref []int = b[0:1]
+		var r View[[]int] = b[0:1]
 		n += r[0]
 		for _, e := range b {
 			n += e
@@ -389,9 +396,8 @@ func negativeWriteForms(v any, x any) {
 	// (`append(b, 1)` on a binding is PAR-1, `append(b[:1], 1)` OWN-V1 and
 	// `append(x.([]int), 1)` OWN-R4; a conversion that shares is this rule.)
 	if b, ok := x.([]int); ok {
-		// CHECK: [[@LINE+1]]:7: error{{\[E0354\]}}: cannot write append([]int(b), 2): it is part of a slice inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := b.Clone()`, then write c), or put a pointer in the interface
+		// OWN-V1: `[]T(v)` of a view is a copy-out, so appending to it is fine.
 		_ = append([]int(b), 2)
-		// CHECK: [[@LINE+1]]:7: error{{\[E0354\]}}: cannot write append(Slice(b), 3): it is part of a slice inside an interface value, and the box of an interface value is shared and read-only (TYP-9); clone it first (`c := b.Clone()`, then write c), or put a pointer in the interface
 		_ = append(Slice(b), 3)
 	}
 	if m, ok := x.(map[string]int); ok {
@@ -427,13 +433,13 @@ func positiveWriteForms(v any, x any) int {
 	return n
 }
 
-// A known limit (TODO P04.09): a callee that writes its borrowed parameter is
-// not seen here, so handing a part of the box on as an argument is accepted.
-// (A callee that returns a ref into it is seen: positive/negativeRefResult.)
+// A part of the box handed to a map parameter is an error (OWN-V1): a view
+// converts to no writable type.
 func fill(m map[string]int) { m["x"] = 1 }
 
 func positiveBorrowedArgument(v any) {
 	if m, ok := v.(map[string]int); ok {
+		// CHECK: [[@LINE+1]]:8: error{{\[E0314\]}}: cannot use m (variable of type View[map[string]int]) as map[string]int value in argument to fill: {{.*}}
 		fill(m)
 	}
 }
@@ -509,31 +515,35 @@ func positiveTypeParam[S interface {
 }
 
 // --- calls that take a part of the box: a ref, pointer or func value they
-// return is not a direct write target; accepted until P03.21 (pinned in
-// TYP-9-box-views-later.test). Ordinary results stay writable.
-func head(s ref []int) ref []int { return s[:1] }
+// return is a view, so a write through it is E0368 (OWN-V1; pinned in
+// TYP-9-box-views.test). Ordinary results stay writable.
+func head(s View[[]int]) View[[]int] { return s[:1] }
 
-func (d Doc) TagsRef() ref []int { return d.Tags }
+func (d Doc) TagsRef() View[[]int] { return d.Tags }
 
 func positiveRefResult(x any, own []int) int {
 	own2 := head(own)
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write own2[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 	own2[0] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write head(own)[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 	head(own)[0] = 2
 	n := 0
 	switch v := x.(type) {
 	case []int:
 		n += head(v)[0]
 		c := v.Clone()
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write head(c)[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		head(c)[0] = 4
 	}
 	return n
 }
 
-func two(s ref []int) (ref []int, int) { return s, 1 }
+func two(s View[[]int]) (View[[]int], int) { return s, 1 }
 
-func ptr(s ref []int) *int { return &s[0] }
+// CHECK: [[@LINE+1]]:39: error{{\[E0368\]}}: cannot write s[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+func ptr(s View[[]int]) *int { return &s[0] }
 
-func count(s ref []int) int { return len(s) }
+func count(s View[[]int]) int { return len(s) }
 
 func positiveAliasResults(x any, own []int, d Doc) int {
 	n := 0
@@ -543,7 +553,8 @@ func positiveAliasResults(x any, own []int, d Doc) int {
 		k := count(v)
 		n += k
 		// a closure that captures no part of the box
-		h := func() ref []int { return own }
+		h := func() View[[]int] { return own }
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write h()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		h()[0] = 1
 		// the pointer a binding holds is the box's pointer, and its target is writable
 	case *int:
@@ -551,25 +562,52 @@ func positiveAliasResults(x any, own []int, d Doc) int {
 	}
 	// ref, pointer and tuple results from non-box arguments stay writable
 	r, _ := two(own)
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 	r[0] = 1
 	*ptr(own) = 2
 	p := ptr(own)
 	*p = 3
 	m := d.TagsRef
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write m()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 	m()[0] = 4
 	return n
 }
 
-// --- a [T Copy] binding is a plain value (writable like `case int`)
+// --- a [T Copy] binding is a view (OWN-V1): T may be *int or a struct with a
+// pointer field (copiesOut: only a type parameter whose every type is
+// pointer-free is a plain copy), so handing it out as a plain T would let the
+// caller write what the box points to
 func setp[T Copy](p *T, t T) { *p = t }
 
-func positiveCopyBinding[T Copy](x any, t T) T {
+func negativeCopyBinding[T Copy](x any, t T) T {
+	switch v := x.(type) {
+	case T:
+		// CHECK: [[@LINE+1]]:10: error{{\[E0314\]}}: cannot use v (variable of type View[T]) as T value in return statement
+		return v
+	}
+	if w, ok := x.(T); ok {
+		// CHECK: [[@LINE+1]]:10: error{{\[E0314\]}}: cannot use w (variable of type View[T]) as T value in return statement
+		return w
+	}
+	return t
+}
+
+// --- a binding of a type parameter whose every type is pointer-free is a
+// plain value (writable like `case int`)
+type Num interface {
+	Copy
+	int | float64
+}
+
+func setn[T Num](p *T, t T) { *p = t }
+
+func positivePointerFreeBinding[T Num](x any, t T) T {
 	switch v := x.(type) {
 	case T:
 		p := &v
 		*p = t
 		v = t
-		setp(&v, t)
+		setn(&v, t)
 		return v
 	}
 	if w, ok := x.(T); ok {
@@ -584,25 +622,30 @@ func positiveNeverBoxAlias(x any, w []int, u []int, d Doc, e Doc) int {
 	switch v := x.(type) {
 	case []int:
 		// a ref and a func value that are never bound to a part of the box
-		var r ref []int = w
-		g := func() ref []int { return r }
+		var r View[[]int] = w
+		g := func() View[[]int] { return r }
 		r = head(u)
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write g()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		g()[0] = 1
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		r[0] = 2
 		m := d.TagsRef
 		for i := 0; i < 2; i++ {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write m()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 			m()[0] = 3
 			m = e.TagsRef
 		}
 		// a closure that captures no part of the box, and one that reads it
 		// but hands back no alias
-		k := func() ref []int { return w }
+		k := func() View[[]int] { return w }
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write k()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 		k()[0] = 4
 		h := func() int { return v[0] }
 		n += h()
 		// a cursor loop over slices that are no part of the box
 		c := head(w)
 		for i := 0; i < 2; i++ {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write c[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
 			c[0] = 5
 			c = u
 		}
@@ -624,9 +667,13 @@ func find(ns []*Node, k int) *Node { return ns[k] }
 func positivePointerResult(x any) {
 	switch v := x.(type) {
 	case []*Node:
+		// CHECK: [[@LINE+1]]:13: error{{\[E0314\]}}: cannot use v (variable of type View{{\[}}[]*Node]) as []*Node value in argument to find: {{.*}}
 		n := find(v, 0)
 		n.V = 1
+		// CHECK: [[@LINE+1]]:8: error{{\[E0314\]}}: cannot use v (variable of type View{{\[}}[]*Node]) as []*Node value in argument to find: {{.*}}
 		find(v, 0).V = 2
+		// The Node is behind the pointer element, not in the box: OWN-V1.
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write v[0].V: it is read-only, it is reached through a View (OWN-V1)
 		v[0].V = 3
 	}
 }
@@ -636,16 +683,16 @@ func positivePointerResult(x any) {
 func negativeArrayPointer(x any, w []int) {
 	switch v := x.(type) {
 	case []int:
-		// CHECK: [[@LINE+1]]:18: error{{\[E0354\]}}: cannot write through (*[2]int)(v): it is part of a slice inside an interface value
+		// CHECK: [[@LINE+1]]:18: error{{\[E0160\]}}: cannot convert {{.*}}
 		p := (*[2]int)(v)
 		_ = p
-		// CHECK: [[@LINE+1]]:13: error{{\[E0354\]}}: cannot write through (*[2]int)(v): it is part of a slice
+		// CHECK: [[@LINE+1]]:13: error{{\[E0160\]}}: cannot convert {{.*}}
 		(*[2]int)(v)[1] = 2
 		// CHECK: [[@LINE+1]]:18: error{{\[E0354\]}}: cannot write through (*[1]int)(x.([]int)): it is part of a slice
 		q := (*[1]int)(x.([]int))
 		_ = q
 	case Doc:
-		// CHECK: [[@LINE+1]]:18: error{{\[E0354\]}}: cannot write through (*[1]int)(v.Tags): it is part of a slice
+		// CHECK: [[@LINE+1]]:18: error{{\[E0160\]}}: cannot convert {{.*}}
 		r := (*[1]int)(v.Tags)
 		_ = r
 	}
@@ -677,6 +724,8 @@ func negativeOptionGet(x any) {
 	switch w := x.(type) {
 	case Option[Opts]:
 		if d, ok := w.Get(); ok {
+			// The Get binding of a box binding is a view of the box's
+			// Option (ADR-0020); a direct write into it stays TYP-9.
 			// CHECK: [[@LINE+1]]:4: error{{\[E0354\]}}: cannot write d.Tags[0]: it is part of a slice
 			d.Tags[0] = 1
 			// CHECK: [[@LINE+1]]:4: error{{\[E0354\]}}: cannot write d.Index["a"]: it is part of a map
@@ -690,7 +739,7 @@ func negativeOptionGet(x any) {
 		_ = w
 	}
 	if d, ok := x.(Option[Opts]).Get(); ok {
-		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write d.Index["c"]: it is part of a map
+		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write d.Index["c"]: it is part of a map inside an interface value, and the box of an interface value is shared and read-only
 		d.Index["c"] = 4
 	}
 }
@@ -714,7 +763,7 @@ func positiveOptionGet(o Option[Opts], x any) int {
 // --- a pointer-receiver method value on an element takes its address
 func negativeMethodValue(x any) {
 	if v, ok := x.([]Counter); ok {
-		// CHECK: [[@LINE+1]]:8: error{{\[E0354\]}}: cannot write through the pointer receiver of v[0].Inc: it is part of a slice
+		// CHECK: [[@LINE+1]]:8: error{{\[E0354\]}}: cannot write through the pointer receiver of v[0].Inc: it is part of a slice inside an interface value, and the box of an interface value is shared and read-only
 		f := v[0].Inc
 		f()
 	}
@@ -723,7 +772,7 @@ func negativeMethodValue(x any) {
 // --- unsafe.SliceData points into the slice
 func negativeSliceData(x any) {
 	if v, ok := x.([]int); ok {
-		// CHECK: [[@LINE+1]]:8: error{{\[E0354\]}}: cannot write through unsafe.SliceData(v): it is part of a slice
+		// CHECK: [[@LINE+1]]:25: error{{\[E0315\]}}: invalid argument: v
 		p := unsafe.SliceData(v)
 		_ = p
 	}

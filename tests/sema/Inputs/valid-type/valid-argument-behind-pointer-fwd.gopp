@@ -1,0 +1,6 @@
+package main
+
+type W[T any] struct{ x *T }
+type A struct{ a W[A] }
+
+func main() {}

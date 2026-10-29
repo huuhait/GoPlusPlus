@@ -1,0 +1,254 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-V1 with TYP-9: box bindings are views (ADR-0020), read-only all the
+// way down by their type. Every write below goes through a variable or a call
+// result that stands for a part of the box, or lets such a reference escape;
+// each one is an error.
+package main
+
+type Doc struct{ Tags []int }
+
+func (d Doc) TagsRef() View[[]int] { return d.Tags }
+
+func (d Doc) First() *int { return &d.Tags[0] }
+
+func head(s View[[]int]) View[[]int] { return s[:1] }
+
+func two(s View[[]int]) (View[[]int], int) { return s, 1 }
+
+// CHECK: [[@LINE+1]]:39: error{{\[E0368\]}}: cannot write s[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+func ptr(s View[[]int]) *int { return &s[0] }
+
+// P03.21: box bindings become views. A ref made from a part, a range
+// variable over a part.
+func viewsLaterVariables(x any) {
+	switch b := x.(type) {
+	case []int:
+		var r View[[]int] = b[0:1]
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		r[0] = 1
+		s := b[1:]
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write s[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		s[0] = 1
+	case [][]int:
+		for _, row := range b {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write row[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+			row[0] = 1
+		}
+	}
+}
+
+// P03.21: box bindings become views. A ref, pointer, tuple or func value a
+// call returns from a part (r5, r5b).
+func viewsLaterCallResults(x any) {
+	switch v := x.(type) {
+	case []int:
+		r := head(v)
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		r[0] = 1
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write head(v)[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		head(v)[0] = 2
+		r2, _ := two(v)
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write r2[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		r2[0] = 3
+		g := func() View[[]int] { return v }
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write g()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		g()[0] = 4
+		*ptr(v) = 5
+		p := ptr(v)
+		*p = 6
+	case Doc:
+		// CHECK: [[@LINE+1]]:10: error{{\[E0369\]}}: cannot call v.TagsRef on View[Doc]: {{.*}}
+		m := v.TagsRef
+		m()[0] = 7
+		// CHECK: [[@LINE+1]]:6: error{{\[E0369\]}}: cannot call v.First on View[Doc]: {{.*}}
+		*v.First() = 8
+	}
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write head(x.([]int))[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	head(x.([]int))[0] = 9
+}
+
+// P03.21: box bindings become views. An alias bound to a part later in the
+// body: a closure made earlier, a loop's next pass, a func value bound again
+// (r5c).
+func viewsLaterOrder(x any, w []int, d Doc) {
+	switch v := x.(type) {
+	case []int:
+		var r View[[]int] = w
+		g := func() View[[]int] { return r }
+		r = head(v)
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write g()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		g()[0] = 1
+		c := head(w)
+		for i := 0; i < 2; i++ {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write c[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+			c[0] = 2
+			c = v
+		}
+	case Doc:
+		h := d.TagsRef
+		k := func() View[[]int] { return h() }
+		// CHECK: [[@LINE+1]]:9: error{{\[E0369\]}}: cannot call v.TagsRef on View[Doc]: {{.*}}
+		h = v.TagsRef
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write k()[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		k()[0] = 3
+	}
+}
+
+// P03.21: box bindings become views. A reference that escapes: returned,
+// stored in a struct, sent (r8).
+@View
+type Holder struct{ r View[[]int] }
+
+func get(x any) View[[]int] { return x.([]int) }
+
+func viewsLaterEscapes(x any, hs *Holder, ch chan View[[]int]) {
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write get(x)[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+	get(x)[0] = 1
+	switch v := x.(type) {
+	case []int:
+		hd := Holder{r: head(v)}
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write hd.r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+		hd.r[0] = 2
+		hs.r = v
+		ch <- v
+	}
+}
+
+// P03.21: box bindings become views. A pointer or ref carried out in a
+// struct, slice or channel a helper returns (r8b).
+type PtrHolder struct{ p *int }
+
+// CHECK: [[@LINE+1]]:57: error{{\[E0368\]}}: cannot write s[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+func mkp(s View[[]int]) PtrHolder { return PtrHolder{p: &s[0]} }
+
+// CHECK: [[@LINE+1]]:49: error{{\[E0368\]}}: cannot write s[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+func ptrs(s View[[]int]) []*int { return []*int{&s[0]} }
+
+func mkch(s View[[]int]) chan View[[]int] {
+	c := make(chan View[[]int], 1)
+	c <- s
+	return c
+}
+
+func viewsLaterHolders(x any) {
+	switch v := x.(type) {
+	case []int:
+		h := mkp(v)
+		*h.p = 1
+		*ptrs(v)[0] = 2
+		if r, ok := <-mkch(v); ok {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+			r[0] = 3
+		}
+	}
+}
+
+// P03.21: box bindings become views. The `=` form of a range clause (r14).
+func views(s View[[]int]) []View[[]int] { return []View[[]int]{s} }
+
+func viewsLaterRangeAssign(x any, hs *Holder) {
+	switch v := x.(type) {
+	case []int:
+		var r View[[]int]
+		for _, r = range views(v) {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0368\]}}: cannot write r[0]: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+			r[0] = 1
+		}
+		for _, hs.r = range views(v) {
+		}
+	}
+}
+
+// P03.21: box bindings become views. A pointee reached through a field of a
+// boxed value is read through a view, so it becomes read-only (OWN-V1: only
+// a Copy value that is definitely pointer-free is a plain copy, copiesOut);
+// a pointer the box holds itself (`case *Doc:`) stays writable
+// (TYP-9-box.test). The same holds for an assertion used in place, a field of
+// interface type, an array of pointers and an Option of a pointer.
+type PtrField struct{ P *int }
+type IfaceField struct{ B any }
+type PtrArr struct{ P [2]*int }
+type OptPtr struct{ P Option[*int] }
+type PU *int
+type NamedPtrField struct{ P PU }
+
+func viewsLaterPointee(x any) {
+	switch h := x.(type) {
+	case PtrField:
+		// CHECK: [[@LINE+1]]:4: error{{\[E0204\]}}: invalid operation: cannot indirect h.P (variable of type View[int])
+		*h.P = 1
+	case NamedPtrField:
+		// CHECK: [[@LINE+1]]:4: error{{\[E0204\]}}: invalid operation: cannot indirect h.P (variable of type View[int])
+		*h.P = 1
+	case [2]*int:
+		// CHECK: [[@LINE+1]]:4: error{{\[E0204\]}}: invalid operation: cannot indirect h[0] (variable of type View[int])
+		*h[0] = 1
+	}
+	// CHECK: [[@LINE+1]]:3: error{{\[E0204\]}}: invalid operation: cannot indirect x.(PtrField).P (variable of type View[int])
+	*x.(PtrField).P = 2
+	// CHECK: [[@LINE+1]]:19: error{{\[E0314\]}}: cannot use x.(PtrField) (comma, ok expression of type View[PtrField]) as PtrField value in variable declaration
+	var c PtrField = x.(PtrField)
+	n := x.(IfaceField)
+	// CHECK: [[@LINE+1]]:3: error{{\[E0201\]}}: invalid operation: n.B (variable of type View[any]) is not an interface
+	*n.B.(*int) = 3
+	a := x.(PtrArr)
+	// CHECK: [[@LINE+1]]:3: error{{\[E0204\]}}: invalid operation: cannot indirect a.P[0] (variable of type View[int])
+	*a.P[0] = 4
+	if o, ok := x.(OptPtr); ok {
+		if p, ok := o.P.Get(); ok {
+			// CHECK: [[@LINE+1]]:5: error{{\[E0204\]}}: invalid operation: cannot indirect p (variable of type View[int])
+			*p = 5
+		}
+	}
+	_ = c
+}
+
+// The other side: a pointer-free Copy value is a plain copy (a copy of the
+// binding is writable), a pointer the box holds itself is writable, and a
+// pointee read through the view is copied out by a conversion.
+type Plain struct {
+	N int
+	A [2]float64
+	O Option[uint8]
+}
+
+func viewsLaterPointeeOk(x any) int {
+	switch h := x.(type) {
+	case Plain:
+		c := h
+		c.N = 1
+		c.A[0] = 2
+		return c.N + h.N + int(h.A[1])
+	case *int:
+		*h = 3
+	case PtrField:
+		return int(h.P)
+	}
+	*x.(*int) = 4
+	var q Plain = x.(Plain)
+	q.N++
+	return q.N + x.(Plain).N + int(x.(PtrField).P)
+}
+
+// A func or a chan the box holds itself is a handle, like a pointer: what it
+// reaches is not in the box, so the binding calls it and sends on it.
+type FuncField struct{ F func() }
+
+func handlesOk(x any) {
+	switch h := x.(type) {
+	case func():
+		h()
+	case chan int:
+		h <- 1
+	case FuncField:
+		// CHECK: [[@LINE+1]]:3: error{{\[E0316\]}}: invalid operation: cannot call h.F (variable of type View[func()]): View[func()] is not a function
+		h.F()
+	}
+	x.(func())()
+	x.(chan int) <- 2
+	if g, ok := x.(func() int); ok {
+		_ = g()
+	}
+}
+
+func main() {}

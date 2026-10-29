@@ -6,14 +6,14 @@
 // exactly the errors checked here, so a false error fails it (and a crash
 // fails any RUN line, also under `not`). Split by case so each test stays
 // well under the 2 s budget in the ASan build (D0.13).
-//  - runaway: T[int] reaches ever larger instances T[Option[...[int]]] (an
-//    instantiation cycle Go rejects; P03.23): the walk stops at its instance
-//    bound and answers "not cloneable", stored for T[int], so 100 queries
-//    cost one walk (0.1 s each before).
+//  - runaway: T[int] would reach ever larger instances T[Option[...[int]]]: an
+//    instantiation cycle (P03.23). It is one error at the declaration, the
+//    type is invalid, and the 100 Clone() calls add nothing (the walk bound
+//    of P03.20 is gone).
 //
 // RUN: %python %S/Inputs/gen-strict-stress.py 0 walk runaway > %t.ra.gopp
 // RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.ra.gopp > %t.ra.out 2>&1
-// RUN: grep -c "error\[E" %t.ra.out | FileCheck --check-prefix=HUNDRED %s
-// RUN: grep -c "error\[E0267\]: cannot clone t: T\[int\] can't be cloned: T\[int\] reaches instances of a generic type with ever larger type arguments (more than 100000 of one), too many to check (OWN-R6)" %t.ra.out | FileCheck --check-prefix=HUNDRED %s
-// HUNDRED: {{^100$}}
+// RUN: grep -c "error\[E" %t.ra.out | FileCheck --check-prefix=ONE %s
+// RUN: grep -c "error\[E0366\]: instantiation cycle" %t.ra.out | FileCheck --check-prefix=ONE %s
+// ONE: {{^1$}}
 package main

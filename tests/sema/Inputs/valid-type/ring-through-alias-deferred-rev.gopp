@@ -1,0 +1,14 @@
+// CHECK: error[E0139]: invalid recursive type N0
+package main
+
+type N2[P, Q any] = N1[N1[func(string) Q]]
+type N1[P any] N0[[]int]
+type N0[P any] N2[P, bool]
+
+func main() {}
+
+func use0(a N0[int], b N1[int]) {
+	c := a.Clone()
+	d := b.Clone()
+	_, _ = c, d
+}

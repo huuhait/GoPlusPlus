@@ -620,8 +620,8 @@ EXPLAIN(err_move_type_not_shared,
 func f(a, move b int) {}
 )X")
 EXPLAIN(err_view_for_ref,
-        "Go++ has no `view` type. A borrowed string or slice is written "
-        "with ref: `ref string`, `ref []T`.",
+        "Go++ has no `view` type. A read-only borrow is written with the "
+        "generic type View: `View[string]`, `View[[]T]`.",
         R"X(package p
 
 func f(s view string) {}
@@ -635,9 +635,9 @@ EXPLAIN(err_own_for_move,
 func f(own s string) {}
 )X")
 EXPLAIN(err_ref_bad_elem,
-        "`ref` makes a borrowed view of a string or of a slice and "
-        "nothing else: `ref string`, `ref []T`. For other types borrow "
-        "with a pointer or pass the value as a parameter.",
+        "Retired (P03.21, ADR-0020): `ref` is an ordinary name now, and a "
+        "read-only borrow is written View[T]; a View of a type it cannot "
+        "hold is err_view_bad_arg.",
         R"X(package p
 
 func f(x ref int) {}
@@ -2278,10 +2278,7 @@ type S struct{ names []string }
 func keep(move s S) {}
 
 func f(x any) {
-	switch v := x.(type) {
-	case S:
-		keep(v)
-	}
+	keep(x.(S))
 }
 )X")
 EXPLAIN(note_own_fix_clone,
@@ -2523,23 +2520,23 @@ EXPLAIN(err_own_variadic_generic,
 func f[T any](xs ...T) {}
 )X")
 EXPLAIN(err_own_return_ref_local,
-        "A ref points into the value it was made from. A local variable "
-        "dies at the return, so a ref into it would dangle.",
+        "A view points into the value it was made from. A local variable "
+        "dies at the return, so a view into it would dangle.",
         R"X(package p
 
-func f() ref string {
+func f() View[string] {
 	s := "hi"
 	return s[:1]
 }
 )X")
 EXPLAIN(err_own_return_ref_temp,
-        "A ref into a temporary value would point to freed memory after "
+        "A view into a temporary value would point to freed memory after "
         "the return.",
         R"X(package p
 
 func load() string { return "abc" }
 
-func f() ref string {
+func f() View[string] {
 	return load()[:2]
 }
 )X")
@@ -2557,14 +2554,14 @@ func f() *T {
 }
 )X")
 EXPLAIN(err_own_ref_into_temp,
-        "A ref into a temporary lives only to the end of the statement. "
+        "A view into a temporary lives only to the end of the statement. "
         "Storing it in a longer-lived variable would leave it dangling.",
         R"X(package p
 
 func load() string { return "abc" }
 
 func f() {
-	var r ref string
+	var r View[string]
 	r = load()[1:]
 	_ = r
 }
@@ -2661,13 +2658,13 @@ func f(xs []int) {
 }
 )X")
 EXPLAIN(err_own_case_ref_unreachable,
-        "`case string` also matches a ref string, so a later `case ref string` can never be reached. Put the ref case first, or remove it.",
+        "Retired (P03.21, TYP-9): View[T] and T are different dynamic types, so `case string` never matches a stored View[string] and a later `case View[string]` is reached. The example is accepted now.",
         R"X(package p
 
 func f(x any) {
 	switch x.(type) {
 	case string:
-	case ref string:
+	case View[string]:
 	}
 }
 )X")
@@ -2685,11 +2682,11 @@ func f(x *X) []string {
 }
 )X")
 EXPLAIN(err_own_append_ref,
-        "A ref has a fixed length and no capacity. Copy it into an owned "
+        "A view has a fixed length and no capacity. Copy it into an owned "
         "slice before appending.",
         R"X(package p
 
-func f(xs ref []int) {
+func f(xs View[[]int]) {
 	_ = append(xs, 1)
 }
 )X")
@@ -3029,15 +3026,27 @@ func f() {
 //===----------------------------------------------------------------------===//
 
 EXPLAIN(warn_vet_ref_field,
-        "A struct field of ref type points into data owned elsewhere "
-        "and nothing keeps that data alive. It is allowed at the "
-        "programmer's risk (like std::string_view), but gopp vet asks "
-        "you to say so by marking the struct type declaration @Ref (an "
-        "anonymous struct cannot be marked: declare a type).",
+        "Retired: a struct field that holds a view is an error now "
+        "(err_view_field_without_attr, OWN-V5), not a vet warning. Mark the "
+        "struct @View, or own the data.",
         R"X(package p
 
 type Token struct {
-	Text ref string
+	Text View[string]
+}
+)X")
+EXPLAIN(err_view_field_without_attr,
+        "A view is a read-only borrow: it is valid only while its owner "
+        "lives, and the compiler can follow it only in locals, parameters "
+        "and results. A struct field of view type (or a slice, map, array or "
+        "Option of views, or an embedded view) would let the view outlive "
+        "its owner unseen. Mark the struct @View when it is meant to point "
+        "into data owned elsewhere (a token that points into a source "
+        "buffer), or store an owned value (string, []T).",
+        R"X(package p
+
+type Token struct {
+	Text View[string]
 	Line int
 }
 )X")
@@ -3453,6 +3462,36 @@ type S struct {
 	N int @Required
 }
 )X")
+EXPLAIN(err_view_write,
+        "A View[T] is read-only all the way down: fields, elements, map entries and the targets of pointer fields reached through it cannot be assigned, incremented, deleted, cleared, appended to, copied into, have their address taken or be passed to a function that may write them. Clone the value first, or take it as an owned parameter.",
+        R"X(package p
+
+type U struct{ N int }
+
+func f(u View[U]) {
+	u.N = 1
+}
+)X")
+EXPLAIN(err_view_no_methods,
+        "A View[T] has no methods except Clone, because a method could write its receiver. Clone the value to call a method on the copy, or pass the view to a function that reads it.",
+        R"X(package p
+
+type U struct{ N int }
+
+func (u U) Show() {}
+
+func f(u View[U]) {
+	u.Show()
+}
+)X")
+EXPLAIN(err_view_to_owned,
+        "A View[T] is a read-only borrow. It never becomes an owned T by assignment, argument or append, because the owner would then see two owners of the same data. Copy it: v.Clone(), string(v), or read a part of it that is copied out (an int field). A string parameter and an `any` parameter take a view as it is.",
+        R"X(package p
+
+func f(v View[string], names []string) []string {
+	return append(names, v)
+}
+)X")
 EXPLAIN(warn_vet_strict_no_required,
         "A @Strict struct makes its fields required, except Option[T] fields, @Option fields and `_`. When every field is one of those, nothing is required and @Strict changes nothing. Remove @Strict, or drop an @Option or an Option[T] so that some field is required.",
         R"X(package p
@@ -3460,5 +3499,52 @@ EXPLAIN(warn_vet_strict_no_required,
 @Strict
 type S struct {
 	N Option[int]
+}
+)X")
+EXPLAIN(err_instantiation_cycle,
+        "A generic type or function that instantiates itself, directly or through others, with a type argument built from its own type parameter (`T[[]P]`, `T[Option[P]]`) would need ever larger instances: T[int], T[[]int], T[[][]int], and so on. Go rejects this as an instantiation cycle. Pass the type parameter unchanged (`T[P]`), or break the cycle with a type that does not depend on it.",
+        R"X(package p
+
+type T[P any] struct {
+	s []T[[]P]
+}
+)X")
+EXPLAIN(err_view_bad_arg,
+        "View[X] is a read-only borrow of a value of type X. X can be any "
+        "type except a pointer kind (*T, Unique[*T], Shared[*T], Weak[*T]), "
+        "unsafe.Pointer and another View (ADR-0020). To look at what a "
+        "pointer points to, write View of its target: View[User], not "
+        "View[*User].",
+        R"X(package p
+
+type User struct{ Name string }
+
+func f(u View[*User]) {}
+)X")
+EXPLAIN(err_unknown_attribute,
+        "The attribute is not one the compiler knows. `@Ref` was renamed "
+        "`@View` (ADR-0020): mark a struct that holds a view @View.",
+        R"X(package p
+
+@Ref
+type Token struct{ Line int }
+)X")
+EXPLAIN(err_view_copy_pointer,
+        "A View[T] is read-only all the way down, the targets of the pointers "
+        "it reaches included (OWN-V1). A copy of it (v.Clone(), []T(v), "
+        "T(v)) is owned and writable, but a raw pointer (*T, a named pointer "
+        "type, unsafe.Pointer) in it would still point at the view's targets, "
+        "so writing through the copy would change what the view only reads. "
+        "Hold the target as Unique[*T], which Clone copies deeply, or "
+        "Shared[*T], which is read-only, or keep reading it through the "
+        "view. In a generic body a type parameter may be such a pointer "
+        "unless every type in its type set is pointer-free.",
+        R"X(package p
+
+type U struct{ P *int }
+
+func f(v View[U]) {
+	c := v.Clone()
+	*c.P = 1
 }
 )X")

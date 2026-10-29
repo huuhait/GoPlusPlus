@@ -52,18 +52,19 @@ File <1:1, 69:1>
             Y: BasicLit <15:52, 15:56> char_lit '\r'
   Decl: FuncDecl <20:1, 30:2>
     Name: Ident <20:6, 20:14> 'nextWord'
-    Type: FuncType <20:1, 20:48>
+    Type: FuncType <20:1, 20:50>
       Params: FieldList <20:14, 20:24>
         Field: Field <20:15, 20:23>
           Names: Ident <20:15, 20:16> 's'
           Type: Ident <20:17, 20:23> 'string'
-      Results: FieldList <20:25, 20:48>
-        Field: Field <20:26, 20:47>
+      Results: FieldList <20:25, 20:50>
+        Field: Field <20:26, 20:49>
           Names: Ident <20:26, 20:30> 'word'
           Names: Ident <20:32, 20:36> 'rest'
-          Type: RefType <20:37, 20:47>
-            Elem: Ident <20:41, 20:47> 'string'
-    Body: BlockStmt <20:49, 30:2>
+          Type: IndexExpr <20:37, 20:49>
+            X: Ident <20:37, 20:41> 'View'
+            Index: Ident <20:42, 20:48> 'string'
+    Body: BlockStmt <20:51, 30:2>
       Stmt: AssignStmt <21:2, 21:8> op=':='
         Lhs: Ident <21:2, 21:3> 'i'
         Rhs: BasicLit <21:7, 21:8> int_lit 0
@@ -166,24 +167,26 @@ File <1:1, 69:1>
                 X: SelectorExpr <39:4, 39:12>
                   X: Ident <39:4, 39:6> 'st'
                   Sel: Ident <39:7, 39:12> 'Lines'
-      Stmt: DeclStmt <42:2, 42:21>
-        Decl: GenDecl <42:2, 42:21> var
-          Spec: ValueSpec <42:6, 42:21>
+      Stmt: DeclStmt <42:2, 42:23>
+        Decl: GenDecl <42:2, 42:23> var
+          Spec: ValueSpec <42:6, 42:23>
             Name: Ident <42:6, 42:10> 'best'
-            Type: RefType <42:11, 42:21>
-              Elem: Ident <42:15, 42:21> 'string'
+            Type: IndexExpr <42:11, 42:23>
+              X: Ident <42:11, 42:15> 'View'
+              Index: Ident <42:16, 42:22> 'string'
       Stmt: AssignStmt <43:2, 43:17> op=':='
         Lhs: Ident <43:2, 43:6> 'rest'
         Rhs: SliceExpr <43:10, 43:17>
           X: Ident <43:10, 43:14> 'text'
       Stmt: ForStmt <44:2, 54:3>
         Body: BlockStmt <44:6, 54:3>
-          Stmt: DeclStmt <45:3, 45:19>
-            Decl: GenDecl <45:3, 45:19> var
-              Spec: ValueSpec <45:7, 45:19>
+          Stmt: DeclStmt <45:3, 45:21>
+            Decl: GenDecl <45:3, 45:21> var
+              Spec: ValueSpec <45:7, 45:21>
                 Name: Ident <45:7, 45:8> 'w'
-                Type: RefType <45:9, 45:19>
-                  Elem: Ident <45:13, 45:19> 'string'
+                Type: IndexExpr <45:9, 45:21>
+                  X: Ident <45:9, 45:13> 'View'
+                  Index: Ident <45:14, 45:20> 'string'
           Stmt: AssignStmt <46:3, 46:27> op='='
             Lhs: Ident <46:3, 46:4> 'w'
             Lhs: Ident <46:6, 46:10> 'rest'

@@ -1,0 +1,126 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21 review (R3), OWN-V5: a field whose type reaches a view through an
+// instance of a generic type needs @View on the struct, decided on the
+// instance's real fields (the generic type with its type arguments put in):
+// `W[View[string]]` holds a view because W stores its T; `Never[View[string]]`
+// holds none because Never never stores T. Nested instances, instances in
+// containers, a ring of generic types, a defined type of an instance and an
+// Option of one are all looked into; a struct with its own literal has its
+// own fields (and its own error).
+package main
+
+type W[T any] struct{ x T }
+type Two[T, U any] struct{ a T; b U }
+type Never[T any] struct{ n int }
+type Chain1[T any] struct{ w W[T] }
+type Chain2[T any] struct{ c Chain1[T] }
+type Ring[T any] struct {
+	next *Ring[T]
+	v    T
+}
+type Alias W[View[string]]
+
+@View
+type GV[T any] struct {
+	v View[string]
+	t T
+}
+
+@View
+type Token struct{ Text View[string] }
+
+// The errors (a view in a generic instance).
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field w of struct S1 holds a view (W[View[string]])
+type S1 struct{ w W[View[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field ws of struct S2 holds a view ([]W[View[string]])
+type S2 struct{ ws []W[View[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field c of struct S3 holds a view (Chain2[View[string]])
+type S3 struct{ c Chain2[View[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field r of struct S4 holds a view (Ring[View[string]])
+type S4 struct{ r Ring[View[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field t of struct S5 holds a view (Two[int, View[string]])
+type S5 struct{ t Two[int, View[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field a of struct S6 holds a view (Alias)
+type S6 struct{ a Alias }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field m of struct S7 holds a view (map[string]W[View[string]])
+type S7 struct{ m map[string]W[View[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field o of struct S8 holds a view (Option[W[View[string]]])
+type S8 struct{ o Option[W[View[string]]] }
+
+// Not errors: no view reaches the field.
+type G1 struct{ w W[int] }
+type G2 struct{ n Never[View[string]] }
+type G3 struct{ t Two[int, string] }
+type G4 struct{ c Chain2[int] }
+type G5 struct{ w W[[]int] }
+type G6 struct{ r *Ring[View[string]] }
+type G8 struct{ w W[*int] }
+
+// A @View struct may hold views, also one made from a generic type.
+@View
+type V1 struct{ w W[View[string]] }
+
+@View
+type V2 struct{ g GV[View[string]] }
+
+// P03.21 review (R16): a @View struct holds the views of its fields, so a
+// field of one (directly, in a slice, map, array or Option, in a generic
+// instance, or a generic @View instance) needs @View too; a @View struct
+// whose fields hold no view, and a @View struct inside a @View struct, are
+// fine.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field t of struct H1 holds a view (Token)
+type H1 struct{ t Token }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field ts of struct H2 holds a view ([]Token)
+type H2 struct{ ts []Token }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field g of struct H3 holds a view (GV[int])
+type H3 struct{ g GV[int] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field w of struct H4 holds a view (W[Token])
+type H4 struct{ w W[Token] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field m of struct H5 holds a view (map[int][2]Option[Token])
+type H5 struct{ m map[int][2]Option[Token] }
+
+type TokAlias Token
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field a of struct H6 holds a view (TokAlias)
+type H6 struct{ a TokAlias }
+
+// A borrowed parameter cannot be kept past the call through such a field.
+var keepAll H2
+
+func keep(s string) { keepAll.ts = append(keepAll.ts, Token{Text: s}) }
+
+@View
+type NoViews struct{ N int }
+
+@View
+type NoViewsG[T any] struct{ x T }
+
+type G7 struct {
+	n NoViews
+	g NoViewsG[int]
+	s []NoViews
+}
+
+@View
+type V3 struct {
+	t  Token
+	ts []Token
+	g  GV[int]
+}
+
+// (Package-level variables are checked after the types.)
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0367\]}}: field w of the anonymous struct holds a view (W[View[string]])
+var anon struct{ w W[View[string]] }
+
+func main() {}

@@ -8,20 +8,22 @@ File <1:1, 88:1>
     Spec: ImportSpec <6:2, 6:11>
       Path: BasicLit <6:2, 6:11> string_lit "strconv"
   Decl: GenDecl <11:1, 16:2> type
-    Attr: Attribute <11:1, 11:5> name=Ref
-      Name: Ident <11:2, 11:5> 'Ref'
+    Attr: Attribute <11:1, 11:6> name=View
+      Name: Ident <11:2, 11:6> 'View'
     Spec: TypeSpec <12:6, 16:2>
       Name: Ident <12:6, 12:11> 'Entry'
       Type: StructType <12:12, 16:2>
         Fields: FieldList <12:19, 16:2>
-          Field: Field <13:2, 13:18>
+          Field: Field <13:2, 13:20>
             Names: Ident <13:2, 13:5> 'Key'
-            Type: RefType <13:8, 13:18>
-              Elem: Ident <13:12, 13:18> 'string'
-          Field: Field <14:2, 14:18>
+            Type: IndexExpr <13:8, 13:20>
+              X: Ident <13:8, 13:12> 'View'
+              Index: Ident <13:13, 13:19> 'string'
+          Field: Field <14:2, 14:20>
             Names: Ident <14:2, 14:7> 'Value'
-            Type: RefType <14:8, 14:18>
-              Elem: Ident <14:12, 14:18> 'string'
+            Type: IndexExpr <14:8, 14:20>
+              X: Ident <14:8, 14:12> 'View'
+              Index: Ident <14:13, 14:19> 'string'
           Field: Field <15:2, 15:11>
             Names: Ident <15:2, 15:6> 'Line'
             Type: Ident <15:8, 15:11> 'int'
@@ -50,16 +52,17 @@ File <1:1, 88:1>
             Y: BasicLit <18:66, 18:70> char_lit '\r'
   Decl: FuncDecl <22:1, 30:2>
     Name: Ident <22:6, 22:10> 'trim'
-    Type: FuncType <22:1, 22:31>
+    Type: FuncType <22:1, 22:33>
       Params: FieldList <22:10, 22:20>
         Field: Field <22:11, 22:19>
           Names: Ident <22:11, 22:12> 's'
           Type: Ident <22:13, 22:19> 'string'
-      Results: FieldList <22:21, 22:31>
-        Field: Field <22:21, 22:31>
-          Type: RefType <22:21, 22:31>
-            Elem: Ident <22:25, 22:31> 'string'
-    Body: BlockStmt <22:32, 30:2>
+      Results: FieldList <22:21, 22:33>
+        Field: Field <22:21, 22:33>
+          Type: IndexExpr <22:21, 22:33>
+            X: Ident <22:21, 22:25> 'View'
+            Index: Ident <22:26, 22:32> 'string'
+    Body: BlockStmt <22:34, 30:2>
       Stmt: ForStmt <23:2, 25:3>
         Cond: BinaryExpr <23:6, 23:33> op='&&'
           X: BinaryExpr <23:6, 23:16> op='>'
@@ -108,7 +111,7 @@ File <1:1, 88:1>
         Result: Ident <29:9, 29:10> 's'
   Decl: FuncDecl <33:1, 40:2>
     Name: Ident <33:6, 33:9> 'cut'
-    Type: FuncType <33:1, 33:68>
+    Type: FuncType <33:1, 33:70>
       Params: FieldList <33:9, 33:29>
         Field: Field <33:10, 33:18>
           Names: Ident <33:10, 33:11> 's'
@@ -116,16 +119,17 @@ File <1:1, 88:1>
         Field: Field <33:20, 33:28>
           Names: Ident <33:20, 33:23> 'sep'
           Type: Ident <33:24, 33:28> 'byte'
-      Results: FieldList <33:30, 33:68>
-        Field: Field <33:31, 33:55>
+      Results: FieldList <33:30, 33:70>
+        Field: Field <33:31, 33:57>
           Names: Ident <33:31, 33:37> 'before'
           Names: Ident <33:39, 33:44> 'after'
-          Type: RefType <33:45, 33:55>
-            Elem: Ident <33:49, 33:55> 'string'
-        Field: Field <33:57, 33:67>
-          Names: Ident <33:57, 33:62> 'found'
-          Type: Ident <33:63, 33:67> 'bool'
-    Body: BlockStmt <33:69, 40:2>
+          Type: IndexExpr <33:45, 33:57>
+            X: Ident <33:45, 33:49> 'View'
+            Index: Ident <33:50, 33:56> 'string'
+        Field: Field <33:59, 33:69>
+          Names: Ident <33:59, 33:64> 'found'
+          Type: Ident <33:65, 33:69> 'bool'
+    Body: BlockStmt <33:71, 40:2>
       Stmt: ForStmt <34:2, 38:3>
         Init: AssignStmt <34:6, 34:12> op=':='
           Lhs: Ident <34:6, 34:7> 'i'
@@ -191,12 +195,13 @@ File <1:1, 88:1>
             Args: Ident <48:10, 48:14> 'rest'
           Y: BasicLit <48:18, 48:19> int_lit 0
         Body: BlockStmt <48:20, 61:3>
-          Stmt: DeclStmt <49:3, 49:22>
-            Decl: GenDecl <49:3, 49:22> var
-              Spec: ValueSpec <49:7, 49:22>
+          Stmt: DeclStmt <49:3, 49:24>
+            Decl: GenDecl <49:3, 49:24> var
+              Spec: ValueSpec <49:7, 49:24>
                 Name: Ident <49:7, 49:11> 'text'
-                Type: RefType <49:12, 49:22>
-                  Elem: Ident <49:16, 49:22> 'string'
+                Type: IndexExpr <49:12, 49:24>
+                  X: Ident <49:12, 49:16> 'View'
+                  Index: Ident <49:17, 49:23> 'string'
           Stmt: AssignStmt <50:3, 50:34> op='='
             Lhs: Ident <50:3, 50:7> 'text'
             Lhs: Ident <50:9, 50:13> 'rest'
@@ -270,7 +275,7 @@ File <1:1, 88:1>
         Result: Ident <62:9, 62:12> 'out'
   Decl: FuncDecl <65:1, 72:2>
     Name: Ident <65:6, 65:12> 'lookup'
-    Type: FuncType <65:1, 65:60>
+    Type: FuncType <65:1, 65:62>
       Params: FieldList <65:12, 65:41>
         Field: Field <65:13, 65:28>
           Names: Ident <65:13, 65:20> 'entries'
@@ -279,13 +284,14 @@ File <1:1, 88:1>
         Field: Field <65:30, 65:40>
           Names: Ident <65:30, 65:33> 'key'
           Type: Ident <65:34, 65:40> 'string'
-      Results: FieldList <65:42, 65:60>
-        Field: Field <65:43, 65:53>
-          Type: RefType <65:43, 65:53>
-            Elem: Ident <65:47, 65:53> 'string'
-        Field: Field <65:55, 65:59>
-          Type: Ident <65:55, 65:59> 'bool'
-    Body: BlockStmt <65:61, 72:2>
+      Results: FieldList <65:42, 65:62>
+        Field: Field <65:43, 65:55>
+          Type: IndexExpr <65:43, 65:55>
+            X: Ident <65:43, 65:47> 'View'
+            Index: Ident <65:48, 65:54> 'string'
+        Field: Field <65:57, 65:61>
+          Type: Ident <65:57, 65:61> 'bool'
+    Body: BlockStmt <65:63, 72:2>
       Stmt: RangeStmt <66:2, 70:3> op=':='
         Key: Ident <66:6, 66:7> 'i'
         X: Ident <66:17, 66:24> 'entries'

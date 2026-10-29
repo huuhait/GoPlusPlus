@@ -16,7 +16,7 @@ type T struct { // after brace
 func f(
 	a int, // first
 	move b string, /* second */
-	c ref []int,
+	c View[[]int],
 ) /* result */ int {
 	// only a comment
 	return 1 // done

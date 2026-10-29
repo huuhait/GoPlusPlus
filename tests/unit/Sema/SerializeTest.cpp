@@ -84,7 +84,7 @@ type Pair[K comparable, V any] struct {
 
 func Map[T, U any](xs []T, f func(T) U) []U { return nil }
 func Sum[N Number](xs []N) N                { var z N; return z }
-func Take(s ref string, move p Point) int   { return 0 }
+func Take(s View[string], move p Point) int   { return 0 }
 func Parse!(s string) int                   { return 0 }
 func Pairs(m map[string][]Point) []Pair[string, int] { return nil }
 
@@ -181,8 +181,8 @@ struct Resolver : PackageResolver {
 };
 
 struct Loaded {
-  Loaded() {
-    std::ofstream(T.Root + "/lib.gopp") << LibSource;
+  explicit Loaded(const char *Src = LibSource) {
+    std::ofstream(T.Root + "/lib.gopp") << Src;
     LoadOptions LO;
     LO.Root = T.Root;
     Diags = std::make_unique<DiagnosticsEngine>(SM, Collect, 0);
@@ -263,7 +263,7 @@ TEST(Serialize, RoundTripIntoAFreshContextKeepsTheAPI) {
            "var Owner Option[Unique[*Point]]",
            "var Shared1 Option[Shared[*List[int]]]",
            "var Ch chan<- int",
-           "func Take(ref string, Point) int",
+           "func Take(View[string], Point) int",
            "type Alias = Point",
        })
     EXPECT_NE(D.find(Want), std::string::npos) << Want << "\n" << D;
@@ -426,6 +426,219 @@ func f() {
   EXPECT_TRUE(checkMain(L.Ctx, L.CP->Pkg, Good).empty());
   EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
   // And the bytes of the copy are the bytes of the original.
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+}
+
+// P03.21: a View, a @View struct and the borrowed []T of slicing survive the
+// round trip (REC_REF keeps the borrowed flag): an importing package gets the
+// same errors from the copy as from the checked package (OWN-V1, OWN-V2).
+const char *ViewLibSource = R"(package lib
+
+type User struct {
+	Name string
+	Tags []string
+	Age  int
+}
+
+@View
+type Token struct {
+	Text View[string]
+	Line int
+}
+
+var Arr [4]int
+var Part = Arr[1:]
+
+func Name(u View[User]) View[string]   { return u.Name }
+func Tags(u View[User]) View[[]string] { return u.Tags }
+)";
+
+TEST(Serialize, ViewsAndBorrowedSlicesSurviveTheRoundTripAcrossPackages) {
+  Loaded L(ViewLibSource);
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  std::string D = dump(*P2);
+  EXPECT_NE(D.find("func Tags(View[User]) View[[]string]"), std::string::npos)
+      << D;
+  EXPECT_NE(D.find("type Token struct{Text View[string]; Line int}"),
+            std::string::npos)
+      << D;
+  // The borrowed flag: Part is a borrowed []int, not a View[[]int].
+  auto *Part = P2->PkgScope->lookupLocal("Part");
+  ASSERT_NE(Part, nullptr);
+  auto *R = llvm::dyn_cast<RefType>(Part->Ty);
+  ASSERT_NE(R, nullptr);
+  EXPECT_TRUE(R->Borrowed);
+
+  const char *Bad = R"(package main
+import "lib"
+func f(u lib.User) {
+	v := lib.Tags(u)
+	v[0] = "x"
+	var s string = lib.Name(u)
+	p := lib.Part
+	p = append(p, 1)
+	var w View[[]int] = lib.Part
+	lib.Part = w
+	_ = s
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+func g(u lib.User) int {
+	v := lib.Tags(u)
+	p := lib.Part
+	p[0] = 1
+	var w View[[]int] = lib.Part
+	t := lib.Token{Text: lib.Name(u), Line: 1}
+	return len(v) + len(lib.Name(u)) + p[0] + len(w) + t.Line
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "cannot write v[0]: it is read-only"));
+  EXPECT_TRUE(anyHas(Decoded, "as string value in variable declaration"));
+  EXPECT_TRUE(anyHas(Decoded, "cannot append to p"));
+  EXPECT_TRUE(anyHas(Decoded, "as borrowed []int value in assignment"));
+  EXPECT_EQ(Decoded.size(), 4u);
+  // Both sides: the good code is clean in both.
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+}
+
+// P03.21 review (R3): which generic structs may hold views (@View) survives
+// the round trip, so the OWN-V5 check of an instance made in another package
+// gives the same answer from the copy read back from bytes.
+// P03 review (R24): a type parameter that is Copy only because of a ~T term
+// requires every type argument to be Copy, also in an importing package
+// (the type set travels in the export data, the requirement is derived from
+// it): a defined int type with a drop method is rejected there.
+TEST(Serialize, ImplicitCopyOfATildeTypeSetIsRequiredAcrossPackages) {
+  Loaded L(R"(package lib
+
+func Dup[T ~int](x T) (T, T) { return x, x }
+
+func Max[T ~int | ~float64](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Bad = R"(package main
+import "lib"
+type N int
+func (n *N) drop() {}
+func outer[U ~int](u U) (U, U) { return lib.Dup(u) }
+func f(n N) {
+	a, b := lib.Dup(n)
+	c, d := outer(n)
+	_, _, _, _ = a, b, c, d
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+type Count int
+func outer[U ~int](u U) (U, U) { return lib.Dup(u) }
+func f(c Count) Count {
+	a, b := lib.Dup(c)
+	d, _ := outer(c)
+	return lib.Max(a, b) + d
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "N does not satisfy Copy, which the type set of "
+                              "T (~int) implies: N has a drop method"));
+  EXPECT_TRUE(anyHas(Decoded, "N does not satisfy Copy, which the type set of "
+                              "U (~int) implies: N has a drop method"));
+  EXPECT_EQ(Decoded.size(), 2u);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
+TEST(Serialize, ViewGenericStructsSurviveTheRoundTripAcrossPackages) {
+  Loaded L(R"(package lib
+
+type W[T any] struct{ X T }
+
+@View
+type GV[T any] struct {
+	V View[string]
+	X T
+}
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  auto *W = llvm::cast<NamedType>(P2->PkgScope->lookupLocal("W")->Ty);
+  auto *GV = llvm::cast<NamedType>(P2->PkgScope->lookupLocal("GV")->Ty);
+  EXPECT_FALSE(W->ViewAttr);
+  EXPECT_TRUE(GV->ViewAttr);
+
+  // A @View struct holds the views of its fields (OWN-V5), also an
+  // instance whose type argument is no view: only the decoded ViewAttr says
+  // that lib.GV[int] is worth looking into.
+  const char *Bad = R"(package main
+import "lib"
+type S struct{ w lib.W[View[string]] }
+type T struct{ g lib.GV[int] }
+)";
+  const char *Good = R"(package main
+import "lib"
+type A struct{ w lib.W[int] }
+@View
+type B struct{ g lib.GV[View[string]] }
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "field w of struct S holds a view"));
+  EXPECT_TRUE(anyHas(Decoded, "field g of struct T holds a view"));
+  EXPECT_EQ(Decoded.size(), 2u);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
   MemoryRecordStream Again;
   TypeWriter(Again).writePackage(*P2);
   EXPECT_EQ(Again.toBytes(), Bytes);

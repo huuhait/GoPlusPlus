@@ -1,0 +1,15 @@
+// CHECK: error[E0366]: instantiation cycle
+package main
+
+type T[P any] struct{ s []A[P] }
+
+type A[P any] = T[Option[P]]
+
+func main() {}
+
+func use0(x T[int]) {
+	y := x.Clone()
+	_ = y
+	var z T[int]
+	_ = z
+}

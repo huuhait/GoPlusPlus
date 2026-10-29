@@ -227,13 +227,23 @@ public:
   Type *Elem;
 };
 
-/// `ref string` / `ref []T` (D1.6). Elem is `string` or a SliceType.
+/// `View[X]` (ADR-0020): a read-only borrow of an X, deep. The same type kind,
+/// with Borrowed set, is the type of a slice made by slicing a slice or array
+/// that may be written (OWN-V2, OWN-R3b item 6): a borrowed `[]T`, whose
+/// elements are writable but which cannot grow, move or outlive its owner. It
+/// is never written in source. isViewType (Checker) is the one question "is
+/// this read-only".
 class RefType : public Type, public llvm::FoldingSetNode {
 public:
-  explicit RefType(Type *Elem) : Type(Kind::Ref), Elem(Elem) {}
+  explicit RefType(Type *Elem, bool Borrowed = false)
+      : Type(Kind::Ref), Elem(Elem), Borrowed(Borrowed) {}
   static bool classof(const Type *T) { return T->getKind() == Kind::Ref; }
-  void Profile(llvm::FoldingSetNodeID &ID) const { ID.AddPointer(Elem); }
+  void Profile(llvm::FoldingSetNodeID &ID) const {
+    ID.AddPointer(Elem);
+    ID.AddBoolean(Borrowed);
+  }
   Type *Elem;
+  bool Borrowed;
 };
 
 class ArrayType : public Type, public llvm::FoldingSetNode {
@@ -411,9 +421,16 @@ public:
   /// type is then an interface without methods yet (types2: an incomplete
   /// interface), so `T.m` inside its own method signatures is "undefined".
   bool ResolvingInterface = false;
-  bool Pinned = false; // @Pinned (OWN-R10)
+  bool Pinned = false;   // @Pinned (OWN-R10)
+  bool ViewAttr = false; // @View struct (OWN-V5)
+  /// A generic type on an instantiation cycle (Mono.cpp, set before any
+  /// body is checked): its instances grow without end, so the walks that
+  /// follow every instance a type reaches stop at them (Checker::onInstCycle).
+  bool InstCycle = false;
   /// The predeclared generic `Option` (instances are OptionType, not Named).
   bool IsOption = false;
+  /// The predeclared generic `View` (ADR-0020): an instance is a RefType.
+  bool IsView = false;
   /// "Has a zero value" (TYP-15, OWN-R9): 0 not known, 1 yes, 2 no, 3 no only
   /// because of a type parameter (an instance may have one). Stored
   /// only when exact (ZeroQuery in Ownership.cpp): the answer is a function
@@ -430,10 +447,12 @@ public:
   std::atomic<uint8_t> PinnedState{0};
   /// "Satisfies Clone" (Checker::satisfiesClone): 0 not known, 1 yes, 2 no.
   /// Stored once the types are final (Checker::typesFinal) and only when
-  /// exact, like ZeroState. 3: no, because a walk from this type reaches a
-  /// runaway generic instance graph (MaxInstancesPerWalk, Ownership.cpp);
-  /// stored for the walk's root only and read only as a root.
+  /// exact, like ZeroState.
   std::atomic<uint8_t> CloneState{0};
+  /// Checker::pointerFree and Checker::viewCopyHasPointer (OWN-V1, OWN-V3):
+  /// 0 not known, 1 no pointer is reached, 2 one is. Stored like CloneState.
+  std::atomic<uint8_t> PtrFreeState{0};
+  std::atomic<uint8_t> CopyPtrState{0};
   /// Checker::category: 0 not known, else 1 + the Category. Stored like
   /// CloneState.
   std::atomic<uint8_t> CategoryState{0};
@@ -712,7 +731,7 @@ public:
 
   PointerType *pointer(Type *Elem);
   SliceType *slice(Type *Elem);
-  RefType *ref(Type *Elem);
+  RefType *ref(Type *Elem, bool Borrowed = false);
   OptionType *option(Type *Elem);
   ArrayType *array(Type *Elem, int64_t Len);
   MapType *map(Type *Key, Type *Elem);

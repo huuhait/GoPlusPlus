@@ -1,0 +1,13 @@
+// P03.21 review (R3): the OWN-V5 check of a field that reaches a view
+// through generic instances stays near-linear. A chain of 2000 generic
+// structs G_i[T] { x G_{i+1}[T] } holds T at the end; 2000 structs have a
+// field G_i[View[string]] (one E0367 each, the view is found through up to
+// 2000 instances) and 2000 have a field G_i[int] (none). Under `timeout 3`:
+// a walk that expands the chain again for each field would be quadratic. The
+// answer is kept for each struct type, whether it holds a view or not.
+// RUN: %python %S/Inputs/gen-view-stress.py generic 2000 > %t.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: grep -c "error\[E0367\]" %t.out | FileCheck --check-prefix=N %s
+// RUN: grep -c "error\[" %t.out | FileCheck --check-prefix=N %s
+// N: {{^2000$}}
+package main

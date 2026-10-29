@@ -1,0 +1,107 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21 with TYP-9 (ADR-0020): View[T] and T are different dynamic types, so
+// `case string:` and `case View[string]:` are both reachable (a stored
+// View[string] never matches `case string:`; the run-time fall-through to
+// default is lowered by P04). Box bindings are views: they compare with nil
+// (the value they look at), take len, cap, range and Clone, and a view of an
+// Option has IsNil and a Get that gives a view. A direct write into the box
+// (held by value, rooted at the binding or its Get binding) stays the TYP-9
+// error E0354; a write behind a pointer the box holds, through a stored view
+// or a view parameter is the OWN-V1 error E0368. nil never becomes a view.
+package main
+
+type Inner struct{ M map[string]int }
+type Doc struct {
+	Tags []int
+	In   *Inner
+}
+type Node struct{ V int }
+type Opts struct{ Tags []int }
+
+// Both cases are reachable: View[string] and string are different dynamic
+// types (no "unreachable case" error, no duplicate case).
+func kinds(x any) int {
+	switch v := x.(type) {
+	case string:
+		return len(v)
+	case View[string]:
+		return len(v) + 1
+	default:
+		return 0
+	}
+}
+
+func reads(x any, vs View[[]int], vm View[map[string]int], vo View[Option[Opts]]) int {
+	n := 0
+	switch b := x.(type) {
+	case []int:
+		if b == nil || b != nil {
+			n++
+		}
+		n += len(b) + cap(b)
+		for i, e := range b {
+			n += i + e
+		}
+		c := b.Clone()
+		c[0] = 1
+	case map[string]int:
+		if b == nil {
+			n++
+		}
+		for k, v := range b {
+			n += len(k) + v
+		}
+	case Option[Opts]:
+		if b.IsNil() {
+			n++
+		}
+		if d, ok := b.Get(); ok {
+			n += len(d.Tags)
+		}
+	case *Node:
+		b.V = 1
+	}
+	if vs == nil || vm == nil || vo == nil {
+		n++
+	}
+	if !vo.IsNil() {
+		if d, ok := vo.Get(); ok {
+			n += len(d.Tags) + d.Tags[0]
+		}
+	}
+	x.(*Node).V = 2
+	return n
+}
+
+func writes(x any, vo View[Option[Opts]]) {
+	switch d := x.(type) {
+	case Doc:
+		// CHECK: [[@LINE+1]]:3: error{{\[E0354\]}}: cannot write d.Tags[0]: it is part of a slice inside an interface value
+		d.Tags[0] = 1
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write d.In.M["k"]: it is read-only, it is reached through a View (OWN-V1)
+		d.In.M["k"] = 1
+	case []*Node:
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write d[0].V: it is read-only, it is reached through a View (OWN-V1)
+		d[0].V = 3
+	case Option[Opts]:
+		if o, ok := d.Get(); ok {
+			// CHECK: [[@LINE+1]]:4: error{{\[E0354\]}}: cannot write o.Tags[0]: it is part of a slice inside an interface value
+			o.Tags[0] = 1
+		}
+	case View[Doc]:
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write d.Tags[0]: it is read-only, it is reached through a View (OWN-V1)
+		d.Tags[0] = 1
+	}
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write x.(View[Doc]).Tags[0]: it is read-only, it is reached through a View (OWN-V1)
+	x.(View[Doc]).Tags[0] = 1
+	if o, ok := vo.Get(); ok {
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write o.Tags[0]: it is read-only, it is reached through a View (OWN-V1)
+		o.Tags[0] = 1
+	}
+	var v View[[]int]
+	// CHECK: [[@LINE+1]]:6: error{{\[E0314\]}}: cannot use nil as View{{\[}}[]int] value in assignment
+	v = nil
+	_ = v
+}
+
+func main() {}

@@ -41,19 +41,20 @@ bool contains(const std::string &Hay, llvm::StringRef Needle) {
 //===----------------------------------------------------------------------===//
 
 const char *const GoppValids[] = {
-    // ref types (LEX-12)
-    "func f(s ref string) ref string { return s }",
-    "func f(s ref []int, t ref []ref string) {}",
-    "var x ref string\nvar y ref []byte\nvar z []ref string",
-    "type T struct{ a ref string; b ref []T }",
+    // View[...] is a normal generic type; `ref` is an ordinary name
+    "func f(s View[string]) View[string] { return s }",
+    "func f(s View[[]int], t View[[]string]) {}",
+    "var x View[string]\nvar y View[[]byte]\nvar z []View[string]",
+    "type T struct{ a View[string]; b View[[]T] }",
     "func f() { ref := \"main\"; _ = ref; ref.Name = 1 }",
     "func ref() {}",
-    "func f() { x := Dup[ref string](w); y := (ref string)(x); _, _ = x, y }",
+    "func f() { x := Dup[View[string]](w); y := (View[string])(x); _, _ = x, y "
+    "}",
     "func f(ref [3]int) {}",
-    "type T struct{ ref string }",
-    "var m map[string]ref string",
-    "var c chan ref []int",
-    "type U Unique[T]\ntype S Shared[ref string]\ntype W Weak[T]",
+    "type T struct{ View[string] }",
+    "var m map[string]View[string]",
+    "var c chan View[[]int]",
+    "type U Unique[T]\ntype S Shared[View[string]]\ntype W Weak[T]",
     "func f(u Unique[T], s Shared[T], w Weak[T]) {}",
 
     // move (LEX-12, PAR-5)
@@ -76,8 +77,8 @@ const char *const GoppValids[] = {
     "func f(move map[string]int) {}",
     "func f(move, x int) {}",
     "func f(a, b int, move c string) {}",
-    "func f(move ref string) {}",
-    "func f(move ref []int) {}",
+    "func f(move View[string]) {}",
+    "func f(move View[[]int]) {}",
     "func (m *OrderedMap[K, V]) Put(move k K, move v V) {}",
     "func f() { move(x); y := move(z); _ = y }",
     "func f() { move := 1; move++ }",
@@ -256,7 +257,7 @@ TEST(Parser, MoveMarkVersusParameterNamedMove) {
       {"move s ...T", "Field <2:8, 2:19> move"},
       {"move _ string", "Field <2:8, 2:21> move"},
       {"move string", "Names: Ident <2:8, 2:12> 'move'"},
-      {"move ref string", "Names: Ident <2:8, 2:12> 'move'"},
+      {"move View[string]", "Names: Ident <2:8, 2:12> 'move'"},
   };
   for (const Case &C : Cases) {
     SCOPED_TRACE(C.Params);
@@ -282,17 +283,14 @@ TEST(Parser, MoveDoesNotShareTypeWithPrecedingNames) {
   EXPECT_GE(P.numErrors(), 1u);
 }
 
-TEST(Parser, RefTypeDecision) {
-  // `ref string` and `ref []T` are types; otherwise `ref` is a name.
-  EXPECT_TRUE(contains(dumpOf("var x ref string"), "RefType"));
-  EXPECT_TRUE(contains(dumpOf("var x ref []int"), "RefType"));
+TEST(Parser, ViewIsAGenericType) {
+  // View[...] is an IndexExpr like any generic type; there is no RefType and
+  // `ref` is a name everywhere (P03.21).
+  EXPECT_TRUE(contains(dumpOf("var x View[string]"), "IndexExpr"));
+  EXPECT_TRUE(contains(dumpOf("var x View[[]int]"), "IndexExpr"));
+  EXPECT_FALSE(contains(dumpOf("var x View[[]int]"), "RefType"));
   EXPECT_FALSE(contains(dumpOf("func f() { ref := 1 }"), "RefType"));
-  EXPECT_FALSE(contains(dumpOf("type T struct{ ref string }"), "RefType"));
   EXPECT_FALSE(contains(dumpOf("func f(ref [3]int) {}"), "RefType"));
-  EXPECT_TRUE(contains(dumpOf("func f(ref string) {}"), "RefType"));
-  EXPECT_TRUE(contains(dumpOf("func f() { _ = (ref string)(x) }"), "RefType"));
-  EXPECT_TRUE(
-      contains(dumpOf("func f() { _ = Dup[ref string](x) }"), "RefType"));
 }
 
 TEST(Parser, RangeAliasStructure) {

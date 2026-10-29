@@ -19,7 +19,7 @@ func mkBox() Box    { return Box{U: new_unique(User{})} }
 var global User
 
 func ptr() *User    { return &global }
-func use(s ref string) {}
+func use(s View[string]) {}
 
 // A field or element of an owned temporary is a temporary: it moves out.
 func parts() (string, []string, string) {

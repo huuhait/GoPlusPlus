@@ -1,0 +1,15 @@
+// CHECK: error[E0139]: invalid recursive type B
+package main
+
+type B struct{ c W[A] }
+type A struct{ a W[B] }
+type W[T any] struct{ x T }
+
+func main() {}
+
+func use0(a A) {
+	c := a.Clone()
+	_ = c
+	var z A
+	_ = z
+}

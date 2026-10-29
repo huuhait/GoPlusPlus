@@ -368,3 +368,11 @@ E0362 err_option_redundant
 E0363 err_option_and_required
 E0364 err_required_redundant
 E0365 warn_vet_strict_no_required
+E0366 err_instantiation_cycle
+E0367 err_view_field_without_attr
+E0368 err_view_write
+E0369 err_view_no_methods
+E0370 err_view_to_owned
+E0371 err_view_bad_arg
+E0372 err_unknown_attribute
+E0373 err_view_copy_pointer

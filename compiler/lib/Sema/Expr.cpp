@@ -583,6 +583,24 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
       X.M = Mode::Invalid;
       return;
     }
+    // TYP-3, OWN-V1: `v == nil` on a view compares the value it looks at (a
+    // slice, map, channel or interface; a type switch binding of a slice is
+    // a view, TYP-9) with nil, so the nil has that type. A view itself is
+    // never nil: nil is not assignable to it.
+    if (X.isNil() != Y.isNil() && isViewType(T))
+      if (Type *VE = cast<RefType>(under(T))->Elem; hasNil(VE)) {
+        Operand &N = X.isNil() ? X : Y;
+        convertUntyped(N, VE);
+        if (N.M == Mode::Invalid) {
+          X.M = Mode::Invalid;
+          return;
+        }
+        X.M = Mode::Value;
+        updateExprType(X.E, defaultType(X.Ty), true);
+        updateExprType(Y.E, defaultType(Y.Ty), true);
+        X.Ty = typ(BasicKind::UntypedBool);
+        return;
+      }
   }
   bool Ok = assignableTo(X, Y.Ty, nullptr);
   if (!Ok)
@@ -627,14 +645,20 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
         Fail = true;
       }
       break;
-    default:
-      if (!allBasic(X.Ty, IsOrdered)) {
+    default: {
+      // OWN-V1: a view compares as the value it looks at (`a < b` on two
+      // View[string]s), as `==` does.
+      auto Looked = [&](Type *T) {
+        return own() && isViewType(T) ? cast<RefType>(under(T))->Elem : T;
+      };
+      if (!allBasic(Looked(X.Ty), IsOrdered)) {
         ErrOp = &X;
         Fail = true;
-      } else if (!allBasic(Y.Ty, IsOrdered)) {
+      } else if (!allBasic(Looked(Y.Ty), IsOrdered)) {
         ErrOp = &Y;
         Fail = true;
       }
+    }
     }
   }
   if (Fail) {
@@ -998,6 +1022,12 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     typeAssertion(Ex, X, T, false);
     X.M = Mode::CommaOk;
     X.Ty = T;
+    // OWN-V1, TYP-9: a value in the box that is not a plain copy is read
+    // through a view (`*x.(Holder).P = 1` writes no further than a binding
+    // could). An owning type keeps its type: its direct writes are TYP-9
+    // errors (rejectBoxWrite) and a binding of it is a view.
+    if (own() && !isTypeParam(T) && bindsBox(T) && !isOwning(T))
+      X.Ty = boxBindingType(T);
     break;
   }
   case K::CallExpr:
@@ -1081,7 +1111,6 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
   case K::InterfaceType:
   case K::MapType:
   case K::ChanType:
-  case K::RefType:
     X.M = Mode::TypeExpr;
     X.Ty = typ(Ex);
     break;

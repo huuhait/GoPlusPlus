@@ -1,0 +1,30 @@
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.23: Go reports an instantiation cycle only for a package without other
+// errors (types2 check.go: `if check.firstErr == nil { check.monomorph() }`;
+// the corpus file fixedbugs/issue48619.go relies on it). The types of a cycle
+// are still marked, so the clone walk below ends (no instance graph that
+// never ends is walked, and there is no instance cap); they stay valid for
+// every other check (instantiation-cycle-hides-nothing.test).
+package main
+
+// A type that holds an instance of itself by value is an invalid recursive
+// type: Go's error for this shape (P03.23 Done-when, first shape).
+// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid recursive type: E refers to itself
+type E[P any] struct{ e Option[E[[]P]] }
+
+// The second shape: an instantiation cycle, not reported here (E0140 above).
+type B[P any] struct{ s []B[Option[P]] }
+
+func g[P any](x P) { g[[]P](nil) }
+
+func use() {
+	var x E[int]
+	var y = x
+	_ = y
+	var b B[int]
+	_ = b.Clone()
+	_ = b
+	// CHECK: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use "s" (untyped string constant) as int value in variable declaration
+	var bad int = "s"
+	_ = bad
+}

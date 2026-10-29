@@ -5,6 +5,7 @@ add_gopp_library(Sema
   Check.cpp
   Constant.cpp
   Loader.cpp
+  Mono.cpp
   Decl.cpp
   Expr.cpp
   ExampleMocks.cpp

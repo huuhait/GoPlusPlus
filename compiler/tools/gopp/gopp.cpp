@@ -90,7 +90,7 @@ static cl::SubCommand CheckCmd("check",
                                "Type-check Go++ files or a package directory");
 static cl::SubCommand
     VetCmd("vet", "Type-check like `check`, then report the vet warnings "
-                  "(ref fields without @Ref, drop on a zero value, a ! that "
+                  "(drop on a zero value, a ! that "
                   "panics outside main, defer in a loop, @Strict with no "
                   "required field)");
 static cl::opt<bool>

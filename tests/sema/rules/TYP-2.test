@@ -7,17 +7,17 @@ package main
 func parse(s string) int { return len(s) }
 
 func positive(s string) int {
-	var r ref string = s
+	var r View[string] = s
 	t := string(r)
 	v := s[:3]
 	return parse(v) + len(t)
 }
 
-func negative(r ref string) {
+func negative(r View[string]) {
 	var s string
-	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use r (variable of type ref string) as string value in assignment: a ref is not an owning value: write string(r) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use r (variable of type View[string]) as string value in assignment: a view is not an owning value: write string(r) to copy (TYP-2)
 	s = r
-	// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use r (variable of type ref string) as string value in variable declaration: a ref is not an owning value: write string(r) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use r (variable of type View[string]) as string value in variable declaration: a view is not an owning value: write string(r) to copy (TYP-2)
 	var t string = r
 	_, _ = s, t
 }

@@ -251,6 +251,7 @@ bool Checker::typeList(ArrayRef<ast::Expr *> Es, SmallVector<Type *, 4> &Out) {
 
 Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
   using K = ast::Node::Kind;
+  DepthGuard DeclDepth(DeclNest); // see objDecl
   switch (Ex->getKind()) {
   case K::BadExpr:
     return invalid();
@@ -303,19 +304,6 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
   }
   case K::SliceType:
     return Ctx.slice(varType(cast<ast::SliceType>(Ex)->Elt));
-  case K::RefType: {
-    auto *R = cast<ast::RefType>(Ex);
-    Type *El = varType(R->Elem);
-    if (!isValid(El))
-      return invalid();
-    Type *U = under(El);
-    if (!(El == typ(BasicKind::String) || isa<SliceType>(U))) {
-      err(R, diag::err_sema_typexpr,
-          {"invalid use of ref: " + str(El) + " is not a string or slice"});
-      return invalid();
-    }
-    return Ctx.ref(El);
-  }
   case K::StructType:
     return structTypeExpr(cast<ast::StructType>(Ex));
   case K::StarExpr: {
@@ -447,6 +435,146 @@ static SourceRange withBlanksBefore(const SourceManager &SM, SourceRange R) {
                      R.getEnd());
 }
 
+/// Does T hold a view (OWN-V5)? A view itself, or a slice, array, map,
+/// channel, Option or defined non-struct type of one. A struct type declared
+/// with a literal has its own fields (and its own error), so it is not looked
+/// into. Any other struct is: an instance of a generic struct holds what its
+/// type arguments make of its fields (`W[View[string]]` for `struct{ x T }`;
+/// `W[int]` holds none), and `type T W[View[string]]` has no literal of its
+/// own. The decision is made on the real, substituted fields, once for each
+/// type: a walk that finds no view proves every type it expanded has none
+/// (ViewFree), so any number of fields cost one expansion per type in all.
+/// A `@View` struct may hold views, so it is looked into too (its own
+/// fields were allowed to hold them at its declaration).
+bool Checker::containsView(Type *T) {
+  resolvePendingUnder();
+  // Can the type argument A make a view part of the instance (is there a
+  // view, or a named type that may hold one, in it)? A type parameter is no
+  // view yet: the arguments of its instances are checked where they are
+  // given. An instance with no such argument holds none (its own fields were
+  // checked at its declaration), so it is not expanded: a chain of generic
+  // types over a type parameter costs nothing.
+  auto MayHold = [&](ArrayRef<Type *> Args) {
+    SmallVector<Type *, 8> W(Args.begin(), Args.end());
+    llvm::SmallPtrSet<const Type *, 8> Met;
+    while (!W.empty()) {
+      Type *X = W.pop_back_val();
+      if (!X || !Met.insert(X).second)
+        continue;
+      switch (X->getKind()) {
+      case Type::Kind::Ref:
+        return true;
+      case Type::Kind::Named: {
+        auto *N = cast<NamedType>(X);
+        if (N->Ptr != PtrKind::None)
+          break;
+        if (N->origin()->ViewAttr) // may hold views (OWN-V5)
+          return true;
+        if (N->Orig) {
+          for (Type *A : N->TArgs)
+            W.push_back(A);
+        } else if (!isa_and_nonnull<StructType>(N->FromRHS) &&
+                   !isa<BasicType>(under(N))) {
+          return true;
+        }
+        break;
+      }
+      case Type::Kind::Slice:
+        W.push_back(cast<SliceType>(X)->Elem);
+        break;
+      case Type::Kind::Array:
+        W.push_back(cast<sema::ArrayType>(X)->Elem);
+        break;
+      case Type::Kind::Option:
+        W.push_back(cast<OptionType>(X)->Elem);
+        break;
+      case Type::Kind::Chan:
+        W.push_back(cast<sema::ChanType>(X)->Elem);
+        break;
+      case Type::Kind::Map:
+        W.push_back(cast<sema::MapType>(X)->Key);
+        W.push_back(cast<sema::MapType>(X)->Elem);
+        break;
+      default:
+        break;
+      }
+    }
+    return false;
+  };
+  // The walk, with the way each type was reached: when a view is found, the
+  // structs on the way hold it too (ViewHolders), so a chain of n generic
+  // types asked about n times costs n steps in all, not n each.
+  struct Item {
+    Type *T;
+    int Parent; // index in Trail of the struct it was reached in, or -1
+  };
+  SmallVector<Item, 8> Work{{T, -1}};
+  SmallVector<const NamedType *, 8> Expanded;
+  SmallVector<std::pair<const NamedType *, int>, 8> Trail; // N, its parent
+  llvm::SmallPtrSet<const Type *, 8> Seen;
+  auto Found = [&](int Parent, const NamedType *Self) {
+    if (Self)
+      ViewHolders.insert(Self);
+    for (int I = Parent; I >= 0; I = Trail[I].second)
+      ViewHolders.insert(Trail[I].first);
+    return true;
+  };
+  while (!Work.empty()) {
+    auto [X, Parent] = Work.pop_back_val();
+    if (!X || !Seen.insert(X).second)
+      continue;
+    int Self = Parent;
+    if (auto *N = dyn_cast<NamedType>(X)) {
+      if (N->Ptr != PtrKind::None || onInstCycle(N) || ViewFree.count(N))
+        continue;
+      if (ViewHolders.count(N))
+        return Found(Parent, nullptr);
+      if (N->Orig && !N->Orig->ViewAttr && !MayHold(N->TArgs))
+        continue;
+      X = under(N);
+      if (!X)
+        continue;
+      if (auto *St = dyn_cast<StructType>(X)) {
+        // A `@View` struct holds the views its fields hold, so it is
+        // looked into, an instance with its substituted fields (OWN-V5).
+        const NamedType *O = N->origin();
+        if (!O->ViewAttr && !N->Orig && isa_and_nonnull<StructType>(N->FromRHS))
+          continue;
+        Expanded.push_back(N);
+        Trail.push_back({N, Parent});
+        Self = static_cast<int>(Trail.size()) - 1;
+        for (Var *F : St->Fields)
+          Work.push_back({F->Ty, Self});
+        continue;
+      }
+    }
+    switch (X->getKind()) {
+    case Type::Kind::Ref:
+      return Found(Self, nullptr);
+    case Type::Kind::Slice:
+      Work.push_back({cast<SliceType>(X)->Elem, Self});
+      break;
+    case Type::Kind::Array:
+      Work.push_back({cast<sema::ArrayType>(X)->Elem, Self});
+      break;
+    case Type::Kind::Option:
+      Work.push_back({cast<OptionType>(X)->Elem, Self});
+      break;
+    case Type::Kind::Chan:
+      Work.push_back({cast<sema::ChanType>(X)->Elem, Self});
+      break;
+    case Type::Kind::Map:
+      Work.push_back({cast<sema::MapType>(X)->Key, Self});
+      Work.push_back({cast<sema::MapType>(X)->Elem, Self});
+      break;
+    default:
+      break;
+    }
+  }
+  ViewFree.insert(Expanded.begin(), Expanded.end());
+  return false;
+}
+
 Type *Checker::structTypeExpr(const ast::StructType *St) {
   // TYP-15a: only the struct type of a `@Strict` declaration is strict.
   const bool Strict = own() && St == StrictStructExpr;
@@ -458,6 +586,12 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
   // (TYP-15, TYP-15a), if any.
   const Attribute *ReqAttr = nullptr;
   const Attribute *OptAttr = nullptr;
+  // OWN-V5: a field that holds a view needs `@View` on the struct.
+  const bool ViewOk = !own() || St == ViewStructExpr;
+  std::string StructName = St == DeclStructExpr
+                               ? "struct " + std::string(DeclStructName)
+                               : std::string("the anonymous struct");
+  const ast::Expr *CurTE = nullptr;
   auto Add = [&](const ast::Ident *Id, StringRef N, Type *T, bool Emb,
                  StringRef Tag, SourceLoc Pos, const ast::Expr *EmbE) {
     if (N != "_" && !Seen.insert(N).second) {
@@ -484,6 +618,14 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
   auto CheckAttrs = [&](StringRef Name, Type *T) {
     if (!own())
       return;
+    if (!ViewOk && isValid(T)) {
+      const ast::Expr *TE = CurTE;
+      std::string FName(Name), SName = StructName;
+      later([this, TE, T, FName, SName]() {
+        if (containsView(T))
+          err(TE, diag::err_view_field_without_attr, {FName, SName, str(T)});
+      });
+    }
     if (OptAttr && !Strict)
       err(OptAttr->AtLoc, diag::err_option_not_strict);
     else if (OptAttr && ReqAttr)
@@ -542,6 +684,7 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
       StringRef TagRef = Mem.copy(Tag);
       ReqAttr = nullptr;
       OptAttr = nullptr;
+      CurTE = F->Type;
       for (const Attribute *A : F->Attrs) {
         if (A->Pkg || !A->Name)
           continue;
@@ -850,6 +993,10 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
                                          Alias->AliasTParams.end());
     SourceLoc APos = Ix->getBegin();
     Type *Res = subst(G, Alias->AliasTParams, AArgs);
+    // An instantiation of a generic alias is an edge of the cycle check like
+    // any other (types2 mono.go: the alias's type parameters are vertices;
+    // its right-hand side records the edges out of them).
+    recordMono(APos, nullptr, ATPs, AArgs);
     later([this, APos, ATPs, AArgs, ALocs, Res]() {
       std::string Why;
       int Bad = verify(APos, ATPs, AArgs, &Why);
@@ -883,6 +1030,19 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     recordInstance(Ix, TArgs, Bad);
     return Bad;
   }
+  if (N->IsView) {
+    // View[X] (ADR-0020) is a type of its own too.
+    Type *Arg = TArgs[0];
+    if (!isValid(Arg))
+      return invalid();
+    if (const char *Why = badViewArg(Arg)) {
+      err(Ix->Indices[0], diag::err_view_bad_arg, {str(Arg), Why});
+      return invalid();
+    }
+    RefType *V = Ctx.ref(Arg);
+    recordInstance(Ix, TArgs, V);
+    return V;
+  }
   if (N->IsOption) {
     // Option[T] (ADR-0018) is a type of its own, not an instance of a struct.
     Type *Arg = TArgs[0];
@@ -908,6 +1068,7 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   }
   NamedType *Inst = instantiateNamed(N, TArgs);
   recordInstance(Ix, TArgs, Inst);
+  recordMono(Ix->getBegin(), N->origin(), N->TParams, TArgs);
   SmallVector<SourceLoc, 4> Locs;
   for (const ast::Expr *A : Ix->Indices)
     Locs.push_back(A->getBegin());
@@ -925,6 +1086,23 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     }
   });
   return Inst;
+}
+
+/// Why View[Arg] is not allowed (ADR-0020), or null. The allowed forms: every
+/// type except the pointer kinds, unsafe.Pointer and a view.
+const char *Checker::badViewArg(Type *Arg) {
+  Type *U = under(Arg);
+  if (!isValid(U))
+    return nullptr;
+  if (isa<RefType>(U))
+    return "a View of a View is the same as one View, write View[T] once; "
+           "allowed: any type except *T, Unique[*T], Shared[*T], Weak[*T], "
+           "unsafe.Pointer and a View";
+  if (isa<PointerType>(U) || hasPtrKind(Arg, nullptr, nullptr) ||
+      isUnsafePointer(Arg))
+    return "a View holds a value, not a pointer; allowed: any type except "
+           "*T, Unique[*T], Shared[*T], Weak[*T], unsafe.Pointer and a View";
+  return nullptr;
 }
 
 const char *Checker::badOptionArg(Type *Arg) {
@@ -999,9 +1177,10 @@ struct BadOptionWalk {
           return O;
       return nullptr;
     case Type::Kind::Named: {
-      // Only an instance holds the arguments; under() expands it.
+      // Only an instance holds the arguments; under() expands it. An
+      // instance on an instantiation cycle is a leaf (onInstCycle).
       auto *N = cast<NamedType>(T);
-      if (!N->Orig || N->TArgs.empty())
+      if (!N->Orig || N->TArgs.empty() || Checker::onInstCycle(N))
         return nullptr;
       return walk(C.under(N));
     }

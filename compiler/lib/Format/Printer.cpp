@@ -1499,7 +1499,6 @@ private:
     case Node::Kind::InterfaceType:
     case Node::Kind::MapType:
     case Node::Kind::ChanType:
-    case Node::Kind::RefType:
     case Node::Kind::MacroInvocation:
       return true;
     default:
@@ -1529,7 +1528,6 @@ private:
     case Node::Kind::InterfaceType:
     case Node::Kind::MapType:
     case Node::Kind::ChanType:
-    case Node::Kind::RefType:
       return true;
     case Node::Kind::UnaryExpr:
       return cast<UnaryExpr>(X)->Op == tok::tilde;
@@ -2203,13 +2201,6 @@ private:
       }
       print(blank);
       expr(X->Value);
-      break;
-    }
-
-    case Node::Kind::RefType: {
-      const auto *X = cast<RefType>(E);
-      print(Word{"ref"}, blank);
-      expr(X->Elem);
       break;
     }
 

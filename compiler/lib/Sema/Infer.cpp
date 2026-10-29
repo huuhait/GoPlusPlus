@@ -59,7 +59,7 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
   case Type::Kind::Ref: {
     auto *P = cast<RefType>(T);
     Type *E2 = Rec(P->Elem);
-    return E2 == P->Elem ? T : Ctx.ref(E2);
+    return E2 == P->Elem ? T : Ctx.ref(E2, P->Borrowed);
   }
   case Type::Kind::Option: {
     auto *P = cast<OptionType>(T);
@@ -197,16 +197,36 @@ void Checker::expandNamed(NamedType *N) {
   if (N->Expanding)
     return;
   NamedType *O = N->Orig;
-  if (!O->Underlying && O->Obj && S.ObjMap.count(O->Obj))
-    objDecl(O->Obj, nullptr);
-  if (!O->Underlying)
+  if (!O->Underlying && O->Obj && S.ObjMap.count(O->Obj)) {
+    if (PendingDecl.count(O->Obj))
+      declarePending(O->Obj); // a generic type deferred by objDecl (P03.23)
+    else
+      objDecl(O->Obj, nullptr);
+  }
+  // `type B[P any] A` with A plain: B has no Underlying of its own, it is
+  // A's, once A is resolved (found by following DirectRhs, a chain of plain
+  // types; a ring is cut by Seen).
+  Type *OU = O->Underlying;
+  if (!OU) {
+    llvm::SmallPtrSet<const NamedType *, 8> Seen;
+    for (NamedType *P = O; P && Seen.insert(P).second;) {
+      if (P->Underlying) {
+        OU = P->Underlying;
+        break;
+      }
+      P = P->DirectRhs ? dyn_cast<NamedType>(P->DirectRhs) : nullptr;
+    }
+  }
+  if (!OU)
     return; // still being declared: retry later
   N->Expanding = true;
   Type *U = invalid();
   if (O->TParams.size() == N->TArgs.size())
-    U = under(subst(O->Underlying, O->TParams, N->TArgs));
+    U = under(subst(OU, O->TParams, N->TArgs));
   N->Underlying = U;
   N->Expanding = false;
+  if (ExpandedInsts)
+    ExpandedInsts->push_back(N);
   // Publishes Underlying to the other body threads.
   N->Expanded.store(true, std::memory_order_release);
 }
@@ -273,7 +293,38 @@ bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
   if (!Bound)
     return true;
   Bound = subst(Bound, TParams, TArgs);
-  return implements(Pos, TArg, Bound, true, Cause);
+  if (!implements(Pos, TArg, Bound, true, Cause))
+    return false;
+  // GEN-1, GEN-2 (R24): a parameter that is Copy (Clone) only because of a
+  // type set with a ~T term requires the same of every type argument (a
+  // defined type over T may have a drop method). Here, the one check that
+  // runs per instantiation: explicit, inferred, in another package (the
+  // type set travels in the export data), and through another generic (an
+  // outer parameter must be Copy, or carry the same requirement).
+  if (!own())
+    return true;
+  bool Implicit = false;
+  if (paramIs(TPar, /*Clone=*/false, &Implicit)) {
+    if (Implicit && !isCopyType(TArg)) {
+      if (Cause)
+        *Cause = str(TArg) + " does not satisfy Copy, which the type set of " +
+                 str(TPar) + " (" + str(Bound) +
+                 ") implies: " + notCopyWhy(TArg) + " (GEN-1)";
+      return false;
+    }
+    return true;
+  }
+  if (paramIs(TPar, /*Clone=*/true, &Implicit) && Implicit) {
+    std::string Why;
+    if (!satisfiesClone(TArg, &Why)) {
+      if (Cause)
+        *Cause = str(TArg) + " does not satisfy Clone, which the type set of " +
+                 str(TPar) + " (" + str(Bound) + ") implies" +
+                 (Why.empty() ? "" : ": " + Why) + " (GEN-2)";
+      return false;
+    }
+  }
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -894,7 +945,14 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
     if (!mentionsAny(*this, PT, TParams) && !mentionsAny(*this, A.Ty, TParams))
       continue;
     if (isTyped(A.Ty)) {
-      if (!U.unify(PT, A.Ty, UAssign))
+      // OWN-V3: an owned (or borrowed) value converts to a view implicitly
+      // wherever a view is expected, so a View[X] parameter takes an
+      // argument of type X.
+      Type *P = PT;
+      if (auto *R = dyn_cast<RefType>(PT);
+          own() && R && !R->Borrowed && !isa<RefType>(under(A.Ty)))
+        P = R->Elem;
+      if (!U.unify(P, A.Ty, UAssign))
         return Mismatch(PT, A.Ty, A);
     } else if (isa<TypeParamType>(PT) && !A.isNil()) {
       Untyped.push_back(I);

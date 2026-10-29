@@ -1,0 +1,16 @@
+// P03.21 review (R9, R11): the copy-out predicates (pointerFree for a read
+// through a view, viewCopyHasPointer for a copy of one) stay near-linear.
+// 3000 reads along a chain of 3000 structs whose last one holds a pointer,
+// 3000 clones along it (one E0373 each), 3000 clones along a ring of 3000
+// structs through slices (none) and 3000 plain-copy reads along a
+// pointer-free chain (none). Under `timeout 3`: a walk that went down the
+// chain again for each query would be quadratic; each named type keeps its
+// answer. The same output with 8 threads checking the bodies.
+// RUN: %python %S/Inputs/gen-copy-out-stress.py 3000 > %t.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: grep -c "error\[E0373\]" %t.out | FileCheck --check-prefix=N %s
+// RUN: grep -c "error\[" %t.out | FileCheck --check-prefix=N %s
+// RUN: not timeout 3 %gopp check -check-j=8 --check-error-limit=0 %t.gopp > %t.8.out 2>&1
+// RUN: diff %t.out %t.8.out
+// N: {{^3000$}}
+package main

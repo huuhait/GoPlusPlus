@@ -1,0 +1,21 @@
+// CHECK: error[E0140]: invalid recursive type: N1 refers to itself
+// CHECK: error[E0140]: invalid recursive type: S1 refers to itself
+package main
+
+type N0 [1]N5[int]
+type N1 N5[int]
+type N5[P any] = N1
+
+type S0 [1]S5[int]
+type S1 struct{ x S5[int] }
+type S5[P any] = S1
+
+func main() {}
+
+func use0(x N1, y N0, s S1) {
+	a := x.Clone()
+	b := s.Clone()
+	var z N1
+	c := y
+	_, _, _, _ = a, b, z, c
+}

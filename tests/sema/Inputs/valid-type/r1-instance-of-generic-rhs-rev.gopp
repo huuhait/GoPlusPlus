@@ -1,0 +1,21 @@
+// CHECK: error[E0139]: invalid recursive type A
+package main
+
+type B[Q any] A[Q]
+type A[P any] struct{ b B[int] }
+
+func main() {}
+
+func use0(a A[int]) {
+	c := a.Clone()
+	_ = c
+	var z A[int]
+	_ = z
+}
+
+func use1(a B[string]) {
+	c := a.Clone()
+	_ = c
+	var z B[string]
+	_ = z
+}

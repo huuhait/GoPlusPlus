@@ -1,0 +1,14 @@
+package main
+
+type B struct{ c W[int]; d W[W[int]] }
+type A struct{ a W[B]; b W[B] }
+type W[T any] struct{ x T }
+
+func main() {}
+
+func use0(a A) {
+	c := a.Clone()
+	_ = c
+	var z A
+	_ = z
+}

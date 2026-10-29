@@ -1,0 +1,19 @@
+// P03.21 (a), LEX-7, ADR-0020 point 11: in Go mode none of the Go++
+// predeclared names exist; each is "undefined: <name>". `ref` is an ordinary
+// identifier there, as in a .gopp file (OWN-V1-shadow.test).
+// RUN: not %gopp check --go --check-error-limit=0 %S/Inputs/go-mode-predeclared.go 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: printf 'package main\n\nfunc ref(ref int) int { return ref + 1 }\n\nfunc main() { _ = ref(1) }\n' > %t/ok.go
+// RUN: %gopp check --go %t/ok.go
+// CHECK: :4:8: error[E0111]: undefined: View
+// CHECK: :5:8: error[E0111]: undefined: Option
+// CHECK: :6:8: error[E0111]: undefined: Unique
+// CHECK: :7:8: error[E0111]: undefined: Shared
+// CHECK: :8:8: error[E0111]: undefined: Weak
+// CHECK: :9:8: error[E0111]: undefined: Copy
+// CHECK: :10:8: error[E0111]: undefined: Clone
+// CHECK: :11:7: error[E0111]: undefined: move
+// CHECK: :12:7: error[E0111]: undefined: clone
+// CHECK: :13:7: error[E0111]: undefined: new_unique
+// CHECK: :14:7: error[E0111]: undefined: new_shared
+// CHECK: :15:7: error[E0111]: undefined: new_weak

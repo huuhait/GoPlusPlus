@@ -43,7 +43,7 @@ public:
     NumKinds,
     // Group boundaries (inclusive), for classof.
     FirstExpr = BadExpr,
-    LastExpr = RefType,
+    LastExpr = ChanType,
     FirstStmt = BadStmt,
     LastStmt = RangeStmt,
     FirstDecl = BadDecl,
@@ -327,14 +327,6 @@ public:
   SourceLoc ArrowLoc; // valid if the type has an arrow
   Dir Direction = Both;
   Expr *Value = nullptr;
-};
-
-/// `ref string` or `ref []T`. Elem is the Ident `string` or a SliceType.
-class RefType : public Expr {
-public:
-  GOPP_NODE(RefType, Expr)
-  SourceLoc RefLoc;
-  Expr *Elem = nullptr;
 };
 
 //===----------------------------------------------------------------------===//

@@ -1,0 +1,39 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.23: Go's instantiation cycle. Rejected: a type argument built from the
+// type's own parameter, directly, through Option, through another type and in
+// a generic function. Accepted: the parameter passed on unchanged, and a
+// different, finite argument. As in Go, the cycles are reported only for a
+// package with no other error (instantiation-cycle-errors.test).
+package main
+
+// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+type A[P any] struct{ a Option[*A[[]P]] }
+
+// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+type B[P any] struct{ s []B[Option[P]] }
+
+// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+type C[P any] struct{ b *D[[]P] }
+type D[Q any] struct{ c *C[Q] }
+
+type Ok1[P any] struct {
+	s []Ok1[P]
+	m map[string]Ok1[P]
+}
+type Ok2[P any] struct{ s *Ok3[P, []int] }
+type Ok3[P, Q any] struct{ s []Ok2[Q] }
+
+// The cycle through a generic function, found after the bodies.
+// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+func f[P any](x P) { f[[]P](nil) }
+
+func g[P any](x P) { g[P](x) }
+
+func use() {
+	var x A[int]
+	_ = x
+	var y B[int]
+	_ = y.Clone()
+	var o Ok1[int]
+	_ = o
+}

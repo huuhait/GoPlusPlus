@@ -1,0 +1,26 @@
+// CHECK: error[E0314]: cannot use b (variable of type []N1) as int value in variable declaration
+// CHECK: error[E0314]: cannot use e (variable of struct type G1) as int value in variable declaration
+package main
+
+type G5[P any] = G1
+type G1 struct{ x Option[Unique[*G5[int]]] }
+type G0 [1]G5[int]
+
+type N5 = []N1
+type N1 N5
+type N0 [1]N5
+
+func main() {}
+
+func use0() {
+	var a N0
+	var d G0
+	b := a[0].Clone()
+	var c []N1 = b
+	e := d[0].Clone()
+	var f G1 = e
+	_, _ = c, f
+	var bad1 int = b
+	var bad2 int = e
+	_, _ = bad1, bad2
+}

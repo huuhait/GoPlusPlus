@@ -1,7 +1,7 @@
 // Regression guard: the spec examples (docs/spec/examples/*/main.gopp: 02-wc,
 // 03-kvparse, 10-minicalc, ...) are valid Go++ programs. R15 was a regression
 // found only by these files: every ref result of a multi-value call (02-wc:46,
-// 03-kvparse:50/56/81) was reported as a ref into a temporary.
+// 03-kvparse:50/56/81) was reported as a view into a temporary.
 //
 // Each example is checked with --implicit-check-not="error[E", so ANY error that
 // is not listed below fails the test. The listed errors are the known ones,

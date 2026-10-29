@@ -122,7 +122,7 @@ go func() { n.Add(1) }()     // ok
 
 UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding). The owner confirmed in P01.15 that they stay listed as undefined behavior.
 
-**UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory, or converting a nil `unsafe.Pointer` to a `*T` (pointers are never nil; convert to `Option[*T]` instead).
+**UB-7.** *`unsafe` and raw memory.* Misuse of `unsafe.Pointer`: wrong type, wrong size, misaligned access, reading uninitialized memory, converting a nil `unsafe.Pointer` to a `*T` (pointers are never nil; convert to `Option[*T]` instead), or writing through a pointer converted from an `unsafe.Pointer` that was read out of a view (`*(*int)(v[0]) = 1` with `v View[[]unsafe.Pointer]`; [OWN-V1](04-ownership.md#44-views-d16)).
 
 **UB-8.** *Pinned values.* Using a pointer or view into a local after the local has been moved ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) is a compile error, wherever the pointer came from in the same function, and also when it came through a call ([OWN-B3](04-ownership.md#45-borrow-checking-adr-0021)): `move(x)` is a change that borrows may not survive ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). *Residue (still UB):* a pointer kept through `unsafe` or C.
 

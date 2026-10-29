@@ -59,8 +59,8 @@ ExampleHeaderMocks::ExampleHeaderMocks(TypeContext &Ctx,
 void ExampleHeaderMocks::zlib() {
   // "github.com/madler/zlib/zlib.h": `uLong crc32(uLong crc, const Bytef
   // *buf, uInt len)`. The `const Bytef*` parameter takes a []byte as its data
-  // pointer (ADR-0008 Q2); the mock models that with a `ref []byte`
-  // parameter, which accepts an owned or a ref slice.
+  // pointer (ADR-0008 Q2); the mock models that with a `View[[]byte]`
+  // parameter, which accepts an owned slice, a borrowed one or a view.
   const char *Path = "github.com/madler/zlib/zlib.h";
   std::string Err;
   Package *P = Prov.header(Path, Mem, Err);

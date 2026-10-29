@@ -231,6 +231,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         return false;
       }
       Type *Ps[] = {S0, Ctx.slice(Elem)};
+      // OWN-V1: `append(out, v...)` of a view copies its elements out, which
+      // only a plain-copy element allows (as reading v[i] does).
+      if (own() && Dots && NArgs == 2 && isViewType(Args[1].Ty))
+        if (Type *VE = ElemOfSlice(Args[1].Ty);
+            VE && identical(VE, Elem) && viewRead(VE) == VE)
+          Ps[1] = Args[1].Ty;
       Sig = Ctx.signature(Ctx.tuple(Ps), Ctx.tuple(ArrayRef<Type *>(&S0, 1)),
                           true, false, 0);
     }
@@ -255,7 +261,10 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         }
       }
       if (Dots && NArgs == 2) {
-        if (Args[1].E && placeKind(Args[1].E) != PlaceKind::Temp) {
+        // A borrowed slice made by slicing is no temporary of its own: its
+        // elements belong to the sliced owner (OWN-V2).
+        if (Args[1].E && (placeKind(Args[1].E) != PlaceKind::Temp ||
+                          llvm::isa_and_nonnull<RefType>(Args[1].Ty))) {
           Type *E2 = ElemOfSlice(Args[1].Ty);
           if (E2 && category(E2) != Category::Trivial)
             err(Args[1], diag::err_own_append_spread);
@@ -263,6 +272,23 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
       } else {
         Type *AElem = ElemOfSlice(S0);
         for (size_t K = 1; K < Args.size(); ++K) {
+          // A view is stored as an element only as a view (OWN-V3).
+          if (AElem && isViewType(Args[K].Ty) && !isViewType(AElem) &&
+              !isInterface(AElem)) {
+            err(Args[K], diag::err_view_to_owned,
+                {str(Args[K].E), str(AElem), "append"});
+            continue;
+          }
+          // OWN-V2: an element is an owning destination, so a borrowed
+          // slice made by slicing is not one; the same assignability check
+          // as every other owning destination (arguments() let it through
+          // as for a borrowed parameter).
+          if (AElem && !isa<RefType>(AElem) &&
+              llvm::isa_and_nonnull<RefType>(Args[K].Ty)) {
+            Operand Tmp = Args[K];
+            assignment(Tmp, AElem, "argument to append");
+            continue;
+          }
           if (AElem && isa<RefType>(AElem))
             checkRefStore(Args[K].E, AElem, Args[K].Ty);
           else
@@ -599,9 +625,18 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         return false;
       }
     }
-    if (own() && Y.E && placeKind(Y.E) != PlaceKind::Temp &&
+    // A borrowed slice made by slicing is no temporary of its own: its
+    // elements belong to the sliced owner (OWN-V2).
+    if (own() && Y.E &&
+        (placeKind(Y.E) != PlaceKind::Temp ||
+         llvm::isa_and_nonnull<RefType>(Y.Ty)) &&
         category(Src) != Category::Trivial)
       err(Y, diag::err_own_copy_source);
+    // OWN-V1: copying out of a view copies its elements out, which only a
+    // plain-copy element allows (as reading v[i] does).
+    else if (own() && isViewType(Y.Ty) && viewRead(Src) != Src)
+      err(Y, diag::err_view_to_owned,
+          {Y.E ? str(Y.E) : str(Y), str(X.Ty), "copy"});
     if (X.E)
       rejectBoxWrite(Call, X.E, true, str(Call));
     X.M = Mode::Value;
@@ -612,6 +647,9 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     Type *Key = nullptr;
     Type *MapT = X.Ty;
     bool Ok = underIs(MapT, [&](Type *U) {
+      if (U && own())
+        if (auto *Rf = dyn_cast<RefType>(U))
+          U = under(Rf->Elem); // delete(v.m, k): rejected as a write below
       auto *M = dyn_cast_or_null<sema::MapType>(U);
       if (!M) {
         err(X, diag::err_sema_builtin,
@@ -787,6 +825,12 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
           err(Arg, diag::err_own_move_range_borrowed, {str(Arg)});
         else
           err(Arg, diag::err_own_borrowed_move, {str(Arg)});
+        return false;
+      }
+      // OWN-V2, OWN-R3b item 6: a borrowed []T made by slicing is a borrow
+      // of its owner; it cannot be moved.
+      if (auto *R = dyn_cast<RefType>(X.Ty); R && R->Borrowed) {
+        err(Arg, diag::err_own_borrowed_move, {str(Arg)});
         return false;
       }
       // P03.19: moving out of a map or slice of an interface box writes it.

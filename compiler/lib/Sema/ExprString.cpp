@@ -217,10 +217,6 @@ public:
       print(C->Value, Depth);
       break;
     }
-    case K::RefType:
-      OS << "ref ";
-      print(cast<ast::RefType>(E)->Elem, Depth);
-      break;
     default:
       OS << "?";
     }

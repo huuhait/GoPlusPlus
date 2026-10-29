@@ -1,0 +1,11 @@
+// P03.23 review (R12): what is reported for a by-value cycle does not depend
+// on what was walked before. Each program is checked in every order of its
+// type declarations, and each order reports exactly what go build (1.25)
+// reports for it (the same in every order here), with the walk's memory of
+// failed keys in place (a key with a cycle below it is walked again by a
+// walk that still reports), and with a ring of right-hand sides reported by
+// the walk that first meets it (R22).
+// RUN: %python %S/Inputs/check-decl-orders.py %gopp %S/Inputs/decl-orders/r12.go %t.r12 "invalid recursive type: A" "invalid recursive type: B"
+// RUN: %python %S/Inputs/check-decl-orders.py %gopp %S/Inputs/decl-orders/r12b.go %t.r12b "invalid recursive type: N0" "invalid recursive type N1"
+// RUN: %python %S/Inputs/check-decl-orders.py %gopp %S/Inputs/decl-orders/r12c.go %t.r12c "invalid recursive type: N3" "invalid recursive type N2"
+// RUN: %python %S/Inputs/check-decl-orders.py %gopp %S/Inputs/decl-orders/r22b.go %t.r22b "invalid recursive type N1"

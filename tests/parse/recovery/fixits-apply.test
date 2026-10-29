@@ -65,8 +65,6 @@ func f3!() (int, error) { return 0, nil }
 // CHECK: func f3!() (int) { return 0, nil }
 func f4(own s string) {}
 // CHECK: func f4(move s string) {}
-func f5(t view string) {}
-// CHECK: func f5(t ref string) {}
 func f6(a, move b int) {}
 // CHECK: func f6(a int, move b int) {}
 macro lower(a expr) { a }

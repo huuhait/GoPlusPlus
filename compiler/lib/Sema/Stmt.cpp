@@ -55,10 +55,11 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   if (!Saved.FuncId) {
     PayloadBorrows.clear();
     BoxGetBindings.clear();
+    TempViews.clear();
   }
   // A function literal in a header is an ordinary body, not the header.
-  bool SavedHeader = InHeaderInit;
-  InHeaderInit = false;
+  bool SavedForInit = InForInit;
+  InForInit = false;
   auto SavedLocals = std::move(LocalVars);
   LocalVars.clear();
   // Option flow typing starts with nothing known in every function (a
@@ -159,7 +160,7 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   NoNarrowExpr = SavedNoNarrowExpr;
   RefillLhs = std::move(SavedRefill);
   RefillMoved = std::move(SavedRefillMoved);
-  InHeaderInit = SavedHeader;
+  InForInit = SavedForInit;
   E = Saved;
 }
 
@@ -444,13 +445,11 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
 
 /// The init statement of an if or switch (not a three-clause for, STM-4): its
 /// temporaries live to the end of the whole statement (OWN-R2, STM-4), so a
-/// variable it declares may hold a ref into one (OWN-V6).
-void Checker::headerInit(const ast::Stmt *Init) {
-  bool Saved = InHeaderInit;
-  InHeaderInit = true;
-  simpleStmt(Init);
-  InHeaderInit = Saved;
-}
+/// variable it declares may hold a view into one (OWN-V6). Such a variable is
+/// kept in TempViews as a local of an inner block is (its block is the whole
+/// statement): it may go into a variable of that statement, never into an
+/// outer variable or a return.
+void Checker::headerInit(const ast::Stmt *Init) { simpleStmt(Init); }
 
 void Checker::ifStmt(unsigned Ctx, const IfStmt *S0) {
   openScope(S0->getRange(), "if");
@@ -477,7 +476,10 @@ void Checker::ifStmt(unsigned Ctx, const IfStmt *S0) {
 
 void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   openScope(S0->getRange(), "for");
+  bool SavedForInit = InForInit;
+  InForInit = true;
   simpleStmt(S0->Init);
+  InForInit = SavedForInit;
   // The loop head: the meet of what is known before the loop and at the back
   // edges, decided once the body is checked (Flow.cpp, flowLoopHead).
   int Region = flowLoopHead(S0, S0->Body->getBegin());
@@ -935,16 +937,6 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
       }
       if (Dup)
         continue;
-      // TYP-9: `case string:` also matches a ref string, so a later
-      // `case ref string:` is never reached.
-      if (own() && T)
-        if (auto *R = dyn_cast<RefType>(T))
-          for (auto &[Seen1, Pos1] : Seen)
-            if (Seen1 && identical(Seen1, R->Elem)) {
-              err(Ex, diag::err_own_case_ref_unreachable, {str(T), str(Seen1)})
-                  .note(Pos1, "previous case");
-              break;
-            }
       Seen.push_back({T, Ex->getBegin()});
       if (HaveSX && T)
         typeAssertion(Ex, SX, T, true);
@@ -955,10 +947,13 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
       if (CC->List.size() != 1 || !VT) {
         VT = HaveSX ? SX.Ty : invalid();
       }
+      bool Box = own() && bindsBox(VT);
+      if (Box)
+        VT = boxBindingType(VT); // TYP-9, OWN-V1: a view of the boxed value
       Var *V = newVar(name(Lhs), VT, Lhs->getBegin());
       declare(E.Sc, nullptr, V, CC->Colon);
       recordImplicit(CC, V);
-      if (own() && bindsBox(VT))
+      if (Box)
         V->Mode = Var::Borrowed; // TYP-9
       LhsVars.push_back(V);
     }
@@ -1090,8 +1085,13 @@ static RangeTypes rangeKeyVal(Checker &C, Type *T) {
       R.Ok = true;
       return R;
     }
-  if (auto *Rf = dyn_cast<RefType>(U))
+  // Through a ref or a view, as `<-c` sees it: a channel behind one is not a
+  // channel (a receive would change the channel).
+  bool ThroughRef = false;
+  if (auto *Rf = dyn_cast<RefType>(U)) {
     U = C.under(Rf->Elem);
+    ThroughRef = true;
+  }
   switch (U->getKind()) {
   case Type::Kind::Basic: {
     auto *B = cast<BasicType>(U);
@@ -1128,6 +1128,8 @@ static RangeTypes rangeKeyVal(Checker &C, Type *T) {
     return R;
   case Type::Kind::Chan: {
     auto *Ch = cast<sema::ChanType>(U);
+    if (ThroughRef)
+      return Bad("non-channel " + C.str(T));
     if (Ch->D == sema::ChanType::Send)
       return Bad("receive from send-only channel");
     R.Key = Ch->Elem;
@@ -1203,6 +1205,15 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
           {"range over " + str(X) + " permits only one iteration variable"});
     Key = RT.Key;
     Val = RT.Val;
+    // OWN-V1: elements read through a view are views (or plain copies).
+    if (own() && RT.Ok && !RT.IsFunc &&
+        S0->Alias == RangeStmt::AliasKind::None &&
+        (isViewType(X.Ty) || viewPlace(S0->X))) {
+      if (Val)
+        Val = viewRead(Val);
+      if (Key && coreType(X.Ty) && isa<sema::MapType>(coreType(X.Ty)))
+        Key = viewRead(Key);
+    }
   }
   // Go++ (RNG-1a): the `&` form aliases the element: slices, arrays, map
   // values, and iterators that yield pointers (RNG-6a).
@@ -1253,6 +1264,16 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
 
   const ast::Expr *Lhs[2] = {SKey, SValue};
   Type *Rhs[2] = {Key, Val};
+  // OWN-V6: the temporary a range header makes lives to the end of the
+  // statement, so a range variable that borrows from it (an owning element,
+  // or a view of one) is kept in TempViews: it may go into a variable of the
+  // loop, never into an outer variable or a return.
+  bool FromTemp =
+      own() && RT.Ok && !RT.IsFunc && !IsInt && !OwnedVars &&
+      X.M != Mode::Invalid &&
+      (isTempOrSharedTempPart(S0->X) || tempViewVar(S0->X) ||
+       (X.Ty && isa<RefType>(X.Ty) && refIntoTemp(S0->X, X.Ty, X.Ty)));
+  Type *Elems[2] = {RT.Key, RT.Val};
   if (IsDef) {
     SmallVector<Var *, 2> Vars;
     for (int K = 0; K < 2; ++K) {
@@ -1308,6 +1329,10 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
             if (Type *XU = coreType(X.Ty); XU && isa<sema::ArrayType>(XU))
               notePayloadBorrow(Obj, S0->X);
           }
+          if (FromTemp && !IsAlias &&
+              (Obj->Mode == Var::Borrowed ||
+               (isViewType(Obj->Ty) && Obj->Ty != Elems[K])))
+            TempViews.insert(Obj);
         }
       }
     }
@@ -1338,8 +1363,14 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
         Y.Ty = T;
         bool Saved = NoOwnCheck;
         NoOwnCheck = true;
-        assignVar(Lhs[K], nullptr, &Y, "assignment");
+        Type *Dst = assignVar(Lhs[K], nullptr, &Y, "assignment");
         NoOwnCheck = Saved;
+        // OWN-V6: the `=` form stores into variables declared before the
+        // statement, so a view into its temporary outlives it.
+        if (FromTemp && Y.M != Mode::Invalid && Dst && isa<RefType>(Dst) &&
+            (isOwning(T) || (isViewType(T) && T != Elems[K])))
+          err(Lhs[K], diag::err_own_ref_into_temp,
+              {"an element of " + str(S0->X), str(Lhs[K])});
       }
     }
   } else if (IsInt) {

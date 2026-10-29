@@ -21,7 +21,7 @@ func positive(move xs []string) []string {
 
 func negative() {
 	s := "abc"
-	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use s[1:] (value of type ref string) as string value in assignment: a ref is not an owning value: write string(s[1:]) to copy (TYP-2)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use s[1:] (value of type View[string]) as string value in assignment: a view is not an owning value: write string(s[1:]) to copy (TYP-2)
 	s = s[1:]
 	_ = s
 }

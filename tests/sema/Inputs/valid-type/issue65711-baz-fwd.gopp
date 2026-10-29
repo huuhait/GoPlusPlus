@@ -1,0 +1,21 @@
+// CHECK: error[E0139]: invalid recursive type Baz
+package main
+
+type Foo[T any] struct {
+	baz T
+}
+type Bar[T any] struct {
+	foo Foo[T]
+}
+type Baz struct {
+	bar Bar[Baz]
+}
+
+func main() {}
+
+func use0(a Baz) {
+	c := a.Clone()
+	_ = c
+	var z Baz
+	_ = z
+}

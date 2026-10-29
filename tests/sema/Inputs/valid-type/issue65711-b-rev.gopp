@@ -1,0 +1,15 @@
+// CHECK: error[E0139]: invalid recursive type C
+package main
+
+type C B[C]
+type B[P any] A[P]
+type A[P any] [1]P
+
+func main() {}
+
+func use0(a C) {
+	c := a.Clone()
+	_ = c
+	var z C
+	_ = z
+}

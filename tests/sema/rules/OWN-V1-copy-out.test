@@ -1,0 +1,211 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.21 review (R9, R10, R11, R17, R18), OWN-V1, OWN-V3: a value read
+// through a view is copied out as a plain value only if its type is Copy and
+// DEFINITELY pointer-free (one predicate, copiesOut, on the real types; for a
+// type parameter, on every type in its type set). Everything else read
+// through a view is a view. A copy of a view (`.Clone()`, `[]T(v)`, `T(v)`)
+// must not reach a raw pointer by value (E0373).
+package main
+
+import "unsafe"
+
+// --- generics (R9): [T Copy] may be *int, so its elements are views
+func first[T Copy](v View[[]T]) T {
+	// CHECK: [[@LINE+1]]:9: error{{\[E0314\]}}: cannot use v[0] (variable of type View[T]) as T value in return statement
+	return v[0]
+}
+
+type W[T any] struct {
+	X T
+	S []int
+}
+
+func field[T Copy](v View[W[T]]) T {
+	// CHECK: [[@LINE+1]]:9: error{{\[E0314\]}}: cannot use v.X (variable of type View[T]) as T value in return statement
+	return v.X
+}
+
+func each[T Copy](v View[[]T], f func(T)) {
+	for _, x := range v {
+		// CHECK: [[@LINE+1]]:5: error{{\[E0314\]}}: cannot use x (variable of type View[T]) as T value in argument to f
+		f(x)
+	}
+}
+
+func anyElem[T any](v View[[]T]) T {
+	// CHECK: [[@LINE+1]]:9: error{{\[E0314\]}}: cannot use v[0] (variable of type View[T]) as T value in return statement
+	return v[0]
+}
+
+// The other side (R17): every type in the set is pointer-free, so the
+// element is a plain T; and an owned []int goes to a View[[]T] parameter
+// with T inferred.
+type Num interface{ int | float64 }
+
+func sum[T Num](xs View[[]T]) T {
+	var s T
+	for _, x := range xs {
+		s += x
+	}
+	return s + xs[0]
+}
+
+func contains[T comparable](xs View[[]T], x T) bool {
+	for i := range xs {
+		if xs[i] == x {
+			return true
+		}
+	}
+	return false
+}
+
+func useGenerics(a []int, f []float64, v View[[]string]) bool {
+	return contains(a, 1) && sum(a) > 0 && sum(f) > 0 && contains(v, "x") &&
+		sum(View[[]int](a)) > 0
+}
+
+// --- a named pointer type (R10) reads as a view of its target
+type U struct{ N int }
+type PU *U
+type S struct {
+	P PU
+	T []int
+}
+
+func namedPtr(v View[[]PU], s View[S]) int {
+	p := v[0]
+	// CHECK: [[@LINE+1]]:2: error{{\[E0368\]}}: cannot write p.N: it is read-only, it is reached through a View (OWN-V1)
+	p.N = 1
+	for _, q := range v {
+		// CHECK: [[@LINE+1]]:3: error{{\[E0368\]}}: cannot write q.N: it is read-only, it is reached through a View (OWN-V1)
+		q.N = 2
+	}
+	// CHECK: [[@LINE+1]]:13: error{{\[E0314\]}}: cannot use s.P (variable of type View[U]) as *U value in variable declaration
+	var r *U = s.P
+	_ = r
+	return p.N + s.P.N
+}
+
+// --- copies of a view (R11)
+type HP struct{ P *int }
+type V2 HP
+type HU struct{ P Unique[*int] }
+type HS struct{ P Shared[*int] }
+type HN struct{ P PU }
+
+// A hand-written Clone decides how deep the copy is.
+type Deep struct{ P *int }
+
+func (d Deep) Clone() Deep {
+	n := *d.P
+	return Deep{P: &n}
+}
+
+func copies(a View[HP], b View[[]*int], c View[map[string]*int], d View[HN],
+	e View[[2]*int]) {
+	// CHECK: [[@LINE+1]]:9: error{{\[E0373\]}}: cannot copy a out of a view: HP holds a raw pointer by value
+	x := a.Clone()
+	// CHECK: [[@LINE+1]]:9: error{{\[E0373\]}}: cannot copy b out of a view: []*int holds a raw pointer by value
+	y := b.Clone()
+	// CHECK: [[@LINE+1]]:14: error{{\[E0373\]}}: cannot copy b out of a view: []*int holds a raw pointer by value
+	z := []*int(b)
+	// CHECK: [[@LINE+1]]:10: error{{\[E0373\]}}: cannot copy a out of a view: HP holds a raw pointer by value
+	w := V2(a)
+	// CHECK: [[@LINE+1]]:9: error{{\[E0373\]}}: cannot copy c out of a view: map[string]*int holds a raw pointer by value
+	m := c.Clone()
+	// CHECK: [[@LINE+1]]:9: error{{\[E0373\]}}: cannot copy d out of a view: HN holds a raw pointer by value
+	n := d.Clone()
+	// CHECK: [[@LINE+1]]:9: error{{\[E0373\]}}: cannot copy e out of a view: [2]*int holds a raw pointer by value
+	o := e.Clone()
+	// CHECK: [[@LINE+1]]:15: error{{\[E0373\]}}: cannot copy b out of a view: []*int holds a raw pointer by value
+	q := [1]*int(b)
+	_, _, _, _, _, _, _, _ = x, y, z, w, m, n, o, q
+}
+
+func genericCopy[T Clone](v View[T]) T {
+	// CHECK: [[@LINE+1]]:11: error{{\[E0373\]}}: cannot copy v out of a view: T holds a raw pointer by value
+	return v.Clone()
+}
+
+func copiesOk(a View[HU], b View[[]Unique[*int]], c View[HS], d View[Deep],
+	e View[[]int], f View[W[int]]) (HU, []Unique[*int], HS, Deep, []int, W[int]) {
+	return a.Clone(), b.Clone(), c.Clone(), d.Clone(), []int(e), f.Clone()
+}
+
+func genericCopyOk[T interface {
+	Clone
+	int | string
+}](v View[T]) T {
+	return v.Clone()
+}
+
+// --- R18: re-pointing a view variable through a pointer, appending and
+// copying Copy elements out of a view, ordering views
+func adv(p *View[string]) { *p = (*p)[1:] }
+
+@View
+type HasView struct{ s View[string] }
+
+func minor(s View[string], v View[[]int], a, b View[string], h View[HasView],
+	pv View[[]*int], sv View[[]string]) ([]int, bool) {
+	adv(&s)
+	var out []int
+	out = append(out, v...)
+	dst := make([]int, 2)
+	copy(dst, v)
+	// CHECK: [[@LINE+1]]:6: error{{\[E0368\]}}: cannot write h.s: it is read-only, it is reached through a View (OWN-V1)
+	adv(&h.s)
+	var ps []*int
+	// CHECK: [[@LINE+1]]:18: error{{\[E0314\]}}: cannot use pv (variable of type View{{\[}}[]*int]) as []*int value in argument to append
+	ps = append(ps, pv...)
+	var pd []*int
+	// CHECK: [[@LINE+1]]:11: error{{\[E0370\]}}: cannot use pv (a view) as an owned []*int in copy
+	copy(pd, pv)
+	sd := make([]string, 1)
+	// CHECK: [[@LINE+1]]:11: error{{\[E0292\]}}: copy(dst, src) with non-trivial elements needs src.Clone() (OWN-R4)
+	copy(sd, sv)
+	return out, a < b && a <= "m" && "z" > b && a >= b && a == b
+}
+
+// --- composites of type parameters (review R20): `[2]T` and `G[T]` copy
+// out when every type parameter in them does (decided in the same
+// predicate, with the type-set rule at each parameter); with a parameter
+// that may be a pointer (`[T Copy]`) they stay views. (Copying a plain `T`
+// still needs the Copy constraint, GEN-3.)
+type CNum interface {
+	Copy
+	int | float64
+}
+
+func arrOf[T CNum](v View[[][2]T]) [2]T { x := v[0]; x[0]++; return x }
+
+func instOf[T CNum](v View[[]G[T]]) G[T] { return v[0] }
+
+type G[T any] struct{ x T }
+
+func plainTypes[T int | float64](v View[[][2]T], w View[[]G[T]]) {
+	// CHECK: [[@LINE+1]]:17: error{{\[E0314\]}}: cannot use v[0] (variable of type [2]T) as string value in variable declaration
+	var s string = v[0]
+	// CHECK: [[@LINE+1]]:17: error{{\[E0314\]}}: cannot use w[0] (variable of struct type G[T]) as string value in variable declaration
+	var t string = w[0]
+	_, _ = s, t
+}
+
+func viewTypes[T Copy](v View[[][2]T], w View[[]G[T]]) {
+	// CHECK: [[@LINE+1]]:17: error{{\[E0314\]}}: cannot use v[0] (variable of type View{{\[}}[2]T]) as string value in variable declaration
+	var s string = v[0]
+	// CHECK: [[@LINE+1]]:17: error{{\[E0314\]}}: cannot use w[0] (variable of type View[G[T]]) as string value in variable declaration
+	var t string = w[0]
+	_, _ = s, t
+}
+
+// --- review R25: an unsafe.Pointer read through a view is a plain
+// unsafe.Pointer (View[unsafe.Pointer] cannot be formed); a write through a
+// pointer converted from it is undefined behavior (UB-7), not checked.
+func unsafeRead(v View[[]unsafe.Pointer]) unsafe.Pointer {
+	p := v[0]
+	*(*int)(v[0]) = 1
+	return p
+}
+
+func main() {}

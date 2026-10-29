@@ -26,6 +26,7 @@
 
 #include <deque>
 #include <functional>
+#include <map>
 #include <set>
 
 namespace gopp {
@@ -128,6 +129,7 @@ struct DeclInfo {
   unsigned IotaVal = 0;
   bool Pinned = false; // `@Pinned` type declaration (OWN-R10)
   bool Strict = false; // `@Strict` struct type declaration (TYP-15a)
+  bool ViewOk = false; // `@View` struct type declaration (OWN-V5)
   /// Package-level objects this declaration refers to (initorder.go).
   llvm::SmallSetVector<Object *, 4> Deps;
 };
@@ -183,6 +185,11 @@ struct PackageState {
 
 /// Type category of D1.3.
 enum class Category : uint8_t { Trivial, Owning, SharedHandle };
+
+/// Calls Fn(Q, Exact) for each type parameter Q that Arg mentions: Exact when
+/// Arg is Q itself. Iterative, each type once (Mono.cpp).
+void forEachTypeParam(Type *Arg,
+                      llvm::function_ref<void(TypeParamType *, bool)> Fn);
 
 class Checker;
 
@@ -300,6 +307,52 @@ public:
   void later(std::function<void()> F) { Delayed.push_back(std::move(F)); }
   llvm::DenseMap<const ast::Expr *, ExprInfo> Untyped;
   SmallVector<Object *, 8> ObjPath;
+  /// One instantiation whose type arguments mention type parameters, for the
+  /// instantiation-cycle check (Mono.cpp).
+  struct MonoInst {
+    SourceLoc Pos;
+    NamedType *Orig = nullptr; // the generic type, null for a function
+    SmallVector<TypeParamType *, 2> TParams;
+    SmallVector<Type *, 2> TArgs;
+  };
+  std::vector<MonoInst> MonoInsts;
+  unsigned NoMono = 0; // > 0: instantiations are not recorded (Mono.cpp)
+  std::vector<std::pair<TypeParamType *, TypeParamType *>> MonoCanon;
+  void recordMono(SourceLoc Pos, NamedType *Orig,
+                  ArrayRef<TypeParamType *> TParams, ArrayRef<Type *> TArgs);
+  /// Finds the instantiation cycles among Insts (true if there is one) and
+  /// marks the generic types on them (InstCycle). Report: also report each
+  /// cycle (E0366); the caller asks only for a package without other errors, as
+  /// Go does.
+  bool monoCheck(ArrayRef<MonoInst> Insts, bool Report);
+  /// An instance of a generic type on an instantiation cycle: the ONE test
+  /// that the walks which follow every instance a type reaches (clone,
+  /// pinned, zero values, views held, pointers a copy shares, bad Option
+  /// arguments, the by-value cycle sweep) make, so
+  /// they end (the instances grow without end). Nothing else treats the type
+  /// differently: it stays valid, so every other error is reported as Go
+  /// does, and the cycle itself only when there is no other error.
+  static bool onInstCycle(const Type *T) {
+    auto *N = llvm::dyn_cast_or_null<NamedType>(T);
+    return N && N->Orig && N->Orig->InstCycle;
+  }
+  /// Nesting of declarations and type expressions being resolved; see objDecl.
+  static constexpr unsigned MaxDeclNest = 96;
+  unsigned DeclNest = 0;
+  /// Resolving the right-hand side of an alias: a defined type declared from
+  /// there waits until the alias is done (objDecl).
+  unsigned InAliasRhs = 0;
+  bool DrainingDecls = false;
+  llvm::DenseMap<TypeName *, NamedType *> PendingDecl;
+  /// A deferred generic type: the scope of its type parameters, declared
+  /// when it was deferred.
+  llvm::DenseMap<TypeName *, Scope *> PendingTParamScope;
+  /// The pending type declarePending asks objDecl to declare.
+  TypeName *ForcePending = nullptr;
+  /// Declares a type objDecl deferred (P03.23), if it still is.
+  void declarePending(TypeName *TN);
+  SmallVector<TypeName *, 16> DeferredDecls;
+  void drainDeferredDecls();
   SmallVector<Var *, 16> LocalVars;
 
   // --- universe helpers
@@ -418,6 +471,7 @@ public:
   int64_t gcOffsetof(Type *T, llvm::ArrayRef<int> Index);
   /// Whether the size of T depends on a type parameter (builtins.go).
   bool hasVarSize(Type *T, llvm::DenseMap<NamedType *, bool> *Seen = nullptr);
+  uint64_t varParams(NamedType *O);
 
   /// Recursion guard for checks that can chase infinitely expanding generic
   /// types (invalid programs); past the limit they give up quietly.
@@ -631,20 +685,58 @@ public:
   void varDecl(Var *O, ArrayRef<Var *> Lhs, const ast::Expr *Typ,
                const ast::Expr *Init);
   void typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
-                bool Pinned = false, bool Strict = false);
+                bool Pinned = false, bool Strict = false, bool ViewOk = false);
   /// The struct type expression of the `@Strict` type declaration being
   /// resolved (TYP-15a); null otherwise. Only that very node is strict: a
   /// struct nested in a field type of it is not.
   const ast::StructType *StrictStructExpr = nullptr;
+  /// The struct type of the `@View` type declaration being resolved (OWN-V5):
+  /// only its fields may hold views.
+  const ast::StructType *ViewStructExpr = nullptr;
+  bool containsView(Type *T);
+  /// The one question "is this read-only" (OWN-V1): a View, not the borrowed
+  /// slice made by slicing a writable one.
+  bool isViewType(Type *T);
+  bool pointerFree(Type *T);
+  /// The ONE question "is a value of type T read through a view or a box a
+  /// plain copy" (OWN-V1, TYP-9): T is Copy and definitely pointer-free
+  /// (pointerFree; a type parameter: every type in its type set). viewRead,
+  /// range, box bindings and inference ask it.
+  bool copiesOut(Type *T);
+  bool viewCopyHasPointer(Type *T);
+  bool reachesBlocker(
+      Type *Root, llvm::function_ref<std::atomic<uint8_t> &(NamedType *)> Slot,
+      llvm::function_ref<bool(Type *, llvm::SmallVectorImpl<Type *> &)> Visit);
+  Type *boxBindingType(Type *T);
+  /// The type of a part of type T read through a view: a plain copy if
+  /// copiesOut(T), else View[T] (a pointer gives a view of its target).
+  Type *viewRead(Type *T);
+  /// The view of the target of a pointer read through a view.
+  Type *viewTarget(Type *T);
+  /// Is the place Ex a part of a view (reached through a View-typed
+  /// operand, at any depth)?
+  bool viewPlace(const ast::Expr *Ex);
+  bool rejectViewWrite(const ast::Expr *At, const ast::Expr *Place,
+                       const std::string &What, bool Self = false);
+  llvm::DenseSet<const ast::Expr *> ViewWriteReported;
+  /// The struct type expression of the type declaration being resolved and
+  /// the name of that type (for messages).
+  const ast::StructType *DeclStructExpr = nullptr;
+  StringRef DeclStructName;
+  /// `@Ref` on a type declaration: an unknown attribute (ADR-0020).
+  void rejectRefAttr(const GenDecl *GD);
+  llvm::DenseSet<const Attribute *> RefAttrReported;
   void funcDecl(Func *O, DeclInfo *D);
   void collectMethods(TypeName *O);
   void declStmt(const DeclStmt *S);
   void importPackage(const ImportSpec *Spec, FileState &F);
   bool validCycle(Object *Start, bool &Nval, bool &Ndef);
-  void cycleError(ArrayRef<Object *> Cycle, int Start = -1);
+  void cycleError(ArrayRef<Object *> Cycle, int Start = -1,
+                  ArrayRef<SourceLoc> At = {});
   void validType(NamedType *T);
-  bool validTypeRec(Type *T, SmallVector<NamedType *, 8> &Nest,
-                    SmallVector<NamedType *, 8> &Path);
+  bool validTypeWalk(Type *Root);
+  void resolvePendingUnder();
+  void invalidateByValueCycles(ArrayRef<NamedType *> Roots);
   void checkInitOrder();
   void addDeclDep(Object *To) {
     if (E.Cur && S.ObjMap.count(To))
@@ -753,16 +845,37 @@ public:
   bool own() const { return S.Opts.Ownership && !S.Opts.GoCompat; }
   Category category(Type *T);
   bool isOwning(Type *T) { return category(T) == Category::Owning; }
-  /// A type switch or assertion binding of this type borrows the box (TYP-9):
-  /// an owning type, or a type parameter (it may be a map or slice).
+  /// A type switch or assertion binding of this type borrows the box (TYP-9)
+  /// and is a view of it (OWN-V1): every type that is not a plain copy
+  /// (copiesOut), except an interface, a view and a handle the box holds
+  /// itself (boxHandle: its target is not in the box; an owning Unique
+  /// binding still borrows it).
   bool bindsBox(Type *T) {
     if (!isValid(T))
       return false;
     if (llvm::isa<TypeParamType>(T))
-      return !isCopyType(T); // a [T Copy] binding is a plain value
-    return isOwning(T) && !isInterface(T);
+      return !copiesOut(T);
+    if (isInterface(T) || isViewType(T)) // a view: the box holds no target
+      return false;
+    if (boxHandle(T))
+      return isOwning(T);
+    return !copiesOut(T);
+  }
+  /// A handle the box of an interface holds itself (TYP-9): a pointer (also
+  /// a named pointer type), a pointer kind, unsafe.Pointer, a func or a chan.
+  /// Bound out of the box, it is that handle: what it reaches is not in the
+  /// box (as `case *Doc:` keeps a writable target).
+  bool boxHandle(Type *T) {
+    Type *U = under(T);
+    return llvm::isa<PointerType>(U) || llvm::isa<SignatureType>(U) ||
+           llvm::isa<ChanType>(U) || isUnsafePointer(U) ||
+           hasPtrKind(T, nullptr, nullptr);
   }
   bool isCopyType(Type *T);
+  /// Is type parameter P Copy (Clone)? Implicit (if given): only because of
+  /// a type set with a ~T term, so every instantiation must be too.
+  bool paramIs(TypeParamType *P, bool Clone, bool *Implicit = nullptr);
+  std::string notCopyWhy(Type *T);
   bool satisfiesClone(Type *T, std::string *Why);
   bool cloneWalk(Type *T, std::string *Why); // satisfiesClone's walk
   bool hasPtrKind(Type *T, PtrKind *K, Type **Elem);
@@ -807,6 +920,16 @@ public:
   /// Option is a part of the box (`d, ok := w.Get()` on a binding or
   /// assertion of an `Option[T]`): box bindings too. Kept per checker.
   llvm::DenseSet<const Var *> BoxGetBindings;
+  bool declaredPointerPart(const ast::Expr *Ex);
+  /// OWN-V6: the locals of the outermost body being checked that hold a view
+  /// into a temporary kept alive to the end of their block (`w :=
+  /// f()[0:3]`, `var w = f()[0:3]`), and the locals such a view was copied
+  /// into. Kept per checker, like BoxGetBindings.
+  llvm::DenseSet<const Var *> TempViews;
+  /// The TempViews variable whose view R is (`w`, `w[1:]`), or null.
+  const Var *tempViewVar(const ast::Expr *R);
+  /// Is the view R a view into a temporary (checkRefStore's question)?
+  bool refIntoTemp(const ast::Expr *R, Type *Dst, Type *SrcTy);
   /// A type switch, assertion or box Option Get binding.
   bool boxBinding(const Var *V);
   /// Where Ex lies, for a direct write (P03.19): rooted at a box binding or
@@ -919,6 +1042,7 @@ public:
   /// Why Arg cannot be the value type of an Option (it has a nil already, or
   /// is an Option), or null (OWN-P9).
   const char *badOptionArg(Type *Arg);
+  const char *badViewArg(Type *Arg);
   /// OWN-P9 per instance: an instance Inst of a generic type or function with
   /// the type arguments TArgs must not hold an Option of one of them that
   /// cannot be (Option[T] with T = error). Reported at Pos.
@@ -1235,9 +1359,11 @@ public:
   /// A borrowed string / []T parameter takes a ref at zero cost (PAR-8), and
   /// so does a map key used for a lookup (OWN-V4).
   bool RefToOwnedOk = false;
+  bool ViewKeyLookup = false; // a map key lookup takes a View key (OWN-V4)
   bool NoOwnCheck = false;
-  /// Checking the init statement of an if / for / switch header.
-  bool InHeaderInit = false;
+  /// Checking the init statement of a three-clause for: its temporaries are
+  /// not kept (STM-4, OWN-V6).
+  bool InForInit = false;
   void headerInit(const ast::Stmt *Init);
   /// The selector being evaluated as the callee of a call.
   const ast::Expr *CalleeSel = nullptr;
@@ -1245,7 +1371,41 @@ public:
   bool CalleeSuspended = false;
   /// Call -> the place its result is assigned to (OWN-R4 implicit moves).
   llvm::DenseMap<const ast::Expr *, const ast::Expr *> AppendTargets;
-  llvm::DenseSet<const NamedType *> ValidTypes, ReportedCycle;
+  llvm::DenseSet<const NamedType *> ReportedCycle;
+  /// Rings of right-hand sides found at a declaration, reported by the walk
+  /// that first meets them (noteDeclRing, reportDeclRing): the type each
+  /// ring member's right-hand side names, the ring of each member, and the
+  /// rings not reported yet.
+  llvm::DenseMap<const NamedType *, NamedType *> RingNext;
+  llvm::DenseMap<const NamedType *, unsigned> RingOf;
+  std::vector<std::vector<NamedType *>> DeclRings;
+  std::set<unsigned> PendingRings;
+  void noteDeclRing(ArrayRef<std::pair<NamedType *, NamedType *>> Links);
+  void reportDeclRing(NamedType *N);
+  void flushDeclRings();
+  /// validTypeWalk: the numbers for types and type arguments (equal numbers,
+  /// equal types), and the keys of the finished walks: valid, or failed with
+  /// whether a by-value cycle was met below the key (a walk that reports
+  /// may skip a failed key only without one).
+  std::map<std::vector<uint64_t>, unsigned> WalkIds;
+  llvm::DenseSet<unsigned> ValidKeys;
+  llvm::DenseMap<unsigned, bool> FailedKeys;
+  /// Types waiting for the underlying type of an instance (typeDecl).
+  std::vector<std::pair<NamedType *, NamedType *>> PendingUnder;
+  /// Struct types found to hold no view (containsView).
+  llvm::DenseSet<const NamedType *> ViewFree;
+  /// Struct types found to hold a view (containsView).
+  llvm::DenseSet<const NamedType *> ViewHolders;
+  /// Package-level types whose by-value recursion is not checked yet.
+  std::vector<NamedType *> WalkQueue;
+  /// validTypeWalk met a type inside its own definition.
+  bool ByValueCycle = false;
+  /// The types on the cycles validTypeWalk found: where the search for what
+  /// is left of them starts besides the declared types.
+  std::vector<NamedType *> CycleSeeds;
+  /// The instances expanded while the package's types are declared (so
+  /// invalidateByValueCycles can start from them); null when not recording.
+  std::vector<NamedType *> *ExpandedInsts = nullptr;
 };
 
 /// Scope position helper: variables declared in a statement become visible at
