@@ -355,3 +355,6 @@ E0349 err_required_maybe_nil
 E0350 err_unchecked_value
 E0351 err_unchecked_store
 E0352 err_maybe_nil_to_never_nil
+E0353 err_map_temp_write
+E0354 err_box_write
+E0355 err_close_nil_chan

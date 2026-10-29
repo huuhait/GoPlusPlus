@@ -209,7 +209,10 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     if (auto *Id = dyn_cast<ast::Ident>(Rcv))
       if (auto *V = dyn_cast_or_null<Var>(lookup(name(Id))))
         if (auto *Op = V->Ty ? dyn_cast<OptionType>(under(V->Ty)) : nullptr)
-          if (!isNarrowed(V) || !valueHasMember(Op->Elem, Sel))
+          // (A narrowing that only a loop's assumption gives never picks T's
+          // method over the Option's own, P03.19.)
+          if (!isNarrowed(V) || Cur.TentN.count(V) ||
+              !valueHasMember(Op->Elem, Sel))
             markNoNarrow(Id);
   }
   exprOrType(X, Ex->X, false);
@@ -1298,6 +1301,41 @@ void Checker::arguments(const CallExpr *Call, SignatureType *Sig,
         TArgs[Base + J] = Args[K].PartialTArgs[J];
       GenericArgs.push_back(K);
     }
+  }
+  // P03.19 (OWN-P10): an argument that only a loop's assumption narrows is
+  // the Option itself where its parameter takes the Option. For a generic
+  // parameter inference decides, in one step: first with every such argument
+  // the Option at once (they may share a type parameter: `pair(o, q)`), and
+  // only if that does not infer, with each alone. An argument whose
+  // instantiated parameter accepts the Option (`Option[T]`, `Option[*T]`,
+  // `any`, a bare type parameter) is the Option (unnarrowTentative).
+  if (!TPs.empty()) {
+    SmallVector<std::pair<size_t, Type *>, 2> Tent;
+    for (size_t K = 0; K < Args.size() && K < SigParams.size(); ++K)
+      if (Type *OT = tentOption(Args[K]))
+        Tent.push_back({K, OT});
+    // Infer with the arguments in Which as their Options; unnarrow those
+    // whose parameter then takes the Option. False if it does not infer.
+    auto Try = [&](ArrayRef<std::pair<size_t, Type *>> Which) {
+      SmallVector<Operand, 4> Trial(Args.begin(), Args.end());
+      for (auto [K, OT] : Which)
+        Trial[K].Ty = OT;
+      InferError TE;
+      SmallVector<Type *, 4> R =
+          infer(Call->Lparen, TPs, TArgs, ParamTuple, Trial, false, &TE);
+      if (R.empty())
+        return false;
+      for (auto [K, OT] : Which) {
+        Operand O = Args[K];
+        O.Ty = OT;
+        if (assignableTo(O, subst(SigParams[K], TPs, R), nullptr))
+          unnarrowTentative(Args[K]);
+      }
+      return true;
+    };
+    if (!Tent.empty() && !Try(Tent) && Tent.size() > 1)
+      for (const auto &One : Tent)
+        Try(One);
   }
   if (!TPs.empty()) {
     InferError IE;

@@ -749,6 +749,14 @@ void Checker::conversion(Operand &X, Type *T) {
   bool ConstArg = X.M == Mode::Constant;
   bool Ok = false;
   std::string Cause;
+  // P03.19: `T(o)` converts the Option itself where only a loop's assumption
+  // narrows o and the Option converts to T as well (unnarrowTentative).
+  if (Type *OT = ConstArg ? nullptr : tentOption(X)) {
+    Operand O = X;
+    O.Ty = OT;
+    if (convertibleTo(O, T, nullptr))
+      unnarrowTentative(X);
+  }
   if (ConstArg && isConstType(T)) {
     ConstValue NV;
     Ok = constConvertibleTo(X, T, &NV);
@@ -795,6 +803,14 @@ void Checker::conversion(Operand &X, Type *T) {
   }
   if (checkNilableToNeverNil(X, T))
     return;
+  // P03.19: `(*[N]T)(s)` points into s's storage, so it is a pointer into
+  // the box when s is a part of one (as `&s[0]` is): making it is the error.
+  if (own() && X.E && !ConstArg)
+    if (auto *P = llvm::dyn_cast_or_null<PointerType>(coreType(T));
+        P && isa<sema::ArrayType>(under(P->Elem)) &&
+        llvm::isa_and_nonnull<SliceType>(coreType(X.Ty)))
+      rejectBoxWrite(X.E, X.E, true,
+                     "through (" + str(T) + ")(" + str(X.E) + ")");
   if (isUntyped(X.Ty)) {
     Type *Final = T;
     if (isNonTypeParamInterface(T) || (ConstArg && !isConstType(T)))

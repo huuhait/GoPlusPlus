@@ -1,0 +1,482 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10, the loop fixpoint (P03.19, ADR-0018 amendment point 4): the
+// state at the top of a loop is the meet of the state before it and the state
+// at the end of the body and at every `continue`. A value that is checked on
+// every path back to the top is still known there: a cursor loop
+// `n, err = next(n); if err != nil { return err }` (and its Option form) is
+// accepted. A path that comes back unchecked (a missing check, a `continue`
+// in a switch or select before it, a second assignment, a check of another
+// variable or of a shadowing one, a guard assigned before its check) leaves
+// the top unknown. A goto out of the loop is no path back to its top.
+package main
+
+type U struct {
+	Name string @Required
+}
+
+type Node struct{ V int }
+
+func firstU() (U, error)    { return U{Name: "x"}, nil }
+func nextU(n U) (U, error)  { return U{Name: "y"}, nil }
+func useU(n U)              {}
+func cond() bool            { return true }
+func firstO() Option[*Node] { return nil }
+func nextO(n *Node) Option[*Node] {
+	return nil
+}
+func useN(n *Node) {}
+
+// --- checked results
+func positiveCursor() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		useU(n)
+		n, err = nextU(n)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func positiveCursorRange(xs []int) error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for range xs {
+		useU(n)
+		n, err = nextU(n)
+		if err != nil {
+			return err
+		}
+	}
+	useU(n)
+	return nil
+}
+
+func positiveCursorCond() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for cond() {
+		useU(n)
+		n, err = nextU(n)
+		if err != nil {
+			return err
+		}
+	}
+	useU(n)
+	return nil
+}
+
+func positiveContinueAfterCheck() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		useU(n)
+		n, err = nextU(n)
+		if err != nil {
+			return err
+		}
+		if cond() {
+			continue
+		}
+		useU(n)
+	}
+}
+
+func positiveBreakBeforeCheck() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		useU(n)
+		n, err = nextU(n)
+		if cond() {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+func positiveInnerLoop() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		useU(n)
+		for cond() {
+			n, err = nextU(n)
+			if err != nil {
+				return err
+			}
+			useU(n)
+		}
+		useU(n)
+	}
+}
+
+func negativeNoCheck() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		useU(n)
+		// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = nextU(n)
+	}
+}
+
+func negativeContinueBeforeCheck() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		useU(n)
+		// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = nextU(n)
+		if cond() {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func negativeLabeledContinue() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+outer:
+	for {
+		for {
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+			useU(n)
+			// CHECK-DAG: [[@LINE+1]]:19: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+			n, err = nextU(n)
+			if cond() {
+				continue outer
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func negativeSwitchContinue() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		useU(n)
+		// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = nextU(n)
+		switch {
+		case cond():
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func negativeSelectContinue(ch chan int) error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		useU(n)
+		// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = nextU(n)
+		select {
+		case <-ch:
+			continue
+		default:
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func negativeInnerUnchecked() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		useU(n)
+		for cond() {
+			// CHECK-DAG: [[@LINE+1]]:19: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+			n, err = nextU(n)
+		}
+	}
+}
+
+func negativeGuardChangedBeforeCheck() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and the loop assigns it again from a call that can fail or a comma-ok form, so a later pass may read a value that nothing checked: check it right after that assignment (OWN-P10)
+		useU(n)
+		// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and the loop assigns it again from a call that can fail or a comma-ok form, so a later pass may read a value that nothing checked: check it right after that assignment (OWN-P10)
+		n, err = nextU(n)
+		err = nil
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func negativeCapture() error {
+	n, err := firstU()
+	if err != nil {
+		return err
+	}
+	for {
+		n, err = nextU(n)
+		if err != nil {
+			return err
+		}
+		// CHECK-DAG: [[@LINE+1]]:22: error{{\[E0350\]}}: n may be unset here: U has no zero value, and a function literal can run at any time, so a checked result is never known valid in it (CLO-9): after the check, copy it into a local (`x := n`) and use the copy (OWN-P10)
+		f := func() { useU(n) }
+		f()
+	}
+}
+
+// --- Option values
+func positiveOptionCursor() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		useN(n)
+		n = nextO(n)
+		if n == nil {
+			return
+		}
+	}
+}
+
+func positiveOptionBreak() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for cond() {
+		useN(n)
+		if cond() {
+			continue
+		}
+		n = nextO(n)
+		if n == nil {
+			break
+		}
+	}
+}
+
+func positiveOptionRange(xs []int) {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for range xs {
+		useN(n)
+		n = nextO(n)
+		if nil == n {
+			panic("end")
+		}
+	}
+}
+
+func negativeOptionNoCheck() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		n = nextO(n)
+	}
+}
+
+func negativeOptionContinueBeforeCheck() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		n = nextO(n)
+		if cond() {
+			continue
+		}
+		if n == nil {
+			return
+		}
+	}
+}
+
+func negativeOptionOtherVariable() {
+	n := firstO()
+	m := firstO()
+	if n == nil || m == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		n = nextO(n)
+		if m == nil {
+			return
+		}
+	}
+}
+
+func negativeOptionShadowed() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		n = nextO(n)
+		{
+			n := firstO()
+			if n == nil {
+				return
+			}
+		}
+	}
+}
+
+func negativeOptionAssignedAgain() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		n = nextO(n)
+		if n == nil {
+			return
+		}
+		n = nextO(n)
+	}
+}
+
+func negativeOptionPost() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	// CHECK-DAG: [[@LINE+1]]:31: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+	for i := 0; i < 3; n = nextO(n) {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+	}
+}
+
+func negativeOptionNested() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		for cond() {
+			// CHECK-DAG: [[@LINE+1]]:14: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			n = nextO(n)
+		}
+	}
+}
+
+func negativeOptionBreakOnly() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (the loop assigns n, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		n = nextO(n)
+		if cond() {
+			continue
+		}
+		if n == nil {
+			break
+		}
+	}
+}
+
+// A goto that leaves the loop is no way back to its top: the check before
+// it holds on every back edge (the label after the loop starts unknown).
+func positiveOptionGoto() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		useN(n)
+		n = nextO(n)
+		if n == nil {
+			goto done
+		}
+	}
+done:
+}
+
+func negativeOptionMove() {
+	n := firstO()
+	if n == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: n may be nil; check n != nil first (OWN-P10)
+		useN(n)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: n may be nil; check n != nil first (OWN-P10)
+		n = nextO(n)
+		if n == nil {
+			return
+		}
+		_ = move(n)
+	}
+}

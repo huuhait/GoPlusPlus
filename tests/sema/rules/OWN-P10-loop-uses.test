@@ -1,0 +1,326 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10 at a loop head (P03.19): a local that a loop assigns and that
+// is checked before the loop is assumed checked at the top; the back edges
+// decide it at the end of the loop. The assumption is used only where a use
+// needs the value type: where the Option itself fits (an argument, store,
+// result or comparison of a type that takes the Option, a variable whose
+// type is inferred, a type parameter, a conversion, a switch tag, the
+// Option's own IsNil / Get), the use is the Option, so a failed assumption
+// never turns it into an error and no type depends on it. After a loop whose
+// assumption failed, the variable is unchecked, as before the fixpoint.
+package main
+
+import "unsafe"
+
+type Node struct {
+	V    int
+	Next Option[*Node]
+}
+
+func firstO() Option[*Node]
+func nextO(n *Node) Option[*Node]
+func anyO() Option[*Node]
+func use(n *Node)          {}
+func keep(o Option[*Node]) {}
+func keepAny(x any)        {}
+func keepAll(xs ...any)    {}
+func pick() bool           { return true }
+func same[T Copy](x T) T  { return x }
+
+// --- the assumption fails (nothing checks o before the loop comes back):
+// every use below is legal on the Option, so none is an error
+func positiveUnneeded(q *Node) Option[*Node] {
+	o := firstO()
+	if o == nil {
+		return nil
+	}
+	var p Option[*Node]
+	for {
+		keep(o)
+		keepAny(o)
+		keepAll(o, 1)
+		var y Option[*Node] = o
+		p = o
+		_ = o
+		x := o
+		if x == nil {
+			break
+		}
+		if z := o; z != nil {
+			use(z)
+		}
+		w := same(o)
+		keep(w)
+		if o == q || q != o {
+			keep(y)
+		}
+		keepAny(any(o))
+		keep(Option[*Node](o))
+		switch o {
+		case q:
+		case nil:
+		}
+		_ = []Option[*Node]{o}
+		// built-ins that take a value of any type and do not look into it
+		_ = clone(o)
+		_ = unsafe.Sizeof(o)
+		_ = unsafe.Alignof(o)
+		_ = new_unique(o)
+		_ = new_shared(o)
+		println(o)
+		f := o.IsNil
+		_ = f
+		if pick() {
+			return o
+		}
+		o = anyO()
+	}
+	return p
+}
+
+// The uses that need the value: errors, with the loop in the text.
+func negativeNeeded(d *Node) *Node {
+	o := firstO()
+	if o == nil {
+		return d
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		use(o)
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		_ = o.V
+		// CHECK-DAG: [[@LINE+1]]:21: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		_ = unsafe.Sizeof(o.V)
+		// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		_ = new_unique(o.V)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		var p *Node = o
+		use(p)
+		if pick() {
+			// CHECK-DAG: [[@LINE+1]]:11: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			return o
+		}
+		o = anyO()
+	}
+}
+
+// After a loop whose assumption failed: o is unchecked there (an ordinary
+// error where the value is needed, none where the Option fits).
+func negativeAfterFailedLoop(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		o = anyO()
+	}
+	keep(o)
+	x := o
+	keep(x)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+	use(o)
+	if o != nil {
+		use(o)
+	}
+}
+
+// --- the assumption holds (o is checked before every way back to the top):
+// o is the value where a use needs it, and the Option where it fits
+func positiveHolds(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		use(o)
+		_ = o.V
+		keep(o)
+		x := o
+		if x == nil {
+			return
+		}
+		o = nextO(o)
+		if o == nil {
+			return
+		}
+	}
+	use(o)
+}
+
+// A copy takes the Option's type where only the loop's assumption checks o
+// (the copy must not depend on it): check the copy, or use o itself.
+func negativeHoldsCopy(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		x := o
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: x may be nil; check x != nil first (OWN-P10)
+		use(x)
+		use(o)
+		o = nextO(o)
+		if o == nil {
+			return
+		}
+	}
+}
+
+// --- IsNil and Get: the Option's own, also where T has methods of these
+// names (T's are picked only after a real check: a narrowing that rests on
+// the loop's assumption does not choose between them)
+type Box struct{ N int }
+
+func (b *Box) IsNil() int { return 0 }
+func (b *Box) Get() int   { return b.N }
+
+func firstB() Option[*Box]
+func nextB(b *Box) Option[*Box]
+
+func positiveOwnMethods(xs []int) {
+	b := firstB()
+	if b == nil {
+		return
+	}
+	for range xs {
+		v, ok := b.Get()
+		if !ok || b.IsNil() {
+			return
+		}
+		_ = v.N
+		b = nextB(v)
+	}
+}
+
+// --- a nested loop: the inner loop's assumption rests on the outer one's,
+// and both are decided when the outer loop ends
+func negativeNestedOuterFails(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		for range xs {
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			use(o)
+			// CHECK-DAG: [[@LINE+1]]:14: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			o = nextO(o)
+			if o == nil {
+				return
+			}
+		}
+		keep(o)
+		o = anyO()
+	}
+}
+
+func positiveNestedHolds(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		for range xs {
+			use(o)
+			o = nextO(o)
+			if o == nil {
+				return
+			}
+		}
+		use(o)
+	}
+	use(o)
+}
+
+// A generic parameter decides by inference: where the call infers with the
+// Option and the parameter then takes it (`Option[T]`, `Option[*T]`), the
+// argument is the Option (R16); a `*T` parameter needs the narrowing.
+func takeOpt[T any](o Option[T])    {}
+func takeOptPtr[T any](o Option[*T]) {}
+func takeFirst[T any](o Option[T], n *Node) {}
+func deref[T Copy](p *T) T         { return *p }
+
+func positiveGenericOption(xs []int, d *Node) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		takeOpt(o)
+		takeOptPtr(o)
+		takeFirst(o, d)
+		o = anyO()
+	}
+}
+
+func negativeGenericNeeded(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:9: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		deref(o)
+		o = anyO()
+	}
+}
+
+func positiveGenericNeededHolds(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		deref(o)
+		o = anyO()
+		if o == nil {
+			return
+		}
+	}
+}
+
+// Arguments that share a type parameter are decided together: first with
+// all of them as their Options at once, then one by one.
+func pair[T any](a T, b T)                    {}
+func pairO[T any](a Option[T], b Option[T])   {}
+func mixed[T any](a Option[*T], b *T)         {}
+
+func positiveGenericShared(xs []int) {
+	o, q := firstO(), firstO()
+	if o == nil || q == nil {
+		return
+	}
+	for range xs {
+		pair(o, q)
+		pairO(o, q)
+		o, q = anyO(), anyO()
+	}
+}
+
+func negativeGenericMixed(xs []int) {
+	o, q := firstO(), firstO()
+	if o == nil || q == nil {
+		return
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:12: error{{\[E0329\]}}: q may be nil; check q != nil first (the loop assigns q, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		mixed(o, q)
+		o, q = anyO(), anyO()
+	}
+}
+
+func positiveGenericMixedHolds(xs []int) {
+	o, q := firstO(), firstO()
+	if o == nil || q == nil {
+		return
+	}
+	for range xs {
+		mixed(o, q)
+		o, q = anyO(), anyO()
+		if o == nil || q == nil {
+			return
+		}
+	}
+}
+
+func main() {}

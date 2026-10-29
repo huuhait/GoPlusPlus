@@ -736,6 +736,15 @@ public:
   bool own() const { return S.Opts.Ownership && !S.Opts.GoCompat; }
   Category category(Type *T);
   bool isOwning(Type *T) { return category(T) == Category::Owning; }
+  /// A type switch or assertion binding of this type borrows the box (TYP-9):
+  /// an owning type, or a type parameter (it may be a map or slice).
+  bool bindsBox(Type *T) {
+    if (!isValid(T))
+      return false;
+    if (llvm::isa<TypeParamType>(T))
+      return !isCopyType(T); // a [T Copy] binding is a plain value
+    return isOwning(T) && !isInterface(T);
+  }
   bool isCopyType(Type *T);
   bool satisfiesClone(Type *T, std::string *Why);
   bool hasPtrKind(Type *T, PtrKind *K, Type **Elem);
@@ -771,6 +780,32 @@ public:
   void checkWrite(const ast::Expr *Lhs, bool Repoint = false,
                   bool Redeclare = false);
   void checkAddressOf(const UnaryExpr *E, Operand &X);
+  // --- writes into maps and slices (P03.19, Ownership.cpp)
+  /// How the storage an expression denotes relates to the shared box of an
+  /// interface value: not in one; the value the box holds (or a part of it by
+  /// value that is no map or slice element); or inside a map or slice of it.
+  enum class BoxKind { None, Direct, Via };
+  /// The Option Get bindings of the outermost body being checked whose
+  /// Option is a part of the box (`d, ok := w.Get()` on a binding or
+  /// assertion of an `Option[T]`): box bindings too. Kept per checker.
+  llvm::DenseSet<const Var *> BoxGetBindings;
+  /// A type switch, assertion or box Option Get binding.
+  bool boxBinding(const Var *V);
+  /// Where Ex lies, for a direct write (P03.19): rooted at a box binding or
+  /// an assertion through fields, elements, slicing and sharing conversions.
+  BoxKind boxPlace(const ast::Expr *Ex);
+  /// V is the value binding of `V, ok := Opt.Get()`.
+  void noteBoxGet(const Var *V, const ast::Expr *Opt);
+  /// Report a write through Place (the container itself with AnyDepth, as
+  /// `delete(m, k)`, `clear(s)`, `copy(s, t)`; else a place inside a
+  /// container) when it lies in the box of an interface value. At is where,
+  /// What says what is written. Returns true if reported.
+  bool rejectBoxWrite(const ast::Expr *At, const ast::Expr *Place,
+                      bool AnyDepth, const std::string &What);
+  /// Report a write into the map MapEx when it is a temporary.
+  bool rejectTempMapWrite(const ast::Expr *At, const ast::Expr *MapEx);
+  /// The checks of an assignment target, `x op= y`, `x++`: Lhs is written.
+  void checkContainerStore(const ast::Expr *Lhs);
   void checkPtrRecvCall(const SelectorExpr *Sel, Func *M);
   void checkSigOwnership(const ast::FuncType *FT, SignatureType *Sig,
                          ArrayRef<Var *> Params, ArrayRef<Var *> Results);
@@ -859,7 +894,7 @@ public:
   // one is recorded with the type T instead of Option[T] (Info::narrowedType).
   // An assignment ends it (PendingKills, applied at the end of the
   // statement); where paths meet, only what every path knows is kept; a loop
-  // starts from the state before it minus what the loop assigns; a function
+  // top is the meet of the state before it and at its back edges; a function
   // literal starts empty.
   struct FlowState {
     llvm::SmallPtrSet<const Var *, 8> N;
@@ -871,11 +906,22 @@ public:
     llvm::DenseMap<const Var *, const Var *> Pend;
     /// The tentative entries of Pend: put there at a loop head or a goto
     /// label for a variable that a multi-value assignment of the loop or body
-    /// binds again, before that assignment is checked. The entry is real if
-    /// one of the regions (indices into FlowRegions) holds an assignment that
-    /// the checker classifies as a checked form binding the variable
-    /// (RealForms); a use of it is decided at the end of the body (TentUses).
+    /// binds again, before that assignment is checked. The regions (indices
+    /// into FlowRegions) decide it at the end of the body: a loop region by
+    /// the states at its back edges (flowLoopBack), a label region by whether
+    /// one of its assignments is a checked form binding the variable
+    /// (RealForms); a use of it waits for that (TentUses).
     llvm::DenseMap<const Var *, SmallVector<unsigned, 2>> Tent;
+    /// The entries of N that hold only if a loop's assumption does: a local
+    /// that the loop assigns is assumed set at the loop head (the entry state
+    /// says so), and the back edges of the loop decide it at its end
+    /// (loop fixpoint, FlowRegion::NEdge). The regions it depends on; read
+    /// only for members of N.
+    llvm::DenseMap<const Var *, SmallVector<unsigned, 2>> TentN;
+    /// Local channel variables that are nil on every path to here (CON-6a):
+    /// declared with no value or with nil, or assigned nil, and not assigned
+    /// since.
+    llvm::SmallPtrSet<const Var *, 4> Nil;
     bool Dead = false; // unreachable: everything counts as known
   };
   struct FlowFacts {
@@ -887,6 +933,10 @@ public:
     std::string Label;
     FlowState Break;
     bool HasBreak = false;
+    /// A loop: the states at its `continue`s (back edges to the head).
+    bool IsLoop = false;
+    FlowState Cont;
+    bool HasCont = false;
   };
   FlowState Cur;
   /// Checked results (P03.18, Flow.cpp): the locals of the outermost body
@@ -919,9 +969,57 @@ public:
   /// them), and the region of those assignments (-1: none).
   SmallVector<std::string, 4> LabelForms;
   int LabelRegion = -1;
-  /// The right sides of the multi-value assignments of each loop or label
-  /// region of the outermost body (see FlowState::Tent).
-  SmallVector<llvm::SmallPtrSet<const ast::Expr *, 4>, 4> FlowRegions;
+  /// The loop and label regions of the outermost body (see FlowState::Tent
+  /// and TentN). A label region holds the right sides of the body's
+  /// multi-value assignments and is decided by RealForms; a loop region by
+  /// the states at its back edges (flowLoopBack): for each variable the loop
+  /// assumed, the regions its state at the back edges depends on (a pending
+  /// value: real at once when PendReal; a narrowed one: failed at once when
+  /// NBad, it is not known set on some back edge).
+  struct FlowRegion {
+    llvm::SmallPtrSet<const ast::Expr *, 4> Forms; // label regions
+    bool IsLoop = false;
+    bool Closed = false; // the loop is checked: no back edge comes any more
+    llvm::DenseSet<const Var *> PendReal, NBad;
+    llvm::DenseMap<const Var *, SmallVector<unsigned, 2>> PendEdge, NEdge;
+  };
+  SmallVector<FlowRegion, 4> FlowRegions;
+  /// V is pending for real at the head of region R (Flow.cpp).
+  bool regionPendReal(unsigned R, const Var *V);
+  /// The assumption of loop region R that V stays known set fails.
+  bool regionNBad(unsigned R, const Var *V);
+  /// Walk from the regions Rs for V (Pend: pending, else known set): true if
+  /// a region that decides it is reached (pending for real, or failing);
+  /// else Out gets the regions still open on the way (sorted).
+  bool regionFrontier(ArrayRef<unsigned> Rs, const Var *V, bool Pend,
+                      llvm::SmallVectorImpl<unsigned> &Out);
+  /// A use of a local whose narrowing holds only if a loop's assumption does.
+  /// Regions is empty for a use that was made the Option again
+  /// (unnarrowTentative): it needs no assumption.
+  struct TentNUse {
+    const ast::Ident *Id;
+    const Var *V;
+    SmallVector<unsigned, 2> Regions;
+  };
+  SmallVector<TentNUse, 4> TentNUses;
+  /// The index in TentNUses of the use of each identifier.
+  llvm::DenseMap<const ast::Ident *, unsigned> TentNIndex;
+  /// The declared Option type of X when X (a name, maybe in parentheses) is
+  /// a use that only a loop's assumption narrows; else null.
+  Type *tentOption(const Operand &X);
+  /// Such a use where the Option itself fits as well (an argument, store,
+  /// result or comparison that takes the Option, a variable whose type is
+  /// inferred from it, a type parameter, a conversion, a switch tag): it is
+  /// the Option again (its recorded type too), so whether the assumption
+  /// holds does not matter there and no type depends on it (P03.19, no
+  /// regression against the rule before the loop fixpoint). Returns true if
+  /// X changed.
+  bool unnarrowTentative(Operand &X);
+  /// The end of a loop body: the back edge states decide the loop's region.
+  void flowLoopBack(int Region, const FlowState &Back);
+  /// The state S after the loop of Region: a fact that rests on a region that
+  /// failed (this loop's or one inside it) is not known there.
+  void flowLoopClean(int Region, FlowState &S);
   /// (right side, local) for every checked form that bound a local: the
   /// checker's own classification (noteGuardedForm).
   llvm::DenseSet<std::pair<const ast::Expr *, const Var *>> RealForms;
@@ -933,9 +1031,10 @@ public:
     SmallVector<unsigned, 2> Regions;
   };
   SmallVector<TentUse, 4> TentUses;
-  /// Report the TentUses from Top on whose variable a checked form of one of
-  /// their regions binds (the end of a body, when every form is checked).
-  void flowDecideTentative(size_t Top);
+  /// Report the TentUses from Top whose value is pending for real at one of
+  /// their regions, and the TentNUses from TopN that rest on an assumption
+  /// that failed (the end of a body, when every form and loop is checked).
+  void flowDecideTentative(size_t Top, size_t TopN);
   /// Selector names used on each plain name in the body (`x.M`): a
   /// pointer-receiver method among them takes the address of x implicitly.
   llvm::StringMap<llvm::StringSet<>> MethodSels;
@@ -990,13 +1089,15 @@ public:
   void flowAddTo(FlowState &S, const llvm::SmallPtrSetImpl<const Var *> &Vars);
   /// The state after a label that a goto names (at Pos): nothing is known.
   void flowReset(SourceLoc Pos);
-  /// The loop head: what is known before the loop minus what it assigns.
-  void flowLoopHead(const ast::Node *Loop, SourceLoc BodyPos);
+  /// The loop head (the loop fixpoint, Flow.cpp): the state before the loop
+  /// with the assumptions that the back edges of the loop decide. Returns the
+  /// loop's region (-1: no flow typing here).
+  int flowLoopHead(const ast::Node *Loop, SourceLoc BodyPos);
   /// The values that the statements Ns rebind with a multi-value assignment
   /// are pending (tentatively, until it is known which are checked forms)
   /// when control comes back to Pos from their end (a loop head, a post
   /// statement).
-  void flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos);
+  void flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos, int Region);
   /// GuardText of V when its guard G stops guarding it ("G <What>, so ...").
   void untieText(const Var *V, const Var *G, StringRef What);
   SmallVector<FlowTarget, 4> Targets;
@@ -1006,6 +1107,12 @@ public:
   FlowState FallState;
   bool HasFall = false;
   SmallVector<const Var *, 4> PendingKills;
+  /// Channels the statement being checked leaves nil (applied after the
+  /// kills at its end).
+  SmallVector<const Var *, 2> PendingNil;
+  /// Names used inside a function literal anywhere in the body: a channel
+  /// captured by one is never known nil (a literal may assign it).
+  llvm::StringSet<> ClosureNames;
   /// Names assigned inside a function literal, or whose address is taken,
   /// anywhere in the function: never narrowed, a call may change them.
   llvm::StringSet<> NoNarrowNames;
@@ -1065,12 +1172,17 @@ public:
     return narrowable(V) && (Cur.Dead || Cur.N.count(V));
   }
   bool isNilLit(const ast::Expr *Ex);
+  /// `nil`, or a conversion of nil to a type (`(chan int)(nil)`).
+  bool isNilValue(const ast::Expr *Ex);
+  /// Known nil channels (CON-6a): `ch` is a local channel variable that is
+  /// nil on every path to here.
+  bool knownNilChan(const ast::Expr *Ex);
   void collectAssigned(const ast::Node *N, llvm::StringSet<> &Names);
   void flowKillNames(const llvm::StringSet<> &Names);
   void flowFlushKills();
   void flowDead() { Cur.Dead = true; }
   void flowBranch(const ast::BranchStmt *B);
-  void flowPushTarget();
+  void flowPushTarget(bool IsLoop = false);
   FlowTarget flowPopTarget();
   void flowBeginBody(const BlockStmt *Body);
   void markNoNarrow(const ast::Expr *Ex);

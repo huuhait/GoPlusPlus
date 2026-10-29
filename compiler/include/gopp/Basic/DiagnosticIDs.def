@@ -522,5 +522,8 @@ DIAG(err_required_maybe_nil, 349, Error, "cannot store %0 in %1: the field is @R
 DIAG(err_unchecked_value, 350, Error, "%0 may be unset here: %1 has no zero value, and %2 (OWN-P10)")
 DIAG(err_unchecked_store, 351, Error, "cannot store the result of %0 in %1: its type has no zero value, so it is valid only where %2; bind it to a new local variable and check that first (OWN-P10)")
 DIAG(err_maybe_nil_to_never_nil, 352, Error, "%0 may be nil; %1 is never nil: check %0 != nil first (OWN-P9)")
+DIAG(err_map_temp_write, 353, Error, "cannot write %0: this map is a temporary; the write is lost: store it first (`m := %1`, then write m) (OWN-P9)")
+DIAG(err_box_write, 354, Error, "cannot write %0: it is part of %1 inside an interface value, and the box of an interface value is shared and read-only (TYP-9); %2")
+DIAG(err_close_nil_chan, 355, Error, "close(%0): %0 is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it")
 
 #undef DIAG

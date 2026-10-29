@@ -3342,3 +3342,30 @@ func f(e error) MyErr {
 	return e
 }
 )X")
+EXPLAIN(err_map_temp_write,
+        "A map held in a temporary lives only until the end of the statement: the result of a call, a literal, a value received from a channel, or a field or element of one by value. A write into it (`f()[\"a\"] = 1`, `f()[\"a\"]++`, `delete(f(), \"a\")`, `clear(f())`, `f().Index[\"a\"] = 1`, `f()[\"k1\"][\"k2\"] = 1`) is lost, whether the map is nil or not, so it is an error (OWN-P9). Store the map in a variable first and write that. A map behind a pointer (`f().Index[\"a\"] = 1` with `f() *Doc`) is a place and is fine.",
+        R"X(package p
+
+func f() map[string]int { return nil }
+
+func g() {
+	f()["a"] = 1
+}
+)X")
+EXPLAIN(err_box_write,
+        "The box of an interface value is shared and read-only (TYP-9). Everything it holds by value, down to a pointer, is read-only through the interface: the map or slice itself, and the maps and slices in the struct fields and array elements of the boxed value. So on a type switch binding or an assertion, `v[\"b\"] = 2`, `v[\"b\"]++`, `delete(v, k)`, `clear(v)`, `copy(v, w)`, `x.(map[string]int)[\"b\"] = 2`, `v[0] = 1` on a `[]int` binding, `v.(Doc).Index[\"x\"] = 1`, `&v[0]`, `move(v[0])`, `append(v[:1], x)`, a pointer-receiver call on `v[0]` and an `&` range variable over it are errors. Reads, `len` and `range` are fine. Copy it first (`m := v.Clone()`, then write m), or put a pointer in the interface: a write through a `*T` taken from the interface works.",
+        R"X(package p
+
+func g(x any) {
+	x.(map[string]int)["b"] = 2
+}
+)X")
+EXPLAIN(err_close_nil_chan,
+        "`close(ch)` of a local channel variable that is nil on every path to the `close` always panics at run time (closing a nil channel). The compiler reports it when it can see this: the variable is local (not a package variable, a field, a parameter or a named result), was declared with no value or assigned `nil`, is not assigned another value on any path before the `close`, is not captured by a function literal and is not address-taken. Make the channel (`ch = make(chan int)`) before closing it, or remove the `close`. Every other `close` of a nil channel panics at run time, as in Go (CON-6a).",
+        R"X(package p
+
+func g() {
+	var ch chan int
+	close(ch)
+}
+)X")

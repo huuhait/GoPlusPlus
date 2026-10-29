@@ -1,0 +1,7 @@
+// P03.19 (OWN-P10 loop fixpoint): 12800 loops in a row that each assign the
+// checked Option o. A loop's region that holds for good is dropped from the
+// facts after the loop (flowLoopClean), so each loop sees a short list: the
+// check is linear (about 0.1 s). Kept, the lists grew with every loop and
+// the check was quadratic (8 s here; lit's timeout stops it).
+// RUN: %python -c "b = '\tfor range xs {\n\t\tuse(o)\n\t\to = nextO(o)\n\t\tif o == nil {\n\t\t\treturn\n\t\t}\n\t}\n'; print('package main\n\ntype Node struct{ V int }\n\nfunc firstO() Option[*Node]\nfunc nextO(n *Node) Option[*Node]\nfunc use(n *Node) {}\n\nfunc f(xs []int) {\n\to := firstO()\n\tif o == nil {\n\t\treturn\n\t}\n' + b * 12800 + '}\n\nfunc main() {}')" > %t.gopp
+// RUN: %gopp check %t.gopp

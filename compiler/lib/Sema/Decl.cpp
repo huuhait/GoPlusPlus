@@ -1225,6 +1225,12 @@ void Checker::declStmt(const DeclStmt *DS) {
         recordDef(VS->Names[K], Vars[K]);
         declare(E.Sc, VS->Names[K], Vars[K], VS->getEnd());
         LocalVars.push_back(Vars[K]);
+        // CON-6a: a channel declared with no value, or with nil, is nil.
+        if (own() && Vars[K]->Ty && isValid(Vars[K]->Ty) &&
+            isa<sema::ChanType>(under(Vars[K]->Ty)) &&
+            (VS->Values.empty() || (VS->Values.size() == VS->Names.size() &&
+                                    isNilValue(VS->Values[K]))))
+          PendingNil.push_back(Vars[K]);
       }
       // A later spec of the same group sees this one's checked results as
       // pending, as after a separate `var` statement (OWN-P10).

@@ -1,0 +1,167 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P9, maps not in a place (P03.19, ADR-0018 amendment point 5): a
+// write into a map held in a temporary (a call result by value, a literal, a
+// receive, an assertion, or a field or element of one by value) is lost at
+// the end of the statement, nil or not: a compile error. The same map stored
+// in a variable first, a map behind a pointer (`*T`, `Shared[*T]`,
+// `Unique[*T]`), a slice of a temporary, and reads are unchanged.
+package main
+
+type Doc struct {
+	Index map[string]int
+	Tags  []int
+}
+
+type NM map[string]int
+
+type Holder struct{ Docs map[string]Doc }
+
+type Cfg struct {
+	M map[string]int
+}
+
+func f() map[string]int              { return nil }
+func g() map[string]map[string]int   { return nil }
+func h() Doc                         { return Doc{} }
+func hp(c *Cfg) *Cfg                 { return c }
+func hs() []map[string]int           { return nil }
+func hm() (map[string]int, error)    { return nil, nil }
+func ch() chan map[string]int        { return nil }
+func pm(p *map[string]int) *map[string]int { return p }
+func hh() Holder                     { return Holder{} }
+
+func (d Doc) Own() map[string]int { return d.Index.Clone() }
+
+type Reg struct{ idx map[string]int }
+
+func (r Reg) Index() map[string]int { return r.idx.Clone() }
+
+func mkReg() Reg { return Reg{} }
+
+// --- writes into a temporary map
+func negative(c chan map[string]int) {
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write f()["a"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	f()["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write f()["a"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	f()["a"]++
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write f()["a"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	f()["a"] += 2
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write delete(f(), "a"): this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	delete(f(), "a")
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write clear(f()): this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	clear(f())
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write g()["k1"]["k2"]: this map is a temporary; the write is lost: store it first (`m := g()["k1"]`, then write m) (OWN-P9)
+	g()["k1"]["k2"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write h().Index["a"]: this map is a temporary; the write is lost: store it first (`m := h().Index`, then write m) (OWN-P9)
+	h().Index["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write h().Index["a"]: this map is a temporary; the write is lost: store it first (`m := h().Index`, then write m) (OWN-P9)
+	h().Index["a"]++
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write delete(h().Index, "a"): this map is a temporary; the write is lost: store it first (`m := h().Index`, then write m) (OWN-P9)
+	delete(h().Index, "a")
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write hs()[0]["a"]: this map is a temporary; the write is lost: store it first (`m := hs()[0]`, then write m) (OWN-P9)
+	hs()[0]["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write map[string]int{}["a"]: this map is a temporary; the write is lost: store it first (`m := map[string]int{}`, then write m) (OWN-P9)
+	map[string]int{}["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write make(map[string]int)["a"]: this map is a temporary; the write is lost: store it first (`m := make(map[string]int)`, then write m) (OWN-P9)
+	make(map[string]int)["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write (<-c)["a"]: this map is a temporary; the write is lost: store it first (`m := <-c`, then write m) (OWN-P9)
+	(<-c)["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write (f())["a"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	(f())["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write h().Own()["a"]: this map is a temporary; the write is lost: store it first (`m := h().Own()`, then write m) (OWN-P9)
+	h().Own()["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write mkReg().Index()["a"]: this map is a temporary; the write is lost: store it first (`m := mkReg().Index()`, then write m) (OWN-P9)
+	mkReg().Index()["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write hh().Docs["k"].Index["a"]: this map is a temporary; the write is lost: store it first (`m := hh().Docs["k"].Index`, then write m) (OWN-P9)
+	hh().Docs["k"].Index["a"] = 1
+	// CHECK: [[@LINE+2]]:2: error{{\[E0353\]}}: cannot write f()["a"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	// CHECK: [[@LINE+1]]:12: error{{\[E0353\]}}: cannot write f()["b"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	f()["a"], f()["b"] = 1, 2
+	// CHECK: [[@LINE+1]]:6: error{{\[E0353\]}}: cannot write f()["a"]: this map is a temporary; the write is lost: store it first (`m := f()`, then write m) (OWN-P9)
+	for f()["a"] = range []int{1} {
+	}
+}
+
+// --- the same maps, stored first or reached through a pointer
+func positive(c chan map[string]int, d Doc, r Reg, cfg *Cfg, p *map[string]int) int {
+	m := f()
+	m["a"] = 1
+	m["a"]++
+	delete(m, "a")
+	clear(m)
+	mm := g()
+	mm["k1"]["k2"] = 1
+	mm["new"] = map[string]int{}
+	hp(cfg).M["a"] = 1
+	hp(cfg).M["a"]++
+	delete(hp(cfg).M, "a")
+	(*pm(p))["a"] = 1
+	x := h()
+	x.Index["a"] = 1
+	d.Index["a"] = 1
+	ms := hs()
+	ms[0]["a"] = 1
+	got := <-c
+	got["a"] = 1
+	n, _ := hm()
+	n["a"] = 1
+	n2 := len(f()) + f()["a"] + g()["k"]["j"] + h().Index["a"]
+	for k, v := range f() {
+		_, _ = k, v
+	}
+	own := r.Index()
+	own["a"] = 1
+	return n2
+}
+
+// --- a map held in a variable by a function literal result
+func positiveLiteral() {
+	lit := map[string]int{"a": 1}
+	lit["b"] = 2
+	func() { lit["c"] = 3 }()
+	p := &lit
+	(*p)["d"] = 4
+}
+
+// --- a field of a field, a conversion that shares, the target of a
+// Unique[*T] result (owned by the temporary, dropped with it)
+type Wrap struct{ Inner Doc }
+
+func fw() Wrap               { return Wrap{} }
+func fsh() Shared[*Doc]      { return new_shared(Doc{}) }
+func fu() Unique[*Doc]       { return new_unique(Doc{}) }
+func gm() map[string][]int   { return nil }
+
+func negativeMore() {
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write fw().Inner.Index["a"]: this map is a temporary; the write is lost: store it first (`m := fw().Inner.Index`, then write m) (OWN-P9)
+	fw().Inner.Index["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write map[string]int(f())["a"]: this map is a temporary; the write is lost: store it first (`m := map[string]int(f())`, then write m) (OWN-P9)
+	map[string]int(f())["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write fu().Index["a"]: this map is a temporary; the write is lost: store it first (`m := fu().Index`, then write m) (OWN-P9)
+	fu().Index["a"] = 1
+	// CHECK: [[@LINE+1]]:2: error{{\[E0353\]}}: cannot write NM(f())["a"]: this map is a temporary; the write is lost: store it first (`m := NM(f())`, then write m) (OWN-P9)
+	NM(f())["a"] = 1
+}
+
+// --- through a Shared[*T] result (a place); slices of a temporary and
+// reads; maps in a local array or a slice parameter
+func positiveMore(ds []Doc) {
+	fsh().Index["a"] = 1
+	delete(fsh().Index, "a")
+	v, ok := g()["k"]["j"]
+	_, _ = v, ok
+	h().Tags[0] = 1
+	hs()[0] = nil
+	gm()["k"][0] = 1
+	ds[0].Index["a"] = 1
+	var arr [2]map[string]int
+	arr[0]["a"] = 1
+	// a conversion that shares storage writes into its operand
+	m := make(map[string]int)
+	NM(m)["a"] = 1
+	(map[string]int)(m)["b"] = 2
+	NM(NM(m))["c"] = 3
+	delete(NM(m), "a")
+}
+
+func main() {}

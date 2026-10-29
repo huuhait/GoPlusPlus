@@ -111,6 +111,15 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
       X.M = Mode::Invalid;
       return;
     }
+  // P03.19: a use that only a loop's assumption narrows is the Option where
+  // the Option fits the target too (unnarrowTentative).
+  if (T)
+    if (Type *OT = tentOption(X)) {
+      Operand O = X;
+      O.Ty = OT;
+      if (assignableTo(O, T, nullptr))
+        unnarrowTentative(X);
+    }
   if (!T)
     return;
   std::string Cause;
@@ -182,6 +191,10 @@ void Checker::initVar(Var *Lhs, Operand &X, StringRef Context) {
     return;
   }
   if (!Lhs->Ty) {
+    // P03.19: a type inferred from a use that only a loop's assumption
+    // narrows is the Option's (a range over an integer needed the value).
+    if (Context != "range clause")
+      unnarrowTentative(X);
     Type *T = X.Ty;
     if (isUntyped(T)) {
       if (T == typ(BasicKind::UntypedNil)) {
@@ -201,7 +214,7 @@ void Checker::initVar(Var *Lhs, Operand &X, StringRef Context) {
   // TYP-9: `s := v.(string)` binds a borrowed variable to the shared box. Lhs
   // is new here when it is not in a scope yet.
   if (!IsReturn && !Lhs->Parent && isa<TypeAssertExpr>(unparen(X.E)) &&
-      isOwning(Lhs->Ty) && !isInterface(Lhs->Ty)) {
+      bindsBox(Lhs->Ty)) {
     Lhs->Mode = Var::Borrowed;
     return;
   }
@@ -276,6 +289,7 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
     err(Lhs, diag::err_cannot_assign, {str(Lhs)});
     return invalid();
   }
+  checkContainerStore(Lhs); // P03.19: a map in a temporary, a box's contents
   return X.Ty;
 }
 
@@ -298,8 +312,18 @@ Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
     exprWithHint(*X, RhsExpr, T);
     ReverseDesc.clear();
   }
+  // CON-6a: `ch = nil` leaves a local channel nil (after the kill of the
+  // statement, flowFlushKills).
+  if (own() && T && Context == "assignment" && X->E && X->M != Mode::Invalid &&
+      isNilValue(X->E))
+    if (auto *Id = dyn_cast<ast::Ident>(unparen(Lhs)))
+      if (auto *V = dyn_cast_or_null<Var>(I.Uses.lookup(Id));
+          V && !V->IsPackageLevel && V->Pkg == S.Pkg && V->Ty &&
+          isa<sema::ChanType>(under(V->Ty)))
+        PendingNil.push_back(V);
   if (!T && Lhs) {
-    // blank identifier
+    // blank identifier (it needs no value type, P03.19)
+    unnarrowTentative(*X);
     assignment(*X, nullptr, Context);
     return nullptr;
   }
@@ -454,6 +478,7 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
           Lhs[0]->Mode = Var::Borrowed;
           Lhs[0]->OptionBinding = true;
           notePayloadBorrow(Lhs[0], Sel->X);
+          noteBoxGet(Lhs[0], Sel->X); // TYP-9: an Option in a box
         }
     }
     return;
@@ -624,6 +649,14 @@ void Checker::shortVarDecl(SourceLoc Pos, ArrayRef<ast::Expr *> Lhs,
       LhsVars[K] = newVar("_", nullptr, Lhs[K]->getBegin());
     }
   initVars(LhsVars, Rhs, nullptr);
+  // CON-6a: `ch := (chan int)(nil)` leaves a local channel nil, as `=` does.
+  if (own() && !HasErr && Rhs.size() == LhsVars.size())
+    for (size_t K = 0; K < LhsVars.size(); ++K) {
+      Var *V = LhsVars[K];
+      if (V && V->Name != "_" && !V->IsPackageLevel && V->Pkg == S.Pkg &&
+          V->Ty && isa<sema::ChanType>(under(V->Ty)) && isNilValue(Rhs[K]))
+        PendingNil.push_back(V);
+    }
   processDelayed(Top);
   if (NewVars.empty() && !HasErr) {
     err(Pos, diag::err_define_no_new_vars);

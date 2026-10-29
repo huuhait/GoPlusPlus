@@ -556,6 +556,20 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
   Operand *ErrOp = &X;
   std::string Cause;
   bool Fail = false;
+  // P03.19: `o == p` compares the Option itself where only a loop's
+  // assumption narrows o and the Option compares with p as well
+  // (unnarrowTentative).
+  if (own() && (Op == tok::eql || Op == tok::neq) && !X.isNil() && !Y.isNil())
+    for (Operand *A : {&X, &Y}) {
+      Operand B = A == &X ? Y : X;
+      if (Type *OT = tentOption(*A)) {
+        Operand O = *A;
+        O.Ty = OT;
+        if ((assignableTo(O, B.Ty, nullptr) || assignableTo(B, OT, nullptr)) &&
+            comparableType(OT, true, nullptr))
+          unnarrowTentative(*A);
+      }
+    }
   // ADR-0018: `p == nil` on a pointer kind.
   if (own() && (Op == tok::eql || Op == tok::neq) && (X.isNil() || Y.isNil())) {
     Type *T = X.isNil() ? Y.Ty : X.Ty;

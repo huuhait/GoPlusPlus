@@ -1,0 +1,289 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule CON-6a (P03.19): `close(ch)` of a LOCAL channel variable that is nil on
+// every path to the close is a compile error. A package variable, a field, a
+// parameter and a result are not checked; neither is a channel that is
+// assigned a value on some path, captured by a function literal or
+// address-taken. Every negative has its positive next to it.
+package main
+
+type Hub struct{ done chan int }
+
+var pkgCh chan int
+
+func make1() chan int { return make(chan int) }
+func cond() bool      { return true }
+
+// --- the known-nil forms
+func negativeForms() {
+	var a chan int
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(a): a is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(a)
+	var b chan int
+	b = nil
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(b): b is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(b)
+	var c chan int = nil
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(c): c is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(c)
+	var d, e chan int
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(d): d is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(d)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(e): e is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(e)
+	f := make(chan int)
+	f = nil
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(f): f is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(f)
+	var g = (chan int)(nil)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(g): g is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(g)
+	k := (chan int)(nil)
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(k): k is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(k)
+	l, n := (chan int)(nil), make1()
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(l): l is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(l)
+	close(n)
+	var h chan<- int
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(h): h is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(h)
+	var i chan int
+	// CHECK: [[@LINE+1]]:14: error{{\[E0355\]}}: close(i): i is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	defer close(i)
+	var j chan int
+	// CHECK: [[@LINE+1]]:11: error{{\[E0355\]}}: close(j): j is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	go close(j)
+}
+
+// --- nil again on every path of a join
+func negativeJoins() {
+	var a chan int
+	if cond() {
+		a = nil
+	}
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(a): a is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(a)
+	var b chan int
+	switch {
+	case cond():
+		b = nil
+	default:
+	}
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(b): b is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(b)
+	var c chan int
+	for i := 0; i < 2; i++ {
+		// CHECK: [[@LINE+1]]:9: error{{\[E0355\]}}: close(c): c is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+		close(c)
+	}
+	var d chan int
+	select {
+	default:
+		// CHECK: [[@LINE+1]]:9: error{{\[E0355\]}}: close(d): d is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+		close(d)
+	}
+	d = make1()
+	d = nil
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(d): d is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(d)
+}
+
+// --- a value on some path, or on all
+func positiveAssigned() {
+	nk := (chan int)(nil)
+	nk = make(chan int)
+	close(nk)
+	nl := (chan int)(nil)
+	nl, _ = make1(), 1
+	close(nl)
+	a := make(chan int)
+	close(a)
+	var b chan int
+	b = make(chan int)
+	close(b)
+	var c chan int
+	if cond() {
+		c = make(chan int)
+	}
+	close(c)
+	var d chan int
+	switch {
+	case cond():
+		d = make1()
+	default:
+		d = make1()
+	}
+	close(d)
+	var e chan int
+	e = nil
+	e = make(chan int)
+	close(e)
+	var f chan int
+	f, _ = make1(), 0
+	close(f)
+	var g chan int
+	g, h := make1(), 1
+	_ = h
+	close(g)
+	var i chan int
+	for _, i = range chans() {
+		close(i)
+	}
+	var j chan int
+	for k := 0; k < 2; k++ {
+		close(j)
+		j = make1()
+	}
+	var l chan int
+	select {
+	case l = <-chans2():
+	default:
+	}
+	close(l)
+}
+
+func chans() []chan int      { return nil }
+func chans2() chan chan int  { return nil }
+
+// --- not a local channel variable
+func positiveNotLocal(p chan int, h Hub) (r chan int) {
+	close(p)
+	close(h.done)
+	close(pkgCh)
+	close(r)
+	p = nil
+	close(p)
+	return nil
+}
+
+// --- captured, address-taken, checked
+func positiveEscapes() {
+	var a chan int
+	go func() { a = make(chan int) }()
+	close(a)
+	var b chan int
+	f := func() { _ = b }
+	f()
+	close(b)
+	var c chan int
+	p := &c
+	*p = make(chan int)
+	close(c)
+	var d chan int
+	if d != nil {
+		close(d)
+	}
+	var e chan int
+	func() { close(e) }()
+	var m map[string]chan int
+	close(m["x"])
+}
+
+// --- a label resets what is known
+func positiveGoto() {
+	var a chan int
+L:
+	if cond() {
+		a = make(chan int)
+		goto L
+	}
+	close(a)
+}
+
+// --- a shadowing variable is another channel; a redeclaration assigns
+func shadow() {
+	var a chan int
+	{
+		a := make(chan int)
+		close(a)
+	}
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(a): a is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(a)
+	var b chan int
+	b, err := mk2()
+	_ = err
+	close(b)
+}
+
+func mk2() (chan int, error) { return make(chan int), nil }
+
+// --- a switch that falls through, a select, a function literal that closes
+func positiveSwitch() {
+	var a chan int
+	switch {
+	case cond():
+		a = make(chan int)
+		fallthrough
+	default:
+		close(a)
+	}
+}
+
+func negativeSelect() {
+	var a chan int
+	select {
+	case <-a:
+		// CHECK: [[@LINE+1]]:9: error{{\[E0355\]}}: close(a): a is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+		close(a)
+	default:
+	}
+}
+
+func positiveDeferred() {
+	var a chan int
+	defer func() { close(a) }()
+}
+
+func negativeAfterReturn() {
+	var a chan int
+	if cond() {
+		return
+	}
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(a): a is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(a)
+	a = make(chan int)
+	close(a)
+}
+
+// --- nil on both branches of an if / else; a package variable set to nil; a
+// literal that closes a channel made after it
+func negativeBothBranches() {
+	var a chan int
+	if cond() {
+		a = nil
+	} else {
+		a = nil
+	}
+	// CHECK: [[@LINE+1]]:8: error{{\[E0355\]}}: close(a): a is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it
+	close(a)
+}
+
+func positivePackageNil() {
+	pkgCh = nil
+	close(pkgCh)
+}
+
+func positiveLiteralThenMade() {
+	var a chan int
+	f := func() { close(a) }
+	a = make(chan int)
+	f()
+}
+
+// A pointer-receiver call or method value takes `&ch` as `&ch` does: the
+// method may make the channel (R9).
+type C chan int
+
+func (c *C) Init() { *c = make(C) }
+
+func positiveImplicitAddress() {
+	var ch C
+	ch.Init()
+	close(ch)
+	var ch2 C
+	f := ch2.Init
+	f()
+	close(ch2)
+}
+
+func main() {}

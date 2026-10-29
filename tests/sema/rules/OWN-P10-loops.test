@@ -1,0 +1,333 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10 for loops (P03.19, ADR-0018 point 4): the state at the top of
+// a loop is the meet of the state before the loop and the state at every back
+// edge (the end of the body, each `continue`, the post statement). A value
+// that is checked on every path into the top is known there, so a cursor
+// loop that checks the next value before it comes back is accepted; one that
+// comes back unchecked on any path is still an error.
+package main
+
+type Node struct{ V int }
+
+func first() (*Node, error)
+func next(n *Node) (*Node, error)
+func firstO() Option[*Node]
+func nextO(n *Node) Option[*Node]
+func use(n *Node) {}
+func pick() bool { return true }
+
+// --- checked results (v, err := f())
+func positiveCursor() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		use(n)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func negativeCursor() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here
+		n, err = next(n)
+	}
+}
+
+func positiveContinue(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for _, x := range xs {
+		use(n)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+		if x > 1 {
+			continue
+		}
+	}
+	return nil
+}
+
+// A continue before the check brings the unchecked value to the top.
+func negativeContinue(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for _, x := range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here
+		n, err = next(n)
+		if x > 1 {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func positivePost() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for i := 0; i < 3; i, n = i+1, n {
+		use(n)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func positiveLabeled(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+outer:
+	for range xs {
+		use(n)
+		for range xs {
+			n, err = next(n)
+			if err != nil {
+				return err
+			}
+			continue outer
+		}
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func negativeLabeled(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+outer:
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here
+		use(n)
+		for range xs {
+			// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here
+			n, err = next(n)
+			continue outer
+		}
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func positiveNested(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for range xs {
+		for range xs {
+			use(n)
+			n, err = next(n)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// --- Option
+func positiveOption() {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for {
+		use(o)
+		o = nextO(o)
+		if o == nil {
+			return
+		}
+	}
+}
+
+func negativeOption() {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first
+		use(o)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: o may be nil; check o != nil first
+		o = nextO(o)
+	}
+}
+
+func positiveOptionContinue(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for _, x := range xs {
+		use(o)
+		o = nextO(o)
+		if o == nil {
+			return
+		}
+		if x > 1 {
+			continue
+		}
+	}
+}
+
+func negativeOptionContinue(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for _, x := range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first
+		use(o)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: o may be nil; check o != nil first
+		o = nextO(o)
+		if x > 1 {
+			continue
+		}
+		if o == nil {
+			return
+		}
+	}
+}
+
+// The check is on the loop's own condition and a break leaves the loop.
+func positiveOptionBreak(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		use(o)
+		o = nextO(o)
+		if o == nil {
+			break
+		}
+	}
+}
+
+// A loop that does not assign the Option keeps what was known before it.
+func positiveNotAssigned(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		use(o)
+	}
+	use(o)
+}
+
+// A nested loop that reassigns o decides the outer loop's top too.
+func negativeOptionNested(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first
+		use(o)
+		for range xs {
+			// CHECK-DAG: [[@LINE+1]]:14: error{{\[E0329\]}}: o may be nil; check o != nil first
+			o = nextO(o)
+		}
+	}
+}
+
+func positiveOptionNested(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		use(o)
+		for range xs {
+			o = nextO(o)
+			if o == nil {
+				return
+			}
+		}
+	}
+}
+
+// The post statement is the last back edge: n = n.Next keeps n set.
+type L struct{ Next Option[*L] }
+
+func positiveListWalk(head Option[*L]) {
+	for n := head; n != nil; n = n.Next {
+		_ = n
+	}
+}
+
+// A goto out of the loop is no back edge; a label inside the loop starts with
+// nothing known, so the use after it needs a check of its own.
+func positiveGotoOut() {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for {
+		use(o)
+		o = nextO(o)
+		if o == nil {
+			goto done
+		}
+	}
+done:
+}
+
+func negativeGotoInside() {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for {
+	top:
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+		use(o)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+		o = nextO(o)
+		if pick() {
+			goto top
+		}
+		if o == nil {
+			return
+		}
+	}
+}
+
+func main() {}

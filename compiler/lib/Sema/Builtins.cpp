@@ -135,6 +135,24 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         E.HasCallOrRecv |= SavedRecv;
         return false;
       }
+    // P03.19: these take a value of any type and do not look into it: where
+    // only a loop's assumption narrows an Option argument, it is the Option
+    // itself (unnarrowTentative). The built-ins not listed need the value's
+    // shape (len, append, close, min, ...): the narrowed type stays.
+    switch (Id) {
+    case BuiltinId::Print:
+    case BuiltinId::Println:
+    case BuiltinId::Clone:
+    case BuiltinId::NewUnique:
+    case BuiltinId::NewShared:
+    case BuiltinId::Alignof:
+    case BuiltinId::Sizeof:
+      for (Operand &A : Args)
+        unnarrowTentative(A);
+      break;
+    default:
+      break;
+    }
     if (NArgs > 0)
       X = Args[0];
   }
@@ -230,6 +248,10 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         } else if (PK == PlaceKind::OtherPlace && !isImplicitMove(X.E, Call)) {
           std::string S1 = str(X.E);
           err(X, diag::err_own_append_borrowed, {S1, S1});
+        } else {
+          // P03.19: `append([]int(v), x)` writes into the spare capacity of
+          // the box's slice that the conversion shares.
+          rejectBoxWrite(Call, X.E, true, str(Call));
         }
       }
       if (Dots && NArgs == 2) {
@@ -358,8 +380,11 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         return true;
       });
     }
-    if (X.E)
+    if (X.E) {
       checkRangeMutation(X.E, "clear");
+      if (!rejectBoxWrite(Call, X.E, true, str(Call)))
+        rejectTempMapWrite(Call, X.E);
+    }
     X.M = Mode::NoValue;
     break;
   }
@@ -380,6 +405,8 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     });
     if (!Ok)
       return false;
+    if (X.E && knownNilChan(X.E))
+      err(X, diag::err_close_nil_chan, {str(X.E)});
     X.M = Mode::NoValue;
     break;
   }
@@ -575,6 +602,8 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     if (own() && Y.E && placeKind(Y.E) != PlaceKind::Temp &&
         category(Src) != Category::Trivial)
       err(Y, diag::err_own_copy_source);
+    if (X.E)
+      rejectBoxWrite(Call, X.E, true, str(Call));
     X.M = Mode::Value;
     X.Ty = typ(BasicKind::Int);
     break;
@@ -600,6 +629,8 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     });
     if (!Ok)
       return false;
+    if (X.E && !rejectBoxWrite(Call, X.E, true, str(Call)))
+      rejectTempMapWrite(Call, X.E);
     X = Args[1];
     assignment(X, Key, "argument to delete");
     if (X.M == Mode::Invalid)
@@ -758,6 +789,9 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
           err(Arg, diag::err_own_borrowed_move, {str(Arg)});
         return false;
       }
+      // P03.19: moving out of a map or slice of an interface box writes it.
+      if (rejectBoxWrite(Call, Arg, true, str(Call)))
+        return false;
       if (isPinned(X.Ty)) {
         err(Arg, diag::err_own_pinned_move, {str(Arg), str(X.Ty)});
         return false;
@@ -956,6 +990,9 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
           {"invalid argument: " + str(X) + " is not a slice"});
       return false;
     }
+    // P03.19: a pointer into a slice in the box of an interface value.
+    if (X.E)
+      rejectBoxWrite(Call, X.E, true, "through " + str(Call));
     X.M = Mode::Value;
     X.Ty = Ctx.pointer(Sl->Elem);
     break;

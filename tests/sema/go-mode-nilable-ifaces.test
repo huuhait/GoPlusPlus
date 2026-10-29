@@ -1,6 +1,8 @@
 // P03.18: `--go` keeps Go's rules. A func and an interface with methods may
 // be nil, `l == nil` and `var l Logger` are fine, and (v, err) results are
-// not guarded. Go++ mode (the default) rejects the same code (the other side).
+// not guarded. P03.19: a write into the result of a call, into a map reached
+// through an assertion, and `close` of a nil channel compile too. Go++ mode
+// (the default) rejects the same code (the other side).
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: cp %s %t/a.go
 // RUN: %gopp check --go %t/a.go
@@ -29,7 +31,14 @@ func main() {
 	if err != nil {
 		return
 	}
+	temp()["a"] = 1
+	var x any = map[string]int{}
+	x.(map[string]int)["b"] = 2
+	var ch chan int
+	close(ch)
 }
+
+func temp() map[string]int { return nil }
 
 // CHECK-DAG: error{{\[E[0-9]+\]}}: cannot declare l without a value: Logger has no zero value
 // CHECK-DAG: error{{\[E[0-9]+\]}}: cannot declare f without a value: func() has no zero value
@@ -38,3 +47,6 @@ func main() {
 // CHECK-DAG: error{{\[E[0-9]+\]}}: func() is never nil
 // CHECK-DAG: error{{\[E[0-9]+\]}}: MyErr is never nil
 // CHECK-DAG: error{{\[E[0-9]+\]}}: u may be unset here
+// CHECK-DAG: error{{\[E0353\]}}: cannot write temp()["a"]: this map is a temporary
+// CHECK-DAG: error{{\[E0354\]}}: cannot write x.(map[string]int)["b"]
+// CHECK-DAG: error{{\[E0355\]}}: close(ch): ch is nil on every path

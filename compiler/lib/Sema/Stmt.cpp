@@ -52,8 +52,10 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   Env Saved = E;
   // The borrowers of payloads belong to one outermost body; a function
   // literal inside it keeps them (it may use a captured borrower).
-  if (!Saved.FuncId)
+  if (!Saved.FuncId) {
     PayloadBorrows.clear();
+    BoxGetBindings.clear();
+  }
   // A function literal in a header is an ordinary body, not the header.
   bool SavedHeader = InHeaderInit;
   InHeaderInit = false;
@@ -64,9 +66,11 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   FlowState SavedCur = std::move(Cur);
   auto SavedTargets = std::move(Targets);
   auto SavedKills = std::move(PendingKills);
+  auto SavedNil = std::move(PendingNil);
   auto SavedGuards = std::move(PendingGuards);
   const ast::Expr *SavedNoGuard = NoGuardExpr;
   auto SavedNoNarrow = std::move(NoNarrowNames);
+  auto SavedClosureNames = std::move(ClosureNames);
   auto SavedMethodSels = std::move(MethodSels);
   auto SavedGotos = std::move(GotoLabels);
   auto SavedLabelForms = std::move(LabelForms);
@@ -78,6 +82,7 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   Cur = FlowState();
   Targets.clear();
   PendingKills.clear();
+  PendingNil.clear();
   PendingGuards.clear();
   NoGuardExpr = nullptr;
   PendingLabel.clear();
@@ -88,6 +93,7 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   LabelRegion = -1;
   flowBeginBody(Body);
   size_t TentTop = TentUses.size();
+  size_t TentNTop = TentNUses.size();
   E = Env();
   E.Cur = D;
   E.Sc = Sc;
@@ -125,7 +131,7 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   processDelayed(Top);
   // Every form of this body is checked now (Flow.cpp, points 5, 6).
   if (own())
-    flowDecideTentative(TentTop);
+    flowDecideTentative(TentTop, TentNTop);
   // Every form of the outermost body is known now (Flow.cpp, points 7, 8).
   if (own() && !Saved.FuncId)
     flowEndBody();
@@ -140,9 +146,11 @@ void Checker::funcBody(DeclInfo *D, StringRef Name, SignatureType *Sig,
   Cur = std::move(SavedCur);
   Targets = std::move(SavedTargets);
   PendingKills = std::move(SavedKills);
+  PendingNil = std::move(SavedNil);
   PendingGuards = std::move(SavedGuards);
   NoGuardExpr = SavedNoGuard;
   NoNarrowNames = std::move(SavedNoNarrow);
+  ClosureNames = std::move(SavedClosureNames);
   MethodSels = std::move(SavedMethodSels);
   GotoLabels = std::move(SavedGotos);
   LabelForms = std::move(SavedLabelForms);
@@ -470,11 +478,11 @@ void Checker::ifStmt(unsigned Ctx, const IfStmt *S0) {
 void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   openScope(S0->getRange(), "for");
   simpleStmt(S0->Init);
-  // The loop head: what is known before the loop, minus what the loop
-  // assigns (a later iteration comes back here).
-  flowLoopHead(S0, S0->Body->getBegin());
+  // The loop head: the meet of what is known before the loop and at the back
+  // edges, decided once the body is checked (Flow.cpp, flowLoopHead).
+  int Region = flowLoopHead(S0, S0->Body->getBegin());
   FlowState Head = Cur;
-  flowPushTarget();
+  flowPushTarget(true);
   FlowFacts Facts;
   if (S0->Cond) {
     Operand X;
@@ -484,28 +492,24 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
           {"non-boolean condition in for statement"});
     flowFacts(S0->Cond, Facts);
   }
-  if (S0->Post) {
-    if (auto *AS = dyn_cast<AssignStmt>(S0->Post); AS && AS->Op == tok::define)
-      err(S0->Post, diag::err_sema_stmt,
-          {"cannot declare in post statement of for loop"});
-    // The post statement runs after the body, where the condition held,
-    // unless the body assigned the variable (`for n := head; n != nil; n =
-    // n.Next`, ADR-0018 point 11).
-    llvm::StringSet<> BodyAssigned;
-    if (own())
-      collectAssigned(S0->Body, BodyAssigned);
-    Cur = Head;
-    flowAdd(Facts.True);
-    flowKillNames(BodyAssigned);
-    // The checked results the body rebinds come back unchecked (Flow.cpp).
-    flowRebound(S0->Body, S0->Body->getBegin());
-    simpleStmt(S0->Post);
-  }
   // The body shares the loop scope for scoping purposes of RNG-8 only.
   Cur = Head;
   flowAdd(Facts.True);
   blockStmt(Ctx, S0->Body);
   FlowTarget Done = flowPopTarget();
+  // The post statement runs after the body and after every `continue`, with
+  // what holds there (`for n := head; n != nil; n = n.Next` keeps n set where
+  // every way through the body does, ADR-0018 point 11). Its end is the last
+  // back edge.
+  if (own() && Done.HasCont)
+    Cur = flowJoin(Cur, Done.Cont);
+  if (S0->Post) {
+    if (auto *AS = dyn_cast<AssignStmt>(S0->Post); AS && AS->Op == tok::define)
+      err(S0->Post, diag::err_sema_stmt,
+          {"cannot declare in post statement of for loop"});
+    simpleStmt(S0->Post);
+  }
+  flowLoopBack(Region, Cur);
   // After the loop: the condition was false, or a break left it.
   FlowState Exit;
   if (S0->Cond) {
@@ -517,6 +521,7 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   if (Done.HasBreak)
     Exit = flowJoin(Exit, Done.Break);
   Cur = std::move(Exit);
+  flowLoopClean(Region, Cur);
   closeScope();
 }
 
@@ -728,6 +733,7 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
   Operand X;
   if (S0->Tag) {
     expr(X, S0->Tag);
+    unnarrowTentative(X); // the cases compare with its type (P03.19)
     assignment(X, nullptr, "switch expression");
     if (X.M != Mode::Invalid && !comparableType(X.Ty, true, nullptr) &&
         !hasNil(X.Ty)) {
@@ -952,7 +958,7 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
       Var *V = newVar(name(Lhs), VT, Lhs->getBegin());
       declare(E.Sc, nullptr, V, CC->Colon);
       recordImplicit(CC, V);
-      if (own() && isValid(VT) && isOwning(VT) && !isInterface(VT))
+      if (own() && bindsBox(VT))
         V->Mode = Var::Borrowed; // TYP-9
       LhsVars.push_back(V);
     }
@@ -1226,11 +1232,18 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
       if (Var *BV = borrowedRoot(S0->X))
         err(S0->AliasLoc, diag::err_own_range_alias_borrowed,
             {str(S0->X), std::string(BV->Name)});
-      else {
+      else if (!rejectBoxWrite(S0->X, S0->X, true,
+                               "through the `&` range variable over " +
+                                   str(S0->X))) {
         rejectPayloadAddress(S0->X, "an `&` range variable over an array "
                                     "held by value");
         noteReference(S0->X);
       }
+    } else {
+      // P03.19: the alias of an element of a map or slice in the box of an
+      // interface value would write into the box.
+      rejectBoxWrite(S0->X, S0->X, true,
+                     "through the `&` range variable over " + str(S0->X));
     }
   }
   // RNG-2 / RNG-6: `range move(xs)` and `range ch` give owned variables.
@@ -1348,13 +1361,17 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
   // Flow (ADR-0018 point 4): the body may run zero times or many; it starts
   // from what is known minus what the loop assigns.
   flowFlushKills(); // `for k, v = range xs` assigned k and v
-  flowLoopHead(S0, S0->Body->getBegin());
+  int Region = flowLoopHead(S0, S0->Body->getBegin());
   FlowState Head = Cur;
-  flowPushTarget();
+  flowPushTarget(true);
   stmt(Ctx, S0->Body);
   {
     FlowTarget Done = flowPopTarget();
+    if (own() && Done.HasCont)
+      Cur = flowJoin(Cur, Done.Cont);
+    flowLoopBack(Region, Cur);
     Cur = Done.HasBreak ? flowJoin(Head, Done.Break) : Head;
+    flowLoopClean(Region, Cur);
   }
   if (Frame)
     RangeStack.pop_back();
@@ -1469,6 +1486,7 @@ private:
                                         const Stmt *Parent) {
     SmallVector<FwdJump, 4> Fwd;
     llvm::StringMap<const LabeledStmt *> Declared;
+    DeclaredStack.push_back(&Declared);
     SourceLoc VarDeclPos;
     bool HaveVar = false;
     SmallVector<std::pair<StringRef, const BranchStmt *>, 4> Pending;
@@ -1568,9 +1586,11 @@ private:
             break;
           }
           It->second.Used = true;
-          auto D = Declared.find(N);
-          if (D != Declared.end())
-            break; // backward jump in the same block: fine
+          // A backward jump to a label declared so far in this block or in
+          // an enclosing one is fine (types2: gotoTarget).
+          if (llvm::any_of(DeclaredStack,
+                           [&](const auto *M) { return M->count(N) != 0; }))
+            break;
           Jumped(B, N);
           break;
         }
@@ -1638,9 +1658,12 @@ private:
       }
       Out.push_back(J);
     }
+    DeclaredStack.pop_back();
     return Out;
   }
 
+  /// The labels declared so far in each block being walked, innermost last.
+  SmallVector<const llvm::StringMap<const LabeledStmt *> *, 8> DeclaredStack;
   llvm::DenseMap<const BranchStmt *, SourceLoc> JumpVarPos;
   SmallVector<const LabeledStmt *, 4> EnclosingStack;
   void pushLab(const LabeledStmt *L) {

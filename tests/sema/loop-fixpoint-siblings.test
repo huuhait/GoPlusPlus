@@ -1,0 +1,10 @@
+// P03.19 (OWN-P10 loop fixpoint): one outer loop holding 800 sibling inner
+// loops, each assigning the Option o (and, in g, the checked result n) only on
+// a path that leaves it, so its back edge knows o only through the outer
+// loop's assumption. When an inner loop closes, its region is decided once and
+// collapsed to the open regions it rests on (flowLoopClean, regionFrontier),
+// so every walk is short and the check is linear (about 0.02 s). Kept, every
+// state named every closed inner region and the check grew as K^4 (minutes
+// here; lit's timeout stops it).
+// RUN: %python -c "o = '\t\tfor pick() {\n\t\t\tuse(o)\n\t\t\tif pick() {\n\t\t\t\to = nextO(o)\n\t\t\t\tif o == nil {\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t\tbreak\n\t\t\t}\n\t\t}\n\t\tuse(o)\n'; n = o.replace('o = nextO(o)', 'n, err = next(n)').replace('o == nil', 'err != nil').replace('use(o)', 'use(n)'); print('package main\n\ntype Node struct{ V int }\n\nfunc firstO() Option[*Node]\nfunc nextO(n *Node) Option[*Node]\nfunc first() (*Node, error)\nfunc next(n *Node) (*Node, error)\nfunc use(n *Node)  {}\nfunc pick() bool   { return true }\n\nfunc f() {\n\to := firstO()\n\tif o == nil {\n\t\treturn\n\t}\n\tfor pick() {\n' + o * 800 + '\t}\n}\n\nfunc g() {\n\tn, err := first()\n\tif err != nil {\n\t\treturn\n\t}\n\tfor pick() {\n' + n * 800 + '\t}\n}\n\nfunc main() {}')" > %t.gopp
+// RUN: %gopp check %t.gopp

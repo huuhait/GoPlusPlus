@@ -1,0 +1,270 @@
+// P03.19 (OWN-P10 loop fixpoint): 32 nested loops that each assign the
+// Option o and the checked result n. Whether a loop's assumption holds
+// depends on the loops around it; deciding that is a walk over the loop
+// regions with a set of the regions seen, linear in the nesting (asked once
+// per path it was exponential: over a minute at this depth). Good side:
+// every back edge checks, no error. Bad side: the innermost loop comes back
+// unchecked, so every use of o is an error.
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+package main
+
+type Node struct{ V int }
+
+func firstO() Option[*Node]
+func nextO(n *Node) Option[*Node]
+func first() (*Node, error)
+func next(n *Node) (*Node, error)
+func use(n *Node) {}
+
+func positive(xs []int) error {
+	o := firstO()
+	n, err := first()
+	if o == nil || err != nil {
+		return err
+	}
+	for range xs {
+		for range xs {
+			for range xs {
+				for range xs {
+					for range xs {
+						for range xs {
+							for range xs {
+								for range xs {
+									for range xs {
+										for range xs {
+											for range xs {
+												for range xs {
+													for range xs {
+														for range xs {
+															for range xs {
+																for range xs {
+																	for range xs {
+																		for range xs {
+																			for range xs {
+																				for range xs {
+																					for range xs {
+																						for range xs {
+																							for range xs {
+																								for range xs {
+																									for range xs {
+																										for range xs {
+																											for range xs {
+																												for range xs {
+																													for range xs {
+																														for range xs {
+																															for range xs {
+																																for range xs {
+																																	use(o)
+																																	use(n)
+																																	o = nextO(o)
+																																	n, err = next(n)
+																																	if o == nil || err != nil {
+																																		return err
+																																	}
+																																	use(o)
+																																}
+																																use(o)
+																															}
+																															use(o)
+																														}
+																														use(o)
+																													}
+																													use(o)
+																												}
+																												use(o)
+																											}
+																											use(o)
+																										}
+																										use(o)
+																									}
+																									use(o)
+																								}
+																								use(o)
+																							}
+																							use(o)
+																						}
+																						use(o)
+																					}
+																					use(o)
+																				}
+																				use(o)
+																			}
+																			use(o)
+																		}
+																		use(o)
+																	}
+																	use(o)
+																}
+																use(o)
+															}
+															use(o)
+														}
+														use(o)
+													}
+													use(o)
+												}
+												use(o)
+											}
+											use(o)
+										}
+										use(o)
+									}
+									use(o)
+								}
+								use(o)
+							}
+							use(o)
+						}
+						use(o)
+					}
+					use(o)
+				}
+				use(o)
+			}
+			use(o)
+		}
+		use(o)
+	}
+	return nil
+}
+
+func negative(xs []int) {
+	o := firstO()
+	if o == nil {
+		return
+	}
+	for range xs {
+		for range xs {
+			for range xs {
+				for range xs {
+					for range xs {
+						for range xs {
+							for range xs {
+								for range xs {
+									for range xs {
+										for range xs {
+											for range xs {
+												for range xs {
+													for range xs {
+														for range xs {
+															for range xs {
+																for range xs {
+																	for range xs {
+																		for range xs {
+																			for range xs {
+																				for range xs {
+																					for range xs {
+																						for range xs {
+																							for range xs {
+																								for range xs {
+																									for range xs {
+																										for range xs {
+																											for range xs {
+																												for range xs {
+																													for range xs {
+																														for range xs {
+																															for range xs {
+																																for range xs {
+																																	// CHECK-DAG: [[@LINE+1]]:38: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+																																	use(o)
+																																	// CHECK-DAG: [[@LINE+1]]:44: error{{\[E0329\]}}: o may be nil; check o != nil first (the loop assigns o, and a later pass comes back to this use with it unchecked) (OWN-P10)
+																																	o = nextO(o)
+																																	// CHECK-DAG: [[@LINE+1]]:38: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																																	use(o)
+																																}
+																																// CHECK-DAG: [[@LINE+1]]:37: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																																use(o)
+																															}
+																															// CHECK-DAG: [[@LINE+1]]:36: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																															use(o)
+																														}
+																														// CHECK-DAG: [[@LINE+1]]:35: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																														use(o)
+																													}
+																													// CHECK-DAG: [[@LINE+1]]:34: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																													use(o)
+																												}
+																												// CHECK-DAG: [[@LINE+1]]:33: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																												use(o)
+																											}
+																											// CHECK-DAG: [[@LINE+1]]:32: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																											use(o)
+																										}
+																										// CHECK-DAG: [[@LINE+1]]:31: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																										use(o)
+																									}
+																									// CHECK-DAG: [[@LINE+1]]:30: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																									use(o)
+																								}
+																								// CHECK-DAG: [[@LINE+1]]:29: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																								use(o)
+																							}
+																							// CHECK-DAG: [[@LINE+1]]:28: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																							use(o)
+																						}
+																						// CHECK-DAG: [[@LINE+1]]:27: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																						use(o)
+																					}
+																					// CHECK-DAG: [[@LINE+1]]:26: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																					use(o)
+																				}
+																				// CHECK-DAG: [[@LINE+1]]:25: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																				use(o)
+																			}
+																			// CHECK-DAG: [[@LINE+1]]:24: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																			use(o)
+																		}
+																		// CHECK-DAG: [[@LINE+1]]:23: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																		use(o)
+																	}
+																	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																	use(o)
+																}
+																// CHECK-DAG: [[@LINE+1]]:21: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+																use(o)
+															}
+															// CHECK-DAG: [[@LINE+1]]:20: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+															use(o)
+														}
+														// CHECK-DAG: [[@LINE+1]]:19: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+														use(o)
+													}
+													// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+													use(o)
+												}
+												// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+												use(o)
+											}
+											// CHECK-DAG: [[@LINE+1]]:16: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+											use(o)
+										}
+										// CHECK-DAG: [[@LINE+1]]:15: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+										use(o)
+									}
+									// CHECK-DAG: [[@LINE+1]]:14: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+									use(o)
+								}
+								// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+								use(o)
+							}
+							// CHECK-DAG: [[@LINE+1]]:12: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+							use(o)
+						}
+						// CHECK-DAG: [[@LINE+1]]:11: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+						use(o)
+					}
+					// CHECK-DAG: [[@LINE+1]]:10: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+					use(o)
+				}
+				// CHECK-DAG: [[@LINE+1]]:9: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+				use(o)
+			}
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+			use(o)
+		}
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0329\]}}: o may be nil; check o != nil first (OWN-P10)
+		use(o)
+	}
+}
+
+func main() {}

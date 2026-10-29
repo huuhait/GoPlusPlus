@@ -1,0 +1,491 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule OWN-P10 at a loop head (P03.19): the state at the top of a loop is the
+// meet of the state before the loop and the states that come back (the end of
+// the body, every `continue`, the post statement), so a value that is checked
+// on every path into the top is known there. Branches, `continue` inside a
+// switch, a post statement that assigns, a value not checked before the
+// loop, a move and a function literal that assigns. Each rejected case has
+// its accepted neighbor.
+package main
+
+type U struct {
+	Name string @Required
+}
+
+type Node struct {
+	V    int
+	Next Option[*Node]
+}
+
+func first() (U, error)        { return U{Name: "x"}, nil }
+func next(u U) (U, error)      { return U{Name: "y"}, nil }
+func use(u U)                  {}
+func firstO() Option[*Node]    { return nil }
+func nextO(p *Node) Option[*Node] { return nil }
+func useP(p *Node)             {}
+func pick() bool               { return true }
+
+// --- checked results
+func cursorOk() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		use(n)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func cursorUnchecked() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = next(n)
+	}
+}
+
+func cursorBeforeLoopUnchecked() error {
+	n, err := first()
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func cursorContinue() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for i := 0; i < 3; {
+		use(n)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+		if pick() {
+			continue
+		}
+		i++
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = next(n)
+		if pick() {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		// (the other path comes back unchecked)
+	}
+}
+
+func cursorBranches(c bool) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		use(n)
+		if c {
+			n, err = next(n)
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func cursorBranchUnchecked(c bool) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		if c {
+			// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+			n, err = next(n)
+		}
+	}
+}
+
+func cursorRange(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for range xs {
+		use(n)
+		n, err = next(n)
+		if err != nil {
+			return err
+		}
+	}
+	use(n)
+	return nil
+}
+
+func cursorRangeUnchecked(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = next(n)
+	}
+	return nil
+}
+
+func cursorLabeled(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+outer:
+	for range xs {
+		for range xs {
+			use(n)
+			n, err = next(n)
+			if err != nil {
+				return err
+			}
+			if pick() {
+				continue outer
+			}
+		}
+	}
+	return nil
+}
+
+func cursorLabeledUnchecked(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+outer:
+	for range xs {
+		for range xs {
+			// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+			use(n)
+			// CHECK-DAG: [[@LINE+1]]:18: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+			n, err = next(n)
+			if pick() {
+				continue outer
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cursorSwitchContinue(xs []int) error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		use(n)
+		n, err = next(n)
+		switch {
+		case pick():
+			if err != nil {
+				return err
+			}
+			continue
+		default:
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func cursorSwitchContinueUnchecked() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		// CHECK-DAG: [[@LINE+1]]:17: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		n, err = next(n)
+		switch {
+		case pick():
+			continue
+		default:
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// A value the loop assigns in the post statement is not assumed.
+func cursorPost() error {
+	n, err := first()
+	if err != nil {
+		return err
+	}
+	// CHECK-DAG: [[@LINE+1]]:35: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+	for i := 0; i < 2; n, err = next(n) {
+		// CHECK-DAG: [[@LINE+1]]:7: error{{\[E0350\]}}: n may be unset here: U has no zero value, and it is valid only where err == nil: check `if err != nil { return err }` first (OWN-P10)
+		use(n)
+		i++
+	}
+	return nil
+}
+
+// --- Option
+func optOk() {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		useP(p)
+		p = nextO(p)
+		if p == nil {
+			return
+		}
+	}
+}
+
+func optUnchecked() {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useP(p)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		p = nextO(p)
+	}
+}
+
+func optNotChecked() {
+	p := firstO()
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: p may be nil; check p != nil first (OWN-P10)
+		useP(p)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: p may be nil; check p != nil first (OWN-P10)
+		p = nextO(p)
+		if p == nil {
+			return
+		}
+	}
+}
+
+func optContinue() {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		useP(p)
+		p = nextO(p)
+		if p == nil {
+			return
+		}
+		if pick() {
+			continue
+		}
+	}
+}
+
+func optContinueUnchecked() {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useP(p)
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		p = nextO(p)
+		if pick() {
+			continue
+		}
+		if p == nil {
+			return
+		}
+	}
+}
+
+func optRange(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for range xs {
+		useP(p)
+		p = nextO(p)
+		if p == nil {
+			return
+		}
+	}
+	useP(p)
+}
+
+func optRangeUnchecked(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		p = nextO(p)
+	}
+}
+
+func optInner(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for range xs {
+		useP(p)
+		for range xs {
+			useP(p)
+			p = nextO(p)
+			if p == nil {
+				return
+			}
+		}
+	}
+}
+
+func optInnerUnchecked(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useP(p)
+		for range xs {
+			// CHECK-DAG: [[@LINE+1]]:9: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			useP(p)
+			// CHECK-DAG: [[@LINE+1]]:14: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			p = nextO(p)
+		}
+	}
+}
+
+func optBreakAfter(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for range xs {
+		p = nextO(p)
+		break
+	}
+}
+
+func optBranch(c bool) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		useP(p)
+		if c {
+			p = nextO(p)
+			if p == nil {
+				return
+			}
+		}
+	}
+}
+
+func optBranchUnchecked(c bool) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+		useP(p)
+		if c {
+			// CHECK-DAG: [[@LINE+1]]:14: error{{\[E0329\]}}: p may be nil; check p != nil first (the loop assigns p, and a later pass comes back to this use with it unchecked) (OWN-P10)
+			p = nextO(p)
+		}
+	}
+}
+
+// A loop that moves the Option keeps the old rule (the move empties it).
+func optMoved() {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for {
+		takeP(move(p))
+		// CHECK-DAG: [[@LINE+1]]:13: error{{\[E0329\]}}: p may be nil; check p != nil first (OWN-P10)
+		p = nextO(p)
+		if p == nil {
+			return
+		}
+	}
+}
+
+func takeP(o Option[*Node]) {}
+
+// A local that is not assigned in the loop is unchanged.
+func optUnassigned(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	for range xs {
+		useP(p)
+	}
+	useP(p)
+}
+
+// A value a closure assigns never narrows.
+func optClosure(xs []int) {
+	p := firstO()
+	if p == nil {
+		return
+	}
+	set := func() { p = nil }
+	for range xs {
+		// CHECK-DAG: [[@LINE+1]]:8: error{{\[E0329\]}}: p may be nil; check a local copy: `if v := p; v != nil { ... }` (OWN-P10)
+		useP(p)
+		set()
+	}
+}
+
+// The cursor over a linked list: the condition and the post statement.
+func listWalk(head *Node) {
+	for n := firstO(); n != nil; n = n.Next {
+		useP(n)
+	}
+}

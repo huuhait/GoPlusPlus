@@ -21,8 +21,9 @@
 // variables known to be set (FlowState). Where paths meet (after an if, a
 // switch, a loop, at a break target) only what every path knows is kept; a
 // path that cannot continue (return, break, continue, goto, panic) is Dead
-// and drops out of the meet. A loop starts from the state before it minus the
-// names the loop assigns (a later iteration comes back to the top). A label
+// and drops out of the meet. The state at a loop top is the meet of the state
+// before the loop and the states at its back edges (the end of the body, each
+// `continue`, the post statement): see flowLoopHead and flowLoopBack. A label
 // that a goto names starts with nothing known. A function literal starts
 // empty. The state belongs to one body checker, so it does not depend on the
 // thread.
@@ -83,6 +84,42 @@ bool Checker::isNilLit(const ast::Expr *Ex) {
          llvm::isa_and_nonnull<Nil>(E.Sc->lookup("nil", E.Pos));
 }
 
+bool Checker::isNilValue(const ast::Expr *Ex) {
+  Ex = unparen(Ex);
+  if (isNilLit(Ex))
+    return true;
+  // `(chan int)(nil)`: a conversion of nil.
+  auto *C = dyn_cast<CallExpr>(Ex);
+  if (!C || C->Args.size() != 1 || !isNilLit(C->Args[0]))
+    return false;
+  const TypeAndValue *F = I.lookup(C->Fun);
+  return F && F->M == Mode::TypeExpr;
+}
+
+/// CON-6a. Every way a local channel can stop being nil, and where each is
+/// handled: an assignment of anything (the kills of the statement, also
+/// `ch, x := f()`, a range clause, a select receive); a join with a path that
+/// assigned (the meet keeps only what every path knows); a loop that assigns
+/// it (flowLoopHead); a goto label (the state resets); `&ch`, a
+/// pointer-receiver call or method value on ch (an implicit `&ch`), an
+/// assignment inside a function literal (narrowable) and any capture by one
+/// (ClosureNames): never tracked; a check `ch != nil` (flowAddTo: the path is
+/// not known nil); a move. A package variable, a field, a parameter, a named
+/// result and an `&` range alias are never tracked.
+bool Checker::knownNilChan(const ast::Expr *Ex) {
+  if (!own() || Cur.Dead)
+    return false;
+  auto *Id = dyn_cast<ast::Ident>(unparen(Ex));
+  if (!Id)
+    return false;
+  auto *V = dyn_cast_or_null<Var>(I.Uses.lookup(Id));
+  // What may change a local under the flow facts (also an implicit `&ch` of
+  // a pointer-receiver call or method value) is decided in narrowable.
+  if (!narrowable(V) || V->IsParam || V->Result || ClosureNames.count(V->Name))
+    return false;
+  return Cur.Nil.count(V) && !Cur.N.count(V);
+}
+
 bool Checker::narrowable(const Var *V) {
   // A package variable can change under our feet; so can a variable that a
   // function literal assigns, or whose address is taken (by name, over the
@@ -123,7 +160,44 @@ Type *Checker::narrowedType(const ast::Ident *Id, Var *V, Type *T) {
   auto *Op = dyn_cast<OptionType>(under(T));
   if (!Op || !isNarrowed(V))
     return T;
+  // Known only if the loop around assumed it: decided at its end, unless the
+  // use turns out not to need it (unnarrowTentative).
+  if (!Cur.Dead)
+    if (auto It = Cur.TentN.find(V); It != Cur.TentN.end()) {
+      TentNIndex[Id] = unsigned(TentNUses.size());
+      TentNUses.push_back({Id, V, It->second});
+    }
   return Op->Elem;
+}
+
+Type *Checker::tentOption(const Operand &X) {
+  if (!own() || !X.E || X.M == Mode::Invalid)
+    return nullptr;
+  auto *Id = dyn_cast<ast::Ident>(unparen(X.E));
+  if (!Id)
+    return nullptr;
+  auto It = TentNIndex.find(Id);
+  return It == TentNIndex.end() ? nullptr : TentNUses[It->second].V->Ty;
+}
+
+bool Checker::unnarrowTentative(Operand &X) {
+  Type *OptTy = tentOption(X);
+  if (!OptTy)
+    return false;
+  auto It = TentNIndex.find(llvm::cast<ast::Ident>(unparen(X.E)));
+  TentNUses[It->second].Regions.clear(); // needs no assumption now
+  TentNIndex.erase(It);
+  // The use and its parentheses have the Option's type again.
+  for (const ast::Expr *Ex = X.E;;) {
+    if (auto TV = I.Types.find(Ex); TV != I.Types.end())
+      TV->second.Ty = OptTy;
+    auto *P = dyn_cast<ParenExpr>(Ex);
+    if (!P)
+      break;
+    Ex = P->X;
+  }
+  X.Ty = OptTy;
+  return true;
 }
 
 Var *Checker::optionVarOf(const ast::Expr *Ex) {
@@ -234,9 +308,25 @@ Checker::FlowState Checker::flowJoin(const FlowState &A, const FlowState &B) {
   if (B.Dead)
     return A;
   FlowState R;
+  for (const Var *V : A.Nil)
+    if (B.Nil.count(V))
+      R.Nil.insert(V);
   for (const Var *V : A.N)
-    if (B.N.count(V))
+    if (B.N.count(V)) {
       R.N.insert(V);
+      // Known on both paths; it holds only if the assumptions of both do.
+      auto TA = A.TentN.find(V), TB = B.TentN.find(V);
+      if (TA != A.TentN.end() || TB != B.TentN.end()) {
+        SmallVector<unsigned, 2> Rs;
+        if (TA != A.TentN.end())
+          Rs.append(TA->second.begin(), TA->second.end());
+        if (TB != B.TentN.end())
+          Rs.append(TB->second.begin(), TB->second.end());
+        llvm::sort(Rs);
+        Rs.erase(std::unique(Rs.begin(), Rs.end()), Rs.end());
+        R.TentN[V] = std::move(Rs);
+      }
+    }
   // A value that may be invalid on either path may be invalid after. Where
   // the paths name different guards, no guard makes it valid.
   for (auto &KV : A.Pend) {
@@ -271,11 +361,14 @@ void Checker::flowAddTo(FlowState &S,
                         const llvm::SmallPtrSetImpl<const Var *> &Vars) {
   for (const Var *V : Vars) {
     // A checked result named by a fact is valid; an Option or a nilable local
-    // is known set.
-    if (S.Pend.erase(V))
+    // is known set. (A channel checked non-nil is not known nil on this path.)
+    S.Nil.erase(V);
+    if (S.Pend.erase(V)) {
       S.Tent.erase(V);
-    else
+    } else {
       S.N.insert(V);
+      S.TentN.erase(V); // a fact of its own, not an assumption
+    }
   }
 }
 
@@ -394,11 +487,12 @@ namespace {
 /// over-approximation that needs no scopes (a shadowing variable of the same
 /// name only makes the analysis more cautious).
 struct AssignScan {
-  llvm::StringSet<> Assigned;  // anywhere
-  llvm::StringSet<> InClosure; // inside a function literal
-  llvm::StringSet<> AddrTaken; // &name anywhere
-  llvm::StringSet<> Gotos;     // goto targets
-  llvm::StringSet<> Moved;     // move(name): the variable is nil afterwards
+  llvm::StringSet<> Assigned;      // anywhere
+  llvm::StringSet<> InClosure;     // inside a function literal
+  llvm::StringSet<> AddrTaken;     // &name anywhere
+  llvm::StringSet<> Gotos;         // goto targets
+  llvm::StringSet<> Moved;         // move(name): the variable is nil afterwards
+  llvm::StringSet<> ClosureIdents; // every name used inside a function literal
   /// Selector names used on a plain name: `x.M` (see takesImplicitAddress).
   llvm::StringMap<llvm::StringSet<>> MethodSels;
   /// `a, b, g = rhs` with one right-hand side: a possible checked-result or
@@ -460,6 +554,9 @@ struct AssignScan {
                  isa<CommClause>(N);
     if (Scope)
       Scopes.emplace_back();
+    if (ClosureDepth)
+      if (auto *Id = dyn_cast<ast::Ident>(N))
+        ClosureIdents.insert(Id->Name.str());
     if (auto *AS = dyn_cast<AssignStmt>(N)) {
       bool IsForm = AS->Lhs.size() >= 2 && AS->Rhs.size() == 1 &&
                     (AS->Op == tok::assign || AS->Op == tok::define);
@@ -553,6 +650,7 @@ struct AssignScan {
 
 void Checker::flowBeginBody(const BlockStmt *Body) {
   NoNarrowNames.clear();
+  ClosureNames.clear();
   MethodSels.clear();
   GotoLabels.clear();
   if (!own() || !Body)
@@ -574,6 +672,8 @@ void Checker::flowBeginBody(const BlockStmt *Body) {
     NoNarrowNames.insert(KV.first());
   for (auto &KV : Scan.AddrTaken)
     NoNarrowNames.insert(KV.first());
+  for (auto &KV : Scan.ClosureIdents)
+    ClosureNames.insert(KV.first());
   for (auto &KV : Scan.Gotos)
     GotoLabels.insert(KV.first());
   for (auto &KV : Scan.MethodSels)
@@ -592,7 +692,8 @@ void Checker::flowBeginBody(const BlockStmt *Body) {
         LabelForms.push_back(V);
     }
   LabelRegion = static_cast<int>(FlowRegions.size());
-  FlowRegions.push_back(std::move(Region));
+  FlowRegions.emplace_back();
+  FlowRegions.back().Forms = std::move(Region);
 }
 
 void Checker::collectAssigned(const ast::Node *N, llvm::StringSet<> &Names) {
@@ -610,8 +711,10 @@ void Checker::flowMoved(const ast::Expr *Arg) {
     return;
   if (Var *V = nilCheckVarOf(Arg)) {
     MoveLog.push_back(V);
-    if (!Cur.Dead)
+    if (!Cur.Dead) {
       Cur.N.erase(V);
+      Cur.Nil.erase(V);
+    }
   }
 }
 
@@ -631,11 +734,18 @@ void Checker::flowKillNames(const llvm::StringSet<> &Names) {
       Drop.push_back(V);
   for (const Var *V : Drop)
     Cur.N.erase(V);
+  Drop.clear();
+  for (const Var *V : Cur.Nil)
+    if (Names.count(V->Name))
+      Drop.push_back(V);
+  for (const Var *V : Drop)
+    Cur.Nil.erase(V);
 }
 
 void Checker::flowFlushKills() {
   for (const Var *V : PendingKills) {
     Cur.N.erase(V);
+    Cur.Nil.erase(V);
     // What V guarded is not tied to it any more; V itself is a fresh value.
     Cur.Pend.erase(V);
     Cur.Tent.erase(V);
@@ -649,6 +759,9 @@ void Checker::flowFlushKills() {
       }
   }
   PendingKills.clear();
+  for (const Var *V : PendingNil)
+    Cur.Nil.insert(V);
+  PendingNil.clear();
   for (auto &PG : PendingGuards) {
     GuardedVars.insert(PG.first);
     Cur.Pend[PG.first] = PG.second;
@@ -661,8 +774,9 @@ void Checker::flowFlushKills() {
 // Jumps
 //===----------------------------------------------------------------------===//
 
-void Checker::flowPushTarget() {
+void Checker::flowPushTarget(bool IsLoop) {
   Targets.emplace_back();
+  Targets.back().IsLoop = IsLoop;
   Targets.back().Label = std::move(PendingLabel);
   PendingLabel.clear();
 }
@@ -684,13 +798,22 @@ void Checker::flowBranch(const ast::BranchStmt *B) {
       T.HasBreak = true;
       break;
     }
+  } else if (B->Keyword == tok::kw_continue) {
+    // A back edge to the loop (its post statement, then its head): the
+    // state here is part of the meet that decides the loop head.
+    for (size_t K = Targets.size(); K-- > 0;) {
+      FlowTarget &T = Targets[K];
+      if (!T.IsLoop || (B->Label && T.Label != B->Label->Name.str()))
+        continue;
+      T.Cont = T.HasCont ? flowJoin(T.Cont, Cur) : Cur;
+      T.HasCont = true;
+      break;
+    }
   } else if (B->Keyword == tok::kw_fallthrough) {
     FallState = Cur;
     HasFall = true;
   }
-  // A continue goes back to a loop head and post statement that assume only
-  // what holds on every path (see forStmt); the label a goto names resets
-  // the state.
+  // The label a goto names resets the state.
   flowDead();
 }
 
@@ -733,10 +856,13 @@ void Checker::flowBranch(const ast::BranchStmt *B) {
 //     which multi-value assignments are checked forms is not known yet: the
 //     scan takes every one as possible, and the value is pending there
 //     tentatively (FlowState::Tent, one region per loop or label). Only the
-//     checker's own classification of the typed statement decides
-//     (noteGuardedForm records it in RealForms); at the end of the body a
-//     read of a tentative value is reported if a checked form of its region
-//     binds that variable (flowDecideTentative), in body order.
+//     checker's own states decide, at the end of the body (a read of a
+//     tentative value is reported then, flowDecideTentative, in body order):
+//     a loop region is real if a back edge of the loop has the value pending
+//     for real, or through a region that is (flowLoopBack, the loop fixpoint
+//     of P03.19); a label region is real if one of its forms is a checked
+//     form that binds the variable (noteGuardedForm records the checker's
+//     classification of the typed statement in RealForms).
 //  7. A function literal may run at any time: a captured checked result is
 //     never known valid in it (CLO-9, as for an Option), whether the form
 //     that binds it comes before or after the literal. Such uses are
@@ -943,19 +1069,114 @@ void Checker::flowEndBody() {
   CapturedUses.clear();
 }
 
-void Checker::flowDecideTentative(size_t Top) {
+/// Whether V is pending for real at the head of region R: for a label region,
+/// if one of its forms is a checked form that binds V (RealForms); for a
+/// loop, if a back edge has V pending for real, or pending only through the
+/// tentative entry of a region that is real itself. Pending is the least
+/// fixpoint (a region never supports itself), so this is whether such a
+/// region can be reached from R over those edges: a walk with a set of the
+/// regions seen, linear in the regions however deep the loops nest.
+bool Checker::regionPendReal(unsigned R, const Var *V) {
+  llvm::DenseSet<unsigned> Seen;
+  SmallVector<unsigned, 8> Work{R};
+  while (!Work.empty()) {
+    unsigned Q = Work.pop_back_val();
+    if (!Seen.insert(Q).second)
+      continue;
+    const FlowRegion &Reg = FlowRegions[Q];
+    if (!Reg.IsLoop) {
+      if (llvm::any_of(Reg.Forms, [&](const ast::Expr *Rhs) {
+            return RealForms.count({Rhs, V}) != 0;
+          }))
+        return true;
+      continue;
+    }
+    if (Reg.PendReal.count(V))
+      return true;
+    if (auto It = Reg.PendEdge.find(V); It != Reg.PendEdge.end())
+      Work.append(It->second.begin(), It->second.end());
+  }
+  return false;
+}
+
+/// Whether the assumption of loop region R that V stays known set fails: a
+/// back edge does not know V, or knows it only through the assumption of a
+/// region that fails. Known set is the greatest fixpoint (a region may rest
+/// on itself), so failing is the least one: whether a region whose back edge
+/// does not know V can be reached from R (the same linear walk).
+bool Checker::regionNBad(unsigned R, const Var *V) {
+  llvm::DenseSet<unsigned> Seen;
+  SmallVector<unsigned, 8> Work{R};
+  while (!Work.empty()) {
+    unsigned Q = Work.pop_back_val();
+    if (!Seen.insert(Q).second)
+      continue;
+    const FlowRegion &Reg = FlowRegions[Q];
+    if (Reg.NBad.count(V))
+      return true;
+    if (auto It = Reg.NEdge.find(V); It != Reg.NEdge.end())
+      Work.append(It->second.begin(), It->second.end());
+  }
+  return false;
+}
+
+bool Checker::regionFrontier(ArrayRef<unsigned> Rs, const Var *V, bool Pend,
+                             llvm::SmallVectorImpl<unsigned> &Out) {
+  // The same walk as regionPendReal / regionNBad, from every region of Rs at
+  // once. A closed loop's list is final (and collapsed when it closed), so
+  // the walk only goes through the open regions it reaches.
+  llvm::SmallDenseSet<unsigned, 8> Seen;
+  SmallVector<unsigned, 8> Work(Rs.begin(), Rs.end());
+  while (!Work.empty()) {
+    unsigned Q = Work.pop_back_val();
+    if (!Seen.insert(Q).second)
+      continue;
+    const FlowRegion &Reg = FlowRegions[Q];
+    if (Pend && !Reg.IsLoop) {
+      if (llvm::any_of(Reg.Forms, [&](const ast::Expr *Rhs) {
+            return RealForms.count({Rhs, V}) != 0;
+          }))
+        return true;
+      Out.push_back(Q); // decided at the end of the body
+      continue;
+    }
+    if (Pend ? Reg.PendReal.count(V) : Reg.NBad.count(V))
+      return true;
+    if (!Reg.Closed)
+      Out.push_back(Q);
+    const auto &Edges = Pend ? Reg.PendEdge : Reg.NEdge;
+    if (auto It = Edges.find(V); It != Edges.end())
+      Work.append(It->second.begin(), It->second.end());
+  }
+  llvm::sort(Out);
+  Out.erase(std::unique(Out.begin(), Out.end()), Out.end());
+  return false;
+}
+
+void Checker::flowDecideTentative(size_t Top, size_t TopN) {
   for (size_t K = Top; K < TentUses.size(); ++K) {
     const TentUse &U = TentUses[K];
-    bool Real = llvm::any_of(U.Regions, [&](unsigned R) {
-      return llvm::any_of(FlowRegions[R], [&](const ast::Expr *Rhs) {
-        return RealForms.count({Rhs, U.V}) != 0;
-      });
-    });
-    if (Real)
+    if (llvm::any_of(U.Regions,
+                     [&](unsigned R) { return regionPendReal(R, U.V); }))
       err(U.Id, diag::err_unchecked_value,
           {std::string(U.V->Name), str(U.V->Ty), U.Why});
   }
   TentUses.resize(Top);
+  llvm::SmallPtrSet<const ast::Ident *, 4> Seen;
+  for (size_t K = TopN; K < TentNUses.size(); ++K) {
+    const TentNUse &U = TentNUses[K];
+    TentNIndex.erase(U.Id);
+    if (llvm::any_of(U.Regions,
+                     [&](unsigned R) { return regionNBad(R, U.V); }) &&
+        Seen.insert(U.Id).second) {
+      std::string Nm(U.V->Name);
+      err(U.Id, diag::err_option_maybe_nil,
+          {Nm, nilCheckHint(U.Id) + " (the loop assigns " + Nm +
+                   ", and a later pass comes back to this use with it "
+                   "unchecked)"});
+    }
+  }
+  TentNUses.resize(TopN);
 }
 
 Var *Checker::checkableLocal(StringRef Name, SourceLoc Pos) {
@@ -973,7 +1194,8 @@ void Checker::untieText(const Var *V, const Var *G, StringRef What) {
                  " before that";
 }
 
-void Checker::flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos) {
+void Checker::flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos,
+                          int Region) {
   if (!own() || Cur.Dead)
     return;
   AssignScan Scan;
@@ -1006,19 +1228,15 @@ void Checker::flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos) {
     return true;
   });
   // Every other one may be a checked form: a value it binds from outside is
-  // pending here tentatively, for the region of these forms (point 5). A
+  // pending here tentatively, for the region of the loop (point 5). A
   // `:=` there, or a name declared inside, binds an inner variable; a form
   // inside a function literal binds no local of this body (an error, E0351).
   llvm::StringSet<> Rebound;
-  llvm::SmallPtrSet<const ast::Expr *, 4> Region;
   for (const AssignScan::Form &F : Scan.Forms)
-    if (!F.InClosure) {
-      Region.insert(F.Rhs);
+    if (!F.InClosure)
       for (const std::string &Nm : F.Vals)
         if (Nm != "_" && F.bindsOuter(Nm))
           Rebound.insert(Nm);
-    }
-  int RegionIdx = -1;
   // A pending value whose guard N assigns, and that N does not rebind: the
   // new guard says nothing about it.
   for (auto &KV : Cur.Pend)
@@ -1065,15 +1283,13 @@ void Checker::flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos) {
       GV = nullptr;
     Cur.Pend[V] = GV;
     // A value pending for real before stays real; a new or tentative one is
-    // tentative for this region too.
+    // tentative for this region too: the back edges of the loop decide it
+    // (flowLoopBack).
     if (!Was || Cur.Tent.count(V)) {
-      if (RegionIdx < 0) {
-        RegionIdx = static_cast<int>(FlowRegions.size());
-        FlowRegions.push_back(Region);
-      }
       SmallVector<unsigned, 2> &Rs = Cur.Tent[V];
-      if (!llvm::is_contained(Rs, unsigned(RegionIdx)))
-        Rs.push_back(unsigned(RegionIdx));
+      if (!llvm::is_contained(Rs, unsigned(Region)))
+        Rs.push_back(unsigned(Region));
+      FlowRegions[Region].PendEdge.try_emplace(V);
     }
     GuardText[V] =
         GV ? guardHint(GV)
@@ -1083,17 +1299,157 @@ void Checker::flowRebound(ArrayRef<const ast::Node *> Ns, SourceLoc Pos) {
   }
 }
 
-void Checker::flowLoopHead(const ast::Node *Loop, SourceLoc BodyPos) {
-  if (!own())
-    return;
-  llvm::StringSet<> Assigned;
+/// The head of a loop is the meet of the state before it and the states at its
+/// back edges. The back edges are known only after the body is checked, so
+/// the head starts from the entry state with the assumptions the body can
+/// break, each tagged with the loop's region: a local the loop assigns is
+/// assumed to keep what the entry knows (known set), and a checked result the
+/// loop rebinds with a possible checked form is assumed pending. Uses that
+/// rest on an assumption are recorded; flowLoopBack decides the assumptions
+/// from the real states at the back edges, and flowDecideTentative reports
+/// the uses at the end of the body. Returns the region (-1: no flow typing).
+int Checker::flowLoopHead(const ast::Node *Loop, SourceLoc BodyPos) {
+  if (!own() || Cur.Dead)
+    return -1;
+  // The key and value that `for k, v = range` assigns come in at the top of
+  // each iteration, not over a back edge.
+  if (auto *RS = dyn_cast<RangeStmt>(Loop); RS && RS->Op != tok::define) {
+    llvm::StringSet<> Names;
+    if (auto *Id = dyn_cast_or_null<ast::Ident>(RS->Key))
+      Names.insert(Id->Name.str());
+    if (auto *Id = dyn_cast_or_null<ast::Ident>(RS->Value))
+      Names.insert(Id->Name.str());
+    flowKillNames(Names);
+  }
+  int Region = static_cast<int>(FlowRegions.size());
+  FlowRegions.emplace_back();
+  FlowRegions.back().IsLoop = true;
+  llvm::StringSet<> Assigned, Moved;
   collectAssigned(Loop, Assigned);
-  flowKillNames(Assigned);
+  // A channel that the loop assigns may be made by an earlier pass.
+  Cur.Nil.remove_if([&](const Var *V) { return Assigned.count(V->Name) != 0; });
+  // A move in the loop leaves the variable nil for the next pass (the use
+  // that finds it nil is reported where it is, with the move in its text).
+  collectMoved(Loop, Moved);
+  flowKillNames(Moved);
+  for (const Var *V : Cur.N)
+    if (Assigned.count(V->Name)) {
+      SmallVector<unsigned, 2> &Rs = Cur.TentN[V];
+      Rs.push_back(unsigned(Region));
+      llvm::sort(Rs);
+      Rs.erase(std::unique(Rs.begin(), Rs.end()), Rs.end());
+      FlowRegions[Region].NEdge.try_emplace(V);
+    }
   // A for loop's init statement runs once, before the head.
   if (auto *F = dyn_cast<ForStmt>(Loop))
-    flowRebound({F->Cond, F->Post, F->Body}, BodyPos);
+    flowRebound({F->Cond, F->Post, F->Body}, BodyPos, Region);
   else
-    flowRebound({Loop}, BodyPos);
+    flowRebound({Loop}, BodyPos, Region);
+  return Region;
+}
+
+/// Back is the state at the end of one iteration: the end of the body, every
+/// `continue`, and the post statement. A value the loop assumed pending is
+/// pending at the head if it is pending there; one it assumed known set is not
+/// known at the head if it is not known there.
+void Checker::flowLoopBack(int Region, const FlowState &Back) {
+  if (Region < 0 || Back.Dead)
+    return;
+  FlowRegion &Reg = FlowRegions[Region];
+  for (auto &KV : Reg.PendEdge) {
+    const Var *V = KV.first;
+    if (!Back.Pend.count(V))
+      continue;
+    auto T = Back.Tent.find(V);
+    if (T == Back.Tent.end())
+      Reg.PendReal.insert(V);
+    else
+      KV.second = T->second;
+  }
+  for (auto &KV : Reg.NEdge) {
+    const Var *V = KV.first;
+    if (!Back.N.count(V)) {
+      Reg.NBad.insert(V);
+      continue;
+    }
+    if (auto T = Back.TentN.find(V); T != Back.TentN.end())
+      KV.second = T->second;
+  }
+}
+
+/// The loop and the loops inside it are decided by now (also an inner one a
+/// `break` to an outer label comes from); a loop around it may still make a
+/// region fail later, and the uses wait for that (flowDecideTentative). A
+/// failed region stays failed, so the state after the loop can drop a fact
+/// that rests on one at once: the code after the loop sees the variable
+/// unchecked, as before the loop fixpoint, and no type there depends on it.
+void Checker::flowLoopClean(int Region, FlowState &S) {
+  if (Region < 0)
+    return;
+  // The loop is closed: no back edge comes any more. Decide its region once
+  // for each variable: a failure (or, for a pending value, support) is
+  // recorded in the region itself; otherwise its list becomes the open
+  // regions it rests on, so a closed region is one step from them (R17).
+  FlowRegion &Reg = FlowRegions[Region];
+  Reg.Closed = true;
+  SmallVector<unsigned, 4> Out;
+  for (bool Pend : {false, true}) {
+    auto &Edges = Pend ? Reg.PendEdge : Reg.NEdge;
+    SmallVector<const Var *, 4> Vars;
+    for (auto &KV : Edges)
+      Vars.push_back(KV.first);
+    for (const Var *V : Vars) {
+      Out.clear();
+      unsigned Self = unsigned(Region);
+      if (regionFrontier(Self, V, Pend, Out)) {
+        (Pend ? Reg.PendReal : Reg.NBad).insert(V);
+        Edges[V].clear();
+      } else {
+        Edges[V].assign(Out.begin(), Out.end());
+      }
+    }
+  }
+  if (S.Dead)
+    return;
+  // The state after the loop rests on the open regions only. A failed region
+  // stays failed, so a fact that rests on one is dropped at once: the code
+  // after the loop sees the variable unchecked, as before the loop fixpoint,
+  // and no type there depends on it. A fact that rests on nothing open holds
+  // for good; a pending value that rests on nothing open is pending on
+  // nothing (an empty list: no use of it is reported).
+  SmallVector<const Var *, 2> Failed, Holds;
+  for (auto &KV : S.TentN) {
+    Out.clear();
+    if (regionFrontier(KV.second, KV.first, false, Out)) {
+      if (S.N.count(KV.first))
+        Failed.push_back(KV.first);
+      continue;
+    }
+    KV.second.assign(Out.begin(), Out.end());
+    if (KV.second.empty())
+      Holds.push_back(KV.first);
+  }
+  for (const Var *V : Failed) {
+    S.N.erase(V);
+    S.TentN.erase(V);
+  }
+  for (const Var *V : Holds)
+    S.TentN.erase(V); // a fact of its own now
+  for (auto &KV : S.Tent) {
+    Out.clear();
+    if (!regionFrontier(KV.second, KV.first, true, Out)) {
+      KV.second.assign(Out.begin(), Out.end());
+      continue;
+    }
+    // Real: one region that makes it so is enough.
+    for (unsigned R : KV.second) {
+      Out.clear();
+      if (regionFrontier(R, KV.first, true, Out)) {
+        KV.second.assign(1, R);
+        break;
+      }
+    }
+  }
 }
 
 void Checker::flowReset(SourceLoc Pos) {
@@ -1152,7 +1508,8 @@ bool Checker::knownNonNil(const ast::Expr *Ex, Type *Target, Type *SrcTy) {
   // A local checked with != nil.
   if (auto *Id = dyn_cast<ast::Ident>(Ex)) {
     auto *V = dyn_cast_or_null<Var>(I.Uses.lookup(Id));
-    if (V && narrowable(V) && Cur.N.count(V))
+    // (Not one that only a loop's assumption makes known.)
+    if (V && narrowable(V) && Cur.N.count(V) && !Cur.TentN.count(V))
       return true;
     if (V && Cur.Dead && narrowable(V))
       return true;

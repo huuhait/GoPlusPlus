@@ -1,0 +1,83 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --go --check-error-limit=0 %s 2>&1 | FileCheck --check-prefix=GO "--implicit-check-not=error[E" %s
+// Rule STM-5: `goto` as in Go. A goto may jump back to a label declared
+// earlier in its own block or in any enclosing block (types2: gotoTarget),
+// also from inside an `if`, a loop or a nested block; it must not jump into
+// a block, nor forward over a variable declaration into its scope. Go mode
+// (`--go`) gives the same answers.
+package main
+
+func cond() bool { return true }
+
+func positiveBackFromInner() {
+	for {
+	L:
+		if cond() {
+			return
+		}
+		if cond() {
+			goto L
+		}
+	}
+}
+
+func positiveBackTwoLevels() {
+	n := 0
+L:
+	n++
+	for n < 3 {
+		if cond() {
+			{
+				goto L
+			}
+		}
+		n++
+	}
+}
+
+func positiveBackSameBlock() {
+	n := 0
+L:
+	n++
+	if n < 3 {
+		goto L
+	}
+}
+
+func positiveForwardOut() {
+	for {
+		if cond() {
+			goto done
+		}
+	}
+done:
+}
+
+func negativeIntoBlock() {
+	// CHECK-DAG: [[@LINE+2]]:7: error{{\[E0121\]}}: goto L jumps into block
+	// GO-DAG: [[@LINE+1]]:7: error{{\[E0121\]}}: goto L jumps into block
+	goto L
+	{
+	L:
+	}
+}
+
+func negativeIntoSiblingBlock() {
+	{
+	L:
+	}
+	// CHECK-DAG: [[@LINE+2]]:7: error{{\[E0121\]}}: goto L jumps into block
+	// GO-DAG: [[@LINE+1]]:7: error{{\[E0121\]}}: goto L jumps into block
+	goto L
+}
+
+func negativeOverDeclaration() {
+	// CHECK-DAG: [[@LINE+2]]:7: error{{\[E0120\]}}: goto L jumps over variable declaration at line [[@LINE+3]]
+	// GO-DAG: [[@LINE+1]]:7: error{{\[E0120\]}}: goto L jumps over variable declaration at line [[@LINE+2]]
+	goto L
+	x := 1
+	_ = x
+L:
+}
+
+func main() {}

@@ -426,6 +426,70 @@ TEST(ParallelCheck,
     }
 }
 
+TEST(ParallelCheck, NilSafetyChecksDoNotDependOnTheThreadCount) {
+  // P03.19: the loop fixpoint (assumptions decided at the end of each body,
+  // uses made the Option again where it fits, which rewrites their recorded
+  // types), known-nil channels, temporary maps and writes into an interface
+  // box are per body. Good and bad bodies side by side.
+  std::string Src = "package p\n\ntype Node struct{ V int }\n"
+                    "func firstO() Option[*Node]\n"
+                    "func nextO(n *Node) Option[*Node]\n"
+                    "func anyO() Option[*Node]\n"
+                    "func first() (*Node, error)\n"
+                    "func next(n *Node) (*Node, error)\n"
+                    "func use(n *Node) {}\n"
+                    "func keep(o Option[*Node]) {}\n"
+                    "func f() map[string]int\n"
+                    "func pick() bool { return true }\n";
+  const unsigned Funcs = 60;
+  for (unsigned I = 0; I < Funcs; ++I) {
+    std::string N = std::to_string(I);
+    Src += "func good" + N +
+           "(x any, xs []int) error {\n"
+           "\tm := f()\n\tm[\"a\"] = 1\n"
+           "\tif d, ok := x.(map[string]int); ok {\n"
+           "\t\tc := d.Clone()\n\t\tc[\"b\"] = 2\n\t}\n"
+           "\tch := make(chan int)\n\tclose(ch)\n"
+           "\to := firstO()\n\tif o == nil {\n\t\treturn nil\n\t}\n"
+           "\tfor range xs {\n\t\tuse(o)\n\t\tkeep(o)\n\t\tc := o\n"
+           "\t\tkeep(c)\n\t\to = nextO(o)\n\t\tif o == nil {\n"
+           "\t\t\treturn nil\n\t\t}\n\t}\n"
+           "\tn, err := first()\n\tif err != nil {\n\t\treturn err\n\t}\n"
+           "\tfor {\n\t\tuse(n)\n\t\tn, err = next(n)\n"
+           "\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n}\n";
+    if (I % 3 == 0)
+      Src += "func bad" + N +
+             "(x any, xs []int) {\n"
+             "\to := firstO()\n\tif o == nil {\n\t\treturn\n\t}\n"
+             "\tfor range xs {\n\t\tuse(o)\n\t\tkeep(o)\n\t\to = anyO()\n\t}\n"
+             "\tf()[\"a\"] = 1\n\tx.(map[string]int)[\"b\"] = 2\n"
+             "\tvar ch chan int\n\tclose(ch)\n"
+             "\tfor {\n\tL:\n\t\tif pick() {\n\t\t\treturn\n\t\t}\n"
+             "\t\tif pick() {\n\t\t\tgoto L\n\t\t}\n\t}\n}\n";
+  }
+  Output Ref = run(Src, 1);
+  for (const char *Msg :
+       {"o may be nil; check o != nil first (the loop assigns o",
+        "this map is a temporary", "inside an interface value",
+        "ch is nil on every path to this close"})
+    EXPECT_NE(Ref.Diags.find(Msg), std::string::npos)
+        << Msg << "\n"
+        << Ref.Diags.substr(0, 3000);
+  // Only the planted errors: four in each bad function, none in good ones.
+  unsigned Errors = 0;
+  for (size_t Pos = 0;
+       (Pos = Ref.Diags.find(": error: ", Pos)) != std::string::npos; ++Pos)
+    ++Errors;
+  EXPECT_EQ(Errors, 4u * ((Funcs + 2) / 3)) << Ref.Diags.substr(0, 3000);
+  for (unsigned Threads : {2u, 8u, 16u})
+    for (int Rep = 0; Rep < 2; ++Rep) {
+      Output O = run(Src, Threads);
+      ASSERT_EQ(O.Diags, Ref.Diags) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads, run " << Rep;
+    }
+}
+
 TEST(ParallelCheck, SmallPackagesStayOnTheCallingThread) {
   // MinBodiesPerThread keeps a tiny package serial; the result is the same.
   std::string Src = makeSource(3);

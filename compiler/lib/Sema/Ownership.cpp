@@ -1130,6 +1130,194 @@ void Checker::checkWrite(const ast::Expr *Lhs, bool Repoint, bool Redeclare) {
     E2.note(Lhs->getBegin(), NewName);
 }
 
+//===----------------------------------------------------------------------===//
+// Writes into maps and slices (P03.19, ADR-0018 amendment point 5, TYP-9)
+//
+// Two checks, each decided in one place (boxPlace / rejectBoxWrite for the
+// box of an interface value, rejectTempMapWrite for a temporary map). Every
+// way the language can reach a write calls them:
+//  - `p[k] = v`, `p[k] op= v`, `p[k]++`, `p[i].f = v` (lhsVar, so also range
+//    clauses, select receives and tuple assignments);
+//  - the builtins that write their argument: delete, clear, copy, append (the
+//    spare capacity of a slice that a conversion shares with the box), move
+//    (leaves zero bytes);
+//  - making a pointer into the storage: `&p[i]`, a pointer-receiver call or
+//    method value on a part, an `&` range variable, a slice to array pointer
+//    conversion `(*[N]T)(p)`, `unsafe.SliceData(p)`. Making it is the error,
+//    so no pointer into the box is ever held anywhere.
+// A temporary map is a place that only lives until the end of the statement
+// (placeKind Temp: a call result, a literal, a receive, a field or element of
+// one by value; a `Unique[*T]` result owns its target, a `*T` or `Shared[*T]`
+// target is a place).
+//
+// The box: only DIRECT writes are checked here. The target is rooted, in the
+// syntax, at a type switch or assertion binding (TYP-9, isBinding), an
+// Option Get binding of a part of the box (BoxGetBindings), or an assertion,
+// and reached from it through fields and array elements by value, slice and
+// map elements, slice expressions and conversions that share storage, with
+// no variable or call in between (boxPlace). A write through a variable or a
+// call result that stands for a part of the box (a ref `r := v[1:]`, a range
+// variable over a part, `head(v)[0] = 1`, a value a helper returns or keeps)
+// is not seen: P03.21 makes these bindings views (ADR-0020), read-only all
+// the way down by their type, which closes every indirect write and escape
+// in one place. Also not covered: a call that hands a part of the box on as
+// a borrowed argument or receiver (`fill(m)`, `sort.Ints(s)`), as for any
+// borrowed map parameter (PAR-10); P04.09 adds a "writes its parameter" bit.
+//===----------------------------------------------------------------------===//
+
+bool Checker::boxBinding(const Var *V) {
+  return (isBinding(V) && !V->OptionBinding) || BoxGetBindings.count(V);
+}
+
+Checker::BoxKind Checker::boxPlace(const ast::Expr *Ex) {
+  Ex = unparen(Ex);
+  if (const ast::Expr *Arg = sharedConversionArg(Ex))
+    return boxPlace(Arg);
+  switch (Ex->getKind()) {
+  case ast::Node::Kind::Ident: {
+    auto *V = dyn_cast_or_null<Var>(identObj(Ex));
+    return V && boxBinding(V) ? BoxKind::Direct : BoxKind::None;
+  }
+  case ast::Node::Kind::TypeAssertExpr:
+    return BoxKind::Direct;
+  case ast::Node::Kind::SelectorExpr: {
+    // A field by value; behind a pointer it is no part of the box.
+    auto *Sel = cast<SelectorExpr>(Ex);
+    auto It = I.Selections.find(Sel);
+    if (It == I.Selections.end() || It->second.K != Selection::FieldVal ||
+        It->second.Indirect)
+      return BoxKind::None;
+    return boxPlace(Sel->X);
+  }
+  case ast::Node::Kind::IndexExpr: {
+    auto *Ix = cast<IndexExpr>(Ex);
+    Type *T = I.typeOf(Ix->X);
+    Type *U = T ? coreType(T) : nullptr;
+    if (U && isa<RefType>(U))
+      U = under(cast<RefType>(U)->Elem);
+    if (U && isa<PointerType>(U))
+      return BoxKind::None;
+    BoxKind K = boxPlace(Ix->X);
+    if (K == BoxKind::None)
+      return K;
+    // An array element is part of the array; an element of a slice or map
+    // (or of a type we cannot see) is inside that container.
+    return U && isa<sema::ArrayType>(U) ? K : BoxKind::Via;
+  }
+  case ast::Node::Kind::SliceExpr: {
+    auto *Sl = cast<SliceExpr>(Ex);
+    Type *T = I.typeOf(Sl->X);
+    if (T && isa<PointerType>(under(T)))
+      return BoxKind::None;
+    return boxPlace(Sl->X);
+  }
+  default:
+    return BoxKind::None;
+  }
+}
+
+void Checker::noteBoxGet(const Var *V, const ast::Expr *Opt) {
+  if (own() && boxPlace(Opt) != BoxKind::None)
+    BoxGetBindings.insert(V);
+}
+
+/// The expression at the bottom of a place chain (the variable or assertion
+/// the box part is reached from), for the hint.
+static const ast::Expr *placeRoot(Checker &C, const ast::Expr *Ex) {
+  for (;;) {
+    Ex = unparen(Ex);
+    if (const ast::Expr *Arg = C.sharedConversionArg(Ex)) {
+      Ex = Arg;
+      continue;
+    }
+    if (auto *Sel = dyn_cast<SelectorExpr>(Ex))
+      Ex = Sel->X;
+    else if (auto *Ix = dyn_cast<IndexExpr>(Ex))
+      Ex = Ix->X;
+    else if (auto *Sl = dyn_cast<SliceExpr>(Ex))
+      Ex = Sl->X;
+    else
+      return Ex;
+  }
+}
+
+bool Checker::rejectBoxWrite(const ast::Expr *At, const ast::Expr *Place,
+                             bool AnyDepth, const std::string &What) {
+  if (!own())
+    return false;
+  BoxKind K = boxPlace(Place);
+  if (K == BoxKind::None || (!AnyDepth && K != BoxKind::Via))
+    return false;
+  std::string Root = str(placeRoot(*this, Place));
+  // What kind of container the write goes into: the nearest map or slice.
+  std::string Kind = "a map or slice";
+  for (const ast::Expr *Ex = unparen(Place); Ex;) {
+    const ast::Expr *Base = nullptr;
+    if (auto *Ix = dyn_cast<IndexExpr>(Ex))
+      Base = Ix->X;
+    else if (AnyDepth && Ex == unparen(Place))
+      Base = Ex;
+    if (Base) {
+      Type *T = I.typeOf(Base);
+      Type *U = T ? coreType(T) : nullptr;
+      if (U && isa<RefType>(U))
+        U = under(cast<RefType>(U)->Elem);
+      if (U && isa<sema::MapType>(U)) {
+        Kind = "a map";
+        break;
+      }
+      if (U && isa<SliceType>(U)) {
+        Kind = "a slice";
+        break;
+      }
+    }
+    if (auto *Sel = dyn_cast<SelectorExpr>(Ex))
+      Ex = unparen(Sel->X);
+    else if (auto *Ix = dyn_cast<IndexExpr>(Ex))
+      Ex = unparen(Ix->X);
+    else if (auto *Sl = dyn_cast<SliceExpr>(Ex))
+      Ex = unparen(Sl->X);
+    else
+      break;
+  }
+  const char *Copy = Root == "c" ? "d" : "c";
+  err(At, diag::err_box_write,
+      {What, Kind,
+       "clone it first (`" + std::string(Copy) + " := " + Root +
+           ".Clone()`, then write " + Copy +
+           "), or put a pointer in the interface"});
+  return true;
+}
+
+bool Checker::rejectTempMapWrite(const ast::Expr *At, const ast::Expr *MapEx) {
+  if (!own())
+    return false;
+  const ast::Expr *M = unparen(MapEx);
+  Type *T = I.typeOf(M);
+  Type *U = T ? coreType(T) : nullptr;
+  if (!U || !isa<sema::MapType>(U) || isa<RefType>(T))
+    return false;
+  // A conversion that shares storage is no new value: the write lands in its
+  // operand (`N(m)["a"] = 1`), so that decides (as in boxPlace).
+  const ast::Expr *Held = M;
+  while (const ast::Expr *Arg = sharedConversionArg(Held))
+    Held = unparen(Arg);
+  if (boxPlace(Held) != BoxKind::None || placeKind(Held) != PlaceKind::Temp)
+    return false;
+  err(At, diag::err_map_temp_write, {str(At), str(M)});
+  return true;
+}
+
+void Checker::checkContainerStore(const ast::Expr *Lhs) {
+  if (!own())
+    return;
+  const ast::Expr *L = unparen(Lhs);
+  if (rejectBoxWrite(Lhs, L, false, str(L)))
+    return;
+  if (auto *Ix = dyn_cast<IndexExpr>(L))
+    rejectTempMapWrite(Lhs, Ix->X);
+}
+
 void Checker::checkRangeMutation(const ast::Expr *Lhs, const char *What) {
   if (!own() || RangeStack.empty())
     return;
@@ -1176,6 +1364,10 @@ void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
     err(Ex, diag::err_own_borrowed_address, {str(Inner)});
     return;
   }
+  // P03.19: a pointer into a map or slice of an interface box could write
+  // into it (a binding itself and its by-value parts are the case above).
+  if (rejectBoxWrite(Ex, Inner, true, "through " + str(Ex)))
+    return;
   // ADR-0016 point 8: nil could be written through the pointer; only
   // mem.Replace(&c.F, v) may take it, and v must not be nil either.
   const Var *F = selectedField(Inner);
@@ -1202,6 +1394,9 @@ void Checker::checkPtrRecvCall(const SelectorExpr *Sel, Func *M) {
   if (borrowedRoot(Sel->X))
     err(Sel, diag::err_own_borrowed_ptr_call,
         {std::string(M->Name), str(Sel->X)});
+  else
+    rejectBoxWrite(Sel, Sel->X, true,
+                   "through the pointer receiver of " + str(Sel));
 }
 
 //===----------------------------------------------------------------------===//

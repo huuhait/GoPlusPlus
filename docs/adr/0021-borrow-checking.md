@@ -138,5 +138,5 @@ This is like Rust's `&mut` rule. The rule is spec OWN-B9.
 
 ### Open points of the amendment
 
-1. **P03.21 (h).** The task text of P03.21 on master has items (a) to (g) only, and TYP-9 had no sentence "the binding is that pointer, target writable". The consistency sentence was added to TYP-9 (OWN-B9 rule 7). The P03.19 branch carries the P03.21 (h) item; the manager reconciles when it merges.
+1. **P03.21 (h).** Resolved with the P03.19 merge: P03.21 has item (h) (a binding of a value held by value in a box is a view; a pointer kind the box holds stays that pointer, a reborrow by OWN-B9 rule 7, its target writable as the pointer kind allows), and TYP-9 states both.
 2. **RNG-4.** Check whether OWN-B9 makes the run-time "map insert during iteration" panic reachable only through `unsafe` or C; if so, narrow RNG-4 (unchecked item in P04.20).
