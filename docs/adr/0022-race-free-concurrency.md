@@ -1,6 +1,7 @@
 # ADR-0022: Race-free concurrency in normal code
 
 - **Status:** accepted
+- **Status note (2026-10-28, ADR-0023):** a type that uses `extends` is labeled `Send` / `Sync` from all its fields, the parent's included.
 - **Date:** 2026-10-28
 - **Plan reference:** changes P01 D1.13 ("data races are undefined behavior"), P12 D12.6 and D12.7; supersedes the data-race sentence of ADR-0021 (context and decision 7); spec new rules CON-12 to CON-21, rewrites CON-1, CON-2, CON-3, CON-7, CON-8, CON-9, UB-3, UB-11, 16.4, OWN-B4 note, OWN-B5, OWN-B6, GEN-11, CLO-3 and CLO example 4; new tasks P04.21 and P12.13; P12.06 and P13 notes.
 

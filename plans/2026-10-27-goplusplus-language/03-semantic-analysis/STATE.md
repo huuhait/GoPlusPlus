@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-28 (P03.01–P03.19 done; P03.20 and P03.21 open)
+Last updated: 2026-10-28 (P03.01–P03.19 done; P03.20, P03.21 and P03.22 open)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -28,6 +28,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.19 Nil-safety leftovers: `close` of a known-nil channel (CON-6a); writes into a temporary map; writes into a map or slice inside an interface (ADR-0018 amendment point 5); a loop fixpoint for narrowing (the cursor loop `for { use(n); n, err = next(n); if err != nil { return err } }` and its Option equivalent pass when the guard is known on every path into the loop top)
 - [ ] P03.20 `@Strict` structs and `@Option` fields (ADR-0019)
 - [ ] P03.21 `View[…]` replaces `ref` (ADR-0020)
+- [ ] P03.22 `extends`, method marks and no struct embedding (ADR-0023)
 
 ## Open questions
 
@@ -43,6 +44,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0023, owner decisions): new task P03.22 and design D3.13. Single inheritance with `extends` (one struct parent, `@Virtual` / `@Abstract` / `@Override`, `base.M()`, up- and downcasts), and Go struct embedding is removed from `.gopp` files (error with a fix-it; `.go` files unchanged; interface embedding stays). P03.22 also rewrites every existing `.gopp` test that embeds a struct, including the embedded-field tests of P03.15 and P03.20. The phase stays `[~]`.
 - 2026-10-28 (P03.17 review, owner decisions, ADR-0018 amendment): `Option[T]` is comparable when `T` is (both nil, or both set and equal; `Option[*T]` by address; `comparable`, struct fields and map keys follow; a non-comparable `T` allows only `== nil`; `o == 5` means `o == Option[int](5)`). A copy of a narrowed `Option` takes the value type (`if a != nil { p := a }` gives `*Node`; `var p Option[*Node] = a` stays an `Option`). Amendment points 3 and 4 (task P03.18): funcs and interfaces with methods are never nil like pointers (`error` and its aliases, `any`, `unsafe.Pointer`, maps, slices and channels keep `nil`; `Option[Logger]` / `Option[func()]` are the maybe forms; `@Required` on a func or method-interface field is an error), and flow typing also covers `v, err := f()` and the comma-ok forms when the value type has no zero value, and the known-non-nil stores into `error`/`any`/map/chan `@Required` fields.
 
 - 2026-10-27 (ADR-0009, P03.02 spike): constant floats are exact rationals on `APInt` with a 512-bit binary float past 4096 bits, like `go/constant`; libbf is not vendored (D3.2).

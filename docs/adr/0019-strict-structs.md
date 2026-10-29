@@ -1,6 +1,7 @@
 # ADR-0019: Strict structs (`@Strict`) and optional fields (`@Option`)
 
 - **Status:** accepted
+- **Status note (2026-10-28, ADR-0023):** the sentences about embedded fields (decision 2 "Embedded fields count like any field", and the `@Option` on an embedded field rule) no longer apply in `.gopp` files, because struct embedding is removed; the parent's fields of an `extends` type count in the child instead (TYP-17). The text below is kept as it was written.
 - **Date:** 2026-10-28
 - **Plan reference:** extends ADR-0016 (`@Required`); P01 D1.4 rule 11; spec TYP-10, TYP-15, TYP-15a, EXP-9, MAC-8, MAC-12; new task P03.20; P09.04, P09.08, P13.08, P14.06.
 

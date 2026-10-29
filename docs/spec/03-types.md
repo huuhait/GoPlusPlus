@@ -9,7 +9,14 @@ This chapter lists what changes in the type system: new types, type categories, 
 ```
 Type      = TypeName [ TypeArgs ] | TypeLit | "(" Type ")" .
 TypeLit   = /* Go alternatives */ .
+
+TypeSpec     = /* Go alternatives */ | ExtendsDecl .
+ExtendsDecl  = identifier [ TypeParameters ] "extends" Type StructBody .     /* TYP-16 */
+StructBody   = "{" { FieldDecl ";" } "}" .
+FieldDecl    = IdentifierList Type [ FieldAttributes ] [ Tag ] .              /* no EmbeddedField, TYP-25 */
 ```
+
+`extends` is a contextual keyword ([LEX-12](02-lexical.md#lex-12)). A struct type has no embedded fields in `.gopp` files ([TYP-25](#35-single-inheritance-adr-0023)). Interface types can still embed interfaces and constraints.
 
 - `move` is **not** a type. It is a mark on a parameter or receiver ([PAR-5](05-parameters.md)).
 - `View[X]` is an ordinary `TypeName TypeArgs`: a predeclared generic type, not a keyword and not new syntax ([LEX-7](02-lexical.md#predeclared-identifiers), [OWN-V1](04-ownership.md#44-views-d16)). It is a read-only borrow of an `X`. `X` may be any type except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]`: `View[string]`, `View[[]byte]`, `View[User]` and `View[Bytes]` are fine; the others are a compile error that names the allowed forms.
@@ -109,7 +116,7 @@ case string:       fmt.Println("string", v)    // only a string, never a stored 
 }
 ```
 
-**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are required, by `@Required` or by `@Strict` ([TYP-15](#34-required-fields-d14-rule-11), [TYP-15a](#34-required-fields-d14-rule-11)); the table holds the effective bit), emitted once per type (`linkonce_odr`). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
+**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are required, by `@Required` or by `@Strict` ([TYP-15](#34-required-fields-d14-rule-11), [TYP-15a](#34-required-fields-d14-rule-11)); the table holds the effective bit), emitted once per type (`linkonce_odr`). For a type that uses `extends` the table includes the parent chain: the parent's fields come first, then the child's own ([TYP-22](#35-single-inheritance-adr-0023)). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
 
 **TYP-11.** *No `reflect`.* There is no user-facing `reflect` package in v1.
 
@@ -134,7 +141,7 @@ case string:       fmt.Println("string", v)    // only a string, never a stored 
 
 ## 3.4 Required fields (D1.4 rule 11)
 
-**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (embedded fields too). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field of type `error`, `any` (the empty interface), a map or a channel type, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil. This is the one list of known non-nil values (other rules link here): a literal, `make(…)`, a local checked with `!= nil` (flow typing, [OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17)), any value of a never-nil type converted to `error` or `any` (a pointer kind, a func, an interface with methods, or a concrete non-interface value, such as a `*MyErr` or a `Logger` stored into an `error` or `any` field), and a read of another never-nil `@Required` field of the same kind. `move` out of such a field and `&` of it (except as `mem.Replace`'s first argument) are errors (a required `error`, `any`, map or channel field of a `@Strict` struct is such a field too, [TYP-15a](#34-required-fields-d14-rule-11)); on a slice, an `unsafe.Pointer`, an `Option` or a type-parameter field it only means "must be set". On a pointer field (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), a func field, or a field of an interface with methods other than `error`, it is a compile error, because those are never nil anyway ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), ADR-0018). `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct (a `@Required` or `@Strict` one) is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
+**TYP-15.** *`@Required` fields.* A struct field marked `@Required` (after its type, [MAC-12](13-macros-surface.md#132-rules)) must be set in every composite literal of the struct, by name or by position; leaving it out is a compile error that names the field. The attribute is allowed only on struct fields (a parent's fields apply in a child, [TYP-17](#35-single-inheritance-adr-0023)). A struct with a required field has **no zero value** ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), and so has any struct or array that contains such a type; for a generic type this belongs to the instance (`Box[User]`). So array literals with missing elements (`[3]User{{…}}`) and keyed slice literals with gaps (`[]User{5: {…}}`) are errors too, and so is any use of `m[k]` or `<-ch` other than a comma-ok form, a write `m[k] = v` or `delete` (`v := m[k]`, `m[k].Email`, `f(m[k])`, `case u := <-ch:`); the comma-ok forms (`u, ok := x.(User)`, `u, ok := clone(m[k])`, `u, ok := <-ch`, …) work (a single-value `clone(m[k])` or `move(m[k])` is an error), with `u` usable only where `ok` is true ([OWN-R9](04-ownership.md#42-ownership-rules-d14)). On a field of type `error`, `any` (the empty interface), a map or a channel type, `@Required` also means **never nil** (checked at compile time): a stored value must be known non-nil. This is the one list of known non-nil values (other rules link here): a literal, `make(…)`, a local checked with `!= nil` (flow typing, [OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17)), any value of a never-nil type converted to `error` or `any` (a pointer kind, a func, an interface with methods, or a concrete non-interface value, such as a `*MyErr` or a `Logger` stored into an `error` or `any` field), and a read of another never-nil `@Required` field of the same kind. `move` out of such a field and `&` of it (except as `mem.Replace`'s first argument) are errors (a required `error`, `any`, map or channel field of a `@Strict` struct is such a field too, [TYP-15a](#34-required-fields-d14-rule-11)); on a slice, an `unsafe.Pointer`, an `Option` or a type-parameter field it only means "must be set". On a pointer field (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), a func field, or a field of an interface with methods other than `error`, it is a compile error, because those are never nil anyway ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), ADR-0018). `move` out of any non-local place (element, field, `*p`, `&` range alias, a captured variable inside a closure) of such a struct (a `@Required` or `@Strict` one) is an error too, while swaps stay allowed ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The guarantee is about construction: a moved-from place still holds the all-zero bytes ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). JSON decoding builds a fresh value: `u, err := json.Decode[User](data)`, an error naming the field if the input lacks a required one (ADR-0016).
 
 ```go
 type User struct {
@@ -161,7 +168,7 @@ type Server struct{ Log io.Writer }  // an interface field: never nil, must be s
 type Job struct{ Done chan bool @Required }   // a channel field: @Required makes it never nil
 ```
 
-**TYP-15a.** *`@Strict` structs and `@Option` fields* (ADR-0019). `@Strict` is a built-in attribute on a struct type, written on the line before `type` ([MAC-3](13-macros-surface.md#132-rules), generic struct types too). On a non-struct type, a func, a var or a field it is an error. In a `@Strict` struct every field counts as `@Required`, with all of the meaning of [TYP-15](#34-required-fields-d14-rule-11): it must be set in every literal, the struct has no zero value, this spreads to containing types, and the field is never nil for `error`, `any`, map and channel types ("must be set" only for slices, `unsafe.Pointer` and type-parameter fields). Embedded fields count like any field. Three kinds of field are **not** required: a field of type `Option[T]`, a field marked `@Option`, and a blank `_` field. Pointer, func and method-interface fields are required in every struct already, so in a `@Strict` struct they are simply required as before (no error, unlike `@Required` on them).
+**TYP-15a.** *`@Strict` structs and `@Option` fields* (ADR-0019). `@Strict` is a built-in attribute on a struct type, written on the line before `type` ([MAC-3](13-macros-surface.md#132-rules), generic struct types too). On a non-struct type, a func, a var or a field it is an error. In a `@Strict` struct every field counts as `@Required`, with all of the meaning of [TYP-15](#34-required-fields-d14-rule-11): it must be set in every literal, the struct has no zero value, this spreads to containing types, and the field is never nil for `error`, `any`, map and channel types ("must be set" only for slices, `unsafe.Pointer` and type-parameter fields). The parent's fields count in a child ([TYP-17](#35-single-inheritance-adr-0023)). Three kinds of field are **not** required: a field of type `Option[T]`, a field marked `@Option`, and a blank `_` field. Pointer, func and method-interface fields are required in every struct already, so in a `@Strict` struct they are simply required as before (no error, unlike `@Required` on them).
 
 `@Option` is a built-in field attribute, written after the field's type ([MAC-12](13-macros-surface.md#132-rules)). It means "this field may be left out of a literal and gets its zero value". The field is a plain Go field: an `error`, map or `any` field marked `@Option` may be nil, so `Err: nil` is fine. These are compile errors:
 - `@Option` in a struct that is not `@Strict` (the message says fields are optional there by default);
@@ -171,7 +178,7 @@ type Job struct{ Done chan bool @Required }   // a channel field: @Required make
 - `@Option` together with `@Required`;
 - `@Required` on a field of a `@Strict` struct that `@Strict` already requires (redundant; the fix-it removes it).
 
-`@Required` on an `Option[T]` field of a `@Strict` struct is allowed and keeps its TYP-15 meaning "must be set": the literal must name the field, and `Note: nil` is fine. `@Option` on an embedded field is allowed and means the same as on any field; if the embedded type has no zero value, it is the error above. For a type from another package the effective bits come from the serialized export data, as for `@Required`.
+`@Required` on an `Option[T]` field of a `@Strict` struct is allowed and keeps its TYP-15 meaning "must be set": the literal must name the field, and `Note: nil` is fine. For a type from another package the effective bits come from the serialized export data, as for `@Required`.
 
 A `@Strict` struct with at least one required field has no zero value. If no field is required (all are `Option`, `@Option` or `_`), `@Strict` changes nothing and `gopp vet` warns about it. The required bit of each field is part of what must match in a struct conversion ([EXP-9](06-expressions.md#65-conversions)): a `@Strict` struct and a non-strict struct with the same fields don't convert into each other unless their effective required bits are equal. The effective bits are exported with the type, shown in the field table ([TYP-10](#32-interfaces-and-runtime-type-information-d112)), and used by JSON decoding (a missing required field is an error naming it; a missing `@Option` field gets its zero value; a missing `Option` field gets nil), by the macro API and by the LSP. Attributes are not Go syntax, so `.go` files are not affected.
 
@@ -190,10 +197,100 @@ var q Payment                      // error: Payment has no zero value
 type Bad struct{ N int @Option }   // error: Bad is not @Strict; fields are optional already
 ```
 
-## 3.5 Rationale
+## 3.5 Single inheritance (ADR-0023)
+
+Go's embedding is removed in `.gopp` files ([TYP-25](#35-single-inheritance-adr-0023)). The replacement is `extends`: one parent, explicit method marks, dynamic dispatch only where a method is marked virtual. Marks are built-in attributes ([MAC-8](13-macros-surface.md#132-rules)). Pointer conversions are in [EXP-13](06-expressions.md#69-upcasts-and-downcasts-adr-0023).
+
+**TYP-16.** *Syntax.* `type Child extends Parent { fields }` (grammar in [3.1](#31-type-syntax)).
+- The parent must be a struct type, possibly generic: `type B[T any] extends A[T] { … }`. A child of a child is fine.
+- There is one parent. `extends A, B` is an error.
+- `extends` is contextual ([LEX-12](02-lexical.md#lex-12)): special only after the type name (and type parameters) in a type declaration. It is not reserved.
+- `extends` on a non-struct type, an interface type, a pointer type or a C++ type is an error. C++ class inheritance at the boundary is open (ADR-0023 open point 1, P08 D8.8).
+
+**TYP-17.** *What the child gets.* The child has the parent's fields and methods.
+- A composite literal may set parent fields directly (`Card{Amount: 100, Number: "4242"}`) or through the parent (`Card{Payment: Payment{…}}`). Setting the same field both ways is an error. Grandparent fields work the same way. A composite literal of an `extends` type must use field names: a positional literal is an error.
+- Field and method names may not clash with the parent's (or any ancestor's), except through `@Override` (TYP-18).
+- `@Required`, `@Strict` and never-nil rules of the parent's fields apply in the child ([TYP-15](#34-required-fields-d14-rule-11), [TYP-15a](#34-required-fields-d14-rule-11)): a child literal must set the parent's required fields, and a child of a type with no zero value has no zero value ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
+
+**TYP-18.** *Method marks* (attributes, [MAC-8](13-macros-surface.md#132-rules)). On a parent method: no mark = **final**; `@Virtual` = may be replaced; `@Abstract` = no body, must be replaced. On a child method, `@Override` replaces a `@Virtual` or `@Abstract` method of an ancestor and is **required** for that. An `@Override` method stays replaceable by a further child. Compile errors:
+- a same-named method without `@Override`;
+- `@Override` with nothing to override (for example a typo);
+- overriding a final method;
+- a signature that does not match exactly (receiver kind, parameters, results, `!`);
+- `@Virtual`, `@Abstract` or `@Override` on a value receiver;
+- these marks on functions that are not methods;
+- a body on an `@Abstract` method.
+
+**TYP-19.** *Abstract types.* A type with an `@Abstract` method that is not overridden on its path is abstract.
+- It cannot be created directly: a literal, `var x T`, `make([]T, n)`, `new_unique(T{…})`, a struct field or array element of that type, an argument, and so on are errors. The one exception is the parent part inside a child's composite literal: `Card{Payment: Payment{…}}` is allowed even when `Payment` is abstract, because that part is not a standalone value.
+- It is usable only through pointers to a concrete child.
+- A child that leaves an `@Abstract` method unimplemented is an error unless the child is itself marked `@Abstract` (a type attribute, [MAC-8](13-macros-surface.md#132-rules)): `@Abstract type Bird extends Animal {}`.  `@Abstract` as a type attribute on a type that is not an `extends` type is an error.
+
+**TYP-20.** *`base`.* Inside a method of a child type, `base.M(…)` calls the direct parent's version of `M`, statically (no dispatch), for any parent method, final ones included. It is an error when `M` is `@Abstract` in the parent (no body). `base` is contextual: it has this meaning only inside methods of an `extends` type. `base.M()` is also allowed inside a function literal within such a method: it captures the receiver and means the same as in the method body. Declaring a local, parameter or result named `base` there is an error with a rename hint. Elsewhere `base` is an ordinary identifier ([LEX-12](02-lexical.md#lex-12)).
+
+**TYP-21.** *Up- and downcast.* Rules in [EXP-13 to EXP-15](06-expressions.md#69-upcasts-and-downcasts-adr-0023). In short: `*Child` converts implicitly to `*Parent` and to any ancestor pointer, and `Unique`, `Shared`, `Weak` and `View` keep the conversion; downcast is a checked assertion `p.(*Card)`; copying a `Child` into a `Parent` value (value slicing) is an error. The owning-pointer upcast and the downcast need a type table in the parent (TYP-22).
+
+**TYP-22.** *Cost and layout.*
+- A type gets a hidden type-table pointer only if it (or an ancestor) has `@Virtual` or `@Abstract` methods. It is one word, stored first.
+- The parent part is the first part of the child, after that word if the child has one, so an upcast is free (at most a fixed address adjustment). Struct layout stays declaration order with C alignment ([TYP-12](#33-layout-d117-d122)): parent fields, then the child's.
+- Calls through a parent pointer to virtual methods are indirect. Every other call is direct.
+- Final-only hierarchies (no `@Virtual` or `@Abstract` method anywhere in the hierarchy) have zero overhead and can still be extended. Their limits are compile errors: an upcast gives only a borrowed `*Parent`; `Unique[*Child]` to `Unique[*Parent]` (and `Shared`, `Weak`) is an error, because a parent owner could not drop the right type; a downcast `p.(*Child)` is an error, because there is no dynamic type. When the parent has a type table, all three are allowed.
+- A cycle in `extends` is an error.
+
+**TYP-23.** *Interfaces.* A child satisfies every interface its method set satisfies. The method set includes inherited methods. A call through an interface uses the overrides.
+
+**TYP-24.** *Safety interplay.* Each of these is also stated where the rule lives:
+- ownership: drop order is the child's fields first, then the parent part ([OWN-R2](04-ownership.md#42-ownership-rules-d14)); moves are of the whole value ([OWN-R3](04-ownership.md#42-ownership-rules-d14));
+- `Clone`: auto-`Clone` covers parent and child fields; an abstract type is not cloneable by value ([OWN-R6](04-ownership.md#42-ownership-rules-d14));
+- borrow checking: an upcast pointer is the same borrow ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021);
+- views: `View[Child]` converts to `View[Parent]`, read-only ([OWN-V1](04-ownership.md#44-views-d16), ADR-0020);
+- `Send` / `Sync`: a child is labeled from all its fields, the parent's included ([CON-12](12-concurrency.md), ADR-0022);
+- `@Strict`: [TYP-17](#35-single-inheritance-adr-0023);
+- generics: a constraint `T extends Parent` does not exist (ADR-0023 open point 2; [GEN-2](10-generics.md)).
+
+**TYP-25.** *No struct embedding.* In a `.gopp` file an embedded field (an anonymous field of a struct type: `struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error. The fix-it says: use `extends` for the one main parent, and a named field for everything else (`Lock sync.Mutex`, `Log Logger`). Promoted fields and methods go away with embedding: the method set of a struct never includes methods of its fields. Interface embedding stays (`interface{ io.Reader; io.Writer }`, a constraint in a constraint interface): it composes type sets and is not inheritance.
+
+**TYP-26.** *Go mode.* In `.go` files `extends`, `base` and the marks are not special, and struct embedding works as in Go.
+
+```go
+type Payment struct { Amount int64; ID string }
+
+@Abstract
+func (p *Payment) Pay() error
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount + p.Fee() }   // final
+
+type Card extends Payment { Number string }
+
+@Override
+func (c *Card) Pay() error { return nil }
+@Override
+func (c *Card) Fee() int64 { return c.Amount * 3 / 100 }
+
+type PremiumCard extends Card {}
+
+@Override
+func (p *PremiumCard) Fee() int64 { return base.Fee() / 2 }      // Card's version
+
+c := Card{Amount: 100, Number: "4242"}                            // ok: parent field set directly
+d := Card{Payment: Payment{Amount: 100}, Number: "1"}             // ok: through the parent
+e := Card{Amount: 1, Payment: Payment{Amount: 2}}                 // error: Amount set twice
+var p Payment                                                     // error: Payment is abstract
+type Z struct{ Payment }                                          // error: struct embedding is removed; use extends or a named field
+type L struct{ sync.Mutex }                                       // error: write Lock sync.Mutex
+type R interface{ io.Reader; io.Writer }                          // ok: interface embedding stays
+```
+
+The full example, its output and the list of errors are in [ADR-0023](../adr/0023-single-inheritance.md).
+
+## 3.6 Rationale
 
 - **Shared handles for interfaces** keep Go's `err == io.EOF`, `errors.Is`, `%w` and type switches working with no GC.
 - **Borrowed interface parameters** make `fmt.Println(name)` free and non-consuming. Boxing happens only when a callee really keeps the value.
+- **`extends` and marks instead of embedding** (ADR-0023): the call from a parent method to a replaced method does what the reader expects, every override is visible, and only `@Virtual` / `@Abstract` methods cost an indirect call. Embedding would be a second, different way to reuse a struct, so it is removed from `.gopp` files.
 - **Field tables instead of `reflect`** give `fmt` and `json` what they need and nothing more.
 - **C layout** is required for C interop (P07) and costs nothing in practice.
 - **`@Strict` as an opt-in on the type**, not required-by-default: Go code and partial literals such as `http.Server{Addr: ":80"}` keep working, and adding a field to a library struct breaks nobody (ADR-0019).

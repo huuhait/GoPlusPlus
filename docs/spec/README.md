@@ -10,7 +10,7 @@ Start with the [overview](01-overview.md).
 |---|---|---|---|
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
 | 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names | D1.2 |
-| 3 | [Types](03-types.md) | type syntax, interfaces, layout | D1.12, D1.17 |
+| 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, single inheritance (`extends`) | D1.12, D1.17, ADR-0023 |
 | 4 | [Ownership](04-ownership.md) | categories, rules 1 to 10, pointers, views | D1.3, D1.4, D1.6, D1.7 |
 | 5 | [Parameters](05-parameters.md) | borrow, `move`, receivers, ABI | D1.5 |
 | 6 | [Expressions](06-expressions.md) | `move`, `clone`, safety defaults | D1.17 |

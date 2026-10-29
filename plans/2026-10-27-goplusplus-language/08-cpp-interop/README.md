@@ -79,6 +79,7 @@ The work ships in five stages. Each stage is tested and usable before the next o
 - Virtual calls use normal method-call syntax; Clang emits the dispatch.
 - `ffi.DynamicCast[T](p)` performs a dynamic cast.
 - Go++ types that subclass C++ classes or override virtuals come in v1.x, because they need vtable synthesis.
+- Open point from ADR-0023: Go++ now has its own single inheritance (`extends`), and `extends` on a C++ class (or a C++ class as the parent of a Go++ type) is an error. Whether the two connect is decided here, with the vtable work.
 
 **D8.9 — Exceptions are unified with panics (P04 D4.6).**
 - **Panics are native C++ exceptions.** Go++ panics passing through C++ frames run C++ destructors. A C++ `catch (...)` can catch them, and frees them correctly; this is documented behavior.

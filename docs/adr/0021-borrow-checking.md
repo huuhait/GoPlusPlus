@@ -1,6 +1,7 @@
 # ADR-0021: Borrow checking without lifetime annotations
 
 - **Status:** accepted; amended 2026-10-28 (inferred borrow summaries replace elision; exclusive writable borrows close hidden aliasing; see Amendment)
+- **Status note (2026-10-28, ADR-0023):** an upcast pointer (`*Child` to `*Parent`) is the same borrow, not a new one.
 - **Date:** 2026-10-28
 - **Plan reference:** changes P01 D1.4 rule 8 ("no borrow checker"); spec OWN-R8, OWN-V5, OWN-V7, new section 4.5 (OWN-B1 to OWN-B9, B9 through the amendment), UB-1, UB-2, UB-2a to UB-2e, UB-5, UB-8, RNG-3, RNG-3a, CON-2, CLO-7, TYP-9, PAR-8 and chapter 16; extends ADR-0020 (the forward reference "ADR-0021 will add the escape rule"); new task P04.20; P04.09 note. Amendment: OWN-B3 (rewritten), OWN-B4, OWN-B6, new OWN-B9, OWN-C1, OWN-P*, PAR-6, PAR-7, CON-19, TYP-9, UB-1, UB-2, UB-2a, UB-2b, UB-2d, UB-2e, UB-8 and §16.4 / §16.5; P04.20, P03.11, P05.07, P12.13 and P14.01.
 

@@ -10,7 +10,7 @@ Base: Go spec [Lexical elements](https://go.dev/ref/spec#Lexical_elements), [Tok
 
 ### Keywords
 
-**LEX-2.** One new keyword is reserved: `macro`. One more word is *contextual*: `move` ([LEX-12](#lex-12)). It is not reserved, so it stays usable as a name. `ref` is not special at all: it is an ordinary identifier.
+**LEX-2.** One new keyword is reserved: `macro`. Three more words are *contextual*: `move`, `extends` and `base` ([LEX-12](#lex-12)). They are not reserved, so they stay usable as names. `ref` is not special at all: it is an ordinary identifier.
 
 ```
 keyword = /* the 25 Go keywords */ | "macro" .
@@ -68,6 +68,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 - Like Go's predeclared names, these can be redeclared in any scope, package level included (`type Option int` is accepted). The declaration hides the predeclared name in its scope. Do not do it. This holds for `View` as for `Option`.
 - `View` is a generic type name, not a keyword. `View[X]` is valid for every type `X` except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]` itself; those are compile errors that name the allowed forms ([OWN-V1](04-ownership.md#44-views-d16)). Named types are fine (`View[User]`, `View[Bytes]`).
 - In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `View`, `Copy`, `Clone`, `move`, `clone`, `new_unique`, `new_shared` and `new_weak` are ordinary names there (`Option[int]` is "undefined: Option").
+- In Go mode `extends` and `base` are ordinary names too ([TYP-26](03-types.md#35-single-inheritance-adr-0023)).
 - The macro names live in their own namespace (they are only used after `#` or `@`).
 
 **LEX-8.** Go's `new` is not predeclared. Using it is a compile error "undefined: new" with a fix-it that suggests `new_unique(T{})` or `new_shared(T{})`.
@@ -83,7 +84,9 @@ Old uses stay: unary `!x` and the operator `!=`.
 ### Contextual words
 
 <a id="lex-12"></a>
-**LEX-12.** *`move` is contextual.* It is special only in the places below. Everywhere else it is an ordinary identifier. (`ref` was contextual before ADR-0020. It is now an ordinary identifier everywhere, in `.gopp` and in `.go` files.)
+**LEX-12.** *`move`, `extends` and `base` are contextual.* Each is special only in the places below. Everywhere else it is an ordinary identifier. (`ref` was contextual before ADR-0020. It is now an ordinary identifier everywhere, in `.gopp` and in `.go` files.)
+- `extends` is special only in a type declaration, after the type name and its optional type parameters: `type Card extends Payment { … }` ([TYP-16](03-types.md#35-single-inheritance-adr-0023)). Everywhere else it is an ordinary identifier (`extends := 1`, `func extends()`, a field named `extends`).
+- `base` is special only inside the methods of a type declared with `extends`, where `base.M(…)` calls the parent's method ([TYP-20](03-types.md#35-single-inheritance-adr-0023)). A local, parameter or result named `base` is an error there, with a rename hint. In any other function, method or scope `base` is an ordinary identifier.
 - `move(x)` is a predeclared function ([EXP-1](06-expressions.md)). `move` is also the mark of a parameter or receiver ([PAR-5](05-parameters.md)), but only at the start of a parameter declaration, followed by a parameter name and then the type: `move s string`. A `move` followed by a type alone (`move T`, `move pkg.T`, `move G[K]`, `move []int`) is read as in Go: a parameter *named* `move` of that type. See the EBNF in [5.1](05-parameters.md#51-syntax).
 
 
@@ -121,14 +124,14 @@ Each changed production is defined in exactly one place:
 | `FunctionDecl`, `MethodDecl`, `FunctionLit`, `FunctionType`, `MethodElem`, `PrimaryExpr "!" Arguments` (the `!` forms and generic methods) | [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18) |
 | `ParameterDecl` (`move`) | [5.1](05-parameters.md) |
 | `RangeClause`, `RangeVars`, `RangeVar` (`&`) | [8.3](08-slices-and-range.md#83-range-loops-d121) |
-| `FieldDecl`, `FieldAttributes` | [13.1](13-macros-surface.md) |
-| `Type`, `TypeLit` | [3.1](03-types.md) |
+| `FieldAttributes` | [13.1](13-macros-surface.md) |
+| `Type`, `TypeLit`, `ExtendsDecl`, `FieldDecl` (no embedded fields) | [3.1](03-types.md) |
 | `MacroDecl`, `ProcMacroDecl`, `MacroInvocation`, `Attribute`, `TopLevelDecl`, `Operand` | [13.1](13-macros-surface.md) |
 | `ImportPath` forms | [14.1](14-foreign-surface.md) |
 
 ## 2.4 Rationale
 
-- Only one keyword is reserved (`macro`). `move` is contextual, and it must also stay a function name because `move(x)` is a built-in. Owning pointers, `Option` and `View` are predeclared generic types, not keywords.
+- Only one keyword is reserved (`macro`). `move`, `extends` and `base` are contextual. `move` must also stay a function name because `move(x)` is a built-in; `extends` and `base` stay usable as names so old Go code keeps compiling. Owning pointers, `Option` and `View` are predeclared generic types, not keywords.
 - `#` and `@` were free in Go, so no old code changes meaning.
 - `!` stays near the function name where the reader looks first. An earlier draft used `call()!` and needed a special semicolon rule and a `!=` caveat (`f()!==y`). It was rejected.
 - `new_unique` uses snake case on purpose: it is a built-in that is not a Go name, so it is easy to spot.

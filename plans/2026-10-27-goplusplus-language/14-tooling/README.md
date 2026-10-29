@@ -33,6 +33,7 @@
 - Clang runs in a worker process (clangd-style) or under `CrashRecoveryContext`, so a Clang crash doesn't kill the LSP.
 - Each snapshot has its own source-offset space (P02 D2.4).
 - The early minimal LSP uses the P04 source mode (P04 D4.11), which loads all packages from source.
+- `extends` support (ADR-0023): go to override and find overrides, `base.M` definition, "implement abstract methods", rename of virtual methods, and a quick fix for struct embedding. Listed in P14.06.
 - Features:
   - diagnostics, completion and formatting;
   - hover with ownership info ("owned", "view", "moved at line 12");

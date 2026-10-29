@@ -5,7 +5,7 @@
 
 ## Decisions
 
-**D3.1 — Follow Go's `go/types` (types2) algorithms wherever the semantics are shared.** That covers untyped constants, assignability, method sets, embedding/promotion, interface satisfaction, type sets, and inference by unification. Port types2's test data as a conformance suite (BSD; attributed).
+**D3.1 — Follow Go's `go/types` (types2) algorithms wherever the semantics are shared.** That covers untyped constants, assignability, method sets, embedding/promotion (Go mode only: struct embedding is an error in `.gopp` files, D3.13), interface satisfaction, type sets, and inference by unification. Port types2's test data as a conformance suite (BSD; attributed).
 *Why:* for the shared parts, Go's checker is the de-facto specification. Reinventing it would create subtle incompatibilities.
 
 **D3.2 — Arbitrary-precision constants.** The Go spec requires at least 256-bit integers and 256-bit float mantissas for untyped constants.
@@ -34,6 +34,7 @@
   - borrowing a temporary into a longer-lived place;
   - `move`/`clone` typing and the `append` move rule;
   - `@Strict` structs and `@Option` fields (D1.4 rule 11, ADR-0019, spec TYP-15a): the effective required bit of each field, the attribute placement and combination errors, the `@Strict`-without-required-field vet warning, and the required bits in struct conversions and in serialization; task P03.20;
+  - `extends`, method marks, abstract types, `base`, up- and downcasts, and the removal of struct embedding in `.gopp` files (ADR-0023, spec TYP-16 to TYP-26, D3.13);
   - types with no zero value (D1.4 rules 9 and 11): C++ types without a default constructor and structs with a `@Required` field or a `@Strict` struct with a required field, spread to the structs and arrays that contain them; every composite literal must set each `@Required` field (and each field required by `@Strict`) (by name or by position); every place where Go makes a zero value is an error (`var x T`, `make([]T, n)` unless `n` is the constant `0`, `var a [N]T`, array literals with missing elements, keyed slice literals with gaps, named results, `var zero T` in generic code, `m[k]` and `<-ch` outside comma-ok forms, a write or `delete`, `clear(s)` on a slice); for generic types, per instance. The comma-ok lookups stay legal; that their value is read only where `ok` is true is checked by the flow typing of task P03.18. `move` out of a non-local place of a Go++ type with no zero value is an error. A nilable `@Required` field is never nil: storing `nil`, `move` out of it and `&` of it (except in `mem.Replace`) are errors here, `@Required` on `Weak[*T]` is an error, and every other stored value must be known non-nil (spec TYP-15's list), checked by the flow typing of task P03.18. Task P03.15, ADR-0016. The `@Required` flags and "no zero value" are part of a type's serialized description (D3.8), so they hold across packages.
 - **Flow-sensitive, in P04 on GIR:** use after move, `defer`/`go` borrowing something that dies first, and drop elaboration. The comma-ok, `err == nil` and known-non-nil checks are done in P03 (task P03.18, ADR-0018 amendment point 4); P04.09 keeps them only as GIR regression cases.
 
@@ -98,6 +99,12 @@ help: use name.Clone() before the move to keep a copy
 - Vet checks run on the already type-checked code inside `gopp`; there is no separate tool that re-parses and re-checks.
 - `gopp vet` turns the hints on, and the LSP shows them live in the editor.
 - Like Go, `gopp test` also runs a small set of high-confidence vet checks. `gopp build` doesn't run them.
+
+**D3.13 — Single inheritance and no struct embedding** (ADR-0023; task P03.22).
+- `extends` parent links are part of the type graph and of export data (P03.11). Method marks (`@Virtual`, `@Abstract`, `@Override`), the abstract bit and the parent chain of the field table are serialized.
+- The override check runs when the child's method set is built: each child method is matched against the ancestors' methods by name; the signature must be identical; a missing or surplus `@Override` is an error.
+- Struct embedding is an error in `.gopp` files with a fix-it (use `extends`, or a named field). In `.go` files the types2 embedding code stays, so Go mode is unchanged.
+- Dispatch, type tables, drop order and `base` calls are lowered in P04.22 (D4.18).
 
 ## Open questions
 

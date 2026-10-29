@@ -55,7 +55,7 @@ A value that is allowed by this list must also pass the race rules of [CON-13](#
 
 **CON-11.** *Panics in goroutines.* An unrecovered panic in any goroutine prints the panic, stops everything and exits with code 2 ([PAN-10](09-errors-and-panics.md)). `go f!()` panics there on error ([ERR-11a](09-errors-and-panics.md)).
 
-**CON-12.** *Two labels on every type: `Send` and `Sync`.* The compiler computes them. They are never written on a type by hand.
+**CON-12.** *Two labels on every type: `Send` and `Sync`.* The compiler computes them. They are never written on a type by hand. A type that uses `extends` is labeled from all its fields, the parent's included ([TYP-24](03-types.md#35-single-inheritance-adr-0023), ADR-0023). An upcast pointer has the labels of its pointer kind and of the parent type.
 - **`Send`:** a value of the type may be moved to another goroutine.
 - **`Sync`:** a value of the type may be shared between goroutines at the same time.
 - Plain values with no pointers (numbers, `bool`, arrays and structs of them) are both.

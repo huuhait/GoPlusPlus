@@ -1,6 +1,7 @@
 # ADR-0016: Required struct fields (`@Required`)
 
 - **Status:** accepted; extended by ADR-0019 (`@Strict` and `@Option`); parts changed by ADR-0018 (point 8 for pointer, func and interface fields; point 9 and the consequences: the checks move from P04 to the P03 flow typing, task P03.18)
+- **Status note (2026-10-28, ADR-0023):** the sentences about embedded fields ("embedded fields included" in decision 2) no longer apply in `.gopp` files, because struct embedding is removed; a child of an `extends` type gets its parent's required fields instead (TYP-17). The text below is kept as it was written.
 - **Date:** 2026-10-27
 - **Plan reference:** P01 D1.4 rules 9 and 11 (decision change to the completed P01); spec TYP-15, OWN-R9, MAC-8, MAC-12; new task P03.15; P09.08, P13.08. Decides P01 Q9.
 

@@ -111,7 +111,22 @@ c := u.Clone()                            // a new Unique holding a copy (needs 
 p := u                                    // u moves into p; u is unusable until assigned again
 ```
 
-## 6.9 Rationale
+## 6.9 Upcasts and downcasts (ADR-0023)
+
+**EXP-13.** *Upcast.* A `*Child` converts implicitly to a `*Parent`, or to any ancestor pointer, and to the pointer kinds: `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`; `View[Child]` converts to `View[Parent]` (read-only, [OWN-V3](04-ownership.md#44-views-d16)). The conversion changes only the static type (free, [TYP-22](03-types.md#35-single-inheritance-adr-0023)) and keeps the same borrow ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021)); an owning pointer moves as before. The reverse (`*Parent` to `*Child`) is never implicit. If the parent has no type table ([TYP-22](03-types.md#35-single-inheritance-adr-0023)), only the borrowed `*Child` to `*Parent` conversion exists; the `Unique`, `Shared` and `Weak` forms are errors.
+
+**EXP-14.** *Dispatch.* A call through a parent pointer to a `@Virtual` or `@Abstract` method runs the override of the dynamic type (indirect call through the type table). A call to a final method is direct, and `base.M()` is direct ([TYP-20](03-types.md#35-single-inheritance-adr-0023)).
+
+**EXP-15.** *Downcast and value slicing.* Downcast is a checked type assertion on a pointer, allowed only when the parent has a type table (otherwise it is an error: there is no dynamic type): `c := p.(*Card)` panics when the dynamic type is not `*Card` or a child of `Card`; `c, ok := p.(*Card)` gives `ok = false` instead. `p` may be a `*Parent` or an owning pointer kind held in a place; the result is a `*Card` that borrows from it ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17)). Value slicing is a compile error: `var a Parent = child`, `a = child`, passing a `Child` value where a `Parent` value is expected, a `Child` value in a `Parent` composite literal field or `append` to `[]Parent`. Use a pointer. Conversions between struct types ([EXP-9](#65-conversions)) do not turn a `Child` into a `Parent`.
+
+```go
+var c Unique[*Card] = new_unique(Card{Amount: 10, Number: "4242"})
+var p Unique[*Payment] = c           // ok: upcast, c moves
+q, ok := p.(*Card)                   // ok: checked downcast
+var v Payment = *q                   // error: value slicing; use the pointer
+```
+
+## 6.10 Rationale
 
 - Go semantics for overflow, shifts and division are kept so that ported code behaves the same. Some of them are UB in LLVM, so the compiler pays a small cost (a compare or a mask) to keep Go's answers.
 - Moves after other arguments make `append(move(p), p2...)`-like calls predictable.

@@ -22,8 +22,7 @@ MacroArgs       = ExpressionList .               /* a `block` argument is a func
 
 TopLevelDecl   = /* Go alternatives */ | MacroDecl | ProcMacroDecl | MacroInvocation | AttributedDecl .
 AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl ) .
-FieldDecl      = ( IdentifierList Type | EmbeddedField ) [ FieldAttributes ] [ Tag ] .   /* Go: without FieldAttributes */
-FieldAttributes = Attribute { Attribute } .
+FieldAttributes = Attribute { Attribute } .             /* used by FieldDecl, defined in 3.1 (03-types.md) */
 Operand        = /* Go alternatives */ | MacroInvocation .
 ```
 
@@ -66,6 +65,9 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 | `@Required` | struct field | the field must be set in every literal; the struct has no zero value ([TYP-15](03-types.md)) | ADR-0016 |
 | `@Strict` | struct type | every field is required, as if marked `@Required`, except `Option[T]` fields, `@Option` fields and `_` ([TYP-15a](03-types.md)) | ADR-0019 |
 | `@Option` | field of a `@Strict` struct | the field may be left out of a literal and gets its zero value ([TYP-15a](03-types.md)) | ADR-0019 |
+| `@Virtual` | method (pointer receiver) | the method may be replaced in a child type with `@Override` ([TYP-18](03-types.md#35-single-inheritance-adr-0023)); an error on a value receiver or a non-method | ADR-0023 |
+| `@Abstract` | method (pointer receiver), or type | on a method: no body, every child must override it ([TYP-18](03-types.md#35-single-inheritance-adr-0023)); the type that declares or inherits one is abstract ([TYP-19](03-types.md#35-single-inheritance-adr-0023)). On an `extends` type: the child may leave `@Abstract` methods unimplemented | ADR-0023 |
+| `@Override` | method (pointer receiver) | replaces a `@Virtual` or `@Abstract` method of an ancestor; required for that; an error when there is nothing to override, when the ancestor method is final, or when the signature differs ([TYP-18](03-types.md#35-single-inheritance-adr-0023)) | ADR-0023 |
 | `@Unwind` | callback function | the callback may unwind through its C callers | P07 |
 | `@If(cond)` | type, func, method, var, const | the declaration is type-checked, but only emitted and exported when the constant `bool` `cond` is true ([MAC-15](#132-rules)) | P09 D9.12 |
 

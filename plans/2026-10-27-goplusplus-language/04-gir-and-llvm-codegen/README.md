@@ -206,3 +206,9 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 - **Deadlock check.** Locks are identified by lock class (like Linux lockdep): the same field of the same type, or the same package variable. The pass records, per function, the ordered pairs "a lock of class A was taken while the guard of class B was live". The pairs go into export data. Two functions with the pairs (A,B) and (B,A) are an error; so is locking the same mutex while its own guard is live, and so is taking two locks of the same class with both guards live (`sync.LockAll` is the fix; it is known to the pass). Locks behind interfaces or function values are not recorded.
 - Cost: linear in function size, like D4.16; plus one pass over the recorded pairs per package. A test measures it on a large generated function.
 - `gopp check` runs it.
+
+**D4.18 — `extends` lowering** (ADR-0023; task P04.22).
+- A type has a type-table pointer (one word, first) only if it or an ancestor has a `@Virtual` or `@Abstract` method. The parent part follows, then the child's fields, so an upcast is free (at most a fixed address adjustment: the same address when the parent has a table or neither has one, a fixed offset when the child adds the first virtual method).
+- Calls to virtual methods through a parent pointer are indirect through the table; all other calls, `base.M()` included, are direct. Final-only hierarchies cost nothing.
+- Downcast checks the table chain. Drop order is child fields, then the parent part; dropping a `Unique[*Parent]` calls the dynamic type's drop.
+- A hierarchy without virtual methods has no table, so P03.22 rejects `Unique`/`Shared`/`Weak` upcasts and downcasts there (a parent owner could not drop the right type); lowering needs no dynamic type for them.

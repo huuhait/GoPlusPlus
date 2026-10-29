@@ -47,7 +47,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 - Consuming Go modules. Importing a Go module is an error in v1; after v1.0 it needs a dual engine (Go semantics with GC next to Go++) (P10 Q2).
 - Rust-style lifetime annotations, and full memory safety: `unsafe`, C and C++ interop, data races in `unsafe` or C and C++ threads, and `longjmp` stay undefined. Borrows are checked by flow and liveness without annotations, with inferred borrow summaries and one writable borrow per place, so hidden aliasing is a compile error (ADR-0021). Data races in normal code are compile errors (ADR-0022); logic races and deadlocks the compiler cannot see are not covered.
 - A tracing GC, or automatic refcounting of everything.
-- User-defined operator overloading, class inheritance, or exceptions as an error mechanism. Imported C++ operators and exceptions *are* supported at the boundary.
+- User-defined operator overloading, multiple inheritance, or exceptions as an error mechanism. (Single inheritance with `extends` is in v1, ADR-0023; Go's struct embedding is removed from `.gopp` files.) Imported C++ operators and exceptions *are* supported at the boundary. C++ class inheritance at the boundary is an open point for P08.
 - A user-facing `reflect` package. `fmt` and `encoding/json` still work on any type, using small field tables the compiler emits (P01 D1.12).
 - C/C++ build systems other than CMake (Meson, Autotools, Bazel). A package without CMake gets a small local CMake file instead (P11); other build systems may come after v1.
 - A non-LLVM production backend.
@@ -146,6 +146,7 @@ github.com/madler/zlib v1.3.1/cdep h1:<sha256 hash of the source tree, base64>=
 | C++ interop | — | Same import style (`import "<vector>"` → `vector.vector[int32]`): classes, templates, RAII, exceptions |
 | Panics | Go runtime unwinding | Platform unwinder shared with C++ exceptions; destructors run |
 | Goroutines | Growable moving stacks, async preemption | Fixed non-moving stacks (so C can run on them); cooperative scheduling with yield points in function prologues and loop back-edges |
+| Struct reuse | Embedding with promotion; no inheritance | Embedding removed in `.gopp` (error with fix-it); single inheritance `type Card extends Payment`, methods marked `@Virtual` / `@Abstract` / `@Override`, `base.M()` (ADR-0023); `.go` files keep embedding |
 | Generics | GC-shape stenciling + dictionaries | Full monomorphization with cross-package dedupe |
 | Generic methods | Not allowed | Allowed; they can't satisfy interface methods |
 | Data races | Memory model limits damage | Compile-time checks in normal code (ADR-0022); `-race` (TSan) only for `unsafe` and C/C++ |
@@ -257,6 +258,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 | Clang is single-threaded | Races, or all C++ work serialized | One Clang worker per package; packages share only PCH files (P07 D7.1) | P06, P07 |
 | Ownership model feels un-Go-like | Adoption | Write the sample programs before implementing; keep a spec-revision window after M2 | P01, P05 |
 | Dangling views/pointers | Memory bugs | Borrow checker without annotations (ADR-0021, P04.20), view types that make borrows visible, inferred borrow summaries, one writable borrow per place, sanitizers behind one flag for the residue (`unsafe`, C interop) | P01, P03, P05 |
+| Inheritance and embedding change Go idioms | Go code that embeds structs must be rewritten | `extends` with explicit `@Virtual` / `@Abstract` / `@Override` marks and a fix-it on every embedded field (ADR-0023, P03.22, P04.22) | P01, P03, P04 |
 | Data races | Memory bugs; Go code with a plain `sync.Mutex` must be rewritten | `Send` / `Sync` labels, mutexes that hold their data, `sync.Scope` with `Split`, a simple deadlock check (ADR-0022, P04.21, P12.13); `-race` for `unsafe` and C/C++ threads | P01, P04, P12 |
 | CMake builds run arbitrary code | Supply chain | Lock files, a Landlock sandbox (no network; writes only to a private source copy and the build dir), the dependency provider, and a hermetic mode | P11 |
 | Bundling LLVM/Clang/LLD | Huge binary, slow CI | Prebuilt LLVM via Nix, ccache, shared-library dev builds | P00 |
