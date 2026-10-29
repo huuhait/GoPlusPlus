@@ -1,0 +1,479 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-15a (P03.20, ADR-0019): `@Strict` on a struct type makes every
+// field required as if marked `@Required` (set in every literal, no zero value,
+// spreads, never nil for error/any/map/chan), except `Option[T]` fields,
+// `@Option` fields and `_`. `@Option` lets a field of a @Strict struct be left
+// out. Whether each field is required is compared in conversions (EXP-9).
+// Each rejected case has an accepted twin nearby; the functions named
+// positive* have no error. The bits and attributes in export data:
+// tests/unit/Sema/SerializeTest.cpp; a C++ type without a default
+// constructor: tests/unit/Sema/ForeignTest.cpp; `.go` files:
+// go-mode-strict.test; vet: vet-strict.test; the fix-it:
+// strict-redundant-fixit.test.
+package main
+
+type Plain struct{ N int }
+type Opaque interface{ Do() }
+type Gone struct{ Opaque }
+type impl struct{}
+
+func (impl) Do() {}
+
+type Fail struct{}
+
+func (Fail) Error() string { return "fail" }
+
+@Strict
+type Payment struct {
+	ID      int
+	Amount  int64
+	Note    Option[string]
+	Retries int @Option
+	_       int
+}
+
+type Team struct {
+	Pay  Payment
+	Size int
+}
+
+@Strict
+type Box[T any] struct{ V T }
+
+@Strict
+type Conn struct {
+	Err  error
+	Tags map[string]int
+	Any  any
+	Done chan int
+	Buf  []byte
+}
+
+@Strict
+type Held struct {
+	Plain
+	Name string
+}
+
+@Strict
+type Soft struct {
+	Plain @Option
+	Err  error          @Option
+	Tags map[string]int @Option
+	Any  any            @Option
+	Done chan int       @Option
+	Emb  Plain          @Option
+}
+
+@Strict
+type Handles struct {
+	P   *Plain
+	F   func()
+	O   Opaque
+	Opt Option[*Plain]
+	N   int @Option
+}
+
+@Strict
+type Named struct {
+	Note Option[string] @Required
+	N    int
+}
+
+@Strict
+type OneRaw struct{ N int }
+
+@Strict
+type TwoRaw struct{ N int }
+
+type ReqRaw struct{ N int @Required }
+type FreeRaw struct{ N int }
+
+@Strict
+type OptRaw struct{ N int @Option }
+
+@Strict
+type NoReq struct {
+	O Option[int]
+	_ int
+}
+
+@Strict
+type Pair struct{ A, B Plain @Option }
+
+// A parenthesized struct type is a struct type; each type of a group is
+// checked on its own.
+@Strict
+type Paren (struct{ N int })
+
+@Strict
+type (
+	G1 struct{ N int }
+	// CHECK-DAG: [[@LINE-3]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on type G2, which is not a struct type (TYP-15a)
+	G2 int
+)
+
+// --- declarations that are errors -------------------------------------------
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on type NotStruct, which is not a struct type (TYP-15a)
+@Strict
+type NotStruct int
+
+// A defined type of a named struct is not a struct type literal (it has the
+// bits of Payment already).
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on type DefPay, which is not a struct type (TYP-15a)
+@Strict
+type DefPay Payment
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on the alias AliasStruct (TYP-15a)
+@Strict
+type AliasStruct = struct{ N int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on a function (TYP-15a)
+@Strict
+func fn() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on a method (TYP-15a)
+@Strict
+func (Plain) Meth() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on a variable declaration (TYP-15a)
+@Strict
+var vv int
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on a constant declaration (TYP-15a)
+@Strict
+const cc = 1
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict takes no arguments
+@Strict(1)
+type WithArgs struct{ N int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Option is only allowed on a field of a @Strict struct, not on a type declaration (TYP-15a)
+@Option
+type OptOnType struct{ N int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Option is only allowed on a field of a @Strict struct, not on a function (TYP-15a)
+@Option
+func fn2() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Option is only allowed on a field of a @Strict struct, not on a variable declaration (TYP-15a)
+@Option
+var ov int
+
+type FieldStrict struct {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on a field (TYP-15a)
+	X int @Strict
+}
+
+type NotStrict struct {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Option is only allowed in a @Strict struct: the fields of this struct are optional already (TYP-15a)
+	N int @Option
+}
+
+// An anonymous struct is never strict, even inside a @Strict struct.
+@Strict
+type Outer struct {
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: @Option is only allowed in a @Strict struct: the fields of this struct are optional already (TYP-15a)
+	In struct{ N int @Option }
+}
+
+@Strict
+type BadOpt struct {
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: @Option on field P of type *Plain: *Plain has no zero value (pointers are never nil), so the field can't be left out; use Option[*Plain] (TYP-15a)
+	P *Plain @Option
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: @Option on field F of type func(): func() has no zero value (funcs are never nil), so the field can't be left out; use Option[func()] (TYP-15a)
+	F func() @Option
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: @Option on field O of type Opaque: Opaque has no zero value (interfaces with methods are never nil), so the field can't be left out; use Option[Opaque] (TYP-15a)
+	O Opaque @Option
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: @Option on field R of type Payment: Payment has no zero value (field ID is required (@Strict)), so the field can't be left out; use Option[Payment] (TYP-15a)
+	R Payment @Option
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: @Option on field U of type Unique[*Plain]: Unique[*Plain] has no zero value (pointers are never nil), so the field can't be left out; use Option[Unique[*Plain]] (TYP-15a)
+	U Unique[*Plain] @Option
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: @Option on field OO is redundant: a field of type Option[int] may be left out already (it is nil) (TYP-15a)
+	OO Option[int] @Option
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: field Both has both @Option and @Required: @Option lets it be left out, @Required says it must be set (TYP-15a)
+	Both int @Option @Required
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Option on field _ is redundant: the blank field _ is never required (TYP-15a)
+	_ int @Option
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: @Option takes no arguments
+	Args int @Option(1)
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: @Option on field Payment of type Payment: Payment has no zero value (field ID is required (@Strict)), so the field can't be left out; use Option[Payment] (TYP-15a)
+	Payment @Option
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: @Option on field G of type Gone: Gone has no zero value (field Opaque of type Opaque has none: interfaces with methods are never nil), so the field can't be left out; use Option[Gone] (TYP-15a)
+	G Gone @Option
+	// One field declaration with two names: one error, not one per name.
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: @Option on field P1 of type *Plain: *Plain has no zero value (pointers are never nil), so the field can't be left out; use Option[*Plain] (TYP-15a)
+	P1, P2 *Plain @Option
+}
+
+// `V T @Option` is accepted on the declaration and judged per instance, with
+// the real T (GEN-5): BoxOpt[int] is fine, BoxOpt[Payment] is an error. Other
+// generic field types are judged on the declaration (`[1]T` by T's
+// constraint, `*T` has no zero value for any T).
+@Strict
+type BoxOpt[T any] struct {
+	N int
+	V T @Option
+}
+
+type AliasBoxOpt[T any] = BoxOpt[T]
+
+@Strict
+type BoxOptArr[T any] struct {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: @Option on field V of type [1]T: [1]T has no zero value (its element type T has none: its constraint allows types with none (GEN-5); constrain T, or use Option[T]), so the field can't be left out; use Option{{\[\[}}1]T] (TYP-15a)
+	V [1]T @Option
+}
+
+@Strict
+type BoxOptPtr[T any] struct {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: @Option on field V of type *T: *T has no zero value (pointers are never nil), so the field can't be left out; use Option[*T] (TYP-15a)
+	V *T @Option
+}
+
+@Strict
+type BoxOptInt[T ~int | ~string] struct{ V [1]T @Option }
+
+@Strict
+type BoxOptOption[T any] struct{ V Option[T] }
+
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: BoxOpt[Payment]: field V is @Option, but Payment has no zero value (field ID is required (@Strict)), so the field can't be left out; make it Option[T] (TYP-15a)
+func boxOptBad(b BoxOpt[Payment]) {}
+
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: BoxOpt[*Plain]: field V is @Option, but *Plain has no zero value (pointers are never nil), so the field can't be left out; make it Option[T] (TYP-15a)
+func boxOptBadPtr(b BoxOpt[*Plain]) {}
+
+// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: BoxOpt[Payment]: field V is @Option, but Payment has no zero value (field ID is required (@Strict)), so the field can't be left out; make it Option[T] (TYP-15a)
+func boxOptBadAlias(b AliasBoxOpt[Payment]) {}
+
+func boxOptGeneric[U any](b BoxOpt[U], c BoxOpt[[]U]) {
+	// Generic code: not judged per instance, but V counts as required where
+	// U may have no zero value.
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: missing required field V in BoxOpt[U] literal (TYP-15)
+	_ = BoxOpt[U]{N: 1}
+	_, _ = b, c
+}
+
+@Strict
+type Redundant struct {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Required on field N is redundant: @Strict already requires it (TYP-15a); remove @Required
+	N int @Required
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: @Required on field S is redundant: @Strict already requires it (TYP-15a); remove @Required
+	S string @Required
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: @Required on field Err is redundant: @Strict already requires it (TYP-15a); remove @Required
+	Err error @Required
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Required on field Plain is redundant: @Strict already requires it (TYP-15a); remove @Required
+	Plain @Required
+	// The pointer and never-nil errors come first.
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field P of type *Plain
+	P *Plain @Required
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: func() is never nil (a func has no nil); @Required isn't needed on field F
+	F func() @Required
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: Opaque is never nil (an interface with methods has no nil); @Required isn't needed on field O
+	O Opaque @Required
+	// The attribute is not redundant here: Option and _ are not required.
+	Note Option[string] @Required
+	_    int            @Required
+	Z    int            @Option
+}
+
+// --- uses -------------------------------------------------------------------
+
+func positive(ch chan Payment, p *Payment, n int, pl Plain) {
+	_ = Payment{ID: 1, Amount: 2}
+	_ = Payment{ID: 1, Amount: 2, Note: nil, Retries: 3}
+	_ = Payment{1, 2, nil, 0, 0}
+	_ = Team{Pay: Payment{ID: 1, Amount: 2}, Size: 1}
+	_ = Team{Payment{1, 2, nil, 0, 0}, 1}
+	_ = Box[int]{V: 1}
+	_ = Box[Payment]{V: Payment{ID: 1, Amount: 2}}
+	_ = Box[Payment]{Payment{ID: 1, Amount: 2}}
+	_ = Box[Option[int]]{V: nil}
+	_ = Conn{Err: Fail{}, Tags: map[string]int{}, Any: 1, Done: make(chan int), Buf: nil}
+	_ = Held{Plain: pl, Name: "x"}
+	_ = Held{pl, "x"}
+	_ = Soft{}
+	_ = Soft{Plain: pl}
+	_ = Soft{Plain: pl, Err: nil, Tags: nil, Any: nil, Done: nil}
+	_ = Soft{pl, nil, nil, nil, nil, Plain{}}
+	_ = Handles{P: &pl, F: func() {}, O: impl{}, Opt: nil}
+	_ = Named{Note: nil, N: 1}
+	_ = NoReq{}
+	_ = Pair{}
+	_ = Paren{N: 1}
+	_ = G1{N: 1}
+	_ = []Payment{}
+	_ = make([]Payment, 0, n)
+	_ = make([]Payment, 0)
+	_ = []Payment{{ID: 1, Amount: 2}}
+	_ = map[string]Payment{"a": {ID: 1, Amount: 2}}
+	_ = [1]Payment{{ID: 1, Amount: 2}}
+	var s Soft
+	_ = s
+	var nr NoReq
+	_ = nr
+	_ = BoxOpt[int]{N: 1}
+	_ = BoxOpt[string]{N: 1, V: "v"}
+	_ = BoxOpt[Plain]{N: 1}
+	_ = BoxOptInt[int]{}
+	_ = BoxOptOption[Payment]{}
+	_, _ = ch, p
+}
+
+func negative(ch chan Payment, m map[string]Payment, n int, ps []Payment, x any, c *Conn, e error) {
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: missing required field Amount in Payment literal (TYP-15)
+	_ = Payment{ID: 1}
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: missing required fields ID, Amount in Payment literal (TYP-15)
+	_ = Payment{}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare p without a value: Payment has no zero value (field ID is required (@Strict))
+	var p Payment
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: make([]Payment, n) creates zero values: Payment has no zero value (field ID is required (@Strict); use make([]Payment, 0, n) and append)
+	_ = make([]Payment, n)
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: missing required field Pay in Team literal (TYP-15)
+	_ = Team{Size: 1}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare t without a value: Team has no zero value (field Pay of type Payment has none: field ID is required (@Strict))
+	var t Team
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: missing required field V in Box[int] literal (TYP-15)
+	_ = Box[int]{}
+	// The bit of `V T` was decided on the declaration: an Option argument does
+	// not change it.
+	// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: missing required field V in Box[Option[int]] literal (TYP-15)
+	_ = Box[Option[int]]{}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare b without a value: Box[Payment] has no zero value (field V is required (@Strict))
+	var b Box[Payment]
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare bi without a value: Box[int] has no zero value (field V is required (@Strict))
+	var bi Box[int]
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: missing required field Plain in Held literal (TYP-15)
+	_ = Held{Name: "x"}
+	// CHECK-DAG: [[@LINE+2]]:16: error{{\[E[0-9]+\]}}: cannot store nil_error() in Conn.Err: the field is required (@Strict) and never nil, and nil_error() may be nil; check a local copy: `if v := nil_error(); v != nil { ... }` (TYP-15)
+	// CHECK-DAG: [[@LINE+1]]:27: error{{\[E[0-9]+\]}}: missing required fields Tags, Any, Done, Buf in Conn literal (TYP-15)
+	_ = Conn{Err: nil_error()}
+	// CHECK-DAG: [[@LINE+4]]:16: error{{\[E[0-9]+\]}}: cannot store nil in Conn.Err: the field is required (@Strict), so it is never nil
+	// CHECK-DAG: [[@LINE+3]]:27: error{{\[E[0-9]+\]}}: cannot store nil in Conn.Tags: the field is required (@Strict), so it is never nil
+	// CHECK-DAG: [[@LINE+2]]:37: error{{\[E[0-9]+\]}}: cannot store nil in Conn.Any: the field is required (@Strict), so it is never nil
+	// CHECK-DAG: [[@LINE+1]]:48: error{{\[E[0-9]+\]}}: cannot store nil in Conn.Done: the field is required (@Strict), so it is never nil
+	_ = Conn{Err: nil, Tags: nil, Any: nil, Done: nil, Buf: nil}
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store nil in c.Err: the field is required (@Strict), so it is never nil
+	c.Err = nil
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot store e in c.Err: the field is required (@Strict) and never nil, and e may be nil; check e != nil first (TYP-15)
+	c.Err = e
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot move out of c.Err: the field is required (@Strict) and would be left nil; use mem.Replace(&c.Err, v)
+	_ = move(c.Err)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot take the address of c.Tags: the field is required (@Strict) and never nil; only mem.Replace(&c.Tags, v) may
+	_ = &c.Tags
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare cn without a value: Conn has no zero value (field Err is required (@Strict))
+	var cn Conn
+	// A field marked @Required keeps its text, in a @Strict struct too.
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare nm without a value: Named has no zero value (field Note is @Required)
+	var nm Named
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: missing required field Pay in Team literal (TYP-15)
+	_ = [1]Team{{Size: 1}}
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: missing required field Note in Named literal (TYP-15)
+	_ = Named{N: 1}
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: missing required field N in Paren literal (TYP-15)
+	_ = Paren{}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: m["k"] may not exist: a missing key or a closed channel would give a Payment, which has no zero value (field ID is required (@Strict)); use the comma-ok form `v, ok := m["k"]`
+	_ = m["k"].ID
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: <-ch may not exist: a missing key or a closed channel would give a Payment, which has no zero value (field ID is required (@Strict)); use the comma-ok form `v, ok := <-ch`
+	_ = (<-ch).ID
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: clear(ps) would zero the elements: Payment has no zero value (field ID is required (@Strict); use ps = ps[:0] to drop them)
+	clear(ps)
+	_, _, _, _ = p, t, b, bi
+	_, _, _ = cn, nm, x
+}
+
+func nil_error() error { return nil }
+
+// A @Strict struct is no different from the same struct with @Required on each
+// field: `var zero T` with T = Payment, and the spread to the containing type.
+func ZeroPayment[T Payment | int]() T {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare z without a value: T has no zero value (its constraint allows types with none (GEN-5); constrain T, or use Option[T])
+	var z T
+	return z
+}
+
+func ZeroOK[T ~int | Soft]() T {
+	var z T
+	return z
+}
+
+// --- conversions (EXP-9) ----------------------------------------------------
+// Each field must be required on both sides or on neither: by its bit, or
+// because its type has no zero value anyway.
+
+type LoosePayment struct {
+	ID      int
+	Amount  int64
+	Note    Option[string]
+	Retries int
+	_       int
+}
+
+type MarkedPayment struct {
+	ID      int   @Required
+	Amount  int64 @Required
+	Note    Option[string]
+	Retries int
+	_       int
+}
+
+// Pointer, func and method-interface fields, and a field of a type with no
+// zero value, are required in a plain struct too.
+@Strict
+type StrictKinds struct {
+	ID  int
+	P   *Plain
+	F   func()
+	O   Opaque
+	Pay Payment
+}
+
+type MarkedKinds struct {
+	ID  int @Required
+	P   *Plain
+	F   func()
+	O   Opaque
+	Pay Payment
+}
+
+type LooseKinds struct {
+	ID  int
+	P   *Plain
+	F   func()
+	O   Opaque
+	Pay Payment
+}
+
+func positiveConversions(p Payment, mp MarkedPayment, sk StrictKinds, mk MarkedKinds, psk *StrictKinds) {
+	_ = OneRaw(TwoRaw{N: 1})
+	_ = TwoRaw(OneRaw{N: 1})
+	_ = ReqRaw(OneRaw{N: 1})
+	_ = OneRaw(ReqRaw{N: 1})
+	_ = FreeRaw(OptRaw{N: 1})
+	_ = OptRaw(FreeRaw{N: 1})
+	_ = struct{ N int @Required }(OneRaw{N: 1})
+	_ = MarkedPayment(p)
+	_ = Payment(mp)
+	_ = MarkedKinds(sk)
+	_ = StrictKinds(mk)
+	_ = (*MarkedKinds)(psk)
+}
+
+func negativeConversions(p Payment, lp LoosePayment, sk StrictKinds, lk LooseKinds) {
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot convert OneRaw{…} (value of struct type OneRaw) to type FreeRaw
+	_ = FreeRaw(OneRaw{N: 1})
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert FreeRaw{…} (value of struct type FreeRaw) to type OneRaw
+	_ = OneRaw(FreeRaw{N: 1})
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert OptRaw{…} (value of struct type OptRaw) to type OneRaw
+	_ = OneRaw(OptRaw{N: 1})
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot convert OneRaw{…} (value of struct type OneRaw) to type struct{N int}
+	_ = struct{ N int }(OneRaw{N: 1})
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot convert p (variable of struct type Payment) to type LoosePayment
+	_ = LoosePayment(p)
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot convert lp (variable of struct type LoosePayment) to type Payment
+	_ = Payment(lp)
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot convert sk (variable of struct type StrictKinds) to type LooseKinds
+	_ = LooseKinds(sk)
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot convert lk (variable of struct type LooseKinds) to type StrictKinds
+	_ = StrictKinds(lk)
+}

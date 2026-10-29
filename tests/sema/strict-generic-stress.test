@@ -1,0 +1,17 @@
+// P03.20 (stress, R5): 1500 chains of nested generic types G<k>[T] (each holds
+// G<k-1>[T]) and, per level and over its own type parameter, a conversion from
+// H<k>[T] to R<k>[T] (R<k> marks the field @Required: an error, since an
+// instance of T may have a zero value) and a `var z G<k>[T]` (an error: T may
+// have no zero value). No instance is shared between levels, so the answer for
+// each one must come from the generic declaration (quadratic otherwise: 2 s at
+// 1500 levels for the conversions, much more for the declarations). The
+// answers are the same for one and eight threads.
+// RUN: %python %S/Inputs/gen-strict-stress.py 1500 generic > %t.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.1 2>&1
+// RUN: not timeout 3 %gopp check -check-j=8 --check-error-limit=0 %t.gopp > %t.8 2>&1
+// RUN: diff %t.1 %t.8
+// RUN: grep -c "error\[E0160\]" %t.1 | FileCheck --check-prefix=CONV %s
+// RUN: grep -c "cannot declare z without a value" %t.1 | FileCheck --check-prefix=ZERO %s
+// CONV: 1500
+// ZERO: 1500
+package main

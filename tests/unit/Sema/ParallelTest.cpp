@@ -29,6 +29,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -488,6 +489,98 @@ TEST(ParallelCheck, NilSafetyChecksDoNotDependOnTheThreadCount) {
       ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads, run " << Rep;
       ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads, run " << Rep;
     }
+}
+
+TEST(ParallelCheck, StrictStructsAndCloneWitnessesDoNotDependOnTheThreadCount) {
+  // P03.20: @Strict structs, @Option fields, the conversion rule and the
+  // clone witness path, many of each: a chain of nested @Strict types (no
+  // zero value spreads down the chain), siblings that use them, and
+  // `Clone()` on a nest of structs ending in a type with a drop method. Also
+  // `V T @Option` judged per instance in bodies, and conversions that ask
+  // whether a field type has a zero value (a pointer field of a @Strict
+  // struct and of a plain one). Check time must stay near-linear (a generous
+  // bound catches a quadratic walk).
+  const unsigned Types = 400, Funcs = 200;
+  std::string Src = "package st\n\ntype Mu struct{ b bool }\n"
+                    "func (m *Mu) drop() {}\n"
+                    "@Strict\ntype BoxOpt[T any] struct {\n\tN int\n"
+                    "\tV T @Option\n}\n"
+                    "@Strict\ntype SK struct {\n\tID int\n\tP *int\n}\n"
+                    "type MK struct {\n\tID int @Required\n\tP *int\n}\n";
+  for (unsigned I = 0; I < Types; ++I) {
+    std::string N = std::to_string(I), M = std::to_string(I + 1);
+    Src += "@Strict\ntype S" + N +
+           " struct {\n\tID int\n\tNote Option[string]\n"
+           "\tR int @Option\n\t_ int\n";
+    if (I + 1 < Types)
+      Src += "\tNext S" + M + "\n";
+    Src += "}\n";
+    Src += "type P" + N +
+           " struct {\n\tID int @Required\n\tNote Option[string]\n"
+           "\tR int\n\t_ int\n}\n";
+    Src += "type C" + N + " struct {\n\tmu Mu\n";
+    if (I > 0)
+      Src += "\tIn C" + std::to_string(I - 1) + "\n";
+    Src += "}\n";
+  }
+  for (unsigned I = 0; I < Funcs; ++I) {
+    std::string N = std::to_string(I % Types);
+    Src += "func good" + std::to_string(I) + "(x S" + N + ", k SK) P" + N +
+           " {\n"
+           "\ty := S" +
+           N +
+           "{ID: 1, Next: x.Next.Clone()}\n"
+           "\t_ = y\n\t_ = MK(k)\n\t_ = BoxOpt[int]{N: 1}\n\treturn P" +
+           N + "{ID: 2}\n}\n";
+    if (I % 5 == 0)
+      Src += "func bad" + std::to_string(I) + "(p P" + N + ", s S" + N +
+             ") {\n"
+             "\t_ = S" +
+             N +
+             "(p)\n"
+             "\tvar z S" +
+             N +
+             "\n\t_ = z\n"
+             "\t_ = S" +
+             N +
+             "{}\n"
+             "\t_ = BoxOpt[S" +
+             N +
+             "]{N: 1, V: s.Clone()}\n}\n"
+             "func cl" +
+             std::to_string(I) + "(c C" + N +
+             ") {\n"
+             "\t_ = c.Clone()\n}\n";
+  }
+  Output Ref = run(Src, 1);
+  for (const char *Msg :
+       {"has no zero value (field ID is required (@Strict))",
+        "missing required fields ID, Next in S0 literal",
+        "can't be cloned: field mu (Mu)", "cannot convert",
+        "BoxOpt[S0]: field V is @Option, but S0 has no zero value"})
+    EXPECT_NE(Ref.Diags.find(Msg), std::string::npos)
+        << Msg << "\n"
+        << Ref.Diags.substr(0, 3000);
+  // Bad functions: one conversion error, one zero value, one literal error,
+  // one BoxOpt instance error, one clone error each (the literal error lists
+  // the missing fields).
+  unsigned Errors = 0;
+  for (size_t Pos = 0;
+       (Pos = Ref.Diags.find(": error: ", Pos)) != std::string::npos; ++Pos)
+    ++Errors;
+  EXPECT_EQ(Errors, 5u * ((Funcs + 4) / 5)) << Ref.Diags.substr(0, 3000);
+  auto Start = std::chrono::steady_clock::now();
+  for (unsigned Threads : {2u, 8u, 16u})
+    for (int Rep = 0; Rep < 2; ++Rep) {
+      Output O = run(Src, Threads);
+      ASSERT_EQ(O.Diags, Ref.Diags) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads, run " << Rep;
+    }
+  auto Secs =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - Start)
+          .count();
+  EXPECT_LT(Secs, 30.0) << "six checks of " << Types << " nested types";
 }
 
 TEST(ParallelCheck, SmallPackagesStayOnTheCallingThread) {

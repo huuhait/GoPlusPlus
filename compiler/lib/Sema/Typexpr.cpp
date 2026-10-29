@@ -415,13 +415,49 @@ int64_t Checker::arrayLength(const ast::Expr *Ex) {
 // Struct types
 //===----------------------------------------------------------------------===//
 
+/// The effective required bit of a struct field (TYP-15, TYP-15a): the ONE
+/// place that decides it. It is stored in Var::Required when the struct type
+/// is built from source; every reader (literal check, zero-value query,
+/// never-nil stores, conversions, export data, vet) reads the stored bit, and
+/// instances and export data keep it. A field is required when it is marked
+/// `@Required`, or when its struct is `@Strict` and the field is not marked
+/// `@Option`, not blank `_` and not of type `Option[T]`. Pointer, func and
+/// method-interface fields are required in every struct already (no zero
+/// value); in a `@Strict` struct they carry the bit as well.
+static bool effectiveRequired(bool Strict, bool MarkedRequired,
+                              bool MarkedOption, bool Blank,
+                              const Type *FieldTy) {
+  if (MarkedRequired)
+    return true;
+  return Strict && !MarkedOption && !Blank &&
+         !isa_and_nonnull<OptionType>(FieldTy);
+}
+
+/// R widened over the blanks before it, so that a fix-it that removes an
+/// attribute leaves `N int`, not `N int ` (TYP-15a).
+static SourceRange withBlanksBefore(const SourceManager &SM, SourceRange R) {
+  FileID F = SM.getFileID(R.getBegin());
+  if (!F.isValid())
+    return R;
+  StringRef Buf = SM.getBuffer(F);
+  uint32_t Off = SM.getFileOffset(R.getBegin()), K = Off;
+  while (K > 0 && K <= Buf.size() && (Buf[K - 1] == ' ' || Buf[K - 1] == '\t'))
+    --K;
+  return SourceRange(R.getBegin().getLocWithOffset(-int64_t(Off - K)),
+                     R.getEnd());
+}
+
 Type *Checker::structTypeExpr(const ast::StructType *St) {
+  // TYP-15a: only the struct type of a `@Strict` declaration is strict.
+  const bool Strict = own() && St == StrictStructExpr;
   SmallVector<TypeContext::FieldSpec, 8> Fields;
   SmallVector<const ast::Ident *, 8> Idents;
   SmallVector<const ast::Expr *, 8> EmbExprs;
   llvm::StringSet<> Seen;
-  // The `@Required` attribute of the field being added (TYP-15), if any.
+  // The `@Required` and `@Option` attributes of the field being added
+  // (TYP-15, TYP-15a), if any.
   const Attribute *ReqAttr = nullptr;
+  const Attribute *OptAttr = nullptr;
   auto Add = [&](const ast::Ident *Id, StringRef N, Type *T, bool Emb,
                  StringRef Tag, SourceLoc Pos, const ast::Expr *EmbE) {
     if (N != "_" && !Seen.insert(N).second) {
@@ -434,22 +470,64 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
     FS.Ty = T;
     FS.Embedded = Emb;
     FS.Tag = Tag;
-    FS.Required = ReqAttr && own();
-    if (ReqAttr && own() && isValid(T)) {
-      // ADR-0018 point 7 and amendment point 3: a pointer, a func and an
-      // interface with methods are never nil, so @Required says nothing.
-      SourceLoc AtPos = ReqAttr->AtLoc;
-      std::string FName(N);
-      later([this, AtPos, FName, T]() {
-        if (isPointerKind(T))
-          err(AtPos, diag::err_required_pointer, {FName, str(T)});
-        else if (const char *Why = neverNilKind(T))
-          err(AtPos, diag::err_required_never_nil, {FName, str(T), Why});
-      });
-    }
+    FS.MarkedRequired = ReqAttr && own();
+    FS.MarkedOption = OptAttr && own();
+    FS.Required = effectiveRequired(Strict, FS.MarkedRequired, FS.MarkedOption,
+                                    N == "_", T);
     Fields.push_back(FS);
     Idents.push_back(Id);
     EmbExprs.push_back(EmbE);
+  };
+  // The attribute checks that need the field type, once per field
+  // declaration (`A, B int @Option` is one). Name is its first name that is
+  // not `_`, or `_`.
+  auto CheckAttrs = [&](StringRef Name, Type *T) {
+    if (!own())
+      return;
+    if (OptAttr && !Strict)
+      err(OptAttr->AtLoc, diag::err_option_not_strict);
+    else if (OptAttr && ReqAttr)
+      err(OptAttr->AtLoc, diag::err_option_and_required, {std::string(Name)});
+    if (!isValid(T))
+      return;
+    const bool Blank = Name == "_";
+    std::string FName(Name);
+    if (ReqAttr) {
+      // ADR-0018 point 7 and amendment point 3: a pointer, a func and an
+      // interface with methods are never nil, so @Required says nothing.
+      // In a `@Strict` struct the attribute is also redundant where
+      // `@Strict` alone requires the field (TYP-15a); those errors first.
+      bool Redundant =
+          effectiveRequired(Strict, false, OptAttr != nullptr, Blank, T);
+      SourceLoc ReqPos = ReqAttr->AtLoc;
+      SourceRange ReqRange = withBlanksBefore(
+          S.SM, SourceRange(ReqAttr->getBegin(), ReqAttr->getEnd()));
+      later([this, ReqPos, ReqRange, FName, T, Redundant]() {
+        if (isPointerKind(T))
+          err(ReqPos, diag::err_required_pointer, {FName, str(T)});
+        else if (const char *Why = neverNilKind(T))
+          err(ReqPos, diag::err_required_never_nil, {FName, str(T), Why});
+        else if (Redundant)
+          err(ReqPos, diag::err_required_redundant, {FName})
+              .fixit(ReqRange, "");
+      });
+    }
+    if (OptAttr && Strict && !ReqAttr) {
+      SourceLoc OptPos = OptAttr->AtLoc;
+      if (isa<OptionType>(T))
+        err(OptPos, diag::err_option_redundant,
+            {FName, "a field of type " + str(T) +
+                        " may be left out already (it is nil)"});
+      else if (Blank)
+        err(OptPos, diag::err_option_redundant,
+            {FName, "the blank field _ is never required"});
+      else if (!isa<TypeParamType>(T)) // judged per instance: checkOptionFields
+        later([this, OptPos, FName, T]() {
+          std::string Why;
+          if (!hasZeroValue(T, &Why))
+            err(OptPos, diag::err_option_no_zero, {FName, str(T), Why});
+        });
+    }
   };
   if (St->Fields) {
     for (const Field *F : St->Fields->List) {
@@ -463,12 +541,24 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
       }
       StringRef TagRef = Mem.copy(Tag);
       ReqAttr = nullptr;
-      for (const Attribute *A : F->Attrs)
-        if (!A->Pkg && A->Name && name(A->Name) == "Required") {
+      OptAttr = nullptr;
+      for (const Attribute *A : F->Attrs) {
+        if (A->Pkg || !A->Name)
+          continue;
+        StringRef AN = name(A->Name);
+        if (AN == "Required") {
           if (own() && A->HasArgs)
             err(A->AtLoc, diag::err_required_args);
           ReqAttr = A;
+        } else if (AN == "Option") {
+          if (own() && A->HasArgs)
+            err(A->AtLoc, diag::err_attr_no_args, {"@Option"});
+          OptAttr = A;
+        } else if (AN == "Strict" && own()) {
+          // TYP-15a: @Strict is a type attribute only.
+          err(A->AtLoc, diag::err_strict_placement, {"a field"});
         }
+      }
       if (F->Names.empty()) {
         // Embedded field: T, *T, pkg.T or T[args].
         const ast::Expr *TE = F->Type;
@@ -490,6 +580,7 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
               {"invalid embedded field type " + str(TE)});
           continue;
         }
+        CheckAttrs(N, T);
         Add(nullptr, N, T, true, TagRef, TE->getBegin(), TE);
         if (isValid(T)) {
           later([this, TE, T]() {
@@ -511,12 +602,19 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
         }
       } else {
         Type *T = varType(F->Type);
+        StringRef Name = "_";
+        for (const ast::Ident *Id : F->Names)
+          if (name(Id) != "_") {
+            Name = name(Id);
+            break;
+          }
+        CheckAttrs(Name, T);
         for (const ast::Ident *Id : F->Names)
           Add(Id, name(Id), T, false, TagRef, Id->getBegin(), nullptr);
       }
     }
   }
-  StructType *ST = Ctx.structOf(Fields);
+  StructType *ST = Ctx.structOf(Fields, Strict);
   for (size_t K = 0; K < Idents.size() && K < ST->Fields.size(); ++K)
     if (Idents[K])
       recordDef(Idents[K], ST->Fields[K]);
@@ -751,14 +849,17 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     SmallVector<TypeParamType *, 4> ATPs(Alias->AliasTParams.begin(),
                                          Alias->AliasTParams.end());
     SourceLoc APos = Ix->getBegin();
-    later([this, APos, ATPs, AArgs, ALocs]() {
+    Type *Res = subst(G, Alias->AliasTParams, AArgs);
+    later([this, APos, ATPs, AArgs, ALocs, Res]() {
       std::string Why;
       int Bad = verify(APos, ATPs, AArgs, &Why);
       if (Bad >= 0)
         err(static_cast<size_t>(Bad) < ALocs.size() ? ALocs[Bad] : APos,
             diag::err_sema_typexpr, {Why});
+      else
+        checkOptionFields(APos, Res);
     });
-    return subst(G, Alias->AliasTParams, AArgs);
+    return Res;
   }
   auto *N = cast<NamedType>(G);
   SmallVector<Type *, 4> TArgs;
@@ -815,11 +916,13 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   later([this, Pos, TPs, TArgs, Locs, Inst]() {
     std::string Why;
     int Bad = verify(Pos, TPs, TArgs, &Why);
-    if (Bad >= 0)
+    if (Bad >= 0) {
       err(static_cast<size_t>(Bad) < Locs.size() ? Locs[Bad] : Pos,
           diag::err_sema_typexpr, {Why});
-    else
+    } else {
       checkOptionArgs(Pos, Inst, TArgs);
+      checkOptionFields(Pos, Inst);
+    }
   });
   return Inst;
 }
@@ -920,6 +1023,77 @@ void Checker::checkOptionArgs(SourceLoc Pos, Type *Inst,
     err(Pos, diag::err_option_bad_arg,
         {str(O->Elem),
          std::string(badOptionArg(O->Elem)) + " (in " + str(Inst) + ")"});
+}
+
+/// Whether T mentions a type parameter, so that it is a type of generic code.
+static bool mentionsTypeParam(const Type *T, unsigned Depth = 0) {
+  if (!T || Depth > Checker::MaxRecDepth)
+    return false;
+  auto Rec = [&](const Type *X) { return mentionsTypeParam(X, Depth + 1); };
+  switch (T->getKind()) {
+  case Type::Kind::TypeParam:
+    return true;
+  case Type::Kind::Pointer:
+    return Rec(cast<PointerType>(T)->Elem);
+  case Type::Kind::Slice:
+    return Rec(cast<SliceType>(T)->Elem);
+  case Type::Kind::Ref:
+    return Rec(cast<RefType>(T)->Elem);
+  case Type::Kind::Option:
+    return Rec(cast<OptionType>(T)->Elem);
+  case Type::Kind::Array:
+    return Rec(cast<sema::ArrayType>(T)->Elem);
+  case Type::Kind::Chan:
+    return Rec(cast<sema::ChanType>(T)->Elem);
+  case Type::Kind::Map:
+    return Rec(cast<sema::MapType>(T)->Key) ||
+           Rec(cast<sema::MapType>(T)->Elem);
+  case Type::Kind::Tuple:
+    return llvm::any_of(cast<TupleType>(T)->Elems, Rec);
+  case Type::Kind::Signature:
+    return Rec(cast<SignatureType>(T)->Params) ||
+           Rec(cast<SignatureType>(T)->Results);
+  case Type::Kind::Struct:
+    return llvm::any_of(cast<StructType>(T)->Fields,
+                        [&](const Var *F) { return Rec(F->Ty); });
+  case Type::Kind::Named:
+    return llvm::any_of(cast<NamedType>(T)->TArgs, Rec);
+  default:
+    // A basic type; an interface value's zero value does not depend on
+    // the types its methods mention.
+    return false;
+  }
+}
+
+void Checker::checkOptionFields(SourceLoc Pos, Type *Inst) {
+  // TYP-15a per instance (GEN-5): `V T @Option` is accepted on the generic
+  // declaration and judged here with the real T: Box[int] is fine,
+  // Box[Payment] is an error. An argument of generic code is not judged
+  // (that code is checked once; the literal and zero-value rules already
+  // treat the field as required where its type may have no zero value).
+  auto *N = dyn_cast_or_null<NamedType>(Inst);
+  if (!own() || !N || !N->Orig)
+    return;
+  auto IsGenericOption = [](const Var *F) {
+    return F->MarkedOption && isa<TypeParamType>(F->Ty);
+  };
+  // The declaration first, so that only these instances are expanded.
+  auto *G = dyn_cast_or_null<StructType>(under(N->Orig));
+  if (!G || !G->Strict || llvm::none_of(G->Fields, IsGenericOption))
+    return;
+  auto *IS = dyn_cast_or_null<StructType>(under(N));
+  if (!IS || IS->Fields.size() != G->Fields.size())
+    return;
+  for (size_t K = 0; K < G->Fields.size(); ++K) {
+    const Var *F = G->Fields[K];
+    Type *Y = IS->Fields[K]->Ty;
+    if (!IsGenericOption(F) || !isValid(Y) || mentionsTypeParam(Y))
+      continue;
+    std::string Why;
+    if (!hasZeroValue(Y, &Why))
+      err(Pos, diag::err_option_no_zero_instance,
+          {str(N), std::string(F->Name), str(Y), Why, str(F->Ty)});
+  }
 }
 
 //===----------------------------------------------------------------------===//

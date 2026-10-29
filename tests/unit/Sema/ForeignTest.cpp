@@ -609,4 +609,50 @@ func f(n int) {
   EXPECT_EQ(Errs.size(), 3u);
 }
 
+// P03.20 (ADR-0019 point 3): @Option on a C++ type without a default
+// constructor is an error, because the field could not be left out; on one with
+// a default constructor it is fine. Both sides, also for an embedded field.
+TEST(Foreign, OptionOnACppTypeNeedsADefaultConstructor) {
+  Fixture F;
+  Package *P = F.header("<conn>");
+  MockForeignScope &S = F.Prov.scopeOf("<conn>");
+  NamedType *Conn = F.klass(P, "Conn");
+  NamedType *Plain = F.klass(P, "Plain");
+  S.add(Conn->Obj);
+  S.add(Plain->Obj);
+  S.setNoDefaultConstructor(Conn);
+  EXPECT_TRUE(F.check(R"(package main
+import "<conn>"
+@Strict
+type Ok struct {
+	N int
+	P conn.Plain @Option
+	C conn.Conn
+	O Option[conn.Conn]
+}
+func main() {
+	_ = Ok{N: 1, C: conn.Conn{}}
+}
+)")
+                  .empty());
+  auto Errs = F.check(R"(package main
+import "<conn>"
+@Strict
+type Bad struct {
+	N int
+	C conn.Conn @Option
+}
+@Strict
+type BadEmb struct {
+	conn.Conn @Option
+}
+)");
+  EXPECT_TRUE(mentions(Errs, "@Option on field C of type conn.Conn: conn.Conn "
+                             "has no zero value (it has no default "
+                             "constructor)"))
+      << (Errs.empty() ? "" : Errs[0]);
+  EXPECT_TRUE(mentions(Errs, "@Option on field Conn of type conn.Conn"));
+  EXPECT_EQ(Errs.size(), 2u);
+}
+
 } // namespace

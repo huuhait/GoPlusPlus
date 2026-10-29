@@ -1,0 +1,217 @@
+// P03.20 (follow-up): category() (OWN-C1..C5) had a depth cut at 24 that
+// answered Trivial, the unsafe side: S30 (30 named structs over a string) was
+// Copy, so `t := s` copied a borrowed owner bitwise and NeedC[S30] satisfied
+// Copy; R (a raw pointer next to S30) got an automatic Clone() that copies
+// the pointer. Now the walk has no cut: S30 is owning like S5. The trivial
+// chain P30 next to it stays Copy, and RP (a raw pointer next to P30) stays
+// cloneable. Generic instances are answered from their declaration (its
+// parameters held by value, joined with the arguments' categories): G30[T]
+// holds T 30 levels down, so G30[string] and G30[Box[Mu]] are owning and
+// G30[int] and G30[*Mu] are Copy; in a generic function G30[T] copies only
+// when T is Copy.
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+package main
+
+type NeedC[T Copy] struct{ v T }
+
+type S0 struct{ s string }
+type P0 struct{ x int }
+type S1 struct{ in S0 }
+type S2 struct{ in S1 }
+type S3 struct{ in S2 }
+type S4 struct{ in S3 }
+type S5 struct{ in S4 }
+type S6 struct{ in S5 }
+type S7 struct{ in S6 }
+type S8 struct{ in S7 }
+type S9 struct{ in S8 }
+type S10 struct{ in S9 }
+type S11 struct{ in S10 }
+type S12 struct{ in S11 }
+type S13 struct{ in S12 }
+type S14 struct{ in S13 }
+type S15 struct{ in S14 }
+type S16 struct{ in S15 }
+type S17 struct{ in S16 }
+type S18 struct{ in S17 }
+type S19 struct{ in S18 }
+type S20 struct{ in S19 }
+type S21 struct{ in S20 }
+type S22 struct{ in S21 }
+type S23 struct{ in S22 }
+type S24 struct{ in S23 }
+type S25 struct{ in S24 }
+type S26 struct{ in S25 }
+type S27 struct{ in S26 }
+type S28 struct{ in S27 }
+type S29 struct{ in S28 }
+type S30 struct{ in S29 }
+type P1 struct{ in P0 }
+type P2 struct{ in P1 }
+type P3 struct{ in P2 }
+type P4 struct{ in P3 }
+type P5 struct{ in P4 }
+type P6 struct{ in P5 }
+type P7 struct{ in P6 }
+type P8 struct{ in P7 }
+type P9 struct{ in P8 }
+type P10 struct{ in P9 }
+type P11 struct{ in P10 }
+type P12 struct{ in P11 }
+type P13 struct{ in P12 }
+type P14 struct{ in P13 }
+type P15 struct{ in P14 }
+type P16 struct{ in P15 }
+type P17 struct{ in P16 }
+type P18 struct{ in P17 }
+type P19 struct{ in P18 }
+type P20 struct{ in P19 }
+type P21 struct{ in P20 }
+type P22 struct{ in P21 }
+type P23 struct{ in P22 }
+type P24 struct{ in P23 }
+type P25 struct{ in P24 }
+type P26 struct{ in P25 }
+type P27 struct{ in P26 }
+type P28 struct{ in P27 }
+type P29 struct{ in P28 }
+type P30 struct{ in P29 }
+
+type R struct {
+	p *int
+	s S30
+}
+
+type RP struct {
+	p *int
+	q P30
+}
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: S5 does not satisfy Copy
+type UseS5 struct{ c NeedC[S5] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: S30 does not satisfy Copy
+type UseS30 struct{ c NeedC[S30] }
+
+type UseP30 struct{ c NeedC[P30] }
+
+type Box[T any] struct{ v T }
+type Two[A any, B any] struct {
+	a A
+	b []int
+	c Box[B]
+}
+type Pair[A any, B any] struct {
+	a A
+	b Box[B]
+}
+type G0[T any] struct{ V T }
+type G1[T any] struct{ P G0[T] }
+type G2[T any] struct{ P G1[T] }
+type G3[T any] struct{ P G2[T] }
+type G4[T any] struct{ P G3[T] }
+type G5[T any] struct{ P G4[T] }
+type G6[T any] struct{ P G5[T] }
+type G7[T any] struct{ P G6[T] }
+type G8[T any] struct{ P G7[T] }
+type G9[T any] struct{ P G8[T] }
+type G10[T any] struct{ P G9[T] }
+type G11[T any] struct{ P G10[T] }
+type G12[T any] struct{ P G11[T] }
+type G13[T any] struct{ P G12[T] }
+type G14[T any] struct{ P G13[T] }
+type G15[T any] struct{ P G14[T] }
+type G16[T any] struct{ P G15[T] }
+type G17[T any] struct{ P G16[T] }
+type G18[T any] struct{ P G17[T] }
+type G19[T any] struct{ P G18[T] }
+type G20[T any] struct{ P G19[T] }
+type G21[T any] struct{ P G20[T] }
+type G22[T any] struct{ P G21[T] }
+type G23[T any] struct{ P G22[T] }
+type G24[T any] struct{ P G23[T] }
+type G25[T any] struct{ P G24[T] }
+type G26[T any] struct{ P G25[T] }
+type G27[T any] struct{ P G26[T] }
+type G28[T any] struct{ P G27[T] }
+type G29[T any] struct{ P G28[T] }
+type G30[T any] struct{ P G29[T] }
+type Mu struct{ b bool }
+
+func (m *Mu) drop() {}
+
+type G0Use struct{ c NeedC[Box[int]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Box[string] does not satisfy Copy
+type G1Use struct{ c NeedC[Box[string]] }
+
+type G2Use struct{ c NeedC[Box[Box[int]]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Box[Box[string]] does not satisfy Copy
+type G3Use struct{ c NeedC[Box[Box[string]]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Two[int, int] does not satisfy Copy
+type G4Use struct{ c NeedC[Two[int, int]] }
+
+type G5Use struct{ c NeedC[Pair[int, int]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Pair[int, string] does not satisfy Copy
+type G6Use struct{ c NeedC[Pair[int, string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Pair[string, int] does not satisfy Copy
+type G7Use struct{ c NeedC[Pair[string, int]] }
+
+type G8Use struct{ c NeedC[G30[int]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: G30[string] does not satisfy Copy
+type G9Use struct{ c NeedC[G30[string]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: G30[Box[Mu]] does not satisfy Copy
+type G10Use struct{ c NeedC[G30[Box[Mu]]] }
+
+type G11Use struct{ c NeedC[G30[*Mu]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Box{{\[\[}}3]Pair[int, Box[string]]] does not satisfy Copy
+type G12Use struct{ c NeedC[Box[[3]Pair[int, Box[string]]]] }
+
+type G13Use struct{ c NeedC[Option[Box[int]]] }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: Option[G30[string]] does not satisfy Copy
+type G14Use struct{ c NeedC[Option[G30[string]]] }
+
+func copyS5(s S5) S5 {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0253]: cannot initialize from s: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	t := s
+	return t
+}
+
+func copyS30(s S30) S30 {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0253]: cannot initialize from s: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	t := s
+	return t
+}
+
+func copyP30(p P30) P30 {
+	t := p
+	return t
+}
+
+func cloneR(r R) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0267]: cannot clone r: R can't be cloned: R mixes owning fields with the raw pointer field p: write Clone() by hand (OWN-R6)
+	_ = r.Clone()
+}
+
+func cloneRP(r RP) { _ = r.Clone() }
+
+func copyG[T any](g G30[T]) G30[T] {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0253]: cannot initialize from g: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+	h := g
+	return h
+}
+
+func copyGCopy[T Copy](g G30[T]) G30[T] {
+	h := g
+	return h
+}
+
+func main() {}

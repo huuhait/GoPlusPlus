@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-R6: copies are explicit, x.Clone() exists for every cloneable
 // type; a hand-written Clone() T has a value receiver; a type with drop is
 // cloneable only with its own Clone(); an owning struct with raw pointer
@@ -38,8 +38,104 @@ func positive(h Handle, s string, xs []string, m map[string]int) {
 func (c *C) Clone() C { return *c }
 
 func negative(f File, t Tree) {
-	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone f: type File does not satisfy Clone: File has a drop method but no Clone() File (OWN-R6)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone f: File can't be cloned: File has a drop method but no Clone() (OWN-R6)
 	_ = clone(f)
-	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone t: type Tree does not satisfy Clone: it mixes owning fields with the raw pointer field Up: write Clone() by hand (OWN-R6)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone t: Tree can't be cloned: Tree mixes owning fields with the raw pointer field Up: write Clone() by hand (OWN-R6)
 	_ = t.Clone()
+}
+
+// The error names the path of the first field that blocks the clone (P03.20,
+// owner decision 2026-10-28): through nested structs, slices, arrays, maps,
+// Options and Unique pointers, which add nothing to the path. A type that has
+// its own Clone() stops the path. One place decides it for clone(x),
+// x.Clone(), u.Clone() on a Unique and the Clone constraint (GEN-2).
+type Mu struct{ n int }
+
+func (m *Mu) drop() {}
+
+type Server struct {
+	mu   Mu
+	Name string
+}
+
+type Pair struct{ A, B Server }
+type Deep struct{ P Pair }
+type Fine struct{ N int }
+type Mixed struct {
+	Name string
+	Srv  Server
+}
+type Cloner struct{ mu Mu }
+
+func (c Cloner) Clone() Cloner { return Cloner{} }
+
+type Holds struct{ C Cloner }
+type Linked struct {
+	Next Unique[*Server]
+}
+type Holder struct {
+	Items []Server
+}
+
+// A recursive type is assumed cloneable while it is being looked at, so the
+// path names the field that blocks it, not Kids.Kids.Kids...
+type Node struct {
+	Kids []Node
+	mu   Mu
+}
+type Leaf struct {
+	Kids []Leaf
+	Name string
+}
+
+func dup[T Clone](x T) T { return x.Clone() }
+
+func paths(s Server, p Pair, d Deep, ss []Server, m map[string]Server, k map[Server]int, a [2]Server, o Option[Server], mx Mixed, l Linked, h Holder, n Node, u Unique[*Server]) {
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone s: Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = s.Clone()
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone s: Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(s)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone p: Pair can't be cloned: field A.mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = p.Clone()
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone d: Deep can't be cloned: field P.A.mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(d)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone ss: []Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(ss)
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot clone ss: []Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = ss.Clone()
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone m: map[string]Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(m)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone m: map[string]Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = m.Clone()
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone k: map[Server]int can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(k)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone a: [2]Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(a)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone o: Option[Server] can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(o)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone mx: Mixed can't be cloned: field Srv.mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(mx)
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot clone l: Linked can't be cloned: field Next.mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = clone(l)
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone h: Holder can't be cloned: field Items.mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = h.Clone()
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone n: Node can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = n.Clone()
+	// CHECK: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone u: Server can't be cloned: field mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = u.Clone()
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Pair does not satisfy Clone (field A.mu (Mu) has a drop method but no Clone())
+	_ = dup(p)
+}
+
+func pathsOK(f Fine, h Holds, c Cloner, fs []Fine, fm map[string]Fine, lf Leaf, lfs []Leaf) {
+	_ = f.Clone()
+	_ = h.Clone()
+	_ = clone(c)
+	_ = clone(fs)
+	_ = clone(fm)
+	_ = lf.Clone()
+	_ = clone(lfs)
+	_ = dup(f)
+	_ = dup(h)
+	_ = dup(lf)
 }

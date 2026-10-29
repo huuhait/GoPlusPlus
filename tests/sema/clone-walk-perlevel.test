@@ -1,0 +1,22 @@
+// P03.20 (stress): a constraint per level, checked while the types are
+// declared.
+// satisfiesClone walks the graph of types with an explicit stack: no
+// recursion, so a deep type cannot overflow the stack, and no depth cut, so
+// the depth of a type never decides the answer. Each generated case runs
+// under `timeout 3` (a quadratic or exponential walk fails it) and reports
+// exactly the errors checked here, so a false error fails it (and a crash
+// fails any RUN line, also under `not`). Split by case so each test stays
+// well under the 2 s budget in the ASan build (D0.13).
+//  - perlevel: 6000 levels, each holding a `[T Clone]` instance of the level
+//    below (and a `[T Copy]` one in a twin chain): linear because the
+//    answers are stored once every package-level type is declared (it took
+//    4.3 s). The string 6000 levels down is found: S6000 is not Copy.
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 6000 walk perlevel > %t.pl.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.pl.gopp > %t.pl.out 2>&1
+// RUN: grep -c "error\[E" %t.pl.out | FileCheck --check-prefix=TWO %s
+// RUN: FileCheck --check-prefix=PERLEVEL %s < %t.pl.out
+// PERLEVEL: error[E0323]: S6000 does not satisfy Copy
+// PERLEVEL: error[E0253]: cannot initialize from s: it is a borrowed parameter, and this needs ownership (OWN-R3a)
+// TWO: {{^2$}}
+package main

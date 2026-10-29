@@ -1,0 +1,16 @@
+// RUN: not %gopp check --check-diag-format=json %s 2>&1 | FileCheck %s
+// P03.20 (TYP-15a): `@Required` on a field that @Strict already requires has
+// a fix-it that removes the attribute and the blanks before it, so the field
+// reads `N   int` again (and a tag after it stays). An Option field keeps the
+// attribute (no error).
+package p
+
+@Strict
+type T struct {
+	// CHECK: "id":"err_required_redundant"{{.*}}"line":[[@LINE+1]],"column":13{{.*}}"fixits":[{"range":{"begin":{"line":[[@LINE+1]],"column":9,{{.*}}"end":{"line":[[@LINE+1]],"column":22,{{.*}}"text":""}]
+	N   int    @Required
+	// CHECK: "id":"err_required_redundant"{{.*}}"line":[[@LINE+1]],"column":11{{.*}}"fixits":[{"range":{"begin":{"line":[[@LINE+1]],"column":10,{{.*}}"end":{"line":[[@LINE+1]],"column":20,{{.*}}"text":""}]
+	S string @Required `json:"s"`
+	O Option[int] @Required
+}
+// CHECK-NOT: "id":"err_

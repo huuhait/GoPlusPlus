@@ -19,7 +19,9 @@
 //     guards;
 //   - a `!` that panics because its function cannot return the error, in a
 //     package other than main (ERR-6, ERR-10, ERR-11a);
-//   - `defer` in a loop body (D3.9, PAN-4).
+//   - `defer` in a loop body (D3.9, PAN-4);
+//   - a @Strict struct with no required field: every field is Option[T],
+//     @Option or `_`, so @Strict changes nothing (TYP-15a).
 // The findings come in source order: files in the given order, then by offset.
 //
 //===----------------------------------------------------------------------===//
@@ -74,6 +76,7 @@ public:
     Pending.clear();
     for (const ast::Decl *Dl : F->Decls) {
       structs(Dl, nullptr);
+      strictWithoutRequired(Dl);
       if (auto *FD = dyn_cast<ast::FuncDecl>(Dl))
         dropMethod(FD);
     }
@@ -135,6 +138,29 @@ private:
             {"<embedded>", Struct});
       for (const ast::Ident *Nm : Fd->Names)
         add(Nm->getBegin(), diag::warn_vet_ref_field, {Nm->Name.str(), Struct});
+    }
+  }
+
+  // --- @Strict without a required field (TYP-15a) -------------------------
+
+  /// The struct type of a @Strict declaration none of whose fields is
+  /// required. It reads the effective bit (Var::Required), as every other
+  /// rule does: every field is Option[T], @Option or `_`.
+  void strictWithoutRequired(const ast::Decl *Dl) {
+    auto *GD = dyn_cast<ast::GenDecl>(Dl);
+    if (!GD || GD->Keyword != tok::kw_type || !hasAttr(GD, "Strict"))
+      return;
+    for (const ast::Spec *Sp : GD->Specs) {
+      auto *TS = dyn_cast<ast::TypeSpec>(Sp);
+      if (!TS || !TS->Type || TS->AssignLoc.isValid())
+        continue;
+      auto *St =
+          dyn_cast_or_null<sema::StructType>(I.typeOf(unparen(TS->Type)));
+      if (!St || !St->Strict ||
+          llvm::any_of(St->Fields, [](const Var *F) { return F->Required; }))
+        continue;
+      add(TS->Name->getBegin(), diag::warn_vet_strict_no_required,
+          {TS->Name->Name.str()});
     }
   }
 

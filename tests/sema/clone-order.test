@@ -1,0 +1,18 @@
+// P03.20 (R7): the answer of satisfiesClone is a function of the type alone.
+// N0 holds 1980 levels of slices (the depth cut was at 2000 levels of one type
+// body); N40 is 40 named structs above it. The depth used to count the levels
+// of the whole query, so `b(x N40)` was rejected when it was checked before
+// `a(x N0)` (N0 not cached yet) and accepted after it, and with parallel body
+// workers the output depended on scheduling. Both orders, and one and eight
+// threads, now give the same output (no error: N0 is cloneable).
+// RUN: %python %S/Inputs/gen-strict-stress.py 40 order ab > %t.ab.gopp
+// RUN: %python %S/Inputs/gen-strict-stress.py 40 order ba > %t.ba.gopp
+// RUN: %gopp check -check-j=1 --check-error-limit=0 %t.ab.gopp > %t.ab.1 2>&1
+// RUN: %gopp check -check-j=1 --check-error-limit=0 %t.ba.gopp > %t.ba.1 2>&1
+// RUN: %gopp check -check-j=8 --check-error-limit=0 %t.ab.gopp > %t.ab.8 2>&1
+// RUN: %gopp check -check-j=8 --check-error-limit=0 %t.ba.gopp > %t.ba.8 2>&1
+// RUN: diff %t.ab.1 %t.ba.1
+// RUN: diff %t.ab.1 %t.ab.8
+// RUN: diff %t.ba.1 %t.ba.8
+// RUN: not grep -q "error" %t.ab.1
+package main

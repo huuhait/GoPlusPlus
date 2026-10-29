@@ -1,0 +1,38 @@
+// P03.20: `--go` keeps Go's rules. @Strict and @Option are unknown attributes
+// there: a struct marked @Strict has no required field, a literal may leave
+// fields out, `var p Payment` and `make([]Payment, n)` are fine, @Option
+// needs no @Strict, and @Strict on a non-struct type is not an error.
+// Go++ mode (the default) rejects the same code (the other side).
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp %s %t/a.go
+// RUN: %gopp check --go %t/a.go
+// RUN: cp %s %t/a.gopp
+// RUN: not %gopp check --check-error-limit=0 %t/a.gopp 2>&1 | FileCheck %s
+package main
+
+@Strict
+type Payment struct {
+	ID     int
+	Amount int64
+	Tries  int @Option
+}
+
+type Loose struct {
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Option is only allowed in a @Strict struct: the fields of this struct are optional already (TYP-15a)
+	N int @Option
+}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Strict is only allowed on a struct type declaration, not on type Count, which is not a struct type
+@Strict
+type Count int
+
+func main() {
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: missing required field Amount in Payment literal (TYP-15)
+	_ = Payment{ID: 1}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare p without a value: Payment has no zero value
+	var p Payment
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: make([]Payment, 3) creates zero values: Payment has no zero value
+	_ = make([]Payment, 3)
+	_ = Loose{}
+	_, _ = p, Count(1)
+}

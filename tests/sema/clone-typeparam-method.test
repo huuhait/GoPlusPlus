@@ -1,0 +1,58 @@
+// P03.20 (R13): a type parameter is cloneable when its constraint is Clone
+// or Copy, or has the method `Clone() T` with T the parameter itself
+// (GEN-2). Any other method named Clone (`Clone() int`, `Clone(int) T`)
+// clones nothing: such a T was accepted. And a raw pointer to a type with
+// Clone() gets that method too; the reason says an automatic Clone() would
+// copy the pointer (it named a signature mismatch).
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+package main
+
+type ClInt interface{ Clone() int }
+
+type ClSelf[T any] interface{ Clone() T }
+
+type Need[T Clone] struct{ v []T }
+
+type Cl struct{ s []int }
+
+func (c Cl) Clone() Cl { return Cl{s: []int{1}} }
+
+type S struct {
+	p *Cl
+	n int
+}
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0323]: T does not satisfy Clone (T is not constrained by Clone)
+func badNeed[T interface{ Clone() int }]() { var n Need[T]; _ = n }
+
+func goodNeed[T interface{ Clone() T }]() { var n Need[T]; _ = n }
+
+func badInt[T interface{ Clone() int }](x T) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0267]: cannot clone x: T can't be cloned: T is not constrained by Clone (OWN-R6)
+	_ = clone(x)
+}
+
+func badNamed[T ClInt](x []T) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0267]: cannot clone x: []T can't be cloned: T is not constrained by Clone (OWN-R6)
+	_ = clone(x)
+}
+
+func badParam[T interface{ Clone(int) T }](x T) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0267]: cannot clone x: T can't be cloned: T is not constrained by Clone (OWN-R6)
+	_ = clone(x)
+}
+
+func goodSelf[T interface{ Clone() T }](x T) { _ = clone(x) }
+
+func goodNamedSelf[T ClSelf[T]](x []T) { _ = clone(x) }
+
+func goodClone[T Clone](x T) { _ = clone(x) }
+
+func goodCopy[T Copy](x T) { _ = clone(x) }
+
+func rawPtr(x S) S {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0267]: cannot clone x: S can't be cloned: field p (*Cl) is a raw pointer to a type with Clone(): an automatic Clone() would copy the pointer, write Clone() by hand (OWN-R6)
+	return x.Clone()
+}
+
+func main() {}

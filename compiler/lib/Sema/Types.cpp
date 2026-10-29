@@ -27,6 +27,7 @@ void SignatureType::Profile(llvm::FoldingSetNodeID &ID) const {
 }
 
 void StructType::Profile(llvm::FoldingSetNodeID &ID) const {
+  ID.AddBoolean(Strict);
   for (const Var *F : Fields) {
     ID.AddString(F->Name);
     // Unexported names of different packages are different (Go identity).
@@ -36,6 +37,8 @@ void StructType::Profile(llvm::FoldingSetNodeID &ID) const {
     ID.AddString(F->Tag);
     ID.AddBoolean(F->Required);
     ID.AddBoolean(F->RequiredSetOnly);
+    ID.AddBoolean(F->MarkedRequired);
+    ID.AddBoolean(F->MarkedOption);
   }
 }
 
@@ -261,10 +264,11 @@ SignatureType *TypeContext::signature(TupleType *Params, TupleType *Results,
   });
 }
 
-StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields) {
+StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields, bool Strict) {
   // The profile is computed from the specs (the same as StructType::Profile
   // of the fields), so that a struct that exists already allocates nothing.
   llvm::FoldingSetNodeID ID;
+  ID.AddBoolean(Strict);
   for (const FieldSpec &F : Fields) {
     ID.AddString(F.Name);
     ID.AddPointer(isExportedName(F.Name) ? nullptr : F.Pkg);
@@ -273,6 +277,8 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields) {
     ID.AddString(F.Tag);
     ID.AddBoolean(F.Required);
     ID.AddBoolean(F.RequiredSetOnly);
+    ID.AddBoolean(F.MarkedRequired);
+    ID.AddBoolean(F.MarkedOption);
   }
   return unique(Structs, ID, [&](llvm::BumpPtrAllocator &A) {
     llvm::SmallVector<Var *, 8> Vars;
@@ -289,10 +295,12 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields) {
       V->Tag = copyIn(A, F.Tag);
       V->Required = F.Required;
       V->RequiredSetOnly = F.RequiredSetOnly;
+      V->MarkedRequired = F.MarkedRequired;
+      V->MarkedOption = F.MarkedOption;
       Vars.push_back(V);
     }
     return new (A.Allocate<StructType>())
-        StructType(copyIn(A, ArrayRef<Var *>(Vars)));
+        StructType(copyIn(A, ArrayRef<Var *>(Vars)), Strict);
   });
 }
 
@@ -332,6 +340,21 @@ TypeParamType *TypeContext::newTypeParam(TypeName *Obj, unsigned Index,
   if (Obj && !Obj->Ty)
     Obj->Ty = T;
   return T;
+}
+
+TypeParamType *TypeContext::canonicalParam(Type *Bound, unsigned Ordinal) {
+  std::lock_guard<std::mutex> G(CanonMu);
+  TypeParamType *&P = CanonParams[{Bound, Ordinal}];
+  if (!P) {
+    TypeName *TN;
+    {
+      std::lock_guard<std::mutex> A(AllocMu);
+      TN = Objs.make<TypeName>();
+      TN->Name = "T";
+    }
+    P = newTypeParam(TN, Ordinal, Bound);
+  }
+  return P;
 }
 
 NamedType *TypeContext::instance(NamedType *Orig, ArrayRef<Type *> TArgs) {

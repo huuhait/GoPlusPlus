@@ -413,7 +413,7 @@ DIAG(err_own_borrowed_ptr_call, 263, Error, "cannot call pointer method %0 on %1
 DIAG(err_own_borrowed_move, 264, Error, "cannot move %0: it is a borrowed variable (OWN-R3b)")
 DIAG(err_own_borrowed_append, 265, Error, "cannot append to %0: it is a borrowed variable (PAR-1)")
 DIAG(err_own_move_not_place, 266, Error, "move argument %0 is not a place (variable, field, element, map entry or pointer target)")
-DIAG(err_own_clone_not_cloneable, 267, Error, "cannot clone %0: type %1 does not satisfy Clone%2 (OWN-R6)")
+DIAG(err_own_clone_not_cloneable, 267, Error, "cannot clone %0: %1 can't be cloned%2 (OWN-R6)")
 DIAG(err_own_clone_ambiguous, 268, Error, "%0 is ambiguous on pointer %1: %2 has a value-receiver %3 method (OWN-R6)")
 DIAG(err_own_isnil_ambiguous, 269, Error, "p.IsNil() is ambiguous on pointer %0: %1 has an IsNil method (OWN-P9)")
 DIAG(err_duplicate_method_iface, 270, Error, "duplicate method %0")
@@ -501,9 +501,9 @@ DIAG(err_no_zero_lookup, 334, Error, "%0 may not exist: a missing key or a close
 DIAG(err_required_missing, 335, Error, "missing required %0 in %1 literal (TYP-15)")
 DIAG(err_required_placement, 336, Error, "@Required is only allowed on a struct field, not on %0")
 DIAG(err_required_pointer, 337, Error, "pointers are never nil; @Required isn't needed on field %0 of type %1")
-DIAG(err_required_nil_store, 338, Error, "cannot store nil in %0: the field is @Required, so it is never nil")
-DIAG(err_required_move, 339, Error, "cannot move out of %0: the field is @Required and would be left nil; use mem.Replace(&%0, v)")
-DIAG(err_required_addr, 340, Error, "cannot take the address of %0: the field is @Required and never nil; only mem.Replace(&%0, v) may")
+DIAG(err_required_nil_store, 338, Error, "cannot store nil in %0: the field is %1, so it is never nil")
+DIAG(err_required_move, 339, Error, "cannot move out of %0: the field is %1 and would be left nil; use mem.Replace(&%0, v)")
+DIAG(err_required_addr, 340, Error, "cannot take the address of %0: the field is %1 and never nil; only mem.Replace(&%0, v) may")
 DIAG(err_move_nonlocal, 341, Error, "cannot move %0: the place would be left as zero bytes, and %1 has no zero value; use mem.Replace(%2, v)")
 DIAG(err_weak_no_deref, 342, Error, "cannot use %0.%1: a Weak pointer is not dereferenced (OWN-P5); use `if c := %0.Lock(); c != nil { ... }`")
 DIAG(err_fail_return_nil, 343, Error, "cannot return nil for the %0 result of a function not declared with !: declare it with ! or return Option[%1]")
@@ -518,12 +518,27 @@ DIAG(err_own_get_binding_read_only, 346, Error, "cannot %0 %1: it borrows the va
 
 DIAG(err_nil_never_nil, 347, Error, "%0 is never nil: %1; use Option[%0] for \"maybe\" (OWN-P9)")
 DIAG(err_required_never_nil, 348, Error, "%1 is never nil (%2); @Required isn't needed on field %0")
-DIAG(err_required_maybe_nil, 349, Error, "cannot store %0 in %1: the field is @Required and never nil, and %0 may be nil; %2 (TYP-15)")
+DIAG(err_required_maybe_nil, 349, Error, "cannot store %0 in %1: the field is %3 and never nil, and %0 may be nil; %2 (TYP-15)")
 DIAG(err_unchecked_value, 350, Error, "%0 may be unset here: %1 has no zero value, and %2 (OWN-P10)")
 DIAG(err_unchecked_store, 351, Error, "cannot store the result of %0 in %1: its type has no zero value, so it is valid only where %2; bind it to a new local variable and check that first (OWN-P10)")
 DIAG(err_maybe_nil_to_never_nil, 352, Error, "%0 may be nil; %1 is never nil: check %0 != nil first (OWN-P9)")
 DIAG(err_map_temp_write, 353, Error, "cannot write %0: this map is a temporary; the write is lost: store it first (`m := %1`, then write m) (OWN-P9)")
 DIAG(err_box_write, 354, Error, "cannot write %0: it is part of %1 inside an interface value, and the box of an interface value is shared and read-only (TYP-9); %2")
 DIAG(err_close_nil_chan, 355, Error, "close(%0): %0 is nil on every path to this close, so it would panic (CON-6a); make the channel first, or do not close it")
+
+//===----------------------------------------------------------------------===//
+// @Strict structs and @Option fields (P03.20, ADR-0019, TYP-15a)
+//===----------------------------------------------------------------------===//
+
+DIAG(err_strict_placement, 356, Error, "@Strict is only allowed on a struct type declaration, not on %0 (TYP-15a)")
+DIAG(err_option_placement, 357, Error, "@Option is only allowed on a field of a @Strict struct, not on %0 (TYP-15a)")
+DIAG(err_attr_no_args, 358, Error, "%0 takes no arguments")
+DIAG(err_option_not_strict, 359, Error, "@Option is only allowed in a @Strict struct: the fields of this struct are optional already (TYP-15a)")
+DIAG(err_option_no_zero, 360, Error, "@Option on field %0 of type %1: %1 has no zero value (%2), so the field can't be left out; use Option[%1] (TYP-15a)")
+DIAG(err_option_no_zero_instance, 361, Error, "%0: field %1 is @Option, but %2 has no zero value (%3), so the field can't be left out; make it Option[%4] (TYP-15a)")
+DIAG(err_option_redundant, 362, Error, "@Option on field %0 is redundant: %1 (TYP-15a)")
+DIAG(err_option_and_required, 363, Error, "field %0 has both @Option and @Required: @Option lets it be left out, @Required says it must be set (TYP-15a)")
+DIAG(err_required_redundant, 364, Error, "@Required on field %0 is redundant: @Strict already requires it (TYP-15a); remove @Required")
+DIAG(warn_vet_strict_no_required, 365, Warning, "struct %0 is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)")
 
 #undef DIAG

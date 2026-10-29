@@ -25,8 +25,8 @@ func positive() {
 }
 
 func negative() {
-	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Bad does not satisfy Clone (its Clone method does not have the signature Clone() Bad)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Bad does not satisfy Clone (Bad has a Clone method that does not have the signature Clone() Bad)
 	_ = dup(Bad{})
-	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Res does not satisfy Clone (Res has a drop method but no Clone() Res)
+	// CHECK: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Res does not satisfy Clone (Res has a drop method but no Clone())
 	_ = dup(Res{})
 }

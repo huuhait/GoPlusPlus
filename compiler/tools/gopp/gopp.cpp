@@ -91,7 +91,8 @@ static cl::SubCommand CheckCmd("check",
 static cl::SubCommand
     VetCmd("vet", "Type-check like `check`, then report the vet warnings "
                   "(ref fields without @Ref, drop on a zero value, a ! that "
-                  "panics outside main, defer in a loop)");
+                  "panics outside main, defer in a loop, @Strict with no "
+                  "required field)");
 static cl::opt<bool>
     VetWerror("Werror", cl::desc("Exit with status 1 if there are warnings"),
               cl::sub(VetCmd));

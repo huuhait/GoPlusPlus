@@ -310,11 +310,15 @@ public:
 
 class StructType : public Type, public llvm::FoldingSetNode {
 public:
-  explicit StructType(llvm::ArrayRef<Var *> Fields)
-      : Type(Kind::Struct), Fields(Fields) {}
+  StructType(llvm::ArrayRef<Var *> Fields, bool Strict)
+      : Type(Kind::Struct), Fields(Fields), Strict(Strict) {}
   static bool classof(const Type *T) { return T->getKind() == Kind::Struct; }
   void Profile(llvm::FoldingSetNodeID &ID) const;
   llvm::ArrayRef<Var *> Fields;
+  /// The struct type of a `@Strict` declaration (TYP-15a, ADR-0019). The
+  /// effective required bit of each field (Var::Required) already says what
+  /// it means; this records the attribute itself (export data, P09, P14).
+  bool Strict;
 };
 
 struct Term {
@@ -410,10 +414,36 @@ public:
   bool Pinned = false; // @Pinned (OWN-R10)
   /// The predeclared generic `Option` (instances are OptionType, not Named).
   bool IsOption = false;
-  /// "Has a zero value" (TYP-15, OWN-R9): 0 not known, 1 yes, 2 no. Stored
+  /// "Has a zero value" (TYP-15, OWN-R9): 0 not known, 1 yes, 2 no, 3 no only
+  /// because of a type parameter (an instance may have one). Stored
   /// only when exact (ZeroQuery in Ownership.cpp): the answer is a function
   /// of the type alone, so every thread that stores it stores the same value.
   std::atomic<uint8_t> ZeroState{0};
+  /// Generic declaration with ZeroState 3: the type parameters (bit per
+  /// index) its "no zero value" rests on. Written before ZeroState; the same
+  /// value whichever thread writes it.
+  std::atomic<uint64_t> PolyMask{0};
+  /// "Is pinned" (OWN-R10, Checker::isPinned) for the type as a whole: 0 not
+  /// known, 1 no, 2 yes. Stored only when exact (nothing below it was still
+  /// being declared): the answer is a function of the type alone, so every
+  /// thread that stores it stores the same value.
+  std::atomic<uint8_t> PinnedState{0};
+  /// "Satisfies Clone" (Checker::satisfiesClone): 0 not known, 1 yes, 2 no.
+  /// Stored once the types are final (Checker::typesFinal) and only when
+  /// exact, like ZeroState. 3: no, because a walk from this type reaches a
+  /// runaway generic instance graph (MaxInstancesPerWalk, Ownership.cpp);
+  /// stored for the walk's root only and read only as a root.
+  std::atomic<uint8_t> CloneState{0};
+  /// Checker::category: 0 not known, else 1 + the Category. Stored like
+  /// CloneState.
+  std::atomic<uint8_t> CategoryState{0};
+  /// Generic declaration: the category of its underlying type with the type
+  /// parameters left open: 0 not known, else 1 + the Category of the rest,
+  /// and CatParams the parameters (bit per index, 63 for 63 and up) held by
+  /// value, whose arguments' categories join it. CatParams is written before
+  /// CatGeneric. An instance is answered from these, never expanded.
+  std::atomic<uint8_t> CatGeneric{0};
+  std::atomic<uint64_t> CatParams{0};
   /// Instance: Underlying is set. Written once, with release order, after
   /// Underlying: another body thread may read it (P03.10).
   std::atomic<bool> Expanded{false};
@@ -501,11 +531,19 @@ public:
   bool IsField = false;
   bool Embedded = false;
   bool IsParam = false;
-  bool Required = false; // a struct field marked `@Required` (TYP-15)
+  /// The effective required bit of a struct field: marked `@Required`
+  /// (TYP-15), or required by its `@Strict` struct (TYP-15a). Every rule
+  /// reads this bit; it is decided in one place, effectiveRequired
+  /// (Typexpr.cpp).
+  bool Required = false;
   /// The field of an instance whose declared type is a type parameter
   /// (`Val T @Required`): its @Required only means "must be set", never "never
   /// nil", since the generic code may store a nil T (ADR-0016 point 8).
   bool RequiredSetOnly = false;
+  /// The field attributes as written (ADR-0019): `@Required` and `@Option`.
+  /// Only messages and the readers of the attributes (P09, P14) use them.
+  bool MarkedRequired = false;
+  bool MarkedOption = false;
   bool Used = false;
   bool IsPackageLevel = false;
   /// Ownership (P03.07): how the variable relates to its value.
@@ -692,10 +730,13 @@ public:
     llvm::StringRef Tag;
     bool Required = false;
     bool RequiredSetOnly = false;
+    bool MarkedRequired = false;
+    bool MarkedOption = false;
     /// No position: a struct is uniqued, so a Var in it cannot belong to one
     /// body (see the rule at TypeContext::unique in Types.cpp).
   };
-  StructType *structOf(llvm::ArrayRef<FieldSpec> Fields);
+  /// Strict: the struct type of a `@Strict` declaration (StructType::Strict).
+  StructType *structOf(llvm::ArrayRef<FieldSpec> Fields, bool Strict = false);
   /// Not uniqued: interfaces and unions are compared by their type sets.
   InterfaceType *newInterface(llvm::ArrayRef<Func *> Methods,
                               llvm::ArrayRef<Type *> Embeddeds,
@@ -704,6 +745,12 @@ public:
   UnionType *newUnion(llvm::ArrayRef<Term> Terms);
   NamedType *newNamed(TypeName *Obj, Type *Underlying = nullptr);
   TypeParamType *newTypeParam(TypeName *Obj, unsigned Index, Type *Bound);
+  /// The shared stand-in for the Ordinal-th distinct type parameter, with
+  /// constraint Bound, of a type asked about by a type-level query
+  /// (Checker::canonicalParams): two type parameters with the same bound
+  /// answer every such query alike, so the stand-ins let the bodies of many
+  /// generic functions share the cached answers of one instance.
+  TypeParamType *canonicalParam(Type *Bound, unsigned Ordinal);
   /// The instance Orig[TArgs]; created (unexpanded) on first use.
   NamedType *instance(NamedType *Orig, llvm::ArrayRef<Type *> TArgs);
 
@@ -759,6 +806,8 @@ private:
   Table<SignatureType> Signatures;
   Table<StructType> Structs;
   Table<NamedType> Instances;
+  std::mutex CanonMu; // CanonParams; taken before AllocMu
+  llvm::DenseMap<std::pair<Type *, unsigned>, TypeParamType *> CanonParams;
   Type *ErrorType = nullptr, *AnyType = nullptr, *ComparableType = nullptr,
        *CopyType = nullptr, *CloneType = nullptr, *ByteType = nullptr,
        *RuneType = nullptr;

@@ -52,6 +52,132 @@ bool Checker::hasPtrKind(Type *T, PtrKind *K, Type **Elem) {
 }
 
 bool Checker::isPinned(Type *T) {
+  bool Exact = true;
+  return isPinnedRec(canonicalParams(T), Exact);
+}
+
+/// isPinned and satisfiesClone look at a type parameter only through its
+/// constraint (its type set's Clone, Copy and method names; a type parameter
+/// is never pinned), and compare types only by identity. So the answer for
+/// G[T] is the answer for G[S], where S is a stand-in with T's constraint,
+/// as long as distinct parameters get distinct stand-ins. The stand-ins are
+/// shared, so a chain of generic types used by many generic functions, each
+/// with its own T, is walked once instead of once per function. Not done
+/// when a constraint mentions a type parameter (`[T Cloner[T]]`: the
+/// constraint would still name the old T), when T is nested deeper than
+/// substitution goes, or when a type parameter of T is inside an interface
+/// or a union: those types are not uniqued, so the substituted type would
+/// be a new one (and walked anew) on every query.
+Type *Checker::canonicalParams(Type *T) {
+  if (!T)
+    return T;
+  SmallVector<TypeParamType *, 4> Params; // in order of first appearance
+  llvm::SmallPtrSet<const Type *, 16> Seen;
+  // Collects the type parameters T mentions; false if too deep to follow.
+  // With Record, a type parameter inside an interface or a union makes it
+  // give up (nullopt) as well.
+  auto Collect = [&](Type *Root, bool Record) {
+    struct Item {
+      Type *X;
+      unsigned D;
+      bool InIface; // below an interface or a union
+    };
+    SmallVector<Item, 16> Work{{Root, 0, false}};
+    llvm::SmallPtrSet<const Type *, 16> SeenInIface;
+    bool Found = false;
+    while (!Work.empty()) {
+      auto [X, D, InIface] = Work.pop_back_val();
+      if (!X || !(InIface ? SeenInIface : Seen).insert(X).second)
+        continue;
+      if (D > 60)
+        return std::optional<bool>();
+      bool Below = InIface || isa<InterfaceType>(X) || isa<UnionType>(X);
+      auto Push = [&](Type *Y) { Work.push_back({Y, D + 1, Below}); };
+      switch (X->getKind()) {
+      case Type::Kind::TypeParam:
+        if (Record && InIface)
+          return std::optional<bool>();
+        Found = true;
+        if (Record)
+          Params.push_back(cast<TypeParamType>(X));
+        break;
+      case Type::Kind::Pointer:
+        Push(cast<PointerType>(X)->Elem);
+        break;
+      case Type::Kind::Slice:
+        Push(cast<SliceType>(X)->Elem);
+        break;
+      case Type::Kind::Ref:
+        Push(cast<RefType>(X)->Elem);
+        break;
+      case Type::Kind::Option:
+        Push(cast<OptionType>(X)->Elem);
+        break;
+      case Type::Kind::Array:
+        Push(cast<sema::ArrayType>(X)->Elem);
+        break;
+      case Type::Kind::Chan:
+        Push(cast<sema::ChanType>(X)->Elem);
+        break;
+      case Type::Kind::Map:
+        Push(cast<sema::MapType>(X)->Key);
+        Push(cast<sema::MapType>(X)->Elem);
+        break;
+      case Type::Kind::Tuple:
+        for (Type *E : cast<TupleType>(X)->Elems)
+          Push(E);
+        break;
+      case Type::Kind::Signature:
+        Push(cast<SignatureType>(X)->Params);
+        Push(cast<SignatureType>(X)->Results);
+        break;
+      case Type::Kind::Struct:
+        for (Var *F : cast<StructType>(X)->Fields)
+          Push(F->Ty);
+        break;
+      case Type::Kind::Union:
+        for (const Term &Tm : cast<UnionType>(X)->Terms)
+          Push(Tm.T);
+        break;
+      case Type::Kind::Interface:
+        for (Func *M : cast<InterfaceType>(X)->Methods)
+          Push(M->Ty);
+        for (Type *E : cast<InterfaceType>(X)->Embeddeds)
+          Push(E);
+        break;
+      case Type::Kind::Named:
+        for (Type *A : cast<NamedType>(X)->TArgs)
+          Push(A);
+        break;
+      default:
+        break;
+      }
+    }
+    return std::optional<bool>(Found);
+  };
+  std::optional<bool> Any = Collect(T, true);
+  if (!Any || !*Any)
+    return T;
+  // The work list visits in reverse; number the parameters as they first
+  // appear in a fixed order (any fixed order will do).
+  SmallVector<Type *, 4> To;
+  for (unsigned I = 0; I < Params.size(); ++I) {
+    TypeParamType *P = Params[I];
+    Seen.clear();
+    std::optional<bool> InBound = Collect(P->Bound, false);
+    if (!InBound || *InBound)
+      return T;
+    To.push_back(Ctx.canonicalParam(P->Bound, I));
+  }
+  SmallVector<TypeParamType *, 4> From(Params.begin(), Params.end());
+  return subst(T, From, To);
+}
+
+/// Exact is cleared when an answer rests on a type that is not declared yet
+/// (an invalid underlying type): such an answer is not cached. A named type
+/// caches the rest in NamedType::PinnedState, so a chain of n nested named
+/// types costs n steps in all, not n per query.
+bool Checker::isPinnedRec(Type *T, bool &Exact) {
   if (!T)
     return false;
   switch (T->getKind()) {
@@ -62,16 +188,32 @@ bool Checker::isPinned(Type *T) {
     // A struct or array type that holds a pinned value by value is pinned.
     if (N->Ptr != PtrKind::None)
       return false;
+    uint8_t St = N->PinnedState.load(std::memory_order_acquire);
+    if (St != 0)
+      return St == 2;
     Type *U = under(N);
-    return (isa<StructType>(U) || isa<sema::ArrayType>(U)) && isPinned(U);
+    if (!isValid(U)) {
+      Exact = false;
+      return false;
+    }
+    if (!isa<StructType>(U) && !isa<sema::ArrayType>(U)) {
+      N->PinnedState.store(1, std::memory_order_release);
+      return false;
+    }
+    bool Own = true;
+    bool R = isPinnedRec(U, Own);
+    if (Own)
+      N->PinnedState.store(R ? 2 : 1, std::memory_order_release);
+    Exact = Exact && Own;
+    return R;
   }
   case Type::Kind::Array:
-    return isPinned(cast<sema::ArrayType>(T)->Elem);
+    return isPinnedRec(cast<sema::ArrayType>(T)->Elem, Exact);
   case Type::Kind::Option:
-    return isPinned(cast<OptionType>(T)->Elem);
+    return isPinnedRec(cast<OptionType>(T)->Elem, Exact);
   case Type::Kind::Struct:
     for (Var *F : cast<StructType>(T)->Fields)
-      if (isPinned(F->Ty))
+      if (isPinnedRec(F->Ty, Exact))
         return true;
     return false;
   default:
@@ -96,67 +238,245 @@ static Category worse(Category A, Category B) {
   return Category::Trivial;
 }
 
-static Category categoryRec(Checker &C, Type *T, unsigned Depth) {
-  if (!T || Depth > 24)
-    return Category::Trivial;
-  switch (T->getKind()) {
-  case Type::Kind::Basic: {
-    auto *B = cast<BasicType>(T);
-    return (B->Info & IsString) ? Category::Owning : Category::Trivial;
-  }
-  case Type::Kind::Pointer:
-  case Type::Kind::Ref:
-    return Category::Trivial;
-  case Type::Kind::Option:
-    // Ownership follows T (ADR-0018).
-    return categoryRec(C, cast<OptionType>(T)->Elem, Depth + 1);
-  case Type::Kind::Slice:
-  case Type::Kind::Map:
-    return Category::Owning;
-  case Type::Kind::Chan:
-  case Type::Kind::Signature:
-  case Type::Kind::Interface:
-    return Category::SharedHandle;
-  case Type::Kind::Array:
-    return categoryRec(C, cast<sema::ArrayType>(T)->Elem, Depth + 1);
-  case Type::Kind::Struct: {
-    Category R = Category::Trivial;
-    for (Var *F : cast<StructType>(T)->Fields)
-      R = worse(R, categoryRec(C, F->Ty, Depth + 1));
-    return R;
-  }
-  case Type::Kind::Tuple:
-  case Type::Kind::Union:
-    return Category::Trivial;
-  case Type::Kind::TypeParam: {
-    auto *I = dyn_cast_or_null<InterfaceType>(C.under(T));
-    if (I && C.typeSet(I)->Copy)
-      return Category::Trivial;
-    return Category::Owning; // OWN-C5
-  }
-  case Type::Kind::Named: {
-    auto *N = cast<NamedType>(T);
-    switch (N->Ptr) {
-    case PtrKind::Unique:
-      return Category::Owning;
-    case PtrKind::Shared:
-    case PtrKind::Weak:
-      return Category::SharedHandle;
-    case PtrKind::None:
-      break;
-    }
-    // A `drop` method makes a type owning (OWN-C4).
-    if (hasDropMethod(N))
-      return Category::Owning;
-    if (N->Obj && N->Obj->Pkg == nullptr && N->Obj->Name == "error")
-      return Category::SharedHandle;
-    return categoryRec(C, C.under(T), Depth + 1);
-  }
-  }
-  return Category::Trivial;
-}
+/// More generic instances of one generic type than this in one clone walk
+/// means an instance graph that never ends (`type T[P any] struct{ s
+/// []T[Option[P]] }` reaches T[int], T[Option[int]], ...: Go reports an
+/// instantiation cycle; this checker does not yet). The walk stops with the
+/// safe answer and stores nothing. Finite code does not come near it.
+static constexpr unsigned MaxInstancesPerWalk = 100000;
 
-Category Checker::category(Type *T) { return categoryRec(*this, T, 0); }
+/// The category of T (OWN-C1..C5): the worst category of what T holds by
+/// value (struct fields, array and Option elements, the underlying type of a
+/// named type); slices, maps, strings, pointer kinds, drop types and the rest
+/// decide by themselves. The walk is iterative with no depth limit: a cut
+/// would answer Trivial for a deeply nested owning type, which then is
+/// copied bitwise and dropped twice.
+///
+/// An instance G[A] is answered from its generic declaration, never expanded:
+/// G's underlying type is walked once with its type parameters left open,
+/// which gives the category of the rest and the parameters held by value
+/// (NamedType::CatGeneric / CatParams); the instance joins that with the
+/// categories of those arguments. So a chain of n generic types instantiated
+/// over fresh type parameters costs n steps in all, and a generic type whose
+/// instances grow without end (`T[P]` holding `Option[T[[]P]]`) is finite.
+///
+/// Every answer is exact and a function of the type alone. Named types
+/// store theirs (CategoryState, and CatGeneric for a declaration) once the
+/// types are final (typesFinal), but only when nothing on the way was an
+/// unfinished declaration or a cycle by value (an invalid recursive type).
+Category Checker::category(Type *T) {
+  // A category and the open type parameters of the frame's generic
+  // declaration (Gen) that it rests on.
+  struct Val {
+    Category C = Category::Trivial;
+    uint64_t M = 0;
+  };
+  auto Join = [](Val A, Val B) { return Val{worse(A.C, B.C), A.M | B.M}; };
+  auto BitOf = [](unsigned I) { return 1ull << (I < 63 ? I : 63); };
+  struct Frame {
+    Type *X;                      // the type; for a declaration's walk, Gen
+    NamedType *Gen = nullptr;     // whose type parameters are open (or none)
+    bool Decl = false;            // the walk of Gen's own underlying type
+    NamedType *WaitFor = nullptr; // an instance waiting for its declaration
+    SmallVector<Type *, 4> Kids;
+    size_t Next = 0;
+    Val Acc;
+  };
+  bool Exact = true;
+  auto Store = [&] { return Exact && typesFinal(); };
+  SmallVector<Frame, 8> Stack;
+  struct Mark {
+    bool Open = true;
+    Val V;
+  };
+  llvm::DenseMap<std::pair<Type *, NamedType *>, Mark> Seen;
+  llvm::DenseMap<NamedType *, Val> GenSeen; // declarations done this walk
+  llvm::SmallPtrSet<NamedType *, 4> GenOpen;
+  auto GenKnown = [&](NamedType *O, Val &V) {
+    if (uint8_t St = O->CatGeneric.load(std::memory_order_acquire)) {
+      V = {static_cast<Category>(St - 1),
+           O->CatParams.load(std::memory_order_relaxed)};
+      return true;
+    }
+    auto It = GenSeen.find(O);
+    if (It == GenSeen.end())
+      return false;
+    V = It->second;
+    return true;
+  };
+  // The parts of instance N, from its declaration's answer D.
+  auto FromDecl = [&](Frame &F, NamedType *N, Val D) {
+    F.Acc = Join(F.Acc, Val{D.C, 0});
+    for (unsigned J = 0; J < N->TArgs.size(); ++J)
+      if (D.M & BitOf(J))
+        F.Kids.push_back(N->TArgs[J]);
+  };
+  // What X decides by itself in the walk of Gen, or none: then F (X's frame)
+  // has its parts. Pushes the declaration's walk when an instance needs it.
+  auto Local = [&](Type *X, NamedType *Gen, Frame &F) -> std::optional<Val> {
+    switch (X->getKind()) {
+    case Type::Kind::Basic:
+      return Val{(cast<BasicType>(X)->Info & IsString) ? Category::Owning
+                                                       : Category::Trivial};
+    case Type::Kind::Pointer:
+    case Type::Kind::Ref:
+    case Type::Kind::Tuple:
+    case Type::Kind::Union:
+      return Val{Category::Trivial};
+    case Type::Kind::Slice:
+    case Type::Kind::Map:
+      return Val{Category::Owning};
+    case Type::Kind::Chan:
+    case Type::Kind::Signature:
+    case Type::Kind::Interface:
+      return Val{Category::SharedHandle};
+    case Type::Kind::Option: // ownership follows T (ADR-0018)
+      F.Kids.push_back(cast<OptionType>(X)->Elem);
+      return std::nullopt;
+    case Type::Kind::Array:
+      F.Kids.push_back(cast<sema::ArrayType>(X)->Elem);
+      return std::nullopt;
+    case Type::Kind::Struct:
+      for (Var *Fd : cast<StructType>(X)->Fields)
+        F.Kids.push_back(Fd->Ty);
+      return std::nullopt;
+    case Type::Kind::TypeParam: {
+      auto *P = cast<TypeParamType>(X);
+      if (Gen && P->Index < Gen->TParams.size() && Gen->TParams[P->Index] == P)
+        return Val{Category::Trivial, BitOf(P->Index)}; // left open
+      auto *I = dyn_cast_or_null<InterfaceType>(under(X));
+      if (I && typeSet(I)->Copy)
+        return Val{Category::Trivial};
+      return Val{Category::Owning}; // OWN-C5
+    }
+    case Type::Kind::Named: {
+      auto *N = cast<NamedType>(X);
+      switch (N->Ptr) {
+      case PtrKind::Unique:
+        return Val{Category::Owning};
+      case PtrKind::Shared:
+      case PtrKind::Weak:
+        return Val{Category::SharedHandle};
+      case PtrKind::None:
+        break;
+      }
+      bool Inst = N->Orig && !N->Orig->TParams.empty() &&
+                  N->TArgs.size() == N->Orig->TParams.size();
+      // A stored answer is about the type with no parameter left open; an
+      // instance inside a declaration's walk may mention them.
+      if (!Gen || !Inst)
+        if (uint8_t St = N->CategoryState.load(std::memory_order_acquire))
+          return Val{static_cast<Category>(St - 1)};
+      // A `drop` method makes a type owning (OWN-C4).
+      if (hasDropMethod(N))
+        return Val{Category::Owning};
+      if (N->Obj && N->Obj->Pkg == nullptr && N->Obj->Name == "error")
+        return Val{Category::SharedHandle};
+      if (!declFinished(N))
+        Exact = false;
+      if (!Inst) {
+        F.Kids.push_back(under(N));
+        return std::nullopt;
+      }
+      NamedType *O = N->Orig;
+      Val D;
+      if (GenKnown(O, D)) {
+        FromDecl(F, N, D);
+        return std::nullopt;
+      }
+      if (GenOpen.count(O)) {
+        Exact = false; // G inside G by value: an invalid recursive type
+        return Val{};
+      }
+      F.WaitFor = O; // FromDecl once O's walk is done
+      return std::nullopt;
+    }
+    }
+    return Val{};
+  };
+  // Starts the frame of X in the walk of Gen, or gives X's value at once.
+  auto Start = [&](Type *X, NamedType *Gen) -> std::optional<Val> {
+    Frame F;
+    F.X = X;
+    F.Gen = Gen;
+    if (std::optional<Val> V = Local(X, Gen, F))
+      return V;
+    Seen[{X, Gen}] = Mark();
+    NamedType *O = F.WaitFor;
+    Stack.push_back(std::move(F));
+    if (O) {
+      // The declaration's own walk, with its type parameters left open.
+      Frame G;
+      G.X = O;
+      G.Gen = O;
+      G.Decl = true;
+      G.Kids.push_back(under(O));
+      if (!declFinished(O))
+        Exact = false;
+      GenOpen.insert(O);
+      Stack.push_back(std::move(G));
+    }
+    return std::nullopt;
+  };
+  if (!T)
+    return Category::Trivial;
+  if (std::optional<Val> V = Start(T, nullptr))
+    return V->C;
+  while (true) {
+    Frame &F = Stack.back();
+    if (F.WaitFor) {
+      Val D;
+      bool Known = GenKnown(F.WaitFor, D);
+      assert(Known && "the declaration's walk ends before its instance");
+      (void)Known;
+      NamedType *N = cast<NamedType>(F.X);
+      F.WaitFor = nullptr;
+      FromDecl(F, N, D);
+      continue;
+    }
+    // Owning is the worst: the rest of the parts cannot change it.
+    if (F.Acc.C != Category::Owning && F.Next < F.Kids.size()) {
+      Type *Y = F.Kids[F.Next++];
+      if (!Y)
+        continue;
+      NamedType *Gen = F.Gen;
+      auto It = Seen.find({Y, Gen});
+      if (It != Seen.end()) {
+        if (It->second.Open)
+          Exact = false; // a cycle by value: an invalid recursive type
+        else
+          F.Acc = Join(F.Acc, It->second.V);
+        continue;
+      }
+      if (std::optional<Val> V = Start(Y, Gen)) // may invalidate F
+        Stack.back().Acc = Join(Stack.back().Acc, *V);
+      continue;
+    }
+    Frame Done = std::move(F);
+    Stack.pop_back();
+    Val R = Done.Acc;
+    if (R.C == Category::Owning)
+      R.M = 0; // the parameters cannot change it
+    if (Done.Decl) {
+      NamedType *O = cast<NamedType>(Done.X);
+      GenOpen.erase(O);
+      GenSeen[O] = R;
+      if (Store()) {
+        O->CatParams.store(R.M, std::memory_order_relaxed);
+        O->CatGeneric.store(static_cast<uint8_t>(R.C) + 1,
+                            std::memory_order_release);
+      }
+      continue; // the instance below reads it (FromDecl)
+    }
+    Seen[{Done.X, Done.Gen}] = Mark{false, R};
+    if (auto *N = dyn_cast<NamedType>(Done.X); N && !R.M && Store())
+      N->CategoryState.store(static_cast<uint8_t>(R.C) + 1,
+                             std::memory_order_release);
+    if (Stack.empty())
+      return R.C;
+    Stack.back().Acc = Join(Stack.back().Acc, R);
+  }
+}
 
 bool Checker::isCopyType(Type *T) {
   if (!T || !isValid(T))
@@ -168,28 +488,147 @@ bool Checker::isCopyType(Type *T) {
   return category(T) == Category::Trivial && !isPinned(T);
 }
 
+/// Is T cloneable (OWN-R6, GEN-2)? The ONE place that decides it, for
+/// `clone(x)`, `x.Clone()` and the `Clone` constraint. When it is not, Why
+/// (if given) names the first thing that blocks it, with the path of field
+/// names down to it: `field mu (Mu) has a drop method but no Clone()`,
+/// `field A.mu (Mu) has ...` (owner decision 2026-10-28). The elements of
+/// slices, arrays, maps, Options and Unique pointers are looked through
+/// without adding to the path, so `[]Server` names the same field as `Server`
+/// does.
+///
+/// The types form a graph: a type has an edge to each type its answer rests
+/// on (a field, an element, the target of a Unique pointer), and some types
+/// block by themselves (a drop method without Clone(), @Pinned, ...). A type
+/// is cloneable if and only if no type that blocks can be reached from it, so
+/// a type on a cycle (`Kids []Tree` in Tree) is cloneable unless something
+/// reachable from the cycle blocks. The walk is an iterative depth-first
+/// search (no recursion and no depth limit, so neither the stack nor a cut
+/// decides anything) that takes the edges in field order and stops at the
+/// first type that blocks: that type and the field path to it are the reason.
+/// On the way it finds the strongly connected components (Tarjan): a finished
+/// component reaches no blocker, so its types are cloneable; when the walk
+/// stops at a blocker, every type still on Tarjan's stack reaches it, so
+/// those are not. Both answers are exact, a function of the type alone, and
+/// once the types are final (typesFinal: every package-level type and its
+/// methods are declared) each named type stores its own in
+/// NamedType::CloneState (every thread stores the same value). A walk that
+/// wants the reason goes into a stored "no" to find it, and skips a stored
+/// "yes" (nothing below it blocks), so the reason does not depend on what is
+/// stored either. Nothing is stored before that, or once the walk met a type
+/// whose declaration is not finished (a local type being declared) or a
+/// runaway instance graph (MaxInstancesPerWalk: answered "no", the safe
+/// side); each query still visits each type once.
 bool Checker::satisfiesClone(Type *T, std::string *Why) {
-  std::function<bool(Type *, unsigned)> Rec = [&](Type *X, unsigned D) -> bool {
-    if (!X || !isValid(X) || D > 20)
-      return true;
-    if (isPinned(X)) {
-      if (Why)
-        *Why = str(X) + " is @Pinned";
-      return false;
+  if (!T || !isValid(T))
+    return true;
+  // The answer is asked about T with shared stand-ins for its type
+  // parameters (canonicalParams); the reason, wanted only when it is "no",
+  // is found on T itself, so it names T's own types.
+  Type *K = canonicalParams(T);
+  if (K != T)
+    return cloneWalk(K, nullptr) || (Why && cloneWalk(T, Why));
+  return cloneWalk(T, Why);
+}
+
+bool Checker::cloneWalk(Type *T, std::string *Why) {
+  // 3 ("capped") is read for the root only: see Capped below.
+  auto Stored = [&](Type *X) -> uint8_t {
+    auto *N = dyn_cast<NamedType>(X);
+    uint8_t St = N ? N->CloneState.load(std::memory_order_acquire) : 0;
+    return St == 3 ? 0 : St;
+  };
+  // The reason of a walk that reached MaxInstancesPerWalk: about the root,
+  // so a stored "capped" answer gives the same text as a fresh walk.
+  auto CapReason = [&] {
+    return str(T) +
+           " reaches instances of a generic type with ever larger "
+           "type arguments (more than " +
+           num(MaxInstancesPerWalk) + " of one), too many to check";
+  };
+  if (auto *N = dyn_cast<NamedType>(T);
+      N && N->CloneState.load(std::memory_order_acquire) == 3) {
+    if (Why)
+      *Why = CapReason();
+    return false;
+  }
+  if (uint8_t St = Stored(T); St == 1 || (St == 2 && !Why))
+    return St == 1;
+
+  struct Edge {
+    Type *Ty;
+    StringRef Field; // empty for an element (no name on the path)
+  };
+  struct Frame {
+    Type *X;
+    unsigned Index, Low; // Tarjan's
+    SmallVector<Edge, 2> Edges;
+    size_t Next = 0;
+    /// Set when X blocks by itself (once its Edges are found cloneable).
+    Type *Leaf = nullptr;
+    std::string Pred; // what is wrong with Leaf, as a predicate (with Why)
+  };
+  std::vector<Frame> Stack;              // the depth-first path
+  SmallVector<Type *, 16> Open;          // Tarjan's stack
+  llvm::DenseMap<Type *, unsigned> Seen; // Index of each type met
+  std::vector<bool> Done;                // by Index: known cloneable
+  // Cleared once an answer may rest on an unfinished declaration or a cut:
+  // from then on nothing is stored (what finished before is still exact).
+  bool Exact = true;
+  // The walk reached MaxInstancesPerWalk: the root is not cloneable (the
+  // safe side). Whether a walk from the root gets there is a function of
+  // the root alone (nothing in a runaway instance graph is ever stored as
+  // cloneable), so that answer is stored for the root, as 3, unless a
+  // declaration on the way was unfinished; never for the types in between.
+  bool Capped = false, Unfinished = false;
+  llvm::DenseMap<const NamedType *, unsigned> Instances;
+  auto CanStore = [&] { return Exact && typesFinal(); };
+
+  // Starts X: its own rule either decides it or lists the edges it rests on.
+  auto Visit = [&](Type *X) {
+    unsigned Idx = Done.size();
+    Seen[X] = Idx;
+    Done.push_back(false);
+    Open.push_back(X);
+    Frame &F = Stack.emplace_back();
+    F.X = X;
+    F.Index = F.Low = Idx;
+    auto Block = [&](Type *Leaf, std::string Pred) {
+      F.Leaf = Leaf;
+      F.Pred = std::move(Pred);
+    };
+    auto Rests = [&](Type *Y, StringRef Field = {}) {
+      if (Y && isValid(Y))
+        F.Edges.push_back({Y, Field});
+    };
+    if (auto *N = dyn_cast<NamedType>(X)) {
+      if (!declFinished(N))
+        Exact = false, Unfinished = true;
+      if (N->Orig && ++Instances[N->Orig] > MaxInstancesPerWalk) {
+        Exact = false;
+        Capped = true;
+        return Block(N->Orig, "");
+      }
     }
+    if (isPinned(X))
+      return Block(X, "is @Pinned");
     if (auto *P = dyn_cast<TypeParamType>(X)) {
       auto *I = dyn_cast_or_null<InterfaceType>(under(P));
       if (I) {
         TypeSet *TS = typeSet(I);
         if (TS->Clone || TS->Copy)
-          return true;
+          return;
+        // GEN-2: a method of the constraint counts only as `Clone() T`, T
+        // being this very parameter (`Clone() int` clones nothing).
         for (Func *M : TS->Methods)
-          if (M->Name == "Clone")
-            return true;
+          if (M->Name == "Clone") {
+            auto *Sg = dyn_cast_or_null<SignatureType>(M->Ty);
+            if (Sg && Sg->Params->size() == 0 && Sg->Results->size() == 1 &&
+                identical(Sg->Results->Elems[0], P))
+              return;
+          }
       }
-      if (Why)
-        *Why = str(X) + " is not constrained by Clone";
-      return false;
+      return Block(X, "is not constrained by Clone");
     }
     // A declared Clone method decides.
     if (isa<NamedType>(X) || isa<PointerType>(X)) {
@@ -202,71 +641,141 @@ bool Checker::satisfiesClone(Type *T, std::string *Why) {
                      Sg->Results->size() == 1 &&
                      identical(Sg->Results->Elems[0], X);
         if ((isa<PointerType>(X) || !M->HasPtrRecv) && Exact)
-          return true;
-        if (Why)
-          *Why =
-              "its Clone method does not have the signature Clone() " + str(X);
-        return false;
+          return;
+        // A raw pointer to a type with Clone() gets that method too; an
+        // automatic Clone would copy the pointer.
+        auto *Ptr = dyn_cast<PointerType>(X);
+        if (Why && Ptr && Sg && Sg->Results->size() == 1 &&
+            identical(Sg->Results->Elems[0], Ptr->Elem))
+          return Block(X, "is a raw pointer to a type with Clone(): an "
+                          "automatic Clone() would copy the pointer, write "
+                          "Clone() by hand");
+        return Block(X, Why ? "has a Clone method that does not have the "
+                              "signature Clone() " +
+                                  str(X)
+                            : "");
       }
       if (auto *N = dyn_cast<NamedType>(X)) {
         PtrKind K;
         Type *El;
         if (hasPtrKind(X, &K, &El)) {
           if (K == PtrKind::Unique)
-            return Rec(El, D + 1);
-          return true;
+            Rests(El);
+          return;
         }
-        if (hasDropMethod(N)) {
-          if (Why)
-            *Why = str(X) + " has a drop method but no Clone() " + str(X);
-          return false;
-        }
+        if (hasDropMethod(N))
+          return Block(X, "has a drop method but no Clone()");
         if (N->Obj && N->Obj->Pkg == nullptr && N->Obj->Name == "error")
-          return true;
+          return;
       }
     }
     Type *U = under(X);
     switch (U->getKind()) {
-    case Type::Kind::Basic:
-    case Type::Kind::Pointer:
-    case Type::Kind::Ref:
-    case Type::Kind::Chan:
-    case Type::Kind::Signature:
-    case Type::Kind::Interface:
-      return true;
     case Type::Kind::Option:
-      return Rec(cast<OptionType>(U)->Elem, D + 1);
+      return Rests(cast<OptionType>(U)->Elem);
     case Type::Kind::Slice:
-      return Rec(cast<SliceType>(U)->Elem, D + 1);
+      return Rests(cast<SliceType>(U)->Elem);
     case Type::Kind::Map:
-      return Rec(cast<sema::MapType>(U)->Key, D + 1) &&
-             Rec(cast<sema::MapType>(U)->Elem, D + 1);
+      Rests(cast<sema::MapType>(U)->Key);
+      return Rests(cast<sema::MapType>(U)->Elem);
     case Type::Kind::Array:
-      return Rec(cast<sema::ArrayType>(U)->Elem, D + 1);
+      return Rests(cast<sema::ArrayType>(U)->Elem);
     case Type::Kind::Struct: {
       // An owning struct with raw pointer fields needs a hand-written Clone:
-      // an automatic one would copy the pointers (OWN-R6).
+      // an automatic one would copy the pointers (OWN-R6). The fields before
+      // that one come first, as the reason takes the first field that blocks.
       bool Owning = category(U) == Category::Owning;
-      for (Var *F : cast<StructType>(U)->Fields) {
-        if (Owning && isa<PointerType>(under(F->Ty))) {
-          if (Why)
-            *Why = "it mixes owning fields with the raw pointer field " +
-                   std::string(F->Name) + ": write Clone() by hand";
-          return false;
-        }
-        if (!Rec(F->Ty, D + 1)) {
-          if (Why && Why->empty())
-            *Why = "field " + std::string(F->Name) + " is not cloneable";
-          return false;
-        }
+      for (Var *Fd : cast<StructType>(U)->Fields) {
+        if (Owning && isa<PointerType>(under(Fd->Ty)))
+          return Block(X, "mixes owning fields with the raw pointer field " +
+                              std::string(Fd->Name) +
+                              ": write Clone() by hand");
+        Rests(Fd->Ty, Fd->Name);
       }
-      return true;
+      return;
     }
-    default:
-      return true;
+    default: // basic types, pointers, refs, channels, funcs, interfaces
+      return;
     }
   };
-  return Rec(T, 0);
+  // The walk stopped at a blocker: every type still open reaches it.
+  auto Blocked = [&] {
+    if (Capped) {
+      if (auto *N = dyn_cast<NamedType>(T); N && !Unfinished && typesFinal())
+        N->CloneState.store(3, std::memory_order_release);
+      if (Why)
+        *Why = CapReason();
+      return false;
+    }
+    if (CanStore())
+      for (Type *Y : Open)
+        if (auto *N = dyn_cast<NamedType>(Y))
+          N->CloneState.store(2, std::memory_order_release);
+    return false;
+  };
+
+  Visit(T);
+  while (!Stack.empty()) {
+    Frame &F = Stack.back();
+    if (F.Next < F.Edges.size()) {
+      Type *Y = F.Edges[F.Next++].Ty;
+      auto It = Seen.find(Y);
+      if (It != Seen.end()) {
+        if (!Done[It->second]) // open: on a cycle through the path
+          F.Low = std::min(F.Low, It->second);
+        continue;
+      }
+      uint8_t St = Stored(Y);
+      if (St == 1)
+        continue;
+      if (St == 2 && !Why)
+        return Blocked();
+      Visit(Y); // invalidates F
+      continue;
+    }
+    if (F.Leaf) {
+      if (Why && !Capped) {
+        // The field names on the path, outermost first. A very long path is
+        // shortened in the middle; the blocking type is always named.
+        constexpr size_t ReasonDepth = 200;
+        SmallVector<StringRef, 8> Path;
+        for (size_t I = 0; I + 1 < Stack.size(); ++I)
+          if (StringRef Fd = Stack[I].Edges[Stack[I].Next - 1].Field;
+              !Fd.empty())
+            Path.push_back(Fd);
+        std::string Subject = str(F.Leaf);
+        if (!Path.empty()) {
+          std::string P;
+          for (size_t I = 0; I < Path.size() && I < ReasonDepth; ++I)
+            P += (I ? "." : "") + Path[I].str();
+          if (Path.size() > ReasonDepth + 1)
+            P += ".(" + num(Path.size() - ReasonDepth - 1) + " more fields)";
+          if (Path.size() > ReasonDepth)
+            P += "." + Path.back().str();
+          Subject = "field " + P + " (" + Subject + ")";
+        }
+        *Why = Subject + " " + F.Pred;
+      }
+      return Blocked();
+    }
+    // Every edge of F is cloneable. If F roots a component, nothing in it
+    // reaches a blocker.
+    Type *X = F.X;
+    unsigned Idx = F.Index, Low = F.Low;
+    Stack.pop_back();
+    if (Low == Idx) {
+      Type *Y;
+      do {
+        Y = Open.pop_back_val();
+        Done[Seen[Y]] = true;
+        if (auto *N = dyn_cast<NamedType>(Y); N && CanStore())
+          N->CloneState.store(1, std::memory_order_release);
+      } while (Y != X);
+    }
+    if (!Stack.empty())
+      Stack.back().Low = std::min(Stack.back().Low, Low);
+  }
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -294,6 +803,15 @@ struct ZeroQuery {
   SmallVector<const NamedType *, 8> InProgress;
   unsigned Depth = 0;
   bool Cut = false;
+  /// Set by has() when it answers false: the answer rests only on type
+  /// parameters (an instance may still have a zero value), no type that is
+  /// certain to have none. Read right after a false answer.
+  bool Poly = false;
+  /// The type parameters (by index, bit 63 for index >= 63) that a false
+  /// answer of the query rested on. Read for a generic declaration only (its
+  /// own parameters), see NamedType::PolyMask.
+  uint64_t PolyMask = 0;
+  static uint64_t bitOf(unsigned I) { return 1ull << (I < 63 ? I : 63); }
   static constexpr unsigned MaxDepth = 1000;
 
   /// Depth at which a long chain is resolved iteratively / its reason is
@@ -381,8 +899,8 @@ struct ZeroQuery {
       if (auto *St = dyn_cast<StructType>(U)) {
         for (Var *F : St->Fields) {
           if (F->Required) {
-            Leaf = "field " + std::string(F->Name) + " of " + Last +
-                   " is @Required";
+            Leaf = "field " + std::string(F->Name) + " of " + Last + " is " +
+                   Checker::requiredWhy(F);
             break;
           }
           if (Lacks(F->Ty)) {
@@ -423,6 +941,7 @@ struct ZeroQuery {
   }
 
   bool has(Type *T, std::string *Why) {
+    Poly = false;
     if (!T || !C.isValid(T))
       return true;
     if (Depth >= MaxDepth) {
@@ -494,21 +1013,40 @@ struct ZeroQuery {
       return false;
     }
     case Type::Kind::Struct: {
+      // The first field without a zero value gives the reason. A field that
+      // lacks one only through a type parameter does not end the walk: a
+      // later field may lack one for certain.
+      bool PolyFail = false;
+      std::string FirstWhy;
       for (Var *F : cast<StructType>(T)->Fields) {
         if (F->Required) {
-          if (Why)
-            *Why = "field " + std::string(F->Name) + " is @Required";
+          if (Why && !PolyFail)
+            *Why = "field " + std::string(F->Name) + " is " +
+                   Checker::requiredWhy(F);
+          else if (Why)
+            *Why = FirstWhy;
+          Poly = false;
           return false;
         }
         std::string Inner;
         if (!has(F->Ty, Why ? &Inner : nullptr)) {
-          if (Why)
-            *Why = "field " + std::string(F->Name) + " of type " +
-                   C.str(F->Ty) + " has none: " + Inner;
-          return false;
+          bool FieldPoly = Poly;
+          if (Why && !PolyFail)
+            FirstWhy = "field " + std::string(F->Name) + " of type " +
+                       C.str(F->Ty) + " has none: " + Inner;
+          if (!FieldPoly) {
+            if (Why)
+              *Why = FirstWhy;
+            Poly = false;
+            return false;
+          }
+          PolyFail = true;
         }
       }
-      return true;
+      Poly = PolyFail;
+      if (PolyFail && Why)
+        *Why = FirstWhy;
+      return !PolyFail;
     }
     case Type::Kind::TypeParam: {
       // A generic body is checked once: T may be anything its constraint
@@ -527,6 +1065,8 @@ struct ZeroQuery {
       if (Why)
         *Why = "its constraint allows types with none (GEN-5); constrain " +
                C.str(T) + ", or use Option[" + C.str(T) + "]";
+      Poly = true;
+      PolyMask |= bitOf(cast<TypeParamType>(T)->Index);
       return false;
     }
     case Type::Kind::Named: {
@@ -553,6 +1093,64 @@ struct ZeroQuery {
           *Why = "it has no default constructor";
         return false;
       }
+      // An instance of a generic type is answered from the declaration: its
+      // field types mention the type parameters, and the answer for the
+      // arguments follows from the parameters it rests on (PolyMask). So a
+      // chain of n instances over fresh type parameters costs n steps in all,
+      // not n per instance. The answer is exact and a function of the
+      // instance alone.
+      if (!IgnoreForeign && N->Orig && !N->Orig->TParams.empty() &&
+          N->TArgs.size() == N->Orig->TParams.size() &&
+          !llvm::is_contained(InProgress, N->Orig)) {
+        NamedType *O = N->Orig;
+        uint8_t OSt = O->ZeroState.load(std::memory_order_acquire);
+        if (OSt == 0) {
+          ZeroQuery Q(C, false);
+          Q.has(O, nullptr); // writes O->ZeroState when the answer is exact
+          OSt = O->ZeroState.load(std::memory_order_acquire);
+        }
+        if (OSt != 0) {
+          bool Answer = true, Pol = false, ArgCut = false;
+          uint64_t Used = 0;
+          if (OSt == 2)
+            Answer = false;
+          else if (OSt == 3) {
+            uint64_t M = O->PolyMask.load(std::memory_order_relaxed);
+            for (unsigned J = 0; J < N->TArgs.size() && Answer; ++J) {
+              if (!(M & bitOf(J)) && !(J >= 63 && (M & bitOf(63))))
+                continue;
+              ZeroQuery Q(C, false);
+              bool QHas = Q.has(N->TArgs[J], nullptr);
+              ArgCut |= Q.Cut;
+              if (QHas)
+                continue;
+              Used |= Q.PolyMask;
+              if (Q.Poly)
+                Pol = true;
+              else
+                Answer = false; // an argument that surely has none
+            }
+            if (Answer && Pol)
+              Answer = false;
+            else if (!Answer)
+              Pol = false;
+            if (!Answer && Pol)
+              PolyMask |= Used;
+          }
+          Poly = !Answer && Pol;
+          // An argument query that was cut short is not exact: not stored,
+          // and the enclosing answers are not stored either.
+          if (ArgCut)
+            Cut = true;
+          else
+            N->ZeroState.store(Answer ? 1
+                               : Poly ? 3
+                                      : 2,
+                               std::memory_order_release);
+          if (Answer || !Why)
+            return Answer;
+        }
+      }
       uint8_t St = N->ZeroState.load(std::memory_order_acquire);
       // A long chain of named types is resolved from the bottom up on the
       // heap, so no depth limit decides the answer (and the stack stays
@@ -561,10 +1159,22 @@ struct ZeroQuery {
         prewarm(N);
         St = N->ZeroState.load(std::memory_order_acquire);
       }
-      if (St == 1 || (St == 2 && !Why && !IgnoreForeign))
+      if (St == 1 || (St >= 2 && !Why && !IgnoreForeign)) {
+        Poly = St == 3;
         return St == 1;
-      if (St == 2 && Why && !IgnoreForeign && Depth >= SummaryDepth) {
-        *Why = deepWhy(N);
+      }
+      if (St >= 2 && Why && !IgnoreForeign && Depth >= SummaryDepth) {
+        // A chain of instances is named by its generic declaration: walking
+        // it would instantiate every level again for every error.
+        if (N->Orig)
+          *Why = "it nests more than " + std::to_string(SummaryDepth) +
+                 " levels of " + std::string(N->Orig->Obj->Name) +
+                 " instances, and " +
+                 (St == 3 ? "a type parameter allows types with none (GEN-5)"
+                          : "one of them has no zero value");
+        else
+          *Why = deepWhy(N);
+        Poly = St == 3;
         return false;
       }
       if (llvm::is_contained(InProgress, N)) {
@@ -583,9 +1193,17 @@ struct ZeroQuery {
       InProgress.push_back(N);
       bool SavedCut = Cut;
       Cut = false;
+      uint64_t SavedMask = PolyMask;
+      PolyMask = 0;
       bool R = has(U, Why);
-      if (!Cut && !IgnoreForeign)
-        N->ZeroState.store(R ? 1 : 2, std::memory_order_release);
+      bool RPoly = !R && Poly;
+      if (!Cut && !IgnoreForeign) {
+        if (RPoly && N->isGeneric())
+          N->PolyMask.store(PolyMask, std::memory_order_relaxed);
+        N->ZeroState.store(R ? 1 : RPoly ? 3 : 2, std::memory_order_release);
+      }
+      PolyMask |= SavedMask;
+      Poly = RPoly;
       Cut = Cut || SavedCut;
       InProgress.pop_back();
       return R;
@@ -604,6 +1222,13 @@ bool Checker::hasZeroValue(Type *T, std::string *Why) {
   return Q.has(T, Why);
 }
 
+bool Checker::lacksZeroValueForSure(Type *T) {
+  if (!own() || !T || !isValid(T))
+    return false;
+  ZeroQuery Q(*this, false);
+  return !Q.has(T, nullptr) && !Q.Poly;
+}
+
 bool Checker::lacksGoZeroValue(Type *T) {
   if (!own() || !T || !isValid(T))
     return false;
@@ -617,10 +1242,14 @@ bool Checker::isNeverNilField(const Var *F) {
   // A type-parameter field only means "must be set" (ADR-0016 point 8).
   if (isa<TypeParamType>(F->Ty) || F->RequiredSetOnly)
     return false;
-  Type *U = under(F->Ty);
+  return requiredMeansNeverNil(F->Ty);
+}
+
+bool Checker::requiredMeansNeverNil(Type *Ty) {
+  Type *U = under(Ty);
   // `error`, `any` and the other empty interfaces, maps and channels; a func
   // and an interface with methods are never nil without the attribute.
-  return (isa<InterfaceType>(U) && !neverNilKind(F->Ty)) ||
+  return (isa<InterfaceType>(U) && !neverNilKind(Ty)) ||
          isa<sema::MapType>(U) || isa<sema::ChanType>(U);
 }
 
@@ -1374,9 +2003,9 @@ void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
   if (!F || !isNeverNilField(F))
     return;
   if (unparen(Ex) != ReplaceArg)
-    err(Ex, diag::err_required_addr, {str(Inner)});
+    err(Ex, diag::err_required_addr, {str(Inner), requiredWhy(F)});
   else if (ReplaceNil)
-    err(ReplaceNil, diag::err_required_nil_store, {str(Inner)});
+    err(ReplaceNil, diag::err_required_nil_store, {str(Inner), requiredWhy(F)});
   else {
     // The new value must be known non-nil too: callExpr checks it once the
     // arguments are (TYP-15).

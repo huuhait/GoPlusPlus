@@ -1,0 +1,20 @@
+// P03.20 (R9, R10, stress): satisfiesClone on long chains of named types,
+// under `timeout 3`, with exactly the errors checked here (so no false error
+// for the cloneable half).
+//  - 30000 named structs Q<k>, cloneable, with a Clone() call per 10th level
+//    (each body costs time), and
+//    30000 blocked ones C<k>, called at three levels: each reason names the
+//    blocking type, the long paths shortened in the middle. Also the 16 x 3
+//    DAGs: D16 cloneable, E16 blocked in its last field only.
+// Both function orders and 1 and 8 threads are in clone-walk-order.test (a
+// separate test, so each stays under the 2 s budget in the ASan build).
+// RUN: %python %S/Inputs/gen-strict-stress.py 30000 walk chain ab > %t.big.gopp
+// RUN: not timeout 3 %gopp check -check-j=8 --check-error-limit=0 %t.big.gopp > %t.big 2>&1
+// RUN: grep -c "error\[E" %t.big | FileCheck --check-prefix=FOUR %s
+// RUN: grep -o "error\[.*" %t.big | sort | FileCheck --check-prefix=BIG %s
+// BIG: error[E0267]: cannot clone c: C1 can't be cloned: field in.mu (Mu) has a drop method but no Clone() (OWN-R6)
+// BIG-NEXT: error[E0267]: cannot clone c: C15000 can't be cloned: field in{{([.]in){199}[.]}}(14800 more fields).mu (Mu) has a drop method but no Clone() (OWN-R6)
+// BIG-NEXT: error[E0267]: cannot clone c: C30000 can't be cloned: field in{{([.]in){199}[.]}}(29800 more fields).mu (Mu) has a drop method but no Clone() (OWN-R6)
+// BIG-NEXT: error[E0267]: cannot clone e: E16 can't be cloned: field c.c.c.c.c.c.c.c.c.c.c.c.c.c.c.c.mu (Mu) has a drop method but no Clone() (OWN-R6)
+// FOUR: {{^4$}}
+package main

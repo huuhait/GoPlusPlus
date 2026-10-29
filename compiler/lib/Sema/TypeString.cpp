@@ -102,6 +102,10 @@ public:
       break;
     case Type::Kind::Struct: {
       auto *S = llvm::cast<StructType>(T);
+      // The attributes are part of the identity (TYP-15a): a @Strict struct
+      // and one with the same effective bits written out print differently.
+      if (S->Strict)
+        OS << "@Strict ";
       OS << "struct{";
       for (size_t I = 0; I < S->Fields.size(); ++I) {
         if (I)
@@ -110,8 +114,12 @@ public:
         if (!F->Embedded)
           OS << F->Name << ' ';
         type(F->Ty, Depth);
-        if (F->Required) // MAC-12: the attribute comes before the tag
+        // MAC-12: the attributes come before the tag. In a @Strict struct only
+        // the written ones are shown (the rest follows from @Strict).
+        if (S->Strict ? F->MarkedRequired : F->Required)
           OS << " @Required";
+        if (F->MarkedOption)
+          OS << " @Option";
         if (!F->Tag.empty())
           OS << " \"" << F->Tag << '"';
       }

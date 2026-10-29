@@ -1,0 +1,26 @@
+// P03.20 (stress): 1500 nested @Strict structs, one function per level that
+// builds a literal with the nested field left out (an error) or sets every
+// required field (fine), one `var z S<k>` per level (an error), a @Strict
+// struct with 1500 fields whose empty literal names the 1000 required ones,
+// one instance BoxOpt[S<k>] of a generic `V T @Option` per level (an error,
+// judged per instance), and 1500 sibling pairs of a @Strict struct and a plain
+// one that convert both ways (fine: a field whose type has no zero value is
+// required on both sides). The answers are the same for one and eight threads, and the
+// check stays near-linear (lit's timeout stops a quadratic one). Good side:
+// the ok<k> and conv<k> functions and wideOK report nothing.
+// RUN: %python %S/Inputs/gen-strict-stress.py 1500 > %t.gopp
+// RUN: not %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.1 2>&1
+// RUN: not %gopp check -check-j=8 --check-error-limit=0 %t.gopp > %t.8 2>&1
+// RUN: diff %t.1 %t.8
+// RUN: grep -c "missing required field P in S" %t.1 | FileCheck --check-prefix=LIT %s
+// RUN: grep -c "cannot declare z without a value" %t.1 | FileCheck --check-prefix=ZERO %s
+// RUN: grep -c "in Wide literal" %t.1 | FileCheck --check-prefix=WIDE %s
+// RUN: grep -c "field V is @Option, but S[0-9]* has no zero value" %t.1 | FileCheck --check-prefix=BOX %s
+// RUN: grep -c "error\[E" %t.1 | FileCheck --check-prefix=ALL %s
+// RUN: not grep -q "func ok[0-9]\|func conv\|wideOK" %t.1
+// LIT: 1499
+// ZERO: 1499
+// WIDE: 1
+// BOX: 1500
+// ALL: 4500
+package main

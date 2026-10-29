@@ -330,7 +330,7 @@ Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
   // ADR-0016 point 8: a never-nil @Required field is never set to nil.
   if (own() && X->isNil() && Lhs)
     if (const Var *F = selectedField(Lhs); F && isNeverNilField(F))
-      err(*X, diag::err_required_nil_store, {str(Lhs)});
+      err(*X, diag::err_required_nil_store, {str(Lhs), requiredWhy(F)});
   if (own() && !X->isNil() && Lhs && Context != "assignment operation")
     if (const Var *F = selectedField(Lhs))
       checkNeverNilStore(*X, F, str(Lhs));

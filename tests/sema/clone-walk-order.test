@@ -1,0 +1,26 @@
+// P03.20 (R7, stress): the answers of satisfiesClone are a function of the
+// type alone. 3000 cloneable named structs Q<k> (a Clone() call per level),
+// 3000 blocked ones C<k> (calls at three levels) and the 16 x 3 DAGs, with
+// the functions in both orders, on 1 and on 8 threads: the same errors every
+// time, whichever body asks first. Each run is under `timeout 3`.
+// RUN: %python %S/Inputs/gen-strict-stress.py 3000 walk chain ab > %t.ab.gopp
+// RUN: %python %S/Inputs/gen-strict-stress.py 3000 walk chain ba > %t.ba.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.ab.gopp > %t.ab.1 2>&1
+// RUN: not timeout 3 %gopp check -check-j=8 --check-error-limit=0 %t.ab.gopp > %t.ab.8 2>&1
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.ba.gopp > %t.ba.1 2>&1
+// RUN: not timeout 3 %gopp check -check-j=8 --check-error-limit=0 %t.ba.gopp > %t.ba.8 2>&1
+// RUN: grep -o "error\[.*" %t.ab.1 | sort > %t.ab.1s
+// RUN: grep -o "error\[.*" %t.ab.8 | sort > %t.ab.8s
+// RUN: grep -o "error\[.*" %t.ba.1 | sort > %t.ba.1s
+// RUN: grep -o "error\[.*" %t.ba.8 | sort > %t.ba.8s
+// RUN: diff %t.ab.1s %t.ab.8s
+// RUN: diff %t.ab.1s %t.ba.1s
+// RUN: diff %t.ab.1s %t.ba.8s
+// RUN: grep -c "error\[E" %t.ab.1 | FileCheck --check-prefix=FOUR %s
+// RUN: FileCheck --check-prefix=ORDER %s < %t.ab.1s
+// ORDER: error[E0267]: cannot clone c: C1 can't be cloned: field in.mu (Mu) has a drop method but no Clone() (OWN-R6)
+// ORDER-NEXT: error[E0267]: cannot clone c: C1500 can't be cloned: field in{{([.]in){199}[.]}}(1300 more fields).mu (Mu) has a drop method but no Clone() (OWN-R6)
+// ORDER-NEXT: error[E0267]: cannot clone c: C3000 can't be cloned: field in{{([.]in){199}[.]}}(2800 more fields).mu (Mu) has a drop method but no Clone() (OWN-R6)
+// ORDER-NEXT: error[E0267]: cannot clone e: E16 can't be cloned: field c.c.c.c.c.c.c.c.c.c.c.c.c.c.c.c.mu (Mu) has a drop method but no Clone() (OWN-R6)
+// FOUR: {{^4$}}
+package main

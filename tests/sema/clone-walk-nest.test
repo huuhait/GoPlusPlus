@@ -1,0 +1,61 @@
+// P03.20 (R9, R10, stress): deep nesting, long slices and rings.
+// satisfiesClone walks the graph of types with an explicit stack: no
+// recursion, so a deep type cannot overflow the stack, and no depth cut, so
+// the depth of a type never decides the answer. Each generated case runs
+// under `timeout 3` (a quadratic or exponential walk fails it) and reports
+// exactly the errors checked here, so a false error fails it (and a crash
+// fails any RUN line, also under `not`). Split by case so each test stays
+// well under the 2 s budget in the ASan build (D0.13).
+//  - nest: 70 named types holding the one before under 300 levels of slices,
+//    and 20 x 990, asked in a body; 100 x 300 asked by a `[T Clone]` instance
+//    while the types are declared (each overflowed the stack). The blocked
+//    twin B<k> (over a drop type) names the whole path.
+//  - nest 5500 x 1 while the types are declared: N5500 is accepted (it got a
+//    false E0323 from a cut at 5000 named types); the twin's path is
+//    shortened in the middle and still names the blocking type.
+//  - slices: 1980 levels of slices in one type, of int and of a drop type.
+//  - cycle: a ring of 300 types (2 levels of slices each) is cloneable; in a
+//    ring whose last type holds a drop type the reason goes around the ring
+//    from the type asked about. (A ring of about 1000 types overflows the
+//    stack in the declaration checker, also on master; with ASan, so do 300
+//    types with 5 levels of slices each: P03.23.)
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 70 walk nest 300 body > %t.n1.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.n1.gopp > %t.n1.out 2>&1
+// RUN: grep -c "error\[E" %t.n1.out | FileCheck --check-prefix=ONE %s
+// RUN: FileCheck --check-prefix=NEST1 %s < %t.n1.out
+// NEST1: error[E0267]: cannot clone x: B70 can't be cloned: field x{{([.]x){69}[.]}}mu (Mu) has a drop method but no Clone() (OWN-R6)
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 20 walk nest 990 body > %t.n2.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.n2.gopp > %t.n2.out 2>&1
+// RUN: grep -c "error\[E" %t.n2.out | FileCheck --check-prefix=ONE %s
+// RUN: FileCheck --check-prefix=NEST2 %s < %t.n2.out
+// NEST2: error[E0267]: cannot clone x: B20 can't be cloned: field x{{([.]x){19}[.]}}mu (Mu) has a drop method but no Clone() (OWN-R6)
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 100 walk nest 300 decl > %t.n3.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.n3.gopp > %t.n3.out 2>&1
+// RUN: grep -c "error\[E" %t.n3.out | FileCheck --check-prefix=ONE %s
+// RUN: FileCheck --check-prefix=NEST3 %s < %t.n3.out
+// NEST3: error[E0323]: B100 does not satisfy Clone (field x{{([.]x){99}[.]}}mu (Mu) has a drop method but no Clone())
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 5500 walk nest 1 decl > %t.n4.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.n4.gopp > %t.n4.out 2>&1
+// RUN: grep -c "error\[E" %t.n4.out | FileCheck --check-prefix=ONE %s
+// RUN: FileCheck --check-prefix=NEST4 %s < %t.n4.out
+// NEST4: error[E0323]: B5500 does not satisfy Clone (field x{{([.]x){199}[.]}}(5300 more fields).mu (Mu) has a drop method but no Clone())
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 0 walk slices > %t.sl.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.sl.gopp > %t.sl.out 2>&1
+// RUN: grep -c "error\[E" %t.sl.out | FileCheck --check-prefix=ONE %s
+// RUN: FileCheck --check-prefix=SLICES %s < %t.sl.out
+// SLICES: error[E0267]: cannot clone x: B0 can't be cloned: field x (Mu) has a drop method but no Clone() (OWN-R6)
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 300 walk cycle 2 > %t.cy.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.cy.gopp > %t.cy.out 2>&1
+// RUN: grep -c "error\[E" %t.cy.out | FileCheck --check-prefix=TWO %s
+// RUN: FileCheck --check-prefix=CYCLE %s < %t.cy.out
+// CYCLE: error[E0267]: cannot clone x: K0 can't be cloned: field next{{([.]next){199}[.]}}(99 more fields).mu (Mu) has a drop method but no Clone() (OWN-R6)
+// CYCLE: error[E0267]: cannot clone x: K150 can't be cloned: field next{{([.]next){148}[.]}}mu (Mu) has a drop method but no Clone() (OWN-R6)
+// ONE: {{^1$}}
+// TWO: {{^2$}}
+package main

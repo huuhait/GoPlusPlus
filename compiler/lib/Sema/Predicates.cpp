@@ -515,15 +515,34 @@ bool Checker::identicalImpl(const Type *X0, const Type *Y0, bool IgnoreTags,
   }
   case Type::Kind::Struct: {
     auto *A = cast<StructType>(X), *B = cast<StructType>(Y);
-    if (A->Fields.size() != B->Fields.size())
+    // The attributes are part of the identity, like the tags (TYP-15a); a
+    // conversion ignores them and compares the fields below.
+    if (A->Fields.size() != B->Fields.size() ||
+        (!IgnoreTags && A->Strict != B->Strict))
       return false;
     for (size_t I = 0; I < A->Fields.size(); ++I) {
       Var *F = A->Fields[I], *G = B->Fields[I];
-      // `@Required` is part of the identity even where tags are ignored
-      // (conversions): `User(struct{ID int}{})` would skip the field.
-      if (F->Embedded != G->Embedded || F->Required != G->Required ||
-          (!IgnoreTags && F->Tag != G->Tag) || F->Name != G->Name ||
+      if (F->Embedded != G->Embedded ||
+          (!IgnoreTags && (F->Tag != G->Tag || F->Required != G->Required ||
+                           F->RequiredSetOnly != G->RequiredSetOnly ||
+                           F->MarkedRequired != G->MarkedRequired ||
+                           F->MarkedOption != G->MarkedOption)) ||
+          F->Name != G->Name ||
           (!isExportedName(F->Name) && F->Pkg != G->Pkg) || !Rec(F->Ty, G->Ty))
+        return false;
+      // Whether a field is required is part of the identity even where tags
+      // are ignored (conversions): `User(struct{ID int}{})` would skip the
+      // field. A conversion compares it per field (EXP-9, TYP-15a): the
+      // effective bit, or a type with no zero value, which is required
+      // without the bit (a pointer field of a @Strict struct and of a plain
+      // one are both required). A type that may have a zero value in some
+      // instance (a type parameter) does not count.
+      if (IgnoreTags && F->Required != G->Required &&
+          !lacksZeroValueForSure(F->Required ? G->Ty : F->Ty))
+        return false;
+      // A field that is never nil must not receive a value that may be nil
+      // (an instance's set-only `A error`), so never-nil-ness is compared too.
+      if (IgnoreTags && isNeverNilField(F) != isNeverNilField(G))
         return false;
     }
     return true;

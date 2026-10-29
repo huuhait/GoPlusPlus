@@ -1536,5 +1536,6 @@ void Checker::checkNeverNilStore(const Operand &X, const Var *Fld,
     return;
   if (knownNonNil(X.E, Fld->Ty, X.Ty))
     return;
-  err(X, diag::err_required_maybe_nil, {str(X.E), Place, nilCheckHint(X.E)});
+  err(X, diag::err_required_maybe_nil,
+      {str(X.E), Place, nilCheckHint(X.E), requiredWhy(Fld)});
 }

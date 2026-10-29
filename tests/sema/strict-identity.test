@@ -1,0 +1,128 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.20 (TYP-15a, EXP-9): type identity includes the attributes (the struct's
+// @Strict flag and each field's @Required / @Option as written), like tags, so
+// two types are identical exactly when they are the same object. A
+// conversion ignores them and compares per field: the effective required bit,
+// or a field type that has no zero value in every instance (a type parameter
+// does not count: GEN-5). Each rejected case has an accepted twin; functions
+// named positive* have no error.
+package main
+
+@Strict
+type SA struct{ A int }
+
+type SR struct{ A int @Required }
+
+type Gen[T any] struct{ A T }
+type GenR[T any] struct{ A T @Required }
+
+@Strict
+type SG[T any] struct{ A T }
+
+type Gen2[T any] struct{ A T }
+
+type PP[T any] struct{ P *int }
+
+@Strict
+type PS[T any] struct{ P *int }
+
+type Inner[T any] struct {
+	A T
+	P *int
+}
+type Outer[T any] struct{ F Inner[T] }
+type OuterR[T any] struct{ F Inner[T] @Required }
+
+type FnP struct{ F func() }
+
+@Strict
+type FnS struct{ F func() }
+
+// --- identity ---------------------------------------------------------------
+
+func positiveIdentity(r struct{ A int @Required }, s SR) {
+	var _ struct{ A int @Required } = s
+	var _ SR = r
+	_ = SA(r)
+	_ = SR(SA{A: 1})
+}
+
+func negativeIdentity(r struct{ A int @Required }, s SA) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use s (variable of struct type SA) as struct{A int @Required} value in variable declaration
+	var _ struct{ A int @Required } = s
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use r (variable of type struct{A int @Required}) as SA value in variable declaration
+	var _ SA = r
+}
+
+// --- conversions in generic code --------------------------------------------
+
+func positiveGeneric[T any](a Gen[T], b GenR[T], c SG[T], p PP[T], q PS[T], o Outer[T], or OuterR[T], f FnP, fs FnS) {
+	_ = Gen2[T](a)
+	_ = Gen[T](a)
+	_ = GenR[T](b)
+	_ = SG[T](GenR[T](b))
+	_ = PS[T](p)
+	_ = PP[T](q)
+	_ = OuterR[T](o)
+	_ = Outer[T](or)
+	_ = FnS(f)
+	_ = FnP(fs)
+	_ = c
+}
+
+func negativeGeneric[T any](a Gen[T], b GenR[T], c SG[T]) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert a (variable of struct type Gen[T]) to type GenR[T]
+	_ = GenR[T](a)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert a (variable of struct type Gen[T]) to type SG[T]
+	_ = SG[T](a)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert b (variable of struct type GenR[T]) to type Gen[T]
+	_ = Gen[T](b)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert c (variable of struct type SG[T]) to type Gen[T]
+	_ = Gen[T](c)
+}
+
+func positiveInstances(a Gen[int], b GenR[int]) {
+	_ = Gen2[int](a)
+	_ = GenR[int](b)
+}
+
+func negativeInstances(a Gen[int], b GenR[int]) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert a (variable of struct type Gen[int]) to type GenR[int]
+	_ = GenR[int](a)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert b (variable of struct type GenR[int]) to type Gen[int]
+	_ = Gen[int](b)
+}
+
+func positivePointerInstance(c Gen[*int]) {
+	_ = GenR[*int](c)
+}
+
+// --- set-only fields (R2, R4) -----------------------------------------------
+// A field of an instance whose declared type is a type parameter only means
+// "must be set" (ADR-0016 point 8): SG[error].A may hold nil. That mark
+// splits identity and conversions only where it changes never-nil-ness
+// (error, any, map, chan); for int it is dropped.
+
+@Strict
+type SE struct{ A error }
+
+@Strict
+type SI struct{ A int }
+
+func positiveSetOnly(g SG[int], i SI, e SE, r GenR[int]) {
+	var _ struct{ A int @Required } = r
+	_ = SI(g)
+	_ = SG[int](i)
+	_ = SE(e)
+}
+
+func negativeSetOnly(g SG[error], e SE, r GenR[error]) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert g (variable of struct type SG[error]) to type SE
+	_ = SE(g)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0160\]}}: cannot convert e (variable of struct type SE) to type SG[error]
+	_ = SG[error](e)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0314\]}}: cannot use r (variable of struct type GenR[error]) as struct{A error @Required} value in variable declaration
+	var _ struct{ A error @Required } = r
+}
+
+func main() {}

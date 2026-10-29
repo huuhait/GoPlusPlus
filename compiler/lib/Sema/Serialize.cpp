@@ -273,7 +273,9 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
   }
   case Type::Kind::Struct: {
     auto *St = cast<StructType>(T);
-    std::vector<uint64_t> Ops{St->Fields.size()};
+    // TYP-15a: the effective required bits, and the attributes as written
+    // (`@Strict` on the struct, `@Required` and `@Option` on each field).
+    std::vector<uint64_t> Ops{St->Fields.size(), St->Strict};
     for (const Var *F : St->Fields) {
       uint64_t Ty = type(F->Ty);
       Ops.push_back(string(F->Name));
@@ -283,6 +285,8 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
       Ops.push_back(string(F->Tag));
       Ops.push_back(F->Required);
       Ops.push_back(F->RequiredSetOnly);
+      Ops.push_back(F->MarkedRequired);
+      Ops.push_back(F->MarkedOption);
     }
     return Emit(REC_STRUCT, Ops);
   }
@@ -343,10 +347,15 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
         Ops.push_back(type(A));
       return Emit(REC_NAMED_INST, Ops);
     }
+    // State 3 (no zero value only through a type parameter) and the state of
+    // a generic declaration are not exported: the importer works them out
+    // again (the exported bytes must not depend on which queries ran).
+    uint64_t Zero = N->ZeroState.load(std::memory_order_acquire);
+    if (Zero == 3 || N->isGeneric())
+      Zero = 0;
     uint64_t DeclOps[] = {package(N->Obj ? N->Obj->Pkg : nullptr),
                           string(N->Obj ? N->Obj->Name : StringRef()),
-                          static_cast<uint64_t>(N->Ptr), N->Pinned,
-                          N->ZeroState.load(std::memory_order_acquire)};
+                          static_cast<uint64_t>(N->Ptr), N->Pinned, Zero};
     W.write(REC_NAMED_DECL, DeclOps);
     uint64_t Id = Ids[T] = NextType++;
     std::vector<uint64_t> Ops{Id, 0, N->TParams.size()};
@@ -761,6 +770,7 @@ bool TypeReader::record(const Record &Rec) {
   }
   case REC_STRUCT: {
     uint64_t N = Next();
+    bool Strict = Flag();
     std::vector<TypeContext::FieldSpec> Fs;
     for (uint64_t K = 0; K < N && !Bad; ++K) {
       TypeContext::FieldSpec F;
@@ -771,11 +781,13 @@ bool TypeReader::record(const Record &Rec) {
       F.Tag = Str();
       F.Required = Flag();
       F.RequiredSetOnly = Flag();
+      F.MarkedRequired = Flag();
+      F.MarkedOption = Flag();
       if (!F.Ty)
         Bad = true;
       Fs.push_back(F);
     }
-    return Produce(Bad ? nullptr : Ctx.structOf(Fs));
+    return Produce(Bad ? nullptr : Ctx.structOf(Fs, Strict));
   }
   case REC_INTERFACE: {
     bool Implicit = Flag();

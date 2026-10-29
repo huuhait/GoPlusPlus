@@ -127,6 +127,7 @@ struct DeclInfo {
   const FuncDecl *FDecl = nullptr;
   unsigned IotaVal = 0;
   bool Pinned = false; // `@Pinned` type declaration (OWN-R10)
+  bool Strict = false; // `@Strict` struct type declaration (TYP-15a)
   /// Package-level objects this declaration refers to (initorder.go).
   llvm::SmallSetVector<Object *, 4> Deps;
 };
@@ -263,6 +264,18 @@ public:
   void constArity(const ast::ValueSpec *VS, const ast::ValueSpec *Src,
                   bool Inherited);
   bool Bodies = false; // body checker (phase 2)
+  /// Every package-level type is declared, with its method list (set in
+  /// packageObjects once the type declarations are done). From then on a
+  /// type-level answer that met only finished declarations is final, so
+  /// NamedType::CloneState and CategoryState may be stored (typesFinal()).
+  bool TypesDeclared = false;
+  bool typesFinal() const { return Bodies || TypesDeclared; }
+  /// Is N's declaration finished (its underlying type and method list are
+  /// final)? A type of another package always is.
+  bool declFinished(NamedType *N) const {
+    NamedType *O = N->origin();
+    return O->Methods || !O->Obj || O->Obj->Pkg != S.Pkg;
+  }
 
   /// Per function environment (types2's `environment`).
   struct Env {
@@ -618,7 +631,11 @@ public:
   void varDecl(Var *O, ArrayRef<Var *> Lhs, const ast::Expr *Typ,
                const ast::Expr *Init);
   void typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
-                bool Pinned = false);
+                bool Pinned = false, bool Strict = false);
+  /// The struct type expression of the `@Strict` type declaration being
+  /// resolved (TYP-15a); null otherwise. Only that very node is strict: a
+  /// struct nested in a field type of it is not.
+  const ast::StructType *StrictStructExpr = nullptr;
   void funcDecl(Func *O, DeclInfo *D);
   void collectMethods(TypeName *O);
   void declStmt(const DeclStmt *S);
@@ -747,6 +764,7 @@ public:
   }
   bool isCopyType(Type *T);
   bool satisfiesClone(Type *T, std::string *Why);
+  bool cloneWalk(Type *T, std::string *Why); // satisfiesClone's walk
   bool hasPtrKind(Type *T, PtrKind *K, Type **Elem);
   bool isPlaceExpr(const ast::Expr *E);
   /// What an expression is for the rules of OWN-R3a.
@@ -820,12 +838,21 @@ public:
   /// and returns true.
   bool checkPointerField(Operand &X, Type *FieldTy);
   bool isPinned(Type *T);
+  /// T with its type parameters replaced by shared stand-ins
+  /// (TypeContext::canonicalParam), for the type-level queries whose answer
+  /// only depends on a type parameter's constraint; T itself when it has
+  /// none, or when that is not safe (see Ownership.cpp).
+  Type *canonicalParams(Type *T);
+  bool isPinnedRec(Type *T, bool &Exact);
   /// Zero values (TYP-15, OWN-R9): false for a pointer kind, a struct with a
   /// `@Required` field or a C++ type without a default constructor, and for
   /// anything that contains one; for a type parameter, false unless every
   /// term of its constraint has one (GEN-5). Why gets the reason. True when
   /// not in Go++ mode.
   bool hasZeroValue(Type *T, std::string *Why = nullptr);
+  /// True when T has no zero value in every instance: unlike !hasZeroValue,
+  /// false for a type whose answer depends on a type parameter (GEN-5).
+  bool lacksZeroValueForSure(Type *T);
   /// Like !hasZeroValue, but a foreign (C++) type counts as having one: the
   /// types the move rule of ADR-0016 point 5 is about.
   bool lacksGoZeroValue(Type *T);
@@ -849,6 +876,15 @@ public:
   /// func, map, channel): never nil, checked at compile time (ADR-0016
   /// point 8). Slices and type parameters only mean "must be set".
   bool isNeverNilField(const Var *F);
+  /// Does `@Required` on a field of type Ty mean "never nil" (as opposed to
+  /// only "must be set")? The one list isNeverNilField reads.
+  bool requiredMeansNeverNil(Type *Ty);
+  /// How a message says why the required field F is required: "@Required"
+  /// where it is marked, "required (@Strict)" where only its struct's
+  /// `@Strict` makes it so (TYP-15a).
+  static const char *requiredWhy(const Var *F) {
+    return F->MarkedRequired ? "@Required" : "required (@Strict)";
+  }
   /// The selected field of a selector expression Ex, or null.
   const Var *selectedField(const ast::Expr *Ex);
   /// Lookups that can fail (ADR-0016 point 9): `m[k]` and `<-ch` of a type
@@ -887,6 +923,10 @@ public:
   /// the type arguments TArgs must not hold an Option of one of them that
   /// cannot be (Option[T] with T = error). Reported at Pos.
   void checkOptionArgs(SourceLoc Pos, Type *Inst, ArrayRef<Type *> TArgs);
+  /// TYP-15a per instance: an instance Inst (from a type expression) of a
+  /// generic `@Strict` struct whose `V T @Option` field gets a T with no zero
+  /// value. Reported at Pos.
+  void checkOptionFields(SourceLoc Pos, Type *Inst);
 
   // --- flow typing of Option (Flow.cpp, ADR-0018 point 4)
   // The state is the set of Option locals and parameters known to be set at

@@ -1,0 +1,23 @@
+// P03.20 (stress): one generic chain, many generic functions.
+// satisfiesClone walks the graph of types with an explicit stack: no
+// recursion, so a deep type cannot overflow the stack, and no depth cut, so
+// the depth of a type never decides the answer. Each generated case runs
+// under `timeout 3` (a quadratic or exponential walk fails it) and reports
+// exactly the errors checked here, so a false error fails it (and a crash
+// fails any RUN line, also under `not`). Split by case so each test stays
+// well under the 2 s budget in the ASan build (D0.13).
+//  - generic: 6000 generic types G<k>[T] and 12000 generic functions, each
+//    with its own T, cloning (`[T Clone]`) or copying (`[T Copy]`) a G<k>[T]:
+//    linear because the answers are asked with shared stand-ins for T (it
+//    took 60 s); three `[T any]` functions get the error, with the path down
+//    to T found on their own types.
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 6000 walk generic > %t.ge.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.ge.gopp > %t.ge.out 2>&1
+// RUN: grep -c "error\[E" %t.ge.out | FileCheck --check-prefix=THREE %s
+// RUN: FileCheck --check-prefix=GENERIC %s < %t.ge.out
+// GENERIC: error[E0267]: cannot clone g: G1[T] can't be cloned: field P.V (T) is not constrained by Clone (OWN-R6)
+// GENERIC: error[E0267]: cannot clone g: G3000[T] can't be cloned: field P{{([.]P){199}[.]}}(2800 more fields).V (T) is not constrained by Clone (OWN-R6)
+// GENERIC: error[E0267]: cannot clone g: G6000[T] can't be cloned: field P{{([.]P){199}[.]}}(5800 more fields).V (T) is not constrained by Clone (OWN-R6)
+// THREE: {{^3$}}
+package main

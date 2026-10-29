@@ -1,0 +1,80 @@
+// RUN: %gopp vet --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=warning[E" "--implicit-check-not=error[E" %s
+// RUN: %gopp check %s 2>&1 | not grep warning
+// RUN: not %gopp vet -Werror %s 2>/dev/null
+// P03.20 (ADR-0019 point 5, TYP-15a): `gopp vet` warns about a @Strict struct
+// with no required field: every field is Option[T], @Option or `_`, so
+// @Strict changes nothing. Both sides: the flagged forms warn, the structs
+// with a required field (an int, a pointer, an embedded field, an Option
+// marked @Required) are silent, and `gopp check` reports no warning at all.
+package lib
+
+type Plain struct{ N int }
+
+// CHECK: vet-strict.test:[[@LINE+2]]:6: warning{{\[E[0-9]+\]}}: struct AllOptional is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)
+@Strict
+type AllOptional struct {
+	A Option[int]
+	B string @Option
+	_ int
+}
+
+// CHECK: vet-strict.test:[[@LINE+2]]:6: warning{{\[E[0-9]+\]}}: struct Empty is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)
+@Strict
+type Empty struct{}
+
+// CHECK: vet-strict.test:[[@LINE+2]]:6: warning{{\[E[0-9]+\]}}: struct Both is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)
+@Strict
+type Both struct{ X, Y int @Option }
+
+@Strict
+type OneInt struct {
+	A Option[int]
+	N int
+}
+
+@Strict
+type Ptr struct {
+	A Option[int]
+	P *Plain
+}
+
+@Strict
+type Emb struct {
+	Plain @Option
+	Q     Plain
+}
+
+@Strict
+type Embedded struct {
+	A Option[int]
+	Plain
+}
+
+@Strict
+type Named struct {
+	A Option[int] @Required
+}
+
+// Generic structs: `V T` is required, `V T @Option` is not.
+@Strict
+type Generic[T any] struct{ V T }
+
+// CHECK: vet-strict.test:[[@LINE+2]]:6: warning{{\[E[0-9]+\]}}: struct GenericOpt is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)
+@Strict
+type GenericOpt[T any] struct{ V T @Option }
+
+// CHECK: vet-strict.test:[[@LINE+2]]:6: warning{{\[E[0-9]+\]}}: struct Paren is @Strict but has no required field: every field is Option, @Option or _, so @Strict changes nothing (TYP-15a)
+@Strict
+type Paren (struct{ A Option[int] })
+
+// Not @Strict: nothing to say.
+type Free struct {
+	A Option[int]
+	B string @Required
+}
+
+type NoAttr struct {
+	A Option[int]
+}
+
+func use() {}

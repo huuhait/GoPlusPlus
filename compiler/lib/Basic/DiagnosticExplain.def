@@ -2430,7 +2430,11 @@ func f() string {
 EXPLAIN(err_own_clone_not_cloneable,
         "Clone() is available for types that can be copied: built-in "
         "types and types with a Clone method. This type has a drop method "
-        "or holds something that cannot be cloned.",
+        "or holds something that cannot be cloned. The message names the "
+        "first field that blocks it, with the path of fields down to it "
+        "(`field A.mu (Mu) has a drop method but no Clone()`); the elements "
+        "of slices, arrays, maps, Options and Unique pointers are looked "
+        "through.",
         R"X(package p
 
 type R struct{ id int }
@@ -3367,5 +3371,94 @@ EXPLAIN(err_close_nil_chan,
 func g() {
 	var ch chan int
 	close(ch)
+}
+)X")
+EXPLAIN(err_strict_placement,
+        "@Strict is a type attribute: it is only allowed before the declaration of a struct type (`@Strict` on the line before `type S struct{...}`, generic struct types too). On a type that is not a struct type literal (`type T int`, or `type T Payment`, a defined type of a named struct), an alias, a func, a method, a variable, a constant or a field it is an error.",
+        R"X(package p
+
+@Strict
+type T int
+)X")
+EXPLAIN(err_option_placement,
+        "@Option is a field attribute: it is written after the type of a field of a @Strict struct. It is not allowed on a type, a func, a method, a variable, a constant or an import.",
+        R"X(package p
+
+@Option
+func f() {}
+)X")
+EXPLAIN(err_attr_no_args,
+        "@Strict and @Option take no arguments. Write the attribute without parentheses.",
+        R"X(package p
+
+@Strict(1)
+type S struct{ N int }
+)X")
+EXPLAIN(err_option_not_strict,
+        "@Option says that a field of a @Strict struct may be left out of a composite literal. In a struct that is not @Strict every field may be left out already, so the attribute has no meaning there. Remove it, or mark the struct @Strict. A struct type written inside a @Strict struct is not @Strict itself.",
+        R"X(package p
+
+type S struct {
+	N int @Option
+}
+)X")
+EXPLAIN(err_option_no_zero,
+        "@Option lets a field be left out of a literal, and then it gets its zero value. A type with no zero value (a pointer kind, a func, an interface with methods, a struct with a required field, a C++ type without a default constructor) can't be left out. Use Option[T] for the field instead. A field whose type is a type parameter (`V T @Option`) is checked for each instance instead, with the real type.",
+        R"X(package p
+
+type N struct{ V int }
+
+@Strict
+type S struct {
+	P *N @Option
+}
+)X")
+EXPLAIN(err_option_no_zero_instance,
+        "In a generic @Strict struct, `V T @Option` is accepted on the declaration and checked for each instance written in the code (GEN-5): Box[int] is fine, but Box[Payment] is an error when Payment has no zero value, because V could be left out and would then have no value. Instantiate the struct with a type that has a zero value, or declare the field Option[T]. A type argument of generic code is not checked here; there the field counts as required wherever its type may have no zero value.",
+        R"X(package p
+
+@Strict
+type Box[T any] struct {
+	N int
+	V T @Option
+}
+
+func f(b Box[*int]) {}
+)X")
+EXPLAIN(err_option_redundant,
+        "@Option is redundant on a field that is not required already: a field of type Option[T] (it may be left out and is nil), and the blank field `_`. Remove it.",
+        R"X(package p
+
+@Strict
+type S struct {
+	N int
+	O Option[int] @Option
+}
+)X")
+EXPLAIN(err_option_and_required,
+        "@Option says the field may be left out of a literal, and @Required says it must be set. A field can't have both. Keep the one you mean.",
+        R"X(package p
+
+@Strict
+type S struct {
+	N int @Option @Required
+}
+)X")
+EXPLAIN(err_required_redundant,
+        "In a @Strict struct every field is required already, except Option[T] fields, @Option fields and `_`. @Required on such a field adds nothing, so it is an error; the fix-it removes it. On an Option[T] field it is allowed: it means the literal must name the field (`Note: nil` is fine). On a pointer, func or method-interface field the error says that the field is never nil instead.",
+        R"X(package p
+
+@Strict
+type S struct {
+	N int @Required
+}
+)X")
+EXPLAIN(warn_vet_strict_no_required,
+        "A @Strict struct makes its fields required, except Option[T] fields, @Option fields and `_`. When every field is one of those, nothing is required and @Strict changes nothing. Remove @Strict, or drop an @Option or an Option[T] so that some field is required.",
+        R"X(package p
+
+@Strict
+type S struct {
+	N Option[int]
 }
 )X")

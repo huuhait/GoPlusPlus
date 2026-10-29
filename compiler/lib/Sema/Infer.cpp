@@ -108,13 +108,20 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
     for (Var *F : P->Fields) {
       Type *Y = Rec(F->Ty);
       Changed |= Y != F->Ty;
-      // `Val T @Required` stays "must be set" only in every instance.
-      bool SetOnly =
-          F->Required && (F->RequiredSetOnly || isa<TypeParamType>(F->Ty));
-      Fs.push_back(
-          {F->Name, F->Pkg, Y, F->Embedded, F->Tag, F->Required, SetOnly});
+      // `Val T @Required` stays "must be set" only in every instance. The
+      // effective bit was decided on the generic declaration (TYP-15a: `V T`
+      // of a @Strict struct stays required for T = Option[int]).
+      // The mark only matters where it changes never-nil-ness (error, any,
+      // map, chan): elsewhere it would split the identity of equal types.
+      // A type that is not resolved yet keeps the mark (the safe side).
+      bool SetOnly = F->Required &&
+                     (F->RequiredSetOnly || isa<TypeParamType>(F->Ty)) &&
+                     (isa<TypeParamType>(Y) || !isValid(under(Y)) ||
+                      requiredMeansNeverNil(Y));
+      Fs.push_back({F->Name, F->Pkg, Y, F->Embedded, F->Tag, F->Required,
+                    SetOnly, F->MarkedRequired, F->MarkedOption});
     }
-    return Changed ? Ctx.structOf(Fs) : T;
+    return Changed ? Ctx.structOf(Fs, P->Strict) : T;
   }
   case Type::Kind::Union: {
     auto *P = cast<UnionType>(T);
@@ -515,11 +522,16 @@ bool Unifier::nify(Type *X, Type *Y, unsigned Mode, unsigned Depth) {
   case Type::Kind::Struct: {
     auto *A = cast<StructType>(X);
     auto *B = dyn_cast<StructType>(Y);
-    if (!B || A->Fields.size() != B->Fields.size())
+    if (!B || A->Fields.size() != B->Fields.size() || A->Strict != B->Strict)
       return false;
     for (size_t I = 0; I < A->Fields.size(); ++I) {
       Var *F = A->Fields[I], *G = B->Fields[I];
+      // Identity includes the attributes (TYP-15a), like the tag.
       if (F->Embedded != G->Embedded || F->Tag != G->Tag ||
+          F->Required != G->Required ||
+          F->RequiredSetOnly != G->RequiredSetOnly ||
+          F->MarkedRequired != G->MarkedRequired ||
+          F->MarkedOption != G->MarkedOption ||
           !C.sameId(F, G->Pkg, G->Name, false) ||
           !nify(F->Ty, G->Ty, EMode, Depth + 1))
         return false;

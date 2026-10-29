@@ -1,0 +1,82 @@
+// P03.20 (R3, R6): satisfiesClone has no depth cap that answers "cloneable",
+// and every named type caches its answer. Small cases first: a chain of 20
+// structs over a drop type without Clone is rejected (it was accepted), and a
+// chain of 20 cloneable structs is accepted. The generated part (stress): 3000
+// cloneable levels with one Clone() each (fine), a blocked chain of 3000
+// levels (one error, its path shortened), and two DAGs of 16 levels
+// with 3 fields of the previous level each: the cloneable one is fine, the
+// blocked one reports the first path (3^16 walks without the cache). The same
+// DAGs satisfy (D16) or fail (F16, blocked only in its last field) a `[T Clone]`
+// constraint checked while the types are declared, before the bodies. `timeout`
+// stops a quadratic or exponential check.
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: %python %S/Inputs/gen-strict-stress.py 3000 clone > %t.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: grep -c "error\[E0267\]" %t.out | FileCheck --check-prefix=ALL %s
+// RUN: grep -c "error\[E0323\]" %t.out | FileCheck --check-prefix=CONSTR %s
+// RUN: grep "error\[E0323\]" %t.out | FileCheck --check-prefix=CONSTRMSG %s
+// RUN: grep "cannot clone c: C3000" %t.out | FileCheck --check-prefix=CHAIN %s
+// RUN: grep "cannot clone b: B16" %t.out | FileCheck --check-prefix=DAG %s
+// ALL: 2
+// CONSTR: 1
+// CONSTRMSG: F16 does not satisfy Clone (field c.c.c.c.c.c.c.c.c.c.c.c.c.c.c.c.mu (Mu) has a drop method but no Clone())
+// CHAIN: field in{{([.]in){199}[.]}}(2800 more fields).mu (Mu) has a drop method but no Clone()
+// DAG: field a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.mu (Mu) has a drop method but no Clone()
+package main
+
+type Mu struct{ b bool }
+
+func (m *Mu) drop() {}
+
+type C0 struct{ mu Mu }
+type C1 struct{ in C0 }
+type C2 struct{ in C1 }
+type C3 struct{ in C2 }
+type C4 struct{ in C3 }
+type C5 struct{ in C4 }
+type C6 struct{ in C5 }
+type C7 struct{ in C6 }
+type C8 struct{ in C7 }
+type C9 struct{ in C8 }
+type C10 struct{ in C9 }
+type C11 struct{ in C10 }
+type C12 struct{ in C11 }
+type C13 struct{ in C12 }
+type C14 struct{ in C13 }
+type C15 struct{ in C14 }
+type C16 struct{ in C15 }
+type C17 struct{ in C16 }
+type C18 struct{ in C17 }
+type C19 struct{ in C18 }
+type C20 struct{ in C19 }
+
+type Q0 struct{ x []int }
+type Q1 struct{ in Q0 }
+type Q2 struct{ in Q1 }
+type Q3 struct{ in Q2 }
+type Q4 struct{ in Q3 }
+type Q5 struct{ in Q4 }
+type Q6 struct{ in Q5 }
+type Q7 struct{ in Q6 }
+type Q8 struct{ in Q7 }
+type Q9 struct{ in Q8 }
+type Q10 struct{ in Q9 }
+type Q11 struct{ in Q10 }
+type Q12 struct{ in Q11 }
+type Q13 struct{ in Q12 }
+type Q14 struct{ in Q13 }
+type Q15 struct{ in Q14 }
+type Q16 struct{ in Q15 }
+type Q17 struct{ in Q16 }
+type Q18 struct{ in Q17 }
+type Q19 struct{ in Q18 }
+type Q20 struct{ in Q19 }
+
+func negative(c C20) {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error[E0267]: cannot clone c: C20 can't be cloned: field in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.mu (Mu) has a drop method but no Clone()
+	_ = c.Clone()
+}
+
+func positive(q Q20) { _ = q.Clone() }
+
+func main() {}

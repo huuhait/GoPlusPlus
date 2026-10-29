@@ -358,3 +358,13 @@ E0352 err_maybe_nil_to_never_nil
 E0353 err_map_temp_write
 E0354 err_box_write
 E0355 err_close_nil_chan
+E0356 err_strict_placement
+E0357 err_option_placement
+E0358 err_attr_no_args
+E0359 err_option_not_strict
+E0360 err_option_no_zero
+E0361 err_option_no_zero_instance
+E0362 err_option_redundant
+E0363 err_option_and_required
+E0364 err_required_redundant
+E0365 warn_vet_strict_no_required

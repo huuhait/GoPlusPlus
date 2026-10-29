@@ -605,7 +605,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         recordUse(Key, Fld);
         if (V.isNil() && isNeverNilField(Fld))
           err(V, diag::err_required_nil_store,
-              {str(Base) + "." + std::string(Fld->Name)});
+              {str(Base) + "." + std::string(Fld->Name), requiredWhy(Fld)});
         else
           checkNeverNilStore(V, Fld, str(Base) + "." + std::string(Fld->Name));
         if (!checkPointerField(V, Fld->Ty)) {
@@ -639,7 +639,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         }
         if (V.isNil() && isNeverNilField(Fld))
           err(V, diag::err_required_nil_store,
-              {str(Base) + "." + std::string(Fld->Name)});
+              {str(Base) + "." + std::string(Fld->Name), requiredWhy(Fld)});
         else
           checkNeverNilStore(V, Fld, str(Base) + "." + std::string(Fld->Name));
         if (!checkPointerField(V, Fld->Ty)) {

@@ -118,6 +118,47 @@ type Gate struct {
 	Open error @Required
 }
 
+// P03.20: a @Strict struct. The effective required bits and the attributes
+// (`@Strict`, `@Required`, `@Option`) are stored.
+@Strict
+type Payment struct {
+	ID      int
+	Amount  int64
+	Note    Option[string]
+	Retries int @Option
+	_       int
+}
+@Strict
+type Memo struct {
+	Note Option[string] @Required
+	N    int
+}
+@Strict
+type GenOpt[T any] struct {
+	N int
+	V T @Option
+}
+type Ledger struct {
+	Pay  Payment
+	Size int
+}
+type RawPayment struct {
+	ID      int @Required
+	Amount  int64 @Required
+	Note    Option[string]
+	Retries int
+	_       int
+}
+type LoosePayment struct {
+	ID      int
+	Amount  int64
+	Note    Option[string]
+	Retries int
+	_       int
+}
+@Strict
+type Gen[T any] struct{ V T }
+
 type Alias = Point
 type Fn func(int) (string, error)
 type Celsius float64
@@ -385,6 +426,137 @@ func f() {
   EXPECT_TRUE(checkMain(L.Ctx, L.CP->Pkg, Good).empty());
   EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
   // And the bytes of the copy are the bytes of the original.
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+}
+
+// The struct of a named type of P as text: `S:` if it is @Strict (`-:` if
+// not), then per field its effective required bit (R or -) and the
+// attributes written on it (r: @Required, o: @Option).
+std::string strictBits(Package *P, const char *Type) {
+  auto *N = llvm::cast<NamedType>(P->PkgScope->lookupLocal(Type)->Ty);
+  auto *St = llvm::cast<StructType>(N->Underlying);
+  std::string S = St->Strict ? "S:" : "-:";
+  for (const Var *F : St->Fields) {
+    S += ' ';
+    S += F->Required ? 'R' : '-';
+    if (F->MarkedRequired)
+      S += 'r';
+    if (F->MarkedOption)
+      S += 'o';
+  }
+  return S;
+}
+
+// P03.20: the effective required bits of a @Strict struct and the attributes
+// (`@Strict`, `@Required`, `@Option`; P09 and P14 read them) survive the
+// round trip: a package importing Payment gets the same errors from the copy
+// read back from bytes as from the original, for the rules of literals and
+// zero values, the bit compared in a conversion, the messages that say why a
+// field is required, and `V T @Option` judged per instance.
+TEST(Serialize, StrictStructBitsSurviveTheRoundTripAcrossPackages) {
+  Loaded L;
+  ASSERT_NE(L.CP, nullptr);
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  // The dump shows the attributes as written: type identity includes them, so
+  // the strict struct and the one marked by hand print differently.
+  std::string D = dump(*P2);
+  EXPECT_NE(D.find("type Payment @Strict struct{ID int; Amount int64; "
+                   "Note Option[string]; Retries int @Option; _ int}"),
+            std::string::npos)
+      << D;
+  EXPECT_NE(D.find("type RawPayment struct{ID int @Required; Amount int64 "
+                   "@Required; Note Option[string]; Retries int; _ int}"),
+            std::string::npos)
+      << D;
+  auto State = [&](const char *Name) {
+    auto *N = llvm::cast<NamedType>(P2->PkgScope->lookupLocal(Name)->Ty);
+    return N->ZeroState.load();
+  };
+  EXPECT_EQ(State("Payment"), 2);
+  EXPECT_EQ(State("Ledger"), 2);
+  EXPECT_EQ(State("RawPayment"), 2);
+  EXPECT_EQ(State("LoosePayment"), 1);
+  // The bits and the attributes, exactly, and the same as the original's.
+  EXPECT_EQ(strictBits(P2, "Payment"), "S: R R - -o -");
+  EXPECT_EQ(strictBits(P2, "RawPayment"), "-: Rr Rr - - -");
+  EXPECT_EQ(strictBits(P2, "LoosePayment"), "-: - - - - -");
+  EXPECT_EQ(strictBits(P2, "Memo"), "S: Rr R");
+  EXPECT_EQ(strictBits(P2, "Gen"), "S: R");
+  EXPECT_EQ(strictBits(P2, "GenOpt"), "S: R -o");
+  for (const char *T :
+       {"Payment", "RawPayment", "LoosePayment", "Memo", "Gen", "GenOpt"})
+    EXPECT_EQ(strictBits(P2, T), strictBits(L.CP->Pkg, T)) << T;
+
+  const char *Bad = R"(package main
+import "lib"
+func f(loose lib.LoosePayment, ch chan lib.Payment) {
+	_ = lib.Payment{ID: 1}
+	var p lib.Payment
+	var l lib.Ledger
+	var g lib.Gen[int]
+	_ = make([]lib.Payment, 3)
+	_ = lib.Ledger{Size: 1}
+	_ = lib.LoosePayment(lib.Payment{ID: 1, Amount: 2})
+	_ = lib.Payment(loose)
+	_, _, _ = p, l, g
+	_ = ch
+	var m lib.Memo
+	_ = m
+}
+func g(b lib.GenOpt[lib.Payment]) {}
+)";
+  const char *Good = R"(package main
+import "lib"
+func f() {
+	raw := lib.RawPayment{ID: 1, Amount: 2}
+	p := lib.Payment{ID: 1, Amount: 2, Retries: 3}
+	q := lib.Payment{ID: 1, Amount: 2, Note: nil}
+	l := lib.Ledger{Pay: p, Size: 1}
+	g := lib.Gen[int]{V: 1}
+	r := lib.RawPayment(p)
+	s := lib.Payment(raw)
+	ps := make([]lib.Payment, 0, 4)
+	_, _, _, _, _, _, _ = q, l, g, r, s, ps, p
+	m := lib.Memo{Note: nil, N: 1}
+	o := lib.GenOpt[int]{N: 1}
+	_, _ = m, o
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(
+      anyHas(Decoded, "missing required field Amount in lib.Payment literal"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Payment has no zero value"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Ledger has no zero value"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Gen[int] has no zero value"));
+  EXPECT_TRUE(anyHas(Decoded, "make([]lib.Payment, 3) creates zero values"));
+  EXPECT_TRUE(
+      anyHas(Decoded, "missing required field Pay in lib.Ledger literal"));
+  EXPECT_TRUE(anyHas(Decoded, "to type lib.LoosePayment"));
+  EXPECT_TRUE(anyHas(Decoded, "to type lib.Payment"));
+  // The messages say why a field is required: @Strict or the mark.
+  EXPECT_TRUE(anyHas(Decoded, "lib.Payment has no zero value (field ID is "
+                              "required (@Strict))"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Memo has no zero value (field Note is "
+                              "@Required)"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.GenOpt[lib.Payment]: field V is @Option, "
+                              "but lib.Payment has no zero value"));
+  EXPECT_EQ(Decoded.size(), 10u);
+  EXPECT_TRUE(checkMain(L.Ctx, L.CP->Pkg, Good).empty());
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
   MemoryRecordStream Again;
   TypeWriter(Again).writePackage(*P2);
   EXPECT_EQ(Again.toBytes(), Bytes);

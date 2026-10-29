@@ -122,12 +122,23 @@ void Checker::importPackage(const ImportSpec *Spec, FileState &F) {
   F.Imports.push_back(PN);
 }
 
-/// `@Pinned` before a type declaration (OWN-R10).
-static bool hasPinnedAttr(const GenDecl *GD) {
+static const ast::Expr *unparen(const ast::Expr *E) {
+  while (auto *P = dyn_cast<ParenExpr>(E))
+    E = P->X;
+  return E;
+}
+
+/// A built-in attribute `@Name` before a declaration.
+static bool hasDeclAttr(const GenDecl *GD, StringRef Name) {
   for (const Attribute *A : GD->Attrs)
-    if (!A->Pkg && A->Name && A->Name->Name.str() == "Pinned")
+    if (!A->Pkg && A->Name && A->Name->Name.str() == Name)
       return true;
   return false;
+}
+
+/// `@Pinned` before a type declaration (OWN-R10).
+static bool hasPinnedAttr(const GenDecl *GD) {
+  return hasDeclAttr(GD, "Pinned");
 }
 
 static StringRef recvBaseName(const ast::Expr *R, bool &Ptr,
@@ -200,7 +211,8 @@ void Checker::collectObjects() {
       err(File->Name, diag::err_sema_decl, {"invalid package name _"});
     F.FileScope = Mem.newScope(PkgScope, File->getRange(), "file");
     for (const ast::Decl *D : File->Decls) {
-      // @Required is a field attribute only (MAC-8).
+      // @Required and @Option are field attributes only, @Strict is for a
+      // struct type declaration (MAC-8, TYP-15a).
       if (own()) {
         ArrayRef<Attribute *> Attrs;
         const char *What = "";
@@ -214,9 +226,37 @@ void Checker::collectObjects() {
           Attrs = FD0->Attrs;
           What = FD0->Recv ? "a method" : "a function";
         }
-        for (const Attribute *A : Attrs)
-          if (!A->Pkg && A->Name && name(A->Name) == "Required")
+        for (const Attribute *A : Attrs) {
+          if (A->Pkg || !A->Name)
+            continue;
+          StringRef AN = name(A->Name);
+          if (AN == "Required")
             err(A->AtLoc, diag::err_required_placement, {What});
+          else if (AN == "Option")
+            err(A->AtLoc, diag::err_option_placement, {What});
+          else if (AN == "Strict") {
+            // TYP-15a: @Strict stands before a struct type declaration; each
+            // type of a group must be a (non-alias) struct type literal, so
+            // a defined type of a named struct is not one.
+            auto *GD0 = dyn_cast<GenDecl>(D);
+            if (!GD0 || GD0->Keyword != tok::kw_type) {
+              err(A->AtLoc, diag::err_strict_placement, {What});
+              continue;
+            }
+            if (A->HasArgs)
+              err(A->AtLoc, diag::err_attr_no_args, {"@Strict"});
+            for (const Spec *Sp : GD0->Specs) {
+              auto *TS = cast<TypeSpec>(Sp);
+              if (TS->AssignLoc.isValid())
+                err(A->AtLoc, diag::err_strict_placement,
+                    {"the alias " + std::string(name(TS->Name))});
+              else if (!isa<ast::StructType>(unparen(TS->Type)))
+                err(A->AtLoc, diag::err_strict_placement,
+                    {"type " + std::string(name(TS->Name)) +
+                     ", which is not a struct type"});
+            }
+          }
+        }
       }
       if (auto *GD = dyn_cast<GenDecl>(D)) {
         const ConstValue *IotaPtr = nullptr;
@@ -303,6 +343,7 @@ void Checker::collectObjects() {
             DI->FileScope = F.FileScope;
             DI->TDecl = TS;
             DI->Pinned = hasPinnedAttr(GD);
+            DI->Strict = hasDeclAttr(GD, "Strict");
             DeclarePkg(TS->Name, TN, DI);
             break;
           }
@@ -427,6 +468,10 @@ void Checker::packageObjects() {
     objDecl(O, nullptr);
   for (Object *O : Aliases)
     objDecl(O, nullptr);
+  // Every package-level type and its method list are final now; a local type
+  // declared later (in a function literal) is final once declFinished says
+  // so.
+  TypesDeclared = true;
   for (Object *O : Others)
     objDecl(O, nullptr);
   // Methods: resolve all signatures (also those of invalid receivers).
@@ -564,7 +609,7 @@ void Checker::objDecl(Object *O, NamedType *Def) {
     varDecl(cast<Var>(O), D->Lhs, D->VType, D->Init);
     break;
   case Object::Kind::TypeName:
-    typeDecl(cast<TypeName>(O), D->TDecl, Def, D->Pinned);
+    typeDecl(cast<TypeName>(O), D->TDecl, Def, D->Pinned, D->Strict);
     break;
   case Object::Kind::Func:
     // Names used in a signature are no initialization dependencies of the
@@ -650,7 +695,7 @@ void Checker::varDecl(Var *O, ArrayRef<Var *> Lhs, const ast::Expr *Typ,
 }
 
 void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
-                       bool Pinned) {
+                       bool Pinned, bool Strict) {
   (void)Def;
   if (TD->AssignLoc.isValid()) {
     // Alias, possibly generic (Go 1.24).
@@ -694,7 +739,14 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
   }
   N->Resolving = true;
   N->ResolvingInterface = isa<ast::InterfaceType>(TD->Type);
+  // TYP-15a: `@Strict` makes the fields of this very struct type required.
+  const ast::StructType *SavedStrict = StrictStructExpr;
+  StrictStructExpr = nullptr;
+  if (Strict && own())
+    if (auto *St = dyn_cast<ast::StructType>(unparen(TD->Type)))
+      StrictStructExpr = St;
   Type *Rhs = definedType(TD->Type, N);
+  StrictStructExpr = SavedStrict;
   N->Resolving = false;
   N->ResolvingInterface = false;
   E.Sc = Saved;

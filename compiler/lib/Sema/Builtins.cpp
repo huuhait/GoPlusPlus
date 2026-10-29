@@ -818,7 +818,7 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         }
         if (const Var *F = selectedField(A0);
             F && isNeverNilField(F) && !Refilled) {
-          err(Arg, diag::err_required_move, {str(Arg)});
+          err(Arg, diag::err_required_move, {str(Arg), requiredWhy(F)});
           return false;
         }
         // ADR-0016 point 5: moving out of a non-local place of a type with

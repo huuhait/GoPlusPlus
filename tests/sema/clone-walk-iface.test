@@ -1,0 +1,16 @@
+// P03.20 (R11, stress): a type parameter inside an interface literal.
+// satisfiesClone walks the graph of types with an explicit stack: no
+// recursion, so a deep type cannot overflow the stack, and no depth cut, so
+// the depth of a type never decides the answer. Each generated case runs
+// under `timeout 3` (a quadratic or exponential walk fails it) and reports
+// exactly the errors checked here, so a false error fails it (and a crash
+// fails any RUN line, also under `not`). Split by case so each test stays
+// well under the 2 s budget in the ASan build (D0.13).
+//  - iface: 1000 Copy and 1000 Clone queries on a 2000-level chain whose
+//    argument is an interface mentioning T (interfaces are not uniqued, so
+//    stand-ins there would build the chain anew per query: 4.5 s, 1.4 GB).
+//    Nothing is reported.
+//
+// RUN: %python %S/Inputs/gen-strict-stress.py 2000 walk iface > %t.if.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.if.gopp
+package main

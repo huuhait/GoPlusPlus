@@ -1,0 +1,9 @@
+// P03.20 (stress, M3): 30000 nested named structs and one conversion per
+// level. Each conversion asks whether its operand is pinned (OWN-R10), which
+// walked the whole chain every time: quadratic (2.4 s at 24000 levels, about
+// 3.7 s at 30000). The answer is cached per named type now, so the check takes
+// about 0.3 s; `timeout` fails the test if the walk comes back. Nothing is
+// reported.
+// RUN: %python %S/Inputs/gen-strict-stress.py 30000 chain > %t.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+package main
