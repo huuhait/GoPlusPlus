@@ -61,6 +61,8 @@
 - When the OS has no data (`scratch` or distroless images), it uses an embedded copy of the tzdata release bundled with gopp. The copy (~450 KB) is linked only into programs that can reach `LoadLocation`.
 - `-tags notzdata` leaves the copy out. `import _ "time/tzdata"` is accepted for Go compatibility and does nothing extra.
 
+**D13.9 — A `units` package (ADR-0025, UNI-14).** Ordinary Go++ source made of `unit` declarations, with `@Symbol` texts for printing. SI base units `M`, `S`, `KG`, `A`, `K`, `MOL`, `CD`; common derived and scaled units (`MM`, `CM`, `KM`, `G`, `MS`, `US`, `NS`, `MIN`, `H`, `DAY`, `HZ`, `N`, `PA`, `J`, `W`, `V`, `L`, `RAD` and `DEG` as a base unit pair). No Celsius (units have no offset). `fmt` prints unit values with their unit (D13.4, UNI-12). `time.Duration` stays the Go-style typed type for now (UNI-16); moving it to `int64[NS]` is an open point of ADR-0025. `math` stays unitless (UNI-11). Built in P13.07 with `time`.
+
 ## Deliverables
 
 - T1 and T2 packages, with ported tests passing under ASan.

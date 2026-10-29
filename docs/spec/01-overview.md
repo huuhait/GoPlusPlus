@@ -35,6 +35,7 @@ The P01 review (P01.15) is done. During the review, places where the plan was si
 | `FOR` | [14 foreign surface](14-foreign-surface.md) |
 | `INI` | [15 program init](15-program-init.md) |
 | `UB` | [16 undefined behavior](16-undefined-behavior.md) |
+| `UNI` | [17 units of measure](17-units.md) |
 
 ## 1.3 What stays as in Go
 
@@ -64,6 +65,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | Data races | limited damage | compile error in normal code; UB only in `unsafe` and C/C++ (UB-3) | 12, 16 |
 | C interop | cgo | header imports `"<stdio.h>"` | 14 |
 | Macros | `go generate` | `#Name(...)`, `@Name`, `macro` | 13 |
+| Units | typed constants times a number (`30 * time.Second`); no unit math, `Meters + Seconds` needs two named types and conversions | `unit KM = 1000 M`, `float64[KM]`, `100.0[KM]`; the compiler does the unit math (`KM/H`), converts scales when compiling, rejects `KM + H`; no run-time cost (ADR-0025) | 17, 06 |
 | Reuse of a struct | embedding (promotion) | embedding removed in `.gopp`; single inheritance `extends`, with `@Virtual` / `@Abstract` / `@Override` and `base` | 03 |
 
 ## 1.5 Delta index
@@ -92,6 +94,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | D1.20 | re-slicing in place | [08](08-slices-and-range.md) |
 | D1.21 | range loops | [08](08-slices-and-range.md) |
 | D1.22 | allocators in slices and maps | [08](08-slices-and-range.md) |
+| ADR-0025 | units of measure (`unit`, `float64[KM]`, `100.0[KM]`) | [17](17-units.md), [06](06-expressions.md#612-unit-expressions-adr-0025) |
 
 ## 1.6 Key words used in this spec
 

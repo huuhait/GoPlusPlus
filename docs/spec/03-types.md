@@ -19,6 +19,10 @@ FieldDecl    = IdentifierList Type [ FieldAttributes ] [ Tag ] .              /*
 `extends` is a contextual keyword ([LEX-12](02-lexical.md#lex-12)). A struct type has no embedded fields in `.gopp` files ([TYP-25](#35-single-inheritance-adr-0023)). Interface types can still embed interfaces and constraints.
 
 ```
+Type      = /* above */ | UnitType .                                              /* TYP-29, UNI-6 */
+```
+
+```
 MethodName   = identifier | OperatorName .                                      /* TYP-27 */
 OperatorName = "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" | "&^"
              | "!" | "==" | "<=>" | "&&" | "||"
@@ -34,10 +38,18 @@ OperatorName = "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" | "&^
 - **Not allowed on an operator method:** type parameters of its own, and `!` ([EXP-30](06-expressions.md#610-operator-methods-adr-0024)). Type parameters of the receiver type are fine: `func (a Vec[T]) + (b Vec[T]) Vec[T]`.
 - **Go mode.** In `.go` files an operator method is a syntax error.
 
+**TYP-29.** *Unit types* (ADR-0025). `UnitType = NumericName "[" UnitExpr "]"` ([17.1](17-units.md#171-syntax)): a built-in numeric type with a unit, such as `float64[KM]` or `int[M/S^2]`.
+- *Parsing.* The parser reads `float64[KM]` like a generic instantiation (`Name "[" … "]"`). After a predeclared numeric type name it reads the bracket with the unit grammar; in other type bracket lists an element followed by `/`, `^` or `*` is continued as a unit expression. Rule: [UNI-7](17-units.md#172-rules).
+- *Checking.* The checker looks at the base name: a predeclared numeric type makes the bracket a unit; a generic type with a `unit` type parameter takes a unit for that argument; any other use is the usual generic shape or an error ([UNI-6](17-units.md#172-rules), [UNI-7](17-units.md#172-rules)).
+- *Identity.* `T[U]` is identical to `T[V]` when the canonical forms of `U` and `V` are equal ([UNI-5](17-units.md#172-rules)); it is a different type from `T`. A defined type may have it as its underlying type (`type Distance float64[M]`, [UNI-8](17-units.md#172-rules)).
+- *Layout and category.* Same as `T` ([UNI-9](17-units.md#172-rules)); it is a trivial `Copy` number type ([UNI-15](17-units.md#172-rules)).
+- *Go mode.* In `.go` files `float64[KM]` is an error.
+
 Other notes on type syntax:
 
 - `move` is **not** a type. It is a mark on a parameter or receiver ([PAR-5](05-parameters.md)).
 - `View[X]` is an ordinary `TypeName TypeArgs`: a predeclared generic type, not a keyword and not new syntax ([LEX-7](02-lexical.md#predeclared-identifiers), [OWN-V1](04-ownership.md#44-views-d16)). It is a read-only borrow of an `X`. `X` may be any type except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]`: `View[string]`, `View[[]byte]`, `View[User]` and `View[Bytes]` are fine; the others are a compile error that names the allowed forms.
+- A built-in numeric type can take a unit: `float64[KM]` ([TYP-29](#31-type-syntax)). It is a type syntax, not a predeclared generic type.
 - Predeclared generic types: `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]` and `View[X]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)). The argument of `Unique`, `Shared` and `Weak` must be a pointer type `*T`.
 - Types imported from C and C++ headers are plain Go++ types ([chapter 14](14-foreign-surface.md)).
 

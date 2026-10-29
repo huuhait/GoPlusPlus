@@ -9,21 +9,22 @@ Start with the [overview](01-overview.md).
 | # | Chapter | Covers | Plan decisions |
 |---|---|---|---|
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
-| 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, `<=>`, predeclared names | D1.2, ADR-0024 |
-| 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, single inheritance (`extends`) | D1.12, D1.17, ADR-0023 |
+| 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, `<=>`, predeclared names, contextual `unit` | D1.2, ADR-0024, ADR-0025 |
+| 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, single inheritance (`extends`), unit types | D1.12, D1.17, ADR-0023, ADR-0025 |
 | 4 | [Ownership](04-ownership.md) | categories, rules 1 to 10, pointers, views | D1.3, D1.4, D1.6, D1.7 |
 | 5 | [Parameters](05-parameters.md) | borrow, `move`, receivers, ABI | D1.5 |
-| 6 | [Expressions](06-expressions.md) | `move`, `clone`, safety defaults, operator methods | D1.17, ADR-0024 |
+| 6 | [Expressions](06-expressions.md) | `move`, `clone`, safety defaults, operator methods, unit expressions | D1.17, ADR-0024, ADR-0025 |
 | 7 | [Statements](07-statements.md) | assignment, blocks, headers | D1.4, D1.6 |
 | 8 | [Slices, maps and range](08-slices-and-range.md) | in-place re-slicing, allocators, range (also over user types) | D1.20, D1.21, D1.22, ADR-0024 |
 | 9 | [Errors and panics](09-errors-and-panics.md) | `!`, `call!()`, panic, defer, recover | D1.8, D1.9, D1.19 |
-| 10 | [Generics](10-generics.md) | `Copy`, `Clone`, generic methods, operator constraints | D1.10, ADR-0024 |
+| 10 | [Generics](10-generics.md) | `Copy`, `Clone`, generic methods, operator constraints, unit parameters | D1.10, ADR-0024, ADR-0025 |
 | 11 | [Closures](11-closures.md) | shared cells, method values | D1.11 |
 | 12 | [Concurrency](12-concurrency.md) | `go`, channels, `select`, races, user `<-` types | D1.13, ADR-0024 |
-| 13 | [Macro and attribute surface](13-macros-surface.md) | `macro`, `#`, `@`, built-in attributes | D1.14 |
+| 13 | [Macro and attribute surface](13-macros-surface.md) | `macro`, `#`, `@`, built-in attributes (`@Symbol`) | D1.14, ADR-0025 |
 | 14 | [Foreign import surface](14-foreign-surface.md) | header imports, `gopp.mod` C/C++ settings, `//gopp:build` | D1.15 |
 | 15 | [Program init and exit](15-program-init.md) | start and exit order | D1.18 |
 | 16 | [Undefined behavior](16-undefined-behavior.md) | UB and implementation-defined list | D1.4 r8, D1.17 |
+| 17 | [Units of measure](17-units.md) | `unit` declarations, `float64[KM]`, unit literals, unit math, `[U unit]`, printing | ADR-0025 |
 
 ## Samples (D1.16)
 

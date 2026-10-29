@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-28 (P03.01–P03.20 done; P03.21, P03.22, P03.23 and P03.24 open)
+Last updated: 2026-10-28 (P03.01–P03.20 done; P03.21, P03.22, P03.23, P03.24 and P03.25 open)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -31,6 +31,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [ ] P03.22 `extends`, method marks and no struct embedding (ADR-0023)
 - [ ] P03.23 Iterative declaration checking: no stack overflow on deep named-type rings
 - [ ] P03.24 Operator overloading (ADR-0024)
+- [ ] P03.25 Units of measure (ADR-0025)
 
 ## Open questions
 
@@ -46,6 +47,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0025, owner decision): new task P03.25 and design D3.15. Units of measure in the language, like F# but written `[UNIT]`: `unit KM = 1000 M`, `float64[KM]`, `100.0[KM]`, unit math with a canonical form, `+` and comparisons convert both operands to the finer unit, the untyped constant `0` fits every unit, exact units for assignment, exact integer scale conversions, `[U unit]` generics, `.In[U]()`, `@Symbol`. ADR-0024 decision 15 (no literal suffixes) stays. Task count 261.
 - 2026-10-28 (ADR-0024, owner decision): new task P03.24 and design D3.14. Operator overloading, "full minus unsafe": the operator is the method name (`func (a Vec2) + (b Vec2) Vec2`); binary, unary, `==` (gives `!=`), `<=>` returning `int` (gives `< <= > >=`), `&&`/`||` (lazy with `func() T`), `[]`/`[]=`, `()`, `<-`, explicit `@Convert`, `range`, `++`/`--`, read-only `*x`, `@Right` for a number on the left, operator constraints in generics, and `gopp vet` for `==`/`<=>`. Blocked: `=`, `.`, `&x`, the comma and implicit conversions. Replaces the non-goal "no user-defined operator overloading". The number 23 is skipped on purpose (a parallel branch may add P03.23).
 - 2026-10-28 (owner decisions): P03.22 also builds the generic constraint `T extends Parent` (ADR-0023 decision 15, GEN-12); a C++ class as a parent is checked in P08.16. P03.24 has no literal-suffix work any more (ADR-0024 decision 15).
 - 2026-10-28 (ADR-0024, manager decisions on the open points): the conversion hook is the attribute `@Convert` on an ordinary method (not a method named `to`); `<=>` is built in for numbers and strings (like `cmp.Compare`); `@Right` is allowed on every binary operator except `&&`/`||` (non-commutative operators are written for the swapped order, e.g. `1.0 / v`); an optional in-place compound method with a pointer receiver (`func (m *Matrix) += (b Matrix)`) avoids the temporary. `select` with user channels, user `==` ignored for map keys, constraint-only operator interfaces and no `!` on operators are decided. The one open point left (literal suffixes from other packages) was closed later the same day: literal suffixes were dropped (see the units line).

@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27 (build profiles added)
+Last updated: 2026-10-28 (units LSP note)
 Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](README.md)
 
 ## Tasks
@@ -32,6 +32,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0025, owner decision): the LSP supports units: hover with the unit and canonical form, go-to-definition, completion, references and rename of unit names in `[ ]`, and quick fixes for unit mismatches (P14.06). No new task.
 - 2026-10-28 (ADR-0024, owner decision): the LSP supports operator methods: hover and go-to-definition on operator expressions, conversions, indexes, and `range` loops; find references; "add operator method" action; quick fixes for blocked operators (P14.06 note; depends on P03.24 and P04.23).
 - 2026-10-28 (ADR-0023, owner decision): the LSP supports `extends`: go to override / find overrides, `base.M` definition, "implement abstract methods", rename of virtual methods, and a quick fix for struct embedding (P14.06 note; depends on P03.22 and P04.22).
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): `view` is renamed `ref` in hover text and pretty printers.

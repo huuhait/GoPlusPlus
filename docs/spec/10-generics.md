@@ -13,6 +13,12 @@ TypeParamDecl = IdentifierList ( TypeConstraint | "extends" Type ) .     /* [T e
 InterfaceElem = /* Go alternatives */ | "extends" Type .                /* GEN-12 */
 ```
 
+A type parameter whose whole constraint is `unit` is a **unit parameter** ([GEN-14](#102-rules)): `func Avg[U unit](xs []float64[U]) float64[U]`.
+
+```
+TypeConstraint = /* Go alternatives */ | "unit" .                       /* GEN-14 */
+```
+
 A constraint interface may also list operator methods (`interface{ + (T) T }`, grammar in [TYP-27](03-types.md#31-type-syntax), rule [GEN-13](#102-rules)).
 
 `Copy` and `Clone` are built-in constraints, written like Go's `comparable`: `[T Copy]`, `[T Clone]`. There is no type argument: `[T Clone[T]]` and the short `[Clone[T]]` are not used (the short form is not valid Go syntax; `go vet` reports "missing type parameter name or invalid array length").
@@ -75,6 +81,15 @@ func Both[T interface{ extends Animal; Clone }](a *T) T { a.Eat(); return a.Clon
 - An interface with operator elements is a constraint interface: it cannot be used as the type of a variable or parameter in v1 ([TYP-27](03-types.md#31-type-syntax)).
 - Operator elements can be mixed with the others: `interface{ + (T) T; Clone }`.
 
+**GEN-14.** *Unit parameters* (ADR-0025). `[U unit]` declares a type parameter that stands for a unit. `unit` is the predeclared constraint of [LEX-7](02-lexical.md#predeclared-identifiers); it cannot be combined with other elements (`interface{ unit; Clone }` is an error). It is allowed on generic functions, generic methods and generic types.
+- *Use.* `U` can appear in a unit expression in a type: `float64[U]`, `float64[U/S]`, `float64[U^2]`, `float64[M*U]`. It is not a type and not a value: `var x U` and `U(3)` are errors.
+- *Argument.* The argument for a unit parameter is a unit expression ([UNI-7](17-units.md#172-rules)). In an expression with explicit arguments only `*`, `/`, parentheses and names are read (UNI-7). A unit parameter can be given another unit parameter of the caller.
+- *Inference.* From a value argument the compiler unifies the unit expression of the parameter type with the canonical form of the argument type. It solves for the unit parameter when the parameter appears once as a factor with exponent 1 or -1 (`float64[U]`, `float64[U/S]`, `float64[M*U]`); the other units in the expression are known, so the answer is exact (`float64[U/H]` with an argument `float64[KM/H]` gives `U = KM`). A parameter with another exponent (`float64[U^2]`) must be given explicitly in v1. If the argument has no unit, or the dimension cannot match, the call is an error that names the parameter. Two arguments that need two different values for one `U` are an error (unit types must be identical, [UNI-5](17-units.md#172-rules)).
+- *In the body* (checked once, [GEN-5](#102-rules)): `U` is a unit of unknown dimension, so the body may use the operations that work for any unit: `+`, `-`, comparisons, a scalar `*` and `/`, `.In[U]()` (identity), and assignment between values of the same type. `x * y` of two `float64[U]` has the unit `U^2`, which is a type `float64[U^2]`; a body can build it and pass it on. A conversion to a concrete unit (`float64[M](x)`) is an error in the body, because the dimension of `U` is not known. Each instance (`Avg[KM]`) is monomorphized, so the generated code is the plain-number code.
+- *Constraints over numeric types.* A unit type does **not** satisfy a constraint with a type-set term such as `~float64`, `cmp.Ordered` or a `Number` made of such terms (the underlying type of `float64[M]` is `float64[M]`); this keeps `[T ~float64]` meaning "a number with no unit". It satisfies operator constraints ([GEN-13](#102-rules), [UNI-10](17-units.md#172-rules)), `comparable`, `Copy`, `Clone`, `Send` and `Sync`.
+- *Generic types.* `type Vec2[U unit] struct{ X, Y float64[U] }` makes `Vec2[M]` and `Vec2[KM/H]`. This is how a user type gets a unit in v1 (UNI-6). Operator methods on such a type ([ADR-0024](../adr/0024-operator-overloading.md)) work as on any generic type: `func (a Vec2[U]) + (b Vec2[U]) Vec2[U]`.
+- *Export data.* The `unit` kind of a type parameter is part of the signature in export data.
+
 ## 10.3 Examples
 
 ```go
@@ -130,11 +145,30 @@ Max(1, 2)                           // ok: int has the built-in <=>
 Max("a", "b")                       // ok: string too
 ```
 
+Unit-generic code ([GEN-14](#102-rules)):
+
+```go
+func Avg[U unit](xs []float64[U]) float64[U] {
+    var s float64[U]
+    for _, x := range xs { s += x }
+    return s / float64(len(xs))
+}
+Avg([]float64[KM]{1.0[KM], 3.0[KM]})       // 2 KM: U inferred as KM
+Avg[M]([]float64[M]{1.0[M]})               // explicit
+
+type Vec2[U unit] struct{ X, Y float64[U] }
+func Len2[U unit](v Vec2[U]) float64[U*U] { return v.X*v.X + v.Y*v.Y }   // float64[U^2]
+var f float64[M] = Avg([]float64[KM]{1.0[KM]})   // error: float64[KM] is not float64[M]
+Avg([]float64{1.0})                        // error: no unit to infer U from
+func Bad[U unit]() { var x U }             // error: U is a unit, not a type
+```
+
 Compared with Go: generic methods are new (Go forbids them). In Go, `First[T any]` would just copy `xs[0]`; in Go++ the `Clone` bound and the `Clone` call say that a copy happens.
 
 ## 10.4 Rationale
 
 - Operator constraints (GEN-13) let one `Sum` work for `int`, `Vec2` and `BigInt`, with no dictionary: every instance is monomorphized and calls the real operator.
+- Unit parameters (GEN-14) are a separate kind of parameter, so `[U unit]` code is checked once and every instance is plain-number code; type-set constraints stay unitless on purpose.
 - Borrowing parameters means most generic code needs no new syntax for owning types.
 - `Copy` and `Clone` make hidden copies visible in the signature. They are written like `comparable`, so they are plain Go syntax.
 - Full monomorphization gives C++-class speed and lets each instance know its type's real destructor.

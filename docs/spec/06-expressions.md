@@ -10,6 +10,8 @@ The expression grammar of Go is unchanged except for two additions, each defined
 - the unwrapping call `PrimaryExpr "!" Arguments` (`f!(x)`, `os.Open!(p).Close!()`), in [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18) ([ERR-5](09-errors-and-panics.md));
 - macro invocations as an `Operand` (`#Name(args)`), in [13.1](13-macros-surface.md) ([MAC-2](13-macros-surface.md)).
 
+Unit literals add one form, a number literal followed by `[UnitExpr]` (`100.0[KM]`, [EXP-31](#612-unit-expressions-adr-0025)); the unit grammar is in [17.1](17-units.md#171-syntax).
+
 Operator methods add no expression grammar ([6.10](#610-operator-methods-adr-0024)): `a + b`, `m[i, j]` (an index list is already valid Go syntax), `q <- v` and `<-q` are the same forms as before. The only new token is `<=>` ([LEX-13](02-lexical.md#new-tokens)).
 
 ## 6.2 New built-in functions
@@ -88,6 +90,7 @@ fmt.Println(int8(-8) >> s)     // -1
 - `string([]byte)` and `[]byte(string)` copy, as in Go.
 - Between struct types, the required bit of each field must match too, as the field names and types do ([TYP-15a](03-types.md)): each field is compared as "required" when its effective bit (by `@Required` or `@Strict`) is set, or when its type definitely has no zero value in every instance (a pointer, a func, a method interface, a struct with a required field, a C++ type without a default constructor). A field that is never nil on one side ([TYP-15](03-types.md#34-required-fields-d14-rule-11): `@Required` on `error`, `any`, a map or a channel) must be never nil on the other side too, so a value that may hold nil (the set-only field of an instance such as `SG[error]`) never reaches a never-nil field. The two sides must agree for every field, so `U(Raw{…})` is an error if `U` and `Raw` differ in this for any field, in either direction. A field whose type is a type parameter counts as required only through its bit, because an instance may have a zero value (GEN-5): `GenR[T](gen)` from `Gen[T]{A T}` to `GenR[T]{A T @Required}` is an error. A `@Strict` struct and a non-strict struct with the same fields convert into each other only if they agree for every field. (Assignment is stricter: type identity includes the attributes, [TYP-15a](03-types.md#34-required-fields-d14-rule-11).) Conversions between struct types do not turn a `Child` into a `Parent` (value slicing, [EXP-15](#69-upcasts-and-downcasts-adr-0023)).
 - `R(a)` where the type of `a` has a method marked `@Convert` with result `R`: the user conversion [EXP-25](#610-operator-methods-adr-0024). It is explicit only.
+- `N[U](x)` and `N(x)` where `N` is a numeric type and `U` a unit expression: give a value a unit, change its unit, or remove it ([EXP-32](#612-unit-expressions-adr-0025)).
 - Owned to view is implicit, never written as a conversion.
 - A `Unique[*T]` or `Shared[*T]` stored in a place converts implicitly to `*T`; from a temporary it is an error ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17)).
 
@@ -168,7 +171,8 @@ A **second meaning is an error**: an operator method may not be declared when th
 - an operator with the same parameter type that the built-in operator already has (`type Meters float64` with `+ (Meters) Meters`; `Meters * float64` is fine because the built-in needs two `Meters`);
 - `[]` or `[]=` on a type whose underlying type is an array, slice, string, map or pointer to array;
 - `()` on a func type, `<-` on a channel type, `range` on a type that ranges already (slice, array, string, map, channel, integer, func), unary `*` on a pointer kind;
-- `@Convert` with a result type that a built-in conversion already gives ([EXP-9](#65-conversions)).
+- `@Convert` with a result type that a built-in conversion already gives ([EXP-9](#65-conversions));
+- any operator method on a unit type, including a named one such as `type Distance float64[M]`: its operators are the built-in unit rules ([UNI-15](17-units.md#172-rules), [6.12](#612-unit-expressions-adr-0025)). (A generic type with a unit parameter, `Vec2[U unit]`, is a struct and may have operator methods.)
 
 Two methods with the same operator and the same parameter types are a duplicate-method error. (Exception: for an operator that is not commutative, one method with `@Right` and one without may have the same parameter types, because they serve different orders, [EXP-26](#610-operator-methods-adr-0024).) With `@Right` ([EXP-26](#610-operator-methods-adr-0024)) or with inherited methods ([EXP-30](#610-operator-methods-adr-0024)) a clash can appear only at a use, in a package that sees both; that is an ambiguity error at the use.
 
@@ -228,7 +232,7 @@ Two methods with the same operator and the same parameter types are a duplicate-
 - The parameter type must differ from the receiver type. `@Right` on anything that is not a binary operator method is an error.
 - If the left operand's type already has a method for this pair, the use is ambiguous and is an error ([EXP-17](#610-operator-methods-adr-0024)).
 
-**EXP-27.** *(Removed: no literal suffixes.)* Go++ has no user literal suffixes like `10.5_km` (owner decision 2026-10-28, ADR-0024 decision 15). The number is kept free for later rules, so the other EXP numbers and their links do not change. Units are written the Go way, as in `time.Duration`: typed constants times a number. This needs no new rule; an operator method makes it work for struct types too.
+**EXP-27.** *(Removed: no literal suffixes.)* Go++ has no user literal suffixes like `10.5_km` (owner decision 2026-10-28, ADR-0024 decision 15). The number is kept free for later rules, so the other EXP numbers and their links do not change. Units are written the Go way, as in `time.Duration`: typed constants times a number; an operator method makes it work for struct types too. Since ADR-0025, units of measure with unit math are also in the language: [EXP-31](#612-unit-expressions-adr-0025) and [chapter 17](17-units.md). The unit literal `100.0[KM]` is not a user suffix.
 ```go
 type Meters float64
 const (
@@ -292,3 +296,69 @@ g := a + 1                  // error: no + takes int (no implicit conversion)
 - Moves after other arguments make `append(move(p), p2...)`-like calls predictable.
 - `move` is a built-in (not a method) so that it works on every type, including C++ classes. `Clone` is a method that every cloneable type has, built-in types too, so `x.Clone()` works everywhere; `clone(x)` is the short form.
 - Operator methods (ADR-0024) give numeric and container types readable code and let generic code require `+`, `==` and so on. They are plain methods with fixed names, so the borrow, view and never-nil rules need no special case. The operators that would break ownership, borrowing or clarity (`=`, `.`, `&x`, the comma, implicit conversions) have no form. Compound operators, `!=` and `< <= > >=` are made from `+`, `==` and `<=>`, so one definition cannot disagree with another. Eager `&&` is allowed but listed as a difference; the lazy `func() T` form keeps short-circuit.
+- Units (ADR-0025) keep the checks at compile time. `+` converts both operands to the finer unit because nothing is lost and the result does not depend on the order; assignment never rescales, so a function signature says exactly which unit it takes. Dividing two values of one dimension gives a plain number, so `distance / limit` can be compared and printed as a ratio.
+
+## 6.12 Unit expressions (ADR-0025)
+
+Units of measure are in [chapter 17](17-units.md): declarations (UNI-1 to UNI-4), canonical form and identity (UNI-5), unit types (UNI-6 to UNI-8). This section is the expression side. "Unit value" means a value whose type is `T[U]` or a named type with such an underlying type. Every rule here has its error case in the examples of [17.3](17-units.md#173-examples).
+
+**EXP-31.** *Unit literals.* A number literal (integer, floating-point or imaginary) directly followed by `[UnitExpr]` is a constant with that unit: `100.0[KM]`, `3[M/S]`, `2i[A]`.
+- Indexing a number literal is never legal in Go++, so there is no clash with an index expression. The `[` must follow the literal on the same line; `gopp fmt` removes spaces before it. A rune or string literal cannot take a unit.
+- The constant is **untyped in its number part**, as Go constants are: `100.0[KM]` has the default type `float64[KM]`, `3[M/S]` has `int[M/S]`, `2i[A]` has `complex128[A]`. It converts to any numeric type that can hold the number, with that exact unit: `var n int[KM] = 100.0[KM]` is fine, `var m float64[M] = 100.0[KM]` is an error (EXP-35).
+- For an expression that is not a literal, use the conversion of EXP-32.
+
+**EXP-32.** *Conversions and `.In`.*
+- `N[U](x)` **gives a unit**: if `x` is a plain numeric value (any numeric kind, converted as in Go), the result is `x` read as a number of `U`: `float64[KM](v)`. If `x` is a unit value, it is a **scale conversion**: `x` must have the same dimension as `U`, and the value is multiplied by the constant factor (`float64[M](d)` for `d` in `KM` multiplies by 1000). Another dimension is an error. The numeric kind may change at the same time: `float64[KM](n)` for `n int[M]` multiplies by 1/1000 in floating point.
+- `N(x)` where `N` is a plain numeric type and `x` a unit value **removes the unit**: the number is kept as it is in its own unit (`float64(100.0[KM])` is `100.0`). It is always explicit and has Go's numeric conversion rules (`int(d)` truncates).
+- A conversion to a named unit type (`Distance(x)`, `type Distance float64[M]`) acts like the conversion to its underlying `float64[M]`. A conversion to a named type without a unit removes the unit.
+- `x.In[U]()` on a unit value is the same as `T[U](x)` for the base type `T` of `x`: it converts to another unit of the **same dimension** and keeps the numeric kind. `In` is a built-in member of unit values (like `len`, not a method): it cannot be stored as a method value (`f := d.In[M]` is an error), is not in any method set, and on a value that has no unit it is an error. On a constant it gives a constant. The unit argument is read with the unit grammar ([UNI-7](17-units.md#172-rules)): `speed.In[M/S^2]()` is legal.
+- *Integer to a coarser unit.* An explicit conversion of an integer to a **coarser** unit (`int[KM](m)`, `m.In[KM]()` for `m int[M]`) is allowed and **truncates toward zero**, like Go's integer division: `int[KM](int[M](1999))` is `int[KM](1)`, and `int[KM](int[M](-1999))` is `-1`. An explicit conversion is the programmer's choice, as Go's float to int conversion truncates. The implicit conversions of EXP-34 stay exact-only (EXP-35). To a finer unit (`int[M](k)`) the conversion multiplies by the integer ratio. If the ratio is not an integer in either direction, the explicit conversion computes `x * p / q` with the exact ratio `p/q` in wide arithmetic and truncates toward zero.
+
+**EXP-33.** *`*` and `/`.* The unit of the result is made by the unit math and simplified to the canonical form ([UNI-5](17-units.md#172-rules)).
+- `a * b` has the unit `ua * ub`, and `a / b` has the unit `ua / ub`. The scales of the operands are **not** converted: the value is the plain product or quotient, and the type remembers the factor (`KM * M` is `KM*M`, a type with the factor 1000 and the dimension `M^2`). The numeric kinds must be the same, as in Go.
+- A scalar (a value with no unit) may multiply or divide a unit value, on either side; the unit is kept: `2 * d`, `d / 2`, `d * k` for a plain `k float64`. `1.0 / t` has the unit `1/S`.
+- If the result has an **empty dimension** (`M/M`, `KM/M`, `d / d`), its type is the plain numeric type, and the value is multiplied by the factor of the unit that remains: `d / 500.0[M]` for `d` in `KM` is `float64` and the value is the ratio `200`, not `0.2`; `5.0[KM] / 2.0[M]` is the plain `2500.0` (5 KM over 2 M is 2500, not 2.5). For an integer kind the factor must be an integer, else it is an error (EXP-35).
+- Division by zero and overflow are as in Go for the base kind.
+
+**EXP-34.** *`+`, `-` and comparisons.* `a + b`, `a - b` and `==`, `!=`, `<`, `<=`, `>`, `>=` need two unit values of the **same dimension**. A different dimension is an error ("cannot add KM and H").
+- If the units are identical, nothing is converted. If only the scale differs, **both operands are converted to the finer unit** (the one with the smaller factor) at compile time, with a constant multiplication, and the result of `+` and `-` has that unit. It does not matter which operand is on the left: `100.0[KM] + 500.0[M]` and `500.0[M] + 100.0[KM]` are both `100500.0[M]`, of type `float64[M]`. This holds for every numeric base type. For constants the conversion is exact, before the value is rounded to the type.
+- A comparison converts in the same way and gives `bool`. `<=>` (ADR-0024) works like the comparisons and gives `int`.
+- The two numeric kinds must be the same. The named-type rule of Go holds (`Distance + float64[M]` is an error, UNI-8).
+- Unary `-` and `+` keep the unit. **Compound assignment** `x += y`, `x -= y` (and `%=`) always keeps the unit of `x`, because the target cannot change type: `y` is converted to the unit of `x`, not to the finer unit. For floats and complex numbers this is always allowed (`x` in `KM`, `x += 500.0[M]` adds `0.5`). For integers it is allowed only when the conversion is exact: `y` has the unit of `x`, or a coarser unit by an integer ratio (`int[M] += int[KM]` multiplies by 1000). `int[KM] += int[M]` is an error with the hint "convert first: `x += int[KM](y)` truncates, or use floats".
+- `min(a, b, …)` and `max(a, b, …)` take unit values of one dimension and follow this rule: all arguments are converted to the finest unit among them, and the result has that unit.
+
+**EXP-35.** *Plain numbers, exact units and integers.*
+- **A plain number and a unit value** cannot be added, subtracted or compared: `d + 1.0`, `d > 1.0` and `d < 5` are errors ("cannot add a number without a unit to a value in KM"); write `d + 1.0[KM]`, `d > 1.0[KM]`. `d++` and `d--` are errors for the same reason; use `d += 1.0[KM]`.
+- **The one exception is zero.** An untyped constant whose value is `0` (`0`, `0.0`, `0i`) is accepted wherever a unit value of any unit is expected, because zero means the same in every unit: comparisons (`d > 0`, `d == 0`), assignment and initialization (`var d float64[KM] = 0`, `d = 0`), `+` and `-` (`d + 0`), call arguments (`f(0)`), `return 0`, composite fields and `const L float64[KM] = 0`. The value takes the unit it is used with; the result of `d + 0` has the type of `d`. Any other plain number is still an error, and so is a typed zero (`float64(0)`, a variable holding `0.0`): only the untyped constant counts.
+- **Exact unit** is needed in assignment, initialization, call arguments, `return`, composite literal fields and elements, channel sends, map keys and index values, and the element types of `append` and `copy`. (`switch` tags and `case` values are comparisons and follow EXP-34.) "Exact" means the types are identical: same dimension **and** same factor. `var m float64[M] = d` with `d` in `KM` is an error with the fix-it `d.In[M]()`. An API boundary never rescales a value silently.
+- **Unit to plain.** A `float64[KM]` value is not assignable to `float64`, and a `float64` is not assignable to `float64[KM]` (a plain constant is not either, except the untyped constant `0`). Write `float64(d)` or `float64[KM](v)`.
+- **Integers must be exact.** Because `+`, `-`, `%`, `min`, `max` and comparisons convert to the finer unit, the conversion of an integer kind is a multiplication by the ratio of the two factors. It is exact when the ratio is an **integer**: `int[KM] + int[M]` and `int[M] + int[KM]` both work and give `int[M]`. A ratio that is not an integer (`int[IN] + int[CM]` with `unit IN = 2.54 CM`: IN converts to the finer CM with the ratio 127/50) is an error: "the conversion needs the ratio 127/50, which cannot be exact for an int; convert to float first (`float64[CM](n)`)". Only **implicit** conversions are exact-only. An explicit conversion (EXP-32, `int[KM](m)`) truncates toward zero, so `int[KM](m)` is accepted while `km += m` for `int[KM] km` and `m int[M]` is rejected. Integer multiplication wraps like any Go `*`; a constant that overflows is a compile error.
+- **Floats** use the factor rounded once to the type (`float32` or `float64`) and one multiplication. A round trip `KM` to `M` to `KM` may differ in the last bit, as `x * 1000 / 1000` does. Constants are exact (EXP-37).
+
+**EXP-36.** *`%`, shifts and bit operators.*
+- `a % b` with two integer unit values of one dimension follows `+` (both are converted to the finer unit, the result has that unit). `a % 2` (a plain number) is an error: a remainder of "2 what".
+- `a << n` and `a >> n` with a unit value `a` and a plain integer shift count `n` keep the unit of `a` (they multiply and divide by powers of two). A unit value as the shift count is an error.
+- `&`, `|`, `^`, `&^` and unary `^` on a unit value are errors: bit patterns have no unit. Use `uint32(x)` to remove the unit first.
+- `!` and `&&` do not apply (the operands are not `bool`).
+
+**EXP-37.** *Constants.* An untyped constant with a unit is an exact rational (or a complex of rationals) with an exact unit. Constant arithmetic follows EXP-33 and EXP-34 exactly and without rounding: `1.0[KM] + 500.0[M]` is the constant `1500.0[M]`; `2.0[H] * 3.0[KM]` is `6.0[H*KM]`. `.In[U]()` and the conversion `float64[M](1.0[KM])` give constants. A constant is rounded only when it takes a typed type, and a conversion that cannot be represented (an `int` kind and `1.5[M]`) is an error as in Go. A `const` declaration may hold a unit constant: `const Limit = 120.0[KM/H]`, `const Limit float64[KM/H] = 120.0[KM/H]`. A typed constant with a unit cannot be given a plain number: `const L float64[KM] = 120` is an error.
+
+```go
+d := 100.0[KM]
+t := 2.0[H]
+speed := d / t                 // float64[KM/H]
+total := d + 500.0[M]          // float64[M], 100500.0 (both operands in the finer unit)
+n := 5[M]
+big := 2[KM]
+_ = n + big                    // ok: int[M], 2005
+_ = big + n                    // ok: int[M], 2005 (the same, in either order)
+_ = d > 0                      // ok: the untyped constant 0 is accepted
+_ = d > 1.0                    // error: a plain number other than 0
+var z float64[KM] = 0          // ok
+_ = 5.0[KM] / 2.0[M]           // float64, 2500.0: the factor is kept
+_ = d / 500.0[M]               // float64, 200
+_ = d + t                      // error: cannot add KM and H
+_ = d + 1.0                    // error: a plain number
+var m float64[M] = d           // error: exact unit needed
+```
+

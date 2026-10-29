@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-28 (P04.23 operator lowering added)
+Last updated: 2026-10-28 (P04.24 units lowering added)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
@@ -30,6 +30,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.21 Concurrency checks (ADR-0022)
 - [ ] P04.22 `extends` lowering (ADR-0023)
 - [ ] P04.23 Operator lowering (ADR-0024)
+- [ ] P04.24 Units lowering (ADR-0025)
 
 ## Open questions
 
@@ -47,6 +48,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0025, owner decision): new task P04.24 and design D4.20, units lowering (units erased to the base kind, scale conversions as constant `fmul` or `mul`, type descriptors with the canonical and display form for boxed unit values, `fmt` printing). Task count 261.
 - 2026-10-28 (ADR-0023, owner decision): new task P04.22 and design D4.18, lowering of `extends` (type tables only for types with `@Virtual` / `@Abstract` methods, indirect calls through parent pointers, free upcast, checked downcast, `base` calls, drop order child then parent). Depends on P03.22. Final-only hierarchies have no table; owning upcasts and downcasts there are checker errors (P03.22).
 - 2026-10-28 (ADR-0024, owner decision): new task P04.23 and design D4.19, operator lowering (direct calls that inline, compound forms with one evaluation, lazy and eager `&&`/`||`, `range`, `<-`, `@Convert`, user literals, fixed mangling table). Depends on P03.24.
 - 2026-10-28 (owner decisions): Q3 (Go mode and the borrow and concurrency checks) is deferred, Go mode is not a current focus. P04.23 has no literal-suffix lowering any more (ADR-0024 decision 15).

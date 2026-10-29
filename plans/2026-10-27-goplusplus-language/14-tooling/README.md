@@ -34,6 +34,7 @@
 - Each snapshot has its own source-offset space (P02 D2.4).
 - The early minimal LSP uses the P04 source mode (P04 D4.11), which loads all packages from source.
 - Operator methods (ADR-0024): hover and go-to-definition on `a + b`, `float64(b)`, `m[i, j]`, and `range` loops go to the operator method; find references; an "add operator method" action; quick fixes for the blocked operators. Listed in P14.06.
+- Units (ADR-0025): hover shows the unit type and its canonical form; go-to-definition, completion, references and rename for unit names inside `[ ]`; quick fixes for an exact-unit mismatch (`.In[U]()`) and for unit to plain (`float64(d)`). Listed in P14.06.
 - `extends` support (ADR-0023): go to override and find overrides, `base.M` definition, "implement abstract methods", rename of virtual methods, and a quick fix for struct embedding. Listed in P14.06.
 - Features:
   - diagnostics, completion and formatting;

@@ -21,7 +21,7 @@ Attribute       = "@" MacroRef [ "(" [ MacroArgs ] ")" ] .
 MacroArgs       = ExpressionList .               /* a `block` argument is a func literal, see MAC-13 */
 
 TopLevelDecl   = /* Go alternatives */ | MacroDecl | ProcMacroDecl | MacroInvocation | AttributedDecl .
-AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl ) .
+AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | UnitDecl | FunctionDecl | MethodDecl ) .   /* UnitDecl: 17.1 */
 FieldAttributes = Attribute { Attribute } .             /* used by FieldDecl, defined in 3.1 (03-types.md) */
 Operand        = /* Go alternatives */ | MacroInvocation .
 ```
@@ -30,7 +30,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 - The optional `;` after an attribute is the semicolon that [semicolon insertion](02-lexical.md) adds at a line end.
 - `macro` is a keyword ([LEX-2](02-lexical.md)).
 - Fragment kinds and their meaning are in P09 D9.1.
-- Attributes are allowed before top-level declarations (type, func, method, var, const) and on struct fields ([MAC-12](#132-rules)). Attributes on statements are not defined in v0. The "Placed on" column of the attribute table in MAC-8 says where each built-in attribute is accepted.
+- Attributes are allowed before top-level declarations (type, func, method, var, const, `unit`) and on struct fields ([MAC-12](#132-rules)). Attributes on statements are not defined in v0. The "Placed on" column of the attribute table in MAC-8 says where each built-in attribute is accepted.
 
 > **Deferred to P09:** how a `stmt`, `type` or `tokens` argument is written at an invocation. Only the `block` kind is fixed here ([MAC-13](#132-rules)).
 
@@ -70,6 +70,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 | `@Override` | method (pointer receiver) | replaces a `@Virtual` or `@Abstract` method of an ancestor; required for that; an error when there is nothing to override, when the ancestor method is final, or when the signature differs ([TYP-18](03-types.md#35-single-inheritance-adr-0023)) | ADR-0023 |
 | `@Right` | binary operator method (every binary operator except `&&` and `\|\|`) | `s op a` is valid, where `s` has the parameter type. On `+ * & \| ^ ==` the method serves both orders; on every other operator it is written for the swapped order (the receiver is the right operand) and serves `s op a` only. An error on unary forms, on `&&`/`\|\|`, and when the parameter type equals the receiver type ([EXP-26](06-expressions.md#610-operator-methods-adr-0024)) | ADR-0024 |
 | `@Convert` | method (value receiver, no parameters, one result) | enables the explicit conversion `R(x)` to the result type `R`; at most one per target type; an error when a built-in conversion exists already or on a non-method ([EXP-25](06-expressions.md#610-operator-methods-adr-0024)) | ADR-0024 |
+| `@Symbol("text")` | `unit` declaration | the text `fmt` prints for the unit instead of its name; a non-empty string constant with no whitespace and none of `*`, `/`, `^`, `(`, `)`; one per unit; no effect on identity or on source spelling ([UNI-13](17-units.md#172-rules)); an error on anything but a `unit` declaration | ADR-0025 |
 | `@Unwind` | callback function | the callback may unwind through its C callers | P07 |
 | `@If(cond)` | type, func, method, var, const | the declaration is type-checked, but only emitted and exported when the constant `bool` `cond` is true ([MAC-15](#132-rules)) | P09 D9.12 |
 
