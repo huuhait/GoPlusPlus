@@ -91,4 +91,5 @@ A task is not done until:
 - In parallel code, anything computed once and shared must not depend on which thread computes it first: no errors, positions or depth limits taken from the asking thread.
 - For a safety rule, first list every way the language could break it, then block them all in one place; don't patch one reported case at a time.
 - Make safety decisions from the checker's real types, never from a guess made before the code is type-checked. A guess is wrong both ways: it rejects good code and lets bad code through.
+- Wrap every timing or benchmark run in `timeout 60` (or less), and never wait on a run that has no time limit.
 - `docs/spec/examples/` are test inputs: run `ninja check` before committing any docs change, even a "docs-only" one.
