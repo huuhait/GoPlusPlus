@@ -1,6 +1,6 @@
 # ADR-0023: Single inheritance with `extends`; Go struct embedding removed
 
-- **Status:** accepted; amended 2026-10-28 (a Go++ type may extend a C++ class, decision 14; generic constraint `T extends Parent`, decision 15; see Amendment)
+- **Status:** accepted; amended 2026-10-28 (a Go++ type may extend a C++ class, decision 14; generic constraint `T extends Parent`, decision 15; see Amendment); amended 2026-10-29 (`Clone` always copies the whole real value, decision 16; see Amendment 2)
 - **Date:** 2026-10-28
 - **Plan reference:** replaces the non-goal "no class inheritance" (spec 1.7, plan README non-goals); spec new section 3.5 (TYP-16 to TYP-26), changes TYP-10, TYP-15, TYP-15a, 6.9 (new EXP-13 to EXP-15), OWN-R2, OWN-R3, OWN-R6, GEN-2, MAC-8, LEX-2 and the grammar in chapters 2, 3 and 13; builds on ADR-0016, ADR-0019, ADR-0020, ADR-0021 and ADR-0022; new tasks P03.22 and P04.22; P14 note. Amendment: new TYP-28, GEN-12 rewritten, new task P08.16, P03.22 extended.
 
@@ -47,21 +47,21 @@ Programmers who want "a common part with its own methods, and children that chan
    - A child that leaves an `@Abstract` method unimplemented is an error, unless the child is itself marked `@Abstract` (a type attribute: `@Abstract type Bird extends Animal {}`).
 5. **`base.M(…)` (TYP-20).** Inside a method of a child type, `base.M()` calls the **direct parent's** version of `M`, statically. It works for any parent method. `base.M()` on a method that is `@Abstract` in the parent is an error (there is no body).
    - `base` is contextual: it has this meaning only inside methods of an `extends` type. Declaring a local named `base` there is an error with a rename hint. Elsewhere `base` is an ordinary identifier. `base.M()` inside a function literal within a child method is allowed: it captures the receiver and means the same as in the method body.
-6. **Upcast and downcast (TYP-21).** A `*Child` converts implicitly to a `*Parent`, or to any ancestor pointer, and to the pointer kinds: `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`.
+6. **Upcast and downcast (TYP-21).** A `*Child` converts implicitly to a `*Parent`, or to any ancestor pointer, and to the pointer kinds: `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`. (Changed by decision 16: the upcast exists only when the parent has a type table.)
    - A call through the parent pointer to a `@Virtual` or `@Abstract` method runs the child's override (dynamic dispatch). Calls to final methods are direct.
-   - **Limits without a type table (see decision 7).** If the parent has no type table, an upcast gives only a borrowed `*Parent`. `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`, are errors, because a parent owner could not drop the right type. A downcast `p.(*Child)` is an error, because there is no dynamic type. With a type table, all three are allowed.
+   - **Limits without a type table (see decision 7).** If the parent has no type table, an upcast gives only a borrowed `*Parent`. (Changed by decision 16: without a type table there is no upcast at all, borrowed or owning.) `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`, are errors, because a parent owner could not drop the right type. A downcast `p.(*Child)` is an error, because there is no dynamic type. With a type table, all three are allowed.
    - Downcast is a checked type assertion: `p.(*Card)` and `x, ok := p.(*Card)`. It panics, or returns `ok = false`, on a mismatch.
    - Value slicing is an error: `var a Parent = child` (copying only the parent part), and passing a `Child` value where a `Parent` value is expected. Use a pointer.
 7. **Cost (TYP-22).** A type gets a hidden type-table pointer only if it (or an ancestor) has `@Virtual` or `@Abstract` methods. It is one word, stored first.
    - Calls through a parent pointer to virtual methods are indirect. Every other call is direct.
-   - Final-only hierarchies (no `@Virtual` or `@Abstract` method anywhere in the hierarchy) have zero overhead. They can still be extended, with the limits of decision 6: no owning-pointer upcast and no downcast. These are compile errors.
-   - The parent part is the first part of the child after the table word, if any, so an upcast is free (a static address adjustment at most). Drop order is the child's `drop`, the child's fields in reverse order, then the parent part. An abstract type is not allowed as a field or element. A cycle in `extends` is an error.
+   - Final-only hierarchies (no `@Virtual` or `@Abstract` method anywhere in the hierarchy) have zero overhead. They can still be extended, with the limits of decision 6: no owning-pointer upcast and no downcast. These are compile errors. (Changed by decision 16: no borrowed or `View` upcast either.)
+   - The parent part is the first part of the child after the table word, if any, so an upcast, where it exists (only to a parent with a type table, decision 16), keeps the same address. Drop order is the child's `drop`, the child's fields in reverse order, then the parent part. An abstract type is not allowed as a field or element. A cycle in `extends` is an error.
 8. **Interfaces (TYP-23).** A child satisfies every interface its method set satisfies, and that method set includes the inherited methods. Calls through an interface use the overrides.
 9. **Safety interplay (TYP-24).**
    - *Ownership:* drop order is the child's fields first, then the parent part (OWN-R2). Moves and `move` work on the whole value as before (OWN-R3).
-   - *Clone:* auto-`Clone` covers the parent's and the child's fields. An abstract type is not cloneable by value (OWN-R6).
+   - *Clone:* auto-`Clone` covers the parent's and the child's fields. An abstract type is not cloneable by value (OWN-R6). A `Clone` through a pointer copies the whole real value (decision 16).
    - *Borrow checking (ADR-0021):* an upcast pointer is the same borrow, not a new one.
-   - *Views (ADR-0020):* `View[Child]` converts to `View[Parent]`, read-only.
+   - *Views (ADR-0020):* `View[Child]` converts to `View[Parent]`, read-only. (Changed by decision 16: only when the parent has a type table.)
    - *Send / Sync (ADR-0022):* a child is labeled from all its fields, the parent's included.
    - *`@Strict`:* the required bits of the parent's fields apply in the child (TYP-15a).
    - *Generics:* the constraint `T extends Parent` is allowed (decision 15, GEN-12).
@@ -81,7 +81,7 @@ Programmers who want "a common part with its own methods, and children that chan
     @Override
     func (b *MyButton) mousePressEvent(e *QtWidgets.QMouseEvent) { b.clicks++; base.mousePressEvent(e) }
     ```
-    - A Go++ struct may `extends` **one** C++ class. If the class is upcast (a `*MyButton` becomes a `*QtWidgets.QPushButton`), it must be polymorphic or have a virtual destructor for the owning-pointer upcast. A class that is not polymorphic follows the final-only rules of decision 6 and 7: a borrowed upcast only, no owning upcast, no downcast.
+    - A Go++ struct may `extends` **one** C++ class. If the class is upcast (a `*MyButton` becomes a `*QtWidgets.QPushButton`), it must be polymorphic or have a virtual destructor for the owning-pointer upcast. A class that is not polymorphic follows the final-only rules of decision 6 and 7: a borrowed upcast only, no owning upcast, no downcast. (Changed by decision 16: "tagged" for a C++ parent means polymorphic, with a vtable. A Go++ child of a non-polymorphic C++ class gets no upcast to it, like an untagged Go++ parent; the base's fields and methods stay available on the child.)
     - `@Override` works on the C++ class's `virtual` methods. A non-virtual C++ method cannot be overridden (error). A C++ method marked `final` cannot be overridden either.
     - `base.M()` calls the C++ class's implementation of `M`, statically (`QPushButton::mousePressEvent`).
     - C++ pure virtual methods act like `@Abstract`: the Go++ type must override them, or be marked `@Abstract` itself.
@@ -97,7 +97,47 @@ Programmers who want "a common part with its own methods, and children that chan
     - `[T extends P]` means `T` is `P` or a type that extends `P`, directly or indirectly.
     - In the body, `*T` converts to `*P` (an upcast), the methods of `P` are available on `T` (with dispatch per instance), and the fields of `P` are accessible.
     - It can be combined with other constraint elements: `interface{ extends Animal; Clone }`.
-    - Instantiating with a type that does not extend `P` is an error. If `P` is final-only, the upcast limits of decision 6 still apply: a borrowed upcast only.
+    - Instantiating with a type that does not extend `P` is an error. If `P` is final-only, the upcast limits of decision 6 still apply: a borrowed upcast only. (Changed by decision 16: with a final-only `P` there is no upcast `*T` to `*P`; the fields and methods of `P` stay available on `T`.)
+
+16. **`Clone` always copies the whole real value, 1:1 (owner decision 2026-10-29; Amendment 2).** A clone never loses the child part. "Tagged" means the type has a type table (decision 7). For a C++ parent it means polymorphic (it has a vtable).
+    - *Untagged types have no upcast.* A type without a type table can still be extended, but a `*Child` does not convert to a `*Parent`, and a `View[Child]` does not convert to a `View[Parent]` (the owning kinds already could not, decision 6). The same holds in a generic body: with `T extends P` and a final-only `P`, `*T` does not convert to `*P`, but the fields and methods of `P` stay available on `T`. The error hint: add a `@Virtual` method to the parent to use children through a parent pointer, or use `*Child`.
+    - *Inherited methods of an untagged parent are allowed.* `func (p *Config) Dup() Config` is called as `my.Dup()`. Inside a parent method the receiver is the parent part, and the signature says what the method returns (here `Config`). This is a documented limit, the same as Go embedding, and not a silent loss. Outside the parent's own methods, a pointer to an untagged type points at exactly that type.
+    - *Explicit forms that build a `*Config` from a child are upcasts, and are errors for an untagged parent:* `&my.Config`, `View` of `my.Config`, and the method expression `(*Config).Dup(&my)`. A method value `my.Dup` is fine. Method expressions follow the upcast rule.
+    - *Tagged types clone through the table.* `p.Clone()` on a `*P` or a `View[P]` of a tagged `P` gives a `Unique[*P]` that holds a full copy of the dynamic type (read from the table), so the overrides keep working on the copy. This replaces the OWN-R6 ambiguity error for these types. `x.Clone()` on a `P` value (a variable of type `P`) gives a `P`: a value always has its real type, because value slicing is an error (decision 6).
+    - *Clone and `Unique`, `Shared`, `Weak`.* `Unique[*P].Clone()` for a tagged `P` holds a full dynamic copy; this replaces OWN-R6's `(*u).Clone()` for these types. `Shared[*P].Clone()` and `Weak[*P].Clone()` retain, so nothing is lost.
+    - *Untagged types keep OWN-R6.* `p.Clone()` on a raw `*T` with a value-receiver `Clone` is still the ambiguity error. Write `(*p).Clone()`.
+    - *`*p` has no value use for a tagged `P`* (any pointer kind). Only field access, a method call and `&*p` are allowed. These are errors:
+      - every copy: `x := *p`, an argument, a literal element, `return *p`, `ch <- *p`, `m[k] = *p`, `append(s, *p)`, `Some(*p)`, `defer f(*p)`, and ranging by value over `P` elements reached through a pointer;
+      - assignment through it: `*p = v` and `*q = *p`;
+      - `(*p).Clone()`.
+    - *A value receiver of a tagged type is the same.* In `func (a Animal) M()`, `a` may be the parent part of a child. A copy of `a` or `a.Clone()` inside it is an error. Field access and method calls are fine.
+    - *Generics and `Clone`.* `*P` does not satisfy `[T Clone]`; `Unique[*P]` does. `clone(x)` is a predeclared function and the short form of `x.Clone()`, so it follows the same rules. In a generic body, `a.Clone()` on `*T` with a tagged `T extends P` gives `Unique[*T]`. Auto-`Clone` of a struct with a `Unique[*P]` field, or a slice or map of them, goes through the table.
+    - *Other ways to reach the parent.* An `unsafe` cast to `*Parent` is UB (UB-7). An interface that holds a `*Child` and is asserted to `*Parent` is an error: the dynamic type is `*Child`.
+    ```go
+    type Animal struct{ Name string }
+    @Virtual func (a *Animal) Speak() string { return "..." }
+    type Dog extends Animal { Tricks []string }
+    @Override func (d *Dog) Speak() string { return "woof" }
+
+    type Config struct{ Port int }               // untagged
+    func (p *Config) Dup() Config { return *p }  // the receiver is the parent part
+    type MyConfig extends Config { Debug bool }
+
+    var p *Animal = &dog
+    a := p.Clone()          // Unique[*Animal] holding a full Dog; a.Speak() == "woof"
+    x := *p                 // error: could copy only the Animal part; use p.Clone()
+    d := dog.Clone()        // Dog
+
+    var q *Config = &my     // error: Config has no type table, so no upcast
+    c := my.Dup()           // Config (the parent part only; the signature says so)
+    r := &my.Config         // error: an upcast
+    f := (*Config).Dup      // ok as a value
+    g := f(&my)             // error: an upcast
+    var cfg Config          // a value
+    cfg2 := cfg.Clone()     // Config (exact)
+    var z *Config = &cfg
+    cfg3 := (*z).Clone()    // Config; z.Clone() is the OWN-R6 ambiguity error
+    ```
 
 ## Example
 
@@ -193,7 +233,7 @@ type Z struct { Payment }                         // error: struct embedding is 
 ## Consequences
 
 - Go++ has one inheritance feature, with explicit marks for every override. A forgotten or misspelled override is a compile error, not a silent new method.
-- The layout puts the parent part first in the child (after the table word, if any). An upcast is free. This is needed for TYP-21 and is part of the layout rule TYP-22.
+- The layout puts the parent part first in the child (after the table word, if any). An upcast is free (it exists only to a parent with a type table, decision 16). This is needed for TYP-21 and is part of the layout rule TYP-22.
 - Struct embedding is gone from `.gopp` files. Go code that embeds must be rewritten (`extends`, or a named field plus forwarding methods). The owner accepts this, as with `sync.Mutex` in ADR-0022. This also removes the rules that existed only for embedding: `@Option` on an embedded field (ADR-0019), "embedded fields count" in `@Strict` and `@Required` (ADR-0016, ADR-0019), and a `Clone` promoted from an embedded field (OWN-R6, GEN-2). They are rewritten for `extends`.
 - Field tables, export data, `gopp doc` and the LSP must know the parent chain.
 - The checker needs: the hierarchy in export data (P03.11), override checks, `base`, upcast conversions, abstract checks. The code generator needs type tables, dynamic dispatch, `base` calls, up- and downcasts and the drop order.
@@ -223,9 +263,18 @@ type Z struct { Payment }                         // error: struct embedding is 
    - Failable overrides: a `!` on an override cannot match a C++ signature (TYP-18 requires an exact match), so such overrides cannot be failable. A panic in an override unwinds as a C++ exception through the C++ caller (P08 D8.9).
    - Field tables (TYP-10): the C++ base's fields are not listed. Auto-`Clone` and `Send` / `Sync` of the C++ part follow the C++ class rules of ADR-0022 and OWN-R9.
    - GEN-12: whether a C++ class derived (in C++) from `P` satisfies `T extends P` is not decided; v1 default: no, only Go++ `extends`.
+   - Decision 16 and C++ copy constructors: a C++ copy constructor copies only the base part when called through a base reference (slicing). That is C++ territory, in the class of UB-9 and UB-10, and Go++ cannot prevent it. P08.16 decides how `Clone` of a polymorphic C++ parent works (for example through a C++ `clone()` method) and records it.
 
 ## Amendment (2026-10-28, owner decisions)
 
 - Open point 1 (C++ class inheritance) became decision 14 and open point 2 (constraint `T extends Parent`) became decision 15. Spec: TYP-16 allows a C++ class as the parent; new TYP-28; TYP-24 and GEN-12 rewritten. Plan: P08.08 and D8.8 point to the new task P08.16; P03.22 gets the `T extends Parent` checks.
 - The text in decision 1 and decision 9 (Generics) that said "a C++ type is an error" or "no `T extends Parent`" is replaced above. The rest of the ADR is unchanged.
-- ADR-0020 (views): `View[Child]` converts to `View[Parent]` also when `Parent` is a C++ class (read-only). ADR-0021 (borrows): an upcast, also in a generic body (`*T` to `*P`), is the same borrow. ADR-0022 (Send / Sync): the label of a type that extends a C++ class includes the C++ part. ADR-0024 (operators): a child inherits the operator methods of a C++ parent, and a `T extends P` body sees the operator methods of `P` (GEN-13).
+- ADR-0020 (views): `View[Child]` converts to `View[Parent]` also when `Parent` is a C++ class (read-only; only when the parent has a type table, decision 16). ADR-0021 (borrows): an upcast, also in a generic body (`*T` to `*P`), is the same borrow. ADR-0022 (Send / Sync): the label of a type that extends a C++ class includes the C++ part. ADR-0024 (operators): a child inherits the operator methods of a C++ parent, and a `T extends P` body sees the operator methods of `P` (GEN-13).
+
+## Amendment 2 (2026-10-29, owner decision)
+
+- New decision 16: `Clone` always copies the whole real value. The owner compared allowing a partial clone (as in C++), an error on every clone through a pointer, a second method (`CloneFull`), a smart `Clone` that copies only the parent part of an untagged type, and a hidden type word in every struct; the owner chose "always full, 1:1" with zero cost, which needs the untagged upcast removed.
+- Decisions 6, 7, 9, 14 and 15 carry a "Changed by decision 16" note; the old text is kept.
+- Spec items to update with P03.22: TYP-21 (including `View`), TYP-22, TYP-24, EXP-14, EXP-15, OWN-R6 and GEN-12. Plan: P03.22 (checker), P04.22 (the clone through the table, the layout) and P08.16 (C++ parents).
+- Other ADRs: ADR-0020 (views: `View[Child]` to `View[Parent]` only with a type table); ADR-0021 (an upcast is the same borrow, when it exists); ADR-0022 (no change); ADR-0024 (inherited operator methods of an untagged `P` run on the parent part, like `Dup()` in decision 16). ADR-0020, ADR-0021 and ADR-0024 got a status note.
+- Alternatives rejected: partial clone through a parent pointer (silent loss of the child part and of its overrides); `CloneFull` as a second name (two names for one idea); a hidden type word in every struct (one word per value of every struct, and a different layout from C).

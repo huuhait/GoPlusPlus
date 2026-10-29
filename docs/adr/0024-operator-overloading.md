@@ -1,6 +1,7 @@
 # ADR-0024: Operator overloading, "full minus unsafe"
 
 - **Status:** accepted
+- **Status note (2026-10-29, ADR-0023):** an inherited operator method of an untagged parent `P` runs on the parent part, like `Dup()` in ADR-0023 decision 16.
 - **Date:** 2026-10-28
 - **Plan reference:** replaces the non-goal "no user-defined operator overloading" (spec 1.7, plan README non-goals); spec new section 6.10 (EXP-16 to EXP-30), new TYP-27, LEX-13, RNG-6b, CON-22, GEN-13, changes EXP-4, MAC-8 and the grammar in chapters 2, 3 and 10; builds on ADR-0018, ADR-0020, ADR-0021, ADR-0022 and ADR-0023; new tasks P03.24 and P04.23; P14 note.
 

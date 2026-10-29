@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Status note (2026-10-28, ADR-0023):** `View[Child]` converts to `View[Parent]` (read-only) for types that use `extends`.
+- **Status note (2026-10-29, ADR-0023):** `View[Child]` converts to `View[Parent]` only when the parent has a type table; see ADR-0023 decision 16.
 - **Date:** 2026-10-28
 - **Plan reference:** changes P01 D1.2 (contextual words), D1.6 (refs, now views) and ADR-0006 D5; spec LEX-2, LEX-7, LEX-12, TYP-1, TYP-2, TYP-9, OWN-R3b, OWN-V1 to OWN-V7 (section 4.4), PAR-2, PAR-8, PAR-9, SLC-8, MAC-8 and every chapter that names a ref; spec examples 02, 03, 06 and 10; new task P03.21; P02, P04, P07, P14 wording.
 
