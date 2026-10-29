@@ -212,3 +212,10 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 - Calls to virtual methods through a parent pointer are indirect through the table; all other calls, `base.M()` included, are direct. Final-only hierarchies cost nothing.
 - Downcast checks the table chain. Drop order is child fields, then the parent part; dropping a `Unique[*Parent]` calls the dynamic type's drop.
 - A hierarchy without virtual methods has no table, so P03.22 rejects `Unique`/`Shared`/`Weak` upcasts and downcasts there (a parent owner could not drop the right type); lowering needs no dynamic type for them.
+
+**D4.19 — Operator lowering** (ADR-0024; task P04.23).
+- After P03.24 every operator on a user type has a resolved method, so lowering is a direct call: no table, no dictionary, no boxing. Calls inline like any small method, so `Vec2` math compiles to the same IR as hand-written field code.
+- Compound forms evaluate the place once. With an in-place `+=` method the call changes the place (no allocation); otherwise the result is assigned (the old value is dropped). Built-in `<=>` on numbers and strings is two compares. `!=` and the `<`-family are a negation and a sign test of the `==` and `<=>` calls.
+- The lazy `&&`/`||` form passes a non-escaping closure; the eager form is a call after both operands. Built-in `bool` `&&`/`||` keep their branches.
+- Operator functions have mangled names from a fixed table (P04.17) and source-style names in DWARF.
+- `range`, `<-` and `@Convert` need no runtime support: they are calls of user methods.

@@ -8,6 +8,8 @@ Delta D1.10. Go's design is kept: type parameters, constraint interfaces with ty
 
 Only one grammar change: **methods may have type parameters** (generic methods). `MethodDecl` (with `TypeParameters` before the optional `!`) is defined in [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18).
 
+A constraint interface may also list operator methods (`interface{ + (T) T }`, grammar in [TYP-27](03-types.md#31-type-syntax), rule [GEN-13](#102-rules)).
+
 `Copy` and `Clone` are built-in constraints, written like Go's `comparable`: `[T Copy]`, `[T Clone]`. There is no type argument: `[T Clone[T]]` and the short `[Clone[T]]` are not used (the short form is not valid Go syntax; `go vet` reports "missing type parameter name or invalid array length").
 
 ## 10.2 Rules
@@ -46,7 +48,17 @@ Only one grammar change: **methods may have type parameters** (generic methods).
 
 **GEN-11.** *`Send` and `Sync`* are predeclared constraints, written like `Copy` and `Clone`: `[T Send]`, `[T Sync]`. There is no type argument. They are computed by the compiler for every type ([CON-12](12-concurrency.md), ADR-0022) and cannot be implemented by hand. `[T Send]` means a `T` may be moved to another goroutine (for example in `go` or on a channel); `[T Sync]` means a `T` may be shared between goroutines. They can be embedded in a constraint interface like `Copy` and `Clone`: `interface{ Send; Clone }`. A generic body that moves or shares a `T` across goroutines needs the constraint; the check is once per body (GEN-5), and the instance is checked again with the real type (P04.08). An interface that embeds them (`interface{ Send }`) is itself `Send`; `error` is declared with both. Example: `func Spawn[T Send](x T, f func(T)) { go f(x) }`; `Spawn[View[string]]` is an error.
 
-**GEN-12.** *`extends` and generics.* A generic struct may be a parent or a child (`type B[T any] extends A[T]`, [TYP-16](03-types.md#35-single-inheritance-adr-0023)); marks and checks apply per instance like every generic rule ([GEN-5](#101-rules)). A constraint "`T extends Parent`" does **not** exist in v1 (ADR-0023 open point 2): use a `*Parent` parameter or an interface.
+**GEN-12.** *`extends` and generics.* A generic struct may be a parent or a child (`type B[T any] extends A[T]`, [TYP-16](03-types.md#35-single-inheritance-adr-0023)); marks and checks apply per instance like every generic rule ([GEN-5](#102-rules)). A constraint "`T extends Parent`" does **not** exist in v1 (ADR-0023 open point 2): use a `*Parent` parameter or an interface.
+
+**GEN-13.** *Operators in constraints* (ADR-0024). A constraint interface can list operator methods like any method: `interface{ + (T) T }`, `interface{ == (T) bool }`, `interface{ <=> (T) int }`, `interface{ [] (int) T }`. A conversion marked `@Convert` is not an operator element: to require one, list the ordinary method (`interface{ Float64() float64 }`).
+- The body is checked once ([GEN-5](#102-rules)) with the operators the constraint lists, and with nothing else. `a + b` is valid if the constraint of `T` has `+ (T) T`. An instance calls the real method, or the built-in operator.
+- **Built-in types satisfy the constraint with their built-in operators.** `int` satisfies `+ (int) int`, `- () int` and `== (int) bool`; `string` satisfies `+ (string) string`. A type-set constraint such as `~int | ~float64` gives the built-in operators as in Go.
+- **Derived forms.** `+ (T) T` also gives `a += b` (and `+= (T)`, the in-place form, gives it too); `== (T) bool` gives `!=`; `<=> (T) int` gives `< <= > >=` ([EXP-19](06-expressions.md#610-operator-methods-adr-0024), [EXP-20](06-expressions.md#610-operator-methods-adr-0024)).
+- **`<=>` is built in** for numbers and strings ([EXP-20](06-expressions.md#610-operator-methods-adr-0024)), so `int`, `float64` and `string` satisfy `<=> (T) int`. One constraint `interface{ <=> (T) int }` serves built-in and user types; `cmp.Ordered` stays for code that wants only built-in types. In such a body `a < b` means `(a <=> b) < 0`, so for floats NaN follows `cmp.Compare`, not IEEE `<`.
+- **`comparable` and `==`.** `comparable` still means built-in equality. In a body with `[T comparable]`, `a == b` is the built-in comparison even for an instance whose type has an `==` method. Ask for the method with `interface{ == (T) bool }` instead. Map keys use built-in equality too (ADR-0024 decision 11).
+- Elements are matched by exact signature: `* (float64) T` and `* (T) T` are two different elements, and a type must have both to satisfy both.
+- An interface with operator elements is a constraint interface: it cannot be used as the type of a variable or parameter in v1 ([TYP-27](03-types.md#31-type-syntax)).
+- Operator elements can be mixed with the others: `interface{ + (T) T; Clone }`.
 
 ## 10.3 Examples
 
@@ -86,10 +98,28 @@ type Mapper interface{ Map(f func(int) string) []string }
 var _ Mapper = Set{}      // error: generic method Map does not satisfy an interface method
 ```
 
+```go
+// Operators in constraints (GEN-13)
+func Sum[T interface{ + (T) T; Clone }](xs []T) T {     // xs must not be empty
+    acc := xs[0].Clone()
+    for i := 1; i < len(xs); i++ { acc = acc + xs[i] }
+    return acc
+}
+Sum([]int{1, 2, 3})                 // ok: int has the built-in +
+Sum([]Vec2{{1, 2}, {3, 4}})         // ok: Vec2 has the method + (Vec2) Vec2
+Sum([]string{"a", "b"})             // ok: string + string
+Sum([]bool{true})                   // error: bool does not satisfy + (bool) bool
+func Max[T interface{ Clone; <=> (T) int }](a, b T) T { if a > b { return a.Clone() }; return b.Clone() }   // GEN-4: a borrowed T is returned as a clone
+Max(Vec2{1, 0}, Vec2{2, 0})         // ok
+Max(1, 2)                           // ok: int has the built-in <=>
+Max("a", "b")                       // ok: string too
+```
+
 Compared with Go: generic methods are new (Go forbids them). In Go, `First[T any]` would just copy `xs[0]`; in Go++ the `Clone` bound and the `Clone` call say that a copy happens.
 
 ## 10.4 Rationale
 
+- Operator constraints (GEN-13) let one `Sum` work for `int`, `Vec2` and `BigInt`, with no dictionary: every instance is monomorphized and calls the real operator.
 - Borrowing parameters means most generic code needs no new syntax for owning types.
 - `Copy` and `Clone` make hidden copies visible in the signature. They are written like `comparable`, so they are plain Go syntax.
 - Full monomorphization gives C++-class speed and lets each instance know its type's real destructor.

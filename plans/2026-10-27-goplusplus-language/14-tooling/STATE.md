@@ -32,6 +32,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P14) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0024, owner decision): the LSP supports operator methods: hover and go-to-definition on operator expressions, conversions, indexes, `range` loops and literal suffixes; find references; "add operator method" action; quick fixes for blocked operators (P14.06 note; depends on P03.24 and P04.23).
 - 2026-10-28 (ADR-0023, owner decision): the LSP supports `extends`: go to override / find overrides, `base.M` definition, "implement abstract methods", rename of virtual methods, and a quick fix for struct embedding (P14.06 note; depends on P03.22 and P04.22).
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): `view` is renamed `ref` in hover text and pretty printers.
 - 2026-10-27 (ADR-0007, build profiles): D14.1 gets `gopp new`, which writes `target/` into the new project's `.gitignore`.

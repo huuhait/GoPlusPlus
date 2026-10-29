@@ -47,6 +47,11 @@ Old uses stay: unary `!x` and the operator `!=`.
 - `f!(x)` is `f`, `!`, `(`. In `f != (x)` the `!` is joined with `=`.
 - A `!` right after a primary expression and before `(` is the unwrapping mark (`PrimaryExpr "!" Arguments`; generic calls are `f[T]!(x)`, where `!` follows the `]`). A unary `!` can never follow an operand, so the parser always knows which it is.
 
+**LEX-13.** *Operator tokens and literal suffixes* (ADR-0024). Only in `.gopp` files.
+- One new token: `<=>`. Lexing is greedy, so `a<=>b` is `a`, `<=>`, `b`. It was never valid Go, so no code changes meaning. In `.go` files it is still `<=` followed by `>`.
+- Operator method names ([TYP-27](03-types.md#31-type-syntax)) are written with existing tokens: `+`, `==`, `<-`, `++`, `range` and so on. `[]`, `[]=` and `()` are two or three adjacent tokens (`[`, `]`, `=`). The parser accepts spaces between them, and `gopp fmt` removes the spaces.
+- A number literal may end with a **suffix**: `_` directly followed by a letter, then letters, digits and `_`. Examples: `10.5_km`, `3_h`, `0xFF_u`. The suffix is part of the literal token. Digit separators are unchanged: in `1_000` the `_` is followed by a digit, so it is a separator. In a hex literal, `_` followed by a hex digit is a separator (`0x1_f`), so `0x10_ab` has no suffix and `0x10_km` has the suffix `_km`. The meaning is in [EXP-27](06-expressions.md#610-operator-methods-adr-0024). In `.go` files a suffix is the usual Go error.
+
 ### Semicolon insertion
 
 **LEX-6.** Semicolon insertion is unchanged. `call!()` ends in `)`, so the existing rule already works. Two consequences:
@@ -128,6 +133,7 @@ Each changed production is defined in exactly one place:
 | `Type`, `TypeLit`, `ExtendsDecl`, `FieldDecl` (no embedded fields) | [3.1](03-types.md) |
 | `MacroDecl`, `ProcMacroDecl`, `MacroInvocation`, `Attribute`, `TopLevelDecl`, `Operand` | [13.1](13-macros-surface.md) |
 | `ImportPath` forms | [14.1](14-foreign-surface.md) |
+| `MethodName`, `OperatorName` (operator methods; the token `<=>` and number suffixes are in [LEX-13](#new-tokens)) | [3.1](03-types.md#31-type-syntax) |
 
 ## 2.4 Rationale
 

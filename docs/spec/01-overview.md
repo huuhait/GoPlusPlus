@@ -109,7 +109,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - Source compatibility with Go code that relies on GC.
 - Rust-style lifetime annotations. Go++ checks borrows by flow and liveness without annotations ([4.5](04-ownership.md#45-borrow-checking-adr-0021)); what is left undefined is in [chapter 16](16-undefined-behavior.md).
 - A user-facing `reflect` package.
-- User-defined operator overloading, exceptions as an error mechanism. (Inheritance is *not* a non-goal any more: single inheritance with `extends` is in v1, [TYP-16](03-types.md#35-single-inheritance-adr-0023), ADR-0023. Multiple inheritance is.)
+- Exceptions as an error mechanism, and multiple inheritance. (Inheritance and operator overloading are *not* non-goals any more: single inheritance with `extends` is in v1, [TYP-16](03-types.md#35-single-inheritance-adr-0023), ADR-0023; operator methods are in v1, [EXP-16](06-expressions.md#610-operator-methods-adr-0024), ADR-0024. The unsafe operators stay blocked: `=`, `.`, `&x`, the comma and implicit conversions, [EXP-29](06-expressions.md#610-operator-methods-adr-0024).)
 
 ## 1.8 Samples
 

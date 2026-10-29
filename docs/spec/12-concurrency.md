@@ -164,6 +164,21 @@ ok := false
 if ok { g := stock.Lock(); g.N-- }         // section 2: compiles, but another goroutine may have taken the last item
 ```
 
+**CON-22.** *User channel types* (ADR-0024). A type with `<-` methods ([EXP-16](06-expressions.md#610-operator-methods-adr-0024)) works with the channel operators: `q <- v` calls the send method, `<-q` calls the receive method, and `v, ok := <-q` is allowed when the receive method returns `(R, bool)`.
+- Both methods have a pointer receiver, so `q` must be addressable and writable. They are ordinary method calls that may block; the value `v` of a send moves in like an argument ([OWN-R3](04-ownership.md#42-ownership-rules-d14)), and the result of a receive is an owned temporary.
+- The type is **not** a channel for the other rules. `Send` and `Sync` are computed from its fields as for any type ([CON-12](#121-rules)): a queue shared by goroutines must be `Sync`, for example built on `Mutex[T]` ([CON-15](#121-rules)). `close(q)`, `len(q)`, `cap(q)` and `for v := range q` do not exist for it. A loop uses a `range` method ([RNG-6b](08-slices-and-range.md#83-range-loops-d121)).
+- **`select` does not accept user channel types.** A `case q <- v:` or `case v := <-q:` on a user type is a compile error in v1. `select` needs a try-operation and a wait protocol that a plain `<-` method does not give. Decided for v1 (ADR-0024 decision 10); a later ADR may add an interface that lets a user type take part in `select`. Outside `select` the type works everywhere.
+- A `<-` method on a type whose underlying type is a channel type is an error ([EXP-17](06-expressions.md#610-operator-methods-adr-0024)).
+
+```go
+func (q *Queue) <- (v Job) { … }       // send
+func (q *Queue) <- () Job  { … }       // receive
+
+q <- job                                // ok
+j := <-q                                // ok
+select { case j := <-q: … }             // error: select works on built-in channels only
+```
+
 ## 12.2 Examples
 
 ```go

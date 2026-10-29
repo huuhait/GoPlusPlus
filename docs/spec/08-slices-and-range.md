@@ -170,6 +170,22 @@ func (l *DocList) Values() iter.Seq[Doc] { … }
 for d := range docs.Values() { use(d) }          // d is a Doc: read-only; d.Clone() keeps it
 ```
 
+**RNG-6b.** *Range over a user type* (ADR-0024). A type with a `range` method, `func (t *Tree) range () iter.Seq[int]`, can be ranged over: `for v := range t { … }` means `for v := range t.range() { … }`. All of [RNG-6a](#83-range-loops-d121) applies to the returned function: how `x` is borrowed, `&x` only when the iterator yields pointers, the loop body as a non-escaping closure, and the panic when `yield` is called after the loop.
+- The result type must be a function type that range-over-func accepts (`iter.Seq[V]`, `iter.Seq2[K, V]`, or `func(yield func(…) bool)`), else the declaration is an error.
+- The receiver may be a value or a pointer. A pointer receiver needs an addressable, writable operand (a variable, field, element or `*p`), not a temporary.
+- The receiver stays borrowed for the whole loop ([OWN-B](04-ownership.md#45-borrow-checking-adr-0021)), so a body that writes to it, or calls a method that does, is a compile error, the same as for a slice ([RNG-3](#83-range-loops-d121)).
+- `range` on a type that already ranges (slice, array, string, map, channel, integer, func) is an error at the declaration ([EXP-17](06-expressions.md#610-operator-methods-adr-0024)). Imported C++ containers keep [RNG-6](#83-range-loops-d121).
+- `range` is not callable by name: `t.range()` is not valid syntax (`range` is a keyword).
+
+```go
+func (t *Tree) range () iter.Seq[int] { return func(yield func(int) bool) { t.walk(yield) } }
+
+for v := range t { use(v) }          // ok: v is an int
+for v := range t { t.insert(v) }     // error: t is borrowed by the loop (RNG-3, OWN-B)
+type Stack []int
+func (s Stack) range () iter.Seq[int] { … }   // error: Stack already ranges (slice)
+```
+
 **RNG-7.** *Temporaries in the header.* The range expression is evaluated once. If it creates temporaries, they live until the end of the whole `for` statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14), [STM-4](07-statements.md)).
 
 **RNG-8.** *No redeclaring a loop variable.* Declaring a variable with the same name as a loop variable inside that loop's body, in the body block or in any block nested in it, is a **compile error**. This covers `u := u`, `u := u.Clone()` and `var u = u`, for the variables of a range clause and of a `for` clause. The parameters of a function literal inside the loop body count too, so `go func(u User){…}(u.Clone())` is an error: rename the parameter. Old Go code that wrote `u := u` (needed before Go 1.22) must rename the copy. Fix-its never reuse the name: `mine := u.Clone()`, or `go fetch(u.Clone())`, or `range move(users)` ([CLO-3a](11-closures.md)).
@@ -203,6 +219,7 @@ for k := range m { delete(m, k) } // allowed
 
 ## 8.4 Rationale
 
+- A `range` method (RNG-6b) reuses range-over-func, so user containers need no new loop protocol and get the same borrow rules as slices.
 - In-place re-slicing needs no offset field and frees memory as soon as it is not needed. The cost, O(n) for `s[1:]`, is paid only where Go code uses a slice as a queue, and `container/deque` replaces that pattern.
 - Allocators in the type keep one `[]T` type for heap and arena data. The alternative (a separate `ArenaSlice[T]`) would split every generic API in two.
 - Borrowing in `range` is the cheapest default and matches Go's reading code. Changing the real element needs the `&` form, and consuming needs an explicit `move(xs)`, so both are visible at the loop.

@@ -18,6 +18,24 @@ FieldDecl    = IdentifierList Type [ FieldAttributes ] [ Tag ] .              /*
 
 `extends` is a contextual keyword ([LEX-12](02-lexical.md#lex-12)). A struct type has no embedded fields in `.gopp` files ([TYP-25](#35-single-inheritance-adr-0023)). Interface types can still embed interfaces and constraints.
 
+```
+MethodName   = identifier | OperatorName .                                      /* TYP-27 */
+OperatorName = "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" | "&^"
+             | "!" | "==" | "<=>" | "&&" | "||"
+             | "[]" | "[]=" | "()" | "<-" | "++" | "--" | "range"
+             | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" | "&^=" .      /* in-place forms, EXP-19 */
+```
+
+**TYP-27.** *Operator method names* (ADR-0024). `MethodName` in `MethodDecl` and `MethodElem` ([9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18)) may be an operator: `func (a Vec2) + (b Vec2) Vec2`. What each operator method looks like, and what it means, is in [6.10](06-expressions.md#610-operator-methods-adr-0024) (EXP-16 to EXP-30).
+- **Parsing.** After the receiver the parser expects a method name. An operator token there starts an operator name, so `func (a T) - () T` is unary and `func (a T) - (b T) T` is binary: the parameter list decides. `()` is the two tokens `(` `)` right after the receiver; there is no clash, because a method name is required. `_km` is an ordinary identifier, and `@Convert` marks an ordinary method (EXP-25, EXP-27); neither changes the grammar.
+- **In an interface.** An operator method element is written the same way: `interface{ + (T) T; Clone }`. An element that starts with `*`, `[]` or `<-` followed by `(` is a method element, except `*(T)` and `[](T)` with nothing after the `)`: those are type terms. `*T`, `[]T` and `<-chan T` stay type terms. A binary operator always has a result, so `* (T) T` is a method element. P03.24 pins the rule with parser tests.
+- **Method sets.** Operator methods belong to the method set of the type, with the usual value and pointer receiver rules. An interface that lists an operator method is a **constraint interface** (like one with a union) and cannot be used as an ordinary type in v1 (ADR-0024 decision 12).
+- **Overload sets.** Several operator methods with the same name and different parameter lists may exist on one type. Any other duplicate is an error ([EXP-17](06-expressions.md#610-operator-methods-adr-0024)). Names of ordinary methods stay unique, as in Go.
+- **Not allowed on an operator method:** type parameters of its own, and `!` ([EXP-30](06-expressions.md#610-operator-methods-adr-0024)). Type parameters of the receiver type are fine: `func (a Vec[T]) + (b Vec[T]) Vec[T]`.
+- **Go mode.** In `.go` files an operator method is a syntax error.
+
+Other notes on type syntax:
+
 - `move` is **not** a type. It is a mark on a parameter or receiver ([PAR-5](05-parameters.md)).
 - `View[X]` is an ordinary `TypeName TypeArgs`: a predeclared generic type, not a keyword and not new syntax ([LEX-7](02-lexical.md#predeclared-identifiers), [OWN-V1](04-ownership.md#44-views-d16)). It is a read-only borrow of an `X`. `X` may be any type except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]`: `View[string]`, `View[[]byte]`, `View[User]` and `View[Bytes]` are fine; the others are a compile error that names the allowed forms.
 - Predeclared generic types: `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]` and `View[X]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17)). The argument of `Unique`, `Shared` and `Weak` must be a pointer type `*T`.
@@ -291,6 +309,7 @@ The full example, its output and the list of errors are in [ADR-0023](../adr/002
 - **Shared handles for interfaces** keep Go's `err == io.EOF`, `errors.Is`, `%w` and type switches working with no GC.
 - **Borrowed interface parameters** make `fmt.Println(name)` free and non-consuming. Boxing happens only when a callee really keeps the value.
 - **`extends` and marks instead of embedding** (ADR-0023): the call from a parent method to a replaced method does what the reader expects, every override is visible, and only `@Virtual` / `@Abstract` methods cost an indirect call. Embedding would be a second, different way to reuse a struct, so it is removed from `.gopp` files.
+- **Operator names as method names** (ADR-0024): no new declaration form and no `operator` keyword. The method set, export data, `gopp doc` and the LSP already know methods; only the name grammar grows.
 - **Field tables instead of `reflect`** give `fmt` and `json` what they need and nothing more.
 - **C layout** is required for C interop (P07) and costs nothing in practice.
 - **`@Strict` as an opt-in on the type**, not required-by-default: Go code and partial literals such as `http.Server{Addr: ":80"}` keep working, and adding a field to a library struct breaks nobody (ADR-0019).

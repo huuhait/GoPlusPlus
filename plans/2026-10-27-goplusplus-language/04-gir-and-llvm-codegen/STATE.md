@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-28 (P04.22 `extends` lowering added)
+Last updated: 2026-10-28 (P04.23 operator lowering added)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
@@ -29,6 +29,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.20 Borrow checker (ADR-0021)
 - [ ] P04.21 Concurrency checks (ADR-0022)
 - [ ] P04.22 `extends` lowering (ADR-0023)
+- [ ] P04.23 Operator lowering (ADR-0024)
 
 ## Open questions
 
@@ -47,6 +48,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 ## Decision changes
 
 - 2026-10-28 (ADR-0023, owner decision): new task P04.22 and design D4.18, lowering of `extends` (type tables only for types with `@Virtual` / `@Abstract` methods, indirect calls through parent pointers, free upcast, checked downcast, `base` calls, drop order child then parent). Depends on P03.22. Final-only hierarchies have no table; owning upcasts and downcasts there are checker errors (P03.22).
+- 2026-10-28 (ADR-0024, owner decision): new task P04.23 and design D4.19, operator lowering (direct calls that inline, compound forms with one evaluation, lazy and eager `&&`/`||`, `range`, `<-`, `@Convert`, user literals, fixed mangling table). Depends on P03.24.
+- 2026-10-28 (ADR-0024, manager decisions on the open points): the conversion hook is the attribute `@Convert` on an ordinary method (not a method named `to`); `<=>` is built in for numbers and strings (like `cmp.Compare`); `@Right` is allowed on every binary operator except `&&`/`||` (non-commutative operators are written for the swapped order, e.g. `1.0 / v`); an optional in-place compound method with a pointer receiver (`func (m *Matrix) += (b Matrix)`) avoids the temporary. `select` with user channels, user `==` ignored for map keys, constraint-only operator interfaces and no `!` on operators are decided. The only open point left is literal suffixes from other packages.
 - 2026-10-28 (ADR-0021 amendment, owner decisions): (A) a call result borrows what the callee's body says (per-function borrow summary, fixpoint over recursion, stored in export data with the "writes this parameter" bit; fallback to "all borrow-capable arguments" only with no body; no lifetime syntax; a changed summary is an API change for P14); (B) one writable borrow of a place at a time (Rust's `&mut` rule, spec OWN-B9): conservative overlap, writable `*T` copies are reborrows, every raw `*T` is a tracked borrow, `Shared[*T]` read-only unless a cell type (`mem.Cell` / `Mutex`). Hidden aliasing leaves UB. P04.20 extended, D4.16 updated; no new task.
 - 2026-10-28 (ADR-0022, owner decision): new task P04.21 and design D4.17, race-free concurrency checks (`Send` / `Sync` labels, `go` and channel rules, globals, shared handles, deadlock check) on the flow graph of P04.09 and P04.20.
 - 2026-10-28 (ADR-0021, owner decision): new task P04.20, a borrow checker without lifetime annotations on P04.09's flow graph; P04.09's "use through a pointer taken in the same function" item moves into it.

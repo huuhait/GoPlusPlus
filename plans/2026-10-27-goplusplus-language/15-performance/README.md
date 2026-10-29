@@ -76,4 +76,11 @@
 ## Open questions
 
 - **Q1** Small-string optimization for `string` (from P01 Q8)? The layout is ABI, so decide before v1.0 (task P15.14).
+- **Q3** SIMD: **deferred by owner 2026-10-28.** Not designed yet; recorded so it is not forgotten. No task, no spec rule. Decide before v1.0 only if the owner wants it.
+  - *Today:* LLVM auto-vectorization in release builds (the D15.3 pipeline), plus C/C++ intrinsics and libraries through header imports (P07, P08).
+  - *Option A:* nothing new.
+  - *Option B:* a portable `simd` package with `simd.Vec[T, N]` and the normal operators (possible now through operator overloading, ADR-0024); bounds-checked `Load`, `Store` and `LoadPartial`; `Min`, `Max`, `Abs`, `Sqrt`, `FMA`, `SatAdd`; `Sum` and `ReduceMax`; `Select` with `simd.Mask`; `Shuffle`, `Convert` and `Gather`; `simd.Native[T]` (the best width for the target) and `simd.Has(...)` (feature test); and `@Target("avx2", "avx512", "neon")` multiversioning with a run-time pick.
+  - *Option C:* B plus raw `simd/x86` and `simd/arm` intrinsics packages.
+  - *Comparison:* C++ has intrinsics, Highway and `std::simd`; Rust has `std::arch` and a nightly `std::simd`; Zig has `@Vector`; Go has none.
+  - *Owner's recommendation note:* B now, with C later.
 - **Q2** Should mimalloc be the default allocator (from P05 Q2)? Task P15.10 evaluates it (D15.3 item 7).

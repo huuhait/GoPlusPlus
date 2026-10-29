@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-28 (SIMD question recorded)
 Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](README.md)
 
 ## Tasks
@@ -26,6 +26,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](
 
 - [ ] Q1 Small-string optimization for `string` (task P15.14; decide before v1.0)
 - [ ] Q2 mimalloc as the default allocator (task P15.10)
+- [ ] Q3 SIMD: deferred by owner 2026-10-28 (no task; options A, B, C in the README; recommendation: B now, C later)
 
 ## Exit criteria
 
@@ -34,6 +35,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (owner decision): SIMD is deferred but recorded as open question Q3 in the README (options A, B, C and the comparison). Not designed; no task. Operator overloading (ADR-0024) makes the `simd.Vec[T, N]` operators of option B possible.
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): `own` parameters are now `move` parameters (the `noalias` row), and `view` is renamed `ref`.
 
 ## Notes / blockers

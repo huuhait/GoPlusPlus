@@ -35,6 +35,7 @@
   - `move`/`clone` typing and the `append` move rule;
   - `@Strict` structs and `@Option` fields (D1.4 rule 11, ADR-0019, spec TYP-15a): the effective required bit of each field, the attribute placement and combination errors, the `@Strict`-without-required-field vet warning, and the required bits in struct conversions and in serialization; task P03.20;
   - `extends`, method marks, abstract types, `base`, up- and downcasts, and the removal of struct embedding in `.gopp` files (ADR-0023, spec TYP-16 to TYP-26, D3.13);
+  - operator methods: forms, overload sets, resolution, compound forms, `@Right`, literal suffixes, `range`, user `<-` and operator constraints (ADR-0024, spec TYP-27, EXP-16 to EXP-30, D3.14);
   - types with no zero value (D1.4 rules 9 and 11): C++ types without a default constructor and structs with a `@Required` field or a `@Strict` struct with a required field, spread to the structs and arrays that contain them; every composite literal must set each `@Required` field (and each field required by `@Strict`) (by name or by position); every place where Go makes a zero value is an error (`var x T`, `make([]T, n)` unless `n` is the constant `0`, `var a [N]T`, array literals with missing elements, keyed slice literals with gaps, named results, `var zero T` in generic code, `m[k]` and `<-ch` outside comma-ok forms, a write or `delete`, `clear(s)` on a slice); for generic types, per instance. The comma-ok lookups stay legal; that their value is read only where `ok` is true is checked by the flow typing of task P03.18. `move` out of a non-local place of a Go++ type with no zero value is an error. A nilable `@Required` field is never nil: storing `nil`, `move` out of it and `&` of it (except in `mem.Replace`) are errors here, `@Required` on `Weak[*T]` is an error, and every other stored value must be known non-nil (spec TYP-15's list), checked by the flow typing of task P03.18. Task P03.15, ADR-0016. The `@Required` flags and "no zero value" are part of a type's serialized description (D3.8), so they hold across packages.
 - **Flow-sensitive, in P04 on GIR:** use after move, `defer`/`go` borrowing something that dies first, and drop elaboration. The comma-ok, `err == nil` and known-non-nil checks are done in P03 (task P03.18, ADR-0018 amendment point 4); P04.09 keeps them only as GIR regression cases.
 
@@ -105,6 +106,13 @@ help: use name.Clone() before the move to keep a copy
 - The override check runs when the child's method set is built: each child method is matched against the ancestors' methods by name; the signature must be identical; a missing or surplus `@Override` is an error.
 - Struct embedding is an error in `.gopp` files with a fix-it (use `extends`, or a named field). In `.go` files the types2 embedding code stays, so Go mode is unchanged.
 - Dispatch, type tables, drop order and `base` calls are lowered in P04.22 (D4.18).
+
+**D3.14 — Operator overloading** (ADR-0024; task P03.24).
+- An operator method is an ordinary method whose name is an operator (`OperatorName`, TYP-27). It lives in the method set, in export data and in `gopp doc` like any method. The new things are the overload set (one operator name, several parameter lists), the shape table (EXP-16) and the resolution (EXP-17).
+- Resolution is one function: given the operator and the static types of the operands, return the method, the built-in operation, or an error. Every operator expression, compound form, `!=`, `<`-family, index, call, conversion, `range` and literal suffix goes through it, so the rules cannot drift apart. Generic bodies call it with the constraint's method set (GEN-13), so a body is checked once.
+- The call is then checked like the method call `a.op(b)` by the existing passes (borrow summaries, views, never-nil, `Send`/`Sync`). No new analysis is added, and the stress test covers resolution cost: overload sets are looked up by a hash on the operator and the parameter types, so a set of 50 methods and an expression of 10 000 operands stay near-linear.
+- The blocked operators (`=`, `.`, unary `&`, the comma, implicit conversions) are rejected in the parser or at the declaration with the reason from EXP-29. `select` rejects user channel types (CON-22); this is decided for v1 (ADR-0024 decision 10).
+- The lowering is P04.23 (D4.19).
 
 ## Open questions
 

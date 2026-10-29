@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-28 (P03.01–P03.19 done; P03.20, P03.21 and P03.22 open)
+Last updated: 2026-10-28 (P03.01–P03.19 done; P03.20, P03.21, P03.22 and P03.24 open)
 Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](README.md)
 
 ## Tasks
@@ -29,6 +29,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [ ] P03.20 `@Strict` structs and `@Option` fields (ADR-0019)
 - [ ] P03.21 `View[…]` replaces `ref` (ADR-0020)
 - [ ] P03.22 `extends`, method marks and no struct embedding (ADR-0023)
+- [ ] P03.24 Operator overloading (ADR-0024)
 
 ## Open questions
 
@@ -44,6 +45,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-28 (ADR-0024, owner decision): new task P03.24 and design D3.14. Operator overloading, "full minus unsafe": the operator is the method name (`func (a Vec2) + (b Vec2) Vec2`); binary, unary, `==` (gives `!=`), `<=>` returning `int` (gives `< <= > >=`), `&&`/`||` (lazy with `func() T`), `[]`/`[]=`, `()`, `<-`, explicit `@Convert`, `range`, `++`/`--`, read-only `*x`, literal suffixes (`10.5_km`), `@Right` for a number on the left, operator constraints in generics, and `gopp vet` for `==`/`<=>`. Blocked: `=`, `.`, `&x`, the comma and implicit conversions. Replaces the non-goal "no user-defined operator overloading". The number 23 is skipped on purpose (a parallel branch may add P03.23).
+- 2026-10-28 (ADR-0024, manager decisions on the open points): the conversion hook is the attribute `@Convert` on an ordinary method (not a method named `to`); `<=>` is built in for numbers and strings (like `cmp.Compare`); `@Right` is allowed on every binary operator except `&&`/`||` (non-commutative operators are written for the swapped order, e.g. `1.0 / v`); an optional in-place compound method with a pointer receiver (`func (m *Matrix) += (b Matrix)`) avoids the temporary. `select` with user channels, user `==` ignored for map keys, constraint-only operator interfaces and no `!` on operators are decided. The only open point left is literal suffixes from other packages.
 - 2026-10-28 (ADR-0023, owner decisions): new task P03.22 and design D3.13. Single inheritance with `extends` (one struct parent, `@Virtual` / `@Abstract` / `@Override`, `base.M()`, up- and downcasts), and Go struct embedding is removed from `.gopp` files (error with a fix-it; `.go` files unchanged; interface embedding stays). P03.22 also rewrites every existing `.gopp` test that embeds a struct, including the embedded-field tests of P03.15 and P03.20. The phase stays `[~]`.
 - 2026-10-28 (P03.17 review, owner decisions, ADR-0018 amendment): `Option[T]` is comparable when `T` is (both nil, or both set and equal; `Option[*T]` by address; `comparable`, struct fields and map keys follow; a non-comparable `T` allows only `== nil`; `o == 5` means `o == Option[int](5)`). A copy of a narrowed `Option` takes the value type (`if a != nil { p := a }` gives `*Node`; `var p Option[*Node] = a` stays an `Option`). Amendment points 3 and 4 (task P03.18): funcs and interfaces with methods are never nil like pointers (`error` and its aliases, `any`, `unsafe.Pointer`, maps, slices and channels keep `nil`; `Option[Logger]` / `Option[func()]` are the maybe forms; `@Required` on a func or method-interface field is an error), and flow typing also covers `v, err := f()` and the comma-ok forms when the value type has no zero value, and the known-non-nil stores into `error`/`any`/map/chan `@Required` fields.
 
