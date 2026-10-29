@@ -17,6 +17,7 @@ sorted into classes:
 --allow-other (default 0) files in "other".
 """
 import concurrent.futures
+import functools
 import os
 import subprocess
 import sys
@@ -82,8 +83,11 @@ def main():
             files.append(p)
     files.sort()
     counts = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-        for f, c in zip(files, ex.map(lambda f: classify(gopp, f), files)):
+    # Threads suit a small set; a large one (the standard library) needs processes,
+    # because the Python work per file runs under one interpreter lock.
+    pool = concurrent.futures.ProcessPoolExecutor if len(files) > 1000 else concurrent.futures.ThreadPoolExecutor
+    with pool(max_workers=jobs) as ex:
+        for f, c in zip(files, ex.map(functools.partial(classify, gopp), files, chunksize=16)):
             counts[c] = counts.get(c, 0) + 1
             if c in ("other", "fixed-point", "go++-syntax") or (show and c != "identical"):
                 print("%s: %s" % (c, f))
@@ -93,4 +97,5 @@ def main():
     return 1 if counts.get("other", 0) > allow else 0
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())

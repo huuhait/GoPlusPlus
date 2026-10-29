@@ -17,6 +17,7 @@ Files with syntax errors are counted and skipped. Prints a summary; exit status
 1 if any check failed or fewer than --min files were checked.
 """
 import concurrent.futures
+import functools
 import os
 import re
 import subprocess
@@ -170,8 +171,11 @@ def main():
             files.append(p)
     files.sort()
     counts = {"ok": 0, "skip": 0, "fail": 0}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-        for f, (status, why) in zip(files, ex.map(lambda f: check(gopp, f), files)):
+    # Threads suit a small set; a large one (the standard library) needs processes,
+    # because the Python work per file runs under one interpreter lock.
+    pool = concurrent.futures.ProcessPoolExecutor if len(files) > 1000 else concurrent.futures.ThreadPoolExecutor
+    with pool(max_workers=jobs) as ex:
+        for f, (status, why) in zip(files, ex.map(functools.partial(check, gopp), files, chunksize=16)):
             counts[status] += 1
             if status == "fail":
                 print("FAIL %s: %s" % (f, why))
@@ -183,4 +187,5 @@ def main():
     return 1 if bad else 0
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())
