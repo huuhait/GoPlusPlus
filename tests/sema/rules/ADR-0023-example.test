@@ -1,0 +1,168 @@
+// RUN: %gopp check %s
+// P03.22 (ADR-0023): the accepted side as one program. The ADR payment
+// example (Payment, Card, PremiumCard, the Total call, base.Fee(), the
+// Unique upcast in a slice literal, the checked downcast; its output is
+// checked by P04.22), an @Override method overridden again, base.Fee() in a
+// function literal, an @Abstract type that leaves a method open, a
+// final-only hierarchy used through the child (calls, base.M(), fields), a
+// generic child with two instances, interfaces satisfied by inherited
+// methods, the owning upcasts and downcasts of a tagged parent, Clone of a
+// child and through a pointer, and the contextual names (LEX-12).
+package main
+
+type Payment struct {
+	Amount int64
+	ID     string
+}
+
+@Abstract
+func (p *Payment) Pay() error
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount + p.Fee() }
+
+type Card extends Payment {
+	Number string
+}
+
+@Override
+func (c *Card) Pay() error {
+	println("card", c.Number, "pays", c.Total())
+	return nil
+}
+
+@Override
+func (c *Card) Fee() int64 { return c.Amount * 3 / 100 }
+
+type PremiumCard extends Card {}
+
+@Override
+func (p *PremiumCard) Fee() int64 { return base.Fee() / 2 }
+
+func main() {
+	list := []Unique[*Payment]{
+		new_unique(Card{Amount: 1000, ID: "p1", Number: "4242"}),
+		new_unique(PremiumCard{Amount: 2000, ID: "p2", Number: "1111"}),
+	}
+	for _, p := range list {
+		p.Pay()
+		println(p.ID, p.Fee())
+	}
+	if c, ok := list[1].(*Card); ok {
+		println("is a card:", c.Number)
+	}
+	more()
+}
+
+// An @Override method overridden again, base.Fee() in a function literal.
+type Gold extends PremiumCard {}
+
+@Override
+func (g *Gold) Fee() int64 {
+	f := func() int64 { return base.Fee() + 1 }
+	return f()
+}
+
+// An @Abstract type that leaves a method open, and its concrete child.
+type Animal struct{ Name string }
+
+@Abstract
+func (a *Animal) Speak() string
+
+@Abstract
+type Bird extends Animal {}
+
+type Owl extends Bird {}
+
+@Override
+func (o *Owl) Speak() string { return "hoo" }
+
+// A final-only hierarchy, used through the child.
+type Shape struct{ W, H int }
+
+func (s *Shape) Area() int { return s.W * s.H }
+
+type Square extends Shape {}
+
+func (s *Square) Side() int { return base.Area() + base.W }
+
+// A generic parent and child.
+type Box[T any] struct{ V T }
+
+func (b *Box[T]) Size() int { return 1 }
+
+type Named[T any] extends Box[T] { Label string }
+
+// Interfaces satisfied by inherited methods.
+type Payer interface{ Pay() error }
+type Totaler interface{ Total() int64 }
+
+func payAll(p Payer) error { return p.Pay() }
+
+func Total(p *Payment) int64 { return p.Total() }
+
+// The contextual names.
+type Holder struct{ extends, base int }
+
+func extends(base int) int { return base }
+
+// Clone: a child with parent and child fields, and through a pointer.
+type Item struct{ Name string }
+type Tagged extends Item {
+	Tag  string
+	Tags []string
+}
+
+func more() {
+	c := Card{Amount: 100, Number: "4242"}
+	d := Card{Payment: Payment{Amount: 100}, Number: "4242"}
+	_ = c.Total() + d.Fee() + c.Amount
+	var p *Payment = &c
+	_ = p.Total() + Total(&d)
+	_ = payAll(&c)
+	var t Totaler = &c
+	_ = t.Total()
+	var cp Unique[*Payment] = p.Clone()
+	_ = cp
+	sq := Square{W: 2, H: 3}
+	_ = sq.Side() + sq.Area()
+	o := Owl{Name: "o"}
+	var a *Animal = &o
+	_ = a.Speak()
+	n := Named[int]{Box: Box[int]{V: 1}, Label: "a"}
+	m := Named[string]{Label: "b"}
+	_ = n.Size() + m.Size() + n.V
+	h := Holder{extends: 1, base: 2}
+	base := h.base + extends(3)
+	_ = base
+	u := new_unique(Card{Amount: 1, Number: "1"})
+	var up Unique[*Payment] = u
+	if cc, ok := up.(*Card); ok {
+		_ = cc.Number
+	}
+	s := new_shared(Card{Amount: 1, Number: "1"})
+	var sp Shared[*Payment] = s
+	_ = sp
+	tg := Tagged{Name: "x", Tag: "y"}
+	_ = tg.Clone()
+}
+
+func weak(w Weak[*Card]) Weak[*Payment] { return w }
+
+func view(v View[Card]) View[Payment] { return v }
+
+func down(p *Payment, u Unique[*Payment]) {
+	if c, ok := p.(*Card); ok {
+		_ = c.Number
+	}
+	_ = p.(*Card)
+	_ = u.(*PremiumCard)
+	switch x := p.(type) {
+	case *PremiumCard:
+		_ = x.Number
+	case *Card:
+		_ = x.Fee()
+	}
+}

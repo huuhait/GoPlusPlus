@@ -224,6 +224,7 @@ void Checker::collectObjects() {
       err(File->Name, diag::err_sema_decl, {"invalid package name _"});
     F.FileScope = Mem.newScope(PkgScope, File->getRange(), "file");
     for (const ast::Decl *D : File->Decls) {
+      checkDeclMarks(D);
       // @Required and @Option are field attributes only, @Strict is for a
       // struct type declaration (MAC-8, TYP-15a).
       if (own()) {
@@ -358,6 +359,7 @@ void Checker::collectObjects() {
             DI->Pinned = hasPinnedAttr(GD);
             DI->Strict = hasDeclAttr(GD, "Strict");
             DI->ViewOk = hasDeclAttr(GD, "View");
+            DI->Abstract = hasDeclAttr(GD, "Abstract");
             rejectRefAttr(GD);
             DeclarePkg(TS->Name, TN, DI);
             break;
@@ -370,6 +372,7 @@ void Checker::collectObjects() {
         StringRef N = name(FD->Name);
         Func *Fn = newFunc(N, nullptr, FD->Name->getBegin());
         Fn->Decl = FD;
+        readMethodMarks(FD, Fn);
         DeclInfo *DI = S.newDecl();
         DI->FileScope = F.FileScope;
         DI->FDecl = FD;
@@ -489,6 +492,15 @@ void Checker::packageObjects() {
   // declared later (in a function literal) is final once declFinished says
   // so.
   TypesDeclared = true;
+  // TYP-22: the `extends` rings, before anything asks for a parent, and
+  // before the by-value sweep below would call them recursive types.
+  {
+    SmallVector<NamedType *, 32> Ts;
+    for (Object *O : Types)
+      if (auto *N = dyn_cast_or_null<NamedType>(O->Ty))
+        Ts.push_back(N);
+    checkExtendsCycles(Ts);
+  }
   for (Object *O : Others)
     objDecl(O, nullptr);
   // Methods: resolve all signatures (also those of invalid receivers).
@@ -516,6 +528,9 @@ void Checker::packageObjects() {
   }
   WalkQueue.clear();
   CycleSeeds.clear();
+  // TYP-17 to TYP-19: the walk of the package's hierarchy (once; an earlier
+  // question about an abstract type may have run it already).
+  ensureHierarchy();
   processDelayed();
 }
 
@@ -790,7 +805,7 @@ void Checker::constDecl(Const *O, const ast::Expr *Typ, const ast::Expr *Init,
 void Checker::varDecl(Var *O, ArrayRef<Var *> Lhs, const ast::Expr *Typ,
                       const ast::Expr *Init) {
   if (Typ) {
-    O->Ty = varType(Typ);
+    O->Ty = varType(Typ, true, "the type of a variable");
     // All variables of an n:1 declaration share the type.
     for (Var *V : Lhs)
       if (V != O && !V->Ty) {
@@ -895,6 +910,8 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
     E.InTParamList = SavedTP;
     N->TParams = Mem.copy(ArrayRef<TypeParamType *>(TPs));
   }
+  if (auto OIt = S.ObjMap.find(O); OIt != S.ObjMap.end())
+    N->AbstractAttr = OIt->second->Abstract; // TYP-19
   N->Resolving = true;
   N->ResolvingInterface = isa<ast::InterfaceType>(TD->Type);
   // TYP-15a: `@Strict` makes the fields of this very struct type required.
@@ -911,11 +928,14 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
       N->ViewAttr = true;
     }
   const ast::StructType *SavedDecl = DeclStructExpr;
+  const ast::Expr *SavedExtends = DeclExtendsExpr;
   StringRef SavedDeclName = DeclStructName;
   DeclStructExpr = dyn_cast<ast::StructType>(unparen(TD->Type));
+  DeclExtendsExpr = TD->Extends; // TYP-16
   DeclStructName = O->Name;
   Type *Rhs = definedType(TD->Type, N);
   DeclStructExpr = SavedDecl;
+  DeclExtendsExpr = SavedExtends;
   DeclStructName = SavedDeclName;
   ViewStructExpr = SavedView;
   StrictStructExpr = SavedStrict;
@@ -1014,6 +1034,43 @@ void Checker::typeDecl(TypeName *O, const TypeSpec *TD, NamedType *Def,
   N->Underlying = U;
   N->FromRHS = Rhs;
   collectMethods(O);
+  if (!S.Opts.GoCompat) {
+    // TYP-17 to TYP-19: the names, marks and open @Abstract methods are
+    // checked by the walk of the hierarchy (Hierarchy.cpp): for the package
+    // once its types are declared, for the local types of a body when the
+    // body is done. A local type can only extend itself in a ring; it is cut
+    // here, before its by-value walk would call it a recursive type.
+    const bool Local = !S.ObjMap.count(O);
+    bool Extends = false;
+    if (auto *St = dyn_cast_or_null<StructType>(N->Underlying))
+      Extends = !St->Fields.empty() && St->Fields[0]->IsParent;
+    if (Local && Extends) {
+      NamedType *Self[] = {N};
+      checkExtendsCycles(Self);
+    }
+    noteHierarchy(N, dyn_cast<ast::StructType>(unparen(TD->Type)),
+                  Local && Extends && isValid(N->Underlying));
+    // TYP-16: `type X Y` copies the declaration of Y, hidden parent part and
+    // all, so X would silently be a child (or a second root with the type
+    // table of Y); a child is made only by `type X extends Y {}`.
+    if (!TD->Extends && !TD->AssignLoc.isValid())
+      if (auto *RN = dyn_cast_or_null<NamedType>(N->FromRHS))
+        later([this, N, RN, TD]() {
+          auto *St = dyn_cast_or_null<StructType>(RN->Underlying);
+          if (!St)
+            return;
+          std::string Why;
+          if (!St->Fields.empty() && St->Fields[0]->IsParent)
+            Why = str(RN) + " extends " + str(St->Fields[0]->Ty);
+          else if (isAbstractType(RN))
+            Why = str(RN) + " is abstract";
+          else if (isTagged(RN))
+            Why = str(RN) + " has a type table";
+          if (!Why.empty())
+            err(TD->Type, diag::err_defined_from_hierarchy,
+                {std::string(N->Obj->Name), str(RN), Why});
+        });
+  }
 }
 
 void Checker::collectMethods(TypeName *O) {
@@ -1047,6 +1104,7 @@ void Checker::collectMethods(TypeName *O) {
         continue;
       }
     }
+    Ctx.noteMemberName(M->Name);
     N->Methods->push_back(M);
   }
 }
@@ -1285,6 +1343,10 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
   F->MoveRecv = RF->isMove();
   if (!RecvT)
     RecvT = invalid();
+  // TYP-19: a value receiver is a value of the type (the method expression
+  // `T.M` takes it as a parameter too), so an abstract type has none.
+  if (!Ptr && RecvNamed)
+    noAbstract(TE, RecvT, "a value receiver");
   Type *VarT =
       (Ptr && isValid(RecvT)) ? static_cast<Type *>(Ctx.pointer(RecvT)) : RecvT;
   recordTypeAndValue(TE, Mode::TypeExpr, VarT, nullptr);
@@ -1293,6 +1355,7 @@ void Checker::collectRecv(Func *F, const FieldList *Recv, Scope *Sc,
       newParam(RName, VarT,
                RF->Names.empty() ? RF->getBegin() : RF->Names[0]->getBegin());
   RV->IsParam = true;
+  RV->IsRecv = true;
   if (RF->isMove())
     RV->Mode = Var::MoveParam;
   if (!RF->Names.empty()) {
@@ -1329,6 +1392,18 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
   if (FD->Recv)
     --NoMono;
   E.Sc = Saved;
+  // TYP-20: a method of an `extends` type has the hidden `base`, in a scope
+  // of its own between the function scope and its parent: the signature
+  // does not see it, and `base := 1` in the body declares a new local (the
+  // reserved-name error) instead of finding it. Made here, in phase 1, so a
+  // body checker never writes the shared scopes.
+  if (FD->Body && O->Recv && S.Opts.CheckBodies)
+    if (Var *BV = makeBaseVar(O->Recv, FD->Body)) {
+      Scope *BaseSc = Mem.newScope(Sc->Parent, Sc->Extent, "base");
+      BaseSc->Elems[BV->Name] = BV;
+      BV->Parent = BaseSc;
+      Sc->Parent = BaseSc;
+    }
   O->Ty = FI.Sig;
   O->Params = FI.Params;
   O->Results = FI.Results;
@@ -1390,6 +1465,7 @@ void Checker::declStmt(const DeclStmt *DS) {
   auto *GD = dyn_cast<GenDecl>(DS->D);
   if (!GD)
     return;
+  checkDeclMarks(GD); // TYP-18, TYP-19, as for a package-level declaration
   const ValueSpec *LastWithValues = nullptr;
   unsigned Iota = 0;
   for (const Spec *Sp : GD->Specs) {
@@ -1430,7 +1506,8 @@ void Checker::declStmt(const DeclStmt *DS) {
       SmallVector<Var *, 4> Vars;
       for (const ast::Ident *Id : VS->Names)
         Vars.push_back(newVar(name(Id), nullptr, Id->getBegin()));
-      Type *T = VS->Type ? varType(VS->Type) : nullptr;
+      Type *T = VS->Type ? varType(VS->Type, true, "the type of a variable")
+                         : nullptr;
       if (T)
         for (Var *V : Vars)
           V->Ty = T;
@@ -1503,6 +1580,9 @@ void Checker::declStmt(const DeclStmt *DS) {
       rejectRefAttr(GD);
       typeDecl(TN, TS, nullptr, hasPinnedAttr(GD), false,
                hasDeclAttr(GD, "View"));
+      if (auto *LN = dyn_cast_or_null<NamedType>(TN->Ty); LN && !TN->IsAlias)
+        LN->AbstractAttr = !S.Opts.GoCompat && TS->Extends &&
+                           hasDeclAttr(GD, "Abstract"); // TYP-19
       ObjPath.pop_back();
       TN->Color = 1;
       break;

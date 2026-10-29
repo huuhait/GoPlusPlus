@@ -137,6 +137,12 @@ void Checker::closeScope() { E.Sc = E.Sc->Parent; }
 
 void Checker::declare(Scope *Sc, const ast::Ident *Id, Object *Obj,
                       SourceLoc ScopePos) {
+  // TYP-20: `base` is the parent part in a method of an `extends` type.
+  if (!BaseMethodOf.empty() && Obj->Name == "base" && isa<Var>(Obj))
+    err(Id ? Id->getBegin() : Obj->Pos, diag::err_base_reserved,
+        {std::string(BaseMethodOf), cast<Var>(Obj)->IsParam  ? "parameter"
+                                    : cast<Var>(Obj)->Result ? "result"
+                                                             : "variable"});
   if (Obj->Name != "_") {
     // Redeclaring a loop variable in the loop body (RNG-8) is reported by the
     // parser (ParseOptions::CheckLanguageRules).
@@ -241,8 +247,11 @@ void Checker::checkFiles(ArrayRef<const ast::File *> Files) {
   for (auto &KV : S.Pkg->PkgScope->Elems)
     if (auto *TN = dyn_cast<TypeName>(KV.second))
       if (auto *N = llvm::dyn_cast_or_null<NamedType>(TN->Ty);
-          N && !TN->IsAlias && N->TParams.empty())
-        hasZeroValue(N, nullptr);
+          N && !TN->IsAlias) {
+        if (N->TParams.empty())
+          hasZeroValue(N, nullptr);
+        isAbstractType(N); // the abstract bit is exported (TYP-19, P03.11)
+      }
   recordUntyped();
 }
 
@@ -308,7 +317,9 @@ static unsigned bodyThreads(const CheckOptions &O, size_t N) {
 static void runBodies(PackageState &S, const SourceManager &SM,
                       std::vector<BodyWorker> &Workers,
                       std::vector<std::vector<Diagnostic>> &Diags,
-                      std::vector<std::vector<Checker::MonoInst>> &Monos) {
+                      std::vector<std::vector<Checker::MonoInst>> &Monos,
+                      std::vector<std::vector<Checker::UntaggedPending>> &Pend,
+                      std::vector<std::vector<Checker::UseRec>> &Uses) {
   size_t N = S.Bodies.size();
   std::atomic<size_t> Next{0};
   auto Run = [&](BodyWorker &W) {
@@ -323,6 +334,8 @@ static void runBodies(PackageState &S, const SourceManager &SM,
       BC.recordUntyped();
       Diags[K] = std::move(Collect.Diags);
       Monos[K] = std::move(BC.MonoInsts);
+      Pend[K] = std::move(BC.UntaggedPend);
+      Uses[K] = std::move(BC.TPUses);
     }
   };
   if (Workers.size() == 1) {
@@ -371,7 +384,9 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
     Workers[0].Out = &CP->I;
   std::vector<std::vector<Diagnostic>> BodyDiags(S.Bodies.size());
   std::vector<std::vector<Checker::MonoInst>> BodyMonos(S.Bodies.size());
-  runBodies(S, SM, Workers, BodyDiags, BodyMonos);
+  std::vector<std::vector<Checker::UntaggedPending>> BodyPend(S.Bodies.size());
+  std::vector<std::vector<Checker::UseRec>> BodyUses(S.Bodies.size());
+  runBodies(S, SM, Workers, BodyDiags, BodyMonos, BodyPend, BodyUses);
   for (std::vector<Diagnostic> &DL : BodyDiags)
     for (Diagnostic &D : DL) {
       if (D.Sev == Severity::Error) {
@@ -392,6 +407,14 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   }
   CP->I.merge(Tables);
   C.FirstErr = C.NumErrors > 0;
+  // GEN-12, EXP-15: the bodies are all checked, so the uses of this
+  // package's type parameters are known.
+  for (std::vector<Checker::UntaggedPending> &PB : BodyPend)
+    C.UntaggedPend.insert(C.UntaggedPend.end(), PB.begin(), PB.end());
+  for (std::vector<Checker::UseRec> &UB : BodyUses)
+    C.TPUses.insert(C.TPUses.end(), UB.begin(), UB.end());
+  C.noteIntrinsicUses();
+  C.untaggedCheck(C.UntaggedPend);
   C.checkInitOrder();
   C.unusedImports();
   // Instantiation cycles, of the declarations and the bodies (taken in

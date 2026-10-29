@@ -1,0 +1,23 @@
+// P03.22 review (R18, R19) stress: the name index of a chain (a new name
+// per level asked from the leaf, plain and generic; a root with a method per
+// level, each called from its level) and a method use passed down a chain of
+// generics, decided on a value child at each of n calls (n errors), and a
+// chain of nested generic types held in Option by generic bodies, and the
+// inference of U from an ancestor instance of Box on every level (R24). Each
+// stays near-linear; the 200000 sizes are extends-stress-deepask.long.test
+// and extends-stress-rootmeth.long.test.
+// RUN: %python %S/Inputs/gen-extends-stress.py deepask 2000 > %t.deepask.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.deepask.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py rootmeth 2000 > %t.rootmeth.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.rootmeth.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py gdeepask 2000 > %t.gdeepask.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.gdeepask.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py mvpass 2000 > %t.mvpass.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.mvpass.gopp > %t.mvpass.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 2000 and t.count('does not satisfy the implicit requirement of U: the generic code passes U on to a generic that takes the method Val of it as a value, and with U = D, the method Val is inherited') == 2000" %t.mvpass.out
+// RUN: %python %S/Inputs/gen-extends-stress.py holdchain 2000 > %t.holdchain.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.holdchain.gopp > %t.holdchain.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 2000 and t.count('S does not satisfy the implicit requirement of T: the generic code makes or holds a value of T') == 2000" %t.holdchain.out
+// RUN: %python %S/Inputs/gen-extends-stress.py inferbox 2000 > %t.inferbox.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.inferbox.gopp
+package main

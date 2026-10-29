@@ -1,0 +1,131 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R8, R10): the two implicit requirements of a type parameter
+// (T must be untagged when the body copies or moves `*p`; T must not be
+// abstract when the body makes or holds a T value) are checked at EVERY
+// instantiation route: an inferred call, an explicit one, a function value
+// (assigned, declared, returned, passed as an argument and instantiated from
+// the parameter type), through another generic, and a generic type (the
+// cross-package route is the unit test Serialize.ImplicitUntagged...). Both
+// sides: untagged and concrete types pass everywhere.
+package main
+
+type Animal struct{ N int }
+
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+
+type Shape struct{ N int }
+
+@Abstract
+func (s *Shape) Area() int
+
+type Sq extends Shape {}
+
+@Override
+func (s *Sq) Area() int { return s.N }
+
+type Plain struct{ N int }
+
+func Swap[T any](p *T, q *T) { *p, *q = move(*q), move(*p) }
+
+func Zero[T Shape | Sq](p *T) int { var z T; _ = z; return 0 }
+
+type Cell[T any] struct{ v *T }
+
+func (c *Cell[T]) Put(move x T) { *c.v = move(x) }
+
+type Holder[T Shape | Sq] struct{ p *T }
+
+func (h *Holder[T]) Fresh() int { var z T; _ = z; return 0 }
+
+func applySwap(f func(*Animal, *Animal), a *Animal, b *Animal) { f(a, b) }
+func applyZero(f func(*Shape) int, s *Shape) int          { return f(s) }
+
+func retSwap() func(*Animal, *Animal) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	return Swap // error: a function value returned
+}
+
+func routes(a *Animal, b *Animal, s *Shape) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	Swap(a, b) // inferred call
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	Swap[Animal](a, b) // explicit
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	h := Swap[Animal] // a function value
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	var h2 func(*Animal, *Animal) = Swap // a variable, inferred from its type
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	applySwap(Swap, a, b) // an argument, inferred from the parameter type
+	_, _ = h, h2
+
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = Zero(s) // inferred call
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = Zero[Shape](s) // explicit
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	z := Zero[Shape] // a function value
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	var z2 func(*Shape) int = Zero // a variable
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = applyZero(Zero, s) // an argument
+	_, _ = z, z2
+}
+
+// A generic type: the uses in its methods are uses of its parameter.
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+func cellA(c Cell[Animal]) {}
+
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+func holdS(h Holder[Shape]) {}
+
+// Through another generic: the requirement moves to the outer parameter.
+func outerSwap[U any](p *U, q *U) { Swap(p, q) }
+func outerZero[V Shape | Sq](p *V) int { return Zero(p) }
+
+func through(a *Animal, s *Shape) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of U: the generic code passes U on
+	outerSwap(a, a)
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of V: the generic code passes V on
+	_ = outerZero(s)
+}
+
+// Holding T inside an instance (`Option[T]`, `Box[T]`) is a Make use too (M3:
+// plain `Option[Shape]` is E0389); a pointer to T is no value of it.
+type Box[T any] struct{ x T }
+
+func HoldOpt[T any]() int { var z Option[T]; _ = z; return 0 }
+func HoldBox[T any]() int { var z Option[*Box[T]]; _ = z; return 0 }
+func HoldPtr[T any]() int { var z Option[*T]; _ = z; return 0 }
+func outerHold[U any]() int { return HoldOpt[U]() }
+
+func holds() int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	n := HoldOpt[Shape]()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	n += HoldBox[Shape]()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Shape does not satisfy the implicit requirement of U: the generic code passes U on to a generic that makes or holds a value of it
+	n += outerHold[Shape]()
+	return n + HoldPtr[Shape]() + HoldOpt[Sq]() + HoldBox[Plain]() + outerHold[Sq]()
+}
+
+// Accepted everywhere: untagged types, concrete children, no such use.
+func good(x *Plain, y *Plain, q *Sq, i *int, j *int) {
+	Swap(x, y)
+	Swap[Plain](x, y)
+	h := Swap[Plain]
+	var h2 func(*Plain, *Plain) = Swap
+	h(x, y)
+	h2(x, y)
+	Swap(i, j)
+	outerSwap(x, y)
+	_ = Zero(q) // Sq is a concrete child
+	_ = Zero[Sq](q)
+	var z func(*Sq) int = Zero
+	_ = z
+	_ = outerZero(q)
+}
+
+func cp(c *Cell[Plain], h *Holder[Sq]) {}
+
+func main() {}

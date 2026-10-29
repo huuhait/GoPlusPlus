@@ -345,6 +345,7 @@ void ast::forEachChild(const Node *N, Visit Callback) {
     auto *S = cast<TypeSpec>(N);
     F("Name", S->Name);
     F("TypeParams", S->TypeParams);
+    F("Extends", S->Extends);
     F("Type", S->Type);
     break;
   }
@@ -474,6 +475,7 @@ private:
     }
     case Node::Kind::Field:
       flag(cast<Field>(N)->isMove(), "move");
+      flag(cast<Field>(N)->isExtends(), "extends");
       break;
     case Node::Kind::MacroParam: {
       auto *P = cast<MacroParam>(N);

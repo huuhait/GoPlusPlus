@@ -28,12 +28,12 @@ type Pair struct {
 }
 
 type Wrap struct {
-	User // an embedded struct holding required fields
+	User User // an embedded struct holding required fields
 	X    int
 }
 
 type EmbReq struct {
-	Plain @Required
+	Plain Plain @Required
 	N     int
 }
 

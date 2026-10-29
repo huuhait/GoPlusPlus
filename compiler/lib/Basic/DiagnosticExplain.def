@@ -1310,8 +1310,9 @@ var m map[[]int]string
 )X")
 EXPLAIN(err_embedded_field_pointer_iface,
         "An embedded field can be T or *T where T is a type name that is "
-        "not an interface. A pointer to an interface cannot be embedded.",
-        R"X(package p
+        "not an interface. A pointer to an interface cannot be embedded. (This is reported in Go mode, gopp check -go: a .gopp file may not embed a struct at all, TYP-25.)",
+        R"X(// gopp check -go
+package p
 
 type I interface{ M() }
 
@@ -1319,16 +1320,18 @@ type S struct{ *I }
 )X")
 EXPLAIN(err_embedded_field_pointer,
         "An embedded field of pointer type must point to a type name that "
-        "is not itself a pointer type.",
-        R"X(package p
+        "is not itself a pointer type. (This is reported in Go mode, gopp check -go: a .gopp file may not embed a struct at all, TYP-25.)",
+        R"X(// gopp check -go
+package p
 
 type P *int
 
 type S struct{ P }
 )X")
 EXPLAIN(err_embedded_field_unsafe_pointer,
-        "unsafe.Pointer cannot be an embedded field.",
-        R"X(package p
+        "unsafe.Pointer cannot be an embedded field. (This is reported in Go mode, gopp check -go: a .gopp file may not embed a struct at all, TYP-25.)",
+        R"X(// gopp check -go
+package p
 
 import "unsafe"
 
@@ -1336,8 +1339,9 @@ type S struct{ unsafe.Pointer }
 )X")
 EXPLAIN(err_embedded_field_type_param,
         "A type parameter, or a pointer to one, cannot be embedded in a "
-        "struct.",
-        R"X(package p
+        "struct. (This is reported in Go mode, gopp check -go: a .gopp file may not embed a struct at all, TYP-25.)",
+        R"X(// gopp check -go
+package p
 
 type S[T any] struct{ T }
 )X")
@@ -2120,8 +2124,9 @@ var f = T.M
 EXPLAIN(err_ambiguous_selector,
         "Two embedded types at the same depth both have a field or "
         "method with this name. Name the embedded field in the "
-        "selector: x.A.Name.",
-        R"X(package p
+        "selector: x.A.Name. (This is reported in Go mode, gopp check -go: a .gopp file may not embed a struct at all, TYP-25.)",
+        R"X(// gopp check -go
+package p
 
 type A struct{ Name string }
 type B struct{ Name string }
@@ -3547,4 +3552,296 @@ func f(v View[U]) {
 	c := v.Clone()
 	*c.P = 1
 }
+)X")
+EXPLAIN(err_extends_one_parent,
+        "A type extends at most one parent (ADR-0023, TYP-16). Use `extends` for the one main parent and a named field for anything else.",
+        R"X(package p
+
+type A struct{ X int }
+type B struct{ Y int }
+
+type C extends A, B { Z int }
+)X")
+EXPLAIN(err_extends_parent_kind,
+        "The parent of an `extends` type is a named struct type, possibly generic (TYP-16). An interface, a pointer, a basic or other non-struct type cannot be a parent. The same holds for the P of a constraint `T extends P`.",
+        R"X(package p
+
+type Reader interface{ Read() int }
+
+type X extends Reader { n int }
+)X")
+EXPLAIN(err_extends_cycle,
+        "A type cannot be its own ancestor (TYP-22): a ring of `extends` declarations has no first parent part. The message names the whole ring, from its type that comes first in the source.",
+        R"X(package p
+
+type A extends B { X int }
+type B extends A { Y int }
+)X")
+EXPLAIN(err_struct_embedding,
+        "Struct embedding is removed from .gopp files (ADR-0023, TYP-25): there is one way to reuse a struct, `extends`. Use `extends` for the one main parent. Write everything else as a named field (`Lock sync.Mutex`, `Log Logger`) and call its methods through the name. Interface embedding stays. Go files (gopp check -go) are unchanged.",
+        R"X(package p
+
+type Animal struct{ Name string }
+
+type Dog struct {
+	Animal
+	Age int
+}
+)X")
+EXPLAIN(err_method_mark_not_method,
+        "@Virtual, @Abstract and @Override mark methods that a child type can replace (TYP-18). They are not allowed on functions, variables, constants or imports. @Abstract is also a type attribute, on an `extends` type only (TYP-19).",
+        R"X(package p
+
+@Virtual
+func helper() {}
+)X")
+EXPLAIN(err_method_mark_value_recv,
+        "A method that can be replaced is called through a pointer to the parent, so @Virtual, @Abstract and @Override need a pointer receiver (TYP-18).",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+func (p P) Name() string { return "" }
+)X")
+EXPLAIN(err_method_marks_conflict,
+        "A method has at most one of @Virtual, @Abstract and @Override (TYP-18). @Override already says that the method can be replaced again.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+@Abstract
+func (p *P) M()
+)X")
+EXPLAIN(err_abstract_body,
+        "An @Abstract method has no body: every child must write it (TYP-18). Remove the body, or remove @Abstract and keep the body as a @Virtual method.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Abstract
+func (p *P) M() {}
+)X")
+EXPLAIN(err_override_missing,
+        "A method with the name of an ancestor method must say @Override, so that a method is never replaced by accident (TYP-18). If the new method is meant to be a new one, give it another name.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+func (p *P) Fee() int { return 0 }
+
+type C extends P { M int }
+
+func (c *C) Fee() int { return 1 }
+)X")
+EXPLAIN(err_override_nothing,
+        "@Override replaces a @Virtual or @Abstract method of an ancestor (TYP-18). Here no ancestor has a method of this name, which is often a typo.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+func (p *P) Fee() int { return 0 }
+
+type C extends P { M int }
+
+@Override
+func (c *C) Fe() int { return 1 }
+)X")
+EXPLAIN(err_override_final,
+        "A method without a mark is final: a child cannot replace it (TYP-18). Mark the parent method @Virtual (or @Abstract) if it is meant to be replaced.",
+        R"X(package p
+
+type P struct{ N int }
+
+func (p *P) Total() int { return p.N }
+
+type C extends P { M int }
+
+@Override
+func (c *C) Total() int { return 1 }
+)X")
+EXPLAIN(err_override_signature,
+        "An override must have exactly the signature of the method it replaces: the receiver kind, the parameters, the results and the `!` mark (TYP-18).",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+func (p *P) Fee() int { return 0 }
+
+type C extends P { M int }
+
+@Override
+func (c *C) Fee() string { return "" }
+)X")
+EXPLAIN(err_abstract_unimplemented,
+        "A type that extends a type with an @Abstract method must implement it with @Override, or be marked @Abstract itself (TYP-19).",
+        R"X(package p
+
+type P struct{ N int }
+
+@Abstract
+func (p *P) Pay()
+
+type C extends P { M int }
+)X")
+EXPLAIN(err_abstract_instance,
+        "An abstract type (one with an @Abstract method nobody implements on its path, or one marked @Abstract) has no values (TYP-19): no literal, variable, field, element of an array, slice, map or channel, parameter, result, make, conversion or type assertion of it, and no type argument that the instance holds by value (Box[P], Option[P]; decided on the substituted types). Use a pointer to a concrete child: *P, Unique[*P], Shared[*P], Weak[*P] and View[P] are fine. The one exception is the parent part inside a child literal: Card{Payment: Payment{...}}.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Abstract
+func (p *P) Pay()
+
+func f() {
+	var x P
+	_ = x
+}
+)X")
+EXPLAIN(err_abstract_attr_placement,
+        "@Abstract as a type attribute says that a type leaves an @Abstract method open: `@Abstract type Bird extends Animal {}`. It is allowed on a type that extends another (TYP-19).",
+        R"X(package p
+
+@Abstract
+type T struct{ N int }
+)X")
+EXPLAIN(err_extends_name_clash,
+        "A field or method of a child may not have the name of a field or method of any ancestor (TYP-17), so a name always means one member. Only an @Override method may repeat the name of a @Virtual or @Abstract ancestor method (TYP-18).",
+        R"X(package p
+
+type P struct{ N int }
+
+type C extends P { N int }
+)X")
+EXPLAIN(err_extends_literal_positional,
+        "The literal of an `extends` type must use field names (TYP-17): the fields of the parent and the child would otherwise have to be listed in one fixed order.",
+        R"X(package p
+
+type P struct{ N int }
+type C extends P { M int }
+
+var c = C{1, 2}
+)X")
+EXPLAIN(err_extends_literal_twice,
+        "A literal of an `extends` type may set a parent field directly (Card{Amount: 1}) or through the parent (Card{Payment: Payment{Amount: 1}}), never both (TYP-17).",
+        R"X(package p
+
+type P struct{ N int }
+type C extends P { M int }
+
+var c = C{N: 1, P: P{N: 2}}
+)X")
+EXPLAIN(err_base_reserved,
+        "Inside a method of an `extends` type, `base` is the parent part (TYP-20), so a variable, parameter or result of that name is not allowed there. Rename it. Elsewhere `base` is an ordinary name.",
+        R"X(package p
+
+type P struct{ N int }
+type C extends P { M int }
+
+func (c *C) F() {
+	base := 1
+	_ = base
+}
+)X")
+EXPLAIN(err_base_abstract,
+        "base.M() calls the parent version of M, statically (TYP-20). An @Abstract method has no body, so there is nothing to call.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Abstract
+func (p *P) Pay()
+
+type C extends P { M int }
+
+@Override
+func (c *C) Pay() { base.Pay() }
+)X")
+EXPLAIN(err_base_value,
+        "In a method of an `extends` type, `base` names the parent part of the receiver (TYP-20): it is used as base.M(...), a static call of the parent's version, or base.f. It is not a value: `x := base` or `&base` would be a pointer to the parent part, an upcast in disguise.",
+        R"X(package p
+
+type P struct{ N int }
+type C extends P { M int }
+
+func (c *C) F() {
+	x := base
+	_ = x
+}
+)X")
+EXPLAIN(err_partial_value,
+        "Value slicing (EXP-15, ADR-0023 decision 16): some places may hold only the parent part of a bigger value. They are the parent part c.Payment of a child, and for a type with a type table (tagged) the target *p of a pointer and a value receiver, whose dynamic object may be a child. Such a place is used only to reach a field or call a method, or under & (a pointer, for a tagged parent). A copy, a move, an argument, a result, a literal element, a send, a store, an assignment through it or a Clone of it as a value would cover only that part. Use the fields, a pointer, or the pointer's Clone(), which copies the whole dynamic value into a Unique.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+func (p *P) M() int { return p.N }
+
+func f(p *P) {
+	x := *p
+	_ = x
+}
+)X")
+EXPLAIN(err_upcast_untagged,
+        "An upcast needs a type table in the parent (TYP-22, ADR-0023 decision 16): only then does a parent pointer know the dynamic type behind it, so that a Clone through it copies the whole value. A parent without a @Virtual or @Abstract method in its hierarchy has no upcast of any kind; &c.Parent is one. Add a @Virtual method to the parent to use children through parent pointers, or keep using the child pointer.",
+        R"X(package p
+
+type P struct{ N int }
+type C extends P { M int }
+
+func f() {
+	c := C{N: 1}
+	_ = &c.P
+}
+)X")
+EXPLAIN(err_downcast_no_table,
+        "A downcast p.(*Child), or a type switch on p, asks for the dynamic type of p. A type has a type table only if it or an ancestor has a @Virtual or @Abstract method (TYP-22); a hierarchy without one has no dynamic type, so the assertion is an error (EXP-15), and so is every upcast to such a parent.",
+        R"X(package p
+
+type P struct{ N int }
+type C extends P { M int }
+
+func f(p *P) *C { return p.(*C) }
+)X")
+EXPLAIN(err_downcast_impossible,
+        "A type assertion on a pointer to a struct is a downcast (EXP-15): the target must be a pointer to a type that extends the struct, directly or not. Another type can never be the dynamic type behind that pointer.",
+        R"X(package p
+
+type P struct{ N int }
+
+@Virtual
+func (p *P) M() {}
+
+type Q struct{ N int }
+
+func f(p *P) *Q { return p.(*Q) }
+)X")
+EXPLAIN(err_extends_constraint,
+        "A constraint `T extends P` has the type set of P and every type that extends it (GEN-12). It cannot be combined with specific types such as ~int (the set would be empty), and an interface can extend one type only.",
+        R"X(package p
+
+type P struct{ N int }
+
+type Bad interface {
+	extends P
+	~int
+}
+)X")
+EXPLAIN(err_defined_from_hierarchy,
+        "`type X Y` copies the declaration of Y. When Y extends a parent, has a type table (a @Virtual or @Abstract method in its hierarchy) or is abstract, the copy would silently be a child of Y's parent (or a second root over the same type table). Write `type X extends Y { ... }` to make a child of Y (TYP-16). A type without a hierarchy is defined from another as in Go.",
+        R"X(package p
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() string { return "..." }
+
+type Dog extends Animal { Tricks int }
+
+type Other Dog
 )X")

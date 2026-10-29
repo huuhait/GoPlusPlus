@@ -359,7 +359,12 @@ public:
   llvm::ArrayRef<Attribute *> Attrs; // after the type, before the tag
   BasicLit *Tag = nullptr;
   SourceLoc MoveLoc;
+  /// The contextual word `extends` (LEX-12, GEN-12): for a type parameter
+  /// `T extends P` Type is P; for an interface element `extends P` Names is
+  /// empty and Type is P.
+  SourceLoc ExtendsLoc;
   bool isMove() const { return MoveLoc.isValid(); }
+  bool isExtends() const { return ExtendsLoc.isValid(); }
 };
 
 /// A list in (), [] or {}. Opening/Closing are invalid for an unparenthesized
@@ -610,6 +615,10 @@ public:
   Ident *Name = nullptr;
   FieldList *TypeParams = nullptr;
   SourceLoc AssignLoc; // valid for an alias `type A = B`
+  /// `type Child extends Parent { ... }` (TYP-16): Extends is the parent type
+  /// and Type the StructType of the body.
+  SourceLoc ExtendsLoc;
+  Expr *Extends = nullptr;
   Expr *Type = nullptr;
 };
 

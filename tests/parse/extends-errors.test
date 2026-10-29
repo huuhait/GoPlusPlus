@@ -1,0 +1,19 @@
+// RUN: not %gopp parse %s 2>&1 | FileCheck %s
+// RUN: rm -rf %t && mkdir -p %t && cp %s %t/a.go
+// RUN: not %gopp check --go %t/a.go 2>&1 | FileCheck --check-prefix=GO %s
+// P03.22 (TYP-16, LEX-12): one parent only; `extends` needs a body; in Go
+// mode (`--go`, and .go files) `extends` is an ordinary name, so the same text
+// is a syntax error (the other side: tests/parse/extends.test parses it).
+package p
+
+type A struct{}
+type B struct{}
+
+// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: a type can extend only one parent: `extends A, B` is not allowed (TYP-16)
+type Y extends A, B {}
+
+// GO: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: expected ';', found A
+type C extends A { N int }
+
+// CHECK: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: expected '{', found newline
+type W extends A

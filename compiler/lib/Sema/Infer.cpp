@@ -119,7 +119,7 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
                      (isa<TypeParamType>(Y) || !isValid(under(Y)) ||
                       requiredMeansNeverNil(Y));
       Fs.push_back({F->Name, F->Pkg, Y, F->Embedded, F->Tag, F->Required,
-                    SetOnly, F->MarkedRequired, F->MarkedOption});
+                    SetOnly, F->MarkedRequired, F->MarkedOption, F->IsParent});
     }
     return Changed ? Ctx.structOf(Fs, P->Strict) : T;
   }
@@ -158,12 +158,15 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
       Changed |= Y != X;
       Es.push_back(Y);
     }
+    Type *Ext = P->Extends ? Rec(P->Extends) : nullptr;
+    Changed |= Ext != P->Extends;
     if (!Changed)
       return T;
     InterfaceType *N =
         Ctx.newInterface(Mem.copy(ArrayRef<Func *>(Ms)),
                          Mem.copy(ArrayRef<Type *>(Es)), {}, P->Implicit);
     N->Sp = P->Sp;
+    N->Extends = Ext;
     N->Substituted = true;
     return N;
   }
@@ -276,11 +279,11 @@ SignatureType *Checker::instantiateFuncSig(SignatureType *Sig,
 //===----------------------------------------------------------------------===//
 
 int Checker::verify(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
-                    ArrayRef<Type *> TArgs, std::string *Cause) {
+                    ArrayRef<Type *> TArgs, std::string *Cause, bool ForType) {
   for (size_t I = 0; I < TParams.size() && I < TArgs.size(); ++I) {
     if (!TArgs[I] || !isValid(TArgs[I]))
       continue;
-    if (!satisfies(Pos, TArgs[I], TParams[I], TParams, TArgs, Cause))
+    if (!satisfies(Pos, TArgs[I], TParams[I], TParams, TArgs, Cause, ForType))
       return static_cast<int>(I);
   }
   return -1;
@@ -288,7 +291,8 @@ int Checker::verify(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
 
 bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
                         ArrayRef<TypeParamType *> TParams,
-                        ArrayRef<Type *> TArgs, std::string *Cause) {
+                        ArrayRef<Type *> TArgs, std::string *Cause,
+                        bool ForType) {
   Type *Bound = TPar->Bound;
   if (!Bound)
     return true;
@@ -303,6 +307,35 @@ bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
   // outer parameter must be Copy, or carry the same requirement).
   if (!own())
     return true;
+  // GEN-12, EXP-15, TYP-19: what the generic code does with the parameter
+  // (TypeParamType::uses) is decided on the real type argument, with the
+  // predicate of the plain code (useWhy). Same decision for every way to
+  // instantiate (explicit, inferred, through another generic, in another
+  // package). The uses of a generic of this package are final only after
+  // all its bodies: such an instantiation waits (untaggedCheck). A generic
+  // of another package is complete: its uses came with the export data.
+  if (mayBreakUses(TArg)) {
+    // (A parameter copied for one call's inference stands for its original.)
+    TypeParamType *Root = TPar->RenamedFrom ? TPar->RenamedFrom : TPar;
+    if (Root->Obj && Root->Obj->Pkg == S.Pkg) {
+      UntaggedPend.push_back({Pos, TArg, Root, ForType});
+    } else {
+      // A use that TArg gives on to a type parameter of this package is
+      // noted there.
+      bool Saved = NotingPassed;
+      NotingPassed = true;
+      std::string Why;
+      for (const TypeParamType::Use &U : Root->uses())
+        if (Why = useWhy(TArg, Root, U); !Why.empty())
+          break;
+      NotingPassed = Saved;
+      if (!Why.empty()) {
+        if (Cause)
+          *Cause = Why;
+        return false;
+      }
+    }
+  }
   bool Implicit = false;
   if (paramIs(TPar, /*Clone=*/false, &Implicit)) {
     if (Implicit && !isCopyType(TArg)) {
@@ -578,8 +611,8 @@ bool Unifier::nify(Type *X, Type *Y, unsigned Mode, unsigned Depth) {
     for (size_t I = 0; I < A->Fields.size(); ++I) {
       Var *F = A->Fields[I], *G = B->Fields[I];
       // Identity includes the attributes (TYP-15a), like the tag.
-      if (F->Embedded != G->Embedded || F->Tag != G->Tag ||
-          F->Required != G->Required ||
+      if (F->Embedded != G->Embedded || F->IsParent != G->IsParent ||
+          F->Tag != G->Tag || F->Required != G->Required ||
           F->RequiredSetOnly != G->RequiredSetOnly ||
           F->MarkedRequired != G->MarkedRequired ||
           F->MarkedOption != G->MarkedOption ||
@@ -722,6 +755,8 @@ static bool mentionsAny(Checker &C, Type *T, ArrayRef<TypeParamType *> TPs,
     for (Type *E : I->Embeddeds)
       if (mentionsAny(C, E, TPs, Depth + 1))
         return true;
+    if (I->Extends && mentionsAny(C, I->Extends, TPs, Depth + 1))
+      return true;
     return false;
   }
   case Type::Kind::Union:
@@ -976,6 +1011,21 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
           U.set(I, Core.T);
         }
       }
+      // GEN-12 (R3): `T extends Box[U]` with T known gives U, from the
+      // ancestor of T that is an instance of Box (`IntBox extends Box[int]`).
+      // When the bound has nothing to infer, the check at instantiation
+      // reports a mismatch.
+      if (TX && !S.Opts.GoCompat && !mentionsAny(*this, TX, TParams))
+        if (auto *CI = dyn_cast_or_null<InterfaceType>(under(TP)))
+          if (Type *Ext = typeSet(CI)->Extends;
+              Ext && mentionsAny(*this, Ext, TParams))
+            if (auto *EN = dyn_cast<NamedType>(Ext); EN && EN->Orig)
+              if (auto *TN = dyn_cast<NamedType>(TX))
+                if (NamedType *A = ancestorInstanceOf(TN, EN->Orig))
+                  if (!U.unify(A, Ext, UExact))
+                    return Fail(Pos, str(TP) + " (type " + str(TX) +
+                                         ") does not satisfy " +
+                                         str(TP->Bound));
       // The type argument must implement the methods of the constraint,
       // possibly after unification of the method signatures.
       if (TX && !mentionsAny(*this, TX, TParams)) {

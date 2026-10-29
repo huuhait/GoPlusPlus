@@ -1,0 +1,11 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R5): `type A extends {}` is one syntax error, with no
+// follow-on "undefined: extends" or "cannot extend BadExpr"; the constraint
+// `[T extends T]` names the constraint, not a type "a constraint".
+package main
+
+// CHECK: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: expected type, found '{'
+type A extends {}
+
+// CHECK: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: a constraint cannot extend T: a type parameter cannot be extended (TYP-16)
+func F[T extends T](x T) {}

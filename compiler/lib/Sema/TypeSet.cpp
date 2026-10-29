@@ -247,6 +247,7 @@ TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
     AddMethod(M, M->Pos, true);
 
   TermList Terms;
+  Type *Extends = I->Extends; // GEN-12
   bool Comparable = false, Copy = false, Clone = false;
   switch (I->Sp) {
   case InterfaceType::Comparable:
@@ -273,6 +274,14 @@ TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
       Comparable |= ES->Comparable;
       Copy |= ES->Copy;
       Clone |= ES->Clone;
+      if (ES->Extends) {
+        if (Extends && Extends != ES->Extends && !I->Substituted &&
+            At.isValid())
+          err(At, diag::err_extends_constraint,
+              {str(I), "the constraint",
+               "it extends both " + str(Extends) + " and " + str(ES->Extends)});
+        Extends = Extends ? Extends : ES->Extends;
+      }
       Cur.All = ES->AllTerms;
       if (!ES->AllTerms)
         Cur.Terms.assign(ES->Terms.begin(), ES->Terms.end());
@@ -325,6 +334,17 @@ TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
     });
     Comparable = false;
   }
+  // GEN-12: `extends P` and specific types (`~int`) have no type in common.
+  if (Extends && !Terms.All) {
+    if (!I->Substituted && I->ExtendsLoc.isValid())
+      err(I->ExtendsLoc, diag::err_extends_constraint,
+          {str(I), "the constraint",
+           "extends " + str(Extends) +
+               " cannot be combined with the type "
+               "terms of a type set (empty type set)"});
+    Terms.All = false;
+    Terms.Terms.clear();
+  }
   std::sort(Methods.begin(), Methods.end(), lessFunc);
   std::unique_lock<std::mutex> A(Ctx.allocLock());
   TS->Methods = Ctx.arena().copy(ArrayRef<Func *>(Methods));
@@ -334,6 +354,7 @@ TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
   TS->Comparable = Comparable;
   TS->Copy = Copy;
   TS->Clone = Clone;
+  TS->Extends = Extends;
   I->Computing = false;
   if (TypeSetCut)
     return TS;

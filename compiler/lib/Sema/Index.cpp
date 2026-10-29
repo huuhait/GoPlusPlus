@@ -13,13 +13,21 @@
 
 #include "Checker.h"
 
+#include <map>
 #include <set>
 
 using namespace gopp;
 using namespace gopp::sema;
 using llvm::cast;
 using llvm::dyn_cast;
+using llvm::dyn_cast_or_null;
 using llvm::isa;
+
+static const ast::Expr *unparen(const ast::Expr *E) {
+  while (auto *P = dyn_cast<ParenExpr>(E))
+    E = P->X;
+  return E;
+}
 
 bool Checker::isValidIndex(Operand &X, const char *What, bool AllowNegative) {
   if (X.M == Mode::Invalid)
@@ -97,7 +105,7 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     return false;
   case Mode::TypeExpr:
     X.M = Mode::Invalid;
-    X.Ty = varType(Ex);
+    X.Ty = varType(Ex, /*ValueUse=*/false); // a conversion decides (TYP-19)
     if (isValid(X.Ty))
       X.M = Mode::TypeExpr;
     return false;
@@ -502,7 +510,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
   if (Ex->Type) {
     auto *AT = dyn_cast<ast::ArrayType>(Ex->Type);
     if (AT && AT->Len && isa<Ellipsis>(AT->Len)) {
-      Typ = Ctx.array(varType(AT->Elt), -1);
+      Typ = Ctx.array(varType(AT->Elt, true, "an element type"), -1);
       OpenArray = true;
       Base = Typ;
     } else {
@@ -546,21 +554,71 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
   if (CoreT && isa<StructType>(CoreT)) {
     auto *St = cast<StructType>(CoreT);
     ArrayRef<Var *> Fields = St->Fields;
+    // TYP-19: a standalone value of an abstract type; the parent part of a
+    // child's literal (`Card{Payment: Payment{...}}`) is not one.
+    if (Ex != ParentPartLit)
+      noAbstract(Ex, Typ, "a composite literal");
+    const bool Extends =
+        !S.Opts.GoCompat && !Fields.empty() && Fields[0]->IsParent;
+    // The fields set by name, directly or through the parent chain (TYP-17).
+    // A field of the ancestor Depth levels up covers the Depth parent fields
+    // on the way: only the numbers are kept (MaxDepth the deepest field set,
+    // ParentSet the parent fields set as a whole by their level), so a
+    // literal costs no walk over the chain.
+    llvm::DenseSet<const Var *> SetVars;
+    unsigned MaxDepth = 0;
+    std::map<unsigned, Var *> ParentSet;
+    constexpr unsigned NoParentSet = ~0u;
     // TYP-15: every field without a zero value (a `@Required` field, a
     // pointer, a nested type with none) must be set, by name or by position.
-    auto CheckRequired = [&](std::vector<bool> Set) {
+    // A parent part that is not set as a whole is looked into (TYP-17).
+    auto CheckRequired = [&](std::vector<bool> Set,
+                             llvm::DenseSet<const Var *> Keys,
+                             unsigned FirstParentSet) {
       if (!own() || !isValid(Typ))
         return;
       SourceLoc At = Ex->Rbrace;
-      auto Run = [this, Fields, Set, At, Base]() {
+      NamedType *NT = dyn_cast<NamedType>(Typ);
+      auto Run = [this, St, Set, Keys, FirstParentSet, At, Base, NT,
+                  Extends]() {
         std::string Names;
         unsigned N = 0;
-        for (size_t I = 0; I < Fields.size(); ++I) {
-          if (I < Set.size() && Set[I])
-            continue;
-          if (!Fields[I]->Required && hasZeroValue(Fields[I]->Ty))
-            continue;
-          Names += (N++ ? ", " : "") + std::string(Fields[I]->Name);
+        auto Add = [&](Var *F) {
+          Names += (N++ ? ", " : "") + std::string(F->Name);
+        };
+        // Once the types are final the unset parents are walked by the
+        // ancestors that have a field to set (a memo per type), not by all.
+        const uint32_t DN = Extends && NT && typesFinal() ? hierDepth(NT) : 0;
+        // Work list of structs (the literal's, then its unset parents').
+        SmallVector<std::pair<StructType *, bool>, 4> Work{{St, true}};
+        while (!Work.empty()) {
+          auto [Cur, Top] = Work.pop_back_val();
+          for (size_t I = 0; I < Cur->Fields.size(); ++I) {
+            Var *F = Cur->Fields[I];
+            if (Top ? (I < Set.size() && Set[I]) : Keys.count(F))
+              continue;
+            if (F->IsParent) {
+              if (!DN)
+                if (auto *PS = dyn_cast_or_null<StructType>(under(F->Ty)))
+                  Work.push_back({PS, false});
+              continue;
+            }
+            if (!F->Required && hasZeroValue(F->Ty))
+              continue;
+            Add(F);
+          }
+        }
+        if (DN) {
+          for (NamedType *Y = requiredAncestor(parentOf(NT)); Y;
+               Y = requiredAncestor(parentOf(Y))) {
+            uint32_t DY = hierDepth(Y);
+            if (!DY || DY > DN || DN - DY > FirstParentSet)
+              break;
+            for (Var *F : cast<StructType>(under(Y))->Fields)
+              if (!F->IsParent && !Keys.count(F) &&
+                  (F->Required || !hasZeroValue(F->Ty)))
+                Add(F);
+          }
         }
         if (N)
           err(At, diag::err_required_missing,
@@ -572,7 +630,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         later(Run);
     };
     if (Ex->Elts.empty()) {
-      CheckRequired(std::vector<bool>(Fields.size()));
+      CheckRequired(std::vector<bool>(Fields.size()), {}, NoParentSet);
       return Done();
     }
     if (isa<KeyValueExpr>(Ex->Elts[0])) {
@@ -580,7 +638,11 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
       struct Finish {
         std::function<void()> F;
         ~Finish() { F(); }
-      } Fin{[&]() { CheckRequired(Visited); }};
+      } Fin{[&]() {
+        CheckRequired(Visited, SetVars,
+                      ParentSet.empty() ? NoParentSet
+                                        : ParentSet.begin()->first);
+      }};
       for (const ast::Expr *El : Ex->Elts) {
         auto *KV = dyn_cast<KeyValueExpr>(El);
         if (!KV) {
@@ -588,26 +650,65 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
           continue;
         }
         auto *Key = dyn_cast<ast::Ident>(KV->Key);
+        // The field the key names: a direct field, or (TYP-17) one of an
+        // ancestor, with the parent fields on the way.
+        Var *Fld = nullptr, *AltFld = nullptr;
+        unsigned FldDepth = 0;
+        int Idx = -1;
+        if (Key) {
+          for (size_t I = 0; I < Fields.size(); ++I) {
+            if (sameId(Fields[I], S.Pkg, name(Key), false)) {
+              Fld = Fields[I];
+              Idx = static_cast<int>(I);
+            }
+            if (!AltFld && sameId(Fields[I], S.Pkg, name(Key), true))
+              AltFld = Fields[I];
+          }
+          // Not a field of the literal's own struct: an ancestor's, found by
+          // the memoized chain lookup, or (what it cannot answer) a walk.
+          if (!Fld && Extends) {
+            LookupResult CR;
+            auto *NT = dyn_cast<NamedType>(Typ);
+            if (NT && chainLookup(NT, false, true, S.Pkg, name(Key), CR) &&
+                CR.Obj && isa<Var>(CR.Obj)) {
+              Fld = cast<Var>(CR.Obj);
+              FldDepth = CR.ParentSteps;
+            } else {
+              StructType *Cur = St;
+              for (unsigned Depth = 0; Cur && !Fld; ++Depth) {
+                for (size_t I = 0; I < Cur->Fields.size(); ++I) {
+                  if (sameId(Cur->Fields[I], S.Pkg, name(Key), false)) {
+                    Fld = Cur->Fields[I];
+                    FldDepth = Depth;
+                  }
+                  if (!AltFld && sameId(Cur->Fields[I], S.Pkg, name(Key), true))
+                    AltFld = Cur->Fields[I];
+                }
+                if (Fld || Cur->Fields.empty() || !Cur->Fields[0]->IsParent)
+                  break;
+                Cur = dyn_cast_or_null<StructType>(under(Cur->Fields[0]->Ty));
+              }
+            }
+          }
+        }
+        // The parent part is no standalone value (TYP-19).
+        const CompositeLit *SavedPP = ParentPartLit;
+        ParentPartLit = nullptr;
+        if (Fld && Fld->IsParent)
+          if (auto *PL = dyn_cast<CompositeLit>(unparen(KV->Value)))
+            ParentPartLit = PL;
         Operand V;
         expr(V, KV->Value);
+        ParentPartLit = SavedPP;
         if (!Key) {
           err(KV, diag::err_literal_invalid_field_name, {str(KV->Key)});
           continue;
         }
-        int Idx = -1, Alt = -1;
-        for (size_t I = 0; I < Fields.size(); ++I) {
-          if (sameId(Fields[I], S.Pkg, name(Key), false))
-            Idx = static_cast<int>(I);
-          if (sameId(Fields[I], S.Pkg, name(Key), true))
-            Alt = static_cast<int>(I);
-        }
-        if (Idx < 0) {
-          std::string Msg = lookupError(Base, name(Key),
-                                        Alt >= 0 ? Fields[Alt] : nullptr, true);
+        if (!Fld) {
+          std::string Msg = lookupError(Base, name(Key), AltFld, true);
           err(KV->Key, diag::err_sema_index, {Msg});
           continue;
         }
-        Var *Fld = Fields[Idx];
         recordUse(Key, Fld);
         if (V.isNil() && isNeverNilField(Fld))
           err(V, diag::err_required_nil_store,
@@ -618,13 +719,42 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
           assignment(V, Fld->Ty, "struct literal");
           storeLiteralElem(V, Fld->Ty);
         }
-        if (Visited[Idx]) {
+        if (Idx >= 0 && Visited[Idx]) {
           err(KV, diag::err_literal_duplicate_field, {std::string(name(Key))});
           continue;
         }
-        Visited[Idx] = true;
+        if (Idx < 0 && SetVars.count(Fld)) {
+          err(KV, diag::err_literal_duplicate_field, {std::string(name(Key))});
+          continue;
+        }
+        // The same field both directly and through its parent is an error.
+        const Var *Twice = nullptr;
+        if (Extends) {
+          // A field of an ancestor set before covers this parent field; a
+          // parent field set as a whole covers this one (the deepest wins).
+          if (Fld->IsParent && MaxDepth > FldDepth)
+            Twice = Fld;
+          auto It = ParentSet.lower_bound(FldDepth);
+          if (It != ParentSet.begin())
+            Twice = std::prev(It)->second;
+          if (Twice)
+            err(KV, diag::err_extends_literal_twice,
+                {str(Base), std::string(Twice->Name)});
+        }
+        if (Idx >= 0)
+          Visited[Idx] = true;
+        SetVars.insert(Fld);
+        MaxDepth = std::max(MaxDepth, FldDepth);
+        if (Fld->IsParent)
+          ParentSet.emplace(FldDepth, Fld);
       }
     } else {
+      if (Extends) {
+        for (const ast::Expr *El : Ex->Elts)
+          use(El);
+        err(Ex->Elts[0], diag::err_extends_literal_positional, {str(Base)});
+        return Done();
+      }
       for (size_t I = 0; I < Ex->Elts.size(); ++I) {
         const ast::Expr *El = Ex->Elts[I];
         if (isa<KeyValueExpr>(El)) {

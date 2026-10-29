@@ -40,6 +40,8 @@
 // RUN: %gopp fmt %S/Inputs/gofmt/typeparams.input | diff - %S/Inputs/gofmt/typeparams.golden
 // RUN: %gopp fmt %S/Inputs/gofmt/typeswitch.input | diff - %S/Inputs/gofmt/typeswitch.golden
 // RUN: %gopp fmt %S/Inputs/gopp/comments.input | diff - %S/Inputs/gopp/comments.golden
+// RUN: %gopp fmt %S/Inputs/gopp/extends.input | diff - %S/Inputs/gopp/extends.golden
+// RUN: %gopp fmt %S/Inputs/gopp/extends.golden | diff - %S/Inputs/gopp/extends.golden
 // RUN: %gopp fmt %S/Inputs/gopp/headers.input | diff - %S/Inputs/gopp/headers.golden
 // RUN: %gopp fmt %S/Inputs/gopp/macros.input | diff - %S/Inputs/gopp/macros.golden
 // RUN: %gopp fmt %S/Inputs/gopp/syntax.input | diff - %S/Inputs/gopp/syntax.golden

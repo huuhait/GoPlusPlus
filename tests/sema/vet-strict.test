@@ -40,14 +40,14 @@ type Ptr struct {
 
 @Strict
 type Emb struct {
-	Plain @Option
+	Plain Plain @Option
 	Q     Plain
 }
 
 @Strict
 type Embedded struct {
 	A Option[int]
-	Plain
+	Plain Plain
 }
 
 @Strict

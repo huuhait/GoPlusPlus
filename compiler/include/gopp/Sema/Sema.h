@@ -74,8 +74,14 @@ struct Selection {
   Type *Recv = nullptr;
   Object *Obj = nullptr;
   llvm::ArrayRef<int> Index;
+  /// A member of an `extends` ancestor: Index is preceded by this many parent
+  /// parts (field 0 at each level), which are not spelled out.
+  uint32_t ParentSteps = 0;
   bool Indirect = false;
   Type *Ty = nullptr;
+  /// `base.M`: the receiver is the parent part, and the call is static, to
+  /// the parent's version of M (TYP-20, EXP-14).
+  bool Base = false;
 };
 
 struct Instance {

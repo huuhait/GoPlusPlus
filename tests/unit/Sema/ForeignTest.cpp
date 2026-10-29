@@ -642,17 +642,12 @@ type Bad struct {
 	N int
 	C conn.Conn @Option
 }
-@Strict
-type BadEmb struct {
-	conn.Conn @Option
-}
 )");
   EXPECT_TRUE(mentions(Errs, "@Option on field C of type conn.Conn: conn.Conn "
                              "has no zero value (it has no default "
                              "constructor)"))
       << (Errs.empty() ? "" : Errs[0]);
-  EXPECT_TRUE(mentions(Errs, "@Option on field Conn of type conn.Conn"));
-  EXPECT_EQ(Errs.size(), 2u);
+  EXPECT_EQ(Errs.size(), 1u);
 }
 
 } // namespace

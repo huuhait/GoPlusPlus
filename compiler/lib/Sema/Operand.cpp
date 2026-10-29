@@ -559,6 +559,37 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
         return true;
       }
     }
+  // Go++ (EXP-13): the upcasts of `extends`: `*Child` to `*Parent`, the
+  // pointer kinds and View keep the conversion, when the parent has a type
+  // table (ADR-0023 decision 16).
+  if (!S.Opts.GoCompat && !Tp && !Vp) {
+    bool Handled = false;
+    if (hierarchyUpcast(V, T, Cause, Handled))
+      return true;
+    if (Handled)
+      return false;
+    // Unique[*C] / Shared[*C] to *P: borrowed from a place.
+    PtrKind K;
+    Type *Elem;
+    if (auto *Tptr = dyn_cast<PointerType>(Tu);
+        Tptr && hasPtrKind(V, &K, &Elem) && K != PtrKind::Weak) {
+      auto *P = dyn_cast<NamedType>(Tptr->Elem);
+      if (P && strictlyExtends(Elem, P)) {
+        if (!hasTypeTable(P)) {
+          if (Cause)
+            *Cause = untaggedCause(P, Elem, T);
+          return false;
+        }
+        if (X.E && placeKind(X.E) == PlaceKind::Temp) {
+          if (Cause)
+            *Cause = "cannot borrow a temporary " + str(V) +
+                     ": the target would be freed immediately (OWN-P6)";
+          return false;
+        }
+        return true;
+      }
+    }
+  }
   if (own() && !Tp && !Vp && X.E)
     if (auto *From = dyn_cast<OptionType>(Vu))
       if (Cause && !isa<InterfaceType>(Tu) &&
@@ -575,6 +606,39 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
              " is not an owning value: write " + str(T) + "(" + str(X.E) +
              ") to copy (TYP-2)";
 
+  if (!S.Opts.GoCompat && Cause && !Vp && !Tp) {
+    auto *VN = dyn_cast<NamedType>(V);
+    auto *TN = dyn_cast<NamedType>(T);
+    if (VN && TN && extendsType(VN, TN))
+      *Cause = "value slicing: " + str(V) + " extends " + str(T) + ", but a " +
+               str(V) + " value is not a " + str(T) +
+               " value (it would copy only the parent part); " +
+               (hasTypeTable(TN)
+                    ? "use a pointer: *" + str(V) + " converts to *" + str(T)
+                    : "use the fields of its parent part, or a *" + str(V) +
+                          " (" + str(T) + " has no type table, so no upcast)") +
+               " (EXP-15)";
+    else if (auto *PV = dyn_cast<PointerType>(V))
+      if (auto *PT = dyn_cast<PointerType>(T))
+        if (auto *PVN = dyn_cast<NamedType>(PV->Elem))
+          if (auto *PTN = dyn_cast<NamedType>(PT->Elem))
+            if (extendsType(PTN, PVN))
+              *Cause = str(V) + " does not convert to " + str(T) + ": " +
+                       str(PTN) + " extends " + str(PVN) +
+                       ", and only an upcast is implicit; " +
+                       (hasTypeTable(PVN)
+                            ? std::string("use a type assertion")
+                            : str(PVN) + " has no type table, so there is no "
+                                         "downcast either") +
+                       " (EXP-15)";
+  }
+  // GEN-12: a `T extends P` value is not a P value either.
+  if (!S.Opts.GoCompat && Cause && Vp && !Tp && isa<NamedType>(T) &&
+      extendsOrIs(Vp, T))
+    *Cause = "value slicing: " + str(V) + " extends " + str(T) + ", but a " +
+             str(V) + " value is not a " + str(T) +
+             " value (it would copy only the parent part); use a pointer: *" +
+             str(V) + " converts to *" + str(T) + " (GEN-12)";
   if (!Vp && !Tp)
     return false;
 
@@ -629,6 +693,32 @@ bool Checker::convertibleTo(Operand &X, Type *T, std::string *Cause) {
   auto *Vp = dyn_cast<TypeParamType>(V);
   auto *Tp = dyn_cast<TypeParamType>(T);
 
+  // TYP-22, EXP-13 (R4): a pointer, a view or an owning pointer to or from a
+  // type with a type table converts only along the hierarchy (the upcast was
+  // accepted above as an assignment; the downcast is the type assertion): a
+  // pointer to the same bytes under another type would break the type table
+  // of the object (`(*struct{Name string})(p)`).
+  if (own() && !S.Opts.GoCompat) {
+    auto Pointee = [&](Type *Ty) -> Type * {
+      PtrKind K;
+      Type *E;
+      if (hasPtrKind(Ty, &K, &E))
+        return E;
+      if (auto *P = dyn_cast<PointerType>(Ty))
+        return P->Elem;
+      if (auto *R = dyn_cast<RefType>(Ty))
+        return R->Elem;
+      return nullptr;
+    };
+    Type *VE = Pointee(V), *TE = Pointee(T);
+    if (VE && TE && (isTagged(VE) || isTagged(TE))) {
+      if (Cause)
+        *Cause = "a pointer to or from a type with a type table converts only "
+                 "along the hierarchy: upcast it by assignment, downcast it "
+                 "with a type assertion (TYP-22, EXP-13)";
+      return false;
+    }
+  }
   if (identicalIgnoreTags(Vu, Tu) && !Vp && !Tp)
     return true;
   if (auto *VP = dyn_cast<PointerType>(V))
@@ -839,6 +929,29 @@ void Checker::conversion(Operand &X, Type *T) {
   }
   if (checkNilableToNeverNil(X, T))
     return;
+  if (own()) {
+    // TYP-19: a conversion makes a value of T; an abstract T has none.
+    if (isAbstractType(T)) {
+      err(X, diag::err_abstract_instance,
+          {"a conversion", str(T), abstractWhy(cast<NamedType>(T))});
+      X.M = Mode::Invalid;
+      return;
+    }
+    // ADR-0023 decision 16: `T(v)` of a view of a tagged type copies what
+    // the view sees, which may be the parent part of a child.
+    if (auto *R = dyn_cast<RefType>(under(X.Ty));
+        R && !ConstArg && isTagged(R->Elem) && !isViewType(T) &&
+        !isNonTypeParamInterface(T)) {
+      err(X, diag::err_partial_value,
+          {X.E ? str(X.E) : str(X), "as a value",
+           str(R->Elem) +
+               " has a type table, so the view may see the parent part of a "
+               "child, and a copy of it would cover only that part; use its "
+               "Clone() for a full copy"});
+      X.M = Mode::Invalid;
+      return;
+    }
+  }
   // OWN-V3: `[]T(v)`, `[N]T(v)` and `T(v)` of a view are an owned copy; it
   // must not share a raw pointer target with the view (viewCopyHasPointer).
   if (own() && !ConstArg && isViewType(X.Ty) && !isViewType(T) &&

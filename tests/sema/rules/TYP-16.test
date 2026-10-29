@@ -1,0 +1,87 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-16 (P03.22, ADR-0023): `type C extends P { ... }` takes exactly one
+// parent, a named struct type (a generic one too); a child of a child is
+// fine. `extends` on int, a pointer, an interface, a slice, a map, a named
+// non-struct type or a struct literal is an error, and so is a cycle (TYP-22),
+// reported once per ring with the whole ring. `extends` and `base` are
+// contextual (LEX-12): ordinary names elsewhere. Lines without a CHECK line
+// are accepted.
+package main
+
+type Animal struct{ Name string }
+type Box[T any] struct{ V T }
+type Iface interface{ M() }
+type Num int
+type Slice []int
+type A struct{}
+type B struct{}
+
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: a type can extend only one parent: `extends A, B` is not allowed (TYP-16)
+type TwoParents extends A, B {}            // error: one parent
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: type IntParent cannot extend int: the parent must be a struct type (TYP-16)
+type IntParent extends int {}              // error
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: type PtrParent cannot extend *Animal: a pointer type cannot be a parent (TYP-16)
+type PtrParent extends *Animal {}          // error
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: type IfaceParent cannot extend Iface: an interface cannot be a parent (TYP-16)
+type IfaceParent extends Iface {}          // error
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: type ErrParent cannot extend error: an interface cannot be a parent (TYP-16)
+type ErrParent extends error {}            // error
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: type SliceParent cannot extend []int: the parent must be a struct type (TYP-16)
+type SliceParent extends []int {}          // error
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: type MapParent cannot extend map[int]int: the parent must be a struct type (TYP-16)
+type MapParent extends map[int]int {}      // error
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: type NumParent cannot extend Num: the parent must be a struct type (TYP-16)
+type NumParent extends Num {}              // error
+// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: type SliceNamed cannot extend Slice: the parent must be a struct type (TYP-16)
+type SliceNamed extends Slice {}           // error
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: type LitParent cannot extend struct{…}: the parent must be a named struct type (TYP-16)
+type LitParent extends struct{ X int } {}  // error
+
+// Cycles: one error per ring, from its first type in the source.
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: `extends` cycle: CycA extends CycB extends CycA; a type cannot be its own ancestor (TYP-22)
+type CycA extends CycB {} // error: CycA extends CycB extends CycA
+type CycB extends CycA {}
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: `extends` cycle: Self extends Self; a type cannot be its own ancestor (TYP-22)
+type Self extends Self {} // error
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: `extends` cycle: R1 extends R3 extends R2 extends R1; a type cannot be its own ancestor (TYP-22)
+type R1 extends R3 {}     // error: a ring of three
+type R2 extends R1 {}
+type R3 extends R2 {}
+type OnRing extends R2 {}
+
+func localCycle() {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: `extends` cycle: L extends L; a type cannot be its own ancestor (TYP-22)
+	type L extends L {} // error: a local type can only extend itself
+}
+
+// Accepted: a child, a child of a child, generic parents and children.
+type Dog extends Animal { Age int }
+type Puppy extends Dog {}
+type Gen[T any] extends Box[T] { Extra T }
+type Leaf extends Gen[int] {}
+type Pair[X any, Y any] extends Box[X] { Second Y }
+
+func good() {
+	_ = Puppy{Name: "a", Age: 1}
+	var g Gen[string]
+	var h Gen[int]
+	g.V, h.Extra = "s", 1
+	_ = Leaf{V: 1, Extra: 2}
+	_ = Pair[int, string]{V: 1, Second: "x"}
+}
+
+// `extends` and `base` are ordinary names outside their places (LEX-12).
+var extends = 1
+
+type extendsT struct{ extends, base int }
+
+func extendsF(extends int) int { return extends }
+
+func base() int { return 2 }
+
+func names() {
+	extends := 3
+	base := 4
+	_ = extendsT{extends: extends, base: base}
+	_ = extendsF(5)
+}

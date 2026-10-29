@@ -1,0 +1,76 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R1, GEN-12, EXP-15): a type parameter T whose generic code
+// uses `*p` (p points to T) as a value, assigns through it or calls
+// `(*p).Clone()` must be untagged at every instantiation: a pointer to a
+// tagged Animal may point to a Dog, and the copy would cut the child down.
+// Decided in one place (Checker::satisfies / untaggedCheck): explicit,
+// inferred, through another generic, in a generic type's method.
+// Untagged types, and generic code that only reads fields and calls methods
+// through the pointer, keep working (the other side). Lines without a CHECK
+// line are accepted.
+package main
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() string { return "..." }
+
+type Dog extends Animal { Tricks int }
+
+type Plain struct{ N int }
+
+// Uses of *p as a value.
+func swapG[T any](p *T, q *T)    { *p, *q = move(*q), move(*p) }
+func viaClone[T Clone](p *T) T   { return (*p).Clone() }
+func store[T any](p *T, move v T) { *p = move(v) }
+
+// No such use: fields, methods and the pointer itself.
+func same[T any](p *T, q *T) bool { return p == q }
+func name[T extends Animal](p *T) string { return p.Name + p.Speak() }
+func keep[T any](p *T) *T         { return p }
+
+// Passed on: the requirement moves to the callers' parameter.
+func mid[U any](p *U, q *U) { swapG(p, q) }
+func top[V any](p *V, q *V) { mid(p, q) }
+
+type Cell[T any] struct{ v *T }
+
+func (c *Cell[T]) Set(move x T) { *c.v = move(x) }
+
+func main() {
+	a, b := Animal{}, Animal{}
+	d := Dog{}
+	pa, pb := &a, &b
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies, moves or assigns a value of T through a pointer, a view or a receiver (`*p`), and a pointer to Animal may point to a child
+	swapG(pa, pb) // error: inferred
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies, moves or assigns a value of T through a pointer
+	swapG[Animal](&a, &b) // error: explicit
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code clones a value of T through a pointer or a view (`(*p).Clone()`)
+	_ = viaClone(pa) // error: Clone
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies, moves or assigns a value of T through a pointer
+	store(pa, Animal{}) // error: assigns through it
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of U: the generic code passes U on to a generic
+	mid(pa, pb) // error: through another generic
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of V: the generic code passes V on to a generic
+	top(pa, pb) // error: through two
+	// CHECK: [[@LINE+2]]:8: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	// CHECK: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies
+	var c Cell[Animal] = Cell[Animal]{v: &a} // error: a method of the type (the type is named twice)
+	_ = c
+
+	// Accepted: untagged types, and no use of *p as a value.
+	x, y := Plain{}, Plain{}
+	swapG(&x, &y)
+	top(&x, &y)
+	i, j := 1, 2
+	swapG(&i, &j)
+	top(&i, &j)
+	_ = viaClone(&x)
+	var cp Cell[Plain] = Cell[Plain]{v: &x}
+	_ = cp
+	_ = same(pa, pb)
+	_ = name(&d)
+	_ = keep(pa)
+	_ = keep(&d)
+	_ = d
+}

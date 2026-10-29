@@ -29,6 +29,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+#include <map>
+#include <set>
+
 #include <algorithm>
 #include <fstream>
 
@@ -100,7 +104,7 @@ var Anyval any
 var Err error
 var Callback = func(int, ...int) (bool, error) { return false, nil }
 var Embedded struct {
-	Point
+	P     Point
 	Extra []Shape
 }
 
@@ -588,6 +592,87 @@ func f(c Count) Count {
   EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
 }
 
+// P03.22 review (R1): a type parameter whose generic code uses `*p` as a value
+// must be untagged at every instantiation, also in an importing package (the
+// requirement is carried by the type parameter in the export data), and also
+// through a generic of the importing package that passes its parameter on.
+TEST(Serialize, ImplicitUntaggedRequirementIsRequiredAcrossPackages) {
+  Loaded L(R"(package lib
+
+func Swap[T any](p *T, q *T) { *p, *q = move(*q), move(*p) }
+
+func Same[T any](p *T, q *T) bool { return p == q }
+
+func Zero[T ~struct{ N int }](p *T) int { var z T; _ = z; return 0 }
+
+type Cell[T any] struct{ V *T }
+
+func (c *Cell[T]) Put(move x T) { *c.V = move(x) }
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Bad = R"(package main
+import "lib"
+type Animal struct{ Name string }
+@Virtual
+func (a *Animal) Speak() string { return "" }
+type Shape struct{ N int }
+@Abstract
+func (s *Shape) Area() int
+func outer[U any](p *U, q *U) { lib.Swap(p, q) }
+func f(a *Animal, b *Animal, sh *Shape) {
+	lib.Swap(a, b)
+	outer(a, b)
+	lib.Zero(sh)
+	c := lib.Cell[Animal]{V: a}
+	_ = c
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+type Animal struct{ Name string }
+@Virtual
+func (a *Animal) Speak() string { return "" }
+type Plain struct{ N int }
+func outer[U any](p *U, q *U) { lib.Swap(p, q) }
+func g(a *Animal, b *Animal, x *Plain, y *Plain) bool {
+	lib.Swap(x, y)
+	outer(x, y)
+	lib.Zero(x)
+	c := lib.Cell[Plain]{V: x}
+	_ = c
+	return lib.Same(a, b)
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "Animal does not satisfy the implicit "
+                              "requirement of T: the generic code copies, "
+                              "moves or assigns a value of T through a "
+                              "pointer"));
+  EXPECT_TRUE(anyHas(Decoded, "Animal does not satisfy the implicit "
+                              "requirement of U: the generic code passes U "
+                              "on to a generic"));
+  EXPECT_TRUE(anyHas(Decoded, "Shape does not satisfy the implicit "
+                              "requirement of T: the generic code makes or "
+                              "holds a value of T"));
+  EXPECT_EQ(Decoded.size(), 4u);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
 TEST(Serialize, ViewGenericStructsSurviveTheRoundTripAcrossPackages) {
   Loaded L(R"(package lib
 
@@ -775,6 +860,239 @@ func f() {
   EXPECT_EQ(Again.toBytes(), Bytes);
 }
 
+// P03.22: the hierarchy is exported: the parent of each type (the hidden
+// first field), the mark of each method, the abstract bit and the `@Abstract`
+// attribute of a type, and the `extends` constraint. A package that imports
+// Payment gets the same errors from the decoded package as from the original.
+const char *HierarchySource = R"(package lib
+
+type Payment struct{ Amount int64 }
+
+@Abstract
+func (p *Payment) Pay() error
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount }
+
+type Card extends Payment { Number string }
+
+@Override
+func (c *Card) Pay() error { return nil }
+
+@Override
+func (c *Card) Fee() int64 { return 1 }
+
+type Premium extends Card {}
+
+@Abstract
+type Half extends Payment {}
+
+type Animal struct{ Name string }
+
+func (a *Animal) Eat() {}
+
+type Dog extends Animal { Age int }
+
+type Box[T any] struct{ V T }
+type Crate[T any] extends Box[T] { Extra T }
+
+func Feed[T extends Animal](a *T) { a.Eat() }
+
+type Both interface {
+	extends Payment
+	Clone
+}
+)";
+
+// P03.22 review (R12): a type that is abstract by its `@Abstract` attribute
+// only (nothing left open, abstract state 3) survives the round trip, and is
+// still abstract in the importing package.
+TEST(Serialize, AbstractByAttributeOnlySurvivesTheRoundTrip) {
+  Loaded L(R"(package lib
+
+type Animal struct{ Name string }
+
+@Abstract
+type Bird extends Animal {}
+
+type Sparrow extends Bird {}
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Bad = R"(package main
+import "lib"
+func f() {
+	_ = lib.Bird{}
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+func g() {
+	_ = lib.Sparrow{}
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "cannot use the abstract type lib.Bird"));
+  EXPECT_EQ(Decoded.size(), 1u);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
+TEST(Serialize, HierarchySurvivesTheRoundTripAcrossPackages) {
+  Loaded L(HierarchySource);
+  ASSERT_NE(L.CP, nullptr);
+  std::string Msgs;
+  for (const Diagnostic &D : L.Collect.Diags)
+    Msgs += D.Message + "\n";
+  ASSERT_TRUE(L.Collect.Diags.empty()) << Msgs;
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+
+  // The decoded package has the same hierarchy: dump and bytes.
+  EXPECT_EQ(dump(*P2), dump(*L.CP->Pkg));
+  std::string D = dump(*P2);
+  EXPECT_NE(D.find("extends Payment"), std::string::npos) << D;
+  EXPECT_NE(D.find("extends Animal"), std::string::npos) << D;
+  auto Named = [&](Package *P, const char *Name) {
+    return llvm::cast<NamedType>(P->PkgScope->lookupLocal(Name)->Ty);
+  };
+  for (const char *T :
+       {"Payment", "Card", "Premium", "Half", "Animal", "Dog"}) {
+    EXPECT_EQ(Named(P2, T)->AbstractAttr, Named(L.CP->Pkg, T)->AbstractAttr)
+        << T;
+    EXPECT_EQ(Named(P2, T)->AbstractState.load(),
+              Named(L.CP->Pkg, T)->AbstractState.load())
+        << T;
+  }
+  EXPECT_TRUE(Named(P2, "Half")->AbstractAttr);
+  EXPECT_FALSE(Named(P2, "Card")->AbstractAttr);
+  // The marks of the methods.
+  auto Mark = [&](const char *Ty, const char *M) {
+    for (Func *F : *Named(P2, Ty)->Methods)
+      if (F->Name == M)
+        return F->MethodMark;
+    return Func::Mark::None;
+  };
+  EXPECT_EQ(Mark("Payment", "Pay"), Func::Mark::Abstract);
+  EXPECT_EQ(Mark("Payment", "Fee"), Func::Mark::Virtual);
+  EXPECT_EQ(Mark("Payment", "Total"), Func::Mark::None);
+  EXPECT_EQ(Mark("Card", "Fee"), Func::Mark::Override);
+  // The field table of a child starts with the parent.
+  auto *CardSt = llvm::cast<StructType>(Named(P2, "Card")->Underlying);
+  ASSERT_EQ(CardSt->Fields.size(), 2u);
+  EXPECT_TRUE(CardSt->Fields[0]->IsParent);
+  EXPECT_TRUE(CardSt->Fields[0]->Embedded);
+  EXPECT_EQ(CardSt->Fields[0]->Name, "Payment");
+  EXPECT_FALSE(CardSt->Fields[1]->IsParent);
+  // TYP-10: the field table lists the parent chain, the root's fields first.
+  llvm::SmallVector<const Var *, 4> Table;
+  fieldTable(Named(P2, "Premium"), Table);
+  ASSERT_EQ(Table.size(), 2u);
+  EXPECT_EQ(Table[0]->Name, "Amount");
+  EXPECT_EQ(Table[1]->Name, "Number");
+
+  const char *Bad = R"(package main
+import "lib"
+type Cat struct{ N int }
+type Own extends lib.Payment {}
+func f(c *lib.Card, h lib.Half, d lib.Dog, move pu Unique[*lib.Dog], a *lib.Animal, cat *Cat, dp *lib.Dog) {
+	_ = lib.Payment{Amount: 1}
+	var p lib.Payment
+	_ = p
+	_ = make([]lib.Payment, 3)
+	_ = lib.Half{Amount: 1}
+	var q lib.Payment = *c
+	_ = q
+	lib.Feed[Cat](cat)
+	_ = a.(*lib.Dog)
+	var ua Unique[*lib.Animal] = move(pu)
+	var ap *lib.Animal = dp
+	var bx lib.Box[lib.Payment]
+	k := lib.Card{Number: "x"}
+	_ = k.Payment
+	_, _, _ = ua, ap, bx
+}
+type NoOverride extends lib.Card {}
+func (n *NoOverride) Fee() int64 { return 2 }
+func (n *NoOverride) Total() int64 { return 2 }
+)";
+  const char *Good = R"(package main
+import "lib"
+type Own extends lib.Card {}
+@Override
+func (o *Own) Fee() int64 { return base.Fee() + base.Total() }
+func f(c *lib.Card, h *lib.Half, d *lib.Dog) {
+	var p *lib.Payment = c
+	d.Eat()
+	var cp Unique[*lib.Payment] = p.Clone()
+	switch x := p.(type) {
+	case *lib.Premium:
+		_ = x
+	}
+	_ = lib.Card{Amount: 1, Number: "x"}
+	_ = lib.Card{Payment: lib.Payment{Amount: 1}}
+	_ = lib.Premium{Amount: 2}
+	_ = lib.Crate[int]{V: 1, Extra: 2}
+	lib.Feed[lib.Dog](d)
+	lib.Feed(d)
+	_, _, _ = p, cp, h
+	if k, ok := p.(*lib.Card); ok {
+		_ = k
+	}
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "lib.Payment for a composite literal"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Payment for the type of a variable"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Payment for an element type"));
+  EXPECT_TRUE(anyHas(Decoded, "a type argument of lib.Box[lib.Payment]"));
+  EXPECT_TRUE(anyHas(Decoded, "so a *lib.Animal points at a child only in "
+                              "the parent's own methods and what they "
+                              "return"));
+  EXPECT_TRUE(anyHas(Decoded, "cannot use k.Payment as a value"));
+  EXPECT_TRUE(anyHas(Decoded, "cannot use *c as a value"));
+  EXPECT_TRUE(anyHas(Decoded, "its @Abstract method Pay is not implemented"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Half for a composite literal"));
+  EXPECT_TRUE(anyHas(Decoded, "value slicing"));
+  EXPECT_TRUE(anyHas(Decoded, "does not satisfy extends lib.Animal"));
+  EXPECT_TRUE(anyHas(Decoded, "Animal has no type table"));
+  EXPECT_TRUE(anyHas(Decoded, "does not implement the @Abstract method"));
+  EXPECT_TRUE(anyHas(Decoded, "write @Override to replace it"));
+  EXPECT_TRUE(anyHas(Decoded, "is final"));
+  EXPECT_FALSE(Decoded.empty());
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+}
+
 //===----------------------------------------------------------------------===//
 // Round trips of whole corpora
 //===----------------------------------------------------------------------===//
@@ -806,6 +1124,7 @@ std::string roundTrip(llvm::StringRef Text, bool GoMode, unsigned &Objects) {
   PO.CheckLanguageRules = !GoMode;
   PO.AllowGenericMethods = !GoMode;
   PO.AllowNamespaceTypes = !GoMode;
+  PO.AllowExtends = !GoMode;
   test::Parsed Pr(Text, PO);
   TypeContext Ctx(GoMode);
   NoImports Imp;
@@ -1045,6 +1364,518 @@ TEST(Serialize, MalformedStreamsAreRejected) {
     S2.write(REC_PKG_END, {});
     EXPECT_EQ(TypeReader(S2, Ctx, Mem, PR).readPackage(Err), nullptr);
   }
+}
+
+// A parent checked in Go mode (a Go package, TYP-26) whose first field is an
+// embedded one: the members it promotes stay reachable on a .gopp child
+// (the chain lookup must leave a non-parent embedded field to the general
+// walk, wherever it is in the chain), and an unknown name is still an error.
+TEST(Serialize, GoModeParentWithEmbedding) {
+  TypeContext Ctx;
+  ParseOptions LPO;
+  LPO.AllowExtends = false;
+  test::Parsed Lib(R"(package lib
+
+type Inner struct{ N int }
+
+func (i *Inner) Get() int { return i.N }
+
+type Outer struct {
+	Inner
+	X int
+}
+)",
+                   LPO);
+  CheckOptions LCO;
+  LCO.GoCompat = true;
+  LCO.Ownership = false;
+  const ast::File *LF[] = {Lib.File};
+  OnePackage None("none", nullptr);
+  auto LP = checkPackage(Ctx, Lib.Src.SM, "lib", LF, None, Lib.Src.Diags, LCO);
+  ASSERT_TRUE(LP && Lib.errors().empty());
+  auto Errs = checkMain(Ctx, LP->Pkg, R"(package main
+import "lib"
+type K extends lib.Outer { Y int }
+type K2 extends K { Z int }
+func use(o *lib.Outer, k *K, k2 *K2) int {
+	return o.Get() + o.N + k.Get() + k.N + k.X + k2.Get() + k2.N + k2.X + k2.Y
+}
+func bad(k2 *K2) int { return k2.Nope }
+)");
+  ASSERT_EQ(Errs.size(), 1u) << (Errs.empty() ? "" : Errs[0]);
+  EXPECT_NE(Errs[0].find("Nope"), std::string::npos) << Errs[0];
+}
+
+// R17: a type parameter that takes a method of T as a value (a method value,
+// `go x.M()`, `T.M`) must not be a pointer to a tagged type when the method
+// has a value receiver. The method names travel in the export data; a call
+// `x.M()`, a pointer receiver and an untagged pointee stay valid, also
+// through another generic of the importing package.
+TEST(Serialize, PointerToTaggedAsTypeArgument) {
+  Loaded L(R"(package lib
+
+func MV[T interface{ Val() int }](x T) int { f := x.Val; return f() }
+
+func Go[T interface{ Val() int }](x T) { go x.Val() }
+
+func Call[T interface{ Val() int }](x T) int { return x.Val() }
+
+func PMV[T interface{ PVal() int }](x T) int { f := x.PVal; return f() }
+
+type Box[T interface{ Val() int }] struct{ X T }
+
+func (b *Box[T]) Get() int { f := b.X.Val; return f() }
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Bad = R"(package main
+import "lib"
+type Animal struct{ N int }
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+func (a Animal) Val() int { return a.N }
+func (a *Animal) PVal() int { return a.N }
+func outer[U interface{ Val() int }](x U) int { return lib.MV(x) }
+func f(a *Animal, b *lib.Box[*Animal]) int {
+	lib.Go(a)
+	return lib.MV(a) + outer(a)
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+type Animal struct{ N int }
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+func (a Animal) Val() int { return a.N }
+func (a *Animal) PVal() int { return a.N }
+type Plain struct{ N int }
+func (p Plain) Val() int { return p.N }
+func outer[U interface{ Val() int }](x U) int { return lib.Call(x) }
+func g(a *Animal, p *Plain, b *lib.Box[*Plain]) int {
+	return lib.Call(a) + lib.PMV(a) + lib.MV(p) + outer(a) + b.Get()
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "*Animal does not satisfy the implicit "
+                              "requirement of T: the generic code takes the "
+                              "method Val of T as a value"));
+  EXPECT_TRUE(anyHas(Decoded, "requirement of U: the generic code passes U "
+                              "on to a generic that takes the method Val of "
+                              "it as a value"));
+  EXPECT_EQ(Decoded.size(), 4u) << (Decoded.empty() ? "" : Decoded[0]);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
+TEST(Serialize, GoEmbeddingPromotedValueMethodIsNoParentPart) {
+  // R23: a Go struct with an embedded field (Go's embedding, not an
+  // `extends` parent): its promoted value method taken as a method value or
+  // deferred copies a field of a whole value, not the parent part of a
+  // child, in plain and in generic code. The receiver is the parent part
+  // only when the last step to the method's owner is a parent part (`k.Show`
+  // with Show on the parent lib.Outer).
+  TypeContext Ctx;
+  ParseOptions LPO;
+  LPO.AllowExtends = false;
+  test::Parsed Lib(R"(package lib
+
+type Inner struct{ N int }
+
+func (i Inner) Get() int { return i.N }
+
+type Outer struct {
+	Inner
+	X int
+}
+
+func (o Outer) Show() int { return o.X }
+)",
+                   LPO);
+  CheckOptions LCO;
+  LCO.GoCompat = true;
+  LCO.Ownership = false;
+  const ast::File *LF[] = {Lib.File};
+  OnePackage None("none", nullptr);
+  auto LP = checkPackage(Ctx, Lib.Src.SM, "lib", LF, None, Lib.Src.Diags, LCO);
+  ASSERT_TRUE(LP && Lib.errors().empty());
+  auto Errs = checkMain(Ctx, LP->Pkg, R"(package main
+import "lib"
+type K extends lib.Outer { Y int }
+func use(o lib.Outer, k K) int {
+	f := o.Get
+	g := o.Inner.Get
+	h := k.Get
+	defer o.Get()
+	return f() + g() + h()
+}
+type J interface{ Get() int }
+func MV[T J](x T) int { f := x.Get; return f() }
+func use2(o lib.Outer, k K) int { return MV(o) + MV(k) }
+func bad(k K) int { s := k.Show; return s() }
+)");
+  ASSERT_EQ(Errs.size(), 1u) << (Errs.empty() ? "" : Errs[0]);
+  EXPECT_NE(Errs[0].find("cannot use k.Show as a method value"),
+            std::string::npos)
+      << Errs[0];
+}
+
+TEST(Serialize, GoEmbeddingInsideChain) {
+  // R27: a .gopp chain over a Go-mode parent that embeds Inner. A method of
+  // Inner reached through the parent part has the field Inner as its
+  // receiver (a whole value), whatever place holds it (`k.Outer.Get`,
+  // `pt.Get` on a tagged child); a method declared on Outer itself is
+  // inherited (its receiver is the parent part).
+  TypeContext Ctx;
+  ParseOptions LPO;
+  LPO.AllowExtends = false;
+  test::Parsed Lib(R"(package lib
+
+type Inner struct{ N int }
+
+func (i Inner) Get() int { return i.N }
+
+type Outer struct {
+	Inner
+	X int
+}
+
+func (o Outer) Own() int { return o.X }
+)",
+                   LPO);
+  CheckOptions LCO;
+  LCO.GoCompat = true;
+  LCO.Ownership = false;
+  const ast::File *LF[] = {Lib.File};
+  OnePackage None("none", nullptr);
+  auto LP = checkPackage(Ctx, Lib.Src.SM, "lib", LF, None, Lib.Src.Diags, LCO);
+  ASSERT_TRUE(LP && Lib.errors().empty());
+  auto Good = checkMain(Ctx, LP->Pkg, R"(package main
+import "lib"
+type K extends lib.Outer { Y int }
+type T extends lib.Outer { Z int }
+@Virtual
+func (t *T) V() int { return 0 }
+func good(k K, pk *K, pt *T) int {
+	a := k.Get
+	b := k.Outer.Inner.Get
+	c := k.Outer.Get
+	d := pt.Get
+	e := (*pt).Get
+	f := pk.Get
+	return a() + b() + c() + d() + e() + f()
+}
+)");
+  EXPECT_TRUE(Good.empty()) << (Good.empty() ? "" : Good[0]);
+  auto Bad = checkMain(Ctx, LP->Pkg, R"(package main
+import "lib"
+type K extends lib.Outer { Y int }
+func bad(k K, pk *K) int {
+	a := k.Own
+	b := pk.Own
+	return a() + b()
+}
+)");
+  EXPECT_EQ(Bad.size(), 2u) << (Bad.empty() ? "" : Bad[0]);
+}
+
+struct ByPath : Importer {
+  std::map<std::string, Package *> M;
+  Package *import(llvm::StringRef Want, std::string &) override {
+    auto It = M.find(Want.str());
+    return It == M.end() ? nullptr : It->second;
+  }
+};
+
+/// The errors (offset-prefixed, as test::Parsed::errors gives them) by the
+/// line of Text (1-based) they point at.
+std::map<unsigned, std::string>
+errorsByLine(llvm::StringRef Text, const std::vector<std::string> &Errs) {
+  std::map<unsigned, std::string> Lines;
+  for (const std::string &E : Errs) {
+    size_t Off = std::strtoul(E.c_str(), nullptr, 10);
+    Lines[1 + static_cast<unsigned>(Text.take_front(Off).count('\n'))] += E;
+  }
+  return Lines;
+}
+
+TEST(Serialize, GoEmbeddedPointerToTagged) {
+  // R28: a Go struct embeds *a.Animal, a tagged Go++ type. Its promoted value
+  // method taken as a method value copies *w.Animal, which may be the Animal
+  // part of a Dog: the same copy as `p.Val` with p *a.Animal (E0395), and as
+  // the written-out `w.Animal.Val`; in generic code too (`MV(w)`).
+  TypeContext Ctx;
+  test::Parsed A(R"(package a
+
+type Animal struct{ N int }
+
+@Virtual
+func (x *Animal) Speak() int { return 0 }
+
+func (x Animal) Val() int { return x.N }
+
+type Dog extends Animal { X int }
+)");
+  CheckOptions ACO;
+  ACO.Ownership = true;
+  const ast::File *AF[] = {A.File};
+  OnePackage None("none", nullptr);
+  auto AP = checkPackage(Ctx, A.Src.SM, "a", AF, None, A.Src.Diags, ACO);
+  ASSERT_TRUE(AP && A.errors().empty());
+  ParseOptions LPO;
+  LPO.AllowExtends = false;
+  test::Parsed Lib(R"(package lib
+
+import "a"
+
+type W struct {
+	*a.Animal
+}
+
+type V struct {
+	a.Dog
+}
+)",
+                   LPO);
+  CheckOptions LCO;
+  LCO.GoCompat = true;
+  LCO.Ownership = false;
+  const ast::File *LF[] = {Lib.File};
+  OnePackage OnlyA("a", AP->Pkg);
+  auto LP = checkPackage(Ctx, Lib.Src.SM, "lib", LF, OnlyA, Lib.Src.Diags, LCO);
+  ASSERT_TRUE(LP && Lib.errors().empty());
+  test::Parsed Main(R"(package main
+import (
+	"a"
+	"lib"
+)
+func plain(p *a.Animal) int {
+	f := p.Val
+	return f()
+}
+func viaGo(w lib.W) int {
+	f := w.Val
+	defer w.Val()
+	return f()
+}
+func viaGo2(v lib.V) int {
+	f := v.Val
+	return f()
+}
+type J interface{ Val() int }
+func MV[T J](x T) int { f := x.Val; return f() }
+func viaGen(w lib.W) int { return MV(w) }
+)");
+  ByPath Imp;
+  Imp.M["a"] = AP->Pkg;
+  Imp.M["lib"] = LP->Pkg;
+  CheckOptions CO;
+  CO.Ownership = true;
+  const ast::File *MF[] = {Main.File};
+  checkPackage(Ctx, Main.Src.SM, "main", MF, Imp, Main.Src.Diags, CO);
+  // plain p.Val, w.Val (twice), v.Val (inherited Val of a.Dog) and MV(w).
+  auto Errs = Main.errors();
+  ASSERT_EQ(Errs.size(), 5u) << (Errs.empty() ? "" : Errs[0]);
+  EXPECT_TRUE(anyHas(Errs, "lib.W does not satisfy the implicit requirement "
+                           "of T"));
+}
+
+TEST(Serialize, GoEmbeddedFieldKindsMatchTheWrittenOutSelector) {
+  // R28: `w.Val` promoted through a Go embedded field and the written-out
+  // `w.F.Val` give the same partial-place answer (E0395 or none) for every
+  // kind of embedded field (a value, *T, Unique[*T], Shared[*T], View[T])
+  // over a tagged type, an untagged one, an abstract one and an `extends`
+  // child: one decision (receiverWhy). A method is not promoted through an
+  // embedded Unique, Shared or View (the lookup does not look through them),
+  // so there `w.Val` is undefined: nothing to compare, pinned below.
+  TypeContext Ctx;
+  const char *Types[] = {"Animal", "Config", "Shape", "Dog"};
+  std::string AText = R"(package a
+
+type Animal struct{ N int }
+
+@Virtual
+func (x *Animal) Speak() int { return 0 }
+
+func (x Animal) Val() int { return x.N }
+
+type Dog extends Animal { X int }
+
+type Config struct{ N int }
+
+func (c Config) Val() int { return c.N }
+
+type Shape struct{ N int }
+
+@Abstract
+func (s *Shape) Area() int
+
+func (s *Shape) Val() int { return s.N }
+)";
+  // The owning pointers and views are named through aliases (Go-mode code
+  // embeds a type name).
+  for (const char *T : Types)
+    AText += std::string("type U") + T + " = Unique[*" + T + "]\ntype S" + T +
+             " = Shared[*" + T + "]\ntype V" + T + " = View[" + T + "]\n";
+  test::Parsed A(AText);
+  CheckOptions ACO;
+  ACO.Ownership = true;
+  const ast::File *AF[] = {A.File};
+  OnePackage None("none", nullptr);
+  auto AP = checkPackage(Ctx, A.Src.SM, "a", AF, None, A.Src.Diags, ACO);
+  ASSERT_TRUE(AP && A.errors().empty())
+      << (A.errors().empty() ? "" : A.errors()[0]);
+  // Kind: how the field is embedded, and its name.
+  struct Kind {
+    const char *Pre, *Field;
+  };
+  const Kind Kinds[] = {
+      {"a.", ""}, {"*a.", ""}, {"a.U", "U"}, {"a.S", "S"}, {"a.V", "V"}};
+  std::string LText = "package lib\n\nimport \"a\"\n\n";
+  std::string MText = "package main\n\nimport \"lib\"\n\n";
+  struct Pair {
+    std::string What;
+    unsigned Promoted, Written;
+    bool Owning; // embedded as Unique, Shared or View
+  };
+  std::vector<Pair> Pairs;
+  unsigned Line = 5;
+  for (unsigned K = 0; K < 5; ++K)
+    for (const char *T : Types) {
+      std::string W = "W" + std::to_string(K) + T;
+      std::string F = std::string(Kinds[K].Field) + T;
+      LText += "type " + W + " struct {\n\t" + Kinds[K].Pre + T + "\n}\n";
+      MText +=
+          "func p" + W + "(w lib." + W + ") int { f := w.Val; return f() }\n";
+      MText += "func q" + W + "(w lib." + W + ") int { f := w." + F +
+               ".Val; return f() }\n";
+      Pairs.push_back({std::string(Kinds[K].Pre) + T, Line, Line + 1, K >= 2});
+      Line += 2;
+    }
+  ParseOptions LPO;
+  LPO.AllowExtends = false;
+  test::Parsed Lib(LText, LPO);
+  CheckOptions LCO;
+  LCO.GoCompat = true;
+  LCO.Ownership = false;
+  const ast::File *LF[] = {Lib.File};
+  OnePackage OnlyA("a", AP->Pkg);
+  auto LP = checkPackage(Ctx, Lib.Src.SM, "lib", LF, OnlyA, Lib.Src.Diags, LCO);
+  ASSERT_TRUE(LP && Lib.errors().empty())
+      << (Lib.errors().empty() ? "" : Lib.errors()[0]);
+  test::Parsed Main(MText);
+  ByPath Imp;
+  Imp.M["a"] = AP->Pkg;
+  Imp.M["lib"] = LP->Pkg;
+  CheckOptions CO;
+  CO.Ownership = true;
+  const ast::File *MF[] = {Main.File};
+  checkPackage(Ctx, Main.Src.SM, "main", MF, Imp, Main.Src.Diags, CO);
+  std::map<unsigned, std::string> Errs = errorsByLine(MText, Main.errors());
+  auto Partial = [&](unsigned L) {
+    return Errs[L].find("as a method value or deferred call") !=
+           std::string::npos;
+  };
+  unsigned Rejected = 0, Accepted = 0;
+  for (const Pair &P : Pairs) {
+    if (Errs[P.Promoted].find("undefined") != std::string::npos) {
+      EXPECT_TRUE(P.Owning)
+          << "embedded " << P.What << ": " << Errs[P.Promoted];
+      continue;
+    }
+    EXPECT_FALSE(P.Owning) << "embedded " << P.What << " promotes Val";
+    EXPECT_EQ(Partial(P.Promoted), Partial(P.Written))
+        << "embedded " << P.What << ": w.Val and the written-out selector "
+        << "differ: " << Errs[P.Promoted] << " / " << Errs[P.Written];
+    (Partial(P.Written) ? Rejected : Accepted) += 1;
+  }
+  // Both sides are there: a tagged pointee or an inherited method is
+  // rejected (*Animal, Dog, *Dog), a value of Animal, Config or Shape and a
+  // pointer to an untagged type are not.
+  EXPECT_EQ(Rejected, 3u);
+  EXPECT_EQ(Accepted, 5u);
+}
+
+TEST(Serialize, InheritedMethodOfAValueTypeArgument) {
+  // R18: the uses of a type parameter travel in the export data as data
+  // (kind, place, method name) and are decided in the importing package on
+  // the real type argument, with the rule of the plain code: Val of a Dog
+  // value is Animal.Val, so its method value copies the parent part.
+  Loaded L(R"(package lib
+
+func MV[T interface{ Val() int }](x T) int { f := x.Val; return f() }
+
+func Go[T interface{ Val() int }](x T) { go x.Val() }
+
+func Call[T interface{ Val() int }](x T) int { return x.Val() }
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Decls = R"(package main
+import "lib"
+type Animal struct{ N int }
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+func (a Animal) Val() int { return a.N }
+type Dog extends Animal { Extra int }
+type Pet struct{ N int }
+@Virtual
+func (p *Pet) Speak() int { return 0 }
+type Cat extends Pet { Extra int }
+func (c Cat) Val() int { return c.N }
+)";
+  std::string Bad = std::string(Decls) + R"(
+func outer[U interface{ Val() int }](x U) int { return lib.MV(x) }
+func f(d Dog) int {
+	lib.Go(d)
+	return lib.MV(d) + outer(d)
+}
+)";
+  std::string Good = std::string(Decls) + R"(
+func outer[U interface{ Val() int }](x U) int { return lib.Call(x) }
+func g(d Dog, c Cat, a Animal) int {
+	lib.Go(c)
+	return lib.MV(c) + lib.MV(a) + lib.Call(d) + outer(d)
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad.c_str());
+  auto Decoded = checkMain(Ctx2, P2, Bad.c_str());
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "Dog does not satisfy the implicit requirement "
+                              "of T: the generic code takes the method Val "
+                              "of T as a value"));
+  EXPECT_TRUE(anyHas(Decoded, "the method Val is inherited, so its receiver "
+                              "is the parent part of Dog"));
+  EXPECT_TRUE(anyHas(Decoded, "requirement of U: the generic code passes U "
+                              "on to a generic that takes the method Val of "
+                              "it as a value"));
+  EXPECT_EQ(Decoded.size(), 3u) << (Decoded.empty() ? "" : Decoded[0]);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good.c_str()),
+            std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good.c_str()), std::vector<std::string>{});
 }
 
 } // namespace

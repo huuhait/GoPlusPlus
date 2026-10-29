@@ -1,0 +1,52 @@
+// P03.22 review (R18): the plain code and the generic code decide every
+// partial place by the same rule. Inputs/gen-generic-plain-table.py writes,
+// for each pair (use kind x type argument kind: a value child with an
+// inherited method, one with its own method, a tagged value, pointers to a
+// tagged type and to a child, an untagged child and root, Unique / Shared /
+// View of a tagged type, a plain struct, int, an abstract type, func types
+// returning a tagged and an abstract type), the plain form and the generic
+// form, checks both (with one body thread and with eight) and compares them
+// pair by pair (the legend is in the script). The whole table is pinned
+// here; the compiler before R18 fails it (14 pairs).
+// RUN: %python %S/Inputs/gen-generic-plain-table.py --gopp %gopp --out %t | FileCheck %s
+// CHECK: args: 0=child-inherited 1=child-own 2=tagged 3=ptr-tagged 4=ptr-child 5=untagged-child 6=untagged-root 7=unique 8=shared 9=view 10=plain 11=int 12=abstract 13=func-tagged 14=func-abstract
+// CHECK-NEXT: method-value             R..RRR.ccc.cccR
+// CHECK-NEXT: go                       R..RRR.ccc.cccR
+// CHECK-NEXT: defer                    R..RRR.ccc.cccR
+// CHECK-NEXT: method-value-deref       RRRRRR.ccc.cccR
+// CHECK-NEXT: method-expr              .......ccc.cccR
+// CHECK-NEXT: method-value-ext         R..--R.---.-R--
+// CHECK-NEXT: go-ext                   R..--R.---.-R--
+// CHECK-NEXT: method-value-deref-ext   RRR--R.---.-x--
+// CHECK-NEXT: method-value-ptr-ext     RRR--R.---.-x--
+// CHECK-NEXT: method-expr-ext          ...--..---.-R--
+// CHECK-NEXT: move-recv-ext            R..--R.---.-R--
+// CHECK-NEXT: call-ext                 ...--..---.-R--
+// CHECK-NEXT: method-value-root        Rc.--cc---c-c--
+// CHECK-NEXT: go-root                  Rc.--cc---c-c--
+// CHECK-NEXT: move-recv-root           Rc.--cc---c-c--
+// CHECK-NEXT: copy                     ccc....cc...ccR
+// CHECK-NEXT: swap                     RRR......k..R.R
+// CHECK-NEXT: assign                   ccc....cc...ccR
+// CHECK-NEXT: clone                    RRRcc.......c.R
+// CHECK-NEXT: clone-builtin            RRRcc.......c.R
+// CHECK-NEXT: view-clone               xxxxx..kkk..R.R
+// CHECK-NEXT: make                     ............R.R
+// CHECK-NEXT: hold                     ............R.R
+// CHECK-NEXT: hold-option              ............R.R
+// CHECK-NEXT: hold-instance            ............R.R
+// CHECK-NEXT: hold-pointer             ..............R
+// CHECK-NEXT: hold-ptr-instance        ..............R
+// CHECK-NEXT: hold-func-result         ............R.R
+// CHECK-NEXT: hold-func-param          ............R.R
+// CHECK-NEXT: hold-func-instance       ............R.R
+// CHECK-NEXT: zero                     ...xx..xx...RxR
+// CHECK-NEXT: literal                  ...xx....x.xRxR
+// CHECK-NEXT: pairs: 400 (accepted 232, rule 82, other 17, constraint 65, known 4), mismatches: 0
+// CHECK-NEXT: KNOWN swap x view: OWN-V1: the plain code reads *p of a *View[Animal] as a place reached through a view (read-only); the generic swap of two View[Animal] values copies no parent part
+// CHECK-NEXT: KNOWN view-clone x shared: the same for View[Shared[*Animal]]
+// CHECK-NEXT: KNOWN view-clone x unique: OWN-V1 (ADR-0020): View[Unique[*Animal]] is refused where it is written; the generic View[T] is not checked again on its type argument (no partial place: the clone of a Unique copies the whole value through the table)
+// CHECK-NEXT: KNOWN view-clone x view: the same for View[View[Animal]]
+// CHECK-NOT: MISMATCH
+// CHECK-NOT: STRAY
+package main

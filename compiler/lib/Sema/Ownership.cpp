@@ -144,6 +144,8 @@ Type *Checker::canonicalParams(Type *T) {
           Push(M->Ty);
         for (Type *E : cast<InterfaceType>(X)->Embeddeds)
           Push(E);
+        if (Type *Ext = cast<InterfaceType>(X)->Extends)
+          Push(Ext);
         break;
       case Type::Kind::Named:
         for (Type *A : cast<NamedType>(X)->TArgs)
@@ -622,9 +624,37 @@ std::string Checker::notCopyWhy(Type *T) {
 /// query still visits each type once. The instance graph is finite: an
 /// instance of a generic type on an instantiation cycle (`T[P]` using
 /// `T[[]P]`, an error, Mono.cpp) is a leaf (onInstCycle).
-bool Checker::satisfiesClone(Type *T, std::string *Why) {
+bool Checker::satisfiesClone(Type *T, std::string *Why, bool ByValue) {
   if (!T || !isValid(T))
     return true;
+  if (own() && ByValue) {
+    // OWN-R6, TYP-19: an abstract type has no value to clone (a parent part
+    // inside a child, or the target of a Unique, is cloned with the child:
+    // the walk below does not stop at it).
+    if (isAbstractType(T)) {
+      if (Why)
+        *Why = str(T) + " is abstract: only a concrete child can be cloned, "
+                        "through a pointer (TYP-19)";
+      return false;
+    }
+    // ADR-0023 decision 16: the Clone of a *P with a type table is a
+    // Unique[*P] holding a full copy of the dynamic type, not a *P (unless
+    // *P declares a Clone of its own).
+    auto Own = [&]() -> Func * {
+      LookupResult LR = lookupFieldOrMethod(T, true, S.Pkg, "Clone");
+      auto *M = dyn_cast_or_null<Func>(LR.Obj);
+      return M && M->HasPtrRecv ? M : nullptr;
+    };
+    if (auto *P = dyn_cast<PointerType>(T); P && isTagged(P->Elem) && !Own()) {
+      if (Why)
+        *Why = str(P->Elem) +
+               " has a type table, so the Clone() of a pointer to it is a "
+               "Unique[*" +
+               str(P->Elem) + "] (a full copy of the dynamic type), not a " +
+               str(T);
+      return false;
+    }
+  }
   // The answer is asked about T with shared stand-ins for its type
   // parameters (canonicalParams); the reason, wanted only when it is "no",
   // is found on T itself, so it names T's own types.

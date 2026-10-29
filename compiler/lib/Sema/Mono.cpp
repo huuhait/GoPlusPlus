@@ -85,6 +85,8 @@ void sema::forEachTypeParam(
         Work.push_back(M->Ty);
       for (Type *E : cast<InterfaceType>(X)->Embeddeds)
         Work.push_back(E);
+      if (Type *Ext = cast<InterfaceType>(X)->Extends)
+        Work.push_back(Ext);
       break;
     case Type::Kind::Named:
       // The arguments of an instance; a named type's own body is not part

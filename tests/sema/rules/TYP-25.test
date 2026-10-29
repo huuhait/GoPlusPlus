@@ -1,0 +1,63 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-25 (P03.22, ADR-0023): struct embedding is an error in a .gopp
+// file (the message has the fix-it text): a type, a pointer, a type of
+// another package (sync.Mutex here as a local Mutex: no std in the lit
+// sandbox), a generic instance, an alias, with a tag. The field is kept as a
+// named field, so nothing is promoted and no second error follows. Named
+// fields, interface embedding and a constraint embedded in a constraint are
+// fine. A .go file keeps Go's embedding (go-mode-embedding.test).
+package main
+
+type Animal struct{ Name string }
+
+func (a *Animal) Hello() int { return len(a.Name) }
+
+type Box[T any] struct{ V T }
+type Mutex struct{ n int }
+type Alias = Animal
+
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Animal embeds Animal (TYP-25); use `extends` for the one main parent, or a named field (`Lo
+type E1 struct{ Animal }            // error
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Animal embeds *Animal (TYP-25); use `extends` for the one main parent, or a named field (`L
+type E2 struct{ *Animal }           // error
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Mutex embeds Mutex (TYP-25); use `extends` for the one main parent, or a named field (`Lock
+type E3 struct{ Mutex }             // error
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Box embeds Box[T] (TYP-25); use `extends` for the one main parent, or a named field (`Lock
+type E4[T any] struct{ Box[T] }     // error
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Box embeds Box[int] (TYP-25); use `extends` for the one main parent, or a named field (`Loc
+type E5 struct{ Box[int] }          // error
+type E6 struct {
+	N int
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Animal embeds Animal (TYP-25); use `extends` for the one main parent, or a named field (`Lo
+	Animal // error
+}
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Animal embeds Animal (TYP-25); use `extends` for the one main parent, or a named field (`Lo
+type E7 struct{ Animal "tag" }      // error
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Alias embeds Alias (TYP-25); use `extends` for the one main parent, or a named field (`Lock
+type E8 struct{ Alias }             // error
+
+// Nothing is promoted.
+func noPromotion(e *E1) int {
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: e.Hello undefined (type *E1 has no field or method Hello)
+	return e.Hello() // error: no promotion
+}
+
+// Accepted: named fields, interface embedding, constraint embedding.
+type Named struct {
+	Lock Mutex
+	A    Animal
+}
+
+type Reader interface{ Read() }
+type Writer interface{ Write() }
+type RW interface {
+	Reader
+	Writer
+}
+type Num interface{ ~int | ~int64 }
+type Num2 interface {
+	Num
+	comparable
+}
+
+func named(n *Named) int { return n.A.Hello() + n.Lock.n }

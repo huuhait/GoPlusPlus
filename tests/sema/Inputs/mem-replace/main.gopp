@@ -1,0 +1,45 @@
+package main
+
+import "mem"
+
+type Animal struct{ N int }
+
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+
+type Dog extends Animal { Extra [8]int }
+
+type Plain struct{ N int }
+
+func f(p *Animal, q *Plain) int {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies, moves or assigns a value of T through a pointer
+	old := mem.Replace(p, Animal{N: 2}) // error: tagged *p replaced
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code copies, moves or assigns a value of T through a pointer
+	r := mem.Replace[Animal] // error: the same function as a value (R22)
+	_ = r
+	old2 := Animal{}
+	// Accepted: an untagged pointee.
+	old3 := mem.Replace(q, Plain{N: 3})
+	return old.N + old2.N + old3.N
+}
+
+func swap[T any](p *T, move v T) T { return mem.Replace(p, move(v)) }
+
+func swapV[T any](p *T, move v T) T {
+	r := mem.Replace[T]
+	return r(p, move(v))
+}
+
+func main() {
+	d := Dog{N: 1}
+	var p *Animal = &d
+	pl := Plain{}
+	_ = f(p, &pl)
+	_ = swap(&pl, Plain{N: 1})
+	var pa *Animal = p
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T
+	_ = swap(pa, Animal{}) // error: swap's body replaces *p
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code passes T on
+	_ = swapV(pa, Animal{}) // error: the function value in a generic
+	_ = swapV(&pl, Plain{N: 1})
+}

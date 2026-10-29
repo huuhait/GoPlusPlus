@@ -30,6 +30,8 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
   X.M = Mode::Invalid;
   X.E = Id;
   X.Ty = invalid();
+  // Is this name the start of a selector, or the operand of `&` (EXP-15)?
+  const PartialMark PM = takePartialMark(Id);
   StringRef N = name(Id);
   Scope *Found = nullptr;
   Object *Obj = E.Sc->lookup(N, E.Pos, &Found);
@@ -114,6 +116,21 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
       V->Used = true;
     if (!T || !isValid(T))
       return;
+    if (!S.Opts.GoCompat) {
+      // TYP-20: `base` names the parent part of the receiver: only
+      // `base.M(...)` and `base.f`, never a value (an upcast of the receiver).
+      if (V->IsBase && (!PM.Ok || PM.Addr)) {
+        err(Id, diag::err_base_value,
+            {BaseMethodOf.empty() ? str(cast<PointerType>(T)->Elem)
+                                  : BaseMethodOf});
+        return;
+      }
+      // ADR-0023 decision 16: a value receiver of a tagged type may be the
+      // parent part of a child.
+      if (V->IsRecv && isTagged(T) &&
+          !partialUse(Id, PartialKind::Receiver, T, nullptr, PM))
+        return;
+    }
     X.M = Mode::Variable;
     // Flow typing (ADR-0018): an Option known to be set has the type of its
     // value here. The side table records this narrowed type for the use.
@@ -151,9 +168,16 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
 
 Type *Checker::typ(const ast::Expr *Ex) { return definedType(Ex, nullptr); }
 
-Type *Checker::varType(const ast::Expr *Ex) {
+Type *Checker::varType(const ast::Expr *Ex, bool ValueUse, const char *What) {
   Type *T = definedType(Ex, nullptr);
   validVarType(Ex, T);
+  // TYP-19: every type expression that holds a value (a variable, a field,
+  // an element, a parameter, a result, the type of make or of a type
+  // assertion) comes through here, so this is the one place where an
+  // abstract type by value is refused; the pointee of `*`, a type argument
+  // (decided on the instance, noAbstractArgs) and a parent are no value.
+  if (ValueUse)
+    noAbstract(Ex, T, What ? What : "a value");
   return T;
 }
 
@@ -241,7 +265,7 @@ Type *Checker::genericType(const ast::Expr *Ex, std::string *Cause,
 bool Checker::typeList(ArrayRef<ast::Expr *> Es, SmallVector<Type *, 4> &Out) {
   bool Ok = true;
   for (const ast::Expr *Ex : Es) {
-    Type *T = varType(Ex);
+    Type *T = varType(Ex, /*ValueUse=*/false);
     if (!isValid(T))
       Ok = false;
     Out.push_back(T);
@@ -297,17 +321,18 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
       return invalid();
     }
     int64_t N = arrayLength(AT->Len);
-    Type *Elem = varType(AT->Elt);
+    Type *Elem = varType(AT->Elt, true, "an element type");
     if (N < 0)
       return invalid();
     return Ctx.array(Elem, N);
   }
   case K::SliceType:
-    return Ctx.slice(varType(cast<ast::SliceType>(Ex)->Elt));
+    return Ctx.slice(
+        varType(cast<ast::SliceType>(Ex)->Elt, true, "an element type"));
   case K::StructType:
     return structTypeExpr(cast<ast::StructType>(Ex));
   case K::StarExpr: {
-    Type *El = varType(cast<StarExpr>(Ex)->X);
+    Type *El = varType(cast<StarExpr>(Ex)->X, /*ValueUse=*/false);
     return isValid(El) ? static_cast<Type *>(Ctx.pointer(El)) : El;
   }
   case K::FuncType: {
@@ -318,8 +343,8 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
     return interfaceTypeExpr(cast<ast::InterfaceType>(Ex), Def);
   case K::MapType: {
     auto *M = cast<ast::MapType>(Ex);
-    Type *Key = varType(M->Key);
-    Type *Val = varType(M->Value);
+    Type *Key = varType(M->Key, true, "a map key type");
+    Type *Val = varType(M->Value, true, "an element type");
     later([this, M, Key]() {
       if (!isValid(Key))
         return;
@@ -334,7 +359,7 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
   }
   case K::ChanType: {
     auto *C = cast<ast::ChanType>(Ex);
-    Type *El = varType(C->Value);
+    Type *El = varType(C->Value, true, "an element type");
     return Ctx.chan(static_cast<sema::ChanType::Dir>(C->Direction), El);
   }
   case K::Ellipsis:
@@ -592,8 +617,10 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
                                ? "struct " + std::string(DeclStructName)
                                : std::string("the anonymous struct");
   const ast::Expr *CurTE = nullptr;
+  Type *ParentTy = nullptr; // TYP-16: the type this declaration extends
   auto Add = [&](const ast::Ident *Id, StringRef N, Type *T, bool Emb,
-                 StringRef Tag, SourceLoc Pos, const ast::Expr *EmbE) {
+                 StringRef Tag, SourceLoc Pos, const ast::Expr *EmbE,
+                 bool IsParent = false) {
     if (N != "_" && !Seen.insert(N).second) {
       err(Pos, diag::err_duplicate_field, {std::string(N)});
       return;
@@ -603,14 +630,19 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
     FS.Pkg = S.Pkg;
     FS.Ty = T;
     FS.Embedded = Emb;
+    FS.IsParent = IsParent;
     FS.Tag = Tag;
     FS.MarkedRequired = ReqAttr && own();
     FS.MarkedOption = OptAttr && own();
-    FS.Required = effectiveRequired(Strict, FS.MarkedRequired, FS.MarkedOption,
-                                    N == "_", T);
+    // The parent part is never required as a whole: the required bits of its
+    // own fields apply in the child (TYP-17).
+    FS.Required = !IsParent && effectiveRequired(Strict, FS.MarkedRequired,
+                                                 FS.MarkedOption, N == "_", T);
     Fields.push_back(FS);
     Idents.push_back(Id);
     EmbExprs.push_back(EmbE);
+    if (ParentTy && !IsParent && N != "_")
+      FieldPosOf[DeclStructExpr].push_back({Fields.back().Name, Pos});
   };
   // The attribute checks that need the field type, once per field
   // declaration (`A, B int @Option` is one). Name is its first name that is
@@ -671,6 +703,12 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
         });
     }
   };
+  if (DeclExtendsExpr && St == DeclStructExpr)
+    addParentField(DeclExtendsExpr, DeclStructName, [&](Type *PT, StringRef N) {
+      ParentTy = PT;
+      Add(nullptr, N, PT, true, StringRef(), DeclExtendsExpr->getBegin(),
+          DeclExtendsExpr, /*IsParent=*/true);
+    });
   if (St->Fields) {
     for (const Field *F : St->Fields->List) {
       std::string Tag;
@@ -703,9 +741,10 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
         }
       }
       if (F->Names.empty()) {
-        // Embedded field: T, *T, pkg.T or T[args].
+        // Embedded field: T, *T, pkg.T or T[args]. (In a .gopp file the
+        // embedding is the error; the field type gets no second one.)
         const ast::Expr *TE = F->Type;
-        Type *T = varType(TE);
+        Type *T = varType(TE, /*ValueUse=*/S.Opts.GoCompat);
         const ast::Expr *Base = TE;
         if (auto *Sx = dyn_cast<StarExpr>(Base))
           Base = Sx->X;
@@ -724,6 +763,15 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
           continue;
         }
         CheckAttrs(N, T);
+        if (!S.Opts.GoCompat) {
+          // TYP-25: no struct embedding in a .gopp file; the field is kept
+          // as a named field, so nothing is promoted.
+          err(TE, diag::err_struct_embedding, {std::string(N), str(TE)})
+              .fixit(SourceRange(TE->getBegin(), TE->getBegin()),
+                     std::string(N) + " ");
+          Add(nullptr, N, T, false, TagRef, TE->getBegin(), TE);
+          continue;
+        }
         Add(nullptr, N, T, true, TagRef, TE->getBegin(), TE);
         if (isValid(T)) {
           later([this, TE, T]() {
@@ -744,7 +792,7 @@ Type *Checker::structTypeExpr(const ast::StructType *St) {
           });
         }
       } else {
-        Type *T = varType(F->Type);
+        Type *T = varType(F->Type, true, "the type of a struct field");
         StringRef Name = "_";
         for (const ast::Ident *Id : F->Names)
           if (name(Id) != "_") {
@@ -872,6 +920,8 @@ Type *Checker::interfaceTypeExpr(const ast::InterfaceType *It, NamedType *Def) {
   SmallVector<Func *, 8> Methods;
   SmallVector<Type *, 4> Embeds;
   SmallVector<SourceLoc, 4> EmbLocs;
+  Type *Ext = nullptr; // GEN-12
+  SourceLoc ExtLoc;
   if (It->Methods) {
     for (const Field *F : It->Methods->List) {
       if (!F->Names.empty()) {
@@ -900,6 +950,19 @@ Type *Checker::interfaceTypeExpr(const ast::InterfaceType *It, NamedType *Def) {
         M->Fails = FI.Sig->Fails;
         recordDef(Id, M);
         Methods.push_back(M);
+      } else if (F->isExtends()) {
+        // GEN-12: `extends P`
+        Type *PT = extendsConstraintType(F->Type);
+        if (!PT)
+          continue;
+        if (Ext)
+          err(F->ExtendsLoc, diag::err_extends_constraint,
+              {"interface", "the constraint",
+               "it extends more than one type; write one `extends`"});
+        else {
+          Ext = PT;
+          ExtLoc = F->ExtendsLoc;
+        }
       } else {
         Type *T = unionTypeExpr(F->Type);
         if (!T || !isValid(T))
@@ -913,6 +976,8 @@ Type *Checker::interfaceTypeExpr(const ast::InterfaceType *It, NamedType *Def) {
   InterfaceType *Ity = Ctx.newInterface(Mem.copy(ArrayRef<Func *>(Methods)),
                                         Mem.copy(ArrayRef<Type *>(Embeds)),
                                         Mem.copy(ArrayRef<SourceLoc>(EmbLocs)));
+  Ity->Extends = Ext;
+  Ity->ExtendsLoc = ExtLoc;
   SourceLoc Pos = It->getBegin();
   later([this, Ity, Pos]() { computeTypeSet(Ity, Pos); });
   return Ity;
@@ -999,12 +1064,14 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     recordMono(APos, nullptr, ATPs, AArgs);
     later([this, APos, ATPs, AArgs, ALocs, Res]() {
       std::string Why;
-      int Bad = verify(APos, ATPs, AArgs, &Why);
+      int Bad = verify(APos, ATPs, AArgs, &Why, /*ForType=*/true);
       if (Bad >= 0)
         err(static_cast<size_t>(Bad) < ALocs.size() ? ALocs[Bad] : APos,
             diag::err_sema_typexpr, {Why});
-      else
+      else {
         checkOptionFields(APos, Res);
+        noAbstractArgs(APos, Res, AArgs); // TYP-19
+      }
     });
     return Res;
   }
@@ -1050,9 +1117,11 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     recordInstance(Ix, TArgs, Opt);
     if (isValid(Arg)) {
       SourceLoc ArgPos = Ix->Indices[0]->getBegin();
-      later([this, Arg, ArgPos]() {
+      later([this, Arg, ArgPos, Opt]() {
         if (const char *Why = badOptionArg(Arg))
           err(ArgPos, diag::err_option_bad_arg, {str(Arg), Why});
+        else
+          noAbstractArgs(ArgPos, Opt, Arg); // TYP-19: Option holds it
       });
     }
     return Opt;
@@ -1076,13 +1145,14 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   SourceLoc Pos = Ix->getBegin();
   later([this, Pos, TPs, TArgs, Locs, Inst]() {
     std::string Why;
-    int Bad = verify(Pos, TPs, TArgs, &Why);
+    int Bad = verify(Pos, TPs, TArgs, &Why, /*ForType=*/true);
     if (Bad >= 0) {
       err(static_cast<size_t>(Bad) < Locs.size() ? Locs[Bad] : Pos,
           diag::err_sema_typexpr, {Why});
     } else {
       checkOptionArgs(Pos, Inst, TArgs);
       checkOptionFields(Pos, Inst);
+      noAbstractArgs(Pos, Inst, TArgs); // TYP-19
     }
   });
   return Inst;
@@ -1288,6 +1358,7 @@ SmallVector<TypeParamType *, 4> Checker::collectTypeParams(
   struct Pending {
     TypeParamType *TP;
     const ast::Expr *Bound;
+    SourceLoc ExtendsLoc; // `T extends P`: the bound is P (GEN-12)
   };
   SmallVector<Pending, 4> Pend;
   unsigned Index = 0;
@@ -1299,7 +1370,7 @@ SmallVector<TypeParamType *, 4> Checker::collectTypeParams(
       recordDef(Id, TN);
       declare(Sc, Id, TN, Sc->Extent.getBegin());
       TPs.push_back(TP);
-      Pend.push_back({TP, F->Type});
+      Pend.push_back({TP, F->Type, F->ExtendsLoc});
     }
   }
   if (Bind)
@@ -1311,7 +1382,8 @@ SmallVector<TypeParamType *, 4> Checker::collectTypeParams(
   E.InTParamList = true;
   for (Pending &P : Pend) {
     if (P.Bound != LastE) {
-      Last = boundType(P.Bound);
+      Last = P.ExtendsLoc.isValid() ? extendsBound(P.Bound, P.ExtendsLoc)
+                                    : boundType(P.Bound);
       LastE = P.Bound;
     }
     P.TP->Bound = Last && isValid(Last) ? Last : Ctx.anyType();
@@ -1333,16 +1405,19 @@ void Checker::collectParams(Scope *Sc, const FieldList *L, bool IsResult,
     if (auto *Dots = dyn_cast<Ellipsis>(F->Type)) {
       if (IsResult || FI + 1 != L->List.size() || F->Names.size() > 1) {
         err(Dots, diag::err_dots_not_last);
-        T = Dots->Elt ? varType(Dots->Elt) : invalid();
+        T = Dots->Elt ? varType(Dots->Elt, true, "the type of a parameter")
+                      : invalid();
       } else if (!Dots->Elt) {
         err(Dots, diag::err_invalid_use_of_dots);
         T = invalid();
       } else {
-        T = Ctx.slice(varType(Dots->Elt));
+        T = Ctx.slice(varType(Dots->Elt, true, "the type of a parameter"));
         Variadic = true;
       }
     } else {
-      T = varType(F->Type);
+      T = varType(F->Type, true,
+                  IsResult ? "the type of a result"
+                           : "the type of a parameter");
     }
     size_t N = F->Names.empty() ? 1 : F->Names.size();
     for (size_t K = 0; K < N; ++K) {

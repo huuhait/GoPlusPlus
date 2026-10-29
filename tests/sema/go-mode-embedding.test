@@ -1,0 +1,41 @@
+// P03.22 (TYP-25, ADR-0023): `--go` keeps Go's struct embedding: promoted
+// fields and methods, embedded pointers, interface satisfaction through
+// promotion, and `extends` and `base` are ordinary names. Go++ mode (the
+// default) rejects the embedded fields and, with them, the promotion.
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp %s %t/a.go
+// RUN: %gopp check --go %t/a.go
+// RUN: cp %s %t/a.gopp
+// RUN: not %gopp check --check-error-limit=0 %t/a.gopp 2>&1 | FileCheck %s
+package main
+
+type Animal struct{ Name string }
+
+func (a *Animal) Hello() int { return len(a.Name) }
+
+type Dog struct {
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Animal embeds Animal (TYP-25); use `extends` for the one main parent, or a named field
+	Animal
+	Age int
+}
+
+type Cat struct {
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: struct embedding is not allowed in a .gopp file: the field Animal embeds *Animal (TYP-25)
+	*Animal
+}
+
+type extends int
+
+type Speaker interface{ Hello() int }
+
+func use(d *Dog, c Cat, s Speaker) int {
+	extends := 1
+	base := 2
+	// CHECK: [[@LINE+3]]:11: error{{\[E[0-9]+\]}}: d.Hello undefined (type *Dog has no field or method Hello)
+	// CHECK: [[@LINE+2]]:27: error{{\[E[0-9]+\]}}: d.Name undefined (type *Dog has no field or method Name)
+	// CHECK: [[@LINE+1]]:37: error{{\[E[0-9]+\]}}: c.Hello undefined (type Cat has no field or method Hello)
+	return d.Hello() + len(d.Name) + c.Hello() + extends + base
+}
+
+// CHECK: [[@LINE+1]]:37: error{{\[E[0-9]+\]}}: cannot use d (variable of type *Dog) as Speaker value in return statement: *Dog does not implement Speaker (missing method Hello)
+func speak(d *Dog) Speaker { return d }

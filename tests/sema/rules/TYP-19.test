@@ -1,0 +1,167 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-19 (P03.22, ADR-0023): abstract types. A type with an @Abstract
+// method that nothing on its path implements, or a type marked @Abstract, is
+// abstract, and no value of it exists: it is never held by value. Decided on
+// the real types in one place for every type expression (a variable, a
+// field, an element of an array, slice, map or channel, a parameter, a
+// result, make, a type assertion) and on the substituted types
+// for a type argument (an instance that holds the argument by value: Box,
+// Option, a generic function's parameter); a literal and a conversion make a
+// value too. Through a pointer it is fine: *Payment, Unique[*Payment],
+// Shared, Weak, View[Payment], Box[*Payment], and a type argument that the
+// instance holds only behind a pointer. The parent part of a child literal
+// is not a standalone value. A child that is not @Abstract itself must
+// implement every open method; @Abstract as a type attribute needs an
+// `extends` type. Lines without a CHECK line are accepted.
+package main
+
+type Payment struct{ Amount int64 }
+
+@Abstract
+func (p *Payment) Pay(amount int64) error
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount + p.Fee() }
+
+// A value receiver of an abstract type is an error: the receiver is a value of
+// the type, and no value of it exists (review R2). The method expression
+// `Payment.Show` takes it as a parameter, so it is an error too.
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a value receiver: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a pointer to a concrete child
+func (p Payment) Show() int64 { return p.Amount }
+
+// Not @Abstract and Pay is left open.
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Open does not implement the @Abstract method(s) Pay of Payment: write @Override methods, or mark Open @Abstract (TYP-19)
+type Open extends Payment{} // error: Pay is not implemented
+
+type Card extends Payment{ Number string }
+
+@Override
+func (c *Card) Pay(amount int64) error { return nil }
+
+// An @Abstract child may leave Pay open; its child must implement it.
+@Abstract
+type Half extends Payment{}
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Rest does not implement the @Abstract method(s) Pay of Half: write @Override methods, or mark Rest @Abstract (TYP-19)
+type Rest extends Half{} // error: Pay is still open
+
+type Done extends Half{}
+
+@Override
+func (d *Done) Pay(amount int64) error { return nil }
+
+// An @Abstract child is abstract even with nothing open.
+@Abstract
+type Marked extends Card{}
+
+// @Abstract on a type that is not an `extends` type, and on other things.
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Abstract as a type attribute is only allowed on a type that extends another (`@Abstract type Bird extends Animal {}`), not on type Lone, which does n
+@Abstract // error
+type Lone struct{ X int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Abstract as a type attribute is only allowed on a type that extends another (`@Abstract type Bird extends Animal {}`), not on the alias Alias (TYP-19
+@Abstract // error
+type Alias = Payment
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Abstract is only allowed on a method (or @Abstract on an `extends` type), not on a variable declaration (TYP-18)
+@Abstract // error
+var abstractVar int
+
+type Holder struct {
+	// CHECK-DAG: [[@LINE+1]]:5: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for the type of a struct field: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19)
+	P  Payment          // error: a field
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	PA [2]Payment       // error: an array element
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	PS []Payment        // error: a slice element
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	PM map[string]Payment // error: a map element
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a map key type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poin
+	PK map[Payment]int  // error: a map key
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	PC chan Payment     // error: a channel element
+	OK1 *Payment
+	OK2 []*Payment
+	OK3 Unique[*Payment]
+}
+
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for the type of a parameter: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); u
+func take(p Payment) {}            // error: a parameter
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for the type of a result: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use
+func ret() Payment { panic("x") }  // error: a result
+// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for the type of a parameter: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); u
+func takeFn(f func(Payment)) {}    // error: a parameter of a func type
+func takeP(p *Payment) {}
+
+type Box[T any] struct{ V T }
+type Ptr[T any] struct{ P *T }
+type Wrap[T any] struct{ B Box[T] }
+
+func ByVal[T any](v T) {}
+func ByPtr[T any](p *T) {}
+func Make[T any](p *T) Box[T] { panic("x") }
+
+func bad(pp *Payment) {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a composite literal: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a
+	_ = Payment{Amount: 1}           // error: a literal
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for the type of a variable: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); us
+	var p Payment                    // error: a variable
+	_ = p
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	_ = make([]Payment, 3)           // error: make
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a composite literal: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a
+	_ = new_unique(Payment{Amount: 1}) // error: a literal
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	var arr [3]Payment               // error: an array
+	_ = arr
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	_ = []Payment{}                  // error: a slice
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for an element type: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a poi
+	_ = map[string]Payment{}         // error: a map
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the abstract type Half for a composite literal: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a po
+	_ = Half{Amount: 3}              // error: Half is abstract
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the abstract type Marked for a composite literal: it is marked @Abstract, so no value of it can exist (TYP-19); use a pointer to a concrete
+	_ = Marked{Amount: 3}            // error: Marked is marked @Abstract
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a type argument of Box[Payment], which holds it by value: its @Abstract method Pay is not implemented, so no
+	var b Box[Payment]               // error: Box holds it by value
+	// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a type argument of Option[Payment], which holds it by value: its @Abstract method Pay is not implemented, so
+	var o Option[Payment]            // error: Option holds it
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a type argument of Wrap[Payment], which holds it by value: its @Abstract method Pay is not implemented, so no
+	var w Wrap[Payment]              // error: through another instance
+	_, _, _ = b, o, w
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a type argument of func(Payment), which holds it by value: its @Abstract method Pay is not implemented, so no
+	f := ByVal[Payment]              // error: the parameter holds it
+	_ = f
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a type argument of func(*Payment) Box[Payment], which holds it by value: its @Abstract method Pay is not impl
+	_ = Make(pp)                     // error: the result holds it
+	var x interface{} = 1
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a type assertion: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a po
+	_ = x.(Payment)                  // error: a type assertion
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for a conversion: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a pointe
+	_ = Payment(Raw{Amount: 1})      // error: a conversion
+}
+
+type Raw struct{ Amount int64 }
+
+func good(c *Card, h *Half, pp *Payment, vp View[Payment], u Unique[*Payment], s Shared[*Payment], w Weak[*Payment], bp Box[*Payment], pt Ptr[Payment]) {
+	_ = Card{Amount: 100, Number: "4242"}
+	_ = Card{Payment: Payment{Amount: 100}, Number: "4242"}
+	_ = Done{Amount: 1}
+	_ = new_unique(Card{Amount: 1, Number: "x"})
+	takeP(c)
+	var p *Payment = c
+	_ = p
+	var ps []*Payment
+	ps = append(ps, c)
+	_ = ps
+	_ = make([]*Payment, 0, 3)
+	ByPtr[Payment](pp)
+	ByPtr(pp)
+	_, _, _, _, _, _, _ = h, vp, u, s, w, bp, pt
+	_ = pp.Total() + pp.Amount + pp.Show()
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the abstract type Payment for the receiver parameter of a method expression: its @Abstract method Pay is not implemented, so no value of it can exist (TYP-19); use a pointer to a concrete child
+	_ = Payment.Show // error: func(Payment) int64
+	_ = (*Payment).Total
+}

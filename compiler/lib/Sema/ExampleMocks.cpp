@@ -43,6 +43,7 @@ Func *addMethod(Arena &Mem, TypeContext &Ctx, NamedType *N, Package *P,
   F->Recv = Recv;
   if (!N->Methods)
     N->Methods = Ctx.newMethodList();
+  Ctx.noteMemberName(F->Name);
   N->Methods->push_back(F);
   return F;
 }

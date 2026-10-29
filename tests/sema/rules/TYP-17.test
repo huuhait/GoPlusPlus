@@ -1,0 +1,131 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-17 (P03.22, ADR-0023): the child has the fields and methods of its
+// parent chain. A literal sets a parent field directly or through the parent
+// part (a grandparent's too), never both, and uses field names. A field or
+// method may not have the name of an ancestor's field or method (an
+// @Override method replaces one, TYP-18); siblings may share names. The
+// @Required, @Strict and never-nil rules of the parent's fields apply in the
+// child, which has no zero value when a parent field has none. Lines without
+// a CHECK line are accepted.
+package main
+
+type Payment struct {
+	Amount int64
+	ID     string
+}
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount + p.Fee() }
+
+type Card extends Payment { Number string }
+type Gold extends Card { Tier int }
+
+func inherited(g *Gold) int64 {
+	g.Amount = 1
+	g.Number = "x"
+	return g.Total() + g.Fee() + g.Amount + int64(g.Tier) + g.Card.Payment.Amount
+}
+
+func literals() {
+	_ = Card{Amount: 100, Number: "4242"}
+	_ = Card{Payment: Payment{Amount: 100}, Number: "4242"}
+	_ = Card{}
+	_ = Gold{Amount: 1, Number: "n", Tier: 2}
+	_ = Gold{Card: Card{Amount: 1}, Tier: 2}
+	_ = Gold{Payment: Payment{Amount: 1}, Tier: 2}
+	_ = Gold{Card: Card{Payment: Payment{Amount: 1}, Number: "z"}, Tier: 2}
+	_ = []Card{{Amount: 1}, {Payment: Payment{Amount: 2}}}
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: the composite literal of Card, which extends a type, must use field names: a positional literal is not allowed (TYP-17)
+	_ = Card{100, "4242"}                            // error: a positional literal
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: the literal of Card sets the parent part Payment and also fields of it directly: set them once, directly or through Payment (TYP-17)
+	_ = Card{Amount: 1, Payment: Payment{Amount: 2}} // error: Amount twice
+	// CHECK-DAG: [[@LINE+1]]:40: error{{\[E[0-9]+\]}}: the literal of Card sets the parent part Payment and also fields of it directly: set them once, directly or through Payment (TYP-17)
+	_ = Card{Payment: Payment{Amount: 2}, Amount: 1} // error: Amount twice
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: the literal of Gold sets the parent part Card and also fields of it directly: set them once, directly or through Card (TYP-17)
+	_ = Gold{Amount: 1, Card: Card{Number: "x"}}     // error: through the grandparent
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: the literal of Gold sets the parent part Payment and also fields of it directly: set them once, directly or through Payment (TYP-17)
+	_ = Gold{Amount: 1, Payment: Payment{ID: "x"}}   // error: through the grandparent
+	// CHECK-DAG: [[@LINE+1]]:34: error{{\[E[0-9]+\]}}: the literal of Gold sets the parent part Card and also fields of it directly: set them once, directly or through Card (TYP-17)
+	_ = Gold{Card: Card{Amount: 1}, Number: "x"}     // error: Number twice
+	// CHECK-DAG: [[@LINE+1]]:31: error{{\[E[0-9]+\]}}: the literal of Gold sets the parent part Card and also fields of it directly: set them once, directly or through Card (TYP-17)
+	_ = Gold{Payment: Payment{}, Card: Card{}}       // error: the parent part twice
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: duplicate field name Amount in struct literal
+	_ = Card{Amount: 1, Amount: 2}                   // error: a duplicate field
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: unknown field Nope in struct literal of type Card
+	_ = Card{Nope: 1}                                // error: no such field
+}
+
+// Name clashes with any ancestor, fields and methods.
+type Box[T any] struct{ V T }
+
+// CHECK-DAG: [[@LINE+1]]:27: error{{\[E[0-9]+\]}}: field Amount of C1 has the name of the field Amount of its ancestor Payment: a name is used once in a hierarchy, except by an @Override method (TYP-17
+type C1 extends Payment { Amount int64 } // error: a field of the parent
+// CHECK-DAG: [[@LINE+1]]:27: error{{\[E[0-9]+\]}}: field Fee of C2 has the name of the method Fee of its ancestor Payment: a name is used once in a hierarchy, except by an @Override method (TYP-17)
+type C2 extends Payment { Fee int }      // error: a method of the parent
+type C3 extends Payment {}
+
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: method Amount of C3 has the name of the field Amount of its ancestor Payment: a name is used once in a hierarchy, except by an @Override method (TYP-1
+func (c *C3) Amount() int64 { return 0 } // error: a field of the parent
+
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: field Amount of C4 has the name of the method Amount of its ancestor C3: a name is used once in a hierarchy, except by an @Override method (TYP-17)
+type C4 extends C3 { Amount string }                       // error: a method of C3
+// CHECK-DAG: [[@LINE+3]]:24: error{{\[E[0-9]+\]}}: field ID of C5 has the name of the field ID of its ancestor Payment: a name is used once in a hierarchy, except by an @Override method (TYP-17)
+// CHECK-DAG: [[@LINE+2]]:32: error{{\[E[0-9]+\]}}: field Number of C5 has the name of the field Number of its ancestor Card: a name is used once in a hierarchy, except by an @Override method (TYP-17)
+// CHECK-DAG: [[@LINE+1]]:47: error{{\[E[0-9]+\]}}: field Card of C5 has the name of the field Card of its ancestor Gold: a name is used once in a hierarchy, except by an @Override method (TYP-17)
+type C5 extends Gold { ID int; Number string; Card int }   // error: three names
+// CHECK-DAG: [[@LINE+1]]:39: error{{\[E[0-9]+\]}}: field V of GenClash has the name of the field V of its ancestor Box: a name is used once in a hierarchy, except by an @Override method (TYP-17)
+type GenClash[T any] extends Box[T] { V int }              // error: a generic parent
+type Sib1 extends Payment { Tag string }
+type Sib2 extends Payment { Tag string }
+
+// The @Required, @Strict and never-nil rules of the parent's fields.
+type Req struct {
+	ID    int    @Required
+	Email string @Required
+}
+type ReqChild extends Req { N int }
+
+@Strict
+type Money struct {
+	Amount int64
+	Cur    string
+	Note   Option[string]
+}
+type Wallet extends Money { Owner string }
+
+@Strict
+type StrictChild extends Req { Z int }
+
+type NeverNil struct {
+	Err error @Required
+}
+type NNChild extends NeverNil { X int }
+
+func required(e error) {
+	_ = ReqChild{ID: 1, Email: "a", N: 2}
+	_ = ReqChild{Req: Req{ID: 1, Email: "a"}}
+	_ = Wallet{Amount: 1, Cur: "EUR", Owner: "x"}
+	_ = Wallet{Money: Money{Amount: 1, Cur: "EUR"}, Owner: "x"}
+	_ = StrictChild{ID: 1, Email: "a", Z: 3}
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: missing required fields ID, Email in ReqChild literal (TYP-15)
+	_ = ReqChild{N: 1}                 // error: ID and Email
+	// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: missing required field Email in ReqChild literal (TYP-15)
+	_ = ReqChild{ID: 1}                // error: Email
+	// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: missing required fields Amount, Cur in Wallet literal (TYP-15)
+	_ = Wallet{Owner: "x"}             // error: Amount and Cur
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: missing required fields ID, Email in StrictChild literal (TYP-15)
+	_ = StrictChild{Z: 1}              // error: ID and Email
+	// CHECK-DAG: [[@LINE+1]]:35: error{{\[E[0-9]+\]}}: missing required field Z in StrictChild literal (TYP-15)
+	_ = StrictChild{ID: 1, Email: "a"} // error: Z
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot store nil in NNChild.Err: the field is @Required, so it is never nil
+	_ = NNChild{Err: nil, X: 1}        // error: never nil
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare c without a value: ReqChild has no zero value (field Req of type Req has none: field ID is @Required)
+	var c ReqChild                     // error: no zero value
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot declare w without a value: Wallet has no zero value (field Money of type Money has none: field Amount is required (@Strict))
+	var w Wallet                       // error: no zero value
+	// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: make([]ReqChild, 2) creates zero values: ReqChild has no zero value (field Req of type Req has none: field ID is @Required; use make([]ReqChild, 0, n)
+	_ = make([]ReqChild, 2)            // error: zero values
+	_, _ = c, w
+}

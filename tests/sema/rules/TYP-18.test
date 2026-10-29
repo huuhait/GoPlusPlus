@@ -1,0 +1,204 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-18 (P03.22, ADR-0023): method marks. A method is final unless it
+// is marked @Virtual, @Abstract or @Override (a pointer receiver only,
+// methods only, one mark each). A child method with an ancestor's method name
+// needs @Override; @Override needs something replaceable with the same
+// receiver kind, parameters, results and `!`. An @Override method stays
+// replaceable, also in a generic hierarchy; base.M() works on a final, a
+// @Virtual and an @Override parent method. Lines without a CHECK line are
+// accepted.
+package main
+
+type Payment struct{ Amount int64 }
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount }
+
+@Virtual
+func (p *Payment) Pay(amount int64) error { return nil }
+
+@Virtual
+func (p *Payment) Name!() string { return "p" }
+
+type Card extends Payment{ Number string }
+
+@Override
+func (c *Card) Fee() int64 { return 1 }
+
+// The same name without @Override.
+type NoMark extends Payment{}
+
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: method Fee of NoMark has the name of a method of Payment: write @Override to replace it (TYP-18)
+func (c *NoMark) Fee() int64 { return 2 } // error: write @Override
+
+// @Override with nothing to override (a typo), also on a type with no parent.
+type Typo extends Payment{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: @Override on Fees, but Typo or any of its ancestors has no method of that name to replace; check the name (TYP-18)
+func (c *Typo) Fees() int64 { return 2 } // error: nothing to override
+
+type Root struct{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: @Override on Fee, but Root, which extends no type, has no method of that name to replace; check the name (TYP-18)
+func (r *Root) Fee() int64 { return 2 } // error: Root extends no type
+
+// Overriding a final method, with and without @Override.
+type Final extends Payment{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: method Total of Payment is final (it has no @Virtual, @Abstract or @Override mark), so it cannot be replaced; mark it @Virtual there (TYP-18)
+func (c *Final) Total() int64 { return 2 } // error: Total is final
+
+type Final2 extends Payment{}
+
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: method Total of Payment is final (it has no @Virtual, @Abstract or @Override mark), so it cannot be replaced; mark it @Virtual there (TYP-18)
+func (c *Final2) Total() int64 { return 2 } // error: Total is final
+
+// A signature that differs: a parameter, a result, `!` both ways, the
+// receiver kind.
+type SigParam extends Payment{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: method Pay of SigParam does not match the method it overrides (receiver kind, parameters, results and ! must be equal): have Pay(int32) error, want Pa
+func (c *SigParam) Pay(amount int32) error { return nil } // error: a parameter
+
+type SigResult extends Payment{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: method Pay of SigResult does not match the method it overrides (receiver kind, parameters, results and ! must be equal): have Pay(int64) int, want Pay
+func (c *SigResult) Pay(amount int64) int { return 0 } // error: a result
+
+type SigBang extends Payment{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: method Fee of SigBang does not match the method it overrides (receiver kind, parameters, results and ! must be equal): have Fee!() int64, want Fee() i
+func (c *SigBang) Fee!() int64 { return 0 } // error: `!` added
+
+type SigNoBang extends Payment{}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: method Name of SigNoBang does not match the method it overrides (receiver kind, parameters, results and ! must be equal): have Name() string, want Nam
+func (c *SigNoBang) Name() string { return "" } // error: `!` removed
+
+type SigRecv extends Payment{}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Override on method Pay: the method has a value receiver; the marks need a pointer receiver (TYP-18)
+@Override // error: a value receiver
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: method Pay of SigRecv does not match the method it overrides (receiver kind, parameters, results and ! must be equal): have Pay(int64) error with a va
+func (c SigRecv) Pay(amount int64) error { return nil } // error: the receiver kind
+
+// Marks on a value receiver and on functions that are not methods.
+type Val struct{}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Virtual on method V: the method has a value receiver; the marks need a pointer receiver (TYP-18)
+@Virtual // error
+func (p Val) V() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Abstract on method A: the method has a value receiver; the marks need a pointer receiver (TYP-18)
+@Abstract // error
+func (p Val) A()
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Override on method O: the method has a value receiver; the marks need a pointer receiver (TYP-18)
+@Override // error
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: @Override on O, but Val, which extends no type, has no method of that name to replace; check the name (TYP-18)
+func (p Val) O() {} // error: nothing to override
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Virtual is only allowed on a method (or @Abstract on an `extends` type), not on the function PlainV (TYP-18)
+@Virtual // error
+func PlainV() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Abstract is only allowed on a method (or @Abstract on an `extends` type), not on the function PlainA (TYP-18)
+@Abstract // error
+func PlainA()
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Override is only allowed on a method (or @Abstract on an `extends` type), not on the function PlainO (TYP-18)
+@Override // error
+func PlainO() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Virtual is only allowed on a method (or @Abstract on an `extends` type), not on a variable declaration (TYP-18)
+@Virtual // error
+var markedVar int
+
+// A body on an @Abstract method; two marks on one method.
+type Marks struct{}
+
+@Abstract
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: the @Abstract method Body has a body: an abstract method has none (TYP-18)
+func (p *Marks) Body() {} // error: an abstract method has no body
+
+@Virtual
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: method Two has more than one of @Virtual, @Abstract and @Override (TYP-18)
+@Abstract // error: two marks
+func (p *Marks) Two()
+
+// Accepted: an @Override method overridden again by a grandchild (also with
+// `!`), base.M() on a final, a @Virtual and an @Override parent method.
+type Whole extends Card{}
+
+@Override
+func (c *Whole) Fee() int64 { return base.Fee() + base.Total() }
+
+@Override
+func (c *Whole) Name!() string { return "w" }
+
+type Whole2 extends Whole{}
+
+@Override
+func (c *Whole2) Fee() int64 { return base.Fee() + 1 }
+
+func ok(c *Whole2) int64 { return c.Total() + c.Fee() }
+
+// Accepted: overrides in a generic hierarchy, with two instances.
+type A[T Copy] struct{ V T }
+
+@Virtual
+func (a *A[T]) Get() T { return a.V }
+
+func (a *A[T]) Final() T { return a.V }
+
+type G[T Copy] extends A[T] { W T }
+
+@Override
+func (g *G[T]) Get() T { return base.Get() }
+
+type GI extends G[int] {}
+
+@Override
+func (g *GI) Get() int { return g.W + base.Get() }
+
+type GBad[T Copy] extends A[T] {}
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: method Get of GBad does not match the method it overrides (receiver kind, parameters, results and ! must be equal): have Get() int, want Get() T (TYP-
+func (g *GBad[T]) Get() int { return 0 } // error: T, not int
+
+func generic(g1 *G[int], g2 *G[float64], gi *GI) int {
+	var a1 *A[int] = g1
+	var a2 *A[float64] = g2
+	var a3 *A[int] = gi
+	_, _ = a2, a3
+	return a1.Get() + g1.V + gi.Final()
+}
+
+// A wrong mark is reported once, at its method: a child does not inherit an
+// open @Abstract method or a table from it.
+type BadMarks struct{ N int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Abstract on method A: the method has a value receiver; the marks need a pointer receiver (TYP-18)
+@Abstract // error: a value receiver
+func (b BadMarks) A()
+
+@Abstract
+// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: the @Abstract method B has a body: an abstract method has none (TYP-18)
+func (b *BadMarks) B() {} // error: an abstract method has no body
+
+type BadKid extends BadMarks {}
+
+func badKids() {
+	_ = BadKid{N: 1}
+	_ = BadMarks{N: 2}
+}

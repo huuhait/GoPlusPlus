@@ -1428,6 +1428,13 @@ private:
           identList(Par->Names, Ws == indent);
           print(blank);
         }
+        if (Par->isExtends()) { // `T extends P` (GEN-12)
+          setPos(Par->ExtendsLoc);
+          print(Word{"extends"}, blank);
+          expr(stripParensAlways(Par->Type));
+          PrevLine = ParLineEnd;
+          continue;
+        }
         // parameter type
         const Expr *ParType = stripParensAlways(Par->Type);
         if (PM == ParamMode::typeTParam && I == 0 && Par->Names.size() == 1 &&
@@ -1453,6 +1460,7 @@ private:
         print(tok::comma);
         linebreak(Closing, 0, ignore, true);
       } else if (PM == ParamMode::typeTParam && Fields->numFields() == 1 &&
+                 !Fields->List[0]->isExtends() &&
                  (combinesWithName(stripParensAlways(Fields->List[0]->Type)) ||
                   (!Fields->List[0]->Names.empty() &&
                    !isConstraint(stripParensAlways(Fields->List[0]->Type))))) {
@@ -1638,7 +1646,8 @@ private:
     emit(Sh.Src.substr(B, E - B), true, true, tok::r_paren);
   }
 
-  void fieldList(const FieldList *Fields, bool IsStruct) {
+  void fieldList(const FieldList *Fields, bool IsStruct,
+                 bool BlankBefore = false) {
     SourceLoc Lbrace = Fields->Opening;
     ArrayRef<Field *> List = Fields->List;
     SourceLoc Rbrace = Fields->Closing;
@@ -1650,6 +1659,8 @@ private:
       // possibly a one-line struct/interface
       if (List.empty()) {
         // no blank between keyword and {} in this case
+        if (BlankBefore)
+          print(blank);
         setPos(Lbrace);
         print(tok::l_brace);
         setPos(Rbrace);
@@ -1659,6 +1670,8 @@ private:
       if (isOneLineFieldList(List)) {
         // small enough - print on one line (don't use identList and ignore
         // source line breaks)
+        if (BlankBefore)
+          print(blank);
         setPos(Lbrace);
         print(tok::l_brace, blank);
         const Field *F = List[0];
@@ -1680,6 +1693,10 @@ private:
             signature(cast<FuncType>(F->Type)); // don't print "func"
           } else {
             // embedded interface
+            if (F->isExtends()) {
+              setPos(F->ExtendsLoc);
+              print(Word{"extends"}, blank);
+            }
             expr(F->Type);
           }
         }
@@ -1754,6 +1771,10 @@ private:
           signature(cast<FuncType>(F->Type)); // don't print "func"
         } else {
           // embedded interface
+          if (F->isExtends()) {
+            setPos(F->ExtendsLoc);
+            print(Word{"extends"}, blank);
+          }
           expr(F->Type);
         }
       }
@@ -2920,6 +2941,13 @@ private:
         print(vtab);
       if (S->AssignLoc.isValid())
         print(tok::assign, blank);
+      if (S->Extends) { // `type C extends P { ... }` (TYP-16)
+        setPos(S->ExtendsLoc);
+        print(Word{"extends"}, blank);
+        expr(S->Extends);
+        fieldList(cast<StructType>(S->Type)->Fields, true, true);
+        break;
+      }
       expr(S->Type);
       break;
     }

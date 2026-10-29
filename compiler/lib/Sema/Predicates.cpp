@@ -526,7 +526,7 @@ bool Checker::identicalImpl(const Type *X0, const Type *Y0, bool IgnoreTags,
       return false;
     for (size_t I = 0; I < A->Fields.size(); ++I) {
       Var *F = A->Fields[I], *G = B->Fields[I];
-      if (F->Embedded != G->Embedded ||
+      if (F->Embedded != G->Embedded || F->IsParent != G->IsParent ||
           (!IgnoreTags && (F->Tag != G->Tag || F->Required != G->Required ||
                            F->RequiredSetOnly != G->RequiredSetOnly ||
                            F->MarkedRequired != G->MarkedRequired ||

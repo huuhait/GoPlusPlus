@@ -1,0 +1,6 @@
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/mem-replace 2>&1 | FileCheck "--implicit-check-not=error[E" %S/Inputs/mem-replace/main.gopp
+// P03.22 review (R13, R22): mem.Replace(p, v) is `old := *p; *p = v`, so its
+// T has a Copy use (Checker::noteIntrinsicUses), decided at every
+// instantiation like the use of any generic body: a direct call, the
+// function as a value and through a generic wrapper. The expected errors are
+// the CHECK lines of Inputs/mem-replace/main.gopp.

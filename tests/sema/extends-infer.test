@@ -1,0 +1,43 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R3, GEN-12): in `func Feed[T extends Box[U], U any](a *T)`
+// U is inferred from the ancestor of the argument's type that is an instance
+// of Box, through any number of generic parents. A mismatch is still an
+// error (the other side). Lines without a CHECK line are accepted.
+package main
+
+type Box[T any] struct{ v T }
+type IntBox extends Box[int] {}
+type StrBox extends Box[string] {}
+type Gen[T any] extends Box[T] {}
+type Gen2[T any] extends Gen[T] {}
+
+func Feed[T extends Box[U], U any](a *T) int { return 1 }
+func Pick[U Copy, T extends Box[U]](a *T, u U) U { return u }
+func Sum[T extends Box[int]](a *T) int       { return a.v }
+
+func ok() int {
+	var a IntBox
+	var c Gen2[float64]
+	var d Gen[int]
+	var bb Box[int]
+	var s StrBox
+	n := Feed(&a) + Feed(&c) + Feed(&d) + Feed(&bb) + Feed(&s)
+	var i int = Pick(&a, 1)
+	var f float64 = Pick(&c, 2) // 2 is a float64: U comes from Gen2[float64]
+	_, _ = i, f
+	return n + Sum(&a) + Sum(&d) + Sum(&bb) + Feed[IntBox, int](&a)
+}
+
+func bad() {
+	var a IntBox
+	var b StrBox
+	var c Gen2[float64]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: in call to Pick[int], T (type StrBox) does not satisfy
+	_ = Pick[int](&b, 1)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: StrBox does not satisfy extends Box[int]
+	_ = Sum(&b)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Gen2[float64] does not satisfy extends Box[int]
+	_ = Sum(&c)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: IntBox does not satisfy extends Box[string]
+	_ = Feed[IntBox, string](&a)
+}

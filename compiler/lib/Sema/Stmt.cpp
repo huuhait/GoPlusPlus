@@ -168,8 +168,27 @@ void Checker::checkBody(const BodyJob &J) {
   E = Env();
   E.Sc = J.Sc;
   E.Decl = J.F;
+  // TYP-20: a method of an `extends` type has the hidden `base` (made in
+  // phase 1, funcDecl); no parameter, result or local may be named so.
+  BaseMethodOf = baseOwnerName(J.Recv);
+  if (!BaseMethodOf.empty()) {
+    auto Named = [&](Var *V) {
+      if (V->Name == "base")
+        err(V->Pos, diag::err_base_reserved,
+            {BaseMethodOf, V == J.Recv ? "receiver"
+                           : V->Result ? "result"
+                                       : "parameter"});
+    };
+    for (Var *V : J.Params)
+      Named(V);
+    for (Var *V : J.Results)
+      Named(V);
+    if (J.Recv)
+      Named(J.Recv);
+  }
   funcBody(J.D, J.F->Name, J.Sig, J.Decl->Body, nullptr, J.Sc, J.Params,
            J.Results, J.Recv, J.Decl->Type);
+  BaseMethodOf.clear();
   processDelayed();
 }
 
@@ -882,6 +901,11 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
   }
   Operand SX;
   bool HaveSX = false;
+  // EXP-15: a type switch on a parent pointer (`*P`, `Unique[*P]`,
+  // `Shared[*P]`) is a series of downcasts: each case is a pointer to a
+  // child, and P needs a type table.
+  NamedType *DownP = nullptr;
+  bool DownOk = false;
   {
     Operand X;
     expr(X, Guard->X);
@@ -892,6 +916,12 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
       else if (isInterface(X.Ty)) {
         SX = X;
         HaveSX = true;
+      } else if (!S.Opts.GoCompat && (DownP = downcastParent(X.Ty))) {
+        SX = X;
+        DownOk = hasTypeTable(DownP);
+        if (!DownOk)
+          err(Guard, diag::err_downcast_no_table,
+              {str(Guard->X) + ".(type)", "a child", str(DownP)});
       } else
         err(X, diag::err_unexpected_type_switch, {str(X)});
     }
@@ -920,7 +950,7 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
         Operand Dummy;
         expr(Dummy, Ex);
       } else {
-        T = varType(Ex);
+        T = varType(Ex, true, "a type switch case");
         if (!isValid(T))
           continue;
       }
@@ -940,14 +970,18 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
       Seen.push_back({T, Ex->getBegin()});
       if (HaveSX && T)
         typeAssertion(Ex, SX, T, true);
+      else if (DownOk && !T)
+        err(Ex, diag::err_ptr_never_nil, {str(SX.Ty)});
+      else if (DownOk)
+        downcastTarget(DownP, T, Ex, "case " + str(Ex));
     }
     openScope(CC->getRange(), "case");
     if (Lhs) {
       Type *VT = T;
       if (CC->List.size() != 1 || !VT) {
-        VT = HaveSX ? SX.Ty : invalid();
+        VT = HaveSX || DownP ? SX.Ty : invalid();
       }
-      bool Box = own() && bindsBox(VT);
+      bool Box = own() && HaveSX && bindsBox(VT);
       if (Box)
         VT = boxBindingType(VT); // TYP-9, OWN-V1: a view of the boxed value
       Var *V = newVar(name(Lhs), VT, Lhs->getBegin());

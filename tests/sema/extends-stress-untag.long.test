@@ -1,0 +1,6 @@
+// REQUIRES: long
+// P03.22 review (R1): the implicit "must be untagged" requirement travels
+// through a chain of 200000 generics in near-linear time (`untag`).
+// RUN: %python %S/Inputs/gen-extends-stress.py untag 200000 > %t.gopp
+// RUN: timeout 60 %gopp check -check-j=1 %t.gopp
+package main

@@ -886,6 +886,32 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
   }
   case BuiltinId::Clone: {
     Type *T = X.Ty;
+    // `clone(*p)` and `clone(v)` are `.Clone()` (R1, R9).
+    if (own()) {
+      if (isa<StarExpr>(unparen(Call->Args[0])))
+        noteUse(T, {TypeParamType::Use::Clone});
+      noteViewClone(T);
+    }
+    if (own())
+      if (Type *Through = cloneThroughTable(T)) {
+        // `clone(p)` is `p.Clone()`: a tagged type reached through a pointer
+        // or a view clones through its table (ADR-0023 decision 16), unless
+        // the pointer type declares a Clone of its own.
+        LookupResult LR = lookupFieldOrMethod(T, false, S.Pkg, "Clone");
+        auto *M = dyn_cast_or_null<Func>(LR.Obj);
+        if (!(M && M->HasPtrRecv)) {
+          std::string Why;
+          if (!satisfiesClone(Through, &Why, /*ByValue=*/false)) {
+            err(Call->Args[0], diag::err_own_clone_not_cloneable,
+                {str(Call->Args[0]), str(Through),
+                 Why.empty() ? "" : ": " + Why});
+            return false;
+          }
+          X.M = Mode::Value;
+          X.Ty = uniqueOf(Through);
+          break;
+        }
+      }
     if (own()) {
       if (auto *P = dyn_cast<PointerType>(T)) {
         LookupResult LR = lookupFieldOrMethod(T, false, S.Pkg, "Clone");
@@ -1003,7 +1029,9 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     if (hasVarSize(Base)) {
       X.M = Mode::Value;
     } else {
-      int64_t Offs = gcOffsetof(Base, LR.Index);
+      SmallVector<int, 8> Path(LR.ParentSteps, 0);
+      Path.append(LR.Index.begin(), LR.Index.end());
+      int64_t Offs = gcOffsetof(Base, Path);
       if (Offs < 0) {
         err(X, diag::err_sema_builtin, {str(X) + " is too large"});
         return false;

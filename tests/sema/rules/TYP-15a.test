@@ -14,7 +14,7 @@ package main
 
 type Plain struct{ N int }
 type Opaque interface{ Do() }
-type Gone struct{ Opaque }
+type Gone struct{ Opaque Opaque }
 type impl struct{}
 
 func (impl) Do() {}
@@ -51,13 +51,13 @@ type Conn struct {
 
 @Strict
 type Held struct {
-	Plain
+	Plain Plain
 	Name string
 }
 
 @Strict
 type Soft struct {
-	Plain @Option
+	Plain Plain @Option
 	Err  error          @Option
 	Tags map[string]int @Option
 	Any  any            @Option
@@ -198,8 +198,8 @@ type BadOpt struct {
 	_ int @Option
 	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: @Option takes no arguments
 	Args int @Option(1)
-	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: @Option on field Payment of type Payment: Payment has no zero value (field ID is required (@Strict)), so the field can't be left out; use Option[Payment] (TYP-15a)
-	Payment @Option
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: @Option on field Payment of type Payment: Payment has no zero value (field ID is required (@Strict)), so the field can't be left out; use Option[Payment] (TYP-15a)
+	Payment Payment @Option
 	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: @Option on field G of type Gone: Gone has no zero value (field Opaque of type Opaque has none: interfaces with methods are never nil), so the field can't be left out; use Option[Gone] (TYP-15a)
 	G Gone @Option
 	// One field declaration with two names: one error, not one per name.
@@ -262,8 +262,8 @@ type Redundant struct {
 	S string @Required
 	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: @Required on field Err is redundant: @Strict already requires it (TYP-15a); remove @Required
 	Err error @Required
-	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: @Required on field Plain is redundant: @Strict already requires it (TYP-15a); remove @Required
-	Plain @Required
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: @Required on field Plain is redundant: @Strict already requires it (TYP-15a); remove @Required
+	Plain Plain @Required
 	// The pointer and never-nil errors come first.
 	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: pointers are never nil; @Required isn't needed on field P of type *Plain
 	P *Plain @Required

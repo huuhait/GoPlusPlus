@@ -1,0 +1,111 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R17): a type parameter T that is a pointer to a tagged type
+// (`*Animal`, which may point to a Dog). A generic body that takes a method of
+// T as a value (a method value `x.Val`, `go x.Val()`, `defer x.Val()`)
+// copies the receiver, so T may not be a pointer to a tagged type when that
+// method has a value receiver. The use is noted with the method name and
+// decided at every instantiation route by the rule of the plain code (`f :=
+// p.Val` with p *Animal is E0395) (explicit, inferred, a function value, an argument, through another generic, a method
+// of a generic type; the cross-package route is the unit test
+// Serialize.PointerToTaggedAsTypeArgument). A direct call `x.Val()` only
+// borrows the receiver, a pointer-receiver method copies a pointer, and an
+// untagged pointee has nothing to cut off: all of these stay valid. So does
+// the method expression `T.Val`: it binds no receiver, and the plain code's
+// `(*Animal).Val` is valid too (its call borrows the receiver).
+package main
+
+type Animal struct{ N int }
+
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+
+func (a Animal) Val() int     { return a.N }
+func (a *Animal) PVal() int   { return a.N }
+
+type Dog extends Animal { Extra int }
+
+type Plain struct{ N int }
+
+func (p Plain) Val() int   { return p.N }
+func (p *Plain) PVal() int { return p.N }
+
+func MV[T interface{ Val() int }](x T) int  { f := x.Val; return f() }
+func GoV[T interface{ Val() int }](x T)     { go x.Val() }
+func DeferV[T interface{ Val() int }](x T)  { defer x.Val() }
+func ME[T interface{ Val() int }](x T) int  { f := T.Val; _ = f; return 0 }
+func Wrap[T interface{ Copy; Val() int }](x T) int { return MV(x) }
+func Wrap2[T interface{ Copy; Val() int }](x T) int { return Wrap(x) }
+
+// Valid on every pointer: a call borrows the receiver, a pointer receiver
+// copies the pointer, an interface holds the pointer.
+func Call[T interface{ Val() int }](x T) int  { return x.Val() }
+func PMV[T interface{ PVal() int }](x T) int  { f := x.PVal; return f() }
+func PGo[T interface{ PVal() int }](x T)      { go x.PVal() }
+func ToI[T interface{ Copy; Val() int }](x T) int {
+	var i interface{ Val() int } = x
+	return i.Val()
+}
+
+type Box[T interface{ Val() int }] struct{ x T }
+
+func (b *Box[T]) Get() int { f := b.x.Val; return f() }
+
+type CallBox[T interface{ Val() int }] struct{ x T }
+
+func (b *CallBox[T]) Get() int { return b.x.Val() }
+
+func apply(f func(*Animal) int, a *Animal) int { return f(a) }
+
+func retMV() func(*Animal) int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	return MV // error: a function value returned
+}
+
+func bad(a *Animal, d *Dog) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value (`x.Val`, `go x.Val()`, `defer x.Val()`), and with T = *Animal, Animal has a type table, so the receiver *x may be the parent part of a child
+	_ = MV(a) // inferred
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	_ = MV[*Animal](a) // explicit
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	GoV(a) // go x.Val()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	DeferV(a) // defer x.Val()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	f := MV[*Animal] // a function value
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	var g func(*Animal) int = MV // a variable
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	_ = apply(MV, a) // an argument, inferred from the parameter type
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code passes T on to a generic that takes the method Val of it as a value
+	_ = Wrap(a) // through another generic
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code passes T on to a generic that takes the method Val of it as a value
+	_ = Wrap2(a) // through two
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+	_ = MV(d) // *Dog: Val is inherited, the receiver is the Animal part
+	_, _ = f, g
+}
+
+// A generic type: the method of the type takes the method as a value.
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: *Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T
+func boxA(b Box[*Animal]) {}
+
+func good(a *Animal, p *Plain, d *Dog, cb *CallBox[*Animal], bp *Box[*Plain]) {
+	_ = Call(a)
+	_ = Call(p)
+	_ = Call(d)
+	_ = PMV(a)
+	PGo(a)
+	_ = ToI(a)
+	_ = ME(a) // T.Val binds no receiver, like (*Animal).Val
+	_ = ME(d)
+	// An untagged pointee: nothing to cut off.
+	_ = MV(p)
+	GoV(p)
+	DeferV(p)
+	_ = ME(p)
+	_ = Wrap2(p)
+	// The value itself is the whole thing.
+	_ = MV(Plain{N: 1})
+	_ = cb.Get()
+	_ = bp.Get()
+}

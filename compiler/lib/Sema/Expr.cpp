@@ -436,9 +436,12 @@ static bool opAllowed(Checker &C, tok::Kind Op, Type *T, bool Unary) {
 void Checker::unary(Operand &X, const UnaryExpr *Ex) {
   // `&o` of an Option points at the Option itself (and o is never narrowed:
   // see narrowable).
-  if (Ex->Op == tok::and_)
+  if (Ex->Op == tok::and_) {
     markNoNarrow(Ex->X);
+    markPartialOk(Ex->X, /*Addr=*/true); // `&c.Payment`, `&*p` (EXP-13)
+  }
   expr(X, Ex->X);
+  PartialOk = nullptr;
   if (X.M == Mode::Invalid)
     return;
   tok::Kind Op = Ex->Op;
@@ -1013,10 +1016,23 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
       return Error();
     }
     if (!isa<InterfaceType>(under(X.Ty))) {
+      // EXP-15: the downcast of a parent pointer.
+      if (!S.Opts.GoCompat && downcastParent(X.Ty)) {
+        Type *DT = varType(TA->Type, /*ValueUse=*/false);
+        if (!isValid(DT))
+          return Error();
+        if (downcastOk(X, DT, Ex)) {
+          if (X.M == Mode::Invalid)
+            return Error();
+          X.M = Mode::CommaOk;
+          X.Ty = DT;
+          break;
+        }
+      }
       err(X, diag::err_type_assertion_non_interface, {str(X)});
       return Error();
     }
-    Type *T = varType(TA->Type);
+    Type *T = varType(TA->Type, true, "a type assertion");
     if (!isValid(T))
       return Error();
     typeAssertion(Ex, X, T, false);
@@ -1034,6 +1050,8 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     return callExpr(X, cast<CallExpr>(Ex));
   case K::StarExpr: {
     auto *St = cast<StarExpr>(Ex);
+    // Is `*p` the start of a selector, or the operand of `&` (EXP-15)?
+    const PartialMark PM = takePartialMark(Ex);
     exprOrType(X, St->X, false);
     switch (X.M) {
     case Mode::Invalid:
@@ -1081,6 +1099,15 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
       X.Ty = Base;
     }
     }
+    // ADR-0023 decision 16: `*p` of a tagged type may be the parent part of
+    // a child; it has no value use (partialUse decides).
+    if (X.M == Mode::Variable && derefKind(X.Ty) == PartialKind::Deref &&
+        !partialUse(Ex, PartialKind::Deref, X.Ty, nullptr, PM))
+      return Error();
+    // The same for `*p` of a plain type parameter T: a use as a value is
+    // decided on each type argument (Checker::useWhy, R1).
+    if (X.M == Mode::Variable && !PM.Ok)
+      noteUse(X.Ty, {TypeParamType::Use::Copy});
     break;
   }
   case K::UnaryExpr: {

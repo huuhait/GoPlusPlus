@@ -1,0 +1,40 @@
+// P03.22 stress, part 2 of 2 (the rules that look at every level): a new
+// name per level, an upcast per level (jump pointers), an abstract chain
+// (the open methods), a generic chain of overrides, wide overrides, local
+// types in many bodies (the name index) and a type switch over many
+// children. Part 1 is extends-stress.test.
+// RUN: %python %S/Inputs/gen-extends-stress.py fresh 4000 > %t.fresh.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.fresh.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py upcast 4000 > %t.upcast.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.upcast.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py abschain 4000 > %t.abschain.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.abschain.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py genover 4000 > %t.genover.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.genover.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py wideover 4000 > %t.wideover.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.wideover.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py local 4000 > %t.local.gopp
+// RUN: timeout 10 %gopp check -check-j=8 %t.local.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py switch 1000 > %t.switch.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.switch.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py rootsel 2000 > %t.rootsel.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.rootsel.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py clone 2000 > %t.clone.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.clone.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py lits 2000 > %t.lits.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.lits.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py iface 2000 > %t.iface.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.iface.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py zero 2000 > %t.zero.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.zero.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py gensel 2000 > %t.gensel.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.gensel.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py undef 2000 > %t.undef.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.undef.gopp 2>&1 | FileCheck --check-prefix=UNDEF %s
+// RUN: %python %S/Inputs/gen-extends-stress.py ptrmeth 1000 > %t.ptrmeth.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.ptrmeth.gopp 2>&1 | FileCheck --check-prefix=PTRMETH %s
+// UNDEF: error[E{{[0-9]+}}]: c.nope1 undefined
+// UNDEF: error[E{{[0-9]+}}]: c.nope2000 undefined
+// PTRMETH: error[E{{[0-9]+}}]: *C1000 does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+// PTRMETH: error[E{{[0-9]+}}]: *C1000 does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+package main

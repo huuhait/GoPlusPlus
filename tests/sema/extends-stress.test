@@ -1,0 +1,35 @@
+// P03.22 stress, part 1 of 2 (the declarations): the hierarchy checks stay
+// near-linear and never recurse. One generated program per shape
+// (Inputs/gen-extends-stress.py has the list): a chain declared top-down
+// and bottom-up (with the upcasts, the downcast and a type switch on the
+// last type), one parent with many children, a tree, a final-only chain, a
+// generic chain, and a ring and a clash at the end of a chain (one error
+// each). Part 2 is extends-stress-uses.test; the Done-when sizes (200000)
+// are extends-stress.long.test.
+// RUN: %python %S/Inputs/gen-extends-stress.py chain 4000 > %t.chain.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.chain.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py rchain 4000 > %t.rchain.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.rchain.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py wide 4000 > %t.wide.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.wide.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py mixed 4000 > %t.mixed.gopp
+// RUN: timeout 10 %gopp check -check-j=8 %t.mixed.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py final 4000 > %t.final.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.final.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py generic 4000 > %t.generic.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.generic.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py ring 4000 > %t.ring.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 %t.ring.gopp 2>&1 | FileCheck --check-prefix=RING %s
+// RUN: %python %S/Inputs/gen-extends-stress.py clash 4000 > %t.clash.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 %t.clash.gopp 2>&1 | FileCheck --check-prefix=CLASH %s
+// RUN: %python %S/Inputs/gen-extends-stress.py untag 1500 > %t.untag.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.untag.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py untagbad 1500 > %t.untagbad.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 %t.untagbad.gopp 2>&1 | FileCheck --check-prefix=UNTAG %s
+// UNTAG: :{{[0-9]+}}:{{[0-9]+}}: error[E{{[0-9]+}}]: A does not satisfy the implicit requirement of U: the generic code passes U on to a generic
+// UNTAG-NOT: error
+// RING: :3:6: error[E{{[0-9]+}}]: `extends` cycle: R0 extends R1 extends R2
+// RING-NOT: error
+// CLASH: :4003:{{[0-9]+}}: error[E{{[0-9]+}}]: field x of C4000 has the name of the field x of its ancestor C0
+// CLASH-NOT: error
+package main

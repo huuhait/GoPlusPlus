@@ -1,0 +1,156 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule GEN-12 (P03.22, ADR-0023 decisions 15 and 16): `T extends P` and the
+// constraint element `interface{ extends P; ... }`. The type set is P and
+// every type that extends P (directly or not); the check at instantiation
+// names the constraint. In the body T has the fields and methods of P and
+// nothing else, with the upcast rules of a concrete child: `*T` converts to
+// `*P`, Unique[*T] to Unique[*P], and `p.(*T)` is a downcast, only when P
+// has a type table; with a final-only P the fields and methods stay. A T
+// value is never a P value, and for a tagged P `*a` has no value use;
+// `a.Clone()` on `*T` is a Unique[*T]. `extends P` with a type term is an
+// empty type set. Lines without a CHECK line are accepted.
+package main
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() string { return "" }
+
+func (a *Animal) Eat() int { return 1 }
+
+type Dog extends Animal { Age int }
+
+@Override
+func (d *Dog) Speak() string { return "woof" }
+
+func (d *Dog) Fee() int { return 1 }
+
+type Puppy extends Dog {}
+type Cat struct{ Name string }
+type Speaker interface{ Speak() string }
+
+type Box[U any] struct{ V U }
+type Crate[U any] extends Box[U] { Extra U }
+type IntBox extends Box[int] {}
+
+func Feed[T extends Animal](a *T) string {
+	_ = a.Eat()
+	a.Name = "x"
+	var p *Animal = a
+	_ = p
+	return a.Speak() + a.Name
+}
+
+func Open[U any, T extends Box[U]](t *T) { _ = t.V }
+
+func Unbox[T extends Box[int]](b *T) int { return b.V }
+
+type Cl interface {
+	extends Animal
+	Clone
+}
+
+func Both[T Cl](a *T) Unique[*T] {
+	_ = a.Eat()
+	return a.Clone()
+}
+
+func Own[T extends Animal](move u Unique[*T]) Unique[*Animal] { return move(u) }
+
+func Down[T extends Animal](p *Animal) *T { return p.(*T) }
+
+func ok() {
+	var d Dog
+	var pu Puppy
+	var an Animal
+	_ = Feed[Dog](&d)
+	_ = Feed[Animal](&an)
+	_ = Feed[Puppy](&pu)
+	_ = Feed(&d)
+	var c Crate[int]
+	Open[int, Crate[int]](&c)
+	var ib IntBox
+	_ = Unbox[IntBox](&ib)
+	_ = Both(&d)
+}
+
+// Rejected bodies.
+func Member[T extends Animal](a *T) int {
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: a.Fee undefined (type T extends Animal, so it has only the fields and methods of Animal (GEN-12))
+	return a.Fee() // error: only Dog has Fee
+}
+
+func Slice[T extends Animal](a *T) {
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use *a as a value: T has a type table, so *a may be the parent part of a child, and a copy of it or an assignment through it would cover only t
+	var v Animal = *a // error: for a tagged P, *a has no value use
+	_ = v
+}
+
+func CloneVal[T Cl](a *T) T {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use (*a).Clone() here: T has a type table, so (*a) may be the parent part of a child, and its Clone() would copy only that part; clone through
+	return (*a).Clone() // error: use a.Clone()
+}
+
+// Rejected instances.
+func bad(cat *Cat, pi *int, pd **Dog, sp *Speaker) {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: int does not satisfy extends Animal (int does not extend Animal)
+	Feed[int](pi)     // error
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: Cat does not satisfy extends Animal (Cat does not extend Animal)
+	Feed[Cat](cat)    // error: Cat does not extend Animal
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: *Dog does not satisfy extends Animal (*Dog does not extend Animal)
+	Feed[*Dog](pd)    // error: a pointer
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: Speaker does not satisfy extends Animal (Speaker does not extend Animal)
+	Feed[Speaker](sp) // error: an interface
+}
+
+// An empty type set.
+type Mixed interface {
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: interface{extends Animal; ~int} does not satisfy the constraint: extends Animal cannot be combined with the type terms of a type set (empty type set)
+	extends Animal // error: with a type term
+	~int
+}
+
+// A final-only P: the fields and methods of P stay, there is no upcast and
+// no downcast.
+type Final struct{ N int }
+
+func (f *Final) Get() int { return f.N }
+
+type FinalKid extends Final {}
+
+func FinalBody[T extends Final](a *T) int {
+	a.N = 2
+	return a.Get() + a.N
+}
+
+func FinalUp[T extends Final](a *T) *Final {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use a (variable of type *T) as *Final value in return statement: Final has no type table (no @Virtual or @Abstract method in its hierarchy), so
+	return a // error: Final has no type table
+}
+
+func FinalOwn[T extends Final](move u Unique[*T]) Unique[*Final] {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use move(u) (value of struct type Unique[*T]) as Unique[*Final] value in return statement: Final has no type table (no @Virtual or @Abstract me
+	return move(u) // error
+}
+
+func FinalDown[T extends Final](p *Final) *T {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use the type assertion p.(*T) to downcast to *T: Final has no type table (no @Virtual or @Abstract method in the hierarchy), so the value has n
+	return p.(*T) // error
+}
+
+func finalOK(k *FinalKid) int { return FinalBody(k) }
+
+// A tagged type is not Copy for generic code: a copy through a *T could be
+// the parent part of a child.
+type Tick struct{ N int }
+
+@Virtual
+func (t *Tick) Run() {}
+
+func Dup[T Copy](p *T) T { return *p }
+
+func copies(t *Tick, n *int) {
+	_ = Dup(n)
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Tick does not satisfy Copy (Tick has a type table, so a copy through a *Tick could cover only the parent part of a child; ADR-0023)
+	_ = Dup(t) // error: Tick has a type table
+}

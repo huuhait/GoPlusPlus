@@ -1,0 +1,62 @@
+// RUN: %gopp check --dump-types %s | FileCheck %s
+// Rule OWN-R6 with ADR-0023 decision 16 (P03.22), the accepted side as a
+// type dump: a Clone always copies the whole real value. Through a pointer,
+// a view or a Unique of a tagged type it is a Unique holding a full copy of
+// the dynamic type (also clone(p), and on *T with a tagged `T extends P`); a
+// value clones to its own type; Shared retains; an untagged pointer's target
+// clones to a plain value; an inherited method of an untagged parent returns
+// what its signature says.
+package main
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() string { return "..." }
+
+type Dog extends Animal { Tricks []string }
+
+type Config struct{ Port int }
+
+func (p *Config) Dup() Config { return *p }
+
+type MyConfig extends Config { Debug bool }
+
+func rows(p *Animal, v View[Animal], u Unique[*Animal], s Shared[*Animal], dog Dog, q *Config, cfg Config) {
+	// CHECK-DAG: [[@LINE+1]]:7 expr `p.Clone()` value Unique[*Animal]
+	a := p.Clone()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `clone(p)` value Unique[*Animal]
+	b := clone(p)
+	// CHECK-DAG: [[@LINE+1]]:7 expr `v.Clone()` value Unique[*Animal]
+	c := v.Clone()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `u.Clone()` value Unique[*Animal]
+	d := u.Clone()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `s.Clone()` value Shared[*Animal]
+	e := s.Clone()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `dog.Clone()` value Dog
+	f := dog.Clone()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `(*q).Clone()` value Config
+	g := (*q).Clone()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `cfg.Clone()` value Config
+	h := cfg.Clone()
+	my := MyConfig{Port: 1}
+	// CHECK-DAG: [[@LINE+1]]:7 expr `my.Dup()` value Config
+	i := my.Dup()
+	// CHECK-DAG: [[@LINE+1]]:7 expr `my.Dup` value func() Config
+	j := my.Dup
+	_ = p.Name
+	_ = (*p).Name
+	_ = p.Speak()
+	_ = &*p
+	_, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, f, g, h, i, j
+}
+
+type Cl interface {
+	extends Animal
+	Clone
+}
+
+func Gen[T Cl](a *T) {
+	// CHECK-DAG: [[@LINE+1]]:7 expr `a.Clone()` value Unique[*T]
+	k := a.Clone()
+	_ = k
+}

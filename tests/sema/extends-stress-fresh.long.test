@@ -1,0 +1,7 @@
+// REQUIRES: long
+// P03.22 Done-when size for the hierarchy checks: the `fresh` shape of
+// extends-stress.test at 200000 types, one test per shape so lit runs the
+// shapes in parallel (the ASan build must stay under 60 s for all of them).
+// RUN: %python %S/Inputs/gen-extends-stress.py fresh 200000 > %t.gopp
+// RUN: timeout 60 %gopp check -check-j=1 %t.gopp
+package main

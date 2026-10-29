@@ -1,0 +1,6 @@
+// REQUIRES: long
+// P03.22 (R19): the `rootmeth` shape of extends-stress-index.test at 200000
+// levels: the chain's name index keeps it near-linear.
+// RUN: %python %S/Inputs/gen-extends-stress.py rootmeth 200000 > %t.gopp
+// RUN: timeout 60 %gopp check -check-j=1 %t.gopp
+package main

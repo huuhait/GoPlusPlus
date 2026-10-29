@@ -1,0 +1,6 @@
+// REQUIRES: long
+// P03.22: a ring of 200000 types gives one cycle error, in near-linear time.
+// RUN: %python %S/Inputs/gen-extends-stress.py ring 200000 > %t.gopp
+// RUN: not timeout 60 %gopp check -check-j=1 %t.gopp > %t.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 1 and 'extends cycle: R0 extends R1' in t.replace('\x60', '')" %t.out
+package main

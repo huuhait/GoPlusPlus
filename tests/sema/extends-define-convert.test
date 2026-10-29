@@ -1,0 +1,55 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R4): `type X Y` never makes a child by accident, and a
+// pointer, View or owning pointer converts to or from a type with a type table
+// only along the hierarchy. Untagged roots keep Go's rules (the other side).
+package main
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() string { return "..." }
+
+type Dog extends Animal { Tricks int }
+
+@Abstract
+type Shape extends Animal { W int }
+
+type Config struct{ N int }
+type Kid extends Config { M int }
+type Plain struct{ N int }
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot define type D2 as Dog: Dog extends Animal, so the copy would silently be a child or a second root of its hierarchy (TYP-16); write `type D2 extends Dog { ... }` to make a child
+type D2 Dog // error: Dog is a child
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot define type A2 as Animal: Animal has a type table
+type A2 Animal // error: tagged root
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot define type S2 as Shape: Shape extends Animal
+type S2 Shape // error: abstract
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot define type K2 as Kid: Kid extends Config
+type K2 Kid // error: a child of an untagged parent too
+
+// Accepted: untagged roots, and a child made on purpose.
+type C2 Config
+type P2 Plain
+type D3 extends Dog { More int }
+
+func conv(p *Animal, d *Dog, v View[Animal], u Unique[*Dog], cfg *Config, pl *Plain) {
+	// CHECK: [[@LINE+1]]:31: error{{\[E[0-9]+\]}}: cannot convert p (variable of type *Animal) to type *struct{Name string}: a pointer to or from a type with a type table
+	_ = (*struct{ Name string })(p) // error: tagged to a literal
+	// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot convert d (variable of type *Dog) to type *D3: a pointer to or from
+	_ = (*D3)(d) // error: a downcast by conversion
+	// CHECK: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert p (variable of type *Animal) to type *Dog: a pointer to or from
+	_ = (*Dog)(p) // error: a downcast by conversion
+	// CHECK: [[@LINE+1]]:36: error{{\[E[0-9]+\]}}: cannot convert v (variable of type View[Animal]) to type View[struct{Name string}]: a pointer to or from
+	_ = (View[struct{ Name string }])(v) // error: a view
+	var _ *Animal = (*Animal)(d)         // the upcast
+	_ = (*Animal)(p)                     // identical
+	_ = (*C2)(cfg)                       // untagged roots: Go's rule
+	_ = (*Plain)(pl)
+	_ = (*struct{ N int })(pl)
+	_ = (*P2)(pl)
+	_ = u
+	_ = d
+}

@@ -8,6 +8,10 @@
 
 #include "gopp/Sema/Types.h"
 
+#include "llvm/ADT/STLExtras.h"
+
+#include <algorithm>
+
 using namespace gopp;
 using namespace gopp::sema;
 using llvm::ArrayRef;
@@ -34,6 +38,7 @@ void StructType::Profile(llvm::FoldingSetNodeID &ID) const {
     ID.AddPointer(isExportedName(F->Name) ? nullptr : F->Pkg);
     ID.AddPointer(F->Ty);
     ID.AddBoolean(F->Embedded);
+    ID.AddBoolean(F->IsParent);
     ID.AddString(F->Tag);
     ID.AddBoolean(F->Required);
     ID.AddBoolean(F->RequiredSetOnly);
@@ -266,6 +271,8 @@ SignatureType *TypeContext::signature(TupleType *Params, TupleType *Results,
 }
 
 StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields, bool Strict) {
+  for (const FieldSpec &F : Fields)
+    noteMemberName(F.Name);
   // The profile is computed from the specs (the same as StructType::Profile
   // of the fields), so that a struct that exists already allocates nothing.
   llvm::FoldingSetNodeID ID;
@@ -275,6 +282,7 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields, bool Strict) {
     ID.AddPointer(isExportedName(F.Name) ? nullptr : F.Pkg);
     ID.AddPointer(F.Ty);
     ID.AddBoolean(F.Embedded);
+    ID.AddBoolean(F.IsParent);
     ID.AddString(F.Tag);
     ID.AddBoolean(F.Required);
     ID.AddBoolean(F.RequiredSetOnly);
@@ -293,6 +301,7 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields, bool Strict) {
       V->Ty = F.Ty;
       V->IsField = true;
       V->Embedded = F.Embedded;
+      V->IsParent = F.IsParent;
       V->Tag = copyIn(A, F.Tag);
       V->Required = F.Required;
       V->RequiredSetOnly = F.RequiredSetOnly;
@@ -309,6 +318,8 @@ InterfaceType *TypeContext::newInterface(ArrayRef<Func *> Methods,
                                          ArrayRef<Type *> Embeddeds,
                                          ArrayRef<SourceLoc> EmbedLocs,
                                          bool Implicit) {
+  for (const Func *M : Methods)
+    noteMemberName(M->Name);
   std::lock_guard<std::mutex> G(AllocMu);
   InterfaceType *I = new (Alloc.Allocate<InterfaceType>()) InterfaceType();
   I->Methods = Objs.copy(Methods);
@@ -589,4 +600,117 @@ void TypeContext::initUniverse(bool GoCompat) {
     B->Ty = invalid();
     Unsafe->PkgScope->insert(B);
   }
+}
+
+static bool isAscii(llvm::StringRef S) {
+  return llvm::all_of(S, [](char C) { return !(C & 0x80); });
+}
+
+void TypeContext::noteMemberName(llvm::StringRef Name) {
+  {
+    std::shared_lock<std::shared_mutex> R(NamesMu);
+    if (MemberNames.contains(Name))
+      return;
+  }
+  std::unique_lock<std::shared_mutex> W(NamesMu);
+  MemberNames.insert(Name);
+  if (isAscii(Name))
+    MemberNames.insert("\x04" + Name.lower());
+  else
+    NonAsciiNames = true;
+}
+
+void TypeContext::setTParamUses(TypeParamType *TP,
+                                llvm::ArrayRef<TypeParamType::Use> Uses) {
+  std::lock_guard<std::mutex> A(AllocMu);
+  auto *Mem = Alloc.Allocate<TypeParamType::Use>(Uses.size());
+  for (size_t I = 0; I < Uses.size(); ++I) {
+    Mem[I] = Uses[I];
+    llvm::StringRef M = Uses[I].Member;
+    char *Str = Alloc.Allocate<char>(M.size() + 1);
+    std::copy(M.begin(), M.end(), Str);
+    Str[M.size()] = 0;
+    Mem[I].Member = llvm::StringRef(Str, M.size());
+  }
+  auto *L =
+      new (Alloc.Allocate<TypeParamType::UseList>()) TypeParamType::UseList{
+          llvm::ArrayRef<TypeParamType::Use>(Mem, Uses.size())};
+  TP->UseSet.store(L, std::memory_order_release);
+}
+
+bool TypeContext::memberNameSeen(llvm::StringRef Name) {
+  std::shared_lock<std::shared_mutex> R(NamesMu);
+  return MemberNames.contains(Name);
+}
+
+bool TypeContext::memberNameSeenFold(llvm::StringRef Name) {
+  std::shared_lock<std::shared_mutex> R(NamesMu);
+  // Case folding of a non-ASCII name (or to one: the Kelvin sign) is not
+  // tracked: such a program takes the general walk.
+  if (NonAsciiNames || !isAscii(Name))
+    return true;
+  return MemberNames.contains("\x04" + Name.lower());
+}
+
+bool TypeContext::memberMemoGet(const NamedType *N, llvm::StringRef Key,
+                                MemberMemo &Out) {
+  std::lock_guard<std::mutex> G(MemoMu);
+  auto It = MemberMemos.find(N);
+  if (It == MemberMemos.end())
+    return false;
+  auto J = It->second.find(Key);
+  if (J == It->second.end())
+    return false;
+  Out = J->second;
+  return true;
+}
+
+void TypeContext::memberMemoPut(const NamedType *N, llvm::StringRef Key,
+                                const MemberMemo &M) {
+  std::lock_guard<std::mutex> G(MemoMu);
+  MemberMemos[N].try_emplace(Key, M);
+}
+
+bool TypeContext::chainEntry(const NamedType *N, ChainEntry &Out) {
+  std::shared_lock<std::shared_mutex> R(ChainMu);
+  auto It = ChainTypes.find(N);
+  if (It == ChainTypes.end())
+    return false;
+  Out = It->second;
+  return true;
+}
+
+void TypeContext::chainAdd(const NamedType *N, const ChainEntry &E,
+                           llvm::ArrayRef<ChainMember> Members) {
+  std::unique_lock<std::shared_mutex> W(ChainMu);
+  if (!ChainTypes.try_emplace(N, E).second)
+    return; // entered by another thread: the same entry
+  for (const ChainMember &M : Members) {
+    llvm::StringRef Name = M.Obj->Name;
+    ChainMembersOf[{N, Name}].push_back(M);
+    // Sorted, a depth once per name. Origins are entered from the root
+    // down, so a new depth is almost always the last one.
+    llvm::SmallVector<uint32_t, 1> &Ds = ChainDepthsOf[{E.Root, Name}];
+    auto At = std::lower_bound(Ds.begin(), Ds.end(), E.Depth);
+    if (At == Ds.end() || *At != E.Depth)
+      Ds.insert(At, E.Depth);
+  }
+}
+
+uint32_t TypeContext::chainDepthAtMost(const NamedType *Root,
+                                       llvm::StringRef Name, uint32_t Max) {
+  std::shared_lock<std::shared_mutex> R(ChainMu);
+  auto It = ChainDepthsOf.find({Root, Name});
+  if (It == ChainDepthsOf.end())
+    return 0;
+  auto At = std::upper_bound(It->second.begin(), It->second.end(), Max);
+  return At == It->second.begin() ? 0 : *(At - 1);
+}
+
+void TypeContext::chainMembers(const NamedType *N, llvm::StringRef Name,
+                               llvm::SmallVectorImpl<ChainMember> &Out) {
+  std::shared_lock<std::shared_mutex> R(ChainMu);
+  auto It = ChainMembersOf.find({N, Name});
+  if (It != ChainMembersOf.end())
+    Out.append(It->second.begin(), It->second.end());
 }

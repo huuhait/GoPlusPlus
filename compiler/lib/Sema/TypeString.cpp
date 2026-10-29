@@ -117,7 +117,9 @@ public:
         if (I)
           OS << "; ";
         const Var *F = S->Fields[I];
-        if (!F->Embedded)
+        if (F->IsParent)
+          OS << "extends ";
+        else if (!F->Embedded)
           OS << F->Name << ' ';
         type(F->Ty, Depth);
         // MAC-12: the attributes come before the tag. In a @Strict struct only
@@ -250,8 +252,15 @@ private:
   }
 
   void interface(const InterfaceType *I, unsigned Depth) {
-    if (I->Implicit && I->Methods.empty() && I->Embeddeds.size() == 1) {
+    if (I->Implicit && I->Methods.empty() && I->Embeddeds.size() == 1 &&
+        !I->Extends) {
       type(I->Embeddeds[0], Depth);
+      return;
+    }
+    if (I->Implicit && I->Extends && I->Methods.empty() &&
+        I->Embeddeds.empty()) {
+      OS << "extends ";
+      type(I->Extends, Depth);
       return;
     }
     if (I->Sp == InterfaceType::Comparable) {
@@ -264,6 +273,11 @@ private:
     }
     OS << "interface{";
     bool First = true;
+    if (I->Extends) {
+      OS << "extends ";
+      type(I->Extends, Depth);
+      First = false;
+    }
     for (const Func *M : I->Methods) {
       if (!First)
         OS << "; ";

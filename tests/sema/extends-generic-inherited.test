@@ -1,0 +1,111 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R18): a VALUE type argument whose method is inherited. The
+// plain code's `g := dog.Val` copies the parent part dog.Animal (E0395, the
+// receiver of Animal.Val); the generic code `f := x.Val` with T = Dog does
+// the same, so the instantiation is an error, decided by the same rule on
+// the real type (Checker::receiverWhy) at every route: inferred, explicit, a
+// function value, a variable, a return, an argument, through another
+// generic, a generic type and its method, an `extends` bound, a `move`
+// receiver. Both sides: a child with its own method, the tagged root itself,
+// a pointer-receiver method, a direct call and a method expression stay
+// valid (the cross-package route is the unit test
+// Serialize.InheritedMethodOfAValueTypeArgument).
+package main
+
+type Animal struct{ N int }
+
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+
+func (a Animal) Val() int      { return a.N }
+func (a *Animal) PVal() int    { return a.N }
+func (move a Animal) Eat() int { return a.N }
+
+type Dog extends Animal { Extra int }
+
+type Pet struct{ N int }
+
+@Virtual
+func (p *Pet) Speak() int { return 0 }
+
+type Cat extends Pet { Extra int }
+
+func (c Cat) Val() int { return c.N }
+
+type Config struct{ Port int }
+
+func (c Config) Val() int { return c.Port }
+
+type MyConfig extends Config { Debug bool }
+
+type J interface{ Val() int }
+type PJ interface{ PVal() int }
+
+func MV[T J](x T) int { f := x.Val; return f() }
+func GoV[T J](x T)     { go x.Val() }
+func DeferV[T J](x T)  { defer x.Val() }
+func Outer[U J](x U) int { return MV(x) }
+func XV[T extends Animal](x T) int { f := x.Val; return f() }
+func XEat[T extends Animal](move x T) int { return x.Eat() }
+
+type Box[T J] struct{ x T }
+
+func (b *Box[T]) Get() int { f := b.x.Val; return f() }
+
+func applyMV(f func(Dog) int, d Dog) int { return f(d) }
+
+func retMV() func(Dog) int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value (`x.Val`, `go x.Val()`, `defer x.Val()`), and with T = Dog, the method Val is inherited, so its receiver is the parent part of Dog
+	return MV // a function value returned
+}
+
+func bad(dog Dog, move own Dog, my MyConfig) {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use dog.Val as a method value or deferred call: the method Val is inherited
+	g := dog.Val // the plain code
+	_ = g
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	_ = MV(dog) // inferred
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	_ = MV[Dog](dog) // explicit
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	GoV(dog) // go x.Val()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	DeferV(dog) // defer x.Val()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	f := MV[Dog] // a function value
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	var h func(Dog) int = MV // a variable
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	_ = applyMV(MV, dog) // an argument
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of U: the generic code passes U on to a generic that takes the method Val of it as a value
+	_ = Outer(dog) // through another generic
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	_ = XV(dog) // an `extends` bound
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code calls the method Eat of T (`x.Eat()`), and with T = Dog, the method Eat is inherited
+	_ = XEat(move(own)) // a `move` receiver
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: MyConfig does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+	_ = MV(my) // an untagged child: the same copy of its parent part
+	_, _ = f, h
+}
+
+// A generic type: its method takes the method of T as a value.
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Dog does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value
+func boxD(b *Box[Dog]) {}
+
+func Call[T J](x T) int   { return x.Val() }
+func PMV[T PJ](x T) int   { f := x.PVal; return f() }
+func ME[T J](x T) int     { f := T.Val; return f(x) }
+func XCall[T extends Animal](x T) int { return x.Val() }
+
+func good(cat Cat, a Animal, dog Dog, pd *Dog, cfg Config, move own Animal, b *Box[Cat]) int {
+	n := MV(cat) + MV(a) + MV(cfg) // own methods: the value itself
+	GoV(cat)
+	DeferV(a)
+	n += Call(dog) + XCall(dog) // a call borrows the receiver
+	n += PMV(pd)                 // a pointer receiver copies the pointer
+	n += ME(dog)                 // a method expression binds no receiver
+	n += XV(a) + XEat(move(own)) // the root's own methods
+	return n + b.Get()
+}
+
+func main() {}

@@ -1,0 +1,182 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck --match-full-lines --strict-whitespace %s
+// P03.22 (TYP-16, GEN-12, LEX-12): the AST of `extends` (golden first, the source follows).
+// CHECK:File <{{.*}}>
+// CHECK-NEXT:  Name: Ident <162:9, 162:10> 'p'
+// CHECK-NEXT:  Decl: GenDecl <164:1, 164:36> type
+// CHECK-NEXT:    Spec: TypeSpec <164:6, 164:36>
+// CHECK-NEXT:      Name: Ident <164:6, 164:13> 'Payment'
+// CHECK-NEXT:      Type: StructType <164:14, 164:36>
+// CHECK-NEXT:        Fields: FieldList <164:20, 164:36>
+// CHECK-NEXT:          Field: Field <164:22, 164:34>
+// CHECK-NEXT:            Names: Ident <164:22, 164:28> 'Amount'
+// CHECK-NEXT:            Type: Ident <164:29, 164:34> 'int64'
+// CHECK-NEXT:  Decl: GenDecl <165:1, 165:44> type
+// CHECK-NEXT:    Spec: TypeSpec <165:6, 165:44>
+// CHECK-NEXT:      Name: Ident <165:6, 165:10> 'Card'
+// CHECK-NEXT:      Extends: Ident <165:19, 165:26> 'Payment'
+// CHECK-NEXT:      Type: StructType <165:27, 165:44>
+// CHECK-NEXT:        Fields: FieldList <165:27, 165:44>
+// CHECK-NEXT:          Field: Field <165:29, 165:42>
+// CHECK-NEXT:            Names: Ident <165:29, 165:35> 'Number'
+// CHECK-NEXT:            Type: Ident <165:36, 165:42> 'string'
+// CHECK-NEXT:  Decl: GenDecl <166:1, 166:30> type
+// CHECK-NEXT:    Spec: TypeSpec <166:6, 166:30>
+// CHECK-NEXT:      Name: Ident <166:6, 166:11> 'Empty'
+// CHECK-NEXT:      Extends: Ident <166:20, 166:27> 'Payment'
+// CHECK-NEXT:      Type: StructType <166:28, 166:30>
+// CHECK-NEXT:        Fields: FieldList <166:28, 166:30>
+// CHECK-NEXT:  Decl: GenDecl <167:1, 167:40> type
+// CHECK-NEXT:    Spec: TypeSpec <167:6, 167:40>
+// CHECK-NEXT:      Name: Ident <167:6, 167:9> 'Box'
+// CHECK-NEXT:      TypeParams: FieldList <167:9, 167:16>
+// CHECK-NEXT:        Field: Field <167:10, 167:15>
+// CHECK-NEXT:          Names: Ident <167:10, 167:11> 'T'
+// CHECK-NEXT:          Type: Ident <167:12, 167:15> 'any'
+// CHECK-NEXT:      Extends: Ident <167:25, 167:32> 'Payment'
+// CHECK-NEXT:      Type: StructType <167:33, 167:40>
+// CHECK-NEXT:        Fields: FieldList <167:33, 167:40>
+// CHECK-NEXT:          Field: Field <167:35, 167:38>
+// CHECK-NEXT:            Names: Ident <167:35, 167:36> 'V'
+// CHECK-NEXT:            Type: Ident <167:37, 167:38> 'T'
+// CHECK-NEXT:  Decl: GenDecl <168:1, 168:34> type
+// CHECK-NEXT:    Spec: TypeSpec <168:6, 168:34>
+// CHECK-NEXT:      Name: Ident <168:6, 168:9> 'Gen'
+// CHECK-NEXT:      TypeParams: FieldList <168:9, 168:16>
+// CHECK-NEXT:        Field: Field <168:10, 168:15>
+// CHECK-NEXT:          Names: Ident <168:10, 168:11> 'T'
+// CHECK-NEXT:          Type: Ident <168:12, 168:15> 'any'
+// CHECK-NEXT:      Extends: IndexExpr <168:25, 168:31>
+// CHECK-NEXT:        X: Ident <168:25, 168:28> 'Box'
+// CHECK-NEXT:        Index: Ident <168:29, 168:30> 'T'
+// CHECK-NEXT:      Type: StructType <168:32, 168:34>
+// CHECK-NEXT:        Fields: FieldList <168:32, 168:34>
+// CHECK-NEXT:  Decl: FuncDecl <169:1, 169:44>
+// CHECK-NEXT:    Name: Ident <169:6, 169:10> 'Feed'
+// CHECK-NEXT:    Type: FuncType <169:1, 169:41>
+// CHECK-NEXT:      TypeParams: FieldList <169:10, 169:35>
+// CHECK-NEXT:        Field: Field <169:11, 169:27> extends
+// CHECK-NEXT:          Names: Ident <169:11, 169:12> 'T'
+// CHECK-NEXT:          Type: Ident <169:21, 169:27> 'Animal'
+// CHECK-NEXT:        Field: Field <169:29, 169:34>
+// CHECK-NEXT:          Names: Ident <169:29, 169:30> 'U'
+// CHECK-NEXT:          Type: Ident <169:31, 169:34> 'any'
+// CHECK-NEXT:      Params: FieldList <169:35, 169:41>
+// CHECK-NEXT:        Field: Field <169:36, 169:40>
+// CHECK-NEXT:          Names: Ident <169:36, 169:37> 'a'
+// CHECK-NEXT:          Type: StarExpr <169:38, 169:40>
+// CHECK-NEXT:            X: Ident <169:39, 169:40> 'T'
+// CHECK-NEXT:    Body: BlockStmt <169:42, 169:44>
+// CHECK-NEXT:  Decl: GenDecl <170:1, 170:41> type
+// CHECK-NEXT:    Spec: TypeSpec <170:6, 170:41>
+// CHECK-NEXT:      Name: Ident <170:6, 170:12> 'Holder'
+// CHECK-NEXT:      TypeParams: FieldList <170:12, 170:32>
+// CHECK-NEXT:        Field: Field <170:13, 170:31> extends
+// CHECK-NEXT:          Names: Ident <170:13, 170:14> 'T'
+// CHECK-NEXT:          Type: IndexExpr <170:23, 170:31>
+// CHECK-NEXT:            X: Ident <170:23, 170:26> 'Box'
+// CHECK-NEXT:            Index: Ident <170:27, 170:30> 'int'
+// CHECK-NEXT:      Type: StructType <170:33, 170:41>
+// CHECK-NEXT:        Fields: FieldList <170:39, 170:41>
+// CHECK-NEXT:  Decl: GenDecl <171:1, 171:43> type
+// CHECK-NEXT:    Spec: TypeSpec <171:6, 171:43>
+// CHECK-NEXT:      Name: Ident <171:6, 171:8> 'Cl'
+// CHECK-NEXT:      Type: InterfaceType <171:9, 171:43>
+// CHECK-NEXT:        Methods: FieldList <171:18, 171:43>
+// CHECK-NEXT:          Field: Field <171:20, 171:34> extends
+// CHECK-NEXT:            Type: Ident <171:28, 171:34> 'Animal'
+// CHECK-NEXT:          Field: Field <171:36, 171:41>
+// CHECK-NEXT:            Type: Ident <171:36, 171:41> 'Clone'
+// CHECK-NEXT:  Decl: GenDecl <172:1, 172:30> type
+// CHECK-NEXT:    Spec: TypeSpec <172:6, 172:30>
+// CHECK-NEXT:      Name: Ident <172:6, 172:7> 'J'
+// CHECK-NEXT:      Type: InterfaceType <172:8, 172:30>
+// CHECK-NEXT:        Methods: FieldList <172:17, 172:30>
+// CHECK-NEXT:          Field: Field <172:19, 172:28>
+// CHECK-NEXT:            Names: Ident <172:19, 172:26> 'extends'
+// CHECK-NEXT:            Type: FuncType <172:26, 172:28>
+// CHECK-NEXT:              Params: FieldList <172:26, 172:28>
+// CHECK-NEXT:  Decl: GenDecl <173:1, 173:33> type
+// CHECK-NEXT:    Spec: TypeSpec <173:6, 173:33>
+// CHECK-NEXT:      Name: Ident <173:6, 173:11> 'Words'
+// CHECK-NEXT:      Type: StructType <173:12, 173:33>
+// CHECK-NEXT:        Fields: FieldList <173:18, 173:33>
+// CHECK-NEXT:          Field: Field <173:20, 173:31>
+// CHECK-NEXT:            Names: Ident <173:20, 173:27> 'extends'
+// CHECK-NEXT:            Type: Ident <173:28, 173:31> 'int'
+// CHECK-NEXT:  Decl: GenDecl <174:1, 174:16> var
+// CHECK-NEXT:    Spec: ValueSpec <174:5, 174:16>
+// CHECK-NEXT:      Name: Ident <174:5, 174:12> 'extends'
+// CHECK-NEXT:      Value: BasicLit <174:15, 174:16> int_lit 1
+// CHECK-NEXT:  Decl: FuncDecl <175:1, 175:40>
+// CHECK-NEXT:    Name: Ident <175:6, 175:10> 'base'
+// CHECK-NEXT:    Type: FuncType <175:1, 175:24>
+// CHECK-NEXT:      Params: FieldList <175:10, 175:20>
+// CHECK-NEXT:        Field: Field <175:11, 175:19>
+// CHECK-NEXT:          Names: Ident <175:11, 175:15> 'base'
+// CHECK-NEXT:          Type: Ident <175:16, 175:19> 'int'
+// CHECK-NEXT:      Results: FieldList <175:21, 175:24>
+// CHECK-NEXT:        Field: Field <175:21, 175:24>
+// CHECK-NEXT:          Type: Ident <175:21, 175:24> 'int'
+// CHECK-NEXT:    Body: BlockStmt <175:25, 175:40>
+// CHECK-NEXT:      Stmt: ReturnStmt <175:27, 175:38>
+// CHECK-NEXT:        Result: Ident <175:34, 175:38> 'base'
+// CHECK-NEXT:  Decl: GenDecl <176:1, 177:30> type
+// CHECK-NEXT:    Attr: Attribute <176:1, 176:10> name=Abstract
+// CHECK-NEXT:      Name: Ident <176:2, 176:10> 'Abstract'
+// CHECK-NEXT:    Spec: TypeSpec <177:6, 177:30>
+// CHECK-NEXT:      Name: Ident <177:6, 177:11> 'Shape'
+// CHECK-NEXT:      Extends: Ident <177:20, 177:27> 'Payment'
+// CHECK-NEXT:      Type: StructType <177:28, 177:30>
+// CHECK-NEXT:        Fields: FieldList <177:28, 177:30>
+// CHECK-NEXT:  Decl: FuncDecl <178:1, 179:43>
+// CHECK-NEXT:    Attr: Attribute <178:1, 178:9> name=Virtual
+// CHECK-NEXT:      Name: Ident <178:2, 178:9> 'Virtual'
+// CHECK-NEXT:    Recv: FieldList <179:6, 179:18>
+// CHECK-NEXT:      Field: Field <179:7, 179:17>
+// CHECK-NEXT:        Names: Ident <179:7, 179:8> 'p'
+// CHECK-NEXT:        Type: StarExpr <179:9, 179:17>
+// CHECK-NEXT:          X: Ident <179:10, 179:17> 'Payment'
+// CHECK-NEXT:    Name: Ident <179:19, 179:22> 'Fee'
+// CHECK-NEXT:    Type: FuncType <179:1, 179:30>
+// CHECK-NEXT:      Params: FieldList <179:22, 179:24>
+// CHECK-NEXT:      Results: FieldList <179:25, 179:30>
+// CHECK-NEXT:        Field: Field <179:25, 179:30>
+// CHECK-NEXT:          Type: Ident <179:25, 179:30> 'int64'
+// CHECK-NEXT:    Body: BlockStmt <179:31, 179:43>
+// CHECK-NEXT:      Stmt: ReturnStmt <179:33, 179:41>
+// CHECK-NEXT:        Result: BasicLit <179:40, 179:41> int_lit 0
+// CHECK-NEXT:  Decl: GenDecl <180:1, 180:20> type
+// CHECK-NEXT:    Spec: TypeSpec <180:6, 180:20> alias
+// CHECK-NEXT:      Name: Ident <180:6, 180:14> 'extends2'
+// CHECK-NEXT:      Type: Ident <180:17, 180:20> 'int'
+// CHECK-NEXT:  Decl: GenDecl <181:1, 181:17> type
+// CHECK-NEXT:    Spec: TypeSpec <181:6, 181:17>
+// CHECK-NEXT:      Name: Ident <181:6, 181:13> 'extends'
+// CHECK-NEXT:      Type: Ident <181:14, 181:17> 'int'
+// CHECK-NEXT:  Decl: GenDecl <182:1, 182:19> var
+// CHECK-NEXT:    Spec: ValueSpec <182:5, 182:19>
+// CHECK-NEXT:      Name: Ident <182:5, 182:6> 'a'
+// CHECK-NEXT:      Name: Ident <182:8, 182:12> 'base'
+// CHECK-NEXT:      Value: BasicLit <182:15, 182:16> int_lit 1
+// CHECK-NEXT:      Value: BasicLit <182:18, 182:19> int_lit 2
+package p
+
+type Payment struct{ Amount int64 }
+type Card extends Payment { Number string }
+type Empty extends Payment {}
+type Box[T any] extends Payment { V T }
+type Gen[T any] extends Box[T] {}
+func Feed[T extends Animal, U any](a *T) {}
+type Holder[T extends Box[int]] struct{}
+type Cl interface{ extends Animal; Clone }
+type J interface{ extends() }
+type Words struct{ extends int }
+var extends = 1
+func base(base int) int { return base }
+@Abstract
+type Shape extends Payment {}
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+type extends2 = int
+type extends int
+var a, base = 1, 2

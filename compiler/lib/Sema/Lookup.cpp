@@ -13,6 +13,8 @@
 
 #include "Checker.h"
 
+#include <algorithm>
+
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -21,6 +23,7 @@ using namespace gopp;
 using namespace gopp::sema;
 using llvm::cast;
 using llvm::dyn_cast;
+using llvm::dyn_cast_or_null;
 using llvm::isa;
 
 bool Checker::sameId(const Object *O, Package *Pkg, StringRef Name, bool Fold) {
@@ -88,7 +91,7 @@ Checker::LookupResult Checker::lookupFieldOrMethod(Type *T, bool Addressable,
 namespace {
 struct Embedded {
   Type *Ty;
-  SmallVector<int, 4> Index;
+  int Index; // a node of the path list in lookupImpl; -1 is the empty path
   bool Indirect;
   bool Multiples;
 };
@@ -102,17 +105,52 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
     return R;
   bool IsPtr;
   Type *Ty = deref(T, IsPtr);
+  // GEN-12: a type parameter bounded by `extends P` has the fields and
+  // methods of P (also through a pointer).
+  Type *Ext = nullptr;
+  if (!S.Opts.GoCompat)
+    if (auto *TP = dyn_cast<TypeParamType>(Ty))
+      if (auto *BI = dyn_cast_or_null<InterfaceType>(under(TP)))
+        Ext = typeSet(BI)->Extends;
   // *typ where typ is an interface (incl. a type parameter) has no methods.
-  if (IsPtr && isa<InterfaceType>(under(Ty)))
+  if (IsPtr && isa<InterfaceType>(under(Ty)) && !Ext)
     return R;
 
-  SmallVector<Embedded, 4> Current;
-  Current.push_back({Ty, {}, IsPtr, false});
-  SmallVector<NamedType *, 8> Seen;
+  // A type of an `extends` chain: its parents are found by the memo, one
+  // step for each type of the chain however many lookups there are.
+  if (!Ext && !S.Opts.GoCompat)
+    if (auto *N = dyn_cast<NamedType>(Ty)) {
+      LookupResult CR;
+      if (!FoldCase) {
+        if (chainLookup(N, IsPtr, Addressable, Pkg, Name, CR))
+          return CR;
+      } else if (typesFinal() && !Ctx.memberNameSeenFold(Name) &&
+                 parentOf(N->origin())) {
+        return CR; // no member of any type has this name, up to case
+      }
+    }
 
-  auto Concat = [](const SmallVector<int, 4> &A, int I) {
-    SmallVector<int, 4> Out(A.begin(), A.end());
-    Out.push_back(I);
+  SmallVector<Embedded, 4> Current;
+  Current.push_back({Ext ? Ext : Ty, -1, IsPtr, false});
+  if (Ext && !IsPtr)
+    Current.push_back({Ty, -1, false, false}); // the methods of the constraint
+  llvm::SmallPtrSet<NamedType *, 8> Seen;
+
+  // The paths to the embedded types share their prefixes: a node is a step
+  // and the node before it. A path is made only for a result, so a chain of
+  // a thousand parents costs a thousand nodes, not a thousand copies of a
+  // growing vector.
+  SmallVector<std::pair<int, int>, 16> Nodes;
+  auto Step = [&Nodes](int Prev, int I) {
+    Nodes.push_back({I, Prev});
+    return static_cast<int>(Nodes.size()) - 1;
+  };
+  auto Path = [&Nodes](int Node, int Last) {
+    SmallVector<int, 4> Out;
+    Out.push_back(Last);
+    for (; Node >= 0; Node = Nodes[Node].second)
+      Out.push_back(Nodes[Node].first);
+    std::reverse(Out.begin(), Out.end());
     return Out;
   };
 
@@ -121,18 +159,11 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
     for (Embedded &E : Current) {
       Type *Tp = E.Ty;
       if (auto *N = dyn_cast<NamedType>(Tp)) {
-        bool Dup = false;
-        for (NamedType *S : Seen)
-          if (S == N) {
-            Dup = true;
-            break;
-          }
-        if (Dup)
+        if (!Seen.insert(N).second)
           continue;
-        Seen.push_back(N);
         int Idx = 0;
         if (Func *M = lookupMethod(N, Pkg, Name, FoldCase, &Idx)) {
-          SmallVector<int, 4> Index = Concat(E.Index, Idx);
+          SmallVector<int, 4> Index = Path(E.Index, Idx);
           if (R.Obj || E.Multiples) {
             LookupResult Coll;
             Coll.Index = Index;
@@ -150,7 +181,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
         for (size_t I = 0; I < St->Fields.size(); ++I) {
           Var *F = St->Fields[I];
           if (sameId(F, Pkg, Name, FoldCase)) {
-            SmallVector<int, 4> Index = Concat(E.Index, static_cast<int>(I));
+            SmallVector<int, 4> Index = Path(E.Index, static_cast<int>(I));
             if (R.Obj || E.Multiples) {
               LookupResult Coll;
               Coll.Index = Index;
@@ -165,7 +196,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
           if (!R.Obj && F->Embedded) {
             bool P;
             Type *FT = deref(F->Ty, P);
-            Next.push_back({FT, Concat(E.Index, static_cast<int>(I)),
+            Next.push_back({FT, Step(E.Index, static_cast<int>(I)),
                             E.Indirect || P, E.Multiples});
           }
         }
@@ -173,7 +204,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
         int Idx = 0;
         if (Func *M =
                 lookupMethodInSet(typeSet(In), Pkg, Name, FoldCase, &Idx)) {
-          SmallVector<int, 4> Index = Concat(E.Index, Idx);
+          SmallVector<int, 4> Index = Path(E.Index, Idx);
           if (R.Obj || E.Multiples) {
             LookupResult Coll;
             Coll.Index = Index;
@@ -430,10 +461,25 @@ bool Checker::implements(SourceLoc, Type *V, Type *T, bool Constraint,
       *Cause = str(V) + " does not " + Verb + " " + str(T) + " " + MCause;
     return false;
   }
-  // Go++: Copy and Clone constraints (GEN-1, GEN-2).
-  if (TTS->Copy && own() && !isCopyType(V)) {
+  // GEN-12: `extends P`: the type set is P and every type that extends it.
+  if (TTS->Extends && !extendsOrIs(V, TTS->Extends)) {
     if (Cause)
-      *Cause = str(V) + " does not " + Verb + " Copy";
+      *Cause = str(V) + " does not " + Verb + " " + str(T) + " (" + str(V) +
+               " does not extend " + str(TTS->Extends) + ")";
+    return false;
+  }
+  // Go++: Copy and Clone constraints (GEN-1, GEN-2).
+  if (TTS->Copy && own() && (!isCopyType(V) || isTagged(V))) {
+    // ADR-0023 decision 16: generic code copies a T through a *T freely, and
+    // a *T of a type with a type table may point at a child.
+    if (Cause)
+      *Cause = str(V) + " does not " + Verb + " Copy" +
+               (isTagged(V)
+                    ? " (" + str(V) +
+                          " has a type table, so a copy through a *" + str(V) +
+                          " could cover only the parent part of a "
+                          "child; ADR-0023)"
+                    : "");
     return false;
   }
   if (TTS->Clone && own()) {
@@ -503,4 +549,203 @@ bool Checker::assertableTo(Type *V, Type *T, std::string *Cause) {
   if (isInterface(T))
     return true;
   return hasAllMethods(T, V, false, Cause);
+}
+
+/// The chain name index (TypeContext::chainEntry) works on the ORIGINS of a
+/// chain (the declarations: a generic chain is one chain, however many
+/// instances it has, so a body of a generic method never makes the fresh
+/// instances of its receiver's chain). Each origin has its depth, its
+/// parent and a skew-binary jump pointer (as Checker::hierDepth), each with
+/// its type arguments in terms of the origin's own parameters, so the
+/// ancestor at any depth and its type arguments are O(log depth) away.
+bool Checker::chainIndex(NamedType *O, TypeContext::ChainEntry &E) {
+  if (Ctx.chainEntry(O, E))
+    return true;
+  if (!typesFinal())
+    return false;
+  // Up to the first origin entered (or the root), then down: each origin is
+  // entered once. A ring (reported and cut by checkExtendsCycles) ends the
+  // walk with no answer: Brent's method, so no set is filled.
+  SmallVector<NamedType *, 16> Path;
+  TypeContext::ChainEntry Top;
+  NamedType *TopO = nullptr; // the first origin entered, if any
+  NamedType *Mark = nullptr;
+  unsigned Steps = 0, Limit = 1;
+  for (NamedType *X = O; X;) {
+    if (X == Mark || X->InstCycle || !declFinished(X))
+      return false;
+    if (Ctx.chainEntry(X, Top)) {
+      TopO = X;
+      break;
+    }
+    Path.push_back(X);
+    if (++Steps == Limit) {
+      Mark = X;
+      Steps = 0;
+      Limit *= 2;
+    }
+    NamedType *P = parentOf(X);
+    X = P ? P->origin() : nullptr;
+  }
+  auto Args = [&](ArrayRef<Type *> As, NamedType *Of, ArrayRef<Type *> To) {
+    SmallVector<Type *, 4> Out;
+    for (Type *A : As)
+      Out.push_back(subst(A, Of->TParams, To));
+    return Ctx.copyTypes(Out);
+  };
+  TypeContext::ChainEntry Par = Top;
+  NamedType *ParO = TopO;
+  SmallVector<TypeContext::ChainMember, 8> Members;
+  for (size_t K = Path.size(); K-- > 0;) {
+    NamedType *X = Path[K];
+    auto *St = dyn_cast_or_null<StructType>(under(X));
+    TypeContext::ChainEntry Cur;
+    if (ParO) {
+      NamedType *PI = parentOf(X);
+      Cur.Root = Par.Root;
+      Cur.Depth = Par.Depth + 1;
+      Cur.Plain = Par.Plain;
+      Cur.Parent = ParO;
+      Cur.ParentArgs = Ctx.copyTypes(PI->TArgs);
+      // The jump of the parent's jump when the two jumps have the same
+      // length, else the parent (Myers' skew-binary jump pointers).
+      TypeContext::ChainEntry PJ, PJJ;
+      Ctx.chainEntry(Par.Jump, PJ);
+      Ctx.chainEntry(PJ.Jump, PJJ);
+      if (Par.Depth - PJ.Depth == PJ.Depth - PJJ.Depth) {
+        Cur.Jump = PJ.Jump;
+        // PJ.Jump's arguments in terms of Par.Jump's, of ParO's, of X's.
+        Cur.JumpArgs = Args(PJ.JumpArgs, Par.Jump,
+                            Args(Par.JumpArgs, ParO, Cur.ParentArgs));
+      } else {
+        Cur.Jump = ParO;
+        Cur.JumpArgs = Cur.ParentArgs;
+      }
+    } else {
+      Cur.Root = X;
+      Cur.Depth = 1;
+      Cur.Plain = true;
+      Cur.Jump = X;
+      SmallVector<Type *, 4> Own(X->TParams.begin(), X->TParams.end());
+      Cur.JumpArgs = Ctx.copyTypes(Own);
+    }
+    // Only the parent part may be embedded: the promoted members of any
+    // other embedded field (a Go-mode parent) take the general walk.
+    Cur.Plain = Cur.Plain && St;
+    Members.clear();
+    if (Cur.Plain) {
+      if (X->Methods)
+        for (unsigned I = 0; I < X->Methods->size(); ++I)
+          Members.push_back({(*X->Methods)[I], static_cast<int>(I)});
+      for (size_t I = 0; I < St->Fields.size(); ++I) {
+        Var *F = St->Fields[I];
+        if (F->Embedded && !F->IsParent)
+          Cur.Plain = false;
+        else
+          Members.push_back({F, static_cast<int>(I)}); // the parent part too
+      }
+      if (!Cur.Plain)
+        Members.clear();
+    }
+    Ctx.chainAdd(X, Cur, Members);
+    Par = Cur;
+    ParO = X;
+  }
+  return Ctx.chainEntry(O, E);
+}
+
+NamedType *Checker::chainAncestor(NamedType *O, TypeContext::ChainEntry E,
+                                  uint32_t D,
+                                  llvm::SmallVectorImpl<Type *> *Args) {
+  // Args: the type arguments of the current origin X in terms of O's own
+  // parameters; each step puts them in for X's parameters.
+  if (Args)
+    Args->assign(O->TParams.begin(), O->TParams.end());
+  NamedType *X = O;
+  while (E.Depth > D) {
+    TypeContext::ChainEntry JE, Next;
+    Ctx.chainEntry(E.Jump, JE);
+    bool Jump = JE.Depth >= D;
+    NamedType *To = Jump ? E.Jump : E.Parent;
+    if (Args) {
+      SmallVector<Type *, 4> Cur;
+      for (Type *A : Jump ? E.JumpArgs : E.ParentArgs)
+        Cur.push_back(subst(A, X->TParams, *Args));
+      Args->swap(Cur);
+    }
+    if (Jump)
+      Next = JE;
+    else
+      Ctx.chainEntry(To, Next);
+    X = To;
+    E = Next;
+  }
+  return X;
+}
+
+/// The lookup of Name in a type of an `extends` chain (single inheritance: the
+/// parent part is the first field, and the only embedded one in .gopp). The
+/// member is the first one up the chain; the path is that many zeros (the
+/// parent field) and its index. The name index of the chain's origins gives
+/// the depths at which its tree declares Name; the ancestor at the deepest of
+/// them that has it is the owner (R19), and only the member found is put in
+/// for N's type arguments. False if N is not such a type, or its types are
+/// not final yet (the general walk then decides).
+bool Checker::chainLookup(NamedType *N, bool IsPtr, bool Addressable,
+                          Package *Pkg, StringRef Name, LookupResult &R) {
+  if (!typesFinal())
+    return false;
+  NamedType *O = N->origin();
+  // A name that no struct, interface or method list has: a miss at once.
+  if (!Ctx.memberNameSeen(Name))
+    return parentOf(O) != nullptr;
+  if (!parentOf(O) || O->InstCycle ||
+      (N->Orig && O->TParams.size() != N->TArgs.size()))
+    return false;
+  TypeContext::ChainEntry E;
+  if (!chainIndex(O, E) || !E.Plain)
+    return false;
+  SmallVector<TypeContext::ChainMember, 2> Members;
+  for (uint32_t D = Ctx.chainDepthAtMost(E.Root, Name, E.Depth); D;
+       D = Ctx.chainDepthAtMost(E.Root, Name, D - 1)) {
+    NamedType *A = chainAncestor(O, E, D, nullptr);
+    Members.clear();
+    Ctx.chainMembers(A, Name, Members);
+    for (const TypeContext::ChainMember &M : Members) {
+      if (!sameId(M.Obj, Pkg, Name, false))
+        continue;
+      Object *Mem = M.Obj;
+      if (!A->TParams.empty()) {
+        // The owner's instance: its arguments in terms of O's parameters,
+        // then N's arguments put in.
+        SmallVector<Type *, 4> Args;
+        chainAncestor(O, E, D, &Args);
+        if (N->Orig)
+          for (Type *&T : Args)
+            T = subst(T, O->TParams, N->TArgs);
+        if (Args.size() != A->TParams.size())
+          return false;
+        NamedType *Owner = instantiateNamed(A, Args);
+        if (isa<Var>(M.Obj)) {
+          auto *St = dyn_cast_or_null<StructType>(under(Owner));
+          if (!St || static_cast<size_t>(M.Idx) >= St->Fields.size())
+            return false;
+          Mem = St->Fields[M.Idx];
+        } else {
+          Mem = namedMethod(Owner, static_cast<unsigned>(M.Idx));
+        }
+      }
+      R.Obj = Mem;
+      R.Index.assign(1, M.Idx);
+      R.ParentSteps = E.Depth - D;
+      R.Indirect = IsPtr;
+      if (auto *F = dyn_cast<Func>(R.Obj))
+        if (F->HasPtrRecv && !R.Indirect && !Addressable) {
+          R = LookupResult();
+          R.Indirect = true; // pointer/addressable receiver required
+        }
+      return true;
+    }
+  }
+  return true; // not found: R stays empty
 }

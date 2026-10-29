@@ -1,0 +1,48 @@
+package p
+
+type Payment struct{ Amount int64 }
+type Card extends Payment {
+	Number string
+}
+type Empty extends Payment {}
+type Box[T any] extends Payment { V T }
+type Gen[T any] extends Box[T] {}
+@Abstract
+type Shape extends Payment {}
+
+func Feed[T extends Animal, U any](a *T) {}
+
+type Holder[T extends Box[int]] struct{}
+type Cl interface {
+	extends Animal
+	Clone
+}
+type Words struct{ extends int }
+
+var extends = 1
+
+func base(base int) int { return base }
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+@Override
+func (c *Card) Fee() int64 { return base.Fee() }
+
+// Comments in the body, a group, a generic pair (from the other
+// implementations).
+type Card2 extends Payment {
+	// the number
+	Number string // trailing
+	Exp    int
+}
+type Pair[A any, B comparable] extends Box[A] { Second B }
+type (
+	G1 extends Payment { X int }
+	G2 extends Card {}
+)
+
+func g[T extends Payment, U any](t *T, u U) {}
+func h[T interface {
+	extends Payment
+	Clone
+}](t *T) {
+}

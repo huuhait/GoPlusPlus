@@ -119,6 +119,9 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     X.M = Mode::Invalid;
     X.E = Ex;
   };
+  // Is this selector the start of a longer one, or the operand of `&`? (The
+  // parent part `c.Payment` is allowed only there, EXP-15.)
+  const PartialMark SelfMark = takePartialMark(Ex);
   // Package-qualified identifier (`pkg.Name`), or a name in a namespace of a
   // C++ header (`pkg.ns.Name`, ADR-0010 Q4).
   if (Package *P = qualifierPackage(Ex->X)) {
@@ -215,7 +218,9 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
               !valueHasMember(Op->Elem, Sel))
             markNoNarrow(Id);
   }
+  markPartialOk(Ex->X, /*Addr=*/false); // the start of this selector
   exprOrType(X, Ex->X, false);
+  PartialOk = nullptr;
   switch (X.M) {
   case Mode::TypeExpr:
     // `type T T.x` (go.dev/issue/51509).
@@ -260,8 +265,12 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     // Clone is a method.
     Type *Elem = cast<RefType>(under(X.Ty))->Elem;
     if (Sel == "Clone") {
+      // ADR-0023 decision 16: the view of a tagged type may see a child; its
+      // clone is a Unique holding a full copy of the dynamic type.
+      const bool Tagged = cloneThroughTable(X.Ty) != nullptr;
+      noteViewClone(X.Ty); // a View[T] of a type parameter (R9)
       std::string Why;
-      if (!satisfiesClone(Elem, &Why)) {
+      if (!satisfiesClone(Elem, &Why, /*ByValue=*/!Tagged)) {
         err(Ex->Sel, diag::err_own_clone_not_cloneable,
             {str(Ex->X), str(Elem), Why.empty() ? "" : ": " + Why});
         return Error();
@@ -270,7 +279,7 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
         err(Ex->Sel, diag::err_view_copy_pointer, {str(Ex->X), str(Elem)});
         return Error();
       }
-      Type *Res[] = {Elem};
+      Type *Res[] = {Tagged ? uniqueOf(Elem) : Elem};
       Synth(syntheticMethod("Clone", Res, Ex->Sel->getBegin()));
       return;
     }
@@ -297,6 +306,7 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       SelInfo.Recv = X.Ty;
       SelInfo.Obj = F;
       SelInfo.Index = Mem.copy(ArrayRef<int>(VR.Index));
+      SelInfo.ParentSteps = VR.ParentSteps;
       SelInfo.Indirect = VR.Indirect;
       recordSelection(Ex, SelInfo);
       recordUse(Ex->Sel, F);
@@ -376,8 +386,10 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       }
       if (Sel == "Clone") {
         if (PK == PtrKind::Unique) {
+          // ADR-0023 decision 16: for a tagged target, a full copy of the
+          // dynamic type (an abstract target is fine: the child is copied).
           std::string Why;
-          if (!satisfiesClone(PElem, &Why)) {
+          if (!satisfiesClone(PElem, &Why, /*ByValue=*/!isTagged(PElem))) {
             err(Ex->Sel, diag::err_own_clone_not_cloneable,
                 {str(Ex->X), str(PElem), Why.empty() ? "" : ": " + Why});
             return Error();
@@ -402,6 +414,38 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
   // Go++ (OWN-R6): `x.Clone()` exists for every cloneable type.
   if (own() && Sel == "Clone" && X.M != Mode::TypeExpr) {
     bool Declared = Obj && isa<Func>(Obj);
+    // ADR-0023 decision 16: a clone never loses the child part. A place that
+    // may hold only a parent part is not cloned as a value, and a tagged
+    // type reached through a pointer or a view clones through its table into
+    // a Unique (this replaces the ambiguity and the pointer copy for these
+    // types; a Clone declared on the pointer type itself is still called).
+    if (rejectPartialClone(Ex->X, X.Ty, Ex))
+      return Error();
+    // `(*p).Clone()` for a p pointing to a type parameter T would clone only
+    // the T part of a child: T must be untagged (R1). (`p.Clone()` is the
+    // clone of the pointer itself.)
+    if (isa<StarExpr>(unparen(Ex->X)))
+      noteUse(X.Ty, {TypeParamType::Use::Clone});
+    if (Type *Through = cloneThroughTable(X.Ty);
+        Through && !(Declared && cast<Func>(Obj)->HasPtrRecv)) {
+      std::string Why;
+      if (!satisfiesClone(Through, &Why, /*ByValue=*/false)) {
+        err(Ex->Sel, diag::err_own_clone_not_cloneable,
+            {str(Ex->X), str(Through), Why.empty() ? "" : ": " + Why});
+        return Error();
+      }
+      Type *Res[] = {uniqueOf(Through)};
+      Func *B = syntheticMethod("Clone", Res, Ex->Sel->getBegin());
+      Selection SelInfo;
+      SelInfo.K = Selection::MethodVal;
+      SelInfo.Recv = X.Ty;
+      SelInfo.Obj = B;
+      recordSelection(Ex, SelInfo);
+      X.M = Mode::Value;
+      X.Ty = B->Ty;
+      X.E = Ex;
+      return;
+    }
     if (Declared) {
       // A raw *T whose T has a value-receiver Clone: ambiguous (OWN-R6).
       if (isa<PointerType>(X.Ty) && !cast<Func>(Obj)->HasPtrRecv) {
@@ -466,10 +510,18 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     }
     std::string Why;
     if (isInterfacePtr(X.Ty)) {
-      bool TP = isTypeParam(cast<PointerType>(under(X.Ty))->Elem);
+      Type *PE = cast<PointerType>(under(X.Ty))->Elem;
+      bool TP = isTypeParam(PE);
       Why = "type " + str(X.Ty) + " is pointer to " +
             (TP ? "type parameter, not type parameter"
                 : "interface, not interface");
+      // GEN-12: `T extends P` sees the fields and methods of P only.
+      if (TP && !S.Opts.GoCompat)
+        if (auto *BI = dyn_cast_or_null<InterfaceType>(under(PE)))
+          if (Type *Ext = typeSet(BI)->Extends)
+            Why = "type " + str(PE) + " extends " + str(Ext) +
+                  ", so it has only the fields and methods of " + str(Ext) +
+                  " (GEN-12)";
     } else {
       LookupResult Alt =
           lookupFieldOrMethod(LookupT, Addressable, S.Pkg, Sel, true);
@@ -502,8 +554,12 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     SelInfo.Recv = X.Ty;
     SelInfo.Obj = M;
     SelInfo.Index = Mem.copy(ArrayRef<int>(LR.Index));
+    SelInfo.ParentSteps = LR.ParentSteps;
     SelInfo.Indirect = LR.Indirect;
     recordSelection(Ex, SelInfo);
+    // TYP-19: the receiver becomes the first parameter, a value of the type
+    // (a pointer type, `(*T).M`, is no value of it).
+    noAbstract(Ex->X, X.Ty, "the receiver parameter of a method expression");
     auto *Sig = dyn_cast_or_null<SignatureType>(M->Ty);
     if (!Sig) {
       err(Ex, diag::err_sema_call, {"illegal cycle in method declaration"});
@@ -519,11 +575,19 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     SelInfo.Ty = X.Ty;
   } else {
     if (auto *V = dyn_cast<Var>(Obj)) {
+      // EXP-15: the parent part as a whole is no value (partialUse).
+      if (V->IsParent && !S.Opts.GoCompat) {
+        bool IsPtr;
+        if (!partialUse(Ex, PartialKind::ParentPart, V->Ty, deref(X.Ty, IsPtr),
+                        SelfMark))
+          return Error();
+      }
       Selection SelInfo;
       SelInfo.K = Selection::FieldVal;
       SelInfo.Recv = X.Ty;
       SelInfo.Obj = V;
       SelInfo.Index = Mem.copy(ArrayRef<int>(LR.Index));
+      SelInfo.ParentSteps = LR.ParentSteps;
       SelInfo.Indirect = LR.Indirect;
       recordSelection(Ex, SelInfo);
       if (X.M == Mode::Variable || LR.Indirect)
@@ -539,7 +603,17 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       SelInfo.Recv = X.Ty;
       SelInfo.Obj = F;
       SelInfo.Index = Mem.copy(ArrayRef<int>(LR.Index));
+      SelInfo.ParentSteps = LR.ParentSteps;
       SelInfo.Indirect = LR.Indirect;
+      // TYP-20: `base.M` calls the parent's version of M, statically.
+      if (auto *BV = dyn_cast_or_null<Var>(identObj(Ex->X)); BV && BV->IsBase) {
+        SelInfo.Base = true;
+        if (markOf(F) == Func::Mark::Abstract) {
+          err(Ex->Sel, diag::err_base_abstract,
+              {std::string(Sel), str(cast<PointerType>(BV->Ty)->Elem)});
+          return Error();
+        }
+      }
       recordSelection(Ex, SelInfo);
       recordUse(Ex->Sel, F);
       if (own() && F->HasPtrRecv && !LR.Indirect)
@@ -555,6 +629,12 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
                                     "with a pointer receiver");
         noteReference(Ex->X);
       }
+      // ONE decision for every route that takes the receiver itself: a
+      // method value, a `go` / `defer` call (the receiver is evaluated and
+      // copied) and a `move` receiver (R6, R7, R18).
+      if (own() && !receiverTakenOk(Ex, F, ownerStep(X.Ty, LR), X.Ty,
+                                    Ex != CalleeSel || CalleeSuspended))
+        return Error();
       // A method value (not the callee of a call) binds, so moves, the
       // receiver; a call is checked in arguments().
       if (own() && F->MoveRecv && Ex != CalleeSel)
@@ -698,6 +778,7 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
       err(At, diag::err_sema_call, {Cause});
     } else {
       checkOptionArgs(Pos, Inst, TA);
+      noAbstractArgs(Pos, Inst, TA); // TYP-19, on the substituted signature
     }
   });
   return Inst;
@@ -850,6 +931,7 @@ void Checker::renameTParams(ArrayRef<TypeParamType *> TPs, TupleType *Params,
   for (TypeParamType *P : TPs) {
     TypeName *TN = newTypeName(P->Obj->Name, nullptr, P->Obj->Pos);
     TypeParamType *N = Ctx.newTypeParam(TN, P->Index, nullptr);
+    N->RenamedFrom = P->RenamedFrom ? P->RenamedFrom : P;
     NewTPs.push_back(N);
     Map[P] = N;
   }

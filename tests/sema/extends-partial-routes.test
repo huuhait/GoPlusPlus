@@ -1,0 +1,121 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R6, R7, R9, R11): a place that may hold only the parent part
+// of a child (a tagged `*p`, a tagged value receiver, a view, the parent
+// part, a method found on a parent) is copied, value-cloned or moved out of
+// by ONE event, whatever the route: a method value, a `go` / `defer`
+// receiver, a `move` receiver, `v.Clone()`. In plain code that is E0395; in a
+// generic body it is a use of the type parameter, decided on each type
+// argument by the same rule (Checker::useWhy). A direct call borrows the
+// receiver and stays fine (the other side). Lines without CHECK are accepted.
+package main
+
+type Animal struct{ N int; Tags []string }
+
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+
+func (a Animal) Val() int         { return a.N }
+func (move a Animal) Eat() int    { return a.N }
+func (a Animal) Twice() int       { return a.Val() + a.Val() }
+
+type Dog extends Animal { Extra [8]int }
+
+type Config struct{ Port int; Tags []string }
+
+func (c Config) Show() int        { return c.Port }
+func (move c Config) Take() int   { return c.Port }
+
+type MyConfig extends Config { Debug bool }
+
+func (a Animal) M() {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use a.Val as a method value or deferred call: Animal has a type table, so the value receiver a may be the parent part of a child
+	f := a.Val // error: copies the value receiver
+	_ = f
+	_ = a.Val() // a call borrows the receiver
+}
+
+func routes(p *Animal, u Unique[*Animal], dog Dog, my MyConfig, move md Dog, move mm MyConfig) int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use (*p).Val as a method value or deferred call: Animal has a type table, so (*p) may be the parent part of a child
+	f := (*p).Val // error: a method value copies *p
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use p.Val as a method value or deferred call: Animal has a type table, so the receiver *p may be the parent part
+	f2 := p.Val // error: the same through the implicit *
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use u.Val as a method value or deferred call: Animal has a type table, so the receiver *u
+	f3 := u.Val // error: an owning pointer
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use dog.Val as a method value or deferred call: the method Val is inherited, so its receiver is the parent part of Dog
+	f4 := dog.Val // error: copies dog.Animal
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use my.Show as a method value or deferred call: the method Show is inherited, so its receiver is the parent part of MyConfig
+	f5 := my.Show // error: an untagged parent too
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use (*p).Val as a method value or deferred call: Animal has a type table
+	go (*p).Val() // error: the receiver is evaluated by go
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use p.Val as a method value or deferred call: Animal has a type table
+	defer p.Val() // error: and by defer
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use md.Eat here: the method Eat is inherited, so its receiver is the parent part of Dog, and a `move` receiver would move out just that part
+	n := md.Eat() // error: moves md.Animal out
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use mm.Take here: the method Take is inherited, so its receiver is the parent part of MyConfig, and a `move` receiver
+	n += mm.Take() // error: an untagged parent too
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use p.Eat here: Animal has a type table, so the receiver *p may be the parent part of a child, and a `move` receiver
+	n += p.Eat() // error: moves *p
+
+	// Accepted: calls borrow the receiver, pointer receivers, own values.
+	n += p.Val() + dog.Val() + dog.Twice() + my.Show() + (*p).Val() + u.Val()
+	var own Animal
+	g := own.Val // an exact value: its copy is exact
+	n += own.Eat()
+	_, _, _, _, _, _ = f, f2, f3, f4, f5, g
+	return n
+}
+
+// Generic: the same events are recorded as uses of T; each is decided at
+// instantiation on the real type, by the same rule (receiverWhy).
+func mv[T interface{ Val() int }](p *T) int { f := (*p).Val; return f() }
+
+func use(pa *Animal, pd *Dog) int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: Animal does not satisfy the implicit requirement of T: the generic code takes the method Val of T as a value (`(*p).Val`, `go (*p).Val()`, `defer (*p).Val()`), and with T = Animal, Animal has a type table, so (*p) may be the parent part of a child
+	return mv(pa) // error: T = tagged Animal
+}
+
+func MV2[T interface{ Val() int }](p *T) int { return (*p).Val() }
+
+func ok(pa *Animal) int { return MV2(pa) } // a direct call borrows: fine
+
+// A downcast of a temporary owning pointer borrows a temporary (R11, OWN-P6).
+func mk() Unique[*Animal] { return new_unique(Dog{N: 1}) }
+
+func down(u Unique[*Animal]) int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot borrow a temporary Unique[*Animal] for the downcast mk().(*Dog)
+	d := mk().(*Dog) // error: dangles at the end of the statement
+	e := u.(*Dog)    // a place: fine
+	x, okk := u.(*Dog)
+	if okk {
+		_ = x
+	}
+	_ = e
+	return d.Extra[7]
+}
+
+// `base` is the parent part of the receiver (TYP-20): taking a value
+// receiver through it copies that part, as `m.Config.Show` does, whatever
+// the table (R21); a call through it borrows.
+func (m *MyConfig) ViaBase() int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use base.Show as a method value or deferred call: base is the parent part of the receiver
+	f := base.Show
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use base.Show as a method value or deferred call: base is the parent part of the receiver
+	defer base.Show()
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use base.Show as a method value or deferred call: base is the parent part of the receiver
+	go base.Show()
+	return f() + base.Show() // the call borrows: fine
+}
+
+type GB[T any] struct{ v T }
+
+func (b GB[T]) Get() int { return 0 }
+
+type GC[T any] extends GB[T] { w int }
+
+func (c *GC[T]) ViaBase() int {
+	// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use base.Get as a method value or deferred call: base is the parent part of the receiver
+	f := base.Get
+	return f() + base.Get()
+}
+
+func main() {}

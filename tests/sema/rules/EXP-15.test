@@ -1,0 +1,152 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule EXP-15 (P03.22, ADR-0023 decisions 6 and 16): value slicing is an
+// error everywhere. A Child value is never a Parent value (assign, argument,
+// return, conversion, literal field, append). The places that may hold only
+// the parent part of a bigger value are decided by one rule: the parent part
+// `c.Payment`, and for a type with a type table `*p` (any pointer kind) and
+// a value receiver. Such a place is used only to reach a field or call a
+// method (`c.Payment.Amount`, `(*p).Fee()`), or under `&` (`&c.Payment` for
+// a tagged parent, `&*p`); every other use is an error: a copy, a move, an
+// argument, a result, a literal element, a send, a map store, append, an
+// Option,
+// a deferred argument, an assignment through it and a clone of it as a
+// value. An untagged `*p` is an exact value (TYP-22). Lines without a CHECK
+// line are accepted.
+package main
+
+type Payment struct{ Amount int64 }
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p Payment) Show() int64 {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use p as a value: Payment has a type table, so the value receiver p may be the parent part of a child, and a copy of it would cover only that p
+	x := p // error: the value receiver may be the parent part
+	_ = x
+	return p.Amount + p.Fee()
+}
+
+func (p Payment) Twin() Payment {
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use p.Clone() here: Payment has a type table, so the value receiver p may be the parent part of a child, and its Clone() would copy only that p
+	return p.Clone() // error: a clone of the receiver as a value
+}
+
+type Card extends Payment{ Number string }
+
+func take(p Payment)    {}
+func takePtr(p *Payment) {}
+
+type Wallet struct{ P Payment }
+
+// CHECK-DAG: [[@LINE+1]]:40: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+func retPart(c *Card) Payment { return c.Payment } // error: the parent part
+// CHECK-DAG: [[@LINE+1]]:40: error{{\[E[0-9]+\]}}: cannot use c (variable of struct type Card) as Payment value in return statement: value slicing: Card extends Payment, but a Card value is not a Payme
+func retC(c Card) Payment     { return c }         // error: value slicing
+
+func slicing(pp *Payment) {
+	card := Card{Amount: 1, Number: "x"}
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use card (variable of struct type Card) as Payment value in variable declaration: value slicing: Card extends Payment, but a Card value is not
+	var a Payment = card // error
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use card (variable of struct type Card) as Payment value in assignment: value slicing: Card extends Payment, but a Card value is not a Payment
+	a = card             // error
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use card (variable of struct type Card) as Payment value in argument to take: value slicing: Card extends Payment, but a Card value is not a Pa
+	take(card)           // error
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot convert card (variable of struct type Card) to type Payment: value slicing: Card extends Payment, but a Card value is not a Payment value (it w
+	_ = Payment(card)    // error
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use card (variable of struct type Card) as Payment value in struct literal: value slicing: Card extends Payment, but a Card value is not a Paym
+	_ = Wallet{P: card}  // error
+	var ps []Payment
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use card (variable of struct type Card) as Payment value in argument to append: value slicing: Card extends Payment, but a Card value is not a
+	ps = append(ps, card) // error
+	_, _ = a, ps
+}
+
+func parentPart() {
+	c := Card{Amount: 1, Number: "x"}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+	x := c.Payment                 // error
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+	y := move(c.Payment)           // error
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+	take(c.Payment)                // error
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+	_ = Wallet{P: c.Payment}       // error
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+	_ = []Payment{c.Payment}       // error
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot use c.Payment as a value: it is the parent part of a Card, and a copy, a move or an assignment of it as a whole would cut off the child; use it
+	c.Payment = Payment{Amount: 1} // error: an assignment as a whole
+	_, _ = x, y
+	takePtr(&c.Payment)
+	_ = c.Payment.Amount
+	_ = c.Payment.Fee()
+	_ = c.Payment.Show()
+	c.Payment.Amount = 4
+	_ = Card{Payment: Payment{Amount: 1}, Number: "x"}
+}
+
+func derefs(p *Payment, u Unique[*Payment], s Shared[*Payment], q *Payment, m map[string]Payment, ch chan Payment, arr *[2]Payment) {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	x := *p                // error: a copy
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	take(*p)               // error: an argument
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	_ = Wallet{P: *p}      // error: a literal element
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	ch <- *p               // error: a send
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	m["k"] = *p            // error: a map store
+	var ps []Payment
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use *u as a value: Payment has a type table, so *u may be the parent part of a child, and a copy of it or an assignment through it would cover
+	ps = append(ps, *u)    // error: append
+	// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot use *s as a value: Payment has a type table, so *s may be the parent part of a child, and a copy of it or an assignment through it would cover
+	var o Option[Payment] = *s // error: into an Option
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	defer take(*p)         // error: a deferred argument
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	*p = Payment{Amount: 1} // error: an assignment through it
+	// CHECK-DAG: [[@LINE+2]]:2: error{{\[E[0-9]+\]}}: cannot use *q as a value: Payment has a type table, so *q may be the parent part of a child, and a copy of it or an assignment through it would cover
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+	*q = *p                // error: twice
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use (*p).Clone() here: Payment has a type table, so (*p) may be the parent part of a child, and its Clone() would copy only that part; clone th
+	_ = (*p).Clone()       // error: use p.Clone()
+	_, _, _ = x, ps, o
+	_ = (*p).Amount + (*p).Fee() + (*u).Amount
+	_ = &*p
+	_ = p.Amount + p.Fee()
+	for i := range arr {
+		_ = arr[i].Amount
+	}
+}
+
+// Elements of an array are exact values (value slicing is banned, so none is
+// the parent part of a child): ranging by value over them through a pointer
+// is fine, as is `arr[i]`.
+func rangeArr(arr *[2]Payment, ps *[]Payment) int64 {
+	n := int64(0)
+	for _, v := range *arr {
+		n += v.Amount
+	}
+	for _, v := range arr {
+		n += v.Amount
+	}
+	for i, v := range *ps {
+		n += int64(i) + v.Amount + arr[i].Amount
+	}
+	return n
+}
+
+// Untagged: `*p` is a whole Plain, since a *Plain points at a child only in
+// Plain's own methods and what they return (a valid Plain then too).
+type Plain struct{ N int }
+
+func (p Plain) Copy() Plain { return p }
+
+func untagged(p *Plain) Plain {
+	x := *p
+	*p = Plain{N: 1}
+	_ = x
+	return *p
+}
+
+// CHECK-DAG: [[@LINE+1]]:44: error{{\[E[0-9]+\]}}: cannot use *p as a value: Payment has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover
+func retDeref(p *Payment) Payment { return *p } // error: return *p

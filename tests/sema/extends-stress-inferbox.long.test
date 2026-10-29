@@ -1,0 +1,6 @@
+// REQUIRES: long
+// P03.22 (R24): the `inferbox` shape of extends-stress-index.test at 200000
+// levels: the ancestor instance comes from the shared chain index.
+// RUN: %python %S/Inputs/gen-extends-stress.py inferbox 200000 > %t.gopp
+// RUN: timeout 60 %gopp check -check-j=1 %t.gopp
+package main

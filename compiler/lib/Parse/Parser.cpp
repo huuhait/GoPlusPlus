@@ -17,6 +17,7 @@
 #include "gopp/AST/ASTDumper.h"
 #include "gopp/Lex/Lexer.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ThreadPool.h"
@@ -116,6 +117,7 @@ struct ParamEntry {
   Ident *Name = nullptr;
   Expr *Type = nullptr;
   SourceLoc MoveLoc;
+  SourceLoc ExtendsLoc; // `T extends P`: Type is P
 };
 
 class Parser {
@@ -732,6 +734,64 @@ private:
     }
   }
 
+  /// Can a type start with this token? (for the contextual `extends`)
+  static bool startsType(const Token &T) {
+    switch (T.Kind) {
+    case tok::ident:
+    case tok::mul:
+    case tok::arrow:
+    case tok::kw_func:
+    case tok::kw_chan:
+    case tok::kw_map:
+    case tok::kw_struct:
+    case tok::kw_interface:
+    case tok::l_paren:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  /// At the contextual `extends` of a type parameter `T extends P` or of an
+  /// interface element `extends P` (LEX-12): the word is followed by a type.
+  /// `[` is not taken (it could be a generic type named `extends`).
+  bool atExtendsWord() {
+    return Opts.AllowExtends && isWord(Tok, "extends") && startsType(peek(1)) &&
+           !peek(1).is(tok::l_paren);
+  }
+
+  /// At the contextual `extends` after the name (and type parameters) of a
+  /// type declaration. `[` starts a type here (`extends []int`,
+  /// `extends [4]int`, `extends A[T]` is the ident case); it is the type named
+  /// `extends` only when nothing but the brackets follow, as in the generic
+  /// alias `type T extends[int]`.
+  bool atTypeDeclExtends() {
+    if (!Opts.AllowExtends || !isWord(Tok, "extends"))
+      return false;
+    const Token &T1 = peek(1);
+    // `type A extends {}` forgot the parent: `extends` followed by `{` is
+    // never a type named `extends` (that is a syntax error), so it is read
+    // as the keyword and the missing parent is the one error.
+    if (startsType(T1) || T1.is(tok::l_brace))
+      return true;
+    if (!T1.is(tok::l_brack))
+      return false;
+    unsigned Depth = 0;
+    for (unsigned I = 1; I < 1 + 256; ++I) {
+      const Token &T = peek(I);
+      if (T.is(tok::eof))
+        return false;
+      if (T.is(tok::l_brack))
+        ++Depth;
+      else if (T.is(tok::r_brack) && --Depth == 0) {
+        const Token &After = peek(I + 1);
+        return !(After.is(tok::semi) || After.is(tok::eof) ||
+                 After.is(tok::r_paren));
+      }
+    }
+    return false;
+  }
+
   //===--------------------------------------------------------------------===//
   // Identifiers and lists
   //===--------------------------------------------------------------------===//
@@ -1090,6 +1150,13 @@ private:
     case tok::ident:
       // name
       F.Name = Forced ? Name0 : parseIdent();
+      if (TypeSetsOK && atExtendsWord()) {
+        // `T extends P` (GEN-12)
+        F.ExtendsLoc = Tok.Loc;
+        next();
+        F.Type = parseType();
+        return F;
+      }
       switch (Tok.Kind) {
       case tok::ident:
       case tok::mul:
@@ -1186,6 +1253,7 @@ private:
       Pos0 = Typ0->Begin;
 
     SmallVector<ParamEntry, 8> List;
+    llvm::DenseMap<Expr *, SourceLoc> Extends; // type -> its `extends` word
     unsigned Named = 0; // number of entries that have an explicit name and type
     unsigned Typed = 0; // number of entries that have an explicit type
 
@@ -1202,6 +1270,8 @@ private:
       Name0 = nullptr; // 1st name was consumed if present
       Typ0 = nullptr;  // 1st typ was consumed if present
       if (Par.Name || Par.Type) {
+        if (Par.ExtendsLoc.isValid() && Par.Type)
+          Extends[Par.Type] = Par.ExtendsLoc;
         List.push_back(Par);
         if (Par.Name && Par.Type)
           ++Named;
@@ -1338,6 +1408,8 @@ private:
       F->Names = Ctx.copy(ArrayRef<Ident *>(Names));
       F->Type = Typ;
       F->MoveLoc = MoveLoc;
+      if (auto It = Extends.find(Typ); It != Extends.end())
+        F->ExtendsLoc = It->second;
       Params.push_back(F);
       Names.clear();
     };
@@ -1580,7 +1652,16 @@ private:
     SourceLoc Lbrace = expect(tok::l_brace);
     SmallVector<Field *, 8> List;
     for (;;) {
-      if (is(tok::ident)) {
+      if (atExtendsWord()) {
+        // `extends P` (GEN-12)
+        SourceLoc B = Tok.Loc;
+        next();
+        Expr *T = parseType();
+        Field *F = mk<Field>(B, T->End);
+        F->ExtendsLoc = B;
+        F->Type = T;
+        List.push_back(F);
+      } else if (is(tok::ident)) {
         Field *F = parseMethodSpec();
         if (F->Names.empty()) {
           F->Type = embeddedElem(F->Type);
@@ -3471,7 +3552,31 @@ private:
       Spec->AssignLoc = Tok.Loc;
       next();
     }
-    Spec->Type = parseType();
+    parseTypeSpecRhs(Spec);
+  }
+
+  /// The type after the name of a type declaration (and its type parameters):
+  /// a type, or `extends Parent { fields }` (TYP-16).
+  void parseTypeSpecRhs(TypeSpec *Spec) {
+    if (Spec->AssignLoc.isValid() || !atTypeDeclExtends()) {
+      Spec->Type = parseType();
+      return;
+    }
+    Spec->ExtendsLoc = Tok.Loc;
+    next();
+    Spec->Extends = parseType();
+    if (is(tok::comma)) {
+      // `extends A, B`: one parent only (TYP-16); the rest is skipped
+      SourceLoc Comma = Tok.Loc;
+      while (is(tok::comma)) {
+        next();
+        parseType();
+      }
+      if (shouldReport(Comma))
+        Diags.report(Comma, diag::err_extends_one_parent)
+            .range(SourceRange(Comma, PrevEnd));
+    }
+    Spec->Type = parseStructBody(Tok.Loc);
   }
 
   /// Splits X into (name, expr) if syntactically X can be written as
@@ -3596,7 +3701,7 @@ private:
         Spec->AssignLoc = Tok.Loc;
         next();
       }
-      Spec->Type = parseType();
+      parseTypeSpecRhs(Spec);
     }
 
     setEnd(Spec, PrevEnd);

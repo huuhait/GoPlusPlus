@@ -38,13 +38,17 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Casting.h"
 
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
+#include <tuple>
+#include <vector>
 
 namespace gopp {
 namespace ast {
@@ -357,9 +361,11 @@ struct TypeSet {
   bool Comparable = false; // the `comparable` constraint is part of the set
   bool Copy = false;       // Copy constraint (D1.3, GEN-1)
   bool Clone = false;      // Clone constraint (GEN-2)
+  Type *Extends = nullptr; // `extends P` (GEN-12)
   bool isEmpty() const { return !AllTerms && Terms.empty(); }
   bool isAll() const {
-    return AllTerms && !Comparable && !Copy && !Clone && Methods.empty();
+    return AllTerms && !Comparable && !Copy && !Clone && Methods.empty() &&
+           !Extends;
   }
   bool hasTerms() const { return !AllTerms; }
 };
@@ -374,7 +380,11 @@ public:
   llvm::ArrayRef<SourceLoc> EmbedLocs;
   Special Sp = None;
   bool Implicit = false; // `[T int|string]` wrapped into an interface
-  bool IsAny = false;    // the predeclared `any` (printed as such)
+  /// `extends P` (GEN-12): the type set is P and every type that extends P.
+  /// Null if there is none; the location is for messages.
+  Type *Extends = nullptr;
+  SourceLoc ExtendsLoc;
+  bool IsAny = false; // the predeclared `any` (printed as such)
   /// Made by substitution (an instance of a generic interface): its type set
   /// reports no errors. Which body computes it first is a matter of timing, so
   /// the error would land in a different place on each run; the declaration
@@ -395,6 +405,52 @@ public:
   TypeName *Obj;
   unsigned Index;
   Type *Bound = nullptr; // the constraint (an interface or a named interface)
+  /// One thing the generic code does with this parameter that the plain
+  /// code decides on the real type (EXP-15, TYP-19, ADR-0023 decision 16):
+  /// it is recorded here as data, and every instantiation decides it on the
+  /// real type argument with the predicate of the plain code
+  /// (Checker::useWhy), so the two cannot differ (GEN-12).
+  struct Use {
+    enum Kind : uint8_t {
+      Copy,   // `*p` used as a value: copied, moved, assigned through
+      Clone,  // a value clone through a pointer or a view: `(*p).Clone()`
+      Make,   // a value of T made or held: `var z T`, `T{}`, `make([]T, n)`
+      Method, // the receiver of Member bound, deferred or moved
+    };
+    /// Where the receiver of a Method use is: `x.M` (a T value), `(*p).M`
+    /// (through a pointer to T) or `p.M` (p a pointer, owning pointer or
+    /// view of T).
+    enum Place : uint8_t { Value, Deref, Pointer };
+    Kind K = Copy;
+    Place P = Value;
+    /// A method value or a `go` / `defer` call (the receiver is copied),
+    /// else a direct call of a `move` method (the receiver is moved).
+    bool Taken = false;
+    /// Given on by the generic code to another generic that has the use.
+    bool Passed = false;
+    llvm::StringRef Member; // Method: the method's name
+    Use() = default;
+    Use(Kind K, Place P = Value, bool Taken = false,
+        llvm::StringRef Member = {})
+        : K(K), P(P), Taken(Taken), Member(Member) {}
+    auto tie() const { return std::make_tuple(K, P, Taken, Passed, Member); }
+    bool operator<(const Use &O) const { return tie() < O.tie(); }
+    bool operator==(const Use &O) const { return tie() == O.tie(); }
+  };
+  /// The parameter this one was copied from for one call's inference
+  /// (Checker::renameTParams); the uses are those of the original.
+  TypeParamType *RenamedFrom = nullptr;
+  /// The uses of this parameter: an immutable sorted set, published once
+  /// after all bodies of its package (Checker::untaggedCheck) or read from
+  /// export data, so no reader depends on the order of the threads.
+  struct UseList {
+    llvm::ArrayRef<Use> Uses;
+  };
+  std::atomic<const UseList *> UseSet{nullptr};
+  llvm::ArrayRef<Use> uses() const {
+    const UseList *L = UseSet.load(std::memory_order_acquire);
+    return L ? L->Uses : llvm::ArrayRef<Use>();
+  }
 };
 
 /// Predeclared generic pointer types of D1.7.
@@ -423,6 +479,28 @@ public:
   bool ResolvingInterface = false;
   bool Pinned = false;   // @Pinned (OWN-R10)
   bool ViewAttr = false; // @View struct (OWN-V5)
+  /// `@Abstract type Bird extends Animal {}` (TYP-19): the type may leave an
+  /// `@Abstract` method open, and it is abstract itself.
+  bool AbstractAttr = false;
+  /// Checker::hasTypeTable (TYP-22): 0 not known, 1 no, 2 yes: the type or
+  /// an ancestor has a `@Virtual` or `@Abstract` method. Stored once the
+  /// types are final and only when exact, like CloneState.
+  std::atomic<uint8_t> TableState{0};
+  /// Checker::isAbstractType (TYP-19), on the origin: 0 not known, 1 no, 2 yes
+  /// (an `@Abstract` method is open on its path), 3 yes only because of the
+  /// `@Abstract` attribute (nothing is open). Stored like TableState.
+  std::atomic<uint8_t> AbstractState{0};
+  /// The first open `@Abstract` method by position (for messages); stored
+  /// before AbstractState becomes 2.
+  std::atomic<Func *> OpenWitness{nullptr};
+  /// Place in the `extends` hierarchy (Hierarchy.cpp): the depth (1 for a
+  /// root, 0 not known), the parent and a skew-binary jump pointer, so "does
+  /// C extend P" takes O(log depth) steps, not one per level. Kept for
+  /// instances too (an instance's parent is an instance). Written once the
+  /// types are final, the depth last.
+  std::atomic<uint32_t> HierDepth{0};
+  std::atomic<NamedType *> HierParent{nullptr};
+  std::atomic<NamedType *> HierJump{nullptr};
   /// A generic type on an instantiation cycle (Mono.cpp, set before any
   /// body is checked): its instances grow without end, so the walks that
   /// follow every instance a type reaches stop at them (Checker::onInstCycle).
@@ -463,6 +541,12 @@ public:
   /// CatGeneric. An instance is answered from these, never expanded.
   std::atomic<uint8_t> CatGeneric{0};
   std::atomic<uint64_t> CatParams{0};
+  /// Generic declaration: its type parameters (bit per index, 63 for 63 and
+  /// up) that its underlying type holds by value as holdsByValue sees it
+  /// (Checker::heldParams); HeldKnown is set after HeldParams, once the types
+  /// are final. An instance holding a type parameter is answered from these.
+  std::atomic<uint64_t> HeldParams{0};
+  std::atomic<bool> HeldKnown{false};
   /// Instance: Underlying is set. Written once, with release order, after
   /// Underlying: another body thread may read it (P03.10).
   std::atomic<bool> Expanded{false};
@@ -549,7 +633,19 @@ public:
   static bool classof(const Object *O) { return O->getKind() == Kind::Var; }
   bool IsField = false;
   bool Embedded = false;
+  /// The hidden first field of an `extends` type (TYP-16, ADR-0023): the
+  /// parent part, named like the parent type. It is an embedded field, so
+  /// the lookup finds the parent's fields and methods through it, and it is
+  /// the first field, so the parent part comes first in the layout (TYP-22).
+  /// A user-written embedded field is an error in a `.gopp` file (TYP-25).
+  bool IsParent = false;
+  /// The hidden `base` variable of a method of an `extends` type: the
+  /// borrowed pointer to the parent part (TYP-20).
+  bool IsBase = false;
   bool IsParam = false;
+  /// The receiver of a method. A value receiver of a type with a type table
+  /// may be the parent part of a child (EXP-15, ADR-0023 decision 16).
+  bool IsRecv = false;
   /// The effective required bit of a struct field: marked `@Required`
   /// (TYP-15), or required by its `@Strict` struct (TYP-15a). Every rule
   /// reads this bit; it is decided in one place, effectiveRequired
@@ -650,6 +746,10 @@ public:
   llvm::ArrayRef<Var *> Results;
   Var *Recv = nullptr;
   bool HasPtrRecv = false;
+  /// The method mark of TYP-18: none (the method is final), `@Virtual`,
+  /// `@Abstract` or `@Override`. An instantiated method has its origin's.
+  enum class Mark : uint8_t { None, Virtual, Abstract, Override };
+  Mark MethodMark = Mark::None;
   bool MoveRecv = false; // a `move` receiver (PAR-5)
   bool IsInterfaceMethod = false;
   bool Fails = false;
@@ -751,6 +851,7 @@ public:
     bool RequiredSetOnly = false;
     bool MarkedRequired = false;
     bool MarkedOption = false;
+    bool IsParent = false;
     /// No position: a struct is uniqued, so a Var in it cannot belong to one
     /// body (see the rule at TypeContext::unique in Types.cpp).
   };
@@ -786,9 +887,82 @@ public:
   /// objects in it from several threads.
   std::mutex &allocLock() { return AllocMu; }
 
+  /// A per-type answer about the parent chain of an `extends` type, stored
+  /// once for every type of the chain, so a chain of n types with a question
+  /// on each costs n steps, not n squared (Checker::requiredAncestor). The
+  /// answer is a function of the final types alone, so every thread stores
+  /// the same one.
+  struct MemberMemo {
+    NamedType *Owner = nullptr; // the type of the chain that answers, or null
+  };
+  bool memberMemoGet(const NamedType *N, llvm::StringRef Key, MemberMemo &Out);
+  void memberMemoPut(const NamedType *N, llvm::StringRef Key,
+                     const MemberMemo &M);
+  /// Every field and method name that any struct, interface or method list
+  /// has (the names only, not whose they are): a name that was never noted
+  /// is a member of no type, so a lookup on a chain ends at once. Noted when
+  /// the member is made, before any lookup on a type that has it.
+  void noteMemberName(llvm::StringRef Name);
+  /// Publishes the uses of TP (TypeParamType::uses): sorted and without
+  /// duplicates, copied into the context with their names.
+  void setTParamUses(TypeParamType *TP,
+                     llvm::ArrayRef<TypeParamType::Use> Uses);
+  bool memberNameSeen(llvm::StringRef Name);
+  /// The same for the case-folding lookup (the "did you mean" of an error):
+  /// false only when no member name equals Name up to case.
+  bool memberNameSeenFold(llvm::StringRef Name);
+
+  /// The name index of the `extends` chains, on their origins
+  /// (Checker::chainIndex, chainLookup, R19): for each root, the depths at
+  /// which an origin of its tree declares a name, and for each origin its own
+  /// members by name (methods first), its parent and a skew-binary jump
+  /// pointer with their type arguments. A lookup goes straight to the
+  /// ancestor at such a depth, so n lookups of n different names on a chain
+  /// of n types cost n log n, not n squared. Each origin is entered once,
+  /// after the types are final, with its ancestors; what is stored depends
+  /// on the declarations alone, so no answer depends on the thread.
+  struct ChainEntry {
+    NamedType *Root = nullptr;
+    uint32_t Depth = 0; // 1 for the root
+    /// The types up to the root are all structs whose only embedded field is
+    /// the parent part (else the general walk decides).
+    bool Plain = false;
+    NamedType *Parent = nullptr; // the parent's origin
+    NamedType *Jump = nullptr;   // an ancestor origin (the root: itself)
+    /// The type arguments of Parent and of Jump in terms of this origin's
+    /// own type parameters.
+    llvm::ArrayRef<Type *> ParentArgs, JumpArgs;
+  };
+  struct ChainMember {
+    Object *Obj;
+    int Idx; // its index among the type's methods or fields
+  };
+  bool chainEntry(const NamedType *N, ChainEntry &Out);
+  /// Enters N (if it is not yet) with its members, Members[I] named
+  /// Members[I].Obj->Name.
+  void chainAdd(const NamedType *N, const ChainEntry &E,
+                llvm::ArrayRef<ChainMember> Members);
+  /// The deepest depth, at most Max, at which an origin under Root declares
+  /// Name, or 0 (a binary search: an override at every level of a chain
+  /// costs nothing more).
+  uint32_t chainDepthAtMost(const NamedType *Root, llvm::StringRef Name,
+                            uint32_t Max);
+  void chainMembers(const NamedType *N, llvm::StringRef Name,
+                    llvm::SmallVectorImpl<ChainMember> &Out);
+
 private:
   void initUniverse(bool GoCompat);
+  std::shared_mutex NamesMu;
+  llvm::StringSet<> MemberNames; // also "\x04" + the ASCII lowercase
+  bool NonAsciiNames = false;
+  std::mutex MemoMu;
+  llvm::DenseMap<const NamedType *, llvm::StringMap<MemberMemo>> MemberMemos;
   std::deque<llvm::SmallVector<Func *, 0>> MethodLists;
+  std::shared_mutex ChainMu;
+  llvm::DenseMap<const NamedType *, ChainEntry> ChainTypes;
+  using ChainKey = std::pair<const NamedType *, llvm::StringRef>;
+  llvm::DenseMap<ChainKey, llvm::SmallVector<uint32_t, 1>> ChainDepthsOf;
+  llvm::DenseMap<ChainKey, llvm::SmallVector<ChainMember, 1>> ChainMembersOf;
 
   llvm::ArrayRef<Type *> copyTypesLocked(llvm::ArrayRef<Type *> Ts);
 
@@ -867,6 +1041,12 @@ inline bool Object::exported() const { return isExportedName(Name); }
 /// constraint interface). Instances must be expanded first: use
 /// Checker::under.
 Type *under(Type *T);
+
+/// TYP-10: the fields of a struct type with the parent chain flattened: the
+/// root ancestor's own fields first, then each child's, then the type's own.
+/// The hidden parent fields themselves are not listed. Iterative, so a chain
+/// of any depth is fine; the type and its ancestors must be resolved.
+void fieldTable(Type *T, llvm::SmallVectorImpl<const Var *> &Out);
 
 /// Go-style text of a type for messages; types of package Qual are printed
 /// without a package name.

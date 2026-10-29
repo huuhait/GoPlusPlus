@@ -1,0 +1,40 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 (R14): the required fields of the parent chain in a literal are found
+// through the ancestors that have one (a memo per type); the fields a literal
+// sets by name, or through a parent part set as a whole, are not missing, and
+// the ones in between are. Lines without a CHECK line are accepted.
+package main
+
+type A struct {
+	a int @Required
+}
+type B extends A { b int }
+type C extends B {
+	c int @Required
+}
+type D extends C { d int }
+type E extends D {}
+
+func ok() {
+	_ = E{a: 1, c: 2}
+	_ = E{C: C{A: A{a: 1}, c: 2}}
+	_ = E{D: D{C: C{A: A{a: 1}, c: 2}}}
+	_ = D{a: 1, c: 2, d: 3}
+	_ = C{B: B{A: A{a: 1}}, c: 2}
+	_ = B{a: 1}
+}
+
+func bad() {
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: {{.*}}field c{{.*}}E
+	_ = E{a: 1}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: {{.*}}field a{{.*}}E
+	_ = E{c: 2}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: {{.*}}fields c, a{{.*}}E
+	_ = E{d: 2}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: {{.*}}field c{{.*}}D
+	_ = D{B: B{A: A{a: 1}}}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: {{.*}}field a{{.*}}B
+	_ = C{B: B{}, c: 1}
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: {{.*}}field a{{.*}}B
+	_ = B{b: 1}
+}

@@ -84,10 +84,9 @@ type Base struct{ id int }
 
 func (b *Base) ID() int { return b.id }
 
-type Derived struct {
-	Base
-	List[int]
-	tags map[string][]string
+type Derived extends Base {
+	items List[int]
+	tags  map[string][]string
 }
 
 type Number interface{ ~int | ~int64 | ~float64 }
@@ -140,7 +139,7 @@ func (t *Tree[K, V]) Get(k K) bool {
     S += "\tvar sh Shape = Sq{2}\n\t_ = sh.Area()\n";
     S += "\tys := Map(s, func(v int) string { return \"k\" })\n\t_ = ys\n";
     S += "\tvar nm Named = Sq{1}\n\tvar sh2 Shape = nm\n\t_ = sh2\n";
-    S += "\td := Derived{}\n\td.Push(a)\n\t_ = d.ID() + d.Len()\n";
+    S += "\td := Derived{}\n\td.items.Push(a)\n\t_ = d.ID() + d.items.Len()\n";
     S += "\t_ = Sum([]int{1, 2, a}) + int(Sum([]int64{3}))\n\t_ = "
          "Sum([]float64{1.5, 2})\n";
     S += "\ttr := new_unique(Tree[string, " +
@@ -848,6 +847,7 @@ TEST(ParallelCheck, ConformanceCorpusGivesTheSameDiagnostics) {
     PO.CheckLanguageRules = false;
     PO.AllowGenericMethods = false;
     PO.AllowNamespaceTypes = false;
+    PO.AllowExtends = false;
     ast::File *AST = parseFile(AC, SM, *F, Diags, PO);
     TypeContext Ctx(true);
     UnsafeOnly Imp(Ctx);

@@ -1,0 +1,65 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-23 (P03.22, ADR-0023): the method set of a child includes the
+// inherited methods, so a child satisfies every interface they satisfy: a
+// *Card through the pointer-receiver methods, a Card value through the
+// value-receiver ones, in a final-only hierarchy too. An interface that
+// holds a *Child is not asserted to a *Parent: the dynamic type is *Child,
+// and with a child-only method in the interface the assertion is impossible.
+// Lines without a CHECK line are accepted.
+package main
+
+type Payment struct{ Amount int64 }
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p Payment) Show() string { return "p" }
+
+type Card extends Payment{ Number string }
+
+@Override
+func (c *Card) Fee() int64 { return 1 }
+
+func (c *Card) Swipe() {}
+
+type Gold extends Card{}
+
+type Feeer interface{ Fee() int64 }
+type Shower interface{ Show() string }
+type Swiper interface {
+	Fee() int64
+	Swipe()
+}
+
+// A final-only hierarchy satisfies interfaces as well.
+type Shape struct{ W int }
+
+func (s *Shape) Area() int { return s.W }
+
+type Square extends Shape {}
+
+type Areaer interface{ Area() int }
+
+func ok(cp *Card, g *Gold, sq *Square) {
+	var a Feeer = cp
+	a = g
+	var b Shower = Card{Amount: 3}
+	b = cp
+	var e any = Card{Amount: 2}
+	var s Swiper = g
+	var ar Areaer = sq
+	_, _, _, _, _ = a, b, e, s, ar
+	if c, ok := s.(*Card); ok {
+		_ = c
+	}
+	_, ok := e.(*Payment)
+	_ = ok
+}
+
+func bad(c Card, s Swiper) {
+	// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use c (variable of struct type Card) as Feeer value in variable declaration: Card does not implement Feeer (method Fee has pointer receiver)
+	var f Feeer = c  // error: Fee has a pointer receiver
+	_ = f
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: impossible type assertion: s.(*Payment)
+	_ = s.(*Payment) // error: *Payment has no method Swipe
+}

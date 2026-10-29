@@ -10,6 +10,7 @@ add_gopp_library(Sema
   Expr.cpp
   ExampleMocks.cpp
   Foreign.cpp
+  Hierarchy.cpp
   ExprString.cpp
   Flow.cpp
   Index.cpp

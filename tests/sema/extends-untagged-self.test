@@ -1,0 +1,44 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.22 review (R20, decision B): an inherited method that returns its
+// receiver (the builder idiom) hands out the parent part. For an untagged
+// parent that is a valid Config (no table, no overrides): `*q` and
+// `(*q).Clone()` are a Config, the same documented limit as `my.Dup()`
+// (ADR-0023 decision 16). For a tagged parent the same copies are E0395.
+package main
+
+type Config struct{ Port int }
+
+func (p *Config) Self() *Config { return p }
+func (p *Config) Dup() Config    { return Config{Port: p.Port} }
+
+type MyConfig extends Config { Debug bool }
+
+type Animal struct{ N int }
+
+@Virtual
+func (a *Animal) Speak() int { return 0 }
+
+func (a *Animal) Self() *Animal { return a }
+
+type Dog extends Animal { Extra int }
+
+func untagged() int {
+	my := MyConfig{Port: 1, Debug: true}
+	var q *Config = my.Self() // accepted: the receiver handed back
+	cp := *q                  // accepted: the Config part, a valid Config
+	var cl Config = (*q).Clone()
+	var d Config = my.Dup()
+	return cp.Port + cl.Port + d.Port
+}
+
+func tagged() int {
+	d := Dog{N: 1}
+	q := d.Self() // accepted: a *Animal (Animal has a table)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use *q as a value
+	cp := *q
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use (*q).Clone() here
+	cl := (*q).Clone()
+	return cp.N + cl.N
+}
+
+func main() {}

@@ -127,9 +127,10 @@ struct DeclInfo {
   const TypeSpec *TDecl = nullptr;
   const FuncDecl *FDecl = nullptr;
   unsigned IotaVal = 0;
-  bool Pinned = false; // `@Pinned` type declaration (OWN-R10)
-  bool Strict = false; // `@Strict` struct type declaration (TYP-15a)
-  bool ViewOk = false; // `@View` struct type declaration (OWN-V5)
+  bool Pinned = false;   // `@Pinned` type declaration (OWN-R10)
+  bool Strict = false;   // `@Strict` struct type declaration (TYP-15a)
+  bool ViewOk = false;   // `@View` struct type declaration (OWN-V5)
+  bool Abstract = false; // `@Abstract` type declaration (TYP-19)
   /// Package-level objects this declaration refers to (initorder.go).
   llvm::SmallSetVector<Object *, 4> Deps;
 };
@@ -175,6 +176,11 @@ struct PackageState {
   std::deque<DeclInfo> Decls; // stable addresses
   DeclInfo *newDecl() { return &Decls.emplace_back(); }
   SmallVector<MethodInfo, 4> OrphanMethods;
+  /// The field and method names of every package-level type and of its
+  /// ancestors (name -> the declaring origins), for the checks of the local
+  /// types of the bodies (Checker::checkLocalHierarchy, ADR-0023).
+  llvm::StringMap<SmallVector<std::pair<NamedType *, Object *>, 2>> HierNames;
+  llvm::DenseSet<NamedType *> HierIndexed;
   llvm::DenseMap<StringRef, Package *> ImportedByPath;
   /// (file scope, name) of a dot-imported object -> its import.
   llvm::DenseMap<std::pair<const Scope *, StringRef>, PkgName *> DotImportMap;
@@ -513,9 +519,24 @@ public:
   struct LookupResult {
     Object *Obj = nullptr;
     SmallVector<int, 4> Index;
+    /// A member found up an `extends` chain: the path is ParentSteps parent
+    /// parts (field 0 at each level), then Index (the member's own index).
+    /// The zeros are not spelled out: on a chain of n types they would cost
+    /// up to n for each lookup (Selection::ParentSteps).
+    uint32_t ParentSteps = 0;
     bool Indirect = false;
     bool Ambiguous = false; // index set, no object
   };
+  bool chainLookup(NamedType *N, bool IsPtr, bool Addressable, Package *Pkg,
+                   StringRef Name, LookupResult &R);
+  /// The entry of the origin O in the chain name index (TypeContext::
+  /// chainEntry), entering O and its ancestors not entered yet. False before
+  /// the types are final or on a ring.
+  bool chainIndex(NamedType *O, TypeContext::ChainEntry &E);
+  /// The ancestor origin of O (E its entry) at depth D <= E.Depth, and, if
+  /// Args, its type arguments in terms of O's own type parameters.
+  NamedType *chainAncestor(NamedType *O, TypeContext::ChainEntry E, uint32_t D,
+                           llvm::SmallVectorImpl<Type *> *Args);
   LookupResult lookupFieldOrMethod(Type *T, bool Addressable, Package *Pkg,
                                    StringRef Name, bool FoldCase = false);
   LookupResult lookupImpl(Type *T, bool Addressable, Package *Pkg,
@@ -593,6 +614,10 @@ public:
   bool isValidIndex(Operand &X, const char *What, bool AllowNegative);
   int64_t index(const ast::Expr *Idx, int64_t Max);
   void compositeLit(Operand &X, const CompositeLit *E, Type *Hint);
+  /// The composite literal that is the parent part of a child's literal
+  /// (`Card{Payment: Payment{...}}`): no standalone value, so allowed even
+  /// when the parent type is abstract (TYP-19).
+  const CompositeLit *ParentPartLit = nullptr;
   /// A value stored in a composite literal (OWN-R3a, OWN-V6).
   void storeLiteralElem(Operand &X, Type *T);
   int64_t indexedElts(ArrayRef<ast::Expr *> Elts, Type *Elem, int64_t Length,
@@ -642,9 +667,193 @@ public:
                      SmallVector<TypeParamType *, 4> &NewTPs,
                      TupleType **NewParams);
 
+  // --- extends hierarchy (Hierarchy.cpp, ADR-0023)
+  /// While a method of an `extends` type is checked: the name of its type.
+  /// `base` may not be declared then (TYP-20).
+  std::string BaseMethodOf;
+  /// The hidden `base` variable of a method whose receiver type extends a
+  /// type (TYP-20), owned by Body; null otherwise. Made in phase 1.
+  Var *makeBaseVar(Var *Recv, const void *Body);
+  /// The name of the receiver's type if it extends a type, else empty.
+  std::string baseOwnerName(Var *Recv);
+  /// The marks of a method declaration (TYP-18); reported once, at the
+  /// declaration.
+  void readMethodMarks(const FuncDecl *FD, Func *Fn);
+  /// @Virtual, @Abstract and @Override are for methods; @Abstract is also a
+  /// type attribute of an `extends` type (TYP-19).
+  void checkDeclMarks(const ast::Decl *D);
+  /// The parent of N: the type its hidden first field names (TYP-16).
+  NamedType *parentOf(NamedType *N);
+  /// The first ancestor of From (itself included) that is an instance of the
+  /// generic type Orig, or null. Memoized for every type on the walk, so the
+  /// calls of a hierarchy cost one step per type (inference, GEN-12).
+  NamedType *ancestorInstanceOf(NamedType *From, NamedType *Orig);
+  llvm::DenseMap<std::pair<const NamedType *, const NamedType *>, NamedType *>
+      AncestorInst;
+  /// The depth of N in its hierarchy (1 for a root), with the jump pointers
+  /// on the way; 0 before the types are final.
+  uint32_t hierDepth(NamedType *N);
+  /// The ancestor of X (itself included) at depth D, by the jump pointers
+  /// (O(log depth)); hierDepth(X) must be known and at least D.
+  NamedType *levelAncestor(NamedType *X, uint32_t D);
+  /// The first type from N up its parents (N included) with a field that must
+  /// be set in a literal (TYP-15), or null; memoized for every type on the
+  /// walk. Only once the types are final.
+  NamedType *requiredAncestor(NamedType *N);
+  /// Is Anc a strict ancestor of Child (O(log depth))?
+  bool extendsType(NamedType *Child, NamedType *Anc);
+  /// GEN-12: V is P or extends it (V may be a type parameter bounded by
+  /// `extends Q`, with Q extending P).
+  bool extendsOrIs(Type *V, Type *P);
+  /// Ch is a defined type or a type parameter that extends P (not P itself).
+  bool strictlyExtends(Type *Ch, Type *P);
+  static Func::Mark markOf(const Func *F);
+  /// TYP-22: N or an ancestor has a @Virtual or @Abstract method.
+  bool hasTypeTable(NamedType *N);
+  /// A struct type with a type table, or a type parameter bounded by
+  /// `extends P` with such a P ("tagged", ADR-0023 decision 16).
+  bool isTagged(Type *T);
+  /// TYP-19 on the origin of N: 1 concrete, 2 an @Abstract method is open on
+  /// its path, 3 abstract only by the @Abstract attribute.
+  uint8_t abstractState(NamedType *N);
+  bool isAbstractType(Type *T);
+  /// Why N is abstract, for messages.
+  std::string abstractWhy(NamedType *N);
+  /// Reports (once the declarations are done) that a value of type T cannot
+  /// be made here because T is abstract. What names the construct.
+  void noAbstract(const ast::Expr *At, Type *T, const char *What);
+  /// TYP-19 through type arguments: an abstract argument that the instance
+  /// (a named type, an Option, or the signature of a generic function) holds
+  /// by value, decided on the substituted types. Called once the instance
+  /// is verified (a delayed check).
+  void noAbstractArgs(SourceLoc At, Type *Holder, ArrayRef<Type *> Args);
+  /// TYP-22: reports the `extends` rings among Types (their origins) and
+  /// makes their types invalid.
+  void checkExtendsCycles(ArrayRef<NamedType *> Types);
+  /// The positions of the declared fields of an `extends` struct
+  /// (structTypeExpr), and the batch of a body's local types.
+  void noteHierarchy(NamedType *N, const ast::StructType *Decl, bool Local);
+  /// The walk of every package-level type, once (phase 1).
+  void ensureHierarchy();
+  bool HierarchyDone = false;
+  /// TYP-17 to TYP-19: one depth-first walk of the `extends` forest of Seeds
+  /// and their ancestors, with the names of the path in a hash map and an
+  /// undo log (linear); reports for the seeds of this package if Report,
+  /// and stores the abstract state of every type it meets.
+  void hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report);
+  llvm::DenseMap<const ast::StructType *,
+                 SmallVector<std::pair<StringRef, SourceLoc>, 4>>
+      FieldPosOf;
+  llvm::DenseMap<NamedType *, SmallVector<std::pair<StringRef, SourceLoc>, 4>>
+      FieldPos;
+  SmallVector<NamedType *, 8> LocalBatch;
+  /// The rules of the local types of a body (no methods of their own): the
+  /// names of their fields against the ancestors', through NameIndex (every
+  /// declaring type of a name, filled once per type), and the open @Abstract
+  /// methods they inherit.
+  void checkLocalHierarchy(ArrayRef<NamedType *> Batch);
+  llvm::StringMap<SmallVector<std::pair<NamedType *, Object *>, 2>> NameIndex;
+  llvm::DenseSet<NamedType *> NameIndexed;
+  /// Adds the own field and method names of From and its ancestors to Index,
+  /// up to a type in Indexed or Also.
+  void indexNames(
+      NamedType *From,
+      llvm::StringMap<SmallVector<std::pair<NamedType *, Object *>, 2>> &Index,
+      llvm::DenseSet<NamedType *> &Indexed,
+      const llvm::DenseSet<NamedType *> *Also);
+  /// extendsType on origins: is AncO the origin of an ancestor of Child?
+  bool extendsOrigin(NamedType *Child, NamedType *AncO);
+  /// EXP-13: V converts to T by an upcast (`*C` to `*P`, `Unique[*C]` to
+  /// `Unique[*P]`, `View[C]` to `View[P]`), which needs a type table in the
+  /// target parent. Handled: the pair is such an upcast, so the answer is
+  /// final (false with a Cause when it is not allowed).
+  bool hierarchyUpcast(Type *V, Type *T, std::string *Cause, bool &Handled);
+  /// The Cause of an upcast to a parent P without a type table.
+  std::string untaggedCause(NamedType *P, Type *Child, Type *To);
+  /// The parent struct behind a pointer or an owning pointer kind (a downcast
+  /// or a type switch on it), or null.
+  NamedType *downcastParent(Type *From);
+  /// EXP-15: T is a pointer to a strict descendant of P and P has a type
+  /// table; reports at At otherwise.
+  bool downcastTarget(NamedType *P, Type *T, const ast::Expr *At,
+                      const std::string &What);
+  /// EXP-15: `p.(*Card)` on a parent pointer. True if the assertion is a
+  /// downcast (X is invalid after an error).
+  bool downcastOk(Operand &X, Type *T, const ast::Expr *Ex);
+  /// The places that may hold only the parent part of a bigger value
+  /// (EXP-15, ADR-0023 decision 16): the parent part `c.P`, `*p` of a tagged
+  /// type, and a value receiver of a tagged type. They are allowed as the
+  /// start of a selector (field access, method call) and under `&`; the
+  /// selector and `&` mark the operand they allow (PartialOk), and the place
+  /// takes the mark when it is checked.
+  enum class PartialKind : uint8_t { None, ParentPart, Deref, Receiver };
+  struct PartialMark {
+    bool Ok = false;   // the start of a selector, or the operand of `&`
+    bool Addr = false; // the operand of `&`
+  };
+  const ast::Expr *PartialOk = nullptr;
+  bool PartialOkAddr = false;
+  void markPartialOk(const ast::Expr *E, bool Addr);
+  PartialMark takePartialMark(const ast::Expr *E);
+  /// The one decision for every partial place: true if this use is allowed,
+  /// else reports. PartTy is the type of the place, Whole the child (for
+  /// messages).
+  bool partialUse(const ast::Expr *E, PartialKind K, Type *PartTy, Type *Whole,
+                  PartialMark M);
+  /// The kind of partial place E (already checked, of type T) is.
+  PartialKind partialKindOf(const ast::Expr *E, Type *T);
+  /// The kind of the place `*p` for a p pointing to T: Deref if T is tagged.
+  PartialKind derefKind(Type *T);
+  /// The target of a pointer, an owning pointer (not Weak) or a view, or null.
+  Type *pointeeOf(Type *T, bool IncludeWeak = false);
+  /// A method value, a `go` / `defer` call (Taken) or a `move` receiver
+  /// takes the receiver of Ex (a COPY for a value receiver, the object
+  /// itself for a `move` one). When that place may hold only the parent part
+  /// of a child (a tagged `*p`, a tagged value receiver, a view, the parent
+  /// part, a method found on a parent), it is the same event as `x := *p`:
+  /// an error (R6, R7). False if reported.
+  /// How the member of a lookup is reached from the receiver: its own
+  /// member, or the last step to its owner is the parent part (inherited) or
+  /// a Go embedded field (the receiver is that field, Via).
+  enum class OwnerKind : uint8_t { Own, Parent, Field };
+  struct OwnerStep {
+    OwnerKind K = OwnerKind::Own;
+    Var *Via = nullptr; // Field: the embedded field of the last step
+  };
+  bool receiverTakenOk(const SelectorExpr *Ex, Func *F, OwnerStep Step,
+                       Type *RcvTy, bool Taken);
+  /// The one decision behind receiverTakenOk, also made at instantiation on
+  /// the real type argument (useWhy): why taking the receiver of F on a
+  /// receiver of type RcvTy whose place is of kind K (Star: it is `*p`;
+  /// ParentPart for a pointer: `base`) would cut a child down, or empty if it
+  /// does not. Step: how F was found (ownerStep). A receiver
+  /// that is (or points to) a type parameter is decided by its
+  /// instantiations: the use is noted (noteUse). Text gives the receiver's
+  /// text, asked only for a message.
+  std::string receiverWhy(Type *RcvTy, PartialKind K, bool Star, Func *F,
+                          OwnerStep Step, bool Taken,
+                          llvm::function_ref<std::string()> Text);
+  /// The last step of lookup R on RcvTy to the member's owner: an `extends`
+  /// parent part, or a Go embedded field (decided as the written-out
+  /// selector through that field is).
+  OwnerStep ownerStep(Type *RcvTy, const LookupResult &R);
+  /// `v.Clone()` / `clone(v)` on a view of a type parameter: a value clone of
+  /// a place that may be a parent part (R9).
+  void noteViewClone(Type *RcvTy);
+  /// ADR-0023 decision 16: the tagged P behind a *P or View[P] whose Clone()
+  /// is a Unique[*P] with a full copy of the dynamic type, or null.
+  Type *cloneThroughTable(Type *T);
+  Type *uniqueOf(Type *Elem);
+  /// `(*p).Clone()` and the like on a partial place (reported at At).
+  bool rejectPartialClone(const ast::Expr *Recv, Type *T, const ast::Expr *At);
+
   // --- type expressions (Typexpr.cpp)
   Type *typ(const ast::Expr *E);
-  Type *varType(const ast::Expr *E);
+  /// The type of a variable, field, element, parameter or result. A value
+  /// use (not the pointee of `*`, a type argument, the argument of View or a
+  /// parent) may not be abstract (TYP-19); What names it for the message.
+  Type *varType(const ast::Expr *E, bool ValueUse = true,
+                const char *What = nullptr);
   Type *definedType(const ast::Expr *E, NamedType *Def);
   Type *genericType(const ast::Expr *E, std::string *Cause,
                     TypeName **Alias = nullptr);
@@ -652,6 +861,11 @@ public:
   void ident(Operand &X, const ast::Ident *Id, NamedType *Def, bool WantType);
   int64_t arrayLength(const ast::Expr *E);
   Type *structTypeExpr(const ast::StructType *E);
+  /// TYP-16: resolves the parent type of an `extends` declaration, checks
+  /// that it can be one, and gives the hidden parent field to Add. DeclName
+  /// is the type being declared (Hierarchy.cpp).
+  void addParentField(const ast::Expr *PE, StringRef DeclName,
+                      llvm::function_ref<void(Type *, StringRef)> Add);
   Type *interfaceTypeExpr(const ast::InterfaceType *E, NamedType *Def);
   struct FuncInfo {
     SignatureType *Sig = nullptr;
@@ -673,6 +887,11 @@ public:
       const FieldList *L, Scope *Sc,
       const std::function<void(ArrayRef<TypeParamType *>)> &Bind = nullptr);
   Type *boundType(const ast::Expr *E, bool IsImplicit = false);
+  /// GEN-12: the parent type of an `extends P` constraint element; null
+  /// after an error.
+  Type *extendsConstraintType(const ast::Expr *PE);
+  /// `T extends P`: the implicit interface `interface{ extends P }`.
+  Type *extendsBound(const ast::Expr *PE, SourceLoc ExtendsLoc);
   Type *boundTypeNoWrap(const ast::Expr *E);
   SourceLoc exprLoc(const ast::Expr *E) const { return E->getBegin(); }
 
@@ -722,6 +941,10 @@ public:
   /// The struct type expression of the type declaration being resolved and
   /// the name of that type (for messages).
   const ast::StructType *DeclStructExpr = nullptr;
+  /// The parent type expression of the `extends` declaration being resolved
+  /// (TYP-16): structTypeExpr makes the hidden parent field of DeclStructExpr
+  /// from it.
+  const ast::Expr *DeclExtendsExpr = nullptr;
   StringRef DeclStructName;
   /// `@Ref` on a type declaration: an unknown attribute (ADR-0020).
   void rejectRefAttr(const GenDecl *GD);
@@ -824,10 +1047,62 @@ public:
                              ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos,
                              const ast::Expr *Ex = nullptr);
   int verify(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
-             ArrayRef<Type *> TArgs, std::string *Cause);
+             ArrayRef<Type *> TArgs, std::string *Cause, bool ForType = false);
   bool satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
                  ArrayRef<TypeParamType *> TParams, ArrayRef<Type *> TArgs,
-                 std::string *Cause);
+                 std::string *Cause, bool ForType = false);
+  /// An instantiation of a generic of this package whose type argument may
+  /// break a use of the generic code (GEN-12, EXP-15, TYP-19; mayBreakUses).
+  /// The generic's bodies are not all checked yet, so the answer waits for
+  /// untaggedCheck, after them.
+  struct UntaggedPending {
+    SourceLoc Pos;
+    Type *TArg;
+    TypeParamType *TPar;
+    bool ForType; // a type instantiation (E0323), else a call (E0316)
+  };
+  std::vector<UntaggedPending> UntaggedPend;
+  /// The uses the generic code makes of its type parameters (TypeParamType::
+  /// Use), recorded by each checker and merged after the bodies, so their
+  /// set does not depend on which thread checked which body.
+  struct UseRec {
+    TypeParamType *TP;
+    TypeParamType::Use U;
+  };
+  std::vector<UseRec> TPUses;
+  std::vector<UseRec> *UseSink = &TPUses;
+  bool NotingPassed = false; // the uses noted now are given on (Use::Passed)
+  /// Notes U for T if T is a type parameter (its original, RenamedFrom).
+  void noteUse(Type *T, TypeParamType::Use U);
+  /// Notes a Make use for every type parameter that the instance Holder of
+  /// generic code holds by value (TYP-19, M3: `Option[T]`, `Box[T]`).
+  void noteHeldTParams(Type *Holder, ArrayRef<Type *> Args);
+  /// NamedType::HeldParams of the generic declaration O, computed
+  /// iteratively over the declarations it holds (no instance is expanded).
+  uint64_t heldParams(NamedType *O);
+  /// Does a value of type T hold the type parameter TP by value (the parts
+  /// holdsByValue walks; an instance through heldParams)?
+  bool holdsTParam(Type *T, TypeParamType *TP);
+  /// After all bodies: the uses travel to the type parameters they are
+  /// passed to (a fixpoint: deciding a use on a type argument that is, or
+  /// points to, a type parameter notes it there), then each pending
+  /// instantiation is decided. Order independent: the uses are sets, the
+  /// errors follow Pend and the sorted uses.
+  void untaggedCheck(ArrayRef<UntaggedPending> Pend);
+  /// The uses of a generic whose body does not show them: `mem.Replace(p,
+  /// v)` is `old := *p; *p = v`, a Copy use of its T (R13, R22), decided at
+  /// every instantiation (a call, a function value, through a generic).
+  void noteIntrinsicUses();
+  /// Decides the use U of TPar on the real type argument TArg with the
+  /// predicate of the plain code: why the instantiation is an error, or
+  /// empty. A use that TArg gives on to a type parameter is noted
+  /// (NotingPassed).
+  std::string useWhy(Type *TArg, TypeParamType *TPar,
+                     const TypeParamType::Use &U);
+  /// A type argument whose instantiation useWhy may reject or pass a use on
+  /// from: the others are decided at once (nothing to note, nothing to
+  /// reject).
+  bool mayBreakUses(Type *TArg);
   struct InferError {
     SourceLoc Pos;
     std::string Msg;
@@ -876,7 +1151,9 @@ public:
   /// a type set with a ~T term, so every instantiation must be too.
   bool paramIs(TypeParamType *P, bool Clone, bool *Implicit = nullptr);
   std::string notCopyWhy(Type *T);
-  bool satisfiesClone(Type *T, std::string *Why);
+  /// ByValue: T is cloned as a value (an abstract type cannot be); false
+  /// for the target of a clone through the type table (ADR-0023 decision 16).
+  bool satisfiesClone(Type *T, std::string *Why, bool ByValue = true);
   bool cloneWalk(Type *T, std::string *Why); // satisfiesClone's walk
   bool hasPtrKind(Type *T, PtrKind *K, Type **Elem);
   bool isPlaceExpr(const ast::Expr *E);

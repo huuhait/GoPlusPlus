@@ -1,0 +1,97 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-22 (P03.22, ADR-0023 decisions 7 and 16): a type has a type table
+// ("tagged") when it or an ancestor has a @Virtual or @Abstract method, and
+// every upcast needs one in the TARGET parent, so outside the parent's own
+// methods and what they return a pointer of an untagged type never points
+// at a child, and a clone through it is exact.
+// Without a table there is no upcast of any kind (`*Child`, View, Unique,
+// Shared, Weak, the borrow from an owning pointer, `&c.Parent`, a method
+// expression called with a child) and no downcast; the hint names both ways
+// out. A child that adds the first @Virtual method is tagged, but its parent
+// still is not. Inherited methods (the receiver is the parent part: a
+// documented limit), method values, base.M(), fields and interfaces work.
+// Lines without a CHECK line are accepted.
+package main
+
+// A final-only hierarchy: no @Virtual or @Abstract method anywhere.
+type Config struct{ Port int }
+
+func (p *Config) Dup() Config { return *p }
+
+func (p *Config) Get() int { return p.Port }
+
+type MyConfig extends Config { Debug bool }
+
+func (m *MyConfig) Both() int { return base.Get() + m.Port }
+
+type Getter interface{ Get() int }
+
+func useConfig(c *Config)        {}
+func viewConfig(v View[Config]) {}
+
+func untagged(my MyConfig, mp *MyConfig, move u Unique[*MyConfig], s Shared[*MyConfig], w Weak[*MyConfig], v View[MyConfig], uo Unique[*MyConfig], p *Config, cfg Config) {
+	// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use mp (variable of type *MyConfig) as *Config value in variable declaration: Config has no type table (no @Virtual or @Abstract method in its
+	var q *Config = mp                // error: no table, no upcast
+	// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: cannot use v (variable of type View[MyConfig]) as View[Config] value in variable declaration: Config has no type table (no @Virtual or @Abstract metho
+	var r View[Config] = v            // error
+	// CHECK-DAG: [[@LINE+1]]:27: error{{\[E[0-9]+\]}}: cannot use move(u) (value of struct type Unique[*MyConfig]) as Unique[*Config] value in variable declaration: Config has no type table (no @Virtual or
+	var ua Unique[*Config] = move(u)  // error
+	// CHECK-DAG: [[@LINE+1]]:27: error{{\[E[0-9]+\]}}: cannot use s (variable of struct type Shared[*MyConfig]) as Shared[*Config] value in variable declaration: Config has no type table (no @Virtual or @A
+	var sa Shared[*Config] = s        // error
+	// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: cannot use w (variable of struct type Weak[*MyConfig]) as Weak[*Config] value in variable declaration: Config has no type table (no @Virtual or @Abstr
+	var wa Weak[*Config] = w          // error
+	// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use uo (variable of struct type Unique[*MyConfig]) as *Config value in variable declaration: Config has no type table (no @Virtual or @Abstract
+	var lent *Config = uo             // error: no borrowed upcast either
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot use mp (variable of type *MyConfig) as *Config value in argument to useConfig: Config has no type table (no @Virtual or @Abstract method in its
+	useConfig(mp)                     // error
+	m := MyConfig{Port: 1}
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot take &m.Config: Config has no type table (no @Virtual or @Abstract method in its hierarchy), so a *Config never points into a child and there i
+	_ = &m.Config                     // error: an upcast
+	// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use m.Config as a value: it is the parent part of a MyConfig, and a copy, a move or an assignment of it as a whole would cut off the child; use
+	viewConfig(m.Config)              // error: a View of the parent part
+	f := (*Config).Dup
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use &m (value of type *MyConfig) as *Config value in argument to f: Config has no type table (no @Virtual or @Abstract method in its hierarchy)
+	_ = f(&m)                         // error: a method expression with a child
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the type assertion p.(*MyConfig) to downcast to *MyConfig: Config has no type table (no @Virtual or @Abstract method in the hierarchy), so
+	_ = p.(*MyConfig)                 // error: no table, no downcast
+	// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use the type assertion p.(type) to downcast to a child: Config has no type table (no @Virtual or @Abstract method in the hierarchy), so the val
+	switch p.(type) {                 // error: no table, no type switch
+	case *MyConfig:
+	}
+	_, _, _, _, _, _ = q, r, ua, sa, wa, lent
+	// Accepted: the inherited method, a method value, base, fields, an
+	// interface, a value copy.
+	var dup Config = m.Dup()
+	_ = dup
+	g := m.Dup
+	_ = g()
+	_ = mp.Both() + mp.Get() + mp.Port
+	var gi Getter = mp
+	_ = gi
+	cfg2 := cfg.Clone()
+	var z *Config = &cfg
+	cfg3 := (*z).Clone()
+	_, _ = cfg2, cfg3
+}
+
+// A child that adds the first @Virtual method has a table, its parent not.
+type Shape struct{ W int }
+type Kid extends Shape {}
+
+@Virtual
+func (k *Kid) Draw() {}
+
+type GrandKid extends Kid {}
+
+func kids(k *Kid, g *GrandKid, move uk Unique[*Kid], p *Shape) {
+	// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use k (variable of type *Kid) as *Shape value in variable declaration: Shape has no type table (no @Virtual or @Abstract method in its hierarch
+	var s *Shape = k                 // error: Shape has no table
+	// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: cannot use move(uk) (value of struct type Unique[*Kid]) as Unique[*Shape] value in variable declaration: Shape has no type table (no @Virtual or @Abst
+	var u Unique[*Shape] = move(uk)  // error
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use the type assertion p.(*Kid) to downcast to *Kid: Shape has no type table (no @Virtual or @Abstract method in the hierarchy), so the value h
+	_ = p.(*Kid)                     // error: no downcast from Shape
+	var kp *Kid = g
+	var ku Unique[*Kid] = new_unique(GrandKid{})
+	_ = kp.(*GrandKid)
+	_, _, _ = s, u, ku
+}

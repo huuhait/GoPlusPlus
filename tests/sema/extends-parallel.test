@@ -1,0 +1,15 @@
+// P03.22: the hierarchy answers (abstract state, type table, depth and jump
+// pointers, the name index of the local types) are stored on the types only
+// when final, so the diagnostics do not depend on which thread asks first:
+// one body thread and eight give the same output, for many bodies that ask
+// at once (ParallelCheck.* covers the unit side).
+// RUN: %python %S/Inputs/gen-extends-parallel.py 400 > %t.gopp
+// RUN: not %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.1 2>&1
+// RUN: not %gopp check -check-j=8 --check-error-limit=0 %t.gopp > %t.8 2>&1
+// RUN: diff %t.1 %t.8
+// RUN: FileCheck %s < %t.1
+// CHECK: B does not implement the @Abstract method(s) M of A
+// CHECK: field x of L0 has the name of the field x of its ancestor A
+// CHECK: cannot use *p as a value
+// CHECK: U has no type table
+package main

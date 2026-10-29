@@ -1,0 +1,10 @@
+// REQUIRES: long
+// REQUIRES: go
+// P03.22 (TYP-25, TYP-26): in a .go file struct embedding is Go's. Every
+// program of Inputs/go-embedding (valid and invalid embedding: promotion,
+// embedded pointers, shadowing by depth, ambiguous selectors, pointer
+// receivers, duplicates, what cannot be embedded, recursion, generic and
+// alias embedding, `extends` and `base` as names) gives the same outcome
+// under `gopp check --go` as under `go build`, with errors on the same
+// lines. Long: `go build` needs a warm build cache to stay fast.
+// RUN: %python %S/Inputs/go-embedding-diff.py %gopp %S/Inputs/go-embedding

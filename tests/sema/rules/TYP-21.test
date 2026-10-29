@@ -1,0 +1,103 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rules TYP-21 and EXP-13, EXP-15 (P03.22, ADR-0023): with a type table in
+// the parent, `*Child` converts implicitly to `*Parent` and to any ancestor
+// pointer, `Unique`, `Shared`, `Weak` and `View` keep the conversion, a
+// `Unique[*Child]` held in a place lends a `*Parent`, and the downcast is a
+// checked assertion `p.(*Card)` (one value or comma-ok, also on a
+// `Unique[*Parent]`) or a type switch. The reverse (`*Parent` to `*Child`)
+// is never implicit. A downcast needs a pointer to a strict descendant.
+// Lines without a CHECK line are accepted (the type-table rule is TYP-22).
+package main
+
+type Payment struct{ Amount int64 }
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+type Card extends Payment{ Number string }
+
+@Override
+func (c *Card) Fee() int64 { return 1 }
+
+type Gold extends Card{}
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() string { return "" }
+
+type Dog extends Animal{}
+
+func byPtr(p *Payment)       {}
+func byView(v View[Payment]) {}
+func own(u Unique[*Payment]) {}
+
+func upcasts(c *Card, g *Gold, move u Unique[*Card], s Shared[*Card], w Weak[*Card], v View[Card], ug Unique[*Gold]) {
+	var p1 *Payment = c
+	var p2 *Payment = g
+	var p3 *Card = g
+	var ua Unique[*Payment] = move(u)
+	var sa Shared[*Payment] = s
+	var wa Weak[*Payment] = w
+	var va View[Payment] = v
+	var lent *Payment = ug
+	byPtr(c)
+	byPtr(ug)
+	byView(v)
+	own(new_unique(Card{Amount: 1, Number: "x"}))
+	var ck Unique[*Card] = new_unique(Card{Amount: 10, Number: "4242"})
+	var pk Unique[*Payment] = ck
+	_, _, _, _, _, _, _, _, _ = p1, p2, p3, ua, sa, wa, va, lent, pk
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot use p1 (variable of type *Payment) as *Card value in variable declaration: *Payment does not convert to *Card: Card extends Payment, and only a
+	var down *Card = p1 // error: no implicit downcast
+	_ = down
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use new_unique(Card{…}) (value of struct type Unique[*Card]) as *Payment value in argument to byPtr: cannot borrow a temporary Unique[*Card]: t
+	byPtr(new_unique(Card{Amount: 1})) // error: a borrow of a temporary
+}
+
+func downcasts(p *Payment, up Unique[*Payment], sp Shared[*Payment], wp Weak[*Payment], c Card) {
+	k := p.(*Card)
+	k2, ok := p.(*Card)
+	if !ok {
+		return
+	}
+	k3 := up.(*Gold)
+	k4, ok4 := sp.(*Card)
+	if !ok4 {
+		return
+	}
+	_, _, _, _ = k, k2, k3, k4
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: impossible downcast p.(*Dog): Dog does not extend Payment (EXP-15)
+	_ = p.(*Dog)     // error: Dog does not extend Payment
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: impossible downcast p.(*Payment): Payment does not extend Payment (EXP-15)
+	_ = p.(*Payment) // error: not a strict descendant
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: impossible downcast p.(Card): Card does not extend Payment (EXP-15)
+	_ = p.(Card)     // error: not a pointer
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c (variable of struct type Card) is not an interface
+	_ = c.(*Card)    // error: not an interface or a pointer
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: wp (variable of struct type Weak[*Payment]) is not an interface
+	_ = wp.(*Card)   // error: a Weak pointer is not dereferenced
+}
+
+func switches(p *Payment, up Unique[*Payment]) int64 {
+	switch x := p.(type) {
+	case *Gold:
+		return x.Fee()
+	case *Card:
+		return int64(len(x.Number))
+	default:
+		return x.Fee()
+	}
+	switch up.(type) {
+	case *Card:
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: impossible downcast case *Dog: Dog does not extend Payment (EXP-15)
+	case *Dog: // error: Dog does not extend Payment
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: Unique[*Payment] is never nil: a pointer has no nil; use Option[Unique[*Payment]] for "maybe" (OWN-P9)
+	case nil: // error: a pointer is never nil
+	}
+	switch y := up.(type) {
+	case *Card, *Gold:
+		_ = y.Fee()
+	}
+	return 0
+}

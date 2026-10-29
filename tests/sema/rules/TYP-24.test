@@ -1,0 +1,125 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rules TYP-24 and OWN-R6 (P03.22, ADR-0023 decisions 9 and 16): the safety
+// rules reach the parent through its hidden first field. Auto-Clone of a
+// child copies the parent's and the child's fields; a parent with a drop
+// method and no Clone makes the child uncloneable; an inherited Clone with
+// another signature makes the child not cloneable (`type S extends
+// tls.Config`). A Clone always copies the whole real value: through a
+// pointer, a view or a Unique of a tagged type it is a Unique holding a full
+// copy of the dynamic type (also clone(p), and for an abstract type), a
+// value clones to its own type, `*P` does not satisfy Clone but Unique[*P]
+// does, and an untagged type keeps OWN-R6. A View[Child] converts to
+// View[Parent] for a tagged parent. Lines without a CHECK line are accepted.
+package main
+
+type Animal struct{ Name string; Tricks []string }
+
+@Virtual
+func (a *Animal) Speak() string { return "..." }
+
+type Dog extends Animal { Toys []string }
+
+@Override
+func (d *Dog) Speak() string { return "woof" }
+
+type Shape struct{ N int }
+
+@Abstract
+func (s *Shape) Area() int
+
+type Square extends Shape {}
+
+@Override
+func (s *Square) Area() int { return s.N * s.N }
+
+type Config struct{ Port int; Tags []string }
+type MyConfig extends Config { Debug bool }
+
+type Handle struct{ fd int }
+
+func (h Handle) Clone() Handle { return Handle{fd: h.fd} }
+
+func need[T Clone]() {}
+
+// The table rows of decision 16.
+func rows(p *Animal, dog Dog, q *Config, my MyConfig, v View[Animal], u Unique[*Animal], s Shared[*Animal], sp *Shape, us Unique[*Shape], h *Handle) {
+	var a Unique[*Animal] = p.Clone()   // p.Clone(): a full copy of the dynamic type
+	var a2 Unique[*Animal] = clone(p)   // the short form
+	var a3 Unique[*Animal] = v.Clone()  // through a view
+	var a4 Unique[*Animal] = u.Clone()  // through a Unique
+	var a5 Shared[*Animal] = s.Clone()  // Shared retains
+	var d Dog = dog.Clone()             // a value clones to its own type
+	var c Config = (*q).Clone()         // untagged: a plain copy of the whole value
+	var cp *Config = q.Clone()          // untagged, no Clone method: the pointer copy (OWN-R6)
+	var sh Unique[*Shape] = sp.Clone()  // an abstract type through a pointer
+	var sh2 Unique[*Shape] = us.Clone()
+	_ = p.Name
+	_, _, _, _, _, _, _, _, _, _ = a, a2, a3, a4, a5, d, c, cp, sh, sh2
+	// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use p.Clone() (value of struct type Unique[*Animal]) as *Animal value in variable declaration: cannot borrow a temporary Unique[*Animal]: the t
+	var wrong *Animal = p.Clone()       // error: it is a Unique[*Animal]
+	m2 := MyConfig{Port: 1}
+	// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot use &m2 (value of type *MyConfig) as *Config value in variable declaration: Config has no type table (no @Virtual or @Abstract method in its hi
+	var mq *Config = &m2                // error: Config has no type table
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use *p as a value: Animal has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover o
+	x := *p                             // error: it could copy only the Animal part
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: h.Clone is ambiguous on pointer *Handle: Handle has a value-receiver Clone method (OWN-R6)
+	_ = h.Clone()                       // error: OWN-R6 ambiguity, unchanged
+	_, _, _ = wrong, mq, x
+}
+
+func constraints() {
+	need[Dog]()
+	need[Unique[*Animal]]()
+	need[Unique[*Shape]]()
+	need[*Config]()
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: *Animal does not satisfy Clone (Animal has a type table, so the Clone() of a pointer to it is a Unique[*Animal] (a full copy of the dynamic type), not
+	need[*Animal]() // error: its Clone is a Unique[*Animal]
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: Shape does not satisfy Clone (Shape is abstract: only a concrete child can be cloned, through a pointer (TYP-19))
+	need[Shape]()   // error: an abstract type has no value to clone
+}
+
+// Auto-Clone of a struct that holds a Unique[*P] goes through the table.
+type Zoo struct {
+	One  Unique[*Animal]
+	Many []Unique[*Animal]
+	ByID map[string]Unique[*Shape]
+}
+
+// A parent with a drop method and no Clone; a hand-written Clone that the
+// child inherits (the inherited signature returns the parent).
+type Mu struct{ n int }
+
+func (m *Mu) drop() {}
+
+type Server struct{ mu Mu }
+type Web extends Server { Name string }
+
+type Named extends Handle { Label string }
+
+type Cfg struct{ n int; m map[string]int }
+
+func (c *Cfg) Clone() *Cfg { return c }
+
+type S extends Cfg { k int }
+
+func clones(z Zoo, w Web, n Named, t S, my MyConfig, sq Square) {
+	_ = z.Clone()
+	_ = my.Clone()
+	_ = sq.Clone()
+	// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot clone w: Web can't be cloned: field Server.mu (Mu) has a drop method but no Clone() (OWN-R6)
+	_ = w.Clone()     // error: the parent part has a drop method
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: Named does not satisfy Clone (Named has a Clone method that does not have the signature Clone() Named)
+	need[Named]()     // error: the inherited Clone returns Handle
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: S does not satisfy Clone (S has a Clone method that does not have the signature Clone() S)
+	need[S]()         // error: the inherited Clone returns *Cfg
+	var t2 S
+	_ = t2.Clone()
+}
+
+// Views and the field table: a tagged parent's view, the parent chain.
+type Deep extends Dog { W int }
+
+func views(v View[Dog], d Deep) int {
+	var a View[Animal] = v
+	return len(a.Name) + len(v.Toys) + d.W + len(d.Dog.Animal.Name) + len(d.Tricks)
+}

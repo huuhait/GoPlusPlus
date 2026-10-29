@@ -18,12 +18,19 @@
 //   CHAN          dir T(elem)
 //   TUPLE         n T...
 //   SIGNATURE     T(params) T(results) variadic fails moveMask n T(tparam)...
-//   STRUCT        n { S(name) P T embedded S(tag) }...
+//   STRUCT        n strict { S(name) P T embedded parent S(tag) required
+//                 setOnly markedRequired markedOption }...
 //   INTERFACE     implicit special nm ne { S(name) P T(sig) fails }... T...
+//                 T(extends, 0 for none)
 //   UNION         n { tilde T }...
-//   NAMED_DECL    P S(name) ptrKind pinned
+//   NAMED_DECL    P S(name) ptrKind flags zeroState
+//                 flags: bit 0 @Pinned, bit 1 @View, bit 2 @Abstract (the
+//                 type attribute), bits 3-4 abstract (0 not known, 1 no, 2 yes)
 //   NAMED_DEF     T(named) T(underlying) n T(tparam)... nm
 //                 { S(name) T(sig) flags nr T... no T... }...
+//                 method flags: bit 0 pointer receiver, 1 move receiver,
+//                 2 fails, 3 builtin, bits 4-5 the mark (0 none, 1 @Virtual,
+//                 2 @Abstract, 3 @Override)
 //   NAMED_INST    T(origin) n T(arg)...
 //   TPARAM_DECL   S(name) index
 //   TPARAM_DEF    T(tparam) T(bound)
@@ -204,7 +211,15 @@ uint64_t TypeWriter::type(const Type *T) {
     while (!PendingTParams.empty()) {
       const TypeParamType *TP = PendingTParams.front();
       PendingTParams.pop_front();
-      uint64_t Ops[] = {Ids[TP], type(TP->Bound)};
+      // The uses of the parameter by the generic code (GEN-12): decided on
+      // the type arguments of the importing package.
+      std::vector<uint64_t> Ops{Ids[TP], type(TP->Bound), TP->uses().size()};
+      for (const TypeParamType::Use &U : TP->uses()) {
+        Ops.push_back(U.K);
+        Ops.push_back(U.P);
+        Ops.push_back(U.Taken | (U.Passed << 1));
+        Ops.push_back(string(U.Member));
+      }
       W.write(REC_TPARAM_DEF, Ops);
     }
     --Depth;
@@ -284,6 +299,7 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
       Ops.push_back(isExportedName(F->Name) ? 0 : package(F->Pkg));
       Ops.push_back(Ty);
       Ops.push_back(F->Embedded);
+      Ops.push_back(F->IsParent);
       Ops.push_back(string(F->Tag));
       Ops.push_back(F->Required);
       Ops.push_back(F->RequiredSetOnly);
@@ -309,10 +325,12 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
     }
     for (Type *E : I->Embeddeds)
       Es.push_back(type(E));
+    uint64_t Ext = I->Extends ? type(I->Extends) : 0; // GEN-12
     std::vector<uint64_t> Ops{I->Implicit, static_cast<uint64_t>(I->Sp),
                               I->Methods.size(), I->Embeddeds.size()};
     Ops.insert(Ops.end(), Ms.begin(), Ms.end());
     Ops.insert(Ops.end(), Es.begin(), Es.end());
+    Ops.push_back(Ext);
     return Emit(REC_INTERFACE, Ops);
   }
   case Type::Kind::Union: {
@@ -355,11 +373,14 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
     uint64_t Zero = N->ZeroState.load(std::memory_order_acquire);
     if (Zero == 3 || N->isGeneric())
       Zero = 0;
-    uint64_t DeclOps[] = {package(N->Obj ? N->Obj->Pkg : nullptr),
-                          string(N->Obj ? N->Obj->Name : StringRef()),
-                          static_cast<uint64_t>(N->Ptr),
-                          uint64_t(N->Pinned) | uint64_t(N->ViewAttr) << 1,
-                          Zero};
+    uint64_t DeclOps[] = {
+        package(N->Obj ? N->Obj->Pkg : nullptr),
+        string(N->Obj ? N->Obj->Name : StringRef()),
+        static_cast<uint64_t>(N->Ptr),
+        uint64_t(N->Pinned) | uint64_t(N->ViewAttr) << 1 |
+            uint64_t(N->AbstractAttr) << 2 |
+            uint64_t(N->AbstractState.load(std::memory_order_acquire)) << 3,
+        Zero};
     W.write(REC_NAMED_DECL, DeclOps);
     uint64_t Id = Ids[T] = NextType++;
     std::vector<uint64_t> Ops{Id, 0, N->TParams.size()};
@@ -374,7 +395,7 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
       Ops.push_back(string(F->Name));
       Ops.push_back(Sig);
       Ops.push_back(F->HasPtrRecv | (F->MoveRecv << 1) | (F->Fails << 2) |
-                    (F->IsBuiltinMethod << 3));
+                    (F->IsBuiltinMethod << 3) | (uint64_t(F->MethodMark) << 4));
       Ops.push_back(F->RecvTParams.size());
       for (TypeParamType *TP : F->RecvTParams)
         Ops.push_back(type(TP));
@@ -783,12 +804,16 @@ bool TypeReader::record(const Record &Rec) {
       F.Pkg = Pk();
       F.Ty = Ty();
       F.Embedded = Flag();
+      F.IsParent = Flag();
       F.Tag = Str();
       F.Required = Flag();
       F.RequiredSetOnly = Flag();
       F.MarkedRequired = Flag();
       F.MarkedOption = Flag();
       if (!F.Ty)
+        Bad = true;
+      // The parent part is the first field and an embedded one (TYP-16).
+      if (F.IsParent && (K != 0 || !F.Embedded))
         Bad = true;
       Fs.push_back(F);
     }
@@ -818,8 +843,12 @@ bool TypeReader::record(const Record &Rec) {
     if (Bad || Special > InterfaceType::Clone)
       return fail("malformed interface");
     std::vector<SourceLoc> Locs(Es.size());
+    Type *Ext = Ty(); // GEN-12; null if there is none
+    if (Bad)
+      return fail("malformed interface");
     InterfaceType *It = Ctx.newInterface(Ms, Es, Locs, Implicit);
     It->Sp = static_cast<InterfaceType::Special>(Special);
+    It->Extends = Ext;
     return Produce(It);
   }
   case REC_UNION: {
@@ -839,10 +868,11 @@ bool TypeReader::record(const Record &Rec) {
     Package *P = Pk();
     StringRef Name = Str();
     uint64_t Ptr = Next();
-    uint64_t Flags = Next(); // bit 0 @Pinned, bit 1 @View
+    uint64_t Flags =
+        Next(); // bit 0 @Pinned, 1 @View, 2 @Abstract, 3-4 abstract
     uint64_t Zero = Next();
-    if (Bad || Ptr > static_cast<uint64_t>(PtrKind::Weak) || Flags > 3 ||
-        Zero > 2)
+    if (Bad || Ptr > static_cast<uint64_t>(PtrKind::Weak) || Flags > 31 ||
+        (Flags >> 3) > 3 || Zero > 2)
       return fail("malformed named type");
     TypeName *TN = Mem.make<TypeName>();
     TN->Name = Mem.copy(Name);
@@ -851,6 +881,9 @@ bool TypeReader::record(const Record &Rec) {
     N->Ptr = static_cast<PtrKind>(Ptr);
     N->Pinned = Flags & 1;
     N->ViewAttr = Flags & 2;
+    N->AbstractAttr = Flags & 4;
+    N->AbstractState.store(static_cast<uint8_t>(Flags >> 3),
+                           std::memory_order_release);
     N->ZeroState.store(static_cast<uint8_t>(Zero), std::memory_order_release);
     Undefined.insert(N);
     return Produce(N);
@@ -878,12 +911,13 @@ bool TypeReader::record(const Record &Rec) {
       F->MoveRecv = Flags & 2;
       F->Fails = Flags & 4;
       F->IsBuiltinMethod = Flags & 8;
+      F->MethodMark = static_cast<Func::Mark>((Flags >> 4) & 3);
       SmallVector<TypeParamType *, 4> RTPs, OTPs;
       TParams(RTPs);
       TParams(OTPs);
       F->RecvTParams = Mem.copy(ArrayRef<TypeParamType *>(RTPs));
       F->OwnTParams = Mem.copy(ArrayRef<TypeParamType *>(OTPs));
-      if (Flags > 15 || !isa_and_nonnull<SignatureType>(F->Ty)) {
+      if (Flags > 63 || !isa_and_nonnull<SignatureType>(F->Ty)) {
         Bad = true;
         break;
       }
@@ -892,6 +926,7 @@ bool TypeReader::record(const Record &Rec) {
       Recv->IsParam = true;
       Recv->Ty = F->HasPtrRecv ? static_cast<Type *>(Ctx.pointer(N)) : N;
       F->Recv = Recv;
+      Ctx.noteMemberName(F->Name);
       N->Methods->push_back(F);
     }
     if (Bad)
@@ -926,9 +961,30 @@ bool TypeReader::record(const Record &Rec) {
   case REC_TPARAM_DEF: {
     auto *TP = dyn_cast_or_null<TypeParamType>(Ty());
     Type *Bound = Ty();
-    if (!TP || Bad || !Undefined.erase(TP))
+    uint64_t NUses = Next();
+    std::vector<TypeParamType::Use> Uses;
+    for (uint64_t K = 0; K < NUses && !Bad; ++K) {
+      uint64_t Kind = Next(), Place = Next(), Flags = Next();
+      StringRef Member = Str();
+      if (Kind > TypeParamType::Use::Method ||
+          Place > TypeParamType::Use::Pointer || Flags > 3) {
+        Bad = true;
+        break;
+      }
+      TypeParamType::Use U;
+      U.K = static_cast<TypeParamType::Use::Kind>(Kind);
+      U.P = static_cast<TypeParamType::Use::Place>(Place);
+      U.Taken = Flags & 1;
+      U.Passed = Flags & 2;
+      U.Member = Member;
+      Uses.push_back(U);
+    }
+    if (!TP || Bad || !Undefined.erase(TP) ||
+        !std::is_sorted(Uses.begin(), Uses.end()) ||
+        std::adjacent_find(Uses.begin(), Uses.end()) != Uses.end())
       return fail("malformed type parameter definition");
     TP->Bound = Bound;
+    Ctx.setTParamUses(TP, Uses);
     return true;
   }
   case REC_PKG_BEGIN: {

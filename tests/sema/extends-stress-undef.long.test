@@ -1,0 +1,7 @@
+// REQUIRES: long
+// P03.22 (R16, R17): the `undef` shape of extends-stress-uses.test at 200000
+// levels: one error for each level, in near-linear time.
+// RUN: %python %S/Inputs/gen-extends-stress.py undef 200000 > %t.gopp
+// RUN: not timeout 60 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 200000" %t.out
+package main

@@ -1,0 +1,104 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule TYP-20 (P03.22, ADR-0023): in a method of an `extends` type, `base`
+// names the parent part of the receiver: `base.M()` calls the parent's
+// version statically (also in a function literal, which captures the
+// receiver) and `base.f` reads a field; `base` itself is no value. base.M()
+// on an @Abstract parent method is an error. A local, parameter, result or
+// receiver named `base` in such a method is an error with a rename hint,
+// reported once (the local then shadows `base`). Elsewhere `base` is an
+// ordinary name. Lines without a CHECK line are accepted.
+package main
+
+type Payment struct{ Amount int64 }
+
+@Abstract
+func (p *Payment) Pay() error
+
+@Virtual
+func (p *Payment) Fee() int64 { return 0 }
+
+func (p *Payment) Total() int64 { return p.Amount }
+
+type Card extends Payment{}
+
+@Override
+func (c *Card) Pay() error {
+	// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: base.Pay: Pay is @Abstract in Payment, it has no body to call (TYP-20)
+	return base.Pay() // error: Pay is @Abstract in Payment
+}
+
+@Override
+func (c *Card) Fee() int64 {
+	f := func() int64 { return base.Fee() + base.Total() }
+	return f()
+}
+
+func (c *Card) Fields() int64 { return base.Amount + base.Total() }
+
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this parameter
+func (c *Card) Names(base int) int { // error: a parameter
+	return base
+}
+
+// CHECK-DAG: [[@LINE+1]]:27: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this result
+func (c *Card) Results() (base int) { // error: a result
+	return 0
+}
+
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this receiver
+func (base *Card) Recv() {} // error: the receiver
+
+func (c *Card) Locals() int {
+	// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this variable
+	base := 1 // error: a local
+	var other int
+	base, other = 2, 3
+	return base + other
+}
+
+func (c *Card) Var() int {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this variable
+	var base int // error: a local
+	base = 3
+	return base + base
+}
+
+func (c *Card) Loop() {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this variable
+	for base := 0; base < 3; base++ { // error: a loop variable
+	}
+}
+
+func (c *Card) Lit() {
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: `base` is special in a method of Card (it names the parent part, TYP-20): rename this parameter
+	f := func(base int) {} // error: a parameter of a function literal
+	_ = f
+}
+
+func (c *Card) Value() {
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: `base` in a method of Card is only used as base.M(...) or base.f: it names the parent part of the receiver, not a value (TYP-20)
+	x := base // error: base is no value
+	_ = x
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: `base` in a method of Card is only used as base.M(...) or base.f: it names the parent part of the receiver, not a value (TYP-20)
+	_ = &base     // error
+	// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: base.Nope undefined (type *Payment has no field or method Nope)
+	_ = base.Nope // error: no such member
+}
+
+// Elsewhere `base` is an ordinary name.
+type Plain struct{ N int }
+
+func (p *Plain) Use() int {
+	base := 1
+	return base + p.N
+}
+
+func free(base int) int {
+	base2 := base
+	return base2
+}
+
+func (p *Payment) OnRoot() int64 {
+	base := p.Amount
+	return base
+}
