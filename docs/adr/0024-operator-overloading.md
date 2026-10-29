@@ -31,7 +31,6 @@ On 2026-10-28 the owner decided: Go++ gets **full operator overloading minus the
    - `range`: `func (t *Tree) range () iter.Seq[int]`, so `for v := range t {}` works (RNG-6b).
    - `++` and `--`, as statements, as in Go (EXP-19).
    - Dereference `*x` for user pointer-like types: read access only; the method must return `View[T]`, so there is no write through it (EXP-24).
-   - User literal suffixes: `func (km) _km (v float64) Meters` gives `10.5_km` (EXP-27, LEX-13).
 3. **A number on the left (EXP-26).** The attribute `@Right` on a binary method makes `s op a` work (`s` is the parameter type). It is allowed on every binary operator method except `&&` and `||`.
    - On `+ * & | ^ ==` the order does not matter, so the one method serves `a op s` and `s op a`.
    - On every other operator the method is **written for the swapped order**: with `@Right`, `func (a Vec2) / (s float64) Vec2` is the body of `s / a` (`a` is the right operand), so `1.0 / v` calls it. It does not serve `a / s`. For that, write a second method without `@Right`.
@@ -48,12 +47,13 @@ On 2026-10-28 the owner decided: Go++ gets **full operator overloading minus the
 6. **Generics (GEN-13).** A constraint can require operators: `[T interface{ + (T) T }]`. One `Sum` works for `int`, `Vec2` and `BigInt`. Built-in types satisfy a constraint with their built-in operators, `<=>` included: `int`, `float64` and `string` satisfy `<=> (T) int`, so one ordered constraint serves built-in and user types. `cmp.Ordered` stays.
 7. **Vet (EXP-20).** `gopp vet` warns if `==` and `<=>` disagree in definition, or if only one of them is defined.
 8. **Precedence and associativity (EXP-28).** The same as Go for every operator. The new `<=>` has the level of the comparison operators (level 3).
-9. **Go mode.** `.go` files are unchanged: no operator methods, no `<=>`, no literal suffixes, no `@Convert`.
+9. **Go mode.** `.go` files are unchanged: no operator methods, no `<=>`, no `@Convert`.
 10. **`select` and user channel types (CON-22).** A type with `<-` methods cannot appear in a `select` case; only built-in channels can. A `select` needs a try-send, a try-receive and a wait-queue protocol that a plain `<-` method does not give.
 11. **Map keys and `comparable` (EXP-20, GEN-13).** They use built-in equality, never a user `==` method (hashing needs the bytes). `gopp vet` warns when a type with a user `==` is used as a map key or in a `comparable` instantiation, because the two can disagree.
 12. **Constraint-only interfaces (TYP-27).** An interface with an operator element can be used only as a constraint in v1, like an interface with a union.
 13. **No `!` on operator methods (EXP-30).** A failing operator returns an explicit result or panics, like integer division by zero.
 14. **`<=>` on built-in types (EXP-20).** For numbers and strings the result is -1, 0 or 1, the same as `cmp.Compare`. NaN follows `cmp.Compare`: NaN is less than every other value and equal to NaN.
+15. **No literal suffixes (owner decision 2026-10-28).** Go++ has no user literal suffixes (`10.5_km`). Units are written the Go way, like `time.Duration`: typed constants times a number. `30 * time.Second`, `10*units.Km + 500*units.M` (with `type Meters float64; const Km Meters = 1000`, and a `String()` method for printing), and with operators `10 * money.USD`. No new rule is needed (EXP-27 is removed; example in EXP-27). Imported units are ordinary imported constants, so there is no question about packages, exports or dot imports.
 
 ## Example
 
@@ -111,9 +111,12 @@ q <- job
 j := <-q
 
 type Meters float64
-type km struct{}
-func (km) _km (v float64) Meters { return Meters(v * 1000) }
-d := 10.5_km                          // Meters(10500)
+const (
+    M  Meters = 1
+    Km Meters = 1000
+)
+d := 10*Km + 500*M                    // Meters(10500), the Go way (like 30 * time.Second)
+price := 10 * money.USD               // a Money value (Cents int64, Cur a Copy currency code) and a @Right `*` method (EXP-27)
 ```
 
 ### What the compiler stops
@@ -186,7 +189,6 @@ What each language lets the program overload. "Yes" means the language has the f
 | loop over a user type | `begin` and `end` | `IntoIterator` | range over func | `range` method |
 | increment and decrement | yes (prefix and postfix) | no | no | yes (statements) |
 | channel `<-` | no channels | no channels | no | yes |
-| user literal suffix | yes (`operator""_km`) | no | no | yes (`10.5_km`) |
 | number on the left (`2.0 * v`) | a free function | `impl Mul<Vec2> for f64` | no | `@Right` (any binary operator) |
 | assignment `=` | yes | no (moves) | no | **blocked** |
 | address-of `&` | yes | no | no | **blocked** |
@@ -203,7 +205,7 @@ C++ has the most, including the unsafe ones. Rust has math, compare, index, dere
 - Numeric code reads like math. Generic algorithms can require operators, so `Sum`, `Dot`, `Lerp` and `Max` work for built-in numbers and user types, and `Max[T interface{ Clone; <=> (T) int }]` (returning `a.Clone()`, GEN-4) serves both.
 - A call like `a + b` can now run user code, allocate and panic. Reviewers must know this. The language still shows what a line may do: the borrow, view and never-nil checks are the same as for a method call.
 - `a != b` and `a < b` are made from one definition each, so they cannot disagree with `==` and `<=>`. `gopp vet` catches a type whose `==` and `<=>` disagree.
-- The checker needs: operator method names and forms, overload sets, resolution of every operator expression, compound forms, `@Right`, user literal suffixes, constraint elements, `range`, `@Convert` and the `select` limit. The code generator lowers them to direct calls that inline (P04.23). The formatter, export data and the LSP know the new names.
+- The checker needs: operator method names and forms, overload sets, resolution of every operator expression, compound forms, `@Right`, constraint elements, `range`, `@Convert` and the `select` limit. The code generator lowers them to direct calls that inline (P04.23). The formatter, export data and the LSP know the new names.
 - Imported C++ operators ([P08 D8.6](../../plans/2026-10-27-goplusplus-language/08-cpp-interop/README.md)) and Go++ operator methods use the same resolution in the checker, so `a + b` looks the same for both.
 - `.go` files are unchanged.
 
@@ -212,8 +214,9 @@ C++ has the most, including the unsafe ones. Rust has math, compare, index, dere
 - **A: No overloading, like Go (rejected).** Nothing to do. But vectors, matrices, big numbers and units keep `a.Add(b)`, and generic numeric code stays impossible. This was the old non-goal.
 - **B-limited: arithmetic only, no allocation (rejected).** Easy to review, but `BigInt` and `Matrix` are the main use cases and they allocate. The language already allows allocation in methods, so forbidding it only here has no safety value.
 - **C++-full, including `=`, `&` and implicit conversions (rejected as unsafe).** Overloading `=` breaks the ownership rules (what does a move do?). Overloading `&` breaks the borrow checker (ADR-0021). Implicit conversions cause silent bugs and hidden copies. `.` and the comma have no safe use.
-- **Rust's trait style (rejected).** Every operator needs a trait impl with an associated `Output` type: more boilerplate, and fewer operators (no call, no `&&`, no `++`, no literal suffix). Go++ uses plain methods, which fits Go.
+- **Rust's trait style (rejected).** Every operator needs a trait impl with an associated `Output` type: more boilerplate, and fewer operators (no call, no `&&`, no `++`). Go++ uses plain methods, which fits Go.
+- **User literal suffixes, `10.5_km` (rejected by the owner, 2026-10-28).** The earlier draft had `func (km) _km (v float64) Meters` and the cross-package form `10_units.km`. It needs a new token rule, a name lookup inside the lexer's output, and export and dot-import rules. Go already has the idiom for units: typed constants times a number (`30 * time.Second`, decision 15). Decision 15 replaces it.
 
 ## Open points
 
-1. **Literal suffixes across packages.** The suffix `_km` is looked up as the type `km` of the same package (EXP-27). A suffix from an imported package needs an exported name and a way to write it. **Proposal, still open:** a suffix is imported like any name, written `10_units.km` (package `units`, type `km`), or the type is brought in by a dot import so that `10.5_km` works as in the same package.
+None.

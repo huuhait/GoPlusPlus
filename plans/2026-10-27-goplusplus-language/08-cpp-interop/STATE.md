@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-27
+Last updated: 2026-10-28 (P08.16 added)
 Task definitions: [../TODO.md](../TODO.md) (section P08) · Design: [README.md](README.md)
 
 ## Stages
@@ -30,6 +30,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P08) · Design: [README.md](
 - [ ] P08.13 Performance parity
 - [ ] P08.14 C++ ABI fuzzing
 - [x] P08.15 Decide P08 Q3–Q4 (owner decisions, ADR-0010)
+- [ ] P08.16 Extending C++ classes (ADR-0023 decision 14)
 
 ## Open questions
 
@@ -47,6 +48,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P08) · Design: [README.md](
 ## Decision changes
 
 - 2026-10-28 (ADR-0023): open point for D8.8 and P08.08: `extends` on a C++ class is an error in v1; P08 decides whether Go++ `extends` and C++ inheritance connect.
+- 2026-10-28 (owner decision, ADR-0023 decision 14): that open point is decided: a Go++ struct may extend one C++ class (spec TYP-28). New task P08.16 (the checker rules, the Clang subclass shim, construction, destruction); several C++ bases, virtual inheritance and templates as parents are not in v1; conflicts are in ADR-0023 open point 5.
 - 2026-10-27 (ADR-0006, P01.15 owner decisions): `//gopp:cxxstd` is removed; `cxxstd` in gopp.mod replaces it. A range over a C++ container works like a slice loop (`for _, x := range c` borrows, `for _, &x := range c` changes the element). `clone(x)` is the short form of `x.Clone()`.
 
 ## Notes / blockers

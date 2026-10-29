@@ -6,7 +6,12 @@ Delta D1.10. Go's design is kept: type parameters, constraint interfaces with ty
 
 ## 10.1 Syntax
 
-Only one grammar change: **methods may have type parameters** (generic methods). `MethodDecl` (with `TypeParameters` before the optional `!`) is defined in [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18).
+Two grammar changes. The first: **methods may have type parameters** (generic methods). `MethodDecl` (with `TypeParameters` before the optional `!`) is defined in [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18). The second: the **`extends` constraint form** ([GEN-12](#102-rules)):
+
+```
+TypeParamDecl = IdentifierList ( TypeConstraint | "extends" Type ) .     /* [T extends P] is short for [T interface{ extends P }] */
+InterfaceElem = /* Go alternatives */ | "extends" Type .                /* GEN-12 */
+```
 
 A constraint interface may also list operator methods (`interface{ + (T) T }`, grammar in [TYP-27](03-types.md#31-type-syntax), rule [GEN-13](#102-rules)).
 
@@ -48,7 +53,17 @@ A constraint interface may also list operator methods (`interface{ + (T) T }`, g
 
 **GEN-11.** *`Send` and `Sync`* are predeclared constraints, written like `Copy` and `Clone`: `[T Send]`, `[T Sync]`. There is no type argument. They are computed by the compiler for every type ([CON-12](12-concurrency.md), ADR-0022) and cannot be implemented by hand. `[T Send]` means a `T` may be moved to another goroutine (for example in `go` or on a channel); `[T Sync]` means a `T` may be shared between goroutines. They can be embedded in a constraint interface like `Copy` and `Clone`: `interface{ Send; Clone }`. A generic body that moves or shares a `T` across goroutines needs the constraint; the check is once per body (GEN-5), and the instance is checked again with the real type (P04.08). An interface that embeds them (`interface{ Send }`) is itself `Send`; `error` is declared with both. Example: `func Spawn[T Send](x T, f func(T)) { go f(x) }`; `Spawn[View[string]]` is an error.
 
-**GEN-12.** *`extends` and generics.* A generic struct may be a parent or a child (`type B[T any] extends A[T]`, [TYP-16](03-types.md#35-single-inheritance-adr-0023)); marks and checks apply per instance like every generic rule ([GEN-5](#102-rules)). A constraint "`T extends Parent`" does **not** exist in v1 (ADR-0023 open point 2): use a `*Parent` parameter or an interface.
+**GEN-12.** *`extends` and generics* (ADR-0023 decision 15). A generic struct may be a parent or a child (`type B[T any] extends A[T]`, [TYP-16](03-types.md#35-single-inheritance-adr-0023)); marks and checks apply per instance like every generic rule ([GEN-5](#102-rules)). The constraint `[T extends P]` means `T` is `P` or a type that extends `P`, directly or indirectly:
+```go
+func Feed[T extends Animal](a *T) { a.Eat(); a.Speak() }
+func Both[T interface{ extends Animal; Clone }](a *T) T { a.Eat(); return a.Clone() }
+```
+- *Grammar.* In a type parameter list `T extends P` is short for `T interface{ extends P }`. `extends` is also an element of a constraint interface, next to methods, operator methods and type terms. It is contextual ([LEX-12](02-lexical.md#lex-12)). `P` is a struct type, a generic one with arguments too (`T extends Box[U]`), or a C++ class ([TYP-28](03-types.md#35-single-inheritance-adr-0023)).
+- *In the body* (checked once, [GEN-5](#102-rules)): `*T` converts to `*P` (an upcast, the same borrow, [EXP-13](06-expressions.md#69-upcasts-and-downcasts-adr-0023)); the methods of `P` (operator methods too, [GEN-13](#102-rules)) and the fields of `P` are available on `T`. Nothing else of `T` is known. A call runs the version of the real type of the instance: `a.Speak()` in `Feed[Dog]` runs `Dog`'s `Speak`, and through a `*P` that really points to a `Dog` it dispatches dynamically as always ([EXP-14](06-expressions.md#69-upcasts-and-downcasts-adr-0023)). A write to a parent field through `*T` is allowed when the borrow rules allow it ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021)).
+- *Value slicing* stays an error: a `T` value does not convert to a `P` value ([EXP-15](06-expressions.md#69-upcasts-and-downcasts-adr-0023)). `var zero T` follows [GEN-5](#102-rules): it is an error when `P` has no zero value.
+- *Instantiation.* `Feed[Dog]` and `Feed[Animal]` are accepted. `Feed[int]`, `Feed[Cat]` where `Cat` does not extend `Animal`, an interface type and a pointer type as `T` are errors, with the constraint named. Elements may be combined, but `extends` with a type-set term (`~int`) has an empty type set and is an error.
+- *Final-only parents.* If `P` has no type table, the limits of [TYP-22](03-types.md#35-single-inheritance-adr-0023) apply in the body: only a borrowed `*T` to `*P`; `Unique[*T]` to `Unique[*P]` (and `Shared`, `Weak`) and a downcast are errors, since the body is checked once for every `T`.
+- *Not decided* (ADR-0023 open point 5): whether a C++ class derived from a C++ `P` in C++ satisfies `T extends P`; v1 default is no.
 
 **GEN-13.** *Operators in constraints* (ADR-0024). A constraint interface can list operator methods like any method: `interface{ + (T) T }`, `interface{ == (T) bool }`, `interface{ <=> (T) int }`, `interface{ [] (int) T }`. A conversion marked `@Convert` is not an operator element: to require one, list the ordinary method (`interface{ Float64() float64 }`).
 - The body is checked once ([GEN-5](#102-rules)) with the operators the constraint lists, and with nothing else. `a + b` is valid if the constraint of `T` has `+ (T) T`. An instance calls the real method, or the built-in operator.

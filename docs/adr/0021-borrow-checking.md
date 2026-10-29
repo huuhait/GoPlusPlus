@@ -55,7 +55,7 @@ On 2026-10-28 the owner decided that these must be compile errors, but without R
 
 1. SLC-6 (`s = s[i:j]`) is an assignment of `s`, so it is an error while a borrow of `s` is live and inside a range loop over `s` (RNG-3 already says so). No other change to SLC-6.
 2. Decided (manager): the visible same-place case of UB-2b (`s.fail(s.err)`) is a compile error through OWN-B4. *(Was: "Only the hidden path stays UB." After Amendment B there is no hidden path in normal code.)*
-3. Go mode: the plan does not say how `.go` files are ownership-checked. This ADR assumes the same ownership model and the same checker. It needs a deliberate decision before P04.20 is built (P04 README Q3): do `.go` files get the borrow checker (they have no GC in Go++ either)?
+3. Go mode: the plan does not say how `.go` files are ownership-checked. This ADR assumes the same ownership model and the same checker. **Deferred by owner 2026-10-28:** Go mode is not a current focus (Go++ plus C/C++ systems programming is), so P04 Q3 stays open and no new Go-mode work is planned; existing Go-mode rules and tests stay. The question was (P04 README Q3): do `.go` files get the borrow checker (they have no GC in Go++ either)?
 4. Rules OWN-V5 ("views may be stored at the programmer's risk") and OWN-V7 ("a view from a call stays UB") were reworded to point to OWN-B5 and OWN-B3. The old principle "No borrow checker (D1.4 rule 8)" is superseded; ADR-0003 keeps its text as history.
 
 ## Amendment (2026-10-28)

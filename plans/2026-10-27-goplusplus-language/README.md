@@ -40,6 +40,8 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 6. **Reproducible, locked builds.** Every byte that goes into a build comes from a hashed input.
 7. **Fast loop for building Go++ itself.** Rebuilding `gopp` and running the tests for what you changed take seconds, not minutes, even as the code grows. A slow loop is a bug: fix it with narrower test targets, caches and tests that stop early, not by waiting (P00 D0.13).
 
+**Current focus (owner, 2026-10-28):** Go++ plus C/C++ systems programming. Go-mode (`.go` files) compatibility is parked: existing Go-mode rules and tests stay, and no new Go-mode work is planned now (P04 Q3).
+
 ## 3. Non-goals for v1
 
 - Source compatibility with Go. Go code that relies on GC won't compile unchanged, and neither will Go code that uses nil pointers, nil funcs or nil interfaces with methods (they are never nil; "maybe" is `Option[T]`, ADR-0018 and its amendment; `error` and `any` keep `nil`); a migration helper comes after v1.
@@ -47,7 +49,7 @@ Go++ is a compiled systems language with **Go's syntax and tooling**, **no garba
 - Consuming Go modules. Importing a Go module is an error in v1; after v1.0 it needs a dual engine (Go semantics with GC next to Go++) (P10 Q2).
 - Rust-style lifetime annotations, and full memory safety: `unsafe`, C and C++ interop, data races in `unsafe` or C and C++ threads, and `longjmp` stay undefined. Borrows are checked by flow and liveness without annotations, with inferred borrow summaries and one writable borrow per place, so hidden aliasing is a compile error (ADR-0021). Data races in normal code are compile errors (ADR-0022); logic races and deadlocks the compiler cannot see are not covered.
 - A tracing GC, or automatic refcounting of everything.
-- Multiple inheritance, or exceptions as an error mechanism. (Single inheritance with `extends` is in v1, ADR-0023; Go's struct embedding is removed from `.gopp` files. Operator overloading is in v1 too, as "full minus unsafe", ADR-0024: the operator is the method name; `=`, `.`, `&x`, the comma and implicit conversions stay blocked.) Imported C++ operators and exceptions *are* supported at the boundary. C++ class inheritance at the boundary is an open point for P08.
+- Multiple inheritance, or exceptions as an error mechanism. (Single inheritance with `extends` is in v1, ADR-0023; Go's struct embedding is removed from `.gopp` files. Operator overloading is in v1 too, as "full minus unsafe", ADR-0024: the operator is the method name; `=`, `.`, `&x`, the comma and implicit conversions stay blocked.) Imported C++ operators and exceptions *are* supported at the boundary. A Go++ type may extend one C++ class (ADR-0023 decision 14, task P08.16); several C++ bases, virtual inheritance and C++ templates as parents are not in v1.
 - A SIMD package: **deferred by owner 2026-10-28**, not designed. Today LLVM auto-vectorizes release builds and C/C++ intrinsics work through imports. The options (a portable `simd.Vec[T, N]` now, raw intrinsics later) are recorded as open question Q3 of P15, so it is not forgotten.
 - A user-facing `reflect` package. `fmt` and `encoding/json` still work on any type, using small field tables the compiler emits (P01 D1.12).
 - C/C++ build systems other than CMake (Meson, Autotools, Bazel). A package without CMake gets a small local CMake file instead (P11); other build systems may come after v1.
@@ -148,7 +150,7 @@ github.com/madler/zlib v1.3.1/cdep h1:<sha256 hash of the source tree, base64>=
 | Panics | Go runtime unwinding | Platform unwinder shared with C++ exceptions; destructors run |
 | Goroutines | Growable moving stacks, async preemption | Fixed non-moving stacks (so C can run on them); cooperative scheduling with yield points in function prologues and loop back-edges |
 | Struct reuse | Embedding with promotion; no inheritance | Embedding removed in `.gopp` (error with fix-it); single inheritance `type Card extends Payment`, methods marked `@Virtual` / `@Abstract` / `@Override`, `base.M()` (ADR-0023); `.go` files keep embedding |
-| Operators | No overloading | Operator methods: the operator is the method name (`func (a Vec2) + (b Vec2) Vec2`); binary, unary, `==` (gives `!=`), `<=>` (built in for numbers and strings too; gives `< <= > >=`), `&&`/`||`, `[]`/`[]=`, `()`, `<-`, explicit `@Convert` conversion, optional in-place `+=`, `range`, `++`/`--`, read-only `*x`, literal suffixes, `@Right`, operator constraints in generics; `=`, `.`, `&x`, the comma and implicit conversions blocked (ADR-0024) |
+| Operators | No overloading | Operator methods: the operator is the method name (`func (a Vec2) + (b Vec2) Vec2`); binary, unary, `==` (gives `!=`), `<=>` (built in for numbers and strings too; gives `< <= > >=`), `&&`/`||`, `[]`/`[]=`, `()`, `<-`, explicit `@Convert` conversion, optional in-place `+=`, `range`, `++`/`--`, read-only `*x`, `@Right`, operator constraints in generics; `=`, `.`, `&x`, the comma and implicit conversions blocked (ADR-0024) |
 | Generics | GC-shape stenciling + dictionaries | Full monomorphization with cross-package dedupe |
 | Generic methods | Not allowed | Allowed; they can't satisfy interface methods |
 | Data races | Memory model limits damage | Compile-time checks in normal code (ADR-0022); `-race` (TSan) only for `unsafe` and C/C++ |

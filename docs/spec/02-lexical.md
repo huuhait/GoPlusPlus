@@ -10,7 +10,7 @@ Base: Go spec [Lexical elements](https://go.dev/ref/spec#Lexical_elements), [Tok
 
 ### Keywords
 
-**LEX-2.** One new keyword is reserved: `macro`. Three more words are *contextual*: `move`, `extends` and `base` ([LEX-12](#lex-12)). They are not reserved, so they stay usable as names. `ref` is not special at all: it is an ordinary identifier.
+**LEX-2.** One new keyword is reserved: `macro`. Three more words are *contextual*: `move`, `extends` and `base` ([LEX-12](#lex-12)); `extends` is special in a type declaration, in a type parameter list and as a constraint element. They are not reserved, so they stay usable as names. `ref` is not special at all: it is an ordinary identifier.
 
 ```
 keyword = /* the 25 Go keywords */ | "macro" .
@@ -47,10 +47,9 @@ Old uses stay: unary `!x` and the operator `!=`.
 - `f!(x)` is `f`, `!`, `(`. In `f != (x)` the `!` is joined with `=`.
 - A `!` right after a primary expression and before `(` is the unwrapping mark (`PrimaryExpr "!" Arguments`; generic calls are `f[T]!(x)`, where `!` follows the `]`). A unary `!` can never follow an operand, so the parser always knows which it is.
 
-**LEX-13.** *Operator tokens and literal suffixes* (ADR-0024). Only in `.gopp` files.
+**LEX-13.** *Operator tokens* (ADR-0024). Only in `.gopp` files.
 - One new token: `<=>`. Lexing is greedy, so `a<=>b` is `a`, `<=>`, `b`. It was never valid Go, so no code changes meaning. In `.go` files it is still `<=` followed by `>`.
 - Operator method names ([TYP-27](03-types.md#31-type-syntax)) are written with existing tokens: `+`, `==`, `<-`, `++`, `range` and so on. `[]`, `[]=` and `()` are two or three adjacent tokens (`[`, `]`, `=`). The parser accepts spaces between them, and `gopp fmt` removes the spaces.
-- A number literal may end with a **suffix**: `_` directly followed by a letter, then letters, digits and `_`. Examples: `10.5_km`, `3_h`, `0xFF_u`. The suffix is part of the literal token. Digit separators are unchanged: in `1_000` the `_` is followed by a digit, so it is a separator. In a hex literal, `_` followed by a hex digit is a separator (`0x1_f`), so `0x10_ab` has no suffix and `0x10_km` has the suffix `_km`. The meaning is in [EXP-27](06-expressions.md#610-operator-methods-adr-0024). In `.go` files a suffix is the usual Go error.
 
 ### Semicolon insertion
 
@@ -90,7 +89,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 <a id="lex-12"></a>
 **LEX-12.** *`move`, `extends` and `base` are contextual.* Each is special only in the places below. Everywhere else it is an ordinary identifier. (`ref` was contextual before ADR-0020. It is now an ordinary identifier everywhere, in `.gopp` and in `.go` files.)
-- `extends` is special only in a type declaration, after the type name and its optional type parameters: `type Card extends Payment { … }` ([TYP-16](03-types.md#35-single-inheritance-adr-0023)). Everywhere else it is an ordinary identifier (`extends := 1`, `func extends()`, a field named `extends`).
+- `extends` is special only in three places: (1) a type declaration, after the type name and its optional type parameters: `type Card extends Payment { … }` ([TYP-16](03-types.md#35-single-inheritance-adr-0023)); (2) a type parameter list, after a type parameter name: `[T extends Animal]` ([GEN-12](10-generics.md#102-rules)); (3) as an element of a constraint interface, at the start of the element: `interface{ extends Animal; Clone }` (GEN-12). In (2) and (3) it must be followed by a type. Everywhere else it is an ordinary identifier (`extends := 1`, `func extends()`, a field named `extends`).
 - `base` is special only inside the methods of a type declared with `extends`, where `base.M(…)` calls the parent's method ([TYP-20](03-types.md#35-single-inheritance-adr-0023)). A local, parameter or result named `base` is an error there, with a rename hint. In any other function, method or scope `base` is an ordinary identifier.
 - `move(x)` is a predeclared function ([EXP-1](06-expressions.md)). `move` is also the mark of a parameter or receiver ([PAR-5](05-parameters.md)), but only at the start of a parameter declaration, followed by a parameter name and then the type: `move s string`. A `move` followed by a type alone (`move T`, `move pkg.T`, `move G[K]`, `move []int`) is read as in Go: a parameter *named* `move` of that type. See the EBNF in [5.1](05-parameters.md#51-syntax).
 
@@ -128,12 +127,13 @@ Each changed production is defined in exactly one place:
 |---|---|
 | `FunctionDecl`, `MethodDecl`, `FunctionLit`, `FunctionType`, `MethodElem`, `PrimaryExpr "!" Arguments` (the `!` forms and generic methods) | [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18) |
 | `ParameterDecl` (`move`) | [5.1](05-parameters.md) |
+| `TypeParamDecl` and `InterfaceElem` (the `extends` constraint form) | [10.1](10-generics.md#101-syntax) |
 | `RangeClause`, `RangeVars`, `RangeVar` (`&`) | [8.3](08-slices-and-range.md#83-range-loops-d121) |
 | `FieldAttributes` | [13.1](13-macros-surface.md) |
 | `Type`, `TypeLit`, `ExtendsDecl`, `FieldDecl` (no embedded fields) | [3.1](03-types.md) |
 | `MacroDecl`, `ProcMacroDecl`, `MacroInvocation`, `Attribute`, `TopLevelDecl`, `Operand` | [13.1](13-macros-surface.md) |
 | `ImportPath` forms | [14.1](14-foreign-surface.md) |
-| `MethodName`, `OperatorName` (operator methods; the token `<=>` and number suffixes are in [LEX-13](#new-tokens)) | [3.1](03-types.md#31-type-syntax) |
+| `MethodName`, `OperatorName` (operator methods; the token `<=>` is in [LEX-13](#new-tokens)) | [3.1](03-types.md#31-type-syntax) |
 
 ## 2.4 Rationale
 

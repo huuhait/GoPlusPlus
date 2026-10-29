@@ -186,7 +186,7 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 
 - **Q1** (decided 2026-10-27) GIR serialization format: LLVM bitstream container, same-compiler-version only, deterministic bytes, `gopp gir dump` (D4.15).
 - **Q2** (deferred to P06) One LLVM module per package, or per function group at `opt 0` (the debug profile)? Decided by measurement in P06.07 (see P06 D6.5).
-- **Q3** (open, decide before P04.20 and P04.21 are built) Do `.go` files get the borrow checker and the concurrency checks (ADR-0022)? They have no GC in Go++ either, so the assumption is yes, with the same rules (ADR-0021 open point 3, ADR-0022 open point 4).
+- **Q3** (deferred by owner 2026-10-28: Go mode (`.go` files) is not a current focus; the owner works on Go++ plus C/C++ systems programming and Go source compatibility is parked. Existing Go-mode rules and tests stay; no new Go-mode work is planned). The question was: do `.go` files get the borrow checker and the concurrency checks (ADR-0021 open point 3, ADR-0022 open point 4)? P04.20 and P04.21 are built for `.gopp` files; what they do for `.go` files stays as the existing rules and tests say, until the owner picks Go mode up again.
 
 **D4.16 — Borrow checker** (ADR-0021; task P04.20).
 - It runs on the same flow graph as the use-after-move check (D4.2 step 2), after it, in the same per-function pass. No lifetime annotations: borrows are found from the code, and liveness is computed backwards from the uses (non-lexical lifetimes).

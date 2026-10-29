@@ -78,8 +78,8 @@ The work ships in five stages. Each stage is tested and usable before the next o
 - Derived → base pointer conversion is implicit.
 - Virtual calls use normal method-call syntax; Clang emits the dispatch.
 - `ffi.DynamicCast[T](p)` performs a dynamic cast.
-- Go++ types that subclass C++ classes or override virtuals come in v1.x, because they need vtable synthesis.
-- Open point from ADR-0023: Go++ now has its own single inheritance (`extends`), and `extends` on a C++ class (or a C++ class as the parent of a Go++ type) is an error. Whether the two connect is decided here, with the vtable work.
+- **Go++ types may extend one C++ class** (owner decision 2026-10-28, ADR-0023 decision 14, spec TYP-28; task P08.16): `type MyButton extends QtWidgets.QPushButton { clicks int }`. `@Override` replaces a C++ `virtual` method and `base.M()` calls the C++ implementation. A pure virtual acts as `@Abstract`; a non-virtual method cannot be overridden. The layout is the C++ object first (with its vtable), then the Go++ fields. The compiler generates a C++ subclass shim through Clang (the vtable synthesis), so C++ code calling the virtual reaches the Go++ override. Construction calls a C++ constructor (syntax decided in P08.16); destruction drops the Go++ fields, then runs the C++ destructor. C++ code holding raw pointers to the object is UB-9 / UB-10 territory.
+- Not in v1: several C++ bases, virtual inheritance, a C++ class template as the parent. The conflicts with earlier rules (relocation, RTTI for downcasts, failable overrides, derived C++ classes and `T extends P`) are listed in ADR-0023 open point 5 and decided in P08.16.
 
 **D8.9 — Exceptions are unified with panics (P04 D4.6).**
 - **Panics are native C++ exceptions.** Go++ panics passing through C++ frames run C++ destructors. A C++ `catch (...)` can catch them, and frees them correctly; this is documented behavior.
@@ -140,9 +140,10 @@ The work ships in five stages. Each stage is tested and usable before the next o
 
 ## Open questions
 
-Task P08.15 decides Q3 and Q4.
+Task P08.15 decides Q3 and Q4. Task P08.16 decides Q5.
 
 - **Q1** (decided 2026-10-27) C++ identifiers that are Go++ keywords get a trailing underscore (`type_`, `range_`, `map_`), as for C (P07 D7.3).
 - **Q2** (moved to P07 Q2; decided 2026-10-27, ADR-0008) Should `const` on methods and parameters show up in Go++ signatures? No: it stays metadata and is enforced at the boundary (only `const` methods on borrowed values; no read-only value passed where C++ may change it).
 - **Q3** (decided 2026-10-27, ADR-0010) Explicit template arguments use Go's generic brackets: `memory.make_unique[Foo](1, 2)` (D8.5).
 - **Q4** (decided 2026-10-27, ADR-0010) Deep names: `asio.tcp` while it is unique, and the full path `asio.ip.tcp` always works; collisions are errors on use, listing each candidate with its C++ name and location (D8.1).
+- **Q5** (open, decided in task P08.16) The construction syntax of a Go++ type that extends a C++ class (ADR-0023 decision 14, D8.8): a composite literal with the C++ constructor's arguments, or a constructor call, or both; how a C++ base with several constructors is chosen; and the conflicts in ADR-0023 open point 5.

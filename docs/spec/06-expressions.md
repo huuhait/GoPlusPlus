@@ -116,7 +116,7 @@ p := u                                    // u moves into p; u is unusable until
 
 ## 6.9 Upcasts and downcasts (ADR-0023)
 
-**EXP-13.** *Upcast.* A `*Child` converts implicitly to a `*Parent`, or to any ancestor pointer, and to the pointer kinds: `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`; `View[Child]` converts to `View[Parent]` (read-only, [OWN-V3](04-ownership.md#44-views-d16)). The conversion changes only the static type (free, [TYP-22](03-types.md#35-single-inheritance-adr-0023)) and keeps the same borrow ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021)); an owning pointer moves as before. The reverse (`*Parent` to `*Child`) is never implicit. If the parent has no type table ([TYP-22](03-types.md#35-single-inheritance-adr-0023)), only the borrowed `*Child` to `*Parent` conversion exists; the `Unique`, `Shared` and `Weak` forms are errors.
+**EXP-13.** *Upcast.* A `*Child` converts implicitly to a `*Parent`, or to any ancestor pointer, and to the pointer kinds: `Unique[*Child]` to `Unique[*Parent]`, and the same for `Shared` and `Weak`; `View[Child]` converts to `View[Parent]` (read-only, [OWN-V3](04-ownership.md#44-views-d16)). The conversion changes only the static type (free, [TYP-22](03-types.md#35-single-inheritance-adr-0023)) and keeps the same borrow ([OWN-B1](04-ownership.md#45-borrow-checking-adr-0021)); an owning pointer moves as before. The reverse (`*Parent` to `*Child`) is never implicit. If the parent has no type table ([TYP-22](03-types.md#35-single-inheritance-adr-0023)), only the borrowed `*Child` to `*Parent` conversion exists; the `Unique`, `Shared` and `Weak` forms are errors. For a C++ parent the C++ vtable is the type table ([TYP-28](03-types.md#35-single-inheritance-adr-0023)); in a generic body `*T` with `T extends P` converts to `*P` by the same rule ([GEN-12](10-generics.md#102-rules)).
 
 **EXP-14.** *Dispatch.* A call through a parent pointer to a `@Virtual` or `@Abstract` method runs the override of the dynamic type (indirect call through the type table). A call to a final method is direct, and `base.M()` is direct ([TYP-20](03-types.md#35-single-inheritance-adr-0023)).
 
@@ -152,7 +152,6 @@ Go++ lets a type define what an operator does, by a method whose name is the ope
 | `*` (unary) | `() View[T]` | value | `*a` |
 | `@Convert` method (any name) | `() R` | value | `R(a)` |
 | `range` | `() F`, where `F` is a function type that `range` accepts | value or pointer | `for x := range a` |
-| `_name` | `(v V) R` | value (no name) | `10.5_name` |
 
 - The shape is checked at the declaration: the wrong number of parameters, a wrong result (`==` must return `bool`, `<=>` must return `int`), or the wrong receiver kind is a compile error that names the table row.
 - A **value receiver** of a non-trivial type is a read-only borrow, like every value parameter ([PAR-4](05-parameters.md)). A **pointer receiver** is required where the operator changes the operand; the operand must then be addressable and writable (a variable, field or element that is not behind a read-only borrow). A pure operator with a pointer receiver is an error, because `a + b` would need `&a` and `a` may be a temporary.
@@ -229,12 +228,28 @@ Two methods with the same operator and the same parameter types are a duplicate-
 - The parameter type must differ from the receiver type. `@Right` on anything that is not a binary operator method is an error.
 - If the left operand's type already has a method for this pair, the use is ambiguous and is an error ([EXP-17](#610-operator-methods-adr-0024)).
 
-**EXP-27.** *User literal suffixes.* A number literal with a suffix, `10.5_km` ([LEX-13](02-lexical.md#new-tokens)), calls the method `_km` of the type `km`.
-- The checker looks up the type `km` (the suffix without its `_`) in the **current package**. It must have a method `_km` with one parameter and one result: `func (km) _km (v float64) Meters`. The receiver has no name, is never created, and so may be any type, even one with no zero value. The call is static and inlines.
-- The literal is converted to the parameter type as an untyped constant: `10.5_km` with `v float64` is fine, `10.5_km` with `v int64` is an error (not representable), `3_km` with `v float64` is fine. Several `_km` methods with different parameter types are an overload set ([EXP-17](#610-operator-methods-adr-0024)).
-- The result is an ordinary call expression of the result type. It is **not a constant**: `const D = 10.5_km` is an error.
-- A suffix with no such type or method is an error that names the suffix. Suffixes from other packages are not decided (ADR-0024 open point 1; proposal: import the suffix type like any name, `10_units.km`, or by a dot import).
-- Applies to integer and floating-point literals (not to strings or runes).
+**EXP-27.** *(Removed: no literal suffixes.)* Go++ has no user literal suffixes like `10.5_km` (owner decision 2026-10-28, ADR-0024 decision 15). The number is kept free for later rules, so the other EXP numbers and their links do not change. Units are written the Go way, as in `time.Duration`: typed constants times a number. This needs no new rule; an operator method makes it work for struct types too.
+```go
+type Meters float64
+const (
+    M  Meters = 1
+    Km Meters = 1000
+)
+func (m Meters) String() string { return strconv.FormatFloat(float64(m), 'f', -1, 64) + "m" }
+
+d := 10*Km + 500*M                  // Meters(10500); from another package: 10*units.Km
+timeout := 30 * time.Second         // the same idiom in the standard library
+
+// with operators (EXP-16): a money type with a currency constant
+type Currency int32                 // a Copy type, so reading it out of a borrowed receiver is a copy
+const CurUSD Currency = 1
+type Money struct { Cents int64; Cur Currency }
+var USD = Money{100, CurUSD}        // one dollar
+@Right
+func (a Money) * (n int64) Money    { return Money{a.Cents * n, a.Cur} }   // serves USD * 10 and 10 * USD
+price := 10 * USD
+```
+
 
 **EXP-28.** *Precedence and associativity.* Overloading never changes the parse. Every operator keeps Go's precedence and associativity ([Operator precedence](https://go.dev/ref/spec#Operator_precedence)); the parser does not know types. The new `<=>` is a binary operator at **level 3**, with `== != < <= > >=`, left to right. So `a <=> b == 0` is `(a <=> b) == 0` and `a <=> b < 0` is `(a <=> b) < 0`, while `a < b < c` stays a type error as in Go. Send `a <- v` is a statement and has no precedence. Unary operators bind tighter than every binary one.
 
@@ -248,7 +263,7 @@ Two methods with the same operator and the same parameter types are a duplicate-
 Also an error, with a "write this instead" hint: `!=` (write `==`); `<`, `<=`, `>`, `>=` (write `<=>`); `:=`. A compound operator (`+=` and so on) can be declared only as the in-place form of [EXP-19](#610-operator-methods-adr-0024): pointer receiver, one parameter, no result. These built-in features have no operator form: `len`, `cap`, `append`, `copy`, `delete`, `close`, `min`, `max`, `clear`, `move`, `clone`, the type assertion `x.(T)`, slice expressions `a[i:j]`, `...`, and `go`, `defer`, `select`.
 
 **EXP-30.** *Other rules.*
-- **Not callable by name.** Operator methods and literal-suffix methods are used only through their operator or literal form. `a._km(1.0)` is an error, with a hint that gives the literal form. (`range` and the symbols cannot be selectors anyway.) A `@Convert` method is an ordinary method and can be called by name. `gopp doc` lists them under the type.
+- **Not callable by name.** Operator methods are used only through their operator form (`range` and the symbols cannot be selectors anyway). A `@Convert` method is an ordinary method and can be called by name. `gopp doc` lists them under the type.
 - **No own type parameters, no `!`.** An operator method cannot have type parameters of its own, and cannot be a `!` function ([ERR-1](09-errors-and-panics.md#91-functions-that-can-fail-d18)). Type parameters of the receiver type are fine. An operator that can fail returns an explicit result, or panics (like integer division by zero).
 - **`extends`.** A child inherits the operator methods of its parent like all methods ([TYP-17](03-types.md#35-single-inheritance-adr-0023)). Resolution uses the exact static types, so a `Child` value is not accepted where the parameter type is `Parent` (value slicing, [EXP-15](#69-upcasts-and-downcasts-adr-0023)). A child may add an overload with another parameter type. **`==` on children:** if `Parent` defines `== (Parent)`, the child inherits it, and that hides the built-in struct equality of the child. With the exact-type rule `child == child` is then an error, with the hint "define `==` on Child, or compare the parent parts". The same holds for an inherited `<=>`. The same signature needs `@Override` and a `@Virtual` or `@Abstract` parent method, which is possible only for the operators with a pointer receiver ([TYP-18](03-types.md#35-single-inheritance-adr-0023)).
 - **Export data.** The operator methods and the `@Right` marks are part of a type's export data, so importers get the same overload sets and errors.

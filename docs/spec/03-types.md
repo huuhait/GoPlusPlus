@@ -27,7 +27,7 @@ OperatorName = "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" | "&^
 ```
 
 **TYP-27.** *Operator method names* (ADR-0024). `MethodName` in `MethodDecl` and `MethodElem` ([9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18)) may be an operator: `func (a Vec2) + (b Vec2) Vec2`. What each operator method looks like, and what it means, is in [6.10](06-expressions.md#610-operator-methods-adr-0024) (EXP-16 to EXP-30).
-- **Parsing.** After the receiver the parser expects a method name. An operator token there starts an operator name, so `func (a T) - () T` is unary and `func (a T) - (b T) T` is binary: the parameter list decides. `()` is the two tokens `(` `)` right after the receiver; there is no clash, because a method name is required. `_km` is an ordinary identifier, and `@Convert` marks an ordinary method (EXP-25, EXP-27); neither changes the grammar.
+- **Parsing.** After the receiver the parser expects a method name. An operator token there starts an operator name, so `func (a T) - () T` is unary and `func (a T) - (b T) T` is binary: the parameter list decides. `()` is the two tokens `(` `)` right after the receiver; there is no clash, because a method name is required. `@Convert` marks an ordinary method (EXP-25); neither changes the grammar.
 - **In an interface.** An operator method element is written the same way: `interface{ + (T) T; Clone }`. An element that starts with `*`, `[]` or `<-` followed by `(` is a method element, except `*(T)` and `[](T)` with nothing after the `)`: those are type terms. `*T`, `[]T` and `<-chan T` stay type terms. A binary operator always has a result, so `* (T) T` is a method element. P03.24 pins the rule with parser tests.
 - **Method sets.** Operator methods belong to the method set of the type, with the usual value and pointer receiver rules. An interface that lists an operator method is a **constraint interface** (like one with a union) and cannot be used as an ordinary type in v1 (ADR-0024 decision 12).
 - **Overload sets.** Several operator methods with the same name and different parameter lists may exist on one type. Any other duplicate is an error ([EXP-17](06-expressions.md#610-operator-methods-adr-0024)). Names of ordinary methods stay unique, as in Go.
@@ -223,7 +223,7 @@ Go's embedding is removed in `.gopp` files ([TYP-25](#35-single-inheritance-adr-
 - The parent must be a struct type, possibly generic: `type B[T any] extends A[T] { … }`. A child of a child is fine.
 - There is one parent. `extends A, B` is an error.
 - `extends` is contextual ([LEX-12](02-lexical.md#lex-12)): special only after the type name (and type parameters) in a type declaration. It is not reserved.
-- `extends` on a non-struct type, an interface type, a pointer type or a C++ type is an error. C++ class inheritance at the boundary is open (ADR-0023 open point 1, P08 D8.8).
+- `extends` on a non-struct type, an interface type or a pointer type is an error. `extends` on a C++ class is allowed ([TYP-28](#35-single-inheritance-adr-0023), ADR-0023 decision 14).
 
 **TYP-17.** *What the child gets.* The child has the parent's fields and methods.
 - A composite literal may set parent fields directly (`Card{Amount: 100, Number: "4242"}`) or through the parent (`Card{Payment: Payment{…}}`). Setting the same field both ways is an error. Grandparent fields work the same way. A composite literal of an `extends` type must use field names: a positional literal is an error.
@@ -254,6 +254,7 @@ Go's embedding is removed in `.gopp` files ([TYP-25](#35-single-inheritance-adr-
 - Calls through a parent pointer to virtual methods are indirect. Every other call is direct.
 - Final-only hierarchies (no `@Virtual` or `@Abstract` method anywhere in the hierarchy) have zero overhead and can still be extended. Their limits are compile errors: an upcast gives only a borrowed `*Parent`; `Unique[*Child]` to `Unique[*Parent]` (and `Shared`, `Weak`) is an error, because a parent owner could not drop the right type; a downcast `p.(*Child)` is an error, because there is no dynamic type. When the parent has a type table, all three are allowed.
 - A cycle in `extends` is an error.
+- *Exception: a C++ parent.* The type table of a type that extends a C++ class is the C++ vtable (inside the C++ part, first in the object); no extra word is stored, and a polymorphic C++ class counts as having a table. The details are in [TYP-28](#35-single-inheritance-adr-0023).
 
 **TYP-23.** *Interfaces.* A child satisfies every interface its method set satisfies. The method set includes inherited methods. A call through an interface uses the overrides.
 
@@ -264,11 +265,31 @@ Go's embedding is removed in `.gopp` files ([TYP-25](#35-single-inheritance-adr-
 - views: `View[Child]` converts to `View[Parent]`, read-only ([OWN-V1](04-ownership.md#44-views-d16), ADR-0020);
 - `Send` / `Sync`: a child is labeled from all its fields, the parent's included ([CON-12](12-concurrency.md), ADR-0022);
 - `@Strict`: [TYP-17](#35-single-inheritance-adr-0023);
-- generics: a constraint `T extends Parent` does not exist (ADR-0023 open point 2; [GEN-2](10-generics.md)).
+- generics: the constraint `T extends Parent` exists ([GEN-12](10-generics.md#102-rules), ADR-0023 decision 15); inside the body `*T` converts to `*Parent` and the parent's methods and fields are available;
+- C++ parent: [TYP-28](#35-single-inheritance-adr-0023).
 
 **TYP-25.** *No struct embedding.* In a `.gopp` file an embedded field (an anonymous field of a struct type: `struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error. The fix-it says: use `extends` for the one main parent, and a named field for everything else (`Lock sync.Mutex`, `Log Logger`). Promoted fields and methods go away with embedding: the method set of a struct never includes methods of its fields. Interface embedding stays (`interface{ io.Reader; io.Writer }`, a constraint in a constraint interface): it composes type sets and is not inheritance.
 
 **TYP-26.** *Go mode.* In `.go` files `extends`, `base` and the marks are not special, and struct embedding works as in Go.
+
+**TYP-28.** *Extending a C++ class* (ADR-0023 decision 14; task P08.16).
+```go
+import "<QtWidgets>"
+type MyButton extends QtWidgets.QPushButton { clicks int }
+
+@Override
+func (b *MyButton) mousePressEvent(e *QtWidgets.QMouseEvent) { b.clicks++; base.mousePressEvent(e) }
+```
+- A Go++ struct may `extends` **one** C++ class (an imported class; not a template instance, not a second base, no virtual inheritance in v1). All of TYP-16 to TYP-24 apply with the changes below.
+- *Upcast.* A borrowed `*MyButton` converts to `*QtWidgets.QPushButton` (a free address change). The owning forms (`Unique`, `Shared`, `Weak`) and the downcast need a type table in the parent ([TYP-22](#35-single-inheritance-adr-0023)): for a C++ parent that means the class is polymorphic (it has a virtual method), and for the owning forms it also needs a virtual destructor. Otherwise the final-only limits apply.
+- *Marks.* `@Override` replaces a C++ `virtual` method (the C++ `virtual` counts as `@Virtual`). A non-virtual method, or one marked `final` in C++, cannot be overridden (error). A C++ pure virtual method counts as `@Abstract`: it must be overridden, or the Go++ type is marked `@Abstract`. The signature must match exactly; an override cannot have `!`.
+- *`base.M()`* calls the C++ class's own implementation, statically.
+- *Layout.* The C++ object comes first (with its vtable pointer, if it has one), then the Go++ fields. The C++ vtable is the type table: no second word is stored. The compiler generates a C++ subclass shim through Clang, so C++ code that calls the virtual method reaches the Go++ override. A new `@Virtual` or `@Abstract` method on a Go++ type directly below a non-polymorphic C++ class is an error (it would need a vtable pointer the C++ part does not have).
+- *Construction* calls a C++ constructor through a composite literal or a constructor call; the syntax is decided in P08.16. A C++ base with no default constructor gives the type no zero value ([OWN-R9](04-ownership.md#42-ownership-rules-d14)).
+- *Destruction.* The Go++ part is dropped first (the type's `drop`, then its fields in reverse order), then the C++ destructor runs ([OWN-R2](04-ownership.md#42-ownership-rules-d14)).
+- *Safety.* On the Go++ side the type follows the Go++ rules. C++ code holding raw pointers to such an object is outside the checks (UB-9, UB-10, [chapter 16](16-undefined-behavior.md)).
+- *Not in v1:* more than one C++ base, virtual inheritance, a C++ class template as the parent. Conflicts with other rules that are not resolved yet are listed in ADR-0023 open point 5.
+
 
 ```go
 type Payment struct { Amount int64; ID string }

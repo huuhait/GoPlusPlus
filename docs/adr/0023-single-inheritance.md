@@ -1,8 +1,8 @@
 # ADR-0023: Single inheritance with `extends`; Go struct embedding removed
 
-- **Status:** accepted
+- **Status:** accepted; amended 2026-10-28 (a Go++ type may extend a C++ class, decision 14; generic constraint `T extends Parent`, decision 15; see Amendment)
 - **Date:** 2026-10-28
-- **Plan reference:** replaces the non-goal "no class inheritance" (spec 1.7, plan README non-goals); spec new section 3.5 (TYP-16 to TYP-26), changes TYP-10, TYP-15, TYP-15a, 6.9 (new EXP-13 to EXP-15), OWN-R2, OWN-R3, OWN-R6, GEN-2, MAC-8, LEX-2 and the grammar in chapters 2, 3 and 13; builds on ADR-0016, ADR-0019, ADR-0020, ADR-0021 and ADR-0022; new tasks P03.22 and P04.22; P14 note.
+- **Plan reference:** replaces the non-goal "no class inheritance" (spec 1.7, plan README non-goals); spec new section 3.5 (TYP-16 to TYP-26), changes TYP-10, TYP-15, TYP-15a, 6.9 (new EXP-13 to EXP-15), OWN-R2, OWN-R3, OWN-R6, GEN-2, MAC-8, LEX-2 and the grammar in chapters 2, 3 and 13; builds on ADR-0016, ADR-0019, ADR-0020, ADR-0021 and ADR-0022; new tasks P03.22 and P04.22; P14 note. Amendment: new TYP-28, GEN-12 rewritten, new task P08.16, P03.22 extended.
 
 ## Context
 
@@ -26,7 +26,7 @@ Programmers who want "a common part with its own methods, and children that chan
    - The parent must be a struct type, possibly generic: `type B[T any] extends A[T] { … }`. A child of a child is fine.
    - There is **one** parent. `extends A, B` is an error.
    - `extends` is a contextual keyword: it is special only in that position (after the type name and optional type parameters, before the `{`). It is not reserved, so `extends` stays usable as a name.
-   - `extends` on a non-struct type, an interface, a pointer, or a C++ type is an error. C++ class inheritance at the boundary is open point 1.
+   - `extends` on a non-struct type, an interface or a pointer is an error. `extends` on a C++ class is allowed (decision 14, TYP-28).
 2. **What the child gets (TYP-17).** The child has the parent's fields and methods.
    - A composite literal may set parent fields directly (`Card{Amount: 100, Number: "4242"}`) or through the parent (`Card{Payment: Payment{…}}`). Setting the same field both ways is an error.
    - A composite literal of an `extends` type must use field names. A positional literal is an error.
@@ -64,7 +64,8 @@ Programmers who want "a common part with its own methods, and children that chan
    - *Views (ADR-0020):* `View[Child]` converts to `View[Parent]`, read-only.
    - *Send / Sync (ADR-0022):* a child is labeled from all its fields, the parent's included.
    - *`@Strict`:* the required bits of the parent's fields apply in the child (TYP-15a).
-   - *Generics:* a constraint `T extends Parent` is **not** added (open point 2).
+   - *Generics:* the constraint `T extends Parent` is allowed (decision 15, GEN-12).
+   - *C++ parents:* TYP-28 (decision 14).
 10. **Go mode (TYP-26).** `.go` files are unchanged. `extends` is not Go syntax.
 11. **Reflection and field tables (TYP-10).** They include the parent chain: the field table of a child lists the parent's fields first, then its own.
 12. **Go struct embedding is removed in `.gopp` files (TYP-25).** An embedded field (an anonymous field: `struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error, with a fix-it: use `extends` for the one main parent, and a named field for everything else (`Lock sync.Mutex`, `Log Logger`).
@@ -72,6 +73,31 @@ Programmers who want "a common part with its own methods, and children that chan
     - **Interface embedding stays.** `interface{ io.Reader; io.Writer }` and embedding a constraint in a constraint interface are type-set composition, not inheritance.
     - `.go` files are unchanged: struct embedding still works there.
 13. **New error codes** are named at implementation (no numbers here) and get `gopp explain` texts (P03.14).
+14. **A Go++ type may extend a C++ class (TYP-28; owner decision 2026-10-28; amendment).**
+    ```go
+    import "<QtWidgets>"
+    type MyButton extends QtWidgets.QPushButton { clicks int }
+
+    @Override
+    func (b *MyButton) mousePressEvent(e *QtWidgets.QMouseEvent) { b.clicks++; base.mousePressEvent(e) }
+    ```
+    - A Go++ struct may `extends` **one** C++ class. If the class is upcast (a `*MyButton` becomes a `*QtWidgets.QPushButton`), it must be polymorphic or have a virtual destructor for the owning-pointer upcast. A class that is not polymorphic follows the final-only rules of decision 6 and 7: a borrowed upcast only, no owning upcast, no downcast.
+    - `@Override` works on the C++ class's `virtual` methods. A non-virtual C++ method cannot be overridden (error). A C++ method marked `final` cannot be overridden either.
+    - `base.M()` calls the C++ class's implementation of `M`, statically (`QPushButton::mousePressEvent`).
+    - C++ pure virtual methods act like `@Abstract`: the Go++ type must override them, or be marked `@Abstract` itself.
+    - *Layout.* The C++ object comes first (with its vtable pointer), then the Go++ fields. The compiler generates a C++ subclass shim through Clang, so C++ code that calls the virtual method reaches the Go++ override. There is no second type-table word: the C++ vtable is the type table (TYP-22).
+    - *Construction.* The type is created through a composite literal or a constructor call that calls a C++ constructor. P08 decides the exact syntax (P08.16).
+    - *Destruction.* The Go++ fields are dropped first (the child's `drop`, then its fields in reverse order), then the C++ destructor runs. This is decision 9's order with the C++ part as the parent part.
+    - *Safety.* On the Go++ side the type follows the Go++ rules (ownership, borrows, views, Send / Sync). C++ code that holds raw pointers to such an object is UB-9 / UB-10 territory, as for any C++ interop.
+    - *Not in v1:* more than one C++ base, virtual inheritance, and a C++ class template (or an instance of one) as the parent. They are open points 3 to 5.
+15. **Generic constraint `T extends Parent` (GEN-12; owner decision 2026-10-28; amendment).**
+    ```go
+    func Feed[T extends Animal](a *T) { a.Eat(); a.Speak() }
+    ```
+    - `[T extends P]` means `T` is `P` or a type that extends `P`, directly or indirectly.
+    - In the body, `*T` converts to `*P` (an upcast), the methods of `P` are available on `T` (with dispatch per instance), and the fields of `P` are accessible.
+    - It can be combined with other constraint elements: `interface{ extends Animal; Clone }`.
+    - Instantiating with a type that does not extend `P` is an error. If `P` is final-only, the upcast limits of decision 6 still apply: a borrowed upcast only.
 
 ## Example
 
@@ -184,5 +210,22 @@ type Z struct { Payment }                         // error: struct embedding is 
 
 ## Open points
 
-1. **C++ class inheritance** at the boundary (P08 D8.8): whether an imported C++ class can be a parent, or a Go++ type a child of a C++ class. Today `extends` on a C++ type is an error (TYP-16). P08 decides.
-2. **Constraint `T extends Parent`** in generics: not added. A generic function that needs "any `T` derived from `Parent`" takes `*Parent` or an interface.
+1. *(Decided 2026-10-28: decision 14.)* C++ class inheritance at the boundary.
+2. *(Decided 2026-10-28: decision 15.)* Constraint `T extends Parent`.
+3. **Several C++ bases and virtual inheritance** are not in v1 (decision 14). A Go++ type with one C++ base only.
+4. **A C++ class template as the parent** (`extends vector.vector[int32]`, a CRTP base, or any instance) is not in v1.
+5. **Conflicts of decision 14 with earlier rules, not resolved here (P08.16 decides):**
+   - TYP-22 says a type table is "one word, stored first". With a C++ parent the C++ vtable pointer is first, so no extra word is stored. A new `@Virtual` or `@Abstract` method added by a Go++ type directly below a non-polymorphic C++ class would need a vtable pointer that the C++ part does not have, and the C++ object could no longer be first. Proposed v1 default: an error.
+   - TYP-18 requires `@Virtual` on a replaceable method, but C++ has no such mark. A C++ `virtual` method counts as `@Virtual`, a C++ `final` method as final, and a pure virtual as `@Abstract`.
+   - OWN-R9: moves of C++ values use the type's relocate operation, and `memcpy` only for trivially relocatable types. A Go++ type with a C++ base is relocatable only if the C++ part is; many classes (Qt `QObject` and friends) are not safe to move, since others may hold their address. A move of such a type is an error or needs the C++ move constructor. Not decided.
+   - OWN-R9 and TYP-17: a C++ base without a default constructor gives the child no zero value.
+   - Downcast (EXP-15) from a C++ pointer to a Go++ child needs C++ RTTI (`dynamic_cast`); with `-fno-rtti` it is an error. Not decided.
+   - Failable overrides: a `!` on an override cannot match a C++ signature (TYP-18 requires an exact match), so such overrides cannot be failable. A panic in an override unwinds as a C++ exception through the C++ caller (P08 D8.9).
+   - Field tables (TYP-10): the C++ base's fields are not listed. Auto-`Clone` and `Send` / `Sync` of the C++ part follow the C++ class rules of ADR-0022 and OWN-R9.
+   - GEN-12: whether a C++ class derived (in C++) from `P` satisfies `T extends P` is not decided; v1 default: no, only Go++ `extends`.
+
+## Amendment (2026-10-28, owner decisions)
+
+- Open point 1 (C++ class inheritance) became decision 14 and open point 2 (constraint `T extends Parent`) became decision 15. Spec: TYP-16 allows a C++ class as the parent; new TYP-28; TYP-24 and GEN-12 rewritten. Plan: P08.08 and D8.8 point to the new task P08.16; P03.22 gets the `T extends Parent` checks.
+- The text in decision 1 and decision 9 (Generics) that said "a C++ type is an error" or "no `T extends Parent`" is replaced above. The rest of the ADR is unchanged.
+- ADR-0020 (views): `View[Child]` converts to `View[Parent]` also when `Parent` is a C++ class (read-only). ADR-0021 (borrows): an upcast, also in a generic body (`*T` to `*P`), is the same borrow. ADR-0022 (Send / Sync): the label of a type that extends a C++ class includes the C++ part. ADR-0024 (operators): a child inherits the operator methods of a C++ parent, and a `T extends P` body sees the operator methods of `P` (GEN-13).
