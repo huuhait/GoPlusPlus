@@ -93,4 +93,5 @@ A task is not done until:
 - Make safety decisions from the checker's real types, never from a guess made before the code is type-checked. A guess is wrong both ways: it rejects good code and lets bad code through.
 - Every new analysis gets a generated stress test (thousands of nested and sibling cases) that proves its check time stays near-linear.
 - Wrap every timing or benchmark run in `timeout 60` (or less), and never wait on a run that has no time limit.
+- Never wait in a polling loop (`until … sleep`) without a timeout; run checks in the foreground with `timeout`, or the agent can wait forever.
 - `docs/spec/examples/` are test inputs: run `ninja check` before committing any docs change, even a "docs-only" one.
