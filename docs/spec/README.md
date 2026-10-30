@@ -26,6 +26,8 @@ Start with the [overview](01-overview.md).
 | 16 | [Undefined behavior](16-undefined-behavior.md) | UB and implementation-defined list | D1.4 r8, D1.17 |
 | 17 | [Units of measure](17-units.md) | `unit` declarations, `float64[KM]`, unit literals, unit math, `[U unit]`, printing | ADR-0025 |
 
+All `@` attributes on one page: [attributes cheat sheet](../attributes.md).
+
 ## Samples (D1.16)
 
 Each sample has `main.gopp`, a Go counterpart `main.go`, `expected_output.txt` and a README with the spec rules it uses.

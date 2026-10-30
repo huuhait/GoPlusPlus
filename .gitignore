@@ -13,3 +13,6 @@ result-*
 
 # Python bytecode (lit helpers such as tests/sema/check-exact-errors.py)
 __pycache__/
+
+# clangd index (IDE)
+.cache/

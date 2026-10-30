@@ -94,4 +94,5 @@ A task is not done until:
 - Every new analysis gets a generated stress test (thousands of nested and sibling cases) that proves its check time stays near-linear.
 - Wrap every timing or benchmark run in `timeout 60` (or less), and never wait on a run that has no time limit.
 - Never wait in a polling loop (`until … sleep`) without a timeout; run checks in the foreground with `timeout`, or the agent can wait forever.
+- When a rule must also hold in generic code, record each use in the generic body and decide it at instantiation with the same function plain code uses; prove it with a generated plain-vs-generic table test.
 - `docs/spec/examples/` are test inputs: run `ninja check` before committing any docs change, even a "docs-only" one.
