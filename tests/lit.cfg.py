@@ -1,4 +1,5 @@
 import os
+import platform
 import shutil
 import sys
 
@@ -32,6 +33,43 @@ if lit_config.params.get("run_long"):
 if not config.gopp_sanitizer.strip():
     config.available_features.add("no-sanitizer")
 
+# What the tests that run a built program can rely on (P04.02, P04.03): a
+# program runs only on the architecture of the machine that builds it.
+if platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64"):
+    config.available_features.add("host-linux-amd64")
+if platform.system() == "Linux" and platform.machine() in ("aarch64", "arm64"):
+    config.available_features.add("host-linux-arm64")
+
+# Local arm64 runs (P04.03, owner decision M6): the flake provides user-mode
+# QEMU and an aarch64 glibc (GOPP_AARCH64_SYSROOT) on x86-64 hosts. The run
+# tests build for linux/arm64 against that sysroot's lib directory and run the
+# result with `qemu-aarch64 -L <sysroot>`; they compare with the amd64 run.
+_sysroot = os.environ.get("GOPP_AARCH64_SYSROOT", "")
+if (
+    _sysroot
+    and os.path.isfile(os.path.join(_sysroot, "lib", "crt1.o"))
+    and shutil.which("qemu-aarch64")
+):
+    config.available_features.add("qemu-aarch64")
+    config.substitutions.append(("%aarch64_sysroot", _sysroot))
+
+# M0 on an FHS distro (P04.02 Done-when): run/debian.test runs on a Debian or
+# Ubuntu host; run/debian-container.long.test builds and runs hello in Debian
+# containers from any host. The second is opt-in (it needs docker or podman
+# and the image, or the network for apt). The variable is the build image,
+# then optionally the image the program runs in:
+#   GOPP_TEST_DEBIAN_IMAGE=debian:stable-slim ninja -C build check-long
+#   GOPP_TEST_DEBIAN_IMAGE="golang:1.25 debian:bookworm" ...
+if os.path.exists("/etc/debian_version"):
+    config.available_features.add("debian")
+if (shutil.which("docker") or shutil.which("podman")) and os.environ.get(
+    "GOPP_TEST_DEBIAN_IMAGE"
+):
+    config.available_features.add("debian-container")
+    config.substitutions.append(
+        ("%debian_image", os.environ["GOPP_TEST_DEBIAN_IMAGE"])
+    )
+
 # A time limit that fails a walk that is not linear: 10 s, five times that in
 # a sanitizer build, which is about five times slower (a chain of 100000
 # selectors: 1.0 s, 5.3 s under ASan).
@@ -42,6 +80,30 @@ config.substitutions.append(
 # over the standard library (they also need "long").
 if shutil.which("go") and shutil.which("gofmt"):
     config.available_features.add("go")
+
+# Every link of a run test would start the host C compiler three or four times
+# to find crt1.o and the dynamic linker (about 0.1 s of a 0.11 s link). The
+# probe runs once here; `%gopp_link_flags` hands its answer to `gopp build`, so
+# a run test skips it. run/hello.test and run/debian.test do not use it: they
+# keep the real probe path (P00.12) tested. This must come before `%gopp`.
+def host_link_flags():
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [os.path.join(config.gopp_tools_dir, "gopp"), "host-toolchain"],
+            capture_output=True, text=True, timeout=60, check=True,
+            env=dict(os.environ, **config.environment),
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    found = dict(l.split(": ", 1) for l in out.splitlines() if ": " in l)
+    crt1, ld = found.get("crt1"), found.get("dynamic-linker")
+    if not crt1 or not ld:
+        return ""
+    return "-crt-dir=%s -dynamic-linker=%s" % (os.path.dirname(crt1), ld)
+
+config.substitutions.append(("%gopp_link_flags", host_link_flags()))
 
 # For test inputs that are generated (too big or too repetitive to check in).
 config.substitutions.append(("%python", sys.executable))

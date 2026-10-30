@@ -1,0 +1,20 @@
+// RUN: %gopp build -emit=obj %s -o %t.o
+// RUN: llvm-dwarfdump --debug-line %t.o | FileCheck %s
+// RUN: %gopp build -emit=obj -no-debug %s -o %t.nodebug.o
+// RUN: llvm-dwarfdump --debug-line %t.nodebug.o | FileCheck --check-prefix=NODEBUG %s
+// P04.02, D4.7: line tables from M0. The table maps the code to the lines
+// of this file (both sides: `-no-debug` has none).
+package main
+
+func main() {
+	println("a")
+	println("b")
+}
+
+// CHECK: debug_line
+// CHECK: version: 5
+// CHECK: name: "debug-lines.test"
+// The two println calls are on lines 10 and 11 of this file, column 2.
+// CHECK: {{0x[0-9a-f]+ +10 +2 +0 +0 +0 +0 +is_stmt}}
+// CHECK: {{0x[0-9a-f]+ +11 +2 +0 +0 +0 +0 +is_stmt}}
+// NODEBUG-NOT: is_stmt

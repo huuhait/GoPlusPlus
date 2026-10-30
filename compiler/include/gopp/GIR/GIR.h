@@ -1,0 +1,362 @@
+//===- gopp/GIR/GIR.h - The GIR data structures -----------------*- C++ -*-===//
+//
+// Part of the Go++ project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// P04.01 (D4.1), docs/design/gir.md. GIR is shaped like Rust's MIR: a function
+// is a list of locals and a control-flow graph of basic blocks; a block is a
+// list of statements and one terminator; values live in *places* (a local plus
+// projections) and are computed by *rvalues*. It is typed and not SSA.
+//
+// Everything refers to its parts by index (LocalId, BlockId, FuncId, string
+// id), never by pointer, so a body can be copied, substituted, serialized
+// (Serialize.h) and compared byte for byte. Types are the only pointers; they
+// are uniqued in a gir::Context.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef GOPP_GIR_GIR_H
+#define GOPP_GIR_GIR_H
+
+#include "gopp/GIR/Type.h"
+
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace gopp {
+namespace gir {
+
+using LocalId = uint32_t;
+using BlockId = uint32_t;
+using FuncId = uint32_t;
+constexpr uint32_t NoId = UINT32_MAX;
+
+/// A source position that needs no SourceManager: File indexes
+/// Module::Files plus one (0 = none), Line and Col are 1-based (D4.7).
+struct Span {
+  uint32_t File = 0, Line = 0, Col = 0;
+  bool isValid() const { return File != 0; }
+  bool operator==(const Span &O) const {
+    return File == O.File && Line == O.Line && Col == O.Col;
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Places, constants, operands
+//===----------------------------------------------------------------------===//
+
+/// One step into a value. Ty is the type after the step.
+struct PlaceElem {
+  enum Kind : uint8_t {
+    Deref,      // *p: the operand is a pointer
+    Field,      // .N of a String, Slice, Tuple or Struct
+    Index,      // [_L]: Val is a local of an integer type; bounds are checked
+                // by an Assert before, not here
+    ConstIndex, // [N] of an Array
+    Downcast,   // the payload of variant N of an enum-like type (P04.05)
+  };
+  Kind K = Deref;
+  uint32_t Val = 0;
+  Type *Ty = nullptr;
+  bool operator==(const PlaceElem &O) const {
+    return K == O.K && Val == O.Val && Ty == O.Ty;
+  }
+};
+
+struct Place {
+  LocalId Local = NoId;
+  llvm::SmallVector<PlaceElem, 1> Proj;
+  /// The type of the place (the type of the local if Proj is empty).
+  Type *Ty = nullptr;
+  bool operator==(const Place &O) const {
+    return Local == O.Local && Proj == O.Proj && Ty == O.Ty;
+  }
+};
+
+struct Constant {
+  enum Kind : uint8_t {
+    Int,   // Bits: the value, truncated to the width of Ty
+    Float, // Bits: the IEEE bits of a double (a f32 is rounded first)
+    Bool,  // Bits: 0 or 1
+    Str,   // Bits: the string id in Module::Strings; Ty is `string`
+    Func,  // Bits: the FuncId; Ty is the function's pointer type
+    Null,  // the nil pointer of Ty
+    Zero,  // the all-zero value of Ty (a zero value in the language's sense)
+  };
+  Kind K = Zero;
+  Type *Ty = nullptr;
+  uint64_t Bits = 0;
+  bool operator==(const Constant &O) const {
+    return K == O.K && Ty == O.Ty && Bits == O.Bits;
+  }
+};
+
+struct Operand {
+  enum Kind : uint8_t {
+    Copy, // read the place; the value stays valid
+    Move, // read the place; the source is moved-from (zeroed, D4.2 step 3)
+    Const,
+  };
+  Kind K = Const;
+  Place P;
+  Constant C;
+  Type *type() const { return K == Const ? C.Ty : P.Ty; }
+};
+
+//===----------------------------------------------------------------------===//
+// Rvalues and statements
+//===----------------------------------------------------------------------===//
+
+enum class BinOp : uint8_t {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Rem,
+  And,
+  Or,
+  Xor,
+  AndNot,
+  Shl,
+  Shr, // arithmetic
+  Eq,
+  Ne,
+  Lt,
+  Le,
+  Gt,
+  Ge, // comparison
+};
+enum class UnOp : uint8_t { Neg, Not, Compl };
+enum class CastKind : uint8_t {
+  IntToInt, // truncate, or extend by the signedness of the source
+  IntToFloat,
+  FloatToInt, // saturating (D4.12)
+  FloatToFloat,
+  PtrToInt,
+  IntToPtr,
+  PtrToPtr,
+};
+enum class AggKind : uint8_t {
+  Tuple,  // Ops are the fields
+  Array,  // Ops are the elements
+  String, // Ops: ptr, len, cap
+  Slice,  // Ops: ptr, len, cap
+  Struct, // Ops are the fields in declaration order
+};
+
+const char *getBinOpName(BinOp Op);
+const char *getUnOpName(UnOp Op);
+const char *getCastKindName(CastKind K);
+const char *getAggKindName(AggKind K);
+bool isComparison(BinOp Op);
+bool isShift(BinOp Op);
+
+struct Rvalue {
+  enum Kind : uint8_t {
+    Use,       // A
+    AddrOf,    // &P (Mut: a writable borrow, P is the borrowed place)
+    Binary,    // A Bin B
+    Unary,     // Un A
+    Cast,      // Cast A as Ty
+    Aggregate, // Agg(Ops...)
+    Len,       // the length of the String, Slice or Array in P (an u64)
+  };
+  Kind K = Use;
+  Type *Ty = nullptr; // the type of the value
+  Operand A, B;
+  Place P;
+  BinOp Bin = BinOp::Add;
+  UnOp Un = UnOp::Neg;
+  CastKind CastOp = CastKind::IntToInt;
+  AggKind Agg = AggKind::Tuple;
+  bool Mut = false;
+  llvm::SmallVector<Operand, 3> Ops;
+};
+
+struct Statement {
+  enum Kind : uint8_t {
+    Assign,      // Dest = RV
+    StorageLive, // the local L starts to exist (its slot is usable)
+    StorageDead, // the local L stops to exist
+    Nop,
+  };
+  Kind K = Nop;
+  Place Dest;
+  Rvalue RV;
+  LocalId L = NoId;
+  Span Loc;
+};
+
+//===----------------------------------------------------------------------===//
+// Terminators
+//===----------------------------------------------------------------------===//
+
+/// What happens when a call (or a drop, or an assert) unwinds (D4.6).
+struct UnwindAction {
+  enum Kind : uint8_t {
+    Continue,    // no cleanup here: keep unwinding to the caller
+    Cleanup,     // run the cleanup block Target, which ends in Resume
+    Terminate,   // an unwind here aborts (a drop that panics while unwinding)
+    Unreachable, // the callee cannot unwind (nounwind)
+  };
+  Kind K = Continue;
+  BlockId Target = NoId;
+  bool operator==(const UnwindAction &O) const {
+    return K == O.K && Target == O.Target;
+  }
+};
+
+enum class AssertKind : uint8_t {
+  DivByZero,
+  NegativeShift,
+  Bounds,   // P04.04
+  Nil,      // P04.04
+  Overflow, // P04.04
+};
+const char *getAssertKindName(AssertKind K);
+
+struct SwitchCase {
+  uint64_t Value = 0;
+  BlockId Target = NoId;
+};
+
+struct Terminator {
+  enum Kind : uint8_t {
+    Goto,        // -> Target
+    Switch,      // on Discr (an integer or bool): Cases, else Otherwise
+    Return,      // return local 0
+    Unreachable, // control cannot get here
+    Call,        // Dest = Callee(Args); continue at Target (NoId: the callee
+                 // is NoReturn); Unwind says what a panic does
+    Drop,        // run the drop glue of the owner in Dest, then Target
+    Assert,      // if Discr != Expected: fail (AK). Continue at Target
+    Resume,      // cleanup blocks only: continue the unwind
+  };
+  Kind K = Unreachable;
+  BlockId Target = NoId;
+  Operand Discr; // Switch: the value; Assert: the condition; Call: the callee
+  llvm::SmallVector<SwitchCase, 2> Cases;
+  BlockId Otherwise = NoId;
+  llvm::SmallVector<Operand, 4> Args;
+  Place Dest; // Call: the result place; Drop: the place dropped
+  UnwindAction Unwind;
+  bool Expected = true;
+  AssertKind AK = AssertKind::DivByZero;
+  Span Loc;
+  bool Set = false; // false until the builder sets it
+};
+
+struct BasicBlock {
+  std::vector<Statement> Stmts;
+  Terminator Term;
+  /// A cleanup block runs on the unwind path only (D4.6). It is reached only
+  /// by Cleanup unwind edges and from other cleanup blocks, and it ends in
+  /// Resume, Unreachable or an edge to another cleanup block (V023, V025).
+  bool Cleanup = false;
+  /// A catch block is a cleanup block that may also end the unwind: it is the
+  /// catch-all handler of a function with `defer` (D4.6, P04.07). It runs the
+  /// deferred calls and `recover`, so it may Return, branch to normal blocks,
+  /// and its calls may unwind onward (a deferred call that panics replaces
+  /// the panic). Catch implies Cleanup (V024); only a catch block may branch
+  /// into one (V023). A plain drop pad keeps the strict rules (V025).
+  bool Catch = false;
+};
+
+//===----------------------------------------------------------------------===//
+// Functions and the module
+//===----------------------------------------------------------------------===//
+
+struct Local {
+  enum Kind : uint8_t { Return, Arg, Var, Temp } K = Temp;
+  Type *Ty = nullptr;
+  std::string Name; // for the dump and the debugger; may be empty
+  bool Mutable = true;
+  Span Loc;
+};
+
+enum class Linkage : uint8_t { External, Internal, LinkOnceODR };
+enum class CallConv : uint8_t {
+  Go, // the internal convention (P04.18; M0: the C one)
+  C,  // the exact C ABI (D4.4)
+};
+
+class Function {
+public:
+  std::string Name;    // the final symbol: gir::symbolOf (Lower.h) makes it
+  Type *Sig = nullptr; // a Func type
+  Linkage Link = Linkage::External;
+  CallConv CC = CallConv::C;
+  bool NoUnwind = false;
+  /// Never returns: a call of it may have no return target (V028).
+  bool NoReturn = false;
+  Span Loc;
+  /// Local 0 is the return place, locals 1..N the parameters, then the rest.
+  std::vector<Local> Locals;
+  std::vector<BasicBlock> Blocks; // block 0 is the entry; empty: a declaration
+  bool isDeclaration() const { return Blocks.empty(); }
+  unsigned numParams() const { return Sig->elems().size(); }
+
+  LocalId addLocal(Local L) {
+    Locals.push_back(std::move(L));
+    return Locals.size() - 1;
+  }
+  BlockId addBlock(bool Cleanup = false, bool Catch = false) {
+    Blocks.emplace_back();
+    Blocks.back().Cleanup = Cleanup || Catch;
+    Blocks.back().Catch = Catch;
+    return Blocks.size() - 1;
+  }
+};
+
+class Module {
+public:
+  explicit Module(Context &Ctx, std::string Name = "")
+      : Ctx(Ctx), Name(std::move(Name)) {}
+  Context &Ctx;
+  std::string Name; // the package path
+  std::vector<std::string> Files;
+  /// String literals by id; the bytes have no terminator (Str constants).
+  std::vector<std::string> Strings;
+  std::vector<std::unique_ptr<Function>> Funcs;
+
+  uint32_t addFile(llvm::StringRef Path);
+  uint32_t internString(llvm::StringRef S);
+  FuncId addFunction(std::unique_ptr<Function> F);
+  /// The function called Name, or NoId.
+  FuncId lookupFunction(llvm::StringRef Name) const;
+  Function &func(FuncId Id) { return *Funcs[Id]; }
+  const Function &func(FuncId Id) const { return *Funcs[Id]; }
+
+private:
+  llvm::StringMap<uint32_t> FileIds, StringIds, FuncIds;
+};
+
+//===----------------------------------------------------------------------===//
+// Helpers to make operands
+//===----------------------------------------------------------------------===//
+
+inline Place localPlace(LocalId L, Type *Ty) {
+  Place P;
+  P.Local = L;
+  P.Ty = Ty;
+  return P;
+}
+Operand copyOf(Place P);
+Operand moveOf(Place P);
+Operand constInt(Type *Ty, uint64_t Bits);
+Operand constBool(Context &C, bool V);
+Operand constFloat(Type *Ty, double V);
+Operand constStr(Module &M, llvm::StringRef S);
+Operand constFunc(const Module &M, FuncId F);
+
+} // namespace gir
+} // namespace gopp
+
+#endif // GOPP_GIR_GIR_H

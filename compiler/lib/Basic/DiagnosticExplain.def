@@ -4227,3 +4227,46 @@ func f[U unit](x float64[U]) {
 	_ = y
 }
 )X")
+EXPLAIN(err_gir_unsupported,
+        "The program is valid, but the code generator of this version of Go++ cannot lower it yet (milestone M0 builds a small subset: functions of integer, bool and string values, `if`, `for`, calls, and `println`). The construct is named in the message. The type checker accepts it; `gopp check` reports no error.",
+        R"X(package main
+
+type T struct{ x int }
+
+func main() {
+	var t T
+	_ = t
+}
+)X")
+EXPLAIN(err_gir_verify,
+        "The GIR verifier found a problem in the code the compiler itself generated. This is a bug in Go++, not in your program: please report it with the program that triggers it. The message names the broken rule (V001 to V070, docs/design/gir.md section 9), the function and the block.",
+        R"X(package main
+
+func main() {}
+)X")
+EXPLAIN(err_codegen,
+        "The back end failed after GIR was built: the target machine could not be created, the object file could not be written, a piece of the C library the link needs is missing (crt1.o, crti.o, crtn.o, libc; install the C library development files), or the linker reported an error, such as a C function that no library defines. The message says which step failed and why.",
+        R"X(package main
+
+@Extern("C")
+func gopp_no_such_function()
+
+func main() {
+	gopp_no_such_function()
+}
+)X")
+EXPLAIN(err_gir_extern_bad,
+        "`@Extern(\"C\")` declares a function that is defined in C: it has no body, it is called with the C ABI under its own name, and its parameter and result types are C scalars (integers, floats, bool, pointers; P04.11 adds structs). The attribute takes the one string \"C\". The C name `main` is taken by the program's entry point. The error is also reported where `println` needs the C `write` and the package declares `write` with another signature: `func write(fd int32, p *byte, n uint) int`.",
+        R"X(package main
+
+@Extern("Rust")
+func f()
+
+func main() { f() }
+)X")
+EXPLAIN(err_gir_no_main,
+        "A program starts at `func main()` of package main, and `gopp build` found no such function in the package it was asked to build. Declare `func main()`, or build the package as a library (`-emit=obj`).",
+        R"X(package main
+
+func helper() {}
+)X")

@@ -70,6 +70,15 @@ const std::map<std::string, const char *> Unchecked = {
     {"err_own_isnil_ambiguous", "retired by ADR-0018: pointers have no IsNil, "
                                 "so there is no clash; the code stays "
                                 "reserved"},
+    {"err_gir_unsupported", "reported by the code generator, not the checker; "
+                            "tests/gir/unsupported.test"},
+    {"err_gir_verify",
+     "an internal error; it cannot be triggered by a program"},
+    {"err_codegen", "reported after GIR is built; tests/codegen"},
+    {"err_gir_extern_bad", "reported by the code generator, not the "
+                           "checker; tests/gir/extern-bad.test"},
+    {"err_gir_no_main", "reported by the code generator, not the checker; "
+                        "tests/gir/no-main.test"},
     {"err_invalid_method_type_params", "the parser reports "
                                        "err_interface_method_type_params and "
                                        "drops the list first"},

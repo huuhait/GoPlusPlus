@@ -1,0 +1,35 @@
+package main
+
+type T struct{ x int }
+
+// A func value, and the call of it (no second error for the call).
+func values() {
+	f := func() {}
+	f()
+}
+
+func floats(x float64) {
+	println(x)
+}
+
+func derefs(p *int) int {
+	return *p
+}
+
+func floatConstants() {
+	println(1.5)
+}
+
+func init() {}
+
+func init() {}
+
+type Celsius int
+
+func ok(c Celsius) int { return int(c) + 1 }
+
+func main() {
+	var t T
+	_ = t
+	println(ok(20))
+}

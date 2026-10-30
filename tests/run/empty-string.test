@@ -1,0 +1,16 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-expect.py %t.exe 0 %S/Inputs/empty-string.out
+// P04.02: empty strings print nothing, and println still adds its spaces and
+// newline; print adds neither (exact bytes).
+package main
+
+func main() {
+	e := ""
+	println("")
+	println("[", "", "]")
+	println("[", e, "]")
+	print("")
+	print(e)
+	println()
+}

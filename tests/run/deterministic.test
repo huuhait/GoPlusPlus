@@ -1,0 +1,16 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d && mkdir -p %t.d/one %t.d/two
+// RUN: %gopp build %gopp_link_flags %s -o %t.d/one/a.out
+// RUN: %gopp build %gopp_link_flags %s -o %t.d/two/b.out
+// RUN: %gopp build -emit=obj %s -o %t.d/one/a.o
+// RUN: %gopp build -emit=obj %s -o %t.d/two/b.o
+// RUN: cmp %t.d/one/a.out %t.d/two/b.out
+// RUN: cmp %t.d/one/a.o %t.d/two/b.o
+// P04.02: the same input gives the same bytes, for the object and for the
+// executable: the link line has no build id and no time, and nothing depends
+// on the output path or the temporary object's name.
+package main
+
+func main() {
+	println("same bytes", 7)
+}

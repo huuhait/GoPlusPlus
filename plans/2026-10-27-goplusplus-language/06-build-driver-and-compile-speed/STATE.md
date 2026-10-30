@@ -23,6 +23,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P06) · Design: [README.md](
 - [ ] P06.14 Build profiles in the driver
 - [ ] P06.15 Profile CLI flags
 - [ ] P06.16 `target/` layout
+- [ ] P06.17 Host-toolchain probe cache
 
 ## Open questions
 

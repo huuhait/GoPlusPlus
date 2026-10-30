@@ -1,0 +1,9 @@
+package main
+
+@Extern("C")
+func write(fd int, p *byte, n int) int
+
+func main() {
+	println("x")
+	println(1)
+}

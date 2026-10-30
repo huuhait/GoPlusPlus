@@ -1,0 +1,17 @@
+// REQUIRES: debian, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp host-toolchain | FileCheck --check-prefix=PROBE %s
+// RUN: %gopp build %s -o %t.exe
+// RUN: %python %S/Inputs/run-expect.py %t.exe 0 %S/Inputs/hello.out
+// P04.02 Done-when, M0 on an FHS distro (Debian or Ubuntu): host sysroot
+// discovery finds the C library under /usr/lib/<multiarch> and the loader
+// under /lib, and hello runs. It runs where /etc/debian_version exists (a
+// Debian CI runner); on NixOS the same run happens inside containers with
+// tools/run-hello-in-debian.sh (debian-container.long.test).
+package main
+
+func main() {
+	println("hello, world", 42, true)
+}
+
+// PROBE: crt1: /usr/lib/{{.*}}crt1.o
+// PROBE: dynamic-linker: /lib{{.*}}/ld-linux-

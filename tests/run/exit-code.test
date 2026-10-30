@@ -1,0 +1,18 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-expect.py %t.exe 7 %S/Inputs/exit-code.out
+// RUN: %gopp build %gopp_link_flags %S/Inputs/exit-zero.gopp -o %t.zero
+// RUN: %python %S/Inputs/run-expect.py %t.zero 0
+// P04.02: the exit status of a program is 0 when main returns (the C entry
+// point returns 0) and what it passes to C `exit` otherwise; output written
+// before is not lost.
+package main
+
+@Extern("C")
+func exit(code int32)
+
+func main() {
+	println("bye")
+	exit(7)
+	println("not reached")
+}

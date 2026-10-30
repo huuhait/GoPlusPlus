@@ -1,0 +1,46 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// RUN: not %gopp build -emit=gir %S/Inputs/write-mismatch.gopp 2>&1 | FileCheck --check-prefix=WRITE %s
+// RUN: %gopp build -emit=gir %S/Inputs/write-unused.gopp | FileCheck --check-prefix=UNUSED %s
+// P04.02: what @Extern accepts is decided in one place
+// (Lowering::declareFunction): the string "C", no body, C scalar or pointer
+// types, not the entry point's name. Each wrong declaration is one error at
+// its attribute or declaration, and a call of it is not reported again.
+// Both sides: `ok` is accepted (extern.test has the rest).
+package main
+
+@Extern("Rust")
+func a()
+
+@Extern("C")
+func b(s string)
+
+@Extern("C")
+func c() string
+
+@Extern("C")
+func d() {
+}
+
+@Extern
+func e()
+
+@Extern("C")
+func ok(x int32) int32
+
+func main() {
+	a()
+	_ = ok(1)
+}
+
+// CHECK: :11:1: error[E0442]: invalid @Extern on a: only the "C" ABI exists
+// CHECK: :14:1: error[E0442]: invalid @Extern on b: parameter type string is not a C scalar or pointer
+// CHECK: :17:1: error[E0442]: invalid @Extern on c: result type string is not a C scalar or pointer
+// CHECK: :20:1: error[E0442]: invalid @Extern on d: a C function has no body
+// CHECK: :24:1: error[E0442]: invalid @Extern on e: write @Extern("C")
+// CHECK-NOT: error
+
+// println needs the C `write` it was given the type of; the program's own
+// `write` of another type is reported where println needs it, once.
+// WRITE: write-mismatch.gopp:7:2: error[E0442]: invalid @Extern on write: println calls it, and needs func write(fd int32, p *byte, n uint) int
+// WRITE-NOT: error
+// UNUSED: declare fn write(_1: i64, _2: *u8, _3: i64) -> i64

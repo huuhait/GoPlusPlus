@@ -1,0 +1,18 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %S/Inputs/hello-ok.gopp -o %t.ok
+// RUN: not %gopp build %gopp_link_flags %s -o %t.exe 2>&1 | FileCheck %s
+// RUN: not test -e %t.exe
+// P04.02: a link failure is reported as a code generation error, with the
+// linker's own message, and leaves no executable. Both sides: the program
+// without the missing function links.
+package main
+
+@Extern("C")
+func gopp_no_such_function()
+
+func main() {
+	gopp_no_such_function()
+}
+
+// CHECK: undefined symbol: gopp_no_such_function
+// CHECK: error[E0441]: code generation failed: the linker failed (exit status 1)

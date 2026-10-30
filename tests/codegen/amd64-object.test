@@ -1,0 +1,22 @@
+// RUN: %gopp build -target=linux/amd64 -emit=obj %s -o %t.o
+// RUN: llvm-readelf -h -S %t.o | FileCheck %s
+// RUN: llvm-objdump -d --no-show-raw-insn %t.o | FileCheck --check-prefix=ASM %s
+// P04.03: the amd64 object (the arm64 one is in arm64-link.test): a
+// relocatable x86-64 ELF with the line table (D4.7) and unwind tables for
+// every function (uwtable, D4.6).
+package main
+
+func main() {
+	println("hello")
+}
+
+// CHECK: Class: ELF64
+// CHECK: Type: REL
+// CHECK: Machine: Advanced Micro Devices X86-64
+// CHECK: .text
+// CHECK: .eh_frame
+// CHECK: .debug_line
+// ASM: file format elf64-x86-64
+// ASM: <main.main>:
+// ASM: call
+// ASM: <main>:

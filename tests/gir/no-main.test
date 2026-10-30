@@ -1,0 +1,16 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// RUN: %gopp build -emit=gir %S/Inputs/library.gopp | FileCheck --check-prefix=LIB %s
+// RUN: not %gopp build %S/Inputs/library.gopp -o %t.exe 2>&1 | FileCheck --check-prefix=EXE %s
+// P04.02: a program needs `func main` in package main (Go's wording). Both
+// sides: a package that is not main has no entry point and is lowered (a
+// library object; files on the command line are the package
+// `command-line-arguments`, as in Go), but it is no program.
+package main
+
+func helper() {}
+
+// CHECK: :8:1: error[E0443]: function main is undeclared in the main package
+// CHECK-NOT: error
+// LIB: fn command-line-arguments.F() -> i64 [go, external]
+// LIB-NOT: fn main(
+// EXE: gopp: error: build: package lib is not package main, so it is no program

@@ -1,0 +1,25 @@
+// RUN: %gopp build -emit=gir %s -o %t.txt
+// RUN: %gopp build -emit=girb %s -o %t.a.girb
+// RUN: %gopp build -emit=girb %s -o %t.b.girb
+// RUN: cmp %t.a.girb %t.b.girb
+// RUN: %gopp gir dump %t.a.girb > %t.dump
+// RUN: diff %t.txt %t.dump
+// RUN: FileCheck %s --input-file=%t.dump
+// P04.01, D4.15: the bitstream is deterministic (two builds, same bytes), and
+// reading it gives back the module the builder made (the dumps are equal).
+package main
+
+func fib(n int) int {
+	a, b := 0, 1
+	for i := 0; i < n; i++ {
+		a, b = b, a+b
+	}
+	return a
+}
+
+func main() {
+	println("fib", fib(10), true)
+}
+// CHECK: fn main.fib(_1: i64) -> i64
+// CHECK: fn main.main() -> ()
+// CHECK: fn gopp.print_i64

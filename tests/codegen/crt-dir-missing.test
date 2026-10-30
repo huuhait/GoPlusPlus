@@ -1,0 +1,20 @@
+// RUN: rm -rf %t.d && mkdir -p %t.d/empty %t.d/partial %t.d/nolibc
+// RUN: not %gopp build -target=linux/arm64 -crt-dir=%t.d/empty %s -o %t.d/a.out 2>&1 | FileCheck --check-prefix=EMPTY %s
+// RUN: not %gopp build -target=linux/arm64 -crt-dir=%t.d/nonexistent %s -o %t.d/a.out 2>&1 | FileCheck --check-prefix=NONE %s
+// RUN: touch %t.d/partial/crt1.o
+// RUN: not %gopp build -target=linux/arm64 -crt-dir=%t.d/partial %s -o %t.d/a.out 2>&1 | FileCheck --check-prefix=PART %s
+// RUN: touch %t.d/nolibc/crt1.o %t.d/nolibc/crti.o %t.d/nolibc/crtn.o
+// RUN: not %gopp build -target=linux/arm64 -crt-dir=%t.d/nolibc %s -o %t.d/a.out 2>&1 | FileCheck --check-prefix=NOLIBC %s
+// RUN: not test -e %t.d/a.out
+// P04.03: a missing piece of the C library is a clear error before the
+// linker runs (Linker.cpp, checkLinkInputs), never a crash and never a bare
+// linker message: the piece and where it was looked for. The good side is
+// arm64-link.test (a complete directory links).
+package main
+
+func main() {}
+
+// EMPTY: error[E0441]: code generation failed: crt1.o does not exist: {{.*}}empty{{/|\\}}crt1.o
+// NONE: error[E0441]: code generation failed: crt1.o does not exist: {{.*}}nonexistent{{/|\\}}crt1.o
+// PART: error[E0441]: code generation failed: crti.o does not exist: {{.*}}partial{{/|\\}}crti.o
+// NOLIBC: error[E0441]: code generation failed: libc.so (or libc.a) is not in {{.*}}nolibc (install the C library development files)

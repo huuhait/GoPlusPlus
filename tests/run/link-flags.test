@@ -1,0 +1,22 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: llvm-readelf -h -l -S -d %t.exe | FileCheck %s
+// P04.02, D4.9: a dynamic executable against the C library, from the link
+// line of Linker.cpp: the program interpreter, libc.so.6, the unwinder's
+// frame index (--eh-frame-hdr), read-only relocations (-z relro), the GNU
+// hash table, and no build id.
+package main
+
+func main() { println("x") }
+
+// CHECK: Type: EXEC
+// CHECK-NOT: .note.gnu.build-id
+// CHECK: .gnu.hash
+// CHECK-NOT: .note.gnu.build-id
+// CHECK: .eh_frame_hdr
+// CHECK-NOT: .note.gnu.build-id
+// CHECK: INTERP
+// CHECK-NEXT: [Requesting program interpreter: {{.*}}ld-linux-{{x86-64.so.2|aarch64.so.1}}]
+// CHECK-DAG: GNU_EH_FRAME
+// CHECK-DAG: GNU_RELRO
+// CHECK: (NEEDED) Shared library: [libc.so.6]

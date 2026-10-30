@@ -1,0 +1,49 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// RUN: %gopp build -emit=llvm %s | FileCheck --check-prefix=LL %s
+// P04.02: an @Extern("C") declaration is a C function: its bare name is the
+// symbol (gir::symbolOf), it has the C convention and cannot unwind, so its
+// calls have no landing pad. Both sides: the C types are scalars and
+// pointers; extern-bad.test has the declarations that are refused.
+package main
+
+@Extern("C")
+func getpid() int32
+
+@Extern("C")
+func abs(x int32) int32
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+@Extern("C")
+func isatty(fd int32) bool
+
+@Extern("C")
+func putchar(c uint8) int32
+
+func main() {
+	var x int32 = abs(-3) + getpid()
+	_ = x
+	_ = isatty(1)
+	_ = putchar('!')
+	println("p")
+}
+
+// CHECK: declare fn getpid() -> i32 [c, external, nounwind]
+// CHECK: declare fn abs(_1: i32) -> i32 [c, external, nounwind]
+// CHECK: declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
+// CHECK: declare fn isatty(_1: i32) -> bool [c, external, nounwind]
+// CHECK-LABEL: fn main.main() -> () [go, external]
+// CHECK: call const fn @abs(const -3: i32) -> [return: bb1, unwind: unreachable]
+// CHECK: call const fn @getpid() -> [return: bb2, unwind: unreachable]
+// The program's own `write` is the one println calls: there is no second.
+// CHECK: call const fn @write(const 1: i32, copy _7.0, copy _7.1)
+// CHECK-NOT: declare fn write
+
+// The C ABI widens a bool and an integer narrower than 32 bits, at the
+// declaration and at the call (as clang does).
+// LL: declare zeroext i1 @isatty(i32) #[[NOUNWIND:[0-9]+]]
+// LL: declare i32 @putchar(i8 zeroext) #[[NOUNWIND]]
+// LL: call zeroext i1 @isatty(i32 1) #[[NOUNWIND]]
+// LL: call i32 @putchar(i8 zeroext 33) #[[NOUNWIND]]
+// LL: attributes #[[NOUNWIND]] = { nounwind }

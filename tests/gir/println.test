@@ -1,0 +1,51 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// P04.02: println and print (Body::lowerPrintln). A constant is formatted
+// when the program is built, and the text from one value to the next,
+// println's spaces and newline included, is one `write`. Go evaluates every
+// operand before it prints anything: the operands that are not constants are
+// evaluated first, left to right, a variable into its own temporary.
+package main
+
+func f(x int) int { return x * 2 }
+
+func main() {
+	var n int = 5
+	var u uint8 = 7
+	var b bool = n > 3
+	s := "str"
+	println("a", 1, true, 'x', -9223372036854775807-1)
+	println(n, u, b, s, f(n))
+	println()
+	print("no", "space", 3)
+}
+
+// CHECK-LABEL: fn main.main()
+// All constants: one write.
+// CHECK: = const str#{{[0-9]+}} "a 1 true 120 -9223372036854775808\0A"
+// CHECK-NEXT: = call const fn @write(
+// The values first: n, u, b and s into temporaries, then the call of f.
+// CHECK: [[N:_[0-9]+]] = copy _1
+// CHECK-NEXT: [[U:_[0-9]+]] = copy _2
+// CHECK-NEXT: [[B:_[0-9]+]] = copy _4
+// CHECK-NEXT: [[S:_[0-9]+]] = copy _5
+// CHECK-NEXT: [[F:_[0-9]+]] = call const fn @main.f(copy _1)
+// Then the writes; an unsigned value widens to u64, a signed one to i64.
+// CHECK: = call const fn @gopp.print_i64(copy [[N]])
+// CHECK: = const str#{{[0-9]+}} " "
+// CHECK: = int_to_int(copy [[U]]) as u64
+// CHECK: = call const fn @gopp.print_u64(
+// CHECK: switch copy [[B]]
+// CHECK: = const str#{{[0-9]+}} "true"
+// CHECK: = const str#{{[0-9]+}} "false"
+// CHECK: = call const fn @write(const 1: i32, copy [[S]].0, copy [[S]].1)
+// CHECK: = call const fn @gopp.print_i64(copy [[F]])
+// CHECK: = const str#[[NL:[0-9]+]] "\0A"
+// println() is a newline; print adds no spaces.
+// CHECK: = const str#[[NL]] "\0A"
+// CHECK: = const str#{{[0-9]+}} "nospace3"
+// CHECK: return
+
+// The helpers are GIR functions on top of the C `write`.
+// CHECK: declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
+// CHECK: fn gopp.print_u64(_1: u64) -> () [go, internal]
+// CHECK: fn gopp.print_i64(_1: i64) -> () [go, internal]

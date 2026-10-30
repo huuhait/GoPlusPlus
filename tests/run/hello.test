@@ -1,0 +1,20 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %s -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// P04.02: the hello program, built for the host through GIR, LLVM IR, an
+// object file and the bundled LLD (found by host sysroot discovery, P00.12),
+// and run. Nothing here depends on NixOS: the same test runs on a Debian
+// container, where the probe finds /usr/lib/<multiarch>/crt1.o and
+// /lib64/ld-linux-x86-64.so.2.
+package main
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func main() {
+	println("hello, Go++")
+	println(1+2, "x", true)
+}
+
+// CHECK: hello, Go++
+// CHECK-NEXT: 3 x true

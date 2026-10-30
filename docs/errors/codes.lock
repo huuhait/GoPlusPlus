@@ -441,3 +441,8 @@ E0435 err_unit_scale
 E0436 err_unit_op_method
 E0437 err_unit_in
 E0438 err_unit_generic
+E0439 err_gir_unsupported
+E0440 err_gir_verify
+E0441 err_codegen
+E0442 err_gir_extern_bad
+E0443 err_gir_no_main

@@ -1,0 +1,105 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// P04.01: the M0 subset. Locals live from StorageLive to StorageDead, a
+// `return` or `break` leaves the scopes it crosses, `&&` branches, a division
+// by a value that is not a constant is checked first.
+package main
+
+func add(a int, b int) int { return a + b }
+
+func loop(n int) int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		if i == 3 {
+			continue
+		}
+		if i > 8 {
+			break
+		}
+		sum += i
+	}
+	return sum
+}
+
+func scoped(n int) int {
+	for {
+		x := n
+		if x > 1 {
+			y := x
+			return y
+		}
+		break
+	}
+	return 0
+}
+
+func logic(a bool, b bool) bool { return a && b }
+
+func div(a int, d int) int { return a / d }
+
+// A defined type over a basic type is that type (the declaration lowers
+// nothing; P04.04 adds structs).
+type Celsius int
+
+func warm(c Celsius) bool {
+	type Small int8
+	var s Small = 3
+	return c > 20 && s > 0
+}
+
+func main() {
+	println(add(1, 2))
+}
+
+// CHECK-LABEL: fn main.add(_1: i64, _2: i64) -> i64
+// CHECK:   let _1: i64  ; a
+// CHECK:   let _2: i64  ; b
+// CHECK:     _3 = add(copy _1, copy _2)
+// CHECK:     _0 = copy _3
+// CHECK:     return
+
+// CHECK-LABEL: fn main.loop(_1: i64) -> i64
+// CHECK:     StorageLive(_2)
+// CHECK:     _2 = const 0: i64
+// CHECK:     StorageLive(_3)
+// The loop head tests the condition with a switch on a bool.
+// CHECK:   bb1:
+// CHECK:     _4 = lt(copy _3, copy _1)
+// CHECK:     switch copy _4 [0: bb4, otherwise: bb2]
+// `continue` goes to the post statement, `break` to the exit, which leaves
+// the loop's variable and then the function's.
+// CHECK:   bb3:
+// CHECK:     _3 = add(copy _3, const 1: i64)
+// CHECK:   bb4:
+// CHECK:     StorageDead(_3)
+// CHECK:     _0 = copy _2
+// CHECK:     StorageDead(_2)
+// CHECK:     return
+// CHECK:   bb5:
+// CHECK:     goto -> bb3
+// CHECK:   bb7:
+// CHECK:     goto -> bb4
+// CHECK:     _2 = add(copy _2, copy _3)
+
+// A `return` in nested blocks leaves every scope it crosses, innermost first.
+// CHECK-LABEL: fn main.scoped(
+// CHECK:     StorageLive(_2)
+// CHECK:     StorageLive(_4)
+// CHECK:     _0 = copy _4
+// CHECK-NEXT:     StorageDead(_4)
+// CHECK-NEXT:     StorageDead(_2)
+// CHECK-NEXT:     return
+
+// CHECK-LABEL: fn main.logic(_1: bool, _2: bool) -> bool
+// CHECK:     _3 = copy _1
+// CHECK:     switch copy _3 [0: bb{{[0-9]+}}, otherwise: bb{{[0-9]+}}]
+// CHECK:     _3 = copy _2
+
+// CHECK-LABEL: fn main.div(_1: i64, _2: i64) -> i64
+// CHECK:     _3 = ne(copy _2, const 0: i64)
+// CHECK:     assert(copy _3 == true, "div_by_zero") -> [success: bb1, unwind: continue]
+// CHECK:     div(copy _1, copy _2)
+
+// CHECK-LABEL: fn main.warm(_1: i64) -> bool
+// CHECK:   let _1: i64  ; c
+// CHECK:   let {{_[0-9]+}}: i8  ; s
+// CHECK:     gt(copy _1, const 20: i64)

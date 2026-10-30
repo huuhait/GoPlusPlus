@@ -24,9 +24,14 @@ add_executable(GoppUnitTests
   Sema/SerializeTest.cpp
   Sema/LoaderTest.cpp
   Sema/ParallelTest.cpp
-  Build/HostToolchainTest.cpp)
+  Build/HostToolchainTest.cpp
+  GIR/GIRTest.cpp
+  GIR/VerifierTest.cpp
+  GIR/StressTest.cpp
+  GIR/DeepTest.cpp
+  CodeGen/CodeGenTest.cpp)
 target_link_libraries(GoppUnitTests PRIVATE
-  goppBasic goppLex goppAST goppParse goppSema goppMangle goppFormat goppBuild goppCodeGen goppImport
+  goppBasic goppLex goppAST goppParse goppSema goppMangle goppFormat goppBuild goppGIR goppCodeGen goppImport
   GTest::gtest_main)
 target_compile_definitions(GoppUnitTests PRIVATE
   GOPP_TEST_INPUTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Build/Inputs"

@@ -1,0 +1,41 @@
+// RUN: rm -rf %t.d && mkdir -p %t.d
+// RUN: clang --target=aarch64-linux-gnu -c %S/Inputs/arm64/crt1.s -o %t.d/crt1.o
+// RUN: clang --target=aarch64-linux-gnu -c %S/Inputs/arm64/crti.s -o %t.d/crti.o
+// RUN: clang --target=aarch64-linux-gnu -c %S/Inputs/arm64/crtn.s -o %t.d/crtn.o
+// RUN: clang --target=aarch64-linux-gnu -c %S/Inputs/arm64/libc.s -o %t.d/libc.o
+// RUN: llvm-ar rcs %t.d/libc.a %t.d/libc.o
+// RUN: %gopp build -target=linux/arm64 -emit=obj %s -o %t.d/hello.o
+// RUN: llvm-readobj --file-headers %t.d/hello.o | FileCheck --check-prefix=OBJ %s
+// RUN: llvm-objdump -d --no-show-raw-insn %t.d/hello.o | FileCheck --check-prefix=ASM %s
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%t.d %s -o %t.d/hello
+// RUN: llvm-readobj --file-headers %t.d/hello | FileCheck --check-prefix=EXE %s
+// RUN: llvm-readelf -l %t.d/hello | FileCheck --check-prefix=INTERP %s
+// RUN: not %gopp build -target=linux/arm64 %s -o %t.d/nocrt 2>&1 | FileCheck --check-prefix=NOCRT %s
+// RUN: not %gopp build -target=linux/riscv %s 2>&1 | FileCheck --check-prefix=BADTARGET %s
+// P04.03: linux/arm64 builds and links through the same code path as the
+// host. This test needs neither QEMU nor an aarch64 libc, so it runs
+// everywhere: it inspects the object and the linked file (an aarch64 ELF, a
+// dynamic linker for aarch64, A64 instructions) against a stub sysroot. That
+// the program runs is checked by run/arm64-qemu-*.test (QEMU user mode, with
+// the flake's aarch64 glibc) and by the arm64 CI runner.
+package main
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func main() {
+	println("hello arm64")
+}
+
+// OBJ: Class: 64-bit
+// OBJ: DataEncoding: LittleEndian
+// OBJ: Machine: EM_AARCH64
+// ASM: file format elf64-littleaarch64
+// ASM: <main.main>:
+// ASM: bl
+// ASM: <main>:
+// EXE: Type: Executable
+// EXE: Machine: EM_AARCH64
+// INTERP: Requesting program interpreter: /lib/ld-linux-aarch64.so.1
+// NOCRT: error[E0441]: code generation failed: linking for linux/arm64 on this host needs -crt-dir
+// BADTARGET: unsupported target 'linux/riscv' (supported: linux/amd64, linux/arm64)

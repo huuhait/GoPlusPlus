@@ -1,0 +1,29 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.01/P04.02: the hello subset as GIR text. The builder verifies the module
+// before it prints it, so a printed dump is a verified one.
+package main
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func main() {
+	println("hello")
+}
+
+// The user's own declaration of `write` is the one println calls. A
+// constant is formatted when the program is built, and println's text with
+// its newline is one `write`.
+// CHECK: module "command-line-arguments"
+// CHECK: declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
+// CHECK: fn main.main() -> () [go, external] {
+// CHECK:   let _0: ()
+// CHECK:   bb0:
+// CHECK:     _1 = const str#0 "hello\0A"
+// CHECK:     _2 = call const fn @write(const 1: i32, copy _1.0, copy _1.1) -> [return: bb1, unwind: unreachable]
+// CHECK:   bb1:
+// CHECK-NEXT: return
+// The C entry point calls main.main and returns 0.
+// CHECK: fn main() -> i32 [c, external] {
+// CHECK:     _1 = call const fn @main.main() -> [return: bb1, unwind: continue]
+// CHECK:     _0 = const 0: i32
+// CHECK:     return

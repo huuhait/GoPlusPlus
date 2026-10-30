@@ -1,0 +1,79 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// RUN: not %gopp build -emit=gir %S/Inputs/unsupported-more.gopp 2>&1 | FileCheck --check-prefix=MORE %s
+// P04.01: what M0 cannot lower is reported with E0439 where it is, once per
+// construct (an unsupported type at its first use), and the module never
+// reaches the printer. Both sides: `type Celsius int` and `ok` are in the
+// subset and draw no error. (Two files: the driver stops after 10 errors.)
+package main
+
+var pkgVar int
+
+type T struct{ x int }
+
+func (t T) method() {}
+
+func pair() (int, int) { return 1, 2 }
+
+func maps() {
+	var m map[string]int
+	_ = m
+}
+
+func ranges() {
+	for i := range 3 {
+		_ = i
+	}
+}
+
+func switches(x int) {
+	switch x {
+	case 1:
+	}
+}
+
+func slices() {
+	s := []int{1}
+	_ = s
+}
+
+func labels() {
+loop:
+	for {
+		break loop
+	}
+}
+
+func defers() {
+	defer println("x")
+}
+
+type Celsius int
+
+func ok(c Celsius) int { return int(c) + 1 }
+
+func main() {
+	println(ok(20))
+}
+
+// CHECK: :9:1: error[E0439]: this package-level declaration is not supported by code generation yet (P04)
+// CHECK: :13:1: error[E0439]: a method is not supported
+// CHECK: :15:1: error[E0439]: this function signature is not supported
+// CHECK: :18:6: error[E0439]: a map is not supported
+// CHECK: :23:2: error[E0439]: the statement RangeStmt is not supported
+// CHECK: :29:2: error[E0439]: the statement SwitchStmt is not supported
+// CHECK: :35:2: error[E0439]: a slice is not supported
+// CHECK: :40:1: error[E0439]: the statement LabeledStmt is not supported
+// CHECK: :47:2: error[E0439]: the statement DeferStmt is not supported
+// CHECK-NOT: error
+// CHECK-NOT: fn main.ok
+
+// The declarations are lowered before the bodies.
+// MORE: :23:1: error[E0439]: an init function is not supported
+// MORE: :25:1: error[E0439]: an init function is not supported
+// MORE: :7:2: error[E0439]: a function value is not supported
+// MORE-NOT: :8:
+// MORE: :12:10: error[E0439]: printing a value of type f64 is not supported
+// MORE: :16:9: error[E0439]: the expression StarExpr is not supported
+// MORE: :20:10: error[E0439]: printing a value of type f64 is not supported
+// MORE: :32:6: error[E0439]: the defined type T is not supported
+// MORE-NOT: error

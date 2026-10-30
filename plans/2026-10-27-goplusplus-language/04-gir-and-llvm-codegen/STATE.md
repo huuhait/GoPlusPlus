@@ -2,14 +2,14 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-30 (P04.15 EH cost spike done, ADR-0028; P04.17 done)
+Last updated: 2026-10-30 (P04.01 to P04.03, P04.15 and P04.17 done: wave 1 complete)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
 
-- [ ] P04.01 GIR design
-- [ ] P04.02 M0 hello
-- [ ] P04.03 Targets & linking
+- [x] P04.01 GIR design
+- [x] P04.02 M0 hello
+- [x] P04.03 Targets & linking
 - [ ] P04.04 Lower core
 - [ ] P04.05 Lower strings/slices/views/maps
 - [ ] P04.06 Lower methods & interfaces
@@ -31,6 +31,12 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.22 `extends` lowering (ADR-0023)
 - [ ] P04.23 Operator lowering (ADR-0024)
 - [ ] P04.24 Units lowering (ADR-0025)
+
+## Notes of finished tasks
+
+- P04.01 (done, team build `p04-gir`; base c3, verifier rules and run tests from c2, `symbolOf` from c1): GIR is its own library (`compiler/lib/GIR`, `include/gopp/GIR`; ADT, Support and Bitstream headers only, in `check-includes`): types (`Type.h`, uniqued in a `Context`, fixed-width, structs nominal), the MIR-shaped IR (`GIR.h`: locals, blocks, statements, terminators with `UnwindAction`, places with typed projections, rvalues, indexes instead of pointers, `NoUnwind`/`NoReturn` functions), `FuncBuilder` (`Builder.h`, the one way to make a body, computes rvalue types), the builder from the checked AST (`Lower.h`; reads `sema::Info` only; `Lowering::lowerType` is the one place a checker type becomes a GIR type, an unsupported type is E0439 once; `gir::symbolOf` is the one place a function gets its symbol, for P04.17), the verifier (`Verify.h`: rules V001 to V070, one decision point each, iterative and linear; runs at the end of `lowerPackage` (E0440), after every `readModule` and at the start of `lowerToLLVM`), the printer (`gopp build -emit=gir` / `-dump-gir`, `gopp gir dump`) and the D4.15 bitstream writer and reader (`Serialize.h`: IDENT, MODULE, TYPES, FUNC and INDEX blocks, a trailer with the index offset, version check, deterministic, selective read of one body). The builder runs on a 32 MB thread (a left-deep chain at the parser's height limit needs 7.1 MB under ASan). The design for P04.04 to P04.24 is `docs/design/gir.md`. Tests: `tests/gir` (`check-gir`), `tests/unit/GIR` (`VerifierTest`: both sides of every rule; `StressTest`: near-linear verifier and printer; `DeepTest`: `DeepChain.*` at the parser's limit through GIR and LLVM IR; `GIRTest`). Not done: a reader for the *text* form (the binary to text to binary round trip of D4.15 is binary to module to binary plus binary to text equal to builder text; the doc says why).
+- P04.02 (done): `CodeGen` lowers GIR to LLVM IR (`LowerToLLVM.cpp`: one alloca per local, one LLVM block per GIR block, bool i1 in registers and i8 in memory, Go semantics of signed `/ %` by -1, shifts at or above the width, saturating float to int, wrapping add/sub/mul; Assert fails to `llvm.trap` until P04.04 has panics; `uwtable` on every definition; DWARF line tables from spans; the LLVM verifier on every result), emits objects and assembly (`Emit.cpp`), and links with the bundled LLD started as `gopp lld ...` (`Linker.cpp`, in-process `lld::elf::link` in a subprocess of gopp; crt objects and dynamic linker from the P00.12 probe; every link input checked first; the link line has no build id, so objects and executables are byte-identical for the same input). `println`/`print` evaluate all operands first (Go's order), format constants at build time and write each run of text with one C `write`; `@Extern("C")` is validated (E0442); package main needs `func main` (E0443). `gopp build [-emit=gir|girb|llvm|asm|obj|exe] [-o]`. Tests: `tests/codegen` (`check-codegen`), `tests/run` (`check-run`: hello, D4.12 semantics, empty/long/non-ASCII strings, println operands, evaluation order, exit codes, determinism, link flags), `tests/unit/CodeGen`. The Debian run is verified from NixOS with `tools/run-hello-in-debian.sh` (gopp builds hello inside a Debian container with gcc and libc6-dev, the program runs in a clean `debian:bookworm`; lit: `run/debian-container.long.test`, opt-in with `GOPP_TEST_DEBIAN_IMAGE`); `run/debian.test` runs on a Debian host. Drops, cleanup edges, `terminate` unwind actions and resume are refused with a message naming P04.09/P04.07.
+- P04.03 (done): `CodeGen/Target.h` has one table of targets (`TargetSpec`: triple, CPU, pinned data layout, LLD emulation, dynamic linker) for linux/amd64 and linux/arm64; `createTargetMachine` fails when LLVM's data layout differs from the pinned one. `gopp build -target=linux/arm64 -crt-dir=DIR [-dynamic-linker=P]` links a foreign target against a directory with crt1.o, crti.o, crtn.o and libc (musl sysroots come with P07.14); without it the error says so, and a directory that lacks a piece names it. Design: `docs/design/targets-and-linking.md`. Tests: `Targets.*`, `CodeGen.*`, `Linker.*` (unit), `codegen/arm64-link.test` (stub crt and libc assembled for aarch64, then object and linked ELF checked with llvm-readobj/objdump/readelf), `codegen/crt-dir-missing.test`, `codegen/amd64-object.test`. arm64 programs run locally (owner decision M6): the dev shell has `qemu-user` and the aarch64 glibc (`GOPP_AARCH64_SYSROOT`, binary-cache download, about 46 MiB), lit feature `qemu-aarch64`, and `run/arm64-qemu-hello.test` / `run/arm64-qemu-features.test` run hello and the feature programs of the run tests for linux/arm64 under `qemu-aarch64 -L <sysroot>` and compare stdout and exit code with the amd64 run. The stub-sysroot link test stays. Still CI: the native run on the arm64 runner.
 
 ## Open questions
 

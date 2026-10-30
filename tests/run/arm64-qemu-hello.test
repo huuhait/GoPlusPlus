@@ -1,0 +1,21 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %gopp build %gopp_link_flags %s -o %t.amd64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64
+// RUN: llvm-readobj --file-headers %t.arm64 | FileCheck --check-prefix=ELF %s
+// RUN: %python %S/Inputs/run-compare-arm64.py %t.amd64 %t.arm64 %aarch64_sysroot 0
+// RUN: %t.amd64 | FileCheck %s
+// RUN: timeout 60 qemu-aarch64 -L %aarch64_sysroot %t.arm64 | FileCheck %s
+// P04.03 (owner decision M6): hello for linux/arm64 really runs, here under
+// user-mode QEMU against an aarch64 glibc from the flake. Its output and exit
+// code are the amd64 program's. Without QEMU the test is skipped, and the
+// arm64 runner of CI runs the host-arm64 form of hello (run/hello.test).
+package main
+
+func main() {
+	println("hello, Go++")
+	println(1+2, "x", true)
+}
+
+// ELF: Machine: EM_AARCH64
+// CHECK: hello, Go++
+// CHECK-NEXT: 3 x true

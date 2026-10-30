@@ -1,0 +1,9 @@
+// RUN: %gopp lld --version | FileCheck %s
+// RUN: %gopp version | FileCheck --check-prefix=VERSION %s
+// RUN: not %gopp lld --no-such-flag 2>&1 | FileCheck --check-prefix=BAD %s
+// P04.02, D4.9: the LLD bundled in gopp runs as `gopp lld ...`; its arguments
+// are the linker's, so gopp does not read them as its own. A bad one is the
+// linker's error and exit status.
+// CHECK: LLD {{[0-9]+\.[0-9]+}}
+// VERSION: LLD: LLD {{[0-9]+\.[0-9]+}}
+// BAD: unknown argument '--no-such-flag'

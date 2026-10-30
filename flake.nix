@@ -41,6 +41,7 @@
           assertions ? false,
         }:
         let
+          x86 = pkgs.stdenv.hostPlatform.system == "x86_64-linux";
           baseLlvm = pkgs."llvmPackages_${llvmMajor}";
           # The compiler that builds gopp is always the regular (fast, cached)
           # clang, and so are clang-format/clang-tidy. Only the LLVM/Clang/LLD
@@ -73,7 +74,11 @@
             ]))
             pkgs.go_1_25
             formatTools
-          ];
+          ]
+          # Local arm64 runs (P04.03, owner decision M6): user-mode QEMU runs
+          # the linux/arm64 programs the tests build, against the aarch64
+          # glibc below. Only on x86-64; an arm64 host runs them natively.
+          ++ pkgs.lib.optionals x86 [ pkgs.qemu-user ];
 
           buildInputs = [
             llvm.libllvm.dev # llvm-config, LLVMConfig.cmake
@@ -101,6 +106,12 @@
           shellHook = ''
             export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-100G}"
           '';
+
+          # The aarch64 glibc (crt1.o, libc, the dynamic linker): the sysroot
+          # of the arm64 run tests, for `-crt-dir=$GOPP_AARCH64_SYSROOT/lib`
+          # and `qemu-aarch64 -L $GOPP_AARCH64_SYSROOT`. A binary-cache
+          # download (about 50 MiB with qemu-user), never built from source.
+          GOPP_AARCH64_SYSROOT = pkgs.lib.optionalString x86 "${pkgs.pkgsCross.aarch64-multiplatform.glibc}";
 
           # find_package(LLVM/Clang/LLD) hints (see CONTRIBUTING.md).
           LLVM_DIR = "${llvm.libllvm.dev}/lib/cmake/llvm";

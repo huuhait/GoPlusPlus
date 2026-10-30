@@ -16,9 +16,14 @@
 #include "gopp/Basic/SourceManager.h"
 #include "gopp/Basic/Version.h"
 #include "gopp/Build/HostToolchain.h"
+#include "gopp/CodeGen/CodeGen.h"
 #include "gopp/CodeGen/Linker.h"
 #include "gopp/CodeGen/Target.h"
 #include "gopp/Format/Format.h"
+#include "gopp/GIR/Lower.h"
+#include "gopp/GIR/Print.h"
+#include "gopp/GIR/Serialize.h"
+#include "gopp/GIR/Verify.h"
 #include "gopp/Import/ClangInfo.h"
 #include "gopp/Lex/Lexer.h"
 #include "gopp/Mangle/SymbolName.h"
@@ -27,13 +32,17 @@
 #include "gopp/Sema/Loader.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -195,6 +204,58 @@ static cl::opt<bool> FmtDiff("d", cl::desc("Print diffs instead of the result"),
 static cl::opt<bool> FmtNoSortImports("no-sort-imports",
                                       cl::desc("Do not sort import groups"),
                                       cl::sub(FmtCmd));
+
+static cl::SubCommand
+    BuildCmd("build", "Compile a package: GIR, LLVM IR, an object or an "
+                      "executable");
+static cl::list<std::string> BuildInputs(cl::Positional,
+                                         cl::desc("<files or directory>"),
+                                         cl::sub(BuildCmd));
+enum class Emit { GIR, GIRBitstream, LLVM, Asm, Obj, Exe };
+static cl::opt<Emit> BuildEmit(
+    "emit", cl::desc("What to produce"),
+    cl::values(clEnumValN(Emit::GIR, "gir", "GIR text (stdout without -o)"),
+               clEnumValN(Emit::GIRBitstream, "girb",
+                          "GIR bitstream (D4.15); needs -o"),
+               clEnumValN(Emit::LLVM, "llvm", "LLVM IR text"),
+               clEnumValN(Emit::Asm, "asm", "assembly"),
+               clEnumValN(Emit::Obj, "obj", "an object file"),
+               clEnumValN(Emit::Exe, "exe", "a linked executable (default)")),
+    cl::init(Emit::Exe), cl::sub(BuildCmd));
+static cl::opt<bool> BuildDumpGIR("dump-gir", cl::desc("Same as -emit=gir"),
+                                  cl::sub(BuildCmd));
+static cl::opt<std::string>
+    BuildTarget("target", cl::desc("Target: linux/amd64, linux/arm64 or host"),
+                cl::init("host"), cl::sub(BuildCmd));
+static cl::opt<std::string>
+    BuildCrtDir("crt-dir",
+                cl::desc("Directory with crt1.o, crti.o, crtn.o and libc, for "
+                         "a target other than the host"),
+                cl::sub(BuildCmd));
+static cl::opt<std::string>
+    BuildDynamicLinker("dynamic-linker",
+                       cl::desc("Path of the dynamic linker the program asks "
+                                "for at run time"),
+                       cl::sub(BuildCmd));
+static cl::opt<bool> BuildNoDebug("no-debug", cl::desc("No DWARF line tables"),
+                                  cl::sub(BuildCmd));
+static cl::opt<bool> BuildNoLocs("gir-no-locs",
+                                 cl::desc("With -emit=gir: leave out the "
+                                          "source positions"),
+                                 cl::sub(BuildCmd));
+static cl::opt<std::string> BuildOutput("o", cl::desc("Output file"),
+                                        cl::value_desc("file"),
+                                        cl::sub(BuildCmd));
+static cl::opt<std::string>
+    BuildTestStubs("build-test-stubs", cl::Hidden,
+                   cl::desc("TEST ONLY: standard packages from this "
+                            "directory"),
+                   cl::sub(BuildCmd));
+
+static cl::SubCommand GirCmd("gir", "Work with GIR files: gopp gir dump "
+                                    "<file.girb>");
+static cl::list<std::string> GirArgs(cl::Positional, cl::desc("dump <file>"),
+                                     cl::sub(GirCmd));
 
 static int runVersion() {
   outs() << "gopp version " << gopp::getGoppVersion() << '\n'
@@ -443,6 +504,194 @@ static int runCheck(bool Vet) {
   return checkStatus(CP, Diags, Vet);
 }
 
+/// Writes Bytes to OutFile, or stdout if it is empty.
+static bool writeOutput(StringRef OutFile, StringRef Bytes) {
+  if (OutFile.empty() || OutFile == "-") {
+    outs() << Bytes;
+    return true;
+  }
+  if (llvm::Error E =
+          gopp::writeFileAtomic(OutFile, [&](llvm::raw_pwrite_stream &OS) {
+            OS << Bytes;
+            return llvm::Error::success();
+          })) {
+    errs() << "gopp: error: " << OutFile << ": " << toString(std::move(E))
+           << '\n';
+    return false;
+  }
+  return true;
+}
+
+static std::string SelfPath;
+
+/// Reports a back-end failure as an error diagnostic.
+static int reportCodegen(gopp::SourceManager &SM,
+                         gopp::DiagnosticsEngine &Diags, llvm::Error E) {
+  (void)SM;
+  Diags.report(gopp::SourceLoc(), gopp::diag::err_codegen)
+      << toString(std::move(E));
+  Diags.finish();
+  return 1;
+}
+
+/// `gopp build` from GIR on: LLVM IR, assembly, an object, an executable.
+static int codegenAndLink(Emit What, gopp::SourceManager &SM,
+                          gopp::DiagnosticsEngine &Diags,
+                          const gopp::gir::Module &M) {
+  Expected<gopp::TargetSpec> T = gopp::parseTarget(BuildTarget);
+  if (!T)
+    return reportCodegen(SM, Diags, T.takeError());
+  Expected<std::unique_ptr<llvm::TargetMachine>> TM =
+      gopp::createTargetMachine(*T);
+  if (!TM)
+    return reportCodegen(SM, Diags, TM.takeError());
+  llvm::LLVMContext LCtx;
+  gopp::LowerToLLVMOptions LO;
+  LO.DebugInfo = !BuildNoDebug;
+  Expected<std::unique_ptr<llvm::Module>> LM =
+      gopp::lowerToLLVM(LCtx, M, **TM, LO);
+  if (!LM)
+    return reportCodegen(SM, Diags, LM.takeError());
+  if (What == Emit::LLVM) {
+    std::string Text;
+    raw_string_ostream OS(Text);
+    (*LM)->print(OS, nullptr);
+    return writeOutput(BuildOutput, Text) ? 0 : 1;
+  }
+  if (What == Emit::Asm) {
+    std::string Text;
+    raw_string_ostream OS(Text);
+    if (llvm::Error E = gopp::emitAssembly(**LM, **TM, OS))
+      return reportCodegen(SM, Diags, std::move(E));
+    return writeOutput(BuildOutput, Text) ? 0 : 1;
+  }
+  // The name of the result: -o, else the first input without its extension.
+  std::string Stem = llvm::sys::path::stem(BuildInputs[0]).str();
+  if (Stem.empty() || Stem == ".")
+    Stem = "a";
+  if (What == Emit::Obj) {
+    std::string Out =
+        BuildOutput.empty() ? Stem + ".o" : BuildOutput.getValue();
+    if (llvm::Error E = gopp::emitObject(**LM, **TM, Out))
+      return reportCodegen(SM, Diags, std::move(E));
+    return 0;
+  }
+  Expected<gopp::LinkInputs> In =
+      gopp::findLinkInputs(*T, BuildCrtDir, BuildDynamicLinker);
+  if (!In)
+    return reportCodegen(SM, Diags, In.takeError());
+  std::string Out = BuildOutput.empty() ? Stem : BuildOutput.getValue();
+  llvm::SmallString<128> Obj;
+  if (std::error_code EC = llvm::sys::fs::createTemporaryFile("gopp", "o", Obj))
+    return reportCodegen(SM, Diags, llvm::errorCodeToError(EC));
+  llvm::FileRemover Remove(Obj);
+  if (llvm::Error E = gopp::emitObject(**LM, **TM, Obj))
+    return reportCodegen(SM, Diags, std::move(E));
+  if (llvm::Error E =
+          gopp::linkExecutable(SelfPath, *T, *In, {std::string(Obj)}, Out))
+    return reportCodegen(SM, Diags, std::move(E));
+  return 0;
+}
+
+/// The part of `gopp build` after the package is checked.
+static int finishBuild(Emit What, gopp::SourceManager &SM,
+                       gopp::DiagnosticsEngine &Diags, gopp::sema::Loader &L,
+                       gopp::sema::CheckedPackage *CP) {
+  if (What == Emit::Exe && CP->Pkg && CP->Pkg->Name != "main") {
+    Diags.finish();
+    errs() << "gopp: error: build: package " << CP->Pkg->Name
+           << " is not package main, so it is no program (-emit=obj, llvm, "
+              "asm or gir build a library; linking libraries comes with P06)\n";
+    return 1;
+  }
+  gopp::gir::Context GCtx;
+  std::unique_ptr<gopp::gir::Module> M =
+      gopp::gir::lowerPackage(GCtx, SM, *CP, L.filesOf(CP), Diags);
+  Diags.finish();
+  if (!M)
+    return 1;
+  switch (What) {
+  case Emit::GIR: {
+    std::string Text;
+    raw_string_ostream OS(Text);
+    gopp::gir::PrintOptions PO;
+    PO.Spans = !BuildNoLocs;
+    gopp::gir::print(OS, *M, PO);
+    return writeOutput(BuildOutput, Text) ? 0 : 1;
+  }
+  case Emit::GIRBitstream:
+    if (BuildOutput.empty()) {
+      errs() << "gopp: error: build: -emit=girb needs -o\n";
+      return 1;
+    }
+    return writeOutput(BuildOutput, gopp::gir::writeModule(*M)) ? 0 : 1;
+  default:
+    break;
+  }
+  return codegenAndLink(What, SM, Diags, *M);
+}
+
+/// `gopp build`: load and check the package, lower it to GIR, then emit.
+static int runBuild() {
+  if (BuildInputs.empty()) {
+    errs() << "gopp: error: build: no input files\n";
+    return 1;
+  }
+  Emit What = BuildDumpGIR ? Emit::GIR : BuildEmit.getValue();
+  gopp::SourceManager SM;
+  gopp::TextDiagnosticPrinter Printer(errs(), SM);
+  gopp::DiagnosticsEngine Diags(SM, Printer,
+                                gopp::DiagnosticsEngine::DefaultErrorLimit);
+  gopp::sema::LoadOptions LO;
+  LO.StdRoot = BuildTestStubs;
+  gopp::sema::CheckOptions CO;
+  gopp::sema::TypeContext TCtx(false);
+  gopp::sema::MockForeignProvider Foreign;
+  bool IsDir =
+      BuildInputs.size() == 1 && llvm::sys::fs::is_directory(BuildInputs[0]);
+  if (IsDir) {
+    LO.Root = BuildInputs[0];
+  } else {
+    LO.Root = llvm::sys::path::parent_path(BuildInputs[0]).str();
+    if (LO.Root.empty())
+      LO.Root = ".";
+  }
+  gopp::sema::Loader L(SM, Diags, TCtx, LO, CO);
+  L.setForeignProvider(&Foreign);
+  gopp::sema::CheckedPackage *CP =
+      IsDir ? L.loadDir(BuildInputs[0], "")
+            : L.loadFiles(std::vector<std::string>(BuildInputs.begin(),
+                                                   BuildInputs.end()));
+  if (!CP || Diags.hasErrors()) {
+    Diags.finish();
+    return 1;
+  }
+  return finishBuild(What, SM, Diags, L, CP);
+}
+
+/// `gopp gir dump file.girb`: the text form of a GIR bitstream.
+static int runGir() {
+  if (GirArgs.size() != 2 || GirArgs[0] != "dump") {
+    errs() << "gopp: error: gir: usage: gopp gir dump <file.girb>\n";
+    return 1;
+  }
+  auto Buf = MemoryBuffer::getFile(GirArgs[1]);
+  if (!Buf) {
+    errs() << "gopp: error: " << GirArgs[1] << ": " << Buf.getError().message()
+           << '\n';
+    return 1;
+  }
+  gopp::gir::Context Ctx;
+  auto M = gopp::gir::readModule((*Buf)->getBuffer(), Ctx);
+  if (!M) {
+    errs() << "gopp: error: " << GirArgs[1] << ": " << toString(M.takeError())
+           << '\n';
+    return 1;
+  }
+  gopp::gir::print(outs(), **M);
+  return 0;
+}
+
 /// `gopp explain E0042`: what the error means and an example. `-list` prints
 /// every code. Exit status 1 for a code that does not exist.
 static int runExplain() {
@@ -617,6 +866,14 @@ static int runFmt() {
 
 int main(int argc, char **argv) {
   InitLLVM X(argc, argv);
+  SelfPath = sys::fs::getMainExecutable(argv[0],
+                                        reinterpret_cast<void *>(&runVersion));
+  // `gopp lld ...` is the bundled LLD (D4.9): its arguments are the linker's,
+  // not ours.
+  if (argc >= 2 && StringRef(argv[1]) == "lld") {
+    std::vector<std::string> Args(argv + 2, argv + argc);
+    return gopp::runLLD(Args);
+  }
 #if defined(__GLIBC__)
   // glibc grows the heap of a thread that is not the main one (the checker
   // threads) one request at a time: about 2000 mprotect calls, 6% of the
@@ -639,6 +896,10 @@ int main(int argc, char **argv) {
     return runCheck(false);
   if (VetCmd)
     return runCheck(true);
+  if (BuildCmd)
+    return runBuild();
+  if (GirCmd)
+    return runGir();
   if (ExplainCmd)
     return runExplain();
   if (FmtCmd)

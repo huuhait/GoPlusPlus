@@ -1,0 +1,11 @@
+// REQUIRES: long, debian-container
+// RUN: bash %S/../../tools/run-hello-in-debian.sh %gopp %debian_image | FileCheck %s
+// P04.02 Done-when, M0 on an FHS distro, from a NixOS machine: gopp builds
+// hello inside a Debian container (its C library found by host sysroot
+// discovery under /usr/lib/<multiarch>) and the program runs in a clean
+// Debian container. Opt-in: it needs docker or podman, and the images (the
+// build image, then optionally the run image; see tests/lit.cfg.py):
+//   GOPP_TEST_DEBIAN_IMAGE=debian:stable-slim ninja -C build check-long
+// CHECK: dynamic-linker: /lib{{.*}}/ld-linux-
+// CHECK: hello, world 42 true
+// CHECK: ok: hello ran on

@@ -45,6 +45,9 @@ gopp_add_stage_check(lex)
 gopp_add_stage_check(parse)
 gopp_add_stage_check(fmt)
 gopp_add_stage_check(sema)
+gopp_add_stage_check(gir)
+gopp_add_stage_check(codegen)
+gopp_add_stage_check(run)
 
 # GoogleTest binaries run through lit too (same parallelism and timing report).
 add_subdirectory(unit)

@@ -629,5 +629,10 @@ DIAG(err_unit_scale, 435, Error, "unit factor out of range: %0 (UNI-2)")
 DIAG(err_unit_op_method, 436, Error, "cannot declare the operator method %0 on %1: the operators of a unit type are the built-in ones (UNI-15)")
 DIAG(err_unit_in, 437, Error, "invalid use of .In: %0 (EXP-32)")
 DIAG(err_unit_generic, 438, Error, "invalid unit argument or parameter: %0 (GEN-14)")
+DIAG(err_gir_unsupported, 439, Error, "%0 is not supported by code generation yet (P04)")
+DIAG(err_gir_verify, 440, Error, "internal error: the generated GIR is invalid: %0")
+DIAG(err_codegen, 441, Error, "code generation failed: %0")
+DIAG(err_gir_extern_bad, 442, Error, "invalid @Extern on %0: %1")
+DIAG(err_gir_no_main, 443, Error, "function main is undeclared in the main package")
 
 #undef DIAG

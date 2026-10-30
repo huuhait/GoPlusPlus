@@ -47,6 +47,7 @@ Last updated: 2026-10-30
 - P01: the spec is written, reviewed by the owner (D1–D25) and applied (ADR-0006). P01 is complete.
 - P03 (semantic analysis) is complete (2026-10-30), including `extends` (P03.22), operators (P03.24), units (P03.25) and the leftovers (P03.26).
 - Next: P04 in three waves (owner decision 2026-10-29): wave 1 foundation (P04.01 GIR design → P04.02 hello → P04.03 linking; P04.17 + P04.18; P04.19; P04.15), wave 2 the language (P04.04–08, P04.10–13), wave 3 safety, new features and proof (P04.09 → P04.20 → P04.21; P04.22–24; P04.14 + P04.16).
+- P04 wave 1: P04.01–P04.03 are done (2026-10-30): hello builds and runs on linux/amd64, on NixOS and in a Debian container; linux/arm64 builds and links, and running it waits for the arm64 CI runner (M0 stays open until then).
 - Build profiles (owner request) are in the plan: P06 D6.12, P09 D9.12, P10 D10.11, P11 D11.13, ADR-0007; tasks P06.14–16, P09.13, P10.12, P11.19–20, P14.11 (240 tasks).
 
 ## Log

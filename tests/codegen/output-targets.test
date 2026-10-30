@@ -1,0 +1,26 @@
+// RUN: rm -rf %t.d && mkdir -p %t.d
+// RUN: %gopp build -emit=llvm %S/Inputs/hello-ok.gopp -o /dev/null
+// RUN: %gopp build -emit=asm %S/Inputs/hello-ok.gopp -o /dev/null
+// RUN: %gopp build -emit=obj %S/Inputs/hello-ok.gopp -o /dev/null
+// RUN: %gopp build -emit=gir %S/Inputs/hello-ok.gopp -o /dev/null
+// RUN: %gopp build -emit=girb %S/Inputs/hello-ok.gopp -o /dev/null
+// RUN: %gopp build -emit=llvm %S/Inputs/hello-ok.gopp -o - | FileCheck --check-prefix=STDOUT %s
+// RUN: %gopp build -emit=obj %S/Inputs/hello-ok.gopp -o %t.d/real.o
+// RUN: ln -s real.o %t.d/lnk.o
+// RUN: echo old > %t.d/real.o
+// RUN: %gopp build -emit=obj %S/Inputs/hello-ok.gopp -o %t.d/lnk.o
+// RUN: test -L %t.d/lnk.o
+// RUN: not test -L %t.d/real.o
+// RUN: llvm-readobj --file-headers %t.d/real.o | FileCheck --check-prefix=OBJ %s
+// RUN: %gopp build -emit=obj %S/Inputs/hello-ok.gopp -o %t.d/plain.o
+// RUN: not test -L %t.d/plain.o
+// RUN: ls -A %t.d | FileCheck --check-prefix=LS %s
+// R5: -o names /dev/null (a device), "-" (stdout) or a symlink: the output is
+// written where it points, the link and the device node stay, and a regular
+// file is still replaced by a rename (no temporary file is left).
+// STDOUT: define
+// OBJ: Class: 64-bit
+// LS: lnk.o
+// LS-NEXT: plain.o
+// LS-NEXT: real.o
+// LS-NOT: tmp

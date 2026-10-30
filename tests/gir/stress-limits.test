@@ -1,0 +1,20 @@
+// P04.01: the deepest shapes the parser lets through (320 nested `if` with a
+// variable each, a chain of 1000 additions) build, verify and print, and 20000
+// sibling statements, scopes and calls stay inside the time limit.
+// RUN: %python %S/Inputs/gen-gir-stress.py nested 320 > %t.nested.gopp
+// RUN: %{timeout10} %gopp build -emit=gir %t.nested.gopp | FileCheck --check-prefix=NESTED %s
+// RUN: %python %S/Inputs/gen-gir-stress.py chain 1000 > %t.chain.gopp
+// RUN: %{timeout10} %gopp build -emit=gir %t.chain.gopp | FileCheck --check-prefix=CHAIN %s
+// RUN: %python %S/Inputs/gen-gir-stress.py blocks 20000 > %t.blocks.gopp
+// RUN: %{timeout10} %gopp build -emit=gir %t.blocks.gopp | FileCheck --check-prefix=BLOCKS %s
+// RUN: %python %S/Inputs/gen-gir-stress.py siblings 20000 > %t.sib.gopp
+// RUN: %{timeout10} %gopp build -emit=girb -o %t.sib.girb %t.sib.gopp
+// RUN: %{timeout10} %gopp gir dump %t.sib.girb | FileCheck --check-prefix=SIB %s
+// NESTED: StorageLive(_319)
+// NESTED: StorageDead(_319)
+// NESTED: return
+// CHAIN: ; y
+// BLOCKS: StorageLive(
+// BLOCKS: return
+// SIB: fn main.main() -> ()
+// SIB: return
