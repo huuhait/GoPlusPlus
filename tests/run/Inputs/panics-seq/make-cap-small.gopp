@@ -1,0 +1,9 @@
+package main
+
+var n, c = 5, 2
+
+func main() {
+	println("before")
+	println(len(make([]int, n, c)))
+	println("not reached")
+}

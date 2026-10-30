@@ -1,0 +1,9 @@
+package main
+
+var n = 1 << 62
+
+func main() {
+	println("before")
+	println(len(make([]int, n)))
+	println("not reached")
+}

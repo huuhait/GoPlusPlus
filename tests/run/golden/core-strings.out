@@ -1,0 +1,70 @@
+typed! 5 true true const true false false
+35 tab	here "quoted" \ back é 😀 AA
+14 5 raw\n
+195 169 2
+0 
+1 x
+foobar 6 foo-bar-foo
+foobarfoobarfoobarfoobarfoobar 30
+hello, world! hello, ! abababab 3000
+foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarend 51
+0 3 3 true
+104 195 169 140
+h é llo, 世界 héllo, 世界 true 0
+ � 3 false
+1953
+true false false true false true
+false true true true false false
+false true false false true true
+false true true true false false
+false true false false true true
+false true true true false false
+false true false false true true
+false true false false true true
+true false false true false true
+false true true true false false
+true
+a c x q
+6 104 195 169 h héllo
+Jéllo true
+10 233 19990 65533
+héllo, 世界� 世界 true
+A é 世 😀
+true false true 4
+true 1 2 2 3
+2 195
+0 0 0 0
+[ ]
+[ 0:97 1:98 2:99 ]
+[ 0:104 1:233 3:108 4:108 5:111 6:44 7:32 8:19990 11:30028 14:128512 ]
+[ 0:65533 ]
+[ 0:97 1:65533 2:98 ]
+[ 0:65533 1:65533 ]
+[ 0:65533 1:65533 ]
+[ 0:19990 ]
+[ 0:65533 1:65533 2:97 ]
+[ 0:65533 1:65533 ]
+[ 0:65533 1:65533 ]
+[ 0:128 ]
+[ 0:65533 1:65533 2:65533 ]
+[ 0:2048 ]
+[ 0:65533 1:65533 2:65533 ]
+[ 0:55295 ]
+[ 0:57344 ]
+[ 0:65533 1:65533 2:65533 3:65533 ]
+[ 0:65536 ]
+[ 0:1114111 ]
+[ 0:65533 1:65533 2:65533 3:65533 ]
+[ 0:65533 1:65533 2:65533 3:65533 ]
+[ 0:65533 1:65533 2:65533 3:65533 4:65533 ]
+[ 0:65533 1:65533 2:65533 ]
+[ 0:128512 4:65533 ]
+5 13
+97 a
+98 b
+false v2 v true
+true
+x! yy v2 true 2
+changed false
+cb 3
+one,two,three

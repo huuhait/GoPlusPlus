@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-30 (P04.01 to P04.04, P04.15, P04.17 and P04.19 done)
+Last updated: 2026-10-30 (P04.01 to P04.05, P04.11, P04.15, P04.17 and P04.19 done)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
@@ -11,7 +11,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [x] P04.02 M0 hello
 - [x] P04.03 Targets & linking
 - [x] P04.04 Lower core
-- [ ] P04.05 Lower strings/slices/views/maps
+- [x] P04.05 Lower strings/slices/views/maps (a bootstrap runtime written in GIR: one allocator entry point `gopp.mem_resize` for P05's mimalloc, a map runtime interface for P05.06 with a random start per range and counted ranges (RNG-4), gc's append growth checked against `go run`; a nil-map write creates the map, also through a borrowed map parameter (PAR-1, PAR-10); `s = s[i:j]` shrinks in place, the checker records it (`Info::Reslices`); owned values leak until P04.09, marked `Local::Owned`; slices have 3 words, D4.5 against SLC-1's 4 is the owner's open question; moved on, with both-sided Done-whens: in-place `+=` and borrowed range variables in place to P04.09, the map range count on unwind to P04.07, borrowed struct parameters by hidden pointer to P04.18; see gir.md section 15)
 - [ ] P04.06 Lower methods & interfaces
 - [ ] P04.07 Lower closures, defer, panics
 - [ ] P04.08 Monomorphization

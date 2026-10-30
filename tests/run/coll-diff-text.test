@@ -1,0 +1,11 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/utf8.gopp %S/Inputs/coll/utf8.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/strcmp.gopp %S/Inputs/coll/strcmp.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/nilempty.gopp %S/Inputs/coll/nilempty.out
+// P04.05 differential tables for strings: every form of invalid UTF-8 through
+// range, []rune, string(rune) and string([]rune) (Go's decoderune and
+// encoderune), comparisons of strings with shared prefixes, embedded zero
+// bytes and bytes above 0x7f, and nil versus empty slices and maps. The
+// programs are valid Go and Go++; Inputs/coll/NAME.out is what Go prints for
+// the same program (`go run`, standard error), so the test needs no Go.
+// Regenerate: Inputs/gen-goldens.py --go GO --dir Inputs/coll Inputs/coll/*.gopp.

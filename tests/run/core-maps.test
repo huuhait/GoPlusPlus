@@ -1,0 +1,314 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-maps.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-maps.out %}
+// P04.05: maps (the temporary runtime of RuntimeMap.cpp; P05.06 replaces it).
+// make, literals, index (a missing key gives the zero value), `v, ok :=`,
+// assignment, `+=` and `++` on an entry, delete, len, clear, range, nil maps
+// (reads, len, delete, range and `== nil`; a write to a nil map panics in Go
+// and creates the map in Go++, ADR-0018 amendment point 5, so the test does
+// not write to one), keys of every comparable kind (string, integers, bool,
+// floats with -0 and NaN, structs and arrays holding strings, complex), values
+// that are slices, structs, maps and strings, deleting during a range, and
+// many entries. Go's iteration order is random and the order here is
+// unspecified, so every loop either adds up what it sees or collects the keys
+// and sorts them. The expected output is `go run` of this text.
+package main
+
+type K struct {
+	A int
+	B string
+}
+
+type Pt struct{ X, Y int8 }
+
+type Val struct {
+	N    int
+	Tags []string
+}
+
+func sortInts(a []int) {
+	for i := 1; i < len(a); i++ {
+		for j := i; j > 0 && a[j-1] > a[j]; j-- {
+			a[j-1], a[j] = a[j], a[j-1]
+		}
+	}
+}
+
+func sortStrings(a []string) {
+	for i := 1; i < len(a); i++ {
+		for j := i; j > 0 && a[j-1] > a[j]; j-- {
+			a[j-1], a[j] = a[j], a[j-1]
+		}
+	}
+}
+
+func intKeys(m map[int]string) []int {
+	var ks []int
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sortInts(ks)
+	return ks
+}
+
+func strKeys(m map[string]int) []string {
+	var ks []string
+	for k := range m {
+		ks = append(ks, k+"")
+	}
+	sortStrings(ks)
+	return ks
+}
+
+func basics() {
+	m := make(map[string]int)
+	println(len(m), m["a"], m == nil)
+	m["a"] = 1
+	m["b"] = 2
+	m["a"] += 10
+	m["c"]++
+	m["c"]++
+	m["d"] -= 4
+	println(len(m), m["a"], m["b"], m["c"], m["d"], m["zz"])
+	for _, k := range strKeys(m) {
+		print(" ", k, "=", m[k])
+	}
+	println()
+	v, ok := m["b"]
+	println(v, ok)
+	v, ok = m["nope"]
+	println(v, ok)
+	if x, found := m["c"]; found {
+		println("found", x)
+	}
+	if _, found := m["e"]; !found {
+		println("not found")
+	}
+	delete(m, "b")
+	delete(m, "never")
+	println(len(m), m["b"])
+	_, ok = m["b"]
+	println(ok)
+	m["b"] = 5
+	println(len(m), m["b"])
+	clear(m)
+	println(len(m), m["a"])
+	m["x"] = 1
+	println(len(m), m["x"])
+	lit := map[string]int{"one": 1, "two": 2, "three": 3}
+	println(len(lit), lit["two"], lit["four"])
+	empty := map[int]int{}
+	println(len(empty), empty == nil)
+	mm := make(map[int]bool, 100)
+	mm[3] = true
+	println(len(mm), mm[3], mm[4])
+	n := 5
+	m2 := make(map[uint8]int, n)
+	m2[200] = 1
+	println(len(m2))
+}
+
+func nilMap() {
+	var m map[string]int
+	println(m == nil, len(m), m["a"])
+	v, ok := m["a"]
+	println(v, ok)
+	delete(m, "a")
+	clear(m)
+	n := 0
+	for range m {
+		n++
+	}
+	println(n)
+	var mi map[int][]int
+	println(len(mi[3]), mi[3] == nil)
+	var mmm map[string]map[string]int
+	println(mmm["x"]["y"], mmm["x"] == nil)
+}
+
+func keyKinds() {
+	mi := map[int]string{}
+	for i := -3; i <= 3; i++ {
+		mi[i*i] = "v" + string(rune('a'+i+3))
+	}
+	for _, k := range intKeys(mi) {
+		print(" ", k, ":", mi[k])
+	}
+	println()
+	mu := map[uint8]int{255: 1, 0: 2}
+	mu[255]++
+	println(len(mu), mu[255], mu[0], mu[1])
+	mb := map[bool]int{}
+	mb[true]++
+	mb[false] += 5
+	mb[true]++
+	println(len(mb), mb[true], mb[false])
+	mf := map[float64]int{}
+	zero := 0.0
+	mf[zero] = 1
+	mf[-zero] += 1
+	mf[1.5] = 7
+	nan := zero / zero
+	mf[nan] = 3
+	mf[nan] = 4
+	_, hasNaN := mf[nan]
+	println(len(mf), mf[0], mf[1.5], hasNaN)
+	mc := map[complex128]string{1 + 2i: "a", 3: "b"}
+	mc[1+2i] += "c"
+	println(len(mc), mc[1+2i], mc[3], mc[4] == "")
+	ms := map[K]int{}
+	ms[K{1, "x"}] = 10
+	ms[K{1, "y"}] = 20
+	ms[K{1, "x"}] += 5
+	ms[K{2, "x"}]++
+	println(len(ms), ms[K{1, "x"}], ms[K{1, "y"}], ms[K{2, "x"}], ms[K{2, "y"}])
+	ma := map[[2]string]int{{"a", "b"}: 1}
+	ma[[2]string{"a", "b"}]++
+	ma[[2]string{"b", "a"}] = 9
+	println(len(ma), ma[[2]string{"a", "b"}], ma[[2]string{"b", "a"}])
+	mp := map[Pt]string{{1, 2}: "p12", {-1, 0}: "pm"}
+	println(mp[Pt{1, 2}], mp[Pt{-1, 0}], len(mp[Pt{0, 0}]))
+	x, y := 1, 2
+	mptr := map[*int]string{&x: "x", &y: "y"}
+	println(mptr[&x], mptr[&y], len(mptr))
+	mstr := map[string]string{"": "empty", "é": "e-acute"}
+	println(mstr[""], mstr["é"], len(mstr["e"]))
+	mstr["k"+"ey"] = "c" + "oncat"
+	println(mstr["key"])
+}
+
+func values() {
+	ms := map[string][]int{}
+	for i := 0; i < 10; i++ {
+		k := "odd"
+		if i%2 == 0 {
+			k = "even"
+		}
+		ms[k] = append(ms[k], i)
+	}
+	println(len(ms), len(ms["even"]), len(ms["odd"]), ms["even"][2], ms["odd"][4])
+	mv := map[int]Val{}
+	mv[1] = Val{N: 1, Tags: []string{"a", "b"}}
+	mv[2] = Val{N: 2}
+	println(mv[1].N, len(mv[1].Tags), mv[1].Tags[1], mv[2].N, len(mv[2].Tags), mv[3].N)
+	mm := map[string]map[string]int{}
+	mm["a"] = map[string]int{}
+	mm["a"]["x"] = 1
+	mm["a"]["x"]++
+	mm["a"]["y"] = 5
+	mm["b"] = map[string]int{"z": 26}
+	println(len(mm), len(mm["a"]), mm["a"]["x"], mm["a"]["y"], mm["b"]["z"], mm["c"]["q"])
+	mstr := map[int]string{}
+	for i := 0; i < 5; i++ {
+		mstr[i] = ""
+		for j := 0; j <= i; j++ {
+			mstr[i] += "ab"
+		}
+	}
+	println(len(mstr[4]), mstr[2])
+	marr := map[string][3]int{}
+	marr["a"] = [3]int{1, 2, 3}
+	println(marr["a"][2], marr["b"][2])
+	mo := map[int]*Val{}
+	v := Val{N: 7}
+	mo[1] = &v
+	if p, ok := mo[1]; ok {
+		p.N++
+	}
+	println(v.N, len(mo))
+}
+
+func iteration() {
+	m := map[int]int{}
+	for i := 0; i < 100; i++ {
+		m[i] = i * i
+	}
+	sum, keys := 0, 0
+	for k, v := range m {
+		sum += v - k
+		keys += k
+	}
+	println(len(m), sum, keys)
+	// delete every even key while ranging: each key is seen at most once
+	seen := 0
+	for k := range m {
+		seen++
+		if k%2 == 0 {
+			delete(m, k)
+		}
+	}
+	println(seen, len(m))
+	// update the values of existing keys while ranging
+	for k := range m {
+		m[k] = -k
+	}
+	total := 0
+	for _, v := range m {
+		total += v
+	}
+	println(total)
+	// delete everything
+	for k := range m {
+		delete(m, k)
+	}
+	println(len(m))
+	// range over a map that is empty, and one entry
+	for range map[int]int{} {
+		println("never")
+	}
+	one := map[string]int{"only": 1}
+	for k, v := range one {
+		println(k, v)
+	}
+	// a key and a value only
+	cnt := 0
+	for _, v := range one {
+		cnt += v
+	}
+	for k := range one {
+		cnt += len(k)
+	}
+	println(cnt)
+}
+
+func many() {
+	m := map[int]int{}
+	for i := 0; i < 20000; i++ {
+		m[i*7] = i
+	}
+	println(len(m), m[7], m[7*19999], m[8])
+	for i := 0; i < 20000; i += 2 {
+		delete(m, i*7)
+	}
+	println(len(m), m[14], m[21])
+	for i := 0; i < 20000; i += 2 {
+		m[i*7] = -i
+	}
+	println(len(m), m[14], m[21])
+	s := map[string]int{}
+	for i := 0; i < 3000; i++ {
+		k := "key"
+		for j := 0; j < i%7; j++ {
+			k += "x"
+		}
+		k += string(rune('a' + i%26))
+		s[k]++
+	}
+	total := 0
+	for _, v := range s {
+		total += v
+	}
+	println(len(s), total)
+	clear(s)
+	println(len(s))
+}
+
+func main() {
+	basics()
+	nilMap()
+	keyKinds()
+	values()
+	iteration()
+	many()
+}

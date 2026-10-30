@@ -1,0 +1,8 @@
+// REQUIRES: long
+// P04.05 review R15: the map-entry arguments of one call lower in time
+// linear in their number (one record each and one runtime call that
+// resolves the aliasing at run time): 4N take at most 12 times as long as
+// N. The control emits GIR for every pair of them
+// (LowerOptions::PairwiseEntryArgs) and must fail the same check. The normal
+// suite counts the work instead (GIRStress.TheLoweringOfEntryArgumentsIsLinear).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_LoweringManyEntryArguments:GIRStressLong.DISABLED_TheEntryArgumentTimingFailsAPairwiseEmission'

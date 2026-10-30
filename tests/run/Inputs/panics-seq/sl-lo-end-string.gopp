@@ -1,0 +1,10 @@
+package main
+
+var t = "héllo"
+var i = 7
+
+func main() {
+	println("before")
+	println(t[i:])
+	println("not reached")
+}

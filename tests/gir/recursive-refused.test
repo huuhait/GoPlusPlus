@@ -1,0 +1,18 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: not %gopp build -emit=gir %S/Inputs/recursive-refused.gopp 2>&1 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags %S/Inputs/recursive-through-struct.gopp -o %t.ok
+// RUN: %t.ok | FileCheck --check-prefix=OK %s
+// P04.05: a defined type that reaches itself through a slice, a map, an array
+// or an Option now lowers (gir.md section 3: the self-naming type;
+// core-recursive.test runs them). What stays refused is the cycle through
+// something that has no GIR type yet: a function value (P04.07) and an
+// interface (P04.06). Each is reported once, at its first use, as that
+// missing part, never as a type that "refers to itself", and the cycle
+// through a slice (`Fine`) draws no error.
+// CHECK: recursive-refused.gopp:10:1: error[E0439]: a function value (P04.07) is not supported
+// CHECK: recursive-refused.gopp:12:1: error[E0439]: an interface (P04.06) is not supported
+// CHECK-NOT: error
+// The other side, kept from P04.04: the cycles through a struct (a list, a
+// tree with Options, two structs that name each other) lower and run.
+// OK: 2 false true 0 2
+// OK-NEXT: 8 7 true

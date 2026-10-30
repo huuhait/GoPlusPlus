@@ -98,6 +98,12 @@ CTypeRules::Info CTypeRules::info(const Type *T, unsigned Depth) {
     break;
   case Type::Kind::Ptr:
     R.L = {8, 8};
+    // A map is a pointer to the runtime's object (P04.05): it has no C
+    // layout, as the front end says on the checker's types (E0442). A
+    // pointer to a map variable is a plain pointer.
+    if (T->elem()->getKind() == Type::Kind::Struct &&
+        T->elem()->name() == "gopp.map")
+      R.V = invalid("a map has no C layout");
     break;
   case Type::Kind::Unit:
     R.V = invalid("the empty tuple is not a C type");

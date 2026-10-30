@@ -190,8 +190,14 @@ TEST(Glue, StructPaddingArraysAndComplex) {
   G.add(Small, "small");
   Type *Cplx = G.C.tuple({G.C.floatTy(32), G.C.floatTy(32)});
   G.add(Cplx, "c64");
-  EXPECT_FALSE(hasGlue(G.C.string()));
-  EXPECT_EQ(addEqGlue(G.M, G.C.string(), "eq_str"), NoId);
+  // A slice cannot be compared (a func value neither): no glue is made.
+  EXPECT_FALSE(hasGlue(G.C.slice(G.C.i32())));
+  EXPECT_EQ(addEqGlue(G.M, G.C.slice(G.C.i32()), "eq_sl"), NoId);
+  EXPECT_FALSE(hasGlue(G.C.tuple({G.C.i32(), G.C.slice(G.C.i32())})));
+  // A string can (P04.05).
+  EXPECT_TRUE(hasGlue(G.C.string()));
+  EXPECT_TRUE(hasGlue(G.C.array(G.C.string(), 3)));
+  G.add(G.C.string(), "str");
   Jit J(G.M);
   if (!J.ok)
     GTEST_SKIP() << "the host is not a supported target";
@@ -242,6 +248,27 @@ TEST(Glue, StructPaddingArraysAndComplex) {
   EXPECT_TRUE(CEq(C1, C2));
   EXPECT_EQ(CHash(C1, 1), CHash(C2, 1));
   EXPECT_FALSE(CEq(C1, C3));
+
+  // A string is its bytes (P04.05): the pointer, the capacity and the bytes
+  // after the length do not matter; the length and every byte do.
+  auto StEq = J.find<Jit::EqFn>("eq_str");
+  auto StHash = J.find<Jit::HashFn>("hash_str");
+  ASSERT_TRUE(StEq && StHash);
+  struct Str {
+    const char *P;
+    uint64_t Len, Cap;
+  };
+  char T1[8] = "hello!!", T2[8] = "hello??";
+  Str S1{T1, 5, 7}, S2{T2, 5, 5}, S3{T2, 4, 4}, S4{T1, 0, 0}, S5{nullptr, 0, 0};
+  EXPECT_TRUE(StEq(&S1, &S2));
+  EXPECT_EQ(StHash(&S1, 1), StHash(&S2, 1));
+  EXPECT_FALSE(StEq(&S1, &S3)); // a prefix
+  EXPECT_NE(StHash(&S1, 1), StHash(&S3, 1));
+  EXPECT_TRUE(StEq(&S4, &S5)); // empty strings are equal, nil or not
+  EXPECT_EQ(StHash(&S4, 1), StHash(&S5, 1));
+  T2[4] = 'x';
+  EXPECT_FALSE(StEq(&S1, &S2)); // the last byte
+  EXPECT_NE(StHash(&S1, 1), StHash(&S2, 1));
 }
 
 // A chain of named types thousands of levels deep (review R6): the glue cuts

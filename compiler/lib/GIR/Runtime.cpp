@@ -428,7 +428,7 @@ FuncId Lowering::ensurePanic(AssertKind K, bool Unsigned, SourceLoc At) {
   FuncId U = ensurePrintU64(At), S = ensurePrintI64(At);
   if (U == NoId || S == NoId)
     return NoId;
-  bool Bounds = K == AssertKind::Bounds;
+  bool Bounds = takesIndexAndLength(K);
   Type *Pos = Ctx.ptr(Ctx.u8());
   SmallVector<Type *, 3> Params{Pos};
   if (Bounds) {
@@ -463,35 +463,80 @@ FuncId Lowering::ensurePanic(AssertKind K, bool Unsigned, SourceLoc At) {
   case AssertKind::Overflow:
     E.writeText(Fd, "integer overflow");
     break;
-  case AssertKind::Bounds: {
-    // index out of range [5] with length 3; a negative index has no length
-    // (Go's boundsNegErrorFmts).
+  case AssertKind::Bounds:
+  case AssertKind::SliceAlen:
+  case AssertKind::SliceAcap:
+  case AssertKind::SliceB:
+  case AssertKind::Slice3Alen:
+  case AssertKind::Slice3Acap:
+  case AssertKind::Slice3B:
+  case AssertKind::Slice3C:
+  case AssertKind::SliceConvert: {
+    // Go's boundsErrorFmts: "index out of range [5] with length 3", "slice
+    // bounds out of range [:7] with capacity 4", "[2:1]", ... A negative
+    // value has no second number (boundsNegErrorFmts).
+    struct Fmt {
+      const char *Open, *Mid, *Tail, *NegClose;
+    };
+    Fmt Fm;
+    switch (K) {
+    case AssertKind::SliceAlen:
+      Fm = {"slice bounds out of range [:", "] with length ", "", "]"};
+      break;
+    case AssertKind::SliceAcap:
+      Fm = {"slice bounds out of range [:", "] with capacity ", "", "]"};
+      break;
+    case AssertKind::SliceB:
+      Fm = {"slice bounds out of range [", ":", "]", ":]"};
+      break;
+    case AssertKind::Slice3Alen:
+      Fm = {"slice bounds out of range [::", "] with length ", "", "]"};
+      break;
+    case AssertKind::Slice3Acap:
+      Fm = {"slice bounds out of range [::", "] with capacity ", "", "]"};
+      break;
+    case AssertKind::Slice3B:
+      Fm = {"slice bounds out of range [:", ":", "]", ":]"};
+      break;
+    case AssertKind::Slice3C:
+      Fm = {"slice bounds out of range [", ":", ":]", "::]"};
+      break;
+    case AssertKind::SliceConvert:
+      Fm = {"cannot convert slice with length ",
+            " to array or pointer to array with length ", "", ""};
+      break;
+    default:
+      Fm = {"index out of range [", "] with length ", "", "]"};
+      break;
+    }
     LocalId Idx = FB.param(1), Len = FB.param(2);
-    E.writeText(Fd, "index out of range [");
+    E.writeText(Fd, Fm.Open);
     FuncId Print = Unsigned ? U : S;
     FB.call(constFunc(*M, Print), {Fd, E.cl(Idx)},
             FB.local(FB.newTemp(Ctx.unit())), {UnwindAction::Continue, NoId});
     if (Unsigned) {
-      E.writeText(Fd, "] with length ");
+      E.writeText(Fd, Fm.Mid);
     } else {
       BlockId NegB = FB.newBlock(), PosB = FB.newBlock(), Join = FB.newBlock();
       FB.branch(E.cp(E.bin(BinOp::Lt, E.cl(Idx), E.i64(0))), NegB, PosB);
       FB.setBlock(NegB);
-      E.writeText(Fd, "]\n");
+      E.writeText(Fd, std::string(Fm.NegClose) + "\n");
       FB.call(constFunc(*M, Exit), {E.i32(2)}, FB.local(FB.newTemp(Ctx.unit())),
               {UnwindAction::Unreachable, NoId});
       FB.unreachable();
       FB.setBlock(PosB);
-      E.writeText(Fd, "] with length ");
+      E.writeText(Fd, Fm.Mid);
       FB.gotoBlock(Join);
       FB.setBlock(Join);
     }
     FB.call(constFunc(*M, U), {Fd, E.cl(Len)}, FB.local(FB.newTemp(Ctx.unit())),
             {UnwindAction::Continue, NoId});
+    if (*Fm.Tail)
+      E.writeText(Fd, Fm.Tail);
     break;
   }
   }
-  E.writeText(Fd, K == AssertKind::Bounds ? "\n" : "\n");
+  E.writeText(Fd, "\n");
   FB.call(constFunc(*M, Exit), {E.i32(2)}, FB.local(FB.newTemp(Ctx.unit())),
           {UnwindAction::Unreachable, NoId});
   FB.unreachable();
@@ -507,14 +552,29 @@ FuncId Lowering::eqGlue(S::Type *T, SourceLoc At) {
   if (!G)
     return NoId;
   if (!hasGlue(G)) {
-    unsupported(At, "comparing a value that holds a string, slice or "
-                    "function (P04.05)");
+    unsupported(At, "comparing a value that holds a slice or a function "
+                    "(P04.06, P04.07)");
     return NoId;
   }
   std::string Sym = Syms.glue(sym::Kind::EqGlue, T);
   if (Sym.empty())
     Sym = runtimeSymbol("eq_" + G->str());
   return addEqGlue(*M, G, Sym);
+}
+
+FuncId Lowering::hashGlue(S::Type *T, SourceLoc At) {
+  Type *G = lowerType(T, At);
+  if (!G)
+    return NoId;
+  if (!hasGlue(G)) {
+    unsupported(At, "hashing a value that holds a slice or a function "
+                    "(P04.06, P04.07)");
+    return NoId;
+  }
+  std::string Sym = Syms.glue(sym::Kind::HashGlue, T);
+  if (Sym.empty())
+    Sym = runtimeSymbol("hash_" + G->str());
+  return addHashGlue(*M, G, Sym);
 }
 
 //===----------------------------------------------------------------------===//

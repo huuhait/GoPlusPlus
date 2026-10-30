@@ -1,0 +1,10 @@
+package main
+
+var g = [][]int{{1}, {2, 3}}
+var i, j = 2, 0
+
+func main() {
+	println("before")
+	println(g[i][j])
+	println("not reached")
+}

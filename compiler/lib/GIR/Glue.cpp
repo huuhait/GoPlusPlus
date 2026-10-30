@@ -173,6 +173,8 @@ private:
       arrayEq(T->length(), A, B, Fail);
       return;
     case Type::Kind::String:
+      stringEq(A, B, Fail);
+      return;
     case Type::Kind::Slice:
     case Type::Kind::Func:
       return; // hasGlue refused the type
@@ -241,10 +243,57 @@ private:
       return;
     }
     case Type::Kind::String:
+      stringHash(P, H);
+      return;
     case Type::Kind::Slice:
     case Type::Kind::Func:
       return;
     }
+  }
+
+  /// The loop `for i < len`: Body(i) runs with the index local; the caller
+  /// continues in the block after the loop.
+  template <typename F> void countLoop(Operand Len, F Body) {
+    LocalId Idx = FB.newLocal(C.u64(), Local::Temp);
+    FB.assign(FB.local(Idx), FB.use(constInt(C.u64(), 0)));
+    BlockId Head = FB.newBlock(), Bd = FB.newBlock(), Exit = FB.newBlock();
+    FB.gotoBlock(Head);
+    FB.setBlock(Head);
+    Place More =
+        FB.temp(FB.binary(BinOp::Lt, copyOf(FB.local(Idx)), std::move(Len)));
+    FB.branch(copyOf(More), Bd, Exit);
+    FB.setBlock(Bd);
+    Body(Idx);
+    FB.assign(FB.local(Idx), FB.binary(BinOp::Add, copyOf(FB.local(Idx)),
+                                       constInt(C.u64(), 1)));
+    FB.gotoBlock(Head);
+    FB.setBlock(Exit);
+  }
+
+  /// Equal lengths, then equal bytes (Go's string ==).
+  void stringEq(const Place &A, const Place &B, BlockId Fail) {
+    Place SameLen = FB.temp(
+        FB.binary(BinOp::Eq, copyOf(FB.field(A, 1)), copyOf(FB.field(B, 1))));
+    BlockId Cmp = FB.newBlock();
+    FB.branch(copyOf(SameLen), Cmp, Fail);
+    FB.setBlock(Cmp);
+    // A string is a copy of its bytes; the same pointer is the same bytes.
+    countLoop(copyOf(FB.field(A, 1)), [&](LocalId Idx) {
+      Place Same = FB.temp(FB.binary(BinOp::Eq, copyOf(FB.index(A, Idx)),
+                                     copyOf(FB.index(B, Idx))));
+      BlockId Next = FB.newBlock();
+      FB.branch(copyOf(Same), Next, Fail);
+      FB.setBlock(Next);
+    });
+  }
+
+  /// The length, then every byte.
+  void stringHash(const Place &P, LocalId H) {
+    mix(H, copyOf(FB.field(P, 1)));
+    countLoop(copyOf(FB.field(P, 1)), [&](LocalId Idx) {
+      mix(H, copyOf(FB.temp(FB.cast(CastKind::IntToInt,
+                                    copyOf(FB.index(P, Idx)), C.u64()))));
+    });
   }
 
   void arrayEq(uint64_t N, const Place &A, const Place &B, BlockId Fail) {
@@ -318,7 +367,6 @@ bool gir::hasGlue(const Type *T) {
   while (!Work.empty()) {
     const Type *C = Work.pop_back_val();
     switch (C->getKind()) {
-    case Type::Kind::String:
     case Type::Kind::Slice:
     case Type::Kind::Func:
       return false;

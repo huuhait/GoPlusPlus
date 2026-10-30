@@ -298,6 +298,67 @@ TEST(GIRVerifier, V002_TypeShapes) {
   }
 }
 
+TEST(GIRVerifier, V002_V003_SelfNamingTypes) {
+  // A self-naming type (`type S []S`, `type O Option[*O]`, P04.05) needs its
+  // body like a struct, and may not hold itself by value.
+  {
+    PlaceFixture X; // no body set
+    X.local(X.C.recTy("test.Shell"));
+    EXPECT_GIR_RULE(X.M, "V002");
+  }
+  {
+    PlaceFixture X; // good: type S []S
+    Type *S = X.C.recTy("test.S");
+    ASSERT_TRUE(X.C.setRecBody(S, X.C.slice(S)));
+    X.local(S);
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // good: type O Option[*O] (a pointer: one word)
+    Type *O = X.C.recTy("test.O");
+    ASSERT_TRUE(X.C.setRecBody(O, X.C.ptr(O)));
+    X.local(O);
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // good: type A [2]Option[*A]
+    Type *A = X.C.recTy("test.A");
+    ASSERT_TRUE(X.C.setRecBody(A, X.C.array(X.C.option(X.C.ptr(A)), 2)));
+    X.local(A);
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // bad: type A [2]A
+    Type *A = X.C.recTy("test.A");
+    ASSERT_TRUE(X.C.setRecBody(A, X.C.array(A, 2)));
+    X.local(A);
+    EXPECT_GIR_RULE(X.M, "V003");
+  }
+  {
+    PlaceFixture X; // bad: type A Option[A] (the payload is A itself)
+    Type *A = X.C.recTy("test.A");
+    ASSERT_TRUE(X.C.setRecBody(A, X.C.option(A)));
+    X.local(A);
+    EXPECT_GIR_RULE(X.M, "V003");
+  }
+  {
+    PlaceFixture X; // bad, through a struct: type A [1]B, B { A }
+    Type *A = X.C.recTy("test.A"), *B = X.C.structTy("test.B");
+    X.C.setStructBody(B, {A});
+    ASSERT_TRUE(X.C.setRecBody(A, X.C.array(B, 1)));
+    X.local(A);
+    EXPECT_GIR_RULE(X.M, "V003");
+  }
+  {
+    PlaceFixture X; // good, through a struct and a slice: B { []A }
+    Type *A = X.C.recTy("test.A"), *B = X.C.structTy("test.B");
+    X.C.setStructBody(B, {X.C.slice(A)});
+    ASSERT_TRUE(X.C.setRecBody(A, X.C.array(B, 1)));
+    X.local(A);
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
 TEST(GIRVerifier, V003_StructContainsItself) {
   {
     PlaceFixture X;
@@ -413,6 +474,27 @@ TEST(GIRVerifier, V013_Entry) {
 //===----------------------------------------------------------------------===//
 // The CFG: V020-V028
 //===----------------------------------------------------------------------===//
+
+TEST(GIRVerifier, V014_OwnedIsATemporary) {
+  // P04.05: a value the runtime allocates is held by a temporary marked
+  // Owned, for drop elaboration (P04.09) to find; nothing else is marked.
+  {
+    PlaceFixture X; // good: an owned temporary
+    LocalId T = X.local(X.Str);
+    X.fn(X.P).Locals[T].K = Local::Temp;
+    X.fn(X.P).Locals[T].Owned = true;
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // bad: an owned variable
+    X.fn(X.P).Locals[X.LStr].Owned = true;
+    EXPECT_GIR_RULE(X.M, "V014");
+  }
+  {
+    PlaceFixture X; // and an unowned variable is fine
+    EXPECT_GIR_VALID(X.M);
+  }
+}
 
 TEST(GIRVerifier, V020_MissingTerminator) {
   GoodModule G;
@@ -755,6 +837,29 @@ TEST(GIRVerifier, V032_BadProjection) {
     PlaceFixture X;
     X.store(placeOf(Cs.L, X.I64, {Cs.E}), constInt(X.I64, 0));
     EXPECT_TRUE(hasRule(X.M, "V032")) << Cs.Name << "\n" << errorsOf(X.M);
+  }
+}
+
+TEST(GIRVerifier, V032_IndexOfAString) {
+  // P04.05: a byte of a string is a u8 place (a slice gives its element,
+  // a string its bytes); a string has no field of a type but the three words.
+  {
+    PlaceFixture X;
+    X.store(placeOf(X.LStr, X.U8, {elem(PlaceElem::Index, X.LI, X.U8)}),
+            constInt(X.U8, 7));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // the byte recorded as an i64
+    X.store(placeOf(X.LStr, X.I64, {elem(PlaceElem::Index, X.LI, X.I64)}),
+            constInt(X.I64, 7));
+    EXPECT_GIR_RULE(X.M, "V033");
+  }
+  {
+    PlaceFixture X; // a constant index into a string: arrays only
+    X.store(placeOf(X.LStr, X.U8, {elem(PlaceElem::ConstIndex, 0, X.U8)}),
+            constInt(X.U8, 7));
+    EXPECT_GIR_RULE(X.M, "V032");
   }
 }
 
@@ -1306,6 +1411,26 @@ TEST(GIRVerifier, V065_AssertValues) {
                {constFloat(X.F64, 5), constInt(X.U64, 3)});
     EXPECT_GIR_RULE(X.M, "V065");
   }
+  // The slice-bounds kinds (P04.05) show the same two integers: the values a
+  // message such as "slice bounds out of range [:7] with capacity 4" prints.
+  for (AssertKind K :
+       {AssertKind::SliceAlen, AssertKind::SliceAcap, AssertKind::SliceB,
+        AssertKind::Slice3Alen, AssertKind::Slice3Acap, AssertKind::Slice3B,
+        AssertKind::Slice3C, AssertKind::SliceConvert}) {
+    PlaceFixture Good;
+    assertWith(Good, K, {constInt(Good.I64, 7), constInt(Good.U64, 4)});
+    EXPECT_GIR_VALID(Good.M);
+    PlaceFixture Unsigned;
+    assertWith(Unsigned, K,
+               {constInt(Unsigned.U64, 7), constInt(Unsigned.U64, 4)});
+    EXPECT_GIR_VALID(Unsigned.M);
+    PlaceFixture None;
+    assertWith(None, K, {});
+    EXPECT_GIR_RULE(None.M, "V065");
+    PlaceFixture Narrow;
+    assertWith(Narrow, K, {constInt(Narrow.I32, 7), constInt(Narrow.U64, 4)});
+    EXPECT_GIR_RULE(Narrow.M, "V065");
+  }
   // The other kinds show nothing.
   for (AssertKind K : {AssertKind::DivByZero, AssertKind::NegativeShift,
                        AssertKind::Nil, AssertKind::Overflow}) {
@@ -1389,6 +1514,14 @@ Type *structOf(PlaceFixture &X, const std::string &Name,
   return S;
 }
 
+/// A map as the lowering makes it (P04.05): a pointer to gopp.map.
+static Type *mapPtr(PlaceFixture &X) {
+  Type *S = X.C.structTy("gopp.map");
+  if (!S->hasBody())
+    X.C.setStructBody(S, {X.I64});
+  return X.C.ptr(S);
+}
+
 TEST(GIRVerifier, V067_CSignatures) {
   // Accepted: scalars, pointers, structs of these (nested, with arrays inside,
   // also of length 0, empty ones, one that points to itself); a struct or
@@ -1425,6 +1558,19 @@ TEST(GIRVerifier, V067_CSignatures) {
     cDecl(X, "bad", {}, structOf(X, "HasStr", {X.I32, X.Str}));
   });
   Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.slice(X.I32)}, X.Unit); });
+  // A map (P04.05: a pointer to the runtime's gopp.map object), as a
+  // parameter, a result and a field; a pointer to a map variable is a plain
+  // pointer and is accepted.
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {mapPtr(X)}, X.Unit); });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {}, mapPtr(X)); });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {structOf(X, "HasMap", {X.I32, mapPtr(X)})}, X.Unit);
+  });
+  {
+    PlaceFixture X;
+    cDecl(X, "okmap", {X.C.ptr(mapPtr(X))}, X.I32);
+    EXPECT_GIR_VALID(X.M);
+  }
   Bad([](PlaceFixture &X) { cDecl(X, "bad", {}, X.C.tuple({X.I32, X.I32})); });
   Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.Unit}, X.Unit); });
   // Option[T] by value (M6: no C type until P07), alone, as a result and in a

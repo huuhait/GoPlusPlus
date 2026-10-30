@@ -1,0 +1,14 @@
+// REQUIRES: long
+// P04.05: lowering strings, slices, views and maps is near-linear in every
+// dimension a program can grow in: here a long `+` chain and big slice, map
+// and string literals (core-stress-str-2: a deep chain of slicing, many
+// slicing statements; core-stress-str-3: many map operations, many ranges
+// over a map with their break, continue, return and goto exits, many appends
+// and conversions); 4N takes at most 12 times as long as N. The control
+// (core-stress-str-4) lowers a program whose size is the product of two
+// dimensions and must fail the same check. The normal suite counts the work
+// instead (tests/unit/GIR/StressTest.cpp): the GIR made
+// (GIRStress.Lowering*IsLinear) and the steps of the lowering walks that make
+// no GIR statement each (GIRStress.TheLoweringCounts*, gir::loweringSteps,
+// one dimension grown 16 times, with a quadratic labelPos as the control).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_LoweringConcatsAndLiterals'

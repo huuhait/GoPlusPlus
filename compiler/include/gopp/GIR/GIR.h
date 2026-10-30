@@ -57,10 +57,12 @@ struct PlaceElem {
   enum Kind : uint8_t {
     Deref,      // *p: the operand is a pointer
     Field,      // .N of a String, Slice, Tuple or Struct
-    Index,      // [_L]: Val is a local of an integer type; bounds are checked
-                // by an Assert before, not here
+    Index,      // [_L] of an Array, a Slice or a String (a byte): Val is a
+                // local of an integer type; bounds are checked by an Assert
+                // before, not here
     ConstIndex, // [N] of an Array
-    Downcast,   // the payload of variant N of an enum-like type (P04.05)
+    Downcast,   // the payload of variant N of an enum-like type (interface
+                // data, `extends` parts: P04.06, P04.22)
   };
   Kind K = Deref;
   uint32_t Val = 0;
@@ -226,7 +228,28 @@ enum class AssertKind : uint8_t {
   Bounds,
   Nil,
   Overflow,
+  // Slice expressions (Go's boundsErrors, runtime/error.go). Each takes the
+  // offending index X (an i64, or a u64 for an unsigned index) and a u64 Y.
+  // s[:x] needs x <= cap(s) (a string or an array: length): SliceAcap,
+  // SliceAlen (Y is the capacity, the length); s[x:y] needs x <= y: SliceB;
+  // s[::x] and s[:x:y] and s[x:y:] are the three-index forms.
+  SliceAlen,
+  SliceAcap,
+  SliceB,
+  Slice3Alen,
+  Slice3Acap,
+  Slice3B,
+  Slice3C,
+  // [N]T(s) and (*[N]T)(s) need len(s) >= N: X is the length, Y is N
+  // ("cannot convert slice with length X to array or pointer to array with
+  // length Y").
+  SliceConvert,
 };
+/// The kinds whose Args are an index and a length (V065): Bounds and the
+/// slice kinds.
+inline bool takesIndexAndLength(AssertKind K) {
+  return K == AssertKind::Bounds || K >= AssertKind::SliceAlen;
+}
 const char *getAssertKindName(AssertKind K);
 
 struct SwitchCase {
@@ -286,6 +309,12 @@ struct Local {
   Type *Ty = nullptr;
   std::string Name; // for the dump and the debugger; may be empty
   bool Mutable = true;
+  /// A temporary that holds a value which owns memory (a string, slice or
+  /// map just made by `+`, `make`, `append`, a conversion, a literal) and that
+  /// no variable took over yet. Drop elaboration (P04.09) drops it at the end
+  /// of its statement unless a `Move` of it was made; until then it leaks
+  /// (gir.md section 7). Only temporaries are owned (V014).
+  bool Owned = false;
   Span Loc;
 };
 

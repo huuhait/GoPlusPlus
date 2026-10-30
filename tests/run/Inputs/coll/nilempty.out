@@ -1,0 +1,25 @@
+var true 0 0
+lit false 0 0
+make0 false 0 0
+make05 false 0 5
+append-nil-nothing true 0
+append-nil-empty true 0
+append-nil-1 false 1
+append-empty-empty false 0
+append-lit false 3
+true true 0 0
+true false false 0 0 0
+0 false
+0 false
+0 0
+0
+0
+0
+0
+true false true 2
+true true false
+0 true 0
+1 false 0
+2 false 0
+3 true true
+true false 1

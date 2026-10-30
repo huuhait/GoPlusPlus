@@ -1,10 +1,13 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names div-int,shift-left,index-array,index-after-output,assign-order-call,assign-order-tuple
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names div-int,shift-left,index-array,index-after-output,assign-order-call,assign-order-tuple,assign-order-read-slice,assign-order-read-ptr
 // P04.04 (D4.12, ADR-0028 rule 3.3): a failed check ends the program with
 // exit status 2 and Go's first line on standard error ("panic: runtime
 // error: ..."), after the output that came before. Division and shift
-// checks (a smoke of six programs) here, index checks in core-panics-index.long.test, every program of
-// Inputs/panics in core-panics.long.test, and on arm64 in
+// checks and the order of a target's checks (a smoke of eight programs:
+// assign-order-read-* index an outer slice far past its end, whose element
+// is read before the store, so its check comes first) here, index checks
+// in core-panics-index.long.test, every program of Inputs/panics in
+// core-panics.long.test, and on arm64 in
 // core-panics-arm64.test and core-panics-arm64.long.test.
 // Inputs/panics/*.gopp are Go programs: .out and .err are `go run`'s
 // (the output before the panic, and its first line), made by

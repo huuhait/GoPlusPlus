@@ -1,0 +1,79 @@
+// GOLDEN: by-hand
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-maporder.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-maporder.out %}
+// P04.05: the order of a range over a map is random, as in Go (spec chapter
+// 16): every range starts at its own pseudo-random entry and goes around.
+// From any start every entry is seen exactly once (400 ranges over a map
+// with deleted entries see all 7 starts; the chance that one is missed is
+// below 1e-25), and ranges over a map of 1000 keys do not all begin at the
+// same key. An entry deleted before the range reaches it is not seen, and a
+// map cleared during a range (in a call, which the checker cannot see) ends
+// it. The program prints only what does not depend on the order, so the
+// expected output is written by hand.
+package main
+
+func clearIt(m map[int]int) { clear(m) }
+
+func main() {
+	m := map[int]int{}
+	for i := 0; i < 1000; i++ {
+		m[i] = i
+	}
+	firsts := map[int]bool{}
+	for r := 0; r < 20; r++ {
+		for k := range m {
+			firsts[k] = true
+			break
+		}
+	}
+	println(len(firsts) > 1)
+	small := map[int]int{}
+	for i := 0; i < 9; i++ {
+		small[i] = i
+	}
+	delete(small, 3)
+	delete(small, 7)
+	starts := map[int]bool{}
+	ok := true
+	for r := 0; r < 400; r++ {
+		seen := map[int]int{}
+		first := -1
+		for k, v := range small {
+			if first < 0 {
+				first = k
+			}
+			seen[k] += v + 1 - k
+		}
+		starts[first] = true
+		if len(seen) != 7 {
+			ok = false
+		}
+		for _, n := range seen {
+			if n != 1 {
+				ok = false
+			}
+		}
+	}
+	println(ok, len(starts))
+	d := map[int]int{1: 1, 2: 2, 3: 3, 4: 4}
+	n := 0
+	for k := range d {
+		n++
+		for j := range d {
+			if j != k {
+				delete(d, j)
+			}
+		}
+	}
+	println(n, len(d))
+	c := map[int]int{1: 1, 2: 2, 3: 3}
+	n = 0
+	for range c {
+		n++
+		clearIt(c)
+	}
+	c[5] = 5
+	println(n, len(c))
+}

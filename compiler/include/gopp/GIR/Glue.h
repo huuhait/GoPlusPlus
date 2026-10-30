@@ -27,8 +27,11 @@
 //                            part in == or in the hash (ADR-0018 amendment
 //                            point 1; P05 map keys use the hash). An Option of
 //                            a pointer kind is the pointer (no Option type).
-// A type with a string, a slice or a function pointer has no glue yet
-// (P04.05, P04.06, P04.07): the builders return NoId.
+//   string                   ==: the same length and the same bytes; hash: the
+//                            length, then every byte (the pointer and the
+//                            capacity do not take part);
+// A type with a slice or a function pointer has no glue yet (P04.06,
+// P04.07): the builders return NoId.
 //
 // P04.06 (interfaces) and P05 (maps) call these; they are the one place that
 // decides how a type is compared and hashed.

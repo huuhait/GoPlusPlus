@@ -1,0 +1,13 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-seq --names idx-slice,idx-slice-neg,idx-string,idx-store-tuple,sl-hi-cap,sl-hi-len-string,sl-lo-hi,sl-neg-lo,sl3-lo-hi,sl3-max-len-array,make-len-neg,make-cap-small,conv-array,range-index-target
+// P04.05: a failed check of a string or slice ends the program with exit
+// status 2 and Go's first line on standard error, after the output that came
+// before: "index out of range [3] with length 3", "slice bounds out of range
+// [:6] with capacity 5", "[3:2]", "[2:1:]", "[-1:]", "makeslice: len out of
+// range", "cannot convert slice with length 3 to array or pointer to array
+// with length 4" and the rest of Go's boundsErrorFmts and boundsNegErrorFmts
+// (a smoke of fourteen programs here, all of Inputs/panics-seq in
+// core-panics-seq.long.test, on arm64 in core-panics-arm64.test and
+// core-panics-seq-arm64.long.test). Inputs/panics-seq/*.gopp are Go
+// programs: .out and .err are `go run`'s (the output before the panic, and
+// its first line), made by Inputs/gen-panics-seq.py and Inputs/gen-goldens.py.

@@ -1,0 +1,78 @@
+package main
+
+// copy with every overlap of source and destination in one array (forward
+// and backward moves, equal ranges, empty ranges), between slices of
+// different lengths, from a string, and of elements wider than a byte.
+
+func fill(a []int) {
+	for i := range a {
+		a[i] = i + 1
+	}
+}
+
+func dump(a []int) {
+	for _, x := range a {
+		print(" ", x)
+	}
+	println()
+}
+
+func main() {
+	var arr [12]int
+	for d := 0; d <= 12; d++ {
+		for s := 0; s <= 12; s++ {
+			for n := 0; n <= 12; n += 3 {
+				if d+n > 12 || s+n > 12 {
+					continue
+				}
+				fill(arr[:])
+				c := copy(arr[d:d+n], arr[s:s+n])
+				print(d, s, n, c, ":")
+				dump(arr[:])
+			}
+		}
+	}
+	// destination shorter or longer than the source
+	src := []int{1, 2, 3, 4, 5, 6, 7}
+	for dl := 0; dl <= 9; dl++ {
+		dst := make([]int, dl)
+		c := copy(dst, src)
+		print("len", dl, c, ":")
+		dump(dst)
+	}
+	// bytes from a string, into a larger and a smaller buffer
+	for n := 0; n <= 8; n++ {
+		b := make([]byte, n)
+		c := copy(b, "hello, world")
+		println(n, c, string(b))
+	}
+	// wide elements
+	type pair struct {
+		a int32
+		b [3]int16
+	}
+	ps := make([]pair, 6)
+	for i := range ps {
+		ps[i] = pair{int32(i), [3]int16{int16(i), int16(2 * i), int16(3 * i)}}
+	}
+	c := copy(ps[1:], ps)
+	println(c)
+	for _, p := range ps {
+		print(" ", p.a, p.b[0], p.b[1], p.b[2])
+	}
+	println()
+	c = copy(ps, ps[2:])
+	println(c)
+	for _, p := range ps {
+		print(" ", p.a, p.b[0], p.b[1], p.b[2])
+	}
+	println()
+	var nilS []int
+	println(copy(nilS, src), copy(src, nilS), copy(nilS, nilS))
+	// clear
+	cl := []int{1, 2, 3, 4}
+	clear(cl[1:3])
+	dump(cl)
+	clear(cl)
+	dump(cl)
+}

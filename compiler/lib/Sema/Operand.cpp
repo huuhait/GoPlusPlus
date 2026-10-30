@@ -290,11 +290,14 @@ bool Checker::representableConst(const ConstValue &X, BasicType *T,
       return false;
     }
   }
-  if (T->Info & IsString)
-    return X.kind() == ConstValue::String;
-  if (T->Info & IsBoolean)
-    return X.kind() == ConstValue::Bool;
-  return false;
+  // The value itself (as the numeric kinds give theirs): `Name("x")` of a
+  // defined string type is the constant "x", not an unknown one.
+  bool Ok = (T->Info & IsString)    ? X.kind() == ConstValue::String
+            : (T->Info & IsBoolean) ? X.kind() == ConstValue::Bool
+                                    : false;
+  if (Ok && Rounded)
+    *Rounded = X;
+  return Ok;
 }
 
 Checker::ReprCode Checker::representation(Operand &X, BasicType *T,

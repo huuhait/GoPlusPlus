@@ -1,0 +1,10 @@
+package main
+
+var s []int
+var i = 1
+
+func main() {
+	println("before")
+	println(len(s[:i]))
+	println("not reached")
+}

@@ -57,7 +57,9 @@ enum TypeCode : unsigned {
   T_Tuple,
   T_Func,
   T_Struct,
-  T_StructBody
+  T_StructBody,
+  T_Rec,    // a self-naming type: [name chars]
+  T_RecBody // [id, kind (a TypeCode), length, n, part ids...]
 };
 enum FuncCode : unsigned { F_Body = 1, F_Local, F_Block, F_Stmt, F_Term };
 enum IndexCode : unsigned { X_Body = 1 };
@@ -169,7 +171,9 @@ private:
         continue;
       }
       SmallVector<const Type *, 4> Parts;
-      switch (Cur->getKind()) {
+      // A self-naming type is a leaf here, like a struct: its parts may name
+      // it, so they come after all other types (the bodies).
+      switch (Cur->isRec() ? Type::Kind::Unit : Cur->getKind()) {
       case Type::Kind::Ptr:
       case Type::Kind::Slice:
       case Type::Kind::Array:
@@ -194,7 +198,8 @@ private:
       }
       TypeIds[Cur] = TypeOrder.size();
       TypeOrder.push_back(Cur);
-      if (Cur->getKind() == Type::Kind::Struct && Cur->hasBody())
+      if ((Cur->getKind() == Type::Kind::Struct || Cur->isRec()) &&
+          Cur->hasBody())
         PendingBodies.push_back(Cur);
       Stack.pop_back();
     }
@@ -206,6 +211,37 @@ private:
     std::vector<Rec> Bodies;
     for (size_t I = 0; I < PendingBodies.size(); ++I) {
       const Type *S = PendingBodies[I];
+      if (S->isRec()) {
+        // The parts of the body: the element (or the tuple's elements).
+        SmallVector<const Type *, 4> Parts;
+        TypeCode Code = T_Ptr;
+        switch (S->getKind()) {
+        case Type::Kind::Slice:
+          Code = T_Slice;
+          Parts.push_back(S->elem());
+          break;
+        case Type::Kind::Array:
+          Code = T_Array;
+          Parts.push_back(S->elem());
+          break;
+        case Type::Kind::Option:
+          Code = T_Option;
+          Parts.push_back(S->elem());
+          break;
+        case Type::Kind::Tuple:
+          Code = T_Tuple;
+          Parts.append(S->elems().begin(), S->elems().end());
+          break;
+        default:
+          Parts.push_back(S->elem());
+          break;
+        }
+        Rec R{T_RecBody, {TypeIds[S], Code, S->length(), Parts.size()}};
+        for (const Type *F : Parts)
+          R.Vals.push_back(typeId(F));
+        Bodies.push_back(std::move(R));
+        continue;
+      }
       Rec R{T_StructBody, {TypeIds[S], S->elems().size()}};
       for (const Type *F : S->elems())
         R.Vals.push_back(typeId(F));
@@ -214,9 +250,9 @@ private:
     std::vector<Rec> Out;
     for (const Type *T : TypeOrder) {
       Rec R;
-      switch (T->getKind()) {
+      switch (T->isRec() ? Type::Kind::Unit : T->getKind()) {
       case Type::Kind::Unit:
-        R = {T_Unit, {}};
+        R = T->isRec() ? Rec{T_Rec, chars(T->name())} : Rec{T_Unit, {}};
         break;
       case Type::Kind::Bool:
         R = {T_Bool, {}};
@@ -358,7 +394,7 @@ private:
     std::vector<Rec> Out;
     Out.push_back({F_Body, {Id}});
     for (const Local &L : F.Locals) {
-      Rec R{F_Local, {L.K, typeId(L.Ty), L.Mutable}};
+      Rec R{F_Local, {L.K, typeId(L.Ty), L.Mutable, L.Owned}};
       put(R.Vals, L.Loc);
       R.Vals.append(chars(L.Name));
       Out.push_back(std::move(R));
@@ -667,6 +703,49 @@ private:
     case T_Struct:
       T = Ctx.structTy(R.rest());
       break;
+    case T_Rec:
+      T = Ctx.recTy(R.rest());
+      break;
+    case T_RecBody: {
+      uint64_t Id = R.next(), Code = R.next(), Len = R.next(), N = R.next();
+      if (Id >= Types.size() || !Types[Id]->isRec())
+        return bad("self-naming body for another type");
+      SmallVector<Type *, 4> Parts;
+      for (uint64_t I = 0; I < N && !R.Failed; ++I)
+        Parts.push_back(type(R));
+      if (R.Failed || (Code != T_Tuple && Parts.size() != 1))
+        return bad("self-naming body");
+      Type *Body = nullptr;
+      switch (Code) {
+      case T_Ptr:
+        Body = Ctx.ptr(Parts[0]);
+        break;
+      case T_Slice:
+        Body = Ctx.slice(Parts[0]);
+        break;
+      case T_Array:
+        Body = Ctx.array(Parts[0], Len);
+        break;
+      case T_Option:
+        Body = Ctx.option(Parts[0]);
+        break;
+      case T_Tuple:
+        Body = Ctx.tuple(Parts);
+        break;
+      default:
+        return bad("self-naming body kind");
+      }
+      // The context may know the type already (a second read of the module).
+      if (Types[Id]->hasBody()) {
+        if (Types[Id]->getKind() != Body->getKind())
+          return bad("self-naming type " + Types[Id]->name() +
+                     " has two bodies");
+        return Error::success();
+      }
+      if (!Ctx.setRecBody(Types[Id], Body))
+        return bad("self-naming type " + Types[Id]->name() + " has no body");
+      return Error::success();
+    }
     case T_StructBody: {
       uint64_t Id = R.next(), N = R.next();
       if (Id >= Types.size() || Types[Id]->getKind() != Type::Kind::Struct)
@@ -928,6 +1007,7 @@ private:
         L.K = enumVal(R, Local::Temp);
         L.Ty = type(R);
         L.Mutable = R.next();
+        L.Owned = R.next();
         L.Loc = span(R);
         L.Name = R.rest();
         F->Locals.push_back(std::move(L));
@@ -1005,7 +1085,7 @@ private:
         case Terminator::Assert:
           T.Discr = operand(R, *F);
           T.Expected = R.next();
-          T.AK = enumVal(R, AssertKind::Overflow);
+          T.AK = enumVal(R, AssertKind::SliceConvert);
           T.Target = R.next();
           T.Unwind = unwind(R);
           for (uint64_t N = R.next(), I = 0; I < N && !R.Failed; ++I)

@@ -1,0 +1,17 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/strcmp.gopp -o %t.strcmp
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.strcmp %S/Inputs/coll/strcmp.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/slicing.gopp -o %t.slicing
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.slicing %S/Inputs/coll/slicing.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/copy.gopp -o %t.copy
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.copy %S/Inputs/coll/copy.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/nilempty.gopp -o %t.nilempty
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.nilempty %S/Inputs/coll/nilempty.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/append_scalar.gopp -o %t.append_scalar
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.append_scalar %S/Inputs/coll/append_scalar.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/append_convert.gopp -o %t.append_convert
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.append_convert %S/Inputs/coll/append_convert.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/coll/append_string.gopp -o %t.append_string
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.append_string %S/Inputs/coll/append_string.out
+// P04.05: the programs of coll-arm64.test that it leaves out, on linux/arm64
+// under QEMU (every panic program: core-panics-seq-arm64.long.test).

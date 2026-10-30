@@ -72,7 +72,7 @@ Place FuncBuilder::index(Place P, LocalId Idx) {
   PlaceElem E;
   E.K = PlaceElem::Index;
   E.Val = Idx;
-  E.Ty = P.Ty->elem();
+  E.Ty = P.Ty->getKind() == Type::Kind::String ? M.Ctx.u8() : P.Ty->elem();
   P.Proj.push_back(E);
   P.Ty = E.Ty;
   return P;

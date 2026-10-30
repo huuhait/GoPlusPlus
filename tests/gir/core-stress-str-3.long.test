@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P04.05: the map and append part of core-stress-str.long.test (many map
+// operations, many ranges over a map with their break, continue, return and
+// goto exits, many appends and conversions).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_LoweringMapsAndAppends'

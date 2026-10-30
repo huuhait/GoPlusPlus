@@ -36,7 +36,20 @@ struct LowerOptions {
   /// Building a program: package main must have `func main`, and the module
   /// gets the C entry point `main` that calls `main.main`.
   bool Entry = true;
+  /// Test-only: labelPos walks the function's statements again at every
+  /// goto out of a map range, the quadratic walk the stress test's control
+  /// must catch (tests/unit/GIR/StressTest.cpp).
+  bool RescanLabels = false;
+  /// Test-only: a call emits GIR for every pair of its map-entry arguments
+  /// (the quadratic emission the stress test's control must catch).
+  bool PairwiseEntryArgs = false;
 };
+
+/// Test-only (M8): the steps the lowering walks that make no GIR statement
+/// each (the late reads of assignment targets, range clauses, the label
+/// walk, the scopes left by a branch) have taken on this thread so far. A
+/// stress test checks that it grows in step with the input.
+uint64_t loweringSteps();
 
 /// Lowers the package. Returns null after reporting the errors.
 std::unique_ptr<Module> lowerPackage(Context &Ctx, const SourceManager &SM,

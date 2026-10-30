@@ -1,0 +1,192 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-strings.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-strings.out %}
+// P04.05: strings. Constants and escapes, len, indexing, slicing, `+` and
+// `+=` (one allocation for a chain), comparisons (equal prefixes, empty,
+// non-ASCII), string <-> []byte, string <-> []rune, string(rune) (invalid
+// values give U+FFFD), `for i, r := range s` with Go's exact UTF-8 decoding
+// (invalid, truncated, overlong, surrogate and too-large sequences are one
+// U+FFFD of width 1), strings in structs, arrays and as values passed and
+// returned, min and max. The expected output is `go run` of this text
+// (Inputs/regen-goldens.py).
+package main
+
+type Pair struct {
+	Name  string
+	Value string
+	N     int
+}
+
+func greet(name string) string { return "hello, " + name + "!" }
+
+func repeat(s string, n int) string {
+	r := ""
+	for i := 0; i < n; i++ {
+		r += s
+	}
+	return r
+}
+
+func show(s string) {
+	println(len(s), s)
+}
+
+func decode(s string) {
+	print("[")
+	for i, r := range s {
+		print(" ", i, ":", r)
+	}
+	println(" ]")
+}
+
+func cmp(a, b string) {
+	println(a == b, a != b, a < b, a <= b, a > b, a >= b)
+}
+
+type Name string
+
+type Flag bool
+
+const named = Name("const")
+
+func main() {
+	// constants of defined types: the conversion of a constant is a constant
+	nm := Name("typed")
+	fl := Flag(true)
+	println(nm+"!", len(nm), string(nm) == "typed", nm < "u", named, fl, !fl, Flag(false) == fl)
+	// constants
+	const c = "tab\there \"quoted\" \\ back é \U0001F600 \x41\101"
+	println(len(c), c)
+	println(len("héllo, 世界"), len(`raw\n`), `raw\n`)
+	println("é"[0], "é"[1], len("\xff\xfe"))
+	show("")
+	show("x")
+
+	// concatenation
+	a, b := "foo", "bar"
+	ab := a + b
+	println(ab, len(ab), a+"-"+b+"-"+a)
+	var s string
+	for i := 0; i < 5; i++ {
+		s += a
+		s = s + b
+	}
+	println(s, len(s))
+	println(greet("world"), greet(""), repeat("ab", 4), len(repeat("xyz", 1000)))
+	long := a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + "end"
+	println(long, len(long))
+	empty := ""
+	println(len(empty+empty), len(empty+a), len(a+empty), empty+empty == "")
+
+	// indexing and slicing
+	t := "héllo, 世界"
+	println(t[0], t[1], t[2], t[len(t)-1])
+	println(t[:1], t[1:3], t[3:], t[:], t[2:2] == "", len(t[len(t):]))
+	u := t[7:10]
+	println(u, len(u), u == "世")
+	var sum int
+	for i := 0; i < len(t); i++ {
+		sum += int(t[i])
+	}
+	println(sum)
+
+	// comparison
+	cmp("", "")
+	cmp("", "a")
+	cmp("a", "")
+	cmp("abc", "abd")
+	cmp("abc", "ab")
+	cmp("ab", "abc")
+	cmp("é", "f")
+	cmp("\xff", "a")
+	cmp(a+b, "foobar")
+	cmp("Z", "a")
+	println("b" > "a" && "a" < "b" || false)
+	println(min("b", "a", "c"), max("b", "a", "c"), min("x"), max("", "q"))
+
+	// conversions
+	bs := []byte("héllo")
+	println(len(bs), bs[0], bs[1], bs[2], string(bs[:1]), string(bs))
+	bs[0] = 'J'
+	println(string(bs), string(bs[:0]) == "")
+	rs := []rune("héllo, 世界\xff")
+	println(len(rs), rs[1], rs[7], rs[len(rs)-1])
+	println(string(rs), string(rs[7:9]), string(rs[:0]) == "")
+	println(string(rune(65)), string(rune(0xe9)), string(rune(0x4e16)), string(rune(0x1F600)))
+	var neg int = -1
+	var big int64 = 1 << 40
+	var sur int = 0xD800
+	var max int = 0x10FFFF
+	println(string(rune(neg)) == "�", string(rune(big)) == "�", string(rune(sur)) == "�", len(string(rune(max))))
+	println(string(rune(0x110000)) == "�", len(string(rune(0x7f))), len(string(rune(0x80))), len(string(rune(0x7ff))), len(string(rune(0x800))))
+	b8 := byte(200)
+	println(len(string(rune(b8))), []byte(string(rune(b8)))[0])
+	var empties []byte
+	println(len(string(empties)), len(string([]rune(nil))), len([]byte("")), len([]rune("")))
+
+	// range
+	decode("")
+	decode("abc")
+	decode("héllo, 世界😀")
+	decode("\xff")
+	decode("a\xffb")
+	decode("\x80\x80")
+	decode("\xe4\xb8")
+	decode("\xe4\xb8\x96")
+	decode("\xe4\xb8a")
+	decode("\xc0\x80")
+	decode("\xc1\xbf")
+	decode("\xc2\x80")
+	decode("\xe0\x80\x80")
+	decode("\xe0\xa0\x80")
+	decode("\xed\xa0\x80")
+	decode("\xed\x9f\xbf")
+	decode("\xee\x80\x80")
+	decode("\xf0\x80\x80\x80")
+	decode("\xf0\x90\x80\x80")
+	decode("\xf4\x8f\xbf\xbf")
+	decode("\xf4\x90\x80\x80")
+	decode("\xf5\x80\x80\x80")
+	decode("\xf8\x88\x80\x80\x80")
+	decode("\xf0\x9f\x98")
+	decode("\xf0\x9f\x98\x80\x80")
+	n := 0
+	for range "héllo" {
+		n++
+	}
+	idx := 0
+	for i := range "héllo" {
+		idx += i
+	}
+	println(n, idx)
+	for _, r := range "ab" {
+		println(r, string(r))
+	}
+
+	// strings in aggregates
+	p := Pair{"k", "v", 1}
+	q := Pair{Name: "k", Value: "v", N: 1}
+	p.Value = p.Value + "2"
+	println(p == q, p.Value, q.Value, p.Name == q.Name)
+	q.Value += "2"
+	println(p == q)
+	arr := [3]string{"x", "yy", p.Value + ""}
+	arr[0] += "!"
+	brr := [3]string{"x!", "yy", "v2"}
+	println(arr[0], arr[1], arr[2], arr == brr, len(arr[2]))
+	brr[1] = "changed"
+	println(brr[1], arr == brr)
+	ps := []Pair{{"a", "b", 1}, {"c", "d", 2}}
+	ps[1].Name = ps[1].Name + ps[0].Value
+	println(ps[1].Name, ps[0].N+ps[1].N)
+	words := []string{"one", "two", "three"}
+	total := ""
+	for i, w := range words {
+		if i > 0 {
+			total += ","
+		}
+		total += w
+	}
+	println(total)
+}

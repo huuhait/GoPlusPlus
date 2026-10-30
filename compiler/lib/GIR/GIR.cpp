@@ -113,6 +113,22 @@ const char *gir::getAssertKindName(AssertKind K) {
     return "nil";
   case AssertKind::Overflow:
     return "overflow";
+  case AssertKind::SliceAlen:
+    return "slice_alen";
+  case AssertKind::SliceAcap:
+    return "slice_acap";
+  case AssertKind::SliceB:
+    return "slice_b";
+  case AssertKind::Slice3Alen:
+    return "slice3_alen";
+  case AssertKind::Slice3Acap:
+    return "slice3_acap";
+  case AssertKind::Slice3B:
+    return "slice3_b";
+  case AssertKind::Slice3C:
+    return "slice3_c";
+  case AssertKind::SliceConvert:
+    return "slice_convert";
   }
   return "?";
 }

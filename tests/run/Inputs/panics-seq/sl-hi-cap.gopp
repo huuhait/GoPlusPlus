@@ -1,0 +1,10 @@
+package main
+
+var c = make([]int, 3, 5)
+var i = 6
+
+func main() {
+	println("before")
+	println(len(c[:i]))
+	println("not reached")
+}

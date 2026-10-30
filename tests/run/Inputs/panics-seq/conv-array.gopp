@@ -1,0 +1,11 @@
+package main
+
+var s = []int{1, 2, 3}
+
+
+func main() {
+	println("before")
+	a := [4]int(s)
+	println(a[0])
+	println("not reached")
+}

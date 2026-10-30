@@ -1,0 +1,31 @@
+// RUN: %gopp check --dump-types %s 2>&1 | FileCheck --implicit-check-not="error[" %s
+// P04.05 (SLC-6): the checker records each `s = s[i:j]` that shrinks the owned
+// slice s in place (Info::Reslices, dumped as `reslice`), so the lowering
+// moves the kept elements down instead of guessing. Both sides: the same
+// variable and the same field through a pointer are recorded; a borrowed
+// parameter re-pointed (PAR-2) and a part kept in a new variable are not.
+package main
+
+type Q struct{ items []int }
+
+func pop(xs []int) int {
+	xs = xs[1:]
+	return len(xs)
+}
+
+func main() {
+	s := []int{1, 2, 3}
+	s = s[1:]
+	var qv Q
+	q := &qv
+	q.items = q.items[0:0]
+	v := s[0:1]
+	t := []int{4}
+	t = append(t, len(v))
+	println(len(t), pop(s))
+}
+
+// CHECK-NOT: reslice `xs[1:]`
+// CHECK: 18:6 reslice `s[1:]`
+// CHECK: 21:12 reslice `q.items[0:0]`
+// CHECK-NOT: reslice

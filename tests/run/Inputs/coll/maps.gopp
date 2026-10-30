@@ -1,0 +1,266 @@
+package main
+
+// Maps: growth, deletion and tombstones, deleting during range, every kind of
+// key (NaN never matches, +0 and -0 are one key), comma-ok, op-assignment.
+// Range order is unspecified, so everything printed is order independent.
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+type P struct {
+	a int
+	b string
+}
+
+func ints() {
+	m := map[int]int{}
+	const N = 3000
+	for i := 0; i < N; i++ {
+		m[i*7] = i * 3
+	}
+	println(len(m))
+	miss := 0
+	sum := 0
+	for i := 0; i < N*7; i++ {
+		v, ok := m[i]
+		if ok {
+			sum += v
+		} else {
+			miss++
+		}
+	}
+	println(miss, sum)
+	for i := 0; i < N; i += 2 {
+		delete(m, i*7)
+	}
+	println(len(m))
+	delete(m, 123456789)
+	delete(m, -5)
+	println(len(m), m[7], m[14], m[0])
+	for i := 0; i < N; i += 2 {
+		m[i*7] = -i
+	}
+	println(len(m))
+	t := 0
+	cnt := 0
+	for k, v := range m {
+		t += k + v
+		cnt++
+	}
+	println(t, cnt)
+	// delete every entry from inside the loop
+	for k := range m {
+		delete(m, k)
+	}
+	println(len(m))
+	for i := 0; i < 100; i++ {
+		m[i] = i
+	}
+	// delete all the other entries in the first turn: one turn
+	turns := 0
+	for k := range m {
+		turns++
+		for j := 0; j < 100; j++ {
+			if j != k {
+				delete(m, j)
+			}
+		}
+	}
+	println(turns, len(m))
+	clear(m)
+	println(len(m), m[5])
+	m[5]++
+	m[5] += 10
+	m[6] -= 3
+	m[7] |= 12
+	m[8] <<= 2
+	println(len(m), m[5], m[6], m[7], m[8])
+}
+
+// Many inserts and deletes of different keys keep a small map small.
+func churn() {
+	m := map[int]int{}
+	for i := 0; i < 200000; i++ {
+		m[i] = i
+		if i >= 8 {
+			delete(m, i-8)
+		}
+	}
+	println(len(m))
+	s := 0
+	for k, v := range m {
+		s += k - v
+	}
+	println(s, m[199999], m[199991], m[199992])
+	ms := map[string]int{}
+	for i := 0; i < 20000; i++ {
+		ms["key"+itoa(i)] = i
+		if i >= 3 {
+			delete(ms, "key"+itoa(i-3))
+		}
+	}
+	println(len(ms), ms["key19999"], ms["key19996"], ms["key19997"])
+}
+
+func strs() {
+	m := map[string]int{}
+	for i := 0; i < 2000; i++ {
+		k := "k" + itoa(i%500) + "/" + itoa(i/500)
+		m[k] += i
+	}
+	println(len(m))
+	t := 0
+	for k, v := range m {
+		t += len(k) * v
+	}
+	println(t, m["k0/0"], m["k499/3"], m["k500/0"], m[""])
+	m[""] = 9
+	println(len(m), m[""])
+	// the key is copied in: growing the string later does not change it
+	key := "abc"
+	m2 := map[string]int{}
+	m2[key] = 1
+	key += "def"
+	m2[key] = 2
+	println(len(m2), m2["abc"], m2["abcdef"], m2[key])
+}
+
+func structs() {
+	m := map[P]int{}
+	for i := 0; i < 300; i++ {
+		m[P{i % 17, "x" + itoa(i%5)}] += i
+	}
+	println(len(m))
+	t := 0
+	for k, v := range m {
+		t += k.a*v + len(k.b)
+	}
+	println(t, m[P{3, "x3"}], m[P{3, "x9"}])
+	ma := map[[2]int]string{}
+	ma[[2]int{1, 2}] = "a"
+	ma[[2]int{2, 1}] = "b"
+	ma[[2]int{1, 2}] = "c"
+	println(len(ma), ma[[2]int{1, 2}], ma[[2]int{2, 1}], ma[[2]int{0, 0}] == "")
+	mb := map[bool]int{true: 1}
+	mb[false]--
+	println(len(mb), mb[true], mb[false])
+	mi := map[int8]uint64{-128: 1 << 63, 127: 1<<64 - 1}
+	println(len(mi), mi[-128], mi[127], mi[0])
+	var arr [4]int
+	mp := map[*int]int{}
+	for i := range arr {
+		mp[&arr[i]] = i + 1
+	}
+	println(len(mp), mp[&arr[2]], mp[&arr[3]])
+}
+
+func floats() {
+	m := map[float64]int{}
+	var zero float64
+	negz := -zero
+	m[zero] = 1
+	m[negz] = 2
+	println(len(m), m[0], m[negz])
+	nan := zero / zero
+	for i := 0; i < 5; i++ {
+		m[nan] = i + 10
+	}
+	println(len(m), m[nan], nan == nan)
+	delete(m, nan)
+	println(len(m))
+	n, s := 0, 0
+	for k, v := range m {
+		if k != k {
+			n++
+			s += v
+		}
+	}
+	println(n, s)
+	_, ok := m[nan]
+	println(ok)
+	inf := 1 / zero
+	m[inf] = 7
+	m[-inf] = 8
+	println(len(m), m[inf], m[-inf])
+	clear(m)
+	println(len(m))
+	m[nan] = 1
+	println(len(m))
+	m32 := map[float32]int{1.5: 1, 2.5: 2}
+	m32[1.5]++
+	println(len(m32), m32[1.5], m32[2.5], m32[3.5])
+	mc := map[complex128]int{1 + 2i: 1}
+	mc[1+2i]++
+	println(len(mc), mc[1+2i])
+}
+
+func values() {
+	ms := map[string][]int{}
+	for i := 0; i < 10; i++ {
+		k := "k" + itoa(i%3)
+		ms[k] = append(ms[k], i)
+	}
+	println(len(ms), len(ms["k0"]), len(ms["k1"]), len(ms["k2"]))
+	t := 0
+	for _, v := range ms {
+		for _, x := range v {
+			t += x
+		}
+	}
+	println(t)
+	mm := map[int]map[int]int{}
+	for i := 0; i < 20; i++ {
+		if _, ok := mm[i%4]; !ok {
+			mm[i%4] = map[int]int{}
+		}
+		mm[i%4][i] = i * i
+	}
+	println(len(mm), len(mm[0]), len(mm[3]), mm[1][5], mm[9] == nil)
+	type pt struct{ x, y int }
+	mpt := map[string]pt{"a": {1, 2}}
+	v := mpt["a"]
+	v.x = 100
+	mpt["b"] = v
+	println(len(mpt), mpt["a"].x, mpt["b"].x, mpt["b"].y, mpt["c"].x)
+	// comma-ok in conditions and with blank
+	if x, ok := mpt["a"]; ok {
+		println("found", x.x)
+	}
+	if _, ok := mpt["zz"]; !ok {
+		println("missing")
+	}
+	ma := map[int][3]int{}
+	ma[1] = [3]int{1, 2, 3}
+	println(ma[1][2], ma[2][2], len(ma))
+	mf := map[int]bool{}
+	mf[3] = true
+	println(mf[3], mf[4])
+}
+
+func main() {
+	ints()
+	churn()
+	strs()
+	structs()
+	floats()
+	values()
+}

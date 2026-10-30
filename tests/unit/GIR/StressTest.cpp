@@ -190,21 +190,23 @@ void manyFields(GoodModule &G, unsigned N) {
   B.ret();
 }
 
-/// The CPU time of the calling thread, in seconds. Other processes on a busy
+/// The CPU time of this process, in seconds. Other processes on a busy
 /// machine take the CPU away without adding to this clock; what is left is
-/// cache and memory contention.
-static double threadCpuSeconds() {
+/// cache and memory contention. (The process, not the calling thread:
+/// lowerPackage runs on a thread of its own with a bigger stack, which the
+/// clock of the waiting caller would not see; the tests run nothing else.)
+static double processCpuSeconds() {
   timespec Ts;
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &Ts);
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &Ts);
   return static_cast<double>(Ts.tv_sec) +
          1e-9 * static_cast<double>(Ts.tv_nsec);
 }
 
-/// The time of one run of Run, in seconds (thread CPU time, not wall time).
+/// The time of one run of Run, in seconds (process CPU time, not wall time).
 template <class Fn> double best1(Fn Run) {
-  double T0 = threadCpuSeconds();
+  double T0 = processCpuSeconds();
   Run();
-  return threadCpuSeconds() - T0;
+  return processCpuSeconds() - T0;
 }
 
 /// Timing (long suite only, M8): the times of Small and Big (the same work at
@@ -212,7 +214,7 @@ template <class Fn> double best1(Fn Run) {
 /// several probe runs and doubles until Small takes at least 20 ms, so the
 /// times are far above the clock's noise. Each time is the least of five
 /// runs of Small and Big taken in turn, so a machine that gets busier or
-/// quieter during the test changes both. The times are of the thread's CPU
+/// quieter during the test changes both. The times are of the process's CPU
 /// (best1), so other processes do not add to them.
 template <class FnA, class FnB>
 std::pair<double, double> bestOfBothOnce(FnA Small, FnB Big) {
@@ -505,8 +507,9 @@ struct Checked {
         E += D.Message + "\n";
     return E;
   }
-  std::unique_ptr<gir::Module> lower(gir::Context &C) {
-    return lowerPackage(C, SM, *CP, Ld->filesOf(CP), Diags);
+  std::unique_ptr<gir::Module> lower(gir::Context &C,
+                                     const LowerOptions &Opts = {}) {
+    return lowerPackage(C, SM, *CP, Ld->filesOf(CP), Diags, Opts);
   }
   std::string Dir;
   SourceManager SM;
@@ -600,6 +603,448 @@ TEST(GIRStressLong, DISABLED_LoweringManyCheckedStatements) {
 }
 TEST(GIRStressLong, DISABLED_LoweringManyLocalTypes) {
   expectLoweringNearLinear(1500, typesOfN);
+}
+
+//===----------------------------------------------------------------------===//
+// P04.05: strings, slices, views and maps
+//===----------------------------------------------------------------------===//
+
+// Normal suite (M8): the work is counted, not timed. Lowering N units must
+// make GIR the verifier walks in at most C steps per unit, and four times the
+// units at most 4.5 times the steps (verifierSteps counts the elements of
+// every walk it does). Each dimension a program can grow in has its own
+// generator, so a quadratic spot shows in the dimension that has it: a long
+// `+` chain, a big literal, a deep chain of slicing, many map operations.
+// The control feeds stepsAreLinear a program whose work is the product of two
+// dimensions.
+
+/// x + x + ... (N terms).
+std::string concatChainOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n\tx := \"ab\" + "
+                  "string(rune(65+len(\"\")))\n\ts := x";
+  for (unsigned I = 0; I < N; ++I)
+    S += " + x";
+  return S + "\n\tprintln(len(s))\n}\n";
+}
+
+/// N statements of `s += x`: the same dimension, as a sequence.
+std::string concatStatementsOfN(unsigned N) {
+  std::string S =
+      "package main\n\nfunc main() {\n\tx := \"ab\" + \"\"\n\ts := x + \"\"\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\ts += x\n";
+  return S + "\tprintln(len(s))\n}\n";
+}
+
+/// A slice literal, a map literal and a string-slice literal of N elements.
+std::string literalsOfN(unsigned N) {
+  std::string L, M, T;
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    L += (I ? ", " : "") + K;
+    M += (I ? ", " : "") + K + ": " + K;
+    T += std::string(I ? ", " : "") + "\"s" + K + "\"";
+  }
+  return "package main\n\nfunc main() {\n\tl := []int{" + L +
+         "}\n\tm := map[int]int{" + M + "}\n\tt := []string{" + T +
+         "}\n\tprintln(len(l), len(m), len(t))\n}\n";
+}
+
+/// a[1:][1:]...[1:] (N times) on a slice.
+std::string slicingChainOfN(unsigned N) {
+  std::string S =
+      "package main\n\nfunc main() {\n\ta := make([]int, 10)\n\tv := a";
+  for (unsigned I = 0; I < N; ++I)
+    S += "[0:]";
+  return S + "\n\tprintln(len(v))\n}\n";
+}
+
+/// N statements that slice (two and three index) and index.
+std::string slicingStatementsOfN(unsigned N) {
+  // (the three-index form is for arrays only, SLC-13)
+  std::string S = "package main\n\nfunc main() {\n\ta := make([]int, "
+                  "10)\n\tvar r [10]int\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += len(a[" + std::to_string(I % 3) +
+         ":]) + len(r[1:4:" + std::to_string(5 + I % 4) + "]) + a[" +
+         std::to_string(I % 10) + "]\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// N map writes, reads, deletes and comma-ok reads.
+std::string mapOpsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n\tm := map[int]string{}\n\tn "
+                  ":= map[string]int{}\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "\tm[" + K + "] = \"v" + K + "\"\n\tn[m[" + K +
+         "] + \"\"]++\n\tif _, ok := m[" + std::to_string(I / 2) +
+         "]; ok {\n\t\tt += len(m[" + K + "])\n\t}\n\tdelete(m, " +
+         std::to_string(I / 3) + ")\n";
+  }
+  return S + "\tprintln(t, len(m), len(n))\n}\n";
+}
+
+/// N ranges over a map that end every way a loop can (RNG-4: each way out
+/// ends the iteration): break, `continue` of the loop around it, `return`,
+/// and `goto` out to N labels (the labels of a function are found by one walk
+/// of its statements, at its first goto out of a map range).
+std::string mapRangesOfN(unsigned N) {
+  std::string S = "package main\n\nfunc find(m map[int]int, k int) int {\n"
+                  "\tfor a, b := range m {\n\t\tif a == k {\n\t\t\treturn "
+                  "b\n\t\t}\n\t}\n\treturn -1\n}\n\nfunc main() {\n\tm := "
+                  "map[int]int{1: 2, 3: 4}\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "\tfor k := range m {\n\t\tif k > 2 {\n\t\t\tgoto l" + K +
+         "\n\t\t}\n\t\tt += k\n\t\tbreak\n\t}\nl" + K +
+         ":\n\tfor i := 0; i < 2; i++ {\n\t\tfor range m {\n\t\t\tcontinue l" +
+         K + "\n\t\t}\n\t}\n\tt += find(m, " + std::to_string(I % 4) + ")\n";
+  }
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// N appends and copies and conversions.
+std::string sliceOpsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n\tvar s []int\n\tb := "
+                  "[]byte(\"x\")\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\ts = append(s, " + std::to_string(I) +
+         ", 1)\n\tt += copy(s, s[1:]) + len(string(b)) + "
+         "len([]rune(string(b)))\n";
+  return S + "\tprintln(t, len(s))\n}\n";
+}
+
+/// The steps the verifier counts on the lowered program of N units.
+uint64_t lowerAndCount(unsigned N, std::string (*Make)(unsigned)) {
+  Checked P(Make(N));
+  EXPECT_EQ(P.errors(), "") << "N = " << N;
+  gir::Context C;
+  auto M = P.lower(C);
+  EXPECT_NE(M, nullptr) << P.errors();
+  if (!M)
+    return 0;
+  uint64_t A = verifierSteps();
+  EXPECT_TRUE(verify(*M).empty());
+  return verifierSteps() - A;
+}
+
+/// The lowered program of N units and the one of 4N: linear steps. The
+/// runtime functions are a fixed part, which the per-unit limit allows for.
+void expectLoweredStepsLinear(unsigned N, std::string (*Make)(unsigned)) {
+  uint64_t S1 = lowerAndCount(N, Make), S4 = lowerAndCount(4 * N, Make);
+  const uint64_t C = 400; // GIR steps one unit may make, runtime included
+  EXPECT_TRUE(S1 != 0 && S1 <= C * N && S4 <= C * 4 * N && 2 * S4 <= 9 * S1)
+      << "steps(N) = " << S1 << ", steps(4N) = " << S4 << ", N = " << N;
+}
+
+TEST(GIRStress, LoweringALongConcatChainIsLinear) {
+  expectLoweredStepsLinear(240, concatChainOfN); // 4N: the parser's depth
+                                                 // limit is 1024
+}
+TEST(GIRStress, LoweringManyConcatStatementsIsLinear) {
+  expectLoweredStepsLinear(600, concatStatementsOfN);
+}
+TEST(GIRStress, LoweringBigLiteralsIsLinear) {
+  expectLoweredStepsLinear(600, literalsOfN);
+}
+TEST(GIRStress, LoweringADeepSlicingChainIsLinear) {
+  expectLoweredStepsLinear(240, slicingChainOfN);
+}
+TEST(GIRStress, LoweringManySlicingStatementsIsLinear) {
+  expectLoweredStepsLinear(300, slicingStatementsOfN);
+}
+TEST(GIRStress, LoweringManyMapOperationsIsLinear) {
+  expectLoweredStepsLinear(200, mapOpsOfN);
+}
+TEST(GIRStress, LoweringManyAppendsAndConversionsIsLinear) {
+  expectLoweredStepsLinear(300, sliceOpsOfN);
+}
+TEST(GIRStress, LoweringManyMapRangesAndTheirExitsIsLinear) {
+  expectLoweredStepsLinear(200, mapRangesOfN);
+}
+
+// The control: the same check on a program whose output grows with the
+// product of two dimensions (each of N statements has an N-term chain) must
+// fail it, so the check is able to see a quadratic lowering.
+std::string concatSquareOfN(unsigned N) {
+  std::string Chain = "x";
+  for (unsigned I = 0; I < N; ++I)
+    Chain += " + x";
+  std::string S =
+      "package main\n\nfunc main() {\n\tx := \"ab\" + \"\"\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += len(" + Chain + ")\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+TEST(GIRStress, TheLoweringStepCheckFailsAQuadraticProgram) {
+  uint64_t S1 = lowerAndCount(20, concatSquareOfN),
+           S4 = lowerAndCount(80, concatSquareOfN);
+  EXPECT_GT(2 * S4, 9 * S1) << S1 << " -> " << S4;
+}
+
+// P04.05 review R10: the lowering walks that make no GIR statement each (the
+// late reads of an assignment's targets, `op=`, `++`, a range clause, the
+// stores and shrink moves of a tuple, labelPos, exitScopes, the scopes a
+// goto leaves) count their steps (gir::loweringSteps), since the verifier's
+// steps measure the GIR they made, not the work that made it. One generator
+// per dimension; each control grows its dimension 16 times: the count must
+// grow at least 10 times (the counter sees the dimension) and stay at most
+// C * 16N (linear).
+
+/// One statement with N targets of every kind (a tuple assignment).
+std::string tupleTargetsOfN(unsigned N) {
+  std::string S = "package main\n\ntype T struct{ f int }\n\nfunc main() "
+                  "{\n\ta := make([]int, 8)\n\tm := map[int]int{}\n\tmm "
+                  ":= map[int]map[int]int{}\n\tts := make([]T, 8)\n\t";
+  std::string L, R;
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I % 8);
+    const char *Sep = I ? ", " : "";
+    switch (I % 4) {
+    case 0:
+      L += Sep + ("a[" + K + "]");
+      break;
+    case 1:
+      L += Sep + ("m[" + std::to_string(I) + "]");
+      break;
+    case 2:
+      L += Sep + ("mm[" + K + "][" + std::to_string(I) + "]");
+      break;
+    default:
+      L += Sep + ("ts[" + K + "].f");
+      break;
+    }
+    R += Sep + std::to_string(I);
+  }
+  return S + L + " = " + R +
+         "\n\tprintln(len(a), len(m), len(mm), len(ts))\n}\n";
+}
+
+/// One target whose path is N deep: x[i][i]...[i] = f().
+std::string deepTargetOfN(unsigned N) {
+  std::string Ty, Path;
+  for (unsigned I = 0; I < N; ++I) {
+    Ty += "[]";
+    Path += "[i]";
+  }
+  return "package main\n\nfunc f() int { return 1 }\n\nfunc main() {\n\t"
+         "var x " +
+         Ty + "int\n\ti := len(x)\n\tif i > 0 {\n\t\tx" + Path +
+         " = f()\n\t\tx" + Path + " += f()\n\t}\n}\n";
+}
+
+/// N statements of `op=`, `++`, append and borrowed map arguments.
+std::string lateStatementsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc put(m map[int]int, k int) { m[k] = k "
+                  "}\n\nfunc main() {\n\ta := make([]int, 8)\n\tmm := "
+                  "map[int]map[int]int{}\n\tvar s []int\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I % 8);
+    S += "\ta[" + K + "] += len(s)\n\tmm[" + K + "][" + K +
+         "]++\n\ts = append(s, a[" + K + "])\n\tput(mm[" + K + "], " + K +
+         ")\n";
+  }
+  return S + "\tprintln(len(s), len(mm))\n}\n";
+}
+
+/// N range loops whose targets are places, over a slice, a string and a map.
+std::string rangeTargetsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n\ta := make([]int, 8)\n\t"
+                  "m := map[int]int{1: 2}\n\tk := 0\n\tr := 'x'\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tfor k, a[k&7] = range a {\n\t}\n\tfor k, r = range \"ab\" "
+         "{\n\t}\n\tfor k, m[k] = range m {\n\t\tbreak\n\t}\n";
+  return S + "\tprintln(k, r, len(m))\n}\n";
+}
+
+/// N ways out of nested blocks with locals (exitScopes): break, continue and
+/// return.
+std::string exitsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc f(n int) int {\n\tt := 0\n\tfor i "
+                  ":= 0; i < n; i++ {\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "\t\tif i == " + K +
+         " {\n\t\t\tx := i\n\t\t\t{\n\t\t\t\ty "
+         ":= x\n\t\t\t\tif y > 3 {\n\t\t\t\t\tbreak\n\t\t\t\t}\n\t"
+         "\t\t\tif y > 2 {\n\t\t\t\t\tcontinue\n\t\t\t\t}\n\t\t\t"
+         "\tif y > 1 {\n\t\t\t\t\treturn y\n\t\t\t\t}\n\t\t\t\tt "
+         "+= y\n\t\t\t}\n\t\t}\n";
+  }
+  return S + "\t}\n\treturn t\n}\n\nfunc main() { println(f(9)) }\n";
+}
+
+/// The steps the lowering walks counted on the program of N units.
+uint64_t lowerAndCountWalks(unsigned N, std::string (*Make)(unsigned),
+                            const LowerOptions &Opts = {}) {
+  Checked P(Make(N));
+  EXPECT_EQ(P.errors(), "") << "N = " << N;
+  gir::Context C;
+  uint64_t A = loweringSteps();
+  auto M = P.lower(C, Opts);
+  EXPECT_NE(M, nullptr) << P.errors();
+  return loweringSteps() - A;
+}
+
+/// Steps S1 for N units and S16 for 16N: the dimension is counted (S16 at
+/// least 10 * S1) and linear (S16 at most C * 16N).
+::testing::AssertionResult walksFollow(uint64_t S1, uint64_t S16, unsigned N) {
+  const uint64_t C = 64; // walk steps one unit may take (at most 41 now)
+  if (S1 == 0 || S16 < 10 * S1 || S16 > C * 16 * N)
+    return ::testing::AssertionFailure()
+           << "steps(N) = " << S1 << ", steps(16N) = " << S16 << ", N = " << N;
+  return ::testing::AssertionSuccess();
+}
+
+void expectWalksFollow(unsigned N, std::string (*Make)(unsigned)) {
+  uint64_t S1 = lowerAndCountWalks(N, Make);
+  uint64_t S16 = lowerAndCountWalks(16 * N, Make);
+  EXPECT_TRUE(walksFollow(S1, S16, N));
+}
+
+TEST(GIRStress, TheLoweringCountsTupleTargets) {
+  expectWalksFollow(20, tupleTargetsOfN);
+}
+TEST(GIRStress, TheLoweringCountsTheDepthOfATarget) {
+  expectWalksFollow(30, deepTargetOfN); // 16N: below the parser's limit
+}
+TEST(GIRStress, TheLoweringCountsLateReads) {
+  expectWalksFollow(20, lateStatementsOfN);
+}
+TEST(GIRStress, TheLoweringCountsRangeTargets) {
+  expectWalksFollow(20, rangeTargetsOfN);
+}
+TEST(GIRStress, TheLoweringCountsScopeExits) {
+  expectWalksFollow(20, exitsOfN);
+}
+TEST(GIRStress, TheLoweringCountsLabelsAndGotos) {
+  expectWalksFollow(20, mapRangesOfN);
+}
+
+// The control: labelPos walking the statements again at every goto (the
+// quadratic walk, LowerOptions::RescanLabels) must fail the same check.
+TEST(GIRStress, TheWalkCheckFailsAQuadraticLabelWalk) {
+  LowerOptions Rescan;
+  Rescan.RescanLabels = true;
+  uint64_t S1 = lowerAndCountWalks(20, mapRangesOfN, Rescan);
+  uint64_t S16 = lowerAndCountWalks(320, mapRangesOfN, Rescan);
+  EXPECT_FALSE(walksFollow(S1, S16, 20)) << S1 << " -> " << S16;
+}
+
+// P04.05 review R15: the map-entry arguments of one call make GIR linear in
+// their number (one record each, one runtime call that resolves the
+// aliasing). One call with N entry arguments; the dimension is counted on
+// the GIR made (the verifier's steps, past the size of the program with one
+// such argument, which holds the runtime) and on the lowering's steps. The
+// control emits GIR for every pair (LowerOptions::PairwiseEntryArgs) and
+// must fail the same check.
+std::string entryArgsOfN(unsigned N) {
+  std::string P, A;
+  for (unsigned I = 0; I < N; ++I) {
+    P += (I ? ", a" : "a") + std::to_string(I);
+    A += (I ? ", mm[" : "mm[") + std::to_string(I % 7) + "]";
+  }
+  return "package main\n\nfunc f(" + P +
+         " map[int]int) {\n\ta0[1] = 1\n}\n\nfunc main() {\n\tmm := "
+         "map[int]map[int]int{}\n\tf(" +
+         A + ")\n\tprintln(len(mm))\n}\n";
+}
+
+/// The verifier's steps on the lowered program of N entry arguments.
+uint64_t entryArgsGIR(unsigned N, const LowerOptions &Opts) {
+  Checked P(entryArgsOfN(N));
+  EXPECT_EQ(P.errors(), "") << "N = " << N;
+  gir::Context C;
+  auto M = P.lower(C, Opts);
+  EXPECT_NE(M, nullptr) << P.errors();
+  if (!M)
+    return 0;
+  uint64_t A = verifierSteps();
+  EXPECT_TRUE(verify(*M).empty());
+  return verifierSteps() - A;
+}
+
+/// The GIR of N and of 16N entry arguments, past the program of one.
+::testing::AssertionResult entryArgsFollow(unsigned N,
+                                           const LowerOptions &Opts) {
+  uint64_t B = entryArgsGIR(1, Opts), S1 = entryArgsGIR(N, Opts),
+           S16 = entryArgsGIR(16 * N, Opts);
+  return walksFollow(S1 - B, S16 - B, N);
+}
+
+TEST(GIRStress, TheLoweringOfEntryArgumentsIsLinear) {
+  EXPECT_TRUE(entryArgsFollow(20, {}));
+  expectWalksFollow(20, entryArgsOfN);
+}
+
+TEST(GIRStress, TheEntryArgumentCheckFailsAPairwiseEmission) {
+  LowerOptions Pairwise;
+  Pairwise.PairwiseEntryArgs = true;
+  EXPECT_FALSE(entryArgsFollow(20, Pairwise));
+}
+
+// The timed version is long (tests/gir/core-stress-str.long.test).
+// (In three parts, one lit file each, so the sanitizer build runs them side
+// by side: tests/gir/core-stress-str*.long.test.)
+TEST(GIRStressLong, DISABLED_LoweringConcatsAndLiterals) {
+  expectLoweringNearLinear(240, concatChainOfN);
+  expectLoweringNearLinear(3000, literalsOfN);
+}
+TEST(GIRStressLong, DISABLED_LoweringSlicing) {
+  expectLoweringNearLinear(240, slicingChainOfN);
+  expectLoweringNearLinear(1000, slicingStatementsOfN);
+}
+TEST(GIRStressLong, DISABLED_LoweringMapsAndAppends) {
+  expectLoweringNearLinear(1000, mapOpsOfN);
+  expectLoweringNearLinear(1000, mapRangesOfN);
+  expectLoweringNearLinear(1000, sliceOpsOfN);
+}
+
+// R15, timed: 4N entry arguments of one call lower in at most 12 times the
+// time of N; the pairwise emission must fail the same check at 8 times the
+// size (linear 8, quadratic 64, limit 24), measured once, as the other
+// controls.
+void expectEntryArgsTiming(unsigned N, bool Pairwise) {
+  unsigned Scale = Pairwise ? 8 : 4;
+  Checked P1(entryArgsOfN(N)), PS(entryArgsOfN(Scale * N));
+  LowerOptions Opts;
+  Opts.PairwiseEntryArgs = Pairwise;
+  auto Lower = [&Opts](Checked &P) {
+    return [&P, &Opts] {
+      gir::Context C;
+      auto M = P.lower(C, Opts);
+      EXPECT_NE(M, nullptr);
+    };
+  };
+  if (Pairwise) {
+    auto [T1, T8] = bestOfBothOnce(Lower(P1), Lower(PS));
+    EXPECT_GE(T8, nearLinearLimit(T1, 8)) << T1 << " s, " << T8 << " s";
+  } else {
+    auto [T1, T4] = bestOfBoth(Lower(P1), Lower(PS));
+    EXPECT_LT(T4, nearLinearLimit(T1)) << T1 << " s, " << T4 << " s";
+  }
+}
+
+TEST(GIRStressLong, DISABLED_LoweringManyEntryArguments) {
+  expectEntryArgsTiming(250, false);
+}
+TEST(GIRStressLong, DISABLED_TheEntryArgumentTimingFailsAPairwiseEmission) {
+  expectEntryArgsTiming(250, true);
+}
+
+TEST(GIRStressLong, DISABLED_TheLoweringTimingCheckFailsAQuadraticProgram) {
+  Checked P1(concatSquareOfN(100)), P4(concatSquareOfN(400));
+  auto Lower = [](Checked &P) {
+    return [&P] {
+      gir::Context C;
+      auto M = P.lower(C);
+      EXPECT_NE(M, nullptr);
+    };
+  };
+  auto [T1, T4] = bestOfBoth(Lower(P1), Lower(P4));
+  EXPECT_GE(T4, nearLinearLimit(T1)) << T1 << " s, " << T4 << " s";
 }
 
 TEST(GIRStressLong, DISABLED_CodeGenerationOfTheCoreSubsetIsNearLinear) {

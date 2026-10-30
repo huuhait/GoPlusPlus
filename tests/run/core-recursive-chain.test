@@ -1,0 +1,52 @@
+// GOLDEN: by-hand
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-recursive-chain.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-recursive-chain.out %}
+// P04.05: defined types that reach themselves through Option, a pointer and
+// an array, and no struct (they were refused in P04.04, gir/recursive-refused.test
+// keeps the cases that still are). Go++ only (Option), so the output is by hand.
+package main
+
+type A [2]Option[*A]
+
+type O Option[*O]
+
+type Chain Option[*Chain]
+
+type Link struct {
+	next Option[*Link]
+	val  int
+}
+
+type Ring [1]Option[*Ring]
+
+// the pointer to the type is the first thing lowered (a parameter)
+func f(p *A) int { return len(p) }
+
+func walk(c Chain) int {
+	n := 0
+	for {
+		p, ok := c.Get()
+		if !ok {
+			return n
+		}
+		n++
+		c = *p
+	}
+}
+
+func main() {
+	var a A
+	var o O
+	println(a[1] == nil, o == nil)
+	a[0] = &a
+	println(a[0] == nil, a[0].IsNil())
+	var tail Chain
+	mid := Chain(&tail)
+	head := Chain(&mid)
+	println(walk(tail), walk(mid), walk(head))
+	var r Ring
+	println(r[0] == nil, len(r))
+	println(f(&a))
+}

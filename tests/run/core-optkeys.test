@@ -1,0 +1,51 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-optkeys.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-optkeys.out 0 %}
+// GOLDEN: by-hand
+// P04.05, ADR-0018: an Option is a map key (the glue of P04.04: nil equals nil,
+// a set Option equals one with an equal value, the flag byte's padding and the
+// payload of a nil do not count) and an Option of a string or a slice is a
+// value. Go has no Option, so the expected output is written by hand.
+package main
+
+type K struct {
+	o Option[string]
+	n int
+}
+
+func main() {
+	m := map[Option[int]]string{nil: "none", 5: "five"}
+	println(m[nil], m[5], m[6] == "", len(m))
+	m[7] = "seven"
+	m[5] = "FIVE"
+	delete(m, nil)
+	println(len(m), m[5], m[nil] == "")
+	mk := map[K]int{{nil, 1}: 1, {"x", 1}: 2}
+	mk[K{"x", 1}]++
+	mk[K{nil, 1}] += 10
+	println(mk[K{nil, 1}], mk[K{"x", 1}], mk[K{"y", 1}], mk[K{nil, 2}], len(mk))
+	ms := map[Option[string]]int{"a": 1, nil: 2}
+	ms["a"]++
+	println(ms["a"], ms[nil], ms["b"], len(ms))
+	// Options as slice elements and values.
+	os := []Option[string]{"p", nil, "q"}
+	os = append(os, nil, "r")
+	cnt := 0
+	for _, o := range os {
+		if o != nil {
+			cnt++
+		}
+	}
+	println(len(os), cnt, os[1] == nil, os[2] == "q")
+	type box struct{ list []int }
+	var ob Option[box]
+	println(ob == nil)
+	ob = box{[]int{1, 2}}
+	if ob != nil {
+		println(len(ob.list))
+	}
+	// Equal Options of strings built differently.
+	a, b := Option[string]("go"+"++"), Option[string]("go++")
+	println(a == b, a != nil)
+}

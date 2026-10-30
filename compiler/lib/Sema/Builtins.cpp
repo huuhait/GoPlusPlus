@@ -1027,10 +1027,19 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
       return false;
     X.M = Mode::Value;
     X.Ty = Ctx.slice(P->Elem);
+    // Go++ (SLC-8): it shows memory it does not own, so it is a borrowed
+    // (writable) []T, as a part of an array is (P04.05 review R4).
+    if (own())
+      X.Ty = Ctx.ref(X.Ty, true);
     break;
   }
   case BuiltinId::SliceData: {
-    auto *Sl = dyn_cast_or_null<SliceType>(coreType(X.Ty));
+    // A borrowed (writable) []T too: unsafe.Slice and slicing make one; a
+    // read-only view is not written through the pointer (OWN-V2).
+    Type *Core = coreType(X.Ty);
+    if (auto *Rf = dyn_cast_or_null<RefType>(Core); Rf && Rf->Borrowed)
+      Core = under(Rf->Elem);
+    auto *Sl = dyn_cast_or_null<SliceType>(Core);
     if (!Sl) {
       err(X, diag::err_sema_builtin,
           {"invalid argument: " + str(X) + " is not a slice"});

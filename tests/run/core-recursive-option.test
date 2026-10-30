@@ -1,0 +1,86 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-recursive-option.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-recursive-option.out %}
+// GOLDEN: by-hand
+// P04.05: the Option cycles that P04.04 refused: `type O Option[*O]`, `type A
+// [2]Option[*A]`, `type S []S` next to them, a cycle through a pointer in an
+// array (`type L [1]*L`), and the same through a map and a struct. Go has no
+// Option, so the expected output (golden/core-recursive-option.out) is written
+// by hand: an Option of a pointer is the pointer (nil is the null pointer), so
+// O is one word, and A two.
+package main
+
+import "unsafe"
+
+type O Option[*O]
+
+type A [2]Option[*A]
+
+type S []S
+
+type L [1]*L
+
+type Link struct {
+	next Option[*Link]
+	val  int
+}
+
+type R struct {
+	kids [2]Option[*R]
+	n    int
+}
+
+func isNil(o O) bool { return o == nil }
+
+func chain(a *A) int {
+	n := 0
+	for {
+		next := a[0]
+		if next == nil {
+			return n
+		}
+		a = next
+		n++
+	}
+}
+
+// (A value of L cannot be made: pointers are never nil. The type still
+// lowers, as the parameter of a function.)
+func size(l *L) int { return len(l) }
+
+func sum(l Link) int {
+	t := l.val
+	for {
+		nx := l.next
+		if nx == nil {
+			return t
+		}
+		l = *nx
+		t += l.val
+	}
+}
+
+func main() {
+	var o O
+	var p O
+	println(o == nil, o.IsNil(), isNil(o), unsafe.Sizeof(o), unsafe.Sizeof(p))
+	var a1, a2, a3 A
+	println(a1[0] == nil, a1[1].IsNil(), unsafe.Sizeof(a1), chain(&a1))
+	a1[0] = &a2
+	a2[0] = &a3
+	a3[1] = &a1
+	println(chain(&a1), a1[0] != nil, a3[0] == nil, a3[1] != nil)
+	s := S{S{}, nil, S{S{}}}
+	println(len(s), len(s[2]), s[1] == nil)
+	b := Link{nil, 3}
+	c := Link{&b, 4}
+	d := Link{&c, 5}
+	println(sum(d), sum(b), d.next != nil, b.next == nil)
+	var r1, r2 R
+	r1.kids[1] = &r2
+	r2.n = 8
+	if k, ok := r1.kids[1].Get(); ok {
+		println(r1.kids[0] == nil, r1.kids[1] != nil, k.n, unsafe.Sizeof(r1))
+	}
+}

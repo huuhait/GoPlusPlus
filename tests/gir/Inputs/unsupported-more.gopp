@@ -8,7 +8,8 @@ func values() {
 	f()
 }
 
-// An owning value (a string) in an aggregate must be a constant (P04.09).
+// A string that is not a constant in a struct is in the subset (it leaks
+// until P04.09).
 func owners() T {
 	ok := T{"constant"}
 	_ = ok

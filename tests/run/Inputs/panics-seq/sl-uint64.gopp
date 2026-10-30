@@ -1,0 +1,10 @@
+package main
+
+var c = make([]int, 3, 5)
+var i uint64 = 1<<64 - 1
+
+func main() {
+	println("before")
+	println(len(c[:i]))
+	println("not reached")
+}

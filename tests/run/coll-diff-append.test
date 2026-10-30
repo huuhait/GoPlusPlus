@@ -1,0 +1,13 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/append_scalar.gopp %S/Inputs/coll/append_scalar.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/append_pointer.gopp %S/Inputs/coll/append_pointer.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/append_convert.gopp %S/Inputs/coll/append_convert.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/append_string.gopp %S/Inputs/coll/append_string.out
+// P04.05 differential tables for append: the capacity gc gives (nextslicecap
+// and roundupsize over the size classes of Go 1.25) for 36 element types
+// from 0 to 1600 bytes, with and without a pointer (a malloc header of 8
+// bytes over 512 bytes), one append at a time and by slices of many lengths,
+// and the capacity of []byte(s), []rune(s), make and literals. The expected
+// output is Go's (see coll-diff-text.test), except append_string: a Go++
+// string and slice are 24 bytes, so its expected output is Go's for a
+// 24-byte element that holds a pointer (Inputs/coll-standin/append_string.gopp).

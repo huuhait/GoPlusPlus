@@ -1,0 +1,55 @@
+package main
+
+// Comparison of strings with shared prefixes, different lengths, embedded
+// zero bytes, bytes above 0x7f (compared as unsigned), and results of
+// concatenation and conversion.
+
+func main() {
+	words := []string{
+		"", "a", "aa", "aaa", "aab", "ab", "abc", "abcd", "abcde", "abd", "b",
+		"ba", "\x00", "\x00\x00", "a\x00", "a\x00b", "a\x01", "\x7f", "\x80",
+		"\xff", "a\xff", "a\x7f", "\xc3\xa9", "e", "\xe4\xb8\x96", "hello",
+		"hello world", "hello worle", "hello, world", "Hello", "HELLO",
+		"0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdeg",
+		"0123456789abcdef0123456789abcde", "0123456789abcdef0123456789abcdef!",
+	}
+	n := 0
+	for i := range words {
+		for j := range words {
+			r := 0
+			if words[i] == words[j] {
+				r |= 1
+			}
+			if words[i] != words[j] {
+				r |= 2
+			}
+			if words[i] < words[j] {
+				r |= 4
+			}
+			if words[i] <= words[j] {
+				r |= 8
+			}
+			if words[i] > words[j] {
+				r |= 16
+			}
+			if words[i] >= words[j] {
+				r |= 32
+			}
+			println(i, j, r)
+			n += r
+		}
+	}
+	println(n)
+	// the same text built in different ways compares equal
+	x := "ab" + "cd"
+	y := string([]byte{'a', 'b', 'c', 'd'})
+	z := string([]rune{'a', 'b', 'c', 'd'})
+	println(x == y, y == z, x == "abcd", x < y, x > "abcc", y < "abce")
+	var s string
+	for i := 0; i < 70; i++ {
+		s += "xy"
+		t := s + "z"
+		println(len(s), s < t, t < s, s == t[:len(s)], s+"z" == t)
+	}
+	println(s < "xz", s > "xx", s == "", "" < s, "" == "")
+}

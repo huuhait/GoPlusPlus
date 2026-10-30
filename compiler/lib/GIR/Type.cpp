@@ -9,6 +9,10 @@
 #include "gopp/GIR/Type.h"
 #include "gopp/Basic/NewStack.h"
 
+#include "llvm/ADT/SmallVector.h"
+
+#include <algorithm>
+
 using namespace gopp;
 using namespace gopp::gir;
 using llvm::ArrayRef;
@@ -60,8 +64,10 @@ Type *Context::get(const Key &K) {
   llvm::FoldingSetNodeID ID;
   K.profile(ID);
   void *Pos = nullptr;
-  if (Type *T = Set.FindNodeOrInsertPos(ID, Pos))
-    return T;
+  if (Type *T = Set.FindNodeOrInsertPos(ID, Pos)) {
+    auto C = Canon.find(T);
+    return C == Canon.end() ? T : C->second;
+  }
   Type *T = new (Alloc.Allocate<Type>()) Type(K.K);
   T->Bits = K.Bits;
   T->Signed = K.Signed;
@@ -163,6 +169,141 @@ bool Context::setStructBody(Type *S, ArrayRef<Type *> Fields) {
   return true;
 }
 
+Type *Context::recTy(llvm::StringRef Name) {
+  std::lock_guard<std::mutex> G(Mu);
+  auto It = Structs.find(Name);
+  if (It != Structs.end())
+    return It->second;
+  Type *T = new (Alloc.Allocate<Type>()) Type(Type::Kind::Unit);
+  T->Rec = true;
+  char *Mem = Alloc.Allocate<char>(Name.size() + 1);
+  std::copy(Name.begin(), Name.end(), Mem);
+  Mem[Name.size()] = 0;
+  T->Name = llvm::StringRef(Mem, Name.size());
+  Structs[Name] = T;
+  return T;
+}
+
+bool Context::setRecBody(Type *R, Type *Body) {
+  std::lock_guard<std::mutex> G(Mu);
+  assert(R->Rec && "not a self-naming type");
+  if (R->Body || Body == R || Body->Rec || Canon.count(Body))
+    return false;
+  switch (Body->K) {
+  case Type::Kind::Ptr:
+  case Type::Kind::Slice:
+  case Type::Kind::Array:
+  case Type::Kind::Option:
+  case Type::Kind::Tuple:
+    break;
+  default:
+    return false;
+  }
+  R->K = Body->K;
+  R->Bits = Body->Bits;
+  R->Signed = Body->Signed;
+  R->Fails = Body->Fails;
+  R->Len = Body->Len;
+  R->Elem = Body->Elem;
+  R->Ret = Body->Ret;
+  R->Elems = Body->Elems;
+  R->Body = true;
+  Canon[Body] = R;
+  AnyCanon = true;
+  return true;
+}
+
+Type *Context::canonical(Type *T) {
+  if (!AnyCanon)
+    return T;
+  std::lock_guard<std::mutex> G(Mu);
+  auto It = Canon.find(T);
+  return It == Canon.end() ? T : It->second;
+}
+
+Layout gir::layoutOf(const Type *T) {
+  // Post-order over the parts, with an explicit stack and a memo for this
+  // call only (a type is as deep as the source).
+  llvm::DenseMap<const Type *, Layout> Memo;
+  llvm::SmallVector<std::pair<const Type *, unsigned>, 16> Stack;
+  auto Parts = [](const Type *X, llvm::SmallVectorImpl<const Type *> &Out) {
+    switch (X->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+      Out.push_back(X->elem());
+      break;
+    case Type::Kind::Tuple:
+    case Type::Kind::Struct:
+      Out.append(X->elems().begin(), X->elems().end());
+      break;
+    default:
+      break;
+    }
+  };
+  Stack.push_back({T, 0});
+  while (!Stack.empty()) {
+    auto [Cur, Next] = Stack.back();
+    if (Memo.count(Cur)) {
+      Stack.pop_back();
+      continue;
+    }
+    llvm::SmallVector<const Type *, 4> Ps;
+    Parts(Cur, Ps);
+    if (Next < Ps.size()) {
+      Stack.back().second = Next + 1;
+      if (!Memo.count(Ps[Next]))
+        Stack.push_back({Ps[Next], 0});
+      continue;
+    }
+    Layout L;
+    switch (Cur->getKind()) {
+    case Type::Kind::Unit:
+      L = {0, 1};
+      break;
+    case Type::Kind::Bool:
+      L = {1, 1};
+      break;
+    case Type::Kind::Int:
+    case Type::Kind::Float:
+      L = {Cur->bits() / 8, Cur->bits() / 8};
+      break;
+    case Type::Kind::Ptr:
+    case Type::Kind::Func:
+      L = {8, 8};
+      break;
+    case Type::Kind::String:
+    case Type::Kind::Slice:
+      L = {24, 8};
+      break;
+    case Type::Kind::Array: {
+      Layout E = Memo[Cur->elem()];
+      L = {E.Size * Cur->length(), E.Align};
+      break;
+    }
+    case Type::Kind::Option: {
+      Layout E = Memo[Cur->elem()];
+      L.Align = E.Align;
+      L.Size = (E.Size + 1 + E.Align - 1) / E.Align * E.Align;
+      break;
+    }
+    case Type::Kind::Tuple:
+    case Type::Kind::Struct: {
+      uint64_t Off = 0, A = 1;
+      for (const Type *P : Ps) {
+        Layout E = Memo[P];
+        Off = (Off + E.Align - 1) / E.Align * E.Align + E.Size;
+        A = std::max(A, E.Align);
+      }
+      L = {(Off + A - 1) / A * A, A};
+      break;
+    }
+    }
+    Memo[Cur] = L;
+    Stack.pop_back();
+  }
+  return Memo[T];
+}
+
 unsigned Type::numFields() const {
   switch (K) {
   case Kind::String:
@@ -205,6 +346,10 @@ void Type::print(llvm::raw_ostream &OS) const {
 }
 
 void Type::printOne(llvm::raw_ostream &OS) const {
+  if (Rec) {
+    OS << Name;
+    return;
+  }
   switch (K) {
   case Kind::Unit:
     OS << "()";

@@ -1,0 +1,14 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-gopp
+// P04.05: the failures only Go++ has, each with exit status 2 and its first
+// line on standard error after the output that came before:
+// - a new key inserted into a map while a range over it runs (hidden from the
+//   checker's RNG-3 by a call), also `mm[k1][k2] = v` with k1 absent: "panic:
+//   map insert during iteration" every time (RNG-4: the map counts its running
+//   ranges; break, return, goto and continue or break of an outer loop end
+//   one, and writing a key that is there is no insert);
+// - slicing an owned slice past its length, within its capacity, as a
+//   re-slice in place or as a borrowed slice (SLC-13: the elements past the
+//   length are not live): "slice bounds out of range [:5] with length 3".
+// Inputs/panics-gopp/*.out and .err are written by hand: Go has no such
+// program.

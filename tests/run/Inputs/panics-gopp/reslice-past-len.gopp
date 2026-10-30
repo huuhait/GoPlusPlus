@@ -1,0 +1,13 @@
+package main
+
+// Go++ differs from Go here (SLC-13): re-slicing an owned slice past its
+// length panics even when the capacity is there, because the elements past
+// the length are not live values.
+
+func main() {
+	println("before")
+	s := make([]int, 3, 8)
+	n := 5
+	s = s[:n]
+	println("not reached", len(s))
+}

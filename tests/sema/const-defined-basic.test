@@ -1,0 +1,19 @@
+// RUN: %gopp check --dump-types %s 2>&1 | FileCheck --implicit-check-not="error[" %s
+// P04.05: the conversion of a constant to a defined string or bool type is a
+// constant with the value (the numeric kinds kept theirs already; these were
+// recorded as an unknown constant, which the lowering cannot make).
+package main
+
+type Name string
+
+type Flag bool
+
+type Count int
+
+func main() {
+	println(Name("x"), Flag(true), Count(3))
+}
+
+// CHECK: 14:10 expr `Name("x")` constant Name = "x"
+// CHECK: 14:21 expr `Flag(true)` constant Flag = true
+// CHECK: 14:33 expr `Count(3)` constant Count = 3

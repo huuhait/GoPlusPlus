@@ -573,11 +573,14 @@ llvm::Value *Lowering::placeAddr(const G::Place &P) {
                               : B.CreateZExtOrTrunc(Idx, B.getInt64Ty());
       if (Cur->getKind() == G::Type::Kind::Array) {
         Addr = B.CreateInBoundsGEP(memTy(Cur), Addr, {B.getInt64(0), Idx});
-      } else { // a slice: the data pointer is field 0
+      } else { // a slice or a string: the data pointer is field 0
         llvm::Value *Data =
             B.CreateLoad(llvm::PointerType::getUnqual(C),
                          B.CreateStructGEP(memTy(Cur), Addr, 0));
-        Addr = B.CreateInBoundsGEP(memTy(Cur->elem()), Data, {Idx});
+        llvm::Type *ElemTy = Cur->getKind() == G::Type::Kind::String
+                                 ? llvm::Type::getInt8Ty(C)
+                                 : memTy(Cur->elem());
+        Addr = B.CreateInBoundsGEP(ElemTy, Data, {Idx});
       }
       break;
     }
@@ -914,7 +917,7 @@ std::string Lowering::panicName(const G::Terminator &T) {
   std::string N = "panic_";
   N += G::getAssertKindName(T.AK);
   // An unsigned index is reported as the unsigned number it is.
-  if (T.AK == G::AssertKind::Bounds && !T.Args.empty() &&
+  if (G::takesIndexAndLength(T.AK) && !T.Args.empty() &&
       !T.Args[0].type()->isSigned())
     N += "_u";
   return G::runtimeSymbol(N);

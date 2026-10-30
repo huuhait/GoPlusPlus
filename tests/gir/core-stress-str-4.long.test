@@ -1,0 +1,4 @@
+// REQUIRES: long
+// P04.05: the control of core-stress-str*.long.test: the timing check fails
+// on a program whose lowered size is the product of two dimensions.
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_TheLoweringTimingCheckFailsAQuadraticProgram'

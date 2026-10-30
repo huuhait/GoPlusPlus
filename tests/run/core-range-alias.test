@@ -1,0 +1,72 @@
+// GOLDEN: by-hand
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-range-alias.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-range-alias.out %}
+// P04.05, RNG-1a: the `&` form of range. The variable is the element itself:
+// writes change the slice, the array (never a copy), the map value in place.
+// RNG-6: a range over an array of owning elements walks the live array.
+// Go++ only (the `&` is not Go), so the expected output is written by hand.
+package main
+
+type Doc struct {
+	title string
+	count int
+}
+
+func main() {
+	xs := []int{1, 2, 3}
+	for _, &x := range xs {
+		x *= 10
+	}
+	println(xs[0], xs[1], xs[2])
+	docs := []Doc{{"a", 1}, {"b", 2}}
+	for i, &d := range docs {
+		d.count += 100 + i
+		d.title += "!"
+	}
+	println(docs[0].title, docs[0].count, docs[1].title, docs[1].count)
+	var arr [3]int
+	for i, &e := range arr {
+		e = i + 5
+	}
+	println(arr[0], arr[1], arr[2])
+	p := &arr
+	for _, &e := range p {
+		e++
+	}
+	println(arr[0], arr[1], arr[2])
+	m := map[string]int{"a": 1, "b": 2}
+	for _, &v := range m {
+		v += 40
+	}
+	println(m["a"], m["b"])
+	md := map[int]Doc{1: {"x", 1}}
+	for _, &d := range md {
+		d.count = 99
+	}
+	println(md[1].count)
+	// the plain form of a trivial element is a copy
+	for _, x := range xs {
+		x = 0
+		_ = x
+	}
+	println(xs[0], xs[1], xs[2])
+	// RNG-6: an array of owning elements is not copied (the loop sees a later
+	// element written before it reaches it); one of trivial elements is, as
+	// in Go
+	words := [3]string{"a", "b", "c"}
+	for i, w := range words {
+		if i == 0 {
+			words[1] = "X"
+		}
+		println(w)
+	}
+	nums := [3]int{1, 2, 3}
+	for i, n := range nums {
+		if i == 0 {
+			nums[1] = 20
+		}
+		println(n)
+	}
+}

@@ -25,6 +25,7 @@ using llvm::cast;
 using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
 using llvm::isa;
+using llvm::isa_and_nonnull;
 
 //===----------------------------------------------------------------------===//
 // Small helpers
@@ -130,7 +131,8 @@ Operand Body::nilOf(S::Type *Want, const ast::Node *N) {
   Type *G = Want ? L.lowerType(Want, N->getBegin()) : nullptr;
   if (!G)
     return errorValue(ctx());
-  if (!asOption(Want)) {
+  S::Type *WU = S::under(Want);
+  if (!asOption(Want) && !isa<S::SliceType>(WU) && !isa<S::MapType>(WU)) {
     unsupported(N, "nil of type " + G->str());
     return errorValue(ctx());
   }
@@ -178,7 +180,86 @@ Operand Body::valueFor(const ast::Expr *E, S::Type *Want) {
   Type *G = L.lowerType(Want, E->getBegin());
   if (!G)
     return errorValue(ctx());
+  // A value for a View parameter or variable: the view of it.
+  S::Type *WU = S::under(Want);
+  S::Type *ES = sTyOf(E);
+  if (isa<S::RefType>(WU))
+    return makeView(E, Want);
+  // A view where a string or a slice is borrowed: a borrowed parameter, a
+  // re-pointed borrowed variable (PAR-2), a string key looked up (OWN-V4).
+  if (ES && isa<S::RefType>(S::under(ES)) &&
+      (G->getKind() == Type::Kind::String ||
+       G->getKind() == Type::Kind::Slice)) {
+    unsigned Before = L.Reported;
+    Operand V = lowerExpr(E);
+    if (L.Reported != Before)
+      return zeroOf(G); // reported once, where it failed
+    return borrowedSeq(std::move(V), G, E);
+  }
   return lowerAs(E, G);
+}
+
+Operand Body::argFor(const ast::Expr *E, S::SignatureType *Sig, size_t K) {
+  // (A borrowed map parameter is lowerCall's: mapArgAddr.)
+  return argAs(valueFor(E, Sig->Params->Elems[K]), Sig, K, E);
+}
+
+Operand Body::mapArgAddr(const ast::Expr *E, LateOps &R) {
+  // PAR-10: the address of the variable, field or element that holds the
+  // map (a map entry is copied in and out around the call instead: lowerCall,
+  // mapEntryArg); a value that is no place is in a temporary: what the callee
+  // creates there is dropped with it. Under R's replay (lowerCall: the
+  // address is taken after the other arguments, which may grow the
+  // container it points into).
+  ReplayScope Scope(*this, R);
+  Place P = lowerPlace(E);
+  if (!P.Ty)
+    return errorValue(ctx());
+  at(E);
+  if (P.Ty == L.mapType())
+    return copyOf(FB.temp(FB.addrOf(std::move(P), true)));
+  return copyOf(std::move(P));
+}
+
+Operand Body::argAs(Operand V, S::SignatureType *Sig, size_t K,
+                    const ast::Node *N) {
+  Type *T = V.type();
+  if (L.mapByPointer(Sig, K) && T == L.mapType()) {
+    // A map that is no place: its own temporary (a result's temporary may
+    // not have its address taken, V066).
+    at(N);
+    LocalId Tmp = FB.newTemp(T);
+    FB.assign(FB.local(Tmp), FB.use(std::move(V)));
+    return copyOf(FB.temp(FB.addrOf(FB.local(Tmp), true)));
+  }
+  if (Sig->isMove(K) || !T || T->getKind() != Type::Kind::Slice)
+    return V;
+  Place P = placeOf(std::move(V));
+  at(N);
+  Operand Len = copyOf(FB.field(P, 1));
+  return copyOf(FB.temp(
+      FB.aggregate(AggKind::Slice, T, {copyOf(FB.field(P, 0)), Len, Len})));
+}
+
+Operand Body::borrowedSeq(Operand V, Type *G, const ast::Node *N) {
+  if (V.type() == G)
+    return V;
+  Type *VT = V.type();
+  if (VT->getKind() != Type::Kind::Tuple || VT->numFields() != 2 ||
+      !VT->elems()[0]->isPtr()) {
+    unsupported(N, "a borrowed " + G->str() + " made from " + VT->str());
+    return zeroOf(G);
+  }
+  Place P = placeOf(std::move(V));
+  at(N);
+  Operand Ptr = copyOf(FB.field(P, 0)), Len = copyOf(FB.field(P, 1));
+  bool Str = G->getKind() == Type::Kind::String;
+  if (Ptr.type() != G->fieldType(0, ctx()))
+    Ptr = copyOf(FB.temp(
+        FB.cast(CastKind::PtrToPtr, std::move(Ptr), G->fieldType(0, ctx()))));
+  Operand Cap = Str ? constInt(ctx().u64(), 0) : Len;
+  return copyOf(FB.temp(FB.aggregate(Str ? AggKind::String : AggKind::Slice, G,
+                                     {std::move(Ptr), Len, std::move(Cap)})));
 }
 
 Operand Body::lowerNarrowed(const ast::Ident *Id, S::Type *Payload) {
@@ -197,6 +278,13 @@ Place Body::identPlace(const ast::Ident *Id) {
   auto U = I.Uses.find(Id);
   if (U != I.Uses.end())
     if (auto *V = dyn_cast<S::Var>(U->second)) {
+      // An `&` range variable or a parameter passed by a hidden pointer: the
+      // place it points at.
+      auto Al = Aliases.find(V);
+      if (Al != Aliases.end()) {
+        at(Id);
+        return FB.deref(FB.local(Al->second));
+      }
       auto It = Vars.find(V);
       if (It != Vars.end())
         return FB.local(It->second);
@@ -213,16 +301,24 @@ Place Body::identPlace(const ast::Ident *Id) {
 }
 
 Place Body::followFields(Place Base, S::Type *BaseTy, ArrayRef<int> Path,
-                         const ast::Node *N) {
+                         const ast::Node *N, Pending *Pend) {
   S::Type *Cur = BaseTy;
   for (int Idx : Path) {
     S::Type *U = S::under(Cur);
     if (auto *P = dyn_cast<S::PointerType>(U)) {
-      // The implicit indirection `p.x` is an operand of an assignment
-      // (evaluated in phase 1): the pointer is copied, so a later store to p
-      // in the same statement does not change where this place is.
+      // The implicit indirection `p.x` is an operand of an assignment: the
+      // pointer is copied (Body::deriveDest: before the stores), so a later
+      // store to p in the same statement does not change where this place
+      // is. An index it is read through is checked first.
+      flushChecks(Pend);
       Base = FB.deref(FB.local(localOf(copyOf(std::move(Base)))));
       Cur = P->Elem;
+      U = S::under(Cur);
+    } else if (auto *Rf = dyn_cast<S::RefType>(U)) {
+      // The same through a View[P].
+      flushChecks(Pend);
+      Base = FB.deref(FB.local(localOf(copyOf(std::move(Base)))));
+      Cur = Rf->Elem;
       U = S::under(Cur);
     }
     auto *ST = dyn_cast<S::StructType>(U);
@@ -269,7 +365,7 @@ Place Body::selectorPlace(const ast::SelectorExpr *Sel, Pending *Pend) {
     const ast::SelectorExpr *S = Chain[K - 1];
     at(S);
     Base = followFields(std::move(Base), sTyOf(S->X),
-                        I.Selections.find(S)->second.Index, S);
+                        I.Selections.find(S)->second.Index, S, Pend);
   }
   return Base;
 }
@@ -305,7 +401,10 @@ void Body::indexCheck(Operand Idx, uint64_t Len, const ast::Node *N) {
 
 void Body::emitIndexChecks(const Pending &Checks) {
   for (const PendingCheck &C : Checks)
-    indexCheck(copyOf(FB.local(C.Idx)), C.Len, C.N);
+    if (C.LenLocal != NoId)
+      indexCheckDyn(copyOf(FB.local(C.Idx)), copyOf(FB.local(C.LenLocal)), C.N);
+    else
+      indexCheck(copyOf(FB.local(C.Idx)), C.Len, C.N);
 }
 
 Place Body::checkedIndex(Place Arr, Operand Idx, uint64_t Len, bool IdxConst,
@@ -329,10 +428,19 @@ Place Body::indexPlace(const ast::IndexExpr *IE, Pending *Pend) {
     return Place();
   }
   S::Type *XT = sTyOf(IE->X);
+  if (isMapIndex(IE))
+    return placeOf(mapRead(IE, false));
+  SeqInfo SI = seqInfo(XT);
+  if (SI.K == SeqKind::String || SI.K == SeqKind::Slice ||
+      SI.K == SeqKind::ViewString || SI.K == SeqKind::ViewSlice)
+    return seqIndexPlace(IE, SI, Pend);
   S::Type *U = XT ? S::under(XT) : nullptr;
   bool ViaPtr = false;
   if (auto *P = dyn_cast_or_null<S::PointerType>(U)) {
     U = S::under(P->Elem);
+    ViaPtr = true;
+  } else if (auto *Rf = dyn_cast_or_null<S::RefType>(U)) {
+    U = S::under(Rf->Elem);
     ViaPtr = true;
   }
   auto *AT = dyn_cast_or_null<S::ArrayType>(U);
@@ -423,6 +531,12 @@ Operand Body::lowerIdent(const ast::Ident *Id) {
 }
 
 Operand Body::lowerExpr(const ast::Expr *E) {
+  // An operand evaluated before (recordOps): its value then.
+  if (Replay) {
+    auto It = Replay->Saved.find(E);
+    if (It != Replay->Saved.end())
+      return copyOf(FB.local(It->second));
+  }
   if (isConst(E))
     return constOperand(*I.lookup(E)->Val, tyOf(E), E);
   if (I.UnitConvs.count(E)) {
@@ -446,13 +560,16 @@ Operand Body::lowerExpr(const ast::Expr *E) {
     Place P = lowerPlace(E);
     if (!P.Ty)
       return errorValue(ctx());
+    // What is read through a View is copied out or is a view again.
+    S::Type *ES = sTyOf(E);
+    if (ES && isa<S::RefType>(S::under(ES)) && P.Ty != tyOf(E))
+      return viewOfPlace(std::move(P), ES, E);
     return copyOf(P);
   }
   case ast::Node::Kind::CompositeLit:
     return lowerCompositeLit(cast<ast::CompositeLit>(E));
   case ast::Node::Kind::SliceExpr:
-    unsupported(E, "a slice expression (P04.05)");
-    break;
+    return lowerSliceExpr(cast<ast::SliceExpr>(E));
   case ast::Node::Kind::FuncLit:
     unsupported(E, "a function literal (P04.07)");
     break;
@@ -550,9 +667,7 @@ bool Body::arithChecks(BinOp Op, const Operand &Y, Type *XT, bool YConst,
                        const ast::Node *N) {
   if (!XT->isInt() && !XT->isFloat() && !(XT->isBool() && isComparison(Op)) &&
       !(XT->isPtr() && (Op == BinOp::Eq || Op == BinOp::Ne))) {
-    unsupported(N,
-                std::string("an operator on ") + XT->str() +
-                    (XT->getKind() == Type::Kind::String ? " (P04.05)" : ""));
+    unsupported(N, std::string("an operator on ") + XT->str());
     return false;
   }
   at(N);
@@ -572,6 +687,8 @@ Operand Body::arith(BinOp Op, Operand X, Operand Y, S::Type *T, bool YConst,
                     const ast::Node *N) {
   if (L.isComplexType(T))
     return complexArith(Op, std::move(X), std::move(Y), T, N);
+  if (X.type()->getKind() == Type::Kind::String)
+    return stringArith(Op, std::move(X), std::move(Y), N);
   if (!arithChecks(Op, Y, X.type(), YConst, N))
     return errorValue(ctx());
   return copyOf(FB.temp(FB.binary(Op, std::move(X), std::move(Y))));
@@ -668,6 +785,8 @@ Operand Body::equality(bool Eq, Operand X, Operand Y, S::Type *T,
   if (G->isBool() || G->isInt() || G->isFloat() || G->isPtr())
     return copyOf(FB.temp(
         FB.binary(Eq ? BinOp::Eq : BinOp::Ne, std::move(X), std::move(Y))));
+  if (G->getKind() == Type::Kind::String)
+    return stringEqual(Eq, std::move(X), std::move(Y), N);
   FuncId Glue = L.eqGlue(T, N->getBegin());
   if (Glue == NoId)
     return constBool(ctx(), false);
@@ -703,6 +822,16 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
     if (Other) {
       // `o == nil` on an Option: the flag is clear (or the pointer is null).
       Operand O = lowerExpr(Other);
+      S::Type *OU = S::under(sTyOf(Other));
+      if (isa_and_nonnull<S::SliceType>(OU) ||
+          isa_and_nonnull<S::MapType>(OU)) {
+        // A nil slice has no data pointer, a nil map no object.
+        at(B);
+        Operand Ptr =
+            O.type()->isPtr() ? O : copyOf(FB.field(placeOf(std::move(O)), 0));
+        return copyOf(
+            FB.temp(FB.binary(Op, std::move(Ptr), zeroOf(Ptr.type()))));
+      }
       if (!asOption(sTyOf(Other))) {
         unsupported(B, "a comparison with nil");
         return errorValue(ctx());
@@ -719,6 +848,10 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
     else if (S::OptionType *O2 = asOption(sTyOf(B->Y));
              O2 && !asOption(sTyOf(B->X)))
       OpS = sTyOf(B->Y);
+    // A View[string] is compared as the string it shows (a borrow).
+    if (auto *Rf = dyn_cast_or_null<S::RefType>(OpS ? S::under(OpS) : nullptr);
+        Rf && isStringType(Rf->Elem))
+      OpS = Rf->Elem;
     Operand X = valueFor(B->X, OpS), Y = valueFor(B->Y, OpS);
     if (Op == BinOp::Eq || Op == BinOp::Ne)
       return equality(Op == BinOp::Eq, std::move(X), std::move(Y), OpS, B);
@@ -728,6 +861,8 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
   Type *ResTy = tyOf(B);
   if (!ResTy)
     return errorValue(ctx());
+  if (Op == BinOp::Add && ResTy->getKind() == Type::Kind::String)
+    return lowerStringAdd(B);
   Operand X, Y;
   if (isShift(Op)) {
     X = lowerAs(B->X, ResTy);
@@ -836,9 +971,12 @@ Operand Body::convert(const ast::CallExpr *C, Operand X, S::Type *FromS,
         FB.temp(FB.cast(CastKind::FloatToFloat, copyOf(FB.field(P, 1)), F)));
     return copyOf(FB.temp(FB.aggregate(AggKind::Tuple, To, {Re, Im})));
   } else if (From->getKind() == Type::Kind::String ||
-             To->getKind() == Type::Kind::String) {
-    unsupported(C, "a conversion of strings (P04.05)");
-    return X;
+             To->getKind() == Type::Kind::String ||
+             From->getKind() == Type::Kind::Slice ||
+             To->getKind() == Type::Kind::Slice ||
+             (From->getKind() == Type::Kind::Tuple &&
+              !L.isComplexType(FromS))) {
+    return convertStrings(C, std::move(X), FromS, ToS);
   } else {
     unsupported(C, "a conversion from " + From->str() + " to " + To->str());
     return X;
@@ -852,8 +990,11 @@ Operand Body::lowerConversion(const ast::CallExpr *C) {
     return errorValue(ctx());
   }
   S::Type *ToS = sTyOf(C);
-  if (asOption(ToS))
+  if (asOption(ToS) || isNilValue(C->Args[0]))
     return valueFor(C->Args[0], ToS);
+  // View[T](x): the view of x, as for an implicit one (ADR-0020).
+  if (ToS && isa<S::RefType>(S::under(ToS)))
+    return makeView(C->Args[0], ToS);
   Type *To = tyOf(C);
   if (!To)
     return errorValue(ctx());
@@ -861,9 +1002,14 @@ Operand Body::lowerConversion(const ast::CallExpr *C) {
   // A constant argument is made in the target type, unless no constant of
   // that type exists (a complex number is a pair; a pointer such as
   // unsafe.Pointer(uintptr(8)) is converted from the integer).
-  Operand X = isConst(C->Args[0]) && !L.isComplexType(ToS) && !To->isPtr()
-                  ? constOperand(*I.lookup(C->Args[0])->Val, To, C)
-                  : lowerExpr(C->Args[0]);
+  // (A constant string converted to []byte or []rune stays a string.)
+  Type *ConstTy = To->getKind() == Type::Kind::Slice
+                      ? L.lowerType(FromS, C->getBegin())
+                      : To;
+  Operand X =
+      isConst(C->Args[0]) && !L.isComplexType(ToS) && !To->isPtr() && ConstTy
+          ? constOperand(*I.lookup(C->Args[0])->Val, ConstTy, C)
+          : lowerExpr(C->Args[0]);
   return convert(C, std::move(X), FromS, ToS);
 }
 
@@ -960,6 +1106,13 @@ void Body::printValue(Operand V, S::Type *ST, SourceLoc At) {
     return;
   }
   case Type::Kind::Tuple:
+    if (ST && isa<S::RefType>(S::under(ST)) &&
+        T->elems()[0] == ctx().ptr(ctx().u8())) {
+      // A View[string]: its bytes.
+      Place P = placeOf(std::move(V));
+      callWrite(copyOf(FB.field(P, 0)), copyOf(FB.field(P, 1)), At);
+      return;
+    }
     if (L.isComplexType(ST)) {
       // (+1.000000e+000+2.000000e+000i)
       Place P = placeOf(std::move(V));
@@ -1016,7 +1169,9 @@ void Body::lowerPrintln(const ast::CallExpr *C, bool Newline) {
     It.STy = sTyOf(Arg);
     bool Printable = T->isInt() || T->isBool() || T->isFloat() || T->isPtr() ||
                      T->getKind() == Type::Kind::String ||
-                     (L.isComplexType(It.STy));
+                     (L.isComplexType(It.STy)) ||
+                     (It.STy && isa<S::RefType>(S::under(It.STy)) &&
+                      T->getKind() == Type::Kind::Tuple);
     if (!Printable || asOption(It.STy)) {
       unsupported(Arg, "printing a value of type " + T->str());
       return;
@@ -1109,9 +1264,11 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
       lowerExpr(C->Args[0]);
       return constInt(tyOf(C), uint64_t(AT->Len));
     }
-    unsupported(C, std::string("the built-in ") + B->Name.str() +
-                       " of this type (P04.05)");
-    return errorValue(ctx());
+    if (C->Args.empty()) {
+      unsupported(C, "this built-in");
+      return errorValue(ctx());
+    }
+    return lowerLenCap(C, B->Id == BI::Cap);
   }
   case BI::Real:
   case BI::Imag: {
@@ -1138,6 +1295,8 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
   case BI::Min:
   case BI::Max: {
     Type *T = tyOf(C);
+    if (T && T->getKind() == Type::Kind::String)
+      return lowerMinMaxString(C, B->Id == BI::Min);
     if (!T || !T->isInt()) {
       unsupported(C, std::string("the built-in ") + B->Name.str() +
                          " of this type");
@@ -1168,12 +1327,17 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
     unsupported(C, "heap allocation (P05, P04.09)");
     break;
   case BI::Make:
+    return lowerMake(C);
   case BI::Append:
+    return lowerAppend(C);
   case BI::Copy:
+    return lowerCopy(C);
   case BI::Delete:
+    lowerDelete(C);
+    return unitValue();
   case BI::Clear:
-    unsupported(C, std::string("the built-in ") + B->Name.str() + " (P04.05)");
-    break;
+    lowerClear(C);
+    return unitValue();
   case BI::Panic:
   case BI::Recover:
     unsupported(C, std::string("the built-in ") + B->Name.str() + " (P04.07)");
@@ -1196,9 +1360,8 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
   const ast::Expr *Fun = unparen(C->Fun);
   const S::TypeAndValue *FT = I.lookup(Fun);
   Operand Unit = unitValue();
-  if (C->isMust() || C->EllipsisLoc.isValid()) {
-    unsupported(C, C->isMust() ? "a call with ! (P04.10)"
-                               : "a call with ... (P04.05)");
+  if (C->isMust()) {
+    unsupported(C, "a call with ! (P04.10)");
     return Unit;
   }
   if (FT && FT->M == S::Mode::TypeExpr)
@@ -1234,8 +1397,11 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
             return copyOf(FB.temp(
                 FB.cast(CastKind::IntToPtr, Sum, ctx().ptr(ctx().u8()))));
           }
-          unsupported(C, "unsafe." + B->Name.str() +
-                             (B->Id == S::BuiltinId::Add ? "" : " (P04.05)"));
+          if (B->Id == S::BuiltinId::Slice || B->Id == S::BuiltinId::String ||
+              B->Id == S::BuiltinId::SliceData ||
+              B->Id == S::BuiltinId::StringData)
+            return lowerUnsafeSeq(C, B->Id);
+          unsupported(C, "unsafe." + B->Name.str());
           return errorValue(ctx());
         }
     }
@@ -1269,6 +1435,19 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
       ArrayRef<Type *> Ps = Callee.Sig->elems();
       S::SignatureType *Sig = F->sig();
       SmallVector<Operand, 4> Args;
+      // A borrowed map's address is taken after the other arguments, as a
+      // move out of a place is (EXP-3): it may point into a container one of
+      // them grows. Its operands are evaluated in their turn.
+      SmallVector<std::pair<size_t, LateOps>, 1> Late;
+      auto AddArg = [&](size_t K, const ast::Expr *A) {
+        if (L.mapByPointer(Sig, K) && !isNilValue(A)) {
+          Late.push_back({K, LateOps()});
+          recordOps(A, Late.back().second);
+          Args.push_back(Operand());
+          return;
+        }
+        Args.push_back(argFor(A, Sig, K));
+      };
       if (C->Args.size() == 1 && Ps.size() > 1) {
         // f(g()) where g returns several values.
         Operand T = lowerExpr(C->Args[0]);
@@ -1279,13 +1458,76 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
         }
         Place TP = placeOf(std::move(T));
         for (size_t K = 0; K < Ps.size(); ++K)
-          Args.push_back(copyOf(FB.field(TP, K)));
-      } else if (Ps.size() != C->Args.size()) {
+          Args.push_back(argAs(copyOf(FB.field(TP, K)), Sig, K, C));
+      } else if (Sig->Variadic) {
+        // f(a, b, xs...) passes the slice; f(a, b, x, y) packs x and y.
+        size_t Fixed = Ps.size() - 1;
+        if (C->Args.size() < Fixed) {
+          unsupported(C, "this call form");
+          return Unit;
+        }
+        for (size_t K = 0; K < Fixed; ++K)
+          AddArg(K, C->Args[K]);
+        if (C->EllipsisLoc.isValid()) {
+          if (C->Args.size() != Ps.size()) {
+            unsupported(C, "this call form");
+            return Unit;
+          }
+          Args.push_back(argFor(C->Args.back(), Sig, Fixed));
+        } else {
+          Args.push_back(packVariadic(C, Sig, Fixed));
+        }
+      } else if (C->EllipsisLoc.isValid() || Ps.size() != C->Args.size()) {
         unsupported(C, "this call form");
         return Unit;
       } else {
         for (size_t K = 0; K < C->Args.size(); ++K)
-          Args.push_back(valueFor(C->Args[K], Sig->Params->Elems[K]));
+          AddArg(K, C->Args[K]);
+      }
+      // The map entries among them: one record each in an array of the
+      // frame, copied in and aliased by one runtime call, copied out by
+      // another after the call (mapEntryArg; linear GIR per call).
+      unsigned NE = 0;
+      for (auto &[K, R] : Late)
+        if (auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
+            IE && isMapIndex(IE))
+          ++NE;
+      Place Recs;
+      Operand RecsAddr;
+      if (NE) {
+        at(C);
+        Recs = FB.local(FB.newLocal(ctx().array(L.mapEntryArgType(), NE),
+                                    Local::Var, "entries"));
+        RecsAddr = copyOf(FB.temp(FB.addrOf(FB.constIndex(Recs, 0), true)));
+      }
+      SmallVector<std::pair<size_t, unsigned>, 1> EntryArgs;
+      for (auto &[K, R] : Late) {
+        ++LowerSteps;
+        auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
+        if (IE && isMapIndex(IE)) {
+          ReplayScope Scope(*this, R);
+          unsigned Idx = EntryArgs.size();
+          mapEntryArg(IE, Recs, Idx);
+          EntryArgs.push_back({K, Idx});
+          continue;
+        }
+        Args[K] = argAs(mapArgAddr(C->Args[K], R), Sig, K, C->Args[K]);
+      }
+      if (NE) {
+        // (Test-only: GIR for every pair, the quadratic control.)
+        if (L.Opts.PairwiseEntryArgs)
+          for (unsigned A = 0; A < NE; ++A)
+            for (unsigned B = 0; B < A; ++B)
+              FB.temp(FB.binary(BinOp::Eq,
+                                copyOf(FB.field(FB.constIndex(Recs, A), 1)),
+                                copyOf(FB.field(FB.constIndex(Recs, B), 1))));
+        at(C);
+        callRt(RtFn::MapEntryArgs, {RecsAddr, constInt(ctx().u64(), NE)}, C);
+        for (auto &[K, Idx] : EntryArgs) {
+          at(C->Args[K]);
+          Args[K] = argAs(copyOf(FB.field(FB.constIndex(Recs, Idx), 5)), Sig, K,
+                          C->Args[K]);
+        }
       }
       at(C);
       LocalId Res = FB.newTemp(Callee.Sig->ret());
@@ -1293,6 +1535,10 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
           constFunc(M, FI->second), Args, FB.local(Res),
           {Callee.NoUnwind ? UnwindAction::Unreachable : UnwindAction::Continue,
            NoId});
+      if (NE) {
+        at(C);
+        callRt(RtFn::MapEntryBack, {RecsAddr, constInt(ctx().u64(), NE)}, C);
+      }
       return copyOf(FB.local(Res));
     }
   }
@@ -1307,16 +1553,6 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
 //===----------------------------------------------------------------------===//
 // Composite literals
 //===----------------------------------------------------------------------===//
-
-/// An owning value (a string) may be stored in an aggregate only if it is a
-/// constant: anything else needs drop glue and moves (P04.09).
-bool Body::ownedOk(const ast::Expr *E, Type *Dest) {
-  if (Dest->getKind() != Type::Kind::String || isConst(E))
-    return true;
-  unsupported(E, "storing a string that is not a constant in a struct or "
-                 "array (P04.09)");
-  return false;
-}
 
 Operand Body::lowerStructLit(const ast::CompositeLit *CL, S::StructType *ST,
                              Type *Ty) {
@@ -1355,9 +1591,6 @@ Operand Body::lowerStructLit(const ast::CompositeLit *CL, S::StructType *ST,
       E = KV->Value;
     } else if (K >= N) {
       unsupported(E, "this struct literal");
-      return errorValue(ctx());
-    }
-    if (!ownedOk(E, Ty->fieldType(Field, ctx()))) {
       return errorValue(ctx());
     }
     Operand V = valueFor(E, ST->Fields[Field]->Ty);
@@ -1409,8 +1642,6 @@ Operand Body::lowerArrayLit(const ast::CompositeLit *CL, S::ArrayType *AT,
   if (Dense && Elts.size() == Len && Len <= 32) {
     SmallVector<Operand, 8> Ops;
     for (auto &[Idx, E] : Elts) {
-      if (!ownedOk(E, Ty->elem()))
-        return errorValue(ctx());
       Operand V = valueFor(E, AT->Elem);
       if (V.K == Operand::Copy &&
           !(V.P.Proj.empty() &&
@@ -1428,8 +1659,6 @@ Operand Body::lowerArrayLit(const ast::CompositeLit *CL, S::ArrayType *AT,
   Place Arr = FB.local(FB.newTemp(Ty));
   FB.assign(Arr, FB.use(zeroOf(Ty)));
   for (auto &[Idx, E] : Elts) {
-    if (!ownedOk(E, Ty->elem()))
-      return errorValue(ctx());
     Operand V = valueFor(E, AT->Elem);
     at(E);
     FB.assign(FB.constIndex(Arr, uint32_t(Idx)), FB.use(V));
@@ -1447,6 +1676,10 @@ Operand Body::lowerCompositeLit(const ast::CompositeLit *CL) {
     return lowerStructLit(CL, Str, Ty);
   if (auto *Arr = dyn_cast<S::ArrayType>(U))
     return lowerArrayLit(CL, Arr, Ty);
+  if (auto *Sl = dyn_cast<S::SliceType>(U))
+    return sliceLiteral(CL, Sl, Ty);
+  if (auto *Mp = dyn_cast<S::MapType>(U))
+    return mapLiteral(CL, Mp);
   unsupported(CL, "this composite literal");
   return errorValue(ctx());
 }

@@ -1,0 +1,91 @@
+package main
+
+// nil versus empty slices and maps: comparisons with nil, len, cap, append,
+// range, reads of nil maps, slicing of nil and empty slices.
+
+type T struct {
+	s []int
+	m map[string]int
+}
+
+// (the capacity is the caller's: a borrowed parameter's capacity is its
+// length in Go++, SLC-12)
+func describe(name string, s []int, c int) {
+	println(name, s == nil, len(s), c)
+}
+
+// the capacity of a small append that does not escape depends on Go's escape
+// analysis (a stack buffer), so it is not printed for appends
+func describeLen(name string, s []int) {
+	println(name, s == nil, len(s))
+}
+
+func main() {
+	var s []int
+	describe("var", s, cap(s))
+	e := []int{}
+	describe("lit", e, cap(e))
+	m0 := make([]int, 0)
+	describe("make0", m0, cap(m0))
+	m5 := make([]int, 0, 5)
+	describe("make05", m5, cap(m5))
+	describeLen("append-nil-nothing", append(s))
+	describeLen("append-nil-empty", append(s, e...))
+	describeLen("append-nil-1", append(s, 1))
+	describeLen("append-empty-empty", append(e, m0...))
+	describeLen("append-lit", append([]int(nil), 1, 2, 3))
+	var t T
+	println(t.s == nil, t.m == nil, len(t.s), len(t.m))
+	var mn map[string]int
+	em := map[string]int{}
+	mk := make(map[string]int)
+	println(mn == nil, em == nil, mk == nil, len(mn), len(em), len(mk))
+	v, ok := mn["x"]
+	println(v, ok)
+	v, ok = em["x"]
+	println(v, ok)
+	println(mn["a"], em["a"])
+	delete(mn, "a")
+	delete(em, "a")
+	clear(mn)
+	for k, v := range mn {
+		println(k, v)
+	}
+	for k, v := range em {
+		println(k, v)
+	}
+	for i, x := range s {
+		println(i, x)
+	}
+	n := 0
+	for range e {
+		n++
+	}
+	println(n)
+	// slicing nil and empty
+	a := s[0:0]
+	println(len(a))
+	b := e[0:0]
+	println(len(b))
+	c := s[:]
+	println(len(c))
+	// maps of nil and empty slices
+	ms := map[string][]int{}
+	ms["a"] = nil
+	ms["b"] = []int{}
+	println(ms["a"] == nil, ms["b"] == nil, ms["c"] == nil, len(ms))
+	_, oka := ms["a"]
+	_, okb := ms["b"]
+	_, okc := ms["c"]
+	println(oka, okb, okc)
+	// slices of nil maps
+	mm := []map[string]int{nil, {}, make(map[string]int)}
+	for i := range mm {
+		println(i, mm[i] == nil, len(mm[i]))
+	}
+	// the zero value and nil of a slice of slices
+	ss := make([][]int, 3)
+	println(len(ss), ss[0] == nil, ss[2] == nil)
+	ss[1] = append(ss[1], 7)
+	println(ss[0] == nil, ss[1] == nil, len(ss[1]))
+}

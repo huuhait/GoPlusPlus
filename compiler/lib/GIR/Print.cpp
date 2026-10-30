@@ -281,6 +281,8 @@ struct Printer {
       const Local &L = F.Locals[I];
       ++printSteps();
       OS << "  let _" << I << ": " << L.Ty->str();
+      if (L.Owned)
+        OS << " [owned]";
       if (!L.Name.empty())
         OS << "  ; " << L.Name;
       OS << '\n';

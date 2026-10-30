@@ -381,6 +381,7 @@ Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
             samePlace(Sl->X, Lhs)) {
           X->Ty = T;
           Shrink = true;
+          I.Reslices.insert(Sl); // the lowering shrinks in place (P04.05)
         }
   }
   if (isa<SelectorExpr>(unparen(Lhs)) && checkPointerField(*X, T))

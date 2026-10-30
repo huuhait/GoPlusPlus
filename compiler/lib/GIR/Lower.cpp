@@ -30,6 +30,14 @@
 using namespace gopp;
 using namespace gopp::gir;
 using namespace gopp::gir::impl;
+
+thread_local uint64_t gopp::gir::impl::LowerSteps = 0;
+
+/// The steps of the lowerings this thread asked for (each runs on a thread
+/// of its own, lowerPackage).
+static thread_local uint64_t CallerSteps = 0;
+
+uint64_t gir::loweringSteps() { return CallerSteps; }
 using llvm::cast;
 using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
@@ -77,15 +85,15 @@ static const char *kindName(S::Type::Kind K) {
   case S::Type::Kind::Pointer:
     return "pointer";
   case S::Type::Kind::Slice:
-    return "a slice (P04.05)";
+    return "a slice";
   case S::Type::Kind::Array:
     return "array";
   case S::Type::Kind::Map:
-    return "a map (P04.05)";
+    return "a map";
   case S::Type::Kind::Chan:
     return "a channel (P12)";
   case S::Type::Kind::Ref:
-    return "a view (P04.05)";
+    return "a view";
   case S::Type::Kind::Tuple:
     return "tuple";
   case S::Type::Kind::Signature:
@@ -135,17 +143,31 @@ Type *Lowering::lowerType(S::Type *T, SourceLoc At) {
   if (!New) {
     auto Under = InProgress.find(T);
     if (It->second || Under == InProgress.end())
-      return It->second;
+      return It->second ? Ctx.canonical(It->second) : nullptr;
     // T is under way and reached again. If a struct began after T did, the
     // cycle goes through it: its GIR struct exists (made before its body), so
-    // T is lowered again right here and ends at that struct. Otherwise
-    // nothing can name the type being made.
+    // T is lowered again right here and ends at that struct. Otherwise the
+    // cycle goes through no struct (`type S []S`): T gets a self-naming type
+    // (Type.h) that the parts name, and its body is set when T is done.
     if (StructsActive > Under->second)
       return lowerTypeOnce(T, At);
+    // The key and value of a map are lowered to find what cannot be (the map
+    // itself is one type for all of them): a type under way is just there.
+    if (MapDepth > 0)
+      return Ctx.unit();
+    if (isa<S::NamedType>(T))
+      return recShell(T);
+    // A type with no name (`*L` in `type L [1]*L`) is lowered again: the
+    // cycle ends at the named type, which is under way and is the shell.
+    if (RebuildDepth < 8) {
+      ++RebuildDepth;
+      Type *Again = lowerTypeOnce(T, At);
+      --RebuildDepth;
+      return Again;
+    }
     if (RecursiveReported.insert(T).second)
-      unsupported(At,
-                  "the type " + S::typeString(T) +
-                      ", which refers to itself through no struct (P04.05),");
+      unsupported(At, "the type " + S::typeString(T) +
+                          ", which refers to itself through no named type,");
     return nullptr;
   }
   Type *R = nullptr;
@@ -164,12 +186,50 @@ Type *Lowering::lowerType(S::Type *T, SourceLoc At) {
     }
   }
   InProgress.erase(T);
+  if (auto RS = RecShells.find(T); RS != RecShells.end() && R) {
+    // T reached itself: the type that came out is the body of the shell.
+    if (Ctx.setRecBody(RS->second, R)) {
+      R = RS->second;
+    } else {
+      unsupported(At, "the type " + S::typeString(T) +
+                          ", which refers to itself and has the same shape "
+                          "as another such type,");
+      R = nullptr;
+    }
+  }
   // Never a null without a report: a function whose type is null is left out
   // of the module, and nothing may leave one out silently.
   if (!R && Reported == Before && !Failed)
     unsupported(At, "the type " + S::typeString(T));
   TypeCache[T] = R;
   return R;
+}
+
+std::string Lowering::uniqueTypeName(S::NamedType *Named) {
+  std::string Name;
+  if (Named) {
+    if (const sym::Node *N = Syms.Names.type(Named))
+      Name = sym::print(N).Text;
+    else
+      Name = (Named->Obj->Pkg ? Named->Obj->Pkg->Path.str() + "." : "") +
+             Named->Obj->Name.str();
+  } else {
+    Name = "struct." + std::to_string(AnonStructs++);
+  }
+  if (!StructNames.insert(Name).second) {
+    unsigned K = 2;
+    while (!StructNames.insert(Name + "#" + std::to_string(K)).second)
+      ++K;
+    Name += "#" + std::to_string(K);
+  }
+  return Name;
+}
+
+Type *Lowering::recShell(S::Type *T) {
+  auto [It, New] = RecShells.try_emplace(T, nullptr);
+  if (New)
+    It->second = Ctx.recTy(uniqueTypeName(cast<S::NamedType>(T)));
+  return It->second;
 }
 
 Type *Lowering::lowerOption(S::OptionType *O, SourceLoc At) {
@@ -195,22 +255,7 @@ Type *Lowering::lowerStruct(S::Type *Whole, S::StructType *ST,
   // A defined type and its underlying struct are one GIR struct, so a
   // conversion between two defined types of one struct is no code. The name
   // is the readable symbol of the first type that reaches it.
-  std::string Name;
-  if (Named) {
-    if (const sym::Node *N = Syms.Names.type(Named))
-      Name = sym::print(N).Text;
-    else
-      Name = (Named->Obj->Pkg ? Named->Obj->Pkg->Path.str() + "." : "") +
-             Named->Obj->Name.str();
-  } else {
-    Name = "struct." + std::to_string(AnonStructs++);
-  }
-  if (!StructNames.insert(Name).second) {
-    unsigned K = 2;
-    while (!StructNames.insert(Name + "#" + std::to_string(K)).second)
-      ++K;
-    Name += "#" + std::to_string(K);
-  }
+  std::string Name = uniqueTypeName(Named);
   Type *Str = Ctx.structTy(Name);
   StructCache[ST] = Str;
   ++StructsActive;
@@ -320,6 +365,45 @@ Type *Lowering::lowerTypeOnce(S::Type *T, SourceLoc At) {
     R = Ctx.array(E, A->Len < 0 ? 0 : A->Len);
     break;
   }
+  case S::Type::Kind::Slice: {
+    Type *E = lowerType(cast<S::SliceType>(T)->Elem, At);
+    if (!E)
+      return nullptr;
+    R = Ctx.slice(E);
+    break;
+  }
+  case S::Type::Kind::Map: {
+    // The runtime object, one type for every key and value type (the
+    // runtime knows them by a MapInfo, RuntimeMap.cpp); they are lowered
+    // here so a type that cannot be lowered is reported at the map.
+    auto *Mp = cast<S::MapType>(T);
+    ++MapDepth;
+    bool Ok = lowerType(Mp->Key, At) && lowerType(Mp->Elem, At);
+    --MapDepth;
+    if (!Ok)
+      return nullptr;
+    R = mapType();
+    break;
+  }
+  case S::Type::Kind::Ref: {
+    // A view (D4.5): a string or a slice is its data pointer and length,
+    // anything else the address of the value.
+    S::Type *Target = cast<S::RefType>(T)->Elem;
+    S::Type *U = S::under(Target);
+    if (isa<S::SliceType>(U) || isStringType(U)) {
+      Type *E = isStringType(U) ? Ctx.u8()
+                                : lowerType(cast<S::SliceType>(U)->Elem, At);
+      if (!E)
+        return nullptr;
+      R = Ctx.tuple({Ctx.ptr(E), Ctx.u64()});
+      break;
+    }
+    Type *E = lowerType(Target, At);
+    if (!E)
+      return nullptr;
+    R = Ctx.ptr(E);
+    break;
+  }
   case S::Type::Kind::Struct:
     return lowerStruct(T, cast<S::StructType>(T), nullptr, At);
   case S::Type::Kind::Option:
@@ -406,6 +490,36 @@ static std::string externProblem(const ast::FuncDecl *FD,
   return "";
 }
 
+/// Why a value of the checker type T cannot cross the C ABI because it is,
+/// or holds by value, a Go++ string, slice, map or view (P04.05 review R5);
+/// null if it holds none. Decided on the checker's types, before lowering:
+/// a map is one pointer in GIR and a view of a struct is too, so the GIR
+/// types cannot tell. Pointers are not followed (C gets an address).
+static const char *goppOnlyLayout(S::Type *T) {
+  SmallVector<S::Type *, 8> Work{T};
+  llvm::SmallPtrSet<S::Type *, 8> Seen;
+  while (!Work.empty()) {
+    S::Type *U = S::under(Work.pop_back_val());
+    if (!U || !Seen.insert(U).second)
+      continue;
+    if (isStringType(U))
+      return "a string has no C layout (pass a *byte and a length)";
+    if (isa<S::SliceType>(U))
+      return "a slice has no C layout (pass a *T and a length)";
+    if (isa<S::MapType>(U))
+      return "a map has no C layout";
+    if (isa<S::RefType>(U))
+      return "a view has no C layout (pass a *T)";
+    if (auto *ST = dyn_cast<S::StructType>(U))
+      for (S::Var *F : ST->Fields)
+        Work.push_back(F->Ty);
+    else if (auto *AT = dyn_cast<S::ArrayType>(U))
+      Work.push_back(AT->Elem);
+    // (An Option[T] by value is CTypeRules' to refuse, in its own words.)
+  }
+  return nullptr;
+}
+
 static bool isInitDecl(const ast::FuncDecl *FD) {
   return !FD->Recv && FD->Name->Name.str() == "init";
 }
@@ -472,9 +586,23 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     unsupported(FD->getBegin(), "a function that fails with ! (P04.10)");
     return;
   }
-  if (Sig->Variadic) {
-    unsupported(FD->getBegin(), "a variadic function (P04.05)");
-    return;
+  // A Go++ string, slice, map or view in a C signature (also inside a struct
+  // or an array passed by value): one decision, on the checker's types.
+  if (Ext) {
+    auto Refuse = [&](S::Type *T, const char *What) {
+      const char *Why = goppOnlyLayout(T);
+      if (!Why)
+        return false;
+      badExtern(FD->getBegin(), Name,
+                llvm::Twine(What) + " type " + S::typeString(T) +
+                    " cannot cross the C ABI: " + Why);
+      return true;
+    };
+    for (S::Type *P : Sig->Params->Elems)
+      if (Refuse(P, "parameter"))
+        return;
+    if (Sig->Results->size() == 1 && Refuse(Sig->Results->Elems[0], "result"))
+      return;
   }
   // C calling Go++ (a callback, an exported function) needs thunks with the C
   // ABI: P04.18. Said here, before the generic "function value" message.
@@ -498,6 +626,8 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     Type *T = lowerType(P, FD->getBegin());
     if (!T)
       return;
+    if (!Ext && mapByPointer(Sig, Params.size()))
+      T = Ctx.ptr(T);
     Params.push_back(T);
   }
   Type *Ret = Ctx.unit();
@@ -800,8 +930,14 @@ std::unique_ptr<Module> gir::lowerPackage(Context &Ctx, const SourceManager &SM,
                                           DiagnosticsEngine &Diags,
                                           const LowerOptions &Opts) {
   std::unique_ptr<Module> M;
+  uint64_t Steps = 0;
   runOnNewStackOrHere(
-      [&] { M = Lowering(Ctx, SM, CP, Files, Diags, Opts).run(); },
+      [&] {
+        uint64_t Before = LowerSteps;
+        M = Lowering(Ctx, SM, CP, Files, Diags, Opts).run();
+        Steps = LowerSteps - Before;
+      },
       LowerStackBytes);
+  CallerSteps += Steps;
   return M;
 }

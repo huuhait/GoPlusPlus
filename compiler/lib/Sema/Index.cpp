@@ -435,13 +435,27 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
       Valid = true;
       Length = A->Len;
       X.Ty = Ctx.slice(A->Elem);
+      // Go++ (SLC-8): the part borrows the array the pointer points at, as
+      // slicing the array itself does; it owns no buffer, so `t = t[1:]`
+      // re-points it and never shrinks the array in place (SLC-6, SLC-12).
+      if (own())
+        X.Ty = Ctx.ref(X.Ty, !ReadOnlySrc);
     }
     break;
-  case Type::Kind::Slice:
+  case Type::Kind::Slice: {
     Valid = true;
-    if (own() && (isa<SliceType>(X.Ty) || OrigIsRef))
+    // SLC-8 for a defined slice type too: the part borrows the owner's
+    // buffer and keeps the type's name (`s = s[1:]` is still a shrink of the
+    // same type, SLC-6, and a borrowed `t` of it is re-pointed, PAR-2), so it
+    // never owns, frees or shrinks the owner's elements (P04.05 review R4).
+    auto *Rf = dyn_cast<RefType>(X.Ty);
+    Type *Named = Rf && Rf->Borrowed ? Rf->Elem : X.Ty;
+    if (own() && isa<NamedType>(Named) && (!Rf || Rf->Borrowed))
+      X.Ty = Ctx.ref(Named, !ReadOnlySrc);
+    else if (own() && (isa<SliceType>(X.Ty) || OrigIsRef))
       X.Ty = Ctx.ref(cast<SliceType>(U), !ReadOnlySrc);
     break;
+  }
   default:
     break;
   }

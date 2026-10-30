@@ -1,0 +1,11 @@
+package main
+
+// The same for a borrowed slice made by slicing (SLC-13).
+
+func main() {
+	println("before")
+	s := make([]int, 3, 8)
+	n := 4
+	t := s[:n]
+	println("not reached", len(t))
+}

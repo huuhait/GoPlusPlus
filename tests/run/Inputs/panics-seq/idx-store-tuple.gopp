@@ -1,0 +1,15 @@
+package main
+
+var s = []int{1, 2, 3}
+var i = 5
+
+func f() int {
+	println("f called")
+	return 1
+}
+
+func main() {
+	println("before")
+	s[1], s[i], s[7] = f(), f(), f()
+	println("not reached")
+}

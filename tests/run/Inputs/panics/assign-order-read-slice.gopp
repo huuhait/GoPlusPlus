@@ -1,0 +1,18 @@
+package main
+
+// The element of an outer index is read (a slice header) before the store:
+// its index is checked first, after the right side, not after the read.
+var s = [][]int{{1}, {2}}
+
+func n(x int) int { return x }
+
+func f() int {
+	println("f called")
+	return 1
+}
+
+func main() {
+	println("before")
+	s[n(1<<40)][0] = f()
+	println("not reached")
+}

@@ -1,0 +1,467 @@
+case 0
+ runes 0
+
+ back 0 true
+ bytes 0 true
+0
+case 1
+  0 65
+ runes 1
+ 65
+ back 1 true
+ bytes 1 true
+1
+case 1
+  0 127
+ runes 1
+ 127
+ back 1 true
+ bytes 1 true
+2
+case 2
+  0 128
+ runes 1
+ 128
+ back 2 true
+ bytes 2 true
+3
+case 2
+  0 2047
+ runes 1
+ 2047
+ back 2 true
+ bytes 2 true
+4
+case 3
+  0 2048
+ runes 1
+ 2048
+ back 3 true
+ bytes 3 true
+5
+case 3
+  0 65535
+ runes 1
+ 65535
+ back 3 true
+ bytes 3 true
+6
+case 4
+  0 65536
+ runes 1
+ 65536
+ back 4 true
+ bytes 4 true
+7
+case 4
+  0 1114111
+ runes 1
+ 1114111
+ back 4 true
+ bytes 4 true
+8
+case 1
+  0 65533
+ runes 1
+ 65533
+ back 3 false
+ bytes 1 true
+9
+case 2
+  0 65533
+  1 65
+ runes 2
+ 65533 65
+ back 4 false
+ bytes 2 true
+10
+case 3
+  0 65
+  1 65533
+  2 66
+ runes 3
+ 65 65533 66
+ back 5 false
+ bytes 3 true
+11
+case 2
+  0 65
+  1 65533
+ runes 2
+ 65 65533
+ back 4 false
+ bytes 2 true
+12
+case 1
+  0 65533
+ runes 1
+ 65533
+ back 3 false
+ bytes 1 true
+13
+case 2
+  0 65533
+  1 65
+ runes 2
+ 65533 65
+ back 4 false
+ bytes 2 true
+14
+case 1
+  0 65533
+ runes 1
+ 65533
+ back 3 false
+ bytes 1 true
+15
+case 2
+  0 65533
+  1 65533
+ runes 2
+ 65533 65533
+ back 6 false
+ bytes 2 true
+16
+case 3
+  0 65533
+  1 65533
+  2 65
+ runes 3
+ 65533 65533 65
+ back 7 false
+ bytes 3 true
+17
+case 3
+  0 65533
+  1 65
+  2 65533
+ runes 3
+ 65533 65 65533
+ back 7 false
+ bytes 3 true
+18
+case 1
+  0 65533
+ runes 1
+ 65533
+ back 3 false
+ bytes 1 true
+19
+case 2
+  0 65533
+  1 65533
+ runes 2
+ 65533 65533
+ back 6 false
+ bytes 2 true
+20
+case 3
+  0 65533
+  1 65533
+  2 65533
+ runes 3
+ 65533 65533 65533
+ back 9 false
+ bytes 3 true
+21
+case 4
+  0 65533
+  1 65533
+  2 65533
+  3 65
+ runes 4
+ 65533 65533 65533 65
+ back 10 false
+ bytes 4 true
+22
+case 4
+  0 65533
+  1 65533
+  2 65
+  3 65533
+ runes 4
+ 65533 65533 65 65533
+ back 10 false
+ bytes 4 true
+23
+case 2
+  0 65533
+  1 65533
+ runes 2
+ 65533 65533
+ back 6 false
+ bytes 2 true
+24
+case 2
+  0 65533
+  1 65533
+ runes 2
+ 65533 65533
+ back 6 false
+ bytes 2 true
+25
+case 3
+  0 65533
+  1 65533
+  2 65533
+ runes 3
+ 65533 65533 65533
+ back 9 false
+ bytes 3 true
+26
+case 3
+  0 65533
+  1 65533
+  2 65533
+ runes 3
+ 65533 65533 65533
+ back 9 false
+ bytes 3 true
+27
+case 4
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+ runes 4
+ 65533 65533 65533 65533
+ back 12 false
+ bytes 4 true
+28
+case 4
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+ runes 4
+ 65533 65533 65533 65533
+ back 12 false
+ bytes 4 true
+29
+case 3
+  0 65533
+  1 65533
+  2 65533
+ runes 3
+ 65533 65533 65533
+ back 9 false
+ bytes 3 true
+30
+case 3
+  0 65533
+  1 65533
+  2 65533
+ runes 3
+ 65533 65533 65533
+ back 9 false
+ bytes 3 true
+31
+case 3
+  0 55295
+ runes 1
+ 55295
+ back 3 true
+ bytes 3 true
+32
+case 3
+  0 57344
+ runes 1
+ 57344
+ back 3 true
+ bytes 3 true
+33
+case 4
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+ runes 4
+ 65533 65533 65533 65533
+ back 12 false
+ bytes 4 true
+34
+case 4
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+ runes 4
+ 65533 65533 65533 65533
+ back 12 false
+ bytes 4 true
+35
+case 4
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+ runes 4
+ 65533 65533 65533 65533
+ back 12 false
+ bytes 4 true
+36
+case 5
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+  4 65533
+ runes 5
+ 65533 65533 65533 65533 65533
+ back 15 false
+ bytes 5 true
+37
+case 6
+  0 65533
+  1 65533
+  2 65533
+  3 65533
+  4 65533
+  5 65533
+ runes 6
+ 65533 65533 65533 65533 65533 65533
+ back 18 false
+ bytes 6 true
+38
+case 1
+  0 65533
+ runes 1
+ 65533
+ back 3 false
+ bytes 1 true
+39
+case 1
+  0 65533
+ runes 1
+ 65533
+ back 3 false
+ bytes 1 true
+40
+case 3
+  0 65533
+  1 65533
+  2 65533
+ runes 3
+ 65533 65533 65533
+ back 9 false
+ bytes 3 true
+41
+case 13
+  0 104
+  1 233
+  3 108
+  4 108
+  5 111
+  6 19990
+  9 128512
+ runes 7
+ 104 233 108 108 111 19990 128512
+ back 13 true
+ bytes 13 true
+42
+case 7
+  0 19990
+  3 65533
+  4 19990
+ runes 3
+ 19990 65533 19990
+ back 9 false
+ bytes 7 true
+43
+case 3
+  0 65533
+  1 233
+ runes 2
+ 65533 233
+ back 5 false
+ bytes 3 true
+44
+case 5
+  0 65533
+  1 65533
+  2 19990
+ runes 3
+ 65533 65533 19990
+ back 9 false
+ bytes 5 true
+45
+case 6
+  0 65533
+  1 65533
+  2 128512
+ runes 3
+ 65533 65533 128512
+ back 10 false
+ bytes 6 true
+46
+-9223372036854775808 1
+ 0
+-4294967296 1
+ 0
+-2 3
+ 239 191 189
+-1 3
+ 239 191 189
+0 1
+ 0
+1 1
+ 1
+65 1
+ 65
+127 1
+ 127
+128 2
+ 194 128
+2047 2
+ 223 191
+2048 3
+ 224 160 128
+55295 3
+ 237 159 191
+55296 3
+ 239 191 189
+56319 3
+ 239 191 189
+56320 3
+ 239 191 189
+57343 3
+ 239 191 189
+57344 3
+ 238 128 128
+65533 3
+ 239 191 189
+65534 3
+ 239 191 190
+65535 3
+ 239 191 191
+65536 4
+ 240 144 128 128
+1114111 4
+ 244 143 191 191
+1114112 3
+ 239 191 189
+2147483647 3
+ 239 191 189
+2147483648 3
+ 239 191 189
+4294967296 1
+ 0
+4294967361 1
+ 65
+4611686018427387904 1
+ 0
+9223372036854775807 3
+ 239 191 189
+2 3 4 3
+true true
+19
+ 65 239 191 189 239 191 189 239 191 189 244 143 191 191 239 191 189 195 169
+0 65
+1 65533
+4 65533
+7 65533
+10 1114111
+14 65533
+17 233
+7 aé世z
+4 4

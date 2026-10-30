@@ -1,0 +1,57 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --dump-types %s 2>/dev/null | FileCheck --check-prefix=TYPES %s
+// Rule SLC-8 (P04.05 review R4): every slice made over a backing store the
+// slice does not own is a borrowed []T, decided in one place on the
+// checker's types: slicing an array (held by value, a field reached through
+// a pointer, a borrowed parameter's array), a pointer to an array, a
+// defined slice type (keeping its name), and unsafe.Slice. So it is never an
+// owned slice: it cannot become a different owned variable (SLC-8), and
+// `t = t[1:]` re-points it (PAR-2) instead of shrinking the backing store in
+// place (SLC-6, which is for the same owned slice only).
+package main
+
+import "unsafe"
+
+type IS []int
+
+type Box struct{ arr [4]int }
+
+func accepted(a [4]int, pb *Box) int {
+	var arr [4]int
+	p := &arr
+	t := p[0:3]
+	t = t[1:]
+	u := unsafe.Slice(&arr[0], 4)
+	u = u[2:]
+	u[0] = 7
+	s := IS{1, 2, 3, 4}
+	w := s[1:3]
+	w = w[1:]
+	s = s[1:]
+	f := pb.arr[1:]
+	f = f[1:]
+	g := a[:]
+	g = g[1:]
+	return t[0] + u[0] + w[0] + s[0] + f[0] + g[0] + *unsafe.SliceData(u)
+}
+
+func rejected() {
+	var arr [4]int
+	p := &arr
+	var o []int
+	// CHECK: [[@LINE+1]]:6: error[E0314]: cannot use p[0:3] (value of type borrowed []int) as []int value in assignment
+	o = p[0:3]
+	// CHECK: [[@LINE+1]]:6: error[E0314]: cannot use unsafe.Slice(&arr[0], 4) (value of type borrowed []int) as []int value in assignment
+	o = unsafe.Slice(&arr[0], 4)
+	s := IS{1, 2, 3}
+	var n IS
+	// CHECK: [[@LINE+1]]:6: error[E0314]: cannot use s[1:] (value of type borrowed IS) as IS value in assignment
+	n = s[1:]
+	_, _ = o, n
+}
+
+// TYPES: expr `p[0:3]` value borrowed []int
+// TYPES: expr `unsafe.Slice(&arr[0], 4)` value borrowed []int
+// TYPES: expr `s[1:3]` value borrowed IS
+// TYPES: reslice `s[1:]`
+// TYPES-NOT: reslice

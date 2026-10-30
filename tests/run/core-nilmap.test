@@ -1,0 +1,93 @@
+// GOLDEN: by-hand
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-nilmap.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-nilmap.out %}
+// P04.05, ADR-0018 amendment point 5, PAR-1: a nil map is an empty map, and
+// the first write creates it in the place that holds it, where Go panics
+// ("assignment to entry in nil map"; the panic programs of the other P04.05
+// implementations, made positive here): a package variable, `+=`, `++`, a
+// map(nil) conversion, a struct field, through a pointer, an array element,
+// `mm[k1][k2]` with k1 there and its inner map nil, and through a borrowed
+// map parameter, which passes by a hidden pointer to the caller's header
+// (PAR-10), also one call further down, and through a map entry passed on
+// whose key is there (OWN-P9: an entry is a place; it gets its own map). A
+// map that is no place (a temporary) gets the write and drops it, and so
+// does an entry whose key is absent: an argument never inserts (decision
+// M9). Reads, len, range, delete and clear of a nil map work as in Go. Go++
+// only, so the expected output is written by hand.
+package main
+
+type T struct{ m map[int]int }
+
+var gm map[string]int
+var gs map[int]string
+var gc = map[string]int(nil)
+var gt T
+
+func add(m map[string]int, k string) { m[k]++ }
+
+func addTwice(m map[string]int, k string) {
+	add(m, k)
+	add(m, k)
+}
+
+func pair() (map[string]int, int) { return nil, 1 }
+
+func put(m map[string]int, n int) int {
+	m["z"] = n
+	return len(m)
+}
+
+func main() {
+	// reads of a nil map
+	var r map[string]int
+	v, ok := r["x"]
+	n := 0
+	for range r {
+		n++
+	}
+	delete(r, "x")
+	clear(r)
+	println(r == nil, len(r), r["x"], v, ok, n)
+	// writes create the map where it is held
+	gm["a"] = 1
+	gs[1] += "x"
+	gc["k"] = 2
+	gt.m[3] = 4
+	var inc map[int]int
+	inc[1]++
+	inc[1]++
+	println(gm["a"], gs[1], gc["k"], gt.m[3], inc[1], gm == nil, len(gm))
+	p := &gt
+	var t2 T
+	q := &t2
+	q.m[5] = 6
+	println(len(p.m), t2.m[5], t2.m == nil)
+	var arr [2]map[string]int
+	arr[1]["w"] = 7
+	println(arr[0] == nil, arr[1]["w"])
+	mm := map[string]map[string]int{"a": nil}
+	mm["a"]["x"] = 8
+	println(len(mm), mm["a"]["x"])
+	// through borrowed map parameters
+	var m map[string]int
+	add(m, "a")
+	println(len(m), m["a"], m == nil)
+	addTwice(m, "b")
+	addTwice(gm, "g")
+	println(len(m), m["b"], gm["g"])
+	var d T
+	var dm map[string]int
+	println(put(dm, 3), dm["z"], d.m == nil)
+	// no place: the write goes to a temporary
+	println(put(pair()))
+	add(nil, "lost")
+	add(map[string]int{"t": 1}, "t")
+	add(mm["b"], "lost")
+	println(len(mm), mm["b"] == nil)
+	// a present entry is a place
+	mm["c"] = nil
+	add(mm["c"], "kept")
+	println(len(mm), len(mm["c"]), mm["c"]["kept"])
+}

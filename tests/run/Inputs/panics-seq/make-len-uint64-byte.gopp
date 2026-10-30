@@ -1,0 +1,9 @@
+package main
+
+var n uint64 = 1<<64 - 1
+
+func main() {
+	println("before")
+	println(len(make([]byte, n)))
+	println("not reached")
+}

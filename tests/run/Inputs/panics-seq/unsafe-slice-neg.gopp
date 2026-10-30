@@ -1,0 +1,12 @@
+package main
+
+import "unsafe"
+
+var a [5]int
+var n = -1
+
+func main() {
+	println("before")
+	println(len(unsafe.Slice(&a[0], n)))
+	println("not reached")
+}

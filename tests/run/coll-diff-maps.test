@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/coll/maps.gopp %S/Inputs/coll/maps.out
+// P04.05 differential table for maps: growth, delete, tombstones (200000
+// inserts and deletes keep a map of 8 entries), deleting during range,
+// every kind of key (strings copied in, structs, arrays, floats where NaN
+// never matches and +0 and -0 are one key, pointers, complex numbers),
+// comma-ok, op-assignment, maps of slices and of maps. Range order is
+// unspecified, so the program prints only what does not depend on it. The
+// expected output is Go's (see coll-diff-text.test).

@@ -1,0 +1,318 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-range.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-range.out %}
+// P04.05: `for ... range` over integers (every width), arrays (the array is
+// copied when the value is read), pointers to arrays, slices (the length is
+// fixed before the loop), strings, maps; the key only, the value only, neither;
+// the assignment form `for a[i] = range`, `for k, v = range` (phase 1 for
+// both targets, then the stores: `for i, a[i] = range`); labeled break
+// and continue; the range expression evaluated once; nested loops. The
+// expected output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+type P struct{ X, Y int }
+
+var calls int
+
+func nums() []int {
+	calls++
+	return []int{10, 20, 30}
+}
+
+func arr() [3]int {
+	calls++
+	return [3]int{1, 2, 3}
+}
+
+func ints() {
+	for i := range 3 {
+		print(" ", i)
+	}
+	println()
+	var n8 int8 = 3
+	for i := range n8 {
+		print(" ", i)
+	}
+	println()
+	var u uint = 4
+	for i := range u {
+		print(" ", i+10)
+	}
+	println()
+	const c = 2
+	for i := range c {
+		print(" ", i)
+	}
+	println()
+	for i := range 0 {
+		print(" never", i)
+	}
+	neg := -5
+	for i := range neg {
+		print(" never", i)
+	}
+	var u64 uint64 = 2
+	for i := range u64 {
+		print(" ", i)
+	}
+	cnt := 0
+	for range 7 {
+		cnt++
+	}
+	println(" ", cnt)
+	for i := range 5 {
+		if i == 1 {
+			continue
+		}
+		if i == 4 {
+			break
+		}
+		print(" ", i)
+	}
+	println()
+}
+
+func arrays() {
+	a := [4]int{1, 2, 3, 4}
+	for i, v := range a {
+		a[3] = 100 // the loop sees the copy
+		print(" ", i, ":", v)
+	}
+	println(" ", a[3])
+	for i := range a {
+		print(" ", i)
+	}
+	println()
+	for _, v := range a {
+		print(" ", v)
+	}
+	println()
+	pa := &a
+	for i, v := range pa {
+		pa[3] = 7 // through the pointer: not a copy
+		print(" ", i, ":", v)
+	}
+	println()
+	var empty [0]int
+	for range empty {
+		println("never")
+	}
+	var grid [2][3]int
+	for i := range grid {
+		for j := range grid[i] {
+			grid[i][j] = i*10 + j
+		}
+	}
+	for _, row := range grid {
+		for _, v := range row {
+			print(" ", v)
+		}
+	}
+	println()
+	ps := [2]P{{1, 2}, {3, 4}}
+	for _, p := range ps {
+		p.X = 99 // a copy
+		print(" ", p.X+p.Y)
+	}
+	println(" ", ps[0].X)
+	calls = 0
+	for i, v := range arr() {
+		print(" ", i, v)
+	}
+	println(" ", calls)
+	words := [3]string{"a", "bb", "ccc"}
+	for i, w := range words {
+		print(" ", i, w, len(w))
+	}
+	println()
+}
+
+func slices() {
+	s := []int{1, 2, 3}
+	for i, v := range s {
+		if i == 0 {
+			s[1] = 20 // the loop sees it: same elements
+		}
+		print(" ", i, ":", v)
+	}
+	println(" ", len(s))
+	t := []int{1, 2, 3}
+	for i, v := range t {
+		t[2] = 30
+		print(" ", i, ":", v)
+	}
+	println()
+	var nilS []int
+	for range nilS {
+		println("never")
+	}
+	calls = 0
+	for _, v := range nums() {
+		print(" ", v)
+	}
+	println(" ", calls)
+	sum := 0
+	for _, v := range [][]int{{1, 2}, {3}, {}, nil} {
+		for _, x := range v {
+			sum += x
+		}
+	}
+	println(sum)
+	bs := []byte("xyz")
+	for i, b := range bs {
+		print(" ", i, b)
+	}
+	println()
+	ps := []P{{1, 2}, {3, 4}}
+	for i := range ps {
+		ps[i].X *= 10
+	}
+	for _, p := range ps {
+		print(" ", p.X, p.Y)
+	}
+	println()
+	sub := t[1:]
+	for i, v := range sub {
+		print(" ", i, v)
+	}
+	println()
+}
+
+func strs() {
+	for i, r := range "aé世😀x" {
+		print(" ", i, ":", r)
+	}
+	println()
+	for i := range "aé世" {
+		print(" ", i)
+	}
+	println()
+	for _, r := range "aé世" {
+		print(" ", r)
+	}
+	println()
+	for i, r := range "a\xffb\xe4\xb8" {
+		print(" ", i, ":", r)
+	}
+	println()
+	n := 0
+	for range "héllo" {
+		n++
+	}
+	println(n)
+	s := "xyz"
+	for i, r := range s {
+		print(" ", i, string(r))
+	}
+	println(" ", s)
+}
+
+func targets() {
+	var a [3]int
+	for a[1] = range 4 {
+	}
+	println(a[1])
+	var k, v int
+	for k, v = range []int{5, 6, 7} {
+	}
+	println(k, v)
+	var idx [2]int
+	xs := []int{7, 8, 9}
+	for idx[0], idx[1] = range xs {
+	}
+	println(idx[0], idx[1])
+	sl := make([]int, 3)
+	for sl[0] = range 3 {
+	}
+	println(sl[0])
+	var r rune
+	var i int
+	for i, r = range "ab" {
+	}
+	println(i, r)
+	m := map[string]int{"only": 3}
+	var key string
+	var val int
+	for key, val = range m {
+	}
+	println(key, val)
+	var pv P
+	p := &pv
+	for p.X, p.Y = range []int{4, 5} {
+	}
+	println(p.X, p.Y)
+	// Each turn is the assignment `k, v = key, value`: the operands of both
+	// targets first, then the stores, so a[i] indexes with the i of the turn
+	// before.
+	var ai [5]int
+	j := 0
+	for j, ai[j] = range []int{10, 20, 30} {
+	}
+	println(ai[0], ai[1], ai[2], ai[3], j)
+	var vals [3]int
+	n := 0
+	for idx[n%2], vals[n] = range []int{10, 20, 30} {
+		n++
+		if n == 3 {
+			break
+		}
+	}
+	println(idx[0], idx[1], vals[0], vals[1], vals[2])
+	cnt := map[string]int{}
+	for cnt["last"] = range 3 {
+		cnt["turns"]++
+	}
+	println(cnt["last"], cnt["turns"], len(cnt))
+	// The value is read before the stores: `s[0], s[1] = key, s[key]`.
+	s2 := []int{5, 6}
+	for s2[0], s2[1] = range s2 {
+	}
+	println(s2[0], s2[1])
+}
+
+func labels() {
+outer:
+	for i := range 4 {
+		for j := range 4 {
+			if j == 2 {
+				continue outer
+			}
+			if i == 3 {
+				break outer
+			}
+			print(" ", i, j)
+		}
+	}
+	println()
+	found := -1
+search:
+	for i, row := range [3][3]int{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}} {
+		for j, v := range row {
+			if v == 6 {
+				found = i*10 + j
+				break search
+			}
+		}
+	}
+	println(found)
+	m := map[int]int{1: 1}
+loop:
+	for k := range m {
+		for range 3 {
+			if k == 1 {
+				break loop
+			}
+		}
+	}
+	println("done")
+}
+
+func main() {
+	ints()
+	arrays()
+	slices()
+	strs()
+	targets()
+	labels()
+}

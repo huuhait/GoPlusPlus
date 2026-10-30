@@ -370,6 +370,60 @@ TEST(GIRSerialize, CatchBlocksRoundTrip) {
   EXPECT_FALSE((*R)->Funcs[1]->Blocks[Plain].Catch);
 }
 
+// P04.05: the self-naming types (`type S []S`, `type O Option[*O]`, `type A
+// [2]Option[*A]`) and the Owned flag survive the bitstream, and Context makes
+// one type of every spelling of the same body.
+TEST(GIRSerialize, SelfNamingTypesAndOwnedTemporariesRoundTrip) {
+  Context C1;
+  auto M = std::make_unique<Module>(C1, "rec");
+  Type *S = C1.recTy("rec.S"), *O = C1.recTy("rec.O"), *A = C1.recTy("rec.A");
+  ASSERT_TRUE(C1.setRecBody(S, C1.slice(S)));
+  ASSERT_TRUE(C1.setRecBody(O, C1.ptr(O)));
+  ASSERT_TRUE(C1.setRecBody(A, C1.array(C1.option(C1.ptr(A)), 2)));
+  // The same body is the same type, however it is spelled.
+  EXPECT_EQ(C1.slice(S), S);
+  EXPECT_EQ(C1.ptr(O), O);
+  EXPECT_EQ(C1.array(C1.option(C1.ptr(A)), 2), A);
+  EXPECT_EQ(C1.canonical(C1.slice(S)), S);
+  // Two names, one body: the second is refused.
+  Type *Twin = C1.recTy("rec.Twin");
+  EXPECT_FALSE(C1.setRecBody(Twin, C1.slice(S)));
+  EXPECT_TRUE(S->isRec() && S->isNominal() && S->hasBody());
+  EXPECT_EQ(S->str(), "rec.S");
+
+  auto F = std::make_unique<Function>();
+  F->Name = "rec.f";
+  F->Sig = C1.func({S, A}, C1.unit());
+  F->CC = CallConv::Go; // (a C function takes only C types, V067)
+  Function &Fn = *F;
+  M->addFunction(std::move(F));
+  FuncBuilder B(*M, Fn);
+  LocalId T = B.newTemp(S);
+  Fn.Locals[T].Owned = true;
+  B.assign(B.local(T), B.use(copyOf(B.local(B.param(0)))));
+  B.ret();
+  ASSERT_EQ(errorsOf(*M), "");
+  EXPECT_NE(text(*M).find("[owned]"), std::string::npos) << text(*M);
+
+  std::string Bytes = writeModule(*M);
+  EXPECT_EQ(Bytes, writeModule(*M));
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(text(**R), text(*M));
+  EXPECT_EQ(writeModule(**R), Bytes);
+  EXPECT_EQ(errorsOf(**R), "");
+  EXPECT_TRUE((*R)->Funcs[0]->Locals[T].Owned);
+  Type *S2 = (*R)->Funcs[0]->Sig->elems()[0];
+  ASSERT_TRUE(S2->isRec());
+  EXPECT_EQ(S2->name(), "rec.S");
+  EXPECT_EQ(S2->getKind(), Type::Kind::Slice);
+  EXPECT_EQ(S2->elem(), S2); // the cycle came back as a cycle
+  Type *A2 = (*R)->Funcs[0]->Sig->elems()[1];
+  EXPECT_EQ(A2->getKind(), Type::Kind::Array);
+  EXPECT_EQ(A2->elem()->getKind(), Type::Kind::Option);
+}
+
 TEST(GIRSerialize, ReadsOneBodyThroughTheIndex) {
   Context C1;
   auto M = sample(C1);
@@ -556,18 +610,22 @@ TEST(GIRLower, SymbolsDoNotDependOnTheThreadCount) {
 TEST(GIRLower, ReportsWhatItCannotLower) {
   Context C;
   std::string Diag;
-  EXPECT_EQ(lower(C,
-                  "package main\nfunc main() { var m map[string]int; _ = m }\n",
-                  &Diag),
+  EXPECT_EQ(lower(C, "package main\nfunc main() { defer println(1) }\n", &Diag),
             nullptr);
   EXPECT_NE(Diag.find("err_gir_unsupported"), std::string::npos) << Diag;
   Diag.clear();
   EXPECT_EQ(
-      lower(C, "package main\nfunc main() { x := []int{1}; _ = x }\n", &Diag),
+      lower(C, "package main\nfunc main() { f := func() {}; f() }\n", &Diag),
       nullptr);
   EXPECT_NE(Diag.find("err_gir_unsupported"), std::string::npos) << Diag;
-  // And the good side: a program in the subset is lowered.
+  // And the good side: a program in the subset is lowered, a map, a slice
+  // and a range loop (P04.05) included.
   EXPECT_NE(lower(C, "package main\nfunc main() { x := 1; _ = x }\n"), nullptr);
+  EXPECT_NE(lower(C,
+                  "package main\nfunc main() {\n\tm := map[string]int{\"a\": "
+                  "1}\n\tfor k, v := range m { println(k, v) }\n\tx := "
+                  "[]int{1}\n\t_ = x\n}\n"),
+            nullptr);
 }
 
 } // namespace

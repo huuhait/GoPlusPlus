@@ -1,0 +1,105 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-recursive.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-recursive.out %}
+// P04.05: a defined type that reaches itself through a slice, a map or an
+// array lowers to a self-naming GIR type (gir.md section 3) and runs: `type S
+// []S`, `type M map[string]M`, `type A [2][]A`, two types that name each
+// other, a struct that holds a slice of itself and a map of itself, and a
+// pointer to a self-naming type as a parameter. The Option cycles (`type O
+// Option[*O]`) are in core-recursive-option.test, which only Go++ has. The
+// expected output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+type S []S
+
+type M map[string]M
+
+type A [2][]A
+
+type X []Y
+
+type Y []X
+
+type Tree struct {
+	Name string
+	Kids []Tree
+	Idx  map[string]Tree
+}
+
+func depth(s S) int {
+	d := 0
+	for _, k := range s {
+		if x := depth(k); x > d {
+			d = x
+		}
+	}
+	return d + 1
+}
+
+func count(m M) int {
+	n := 1
+	for _, v := range m {
+		n += count(v)
+	}
+	return n
+}
+
+func size(t Tree) int {
+	n := 1
+	for _, k := range t.Kids {
+		n += size(k)
+	}
+	for _, k := range t.Idx {
+		n += size(k)
+	}
+	return n
+}
+
+func weigh(x X) int {
+	n := 1
+	for _, y := range x {
+		for _, x2 := range y {
+			n += weigh(x2)
+		}
+	}
+	return n
+}
+
+func area(a A) int {
+	n := 1
+	for _, side := range a {
+		for _, sub := range side {
+			n += area(sub)
+		}
+	}
+	return n
+}
+
+func main() {
+	var s S
+	println(len(s), depth(s), s == nil)
+	s = S{S{}, S{S{}, S{S{}}}, nil}
+	println(len(s), len(s[1]), len(s[1][1]), depth(s))
+	s = append(s, S{S{}})
+	println(len(s), len(s[3]), depth(s))
+
+	m := M{}
+	m["a"] = M{}
+	m["a"]["b"] = M{"c": nil}
+	m["d"] = nil
+	println(len(m), len(m["a"]), len(m["a"]["b"]), count(m))
+
+	var a A
+	a[0] = []A{{}, {}}
+	a[1] = []A{{nil, []A{{}}}}
+	println(len(a[0]), len(a[1]), len(a[1][0][1]), area(a))
+
+	x := X{Y{X{}, X{Y{}}}, nil}
+	println(len(x), len(x[0]), len(x[0][1]), weigh(x))
+
+	t := Tree{Name: "root"}
+	t.Kids = append(t.Kids, Tree{Name: "a"}, Tree{Name: "b", Kids: []Tree{{Name: "c"}}})
+	t.Idx = map[string]Tree{"d": {Name: "d", Idx: map[string]Tree{"e": {Name: "e"}}}}
+	println(size(t), len(t.Kids), len(t.Kids[1].Kids), t.Kids[1].Kids[0].Name, len(t.Idx["d"].Idx), t.Idx["d"].Idx["e"].Name)
+}

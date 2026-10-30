@@ -1,0 +1,11 @@
+package main
+
+var a [5]int
+var i = 4
+
+func main() {
+	println("before")
+	t := a[1:3]
+	println(t[i])
+	println("not reached")
+}

@@ -1,0 +1,178 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-latewrite.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-latewrite.out %}
+// P04.05 review R1, R3, R8 (gir.md "Assignment order"): a place into a
+// container that the rest of the statement may grow is found again after it
+// has run. The left side's operands (indexes, keys, calls) are evaluated
+// first; the slices, maps and pointers along it are read after the right
+// sides and before the first store, as gc does, so a write is not lost in a
+// buffer the right side moved away from (a use after free once P04.09
+// frees it). Every target kind: a slice element, an element of a slice in
+// a map, of a slice in a slice, a map in a slice, nested map entries, `op=`,
+// a tuple, range targets, an element through a conversion that shares the
+// storage. A store of the same statement does not move a
+// later target (`s, s[0] = t, 50` writes the old s, Go spec), and the move
+// of an in-place shrink runs after every store (R3). `append` reads the
+// slice after its other arguments (EXP-3, R1): directly, through a field
+// and a pointer, and with `...`. The expected output is Go's.
+package main
+
+var xs []int
+var m map[int][]int
+var ss [][]int
+var ms []map[int]int
+var mm map[int]map[int]int
+var cnt map[int]int
+var next int
+
+func grow() int {
+	xs = append(xs, 9, 9, 9, 9, 9)
+	return 7
+}
+
+func growM() int {
+	m[1] = append(m[1], 9, 9, 9, 9, 9)
+	return 8
+}
+
+func growS() int {
+	ss[0] = append(ss[0], 9, 9, 9, 9, 9)
+	ss = append(ss, nil, nil, nil)
+	return 6
+}
+
+func growMS() int {
+	ms = append(ms, map[int]int{}, map[int]int{}, map[int]int{})
+	return 4
+}
+
+// Inserts 300 new keys: the map grows and its entries move.
+func growMM() int {
+	for i := 0; i < 300; i++ {
+		mm[1000+next] = map[int]int{}
+		next++
+	}
+	return 5
+}
+
+func growCnt() int {
+	for i := 0; i < 300; i++ {
+		cnt[1000+next] = 0
+		next++
+	}
+	return 3
+}
+
+type IS []int
+
+var g []int
+
+func bump() int {
+	g = append(g, 100)
+	return len(g)
+}
+
+func bumpS() []int {
+	g = append(g, 200)
+	return []int{7, 8}
+}
+
+type H struct{ items []int }
+
+var h H
+
+func bumpH() int {
+	h.items = append(h.items, 300)
+	return len(h.items)
+}
+
+func main() {
+	// R8: a slice element; the right side grows the slice.
+	xs = []int{1, 2, 3}
+	xs[1] = grow()
+	println(xs[0], xs[1], xs[2], len(xs))
+	xs = []int{1, 2, 3}
+	xs[1] += grow()
+	println(xs[0], xs[1], xs[2], len(xs))
+	xs = []int{1, 2, 3}
+	xs[0], xs[2] = grow(), grow()
+	println(xs[0], xs[1], xs[2], len(xs))
+	// An element of a slice in a map, and of a slice in a slice.
+	m = map[int][]int{1: {1, 2, 3}}
+	m[1][1] = growM()
+	println(m[1][0], m[1][1], len(m[1]))
+	m[1][2] += growM()
+	println(m[1][2], len(m[1]))
+	ss = [][]int{{1, 2, 3}}
+	ss[0][1] = growS()
+	println(ss[0][1], len(ss[0]), len(ss))
+	// A map in a slice (s[i][k]): the slice moves.
+	ms = []map[int]int{{1: 1}}
+	ms[0][5] = growMS()
+	println(len(ms), ms[0][5], len(ms[0]))
+	// Map entries, nested and with op=; the right side grows the outer map.
+	mm = map[int]map[int]int{1: {}}
+	mm[1][2] = growMM()
+	println(len(mm), mm[1][2], len(mm[1]))
+	mm[1][2] += growMM()
+	println(len(mm), mm[1][2])
+	mm[1][3], mm[1][4] = growMM(), growMM()
+	println(len(mm), mm[1][3], mm[1][4], len(mm[1]))
+	cnt = map[int]int{1: 10}
+	cnt[1] += growCnt()
+	cnt[2] = growCnt()
+	println(len(cnt), cnt[1], cnt[2])
+	// Through a conversion that shares the storage.
+	xs = []int{1, 2, 3, 4}
+	IS(xs)[1] = grow()
+	println(len(xs), xs[1])
+	xs = []int{1, 2, 3, 4}
+	(*[4]int)(xs)[2] = grow()
+	println(len(xs), xs[2])
+	// Range targets.
+	src := []int{4, 5, 6}
+	dst := make([]int, 3)
+	k := 0
+	for k, dst[k] = range src {
+	}
+	println(k, dst[0], dst[1], dst[2])
+	for k, mm[1][k] = range src {
+	}
+	println(mm[1][0], mm[1][1], mm[1][2])
+	// The same statement: a later target keeps the slice it had.
+	s := []int{1, 2, 3}
+	t := []int{4, 5, 6}
+	s, s[0] = t, 50
+	println(s[0], t[0])
+	// R3: the move of a shrink in place runs after every store.
+	s = []int{1, 2, 3, 4}
+	s, s[0] = s[1:], 50
+	println(len(s), s[0], s[1], s[2])
+	s = []int{1, 2, 3, 4}
+	s, s[1] = s[1:], 70
+	println(len(s), s[0], s[1], s[2])
+	s = []int{1, 2, 3, 4}
+	s[0], s = 50, s[1:]
+	println(len(s), s[0], s[1], s[2])
+	s = []int{1, 2, 3, 4}
+	s[1], s = 70, s[1:]
+	println(len(s), s[0], s[1], s[2])
+	// R1: append reads its slice after the other arguments.
+	g = make([]int, 1, 10)
+	g[0] = 1
+	g = append(g, bump())
+	println(len(g), cap(g), g[0], g[1], g[len(g)-1])
+	g = []int{1}
+	g = append(g, bump())
+	println(len(g), g[0], g[1], g[len(g)-1])
+	g = make([]int, 1, 10)
+	g = append(g, bumpS()...)
+	println(len(g), cap(g), g[0], g[1], g[len(g)-1])
+	h.items = []int{1}
+	h.items = append(h.items, bumpH())
+	println(len(h.items), h.items[0], h.items[1], h.items[2])
+	p := &h
+	p.items = append(p.items, bumpH(), bumpH())
+	println(len(h.items), h.items[3], h.items[4], h.items[5], h.items[6])
+}

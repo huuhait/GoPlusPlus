@@ -1,0 +1,25 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.05, spec SLC-13: the three-index form `s[i:j:k]` is defined for arrays
+// only in v0. Both sides: on an array and on a pointer to one it lowers; on a
+// slice and on a view it is one E0439 per use naming the rule, and nothing
+// else is reported for the code that uses the result. (The checker accepts
+// it today; it would be the place to refuse it.)
+package main
+
+func sum(xs []int) int { return len(xs) }
+
+func main() {
+	var a [5]int
+	p := &a
+	ok := a[1:2:3]
+	ok2 := p[0:1:4]
+	s := make([]int, 2, 8)
+	bad := s[0:1:2]
+	v := a[0:4]
+	bad2 := v[0:1:2]
+	println(len(ok), len(ok2), len(bad), sum(bad2))
+}
+
+// CHECK: slice3-refused.test:17:9: error[E0439]: a 3-index slice of a slice or a view (spec SLC-13: arrays only in v0) is not supported
+// CHECK: slice3-refused.test:19:10: error[E0439]: a 3-index slice of a slice or a view (spec SLC-13: arrays only in v0) is not supported
+// CHECK-NOT: error

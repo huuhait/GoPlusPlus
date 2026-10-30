@@ -1,0 +1,18 @@
+package main
+
+// A type that refers to itself through a function value or an interface is
+// refused for the function value / the interface (P04.07, P04.06), once at
+// the type, and nothing else is reported for it.
+type F func() F
+
+type I interface{ Next() I }
+
+func useF(f F) {}
+
+func useI(i I) {}
+
+type Fine []Fine
+
+func ok(s Fine) int { return len(s) }
+
+func main() {}

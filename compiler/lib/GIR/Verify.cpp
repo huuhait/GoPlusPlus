@@ -227,6 +227,10 @@ private:
     for (size_t I = 0; I < TypeWork.size() && !full(); ++I) {
       ++Steps;
       const Type *T = TypeWork[I];
+      if (T->isRec() && !T->hasBody()) {
+        err("V002", "self-naming type " + T->name().str() + " has no body");
+        continue;
+      }
       switch (T->getKind()) {
       case Type::Kind::Int:
         if (T->bits() != 8 && T->bits() != 16 && T->bits() != 32 &&
@@ -279,7 +283,7 @@ private:
       const Type *C = Work.pop_back_val();
       if (!C)
         continue;
-      if (C->getKind() == Type::Kind::Struct)
+      if (C->isNominal())
         Out.push_back(C);
       else if (C->getKind() == Type::Kind::Array ||
                C->getKind() == Type::Kind::Option)
@@ -289,9 +293,31 @@ private:
     }
   }
 
-  /// V003: a struct does not contain itself by value, directly or through
-  /// other structs, arrays and tuples (it would have no finite size). A
-  /// three-colour DFS over the structs the module uses, with its own stack.
+  /// What a struct, or a self-naming type, holds by value: its fields, or the
+  /// parts of the body of the self-naming type.
+  static void bodyParts(const Type *S,
+                        llvm::SmallVectorImpl<const Type *> &Parts) {
+    if (!S->isRec()) {
+      Parts.append(S->elems().begin(), S->elems().end());
+      return;
+    }
+    switch (S->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+      Parts.push_back(S->elem());
+      break;
+    case Type::Kind::Tuple:
+      Parts.append(S->elems().begin(), S->elems().end());
+      break;
+    default:
+      break; // a pointer, a slice: the cycle ends there
+    }
+  }
+
+  /// V003: a struct (or a self-naming type, `type A [2]A`) does not contain
+  /// itself by value, directly or through other structs, arrays and tuples
+  /// (it would have no finite size). A three-colour DFS over the named types
+  /// the module uses, with its own stack.
   void structCycles() {
     llvm::DenseMap<const Type *, uint8_t> Color; // 1: on the path, 2: done
     struct Frame {
@@ -302,14 +328,16 @@ private:
     auto Push = [&](const Type *S) {
       Color[S] = 1;
       Frame Fr{S, {}};
-      for (const Type *Fd : counted(Steps, S->elems()))
+      llvm::SmallVector<const Type *, 4> Parts;
+      bodyParts(S, Parts);
+      for (const Type *Fd : counted(Steps, llvm::ArrayRef(Parts)))
         structsIn(Fd, Fr.Next);
       Stack.push_back(std::move(Fr));
     };
     for (size_t I = 0; I < TypeWork.size() && !full(); ++I) {
       ++Steps;
       const Type *Root = TypeWork[I];
-      if (Root->getKind() != Type::Kind::Struct || Color.count(Root))
+      if (!Root->isNominal() || Color.count(Root))
         continue;
       Push(Root);
       while (!Stack.empty()) {
@@ -325,8 +353,8 @@ private:
         if (It == Color.end())
           Push(Kid);
         else if (It->second == 1)
-          err("V003",
-              "struct " + Kid->name().str() + " contains itself by value");
+          err("V003", (Kid->isRec() ? "type " : "struct ") + Kid->name().str() +
+                          " contains itself by value");
       }
     }
   }
@@ -431,6 +459,8 @@ private:
                              : Lo.K == Local::Var || Lo.K == Local::Temp;
       if (!KindOk)
         err("V011", "local _" + num(L) + " has the wrong kind");
+      if (Lo.Owned && Lo.K != Local::Temp)
+        err("V014", "local _" + num(L) + " is owned and not a temporary");
       const Type *Want = L == 0   ? Fn.Sig->ret()
                          : L <= N ? Fn.Sig->elems()[L - 1]
                                   : Lo.Ty;
@@ -539,6 +569,8 @@ private:
       if (Cur->getKind() == Type::Kind::Array ||
           Cur->getKind() == Type::Kind::Slice)
         return Cur->elem();
+      if (Cur->getKind() == Type::Kind::String)
+        return M.Ctx.u8(); // a byte of the string (P04.05)
       err("V032", "an index into " + str(Cur));
       return nullptr;
     case PlaceElem::ConstIndex:
@@ -938,7 +970,7 @@ private:
   void assertOn(const Terminator &T) {
     if (operand(T.Discr) && !T.Discr.type()->isBool())
       err("V060", "an assert on " + str(T.Discr.type()));
-    size_t Want = T.AK == AssertKind::Bounds ? 2 : 0;
+    size_t Want = takesIndexAndLength(T.AK) ? 2 : 0;
     if (T.Args.size() != Want) {
       err("V065", std::string("a ") + getAssertKindName(T.AK) + " assert has " +
                       num(T.Args.size()) + " values, it needs " + num(Want));

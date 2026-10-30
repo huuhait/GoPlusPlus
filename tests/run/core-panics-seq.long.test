@@ -1,0 +1,9 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-seq
+// P04.05: every program of Inputs/panics-seq (an index of a slice and of a
+// string by index type, in loads, stores, compound assignments, nested and
+// after output; [:hi] against the capacity and the length, [lo:hi], the
+// negative forms, the three-index forms of arrays, make with a bad length or
+// capacity, a slice converted to an array that is too long, an index target of
+// a range clause).
+// See core-panics-seq.test.

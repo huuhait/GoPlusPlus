@@ -31,6 +31,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -82,6 +83,15 @@ public:
   bool fails() const { return Fails; }
   llvm::StringRef name() const { return Name; }
   bool hasBody() const { return Body; }
+  /// A self-naming type (Context::recTy): a named type whose body is any
+  /// structural kind, made for a type that reaches itself through no struct
+  /// (`type S []S`, `type A [2]*A`). Once its body is set it behaves as the
+  /// kind of its body (getKind, elem, length, ... answer for the body), but
+  /// it is nominal: two of them are the same type only when they have the
+  /// same name, and printing, the bitstream and the verifier use the name.
+  bool isRec() const { return Rec; }
+  /// Is the type known by a name (a struct or a self-naming type)?
+  bool isNominal() const { return K == Kind::Struct || Rec; }
 
   /// The type of field I of a String, a Slice, an Option, a Tuple or a Struct
   /// (null if there is no such field).
@@ -100,6 +110,7 @@ private:
   bool Signed = false;
   bool Fails = false;
   bool Body = false;
+  bool Rec = false;
   unsigned Bits = 0;
   uint64_t Len = 0;
   Type *Elem = nullptr;
@@ -107,6 +118,19 @@ private:
   llvm::ArrayRef<Type *> Elems;
   llvm::StringRef Name;
 };
+
+/// The size and alignment of a value in memory, in bytes, as the code
+/// generator lays it out for linux/amd64 and linux/arm64 (D4.5; both have
+/// 64-bit pointers and natural alignment): a bool is one byte, a string and a
+/// slice 24 (pointer, length, capacity), a struct, a tuple and an Option(T) (T,
+/// then a flag byte) are laid out in order with natural alignment, and the size
+/// is a multiple of the alignment. `tests/unit/CodeGen/LayoutTest.cpp` compares
+/// it with LLVM's data layout. Iterative: a chain of named types is as deep as
+/// the source.
+struct Layout {
+  uint64_t Size = 0, Align = 1;
+};
+Layout layoutOf(const Type *T);
 
 class Context {
 public:
@@ -131,6 +155,21 @@ public:
   /// Sets the fields of a struct once; false if it already has a body.
   bool setStructBody(Type *S, llvm::ArrayRef<Type *> Fields);
 
+  /// The self-naming type called Name (created without a body on first
+  /// use). Its parts may name it: `type S []S` is recTy("S") whose body is
+  /// `slice(S)`. Until its body is set it has no kind (Unit).
+  Type *recTy(llvm::StringRef Name);
+  /// Gives R the body Body, a structural type made with R inside it (Ptr,
+  /// Slice, Array, Option or Tuple). From then on R answers for the kind,
+  /// element and length of Body, and Body itself is the same type as R: a
+  /// structural type that is built later with the same parts (`slice(S)`)
+  /// comes back as R, so `[]S` and `S` are one type, as the checker says
+  /// (`S` has the underlying type `[]S`). False if R already has a body or
+  /// Body is a body of another self-naming type.
+  bool setRecBody(Type *R, Type *Body);
+  /// T, or the self-naming type whose body T is (setRecBody).
+  Type *canonical(Type *T);
+
   /// What makes two structural types the same type (Type.cpp).
   struct Key;
 
@@ -147,6 +186,9 @@ private:
   llvm::BumpPtrAllocator Alloc;
   llvm::FoldingSet<Type> Set;
   llvm::StringMap<Type *> Structs;
+  /// The structural body of each self-naming type (setRecBody) to the type.
+  llvm::DenseMap<Type *, Type *> Canon;
+  std::atomic<bool> AnyCanon{false};
   Type *Unit, *Bool, *String;
 };
 

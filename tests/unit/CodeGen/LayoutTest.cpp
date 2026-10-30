@@ -182,6 +182,33 @@ void makeTable(std::vector<std::string> &Decls, std::vector<Entry> &Table) {
   Table.push_back({"Nest", 3});
   Decls.push_back("type Cx struct { f0 bool; f1 complex64; f2 complex128 }");
   Table.push_back({"Cx", 3});
+  // P04.05: slices (three words), maps (one pointer), the self-naming types
+  // and structs that hold them.
+  Decls.push_back("type WithSlice struct { f0 int8; f1 []int16; f2 "
+                  "map[int]string; f3 bool; f4 [2][]byte }");
+  Table.push_back({"WithSlice", 5});
+  Decls.push_back("type RecS []RecS");
+  Decls.push_back("type RecM map[string]RecM");
+  Decls.push_back("type RecO Option[*RecO]");
+  Decls.push_back("type RecA [2]Option[*RecA]");
+  Decls.push_back("type RecT struct { f0 bool; f1 []RecT; f2 map[int]RecT }");
+  Table.push_back({"RecT", 3});
+  const char *Seq[] = {"[]int8",
+                       "[]int64",
+                       "[][]string",
+                       "[]struct{}",
+                       "[]PadA",
+                       "map[int]int8",
+                       "map[string]PadB",
+                       "[3][]int32",
+                       "RecS",
+                       "RecM",
+                       "RecO",
+                       "RecA",
+                       "[2]RecS",
+                       "Option[RecA]"};
+  for (const char *Q : Seq)
+    Table.push_back({Q, 0});
   // Option[T]: the nil bit pattern for a pointer kind, else T and a flag.
   const char *Options[] = {
       "Option[int8]",     "Option[int16]",     "Option[int32]",

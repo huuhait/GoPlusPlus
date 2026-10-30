@@ -1,0 +1,22 @@
+package main
+
+// RNG-4: `mm[k1][k2] = v` with k1 absent inserts k1 into mm, so during a
+// range over mm it panics (with k1 there and its inner map nil, the inner
+// map is made in the entry: no insert into mm).
+
+func set(mm map[string]map[string]int, k1, k2 string) {
+	mm[k1][k2] = 1
+}
+
+func main() {
+	mm := map[string]map[string]int{"a": nil}
+	for k := range mm {
+		set(mm, k, "x")
+	}
+	println(len(mm), len(mm["a"]))
+	println("before")
+	for k := range mm {
+		set(mm, k+"!", "x")
+	}
+	println("not reached")
+}

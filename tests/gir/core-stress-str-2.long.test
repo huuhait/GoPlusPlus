@@ -1,0 +1,4 @@
+// REQUIRES: long
+// P04.05: the slicing part of core-stress-str.long.test (a deep chain of
+// slicing, many slicing statements).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_LoweringSlicing'

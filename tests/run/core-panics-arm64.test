@@ -1,4 +1,7 @@
 // REQUIRES: host-linux-amd64, qemu-aarch64
 // RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names div-int8,shift-left,index-uint8,index-after-output,assign-order-call --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
-// P04.04: panics on linux/arm64 under QEMU: the same exit status, output and
-// first line as Go's. Every program: core-panics-arm64.long.test.
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-seq --names idx-slice,idx-string-neg,sl-hi-cap,sl-lo-hi,sl3-hi-max,make-cap-small,conv-ptr-array --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
+// P04.04, P04.05: panics on linux/arm64 under QEMU: the same exit status, output and
+// first line as Go's, for division and shifts and indexes of arrays (P04.04) and
+// of slices and strings (P04.05). Every program: core-panics-arm64.long.test and
+// core-panics-seq-arm64.long.test.

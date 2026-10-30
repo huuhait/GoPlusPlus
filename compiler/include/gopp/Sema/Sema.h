@@ -35,6 +35,7 @@
 #include "gopp/Sema/Types.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <memory>
 #include <string>
@@ -218,6 +219,11 @@ struct Info {
   /// picks the printed form of a type among these and the package tables by
   /// the fixed order (P04.24).
   llvm::DenseMap<const ast::Expr *, const UnitDisplay *> UnitDisplays;
+  /// The slice expression of every `s = s[i:j]` that shrinks the owned
+  /// slice s in place (SLC-6, SLC-7: the kept elements move down and the
+  /// capacity stays). Any other slice expression makes a borrowed slice or a
+  /// view (SLC-8), whose type is in Types.
+  llvm::DenseSet<const ast::SliceExpr *> Reslices;
 
   const TypeAndValue *lookup(const ast::Expr *E) const {
     auto It = Types.find(E);

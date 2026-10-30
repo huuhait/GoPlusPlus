@@ -1,0 +1,155 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-views.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-views.out %}
+// GOLDEN: by-hand
+// P04.05, D4.5, ADR-0020: View[T] and the Go++ rules of strings, slices and
+// maps that Go has no program for, so the expected output
+// (golden/core-views.out) is written by hand from the rules.
+// - A View[string] and a View[[]T] are the data pointer and the length;
+//   slicing a string or a slice makes one, and a slice view has no capacity
+//   (SLC-12: its cap is its length).
+// - A string converts to View[string] where a view is wanted, and a value T
+//   to View[T] by address; reads through a view copy out (string(v), []T(v))
+//   or are a view again.
+// - `s = s[i:j]` on the same owned slice shrinks it: the kept elements move
+//   down and the capacity stays (SLC-6, SLC-7).
+// - A write to a nil map creates it in the variable (ADR-0018 amendment 5),
+//   and `m[a][b] = v` makes m[a] when it is missing.
+// - A map is looked up with a View[string] key without copying it (OWN-V4).
+// - An explicit conversion View[T](x) is the same view (P04.05 review R7).
+package main
+
+type P struct {
+	Name string
+	Age  int
+}
+
+func length(s View[string]) int { return len(s) }
+
+func total(a View[[]int]) int {
+	t := 0
+	for _, x := range a {
+		t += x
+	}
+	return t
+}
+
+func first(a View[[]int]) int { return a[0] }
+
+func name(p View[P]) string { return string(p.Name) }
+
+func age(p View[P]) int { return p.Age }
+
+func shout(s View[string]) string { return string(s) + "!" }
+
+func count(m View[map[string]int], k View[string]) int { return m[k] }
+
+func main() {
+	// strings and views
+	s := "hello, world"
+	v := s[7:]
+	println(length(s), length(v), length(s[1:3]), v, s[:5])
+	println(v == "world", s[:5] == "hello", s[1:3] == s[1:3], v < "x")
+	c := string(v) + "?"
+	println(c, shout(s[:2]), shout(c))
+	b := []byte(v)
+	b[0] = 'W'
+	println(string(b), v)
+	println(len(s[3:3]), s[3:3] == "", len(s[len(s):]))
+
+	// slices and views
+	xs := []int{1, 2, 3, 4, 5}
+	w := xs[1:4]
+	w[0] = 20
+	println(len(w), cap(w), w[0], w[2], xs[1], total(w), total(xs), first(xs[2:]))
+	ys := xs[2:]
+	ys = ys[1:]
+	println(len(ys), cap(ys), ys[0], total(ys))
+	var arr [4]int
+	for i := range arr {
+		arr[i] = i + 1
+	}
+	av := arr[1:3]
+	av[1] = 30
+	println(len(av), arr[2], total(arr[:]), len(arr[4:]))
+	pa := &arr
+	pv := pa[2:]
+	println(len(pv), cap(pv), pv[0], pv[1])
+	cp := []int(w)
+	cp[0] = 999
+	println(len(cp), cp[0], xs[1], w[0])
+	for i, x := range xs[3:] {
+		print(" ", i, x)
+	}
+	println()
+	n := copy(xs, xs[3:])
+	println(n, xs[0], xs[1], xs[2])
+
+	// a value as a view
+	p := P{"ann", 31}
+	println(name(p), age(p))
+	ps := []P{{"x", 1}, {"yy", 2}}
+	println(name(ps[1]), age(ps[0]), len(ps[1].Name))
+	vp := ps[:1]
+	println(len(vp), vp[0].Age)
+
+	// shrinking in place
+	z := []int{0, 1, 2, 3, 4, 5, 6, 7}
+	z = z[3:6]
+	println(len(z), cap(z), z[0], z[1], z[2])
+	z = z[:1]
+	println(len(z), cap(z), z[0])
+	z = z[:0]
+	println(len(z), cap(z))
+	z = append(z, 9, 9)
+	println(len(z), cap(z), z[1])
+	zs := []string{"a", "b", "c", "d"}
+	zs = zs[1:3]
+	println(len(zs), cap(zs), zs[0], zs[1])
+
+	// nil maps are created by the first write
+	var m map[string]int
+	println(m == nil, len(m))
+	m["a"] = 1
+	println(m == nil, len(m), m["a"])
+	var nested map[string]map[string]int
+	nested["x"] = nil
+	println(len(nested), nested["x"] == nil)
+	mm := map[string]map[string]int{}
+	mm["a"]["b"] = 7
+	mm["a"]["c"]++
+	mm["z"]["q"] += 2
+	println(len(mm), len(mm["a"]), mm["a"]["b"], mm["a"]["c"], mm["z"]["q"], len(mm["none"]))
+	type pair struct{ m map[int]string }
+	var pr pair
+	pr.m = nil
+	pr.m[3] = "three"
+	println(len(pr.m), pr.m[3])
+	var grid map[int]map[int]int
+	for i := range 3 {
+		for j := range 3 {
+			grid[i][j] = i * j
+		}
+	}
+	println(len(grid), len(grid[2]), grid[2][2], grid[1][2])
+
+	// a view as a key
+	counts := map[string]int{"hello": 5, "world": 6}
+	println(count(counts, s[:5]), count(counts, v), count(counts, s[1:2]))
+	println(counts[s[:5]], counts[v], counts[s[:0]])
+	counts[string(s[:5])] += 1
+	println(counts["hello"])
+
+	// explicit conversions to a view
+	cbs := []byte("xyz")
+	cs := "abcd"
+	cpv := P{"cy", 4}
+	ci := []int{1, 2, 3}
+	va := View[string](cs)
+	vb := View[P](cpv)
+	vc := View[[]byte](cbs)
+	vd := View[[]int](ci)
+	println(len(va), vb.Name, vb.Age, len(vc), string(vc[1:]), total(vd),
+		length(View[string](cs[1:])), length(View[string]("lit")))
+}

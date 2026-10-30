@@ -8,7 +8,10 @@ add_gopp_library(GIR
   Glue.cpp
   LowerExpr.cpp
   LowerStmt.cpp
+  LowerStr.cpp
   Runtime.cpp
+  RuntimeMap.cpp
+  RuntimeStr.cpp
   Print.cpp
   Serialize.cpp
   Symbols.cpp

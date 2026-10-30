@@ -1,0 +1,12 @@
+package main
+
+func ins(m map[int]int, k int) { m[k] = 1 }
+
+func main() {
+	m := map[int]int{1: 1, 2: 2}
+	println("start")
+	for k := range m {
+		ins(m, k+100)
+	}
+	println("not reached")
+}

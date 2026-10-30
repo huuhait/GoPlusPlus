@@ -1,0 +1,250 @@
+// GOLDEN: by-hand
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-latewrite-gopp.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-latewrite-gopp.out %}
+// P04.05 review R2, R6, R8 where Go++ differs from Go (a write to a nil map
+// creates it in place, ADR-0018 amendment point 5; Go panics). A map entry
+// is made when its value is stored, outer to inner, from the map as it is
+// then: `mm[a][b], mm[c][d] = ...` with a and c absent, where the first
+// store fills the table and the second grows it (map_grow moves the
+// entries, a pointer taken before would be stale), and `mm[a][b] = grow()`
+// where grow grows mm. A present entry passed to a borrowed map parameter
+// is the entry's own map (OWN-P9, PAR-10): what the callee creates is the
+// owner's; its address is taken after the other arguments, which may grow
+// the map (EXP-3). An absent key passes a nil map of its own (decision M9,
+// an argument never inserts). The entry is copied in and out around the
+// call (review R11), so no pointer into the map's entries is held while the
+// callee runs and may grow the map: a map the callee created for a nil
+// entry is stored into the entry after the call, in the map as it is then,
+// if the key is still there and its map still nil; a key the callee deleted
+// stays deleted, and an entry the callee set to another map keeps it. The
+// copy-out goes to the map object the entry was read from, also when the
+// callee re-points the path to it (R13), and one entry passed twice to a call
+// is one temporary, compared at run time (R12: `two(mm[i], mm[j])` with
+// i == j aliases as `two(x, x)` does; three and four equal ones are one map
+// too, R14). The aliasing is resolved at run time by gopp.map_entry_args,
+// pairwise up to 8 entry arguments and by a hash table above (R15: twelve
+// arguments here, two maps with the same keys). An in-place shrink (SLC-6) reads its slice
+// after the other right sides, as `p = append(p, ...)` does (EXP-3): a call
+// among them that grows the slice moved its elements (Go re-slices the old
+// array instead, and `g, x = g[1:], grow()` keeps 3 elements there). Go has
+// none of this, so the expected output is written by hand.
+package main
+
+var mm map[int]map[int]int
+
+func grow() int {
+	for i := 200; i < 300; i++ {
+		mm[i] = nil
+	}
+	return 5
+}
+
+func put(m map[int]int, k int) {
+	m[k] = k * 10
+}
+
+var ms []map[int]int
+
+var g []int
+
+func growMM() {
+	for i := 1000; i < 1490; i++ {
+		mm[i] = map[int]int{i: i}
+	}
+}
+
+func putGrow(a map[int]int, k int) {
+	growMM()
+	a[k] = k * 10
+}
+
+func fGrow(o map[int]map[int]int, a map[int]int) {
+	for i := 10; i < 500; i++ {
+		o[i] = nil
+	}
+	a[1] = 1
+}
+
+func putDel(a map[int]int) {
+	a[1] = 1
+	delete(mm, 5)
+}
+
+func putReplace(a map[int]int) {
+	a[1] = 1
+	mm[5] = map[int]int{7: 7}
+}
+
+func putReplaceFirst(a map[int]int) {
+	mm[5] = map[int]int{7: 7}
+	a[1] = 1
+}
+
+var mmm map[int]map[int]map[int]int
+
+func two(a map[int]int, b map[int]int) {
+	a[1] = 1
+	println("in two:", len(a), len(b))
+	b[2] = 2
+}
+
+func three(a, b, c map[int]int) {
+	a[1] = 1
+	b[2] = 2
+	c[3] = 3
+	println("in three:", len(a), len(b), len(c))
+}
+
+func four(a, b, c, d map[int]int) {
+	a[1] = 1
+	b[2] = 2
+	c[3] = 3
+	d[4] = 4
+	println("in four:", len(a), len(b), len(c), len(d))
+}
+
+func twelve(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11 map[int]int) {
+	p0[0] = 0
+	p1[1] = 1
+	p2[2] = 2
+	p3[3] = 3
+	p4[4] = 4
+	p5[5] = 5
+	p6[6] = 6
+	p7[7] = 7
+	p8[8] = 8
+	p9[9] = 9
+	p10[10] = 10
+	p11[11] = 11
+	println("in twelve:", len(p0), len(p1), len(p3), len(p6), len(p11))
+}
+
+type H struct{ m map[int]map[int]int }
+
+var s1, s2 H
+var hp *H = &s1
+
+func repoint(a map[int]int) {
+	hp = &s2
+	a[3] = 3
+}
+
+func putNested(a map[int]int) {
+	for i := 0; i < 300; i++ {
+		mmm[1][100+i] = nil
+	}
+	a[2] = 20
+}
+
+func growG() int {
+	g = append(g, 9, 9, 9, 9, 9)
+	return 7
+}
+
+func growMS() int {
+	ms = append(ms, nil, nil, nil)
+	return 4
+}
+
+func main() {
+	// mm has 7 entries in a table of 8: mm[100] is the 8th, mm[101] grows it.
+	mm = map[int]map[int]int{}
+	for i := 0; i < 7; i++ {
+		mm[i] = map[int]int{}
+	}
+	mm[100][1], mm[101][2] = 11, 22
+	println(len(mm), len(mm[100]), mm[100][1], len(mm[101]), mm[101][2])
+	mm = map[int]map[int]int{}
+	mm[100][1] = grow()
+	println(len(mm), len(mm[100]), mm[100][1])
+	mm[100][1] += grow()
+	mm[150][2] += grow()
+	println(len(mm), mm[100][1], mm[150][2])
+	// A nil map in a slice, created in place after the slice moved.
+	ms = []map[int]int{nil}
+	ms[0][7] = growMS()
+	println(len(ms), len(ms[0]), ms[0][7])
+	// A present entry passed on: the callee creates the owner's map.
+	mm = map[int]map[int]int{5: nil}
+	put(mm[5], 9)
+	println(len(mm), len(mm[5]), mm[5][9])
+	mm[6] = nil
+	put(mm[6], grow())
+	println(len(mm), len(mm[6]), mm[6][5])
+	// An absent key inserts nothing; the callee's map is dropped.
+	put(mm[7], 1)
+	_, ok := mm[7]
+	println(len(mm), ok)
+	// R11: the callee grows the map the entry is in.
+	mm = map[int]map[int]int{5: nil}
+	putGrow(mm[5], 9)
+	println(len(mm), len(mm[5]), mm[5][9])
+	m2 := map[int]map[int]int{5: nil}
+	fGrow(m2, m2[5])
+	println(len(m2), len(m2[5]))
+	mm = map[int]map[int]int{5: map[int]int{}}
+	putGrow(mm[5], 3)
+	println(len(mm), len(mm[5]), mm[5][3])
+	// The callee deletes the key, or replaces the entry's map.
+	mm = map[int]map[int]int{5: nil}
+	putDel(mm[5])
+	_, ok = mm[5]
+	println(len(mm), ok)
+	mm = map[int]map[int]int{5: nil}
+	putReplace(mm[5])
+	println(len(mm[5]), mm[5][7], mm[5][1])
+	mm = map[int]map[int]int{5: nil}
+	putReplaceFirst(mm[5])
+	println(len(mm[5]), mm[5][7], mm[5][1])
+	// A nested entry, mmm[a][b], whose map grows during the call.
+	mmm = map[int]map[int]map[int]int{1: {2: nil}}
+	putNested(mmm[1][2])
+	println(len(mmm[1]), len(mmm[1][2]), mmm[1][2][2])
+	// R12: one entry passed twice is one map for the callee.
+	mm = map[int]map[int]int{6: nil, 7: nil}
+	two(mm[6], mm[6])
+	println(len(mm[6]))
+	i, j := 7, 7
+	two(mm[i], mm[j])
+	println(len(mm[7]))
+	mm = map[int]map[int]int{6: nil, 7: nil}
+	j = 6
+	two(mm[i], mm[j])
+	println(len(mm[6]), len(mm[7]))
+	m3 := map[int]map[int]int{6: nil}
+	mm = map[int]map[int]int{6: nil}
+	two(mm[6], m3[6])
+	println(len(mm[6]), len(m3[6]))
+	// R14: three and four equal entries are one map.
+	mm = map[int]map[int]int{6: nil, 7: nil}
+	three(mm[6], mm[6], mm[6])
+	println(len(mm[6]))
+	mm = map[int]map[int]int{6: nil, 7: nil}
+	i, j = 6, 6
+	four(mm[6], mm[i], mm[7], mm[j])
+	println(len(mm[6]), len(mm[7]))
+	// R15: more than 8 entry arguments (the hash table): keys 1 1 2 1 2 3
+	// for mm, then the same keys for nn, which are other entries.
+	mm = map[int]map[int]int{1: nil, 2: nil, 3: nil}
+	nn := map[int]map[int]int{1: nil, 2: nil, 3: nil}
+	one, two_ := 1, 2
+	twelve(mm[1], mm[one], mm[2], mm[1], mm[two_], mm[3], nn[1], nn[one],
+		nn[2], nn[1], nn[two_], nn[3])
+	println(len(mm[1]), len(mm[2]), len(mm[3]), len(nn[1]), len(nn[2]),
+		len(nn[3]))
+	// R13: the copy-out goes to the map the entry was read from.
+	s1.m = map[int]map[int]int{5: nil}
+	s2.m = map[int]map[int]int{5: nil}
+	repoint(hp.m[5])
+	println(len(s1.m[5]), len(s2.m[5]))
+	// A shrink in place reads its slice after a call that grows it.
+	g = []int{1, 2, 3, 4}
+	x := 0
+	g, x = g[1:], growG()
+	println(len(g), g[0], g[2], g[3], x)
+	g = []int{1, 2, 3, 4}
+	x, g = growG(), g[1:]
+	println(len(g), g[0], g[2], g[3], x)
+}

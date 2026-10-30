@@ -1,0 +1,37 @@
+package main
+
+@Extern("C")
+func m(x map[int]int) int32
+
+@Extern("C")
+func mr() map[string]int
+
+@Extern("C")
+func sl(x []byte)
+
+@Extern("C")
+func vs(x View[string])
+
+type P struct{ a, b int32 }
+
+@Extern("C")
+func vp(x View[P])
+
+type HasMap struct {
+	n int32
+	m [2]map[int]int
+}
+
+@Extern("C")
+func inner(x HasMap)
+
+@Extern("C")
+func okp(x *map[int]int, y *string, z *HasMap) int32
+
+func main() {
+	var mp map[int]int
+	_ = m(mp)
+	str := ""
+	var h HasMap
+	_ = okp(&mp, &str, &h)
+}

@@ -1,0 +1,69 @@
+package main
+
+// RNG-4: a map counts its running ranges. A range that ends early (break,
+// return, continue or break of an outer loop, goto out of it) stops counting,
+// so an insert after it is fine; writing a key that is there during a range
+// is no insert. Then a new key during a range panics, whatever the size.
+
+func find(m map[int]int, want int) int {
+	for k, v := range m {
+		if k == want {
+			return v
+		}
+	}
+	return -1
+}
+
+func addKey(m map[int]int, k int) {
+	m[k] = 1
+}
+
+func gotoOut(m map[int]int) int {
+	n := 0
+	for k := range m {
+		n += k
+		if n > 0 {
+			goto done
+		}
+	}
+done:
+	return n
+}
+
+func main() {
+	m := map[int]int{1: 10, 2: 20, 3: 30}
+	for k := range m {
+		if k > 0 {
+			break
+		}
+	}
+	addKey(m, 4)
+	println(find(m, 2), find(m, 9), len(m))
+	addKey(m, 5)
+outer:
+	for i := 0; i < 3; i++ {
+		for k := range m {
+			if k > 0 {
+				continue outer
+			}
+		}
+	}
+	addKey(m, 6)
+	_ = gotoOut(m)
+	addKey(m, 7)
+	for k := range m {
+		for j := range m {
+			_ = j
+		}
+		addKey(m, k) // a key that is there
+	}
+	addKey(m, 8)
+	println(len(m))
+	println("before")
+	for k := range m {
+		if k > 0 {
+			addKey(m, 1000)
+		}
+	}
+	println("not reached")
+}

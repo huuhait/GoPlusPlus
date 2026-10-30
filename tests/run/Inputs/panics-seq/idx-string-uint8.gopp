@@ -1,0 +1,10 @@
+package main
+
+var t = "héllo"
+var i uint8 = 255
+
+func main() {
+	println("before")
+	println(t[i])
+	println("not reached")
+}

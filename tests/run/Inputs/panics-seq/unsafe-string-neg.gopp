@@ -1,0 +1,13 @@
+package main
+
+import "unsafe"
+
+var a [5]int
+var n = -2
+var b = [3]byte{1, 2, 3}
+
+func main() {
+	println("before")
+	println(len(unsafe.String(&b[0], n)))
+	println("not reached")
+}

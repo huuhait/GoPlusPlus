@@ -1,0 +1,22 @@
+package main
+
+// The element of an outer index is read (a pointer) before the store: its
+// index is checked first, after the right side, not after the read.
+type U struct{ x int }
+
+type T struct{ p *U }
+
+func n(x int) int { return x }
+
+func f() int {
+	println("f called")
+	return 1
+}
+
+func main() {
+	var u U
+	t := []T{{p: &u}}
+	println("before")
+	t[n(1<<40)].p.x = f()
+	println("not reached")
+}

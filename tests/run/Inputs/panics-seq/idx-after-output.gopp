@@ -1,0 +1,13 @@
+package main
+
+var s = []int{1, 2, 3}
+var i = 3
+
+func main() {
+	println("before")
+	for k := 0; k < 3; k++ {
+		println("k", k)
+	}
+	println(s[i])
+	println("not reached")
+}

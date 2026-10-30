@@ -241,8 +241,8 @@ TEST(OptionHash, BoolAndArrayPayloads) {
 }
 
 TEST(OptionHash, RefusesAPayloadItCannotHashYet) {
-  // A string needs P04.05: no glue is made, nothing is hashed wrongly.
-  Jit J("var g Option[string]");
+  // A slice has no glue: none is made, nothing is hashed wrongly.
+  Jit J("var g Option[struct{ s []int }]");
   EXPECT_EQ(J.Fn, nullptr);
   EXPECT_NE(J.Error.find("no hash glue"), std::string::npos) << J.Error;
 }

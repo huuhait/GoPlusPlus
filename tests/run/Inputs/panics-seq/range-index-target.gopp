@@ -1,0 +1,12 @@
+package main
+
+var s = []int{1, 2, 3}
+var a [2]int
+var i = 2
+
+func main() {
+	println("before")
+	for a[i] = range s {
+	}
+	println("not reached")
+}

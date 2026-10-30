@@ -296,6 +296,8 @@ void Info::merge(ArrayRef<Info *> Others) {
   One(&Info::UnitConvs);
   One(&Info::UnitSites);
   One(&Info::UnitDisplays);
+  for (const Info *O : Others)
+    Reslices.insert(O->Reslices.begin(), O->Reslices.end());
 }
 
 //===----------------------------------------------------------------------===//
@@ -834,6 +836,11 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
                        Loc(N->getBegin()) + " unit-form `" + Text(N) + "` " +
                            units::displayStr(KV.second, Pkg)});
   }
+  // SLC-6: the re-slices that shrink a slice in place, as the lowering reads
+  // them (P04.05).
+  for (const ast::SliceExpr *N : P.I.Reslices)
+    Entries.push_back({N->getBegin().getRaw(), N->getEnd().getRaw(), 7,
+                       Loc(N->getBegin()) + " reslice `" + Text(N) + "`"});
   std::stable_sort(Entries.begin(), Entries.end(),
                    [](const DumpEntry &A, const DumpEntry &B) {
                      if (A.Begin != B.Begin)

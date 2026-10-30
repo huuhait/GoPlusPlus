@@ -1,4 +1,5 @@
 // RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// RUN: not %gopp build -emit=gir %S/Inputs/extern-gopp-types.gopp 2>&1 | FileCheck --check-prefix=TYPES %s
 // RUN: not %gopp build -emit=gir %S/Inputs/write-mismatch.gopp 2>&1 | FileCheck --check-prefix=WRITE %s
 // RUN: %gopp build -emit=gir %S/Inputs/write-unused.gopp | FileCheck --check-prefix=UNUSED %s
 // P04.02, P04.11: what @Extern accepts is decided in one place (Lowering::
@@ -6,7 +7,12 @@
 // (extern-aggregates.test has accepted ones, extern-deep.test the limits,
 // extern-bad-aggregates.test more), not the entry point. Each wrong declaration is one error at
 // its attribute or declaration, and a call of it is not reported again.
-// Both sides: `ok` is accepted (extern.test has the rest).
+// P04.05 review R5 (Inputs/extern-gopp-types.gopp, TYPES): a Go++ string,
+// slice, map or view, also inside a struct or an array passed by value, is
+// refused on the checker's type (a map and a view of a struct are one
+// pointer in GIR) before CTypeRules looks at the GIR types, in the same
+// words (`inner` is that check's), one error each. Both sides: `ok`, and
+// pointers to those types (`okp`), are accepted (extern.test has the rest).
 package main
 
 @Extern("Rust")
@@ -54,18 +60,18 @@ func main() {
 	_ = ok(1)
 }
 
-// CHECK: :12:1: error[E0442]: invalid @Extern on a: only the "C" ABI exists
-// CHECK: :15:1: error[E0442]: invalid @Extern on b: parameter type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
-// CHECK: :18:1: error[E0442]: invalid @Extern on c: result type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
-// CHECK: :21:1: error[E0442]: invalid @Extern on d: a C function has no body
-// CHECK: :25:1: error[E0442]: invalid @Extern on e: write @Extern("C")
+// CHECK: :18:1: error[E0442]: invalid @Extern on a: only the "C" ABI exists
+// CHECK: :21:1: error[E0442]: invalid @Extern on b: parameter type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :24:1: error[E0442]: invalid @Extern on c: result type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :27:1: error[E0442]: invalid @Extern on d: a C function has no body
+// CHECK: :31:1: error[E0442]: invalid @Extern on e: write @Extern("C")
 // An array is not a C parameter, several results are not a C result, a
 // string inside a struct is still a string, and a by-value type over 1 GiB is
 // refused before Clang is asked about it.
-// CHECK: :31:1: error[E0442]: invalid @Extern on arr: parameter type [4]i32 cannot cross the C ABI: an array is not passed by value in C (wrap it in a struct)
-// CHECK: :34:1: error[E0442]: invalid @Extern on two: result type (i32, i32) cannot cross the C ABI: a C function has one result (return a struct)
-// CHECK: :42:1: error[E0442]: invalid @Extern on inner: parameter type main.HasString cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
-// CHECK: :49:1: error[E0442]: invalid @Extern on huge: parameter type main.Huge cannot cross the C ABI: type main.Huge is larger than 1 GiB
+// CHECK: :37:1: error[E0442]: invalid @Extern on arr: parameter type [4]i32 cannot cross the C ABI: an array is not passed by value in C (wrap it in a struct)
+// CHECK: :40:1: error[E0442]: invalid @Extern on two: result type (i32, i32) cannot cross the C ABI: a C function has one result (return a struct)
+// CHECK: :48:1: error[E0442]: invalid @Extern on inner: parameter type main.HasString cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :55:1: error[E0442]: invalid @Extern on huge: parameter type main.Huge cannot cross the C ABI: type main.Huge is larger than 1 GiB
 // CHECK-NOT: error
 
 // println needs the C `write` it was given the type of; the program's own
@@ -73,3 +79,11 @@ func main() {
 // WRITE: write-mismatch.gopp:7:2: error[E0442]: invalid @Extern on write: println calls it, and needs func write(fd int32, p *byte, n uint) int
 // WRITE-NOT: error
 // UNUSED: declare fn write(_1: i64, _2: *u8, _3: i64) -> i64
+
+// TYPES: extern-gopp-types.gopp:3:1: error[E0442]: invalid @Extern on m: parameter type map[int]int cannot cross the C ABI: a map has no C layout
+// TYPES: extern-gopp-types.gopp:6:1: error[E0442]: invalid @Extern on mr: result type map[string]int cannot cross the C ABI: a map has no C layout
+// TYPES: extern-gopp-types.gopp:9:1: error[E0442]: invalid @Extern on sl: parameter type []byte cannot cross the C ABI: a slice has no C layout (pass a *T and a length)
+// TYPES: extern-gopp-types.gopp:12:1: error[E0442]: invalid @Extern on vs: parameter type View[string] cannot cross the C ABI: a view has no C layout (pass a *T)
+// TYPES: extern-gopp-types.gopp:17:1: error[E0442]: invalid @Extern on vp: parameter type View[main.P] cannot cross the C ABI: a view has no C layout (pass a *T)
+// TYPES: extern-gopp-types.gopp:25:1: error[E0442]: invalid @Extern on inner: parameter type main.HasMap cannot cross the C ABI: a map has no C layout
+// TYPES-NOT: error

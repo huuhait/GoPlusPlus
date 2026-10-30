@@ -10,6 +10,17 @@ type Tree struct {
 	n    int
 }
 
+// two structs that name each other through Option pointers
+type A struct {
+	b Option[*B]
+	n int
+}
+
+type B struct {
+	a Option[*A]
+	m int
+}
+
 // the pointer to the struct is the first thing lowered (a parameter)
 func kids(t *Tree) int { return len(t.kids) }
 
@@ -18,4 +29,12 @@ func main() {
 	b := Node{&a, 2}
 	var t Tree
 	println(b.val, b.next == nil, t.kids[0] == nil, t.n, kids(&t))
+	x := A{nil, 7}
+	y := B{&x, 8}
+	x.b = &y
+	if p, ok := x.b.Get(); ok {
+		if q, ok2 := p.a.Get(); ok2 {
+			println(p.m, q.n, y.a != nil)
+		}
+	}
 }
