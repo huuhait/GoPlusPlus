@@ -420,6 +420,7 @@ CheckedPackage *Loader::loadFilesImpl(std::vector<std::string> Paths,
   PO.AllowGenericMethods = !CO.GoCompat;
   PO.AllowNamespaceTypes = !CO.GoCompat;
   PO.AllowExtends = !CO.GoCompat;
+  PO.AllowOperators = !CO.GoCompat;
   E->Parsed = parseFiles(SM, Ids, Diags, PO, 1);
   for (ParsedFile &PF : E->Parsed)
     E->Files.push_back(PF.AST);

@@ -87,6 +87,7 @@ int precedence(tok::Kind K) {
   case tok::leq:
   case tok::gtr:
   case tok::geq:
+  case tok::cmp3:
     return 3;
   case tok::add:
   case tok::sub:
@@ -127,9 +128,10 @@ public:
       : Ctx(Ctx), SM(SM), File(File), Diags(Diags), Opts(Opts),
         LexDiags(SM, LexQueue, /*ErrorLimit=*/0),
         Lex(SM, File, LexDiags,
-            [] {
+            [&Opts] {
               LexerOptions LO;
               LO.KeepComments = true; // collected for the comment map (D2.3)
+              LO.Spaceship = Opts.AllowOperators;
               return LO;
             }()),
         Src(SM.getBuffer(File)) {
@@ -795,6 +797,195 @@ private:
   //===--------------------------------------------------------------------===//
   // Identifiers and lists
   //===--------------------------------------------------------------------===//
+
+  //===--------------------------------------------------------------------===//
+  // Operator method names (TYP-27, EXP-29)
+  //===--------------------------------------------------------------------===//
+
+  /// The tokens that start an operator method name after a receiver. `(`
+  /// starts `()` and `[` starts `[]` or `[]=`: a method name is required
+  /// there, so there is no clash.
+  bool atOperatorNameAfterRecv() const {
+    if (!Opts.AllowOperators)
+      return false;
+    switch (Tok.Kind) {
+    case tok::l_paren:
+    case tok::l_brack:
+      return true;
+    default:
+      return isSimpleOperator(Tok.Kind);
+    }
+  }
+
+  /// A token that is an operator name by itself (or a blocked one, which gets
+  /// its own error): never the start of a type.
+  static bool isSimpleOperator(tok::Kind K) {
+    switch (K) {
+    case tok::add:
+    case tok::sub:
+    case tok::quo:
+    case tok::rem:
+    case tok::and_:
+    case tok::or_:
+    case tok::xor_:
+    case tok::shl:
+    case tok::shr:
+    case tok::and_not:
+    case tok::not_:
+    case tok::eql:
+    case tok::cmp3:
+    case tok::land:
+    case tok::lor:
+    case tok::inc:
+    case tok::dec:
+    case tok::add_assign:
+    case tok::sub_assign:
+    case tok::mul_assign:
+    case tok::quo_assign:
+    case tok::rem_assign:
+    case tok::and_assign:
+    case tok::or_assign:
+    case tok::xor_assign:
+    case tok::shl_assign:
+    case tok::shr_assign:
+    case tok::and_not_assign:
+    case tok::kw_range:
+    case tok::mul:
+    case tok::arrow:
+    // blocked names (EXP-29): parsed to give the reason
+    case tok::assign:
+    case tok::period:
+    case tok::comma:
+    case tok::neq:
+    case tok::lss:
+    case tok::leq:
+    case tok::gtr:
+    case tok::geq:
+    case tok::define:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  /// At an operator method element of an interface (TYP-27). An element that
+  /// starts with `*`, `[]` or `<-` followed by `(` is a method element,
+  /// except `*(T)` and `[](T)` with nothing after the `)`: those are type
+  /// terms. `*T`, `[]T` and `<-chan T` stay type terms.
+  bool atInterfaceOperator() {
+    if (!Opts.AllowOperators)
+      return false;
+    // After the matching `)` of the `(` at peek(From): does a type term end?
+    auto TermEndsAfterParens = [&](unsigned From) {
+      unsigned Depth = 0;
+      for (unsigned I = From; I < From + 512; ++I) {
+        const Token &T = peek(I);
+        if (T.is(tok::eof))
+          return true;
+        if (T.is(tok::l_paren))
+          ++Depth;
+        else if (T.is(tok::r_paren) && --Depth == 0) {
+          const Token &After = peek(I + 1);
+          return After.is(tok::semi) || After.is(tok::r_brace) ||
+                 After.is(tok::or_) || After.is(tok::eof);
+        }
+      }
+      return true;
+    };
+    switch (Tok.Kind) {
+    case tok::mul:
+      if (!peek(1).is(tok::l_paren))
+        return false;
+      if (peek(2).is(tok::r_paren))
+        return true; // `*()` is no type
+      return !TermEndsAfterParens(1);
+    case tok::arrow:
+      return peek(1).is(tok::l_paren);
+    case tok::l_brack:
+      if (!peek(1).is(tok::r_brack))
+        return false;
+      if (peek(2).is(tok::assign))
+        return true;
+      if (!peek(2).is(tok::l_paren))
+        return false;
+      if (peek(3).is(tok::r_paren))
+        return true;
+      return !TermEndsAfterParens(2);
+    case tok::l_paren:
+      return peek(1).is(tok::r_paren);
+    default:
+      return isSimpleOperator(Tok.Kind);
+    }
+  }
+
+  /// The reason a blocked operator cannot be declared (EXP-29), or null.
+  static const char *blockedReason(tok::Kind K) {
+    switch (K) {
+    case tok::assign:
+      return "assignment cannot be overloaded: ownership and moves depend on "
+             "it";
+    case tok::period:
+      return "member access `.` cannot be overloaded";
+    case tok::comma:
+      return "the comma cannot be overloaded";
+    case tok::neq:
+      return "write `==`: `!=` is made from it";
+    case tok::lss:
+    case tok::leq:
+    case tok::gtr:
+    case tok::geq:
+      return "write `<=>`: `<`, `<=`, `>` and `>=` are made from it";
+    case tok::define:
+      return "`:=` is not an operator and cannot be a method name";
+    default:
+      return nullptr;
+    }
+  }
+
+  /// Parses the operator method name at the current token (atOperatorName...
+  /// said yes) as an Ident whose text is the operator: `+`, `[]`, `[]=`, `()`,
+  /// `range`. A blocked name is reported with its reason and gets the name
+  /// `_`, so nothing else is said about the method.
+  Ident *parseOperatorName() {
+    SourceLoc B = Tok.Loc;
+    tok::Kind K = Tok.Kind;
+    std::string Spell;
+    if (K == tok::l_brack) {
+      next();
+      Spell = "[]";
+      expect(tok::r_brack);
+      if (is(tok::assign)) {
+        next();
+        Spell = "[]=";
+      }
+    } else if (K == tok::l_paren) {
+      next();
+      Spell = "()";
+      expect(tok::r_paren);
+    } else if (K == tok::kw_range) {
+      next();
+      Spell = "range";
+    } else {
+      Spell = tokString(K);
+      if (const char *Why = blockedReason(K)) {
+        SourceLoc At = Tok.Loc;
+        next();
+        error(At, diag::err_op_blocked, {Spell, Why});
+        return makeIdent("_", B, PrevEnd);
+      }
+      next();
+    }
+    return makeIdent(Spell, B, PrevEnd);
+  }
+
+  /// Unary `&` has no operator form (EXP-29): `&` with no parameters.
+  void checkUnaryAmp(const Ident *Name, const FuncType *FT) {
+    if (Name->Name.str() != "&" || !FT->Params || FT->Params->numFields())
+      return;
+    error(Name->Begin, diag::err_op_blocked,
+          {"&", "unary `&` cannot be overloaded: the borrow checker depends "
+                "on it"});
+  }
 
   Ident *parseIdent() {
     SourceLoc L = Tok.Loc;
@@ -1661,6 +1852,16 @@ private:
         F->ExtendsLoc = B;
         F->Type = T;
         List.push_back(F);
+      } else if (atInterfaceOperator()) {
+        SourceLoc B = Tok.Loc;
+        Ident *Name = parseOperatorName();
+        FuncType *FT = mk<FuncType>(Name->End);
+        parseSignature(FT);
+        checkUnaryAmp(Name, FT);
+        Field *F = mk<Field>(B, PrevEnd);
+        F->Names = Ctx.copy(ArrayRef<Ident *>(&Name, 1));
+        F->Type = FT;
+        List.push_back(F);
       } else if (is(tok::ident)) {
         Field *F = parseMethodSpec();
         if (F->Names.empty()) {
@@ -2075,8 +2276,10 @@ private:
       Args.push_back(Index[0]);
       while (is(tok::comma)) {
         next();
+        // ADR-0024: `a[i, j]` indexes with several values; an operand that
+        // is not a type is an index.
         if (!is(tok::r_brack) && !is(tok::eof))
-          Args.push_back(parseType());
+          Args.push_back(Opts.AllowOperators ? parseRhs() : parseType());
       }
       break;
     default:
@@ -3754,8 +3957,9 @@ private:
     if (is(tok::l_paren))
       Recv = parseParameters(false);
 
-    Ident *Name = parseIdent();
-    if (is(tok::lss))
+    Ident *Name =
+        Recv && atOperatorNameAfterRecv() ? parseOperatorName() : parseIdent();
+    if (is(tok::lss) && !isOperatorSpelling(Name->Name.str()))
       skipAngleTypeParams(Name); // `func Map<T any>(...)`
 
     FuncType *FT = mk<FuncType>(Pos);
@@ -3771,6 +3975,7 @@ private:
       FT->TypeParams = TParams;
     }
     parseSignature(FT);
+    checkUnaryAmp(Name, FT);
 
     BlockStmt *Body = nullptr;
     switch (Tok.Kind) {

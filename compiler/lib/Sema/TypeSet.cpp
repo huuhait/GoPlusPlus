@@ -14,6 +14,7 @@
 #include "Checker.h"
 
 #include <algorithm>
+#include <tuple>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -150,10 +151,10 @@ bool Checker::typeSetIsComparable(TypeSet *TS) {
 }
 
 Func *Checker::lookupMethodInSet(TypeSet *TS, Package *P, StringRef N,
-                                 bool Fold, int *Idx) {
+                                 bool Fold, int *Idx, const Func *Want) {
   for (size_t I = 0; I < TS->Methods.size(); ++I) {
     Func *M = TS->Methods[I];
-    if (sameId(M, P, N, Fold)) {
+    if (Want ? M == Want : sameId(M, P, N, Fold)) {
       if (Idx)
         *Idx = static_cast<int>(I);
       return M;
@@ -179,12 +180,6 @@ TypeSet *Checker::typeSetOf(Type *T) {
   if (auto *I = dyn_cast<InterfaceType>(U))
     return typeSet(I);
   return nullptr;
-}
-
-static bool lessFunc(const Func *A, const Func *B) {
-  if (A->Name != B->Name)
-    return A->Name < B->Name;
-  return A->Pkg < B->Pkg;
 }
 
 TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
@@ -231,7 +226,11 @@ TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
   SmallVector<Func *, 8> Methods;
   auto AddMethod = [&](Func *M, SourceLoc At, bool Explicit) {
     for (Func *Old : Methods)
-      if (sameId(Old, M->Pkg, M->Name, false)) {
+      // Operator elements of one name are an overload set (TYP-27): only the
+      // same form with the same signature is the same element.
+      if (sameId(Old, M->Pkg, M->Name, false) &&
+          (!M->isOperator() || (Old->Op == M->Op && Old->Right == M->Right &&
+                                identical(Old->Ty, M->Ty)))) {
         if (Old == M)
           return;
         if (!Explicit && identical(Old->Ty, M->Ty))
@@ -345,9 +344,24 @@ TypeSet *Checker::computeTypeSet(InterfaceType *I, SourceLoc) {
     Terms.All = false;
     Terms.Terms.clear();
   }
-  std::sort(Methods.begin(), Methods.end(), lessFunc);
+  // The order must not depend on addresses or on who asks first: by name,
+  // then package path, then signature (the same-named operator elements of
+  // different packages and the overloads of one operator). Elements equal in
+  // all three keep their order.
+  {
+    auto Key = [&](const Func *F) {
+      return std::make_tuple(F->Name, F->Pkg ? F->Pkg->Path : StringRef(),
+                             F->Ty ? str(F->Ty) : std::string(), F->Right);
+    };
+    std::stable_sort(
+        Methods.begin(), Methods.end(),
+        [&](const Func *A, const Func *B) { return Key(A) < Key(B); });
+  }
+  const bool HasOps =
+      llvm::any_of(Methods, [](const Func *M) { return M->isOperator(); });
   std::unique_lock<std::mutex> A(Ctx.allocLock());
   TS->Methods = Ctx.arena().copy(ArrayRef<Func *>(Methods));
+  TS->HasOps = HasOps;
   TS->AllTerms = Terms.All;
   if (!Terms.All)
     TS->Terms = Ctx.arena().copy(ArrayRef<Term>(Terms.Terms));

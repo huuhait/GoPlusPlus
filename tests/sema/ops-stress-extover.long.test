@@ -1,0 +1,13 @@
+// REQUIRES: long
+// P03.24 (EXP-30): the `extover` shape of ops-stress.test at 3200 levels: a
+// chain of types that extend each other, each with its own `+` overload, and
+// a use at every level and from the deepest type. The merged operator list of
+// a level is made once from the list behind it (OpTable::Merged), so the
+// check does not repeat the walk of the chain for every use (1600 levels took
+// 11 s before). Measured: 400 levels 0.03 s, 800 0.06 s, 1600 0.2 s, 3200
+// 0.8 s: the overload set of a level grows with the level, so the picks are
+// quadratic by nature.
+// RUN: %python %S/Inputs/gen-ops-stress.py extover 3200 > %t.gopp
+// RUN: timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+// RUN: timeout 30 %gopp check -check-j=8 --check-error-limit=0 %t.gopp
+package main

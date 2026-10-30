@@ -932,6 +932,25 @@ void Checker::indexNames(
   }
 }
 
+/// The name an ancestor method is looked up by: the name for an ordinary
+/// method; for an operator method (an overload set shares its name) the
+/// operator and the parameter types, with @Right, so a child's extra overload
+/// is its own method and an @Override replaces the method of the same
+/// signature (EXP-30).
+static std::string methodKey(Checker &C, Func *M) {
+  if (!M->isOperator())
+    return clashKey(M->Name, M->Pkg);
+  C.objDecl(M, nullptr);
+  std::string K = "operator ";
+  K += M->Name;
+  if (M->Right)
+    K += " @Right";
+  if (auto *Sig = dyn_cast_or_null<SignatureType>(M->Ty))
+    for (Type *P : Sig->Params->Elems)
+      K += " " + C.str(P);
+  return K;
+}
+
 void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
   if (S.Opts.GoCompat || Seeds.empty())
     return;
@@ -1035,6 +1054,48 @@ void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
     return T->Obj ? std::string(T->Obj->Name) : str(T);
   };
 
+  // The ancestor operator method that M replaces (EXP-30): the nearest one
+  // of the same operator and @Right whose parameters (the target for
+  // @Convert) are identical to M's, both seen in the type parameters of O
+  // (the instance signatures, as for a method override). The names of the
+  // type parameters of the levels do not matter.
+  auto OpAncestor = [&](NamedType *O, Func *M, Func *&Inst) -> VisEntry {
+    Inst = nullptr;
+    NamedType *PI = parentOf(O);
+    if (!PI)
+      return VisEntry();
+    objDecl(M, nullptr);
+    if (!M->Ty)
+      return VisEntry();
+    Type *MSig = M->Ty;
+    if (!O->TParams.empty() && M->RecvTParams.size() == O->TParams.size()) {
+      SmallVector<Type *, 4> Args(O->TParams.begin(), O->TParams.end());
+      MSig = subst(M->Ty, M->RecvTParams, Args);
+    }
+    auto *MS = dyn_cast<SignatureType>(MSig);
+    if (!MS)
+      return VisEntry();
+    SmallVector<Func *, 8> Cands;
+    opCandidates(PI, M->Op, Cands);
+    for (Func *F : Cands) {
+      auto *FS = cast<SignatureType>(F->Ty);
+      if (M->Op == OpKind::Convert
+              ? !identical(MS->Results, FS->Results)
+              : (F->Right != M->Right || !identical(MS->Params, FS->Params)))
+        continue;
+      Func *Decl = F->Origin ? F->Origin : F;
+      Type *RT = Decl->Recv ? Decl->Recv->Ty : nullptr;
+      if (auto *P = dyn_cast_or_null<PointerType>(RT))
+        RT = P->Elem;
+      auto *Owner = dyn_cast_or_null<NamedType>(RT);
+      if (!Owner)
+        continue;
+      Inst = F;
+      return {Decl, Owner->origin()};
+    }
+    return VisEntry();
+  };
+
   struct Frame {
     int Node;
     int NextChild;
@@ -1073,8 +1134,15 @@ void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
                 markOfAttr(name(A->Name)) != Func::Mark::None)
               err(A->AtLoc, diag::err_method_mark_value_recv,
                   {markName(Mk), std::string(M->Name)});
-        auto It = Visible.find(clashKey(M->Name, M->Pkg));
-        if (It == Visible.end()) {
+        VisEntry Found;
+        Func *OpInst = nullptr;
+        if (M->isOperator()) {
+          Found = OpAncestor(O, M, OpInst);
+        } else if (auto It = Visible.find(methodKey(*this, M));
+                   It != Visible.end()) {
+          Found = It->second;
+        }
+        if (!Found.Obj) {
           if (Mk == Func::Mark::Override)
             err(M->Pos, diag::err_override_nothing,
                 {std::string(M->Name),
@@ -1082,8 +1150,8 @@ void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
                            : Self + ", which extends no type,"});
           continue;
         }
-        NamedType *AncT = It->second.Owner;
-        auto *Anc = dyn_cast<Func>(It->second.Obj);
+        NamedType *AncT = Found.Owner;
+        auto *Anc = dyn_cast<Func>(Found.Obj);
         if (!Anc) {
           err(M->Pos, diag::err_extends_name_clash,
               {"method", std::string(M->Name), Self, "field", Name(AncT)});
@@ -1108,8 +1176,8 @@ void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
         // level substituted by the lookup.
         objDecl(M, nullptr);
         objDecl(Anc, nullptr);
-        Func *AncM = Anc;
-        if (!O->TParams.empty() || !AncT->TParams.empty())
+        Func *AncM = OpInst ? OpInst : Anc;
+        if (!OpInst && (!O->TParams.empty() || !AncT->TParams.empty()))
           if (NamedType *PI = parentOf(O)) {
             LookupResult LR = lookupImpl(PI, true, M->Pkg, M->Name, false);
             if (auto *AF = dyn_cast_or_null<Func>(LR.Obj))
@@ -1147,15 +1215,24 @@ void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
     if (O->Methods)
       for (Func *M : *O->Methods)
         if (M->Name != "_")
-          SetVis(clashKey(M->Name, M->Pkg), {M, O});
+          SetVis(methodKey(*this, M), {M, O});
     // The open @Abstract methods: a method of the same name closes one (an
     // override, or an error reported above); an own @Abstract method opens
     // one. What is still open from the ancestors needs an @Abstract type.
     if (O->Methods)
       for (Func *M : *O->Methods)
-        if (M->Name != "_")
-          if (std::string K = clashKey(M->Name, M->Pkg); Open.count(K))
+        if (M->Name != "_") {
+          std::string K;
+          if (M->isOperator()) {
+            Func *Inst = nullptr;
+            if (VisEntry A = OpAncestor(O, M, Inst); A.Obj)
+              K = methodKey(*this, cast<Func>(A.Obj));
+          } else {
+            K = methodKey(*this, M);
+          }
+          if (!K.empty() && Open.count(K))
             SetOpen(K, nullptr);
+        }
     if (Rep && !O->AbstractAttr && !Open.empty()) {
       std::string Names;
       for (const OpenPos &OP : OpenOrder)
@@ -1168,7 +1245,7 @@ void Checker::hierarchyBatch(ArrayRef<NamedType *> Seeds, bool Report) {
     if (O->Methods)
       for (Func *M : *O->Methods)
         if (M->Name != "_" && markOf(M) == Func::Mark::Abstract)
-          SetOpen(clashKey(M->Name, M->Pkg), M);
+          SetOpen(methodKey(*this, M), M);
     // The answers of this type (the same from every walk).
     if (typesFinal() && declFinished(O)) {
       Func *W = Open.empty() ? nullptr : Open.lookup(OpenOrder.begin()->second);

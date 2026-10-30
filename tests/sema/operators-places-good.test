@@ -1,0 +1,82 @@
+// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error %s
+// P03.24: index, call, send, receive, range, deref, convert, ++ and compound uses that check (EXP-19, EXP-22 to EXP-25, RNG-6b, CON-22).
+package main
+
+type Seq[V any] func(yield func(V) bool)
+
+type Matrix struct{ data [4]float64 }
+
+func (m Matrix) [] (i, j int) float64      { return m.data[i*2+j] }
+func (m *Matrix) []= (i, j int, v float64) { m.data[i*2+j] = v }
+func (m Matrix) + (o Matrix) Matrix        { return m }
+func (m *Matrix) += (o Matrix)             {}
+func (m Matrix) twin() Matrix              { return m }
+
+type Plain struct{ x int }
+
+func (p Plain) + (o Plain) Plain { return p }
+
+type Queue struct{ items [4]int }
+
+func (q *Queue) <- (v int)        {}
+func (q *Queue) <- () (int, bool) { return 0, false }
+
+type Counter struct{ n int }
+
+func (c *Counter) ++ () { c.n++ }
+func (c *Counter) -- () { c.n-- }
+
+type Adder struct{ base int }
+
+func (a Adder) () (x int) int       { return a.base + x }
+func (a Adder) () (s string) string { return "y" }
+
+type Box struct{ m Matrix }
+
+func (b Box) * () View[Matrix] { return View[Matrix](b.m) }
+
+type Tree struct{ n int }
+
+func (t *Tree) range () Seq[int] { return func(yield func(int) bool) {} }
+
+type BigInt struct{ v int }
+
+@Convert
+func (b BigInt) Int64() int64 { return 0 }
+@Convert
+func (b BigInt) Float64() float64 { return 0 }
+
+func main() {
+	var m, n Matrix
+	m[1, 1] = 5.0
+	x := m[1, 0]
+	m[1, 1] += 1.0
+	// `m += n` uses the in-place method; `p += p` falls back to p = p + p.
+	m += n
+	m += m.twin()
+	m = m + n
+	var p Plain
+	p += p
+	var q Queue
+	q <- 3
+	v, ok := <-q
+	var c Counter
+	c++
+	c--
+	var a Adder
+	r := a(1)
+	s := a("x")
+	var bx Box
+	d := *bx
+	_ = d
+	var t Tree
+	for e := range t {
+		_ = e
+	}
+	var b BigInt
+	f := float64(b)
+	g := int64(b)
+	_, _, _, _, _, _, _ = x, v, ok, r, s, f, g
+}
+
+

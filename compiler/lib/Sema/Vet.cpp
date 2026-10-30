@@ -19,7 +19,12 @@
 //     package other than main (ERR-6, ERR-10, ERR-11a);
 //   - `defer` in a loop body (D3.9, PAN-4);
 //   - a @Strict struct with no required field: every field is Option[T],
-//     @Option or `_`, so @Strict changes nothing (TYP-15a).
+//     @Option or `_`, so @Strict changes nothing (TYP-15a);
+//   - `==` and `<=>` that can disagree (EXP-20): only one of them defined
+//     for a right-hand type, different right-hand types, or (best effort)
+//     bodies that read different fields; and a type with a user `==` used
+//     as a map key or as the argument of a `comparable` parameter, where the
+//     built-in equality is used instead of the method.
 // The findings come in source order: files in the given order, then by offset.
 //
 //===----------------------------------------------------------------------===//
@@ -32,6 +37,7 @@
 #include "llvm/Support/Casting.h"
 
 #include <algorithm>
+#include <set>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -74,10 +80,13 @@ public:
     Pending.clear();
     for (const ast::Decl *Dl : F->Decls) {
       strictWithoutRequired(Dl);
-      if (auto *FD = dyn_cast<ast::FuncDecl>(Dl))
+      if (auto *FD = dyn_cast<ast::FuncDecl>(Dl)) {
         dropMethod(FD);
+        eqCmpAgree(FD);
+      }
     }
     bangsAndDefers(F);
+    userEqBuiltin(F);
     std::stable_sort(Pending.begin(), Pending.end(),
                      [](const Finding &A, const Finding &B) {
                        return A.Loc.getRaw() < B.Loc.getRaw();
@@ -218,6 +227,178 @@ private:
     for (auto &[V, Loc] : Uses)
       if (!Guarded.count(V) && Seen.insert(V).second)
         add(Loc, diag::warn_vet_drop_zero, {"field " + V->Name.str()});
+  }
+
+  // --- `==` and `<=>` that disagree, and a user `==` that is not used ------
+
+  /// The right-hand type of a binary operator method M as a key: the
+  /// receiver type itself is one key for every method of a generic type,
+  /// whatever its type parameters are called.
+  static std::string rhsKey(const Func *M, const Package *Pkg) {
+    auto *Sig = dyn_cast_or_null<SignatureType>(M->Ty);
+    if (!Sig || Sig->Params->size() != 1 || !M->Recv)
+      return {};
+    const Type *P0 = Sig->Params->Elems[0], *RT = M->Recv->Ty;
+    if (auto *PT = dyn_cast_or_null<PointerType>(RT))
+      RT = PT->Elem;
+    return P0 == RT ? std::string("<the receiver type>") : typeString(P0, Pkg);
+  }
+
+  /// The declared methods of a named type (of its origin, for an instance).
+  static const llvm::SmallVector<Func *, 0> *methodsOf(const NamedType *N) {
+    return N ? (N->Orig ? N->Orig : N)->Methods : nullptr;
+  }
+
+  /// The user operator methods of kind K of a named type (not @Right), as
+  /// (right-hand type key, method).
+  static llvm::SmallVector<std::pair<std::string, const Func *>, 2>
+  opMethodsOf(const NamedType *N, OpKind K, const Package *Pkg) {
+    llvm::SmallVector<std::pair<std::string, const Func *>, 2> R;
+    const auto *Ms = methodsOf(N);
+    if (!Ms)
+      return R;
+    for (const Func *M : *Ms) {
+      if (M->Op != K || M->Right)
+        continue;
+      std::string Key = rhsKey(M, Pkg);
+      if (!Key.empty())
+        R.push_back({Key, M});
+    }
+    return R;
+  }
+
+  /// The names of the fields that the body of a method reads or writes.
+  std::set<std::string> fieldsRead(const Func *M) const {
+    std::set<std::string> R;
+    if (!M->Decl || !M->Decl->Body)
+      return R;
+    auto Visit = [&](auto &&Self, const ast::Node *N) -> void {
+      if (auto *Sel = dyn_cast<ast::SelectorExpr>(N)) {
+        auto It = I.Selections.find(Sel);
+        if (It != I.Selections.end() && It->second.K == Selection::FieldVal &&
+            It->second.Obj)
+          R.insert(It->second.Obj->Name.str());
+      }
+      forEachChild(N, [&](const ast::Node *C) { Self(Self, C); });
+    };
+    Visit(Visit, M->Decl->Body);
+    return R;
+  }
+
+  static std::string joined(const std::set<std::string> &S) {
+    std::string R;
+    for (const std::string &X : S)
+      R += (R.empty() ? "" : ", ") + X;
+    return R;
+  }
+
+  void eqCmpAgree(const ast::FuncDecl *FD) {
+    if (!FD->Recv || !FD->Name)
+      return;
+    StringRef Name = FD->Name->Name.str();
+    if (Name != "==" && Name != "<=>")
+      return;
+    auto Def = I.Defs.find(FD->Name);
+    auto *F =
+        Def == I.Defs.end() ? nullptr : dyn_cast_or_null<Func>(Def->second);
+    if (!F || !F->Recv || !F->Ty || F->Right || !F->isOperator())
+      return;
+    Type *RT = F->Recv->Ty;
+    if (auto *PT = dyn_cast_or_null<PointerType>(RT))
+      RT = PT->Elem;
+    auto *N = dyn_cast_or_null<NamedType>(RT);
+    auto *Sig = dyn_cast<SignatureType>(F->Ty);
+    if (!N || !Sig || Sig->Params->size() != 1)
+      return;
+    std::string R = typeString(Sig->Params->Elems[0], P.Pkg);
+    const std::string Key = rhsKey(F, P.Pkg);
+    bool IsEq = Name == "==";
+    auto Other = opMethodsOf(N, IsEq ? OpKind::Cmp : OpKind::Eq, P.Pkg);
+    const Func *Twin = nullptr;
+    for (auto &[Text, M] : Other)
+      if (Text == Key)
+        Twin = M;
+    if (!Twin) {
+      add(FD->Name->getBegin(), diag::warn_vet_op_eq_cmp,
+          {typeString(N, P.Pkg), IsEq ? "`==`" : "`<=>`", R,
+           IsEq ? "`<=>`" : "`==`"});
+      return;
+    }
+    if (!IsEq)
+      return; // the pair is looked at once, from the `==`
+    std::set<std::string> A = fieldsRead(F), B = fieldsRead(Twin);
+    if (!A.empty() && !B.empty() && A != B)
+      add(FD->Name->getBegin(), diag::warn_vet_op_fields,
+          {"`==`", joined(A), R, "`" + joined(B) + "`"});
+  }
+
+  static bool hasUserEq(const Type *T) {
+    const auto *Ms = methodsOf(dyn_cast_or_null<NamedType>(T));
+    if (!Ms)
+      return false;
+    for (const Func *M : *Ms)
+      if (M->Op == OpKind::Eq && !M->Right)
+        return true;
+    return false;
+  }
+
+  /// A constraint that is `comparable`, or an interface that embeds it.
+  static bool isComparableBound(const Type *B, unsigned Depth = 0) {
+    if (!B || Depth > 4)
+      return false;
+    if (auto *N = dyn_cast<NamedType>(B))
+      B = N->Underlying;
+    auto *It = dyn_cast_or_null<InterfaceType>(B);
+    if (!It)
+      return false;
+    if (It->Sp == InterfaceType::Comparable)
+      return true;
+    for (const Type *E : It->Embeddeds)
+      if (isComparableBound(E, Depth + 1))
+        return true;
+    return false;
+  }
+
+  void userEqBuiltin(const ast::File *F) {
+    auto Visit = [&](auto &&Self, const ast::Node *N) -> void {
+      if (auto *MT = dyn_cast<ast::MapType>(N); MT && MT->Key) {
+        Type *K = I.typeOf(MT->Key);
+        if (hasUserEq(K))
+          add(MT->Key->getBegin(), diag::warn_vet_op_eq_builtin,
+              {typeString(K, P.Pkg), "a map"});
+      }
+      if (auto *E = dyn_cast<ast::Expr>(N)) {
+        auto It = I.Instances.find(E);
+        if (It != I.Instances.end()) {
+          // The generic function or type the expression names.
+          const ast::Expr *Callee = E;
+          if (auto *Ix = dyn_cast<ast::IndexExpr>(Callee))
+            Callee = Ix->X;
+          const ast::Ident *Id = dyn_cast<ast::Ident>(Callee);
+          if (auto *Sel = dyn_cast<ast::SelectorExpr>(Callee))
+            Id = Sel->Sel;
+          auto U = Id ? I.Uses.find(Id) : I.Uses.end();
+          llvm::ArrayRef<TypeParamType *> TPs;
+          if (U != I.Uses.end() && U->second) {
+            if (auto *Fn = dyn_cast<Func>(U->second))
+              if (auto *Sig = dyn_cast_or_null<SignatureType>(Fn->Ty))
+                TPs = Sig->TParams;
+            if (auto *TN = dyn_cast<TypeName>(U->second))
+              if (auto *Nm = dyn_cast_or_null<NamedType>(TN->Ty))
+                TPs = Nm->TParams;
+          }
+          const auto &TA = It->second.TArgs;
+          for (size_t K = 0; K < TA.size() && K < TPs.size(); ++K)
+            if (isComparableBound(TPs[K]->Bound) && hasUserEq(TA[K]))
+              add(E->getBegin(), diag::warn_vet_op_eq_builtin,
+                  {typeString(TA[K], P.Pkg),
+                   "the `comparable` parameter " + TPs[K]->Obj->Name.str()});
+        }
+      }
+      forEachChild(N, [&](const ast::Node *C) { Self(Self, C); });
+    };
+    for (const ast::Decl *Dl : F->Decls)
+      Visit(Visit, Dl);
   }
 
   // --- ! outside main (ERR-10) and defer in a loop (D3.9) ------------------

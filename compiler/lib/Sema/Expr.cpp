@@ -163,6 +163,15 @@ void Checker::convertUntyped(Operand &X, Type *Target) {
 
 ExprKind Checker::rawExpr(Operand &X, const ast::Expr *Ex, Type *Hint,
                           bool AllowGeneric) {
+  // An operand the operator code evaluated already (ADR-0024). A partial
+  // place mark meant for it was used when it was evaluated.
+  if (!PreEval.empty())
+    if (auto It = PreEval.find(Ex); It != PreEval.end()) {
+      X = std::move(It->second);
+      PreEval.erase(It);
+      (void)takePartialMark(Ex);
+      return ExprKind::Expression;
+    }
   ExprKind Kind = exprInternal(X, Ex, Hint);
   // Reverse type inference: a generic function used where a function type is
   // expected is instantiated from that type.
@@ -398,7 +407,7 @@ void Checker::overflow(Operand &X, SourceLoc OpLoc) {
 // Operators
 //===----------------------------------------------------------------------===//
 
-static bool opAllowed(Checker &C, tok::Kind Op, Type *T, bool Unary) {
+bool gopp::sema::opAllowed(Checker &C, tok::Kind Op, Type *T, bool Unary) {
   if (Unary) {
     switch (Op) {
     case tok::add:
@@ -439,12 +448,29 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
   if (Ex->Op == tok::and_) {
     markNoNarrow(Ex->X);
     markPartialOk(Ex->X, /*Addr=*/true); // `&c.Payment`, `&*p` (EXP-13)
+  } else if (Ex->Op == tok::arrow && !S.Opts.GoCompat && Ctx.operatorsSeen()) {
+    // The operand of `<-` may be the receiver of a `<-` method (CON-22): a
+    // partial place is decided with the method (opReceiverOk); a struct has
+    // no built-in receive anyway.
+    markPartialOk(Ex->X, /*Addr=*/false);
   }
   expr(X, Ex->X);
   PartialOk = nullptr;
   if (X.M == Mode::Invalid)
     return;
   tok::Kind Op = Ex->Op;
+  // ADR-0024: `-a + ^ !` and `<-q` on a type with operator methods (`<-`
+  // also through a pointer, like the method call `q.M()`).
+  if (!S.Opts.GoCompat && Ctx.operatorsSeen()) {
+    if (Op == tok::add || Op == tok::sub || Op == tok::xor_ ||
+        Op == tok::not_) {
+      if (opCandidateType(X.Ty) && opUnary(X, Ex))
+        return;
+    } else if (Op == tok::arrow) {
+      if (opCandidateType(X.Ty, /*ThroughPtr=*/true) && opRecv(X, Ex))
+        return;
+    }
+  }
   switch (Op) {
   case tok::and_: {
     const ast::Expr *Inner = Ex->X;
@@ -844,6 +870,13 @@ void Checker::binary(Operand &X, const ast::Expr *Ex, const ast::Expr *L,
     X.E = Y.E;
     return;
   }
+  // ADR-0024: an operand with operator methods. The record of the last
+  // operator is this expression's own: one left by an operand is not.
+  LastOp = OperatorUse();
+  if (!S.Opts.GoCompat && Ctx.operatorsSeen() &&
+      (opCandidateType(X.Ty) || opCandidateType(Y.Ty)) &&
+      opBinary(X, Y, Ex, L, R, Op, OpLoc))
+    return;
   if (isShiftOp(Op)) {
     shift(X, Y, Ex, Op);
     return;
@@ -851,6 +884,10 @@ void Checker::binary(Operand &X, const ast::Expr *Ex, const ast::Expr *L,
   matchTypes(X, Y);
   if (X.M == Mode::Invalid)
     return;
+  if (Op == tok::cmp3) {
+    builtinSpaceship(X, Y, Ex);
+    return;
+  }
   if (isComparison(Op)) {
     comparison(X, Y, Op);
     return;
@@ -1061,6 +1098,13 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
       X.Ty = Ctx.pointer(X.Ty);
       break;
     default: {
+      // ADR-0024, EXP-24: `*a` on a type with a `*` method.
+      if (!S.Opts.GoCompat && Ctx.operatorsSeen() && opCandidateType(X.Ty) &&
+          opDeref(X, St)) {
+        if (X.M == Mode::Invalid)
+          return Error();
+        break;
+      }
       PtrKind PK;
       Type *PElem;
       if (hasPtrKind(X.Ty, &PK, &PElem)) {

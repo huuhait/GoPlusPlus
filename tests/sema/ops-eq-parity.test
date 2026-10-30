@@ -1,0 +1,68 @@
+// P03.24, R24/R25/R26: the rule table of `x == y` when no `==` method serves
+// it (Checker::eqKeepsBuiltin), for plain and generic code side by side
+// (Inputs/gen-eq-parity.py). Row = constraint and its plain twin; column = a
+// use; `.` accepted, else the error code; `plain/generic` where they differ.
+// The table column names the rows of eqKeepsBuiltin (plain/generic):
+//  (a) no `==` method: the built-in, if comparable (EXP-20,
+//      06-expressions.md:201);
+//  (b) a defined number or string type with `==` methods for other types: the
+//      built-in for its own type (EXP-17 rule 6, 06-expressions.md:171); a
+//      defined bool is neither, so it is row (c) (row `bool`);
+//  (c) any other type with an `==` method, own or inherited: the method only,
+//      else E0411 (EXP-20: "A type with an `==` method uses the method in
+//      `==`, `!=`, `switch` cases and everywhere else the source writes `==`";
+//      EXP-30, 06-expressions.md:276: an inherited `==` "hides the built-in
+//      struct equality of the child");
+//  (d) a type parameter with `==` in its constraint: a matching element, else
+//      the built-in exactly when the type set is comparable, else E0411;
+//  (e) an interface operand (column iface): the built-in comparison.
+//
+// THE ONE INTENDED DIFFERENCE, rows marked `intended`: (c) against (d) in
+// `a == b`, `a != b` and `case b`. GEN-13 (10-generics.md:82): "`comparable`
+// still means built-in equality. In a body with `[T comparable]`, `a == b` is
+// the built-in comparison even for an instance whose type has an `==`
+// method"; EXP-20 (06-expressions.md:201): "`comparable` instances still use
+// built-in equality, never the method". So `[T interface{ comparable; ==
+// (int) bool }]` (and a comparable `extends` constraint) has `a == b`, while
+// the plain struct with only `== (int)` (or the child of a parent with `==`)
+// has no `v == w`. The generator fails on any other difference.
+//
+// The instances table: `[T interface{ == (T) bool }]` (eqT) is met by a
+// type's built-in `==` exactly when (a) or (b) keeps it; `[T comparable]`
+// (cmpT) is met by every comparable type (GEN-13).
+// RUN: %python %S/Inputs/gen-eq-parity.py --gopp %gopp --out %t | FileCheck %s
+// CHECK: uses: eq | ne | case | one | str | lone | iface
+// CHECK-NEXT: comparable a/a . . . E0160 E0168 E0160 .
+// CHECK-NEXT: typeset    a/a . . . . E0168 . .
+// CHECK-NEXT: any        a/a E0168 E0168 E0218 E0160 E0168 E0160 E0168
+// CHECK-NEXT: element    c/d E0411 E0411 E0411 . E0411 E0411 E0168
+// CHECK-NEXT: both       c/d E0411/. E0411/. E0411/. . E0411 E0411 . intended
+// CHECK-NEXT: gstruct    c/d E0411/. E0411/. E0411/. . E0411 E0411 . intended
+// CHECK-NEXT: noncomp    c/d E0411 E0411 E0411 . E0411 E0411 E0168
+// CHECK-NEXT: num        b/d . . . . . . .
+// CHECK-NEXT: bool       c/d E0411/. E0411/. E0411/. . E0411 E0411 . intended
+// CHECK-NEXT: self       c/d . . . E0411 E0411 E0411 .
+// CHECK-NEXT: child      c/d E0411/. E0411/. E0411/. E0411 E0411 E0411 . intended
+// CHECK-NEXT: grandchild c/d E0411/. E0411/. E0411/. E0411 E0411 E0411 . intended
+// CHECK-NEXT: gchild     c/d E0411/. E0411/. E0411/. E0411 E0411 E0411 . intended
+// CHECK-NEXT: ichild     c/d E0411/. E0411/. E0411/. . E0411 E0411 . intended
+// CHECK-NEXT: ncchild    c/d E0411 E0411 E0411 E0411 E0411 E0411 E0168
+// CHECK-NEXT: ncgrand    c/d E0411 E0411 E0411 E0411 E0411 E0411 E0168
+// CHECK-NEXT: instances: eqT | cmpT
+// CHECK-NEXT: PC         . .
+// CHECK-NEXT: int        . .
+// CHECK-NEXT: PA         E0316 E0316
+// CHECK-NEXT: PE         E0316 E0316
+// CHECK-NEXT: PCE        E0316 .
+// CHECK-NEXT: G[int]     E0316 .
+// CHECK-NEXT: PN         E0316 E0316
+// CHECK-NEXT: PM         . .
+// CHECK-NEXT: PB         E0316 .
+// CHECK-NEXT: PS         . .
+// CHECK-NEXT: CC         E0316 .
+// CHECK-NEXT: GC         E0316 .
+// CHECK-NEXT: GK[int]    E0316 .
+// CHECK-NEXT: CQ         E0316 .
+// CHECK-NEXT: CN         E0316 E0316
+// CHECK-NEXT: GN         E0316 E0316
+// CHECK-NOT: MISMATCH

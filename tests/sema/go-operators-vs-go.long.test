@@ -1,0 +1,9 @@
+// REQUIRES: long
+// REQUIRES: go
+// P03.24 (ADR-0024 decision 9, LEX-13, TYP-27): .go files are unchanged.
+// Every program of Inputs/go-operators (`<=>`, operator method names in a
+// method declaration and in an interface, and the neighbouring tokens `<=`,
+// `>`, `<-`, `<`) gives the same outcome under `gopp check --go` as under
+// `go build`, with errors on the same lines. Long: `go build` needs a warm
+// build cache to stay fast.
+// RUN: %python %S/Inputs/go-embedding-diff.py %gopp %S/Inputs/go-operators

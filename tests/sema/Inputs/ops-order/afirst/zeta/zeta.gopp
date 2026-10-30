@@ -1,0 +1,3 @@
+package zeta
+
+type Z interface{ + (int) int }

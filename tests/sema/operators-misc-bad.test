@@ -1,0 +1,44 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24: more uses the rules refuse: a write into the temporary of [], move of it, close and len of a type with <-, ++ and += with no method, no implicit conversion (EXP-22, EXP-25, CON-22).
+package main
+
+type Cell struct{ f int }
+type Grid struct{ d [4]Cell }
+
+func (g Grid) [] (i int) Cell        { return g.d[i] }
+func (g *Grid) []= (i int, v Cell)   { g.d[i] = v }
+
+type Q struct{ n int }
+
+func (q *Q) <- (v int) {}
+
+type Plain struct{ n int }
+
+type Pt struct{ x float64 }
+
+func (p Pt) + (o Pt) Pt { return p }
+
+func f(g Grid, q Q, p Plain, pt Pt, n int) {
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to g[0].f (neither addressable nor a map index expression)
+	g[0].f = 1
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: move argument g[0] is not a place (variable, field, element, map entry or pointer target)
+	_ = move(g[0])
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid operation: cannot close non-channel q (variable of struct type Q)
+	close(q)
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid argument: q (variable of struct type Q) for built-in len
+	_ = len(q)
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: p++ (non-numeric type Plain)
+	p++
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: p + p: Plain has no operator `+` for Plain (EXP-17)
+	p += p
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: pt + n: Pt has no operator `+` for int (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = pt + n
+	pt += pt
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot use pt (variable of struct type Pt) as int value in variable declaration
+	var x int = pt
+	_ = x
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use 1 (untyped int constant) as Pt value in variable declaration
+	var u Pt = 1
+	_ = u
+}
+

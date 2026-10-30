@@ -1,0 +1,10 @@
+// REQUIRES: long
+// P03.24 Done-when size for the operator checks, shape `chain`: a generated
+// program of size 100000 checks without a crash and in near-linear time
+// (`timeout`, also in the ASan build). One test per shape so lit runs the
+// shapes in parallel. The parser allows 1024 levels of nesting, so a chain of
+// operands is cut into expressions of 1000 operands (the same limit holds for
+// an `int` sum).
+// RUN: %python %S/Inputs/gen-ops-stress.py chain 100000 > %t.gopp
+// RUN: timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+package main

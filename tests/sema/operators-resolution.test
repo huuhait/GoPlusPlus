@@ -1,0 +1,126 @@
+// RUN: %gopp check --dump-types %s | FileCheck --match-full-lines %s
+// RUN: %gopp fmt %s | diff - %s
+// Rules EXP-17 to EXP-28 (P03.24): how the checker resolved each operator
+// use, as the lowering (P04.23) reads it (Info::Operators): the operator,
+// the method, a swapped @Right call, a negated `==`, the sign test of an
+// ordering, the lazy `&&` (the right side is a `func() V`) next to the eager
+// `||`, the read and the write of `a[i] += v`, the in-place `+=`, `++`, the
+// @Convert call, a `case` compared with the `==` method, the built-in `<=>`
+// (an int that is not constant; NaN is decided at run time as cmp.Compare),
+// @Right on `<<` and `<=>`, and `range` with two values. The position is
+// line:column of the expression or statement.
+package main
+
+type V struct{ x int }
+
+func (a V) + (b V) V { return a }
+@Right
+func (a V) * (f float64) V     { return a }
+func (a V) == (b V) bool       { return true }
+func (a V) <=> (b V) int       { return 0 }
+func (a V) && (b func() V) V   { return a }
+func (a V) || (b V) V          { return a }
+func (a V) [] (i int) int      { return 0 }
+func (a *V) []= (i int, v int) {}
+func (a *V) += (b V)           {}
+func (a *V) ++ ()              {}
+func (a V) - () V              { return a }
+@Convert
+func (a V) Int() int { return 0 }
+
+func main() {
+	var a, b V
+	_ = a + b
+	_ = 2.0 * a
+	_ = a != b
+	_ = a >= b
+	_ = a && b
+	_ = a || b
+	_ = a[1]
+	a[1] = 2
+	a[1] += 3
+	a += b
+	a++
+	_ = -a
+	_ = int(a)
+}
+
+func sw(a, b V) {
+	switch a {
+	case b:
+	}
+}
+
+// The built-in `<=>` (EXP-20): an int that is not constant, NaN as in
+// cmp.Compare at run time; `@Right` on `<<` and `<=>` (EXP-26); `range` with
+// two values (RNG-6b); `a[f()] += v` reads and writes with one index.
+type R struct{ x int }
+
+@Right
+func (a R) << (n int) R { return a }
+@Right
+func (a R) <=> (n int) int { return 0 }
+
+type Pairs struct{ n int }
+
+func (p Pairs) range () func(yield func(int, string) bool) {
+	return func(yield func(int, string) bool) {}
+}
+
+func f() int { return 0 }
+
+func more(r R, p Pairs, nan float64, s string, v V) {
+	_ = 3 <=> 4
+	_ = "a" <=> s
+	_ = nan <=> 1.0
+	_ = nan <=> nan
+	_ = 1 << r
+	_ = 2 <=> r
+	for k, w := range p {
+		_, _ = k, w
+	}
+	v[f()] += 3
+}
+
+// GEN-13: `==` in a `[T comparable]` body is the built-in comparison, even
+// for an instance whose type has an `==` method: no operator record.
+func same[T comparable](a, b T) bool { return a == b }
+
+func useSame(a, b V) bool { return same(a, b) }
+
+// CHECK: 33:6 operator `a + b` add +(V) V
+// CHECK: 34:6 operator `2.0 * a` mul *(float64) V swapped
+// CHECK: 35:6 operator `a != b` eq ==(V) bool negated
+// CHECK: 36:6 operator `a >= b` cmp <=>(V) int sign >=
+// CHECK: 37:6 operator `a && b` land &&(func() V) V lazy
+// CHECK: 38:6 operator `a || b` lor ||(V) V
+// CHECK: 39:6 operator `a[1]` index [](int) int
+// CHECK: 40:2 operator `a[1]` indexset []=(int, int)
+// CHECK: 41:2 operator `a[1]` index [](int) int
+// CHECK: 41:2 operator `a[1] += 3` add read [](int) int write []=(int, int)
+// CHECK: 42:2 operator `a += b` add +=(V) inplace
+// CHECK: 43:2 operator `a++` inc ++()
+// CHECK: 44:6 operator `-a` neg -() V
+// CHECK: 45:6 operator `int(a)` convert Int() int
+// CHECK: 50:7 operator `b` eq ==(V) bool
+// CHECK: 73:6 expr `3` constant int = 3
+// CHECK: 73:6 expr `3 <=> 4` value int
+// CHECK: 73:6 operator `3 <=> 4` cmp builtin
+// CHECK: 73:12 expr `4` constant int = 4
+// CHECK: 74:6 operator `"a" <=> s` cmp builtin
+// CHECK: 75:6 expr `nan <=> 1.0` value int
+// CHECK: 75:6 operator `nan <=> 1.0` cmp builtin
+// CHECK: 75:14 expr `1.0` constant float64 = 1
+// CHECK: 76:6 expr `nan <=> nan` value int
+// CHECK: 76:6 operator `nan <=> nan` cmp builtin
+// CHECK: 77:6 operator `1 << r` shl <<(int) R swapped
+// CHECK: 78:6 expr `2 <=> r` value int
+// CHECK: 78:6 operator `2 <=> r` cmp <=>(int) int swapped
+// CHECK: 79:2 operator `for k, w := range p {   _, _ = k, w  }` range range() func(func(int, string) bool)
+// CHECK: 79:6 def k int
+// CHECK: 79:9 def w string
+// CHECK: 82:2 operator `v[f()]` index [](int) int
+// CHECK: 82:2 operator `v[f()] += 3` add read [](int) int write []=(int, int)
+// CHECK: 82:4 expr `f()` value int
+// CHECK: 82:12 expr `3` constant int = 3
+// CHECK-NOT: operator `a == b`

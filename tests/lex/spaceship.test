@@ -1,0 +1,39 @@
+// RUN: %gopp parse -dump-tokens %s | FileCheck --match-full-lines --strict-whitespace %s
+// RUN: rm -rf %t && mkdir -p %t && cp %s %t/a.go
+// RUN: not %gopp check --go %t/a.go 2>&1 | FileCheck --check-prefix=GO %s
+// P03.24 (LEX-13): `<=>` is one token in Go++ source and is not confused with
+// `<=`, `<`, `>` or `<-` next to it (a space splits `<= >`). In Go mode (`--go`)
+// the same text is `<=` then `>`, so it is a syntax error.
+// GO: error[E0026]: expected operand, found '>'
+package p
+
+var a = 1 <=> 2 <= 3 >= 4 < 5 <= > 6 <- 7
+var b = x<=>y
+// CHECK:8:1 kw_package 'package'
+// CHECK-NEXT:8:9 ident 'p'
+// CHECK-NEXT:8:10 semi '\n'
+// CHECK-NEXT:10:1 kw_var 'var'
+// CHECK-NEXT:10:5 ident 'a'
+// CHECK-NEXT:10:7 assign '='
+// CHECK-NEXT:10:9 int_lit '1'
+// CHECK-NEXT:10:11 cmp3 '<=>'
+// CHECK-NEXT:10:15 int_lit '2'
+// CHECK-NEXT:10:17 leq '<='
+// CHECK-NEXT:10:20 int_lit '3'
+// CHECK-NEXT:10:22 geq '>='
+// CHECK-NEXT:10:25 int_lit '4'
+// CHECK-NEXT:10:27 lss '<'
+// CHECK-NEXT:10:29 int_lit '5'
+// CHECK-NEXT:10:31 leq '<='
+// CHECK-NEXT:10:34 gtr '>'
+// CHECK-NEXT:10:36 int_lit '6'
+// CHECK-NEXT:10:38 arrow '<-'
+// CHECK-NEXT:10:41 int_lit '7'
+// CHECK-NEXT:10:42 semi '\n'
+// CHECK-NEXT:11:1 kw_var 'var'
+// CHECK-NEXT:11:5 ident 'b'
+// CHECK-NEXT:11:7 assign '='
+// CHECK-NEXT:11:9 ident 'x'
+// CHECK-NEXT:11:10 cmp3 '<=>'
+// CHECK-NEXT:11:13 ident 'y'
+// CHECK-NEXT:11:14 semi '\n'

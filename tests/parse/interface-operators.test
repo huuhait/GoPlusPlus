@@ -1,0 +1,75 @@
+// RUN: %gopp parse --dump-ast %s | FileCheck %s
+// RUN: %gopp fmt %s | diff - %s
+// Rule TYP-27, LEX-13 (P03.24): the operator elements of an interface, and
+// the disambiguation from the type terms that start with the same tokens:
+// `*T`, `[]T | map[string]T`, `<-chan T` and `~[]T` stay type terms; `* (T) T`,
+// `[] (int) T`, `[]= (int, T)`, `() (int) T`, `<- () T`, `<- (T)`, `range ()`,
+// `<=>`, `==`, `++` and `&&` are methods named by the operator. `(int)`, `*(T)`
+// and `[](T)` alone are type terms (TYP-27). `gopp fmt` leaves the file as is.
+package p
+
+type A[T any] interface {
+	*T
+	+ (T) T
+}
+
+type B[T any] interface {
+	[]T | map[string]T
+	[] (int) T
+	[]= (int, T)
+	() (int) T
+	<- () T
+	<- (T)
+	* () View[T]
+	- () T
+	range () func(yield func(T) bool)
+	<=> (T) int
+	== (T) bool
+	++ ()
+	&& (func() T) T
+}
+
+type C[T any] interface {
+	<-chan T
+	~[]T
+	* (T) T
+}
+
+type D[T any] interface {
+	*T | *int
+	(int)
+}
+
+type E[T any] interface {
+	[]T
+}
+
+type F[T any] interface {
+	*(T)
+	[](T)
+	*(T) | [](T)
+}
+
+// CHECK: Type: StarExpr <12:2, 12:4>
+// CHECK: Names: Ident <13:2, 13:3> '+'
+// CHECK: Type: BinaryExpr <17:2, 17:20> op='|'
+// CHECK: Names: Ident <18:2, 18:4> '[]'
+// CHECK: Names: Ident <19:2, 19:5> '[]='
+// CHECK: Names: Ident <20:2, 20:4> '()'
+// CHECK: Names: Ident <21:2, 21:4> '<-'
+// CHECK: Names: Ident <22:2, 22:4> '<-'
+// CHECK: Names: Ident <23:2, 23:3> '*'
+// CHECK: Names: Ident <24:2, 24:3> '-'
+// CHECK: Names: Ident <25:2, 25:7> 'range'
+// CHECK: Names: Ident <26:2, 26:5> '<=>'
+// CHECK: Names: Ident <27:2, 27:4> '=='
+// CHECK: Names: Ident <28:2, 28:4> '++'
+// CHECK: Names: Ident <29:2, 29:4> '&&'
+// CHECK: Type: ChanType <33:2, 33:10> recv
+// CHECK: Type: UnaryExpr <34:2, 34:6> op='~'
+// CHECK: Names: Ident <35:2, 35:3> '*'
+// CHECK: Type: BinaryExpr <39:2, 39:11> op='|'
+// CHECK: Type: ParenExpr <40:2, 40:7>
+// CHECK: Type: StarExpr <48:2, 48:6>
+// CHECK: Type: SliceType <49:2, 49:7>
+// CHECK: Type: BinaryExpr <50:2, 50:14> op='|'

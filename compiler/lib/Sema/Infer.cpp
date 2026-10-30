@@ -145,6 +145,8 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
         Func *N = newFunc(Mth->Name, Y, Mth->Pos);
         N->Pkg = Mth->Pkg;
         N->IsInterfaceMethod = true;
+        N->Op = Mth->Op;
+        N->Right = Mth->Right;
         N->Origin = Mth;
         N->Fails = Mth->Fails;
         Ms.push_back(N);
@@ -1032,6 +1034,18 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
         auto *CI = dyn_cast_or_null<InterfaceType>(under(TP));
         if (CI)
           for (Func *M : typeSet(CI)->Methods) {
+            if (M->isOperator()) {
+              // GEN-13: an operator element is met by operator and
+              // signature, which the instantiation check decides
+              // (satisfiesOpElem). The one method of that operator is
+              // unified, so a type parameter only the element mentions is
+              // inferred; an overload set guesses nothing.
+              SmallVector<Func *, 4> Cs;
+              opCandidates(TX, M->Op, Cs);
+              if (Cs.size() == 1 && Cs[0]->Ty)
+                U.unify(Cs[0]->Ty, M->Ty, UExact);
+              continue;
+            }
             auto LR = lookupFieldOrMethod(TX, false, M->Pkg, M->Name);
             auto *F = dyn_cast_or_null<Func>(LR.Obj);
             if (F && !F->Ty)

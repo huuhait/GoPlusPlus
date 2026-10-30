@@ -1,0 +1,40 @@
+// P03.24 (GEN-13, ADR-0024): the plain code and the generic code give the
+// same answer for operators. Inputs/gen-ops-table.py writes, for each use
+// (binary, unary, `!`, `==`/`!=`, `<=>` and its derived orderings, `[]`) and each
+// type (a user type with the methods, a struct without, int, float64,
+// string, bool, uint8, named numeric types, a named bool, a slice, a map and
+// a pointer), the plain form and the generic form (a type parameter whose
+// constraint lists the operator element, instantiated explicitly and by
+// inference from a call), checks both with one body thread and with eight,
+// and requires the answers to agree: `.` all accepted, `x` all rejected.
+// int, float64 and string satisfy `<=> (X) int`; bool does not; `Count *
+// Count` is built in next to `Count`'s `* (Meters)`; `*Vec` has only the
+// built-in `==` of a pointer (a binary or unary operator does not look
+// through it) and the `[]` of Vec (an index does, like `p.M()`); a
+// `[]float64` meets `[] (int) float64` with its built-in index. The rows
+// `addi` (`+= (X)`, `*p += b`) and `inc` (`++ ()`, `(*p)++`) write through a
+// pointer, the place of an in-place use; `p` marks plain accepted and generic
+// rejected, by design: Acc's in-place methods have a pointer receiver, which a
+// value type does not meet (GEN-13), and Vec has only `+`, so `a += b` is
+// derived in plain code but no `+=` element is listed. The rows `cmpts` and
+// `ltts` use a type-set constraint of all numbers and strings: the built-in
+// `a <=> b` and `a < b` agree with plain code (Vec is in no such type set).
+// RUN: %python %S/Inputs/gen-ops-table.py --gopp %gopp --out %t | FileCheck %s
+// CHECK: types: 0=Vec 1=Plain 2=int 3=float64 4=string 5=bool 6=Meters 7=Num 8=uint8 9=Count 10=Flag 11=Names 12=Table 13=*Vec 14=[]int 15=[]float64 16=Acc
+// CHECK-NEXT: add    .x...x....xxxxxxx
+// CHECK-NEXT: sub    .x..xx....xxxxxxx
+// CHECK-NEXT: mul    .x..xx....xxxxxxx
+// CHECK-NEXT: rem    .x.xxxx...xxxxxxx
+// CHECK-NEXT: neg    .x..xx....xxxxxxx
+// CHECK-NEXT: not    .xxxx.xxxx.xxxxxx
+// CHECK-NEXT: eq     ...........xx.xx.
+// CHECK-NEXT: ne     ...........xx.xx.
+// CHECK-NEXT: cmp    .x...x....xxxxxxx
+// CHECK-NEXT: lt     .x...x....xxxxxxx
+// CHECK-NEXT: ge     .x...x....xxxxxxx
+// CHECK-NEXT: idx    .xxxxxxxxxxxx.x.x
+// CHECK-NEXT: cmpts  px...x....xxxxxxx
+// CHECK-NEXT: ltts   px...x....xxxxxxx
+// CHECK-NEXT: addi   px...x....xxxxxxp
+// CHECK-NEXT: inc    xx..xx....xxxxxxp
+// CHECK-NOT: MISMATCH

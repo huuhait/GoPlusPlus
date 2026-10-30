@@ -1,0 +1,53 @@
+// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error %s
+// P03.24: operator constraints that are met, and bodies that use them (GEN-13, TYP-27).
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2  { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) - () Vec2        { return Vec2{-a.X, -a.Y} }
+func (a Vec2) == (b Vec2) bool { return true }
+func (a Vec2) <=> (b Vec2) int { return 0 }
+
+type Meters float64
+type Row struct{ v [2]float64 }
+
+func (r Row) [] (i int) float64 { return r.v[i] }
+
+func Sum[T interface{ + (T) T }](a, b T) T { return a + b }
+func Max[T interface{ Copy; <=> (T) int }](a, b T) T {
+	if a < b {
+		return b
+	}
+	if a <=> b >= 0 {
+		return a
+	}
+	return b
+}
+func Both[T interface{ Copy; + (T) T; - () T; == (T) bool }](a, b T) T {
+	if a == b {
+		return -a
+	}
+	return a + b
+}
+func Idx[T interface{ [] (int) float64 }](a T) float64 { return a[0] }
+func Inc[T interface{ ++ () }](a *T)                   { (*a)++ }
+
+func main() {
+	_ = Sum(1, 2)
+	_ = Sum(1.5, 2.5)
+	_ = Sum("a", "b")
+	_ = Sum(Vec2{}, Vec2{})
+	_ = Sum(Meters(1), Meters(2))
+	_ = Max(1, 2)
+	_ = Max(2.5, 1.5)
+	_ = Max(Vec2{}, Vec2{})
+	_ = Both(1, 2)
+	_ = Both(Vec2{}, Vec2{})
+	_ = Idx([]float64{1})
+	_ = Idx(Row{})
+	var i int
+	Inc(&i)
+}
+
+

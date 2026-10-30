@@ -1,0 +1,234 @@
+// RUN: %gopp check %s
+// P03.24 (ADR-0024), accepted side: every operator form on user types, the
+// overload pick, @Right, the in-place compound forms, index and call
+// forms, channel forms, @Convert, range, extends and generic operator
+// constraints. Exit status 0, no output.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2    { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) + (s float64) Vec2 { return Vec2{a.X + s, a.Y + s} }
+func (a Vec2) - (b Vec2) Vec2    { return Vec2{a.X - b.X, a.Y - b.Y} }
+func (a Vec2) - () Vec2          { return Vec2{-a.X, -a.Y} }
+func (a Vec2) + () Vec2          { return a }
+func (a Vec2) ^ () Vec2          { return a }
+func (a Vec2) % (b Vec2) Vec2    { return a }
+func (a Vec2) & (b Vec2) Vec2    { return a }
+func (a Vec2) | (b Vec2) Vec2    { return a }
+func (a Vec2) &^ (b Vec2) Vec2   { return a }
+func (a Vec2) << (n uint) Vec2   { return a }
+func (a Vec2) >> (n uint) Vec2   { return a }
+func (a Vec2) == (b Vec2) bool   { return a.X == b.X && a.Y == b.Y }
+func (a Vec2) <=> (b Vec2) int   { return 0 }
+func (a Vec2) ! () bool          { return a.X == 0 }
+
+@Right
+func (a Vec2) * (s float64) Vec2 { return Vec2{a.X * s, a.Y * s} }
+@Right
+func (a Vec2) / (s float64) Vec2 { return Vec2{s / a.X, s / a.Y} }
+func (a Vec2) / (s int) Vec2     { return a }
+@Right
+func (a Vec2) - (s string) Vec2  { return a }
+
+func (a Vec2) Clone() Vec2 { return a }
+
+func vec() {
+	a, b, c := Vec2{1, 2}, Vec2{3, 4}, Vec2{5, 6}
+	_ = a + b
+	_ = a + 1.5
+	_ = a + 1 // an untyped constant picks float64: int has no overload
+	_ = a - b
+	_ = -a * 2.0 + b
+	_ = a + b*c.X
+	_ = 2.0 * a
+	_ = a * 2.0
+	_ = 1.0 / a
+	_ = a / 2
+	_ = "s" - a
+	_ = +a
+	_ = ^a
+	_ = !a
+	_ = a % b
+	_ = a & b | c &^ a
+	_ = a << 2
+	_ = a >> 2
+	_ = a == b
+	_ = a != b
+	_ = a < b
+	_ = a <= b
+	_ = a > b
+	_ = a >= b
+	_ = a <=> b == 0
+	_ = 3 <=> 4
+	_ = "a" <=> "b"
+	_ = 1.5 <=> 2.5
+}
+
+// Compound forms: through the binary method, and through an in-place one.
+type Matrix struct {
+	rows, cols int
+	data       []float64
+}
+
+func (m Matrix) [] (i, j int) float64      { return m.data[i*m.cols+j] }
+func (m *Matrix) []= (i, j int, v float64) { m.data[i*m.cols+j] = v }
+func (m Matrix) + (o Matrix) Matrix        { return m.Clone() }
+func (m *Matrix) += (o Matrix)             {}
+func (m Matrix) Clone() Matrix             { return Matrix{m.rows, m.cols, nil} }
+
+type Plain struct{ x int }
+
+func (p Plain) + (o Plain) Plain { return p }
+func (p Plain) Clone() Plain     { return p }
+
+func compound() {
+	var m, n Matrix
+	_ = m[1, 2]
+	m[1, 2] = 5.0
+	m[1, 2] += 1.0
+	m += n
+	m = m + n
+	m = m + m
+	var p Plain
+	p += p
+}
+
+// Counters, calls and channels.
+type Counter struct{ n int }
+
+func (c *Counter) ++ () { c.n++ }
+func (c *Counter) -- () { c.n-- }
+
+type Fn struct{ k int }
+
+func (f Fn) () (x int) int       { return x }
+func (f Fn) () (s string) string { return s.Clone() }
+
+type Job struct{ n int }
+type Queue struct{ items []Job }
+
+func (q *Queue) <- (v Job)        {}
+func (q *Queue) <- () (Job, bool) { return Job{}, false }
+
+type Big struct{ v int }
+
+@Convert
+func (b Big) Float64() float64 { return float64(b.v) }
+
+type Tree struct{ n int }
+
+func (t *Tree) range () func(yield func(int) bool) { return func(yield func(int) bool) {} }
+
+type Table struct{ n int }
+
+func (t *Table) range () func(yield func(int, string) bool) {
+	return func(yield func(int, string) bool) {}
+}
+
+type Handle struct{ p Unique[*Vec2] }
+
+func (h Handle) * () View[Vec2] { return *h.p }
+
+func others(h Fn, q *Queue, hd Handle, b Big, t *Tree, tb *Table) {
+	_ = *hd + Vec2{}
+	var c Counter
+	c++
+	c--
+	_ = h(3)
+	_ = h("s")
+	defer h(1)
+	go h(2)
+	h(3)
+	*q <- Job{1}
+	v, ok := <-q
+	_, _ = v, ok
+	_ = float64(b)
+	_ = b.Float64()
+	for x := range t {
+		_ = x
+	}
+	for x, y := range tb {
+		_, _ = x, y
+	}
+}
+
+// Lazy and eager logical operators.
+type Flag struct{ on bool }
+
+func (a Flag) && (b Flag) Flag        { return a }
+func (a Flag) || (b func() Flag) Flag { return a }
+
+func logic(a, b Flag) {
+	_ = a && b
+	_ = a || b
+}
+
+// extends: an inherited operator, an extra overload, an @Override.
+type Parent struct{ N int }
+
+func (a Parent) + (b Parent) Parent { return Parent{a.N + b.N} }
+func (a Parent) == (b Parent) bool  { return a.N == b.N }
+func (a Parent) <=> (b Parent) int  { return 0 }
+@Virtual
+func (a *Parent) () (x int) int { return x }
+
+type Child extends Parent { M int }
+
+func (a Child) + (b int) Child { return Child{} }
+func (a Child) == (b Child) bool { return true }
+@Override
+func (a *Child) () (x int) int { return x + 1 }
+
+func kin(c Child, p Parent, pp *Parent, cc *Child) {
+	_ = c + p.N
+	_ = p + p
+	_ = c == c
+	_ = p == p
+	_ = p < p
+	_ = pp(3)
+	_ = cc(4)
+}
+
+// Generics: the operator constraint, built-in types satisfy it, derived forms.
+func Sum[T interface{ + (T) T; Clone }](xs []T) T {
+	acc := xs[0].Clone()
+	for i := 1; i < len(xs); i++ {
+		acc = acc + xs[i]
+	}
+	return acc
+}
+
+func Max[T interface{ <=> (T) int; Clone }](a, b T) T {
+	if a <=> b >= 0 {
+		return a.Clone()
+	}
+	return b.Clone()
+}
+
+func Less[T interface{ <=> (T) int }](a, b T) bool { return a < b }
+func Same[T interface{ == (T) bool }](a, b T) bool { return a != b }
+
+func comparable1[T comparable](a, b T) bool { return a == b }
+
+type Vec[T any] struct{ xs []T }
+
+func (v Vec[T]) + (o Vec[T]) Vec[T] { return Vec[T]{} }
+
+func generic() {
+	_ = Sum([]int{1, 2, 3})
+	_ = Sum([]float64{1, 2})
+	_ = Sum([]string{"a"})
+	_ = Sum([]Vec2{{1, 2}})
+	_ = Max(1, 2)
+	_ = Max(1.5, 2.5)
+	_ = Max("a", "b")
+	_ = Max(Vec2{}, Vec2{})
+	_ = Less(1, 2)
+	_ = Same(Vec2{}, Vec2{})
+	_ = comparable1(1, 2)
+	var x, y Vec[int]
+	_ = x + y
+}
+
+func main() {}

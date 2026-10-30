@@ -1,0 +1,7 @@
+// RUN: not %gopp check %S/Inputs/ops-order/zfirst 2>&1 | FileCheck %s
+// RUN: not %gopp check %S/Inputs/ops-order/afirst 2>&1 | FileCheck %s
+// P03.24 review (M6): operator elements with the same name from different
+// packages are ordered by name, package path, then signature, not by where
+// the packages happen to sit in memory: `alpha`'s `+ (string) string` is the
+// first missing one whichever package main imports first.
+// CHECK: error{{\[E[0-9]+\]}}: S does not satisfy Both (missing operator + (string) string)

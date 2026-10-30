@@ -1,0 +1,83 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule GEN-13 (P03.24, ADR-0024), rejected: an operator element is not met
+// by `bool` (`<=>`, `+`), by a type without the method, or by a value type
+// whose method has a pointer receiver; `a != b` needs `==` in the constraint
+// (only `<=>` is listed), `a + b` needs `+`. Lines without a CHECK line are
+// accepted: `int`, `string` and `Vec2` for `<=> (T) int`, `Vec2`'s own
+// `==` next to `comparable` (the built-in equality stays), `Sum` over
+// `float64` and `string` (built-in `+`), and `int` for `++ ()` (the built-in
+// `i++`, as in plain code).
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) <=> (b Vec2) int { return 0 }
+func (a Vec2) == (b Vec2) bool { return true }
+
+type PC struct{ n int }
+
+func (p *PC) ++() { p.n++ }
+
+type Cmp[T any] interface {
+	<=> (T) int
+}
+
+type Inc interface {
+	++ ()
+}
+
+type Plus[T any] interface {
+	+ (T) T
+}
+
+func Less[T Cmp[T]](a, b T) bool { return a < b }
+
+// CHECK-DAG: [[@LINE+1]]:41: error{{\[E[0-9]+\]}}: invalid operation: a != b (incomparable types in type set)
+func Ne[T Cmp[T]](a, b T) bool { return a != b }
+
+func Add[T Cmp[T]](a, b T) bool {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a + b: T has no operator `+` for T (EXP-17); list `+ (b U) R` in the constraint of T (GEN-13)
+	_ = a + b
+	return true
+}
+
+func Bump[T Inc](a *T) { (*a)++ }
+
+func Same[T comparable](a, b T) bool { return a == b }
+
+func Sum[T Plus[T]](a, b T) T { return a + b }
+
+type Neg interface {
+	- () Vec2
+}
+
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use type Neg outside a type constraint: interface has operator elements (TYP-27)
+func vars(n Neg) {
+// CHECK-DAG: [[@LINE+2]]:6: error{{\[E[0-9]+\]}}: cannot declare m without a value: Neg has no zero value (interfaces with methods are never nil)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use type Neg outside a type constraint: interface has operator elements (TYP-27)
+	var m Neg
+	_, _ = n, m
+}
+
+func use() {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: bool does not satisfy Cmp[bool] (missing operator <=> (bool) int)
+	_ = Less(true, false)
+	_ = Less("a", "b")
+	_ = Less(1, 2)
+	_ = Less(Vec2{}, Vec2{})
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Vec2 does not satisfy Plus[Vec2] (missing operator + (Vec2) Vec2)
+	_ = Sum(Vec2{}, Vec2{})
+	_ = Sum(1.5, 2.5)
+	_ = Sum("a", "b")
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: bool does not satisfy Plus[bool] (missing operator + (bool) bool)
+	_ = Sum(true, false)
+	_ = Same(Vec2{}, Vec2{})
+	var p PC
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: PC does not satisfy Inc (method ++ has pointer receiver)
+	Bump(&p)
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: PC does not satisfy Inc (method ++ has pointer receiver)
+	_ = Bump[PC]
+	_ = Bump[int]
+}
+
+func main() {}

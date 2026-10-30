@@ -404,7 +404,14 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     }
   }
 
-  LookupResult LR = lookupFieldOrMethod(LookupT, Addressable, S.Pkg, Sel);
+  // A selector synthesized for an operator call names the method itself:
+  // an overload set shares the name (ADR-0024).
+  const Func *WantOp = nullptr;
+  if (!OpSelect.empty())
+    if (auto It = OpSelect.find(Ex); It != OpSelect.end())
+      WantOp = It->second;
+  LookupResult LR =
+      lookupFieldOrMethod(LookupT, Addressable, S.Pkg, Sel, false, WantOp);
   Object *Obj = LR.Obj;
   if (Obj && !Obj->Ty)
     objDecl(Obj, nullptr);
@@ -616,8 +623,14 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       }
       recordSelection(Ex, SelInfo);
       recordUse(Ex->Sel, F);
-      if (own() && F->HasPtrRecv && !LR.Indirect)
-        checkPtrRecvCall(Ex, F);
+      if (own() && F->HasPtrRecv) {
+        // RNG-6b: a pointer method writes the place it is called on, also
+        // through the pointer that is ranged over (`p.Inc()` in `range p`).
+        checkUserRangeWrite(Ex->X, "call the pointer method " +
+                                       std::string(F->Name) + " on");
+        if (!LR.Indirect)
+          checkPtrRecvCall(Ex, F);
+      }
       // A pointer-receiver method value, or a `go` / `defer` call, on a
       // checked Option binds &o and outlives the statement: `o = nil` could
       // then empty the payload under it. It is an implicit `&o`, so o is
@@ -879,7 +892,13 @@ void Checker::genericExprList(ArrayRef<ast::Expr *> Es,
   // A generic function may be partially instantiated (`f[int]`): its type
   // arguments are kept in the operand and the rest is inferred by the call.
   auto Eval = [&](Operand &X, const ast::Expr *Ex) {
-    if (auto *IE = dyn_cast<IndexExpr>(Ex)) {
+    // An operand the operator code evaluated already goes through rawExpr,
+    // which hands it back: no operand is checked twice (ADR-0024). Every
+    // other evaluation path (exprList, multiExpr, exprOrType, use) reaches
+    // rawExpr; this one and the callee of callExpr are the only direct
+    // indexExpr calls, and an operator call has a selector as its callee.
+    auto *IE = dyn_cast<IndexExpr>(Ex);
+    if (IE && !PreEval.count(Ex)) {
       if (indexExpr(X, IE)) {
         funcInst(X, IE->getBegin(), IE, false, nullptr);
         if (X.M != Mode::Invalid)
@@ -1055,6 +1074,11 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
       CalleeSel = Pa->X;
     bool SavedSusp = CalleeSuspended;
     CalleeSuspended = Call == GoCall || Call == DeferCall;
+    // ADR-0024: the callee may be the receiver of a `()` method; a partial
+    // place is decided with the method (opReceiverOk), and a struct is no
+    // function anyway.
+    if (!S.Opts.GoCompat && Ctx.operatorsSeen())
+      markPartialOk(Call->Fun, /*Addr=*/false);
     exprOrType(X, Call->Fun, true);
     CalleeSuspended = SavedSusp;
     CalleeSel = SavedCallee;
@@ -1124,6 +1148,11 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
               {"invalid use of ... in conversion to " + str(T)});
           break;
         }
+        // ADR-0024, EXP-25: `float64(b)` through an @Convert method.
+        bool ViaMethod = false;
+        if (!S.Opts.GoCompat && Ctx.operatorsSeen() &&
+            opConvert(X, T, Call, ViaMethod) && ViaMethod)
+          break;
         conversion(X, T);
       }
       break;
@@ -1190,6 +1219,16 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     break;
   }
 
+  // ADR-0024, EXP-23: `a(x)` on a type with `()` methods (also through a
+  // pointer, like the method call `p.M()`).
+  if (!S.Opts.GoCompat && Ctx.operatorsSeen() && X.M != Mode::Invalid &&
+      X.M != Mode::TypeExpr && opCandidateType(X.Ty, /*ThroughPtr=*/true)) {
+    bool Handled = false;
+    if (opCallExpr(X, Call, Handled) && Handled) {
+      X.E = Call;
+      return ExprKind::Statement;
+    }
+  }
   // Ordinary function or method call.
   std::string CallWhy;
   auto *Sig = dyn_cast_or_null<SignatureType>(commonUnder(

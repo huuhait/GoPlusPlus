@@ -1,0 +1,160 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24 (ADR-0024), rejected uses: no implicit conversion, an untyped constant
+// that fits two overloads, places that an index operator does not give, `*`
+// results, in-place overlap, views as operands, `extends` exact-type
+// resolution, `select` and builtins on a user channel, and constraints.
+// Every error is pinned; the accepted twins are in operators-ok.test.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) Clone() Vec2    { return a }
+
+type Num struct{ n int }
+
+func (a Num) + (b float64) Num { return a }
+func (a Num) + (b int8) Num    { return a }
+
+type Matrix struct {
+	data []float64
+	subs []Matrix
+	pt   Vec2
+}
+
+func (m Matrix) [] (i int) Vec2         { return Vec2{} }
+func (m *Matrix) []= (i int, v Vec2)    {}
+func (m Matrix) + (o Matrix) Matrix     { return Matrix{} }
+func (m *Matrix) += (o Matrix)          {}
+func (m Matrix) Clone() Matrix          { return Matrix{} }
+
+type Hold struct{ n int }
+
+func (h Hold) <=> (o Hold) int { return 0 }
+
+type T1 struct{ x int }
+
+@Right
+func (a T1) * (s float64) T1 { return a }
+@Right
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: duplicate operator method `*` for the parameter types (float64) with @Right: the first is at line {{[0-9]+}} (EXP-17)
+func (a T1) * (s float64) T1 { return a }
+
+type T2 struct{ x int }
+type T3 struct{ x int }
+
+func (a T2) * (b T3) T2 { return a }
+@Right
+func (a T3) * (b T2) T3 { return a }
+
+type Big struct{ d []int }
+
+func (a Big) + (b Big) Big { return Big{} }
+
+type Handle struct{ p Unique[*Vec2] }
+
+func (h Handle) * () View[Vec2] { return *h.p }
+
+type Q struct{ n int }
+
+func (q *Q) <- (v int) {}
+
+type Tree struct{ n int }
+
+func (t *Tree) range () func(yield func(int) bool) { return func(yield func(int) bool) {} }
+
+func mk() Tree { return Tree{} }
+
+type Parent struct{ N int }
+
+func (a Parent) == (b Parent) bool { return true }
+
+type Child extends Parent { M int }
+
+func takeParent(p Parent) {}
+
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot use type Ord outside a type constraint: interface has operator elements (TYP-27)
+type Ord interface{ <=> (Ord) int }
+
+// CHECK-DAG: [[@LINE+1]]:53: error{{\[E[0-9]+\]}}: cannot copy a value of type T in generic code: T is not constrained by Copy (GEN-3)
+func Sum[T interface{ + (T) T }](xs []T) T { return xs[0] }
+// CHECK-DAG: [[@LINE+1]]:57: error{{\[E[0-9]+\]}}: cannot return a of type T: it is borrowed, and T is not constrained by Copy (GEN-4)
+func Max[T interface{ <=> (T) int }](a, b T) T { return a }
+// CHECK-DAG: [[@LINE+1]]:53: error{{\[E[0-9]+\]}}: invalid operation: a - b: T has no operator `-` for T (EXP-17); list `- (b U) R` in the constraint of T (GEN-13)
+func Sub[T interface{ + (T) T }](a, b T) T { return a - b }
+func Eq[T comparable](a, b T) bool { return a == b }
+
+func use(v Vec2, x Hold, vv View[Big], h Handle, q *Q, c Child, f float64, i int, ch chan int) {
+	var m, n Matrix
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use Big{} (value of struct type Big) as float64 value in variable declaration
+	var y float64 = Big{}
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v + 1: Vec2 has no operator `+` for untyped int constant 1 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = v + 1
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v + f: Vec2 has no operator `+` for float64 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = v + f
+	var a Num
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `+` in a + 1: the untyped int constant 1 argument fits +(float64) Num; +(int8) Num; write the argument with an explicit type (EXP-17)
+	_ = a + 1
+	_ = a + 2.5
+	_ = a + int8(3)
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: m[1] is not a place: ++ is not allowed on a user index (EXP-22); write `m[1] += 1`
+	m[1]++
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: cannot take address of m[1] (value of struct type Vec2)
+	_ = &m[1]
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to m[1].X (neither addressable nor a map index expression)
+	m[1].X = 3
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: move argument m[1] is not a place (variable, field, element, map entry or pointer target)
+	_ = move(m[1])
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: v++ (non-numeric type Vec2)
+	v++
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: x < 3: Hold has no operator `<` for untyped int constant 3 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = x < 3
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: 3 < x: untyped int constant 3 has no operator `<` for Hold (EXP-17); the `<` methods of Hold take it as the left operand: for a constant on the left write a @Right method for the swapped order (EXP-26)
+	_ = 3 < x
+	var t1 T1
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `*` in 2.0 * t1: the untyped float constant 2 argument fits *(float64) T1 @Right; *(float64) T1 @Right; write the argument with an explicit type (EXP-17)
+	_ = 2.0 * t1
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `*` in t1 * 2.0: the untyped float constant 2 argument fits *(float64) T1 @Right; *(float64) T1 @Right; write the argument with an explicit type (EXP-17)
+	_ = t1 * 2.0
+	var t2 T2
+	var t3 T3
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `*` in t2 * t3: T2 has *(T3) T2 and T3 has the @Right method *(T2) T3: the use fits both (EXP-17)
+	_ = t2 * t3
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += m: the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + m`
+	m += m
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += m.subs[0]: the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + m.subs[0]`
+	m += m.subs[0]
+	m += n
+	m = m + m
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: vv + vv: View[Big] has no operator `+` for View[Big] (EXP-17); Big is not a pointer-free Copy type, so a view of it cannot be an operand: the receiver and the parameters are not views (OWN-V1)
+	_ = vv + vv
+	_ = *h + Vec2{}
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to *h (neither addressable nor a map index expression)
+	*h = Vec2{}
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: h.X undefined (type Handle has no field or method X)
+	_ = h.X
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot use mk() as the operand of `range`: the operator method has a pointer receiver, so the operand must be a variable, a field or an element that can be written; Tree here is a temporary or a read-only value (EXP-16)
+	for range mk() {
+	}
+	var tr Tree
+	for range &tr {
+	}
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c == c: Child has no operator `==` for Child (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child value is not a parent operand (EXP-30): define the operator on Child, or use the parent parts
+	_ = c == c
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot use c (variable of struct type Child) as Parent value in argument to takeParent: value slicing: Child extends Parent, but a Child value is not a Parent value (it would copy only the parent part); use the fields of its parent part, or a *Child (Parent has no type table, so no upcast) (EXP-15)
+	takeParent(c)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: bool does not satisfy interface{+ (bool) bool} (missing operator + (bool) bool)
+	_ = Sum([]bool{true})
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: bool does not satisfy interface{<=> (bool) int} (missing operator <=> (bool) int)
+	_ = Max(true, false)
+	_ = Max(Hold{}, Hold{})
+	_ = Max(x, x)
+// CHECK-DAG: [[@LINE+2]]:6: error{{\[E[0-9]+\]}}: cannot declare o without a value: Ord has no zero value (interfaces with methods are never nil)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use type Ord outside a type constraint: interface has operator elements (TYP-27)
+	var o Ord
+	_ = o
+	_ = Eq(v, v)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: i + f (mismatched types int and float64)
+	_ = i + f
+	_ = y
+}

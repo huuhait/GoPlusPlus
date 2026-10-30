@@ -1,0 +1,13 @@
+// P03.24: the operator table of a type (its own methods and its ancestors')
+// and of the instances of a generic type is stored on the type only when the
+// types are final, the first stored table staying, so no diagnostic depends
+// on which thread asks first: one body thread and eight give the same output
+// for many bodies that ask at once (ParallelCheck.* covers the unit side).
+// RUN: %python %S/Inputs/gen-ops-stress.py parallel 400 > %t.gopp
+// RUN: not %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.1 2>&1
+// RUN: not %gopp check -check-j=8 --check-error-limit=0 %t.gopp > %t.8 2>&1
+// RUN: diff %t.1 %t.8
+// RUN: FileCheck %s < %t.1
+// CHECK: error{{\[E[0-9]+\]}}: invalid operation: a - b: Box[int] has no operator `-` for Box[int] (EXP-17)
+// CHECK: error{{\[E[0-9]+\]}}: invalid operation: r + r: L0 has no operator `+` for L0 (EXP-17); the operator methods are inherited from the parent and take the parent type
+package main

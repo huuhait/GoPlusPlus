@@ -74,6 +74,13 @@ public:
       break;
     case K::SelectorExpr: {
       auto *S = cast<SelectorExpr>(E);
+      // The selector of an operator call the checker made (ADR-0024): no
+      // source selector can name an operator.
+      if (isOperatorSpelling(S->Sel->Name.str())) {
+        OS << "the operator " << S->Sel->Name.str() << " of ";
+        print(S->X, Depth);
+        break;
+      }
       print(S->X, Depth);
       OS << '.' << S->Sel->Name.str();
       break;

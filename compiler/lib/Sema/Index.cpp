@@ -97,6 +97,11 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     }
     return false;
   }
+  // ADR-0024: the operand may be the receiver of a `[]` method; a partial
+  // place is decided with the method (opReceiverOk), and a struct has no
+  // built-in index anyway.
+  if (!S.Opts.GoCompat && Ctx.operatorsSeen())
+    markPartialOk(Ex->X, /*Addr=*/false);
   exprOrType(X, Ex->X, true);
   switch (X.M) {
   case Mode::Invalid:
@@ -117,6 +122,12 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
   default:
     break;
   }
+  // ADR-0024, EXP-22: `a[i]`, `a[i, j]` on a type with `[]` methods (also
+  // through a pointer, like the method call `p.M()`).
+  if (X.M != Mode::Invalid && X.M != Mode::TypeExpr && !S.Opts.GoCompat &&
+      Ctx.operatorsSeen() && opCandidateType(X.Ty, /*ThroughPtr=*/true) &&
+      !isGeneric(X.Ty) && opIndex(X, Ex))
+    return false;
   if (X.M != Mode::Invalid && X.Ty && isGeneric(X.Ty)) {
     err(Ex->X, diag::err_generic_without_instantiation,
         {"type", str(Ex->X), ""});

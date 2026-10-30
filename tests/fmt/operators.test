@@ -1,0 +1,83 @@
+// RUN: %gopp fmt %s | FileCheck --match-full-lines %s
+// RUN: %gopp fmt %s > %t.fmt.gopp && %gopp fmt %t.fmt.gopp | diff %t.fmt.gopp -
+// P03.24 (TYP-27, LEX-13, EXP-28): `gopp fmt` writes an operator method as
+// `func (a T) + (b T) T`, removes the spaces inside `[]`, `[]=` and `()`,
+// puts `<=>` at the level of `==`, and does the same for the operator
+// elements of an interface; the type terms `~int | ~string`, `*T`, `[]T` and
+// `<-chan int` are untouched. A second run changes nothing.
+package p
+
+type T struct{}
+
+func (a T)+(b T)T{return a}
+func (a T)  [ ]  (i int)int{return 0}
+func (a *T)[ ]=(i int,v int){}
+func (a *T)[ ] = (i, j int,v int){}
+func (a *T)+=(b T){}
+func (a T)! ( )bool{return true}
+func (a T)( )(x int)int{return x}
+func (a T)<=>(b T)int{return 0}
+func (a T)-()T{return a}
+func (a *T)<-(v int){}
+func (a T)range()func(yield func(int)bool){return nil}
+@Right
+func (a T)*(f float64)T{return a}
+
+type I interface{
+	+(T)T
+	[ ](int)T
+	[ ]=(int,T)
+	( )(int)T
+	<-()T
+	range()func(yield func(T)bool)
+	<=>(T)int
+	~int|~string
+	*T
+	[]T
+	<-chan int
+}
+
+func g(a,b T){
+	_=a<=>b==0
+	_=a<=>b==0 && a<=>b<0 || (a <=> b)>=0
+	_=a<=>b+1
+	_=a+b<=>a
+	a[ 1 ]=2
+	_=a( 1 )
+}
+
+// CHECK:type T struct{}
+// CHECK:func (a T) + (b T) T                           { return a }
+// CHECK:func (a T) [] (i int) int                      { return 0 }
+// CHECK:func (a *T) []= (i int, v int)                 {}
+// CHECK:func (a *T) []= (i, j int, v int)              {}
+// CHECK:func (a *T) += (b T)                           {}
+// CHECK:func (a T) ! () bool                           { return true }
+// CHECK:func (a T) () (x int) int                      { return x }
+// CHECK:func (a T) <=> (b T) int                       { return 0 }
+// CHECK:func (a T) - () T                              { return a }
+// CHECK:func (a *T) <- (v int)                         {}
+// CHECK:func (a T) range () func(yield func(int) bool) { return nil }
+// CHECK:@Right
+// CHECK:func (a T) * (f float64) T { return a }
+// CHECK:type I interface {
+// CHECK:	+ (T) T
+// CHECK:	[] (int) T
+// CHECK:	[]= (int, T)
+// CHECK:	() (int) T
+// CHECK:	<- () T
+// CHECK:	range () func(yield func(T) bool)
+// CHECK:	<=> (T) int
+// CHECK:	~int | ~string
+// CHECK:	*T
+// CHECK:	[]T
+// CHECK:	<-chan int
+// CHECK:}
+// CHECK:func g(a, b T) {
+// CHECK:	_ = a <=> b == 0
+// CHECK:	_ = a <=> b == 0 && a <=> b < 0 || (a <=> b) >= 0
+// CHECK:	_ = a <=> b+1
+// CHECK:	_ = a+b <=> a
+// CHECK:	a[1] = 2
+// CHECK:	_ = a(1)
+// CHECK:}

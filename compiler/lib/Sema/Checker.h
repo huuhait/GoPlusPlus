@@ -199,6 +199,14 @@ void forEachTypeParam(Type *Arg,
 
 class Checker;
 
+/// Is the unary or binary operator Op defined on the (core) type T by the
+/// language itself (Expr.cpp).
+bool opAllowed(Checker &C, tok::Kind Op, Type *T, bool Unary);
+
+/// The method as its type declares it: the origin of an instantiated method
+/// or of a substituted interface method (Lookup.cpp).
+const Func *declaredMethod(const Func *F);
+
 /// A diagnostic under construction; emitted by the destructor.
 class Err {
 public:
@@ -506,8 +514,12 @@ public:
   bool termDisjoint(const Term &X, const Term &Y);
   bool typeSetSubsetOf(TypeSet *A, TypeSet *B);
   bool termSubsetOf(const Term &X, const Term &Y);
+  /// Want (ADR-0024): the operator method a synthesized selector names; an
+  /// overload set shares its name, so the lookup finds that method itself
+  /// (the element of the set, or the method a type declares) and ignores the
+  /// name's package. Null for every lookup by name.
   Func *lookupMethodInSet(TypeSet *TS, Package *P, StringRef N, bool Fold,
-                          int *Idx = nullptr);
+                          int *Idx = nullptr, const Func *Want = nullptr);
   std::string termsString(ArrayRef<Term> Ts);
   bool typeSetIsComparable(TypeSet *TS);
   TypeSet *computeTypeSet(InterfaceType *I, SourceLoc Pos);
@@ -528,7 +540,7 @@ public:
     bool Ambiguous = false; // index set, no object
   };
   bool chainLookup(NamedType *N, bool IsPtr, bool Addressable, Package *Pkg,
-                   StringRef Name, LookupResult &R);
+                   StringRef Name, LookupResult &R, const Func *Want = nullptr);
   /// The entry of the origin O in the chain name index (TypeContext::
   /// chainEntry), entering O and its ancestors not entered yet. False before
   /// the types are final or on a ring.
@@ -538,11 +550,13 @@ public:
   NamedType *chainAncestor(NamedType *O, TypeContext::ChainEntry E, uint32_t D,
                            llvm::SmallVectorImpl<Type *> *Args);
   LookupResult lookupFieldOrMethod(Type *T, bool Addressable, Package *Pkg,
-                                   StringRef Name, bool FoldCase = false);
+                                   StringRef Name, bool FoldCase = false,
+                                   const Func *Want = nullptr);
   LookupResult lookupImpl(Type *T, bool Addressable, Package *Pkg,
-                          StringRef Name, bool FoldCase);
+                          StringRef Name, bool FoldCase,
+                          const Func *Want = nullptr);
   Func *lookupMethod(NamedType *N, Package *Pkg, StringRef Name, bool Fold,
-                     int *Idx);
+                     int *Idx, const Func *Want = nullptr);
   Func *namedMethod(NamedType *N, unsigned I); // instantiates lazily
   unsigned numMethods(NamedType *N);
   bool sameId(const Object *O, Package *Pkg, StringRef Name, bool Fold);
@@ -1264,11 +1278,16 @@ public:
   /// variable, and whether the body wrote the key already.
   struct RangeFrame {
     std::string X;
+    const ast::Expr *XE = nullptr; // the range expression, a stable place
     Type *XTy = nullptr;
     Var *Key = nullptr;
     bool KeyWritten = false;
+    bool User = false; // a `range` method: X stays borrowed (RNG-6b)
   };
   SmallVector<RangeFrame, 4> RangeStack;
+  /// RNG-6b: a write to, or a pointer-method call on, the place that a
+  /// `range` method is looping over.
+  void checkUserRangeWrite(const ast::Expr *Place, const std::string &What);
   /// RNG-3: What is "assign to", "append to", ...; Lhs the place written.
   void checkRangeMutation(const ast::Expr *Lhs, const char *What);
 
@@ -1683,6 +1702,166 @@ public:
   /// The instances expanded while the package's types are declared (so
   /// invalidateByValueCycles can start from them); null when not recording.
   std::vector<NamedType *> *ExpandedInsts = nullptr;
+
+  // =========================================================================
+  // Operator methods (Operators.cpp, ADR-0024, EXP-16 to EXP-30)
+  //
+  // An operator method is a Func named by its operator, with its form in
+  // Func::Op. The rules, each decided in ONE place:
+  //   the form of a declaration          checkOperatorShape (+ opSecondMeaning)
+  //   overload sets, duplicates          checkOperatorSets
+  //   which methods a type has           opCandidates, from the per-type
+  //                                      operator table (opTable: the type,
+  //                                      its `extends` ancestors) or the
+  //                                      constraint of a type parameter
+  //   which overload an operand list     pickOverload (exact types; the
+  //   picks                              untyped-constant rule)
+  //   how the call is checked            opCall: the operator expression is
+  //                                      checked as the method call
+  //                                      Recv.M(Args) (EXP-18), once, with the
+  //                                      operands evaluated before (PreEval)
+  //   a partial place as the receiver    opReceiverOk (receiverWhy)
+  //   a constraint element               satisfiesOpElem (GEN-13)
+  // =========================================================================
+  /// Operands already evaluated by the operator code: rawExpr hands them back
+  /// instead of evaluating the expression again, so a left-deep chain of ten
+  /// thousand `a + b + ...` is checked once, not twice at every level.
+  llvm::DenseMap<const ast::Expr *, Operand> PreEval;
+  /// The operator method that each synthesized selector `a.op` names: an
+  /// overload set shares its name, so the selector finds the method itself
+  /// (lookupFieldOrMethod with Want).
+  llvm::DenseMap<const ast::SelectorExpr *, const Func *> OpSelect;
+  /// The `...` of the operator call being synthesized (`a(xs...)`).
+  SourceLoc PendingEllipsis;
+  /// Func::Op and Func::Right of a function declaration, and the misuse of
+  /// `@Right` and `@Convert` on a function (EXP-25, EXP-26).
+  void readOperatorMarks(const FuncDecl *FD, Func *Fn);
+  /// The form of the operator method F at its declaration (EXP-16, EXP-17
+  /// second meaning, EXP-25, EXP-26, EXP-30).
+  void checkOperatorShape(Func *F, const FuncDecl *FD, NamedType *RecvNamed);
+  std::string opSecondMeaning(Func *F, StringRef Sp, Type *RecvT);
+  /// Overload sets of the package: duplicates (EXP-17), a second @Convert
+  /// to one target (EXP-25).
+  void checkOperatorSets();
+  /// The signature of the operator method F as the declaration of its
+  /// generic receiver type writes it (the type parameters of the receiver are
+  /// those of the type), so two methods can be compared.
+  SignatureType *opNormSig(Func *F);
+  /// The operator methods of N and its `extends` ancestors (EXP-30), from
+  /// the origin's declarations (an instance has the instantiated methods).
+  /// Stored on N once the types are final, the first stored table staying,
+  /// so no answer depends on which thread asks first.
+  const OpTable *opTable(NamedType *N);
+  /// The operator type of a value of type T: a defined type or a type
+  /// parameter; X for a View[X] of one (OWN-V1: the value is read out, or
+  /// the use is an error); with ThroughPtr also N for a *N, for the forms
+  /// that look through a pointer like the method call `p.M()` does (index,
+  /// call, `<-`, `range`). Null for every other type.
+  Type *opBase(Type *T, bool ThroughPtr = false);
+  bool opCandidateType(Type *T, bool ThroughPtr = false) {
+    return opBase(T, ThroughPtr) != nullptr;
+  }
+  /// The methods of kind K that a value of the operator type T (opBase) has:
+  /// its own and its ancestors' (a nearer method with the same parameter
+  /// types hides a farther one, an @Override), or the operator elements of
+  /// the constraint of a type parameter (GEN-13).
+  void opCandidates(Type *T, OpKind K, llvm::SmallVectorImpl<Func *> &Out);
+  /// The visible methods of kind K of the table T and the tables behind it,
+  /// memoized in the tables (OpTable::Merged).
+  llvm::ArrayRef<Func *> opMerged(const OpTable *T, OpKind K);
+  bool hasOpKind(Type *T, OpKind K);
+  bool hasNoBuiltinOps(Type *T);
+  struct OpMatch {
+    Func *M = nullptr;
+    bool Ambiguous = false;
+    SmallVector<Func *, 2> Tied;
+  };
+  /// The overload among Cands that the arguments Args pick (EXP-17): the
+  /// parameter types must be identical; an untyped constant picks the
+  /// method whose parameter type is its default type, else the only method
+  /// that can represent it. Lazy: a candidate whose parameter is `func() U`
+  /// matches an argument of type U (EXP-21).
+  OpMatch pickOverload(ArrayRef<Func *> Cands, ArrayRef<Operand *> Args,
+                       bool Lazy = false, int MaxPhase = 2);
+  std::string opArgString(const Operand &X);
+  std::string opSetString(ArrayRef<Func *> Cands);
+  /// The partial-place rule for the receiver of an operator method (EXP-30,
+  /// ADR-0023 decision 16): a value receiver on a place that may hold only
+  /// the parent part of a child is a taken receiver, decided by receiverWhy.
+  /// False if reported.
+  bool opReceiverOk(const ast::Expr *RecvE, Type *RcvTy, Func *F);
+  /// Checks the call RecvE.M(ArgEs...) as the method call it stands for.
+  /// RecvOp and ArgOps are the operands, evaluated already. Out is the
+  /// result (Mode::NoValue for a method without result). U is the record of
+  /// the use (Op and the flags); opCall adds the method and the call and
+  /// stores it under At. Returns false after an error.
+  bool opCall(Operand &Out, const ast::Node *At, SourceRange Range, Func *M,
+              const ast::Expr *RecvE, Operand &RecvOp,
+              ArrayRef<const ast::Expr *> ArgEs, ArrayRef<Operand *> ArgOps,
+              OperatorUse U, const ast::CallExpr *Replace = nullptr);
+  /// Mem-allocated nodes standing for a method call.
+  const ast::CallExpr *synthCall(Func *M, const ast::Expr *RecvE,
+                                 ArrayRef<const ast::Expr *> ArgEs,
+                                 SourceRange R);
+  const ast::Expr *synthExpr(SourceRange R);
+  void recordOperator(const ast::Node *At, const OperatorUse &U);
+  /// The use the last opCall recorded (a compound statement keeps the
+  /// middle step of its expression).
+  OperatorUse LastOp;
+  /// Binary expression `X op Y` with a user type on a side; true if it was
+  /// handled (X is the result or invalid), false to use the built-in rules.
+  bool opBinary(Operand &X, Operand &Y, const ast::Expr *Ex, const ast::Expr *L,
+                const ast::Expr *R, tok::Kind Op, SourceLoc OpLoc);
+  /// The rule table of `x == y` when no `==` method serves it (EXP-17 rule
+  /// 6, EXP-20, EXP-30, GEN-13): true for the built-in comparison, false for
+  /// "no operator".
+  bool eqKeepsBuiltin(const Operand &X, const Operand &Y);
+  bool opUnary(Operand &X, const UnaryExpr *Ex);
+  /// The built-in `<=>` of numbers and strings (EXP-20).
+  void builtinSpaceship(Operand &X, Operand &Y, const ast::Expr *Ex);
+  bool opIndex(Operand &X, const IndexExpr *Ex);
+  bool opDeref(Operand &X, const StarExpr *Ex);
+  bool opRecv(Operand &X, const UnaryExpr *Ex);
+  /// `a(x)` where a has `()` methods; X is the evaluated callee.
+  bool opCallExpr(Operand &X, const CallExpr *Call, bool &Handled);
+  /// pickOverload for `a(xs...)`: variadic methods only, xs as the slice.
+  bool OpSpread = false;
+  void opCallOne(Operand &X, const CallExpr *Call);
+  int opCallPrep(Operand &X, const CallExpr *Call);
+  void opCallFinish(Operand &X, const CallExpr *Call,
+                    SmallVector<Operand, 4> &Args);
+  /// The @Convert method of N (or of an ancestor) whose result is T, or null.
+  Func *convertMethod(NamedType *N, Type *T);
+  /// `R(a)` through an @Convert method (EXP-25).
+  bool opConvert(Operand &X, Type *T, const ast::Expr *At, bool &Handled);
+  /// Statements: `x op= y`, `x++`, `a[i] = v`, `q <- v`.
+  bool opCompound(const ast::AssignStmt *AS);
+  /// Is A the same place as B, a part of it, or a prefix of it?
+  bool overlapsPlace(const ast::Expr *A, const ast::Expr *B);
+  /// The communication of the `select` case being checked, the send
+  /// statement or the receive expression itself (CON-22); null elsewhere.
+  /// Its operands and function literals are no select operation.
+  const ast::Node *SelectComm = nullptr;
+  bool opIncDec(const ast::IncDecStmt *ID);
+  bool opIndexAssign(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
+                     Operand *X);
+  bool opSend(const ast::SendStmt *SS);
+  /// `for x := range a` through a `range` method: the function type that
+  /// the method returns, or null if the type has none.
+  Type *opRangeType(Operand &X, const ast::RangeStmt *RS, Func **Method);
+  /// The built-in operator K of the type T has the signature Sig, the one a
+  /// constraint element asks for: `+ (T) T` for numbers and strings,
+  /// `== (T) bool` for comparable types, `<=> (T) int` for numbers and
+  /// strings, `[] (int) E` for slices, ... (GEN-13).
+  bool builtinOpSignature(OpKind K, Type *T, SignatureType *Sig,
+                          const std::function<bool(Type *, Type *)> &Equiv);
+  /// Does V meet the operator element M of a constraint (same operator,
+  /// a signature Equiv to M's; a value type needs a value receiver)? Built-in
+  /// types meet it with their built-in operators, a type parameter with the
+  /// elements of its own constraint or the terms of its type set (GEN-13).
+  bool satisfiesOpElem(Type *V, Func *M,
+                       const std::function<bool(Type *, Type *)> &Equiv,
+                       std::string *Cause);
 };
 
 /// Scope position helper: variables declared in a statement become visible at

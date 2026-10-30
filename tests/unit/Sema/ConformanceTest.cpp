@@ -122,6 +122,7 @@ private:
     PO.AllowGenericMethods = false;
     PO.AllowNamespaceTypes = false;
     PO.AllowExtends = false;
+    PO.AllowOperators = false;
     ast::File *AST = parseFile(S->AC, S->SM, *F, *S->Diags, PO);
     CheckOptions CO;
     CO.GoCompat = true;
@@ -205,6 +206,7 @@ Result runFile(const std::string &Path) {
   PO.AllowGenericMethods = false;
   PO.AllowNamespaceTypes = false;
   PO.AllowExtends = false;
+  PO.AllowOperators = false;
   ast::File *AST = parseFile(AC, SM, *F, Diags, PO);
 
   // Expectations from the comments.

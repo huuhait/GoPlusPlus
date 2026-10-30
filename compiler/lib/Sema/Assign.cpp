@@ -304,6 +304,10 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
 
 Type *Checker::assignVar(const ast::Expr *Lhs, const ast::Expr *RhsExpr,
                          Operand *X, StringRef Context) {
+  // ADR-0024, EXP-22: `a[i] = v` on a type with `[]=` methods.
+  if (!S.Opts.GoCompat && Ctx.operatorsSeen() &&
+      Context != "assignment operation" && opIndexAssign(Lhs, RhsExpr, X))
+    return nullptr;
   AssignReadsLhs = Context == "assignment operation";
   Type *T = lhsVar(Lhs); // nullptr for the blank identifier
   AssignReadsLhs = false;

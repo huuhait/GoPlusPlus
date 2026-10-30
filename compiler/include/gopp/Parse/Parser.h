@@ -62,6 +62,10 @@ struct ParseOptions {
   /// element `extends P` (TYP-16, GEN-12, LEX-12). In Go mode `extends` is an
   /// ordinary name (TYP-26).
   bool AllowExtends = true;
+  /// Accept operator method names after a receiver and as interface elements
+  /// (`func (a T) + (b T) T`, TYP-27) and the token `<=>` (LEX-13). In Go
+  /// mode they are syntax errors, and `<=>` is `<=` then `>`.
+  bool AllowOperators = true;
 };
 
 /// Parses File (a file of SM) into Ctx. The returned File lives in Ctx; it

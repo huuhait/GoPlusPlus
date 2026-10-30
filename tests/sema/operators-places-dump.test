@@ -1,0 +1,66 @@
+// RUN: %gopp check --dump-types %s | FileCheck %s
+// RUN: %gopp fmt %s | diff - %s
+// P03.24 review: the operator record of a statement is the statement's own.
+// An element of a built-in slice or array is a place, so `s[0] += o` uses the
+// in-place method as a variable does (`x += o`), else `x = x op y`; `++` and
+// `<-` work on elements too. A built-in `n += (a + b).x` has no record of its
+// own (the operator inside belongs to its operand), and the right operand of a
+// lazy `&&` takes the type of the closure result like an eager one.
+package main
+
+type Q struct{ n int }
+
+func (q *Q) += (o Q)   {}
+func (q *Q) ++ ()      {}
+func (q *Q) <- (v int) {}
+
+type Z struct{ n int }
+
+func (z Z) + (o Z) Z { return z }
+
+type V struct{ x int }
+
+func (a V) + (b V) V      { return a }
+func (a V) [] (i int) int { return 0 }
+
+type E struct{}
+
+func (a E) && (f func() float64) E { return a }
+func (a E) + (f float64) E         { return a }
+
+func elems(s []Q, a [2]Q, o Q, zs []Z, zo Z, m map[string]Z) {
+	s[0] += o
+	a[1] += o
+	var x Q
+	x += o
+	zs[0] += zo
+	m["k"] += zo
+	s[1]++
+	s[0] <- 1
+}
+
+func inner(n int, a, b V) {
+	n += (a + b).x
+	n -= a[2] + 1
+}
+
+func lazy(e E) {
+	_ = e && 1
+	_ = e + 1
+}
+
+// CHECK: 32:2 operator `s[0] += o` add +=(Q) inplace
+// CHECK: 33:2 operator `a[1] += o` add +=(Q) inplace
+// CHECK: 35:2 operator `x += o` add +=(Q) inplace
+// CHECK: 36:2 operator `zs[0] += zo` add +(Z) Z
+// CHECK: 37:2 operator `m["k"] += zo` add +(Z) Z
+// CHECK: 38:2 operator `s[1]++` inc ++()
+// CHECK: 39:2 operator `s[0] <- 1` send <-(int)
+// CHECK-NOT: operator `n += (a + b).x`
+// CHECK: 43:8 operator `a + b` add +(V) V
+// CHECK-NOT: operator `n -= a[2] + 1`
+// CHECK: 44:7 operator `a[2]` index [](int) int
+// CHECK: 48:6 expr `e && 1` value E
+// CHECK: 48:6 operator `e && 1` land &&(func() float64) E lazy
+// CHECK: 48:11 expr `1` constant float64 = 1
+// CHECK: 49:10 expr `1` constant float64 = 1

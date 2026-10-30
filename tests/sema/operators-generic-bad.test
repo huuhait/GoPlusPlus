@@ -1,0 +1,47 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24: operator constraints that are not met, a body that uses an operator the constraint does not list, and a constraint-only interface used as a type (GEN-13, TYP-27).
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2  { return a }
+func (a Vec2) <=> (b Vec2) int { return 0 }
+
+// CHECK-DAG: [[@LINE+2]]:24: error{{\[E[0-9]+\]}}: cannot use type Num outside a type constraint: interface has operator elements (TYP-27)
+// CHECK-DAG: [[@LINE+1]]:29: error{{\[E[0-9]+\]}}: cannot use type Num outside a type constraint: interface has operator elements (TYP-27)
+type Num interface{ + (Num) Num }
+
+func Sum[T interface{ Copy; + (T) T }](a, b T) T { return a + b }
+func Max[T interface{ Copy; <=> (T) int }](a, b T) T { return a }
+func Both[T interface{ Copy; + (T) T; - () T }](a, b T) T { return a }
+func Idx[T interface{ [] (int) float64 }](a T) float64 { return a[0] }
+
+// The body may use only what the constraint lists.
+// CHECK-DAG: [[@LINE+1]]:38: error{{\[E[0-9]+\]}}: invalid operation: a + b: T has no operator `+` for T (EXP-17); list `+ (b U) R` in the constraint of T (GEN-13)
+func NoOp[T Copy](a, b T) T { return a + b }
+// CHECK-DAG: [[@LINE+1]]:64: error{{\[E[0-9]+\]}}: invalid operation: a < b: T has no operator `<` for T (EXP-17); list `<=> (b T) int` in the constraint (GEN-13): `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+func NoCmp[T interface{ Copy; + (T) T }](a, b T) bool { return a < b }
+
+type Counter struct{ n int }
+
+func (c *Counter) ++ () { c.n++ }
+func Inc[T interface{ ++ () }](a *T) { (*a)++ }
+
+func main() {
+	var c Counter
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: Counter does not satisfy interface{++ ()} (method ++ has pointer receiver)
+	Inc(&c)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: bool does not satisfy interface{+ (bool) bool; Copy} (missing operator + (bool) bool)
+	_ = Sum(true, false)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: bool does not satisfy interface{<=> (bool) int; Copy} (missing operator <=> (bool) int)
+	_ = Max(true, false)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Vec2 does not satisfy interface{+ (Vec2) Vec2; - () Vec2; Copy} (missing operator - () Vec2)
+	_ = Both(Vec2{}, Vec2{})
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Vec2 does not satisfy interface{[] (int) float64} (missing operator [] (int) float64)
+	_ = Idx(Vec2{})
+// CHECK-DAG: [[@LINE+2]]:6: error{{\[E[0-9]+\]}}: cannot declare n without a value: Num has no zero value (interfaces with methods are never nil)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use type Num outside a type constraint: interface has operator elements (TYP-27)
+	var n Num
+	_ = n
+}
+

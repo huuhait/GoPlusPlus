@@ -1,0 +1,88 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule EXP-30 (P03.24 with P03.22, ADR-0024): operator methods and
+// `extends`. A child inherits the operator methods of its parent
+// (`c + q` for a Parent operand `q`), may add an overload with other
+// parameter types (`c + 1`), and replaces one of the same signature with
+// @Override (pointer receivers only: the marks need one). Resolution is by
+// exact type: a Child value is not a Parent operand, so `c + d` and
+// `c == d` are errors with the hint, and `c == d` is accepted when Child
+// defines `== (Child)`. Value-receiver operators are final (TYP-18).
+// Lines without a CHECK line are accepted.
+package main
+
+type Parent struct{ X int }
+
+func (a Parent) + (b Parent) Parent { return a }
+func (a Parent) == (b Parent) bool { return a.X == b.X }
+func (a Parent) <=> (b Parent) int { return 0 }
+
+type Child extends Parent { Y int }
+
+func (c Child) + (d int) Child { return c }
+
+type Child3 extends Parent { W int }
+
+func (c Child3) == (d Child3) bool { return true }
+
+type Tagged struct{ X int }
+
+@Virtual
+func (t *Tagged) ++() { t.X++ }
+@Virtual
+func (t *Tagged) += (u Tagged) { t.X += u.X }
+func (t Tagged) - (u Tagged) Tagged { return u }
+
+type TC1 extends Tagged { Y int }
+
+@Override
+func (t *TC1) ++() { t.Y++ }
+
+type TC2 extends Tagged { Y int }
+
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: method ++ of TC2 has the name of a method of Tagged: write @Override to replace it (TYP-18)
+func (t *TC2) ++() { t.Y++ }
+
+type TC3 extends Tagged { Y int }
+
+func (t *TC3) += (u TC3) { }
+
+@Override
+func (t *TC3) += (u Tagged) { }
+
+type TC4 extends Tagged { Y int }
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Override on method -: the method has a value receiver; the marks need a pointer receiver (TYP-18)
+@Override
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: method - of Tagged is final (it has no @Virtual, @Abstract or @Override mark), so it cannot be replaced; mark it @Virtual there (TYP-18)
+func (t TC4) - (u Tagged) Tagged { return u }
+
+type TC5 extends Tagged { Y int }
+
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: method - of Tagged is final (it has no @Virtual, @Abstract or @Override mark), so it cannot be replaced; mark it @Virtual there (TYP-18)
+func (t TC5) - (u Tagged) Tagged { return u }
+
+func main() {
+	var p, q Parent
+	var c, d Child
+	_ = p + q
+	_ = c + 1
+	_ = p == q
+	_ = p < q
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c + d: Child has no operator `+` for Child (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child value is not a parent operand (EXP-30): define the operator on Child, or use the parent parts
+	_ = c + d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c == d: Child has no operator `==` for Child (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child value is not a parent operand (EXP-30): define the operator on Child, or use the parent parts
+	_ = c == d
+	_ = c + q
+	_ = c == p
+	_ = c < p
+	var c3, c4 Child3
+	_ = c3 == c4
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c3 < c4: Child3 has no operator `<` for Child3 (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child3 value is not a parent operand (EXP-30): define the operator on Child3, or use the parent parts
+	_ = c3 < c4
+	var t1 TC1
+	t1++
+	var t3 TC3
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid operation: t3 += t3: the in-place operator method has a writable receiver, and the operand overlaps t3 (OWN-B4, EXP-19); write `t3 = t3 + t3`
+	t3 += t3
+	t3 += Tagged{}
+}

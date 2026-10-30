@@ -1,0 +1,142 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24 review round 1, rejected side (the accepted side is operators-review-ok.test):
+// R1 a built-in element with neither the in-place method nor the operator;
+// R3 the communication itself in a select case is still an error;
+// R4 a type without the operator does not meet `+= (T)`;
+// R5 an @Override whose parameters differ from the generic parent's;
+// R6 the ranged place by every spelling (a pointer, `(t).n`, `(*a).n`, the
+// whole of a part) is still borrowed, a sibling is not;
+// R7 one code for "no operator" in plain and generic code;
+// R11 the hint about inherited parent operands only if the right operand is a child of the parameter.
+package main
+
+type Q struct{ n int }
+
+func (q *Q) += (o Q)   {}
+func (q *Q) <- () int  { return 0 }
+func (q *Q) <- (v int) {}
+
+type N struct{ n int }
+
+type P[T any] struct{ x int }
+
+@Virtual
+func (p *P[T]) [] (i T) int { return 0 }
+
+type C[U any] extends P[U] { y int }
+
+@Override
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: @Override on [], but C or any of its ancestors has no method of that name to replace; check the name (TYP-18)
+func (c *C[U]) [] (i string) int { return 1 }
+
+type Tree struct{ items []int; n int }
+
+func (t *Tree) range() func(yield func(int) bool) {
+	return func(yield func(int) bool) {}
+}
+func (t *Tree) Push(n int) { t.n = n }
+
+type Holder struct{ t Tree }
+
+func ptr(a *Tree) {
+	for v := range a {
+		_ = v
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to a.n inside a range over a: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		a.n = 0
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to (*a).n inside a range over a: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		(*a).n = 1
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method Push on *a inside a range over a: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		(*a).Push(1)
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to a.items inside a range over a: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		a.items = nil
+	}
+}
+func val() {
+	var t Tree
+	for v := range t {
+		_ = v
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to (t).n inside a range over t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		(t).n = 5
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to t inside a range over t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		t = Tree{}
+	}
+}
+func part() {
+	var h, h2 Holder
+	for v := range h.t {
+		_ = v
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to h.t.n inside a range over h.t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		h.t.n = 1
+		h2.t.n = 2
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to h inside a range over h.t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		h = Holder{}
+	}
+}
+
+func Acc[T interface{ += (T) }](p *T, q T) { *p += q }
+
+type G[T any] struct{ v T }
+
+func (a G[T]) + (b G[T]) int { return 0 }
+func (a G[T]) == (b G[T]) bool { return true }
+
+type H extends G[int] { y int }
+type K[U any] extends G[U] { y int }
+
+type S struct{ x int }
+type W struct{ x int }
+
+func (w W) - (o W) W { return w }
+
+func codes[T any, U interface{ - (U) U }](a, b S, c, d T, e, f U, w W) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a + b: S has no operator `+` for S (EXP-17)
+	_ = a + b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c + d: T has no operator `+` for T (EXP-17)
+	_ = c + d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: e + f: U has no operator `+` for U (EXP-17)
+	_ = e + f
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: w + w: W has no operator `+` for W (EXP-17)
+	_ = w + w
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -a: S has no operator `-` that takes no operand (EXP-17); define it as a method: `func (a S) - () R` (EXP-16)
+	_ = -a
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -c: T has no operator `-` that takes no operand (EXP-17); list `- () R` in the constraint (GEN-13)
+	_ = -c
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -f: U has no operator `-` that takes no operand (EXP-17); list `- () R` in the constraint (GEN-13)
+	_ = -f
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a < b: S has no operator `<` for S (EXP-17); define `<=> (b S) int`: `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+	_ = a < b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c < d: T has no operator `<` for T (EXP-17); list `<=> (b T) int` in the constraint (GEN-13): `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+	_ = c < d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: e < f: U has no operator `<` for U (EXP-17); list `<=> (b U) int` in the constraint (GEN-13): `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+	_ = e < f
+}
+
+func nopath(s []N, o N, q chan N) {
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: s[0] + o: N has no operator `+` for N (EXP-17)
+	s[0] += o
+}
+
+func sel(c chan int) {
+	var q Q
+	select {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a select case cannot use <-q: a receive on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case <-q:
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: a select case cannot use q <- 1: a send on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case q <- 1:
+	}
+}
+
+func hints(h, h2 H, k K[string], g G[int], gs G[string]) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: h + h: H has no operator `+` for H (EXP-17); the operator methods are inherited from the parent and take the parent type, and a H value is not a parent operand (EXP-30): define the operator on H, or use the parent parts
+	_ = h + h
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: k + g: K[string] has no operator `+` for G[int] (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = k + g
+	_ = k + gs
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: k == k: K[string] has no operator `==` for K[string] (EXP-17); the operator methods are inherited from the parent and take the parent type, and a K[string] value is not a parent operand (EXP-30): define the operator on K[string], or use the parent parts
+	_ = k == k
+}
+
+func main() {
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: bool does not satisfy interface{+= (bool)} (missing operator += (bool))
+	_ = Acc[bool]
+}

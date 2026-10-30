@@ -1,0 +1,136 @@
+// RUN: %gopp check %s
+// P03.24 review round 1, accepted side (the bad side is operators-review-bad.test):
+// R1 an element of a built-in slice or array takes the in-place method or the
+// fallback `x = x op y` as a variable does, with `++` and `<-`;
+// R3 only the communication of a select case is the select operation: its
+// operands and function literals may use the operators;
+// R4 a generic body uses the in-place and compound elements of its constraint;
+// R5 @Override of an operator on a generic parent, whatever the type
+// parameters are called; R6 a shadowed variable of the ranged name is another
+// place; R9 a constant right operand of a lazy `&&`.
+package main
+
+type Q struct{ n int }
+
+func (q *Q) += (o Q)   {}
+func (q *Q) ++ ()      {}
+func (q *Q) <- (v int) {}
+func (q *Q) <- () int  { return 0 }
+func (q *Q) () () int  { return 0 }
+
+type Z struct{ n int }
+
+func (z Z) + (o Z) Z { return z }
+
+func elems(s []Q, a [2]Q, o Q, zs []Z, zo Z, m map[string]Z, qs []*Q) {
+	s[0] += o
+	a[1] += o
+	zs[0] += zo
+	m["k"] += zo
+	s[1]++
+	s[0] <- 1
+	var x Q
+	x += o
+	qs[0] <- 2
+}
+
+func sel(c chan int, d chan int) {
+	var q Q
+	select {
+	case c <- <-q:
+	}
+	select {
+	case c <- q():
+	}
+	select {
+	case x := <-c:
+		_ = x
+	case <-c:
+		q <- 1
+	}
+	select {
+	case d <- func() int { _ = <-q; q <- 2; return 1 }():
+	}
+}
+
+func Acc[T interface{ += (T) }](p *T, q T) { *p += q }
+func Inc[T interface{ ++ () }](p *T)       { (*p)++ }
+func Mix[T interface{ -= (T); *= (T) }](p *T, q T) {
+	*p -= q
+	*p *= q
+}
+
+func useAcc() {
+	x, y := 1, 2.5
+	Acc(&x, 2)
+	Acc(&y, 1.5)
+	Inc(&x)
+	Mix(&y, 2)
+}
+
+type P[T any] struct{ x int }
+
+@Virtual
+func (p *P[T]) [] (i T) int { return 0 }
+@Virtual
+func (p *P[T]) ++ () {}
+@Virtual
+func (p *P[T]) <- (v T) {}
+
+type C[U any] extends P[U] { y int }
+
+@Override
+func (c *C[U]) [] (i U) int { return 1 }
+@Override
+func (c *C[U]) ++ () {}
+@Override
+func (c *C[U]) <- (v U) {}
+
+type D extends P[int] { y int }
+
+@Override
+func (c *D) [] (i int) int { return 1 }
+
+type Tree struct{ n int }
+
+type Holder struct {
+	t Tree
+	k int
+}
+
+func (t *Tree) range() func(yield func(int) bool) {
+	return func(yield func(int) bool) {}
+}
+func (t *Tree) Push(n int) { t.n = n }
+
+func good() {
+	var t Tree
+	for v := range t {
+		_ = v
+		{
+			t := Tree{} // another variable named t
+			t.Push(1)
+			t.n = 2
+		}
+	}
+	var h Holder
+	for v := range h.t {
+		_ = v
+		h.k = 1 // a sibling of the ranged place
+	}
+	var u Tree
+	u.Push(1)
+	for v := range t {
+		_ = v
+		u.Push(2)
+		u.n = 3
+	}
+}
+
+type E struct{}
+
+func (a E) && (f func() float64) E { return a }
+
+func lazy(e E) { _ = e && 1 }
+
+func main() {}

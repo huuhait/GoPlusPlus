@@ -373,6 +373,7 @@ void Checker::collectObjects() {
         Func *Fn = newFunc(N, nullptr, FD->Name->getBegin());
         Fn->Decl = FD;
         readMethodMarks(FD, Fn);
+        readOperatorMarks(FD, Fn);
         DeclInfo *DI = S.newDecl();
         DI->FileScope = F.FileScope;
         DI->FDecl = FD;
@@ -508,6 +509,8 @@ void Checker::packageObjects() {
     if (auto *F = dyn_cast<Func>(O))
       if (F->Decl && F->Decl->Recv)
         objDecl(F, nullptr);
+  // ADR-0024: the overload sets of the package, once every signature is known.
+  checkOperatorSets();
   // Every package-level type is declared: check for by-value cycles (Go
   // reports the recursion and no instantiation cycle then), and mark the
   // generic types on an instantiation cycle before the delayed checks expand
@@ -1091,7 +1094,10 @@ void Checker::collectMethods(TypeName *O) {
   for (MethodInfo &MI : It->second) {
     Func *M = MI.F;
     StringRef MN = M->Name;
-    if (MN != "_") {
+    // The operator methods of one name form an overload set (EXP-17): their
+    // duplicates are found by the parameter types once every signature is
+    // known (checkOperatorSets), and no field can have their names.
+    if (MN != "_" && !M->isOperator()) {
       auto Ins = Seen.try_emplace(MN, M);
       if (!Ins.second) {
         err(M->Pos, diag::err_duplicate_method,
@@ -1413,6 +1419,8 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
     checkMoveRecvSig(O, FD);
     checkSpecialMethod(O, FD);
   }
+  if (FD->Recv && !S.Opts.GoCompat)
+    checkOperatorShape(O, FD, RecvNamed);
   if (!FD->Body && FD->Type->TypeParams && FD->Type->TypeParams->numFields())
     err(FD, diag::err_sema_decl, {"generic function is missing function body"});
   if (FD->Body && S.Opts.CheckBodies) {

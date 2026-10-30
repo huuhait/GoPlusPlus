@@ -1,0 +1,17 @@
+// Package money: the EXP-27 example of ADR-0024, a money type with a currency
+// constant and a @Right `*` method, used from another package.
+package money
+
+type Currency int32 // a Copy type: reading it out of a borrowed receiver copies
+
+const CurUSD Currency = 1
+
+type Money struct {
+	Cents int64
+	Cur   Currency
+}
+
+var USD = Money{100, CurUSD} // one dollar
+
+@Right
+func (a Money) * (n int64) Money { return Money{a.Cents * n, a.Cur} } // serves USD * 10 and 10 * USD

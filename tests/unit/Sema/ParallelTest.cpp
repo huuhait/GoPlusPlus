@@ -582,6 +582,107 @@ TEST(ParallelCheck, StrictStructsAndCloneWitnessesDoNotDependOnTheThreadCount) {
   EXPECT_LT(Secs, 30.0) << "six checks of " << Types << " nested types";
 }
 
+TEST(ParallelCheck, OperatorChecksDoNotDependOnTheThreadCount) {
+  // P03.24: many types with operator methods (a pointer receiver, @Right,
+  // @Convert, an `extends` child that inherits and adds an overload), many
+  // bodies that use them, with a planted error in every fifth body, and
+  // generic functions whose bodies use an operator of their constraint,
+  // instantiated by many bodies at once. Everything is shared between the
+  // body threads (the overload sets, the constraint's method list, the
+  // instances) and none of it may depend on which thread asks first.
+  const unsigned Types = 120, Funcs = 360;
+  std::string Src =
+      "package ops\n\n"
+      "type Adder[T any] interface {\n\tCopy\n\t+ (T) T\n}\n"
+      "type Cmp[T any] interface {\n\t<=> (T) int\n}\n"
+      "func Sum[T Adder[T]](a, b T) T { return a + b }\n"
+      "func Less[T Cmp[T]](a, b T) bool { return a < b }\n"
+      "func Sum3[T Adder[T]](a, b, c T) T { return Sum[T](a, b) + c }\n";
+  for (unsigned I = 0; I < Types; ++I) {
+    std::string T = "T" + std::to_string(I);
+    Src += "type " + T +
+           " struct{ X, Y float64 }\n"
+           "func (a " +
+           T + ") + (b " + T + ") " + T +
+           " { return a }\n"
+           "func (a " +
+           T + ") - () " + T +
+           " { return a }\n"
+           "func (a " +
+           T + ") <=> (b " + T +
+           ") int { return 0 }\n"
+           "func (a " +
+           T + ") == (b " + T +
+           ") bool { return true }\n"
+           "@Right\nfunc (a " +
+           T + ") * (s float64) " + T +
+           " { return a }\n"
+           "func (a " +
+           T + ") * (s int) " + T +
+           " { return a }\n"
+           "func (a " +
+           T +
+           ") [] (i int) float64 { return a.X }\n"
+           "func (a *" +
+           T +
+           ") []= (i int, v float64) { a.X = v }\n"
+           "func (a *" +
+           T +
+           ") ++() { a.X++ }\n"
+           "func (a *" +
+           T + ") += (b " + T +
+           ") { a.X += b.X }\n"
+           "@Convert\nfunc (a " +
+           T +
+           ") Float() float64 { return a.X }\n"
+           "type C" +
+           std::to_string(I) + " extends " + T +
+           " { Z int }\n"
+           "func (c C" +
+           std::to_string(I) + ") + (n int) C" + std::to_string(I) +
+           " { return c }\n";
+  }
+  for (unsigned I = 0; I < Funcs; ++I) {
+    std::string N = std::to_string(I % Types);
+    std::string T = "T" + N;
+    Src += "func use" + std::to_string(I) + "(a, b " + T + ", c C" + N +
+           ") float64 {\n"
+           "\tvar m " +
+           T +
+           "\n"
+           "\t_ = a + b\n\t_ = -a\n\t_ = a < b\n\t_ = a != b\n"
+           "\t_ = 2.0 * a\n\t_ = a * 2\n\t_ = a[0]\n"
+           "\tm[1] = 2.5\n\tm[2] += 1.5\n\tm++\n\tm += b\n"
+           "\t_ = Sum[" +
+           T +
+           "](a, b)\n\t_ = Sum3(a, b, a)\n"
+           "\t_ = Less(a, b)\n\t_ = c + 1\n";
+    if (I % 5 == 0)
+      Src += "\t_ = a + 1\n\t_ = a - b\n\t_ = a[\"k\"]\n"
+             "\t_ = c + c\n\t_ = Sum(1.5, 2.5)\n\t_ = Sum(true, false)\n";
+    Src += "\treturn float64(a)\n}\n";
+  }
+  Output Ref = run(Src, 1);
+  for (const char *Msg : {"has no operator `+` for untyped int constant 1",
+                          "has no operator `-` for T0", "does not satisfy",
+                          "invalid operation: c + c"})
+    EXPECT_NE(Ref.Diags.find(Msg), std::string::npos)
+        << Msg << "\n"
+        << Ref.Diags.substr(0, 3000);
+  auto Start = std::chrono::steady_clock::now();
+  for (unsigned Threads : {2u, 8u, 16u})
+    for (int Rep = 0; Rep < 2; ++Rep) {
+      Output O = run(Src, Threads);
+      ASSERT_EQ(O.Diags, Ref.Diags) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads, run " << Rep;
+      ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads, run " << Rep;
+    }
+  auto Secs =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - Start)
+          .count();
+  EXPECT_LT(Secs, 30.0) << "six checks of " << Types << " operator types";
+}
+
 TEST(ParallelCheck, SmallPackagesStayOnTheCallingThread) {
   // MinBodiesPerThread keeps a tiny package serial; the result is the same.
   std::string Src = makeSource(3);
@@ -848,6 +949,7 @@ TEST(ParallelCheck, ConformanceCorpusGivesTheSameDiagnostics) {
     PO.AllowGenericMethods = false;
     PO.AllowNamespaceTypes = false;
     PO.AllowExtends = false;
+    PO.AllowOperators = false;
     ast::File *AST = parseFile(AC, SM, *F, Diags, PO);
     TypeContext Ctx(true);
     UnsafeOnly Imp(Ctx);

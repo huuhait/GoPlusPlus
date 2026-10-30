@@ -107,6 +107,7 @@ int precedence(tok::Kind K) {
   case tok::leq:
   case tok::gtr:
   case tok::geq:
+  case tok::cmp3:
     return 3;
   case tok::add:
   case tok::sub:
@@ -1689,7 +1690,7 @@ private:
         } else { // interface
           if (!F->Names.empty()) {
             const Ident *Name = F->Names[0]; // method name
-            expr(Name);
+            methodName(Name);
             signature(cast<FuncType>(F->Type)); // don't print "func"
           } else {
             // embedded interface
@@ -1767,7 +1768,7 @@ private:
         recordLine(&Line);
         if (Name) {
           // method
-          expr(Name);
+          methodName(Name);
           signature(cast<FuncType>(F->Type)); // don't print "func"
         } else {
           // embedded interface
@@ -1782,6 +1783,15 @@ private:
     print(unindent, formfeed);
     setPos(Rbrace);
     print(tok::r_brace);
+  }
+
+  /// A method name; an operator name (`+`, `[]=`, `range`) is followed by a
+  /// blank: `func (a T) + (b T) T` (TYP-27). The spaces inside `[]`, `[]=` and
+  /// `()` are gone because the name is one Ident.
+  void methodName(const Ident *Name) {
+    expr(Name);
+    if (isOperatorSpelling(Name->Name.str()))
+      print(blank);
   }
 
   void recordLine(int *LinePtr) { linePtr = LinePtr; }
@@ -3028,7 +3038,7 @@ private:
       parameters(D->Recv, ParamMode::funcParam); // method: print receiver
       print(blank);
     }
-    expr(D->Name);
+    methodName(D->Name);
     signature(D->Type);
     funcBody(distanceFrom(D->Type->FuncLoc, StartCol), vtab, D->Body);
   }

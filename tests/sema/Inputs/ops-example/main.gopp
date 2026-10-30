@@ -1,0 +1,150 @@
+// P03.24: the examples of ADR-0024 as one accepted program (with the money
+// and units packages of EXP-27 and decision 15). The ADR's rejected
+// declarations are the rule tables tests/sema/rules/EXP-16-declarations.test
+// and EXP-17-expressions.test.
+package main
+
+import (
+	"money"
+	"time"
+	"units"
+)
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) - (b Vec2) Vec2 { return Vec2{a.X - b.X, a.Y - b.Y} }
+@Right
+func (a Vec2) * (s float64) Vec2 { return Vec2{a.X * s, a.Y * s} } // also handles s * a
+func (a Vec2) - () Vec2          { return Vec2{-a.X, -a.Y} }
+func (a Vec2) == (b Vec2) bool   { return a.X == b.X && a.Y == b.Y }
+func (a Vec2) <=> (b Vec2) int {
+	n, m := a.X*a.X+a.Y*a.Y, b.X*b.X+b.Y*b.Y
+	if n < m {
+		return -1
+	}
+	if n > m {
+		return 1
+	}
+	return 0
+}
+
+@Right
+func (a Vec2) / (s float64) Vec2 { return Vec2{s / a.X, s / a.Y} } // written for the swapped order: this is s / a
+
+func vectors() {
+	a := Vec2{1, 2}
+	b := Vec2{3, 4}
+	c := a + b    // Vec2{4, 6}
+	d := -a * 2.0 // Vec2{-2, -4}
+	e := 2.0 * a  // ok: @Right
+	f := 1.0 / a  // ok: @Right on /, the method body is s / a (Vec2{1, 0.5})
+	c += b        // c = c + b: Vec2{7, 10}
+	ok := a != b  // !(a == b)
+	if a < b {    // (a <=> b) < 0
+		ok = !ok
+	}
+	_, _, _, _ = d, e, f, ok
+}
+
+// A generic function, and a type with allocation.
+func Sum[T interface {
+	+ (T) T
+	Clone
+}](xs []T) T { // xs must not be empty
+	acc := xs[0].Clone()
+	for i := 1; i < len(xs); i++ {
+		acc = acc + xs[i]
+	}
+	return acc
+}
+
+func Max[T interface {
+	Clone
+	<=> (T) int
+}](a, b T) T {
+	if a > b {
+		return a.Clone()
+	}
+	return b.Clone()
+}
+
+type BigInt struct{ limbs []uint64 }
+
+func (a BigInt) + (b BigInt) BigInt { return BigInt{limbs: make([]uint64, 1)} } // the + method allocates the result
+@Convert
+func (b BigInt) Int64() int64 { return 0 } // explicit conversion, int64(b)
+@Convert
+func (b BigInt) Float64() float64 { return 0 }
+
+func sums() {
+	var x, y, z BigInt
+	_ = Sum([]int{1, 2, 3})         // 6: int satisfies + (int) int
+	_ = Sum([]Vec2{{1, 2}, {3, 4}}) // Vec2{4, 6}
+	_ = Sum([]BigInt{x, y, z})      // BigInt: the + method allocates the result
+	_ = Sum([]string{"a", "b"})     // string + string
+	_ = Max(Vec2{1, 0}, Vec2{2, 0}) // ok
+	_ = Max(1, 2)                   // ok: int has the built-in <=>
+	_ = Max("a", "b")               // ok: string too
+	f := float64(x)                 // ok: calls the @Convert method
+	n := x.Int64()                  // ok: a @Convert method is a normal method
+	_, _ = f, n
+}
+
+type Matrix struct {
+	rows, cols int
+	data       []float64
+}
+
+func (m Matrix) [] (i, j int) float64      { return m.data[i*m.cols+j] }
+func (m *Matrix) []= (i, j int, v float64) { m.data[i*m.cols+j] = v }
+func (m Matrix) * (o Matrix) Matrix        { return Matrix{m.rows, o.cols, make([]float64, m.rows*o.cols)} }
+func (m Matrix) + (o Matrix) Matrix        { return Matrix{m.rows, m.cols, make([]float64, m.rows*m.cols)} }
+func (m *Matrix) += (o Matrix)             {} // adds in place, no allocation
+
+func matrices() {
+	var m, n Matrix
+	m[1, 2] = 5.0  // calls []=
+	x := m[1, 2]   // calls []
+	m[1, 2] += 1.0 // m[1, 2] = m[1, 2] + 1.0 : needs [] and []=
+	m += n         // uses func (m *Matrix) += (b Matrix): no allocation
+	p := m*n + m   // * then +
+	_, _ = x, p
+}
+
+type Job struct{ id int }
+type Queue struct{ jobs []Job }
+
+func (q *Queue) <- (v Job)        { q.jobs = append(q.jobs, v) } // send
+func (q *Queue) <- () (Job, bool) { return Job{}, false }        // receive
+
+func queues(job Job) {
+	var q Queue
+	q <- job
+	j := <-q
+	k, ok := <-q
+	_, _, _ = j, k, ok
+}
+
+type Meters float64
+type Seconds float64
+type Speed float64
+
+const (
+	M  Meters = 1
+	Km Meters = 1000
+)
+
+func (a Meters) * (b Seconds) Speed { return Speed(float64(a) / float64(b)) } // ok: a different right-hand type
+
+func unitsIdiom(t Seconds) {
+	d := 10*Km + 500*M             // Meters(10500), the Go way (like 30 * time.Second)
+	e := 10*units.Km + 500*units.M // the same with constants of another package
+	price := 10 * money.USD        // a Money value through the @Right `*` method
+	cents := money.USD * 10        // the same method, the other order
+	v := d * t                     // Speed
+	timeout := 30 * time.Second    // the same idiom in the standard library
+	_, _, _, _, _ = e, price, cents, v, timeout
+}
+
+func main() {}

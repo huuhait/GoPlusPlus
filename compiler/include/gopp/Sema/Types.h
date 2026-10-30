@@ -361,6 +361,7 @@ struct TypeSet {
   bool Comparable = false; // the `comparable` constraint is part of the set
   bool Copy = false;       // Copy constraint (D1.3, GEN-1)
   bool Clone = false;      // Clone constraint (GEN-2)
+  bool HasOps = false; // lists an operator element (TYP-27): constraint only
   Type *Extends = nullptr; // `extends P` (GEN-12)
   bool isEmpty() const { return !AllTerms && Terms.empty(); }
   bool isAll() const {
@@ -456,6 +457,24 @@ public:
 /// Predeclared generic pointer types of D1.7.
 enum class PtrKind : uint8_t { None, Unique, Shared, Weak };
 
+/// The operator methods of one named type (ADR-0024), grouped by OpKind,
+/// and the table of its nearest `extends` ancestor that has any (EXP-30).
+/// It is a function of the declarations alone (Checker::opTable), so no
+/// answer depends on which thread asks first.
+struct OpTable {
+  /// Sorted by OpKind, then declaration order. For an instance these are the
+  /// instantiated methods.
+  llvm::ArrayRef<Func *> Own;
+  const OpTable *Next = nullptr;
+  /// The methods of each kind that a value of the type has: Own of that kind
+  /// then those behind it that Own does not hide (Checker::opMerged), kept
+  /// here once made, so a use costs the list, not the depth of the chain.
+  /// A function of the tables alone: a thread that loses the race to store
+  /// has made the same list.
+  static constexpr unsigned MaxKinds = 48;
+  mutable std::atomic<const llvm::ArrayRef<Func *> *> Merged[MaxKinds] = {};
+};
+
 /// A defined type, or an instantiation of a generic one. Instances are
 /// uniqued by (origin, type arguments). `Underlying` and the instantiated
 /// methods of an instance are filled in lazily by the checker.
@@ -527,6 +546,10 @@ public:
   /// Stored once the types are final (Checker::typesFinal) and only when
   /// exact, like ZeroState.
   std::atomic<uint8_t> CloneState{0};
+  /// Checker::opTable: the operator methods of the type and its ancestors.
+  /// Null until asked; stored only once the types are final (like
+  /// CloneState), and the first table stored stays.
+  std::atomic<const OpTable *> OpsState{nullptr};
   /// Checker::pointerFree and Checker::viewCopyHasPointer (OWN-V1, OWN-V3):
   /// 0 not known, 1 no pointer is reached, 2 one is. Stored like CloneState.
   std::atomic<uint8_t> PtrFreeState{0};
@@ -736,6 +759,71 @@ public:
   bool Used = false;
 };
 
+/// The operator an operator method stands for (ADR-0024, EXP-16): its name
+/// and its parameter count decide it (`-` with no parameter is Neg, with one
+/// it is Sub). Convert is the `@Convert` attribute on an ordinary method; Bad
+/// is a name the parser rejected (`=`, `.`, `,`, `!=`, unary `&`, ...).
+enum class OpKind : uint8_t {
+  None,
+  Add,
+  Sub,
+  Mul,
+  Quo,
+  Rem,
+  And,
+  Or,
+  Xor,
+  Shl,
+  Shr,
+  AndNot,
+  Neg,
+  Pos,
+  Compl,
+  Not,
+  Eq,
+  Cmp,
+  LAnd,
+  LOr,
+  Index,
+  IndexSet,
+  Call,
+  Send,
+  Recv,
+  Inc,
+  Dec,
+  Deref,
+  Range,
+  AddAssign,
+  SubAssign,
+  MulAssign,
+  QuoAssign,
+  RemAssign,
+  AndAssign,
+  OrAssign,
+  XorAssign,
+  ShlAssign,
+  ShrAssign,
+  AndNotAssign,
+  Convert,
+  Bad,
+};
+static_assert(static_cast<unsigned>(OpKind::Bad) < OpTable::MaxKinds,
+              "OpTable::Merged has a slot per OpKind");
+/// The operator of the method name N with NumParams parameters, or None if N
+/// is an ordinary name. A name that is an operator but has no form with that
+/// many parameters gets the kind of its binary form (or its only form), so
+/// the declaration check can say which row of the forms table it breaks.
+OpKind opKindOf(llvm::StringRef N, unsigned NumParams);
+/// The spelling of an operator kind: `+` for Add and Pos, `+=` for
+/// AddAssign, `range` for Range.
+const char *opSpelling(OpKind K);
+bool isBinaryArith(OpKind K); // Add .. AndNot
+bool isCompoundOp(OpKind K);  // AddAssign .. AndNotAssign
+OpKind compoundToBinary(OpKind K);
+OpKind binaryToCompound(OpKind K);
+/// `+ * & | ^ ==`: one @Right method serves both orders (EXP-26).
+bool isCommutativeOp(OpKind K);
+
 class Func : public Object {
 public:
   Func() : Object(Kind::Func) {}
@@ -751,6 +839,19 @@ public:
   enum class Mark : uint8_t { None, Virtual, Abstract, Override };
   Mark MethodMark = Mark::None;
   bool MoveRecv = false; // a `move` receiver (PAR-5)
+  /// An operator method (ADR-0024, TYP-27): its Name is the operator (`+`,
+  /// `[]=`, `range`) and Op the form that the name and the parameter count
+  /// give; OpKind::Convert marks a `@Convert` method, OpKind::None an
+  /// ordinary one. Set from the declaration, so an instantiated method and
+  /// an imported one have it too. Operator methods are in the method list of
+  /// their named type like every method (an overload set shares the name);
+  /// an operator element of an interface is one of its methods.
+  OpKind Op = OpKind::None;
+  /// `@Right` (EXP-26): the method also serves `s op a`.
+  bool Right = false;
+  bool isOperator() const {
+    return Op != OpKind::None && Op != OpKind::Convert;
+  }
   bool IsInterfaceMethod = false;
   bool Fails = false;
   bool IsBuiltinMethod = false; // x.Clone() / p.IsNil() of a pointer kind
@@ -877,6 +978,18 @@ public:
   llvm::ArrayRef<Type *> copyTypes(llvm::ArrayRef<Type *> Ts);
   /// A method list owned by the context (see NamedType::Methods).
   llvm::SmallVector<Func *, 0> *newMethodList();
+  /// An operator table owned by the context (see OpTable), and the shared
+  /// empty table of a type with no operator method up its chain.
+  const OpTable *newOpTable(llvm::ArrayRef<Func *> Own, const OpTable *Next);
+  /// A list kept for an OpTable::Merged slot.
+  const llvm::ArrayRef<Func *> *newOpList(llvm::ArrayRef<Func *> L);
+  static const OpTable *emptyOps();
+  /// Set once any package (declared or imported) has an operator method, a
+  /// @Convert method or an operator element (ADR-0024). Until then no
+  /// operator set is searched, so a program without operators pays nothing.
+  /// Only ever set, before the bodies of the packages that can see one.
+  void noteOperators() { OpsSeen.store(true, std::memory_order_relaxed); }
+  bool operatorsSeen() const { return OpsSeen.load(std::memory_order_relaxed); }
   /// Objects the context itself makes (universe, struct fields).
   Arena &arena() { return Objs; }
   /// Guards the lazy completion of instances and type sets (expandNamed,
@@ -958,6 +1071,9 @@ private:
   std::mutex MemoMu;
   llvm::DenseMap<const NamedType *, llvm::StringMap<MemberMemo>> MemberMemos;
   std::deque<llvm::SmallVector<Func *, 0>> MethodLists;
+  std::deque<OpTable> OpTables;
+  std::deque<llvm::ArrayRef<Func *>> OpLists;
+  std::atomic<bool> OpsSeen{false};
   std::shared_mutex ChainMu;
   llvm::DenseMap<const NamedType *, ChainEntry> ChainTypes;
   using ChainKey = std::pair<const NamedType *, llvm::StringRef>;

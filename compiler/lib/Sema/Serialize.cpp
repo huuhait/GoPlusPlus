@@ -50,6 +50,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gopp/Sema/Serialize.h"
+#include "gopp/Basic/Symbol.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -394,8 +395,13 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
       uint64_t Sig = type(F->Ty);
       Ops.push_back(string(F->Name));
       Ops.push_back(Sig);
+      // Bits 6 and 7: the @Right and @Convert marks (ADR-0024). The kind of
+      // an operator method is not written: its name (the operator) and its
+      // parameter count give it, as at its declaration (opKindOf).
       Ops.push_back(F->HasPtrRecv | (F->MoveRecv << 1) | (F->Fails << 2) |
-                    (F->IsBuiltinMethod << 3) | (uint64_t(F->MethodMark) << 4));
+                    (F->IsBuiltinMethod << 3) | (uint64_t(F->MethodMark) << 4) |
+                    (uint64_t(F->Right) << 6) |
+                    (uint64_t(F->Op == OpKind::Convert) << 7));
       Ops.push_back(F->RecvTParams.size());
       for (TypeParamType *TP : F->RecvTParams)
         Ops.push_back(type(TP));
@@ -514,6 +520,16 @@ void TypeWriter::writePackage(const Package &P, bool OnlyExported) {
 //===----------------------------------------------------------------------===//
 // Reader
 //===----------------------------------------------------------------------===//
+
+/// The operator kind of an imported method or interface element (ADR-0024):
+/// its name and parameter count give it, as at its declaration. F has a
+/// signature.
+static void readOpKind(TypeContext &Ctx, Func *F) {
+  if (!isOperatorSpelling(F->Name))
+    return;
+  F->Op = opKindOf(F->Name, F->sig()->Params->size());
+  Ctx.noteOperators();
+}
 
 bool TypeReader::fail(const char *Msg) {
   if (Error.empty())
@@ -832,6 +848,8 @@ bool TypeReader::record(const Record &Rec) {
       F->IsInterfaceMethod = true;
       if (!isa_and_nonnull<SignatureType>(F->Ty))
         Bad = true;
+      else
+        readOpKind(Ctx, F); // an operator element (TYP-27)
       Ms.push_back(F);
     }
     SmallVector<Type *, 4> Es;
@@ -912,14 +930,21 @@ bool TypeReader::record(const Record &Rec) {
       F->Fails = Flags & 4;
       F->IsBuiltinMethod = Flags & 8;
       F->MethodMark = static_cast<Func::Mark>((Flags >> 4) & 3);
+      F->Right = Flags & 64;
       SmallVector<TypeParamType *, 4> RTPs, OTPs;
       TParams(RTPs);
       TParams(OTPs);
       F->RecvTParams = Mem.copy(ArrayRef<TypeParamType *>(RTPs));
       F->OwnTParams = Mem.copy(ArrayRef<TypeParamType *>(OTPs));
-      if (Flags > 63 || !isa_and_nonnull<SignatureType>(F->Ty)) {
+      if (Flags > 255 || !isa_and_nonnull<SignatureType>(F->Ty)) {
         Bad = true;
         break;
+      }
+      if (Flags & 128) {
+        F->Op = OpKind::Convert; // @Convert (EXP-25)
+        Ctx.noteOperators();
+      } else {
+        readOpKind(Ctx, F);
       }
       Var *Recv = Mem.make<Var>();
       Recv->Pkg = F->Pkg;
@@ -1169,9 +1194,10 @@ void sema::dumpPackageAPI(llvm::raw_ostream &OS, const Package &P,
          << typeString(N->Underlying, &P) << '\n';
       if (N->Methods)
         for (const Func *M : *N->Methods)
-          OS << "func (" << (M->HasPtrRecv ? "*" : "") << typeString(N, &P)
-             << ") " << (M->MoveRecv ? "move " : "") << M->Name << Sig(M->Ty)
-             << '\n';
+          OS << (M->Right ? "@Right " : "")
+             << (M->Op == OpKind::Convert ? "@Convert " : "") << "func ("
+             << (M->HasPtrRecv ? "*" : "") << typeString(N, &P) << ") "
+             << (M->MoveRecv ? "move " : "") << M->Name << Sig(M->Ty) << '\n';
       break;
     }
     default:

@@ -1093,6 +1093,223 @@ func f(c *lib.Card, h *lib.Half, d *lib.Dog) {
   EXPECT_EQ(Again.toBytes(), Bytes);
 }
 
+// P03.24 (ADR-0024): a package that imports operator methods gets the same
+// overloads, @Right and @Convert marks and the same errors as the package
+// that declares them, from the decoded export data and from the source.
+const char *OperatorSource = R"(package lib
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2   { return a }
+func (a Vec2) - () Vec2         { return a }
+func (a Vec2) == (b Vec2) bool  { return true }
+func (a Vec2) <=> (b Vec2) int  { return 0 }
+@Right
+func (a Vec2) * (s float64) Vec2 { return a }
+func (a Vec2) * (s int) Vec2     { return a }
+func (a Vec2) [] (i int) float64 { return a.X }
+func (a *Vec2) []= (i int, v float64) {}
+func (a *Vec2) ++() {}
+func (a Vec2) () (x int) int { return x }
+func (a Vec2) ! () bool { return true }
+
+type Big struct{ n int }
+
+@Convert
+func (b Big) Float() float64 { return 1 }
+
+type Ordered[T any] interface {
+	<=> (T) int
+}
+
+func Max[T Ordered[T]](a, b T) bool { return a > b }
+
+type Vec[T any] struct{ a, b T }
+
+func (v Vec[T]) + (w Vec[T]) Vec[T] { panic(1) }
+)";
+
+TEST(Serialize, OperatorMethodsSurviveTheRoundTripAcrossPackages) {
+  Loaded L(OperatorSource);
+  ASSERT_NE(L.CP, nullptr);
+  std::string Msgs;
+  for (const Diagnostic &D : L.Collect.Diags)
+    Msgs += D.Message + "\n";
+  ASSERT_TRUE(L.Collect.Diags.empty()) << Msgs;
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  EXPECT_TRUE(Ctx2.operatorsSeen());
+  EXPECT_EQ(dump(*P2), dump(*L.CP->Pkg));
+  // The kind of each operator method is derived from its name and parameter
+  // count on reading, as at its declaration; the marks are read back.
+  for (const char *TN : {"Vec2", "Big", "Vec"}) {
+    auto *Src = llvm::cast<NamedType>(L.CP->Pkg->PkgScope->lookupLocal(TN)->Ty);
+    auto *Dec = llvm::cast<NamedType>(P2->PkgScope->lookupLocal(TN)->Ty);
+    ASSERT_EQ(Src->Methods->size(), Dec->Methods->size()) << TN;
+    for (size_t K = 0; K < Src->Methods->size(); ++K) {
+      const Func *A = (*Src->Methods)[K], *B = (*Dec->Methods)[K];
+      EXPECT_EQ(A->Name, B->Name);
+      EXPECT_EQ(A->Op, B->Op) << TN << "." << std::string(A->Name);
+      EXPECT_EQ(A->Right, B->Right) << TN << "." << std::string(A->Name);
+    }
+  }
+  auto *Vec2T = llvm::cast<NamedType>(P2->PkgScope->lookupLocal("Vec2")->Ty);
+  unsigned Rights = 0, Negs = 0, Subs = 0, Calls = 0;
+  for (const Func *F : *Vec2T->Methods) {
+    Rights += F->Right;
+    Negs += F->Op == OpKind::Neg;
+    Subs += F->Op == OpKind::Sub;
+    Calls += F->Op == OpKind::Call;
+  }
+  EXPECT_EQ(Rights, 1u);
+  EXPECT_EQ(Negs, 1u);
+  EXPECT_EQ(Subs, 0u);
+  EXPECT_EQ(Calls, 1u);
+  auto *BigT = llvm::cast<NamedType>(P2->PkgScope->lookupLocal("Big")->Ty);
+  ASSERT_EQ(BigT->Methods->size(), 1u);
+  EXPECT_EQ((*BigT->Methods)[0]->Op, OpKind::Convert);
+  std::string D = dump(*P2);
+  EXPECT_NE(D.find("@Right func (Vec2) *(float64) Vec2"), std::string::npos)
+      << D;
+  EXPECT_NE(D.find("@Convert func (Big) Float() float64"), std::string::npos)
+      << D;
+  EXPECT_NE(D.find("func (*Vec2) []=(int, float64)"), std::string::npos) << D;
+
+  const char *Bad = R"(package main
+import "lib"
+func f(a lib.Vec2, b lib.Big, n int) {
+	_ = a + 1
+	_ = a * "x"
+	_ = a - a
+	_ = a + a + b
+	_ = float32(b)
+	var g float64 = b
+	_ = g
+	_ = n + a
+	_ = lib.Max(true, false)
+	_ = a["k"]
+	_ = a(true)
+	a[0]++
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+type Mine struct{ n int }
+func (m Mine) <=> (o Mine) int { return 0 }
+func f(a lib.Vec2, b lib.Big) {
+	_ = a + a
+	_ = -a
+	_ = !a
+	_ = a == a
+	_ = a != a
+	_ = a < a
+	_ = a * 2
+	_ = a * 2.5
+	_ = 2.5 * a
+	_ = a[0]
+	_ = a(1)
+	_ = float64(b)
+	_ = b.Float()
+	_ = lib.Max(1, 2)
+	_ = lib.Max(a, a)
+	_ = lib.Max("a", "b")
+	_ = lib.Max(Mine{}, Mine{})
+	v := lib.Vec[int]{}
+	_ = v + v
+}
+func g() {
+	var a lib.Vec2
+	a[0] = 1.5
+	a++
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(
+      anyHas(Decoded, "has no operator `+` for untyped int constant 1"));
+  EXPECT_TRUE(anyHas(Decoded, "lib.Vec2 has no operator `*`"));
+  EXPECT_TRUE(anyHas(Decoded, "has no operator `-`"));
+  EXPECT_TRUE(anyHas(Decoded, "cannot convert b"));
+  EXPECT_TRUE(anyHas(Decoded, "does not satisfy"));
+  EXPECT_TRUE(anyHas(Decoded, "is not a place"));
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+}
+
+// P03.24 (EXP-19, EXP-22): `a[f()] += v` is checked as a read through `[]`,
+// the binary method and a write through `[]=`, and the record the lowering
+// reads (Info::Operators) gives the three calls one index expression, so
+// `f()` runs once. The record is a function of the checked package, so it is
+// tested next to the export data of the same package.
+TEST(Serialize, OperatorCompoundIndexSharesTheIndex) {
+  Loaded L(R"(package lib
+
+type V struct{ X int }
+
+func (a V) + (b V) V              { return a }
+func (g Grid) [] (i int) V        { return V{} }
+func (g *Grid) []= (i int, v V)   {}
+
+type Grid struct{ n int }
+
+func f() int { return 0 }
+
+func Use(g Grid, v V) {
+	g[f()] += v
+}
+)");
+  ASSERT_NE(L.CP, nullptr);
+  std::string Msgs;
+  for (const Diagnostic &D : L.Collect.Diags)
+    Msgs += D.Message + "\n";
+  ASSERT_TRUE(L.Collect.Diags.empty()) << Msgs;
+  const Info &I = L.CP->I;
+  const ast::AssignStmt *AS = nullptr;
+  const OperatorUse *Stmt = nullptr;
+  for (auto &KV : I.Operators)
+    if (auto *A = llvm::dyn_cast<ast::AssignStmt>(KV.first)) {
+      AS = A;
+      Stmt = &KV.second;
+    }
+  ASSERT_NE(AS, nullptr);
+  EXPECT_EQ(Stmt->Op, OpKind::Add);
+  ASSERT_NE(Stmt->Method, nullptr);
+  ASSERT_NE(Stmt->Index, nullptr);
+  ASSERT_NE(Stmt->IndexSet, nullptr);
+  EXPECT_EQ(Stmt->Index->Op, OpKind::Index);
+  EXPECT_EQ(Stmt->IndexSet->Op, OpKind::IndexSet);
+  ASSERT_NE(Stmt->Call, nullptr);
+  ASSERT_NE(Stmt->SetCall, nullptr);
+  auto *Ix = llvm::dyn_cast<ast::IndexExpr>(AS->Lhs[0]);
+  ASSERT_NE(Ix, nullptr);
+  auto Read = I.Operators.find(Ix);
+  ASSERT_NE(Read, I.Operators.end());
+  ASSERT_NE(Read->second.Call, nullptr);
+  EXPECT_EQ(Read->second.Op, OpKind::Index);
+  // One index expression for the read and the write; the middle call takes
+  // the element (the IndexExpr) and the right operand.
+  ASSERT_EQ(Read->second.Call->Args.size(), 1u);
+  ASSERT_EQ(Stmt->SetCall->Args.size(), 2u);
+  EXPECT_EQ(Read->second.Call->Args[0], Ix->Indices[0]);
+  EXPECT_EQ(Stmt->SetCall->Args[0], Ix->Indices[0]);
+  ASSERT_EQ(Stmt->Call->Args.size(), 1u);
+  EXPECT_EQ(Stmt->Call->Args[0], AS->Rhs[0]);
+  EXPECT_EQ(llvm::cast<ast::SelectorExpr>(Stmt->Call->Fun)->X, Ix);
+}
+
 //===----------------------------------------------------------------------===//
 // Round trips of whole corpora
 //===----------------------------------------------------------------------===//
@@ -1125,6 +1342,7 @@ std::string roundTrip(llvm::StringRef Text, bool GoMode, unsigned &Objects) {
   PO.AllowGenericMethods = !GoMode;
   PO.AllowNamespaceTypes = !GoMode;
   PO.AllowExtends = !GoMode;
+  PO.AllowOperators = !GoMode;
   test::Parsed Pr(Text, PO);
   TypeContext Ctx(GoMode);
   NoImports Imp;
@@ -1374,6 +1592,7 @@ TEST(Serialize, GoModeParentWithEmbedding) {
   TypeContext Ctx;
   ParseOptions LPO;
   LPO.AllowExtends = false;
+  LPO.AllowOperators = false;
   test::Parsed Lib(R"(package lib
 
 type Inner struct{ N int }
@@ -1490,6 +1709,7 @@ TEST(Serialize, GoEmbeddingPromotedValueMethodIsNoParentPart) {
   TypeContext Ctx;
   ParseOptions LPO;
   LPO.AllowExtends = false;
+  LPO.AllowOperators = false;
   test::Parsed Lib(R"(package lib
 
 type Inner struct{ N int }
@@ -1541,6 +1761,7 @@ TEST(Serialize, GoEmbeddingInsideChain) {
   TypeContext Ctx;
   ParseOptions LPO;
   LPO.AllowExtends = false;
+  LPO.AllowOperators = false;
   test::Parsed Lib(R"(package lib
 
 type Inner struct{ N int }
@@ -1636,6 +1857,7 @@ type Dog extends Animal { X int }
   ASSERT_TRUE(AP && A.errors().empty());
   ParseOptions LPO;
   LPO.AllowExtends = false;
+  LPO.AllowOperators = false;
   test::Parsed Lib(R"(package lib
 
 import "a"
@@ -1766,6 +1988,7 @@ func (s *Shape) Val() int { return s.N }
     }
   ParseOptions LPO;
   LPO.AllowExtends = false;
+  LPO.AllowOperators = false;
   test::Parsed Lib(LText, LPO);
   CheckOptions LCO;
   LCO.GoCompat = true;

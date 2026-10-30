@@ -1,0 +1,19 @@
+package main
+
+import (
+	"alpha"
+	"zeta"
+)
+
+type Both interface {
+	zeta.Z
+	alpha.A
+}
+
+func f[T Both](a T) {}
+
+type S struct{ x int }
+
+func main() {
+	f(S{})
+}

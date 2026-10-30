@@ -825,6 +825,10 @@ Token Lexer::lex() {
         if (Ch == '-') {
           next();
           K = tok::arrow;
+        } else if (Opts.Spaceship && Ch == '=' && peekByte() == '>') {
+          next();
+          next();
+          K = tok::cmp3;
         } else {
           K = switch4(tok::lss, tok::leq, '<', tok::shl, tok::shl_assign);
         }

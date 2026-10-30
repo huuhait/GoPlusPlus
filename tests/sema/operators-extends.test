@@ -1,0 +1,75 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24: operators and extends (EXP-30, TYP-17, TYP-18, EXP-15): a child has the operators of its parent on the parent's own type, resolution uses exact static types,
+// a partial place is not a value receiver, an overload on the child, @Override of an operator with a pointer receiver.
+package main
+
+type Base struct{ N int }
+
+// CHECK-DAG: [[@LINE+1]]:41: error{{\[E[0-9]+\]}}: cannot use b as a value: Base has a type table, so the value receiver b may be the parent part of a child, and a copy of it would cover only that part; use its fields and methods, or a pointer receiver and its Clone() (value slicing, EXP-15)
+func (b Base) + (o Base) Base  { return b }
+func (b Base) == (o Base) bool { return true }
+func (b Base) <=> (o Base) int { return 0 }
+// CHECK-DAG: [[@LINE+1]]:41: error{{\[E[0-9]+\]}}: cannot use b as a value: Base has a type table, so the value receiver b may be the parent part of a child, and a copy of it would cover only that part; use its fields and methods, or a pointer receiver and its Clone() (value slicing, EXP-15)
+func (b Base) - () Base        { return b }
+@Virtual
+func (b *Base) += (o Base) {}
+
+type Child extends Base { M int }
+
+// A child has the operators of its parent on the parent's own type.
+func ok(p, q Base, c *Child) {
+	_ = p + q
+	_ = p == q
+	_ = p < q
+	_ = -p
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use c.Base as a value: it is the parent part of a Child, and a copy, a move or an assignment of it as a whole would cut off the child; use its fields and methods, or the pointer &c.Base (value slicing, EXP-15)
+	_ = c.Base + p
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use c.Base as a value: it is the parent part of a Child, and a copy, a move or an assignment of it as a whole would cut off the child; use its fields and methods, or the pointer &c.Base (value slicing, EXP-15)
+	_ = -c.Base
+}
+
+// Resolution uses the exact static types: no value slicing (EXP-15, EXP-30).
+func bad(a, b Child, p Base) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a + b: Child has no operator `+` for Child (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child value is not a parent operand (EXP-30): define the operator on Child, or use the parent parts
+	_ = a + b
+	_ = a + p
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a == b: Child has no operator `==` for Child (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child value is not a parent operand (EXP-30): define the operator on Child, or use the parent parts
+	_ = a == b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a < b: Child has no operator `<` for Child (EXP-17); the operator methods are inherited from the parent and take the parent type, and a Child value is not a parent operand (EXP-30): define the operator on Child, or use the parent parts
+	_ = a < b
+	_ = -a
+}
+
+// A child may add an overload with another parameter type.
+type Own extends Base {}
+func (o Own) + (b Own) Own { return b }
+func (o Own) == (b Own) bool { return true }
+
+func ok2(a, b Own) {
+	_ = a + b
+	_ = a == b
+	_ = a != b
+}
+
+// @Override of an operator with a pointer receiver.
+type Grand extends Child {}
+@Override
+func (g *Grand) += (o Base) {}
+@Override
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: @Override on *=, but Grand or any of its ancestors has no method of that name to replace; check the name (TYP-18)
+func (g *Grand) *= (o Base) {}
+func (g *Grand) -= (o Base) {}
+
+
+// GEN-12 with GEN-13: a type parameter `T extends Base` has the operator
+// methods of Base, on the parent part of its value, with the same exact-type
+// rule as plain code (`a + q` is fine, `a + b` with two T values is not).
+func Inherit[T extends Base](a, b T, q Base) Base {
+	if a < q {
+		return a + q
+	}
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: invalid operation: a + b: T has no operator `+` for T (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	return a + b
+}
+
+func useInherit(c Child, q Base) { _ = Inherit(c, c, q) }

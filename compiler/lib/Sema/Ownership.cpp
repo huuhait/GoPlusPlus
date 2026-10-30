@@ -1833,10 +1833,27 @@ void Checker::needOwnership(const Operand &X, const char *What, Type *Dst) {
 // Borrowed variables (OWN-R3b) and range mutations (RNG-3)
 //===----------------------------------------------------------------------===//
 
+void Checker::checkUserRangeWrite(const ast::Expr *Place,
+                                  const std::string &What) {
+  if (RangeStack.empty())
+    return;
+  for (const RangeFrame &F : RangeStack) {
+    if (!F.User || !F.XE)
+      continue;
+    // The same place or a part of it, whatever its spelling; and the whole
+    // of which it is a part (`h = ...` while ranging over `h.t`).
+    if (overlapsPlace(Place, F.XE)) {
+      err(Place, diag::err_op_range_write, {What, str(unparen(Place)), F.X});
+      return;
+    }
+  }
+}
+
 void Checker::checkWrite(const ast::Expr *Lhs, bool Repoint, bool Redeclare) {
   if (!own())
     return;
   const ast::Expr *U = unparen(Lhs);
+  checkUserRangeWrite(Lhs, "assign to");
   // A write to the key variable of an enclosing range: from now on `m[k]`
   // may name another entry (RNG-3).
   if (auto *KV = dyn_cast_or_null<Var>(identObj(U)))

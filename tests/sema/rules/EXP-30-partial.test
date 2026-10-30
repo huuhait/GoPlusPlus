@@ -1,0 +1,125 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule EXP-30 with EXP-15 and ADR-0023 decision 16 (P03.24): an operator
+// method with a value receiver on a partial place is a taken receiver,
+// decided by the rule of a method value (receiverWhy, not a second rule):
+// `*p` of a type with a type table may be the parent part of a child, and so
+// may `c.Tg`, the target of a `*Tg` the operator looks through, and the
+// value receiver of a method; the variables `tg` and `ch` are exact values.
+// A pointer receiver borrows the place, as `(*p).Set(0, 1)` does, so the
+// pointer-receiver operators of Tp accept every one of those places. Lines
+// without a CHECK line are accepted.
+package main
+
+type Tg struct{ X int }
+
+@Virtual
+func (t *Tg) Speak() int { return 0 }
+
+func (t Tg) + (u Tg) Tg { return Tg{} }
+func (t Tg) - () Tg     { return Tg{} }
+func (t Tg) [] (i int) int { return i }
+func (t Tg) () (i int) int { return i }
+func (t Tg) <=> (u Tg) int { return 0 }
+
+type Ch extends Tg { Y int }
+
+func f(p *Tg, c *Ch, tg Tg, ch Ch, q Tg) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use *p as a value: Tg has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover only that part; use the fields and methods through the pointer, or its Clone() for a full copy (value slicing, EXP-15)
+	_ = *p + q
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use *p as a value: Tg has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover only that part; use the fields and methods through the pointer, or its Clone() for a full copy (value slicing, EXP-15)
+	_ = -*p
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use (*p) as the receiver of the operator []: Tg has a type table, so (*p) may be the parent part of a child, and the value receiver of an operator method is a copy, so it would cover only that part; use a method with a pointer receiver, or copy the whole value out first (value slicing, EXP-15)
+	_ = (*p)[0]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use (*p) as the receiver of the operator (): Tg has a type table, so (*p) may be the parent part of a child, and the value receiver of an operator method is a copy, so it would cover only that part; use a method with a pointer receiver, or copy the whole value out first (value slicing, EXP-15)
+	_ = (*p)(1)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use p as the receiver of the operator []: Tg has a type table, so the receiver *p may be the parent part of a child, and the value receiver of an operator method is a copy, so it would cover only that part; use a method with a pointer receiver, or copy the whole value out first (value slicing, EXP-15)
+	_ = p[0]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use p as the receiver of the operator (): Tg has a type table, so the receiver *p may be the parent part of a child, and the value receiver of an operator method is a copy, so it would cover only that part; use a method with a pointer receiver, or copy the whole value out first (value slicing, EXP-15)
+	_ = p(1)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use *p as a value: Tg has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover only that part; use the fields and methods through the pointer, or its Clone() for a full copy (value slicing, EXP-15)
+	_ = *p < q
+	_ = tg + q
+	_ = -tg
+	_ = ch + q
+	_ = tg[0]
+	_ = ch(1)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use c.Tg as a value: it is the parent part of a Ch, and a copy, a move or an assignment of it as a whole would cut off the child; use its fields and methods, or the pointer &c.Tg (value slicing, EXP-15)
+	_ = c.Tg + q
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use c.Tg as the receiver of the operator []: c.Tg is the parent part of a child, and the value receiver of an operator method is a copy, so it would cover only that part; use a method with a pointer receiver, or copy the whole value out first (value slicing, EXP-15)
+	_ = c.Tg[0]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: cannot use *c as a value: Ch has a type table, so *c may be the parent part of a child, and a copy of it or an assignment through it would cover only that part; use the fields and methods through the pointer, or its Clone() for a full copy (value slicing, EXP-15)
+	_ = *c + q
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: cannot use *p as a value: Tg has a type table, so *p may be the parent part of a child, and a copy of it or an assignment through it would cover only that part; use the fields and methods through the pointer, or its Clone() for a full copy (value slicing, EXP-15)
+	_ = q + *p
+}
+
+// The value receiver of a tagged type may be the parent part too.
+func (t Tg) Use() int {
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot use t as the receiver of the operator []: Tg has a type table, so the value receiver t may be the parent part of a child, and the value receiver of an operator method is a copy, so it would cover only that part; use a method with a pointer receiver, or copy the whole value out first (value slicing, EXP-15)
+	return t[0]
+}
+
+type Tp struct{ X int }
+
+@Virtual
+func (t *Tp) Speak() int { return 0 }
+
+func (t *Tp) []= (i int, v int) {}
+func (t *Tp) [] (i int) int     { return i }
+func (t *Tp) += (u int)         {}
+func (t *Tp) ++ ()              {}
+func (t *Tp) <- (v int)         {}
+func (t *Tp) <- () int          { return 0 }
+func (t *Tp) () (i int) int     { return i }
+func (t *Tp) range () func(yield func(int) bool) {
+	return func(yield func(int) bool) {}
+}
+func (t *Tp) Set(i int, v int) {}
+
+type Cp extends Tp { Y int }
+
+func g(p *Tp, c *Cp) {
+	(*p).Set(0, 1)
+	(*p)[0] = 1
+	_ = (*p)[0]
+	*p += 1
+	(*p)++
+	*p <- 1
+	_ = <-*p
+	_ = (*p)(1)
+	for x := range *p {
+		_ = x
+	}
+	p[0] = 1
+	_ = p[0]
+	_ = p(1)
+	_ = <-p
+	p <- 2
+	for x := range p {
+		_ = x
+	}
+	c.Tp[0] = 1
+	c.Tp += 1
+	c.Tp++
+	_ = c.Tp(1)
+}
+
+// `defer` and `go` take the receiver (CON-1): an inherited value-receiver
+// operator then copies the parent part, the same decision as for
+// `defer ch.Call(1)`; on the type itself it is fine.
+type Ti struct{ X int }
+
+func (t Ti) () (i int) int   { return i }
+func (t Ti) Call(i int) int { return i }
+
+type Ci extends Ti { Y int }
+
+func h(ci Ci, ti Ti) {
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use the operator () of ci as a method value or deferred call: the method () is inherited, so its receiver is the parent part of Ci, and binding or deferring a value receiver copies it, so the copy would cover only that part; call the method directly (a call borrows the receiver) or give it a pointer receiver (value slicing, EXP-15)
+	defer ci(1)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use ci.Call as a method value or deferred call: the method Call is inherited, so its receiver is the parent part of Ci, and binding or deferring a value receiver copies it, so the copy would cover only that part; call the method directly (a call borrows the receiver) or give it a pointer receiver (value slicing, EXP-15)
+	defer ci.Call(1)
+	defer ti(2)
+	go ti(3)
+	_ = ci(4)
+}

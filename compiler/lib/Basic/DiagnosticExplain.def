@@ -3845,3 +3845,224 @@ type Dog extends Animal { Tricks int }
 
 type Other Dog
 )X")
+EXPLAIN(err_op_blocked,
+        "Some operators cannot be methods (EXP-29): `=` and `:=` (moves and ownership depend on them), `.`, `,`, unary `&` (the borrow checker depends on it), and `!=`, `<`, `<=`, `>`, `>=` (they are made from `==` and `<=>`).",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) = (b V) {}
+)X")
+EXPLAIN(err_op_shape,
+        "An operator method has a fixed form (EXP-16): a binary operator takes one parameter and returns a result, a unary one takes none, an in-place compound operator (`+=`) has no result, `==` returns bool, `<=>` returns int, and a user `*` returns View[T].",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) + (b V, c V) V { return a }
+)X")
+EXPLAIN(err_op_receiver,
+        "The receiver kind of an operator method is fixed (EXP-16). Binary and unary operators borrow their operands, so they take a value receiver. Operators that change the receiver (`+=`, `++`, `[]=`, `<-`) need a pointer receiver, because a value receiver would change a copy.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) += (b V) {}
+)X")
+EXPLAIN(err_op_duplicate,
+        "Two operator methods of one type may share a spelling only when their parameter types differ (EXP-17). Each type of the right operand has one meaning.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) + (b V) V { return a }
+
+func (a V) + (b V) V { return b }
+)X")
+EXPLAIN(err_op_second_meaning,
+        "An operator that already has a meaning on the receiver's underlying type cannot get a second one (EXP-17). Define a new named struct, or use a method name.",
+        R"X(package p
+
+type Meters float64
+
+func (a Meters) + (b Meters) Meters { return a }
+)X")
+EXPLAIN(err_op_tparams,
+        "An operator method cannot have type parameters of its own (EXP-30): the call has no place to write them. The type parameters of the receiver type are fine.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) + [T any] (b T) V { return a }
+)X")
+EXPLAIN(err_op_fails,
+        "An operator method cannot be a `!` function (EXP-30). Return an explicit result, or panic like integer division by zero.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) +! (b V) V { return a }
+)X")
+EXPLAIN(err_convert_misuse,
+        "`@Convert` marks a method that makes `T(x)` work for a type that has no built-in conversion (EXP-25). It goes on a method with a value receiver, no parameters and one result, at most one per target type.",
+        R"X(package p
+
+@Convert
+func plain() int { return 0 }
+)X")
+EXPLAIN(err_right_misuse,
+        "`@Right` lets `2.0 * v` call the method `v * 2.0` (EXP-26). It goes on a binary operator method whose right operand is not the receiver's type; it is not for unary, comparison or in-place operators.",
+        R"X(package p
+
+type V struct{ X float64 }
+
+@Right
+func (a V) - () V { return a }
+)X")
+EXPLAIN(err_op_not_addressable,
+        "An operator method with a pointer receiver changes its operand, so the operand must be a place that can be written: a variable, a field or an element. A temporary or a read-only value has no place (EXP-16).",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a *V) ++() { a.X++ }
+
+func main() {
+	V{1}++
+}
+)X")
+EXPLAIN(err_op_no_method,
+        "No operator method of the type fits the operands (EXP-17). There is no implicit conversion: the operand types must match a method exactly; an untyped constant takes the type of the parameter.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) + (b V) V { return a }
+
+func main() {
+	v := V{1}
+	_ = v + 1
+}
+)X")
+EXPLAIN(err_op_ambiguous,
+        "Two operator methods fit the operands equally well (EXP-17). Give one operand an explicit type.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) + (b int8) V { return a }
+
+func (a V) + (b int16) V { return a }
+
+func main() {
+	v := V{1}
+	_ = v + 1
+}
+)X")
+EXPLAIN(err_op_compound_overlap,
+        "An in-place operator method writes its receiver while it reads the other operand, so the operand cannot be the same place or contain it (OWN-B4, EXP-19). Write `x = x + y`.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a *V) += (b V) { a.X += b.X }
+
+func main() {
+	v := V{1}
+	v += v
+}
+)X")
+EXPLAIN(err_op_index_not_place,
+        "A user `[]` returns a value, not a place (EXP-22). `a[i]++`, `&a[i]` and `a[i].f = v` are not allowed; write `a[i] += 1` (read, add, then `[]=`).",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) [] (i int) int { return a.X }
+
+func (a *V) []= (i int, x int) { a.X = x }
+
+func main() {
+	v := V{1}
+	v[0]++
+}
+)X")
+EXPLAIN(err_op_select,
+        "`select` works on built-in channels only (CON-22). A user type with `<-` methods cannot be a case of a select.",
+        R"X(package p
+
+type Q struct{ X []int }
+
+func (q *Q) <- () int { return 0 }
+
+func main() {
+	var q Q
+	select {
+	case x := <-q:
+		_ = x
+	}
+}
+)X")
+EXPLAIN(err_op_no_unary,
+        "The type has no unary operator method of this spelling (EXP-17). Define it with no parameter: `func (a T) - () T`.",
+        R"X(package p
+
+type V struct{ X int }
+
+func (a V) + (b V) V { return a }
+
+func main() {
+	v := V{1}
+	_ = -v
+}
+)X")
+EXPLAIN(err_op_range_write,
+        "A type with a `range` method is ranged over through the function the method returns, and the receiver stays borrowed for the whole loop, as the slice does in a range (RNG-6b, RNG-3). A body that assigns to the ranged value, or calls a pointer method on it, is an error. Collect the changes and apply them after the loop.",
+        R"X(package p
+
+type Seq func(yield func(int) bool)
+
+type Tree struct{ items []int }
+
+func (t *Tree) range() Seq {
+	return func(yield func(int) bool) {}
+}
+
+func f() {
+	var t Tree
+	for x := range t {
+		t = Tree{}
+		_ = x
+	}
+}
+)X")
+EXPLAIN(warn_vet_op_eq_cmp,
+        "`gopp vet` found a type that defines `==` for a right-hand type but not `<=>`, or the other way round. The four orderings come from `<=>` and `!=` from `==`, so two operators that are not defined for the same right-hand types can disagree: `a == b` may be false while `a <=> b == 0` is true. Define both for each right-hand type (EXP-20).",
+        R"X(package p
+
+type A struct{ X, Y int }
+
+func (a A) == (b A) bool { return a.X == b.X }
+)X")
+EXPLAIN(warn_vet_op_fields,
+        "`gopp vet` compares the fields that the bodies of `==` and `<=>` read for the same right-hand type. When both read some fields and the sets differ, the two operators can disagree (best effort: it only looks at the bodies it can see).",
+        R"X(package p
+
+type C struct{ X, Y int }
+
+func (a C) == (b C) bool { return a.X == b.X && a.Y == b.Y }
+
+func (a C) <=> (b C) int { return a.X - b.X }
+)X")
+EXPLAIN(warn_vet_op_eq_builtin,
+        "A map key and a `comparable` type argument use the built-in equality of the type (its fields compared one by one), never a user `==` method. A type with a `==` method that is used there gets a different meaning of equal than `a == b` has in the code (EXP-20).",
+        R"X(package p
+
+type F struct{ X, Y int }
+
+func (a F) == (b F) bool { return a.X == b.X }
+
+func (a F) <=> (b F) int { return a.X - b.X }
+
+var M map[F]int
+)X")

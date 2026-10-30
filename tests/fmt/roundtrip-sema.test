@@ -1,0 +1,5 @@
+// The invariants of `gopp fmt` (see roundtrip.test) on the sema test inputs
+// that are valid programs, in two tests (this one and roundtrip-rules.test):
+// the corpus grew past the 2 s limit of one test. This one has the top-level
+// tests and the .gopp inputs of Inputs and conformance.
+// RUN: %python %S/check-corpus.py %gopp --ext .test --min 15 %S/../sema/*.test %S/../sema/Inputs %S/../sema/conformance

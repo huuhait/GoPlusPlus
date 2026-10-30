@@ -632,6 +632,13 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
                                          "downcast either") +
                        " (EXP-15)";
   }
+  // ADR-0024, EXP-25: an @Convert method is called by a written conversion,
+  // never implicitly.
+  if (!S.Opts.GoCompat && Cause && !Vp && !Tp)
+    if (Func *CM = convertMethod(dyn_cast<NamedType>(V), T))
+      *Cause = "there is no implicit conversion: write " + str(T) + "(" +
+               (X.E ? str(X.E) : str(V)) + ") to call the @Convert method " +
+               std::string(CM->Name) + " (EXP-25)";
   // GEN-12: a `T extends P` value is not a P value either.
   if (!S.Opts.GoCompat && Cause && Vp && !Tp && isa<NamedType>(T) &&
       extendsOrIs(Vp, T))

@@ -176,6 +176,27 @@ llvm::SmallVector<Func *, 0> *TypeContext::newMethodList() {
   return &MethodLists.back();
 }
 
+const OpTable *TypeContext::newOpTable(llvm::ArrayRef<Func *> Own,
+                                       const OpTable *Next) {
+  std::lock_guard<std::mutex> G(AllocMu);
+  OpTables.emplace_back();
+  OpTable &T = OpTables.back();
+  T.Own = Objs.copy(Own);
+  T.Next = Next;
+  return &T;
+}
+
+const llvm::ArrayRef<Func *> *TypeContext::newOpList(llvm::ArrayRef<Func *> L) {
+  std::lock_guard<std::mutex> G(AllocMu);
+  OpLists.push_back(Objs.copy(L));
+  return &OpLists.back();
+}
+
+const OpTable *TypeContext::emptyOps() {
+  static const OpTable Empty;
+  return &Empty;
+}
+
 namespace {
 /// Memory in the allocator of a shard (struct fields and the arrays of a
 /// type live next to the type).

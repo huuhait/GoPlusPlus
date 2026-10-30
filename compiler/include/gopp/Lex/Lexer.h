@@ -31,6 +31,8 @@ struct LexerOptions {
   bool KeepComments = false;
   /// Insert semicolons at newlines (Go's rule). Only tests turn this off.
   bool InsertSemis = true;
+  /// Lex `<=>` as one token (LEX-13). In Go mode it is `<=` then `>`.
+  bool Spaceship = true;
 };
 
 class Lexer {

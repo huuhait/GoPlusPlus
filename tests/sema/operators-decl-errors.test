@@ -1,0 +1,134 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24: declaration rules of operator methods (EXP-16, EXP-17, EXP-25,
+// EXP-26, EXP-30): the forms table, the receiver kinds, own type parameters
+// and `!`, duplicates, second meanings, @Right and @Convert. Every error is
+// pinned; lines without a CHECK line are accepted (`* (float64)` next to the
+// @Right `/`, `Meters * Seconds`, the unary `-` of Vec2).
+package main
+
+type Seq[V any] func(yield func(V) bool)
+
+type Vec2 struct{ X, Y float64 }
+type Meters float64
+type Seconds float64
+type Speed float64
+type Stack []int
+type F func(int) int
+type Ch chan int
+type Matrix struct{ data []float64 }
+type BigInt struct{ v []uint }
+
+func (a Vec2) + (b Vec2) Vec2    { return a }
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: duplicate operator method `+` for the parameter types (Vec2): the first is at line {{[0-9]+}} (EXP-17)
+func (a Vec2) + (b Vec2) Vec2    { return a }
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: operator method `-` needs a value receiver: a binary operator would need &a, and a may be a temporary; the operands are borrowed, so the method cannot change them (EXP-16)
+func (a *Vec2) - (b Vec2) Vec2   { return *a }
+func (a Vec2) - () Vec2          { return a }
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `==` has the wrong form: `==` must return bool (EXP-16)
+func (a Vec2) == (b Vec2) int    { return 0 }
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `<=>` has the wrong form: `<=>` must return int (-1, 0 or 1) (EXP-16)
+func (a Vec2) <=> (b Vec2) bool  { return false }
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `!` has the wrong form: `!` is unary only: it takes no parameter (EXP-16)
+func (a Vec2) ! (b Vec2) Vec2    { return a }
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `[]=` needs a pointer receiver: `[]=` changes the receiver; a value receiver would change a copy (EXP-16)
+func (a Vec2) []= (i int, v float64) {}
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `+=` needs a pointer receiver: an in-place `+=` changes the receiver; a value receiver would change a copy (EXP-16)
+func (a Vec2) += (b Vec2) {}
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: operator method `*=` has the wrong form: an in-place compound operator has no result (EXP-16)
+func (a *Vec2) *= (b Vec2) Vec2 { return *a }
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: operator method `/=` has the wrong form: an in-place compound operator takes one parameter (the right operand) (EXP-16)
+func (a *Vec2) /= (b Vec2, c Vec2) {}
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `+` has the wrong form: a binary operator takes one parameter (the right operand), a unary one takes none (EXP-16)
+func (a Vec2) + (b Vec2, c Vec2) Vec2 { return a }
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: the operator method `+` cannot have type parameters of its own; the type parameters of the receiver type are fine (EXP-30)
+func (a Vec2) + [T any] (b T) Vec2 { return a }
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: the operator method `+` cannot be a `!` function: return an explicit result, or panic like integer division by zero (EXP-30)
+func (a Vec2) +! (b Vec2) Vec2 { return a }
+func (a Vec2) * (s float64) Vec2 { return a }
+@Right
+func (a Vec2) / (s float64) Vec2 { return a }
+@Right
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: duplicate operator method `/` for the parameter types (float64) with @Right: the first is at line {{[0-9]+}} (EXP-17)
+func (a Vec2) / (s float64) Vec2 { return a }
+@Right
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: @Right on `&&`: not allowed on `&&` and `||`: the swap would break the laziness of the right operand (EXP-21) (EXP-26)
+func (a Vec2) && (s func() bool) Vec2 { return a }
+@Right
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: @Right on `-`: a unary operator has no left operand to swap (EXP-26)
+func (a Vec2) - () Vec2 { return a }
+@Right
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: @Right on `%`: the parameter type must differ from the receiver type Vec2: with the same type both orders are the same call (EXP-26)
+func (a Vec2) % (b Vec2) Vec2 { return a }
+
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot declare the operator method `+` on Meters: Meters has the built-in `+` (Meters, Meters) Meters already (its underlying type is float64), so the method would be a second meaning (EXP-17)
+func (a Meters) + (b Meters) Meters { return a }
+func (a Meters) * (b Seconds) Speed { return 0 }
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot declare the operator method `<=>` on Meters: Meters has the built-in `<=>` (EXP-20) already (its underlying type is float64), so the method would be a second meaning (EXP-17)
+func (a Meters) <=> (b Meters) int { return 0 }
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot declare the operator method `-` on Meters: Meters has the unary `-` already (its underlying type is float64), so the method would be a second meaning (EXP-17)
+func (a Meters) - () Meters { return a }
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot declare the operator method `++` on Meters: Meters has the built-in `++` already (its underlying type is float64), so the method would be a second meaning (EXP-17)
+func (a *Meters) ++ () {}
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot declare the operator method `[]` on Stack: Stack has the built-in index `[]` already (its underlying type is []int), so the method would be a second meaning (EXP-17)
+func (s Stack) [] (i int) int { return 0 }
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method `()` on F: F has the built-in call already (its underlying type is func(int) int), so the method would be a second meaning (EXP-17)
+func (f F) () (x int) int { return 0 }
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: operator method `<-` needs a pointer receiver: a send or receive changes the queue; a value receiver would change a copy (EXP-16)
+func (c Ch) <- (x int) {}
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot declare the operator method `range` on Stack: Stack has `range` already (its underlying type is []int), so the method would be a second meaning (EXP-17)
+func (s Stack) range () Seq[int] { return func(yield func(int) bool) {} }
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: operator method `*` has the wrong form: a user `*` must return View[T] (read-only), not int (EXP-16)
+func (s Stack) * () int { return 0 }
+
+@Convert
+func (b BigInt) Int64() int64 { return 0 }
+@Convert
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: @Convert on `Other`: BigInt already has a @Convert to int64: Int64 at line {{[0-9]+}} (one per target type) (EXP-25)
+func (b BigInt) Other() int64 { return 0 }
+@Convert
+func (b BigInt) Float64() float64 { return 0 }
+@Convert
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: @Convert on `Parse`: it takes no parameters and returns exactly one result (EXP-25)
+func (b BigInt) Parse(s string) int64 { return 0 }
+@Convert
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: @Convert on `Ptr`: it needs a value receiver: a conversion does not change its operand (EXP-25)
+func (b *BigInt) Ptr() int32 { return 0 }
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: @Convert on the function plain: it is only for methods (EXP-25)
+@Convert
+func plain() int { return 0 }
+@Convert
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: @Convert on `Float64`: Meters already converts to float64 (EXP-9): the conversion would have two meanings (EXP-25)
+func (m Meters) Float64() float64 { return 0 }
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: operator method `*` has the wrong form: a user `*` must return View[T] (read-only), not int (EXP-16)
+func (m Matrix) * () int { return 0 }
+// More shapes and second meanings (ported from the c1 rule table).
+type Celsius float64
+type Mp map[int]int
+type Arr [3]int
+type W struct{ n int }
+
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: operator method `++` needs a pointer receiver: `++` changes the receiver (EXP-16)
+func (a W) ++ () {}
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: operator method `<-` needs a pointer receiver: a send or receive changes the queue; a value receiver would change a copy (EXP-16)
+func (a W) <- (v int) {}
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: the operator method `-` cannot be a `!` function: return an explicit result, or panic like integer division by zero (EXP-30)
+func (a W) -! () W { return a }
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: operator method `range` has the wrong form: the result must be a function type that `range` accepts, like iter.Seq[V]: func(yield func(V) bool); not int (EXP-16)
+func (a W) range () int { return 0 }
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: operator method `[]=` has the wrong form: it takes the indexes and then the value to store (at least two parameters) (EXP-16)
+func (a *W) []= (i int) {}
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: operator method `*` has the wrong form: a user `*` must return View[T] (read-only), not *W (EXP-16)
+func (p W) * () *W { panic("x") }
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: operator method `[]=` needs a pointer receiver: `[]=` changes the receiver; a value receiver would change a copy (EXP-16)
+func (m Mp) []= (i, v int) {}
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot declare the operator method `[]` on Arr: Arr has the built-in index `[]` already (its underlying type is [3]int), so the method would be a second meaning (EXP-17)
+func (a Arr) [] (i int) int { return 0 }
+@Convert
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: @Convert on `NoResult`: it takes no parameters and returns exactly one result (EXP-25)
+func (b BigInt) NoResult() {}
+@Convert
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: @Convert on `Float64`: Celsius already converts to float64 (EXP-9): the conversion would have two meanings (EXP-25)
+func (c Celsius) Float64() float64 { return 0 }
+
+func main() {}
+

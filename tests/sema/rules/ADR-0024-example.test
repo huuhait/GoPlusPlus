@@ -1,0 +1,12 @@
+// RUN: %gopp check %S/../Inputs/ops-example
+// RUN: %gopp fmt %S/../Inputs/ops-example/main.gopp | diff - %S/../Inputs/ops-example/main.gopp
+// P03.24 (ADR-0024): the examples of the ADR as one accepted program in
+// Inputs/ops-example: Vec2 with `@Right` `*` and `/` and the derived `!=` and
+// `<`, `Sum` over int, Vec2, BigInt and string, `Max` over Vec2, int and
+// string, `float64(b)` and `b.Int64()` through @Convert, Matrix with `[]`,
+// `[]=`, `m[1, 2] += 1.0` and the in-place `+=`, a Queue with send and
+// receive (and comma-ok), the units idiom `10*Km + 500*M` here and with the
+// constants of the `units` package, `30 * time.Second` (a stub `time`),
+// `10 * money.USD` through the @Right `*` method of another package, and
+// `Meters * Seconds`. Its run output is P04.23's.
+package main

@@ -1,0 +1,106 @@
+// RUN: %gopp vet --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=warning[E" "--implicit-check-not=error[E" %s
+// RUN: %gopp check %s 2>&1 | not grep warning
+// RUN: not %gopp vet -Werror %s 2>/dev/null
+// P03.24 (EXP-20): `gopp vet` warns when `==` and `<=>` can disagree: only
+// one of them for a right-hand type (A, B), different right-hand types (E),
+// bodies that read different fields (C), and a type with a user `==` that is
+// a map key or the argument of a `comparable` parameter of a function or a
+// type (F, D, Both), where the built-in equality is used. Both sides: the
+// pair D reads the same fields and is silent about them, Both and Neither
+// are silent, a map value is no key, and `gopp check` reports no warning.
+package lib
+
+type A struct{ X, Y int }
+
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: type A defines `==` for A but not `<=>`: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)
+func (a A) == (b A) bool { return a.X == b.X }
+
+type B struct{ X, Y int }
+
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: type B defines `<=>` for B but not `==`: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)
+func (a B) <=> (b B) int { return a.X - b.X }
+
+type C struct{ X, Y int }
+
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: `==` compares the fields X, Y of C but `<=>` compares `X`: `==` and `<=>` can disagree (EXP-20)
+func (a C) == (b C) bool { return a.X == b.X && a.Y == b.Y }
+func (a C) <=> (b C) int { return a.X - b.X }
+
+type D struct{ X, Y int }
+
+func (a D) == (b D) bool { return a.X == b.X && a.Y == b.Y }
+func (a D) <=> (b D) int {
+	if a.X != b.X {
+		return a.X - b.X
+	}
+	return a.Y - b.Y
+}
+
+type E struct{ X int }
+
+func (a E) == (b E) bool { return a.X == b.X }
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: type E defines `==` for int but not `<=>`: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)
+func (a E) == (b int) bool { return a.X == b }
+func (a E) <=> (b E) int { return a.X - b.X }
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: type E defines `<=>` for float64 but not `==`: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)
+func (a E) <=> (b float64) int { return 0 }
+
+type F struct{ X int }
+
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: type F defines `==` for F but not `<=>`: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)
+func (a F) == (b F) bool { return true }
+
+// CHECK-DAG: [[@LINE+1]]:11: warning{{\[E[0-9]+\]}}: F has a user `==`, but a map compares with the built-in equality of its fields, not with the method (EXP-20)
+var M map[F]int
+// CHECK-DAG: [[@LINE+1]]:11: warning{{\[E[0-9]+\]}}: D has a user `==`, but a map compares with the built-in equality of its fields, not with the method (EXP-20)
+var N map[D]int
+
+func Set[K comparable](k K) {}
+
+// Both sides: both operators for the same right-hand type and the same
+// fields, or neither, is silent; a user `==` type as a map value is silent.
+type Both struct{ X int }
+
+func (a Both) == (b Both) bool { return a.X == b.X }
+func (a Both) <=> (b Both) int { return a.X - b.X }
+
+type Neither struct{ X int }
+
+// A generic type with a `comparable` parameter, like a map key.
+type KeySet[K comparable] struct{ n int }
+
+var M3 map[Neither]int
+var M4 map[int]Both
+// CHECK-DAG: [[@LINE+1]]:8: warning{{\[E[0-9]+\]}}: Both has a user `==`, but the `comparable` parameter K compares with the built-in equality of its fields, not with the method (EXP-20)
+var S1 KeySet[Both]
+var S2 KeySet[Neither]
+var S3 KeySet[int]
+
+func use(f F, d D) {
+// CHECK-DAG: [[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: F has a user `==`, but the `comparable` parameter K compares with the built-in equality of its fields, not with the method (EXP-20)
+	Set(f)
+// CHECK-DAG: [[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: D has a user `==`, but the `comparable` parameter K compares with the built-in equality of its fields, not with the method (EXP-20)
+	Set(d)
+// CHECK-DAG: [[@LINE+1]]:2: warning{{\[E[0-9]+\]}}: F has a user `==`, but the `comparable` parameter K compares with the built-in equality of its fields, not with the method (EXP-20)
+	Set[F](f)
+// CHECK-DAG: [[@LINE+1]]:10: warning{{\[E[0-9]+\]}}: F has a user `==`, but a map compares with the built-in equality of its fields, not with the method (EXP-20)
+	_ = map[F]bool{}
+}
+
+// A generic type: both operators for the receiver type are silent, one alone
+// is not, and an instance as a map key or a `comparable` argument warns.
+type Box[T any] struct{ v T }
+
+func (a Box[T]) == (b Box[T]) bool { return true }
+func (a Box[T]) <=> (b Box[T]) int { return 0 }
+
+type Half[T any] struct{ v T }
+
+// CHECK-DAG: [[@LINE+1]]:18: warning{{\[E[0-9]+\]}}: type Half[T] defines `==` for Half[T] but not `<=>`: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)
+func (a Half[T]) == (b Half[T]) bool { return true }
+
+// CHECK-DAG: [[@LINE+1]]:12: warning{{\[E[0-9]+\]}}: Box[int] has a user `==`, but a map compares with the built-in equality of its fields, not with the method (EXP-20)
+var M5 map[Box[int]]int
+
+// CHECK-DAG: [[@LINE+1]]:27: warning{{\[E[0-9]+\]}}: Box[int] has a user `==`, but the `comparable` parameter K compares with the built-in equality of its fields, not with the method (EXP-20)
+func useBox(b Box[int]) { Set(b) }

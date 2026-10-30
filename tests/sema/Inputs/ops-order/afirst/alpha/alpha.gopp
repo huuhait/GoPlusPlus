@@ -1,0 +1,3 @@
+package alpha
+
+type A interface{ + (string) string }

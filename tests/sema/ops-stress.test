@@ -1,0 +1,39 @@
+// P03.24: the operator checks on generated programs of every shape, at a
+// small size (the Done-when sizes are in ops-stress-*.long.test): types with
+// every operator form, an overload set of 50 methods picked 5000 times,
+// long `a + b + ...` chains, a chain of generic functions that use an
+// operator of their constraint, nested parentheses, chains of index, call and
+// plain operands, a deep `extends` chain whose every level uses the root's
+// operators, and a chain whose every level adds an overload and uses the
+// operator (the merged list of each level is made once); each is accepted, with one body thread and with eight.
+// And 500 uses that fit none of 50 overloads give 500 errors.
+// RUN: %python %S/Inputs/gen-ops-stress.py types 100 > %t.types.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.types.gopp
+// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.types.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py overloads 50 > %t.over.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.over.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py chain 3000 > %t.chain.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.chain.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py generic 100 > %t.gen.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.gen.gopp
+// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.gen.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py nested 250 > %t.nest.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.nest.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py mixed 3000 > %t.mixed.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.mixed.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py inherit 300 > %t.inh.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.inh.gopp
+// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.inh.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py extover 400 > %t.xo.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.xo.gopp
+// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.xo.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py nestidx 100 > %t.ni.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.ni.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py nestcall 100 > %t.nc.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.nc.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py nestplus 100 > %t.np.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.np.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py errors 500 > %t.err.gopp
+// RUN: not timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.err.gopp > %t.err.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 500, t[:300]" %t.err.out
+package main

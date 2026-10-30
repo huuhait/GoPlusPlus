@@ -1,0 +1,60 @@
+// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error %s
+// P03.24: operator uses that resolve (EXP-18 to EXP-21, EXP-26); the other side is operators-resolve-bad.test.
+package main
+
+type Seq[V any] func(yield func(V) bool)
+
+type Vec2 struct{ X, Y float64 }
+type Meters float64
+type Seconds float64
+type Speed float64
+
+func (a Vec2) + (b Vec2) Vec2         { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) - (b Vec2) Vec2         { return Vec2{a.X - b.X, a.Y - b.Y} }
+func (a Vec2) - () Vec2               { return Vec2{-a.X, -a.Y} }
+func (a Vec2) == (b Vec2) bool        { return a.X == b.X && a.Y == b.Y }
+func (a Vec2) <=> (b Vec2) int        { return 0 }
+func (a Vec2) && (b Vec2) Vec2        { return a }
+func (a Vec2) || (b func() Vec2) Vec2 { return a }
+
+// @Right on a commutative operator: one method serves both orders.
+@Right
+func (a Vec2) * (s float64) Vec2 { return Vec2{a.X * s, a.Y * s} }
+
+// An overload set: the argument type picks the method.
+func (a Vec2) * (s int) Vec2 { return Vec2{a.X * float64(s), a.Y * float64(s)} }
+
+// @Right on a non-commutative operator: `s / a` only.
+@Right
+func (a Vec2) / (s float64) Vec2 { return Vec2{s / a.X, s / a.Y} }
+
+func (a Meters) * (b Seconds) Speed { return 0 }
+
+func main() {
+	a := Vec2{1, 2}
+	b := Vec2{3, 4}
+	var v Vec2 = a + b
+	v = -a * 2.0
+	v = 2.0 * a
+	v = 1.0 / a
+	v = a * 3
+	v = a && b
+	v = a || b
+	v = a + b + a - b
+	_ = v
+	var ok bool = a != b
+	ok = a == b
+	ok = a < b
+	ok = a >= b
+	var c int = a <=> b
+	var sp Speed = Meters(3) * Seconds(2)
+	// A built-in meaning stays for a basic type with an untyped constant.
+	var m Meters = Meters(3) * 2.0
+	m = Meters(3) + 2.0
+	// <=> is built in for numbers and strings.
+	c = 3 <=> 4
+	c = "a" <=> "b"
+	_, _, _, _, _ = ok, c, sp, m, 1
+}
+
+

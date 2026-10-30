@@ -34,8 +34,9 @@ bool Checker::sameId(const Object *O, Package *Pkg, StringRef Name, bool Fold) {
     return true;
   if (O->Name != Name)
     return false;
-  // Exported names and names of foreign packages do not depend on the package.
-  if (isExportedName(Name))
+  // Exported names and names of foreign packages do not depend on the package,
+  // nor do operator names (ADR-0024: importers get the operator methods).
+  if (isExportedName(Name) || isOperatorSpelling(Name))
     return true;
   if ((O->Pkg && O->Pkg->IsForeign) || (Pkg && Pkg->IsForeign))
     return true;
@@ -53,14 +54,21 @@ Func *Checker::namedMethod(NamedType *N, unsigned I) {
   return instantiatedMethod(N, I);
 }
 
+const Func *sema::declaredMethod(const Func *F) {
+  while (F && F->Origin)
+    F = F->Origin;
+  return F;
+}
+
 Func *Checker::lookupMethod(NamedType *N, Package *Pkg, StringRef Name,
-                            bool Fold, int *Idx) {
+                            bool Fold, int *Idx, const Func *Want) {
   NamedType *O = N->origin();
   if (!O->Methods)
     return nullptr;
+  const Func *WantDecl = declaredMethod(Want);
   for (unsigned I = 0; I < O->Methods->size(); ++I) {
     Func *M = (*O->Methods)[I];
-    if (sameId(M, Pkg, Name, Fold)) {
+    if (Want ? M == WantDecl : sameId(M, Pkg, Name, Fold)) {
       if (Idx)
         *Idx = static_cast<int>(I);
       return N->Orig ? instantiatedMethod(N, I) : M;
@@ -71,7 +79,8 @@ Func *Checker::lookupMethod(NamedType *N, Package *Pkg, StringRef Name,
 
 Checker::LookupResult Checker::lookupFieldOrMethod(Type *T, bool Addressable,
                                                    Package *Pkg, StringRef Name,
-                                                   bool FoldCase) {
+                                                   bool FoldCase,
+                                                   const Func *Want) {
   LookupResult R;
   if (Name == "_")
     return R;
@@ -79,13 +88,13 @@ Checker::LookupResult Checker::lookupFieldOrMethod(Type *T, bool Addressable,
   // pointer, and drop a method found there.
   if (auto *N = dyn_cast<NamedType>(T)) {
     if (auto *P = dyn_cast<PointerType>(under(N))) {
-      R = lookupImpl(P, false, Pkg, Name, FoldCase);
+      R = lookupImpl(P, false, Pkg, Name, FoldCase, Want);
       if (R.Obj && isa<Func>(R.Obj))
         return LookupResult();
       return R;
     }
   }
-  return lookupImpl(T, Addressable, Pkg, Name, FoldCase);
+  return lookupImpl(T, Addressable, Pkg, Name, FoldCase, Want);
 }
 
 namespace {
@@ -99,7 +108,7 @@ struct Embedded {
 
 Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
                                           Package *Pkg, StringRef Name,
-                                          bool FoldCase) {
+                                          bool FoldCase, const Func *Want) {
   LookupResult R;
   if (Name == "_")
     return R;
@@ -122,7 +131,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
     if (auto *N = dyn_cast<NamedType>(Ty)) {
       LookupResult CR;
       if (!FoldCase) {
-        if (chainLookup(N, IsPtr, Addressable, Pkg, Name, CR))
+        if (chainLookup(N, IsPtr, Addressable, Pkg, Name, CR, Want))
           return CR;
       } else if (typesFinal() && !Ctx.memberNameSeenFold(Name) &&
                  parentOf(N->origin())) {
@@ -162,7 +171,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
         if (!Seen.insert(N).second)
           continue;
         int Idx = 0;
-        if (Func *M = lookupMethod(N, Pkg, Name, FoldCase, &Idx)) {
+        if (Func *M = lookupMethod(N, Pkg, Name, FoldCase, &Idx, Want)) {
           SmallVector<int, 4> Index = Path(E.Index, Idx);
           if (R.Obj || E.Multiples) {
             LookupResult Coll;
@@ -180,7 +189,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
       if (auto *St = dyn_cast<StructType>(U)) {
         for (size_t I = 0; I < St->Fields.size(); ++I) {
           Var *F = St->Fields[I];
-          if (sameId(F, Pkg, Name, FoldCase)) {
+          if (!Want && sameId(F, Pkg, Name, FoldCase)) {
             SmallVector<int, 4> Index = Path(E.Index, static_cast<int>(I));
             if (R.Obj || E.Multiples) {
               LookupResult Coll;
@@ -202,8 +211,8 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
         }
       } else if (auto *In = dyn_cast<InterfaceType>(U)) {
         int Idx = 0;
-        if (Func *M =
-                lookupMethodInSet(typeSet(In), Pkg, Name, FoldCase, &Idx)) {
+        if (Func *M = lookupMethodInSet(typeSet(In), Pkg, Name, FoldCase, &Idx,
+                                        Want)) {
           SmallVector<int, 4> Index = Path(E.Index, Idx);
           if (R.Obj || E.Multiples) {
             LookupResult Coll;
@@ -276,14 +285,23 @@ Func *Checker::missingMethod(Type *V, Type *T, bool Static,
     PtrRecv,
     FieldSt,
     MoveRecv,
-    GenericMethod
+    GenericMethod,
+    OpMissing
   } State = Ok;
+  std::string OpCause;
   Func *M = nullptr; // method of T we try to implement
   Func *F = nullptr; // method of V found
   if (auto *VI = dyn_cast<InterfaceType>(under(V))) {
     TypeSet *VTS = typeSet(VI);
     for (Func *Mi : TTS->Methods) {
       M = Mi;
+      // GEN-13: an operator element is met by operator and signature.
+      if (M->isOperator()) {
+        if (satisfiesOpElem(V, M, Equiv, &OpCause))
+          continue;
+        State = OpMissing;
+        break;
+      }
       F = lookupMethodInSet(VTS, M->Pkg, M->Name, false);
       if (!F) {
         if (!Static)
@@ -299,6 +317,12 @@ Func *Checker::missingMethod(Type *V, Type *T, bool Static,
   } else {
     for (Func *Mi : TTS->Methods) {
       M = Mi;
+      if (M->isOperator()) {
+        if (satisfiesOpElem(V, M, Equiv, &OpCause))
+          continue;
+        State = OpMissing;
+        break;
+      }
       LookupResult LR = lookupImpl(V, false, M->Pkg, M->Name, false);
       if (!LR.Obj) {
         if (LR.Ambiguous)
@@ -370,6 +394,9 @@ Func *Checker::missingMethod(Type *V, Type *T, bool Static,
       break;
     case MoveRecv:
       *Cause = "(method " + Mn + " has a move receiver, PAR-5)";
+      break;
+    case OpMissing:
+      *Cause = OpCause;
       break;
     case GenericMethod:
       *Cause = "(method " + Mn +
@@ -692,7 +719,8 @@ NamedType *Checker::chainAncestor(NamedType *O, TypeContext::ChainEntry E,
 /// for N's type arguments. False if N is not such a type, or its types are
 /// not final yet (the general walk then decides).
 bool Checker::chainLookup(NamedType *N, bool IsPtr, bool Addressable,
-                          Package *Pkg, StringRef Name, LookupResult &R) {
+                          Package *Pkg, StringRef Name, LookupResult &R,
+                          const Func *Want) {
   if (!typesFinal())
     return false;
   NamedType *O = N->origin();
@@ -706,13 +734,14 @@ bool Checker::chainLookup(NamedType *N, bool IsPtr, bool Addressable,
   if (!chainIndex(O, E) || !E.Plain)
     return false;
   SmallVector<TypeContext::ChainMember, 2> Members;
+  const Func *WantDecl = declaredMethod(Want);
   for (uint32_t D = Ctx.chainDepthAtMost(E.Root, Name, E.Depth); D;
        D = Ctx.chainDepthAtMost(E.Root, Name, D - 1)) {
     NamedType *A = chainAncestor(O, E, D, nullptr);
     Members.clear();
     Ctx.chainMembers(A, Name, Members);
     for (const TypeContext::ChainMember &M : Members) {
-      if (!sameId(M.Obj, Pkg, Name, false))
+      if (Want ? M.Obj != WantDecl : !sameId(M.Obj, Pkg, Name, false))
         continue;
       Object *Mem = M.Obj;
       if (!A->TParams.empty()) {

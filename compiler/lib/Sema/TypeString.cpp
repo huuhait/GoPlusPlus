@@ -283,6 +283,8 @@ private:
         OS << "; ";
       First = false;
       OS << M->Name;
+      if (M->isOperator())
+        OS << ' '; // `+ (T) T`, as the source writes it (TYP-27)
       signature(llvm::cast<SignatureType>(M->Ty), Depth);
     }
     for (const Type *E : I->Embeddeds) {

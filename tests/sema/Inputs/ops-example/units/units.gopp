@@ -1,0 +1,12 @@
+// Package units: the Go-style units idiom of ADR-0024 decision 15, typed
+// constants times a number, imported from another package.
+package units
+
+type Meters float64
+
+const (
+	M  Meters = 1
+	Km Meters = 1000
+)
+
+func (m Meters) String() string { return "m" }

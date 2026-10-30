@@ -97,6 +97,53 @@ enum class BangKind : uint8_t {
   DeferSet, // `defer f!()` in a function that can fail: sets the error if nil
 };
 
+/// A checked use of an operator method (ADR-0024), keyed in Info::Operators
+/// by the expression or statement the source wrote. The checker checked it
+/// as the method call Call (`a.op(b)`, or `b.op(a)` when Swapped) through the
+/// ordinary call path (EXP-18), so the lowering (P04.23) lowers that call
+/// (its Selections give the receiver path) and needs no second search.
+struct OperatorUse {
+  /// The operator the source wrote: Add for `a + b` and for `a += b`, Eq for
+  /// `a != b`, Cmp for `a < b`, Index for `a[i]`, IndexSet for `a[i] = v`.
+  OpKind Op = OpKind::None;
+  /// The method called. For an operand that is a type parameter it is the
+  /// element of its constraint (the instance's method is found at P04.23).
+  Func *Method = nullptr;
+  /// The method call the use was checked as; null for the built-in `<=>`.
+  const ast::CallExpr *Call = nullptr;
+  /// `a[i] op= v` (keyed by the statement): Method is the binary method of
+  /// the element type and Call its call (both null when the element type's
+  /// operator is built in), Index the `[]` read (its call is the use of the
+  /// IndexExpr), IndexSet the `[]=` write, whose call SetCall takes the
+  /// result of the middle step as its last argument; the three calls share
+  /// `a` and the index expressions, which are evaluated once. `a[i] = v`
+  /// (keyed by the IndexExpr): IndexSet only.
+  Func *Index = nullptr;
+  Func *IndexSet = nullptr;
+  const ast::CallExpr *SetCall = nullptr;
+  /// A lazy `&&`/`||`: the right operand is passed as a closure (EXP-21).
+  bool Lazy = false;
+  /// `@Right`: the receiver is the right operand (EXP-26); the operands are
+  /// evaluated in the source order.
+  bool Swapped = false;
+  /// `a != b`: the negation of the `==` call.
+  bool Negate = false;
+  /// `a < b`, `a <= b`, `a > b`, `a >= b`: the sign test of the `<=>` call
+  /// (the comparison token); tok::illegal otherwise.
+  tok::Kind Sign = tok::illegal;
+  /// `a op= b` calls the in-place pointer-receiver method (EXP-19); false
+  /// for `a = a op b`.
+  bool InPlace = false;
+  /// The built-in `<=>` of numbers and strings: -1, 0 or 1 as cmp.Compare,
+  /// NaN as in cmp.Compare (EXP-20).
+  bool Builtin = false;
+  /// The method is an element of the constraint of a type parameter (GEN-13).
+  bool ViaConstraint = false;
+  /// The method is declared on an `extends` ancestor of the receiver
+  /// (EXP-30).
+  bool Inherited = false;
+};
+
 /// The typed side table (D3.4): the AST stays immutable.
 struct Info {
   llvm::DenseMap<const ast::Expr *, TypeAndValue> Types;
@@ -107,6 +154,11 @@ struct Info {
   llvm::DenseMap<const ast::Expr *, Instance> Instances;
   /// Every `f!(...)` call that type-checked, and what it does on failure.
   llvm::DenseMap<const ast::CallExpr *, BangKind> Bangs;
+  /// Every operator expression or statement that resolved to an operator
+  /// method, and every built-in `<=>`, keyed by its node (BinaryExpr,
+  /// UnaryExpr, StarExpr, IndexExpr, CallExpr, AssignStmt, IncDecStmt,
+  /// SendStmt, RangeStmt, a `case` value) (ADR-0024).
+  llvm::DenseMap<const ast::Node *, OperatorUse> Operators;
 
   const TypeAndValue *lookup(const ast::Expr *E) const {
     auto It = Types.find(E);

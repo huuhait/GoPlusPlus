@@ -1,0 +1,40 @@
+// RUN: not %gopp parse --error-limit=0 %s 2>&1 | FileCheck %s
+// RUN: rm -rf %t && mkdir -p %t && cp %s %t/a.go
+// RUN: not %gopp check --go --check-error-limit=0 %t/a.go 2>&1 | FileCheck --check-prefix=GO %s
+// P03.24 (EXP-29, LEX-13): the names an operator method cannot have, each
+// with its reason; and in Go mode (`--go`, and .go files for the checker
+// driver) the same text is a syntax error: an operator is no method name and
+// `<=>` is `<=` and `>`.
+package p
+
+type T struct{}
+
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method =: assignment cannot be overloaded: ownership and moves depend on it (EXP-29)
+func (a T) = (b T) {}
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method .: member access `.` cannot be overloaded (EXP-29)
+func (a T) . (b T) {}
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method ,: the comma cannot be overloaded (EXP-29)
+func (a T) , (b T) {}
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method :=: `:=` is not an operator and cannot be a method name (EXP-29)
+func (a T) := (b T) {}
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method &: unary `&` cannot be overloaded: the borrow checker depends on it (EXP-29)
+func (a T) & () {}
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method !=: write `==`: `!=` is made from it (EXP-29)
+func (a T) != (b T) bool { return true }
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method <: write `<=>`: `<`, `<=`, `>` and `>=` are made from it (EXP-29)
+func (a T) < (b T) bool { return true }
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method <=: write `<=>`: `<`, `<=`, `>` and `>=` are made from it (EXP-29)
+func (a T) <= (b T) bool { return true }
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method >: write `<=>`: `<`, `<=`, `>` and `>=` are made from it (EXP-29)
+func (a T) > (b T) bool { return true }
+// CHECK: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: cannot declare the operator method >=: write `<=>`: `<`, `<=`, `>` and `>=` are made from it (EXP-29)
+func (a T) >= (b T) bool { return true }
+
+// GO: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: expected 'IDENT', found '='
+func (a T) = (b T) {}
+// GO: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: expected 'IDENT', found '+'
+func (a T) + (b T) T { return a }
+// GO: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: expected 'IDENT', found '['
+func (a T) [] (i int) int { return 0 }
+// GO: [[@LINE+1]]:35: error{{\[E[0-9]+\]}}: expected operand, found '>'
+func f(a, b int) int { return a <=> b }

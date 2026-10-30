@@ -1,0 +1,55 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24: the same uses where the rule says no (EXP-19, EXP-22, EXP-24, EXP-25, CON-22).
+package main
+
+type Matrix struct{ data [4]float64 }
+
+func (m Matrix) [] (i, j int) float64      { return m.data[i*2+j] }
+func (m *Matrix) []= (i, j int, v float64) { m.data[i*2+j] = v }
+func (m *Matrix) += (o Matrix)             {}
+
+type Queue struct{ items [4]int }
+
+func (q *Queue) <- (v int) {}
+
+type Counter struct{ n int }
+
+func (c *Counter) ++ () { c.n++ }
+
+type Box struct{ m Matrix }
+
+func (b Box) * () View[Matrix] { return View[Matrix](b.m) }
+
+type BigInt struct{ v int }
+
+@Convert
+func (b BigInt) Float64() float64 { return 0 }
+
+func main() {
+	var m Matrix
+	var b BigInt
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use b (variable of struct type BigInt) as float64 value in variable declaration: there is no implicit conversion: write float64(b) to call the @Convert method Float64 (EXP-25)
+	var h float64 = b
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: m[0, 0] is not a place: ++ is not allowed on a user index (EXP-22); write `m[0, 0] += 1`
+	m[0, 0]++
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: cannot take address of m[0, 0] (value of type float64)
+	_ = &m[0, 0]
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: m[1] = 2.0: Matrix has no operator `[]=` for untyped int constant 1, untyped float constant 2 (EXP-17); the operator methods of Matrix: []=(int, int, float64)
+	m[1] = 2.0
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: m[1, 1] = "s": Matrix has no operator `[]=` for untyped int constant 1, untyped int constant 1, untyped string constant "s" (EXP-17); the operator methods of Matrix: []=(int, int, float64)
+	m[1, 1] = "s"
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += m: the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + m`
+	m += m
+	var q Queue
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: q <- "x": Queue has no operator `<-` (send) for untyped string constant "x" (EXP-17); the operator methods of Queue: <-(int)
+	q <- "x"
+	select {
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: a select case cannot use q <- 1: a send on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case q <- 1:
+	}
+	var bx Box
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to *bx (neither addressable nor a map index expression)
+	*bx = m
+	_ = h
+}
+

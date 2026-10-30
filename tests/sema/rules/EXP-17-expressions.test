@@ -1,0 +1,172 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rules EXP-17 to EXP-26, EXP-29, CON-22 (P03.24, ADR-0024), the expression
+// side, rejected: no implicit conversion (an untyped constant takes the
+// parameter type, nothing else converts), a constant that fits two
+// overloads, a unary operator the type lacks, `a[i]++`, `&a[i]`,
+// `a[i].f = v`, `move(a[i])`, `*p = v`, `&*p`, `a.f` through a user `*`,
+// `select` / `close` / `len` on a user channel type, `m += m` and
+// `m += m.sub` for an in-place `+=`, a non-Copy view as an operand, and
+// `@Right` ambiguity. Lines without a CHECK line are accepted: `m += n`,
+// `m = m + m`, `*p + w` with `*p` a `View[Vec2]` (copied out), `v / 2`
+// (a plain method, a constant of the parameter type), `1.5 / v`.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2   { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) * (s int8) Vec2   { return a }
+func (a Vec2) * (s int16) Vec2  { return a }
+func (a Vec2) - (s float64) Vec2 { return a }
+@Right
+func (a Vec2) / (s float64) Vec2 { return a }
+@Right
+func (a Vec2) / (s float32) Vec2 { return a }
+func (a Vec2) / (s float32) Vec2 { return a }
+
+type Big struct{ n int }
+
+@Convert
+func (b Big) Float64() float64 { return 1 }
+
+type Grid struct{ cells []int; f Vec2 }
+
+func (g Grid) [] (i int) Vec2         { return Vec2{} }
+func (g *Grid) []= (i int, v Vec2)    {}
+
+type Ptr struct{ v Vec2 }
+
+// CHECK-DAG: [[@LINE+1]]:39: error{{\[E[0-9]+\]}}: invalid composite literal type View[Vec2]
+func (p Ptr) * () View[Vec2] { return View[Vec2]{} }
+
+type Q struct{ n int }
+
+func (q *Q) <- (v int)   { }
+func (q *Q) <- () int    { return 0 }
+
+type Inner struct{ k int }
+type Mat struct{ sub Inner; n int }
+
+func (m Mat) + (n Mat) Mat { return Mat{} }
+func (m *Mat) += (n Mat)   {}
+func (m *Mat) += (i Inner) {}
+
+type Num struct{ n int }
+
+func plain(b Big, v Vec2, x int, f float64) {
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use b (variable of struct type Big) as float64 value in variable declaration: there is no implicit conversion: write float64(b) to call the @Convert method Float64 (EXP-25)
+	var g float64 = b      // no implicit conversion
+	_ = g
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v + 1: Vec2 has no operator `+` for untyped int constant 1 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = v + 1              // method takes Vec2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v - x: Vec2 has no operator `-` for int (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = v - x              // int variable for a float64 parameter
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `*` in v * 1: the untyped int constant 1 argument fits *(int8) Vec2; *(int16) Vec2; write the argument with an explicit type (EXP-17)
+	_ = v * 1              // int8 and int16 both fit
+	_ = 1.5 / v
+	_ = v / 2
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -v: Vec2 has no operator `-` that takes no operand (EXP-17); define it as a method: `func (a Vec2) - () R` (EXP-16)
+	_ = -v                 // no unary
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot convert b (variable of struct type Big) to type float32
+	_ = float32(b)         // not a conversion Big has
+}
+
+func idx() {
+	var g Grid
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: g[1] is not a place: ++ is not allowed on a user index (EXP-22); write `g[1] += 1`
+	g[1]++
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: cannot take address of g[1] (value of struct type Vec2)
+	_ = &g[1]
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to g[1].X (neither addressable nor a map index expression)
+	g[1].X = 2
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: move argument g[1] is not a place (variable, field, element, map entry or pointer target)
+	_ = move(g[1])
+	g[1] += g[2]
+}
+
+func deref(p Ptr, w Vec2) {
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot assign to *p (neither addressable nor a map index expression)
+	*p = w
+	_ = p.v
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: p.X undefined (type Ptr has no field or method X)
+	_ = p.X
+	_ = *p + w
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: cannot take address of *p (value of type View[Vec2])
+	_ = &*p
+}
+
+func chans() {
+	var q Q
+	select {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: a select case cannot use <-q: a receive on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case <-q:
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: a select case cannot use q <- 1: a send on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case q <- 1:
+	}
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid operation: cannot close non-channel q (variable of struct type Q)
+	close(q)
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid argument: q (variable of struct type Q) for built-in len
+	_ = len(q)
+}
+
+func inplace() {
+	var m, n Mat
+	m += n
+	m = m + m
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += m: the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + m`
+	m += m
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += m.sub: the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + m.sub`
+	m += m.sub
+	var k Num
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: k++ (non-numeric type Num)
+	k++
+}
+
+func main() {}
+
+type BigI struct{ items []int }
+
+func (b BigI) + (c BigI) BigI { return BigI{} }
+
+func views(p Ptr, w Vec2, v View[BigI], u View[BigI]) {
+	_ = *p + w
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v + u: View[BigI] has no operator `+` for View[BigI] (EXP-17); BigI is not a pointer-free Copy type, so a view of it cannot be an operand: the receiver and the parameters are not views (OWN-V1)
+	_ = v + u
+}
+
+type Pa struct{ k int }
+type Pb struct{ k int }
+type Pc struct{ k int }
+
+func (a Pa) / (b Pb) Pa { return a }
+@Right
+func (b Pb) / (a Pa) Pb { return b }
+@Right
+func (c Pc) - (s int8) Pc  { return c }
+@Right
+func (c Pc) - (s int16) Pc { return c }
+
+func rights(a Pa, b Pb, c Pc) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `/` in a / b: Pa has /(Pb) Pa and Pb has the @Right method /(Pa) Pb: the use fits both (EXP-17)
+	_ = a / b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: ambiguous operator `-` in 1 - c: the untyped int constant 1 argument fits -(int8) Pc @Right; -(int16) Pc @Right; write the argument with an explicit type (EXP-17)
+	_ = 1 - c
+}
+
+type Qok struct{ n int }
+
+func (q *Qok) <- () (int, bool) { return 0, false }
+
+// The define forms of a select case, through a pointer to the queue.
+func chans2(q *Q, r *Qok) {
+	select {
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: a select case cannot use <-q: a receive on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case v := <-q:
+		_ = v
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: a select case cannot use <-r: a receive on a user type with `<-` methods; select works on built-in channels only (CON-22)
+	case v, ok := <-r:
+		_, _ = v, ok
+	default:
+	}
+	v, ok := <-r
+	_, _ = v, ok
+}

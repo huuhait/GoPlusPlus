@@ -338,6 +338,9 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
   }
   case K::SendStmt: {
     auto *SS = cast<SendStmt>(S0);
+    // ADR-0024, CON-22: `q <- v` on a type with `<-` methods.
+    if (!S.Opts.GoCompat && this->Ctx.operatorsSeen() && opSend(SS))
+      return;
     Operand Ch, Val;
     expr(Ch, SS->Chan);
     expr(Val, SS->Value);
@@ -358,6 +361,9 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
   case K::IncDecStmt: {
     auto *ID = cast<IncDecStmt>(S0);
     Operand X;
+    // ADR-0024, EXP-19: `x++` on a type with a `++` method.
+    if (!S.Opts.GoCompat && this->Ctx.operatorsSeen() && opIncDec(ID))
+      return;
     expr(X, ID->X);
     if (X.M == Mode::Invalid)
       return;
@@ -388,8 +394,17 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
       return;
     }
     Operand X;
+    // ADR-0024, EXP-19: the in-place method, or `a[i] op= v` through `[]`
+    // and `[]=`.
+    if (!S.Opts.GoCompat && this->Ctx.operatorsSeen() && opCompound(AS)) {
+      flowFlushKills();
+      return;
+    }
+    LastOp = OperatorUse();
     binary(X, nullptr, AS->Lhs[0], AS->Rhs[0], assignOpToBinary(AS->Op),
            AS->OpLoc);
+    if (LastOp.Call) // `x = x op y` through the binary method (EXP-19)
+      I.Operators[AS] = LastOp;
     assignVar(AS->Lhs[0], nullptr, &X, "assignment operation");
     flowFlushKills();
     return;
@@ -717,6 +732,22 @@ void Checker::caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
     expr(V, Ex);
     if (X.M == Mode::Invalid || V.M == Mode::Invalid)
       continue;
+    // ADR-0024, EXP-20: a tag or case value of a type with a `==` method is
+    // compared exactly as `tag == value` is: the value is still untyped, so
+    // an untyped constant picks the method by the same rule (and the
+    // built-in meaning stays where `tag == value` keeps it).
+    if (!S.Opts.GoCompat && this->Ctx.operatorsSeen() && X.E &&
+        (hasOpKind(opBase(X.Ty), OpKind::Eq) ||
+         hasOpKind(opBase(V.Ty), OpKind::Eq))) {
+      LastOp = OperatorUse();
+      Operand L = X, R = V;
+      L.E = Ex; // an error is reported at the case value
+      if (opBinary(L, R, nullptr, X.E, Ex, tok::eql, Ex->getBegin())) {
+        if (L.M != Mode::Invalid && LastOp.Call)
+          I.Operators[Ex] = LastOp;
+        continue;
+      }
+    }
     convertUntyped(V, X.Ty);
     if (V.M == Mode::Invalid)
       continue;
@@ -756,8 +787,10 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
     expr(X, S0->Tag);
     unnarrowTentative(X); // the cases compare with its type (P03.19)
     assignment(X, nullptr, "switch expression");
+    // EXP-20: a tag whose `==` method serves the cases needs no built-in
+    // comparability (none in Go mode: opBase is null there).
     if (X.M != Mode::Invalid && !comparableType(X.Ty, true, nullptr) &&
-        !hasNil(X.Ty)) {
+        !hasNil(X.Ty) && !hasOpKind(opBase(X.Ty), OpKind::Eq)) {
       err(S0->Tag, diag::err_switch_tag_not_comparable, {str(X)});
       X.M = Mode::Invalid;
     }
@@ -1053,8 +1086,14 @@ void Checker::selectStmt(unsigned Ctx, const SelectStmt *S0) {
       continue;
     }
     openScope(CC->getRange(), "case");
-    if (CC->Comm)
+    if (CC->Comm) {
+      const ast::Node *SavedSel = SelectComm;
+      SelectComm = isa<SendStmt>(CC->Comm)
+                       ? static_cast<const ast::Node *>(CC->Comm)
+                       : static_cast<const ast::Node *>(unparen(Rhs));
       stmt(Ctx, CC->Comm);
+      SelectComm = SavedSel;
+    }
     stmtList(Ctx, CC->Body);
     closeScope();
     SelOut = flowJoin(SelOut, Cur);
@@ -1212,7 +1251,29 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
   const ast::Expr *SKey = S0->Key, *SValue = S0->Value;
   bool IsDef = S0->Op == tok::define;
   Operand X;
+  // ADR-0024: the range expression may be the receiver of a `range` method;
+  // a partial place is decided with the method (opReceiverOk), and a struct
+  // does not range anyway.
+  const bool Ops = !S.Opts.GoCompat && this->Ctx.operatorsSeen();
+  if (Ops)
+    markPartialOk(S0->X, /*Addr=*/false);
   expr(X, S0->X);
+  // ADR-0024, RNG-6b: a user type with a `range` method ranges over the
+  // function it returns (also through a pointer, like `t.M()`).
+  bool UserRange = false;
+  if (X.M != Mode::Invalid && Ops &&
+      opCandidateType(X.Ty, /*ThroughPtr=*/true)) {
+    Func *RM = nullptr;
+    if (Type *IT = opRangeType(X, S0, &RM)) {
+      if (!isValid(IT)) {
+        X.M = Mode::Invalid;
+      } else {
+        X.M = Mode::Value;
+        X.Ty = IT;
+        UserRange = true;
+      }
+    }
+  }
   // The scope of the iteration variables opens after the range expression
   // (types2, go.dev/issue/51437).
   openScope(S0->getRange(), "range");
@@ -1412,12 +1473,15 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
   }
   // RNG-3: the body must not visibly reallocate a ranged place.
   bool Frame = own() && X.M != Mode::Invalid && !OwnedVars &&
-               placeKind(S0->X) != PlaceKind::Temp;
+               (placeKind(S0->X) != PlaceKind::Temp || UserRange);
   if (Frame) {
     RangeFrame F;
+    F.User = UserRange; // RNG-6b: the receiver of `range` stays borrowed
     // An unstable range expression (`f()`) names no place to protect.
-    if (samePlace(S0->X, S0->X))
+    if (samePlace(S0->X, S0->X)) {
       F.X = str(unparen(S0->X));
+      F.XE = S0->X;
+    }
     F.XTy = X.Ty;
     if (SKey)
       F.Key = dyn_cast_or_null<Var>(identObj(SKey));

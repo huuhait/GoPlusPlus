@@ -8,11 +8,13 @@
 
 #include "Checker.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <atomic>
+#include <iterator>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -280,6 +282,7 @@ void Info::merge(ArrayRef<Info *> Others) {
   One(&Info::Selections);
   One(&Info::Instances);
   One(&Info::Bangs);
+  One(&Info::Operators);
 }
 
 //===----------------------------------------------------------------------===//
@@ -470,11 +473,24 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
       S0 = S0.substr(0, 37) + "...";
     return S0;
   };
+  // The calls the checker made for operator expressions (ADR-0024) are not
+  // source expressions: they are shown as the operator lines below.
+  llvm::DenseSet<const ast::Node *> Made;
+  for (auto &KV : P.I.Operators)
+    for (const ast::CallExpr *C : {KV.second.Call, KV.second.SetCall})
+      if (C) {
+        Made.insert(C);
+        Made.insert(C->Fun);
+        for (const ast::Expr *A : C->Args)
+          if (auto *Id = dyn_cast<ast::Ident>(A);
+              Id && Id->getBegin() == C->getBegin() && Id->Name.str() == "_")
+            Made.insert(Id); // the value of `a[i] op= v` (synthExpr)
+      }
   SmallVector<DumpEntry, 64> Entries;
   for (auto &KV : P.I.Types) {
     const ast::Expr *Ex = KV.first;
     const TypeAndValue &TV = KV.second;
-    if (!Ex->getBegin().isValid())
+    if (!Ex->getBegin().isValid() || Made.count(Ex))
       continue;
     std::string L = Loc(Ex->getBegin()) + " expr `" + Text(Ex) + "` " +
                     getModeName(TV.M) + " " + typeString(TV.Ty, Pkg);
@@ -499,6 +515,47 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
     const ast::CallExpr *C = KV.first;
     Entries.push_back({C->BangLoc.getRaw(), C->BangLoc.getRaw(), 2,
                        Loc(C->BangLoc) + " bang `" + Text(C) + "` " + Kind});
+  }
+  // P03.24: how each operator use was resolved, as the lowering reads it.
+  static const char *const KindNames[] = {
+      "none",      "add",       "sub",       "mul",       "quo",
+      "rem",       "and",       "or",        "xor",       "shl",
+      "shr",       "andnot",    "neg",       "pos",       "compl",
+      "not",       "eq",        "cmp",       "land",      "lor",
+      "index",     "indexset",  "call",      "send",      "recv",
+      "inc",       "dec",       "deref",     "range",     "addassign",
+      "subassign", "mulassign", "quoassign", "remassign", "andassign",
+      "orassign",  "xorassign", "shlassign", "shrassign", "andnotassign",
+      "convert",   "bad"};
+  static_assert(std::size(KindNames) == size_t(OpKind::Bad) + 1);
+  auto Method = [&](const Func *M) {
+    return std::string(M->Name) + typeString(M->Ty, Pkg).substr(4);
+  };
+  for (auto &KV : P.I.Operators) {
+    const ast::Node *N = KV.first;
+    const OperatorUse &U = KV.second;
+    if (!N->getBegin().isValid())
+      continue;
+    std::string L = Loc(N->getBegin()) + " operator `" + Text(N) + "` " +
+                    KindNames[size_t(U.Op)];
+    if (U.Method)
+      L += " " + Method(U.Method);
+    if (U.Index && U.Index != U.Method)
+      L += " read " + Method(U.Index);
+    if (U.IndexSet && U.IndexSet != U.Method)
+      L += " write " + Method(U.IndexSet);
+    for (auto [On, Flag] : {std::pair{U.Swapped, "swapped"},
+                            {U.Negate, "negated"},
+                            {U.Lazy, "lazy"},
+                            {U.InPlace, "inplace"},
+                            {U.Builtin, "builtin"},
+                            {U.ViaConstraint, "constraint"},
+                            {U.Inherited, "inherited"}})
+      if (On)
+        L += std::string(" ") + Flag;
+    if (U.Sign != tok::illegal)
+      L += std::string(" sign ") + tok::getSpelling(U.Sign);
+    Entries.push_back({N->getBegin().getRaw(), N->getEnd().getRaw(), 3, L});
   }
   std::stable_sort(Entries.begin(), Entries.end(),
                    [](const DumpEntry &A, const DumpEntry &B) {

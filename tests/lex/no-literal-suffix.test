@@ -1,0 +1,18 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: rm -rf %t && mkdir -p %t && cp %s %t/a.go
+// RUN: not %gopp check --go --check-error-limit=0 %t/a.go 2>&1 | FileCheck %s
+// P03.24 (ADR-0024 decision 15): there are no literal suffixes. `10.5_km` and
+// `0x10_km` are the same plain Go error in .gopp and in .go files, and the
+// digit separators `10_000` and `0x1_f` are unchanged (no error line).
+package p
+
+const Km = 1000
+
+func f() {
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: '_' must separate successive digits
+	_ = 10.5_km
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: '_' must separate successive digits
+	_ = 0x10_km
+	_ = 10_000
+	_ = 0x1_f
+}

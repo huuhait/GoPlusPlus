@@ -1,0 +1,89 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24 (ADR-0024, GEN-13): generic code gives the same answer as plain code.
+// Each body is written twice: for a plain type, and for a type parameter whose
+// constraint lists the same operators. The accepted pairs (f1 and g1) give no
+// error. The rejected pairs use an operator that the type (or the constraint)
+// does not have; both forms give the same error code.
+// The one difference is Go's own: `a == b` on the plain struct is its built-in equality, while a type parameter needs `comparable` or an `==` method.
+package main
+
+type Vec struct{ X, Y float64 }
+
+func (a Vec) + (b Vec) Vec      { return Vec{a.X + b.X, a.Y + b.Y} }
+func (a Vec) - (b Vec) Vec      { return Vec{a.X - b.X, a.Y - b.Y} }
+func (a Vec) - () Vec           { return Vec{-a.X, -a.Y} }
+func (a Vec) == (b Vec) bool    { return a.X == b.X }
+func (a Vec) <=> (b Vec) int    { return 0 }
+func (a Vec) [] (i int) float64 { return a.X }
+func (a Vec) () (i int) int     { return i }
+func (a Vec) Clone() Vec        { return a }
+
+type Bare struct{ X, Y float64 }
+
+func (a Bare) Clone() Bare { return a }
+
+type Full[T any] interface {
+	+ (T) T
+	- (T) T
+	- () T
+	== (T) bool
+	<=> (T) int
+	[] (int) float64
+	() (int) int
+	Clone
+}
+
+func f1(a, b Vec) bool {
+	c := a + b
+	d := a - b
+	e := -a
+	_ = a[0]
+	_ = a(1)
+	return c == d || c != e || c < d || c >= e
+}
+
+func g1[T Full[T]](a, b T) bool {
+	c := a + b
+	d := a - b
+	e := -a
+	_ = a[0]
+	_ = a(1)
+	return c == d || c != e || c < d || c >= e
+}
+
+func use1(a, b Vec) bool { return f1(a, b) && g1(a, b) }
+
+type OnlyPlus[T any] interface {
+	+ (T) T
+	Clone
+}
+
+// Rejected: no `-`, no `==`, no `<=>`, no `[]` on the type / in the constraint.
+func f2(a, b Bare) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a - b: Bare has no operator `-` for Bare (EXP-17)
+	_ = a - b
+	_ = a == b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a < b: Bare has no operator `<` for Bare (EXP-17); define `<=> (b Bare) int`: `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+	_ = a < b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: cannot index a (variable of struct type Bare)
+	_ = a[0]
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -a: Bare has no operator `-` that takes no operand (EXP-17); define it as a method: `func (a Bare) - () R` (EXP-16)
+	_ = -a
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: cannot call a (variable of struct type Bare): Bare is not a function
+	_ = a(1)
+}
+
+func g2[T OnlyPlus[T]](a, b T) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a - b: T has no operator `-` for T (EXP-17); list `- (b U) R` in the constraint of T (GEN-13)
+	_ = a - b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a == b (incomparable types in type set)
+	_ = a == b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a < b: T has no operator `<` for T (EXP-17); list `<=> (b T) int` in the constraint (GEN-13): `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+	_ = a < b
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: cannot index a (variable of type T constrained by OnlyPlus[T])
+	_ = a[0]
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -a: T has no operator `-` that takes no operand (EXP-17); list `- () R` in the constraint (GEN-13)
+	_ = -a
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: cannot call a (variable of type T constrained by OnlyPlus[T]): no specific type
+	_ = a(1)
+}

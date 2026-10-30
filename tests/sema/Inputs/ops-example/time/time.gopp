@@ -1,0 +1,11 @@
+// Package time: the part of the standard library's `time` that the units
+// idiom of ADR-0024 decision 15 uses, `30 * time.Second` (a stub: the test
+// has no standard library).
+package time
+
+type Duration int64
+
+const (
+	Millisecond Duration = 1000000
+	Second      Duration = 1000 * Millisecond
+)

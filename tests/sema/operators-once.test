@@ -1,0 +1,20 @@
+// RUN: not %gopp check --check-error-limit=0 %s > %t.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 3, t" %t.out
+// P03.24 round 3 (R16): an operand of an operator call is checked exactly
+// once, whatever its expression kind. An index operand was checked again by
+// the call (a second report of its errors, and a time that doubled with each
+// level of `a[a[...]]`): the three errors below are reported once each.
+package main
+
+type V struct{ x int }
+
+func (a V) + (b int) V    { return a }
+func (a V) [] (i int) int { return i }
+
+func f(a V, s []int) {
+	_ = a + s[1.5]
+	_ = a[s[1.5]]
+	_ = a[a[a[1.5]]]
+}
+
+func main() {}

@@ -1,0 +1,57 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24: operator uses that do not resolve (EXP-17, EXP-26); the other side is operators-resolve-good.test.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2  { return a }
+func (a Vec2) == (b Vec2) bool { return true }
+func (a Vec2) && (b Vec2) Vec2 { return a }
+
+@Right
+func (a Vec2) / (s float64) Vec2 { return a }
+
+@Right
+func (a Vec2) * (s float64) Vec2 { return a }
+func (a Vec2) * (s int) Vec2     { return a }
+
+type Other struct{ X int }
+type Pair struct{ A, B Vec2 }
+
+func main() {
+	a := Vec2{1, 2}
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a + 1: Vec2 has no operator `+` for untyped int constant 1 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = a + 1
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a + 1.5: Vec2 has no operator `+` for untyped float constant 1.5 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = a + 1.5
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a == 1: Vec2 has no operator `==` for untyped int constant 1 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = a == 1
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a / 2.0: Vec2 has no operator `/` for untyped float constant 2 (EXP-17); the `/` methods of Vec2 are marked @Right: each is written for the swapped order and serves `s / a` only; for `a / s` write a second method without @Right (EXP-26)
+	_ = a / 2.0
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a - a: Vec2 has no operator `-` for Vec2 (EXP-17)
+	_ = a - a
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a < a: Vec2 has no operator `<` for Vec2 (EXP-17); define `<=> (b Vec2) int`: `<`, `<=`, `>` and `>=` are made from it (EXP-20)
+	_ = a < a
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: -a: Vec2 has no operator `-` that takes no operand (EXP-17); define it as a method: `func (a Vec2) - () R` (EXP-16)
+	_ = -a
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a + Other{…}: Vec2 has no operator `+` for Other (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = a + Other{1}
+	var o Other
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: o + o: Other has no operator `+` for Other (EXP-17)
+	_ = o + o
+	_ = o == o
+	var n int
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: n * a: int has no operator `*` for Vec2 (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = n * a
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a * "s": Vec2 has no operator `*` for untyped string constant "s" (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = a * "s"
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: a || a: Vec2 has no operator `||` for Vec2 (EXP-17); define it as a method: `func (a Vec2) || (b U) R` (EXP-21)
+	_ = a || a
+	var f float64
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: f + a (mismatched types float64 and Vec2)
+	_ = f + a
+	_ = f / a
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: !a: Vec2 has no operator `!` that takes no operand (EXP-17); define it as a method: `func (a Vec2) ! () R` (EXP-16)
+	_ = !a
+}
+

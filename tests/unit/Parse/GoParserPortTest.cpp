@@ -291,6 +291,7 @@ TEST(GoParserPort, Invalid) {
     Go.AllowGenericMethods = false;
     Go.AllowNamespaceTypes = false;
     Go.AllowExtends = false;
+    Go.AllowOperators = false;
     Parsed P(I.Src, Go);
     std::vector<std::string> Errs = P.errors();
     ASSERT_FALSE(Errs.empty()) << "no error reported";
@@ -302,6 +303,35 @@ TEST(GoParserPort, Invalid) {
                          << markerOffset(I.Src)
                          << "): " << ::testing::PrintToString(Errs);
     }
+  }
+}
+
+// ADR-0024: in Go mode nothing changes. An operator method name is a syntax
+// error, and `<=>` is `<=` followed by `>` (so `a <=> b` is an error, as in
+// Go); the same sources parse in Go++.
+TEST(GoParserPort, OperatorMethodsAreGoPlusPlusOnly) {
+  const char *Srcs[] = {
+      "package p; type T struct{}; func (a T) + (b T) T { return a }",
+      "package p; type T struct{}; func (a T) []= (i int, v T) {}",
+      "package p; type T struct{}; func (a T) range () int { return 0 }",
+      "package p; type I interface{ + (int) int }",
+      "package p; func f(a, b int) int { return a <=> b }",
+  };
+  for (const char *Src : Srcs) {
+    SCOPED_TRACE(Src);
+    ParseOptions Go;
+    Go.CheckLanguageRules = false;
+    Go.AllowGenericMethods = false;
+    Go.AllowNamespaceTypes = false;
+    Go.AllowExtends = false;
+    Go.AllowOperators = false;
+    Parsed InGo(Src, Go);
+    EXPECT_GT(InGo.numErrors(), 0u);
+    ParseOptions Gopp;
+    Gopp.CheckLanguageRules = false;
+    Parsed InGopp(Src, Gopp);
+    EXPECT_EQ(InGopp.numErrors(), 0u)
+        << ::testing::PrintToString(InGopp.errors());
   }
 }
 

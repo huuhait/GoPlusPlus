@@ -1,0 +1,9 @@
+// REQUIRES: long
+// P03.24 (EXP-30): the `inherit` shape of ops-stress.test at 40000 levels: a
+// chain of types that extend each other, the operators on the root, and a use
+// of each at every level. The operator table of a type is built once and
+// shared down the chain, and the receiver lookup uses the chain's index, so
+// the check time stays near-linear.
+// RUN: %python %S/Inputs/gen-ops-stress.py inherit 40000 > %t.gopp
+// RUN: timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+package main

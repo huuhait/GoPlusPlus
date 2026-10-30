@@ -9,8 +9,9 @@
 // The ten spec examples.
 // RUN: %python %S/check-corpus.py %gopp %examples --min 10
 
-// Every test input that is a valid program: parse, lex, sema tests.
-// RUN: %python %S/check-corpus.py %gopp --ext .test --min 15 %S/../parse %S/../lex %S/../sema
+// Every test input that is a valid program: parse and lex tests (the sema
+// tests are in roundtrip-sema.test, so each test stays under the 2 s limit).
+// RUN: %python %S/check-corpus.py %gopp --ext .test --min 15 %S/../parse %S/../lex
 
 // The formatter's own goldens.
 // RUN: %python %S/check-corpus.py %gopp --ext .golden --min 10 %S/Inputs

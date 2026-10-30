@@ -1,0 +1,185 @@
+// RUN: %gopp check %s
+// P03.24 round 3, accepted side (the bad side is operators-final-bad.test):
+// R12 a pointer method on something else than the ranged place; R13 `a(xs...)`
+// on a `()` overload set takes the variadic overload; R14 a `switch` case is
+// compared like `tag == case`, an untyped constant too; R15 the built-in `<=>`
+// over a type parameter whose terms are all numbers and strings; R16 nested
+// index and call operands; R18 `()` may be variadic; R20 `m += other`.
+package main
+
+type V struct{ x int }
+
+func (a V) == (b int) bool { return true }
+
+type Name struct{ s string }
+
+func (a Name) == (b string) bool { return true }
+
+func sw(a V, n Name) {
+	_ = a == 0
+	switch a {
+	case 0:
+	}
+	i := 1
+	switch a {
+	case i:
+	}
+	_ = n == "bob"
+	switch n {
+	case "bob":
+	}
+}
+
+type G struct{ n int }
+
+func (g G) () (xs ...int) int { return 0 }
+func (g G) () (s string) int  { return 0 }
+
+func spread(g G, xs []int) {
+	_ = g(xs...)
+	_ = g(1, 2)
+	_ = g("s")
+}
+
+type Ordered interface {
+	~int | ~int64 | ~float64 | ~string
+}
+
+func Plain(a, b int) int       { return a <=> b }
+func G1[T Ordered](a, b T) int { return a <=> b }
+func H[T ~int](a, b T) int     { return a <=> b }
+func L[T Ordered](a, b T) bool { return a < b }
+
+type Idx struct{ x int }
+
+func (a Idx) [] (i Idx) Idx { return i }
+func (a Idx) () (i Idx) Idx { return i }
+func (a Idx) + (b Idx) Idx  { return b }
+
+func nest(a Idx) {
+	_ = a[a[a[a[a]]]]
+	_ = a(a(a(a(a))))
+	_ = a + (a + (a + a))
+	_ = a[a(a+a[a])]
+}
+
+type T struct{ n int }
+
+func (t *T) range () func(yield func(int) bool) { return func(yield func(int) bool) {} }
+func (t *T) Inc()                               {}
+func (t *T) []= (i int, v int)                  {}
+
+func rng(p, q *T) {
+	for x := range p {
+		_ = x
+		q.Inc()
+		q[0] = 1
+	}
+	var t T
+	for x := range *p {
+		_ = x
+		t.Inc()
+	}
+}
+
+type M struct{ d []float64 }
+
+func (m *M) += (o M) {}
+
+func ov() {
+	var m, n M
+	m += n
+	m += *(&n)
+}
+
+// R23 (EXP-20): the `==` method serves the cases of a tag that is not
+// built-in comparable, also for a type parameter.
+type NC struct{ s []int }
+
+func (a NC) == (b int) bool { return true }
+
+func ncSwitch(w NC) {
+	switch w {
+	case 1:
+	}
+}
+
+func gSwitch[T interface{ == (int) bool }](t T) {
+	switch t {
+	case 1:
+	}
+}
+
+// R26 accepted side of the `==` table (eqKeepsBuiltin): a defined number or
+// string type keeps its built-in `==` for its own type next to `==` methods
+// for other types (EXP-17 rule 6); an interface operand is the built-in
+// comparison (EXP-17 rule 6); a matching method; a type parameter whose type
+// set is comparable keeps the built-in (GEN-13, 10-generics.md:82); a
+// `comparable` instance uses built-in equality (EXP-20).
+type R26M float64
+
+func (a R26M) == (b string) bool { return true }
+
+type R26P struct{ x int }
+
+func (a R26P) == (b R26P) bool { return true }
+
+type R26C extends R26P { y int }
+
+func r26(v V, m, m2 R26M, p, p2 R26P, c R26C, i any) {
+	_ = m == m2
+	_ = m != m2
+	_ = m == 1.5
+	_ = 1 == m
+	_ = m == "x"
+	_ = v == 1
+	_ = v != 1
+	_ = v == i
+	_ = i == v
+	_ = p == p2
+	_ = c == p
+	switch i {
+	case v:
+	}
+	switch m {
+	case m2, 1, "x":
+	}
+}
+
+func r26g[T interface{ comparable; == (int) bool }](a, b T) {
+	_ = a == b
+	_ = a != b
+	_ = a == 1
+	switch a {
+	case b, 1:
+	}
+}
+
+func r26eq[T interface{ == (T) bool }](a, b T) bool { return a == b }
+
+func r26cmp[T comparable](a, b T) bool { return a == b }
+
+func r26inst(v V, m R26M, p R26P, c R26C) {
+	_ = r26cmp(v, v)
+	_ = r26cmp(c, c)
+	_ = r26eq(m, m)
+	_ = r26eq(p, p)
+}
+
+// EXP-20 (06-expressions.md:201): `==` on a composite type with no `==`
+// method of its own (an array, a struct with a field of V, an Option) is its
+// built-in equality, which compares the V parts with V's built-in equality
+// (row (a) of eqKeepsBuiltin), though V itself has only `== (int)`.
+type R26Box struct{ v V }
+
+func r26comp(a, b [2]V, x, y R26Box, o, p Option[V]) {
+	_ = a == b
+	_ = a != b
+	_ = x == y
+	_ = o == p
+	switch x {
+	case y:
+	}
+}
+
+func main() {}

@@ -1,0 +1,222 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.24 round 3, rejected side (the accepted side is operators-final-ok.test).
+// The implicit-check-not makes every diagnostic appear exactly once and be
+// named here: R16 an operand (an index inside an operand) is checked once, so
+// no error is reported twice; R12 a write through the ranged pointer itself;
+// R13 `a(xs...)` needs a variadic overload; R14 a switch case is compared as
+// `tag == case`; R15 `<=>` over a type set with a non-ordered term; R18 a
+// variadic parameter in an operator other than `()`; R19 the operand roles in
+// the view message; R20 `*(&m)` is the place m; R21 no synthesized text.
+package main
+
+type V struct{ x int }
+
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: operator method `+` has the wrong form: the parameters of this operator are plain: a variadic `...` parameter is only for `()` (EXP-16)
+func (a V) + (b ...V) V { return a }
+
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: operator method `==` has the wrong form: the parameters of this operator are plain: a variadic `...` parameter is only for `()` (EXP-16)
+func (a V) == (b ...V) bool { return true }
+
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: operator method `<-` has the wrong form: the parameters of this operator are plain: a variadic `...` parameter is only for `()` (EXP-16)
+func (a *V) <- (v ...int) {}
+
+type F struct{ n int }
+
+func (f F) () (xs []int) int { return 0 }
+func (f F) () (s string) int { return 0 }
+
+type Idx struct{ x int }
+
+func (a Idx) [] (i int) int { return i }
+func (a Idx) + (b int) Idx  { return a }
+
+type Big struct{ d []int }
+type BM struct{ d []int }
+
+func (m BM) [] (i int) Big      { return Big{} }
+func (m *BM) []= (i int, v Big) {}
+func (a Big) + (b Big) Big      { return Big{} }
+
+type T struct{ n int }
+
+func (t *T) range () func(yield func(int) bool) { return func(yield func(int) bool) {} }
+func (t *T) Inc()                               {}
+func (t *T) []= (i int, v int)                  {}
+func (t *T) <- (v int)                          {}
+
+type M struct{ d []float64 }
+
+func (m *M) += (o M) {}
+
+type FM struct{ d []int }
+
+func (m FM) [] (i int) float64      { return 0 }
+func (m *FM) []= (i int, v float64) {}
+
+type W struct{ x int }
+
+func (a W) == (b int) bool { return true }
+
+func spread(f F, xs []int) {
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: f(xs...): F has no operator `()` for []int (EXP-17); the operator methods of F: ()([]int) int; ()(string) int
+	_ = f(xs...)
+}
+
+func dup(a Idx, s []int) {
+	// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: 1.5 (untyped float constant) truncated to int
+	_ = a + s[1.5]
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: 1.5 (untyped float constant) truncated to int
+	_ = a[s[1.5]]
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: a[1.5]: Idx has no operator `[]` for untyped float constant 1.5 (EXP-17); the operator methods of Idx: [](int) int
+	_ = a[a[a[1.5]]]
+}
+
+func view(b Big, vb View[Big]) {
+	// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: b + vb: Big has no operator `+` for View[Big] (EXP-17); Big is not a pointer-free Copy type, so a view of it cannot be an operand: the receiver and the parameters are not views (OWN-V1)
+	_ = b + vb
+}
+
+func rng(p *T) {
+	for x := range p {
+		_ = x
+		// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method Inc on *p inside a range over p: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		(*p).Inc()
+		// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method Inc on p inside a range over p: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		p.Inc()
+		// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method []= on p inside a range over p: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		p[0] = 1
+		// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method <- on p inside a range over p: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		p <- 1
+	}
+	for x := range *p {
+		_ = x
+		// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method Inc on p inside a range over *p: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		p.Inc()
+	}
+}
+
+func ov() {
+	var m M
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += m: the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + m`
+	m += m
+	// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: m += *(&m): the in-place operator method has a writable receiver, and the operand overlaps m (OWN-B4, EXP-19); write `m = m + *(&m)`
+	m += *(&m)
+}
+
+func rmsg(xs []int) {
+	var m FM
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: m[0] = a value of type int: FM has no operator `[]=` for untyped int constant 0, int (EXP-17); the operator methods of FM: []=(int, float64)
+	for m[0] = range xs {
+	}
+}
+
+func sw(w W) {
+	// CHECK-DAG: [[@LINE+2]]:7: error{{\[E[0-9]+\]}}: invalid operation: w == "s": W has no operator `==` for untyped string constant "s" (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	switch w {
+	case "s":
+	}
+	// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: w == "s": W has no operator `==` for untyped string constant "s" (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = w == "s"
+}
+
+func Bad[T ~int | ~string](a, b T) int { return a <=> b }
+
+// CHECK-DAG: [[@LINE+1]]:47: error{{\[E[0-9]+\]}}: invalid operation: operator <=> not defined on a (variable of type T constrained by ~int | bool)
+func Bad2[T ~int | bool](a, b T) int { return a <=> b }
+
+type NoEq struct{ s []int }
+
+func swNoEq(n NoEq) {
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot switch on n (variable of struct type NoEq)
+	switch n {
+	}
+}
+
+func swGen[T any](t T) {
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot switch on t (variable of type T constrained by any)
+	switch t {
+	}
+}
+
+// R22: an error decided through the method is at the case value.
+func swPos(w W) {
+	switch w {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: w == "x": W has no operator `==` for untyped string constant "x" (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	case "x":
+	}
+}
+
+// R24, R26: a type parameter is no interface operand (row (d) of the `==`
+// table, not (e)): the same code as plain code.
+func gEq[T interface{ == (int) bool }](t T) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: t == "a": T has no operator `==` for untyped string constant "a" (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = t == "a"
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: t == t: T has no operator `==` for T (EXP-17); the type set of T is not comparable, so `==` is the constraint's elements only: list `comparable` or `== (T) bool` (GEN-13)
+	_ = t == t
+	switch t {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: t == "a": T has no operator `==` for untyped string constant "a" (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	case "a":
+	}
+}
+
+// R26 (EXP-20, 06-expressions.md:201; EXP-30, 06-expressions.md:276): a type
+// with an `==` method, own or inherited, has no built-in `==` next to it: not
+// for two operands of its type, not from the right side, not in switch cases,
+// and it does not meet `== (T) bool` with a built-in (row (c) of
+// eqKeepsBuiltin; ops-eq-parity.test pins the whole table). A defined bool is
+// no number or string, so EXP-17 rule 6 keeps nothing for it.
+type R26Q struct{ x int }
+
+func (a R26Q) == (b int) bool { return true }
+
+type R26C extends R26Q { y int }
+
+type R26D extends R26C { z int }
+
+type R26G[T any] struct{ v T }
+
+func (a R26G[T]) == (b int) bool { return true }
+
+type R26B bool
+
+func (a R26B) == (b int) bool { return true }
+
+func r26(w, w2 W, c, c2 R26C, d, d2 R26D, g, g2 R26G[int], b, b2 R26B, u struct{ x int }) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: w == w2: W has no operator `==` for W (EXP-17); W has `==` methods, so it has no built-in `==` (EXP-20): define `== (b W) bool`
+	_ = w == w2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: w != w2: W has no operator `!=` for W (EXP-17); W has `==` methods, so it has no built-in `==` (EXP-20): define `== (b W) bool`
+	_ = w != w2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: c == c2: R26C has no operator `==` for R26C (EXP-17); R26C has `==` methods, so it has no built-in `==` (EXP-20): define `== (b R26C) bool`
+	_ = c == c2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d == d2: R26D has no operator `==` for R26D (EXP-17); R26D has `==` methods, so it has no built-in `==` (EXP-20): define `== (b R26D) bool`
+	_ = d == d2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: g == g2: R26G[int] has no operator `==` for R26G[int] (EXP-17); R26G[int] has `==` methods, so it has no built-in `==` (EXP-20): define `== (b R26G[int]) bool`
+	_ = g == g2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: b == b2: R26B has no operator `==` for R26B (EXP-17); R26B has `==` methods, so it has no built-in `==` (EXP-20): define `== (b R26B) bool`
+	_ = b == b2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: 1 == w: untyped int has no operator `==` for W (EXP-17); the `==` methods of W take it as the left operand: for this order mark one with @Right (EXP-26)
+	_ = 1 == w
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: u == w: struct{x int} has no operator `==` for W (EXP-17); the `==` methods of W take it as the left operand: for this order mark one with @Right (EXP-26)
+	_ = u == w
+	switch w {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: w == w2: W has no operator `==` for W (EXP-17); W has `==` methods, so it has no built-in `==` (EXP-20): define `== (b W) bool`
+	case w2:
+	}
+	switch u {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: u == w: struct{x int} has no operator `==` for W (EXP-17); the `==` methods of W take it as the left operand: for this order mark one with @Right (EXP-26)
+	case w:
+	}
+}
+
+func r26eq[T interface{ == (T) bool }](a, b T) bool { return a == b }
+
+func r26inst(w W, c R26C, g R26G[int]) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: W does not satisfy interface{== (W) bool} (missing operator == (W) bool)
+	_ = r26eq(w, w)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: R26C does not satisfy interface{== (R26C) bool} (missing operator == (R26C) bool)
+	_ = r26eq(c, c)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: R26G[int] does not satisfy interface{== (R26G[int]) bool} (missing operator == (R26G[int]) bool)
+	_ = r26eq(g, g)
+}
+
+func main() {}

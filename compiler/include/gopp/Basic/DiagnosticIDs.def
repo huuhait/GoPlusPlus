@@ -581,4 +581,30 @@ DIAG(err_downcast_impossible, 398, Error, "impossible downcast %0: %1 does not e
 DIAG(err_extends_constraint, 399, Error, "%0 does not satisfy %1: %2 (GEN-12)")
 DIAG(err_defined_from_hierarchy, 400, Error, "cannot define type %0 as %1: %2, so the copy would silently be a child or a second root of its hierarchy (TYP-16); write `type %0 extends %1 { ... }` to make a child")
 
+//===----------------------------------------------------------------------===//
+// Operator overloading (P03.24, ADR-0024)
+//===----------------------------------------------------------------------===//
+
+DIAG(err_op_blocked, 401, Error, "cannot declare the operator method %0: %1 (EXP-29)")
+
+DIAG(err_op_shape, 402, Error, "operator method %0 has the wrong form: %1 (EXP-16)")
+DIAG(err_op_receiver, 403, Error, "operator method %0 needs a %1 receiver: %2 (EXP-16)")
+DIAG(err_op_duplicate, 404, Error, "duplicate operator method %0 for the parameter types %1: the first is at line %2 (EXP-17)")
+DIAG(err_op_second_meaning, 405, Error, "cannot declare the operator method %0 on %1: %2, so the method would be a second meaning (EXP-17)")
+DIAG(err_op_tparams, 406, Error, "the operator method %0 cannot have type parameters of its own; the type parameters of the receiver type are fine (EXP-30)")
+DIAG(err_op_fails, 407, Error, "the operator method %0 cannot be a `!` function: return an explicit result, or panic like integer division by zero (EXP-30)")
+DIAG(err_convert_misuse, 408, Error, "@Convert on %0: %1 (EXP-25)")
+DIAG(err_right_misuse, 409, Error, "@Right on %0: %1 (EXP-26)")
+DIAG(err_op_not_addressable, 410, Error, "cannot use %0 as the operand of %1: the operator method has a pointer receiver, so the operand must be a variable, a field or an element that can be written; %2 here is a temporary or a read-only value (EXP-16)")
+DIAG(err_op_no_method, 411, Error, "invalid operation: %0: %1 has no operator %2 for %3 (EXP-17)%4")
+DIAG(err_op_ambiguous, 412, Error, "ambiguous operator %0 in %1: %2 (EXP-17)")
+DIAG(err_op_compound_overlap, 413, Error, "invalid operation: %0: the in-place operator method has a writable receiver, and the operand overlaps %1 (OWN-B4, EXP-19); write `%2`")
+DIAG(err_op_index_not_place, 414, Error, "%0 is not a place: %1 is not allowed on a user index (EXP-22); %2")
+DIAG(err_op_select, 415, Error, "a select case cannot use %0: %1 on a user type with `<-` methods; select works on built-in channels only (CON-22)")
+DIAG(err_op_no_unary, 416, Error, "invalid operation: %0: %1 has no operator %2 that takes no operand (EXP-17)%3")
+DIAG(err_op_range_write, 417, Error, "cannot %0 %1 inside a range over %2: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)")
+DIAG(warn_vet_op_eq_cmp, 418, Warning, "type %0 defines %1 for %2 but not %3: `==` and `<=>` can disagree, so `a == b` and `a <=> b == 0` may give different answers (EXP-20)")
+DIAG(warn_vet_op_fields, 419, Warning, "%0 compares the fields %1 of %2 but `<=>` compares %3: `==` and `<=>` can disagree (EXP-20)")
+DIAG(warn_vet_op_eq_builtin, 420, Warning, "%0 has a user `==`, but %1 compares with the built-in equality of its fields, not with the method (EXP-20)")
+
 #undef DIAG

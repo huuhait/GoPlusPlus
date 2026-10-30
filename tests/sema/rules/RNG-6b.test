@@ -1,0 +1,91 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Rule RNG-6b (P03.24, ADR-0024): ranging over a user type through its
+// `range` method. Accepted (no CHECK line): a pointer receiver on a variable,
+// a value receiver on a temporary, `Seq`, `Seq2` and the plain func type
+// `func(yield func(V) bool)` as the result, a loop with no variables, and a
+// write to another variable in the body. Rejected: a result that is not a
+// func type that range accepts, a parameter, a pointer-receiver `range` on a
+// temporary, and a body that assigns to the ranged value, to its field or
+// calls a pointer method on it (the receiver stays borrowed for the loop).
+package main
+
+type Seq[V any] func(yield func(V) bool)
+
+type Seq2[K, V any] func(yield func(K, V) bool)
+
+type Tree struct{ items []int }
+
+func (t *Tree) range() Seq[int] {
+	return func(yield func(int) bool) {}
+}
+
+func (t *Tree) Push(n int) { t.items = append(t.items, n) }
+
+type Pairs struct{ k []int }
+
+func (p Pairs) range() Seq2[int, string] {
+	return func(yield func(int, string) bool) {}
+}
+
+type Raw struct{ n int }
+
+func (r Raw) range() func(yield func(int) bool) {
+	return func(yield func(int) bool) {}
+}
+
+type Bad struct{ n int }
+
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: operator method `range` has the wrong form: the result must be a function type that `range` accepts, like iter.Seq[V]: func(yield func(V) bool); not int (EXP-16)
+func (b Bad) range() int { return 0 }
+
+type Bad2 struct{ n int }
+
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: operator method `range` has the wrong form: `range` takes no parameter (EXP-16)
+func (b Bad2) range(x int) Seq[int] { return func(yield func(int) bool) {} }
+
+func main() {
+	var t Tree
+	for v := range t {
+		_ = v
+	}
+	for range t {
+	}
+	var p Pairs
+	for k, v := range p {
+		_, _ = k, v
+	}
+	var r Raw
+	for x := range r {
+		_ = x
+	}
+	for x := range (Raw{}) {
+		_ = x
+	}
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use (Tree{}) as the operand of `range`: the operator method has a pointer receiver, so the operand must be a variable, a field or an element that can be written; Tree here is a temporary or a read-only value (EXP-16)
+	for x := range (Tree{}) {
+		_ = x
+	}
+	for x := range t {
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to t.items inside a range over t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		t.items = nil
+		_ = x
+	}
+	for x := range t {
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot assign to t inside a range over t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		t = Tree{}
+		_ = x
+	}
+	for x := range t {
+// CHECK-DAG: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot call the pointer method Push on t inside a range over t: the receiver of a `range` method stays borrowed for the whole loop (RNG-6b)
+		t.Push(x)
+	}
+	for x := range t {
+		var u Tree
+		u.Push(x)
+		u = Tree{}
+	}
+	var b Bad
+	for x := range b {
+		_ = x
+	}
+}

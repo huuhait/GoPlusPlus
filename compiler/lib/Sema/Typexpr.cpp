@@ -192,6 +192,9 @@ void Checker::validVarType(const ast::Expr *Ex, Type *T) {
       TypeSet *TS = typeSet(It);
       if (TS->hasTerms()) {
         err(Ex, diag::err_interface_contains_type_constraints, {str(T)});
+      } else if (TS->HasOps) {
+        err(Ex, diag::err_cannot_use_constraint_outside,
+            {str(T), "interface has operator elements (TYP-27)"});
       } else if (TS->Comparable || TS->Copy || TS->Clone) {
         if (TS->Comparable)
           err(Ex, diag::err_interface_is_comparable, {str(T)});
@@ -939,6 +942,12 @@ Type *Checker::interfaceTypeExpr(const ast::InterfaceType *It, NamedType *Def) {
         }
         Func *M = newFunc(N, nullptr, Id->getBegin());
         M->IsInterfaceMethod = true;
+        // An operator element (TYP-27, GEN-13): an overload set of a
+        // constraint shares the name, like the methods of a type.
+        if (!S.Opts.GoCompat && isOperatorSpelling(N)) {
+          M->Op = opKindOf(N, FT->Params ? FT->Params->numFields() : 0);
+          Ctx.noteOperators();
+        }
         FuncInfo FI = funcSignature(FT, nullptr, M);
         if (FT->TypeParams && FT->TypeParams->numFields())
           err(FT->TypeParams, diag::err_invalid_method_type_params);

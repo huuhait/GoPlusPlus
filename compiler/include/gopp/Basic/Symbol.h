@@ -35,6 +35,20 @@ public:
   friend bool operator!=(Symbol A, Symbol B) { return !(A == B); }
 };
 
+/// The name of an operator method (ADR-0024, TYP-27): `+`, `==`, `[]`, `[]=`,
+/// `()`, `<-`, `range` and so on. The parser makes it one Ident with this
+/// text, and the checker keeps it as the method's name. No identifier can
+/// have it: `range` is a keyword.
+inline bool isOperatorSpelling(llvm::StringRef N) {
+  if (N.empty())
+    return false;
+  unsigned char C = static_cast<unsigned char>(N[0]);
+  if (C >= 0x80 || C == '_' || (C >= 'a' && C <= 'z') ||
+      (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9'))
+    return N == "range";
+  return true;
+}
+
 class SymbolTable {
 public:
   explicit SymbolTable(llvm::BumpPtrAllocator &Alloc) : Set(Alloc) {}

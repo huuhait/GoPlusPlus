@@ -1,0 +1,87 @@
+// RUN: %gopp check %s
+// RUN: %gopp fmt %s | diff - %s
+// Rule GEN-13 (P03.24, ADR-0024), accepted: operator elements in
+// constraints. `Max` over `int`, `float64` and `Vec2` (`<=> (T) int`, with
+// `>` and `<=` made from it), `Less` over `string`, `Sum` over `int`,
+// `float64`, `Vec2` and `Big` (`+ (T) T`), a constraint with a unary `-`,
+// `==` and `[]`, and `==` in a `comparable` body. The body is checked once,
+// through the constraint. The file has no error line.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) <=> (b Vec2) int   { return 0 }
+func (a Vec2) + (b Vec2) Vec2    { return a }
+func (a Vec2) - () Vec2          { return a }
+func (a Vec2) == (b Vec2) bool   { return true }
+func (a Vec2) [] (i int) float64 { return a.X }
+
+type Big struct{ n int }
+
+func (a Big) + (b Big) Big { return Big{a.n + b.n} }
+
+type Ordered[T any] interface {
+	Copy
+	<=> (T) int
+}
+
+func Max[T Ordered[T]](a, b T) T {
+	if a > b {
+		return a
+	}
+	if a <= b {
+		return b
+	}
+	return a
+}
+
+type Summable[T any] interface {
+	Copy
+	+ (T) T
+}
+
+func Sum[T Summable[T]](xs []T, zero T) T {
+	s := zero
+	for _, x := range xs {
+		s = s + x
+	}
+	return s
+}
+
+type Negable[T any] interface {
+	Copy
+	- () T
+	== (T) bool
+	[] (int) float64
+}
+
+func Neg[T Negable[T]](a T) T {
+	if a == a {
+		_ = a[0]
+	}
+	return -a
+}
+
+type Cmp[T any] interface {
+	<=> (T) int
+}
+
+func Less[T Cmp[T]](a, b T) bool { return a < b }
+
+func Eq[T comparable](a, b T) bool { return a == b }
+
+func main() {
+	_ = Max(1, 2)
+	_ = Max(1.5, 2.5)
+	_ = Less("a", "b")
+	_ = Less(Vec2{}, Vec2{})
+	_ = Less(2.5, 1.5)
+	_ = Max(Vec2{}, Vec2{})
+	_ = Max[int8](1, 2)
+	_ = Sum([]Vec2{{}}, Vec2{})
+	_ = Sum([]int{1}, 0)
+	_ = Sum([]float64{1}, 0)
+	_ = Sum([]Big{{1}}, Big{})
+	_ = Neg(Vec2{})
+	_ = Eq(Vec2{}, Vec2{})
+}
