@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[ ] not_started`
-Last updated: 2026-10-28 (SIMD question recorded)
+Last updated: 2026-10-29 (Q1 decided, ADR-0026)
 Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](README.md)
 
 ## Tasks
@@ -20,11 +20,11 @@ Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](
 - [ ] P15.11 Binary size
 - [ ] P15.12 Targets review
 - [ ] P15.13 Padding hint
-- [ ] P15.14 Decide P15 Q1
+- [x] P15.14 Decide P15 Q1
 
 ## Open questions
 
-- [ ] Q1 Small-string optimization for `string` (task P15.14; decide before v1.0)
+- [x] Q1 Small-string optimization for `string` (decided: no, ADR-0026)
 - [ ] Q2 mimalloc as the default allocator (task P15.10)
 - [ ] Q3 SIMD: deferred by owner 2026-10-28 (no task; options A, B, C in the README; recommendation: B now, C later)
 

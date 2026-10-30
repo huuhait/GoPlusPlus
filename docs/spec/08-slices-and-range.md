@@ -16,7 +16,7 @@ Syntax: one change, the `&` mark in the range clause ([8.3](#83-range-loops-d121
 
 **SLC-4.** Views and borrowed `[]T` parameters stay `(ptr, len)`: reading and writing elements needs no allocator. A `move` `[]T` parameter passes all 4 words.
 
-**SLC-5.** `string` always uses the global allocator, so strings stay 3 words. The allocator word points to an allocator object whose first word is its function table, so one pointer is enough.
+**SLC-5.** `string` always uses the global allocator, so strings stay 3 words. There is no small-string optimization: the text is never stored inside the string value ([ADR-0026](../adr/0026-no-small-string-optimization.md)). The allocator word points to an allocator object whose first word is its function table, so one pointer is enough.
 
 ```go
 var arena mem.Arena

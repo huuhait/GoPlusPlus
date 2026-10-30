@@ -33,7 +33,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P01) · Design: [README.md](
 - [x] Q5 Generic methods: allowed (decided: D1.10)
 - [x] Q6 Interface inline storage: one word (decided: D1.12)
 - [x] Q7 Range over owning elements / consuming range (decided: D1.21)
-- [x] Q8 Small-string optimization (deferred to P15, P15 Q1)
+- [x] Q8 Small-string optimization (decided: no, ADR-0026)
 - [x] Q9 Map reads and type assertions when the value type has no zero value (decided: comma-ok with `u` moved where `ok` is false, ADR-0016)
 
 ## Exit criteria

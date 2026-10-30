@@ -53,7 +53,7 @@
 | Type | Layout |
 |---|---|
 | struct | declaration order, C alignment |
-| `string` | `{ptr, len, cap}`; a literal points into rodata with cap 0 and is never freed |
+| `string` | `{ptr, len, cap}`; a literal points into rodata with cap 0 and is never freed; no small-string optimization (ADR-0026) |
 | `View[T]` where `T`'s underlying type is `string` or a slice (`View[string]`, `View[Bytes]`) | `{ptr, len}` |
 | `[]T` | `{ptr, len, cap}` |
 | `View[T]` (every other `T`, including map, chan, func, interface, `Option`, structs) | `{ptr}` |

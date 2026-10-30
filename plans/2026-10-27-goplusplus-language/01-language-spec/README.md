@@ -446,5 +446,5 @@ for _, d := range docs { u := d.Clone() }       // ok; `d := d` would be an erro
 - **Q5** (decided 2026-10-27) Generic methods on concrete types: allowed; they can't satisfy interface methods (D1.10).
 - **Q6** (decided 2026-10-27) Interface inline storage: one word (8 bytes), trivial values only (D1.12).
 - **Q7** (decided 2026-10-27) Ranging over owning elements: `for _, x := range xs` borrows each element, and `for _, x := range move(xs)` moves them out (D1.21).
-- **Q8** (deferred to P15, P15 Q1) Small-string optimization for `string`? Proposed: no in v0. The layout is ABI, so P15 decides before v1.0.
+- **Q8** (decided 2026-10-29, ADR-0026) Small-string optimization for `string`? No. The layout is ABI.
 - **Q9** (decided 2026-10-27, ADR-0016) How is a map read (and a type assertion made) when the value type has no zero value? `m[k]` and `<-ch` may be used only in comma-ok forms, as a write target or in `delete`; the comma-ok forms work, and `u` counts as moved wherever `ok` is false, so the use-after-move check stops any read there (D1.4 rule 11).

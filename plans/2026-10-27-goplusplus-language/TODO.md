@@ -200,7 +200,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P04.01 GIR design**: `docs/design/gir.md`; data structures, builder, verifier, printer. *Done when:* the verifier runs in all tests.
 - **P04.02 M0 hello**: `println` via `@Extern("C") write`; LLVM IR → object → LLD, using host sysroot discovery (P00.12). *Done when:* hello runs from a lit test on NixOS and on a Debian container.
 - **P04.03 Targets & linking**: triples, data layouts, TargetMachine, crt objects, LLD driver; linux/amd64 and linux/arm64, each built natively on its own CI runner (cross builds come with musl, P07.14). *Done when:* hello runs on both runners.
-- **P04.04 Lower core**: scalars, control flow, functions, structs, arrays, raw pointers, the Go-semantics lowering table (D4.12), and `Option[T]`: the D4.5 layout (the nil bit pattern for `Option[*T]`, and with P04.06 / P04.07 for `Option[I]` and `Option[F]`; a flag byte otherwise), `==` (both nil, or both set and equal) and the hash used for map keys (ADR-0018 amendment point 1). *Done when:* run tests pass, including `MinInt64 / -1`, shifts ≥ the bit width, out-of-range float → int, `unsafe.Sizeof(Option[*T])` equal to a pointer, `Option[int]` and `Option[*T]` equality, and equal `Option` values hashing equal (flag padding ignored).
+- **P04.04 Lower core**: scalars, control flow, functions, structs, arrays, raw pointers, the Go-semantics lowering table (D4.12), and `Option[T]`: the D4.5 layout (the nil bit pattern for `Option[*T]`, and with P04.06 / P04.07 for `Option[I]` and `Option[F]`; a flag byte otherwise), `==` (both nil, or both set and equal) and the hash used for map keys (ADR-0018 amendment point 1). *Done when:* run tests pass, including `MinInt64 / -1`, shifts ≥ the bit width, out-of-range float → int, `unsafe.Sizeof(Option[*T])` equal to a pointer, `Option[int]` and `Option[*T]` equality, and equal `Option` values hashing equal (flag padding ignored). The checker's `unsafe.Sizeof` / `Alignof` / `Offsetof` (`Sizes.cpp`, still gc's amd64 model from the types2 port) must follow the D4.5 layout so constants and the generated code agree: for example `string` is 24 bytes (`{ptr, len, cap}`), not 16; `tests/sema/sizes.test` changes with it (both sides: Go++ types use D4.5, and the expected sizes come from D4.5).
 - **P04.05 Lower strings/slices/views/maps**: maps use a temporary runtime until P05.06. *Done when:* run tests pass.
 - **P04.06 Lower methods & interfaces**: static itabs, borrowed interfaces, shared interface values, type switches, assertions, `Option[I]` with the null-`itab*` nil (D4.5), and an `Option[T]` converted to `any` / `error` (nil interface) or to `Option[I]`. *Done when:* run tests pass, including `unsafe.Sizeof(Option[I])` equal to `I`'s and both `Option` conversions.
 - **P04.07 Lower closures, defer, panics**:
@@ -563,7 +563,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P15.11 Binary size**: including the runtime line table. *Done when:* the D15.2 size target is met or an ADR documents the gap.
 - **P15.12 Targets review**. *Done when:* a report against D15.2 exists.
 - **P15.13 Padding hint**: `gopp vet` suggests a field order that wastes less padding. *Done when:* tests pass.
-- **P15.14 Decide P15 Q1**: small-string optimization. *Done when:* the ADR is merged.
+- **P15.14 Decide P15 Q1**: small-string optimization. Decided by ADR-0026 (no SSO, option A). *Done when:* the ADR is merged.
 
 ## P16 — Release ([README](16-release/README.md))
 

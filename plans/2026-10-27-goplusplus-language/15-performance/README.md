@@ -75,7 +75,7 @@
 
 ## Open questions
 
-- **Q1** Small-string optimization for `string` (from P01 Q8)? The layout is ABI, so decide before v1.0 (task P15.14).
+- **Q1** (decided 2026-10-29, ADR-0026, option A) Small-string optimization for `string` (from P01 Q8)? **No.** A string is `(ptr, len)` (an owned one also has its capacity word); the text lives in read-only data or on the heap. The layout is ABI. A separate opt-in `SmallString` library type may come later if benchmarks ask for it (option C, no language change).
 - **Q3** SIMD: **deferred by owner 2026-10-28.** Not designed yet; recorded so it is not forgotten. No task, no spec rule. Decide before v1.0 only if the owner wants it.
   - *Today:* LLVM auto-vectorization in release builds (the D15.3 pipeline), plus C/C++ intrinsics and libraries through header imports (P07, P08).
   - *Option A:* nothing new.

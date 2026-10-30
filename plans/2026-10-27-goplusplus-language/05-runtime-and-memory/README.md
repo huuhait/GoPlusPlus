@@ -29,7 +29,7 @@
 - **`string`:** `{ptr, len, cap}`.
   - Literals are static: cap 0, never freed, and cloning one is free.
   - `+` and `+=` allocate or grow.
-  - No small-string optimization in v0 (P15 Q1).
+  - No small-string optimization (ADR-0026).
 - **`[]T`:** `{ptr, len, cap, alloc}` (P01 D1.22). Go's growth policy (doubling for small slices, easing toward 1.25×). Elements are dropped when removed or when the slice is destroyed.
   - Re-slicing a slice into itself (`s = s[i:j]`) shrinks it in place: the cut elements are dropped and the capacity is kept (P01 D1.20).
 - **`map[K]V`:** an open-addressing Swiss table, as in Abseil and Go 1.24. The map header also stores its allocator (P01 D1.22).
