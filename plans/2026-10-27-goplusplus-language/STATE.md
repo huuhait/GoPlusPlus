@@ -13,7 +13,7 @@ Last updated: 2026-10-30
 - [~] P00 Foundations ([state](00-foundations/STATE.md))
 - [x] P01 Language specification v0 ([state](01-language-spec/STATE.md))
 - [x] P02 Front-end: lexer, parser, AST, `gopp fmt` ([state](02-frontend/STATE.md))
-- [~] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
+- [x] P03 Semantic analysis ([state](03-semantic-analysis/STATE.md))
 - [ ] P04 GIR and LLVM codegen ([state](04-gir-and-llvm-codegen/STATE.md))
 - [ ] P05 Runtime and memory ([state](05-runtime-and-memory/STATE.md))
 - [ ] P06 Build driver and compile speed ([state](06-build-driver-and-compile-speed/STATE.md))
@@ -45,8 +45,8 @@ Last updated: 2026-10-30
 
 - P00 is done locally. What's left needs a push: the first GitHub CI run (P00.07, P00.08, P00.13 and the CI exit criteria), then CI suite-time baselines.
 - P01: the spec is written, reviewed by the owner (D1–D25) and applied (ADR-0006). P01 is complete.
-- Single inheritance (`extends`) and the removal of Go struct embedding in `.gopp` files (ADR-0023, owner decisions 2026-10-28): tasks P03.22 and P04.22 added; docs are written, code is not.
-- Units of measure (ADR-0025, owner decision 2026-10-28): tasks P03.25 and P04.24 added; docs are written, code is not.
+- P03 (semantic analysis) is complete (2026-10-30), including `extends` (P03.22), operators (P03.24), units (P03.25) and the leftovers (P03.26).
+- Next: P04 in three waves (owner decision 2026-10-29): wave 1 foundation (P04.01 GIR design → P04.02 hello → P04.03 linking; P04.17 + P04.18; P04.19; P04.15), wave 2 the language (P04.04–08, P04.10–13), wave 3 safety, new features and proof (P04.09 → P04.20 → P04.21; P04.22–24; P04.14 + P04.16).
 - Build profiles (owner request) are in the plan: P06 D6.12, P09 D9.12, P10 D10.11, P11 D11.13, ADR-0007; tasks P06.14–16, P09.13, P10.12, P11.19–20, P14.11 (240 tasks).
 
 ## Log
@@ -155,3 +155,4 @@ Last updated: 2026-10-30
 - 2026-10-29: P03.24 done (team build `p03-ops`, merged from three coders): operator overloading in the lexer, parser, formatter, checker, export data and vet (codes E0401–E0420); an operator method is named by its operator with its form in `Func::Op`, every use is checked as the method call it stands for, and the operator table of a type is shared and thread-independent; the lowering stays P04.23, units P03.25. Details in `03-semantic-analysis/STATE.md`.
 - 2026-10-29: Owner decision (ADR-0027, decides P15 Q2 / P05 Q2, task P15.10): **mimalloc is the global allocator**, the only one for now (no libc-malloc option, no switch flag). It serves `new_unique`, `new_shared`, `make`, string and slice growth, maps and the nil allocator word. `mem.Allocator`/`mem.Arena`, ASan builds (sanitizer allocator) and C/C++ `malloc` stay as they are; memory is freed by the allocator that made it. mimalloc (MIT) is pinned as a source (flake input or vendored release) and compiled per target, then linked statically (ADR rule 6, not overriding `malloc`). Mixed-allocator rule 4a: the side that allocated frees; undefined behavior UB-5a; test hook and malloc-style helpers in P05.03 and P07.07. P05 D5.2, P05.03 (Done-when), P15 D15.3 and P15.10 updated.
 - 2026-10-30: Owner decision (ADR-0025 Amendment, P03.25, P04.24): **B chosen.** Generic unit code gets the units of its instance as a hidden run-time argument (one descriptor per unit parameter, like Go's generic dictionaries) and computes what plain code computes (`Ratio(1.0[KM], 1.0[M])` is 1000). Rejected: A (compile-time errors with a 65 536-instance check limit: errors on useful code, the limit, a rule to learn) and C (a compiled copy per unit combination: code size, and an explosion for branching chains).
+- 2026-10-30: P03.25 units merged (`78ad9f5`): P03 complete. Owner decisions recorded in ADR-0025's 2026-10-30 Amendment (run-time unit dictionary, integer truncation difference kept, method-signature growth is a cycle, a method's own type parameters do not count).
