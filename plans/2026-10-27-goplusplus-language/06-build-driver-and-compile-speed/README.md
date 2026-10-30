@@ -70,6 +70,7 @@
 - `opt 1`, `opt 2`, `opt 3`, `opt s`, `opt z`: the matching LLVM `-O1`, `-O2`, `-O3`, `-Os`, `-Oz` pipelines. `opt 3` is the default of the `release` profile.
 - The plain **O0 + FastISel** pipeline (no GIR inlining, the old `debug` mode) is not a profile setting. It stays as the baseline for the D6.8 budgets and the D6.9 fallback, and is chosen with `-pipeline=fastisel` (a measuring and debugging flag).
 - Everywhere else in the plan, "debug/dev build" means `opt 0` or `opt 1`, and "release build" means `opt 2` or higher.
+- *Where it is built (P04.13).* One function, `selectPipeline` (`compiler/lib/CodeGen/Pipeline.cpp`), turns `opt`, `lto` and `-pipeline=fastisel` into a `PipelineSpec`; profiles (D6.12), `-trace` (D6.7), LTO (P15) and the ADR-0028 split pass (P04.07) plug into it as described in [`docs/design/pipelines.md`](../../../docs/design/pipelines.md). A program means the same at every `opt` (section 1 there).
 
 **D6.7 — Measure, don't guess.**
 - `gopp build -trace=out.json` writes a Chrome trace with per-action and per-LLVM-pass timings (LLVM `TimeProfiler`).

@@ -1,0 +1,12 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8
+// RUN: %if clang %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --no-corpus --cabi 1:30 --cabi 2:30 --cabi 101:100 %}
+// P04.13 (D4.8): every program of the run corpus (the run tests, the
+// differential tables of Inputs/diff and Inputs/coll, the stress set
+// Inputs/opt, the panic programs of Inputs/panics, Inputs/panics-seq and
+// Inputs/panics-gopp) at every `opt` level and with -pipeline=fastisel on the
+// host: the same exit status, output and panic line at every level (see
+// core-opt-matrix.test). With clang, also the C ABI programs of seeds 1, 2
+// (cabi-amd64.test) and 101 (cabi.long.test), their C built once by Clang and
+// linked into every configuration. On linux/arm64:
+// core-opt-matrix-arm64.long.test.

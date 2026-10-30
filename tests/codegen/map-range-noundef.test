@@ -1,0 +1,20 @@
+// RUN: %gopp build -target=linux/amd64 -opt=1 -emit=llvm %s | FileCheck %s
+// RUN: %gopp build -target=linux/arm64 -opt=2 -emit=llvm %s | FileCheck %s
+// P04.13 review: the entry pointers of a map range (`kp`, `vp`) are written
+// by map_iter_next before it returns true, and the body reads them only
+// then; they start as null, so above opt 0 no undefined value reaches the
+// loop header's phi (it was `phi ptr [ undef, ... ]`).
+package main
+
+func main() {
+	m := map[int]int{1: 10, 2: 20}
+	s := 0
+	for k, v := range m {
+		s += k * v
+	}
+	println(s)
+}
+
+// CHECK: define void @_GPF4mainE4main()
+// CHECK-NOT: undef,
+// CHECK: ret void

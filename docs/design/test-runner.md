@@ -26,7 +26,7 @@ It is built to be the engine of three later users, not only of today's lit tests
                                       Runner.h: joins the two (this is `gopp test-run`)
 ```
 
-- **`BatchCompile.h`** compiles a `JobSpec` to an object file for the host: the steps of `gopp build -emit=obj` with no command-line state, so any number run at once. Every compile owns its source manager, diagnostics, type context and LLVM context; nothing mutable is shared. `compileBatch` runs them on a thread pool. It knows nothing about running.
+- **`BatchCompile.h`** compiles a `JobSpec` to an object file for the host: the steps of `gopp build -emit=obj` with no command-line state (the pipeline is `gopp build`'s default, `opt 0`, from `selectPipeline`: GIR inlining, the curated IR passes, the opt-0 selector; `docs/design/pipelines.md`), so any number run at once. Every compile owns its source manager, diagnostics, type context and LLVM context; nothing mutable is shared. `compileBatch` runs them on a thread pool. It knows nothing about running.
 - **`ExecutorPool.h`** takes object files and returns `JobResult`s. It knows nothing about the compiler.
 - **`Protocol.h`** is the only thing the two share, and the only thing a reader outside needs.
 - **`Runner.h`** (`runBatch`) hands each finished object to the pool at once, so compiling and running overlap, and the executors start while the first programs compile.

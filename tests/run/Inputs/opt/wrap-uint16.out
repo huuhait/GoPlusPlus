@@ -1,0 +1,258 @@
+count 0 70001 1
+count 1 65535 2
+count 2 65534 3
+count 3 65533 4
+count 5 65531 6
+count 7 65529 8
+count 64 65472 65
+count 100 65436 101
+count 16383 49153 16384
+count 32767 32769 32768
+count 32768 32768 32769
+count 32769 32767 32770
+count 65533 3 65534
+count 65534 2 65535
+count 65535 1 70001
+step 65535 65535 65535
+chk 0 true true true true false true false true false
+chk2 0 0 false false
+chk2 0 1 false false
+chk2 0 2 false false
+chk2 0 3 false false
+chk2 0 5 false false
+chk2 0 7 false false
+chk2 0 64 false false
+chk2 0 100 false false
+chk2 0 16383 false false
+chk2 0 32767 false false
+chk2 0 32768 false false
+chk2 0 32769 false false
+chk2 0 65533 false false
+chk2 0 65534 false false
+chk2 0 65535 false false
+chk 1 true true false true true true true true true
+chk2 1 0 false false
+chk2 1 1 false true
+chk2 1 2 false false
+chk2 1 3 false false
+chk2 1 5 false false
+chk2 1 7 false false
+chk2 1 64 false false
+chk2 1 100 false false
+chk2 1 16383 false false
+chk2 1 32767 false false
+chk2 1 32768 false false
+chk2 1 32769 false false
+chk2 1 65533 false false
+chk2 1 65534 false false
+chk2 1 65535 true false
+chk 2 true true false true true true true true true
+chk2 2 0 false false
+chk2 2 1 false true
+chk2 2 2 false true
+chk2 2 3 false false
+chk2 2 5 false false
+chk2 2 7 false false
+chk2 2 64 false false
+chk2 2 100 false false
+chk2 2 16383 false false
+chk2 2 32767 false false
+chk2 2 32768 false false
+chk2 2 32769 false false
+chk2 2 65533 false false
+chk2 2 65534 true false
+chk2 2 65535 true false
+chk 3 true true false true true true true true true
+chk2 3 0 false false
+chk2 3 1 false true
+chk2 3 2 false true
+chk2 3 3 false true
+chk2 3 5 false false
+chk2 3 7 false false
+chk2 3 64 false false
+chk2 3 100 false false
+chk2 3 16383 false false
+chk2 3 32767 false false
+chk2 3 32768 false false
+chk2 3 32769 false false
+chk2 3 65533 true false
+chk2 3 65534 true false
+chk2 3 65535 true false
+chk 5 true true false true true true true true true
+chk2 5 0 false false
+chk2 5 1 false true
+chk2 5 2 false true
+chk2 5 3 false true
+chk2 5 5 false true
+chk2 5 7 false false
+chk2 5 64 false false
+chk2 5 100 false false
+chk2 5 16383 false false
+chk2 5 32767 false false
+chk2 5 32768 false false
+chk2 5 32769 false false
+chk2 5 65533 true false
+chk2 5 65534 true false
+chk2 5 65535 true false
+chk 7 true true false true true true true true true
+chk2 7 0 false false
+chk2 7 1 false true
+chk2 7 2 false true
+chk2 7 3 false true
+chk2 7 5 false true
+chk2 7 7 false true
+chk2 7 64 false false
+chk2 7 100 false false
+chk2 7 16383 false false
+chk2 7 32767 false false
+chk2 7 32768 false false
+chk2 7 32769 false false
+chk2 7 65533 true false
+chk2 7 65534 true false
+chk2 7 65535 true false
+chk 64 true true false true true true true true true
+chk2 64 0 false false
+chk2 64 1 false true
+chk2 64 2 false true
+chk2 64 3 false true
+chk2 64 5 false true
+chk2 64 7 false true
+chk2 64 64 false true
+chk2 64 100 false false
+chk2 64 16383 false false
+chk2 64 32767 false false
+chk2 64 32768 false false
+chk2 64 32769 false false
+chk2 64 65533 true false
+chk2 64 65534 true false
+chk2 64 65535 true false
+chk 100 true true false true true true true true true
+chk2 100 0 false false
+chk2 100 1 false true
+chk2 100 2 false true
+chk2 100 3 false true
+chk2 100 5 false true
+chk2 100 7 false true
+chk2 100 64 false true
+chk2 100 100 false true
+chk2 100 16383 false false
+chk2 100 32767 false false
+chk2 100 32768 false false
+chk2 100 32769 false false
+chk2 100 65533 true false
+chk2 100 65534 true false
+chk2 100 65535 true false
+chk 16383 true true false true true true true true true
+chk2 16383 0 false false
+chk2 16383 1 false true
+chk2 16383 2 false true
+chk2 16383 3 false true
+chk2 16383 5 false true
+chk2 16383 7 false true
+chk2 16383 64 false true
+chk2 16383 100 false true
+chk2 16383 16383 false true
+chk2 16383 32767 false false
+chk2 16383 32768 false false
+chk2 16383 32769 false false
+chk2 16383 65533 true false
+chk2 16383 65534 true false
+chk2 16383 65535 true false
+chk 32767 true true false true false true true true true
+chk2 32767 0 false false
+chk2 32767 1 false true
+chk2 32767 2 false true
+chk2 32767 3 false true
+chk2 32767 5 false true
+chk2 32767 7 false true
+chk2 32767 64 false true
+chk2 32767 100 false true
+chk2 32767 16383 false true
+chk2 32767 32767 false true
+chk2 32767 32768 false false
+chk2 32767 32769 true false
+chk2 32767 65533 true false
+chk2 32767 65534 true false
+chk2 32767 65535 true false
+chk 32768 true false true false false true true true false
+chk2 32768 0 false false
+chk2 32768 1 false true
+chk2 32768 2 false true
+chk2 32768 3 false true
+chk2 32768 5 false true
+chk2 32768 7 false true
+chk2 32768 64 false true
+chk2 32768 100 false true
+chk2 32768 16383 false true
+chk2 32768 32767 false true
+chk2 32768 32768 true true
+chk2 32768 32769 true false
+chk2 32768 65533 true false
+chk2 32768 65534 true false
+chk2 32768 65535 true false
+chk 32769 true false false false true true true true false
+chk2 32769 0 false false
+chk2 32769 1 false true
+chk2 32769 2 false true
+chk2 32769 3 false true
+chk2 32769 5 false true
+chk2 32769 7 false true
+chk2 32769 64 false true
+chk2 32769 100 false true
+chk2 32769 16383 false true
+chk2 32769 32767 true true
+chk2 32769 32768 true true
+chk2 32769 32769 true true
+chk2 32769 65533 true false
+chk2 32769 65534 true false
+chk2 32769 65535 true false
+chk 65533 true false false false false true true false false
+chk2 65533 0 false false
+chk2 65533 1 false true
+chk2 65533 2 false true
+chk2 65533 3 true true
+chk2 65533 5 true true
+chk2 65533 7 true true
+chk2 65533 64 true true
+chk2 65533 100 true true
+chk2 65533 16383 true true
+chk2 65533 32767 true true
+chk2 65533 32768 true true
+chk2 65533 32769 true true
+chk2 65533 65533 true true
+chk2 65533 65534 true false
+chk2 65533 65535 true false
+chk 65534 true false false false false true true false false
+chk2 65534 0 false false
+chk2 65534 1 false true
+chk2 65534 2 true true
+chk2 65534 3 true true
+chk2 65534 5 true true
+chk2 65534 7 true true
+chk2 65534 64 true true
+chk2 65534 100 true true
+chk2 65534 16383 true true
+chk2 65534 32767 true true
+chk2 65534 32768 true true
+chk2 65534 32769 true true
+chk2 65534 65533 true true
+chk2 65534 65534 true true
+chk2 65534 65535 true false
+chk 65535 false false false false false false true false false
+chk2 65535 0 false false
+chk2 65535 1 true true
+chk2 65535 2 true true
+chk2 65535 3 true true
+chk2 65535 5 true true
+chk2 65535 7 true true
+chk2 65535 64 true true
+chk2 65535 100 true true
+chk2 65535 16383 true true
+chk2 65535 32767 true true
+chk2 65535 32768 true true
+chk2 65535 32769 true true
+chk2 65535 65533 true true
+chk2 65535 65534 true true
+chk2 65535 65535 true true
+all 13475049437901080235
+lcg 18597 17972 3916269523911081323

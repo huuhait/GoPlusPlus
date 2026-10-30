@@ -1,0 +1,54 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-fma-neg.out
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 4 core-fma-neg %}
+// P04.13 review R8: the negation of a fused result. On arm64 t := x*y - z
+// is one FMA; when x*y == z exactly it is +0, and -t is -0 (gc). LLVM 23.1.0's
+// AArch64 selectors turn fneg(fma) into FNMADD, -(x*y) + z, which is +0;
+// the pre-ISel pass FenceNegatedFmaPass keeps them apart (Pipeline.cpp). The
+// arm64 line builds this test at every `opt` level and with
+// -pipeline=fastisel and compares each with gc's arm64 output
+// (golden/core-fma-neg.arm64.out); amd64 fuses nothing. Both float types,
+// a result that cancels exactly and one that does not, and the negation
+// written as -t, -1*t, t*-1 and t/-1. Each function prints (a call: no
+// inliner takes it at opt 0, s and z, where the selectors see the pattern)
+// and is called with two sets of values (no constant to propagate into it).
+package main
+
+//go:noinline
+func neg64(x, y, z float64) {
+	t := x*y - z
+	u := -t
+	println("neg64", t, u)
+}
+
+//go:noinline
+func neg32(x, y, z float32) {
+	t := x*y - z
+	u := -t
+	println("neg32", t, u)
+}
+
+//go:noinline
+func mulM1(x, y, z float64) {
+	t := x*y - z
+	println("mulM1", -1*t, t*-1, t/-1)
+}
+
+//go:noinline
+func mulM1f32(x, y, z float32) {
+	t := x*y + z
+	println("mulM1f32", -1*t, t/-1)
+}
+
+func main() {
+	// Exact cancellation (4 * 0.25 - 1 == 0), then one that is not exact:
+	// the fused and the unfused results differ in the last bits.
+	neg64(4, 0.25, 1)
+	neg64(1.0000000074505806, 0.9999999925494194, 1)
+	neg32(4, 0.25, 1)
+	neg32(1.0001, 0.9999, 1)
+	mulM1(4, 0.25, 1)
+	mulM1(1.0000000074505806, 0.9999999925494194, 1)
+	mulM1f32(4, 0.25, -1)
+	mulM1f32(1.0001, 0.9999, -1)
+}

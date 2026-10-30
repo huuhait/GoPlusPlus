@@ -18,7 +18,7 @@ The data layout of each target is pinned in the table (D4.5 relies on it: 64-bit
 - amd64: `e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128`
 - arm64: `e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32`
 
-`createTargetMachine` fails when the LLVM that gopp is built against gives another layout: a newer LLVM that changes it is something to look at, not to follow silently (`Targets.DataLayoutsArePinnedAndChecked`). The target machine is PIC (the code links into an executable now and into a PIE later), `-O0` (P04.13 adds the pipelines per `opt`).
+`createTargetMachine` fails when the LLVM that gopp is built against gives another layout: a newer LLVM that changes it is something to look at, not to follow silently (`Targets.DataLayoutsArePinnedAndChecked`). The target machine is PIC (the code links into an executable now and into a PIE later). Its code generation level and instruction selector come from the pipeline (`createTargetMachine(Target, PipelineSpec)`, P04.13, `docs/design/pipelines.md`): `-O0` with FastISel for `opt 0` on x86-64 and for `-pipeline=fastisel` on both targets, `-O0` with GlobalISel for `opt 0` on arm64 (ADR-0028 addendum), and the level of the matching LLVM pipeline for `opt 1` to `opt z`.
 
 ## Code
 

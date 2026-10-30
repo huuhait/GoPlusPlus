@@ -1,0 +1,19 @@
+package main
+
+// The callee is far from the top of its file, so that its lines (17 and 18)
+// are past the end of a.gopp (7 lines): inlined into main, they must not
+// show up as lines of a.gopp.
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+func add(x, y int) int {
+	z := x + y
+	return z
+}

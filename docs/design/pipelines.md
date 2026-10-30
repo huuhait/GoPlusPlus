@@ -1,0 +1,108 @@
+# Codegen pipelines (P04.13)
+
+This document says what happens between a checked package and an object file, how the `opt` setting chooses it, and where later tasks plug in. The code is `compiler/lib/CodeGen/Pipeline.cpp` (the table, the stages) and `compiler/lib/GIR/Inline.cpp` (the GIR pass); the plan is P04 D4.8 and P06 D6.6.
+
+## 1. The rule: a program means the same in every pipeline
+
+The pipeline changes how fast the compiler runs and how fast the program runs. It never changes what the program does: stdout, the exit status, the panic message and the float results are the same at every `opt` and with `-pipeline=fastisel`, on both targets. So:
+
+- No pass may use a fact that Go does not give. The code generator writes no `nsw`/`nuw`/`exact`, no fast-math flag, and no `fptosi` without `.sat`; shifts, `MinInt / -1` and checks are written so that they have a defined result in LLVM (`LowerToLLVM.cpp`).
+- Anything that is a choice between two results that Go allows (FMA fusion) is made once, in the code generator, and not left to the optimizer (section 4).
+- The C library functions the code calls keep only the built-in meaning that cannot change what a program does. The allocation functions (`malloc`, `calloc`, `realloc`, `free` and the rest of the C family) are declared `nobuiltin` (`isCAllocationFunction` in `LowerToLLVM.cpp`, as clang's `-fno-builtin-malloc`): LLVM's optimizer would otherwise delete an allocation whose memory does not escape, and with it the runtime's out-of-memory check, so `make([]byte, 1<<48-1)` would succeed above `opt 0` and fail at `opt 0` (`run/opt-oom.test`, `codegen/alloc-nobuiltin.test`, and the IR scan of section 6 checks every declaration). `memmove`, `memset` and `memcmp` keep theirs: folding or removing a copy of dead memory gives the same bytes. `write` and `exit` keep theirs too: LLVM only learns attributes from them (`nocapture`, `noreturn`) and never deletes a call.
+- The test is the matrix in section 6: the whole run corpus, at every setting, against one set of expected outputs.
+
+## 2. One definition point: `PipelineSpec`
+
+`selectPipeline(PipelineRequest, TargetSpec)` is the only function that decides. It turns the user's settings into a `PipelineSpec`:
+
+| Setting | Name | GIR inlining | IR passes | Code generator | Selector |
+|---|---|---|---|---|---|
+| `-opt=0` (default) | `opt0` | yes (trivial) | curated: `always-inline,function(sroa,instcombine<no-verify-fixpoint>,simplifycfg)` | O0 | FastISel on x86-64, GlobalISel on arm64 (section 5) |
+| `-opt=1` | `opt1` | yes | LLVM per-module O1 | Less | LLVM's choice |
+| `-opt=2` | `opt2` | yes | LLVM O2 | Default | LLVM's choice |
+| `-opt=3` | `opt3` | yes | LLVM O3 | Aggressive | LLVM's choice |
+| `-opt=s` | `opts` | yes | LLVM O2 with `optsize` on every function | Default | LLVM's choice |
+| `-opt=z` | `optz` | yes | LLVM O2 with `optsize` and `minsize` | Default | LLVM's choice |
+| `-pipeline=fastisel` | `fastisel` | no | none | O0 | FastISel (both targets) |
+
+`s` and `z` are O2 plus function attributes because LLVM 23 has no `Os`/`Oz` level, as clang does it. `-pipeline=fastisel` is the measuring baseline of D6.8 and the fallback of D6.9; it cannot be combined with `-opt` other than 0. `lto` other than `none` is refused (P15). The hidden `-isel=fastisel|globalisel|default` forces the selector, for measuring.
+
+The stages, in order. Each one is a `gopp.<stage>` trace scope and is recorded in `PipelineTimes` (`-pipeline-times` prints it as `name=wall/cpu`):
+
+1. **`gir-inline`** (`runGIRPasses`): trivial inlining, section 3. Not in the baseline.
+2. **`lower`**: `lowerToLLVM`. FMA fusion is decided here (section 4).
+3. **`ir-passes`** (`runIRPasses`): the spec's pass set.
+4. **`pre-isel`**: the spec's `PreISel` hooks, in order, on the module the code generator is about to get. Every arm64 spec has one today, `FenceNegatedFmaPass` (section 4).
+5. **`codegen`**: `emitObject`/`emitAssembly` with the `TargetMachine` the spec made (`createTargetMachine(Target, Spec)`: optimization level and selector).
+
+`-emit=llvm` prints the module after stage 4, the IR the back end gets. `-emit=gir` is the GIR as lowered from the package, before stage 1.
+
+## 3. GIR inlining
+
+`gir::inlineTrivial` (`Inline.h`) inlines a direct call of a *trivial* function: defined in the module, one block ending in `return`, at most 12 statements, no call, no assertion, no drop, no `AddrOf`, no owned temporary (`Local::Owned`, P04.05: a drop P04.09 must place in the callee). Such a function cannot panic and cannot reach any other function, so inlining it changes nothing a program can observe. A call whose unwind edge is a cleanup block is left alone (dead-block removal comes with P04.07).
+
+What it makes: the call's block gets `param = arg` copies, the callee's statements on new locals, and `dest = ret` as a copy, then `goto` the call's return block. The copies carry `Statement::Boundary`, which the FMA matcher reads (section 4). The callee stays in the module.
+
+It is a hook, not the whole of D4.2 step 6. It starts small on purpose; later tasks widen the test in `isTrivial` and nothing else:
+
+- P04.06: methods and operator methods (the `@Inline` rules); a method of a value receiver is an ordinary function in GIR, so it is covered once `@Inline` is carried to `Function`.
+- P04.07: callees with asserts or calls need a cleanup-edge story first (what unwinds from the inlined body goes to the call's cleanup block).
+- P04.09: callees with drops.
+
+The pass is linear in the size of the module: one look at each function, one at each block, one copy of each statement and local of an inlined callee (`inlineSteps()`, counted in `GIRInlineStress.*`).
+
+## 4. FMA contraction
+
+gc fuses a float `x*y` with the `+` or `-` that reads it on arm64 and never on amd64 (D4.12). Three levels of the compiler could fuse; only one does.
+
+- The code generator (`FuseFMA` in `LowerToLLVM.cpp`) writes `llvm.fma` where gc fuses, on arm64 only.
+- No float instruction carries `contract` or any other fast-math flag, so the instruction combiners (`instcombine`, SDAG, GlobalISel) never fuse and never refuse to. A conversion needs no `llvm.arithmetic.fence` either: a product that a conversion rounds is a conversion to the matcher.
+- The result of a program is therefore the same at every `opt`, in `fastisel`, with LTO later, and with a different selector. (Before P04.13 the flags were on and only the code generator's matcher fused at `opt 0`; above `opt 0` LLVM would have fused more than gc does.)
+
+The matcher follows gc's SSA rewrite `FADDD a (FMULD x y) => FMADDD`. A *product* is a local that is written by a float `*`, by the negation of a product, or by a copy of a product (the same SSA value in gc), and that is:
+
+- a temporary read once (the value of a sub-expression), or
+- a variable, parameter or result whose address is never taken (`t := x*y`, which GIR makes `tmp = x*y; t = copy tmp`).
+
+A variable read twice fuses at each `+`/`-` (gc keeps the product for its other readers). Both operands products: the right one first, as gc's rules try them.
+
+Which write a read sees is gc's SSA value, found without building SSA:
+
+- The blocks of a function that has a float product are lowered in the preorder of the dominator tree, and the table of products is scoped by that tree (an undo log restores a block's changes when the walk leaves its subtree). So at a read the table holds the last product write of each local in the reading block or in a block that dominates it, and nothing that a write in between replaced. The block order in the function does not matter (a `goto` back, a loop body after the code that follows the loop).
+- A write of the local in a block that dominates neither, but lies on a path from the product to the read, makes the read a phi in gc. A write counts only if the product's block reaches it, and it reaches the read, without passing through the product's block again (a path through it writes the product again). The strongly connected components of the CFG are numbered in topological order and each local's writes are sorted by that number; a write can lie on such a path only if its number is between the product's and the read's, and when one binary search finds none (the usual case) the read fuses. When it finds some, one walk decides exactly (`taintedBy`): from the product's block without that block, to the blocks a write reaches. A branch that returns (`if c { t = z; return t }`) and a write only a path through the product's block reaches (`for { t = x*y; if c { r += t+z }; if d { t = 0 } }`) therefore do not stop the fusion, as in gc. The walk enters only blocks whose number is at most the read's (no other block lies on a path to the read), so it covers the region between the product and the read: N sibling loops cost N walks of one loop each, not of the loops after it (`Pipeline.EverySiblingLoopFuses`: 32 loops, all fused). It is done once per variable and product block (again with a larger bound for a later read), and all the walks of a function share a budget of 8 steps per block and edge (plus 64): when it is spent, a read that needs a walk is not fused (conservative: it takes very many variables that each need a walk over one large loop, `Pipeline.TheFmaWalksAreBoundedByTheSizeOfTheFunction`).
+- The work is linear in the blocks, edges and writes; `Pipeline.TheFmaAnalysisIsNearLinear` counts it (`LowerWorkCounts`) for nested branches, sibling branches, many writes of one variable, many products in one loop and many sibling loops (the walks), with a control.
+
+Constant factors follow gc's generic rules, which run before its FMA rules on what its SSA knows to be constant: `x*2` is `x+x` (no product; the sum fuses a product x holds), `x*1` is x, `x*-1` is `-x`, `x/c` is the product `x*(1/c)` when c is a power of two with an exact reciprocal, and an operation on two constants is folded unless the result is NaN. A constant is a GIR constant or a float local whose one reaching write (the same test as for a product) is a constant, a copy of one, a fold, or a conversion of one (from a float, or from a signed integer local written with a constant). Not followed, so Go++ fuses these where gc does not (P04.14's list, each with gc's output): a local written with the same constant on several paths, integer copies and arithmetic, unsigned conversions (gc's `phielim` and `sccp` find the constant); and constants that gc's SSA sees through memory and aggregates (review R9): a field of a small struct (an SSA value in gc), an element of an array or slice literal and a value stored through a pointer and loaded back (the Load-of-Store rules, `generic.rules` 769-772). With the value 2 there, `x*a[0] + z`, `x*s.k + z`, `x*(*p) + z` and `x*s[0] + z` print +Inf with gc (`x+x`, not fused) and 1e308 with Go++ (fused); `a[0]*a[1] - 1` with the two constants of `core-fma-vars` prints 0 with gc (folded) and -5.551115e-017 with Go++.
+
+Not products: a conversion (`float64(x*y)`), a variable that two branches write (a phi in gc), a variable whose address is taken (not an SSA value in gc), a function argument or result (a call boundary). What gc fuses that this does not, each checked against gc's arm64 output: gir.md section 15, moved to P04.14. In particular, branches that gc's prove pass shows dead (`if k < -1000 { goto A }; if k < -1001 { goto B }`: the second is dead for gc, so its edge makes no phi) still make a phi here; in a random-CFG comparison with gc (300 programs of 6 labelled blocks with gotos and early returns), 13 missed a fusion with provable entry guards, all of this kind, and none of 300 did with guards gc cannot prove.
+
+**The negation of a fused result (review R8).** LLVM 23.1.0's AArch64 GlobalISel and SelectionDAG select `fneg (llvm.fma a, b, c)` as FNMADD, `-(a*b) - c`, which is +0 where the fma is exactly 0 and Go's `-t` is -0 (gc and FastISel give -0); `fmul`/`fdiv` by -1.0 become that `fneg`. The pre-ISel pass `FenceNegatedFmaPass` of every arm64 spec puts `llvm.arithmetic.fence` between an `llvm.fma` and each negation of it, after the IR passes, so the shape LLVM's inliner and combiner make is caught at every level. GlobalISel cannot select the fence and leaves such a function to SelectionDAG (about 0.1 ms of code generation more per function; the shape is rare). `Pipeline.Arm64FnegOfFmaIsFnmadd` fails once LLVM stops doing it; `run/core-fma-neg.test` compares every setting with gc. Details and numbers: the ADR-0028 addendum, next to the FastISel `sext` bug of section 5.
+
+**Inlining must not fuse.** `mul(x, y) + z` is not fused when `mul` is called, and it must not be fused when GIR inlining or LLVM has inlined `mul`: the result of a program may not depend on `opt`. (gc inlines `mul` and fuses; Go allows both results, spec "Floating-point operators". The tests keep to `//go:noinline` where they compare with `go run`.) So the copies that inlining makes (`Statement::Boundary`) are not looked through, and LLVM has no `contract` to act on.
+
+Tests: `run/core-fma.test`, `run/core-fma-vars.test` (values from Go's own amd64 and arm64 builds, both targets, including the block orders above), `run/core-fma-runtime.test` (a product kept across a call of the runtime: string concatenation, map insert, `make` and `append`, a string index check; gc fuses, and so does Go++), `Inputs/opt/fma-1..4` (random programs from `Inputs/gen-fma.py` with Go's goldens, constant factors and propagated constants included; 120 seeds matched gc's arm64 output at `opt 0`, `opt 2` and the baseline when P04.13 was merged), `codegen/fma-pipelines.test` (the IR and the assembly at every `opt`), `Pipeline.FmaIsTheSameInEveryPipeline` (unit).
+
+## 5. The arm64 `opt 0` selector
+
+LLVM's default at O0 on arm64 is GlobalISel; x86-64 uses FastISel. P04.13 measured both on arm64 with Go++ IR. FastISel is cheaper there (2 to 5% of the CPU of a whole `gopp build`, 15 to 37% of code generation alone, for object code about 20% larger), but **`opt 0` on arm64 selects with GlobalISel**: LLVM 23.1.0's AArch64 FastISel compiles `sext` of a `signext` i8 or i16 argument to i64 as a 32-bit move, a zero-extension, and the SROA of `opt 0` makes exactly that pattern from a parameter's stack slot (`widen(-1, -2, 0)` in `run/opt-semantics.test` prints 17179869179 instead of -5 with FastISel). x86-64 FastISel is right on the same IR (`movsbq`, `movswq`), and the arm64 baseline (`-pipeline=fastisel`) keeps FastISel: it runs no SROA, so every argument goes to its slot first and no `sext` reads it.
+
+`Pipeline.Arm64SextOfSignextArgument` reproduces the bug on a hand-written module and fails when LLVM fixes it; that is the trigger to measure again (P04.07's TODO item) and maybe change the one line in `selectPipeline`. The numbers and the bug are in the P04.13 addendum of ADR-0028.
+
+## 6. Tests and the matrix
+
+- `tests/run/Inputs/run-opt-matrix.py` builds every program of the run corpus (the run tests that are a `package main`, the differential tables of `Inputs/diff` and `Inputs/coll`, the stress set `Inputs/opt`, the panic programs of `Inputs/panics`, `Inputs/panics-seq` and `Inputs/panics-gopp`) and, with `--cabi SEED:COUNT`, generated C ABI programs (`gen-cabi.py`; the C half built once by Clang and linked into every setting with `-link-obj`, the generator's expected output and exit status 0) at `opt 0`, `1`, `2`, `3`, `s`, `z` and `-pipeline=fastisel`, runs it (arm64 under QEMU), and requires every setting to give the baseline's exit status, standard output and standard error, and the baseline to give Go's output where it is saved. `run/core-opt-matrix.test` (host), `run/core-opt-matrix-arm64.test` and `run/core-opt-matrix-cabi.test` (a C ABI program, both targets) run a subset in the normal suite; `run/core-opt-matrix.long.test` (host) and `run/core-opt-matrix-arm64.long.test` run all of it (239 programs, and with Clang the C ABI programs of seeds 1, 2 and 101 on the host, 3 and 4 on arm64; one small C ABI program of each target in the normal suite). The matrix builds real binaries; the run tests of the normal suite go through the fast runner (`docs/design/test-runner.md`), which compiles at `opt 0` with this same `selectPipeline`. A setting can be run by hand: `run-opt-matrix.py --gopp build/bin/gopp --root tests/run --configs 3 [NAME...]`.
+- `run/core-opt-ir-flags.long.test` (`Inputs/check-ir-flags.py`): the lowered IR of the whole corpus and of the C ABI programs, on both targets, has no `nsw`, `nuw`, `exact`, `nneg`, `disjoint`, `samesign` and no fast-math flag, and every C allocation function is declared `nobuiltin` (section 1; `run/core-ir-arg-ext.test` scans a part in the normal suite); `Pipeline.TheLoweringEmitsNoFlagThatGivesTheOptimizerMoreThanGoDoes` checks the scan itself on both sides.
+- The stress set `Inputs/opt` (`gen-opt.py`: wrap-around, shifts, division edges, float identities, conversions, memory, saturation for every integer width; `gen-shape.py`: random Go-shaped programs; `gen-fma.py`: random FMA programs), with Go's output on both targets, and the `opt-*` programs of `Inputs/panics` (`gen-opt.py`, `gen-panics.py`): checks an optimizer must keep (a division or an index whose result nobody reads, a check in a loop after output, an index that wrapped, a division in a function LLVM inlines).
+- `tests/run/opt-semantics.test`, `run/core-fma-vars.test`, `run/opt-flags.test` (every setting by hand): what an optimizer is likely to break, the FMA forms, the flags.
+- `Pipeline.SameResultsInEveryPipeline` (unit): the same in LLJIT.
+- `GIRInline.*`, `GIRInlineStress.*` (unit): both sides of what is inlined, the same results before and after, linear work with a control.
+- `bench/pipelines/measure-opt.py` (CPU of a whole `gopp build` per setting and selector) and `measure-pipelines.py` with `gen-program.py` (CPU of each stage, `-pipeline-times`): compile time per pipeline and per selector on the run corpus and on generated programs.
+
+## 7. Where later work plugs in
+
+- **Profiles (P06 D6.12, tasks P06.14 to P06.16).** A profile's effective settings fill a `PipelineRequest` (`opt`, `lto`) and the driver calls `selectPipeline` once. A profile never builds passes itself. The cache key (D6.12) should hash what the spec contains (its name, the selector, the `Inline` limits), not the profile's name, so two profiles with the same settings share entries.
+- **`-trace` (D6.7).** `llvm::timeTraceProfilerInitialize` before the build and `timeTraceProfilerWrite` after: the five stages already open `gopp.<stage>` scopes, and LLVM's passes add theirs. No change to the pipeline.
+- **LTO (`opt 3` with `lto thin`, P15).** `PipelineSpec::LTO` is where it goes. `thin` makes `runIRPasses` run LLVM's ThinLTO pre-link pipeline and the driver write bitcode instead of an object; the link step runs the ThinLTO backend. `selectPipeline` refuses it until then, so nothing can ask for half of it.
+- **The ADR-0028 split pass (P04.07).** `PipelineSpec::PreISel` is its place: it is added for the specs that select with FastISel (x86-64 `opt 0` and both baselines; arm64 `opt 0` uses GlobalISel, section 5, unless P04.07's re-measure switches it), runs after the IR passes and before code generation. `Pipeline.PreISelHooksRunAfterTheIRPasses` tests the order.
+- **`@Inline` / `@NoInline` (P04.06).** They become `alwaysinline`/`noinline` function attributes in `LowerToLLVM.cpp`; `always-inline` is already the first pass of `opt 0`. GIR inlining honours them by widening `isTrivial`.
+- **The D6.8 budgets (P06.01).** `-pipeline-times` prints the stage times; P06.01 reads them. Compile times of each pipeline on the run corpus today are in the P04 STATE (P04.13 note).

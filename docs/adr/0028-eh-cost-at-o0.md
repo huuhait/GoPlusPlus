@@ -226,7 +226,7 @@ An earlier quiet session on `.ll` inputs with a previous generator version gave 
    - until it is upstream, build LLVM from source with the patch, as the assertions shell does.
 
    This changes ADR-0002 ("LLVM comes from nixpkgs"), adds a patch to carry across LLVM upgrades, and makes every developer and the release build compile LLVM. It is not decided here.
-7. **arm64:** P04.13 chooses the `opt 0` selector with real Go++ IR. Until then it uses LLVM's default (GlobalISel). The spike's numbers favour FastISel with decision 3 (−15% on EH code, −29% on code without EH). GlobalISel is LLVM's default and its best-tested AArch64 `-O0` path, so the switch needs P04.13's run tests first.
+7. **arm64:** P04.13 chooses the `opt 0` selector with real Go++ IR (chosen: GlobalISel, because of an LLVM FastISel miscompile; see the P04.13 addendum at the end). The spike's numbers favour FastISel with decision 3 (−15% on EH code, −29% on code without EH). GlobalISel is LLVM's default and its best-tested AArch64 `-O0` path, so the switch needs P04.13's run tests first.
 8. **P04.18 input:** at `opt 0`, first-class aggregate arguments and returns make FastISel fall back, and make x86-64 GlobalISel give up on whole functions (Table 3). P04.18 decides how `(T, error)` returns are lowered there, and re-measures this cost.
 
 ## Impact on the budgets
@@ -283,4 +283,103 @@ nix develop -c llvm-as eh.ll -o eh.bc                            # time bitcode,
 nix develop -c taskset -c 191 python3 bench/eh/measure-eh.py eh.bc ehTS.bc noeh.bc shape.bc
 #   --selectors fast,dag,gisel (x86-64) or a64-gisel,a64-fast (with --triple aarch64-unknown-linux-gnu)
 #   --perf /path/to/perf adds instruction counts
+```
+
+## Addendum (P04.13, 2026-10-30): the arm64 `opt 0` selector
+
+Decision 7 left the arm64 choice between LLVM's default (GlobalISel) and FastISel with the decision-3 lowering to P04.13, to be made with real Go++ IR. **Decision: arm64 `opt 0` selects with GlobalISel.** x86-64 `opt 0` keeps FastISel (decision 2), and `-pipeline=fastisel` uses FastISel on both targets. FastISel is the cheaper selector on arm64 too, but LLVM 23.1.0's AArch64 FastISel miscompiles a pattern that the `opt 0` pipeline itself creates. `selectPipeline` (`compiler/lib/CodeGen/Pipeline.cpp`) holds the choice in one line; above `opt 0` LLVM chooses.
+
+### The bug
+
+AArch64 FastISel selects `sext` of a `signext` i8 or i16 argument to i64 as a 32-bit move, which zero-extends: -1 becomes 4294967295.
+
+```llvm
+define i64 @f8(i64 %a, i8 signext %b) {
+entry:
+  %s = sext i8 %b to i64
+  %r = xor i64 %a, %s
+  ret i64 %r
+}
+```
+
+- `llc -O0 -mtriple=aarch64-unknown-linux-gnu -global-isel=false` gives `mov w8, w1; eor x0, x0, x8`. GlobalISel gives `sxtb x8, w8`; SelectionDAG (`-O2`) gives `sxtw x8, w1` (with `signext` the caller has extended to 32 bits). The i16 case is the same.
+- x86-64 FastISel is right on the same IR: `movsbq` and `movswq` extend the low byte and the low half themselves (FastISel falls back to SelectionDAG only for the lowering of the narrow arguments). Decision 2 stands.
+- SROA, the first pass of `opt 0` after always-inline, turns a narrow parameter's stack slot into exactly this pattern. The baseline is not hit: it runs no SROA, so every argument is stored to its slot and the `sext` reads a load.
+- Found by the run matrix while P04.13 was built, which then had an `-opt=0 -isel=fastisel` configuration (`tests/run/Inputs/run-opt-matrix.py`; left out since): the `int8` and `int16` programs of `tests/run/Inputs/opt` printed other values than Go's under QEMU. GIR inlining (also P04.13) inlines the small helpers of those programs, which hides the bug there, but a function that is not inlined still shows it: `widen(-1, -2, 0)` in `run/opt-semantics.test` prints 17179869179 instead of -5 with `-isel=fastisel`, so the run matrix would catch a switch back to FastISel.
+- A selector that miscompiles a pattern the pipeline creates cannot be the default of a compiler whose rule is that `opt` never changes what a program does (`docs/design/pipelines.md` section 1). `Pipeline.Arm64SextOfSignextArgument` builds the module above for both targets and requires that arm64 `opt 0` and `opt 2` sign-extend, that x86-64 FastISel does, and that AArch64 FastISel still does not: when LLVM fixes the bug that last check fails, which is the trigger to measure again (P04.07's TODO item).
+
+### What GlobalISel costs
+
+Two sets of numbers, both taken on the P04.13 coder branches before the merge, on the machine above with LLVM 23.1.0, under load (so the single figures are rough; the order and the size of the gap held in every session). CPU seconds, best of N rounds.
+
+**Set 1: the code generation stage.** `gopp build -target=linux/arm64 -emit=obj -pipeline-times -isel=SELECTOR` prints each stage's CPU time; best of 5 to 7 runs of each program, summed (`bench/pipelines/measure-pipelines.py`). The 31 programs of the run corpus at the time, and two generated programs of 600 functions and 22k lines each (`bench/pipelines/gen-program.py`). Load average 23 to 30. This branch had GIR inlining.
+
+| Programs | Pipeline | Stage | FastISel | GlobalISel | FastISel vs GlobalISel |
+|---|---|---|---|---|---|
+| run corpus (31) | `opt 0` | code generation | 0.0912 | 0.1444 | **-37%** |
+| run corpus (31) | `opt 0` | lower + IR passes + code generation | 0.2152 | 0.2940 | -27% |
+| run corpus (31) | `opt 0` | object code | 604,896 B | 504,784 B | +20% |
+| generated (2 x 600 functions) | `opt 0` | code generation | 0.3738 | 0.4377 | **-15%** |
+| generated | `opt 0` | all three stages | 1.235 | 1.291 | -4% |
+| generated | `opt 0` | object code | 2,091,672 B | 1,734,184 B | +21% |
+| generated | `-pipeline=fastisel` | code generation | 0.8128 | 1.3088 | -38% |
+
+Five sessions of the generated programs (load average 25 to 75) gave `opt 0` code generation between -4% and -26% for FastISel, most between -13% and -15%. The ADR tools (`gen-eh-ir.py --triple aarch64-unknown-linux-gnu`, 101k IR lines, `measure-eh.py --selectors a64-gisel,a64-fast`, best of 5, load 90): after the `opt 0` passes, `noeh` FastISel 0.101 s against GlobalISel 0.139 s (-27%), `eh+TS` 0.156 against 0.161 (-3%): with `invoke`s FastISel's lead nearly goes (they fall back to SelectionDAG).
+
+**Set 2: the whole build.** CPU (user + system from `wait4`) of `gopp build -emit=obj -target=linux/arm64`, best of 5 rounds that go round-robin over all pairs (`bench/pipelines/measure-opt.py`). `gir` is the front end alone. The corpus is the run corpus of the time; `big*` are generated Go-shaped programs (`tests/run/Inputs/gen-shape.py SEED 250`, about 9100 lines each). This branch had no GIR inlining.
+
+| session (load average) | input | gir | `-pipeline=fastisel` | `opt 0` GlobalISel | `opt 0` FastISel |
+|---|---|---|---|---|---|
+| 1 (about 100) | corpus (129) | 1.180 | 1.989 | 2.129 (1.07x) | 2.081 (1.05x) |
+| 1 | big101 / 102 / 103 | 0.093 / 0.100 / 0.098 | 0.376 / 0.409 / 0.424 | 0.503 / 0.521 / 0.526 | 0.472 / 0.508 / 0.498 |
+| 2 (23) | corpus (133) | 1.251 | 2.117 | 2.273 (1.07x) | 2.214 (1.05x) |
+| 2 | big101 / 102 / 103 | 0.090 / 0.101 / 0.099 | 0.390 / 0.407 / 0.403 | 0.463 / 0.506 / 0.490 | 0.447 / 0.486 / 0.483 |
+
+The same tool for every pipeline (load average 6 on x86-64, about 20 on arm64; the factor is against `-pipeline=fastisel`):
+
+| target | input | gir | fastisel | 0 | 1 | 2 | 3 | s | z |
+|---|---|---|---|---|---|---|---|---|---|
+| x86-64 | corpus (133) | 1.325 | 2.186 | 2.256 (1.03x) | 5.416 (2.48x) | 5.822 (2.66x) | 5.977 (2.73x) | 4.606 (2.11x) | 4.416 (2.02x) |
+| x86-64 | big101 | 0.092 | 0.408 | 0.488 (1.20x) | 1.519 (3.72x) | 1.731 (4.24x) | 1.750 (4.29x) | 1.376 (3.37x) | 1.373 (3.36x) |
+| arm64 | corpus (133) | 1.342 | 2.216 | 2.324 (1.05x) | 5.310 (2.40x) | 5.610 (2.53x) | 5.821 (2.63x) | 4.516 (2.04x) | 4.479 (2.02x) |
+| arm64 | big101 | 0.093 | 0.380 | 0.487 (1.28x) | 1.446 (3.81x) | 1.566 (4.12x) | 1.696 (4.47x) | 1.272 (3.35x) | 1.349 (3.55x) |
+
+**After the merge** (GIR inlining and the final FMA analysis in, the same tool, the 141 programs of the run corpus, best of 2 rounds, load average 44 to 61): arm64 `opt 0` with GlobalISel 2.577 s (1.08x the baseline's 2.377 s), with FastISel 2.487 s (1.05x): FastISel is 3.5% cheaper, inside the range above.
+
+**What this means.** FastISel would cut arm64 code generation by about 15% typically (4 to 37% across the sessions and programs), which is 2 to 5% of the CPU of a whole build (the front end, the lowering and the IR passes are the rest), for object code about 20% larger. Correctness wins over that. With GlobalISel `opt 0` stays within D6.6's target against the baseline (1.05x of the whole build on the corpus, 1.2 to 1.3x on the big programs; P06.01 measures the budgets). Runtime speed was not measured.
+
+**When to look again.** P04.07's TODO item: while `Pipeline.Arm64SextOfSignextArgument` passes, arm64 `opt 0` stays GlobalISel. Once an LLVM update fixes the bug (the test fails), the selectors are measured again with `invoke`s in the IR, and the line in `selectPipeline` follows the numbers.
+
+### A second AArch64 selector bug: `fneg` of `llvm.fma` (review R8)
+
+LLVM 23.1.0's AArch64 GlobalISel (at `-O0`) and SelectionDAG (at `-O2`, also with `optsize`) select `fneg (llvm.fma a, b, c)` as FNMADD, which computes `-(a*b) - c`. Where `a*b + c` is exactly 0 the fma gives +0 and its negation is -0, but FNMADD gives +0: an `nsz` rewrite done without `nsz`. FastISel keeps `fmadd` and `fneg` and is right. Go's `t := x*y - z; u := -t` (fused on arm64) printed `+0` for u at `opt 0`, `s` and `z` and `-0` with `-pipeline=fastisel`, at `opt 1` to `3` (where the values were folded) and with gc. `fmul X, -1.0` and `fdiv X, -1.0` become `fneg` in instcombine and in the DAG combiner, so they hit it too.
+
+```llvm
+define double @f(double %a, double %b, double %c) {
+  %r = call double @llvm.fma.f64(double %a, double %b, double %c)
+  %n = fneg double %r
+  ret double %n
+}
+```
+
+- `llc -O0 -mtriple=aarch64-linux-gnu -global-isel` and `opt -O2 | llc -O2` give `fnmadd d0, d0, d1, d2`; `llc -O0 -global-isel=false` gives `fmadd` then `fneg`.
+- **Workaround:** every arm64 spec runs a pre-ISel pass (`FenceNegatedFmaPass`, `Pipeline.cpp`) that puts `llvm.arithmetic.fence` between an `llvm.fma` and each negation of it (`fneg`, `fmul`/`fdiv` by -1.0). It runs after the IR passes, so it sees the shape that LLVM's inliner and instcombine make, at every level and with every selector; `llc` then gives `fmadd` and `fneg` everywhere. Rewriting the negation as an integer `xor` of the sign bit does not survive: instcombine turns it back into `fneg`.
+- **Cost:** GlobalISel cannot select the fence, so a function with the shape is selected by SelectionDAG at `opt 0` (`GlobalISelAbortMode::Disable`: a silent fallback). 300 functions that each negate a fused result take 0.044 s of code generation instead of 0.016 s (about 0.1 ms more per function); in the run corpus the shape is in `core-fma-neg` (written for it) and in 1 to 4 functions of each random `Inputs/opt/fma-*` program, nowhere else. amd64 fuses nothing and runs no such pass.
+- `Pipeline.Arm64FnegOfFmaIsFnmadd` checks the LLVM behaviour without the pass (two FNMADDs at `opt 0` and `opt 2`) and the fix with it; it fails when LLVM stops doing this, and then the pass can go. `run/core-fma-neg.test` compares all seven settings with gc's arm64 output.
+
+### Reproduce
+
+```sh
+# The bug (sext.ll is the module above; add the i16 function for both cases):
+nix develop -c llc -O0 -mtriple=aarch64-unknown-linux-gnu -global-isel=false sext.ll -o -   # mov w8, w1
+nix develop -c llc -O0 -mtriple=aarch64-unknown-linux-gnu sext.ll -o -                       # sxtb
+nix develop -c llc -O0 -mtriple=x86_64-unknown-linux-gnu sext.ll -o -                        # movsbq
+# Set 1 (stage times):
+python3 bench/pipelines/gen-program.py --functions 600 --seed 1 > gen1.gopp
+nix develop -c python3 bench/pipelines/measure-pipelines.py build/bin/gopp linux/arm64 gen1.gopp \
+    --settings 0,fastisel --isel fastisel,globalisel --repeat 7
+# Set 2 (whole builds):
+python3 tests/run/Inputs/gen-shape.py 101 250 > big101.gopp
+nix develop -c python3 bench/pipelines/measure-opt.py --gopp build/bin/gopp --target arm64 \
+    --configs gir,fastisel,0,isel:fastisel,isel:globalisel --runs 5 --corpus tests/run big101.gopp
 ```

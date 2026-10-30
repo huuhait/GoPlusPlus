@@ -1,0 +1,11 @@
+package main
+
+var n = -3
+
+func main() {
+	println("before")
+	for i := 2; i >= 0; i-- {
+		println(1 << (n + i))
+	}
+	println("not reached")
+}

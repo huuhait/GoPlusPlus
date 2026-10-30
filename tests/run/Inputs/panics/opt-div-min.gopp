@@ -1,0 +1,11 @@
+package main
+
+var z int
+var m = -1 << 63
+
+func main() {
+	println("before")
+	println(m / -1, m % -1)
+	println(m / z)
+	println("not reached")
+}

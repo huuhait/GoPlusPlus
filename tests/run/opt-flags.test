@@ -1,0 +1,57 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-output.py --src %s | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=0 %s -o %t.0
+// RUN: %t.0 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=1 %s -o %t.1
+// RUN: %t.1 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=2 %s -o %t.2
+// RUN: %t.2 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=3 %s -o %t.3
+// RUN: %t.3 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=s %s -o %t.s
+// RUN: %t.s | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=z %s -o %t.z
+// RUN: %t.z | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -pipeline=fastisel %s -o %t.base
+// RUN: %t.base | FileCheck %s
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.a64 %}
+// RUN: %if qemu-aarch64 %{ qemu-aarch64 -L %aarch64_sysroot %t.a64 | FileCheck %s --check-prefixes=CHECK,ARM %}
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib -opt=3 %s -o %t.a64o3 %}
+// RUN: %if qemu-aarch64 %{ qemu-aarch64 -L %aarch64_sysroot %t.a64o3 | FileCheck %s --check-prefixes=CHECK,ARM %}
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib -isel=fastisel %s -o %t.a64f %}
+// RUN: %if qemu-aarch64 %{ qemu-aarch64 -L %aarch64_sysroot %t.a64f | FileCheck %s --check-prefixes=CHECK,ARM %}
+// P04.13: `-opt=N` and `-pipeline=fastisel` pick the pipeline of gopp build and
+// every one gives a working program with the same output. (The whole run
+// corpus at every setting is run/core-opt-matrix*.test.) The hidden -isel flag
+// forces the arm64 selector away from the opt-0 choice, GlobalISel, to
+// FastISel, for measuring (ADR-0028 addendum: not the default because of an
+// LLVM FastISel bug with narrow signed arguments, which this program has
+// none of). The first RUN line is the default pipeline through the fast
+// runner (`gopp test-run` compiles at opt 0, as `gopp build` does without
+// -opt); the flags are `gopp build`'s, so those builds are real binaries.
+package main
+
+//go:noinline
+func fused(x, y, z float64) float64 {
+	t := x * y
+	return t + z
+}
+
+func sum(n int32) int32 {
+	var s int32 = 2147483000
+	for i := int32(0); i < n; i++ {
+		s += i * 7
+	}
+	return s
+}
+
+func main() {
+	x, y := 1.0000000074505806, 0.9999999925494194
+	println("sum", sum(1000))
+	println("fma", fused(x, y, -1))
+}
+
+// CHECK: sum -2143987796
+// ARM: fma -5.551115e-017
+// The amd64 builds do not fuse.
+// CHECK-NOT: fma -5.551115e-017

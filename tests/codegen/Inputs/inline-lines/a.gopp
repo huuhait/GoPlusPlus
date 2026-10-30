@@ -1,0 +1,7 @@
+package main
+
+var g = 5
+
+func main() {
+	println(add(g, g*3))
+}

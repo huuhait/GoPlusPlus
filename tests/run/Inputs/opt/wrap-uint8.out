@@ -1,0 +1,258 @@
+count 0 70001 1
+count 1 255 2
+count 2 254 3
+count 3 253 4
+count 5 251 6
+count 7 249 8
+count 64 192 65
+count 100 156 101
+count 63 193 64
+count 127 129 128
+count 128 128 129
+count 129 127 130
+count 253 3 254
+count 254 2 255
+count 255 1 70001
+step 255 255 255
+chk 0 true true true true false true false true false
+chk2 0 0 false false
+chk2 0 1 false false
+chk2 0 2 false false
+chk2 0 3 false false
+chk2 0 5 false false
+chk2 0 7 false false
+chk2 0 64 false false
+chk2 0 100 false false
+chk2 0 63 false false
+chk2 0 127 false false
+chk2 0 128 false false
+chk2 0 129 false false
+chk2 0 253 false false
+chk2 0 254 false false
+chk2 0 255 false false
+chk 1 true true false true true true true true true
+chk2 1 0 false false
+chk2 1 1 false true
+chk2 1 2 false false
+chk2 1 3 false false
+chk2 1 5 false false
+chk2 1 7 false false
+chk2 1 64 false false
+chk2 1 100 false false
+chk2 1 63 false false
+chk2 1 127 false false
+chk2 1 128 false false
+chk2 1 129 false false
+chk2 1 253 false false
+chk2 1 254 false false
+chk2 1 255 true false
+chk 2 true true false true true true true true true
+chk2 2 0 false false
+chk2 2 1 false true
+chk2 2 2 false true
+chk2 2 3 false false
+chk2 2 5 false false
+chk2 2 7 false false
+chk2 2 64 false false
+chk2 2 100 false false
+chk2 2 63 false false
+chk2 2 127 false false
+chk2 2 128 false false
+chk2 2 129 false false
+chk2 2 253 false false
+chk2 2 254 true false
+chk2 2 255 true false
+chk 3 true true false true true true true true true
+chk2 3 0 false false
+chk2 3 1 false true
+chk2 3 2 false true
+chk2 3 3 false true
+chk2 3 5 false false
+chk2 3 7 false false
+chk2 3 64 false false
+chk2 3 100 false false
+chk2 3 63 false false
+chk2 3 127 false false
+chk2 3 128 false false
+chk2 3 129 false false
+chk2 3 253 true false
+chk2 3 254 true false
+chk2 3 255 true false
+chk 5 true true false true true true true true true
+chk2 5 0 false false
+chk2 5 1 false true
+chk2 5 2 false true
+chk2 5 3 false true
+chk2 5 5 false true
+chk2 5 7 false false
+chk2 5 64 false false
+chk2 5 100 false false
+chk2 5 63 false false
+chk2 5 127 false false
+chk2 5 128 false false
+chk2 5 129 false false
+chk2 5 253 true false
+chk2 5 254 true false
+chk2 5 255 true false
+chk 7 true true false true true true true true true
+chk2 7 0 false false
+chk2 7 1 false true
+chk2 7 2 false true
+chk2 7 3 false true
+chk2 7 5 false true
+chk2 7 7 false true
+chk2 7 64 false false
+chk2 7 100 false false
+chk2 7 63 false false
+chk2 7 127 false false
+chk2 7 128 false false
+chk2 7 129 false false
+chk2 7 253 true false
+chk2 7 254 true false
+chk2 7 255 true false
+chk 64 true true false true true true true true true
+chk2 64 0 false false
+chk2 64 1 false true
+chk2 64 2 false true
+chk2 64 3 false true
+chk2 64 5 false true
+chk2 64 7 false true
+chk2 64 64 false true
+chk2 64 100 false false
+chk2 64 63 false true
+chk2 64 127 false false
+chk2 64 128 false false
+chk2 64 129 false false
+chk2 64 253 true false
+chk2 64 254 true false
+chk2 64 255 true false
+chk 100 true true false true false true true true true
+chk2 100 0 false false
+chk2 100 1 false true
+chk2 100 2 false true
+chk2 100 3 false true
+chk2 100 5 false true
+chk2 100 7 false true
+chk2 100 64 false true
+chk2 100 100 false true
+chk2 100 63 false true
+chk2 100 127 false false
+chk2 100 128 false false
+chk2 100 129 false false
+chk2 100 253 true false
+chk2 100 254 true false
+chk2 100 255 true false
+chk 63 true true false true true true true true true
+chk2 63 0 false false
+chk2 63 1 false true
+chk2 63 2 false true
+chk2 63 3 false true
+chk2 63 5 false true
+chk2 63 7 false true
+chk2 63 64 false false
+chk2 63 100 false false
+chk2 63 63 false true
+chk2 63 127 false false
+chk2 63 128 false false
+chk2 63 129 false false
+chk2 63 253 true false
+chk2 63 254 true false
+chk2 63 255 true false
+chk 127 true true false true false true true true true
+chk2 127 0 false false
+chk2 127 1 false true
+chk2 127 2 false true
+chk2 127 3 false true
+chk2 127 5 false true
+chk2 127 7 false true
+chk2 127 64 false true
+chk2 127 100 false true
+chk2 127 63 false true
+chk2 127 127 false true
+chk2 127 128 false false
+chk2 127 129 true false
+chk2 127 253 true false
+chk2 127 254 true false
+chk2 127 255 true false
+chk 128 true false true false false true true true false
+chk2 128 0 false false
+chk2 128 1 false true
+chk2 128 2 false true
+chk2 128 3 false true
+chk2 128 5 false true
+chk2 128 7 false true
+chk2 128 64 false true
+chk2 128 100 false true
+chk2 128 63 false true
+chk2 128 127 false true
+chk2 128 128 true true
+chk2 128 129 true false
+chk2 128 253 true false
+chk2 128 254 true false
+chk2 128 255 true false
+chk 129 true false false false true true true true false
+chk2 129 0 false false
+chk2 129 1 false true
+chk2 129 2 false true
+chk2 129 3 false true
+chk2 129 5 false true
+chk2 129 7 false true
+chk2 129 64 false true
+chk2 129 100 false true
+chk2 129 63 false true
+chk2 129 127 true true
+chk2 129 128 true true
+chk2 129 129 true true
+chk2 129 253 true false
+chk2 129 254 true false
+chk2 129 255 true false
+chk 253 true false false false false true true false false
+chk2 253 0 false false
+chk2 253 1 false true
+chk2 253 2 false true
+chk2 253 3 true true
+chk2 253 5 true true
+chk2 253 7 true true
+chk2 253 64 true true
+chk2 253 100 true true
+chk2 253 63 true true
+chk2 253 127 true true
+chk2 253 128 true true
+chk2 253 129 true true
+chk2 253 253 true true
+chk2 253 254 true false
+chk2 253 255 true false
+chk 254 true false false false false true true false false
+chk2 254 0 false false
+chk2 254 1 false true
+chk2 254 2 true true
+chk2 254 3 true true
+chk2 254 5 true true
+chk2 254 7 true true
+chk2 254 64 true true
+chk2 254 100 true true
+chk2 254 63 true true
+chk2 254 127 true true
+chk2 254 128 true true
+chk2 254 129 true true
+chk2 254 253 true true
+chk2 254 254 true true
+chk2 254 255 true false
+chk 255 false false false false false false true false false
+chk2 255 0 false false
+chk2 255 1 true true
+chk2 255 2 true true
+chk2 255 3 true true
+chk2 255 5 true true
+chk2 255 7 true true
+chk2 255 64 true true
+chk2 255 100 true true
+chk2 255 63 true true
+chk2 255 127 true true
+chk2 255 128 true true
+chk2 255 129 true true
+chk2 255 253 true true
+chk2 255 254 true true
+chk2 255 255 true true
+all 18154905551358557841
+lcg 165 52 18141339169405115481

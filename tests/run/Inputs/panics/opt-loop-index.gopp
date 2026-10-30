@@ -1,0 +1,15 @@
+package main
+
+var a [5]int
+var n = 6
+
+func main() {
+	println("before")
+	s := 0
+	for i := 0; i < n; i++ {
+		println("i", i)
+		s += a[i]
+	}
+	println(s)
+	println("not reached")
+}

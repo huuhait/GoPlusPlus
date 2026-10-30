@@ -18,6 +18,7 @@
 #include "gopp/Build/HostToolchain.h"
 #include "gopp/CodeGen/CodeGen.h"
 #include "gopp/CodeGen/Linker.h"
+#include "gopp/CodeGen/Pipeline.h"
 #include "gopp/CodeGen/Target.h"
 #include "gopp/Format/Format.h"
 #include "gopp/GIR/Lower.h"
@@ -41,6 +42,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -248,6 +250,27 @@ static cl::list<std::string>
                   cl::desc("TEST ONLY: link this object file into the "
                            "program (the C an @Extern(\"C\") test calls)"),
                   cl::value_desc("file"), cl::sub(BuildCmd));
+static cl::opt<std::string>
+    BuildOpt("opt",
+             cl::desc("Optimization level, which picks the codegen pipeline "
+                      "(D6.6): 0 (default; O0 code generation and a small "
+                      "IR pass set), 1, 2, 3, s or z"),
+             cl::value_desc("level"), cl::init("0"), cl::sub(BuildCmd));
+static cl::opt<std::string> BuildPipeline(
+    "pipeline",
+    cl::desc("fastisel: plain O0 with FastISel and no GIR or IR pass (the "
+             "measuring baseline of D6.8); default: the pipeline -opt picks"),
+    cl::value_desc("name"), cl::init("default"), cl::sub(BuildCmd));
+static cl::opt<std::string>
+    BuildISel("isel", cl::Hidden,
+              cl::desc("MEASURING: force the instruction selector of O0 code "
+                       "generation: fastisel, globalisel or default"),
+              cl::init("default"), cl::sub(BuildCmd));
+static cl::opt<bool>
+    BuildTimes("pipeline-times", cl::Hidden,
+               cl::desc("MEASURING: print each stage as name=wall/cpu "
+                        "seconds to standard error"),
+               cl::sub(BuildCmd));
 static cl::opt<bool> BuildNoDebug("no-debug", cl::desc("No DWARF line tables"),
                                   cl::sub(BuildCmd));
 static cl::opt<bool> BuildNoLocs("gir-no-locs",
@@ -618,21 +641,55 @@ static int reportCodegen(gopp::SourceManager &SM,
 /// `gopp build` from GIR on: LLVM IR, assembly, an object, an executable.
 static int codegenAndLink(Emit What, gopp::SourceManager &SM,
                           gopp::DiagnosticsEngine &Diags,
-                          const gopp::gir::Module &M) {
+                          gopp::gir::Module &M) {
   Expected<gopp::TargetSpec> T = gopp::parseTarget(BuildTarget);
   if (!T)
     return reportCodegen(SM, Diags, T.takeError());
+  if (BuildPipeline != "default" && BuildPipeline != "fastisel") {
+    errs() << "gopp: error: build: unknown -pipeline '" << BuildPipeline
+           << "' (use fastisel)\n";
+    return 1;
+  }
+  gopp::PipelineRequest Req;
+  Req.Opt = BuildOpt;
+  Req.Baseline = BuildPipeline == "fastisel";
+  Req.Selector = BuildISel;
+  Expected<gopp::PipelineSpec> Spec = gopp::selectPipeline(Req, *T);
+  if (!Spec)
+    return reportCodegen(SM, Diags, Spec.takeError());
   Expected<std::unique_ptr<llvm::TargetMachine>> TM =
-      gopp::createTargetMachine(*T);
+      gopp::createTargetMachine(*T, *Spec);
   if (!TM)
     return reportCodegen(SM, Diags, TM.takeError());
+  gopp::PipelineTimes Times;
+  // Prints the stage times of this build when it ends, however it ends.
+  struct PrintTimes {
+    const gopp::PipelineSpec &Spec;
+    gopp::PipelineTimes &T;
+    ~PrintTimes() {
+      if (!BuildTimes)
+        return;
+      errs() << "gopp: pipeline " << Spec.Name << ":";
+      for (const auto &S : T.Stages)
+        errs() << ' ' << S.Name << '=' << llvm::format("%.4f", S.Seconds) << '/'
+               << llvm::format("%.4f", S.CpuSeconds);
+      errs() << '\n';
+    }
+  } Report{*Spec, Times};
+  auto Timed = [&](const char *Name, auto &&Fn) {
+    gopp::StageTimer T(Name, &Times);
+    return Fn();
+  };
+  gopp::runGIRPasses(M, *Spec, &Times);
   llvm::LLVMContext LCtx;
   gopp::LowerToLLVMOptions LO;
   LO.DebugInfo = !BuildNoDebug;
   Expected<std::unique_ptr<llvm::Module>> LM =
-      gopp::lowerToLLVM(LCtx, M, **TM, LO);
+      Timed("lower", [&] { return gopp::lowerToLLVM(LCtx, M, **TM, LO); });
   if (!LM)
     return reportCodegen(SM, Diags, LM.takeError());
+  if (llvm::Error E = gopp::runIRPasses(**LM, **TM, *Spec, &Times))
+    return reportCodegen(SM, Diags, std::move(E));
   if (What == Emit::LLVM) {
     std::string Text;
     raw_string_ostream OS(Text);
@@ -642,7 +699,8 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
   if (What == Emit::Asm) {
     std::string Text;
     raw_string_ostream OS(Text);
-    if (llvm::Error E = gopp::emitAssembly(**LM, **TM, OS))
+    if (llvm::Error E = Timed(
+            "codegen", [&] { return gopp::emitAssembly(**LM, **TM, OS); }))
       return reportCodegen(SM, Diags, std::move(E));
     return writeOutput(BuildOutput, Text) ? 0 : 1;
   }
@@ -653,7 +711,8 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
   if (What == Emit::Obj) {
     std::string Out =
         BuildOutput.empty() ? Stem + ".o" : BuildOutput.getValue();
-    if (llvm::Error E = gopp::emitObject(**LM, **TM, Out))
+    if (llvm::Error E =
+            Timed("codegen", [&] { return gopp::emitObject(**LM, **TM, Out); }))
       return reportCodegen(SM, Diags, std::move(E));
     return 0;
   }
@@ -666,7 +725,8 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
   if (std::error_code EC = llvm::sys::fs::createTemporaryFile("gopp", "o", Obj))
     return reportCodegen(SM, Diags, llvm::errorCodeToError(EC));
   llvm::FileRemover Remove(Obj);
-  if (llvm::Error E = gopp::emitObject(**LM, **TM, Obj))
+  if (llvm::Error E =
+          Timed("codegen", [&] { return gopp::emitObject(**LM, **TM, Obj); }))
     return reportCodegen(SM, Diags, std::move(E));
   std::vector<std::string> Objects = {std::string(Obj)};
   for (const std::string &O : BuildLinkObjs)

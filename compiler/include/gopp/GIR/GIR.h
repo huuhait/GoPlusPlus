@@ -196,6 +196,10 @@ struct Statement {
   Rvalue RV;
   LocalId L = NoId;
   Span Loc;
+  /// A copy made by GIR inlining (Inline.h) for a parameter or a result: the
+  /// code generator's FMA matcher does not look through it, so inlining a
+  /// call never fuses a product with a sum that the call kept apart.
+  bool Boundary = false;
 };
 
 //===----------------------------------------------------------------------===//

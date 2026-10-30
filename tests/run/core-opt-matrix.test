@@ -1,0 +1,16 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 core-maps opt/memory panics/opt-index-loop
+// P04.13 (D4.8): the pipeline decides speed, never what a program does. A
+// representative set of the run corpus is built at every `opt` level and with
+// -pipeline=fastisel on the host, and every build must give the baseline's exit
+// status, standard output and standard error, and Go's output where it is
+// saved. The arm64 half is core-opt-matrix-arm64.test (FMA across statements
+// included: core-fma-vars on arm64 is gc's, at every level), a C ABI program
+// core-opt-matrix-cabi.test (each test stays under the 2 s limit of the normal
+// suite). The whole corpus is core-opt-matrix.long.test and
+// core-opt-matrix-arm64.long.test; the programs built to provoke an optimizer
+// are Inputs/opt (gen-opt.py, gen-shape.py), the checks that must stay
+// Inputs/panics/opt-*; an allocation that must fail at every level is
+// opt-oom.test (Inputs/oom). Strings, slices and maps (P04.05) are in the set
+// too. The set is small (21 builds, 4 at a time) so that the test stays well
+// under the 2 s limit on a loaded machine.

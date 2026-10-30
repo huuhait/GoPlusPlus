@@ -1,0 +1,90 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-fma-runtime.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-fma-runtime.out %}
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib -opt=2 %s -o %t.arm64o2 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64o2 %S/golden/core-fma-runtime.out %}
+// P04.13 with P04.05: a float product kept in a variable is an SSA value in
+// gc, so a call of the runtime between the product and the sum (a string
+// concatenation, a map insert, make and append, a string index check)
+// does not keep gc from fusing them on arm64, and Go++ fuses them too, at
+// every `opt` (the matrix builds this test at all of them). A product added
+// to a map entry or a slice element is a temporary read once and fuses; a
+// variable that the loop writes again is a phi at the sum (loopPhi), and
+// neither fuses it. The expected
+// output is gc's on each target (core-fma-runtime.arm64.out from Go's arm64
+// build under QEMU: Inputs/regen-goldens.py).
+package main
+
+//go:noinline
+func acrossConcat(x, y, z float64, s string) (float64, string) {
+	t := x * y
+	u := s + "!"
+	return t + z, u
+}
+
+//go:noinline
+func acrossMap(x, y, z float64, m map[string]float64) float64 {
+	t := x * y
+	m["a"] = 1
+	r := t + z
+	m["b"] = r
+	return r
+}
+
+//go:noinline
+func mapElem(x, y float64, m map[string]float64) float64 {
+	m["k"] = x*y + m["k"]
+	return m["k"]
+}
+
+//go:noinline
+func acrossAppend(x, y, z float64, n int) ([]float64, float64) {
+	t := x * y
+	a := make([]float64, n)
+	a = append(a, t)
+	return a, t + z
+}
+
+//go:noinline
+func sliceElem(x, y float64, a []float64, i int) float64 {
+	a[i] = x*y + a[i]
+	return a[i]
+}
+
+//go:noinline
+func loopPhi(x, y float64, a []float64) float64 {
+	t := x * y
+	r := 0.0
+	for i, v := range a {
+		if i == 0 {
+			r = t + v
+		}
+		t = v * x
+	}
+	return r
+}
+
+//go:noinline
+func acrossIndex(x, y float64, s string) float64 {
+	t := x * y
+	z := -float64(s[0] - 96)
+	return t + z
+}
+
+func main() {
+	x := 1.0000000074505806
+	y := 0.9999999925494194
+	r, s := acrossConcat(x, y, -1, "a")
+	println(r, s)
+	m := map[string]float64{}
+	println(acrossMap(x, y, -1, m))
+	m["k"] = -1
+	println(mapElem(x, y, m))
+	a, r := acrossAppend(x, y, -1, 1)
+	a[0] = -1
+	println(len(a), r)
+	println(sliceElem(x, y, a, 0))
+	println(loopPhi(x, y, []float64{-1, -1, y, -1}))
+	println(acrossIndex(x, y, "a"))
+}

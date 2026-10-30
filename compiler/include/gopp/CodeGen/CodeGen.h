@@ -25,6 +25,7 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/Error.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -38,6 +39,15 @@ class raw_pwrite_stream;
 
 namespace gopp {
 
+/// The work of the FMA analysis (test-only, manager decision M8 of P04.04):
+/// the near-linear tests count these steps, never time.
+struct LowerWorkCounts {
+  uint64_t FmaDomSteps = 0;  // the dominator tree and its scoped walk
+  uint64_t FmaSccSteps = 0;  // the strongly connected components
+  uint64_t FmaDefSteps = 0;  // the index of the writes
+  uint64_t FmaWalkSteps = 0; // the walks that tell which writes lie between
+};
+
 struct LowerToLLVMOptions {
   /// DWARF line tables (D4.7). Variables and types come with P04.12.
   bool DebugInfo = true;
@@ -48,6 +58,8 @@ struct LowerToLLVMOptions {
   /// layout is checked against Clang's, the signatures classified and the
   /// GIR types mapped to Clang, the IR arguments of the calls of C.
   uint64_t *CABIWork = nullptr;
+  /// If set, the lowering adds its work to it (tests only).
+  LowerWorkCounts *Counts = nullptr;
 };
 
 /// Lowers a GIR module. The result has the target's triple and data layout.

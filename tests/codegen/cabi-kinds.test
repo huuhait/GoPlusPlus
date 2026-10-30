@@ -1,7 +1,7 @@
 // RUN: %gopp build -target=linux/amd64 -emit=llvm %s | FileCheck --check-prefixes=BOTH,AMD %s
 // RUN: %gopp build -target=linux/arm64 -emit=llvm %s | FileCheck --check-prefixes=BOTH,ARM %s
 // RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck --check-prefix=GIR %s
-// RUN: %gopp build -target=linux/amd64 -emit=llvm -no-debug %s | FileCheck --check-prefix=ZERO %s
+// RUN: %gopp build -target=linux/amd64 -emit=llvm -no-debug -pipeline=fastisel %s | FileCheck --check-prefix=ZERO %s
 // P04.11 (docs/design/c-abi.md): a struct, an Option[*T] and an empty struct cross
 // the C ABI as Clang's classification says, on both targets. Every ABIArgInfo
 // kind a Go++ target can produce is here: Direct (coerced to an integer, a
@@ -108,7 +108,8 @@ func main() {
 // A 12-byte struct travels as { i64, i32 }, whose 16 bytes reach past the
 // value: it is copied into a zeroed scratch first, so no byte past it is read
 // and C sees zeros there; the result comes back through a zeroed scratch too,
-// and only its 12 bytes are kept.
+// and only its 12 bytes are kept. This is the IR as lowered
+// (-pipeline=fastisel, P04.13): at opt 0 SROA folds the scratch away.
 // ZERO: call void @llvm.memset.p0.i64(ptr align 8 %[[IN:coerce[0-9]*]], i8 0, i64 16, i1 false)
 // ZERO-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[IN]], ptr align 8 %{{[a-z0-9]+}}, i64 12, i1 false)
 // ZERO: call { i64, i32 } @three(i64 %{{[0-9]+}}, i32 %{{[0-9]+}})

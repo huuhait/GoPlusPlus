@@ -1,0 +1,14 @@
+package main
+
+var a [4]int32
+var j = 4
+
+func main() {
+	println("before")
+	for i := 0; i < 4; i++ {
+		a[i] = int32(i)
+		println(a[i])
+	}
+	println(a[j])
+	println("not reached")
+}

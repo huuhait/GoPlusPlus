@@ -6,6 +6,7 @@ add_gopp_library(GIR
   GIR.cpp
   Lower.cpp
   Glue.cpp
+  Inline.cpp
   LowerExpr.cpp
   LowerStmt.cpp
   LowerStr.cpp

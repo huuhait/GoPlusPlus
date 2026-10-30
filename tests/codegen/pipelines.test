@@ -1,0 +1,67 @@
+// RUN: %gopp build -emit=llvm -pipeline=fastisel %s | FileCheck %s --check-prefix=BASE
+// RUN: %gopp build -emit=llvm %s | FileCheck %s --check-prefix=O0
+// RUN: %gopp build -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=O0
+// RUN: %gopp build -emit=llvm -opt=1 %s | FileCheck %s --check-prefix=O1
+// RUN: %gopp build -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=O1
+// RUN: %gopp build -emit=llvm -opt=3 %s | FileCheck %s --check-prefix=O1
+// RUN: %gopp build -emit=llvm -opt=s %s | FileCheck %s --check-prefixes=O1,OS
+// RUN: %gopp build -emit=llvm -opt=z %s | FileCheck %s --check-prefixes=O1,OZ
+// RUN: not %gopp build -emit=llvm -opt=9 %s 2>&1 | FileCheck %s --check-prefix=BADOPT
+// RUN: not %gopp build -emit=llvm -opt=2 -pipeline=fastisel %s 2>&1 | FileCheck %s --check-prefix=CONFLICT
+// RUN: not %gopp build -emit=llvm -pipeline=slow %s 2>&1 | FileCheck %s --check-prefix=BADPIPE
+// RUN: not %gopp build -emit=llvm -isel=dag %s 2>&1 | FileCheck %s --check-prefix=BADISEL
+// RUN: %gopp build -emit=llvm -pipeline-times %s 2>&1 >/dev/null | FileCheck %s --check-prefix=TIMES
+// RUN: %gopp build -emit=llvm -pipeline=fastisel -pipeline-times %s 2>&1 >/dev/null | FileCheck %s --check-prefix=TIMESBASE
+// P04.13, D4.8, D6.6: `-opt=N` picks the codegen pipeline, `-pipeline=fastisel`
+// is the plain O0 baseline. -emit=llvm shows the IR the back end gets.
+//
+// The program: `inc` is a trivial function (one block, no call, no check), so
+// the GIR inliner of the opt-0 pipeline inlines it; `sum` has a loop whose
+// locals SROA promotes to registers.
+package main
+
+func inc(a int) int { return a + 1 }
+
+func sum(n int) int {
+	s := 0
+	for i := 0; i < n; i++ {
+		s += inc(i)
+	}
+	return s
+}
+
+func main() { println(sum(10)) }
+
+// The baseline: no pass has run. Locals live in memory, inc is called.
+// BASE-LABEL: define i64 @_GPF4mainE3sum(
+// BASE: alloca
+// BASE: call i64 @_GPF4mainE3inc(
+// BASE-NOT: phi
+
+// opt 0: GIR inlining has removed the call and SROA has made the locals
+// registers (phi nodes, no alloca).
+// O0-LABEL: define i64 @_GPF4mainE3sum(
+// O0-NOT: alloca
+// O0-NOT: call i64 @_GPF4mainE3inc
+// O0: phi i64
+
+// opt 1 and up run LLVM's pipeline (at 2 and above it may even replace the
+// loop by a closed form, so only the absence of memory and calls is checked).
+// O1-LABEL: define i64 @_GPF4mainE3sum(
+// O1-NOT: alloca
+// O1-NOT: call i64 @_GPF4mainE3inc
+// O1: ret i64
+
+// opt s and z mark every function.
+// OS: optsize
+// OZ: minsize
+
+// BADOPT: unknown opt level '9' (use 0, 1, 2, 3, s or z)
+// CONFLICT: -pipeline=fastisel is plain O0 code generation and cannot be combined with -opt=2
+// BADPIPE: unknown -pipeline 'slow' (use fastisel)
+// BADISEL: unknown selector 'dag'
+
+// The stage times: opt 0 runs the GIR pass and the IR passes, the baseline
+// neither.
+// TIMES: gopp: pipeline opt0: gir-inline={{[0-9.]+}}/{{[0-9.]+}} lower={{[0-9.]+}}/{{[0-9.]+}} ir-passes=
+// TIMESBASE: gopp: pipeline fastisel: lower={{[0-9.]+}}/{{[0-9.]+}}{{$}}

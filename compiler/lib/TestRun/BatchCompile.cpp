@@ -11,6 +11,7 @@
 #include "gopp/Basic/Diagnostics.h"
 #include "gopp/Basic/SourceManager.h"
 #include "gopp/CodeGen/CodeGen.h"
+#include "gopp/CodeGen/Pipeline.h"
 #include "gopp/CodeGen/Target.h"
 #include "gopp/GIR/Lower.h"
 #include "gopp/Sema/ExampleMocks.h"
@@ -109,10 +110,15 @@ CompiledProgram gopp::testrun::compileProgram(const JobSpec &Job,
   if (!M)
     return fail(W, Text.empty() ? "lowering to GIR failed\n" : Text);
 
+  // The pipeline of `gopp build` without -opt (P04.13): opt 0.
+  llvm::Expected<PipelineSpec> Spec = selectPipeline(PipelineRequest(), *T);
+  if (!Spec)
+    return fail(W, toString(Spec.takeError()) + "\n");
   llvm::Expected<std::unique_ptr<llvm::TargetMachine>> TM =
-      createTargetMachine(*T);
+      createTargetMachine(*T, *Spec);
   if (!TM)
     return fail(W, toString(TM.takeError()) + "\n");
+  runGIRPasses(*M, *Spec);
   llvm::LLVMContext LCtx;
   LowerToLLVMOptions LLO;
   LLO.DebugInfo = Opts.DebugInfo;
@@ -120,6 +126,8 @@ CompiledProgram gopp::testrun::compileProgram(const JobSpec &Job,
       lowerToLLVM(LCtx, *M, **TM, LLO);
   if (!LM)
     return fail(W, toString(LM.takeError()) + "\n");
+  if (llvm::Error E = runIRPasses(**LM, **TM, *Spec))
+    return fail(W, toString(std::move(E)) + "\n");
   CompiledProgram C;
   C.ObjectPath =
       (llvm::Twine(Opts.WorkDir) + "/" + llvm::Twine(Serial) + ".o").str();

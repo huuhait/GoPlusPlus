@@ -1,0 +1,23 @@
+// RUN: %gopp build -emit=llvm -opt=0 %S/Inputs/inline-lines/a.gopp %S/Inputs/inline-lines/b.gopp -o %t.ll
+// RUN: %python %S/Inputs/check-di-lines.py %t.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6 b.gopp:17 b.gopp:18
+// RUN: FileCheck %s --check-prefix=SITE < %t.ll
+// RUN: %gopp build -emit=llvm -pipeline=fastisel %S/Inputs/inline-lines/a.gopp %S/Inputs/inline-lines/b.gopp -o %t.base.ll
+// RUN: %python %S/Inputs/check-di-lines.py %t.base.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6 b.gopp:17 b.gopp:18
+// RUN: %gopp build -emit=llvm -opt=2 %S/Inputs/inline-lines/a.gopp %S/Inputs/inline-lines/b.gopp -o %t.o2.ll
+// RUN: %python %S/Inputs/check-di-lines.py %t.o2.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6
+// RUN: not %python %S/Inputs/check-di-lines.py %S/Inputs/inline-lines/bad.ll a.gopp=%S/Inputs/inline-lines/a.gopp | FileCheck %s --check-prefix=BAD
+// P04.13: GIR inlining puts a callee of another file into main. The inlined
+// statements have the call site's line (a.gopp:6); the callee's own function
+// keeps its lines of b.gopp (17, 18). No location in a function of a.gopp
+// may name a line past the end of a.gopp (7 lines): the line table of a
+// function has the lines of its own file only. The last RUN proves the
+// check itself finds such a location (the input has line 17 in main's
+// scope, as before the fix). Showing the callee's lines inside the inlined
+// call is P04.12 (`inlinedAt` scopes).
+//
+// The inlined `x + y` (g + g*3, folded to a shift) is at the call site.
+// SITE-LABEL: define void @_GPF4mainE4main()
+// SITE: shl i64 {{.*}}, !dbg ![[SITE:[0-9]+]]
+// SITE: ![[SITE]] = !DILocation(line: 6,
+//
+// BAD: FAIL a.gopp: line 17, but the file has 7

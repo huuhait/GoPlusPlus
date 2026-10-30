@@ -12,7 +12,8 @@
 // under QEMU). The product and the sum need not be in one block: a call, an
 // index (its bounds check) or a division (its zero check) between them ends
 // a GIR block, and gc fuses all the same (R1), as long as the product is
-// read once and written once (a named variable is not fused yet: P04.13).
+// read once and written once; a product kept in a named variable is
+// core-fma-vars.test (P04.13).
 // Both sides: crossBlock is fused, and the forms next to it that gc does not
 // fuse (a conversion, a product that a branch may replace) stay unfused.
 package main
@@ -86,8 +87,8 @@ func dot(a, b [2]float64) float64 {
 
 // notFused: forms gc does not fuse. A conversion rounds the product; a
 // product a branch may replace is a phi, not a product. (A named product,
-// `t := x*y; t + z`, IS fused by gc, also when it is read twice; gopp fuses
-// it with P04.13.)
+// `t := x*y; t + z`, IS fused by gc, also when it is read twice, and gopp fuses
+// it: core-fma-vars.test.)
 //
 //go:noinline
 func notFused(x, y float64, arr [3]float64, i int, c bool) [4]float64 {

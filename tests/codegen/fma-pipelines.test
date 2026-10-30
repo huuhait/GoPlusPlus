@@ -1,0 +1,61 @@
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -pipeline=fastisel %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -opt=0 %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -opt=1 %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -opt=2 %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -opt=3 %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -opt=s %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/arm64 -opt=z %s | FileCheck %s --check-prefix=ARM
+// RUN: %gopp build -emit=llvm -target=linux/amd64 -pipeline=fastisel %s | FileCheck %s --check-prefix=AMD
+// RUN: %gopp build -emit=llvm -target=linux/amd64 -opt=0 %s | FileCheck %s --check-prefix=AMD
+// RUN: %gopp build -emit=llvm -target=linux/amd64 -opt=3 %s | FileCheck %s --check-prefix=AMD
+// RUN: %gopp build -emit=asm -target=linux/arm64 -pipeline=fastisel %s | FileCheck %s --check-prefix=ASM
+// RUN: %gopp build -emit=asm -target=linux/arm64 -opt=0 %s | FileCheck %s --check-prefix=ASM
+// RUN: %gopp build -emit=asm -target=linux/arm64 -opt=1 %s | FileCheck %s --check-prefix=ASM
+// RUN: %gopp build -emit=asm -target=linux/arm64 -opt=3 %s | FileCheck %s --check-prefix=ASM
+// P04.13, D4.12: FMA contraction is decided in one place, the code generator,
+// and is the same at every `opt` and with -pipeline=fastisel. On arm64
+// `t := x*y; r := t + z` is fused, `t := float64(x*y); r := t + z` is not; on
+// amd64 nothing is. No float instruction carries `contract`, so no LLVM pass
+// can fuse anything else (a product read through a call that was inlined, a
+// variable that two branches write). The run test run/core-fma-vars.test
+// compares the values with Go's, run/core-opt-matrix*.test runs it at every opt.
+package main
+
+func fused(x, y, z float64) float64 {
+	t := x * y
+	return t + z
+}
+
+func rounded(x, y, z float64) float64 {
+	t := float64(x * y)
+	return t + z
+}
+
+func mul(a, b float64) float64 { return a * b }
+
+func viaCall(x, y, z float64) float64 { return mul(x, y) + z }
+
+func main() { println(fused(1, 2, 3), rounded(1, 2, 3), viaCall(1, 2, 3)) }
+
+// ARM-LABEL: define double @_GPF4mainE5fused(
+// ARM: call double @llvm.fma.f64(
+// ARM-LABEL: define double @_GPF4mainE7rounded(
+// ARM-NOT: call double @llvm.fma
+// ARM: fmul double
+// ARM: fadd double
+// ARM-LABEL: define double @_GPF4mainE7viaCall(
+// ARM-NOT: call double @llvm.fma
+// ARM-NOT: contract
+// ARM-NOT: arithmetic.fence
+
+// AMD-NOT: call double @llvm.fma
+// AMD-NOT: contract
+
+// ASM-LABEL: _GPF4mainE5fused:
+// ASM: fmadd
+// ASM-LABEL: _GPF4mainE7rounded:
+// ASM-NOT: fmadd
+// ASM: fmul
+// ASM: fadd
+// ASM-LABEL: _GPF4mainE7viaCall:
+// ASM-NOT: fmadd

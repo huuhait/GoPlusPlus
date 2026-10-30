@@ -1,4 +1,9 @@
-// RUN: %gopp build -emit=llvm %s | FileCheck %s
+// RUN: %gopp build -emit=llvm -pipeline=fastisel %s | FileCheck %s
+// RUN: %gopp build -emit=llvm %s | FileCheck %s --check-prefix=OPT0
+// P04.13: -emit=llvm prints the IR the back end gets. By default that is the
+// IR after the curated opt-0 passes (second RUN line: SROA has put the string
+// constants straight into the call). With -pipeline=fastisel it is the IR as
+// lowered, no pass having run (first RUN line, the checks below).
 // P04.02: the LLVM IR of the hello subset. It carries the target's triple
 // and its pinned data layout (P04.03), line tables (D4.7), the external C
 // function as a declaration, and the Go++ function as a definition.
@@ -27,3 +32,9 @@ func main() {
 // CHECK: attributes #[[UW]] = { uwtable }
 // CHECK: !llvm.dbg.cu
 // CHECK: !{i32 {{[0-9]+}}, !"Dwarf Version", i32 5}
+
+// OPT0-NOT: alloca
+// OPT0: define void @_GPF4mainE4main() #[[UW:[0-9]+]] !dbg
+// OPT0-NEXT: entry:
+// OPT0-NEXT: call i64 @write(i32 1, ptr nonnull @.str.0, i64 {{[0-9]+}})
+// OPT0: ret void

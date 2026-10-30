@@ -1,0 +1,9 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/check-ir-flags.py --gopp %gopp --root %S --jobs 8 --cabi 1:30 --cabi 2:30 --cabi 101:100
+// P04.13 (D4.8): the IR of every program of the run corpus and of the C ABI
+// programs of run-opt-matrix.py's --cabi seeds (P04.11), on both targets,
+// as the code generator writes it, has no `nsw`, `nuw`, `exact`, `nneg`,
+// `disjoint`, `samesign` and no fast-math flag (`contract` included). That is
+// what lets every pipeline give Go's answer: an optimizer can use only what
+// the IR promises. unit CodeGen: Pipeline.* checks the scan itself on both
+// sides.

@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64, clang
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --no-corpus --cabi 5:4
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 4 --no-corpus --cabi 6:4 %}
+// P04.11 with P04.13 (D4.8): a generated C ABI program (Inputs/gen-cabi.py,
+// as in cabi-amd64.test and cabi-arm64.test) at every `opt` level and with
+// -pipeline=fastisel: its C half is built once by Clang and linked into every
+// configuration (-link-obj), and every build prints what the generator
+// expects, byte for byte, and exits with 0. More seeds:
+// core-opt-matrix.long.test and core-opt-matrix-arm64.long.test.

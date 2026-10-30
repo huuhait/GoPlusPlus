@@ -19,6 +19,7 @@
 
 #include "gopp/Basic/Diagnostics.h"
 #include "gopp/Basic/NewStack.h"
+#include "gopp/Basic/WorkCount.h"
 #include "gopp/CodeGen/CABILower.h"
 #include "gopp/CodeGen/CodeGen.h"
 #include "gopp/GIR/GIR.h"
@@ -28,6 +29,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DIBuilder.h"
@@ -37,9 +40,12 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Target/TargetMachine.h"
 
+#include <algorithm>
+#include <cassert>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -134,44 +140,186 @@ private:
   llvm::Constant *memConstant(const G::Constant &K);
 
   /// FMA contraction (D4.12): gc fuses a float x*y with the + or - that
-  /// reads it on arm64, never on amd64. On arm64 every float operation
-  /// carries `contract`, and an explicit float conversion is an
-  /// `llvm.arithmetic.fence` (the Go spec: a conversion rounds). The opt-0
-  /// pipeline has no combiner that acts on `contract`, so the code generator
-  /// contracts what the flags allow itself, as gc's SSA rewrite does
-  /// (`FADDD a (FMULD x y)` with a single-use product): a product held in a
-  /// temporary that is read once, by a + or - in the same block or in a block
-  /// the product's block dominates, becomes `llvm.fma`, the right operand
-  /// first when both are products, as gc's rules choose. A call, a bounds
-  /// check or a division check ends a block, so `x*y + f()` and
-  /// `a[i]*b[i] + c[i]` fuse across blocks. Across blocks the temporary must
-  /// also be written once in the whole function (a write in between could
-  /// not be seen), and the factors are values of the product's block, which
-  /// dominates the use, so they are valid there. A named variable is never a
-  /// product (`t := x*y; t+z` waits for P04.13), nor a temporary that is
-  /// assigned again before the read (the entry is dropped).
-  /// Products maps such a temporary to its two factors and its block; Uses
-  /// counts the reads and Defs the writes of each local.
-  bool ContractFP = false;
+  /// reads it on arm64, never on amd64. The code generator is the only place
+  /// that decides: it writes `llvm.fma` where gc fuses, and no float
+  /// instruction carries `contract` or any other fast-math flag, so no LLVM
+  /// pass and no selector can fuse anything else, and the result of a
+  /// program is the same at every `opt` level and with every pipeline
+  /// (docs/design/pipelines.md section 4). A float conversion needs no fence
+  /// for the same reason: a product that a conversion rounds is not a product
+  /// to the matcher below.
+  ///
+  /// What is matched follows gc's SSA rewrite `FADDD a (FMULD x y)`: a float
+  /// *product* held in a local that a + or - reads. A product is a float `*`,
+  /// the negation of a product (gc: FNEGD (FMULD x y) => FNMULD x y, exactly
+  /// -(x*y)) or a copy of one (`t := x*y` is `tmp = x*y; t = copy tmp` in
+  /// GIR, the same SSA value in gc), written to a whole local that is a
+  /// temporary read once (the value of a sub-expression), or a variable,
+  /// parameter or result whose address is never taken (gc keeps it in SSA
+  /// values); a variable may be read any number of times, and each + or -
+  /// fuses (gc keeps the product for its other readers). The copies that GIR
+  /// inlining makes for a parameter or a result are not products
+  /// (Statement::Boundary), and a call's result never is, so inlining (GIR
+  /// inlining in the `opt` pipelines, LLVM's above `opt 0`) cannot create a
+  /// fusion. Both operands products: the right one first, as gc's rules try
+  /// them.
+  ///
+  /// Which write a read sees, as gc's SSA would: the blocks of a function
+  /// with a float product are lowered in the preorder of the dominator tree,
+  /// and Products is scoped by that tree (ProductLog undoes a block's
+  /// changes when the walk leaves its subtree). So at a read, Products holds
+  /// the last product write of a local in the reading block or in a block
+  /// that dominates it, and nothing that a write in between replaced or
+  /// ended. Another write in a block on a path from the product's block to
+  /// the reader, which dominates neither, is excluded by unwrittenBetween
+  /// (a phi in gc). The factors are values of the product's block, which
+  /// dominates the read, so they are valid there. A call, a bounds check or
+  /// a division check ends a block, so `x*y + f()` and `a[i]*b[i] + c[i]`
+  /// fuse across blocks.
+  ///
+  /// Before its ARM64 rules, gc rewrites with its generic rules (generic.rules
+  /// "floating point optimizations") on what its SSA knows to be constant, and
+  /// some of them change whether there is a product: `x*1` is x, `x*-1` is
+  /// `-x`, `x*2` is `x+x` (no product, but a sum that may fuse a product x
+  /// holds), `x/c` with an exact reciprocal (a power of two) is `x*(1/c)` (a
+  /// product), and an operation on constants is folded. mulShape decides
+  /// these the same way. The constants are the GIR constants and the values
+  /// of locals (Products holds them too, scoped the same way): a float local
+  /// whose one reaching write is a constant, a copy of one, a negation, sum,
+  /// difference, product or quotient of constants that is not NaN, or a
+  /// conversion of one between float types or from a signed integer local
+  /// written with a constant. Not followed (gc's phielim and sccp do): a
+  /// local written with the same constant on several paths (a phi of equal
+  /// constants), integer copies and arithmetic, and unsigned conversions.
+  bool FuseFMA = false;
+  /// Lowering in dominator order with Products scoped (FuseFMA and the
+  /// function has a float * or /).
+  bool Scoped = false;
   struct ProductInfo {
     llvm::Value *X, *Y;
-    G::BlockId Block;
+    G::BlockId Block; // where the local was written
+    /// Not a product but a known constant: a float (KF) or a signed integer.
+    enum : uint8_t { Product, FloatConst, IntConst } Kind = Product;
+    double KF = 0;
+    int64_t KI = 0;
   };
   llvm::DenseMap<G::LocalId, ProductInfo> Products;
-  llvm::SmallVector<unsigned, 32> Uses, Defs;
+  /// The old value of every change of Products, and per open block of the
+  /// dominator-tree walk where its changes start in the log.
+  std::vector<std::pair<G::LocalId, std::optional<ProductInfo>>> ProductLog;
+  std::vector<std::pair<G::BlockId, size_t>> ProductScopes;
+  /// Sets (or with nullopt ends) the product of L, in the open block.
+  void setProduct(G::LocalId L, std::optional<ProductInfo> P);
+  /// Closes the blocks of the walk that do not dominate B, then opens B.
+  void enterProductScope(G::BlockId B);
+  /// Uses counts the reads of each local, AddrTaken marks the locals whose
+  /// address is taken, DefSites lists every write (local, block).
+  llvm::SmallVector<unsigned, 32> Uses;
+  llvm::SmallVector<bool, 32> AddrTaken;
+  std::vector<std::pair<G::LocalId, G::BlockId>> DefSites;
+  /// The function has a float multiplication or division: without one
+  /// nothing fuses, and the blocks are lowered in index order.
+  bool HasFloatMul = false;
+  /// Can a product written to local L be tracked (see FuseFMA)?
+  bool trackable(G::LocalId L) const;
   G::BlockId CurBlock = 0;
-  /// The dominator tree of the blocks of the function (computed on the first
-  /// cross-block candidate): DomIn/DomOut number its depth-first walk, so
-  /// "A dominates B" is an interval test; an unreachable block has none.
+  /// The dominator tree of the blocks of the function: DomIn/DomOut number
+  /// its depth-first walk, so "A dominates B" is an interval test; an
+  /// unreachable block has none. LowerOrder is the walk's preorder, then the
+  /// unreachable blocks.
   std::vector<uint32_t> DomIn, DomOut;
+  std::vector<G::BlockId> LowerOrder;
   bool DomReady = false;
   void computeDominators(const G::Function &F);
   bool dominates(G::BlockId A, G::BlockId B);
+  /// The strongly connected components of the blocks reachable from the
+  /// entry, numbered so that every edge goes to an equal or greater number
+  /// (Topo; ~0u for a block no path from the entry reaches). InCycle: the
+  /// block's component has several blocks, or it jumps to itself.
+  std::vector<uint32_t> Topo;
+  std::vector<uint8_t> InCycle;
+  /// The successors of every block (in range ones only).
+  std::vector<std::vector<G::BlockId>> SuccOf;
+  bool TopoReady = false;
+  void computeTopo(const G::Function &F);
+  /// Per local: the Topo of every block that writes it, sorted (a block no
+  /// path reaches is left out); WritesInBlock: the writes of (local, block).
+  std::vector<std::vector<uint32_t>> WriteTopos;
+  llvm::DenseMap<uint64_t, uint32_t> WritesInBlock;
+  bool DefIndexReady = false;
+  void buildDefIndex();
+  /// Can the product that the last write of L in block Bd made be read in
+  /// block R, which Bd strictly dominates? Only if no other write of L can
+  /// run between them: such a write is in a block W with a path
+  /// Bd -> W -> R, so with Topo[Bd] <= Topo[W] <= Topo[R]. The test counts
+  /// the writes in that range of the sorted numbers (two binary searches),
+  /// minus those of Bd itself (they come before the product's write, which
+  /// is Bd's last) and of R when R is on no cycle (they come after the read;
+  /// one before it would have ended the entry).
+  ///
+  /// The count is exact when it finds nothing. Otherwise the writes may lie
+  /// on paths that never lead from Bd to R (a path back through Bd writes
+  /// the product again). Then a walk decides exactly: a write counts only if
+  /// Bd reaches it, and it reaches R, without a path through Bd. The walk
+  /// enters only blocks with Topo <= Topo[R] (no other block lies on a path
+  /// to R), so it covers the blocks between Bd and R, not the rest of the
+  /// function: N sibling loops cost N walks of one loop each. One walk serves
+  /// every read of (L, Bd) up to its bound (Tainted; a read past the bound
+  /// walks again with the larger one). All the walks of a function share a
+  /// budget linear in its size (WalkBudget); a read after it is spent counts
+  /// as written (conservative, never wrong). Only a function with very many
+  /// variables that each need a walk over one large loop spends it.
+  bool unwrittenBetween(G::LocalId L, G::BlockId Bd, G::BlockId R);
+  /// The blocks up to Topo Bound that a write of L reaches without passing
+  /// Bd, after Bd (Spent: the budget ran out, nothing is known).
+  struct TaintInfo {
+    uint32_t Bound = 0;
+    bool Spent = false;
+    llvm::DenseSet<G::BlockId> Blocks;
+  };
+  const TaintInfo &taintedBy(G::LocalId L, G::BlockId Bd, uint32_t Bound);
+  llvm::DenseMap<uint64_t, TaintInfo> Tainted;
+  /// The marks of the two walks (a block is seen when its mark is the
+  /// walk's epoch), sized once per function, so a walk costs what it visits.
+  std::vector<uint32_t> SeenReached, SeenAfter;
+  uint32_t WalkEpoch = 0;
+  uint64_t WalkBudget = 0;
+  /// The counter of LowerToLLVMOptions::Counts for one kind of work, or a
+  /// scratch one when the caller counts nothing.
+  uint64_t &workCount(uint64_t LowerWorkCounts::*Kind) {
+    return Opts.Counts ? Opts.Counts->*Kind : NoCount;
+  }
+  uint64_t NoCount = 0;
   void countUses(const G::Function &F);
   llvm::Value *contracted(const G::Rvalue &R, llvm::Value *X, llvm::Value *Y);
-  /// The factors of the product that operand O holds, if it is a single-use
-  /// product temporary that is still valid here (see Products).
+  /// The factors of the product that operand O holds, if it is a local with
+  /// a product that is still valid here (see Products).
   const ProductInfo *productOf(const G::Operand &O);
+  /// What a local operand holds here (a product or a constant), if known;
+  /// with Want, only a fact of that kind (the walk that proves it valid runs
+  /// only then, so a constant never costs a product's walk budget).
+  const ProductInfo *factOf(const G::Operand &O, int Want = -1);
+  /// The value of O if it is a constant here (a GIR constant or a local).
+  std::optional<double> floatConstOf(const G::Operand &O);
+  std::optional<int64_t> intConstOf(const G::Operand &O);
+  /// What gc's generic rules make of a float * or / (see FuseFMA).
+  struct MulShape {
+    enum Kind : uint8_t {
+      None,    // no product (a division without an exact reciprocal)
+      Folded,  // a constant, Value
+      Product, // X times Y, or with FromDiv X times the constant Factor
+      Same,    // *1: the value of X
+      Negated, // *-1: -X
+      Doubled, // *2: X+X
+    } K = None;
+    const G::Operand *X = nullptr;
+    double Value = 0, Factor = 0;
+    bool FromDiv = false;
+  };
+  MulShape mulShape(const G::Rvalue &R);
+  /// What the destination of S holds after it (V: the value stored).
+  std::optional<ProductInfo> factOfAssign(const G::Statement &S, llvm::Value *V,
+                                          G::BlockId Bi);
 
   /// Aggregates (strings, slices, arrays, tuples, structs, Options) live in
   /// memory: they are copied with memmove, zeroed with memset and built in
@@ -497,6 +645,27 @@ llvm::AllocaInst *Lowering::cScratchSlot(llvm::Type *Ty, llvm::Align A,
   return Slot;
 }
 
+/// The C functions whose built-in meaning LLVM may not use: the allocation
+/// functions. LLVM's optimizer knows them (TargetLibraryInfo, MemoryBuiltins)
+/// and above opt 0 deletes an allocation whose memory does not escape,
+/// together with the runtime's out-of-memory check, so an opt level would
+/// change whether a program fails (docs/design/pipelines.md section 1).
+/// `nobuiltin` on the declaration (clang's -fno-builtin-malloc) keeps every
+/// call, also one an inlined `gopp.mem_resize` brings into its caller. The
+/// other C functions the runtime calls keep their built-in meaning: LLVM may
+/// fold memmove, memset and memcmp (the same bytes result), and it never
+/// deletes a write or an exit.
+static bool isCAllocationFunction(llvm::StringRef Name) {
+  return llvm::StringSwitch<bool>(Name)
+      .Cases(
+          {"malloc", "calloc", "realloc", "reallocf", "reallocarray", "free"},
+          true)
+      .Cases({"aligned_alloc", "memalign", "valloc", "pvalloc",
+              "posix_memalign", "strdup", "strndup"},
+             true)
+      .Default(false);
+}
+
 llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   auto CFIt = CFuncs.find(Id);
   llvm::Function *LF = llvm::Function::Create(
@@ -509,6 +678,9 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   llvm::AttributeList AL = LF->getAttributes();
   if (CFIt != CFuncs.end())
     AL = CFIt->second.Sig.Attrs; // the C ABI's: extension, byval, sret, ...
+  if (F.CC == G::CallConv::C && F.isDeclaration() &&
+      isCAllocationFunction(F.Name))
+    AL = AL.addFnAttribute(C, llvm::Attribute::NoBuiltin);
   if (F.NoUnwind)
     AL = AL.addFnAttribute(C, llvm::Attribute::NoUnwind);
   if (F.NoReturn)
@@ -550,9 +722,14 @@ void Lowering::setLoc(const G::Span &S) {
     B.SetCurrentDebugLocation(llvm::DebugLoc());
     return;
   }
-  // Code the compiler made has no position: line 0, as in clang.
-  B.SetCurrentDebugLocation(llvm::DILocation::get(C, S.isValid() ? S.Line : 0,
-                                                  S.isValid() ? S.Col : 0, SP));
+  // Code the compiler made has no position: line 0, as in clang. A span of
+  // another file than the function's would name a line the function's scope
+  // does not have (the GIR passes give inlined code the call site's span):
+  // it has none either.
+  bool Ours = S.isValid() && (!GF->Loc.isValid() || S.File == GF->Loc.File);
+  assert((!S.isValid() || Ours) && "a span of another file in this function");
+  B.SetCurrentDebugLocation(
+      llvm::DILocation::get(C, Ours ? S.Line : 0, Ours ? S.Col : 0, SP));
 }
 
 llvm::Value *Lowering::placeAddr(const G::Place &P) {
@@ -852,12 +1029,9 @@ llvm::Value *Lowering::cast(G::CastKind K, const G::Type *From,
     return B.CreateIntrinsic(Id, {DT, V->getType()}, {V});
   }
   case G::CastKind::FloatToFloat:
-    // A float conversion rounds, so nothing is fused across it (Go spec,
-    // "Floating-point operators"): where operations may be contracted, its
-    // operand is fenced, also when the types are equal.
-    if (ContractFP)
-      V = B.CreateIntrinsic(llvm::Intrinsic::arithmetic_fence, {V->getType()},
-                            {V});
+    // A float conversion rounds. Nothing fuses across it: the matcher
+    // (FuseFMA) sees a conversion, not a product, and no instruction can be
+    // contracted by LLVM.
     if (To->bits() == From->bits())
       return V;
     return To->bits() > From->bits() ? B.CreateFPExt(V, DT)
@@ -883,6 +1057,21 @@ llvm::Expected<llvm::Value *> Lowering::rvalue(const G::Rvalue &R) {
     const G::Type *T = R.A.type();
     if (G::isShift(R.Bin))
       return shift(R.Bin, T, X, R.B.type(), Y);
+    if (Scoped && T->isFloat() &&
+        (R.Bin == G::BinOp::Mul || R.Bin == G::BinOp::Div)) {
+      // gc: x*2 => x+x (also x/0.5), a sum that fuses a product x holds.
+      MulShape Sh = mulShape(R);
+      if (Sh.K == MulShape::Doubled) {
+        G::Rvalue Sum = R;
+        Sum.Bin = G::BinOp::Add;
+        Sum.A = *Sh.X;
+        Sum.B = *Sh.X;
+        llvm::Value *XV = Sh.X == &R.A ? X : Y;
+        if (llvm::Value *F = contracted(Sum, XV, XV))
+          return F;
+        return B.CreateFAdd(XV, XV);
+      }
+    }
     if (llvm::Value *F = contracted(R, X, Y))
       return F;
     return binary(R.Bin, T, X, Y);
@@ -1132,10 +1321,13 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
 
 void Lowering::countUses(const G::Function &F) {
   Uses.assign(F.Locals.size(), 0);
-  Defs.assign(F.Locals.size(), 0);
+  AddrTaken.assign(F.Locals.size(), false);
+  DefSites.clear();
+  HasFloatMul = false;
+  G::BlockId DefBlock = 0;
   auto Def = [&](const G::Place &P) {
-    if (P.Local != G::NoId && P.Local < Defs.size())
-      ++Defs[P.Local];
+    if (P.Local != G::NoId && P.Local < Uses.size())
+      DefSites.push_back({P.Local, DefBlock});
   };
   auto Place = [&](const G::Place &P) {
     if (P.Local != G::NoId && P.Local < Uses.size())
@@ -1148,7 +1340,9 @@ void Lowering::countUses(const G::Function &F) {
     if (O.K != G::Operand::Const)
       Place(O.P);
   };
-  for (const G::BasicBlock &BB : F.Blocks) {
+  for (size_t Bi = 0; Bi < F.Blocks.size(); ++Bi) {
+    const G::BasicBlock &BB = F.Blocks[Bi];
+    DefBlock = static_cast<G::BlockId>(Bi);
     for (const G::Statement &S : BB.Stmts) {
       if (S.K != G::Statement::Assign)
         continue;
@@ -1162,6 +1356,12 @@ void Lowering::countUses(const G::Function &F) {
         Op(O);
       if (S.RV.K == G::Rvalue::AddrOf || S.RV.K == G::Rvalue::Len)
         Place(S.RV.P);
+      if (S.RV.K == G::Rvalue::AddrOf && S.RV.P.Local < AddrTaken.size())
+        AddrTaken[S.RV.P.Local] = true;
+      if (S.RV.K == G::Rvalue::Binary &&
+          (S.RV.Bin == G::BinOp::Mul || S.RV.Bin == G::BinOp::Div) &&
+          S.RV.Ty->isFloat())
+        HasFloatMul = true;
     }
     if (BB.Term.K == G::Terminator::Call)
       Def(BB.Term.Dest);
@@ -1176,17 +1376,30 @@ void Lowering::countUses(const G::Function &F) {
     ++Uses[0];
 }
 
+bool Lowering::trackable(G::LocalId L) const {
+  if (GF->Locals[L].K == G::Local::Temp)
+    return Uses[L] == 1;
+  return !AddrTaken[L]; // a variable, a parameter, the result
+}
+
 void Lowering::computeDominators(const G::Function &F) {
+  uint64_t &Steps = workCount(&LowerWorkCounts::FmaDomSteps);
   size_t N = F.Blocks.size();
   const uint32_t None = ~0u;
   // Reverse post-order of the blocks reachable from the entry (an explicit
   // stack), then the iterative algorithm of Cooper, Harvey and Kennedy.
-  std::vector<std::vector<G::BlockId>> Succ(N);
+  std::vector<std::vector<G::BlockId>> &Succ = SuccOf;
+  Succ.assign(N, {});
+  size_t Edges = 0;
   for (size_t I = 0; I < N; ++I)
     G::forEachSuccessor(F.Blocks[I].Term, [&](const G::BlockId &T) {
-      if (T < N)
+      ++Steps;
+      if (T < N) {
         Succ[I].push_back(T);
+        ++Edges;
+      }
     });
+  WalkBudget = 8 * (N + Edges) + 64;
   std::vector<G::BlockId> Post;
   std::vector<uint32_t> PostNum(N, None);
   std::vector<std::pair<G::BlockId, size_t>> Stack;
@@ -1194,6 +1407,7 @@ void Lowering::computeDominators(const G::Function &F) {
   Seen[0] = 1;
   Stack.push_back({0, 0});
   while (!Stack.empty()) {
+    ++Steps;
     auto &[B, K] = Stack.back();
     if (K < Succ[B].size()) {
       G::BlockId T = Succ[B][K++];
@@ -1209,16 +1423,20 @@ void Lowering::computeDominators(const G::Function &F) {
   }
   std::vector<std::vector<G::BlockId>> Pred(N);
   for (G::BlockId B : Post)
-    for (G::BlockId T : Succ[B])
+    for (G::BlockId T : counted(Steps, Succ[B]))
       Pred[T].push_back(B);
   std::vector<uint32_t> IDom(N, None);
   IDom[0] = 0;
   auto Intersect = [&](G::BlockId A, G::BlockId B) {
     while (A != B) {
-      while (PostNum[A] < PostNum[B])
+      while (PostNum[A] < PostNum[B]) {
+        ++Steps;
         A = IDom[A];
-      while (PostNum[B] < PostNum[A])
+      }
+      while (PostNum[B] < PostNum[A]) {
+        ++Steps;
         B = IDom[B];
+      }
     }
     return A;
   };
@@ -1229,7 +1447,7 @@ void Lowering::computeDominators(const G::Function &F) {
       if (B == 0)
         continue;
       uint32_t New = None;
-      for (G::BlockId P : Pred[B])
+      for (G::BlockId P : counted(Steps, Pred[B]))
         if (IDom[P] != None)
           New = New == None ? P : Intersect(P, New);
       if (New != IDom[B]) {
@@ -1238,27 +1456,33 @@ void Lowering::computeDominators(const G::Function &F) {
       }
     }
   }
-  // Number the dominator tree.
+  // Number the dominator tree; its preorder is the lowering order.
   std::vector<std::vector<G::BlockId>> Kids(N);
-  for (G::BlockId B : Post)
+  for (G::BlockId B : counted(Steps, Post))
     if (B != 0 && IDom[B] != None)
       Kids[IDom[B]].push_back(B);
   DomIn.assign(N, None);
   DomOut.assign(N, None);
+  LowerOrder.assign(1, 0);
   uint32_t Clock = 0;
   std::vector<std::pair<G::BlockId, size_t>> Walk{{0, 0}};
   DomIn[0] = Clock++;
   while (!Walk.empty()) {
+    ++Steps;
     auto &[B, K] = Walk.back();
     if (K < Kids[B].size()) {
       G::BlockId C = Kids[B][K++];
       DomIn[C] = Clock++;
+      LowerOrder.push_back(C);
       Walk.push_back({C, 0});
       continue;
     }
     DomOut[B] = Clock++;
     Walk.pop_back();
   }
+  for (size_t I = 0; I < N; ++I)
+    if (DomIn[I] == None)
+      LowerOrder.push_back(static_cast<G::BlockId>(I));
   DomReady = true;
 }
 
@@ -1269,25 +1493,436 @@ bool Lowering::dominates(G::BlockId A, G::BlockId B) {
          DomOut[B] <= DomOut[A];
 }
 
+void Lowering::computeTopo(const G::Function &F) {
+  // Tarjan's algorithm on an explicit stack: one visit per block and edge.
+  uint64_t &Steps = workCount(&LowerWorkCounts::FmaSccSteps);
+  size_t N = F.Blocks.size();
+  const uint32_t Unset = ~0u;
+  std::vector<std::vector<G::BlockId>> Succ(N);
+  for (size_t I = 0; I < N; ++I)
+    G::forEachSuccessor(F.Blocks[I].Term, [&](const G::BlockId &T) {
+      ++Steps;
+      if (T < N)
+        Succ[I].push_back(T);
+    });
+  std::vector<uint32_t> Index(N, Unset), Low(N, 0), Scc(N, Unset);
+  std::vector<uint8_t> OnStack(N, 0);
+  std::vector<G::BlockId> Stack, Members;
+  std::vector<std::pair<G::BlockId, size_t>> Call;
+  InCycle.assign(N, 0);
+  uint32_t Counter = 0, NumScc = 0;
+  auto Visit = [&](G::BlockId B) {
+    Index[B] = Low[B] = Counter++;
+    Stack.push_back(B);
+    OnStack[B] = 1;
+    Call.push_back({B, 0});
+  };
+  if (N)
+    Visit(0);
+  while (!Call.empty()) {
+    ++Steps;
+    G::BlockId B = Call.back().first;
+    if (Call.back().second < Succ[B].size()) {
+      G::BlockId T = Succ[B][Call.back().second++];
+      if (Index[T] == Unset)
+        Visit(T);
+      else if (OnStack[T])
+        Low[B] = std::min(Low[B], Index[T]);
+      continue;
+    }
+    if (Low[B] == Index[B]) {
+      // B is the root of a component: its members are on Stack down to B.
+      Members.clear();
+      G::BlockId W;
+      do {
+        W = Stack.back();
+        Stack.pop_back();
+        OnStack[W] = 0;
+        Scc[W] = NumScc;
+        Members.push_back(W);
+      } while (W != B);
+      bool Cycle = Members.size() > 1;
+      for (G::BlockId T : Succ[B])
+        Cycle |= T == B; // a block that jumps to itself
+      for (G::BlockId M : counted(Steps, Members))
+        InCycle[M] = Cycle;
+      ++NumScc;
+    }
+    Call.pop_back();
+    if (!Call.empty())
+      Low[Call.back().first] = std::min(Low[Call.back().first], Low[B]);
+  }
+  // Tarjan finishes the components in reverse topological order.
+  Topo.assign(N, Unset);
+  for (size_t I = 0; I < N; ++I)
+    if (Scc[I] != Unset)
+      Topo[I] = NumScc - 1 - Scc[I];
+  TopoReady = true;
+}
+
+void Lowering::buildDefIndex() {
+  if (!TopoReady)
+    computeTopo(*GF);
+  WriteTopos.assign(GF->Locals.size(), {});
+  WritesInBlock.clear();
+  // A write in a block no path reaches never runs: it is left out.
+  for (const auto &[L, Blk] :
+       counted(workCount(&LowerWorkCounts::FmaDefSteps), DefSites))
+    if (Topo[Blk] != ~0u) {
+      WriteTopos[L].push_back(Topo[Blk]);
+      ++WritesInBlock[(uint64_t(L) << 32) | Blk];
+    }
+  // Sorting is n log n in the writes of one local, counted as its size.
+  for (std::vector<uint32_t> &V :
+       counted(workCount(&LowerWorkCounts::FmaDefSteps), WriteTopos))
+    std::sort(V.begin(), V.end());
+  DefIndexReady = true;
+}
+
+bool Lowering::unwrittenBetween(G::LocalId L, G::BlockId Bd, G::BlockId R) {
+  if (!DefIndexReady)
+    buildDefIndex();
+  if (Topo[Bd] == ~0u || Topo[R] == ~0u)
+    return false;
+  const std::vector<uint32_t> &V = WriteTopos[L];
+  size_t In = std::upper_bound(V.begin(), V.end(), Topo[R]) -
+              std::lower_bound(V.begin(), V.end(), Topo[Bd]);
+  size_t Own = WritesInBlock.lookup((uint64_t(L) << 32) | Bd);
+  if (!InCycle[R])
+    Own += WritesInBlock.lookup((uint64_t(L) << 32) | R);
+  if (In == Own)
+    return true;
+  const TaintInfo &T = taintedBy(L, Bd, Topo[R]);
+  return !T.Spent && !T.Blocks.count(R);
+}
+
+const Lowering::TaintInfo &Lowering::taintedBy(G::LocalId L, G::BlockId Bd,
+                                               uint32_t Bound) {
+  auto [It, New] = Tainted.try_emplace((uint64_t(L) << 32) | Bd);
+  TaintInfo &T = It->second;
+  if (!New && T.Bound >= Bound)
+    return T;
+  T.Bound = Bound;
+  T.Spent = false;
+  T.Blocks.clear();
+  uint64_t &Steps = workCount(&LowerWorkCounts::FmaWalkSteps);
+  size_t N = SuccOf.size();
+  if (SeenReached.size() != N) {
+    SeenReached.assign(N, 0);
+    SeenAfter.assign(N, 0);
+  }
+  uint32_t Epoch = ++WalkEpoch;
+  auto charge = [&]() {
+    if (WalkBudget == 0)
+      return !(T.Spent = true);
+    --WalkBudget;
+    ++Steps;
+    return true;
+  };
+  // The blocks after Bd (not through Bd) up to the bound, and the writes of
+  // L among them; then the blocks after those writes.
+  std::vector<G::BlockId> Work{Bd}, Writes;
+  while (!Work.empty() && !T.Spent) {
+    G::BlockId B = Work.back();
+    Work.pop_back();
+    for (G::BlockId S : SuccOf[B]) {
+      if (!charge())
+        break;
+      if (S == Bd || Topo[S] > Bound || SeenReached[S] == Epoch)
+        continue;
+      SeenReached[S] = Epoch;
+      Work.push_back(S);
+      if (WritesInBlock.lookup((uint64_t(L) << 32) | S))
+        Writes.push_back(S);
+    }
+  }
+  Work = std::move(Writes);
+  while (!Work.empty() && !T.Spent) {
+    G::BlockId B = Work.back();
+    Work.pop_back();
+    for (G::BlockId S : SuccOf[B]) {
+      if (!charge())
+        break;
+      if (S == Bd || Topo[S] > Bound || SeenAfter[S] == Epoch)
+        continue;
+      SeenAfter[S] = Epoch;
+      T.Blocks.insert(S);
+      Work.push_back(S);
+    }
+  }
+  return T;
+}
+
+void Lowering::setProduct(G::LocalId L, std::optional<ProductInfo> P) {
+  auto It = Products.find(L);
+  if (It == Products.end() && !P)
+    return;
+  ProductLog.push_back({L, It == Products.end()
+                               ? std::nullopt
+                               : std::optional<ProductInfo>(It->second)});
+  if (P)
+    Products[L] = *P;
+  else
+    Products.erase(It);
+}
+
+void Lowering::enterProductScope(G::BlockId B) {
+  // The open blocks are the dominators of the last block entered (the walk
+  // is a preorder of the dominator tree); those that do not dominate B are
+  // done. An unreachable block dominates nothing and is dominated by
+  // nothing, so it sees only its own products.
+  uint64_t &Steps = workCount(&LowerWorkCounts::FmaDomSteps);
+  while (!ProductScopes.empty() && !dominates(ProductScopes.back().first, B)) {
+    size_t Start = ProductScopes.back().second;
+    while (ProductLog.size() > Start) {
+      ++Steps;
+      auto &[L, Old] = ProductLog.back();
+      if (Old)
+        Products[L] = *Old;
+      else
+        Products.erase(L);
+      ProductLog.pop_back();
+    }
+    ProductScopes.pop_back();
+  }
+  ProductScopes.push_back({B, ProductLog.size()});
+}
+
 const Lowering::ProductInfo *Lowering::productOf(const G::Operand &O) {
+  return factOf(O, ProductInfo::Product);
+}
+
+const Lowering::ProductInfo *Lowering::factOf(const G::Operand &O, int Want) {
   if (O.K == G::Operand::Const || !O.P.Proj.empty())
     return nullptr;
   auto It = Products.find(O.P.Local);
-  if (It == Products.end())
+  if (It == Products.end() || (Want >= 0 && It->second.Kind != Want))
     return nullptr;
-  // The same block: nothing wrote the temporary since (the entry is
-  // dropped by a write). Another block: the only write is the product's,
-  // and its block dominates this one.
+  // This block wrote it (and nothing since: a write ends the entry), or a
+  // block that dominates this one did (Products is scoped by the dominator
+  // tree), and then no other write may lie on a path between the two.
   const ProductInfo &P = It->second;
-  if (P.Block != CurBlock &&
-      (Defs[O.P.Local] != 1 || !dominates(P.Block, CurBlock)))
+  assert((P.Block == CurBlock || dominates(P.Block, CurBlock)) &&
+         "a product of a block that does not dominate the reader");
+  if (P.Block != CurBlock && !unwrittenBetween(O.P.Local, P.Block, CurBlock))
     return nullptr;
   return &P;
 }
 
+std::optional<double> Lowering::floatConstOf(const G::Operand &O) {
+  if (O.K == G::Operand::Const) {
+    if (!O.C.Ty->isFloat())
+      return std::nullopt;
+    if (O.C.K == G::Constant::Zero)
+      return 0.0;
+    if (O.C.K == G::Constant::Float)
+      return llvm::bit_cast<double>(O.C.Bits);
+    return std::nullopt;
+  }
+  if (const ProductInfo *P = factOf(O, ProductInfo::FloatConst))
+    return P->KF;
+  return std::nullopt;
+}
+
+std::optional<int64_t> Lowering::intConstOf(const G::Operand &O) {
+  if (O.K == G::Operand::Const) {
+    if (!O.C.Ty->isInt() || !O.C.Ty->isSigned())
+      return std::nullopt;
+    if (O.C.K == G::Constant::Zero)
+      return 0;
+    if (O.C.K == G::Constant::Int)
+      return llvm::SignExtend64(O.C.Bits, O.C.Ty->bits());
+    return std::nullopt;
+  }
+  if (const ProductInfo *P = factOf(O, ProductInfo::IntConst))
+    return P->KI;
+  return std::nullopt;
+}
+
+/// gc's reciprocalExact64/32 (rewrite.go): c is a normal power of two whose
+/// reciprocal is one too.
+static bool reciprocalExact(double C, bool F32) {
+  if (F32) {
+    uint32_t Bits = llvm::bit_cast<uint32_t>(static_cast<float>(C));
+    uint32_t Exp = Bits >> 23 & 0xff;
+    return (Bits & ((1u << 23) - 1)) == 0 && Exp != 0 && Exp != 0xff &&
+           Exp != 0xfe;
+  }
+  uint64_t Bits = llvm::bit_cast<uint64_t>(C);
+  uint64_t Exp = Bits >> 52 & 0x7ff;
+  return (Bits & ((uint64_t(1) << 52) - 1)) == 0 && Exp != 0 && Exp != 0x7ff &&
+         Exp != 0x7fe;
+}
+
+/// A constant operation as gc folds it: in the type's precision, and only
+/// when the result is not NaN (generic.rules: `c*d == c*d`).
+static std::optional<double> foldFloat(G::BinOp Op, double A, double B,
+                                       bool F32) {
+  double R = 0;
+  auto Do = [&](auto X, auto Y) -> double {
+    switch (Op) {
+    case G::BinOp::Add:
+      return X + Y;
+    case G::BinOp::Sub:
+      return X - Y;
+    case G::BinOp::Mul:
+      return X * Y;
+    default:
+      return X / Y;
+    }
+  };
+  R = F32 ? Do(static_cast<float>(A), static_cast<float>(B)) : Do(A, B);
+  if (R != R)
+    return std::nullopt;
+  return R;
+}
+
+Lowering::MulShape Lowering::mulShape(const G::Rvalue &R) {
+  MulShape Sh;
+  bool F32 = R.Ty->bits() == 32;
+  std::optional<double> KA = floatConstOf(R.A), KB = floatConstOf(R.B);
+  // The rules in gc's order: folding first, then x/c => x*(1/c), then the
+  // rules of *1, *-1 and *2, which match the constant on either side.
+  if (KA && KB)
+    if (auto V = foldFloat(R.Bin, *KA, *KB, F32)) {
+      Sh.K = MulShape::Folded;
+      Sh.Value = *V;
+      return Sh;
+    }
+  Sh.X = &R.A;
+  std::optional<double> K = KB;
+  if (R.Bin == G::BinOp::Div) {
+    if (!KB || !reciprocalExact(*KB, F32))
+      return Sh; // None: a division is no product
+    K = F32 ? static_cast<double>(1.0f / static_cast<float>(*KB)) : 1.0 / *KB;
+    Sh.FromDiv = true;
+    if (KA)
+      if (auto V = foldFloat(G::BinOp::Mul, *KA, *K, F32)) {
+        Sh.K = MulShape::Folded;
+        Sh.Value = *V;
+        return Sh;
+      }
+  } else if (!KB && KA) {
+    Sh.X = &R.B;
+    K = KA;
+  }
+  Sh.K = MulShape::Product;
+  if (K) {
+    Sh.Factor = *K;
+    if (*K == 1.0)
+      Sh.K = MulShape::Same;
+    else if (*K == -1.0)
+      Sh.K = MulShape::Negated;
+    else if (*K == 2.0)
+      Sh.K = MulShape::Doubled;
+  }
+  return Sh;
+}
+
+std::optional<Lowering::ProductInfo>
+Lowering::factOfAssign(const G::Statement &S, llvm::Value *V, G::BlockId Bi) {
+  const G::Rvalue &R = S.RV;
+  auto FloatK = [&](double K) {
+    ProductInfo P{nullptr, nullptr, Bi};
+    P.Kind = ProductInfo::FloatConst;
+    P.KF = R.Ty->bits() == 32 ? static_cast<double>(static_cast<float>(K)) : K;
+    return P;
+  };
+  auto Copy = [&](const ProductInfo *P) -> std::optional<ProductInfo> {
+    if (!P)
+      return std::nullopt;
+    ProductInfo C = *P;
+    C.Block = Bi;
+    return C;
+  };
+  // gc: FNEGD (FMULD x y) => FNMULD x y, and FADD/FSUB fuse an FNMUL like
+  // an FMUL (ARM64.rules; exactly -(x*y)); a constant other than 0 is folded.
+  auto Negated = [&](const G::Operand &O) -> std::optional<ProductInfo> {
+    if (const ProductInfo *P = productOf(O))
+      return ProductInfo{B.CreateFNeg(P->X), P->Y, Bi};
+    if (auto K = floatConstOf(O); K && *K != 0)
+      return FloatK(-*K);
+    return std::nullopt;
+  };
+  if (R.Ty->isInt()) {
+    // The integer constants a conversion to a float may fold: a local written
+    // with a constant (not a copy of one, so that only conversions look up
+    // integer facts).
+    if (R.K == G::Rvalue::Use && !S.Boundary && R.Ty->isSigned() &&
+        R.A.K == G::Operand::Const)
+      if (auto K = intConstOf(R.A)) {
+        ProductInfo P{nullptr, nullptr, Bi};
+        P.Kind = ProductInfo::IntConst;
+        P.KI = *K;
+        return P;
+      }
+    return std::nullopt;
+  }
+  if (!R.Ty->isFloat())
+    return std::nullopt;
+  switch (R.K) {
+  case G::Rvalue::Use:
+    // A copy is the same SSA value in gc, except across an inlined call
+    // (Boundary).
+    if (S.Boundary)
+      return std::nullopt;
+    if (R.A.K == G::Operand::Const) {
+      if (auto K = floatConstOf(R.A))
+        return FloatK(*K);
+      return std::nullopt;
+    }
+    return Copy(factOf(R.A));
+  case G::Rvalue::Unary:
+    return R.Un == G::UnOp::Neg ? Negated(R.A) : std::nullopt;
+  case G::Rvalue::Cast:
+    if (R.CastOp == G::CastKind::FloatToFloat)
+      if (auto K = floatConstOf(R.A))
+        return FloatK(*K);
+    if (R.CastOp == G::CastKind::IntToFloat && R.A.type()->isSigned())
+      if (auto K = intConstOf(R.A))
+        return FloatK(static_cast<double>(*K));
+    return std::nullopt;
+  case G::Rvalue::Binary:
+    break;
+  default:
+    return std::nullopt;
+  }
+  if (R.Bin == G::BinOp::Add || R.Bin == G::BinOp::Sub) {
+    // The second operand is looked up only when the first is a constant.
+    if (auto KA = floatConstOf(R.A))
+      if (auto KB = floatConstOf(R.B))
+        if (auto F = foldFloat(R.Bin, *KA, *KB, R.Ty->bits() == 32))
+          return FloatK(*F);
+    return std::nullopt;
+  }
+  if (R.Bin != G::BinOp::Mul && R.Bin != G::BinOp::Div)
+    return std::nullopt;
+  MulShape Sh = mulShape(R);
+  switch (Sh.K) {
+  case MulShape::Folded:
+    return FloatK(Sh.Value);
+  case MulShape::Same:
+    return Copy(factOf(*Sh.X));
+  case MulShape::Negated:
+    return Negated(*Sh.X);
+  case MulShape::Product:
+    if (auto *Op = llvm::dyn_cast<llvm::BinaryOperator>(V))
+      return Sh.FromDiv
+                 ? ProductInfo{Op->getOperand(0),
+                               llvm::ConstantFP::get(V->getType(), Sh.Factor),
+                               Bi}
+                 : ProductInfo{Op->getOperand(0), Op->getOperand(1), Bi};
+    return std::nullopt;
+  case MulShape::None:
+  case MulShape::Doubled: // x+x is a sum
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
 llvm::Value *Lowering::contracted(const G::Rvalue &R, llvm::Value *X,
                                   llvm::Value *Y) {
-  if (!ContractFP || !R.A.type()->isFloat() ||
+  if (!FuseFMA || !R.A.type()->isFloat() ||
       (R.Bin != G::BinOp::Add && R.Bin != G::BinOp::Sub))
     return nullptr;
   auto Product = [&](const G::Operand &O) { return productOf(O); };
@@ -1312,9 +1947,16 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
   Slots.clear();
   Blocks.clear();
   Products.clear();
+  ProductLog.clear();
+  ProductScopes.clear();
   ArgSlots.clear();
   CScratch.clear();
   DomReady = false;
+  TopoReady = false;
+  DefIndexReady = false;
+  Tainted.clear();
+  SeenReached.clear();
+  SeenAfter.clear();
   Panics.clear();
   countUses(F);
   SP = nullptr;
@@ -1353,20 +1995,30 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
     storePlace(G::localPlace(1 + I, PT), A);
   }
   B.CreateBr(Blocks[0]);
-  for (size_t Bi = 0; Bi < F.Blocks.size(); ++Bi) {
+  // With a float product to fuse, in the preorder of the dominator tree, so
+  // that Products can be scoped by it (see FuseFMA); else in index order.
+  Scoped = FuseFMA && HasFloatMul;
+  if (Scoped)
+    computeDominators(F);
+  for (size_t K = 0; K < F.Blocks.size(); ++K) {
+    G::BlockId Bi = Scoped ? LowerOrder[K] : static_cast<G::BlockId>(K);
     const G::BasicBlock &BB = F.Blocks[Bi];
     B.SetInsertPoint(Blocks[Bi]);
     CurBlock = Bi;
+    if (Scoped)
+      enterProductScope(Bi);
     if (BB.Catch)
       return fail("a catch block, the handler of `defer` (P04.07)");
     for (const G::Statement &S : BB.Stmts) {
       setLoc(S.Loc);
       switch (S.K) {
       case G::Statement::Assign: {
-        Products.erase(S.Dest.Local);
-        if (S.Dest.Ty->isUnit())
+        if (S.Dest.Ty->isUnit()) {
+          setProduct(S.Dest.Local, std::nullopt);
           break; // nothing to store; the operands have no effects
+        }
         if (isAggregate(S.Dest.Ty)) {
+          setProduct(S.Dest.Local, std::nullopt);
           if (llvm::Error E = assignAggregate(S.Dest, S.RV))
             return E;
           break;
@@ -1374,26 +2026,19 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
         llvm::Expected<llvm::Value *> V = rvalue(S.RV);
         if (!V)
           return V.takeError();
+        // What the destination holds, a product or a constant (FuseFMA):
+        // decided before the old entry goes, since `t = t + z` and `t = -t`
+        // read the t that was there (factOfAssign).
+        std::optional<ProductInfo> New;
+        if (Scoped && S.Dest.Proj.empty()) {
+          New = factOfAssign(S, *V, Bi);
+          G::LocalId L = S.Dest.Local;
+          if (New && (New->Kind == ProductInfo::Product ? !trackable(L)
+                                                        : AddrTaken[L]))
+            New.reset();
+        }
         storePlace(S.Dest, *V);
-        if (ContractFP && S.RV.K == G::Rvalue::Binary &&
-            S.RV.Bin == G::BinOp::Mul && S.RV.Ty->isFloat() &&
-            S.Dest.Proj.empty() && F.Locals[S.Dest.Local].K == G::Local::Temp &&
-            Uses[S.Dest.Local] == 1)
-          if (auto *Mul = llvm::dyn_cast<llvm::BinaryOperator>(*V))
-            Products[S.Dest.Local] = {Mul->getOperand(0), Mul->getOperand(1),
-                                      static_cast<G::BlockId>(Bi)};
-        // gc: FNEGD (FMULD x y) => FNMULD x y, and FADD/FSUB fuse an FNMUL
-        // like an FMUL (ARM64.rules): the negation of a product is a product
-        // of the negated first factor and the second (exactly -(x*y)).
-        if (ContractFP && S.RV.K == G::Rvalue::Unary &&
-            S.RV.Un == G::UnOp::Neg && S.RV.Ty->isFloat() &&
-            S.Dest.Proj.empty() && F.Locals[S.Dest.Local].K == G::Local::Temp &&
-            Uses[S.Dest.Local] == 1)
-          if (const ProductInfo *P = productOf(S.RV.A)) {
-            ProductInfo Negated{B.CreateFNeg(P->X), P->Y,
-                                static_cast<G::BlockId>(Bi)};
-            Products[S.Dest.Local] = Negated;
-          }
+        setProduct(S.Dest.Local, New);
         break;
       }
       case G::Statement::StorageLive:
@@ -1404,6 +2049,9 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
     }
     if (llvm::Error E = terminator(BB.Term))
       return E;
+    // A call writes its destination after the statements of its block.
+    if (BB.Term.K == G::Terminator::Call && BB.Term.Dest.Local != G::NoId)
+      setProduct(BB.Term.Dest.Local, std::nullopt);
   }
   return llvm::Error::success();
 }
@@ -1422,14 +2070,8 @@ llvm::Error Lowering::run() {
     DIB.createCompileUnit(llvm::dwarf::DW_LANG_C11, DIFiles[0], "gopp", false,
                           "", 0, "", llvm::DICompileUnit::LineTablesOnly);
   }
-  // gc contracts on arm64 and not on amd64 (D4.12): every float operation
-  // on arm64 carries `contract`.
-  ContractFP = LM.getTargetTriple().isAArch64();
-  if (ContractFP) {
-    llvm::FastMathFlags FMF;
-    FMF.setAllowContract(true);
-    B.setFastMathFlags(FMF);
-  }
+  // gc contracts on arm64 and not on amd64 (D4.12); see FuseFMA.
+  FuseFMA = LM.getTargetTriple().isAArch64();
   prepareTypes();
   if (NoStackAt)
     return nestingError();

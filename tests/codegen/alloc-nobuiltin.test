@@ -1,0 +1,26 @@
+// RUN: %gopp build -target=linux/amd64 -opt=2 -emit=llvm %s | FileCheck %s
+// RUN: %gopp build -target=linux/arm64 -opt=3 -emit=llvm %s | FileCheck %s
+// RUN: %gopp build -target=linux/amd64 -pipeline=fastisel -emit=llvm %s | FileCheck %s --check-prefix=DECL
+// P04.13 (docs/design/pipelines.md section 1): the C allocation functions are
+// declared `nobuiltin`, so LLVM's optimizer does not treat them as malloc:
+// at opt 2 and 3 the allocation of a slice whose memory does not escape stays,
+// and so does the runtime's out-of-memory check after it (without it, opt 1
+// and up deleted both: run/opt-oom.test).
+package main
+
+func main() {
+	s := make([]byte, 1<<40)
+	s[0] = 1
+	println(s[0])
+}
+
+// CHECK: c"runtime: out of memory\00"
+// CHECK: define void @_GPF4mainE4main()
+// CHECK: %[[P:[0-9]+]] = tail call ptr @calloc(i64 1, i64 1099511627776)
+// CHECK-NEXT: icmp eq ptr %[[P]], null
+// CHECK: call {{.*}}@_GPF4goppE10panic_text()
+// CHECK: declare ptr @calloc(i64, i64) {{.*}}#[[A:[0-9]+]]
+// CHECK: attributes #[[A]] = { {{.*}}nobuiltin
+
+// DECL: declare ptr @calloc(i64, i64) #[[A:[0-9]+]]
+// DECL: attributes #[[A]] = { {{.*}}nobuiltin

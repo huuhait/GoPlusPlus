@@ -1,0 +1,542 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-fma-vars.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-fma-vars.out %}
+// P04.13, D4.12: FMA contraction across statements, as gc does it, at every
+// `opt` level (run/core-opt-matrix.test and core-opt-matrix-arm64.test build
+// this test at all of them on both targets). `t := x*y; r := t + z` is fused on
+// arm64, also when t is read twice, copied, negated, sits in another block than
+// the sum, or was written before (the read sees the last write, as gc's SSA
+// value does); `t := float64(x*y); r := t + z` is not; a variable that two
+// branches write, or that a path between the product and the sum writes, is a
+// phi, not a product; a variable whose address is taken is not an SSA value, so
+// nothing fuses. Nothing is fused on amd64. The expected output is gc's on each
+// target (golden/core-fma-vars.out, and core-fma-vars.arm64.out from Go's arm64
+// build under QEMU: Inputs/regen-goldens.py). The values are chosen so that a
+// fused and an unfused result differ. The loop and goto cases are the block
+// orders that once made the matcher miss a fusion (the lowering walks the
+// dominator tree, LowerToLLVM.cpp FuseFMA). A write of the variable that a path
+// can reach only through the product's block again (writeAfterInLoop) does not
+// stop the fusion; one on a path between product and sum does
+// (writeBetweenInLoop). The constant factors gc rewrites first (mul2 ...
+// foldProp) are at the end.
+package main
+
+var gz = -1.0
+
+//go:noinline
+func call() float64 { return gz }
+
+//go:noinline
+func use(p *float64) {}
+
+//go:noinline
+func named(x, y, z float64) float64 {
+	t := x * y
+	return t + z
+}
+
+//go:noinline
+func namedRound(x, y, z float64) float64 {
+	t := float64(x * y)
+	return t + z
+}
+
+//go:noinline
+func namedTwice(x, y, z float64) [3]float64 {
+	t := x * y
+	return [3]float64{t + z, t - z, z - t}
+}
+
+//go:noinline
+func namedKept(x, y, z float64) (float64, float64) {
+	t := x * y
+	return t, t + z
+}
+
+//go:noinline
+func declared(x, y, z float64) float64 {
+	var t float64
+	t = x * y
+	return t + z
+}
+
+//go:noinline
+func reassigned(x, y, z float64) [2]float64 {
+	t := x * y
+	t = t + z
+	u := x * y
+	u = x * z
+	return [2]float64{t, u + z}
+}
+
+//go:noinline
+func param(x, y, z float64) float64 {
+	x = x * y
+	return x + z
+}
+
+//go:noinline
+func crossBlock(x, y float64, arr [3]float64, i int, c bool) [4]float64 {
+	t := x * y
+	var r [4]float64
+	r[0] = t + call()
+	r[1] = t + arr[i]
+	if c {
+		r[2] = 1
+	}
+	r[3] = t - arr[i]
+	return r
+}
+
+// phi: two branches write t; gc has a phi, not a product.
+//
+//go:noinline
+func phi(x, y, z float64, c bool) float64 {
+	var t float64
+	if c {
+		t = x * y
+	} else {
+		t = x * z
+	}
+	return t + z
+}
+
+// addrTaken: t's address is taken, so gc does not make it an SSA value.
+//
+//go:noinline
+func addrTaken(x, y, z float64) float64 {
+	t := x * y
+	p := &t
+	use(p)
+	return t + z
+}
+
+//go:noinline
+func negNamed(x, y, z float64) [2]float64 {
+	t := x * y
+	u := -t
+	return [2]float64{u + z, z - u}
+}
+
+//go:noinline
+func loop(a, b [3]float64) float64 {
+	s := 0.0
+	for i := 0; i < 3; i++ {
+		t := a[i] * b[i]
+		s = s + t
+	}
+	return s
+}
+
+//go:noinline
+func narrow(x, y, z float32) (float32, float32) {
+	t := x * y
+	u := float32(x * y)
+	return t + z, u + z
+}
+
+//go:noinline
+func chained(x, y, z, w float64) float64 {
+	t := x * y
+	u := t + z
+	return u*1e20 + w*t
+}
+
+// namedConvAfter: a conversion of a product variable rounds it.
+//
+//go:noinline
+func namedConvAfter(x, y, z float64) float64 {
+	t := x * y
+	return float64(t) + z
+}
+
+//go:noinline
+func copied(x, y, z float64) float64 {
+	t := x * y
+	u := t
+	return u + z
+}
+
+// result: a named result is a variable.
+//
+//go:noinline
+func result(x, y, z float64) (r float64) {
+	r = x * y
+	r = r + z
+	return
+}
+
+//go:noinline
+func geti() int { return -1 }
+
+// acrossBlocks: a call, a division check, both arms of a branch and a loop
+// lie between the product and the sums.
+//
+//go:noinline
+func acrossBlocks(x, y float64, neg, pos [3]float64, i, n int, c bool) [6]float64 {
+	var r [6]float64
+	t := x * y
+	r[0] = t + call()
+	r[1] = pos[i] - t
+	r[2] = t + float64(n/i)
+	if c {
+		r[3] = t + neg[i]
+	} else {
+		r[3] = pos[i] - t
+	}
+	r[4] = t + float64(geti())
+	u := x * y
+	for k := 0; k < 2; k++ {
+		r[5] += u + call()*float64(1-k)*float64(1-k)
+	}
+	return r
+}
+
+// writtenOnAPath: a branch may replace the product before the sum (a phi).
+//
+//go:noinline
+func writtenOnAPath(x, y, z float64, c bool) float64 {
+	t := x * y
+	if c {
+		t = z
+	}
+	return t + call()
+}
+
+// branchesOwn: each branch writes its own product and reads it.
+//
+//go:noinline
+func branchesOwn(x, y, a, b, z float64, c bool) float64 {
+	var t float64
+	var r float64
+	if c {
+		t = x * y
+		r = t + z
+	} else {
+		t = a * b
+		r = t + z
+	}
+	return r
+}
+
+// rewrittenCross: two writes, the read in a later block sees the second.
+//
+//go:noinline
+func rewrittenCross(x, y, a, b, z float64, c bool) float64 {
+	t := a * b
+	u := t - z
+	t = x * y
+	r := u
+	if c {
+		r = t + z
+	}
+	return r
+}
+
+// readInLoop: the product is made before the loop and read in it.
+//
+//go:noinline
+func readInLoop(x, y, z float64, n int) float64 {
+	t := x * y
+	r := 0.0
+	for i := 0; i < n; i++ {
+		r = t + z
+	}
+	return r
+}
+
+// writeInLoopReadAfter: after the loop t is a phi (0 or the product).
+//
+//go:noinline
+func writeInLoopReadAfter(x, y, z float64, n int) float64 {
+	t := 0.0
+	for i := 0; i < n; i++ {
+		t = x * y
+	}
+	return t + z
+}
+
+// breakLoop: a block after the loop writes t too, and a walk of the blocks
+// in reverse post-order reaches it before the loop body.
+//
+//go:noinline
+func breakLoop(x, y, a, b, z float64, n int) [2]float64 {
+	var t float64
+	r := 0.0
+	i := 0
+	for {
+		if i >= n {
+			break
+		}
+		t = a * b
+		r = t + z
+		i++
+	}
+	t = x * y
+	return [2]float64{r, t + z}
+}
+
+// gotoLoop: the same with goto.
+//
+//go:noinline
+func gotoLoop(x, y, a, b, z float64, n int) [2]float64 {
+	var t float64
+	r := 0.0
+	i := 0
+loop:
+	if i >= n {
+		goto done
+	}
+	t = a * b
+	r = t + z
+	i++
+	goto loop
+done:
+	t = x * y
+	return [2]float64{r, t + z}
+}
+
+// gotoBack: the block of the sum comes before the block of the product in
+// the source.
+//
+//go:noinline
+func gotoBack(x, y, z float64) float64 {
+	var t float64
+	var r float64
+	goto second
+first:
+	r = t + z
+	return r
+second:
+	t = x * y
+	goto first
+}
+
+// scaleAdd is trivial, so the opt pipelines inline it (GIR inlining) and gc
+// inlines it: the product and the sum inside it fuse either way, and nothing
+// fuses across the call.
+func scaleAdd(x, y, z float64) (r float64) {
+	r = x * y
+	r = r + z
+	return
+}
+
+//go:noinline
+func callsScaleAdd(x, y, z float64) float64 {
+	return scaleAdd(x, y, z) * 2
+}
+
+// writeAfterInLoop: the only other write of t is in the loop too, but a path
+// from it to the sum goes back through the product, which writes t again. The
+// sum reads the product: it fuses.
+//
+//go:noinline
+func writeAfterInLoop(x, y, z float64, n int) [2]float64 {
+	var t float64
+	r := 0.0
+	for i := 0; i < n; i++ {
+		t = x * y
+		if i&1 == 0 {
+			r += t + z
+		}
+		if i == 5 {
+			t = 0
+		}
+	}
+	return [2]float64{r, t}
+}
+
+// writeBetweenInLoop: here the write lies on a path from the product to the
+// sum (a phi), so nothing fuses.
+//
+//go:noinline
+func writeBetweenInLoop(x, y, z float64, n int) [2]float64 {
+	var t float64
+	r := 0.0
+	for i := 0; i < n; i++ {
+		t = x * y
+		if i&1 == 1 {
+			t = 0
+		}
+		if i&1 == 0 {
+			r += t + z
+		} else {
+			r += t - z
+		}
+	}
+	return [2]float64{r, t}
+}
+
+// earlyReturn: the other write is in a branch that returns, so it never
+// reaches the sum, and the sum reads the product.
+//
+//go:noinline
+func earlyReturn(x, y, z float64, c bool) float64 {
+	t := x * y
+	if c {
+		t = z
+		return t
+	}
+	return t + z
+}
+
+// gc's generic rules run before its FMA rules (generic.rules, "floating
+// point optimizations"), on the constants its SSA knows: x*2 is x+x (no
+// product), x*1 is x, x*-1 is -x, and x/c is x*(1/c) when c is a power of
+// two (a product). A constant in a variable counts (k := 2.0), and so does a
+// fold of constants (j := k + k).
+const two = 2
+
+var big, nbig = 1e308, -1e308
+
+//go:noinline
+func mul2(x, z float64) float64 { return x*2 + z }
+
+//go:noinline
+func mul2L(x, z float64) float64 { return 2*x + z }
+
+//go:noinline
+func mul2Var(x, z float64) float64 {
+	t := x * 2
+	return t + z
+}
+
+//go:noinline
+func mul2Const(x, z float64) float64 { return two*x + z }
+
+//go:noinline
+func mul2Prop(x, z float64) float64 {
+	k := 2.0
+	return x*k + z
+}
+
+//go:noinline
+func mul2Int(x, z float64) float64 {
+	n := 2
+	return x*float64(n) + z
+}
+
+//go:noinline
+func mul2F32(x, z float32) float32 { return x*2 - z }
+
+//go:noinline
+func mulM2(x, z float64) float64 { return x*-2 + z }
+
+//go:noinline
+func mul1Prod(a, b, z float64) float64 {
+	t := a * b
+	u := t * 1
+	return u + z
+}
+
+//go:noinline
+func mulM1Prod(a, b, z float64) float64 {
+	t := a * b
+	u := t * -1
+	return u + z
+}
+
+//go:noinline
+func mul2Prod(a, b, z float64) float64 {
+	t := a * b
+	return t*2 + z
+}
+
+//go:noinline
+func div2(x, z float64) float64 { return x/2 + z }
+
+//go:noinline
+func div4Var(x, z float64) float64 {
+	t := x / 4
+	return t + z
+}
+
+//go:noinline
+func divHalf(x, z float64) float64 { return x/0.5 + z }
+
+//go:noinline
+func div3(x, z float64) float64 { return x/3 + z }
+
+//go:noinline
+func divProp(x, z float64) float64 {
+	k := 2.0
+	return x/k + z
+}
+
+// Locals written with constants: gc folds their products (x*y is a constant,
+// not a product) before it fuses.
+//
+//go:noinline
+func constLocals() [3]float64 {
+	x := 1.0000000074505806
+	y := 0.9999999925494194
+	p, q := x, y
+	big := 1e300
+	return [3]float64{x*y - 1, p*q - p*q, big*10 - big*10}
+}
+
+//go:noinline
+func foldProp(x, z float64) float64 {
+	k := 1.0
+	j := k + k
+	return x*j + z
+}
+
+func main() {
+	x := 1.0000000074505806
+	y := 0.9999999925494194
+	z := -1.0
+	println("named", named(x, y, z), namedRound(x, y, z))
+	r3 := namedTwice(x, y, z)
+	println("twice", r3[0], r3[1], r3[2])
+	a, b := namedKept(x, y, z)
+	println("kept", a, b)
+	println("declared", declared(x, y, z))
+	r2 := reassigned(x, y, z)
+	println("reassigned", r2[0], r2[1])
+	println("param", param(x, y, z))
+	arr := [3]float64{0.5, -1, -1}
+	r4 := crossBlock(x, y, arr, 1, true)
+	println("cross", r4[0], r4[1], r4[2], r4[3])
+	r4 = crossBlock(x, y, arr, 2, false)
+	println("cross", r4[0], r4[1], r4[2], r4[3])
+	println("phi", phi(x, y, z, true), phi(x, y, z, false))
+	println("addr", addrTaken(x, y, z))
+	n2 := negNamed(x, y, z)
+	println("neg", n2[0], n2[1])
+	println("loop", loop([3]float64{x, -x, 0}, [3]float64{y, y, 0}))
+	f, g := narrow(1e10, 1e10, -1e20)
+	println("narrow", f, g)
+	println("chained", chained(x, y, z, 0.1))
+	p, q := 0.1, 10.0
+	println("small", named(p, q, -1), declared(p, q, -1), param(p, q, -1))
+	a2 := 1.0000000037252903
+	b2 := 0.9999999962747097
+	println("convAfter", namedConvAfter(x, y, z), "copied", copied(x, y, z), "result", result(x, y, z))
+	neg, pos := [3]float64{-1, -1, -1}, [3]float64{1, 1, 1}
+	r6 := acrossBlocks(x, y, neg, pos, 1, -7, true)
+	println("across", r6[0], r6[1], r6[2], r6[3], r6[4], r6[5])
+	r6 = acrossBlocks(x, y, neg, pos, 1, -1, false)
+	println("across", r6[0], r6[1], r6[2], r6[3], r6[4], r6[5])
+	println("onAPath", writtenOnAPath(x, y, z, false), writtenOnAPath(x, y, z, true))
+	println("branchesOwn", branchesOwn(x, y, a2, b2, z, true), branchesOwn(x, y, a2, b2, z, false))
+	println("rewrittenCross", rewrittenCross(x, y, a2, b2, z, true), rewrittenCross(x, y, a2, b2, z, false))
+	println("readInLoop", readInLoop(x, y, z, 2), "writeInLoop", writeInLoopReadAfter(x, y, z, 2))
+	l2 := breakLoop(x, y, a2, b2, z, 2)
+	g2 := gotoLoop(x, y, a2, b2, z, 2)
+	println("breakLoop", l2[0], l2[1], "gotoLoop", g2[0], g2[1])
+	println("gotoBack", gotoBack(x, y, z), "scaleAdd", callsScaleAdd(x, y, z))
+	w1 := writeAfterInLoop(x, y, z, 3)
+	w2 := writeBetweenInLoop(x, y, z, 1)
+	println("earlyReturn", earlyReturn(x, y, z, false), earlyReturn(x, y, z, true))
+	println("writeAfter", w1[0], w1[1], "writeBetween", w2[0], w2[1])
+	println("mul2", mul2(big, nbig), mul2L(big, nbig), mul2Var(big, nbig))
+	println("mul2", mul2Const(big, nbig), mul2Prop(big, nbig), mul2Int(big, nbig))
+	println("mul2", mul2F32(3e38, 3e38), "mulM2", mulM2(big, big))
+	println("mul1", mul1Prod(x, y, -1), mulM1Prod(x, y, 1), "mul2Prod", mul2Prod(1e300, 1e8, nbig))
+	println("div", div2(1.5e-323, -5e-324), div4Var(3e-323, -5e-324), divHalf(big, nbig))
+	println("div", div3(1.5e-323, -5e-324), divProp(1.5e-323, -5e-324), "fold", foldProp(big, nbig))
+	cl := constLocals()
+	println("constLocals", cl[0], cl[1], cl[2])
+}

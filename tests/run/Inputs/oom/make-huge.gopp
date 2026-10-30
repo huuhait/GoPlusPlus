@@ -1,0 +1,13 @@
+package main
+
+// An allocation that always fails: 2^48-1 bytes is the largest `make` takes
+// (a longer one is "makeslice: len out of range"), and no 64-bit Linux gives
+// a process that much address space without a hint (47 bits on x86-64, 48 on
+// arm64), whatever its overcommit setting. The memory does not escape, so an
+// optimizer that knows malloc would delete the allocation and the check.
+func main() {
+	println("start")
+	s := make([]byte, 1<<48-1)
+	s[0] = 1
+	println("allocated", len(s), s[0])
+}

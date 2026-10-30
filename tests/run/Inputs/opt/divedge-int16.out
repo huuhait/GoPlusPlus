@@ -1,0 +1,419 @@
+byConst -32768 -32768 0
+byVar -32768 -32768 0
+pow2 -32768 -16384 0 -8192 0 -512 0
+other -32768 -10922 -2 10922 -2 -3276 -8
+divrem -32768 -32768 1 0 true
+divrem -32768 -32767 1 -1 true
+divrem -32768 -32766 1 -2 true
+divrem -32768 -100 327 -68 true
+divrem -32768 -7 4681 -1 true
+divrem -32768 -3 10922 -2 true
+divrem -32768 -2 16384 0 true
+divrem -32768 -1 -32768 0 true
+divrem -32768 1 -32768 0 true
+divrem -32768 2 -16384 0 true
+divrem -32768 3 -10922 -2 true
+divrem -32768 5 -6553 -3 true
+divrem -32768 7 -4681 -1 true
+divrem -32768 64 -512 0 true
+divrem -32768 100 -327 -68 true
+divrem -32768 16383 -2 -2 true
+divrem -32768 32766 -1 -2 true
+divrem -32768 32767 -1 -1 true
+byConst -32767 32767 0
+byVar -32767 32767 0
+pow2 -32767 -16383 -1 -8191 -3 -511 -63
+other -32767 -10922 -1 10922 -1 -3276 -7
+divrem -32767 -32768 0 -32767 true
+divrem -32767 -32767 1 0 true
+divrem -32767 -32766 1 -1 true
+divrem -32767 -100 327 -67 true
+divrem -32767 -7 4681 0 true
+divrem -32767 -3 10922 -1 true
+divrem -32767 -2 16383 -1 true
+divrem -32767 -1 32767 0 true
+divrem -32767 1 -32767 0 true
+divrem -32767 2 -16383 -1 true
+divrem -32767 3 -10922 -1 true
+divrem -32767 5 -6553 -2 true
+divrem -32767 7 -4681 0 true
+divrem -32767 64 -511 -63 true
+divrem -32767 100 -327 -67 true
+divrem -32767 16383 -2 -1 true
+divrem -32767 32766 -1 -1 true
+divrem -32767 32767 -1 0 true
+byConst -32766 32766 0
+byVar -32766 32766 0
+pow2 -32766 -16383 0 -8191 -2 -511 -62
+other -32766 -10922 0 10922 0 -3276 -6
+divrem -32766 -32768 0 -32766 true
+divrem -32766 -32767 0 -32766 true
+divrem -32766 -32766 1 0 true
+divrem -32766 -100 327 -66 true
+divrem -32766 -7 4680 -6 true
+divrem -32766 -3 10922 0 true
+divrem -32766 -2 16383 0 true
+divrem -32766 -1 32766 0 true
+divrem -32766 1 -32766 0 true
+divrem -32766 2 -16383 0 true
+divrem -32766 3 -10922 0 true
+divrem -32766 5 -6553 -1 true
+divrem -32766 7 -4680 -6 true
+divrem -32766 64 -511 -62 true
+divrem -32766 100 -327 -66 true
+divrem -32766 16383 -2 0 true
+divrem -32766 32766 -1 0 true
+divrem -32766 32767 0 -32766 true
+byConst -100 100 0
+byVar -100 100 0
+pow2 -100 -50 0 -25 0 -1 -36
+other -100 -33 -1 33 -1 -10 0
+divrem -100 -32768 0 -100 true
+divrem -100 -32767 0 -100 true
+divrem -100 -32766 0 -100 true
+divrem -100 -100 1 0 true
+divrem -100 -7 14 -2 true
+divrem -100 -3 33 -1 true
+divrem -100 -2 50 0 true
+divrem -100 -1 100 0 true
+divrem -100 1 -100 0 true
+divrem -100 2 -50 0 true
+divrem -100 3 -33 -1 true
+divrem -100 5 -20 0 true
+divrem -100 7 -14 -2 true
+divrem -100 64 -1 -36 true
+divrem -100 100 -1 0 true
+divrem -100 16383 0 -100 true
+divrem -100 32766 0 -100 true
+divrem -100 32767 0 -100 true
+byConst -7 7 0
+byVar -7 7 0
+pow2 -7 -3 -1 -1 -3 0 -7
+other -7 -2 -1 2 -1 0 -7
+divrem -7 -32768 0 -7 true
+divrem -7 -32767 0 -7 true
+divrem -7 -32766 0 -7 true
+divrem -7 -100 0 -7 true
+divrem -7 -7 1 0 true
+divrem -7 -3 2 -1 true
+divrem -7 -2 3 -1 true
+divrem -7 -1 7 0 true
+divrem -7 1 -7 0 true
+divrem -7 2 -3 -1 true
+divrem -7 3 -2 -1 true
+divrem -7 5 -1 -2 true
+divrem -7 7 -1 0 true
+divrem -7 64 0 -7 true
+divrem -7 100 0 -7 true
+divrem -7 16383 0 -7 true
+divrem -7 32766 0 -7 true
+divrem -7 32767 0 -7 true
+byConst -3 3 0
+byVar -3 3 0
+pow2 -3 -1 -1 0 -3 0 -3
+other -3 -1 0 1 0 0 -3
+divrem -3 -32768 0 -3 true
+divrem -3 -32767 0 -3 true
+divrem -3 -32766 0 -3 true
+divrem -3 -100 0 -3 true
+divrem -3 -7 0 -3 true
+divrem -3 -3 1 0 true
+divrem -3 -2 1 -1 true
+divrem -3 -1 3 0 true
+divrem -3 1 -3 0 true
+divrem -3 2 -1 -1 true
+divrem -3 3 -1 0 true
+divrem -3 5 0 -3 true
+divrem -3 7 0 -3 true
+divrem -3 64 0 -3 true
+divrem -3 100 0 -3 true
+divrem -3 16383 0 -3 true
+divrem -3 32766 0 -3 true
+divrem -3 32767 0 -3 true
+byConst -2 2 0
+byVar -2 2 0
+pow2 -2 -1 0 0 -2 0 -2
+other -2 0 -2 0 -2 0 -2
+divrem -2 -32768 0 -2 true
+divrem -2 -32767 0 -2 true
+divrem -2 -32766 0 -2 true
+divrem -2 -100 0 -2 true
+divrem -2 -7 0 -2 true
+divrem -2 -3 0 -2 true
+divrem -2 -2 1 0 true
+divrem -2 -1 2 0 true
+divrem -2 1 -2 0 true
+divrem -2 2 -1 0 true
+divrem -2 3 0 -2 true
+divrem -2 5 0 -2 true
+divrem -2 7 0 -2 true
+divrem -2 64 0 -2 true
+divrem -2 100 0 -2 true
+divrem -2 16383 0 -2 true
+divrem -2 32766 0 -2 true
+divrem -2 32767 0 -2 true
+byConst -1 1 0
+byVar -1 1 0
+pow2 -1 0 -1 0 -1 0 -1
+other -1 0 -1 0 -1 0 -1
+divrem -1 -32768 0 -1 true
+divrem -1 -32767 0 -1 true
+divrem -1 -32766 0 -1 true
+divrem -1 -100 0 -1 true
+divrem -1 -7 0 -1 true
+divrem -1 -3 0 -1 true
+divrem -1 -2 0 -1 true
+divrem -1 -1 1 0 true
+divrem -1 1 -1 0 true
+divrem -1 2 0 -1 true
+divrem -1 3 0 -1 true
+divrem -1 5 0 -1 true
+divrem -1 7 0 -1 true
+divrem -1 64 0 -1 true
+divrem -1 100 0 -1 true
+divrem -1 16383 0 -1 true
+divrem -1 32766 0 -1 true
+divrem -1 32767 0 -1 true
+byConst 0 0 0
+byVar 0 0 0
+pow2 0 0 0 0 0 0 0
+other 0 0 0 0 0 0 0
+divrem 0 -32768 0 0 true
+divrem 0 -32767 0 0 true
+divrem 0 -32766 0 0 true
+divrem 0 -100 0 0 true
+divrem 0 -7 0 0 true
+divrem 0 -3 0 0 true
+divrem 0 -2 0 0 true
+divrem 0 -1 0 0 true
+divrem 0 1 0 0 true
+divrem 0 2 0 0 true
+divrem 0 3 0 0 true
+divrem 0 5 0 0 true
+divrem 0 7 0 0 true
+divrem 0 64 0 0 true
+divrem 0 100 0 0 true
+divrem 0 16383 0 0 true
+divrem 0 32766 0 0 true
+divrem 0 32767 0 0 true
+byConst 1 -1 0
+byVar 1 -1 0
+pow2 1 0 1 0 1 0 1
+other 1 0 1 0 1 0 1
+divrem 1 -32768 0 1 true
+divrem 1 -32767 0 1 true
+divrem 1 -32766 0 1 true
+divrem 1 -100 0 1 true
+divrem 1 -7 0 1 true
+divrem 1 -3 0 1 true
+divrem 1 -2 0 1 true
+divrem 1 -1 -1 0 true
+divrem 1 1 1 0 true
+divrem 1 2 0 1 true
+divrem 1 3 0 1 true
+divrem 1 5 0 1 true
+divrem 1 7 0 1 true
+divrem 1 64 0 1 true
+divrem 1 100 0 1 true
+divrem 1 16383 0 1 true
+divrem 1 32766 0 1 true
+divrem 1 32767 0 1 true
+byConst 2 -2 0
+byVar 2 -2 0
+pow2 2 1 0 0 2 0 2
+other 2 0 2 0 2 0 2
+divrem 2 -32768 0 2 true
+divrem 2 -32767 0 2 true
+divrem 2 -32766 0 2 true
+divrem 2 -100 0 2 true
+divrem 2 -7 0 2 true
+divrem 2 -3 0 2 true
+divrem 2 -2 -1 0 true
+divrem 2 -1 -2 0 true
+divrem 2 1 2 0 true
+divrem 2 2 1 0 true
+divrem 2 3 0 2 true
+divrem 2 5 0 2 true
+divrem 2 7 0 2 true
+divrem 2 64 0 2 true
+divrem 2 100 0 2 true
+divrem 2 16383 0 2 true
+divrem 2 32766 0 2 true
+divrem 2 32767 0 2 true
+byConst 3 -3 0
+byVar 3 -3 0
+pow2 3 1 1 0 3 0 3
+other 3 1 0 -1 0 0 3
+divrem 3 -32768 0 3 true
+divrem 3 -32767 0 3 true
+divrem 3 -32766 0 3 true
+divrem 3 -100 0 3 true
+divrem 3 -7 0 3 true
+divrem 3 -3 -1 0 true
+divrem 3 -2 -1 1 true
+divrem 3 -1 -3 0 true
+divrem 3 1 3 0 true
+divrem 3 2 1 1 true
+divrem 3 3 1 0 true
+divrem 3 5 0 3 true
+divrem 3 7 0 3 true
+divrem 3 64 0 3 true
+divrem 3 100 0 3 true
+divrem 3 16383 0 3 true
+divrem 3 32766 0 3 true
+divrem 3 32767 0 3 true
+byConst 5 -5 0
+byVar 5 -5 0
+pow2 5 2 1 1 1 0 5
+other 5 1 2 -1 2 0 5
+divrem 5 -32768 0 5 true
+divrem 5 -32767 0 5 true
+divrem 5 -32766 0 5 true
+divrem 5 -100 0 5 true
+divrem 5 -7 0 5 true
+divrem 5 -3 -1 2 true
+divrem 5 -2 -2 1 true
+divrem 5 -1 -5 0 true
+divrem 5 1 5 0 true
+divrem 5 2 2 1 true
+divrem 5 3 1 2 true
+divrem 5 5 1 0 true
+divrem 5 7 0 5 true
+divrem 5 64 0 5 true
+divrem 5 100 0 5 true
+divrem 5 16383 0 5 true
+divrem 5 32766 0 5 true
+divrem 5 32767 0 5 true
+byConst 7 -7 0
+byVar 7 -7 0
+pow2 7 3 1 1 3 0 7
+other 7 2 1 -2 1 0 7
+divrem 7 -32768 0 7 true
+divrem 7 -32767 0 7 true
+divrem 7 -32766 0 7 true
+divrem 7 -100 0 7 true
+divrem 7 -7 -1 0 true
+divrem 7 -3 -2 1 true
+divrem 7 -2 -3 1 true
+divrem 7 -1 -7 0 true
+divrem 7 1 7 0 true
+divrem 7 2 3 1 true
+divrem 7 3 2 1 true
+divrem 7 5 1 2 true
+divrem 7 7 1 0 true
+divrem 7 64 0 7 true
+divrem 7 100 0 7 true
+divrem 7 16383 0 7 true
+divrem 7 32766 0 7 true
+divrem 7 32767 0 7 true
+byConst 64 -64 0
+byVar 64 -64 0
+pow2 64 32 0 16 0 1 0
+other 64 21 1 -21 1 6 4
+divrem 64 -32768 0 64 true
+divrem 64 -32767 0 64 true
+divrem 64 -32766 0 64 true
+divrem 64 -100 0 64 true
+divrem 64 -7 -9 1 true
+divrem 64 -3 -21 1 true
+divrem 64 -2 -32 0 true
+divrem 64 -1 -64 0 true
+divrem 64 1 64 0 true
+divrem 64 2 32 0 true
+divrem 64 3 21 1 true
+divrem 64 5 12 4 true
+divrem 64 7 9 1 true
+divrem 64 64 1 0 true
+divrem 64 100 0 64 true
+divrem 64 16383 0 64 true
+divrem 64 32766 0 64 true
+divrem 64 32767 0 64 true
+byConst 100 -100 0
+byVar 100 -100 0
+pow2 100 50 0 25 0 1 36
+other 100 33 1 -33 1 10 0
+divrem 100 -32768 0 100 true
+divrem 100 -32767 0 100 true
+divrem 100 -32766 0 100 true
+divrem 100 -100 -1 0 true
+divrem 100 -7 -14 2 true
+divrem 100 -3 -33 1 true
+divrem 100 -2 -50 0 true
+divrem 100 -1 -100 0 true
+divrem 100 1 100 0 true
+divrem 100 2 50 0 true
+divrem 100 3 33 1 true
+divrem 100 5 20 0 true
+divrem 100 7 14 2 true
+divrem 100 64 1 36 true
+divrem 100 100 1 0 true
+divrem 100 16383 0 100 true
+divrem 100 32766 0 100 true
+divrem 100 32767 0 100 true
+byConst 16383 -16383 0
+byVar 16383 -16383 0
+pow2 16383 8191 1 4095 3 255 63
+other 16383 5461 0 -5461 0 1638 3
+divrem 16383 -32768 0 16383 true
+divrem 16383 -32767 0 16383 true
+divrem 16383 -32766 0 16383 true
+divrem 16383 -100 -163 83 true
+divrem 16383 -7 -2340 3 true
+divrem 16383 -3 -5461 0 true
+divrem 16383 -2 -8191 1 true
+divrem 16383 -1 -16383 0 true
+divrem 16383 1 16383 0 true
+divrem 16383 2 8191 1 true
+divrem 16383 3 5461 0 true
+divrem 16383 5 3276 3 true
+divrem 16383 7 2340 3 true
+divrem 16383 64 255 63 true
+divrem 16383 100 163 83 true
+divrem 16383 16383 1 0 true
+divrem 16383 32766 0 16383 true
+divrem 16383 32767 0 16383 true
+byConst 32766 -32766 0
+byVar 32766 -32766 0
+pow2 32766 16383 0 8191 2 511 62
+other 32766 10922 0 -10922 0 3276 6
+divrem 32766 -32768 0 32766 true
+divrem 32766 -32767 0 32766 true
+divrem 32766 -32766 -1 0 true
+divrem 32766 -100 -327 66 true
+divrem 32766 -7 -4680 6 true
+divrem 32766 -3 -10922 0 true
+divrem 32766 -2 -16383 0 true
+divrem 32766 -1 -32766 0 true
+divrem 32766 1 32766 0 true
+divrem 32766 2 16383 0 true
+divrem 32766 3 10922 0 true
+divrem 32766 5 6553 1 true
+divrem 32766 7 4680 6 true
+divrem 32766 64 511 62 true
+divrem 32766 100 327 66 true
+divrem 32766 16383 2 0 true
+divrem 32766 32766 1 0 true
+divrem 32766 32767 0 32766 true
+byConst 32767 -32767 0
+byVar 32767 -32767 0
+pow2 32767 16383 1 8191 3 511 63
+other 32767 10922 1 -10922 1 3276 7
+divrem 32767 -32768 0 32767 true
+divrem 32767 -32767 -1 0 true
+divrem 32767 -32766 -1 1 true
+divrem 32767 -100 -327 67 true
+divrem 32767 -7 -4681 0 true
+divrem 32767 -3 -10922 1 true
+divrem 32767 -2 -16383 1 true
+divrem 32767 -1 -32767 0 true
+divrem 32767 1 32767 0 true
+divrem 32767 2 16383 1 true
+divrem 32767 3 10922 1 true
+divrem 32767 5 6553 2 true
+divrem 32767 7 4681 0 true
+divrem 32767 64 511 63 true
+divrem 32767 100 327 67 true
+divrem 32767 16383 2 1 true
+divrem 32767 32766 1 1 true
+divrem 32767 32767 1 0 true
+all 4987882976222369775

@@ -1,0 +1,419 @@
+byConst -2147483648 -2147483648 0
+byVar -2147483648 -2147483648 0
+pow2 -2147483648 -1073741824 0 -536870912 0 -33554432 0
+other -2147483648 -715827882 -2 715827882 -2 -214748364 -8
+divrem -2147483648 -2147483648 1 0 true
+divrem -2147483648 -2147483647 1 -1 true
+divrem -2147483648 -2147483646 1 -2 true
+divrem -2147483648 -100 21474836 -48 true
+divrem -2147483648 -7 306783378 -2 true
+divrem -2147483648 -3 715827882 -2 true
+divrem -2147483648 -2 1073741824 0 true
+divrem -2147483648 -1 -2147483648 0 true
+divrem -2147483648 1 -2147483648 0 true
+divrem -2147483648 2 -1073741824 0 true
+divrem -2147483648 3 -715827882 -2 true
+divrem -2147483648 5 -429496729 -3 true
+divrem -2147483648 7 -306783378 -2 true
+divrem -2147483648 64 -33554432 0 true
+divrem -2147483648 100 -21474836 -48 true
+divrem -2147483648 1073741823 -2 -2 true
+divrem -2147483648 2147483646 -1 -2 true
+divrem -2147483648 2147483647 -1 -1 true
+byConst -2147483647 2147483647 0
+byVar -2147483647 2147483647 0
+pow2 -2147483647 -1073741823 -1 -536870911 -3 -33554431 -63
+other -2147483647 -715827882 -1 715827882 -1 -214748364 -7
+divrem -2147483647 -2147483648 0 -2147483647 true
+divrem -2147483647 -2147483647 1 0 true
+divrem -2147483647 -2147483646 1 -1 true
+divrem -2147483647 -100 21474836 -47 true
+divrem -2147483647 -7 306783378 -1 true
+divrem -2147483647 -3 715827882 -1 true
+divrem -2147483647 -2 1073741823 -1 true
+divrem -2147483647 -1 2147483647 0 true
+divrem -2147483647 1 -2147483647 0 true
+divrem -2147483647 2 -1073741823 -1 true
+divrem -2147483647 3 -715827882 -1 true
+divrem -2147483647 5 -429496729 -2 true
+divrem -2147483647 7 -306783378 -1 true
+divrem -2147483647 64 -33554431 -63 true
+divrem -2147483647 100 -21474836 -47 true
+divrem -2147483647 1073741823 -2 -1 true
+divrem -2147483647 2147483646 -1 -1 true
+divrem -2147483647 2147483647 -1 0 true
+byConst -2147483646 2147483646 0
+byVar -2147483646 2147483646 0
+pow2 -2147483646 -1073741823 0 -536870911 -2 -33554431 -62
+other -2147483646 -715827882 0 715827882 0 -214748364 -6
+divrem -2147483646 -2147483648 0 -2147483646 true
+divrem -2147483646 -2147483647 0 -2147483646 true
+divrem -2147483646 -2147483646 1 0 true
+divrem -2147483646 -100 21474836 -46 true
+divrem -2147483646 -7 306783378 0 true
+divrem -2147483646 -3 715827882 0 true
+divrem -2147483646 -2 1073741823 0 true
+divrem -2147483646 -1 2147483646 0 true
+divrem -2147483646 1 -2147483646 0 true
+divrem -2147483646 2 -1073741823 0 true
+divrem -2147483646 3 -715827882 0 true
+divrem -2147483646 5 -429496729 -1 true
+divrem -2147483646 7 -306783378 0 true
+divrem -2147483646 64 -33554431 -62 true
+divrem -2147483646 100 -21474836 -46 true
+divrem -2147483646 1073741823 -2 0 true
+divrem -2147483646 2147483646 -1 0 true
+divrem -2147483646 2147483647 0 -2147483646 true
+byConst -100 100 0
+byVar -100 100 0
+pow2 -100 -50 0 -25 0 -1 -36
+other -100 -33 -1 33 -1 -10 0
+divrem -100 -2147483648 0 -100 true
+divrem -100 -2147483647 0 -100 true
+divrem -100 -2147483646 0 -100 true
+divrem -100 -100 1 0 true
+divrem -100 -7 14 -2 true
+divrem -100 -3 33 -1 true
+divrem -100 -2 50 0 true
+divrem -100 -1 100 0 true
+divrem -100 1 -100 0 true
+divrem -100 2 -50 0 true
+divrem -100 3 -33 -1 true
+divrem -100 5 -20 0 true
+divrem -100 7 -14 -2 true
+divrem -100 64 -1 -36 true
+divrem -100 100 -1 0 true
+divrem -100 1073741823 0 -100 true
+divrem -100 2147483646 0 -100 true
+divrem -100 2147483647 0 -100 true
+byConst -7 7 0
+byVar -7 7 0
+pow2 -7 -3 -1 -1 -3 0 -7
+other -7 -2 -1 2 -1 0 -7
+divrem -7 -2147483648 0 -7 true
+divrem -7 -2147483647 0 -7 true
+divrem -7 -2147483646 0 -7 true
+divrem -7 -100 0 -7 true
+divrem -7 -7 1 0 true
+divrem -7 -3 2 -1 true
+divrem -7 -2 3 -1 true
+divrem -7 -1 7 0 true
+divrem -7 1 -7 0 true
+divrem -7 2 -3 -1 true
+divrem -7 3 -2 -1 true
+divrem -7 5 -1 -2 true
+divrem -7 7 -1 0 true
+divrem -7 64 0 -7 true
+divrem -7 100 0 -7 true
+divrem -7 1073741823 0 -7 true
+divrem -7 2147483646 0 -7 true
+divrem -7 2147483647 0 -7 true
+byConst -3 3 0
+byVar -3 3 0
+pow2 -3 -1 -1 0 -3 0 -3
+other -3 -1 0 1 0 0 -3
+divrem -3 -2147483648 0 -3 true
+divrem -3 -2147483647 0 -3 true
+divrem -3 -2147483646 0 -3 true
+divrem -3 -100 0 -3 true
+divrem -3 -7 0 -3 true
+divrem -3 -3 1 0 true
+divrem -3 -2 1 -1 true
+divrem -3 -1 3 0 true
+divrem -3 1 -3 0 true
+divrem -3 2 -1 -1 true
+divrem -3 3 -1 0 true
+divrem -3 5 0 -3 true
+divrem -3 7 0 -3 true
+divrem -3 64 0 -3 true
+divrem -3 100 0 -3 true
+divrem -3 1073741823 0 -3 true
+divrem -3 2147483646 0 -3 true
+divrem -3 2147483647 0 -3 true
+byConst -2 2 0
+byVar -2 2 0
+pow2 -2 -1 0 0 -2 0 -2
+other -2 0 -2 0 -2 0 -2
+divrem -2 -2147483648 0 -2 true
+divrem -2 -2147483647 0 -2 true
+divrem -2 -2147483646 0 -2 true
+divrem -2 -100 0 -2 true
+divrem -2 -7 0 -2 true
+divrem -2 -3 0 -2 true
+divrem -2 -2 1 0 true
+divrem -2 -1 2 0 true
+divrem -2 1 -2 0 true
+divrem -2 2 -1 0 true
+divrem -2 3 0 -2 true
+divrem -2 5 0 -2 true
+divrem -2 7 0 -2 true
+divrem -2 64 0 -2 true
+divrem -2 100 0 -2 true
+divrem -2 1073741823 0 -2 true
+divrem -2 2147483646 0 -2 true
+divrem -2 2147483647 0 -2 true
+byConst -1 1 0
+byVar -1 1 0
+pow2 -1 0 -1 0 -1 0 -1
+other -1 0 -1 0 -1 0 -1
+divrem -1 -2147483648 0 -1 true
+divrem -1 -2147483647 0 -1 true
+divrem -1 -2147483646 0 -1 true
+divrem -1 -100 0 -1 true
+divrem -1 -7 0 -1 true
+divrem -1 -3 0 -1 true
+divrem -1 -2 0 -1 true
+divrem -1 -1 1 0 true
+divrem -1 1 -1 0 true
+divrem -1 2 0 -1 true
+divrem -1 3 0 -1 true
+divrem -1 5 0 -1 true
+divrem -1 7 0 -1 true
+divrem -1 64 0 -1 true
+divrem -1 100 0 -1 true
+divrem -1 1073741823 0 -1 true
+divrem -1 2147483646 0 -1 true
+divrem -1 2147483647 0 -1 true
+byConst 0 0 0
+byVar 0 0 0
+pow2 0 0 0 0 0 0 0
+other 0 0 0 0 0 0 0
+divrem 0 -2147483648 0 0 true
+divrem 0 -2147483647 0 0 true
+divrem 0 -2147483646 0 0 true
+divrem 0 -100 0 0 true
+divrem 0 -7 0 0 true
+divrem 0 -3 0 0 true
+divrem 0 -2 0 0 true
+divrem 0 -1 0 0 true
+divrem 0 1 0 0 true
+divrem 0 2 0 0 true
+divrem 0 3 0 0 true
+divrem 0 5 0 0 true
+divrem 0 7 0 0 true
+divrem 0 64 0 0 true
+divrem 0 100 0 0 true
+divrem 0 1073741823 0 0 true
+divrem 0 2147483646 0 0 true
+divrem 0 2147483647 0 0 true
+byConst 1 -1 0
+byVar 1 -1 0
+pow2 1 0 1 0 1 0 1
+other 1 0 1 0 1 0 1
+divrem 1 -2147483648 0 1 true
+divrem 1 -2147483647 0 1 true
+divrem 1 -2147483646 0 1 true
+divrem 1 -100 0 1 true
+divrem 1 -7 0 1 true
+divrem 1 -3 0 1 true
+divrem 1 -2 0 1 true
+divrem 1 -1 -1 0 true
+divrem 1 1 1 0 true
+divrem 1 2 0 1 true
+divrem 1 3 0 1 true
+divrem 1 5 0 1 true
+divrem 1 7 0 1 true
+divrem 1 64 0 1 true
+divrem 1 100 0 1 true
+divrem 1 1073741823 0 1 true
+divrem 1 2147483646 0 1 true
+divrem 1 2147483647 0 1 true
+byConst 2 -2 0
+byVar 2 -2 0
+pow2 2 1 0 0 2 0 2
+other 2 0 2 0 2 0 2
+divrem 2 -2147483648 0 2 true
+divrem 2 -2147483647 0 2 true
+divrem 2 -2147483646 0 2 true
+divrem 2 -100 0 2 true
+divrem 2 -7 0 2 true
+divrem 2 -3 0 2 true
+divrem 2 -2 -1 0 true
+divrem 2 -1 -2 0 true
+divrem 2 1 2 0 true
+divrem 2 2 1 0 true
+divrem 2 3 0 2 true
+divrem 2 5 0 2 true
+divrem 2 7 0 2 true
+divrem 2 64 0 2 true
+divrem 2 100 0 2 true
+divrem 2 1073741823 0 2 true
+divrem 2 2147483646 0 2 true
+divrem 2 2147483647 0 2 true
+byConst 3 -3 0
+byVar 3 -3 0
+pow2 3 1 1 0 3 0 3
+other 3 1 0 -1 0 0 3
+divrem 3 -2147483648 0 3 true
+divrem 3 -2147483647 0 3 true
+divrem 3 -2147483646 0 3 true
+divrem 3 -100 0 3 true
+divrem 3 -7 0 3 true
+divrem 3 -3 -1 0 true
+divrem 3 -2 -1 1 true
+divrem 3 -1 -3 0 true
+divrem 3 1 3 0 true
+divrem 3 2 1 1 true
+divrem 3 3 1 0 true
+divrem 3 5 0 3 true
+divrem 3 7 0 3 true
+divrem 3 64 0 3 true
+divrem 3 100 0 3 true
+divrem 3 1073741823 0 3 true
+divrem 3 2147483646 0 3 true
+divrem 3 2147483647 0 3 true
+byConst 5 -5 0
+byVar 5 -5 0
+pow2 5 2 1 1 1 0 5
+other 5 1 2 -1 2 0 5
+divrem 5 -2147483648 0 5 true
+divrem 5 -2147483647 0 5 true
+divrem 5 -2147483646 0 5 true
+divrem 5 -100 0 5 true
+divrem 5 -7 0 5 true
+divrem 5 -3 -1 2 true
+divrem 5 -2 -2 1 true
+divrem 5 -1 -5 0 true
+divrem 5 1 5 0 true
+divrem 5 2 2 1 true
+divrem 5 3 1 2 true
+divrem 5 5 1 0 true
+divrem 5 7 0 5 true
+divrem 5 64 0 5 true
+divrem 5 100 0 5 true
+divrem 5 1073741823 0 5 true
+divrem 5 2147483646 0 5 true
+divrem 5 2147483647 0 5 true
+byConst 7 -7 0
+byVar 7 -7 0
+pow2 7 3 1 1 3 0 7
+other 7 2 1 -2 1 0 7
+divrem 7 -2147483648 0 7 true
+divrem 7 -2147483647 0 7 true
+divrem 7 -2147483646 0 7 true
+divrem 7 -100 0 7 true
+divrem 7 -7 -1 0 true
+divrem 7 -3 -2 1 true
+divrem 7 -2 -3 1 true
+divrem 7 -1 -7 0 true
+divrem 7 1 7 0 true
+divrem 7 2 3 1 true
+divrem 7 3 2 1 true
+divrem 7 5 1 2 true
+divrem 7 7 1 0 true
+divrem 7 64 0 7 true
+divrem 7 100 0 7 true
+divrem 7 1073741823 0 7 true
+divrem 7 2147483646 0 7 true
+divrem 7 2147483647 0 7 true
+byConst 64 -64 0
+byVar 64 -64 0
+pow2 64 32 0 16 0 1 0
+other 64 21 1 -21 1 6 4
+divrem 64 -2147483648 0 64 true
+divrem 64 -2147483647 0 64 true
+divrem 64 -2147483646 0 64 true
+divrem 64 -100 0 64 true
+divrem 64 -7 -9 1 true
+divrem 64 -3 -21 1 true
+divrem 64 -2 -32 0 true
+divrem 64 -1 -64 0 true
+divrem 64 1 64 0 true
+divrem 64 2 32 0 true
+divrem 64 3 21 1 true
+divrem 64 5 12 4 true
+divrem 64 7 9 1 true
+divrem 64 64 1 0 true
+divrem 64 100 0 64 true
+divrem 64 1073741823 0 64 true
+divrem 64 2147483646 0 64 true
+divrem 64 2147483647 0 64 true
+byConst 100 -100 0
+byVar 100 -100 0
+pow2 100 50 0 25 0 1 36
+other 100 33 1 -33 1 10 0
+divrem 100 -2147483648 0 100 true
+divrem 100 -2147483647 0 100 true
+divrem 100 -2147483646 0 100 true
+divrem 100 -100 -1 0 true
+divrem 100 -7 -14 2 true
+divrem 100 -3 -33 1 true
+divrem 100 -2 -50 0 true
+divrem 100 -1 -100 0 true
+divrem 100 1 100 0 true
+divrem 100 2 50 0 true
+divrem 100 3 33 1 true
+divrem 100 5 20 0 true
+divrem 100 7 14 2 true
+divrem 100 64 1 36 true
+divrem 100 100 1 0 true
+divrem 100 1073741823 0 100 true
+divrem 100 2147483646 0 100 true
+divrem 100 2147483647 0 100 true
+byConst 1073741823 -1073741823 0
+byVar 1073741823 -1073741823 0
+pow2 1073741823 536870911 1 268435455 3 16777215 63
+other 1073741823 357913941 0 -357913941 0 107374182 3
+divrem 1073741823 -2147483648 0 1073741823 true
+divrem 1073741823 -2147483647 0 1073741823 true
+divrem 1073741823 -2147483646 0 1073741823 true
+divrem 1073741823 -100 -10737418 23 true
+divrem 1073741823 -7 -153391689 0 true
+divrem 1073741823 -3 -357913941 0 true
+divrem 1073741823 -2 -536870911 1 true
+divrem 1073741823 -1 -1073741823 0 true
+divrem 1073741823 1 1073741823 0 true
+divrem 1073741823 2 536870911 1 true
+divrem 1073741823 3 357913941 0 true
+divrem 1073741823 5 214748364 3 true
+divrem 1073741823 7 153391689 0 true
+divrem 1073741823 64 16777215 63 true
+divrem 1073741823 100 10737418 23 true
+divrem 1073741823 1073741823 1 0 true
+divrem 1073741823 2147483646 0 1073741823 true
+divrem 1073741823 2147483647 0 1073741823 true
+byConst 2147483646 -2147483646 0
+byVar 2147483646 -2147483646 0
+pow2 2147483646 1073741823 0 536870911 2 33554431 62
+other 2147483646 715827882 0 -715827882 0 214748364 6
+divrem 2147483646 -2147483648 0 2147483646 true
+divrem 2147483646 -2147483647 0 2147483646 true
+divrem 2147483646 -2147483646 -1 0 true
+divrem 2147483646 -100 -21474836 46 true
+divrem 2147483646 -7 -306783378 0 true
+divrem 2147483646 -3 -715827882 0 true
+divrem 2147483646 -2 -1073741823 0 true
+divrem 2147483646 -1 -2147483646 0 true
+divrem 2147483646 1 2147483646 0 true
+divrem 2147483646 2 1073741823 0 true
+divrem 2147483646 3 715827882 0 true
+divrem 2147483646 5 429496729 1 true
+divrem 2147483646 7 306783378 0 true
+divrem 2147483646 64 33554431 62 true
+divrem 2147483646 100 21474836 46 true
+divrem 2147483646 1073741823 2 0 true
+divrem 2147483646 2147483646 1 0 true
+divrem 2147483646 2147483647 0 2147483646 true
+byConst 2147483647 -2147483647 0
+byVar 2147483647 -2147483647 0
+pow2 2147483647 1073741823 1 536870911 3 33554431 63
+other 2147483647 715827882 1 -715827882 1 214748364 7
+divrem 2147483647 -2147483648 0 2147483647 true
+divrem 2147483647 -2147483647 -1 0 true
+divrem 2147483647 -2147483646 -1 1 true
+divrem 2147483647 -100 -21474836 47 true
+divrem 2147483647 -7 -306783378 1 true
+divrem 2147483647 -3 -715827882 1 true
+divrem 2147483647 -2 -1073741823 1 true
+divrem 2147483647 -1 -2147483647 0 true
+divrem 2147483647 1 2147483647 0 true
+divrem 2147483647 2 1073741823 1 true
+divrem 2147483647 3 715827882 1 true
+divrem 2147483647 5 429496729 2 true
+divrem 2147483647 7 306783378 1 true
+divrem 2147483647 64 33554431 63 true
+divrem 2147483647 100 21474836 47 true
+divrem 2147483647 1073741823 2 1 true
+divrem 2147483647 2147483646 1 1 true
+divrem 2147483647 2147483647 1 0 true
+all 15648382993896038753

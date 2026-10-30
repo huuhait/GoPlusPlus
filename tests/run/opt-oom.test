@@ -1,0 +1,13 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/oom --real
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 2 oom/
+// P04.13 (docs/design/pipelines.md section 1): an allocation that fails ends
+// the program with "fatal error: runtime: out of memory" and exit status 2
+// at every `opt` level. LLVM's optimizer knows malloc, calloc and realloc and
+// would delete an allocation whose memory does not escape, with the
+// runtime's check, above opt 0 (review R6); the code generator declares them
+// `nobuiltin` (codegen/alloc-nobuiltin.test has the IR). Real binaries: the
+// fast runner's executor may be built with a sanitizer, whose calloc aborts
+// instead of returning null. Go prints its own words for it ("runtime: out
+// of memory: cannot allocate ..."), so Inputs/oom/*.out and .err are written
+// by hand.

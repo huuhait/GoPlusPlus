@@ -1232,6 +1232,11 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
     VP = FB.local(FB.newLocal(ctx().ptr(ctx().u8()), Local::Var, "vp"));
     at(R);
     FB.assign(FB.local(ItL), FB.use(zeroOf(L.mapIterType())));
+    // map_iter_next writes both before it returns true, and only then does
+    // the body read them; null keeps an undefined value out of the IR (the
+    // loop header's phi) all the same.
+    FB.assign(KP, FB.use(E.null(KP.Ty).Op));
+    FB.assign(VP, FB.use(E.null(VP.Ty).Op));
     callRt(RtFn::MapIterInit, {copyOf(FB.temp(FB.addrOf(FB.local(ItL)))), MapV},
            R);
     Scopes.back().MapIters.push_back({ItL, R});

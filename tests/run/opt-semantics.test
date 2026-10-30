@@ -1,0 +1,197 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/opt-semantics.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/opt-semantics.out %}
+// P04.13: what an optimizer might get wrong. Go defines integer overflow as
+// wrap-around, shifts by any count, MinInt / -1 and MinInt % -1, and narrow
+// integer arithmetic; LLVM's `add nsw`, `shl` by more than the width and
+// `sdiv` of MinInt by -1 would be undefined. The values come through
+// //go:noinline functions and loops, so an optimizer sees a loop it may
+// rewrite, not constants. The matrix (run/core-opt-matrix*.test) builds this
+// at every `opt` and with -pipeline=fastisel; the output is Go's.
+package main
+
+//go:noinline
+func i8(x int8) int8 { return x }
+
+//go:noinline
+func i32(x int32) int32 { return x }
+
+//go:noinline
+func i64(x int64) int64 { return x }
+
+//go:noinline
+func u8(x uint8) uint8 { return x }
+
+//go:noinline
+func u32(x uint32) uint32 { return x }
+
+//go:noinline
+func u64(x uint64) uint64 { return x }
+
+//go:noinline
+func gt(x int64) bool { return x+1 > x }
+
+//go:noinline
+func lt32(x int32) bool { return x-1 < x }
+
+//go:noinline
+func wrapLoop8(from int8) int {
+	n := 0
+	for i := from; i > 0; i++ {
+		n++
+	}
+	return n
+}
+
+//go:noinline
+func wrapLoopU8(from uint8) int {
+	n := 0
+	for i := from; i >= from; i++ {
+		n++
+		if n > 600 {
+			break
+		}
+	}
+	return n
+}
+
+//go:noinline
+func sumWrap(start int32, n int32) int32 {
+	s := start
+	for i := int32(0); i < n; i++ {
+		s += i * 1000003
+	}
+	return s
+}
+
+//go:noinline
+func mulWrap(a, b int64) int64 { return a * b * a }
+
+//go:noinline
+func negMin(x int64) (int64, int8) { return -x, -int8(x) }
+
+//go:noinline
+func divs64(a, b int64) (int64, int64) { return a / b, a % b }
+
+//go:noinline
+func divs32(a, b int32) (int32, int32) { return a / b, a % b }
+
+//go:noinline
+func divs16(a, b int16) (int16, int16) { return a / b, a % b }
+
+//go:noinline
+func divs8(a, b int8) (int8, int8) { return a / b, a % b }
+
+//go:noinline
+func divu(a, b uint32) (uint32, uint32) { return a / b, a % b }
+
+//go:noinline
+func shifts(x int32, y uint32, z int64, w uint8, n uint) [8]int64 {
+	return [8]int64{int64(x << n), int64(x >> n), int64(y << n), int64(y >> n),
+		z << n, z >> n, int64(w << n), int64(w >> n)}
+}
+
+//go:noinline
+func shiftLoop(x int64, upto int) int64 {
+	var acc int64
+	for n := 0; n < upto; n++ {
+		acc += x<<uint(n) ^ x>>uint(n)
+		acc -= int64(uint64(x) >> uint(n))
+	}
+	return acc
+}
+
+//go:noinline
+func narrow(a, b int8, c, d uint16) (int8, int8, uint16, uint16, int32) {
+	return a + b, a * b, c * d, c - d, int32(a) * int32(b) * 1000000
+}
+
+//go:noinline
+func index(a *[256]uint8, k uint8) int {
+	s := 0
+	for i := k; ; i++ {
+		s += int(a[i])
+		if i == k-1 {
+			break
+		}
+	}
+	return s
+}
+
+//go:noinline
+func conv(x uint64, y int64) (float64, float32, float64, uint8, int8, int32) {
+	return float64(x), float32(x), float64(y), uint8(y), int8(x), int32(x)
+}
+
+//go:noinline
+func zero() (int, [3]int, struct {
+	a int8
+	b float64
+}) {
+	var x int
+	var a [3]int
+	var s struct {
+		a int8
+		b float64
+	}
+	return x, a, s
+}
+
+// widen: narrow signed parameters widened to 64 bits in a function that is
+// not inlined (it has a branch). SROA turns the parameters' slots into a
+// `sext` of the `signext` argument, the pattern LLVM 23.1.0's AArch64
+// FastISel compiles as a zero-extension (ADR-0028, P04.13 addendum): the
+// reason arm64 `opt 0` selects with GlobalISel.
+//
+//go:noinline
+func widen(a int8, b int16, n int) int64 {
+	if n > 0 {
+		println("n")
+	}
+	return int64(a)*3 + int64(b)
+}
+
+func main() {
+	println("gt", gt(i64(9223372036854775807)), gt(i64(5)), lt32(i32(-2147483648)))
+	println("wrap8", wrapLoop8(i8(120)), wrapLoop8(i8(-3)), wrapLoopU8(u8(250)))
+	println("sum", sumWrap(i32(2147483000), i32(5000)), sumWrap(i32(-5), i32(100000)))
+	println("mul", mulWrap(i64(3037000500), i64(3037000500)), mulWrap(i64(-9223372036854775808), i64(3)))
+	a, b := negMin(i64(-9223372036854775808))
+	println("neg", a, b)
+	a, b2 := negMin(i64(-128))
+	println("neg", a, b2)
+	q, r := divs64(i64(-9223372036854775808), i64(-1))
+	println("div64", q, r)
+	q, r = divs64(i64(-7), i64(2))
+	println("div64", q, r)
+	q32, r32 := divs32(i32(-2147483648), i32(-1))
+	println("div32", q32, r32)
+	q16, r16 := divs16(-32768, -1)
+	println("div16", q16, r16)
+	q8, r8 := divs8(i8(-128), i8(-1))
+	println("div8", q8, r8)
+	uq, ur := divu(u32(4294967295), u32(7))
+	println("divu", uq, ur)
+	counts := [11]uint{0, 1, 7, 8, 31, 32, 33, 63, 64, 65, 200}
+	for k := 0; k < len(counts); k++ {
+		n := counts[k]
+		s := shifts(i32(-5), u32(0xF0000001), i64(-123456789), u8(0x81), n)
+		println("shift", n, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7])
+	}
+	println("shiftloop", shiftLoop(i64(-0x123456789ABCDEF), 70), shiftLoop(i64(3), 130))
+	n1, n2, n3, n4, n5 := narrow(i8(100), i8(100), 60000, 7)
+	println("narrow", n1, n2, n3, n4, n5)
+	var arr [256]uint8
+	for i := 0; i < 256; i++ {
+		arr[i] = uint8(i * 7)
+	}
+	println("index", index(&arr, u8(200)), index(&arr, u8(0)))
+	f1, f2, f3, c1, c2, c3 := conv(u64(18446744073709551615), i64(-1))
+	println("conv", f1, f2, f3, c1, c2, c3)
+	f1, f2, f3, c1, c2, c3 = conv(u64(9223372036854775809), i64(9223372036854775807))
+	println("conv", f1, f2, f3, c1, c2, c3)
+	x, z, s := zero()
+	println("zero", x, z[0], z[2], s.a, s.b)
+	println("widen", widen(-1, -2, 0), widen(-128, -32768, 0), widen(127, 32767, 0))
+}

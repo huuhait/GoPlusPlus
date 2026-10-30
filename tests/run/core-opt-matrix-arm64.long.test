@@ -1,0 +1,7 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 8
+// RUN: %if clang %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 8 --no-corpus --cabi 3:25 --cabi 4:25 %}
+// P04.13 (D4.8): the whole run corpus at every `opt` level and with
+// -pipeline=fastisel on linux/arm64 under QEMU, and with clang the C ABI
+// programs of seeds 3 and 4 (cabi-arm64.test). See core-opt-matrix.test and
+// core-opt-matrix.long.test.

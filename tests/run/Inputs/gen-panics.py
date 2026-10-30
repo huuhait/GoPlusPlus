@@ -55,6 +55,16 @@ CASES = {
                         "a[n(5)] += f()"),
     "assign-order-nested": ("var m [2][3]int\n\nfunc n(x int) int { return x }\n\nfunc f() int {\n\tprintln(\"f called\")\n\treturn 1\n}",
                             "m[n(4)][n(7)] = f()"),
+    # P04.13: checks an optimizer might move or drop (run/core-opt-matrix*
+    # builds each of these at every `opt`). The output before the panic must be
+    # complete, and a result nobody reads does not remove the check. The other
+    # opt-* programs are written by gen-opt.py.
+    "opt-loop-index": ("var a [5]int\nvar n = 6", "s := 0\n\tfor i := 0; i < n; i++ {\n\t\tprintln(\"i\", i)\n\t\ts += a[i]\n\t}\n\tprintln(s)"),
+    "opt-shift-loop": ("var n = -3", "for i := 2; i >= 0; i-- {\n\t\tprintln(1 << (n + i))\n\t}"),
+    "opt-index-hoist": ("var a [4]int32\nvar j = 4", "for i := 0; i < 4; i++ {\n\t\ta[i] = int32(i)\n\t\tprintln(a[i])\n\t}\n\tprintln(a[j])"),
+    "opt-div-min": ("var z int\nvar m = -1 << 63", "println(m / -1, m % -1)\n\tprintln(m / z)"),
+    "opt-div-inlined": ("func f(a, b int) int { return a / b }", "println(f(1, 0))"),
+    "opt-index-local": ("", "var a [5]int\n\ti := 7\n\tprintln(a[i])"),
 }
 
 
