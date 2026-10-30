@@ -1,0 +1,10 @@
+package main
+
+var z int8
+
+func main() {
+	println("before")
+	var x int8 = -128
+	println(x / z)
+	println("not reached")
+}

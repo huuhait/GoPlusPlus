@@ -1,0 +1,14 @@
+package main
+
+var B = trace("B", C+1)
+
+var Y = trace("Y", 2)
+
+// A function that reads a variable makes the variable a dependency.
+var total = sum()
+
+func sum() int { return A + B + C + Y }
+
+func init() {
+	println("init b")
+}

@@ -1,0 +1,44 @@
+-1 0 1 2
+default 0
+small 1
+small 2
+small 3
+four
+five-ish 4
+default 4
+five-ish 5
+default 5
+default 6
+seven
+default 8
+a or b
+two and a half
+true
+max uint64
+max byte
+one and a half
+false
+zero
+init ten
+tagless init 3
+ij 0 0
+ij 0 1
+ij 1 0
+ij 1 1
+ij 2 0
+ij 2 1
+k 0
+k 2
+m 0
+m 2
+45 0
+c 0
+c 1
+c 2
+while 3
+inf 5
+two vars 3 7
+odd 1
+odd 3
+no cond 2
+no init 2

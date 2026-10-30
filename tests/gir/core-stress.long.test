@@ -1,0 +1,8 @@
+// REQUIRES: long
+// P04.04: lowering the core subset to GIR is near-linear (CLAUDE.md lessons;
+// manager decision M3): a switch with tens of thousands of constant cases
+// and a tagless one, and a struct of tens of thousands of fields built,
+// copied and compared; 4N takes at most 12 times as long as N
+// (tests/unit/GIR/StressTest.cpp, GIRStressLong; split over three tests so
+// they run in parallel: core-stress-decls, core-stress-codegen).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_LoweringSwitchesWithManyCases:GIRStressLong.DISABLED_LoweringStructsWithManyFields'

@@ -1,0 +1,5 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names index-array,index-negative,index-uint8,index-nested,index-after-output -- %gopp build %gopp_link_flags
+// P04.04 (D4.12): an array index out of range panics with Go's message, with
+// the index as the number it is (signed or unsigned) and the length, after
+// the output that came before. See core-panics.test.

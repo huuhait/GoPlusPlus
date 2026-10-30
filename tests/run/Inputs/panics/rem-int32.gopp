@@ -1,0 +1,9 @@
+package main
+
+var z int32
+
+func main() {
+	println("before")
+	println(int32(7) % z)
+	println("not reached")
+}

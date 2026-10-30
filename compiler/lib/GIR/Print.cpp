@@ -8,6 +8,8 @@
 
 #include "gopp/GIR/Print.h"
 
+#include "gopp/Basic/WorkCount.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Path.h"
@@ -19,6 +21,14 @@ using namespace gopp::gir;
 using llvm::raw_ostream;
 
 namespace {
+
+/// Test-only work counter (M8).
+uint64_t &printSteps() {
+  thread_local uint64_t N = 0;
+  return N;
+}
+
+/// The loops below count their elements: `counted(printSteps(), Range)`.
 
 struct Printer {
   raw_ostream &OS;
@@ -65,6 +75,9 @@ struct Printer {
     case Constant::Zero:
       OS << "const zero: " << C.Ty->str();
       return;
+    case Constant::Global:
+      OS << "const global @" << M.Globals[C.Bits].Name;
+      return;
     }
   }
 
@@ -86,7 +99,7 @@ struct Printer {
 
   void operands(llvm::ArrayRef<Operand> Ops) {
     bool First = true;
-    for (const Operand &O : Ops) {
+    for (const Operand &O : counted(printSteps(), Ops)) {
       if (!First)
         OS << ", ";
       First = false;
@@ -193,7 +206,7 @@ struct Printer {
       OS << "switch ";
       operand(T.Discr);
       OS << " [";
-      for (const SwitchCase &C : T.Cases)
+      for (const SwitchCase &C : counted(printSteps(), T.Cases))
         OS << C.Value << ": bb" << C.Target << ", ";
       OS << "otherwise: bb" << T.Otherwise << ']';
       break;
@@ -227,8 +240,12 @@ struct Printer {
       OS << "assert(";
       operand(T.Discr);
       OS << " == " << (T.Expected ? "true" : "false") << ", \""
-         << getAssertKindName(T.AK) << "\") -> [success: bb" << T.Target
-         << ", unwind: ";
+         << getAssertKindName(T.AK) << "\"";
+      for (const Operand &A : counted(printSteps(), T.Args)) {
+        OS << ", ";
+        operand(A);
+      }
+      OS << ") -> [success: bb" << T.Target << ", unwind: ";
       unwind(T.Unwind);
       OS << ']';
       break;
@@ -241,8 +258,9 @@ struct Printer {
   }
 
   void function(const Function &F) {
+    ++printSteps();
     OS << (F.isDeclaration() ? "declare " : "") << "fn " << F.Name << '(';
-    for (unsigned I = 0; I < F.numParams(); ++I) {
+    for (unsigned I = 0; I < F.numParams(); ++I, ++printSteps()) {
       if (I)
         OS << ", ";
       OS << '_' << I + 1 << ": " << F.Sig->elems()[I]->str();
@@ -261,6 +279,7 @@ struct Printer {
     OS << " {\n";
     for (LocalId I = 0; I < F.Locals.size(); ++I) {
       const Local &L = F.Locals[I];
+      ++printSteps();
       OS << "  let _" << I << ": " << L.Ty->str();
       if (!L.Name.empty())
         OS << "  ; " << L.Name;
@@ -268,13 +287,16 @@ struct Printer {
     }
     for (BlockId B = 0; B < F.Blocks.size(); ++B) {
       const BasicBlock &BB = F.Blocks[B];
+      ++printSteps();
       OS << "  bb" << B
          << (BB.Catch     ? " (catch)"
              : BB.Cleanup ? " (cleanup)"
                           : "")
          << ":\n";
-      for (const Statement &S : BB.Stmts)
+      for (const Statement &S : BB.Stmts) {
+        ++printSteps();
         statement(S);
+      }
       if (BB.Term.Set)
         terminator(BB.Term);
       else
@@ -286,9 +308,11 @@ struct Printer {
 
 } // namespace
 
+uint64_t gir::printerSteps() { return printSteps(); }
+
 void gir::print(raw_ostream &OS, const Place &P) {
   std::string S = "_" + std::to_string(P.Local);
-  for (const PlaceElem &E : P.Proj) {
+  for (const PlaceElem &E : counted(printSteps(), P.Proj)) {
     switch (E.K) {
     case PlaceElem::Deref:
       S = "(*" + S + ")";
@@ -317,9 +341,21 @@ void gir::print(raw_ostream &OS, const Module &M, const Function &F,
 
 void gir::print(raw_ostream &OS, const Module &M, const PrintOptions &Opts) {
   OS << "module \"" << M.Name << "\"\n";
-  for (unsigned I = 0; I < M.Files.size(); ++I)
+  for (unsigned I = 0; I < M.Files.size(); ++I, ++printSteps())
     OS << "file " << I << " \"" << llvm::sys::path::filename(M.Files[I])
        << "\"\n";
+  if (!M.Globals.empty())
+    OS << '\n';
+  for (const Global &G : counted(printSteps(), M.Globals)) {
+    OS << (G.ReadOnly ? "constdata @" : "global @") << G.Name << ": "
+       << G.Ty->str();
+    if (G.Init.K != Constant::Zero) {
+      OS << " = ";
+      Printer P{OS, M, Opts};
+      P.constant(G.Init);
+    }
+    OS << '\n';
+  }
   for (const auto &F : M.Funcs) {
     OS << '\n';
     print(OS, M, *F, Opts);

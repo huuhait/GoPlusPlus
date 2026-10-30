@@ -53,6 +53,11 @@ public:
     Tuple,  // Elems, laid out like a struct
     Struct, // nominal: Name, fields set once with Context::setStructBody
     Func,   // a function pointer: Elems = parameters, Ret, Fails
+    Option, // Option[T] of a type that has no nil of its own: T followed by a
+            // one-byte "is set" flag, padded (D4.5); fields 0 (T) and 1 (bool).
+            // Its == and hash ignore the flag's padding and, when the flag is
+            // clear, the payload (Glue.h). Option of a pointer kind is the
+            // pointer: no Option type.
   };
 
   Kind getKind() const { return K; }
@@ -61,6 +66,7 @@ public:
   bool isInt() const { return K == Kind::Int; }
   bool isFloat() const { return K == Kind::Float; }
   bool isPtr() const { return K == Kind::Ptr; }
+  bool isOption() const { return K == Kind::Option; }
   /// Types whose value is one scalar in a register.
   bool isScalar() const {
     return K == Kind::Bool || K == Kind::Int || K == Kind::Float ||
@@ -77,8 +83,8 @@ public:
   llvm::StringRef name() const { return Name; }
   bool hasBody() const { return Body; }
 
-  /// The type of field I of a String, a Slice, a Tuple or a Struct (null if
-  /// there is no such field).
+  /// The type of field I of a String, a Slice, an Option, a Tuple or a Struct
+  /// (null if there is no such field).
   Type *fieldType(unsigned I, class Context &C) const;
   unsigned numFields() const;
 
@@ -89,6 +95,7 @@ public:
 private:
   friend class Context;
   explicit Type(Kind K) : K(K) {}
+  void printOne(llvm::raw_ostream &OS) const;
   Kind K;
   bool Signed = false;
   bool Fails = false;
@@ -115,6 +122,7 @@ public:
   Type *ptr(Type *Elem);
   Type *slice(Type *Elem);
   Type *array(Type *Elem, uint64_t Len);
+  Type *option(Type *Elem);
   /// The empty list is Unit; a list of one stays a 1-tuple.
   Type *tuple(llvm::ArrayRef<Type *> Elems);
   Type *func(llvm::ArrayRef<Type *> Params, Type *Ret, bool Fails = false);

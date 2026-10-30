@@ -1,0 +1,10 @@
+package main
+
+var a [10]int16
+var i int8 = -100
+
+func main() {
+	println("before")
+	println(a[i])
+	println("not reached")
+}

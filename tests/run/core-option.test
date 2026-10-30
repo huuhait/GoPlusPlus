@@ -1,0 +1,79 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-option.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-option.out %}
+// GOLDEN: by-hand
+// P04.04, D4.5, ADR-0018: Option[T] runs. Go has no Option, so the expected
+// output (golden/core-option.out) is written by hand from the rules: nil and
+// the zero value, construction from T, `!= nil`, IsNil, `v, ok := o.Get()`,
+// flow-typed use after a check, `==` (both nil, or both set and equal), and
+// the layout: Option[*T] is one pointer, any other Option[T] is T and a flag
+// padded to T's alignment (Sizeof 16 for int, 2 for int8, 24 for a Point).
+package main
+
+import "unsafe"
+
+type Point struct{ X, Y int }
+
+func first(o Option[int]) int {
+	if o != nil {
+		return o + 1
+	}
+	return -1
+}
+
+func describe(o Option[float64]) {
+	if o.IsNil() {
+		println("no value")
+		return
+	}
+	v, ok := o.Get()
+	println("value", v, ok)
+}
+
+func get(p Option[Point]) (int, bool) {
+	v, ok := p.Get()
+	return v.X + v.Y, ok
+}
+
+func main() {
+	var o Option[int]
+	println(o == nil, o != nil, o.IsNil(), first(o))
+	o = 41
+	println(o == nil, o != nil, o.IsNil(), first(o))
+	v, ok := o.Get()
+	println(v, ok)
+	var none Option[int]
+	v, ok = none.Get()
+	println(v, ok)
+	o = nil
+	println(o == nil)
+	describe(nil)
+	describe(2.5)
+	var a, b Option[int8]
+	println(a == b)
+	a = 7
+	println(a == b, a != b)
+	b = 7
+	println(a == b, a != b)
+	b = 8
+	println(a == b)
+	var x int = 5
+	var pa, pb Option[*int]
+	println(pa == nil, pa == pb)
+	pa = &x
+	pb = &x
+	println(pa != nil, pa == pb)
+	println(unsafe.Sizeof(pa), unsafe.Sizeof(o), unsafe.Sizeof(a), unsafe.Alignof(o))
+	println(unsafe.Sizeof(x), unsafe.Sizeof(Point{}), unsafe.Sizeof(Option[Point](nil)))
+	println(get(Point{3, 4}))
+	println(get(nil))
+	var ob Option[bool]
+	ob = false
+	println(ob == nil, ob == Option[bool](false), ob == Option[bool](true))
+	if q, ok := pa.Get(); ok {
+		*q += 1
+		println(x)
+	}
+}

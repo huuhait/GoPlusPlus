@@ -1,0 +1,9 @@
+// REQUIRES: long
+// P04.04 (review R2, R6, R9, R11): the full depth of the deep-chain unit
+// tests (DeepChain.* and Glue.* named DISABLED_*): rings and chains of 20000
+// links, chains of 20000 and 3000 named types through GIR and LLVM, a
+// selector chain of 100000, glue over chains of 1500 and 60000 types, and the
+// failure to get a stack at that depth. The normal suite runs the same code
+// at a few hundred levels with a new stack every 4 levels (the smoke tests of
+// the same names without DISABLED_).
+// RUN: timeout 120 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='DeepChain.DISABLED_*:Glue.DISABLED_*'

@@ -1,0 +1,13 @@
+// REQUIRES: long
+// REQUIRES: no-sanitizer
+// P04.04 (review R9): a chain of 60000 declarations is walked on stacks of its
+// own (48 MB each, a new one when less than 24 MB is left). When the system gives no more stacks
+// (here an address-space limit of 600 MB), the walk stops at a declaration
+// with one clear error and a nonzero exit, and does not crash; the same chain
+// with normal resources checks clean.
+// RUN: %python %S/Inputs/gen-nesting-chain.py 60000 > %t.gopp
+// RUN: not bash -c 'ulimit -v 600000; exec %gopp check -check-j=1 %t.gopp' > %t.out 2>&1
+// RUN: FileCheck %s < %t.out
+// RUN: %gopp check -check-j=1 %t.gopp
+// CHECK: error[E0444]: nesting too deep: could not get stack for {{[0-9]+}} levels
+// CHECK-NOT: error

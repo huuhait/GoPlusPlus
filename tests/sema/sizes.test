@@ -1,7 +1,10 @@
 // RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
-// The size model is gc's for amd64 (types2 gcsizes.go): sizes, alignment and
-// field offsets are constants; a type larger than the address space is an
-// error (the unsafe.Sizeof/Offsetof tests of types2).
+// The size model of Go++ is D4.5, the layout the code generator gives (gc's
+// for amd64 in types2 gcsizes.go, with the differences D4.5 names): sizes,
+// alignment and field offsets are constants; a type larger than the address
+// space is an error (the unsafe.Sizeof/Offsetof tests of types2).
+// tests/unit/CodeGen/LayoutTest.cpp checks the same numbers against LLVM's
+// data layout for a generated table of types on both targets.
 package main
 
 import "unsafe"
@@ -12,22 +15,55 @@ type S struct {
 	c int16
 }
 
-// Each line is 0 when the size is right; uint(-1) is an error, so a wrong
-// model shows up as an unexpected error.
+type Tail struct {
+	a int32
+	z struct{}
+}
+
+// Each pair of lines is 0 when the size is right: uint(-1) is an error, so a
+// size that is too small fails the first line of the pair and one that is too
+// large fails the second. A wrong model shows up as an unexpected error.
 const (
-	_ = uint(unsafe.Sizeof(S{}) - 24)          // size 24: padded to 8
-	_ = uint(unsafe.Offsetof(S{}.c) - 16)      // offset of c is 16
-	_ = uint(unsafe.Alignof(S{}) - 8)          // the largest field alignment
-	_ = uint(unsafe.Sizeof([3]int16{}) - 6)    // elements are packed
-	_ = uint(unsafe.Sizeof("") - 16)           // a string is two words
-	_ = uint(unsafe.Sizeof(complex64(0)) - 8)  // aligned like two float32
+	_ = uint(unsafe.Sizeof(S{}) - 24)       // size 24: padded to 8
+	_ = uint(24 - unsafe.Sizeof(S{}))
+	_ = uint(unsafe.Offsetof(S{}.c) - 16)   // offset of c is 16
+	_ = uint(16 - unsafe.Offsetof(S{}.c))
+	_ = uint(unsafe.Alignof(S{}) - 8)       // the largest field alignment
+	_ = uint(8 - unsafe.Alignof(S{}))
+	_ = uint(unsafe.Sizeof([3]int16{}) - 6) // elements are packed
+	_ = uint(6 - unsafe.Sizeof([3]int16{}))
+	// A string is {ptr, len, cap}: three words (ADR-0026, D4.5).
+	_ = uint(unsafe.Sizeof("") - 24)
+	_ = uint(24 - unsafe.Sizeof(""))
+	_ = uint(unsafe.Sizeof(complex64(0)) - 8) // aligned like two float32
+	_ = uint(8 - unsafe.Sizeof(complex64(0)))
 	_ = uint(unsafe.Alignof(complex64(0)) - 4) // not like a word
-	_ = uint(unsafe.Sizeof(S{}) - 25)          // positive control: -1 fails
+	_ = uint(4 - unsafe.Alignof(complex64(0)))
+	// No padding byte after a trailing zero-size field (gc adds one).
+	_ = uint(unsafe.Sizeof(Tail{}) - 4)
+	_ = uint(4 - unsafe.Sizeof(Tail{}))
 	// Go++: Option[*T] uses the nil bit pattern; another T gets a flag.
 	_ = uint(unsafe.Sizeof(Option[*S](nil)) - 8)
+	_ = uint(8 - unsafe.Sizeof(Option[*S](nil)))
 	_ = uint(unsafe.Sizeof(Option[int64](nil)) - 16)
+	_ = uint(16 - unsafe.Sizeof(Option[int64](nil)))
+	_ = uint(unsafe.Sizeof(Option[int8](nil)) - 2)
+	_ = uint(2 - unsafe.Sizeof(Option[int8](nil)))
+	_ = uint(unsafe.Alignof(Option[int32](nil)) - 4)
+	_ = uint(4 - unsafe.Alignof(Option[int32](nil)))
+	// A func value is {code, env}; an Option of one is the same two words.
+	_ = uint(unsafe.Sizeof(f) - 16)
+	_ = uint(16 - unsafe.Sizeof(f))
+	_ = uint(unsafe.Sizeof(Option[func()](nil)) - 16)
+	_ = uint(16 - unsafe.Sizeof(Option[func()](nil)))
+	// Positive controls, one for each direction of a pair: -1 fails.
+	_ = uint(unsafe.Sizeof(S{}) - 25)
+	_ = uint(23 - unsafe.Sizeof(S{}))
 )
 
+var f = func() {}
+
+// CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
 // CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
 // CHECK: error[E{{[0-9]+}}]: huge {{.*}} is too large
 type Big [1 << 30]complex128

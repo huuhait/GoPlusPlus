@@ -17,12 +17,12 @@ func main() {
 // CHECK: @.str.0 = private unnamed_addr constant [4 x i8] c"hi\0A\00"
 // CHECK: declare i64 @write(i32, ptr, i64)
 // Every function Go++ defines has unwind tables (D4.6).
-// CHECK: define void @main.main() #[[UW:[0-9]+]] !dbg
+// CHECK: define void @_GPF4mainE4main() #[[UW:[0-9]+]] !dbg
 // CHECK: store { ptr, i64, i64 } { ptr @.str.0, i64 3, i64 0 }
 // CHECK: call i64 @write(i32 1, ptr {{.*}}, i64 {{.*}}) #{{[0-9]+}}, !dbg
 // The C entry point returns 0 after main.main.
 // CHECK: define i32 @main() #[[UW]] !dbg
-// CHECK: call void @main.main()
+// CHECK: call void @_GPF4mainE4main()
 // CHECK: ret i32
 // CHECK: attributes #[[UW]] = { uwtable }
 // CHECK: !llvm.dbg.cu

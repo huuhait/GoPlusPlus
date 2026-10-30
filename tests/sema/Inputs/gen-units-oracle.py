@@ -294,10 +294,15 @@ def main():
     ap.add_argument("--deep", action="store_true",
                     help="longer chains with more calls")
     ap.add_argument("--j1", action="store_true")
+    ap.add_argument("--shard", default="0/1",
+                    help="K/N: the seeds whose number is K modulo N")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     fails = checked = 0
-    for seed in range(a.seeds):
+    shard, shards = (int(x) for x in a.shard.split("/"))
+    done = 0
+    for seed in range(shard, a.seeds, shards):
+        done += 1
         rng = random.Random(seed)
         if a.deep:
             funcs, tops = gen(rng, rng.choice([10, 12, 14]), [2, 3])
@@ -330,7 +335,7 @@ def main():
             print("seed %d: FAIL %s" % (seed, "; ".join(problems)))
             print(o1[:1500] if "errors" in problems else "")
     print("oracle: %d programs, %d instances, %d mismatches" %
-          (a.seeds, checked, fails))
+          (done, checked, fails))
     return 1 if fails else 0
 
 

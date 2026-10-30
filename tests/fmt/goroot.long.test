@@ -4,8 +4,12 @@
 // (doc comment reformatting, //go:build lines, non-idempotent gofmt, files that
 // use Go++ keywords as names).
 
+// It runs in four shards (goroot.long, goroot-1.long, goroot-2.long,
+// goroot-3.long): the files whose place in the sorted list is K modulo 4,
+// so the four run side by side; together they are the whole tree.
+
 // REQUIRES: long
 // REQUIRES: go
 
-// RUN: %python %S/check-corpus.py %gopp --goroot --min 7000
-// RUN: %python %S/compare-gofmt.py %gopp --goroot
+// RUN: %python %S/check-corpus.py %gopp --goroot --jobs 16 --min 1750 --shard 0/4
+// RUN: %python %S/compare-gofmt.py %gopp --goroot --jobs 16 --shard 0/4

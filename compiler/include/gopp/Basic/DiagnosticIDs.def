@@ -635,4 +635,6 @@ DIAG(err_codegen, 441, Error, "code generation failed: %0")
 DIAG(err_gir_extern_bad, 442, Error, "invalid @Extern on %0: %1")
 DIAG(err_gir_no_main, 443, Error, "function main is undeclared in the main package")
 
+DIAG(err_no_stack, 444, Error, "nesting too deep: could not get stack for %0 levels")
+
 #undef DIAG

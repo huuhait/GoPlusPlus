@@ -1,0 +1,21 @@
+package main
+
+type Node struct {
+	next Option[*Node]
+	val  int
+}
+
+type Tree struct {
+	kids [2]Option[*Tree]
+	n    int
+}
+
+// the pointer to the struct is the first thing lowered (a parameter)
+func kids(t *Tree) int { return len(t.kids) }
+
+func main() {
+	a := Node{nil, 1}
+	b := Node{&a, 2}
+	var t Tree
+	println(b.val, b.next == nil, t.kids[0] == nil, t.n, kids(&t))
+}

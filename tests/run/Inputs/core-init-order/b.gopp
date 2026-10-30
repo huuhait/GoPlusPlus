@@ -1,0 +1,26 @@
+package main
+
+var b1 = trace("b1", c2*2)
+
+var b2 = trace("b2", 5)
+
+// The initializer calls a function that reads a variable: the dependency is
+// through the function, so c2 is initialized first.
+var fromFunc = useC()
+
+func useC() int {
+	return trace("fromFunc", c2+1000)
+}
+
+var counter = next() + next() + next()
+
+var n int
+
+func next() int {
+	n++
+	return n
+}
+
+func init() {
+	println("init b", b1, b2, fromFunc)
+}

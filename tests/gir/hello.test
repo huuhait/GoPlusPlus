@@ -15,7 +15,7 @@ func main() {
 // its newline is one `write`.
 // CHECK: module "command-line-arguments"
 // CHECK: declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
-// CHECK: fn main.main() -> () [go, external] {
+// CHECK: fn _GPF4mainE4main() -> () [go, external] {
 // CHECK:   let _0: ()
 // CHECK:   bb0:
 // CHECK:     _1 = const str#0 "hello\0A"
@@ -24,6 +24,6 @@ func main() {
 // CHECK-NEXT: return
 // The C entry point calls main.main and returns 0.
 // CHECK: fn main() -> i32 [c, external] {
-// CHECK:     _1 = call const fn @main.main() -> [return: bb1, unwind: continue]
+// CHECK:     _1 = call const fn @_GPF4mainE4main() -> [return: bb1, unwind: continue]
 // CHECK:     _0 = const 0: i32
 // CHECK:     return

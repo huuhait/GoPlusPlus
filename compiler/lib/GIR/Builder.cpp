@@ -52,6 +52,11 @@ Place FuncBuilder::deref(Place P) {
   return P;
 }
 
+Place FuncBuilder::global(uint32_t G) {
+  Place Addr = temp(use(constGlobal(M, G)));
+  return deref(Addr);
+}
+
 Place FuncBuilder::field(Place P, unsigned I) {
   PlaceElem E;
   E.K = PlaceElem::Field;
@@ -246,7 +251,8 @@ BlockId FuncBuilder::call(Operand Callee, ArrayRef<Operand> Args, Place Dest,
 }
 
 BlockId FuncBuilder::assertThat(Operand Cond, bool Expected, AssertKind K,
-                                UnwindAction Unwind, BlockId Next) {
+                                UnwindAction Unwind, BlockId Next,
+                                llvm::ArrayRef<Operand> Args) {
   if (Next == NoId)
     Next = newBlockLikeCurrent();
   Terminator T;
@@ -256,6 +262,7 @@ BlockId FuncBuilder::assertThat(Operand Cond, bool Expected, AssertKind K,
   T.AK = K;
   T.Target = Next;
   T.Unwind = Unwind;
+  T.Args.assign(Args.begin(), Args.end());
   terminate(std::move(T));
   Cur = Next;
   return Next;
@@ -272,38 +279,6 @@ BlockId FuncBuilder::drop(Place P, UnwindAction Unwind, BlockId Next) {
   terminate(std::move(T));
   Cur = Next;
   return Next;
-}
-
-/// The blocks a terminator can go to, unwind edges included.
-template <class Fn> static void forEachSuccessor(Terminator &T, Fn &&Visit) {
-  auto Unwind = [&](UnwindAction &U) {
-    if (U.K == UnwindAction::Cleanup)
-      Visit(U.Target);
-  };
-  switch (T.K) {
-  case Terminator::Goto:
-    Visit(T.Target);
-    break;
-  case Terminator::Switch:
-    for (SwitchCase &C : T.Cases)
-      Visit(C.Target);
-    Visit(T.Otherwise);
-    break;
-  case Terminator::Call:
-    if (T.Target != NoId)
-      Visit(T.Target);
-    Unwind(T.Unwind);
-    break;
-  case Terminator::Drop:
-  case Terminator::Assert:
-    Visit(T.Target);
-    Unwind(T.Unwind);
-    break;
-  case Terminator::Return:
-  case Terminator::Unreachable:
-  case Terminator::Resume:
-    break;
-  }
 }
 
 void gir::removeDeadBlocks(Function &F) {

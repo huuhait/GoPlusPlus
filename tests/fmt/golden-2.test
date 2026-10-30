@@ -1,0 +1,20 @@
+// The second shard of golden.test: the invariants of `gopp fmt` on the inputs
+// and goldens whose place in the sorted list is 1 modulo 2 (and the golden
+// comparisons of Inputs/gofmt and Inputs/gopp; golden.test has those of
+// Inputs/goprinter: one test took 1.5 s of the 2 s limit).
+// RUN: %python %S/check-corpus.py %gopp %S/Inputs --ext .input --ext .golden --min 25 --shard 1/2
+// RUN: %gopp fmt %S/Inputs/gofmt/comments.input | diff - %S/Inputs/gofmt/comments.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/crlf.input | diff - %S/Inputs/gofmt/crlf.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/go2numbers.input | diff - %S/Inputs/gofmt/go2numbers.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/import.input | diff - %S/Inputs/gofmt/import.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/issue28082.input | diff - %S/Inputs/gofmt/issue28082.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/tabs.input | diff - %S/Inputs/gofmt/tabs.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/typealias.input | diff - %S/Inputs/gofmt/typealias.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/typeparams.input | diff - %S/Inputs/gofmt/typeparams.golden
+// RUN: %gopp fmt %S/Inputs/gofmt/typeswitch.input | diff - %S/Inputs/gofmt/typeswitch.golden
+// RUN: %gopp fmt %S/Inputs/gopp/comments.input | diff - %S/Inputs/gopp/comments.golden
+// RUN: %gopp fmt %S/Inputs/gopp/extends.input | diff - %S/Inputs/gopp/extends.golden
+// RUN: %gopp fmt %S/Inputs/gopp/extends.golden | diff - %S/Inputs/gopp/extends.golden
+// RUN: %gopp fmt %S/Inputs/gopp/headers.input | diff - %S/Inputs/gopp/headers.golden
+// RUN: %gopp fmt %S/Inputs/gopp/macros.input | diff - %S/Inputs/gopp/macros.golden
+// RUN: %gopp fmt %S/Inputs/gopp/syntax.input | diff - %S/Inputs/gopp/syntax.golden

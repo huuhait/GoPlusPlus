@@ -19,7 +19,7 @@ func main() {
 	print("no", "space", 3)
 }
 
-// CHECK-LABEL: fn main.main()
+// CHECK-LABEL: fn _GPF4mainE4main()
 // All constants: one write.
 // CHECK: = const str#{{[0-9]+}} "a 1 true 120 -9223372036854775808\0A"
 // CHECK-NEXT: = call const fn @write(
@@ -28,17 +28,17 @@ func main() {
 // CHECK-NEXT: [[U:_[0-9]+]] = copy _2
 // CHECK-NEXT: [[B:_[0-9]+]] = copy _4
 // CHECK-NEXT: [[S:_[0-9]+]] = copy _5
-// CHECK-NEXT: [[F:_[0-9]+]] = call const fn @main.f(copy _1)
+// CHECK-NEXT: [[F:_[0-9]+]] = call const fn @_GPF4mainE1f(copy _1)
 // Then the writes; an unsigned value widens to u64, a signed one to i64.
-// CHECK: = call const fn @gopp.print_i64(copy [[N]])
+// CHECK: = call const fn @_GPF4goppE9print_i64(const 1: i32, copy [[N]])
 // CHECK: = const str#{{[0-9]+}} " "
 // CHECK: = int_to_int(copy [[U]]) as u64
-// CHECK: = call const fn @gopp.print_u64(
+// CHECK: = call const fn @_GPF4goppE9print_u64(const 1: i32,
 // CHECK: switch copy [[B]]
 // CHECK: = const str#{{[0-9]+}} "true"
 // CHECK: = const str#{{[0-9]+}} "false"
 // CHECK: = call const fn @write(const 1: i32, copy [[S]].0, copy [[S]].1)
-// CHECK: = call const fn @gopp.print_i64(copy [[F]])
+// CHECK: = call const fn @_GPF4goppE9print_i64(const 1: i32, copy [[F]])
 // CHECK: = const str#[[NL:[0-9]+]] "\0A"
 // println() is a newline; print adds no spaces.
 // CHECK: = const str#[[NL]] "\0A"
@@ -47,5 +47,5 @@ func main() {
 
 // The helpers are GIR functions on top of the C `write`.
 // CHECK: declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
-// CHECK: fn gopp.print_u64(_1: u64) -> () [go, internal]
-// CHECK: fn gopp.print_i64(_1: i64) -> () [go, internal]
+// CHECK: fn _GPF4goppE9print_u64(_1: i32, _2: u64) -> () [go, internal]
+// CHECK: fn _GPF4goppE9print_i64(_1: i32, _2: i64) -> () [go, internal]

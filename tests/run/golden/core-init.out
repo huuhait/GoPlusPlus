@@ -1,0 +1,11 @@
+init var X 1
+init var Y 2
+init var C 10
+init var B 11
+init var A 12
+init pair
+init a1 12 11 10
+init a2
+init b
+init c 123 0 +2.500000e+000
+main 12 11 10 1 2 40 50 35

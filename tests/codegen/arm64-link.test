@@ -31,7 +31,7 @@ func main() {
 // OBJ: DataEncoding: LittleEndian
 // OBJ: Machine: EM_AARCH64
 // ASM: file format elf64-littleaarch64
-// ASM: <main.main>:
+// ASM: <_GPF4mainE4main>:
 // ASM: bl
 // ASM: <main>:
 // EXE: Type: Executable

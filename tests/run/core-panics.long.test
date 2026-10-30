@@ -1,0 +1,6 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics -- %gopp build %gopp_link_flags
+// P04.04: every program of Inputs/panics (division and remainder of every
+// width and sign, negative shifts, indexes of every type out of range, in
+// loads, stores, compound assignments, nested arrays, structs, pointers,
+// package initialization). See core-panics.test.

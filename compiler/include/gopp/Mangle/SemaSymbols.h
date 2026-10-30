@@ -43,8 +43,20 @@ namespace sym {
 
 class SemaNames {
 public:
-  explicit SemaNames(Context &C) : C(C) {}
+  /// MainPathIsMain: a package named `main` is `main` in every symbol, what
+  /// path its files were given (the command line names it
+  /// `command-line-arguments`); the compiler's symbols set it.
+  explicit SemaNames(Context &C, bool MainPathIsMain = false)
+      : C(C), MainPathIsMain(MainPathIsMain) {}
 
+  /// Gives the type declared inside a function its place in the name: Scope
+  /// is the node of the enclosing function (the instance, in generic code)
+  /// and Ordinal the type's number among the types declared in it, from 0 in
+  /// source order (so two types of one name in two functions, or in two
+  /// blocks of one function, get two names). Must be called before the type
+  /// is named; until then such a type has no name (why()).
+  void declareLocalType(const sema::TypeName *Obj, const Node *Scope,
+                        uint64_t Ordinal);
   /// The node of a type, or null (see why()).
   const Node *type(const sema::Type *T);
   /// A canonical unit as a Unit node (null for a unit with a type parameter).
@@ -64,6 +76,20 @@ public:
                            llvm::ArrayRef<sema::Type *> TArgs);
   /// A package-level variable.
   const Node *var(const sema::Var *V);
+
+  /// Work done by the type walk so far, for tests that prove the walk is
+  /// linear by counting instead of timing: Visits is the steps of the
+  /// explicit stack, Misses the types converted (not found in the memo).
+  struct WorkCounts {
+    uint64_t Visits = 0, Misses = 0;
+  };
+  const WorkCounts &workCounts() const { return Counts; }
+
+  /// The package path a symbol uses for P (see the constructor).
+  llvm::StringRef pathOf(const sema::Package *P) const {
+    return MainPathIsMain && P->Name == "main" ? llvm::StringRef("main")
+                                               : P->Path;
+  }
 
   /// Why the last call that returned null did.
   const std::string &why() const { return Why; }
@@ -89,7 +115,11 @@ private:
   const Node *build(const sema::Type *T, bool TParams, std::string &Reason);
 
   Context &C;
+  bool MainPathIsMain;
+  llvm::DenseMap<const sema::TypeName *, std::pair<const Node *, uint64_t>>
+      LocalTypes;
   std::string Why;
+  WorkCounts Counts;
   /// Per mode (convert's TParams): the node of every type converted so far
   /// (null: it has none), and the reason of each null.
   llvm::DenseMap<const sema::Type *, const Node *> Memo[2];

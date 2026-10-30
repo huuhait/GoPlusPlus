@@ -1,0 +1,18 @@
+package main
+
+var z int
+
+func f(a, b int) int { return a / b }
+
+func g(n int) int {
+	if n == 0 {
+		return f(1, z)
+	}
+	return g(n-1) + 1
+}
+
+func main() {
+	println("before")
+	println(g(50))
+	println("not reached")
+}

@@ -11,6 +11,6 @@ func helper() {}
 
 // CHECK: :8:1: error[E0443]: function main is undeclared in the main package
 // CHECK-NOT: error
-// LIB: fn command-line-arguments.F() -> i64 [go, external]
+// LIB: fn _GPF28command$2d$line$2d$argumentsE1F() -> i64 [go, external]
 // LIB-NOT: fn main(
 // EXE: gopp: error: build: package lib is not package main, so it is no program

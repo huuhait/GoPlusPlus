@@ -1,0 +1,9 @@
+package main
+
+var z int
+
+func main() {
+	println("before")
+	println(10 / z)
+	println("not reached")
+}

@@ -38,6 +38,8 @@ public:
   LocalId newTemp(Type *Ty) { return newLocal(Ty, Local::Temp); }
   Place local(LocalId L) const;
   Place deref(Place P);
+  /// The value of global G, as a place: `*(&G)` through a temporary.
+  Place global(uint32_t G);
   Place field(Place P, unsigned I);
   Place index(Place P, LocalId Idx);
   Place constIndex(Place P, uint32_t I);
@@ -92,8 +94,10 @@ public:
   /// call continues in.
   BlockId call(Operand Callee, llvm::ArrayRef<Operand> Args, Place Dest,
                UnwindAction Unwind = {}, BlockId Next = NoId);
+  /// Args are the values the failure message shows (AssertKind).
   BlockId assertThat(Operand Cond, bool Expected, AssertKind K,
-                     UnwindAction Unwind = {}, BlockId Next = NoId);
+                     UnwindAction Unwind = {}, BlockId Next = NoId,
+                     llvm::ArrayRef<Operand> Args = {});
   BlockId drop(Place P, UnwindAction Unwind = {}, BlockId Next = NoId);
 
 private:

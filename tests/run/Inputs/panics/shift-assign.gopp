@@ -1,0 +1,11 @@
+package main
+
+var n = -64
+
+func main() {
+	println("before")
+	x := uint32(1)
+	x <<= n
+	println(x)
+	println("not reached")
+}

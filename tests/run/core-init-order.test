@@ -1,0 +1,16 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init-order/a.gopp %S/Inputs/core-init-order/b.gopp %S/Inputs/core-init-order/c.gopp -o %t.abc
+// RUN: %python %S/Inputs/run-golden.py %t.abc %S/golden/core-init-order.out
+// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init-order/c.gopp %S/Inputs/core-init-order/b.gopp %S/Inputs/core-init-order/a.gopp -o %t.cba
+// RUN: %python %S/Inputs/run-golden.py %t.cba %S/golden/core-init-order-cba.out
+// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init-order -o %t.dir
+// RUN: %python %S/Inputs/run-golden.py %t.dir %S/golden/core-init-order.out
+// ORDER: cba c.gopp b.gopp a.gopp
+// P04.04: package variables and the order they start in. The three files of
+// Inputs/core-init-order depend on each other's variables (also through
+// functions), declare blank variables and multi-value initializers, and
+// each has init functions. The order is Go's for the order the files are
+// given on the command line: `go run c.go b.go a.go` initializes c's first
+// (golden/core-init-order-cba.out), and a directory's files are sorted by
+// name (the third build). The expected output is `go run` of the same files
+// in the same order (Inputs/regen-goldens.py).

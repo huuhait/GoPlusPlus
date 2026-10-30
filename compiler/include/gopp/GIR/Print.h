@@ -29,6 +29,9 @@ void print(llvm::raw_ostream &OS, const Module &M,
            const PrintOptions &Opts = {});
 void print(llvm::raw_ostream &OS, const Module &M, const Function &F,
            const PrintOptions &Opts = {});
+/// Test-only (M8): the units (functions, locals, blocks, statements) that the
+/// printer has written on this thread so far.
+uint64_t printerSteps();
 /// `_1`, `(*_1).0`, `_2[_3]`.
 void print(llvm::raw_ostream &OS, const Place &P);
 

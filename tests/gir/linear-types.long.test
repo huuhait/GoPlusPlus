@@ -1,0 +1,16 @@
+// REQUIRES: long
+// P04.01: the second half of linear.long.test: GIR of chains of named types.
+// Chains of named types (review R6): the glue and the lowering of a type walk
+// it on stacks of their own, and a part of the type deeper than 24 levels is
+// compared by a function of its own (Glue.cpp), so the time stays near-linear.
+// The text of an array chain prints the whole type at every use, so only its
+// bitstream is timed.
+// RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d typestruct 5000
+// RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d --emits girb typearr 5000
+// A chain of 20000 (arrays) or 10000 (structs: LLVM's own StructType::setBody
+// is quadratic in the chain) is lowered, with == and a copy, to an object file.
+// RUN: %python %S/Inputs/gen-gir-stress.py typearr 20000 > %t.arr.gopp
+// RUN: %python %S/Inputs/gen-gir-stress.py typestruct 10000 > %t.st.gopp
+// RUN: %{timeout10} %gopp build -emit=girb %t.arr.gopp -o %t.arr.girb
+// RUN: timeout 60 %gopp build -emit=obj %t.arr.gopp -o %t.arr.o
+// RUN: timeout 60 %gopp build -emit=obj %t.st.gopp -o %t.st.o

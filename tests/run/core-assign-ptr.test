@@ -1,0 +1,63 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-assign-ptr.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-assign-ptr.out %}
+// P04.04 (review R15): the implicit pointer indirection of a selector (`q.x`
+// with q a pointer) is an operand of an assignment and is evaluated in phase
+// 1, before any store of the statement: `q, q.x = &s2, 9` writes s1.x (the
+// pointer q had), as `*q` and `q[i]` do. Both sides: a plain `q.x = 9` still
+// writes through the current q, and so do `+=`, `++` and the selector of a
+// field of a pointer field.
+package main
+
+type In struct{ n int }
+
+type S struct {
+	x  int
+	v  [3]int
+	in In
+}
+
+type W struct{ p *S }
+
+func main() {
+	var s1, s2 S
+	q := &s1
+	q, q.x = &s2, 9
+	println(s1.x, s2.x)
+	r := &s1
+	r, (*r).x = &s2, 8
+	println(s1.x, s2.x)
+	var aa, bb [2]int
+	pa := &aa
+	pb := &bb
+	pa0 := pa
+	pa, pa[1] = pb, 6
+	println(pa0[1], pb[1])
+	w := W{&s1}
+	w.p, w.p.x = &s2, 7
+	println(s1.x, s2.x)
+	// a nested selector, an element of a field array, a field of a field
+	q = &s1
+	q, q.in.n = &s2, 5
+	println(s1.in.n, s2.in.n)
+	q = &s1
+	q, q.v[2] = &s2, 4
+	println(s1.v[2], s2.v[2])
+	// the store to q first: the other target still uses the old q
+	q = &s1
+	q.x, q = 3, &s2
+	println(s1.x, s2.x)
+	// plain, compound and increment through the current pointer
+	q = &s2
+	q.x = 11
+	q.x += 2
+	q.x++
+	q.in.n -= 1
+	println(s2.x, s2.in.n)
+	// two pointers swapped with their fields
+	p1, p2 := &s1, &s2
+	p1, p2, p1.x, p2.x = p2, p1, 100, 200
+	println(s1.x, s2.x, p1 == &s2, p2 == &s1)
+}

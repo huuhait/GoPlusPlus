@@ -1,0 +1,15 @@
+init var a2 20
+init var blank a 0
+init pair a3a4 30
+init var b2 5
+init var a1 6
+init var c2 7
+init var b1 14
+init var fromFunc 1007
+init var c1 27
+init a (1) 72
+init a (2) 30 31
+init b 14 5 1007
+init c (1) 27 7
+init c (2)
+main 72 6 20 30 31 14 5 27 7 1007 6

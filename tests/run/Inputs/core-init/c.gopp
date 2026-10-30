@@ -1,0 +1,20 @@
+package main
+
+var C = trace("C", 10)
+
+// A call of two results initializes two variables at once.
+var D, E = pair()
+
+func pair() (int, int) {
+	println("init pair")
+	return 40, 50
+}
+
+// A constant initializer is static data; a zero value needs none.
+var K = 123
+var Z int
+var F float64 = 2.5
+
+func init() {
+	println("init c", K, Z, F)
+}

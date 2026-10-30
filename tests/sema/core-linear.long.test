@@ -1,0 +1,19 @@
+// REQUIRES: long
+// P04.04 (manager decision M3): the checker stays near-linear on the shapes
+// that were quadratic or recursed once per link: a chain of package
+// variables (and of constants) each initialized from the next one declared
+// (declared link by link on stacks of their own, runOnNewStack), rings of
+// variables, of constants and of variables and functions (the search for the
+// cycle has an explicit stack), a chain that ends in a ring (a walk per link
+// would be quadratic), many variables
+// depending on many, a switch with N constant cases of two kinds and a
+// tagless one (duplicate cases are found by hashing), a struct of N fields
+// read and written by name, and keyed literals of it (StructType::ByName).
+// N = 10000 and 4N, best of two runs: 4N may take at most 8 times as long.
+// This is the first half (the chains and rings of 10000); core-linear-2.long
+// has the other shapes and the two long rings, with the same script.
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 initchain 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 constchain 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 cycle 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 mixcycle 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 cyctail 10000

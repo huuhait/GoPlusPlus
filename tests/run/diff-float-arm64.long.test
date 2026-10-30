@@ -1,0 +1,13 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/float_float32.gopp -o %t.float32
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.float32 %S/Inputs/diff/float_float32.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/float_float64.gopp -o %t.float64
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.float64 %S/Inputs/diff/float_float64.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/complex_complex64.gopp -o %t.complex64
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.complex64 %S/Inputs/diff/complex_complex64.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/complex_complex128.gopp -o %t.complex128
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.complex128 %S/Inputs/diff/complex_complex128.out
+// P04.04 differential table (D4.12) on linux/arm64 under QEMU: float32, float64, complex64 and complex128.
+// The programs of diff-float.long.test; the expected output is Go's on arm64
+// (Inputs/diff/NAME.arm64.out where it differs from amd64: gc fuses x*y+z
+// there, also in its complex division).

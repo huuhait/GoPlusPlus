@@ -1,13 +1,8 @@
 // REQUIRES: long
-// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --sizes 10000 --shapes straight,two | FileCheck %s
-// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t.lin --linear 2500 --shapes straight | FileCheck %s --check-prefix=LIN
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --sizes 10000 --shapes straight | FileCheck %s
 // P03.25 (GEN-14, R10): 10000 levels of a chain that passes its unit
-// parameters on unchanged (every level needs the units of the leaf's `a / b`)
-// and of a rearranging chain, with 1 and 8 body threads; the straight chain
-// at 2500 and 10000 levels takes at most 12 times as long.
+// parameters on unchanged (every level needs the units of the leaf's `a / b`),
+// with 1 and 8 body threads. The rearranging chain is units-generic-two.long,
+// the near-linear check units-generic-straight-linear.long.
 // CHECK: straight plain n=10000       errors=0 dicts=0 sites=0 j1==j8:yes ok
 // CHECK-NEXT: straight cancel n=10000      errors=0 dicts=10001 sites=1 j1==j8:yes ok
-// CHECK-NEXT: two plain n=10000            errors=0 dicts=10000 sites=10000 j1==j8:yes ok
-// CHECK-NEXT: two cancel n=10000           errors=0 dicts=10001 sites=10001 j1==j8:yes ok
-// LIN: straight j1: near-linear yes
-// LIN: straight j8: near-linear yes

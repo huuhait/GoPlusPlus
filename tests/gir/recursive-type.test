@@ -1,0 +1,15 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: not %gopp build -emit=gir %S/Inputs/recursive-no-struct.gopp 2>&1 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags %S/Inputs/recursive-through-struct.gopp -o %t.ok
+// RUN: %t.ok | FileCheck --check-prefix=OK %s
+// P04.04 (review R14): a defined type that reaches itself through Option, a
+// pointer or an array but no struct has no GIR type that can name itself (the
+// struct is the one nominal type). It is refused with one E0439 per type that
+// names it, never a null without a report (which dropped `f` silently or
+// crashed in a later step), and nothing else is reported for it. Both sides:
+// the cycles through a struct (a list, a tree with Options) lower and run.
+// CHECK: recursive-no-struct.gopp:9:1: error[E0439]: the type *main.L, which refers to itself through no struct (P04.05), is not supported
+// CHECK: recursive-no-struct.gopp:12:6: error[E0439]: the type main.A, which refers to itself through no struct (P04.05), is not supported
+// CHECK: recursive-no-struct.gopp:13:6: error[E0439]: the type main.O, which refers to itself through no struct (P04.05), is not supported
+// CHECK-NOT: error
+// OK: 2 false true 0 2

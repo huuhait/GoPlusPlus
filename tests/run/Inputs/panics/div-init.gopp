@@ -1,0 +1,10 @@
+package main
+
+var z int
+var x = 100 / z
+
+func main() {
+	println("before")
+	println(x)
+	println("not reached")
+}

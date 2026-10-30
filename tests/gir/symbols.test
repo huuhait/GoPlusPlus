@@ -1,0 +1,81 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck --check-prefix=GIR %s
+// RUN: %gopp build -emit=obj %s -o %t.o
+// RUN: llvm-nm %t.o | FileCheck --check-prefix=NM %s
+// RUN: %gopp demangle _GPF4mainE3add | FileCheck --check-prefix=DEM1 %s
+// RUN: %gopp demangle _GPK4mainE0_ _GPK4mainE1_ | FileCheck --check-prefix=DEM2 %s
+// RUN: %gopp demangle _GPTeg0_1LF4mainE1f _GPTeg1_1LF4mainE1g _GPTeg0_1LF4mainE1g | FileCheck --check-prefix=DEM3 %s
+// Names are the same in every build (the unit test GIRLower.
+// SymbolsDoNotDependOnTheThreadCount covers the thread count).
+// RUN: %gopp build -emit=obj %s -o %t.again.o
+// RUN: cmp %t.o %t.again.o
+// P04.04 (P04.17 wiring): every symbol the lowering makes comes from
+// gir::symbolOf, which names the checker's entity with sym::SemaNames and
+// sym::mangle. Both sides: a Go++ function, an init function and a local type
+// have a _GP name that `gopp demangle` reads back; an @Extern("C") function
+// keeps its C name, and the C entry point stays `main`. Two local types named
+// L (in two functions, and in two blocks of one function) and two init
+// functions get distinct symbols.
+package main
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func add(a, b int) int { return a + b }
+
+func f() bool {
+	type L struct{ a int }
+	x, y := L{1}, L{1}
+	return x == y
+}
+
+func g() bool {
+	type L struct{ a, b int }
+	x, y := L{1, 2}, L{1, 2}
+	{
+		type L struct{ c int8 }
+		p, q := L{1}, L{2}
+		_ = p == q
+	}
+	return x == y
+}
+
+func init() { println("one") }
+
+func init() { println("two") }
+
+func main() {
+	println(add(1, 2), f(), g())
+}
+
+// GIR: declare fn write(
+// GIR: fn _GPF4mainE3add(
+// GIR: fn _GPF4mainE1f(
+// GIR: fn _GPF4mainE1g(
+// GIR: fn _GPK4mainE0_(
+// GIR: fn _GPK4mainE1_(
+// GIR: fn _GPF4mainE4main(
+// GIR: fn main() -> i32 [c, external]
+
+// NM-DAG: T _GPF4mainE3add
+// NM-DAG: T _GPF4mainE1f
+// NM-DAG: T _GPF4mainE1g
+// NM-DAG: T _GPF4mainE4main
+// NM-DAG: t _GPK4mainE0_
+// NM-DAG: t _GPK4mainE1_
+// The three local types are three symbols: f.L, the outer g.L and the
+// inner g.L, one equality function each.
+// NM-DAG: W _GPTeg0_1LF4mainE1f
+// NM-DAG: W _GPTeg0_1LF4mainE1g
+// NM-DAG: W _GPTeg1_1LF4mainE1g
+// The C names are not mangled.
+// NM-DAG: T main
+// NM-DAG: U write
+// NM-NOT: main.main
+// NM-NOT: {{ }}_GP{{[A-Za-z0-9_$]*}}write
+
+// DEM1: main.add
+// DEM2: main.init.0
+// DEM2-NEXT: main.init.1
+// DEM3: eq glue for main.f.L#0
+// DEM3-NEXT: eq glue for main.g.L#1
+// DEM3-NEXT: eq glue for main.g.L#0

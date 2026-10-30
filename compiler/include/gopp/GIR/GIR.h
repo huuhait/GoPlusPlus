@@ -82,13 +82,15 @@ struct Place {
 
 struct Constant {
   enum Kind : uint8_t {
-    Int,   // Bits: the value, truncated to the width of Ty
-    Float, // Bits: the IEEE bits of a double (a f32 is rounded first)
-    Bool,  // Bits: 0 or 1
-    Str,   // Bits: the string id in Module::Strings; Ty is `string`
-    Func,  // Bits: the FuncId; Ty is the function's pointer type
-    Null,  // the nil pointer of Ty
-    Zero,  // the all-zero value of Ty (a zero value in the language's sense)
+    Int,    // Bits: the value, truncated to the width of Ty
+    Float,  // Bits: the IEEE bits of a double (a f32 is rounded first)
+    Bool,   // Bits: 0 or 1
+    Str,    // Bits: the string id in Module::Strings; Ty is `string`
+    Func,   // Bits: the FuncId; Ty is the function's pointer type
+    Null,   // the nil pointer of Ty
+    Zero,   // the all-zero value of Ty (a zero value in the language's sense)
+    Global, // Bits: the GlobalId; Ty is a pointer to the global's type (the
+            // address of the global; a place reaches it by a Deref)
   };
   Kind K = Zero;
   Type *Ty = nullptr;
@@ -213,12 +215,17 @@ struct UnwindAction {
   }
 };
 
+/// What a failed Assert reports. The terminator's Args are the values the
+/// message shows: Bounds takes the index (an i64, or a u64 for an unsigned
+/// index) and the length (a u64); the others take none (V065). The position
+/// is the terminator's Loc: a constant, passed to the panic function by the
+/// code generator (gir.md section 6).
 enum class AssertKind : uint8_t {
   DivByZero,
   NegativeShift,
-  Bounds,   // P04.04
-  Nil,      // P04.04
-  Overflow, // P04.04
+  Bounds,
+  Nil,
+  Overflow,
 };
 const char *getAssertKindName(AssertKind K);
 
@@ -244,7 +251,8 @@ struct Terminator {
   Operand Discr; // Switch: the value; Assert: the condition; Call: the callee
   llvm::SmallVector<SwitchCase, 2> Cases;
   BlockId Otherwise = NoId;
-  llvm::SmallVector<Operand, 4> Args;
+  llvm::SmallVector<Operand, 4>
+      Args;   // Call: the arguments; Assert: AK's values
   Place Dest; // Call: the result place; Drop: the place dropped
   UnwindAction Unwind;
   bool Expected = true;
@@ -315,6 +323,22 @@ public:
   }
 };
 
+/// A package variable or a block of constant data (P04.04). Its address is
+/// `Constant::Global`; code reaches the value through a Deref of it. Init is
+/// a scalar or string constant, or Zero: a variable whose initializer is not
+/// a constant is set by the package's init function (the order of the
+/// checker's init-order record).
+struct Global {
+  std::string Name; // the final symbol (gir::symbolOf)
+  Type *Ty = nullptr;
+  Linkage Link = Linkage::External;
+  /// Constant data: it goes to read-only memory (rodata).
+  bool ReadOnly = false;
+  Constant Init;
+  Span Loc;
+  Global() { Init.K = Constant::Zero; }
+};
+
 class Module {
 public:
   explicit Module(Context &Ctx, std::string Name = "")
@@ -325,18 +349,27 @@ public:
   /// String literals by id; the bytes have no terminator (Str constants).
   std::vector<std::string> Strings;
   std::vector<std::unique_ptr<Function>> Funcs;
+  std::vector<Global> Globals;
 
   uint32_t addFile(llvm::StringRef Path);
   uint32_t internString(llvm::StringRef S);
   FuncId addFunction(std::unique_ptr<Function> F);
   /// The function called Name, or NoId.
   FuncId lookupFunction(llvm::StringRef Name) const;
+  uint32_t addGlobal(Global G);
+  /// The global called Name, or NoId.
+  uint32_t lookupGlobal(llvm::StringRef Name) const;
   Function &func(FuncId Id) { return *Funcs[Id]; }
   const Function &func(FuncId Id) const { return *Funcs[Id]; }
 
 private:
-  llvm::StringMap<uint32_t> FileIds, StringIds, FuncIds;
+  llvm::StringMap<uint32_t> FileIds, StringIds, FuncIds, GlobalIds;
 };
+
+/// The symbol of a function the compiler writes in GIR (println's helpers,
+/// the panic functions of Assert): the mangled name of `gopp.<Name>`. The
+/// code generator finds the panic function of a failed Assert by it.
+std::string runtimeSymbol(llvm::StringRef Name);
 
 //===----------------------------------------------------------------------===//
 // Helpers to make operands
@@ -355,6 +388,40 @@ Operand constBool(Context &C, bool V);
 Operand constFloat(Type *Ty, double V);
 Operand constStr(Module &M, llvm::StringRef S);
 Operand constFunc(const Module &M, FuncId F);
+/// The address of global G (a pointer to its type).
+Operand constGlobal(Module &M, uint32_t G);
+
+/// The blocks a terminator can go to, unwind edges included.
+template <class Term, class Fn> void forEachSuccessor(Term &T, Fn &&Visit) {
+  auto Unwind = [&](auto &U) {
+    if (U.K == UnwindAction::Cleanup)
+      Visit(U.Target);
+  };
+  switch (T.K) {
+  case Terminator::Goto:
+    Visit(T.Target);
+    break;
+  case Terminator::Switch:
+    for (auto &C : T.Cases)
+      Visit(C.Target);
+    Visit(T.Otherwise);
+    break;
+  case Terminator::Call:
+    if (T.Target != NoId)
+      Visit(T.Target);
+    Unwind(T.Unwind);
+    break;
+  case Terminator::Drop:
+  case Terminator::Assert:
+    Visit(T.Target);
+    Unwind(T.Unwind);
+    break;
+  case Terminator::Return:
+  case Terminator::Unreachable:
+  case Terminator::Resume:
+    break;
+  }
+}
 
 } // namespace gir
 } // namespace gopp

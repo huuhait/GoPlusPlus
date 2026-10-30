@@ -1,0 +1,20 @@
+// REQUIRES: long
+// P04.04 (manager decision M3): the second half of core-linear.long.test: the
+// fan-in, the switches, the struct fields and the keyed literals at N = 10000
+// and 4N (4N at most 8 times as long), then the long chain and the two rings.
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 fanin 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 switch 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 fields 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 keyed 10000
+// A chain three times longer than the one that overflowed the checker's
+// stack in the normal build (16000) is checked without a crash.
+// RUN: %python %S/Inputs/gen-core-stress.py initchain 64000 > %t.chain.gopp
+// RUN: %{timeout10} %gopp check -check-j=1 %t.chain.gopp
+// A ring of constants of 20000 links, and a ring of 32000 variables, are
+// reported once, without a crash.
+// RUN: %python %S/Inputs/gen-core-stress.py constcycle 20000 > %t.cring.gopp
+// RUN: not %{timeout10} %gopp check -check-j=1 %t.cring.gopp 2>&1 | FileCheck --check-prefix=CONST %s
+// CONST: error[E0142]: initialization cycle for c0
+// RUN: %python %S/Inputs/gen-core-stress.py cycle 32000 > %t.ring.gopp
+// RUN: not %{timeout10} %gopp check -check-j=1 %t.ring.gopp 2>&1 | FileCheck %s
+// CHECK: error[E0142]: initialization cycle for v0

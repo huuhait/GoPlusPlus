@@ -1,0 +1,13 @@
+package main
+
+var c1 = trace("c1", a2+c2)
+
+var c2 = trace("c2", 7)
+
+func init() {
+	println("init c (1)", c1, c2)
+}
+
+func init() {
+	println("init c (2)")
+}

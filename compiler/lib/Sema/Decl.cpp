@@ -756,6 +756,37 @@ void Checker::objDecl(Object *O, NamedType *Def) {
       TN->Color = 1;
       return;
     }
+  // A package-level variable or constant whose initializer names one declared
+  // later is declared from inside objDecl of the first, so a chain of n such
+  // links (or a cycle of n) recurses n times, and the thread's stack is used
+  // up at some n (P04.04). Whatever the links are made of, when less than
+  // DeclReserveBytes of the stack is left (the worst one declaration can use:
+  // an initializer nested to the parser's limit, R13) the rest of the
+  // declaration runs on a stack of its own and this thread waits
+  // (runOnNewStack; if the thread cannot be made, err_no_stack): the order of
+  // the work and of its diagnostics is that of plain recursion, and the depth
+  // that fits is bounded by memory, not by one stack. SegmentDepth: the level a
+  // segment began at (its body asks again for the same level and must not start
+  // another).
+  if (SegmentDepth != DeclNest && shouldHop(DeclNest, DeclReserveBytes)) {
+    unsigned Saved = SegmentDepth;
+    SegmentDepth = DeclNest;
+    bool Ran = runOnNewStack([&] { objDecl(O, Def); }, DeclSegmentBytes);
+    SegmentDepth = Saved;
+    if (!Ran) {
+      // No stack for the rest of a chain this deep: stop here, with O an
+      // invalid object that is declared (it is not tried again), and say so
+      // once. Nothing was changed before the hop.
+      if (!NoStack) {
+        NoStack = true;
+        err(O->Pos, diag::err_no_stack, {std::to_string(DeclNest)});
+      }
+      if (!O->Ty)
+        O->Ty = invalid();
+      O->Color = 1;
+    }
+    return;
+  }
   ++DeclNest;
   ObjPath.push_back(O);
   O->Color = static_cast<uint8_t>(std::min<size_t>(ObjPath.size() + 1, 250));

@@ -79,6 +79,9 @@ const std::map<std::string, const char *> Unchecked = {
                            "checker; tests/gir/extern-bad.test"},
     {"err_gir_no_main", "reported by the code generator, not the checker; "
                         "tests/gir/no-main.test"},
+    {"err_no_stack", "needs no thread to be had: DeepChain."
+                     "NoStackForADeepChain, tests/sema/"
+                     "no-stack.long.test"},
     {"err_invalid_method_type_params", "the parser reports "
                                        "err_interface_method_type_params and "
                                        "drops the list first"},

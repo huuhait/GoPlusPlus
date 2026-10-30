@@ -1,0 +1,11 @@
+package main
+
+var a [4]byte
+var i = 4
+
+func main() {
+	println("before")
+	a[i] = 1
+	println(a[0])
+	println("not reached")
+}

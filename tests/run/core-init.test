@@ -1,0 +1,10 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-init.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/core-init -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-init.out %}
+// P04.04: the init order of package variables (dependencies first, then
+// declaration order across the sorted files), several `init` functions per
+// file and per package (sorted files, then source order), all before main.
+// The program is Inputs/core-init/{a,b,c}.gopp; the expected output is what
+// `go run a.go b.go c.go` prints (Inputs/regen-goldens.py).

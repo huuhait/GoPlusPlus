@@ -355,12 +355,12 @@ class BigThread {
 public:
   BigThread() = default;
   BigThread(const BigThread &) = delete;
-  bool start(std::function<void()> Fn) {
+  bool start(std::function<void()> Fn, size_t Bytes = CheckStackBytes) {
     Body = std::move(Fn);
     pthread_attr_t Attr;
     if (pthread_attr_init(&Attr) != 0)
       return false;
-    bool Ok = pthread_attr_setstacksize(&Attr, CheckStackBytes) == 0 &&
+    bool Ok = pthread_attr_setstacksize(&Attr, Bytes) == 0 &&
               pthread_create(&Id, &Attr, &BigThread::entry, this) == 0;
     pthread_attr_destroy(&Attr);
     Started = Ok;
@@ -448,6 +448,21 @@ static void onCheckerStack(llvm::function_ref<void()> Fn, bool Here = false) {
   }
   static thread_local CheckerStack Stack;
   Stack.run(Fn);
+}
+
+/// Runs Fn on a thread with a stack of Bytes bytes (a checker thread) and
+/// waits for it: the work and its order are those of a plain call. False,
+/// with Fn not run, if the thread cannot be made (address space, thread
+/// limit, or a test asked for that): the caller is deep in a walk and stops.
+bool sema::runOnNewStack(llvm::function_ref<void()> Fn, size_t Bytes) {
+  if (!newStackAllowed())
+    return false;
+  BigThread T;
+  if (!T.start([&Fn] { Fn(); }, Bytes))
+    return false;
+  noteNewStackThread();
+  T.join();
+  return true;
 }
 
 /// Checks every body; Diags[K] gets the diagnostics of S.Bodies[K]. Workers
@@ -595,7 +610,7 @@ checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
         C.noteIntrinsicUses();
         C.untaggedCheck(C.UntaggedPend);
         C.unitRangeScan(); // GEN-14, UNI-2: every instance, any route
-        C.checkInitOrder();
+        C.checkInitOrder(CP->InitOrder);
         C.unusedImports();
         // Instantiation cycles, of the declarations and the bodies (taken in
         // declaration order): reported, as by Go, only when the package has no

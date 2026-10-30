@@ -47,6 +47,16 @@ void StructType::Profile(llvm::FoldingSetNodeID &ID) const {
   }
 }
 
+ArrayRef<uint32_t> StructType::fieldsNamed(llvm::StringRef Name) const {
+  auto Lo = std::lower_bound(
+      ByName.begin(), ByName.end(), Name,
+      [&](uint32_t I, llvm::StringRef N) { return Fields[I]->Name < N; });
+  auto Hi = Lo;
+  while (Hi != ByName.end() && Fields[*Hi]->Name == Name)
+    ++Hi;
+  return ArrayRef<uint32_t>(Lo, Hi);
+}
+
 bool OptionType::usesNiche() const {
   if (llvm::isa<PointerType>(Elem))
     return true;
@@ -331,8 +341,22 @@ StructType *TypeContext::structOf(ArrayRef<FieldSpec> Fields, bool Strict) {
       V->MarkedOption = F.MarkedOption;
       Vars.push_back(V);
     }
+    ArrayRef<uint32_t> ByName, Embedded;
+    if (Vars.size() > StructType::IndexedFields) {
+      llvm::SmallVector<uint32_t, 32> Order, Emb;
+      for (uint32_t I = 0; I < Vars.size(); ++I) {
+        Order.push_back(I);
+        if (Vars[I]->Embedded)
+          Emb.push_back(I);
+      }
+      std::stable_sort(Order.begin(), Order.end(), [&](uint32_t X, uint32_t Y) {
+        return Vars[X]->Name < Vars[Y]->Name;
+      });
+      ByName = copyIn(A, ArrayRef<uint32_t>(Order));
+      Embedded = copyIn(A, ArrayRef<uint32_t>(Emb));
+    }
     return new (A.Allocate<StructType>())
-        StructType(copyIn(A, ArrayRef<Var *>(Vars)), Strict);
+        StructType(copyIn(A, ArrayRef<Var *>(Vars)), Strict, ByName, Embedded);
   });
 }
 

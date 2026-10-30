@@ -1,0 +1,9 @@
+package main
+
+var z uint64
+
+func main() {
+	println("before")
+	println(uint64(10) / z)
+	println("not reached")
+}

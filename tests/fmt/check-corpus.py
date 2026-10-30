@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Round-trip check of `gopp fmt` on a corpus (P02.09).
 
-usage: check-corpus.py GOPP [--go] [--goroot] [--ext .test] [--skip NAME] [--jobs N] [--min N] PATH...
+usage: check-corpus.py GOPP [--go] [--goroot] [--ext .test] [--skip NAME] [--jobs N] [--min N] [--shard K/N] PATH...
 
 For every file (a directory is searched for *.gopp, with --go also *.go, with
 --ext also files with that suffix; --skip leaves a file name out) that
@@ -142,6 +142,7 @@ def main():
     skip = []
     jobs = os.cpu_count() or 4
     minimum = 1
+    shard = (0, 1)
     paths = []
     while args:
         a = args.pop(0)
@@ -159,6 +160,9 @@ def main():
             jobs = int(args.pop(0))
         elif a == "--min":
             minimum = int(args.pop(0))
+        elif a == "--shard":
+            k, n = args.pop(0).split("/")
+            shard = (int(k), int(n))
         else:
             paths.append(a)
     files = []
@@ -173,6 +177,8 @@ def main():
         else:
             files.append(p)
     files.sort()
+    # --shard K/N: the files whose place in the sorted list is K modulo N.
+    files = files[shard[0] :: shard[1]]
     counts = {"ok": 0, "skip": 0, "fail": 0}
     # Threads suit a small set; a large one (the standard library) needs processes,
     # because the Python work per file runs under one interpreter lock.

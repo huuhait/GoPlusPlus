@@ -114,7 +114,7 @@ std::unique_ptr<Module> sample(Context &C) {
   B.call(constFunc(*M, CalleeId), {copyOf(B.local(B.param(0)))}, B.local(Res),
          {UnwindAction::Cleanup, Cleanup}, Join);
   B.setBlock(Else);
-  BlockId After = B.assertThat(copyOf(Cmp), false, AssertKind::Bounds,
+  BlockId After = B.assertThat(copyOf(Cmp), false, AssertKind::Overflow,
                                {UnwindAction::Cleanup, Cleanup});
   (void)After;
   B.drop(B.local(Str), {UnwindAction::Terminate, NoId});
@@ -435,7 +435,8 @@ TEST(GIRSerialize, DamagedInputIsAnErrorNeverACrash) {
 
 /// Checks and lowers Source (one package file); null if it reports errors.
 std::unique_ptr<Module> lower(Context &C, const std::string &Source,
-                              std::string *Diag = nullptr) {
+                              std::string *Diag = nullptr,
+                              unsigned Threads = 1) {
   llvm::SmallString<128> Dir;
   EXPECT_FALSE(llvm::sys::fs::createUniqueDirectory("gopp-gir", Dir));
   {
@@ -448,7 +449,9 @@ std::unique_ptr<Module> lower(Context &C, const std::string &Source,
   sema::LoadOptions LO;
   LO.Root = std::string(Dir);
   sema::TypeContext TCtx;
-  sema::Loader L(SM, Diags, TCtx, LO, {});
+  sema::CheckOptions CO;
+  CO.BodyThreads = Threads;
+  sema::Loader L(SM, Diags, TCtx, LO, CO);
   sema::CheckedPackage *CP = L.loadDir(std::string(Dir), "");
   std::unique_ptr<Module> M;
   if (CP && !Diags.hasErrors())
@@ -472,6 +475,33 @@ TEST(GIRLower, EveryBuiltModuleVerifies) {
       "<< 1)\n}\n",
       "package main\nfunc main() { x := 2.5; y := float32(x); println(int(y)) "
       "}\n",
+      // P04.04: switch in every form, labels, goto.
+      ("package main\nfunc f(n int) int {\n switch {\n case n < 0:\n return "
+       "-1\n"
+       " case n == 0:\n fallthrough\n default:\n return 1\n case n > 9:\n "
+       "return 2\n }\n"
+       " return 0\n}\nfunc g(n int) int {\nouter:\n for i := 0; i < n; i++ {\n"
+       "  for j := 0; ; j++ {\n   if j > i {\n    continue outer\n   }\n   if "
+       "i > 5 {\n"
+       "    break outer\n   }\n  }\n }\n i := 0\nloop:\n if i < 3 {\n  i++\n  "
+       "goto loop\n }\n return i\n}\n"
+       "func main() { println(f(3), g(4)) }\n"),
+      // Structs, arrays, pointers, comparison, globals and init.
+      ("package main\ntype P struct{ X, Y int }\ntype L struct{ A, B P; N "
+       "[3]int8 }\n"
+       "var g = P{1, 2}\nvar arr [4]float32\nfunc init() { arr[1] = 2 }\n"
+       "func main() {\n l := L{A: g}\n l.N[2] = 3\n p := &l.B\n p.Y = 5\n"
+       " m := l\n println(l == m, l.B.Y, arr[1], len(l.N))\n}\n"),
+      // Complex numbers, Option, shifts and float conversions.
+      ("package main\nfunc main() {\n c := complex(1, 2)\n d := c * c / c\n"
+       " println(real(d), imag(d), c == d)\n var o Option[int]\n o = 3\n"
+       " if o != nil {\n  println(o + 1)\n }\n v, ok := o.Get()\n println(v, "
+       "ok)\n"
+       " var s uint = 70\n var m int8 = -1\n println(1<<s, int8(-128)/m)\n}\n"),
+      // Multiple and named results.
+      ("package main\nfunc f() (a int, b bool) {\n a = 3\n return\n}\n"
+       "func g(x int) (int, int) { return x, x + 1 }\n"
+       "func main() {\n a, b := f()\n c, d := g(a)\n println(a, b, c, d)\n}\n"),
   };
   for (const char *Src : Programs) {
     Context C;
@@ -492,14 +522,44 @@ TEST(GIRLower, EveryBuiltModuleVerifies) {
   }
 }
 
+TEST(GIRLower, SymbolsDoNotDependOnTheThreadCount) {
+  // Local types, init functions and many functions: the module is the same
+  // text whatever the number of checker threads (the file bytes of the
+  // bitstream hold the temporary directory's name, so the lit test
+  // gir/symbols.test compares those, in one directory).
+  std::string Src = "package main\n";
+  for (int I = 0; I < 12; ++I)
+    Src += "func f" + std::to_string(I) +
+           "() bool {\n type L struct{ a int }\n"
+           " x, y := L{" +
+           std::to_string(I) + "}, L{1}\n return x == y\n}\n";
+  Src += "func init() { println(1) }\nfunc init() { println(2) }\n"
+         "func main() { println(f0(), f11()) }\n";
+  std::string Want;
+  for (unsigned Threads : {1u, 2u, 8u, 0u}) {
+    Context C;
+    std::string Diag;
+    auto M = lower(C, Src, &Diag, Threads);
+    ASSERT_NE(M, nullptr) << Diag;
+    EXPECT_EQ(errorsOf(*M), "");
+    std::string T = text(*M);
+    if (Want.empty()) {
+      Want = T;
+      EXPECT_NE(T.find("fn _GPK4mainE1_"), std::string::npos) << T;
+      EXPECT_NE(T.find("L#0"), std::string::npos) << T;
+      EXPECT_NE(T.find("_GPTeg0_1LF4mainE3f11"), std::string::npos) << T;
+    }
+    EXPECT_EQ(T, Want) << Threads << " threads";
+  }
+}
+
 TEST(GIRLower, ReportsWhatItCannotLower) {
   Context C;
   std::string Diag;
-  EXPECT_EQ(
-      lower(C,
-            "package main\ntype T struct{}\nfunc main() { var t T; _ = t }\n",
-            &Diag),
-      nullptr);
+  EXPECT_EQ(lower(C,
+                  "package main\nfunc main() { var m map[string]int; _ = m }\n",
+                  &Diag),
+            nullptr);
   EXPECT_NE(Diag.find("err_gir_unsupported"), std::string::npos) << Diag;
   Diag.clear();
   EXPECT_EQ(

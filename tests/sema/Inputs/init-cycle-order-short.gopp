@@ -1,0 +1,12 @@
+package main
+
+var c1 = c2 + 1
+var c2 = c3 + 1
+var c3 = c1 + 1
+const k1 = k2
+const k2 = k3
+const k3 = k1
+var u1 int = u2
+var u2 string = u1
+var bad = undefinedName + 1
+func main() { println(c1, k1) }

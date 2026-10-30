@@ -1,0 +1,9 @@
+package main
+
+var n = -1
+
+func main() {
+	println("before")
+	println(1 << n)
+	println("not reached")
+}

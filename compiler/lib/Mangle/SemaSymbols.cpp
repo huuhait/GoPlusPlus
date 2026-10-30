@@ -116,6 +116,11 @@ const Node *SemaNames::unitImpl(const UnitCanon *U, bool TParams,
   return C.unit(Num, Den, Dims);
 }
 
+void SemaNames::declareLocalType(const TypeName *Obj, const Node *Scope,
+                                 uint64_t Ordinal) {
+  LocalTypes[Obj] = {Scope, Ordinal};
+}
+
 const Node *SemaNames::unit(const UnitCanon *U) {
   std::string Reason;
   const Node *N = unitImpl(U, false, Reason);
@@ -240,8 +245,10 @@ bool SemaNames::children(const Type *T, bool TParams,
       return false;
     }
     if (isLocal(N->Obj) || (N->Orig && isLocal(N->Orig->Obj))) {
-      Reason = "a type declared inside a function";
-      return false;
+      if (N->Orig || !LocalTypes.count(N->Obj)) {
+        Reason = "a type declared inside a function";
+        return false;
+      }
     }
     if (!N->Orig && !N->TParams.empty()) {
       Reason = "a generic type without type arguments";
@@ -348,8 +355,10 @@ const Node *SemaNames::build(const Type *T, bool TParams, std::string &Reason) {
   case Type::Kind::Named: {
     auto *N = cast<NamedType>(T);
     const TypeName *O = N->origin()->Obj;
+    if (auto L = LocalTypes.find(O); L != LocalTypes.end() && !N->Orig)
+      return C.localNamed(L->second.first, L->second.second, O->Name);
     const Node *Base =
-        O->Pkg ? C.named(O->Pkg->Path, O->Name) : C.universe(O->Name);
+        O->Pkg ? C.named(pathOf(O->Pkg), O->Name) : C.universe(O->Name);
     if (N->TArgs.empty())
       return Base;
     llvm::SmallVector<const Node *, 4> Args;
@@ -375,12 +384,14 @@ const Node *SemaNames::convert(const Type *Root, bool TParams) {
   llvm::SmallVector<const Type *, 8> Kids;
   while (!Stack.empty()) {
     const Type *T = Stack.back();
+    ++Counts.Visits;
     if (M.count(T)) {
       Stack.pop_back();
       continue;
     }
     Kids.clear();
     std::string Reason;
+    ++Counts.Misses;
     if (!children(T, TParams, Kids, Reason)) {
       Stack.pop_back();
       M[T] = nullptr;
@@ -457,7 +468,7 @@ const Node *SemaNames::funcImpl(const Func *F, bool Generic) {
     if (F->Name == "init")
       return fail("an init function (name it with Context::initFunc and its "
                   "ordinal)");
-    return C.func(F->Pkg->Path, F->Name);
+    return C.func(pathOf(F->Pkg), F->Name);
   }
   const NamedType *R = F->RecvInst;
   if (!R) {
@@ -527,5 +538,5 @@ const Node *SemaNames::var(const Var *V) {
   // `var _ = f()` has no storage, and a package may have many.
   if (V->Name == "_")
     return fail("a blank variable (it has no storage)");
-  return C.var(V->Pkg->Path, V->Name);
+  return C.var(pathOf(V->Pkg), V->Name);
 }

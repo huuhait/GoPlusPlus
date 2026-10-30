@@ -395,8 +395,11 @@ public:
 
 class StructType : public Type, public llvm::FoldingSetNode {
 public:
-  StructType(llvm::ArrayRef<Var *> Fields, bool Strict)
-      : Type(Kind::Struct), Fields(Fields), Strict(Strict) {}
+  StructType(llvm::ArrayRef<Var *> Fields, bool Strict,
+             llvm::ArrayRef<uint32_t> ByName = {},
+             llvm::ArrayRef<uint32_t> EmbeddedIdx = {})
+      : Type(Kind::Struct), Fields(Fields), Strict(Strict), ByName(ByName),
+        EmbeddedIdx(EmbeddedIdx) {}
   static bool classof(const Type *T) { return T->getKind() == Kind::Struct; }
   void Profile(llvm::FoldingSetNodeID &ID) const;
   llvm::ArrayRef<Var *> Fields;
@@ -404,6 +407,18 @@ public:
   /// effective required bit of each field (Var::Required) already says what
   /// it means; this records the attribute itself (export data, P09, P14).
   bool Strict;
+  /// A struct of more than IndexedFields fields has its field indexes sorted
+  /// by name (then index) in ByName and its embedded fields' indexes in
+  /// EmbeddedIdx, so a selector or a literal key finds its field by a
+  /// binary search: n lookups in a struct of n fields cost n log n, not n
+  /// squared (P04.04). Both are made with the type and never change.
+  static constexpr size_t IndexedFields = 16;
+  llvm::ArrayRef<uint32_t> ByName;
+  llvm::ArrayRef<uint32_t> EmbeddedIdx;
+  bool indexed() const { return Fields.size() > IndexedFields; }
+  /// The indexes of the fields called Name (several only for `_`), in
+  /// declaration order. Only for indexed().
+  llvm::ArrayRef<uint32_t> fieldsNamed(llvm::StringRef Name) const;
 };
 
 struct Term {

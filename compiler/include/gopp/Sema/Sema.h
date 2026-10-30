@@ -288,9 +288,21 @@ public:
   virtual Package *import(llvm::StringRef Path, std::string &Error) = 0;
 };
 
+/// One package-variable initialization, in the order Go runs them (the spec's
+/// "package initialization": repeatedly the earliest variable in declaration
+/// order that depends on no uninitialized variable). `var a, b = f()` is one
+/// entry with two Lhs; `var a, b = 1, 2` is two.
+struct InitEntry {
+  llvm::ArrayRef<Var *> Lhs;
+  const ast::Expr *Init = nullptr;
+};
+
 struct CheckedPackage {
   Package *Pkg = nullptr;
   Info I;
+  /// The initializations of the package-level variables that have an
+  /// initializer, in initialization order (a variable without one is zero).
+  std::vector<InitEntry> InitOrder;
   /// Owns the objects and scopes Pkg and I refer to. Body checkers' arenas
   /// are added here.
   std::vector<std::unique_ptr<Arena>> Mem;

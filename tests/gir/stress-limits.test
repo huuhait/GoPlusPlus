@@ -16,5 +16,5 @@
 // CHAIN: ; y
 // BLOCKS: StorageLive(
 // BLOCKS: return
-// SIB: fn main.main() -> ()
+// SIB: fn _GPF4mainE4main() -> ()
 // SIB: return

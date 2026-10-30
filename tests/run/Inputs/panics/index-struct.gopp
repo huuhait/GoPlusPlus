@@ -1,0 +1,15 @@
+package main
+
+type S struct {
+	n   int
+	arr [6]int32
+}
+
+var s S
+var i = 6
+
+func main() {
+	println("before")
+	println(s.arr[i])
+	println("not reached")
+}

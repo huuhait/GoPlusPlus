@@ -1,0 +1,13 @@
+package main
+
+var a [2]int
+var i = 2
+
+func main() {
+	println("before")
+	for k := 0; k < 5; k++ {
+		println("k", k)
+	}
+	println(a[i])
+	println("not reached")
+}

@@ -730,7 +730,8 @@ void Checker::failsReturn(const ReturnStmt *S0) {
 
 void Checker::caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
                          SmallVector<std::pair<ConstValue, Type *>, 8> &Seen,
-                         SmallVector<SourceLoc, 8> &SeenPos) {
+                         SmallVector<SourceLoc, 8> &SeenPos,
+                         llvm::StringMap<SmallVector<uint32_t, 1>> &SeenIdx) {
   for (const ast::Expr *Ex : Values) {
     Operand V;
     expr(V, Ex);
@@ -773,7 +774,16 @@ void Checker::caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
     if (V.M != Mode::Constant)
       continue;
     bool Dup = false;
-    for (size_t K = 0; K < Seen.size(); ++K) {
+    // Equal integers, strings and bools have equal text: only the cases with
+    // the same text are compared (a switch of n cases stays linear). The
+    // other kinds share one bucket.
+    std::string Key;
+    if (V.Val.kind() == ConstValue::Int || V.Val.kind() == ConstValue::String ||
+        V.Val.kind() == ConstValue::Bool)
+      Key = std::to_string(static_cast<int>(V.Val.kind())) + ":" +
+            V.Val.exactStr();
+    SmallVector<uint32_t, 1> &Bucket = SeenIdx[Key];
+    for (uint32_t K : Bucket) {
       const auto &[Val, T] = Seen[K];
       if (Val.kind() == V.Val.kind() && !Val.isUnknown() &&
           ConstValue::compare(Val, tok::eql, V.Val) && identical(V.Ty, T)) {
@@ -784,6 +794,7 @@ void Checker::caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
       }
     }
     if (!Dup) {
+      Bucket.push_back(static_cast<uint32_t>(Seen.size()));
       Seen.push_back({V.Val, V.Ty});
       SeenPos.push_back(V.pos());
     }
@@ -815,6 +826,7 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
   bool SeenDefault = false;
   SmallVector<std::pair<ConstValue, Type *>, 8> Seen;
   SmallVector<SourceLoc, 8> SeenPos;
+  llvm::StringMap<SmallVector<uint32_t, 1>> SeenIdx;
   auto Clauses = S0->Body->List;
   // Flow (ADR-0018 point 4): every clause starts from the state at the
   // switch; in a tagless switch it also knows what its case says, and that
@@ -877,7 +889,7 @@ void Checker::switchStmt(unsigned Ctx, const SwitchStmt *S0) {
         }
       }
     } else {
-      caseValues(X, CC->List, Seen, SeenPos);
+      caseValues(X, CC->List, Seen, SeenPos, SeenIdx);
     }
     Cur = SwBase;
     flowAdd(PrevFalse.False);

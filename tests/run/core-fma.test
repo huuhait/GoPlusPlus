@@ -1,0 +1,190 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-fma.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-fma.out %}
+// P04.04, D4.12: FMA contraction follows gc on each target, both sides. On
+// amd64 nothing is fused. On arm64 a product is fused with the + or - that
+// reads it (x*y+z, x*y-z, z-x*y; of two products the right one, as gc's
+// rules try it first), and an explicit conversion rounds the product first,
+// so float64(x*y)+z is not fused; a complex product fuses its parts the same
+// way. The expected output is gc's on each target (Inputs/regen-goldens.py:
+// golden/core-fma.out, and golden/core-fma.arm64.out from Go's arm64 build
+// under QEMU). The product and the sum need not be in one block: a call, an
+// index (its bounds check) or a division (its zero check) between them ends
+// a GIR block, and gc fuses all the same (R1), as long as the product is
+// read once and written once (a named variable is not fused yet: P04.13).
+// Both sides: crossBlock is fused, and the forms next to it that gc does not
+// fuse (a conversion, a product that a branch may replace) stay unfused.
+package main
+
+//go:noinline
+func fma(a, b, c float64) float64 { return a*b + c }
+
+//go:noinline
+func fmaRound(a, b, c float64) float64 { return float64(a*b) + c }
+
+//go:noinline
+func fms(a, b, c float64) float64 { return a*b - c }
+
+//go:noinline
+func fnms(a, b, c float64) float64 { return c - a*b }
+
+//go:noinline
+func two(a, b, c, d float64) (float64, float64) { return a*b + c*d, a*b - c*d }
+
+//go:noinline
+func fma32(a, b, c float32) (float32, float32) {
+	return a*b + c, float32(a*b) + c
+}
+
+//go:noinline
+func cmul(a, b complex128) complex128 { return a * b }
+
+var gz = -1.0000000149011612
+
+//go:noinline
+func call() float64 { return gz }
+
+//go:noinline
+func callI() int { return 3 }
+
+// crossBlock: the product is computed before a call, an index or a
+// division, the sum after it.
+//
+//go:noinline
+func crossBlock(x, y float64, arr [3]float64, i, n int) [8]float64 {
+	var r [8]float64
+	r[0] = x*y + call()
+	r[1] = call() + x*y
+	r[2] = x*y + arr[i]
+	r[3] = arr[i] + x*y
+	r[4] = x*y - arr[i]
+	r[5] = arr[i] - x*y
+	r[6] = x*y + float64(n/i)
+	r[7] = float64(callI()) - x*y
+	return r
+}
+
+// crossProducts: two products on both sides of an index, and a product
+// that reads elements (a[i]*b[i] + c[i]).
+//
+//go:noinline
+func crossProducts(a, b, c [2]float64, i int) [3]float64 {
+	return [3]float64{a[i]*b[i] + c[i], a[i]*b[i] - c[i], c[i] - a[i]*b[i]}
+}
+
+// dot: s += a[i]*b[i], the usual loop.
+//
+//go:noinline
+func dot(a, b [2]float64) float64 {
+	s := 0.0
+	for i := 0; i < 2; i++ {
+		s += a[i] * b[i]
+	}
+	return s
+}
+
+// notFused: forms gc does not fuse. A conversion rounds the product; a
+// product a branch may replace is a phi, not a product. (A named product,
+// `t := x*y; t + z`, IS fused by gc, also when it is read twice; gopp fuses
+// it with P04.13.)
+//
+//go:noinline
+func notFused(x, y float64, arr [3]float64, i int, c bool) [4]float64 {
+	var r [4]float64
+	r[0] = float64(x*y) + call()
+	r[1] = float64(x*y) + arr[i]
+	u := x * y
+	if c {
+		u = arr[i]
+	}
+	r[2] = u + call()
+	r[3] = float64(arr[i]*arr[i]) + call()
+	return r
+}
+
+// negated: gc folds a negated product into FNMUL and fuses it with the + or -
+// that reads it (ARM64.rules: FNEGD (FMULD x y) => FNMULD x y; FADDD a
+// (FNMULD x y) => FMSUBD; FSUBD a (FNMULD x y) => FMADDD; FSUBD (FNMULD x y) a
+// => FNMADDD). A product with a negated factor is a product (FMULD (FNEGD x)
+// y => FNMULD x y), and the negation of a negated product is the product.
+//
+//go:noinline
+func negated(x, y, z float64) [8]float64 {
+	var r [8]float64
+	r[0] = -(x * y) + z
+	r[1] = z - -(x * y)
+	r[2] = -(x * y) - z
+	r[3] = z + -(x * y)
+	r[4] = (-x)*y + z
+	r[5] = -(-(x * y)) + z
+	r[6] = z - (-x)*y
+	r[7] = -(x*y) - (-(x * y))
+	return r
+}
+
+//go:noinline
+func negated32(x, y, z float32) [3]float32 {
+	return [3]float32{-(x * y) + z, z - -(x * y), -(x * y) - z}
+}
+
+// negatedCross: the negated product and the sum are in two blocks.
+//
+//go:noinline
+func negatedCross(x, y float64, arr [3]float64, i int) [3]float64 {
+	return [3]float64{-(x * y) + arr[i], arr[i] - -(x * y), -(x * y) - arr[i]}
+}
+
+// negatedNotFused: a conversion rounds the negated product; a negated product
+// read twice is not a single-use temporary.
+//
+//go:noinline
+func negatedNotFused(x, y, z float64) [2]float64 {
+	return [2]float64{float64(-(x * y)) + z, -float64(x*y) + z}
+}
+
+func main() {
+	var x float64 = 1.0000000074505806
+	var y float64 = 0.9999999925494194
+	var z float64 = -1
+	println("fma", fma(x, y, z), fmaRound(x, y, z), fms(x, y, -z), fnms(x, y, -z))
+	println("fma-big", fma(3, 7, 0.5), fma(1e10, 1e10, -1e20), fms(1e10, 1e10, 1e20))
+	p, q := 0.1, 10.0
+	s, d := two(p, q, -p, q)
+	println("two", s, d)
+	s, d = two(p, q, p, q)
+	println("two", s, d)
+	f, g := fma32(1e10, 1e10, -1e20)
+	println("fma32", f, g)
+	n8 := negated(p, q, 1)
+	println("negated", n8[0], n8[1], n8[2], n8[3], n8[4], n8[5], n8[6], n8[7])
+	n8 = negated(p, q, -1)
+	println("negated", n8[0], n8[1], n8[2], n8[3], n8[4], n8[5], n8[6], n8[7])
+	n8 = negated(x, y, z)
+	println("negated", n8[0], n8[1], n8[2], n8[3], n8[4], n8[5], n8[6], n8[7])
+	n3 := negated32(0.1, 10, 1)
+	println("negated32", n3[0], n3[1], n3[2])
+	c3 := negatedCross(p, q, [3]float64{1, -1, 0.5}, 0)
+	println("negated-cross", c3[0], c3[1], c3[2])
+	c3 = negatedCross(x, y, [3]float64{z, z, z}, 2)
+	println("negated-cross", c3[0], c3[1], c3[2])
+	nf := negatedNotFused(p, q, 1)
+	println("negated-not-fused", nf[0], nf[1])
+	println("complex", cmul(complex(p, q), complex(q, p)), cmul(complex(q, p), complex(p, -q)))
+	arr := [3]float64{0.5, -1.0000000149011612, 3}
+	r := crossBlock(1.0000000074505806, 1.0000000074505806, arr, 1, 7)
+	println("cross", r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7])
+	r = crossBlock(1.0000000074505806, 1.0000000074505806, arr, 2, 7)
+	println("cross", r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7])
+	u := [2]float64{1.0000000074505806, 1.0000000074505806}
+	v := [2]float64{1.0000000074505806, 1.0000000074505806}
+	w := [2]float64{-1.0000000149011612, 1}
+	pr := crossProducts(u, v, w, 0)
+	println("products", pr[0], pr[1], pr[2])
+	println("dot", dot(u, v), dot([2]float64{0.1, 0.1}, [2]float64{10, 10}))
+	n := notFused(1.0000000074505806, 1.0000000074505806, arr, 1, true)
+	println("notfused", n[0], n[1], n[2], n[3])
+	n = notFused(1.0000000074505806, 1.0000000074505806, arr, 1, false)
+	println("notfused", n[0], n[1], n[2], n[3])
+}

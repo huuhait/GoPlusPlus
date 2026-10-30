@@ -1,0 +1,6 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t.lin --linear 2500 --shapes straight | FileCheck %s --check-prefix=LIN
+// P03.25 (GEN-14, R10): the straight chain at 2500 and 10000 levels takes at
+// most 12 times as long (the other half of units-generic-straight.long).
+// LIN: straight j1: near-linear yes
+// LIN: straight j8: near-linear yes

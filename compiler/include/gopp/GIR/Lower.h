@@ -45,22 +45,26 @@ std::unique_ptr<Module> lowerPackage(Context &Ctx, const SourceManager &SM,
                                      DiagnosticsEngine &Diags,
                                      const LowerOptions &Opts = {});
 
-/// What a function's symbol is made from.
+/// What a symbol is made from.
 enum class SymbolKind : uint8_t {
-  Func,    // a function Name of package Pkg
-  ExternC, // an @Extern("C") function: its C name is Name
-  Entry,   // the C entry point that calls main.main (Name is unused)
-  Runtime, // a function the compiler writes in GIR (println's helpers)
+  Func,     // a function Name of package Pkg
+  Var,      // a package variable Name of package Pkg
+  InitFunc, // the Ordinal-th `init` function of package Pkg
+  ExternC,  // an @Extern("C") function: its C name is Name
+  Entry,    // the C entry point that calls main.main (Name is unused)
+  Runtime,  // a function the compiler writes in GIR (println's helpers)
 };
 
-/// The symbol of a function, the one place that decides it (D4.13): M0 makes
-/// `main.f` for package main, `<path>.f` for another package, the bare name
-/// for @Extern("C"), `main` for the entry point and `gopp.<name>` for the
-/// compiler's helpers. A Go++ symbol always has a dot, so it never collides
-/// with a C name. P04.17 replaces the Func and Runtime cases with its
-/// mangling.
+/// The symbol of an entity, the one place that decides it (D4.13): the
+/// mangled `_GP` name (gopp/Mangle) of the function, variable or `init`
+/// function; the bare name for @Extern("C") (appendix A.8); `main` for the
+/// C entry point; the mangled `gopp.<name>` for the compiler's helpers.
+/// Entities that carry a checker type or object (a function, a variable, the
+/// glue of a type, a type declared inside a function) are named by
+/// sym::SemaNames through gir::Symbols (lib/GIR/Symbols.h), which the
+/// lowering uses; this is the same decision for the ones that need none.
 std::string symbolOf(SymbolKind K, const sema::Package *Pkg,
-                     llvm::StringRef Name);
+                     llvm::StringRef Name, uint64_t Ordinal = 0);
 
 } // namespace gir
 } // namespace gopp

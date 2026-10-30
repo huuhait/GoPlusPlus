@@ -3,6 +3,12 @@
 // A port of types2's gcsizes.go for amd64 (the sizes the types2 tests use)
 // and of hasVarSize (builtins.go). Go++ adds Option[T] (ADR-0018).
 //
+// Go++ code (not CheckOptions::GoCompat) follows the layout of D4.5 and of
+// the code generator (LLVM's data layout for the GIR types): `string` is
+// {ptr, len, cap} = 24 bytes (ADR-0026), a func value is {code, env} = 16, and
+// a struct whose last field has size 0 gets no padding byte (gc adds one).
+// P04.04 tests the two agree for a generated table of types, on both targets.
+//
 //===----------------------------------------------------------------------===//
 
 #include "Checker.h"
@@ -46,12 +52,15 @@ void Checker::gcOffsetsof(const StructType *S, SmallVectorImpl<int64_t> &Offs) {
 
 /// The size and alignment of a type that has no parts to walk (a basic type,
 /// a slice, an interface, a view, anything that is one word): gcsizes.go.
-static Checker::Layout leafLayout(Type *U, bool Complex) {
+static Checker::Layout leafLayout(Type *U, bool Complex, bool Go) {
   switch (U->getKind()) {
   case Type::Kind::Slice:
     return {WordSize * 3, WordSize};
   case Type::Kind::Interface:
     return {WordSize * 2, WordSize};
+  case Type::Kind::Signature:
+    // D4.5: a func value is {code*, env*}. (gc: one word.)
+    return {Go ? WordSize : WordSize * 2, WordSize};
   case Type::Kind::Ref: {
     // ADR-0020 point 7: a view of a string or a slice (named or not, and the
     // borrowed []T of slicing) is (ptr, len); every other view is one
@@ -89,7 +98,7 @@ static Checker::Layout leafLayout(Type *U, bool Complex) {
       Size = 16;
       break;
     case BasicKind::String:
-      return {16, WordSize};
+      return {Go ? 16 : 24, WordSize}; // D4.5: {ptr, len, cap}
     default:
       Size = WordSize;
       break;
@@ -185,7 +194,7 @@ Checker::Layout Checker::gcLayout(Type *Root) {
     case Type::Kind::Struct:
       break;
     default: {
-      R = leafLayout(U, isComplex(T));
+      R = leafLayout(U, isComplex(T), S.Opts.GoCompat);
       if (N) // a named leaf (cheap, but memoize the ones in Local)
         Local[N] = {R, false};
       return true;
@@ -251,7 +260,9 @@ Checker::Layout Checker::gcLayout(Type *Root) {
       R.Align = Kids[0].Align;
       if (Kids[0].Size < 0)
         R.Size = -1;
-      else if (O->usesNiche())
+      else if (O->usesNiche() || (!S.Opts.GoCompat && neverNilKind(O->Elem)))
+        // (D4.5 and ADR-0018 point 3: also an interface with methods and a
+        // func type: the null itab / code pointer is nil.)
         R.Size = Kids[0].Size;
       else
         R.Size = alignTo(Kids[0].Size + 1, Kids[0].Align);
@@ -287,7 +298,7 @@ Checker::Layout Checker::gcLayout(Type *Root) {
       }
       // gc: the last field of a non-zero-sized struct is not allowed to have
       // size 0.
-      if (Last > 0 && Size == 0)
+      if (Last > 0 && Size == 0 && S.Opts.GoCompat)
         Size = 1;
       // gc: the size includes alignment padding.
       R = {alignTo(Last + Size, Align), Align};

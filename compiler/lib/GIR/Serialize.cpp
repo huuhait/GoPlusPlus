@@ -37,7 +37,13 @@ enum BlockID : unsigned {
 
 // Record codes. Each block has its own code space.
 enum IdentCode : unsigned { I_Version = 1 };
-enum ModuleCode : unsigned { M_Name = 1, M_File, M_String, M_FuncDecl };
+enum ModuleCode : unsigned {
+  M_Name = 1,
+  M_File,
+  M_String,
+  M_FuncDecl,
+  M_Global
+};
 enum TypeCode : unsigned {
   T_Unit = 1,
   T_Bool,
@@ -47,6 +53,7 @@ enum TypeCode : unsigned {
   T_Ptr,
   T_Slice,
   T_Array,
+  T_Option,
   T_Tuple,
   T_Func,
   T_Struct,
@@ -75,6 +82,8 @@ public:
     // 1. Encode everything in memory; this assigns the type ids in the order
     // the module is walked.
     std::vector<Rec> Decls;
+    for (const Global &G : M.Globals)
+      Decls.push_back(globalDecl(G));
     for (const auto &F : M.Funcs)
       Decls.push_back(funcDecl(*F));
     std::vector<std::vector<Rec>> Bodies(M.Funcs.size());
@@ -164,6 +173,7 @@ private:
       case Type::Kind::Ptr:
       case Type::Kind::Slice:
       case Type::Kind::Array:
+      case Type::Kind::Option:
         Parts.push_back(Cur->elem());
         break;
       case Type::Kind::Tuple:
@@ -229,6 +239,9 @@ private:
       case Type::Kind::Array:
         R = {T_Array, {TypeIds[T->elem()], T->length()}};
         break;
+      case Type::Kind::Option:
+        R = {T_Option, {TypeIds[T->elem()]}};
+        break;
       case Type::Kind::Tuple:
         R = {T_Tuple, {}};
         for (const Type *E : T->elems())
@@ -254,6 +267,20 @@ private:
     V.push_back(S.File);
     V.push_back(S.Line);
     V.push_back(S.Col);
+  }
+
+  /// [ty, link, readonly, init kind, init type, init bits, span(3), name...]
+  Rec globalDecl(const Global &G) {
+    Rec R{M_Global, {}};
+    R.Vals = {typeId(G.Ty),
+              static_cast<uint64_t>(G.Link),
+              G.ReadOnly,
+              static_cast<uint64_t>(G.Init.K),
+              typeId(G.Init.Ty ? G.Init.Ty : G.Ty),
+              G.Init.Bits};
+    put(R.Vals, G.Loc);
+    R.Vals.append(chars(G.Name));
+    return R;
   }
 
   Rec funcDecl(const Function &F) {
@@ -395,6 +422,9 @@ private:
         R.Vals.push_back(static_cast<uint64_t>(T.AK));
         R.Vals.push_back(T.Target);
         put(R.Vals, T.Unwind);
+        R.Vals.push_back(T.Args.size());
+        for (const Operand &O : T.Args)
+          put(R.Vals, O);
         break;
       }
       Out.push_back(std::move(R));
@@ -615,6 +645,9 @@ private:
       T = Ctx.array(E, R.next());
       break;
     }
+    case T_Option:
+      T = Ctx.option(type(R));
+      break;
     case T_Tuple: {
       SmallVector<Type *, 4> Elems;
       while (R.Pos < R.V.size())
@@ -709,6 +742,26 @@ private:
       case M_String:
         Mod->internString(R.rest());
         break;
+      case M_Global: {
+        Global G;
+        G.Ty = type(R);
+        G.Link = enumVal(R, Linkage::LinkOnceODR);
+        G.ReadOnly = R.next();
+        uint64_t CK = R.next();
+        if (CK > Constant::Global)
+          R.Failed = true;
+        G.Init.K = static_cast<Constant::Kind>(CK);
+        G.Init.Ty = type(R);
+        G.Init.Bits = R.next();
+        G.Loc = span(R);
+        G.Name = R.rest();
+        if (R.Failed)
+          return bad("global declaration");
+        if (G.Init.K == Constant::Zero)
+          G.Init.Ty = nullptr;
+        Mod->addGlobal(std::move(G));
+        break;
+      }
       case M_FuncDecl: {
         auto F = std::make_unique<Function>();
         F->Sig = type(R);
@@ -771,7 +824,7 @@ private:
     O.K = static_cast<Operand::Kind>(K);
     if (O.K == Operand::Const) {
       uint64_t CK = R.next();
-      if (CK > Constant::Zero)
+      if (CK > Constant::Global)
         R.Failed = true;
       O.C.K = static_cast<Constant::Kind>(CK);
       O.C.Ty = type(R);
@@ -955,6 +1008,8 @@ private:
           T.AK = enumVal(R, AssertKind::Overflow);
           T.Target = R.next();
           T.Unwind = unwind(R);
+          for (uint64_t N = R.next(), I = 0; I < N && !R.Failed; ++I)
+            T.Args.push_back(operand(R, *F));
           break;
         }
         break;

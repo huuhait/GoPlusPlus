@@ -1,0 +1,4 @@
+// Shard 1 of 2 of units-generic-oracle.long.test (the odd seeds).
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-oracle.py --gopp %gopp --out %t --seeds 160 --shard 1/2 | FileCheck %s
+// CHECK: oracle: 80 programs, {{[0-9]+}} instances, 0 mismatches

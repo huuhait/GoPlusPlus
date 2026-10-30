@@ -1134,19 +1134,6 @@ TEST(SemaSymbols, PackagePathsWithDotsSlashesAndUnicode) {
 // Speed: the long suite (tests/driver/symbol-names.long.test)
 //===----------------------------------------------------------------------===//
 
-/// The least of three timings: a busy machine only ever slows a run down.
-template <class F> double bestOf3(F Fn) {
-  double Best = 1e9;
-  for (int I = 0; I < 3; ++I) {
-    auto T0 = std::chrono::steady_clock::now();
-    Fn();
-    Best = std::min(Best, std::chrono::duration<double>(
-                              std::chrono::steady_clock::now() - T0)
-                              .count());
-  }
-  return Best;
-}
-
 TEST(SemaSymbolsLong, DISABLED_NearLinearOnDeepAndWideTypes) {
   // SemaNames walks the checker's types with an explicit stack and a memo,
   // so its time is linear in the number of distinct types: deep chains of
@@ -1222,28 +1209,56 @@ TEST(SemaSymbolsLong, DISABLED_NearLinearOnDeepAndWideTypes) {
          return T;
        }},
   };
+  // The proof is the count of steps (the walk with its memo does work linear
+  // in the types: a walk that forgot the memo would take 2^n steps on
+  // "shared halves", one that rescanned would take n^2). Time is a coarse
+  // guard only: small and big runs alternate, the least of five each.
   for (const Shape &S : Shapes) {
-    auto Run = [&](size_t Size) {
+    constexpr size_t N = 40000;
+    struct Sized {
       TypeContext Ctx;
       std::deque<std::string> Names;
-      const Type *T = S.Fn(Ctx, Names, Size);
-      return bestOf3([&] {
-        Context C;
-        SemaNames SN(C);
-        const Node *N = SN.type(T);
-        ASSERT_TRUE(N) << SN.why();
-        EXPECT_FALSE(mangleType(N).empty());
-      });
+      const Type *T = nullptr;
+      uint64_t Visits = 0, Misses = 0;
+    } Small, Big;
+    Small.T = S.Fn(Small.Ctx, Small.Names, N);
+    Big.T = S.Fn(Big.Ctx, Big.Names, N * 4);
+    auto Once = [&](Sized &Z) {
+      auto T0 = std::chrono::steady_clock::now();
+      Context C;
+      SemaNames SN(C);
+      const Node *Nd = SN.type(Z.T);
+      EXPECT_TRUE(Nd) << SN.why();
+      EXPECT_FALSE(mangleType(Nd).empty());
+      Z.Visits = SN.workCounts().Visits;
+      Z.Misses = SN.workCounts().Misses;
+      return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                           T0)
+          .count();
     };
-    constexpr size_t N = 10000;
-    double Small = Run(N), Big = Run(N * 16);
-    // 16 times the size: a linear walk takes ~16 times as long, a quadratic
-    // one 256 times. Leave room for noise.
-    double Ratio = Big / std::max(Small, 1e-4);
-    std::fprintf(stderr, "  %-14s %8.4fs -> %8.4fs  (x%.1f for x16)\n", S.Name,
-                 Small, Big, Ratio);
-    EXPECT_LT(Ratio, 16 * 6) << S.Name;
-    EXPECT_LT(Big, 10.0) << S.Name;
+    double TSmall = 1e9, TBig = 1e9;
+    for (int I = 0; I < 5; ++I) {
+      TSmall = std::min(TSmall, Once(Small));
+      TBig = std::min(TBig, Once(Big));
+    }
+    // Steps: at most 8 per level, and 4 times the size at most 4.2 times the
+    // steps (+ a constant for the root).
+    EXPECT_LE(Small.Visits, 8 * N) << S.Name;
+    EXPECT_LE(Big.Visits, 8 * 4 * N) << S.Name;
+    EXPECT_LE(Big.Visits, Small.Visits * 4 + Small.Visits / 20 + 16) << S.Name;
+    EXPECT_LE(Big.Misses, Small.Misses * 4 + Small.Misses / 20 + 16) << S.Name;
+    double Ratio = TBig / std::max(TSmall, 1e-3);
+    std::fprintf(stderr,
+                 "  %-14s %8.4fs -> %8.4fs  (x%.1f for x4; %llu -> %llu "
+                 "steps)\n",
+                 S.Name, TSmall, TBig, Ratio,
+                 static_cast<unsigned long long>(Small.Visits),
+                 static_cast<unsigned long long>(Big.Visits));
+    // The step counts above are the proof of linear work. A time at the scale
+    // of milliseconds says little on a busy machine (the ratio went from 4 to
+    // 12 under load), so time is only a ceiling: a walk that is quadratic
+    // in 160000 nodes takes minutes.
+    EXPECT_LT(TBig, 5.0) << S.Name;
   }
 }
 

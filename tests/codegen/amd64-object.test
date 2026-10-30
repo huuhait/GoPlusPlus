@@ -17,6 +17,6 @@ func main() {
 // CHECK: .eh_frame
 // CHECK: .debug_line
 // ASM: file format elf64-x86-64
-// ASM: <main.main>:
+// ASM: <_GPF4mainE4main>:
 // ASM: call
 // ASM: <main>:

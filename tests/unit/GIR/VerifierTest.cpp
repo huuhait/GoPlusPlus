@@ -201,7 +201,7 @@ TEST(GIRVerifier, EveryKindOfStatementAndTerminatorIsValid) {
   BlockId B1 = Fn.addBlock(), B2 = Fn.addBlock(), B3 = Fn.addBlock();
   Terminator As = term(Terminator::Assert, B1);
   As.Discr = copyOf(localPlace(X.LB, X.Bool));
-  As.AK = AssertKind::Bounds;
+  As.AK = AssertKind::Overflow;
   Fn.Blocks[0].Term = As;
   Terminator D = term(Terminator::Drop, B2);
   D.Dest = localPlace(X.LStr, X.Str);
@@ -1084,6 +1084,42 @@ TEST(GIRVerifier, V055_Aggregate) {
   });
 }
 
+TEST(GIRVerifier, V057_AggregateBuiltInPlace) {
+  {
+    PlaceFixture X; // s = Pair{a[0], b}: the operands read other locals
+    X.append(X.P, 0, localPlace(X.LS, X.Pair),
+             agg(AggKind::Struct, X.Pair,
+                 {copyOf(placeOf(X.LA, X.I64,
+                                 {elem(PlaceElem::ConstIndex, 0, X.I64)})),
+                  copyOf(localPlace(X.LB, X.Bool))}));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // s = Pair{s.0, b} would read a half-built s
+    X.append(
+        X.P, 0, localPlace(X.LS, X.Pair),
+        agg(AggKind::Struct, X.Pair,
+            {copyOf(placeOf(X.LS, X.I64, {elem(PlaceElem::Field, 0, X.I64)})),
+             copyOf(localPlace(X.LB, X.Bool))}));
+    EXPECT_GIR_RULE(X.M, "V057");
+  }
+  {
+    PlaceFixture X; // *q = [3]i64{...}: another pointer may alias *q
+    LocalId Q = X.local(X.C.ptr(X.Arr));
+    X.append(X.P, 0, placeOf(Q, X.Arr, {elem(PlaceElem::Deref, 0, X.Arr)}),
+             agg(AggKind::Array, X.Arr,
+                 {constInt(X.I64, 1), constInt(X.I64, 2), constInt(X.I64, 3)}));
+    EXPECT_GIR_RULE(X.M, "V057");
+  }
+  {
+    PlaceFixture X; // a copy through a pointer is fine: it is a Use
+    LocalId Q = X.local(X.C.ptr(X.Arr));
+    X.store(placeOf(Q, X.Arr, {elem(PlaceElem::Deref, 0, X.Arr)}),
+            copyOf(localPlace(X.LA, X.Arr)));
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
 TEST(GIRVerifier, V056_Len) {
   {
     PlaceFixture X; // len of an integer
@@ -1214,6 +1250,249 @@ TEST(GIRVerifier, ErrorLimitAndFormat) {
   llvm::raw_string_ostream OS(S);
   EXPECT_FALSE(verify(G.M, OS));
   EXPECT_EQ(S.rfind("gir verifier: V022: fn f: bb3: ", 0), 0u) << S;
+}
+
+//===----------------------------------------------------------------------===//
+// P04.04: assert values, globals, Option
+//===----------------------------------------------------------------------===//
+
+/// p: bb0 ends in an assert of kind K on a bool with Args.
+void assertWith(PlaceFixture &X, AssertKind K, std::vector<Operand> Args) {
+  BlockId B1 = X.fn(X.P).addBlock();
+  X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+  Terminator A = term(Terminator::Assert, B1);
+  A.Discr = constBool(X.C, true);
+  A.AK = K;
+  A.Args.assign(Args.begin(), Args.end());
+  X.fn(X.P).Blocks[0].Term = A;
+}
+
+TEST(GIRVerifier, V065_AssertValues) {
+  // A bounds assert shows the index and the length: two integers, the
+  // length unsigned.
+  {
+    PlaceFixture X;
+    assertWith(X, AssertKind::Bounds, {constInt(X.I64, 5), constInt(X.U64, 3)});
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // an unsigned index
+    assertWith(X, AssertKind::Bounds, {constInt(X.U64, 5), constInt(X.U64, 3)});
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // no values
+    assertWith(X, AssertKind::Bounds, {});
+    EXPECT_GIR_RULE(X.M, "V065");
+  }
+  {
+    PlaceFixture X; // an index of 32 bits: the runtime function takes 64
+    assertWith(X, AssertKind::Bounds, {constInt(X.I32, 5), constInt(X.U64, 3)});
+    EXPECT_GIR_RULE(X.M, "V065");
+  }
+  {
+    PlaceFixture X; // and of 8 bits, unsigned
+    assertWith(X, AssertKind::Bounds, {constInt(X.U8, 5), constInt(X.U64, 3)});
+    EXPECT_GIR_RULE(X.M, "V065");
+  }
+  {
+    PlaceFixture X; // a signed length
+    assertWith(X, AssertKind::Bounds, {constInt(X.I64, 5), constInt(X.I64, 3)});
+    EXPECT_GIR_RULE(X.M, "V065");
+  }
+  {
+    PlaceFixture X; // an index that is not an integer
+    assertWith(X, AssertKind::Bounds,
+               {constFloat(X.F64, 5), constInt(X.U64, 3)});
+    EXPECT_GIR_RULE(X.M, "V065");
+  }
+  // The other kinds show nothing.
+  for (AssertKind K : {AssertKind::DivByZero, AssertKind::NegativeShift,
+                       AssertKind::Nil, AssertKind::Overflow}) {
+    PlaceFixture Good;
+    assertWith(Good, K, {});
+    EXPECT_GIR_VALID(Good.M);
+    PlaceFixture Bad;
+    assertWith(Bad, K, {constInt(Bad.I64, 1)});
+    EXPECT_GIR_RULE(Bad.M, "V065");
+  }
+}
+
+/// p: a call of mk() -> Pair, its result going to Dest, then return.
+void callMk(PlaceFixture &X, Place Dest) {
+  FuncId Mk = declare(X.M, "mk", X.C.func({}, X.Pair));
+  BlockId B1 = X.fn(X.P).addBlock();
+  X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+  X.fn(X.P).Blocks[0].Term =
+      callOf(constFunc(X.M, Mk), {}, std::move(Dest), B1);
+}
+
+TEST(GIRVerifier, V066_HiddenResultPointer) {
+  {
+    PlaceFixture X; // a fresh temporary: the builder's shape
+    LocalId T = X.local(X.Pair);
+    callMk(X, localPlace(T, X.Pair));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a field of a temporary is a place of the frame as well
+    Type *Outer = X.C.structTy("test.Outer");
+    X.C.setStructBody(Outer, {X.Pair});
+    LocalId F = X.local(Outer);
+    callMk(X, placeOf(F, X.Pair, {elem(PlaceElem::Field, 0, X.Pair)}));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a scalar result may go anywhere (no hidden pointer)
+    FuncId One = declare(X.M, "one", X.C.func({}, X.I64));
+    BlockId B1 = X.fn(X.P).addBlock();
+    X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+    LocalId Q = X.local(X.PI64);
+    X.fn(X.P).Blocks[0].Term =
+        callOf(constFunc(X.M, One), {},
+               placeOf(Q, X.I64, {elem(PlaceElem::Deref, 0, X.I64)}), B1);
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // into a named variable
+    callMk(X, localPlace(X.LS, X.Pair));
+    EXPECT_GIR_RULE(X.M, "V066");
+  }
+  {
+    PlaceFixture X; // through a pointer: another pointer may alias it
+    LocalId Q = X.local(X.C.ptr(X.Pair));
+    callMk(X, placeOf(Q, X.Pair, {elem(PlaceElem::Deref, 0, X.Pair)}));
+    EXPECT_GIR_RULE(X.M, "V066");
+  }
+  {
+    PlaceFixture X; // into a temporary whose address is taken
+    LocalId T = X.local(X.Pair);
+    X.set(X.C.ptr(X.Pair), addr(localPlace(T, X.Pair), X.C.ptr(X.Pair)));
+    callMk(X, localPlace(T, X.Pair));
+    EXPECT_GIR_RULE(X.M, "V066");
+  }
+}
+
+Global globalOf(const char *Name, Type *Ty, Constant Init = Constant()) {
+  Global G;
+  G.Name = Name;
+  G.Ty = Ty;
+  G.Init = Init;
+  return G;
+}
+
+TEST(GIRVerifier, V071_Globals) {
+  {
+    PlaceFixture X; // zero, an int, a string and a float are fine
+    X.M.addGlobal(globalOf("vz", X.Pair));
+    X.M.addGlobal(globalOf("vi", X.I64, constInt(X.I64, 7).C));
+    X.M.addGlobal(globalOf("vs", X.Str, constStr(X.M, "text").C));
+    X.M.addGlobal(globalOf("vf", X.F64, constFloat(X.F64, 0.5).C));
+    X.M.addGlobal(globalOf("vb", X.Bool, constBool(X.C, true).C));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a name that a function has
+    X.M.addGlobal(globalOf("f", X.I64));
+    EXPECT_GIR_RULE(X.M, "V071");
+  }
+  {
+    PlaceFixture X; // two globals with one name
+    X.M.addGlobal(globalOf("gl", X.I64));
+    X.M.addGlobal(globalOf("gl", X.I64));
+    EXPECT_GIR_RULE(X.M, "V071");
+  }
+  {
+    PlaceFixture X; // an initializer of another type
+    X.M.addGlobal(globalOf("gl", X.I64, constInt(X.I32, 7).C));
+    EXPECT_GIR_RULE(X.M, "V071");
+  }
+  {
+    PlaceFixture X; // an initializer that is an address
+    X.M.addGlobal(globalOf("gl", X.C.ptr(X.I64), constFunc(X.M, X.F).C));
+    EXPECT_GIR_RULE(X.M, "V071");
+  }
+  {
+    PlaceFixture X; // a global of the unit type holds nothing
+    X.M.addGlobal(globalOf("gl", X.Unit));
+    EXPECT_GIR_RULE(X.M, "V071");
+  }
+  {
+    PlaceFixture X; // an aggregate starts at zero (its init function sets it)
+    Constant One = constInt(X.I64, 1).C;
+    One.Ty = X.Pair;
+    X.M.addGlobal(globalOf("gl", X.Pair, One));
+    EXPECT_GIR_RULE(X.M, "V071");
+  }
+}
+
+TEST(GIRVerifier, GlobalAddressesAreConstants) {
+  {
+    PlaceFixture X;
+    uint32_t G = X.M.addGlobal(globalOf("gl", X.I64));
+    // _t = &g; *_t = 5; the address is a pointer to the global's type.
+    Operand Addr = constGlobal(X.M, G);
+    EXPECT_EQ(Addr.type(), X.C.ptr(X.I64));
+    LocalId T = X.local(Addr.type());
+    X.append(X.P, 0, localPlace(T, Addr.type()), useOf(Addr, Addr.type()));
+    X.store(placeOf(T, X.I64, {elem(PlaceElem::Deref, 0, X.I64)}),
+            constInt(X.I64, 5));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a global that does not exist
+    Operand Addr;
+    Addr.C.K = Constant::Global;
+    Addr.C.Bits = 3;
+    Addr.C.Ty = X.C.ptr(X.I64);
+    X.set(Addr.C.Ty, useOf(Addr, Addr.C.Ty));
+    EXPECT_GIR_RULE(X.M, "V040");
+  }
+  {
+    PlaceFixture X; // an address of the wrong type
+    uint32_t G = X.M.addGlobal(globalOf("gl", X.I64));
+    Operand Addr = constGlobal(X.M, G);
+    Addr.C.Ty = X.C.ptr(X.I32);
+    X.set(Addr.C.Ty, useOf(Addr, Addr.C.Ty));
+    EXPECT_GIR_RULE(X.M, "V040");
+  }
+}
+
+TEST(GIRVerifier, OptionIsATupleOfValueAndFlag) {
+  {
+    PlaceFixture X;
+    Type *O = X.C.option(X.I64);
+    EXPECT_EQ(O->numFields(), 2u);
+    EXPECT_EQ(O->fieldType(0, X.C), X.I64);
+    EXPECT_EQ(O->fieldType(1, X.C), X.Bool);
+    X.set(O,
+          agg(AggKind::Tuple, O, {constInt(X.I64, 3), constBool(X.C, true)}));
+    X.set(O, useOf(zeroOf(O), O));
+    LocalId Opt = X.local(O);
+    X.store(localPlace(Opt, O), zeroOf(O));
+    X.set(X.Bool, useOf(copyOf(placeOf(Opt, X.Bool,
+                                       {elem(PlaceElem::Field, 1, X.Bool)})),
+                        X.Bool));
+    X.set(X.I64,
+          useOf(copyOf(placeOf(Opt, X.I64, {elem(PlaceElem::Field, 0, X.I64)})),
+                X.I64));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // the flag has the wrong type
+    Type *O = X.C.option(X.I64);
+    X.set(O, agg(AggKind::Tuple, O, {constInt(X.I64, 3), constInt(X.I64, 1)}));
+    EXPECT_GIR_RULE(X.M, "V055");
+  }
+  {
+    PlaceFixture X; // a field that Option does not have
+    Type *O = X.C.option(X.I64);
+    LocalId Opt = X.local(O);
+    X.set(X.I64,
+          useOf(copyOf(placeOf(Opt, X.I64, {elem(PlaceElem::Field, 2, X.I64)})),
+                X.I64));
+    EXPECT_GIR_RULE(X.M, "V032");
+  }
 }
 
 } // namespace

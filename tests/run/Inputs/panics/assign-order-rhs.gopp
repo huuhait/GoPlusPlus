@@ -1,0 +1,11 @@
+package main
+
+var a [5]int
+
+func n(x int) int { return x }
+
+func main() {
+	println("before")
+	a[n(5)] = a[n(6)]
+	println("not reached")
+}

@@ -1,0 +1,15 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/int_int8.gopp -o %t.int8
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.int8 %S/Inputs/diff/int_int8.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/int_int16.gopp -o %t.int16
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.int16 %S/Inputs/diff/int_int16.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/int_int32.gopp -o %t.int32
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.int32 %S/Inputs/diff/int_int32.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/int_int64.gopp -o %t.int64
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.int64 %S/Inputs/diff/int_int64.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/int_int.gopp -o %t.int
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.int %S/Inputs/diff/int_int.out
+// P04.04 differential table (D4.12) on linux/arm64 under QEMU: the signed integer types.
+// The programs of diff-int-signed.long.test; the expected output is Go's on arm64
+// (Inputs/diff/NAME.arm64.out where it differs from amd64: gc fuses x*y+z
+// there, also in its complex division).

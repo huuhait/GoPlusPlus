@@ -1,0 +1,10 @@
+package main
+
+var n int8 = -5
+
+func main() {
+	println("before")
+	var x int64 = 1 << 40
+	println(x >> n)
+	println("not reached")
+}

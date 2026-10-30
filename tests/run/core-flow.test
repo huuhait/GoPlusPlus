@@ -1,0 +1,184 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-flow.out 0
+// control flow: switch in every form, labels, goto, for
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.
+package main
+
+func classify(n int) int {
+	switch {
+	case n < 0:
+		return -1
+	case n == 0:
+		return 0
+	case n < 10:
+		return 1
+	default:
+		return 2
+	}
+}
+
+// default in the middle, fallthrough into it and out of it.
+func sw(n int) {
+	switch n {
+	case 1, 2, 3:
+		println("small", n)
+	case 4:
+		println("four")
+		fallthrough
+	case 5:
+		println("five-ish", n)
+		fallthrough
+	default:
+		println("default", n)
+	case 7:
+		println("seven")
+	}
+}
+
+func swTypes(b byte, f float64, ok bool, u uint64) {
+	switch b {
+	case 'a', 'b':
+		println("a or b")
+	case 255:
+		println("max byte")
+	}
+	switch f {
+	case 1.5:
+		println("one and a half")
+	case 2.5:
+		println("two and a half")
+	}
+	switch ok {
+	case true:
+		println("true")
+	case false:
+		println("false")
+	}
+	switch u {
+	case 18446744073709551615:
+		println("max uint64")
+	case 0:
+		println("zero")
+	}
+}
+
+func swInit() {
+	switch x := 5 * 2; x {
+	case 10:
+		println("init ten")
+	}
+	switch y := 3; {
+	case y > 2:
+		println("tagless init", y)
+	}
+	switch {
+	}
+	switch 7 {
+	}
+}
+
+func labelled() {
+outer:
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 4; j++ {
+			if j == 2 {
+				continue outer
+			}
+			if i == 3 {
+				break outer
+			}
+			println("ij", i, j)
+		}
+	}
+loop:
+	for k := 0; k < 5; k++ {
+		switch k {
+		case 1:
+			continue loop
+		case 3:
+			break loop
+		}
+		println("k", k)
+	}
+	for m := 0; m < 3; m++ {
+		switch m {
+		case 1:
+			break
+		default:
+			println("m", m)
+		}
+	}
+}
+
+func gotos(n int) int {
+	i := 0
+	sum := 0
+loop:
+	if i >= n {
+		goto done
+	}
+	sum += i
+	i++
+	goto loop
+done:
+	return sum
+}
+
+func forms() {
+	for i := 0; i < 3; i++ {
+		println("c", i)
+	}
+	j := 0
+	for j < 3 {
+		j++
+	}
+	println("while", j)
+	k := 0
+	for {
+		k++
+		if k > 4 {
+			break
+		}
+	}
+	println("inf", k)
+	for i, m := 0, 10; i < m; i, m = i+1, m-1 {
+		if i == 3 {
+			println("two vars", i, m)
+		}
+	}
+	for i := 0; i < 6; i++ {
+		switch {
+		case i%2 == 0:
+			continue
+		case i == 5:
+			break
+		default:
+			println("odd", i)
+		}
+	}
+	for i := 0; ; i++ {
+		if i == 2 {
+			println("no cond", i)
+			break
+		}
+	}
+	n := 0
+	for ; n < 2; n++ {
+	}
+	println("no init", n)
+}
+
+func main() {
+	println(classify(-5), classify(0), classify(7), classify(70))
+	for n := 0; n < 9; n++ {
+		sw(n)
+	}
+	swTypes('b', 2.5, true, 18446744073709551615)
+	swTypes(255, 1.5, false, 0)
+	swInit()
+	labelled()
+	println(gotos(10), gotos(0))
+	forms()
+}

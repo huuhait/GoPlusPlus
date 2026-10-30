@@ -1,0 +1,129 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-structs.out 0
+// structs, arrays, pointers: zero values, literals, copies, ==, places
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.
+package main
+
+type Point struct{ X, Y int }
+
+type Line struct{ A, B Point }
+
+type Grid struct {
+	cells [2][3]int8
+	tag   uint16
+}
+
+type Mixed struct {
+	b bool
+	i int64
+	f float32
+	c complex128
+}
+
+type Celsius float64
+
+type Wrapper struct {
+	inner Line
+	list  [2]Point
+}
+
+func movePoint(p Point, dx int) Point {
+	p.X += dx
+	return p
+}
+
+func movePtr(p *Point, dx int) {
+	p.X += dx
+}
+
+func fill(a [4]int) [4]int {
+	for i := 0; i < len(a); i++ {
+		a[i] = i * i
+	}
+	return a
+}
+
+func main() {
+	var zero Mixed
+	println(zero.b, zero.i, zero.f, zero.c)
+	var g Grid
+	g.cells[1][2] = 9
+	g.cells[0][0] = -3
+	g.tag = 65535
+	println(g.cells[0][0], g.cells[0][1], g.cells[1][2], g.tag)
+
+	p := Point{1, 2}
+	q := Point{Y: 5}
+	l := Line{p, Point{X: 7, Y: 8}}
+	println(p.X, p.Y, q.X, q.Y, l.A.X, l.B.Y)
+	// Copies are independent.
+	r := p
+	r.X = 100
+	l2 := l
+	l2.B.Y = -1
+	println(p.X, r.X, l.B.Y, l2.B.Y)
+	println(movePoint(p, 10).X, p.X)
+	movePtr(&p, 5)
+	println(p.X)
+
+	// Comparison.
+	println(p == Point{6, 2}, p != Point{6, 2}, l == l2, l != l2, l.A == l2.A)
+	var m1, m2 Mixed
+	println(m1 == m2)
+	m2.f = 1
+	println(m1 == m2, m1 != m2)
+	a := [3]int{1, 2, 3}
+	b := [3]int{1, 2, 3}
+	println(a == b, a != b)
+	b[2] = 4
+	println(a == b, a != b)
+
+	// Pointers to fields and elements.
+	pp := &p.Y
+	*pp = 42
+	pe := &g.cells[1][2]
+	*pe += 1
+	pl := &l.B
+	pl.X = 77
+	println(p.Y, g.cells[1][2], l.B.X, pp == &p.Y, pe == &g.cells[1][1], pl == &l.B)
+	ptr := &p
+	ptr.Y++
+	(*ptr).X--
+	println(p.X, p.Y)
+
+	// Arrays: len, cap, copy, elements by variable, arrays of structs.
+	arr := [4]int{}
+	arr2 := fill(arr)
+	println(len(arr), cap(arr2), arr[3], arr2[3])
+	pts := [3]Point{{1, 2}, {3, 4}, {5, 6}}
+	sum := 0
+	for i := 0; i < len(pts); i++ {
+		sum += pts[i].X * pts[i].Y
+	}
+	println(sum)
+	cp := pts
+	cp[1].X = 0
+	println(pts[1].X, cp[1].X)
+	keyed := [5]int{1: 10, 3: 30}
+	println(keyed[0], keyed[1], keyed[2], keyed[3], keyed[4])
+	w := Wrapper{inner: l, list: [2]Point{{9, 9}}}
+	println(w.inner.B.X, w.list[0].X, w.list[1].X)
+	w.list[1] = w.inner.A
+	println(w.list[1].Y)
+	var c Celsius = 36.6
+	cc := c * 2
+	println(cc)
+	mat := [2][2]int{{1, 2}, {3, 4}}
+	mat[1] = mat[0]
+	println(mat[1][1], mat == [2][2]int{{1, 2}, {1, 2}})
+	big := [100]int{}
+	big[99] = 5
+	big2 := big
+	big2[0] = 1
+	println(big[99], big2[0], big == big2, len(big))
+	i := 2
+	idx := [3]int8{1, 2, 3}
+	println(idx[i], idx[i-1])
+}

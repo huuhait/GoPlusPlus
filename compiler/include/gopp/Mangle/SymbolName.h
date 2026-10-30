@@ -304,6 +304,15 @@ struct DemangleResult {
   std::string Error; ///< else the reason
   size_t ErrorPos = 0;
 };
+/// Test-only (M8): the steps of the mangler, the parser, the printer and the
+/// node interning: every loop that can grow with the input counts its elements
+/// that this thread has made so far. A test checks that they grow with the size
+/// of the input, not with the clock.
+struct WorkCounts {
+  uint64_t MangleSteps = 0, ParseSteps = 0, PrintSteps = 0, NodeSteps = 0;
+};
+WorkCounts workCounts();
+
 /// parseSymbol + print.
 DemangleResult demangle(llvm::StringRef Symbol, size_t MaxOut = 1 << 20);
 

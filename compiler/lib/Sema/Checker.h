@@ -21,7 +21,9 @@
 #include "gopp/Sema/Foreign.h"
 #include "gopp/Sema/Sema.h"
 
+#include "gopp/Basic/NewStack.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSet.h"
@@ -221,6 +223,10 @@ bool opAllowed(Checker &C, tok::Kind Op, Type *T, bool Unary);
 /// or of a substituted interface method (Lookup.cpp).
 const Func *declaredMethod(const Func *F);
 
+/// Runs Fn on a thread with a stack of Bytes bytes and waits for it; false,
+/// with Fn not run, if no thread could be made (Check.cpp).
+bool runOnNewStack(llvm::function_ref<void()> Fn, size_t Bytes);
+
 /// A diagnostic under construction; emitted by the destructor.
 class Err {
 public:
@@ -408,6 +414,20 @@ public:
   /// Nesting of declarations and type expressions being resolved; see objDecl.
   static constexpr unsigned MaxDeclNest = 96;
   unsigned DeclNest = 0;
+  /// objDecl starts a thread with a stack of its own when this thread has
+  /// less than DeclReserveBytes of stack left (Decl.cpp): one declaration is
+  /// a step that does not hop, and its initializer may nest to the parser's
+  /// limit. The worst measured step (990 nested calls, a literal, a
+  /// conversion; Dev and ASan) is 16.3 MB under ASan, so the reserve is 24
+  /// MB; a segment is 48 MB (virtual: only the pages touched cost), so it
+  /// holds 24 MB of links, thousands of cheap ones, and a 20000-link chain
+  /// needs a few threads.
+  static constexpr size_t DeclReserveBytes = size_t(24) << 20;
+  static constexpr size_t DeclSegmentBytes = size_t(48) << 20;
+  /// Set once the checker could not get a stack for a deep chain, and
+  /// err_no_stack is reported (only the first time).
+  bool NoStack = false;
+  unsigned SegmentDepth = ~0u;
   /// Resolving the right-hand side of an alias: a defined type declared from
   /// there waits until the alias is done (objDecl).
   unsigned InAliasRhs = 0;
@@ -1104,7 +1124,7 @@ public:
   bool validTypeWalk(Type *Root);
   void resolvePendingUnder();
   void invalidateByValueCycles(ArrayRef<NamedType *> Roots);
-  void checkInitOrder();
+  void checkInitOrder(std::vector<InitEntry> &Out);
   void addDeclDep(Object *To) {
     if (E.Cur && S.ObjMap.count(To))
       E.Cur->Deps.insert(To);
@@ -1162,7 +1182,8 @@ public:
   bool hasBreakList(ArrayRef<Stmt *> L, StringRef Label, bool Implicit);
   void caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
                   SmallVector<std::pair<ConstValue, Type *>, 8> &Seen,
-                  SmallVector<SourceLoc, 8> &SeenPos);
+                  SmallVector<SourceLoc, 8> &SeenPos,
+                  llvm::StringMap<SmallVector<uint32_t, 1>> &SeenIdx);
 
   // --- assignment (Assign.cpp)
   void assignment(Operand &X, Type *T, StringRef Context);

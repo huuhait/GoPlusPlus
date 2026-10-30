@@ -690,7 +690,22 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
         Var *Fld = nullptr, *AltFld = nullptr;
         unsigned FldDepth = 0;
         int Idx = -1;
-        if (Key) {
+        if (Key && St->indexed()) {
+          // A big struct finds the key by its name index (n keys cost
+          // n log n, P04.04); the near miss for the error message is only
+          // looked for when there is no field of that name.
+          for (uint32_t I : St->fieldsNamed(name(Key)))
+            if (sameId(Fields[I], S.Pkg, name(Key), false)) {
+              Fld = Fields[I];
+              Idx = static_cast<int>(I);
+            }
+          if (!Fld)
+            for (Var *F : Fields)
+              if (sameId(F, S.Pkg, name(Key), true)) {
+                AltFld = F;
+                break;
+              }
+        } else if (Key) {
           for (size_t I = 0; I < Fields.size(); ++I) {
             if (sameId(Fields[I], S.Pkg, name(Key), false)) {
               Fld = Fields[I];
@@ -699,6 +714,8 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
             if (!AltFld && sameId(Fields[I], S.Pkg, name(Key), true))
               AltFld = Fields[I];
           }
+        }
+        if (Key) {
           // Not a field of the literal's own struct: an ancestor's, found by
           // the memoized chain lookup, or (what it cannot answer) a walk.
           if (!Fld && Extends) {

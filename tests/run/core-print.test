@@ -1,0 +1,27 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-print.out 0
+// println and print of floats, complex numbers and integers in Go's runtime format
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.
+package main
+
+func main() {
+	var zero float64 = 0
+	nan := zero / zero
+	inf := 1 / zero
+	negzero := -zero
+	println(1.5, -2.25, 0.0, negzero, 100.0, 1e100, 1e-100, 123456789.0)
+	println(nan, inf, -inf, float32(0.1), float32(16777216), 5e-324)
+	println(9.9999999, 99999999.0, 0.000001, 3.14159265358979)
+	println(complex(1, 2), complex(-1.5, 0.25), complex(nan, inf), complex(negzero, 0))
+	var c64 complex64 = complex(1, -1)
+	println(c64, real(c64), imag(c64))
+	println(true, false, 'a', 255, -128, int8(-128), uint64(18446744073709551615), int64(-9223372036854775808))
+	println()
+	print("no", "space", 1, 2, true, 1.5, "\n")
+	print(1, 2, "\n")
+	var x uint8 = 200
+	var y uintptr = 1 << 40
+	println(x, y, x+100)
+}

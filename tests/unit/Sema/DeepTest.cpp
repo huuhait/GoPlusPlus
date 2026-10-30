@@ -20,9 +20,14 @@
 
 #include "../Support/FrontendTestSupport.h"
 
+#include "gopp/Basic/NewStack.h"
 #include "gopp/Sema/Sema.h"
 
+#include "llvm/Support/FormatVariadic.h"
+
 #include "gtest/gtest.h"
+
+#include <iostream>
 
 #include <string>
 
@@ -118,6 +123,45 @@ std::vector<std::string> errorsAtTheLimit(const std::string &Src) {
   return P.errors();
 }
 
+// R13: a chain of declarations whose every initializer is nested to the
+// parser's limit. A declaration hops to a stack of its own when the stack
+// left is less than one worst declaration (DeclReserveBytes), not every N
+// links, so a deep initializer reached after a hop has the whole of a fresh
+// stack. Calls, parentheses, literals and closures (each as deep as the parser
+// allows; K links) must check clean, in the normal and the sanitizer build.
+TEST(DeepChain, ChainOfInitializersAtTheParserLimit) {
+  struct Form {
+    const char *Name, *Open, *Close;
+  } Forms[] = {
+      {"call", "g(", ")"},
+      {"paren", "(", ")"},
+      {"literal", "[]any{", "}"},
+      {"closure", "func() any { return ", " }()"},
+  };
+  const unsigned K = 24;
+  unsigned long Before = newStackThreads();
+  for (const Form &F : Forms) {
+    unsigned N = 1024;
+    std::vector<std::string> Errs;
+    for (; N > 0; N -= 4) {
+      std::string Src = "package p\nfunc g(x any) any { return x }\n";
+      for (unsigned I = 0; I < K; ++I)
+        Src += "var v" + std::to_string(I) + " any = " + repeat(F.Open, N) +
+               "v" + std::to_string(I + 1) + repeat(F.Close, N) + "\n";
+      Src += "var v" + std::to_string(K) + " any = 1\n";
+      Errs = errorsAtTheLimit(Src);
+      if (Errs.empty() ||
+          (Errs[0].find("exceeded max") == std::string::npos &&
+           Errs[0].find("too deeply nested") == std::string::npos))
+        break;
+    }
+    EXPECT_EQ(Errs, std::vector<std::string>{}) << F.Name << " at " << N;
+    EXPECT_GE(N, 250u) << F.Name;
+  }
+  // The initializers use most of a stack each: the chains hopped.
+  EXPECT_GT(newStackThreads(), Before);
+}
+
 TEST(DeepChain, NestedFormsAtTheParserLimit) {
   // R13: the forms that cost the most stack per level (measured in the
   // sanitizer build: nested built-ins 16.3 KB, composite literals 14.3 KB,
@@ -208,6 +252,139 @@ TEST(DeepChain, AnErrorAtTheBottomIsReportedOnce) {
                repeat("()", Links) + " }\n");
   ASSERT_EQ(Errs.size(), 1u);
   EXPECT_NE(Errs[0].find("undefined: nope"), std::string::npos) << Errs[0];
+}
+
+/// The text of each cycle error of the program.
+std::vector<std::string> cycleErrors(const std::string &Src) {
+  std::vector<std::string> Out;
+  for (const std::string &E : errorsOf(Src))
+    if (E.find("initialization cycle") != std::string::npos)
+      Out.push_back(E);
+  return Out;
+}
+
+// An initialization cycle of 20000 variables, of constants, or of variables
+// and functions is declared and reported (once) without a crash: objDecl
+// follows it link by link on stacks of their own (runOnNewStack), and the
+// cycle search has an explicit stack. Both sides: a short ring has its
+// message.
+static void initializationCycles(unsigned N) {
+  auto Ring = [](unsigned K, const char *Fmt) {
+    std::string Src = "package p\n";
+    for (unsigned I = 0; I < K; ++I)
+      Src += llvm::formatv(Fmt, I, (I + 1) % K).str();
+    return Src;
+  };
+  for (unsigned K : {3u, N}) {
+    std::vector<std::string> Var =
+        cycleErrors(Ring(K, "var v{0} = v{1} + 1\n"));
+    ASSERT_EQ(Var.size(), 1u) << K;
+    EXPECT_NE(Var[0].find("initialization cycle for v0"), std::string::npos);
+    std::vector<std::string> Const =
+        cycleErrors(Ring(K, "const c{0} = c{1} + 1\n"));
+    ASSERT_EQ(Const.size(), 1u) << K;
+    EXPECT_NE(Const[0].find("initialization cycle for c0"), std::string::npos);
+    std::vector<std::string> Mix = cycleErrors(
+        Ring(K, "var v{0} = f{0}()\nfunc f{0}() int { return v{1} }\n"));
+    ASSERT_EQ(Mix.size(), 1u) << K;
+    EXPECT_NE(Mix[0].find("initialization cycle for v0"), std::string::npos);
+  }
+  // A chain whose end is a ring, the chain declared first: the search for a
+  // cycle runs for the ring only.
+  std::string Tail = "package p\n";
+  for (unsigned I = 0; I + 1 < N; ++I)
+    Tail +=
+        "var t" + std::to_string(I) + " = t" + std::to_string(I + 1) + " + 1\n";
+  Tail += "var t" + std::to_string(N - 1) + " = r0\n";
+  Tail += "var r0 = r1 + 1\nvar r1 = r2 + 1\nvar r2 = r0 + 1\n";
+  std::vector<std::string> T = cycleErrors(Tail);
+  ASSERT_EQ(T.size(), 1u);
+  EXPECT_NE(T[0].find("initialization cycle for r0"), std::string::npos);
+}
+
+// Smoke: segments of 4 levels, so rings and chains of 300 hop many times.
+TEST(DeepChain, InitializationCycles) {
+  ScopedNewStackSegment Seg(4);
+  initializationCycles(300);
+}
+
+// The full depth (20000 links, 64 levels a stack): deep-chain.long.test.
+TEST(DeepChain, DISABLED_InitializationCyclesFullDepth) {
+  initializationCycles(20000);
+}
+
+/// Lets the next N threads be made, then fails every request; restores the
+/// setting when it goes out of scope.
+struct StackBudget {
+  long Old;
+  explicit StackBudget(long N) : Old(failNewStacksAfter(N)) {}
+  ~StackBudget() { failNewStacksAfter(Old); }
+};
+
+// R9: when the system gives no more stacks (a limit on address space or
+// threads), a chain that needs them stops at its declaration with one clear
+// error, never a crash, and the same chain with normal resources checks
+// clean. The failure is made on purpose through the test hook.
+static void noStackForADeepChain(unsigned N) {
+  const unsigned Seg = newStackSegment();
+  std::string Src = "package p\n";
+  for (unsigned I = 0; I + 1 < N; ++I)
+    Src +=
+        "var v" + std::to_string(I) + " = v" + std::to_string(I + 1) + " + 1\n";
+  Src += "var v" + std::to_string(N - 1) + " = 1\n";
+  {
+    StackBudget B(3); // three stacks of Seg links, then none
+    std::vector<std::string> Errs = errorsOf(Src);
+    ASSERT_EQ(Errs.size(), 1u) << testing::PrintToString(Errs);
+    EXPECT_NE(Errs[0].find("nesting too deep: could not get stack for " +
+                           std::to_string(4 * Seg) + " levels"),
+              std::string::npos)
+        << Errs[0];
+  }
+  {
+    StackBudget B(0); // none at all: the first hop, Seg links down
+    std::vector<std::string> Errs = errorsOf(Src);
+    ASSERT_EQ(Errs.size(), 1u) << testing::PrintToString(Errs);
+    EXPECT_NE(Errs[0].find("could not get stack for " + std::to_string(Seg) +
+                           " levels"),
+              std::string::npos)
+        << Errs[0];
+  }
+  EXPECT_EQ(errorsOf(Src), std::vector<std::string>{}); // normal resources
+  // A chain short of one stack needs none.
+  StackBudget B(0);
+  std::string Short = "package p\n";
+  for (unsigned I = 0; I + 2 < Seg; ++I)
+    Short +=
+        "var v" + std::to_string(I) + " = v" + std::to_string(I + 1) + " + 1\n";
+  Short += "var v" + std::to_string(Seg - 2) + " = 1\n";
+  EXPECT_EQ(errorsOf(Short), std::vector<std::string>{});
+}
+
+TEST(DeepChain, NoStackForADeepChain) {
+  ScopedNewStackSegment Seg(4);
+  noStackForADeepChain(300);
+}
+
+TEST(DeepChain, DISABLED_NoStackForADeepChainFullDepth) {
+  ScopedNewStackSegment Seg(64); // a hop every 64 levels
+  noStackForADeepChain(20000);
+}
+
+// R13: hopping by stack left, a chain of 20000 cheap links needs a few threads
+// (it was one per 64 links, 312). Prints the count.
+TEST(DeepChain, DISABLED_CheapChainNeedsFewThreads) {
+  const unsigned N = 20000;
+  std::string Src = "package p\n";
+  for (unsigned I = 0; I + 1 < N; ++I)
+    Src +=
+        "var v" + std::to_string(I) + " = v" + std::to_string(I + 1) + " + 1\n";
+  Src += "var v" + std::to_string(N - 1) + " = 1\n";
+  unsigned long Before = newStackThreads();
+  EXPECT_EQ(errorsOf(Src), std::vector<std::string>{});
+  unsigned long Used = newStackThreads() - Before;
+  std::cerr << "threads for a chain of " << N << " links: " << Used << "\n";
+  EXPECT_LE(Used, 60u);
 }
 
 } // namespace

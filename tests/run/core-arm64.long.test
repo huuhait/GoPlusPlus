@@ -1,0 +1,32 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-aggregates.test -o %t.core-aggregates
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-aggregates %S/golden/core-aggregates.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-bigdata.test -o %t.core-bigdata
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-bigdata %S/golden/core-bigdata.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-checks.test -o %t.core-checks
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-checks %S/golden/core-checks.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-flow.test -o %t.core-flow
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-flow %S/golden/core-flow.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-funcs.test -o %t.core-funcs
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-funcs %S/golden/core-funcs.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-globals.test -o %t.core-globals
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-globals %S/golden/core-globals.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-print.test -o %t.core-print
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-print %S/golden/core-print.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-sat.test -o %t.core-sat
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-sat %S/golden/core-sat.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-structs.test -o %t.core-structs
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-structs %S/golden/core-structs.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-unsafe.test -o %t.core-unsafe
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.core-unsafe %S/golden/core-unsafe.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/core-ptr-print.test -o %t.ptr
+// RUN: qemu-aarch64 -L %aarch64_sysroot %t.ptr | FileCheck %S/core-ptr-print.test
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/core-init-order/c.gopp %S/Inputs/core-init-order/b.gopp %S/Inputs/core-init-order/a.gopp -o %t.cba
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.cba %S/golden/core-init-order-cba.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/core-init-order -o %t.dir
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.dir %S/golden/core-init-order.out
+// P04.04 (manager decision M5): the core run tests built for linux/arm64
+// and run under QEMU, with the expected output of the amd64 run (Go's on
+// arm64 where it differs: golden/NAME.arm64.out). The normal suite keeps
+// arm64 runs for core-init, core-option, core-fma, one differential table
+// (diff-arm64.test) and the panic smoke test (core-panics-arm64.test).

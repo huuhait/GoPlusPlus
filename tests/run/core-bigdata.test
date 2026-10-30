@@ -1,0 +1,81 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-bigdata.out
+// P04.04: values too big for registers are copied, compared, passed and
+// returned by memory (the code generator never makes an LLVM first-class
+// value of an array: a [100000]int64 would not compile). A global of 8 MB
+// is zero-filled by the loader and costs no space in the executable. The
+// expected output is `go run` of this same text (Inputs/regen-goldens.py).
+package main
+
+type Big struct {
+	a [50000]int64
+	n int
+	b [3]byte
+}
+
+type Tiny struct{ x, y uint8 }
+
+var global [1 << 20]int64
+var gbig Big
+var grid [300][300]int16
+
+func fill(b *Big, seed int64) {
+	for i := 0; i < len(b.a); i++ {
+		b.a[i] = seed + int64(i)*3
+	}
+	b.n = int(seed)
+}
+
+func sum(b Big) (s int64) {
+	for i := 0; i < len(b.a); i++ {
+		s += b.a[i]
+	}
+	b.a[0] = -1 // not seen by the caller
+	return s + int64(b.n)
+}
+
+func make2(seed int64) Big {
+	var b Big
+	fill(&b, seed)
+	b.b = [3]byte{1, 2, 3}
+	return b
+}
+
+func swap(a, b Big) (Big, Big) { return b, a }
+
+func main() {
+	var x Big
+	fill(&x, 10)
+	y := x
+	y.a[49999]++
+	println(sum(x), sum(y), x == y, x.a[0], x.a[49999], y.a[49999])
+	z := make2(10)
+	println(z == x, z.b[2], x.b[2])
+	z.b = x.b
+	println(z == x)
+	p, q := swap(x, y)
+	println(p == y, q == x, p.n, q.a[1])
+	// A global bigger than the stack, zero at the start.
+	println(global[0], global[len(global)-1], len(global))
+	global[len(global)-1] = 5
+	global[12345] = 6
+	println(global[len(global)-1], global[12345], global[12346])
+	gbig = x
+	gbig.n = 77
+	println(gbig.n, x.n, gbig.a[100] == x.a[100])
+	for i := 0; i < len(grid); i++ {
+		for j := 0; j < len(grid[i]); j++ {
+			grid[i][j] = int16(i*j) % 1000
+		}
+	}
+	g2 := grid
+	g2[299][299] = -1
+	println(grid[299][299], g2[299][299], grid == g2, grid[17][19], grid[100][100])
+	// An array of big structs on the stack.
+	var arr [4]Tiny
+	arr[3].y = 9
+	brr := arr
+	brr[0].x = 1
+	println(arr == brr, arr[3] == brr[3], arr[0] == brr[0])
+}

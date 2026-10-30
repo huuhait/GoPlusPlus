@@ -50,14 +50,14 @@ func main() {
 	println(add(1, 2))
 }
 
-// CHECK-LABEL: fn main.add(_1: i64, _2: i64) -> i64
+// CHECK-LABEL: fn _GPF4mainE3add(_1: i64, _2: i64) -> i64
 // CHECK:   let _1: i64  ; a
 // CHECK:   let _2: i64  ; b
 // CHECK:     _3 = add(copy _1, copy _2)
 // CHECK:     _0 = copy _3
 // CHECK:     return
 
-// CHECK-LABEL: fn main.loop(_1: i64) -> i64
+// CHECK-LABEL: fn _GPF4mainE4loop(_1: i64) -> i64
 // CHECK:     StorageLive(_2)
 // CHECK:     _2 = const 0: i64
 // CHECK:     StorageLive(_3)
@@ -81,7 +81,7 @@ func main() {
 // CHECK:     _2 = add(copy _2, copy _3)
 
 // A `return` in nested blocks leaves every scope it crosses, innermost first.
-// CHECK-LABEL: fn main.scoped(
+// CHECK-LABEL: fn _GPF4mainE6scoped(
 // CHECK:     StorageLive(_2)
 // CHECK:     StorageLive(_4)
 // CHECK:     _0 = copy _4
@@ -89,17 +89,17 @@ func main() {
 // CHECK-NEXT:     StorageDead(_2)
 // CHECK-NEXT:     return
 
-// CHECK-LABEL: fn main.logic(_1: bool, _2: bool) -> bool
+// CHECK-LABEL: fn _GPF4mainE5logic(_1: bool, _2: bool) -> bool
 // CHECK:     _3 = copy _1
 // CHECK:     switch copy _3 [0: bb{{[0-9]+}}, otherwise: bb{{[0-9]+}}]
 // CHECK:     _3 = copy _2
 
-// CHECK-LABEL: fn main.div(_1: i64, _2: i64) -> i64
+// CHECK-LABEL: fn _GPF4mainE3div(_1: i64, _2: i64) -> i64
 // CHECK:     _3 = ne(copy _2, const 0: i64)
 // CHECK:     assert(copy _3 == true, "div_by_zero") -> [success: bb1, unwind: continue]
 // CHECK:     div(copy _1, copy _2)
 
-// CHECK-LABEL: fn main.warm(_1: i64) -> bool
+// CHECK-LABEL: fn _GPF4mainE4warm(_1: i64) -> bool
 // CHECK:   let _1: i64  ; c
 // CHECK:   let {{_[0-9]+}}: i8  ; s
 // CHECK:     gt(copy _1, const 20: i64)

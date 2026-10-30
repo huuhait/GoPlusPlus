@@ -1,6 +1,6 @@
 package main
 
-type T struct{ x int }
+type T struct{ name string }
 
 // A func value, and the call of it (no second error for the call).
 func values() {
@@ -8,21 +8,17 @@ func values() {
 	f()
 }
 
-func floats(x float64) {
-	println(x)
+// An owning value (a string) in an aggregate must be a constant (P04.09).
+func owners() T {
+	ok := T{"constant"}
+	_ = ok
+	s := "x"
+	return T{s}
 }
 
-func derefs(p *int) int {
-	return *p
+func opt(o Option[int]) {
+	println(o)
 }
-
-func floatConstants() {
-	println(1.5)
-}
-
-func init() {}
-
-func init() {}
 
 type Celsius int
 

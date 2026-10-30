@@ -1,0 +1,38 @@
+package main
+
+// File a: variables that depend on later files, init functions, and the
+// entry point. The order Go gives: variables by dependency, then by
+// declaration order (the files in the order they are given; a directory's
+// sorted by name), then the init functions in the order of the files and,
+// inside a file, of the source; then main.
+var a1 = trace("a1", b2+1)
+
+var a2 = trace("a2", 20)
+
+var _ = trace("blank a", 0)
+
+var total = a1 + a2 + b1 + b2 + c1
+
+func init() {
+	println("init a (1)", total)
+}
+
+func trace(name string, v int) int {
+	println("init var", name, v)
+	return v
+}
+
+var a3, a4 = pair("a3a4", 30)
+
+func pair(name string, v int) (int, int) {
+	println("init pair", name, v)
+	return v, v + 1
+}
+
+func init() {
+	println("init a (2)", a3, a4)
+}
+
+func main() {
+	println("main", total, a1, a2, a3, a4, b1, b2, c1, c2, fromFunc, counter)
+}

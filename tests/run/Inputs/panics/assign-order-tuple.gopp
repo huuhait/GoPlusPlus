@@ -1,0 +1,16 @@
+package main
+
+var a [5]int
+
+func n(x int) int { println("n", x); return x }
+
+func f() int {
+	println("f called")
+	return 1
+}
+
+func main() {
+	println("before")
+	a[1], a[n(5)], a[n(6)] = f(), f(), f()
+	println("not reached")
+}

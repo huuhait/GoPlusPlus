@@ -1,0 +1,58 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-unsafe.out 0
+// unsafe.Sizeof, Alignof, Offsetof and unsafe.Pointer conversions
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.
+package main
+
+import "unsafe"
+
+type Small struct {
+	a bool
+	b int64
+	c int8
+}
+
+type Packed struct {
+	a, b, c int8
+	d       int16
+}
+
+type Nested struct {
+	s    Small
+	arr  [3]int16
+	p    *int
+	f    float32
+	z    struct{}
+	last uint8
+}
+
+func main() {
+	var x int
+	var i8 int8
+	var f32 float32
+	var c complex128
+	var s Small
+	var pk Packed
+	n := Nested{p: &x}
+	println(unsafe.Sizeof(x), unsafe.Sizeof(i8), unsafe.Sizeof(f32), unsafe.Sizeof(c), unsafe.Sizeof(true))
+	println(unsafe.Alignof(x), unsafe.Alignof(i8), unsafe.Alignof(f32), unsafe.Alignof(c))
+	println(unsafe.Sizeof(s), unsafe.Alignof(s), unsafe.Offsetof(s.a), unsafe.Offsetof(s.b), unsafe.Offsetof(s.c))
+	println(unsafe.Sizeof(pk), unsafe.Alignof(pk), unsafe.Offsetof(pk.d))
+	println(unsafe.Sizeof(n), unsafe.Alignof(n), unsafe.Offsetof(n.arr), unsafe.Offsetof(n.p), unsafe.Offsetof(n.f), unsafe.Offsetof(n.last))
+	var arr [5]Small
+	println(unsafe.Sizeof(arr), unsafe.Sizeof(&x), unsafe.Sizeof(uintptr(0)))
+	// unsafe.Pointer converts to and from *T and uintptr.
+	v := 41
+	p := unsafe.Pointer(&v)
+	q := (*int)(p)
+	*q = *q + 1
+	println(v, uintptr(p) == uintptr(unsafe.Pointer(&v)), uintptr(p) != 0)
+	w := [2]int32{1, 2}
+	e1 := (*int32)(unsafe.Pointer(uintptr(unsafe.Pointer(&w[0])) + unsafe.Sizeof(w[0])))
+	println(*e1)
+	const sz = unsafe.Sizeof(s)
+	var buf [sz]byte
+	println(len(buf))
+}

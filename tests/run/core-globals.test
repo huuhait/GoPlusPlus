@@ -1,0 +1,59 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-globals.out 0
+// package variables: zero values, initializers, init order, places
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.
+package main
+
+type Point struct{ X, Y int }
+
+var counter int
+var total = 10
+var ratio float64 = 0.25
+var flag bool = true
+var origin Point
+var corner = Point{3, 4}
+var table [4]int
+var names = [3]uint8{7, 8, 9}
+var ptr *int = &total
+var grid [2][2]float32
+
+var derived = total * 2
+var sums = [2]int{total, derived}
+
+func bump() int {
+	counter++
+	return counter
+}
+
+func fill() {
+	for i := 0; i < len(table); i++ {
+		table[i] = i * 10
+	}
+	grid[1][0] = 1.5
+}
+
+func move(p *Point) { p.X += 100 }
+
+func main() {
+	println(counter, total, ratio, flag, origin.X, corner.X, corner.Y)
+	bump()
+	bump()
+	println(counter)
+	fill()
+	println(table[0], table[3], names[2], grid[1][0], grid[0][1])
+	*ptr = 99
+	println(total, derived, sums[0], sums[1])
+	move(&corner)
+	move(&origin)
+	println(corner.X, origin.X)
+	pp := &table[2]
+	*pp = -1
+	println(table[2], pp == &table[2], &table[1] == &table[2])
+	origin = corner
+	corner.Y = 0
+	println(origin.Y, corner.Y, origin == corner)
+	i := 3
+	println(table[i], names[i-1])
+}

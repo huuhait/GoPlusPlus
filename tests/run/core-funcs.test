@@ -1,0 +1,111 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-funcs.out 0
+// functions: multiple and named results, recursion, values
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.
+package main
+
+type pair struct{ a, b int }
+
+func divmod(a, b int) (q, r int) {
+	q = a / b
+	r = a % b
+	return
+}
+
+func swap(a, b int) (int, int) { return b, a }
+
+func named() (x int, y float64, ok bool) {
+	x = 3
+	y = 1.5
+	return x * 2, y, !ok
+}
+
+func shadow() (n int) {
+	{
+		n := 5
+		_ = n
+	}
+	n = 8
+	return
+}
+
+func fib(n int) int {
+	if n < 2 {
+		return n
+	}
+	return fib(n-1) + fib(n-2)
+}
+
+func isEven(n int) bool {
+	if n == 0 {
+		return true
+	}
+	return isOdd(n - 1)
+}
+
+func isOdd(n int) bool {
+	if n == 0 {
+		return false
+	}
+	return isEven(n - 1)
+}
+
+func mixed(a int8, b uint16, c float32, d bool, e int64, f float64) float64 {
+	if d {
+		return float64(a) + float64(b) + float64(c) + float64(e) + f
+	}
+	return -1
+}
+
+func byValue(p pair, arr [3]int) (pair, [3]int) {
+	p.a = 100
+	arr[0] = 100
+	return p, arr
+}
+
+func ignore() int {
+	println("ignored")
+	return 1
+}
+
+func noResult(n int) {
+	if n > 2 {
+		println("early")
+		return
+	}
+	println("late")
+}
+
+func forward(a, b int) (int, int) { return swap(swap(a, b)) }
+
+func three() (int, int, int) { return 1, 2, 3 }
+
+func sum3(a, b, c int) int { return a + b + c }
+
+func main() {
+	q, r := divmod(17, 5)
+	println(q, r)
+	a, b := swap(1, 2)
+	println(a, b)
+	x, y, ok := named()
+	println(x, y, ok)
+	println(shadow())
+	println(fib(20), isEven(10), isOdd(10), isEven(7))
+	println(mixed(-3, 65535, 0.5, true, -9000000000, 2.25), mixed(1, 2, 3, false, 4, 5))
+	p := pair{1, 2}
+	arr := [3]int{1, 2, 3}
+	p2, arr2 := byValue(p, arr)
+	println(p.a, arr[0], p2.a, arr2[0], p2.b, arr2[2])
+	ignore()
+	_ = ignore()
+	_, second := swap(7, 8)
+	println(second)
+	noResult(1)
+	noResult(5)
+	println(forward(3, 4))
+	println(sum3(three()))
+	var u, v = divmod(9, 2)
+	println(u, v)
+}

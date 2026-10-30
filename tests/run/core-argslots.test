@@ -1,0 +1,86 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-argslots.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-argslots.out %}
+// P04.04 (review R3): the copy of an aggregate argument lives in a slot of the
+// caller's frame, and the slots are reused: 40 call sites passing a 512 KB
+// array use the frame of one (they were one slot each: 20 MB, a stack
+// overflow). Both sides, the reuse keeps the copies apart: two arguments of
+// one type in one call are two slots, a callee that changes its parameters
+// changes only its copies, and in `pair(id(g), id(id(g)))` the inner calls'
+// copies are done before the outer call's are made.
+package main
+
+type A [65536]int
+
+//go:noinline
+func sum(a A) int { return a[0] + a[65535] }
+
+//go:noinline
+func bump(a A, b A) int {
+	a[0] += 10
+	b[0] += 100
+	return a[0]*1000 + b[0]
+}
+
+//go:noinline
+func id(a A) A {
+	a[1]++
+	return a
+}
+
+//go:noinline
+func pair(a, b A) int { return a[0]*1000 + a[1]*100 + b[0]*10 + b[1] }
+
+var g A
+
+func main() {
+	g[0] = 1
+	g[65535] = 2
+	t := 0
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	t += sum(g)
+	println(t)
+	println(bump(g, g), g[0])
+	println(pair(id(g), id(id(g))), pair(g, id(g)), g[1])
+	println(bump(id(g), id(g)), sum(id(g)))
+}

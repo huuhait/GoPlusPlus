@@ -1,0 +1,24 @@
+// P04.04 (review R5, R2): the diagnostics of a package come out in the order
+// of plain recursive declaration (objDecl follows `var c1 = c2 + 1` into c2
+// and on), whether or not the package holds a chain of 100 links
+// (`var v0 = v1 + 1` ... `var v99 = v100 + 1`); a long chain is declared on
+// stacks of its own (runOnNewStack), it does not reorder anything. Both
+// sides: the same checks for the short and the long package, with the
+// cycles' text and positions as before.
+// RUN: not %gopp check -check-j=1 %S/Inputs/init-cycle-order-short.gopp 2>&1 | FileCheck --check-prefix=ALL %s
+// RUN: not %gopp check -check-j=1 %S/Inputs/init-cycle-order-long.gopp 2>&1 | FileCheck --check-prefix=ALL %s
+// ALL: init-cycle-order-{{[a-z]+}}.gopp:{{[0-9]+}}:{{[0-9]+}}: error[E0314]: cannot use u1 (variable of type int) as string value in variable declaration
+// ALL: error[E0314]: cannot use u2 (variable of type string) as int value in variable declaration
+// ALL: error[E0111]: undefined: undefinedName
+// ALL: init-cycle-order-{{[a-z]+}}.gopp:3:5: error[E0142]: initialization cycle for c1
+// ALL: note: c1 refers to c2
+// ALL: gopp:4:5: note: c2 refers to c3
+// ALL: gopp:5:5: note: c3 refers to c1
+// ALL: gopp:6:7: error[E0142]: initialization cycle for k1
+// ALL: note: k1 refers to k2
+// ALL: note: k2 refers to k3
+// ALL: note: k3 refers to k1
+// ALL: error[E0142]: initialization cycle for u1
+// ALL: note: u1 refers to u2
+// ALL: note: u2 refers to u1
+// ALL-NOT: error

@@ -1,0 +1,70 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P04.04: duplicate case detection is hashed by the value (a switch of n
+// cases was quadratic); both sides: the duplicates in a long run of cases are
+// found, in integers, strings and typed constants, and equal values of
+// different types or kinds are not duplicates.
+package main
+
+type Color int
+
+const (
+	Red Color = iota
+	Green
+)
+
+func ints(x int) int {
+	switch x {
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20:
+		return 1
+	// CHECK: [[@LINE+1]]:7: error[E0216]: duplicate case 7 (constant of type int) in expression switch
+	case 7:
+		return 2
+	// CHECK: [[@LINE+1]]:15: error[E0216]: duplicate case 22 (constant of type int) in expression switch
+	case 21, 22, 22:
+		return 3
+	}
+	return 0
+}
+
+func strs(s string) int {
+	switch s {
+	case "a", "b", "c":
+		return 1
+	// CHECK: [[@LINE+1]]:7: error[E0216]: duplicate case "b" (constant of type string) in expression switch
+	case "b":
+		return 2
+	case "B", "ab", "":
+		return 3
+	}
+	return 0
+}
+
+func flt(f float64) int {
+	switch f {
+	case 1, 2.5:
+		return 1
+	// CHECK: [[@LINE+1]]:7: error[E0216]: duplicate case 2.5 (constant of type float64) in expression switch
+	case 2.5:
+		return 2
+	case 1.5, 3:
+		return 3
+	}
+	return 0
+}
+
+func ok(c Color) int {
+	switch c {
+	case Red:
+		return 1
+	case Green:
+		return 2
+	}
+	var u uint8 = 1
+	switch u {
+	case 1, 2, 255:
+		return 3
+	}
+	return 0
+}
+
+func main() {}

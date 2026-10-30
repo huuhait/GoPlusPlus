@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compares `gopp fmt` with real gofmt on Go files (P02.09).
 
-usage: compare-gofmt.py GOPP [--goroot] [--jobs N] [--list] [--allow-other N] PATH...
+usage: compare-gofmt.py GOPP [--goroot] [--jobs N] [--list] [--allow-other N] [--shard K/N] PATH...
 
 On valid Go the output should be byte-identical. The known differences are
 sorted into classes:
@@ -60,6 +60,7 @@ def main():
     jobs = os.cpu_count() or 4
     show = False
     allow = 0
+    shard = (0, 1)
     paths = []
     while args:
         a = args.pop(0)
@@ -72,6 +73,9 @@ def main():
             show = True
         elif a == "--allow-other":
             allow = int(args.pop(0))
+        elif a == "--shard":
+            k, n = args.pop(0).split("/")
+            shard = (int(k), int(n))
         else:
             paths.append(a)
     files = []
@@ -82,6 +86,8 @@ def main():
         else:
             files.append(p)
     files.sort()
+    # --shard K/N: the files whose place in the sorted list is K modulo N.
+    files = files[shard[0] :: shard[1]]
     counts = {}
     # Threads suit a small set; a large one (the standard library) needs processes,
     # because the Python work per file runs under one interpreter lock.

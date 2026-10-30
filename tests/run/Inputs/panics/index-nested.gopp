@@ -1,0 +1,10 @@
+package main
+
+var g [3][4]int
+var i, j = 2, 4
+
+func main() {
+	println("before")
+	println(g[i][j])
+	println("not reached")
+}

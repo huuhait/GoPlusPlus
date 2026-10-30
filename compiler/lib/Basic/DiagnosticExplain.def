@@ -4270,3 +4270,9 @@ EXPLAIN(err_gir_no_main,
 
 func helper() {}
 )X")
+EXPLAIN(err_no_stack,
+        "A chain of declarations or types in the program is so long (thousands of links: variables that initialize each other, types that name each other) that the compiler walks it on stacks of their own, and the system would not give it another stack (a limit on address space or threads, `ulimit -v`). The compiler stops at that declaration or type instead of overflowing its stack. Raise the limit, or shorten the chain. The number is how many levels of the chain were walked.",
+        R"X(package main
+
+func main() {}
+)X")

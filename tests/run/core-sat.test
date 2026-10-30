@@ -1,0 +1,23 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-sat.out
+// GOLDEN: by-hand
+// P04.04, D4.12: a float converted to an integer type it does not fit in
+// saturates (`llvm.fptosi.sat` / `llvm.fptoui.sat`): the nearest end of the
+// range, 0 for NaN. Go leaves the result to the machine (amd64 and arm64
+// differ), so this golden is the Go++ rule, written by hand. The values that
+// fit are in diff-convert.test, which Go checks.
+package main
+
+func main() {
+	var zero float64 = 0
+	nan := zero / zero
+	inf := 1 / zero
+	big := 1e30
+	println(int64(big), int64(-big), int64(inf), int64(-inf), int64(nan))
+	println(int32(1e10+zero), int32(-1e10+zero), int16(70000.5+zero), int16(-70000.5+zero))
+	println(int8(200.5+zero), int8(-200.5+zero), int8(127.9+zero), int8(-128.9+zero))
+	println(uint64(big), uint64(-1+zero), uint64(inf), uint64(nan), uint64(18446744073709551615.0+zero))
+	println(uint32(5e9+zero), uint32(-5+zero), uint16(70000+zero), uint8(300+zero), uint8(-0.5+zero))
+	println(uint8(255.9+zero), uint8(0.9+zero), int32(float32(3e9)+float32(zero)), uint32(float32(-1)+float32(zero)))
+}

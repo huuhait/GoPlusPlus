@@ -20,6 +20,6 @@ func fib(n int) int {
 func main() {
 	println("fib", fib(10), true)
 }
-// CHECK: fn main.fib(_1: i64) -> i64
-// CHECK: fn main.main() -> ()
-// CHECK: fn gopp.print_i64
+// CHECK: fn _GPF4mainE3fib(_1: i64) -> i64
+// CHECK: fn _GPF4mainE4main() -> ()
+// CHECK: fn _GPF4goppE9print_i64

@@ -23,6 +23,7 @@
 
 using namespace gopp;
 using namespace gopp::sema;
+using llvm::dyn_cast;
 using llvm::isa;
 
 namespace {
@@ -45,25 +46,119 @@ static SmallVector<Object *, 4> sortedDeps(PackageState &S, Object *O) {
   return Out;
 }
 
-static bool findPath(PackageState &S, Object *From, Object *To,
-                     llvm::DenseSet<Object *> &Seen,
-                     SmallVector<Object *, 8> &Path) {
-  if (!Seen.insert(From).second)
-    return false;
-  for (Object *D : sortedDeps(S, From)) {
+/// The strongly connected components of the declaration dependency graph
+/// (Tarjan, with an explicit stack: a cycle of n objects is n deep). Comp[O]
+/// is the component of O; Cyclic[Comp] says it holds a cycle (two objects, or
+/// one that depends on itself).
+namespace {
+struct Components {
+  llvm::DenseMap<Object *, unsigned> Comp;
+  std::vector<bool> Cyclic;
+};
+} // namespace
+
+static Components findComponents(PackageState &S, ArrayRef<Object *> Roots) {
+  Components R;
+  struct Frame {
+    Object *O;
+    SmallVector<Object *, 4> Deps;
+    size_t Next = 0;
+    unsigned Index = 0, Low = 0;
+    bool SelfLoop = false;
+  };
+  llvm::DenseMap<Object *, unsigned> IndexOf;
+  SmallVector<Object *, 32> Open; // Tarjan's stack
+  llvm::DenseSet<Object *> OnOpen;
+  std::vector<Frame> Stack;
+  unsigned Counter = 0;
+  auto Push = [&](Object *O) {
+    Frame F;
+    F.O = O;
+    F.Deps = sortedDeps(S, O);
+    F.Index = F.Low = IndexOf[O] = Counter++;
+    Open.push_back(O);
+    OnOpen.insert(O);
+    Stack.push_back(std::move(F));
+  };
+  for (Object *Root : Roots) {
+    if (IndexOf.count(Root))
+      continue;
+    Push(Root);
+    while (!Stack.empty()) {
+      Frame &F = Stack.back();
+      if (F.Next < F.Deps.size()) {
+        Object *D = F.Deps[F.Next++];
+        if (D == F.O)
+          F.SelfLoop = true;
+        auto It = IndexOf.find(D);
+        if (It == IndexOf.end())
+          Push(D); // (invalidates F)
+        else if (OnOpen.count(D))
+          F.Low = std::min(F.Low, It->second);
+        continue;
+      }
+      Frame Done = std::move(Stack.back());
+      Stack.pop_back();
+      if (!Stack.empty())
+        Stack.back().Low = std::min(Stack.back().Low, Done.Low);
+      if (Done.Low != Done.Index)
+        continue;
+      unsigned Id = R.Cyclic.size();
+      size_t Size = 0;
+      Object *M;
+      do {
+        M = Open.pop_back_val();
+        OnOpen.erase(M);
+        R.Comp[M] = Id;
+        ++Size;
+      } while (M != Done.O);
+      R.Cyclic.push_back(Size > 1 || Done.SelfLoop);
+    }
+  }
+  return R;
+}
+
+/// The path of dependencies From -> ... -> To, as the first one a depth-first
+/// walk in declaration order finds, in the reverse order, To first (types2's
+/// findPath; the walk has an explicit stack, and stays in the component of
+/// From, where all the paths back to From are).
+static bool findPath(PackageState &S, const Components &Cs, Object *From,
+                     Object *To, SmallVector<Object *, 8> &Path) {
+  unsigned Comp = Cs.Comp.lookup(From);
+  struct Frame {
+    Object *O;
+    SmallVector<Object *, 4> Deps;
+    size_t Next = 0;
+  };
+  llvm::DenseSet<Object *> Seen;
+  std::vector<Frame> Stack;
+  auto Push = [&](Object *O) {
+    Seen.insert(O);
+    Stack.push_back({O, sortedDeps(S, O), 0});
+  };
+  Push(From);
+  while (!Stack.empty()) {
+    Frame &F = Stack.back();
+    if (F.Next == F.Deps.size()) {
+      Stack.pop_back();
+      continue;
+    }
+    Object *D = F.Deps[F.Next++];
     if (D == To) {
       Path.push_back(D);
+      for (size_t K = Stack.size(); K-- > 1;)
+        Path.push_back(Stack[K].O);
       return true;
     }
-    if (findPath(S, D, To, Seen, Path)) {
-      Path.push_back(D);
-      return true;
-    }
+    auto C = Cs.Comp.find(D);
+    if (C == Cs.Comp.end() || C->second != Comp || Seen.count(D))
+      continue;
+    Push(D); // (invalidates F)
   }
   return false;
 }
 
-void Checker::checkInitOrder() {
+void Checker::checkInitOrder(std::vector<InitEntry> &Out) {
   llvm::DenseMap<Object *, InitNode *> Nodes;
   std::vector<std::unique_ptr<InitNode>> Store;
   SmallVector<InitNode *, 32> Order;
@@ -107,6 +202,13 @@ void Checker::checkInitOrder() {
       N->NDeps = N->Succ.size();
       Live.push_back(N);
     }
+  // Only an object on a cycle has a path back to itself (so the walk below
+  // runs for those, and a chain that ends in a cycle costs nothing per link).
+  SmallVector<Object *, 32> Roots;
+  for (InitNode *N : Live)
+    Roots.push_back(N->Obj);
+  Components Cs = findComponents(S, Roots);
+  llvm::DenseSet<DeclInfo *> Emitted;
   using Key = std::pair<size_t, std::pair<uint32_t, InitNode *>>;
   std::set<Key> Queue;
   auto KeyOf = [](InitNode *N) { return Key{N->NDeps, {N->Obj->Order, N}}; };
@@ -116,9 +218,10 @@ void Checker::checkInitOrder() {
     InitNode *N = Queue.begin()->second.second;
     Queue.erase(Queue.begin());
     if (N->NDeps > 0) {
-      llvm::DenseSet<Object *> Seen;
       SmallVector<Object *, 8> Cycle;
-      if (findPath(S, N->Obj, N->Obj, Seen, Cycle)) {
+      auto C = Cs.Comp.find(N->Obj);
+      if (C != Cs.Comp.end() && Cs.Cyclic[C->second] &&
+          findPath(S, Cs, N->Obj, N->Obj, Cycle)) {
         // Cycle is the reverse of the path; types2 reports it as built.
         Object *O = Cycle[0];
         if (Cycle.size() == 1) {
@@ -132,6 +235,18 @@ void Checker::checkInitOrder() {
             O = Next;
           }
         }
+      }
+    }
+    // Record the initialization (types2's initorder.go emits it here): a
+    // variable with an initializer, once for `var a, b = f()`.
+    if (auto *V = dyn_cast<Var>(N->Obj)) {
+      auto DI = S.ObjMap.find(V);
+      DeclInfo *D = DI == S.ObjMap.end() ? nullptr : DI->second;
+      if (D && D->Init && Emitted.insert(D).second) {
+        InitEntry E;
+        E.Init = D->Init;
+        E.Lhs = D->Lhs.empty() ? Mem.copy(ArrayRef<Var *>(V)) : D->Lhs;
+        Out.push_back(E);
       }
     }
     for (InitNode *P : N->Pred) {

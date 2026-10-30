@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gopp/GIR/Type.h"
+#include "gopp/Basic/NewStack.h"
 
 using namespace gopp;
 using namespace gopp::gir;
@@ -112,6 +113,12 @@ Type *Context::array(Type *Elem, uint64_t Len) {
   return get(K);
 }
 
+Type *Context::option(Type *Elem) {
+  Key K(Type::Kind::Option);
+  K.Elem = Elem;
+  return get(K);
+}
+
 Type *Context::tuple(ArrayRef<Type *> Elems) {
   if (Elems.empty())
     return Unit;
@@ -161,6 +168,8 @@ unsigned Type::numFields() const {
   case Kind::String:
   case Kind::Slice:
     return 3;
+  case Kind::Option:
+    return 2;
   case Kind::Tuple:
   case Kind::Struct:
     return Elems.size();
@@ -177,12 +186,25 @@ Type *Type::fieldType(unsigned I, Context &C) const {
     return I == 0 ? C.ptr(C.u8()) : C.u64();
   case Kind::Slice:
     return I == 0 ? C.ptr(Elem) : C.u64();
+  case Kind::Option:
+    return I == 0 ? Elem : C.boolean();
   default:
     return Elems[I];
   }
 }
 
 void Type::print(llvm::raw_ostream &OS) const {
+  // The text recurses once per level of the type, and a chain of named types
+  // makes a structural type thousands of levels deep: a new stack every
+  // DeepWalk::Segment levels (Basic/NewStack.h; each thread counts its own
+  // levels, which is all a segment needs).
+  static thread_local DeepWalk Walk;
+  // No stack for a level this deep: the text stops there, bounded.
+  if (!Walk.level([&] { printOne(OS); }))
+    OS << "...";
+}
+
+void Type::printOne(llvm::raw_ostream &OS) const {
   switch (K) {
   case Kind::Unit:
     OS << "()";
@@ -210,6 +232,11 @@ void Type::print(llvm::raw_ostream &OS) const {
   case Kind::Array:
     OS << '[' << Len << ']';
     Elem->print(OS);
+    return;
+  case Kind::Option:
+    OS << "Option<";
+    Elem->print(OS);
+    OS << '>';
     return;
   case Kind::Tuple: {
     OS << '(';

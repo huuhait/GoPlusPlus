@@ -1,0 +1,5 @@
+// REQUIRES: long
+// M8: the timed half of the verifier and printer stress tests (the normal
+// suite counts steps instead; tests/unit/GIR/StressTest.cpp): 4N takes at
+// most 12 times as long as N, and the timing helper fails a quadratic walk.
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_Verifier*:GIRStressLong.DISABLED_Printer*:GIRStressLong.DISABLED_TheTimingHelper*'

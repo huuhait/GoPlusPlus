@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P04.04: lowering stays near-linear for tens of thousands of package
+// variables in init order, thousands of checked statements and thousands of
+// local types (GIRStressLong; see core-stress.long.test).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_LoweringGlobalsInInitOrder:GIRStressLong.DISABLED_LoweringManyCheckedStatements:GIRStressLong.DISABLED_LoweringManyLocalTypes'

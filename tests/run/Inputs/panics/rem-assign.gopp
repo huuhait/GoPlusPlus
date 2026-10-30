@@ -1,0 +1,11 @@
+package main
+
+var z int
+
+func main() {
+	println("before")
+	x := 5
+	x %= z
+	println(x)
+	println("not reached")
+}

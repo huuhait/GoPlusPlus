@@ -1,0 +1,4 @@
+// REQUIRES: long
+// P04.04: lowering GIR of the core subset to LLVM IR is near-linear
+// (GIRStressLong; see core-stress.long.test).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_CodeGenerationOfTheCoreSubsetIsNearLinear'

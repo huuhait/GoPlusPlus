@@ -1469,13 +1469,18 @@ template <class F> double bestOf3(F Fn) {
   return std::min({seconds(Fn), seconds(Fn), seconds(Fn)});
 }
 
-/// Time of mangle + parse + print of a name built by Make(N).
-template <class Make>
-double fullCycle(Make Mk, size_t N, bool Prints = true, size_t *Len = nullptr) {
+/// The steps of mangle + parse + print of a name built by Make(N), and its
+/// time (the least of three runs; only a coarse ceiling, M8).
+struct Cycle {
+  double Seconds = 0;
+  uint64_t Steps = 0;
+  size_t Len = 0;
+};
+template <class Make> Cycle fullCycle(Make Mk, size_t N, bool Prints = true) {
   Context C;
   const Node *E = Mk(C, N);
   std::string M;
-  double T = bestOf3([&] {
+  auto Once = [&] {
     M = mangle(E);
     Context C2;
     ParseError Err;
@@ -1485,10 +1490,17 @@ double fullCycle(Make Mk, size_t N, bool Prints = true, size_t *Len = nullptr) {
       Printed P = print(Back, size_t(1) << 30);
       EXPECT_TRUE(P.Ok);
     }
-  });
-  if (Len)
-    *Len = M.size();
-  return T;
+  };
+  WorkCounts W0 = workCounts();
+  Once();
+  WorkCounts W1 = workCounts();
+  Cycle R;
+  R.Steps = (W1.MangleSteps - W0.MangleSteps) +
+            (W1.ParseSteps - W0.ParseSteps) + (W1.PrintSteps - W0.PrintSteps) +
+            (W1.NodeSteps - W0.NodeSteps);
+  R.Seconds = bestOf3(Once);
+  R.Len = M.size();
+  return R;
 }
 
 TEST(SymbolName, DeepAndWideNamesWork) {
@@ -1517,14 +1529,140 @@ TEST(SymbolName, DeepAndWideNamesWork) {
   EXPECT_EQ(Err.Message, "the text ends before the name is complete");
 }
 
-/// R1: text made to cost more than it is long. Each shape at n and 4n: the
-/// time may grow less than 8 times (linear is 4, quadratic is 16). The
-/// readable form is capped at 1 MB, so a shape that prints a lot is cut at
-/// the same size for both and its time stays flat.
-/// Timing check, so it runs in the long suite (`symbol-names.long.test`):
-/// at the normal suite's size the runs took a millisecond and failed on noise
-/// when 192 tests ran at once. At 40000 the small run takes milliseconds to
-/// tens of milliseconds.
+/// The steps of one walk are linear: at most C per unit of input (Cap is the
+/// extra a capped output may cost), and Scale times the input costs at most
+/// 1.125 * Scale times the steps. A quadratic count is Scale^2 times.
+static bool stepsAreLinear(uint64_t S1, uint64_t S4, size_t Len1, size_t Len4,
+                           size_t Cap = 0, uint64_t Scale = 4) {
+  const uint64_t C = 16;
+  return S1 <= C * (Len1 + Cap) && S4 <= C * (Len4 + Cap) &&
+         8 * S4 <= 9 * Scale * S1 + 512;
+}
+
+TEST(SymbolName, TheStepCountCheckFailsAQuadraticCount) {
+  // The control of the next test: linear counts pass, a quadratic one fails.
+  size_t L1 = 40000, L4 = 160000;
+  EXPECT_TRUE(stepsAreLinear(3 * L1, 3 * L4, L1, L4));
+  EXPECT_FALSE(stepsAreLinear(L1 * L1, L4 * L4, L1, L4));
+  // The ratio alone fails a count that is under the per-unit bound.
+  EXPECT_FALSE(stepsAreLinear(3 * L1, 14 * 3 * L1, L1, L4, size_t(1) << 30));
+  // Sixteen times the input (NearLinearOnLongNames): 256 times is refused.
+  EXPECT_TRUE(stepsAreLinear(3 * L1, 3 * 16 * L1, L1, 16 * L1, 0, 16));
+  EXPECT_FALSE(
+      stepsAreLinear(3 * L1, 3 * 256 * L1, L1, 16 * L1, size_t(1) << 40, 16));
+}
+
+/// R25: each counter follows the dimension it guards. The shapes below grow
+/// one dimension (an identifier, a package path, the arguments of an
+/// instance, the depth, the dimensions of a unit) from N to 16N; the counter
+/// that guards its loop must grow by at least 10 times (so it counts the
+/// elements, not just an outer loop), and the total stays within a constant
+/// per element (so it stays linear). A loop that stopped counting fails the
+/// first; a quadratic walk the second.
+TEST(SymbolName, EachCounterFollowsTheDimensionItGuards) {
+  using Pick = uint64_t WorkCounts::*;
+  struct Dim {
+    const char *Name;
+    Pick Counter; // the counter that must follow it
+    const Node *(*Make)(Context &, size_t);
+  };
+  const Dim Dims[] = {
+      {"identifier length (mangler)", &WorkCounts::MangleSteps,
+       [](Context &C, size_t N) {
+         return C.func("main", std::string(N, 'x'));
+       }},
+      {"identifier length (parser)", &WorkCounts::ParseSteps,
+       [](Context &C, size_t N) {
+         return C.func("main", std::string(N, 'x'));
+       }},
+      {"package path segments (mangler)", &WorkCounts::MangleSteps,
+       [](Context &C, size_t N) {
+         std::string P = "a";
+         for (size_t I = 0; I < N; ++I)
+           P += "/s";
+         return C.func(P, "f");
+       }},
+      {"package path segments (parser)", &WorkCounts::ParseSteps,
+       [](Context &C, size_t N) {
+         std::string P = "a";
+         for (size_t I = 0; I < N; ++I)
+           P += "/s";
+         return C.func(P, "f");
+       }},
+      {"arguments of a tuple (mangler kids)", &WorkCounts::MangleSteps,
+       [](Context &C, size_t N) {
+         std::vector<const Node *> Kids(N, C.basic(Kind::Int));
+         return C.ofType(Kind::TypeInfo, C.tuple(Kids));
+       }},
+      {"arguments of a tuple (node interning)", &WorkCounts::NodeSteps,
+       [](Context &C, size_t N) {
+         std::vector<const Node *> Kids(N, C.basic(Kind::Int));
+         return C.ofType(Kind::TypeInfo, C.tuple(Kids));
+       }},
+      {"arguments of a tuple (printer)", &WorkCounts::PrintSteps,
+       [](Context &C, size_t N) {
+         std::vector<const Node *> Kids(N, C.basic(Kind::Int));
+         return C.ofType(Kind::TypeInfo, C.tuple(Kids));
+       }},
+      {"depth (parser)", &WorkCounts::ParseSteps,
+       [](Context &C, size_t N) {
+         const Node *T = C.basic(Kind::Int);
+         for (size_t I = 0; I < N; ++I)
+           T = C.pointer(T);
+         return C.ofType(Kind::TypeInfo, T);
+       }},
+      {"unit dimensions (printer)", &WorkCounts::PrintSteps,
+       [](Context &C, size_t N) {
+         std::vector<const Node *> Dims;
+         for (size_t I = 0; I < N; ++I)
+           Dims.push_back(C.dim("u", "D" + std::to_string(I), 1 + I % 3));
+         return C.ofType(Kind::TypeInfo,
+                         C.unitType(Kind::Float64, C.unit("1", "1", Dims)));
+       }},
+      {"unit dimensions (parser, order check)", &WorkCounts::ParseSteps,
+       [](Context &C, size_t N) {
+         std::vector<const Node *> Dims;
+         for (size_t I = 0; I < N; ++I)
+           Dims.push_back(C.dim("u", "D" + std::to_string(I), 1 + I % 3));
+         return C.ofType(Kind::TypeInfo,
+                         C.unitType(Kind::Float64, C.unit("1", "1", Dims)));
+       }},
+  };
+  for (const Dim &D : Dims) {
+    uint64_t Steps[2] = {}, All[2] = {};
+    size_t Len[2] = {};
+    size_t Sizes[2] = {500, 8000};
+    for (int K = 0; K < 2; ++K) {
+      Context C;
+      const Node *E = D.Make(C, Sizes[K]);
+      WorkCounts W0 = workCounts();
+      std::string M = mangle(E);
+      DemangleResult R = demangle(M, size_t(1) << 30);
+      EXPECT_TRUE(R.Ok) << D.Name << ": " << R.Error;
+      WorkCounts W1 = workCounts();
+      Steps[K] = W1.*D.Counter - W0.*D.Counter;
+      All[K] = (W1.MangleSteps - W0.MangleSteps) +
+               (W1.ParseSteps - W0.ParseSteps) +
+               (W1.PrintSteps - W0.PrintSteps) + (W1.NodeSteps - W0.NodeSteps);
+      Len[K] = M.size();
+    }
+    EXPECT_GE(Steps[1], 10 * Steps[0])
+        << D.Name << ": " << Steps[0] << " -> " << Steps[1];
+    EXPECT_TRUE(stepsAreLinear(All[0], All[1], Len[0], Len[1], 0, 16))
+        << D.Name << ": " << All[0] << " -> " << All[1];
+  }
+}
+
+/// R1, R24 (M8): text made to cost more than it is long. Each shape at n and
+/// 4n: the parser, the mangler's canonical check and the printer count their
+/// steps, and the steps must grow less than 4.5 times (linear is 4,
+/// quadratic is 16). The readable form is capped at 1 MB, so a shape that
+/// prints a lot is cut at the same size for both and its steps stay flat. The
+/// time is only a coarse ceiling (it must stay far under a second for a
+/// quadratic walk of this size to be seen at all; a loaded machine does not
+/// reach it).
+/// The count is the check; it runs in the long suite (`symbol-names.long.test`)
+/// because the texts are large.
 TEST(SymbolNameLong, DISABLED_HostileTextCostsLinearTime) {
   struct Shape {
     const char *Name;
@@ -1577,18 +1715,35 @@ TEST(SymbolNameLong, DISABLED_HostileTextCostsLinearTime) {
   };
   for (const Shape &S : Shapes) {
     size_t N = 40000;
-    auto Time = [&](size_t Size) {
-      std::string Text = S.Make(Size);
-      Context C;
-      ParseError Err;
-      EXPECT_EQ(parseSymbol(C, Text, Err) != nullptr, S.Valid) << S.Name;
-      return bestOf3([&] { (void)demangle(Text, size_t(1) << 20); });
+    struct Counts {
+      uint64_t Parse, Print;
+      size_t Len;
+      double Seconds;
     };
-    double Small = Time(N), Big = Time(N * 4);
-    double Ratio = Big / std::max(Small, 1e-3);
-    std::fprintf(stderr, "  %-40s %8.4fs -> %8.4fs  (x%.1f for x4)\n", S.Name,
-                 Small, Big, Ratio);
-    EXPECT_LT(Ratio, 8) << S.Name << ": " << Small << "s -> " << Big << "s";
+    auto Run = [&](size_t Size) {
+      std::string Text = S.Make(Size);
+      WorkCounts W0 = workCounts();
+      DemangleResult D;
+      double T = seconds([&] { D = demangle(Text, size_t(1) << 20); });
+      WorkCounts W1 = workCounts();
+      // Parsed, whether or not the readable form fitted the cap.
+      bool Parsed =
+          D.Ok || D.Error == "the readable name is longer than the limit";
+      EXPECT_EQ(Parsed, S.Valid) << S.Name << ": " << D.Error;
+      return Counts{(W1.MangleSteps - W0.MangleSteps) +
+                        (W1.ParseSteps - W0.ParseSteps) +
+                        (W1.NodeSteps - W0.NodeSteps),
+                    W1.PrintSteps - W0.PrintSteps, Text.size(), T};
+    };
+    Counts A = Run(N), B = Run(N * 4);
+    std::fprintf(stderr, "  %-40s parse %8llu -> %8llu  print %8llu -> %8llu\n",
+                 S.Name, (unsigned long long)A.Parse,
+                 (unsigned long long)B.Parse, (unsigned long long)A.Print,
+                 (unsigned long long)B.Print);
+    EXPECT_TRUE(stepsAreLinear(A.Parse, B.Parse, A.Len, B.Len)) << S.Name;
+    EXPECT_TRUE(stepsAreLinear(A.Print, B.Print, A.Len, B.Len, size_t(1) << 20))
+        << S.Name;
+    EXPECT_LT(B.Seconds, 20.0) << S.Name << ": the coarse ceiling";
   }
 }
 
@@ -1605,20 +1760,6 @@ constexpr int Slow = 1;
 #else
 constexpr int Slow = 1;
 #endif
-
-TEST(SymbolNameLong, DISABLED_TheTimingCheckSeesAQuadraticWalk) {
-  // The control of the next test: a quadratic loop must fail its limit.
-  auto Quadratic = [](size_t N) {
-    return seconds([&] {
-      std::string S;
-      for (size_t I = 0; I < N; ++I)
-        S.insert(0, "xy");
-      EXPECT_EQ(S.size(), 2 * N);
-    });
-  };
-  double Ratio = Quadratic(64000 * 4) / std::max(Quadratic(4000 * 4), 1e-4);
-  EXPECT_GT(Ratio, 16 * 6);
-}
 
 TEST(SymbolNameLong, DISABLED_NearLinearOnLongNames) {
   struct Shape {
@@ -1693,18 +1834,19 @@ TEST(SymbolNameLong, DISABLED_NearLinearOnLongNames) {
        false},
   };
   for (const Shape &S : Shapes) {
-    // 16000, not 4000: a run of a millisecond is mostly noise.
     size_t N = 16000;
-    double Small = fullCycle(S.Make, N, S.Prints);
-    double Big = fullCycle(S.Make, N * 16, S.Prints);
-    // 16 times the size: a linear walk takes ~16 times as long. A quadratic
-    // one 256 times. Leave room for noise.
-    double Ratio = Big / std::max(Small, 1e-4);
-    std::fprintf(stderr, "  %-22s %8.4fs -> %8.4fs  (x%.1f for x16)\n", S.Name,
-                 Small, Big, Ratio);
-    EXPECT_LT(Ratio, 16 * 6)
-        << S.Name << ": " << Small << "s -> " << Big << "s";
-    EXPECT_LT(Big, 5.0) << S.Name;
+    Cycle Small = fullCycle(S.Make, N, S.Prints);
+    Cycle Big = fullCycle(S.Make, N * 16, S.Prints);
+    std::fprintf(stderr, "  %-22s steps %9llu -> %9llu  (%.4fs -> %.4fs)\n",
+                 S.Name, (unsigned long long)Small.Steps,
+                 (unsigned long long)Big.Steps, Small.Seconds, Big.Seconds);
+    // 16 times the size: a linear walk takes 16 times the steps, a quadratic
+    // one 256 times. A step count does not change with the load (M8); the
+    // time is only a coarse ceiling.
+    EXPECT_TRUE(stepsAreLinear(Small.Steps, Big.Steps, Small.Len, Big.Len,
+                               size_t(1) << 30, 16))
+        << S.Name;
+    EXPECT_LT(Big.Seconds, 5.0) << S.Name;
   }
 }
 

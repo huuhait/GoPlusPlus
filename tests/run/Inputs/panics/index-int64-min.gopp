@@ -1,0 +1,10 @@
+package main
+
+var a [3]int
+var i int64 = -1 << 63
+
+func main() {
+	println("before")
+	println(a[i])
+	println("not reached")
+}

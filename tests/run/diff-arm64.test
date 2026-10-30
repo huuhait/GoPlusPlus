@@ -1,0 +1,8 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/diff/complex_complex128.gopp -o %t.complex128
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.complex128 %S/Inputs/diff/complex_complex128.out
+// P04.04 (manager decision M5): one differential table on linux/arm64 under
+// QEMU in the normal suite, the one where arm64 differs most from amd64
+// (FMA in complex products and in Go's complex division): the expected
+// output is Go's arm64 output, Inputs/diff/complex_complex128.arm64.out.
+// Every table on arm64: diff-*-arm64.long.test.

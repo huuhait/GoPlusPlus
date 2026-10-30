@@ -1,0 +1,6 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --sizes 10000 --shapes two | FileCheck %s
+// P03.25 (GEN-14, R10): 10000 levels of a rearranging chain, with 1 and 8
+// body threads (the other half of units-generic-straight.long).
+// CHECK: two plain n=10000            errors=0 dicts=10000 sites=10000 j1==j8:yes ok
+// CHECK-NEXT: two cancel n=10000           errors=0 dicts=10001 sites=10001 j1==j8:yes ok

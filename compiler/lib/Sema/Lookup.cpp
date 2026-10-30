@@ -187,6 +187,39 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
       }
       Type *U = under(Tp);
       if (auto *St = dyn_cast<StructType>(U)) {
+        // A big struct finds the fields called Name by its name index
+        // (StructType::ByName) and walks only its embedded fields after them,
+        // so a struct of n fields read n times costs n log n (P04.04); the
+        // order of what is found is the declaration order, as below.
+        if (St->indexed() && !FoldCase && !Want) {
+          for (uint32_t I : St->fieldsNamed(Name)) {
+            Var *F = St->Fields[I];
+            if (!sameId(F, Pkg, Name, false))
+              continue;
+            SmallVector<int, 4> Index = Path(E.Index, static_cast<int>(I));
+            if (R.Obj || E.Multiples) {
+              LookupResult Coll;
+              Coll.Index = Index;
+              Coll.Ambiguous = true;
+              return Coll;
+            }
+            R.Obj = F;
+            R.Index = Index;
+            R.Indirect = E.Indirect;
+          }
+          for (uint32_t I : St->EmbeddedIdx) {
+            Var *F = St->Fields[I];
+            if (R.Obj)
+              break;
+            if (sameId(F, Pkg, Name, false))
+              continue;
+            bool P;
+            Type *FT = deref(F->Ty, P);
+            Next.push_back({FT, Step(E.Index, static_cast<int>(I)),
+                            E.Indirect || P, E.Multiples});
+          }
+          continue;
+        }
         for (size_t I = 0; I < St->Fields.size(); ++I) {
           Var *F = St->Fields[I];
           if (!Want && sameId(F, Pkg, Name, FoldCase)) {

@@ -1,0 +1,8 @@
+// Shard 3 of 4 of goroot.long.test (the same checks on the files whose
+// place in the sorted list is 3 modulo 4).
+
+// REQUIRES: long
+// REQUIRES: go
+
+// RUN: %python %S/check-corpus.py %gopp --goroot --jobs 16 --min 1750 --shard 3/4
+// RUN: %python %S/compare-gofmt.py %gopp --goroot --jobs 16 --shard 3/4

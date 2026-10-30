@@ -17,6 +17,8 @@
 
 #include "gopp/GIR/Verify.h"
 
+#include "gopp/Basic/WorkCount.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -43,6 +45,15 @@ std::string VerifyError::str() const {
 
 namespace {
 
+/// Test-only work counter (M8): the units the verifier visits on this thread.
+thread_local uint64_t Steps = 0;
+
+} // namespace
+
+uint64_t gir::verifierSteps() { return Steps; }
+
+namespace {
+
 /// Calls Visit on each block a normal edge of T goes to.
 template <class Fn> void forEachNormalEdge(const Terminator &T, Fn &&Visit) {
   switch (T.K) {
@@ -50,7 +61,7 @@ template <class Fn> void forEachNormalEdge(const Terminator &T, Fn &&Visit) {
     Visit(T.Target);
     return;
   case Terminator::Switch:
-    for (const SwitchCase &C : T.Cases)
+    for (const SwitchCase &C : counted(Steps, T.Cases))
       Visit(C.Target);
     Visit(T.Otherwise);
     return;
@@ -93,7 +104,8 @@ public:
 
   std::vector<VerifyError> run() {
     functionNames();
-    for (FuncId I = 0; I < M.Funcs.size() && !full(); ++I)
+    globals();
+    for (FuncId I = 0; I < M.Funcs.size() && !full(); ++I, ++Steps)
       if (M.Funcs[I])
         function(*M.Funcs[I]);
     F = nullptr;
@@ -109,6 +121,8 @@ private:
   std::vector<VerifyError> Errors;
   const Function *F = nullptr;
   int64_t Block = -1, Index = -1;
+  /// The locals whose address some AddrOf takes (V066), of the function.
+  llvm::DenseSet<LocalId> AddrTaken;
   /// The types the module uses, each once (V002, V003 look at them last).
   llvm::DenseSet<const Type *> SeenTypes;
   std::vector<const Type *> TypeWork;
@@ -145,6 +159,7 @@ private:
   void functionNames() {
     llvm::StringSet<> Names;
     for (FuncId I = 0; I < M.Funcs.size(); ++I) {
+      ++Steps;
       const Function *Fn = M.Funcs[I].get();
       if (!Fn)
         err("V001", "function #" + num(I) + " is null");
@@ -155,11 +170,56 @@ private:
     }
   }
 
+  /// V071: a global has a name no function or other global has (one symbol
+  /// namespace) and a type that holds a value (not unit); its static value
+  /// is Zero (also for a variable its package's init function sets), or a
+  /// constant of its type that is a scalar or a string, never an address
+  /// (Func or Global: P04.04 needs no relocations in data).
+  void globals() {
+    llvm::StringSet<> Names;
+    for (const auto &Fn : counted(Steps, M.Funcs))
+      if (Fn)
+        Names.insert(Fn->Name);
+    for (size_t I = 0; I < M.Globals.size() && !full(); ++I) {
+      ++Steps;
+      const Global &G = M.Globals[I];
+      std::string Who = "global #" + num(I) + " ";
+      if (G.Name.empty())
+        err("V071", Who + "has no name");
+      else if (!Names.insert(G.Name).second)
+        err("V071", Who + G.Name + " has the name of another symbol");
+      if (!G.Ty || G.Ty->isUnit()) {
+        err("V071", Who + "has no type, or the unit type");
+        continue;
+      }
+      noteType(G.Ty);
+      span(G.Loc);
+      if (G.Init.K == Constant::Zero) {
+        if (G.Init.Ty)
+          err("V071", Who + G.Name + ": a zero initializer has no type");
+        continue;
+      }
+      if (G.Init.K == Constant::Func || G.Init.K == Constant::Global) {
+        err("V071", Who + G.Name + ": an initializer that is an address");
+        continue;
+      }
+      if (!G.Ty->isScalar() && G.Ty->getKind() != Type::Kind::String) {
+        err("V071", Who + G.Name + " of type " + str(G.Ty) +
+                        " starts with a constant that is not zero");
+        continue;
+      }
+      if (constant(G.Init) && G.Init.Ty != G.Ty)
+        err("V071", Who + G.Name + " of type " + str(G.Ty) +
+                        " has an initializer of type " + str(G.Init.Ty));
+    }
+  }
+
   /// V002: a type is well formed: integers are 8, 16, 32 or 64 bits wide,
   /// floats 32 or 64, a struct the module uses has its body, and no part is
   /// missing. Each type is looked at once; its parts join the work list.
   void typeShapes() {
     for (size_t I = 0; I < TypeWork.size() && !full(); ++I) {
+      ++Steps;
       const Type *T = TypeWork[I];
       switch (T->getKind()) {
       case Type::Kind::Int:
@@ -178,6 +238,7 @@ private:
       case Type::Kind::Ptr:
       case Type::Kind::Slice:
       case Type::Kind::Array:
+      case Type::Kind::Option:
         if (!T->elem()) {
           err("V002", "a pointer, slice or array type without an element");
           continue;
@@ -194,7 +255,7 @@ private:
       default:
         break;
       }
-      for (const Type *E : T->elems()) {
+      for (const Type *E : counted(Steps, T->elems())) {
         if (!E)
           err("V002", "a tuple, struct or function type with a null part");
         noteType(E);
@@ -208,12 +269,14 @@ private:
                         llvm::SmallVectorImpl<const Type *> &Out) {
     llvm::SmallVector<const Type *, 8> Work{T};
     while (!Work.empty()) {
+      ++Steps;
       const Type *C = Work.pop_back_val();
       if (!C)
         continue;
       if (C->getKind() == Type::Kind::Struct)
         Out.push_back(C);
-      else if (C->getKind() == Type::Kind::Array)
+      else if (C->getKind() == Type::Kind::Array ||
+               C->getKind() == Type::Kind::Option)
         Work.push_back(C->elem());
       else if (C->getKind() == Type::Kind::Tuple)
         Work.append(C->elems().begin(), C->elems().end());
@@ -233,16 +296,18 @@ private:
     auto Push = [&](const Type *S) {
       Color[S] = 1;
       Frame Fr{S, {}};
-      for (const Type *Fd : S->elems())
+      for (const Type *Fd : counted(Steps, S->elems()))
         structsIn(Fd, Fr.Next);
       Stack.push_back(std::move(Fr));
     };
     for (size_t I = 0; I < TypeWork.size() && !full(); ++I) {
+      ++Steps;
       const Type *Root = TypeWork[I];
       if (Root->getKind() != Type::Kind::Struct || Color.count(Root))
         continue;
       Push(Root);
       while (!Stack.empty()) {
+        ++Steps;
         Frame &Top = Stack.back();
         if (Top.Next.empty()) {
           Color[Top.S] = 2;
@@ -265,6 +330,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
+    ++Steps;
     F = &Fn;
     Block = Index = -1;
     if (!signature(Fn))
@@ -278,10 +344,17 @@ private:
       return;
     if (Fn.Blocks[0].Cleanup)
       err("V013", "the entry block is a cleanup block");
+    AddrTaken.clear();
+    for (const BasicBlock &BB : counted(Steps, Fn.Blocks))
+      for (const Statement &S : counted(Steps, BB.Stmts))
+        if (S.K == Statement::Assign && S.RV.K == Rvalue::AddrOf)
+          AddrTaken.insert(S.RV.P.Local);
     for (BlockId B = 0; B < Fn.Blocks.size() && !full(); ++B) {
       Block = B;
       const BasicBlock &BB = Fn.Blocks[B];
+      ++Steps;
       for (size_t I = 0; I < BB.Stmts.size(); ++I) {
+        ++Steps;
         Index = I;
         statement(BB.Stmts[I]);
       }
@@ -315,6 +388,7 @@ private:
     }
     bool Typed = true;
     for (LocalId L = 0; L < Fn.Locals.size(); ++L) {
+      ++Steps;
       const Local &Lo = Fn.Locals[L];
       span(Lo.Loc);
       if (!Lo.Ty) {
@@ -357,6 +431,7 @@ private:
       }
     };
     while (!Work.empty()) {
+      ++Steps;
       const Terminator &T = Fn.Blocks[Work.pop_back_val()].Term;
       if (!T.Set)
         continue;
@@ -364,7 +439,7 @@ private:
       if (hasUnwind(T) && T.Unwind.K == UnwindAction::Cleanup)
         Reach(T.Unwind.Target);
     }
-    for (BlockId B = 0; B < Fn.Blocks.size() && !full(); ++B)
+    for (BlockId B = 0; B < Fn.Blocks.size() && !full(); ++B, ++Steps)
       if (!Seen[B]) {
         Block = B;
         err("V022", "bb" + num(B) + " is unreachable");
@@ -393,7 +468,7 @@ private:
       return false;
     }
     const Type *Cur = F->Locals[P.Local].Ty;
-    for (const PlaceElem &E : P.Proj) {
+    for (const PlaceElem &E : counted(Steps, P.Proj)) {
       const Type *Next = step(Cur, E);
       if (!Next)
         return false;
@@ -507,6 +582,14 @@ private:
       break;
     case Constant::Zero:
       break;
+    case Constant::Global:
+      if (C.Bits >= M.Globals.size())
+        Bad = "global constant #" + num(C.Bits) + " names no global";
+      else if (!C.Ty->isPtr() || C.Ty->elem() != M.Globals[C.Bits].Ty)
+        Bad = "the address of global @" + M.Globals[C.Bits].Name +
+              " has type " + str(C.Ty) + ", it is a pointer to " +
+              str(M.Globals[C.Bits].Ty);
+      break;
     }
     if (Bad.empty())
       return true;
@@ -522,8 +605,11 @@ private:
     span(S.Loc);
     switch (S.K) {
     case Statement::Assign:
-      if (place(S.Dest))
+      if (place(S.Dest)) {
         assign(S.RV, S.Dest.Ty);
+        if (S.RV.K == Rvalue::Aggregate)
+          aggregateInPlace(S);
+      }
       return;
     case Statement::StorageLive:
     case Statement::StorageDead:
@@ -692,7 +778,7 @@ private:
     bool KindOk = false;
     switch (R.Agg) {
     case AggKind::Tuple:
-      KindOk = T->getKind() == Type::Kind::Tuple;
+      KindOk = T->getKind() == Type::Kind::Tuple || T->isOption();
       break;
     case AggKind::Array:
       KindOk = T->getKind() == Type::Kind::Array;
@@ -719,6 +805,7 @@ private:
       return;
     }
     for (unsigned I = 0; I < N; ++I) {
+      ++Steps;
       if (!operand(R.Ops[I]))
         continue;
       const Type *Want =
@@ -727,6 +814,25 @@ private:
         err("V055", "aggregate operand " + num(I) + " has type " +
                         str(R.Ops[I].type()) + ", it needs " + str(Want));
     }
+  }
+
+  /// V057: the code generator builds an aggregate in its destination, one
+  /// operand after the other, so the destination is a place of the frame (no
+  /// Deref: another pointer may alias it) and no operand reads its local
+  /// (`x = Agg(x.1, x.0)` would read a half-built x; the builder goes through
+  /// a temporary, whose address is never taken).
+  void aggregateInPlace(const Statement &S) {
+    for (const PlaceElem &E : counted(Steps, S.Dest.Proj))
+      if (E.K == PlaceElem::Deref) {
+        err("V057", "an aggregate is built through a pointer");
+        return;
+      }
+    for (const Operand &Op : counted(Steps, S.RV.Ops))
+      if (Op.K != Operand::Const && Op.P.Local == S.Dest.Local) {
+        err("V057", "an aggregate operand reads _" + num(S.Dest.Local) +
+                        ", the local it is built in");
+        return;
+      }
   }
 
   /// V056: `len` is of a string, a slice or an array and gives u64.
@@ -789,7 +895,7 @@ private:
     }
     unsigned Bits = D->isBool() ? 1 : D->bits();
     llvm::SmallDenseSet<uint64_t, 8> Seen;
-    for (const SwitchCase &C : T.Cases) {
+    for (const SwitchCase &C : counted(Steps, T.Cases)) {
       if (Bits < 64 && (C.Value >> Bits) != 0)
         err("V027", "switch case " + num(C.Value) + " does not fit " + str(D));
       if (!Seen.insert(C.Value).second)
@@ -797,15 +903,39 @@ private:
     }
   }
 
-  /// V060: an assert is on a bool.
+  /// V060: an assert is on a bool. V065: its Args are the values its
+  /// message shows: a Bounds assert has two integers (the index, as an i64 or
+  /// a u64, then the length as a u64), every other kind has none.
   void assertOn(const Terminator &T) {
     if (operand(T.Discr) && !T.Discr.type()->isBool())
       err("V060", "an assert on " + str(T.Discr.type()));
+    size_t Want = T.AK == AssertKind::Bounds ? 2 : 0;
+    if (T.Args.size() != Want) {
+      err("V065", std::string("a ") + getAssertKindName(T.AK) + " assert has " +
+                      num(T.Args.size()) + " values, it needs " + num(Want));
+      return;
+    }
+    for (const Operand &A : counted(Steps, T.Args))
+      if (operand(A) && !A.type()->isInt())
+        err("V065", "an assert value of type " + str(A.type()));
+    if (Want == 2 && T.Args[0].type()->isInt() &&
+        T.Args[0].type()->bits() != 64)
+      err("V065", "the index of a bounds assert is an i64 or a u64, not " +
+                      str(T.Args[0].type()));
+    if (Want == 2 && T.Args[1].type()->isInt() &&
+        (T.Args[1].type()->bits() != 64 || T.Args[1].type()->isSigned()))
+      err("V065", "the length of a bounds assert is a u64, not " +
+                      str(T.Args[1].type()));
   }
 
   /// V061: the callee is a value of a function type. V062: the arguments
   /// match its parameters in number and type. V063: the result goes to a
-  /// place of its result type.
+  /// place of its result type. V066: an aggregate result is written by the
+  /// callee through a hidden pointer to the destination while the call runs,
+  /// so the destination is a place of the frame (no Deref: another pointer
+  /// may alias it) in a temporary whose address is never taken (nothing else
+  /// reads it half written or holds it across the call; the builder calls
+  /// into a fresh temporary).
   void call(const Terminator &T) {
     if (!operand(T.Discr))
       return;
@@ -819,7 +949,7 @@ private:
       err("V062", "the call passes " + num(T.Args.size()) +
                       " arguments, the callee takes " + num(Ps.size()));
     } else {
-      for (size_t I = 0; I < Ps.size(); ++I)
+      for (size_t I = 0; I < Ps.size(); ++I, ++Steps)
         if (operand(T.Args[I]) && T.Args[I].type() != Ps[I])
           err("V062", "argument " + num(I) + " has type " +
                           str(T.Args[I].type()) + ", the parameter is " +
@@ -828,6 +958,36 @@ private:
     if (place(T.Dest) && T.Dest.Ty != CT->ret())
       err("V063", "the call's result is " + str(CT->ret()) +
                       ", its destination " + str(T.Dest.Ty));
+    else if (place(T.Dest) && isAggregateType(T.Dest.Ty))
+      hiddenResult(T.Dest);
+  }
+
+  static bool isAggregateType(const Type *T) {
+    switch (T->getKind()) {
+    case Type::Kind::String:
+    case Type::Kind::Slice:
+    case Type::Kind::Array:
+    case Type::Kind::Tuple:
+    case Type::Kind::Struct:
+    case Type::Kind::Option:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  void hiddenResult(const Place &D) {
+    for (const PlaceElem &E : counted(Steps, D.Proj))
+      if (E.K == PlaceElem::Deref) {
+        err("V066", "an aggregate call result is written through a pointer");
+        return;
+      }
+    if (F->Locals[D.Local].K != Local::Temp)
+      err("V066", "an aggregate call result goes to _" + num(D.Local) +
+                      ", which is not a temporary");
+    else if (AddrTaken.count(D.Local))
+      err("V066", "an aggregate call result goes to _" + num(D.Local) +
+                      ", whose address is taken");
   }
 
   /// V064: a drop is of a place that holds a value.

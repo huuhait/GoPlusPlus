@@ -131,7 +131,7 @@ TEST(CodeGen, BothTargetsGetTheSameGIR) {
     ASSERT_FALSE(static_cast<bool>(E)) << toString(std::move(E));
     // The call to the C function and the entry point are in the assembly.
     EXPECT_NE(Asm.find("write"), std::string::npos) << Name;
-    EXPECT_NE(Asm.find("main.main"), std::string::npos) << Name;
+    EXPECT_NE(Asm.find("_GPF4mainE4main"), std::string::npos) << Name;
     EXPECT_NE(Asm.find(std::string(Name) == "linux/amd64" ? "callq" : "bl\t"),
               std::string::npos)
         << Name << "\n"
@@ -371,7 +371,7 @@ TEST(CodeGen, EveryRvalueAndTerminatorLowers) {
   B.temp(B.len(S));
   B.temp(B.len(B.local(Ar)));
   BlockId Two = B.newBlock(), Other = B.newBlock(), Dead = B.newBlock();
-  B.assertThat(copyOf(Lt), true, AssertKind::Bounds);
+  B.assertThat(copyOf(Lt), true, AssertKind::Overflow);
   B.call(constFunc(M, Callee),
          {copyOf(B.field(B.local(Pr), 0)), copyOf(B.field(B.local(Pr), 1))},
          B.local(0), {UnwindAction::Unreachable, NoId});
@@ -399,7 +399,7 @@ TEST(CodeGen, EveryRvalueAndTerminatorLowers) {
                            "fptrunc",
                            "ptrtoint",
                            "inttoptr",
-                           "insertvalue",
+                           "getelementptr inbounds nuw %all.Pair",
                            "getelementptr inbounds",
                            "switch i64",
                            "@llvm.trap",
@@ -568,6 +568,72 @@ TEST(Linker, ArmNeedsACrtDirOnAnotherHost) {
   ASSERT_FALSE(static_cast<bool>(Missing));
   EXPECT_NE(toString(Missing.takeError()).find("/nonexistent-gopp-dir/crt1.o"),
             std::string::npos);
+}
+
+// P04.04 (ADR-0028 rule 3.3): every check of one kind in a function jumps to
+// ONE panic block of that kind, which calls the runtime once; a second kind
+// gets a second block, and so does an index of the other signedness (its
+// message prints the number as it is); another function has its own. Both
+// sides: the blocks exist, each makes one call, and none is duplicated.
+TEST(CodeGen, OnePanicBlockPerKindPerFunction) {
+  gir::Context GC;
+  auto GM = lowerSource(
+      GC, "package main\n"
+          "var a [4]int\nvar z, i, j, k = 3, 1, 2, 3\nvar u uint = 1\n"
+          "func two(x, y int) int {\n"
+          "\treturn x/y + x%y + x/z + a[i] + a[j] + a[k]\n}\n"
+          "func signs(x int) int { return a[i] + a[u] + a[x] + a[u+1] }\n"
+          "func div(x, y int) int { return x / y }\n"
+          "func plain(x, y int) int { return x + y }\n"
+          "func main() {\n"
+          "\tprintln(two(1, 2), signs(0), div(4, 2), plain(1, 2))\n}\n");
+  ASSERT_NE(GM, nullptr);
+  auto T = parseTarget("linux/amd64");
+  auto TM = createTargetMachine(*T);
+  ASSERT_TRUE(static_cast<bool>(TM));
+  llvm::LLVMContext LC;
+  auto LM = lowerToLLVM(LC, *GM, **TM);
+  ASSERT_TRUE(static_cast<bool>(LM)) << toString(LM.takeError());
+  // The panic blocks of the function whose symbol contains Fn: the runtime
+  // function each calls, and how many calls it makes.
+  auto panics = [&](const char *Fn) {
+    std::map<std::string, unsigned> Callees;
+    llvm::Function *F = nullptr;
+    for (llvm::Function &G : **LM)
+      if (G.getName().contains(Fn))
+        F = &G;
+    EXPECT_NE(F, nullptr) << Fn;
+    if (!F)
+      return Callees;
+    for (llvm::BasicBlock &BB : *F) {
+      if (!BB.getName().starts_with("panic"))
+        continue;
+      unsigned Calls = 0;
+      for (llvm::Instruction &In : BB)
+        if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&In)) {
+          ++Calls;
+          ++Callees[CI->getCalledFunction()->getName().str()];
+        }
+      EXPECT_EQ(Calls, 1u) << Fn << " " << BB.getName().str();
+    }
+    return Callees;
+  };
+  // two: the divide kind (three checks: /, %, /) has one block; the index
+  // kind (three signed indexes) one more.
+  auto Two = panics("F4mainE3two");
+  EXPECT_EQ(Two.size(), 2u);
+  for (auto &KV : Two)
+    EXPECT_EQ(KV.second, 1u) << KV.first;
+  // signs: signed and unsigned indexes print differently: two blocks, each
+  // reached by two checks.
+  auto Signs = panics("F4mainE5signs");
+  EXPECT_EQ(Signs.size(), 2u);
+  for (auto &KV : Signs)
+    EXPECT_EQ(KV.second, 1u) << KV.first;
+  // div: one kind, one block. plain: none.
+  auto Div = panics("F4mainE3div");
+  EXPECT_EQ(Div.size(), 1u);
+  EXPECT_TRUE(panics("F4mainE5plain").empty());
 }
 
 } // namespace

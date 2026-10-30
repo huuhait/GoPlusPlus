@@ -1,0 +1,16 @@
+package main
+
+var a [5]int
+
+func n(x int) int { return x }
+
+func two() (int, int) {
+	println("two called")
+	return 1, 2
+}
+
+func main() {
+	println("before")
+	a[n(5)], a[n(0)] = two()
+	println("not reached")
+}

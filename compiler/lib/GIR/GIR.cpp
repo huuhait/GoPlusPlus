@@ -146,6 +146,18 @@ FuncId Module::lookupFunction(llvm::StringRef Name) const {
   return It == FuncIds.end() ? NoId : It->second;
 }
 
+uint32_t Module::addGlobal(Global G) {
+  uint32_t Id = Globals.size();
+  GlobalIds[G.Name] = Id;
+  Globals.push_back(std::move(G));
+  return Id;
+}
+
+uint32_t Module::lookupGlobal(llvm::StringRef Name) const {
+  auto It = GlobalIds.find(Name);
+  return It == GlobalIds.end() ? NoId : It->second;
+}
+
 Operand gir::copyOf(Place P) {
   Operand O;
   O.K = Operand::Copy;
@@ -206,5 +218,14 @@ Operand gir::constFunc(const Module &M, FuncId F) {
   O.C.K = Constant::Func;
   O.C.Ty = M.func(F).Sig;
   O.C.Bits = F;
+  return O;
+}
+
+Operand gir::constGlobal(Module &M, uint32_t G) {
+  Operand O;
+  O.K = Operand::Const;
+  O.C.K = Constant::Global;
+  O.C.Ty = M.Ctx.ptr(M.Globals[G].Ty);
+  O.C.Bits = G;
   return O;
 }

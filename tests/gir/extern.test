@@ -33,7 +33,7 @@ func main() {
 // CHECK: declare fn abs(_1: i32) -> i32 [c, external, nounwind]
 // CHECK: declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
 // CHECK: declare fn isatty(_1: i32) -> bool [c, external, nounwind]
-// CHECK-LABEL: fn main.main() -> () [go, external]
+// CHECK-LABEL: fn _GPF4mainE4main() -> () [go, external]
 // CHECK: call const fn @abs(const -3: i32) -> [return: bb1, unwind: unreachable]
 // CHECK: call const fn @getpid() -> [return: bb2, unwind: unreachable]
 // The program's own `write` is the one println calls: there is no second.

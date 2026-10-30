@@ -23,6 +23,8 @@
 
 #include "gopp/Mangle/SymbolName.h"
 
+#include "gopp/Basic/WorkCount.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -34,6 +36,10 @@
 using namespace gopp;
 using namespace gopp::sym;
 using llvm::StringRef;
+
+/// Test-only work counters (M8), per thread.
+static thread_local WorkCounts Counts;
+WorkCounts sym::workCounts() { return Counts; }
 
 //===----------------------------------------------------------------------===//
 // The table of kinds
@@ -243,6 +249,7 @@ void appendIdent(std::string &Out, StringRef Name) {
   std::string Enc;
   Enc.reserve(Name.size());
   for (size_t I = 0; I < Name.size();) {
+    ++Counts.MangleSteps;
     unsigned char C = Name[I];
     if (isPlain(C, I == 0)) {
       Enc.push_back(static_cast<char>(C));
@@ -276,6 +283,7 @@ void appendIdent(std::string &Out, StringRef Name) {
 void appendPath(std::string &Out, StringRef Path) {
   size_t Start = 0;
   for (;;) {
+    ++Counts.MangleSteps;
     size_t Slash = Path.find('/', Start);
     if (Slash == StringRef::npos) {
       appendIdent(Out, Path.substr(Start));
@@ -538,7 +546,7 @@ static void profileOf(llvm::FoldingSetNodeID &ID, Kind K, char Sub,
   ID.AddString(B);
   ID.AddString(C);
   ID.AddInteger(Kids.size());
-  for (const Node *Kid : Kids)
+  for (const Node *Kid : counted(Counts.NodeSteps, Kids))
     ID.AddInteger(Kid->Id);
 }
 
@@ -583,7 +591,7 @@ const Node *Context::make(Kind K, llvm::ArrayRef<const Node *> Kids, char Sub,
   constexpr uint64_t Cap = uint64_t(1) << 48;
   uint64_t Size =
       prefixOf(K).size() + Scratch.size() + (info(K).Arity == Var ? 1 : 0);
-  for (const Node *Kid : Kids)
+  for (const Node *Kid : counted(Counts.NodeSteps, Kids))
     Size = std::min(Cap, Size + Kid->Size);
   N->Size = Size;
   Set.InsertNode(N, Pos);
@@ -742,6 +750,7 @@ void emit(std::string &Out, const Node *Root) {
   Stack.push_back({Root});
   llvm::DenseMap<uint32_t, size_t> First;
   while (!Stack.empty()) {
+    ++Counts.MangleSteps;
     const Node *N = Stack.pop_back_val().N;
     if (!N) {
       Out.push_back('E');
@@ -760,7 +769,7 @@ void emit(std::string &Out, const Node *Root) {
     writeHeader(*N, Out);
     if (info(N->K).Arity == Var)
       Stack.push_back({nullptr});
-    for (size_t I = N->Kids.size(); I-- > 0;)
+    for (size_t I = N->Kids.size(); I-- > 0; ++Counts.MangleSteps)
       Stack.push_back({N->Kids[I]});
   }
 }
@@ -877,6 +886,7 @@ bool kidOk(Kind Parent, size_t Idx, const Node *Kid) {
 /// Interface methods and unit dimensions are written in one order.
 bool orderedKids(Kind K, llvm::ArrayRef<const Node *> Kids) {
   for (size_t I = 1; I < Kids.size(); ++I) {
+    ++Counts.ParseSteps;
     const Node *X = Kids[I - 1], *Y = Kids[I];
     if (K == Kind::Interface) {
       if (X->A > Y->A || (X->A == Y->A && X->B > Y->B))
@@ -935,8 +945,10 @@ struct Parser {
 
   bool readDigits(StringRef &Digits) {
     size_t Start = Pos;
-    while (Pos < In.size() && In[Pos] >= '0' && In[Pos] <= '9')
+    while (Pos < In.size() && In[Pos] >= '0' && In[Pos] <= '9') {
+      ++Counts.ParseSteps;
       ++Pos;
+    }
     if (Pos == Start)
       return fail("a number is expected", Start);
     Digits = In.substr(Start, Pos - Start);
@@ -1018,6 +1030,7 @@ struct Parser {
     }
     StringRef Enc = In.substr(Pos, Len);
     for (size_t I = 0; I < Enc.size();) {
+      ++Counts.ParseSteps;
       unsigned char C = Enc[I];
       if (C != '$') {
         if (!isPlain(C, false))
@@ -1062,6 +1075,7 @@ struct Parser {
 
   bool readPath(std::string &Out) {
     for (bool First = true;; First = false) {
+      ++Counts.ParseSteps;
       if (Pos >= In.size())
         return fail("the text ends inside a package path");
       if (In[Pos] == 'E') {
@@ -1235,6 +1249,7 @@ struct Parser {
   /// close the parents it completes. False on a bad child.
   bool complete(const Node *N, size_t Start, bool Record) {
     for (;;) {
+      ++Counts.ParseSteps;
       if (Record && N->isType())
         ByOffset[Start] = N;
       Record = true;
@@ -1262,6 +1277,7 @@ struct Parser {
   const Node *run(size_t StartPos) {
     Pos = StartPos;
     while (!Done) {
+      ++Counts.ParseSteps;
       if (Pos >= In.size()) {
         fail("the text ends before the name is complete");
         return nullptr;
@@ -1357,8 +1373,10 @@ static const Node *parseImpl(Context &Ctx, StringRef Text, ParseError &Err,
     Err.Message = "not in the canonical form";
     Err.Pos = 0;
     size_t I = 0;
-    while (I < Again.size() && I < Text.size() && Again[I] == Text[I])
+    while (I < Again.size() && I < Text.size() && Again[I] == Text[I]) {
+      ++Counts.ParseSteps;
       ++I;
+    }
     Err.Pos = I;
     return nullptr;
   }
@@ -1407,12 +1425,19 @@ struct Printer {
 
   // Items are collected in reading order, then pushed in reverse.
   std::vector<Item> Pending;
-  void lit(StringRef S) { Pending.push_back({nullptr, S}); }
+  // Every piece of output is pushed here, so the printer's count is made at
+  // these three places (and in the loops over unit dimensions below).
+  void lit(StringRef S) {
+    ++Counts.PrintSteps;
+    Pending.push_back({nullptr, S});
+  }
   void node(const Node *N, unsigned M = Normal) {
+    ++Counts.PrintSteps;
     Pending.push_back({N, StringRef(), M});
   }
   std::deque<std::string> Owned;
   void dyn(std::string S) {
+    Counts.PrintSteps += 1 + S.size() / 16;
     Owned.push_back(std::move(S));
     Pending.push_back({nullptr, Owned.back()});
   }
@@ -1455,7 +1480,7 @@ struct Printer {
     };
     std::string Pos, Neg;
     unsigned NegCount = 0;
-    for (const Node *D : U->Kids) {
+    for (const Node *D : counted(Counts.PrintSteps, U->Kids)) {
       int64_t E = static_cast<int64_t>(D->Aux);
       if (E > 0) {
         if (!Pos.empty())
@@ -1463,7 +1488,7 @@ struct Printer {
         Pos += Term(D, static_cast<uint64_t>(E));
       }
     }
-    for (const Node *D : U->Kids) {
+    for (const Node *D : counted(Counts.PrintSteps, U->Kids)) {
       int64_t E = static_cast<int64_t>(D->Aux);
       if (E < 0) {
         if (!Neg.empty())
@@ -1766,6 +1791,7 @@ Printed sym::print(const Node *Root, size_t MaxOut) {
   Printer P(MaxOut);
   P.Stack.push_back({Root, StringRef()});
   while (!P.Stack.empty() && P.Ok) {
+    ++Counts.PrintSteps;
     Item It = P.Stack.back();
     P.Stack.pop_back();
     P.expand(It);

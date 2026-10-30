@@ -1,0 +1,16 @@
+package main
+
+var m [2][3]int
+
+func n(x int) int { return x }
+
+func f() int {
+	println("f called")
+	return 1
+}
+
+func main() {
+	println("before")
+	m[n(4)][n(7)] = f()
+	println("not reached")
+}

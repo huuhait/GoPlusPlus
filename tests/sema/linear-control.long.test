@@ -1,0 +1,9 @@
+// REQUIRES: long
+// P04.04 (review R19): the controls of the near-linear scripts. Each script,
+// given a program that is quadratic in N (Inputs/quadratic.py), must say it is
+// NOT near-linear (and exit 1); given the real shapes, they say yes. So a
+// change to the scripts that lets a quadratic walk pass fails here.
+// RUN: not %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.u --max-ratio 8 --control %S/Inputs/quadratic.py control 300 | FileCheck --check-prefix=UNITS %s
+// RUN: not %python %S/../gir/Inputs/check-gir-linear.py --gopp %gopp --gen %S/../gir/Inputs/gen-gir-stress.py --out %t.g --max-ratio 8 --emits gir --control %S/Inputs/quadratic.py control 300 | FileCheck --check-prefix=GIR %s
+// UNITS: control: near-linear NO
+// GIR: control/gir: near-linear NO

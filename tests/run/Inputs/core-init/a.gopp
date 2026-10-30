@@ -1,0 +1,24 @@
+package main
+
+// A depends on B, which depends on C: C, B, A run in that order, whatever
+// the order of the files and of the declarations.
+var A = trace("A", B+1)
+
+var X = trace("X", 1)
+
+func trace(name string, v int) int {
+	println("init var", name, v)
+	return v
+}
+
+func init() {
+	println("init a1", A, B, C)
+}
+
+func init() {
+	println("init a2")
+}
+
+func main() {
+	println("main", A, B, C, X, Y, D, E, total)
+}

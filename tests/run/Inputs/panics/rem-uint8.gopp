@@ -1,0 +1,10 @@
+package main
+
+var z uint8
+
+func main() {
+	println("before")
+	var x uint8 = 200
+	println(x % z)
+	println("not reached")
+}

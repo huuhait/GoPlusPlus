@@ -45,6 +45,11 @@ struct VerifyError {
 /// The broken rules of M, at most MaxErrors; empty if M is valid.
 std::vector<VerifyError> verify(const Module &M, unsigned MaxErrors = 20);
 
+/// Test-only (M8): the units (functions, blocks, statements, types, blocks
+/// reached) that verify has visited on this thread so far. A test checks that
+/// the count grows in step with the size of the input, not with the clock.
+uint64_t verifierSteps();
+
 /// verify, printing one "gir verifier: ..." line per error to OS; true if M
 /// is valid.
 bool verify(const Module &M, llvm::raw_ostream &OS);

@@ -1,0 +1,152 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags %s -o %t.exe
+// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-aggregates.out
+// P04.04: structs and arrays. Literals (positional, keyed, sparse, nested,
+// with `...`), copies that really copy, == and != (floats compare by value
+// so NaN differs from itself and -0 equals 0; blank fields are skipped),
+// zero-size types, len and cap, arrays of structs, structs of arrays, and
+// big values that need memcpy. The expected output is `go run` of this text
+// (Inputs/regen-goldens.py).
+package main
+
+type Point struct{ X, Y int }
+
+type Seg struct {
+	A, B Point
+	Tag  uint8
+}
+
+type Grid [3][3]int8
+
+type Mixed struct {
+	flag bool
+	n    int64
+	f    float32
+	c    complex64
+	arr  [2]Point
+	_    int
+}
+
+type Empty struct{}
+
+type WithEmpty struct {
+	a int16
+	e Empty
+	b int16
+	z [0]int64
+}
+
+type Floaty struct {
+	f float64
+	g float32
+}
+
+var global = Seg{Point{1, 2}, Point{3, 4}, 7}
+var table = [...]Point{{1, 2}, {3, 4}, {5, 6}}
+var sparse = [6]int{1: 10, 3: 30, 5: 50}
+var named = Point{Y: 9}
+
+func main() {
+	// Literals.
+	p := Point{3, 4}
+	q := Point{Y: 7}
+	r := Point{}
+	println(p.X, p.Y, q.X, q.Y, r.X, r.Y)
+	s := Seg{A: p, B: Point{X: 1}}
+	println(s.A.X, s.A.Y, s.B.X, s.B.Y, s.Tag == 0)
+	println(global.A.X, global.B.Y, table[2].Y, len(table), sparse[3], sparse[2], sparse[5], len(sparse), named.Y)
+	arr := [...]int{5, 6, 7}
+	idx := [...]int{2: 20, 4: 40}
+	println(len(arr), len(idx), cap(arr), idx[0], idx[2], idx[3], idx[4])
+	nested := [2][3]int{{1, 2, 3}, {4, 5, 6}}
+	println(nested[1][2], nested[0][1], len(nested), len(nested[0]))
+	var g Grid
+	g[1][1] = 5
+	g[2][0] = -3
+	println(g[1][1], g[2][0], g[0][0], len(g), len(g[0]))
+	// Copies copy.
+	p2 := p
+	p2.X = 99
+	println(p.X, p2.X)
+	s2 := s
+	s2.A.X = 42
+	s2.B = Point{8, 8}
+	println(s.A.X, s2.A.X, s.B.X, s2.B.X)
+	arr2 := arr
+	arr2[0] = 50
+	println(arr[0], arr2[0])
+	nested2 := nested
+	nested2[1][1] = 55
+	println(nested[1][1], nested2[1][1])
+	g2 := g
+	g2[1][1] = 6
+	println(g[1][1], g2[1][1])
+	// Assigning a value to itself, and to an element of the same array.
+	arr = arr
+	pts := [3]Point{{1, 1}, {2, 2}, {3, 3}}
+	pts[0] = pts[2]
+	pts[1], pts[2] = pts[2], pts[1]
+	println(pts[0].X, pts[1].X, pts[2].X)
+	// Comparison.
+	println(p == Point{3, 4}, p != Point{3, 4}, p == q, s == s2, arr == arr2, nested == nested2)
+	println(g == g, g == g2, Seg{} == Seg{}, [0]int{} == [0]int{})
+	var m1, m2 Mixed
+	println(m1 == m2)
+	m2.arr[1].Y = 1
+	println(m1 == m2, m1 != m2)
+	m2 = m1
+	m2.c = complex(1, 0)
+	println(m1 == m2)
+	// Floats compare by value: NaN is not equal to itself, -0 equals 0.
+	var zero float64
+	nan := zero / zero
+	negz := -zero
+	f1 := Floaty{nan, 1}
+	f2 := Floaty{nan, 1}
+	println(f1 == f2, f1 != f2)
+	f3 := Floaty{negz, 1}
+	f4 := Floaty{zero, 1}
+	println(f3 == f4)
+	fa := [2]float64{nan, 1}
+	fb := fa
+	println(fa == fb, [2]float64{negz, 1} == [2]float64{zero, 1})
+	c1 := [1]complex128{complex(nan, 0)}
+	println(c1 == c1, [1]complex128{complex(1, 2)} == [1]complex128{complex(1, 2)})
+	// Zero-size values and types.
+	var e1, e2 Empty
+	we := WithEmpty{a: 1, b: 2}
+	we2 := we
+	we2.b = 3
+	println(e1 == e2, we == we2, we.a, we.b, we2.b)
+	var ea [4]Empty
+	println(len(ea), ea == ea)
+	var big [64]Point
+	for i := 0; i < len(big); i++ {
+		big[i] = Point{i, i * i}
+	}
+	big2 := big
+	big2[63].Y = 0
+	println(big[63].Y, big2[63].Y, big == big2, big[10] == big2[10])
+	// Arrays of arrays of structs.
+	var cube [2][2][2]Point
+	cube[1][0][1] = Point{4, 5}
+	cube2 := cube
+	cube2[1][0][1].X++
+	println(cube[1][0][1].X, cube2[1][0][1].X, cube == cube2)
+	// A struct value built from another's parts.
+	t := Point{p.Y, p.X}
+	p = Point{p.Y, p.X}
+	println(t.X, t.Y, p.X, p.Y)
+	p, q = q, p
+	println(p.X, p.Y, q.X, q.Y)
+	// An array element of a computed index, on both sides of the assignment.
+	for i := 0; i < 3; i++ {
+		pts[i].X = pts[(i+1)%3].X + 10
+	}
+	println(pts[0].X, pts[1].X, pts[2].X)
+	// A mix of everything.
+	m := Mixed{flag: true, n: -5, f: 1.5, c: complex(2, 3), arr: [2]Point{{1, 2}, {3, 4}}}
+	n := m
+	n.arr[0].X = 100
+	println(m.flag, m.n, m.f, m.c, m.arr[0].X, n.arr[0].X, m == n)
+}
