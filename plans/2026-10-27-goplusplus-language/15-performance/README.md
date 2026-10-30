@@ -45,7 +45,7 @@
 6. **PGO.**
    - `gopp build -pgo=<profile>` accepts instrumented or sampled (perf) profiles.
    - A `default.pgo` in the main package is used automatically, as in Go.
-7. **Allocator.** Evaluate bundling mimalloc as the default (P15.10, Q2).
+7. **Allocator.** mimalloc is the global allocator (decided, ADR-0027; P15.10 only records benchmark numbers).
 8. **Struct layout.** C compatibility rules out automatic field reordering. `gopp vet` suggests orderings that save padding (task P15.13).
 
 **D15.4 — Perf CI.**
@@ -83,4 +83,4 @@
   - *Option C:* B plus raw `simd/x86` and `simd/arm` intrinsics packages.
   - *Comparison:* C++ has intrinsics, Highway and `std::simd`; Rust has `std::arch` and a nightly `std::simd`; Zig has `@Vector`; Go has none.
   - *Owner's recommendation note:* B now, with C later.
-- **Q2** Should mimalloc be the default allocator (from P05 Q2)? Task P15.10 evaluates it (D15.3 item 7).
+- **Q2** (decided 2026-10-29) mimalloc is the global allocator (ADR-0027, from P05 Q2). Task P15.10 only records benchmark numbers (D15.3 item 7).

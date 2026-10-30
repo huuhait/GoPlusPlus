@@ -7,11 +7,11 @@
 
 **D5.1 — The runtime is Go++ (with `unsafe`) plus small C/assembly pieces, and it links against libc.**
 - Writing the runtime in Go++ dogfoods the language and lets the runtime inline through GIR.
-- It calls libc (glibc, musl, libSystem, UCRT) rather than making raw syscalls the way Go does. C/C++ interop requires sharing `malloc`, threads, TLS and stdio with the imported libraries.
+- It calls libc (glibc, musl, libSystem, UCRT) rather than making raw syscalls the way Go does. C/C++ interop requires sharing threads, TLS and stdio with the imported libraries. Allocation is not shared: Go++ uses mimalloc and C keeps libc `malloc` (D5.2, ADR-0027).
 
 **D5.2 — Allocation API.**
 - `mem.Allocator` provides alloc, resize and free, each taking a size and an alignment.
-- In v0 the default global allocator is libc `malloc`/`realloc`/`free`. Bundling mimalloc as the default is evaluated in P15.10.
+- The default global allocator is mimalloc, and for now the only one (ADR-0027). C and C++ code keeps its own `malloc`; memory is freed by the allocator that made it.
 - `new_unique`, `new_shared`, `make`, and string and slice growth all use the default allocator. Per-container allocators depend on P01 Q4.
 
 **D5.3 — Arenas.**
@@ -141,5 +141,5 @@ P13's full packages replace them later.
 ## Open questions
 
 - **Q1** (decided 2026-10-27) Arenas with destructors: support both. `mem.Arena` stays `Copy`-only; `mem.DropArena` records drops and runs them on `Free`/`Reset` (D5.3, P05.17).
-- **Q2** (deferred to P15 Q2) mimalloc as the default allocator (P15.10)?
+- **Q2** (decided 2026-10-29) mimalloc is the global allocator, the only one for now (ADR-0027).
 - **Q3** (decided 2026-10-27) Package-level variables are never destroyed at exit, not even as an opt-in (P01 D1.18).

@@ -118,6 +118,8 @@ go func() { n.Add(1) }()     // ok
 
 **UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` or `mem.DropArena` while a value allocated in it is still used later is a compile error: a value from an arena borrows the arena ([OWN-B1, B2](04-ownership.md#45-borrow-checking-adr-0021), [SLC-3](08-slices-and-range.md), P05 D5.3). Fix: finish with the value before `Reset`, or copy it out to the normal heap with an explicit copy-out function (illustrative `mem.CloneTo[User](u, mem.Heap)`; `Clone` does not help, a clone stays in the arena, SLC-3). *Residue (still UB):* arena memory reached through `unsafe` or from C.
 
+**UB-5a.** *Mixed allocators.* Freeing memory with an allocator other than the one that made it: a Go++ (mimalloc) pointer passed to C `free` or `realloc`, a C-owned pointer that a Go++ drop frees (for example a `ffi.CString` buffer after `.Release()`, which is then C's to free), or a C++ `new` object freed with `free`. UB ([ADR-0027](../adr/0027-mimalloc-global-allocator.md) rule 4a). Go++ never adopts memory that C returns, and `ffi.CString(...).Release()` buffers come from C `malloc` for this reason. Not detected by default; the allocator test hook (P05.03) detects it in non-ASan builds. In ASan builds both sides use the sanitizer heap, so the mismatch is invisible there and the code stays wrong.
+
 **UB-6.** *`@NoBounds`.* An out-of-range index in a function (or package) with bounds checks turned off.
 
 UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding). The owner confirmed in P01.15 that they stay listed as undefined behavior.

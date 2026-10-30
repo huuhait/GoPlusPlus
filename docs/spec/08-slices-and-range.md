@@ -10,7 +10,7 @@ Syntax: one change, the `&` mark in the range clause ([8.3](#83-range-loops-d121
 
 **SLC-1.** An owned `[]T` is 4 words: pointer, length, capacity, allocator. A map header also stores its allocator. A view (`View[[]T]`, `View[string]`) and a borrowed `[]T` made by slicing are 2 words.
 
-**SLC-2.** A **nil allocator means the global allocator**, so zero values stay valid. `make`, `append`, literals and conversions use the global allocator unless told otherwise. This nil is the hidden allocator word of the slice or map header, which Go++ code never sees. In Go++ code an allocator is a `mem.Allocator`, an interface with methods, so it is never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an allocator parameter or field that may be absent is written `Option[mem.Allocator]`, nil meaning the global allocator.
+**SLC-2.** A **nil allocator means the global allocator**, so zero values stay valid. `make`, `append`, literals and conversions use the global allocator unless told otherwise; the global allocator is mimalloc ([ADR-0027](../adr/0027-mimalloc-global-allocator.md)). This nil is the hidden allocator word of the slice or map header, which Go++ code never sees. In Go++ code an allocator is a `mem.Allocator`, an interface with methods, so it is never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an allocator parameter or field that may be absent is written `Option[mem.Allocator]`, nil meaning the global allocator.
 
 **SLC-3.** Functions in package `mem` create a slice or map in another allocator, such as a `mem.Arena` (P05 D5.3). Growth (`append`), `Clone` and drop use the value's **own** allocator. A clone stays in the same allocator.
 

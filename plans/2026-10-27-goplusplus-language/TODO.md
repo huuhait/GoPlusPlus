@@ -13,6 +13,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - Python 3 + lit;
   - Go 1.25 (for differential tests);
   - GoogleTest;
+  - the mimalloc source, pinned as a flake input or a vendored release (ADR-0027); the runtime build compiles it for each target, since cross targets (P07.14 arm64, musl) can't link nixpkgs' host library;
   - an optional shell with an assertions-enabled LLVM (D0.4);
   - a committed `flake.lock`, and an optional `.envrc` for direnv.
 
@@ -270,14 +271,20 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
 ## P05 — Runtime and memory ([README](05-runtime-and-memory/README.md))
 
-- **P05.01 Runtime skeleton**: Go++ + C sources, a per-target static archive in the cache, also loadable by the JIT test runner (P04.19). *Done when:* it is linked into every binary.
+- **P05.01 Runtime skeleton**: Go++ + C sources, a per-target static archive in the cache, also loadable by the JIT test runner (P04.19). The runtime build compiles the pinned mimalloc for each target and links it statically (ADR-0027). *Done when:* it is linked into every binary, and the mimalloc object is built for each target in the target matrix.
 - **P05.02 Startup & exit**:
   - args/env and init order;
   - the exit sequence (D1.18): stop goroutines (a no-op until P12.12), drop `main`'s locals, C `exit()`;
   - `os.Exit` and exit codes.
 
   *Done when:* tests pass.
-- **P05.03 Allocators**: `mem.Allocator`, the default libc allocator, `mem.Arena`, allocator objects stored in slices and maps (P01 D1.22), and `mem.Replace` (ADR-0016). *Unchecked:* an explicit copy-out function that copies an arena value to another allocator, for example the heap (illustrative `mem.CloneTo[T](v, mem.Heap)`; `Clone` stays in the value's own allocator, SLC-3), needed by the ADR-0021 fix for values from an arena; and the real names of the arena allocation functions used in spec 4.5 (illustrative `mem.NewIn[T](&arena)`). *Done when:* tests pass under ASan.
+- **P05.03 Allocators**: `mem.Allocator`, the mimalloc global allocator (ADR-0027), `mem.Arena`, allocator objects stored in slices and maps (P01 D1.22), and `mem.Replace` (ADR-0016). *Unchecked:* an explicit copy-out function that copies an arena value to another allocator, for example the heap (illustrative `mem.CloneTo[T](v, mem.Heap)`; `Clone` stays in the value's own allocator, SLC-3), needed by the ADR-0021 fix for values from an arena; and the real names of the arena allocation functions used in spec 4.5 (illustrative `mem.NewIn[T](&arena)`). *Done when:* tests pass under ASan, and (each with both sides):
+  - allocation routing: `new_unique`, `append` and string building raise the mimalloc stats counters, and an interposed libc `malloc` counter stays at zero for them; a direct C `malloc` raises the libc counter and not mimalloc's;
+  - a `mem.Arena` chunk is served by mimalloc;
+  - in the ASan build, ASan reports a use-after-free and a heap overflow on Go++ allocations (the sanitizer allocator is used);
+  - `nm` shows mimalloc symbols in the non-ASan binary and none in the ASan binary;
+  - mixed allocators, in the non-ASan build with an interposed C `free` test hook that checks `mi_is_in_heap_region(p)` and aborts: good cases (a `ffi.CString(...).Release()` buffer freed by C `free`; a C-returned pointer freed by its C API) do not abort, and the bad case (a `new_unique` pointer given to C `free`) aborts. In ASan builds both sides use the sanitizer heap, so this check does not apply there;
+  - there is no allocator flag (`gopp build` rejects one).
 - **P05.04 Owned strings**: literals (cap 0), NUL-terminated buffers (capacity len+1), concatenation, conversions, UTF-8 helpers. *Done when:* tests and microbenchmarks pass.
 - **P05.05 Slices**: growth policy, append/copy/clear, element drops, in-place re-slicing (D1.20), the allocator word (D1.22). *Done when:* tests pass, and the append benchmark against `std::vector::push_back` is recorded.
 - **P05.06 Maps**: Swiss table, seeded hashing, randomized iteration start, drops, view-key lookups, the active-iterator count (a new-key insert during `range` always panics, D1.21), the allocator in the header (D1.22), a nil map that is an empty map whose first write creates it in place when the map is in a place (variable, field, element, `&` alias, borrowed parameter or range variable, including a map field inside a borrowed struct; not a type-switch or assertion binding, whose box is shared and immutable, so that map is read-only (P03.19); ADR-0018 amendment point 5; P04 lowers every map write with the address of the owning map header), an absent outer key in `mm[k1][k2] = v` is inserted with a new inner map (an insert, so the active-iterator rule applies), and there is no nil-map panic (writes into a temporary map or a map inside an interface are compile errors, P03.19), and `Option[T]` keys (one fixed hash when nil, `T`'s hash when set, flag and padding not hashed; ADR-0018 amendment point 1, D5.4). *Done when:* tests pass, including a `map[Option[string]]int` with a nil key and set keys, `var m map[string]int; m["a"] = 1`, a write into a nil map passed as a borrowed parameter that the caller then sees, `mm["a"]["b"] = 1` on an empty `map[string]map[string]int`, a `range mm` that panics on that insert, and the benchmark against absl::flat_hash_map is recorded.
@@ -360,9 +367,10 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - variadic rules;
   - `std::string_view` mapping;
   - `ffi.String`, `ffi.CString`;
-  - the vet list of pointer-keeping functions.
+  - the vet list of pointer-keeping functions;
+  - malloc-style helpers for buffers that C will free or realloc (names set here; ADR-0027 rule 4a).
 
-  *Done when:* tests pass, including zlib `crc32` over empty chunks.
+  *Done when:* tests pass, including zlib `crc32` over empty chunks; and (both sides, non-ASan build, with the P05.03 `free` test hook) a `ffi.CString(...).Release()` buffer and a helper buffer freed by C `free` do not abort, while a Go++ `new_unique` pointer passed to C `free` aborts.
 - **P07.08 Callbacks**:
   - Go++ functions passed as C function pointers (`ffi.Func[...]`), qsort;
   - a panic in a callback exits with code 2 by default, and `@Unwind` opts in to unwinding through C.
@@ -559,7 +567,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P15.07 Cross-package inlining**: via export data. *Done when:* ≥ 5% geomean gain on the suite, or an ADR explains the gap.
 - **P15.08 ThinLTO including cdeps**. *Done when:* the matrix builds with ThinLTO, and the gains are recorded.
 - **P15.09 PGO**. *Done when:* ≥ 5% gain on the suite, or an ADR explains the gap.
-- **P15.10 Allocator evaluation**: mimalloc vs libc → ADR (Q2). *Done when:* the ADR is merged.
+- **P15.10 Allocator evaluation**: decided by ADR-0027 (mimalloc, the only global allocator). *Done when:* the `new_unique`, `append` and string-building benchmarks run multi-threaded on mimalloc, and their numbers are recorded in `15-performance/STATE.md`.
 - **P15.11 Binary size**: including the runtime line table. *Done when:* the D15.2 size target is met or an ADR documents the gap.
 - **P15.12 Targets review**. *Done when:* a report against D15.2 exists.
 - **P15.13 Padding hint**: `gopp vet` suggests a field order that wastes less padding. *Done when:* tests pass.

@@ -28,7 +28,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P05) · Design: [README.md](
 ## Open questions
 
 - [x] Q1 Arenas with destructors (decided: both, `mem.Arena` + `mem.DropArena`, D5.3)
-- [x] Q2 mimalloc as the default allocator: deferred to P15 (P15 Q2)
+- [x] Q2 mimalloc as the default allocator (decided 2026-10-29, ADR-0027)
 - [x] Q3 Package-level destructors at exit: decided, never (P01 D1.18)
 
 ## Exit criteria

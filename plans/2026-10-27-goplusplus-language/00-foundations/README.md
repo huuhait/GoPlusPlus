@@ -22,7 +22,7 @@
 **D0.3 — Build the compiler with CMake + Ninja.** This is LLVM's own ecosystem (`find_package(LLVM)`, `find_package(Clang)`). Add sccache (on automatically, 100 GB, shared by all worktrees; owner decision, ADR-0002), and link with mold or lld. Match the pinned LLVM build: take the RTTI flag from `llvm-config --has-rtti` (nixpkgs LLVM 21 has RTTI on) and build without exceptions.
 
 **D0.4 — The dev environment is a Nix flake.**
-- `flake.nix` pins the LLVM/Clang/LLD dev packages, CMake, Ninja, sccache, mold, Python 3 + lit, Go and GoogleTest. `flake.lock` is committed, so everyone gets the same tools.
+- `flake.nix` pins the LLVM/Clang/LLD dev packages, CMake, Ninja, sccache, mold, Python 3 + lit, Go, GoogleTest and mimalloc (the global allocator of Go++ programs, ADR-0027; its source is pinned as a flake input or a vendored release, and the runtime build compiles it for each target, because cross targets such as arm64 and musl cannot link nixpkgs' host library). `flake.lock` is committed, so everyone gets the same tools.
 - An optional `.envrc` (`use flake`) lets direnv load the shell on `cd`; editors pick it up too.
 - Scripts, CI and agents run commands as `nix develop -c <cmd>`.
 - An optional second dev shell has an **assertions-enabled** LLVM/Clang/LLD of the same major: a Release build with assertions on, never a Debug build (about 10× slower). Misuse of Clang's C++ API must fail loudly during development. A CI job uses it too (D0.7).

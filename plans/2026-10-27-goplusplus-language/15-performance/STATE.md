@@ -25,7 +25,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P15) · Design: [README.md](
 ## Open questions
 
 - [x] Q1 Small-string optimization for `string` (decided: no, ADR-0026)
-- [ ] Q2 mimalloc as the default allocator (task P15.10)
+- [x] Q2 mimalloc as the default allocator (decided 2026-10-29, ADR-0027)
 - [ ] Q3 SIMD: deferred by owner 2026-10-28 (no task; options A, B, C in the README; recommendation: B now, C later)
 
 ## Exit criteria

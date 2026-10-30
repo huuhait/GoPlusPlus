@@ -104,6 +104,10 @@ Several C types map to one Go++ type (on Linux, `long` and `long long` both beco
 - **What stays explicit.** Reading a string from C, and handing C a string it will keep, stay explicit, because a `char*` doesn't say how long it lives:
   - `ffi.String(p) View[string]` wraps a C string without copying; its lifetime is unchecked.
   - `ffi.CString(s)` returns an owned copy allocated with `malloc`, for C APIs that keep the pointer. It is freed on drop, or handed over to C with `.Release()`.
+- **Mixed allocators (ADR-0027 rule 4a).** Go++ allocates with mimalloc and C keeps libc `malloc`, so the side that allocated must free:
+  - Memory that C/C++ returns is a raw C pointer that Go++ does not own. Free it with the C API that made it (`free`, `sqlite3_free`, …). No Go++ owned type adopts it, and a Go++ drop never frees it. A future adopting API must copy into mimalloc.
+  - A buffer that C will `free()` or `realloc()` must come from C `malloc`: `ffi.CString(...).Release()` (the deliberate exception above: it uses `malloc` on purpose) or a malloc-style helper from P07.07. A mimalloc pointer passed to C `free`, or the reverse, is undefined behavior (UB-5a).
+  - A C++ `new` object is freed with C++ `delete` through the P08 bindings.
 
 **D7.8 — Callbacks and panics across C.**
 - Top-level Go++ functions, and function literals that capture nothing, pass directly where C expects a function pointer (type `ffi.Func[…]`) when their signatures are C-compatible.
