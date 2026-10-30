@@ -3,5 +3,3 @@
 // every new walk gets a generated stress test). N and 4N, ratio at most 12.
 // RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d siblings 5000
 // RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d blocks 5000
-// RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d calls 2000
-// RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d funcs 4000

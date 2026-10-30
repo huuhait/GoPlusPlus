@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P04.05 review R15: the control of core-stress-str-5.long.test (split so lit
+// runs both side by side): the timing check fails a lowering that emits GIR
+// for every pair of map-entry arguments (LowerOptions::PairwiseEntryArgs).
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='GIRStressLong.DISABLED_TheEntryArgumentTimingFailsAPairwiseEmission'

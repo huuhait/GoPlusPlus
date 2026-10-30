@@ -1,0 +1,7 @@
+// REQUIRES: long
+// P03.25: the timing check of units-stress-inst.long.test (split so lit runs
+// both side by side): the shape at N and at 4N, the larger run at most 12
+// times the smaller (a quadratic analysis takes 16 times).
+// smaller (a quadratic analysis takes 16 times; Inputs/check-units-linear.py).
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin inst 10000 | FileCheck --check-prefix=LIN-INST %s
+// LIN-INST: inst: near-linear yes

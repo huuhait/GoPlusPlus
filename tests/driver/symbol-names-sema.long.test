@@ -1,0 +1,4 @@
+// P04.17 (D4.13): the SemaSymbolsLong.* half of symbol-names.long.test (the
+// near-linear checks of five shapes of checker type; disabled in `check-unit`).
+// REQUIRES: long
+// RUN: timeout 120 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='SemaSymbolsLong.*'

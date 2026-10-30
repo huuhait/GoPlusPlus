@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P03.25 (R16): the one-expression form of units-stress-prod.long.test as a
+// timing check: 4N take at most 20 times N.
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin2 --max-ratio 20 prodexpr 200 | FileCheck --check-prefix=EXPR %s
+// EXPR: prodexpr: near-linear yes

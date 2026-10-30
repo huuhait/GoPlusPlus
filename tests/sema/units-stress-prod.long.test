@@ -8,7 +8,5 @@
 // 800 values took 8.5 s).
 // RUN: %python %S/Inputs/gen-units-stress.py prod 1600 > %t.prod.gopp
 // RUN: timeout 20 %gopp check %t.prod.gopp
-// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin --max-ratio 20 prod 400 | FileCheck --check-prefix=PROD %s
-// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin2 --max-ratio 20 prodexpr 200 | FileCheck --check-prefix=EXPR %s
-// PROD: prod: near-linear yes
-// EXPR: prodexpr: near-linear yes
+// The timing checks are units-stress-prod-lin and units-stress-prod-expr (split
+// so lit runs the three side by side: the ASan build must stay under 60 s).

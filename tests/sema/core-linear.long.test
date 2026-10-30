@@ -10,10 +10,9 @@
 // tagless one (duplicate cases are found by hashing), a struct of N fields
 // read and written by name, and keyed literals of it (StructType::ByName).
 // N = 10000 and 4N, best of two runs: 4N may take at most 8 times as long.
-// This is the first half (the chains and rings of 10000); core-linear-2.long
+// This is the first part (the chains and two rings of 10000); core-linear-3.long
+// has the mixed ring and the chain that ends in a ring; core-linear-2.long
 // has the other shapes and the two long rings, with the same script.
 // RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 initchain 10000
 // RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 constchain 10000
 // RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 cycle 10000
-// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 mixcycle 10000
-// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 cyctail 10000

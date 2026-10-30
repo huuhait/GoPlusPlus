@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P04.01: the second half of linear.long.test (split so lit runs both side by
+// side): N and 4N, ratio at most 12.
+// RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d calls 2000
+// RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d funcs 4000

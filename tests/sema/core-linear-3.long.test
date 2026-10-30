@@ -1,0 +1,7 @@
+// REQUIRES: long
+// P04.04 (manager decision M3): the mixed ring and the chain that ends in a
+// ring of core-linear.long.test, split off so lit runs them side by side (the
+// ASan build must stay under 60 s for all long tests). N = 10000 and 4N, 4N may
+// take at most 8 times as long.
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 mixcycle 10000
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 cyctail 10000

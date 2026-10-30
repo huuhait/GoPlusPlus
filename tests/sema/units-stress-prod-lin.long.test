@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P03.25 (R16): the statement form of units-stress-prod.long.test as a timing
+// check: 4N take at most 20 times N (cubic took 50 times).
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin --max-ratio 20 prod 400 | FileCheck --check-prefix=PROD %s
+// PROD: prod: near-linear yes

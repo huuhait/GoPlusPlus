@@ -1,8 +1,8 @@
-// Shard 1 of 4 of goroot.long.test (the same checks on the files whose
-// place in the sorted list is 1 modulo 4).
+// Shard 1 of 8 of goroot.long.test (the same checks on the files whose
+// place in the sorted list is 1 modulo 8).
 
 // REQUIRES: long
 // REQUIRES: go
 
-// RUN: %python %S/check-corpus.py %gopp --goroot --jobs 16 --min 1750 --shard 1/4
-// RUN: %python %S/compare-gofmt.py %gopp --goroot --jobs 16 --shard 1/4
+// RUN: %python %S/check-corpus.py %gopp --goroot --jobs 16 --min 870 --shard 1/8
+// RUN: %python %S/compare-gofmt.py %gopp --goroot --jobs 16 --shard 1/8

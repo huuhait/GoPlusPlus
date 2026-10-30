@@ -12,7 +12,7 @@ like type errors for gofmt, they do not stop formatting.
 | `roundtrip.test` | the ten spec examples, every valid parse/lex/sema test, the goldens: `parse(print(parse(src))) == parse(src)`, `fmt(fmt(x)) == fmt(x)`, no comment lost |
 | `header-imports.test` | header imports keep their order; groups without one are sorted |
 | `flags.test` | `-l`, `-w`, `-d`, stdin, directories, exit status 2 on syntax errors |
-| `goroot.long.test` (`REQUIRES: long, go`; `ninja check-long`) | the same round-trip checks and the gofmt comparison on `$(go env GOROOT)/src`, about 7350 files |
+| `goroot.long.test` (`REQUIRES: long, go`; `ninja check-long`) | the same round-trip checks and the gofmt comparison on `$(go env GOROOT)/src`, about 7350 files (eight shards, `goroot-1.long` to `goroot-7.long`) |
 | `../unit/Format/` | layout rules by example, import rules, the header rule hook, the fuzz corpus replay |
 
 `check-corpus.py` runs the round-trip checks on a list of files or directories.
