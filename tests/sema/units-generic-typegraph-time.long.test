@@ -1,0 +1,8 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-typegraph.py --gopp %gopp --out %t --seeds 0 --timing | FileCheck %s
+// P03.25 (GEN-14, UNI-2, R19): the time of a cycle of k generic types (k = 10,
+// 100, 1000, 4000), summarized one strongly connected set at a time, and of a
+// chain of 2000 and 8000 that also holds growing instances: near-linear, and
+// every one ends.
+// CHECK: cycle 10/100/1000/4000: near-linear yes
+// CHECK: chain 2000/8000: near-linear yes

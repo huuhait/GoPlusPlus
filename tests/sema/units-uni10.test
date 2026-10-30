@@ -1,0 +1,89 @@
+// RUN: %gopp check %s
+// P03.25 (UNI-10, UNI-15, GEN-14, M2): a unit type in generic code, accepted
+// side, for float64[M], int[KM], complex128[A] and a named Distance: the
+// operator elements it meets through its built-in operators (`+ (T) T`,
+// `- (T) T`, `- () T`, `+ () T`, `== (T) bool` with `!=`, `<=> (T) int` with
+// `<`, a scalar of the base kind `* (float64) T`, `/ (float64) T`, `* (int)
+// T` for an integer kind, `% (T) T` for an integer kind, the in-place forms
+// `+= (T)`, `-= (T)`, `*= (float64)`), and `comparable`, `Copy`, `Clone`,
+// `any`. The category labels: a unit value is sent on a channel, passed to
+// `go`, a map key; `View[float64[M]]` and a View of a struct with unit
+// fields are read (the write is rejected in units-generics-bad.test). (The
+// `Send` and `Sync` constraints are P04.21's; their labels for a number hold
+// for a unit type, OWN-C1.) The rejected side: units-generics-bad.test.
+package main
+
+unit M
+unit A
+unit KM = 1000 M
+
+type Distance float64[M]
+
+func Add[T interface{ + (T) T }](a, b T) T             { return a + b }
+func Sub[T interface{ - (T) T }](a, b T) T             { return a - b }
+func Neg[T interface{ - () T }](a T) T                 { return -a }
+func Pos[T interface{ + () T }](a T) T                 { return +a }
+func Eq[T interface{ == (T) bool }](a, b T) bool       { return a == b && a != b }
+func Ord[T interface{ <=> (T) int }](a, b T) bool      { return a < b }
+func MulS[T interface{ * (float64) T }](a T) T         { return a * 2 }
+func DivS[T interface{ / (float64) T }](a T) T         { return a / 2 }
+func MulI[T interface{ * (int) T }](a T) T             { return a * 2 }
+func AddTo[T interface{ += (T) }](p *T, q T)           { *p += q }
+func SubTo[T interface{ -= (T) }](p *T, q T)           { *p -= q }
+func MulTo[T interface{ *= (float64) }](p *T, k float64) { *p *= k }
+func Cmp[T comparable](a, b T) bool                    { return a == b }
+func Cp[T Copy](a T) T                                 { return a }
+func Cl[T Clone](a T) T                                { return a.Clone() }
+func An[T any](a T)                                    { _ = a }
+func Rem[T interface{ % (T) T }](a, b T) T             { return a % b }
+
+type Pos2 struct{ X, Y float64[M] }
+
+func readView(v View[Pos2]) float64[M] { return v.X }
+func readNum(v View[float64[M]]) float64[M] { return float64[M](v) }
+
+func main() {
+	var f float64[M] = 1.0[M]
+	var k int[KM] = 2[KM]
+	var c complex128[A] = 1i[A]
+	var d Distance = 3.0[M]
+	_ = Add(f, f)
+	_ = Add(k, k)
+	_ = Add(c, c)
+	_ = Add(d, d)
+	_ = Sub(f, f)
+	_ = Neg(k)
+	_ = Pos(c)
+	_ = Eq(d, d)
+	_ = Ord(f, f)
+	_ = Ord(k, k)
+	_ = Ord(d, d)
+	_ = MulS(f)
+	_ = MulS(d)
+	_ = DivS(f)
+	_ = MulI(k)
+	AddTo(&f, f)
+	AddTo(&k, k)
+	SubTo(&c, c)
+	AddTo(&d, d)
+	MulTo(&f, 2)
+	_ = Cmp(f, f)
+	_ = Cmp(c, c)
+	_ = Cp(k)
+	_ = Cp(d)
+	_ = Cl(f)
+	_ = Cl(c)
+	_ = Cl(d)
+	An(k)
+	_ = Rem(k, k)
+	ch := make(chan float64[M], 1)
+	ch <- f
+	g := <-ch
+	go func(x float64[M]) { _ = x }(g)
+	go readNum(f)
+	var p Pos2
+	_ = readView(p)
+	_ = readNum(f)
+	m := map[int[KM]]complex128[A]{k: c}
+	_ = m
+}

@@ -1,0 +1,21 @@
+// RUN: %python %S/Inputs/gen-units-collapse.py --gopp %gopp --out %t | FileCheck %s
+// P03.25 (GEN-14, UNI-5, R7 to R9, owner decision 2026-10-30): generic code
+// whose units cancel at an instance computes what plain code does, so no
+// instance is an error. The collapse sites are recorded (`unit-site`) and the
+// unit parameters whose units the code needs at run time (`unit-dict`) are
+// passed on by the GEN-12 use fixpoint, with no cap: a chain of 40 and of 200
+// generics written callers first (every one needs the units of the leaf's
+// `a / b`), a leaf with 4500 distinct unit types behind a caller, and a
+// generic of the main package that forwards to a second package, which calls
+// a generic of a third. Each shape with units that cancel with the factor 1000
+// and with units that agree, checked with 1 and 8 body threads (the same
+// errors and the same dump).
+// CHECK: chain40 cancel                     errors=0 dicts=40 sites=1 j1==j8:yes ok
+// CHECK-NEXT: chain40 agree                      errors=0 dicts=40 sites=1 j1==j8:yes ok
+// CHECK-NEXT: chain200 cancel                    errors=0 dicts=200 sites=1 j1==j8:yes ok
+// CHECK-NEXT: chain200 agree                     errors=0 dicts=200 sites=1 j1==j8:yes ok
+// CHECK-NEXT: uses4500 cancel                    errors=0 dicts=2 sites=1 j1==j8:yes ok
+// CHECK-NEXT: uses4500 agree                     errors=0 dicts=2 sites=1 j1==j8:yes ok
+// CHECK-NEXT: forwarder-package cancel           errors=0 dicts=1 sites=0 j1==j8:yes ok
+// CHECK-NEXT: forwarder-package agree            errors=0 dicts=1 sites=0 j1==j8:yes ok
+// CHECK-NOT: FAIL

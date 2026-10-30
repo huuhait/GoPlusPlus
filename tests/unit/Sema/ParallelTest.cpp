@@ -685,6 +685,89 @@ TEST(ParallelCheck, OperatorChecksDoNotDependOnTheThreadCount) {
   EXPECT_LT(Secs, 30.0) << "six checks of " << Types << " operator types";
 }
 
+TEST(ParallelCheck, UnitChecksDoNotDependOnTheThreadCount) {
+  // P03.25 (ported from c1): units shared between body threads: the interned
+  // forms, the display form of a unit type (the same canonical unit written
+  // as KM and K2 in different declarations: the fixed order prints K2), the
+  // forms of products and quotients that only bodies make, instances of a
+  // generic function with a unit parameter made by many bodies at once, and a
+  // planted error in every fifth body whose text prints a unit type. The
+  // diagnostics, the type dump (with the scale changes and the display forms
+  // of Info) and the export data may not depend on which thread asks first.
+  const unsigned Units = 30, Funcs = 120;
+  std::string Src =
+      "package uom\n\nunit M\nunit S\nunit KG\n"
+      "unit KM = 1000 M\nunit K2 = 1000 M\nunit H = 3600 S\n"
+      "unit N = KG*M/S^2\n"
+      "func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }\n"
+      "func Rate[U unit](d float64[U], t float64[S]) float64[U/S] {\n"
+      "\treturn d / t\n}\n"
+      "type Vec[U unit] struct{ X, Y float64[U] }\n"
+      "func (a Vec[U]) + (b Vec[U]) Vec[U] { return a }\n"
+      // GEN-14: collapse sites and the units passed on to them.
+      "func Ratio[U unit, V unit](a float64[U], b float64[V]) float64 {\n"
+      "\treturn float64(a / b)\n}\n"
+      "func Pass[P unit](a float64[P]) float64 { return Ratio(a, 1.0[M]) }\n";
+  for (unsigned I = 0; I < Units; ++I)
+    Src += "unit B" + std::to_string(I) + "\nunit D" + std::to_string(I) +
+           " = " + std::to_string(I + 2) + " B" + std::to_string(I) + "\n";
+  for (unsigned I = 0; I < Funcs; ++I) {
+    std::string N = std::to_string(I % Units);
+    Src += "func use" + std::to_string(I) +
+           "(d float64[KM], e float64[K2], t "
+           "float64[H], x float64[D" +
+           N +
+           "]) float64 {\n"
+           "\t_ = d + e\n\t_ = d / t\n\t_ = d * d\n\t_ = d / e\n"
+           "\t_ = Avg([]float64[D" +
+           N +
+           "]{x})\n"
+           "\t_ = Avg[B" +
+           N + "]([]float64[B" + N +
+           "]{})\n"
+           "\t_ = Rate(d, 2.0[S])\n"
+           "\tv := Vec[D" +
+           N +
+           "]{x, x}\n\t_ = v + v\n"
+           "\tvar f float64[N] = 2.0[KG] * 9.81[M/S^2]\n\t_ = f\n"
+           "\t_ = Ratio(d, x) + Pass(x) + gen" +
+           std::to_string(I) + "(d, x)\n";
+    if (I % 5 == 0)
+      Src += "\t_ = d + t\n\t_ = d + 1.0\n\tvar m float64[M] = d\n\t_ = m\n"
+             "\tvar q float64[KM/H] = d * t\n\t_ = q\n"
+             "\t_ = Avg([]float64{})\n\t_ = v + Vec[KM]{}\n";
+    Src += "\treturn float64(d)\n}\n";
+    // A generic per body whose units go on to Ratio and Pass.
+    Src += "func gen" + std::to_string(I) +
+           "[P unit, Q unit](a float64[P], b float64[Q]) float64 {\n"
+           "\treturn Ratio(a, b) + Pass(b * a)\n}\n";
+  }
+  Output Ref = run(Src, 1);
+  for (const char *Msg :
+       {"unit-dict Ratio: U V", "unit-dict Pass: P", "unit-dict gen7: P Q",
+        "unit-site `a / b` U/V = U / V"})
+    EXPECT_NE(Ref.Types.find(Msg), std::string::npos) << Msg;
+  for (const char *Msg :
+       {"cannot add K2 and H (different dimensions)", "a number without a unit",
+        "an assignment never rescales a value",
+        "cannot use d * t (value of type float64[H*K2]) as float64[K2/H]",
+        "cannot infer U"})
+    EXPECT_NE(Ref.Diags.find(Msg), std::string::npos)
+        << Msg << "\n"
+        << Ref.Diags.substr(0, 3000);
+  auto Start = std::chrono::steady_clock::now();
+  for (unsigned Threads : {2u, 8u, 16u}) {
+    Output O = run(Src, Threads);
+    ASSERT_EQ(O.Diags, Ref.Diags) << Threads << " threads";
+    ASSERT_EQ(O.Types, Ref.Types) << Threads << " threads";
+    ASSERT_EQ(O.Export, Ref.Export) << Threads << " threads";
+  }
+  auto Secs =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - Start)
+          .count();
+  EXPECT_LT(Secs, 30.0) << "three checks of " << Funcs << " unit bodies";
+}
+
 TEST(ParallelCheck, SmallPackagesStayOnTheCallingThread) {
   // MinBodiesPerThread keeps a tiny package serial; the result is the same.
   std::string Src = makeSource(3);
@@ -1034,6 +1117,7 @@ TEST(ParallelCheck, ConformanceCorpusGivesTheSameDiagnostics) {
     PO.AllowNamespaceTypes = false;
     PO.AllowExtends = false;
     PO.AllowOperators = false;
+    PO.AllowUnits = false;
     ast::File *AST = parseFile(AC, SM, *F, Diags, PO);
     TypeContext Ctx(true);
     UnsafeOnly Imp(Ctx);

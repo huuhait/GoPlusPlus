@@ -1,0 +1,21 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --sizes 80,200 | FileCheck %s
+// P03.25 (GEN-14, R10): the chains of units-generic-rearrange at 80 and 200
+// levels, every shape, with 1 and 8 body threads (the timing:
+// units-generic-linear.long).
+// CHECK: two plain n=80               errors=0 dicts=80 sites=80 j1==j8:yes ok
+// CHECK-NEXT: two cancel n=80              errors=0 dicts=81 sites=81 j1==j8:yes ok
+// CHECK-NEXT: twogrow plain n=80           errors=0 dicts=80 sites=160 j1==j8:yes ok
+// CHECK-NEXT: twogrow cancel n=80          errors=0 dicts=81 sites=161 j1==j8:yes ok
+// CHECK-NEXT: three plain n=80             errors=0 dicts=80 sites=160 j1==j8:yes ok
+// CHECK-NEXT: three cancel n=80            errors=0 dicts=81 sites=161 j1==j8:yes ok
+// CHECK-NEXT: straight plain n=80          errors=0 dicts=0 sites=0 j1==j8:yes ok
+// CHECK-NEXT: straight cancel n=80         errors=0 dicts=81 sites=1 j1==j8:yes ok
+// CHECK-NEXT: two plain n=200              errors=0 dicts=200 sites=200 j1==j8:yes ok
+// CHECK-NEXT: two cancel n=200             errors=0 dicts=201 sites=201 j1==j8:yes ok
+// CHECK-NEXT: twogrow plain n=200          errors=0 dicts=200 sites=400 j1==j8:yes ok
+// CHECK-NEXT: twogrow cancel n=200         errors=0 dicts=201 sites=401 j1==j8:yes ok
+// CHECK-NEXT: three plain n=200            errors=0 dicts=200 sites=400 j1==j8:yes ok
+// CHECK-NEXT: three cancel n=200           errors=0 dicts=201 sites=401 j1==j8:yes ok
+// CHECK-NEXT: straight plain n=200         errors=0 dicts=0 sites=0 j1==j8:yes ok
+// CHECK-NEXT: straight cancel n=200        errors=0 dicts=201 sites=1 j1==j8:yes ok

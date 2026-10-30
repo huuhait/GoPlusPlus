@@ -85,6 +85,28 @@ void ast::forEachChild(const Node *N, Visit Callback) {
   case Node::Kind::MacroParam:
   case Node::Kind::NumKinds:
     break;
+  case Node::Kind::UnitExpr: {
+    auto *E = cast<ast::UnitExpr>(N);
+    for (size_t I = 0; I < E->Terms.size(); ++I) {
+      const ast::UnitTerm &T = E->Terms[I];
+      F(T.Div ? "Div" : (I == 0 ? "Base" : "Mul"), T.Base);
+      F(T.NegPower ? "PowNeg" : "Pow", T.Power);
+    }
+    break;
+  }
+  case Node::Kind::UnitLit: {
+    auto *E = cast<ast::UnitLit>(N);
+    F("Lit", E->Lit);
+    F("Unit", E->Unit);
+    break;
+  }
+  case Node::Kind::UnitSpec: {
+    auto *S = cast<ast::UnitSpec>(N);
+    F("Name", S->Name);
+    F("Factor", S->Factor);
+    F("Unit", S->Unit);
+    break;
+  }
   case Node::Kind::CompositeLit: {
     auto *E = cast<CompositeLit>(N);
     F("Type", E->Type);
@@ -511,7 +533,10 @@ private:
     }
     case Node::Kind::GenDecl: {
       auto *D = cast<GenDecl>(N);
-      OS << ' ' << tok::getSpelling(D->Keyword);
+      if (D->IsUnit)
+        OS << " unit";
+      else
+        OS << ' ' << tok::getSpelling(D->Keyword);
       flag(D->Lparen.isValid(), "grouped");
       break;
     }

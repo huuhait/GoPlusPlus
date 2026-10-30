@@ -186,10 +186,12 @@ void Checker::checkBody(const BodyJob &J) {
     if (J.Recv)
       Named(J.Recv);
   }
+  MonoFn = J.F; // (GEN-14: a generic method's body, Mono.cpp)
   funcBody(J.D, J.F->Name, J.Sig, J.Decl->Body, nullptr, J.Sc, J.Params,
            J.Results, J.Recv, J.Decl->Type);
   BaseMethodOf.clear();
   processDelayed();
+  MonoFn = nullptr;
 }
 
 //===----------------------------------------------------------------------===//
@@ -372,6 +374,8 @@ void Checker::stmt(unsigned Ctx, const Stmt *S0) {
       err(ID->X, diag::err_inc_dec_non_numeric, {str(ID->X) + Op, str(X.Ty)});
       return;
     }
+    if (this->Ctx.unitsSeen() && !S.Opts.GoCompat && unitIncDec(ID, X))
+      return; // EXP-36 (out of line: this frame recurses, M4)
     assignVar(ID->X, nullptr, &X, "assignment");
     flowFlushKills();
     return;
@@ -748,11 +752,18 @@ void Checker::caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
         continue;
       }
     }
-    convertUntyped(V, X.Ty);
+    // EXP-34: the case value is compared like `tag == value`, so another
+    // scale of the same dimension is converted to the finer one (a scale
+    // change of the tag is kept under the case value: UnitConv::Tag).
+    Operand XX = X;
+    if (this->Ctx.unitsSeen() && !S.Opts.GoCompat &&
+        (unitOf(X.Ty) || unitOf(V.Ty)) &&
+        !unitMatch(XX, V, tok::eql, false, nullptr, V.E))
+      continue;
+    convertUntyped(V, XX.Ty);
     if (V.M == Mode::Invalid)
       continue;
     Operand Res = V;
-    Operand XX = X;
     bool Saved = SwitchCaseCmp;
     SwitchCaseCmp = true;
     comparison(Res, XX, tok::eql);

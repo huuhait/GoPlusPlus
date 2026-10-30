@@ -1,0 +1,9 @@
+package geo
+
+import "units"
+
+// A package that adds a unit of its own on top of another package's units.
+unit Mile = 1609.344 units.M
+unit Furlong = (1609344 / 8000) units.M
+
+func Len() float64[Mile] { return 1.0[Mile] }

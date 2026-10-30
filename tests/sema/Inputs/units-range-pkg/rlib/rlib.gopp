@@ -1,0 +1,13 @@
+package rlib
+
+unit M
+unit KM = 1000 M
+
+type T[U unit] struct{ F float64[U^1000] }
+type Al[U unit] = T[U]
+
+func Make[U unit](x float64[U]) T[U] {
+	var t T[U]
+	_ = x
+	return t
+}

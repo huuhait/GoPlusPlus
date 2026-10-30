@@ -1,0 +1,35 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --sizes 10,20,40 --others | FileCheck %s
+// P03.25 (GEN-14, R10): the chains of units-generic-rearrange, every shape
+// (two calls, two growing calls, three calls, straight), with and without a
+// leaf that cancels, at 10, 20 and 40 levels, with 1 and 8 body threads (the
+// same dump); and two chains that a search over instances could not finish (a
+// chain that encodes subset sum, a chain that squares its units past the
+// exponent range), accepted at once.
+// CHECK: two plain n=10               errors=0 dicts=10 sites=10 j1==j8:yes ok
+// CHECK-NEXT: two cancel n=10              errors=0 dicts=11 sites=11 j1==j8:yes ok
+// CHECK-NEXT: twogrow plain n=10           errors=0 dicts=10 sites=20 j1==j8:yes ok
+// CHECK-NEXT: twogrow cancel n=10          errors=0 dicts=11 sites=21 j1==j8:yes ok
+// CHECK-NEXT: three plain n=10             errors=0 dicts=10 sites=20 j1==j8:yes ok
+// CHECK-NEXT: three cancel n=10            errors=0 dicts=11 sites=21 j1==j8:yes ok
+// CHECK-NEXT: straight plain n=10          errors=0 dicts=0 sites=0 j1==j8:yes ok
+// CHECK-NEXT: straight cancel n=10         errors=0 dicts=11 sites=1 j1==j8:yes ok
+// CHECK-NEXT: two plain n=20               errors=0 dicts=20 sites=20 j1==j8:yes ok
+// CHECK-NEXT: two cancel n=20              errors=0 dicts=21 sites=21 j1==j8:yes ok
+// CHECK-NEXT: twogrow plain n=20           errors=0 dicts=20 sites=40 j1==j8:yes ok
+// CHECK-NEXT: twogrow cancel n=20          errors=0 dicts=21 sites=41 j1==j8:yes ok
+// CHECK-NEXT: three plain n=20             errors=0 dicts=20 sites=40 j1==j8:yes ok
+// CHECK-NEXT: three cancel n=20            errors=0 dicts=21 sites=41 j1==j8:yes ok
+// CHECK-NEXT: straight plain n=20          errors=0 dicts=0 sites=0 j1==j8:yes ok
+// CHECK-NEXT: straight cancel n=20         errors=0 dicts=21 sites=1 j1==j8:yes ok
+// CHECK-NEXT: two plain n=40               errors=0 dicts=40 sites=40 j1==j8:yes ok
+// CHECK-NEXT: two cancel n=40              errors=0 dicts=41 sites=41 j1==j8:yes ok
+// CHECK-NEXT: twogrow plain n=40           errors=0 dicts=40 sites=80 j1==j8:yes ok
+// CHECK-NEXT: twogrow cancel n=40          errors=0 dicts=41 sites=81 j1==j8:yes ok
+// CHECK-NEXT: three plain n=40             errors=0 dicts=40 sites=80 j1==j8:yes ok
+// CHECK-NEXT: three cancel n=40            errors=0 dicts=41 sites=81 j1==j8:yes ok
+// CHECK-NEXT: straight plain n=40          errors=0 dicts=0 sites=0 j1==j8:yes ok
+// CHECK-NEXT: straight cancel n=40         errors=0 dicts=41 sites=1 j1==j8:yes ok
+// CHECK-NEXT: subset n=24                  errors=0 dicts=25 sites=2 j1==j8:yes ok
+// CHECK-NEXT: squares KM,M n=22            errors=0 dicts=23 sites=1 j1==j8:yes ok
+// CHECK-NEXT: squares KM,S n=22            errors=0 dicts=23 sites=1 j1==j8:yes ok

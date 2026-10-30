@@ -1,0 +1,27 @@
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: not %gopp parse --error-limit=0 %S/Inputs/units-expr-errors.gopp 2>&1 | FileCheck --check-prefix=EXPR --implicit-check-not=error[E %s
+// RUN: printf 'package p\n\nunit X =\n' > %t/b.gopp
+// RUN: not %gopp parse %t/b.gopp 2>&1 | FileCheck --check-prefix=DECL %s
+// RUN: printf 'package p\n\nunit (\n\tW =\n)\n' > %t/c.gopp
+// RUN: not %gopp parse %t/c.gopp 2>&1 | FileCheck --check-prefix=GROUP %s
+// RUN: printf 'package p\n\nunit X = 3 4\n' > %t/d.gopp
+// RUN: not %gopp parse %t/d.gopp 2>&1 | FileCheck --check-prefix=TWO %s
+// RUN: not %gopp parse --error-limit=0 %S/Inputs/units-in-func.gopp 2>&1 | FileCheck --check-prefix=FUNC --implicit-check-not=error[E %s
+// RUN: printf 'package p\n\nvar unit = 3\nvar x = unit + 1\nfunc f(unit int) int { return unit }\nfunc g() {\n\tunit := 2\n\t_ = unit\n}\n' > %t/f.gopp
+// RUN: %gopp parse %t/f.gopp
+// RUN: printf 'package p\n\nunit M\n\nfunc h() []int {\n\tx := 3\n\t[]int{1}[0] = x\n\ty := 2.5\n\t[]float64{y}[0] = 1\n\treturn nil\n}\n' > %t/n.gopp
+// RUN: %gopp check %t/n.gopp
+// P03.25 (UNI-1, UNI-4, LEX-12, EXP-31; ported from c1): syntax errors of the
+// unit grammar, a unit in a function (reported and dropped), `unit` as an
+// ordinary name elsewhere, and a number literal at the end of a line followed
+// by a line that starts with `[`: no unit literal (the newline ends the
+// statement). (`float64[KM, M]` and `x.In[M+S]()` parse; the checker reports
+// them: units-conv-bad.test.)
+// EXPR: units-expr-errors.gopp:3:12: error[E0026]: expected ']', found '+'
+// EXPR: units-expr-errors.gopp:5:17: error[E0026]: expected integer exponent, found 1.5
+// EXPR: units-expr-errors.gopp:6:17: error[E0026]: expected integer exponent, found x
+// DECL: b.gopp:4:1: error[E0026]: expected unit expression, found 'EOF'
+// GROUP: c.gopp:5:1: error[E0026]: expected unit expression, found ')'
+// TWO: d.gopp:3:12: error[E0026]: expected ';', found 4
+// FUNC: units-in-func.gopp:4:2: error[E0421]: units are declared at package level: move the `unit` declaration out of the function (UNI-1)
+// FUNC: units-in-func.gopp:5:2: error[E0421]: units are declared at package level: move the `unit` declaration out of the function (UNI-1)

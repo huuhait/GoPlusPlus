@@ -1,0 +1,51 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (ADR-0025): the lines of "What the compiler stops" in the ADR, one
+// error each (ported from c1). The accepted examples are ADR-0025-example.test.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: unit cycle: A -> B -> A (UNI-3)
+unit A = 2 B
+unit B = 3 A
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: unit X has no dimension: a factor alone has no dimension; declare a base unit (`unit RAD`) or write a unit after the factor (`unit KM = 1000 M`) (UNI-2)
+unit X = 100
+unit IN = 2.54 CM
+unit CM = (1 / 100) M
+
+type Meters float64
+type Distance float64[M]
+
+func Sum[T ~float64](xs []T) T { return 0 }
+
+func f(d float64[KM], t float64[H], e float64[KM], a int[IN], b int[CM], v float64) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d + t: cannot add KM and H (different dimensions) (EXP-34)
+	_ = d + t
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + 1.0: cannot add a number without a unit to a value in KM; write the number with its unit, as in 1.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = d + 1.0
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in variable declaration: an assignment never rescales a value; convert it with d.In[M]()
+	var e2 float64[M] = d
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64 value in variable declaration
+	var v2 float64 = d
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit type string[KM]: units apply to numeric types only, and string is not one (UNI-6)
+	var s string[KM]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit type Meters[KM]: Meters is a type you declared: only a predeclared number type takes a unit in brackets; declare a type over a unit type (`type Distance float64[KM]`) or make the type generic over a unit (`type Meters[U unit] ...`) (UNI-6)
+	var m Meters[KM]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: a: the conversion needs the ratio 127/50, which cannot be exact for an integer; convert first (`int[CM](x)` truncates) or use floats (EXP-35)
+	_ = a + b
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d > 1.0: cannot compare a number without a unit with a value in KM; write the number with its unit, as in 1.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = d > 1.0
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d % 2.0: cannot take the remainder of a number without a unit and a value in KM; write the number with its unit, as in 2.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = d % 2.0
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d & e: the operator & works on bit patterns, which have no unit; remove the unit first, as in uint32(x) (EXP-36)
+	_ = d & e
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: in call to Sum, T (type float64[M]) does not satisfy ~float64
+	_ = Sum([]float64[M]{1.0[M]})
+	_, _, _ = e2, v2, s
+	_, _ = m, v
+}
+
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot declare the operator method `+` on Distance: the operators of a unit type are the built-in ones (UNI-15)
+func (d Distance) + (e Distance) Distance { return d }

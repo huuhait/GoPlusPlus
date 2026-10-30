@@ -1,0 +1,37 @@
+// RUN: %gopp check --dump-types %s | FileCheck %s
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/units-int-ratio-bad.gopp 2>&1 | FileCheck --check-prefix=BAD "--implicit-check-not=error[E" %S/Inputs/units-int-ratio-bad.gopp
+// P03.25 (EXP-33, R5): `x / y` of two integer values with units that cancel
+// is the plain physical ratio. Both operands go to the finer unit first (the
+// rule of `+`), then the integers divide, so 5 KM / 2 M is 5000 / 2 = 2500, not
+// (5 / 2) * 1000. A constant and a variable agree, and the float form is the
+// same ratio. The scale change of the coarser operand is recorded.
+package main
+
+unit M
+unit KM = 1000 M
+
+// Constants: the array lengths are the values.
+const A = 5[KM] / 2[M]
+var _ [2500]int = [A]int{}
+const B = 1[M] / 3[KM]
+var _ [0]int = [B]int{}
+const C = 7[KM] / 3[KM]
+var _ [2]int = [C]int{}
+const D = 5.0[KM] / 2.0[M]
+var _ [2500]int = [int(D)]int{}
+
+func main() {
+	var k int[KM] = 5[KM]
+	var m int[M] = 2[M]
+// CHECK: [[@LINE+1]]:6 unit-conv `k` *1000
+	_ = k / m
+// CHECK: [[@LINE+1]]:10 unit-conv `k` *1000
+	_ = m / k
+	_ = k / k
+	_ = m / m
+	var r int = k / m
+	_ = r
+// CHECK: [[@LINE+1]]:14 unit-conv `k` *1000
+	var q int = k / 2[M]
+	_ = q
+}

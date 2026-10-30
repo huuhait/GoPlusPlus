@@ -44,6 +44,7 @@ void check(llvm::StringRef Text, bool GoMode) {
   PO.AllowNamespaceTypes = !GoMode;
   PO.AllowExtends = !GoMode;
   PO.AllowOperators = !GoMode;
+  PO.AllowUnits = !GoMode;
   test::Parsed P(Text, PO);
   sema::TypeContext Ctx(GoMode);
   NoImporter Imp;

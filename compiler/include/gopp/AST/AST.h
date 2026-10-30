@@ -43,13 +43,13 @@ public:
     NumKinds,
     // Group boundaries (inclusive), for classof.
     FirstExpr = BadExpr,
-    LastExpr = ChanType,
+    LastExpr = UnitLit,
     FirstStmt = BadStmt,
     LastStmt = RangeStmt,
     FirstDecl = BadDecl,
     LastDecl = MacroCallDecl,
     FirstSpec = ImportSpec,
-    LastSpec = TypeSpec,
+    LastSpec = UnitSpec,
   };
 
   Kind getKind() const { return K; }
@@ -327,6 +327,42 @@ public:
   SourceLoc ArrowLoc; // valid if the type has an arrow
   Dir Direction = Both;
   Expr *Value = nullptr;
+};
+
+//===----------------------------------------------------------------------===//
+// Units of measure (ADR-0025)
+//===----------------------------------------------------------------------===//
+
+/// One term of a unit expression: `* Base^N` or `/ Base^-N` (the first term
+/// has no operator). Base is a name (Ident, or `pkg.Name` SelectorExpr), the
+/// literal `1`, or a ParenExpr around a UnitExpr. Power is the digits as
+/// written, so a huge exponent is the checker's error, not a parse overflow.
+struct UnitTerm {
+  SourceLoc OpLoc; // the `*` or `/`; invalid for the first term
+  bool Div = false;
+  Expr *Base = nullptr;
+  SourceLoc CaretLoc; // valid if there is a power
+  bool NegPower = false;
+  BasicLit *Power = nullptr;
+};
+
+/// A unit expression that the unit grammar read (UNI-4, UNI-7): `M/S`,
+/// `KG*M/S^2`, `(M/S)^2`. The terms are a flat list, so a long expression
+/// is not a tall tree. A single name is not wrapped (`float64[KM]`).
+class UnitExpr : public Expr {
+public:
+  GOPP_NODE(UnitExpr, Expr)
+  llvm::ArrayRef<UnitTerm> Terms;
+};
+
+/// `100.0[KM]`: a number literal followed by `[` on the same line (EXP-31).
+/// Unit is a name or a UnitExpr.
+class UnitLit : public Expr {
+public:
+  GOPP_NODE(UnitLit, Expr)
+  BasicLit *Lit = nullptr;
+  SourceLoc Lbrack, Rbrack;
+  Expr *Unit = nullptr;
 };
 
 //===----------------------------------------------------------------------===//
@@ -622,12 +658,27 @@ public:
   Expr *Type = nullptr;
 };
 
-/// import, const, type or var declaration, with attributes before it.
+/// `unit M`, `unit KM = 1000 M` (UNI-1). The unit's name, and for a derived
+/// unit the factor (null: 1) and the unit expression; Eq is invalid for a
+/// base unit.
+class UnitSpec : public Spec {
+public:
+  GOPP_NODE(UnitSpec, Spec)
+  Ident *Name = nullptr;
+  SourceLoc Eq;
+  Expr *Factor = nullptr; // a number literal or a parenthesized expression
+  Expr *Unit = nullptr;   // a name or a UnitExpr
+};
+
+/// import, const, type or var declaration, with attributes before it. A
+/// `unit` declaration (the contextual word, UNI-1) has IsUnit set, its
+/// Keyword is tok::ident and its Specs are UnitSpec.
 class GenDecl : public Decl {
 public:
   GOPP_NODE(GenDecl, Decl)
   llvm::ArrayRef<Attribute *> Attrs;
   SourceLoc KeywordLoc;
+  bool IsUnit = false;
   tok::Kind Keyword = tok::kw_var;
   SourceLoc Lparen, Rparen; // invalid if not grouped
   llvm::ArrayRef<Spec *> Specs;

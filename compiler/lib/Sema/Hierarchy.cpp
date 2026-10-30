@@ -2000,6 +2000,14 @@ std::string Checker::useWhy(Type *TArg, TypeParamType *TPar, const Use &U) {
   };
   std::string T = str(TPar), A = str(TArg);
   switch (U.K) {
+  case Use::UnitDict:
+    // GEN-14: the code needs the unit of TPar at run time; a unit argument
+    // made of the caller's unit parameters needs theirs (passed on).
+    if (const UnitCanon *UA = unitArgCanon(TArg))
+      for (const UnitDim &D : UA->Dims)
+        if (D.Param)
+          noteUse(const_cast<TypeParamType *>(D.Param), U);
+    return {};
   case Use::Copy:
   case Use::Clone: {
     // The plain code's `*p` with p a pointer to TArg (partialKindOf,

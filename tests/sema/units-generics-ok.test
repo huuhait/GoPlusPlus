@@ -1,0 +1,114 @@
+// RUN: %gopp check %s
+// P03.25 (GEN-14, UNI-10): unit parameters, accepted side. The types of the
+// results are stated, so a wrong inference is an error on its line.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+
+func Avg[U unit](xs []float64[U]) float64[U] {
+	var s float64[U]
+	for _, x := range xs {
+		s += x
+	}
+	return s / float64(len(xs))
+}
+
+func Speed[U unit](d float64[U/H]) float64[U] { return d * 1.0[H] }
+func Over[U unit](d float64[M/U]) float64[U] { return 1.0[U] }
+func Both[U unit](a, b float64[U]) float64[U] { return a + b + 0 }
+func Sq[U unit](x float64[U]) float64[U*U] { return x * x }
+func Less[U unit](a, b float64[U]) bool { return a < b || a == b || a > 0 }
+func Pick[U unit](a, b float64[U]) float64[U] { return min(a, max(a, b)) }
+func Same[U unit](a float64[U]) float64[U] { return a.In[U]() }
+func Twice[U unit, V unit](a float64[U], b float64[V]) float64[U*V] { return a * b }
+func Wrap[U unit](a float64[U]) float64[U] { return Same(a) + Same[U](a) }
+func Ratio[U unit](a, b float64[U]) float64 { return a / b }
+func Scale[U unit](a float64[U], k float64) float64[U] { return a*k + k*a }
+func ToPlain[U unit](a float64[U]) float64 { return float64(a) }
+func FromPlain[U unit](a float64) float64[U] { return float64[U](a) }
+func Count[T any](xs []T) int { return len(xs) }
+
+// a generic method with a unit parameter of its own (GEN-14)
+type Scaler struct{ k float64 }
+
+func (s Scaler) Scale[U unit](x float64[U]) float64[U] { return x * s.k }
+
+type Vec2[U unit] struct{ X, Y float64[U] }
+
+func (a Vec2[U]) + (b Vec2[U]) Vec2[U] { return Vec2[U]{a.X + b.X, a.Y + b.Y} }
+func (a Vec2[U]) Len2() float64[U*U] { return a.X*a.X + a.Y*a.Y }
+func (a Vec2[U]) Scale(k float64) Vec2[U] { return Vec2[U]{a.X * k, a.Y * k} }
+
+// A quotient of two unit parameters that the instance makes a plain number
+// with the factor 1 (U = V, or two names of one unit): fine.
+func Ratio2[U unit, V unit](a float64[U], b float64[V]) float64[U/V] { return a / b }
+type Per[U unit, V unit] struct{ R float64[U/V] }
+
+type Pair[T any, U unit] struct {
+	V T
+	D float64[U]
+}
+
+func Sum[T interface{ + (T) T }](a, b T) T { return a + b }
+func Scaled[T interface{ * (float64) T }](a T) T { return a * 2 }
+func Neg[T interface{ - () T }](a T) T { return -a }
+func Cmp[T interface{ <=> (T) int }](a, b T) int { return a <=> b }
+func Same2[T comparable](a, b T) bool { return a == b }
+func Dup[T Clone](a T) T { return a.Clone() }
+func Cp[T Copy](a T) T { return a }
+
+func main() {
+	xs := []float64[KM]{1.0[KM], 2.0[KM]}
+	var a float64[KM] = Avg(xs)
+	var b float64[M] = Avg[M]([]float64[M]{1.0[M]})
+	var c float64[KM/H] = Avg([]float64[KM/H]{1.0[KM/H]})
+	var d float64[KM] = Speed(50.0[KM/H])
+	var kmh float64[KM/H] = 1.0[KM/H]
+	var e float64[KM] = Speed(kmh)
+	var f float64[H] = Over(1.0[M/H])
+	var g float64[M] = Both(1.0[M], 2.0[M])
+	var h float64[KM*KM] = Sq(2.0[KM])
+	var i float64[M*M] = Sq[M](3.0[M])
+	var j bool = Less(1.0[S], 2.0[S])
+	var k float64[M] = Pick(1.0[M], 2.0[M])
+	var l float64[KM*H] = Twice(1.0[KM], 2.0[H])
+	var m float64 = Ratio(1.0[M], 2.0[M])
+	var n float64[M] = Scale(1.0[M], 2)
+	var o float64 = ToPlain(1.0[M])
+	var p float64[M] = FromPlain[M](2)
+	var q int = Count(xs)
+	var r float64[S] = Wrap(1.0[S])
+	_, _, _, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, f, g, h, i, j, k, l
+	_, _, _, _, _, _ = m, n, o, p, q, r
+	var sc Scaler
+	var gm1 float64[KM] = sc.Scale(2.0[KM])
+	var gm2 float64[M/S] = sc.Scale[M/S](2.0[M/S])
+	_, _ = gm1, gm2
+	var same float64 = Ratio2(1.0[KM], 2.0[KM])
+	var per Per[M, M]
+	var other float64[KM/H] = Ratio2(1.0[KM], 2.0[H])
+	_, _, _ = same, per, other
+
+	v := Vec2[KM]{1.0[KM], 2.0[KM]}
+	var w Vec2[KM] = v + v
+	var x float64[KM*KM] = w.Len2()
+	var y Vec2[KM] = w.Scale(2)
+	var z Vec2[KM/H] = Vec2[KM/H]{1.0[KM/H], 1.0[KM/H]}
+	var pr Pair[int, M] = Pair[int, M]{1, 2.0[M]}
+	var pr2 Pair[string, KM/H]
+	_, _, _, _, _ = x, y, z, pr, pr2
+
+	var s1 float64[M] = Sum(1.0[M], 2.0[M])
+	var s2 int[KM] = Sum(1[KM], 2[KM])
+	var s3 Vec2[M] = Sum(Vec2[M]{}, Vec2[M]{})
+	var s4 float64[M] = Scaled(1.0[M])
+	var s5 float64[M] = Neg(1.0[M])
+	var s6 int = Cmp(1.0[M], 2.0[M])
+	var s7 bool = Same2(1.0[M], 2.0[M])
+	var s8 float64[M] = Dup(1.0[M])
+	var s9 float64[M] = Cp(1.0[M])
+	_, _, _, _, _, _, _, _, _ = s1, s2, s3, s4, s5, s6, s7, s8, s9
+}

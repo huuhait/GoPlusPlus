@@ -1,0 +1,11 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --linear 50 --shapes two,twogrow,three | FileCheck %s
+// P03.25 (GEN-14, R10): the time of each rearranging chain of
+// units-generic-rearrange at 50 and 200 levels, with 1 and 8 body threads: at
+// most 12 times (a quadratic check takes 16 times).
+// CHECK: two j1: near-linear yes
+// CHECK: two j8: near-linear yes
+// CHECK: twogrow j1: near-linear yes
+// CHECK: twogrow j8: near-linear yes
+// CHECK: three j1: near-linear yes
+// CHECK: three j8: near-linear yes

@@ -1,0 +1,5 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-oracle.py --gopp %gopp --out %t --seeds 160 | FileCheck %s
+// P03.25 (GEN-14, R10): units-generic-oracle with more seeds, with 1 and 8
+// body threads (the same dump); the longer chains: units-generic-oracle-deep.long.
+// CHECK: oracle: 160 programs, {{[0-9]+}} instances, 0 mismatches

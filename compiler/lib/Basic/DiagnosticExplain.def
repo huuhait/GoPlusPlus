@@ -4066,3 +4066,164 @@ func (a F) <=> (b F) int { return a.X - b.X }
 
 var M map[F]int
 )X")
+EXPLAIN(err_unit_in_func,
+        "A `unit` declaration is a package-level declaration, like a type or a function: the name goes into the package block. Move it out of the function (UNI-1).",
+        R"X(package p
+
+func f() {
+	unit M
+}
+)X")
+EXPLAIN(err_unit_cycle,
+        "A derived unit is defined by other units, so the definitions must end in base units. The message lists every unit of the cycle, in source order starting with the first declared (UNI-3).",
+        R"X(package p
+
+unit A = 2 B
+unit B = 3 A
+)X")
+EXPLAIN(err_unit_factor,
+        "The factor of a derived unit is an untyped numeric constant greater than zero, with no unit and not complex: `unit KM = 1000 M`, `unit MI = (1609344 / 1000) M` (UNI-2).",
+        R"X(package p
+
+unit M
+unit Z = 0 M
+)X")
+EXPLAIN(err_unit_dimension,
+        "A unit has a non-empty dimension. A factor alone is not a unit, and neither is `M/M`: a dimensionless quantity such as an angle is made from a base unit (`unit RAD`) (UNI-2).",
+        R"X(package p
+
+unit X = 100
+)X")
+EXPLAIN(err_unit_not_unit,
+        "A unit expression names units, or unit parameters of the enclosing declaration. A type, a constant, a variable or a package is not one (UNI-3).",
+        R"X(package p
+
+unit M
+
+type T int
+
+var x float64[T]
+)X")
+EXPLAIN(err_unit_is_not_expr,
+        "A unit is not a value and not a type. It is written only inside `[ ]` after a number literal or a numeric type, in a `unit` declaration, or as the argument of a unit parameter (UNI-1).",
+        R"X(package p
+
+unit M
+
+var x = M
+)X")
+EXPLAIN(err_unit_expr,
+        "A unit expression has names, `*`, `/`, parentheses, the number 1 (`1/S`) and written integer powers (`S^2`, `S^-1`). Other numbers, fractional powers and other operators are not part of it (UNI-4). In an expression such as `Avg[M/S](xs)` the `^` is Go's xor, so a power is not read there (UNI-7).",
+        R"X(package p
+
+unit M
+
+var x = 2.0[M*2]
+)X")
+EXPLAIN(err_unit_type,
+        "`T[U]` gives a unit to a predeclared numeric type or an alias of one. `uintptr`, a type that is not a number and a type you declared yourself take no unit; declare `type Distance float64[KM]` instead (UNI-6, UNI-7).",
+        R"X(package p
+
+unit M
+
+var s string[M]
+)X")
+EXPLAIN(err_unit_mismatch,
+        "`+`, `-`, `%`, the comparisons and `min`/`max` need two values of the same dimension. Lengths and times cannot be added (EXP-34).",
+        R"X(package p
+
+unit M
+unit S
+
+func f(a float64[M], b float64[S]) float64[M] {
+	return a + b
+}
+)X")
+EXPLAIN(err_unit_plain,
+        "A plain number cannot be added to, subtracted from or compared with a value that has a unit. Write the number with its unit (`d + 1.0[KM]`). The one exception is the untyped constant zero (EXP-35). `d++` is the same error.",
+        R"X(package p
+
+unit M
+
+func f(a float64[M]) float64[M] {
+	return a + 1.0
+}
+)X")
+EXPLAIN(err_unit_inexact,
+        "An implicit conversion of an integer to another scale of the same dimension is allowed only when it is exact: the ratio of the two factors must be an integer. Convert first (`int[KM](m)` truncates toward zero), or use floats (EXP-35).",
+        R"X(package p
+
+unit M
+unit KM = 1000 M
+
+func f(a int[KM], b int[M]) int[KM] {
+	a += b
+	return a
+}
+)X")
+EXPLAIN(err_unit_conv,
+        "A conversion between two unit types needs the same dimension. To change the scale write `float64[M](d)` or `d.In[M]()`; to drop the unit write `float64(d)` (EXP-32).",
+        R"X(package p
+
+unit M
+unit S
+
+func f(a float64[M]) float64[S] {
+	return float64[S](a)
+}
+)X")
+EXPLAIN(err_unit_op,
+        "A shift count has no unit, and the bit operators `& | ^ &^` and unary `^` work on bit patterns, which have no unit: remove the unit first (`uint32(x)`). `x++` is an error too; write `x += 1.0[KM]` (EXP-36).",
+        R"X(package p
+
+unit M
+
+func f(a int[M]) int[M] {
+	return a & a
+}
+)X")
+EXPLAIN(err_unit_symbol,
+        "`@Symbol(\"km\")` is for one `unit` declaration. Its text is not empty and has no space or control character and none of `* / ^ ( )`; a unit has only one (UNI-13).",
+        R"X(package p
+
+@Symbol("")
+unit M
+)X")
+EXPLAIN(err_unit_scale,
+        "Factors are exact rationals and are never rounded or wrapped. A factor or an exponent that grows too large (an exponent past 2^20, a factor that needs more than 4096 bits) is an error, not a wrong answer (UNI-2).",
+        R"X(package p
+
+unit M
+
+var x float64[M^1048576*M]
+)X")
+EXPLAIN(err_unit_op_method,
+        "The operators of a unit type are the built-in ones. An operator method on a unit type, or on a named type over one, would be a second meaning that skips the unit math. Ordinary methods are fine (UNI-15).",
+        R"X(package p
+
+unit M
+
+type D float64[M]
+
+func (a D) + (b D) D { return a }
+)X")
+EXPLAIN(err_unit_in,
+        "`x.In[U]()` converts a unit value to another unit of the same dimension and keeps the number kind. `In` is a built-in member: it needs a unit in brackets and a call, takes no arguments, and the value must have a unit (EXP-32).",
+        R"X(package p
+
+unit M
+unit S
+
+func f(a float64[M]) float64[S] {
+	return a.In[S]()
+}
+)X")
+EXPLAIN(err_unit_generic,
+        "A unit parameter (`[U unit]`) stands for a unit. It is not a type and not a value: it is used inside `[ ]` after a number type (`float64[U]`), and its argument is a unit with a dimension, while a type parameter takes a type (GEN-14). An instance whose units cancel (`float64[U/V]` with U = KM and V = M) is not an error: the generic code computes the plain number with the factor, as plain code does.",
+        R"X(package p
+
+func f[U unit](x float64[U]) {
+	var y U
+	_ = y
+}
+)X")

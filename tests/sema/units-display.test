@@ -1,0 +1,98 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check -check-j=1 --check-error-limit=0 %s > %t.1 2>&1
+// RUN: not %gopp check -check-j=8 --check-error-limit=0 %s > %t.8 2>&1
+// RUN: diff %t.1 %t.8
+// P03.25 (UNI-5, UNI-12, M2): the display form a message prints for a unit.
+// The forms come from the unit declarations and the unit types written in
+// declarations (phase 1, before any body), from the imports (export data,
+// units-pkg.test), from the unit types written in the same body (that body
+// only), and from the expression itself: a literal, a conversion, `.In`, and
+// an operator whose operands have forms (`d / t` is `KM/H`, `d * d` is
+// `KM^2`, `1.0 / t` is `1/H`); a variable initialized from one keeps it. When a unit has several forms, the fixed order picks one: fewest names
+// (counted with exponents), then the smaller text, never the order of the
+// declarations or of the threads. Without any form the canonical text is
+// printed (the factor, then the base units). The layout is UNI-12: positive exponents first, `/`, more than one
+// negative name in parentheses, `1/S`, `^N`.
+package main
+
+unit M
+unit S
+unit KG
+unit KM = 1000 M
+unit H = 3600 S
+
+// KMH and KM/H name one unit: KMH has fewer names.
+unit KMH = KM / H
+
+// Two names with one name each: the smaller text, in either declaration order.
+unit ZLONG = 7 M
+unit YLONG = 7 M
+unit YWIDE = 9 M
+unit ZWIDE = 9 M
+
+func f(d float64[KM], t float64[H], m float64[KG]) {
+	speed := d / t
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: speed + d: cannot add KMH and KM (different dimensions) (EXP-34)
+	_ = speed + d
+	area := d * d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: area + d: cannot add KM^2 and KM (different dimensions) (EXP-34)
+	_ = area + d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: 1.0 / t + d: cannot add 1/H and KM (different dimensions) (EXP-34)
+	_ = 1.0/t + d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: m / (d * t) + d: cannot add KG/(H*KM) and KM (different dimensions) (EXP-34)
+	_ = m/(d*t) + d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d / (t * t) + d: cannot add KM/H^2 and KM (different dimensions) (EXP-34)
+	_ = d/(t*t) + d
+	// the operator of the expression, also when nothing declares the form
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use d * t (value of type float64[H*KM]) as float64[M] value in variable declaration
+	var x float64[M] = d * t
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use 2.0[KG*M/S^2] (untyped float constant 2) as float64[M] value in variable declaration
+	var y float64[M] = 2.0[KG*M/S^2]
+	// the fixed order, not the order of the declarations
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use 1.0[ZLONG] (untyped float constant 1) as float64[M] value in variable declaration
+	var z float64[M] = 1.0[ZLONG]
+	w := 1.0[ZLONG].In[ZLONG]()
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: w + t: cannot add YLONG and H (different dimensions) (EXP-34)
+	_ = w + t
+	v := 1.0[ZWIDE].In[ZWIDE]()
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v + t: cannot add YWIDE and H (different dimensions) (EXP-34)
+	_ = v + t
+	// a conversion and `.In` have the form written in them
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: float64[M/S](speed.In[M / S]()) + t: cannot add M/S and H (different dimensions) (EXP-34)
+	_ = float64[M/S](speed.In[M/S]()) + t
+	// only equal names cancel: KM/(H*M) is a unit of the dimension 1/S
+	q := d / (t * 1.0[M])
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: q + t: cannot add KM/(H*M) and H (different dimensions) (EXP-34)
+	_ = q + t
+	_, _, _ = x, y, z
+}
+
+// A unit that no form names (an instance makes it, and nothing in this body
+// or in the declarations writes KM^2): the canonical text. A form written in
+// a body counts for the messages of that body only (one checker, in source
+// order).
+func g(d float64[KM], t float64[H]) {
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: Sq(d) + t: cannot add 1000000 M^2 and H (different dimensions) (EXP-34)
+	_ = Sq(d) + t
+}
+
+// M/H is written only in this body: its messages print it.
+func h(d float64[KM], t float64[H]) {
+// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: cannot use d * t (value of type float64[H*KM]) as float64[M/H] value in variable declaration
+	var p float64[M / H] = d * t
+	_ = p
+}
+
+// R6: `x *= y` prints the result in the form of the product (UNI-5), as
+// `x * y` does; a scalar factor keeps the unit (no error).
+func k(d float64[KM], t float64[H]) {
+	d *= 2.0
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot use d (value of type float64[KM^2]) as float64[KM] value in assignment operation
+	d *= d
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot use d (value of type float64[H*KM]) as float64[KM] value in assignment operation
+	d *= t
+}
+
+func Sq[U unit](x float64[U]) float64[U*U] { return x * x }
+
+func main() {}

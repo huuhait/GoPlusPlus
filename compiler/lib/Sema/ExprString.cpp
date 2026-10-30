@@ -47,6 +47,26 @@ public:
     case K::BasicLit:
       OS << cast<BasicLit>(E)->Text;
       break;
+    case K::UnitLit: {
+      auto *U = cast<ast::UnitLit>(E);
+      print(U->Lit, Depth);
+      OS << '[';
+      print(U->Unit, Depth);
+      OS << ']';
+      break;
+    }
+    case K::UnitExpr: {
+      auto *U = cast<ast::UnitExpr>(E);
+      for (size_t I = 0; I < U->Terms.size(); ++I) {
+        const ast::UnitTerm &T = U->Terms[I];
+        if (I)
+          OS << (T.Div ? '/' : '*');
+        print(T.Base, Depth);
+        if (T.Power)
+          OS << '^' << (T.NegPower ? "-" : "") << T.Power->Text;
+      }
+      break;
+    }
     case K::CompositeLit: {
       auto *C = cast<CompositeLit>(E);
       if (C->Type)

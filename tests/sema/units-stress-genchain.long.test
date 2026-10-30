@@ -1,0 +1,23 @@
+// REQUIRES: long
+// P03.25 (GEN-14, UNI-2, R18): the range of the unit types of an instance is
+// decided from the declarations (a bound per generic type, through the types
+// it holds), never by expanding instances. A chain of 8000 generic types,
+// each holding the one before, checks in near-linear time with a unit in the
+// package (genchain), without one (genplain), over a unit parameter
+// instantiated with KM (unitchain), and with `float64[U^412]` at the end
+// (badchain: one E0435, for the instance at the end; the one instance is
+// followed exactly). Each shape at 2000 and 8000 takes at most 12 times.
+// RUN: %python %S/Inputs/gen-units-stress.py genchain 8000 > %t.g.gopp
+// RUN: timeout 20 %gopp check %t.g.gopp
+// RUN: %python %S/Inputs/gen-units-stress.py badchain 8000 > %t.b.gopp
+// RUN: not timeout 20 %gopp check %t.b.gopp 2>&1 | FileCheck --check-prefix=BAD %s
+// BAD: error[E0435]: unit factor out of range: in the instance of W0 with U = KM, float64[U^412]
+// BAD-NOT: error[
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.l1 genchain 2000 | FileCheck --check-prefix=L1 %s
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.l2 genplain 2000 | FileCheck --check-prefix=L2 %s
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.l3 unitchain 2000 | FileCheck --check-prefix=L3 %s
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.l4 badchain 2000 | FileCheck --check-prefix=L4 %s
+// L1: genchain: near-linear yes
+// L2: genplain: near-linear yes
+// L3: unitchain: near-linear yes
+// L4: badchain: near-linear yes

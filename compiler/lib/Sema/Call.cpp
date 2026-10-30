@@ -246,6 +246,9 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
       // A namespace of a C++ header used on its own.
       err(Ex, diag::err_package_without_selector, {str(Ex)});
       return Error();
+    case Object::Kind::Unit:
+      unitNotExpr(Ex);
+      return Error();
     default:
       return Error();
     }
@@ -446,6 +449,11 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
   LookupResult LR =
       lookupFieldOrMethod(LookupT, Addressable, S.Pkg, Sel, false, WantOp);
   Object *Obj = LR.Obj;
+  // ADR-0025, EXP-32: `x.In` on a unit value with no member of that name is
+  // the built-in `In`, completed by `[U]()` (see unitInCall).
+  if (!Obj && Sel == "In" && !S.Opts.GoCompat && Ctx.unitsSeen() &&
+      X.M != Mode::TypeExpr && unitInSelector(X, Ex))
+    return;
   if (Obj && !Obj->Ty)
     objDecl(Obj, nullptr);
   if (Obj && isa<Func>(Obj))
@@ -811,10 +819,12 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
   if (Ex)
     recordInstance(Ex, TArgs, Inst);
   recordMono(Pos, nullptr, Sig->TParams, TArgs, ArgPos);
+  monoBindRecv(Pos, Ex); // GEN-14: a generic method's receiver
   SmallVector<Type *, 4> TA(TArgs.begin(), TArgs.end());
   SmallVector<SourceLoc, 4> AP(ArgPos.begin(), ArgPos.end());
   SmallVector<TypeParamType *, 4> TP(Sig->TParams.begin(), Sig->TParams.end());
-  later([this, Pos, TP, TA, AP, Inst]() {
+  std::string Name = Ctx.unitsSeen() && Ex ? str(Ex) : std::string("it");
+  later([this, Pos, TP, TA, AP, Inst, Sig, Name]() {
     std::string Cause, ViewWhy;
     int Bad = verify(Pos, TP, TA, &Cause, false, &ViewWhy);
     if (Bad >= 0) {
@@ -826,6 +836,7 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
       else
         err(At, diag::err_sema_call, {Cause});
     } else {
+      unitInstanceRange(Pos, Sig, TP, TA, Name); // GEN-14, UNI-2
       checkOptionArgs(Pos, Inst, TA);
       noAbstractArgs(Pos, Inst, TA); // TYP-19, on the substituted signature
     }
@@ -840,7 +851,7 @@ void Checker::funcInst(Operand &X, SourceLoc Pos, const IndexExpr *Inst,
   SmallVector<Type *, 4> TArgs;
   SmallVector<SourceLoc, 4> ArgPos;
   if (Inst) {
-    if (!typeList(Inst->Indices, TArgs)) {
+    if (!typeList(Inst->Indices, TArgs, cast<SignatureType>(X.Ty)->TParams)) {
       X.M = Mode::Invalid;
       return;
     }
@@ -1145,6 +1156,13 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
       X.M = Mode::Invalid;
       return ExprKind::Conversion;
     }
+    if (Ctx.unitsSeen() && isUnitParam(X.Ty)) { // GEN-14: `U(3)`
+      unitParamCall(Call);
+      UseArgs();
+      X.M = Mode::Invalid;
+      X.E = Call;
+      return ExprKind::Conversion;
+    }
     Type *T = X.Ty;
     X.M = Mode::Invalid;
     switch (Call->Args.size()) {
@@ -1177,6 +1195,8 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
             opConvert(X, T, Call, ViaMethod) && ViaMethod)
           break;
         conversion(X, T);
+        if (Ctx.unitsSeen() && X.M != Mode::Invalid)
+          unitNoteConversion(X, Call); // the form of `float64[KM/H](v)`
       }
       break;
     }
@@ -1200,6 +1220,13 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
       X.M = Mode::Invalid;
       X.E = Call;
       return ExprKind::Statement;
+    }
+    if (Id == BuiltinId::UnitIn) {
+      unitInCall(X, Call);
+      X.E = Call;
+      if (X.M != Mode::Invalid && X.M != Mode::Constant)
+        E.HasCallOrRecv = true;
+      return ExprKind::Expression;
     }
     if (!builtin(X, Call, Id))
       X.M = Mode::Invalid;
@@ -1284,7 +1311,7 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
   SmallVector<Type *, 4> TArgs;
   SmallVector<SourceLoc, 4> ArgPos;
   if (Inst) {
-    if (!typeList(Inst->Indices, TArgs)) {
+    if (!typeList(Inst->Indices, TArgs, Sig->TParams)) {
       UseArgs();
       X.M = Mode::Invalid;
       X.E = Call;

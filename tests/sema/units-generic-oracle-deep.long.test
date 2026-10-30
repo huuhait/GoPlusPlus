@@ -1,0 +1,5 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-oracle.py --gopp %gopp --out %t --seeds 60 --deep | FileCheck %s
+// P03.25 (GEN-14, R10): the longer chains of units-generic-oracle (each
+// instance that main reaches is compared, thousands per program).
+// CHECK: oracle: 60 programs, {{[0-9]+}} instances, 0 mismatches

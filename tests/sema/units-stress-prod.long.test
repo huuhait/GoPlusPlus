@@ -1,0 +1,14 @@
+// REQUIRES: long
+// P03.25 (R16): a product of N values of N distinct base units, left to
+// right, as statements (N = 200 to 1600) and as one expression (N = 200 to
+// 800, the parser's nesting limit is 1024). Each step's unit has one more
+// base unit, so the units the program makes grow quadratically; the checker
+// builds the unit of each step once (units::displayCanon normalizes all the
+// parts at once), so 4N takes at most 20 times N (cubic took 50 times:
+// 800 values took 8.5 s).
+// RUN: %python %S/Inputs/gen-units-stress.py prod 1600 > %t.prod.gopp
+// RUN: timeout 20 %gopp check %t.prod.gopp
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin --max-ratio 20 prod 400 | FileCheck --check-prefix=PROD %s
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin2 --max-ratio 20 prodexpr 200 | FileCheck --check-prefix=EXPR %s
+// PROD: prod: near-linear yes
+// EXPR: prodexpr: near-linear yes

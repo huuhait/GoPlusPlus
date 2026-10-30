@@ -97,6 +97,8 @@ static BuiltinInfo builtinInfo(BuiltinId Id) {
     return {"unsafe.String", 2, false};
   case BuiltinId::StringData:
     return {"unsafe.StringData", 1, false};
+  case BuiltinId::UnitIn:
+    return {"In", 0, false};
   }
   return {"?", 0, false};
 }
@@ -467,7 +469,7 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
       if (X.M == Mode::Constant && Y.M == Mode::Constant) {
         auto ToFloat = [&](Operand &O) {
           if (isNumeric(O.Ty) && O.Val.imag().sign() == 0)
-            O.Ty = typ(BasicKind::UntypedFloat);
+            O.Ty = unitPartType(O.Ty, typ(BasicKind::UntypedFloat));
         };
         ToFloat(X);
         ToFloat(Y);
@@ -532,7 +534,7 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
     } else {
       X.M = Mode::Value;
     }
-    X.Ty = Res;
+    X.Ty = unitPartType(X.Ty, Res); // EXP-35: the unit stays (R4)
     break;
   }
   case BuiltinId::Real:
@@ -540,7 +542,7 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
     if (isUntyped(X.Ty)) {
       if (X.M == Mode::Constant) {
         if (isNumeric(X.Ty))
-          X.Ty = typ(BasicKind::UntypedComplex);
+          X.Ty = unitPartType(X.Ty, typ(BasicKind::UntypedComplex));
       } else {
         convertUntyped(X, typ(BasicKind::Complex128));
         if (X.M == Mode::Invalid)
@@ -593,7 +595,7 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
       X.Val = Id == BuiltinId::Real ? X.Val.real() : X.Val.imag();
     else
       X.M = Mode::Value;
-    X.Ty = Res;
+    X.Ty = unitPartType(X.Ty, Res); // EXP-35: the unit stays (R4)
     break;
   }
   case BuiltinId::Copy: {
@@ -694,6 +696,12 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
   case BuiltinId::Max:
   case BuiltinId::Min: {
     tok::Kind Op = Id == BuiltinId::Max ? tok::gtr : tok::lss;
+    // EXP-34: the arguments are converted to the finest unit among them.
+    if (Ctx.unitsSeen() && !S.Opts.GoCompat) {
+      if (!unitMinMax(Args, Call))
+        return false;
+      X = Args[0];
+    }
     for (size_t K = 0; K < Args.size(); ++K) {
       Operand &A = Args[K];
       if (A.M == Mode::Invalid)
@@ -1053,6 +1061,8 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
     X.Ty = Ctx.pointer(Ctx.byteType());
     break;
   }
+  case BuiltinId::UnitIn:
+    return false; // handled by unitInCall before builtin() is reached
   }
   (void)Sig1;
   return true;

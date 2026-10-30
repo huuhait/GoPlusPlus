@@ -137,6 +137,18 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
       }
     std::string Msg = "cannot use " + str(X) + " as " + str(T) + " value in " +
                       std::string(Context);
+    if (Cause.empty() && Ctx.unitsSeen() && !S.Opts.GoCompat && X.E)
+      if (const UnitCanon *XU = unitOf(X.Ty), *TU = unitOf(T);
+          XU && TU && XU != TU && units::sameDim(XU, TU) && !isUntyped(X.Ty) &&
+          !llvm::isa<NamedType>(T) && !llvm::isa<NamedType>(X.Ty))
+        Cause = "an assignment never rescales a value; convert it with " +
+                (unitNamer().find(TU) || units::isOne(TU->Factor)
+                     ? (isa<ast::Ident, SelectorExpr, CallExpr, IndexExpr,
+                            ParenExpr, BasicLit, ast::UnitLit>(X.E)
+                            ? str(X.E)
+                            : "(" + str(X.E) + ")") +
+                           ".In[" + unitStr(TU) + "]()"
+                     : str(T) + "(" + str(X.E) + ")");
     if (!Cause.empty())
       Msg += ": " + Cause;
     err(X, diag::err_sema_assign, {Msg});
@@ -206,6 +218,8 @@ void Checker::initVar(Var *Lhs, Operand &X, StringRef Context) {
       T = defaultType(T);
     }
     Lhs->Ty = T;
+    if (Ctx.unitsSeen() && !S.Opts.GoCompat)
+      noteUnitVar(Lhs, X); // `speed := d / t` keeps the form KM/H (UNI-5)
   }
   assignment(X, Lhs->Ty, Context);
   if (!own() || X.M == Mode::Invalid)

@@ -1,7 +1,7 @@
 # STATE: Go++ language plan
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
-Last updated: 2026-10-29
+Last updated: 2026-10-30
 
 ## Plan
 
@@ -154,3 +154,4 @@ Last updated: 2026-10-29
 - 2026-10-29: P03.21 and P03.23 done (team build `p03-lang`, stage 1, merged from three coders): `View[…]` replaces `ref`, views are read-only all the way down and box bindings are views (E0367–E0372, export data keeps the borrowed-slice flag, OWN-V6 lifetime extension); declaration, valid-type, pinned and zero-value walks keep their own stacks and cost linear time on 200000-type chains and 30000-type rings (plain and generic), every by-value cycle is broken even behind an earlier error, and Go's instantiation-cycle check (E0366, reported only when there is no other error, as in Go) replaces the clone walk's cap. P03 stays `[~]` (P03.22, P03.24 and P03.25 open).
 - 2026-10-29: P03.24 done (team build `p03-ops`, merged from three coders): operator overloading in the lexer, parser, formatter, checker, export data and vet (codes E0401–E0420); an operator method is named by its operator with its form in `Func::Op`, every use is checked as the method call it stands for, and the operator table of a type is shared and thread-independent; the lowering stays P04.23, units P03.25. Details in `03-semantic-analysis/STATE.md`.
 - 2026-10-29: Owner decision (ADR-0027, decides P15 Q2 / P05 Q2, task P15.10): **mimalloc is the global allocator**, the only one for now (no libc-malloc option, no switch flag). It serves `new_unique`, `new_shared`, `make`, string and slice growth, maps and the nil allocator word. `mem.Allocator`/`mem.Arena`, ASan builds (sanitizer allocator) and C/C++ `malloc` stay as they are; memory is freed by the allocator that made it. mimalloc (MIT) is pinned as a source (flake input or vendored release) and compiled per target, then linked statically (ADR rule 6, not overriding `malloc`). Mixed-allocator rule 4a: the side that allocated frees; undefined behavior UB-5a; test hook and malloc-style helpers in P05.03 and P07.07. P05 D5.2, P05.03 (Done-when), P15 D15.3 and P15.10 updated.
+- 2026-10-30: Owner decision (ADR-0025 Amendment, P03.25, P04.24): **B chosen.** Generic unit code gets the units of its instance as a hidden run-time argument (one descriptor per unit parameter, like Go's generic dictionaries) and computes what plain code computes (`Ratio(1.0[KM], 1.0[M])` is 1000). Rejected: A (compile-time errors with a 65 536-instance check limit: errors on useful code, the limit, a rule to learn) and C (a compiled copy per unit combination: code size, and an explosion for branching chains).

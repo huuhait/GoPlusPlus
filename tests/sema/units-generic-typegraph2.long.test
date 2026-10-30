@@ -1,0 +1,7 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-typegraph.py --gopp %gopp --out %t --j1 --seeds 60 --first 60 | FileCheck %s
+// P03.25 (GEN-14, UNI-2, R19): units-generic-typegraph, seeds 60 to 119 (four
+// files that lit runs in parallel: 240 programs, with one body thread; the
+// default test compares 1 and 8 threads; the timing:
+// units-generic-typegraph-time.long).
+// CHECK: typegraph: 60 programs, {{[0-9]+}} rejected ({{[0-9]+}} instantiation cycles, {{[0-9]+}} out of range), 0 mismatches

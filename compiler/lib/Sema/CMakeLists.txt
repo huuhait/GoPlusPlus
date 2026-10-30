@@ -29,5 +29,7 @@ add_gopp_library(Sema
   Typexpr.cpp
   Vet.cpp
   Types.cpp
+  UnitCheck.cpp
+  Units.cpp
   LLVM_COMPONENTS support
   LINK_LIBS goppParse goppAST goppLex goppBasic)

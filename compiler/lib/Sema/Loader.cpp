@@ -421,6 +421,7 @@ CheckedPackage *Loader::loadFilesImpl(std::vector<std::string> Paths,
   PO.AllowNamespaceTypes = !CO.GoCompat;
   PO.AllowExtends = !CO.GoCompat;
   PO.AllowOperators = !CO.GoCompat;
+  PO.AllowUnits = !CO.GoCompat;
   PO.UncountedSelectors = true; // the checker walks a selector chain by loop
   E->Parsed = parseFiles(SM, Ids, Diags, PO, 1);
   for (ParsedFile &PF : E->Parsed)

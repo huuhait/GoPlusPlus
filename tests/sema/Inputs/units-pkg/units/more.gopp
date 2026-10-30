@@ -1,0 +1,24 @@
+package units
+
+type Meters = float64[M]
+
+type Dist float64[KM]
+
+func Half[U unit](x float64[U]) float64[U] { return x / 2 }
+
+func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }
+
+type Vec[U unit] struct{ X, Y float64[U] }
+
+// A generic type with a unit parameter and operator methods (GEN-14, UNI-6),
+// used from another package.
+func (a Vec[U]) + (b Vec[U]) Vec[U]  { return Vec[U]{a.X + b.X, a.Y + b.Y} }
+func (a Vec[U]) Len2() float64[U*U]   { return a.X*a.X + a.Y*a.Y }
+func (a Vec[U]) Scale(k float64) Vec[U] { return Vec[U]{a.X * k, a.Y * k} }
+
+// A unit type that no unit names: the importer prints the form written here
+// (UNI-5, export data).
+func Speed() float64[KM/H] { return 1.0[KM] / 1.0[H] }
+
+func Hidden() float64[Hid] { return 1.0[Hid] }
+func Hidden2() float64[Twice] { return 1.0[Twice] }

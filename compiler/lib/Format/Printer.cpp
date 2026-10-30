@@ -1978,6 +1978,36 @@ private:
       print(cast<BasicLit>(E));
       break;
 
+    case Node::Kind::UnitLit: {
+      // `100.0[KM]`: no space before `[`, none inside (EXP-31)
+      const auto *X = cast<ast::UnitLit>(E);
+      print(X->Lit);
+      setPos(X->Lbrack);
+      print(tok::l_brack);
+      expr0(X->Unit, Depth + 1);
+      setPos(X->Rbrack);
+      print(tok::r_brack);
+      break;
+    }
+
+    case Node::Kind::UnitExpr: {
+      // `M/S`, `KG*M/S^2`: operators without blanks (UNI-4)
+      const auto *X = cast<ast::UnitExpr>(E);
+      for (size_t I = 0; I < X->Terms.size(); ++I) {
+        const ast::UnitTerm &T = X->Terms[I];
+        if (I > 0)
+          print(T.Div ? tok::quo : tok::mul);
+        expr0(T.Base, Depth + 1);
+        if (T.Power) {
+          print(tok::xor_);
+          if (T.NegPower)
+            print(tok::sub);
+          print(T.Power);
+        }
+      }
+      break;
+    }
+
     case Node::Kind::FuncLit: {
       const auto *X = cast<FuncLit>(E);
       setPos(X->Type->Begin);
@@ -2961,6 +2991,21 @@ private:
       expr(S->Type);
       break;
     }
+    case Node::Kind::UnitSpec: {
+      const auto *S = cast<ast::UnitSpec>(Sp);
+      expr(S->Name);
+      if (S->Eq.isValid()) {
+        print(blank, tok::assign, blank);
+        if (S->Factor) {
+          expr(S->Factor);
+          if (S->Unit)
+            print(blank);
+        }
+        if (S->Unit)
+          expr0(S->Unit, 1);
+      }
+      break;
+    }
     default:
       print("BadSpec");
       break;
@@ -2984,7 +3029,10 @@ private:
     setPos(D->Begin);
     declAttrs(D->Attrs, D->KeywordLoc);
     setPos(D->KeywordLoc);
-    print(D->Keyword, blank);
+    if (D->IsUnit)
+      print(Word{"unit"}, blank);
+    else
+      print(D->Keyword, blank);
 
     if (D->Lparen.isValid() || D->Specs.size() != 1) {
       // group of parenthesized declarations

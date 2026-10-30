@@ -39,6 +39,13 @@ void Checker::recordTypeAndValue(const ast::Expr *Ex, Mode M, Type *T,
   TV.Ty = T;
   TV.Val = V;
   TV.M = M;
+  // GEN-14: a constant whose unit mentions a unit parameter is its number
+  // times c(E) at run time; one place for every constant (a literal, a
+  // folded expression, a named constant, a constant conversion).
+  if (M == Mode::Constant && Ctx.unitsSeen())
+    if (const UnitCanon *U = unitOf(T); U && U->HasParam)
+      recordUnitSite(Ex, UnitSite::Const, U, nullptr, nullptr, false,
+                     /*Replace=*/false);
 }
 
 void Checker::rememberUntyped(const ast::Expr *Ex, bool Lhs, Mode M, Type *T,
@@ -97,11 +104,19 @@ void Checker::updateExprType(const ast::Expr *Ex, Type *T, bool Final) {
   case Node::Kind::CallExpr:
   case Node::Kind::Ident:
   case Node::Kind::BasicLit:
+  case Node::Kind::UnitLit:
   case Node::Kind::SelectorExpr:
     break;
   default:
     return;
   }
+  // ADR-0025: an operand of `*` or `/` was typed without its unit; its own
+  // recorded type keeps the unit (`2.0[H]` is a float64[H]).
+  if (Ctx.unitsSeen())
+    if (const UnitCanon *OU = unitOf(Old.Ty))
+      if (auto *TB = dyn_cast_or_null<BasicType>(under(T)))
+        if (TB->Unit != OU && (TB->Info & IsNumeric))
+          T = Ctx.unitType(TB->BK, OU);
   if (!Final && isUntyped(T)) {
     auto It2 = Untyped.find(Ex);
     if (It2 != Untyped.end())
@@ -720,6 +735,8 @@ void Checker::unary(Operand &X, const UnaryExpr *Ex) {
   default:
     break;
   }
+  if (Op == tok::xor_ && Ctx.unitsSeen() && unitBitNot(X, Ex))
+    return;
   if (!opAllowed(*this, Op, X.Ty, true)) {
     err(X, diag::err_operator_not_defined, {tok::getSpelling(Op), str(X)});
     X.M = Mode::Invalid;
@@ -1074,6 +1091,26 @@ void Checker::binary(Operand &X, const ast::Expr *Ex, const ast::Expr *L,
       (opCandidateType(X.Ty) || opCandidateType(Y.Ty)) &&
       opBinary(X, Y, Ex, L, R, Op, OpLoc))
     return;
+  // ADR-0025: the unit rules (EXP-33 to EXP-36) are decided before the
+  // number rules; they convert the operands or strip the units.
+  if (!S.Opts.GoCompat && Ctx.unitsSeen() &&
+      unitBinary(X, Y, Ex, L, R, Op, OpLoc))
+    return;
+  binaryRest(X, Y, Ex, L, R, Op, OpLoc);
+}
+
+void Checker::binaryRest(Operand &X, Operand &Y, const ast::Expr *Ex,
+                         const ast::Expr *L, const ast::Expr *R, tok::Kind Op,
+                         SourceLoc OpLoc) {
+  // An operand whose type is invalid had its error already (a variable or a
+  // field whose type failed, R15): no second error for the operator.
+  auto Failed = [&](const Operand &O) {
+    return O.M != Mode::NilValue && O.Ty && !isValid(O.Ty);
+  };
+  if (Failed(X) || Failed(Y)) {
+    X.M = Mode::Invalid;
+    return;
+  }
   if (isShiftOp(Op)) {
     shift(X, Y, Ex, Op);
     return;
@@ -1131,7 +1168,8 @@ void Checker::binary(Operand &X, const ast::Expr *Ex, const ast::Expr *L,
       return;
     }
     tok::Kind T = Op;
-    if (Op == tok::quo && isInteger(X.Ty))
+    // (The factor of a unit is exact: `(1609344 / 1000) M` is 1609.344, UNI-2.)
+    if (Op == tok::quo && isInteger(X.Ty) && !E.ExactQuo)
       T = tok::quo_assign;
     X.Val = ConstValue::binaryOp(X.Val, T, Y.Val);
     X.E = Ex;
@@ -1204,6 +1242,11 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     overflow(X, Ex->getBegin());
     break;
   }
+  case K::UnitLit:
+    unitLit(X, cast<ast::UnitLit>(Ex));
+    if (X.M == Mode::Invalid)
+      return Error();
+    break;
   case K::FuncLit:
     funcLit(X, cast<FuncLit>(Ex));
     if (X.M == Mode::Invalid)
@@ -1384,6 +1427,9 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     break;
   case K::MacroInvocation:
     err(Ex, diag::err_sema_expr, {"macro invocations are expanded by P09"});
+    return Error();
+  case K::UnitExpr:
+    unitExprAsValue(Ex); // (out of line: this frame recurses, M4)
     return Error();
   default:
     return Error();

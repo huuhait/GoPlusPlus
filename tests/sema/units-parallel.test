@@ -1,0 +1,9 @@
+// P03.25 (CLAUDE.md lessons): units are shared by every function body that is
+// checked in parallel (the unit table, the uniqued unit types, the instances
+// of a unit-generic function). The diagnostics must not depend on the number
+// of threads or on which thread asks first: same text and order with
+// -check-j=1 and -check-j=8 for the rule tests. A generated program with
+// errors in many bodies that use the same units and instances is checked with
+// 1 to 16 threads in ParallelCheck.UnitChecksDoNotDependOnTheThreadCount
+// (diagnostics, type dump with the unit records, export data).
+// RUN: %python %S/Inputs/same-output.py %gopp %S/units-ops-bad.test %S/units-generics-bad.test %S/units-display.test %S/units-typeset-bad.test

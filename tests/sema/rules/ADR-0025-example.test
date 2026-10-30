@@ -1,0 +1,4 @@
+// RUN: %gopp check %S/../Inputs/units-example
+// RUN: %gopp fmt %S/../Inputs/units-example/main.gopp | diff - %S/../Inputs/units-example/main.gopp
+// P03.25 (ADR-0025): the accepted examples of the ADR as one program in
+// Inputs/units-example. The rejected lines are ADR-0025-rejected.test.

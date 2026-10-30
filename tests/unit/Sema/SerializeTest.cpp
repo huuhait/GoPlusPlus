@@ -1516,6 +1516,7 @@ std::string roundTrip(llvm::StringRef Text, bool GoMode, unsigned &Objects) {
   PO.AllowNamespaceTypes = !GoMode;
   PO.AllowExtends = !GoMode;
   PO.AllowOperators = !GoMode;
+  PO.AllowUnits = !GoMode;
   test::Parsed Pr(Text, PO);
   TypeContext Ctx(GoMode);
   NoImports Imp;
@@ -1766,6 +1767,7 @@ TEST(Serialize, GoModeParentWithEmbedding) {
   ParseOptions LPO;
   LPO.AllowExtends = false;
   LPO.AllowOperators = false;
+  LPO.AllowUnits = false;
   test::Parsed Lib(R"(package lib
 
 type Inner struct{ N int }
@@ -1883,6 +1885,7 @@ TEST(Serialize, GoEmbeddingPromotedValueMethodIsNoParentPart) {
   ParseOptions LPO;
   LPO.AllowExtends = false;
   LPO.AllowOperators = false;
+  LPO.AllowUnits = false;
   test::Parsed Lib(R"(package lib
 
 type Inner struct{ N int }
@@ -1935,6 +1938,7 @@ TEST(Serialize, GoEmbeddingInsideChain) {
   ParseOptions LPO;
   LPO.AllowExtends = false;
   LPO.AllowOperators = false;
+  LPO.AllowUnits = false;
   test::Parsed Lib(R"(package lib
 
 type Inner struct{ N int }
@@ -2031,6 +2035,7 @@ type Dog extends Animal { X int }
   ParseOptions LPO;
   LPO.AllowExtends = false;
   LPO.AllowOperators = false;
+  LPO.AllowUnits = false;
   test::Parsed Lib(R"(package lib
 
 import "a"
@@ -2162,6 +2167,7 @@ func (s *Shape) Val() int { return s.N }
   ParseOptions LPO;
   LPO.AllowExtends = false;
   LPO.AllowOperators = false;
+  LPO.AllowUnits = false;
   test::Parsed Lib(LText, LPO);
   CheckOptions LCO;
   LCO.GoCompat = true;
@@ -2275,3 +2281,362 @@ func g(d Dog, c Cat, a Animal) int {
 }
 
 } // namespace
+
+// P03.25 (ADR-0025, UNI-5, GEN-14): units, unit types, unit parameters and
+// their uses survive the round trip. The importer gets the same identity
+// (`lib.KM` and the unit written by hand are one type), the same errors, and
+// the generic functions infer the same units. A unit made from an
+// unexported base unit keeps one identity.
+static const char *UnitSource = R"(package lib
+
+@Symbol("m")
+unit M
+unit S
+unit KG
+unit hidden
+unit Hid = 2 hidden
+unit Twice = 2 Hid
+@Symbol("km")
+unit KM = 1000 M
+unit H = 3600 S
+unit N = KG * M / S ^ 2
+
+type Meters = float64[M]
+type Dist float64[KM]
+type Count int[M]
+type Vec[U unit] struct{ X, Y float64[U] }
+
+func (a Vec[U]) + (b Vec[U]) Vec[U] { return Vec[U]{a.X + b.X, a.Y + b.Y} }
+func (a Vec[U]) Len2() float64[U*U] { return a.X*a.X + a.Y*a.Y }
+
+func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }
+func Speed[U unit](d float64[U/H]) float64[U] { return d * 1.0[H] }
+func Hidden() float64[Hid] { return 1.0[Hid] }
+func Hidden2() float64[Twice] { return 1.0[Twice] }
+func Force() float64[N] { return 1.0[N] }
+func Sum[T interface{ + (T) T }](a, b T) T { return a + b }
+
+const Limit = 120.0[KM/H]
+const Typed float64[KM] = 3.5[KM]
+var V float64[KM/H]
+)";
+
+TEST(Serialize, UnitsSurviveTheRoundTripAcrossPackages) {
+  Loaded L(UnitSource);
+  ASSERT_NE(L.CP, nullptr);
+  std::string Msgs;
+  for (const Diagnostic &D : L.Collect.Diags)
+    Msgs += D.Message + "\n";
+  ASSERT_TRUE(L.Collect.Diags.empty()) << Msgs;
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  EXPECT_TRUE(Ctx2.unitsSeen());
+  EXPECT_EQ(dump(*P2), dump(*L.CP->Pkg));
+  std::string D = dump(*P2);
+  for (const char *Want :
+       {"@Symbol(\"km\") unit KM = 1000 M", "unit N = KG*M/S^2",
+        "@Symbol(\"m\") unit M", "unit H = 3600 S", "type Dist float64[KM]",
+        "func Avg[U unit]([]float64[U]) float64[U]",
+        "func Speed[U unit](float64[U/H]) float64[U]",
+        "func Hidden2() float64[Twice]", "var V float64[KM/H]"})
+    EXPECT_NE(D.find(Want), std::string::npos) << Want << "\n" << D;
+  // The unexported base unit is not in the export data of the API, but the
+  // units made from it are, with its identity.
+  EXPECT_EQ(D.find("unit hidden"), std::string::npos) << D;
+  // A written-out copy writes the same bytes.
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+
+  const char *Good = R"(package main
+import "lib"
+unit Local = 2 lib.KM
+func f() {
+	var a float64[lib.KM] = 1.0[lib.KM]
+	var b lib.Meters = 500.0[lib.M]
+	var c float64[lib.M] = a.In[lib.M]()
+	var d float64[lib.M] = b + a
+	var e float64[lib.KM] = lib.Avg([]float64[lib.KM]{a})
+	var g float64[lib.KM] = lib.Speed(lib.V)
+	var h lib.Vec[lib.KM / lib.H]
+	var i float64[lib.KM] = lib.Typed
+	var j float64[lib.KM] = lib.Limit.In[lib.KM/lib.H]() * 1.0[lib.H]
+	var k float64[lib.M] = lib.Sum(b, b)
+	var l float64[lib.Hid] = lib.Hidden()
+	var m float64[lib.Twice] = lib.Hidden2()
+	var n float64[lib.Hid] = m.In[lib.Hid]()
+	var o float64[lib.N] = lib.Force()
+	var p float64[lib.KG * lib.M / lib.S ^ 2] = o
+	var q float64[Local] = 1.0[Local]
+	var r lib.Dist = lib.Dist(a)
+	w := lib.Vec[lib.KM]{} + lib.Vec[lib.KM]{}
+	var x float64[lib.KM * lib.KM] = w.Len2()
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, g, h, i, j, k, l, m, n, o, p, q, r
+	_ = x
+}
+)";
+  const char *Bad = R"(package main
+import "lib"
+func f(a float64[lib.KM], b float64[lib.S]) {
+	_ = a + b
+	_ = a + 1.0
+	var c float64[lib.M] = a
+	_ = lib.Avg([]float64{})
+	_ = lib.Sum(a, a) * a
+	var d lib.Vec[int]
+	_ = lib.hidden
+	_ = d
+	_ = c
+	_ = lib.Vec[lib.KM]{} + lib.Vec[lib.M]{}
+	var s float64[lib.M] = lib.V
+	_ = s
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "cannot add lib.KM and lib.S"));
+  EXPECT_TRUE(anyHas(Decoded, "cannot add a number without a unit"));
+  EXPECT_TRUE(anyHas(Decoded, "never rescales"));
+  EXPECT_TRUE(anyHas(Decoded, "cannot infer U"));
+  EXPECT_TRUE(anyHas(Decoded, "int is a type, not a unit"));
+  // The importer prints the names the package prints (UNI-5, M2), from the
+  // export data too: KM/H, not (5/18) M/S.
+  EXPECT_TRUE(
+      anyHas(Decoded, "lib.V (variable of type float64[lib.KM/lib.H])"));
+  EXPECT_TRUE(anyHas(Decoded, "has no operator `+` for lib.Vec[lib.M]"));
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
+// P03.25 (GEN-14, owner decision 2026-10-30): which unit parameters the
+// code of a generic needs at run time (Use::UnitDict: a collapse site, or a
+// unit passed on to code that needs it) travels in the export data, so an
+// importer that passes its own units on needs them too, and the lowering
+// (P04.24) knows which functions take the unit dictionary. A generic with no
+// collapse site needs none.
+static const char *UnitDictSource = R"(package lib
+
+unit M
+unit KM = 1000 M
+
+func Rt[U unit, V unit](a float64[U], b float64[V]) float64 {
+	r := a / b
+	return float64(r)
+}
+func Via[U unit, V unit](a float64[U], b float64[V]) float64 { return Rt(b, a) }
+func Just[U unit](a float64[U]) float64[U] { return a + a }
+
+type Vec[U unit] struct{ X float64[U] }
+
+func (v Vec[U]) Div[V unit](d float64[V]) float64 {
+	r := v.X / d
+	return float64(r)
+}
+)";
+
+// The unit parameters of the generic Name of P whose units its code needs.
+static std::string dictOf(Package *P, llvm::StringRef Name) {
+  Object *O = P->PkgScope->lookupLocal(Name);
+  llvm::ArrayRef<TypeParamType *> TPs;
+  if (auto *F = llvm::dyn_cast_or_null<Func>(O))
+    TPs = llvm::cast<SignatureType>(F->Ty)->TParams;
+  else if (auto *TN = llvm::dyn_cast_or_null<TypeName>(O))
+    TPs = llvm::cast<NamedType>(TN->Ty)->TParams;
+  std::string S;
+  for (TypeParamType *TP : TPs)
+    for (const TypeParamType::Use &U : TP->uses())
+      if (U.K == TypeParamType::Use::UnitDict) {
+        S += std::string(TP->Obj->Name);
+        break;
+      }
+  return S;
+}
+
+TEST(Serialize, UnitDictionaryNeedSurvivesTheRoundTrip) {
+  Loaded L(UnitDictSource);
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  MemoryRecordStream Again;
+  TypeWriter(Again).writePackage(*P2);
+  EXPECT_EQ(Again.toBytes(), Bytes);
+  for (Package *P : {L.CP->Pkg, P2}) {
+    EXPECT_EQ(dictOf(P, "Rt"), "UV");
+    EXPECT_EQ(dictOf(P, "Via"), "UV");
+    EXPECT_EQ(dictOf(P, "Just"), "");
+    EXPECT_EQ(dictOf(P, "Vec"), "U");
+  }
+  // An importer whose generic code passes its units on to them.
+  const char *Main = R"(package main
+import "lib"
+func Fwd[P unit, Q unit](a float64[P], b float64[Q]) float64 { return lib.Via(a, b) }
+func Keep[P unit](a float64[P]) float64[P] { return lib.Just(a) }
+func Meth[P unit, Q unit](a float64[P], b float64[Q]) float64 {
+	return lib.Vec[P]{X: a}.Div(b)
+}
+func f() {
+	_ = lib.Via(1.0[lib.KM], 2.0[lib.M])
+	_ = Fwd(1.0[lib.KM], 2.0[lib.M])
+}
+)";
+  for (auto [Ctx, Lib] :
+       {std::pair<TypeContext *, Package *>{&L.Ctx, L.CP->Pkg}, {&Ctx2, P2}}) {
+    ParseOptions PO;
+    test::Parsed Pr(Main, PO);
+    OnePackage Imp("lib", Lib);
+    CheckOptions CO;
+    const ast::File *Files[] = {Pr.File};
+    auto CP =
+        checkPackage(*Ctx, Pr.Src.SM, "main", Files, Imp, Pr.Src.Diags, CO);
+    ASSERT_NE(CP, nullptr);
+    EXPECT_TRUE(Pr.errors().empty());
+    EXPECT_EQ(dictOf(CP->Pkg, "Fwd"), "PQ");
+    EXPECT_EQ(dictOf(CP->Pkg, "Keep"), "");
+    EXPECT_EQ(dictOf(CP->Pkg, "Meth"), "PQ");
+  }
+  // Every operand of the uses of the type parameters can be wrong: rejected
+  // or read, never a crash.
+  const std::vector<Record> &Recs = Stream.records();
+  unsigned Tried = 0;
+  for (size_t R = 0; R < Recs.size(); ++R) {
+    if (Recs[R].Code != REC_TPARAM_DEF || Recs[R].Ops.size() < 4)
+      continue;
+    for (size_t O = 2; O < Recs[R].Ops.size(); ++O)
+      for (uint64_t V :
+           {uint64_t(0), uint64_t(1), Recs[R].Ops[O] + 1, ~uint64_t(0)}) {
+        MemoryRecordStream S;
+        for (size_t K = 0; K < Recs.size(); ++K) {
+          std::vector<uint64_t> Ops = Recs[K].Ops;
+          if (K == R)
+            Ops[O] = V;
+          S.write(Recs[K].Code, Ops, Recs[K].Blob);
+        }
+        TypeContext Ctx3;
+        Arena Mem3;
+        std::string E3;
+        if (Package *P = TypeReader(S, Ctx3, Mem3, PR).readPackage(E3))
+          (void)dump(*P);
+        ++Tried;
+      }
+  }
+  EXPECT_GT(Tried, 20u);
+}
+
+// P03.25 (GEN-14, UNI-2, R15 to R20): the range of the unit types of an
+// instance of an imported generic type is decided from its declarations as
+// they come from the export data: mutual recursion (a linked list), a held
+// generic type, a method that returns a nested instance. The same errors as
+// from the package itself, and the check ends.
+static const char *UnitRangeSource = R"(package lib
+
+unit M
+unit KM = 1000 M
+
+type Node[U unit] struct {
+	v    float64[U]
+	next Option[*List[U]]
+}
+type List[U unit] struct {
+	head Option[*Node[U]]
+	w    float64[U^412]
+}
+type C[U unit] struct{ F float64[U^3] }
+type B[U unit] struct{ C C[U*U] }
+type G[U unit] struct{}
+
+func (G[U]) Get() Option[*B[U^2]] { return nil }
+)";
+
+TEST(Serialize, UnitRangeOfImportedInstances) {
+  Loaded L(UnitRangeSource);
+  ASSERT_NE(L.CP, nullptr);
+  std::string Msgs;
+  for (const Diagnostic &D : L.Collect.Diags)
+    Msgs += D.Message + "\n";
+  ASSERT_TRUE(L.Collect.Diags.empty()) << Msgs;
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Stream.toBytes()));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Main = R"(package main
+import "lib"
+func f() {
+	var a lib.Node[lib.M]
+	var b lib.Node[lib.KM]
+	var c lib.G[lib.KM^35]
+	var d lib.G[lib.KM]
+	_, _, _, _ = a, b, c, d
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Main);
+  auto Decoded = checkMain(Ctx2, P2, Main);
+  EXPECT_EQ(Direct, Decoded);
+  ASSERT_EQ(Decoded.size(), 2u);
+  EXPECT_TRUE(anyHas(Decoded, "in the instance of List with U = lib.KM"));
+  EXPECT_TRUE(anyHas(Decoded, "in the instance of C with U = "));
+}
+
+// A corrupt unit record is rejected, never crashes, never changes the
+// context: every operand of every record, with small, large and wrong values.
+TEST(Serialize, EveryOperandOfEveryUnitRecordCanBeWrong) {
+  Loaded L(UnitSource);
+  ASSERT_NE(L.CP, nullptr);
+  MemoryRecordStream Good;
+  TypeWriter(Good).writePackage(*L.CP->Pkg, /*OnlyExported=*/false);
+  const std::vector<Record> &Recs = Good.records();
+  TypeContext Ctx;
+  unsigned Tried = 0, Units = 0;
+  for (size_t R = 0; R < Recs.size(); ++R) {
+    bool IsUnit = Recs[R].Code == REC_UNIT_CANON ||
+                  Recs[R].Code == REC_UNIT_TYPE ||
+                  Recs[R].Code == REC_OBJ_UNIT || Recs[R].Code == REC_UNIT_NAME;
+    Units += IsUnit;
+    if (!IsUnit)
+      continue;
+    for (size_t O = 0; O < Recs[R].Ops.size(); ++O)
+      for (uint64_t V : {uint64_t(0), uint64_t(1), Recs[R].Ops[O] + 1,
+                         uint64_t(1) << 31, ~uint64_t(0)}) {
+        MemoryRecordStream S;
+        for (size_t K = 0; K < Recs.size(); ++K) {
+          std::vector<uint64_t> Ops = Recs[K].Ops;
+          if (K == R)
+            Ops[O] = V;
+          S.write(Recs[K].Code, Ops, Recs[K].Blob);
+        }
+        Arena Mem;
+        Resolver PR;
+        std::string Err;
+        if (Package *P = TypeReader(S, Ctx, Mem, PR).readPackage(Err))
+          (void)dump(*P);
+        ++Tried;
+      }
+  }
+  EXPECT_GT(Units, 10u);
+  EXPECT_GT(Tried, 200u);
+}

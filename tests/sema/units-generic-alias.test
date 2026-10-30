@@ -1,0 +1,50 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: %gopp check --go %S/Inputs/generic-alias-numeric.go
+// P03.25 (R17): a generic alias over a numeric type is instantiated as any
+// generic is, in a type and in an expression: its brackets hold its type or
+// unit arguments, not a unit (`A[int]` with `type A[T any] = float64`,
+// `R1[KM]` with `type R1[U unit] = float64[U]`). Only a predeclared numeric
+// type (or a plain alias of one) takes a unit in brackets: a type you declared
+// (`Distance[KM]`), a type that has a unit already (`D[KM]`), a unit type
+// indexed twice and a wrong number of arguments stay errors. The same aliases
+// in a Go file in Go mode (Inputs/generic-alias-numeric.go, as types; Go mode
+// is parked and keeps master's answers) are accepted.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+
+type A[T any] = float64
+type B[T any] = int
+type L[T any] = []T
+type R1[U unit] = float64[U]
+type R2[U unit, V unit] = float64[U/V]
+type Distance float64
+type D = float64[M]
+
+func F[U unit](x R1[U]) R1[U] { return x }
+
+func main() {
+	var a A[int] = 1.5
+	var b B[string] = 2
+	var c L[int]
+	var d R1[KM] = 1.0[KM]
+	var e R2[KM, S] = 1.0[KM] / 1.0[S]
+	_ = A[int](2.5)
+	_ = L[int](nil)
+	_ = R1[M](2.0)
+	_ = F(d)
+	_, _, _, _ = a, b, c, e
+// CHECK: [[@LINE+1]]:8: error[E0428]: invalid unit type Distance[KM]: Distance is a type you declared: only a predeclared number type takes a unit in brackets; declare a type over a unit type (`type Distance float64[KM]`) or make the type generic over a unit (`type Distance[U unit] ...`) (UNI-6)
+	var x Distance[KM]
+// CHECK: [[@LINE+1]]:8: error[E0428]: invalid unit type D[KM]: the type float64[M] has a unit already (UNI-6)
+	var z D[KM]
+// CHECK: [[@LINE+1]]:15: error[E0323]: too many type arguments for type A: have 2, want 1
+	var w A[int, int]
+	_, _, _ = x, z, w
+// CHECK: [[@LINE+1]]:6: error[E0323]: invalid operation: float64[M][KM] (float64[M] is not a generic type)
+	_ = float64[M][KM](1.0)
+// CHECK: [[@LINE+1]]:6: error[E0323]: invalid operation: R1[M][KM] (R1[M] is not a generic type)
+	_ = R1[M][KM](1.0)
+}

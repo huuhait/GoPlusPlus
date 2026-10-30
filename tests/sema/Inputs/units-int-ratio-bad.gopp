@@ -1,0 +1,23 @@
+// The bad side of units-int-ratio.test: the quotient is a plain number, so it
+// is not an int[M]; a ratio whose finer unit is not a whole multiple of the
+// coarser still has no exact conversion (as for `+`).
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+unit KMH = KM / H
+unit MS = M / S
+
+func main() {
+	var k int[KM] = 5[KM]
+	var m int[M] = 2[M]
+	// BAD: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use k / m (value of type int) as int[M] value in variable declaration
+	var a int[M] = k / m
+	_ = a
+	var v int[KMH] = 5[KMH]
+	var w int[MS] = 2[MS]
+	// BAD: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: w: the conversion needs the ratio 18/5, which cannot be exact for an integer; convert first (`int[KMH](x)` truncates) or use floats (EXP-35)
+	_ = v / w
+}

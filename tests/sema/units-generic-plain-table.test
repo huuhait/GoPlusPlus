@@ -1,0 +1,112 @@
+// P03.25 (GEN-14, UNI-10, M3): generic code gives the same answer as plain
+// code. Inputs/gen-units-parity.py writes each use once with `K[M]` and once
+// in a body generic over a unit parameter U (`K[U]`), for five number kinds K,
+// checks the file with one body thread and with eight (the same errors), and
+// fails on any difference that is not listed here. The intended differences
+// are the rows marked ./E, and they are exactly what GEN-14 says: "A
+// conversion to a concrete unit (`float64[M](x)`) is an error in the body,
+// because the dimension of `U` is not known." They are the conversion
+// `K[KM](a)`, `a.In[KM]()` (the same conversion, EXP-32) and `a + 1.0[KM]`
+// (the literal's unit KM is another dimension than U). (For uint8 the plain
+// `a + 1.0[KM]`, `uint8[KM](a)` and `a.In[KM]()` are errors too: the factor 1000
+// does not fit the kind, R3.) The second table
+// instantiates an operator element `interface{ OP (T) T }` with each unit
+// type: it is met exactly when the plain code can write the operator with a
+// result of type T (UNI-10). `*` and `/` of two unit values are not elements
+// (the result has another unit); `%` is met by the integer unit types only;
+// `<=>` is not built in for complex numbers. The third table is about the
+// values (R2, GEN-14): a unit-generic body whose units cancel at an instance
+// (KM and M in `a / b`) computes what plain code computes, so the factor that
+// plain code records (`--dump-types` unit-conv, EXP-33) equals the factor that
+// the generic code applies at run time at that instance, computed from the
+// collapse sites it records (unit-site) with the real units. The one cell that
+// cannot agree is `E/t`: an integer kind whose remaining factor is no integer
+// is EXP-35's error in plain code, which sees the units, while generic code
+// truncates at run time like an explicit conversion (GEN-14; owner decision
+// 2026-10-30, ADR-0025 Amendment point 7: the one intended difference).
+// RUN: %python %S/Inputs/gen-units-parity.py --gopp %gopp --out %t | FileCheck %s
+// CHECK: uses (plain/generic body), columns: int uint8 float32 float64 complex128
+// CHECK-NEXT: add              . . . . .
+// CHECK-NEXT: sub              . . . . .
+// CHECK-NEXT: cmp-lt           . . . . E
+// CHECK-NEXT: cmp-eq           . . . . .
+// CHECK-NEXT: cmp-ne           . . . . .
+// CHECK-NEXT: spaceship        . . . . E
+// CHECK-NEXT: neg              . . . . .
+// CHECK-NEXT: pos              . . . . .
+// CHECK-NEXT: mul-scalar       . . . . .
+// CHECK-NEXT: scalar-mul       . . . . .
+// CHECK-NEXT: div-scalar       . . . . .
+// CHECK-NEXT: mul-lit          . . . . .
+// CHECK-NEXT: div-lit          E E . . .
+// CHECK-NEXT: mul-unit         . . . . .
+// CHECK-NEXT: div-unit         . . . . .
+// CHECK-NEXT: inv              . . . . .
+// CHECK-NEXT: add-plain        E E E E E
+// CHECK-NEXT: add-lit          E E E E E
+// CHECK-NEXT: add-zero         . . . . .
+// CHECK-NEXT: sub-zero         . . . . .
+// CHECK-NEXT: cmp-zero         . . . . E
+// CHECK-NEXT: zero-cmp         . . . . .
+// CHECK-NEXT: add-other        E E E E E
+// CHECK-NEXT: cmp-other        E E E E E
+// CHECK-NEXT: rem              . . E E E
+// CHECK-NEXT: and              E E E E E
+// CHECK-NEXT: xor              E E E E E
+// CHECK-NEXT: not              E E E E E
+// CHECK-NEXT: shl              . . E E E
+// CHECK-NEXT: shl-unit         E E E E E
+// CHECK-NEXT: min              . . . . E
+// CHECK-NEXT: max              . . . . E
+// CHECK-NEXT: min-plain        E E E E E
+// CHECK-NEXT: in-self          . . . . .
+// CHECK-NEXT: in-other         E E E E E
+// CHECK-NEXT: plain-conv       . . . . .
+// CHECK-NEXT: unit-conv        . . . . .
+// CHECK-NEXT: conv-concrete    ./E E ./E ./E ./E
+// CHECK-NEXT: in-concrete      ./E E ./E ./E ./E
+// CHECK-NEXT: lit-concrete     ./E E ./E ./E ./E
+// CHECK-NEXT: assign-plain     E E E E E
+// CHECK-NEXT: assign-unit      E E E E E
+// CHECK-NEXT: assign-zero      . . . . .
+// CHECK-NEXT: any              . . . . .
+// CHECK-NEXT: send             . . . . .
+// CHECK-NEXT: slice-elem       . . . . .
+// CHECK-NEXT: map-key          . . . . .
+// CHECK-NEXT: incr             E E E E E
+// CHECK-NEXT: addassign        . . . . .
+// CHECK-NEXT: addassign-other  E E E E E
+// CHECK-NEXT: mulassign        . . . . .
+// CHECK-NEXT: mulassign-unit   E E E E E
+// CHECK-NEXT: instances (plain use / instantiation), columns: float64[M] int[M] uint8[M] complex128[A] float32[KM] Dist
+// CHECK-NEXT: +        . . . . . .
+// CHECK-NEXT: -        . . . . . .
+// CHECK-NEXT: *        E E E E E E
+// CHECK-NEXT: /        E E E E E E
+// CHECK-NEXT: %        E . . E E E
+// CHECK-NEXT: &        E E E E E E
+// CHECK-NEXT: |        E E E E E E
+// CHECK-NEXT: ^        E E E E E E
+// CHECK-NEXT: &^       E E E E E E
+// CHECK-NEXT: *s       . . . . . .
+// CHECK-NEXT: neg      . . . . . .
+// CHECK-NEXT: compl    E E E E E E
+// CHECK-NEXT: ==       . . . . . .
+// CHECK-NEXT: <=>      . . . E . .
+// CHECK-NEXT: ++       E E E E E E
+// CHECK-NEXT: instances of cancelling units (plain factor / generic), columns: M/M KM/M M/KM KM/KM | M/IM KM/IM M/IKM KM/IKM
+// CHECK-NEXT: ratio      float64 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: ratio      float32 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: ratio      int     ./. *1000/*1000 *1000/*1000 ./.
+// CHECK-NEXT: ratio-var  float64 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: ratio-var  float32 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: ratio-var  int     ./. *1000/*1000 *1000/*1000 ./.
+// CHECK-NEXT: ratio-sum  float64 ./. *1000,*1000/*1000,*1000 *1/1000,*1/1000/*1/1000,*1/1000 ./.
+// CHECK-NEXT: ratio-sum  float32 ./. *1000,*1000/*1000,*1000 *1/1000,*1/1000/*1/1000,*1/1000 ./.
+// CHECK-NEXT: ratio-sum  int     ./. *1000,*1000/*1000,*1000 *1000,*1000/*1000,*1000 ./.
+// CHECK-NEXT: product    float64 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: product    float32 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: product    int     ./. *1000/*1000 E/t ./.
+// CHECK-NEXT: via-helper float64 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: via-helper float32 ./. *1000/*1000 *1/1000/*1/1000 ./.
+// CHECK-NEXT: via-helper int     ./. *1000/*1000 *1000/*1000 ./.

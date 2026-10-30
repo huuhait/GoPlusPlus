@@ -1,0 +1,48 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (GEN-14, UNI-10, R1): a unit type in a term of a type set is an error
+// at the constraint. A generic body is checked once, so a term such as
+// `~float64[M]` would let the body treat T as a plain number type (`a * a` is
+// a T, `T(d)` converts across dimensions and scales with no factor), which
+// plain code with `float64[M]` rejects. The way to write it is a function
+// generic over a unit (`[U unit]` with `float64[U]`). Plain number terms,
+// operator constraints and unit parameters stay accepted.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+
+type Dist float64[M]
+type Number interface{ ~int | ~float64 }
+
+// Accepted: no unit in any term.
+func Sum[T Number](a, b T) T                    { return a + b }
+func Op[T interface{ + (T) T }](a, b T) T       { return a + b }
+func Un[U unit](a float64[U]) float64[U]        { return a + a }
+func Wide[T interface{ ~float64 | ~float32 }](a T) T { return a * a }
+func use() {
+	_ = Sum(1.0, 2.0)
+	_ = Op(1.0[M], 2.0[M])
+	_ = Op(Dist(1), Dist(2))
+	_ = Un(1.0[KM])
+}
+
+// CHECK-DAG: [[@LINE+2]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type float64[M]: {{.*}}`[U unit]` with `float64[U]`) (GEN-14)
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type float64[S]: {{.*}} (GEN-14)
+func Sq[T interface{ float64[M] | float64[S] }](a T) T { return a * a }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type float64[M]: {{.*}} (GEN-14)
+func Dv[T interface{ ~float64[M] }](a T) T { return a / a }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type float64[M]: {{.*}} (GEN-14)
+func Cv[T ~float64[M]](d float64[S]) T { return T(d) }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type float64[M]: {{.*}} (GEN-14)
+func One[T float64[M]](a T) T { return a }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type Dist: {{.*}} (GEN-14)
+func Named[T interface{ Dist | float32 }](a T) T { return a }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: the type set cannot name the unit type float32[KM]: {{.*}} (GEN-14)
+type Bad interface{ int | float32[KM] }
+
+func main() {
+	// One error at the constraint, none at the call.
+	var m float64[M] = Sq(2.0[M])
+	_ = m
+}

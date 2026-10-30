@@ -223,4 +223,4 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 **D4.20 — Units lowering** (ADR-0025; task P04.24).
 - Units are erased: a unit type is its base kind in GIR and LLVM, with the same layout and ABI, so `[]float64[M]` vectorizes like `[]float64`. After P03.25 every scale conversion is a known constant factor: one `fmul` (floats, the factor rounded once to the type) or one `mul` by an integer constant. Exact constants are folded before rounding.
 - The dynamic type in an interface keeps the unit: a boxed unit value gets a type descriptor (P05.08) with the canonical form and the display form, interned per canonical form. This is what `fmt` and a type switch read. A program that never boxes a unit type carries no unit descriptor.
-- Generic instances over different units have identical code; P06 dedupe merges them.
+- Generic code over units is compiled once (ADR-0025 Amendment, GEN-14): a generic whose code needs the units of its instance takes a hidden unit dictionary, one descriptor per unit parameter, and applies the factor at its collapse sites (`Info::UnitSites`); a generic without one takes nothing extra.

@@ -680,8 +680,13 @@ void Checker::checkOperatorShape(Func *F, const FuncDecl *FD,
                 str(R));
       }
     }
-    // The built-in meaning of the underlying type: a second meaning.
-    if (!Bad && RecvT) {
+    // UNI-15: the operators of a unit type are the built-in ones of EXP-33
+    // to EXP-36; a method would be a second meaning that skips the unit math
+    // (a named type over a unit type too).
+    if (RecvT && Ctx.unitsSeen() && unitOf(RecvT)) {
+      err(At, diag::err_unit_op_method, {Disp, str(RecvT)});
+      F->Op = OpKind::None; // the built-in operator stays the meaning
+    } else if (!Bad && RecvT) {
       std::string Why = opSecondMeaning(F, Sp, RecvT);
       if (!Why.empty())
         err(At, diag::err_op_second_meaning, {Disp, str(RecvT), Why});
@@ -2484,6 +2489,30 @@ bool Checker::builtinOpSignature(
   auto Is = [&](Type *A, Type *B) { return A && B && Equiv(A, B); };
   auto OneParam = [&](Type *Want) { return P.size() == 1 && Is(P[0], Want); };
   auto Result = [&](Type *Want) { return R.size() == 1 && Is(R[0], Want); };
+  // ADR-0025, UNI-10: a unit type has the built-in operators of EXP-33 to
+  // EXP-36 and no others: `+ - %` and the comparisons of two values of the
+  // type, `* /` by a plain number of the base type (a product of two units
+  // is another type), shifts by a plain count; no bit operators, no `++`.
+  const UnitCanon *UnitT = unitOf(T);
+  if (UnitT && isa<BasicType>(U)) {
+    switch (K) {
+    case OpKind::And:
+    case OpKind::Or:
+    case OpKind::Xor:
+    case OpKind::AndNot:
+    case OpKind::Compl:
+    case OpKind::Inc:
+    case OpKind::Dec:
+      return false;
+    case OpKind::Mul:
+    case OpKind::Quo:
+      if (!opAllowed(*this, tokOf(K), T, false))
+        return false;
+      return Result(T) && OneParam(Ctx.unitType(baseKind(T), nullptr));
+    default:
+      break;
+    }
+  }
   if (isBinaryArith(K)) {
     if (!isa<BasicType>(U) || !opAllowed(*this, tokOf(K), T, false))
       return false;

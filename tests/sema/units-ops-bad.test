@@ -1,0 +1,173 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (EXP-33 to EXP-36): the operators on unit values, bad side. Different dimensions, plain numbers (the untyped zero is fine), exact units in every assignment context, integer ratios that are not whole, ++ and the bit operators and a unit shift count. Lines with no CHECK are accepted: the zero exception, scalars, integer ratios that are whole, products and quotients, named types.
+package main
+
+import "unsafe"
+
+unit M
+unit S
+unit KG
+unit KM = 1000 M
+unit H = 3600 S
+unit IN = 2.54 CM
+unit CM = 0.01 M
+
+type Distance float64[M]
+
+func take(x float64[M]) {}
+func give() float64[M] { return 0 }
+
+type Rec struct {
+	D float64[M]
+	E []float64[M]
+}
+
+func main() {
+	var d float64[KM] = 2.5[KM]
+	var m float64[M] = 3.0[M]
+	var t float64[H] = 1.0[H]
+	var k int[KM] = 3[KM]
+	var n int[M] = 7[M]
+	var in int[IN]
+	var cm int[CM]
+	var plain float64 = 2
+	var dist Distance = 4.0[M]
+	var u8 uint8[M]
+	var sh uint = 2
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d + t: cannot add KM and H (different dimensions) (EXP-34)
+	_ = d + t
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d - t: cannot subtract KM and H (different dimensions) (EXP-34)
+	_ = d - t
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d < t: cannot compare KM and H (different dimensions) (EXP-34)
+	_ = d < t
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + 1.0: cannot add a number without a unit to a value in KM; write the number with its unit, as in 1.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = d + 1.0
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: 1.0 - d: cannot subtract a number without a unit from a value in KM; write the number with its unit, as in 1.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = 1.0 - d
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d > 1.0: cannot compare a number without a unit with a value in KM; write the number with its unit, as in 1.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = d > 1.0
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + 1: cannot add a number without a unit to a value in KM; write the number with its unit, as in 1[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = d + 1
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + plain: cannot add a number without a unit to a value in KM; write float64[KM](plain) to give the value a unit (EXP-35)
+	_ = d + plain
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + float64(0): cannot add a number without a unit to a value in KM; write float64[KM](float64(0)) to give the value a unit (EXP-35)
+	_ = d + float64(0)
+	_ = d * plain
+	// a typed zero, or a variable that holds zero, is no untyped zero
+	var zero = 0.0
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + zero: cannot add a number without a unit to a value in KM; write float64[KM](zero) to give the value a unit (EXP-35)
+	_ = d + zero
+	// a scalar that does not fit an integer kind
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: 2.5 (untyped float constant) truncated to int
+	_ = k * 2.5
+	_ = d + 0
+	_ = d - 0
+	_ = d > 0
+	_ = d == 0
+	_ = d != 0
+	_ = 0 < d
+	var z float64[KM] = 0
+	z = 0
+	take(0)
+	_ = z
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use 1.0 (untyped float constant 1) as float64[KM] value in variable declaration
+	var b float64[KM] = 1.0
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use 100.0[KM] (untyped float constant 100) as float64[M] value in variable declaration
+	var c float64[M] = 100.0[KM]
+	// another scale of one dimension is another type (UNI-5)
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot use 1.0[KM/H] (untyped float constant 1) as float64[M/S] value in variable declaration
+	var sp float64[M / S] = 1.0[KM / H]
+	_ = sp
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in variable declaration: an assignment never rescales a value; convert it with d.In[M]()
+	var e float64[M] = d
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64 value in variable declaration
+	var f float64 = d
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use plain (variable of type float64) as float64[KM] value in variable declaration
+	var g float64[KM] = plain
+	e, f, g = m, f, g
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in argument to take: an assignment never rescales a value; convert it with d.In[M]()
+	take(d)
+// CHECK-DAG: [[@LINE+2]]:13: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in struct literal: an assignment never rescales a value; convert it with d.In[M]()
+// CHECK-DAG: [[@LINE+1]]:32: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in array or slice literal: an assignment never rescales a value; convert it with d.In[M]()
+	_ = Rec{D: d, E: []float64[M]{d}}
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot use 1.0 (untyped float constant 1) as float64[M] value in array or slice literal
+	_ = []float64[M]{1.0}
+	var ch = make(chan float64[M], 1)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in send: an assignment never rescales a value; convert it with d.In[M]()
+	ch <- d
+	mp := map[float64[M]]int{}
+// CHECK-DAG: [[@LINE+1]]:5: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in map index: an assignment never rescales a value; convert it with d.In[M]()
+	mp[d] = 1
+// CHECK-DAG: [[@LINE+1]]:29: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64[M] value in argument to append: an assignment never rescales a value; convert it with d.In[M]()
+	_ = append([]float64[M]{}, d)
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid copy: arguments []float64[M]{} (value of type []float64[M]) and []float64[KM]{} (value of type []float64[KM]) have different element types float64[M] and float64[KM]
+	copy([]float64[M]{}, []float64[KM]{})
+	_, _, _ = b, c, e
+
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: d++: a step of 1 of what? write d += 1.0[KM] (EXP-36)
+	d++
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: d--: a step of 1 of what? write d -= 1.0[KM] (EXP-36)
+	d--
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: invalid operation: k++: a step of 1 of what? write k += 1[KM] (EXP-36)
+	k++
+
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: n: the conversion needs the ratio 1/1000, which cannot be exact for an integer; convert first (`int[KM](x)` truncates) or use floats (EXP-35)
+	k += n
+	_ = k + n
+	_ = n + k
+	n += k
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: in: the conversion needs the ratio 127/50, which cannot be exact for an integer; convert first (`int[CM](x)` truncates) or use floats (EXP-35)
+	_ = in + cm
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: in: the conversion needs the ratio 127/50, which cannot be exact for an integer; convert first (`int[CM](x)` truncates) or use floats (EXP-35)
+	_ = cm + in
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: cm: the conversion needs the ratio 50/127, which cannot be exact for an integer; convert first (`int[IN](x)` truncates) or use floats (EXP-35)
+	in += cm
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use n (variable of type int[M]) as int[KM] value in variable declaration: an assignment never rescales a value; convert it with n.In[KM]()
+	var q int[KM] = n
+	_ = q
+	_ = k % n
+	_ = n % k
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: k % 2: cannot take the remainder of a number without a unit and a value in KM; write the number with its unit, as in 2[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = k % 2
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: operator % not defined on d (variable of type float64[KM])
+	_ = d % d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: k & k: the operator & works on bit patterns, which have no unit; remove the unit first, as in uint32(x) (EXP-36)
+	_ = k & k
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: k | k: the operator | works on bit patterns, which have no unit; remove the unit first, as in uint32(x) (EXP-36)
+	_ = k | k
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: k ^ k: the operator ^ works on bit patterns, which have no unit; remove the unit first, as in uint32(x) (EXP-36)
+	_ = k ^ k
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: k &^ k: the operator &^ works on bit patterns, which have no unit; remove the unit first, as in uint32(x) (EXP-36)
+	_ = k &^ k
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid operation: ^k: bit patterns have no unit; remove the unit first, as in uint32(x) (EXP-36)
+	_ = ^k
+	_ = -k
+	_ = k << 2
+	_ = k >> sh
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid operation: 1 << k: a shift count has no unit; remove the unit first, as in uint(n) (EXP-36)
+	_ = 1 << k
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: invalid operation: sh << k: a shift count has no unit; remove the unit first, as in uint(n) (EXP-36)
+	_ = sh << k
+	_ = u8 << sh
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: dist + m (mismatched types Distance and float64[M])
+	_ = dist + m
+	_ = dist + dist
+	_ = dist * 2
+	_ = dist / m
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d < t: cannot compare KM and H (different dimensions) (EXP-34)
+	_ = min(d, t)
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: invalid operation: d < 1.0: cannot compare a number without a unit with a value in KM; write the number with its unit, as in 1.0[KM] (only an untyped zero needs no unit) (EXP-35)
+	_ = max(d, 1.0)
+	_ = min(k, n)
+
+	_ = d * t
+	_ = d / t
+	_ = unsafe.Sizeof(d)
+	_ = unsafe.Sizeof(plain)
+
+	_ = give
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot convert ([]float64[M])(nil) (value of type []float64[M]) to type []float64
+	_ = []float64(([]float64[M])(nil))
+}

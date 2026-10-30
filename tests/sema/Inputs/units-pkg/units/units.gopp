@@ -1,0 +1,18 @@
+package units
+
+// The SI base units and some derived ones, as the standard library will have
+// them (UNI-14).
+@Symbol("m")
+unit M
+unit S
+unit KG
+@Symbol("km")
+unit KM = 1000 M
+unit H = 3600 S
+unit N = KG * M / S ^ 2
+
+// hidden is a base unit that is not exported: units made from it still have
+// one identity in every importer.
+unit hidden
+unit Hid = 2 hidden
+unit Twice = 2 Hid

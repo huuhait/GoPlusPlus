@@ -1,0 +1,168 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/units-method-cycle-pkg 2>&1 | FileCheck "--implicit-check-not=error[E" --check-prefix=PKG %s
+// RUN: %gopp check --go %S/Inputs/generic-method-cycle.go
+// P03.25 (GEN-14, R21, owner decision 2026-10-30): in a .gopp file a method's
+// signature instantiates for the instantiation cycle check, as a field or a
+// body does: a method whose result grows a parameter (`Next() Option[*Next[U,
+// U*V]]`, growth in either parameter, up and down, `*T` for a type parameter)
+// would make instances without end, so it is E0366 (one per cycle), also in
+// an imported package, as a body that grows it is. Only the receiver type's
+// own parameters count: an argument made with a generic method's own
+// parameter (`Per[V unit]() Vec[U/V]`, `Scale[W unit]() Vec[U*W]`, `Zip[U
+// any]() Seq[Pair[T, U]]`) is given at each call and is no cycle (owner
+// decision 2026-10-30), while `Sq[V unit]() Sq[U*U]` still grows U. The same
+// instance, a permutation, an instance of another type and a linked list are
+// accepted. Go mode keeps Go's rule
+// (go.dev/issue/48703): Inputs/generic-method-cycle.go is accepted.
+package main
+
+unit M
+unit S
+
+// Rejected: a method's result grows a parameter (E0366, GEN-14).
+// CHECK: [[@LINE+1]]:19: error[E0366]: instantiation cycle
+type Next[U unit, V unit] struct{}
+
+func (x Next[U, V]) Next() Option[*Next[U, U*V]] { return nil }
+
+// CHECK: [[@LINE+1]]:11: error[E0366]: instantiation cycle
+type Both[U unit, V unit] struct{}
+
+func (x Both[U, V]) A() Option[*Both[U*V, V]] { return nil }
+func (x Both[U, V]) B() Option[*Both[U, U*V]] { return nil }
+
+// CHECK: [[@LINE+1]]:21: error[E0366]: instantiation cycle
+type UpDown[U unit, V unit] struct{}
+
+func (x UpDown[U, V]) Up() Option[*UpDown[U, V*U]]   { return nil }
+func (x UpDown[U, V]) Down() Option[*UpDown[U, V/U]] { return nil }
+
+// CHECK: [[@LINE+1]]:10: error[E0366]: instantiation cycle
+type Ptr[T any] struct{}
+
+func (x Ptr[T]) Next() Option[*Ptr[*T]] { return nil }
+
+// Rejected too: a body that grows the receiver's own parameter, and a
+// generic method whose result grows the receiver's parameter alone.
+// CHECK-DAG: [[@LINE+1]]:11: error[E0366]: instantiation cycle
+type Body[T any] []int
+
+func (x Body[T]) m() { var _ Body[*T] }
+
+// CHECK-DAG: [[@LINE+1]]:9: error[E0366]: instantiation cycle
+type Sq[U unit] struct{ X float64[U] }
+
+func (p Sq[U]) Sq[V unit](t float64[V]) Option[*Sq[U*U]] { return nil }
+
+// Accepted (owner decision 2026-10-30): an argument made with a generic
+// method's own parameter is given at each call, so it is no cycle.
+type Vec[U unit] struct{ X float64[U] }
+
+func (p Vec[U]) Per[V unit](t float64[V]) Vec[U/V] {
+	var r Vec[U/V]
+	return r
+}
+func (p Vec[U]) Scale[W unit]() Vec[U*W] {
+	var r Vec[U*W]
+	return r
+}
+
+type Pair[A any, B any] struct {
+	a A
+	b B
+}
+type Seq[T any] struct{ x []T }
+
+func (l Seq[T]) Zip[U any](o Seq[U]) Seq[Pair[T, U]] {
+	var r Seq[Pair[T, U]]
+	return r
+}
+
+// Rejected (R23): a generic method's BODY keeps the full rule, as a generic
+// function's does: a call of a generic method or function with an argument
+// grown from the method's own parameter makes instances without end.
+type Deep[T any] struct{ xs []T }
+
+// CHECK-DAG: [[@LINE+1]]:23: error[E0366]: instantiation cycle
+func (l Deep[T]) Deep[U any]() { l.Deep[*U]() }
+
+type Per2[U unit] struct{ X float64[U] }
+
+// CHECK-DAG: [[@LINE+1]]:23: error[E0366]: instantiation cycle
+func (p Per2[U]) Per2[V unit]() { p.Per2[V*S]() }
+
+type Mut[T any] struct{ xs []T }
+
+// CHECK-DAG: [[@LINE+1]]:19: error[E0366]: instantiation cycle
+func (l Mut[T]) A[U any]() { l.B[*U]() }
+func (l Mut[T]) B[U any]() { l.A[[]U]() }
+
+type Via[T any] struct{ xs []T }
+
+// CHECK-DAG: [[@LINE+1]]:19: error[E0366]: instantiation cycle
+func (l Via[T]) A[U any]() { viaG[T, *U](l) }
+func viaG[T any, U any](l Via[T]) { l.A[U]() }
+
+type O2R[T any] struct{ xs []T }
+
+// CHECK-DAG: [[@LINE+1]]:19: error[E0366]: instantiation cycle
+func (l O2R[T]) A[U any]() {
+	var m O2R[U]
+	m.A[*U]()
+}
+
+type Mu[U unit] struct{ X float64[U] }
+
+// CHECK-DAG: [[@LINE+1]]:18: error[E0366]: instantiation cycle
+func (p Mu[U]) A[V unit]() { p.B[V*S]() }
+func (p Mu[U]) B[V unit]() { p.A[V/M]() }
+
+// Accepted: a body that calls the method with the same or permuted own
+// parameters, and one that only makes an instance of the receiver type.
+type Rec[U unit] struct{ X float64[U] }
+
+func (p Rec[U]) Same[V unit](n int) float64[U] {
+	if n == 0 {
+		return p.X
+	}
+	return p.Same[V](n - 1)
+}
+func (p Rec[U]) Flip[V unit, W unit](n int) float64[U] {
+	if n == 0 {
+		return p.X
+	}
+	return p.Flip[W, V](n - 1)
+}
+func (p Rec[U]) Scale[W unit](k float64[W]) Rec[U*W] { return Rec[U*W]{p.X * k} }
+
+// Accepted: the same instance, a permutation, another type, a linked list.
+type Same[U unit, V unit] struct{ f float64[U] }
+
+func (x Same[U, V]) Self() Option[*Same[U, V]] { return nil }
+func (x Same[U, V]) Swap() Option[*Same[V, U]] { return nil }
+func (x Same[U, V]) Other() Option[*Leaf[U*V]] { return nil }
+
+type Leaf[U unit] struct{ f float64[U] }
+
+type Node[U unit] struct {
+	v    float64[U]
+	next Option[*List[U]]
+}
+type List[U unit] struct{ head Option[*Node[U]] }
+
+func (l List[U]) First() Option[*Node[U]] { return l.head }
+
+func main() {
+	var a Next[M, S]
+	var b Same[M, S]
+	var c List[M]
+	_, _, _ = a, b, c
+	pos := Vec[M]{}
+	_ = pos.Per(2.0[S]).Scale[S]()
+	_ = Seq[int]{}.Zip(Seq[string]{})
+	r := Rec[M]{1.0[M]}
+	_ = r.Same[S](3) + r.Flip[S, M](3)
+	_ = r.Scale(2.0[S])
+}
+
+// PKG: mlib.gopp:6:19: error[E0366]: instantiation cycle

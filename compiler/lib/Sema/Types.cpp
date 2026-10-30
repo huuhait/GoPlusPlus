@@ -138,6 +138,7 @@ static const struct {
     {BasicKind::UntypedComplex, IsComplex | IsUntyped, "untyped complex"},
     {BasicKind::UntypedString, IsString | IsUntyped, "untyped string"},
     {BasicKind::UntypedNil, IsUntyped, "untyped nil"},
+    {BasicKind::UnitArg, 0, "unit"},
 };
 
 static BasicType makeBasic(unsigned I) {
@@ -151,7 +152,7 @@ TypeContext::TypeContext(bool GoCompat)
              makeBasic(12), makeBasic(13), makeBasic(14), makeBasic(15),
              makeBasic(16), makeBasic(17), makeBasic(18), makeBasic(19),
              makeBasic(20), makeBasic(21), makeBasic(22), makeBasic(23),
-             makeBasic(24), makeBasic(25)} {
+             makeBasic(24), makeBasic(25), makeBasic(26)} {
   static_assert(sizeof(BasicTable) / sizeof(BasicTable[0]) ==
                 static_cast<unsigned>(BasicKind::NumBasicKinds));
   initUniverse(GoCompat);
@@ -494,6 +495,7 @@ void TypeContext::initUniverse(bool GoCompat) {
   };
   ComparableType = Special("comparable", InterfaceType::Comparable);
   if (!GoCompat) {
+    Special("unit", InterfaceType::Unit); // GEN-14
     CopyType = Special("Copy", InterfaceType::Copy);
     CloneType = Special("Clone", InterfaceType::Clone);
     // Unique[*T], Shared[*T], Weak[*T] (D1.7, ADR-0018).

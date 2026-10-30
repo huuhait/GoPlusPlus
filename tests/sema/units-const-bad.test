@@ -1,0 +1,38 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (EXP-35, EXP-37): constants: a plain number for a typed unit constant, a fraction for an int unit constant, and wrong values (the array length is the value of the constant, so a wrong value is a mismatch). The accepted constants are in units-ops-ok.test.
+package main
+
+unit M
+unit KM = 1000 M
+
+const ok1 = 120.0[KM]
+const ok2 float64[KM] = 120.0[KM]
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot use 120 (untyped int constant) as float64[KM] value in constant declaration
+const bad1 float64[KM] = 120
+// CHECK-DAG: [[@LINE+1]]:21: error{{\[E[0-9]+\]}}: cannot use 1.5[M] (untyped float constant 1.5) as int[M] value in constant declaration (truncated)
+const bad2 int[M] = 1.5[M]
+const zero float64[KM] = 0
+
+// wrong values: the length of the array is the value, so each of these is a
+// mismatch of array types
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use [int(float64(1.0[KM] + 500.0[M]) - 1400) + 1]int{} (value of type [101]int) as [1]int value in variable declaration
+var v1 [1]int = [int(float64(1.0[KM]+500.0[M])-1400) + 1]int{}
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use [int(float64(500.0[M] + 1.0[KM]) - 1400) + 1]int{} (value of type [101]int) as [1]int value in variable declaration
+var v2 [1]int = [int(float64(500.0[M]+1.0[KM])-1400) + 1]int{}
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use [int(float64(float64[M](1.0[KM])) - 999) + 1]int{} (value of type [2]int) as [1]int value in variable declaration
+var v3 [1]int = [int(float64(float64[M](1.0[KM]))-999) + 1]int{}
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use [int(float64(int[KM](int[M](1999)))) + 1]int{} (value of type [2]int) as [1]int value in variable declaration
+var v4 [1]int = [int(float64(int[KM](int[M](1999)))) + 1]int{}
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot convert float64(5.0[KM] / 2.0[M]) - 2.5 (constant 2497.5 of type float64) to type int
+var v5 [1]int = [int(float64(5.0[KM]/2.0[M])-2.5) + 1]int{}
+// CHECK-DAG: [[@LINE+1]]:34: error{{\[E[0-9]+\]}}: invalid unit expression: KM/KM has an empty dimension, so it is not a unit (UNI-4)
+var v6 [1]int = [int(float64(1.0[KM/KM])) + 1]int{}
+
+// `.In` on a constant is a constant conversion: a float value that is not
+// whole does not fit an integer kind (an integer value truncates, EXP-32)
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use 1999.0[M].In[KM]() (untyped float constant 1.999) as int[KM] value in variable declaration (truncated)
+var v7 int[KM] = 1999.0[M].In[KM]()
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot use [int(1999[M].In[KM]()) + 1]int{} (value of type [2]int) as [1]int value in variable declaration
+var v8 [1]int = [int(1999[M].In[KM]()) + 1]int{}
+
+func main() {}

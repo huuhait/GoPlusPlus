@@ -123,6 +123,7 @@ private:
     PO.AllowNamespaceTypes = false;
     PO.AllowExtends = false;
     PO.AllowOperators = false;
+    PO.AllowUnits = false;
     ast::File *AST = parseFile(S->AC, S->SM, *F, *S->Diags, PO);
     CheckOptions CO;
     CO.GoCompat = true;
@@ -207,6 +208,7 @@ Result runFile(const std::string &Path) {
   PO.AllowNamespaceTypes = false;
   PO.AllowExtends = false;
   PO.AllowOperators = false;
+  PO.AllowUnits = false;
   ast::File *AST = parseFile(AC, SM, *F, Diags, PO);
 
   // Expectations from the comments.

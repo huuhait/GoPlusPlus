@@ -50,6 +50,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "gopp/Sema/Serialize.h"
+#include "Units.h"
 #include "gopp/Basic/Symbol.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -228,6 +229,27 @@ uint64_t TypeWriter::type(const Type *T) {
   return Id;
 }
 
+uint64_t TypeWriter::unit(const UnitCanon *U) {
+  if (auto It = UnitIds.find(U); It != UnitIds.end())
+    return It->second;
+  std::vector<uint64_t> Ops{U->Dims.size()};
+  for (const UnitDim &D : U->Dims) {
+    if (D.Param) {
+      Ops.push_back(1);
+      Ops.push_back(type(D.Param));
+      Ops.push_back(0);
+    } else {
+      Ops.push_back(0);
+      Ops.push_back(package(D.Unit->Pkg));
+      Ops.push_back(string(D.Unit->Name));
+    }
+    Ops.push_back(static_cast<uint32_t>(D.Exp));
+  }
+  constValue(ConstValue::makeFloat(U->Factor), Ops);
+  W.write(REC_UNIT_CANON, Ops);
+  return UnitIds[U] = NextUnit++;
+}
+
 uint64_t TypeWriter::typeImpl(const Type *T) {
   if (!T)
     return 0;
@@ -241,6 +263,10 @@ uint64_t TypeWriter::typeImpl(const Type *T) {
   switch (T->getKind()) {
   case Type::Kind::Basic: {
     auto *B = cast<BasicType>(T);
+    if (B->Unit) {
+      uint64_t U = unit(B->Unit);
+      return Emit(REC_UNIT_TYPE, {static_cast<uint64_t>(B->BK), U});
+    }
     StringRef N = B->Name;
     return Emit(REC_BASIC,
                 {static_cast<uint64_t>(B->BK), N == "byte"   ? uint64_t(1)
@@ -467,6 +493,15 @@ void TypeWriter::object(const Object *O) {
     W.write(REC_OBJ_VAR, Ops);
     break;
   }
+  case Object::Kind::Unit: {
+    auto *U = cast<UnitObj>(O);
+    if (!U->Canon) // an invalid unit has nothing to export
+      break;
+    uint64_t Canon = unit(U->Canon);
+    uint64_t Ops[] = {string(U->Name), U->IsBase, string(U->Symbol), Canon};
+    W.write(REC_OBJ_UNIT, Ops);
+    break;
+  }
   case Object::Kind::Func: {
     auto *F = cast<Func>(O);
     uint64_t Sig = type(F->Ty);
@@ -497,6 +532,7 @@ static std::vector<const Object *> packageObjects(const Package &P,
       case Object::Kind::TypeName:
       case Object::Kind::Var:
       case Object::Kind::Func:
+      case Object::Kind::Unit:
         if (O->exported() || !OnlyExported)
           Objs.push_back(O);
         break;
@@ -514,6 +550,32 @@ void TypeWriter::writePackage(const Package &P, bool OnlyExported) {
   W.write(REC_PKG_BEGIN, Ops);
   for (const Object *O : packageObjects(P, OnlyExported))
     object(O);
+  // ADR-0025, UNI-5: the display forms the package prints for the units of
+  // what it exports (the units written above), so an importer prints the
+  // same names. In the order of the units in the stream (one form each), so
+  // the bytes do not depend on addresses.
+  std::vector<std::pair<uint64_t, const UnitDisplay *>> Names;
+  for (const UnitNameEntry &E : P.UnitNames)
+    if (auto It = UnitIds.find(E.Canon); It != UnitIds.end())
+      Names.push_back({It->second, E.Disp});
+  std::sort(Names.begin(), Names.end(),
+            [](const auto &A, const auto &B) { return A.first < B.first; });
+  for (auto &[Id, Disp] : Names) {
+    std::vector<uint64_t> NOps{Id, Disp->Parts.size()};
+    for (const UnitDim &D : Disp->Parts) {
+      if (D.Param) {
+        NOps.push_back(1);
+        NOps.push_back(type(D.Param));
+        NOps.push_back(0);
+      } else {
+        NOps.push_back(0);
+        NOps.push_back(package(D.Unit->Pkg));
+        NOps.push_back(string(D.Unit->Name));
+      }
+      NOps.push_back(static_cast<uint32_t>(D.Exp));
+    }
+    W.write(REC_UNIT_NAME, NOps);
+  }
   W.write(REC_PKG_END, {});
 }
 
@@ -748,6 +810,170 @@ bool TypeReader::record(const Record &Rec) {
                    : Alias == 2 ? Ctx.runeType()
                                 : Ctx.typ(static_cast<BasicKind>(K)));
   }
+  case REC_UNIT_CANON: {
+    uint64_t N = Next();
+    if (Bad || N > Ops.size())
+      return fail("malformed unit");
+    llvm::SmallVector<UnitDim, 8> Dims;
+    for (uint64_t K = 0; K < N && !Bad; ++K) {
+      uint64_t Kind = Next();
+      UnitDim D;
+      if (Kind == 1) {
+        auto *TP = dyn_cast_or_null<TypeParamType>(Ty());
+        Next();
+        if (!TP)
+          Bad = true;
+        D.Param = TP;
+      } else if (Kind == 0) {
+        Package *P = Pk();
+        StringRef Name = Str();
+        if (Bad || !P)
+          return fail("malformed unit");
+        UnitObj *U = nullptr;
+        if (P == Pkg) {
+          // Declared already, or named before its declaration.
+          UnitObj *Declared =
+              dyn_cast_or_null<UnitObj>(Pkg->PkgScope->lookupLocal(Name));
+          UnitObj *&Slot = Declared ? Declared : PendingUnits[Name];
+          if (!Slot) {
+            Slot = Mem.make<UnitObj>();
+            Slot->Name = Mem.copy(Name);
+            Slot->Pkg = Pkg;
+            Slot->IsBase = true;
+            Slot->Resolved = true;
+            Slot->Canon = units::base(Ctx, Slot, nullptr);
+          }
+          U = Slot;
+          if (!U->IsBase)
+            return fail("a unit refers to something that is not a base unit");
+        } else {
+          Object *O = P->PkgScope ? P->PkgScope->lookupLocal(Name) : nullptr;
+          U = dyn_cast_or_null<UnitObj>(O);
+          if (!U && !O && P->PkgScope) {
+            // A base unit another unit is made of, not exported itself.
+            U = Mem.make<UnitObj>();
+            U->Name = Mem.copy(Name);
+            U->Pkg = P;
+            U->IsBase = true;
+            U->Resolved = true;
+            U->Canon = units::base(Ctx, U, nullptr);
+            U->Parent = P->PkgScope;
+            P->PkgScope->insert(U);
+          }
+          if (!U || !U->IsBase)
+            return fail("a unit refers to something that is not a base unit");
+        }
+        D.Unit = U;
+      } else {
+        return fail("malformed unit");
+      }
+      uint64_t Ex = Next();
+      D.Exp = static_cast<int32_t>(static_cast<uint32_t>(Ex));
+      if (Bad || D.Exp == 0 || D.Exp > units::MaxExp || D.Exp < -units::MaxExp)
+        return fail("malformed unit");
+      Dims.push_back(D);
+    }
+    ConstValue F;
+    if (Bad || !constValue(Ops, I, F) || F.kind() != ConstValue::Float ||
+        !F.floatVal().isRat() || F.floatVal().sign() <= 0)
+      return fail("malformed unit factor");
+    UnitStatus St;
+    const UnitCanon *C = units::make(Ctx, Dims, F.floatVal(), St);
+    if (!C)
+      return fail("a unit is out of range");
+    Canons.push_back(C);
+    return true;
+  }
+  case REC_UNIT_TYPE: {
+    uint64_t K = Next(), Id = Next();
+    if (Bad || K >= static_cast<uint64_t>(BasicKind::NumBasicKinds) ||
+        Id == 0 || Id >= Canons.size())
+      return fail("malformed unit type");
+    auto BK = static_cast<BasicKind>(K);
+    if (BK != BasicKind::UnitArg && !(Ctx.typ(BK)->Info & IsNumeric))
+      return fail("a unit on a type that is not a number");
+    if (BK == BasicKind::UnitArg ? false : Canons[Id]->dimensionless())
+      return fail("a unit type with an empty unit");
+    return Produce(Ctx.unitType(BK, Canons[Id]));
+  }
+  case REC_UNIT_NAME: {
+    if (!Pkg)
+      return fail("unit name before the package header");
+    uint64_t Id = Next(), N = Next();
+    if (Bad || Id == 0 || Id >= Canons.size() || N == 0 || N > Ops.size())
+      return fail("malformed unit name");
+    llvm::SmallVector<UnitDim, 8> Parts;
+    for (uint64_t K = 0; K < N && !Bad; ++K) {
+      uint64_t Kind = Next();
+      UnitDim D;
+      if (Kind == 1) {
+        auto *TP = dyn_cast_or_null<TypeParamType>(Ty());
+        Next();
+        if (!TP)
+          return fail("malformed unit name");
+        D.Param = TP;
+      } else if (Kind == 0) {
+        Package *P = Pk();
+        StringRef Name = Str();
+        if (Bad || !P || Name.empty())
+          return fail("malformed unit name");
+        UnitObj *U = nullptr;
+        if (P == Pkg)
+          if (auto It = PendingUnits.find(Name); It != PendingUnits.end())
+            U = It->second;
+        if (!U && P->PkgScope)
+          U = dyn_cast_or_null<UnitObj>(P->PkgScope->lookupLocal(Name));
+        if (!U) {
+          // A name the package prints that is not exported (the importer
+          // prints it, but cannot name it): a unit object for the text only.
+          U = Mem.make<UnitObj>();
+          U->Name = Mem.copy(Name);
+          U->Pkg = P;
+          U->Resolved = true;
+        }
+        D.Unit = U;
+      } else {
+        return fail("malformed unit name");
+      }
+      uint64_t Ex = Next();
+      D.Exp = static_cast<int32_t>(static_cast<uint32_t>(Ex));
+      if (Bad || D.Exp == 0 || D.Exp > units::MaxExp || D.Exp < -units::MaxExp)
+        return fail("malformed unit name");
+      Parts.push_back(D);
+    }
+    UnitStatus St;
+    const UnitDisplay *Disp = units::display(Ctx, Parts, St);
+    if (Bad || !Disp)
+      return fail("malformed unit name");
+    UnitNamesRead.push_back({Canons[Id], Disp});
+    return true;
+  }
+  case REC_OBJ_UNIT: {
+    if (!Pkg)
+      return fail("object before the package header");
+    StringRef Name = Str();
+    bool Base = Flag();
+    StringRef Symbol = Str();
+    uint64_t Id = Next();
+    if (Bad || Id == 0 || Id >= Canons.size())
+      return fail("malformed unit declaration");
+    UnitObj *U = nullptr;
+    if (auto It = PendingUnits.find(Name); It != PendingUnits.end()) {
+      U = It->second; // made when another unit named it first
+      PendingUnits.erase(It);
+      if (!Base)
+        return fail("a derived unit used as a base unit");
+    } else {
+      U = Mem.make<UnitObj>();
+      U->Name = Mem.copy(Name);
+      U->Pkg = Pkg;
+      U->IsBase = Base;
+      U->Resolved = true;
+    }
+    U->Canon = Canons[Id];
+    U->Symbol = Mem.copy(Symbol);
+    return Declare(U);
+  }
   case REC_UNIVERSE: {
     StringRef N = Str();
     Object *O = Bad ? nullptr : Ctx.universe()->lookupLocal(N);
@@ -858,7 +1084,7 @@ bool TypeReader::record(const Record &Rec) {
       if (!Es.back())
         Bad = true;
     }
-    if (Bad || Special > InterfaceType::Clone)
+    if (Bad || Special > InterfaceType::Unit)
       return fail("malformed interface");
     std::vector<SourceLoc> Locs(Es.size());
     Type *Ext = Ty(); // GEN-12; null if there is none
@@ -991,7 +1217,7 @@ bool TypeReader::record(const Record &Rec) {
     for (uint64_t K = 0; K < NUses && !Bad; ++K) {
       uint64_t Kind = Next(), Place = Next(), Flags = Next();
       StringRef Member = Str();
-      if (Kind > TypeParamType::Use::ViewArg ||
+      if (Kind > TypeParamType::Use::UnitDict ||
           Place > TypeParamType::Use::Pointer || Flags > 3) {
         Bad = true;
         break;
@@ -1130,6 +1356,30 @@ Package *TypeReader::readPackage(std::string &Err) {
   while (!Done && R.read(Rec)) {
     if (Rec.Code == REC_PKG_END) {
       Done = true;
+      // A base unit of this package that others are made of but that was not
+      // exported: it stays reachable for the packages that name it.
+      for (auto &KV : PendingUnits) {
+        KV.second->Parent = Pkg->PkgScope;
+        Pkg->PkgScope->insert(KV.second);
+      }
+      PendingUnits.clear();
+      // The display table, by the fixed order where a unit has two (only a
+      // stream that is not written by TypeWriter has that).
+      if (!UnitNamesRead.empty()) {
+        std::stable_sort(UnitNamesRead.begin(), UnitNamesRead.end(),
+                         [](const UnitNameEntry &A, const UnitNameEntry &B) {
+                           if (A.Canon != B.Canon)
+                             return std::less<const UnitCanon *>()(A.Canon,
+                                                                   B.Canon);
+                           return UnitDisplay::before(A.Disp, B.Disp);
+                         });
+        std::vector<UnitNameEntry> Out;
+        for (const UnitNameEntry &E : UnitNamesRead)
+          if (Out.empty() || Out.back().Canon != E.Canon)
+            Out.push_back(E);
+        Pkg->UnitNames = Mem.copy(llvm::ArrayRef<UnitNameEntry>(Out));
+        UnitNamesRead.clear();
+      }
       break;
     }
     if (!record(Rec)) {
@@ -1171,6 +1421,16 @@ void sema::dumpPackageAPI(llvm::raw_ostream &OS, const Package &P,
     case Object::Kind::Var:
       OS << "var " << O->Name << ' ' << typeString(O->Ty, &P) << '\n';
       break;
+    case Object::Kind::Unit: {
+      auto *U = cast<UnitObj>(O);
+      if (!U->Symbol.empty())
+        OS << "@Symbol(\"" << U->Symbol << "\") ";
+      OS << "unit " << O->Name;
+      if (!U->IsBase)
+        OS << " = " << units::canonStr(U->Canon, &P);
+      OS << '\n';
+      break;
+    }
     case Object::Kind::Func:
       OS << "func " << O->Name << Sig(O->Ty) << '\n';
       break;

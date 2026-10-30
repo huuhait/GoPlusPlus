@@ -1,0 +1,140 @@
+// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --check-prefix=ERR --allow-empty %s
+// RUN: %gopp check --dump-types %s | FileCheck %s
+// RUN: %gopp check --dump-types %S/Inputs/units-collapse-pkg | FileCheck --check-prefix=PKG %s
+// P03.25 (GEN-14, R2, owner decision 2026-10-30): generic unit code computes
+// what plain code computes for the same units. `a / b` of `float64[U]` and
+// `float64[V]` with U = KM and V = M is the plain 1000 at run time, as the
+// plain `a / b` is (EXP-33): no instance is an error, and nothing is
+// searched. The checker records, for the lowering (P04.24), each collapse
+// site (`unit-site`: an operation whose value depends on whether a unit has
+// an empty dimension at the instance, with its units over the parameters) and
+// the unit parameters whose units the code needs at run time (`unit-dict`:
+// a collapse site mentions them, or they are passed on to code that needs
+// them: through other generics, the methods of a generic type, a generic
+// method with its receiver's units, and generics of another package through
+// the export data, units-collapse-pkg). A generic with no such site needs no
+// units (Speed, Twice, Sq). The plain-vs-generic table of the factors is
+// units-generic-plain-table.
+// ERR-NOT: error
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+
+// CHECK: [[@LINE+1]]:6 unit-dict Rt: U V
+func Rt[U unit, V unit](a float64[U], b float64[V]) float64 {
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a / b` U/V = U / V
+	r := a / b
+	return float64(r)
+}
+
+// A conversion written in the body.
+// CHECK: [[@LINE+2]]:6 unit-dict Cv: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a * b` U*V = U * V
+func Cv[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a * b) }
+
+// Through other generics, with the parameters in another order.
+// CHECK: [[@LINE+1]]:6 unit-dict Via: U V
+func Via[U unit, V unit](a float64[U], b float64[V]) float64 { return Rt(a, b) }
+// CHECK: [[@LINE+1]]:6 unit-dict Via2: P Q
+func Via2[P unit, Q unit](a float64[P], b float64[Q]) float64 { return Via(a, b) }
+// CHECK: [[@LINE+1]]:6 unit-dict Swap: U V
+func Swap[U unit, V unit](a float64[U], b float64[V]) float64 { return Rt(b, a) }
+
+// A signature whose unit cancels at an instance is the plain type there
+// (Speed[KM, KM] returns the plain float64, Speed[KM, M] the plain 1000 for
+// 1 KM / 1 M): its quotient is a collapse site. Twice and Sq have none.
+// CHECK: [[@LINE+2]]:6 unit-dict Speed: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a / b` U/V = U / V
+func Speed[U unit, V unit](a float64[U], b float64[V]) float64[U/V] { return a / b }
+func Twice[U unit](a float64[U]) float64[U]                         { return a + a }
+func Sq[U unit](a float64[U]) float64[U*U]                          { return a * a }
+
+// CHECK: [[@LINE+1]]:6 unit-dict Box: U V
+type Box[U unit, V unit] struct {
+	A float64[U]
+	B float64[V]
+}
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `b.A / b.B` U/V = U / V
+func (b Box[U, V]) Ratio() float64 { return float64(b.A / b.B) }
+
+type Plain[U unit] struct{ A float64[U] }
+
+func (p Plain[U]) Sq() float64[U*U] { return p.A * p.A }
+
+// A generic method of a generic type: the receiver's unit (Vec's U) and its
+// own (V).
+// CHECK: [[@LINE+1]]:6 unit-dict Vec: U
+type Vec[U unit] struct{ X float64[U] }
+
+// CHECK: [[@LINE+1]]:17 unit-dict Div: V
+func (v Vec[U]) Div[V unit](d float64[V]) float64 {
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `v.X / d` U/V = U / V
+	r := v.X / d
+	return float64(r)
+}
+
+// CHECK: [[@LINE+1]]:6 unit-dict Over: P Q
+func Over[P unit, Q unit](x float64[P], y float64[Q]) float64 {
+	return Vec[P]{X: x}.Div(y)
+}
+
+// A unit argument passed on may have an empty dimension at an instance
+// (U/V with U = V): the callee computes with it as with any unit.
+// CHECK: [[@LINE+2]]:6 unit-dict Inner: W
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `w * 1.0[M]` M*W = W * M
+func Inner[W unit](w float64[W]) float64 { return float64(w * 1.0[M]) }
+
+// CHECK: [[@LINE+1]]:6 unit-dict PassRatio: U V
+func PassRatio[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return Inner[U/V](a / b)
+}
+
+// CHECK: [[@LINE+1]]:6 unit-dict Scaled: U
+func Scaled[U unit](v float64) float64[U*M] {
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `v` M*U from plain
+	return float64[U*M](v)
+}
+
+func main() {
+	_ = Rt(1.0[M], 2.0[M])
+	_ = Rt(1.0[KM], 2.0[KM])
+	_ = Rt(1.0[M], 2.0[S]) // not cancelling: M/S
+	_ = Cv(1.0[M], 2.0[S])
+	_ = Via(1.0[KM], 2.0[KM])
+	_ = Speed(1.0[KM], 2.0[H])
+	_ = Speed(1.0[KM], 2.0[KM])
+	_ = Twice(1.0[KM])
+	_ = Sq(1.0[KM])
+	var ok Box[KM, KM]
+	_ = ok.Ratio()
+	var p Plain[KM]
+	_ = p.Sq()
+	_ = Vec[KM]{}.Div(1.0[KM])
+	_ = Vec[KM]{}.Div(1.0[S])
+	_ = Vec[M]{}.Div(1.0[M])
+	_ = Over(1.0[KM], 2.0[H])
+	_ = PassRatio(1.0[KM], 2.0[S])
+	_ = Scaled[1/M](2.0)
+	// The units cancel with a factor: computed as in plain code (GEN-14).
+	_ = Rt(1.0[KM], 2.0[M])
+	_ = Rt[M, KM](1.0[M], 2.0[KM])
+	_ = Cv(1.0[KM], 2.0[1/M])
+	_ = Via(1.0[KM], 2.0[M])
+	_ = Via2(1.0[KM], 2.0[M])
+	_ = Swap(1.0[KM], 2.0[M])
+	var r float64 = Speed(1.0[KM], 2.0[M]) // the plain type, 500
+	_ = r
+	var bad Box[KM, M]
+	_ = bad
+	_ = Vec[KM]{}.Div(1.0[M])
+	_ = Over(1.0[M], 2.0[KM])
+	_ = PassRatio(1.0[S], 2.0[S])
+}
+
+// PKG: 8:6 unit-dict Fwd: P Q
+// PKG-NOT: unit-dict Keep
+// PKG: 10:6 unit-dict Meth: P Q

@@ -1,0 +1,13 @@
+// REQUIRES: long
+// P03.25 (ADR-0025, CLAUDE.md lessons): the unit analysis stays near-linear:
+// one unit made of 10,000 base units (and of 1,000). The input is generated (Inputs/gen-units-stress.py) and checked under a
+// time limit; nothing nests deeper than the parser allows and no walk is
+// recursive over the size of the input.
+// RUN: %python %S/Inputs/gen-units-stress.py bases 10000 > %t.bases.gopp
+// RUN: timeout 20 %gopp check %t.bases.gopp
+// RUN: %python %S/Inputs/gen-units-stress.py bases 1000 > %t.bases1.gopp
+// RUN: timeout 20 %gopp check %t.bases1.gopp
+// Near-linear: the shape at N and at 4N, the larger run at most 12 times the
+// smaller (a quadratic analysis takes 16 times; Inputs/check-units-linear.py).
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin bases 10000 | FileCheck --check-prefix=LIN-BASES %s
+// LIN-BASES: bases: near-linear yes

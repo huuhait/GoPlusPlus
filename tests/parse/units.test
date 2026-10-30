@@ -1,0 +1,83 @@
+// RUN: %gopp parse -dump-ast %s | FileCheck %s
+
+// P03.25 (UNI-1 to UNI-4, UNI-7, EXP-31): the AST of unit declarations (single,
+// grouped, with @Symbol), unit expressions as flat term lists (no tall tree),
+// the unit literal, a unit after a numeric type name, a unit argument list in
+// an expression (a plain binary tree: `^` is xor there), and `.In[...]`.
+// (The .go file side is tests/sema/units-go-mode.test.)
+package p
+
+@Symbol("km")
+unit KM = 1000 M
+
+unit (
+	M
+	S = (3600) M
+)
+
+unit N = KG * M / S ^ 2
+unit F = 1 / S
+unit G = 2 (M / S) ^ -1
+
+func f[U unit](x float64[U/S^2], y float64[M * S ^ -1]) {
+	a := 100.0[KM]
+	b := 3[M/S].In[KM/H^2]()
+	c := x.In[KM]()
+	d := Avg[M/S](xs)
+	e := 2i[A]
+}
+
+// CHECK: GenDecl {{.*}} unit
+// CHECK-NEXT: Attr: Attribute {{.*}} name=Symbol parens args=["km"]
+// CHECK: Spec: UnitSpec
+// CHECK-NEXT: Name: Ident {{.*}} 'KM'
+// CHECK-NEXT: Factor: BasicLit {{.*}} int_lit 1000
+// CHECK-NEXT: Unit: Ident {{.*}} 'M'
+// CHECK: GenDecl {{.*}} unit grouped
+// CHECK: Name: Ident {{.*}} 'S'
+// CHECK-NEXT: Factor: ParenExpr
+// CHECK: Name: Ident {{.*}} 'N'
+// CHECK-NEXT: Unit: UnitExpr
+// CHECK-NEXT: Base: Ident {{.*}} 'KG'
+// CHECK-NEXT: Mul: Ident {{.*}} 'M'
+// CHECK-NEXT: Div: Ident {{.*}} 'S'
+// CHECK-NEXT: Pow: BasicLit {{.*}} int_lit 2
+// CHECK: Name: Ident {{.*}} 'F'
+// CHECK-NEXT: Unit: UnitExpr
+// CHECK-NEXT: Base: BasicLit {{.*}} int_lit 1
+// CHECK-NEXT: Div: Ident {{.*}} 'S'
+// CHECK: Name: Ident {{.*}} 'G'
+// CHECK-NEXT: Factor: BasicLit {{.*}} int_lit 2
+// CHECK-NEXT: Unit: UnitExpr
+// CHECK-NEXT: Base: ParenExpr
+// CHECK: PowNeg: BasicLit {{.*}} int_lit 1
+// CHECK: Type: Ident {{.*}} 'unit'
+// CHECK: Index: UnitExpr
+// CHECK-NEXT: Base: Ident {{.*}} 'U'
+// CHECK-NEXT: Div: Ident {{.*}} 'S'
+// CHECK-NEXT: Pow: BasicLit {{.*}} int_lit 2
+// CHECK: Index: UnitExpr
+// CHECK-NEXT: Base: Ident {{.*}} 'M'
+// CHECK-NEXT: Mul: Ident {{.*}} 'S'
+// CHECK-NEXT: PowNeg: BasicLit {{.*}} int_lit 1
+// CHECK: Rhs: UnitLit
+// CHECK-NEXT: Lit: BasicLit {{.*}} float_lit 100.0
+// CHECK-NEXT: Unit: Ident {{.*}} 'KM'
+// CHECK: Rhs: CallExpr
+// CHECK-NEXT: Fun: IndexExpr
+// CHECK-NEXT: X: SelectorExpr
+// CHECK-NEXT: X: UnitLit
+// CHECK: Sel: Ident {{.*}} 'In'
+// CHECK-NEXT: Index: UnitExpr
+// CHECK-NEXT: Base: Ident {{.*}} 'KM'
+// CHECK-NEXT: Div: Ident {{.*}} 'H'
+// CHECK-NEXT: Pow: BasicLit {{.*}} int_lit 2
+// CHECK: Fun: IndexExpr
+// CHECK-NEXT: X: SelectorExpr
+// CHECK-NEXT: X: Ident {{.*}} 'x'
+// CHECK-NEXT: Sel: Ident {{.*}} 'In'
+// CHECK-NEXT: Index: Ident {{.*}} 'KM'
+// CHECK: X: Ident {{.*}} 'Avg'
+// CHECK-NEXT: Index: BinaryExpr {{.*}} op='/'
+// CHECK: Rhs: UnitLit
+// CHECK-NEXT: Lit: BasicLit {{.*}} imag_lit 2i

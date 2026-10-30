@@ -41,7 +41,10 @@ Type *Checker::substImpl(Type *T, const llvm::DenseMap<const Type *, Type *> &M,
   auto Rec = [&](Type *X) { return substImpl(X, M, Depth + 1); };
   switch (T->getKind()) {
   case Type::Kind::Basic:
-    return T;
+    // GEN-14: a unit that mentions a unit parameter (`float64[U/S]`, or the
+    // unit argument `U*S` itself) takes the unit argument in its place (out
+    // of line: this frame recurses per level of a type, M4).
+    return unitSubstBasic(T, M);
   case Type::Kind::TypeParam: {
     auto It = M.find(T);
     return It == M.end() ? T : It->second;
@@ -255,6 +258,7 @@ Func *Checker::instantiatedMethod(NamedType *Inst, unsigned I) {
     N = Ctx.arena().make<Func>(*M);
   }
   N->Origin = M;
+  N->RecvInst = Inst;
   if (M->Ty) {
     ArrayRef<TypeParamType *> From = M->RecvTParams;
     if (From.size() == Inst->TArgs.size())
@@ -300,6 +304,23 @@ bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
   Type *Bound = TPar->Bound;
   if (!Bound)
     return true;
+  // GEN-14: a unit parameter takes a unit, every other parameter a type.
+  {
+    bool IsUnitArg = unitArgCanon(TArg) != nullptr;
+    if (isUnitParam(TPar) || IsUnitArg) {
+      if (isUnitParam(TPar) && IsUnitArg) {
+        unitDictUses(Pos, TArg, TPar);
+        return true;
+      }
+      if (Cause)
+        *Cause = IsUnitArg ? "the unit " + str(TArg) +
+                                 " is not a type: " + str(TPar) +
+                                 " is not a unit parameter"
+                           : str(TArg) + " is not a unit: " + str(TPar) +
+                                 " is a unit parameter (GEN-14)";
+      return false;
+    }
+  }
   Bound = subst(Bound, TParams, TArgs);
   if (!implements(Pos, TArg, Bound, true, Cause))
     return false;
@@ -429,6 +450,7 @@ private:
   }
   bool nify(Type *X, Type *Y, unsigned Mode, unsigned Depth);
   bool termsEqual(TypeSet *A, TypeSet *B);
+  bool unifyUnits(const UnitCanon *X, const UnitCanon *Y);
 
   Checker &C;
   ArrayRef<TypeParamType *> TPs;
@@ -438,6 +460,67 @@ private:
 };
 
 } // namespace
+
+/// GEN-14: the unit of a parameter type (X, may mention the unit parameters
+/// being inferred) against the unit of an argument type (Y). The unit
+/// parameters already known are replaced first; then at most one is left, as
+/// a factor with exponent 1 or -1, and the answer is exact: U^e * R = Y gives
+/// U = (Y / R)^e.
+bool Unifier::unifyUnits(const UnitCanon *X, const UnitCanon *Y) {
+  if (X == Y)
+    return true;
+  if (!X || !Y)
+    return false;
+  TypeContext &Ctx = C.Ctx;
+  UnitStatus St;
+  const UnitCanon *K = units::substitute(
+      Ctx, X,
+      [&](const TypeParamType *P) -> const UnitCanon * {
+        int I = indexOf(P);
+        if (I < 0)
+          return nullptr;
+        return C.unitArgCanon(at(I));
+      },
+      St);
+  if (!K)
+    return false;
+  if (K == Y)
+    return true;
+  // The unbound unit parameters of K.
+  const UnitDim *Free = nullptr;
+  for (const UnitDim &D : K->Dims)
+    if (D.Param && indexOf(D.Param) >= 0) {
+      if (Free)
+        return false; // two unknown units in one expression
+      Free = &D;
+    }
+  if (!Free || (Free->Exp != 1 && Free->Exp != -1))
+    return false;
+  // R = K without the free dimension.
+  llvm::SmallVector<UnitDim, 8> Rest;
+  for (const UnitDim &D : K->Dims)
+    if (&D != Free)
+      Rest.push_back(D);
+  const UnitCanon *R = units::make(Ctx, Rest, K->Factor, St);
+  if (!R)
+    return false;
+  const UnitCanon *Q = units::div(Ctx, Y, R, St);
+  if (!Q)
+    return false;
+  if (Free->Exp == -1) {
+    Q = units::div(Ctx, units::one(Ctx), Q, St);
+    if (!Q)
+      return false;
+  }
+  if (Q->dimensionless())
+    return false;
+  int PI = indexOf(Free->Param);
+  Type *Arg = Ctx.unitArgType(Q);
+  if (Type *Cur = at(PI))
+    return Cur == Arg;
+  set(PI, Arg);
+  return true;
+}
 
 bool Unifier::termsEqual(TypeSet *A, TypeSet *B) {
   if (A->AllTerms != B->AllTerms)
@@ -587,7 +670,8 @@ bool Unifier::nify(Type *X, Type *Y, unsigned Mode, unsigned Depth) {
   switch (X->getKind()) {
   case Type::Kind::Basic:
     if (auto *B = dyn_cast<BasicType>(Y))
-      return cast<BasicType>(X)->BK == B->BK;
+      return cast<BasicType>(X)->BK == B->BK &&
+             unifyUnits(cast<BasicType>(X)->Unit, B->Unit);
     return false;
   case Type::Kind::Array: {
     auto *A = cast<ArrayType>(X);
@@ -714,8 +798,15 @@ static bool mentionsAny(Checker &C, Type *T, ArrayRef<TypeParamType *> TPs,
   if (!T || Depth > 40)
     return false;
   switch (T->getKind()) {
-  case Type::Kind::Basic:
+  case Type::Kind::Basic: {
+    auto *B = cast<BasicType>(T);
+    if (B->Unit && B->Unit->HasParam)
+      for (const UnitDim &D : B->Unit->Dims)
+        for (TypeParamType *P : TPs)
+          if (D.Param && P == D.Param)
+            return true;
     return false;
+  }
   case Type::Kind::TypeParam:
     for (TypeParamType *P : TPs)
       if (P == T)
@@ -953,6 +1044,16 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
   };
   auto Mismatch = [&](Type *TPar, Type *TArg, const Operand &A) {
     auto Inf = U.inferred();
+    // GEN-14: a unit parameter with a power other than 1 or -1 is not solved.
+    std::string PowerHint;
+    if (auto *PB = dyn_cast<BasicType>(TPar);
+        PB && PB->Unit && PB->Unit->HasParam)
+      for (const UnitDim &D : PB->Unit->Dims)
+        if (D.Param && (D.Exp > 1 || D.Exp < -1))
+          PowerHint = "; the unit parameter " + str(D.Param) +
+                      " has the power " + std::to_string(D.Exp) +
+                      ", which is not inferred: give it explicitly, as in "
+                      "f[KM](...)";
     if (!Inf[0]) {
       bool AllFailed = true;
       for (Type *T : Inf)
@@ -962,7 +1063,7 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
         return Fail(A.pos(), "type " + str(TArg) + " of " + str(A.E) +
                                  " does not match " + str(TPar) +
                                  " (cannot infer " + typeParamsString(TParams) +
-                                 ")");
+                                 ")" + PowerHint);
     }
     Type *Inferred = SubstInferred(TPar);
     if (Inferred != TPar) {
@@ -980,14 +1081,25 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
   };
 
   // 1. Use the information from the function arguments.
-  SmallVector<size_t, 4> Untyped;
-  for (size_t I = 0; I < Args.size() && I < Params->size(); ++I) {
+  // GEN-14: an argument whose unit has two unknown unit parameters (`U/V`)
+  // cannot give either until the other is known; it waits for the others,
+  // so the order of the arguments does not matter.
+  SmallVector<TypeParamType *, 4> UnitTPs;
+  if (Ctx.unitsSeen())
+    for (TypeParamType *TP : TParams)
+      if (isUnitParam(TP))
+        UnitTPs.push_back(TP);
+  SmallVector<size_t, 4> Untyped, Deferred;
+  // False if the argument I does not unify with its parameter.
+  auto UnifyArg = [&](size_t I) {
     const Operand &A = Args[I];
     Type *PT = Params->Elems[I];
-    if (A.M == Mode::Invalid)
-      continue;
-    if (!mentionsAny(*this, PT, TParams) && !mentionsAny(*this, A.Ty, TParams))
-      continue;
+    // EXP-31: `2.0[M]` is untyped in its number part only; its unit takes
+    // part in inference like the unit of a typed argument.
+    if (!isTyped(A.Ty) && unitOf(A.Ty))
+      if (auto *PB = dyn_cast<BasicType>(PT);
+          PB && PB->Unit && (PB->Info & IsNumeric))
+        return U.unify(PT, Ctx.unitType(PB->BK, unitOf(A.Ty)), UAssign);
     if (isTyped(A.Ty)) {
       // OWN-V3: an owned (or borrowed) value converts to a view implicitly
       // wherever a view is expected, so a View[X] parameter takes an
@@ -996,12 +1108,38 @@ Checker::infer(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
       if (auto *R = dyn_cast<RefType>(PT);
           own() && R && !R->Borrowed && !isa<RefType>(under(A.Ty)))
         P = R->Elem;
-      if (!U.unify(P, A.Ty, UAssign))
-        return Mismatch(PT, A.Ty, A);
-    } else if (isa<TypeParamType>(PT) && !A.isNil()) {
+      return U.unify(P, A.Ty, UAssign);
+    }
+    if (isa<TypeParamType>(PT) && !A.isNil())
       Untyped.push_back(I);
+    return true;
+  };
+  for (size_t I = 0; I < Args.size() && I < Params->size(); ++I) {
+    const Operand &A = Args[I];
+    Type *PT = Params->Elems[I];
+    if (A.M == Mode::Invalid)
+      continue;
+    if (!mentionsAny(*this, PT, TParams) && !mentionsAny(*this, A.Ty, TParams))
+      continue;
+    if (!UnifyArg(I)) {
+      if (UnitTPs.empty() || !mentionsAny(*this, PT, UnitTPs))
+        return Mismatch(PT, A.Ty, A);
+      Deferred.push_back(I);
     }
   }
+  for (bool Progress = !Deferred.empty(); Progress;) {
+    Progress = false;
+    for (size_t K = 0; K < Deferred.size();)
+      if (UnifyArg(Deferred[K])) {
+        Deferred.erase(Deferred.begin() + K);
+        Progress = true;
+      } else {
+        ++K;
+      }
+  }
+  if (!Deferred.empty())
+    return Mismatch(Params->Elems[Deferred[0]], Args[Deferred[0]].Ty,
+                    Args[Deferred[0]]);
 
   // 2. Use the information from the type parameter constraints.
   for (;;) {

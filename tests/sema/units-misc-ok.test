@@ -1,0 +1,79 @@
+// RUN: %gopp check %s
+// P03.25 (UNI-9, UNI-10, UNI-7, TYP-29): erasure, the dynamic type, the
+// category labels and the explicit-argument form.
+package main
+
+import "unsafe"
+
+unit M
+unit S
+unit A
+unit KM = 1000 M
+
+type Distance float64[M]
+
+type Number interface{ ~float64 | ~int }
+
+func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }
+func Copy1[T Copy](x T) T                   { return x }
+func Clone1[T Clone](x T) T                 { return x.Clone() }
+func Cmp[T comparable](a, b T) bool         { return a == b }
+func Plain[T ~float64](x T) T               { return x }
+func Send1[T Copy](c chan T, x T)            { c <- x }
+
+func work(d float64[M]) {}
+
+func main() {
+	// erasure (UNI-9): the layout is the layout of the number
+	var d float64[KM]
+	var n int[M]
+	var c complex128[A]
+	var arr [4]float64[M]
+	var plain [4]float64
+	var _ [unsafe.Sizeof(d)]int = [unsafe.Sizeof(float64(0))]int{}
+	var _ [unsafe.Sizeof(n)]int = [unsafe.Sizeof(int(0))]int{}
+	var _ [unsafe.Sizeof(c)]int = [unsafe.Sizeof(complex128(0))]int{}
+	var _ [unsafe.Sizeof(arr)]int = [unsafe.Sizeof(plain)]int{}
+	var _ [unsafe.Alignof(d)]int = [unsafe.Alignof(float64(0))]int{}
+	var _ bool = d == 0 && n == 0 && c == 0 // the zero value is zero
+	var _ Distance = Distance(d.In[M]())
+
+	// the dynamic type is not erased (UNI-9)
+	var x any = d
+	switch x.(type) {
+	case float64:
+		panic("no")
+	case float64[M]:
+		panic("no")
+	case float64[KM]:
+	}
+	_, ok := x.(float64[KM])
+	_, ok2 := x.(float64)
+	_, _ = ok, ok2
+
+	// the category labels (UNI-10)
+	var m float64[M] = 1.0[M]
+	var dist Distance
+	_ = Copy1(m)
+	_ = Clone1(m)
+	_ = Copy1(n)
+	_ = Clone1(c)
+	_ = Copy1(dist)
+	_ = Clone1(dist)
+	_ = Cmp(m, m)
+	ch := make(chan float64[M], 1)
+	Send1(ch, m)
+	go work(m)
+	defer work(m)
+	var vw View[float64[M]] = m
+	_ = vw
+	_ = Plain(1.5)
+
+	// the explicit-argument form without ^ (UNI-7)
+	_ = Avg[M]([]float64[M]{})
+	_ = Avg[M/S]([]float64[M/S]{})
+	_ = Avg[M*S]([]float64[M*S]{})
+	var _ float64[M/S^2]
+	var _ float64[(M/S)^2]
+	var _ float64[M^-1]
+}

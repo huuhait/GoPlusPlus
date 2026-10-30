@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Checker.h"
+#include "Units.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/ThreadPool.h"
@@ -90,7 +91,9 @@ void Checker::emit(Diagnostic D) {
 //===----------------------------------------------------------------------===//
 
 Checker::Checker(PackageState &S, Info &I, Arena &Mem, DiagnosticsEngine &Diags)
-    : S(S), Ctx(S.Ctx), I(I), Mem(Mem), Diags(Diags) {}
+    : S(S), Ctx(S.Ctx), I(I), Mem(Mem), Diags(Diags) {
+  BodyUnitNames.Parent = &S.UNamer;
+}
 
 Var *Checker::newVar(StringRef Name, Type *T, SourceLoc Pos) {
   Var *V = Mem.make<Var>();
@@ -290,6 +293,9 @@ void Info::merge(ArrayRef<Info *> Others) {
   One(&Info::Instances);
   One(&Info::Bangs);
   One(&Info::Operators);
+  One(&Info::UnitConvs);
+  One(&Info::UnitSites);
+  One(&Info::UnitDisplays);
 }
 
 //===----------------------------------------------------------------------===//
@@ -541,6 +547,10 @@ checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   S.Pkg = Pkg;
   Checker C(S, CP->I, Mem, Diags);
   onCheckerStack([&] { C.checkFiles(Files); }, OnStack);
+  // ADR-0025, UNI-5: the display forms of the units are decided by phase 1
+  // (the declarations and the imports), before any body.
+  if (!S.UNamer.Best.empty())
+    Pkg->UnitNames = S.UNamer.freeze(Mem);
 
   // Phase 2: one checker per body, on one or more threads. A body writes only
   // to its worker; the diagnostics are replayed in declaration order, so the
@@ -584,6 +594,7 @@ checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
           C.TPUses.insert(C.TPUses.end(), UB.begin(), UB.end());
         C.noteIntrinsicUses();
         C.untaggedCheck(C.UntaggedPend);
+        C.unitRangeScan(); // GEN-14, UNI-2: every instance, any route
         C.checkInitOrder();
         C.unusedImports();
         // Instantiation cycles, of the declarations and the bodies (taken in
@@ -644,7 +655,7 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
     PresumedLoc PL = SM.getPresumedLoc(L);
     return std::to_string(PL.Line) + ":" + std::to_string(PL.Column);
   };
-  auto Text = [&](const ast::Node *N) {
+  auto Text = [&](const ast::Node *N, bool Full = false) {
     FileID F = SM.getFileID(N->getBegin());
     if (!F.isValid() || !N->getEnd().isValid())
       return std::string();
@@ -657,7 +668,7 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
     for (char &C : S0)
       if (C == '\n' || C == '\t')
         C = ' ';
-    if (S0.size() > 40)
+    if (S0.size() > 40 && !Full)
       S0 = S0.substr(0, 37) + "...";
     return S0;
   };
@@ -695,6 +706,25 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
                     (O->Ty ? typeString(O->Ty, Pkg) : std::string("<nil>"));
     Entries.push_back(
         {KV.first->getBegin().getRaw(), KV.first->getEnd().getRaw(), 0, L});
+    // GEN-14: the unit parameters of a generic whose code needs their units
+    // at run time (Use::UnitDict, P04.24 passes them).
+    ArrayRef<TypeParamType *> TPs;
+    if (auto *F = dyn_cast<Func>(O); F && F->Ty)
+      TPs = cast<SignatureType>(F->Ty)->TParams;
+    else if (auto *TN = dyn_cast<TypeName>(O); TN && !TN->IsAlias)
+      if (auto *N = llvm::dyn_cast_or_null<NamedType>(TN->Ty))
+        TPs = N->TParams;
+    std::string Dict;
+    for (TypeParamType *TP : TPs)
+      if (llvm::any_of(TP->uses(), [](const TypeParamType::Use &U) {
+            return U.K == TypeParamType::Use::UnitDict;
+          }))
+        Dict += " " + std::string(TP->Obj ? TP->Obj->Name : StringRef("?"));
+    if (!Dict.empty())
+      Entries.push_back({KV.first->getBegin().getRaw(),
+                         KV.first->getEnd().getRaw(), 6,
+                         Loc(KV.first->getBegin()) + " unit-dict " +
+                             std::string(O->Name) + ":" + Dict});
   }
   for (auto &KV : P.I.Bangs) {
     const char *Kind = KV.second == BangKind::Return  ? "returns the error"
@@ -744,6 +774,50 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
     if (U.Sign != tok::illegal)
       L += std::string(" sign ") + tok::getSpelling(U.Sign);
     Entries.push_back({N->getBegin().getRaw(), N->getEnd().getRaw(), 3, L});
+  }
+  // P03.25: the scale changes and the display forms of the unit checker, as
+  // the lowering reads them (P04.24).
+  for (auto &KV : P.I.UnitConvs) {
+    const ast::Expr *N = KV.first;
+    if (!N->getBegin().isValid())
+      continue;
+    // (the whole text: the lowering records of nested nodes that start at
+    // one column must stay apart)
+    std::string L = Loc(N->getBegin()) + " unit-conv `" + Text(N, true) +
+                    "` *" + units::realStr(KV.second.Factor);
+    if (KV.second.Truncate)
+      L += " truncates";
+    if (KV.second.Tag)
+      L += " tag";
+    Entries.push_back({N->getBegin().getRaw(), N->getEnd().getRaw(), 4, L});
+  }
+  for (auto &KV : P.I.UnitSites) {
+    const ast::Expr *N = KV.first;
+    if (!N->getBegin().isValid())
+      continue;
+    auto U = [&](const UnitCanon *C) {
+      return C ? units::canonStr(C, Pkg) : std::string("plain");
+    };
+    for (const UnitSite &St : KV.second) {
+      std::string L =
+          Loc(N->getBegin()) + " unit-site `" + Text(N, true) + "` ";
+      if (St.K == UnitSite::Conv)
+        L += U(St.Res) + " from " + U(St.X) + (St.Tag ? " tag" : "");
+      else if (St.K == UnitSite::Const)
+        L += U(St.Res) + " const";
+      else
+        L += U(St.Res) + " = " + U(St.X) +
+             (St.K == UnitSite::Mul ? " * " : " / ") + U(St.Y);
+      Entries.push_back({N->getBegin().getRaw(), N->getEnd().getRaw(), 4, L});
+    }
+  }
+  for (auto &KV : P.I.UnitDisplays) {
+    const ast::Expr *N = KV.first;
+    if (!N->getBegin().isValid())
+      continue;
+    Entries.push_back({N->getBegin().getRaw(), N->getEnd().getRaw(), 5,
+                       Loc(N->getBegin()) + " unit-form `" + Text(N) + "` " +
+                           units::displayStr(KV.second, Pkg)});
   }
   std::stable_sort(Entries.begin(), Entries.end(),
                    [](const DumpEntry &A, const DumpEntry &B) {

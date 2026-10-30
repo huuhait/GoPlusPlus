@@ -1,0 +1,11 @@
+package main
+
+import "rlib"
+
+func main() {
+	var a rlib.T[rlib.KM]
+	var b rlib.Al[rlib.KM]
+	c := rlib.Make(1.0[rlib.KM])
+	var ok rlib.T[rlib.M]
+	_, _, _, _ = a, b, c, ok
+}

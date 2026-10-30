@@ -1,0 +1,64 @@
+// RUN: %gopp check --dump-types %s | FileCheck %s
+// P03.25 (EXP-32 to EXP-36, M1): the scale changes that the checker decided,
+// as the lowering reads them (Info::UnitConvs, P04.24): the operand that is
+// converted and the exact factor; "truncates" for an integer with a ratio
+// that is no integer (only an explicit conversion does that); "tag" for the
+// switch tag converted in the comparison with one case value. The operand
+// that keeps its unit, a constant (folded) and a conversion that does not
+// change the scale have no entry. Also the display forms an expression makes
+// (Info::UnitDisplays).
+package main
+
+unit M
+unit S
+unit CM = (1 / 100) M
+unit KM = 1000 M
+unit H = 3600 S
+
+func main() {
+	var d float64[KM] = 2.0[KM]
+	var t float64[H] = 1.0[H]
+	var m float64[M] = 3.0[M]
+	var c float64[CM] = 4.0[CM]
+	var n int[M] = 1999[M]
+	var k int[KM] = 2[KM]
+	speed := d / t
+// CHECK: [[@LINE+2]]:6 unit-conv `d` *1000
+// CHECK: [[@LINE+1]]:6 unit-form `d + m` M
+	_ = d + m
+// CHECK: [[@LINE+2]]:6 unit-form `m + d` M
+// CHECK: [[@LINE+1]]:10 unit-conv `d` *1000
+	_ = m + d
+// CHECK: [[@LINE+1]]:7 unit-conv `m` *1/1000
+	d += m
+// CHECK: [[@LINE+1]]:7 unit-conv `k` *1000
+	n += k
+// CHECK: [[@LINE+1]]:14 unit-conv `n` *1/1000 truncates
+	k = int[KM](n)
+// CHECK: [[@LINE+1]]:6 unit-conv `n` *1/1000 truncates
+	_ = n.In[KM]()
+// CHECK: [[@LINE+2]]:6 unit-conv `speed` *5/18
+// CHECK: [[@LINE+1]]:6 unit-form `speed.In[M / S]()` M/S
+	_ = speed.In[M / S]()
+// CHECK: [[@LINE+1]]:6 unit-conv `d / m` *1000
+	_ = d / m
+// CHECK: [[@LINE+3]]:6 unit-form `min(d, m, c)` CM
+// CHECK: [[@LINE+2]]:10 unit-conv `d` *100000
+// CHECK: [[@LINE+1]]:13 unit-conv `m` *100
+	_ = min(d, m, c)
+	switch d {
+// CHECK: [[@LINE+1]]:7 unit-conv `m` *1000 tag
+	case m, 1.0[KM]:
+	}
+	// constants are folded: no entry, the value is in the new unit
+// CHECK-NOT: unit-conv `1.0[KM]`
+// CHECK: [[@LINE+1]]:6 expr `1.0[KM] + 500.0[M]` constant float64[M] = 1500
+	_ = 1.0[KM] + 500.0[M]
+	// a conversion that keeps the scale changes nothing
+// CHECK-NOT: unit-conv `m`
+// CHECK: [[@LINE+1]]:6 unit-form `float64[M](m)` M
+	_ = float64[M](m)
+// CHECK: [[@LINE+1]]:6 unit-form `d * d` KM^2
+	_ = d * d
+	_, _ = k, t
+}

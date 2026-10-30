@@ -1,0 +1,48 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (GEN-14, M2): the instantiation-cycle check (Mono.cpp, types2
+// mono.go) knows unit parameters. A unit argument that is the parameter
+// itself does not grow; any other unit expression that mentions a parameter
+// does, as `*T` does for a type: `F[U]` calling `F[U*M]` would make F[M],
+// F[M*M], ... without end, also through inference (`Inf(x * 1.0[S])`) and
+// in a generic type. Like Go's rule the check is conservative: `H[1/U]` is
+// rejected although its instances repeat (U, 1/U, U). The accepted side: the
+// same parameter, a swap of two parameters, a type that names itself with
+// the same parameter, and calls with concrete units.
+package main
+
+unit M
+unit S
+
+// CHECK-DAG: [[@LINE+2]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+// CHECK-DAG: [[@LINE+1]]:34: note: U instantiated as M*U
+func F[U unit](x float64[U]) { F[U*M](float64[U*M](1)) }
+
+// CHECK-DAG: [[@LINE+2]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+// CHECK-DAG: [[@LINE+1]]:32: note: U instantiated as M*U
+type T[U unit] struct{ next *T[U*M] }
+
+// CHECK-DAG: [[@LINE+2]]:8: error{{\[E[0-9]+\]}}: instantiation cycle
+// CHECK-DAG: [[@LINE+1]]:22: note: U instantiated as 1/U
+func H[U unit]() { H[1/U]() }
+
+// CHECK-DAG: [[@LINE+2]]:10: error{{\[E[0-9]+\]}}: instantiation cycle
+// CHECK-DAG: [[@LINE+1]]:34: note: U instantiated as S*U
+func Inf[U unit](x float64[U]) { Inf(x * 1.0[S]) }
+
+// accepted (Mix: U flows into T, but nothing flows back, so the instances
+// stop at Mix[[]float64[M], M])
+func Mix[T any, U unit]() { Mix[[]float64[U], U]() }
+func G[U unit](x float64[U])        { G[U](x); G(x) }
+func Two[U unit, V unit]()          { Two[V, U]() }
+func Down[U unit](x float64[U])     { _ = x; Down[M](1.0[M]) }
+type Same[U unit] struct{ next *Same[U]; v float64[U] }
+type Other[U unit] struct{ s *Same[U] }
+
+func main() {
+	G(1.0[M])
+	Two[M, S]()
+	Mix[int, S]()
+	var a []Same[M]
+	var b []Other[S]
+	_, _ = a, b
+}

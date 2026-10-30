@@ -1,0 +1,15 @@
+// REQUIRES: long
+// P03.25 (ADR-0025, CLAUDE.md lessons): the unit analysis stays near-linear:
+// an expression of 10,000 terms and of 10,000 factors. The input is generated (Inputs/gen-units-stress.py) and checked under a
+// time limit; nothing nests deeper than the parser allows and no walk is
+// recursive over the size of the input.
+// RUN: %python %S/Inputs/gen-units-stress.py sum 10000 > %t.sum.gopp
+// RUN: timeout 20 %gopp check %t.sum.gopp
+// RUN: %python %S/Inputs/gen-units-stress.py mul 10000 > %t.mul.gopp
+// RUN: timeout 20 %gopp check %t.mul.gopp
+// Near-linear: the shape at N and at 4N, the larger run at most 12 times the
+// smaller (a quadratic analysis takes 16 times; Inputs/check-units-linear.py).
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin sum 10000 | FileCheck --check-prefix=LIN-SUM %s
+// LIN-SUM: sum: near-linear yes
+// RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-units-stress.py --out %t.lin mul 10000 | FileCheck --check-prefix=LIN-MUL %s
+// LIN-MUL: mul: near-linear yes

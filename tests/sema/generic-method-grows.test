@@ -1,10 +1,14 @@
-// P03.26 (R8): a method signature that names a bigger instance of its own
-// type is legal (types2 go.dev/issue/48703); with an abstract instance in the
-// package the check of the method signatures must still end (the walk
-// instantiated the method of each instance, `Pair[Pair[T]]`, `Pair[Pair[Pair[T]]]`,
-// forever; it hung). The other side: a by-value use of the abstract type in
-// such a type is still an error.
-// RUN: timeout 10 %gopp check %S/Inputs/grow-method.gopp
+// P03.26 (R8), P03.25 (R21): a method signature that names a bigger instance
+// of its own type. In Go mode it is legal (types2 go.dev/issue/48703) and the
+// check of the method signatures must end (the walk instantiated the method
+// of each instance, `Pair[Pair[T]]`, `Pair[Pair[Pair[T]]]`, forever; it hung).
+// Outside Go mode it is the instantiation cycle (GEN-14, owner decision
+// 2026-10-30), reported at once. The other side: a by-value use of the
+// abstract type in a generic type without such a method is still an error.
+// RUN: timeout 10 %gopp check --go %S/Inputs/grow-method.go
+// RUN: not timeout 10 %gopp check %S/Inputs/grow-method.gopp 2>&1 | FileCheck --check-prefix=GROW %s
+// GROW: grow-method.gopp:11:11: error[E0366]: instantiation cycle
+// GROW: note: T instantiated as Pair[T]
 // RUN: not timeout 10 %gopp check %s 2>&1 | FileCheck %s
 package main
 
@@ -15,8 +19,7 @@ func (s *Shape) Area() int
 
 type Pair[T any] struct{ n int }
 
-func (p Pair[T]) Nest() Pair[Pair[T]] { panic(0) }
-func (p Pair[T]) Items() []T          { panic(0) }
+func (p Pair[T]) Items() []T { panic(0) }
 
 // CHECK: error[E0389]: cannot use the abstract type Shape for a type argument of Pair[Shape], which holds it by value
 func f(p *Pair[Shape]) {}

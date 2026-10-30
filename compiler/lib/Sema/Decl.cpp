@@ -109,8 +109,10 @@ void Checker::importPackage(const ImportSpec *Spec, FileState &F) {
       S.DotImportMap[{F.FileScope, Name}] = PN;
     }
     F.Imports.push_back(PN);
+    addImportedUnits(P);
     return;
   }
+  addImportedUnits(P);
   // Declared in the file scope; visible everywhere in the file.
   Object *Old = F.FileScope->insert(PN);
   if (Old) {
@@ -225,6 +227,28 @@ void Checker::collectObjects() {
     F.FileScope = Mem.newScope(PkgScope, File->getRange(), "file");
     for (const ast::Decl *D : File->Decls) {
       checkDeclMarks(D);
+      // @Symbol is for a `unit` declaration only (UNI-13, MAC-8).
+      if (!S.Opts.GoCompat) {
+        auto *GDs = dyn_cast<GenDecl>(D);
+        auto *FDs = dyn_cast<FuncDecl>(D);
+        ArrayRef<Attribute *> As = GDs   ? GDs->Attrs
+                                   : FDs ? FDs->Attrs
+                                         : ArrayRef<Attribute *>();
+        if (!(GDs && GDs->IsUnit))
+          for (const Attribute *A : As)
+            if (!A->Pkg && A->Name && name(A->Name) == "Symbol")
+              err(A->AtLoc, diag::err_unit_symbol,
+                  {"@Symbol is only for a `unit` declaration, not for " +
+                   std::string(
+                       GDs ? (GDs->Keyword == tok::kw_type
+                                  ? "a type declaration"
+                              : GDs->Keyword == tok::kw_var
+                                  ? "a variable declaration"
+                              : GDs->Keyword == tok::kw_const
+                                  ? "a constant declaration"
+                                  : "an import")
+                           : (FDs && FDs->Recv ? "a method" : "a function"))});
+      }
       // @Required and @Option are field attributes only, @Strict is for a
       // struct type declaration (MAC-8, TYP-15a).
       if (own()) {
@@ -232,7 +256,8 @@ void Checker::collectObjects() {
         const char *What = "";
         if (auto *GD0 = dyn_cast<GenDecl>(D)) {
           Attrs = GD0->Attrs;
-          What = GD0->Keyword == tok::kw_type    ? "a type declaration"
+          What = GD0->IsUnit                     ? "a unit declaration"
+                 : GD0->Keyword == tok::kw_type  ? "a type declaration"
                  : GD0->Keyword == tok::kw_var   ? "a variable declaration"
                  : GD0->Keyword == tok::kw_const ? "a constant declaration"
                                                  : "an import";
@@ -272,7 +297,21 @@ void Checker::collectObjects() {
           }
         }
       }
-      if (auto *GD = dyn_cast<GenDecl>(D)) {
+      if (auto *GD = dyn_cast<GenDecl>(D); GD && GD->IsUnit) {
+        // UNI-1: a unit lives in the package block like a type or a function.
+        for (const Spec *Sp : GD->Specs) {
+          auto *US = cast<ast::UnitSpec>(Sp);
+          auto *U = Mem.make<UnitObj>();
+          U->Name = name(US->Name);
+          U->Pos = US->Name->getBegin();
+          DeclInfo *DI = S.newDecl();
+          DI->FileScope = F.FileScope;
+          DI->UDecl = US;
+          if (Sp == GD->Specs.front()) // the attribute is read once
+            readUnitSymbol(GD, U);
+          DeclarePkg(US->Name, U, DI);
+        }
+      } else if (auto *GD = dyn_cast<GenDecl>(D)) {
         const ConstValue *IotaPtr = nullptr;
         (void)IotaPtr;
         const ValueSpec *LastWithValues = nullptr;
@@ -485,6 +524,12 @@ void Checker::packageObjects() {
       Others.push_back(O);
     }
   }
+  // UNI-3: the units first, so that a type or a constant that names one sees
+  // it resolved. A unit depends on units (and on constants of its factor)
+  // only; the walk is iterative.
+  for (Object *O : S.PkgObjects)
+    if (auto *U = dyn_cast<UnitObj>(O))
+      resolveUnit(U);
   for (Object *O : Types)
     objDecl(O, nullptr);
   for (Object *O : Aliases)
@@ -1390,13 +1435,22 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
     collectRecv(O, FD->Recv, Sc, D, FD, RecvNamed);
   }
   // The signature of a method does not instantiate anything for the cycle
-  // check (types2: `func (List[P]) m() List[List[P]]` is fine; only a body
-  // is instantiated per type argument, go.dev/issue/48703).
-  if (FD->Recv)
+  // check in Go (types2: `func (List[P]) m() List[List[P]]` is fine; only a
+  // body is instantiated per type argument, go.dev/issue/48703). Outside Go
+  // mode it does (GEN-14, owner decision 2026-10-30): `func (G[U, V]) Next()
+  // Option[*G[U, U*V]]` and `func (U[T]) m() *U[*T]` would make instances
+  // without end, as a field or a body does, so they are the instantiation
+  // cycle too.
+  const bool SigNoMono = FD->Recv && S.Opts.GoCompat;
+  if (SigNoMono)
     ++NoMono;
+  else if (FD->Recv)
+    ++MonoInSig;
   FuncInfo FI = funcSignature(FD->Type, Sc, O);
-  if (FD->Recv)
+  if (SigNoMono)
     --NoMono;
+  else if (FD->Recv)
+    --MonoInSig;
   E.Sc = Saved;
   // TYP-20: a method of an `extends` type has the hidden `base`, in a scope
   // of its own between the function scope and its parent: the signature
@@ -1415,6 +1469,8 @@ void Checker::funcDecl(Func *O, DeclInfo *D) {
   O->Results = FI.Results;
   O->Fails = FI.Sig->Fails;
   O->OwnTParams = FI.Sig->TParams;
+  if (FD->Recv && !S.Opts.GoCompat)
+    MonoMethodOwn.insert(O->OwnTParams.begin(), O->OwnTParams.end());
   if (own() && FD->Recv) {
     checkMoveRecvSig(O, FD);
     checkSpecialMethod(O, FD);
@@ -1519,6 +1575,9 @@ void Checker::declStmt(const DeclStmt *DS) {
       if (T)
         for (Var *V : Vars)
           V->Ty = T;
+      if (T && Ctx.unitsSeen() && !S.Opts.GoCompat)
+        for (Var *V : Vars)
+          noteUnitVarType(V, VS->Type); // its unit as written (UNI-5)
       if (!VS->Values.empty()) {
         if (VS->Values.size() == 1 && VS->Names.size() > 1) {
           // One multi-valued expression.

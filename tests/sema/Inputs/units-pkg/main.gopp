@@ -1,0 +1,37 @@
+package main
+
+import (
+	"geo"
+	"units"
+)
+
+unit Local = 3 units.KM
+
+func main() {
+	var a float64[units.KM] = 1.0[units.KM]
+	var b units.Meters = 500.0[units.M]
+	var c float64[units.M] = a.In[units.M]()
+	var d float64[units.M] = b + a
+	var e float64[units.KM] = units.Half(a)
+	var f float64[units.M] = units.Avg([]units.Meters{b})
+	var g units.Vec[units.KM / units.H]
+	var h float64[units.N] = 1.0[units.KG * units.M / units.S ^ 2]
+	var i float64[Local] = 1.0[Local]
+	var j float64[units.KM] = i.In[units.KM]()
+	var k float64[units.M] = geo.Len().In[units.M]()
+	var l float64[geo.Mile] = geo.Len()
+	var m float64[units.M] = (1.0[geo.Furlong] + 1.0[geo.Mile]).In[units.M]()
+	var n float64[units.M] = units.Avg[units.M]([]float64[units.M]{})
+	var o units.Dist = units.Dist(a)
+	// a unit made from an unexported base unit keeps one identity
+	var p float64[units.Hid] = units.Hidden()
+	var q float64[units.Twice] = units.Hidden2()
+	var r float64[units.Hid] = q.In[units.Hid]()
+	// a generic type of another package with a unit parameter (GEN-14)
+	v := units.Vec[units.KM]{1.0[units.KM], 2.0[units.KM]}
+	var w units.Vec[units.KM] = v + v.Scale(2)
+	var len2 float64[units.KM * units.KM] = w.Len2()
+	var speed float64[units.KM / units.H] = units.Speed()
+	_, _ = len2, speed
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r
+}

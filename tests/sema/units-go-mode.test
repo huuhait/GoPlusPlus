@@ -1,0 +1,13 @@
+// P03.25 (LEX-14): in a .go file `unit` is an ordinary name and `float64[KM]`,
+// `5[KM]` and `100.0[M/S]` are what Go says about them (compare `go build`:
+// "float64 is not a generic type", "cannot index 5", "undefined: KM"). A
+// declaration with the name `unit` is fine.
+// RUN: not %gopp check --go --check-error-limit=0 %S/Inputs/units-go-mode.go 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: printf 'package main\n\nvar unit = 1\n\nfunc main() { unit := unit + 1; _ = unit }\n' > %t.ok.go
+// RUN: %gopp check --go %t.ok.go
+// CHECK: units-go-mode.go:8:8: error{{\[E[0-9]+\]}}: invalid operation: float64[KM] (float64 is not a generic type)
+// CHECK: units-go-mode.go:9:7: error{{\[E[0-9]+\]}}: invalid operation: cannot index 5 (untyped int constant)
+// CHECK: units-go-mode.go:9:9: error{{\[E[0-9]+\]}}: undefined: KM
+// CHECK: units-go-mode.go:10:7: error{{\[E[0-9]+\]}}: invalid operation: cannot index 100.0 (untyped float constant 100)
+// CHECK: units-go-mode.go:10:13: error{{\[E[0-9]+\]}}: undefined: M
+// CHECK: units-go-mode.go:10:15: error{{\[E[0-9]+\]}}: undefined: S

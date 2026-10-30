@@ -1,0 +1,163 @@
+// RUN: %gopp check %s
+// P03.25 (EXP-31 to EXP-37): the accepted side. Every line states a type with a
+// declaration; a wrong unit would be an error on the line. Constants are
+// exact: the array lengths below are the values (a wrong value is a mismatch
+// of the array types).
+package main
+
+unit M
+unit S
+unit KG
+unit A
+unit KM = 1000 M
+unit H = 3600 S
+unit N = KG * M / S ^ 2
+unit MI = (1609344 / 1000) M
+unit K2 = 1000 M
+unit CM = 0.01 M
+unit IN = 2.54 CM
+unit DM = 10 CM
+
+type Distance float64[M]
+type Speed = float64[KM / H]
+
+func take(x float64[M]) float64[M] { return x }
+
+func main() {
+	var d float64[KM] = 2.5[KM]
+	var m float64[M] = 500.0[M]
+	var t float64[H] = 2.0[H]
+	var k int[KM] = 3[KM]
+	var n int[M] = 1999[M]
+	var dist Distance = 4.0[M]
+
+	// simplification identity (UNI-5)
+	var a1 float64[KM / H] = 1.0[KM / H]
+	var a2 float64[KM * H ^ -1] = a1
+	var a3 float64[(KM) / (H)] = a2
+	var a4 float64[K2 / H] = a3
+	var a5 Speed = a4
+	var n1 float64[N] = 1.0[KG * M / S ^ 2]
+	var n2 float64[KG * M * S ^ -2] = n1
+	_, _ = a5, n2
+
+	// + and - convert to the finer unit, in either order (EXP-34)
+	var p1 float64[M] = d + m
+	var p2 float64[M] = m + d
+	var p3 float64[M] = d - m
+	var p4 int[M] = k + n
+	var p5 int[M] = n + k
+	var p6 int[M] = n % k
+	var p7 int[M] = k % n
+	var p8 bool = d > m
+	var p9 bool = m <= d
+	var p10 int = d <=> m
+	var p11 float64[M] = min(d, m)
+	var p12 int[M] = max(k, n)
+	_, _, _, _, _, _, _, _, _, _, _, _ = p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12
+
+	// compound assignment keeps the unit of x (EXP-34)
+	d += 500.0[M]
+	d -= m
+	m += d
+	n += k
+	var dm int[DM]
+	var cm int[CM]
+	cm += dm
+	var ii float64[IN]
+	var cc float64[CM]
+	cc += ii
+	ii += cc
+	_, _ = cm, ii
+
+	// the zero exception (EXP-35)
+	var z1 float64[KM] = 0
+	z1 = 0
+	_ = z1
+	var z2 float32[M] = 0
+	var z3 int[M] = 0
+	var z4 complex128[A] = 0
+	_ = take(0)
+	_ = d > 0
+	_ = d == 0
+	_ = d != 0
+	_ = 0 < d
+	var z5 float64[KM] = d + 0
+	var z6 float64[KM] = d - 0
+	_, _, _, _, _ = z2, z3, z4, z5, z6
+
+	// products and quotients (EXP-33)
+	var q1 float64[KM * KM] = d * d
+	var q2 float64[KM / H] = d / t
+	var q3 float64[KM] = 2 * d
+	var q4 float64[KM] = d / 2
+	var q5 float64[1 / H] = 1.0 / t
+	var q6 float64 = d / 500.0[M]
+	var q7 float64 = d / d
+	var q8 float64 = 5.0[KM] / 2.0[M]
+	var q9 float64[KG * M / S ^ 2] = 3.0[KG] * 2.0[M] / (1.0[S] * 1.0[S])
+	var q10 int[KM] = k * 2
+	var q11 float64[KM] = d * plainK()
+	_, _, _, _, _, _, _, _, _, _, _ = q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11
+
+	// named types (UNI-8)
+	var r1 Distance = dist + dist
+	var r2 Distance = dist * 2
+	var r3 Distance = 2 * dist
+	var r4 float64[M / S] = dist / 3.0[S]
+	var r5 float64[M * M] = dist * dist
+	var r6 float64[M] = float64[M](dist)
+	_, _, _, _, _, _ = r1, r2, r3, r4, r5, r6
+
+	// shifts keep the unit (EXP-36)
+	var sh uint = 2
+	var s1 int[KM] = k << 2
+	var s2 int[KM] = k >> sh
+	_, _ = s1, s2
+
+	// conversions (EXP-32)
+	var c1 float64[M] = float64[M](d)
+	var c2 float64 = float64(d)
+	var c3 float64[KM] = float64[KM](c2)
+	var c4 float64[KM] = float64[KM](n)
+	var c5 float64[M] = d.In[M]()
+	var c6 float64[M / S] = a1.In[M / S ^ 1]()
+	var c7 int[KM] = n.In[KM]()
+	var c8 int[KM] = int[KM](n)
+	var c9 Distance = Distance(c1)
+	var c10 float64[M] = 100.0[KM].In[M]()
+	var c11 int[M] = k.In[M]() // an integer to a finer unit: exact (x1000)
+	_, _, _, _, _, _, _, _, _, _, _ = c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11
+
+	// constants are exact (EXP-37)
+	var e1 [1]int = [int(float64(1.0[KM]+500.0[M])-1500) + 1]int{}
+	var e2 [1]int = [int(float64(500.0[M]+1.0[KM])-1500) + 1]int{}
+	var e3 [1]int = [int(float64(float64[M](1.0[KM]))-1000) + 1]int{}
+	var e4 [1]int = [int(float64(5.0[KM]/2.0[M])-2500) + 1]int{}
+	var e5 [1]int = [int(float64(int[KM](int[M](1999)))) + 0]int{1}
+	var e6 [1]int = [-int(float64(int[KM](int[M](-1999))))]int{1}
+	var e7 [1]int = [int(float64(1.0[MI].In[M]())*1000-1609344) + 1]int{}
+	var e8 [1]int = [int(float64(1.0[KM/H].In[M/S]())*18-5) + 1]int{}
+	_, _ = e7, e8
+	// `.In` on a constant gives a constant (EXP-32, EXP-37), through the same
+	// path as the conversion: an integer value truncates toward zero, an
+	// untyped constant keeps its kind
+	const inM = 1.0[KM].In[M]()
+	var e9 [1]int = [int(float64(inM))-999]int{}
+	const typed float64[KM] = 2.5[KM]
+	const typedM = typed.In[M]()
+	var e10 [1]int = [int(float64(typedM))-2499]int{}
+	var e11 [1]int = [int(1999[M].In[KM]())]int{}
+	var e12 [1]int = [int(int[KM](1999[M]))]int{}
+	var e13 [1]int = [int(int[KM](-1999[M]))+2]int{}
+	var e14 float64[KM] = 1999.0[M].In[KM]()
+	var e15 int[KM] = 1999[M].In[KM]()
+	_, _, _, _, _, _, _ = e9, e10, e11, e12, e13, e14, e15
+	const lim = 120.0[KM / H]
+	const lim2 float64[KM/H] = 120.0[KM/H]
+	const zero float64[KM] = 0
+	_, _, _, _, _, _ = e1, e2, e3, e4, e5, e6
+	_, _, _ = lim, lim2, zero
+}
+
+func plainK() float64 { return 3 }

@@ -1,0 +1,41 @@
+// RUN: %gopp fmt %s | FileCheck --match-full-lines %s
+// RUN: %gopp fmt %s > %t.fmt.gopp && %gopp fmt %t.fmt.gopp | diff %t.fmt.gopp -
+// P03.25 (UNI-4, EXP-31, LEX-14): `gopp fmt` writes a unit declaration as
+// `unit KM = 1000 M`, removes the spaces inside a unit expression (`KG*M/S^2`)
+// and before the `[` of a unit literal, and keeps the factor in parentheses
+// (a signed factor, an error for the checker, is kept as written).
+// A second run changes nothing.
+package p
+
+@Symbol("km")
+unit   KM  =  1000   M
+unit ( M ; S = ( 3600 ) M ; N = KG * M / S ^ 2 )
+unit MI = ( 1609344 / 1000 ) M
+unit F = 1 / S
+unit NEG = - 5 M
+
+func f[U unit](x float64[ U / S ^ 2 ], y float64[ M * S ^ -1 ]) float64[ (M / S) ^ 2 ] {
+	a := 100.0 [ KM ]
+	b := 3 [ M / S ] . In [ KM / H ^ 2 ] ()
+	c := x.In[ KM ] ()
+	d := Avg[ M / S ](xs)
+	return 2i [ A ]
+}
+// CHECK: package p
+// CHECK: @Symbol("km")
+// CHECK-NEXT: unit KM = 1000 M
+// CHECK: unit (
+// CHECK-NEXT: 	M
+// CHECK-NEXT: 	S = (3600) M
+// CHECK-NEXT: 	N = KG*M/S^2
+// CHECK-NEXT: )
+// CHECK: unit MI = (1609344 / 1000) M
+// CHECK: unit F = 1/S
+// CHECK-NEXT: unit NEG = -5 M
+// CHECK: func f[U unit](x float64[U/S^2], y float64[M*S^-1]) float64[(M/S)^2] {
+// CHECK-NEXT: 	a := 100.0[KM]
+// CHECK-NEXT: 	b := 3[M/S].In[KM/H^2]()
+// CHECK-NEXT: 	c := x.In[KM]()
+// CHECK-NEXT: 	d := Avg[M/S](xs)
+// CHECK-NEXT: 	return 2i[A]
+// CHECK-NEXT: }

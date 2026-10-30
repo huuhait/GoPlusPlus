@@ -6,6 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Units.h"
+
 #include "gopp/Sema/Foreign.h"
 #include "gopp/Sema/Types.h"
 
@@ -18,7 +20,8 @@ namespace {
 
 class Printer {
 public:
-  Printer(std::string &Out, const Package *Qual) : OS(Out), Qual(Qual) {}
+  Printer(std::string &Out, const Package *Qual, const units::Namer *UN)
+      : OS(Out), Qual(Qual), UN(UN) {}
 
   void type(const Type *T, unsigned Depth = 0) {
     if (!T) {
@@ -35,7 +38,13 @@ public:
       auto *B = llvm::cast<BasicType>(T);
       if (B->BK == BasicKind::UnsafePointer)
         OS << "unsafe.";
+      if (B->BK == BasicKind::UnitArg) {
+        OS << units::str(B->Unit, Qual, UN); // a unit argument (GEN-14)
+        break;
+      }
       OS << B->Name;
+      if (B->Unit)
+        OS << '[' << units::str(B->Unit, Qual, UN) << ']';
       break;
     }
     case Type::Kind::Pointer:
@@ -298,14 +307,16 @@ private:
 
   llvm::raw_string_ostream OS;
   const Package *Qual;
+  const units::Namer *UN;
 };
 
 } // namespace
 
-std::string sema::typeString(const Type *T, const Package *Qual) {
+std::string sema::typeString(const Type *T, const Package *Qual,
+                             const units::Namer *UN) {
   std::string S;
   {
-    Printer P(S, Qual);
+    Printer P(S, Qual, UN);
     P.type(T);
   }
   return S;

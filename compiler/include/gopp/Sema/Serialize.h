@@ -118,6 +118,17 @@ enum RecordCode : unsigned {
   REC_PKG_END,
   /// `Option[T]`: one operand, the type id of T.
   REC_OPTION,
+  /// A unit (ADR-0025): the dimensions (unit or unit parameter, exponent) and
+  /// the exact factor. Gets the next unit id.
+  REC_UNIT_CANON,
+  /// A numeric type with a unit: the base kind and the unit id (the kind
+  /// UnitArg is a unit used as a type argument).
+  REC_UNIT_TYPE,
+  /// A declared unit of the package: name, base?, symbol, unit id.
+  REC_OBJ_UNIT,
+  /// The display form the package prints for a unit (UNI-5): the unit id and
+  /// the parts (unit by package and name, or unit parameter; exponent).
+  REC_UNIT_NAME,
   /// Codes from here on belong to the user of the stream (GIR bodies).
   REC_FIRST_USER = 64,
 };
@@ -141,8 +152,11 @@ private:
   void object(const Object *O);
   void constValue(const ConstValue &V, std::vector<uint64_t> &Ops);
   void declareTypeParam(const TypeParamType *T);
+  uint64_t unit(const UnitCanon *U);
 
   RecordWriter &W;
+  llvm::DenseMap<const UnitCanon *, uint64_t> UnitIds;
+  uint64_t NextUnit = 1;
   llvm::StringMap<uint64_t> Strings;
   llvm::DenseMap<const Package *, uint64_t> Pkgs;
   llvm::DenseMap<const Type *, uint64_t> Ids;
@@ -190,6 +204,12 @@ private:
   std::vector<std::string> Strings{std::string()};
   std::vector<Package *> Pkgs{nullptr};
   std::vector<Type *> Types{nullptr};
+  /// The units read so far (id 0 is none), and the units of this package that
+  /// a unit refers to before their own declaration has come.
+  std::vector<const UnitCanon *> Canons{nullptr};
+  llvm::StringMap<UnitObj *> PendingUnits;
+  /// The display table of the package (REC_UNIT_NAME), in record order.
+  std::vector<UnitNameEntry> UnitNamesRead;
   /// Depths[Id]: how deep the type Types[Id] nests.
   std::vector<unsigned> Depths{0};
   /// Named types and type parameters made by a DECL record whose DEF record

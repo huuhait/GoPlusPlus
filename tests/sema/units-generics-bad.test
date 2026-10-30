@@ -1,0 +1,174 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (GEN-14, UNI-10, UNI-7): unit parameters, bad side: a unit parameter as a type or a value, a conversion to a concrete unit in the body, a plain number added to U, no inference from a plain argument or from U^2, two different units for one parameter, a unit where a type goes and the reverse, a power in an explicit argument, and the constraints a unit type does not satisfy (a product of two units, ~float64, a Number made of such terms, a bit operator, ++). Lines with no CHECK are accepted: inference, explicit arguments, Vec2[U], Sum and Scale over a unit type.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+
+func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }
+func Speed[U unit](d float64[U/H]) float64[U] { return d * 1.0[H] }
+func Both[U unit](a, b float64[U]) float64[U] { return a + b }
+func Sq[U unit](x float64[U^2]) float64[U^2] { return x }
+func Mixed[T any, U unit](x T, y float64[U]) {}
+func OnlyT[T any](x T) {}
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: `unit` cannot be combined with other elements of a constraint: a unit parameter has no methods, operators or type set (write `[U unit]`) (GEN-14)
+func Comb[U interface{ unit; comparable }](x float64[U]) {}
+// CHECK-DAG: [[@LINE+1]]:64: error{{\[E[0-9]+\]}}: cannot convert x (variable of type float64[U]) to float64[M]: U and M have different dimensions (EXP-32)
+func Conc[U unit](x float64[U]) float64[M] { return float64[M](x) }
+func Bad1[U unit](x float64[U]) {
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: U is a unit parameter, not a type: use it inside the brackets of a number type, as in `float64[U]` (GEN-14)
+	var y U
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: U is a unit parameter, not a type: it cannot be called as a conversion; write float64[U](x) (GEN-14)
+	z := U(3)
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid operation: x + 1.0: cannot add a number without a unit to a value in U; write the number with its unit, as in 1.0[U] (only an untyped zero needs no unit) (EXP-35)
+	w := x + 1.0
+	v := x + 0
+	u := x * x
+	var t float64[U*U] = u
+	_, _, _, _, _ = y, z, w, v, t
+}
+// CHECK-DAG: [[@LINE+1]]:75: error{{\[E[0-9]+\]}}: invalid operation: x + y: cannot add U and V (different dimensions) (EXP-34)
+func Bad2[U unit, V unit](x float64[U], y float64[V]) float64[U] { return x + y }
+// CHECK-DAG: [[@LINE+1]]:53: error{{\[E[0-9]+\]}}: invalid use of .In: x.In[M](): U and M have different dimensions (EXP-32)
+func Bad3[U unit](x float64[U]) float64[U] { return x.In[M]() }
+
+type Vec2[U unit] struct{ X, Y float64[U] }
+
+func (a Vec2[U]) + (b Vec2[U]) Vec2[U] { return Vec2[U]{a.X + b.X, a.Y + b.Y} }
+
+// CHECK-DAG: [[@LINE+1]]:29: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: U is a unit parameter, not a type: use it inside the brackets of a number type, as in `float64[U]` (GEN-14)
+type Bad4[U unit] struct{ u U }
+// CHECK-DAG: [[@LINE+1]]:36: error{{\[E[0-9]+\]}}: T is a type parameter without the constraint `unit` (write `[T unit]`), not a unit (UNI-3)
+type Bad5[T any] struct{ x float64[T] }
+
+func Sum[T interface{ + (T) T }](a, b T) T { return a + b }
+func Prod[T interface{ * (T) T }](a, b T) T { return a * b }
+func Scale[T interface{ * (float64) T }](a T) T { return a * 2 }
+func Tilde[T ~float64](a T) T { return a }
+type Number interface{ ~float64 | ~int }
+func Num[T Number](a T) T { return a }
+func Bits[T interface{ & (T) T }](a T) T { return a & a }
+func Quo[T interface{ / (T) T }](a, b T) T { return a / b }
+func Rem[T interface{ % (T) T }](a, b T) T { return a % b }
+func MulI[T interface{ * (int) T }](a T) T { return a * 2 }
+func Ord[T interface{ <=> (T) int }](a, b T) bool { return a < b }
+
+// GEN-14, UNI-5: an instance that makes a unit type of the signature or of
+// the fields a plain number with a factor other than 1 (U = KM, V = M) is an
+// error: the plain type would lose the factor, and the generic code and the
+// instance would mean different numbers. With the factor 1 (U = V) it is
+// fine (units-generics-ok.test).
+func Ratio[U unit, V unit](a float64[U], b float64[V]) float64[U/V] { return a / b }
+func ScaleBy[U unit, V unit](r float64[U/V], b float64[V]) float64[U] { return r * b }
+type Per[U unit, V unit] struct{ R float64[U/V] }
+
+type Pos2 struct{ X, Y float64[M] }
+
+// CHECK-DAG: [[@LINE+1]]:32: error{{\[E[0-9]+\]}}: cannot write v.X: it is read-only, it is reached through a View (OWN-V1); clone it first, or take the value as an owned parameter
+func writeView(v View[Pos2]) { v.X = 1.0[M] }
+func Inc[T interface{ ++() }](a *T) { (*a)++ }
+
+func main() {
+	xs := []float64[KM]{1.0[KM]}
+	_ = Avg(xs)
+	_ = Avg[M]([]float64[M]{})
+	_ = Avg[KM/H]([]float64[KM/H]{})
+	_ = Avg[KM*H]([]float64[KM*H]{})
+	_ = Avg[M]
+	_ = Speed(50.0[KM/H])
+	var kmh float64[KM/H] = 1.0[KM/H]
+	var s float64[KM] = Speed(kmh)
+	_ = s
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: in call to Avg, type []float64 of []float64{} does not match []float64[U] (cannot infer U)
+	_ = Avg([]float64{})
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: in call to Avg, type []int[M] of []int[M]{} does not match []float64[U] (cannot infer U)
+	_ = Avg([]int[M]{})
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: in call to Both, type untyped float[S] of 1.0[S] does not match inferred type float64[M] for float64[U]
+	_ = Both(1.0[M], 1.0[S])
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: in call to Both, type untyped float[KM] of 1.0[KM] does not match inferred type float64[M] for float64[U]
+	_ = Both(1.0[M], 1.0[KM])
+	_ = Both(1.0[KM], 2.0[KM])
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: in call to Sq, type untyped float[M^2] of 2.0[M*M] does not match float64[U^2] (cannot infer U); the unit parameter U has the power 2, which is not inferred: give it explicitly, as in f[KM](...)
+	_ = Sq(2.0[M*M])
+	_ = Sq[M](2.0[M*M])
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: int is a type, not a unit (UNI-3)
+	_ = Avg[int](nil)
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: got 2 type arguments but Avg[M, S] has 1 type parameters
+	_ = Avg[M, S](nil)
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: invalid unit expression: `^` is Go's xor in an expression, so it is not a power here; name the unit with a `unit` declaration, or let inference find it (UNI-7) (UNI-4)
+	_ = Avg[M/S^2]([]float64[M]{})
+	Mixed[int, KM](1, 2.0[KM])
+// M5: one error for each wrong argument, not one per name in it.
+// CHECK-DAG: [[@LINE+2]]:12: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: KM is a unit, not a type: the type parameter T takes a type (only a parameter `[U unit]` takes a unit) (GEN-14)
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: int is a type, not a unit (UNI-3)
+	_ = Mixed[KM, int](1, 2.0[KM])
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: KM is a unit, not a type: the type parameter T takes a type (only a parameter `[U unit]` takes a unit) (GEN-14)
+	_ = OnlyT[KM](1)
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: M / S is a unit, not a type: the type parameter T takes a type (only a parameter `[U unit]` takes a unit) (GEN-14)
+	_ = OnlyT[M/S](1)
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: int is a type, not a unit (UNI-3)
+	_ = Avg[int](xs)
+	var v1 Vec2[KM]
+	var v2 Vec2[M]
+	_ = v1 + v1
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: v1 + v2: Vec2[KM] has no operator `+` for Vec2[M] (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+	_ = v1 + v2
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: int is a type, not a unit (UNI-3)
+	var _ Vec2[int]
+	var _ Vec2[KM/H]
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: too many type arguments for type Vec2: have 2, want 1
+	var _ Vec2[KM, M]
+
+	_ = Sum(1.0[M], 2.0[M])
+	_ = Sum(1, 2)
+	_ = Sum(v1, v1)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[M] does not satisfy interface{* (float64[M]) float64[M]} (missing operator * (float64[M]) float64[M])
+	_ = Prod(1.0[M], 2.0[M])
+	_ = Prod(1, 2)
+	_ = Scale(1.0[M])
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: Vec2[KM] does not satisfy interface{* (float64) Vec2[KM]} (missing operator * (float64) Vec2[KM])
+	_ = Scale(v1)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[M] does not satisfy ~float64 (float64[M] missing in ~float64)
+	_ = Tilde(1.0[M])
+	_ = Tilde(1.5)
+	_ = Num(1.5)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[M] does not satisfy Number (float64[M] missing in ~float64 | ~int)
+	_ = Num(1.0[M])
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: int[M] does not satisfy Number (int[M] missing in ~float64 | ~int)
+	_ = Num(1[M])
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: int[M] does not satisfy interface{& (int[M]) int[M]} (missing operator & (int[M]) int[M])
+	_ = Bits(3[M])
+	_ = Bits(3)
+	var q float64[M]
+// CHECK-DAG: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: float64[M] does not satisfy interface{++ ()} (missing operator ++ ())
+	Inc(&q)
+	var i int
+	Inc(&i)
+	// UNI-10: a quotient or a product of two values of the type changes the
+	// unit; `%` is for integers; the scalar is of the base kind; `<=>` is not
+	// built in for complex numbers.
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[M] does not satisfy interface{/ (float64[M]) float64[M]} (missing operator / (float64[M]) float64[M])
+	_ = Quo(q, q)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[M] does not satisfy interface{% (float64[M]) float64[M]} (missing operator % (float64[M]) float64[M])
+	_ = Rem(q, q)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[M] does not satisfy interface{* (int) float64[M]} (missing operator * (int) float64[M])
+	_ = MulI(q)
+	var ca complex128[M]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: complex128[M] does not satisfy interface{<=> (complex128[M]) int} (missing operator <=> (complex128[M]) int)
+	_ = Ord(ca, ca)
+	_ = Rem(2[M], 3[M])
+	_ = MulI(2[M])
+	_ = Ord(q, q)
+	var km float64[KM]
+	// GEN-14: a signature, a field or code whose units cancel at the
+	// instance computes as plain code (the factor 1000), so these are
+	// accepted (units-generic-collapse).
+	_ = Ratio(km, q)
+	_ = ScaleBy[KM, M](2.0, q)
+	var _ Per[KM, M]
+	// a unit argument has a dimension
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid unit argument or parameter: M / M has an empty dimension, so it is not a unit (GEN-14)
+	_ = Avg[M/M](nil)
+}

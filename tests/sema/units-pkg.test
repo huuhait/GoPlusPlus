@@ -1,0 +1,21 @@
+// P03.25 (UNI-1, UNI-5, UNI-13, GEN-14): units across packages. Inputs/units-pkg
+// uses `units.KM` in a type, in a literal and in `.In[units.M]()`, a unit
+// declared in terms of another package's unit, a generic function and a
+// generic type of another package with a unit parameter (its `+` method,
+// methods with unit results), a unit exported through a type alias, and units
+// made from an unexported base unit (one identity in every importer).
+// Inputs/units-pkg-bad: a dot import of a unit, an unexported unit, an
+// undefined one, a unit as a value and a type or a package where a unit goes,
+// two instances of a generic unit type, and the display form of the exporting
+// package in a message of the importer (KM/H, M2).
+// RUN: %gopp check %S/Inputs/units-pkg
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/units-pkg-bad 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// CHECK: main.gopp:10:18: error{{\[E[0-9]+\]}}: name hidden not exported by package units
+// CHECK: main.gopp:11:18: error{{\[E[0-9]+\]}}: undefined: u.Missing
+// CHECK: main.gopp:12:23: error{{\[E[0-9]+\]}}: cannot use a (variable of type float64[units.KM]) as float64[units.M] value in variable declaration: an assignment never rescales a value; convert it with a.In[units.M]()
+// CHECK: main.gopp:13:10: error{{\[E[0-9]+\]}}: u.KM is a unit, not an expression (UNI-1); a unit is valid only inside [ ] after a number literal or a numeric type, in a unit declaration, or as a unit argument
+// CHECK: main.gopp:14:16: error{{\[E[0-9]+\]}}: u.Meters is a type, not a unit (UNI-3)
+// CHECK: main.gopp:15:14: error{{\[E[0-9]+\]}}: u is a package, not a unit (UNI-3)
+// CHECK: main.gopp:17:13: error{{\[E[0-9]+\]}}: name hidden not exported by package units
+// CHECK: main.gopp:20:6: error{{\[E[0-9]+\]}}: invalid operation: u.Vec[u.KM]{} + u.Vec[u.M]{}: units.Vec[units.KM] has no operator `+` for units.Vec[units.M] (EXP-17); the right operand must have exactly the parameter type (no implicit conversion)
+// CHECK: main.gopp:21:23: error{{\[E[0-9]+\]}}: cannot use u.Speed() (value of type float64[units.KM/units.H]) as float64[units.M] value in variable declaration

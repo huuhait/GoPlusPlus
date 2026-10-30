@@ -1,0 +1,79 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (UNI-13, MAC-8): @Symbol takes one string with no space, control character or one of * / ^ ( ); one per unit; only on a unit declaration, not on a group in v1. The valid texts (km, the micro sign) are accepted.
+package main
+
+@Symbol("km")
+unit KM
+
+@Symbol("m")
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: a unit has one @Symbol (the first is at line {{[0-9]+}}) (UNI-13)
+@Symbol("mm")
+unit Two
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text is empty (UNI-13)
+@Symbol("")
+unit Empty
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text "a b" has a space, a control character or one of * / ^ ( ), which would make the printed unit ambiguous (UNI-13)
+@Symbol("a b")
+unit Space
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text "a*b" has a space, a control character or one of * / ^ ( ), which would make the printed unit ambiguous (UNI-13)
+@Symbol("a*b")
+unit Star
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text "a/b" has a space, a control character or one of * / ^ ( ), which would make the printed unit ambiguous (UNI-13)
+@Symbol("a/b")
+unit Slash
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text "a^b" has a space, a control character or one of * / ^ ( ), which would make the printed unit ambiguous (UNI-13)
+@Symbol("a^b")
+unit Caret
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text "a(b" has a space, a control character or one of * / ^ ( ), which would make the printed unit ambiguous (UNI-13)
+@Symbol("a(b")
+unit LParen
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: the text "a)b" has a space, a control character or one of * / ^ ( ), which would make the printed unit ambiguous (UNI-13)
+@Symbol("a)b")
+unit RParen
+
+@Symbol("µm")
+unit Micro
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol takes one string: @Symbol("km") (UNI-13)
+@Symbol(1)
+unit NotString
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol takes one string: @Symbol("km") (UNI-13)
+@Symbol
+unit NoArgs
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol takes one string: @Symbol("km") (UNI-13)
+@Symbol("a", "b")
+unit TwoArgs
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol is only for a `unit` declaration, not for a type declaration (UNI-13)
+@Symbol("x")
+type T int
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol is only for a `unit` declaration, not for a function (UNI-13)
+@Symbol("x")
+func f() {}
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol is only for a `unit` declaration, not for a variable declaration (UNI-13)
+@Symbol("x")
+var v = 1
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol is only for a `unit` declaration, not for a constant declaration (UNI-13)
+@Symbol("x")
+const c = 1
+
+// CHECK-DAG: [[@LINE+1]]:1: error{{\[E[0-9]+\]}}: invalid @Symbol: @Symbol is not defined on a group of units in v1; write one `unit` declaration for the unit (UNI-13)
+@Symbol("ok")
+unit (
+	G1
+	G2
+)
+
+func main() {}

@@ -1,0 +1,51 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (UNI-9, UNI-10): erasure is only the layout: float64[KM] and float64 are not assignable either way, nor are slices, pointers and maps of them; unit types satisfy neither ~float64 nor a list of plain types; a named type over a unit does not get the rescaling hint (.In gives the unnamed unit type). The accepted side is units-misc-ok.test.
+package main
+
+import "unsafe"
+
+unit M
+unit KM = 1000 M
+
+type Distance float64[M]
+
+func Plain[T ~float64](x T) T { return x }
+func Num[T interface{ float64 | int }](x T) T { return x }
+
+func f(d float64[KM], xs []float64[KM], n int[M]) {
+	// erasure: the layout is that of the number, but the type is not
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as float64 value in variable declaration
+	var plain float64 = d
+// CHECK-DAG: [[@LINE+1]]:25: error{{\[E[0-9]+\]}}: cannot use plain (variable of type float64) as float64[KM] value in variable declaration
+	var back float64[KM] = plain
+// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: cannot use xs (variable of type []float64[KM]) as []float64 value in variable declaration
+	var s []float64 = xs
+// CHECK-DAG: [[@LINE+1]]:23: error{{\[E[0-9]+\]}}: cannot use xs (variable of type []float64[KM]) as []float64[M] value in variable declaration
+	var t []float64[M] = xs
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: float64(d) + d: cannot add a number without a unit to a value in KM; write float64[KM](float64(d)) to give the value a unit (EXP-35)
+	_ = float64(d) + d
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot convert xs (variable of type []float64[KM]) to type []float64
+	_ = []float64(xs)
+	_ = unsafe.Sizeof(d)
+	_ = (*float64)(unsafe.Pointer(&d))
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot use &d (value of type *float64[KM]) as *float64 value in variable declaration
+	var p *float64 = &d
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use &d (value of type *float64[KM]) as *float64[M] value in variable declaration
+	var q *float64[M] = &d
+// CHECK-DAG: [[@LINE+1]]:26: error{{\[E[0-9]+\]}}: cannot use map[float64[KM]]int{} (value of type map[float64[KM]]int) as map[float64]int value in variable declaration
+	var m map[float64]int = map[float64[KM]]int{}
+// CHECK-DAG: [[@LINE+1]]:29: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as interface{Foo()} value in variable declaration: float64[KM] does not implement interface{Foo()} (missing method Foo)
+	var i interface{ Foo() } = d
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: in call to Plain, T (type float64[KM]) does not satisfy ~float64
+	_ = Plain(d)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: float64[KM] does not satisfy interface{float64 | int} (float64[KM] missing in float64 | int)
+	_ = Num(d)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: int[M] does not satisfy interface{float64 | int} (int[M] missing in float64 | int)
+	_ = Num(n)
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use d (variable of type float64[KM]) as Distance value in variable declaration
+	var dist Distance = d
+	_, _, _, _, _, _ = back, s, t, p, q, m
+	_, _ = i, dist
+}
+
+func main() {}

@@ -1,0 +1,7 @@
+package p
+
+var a = 3[M+S]
+var b float64[KM, M]
+var c float64[M^1.5]
+var d float64[M^x]
+var e = x.In[M+S]()

@@ -97,12 +97,36 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     }
     return false;
   }
+  // `A[int](x)`, `R[KM](v)`: a generic alias instantiated in an expression
+  // is a type, as it is in a type (its name alone is no operand).
+  // (Go mode is parked: it keeps master's answer.)
+  if (auto *Id = dyn_cast<ast::Ident>(Ex->X); Id && !S.Opts.GoCompat)
+    if (auto *TN = dyn_cast_or_null<TypeName>(E.Sc->lookup(name(Id), E.Pos));
+        TN && TN->IsAlias && !TN->AliasTParams.empty()) {
+      X.E = Ex;
+      X.Ty = varType(Ex, /*ValueUse=*/false);
+      X.M = isValid(X.Ty) ? Mode::TypeExpr : Mode::Invalid;
+      return false;
+    }
   chainOperand(X, Ex); // (chainSetup: the ADR-0024 mark)
+  // ADR-0025: `x.In[KM]` with no unit value (the brackets hold a unit, not an
+  // index, EXP-32), and `'a'[M]` (a unit on a rune or string literal).
+  if (!S.Opts.GoCompat && Ctx.unitsSeen() &&
+      ((X.M == Mode::Invalid && unitInAfterError(Ex)) ||
+       (X.M == Mode::Constant && unitIndexLiteral(X, Ex))))
+    return false;
   switch (X.M) {
   case Mode::Invalid:
     for (const ast::Expr *I : Ex->Indices)
       use(I);
     return false;
+  case Mode::Builtin:
+    if (X.BId == BuiltinId::UnitIn) {
+      // `x.In[U]`: the unit is read with the unit grammar (UNI-7).
+      unitInIndex(X, Ex);
+      return false;
+    }
+    break;
   case Mode::TypeExpr:
     X.M = Mode::Invalid;
     X.Ty = varType(Ex, /*ValueUse=*/false); // a conversion decides (TYP-19)

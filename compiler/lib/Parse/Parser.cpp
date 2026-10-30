@@ -1046,7 +1046,7 @@ private:
   Expr *parseQualifiedIdent(Ident *I) {
     Expr *T = parseTypeName(I);
     if (is(tok::l_brack))
-      T = parseTypeInstance(T);
+      T = isNumericIdent(T) ? parseUnitBracket(T) : parseTypeInstance(T);
     return T;
   }
 
@@ -1124,6 +1124,8 @@ private:
   /// embedded or unnamed instantiated type). Returns the name (null for the
   /// instance) and the type.
   std::pair<Ident *, Expr *> parseArrayFieldOrTypeInstance(Ident *X) {
+    if (isNumericIdent(X)) // `float64[M/S^2]`: a unit type (UNI-7)
+      return {nullptr, parseUnitBracket(X)};
     SourceLoc Lbrack = expect(tok::l_brack);
     SourceLoc TrailingComma;
     SmallVector<Expr *, 8> Args;
@@ -1936,12 +1938,351 @@ private:
     return C;
   }
 
+  //===--------------------------------------------------------------------===//
+  // Units of measure (ADR-0025, UNI-1, UNI-4, UNI-7, EXP-31)
+  //===--------------------------------------------------------------------===//
+
+  /// A predeclared numeric type name: the parser reads `[` after it with the
+  /// unit grammar (UNI-7). uintptr is read too; the checker rejects it.
+  static bool isNumericTypeName(llvm::StringRef S) {
+    static const char *const Names[] = {
+        "int",   "int8",    "int16",   "int32",     "int64",     "uint",
+        "uint8", "uint16",  "uint32",  "uint64",    "uintptr",   "byte",
+        "rune",  "float32", "float64", "complex64", "complex128"};
+    for (const char *N : Names)
+      if (S == N)
+        return true;
+    return false;
+  }
+  bool isNumericIdent(const Expr *X) const {
+    const auto *I = dyn_cast_or_null<Ident>(X);
+    return Opts.AllowUnits && I && isNumericTypeName(I->Name.str());
+  }
+
+  /// Can a unit factor start at the current token?
+  bool atUnitFactorStart() const {
+    return is(tok::ident) || is(tok::l_paren) ||
+           (is(tok::int_lit) && text(Tok) == "1");
+  }
+
+  /// UnitFactor = UnitName | "1" | "(" UnitExpr ")".
+  Expr *parseUnitFactor() {
+    NestGuard G(*this);
+    switch (Tok.Kind) {
+    case tok::ident: {
+      Ident *I = parseIdent();
+      if (!is(tok::period))
+        return I;
+      next();
+      Ident *Sel = parseIdent();
+      SelectorExpr *S = mk<SelectorExpr>(I->Begin);
+      S->X = I;
+      S->Sel = Sel;
+      return S;
+    }
+    case tok::int_lit:
+      return parseBasicLit();
+    case tok::l_paren: {
+      SourceLoc Lparen = Tok.Loc;
+      next();
+      Expr *X = parseUnitExpr(true);
+      SourceLoc Rparen = expect(tok::r_paren);
+      ParenExpr *P = mk<ParenExpr>(Lparen);
+      P->Lparen = Lparen;
+      P->Rparen = Rparen;
+      P->X = X;
+      return P;
+    }
+    default: {
+      SourceLoc L = Tok.Loc;
+      errorExpected(L, "unit");
+      return badExprHere(L);
+    }
+    }
+  }
+
+  /// UnitExpr = UnitTerm { ( "*" | "/" ) UnitTerm }. A single name comes back
+  /// as it is; anything longer is a UnitExpr (always, if AlwaysWrap). First is
+  /// an already parsed first factor, or null.
+  Expr *parseUnitExpr(bool AlwaysWrap, Expr *First = nullptr) {
+    SmallVector<ast::UnitTerm, 4> Terms;
+    SourceLoc Begin = First ? First->Begin : Tok.Loc;
+    bool Open = true;
+    while (Open) {
+      ast::UnitTerm T;
+      if (!Terms.empty()) {
+        T.OpLoc = Tok.Loc;
+        T.Div = is(tok::quo);
+        next();
+      }
+      T.Base = First ? First : parseUnitFactor();
+      First = nullptr;
+      if (is(tok::xor_)) {
+        T.CaretLoc = Tok.Loc;
+        next();
+        if (is(tok::sub)) {
+          T.NegPower = true;
+          next();
+        }
+        if (is(tok::int_lit)) {
+          T.Power = parseBasicLit();
+        } else {
+          errorExpected(Tok.Loc, "integer exponent");
+        }
+      }
+      Terms.push_back(T);
+      Open = is(tok::mul) || is(tok::quo);
+    }
+    if (!AlwaysWrap && Terms.size() == 1 && !Terms[0].Power &&
+        !Terms[0].CaretLoc.isValid())
+      return Terms[0].Base;
+    ast::UnitExpr *U = mk<ast::UnitExpr>(Begin);
+    U->Terms = Ctx.copy(ArrayRef<ast::UnitTerm>(Terms));
+    return U;
+  }
+
+  /// `[ UnitExpr ]` after X (a numeric type name, `.In`, ...): the brackets
+  /// hold unit expressions only (a list, so the checker can say "one unit").
+  Expr *parseUnitBracket(Expr *X) {
+    // `int[]` is the Java form: the type-argument path has its own message.
+    if (peek(1).Kind == tok::r_brack && isa<Ident>(X))
+      return parseTypeInstance(X);
+    SourceLoc Lbrack = expect(tok::l_brack);
+    ++ExprLev;
+    SmallVector<Expr *, 4> List;
+    while (!is(tok::r_brack) && !is(tok::eof)) {
+      SourceLoc Before = Tok.Loc;
+      List.push_back(parseUnitExpr(false));
+      if (!is(tok::comma))
+        break;
+      next();
+      if (Tok.Loc == Before)
+        next();
+    }
+    --ExprLev;
+    SourceLoc Rbrack = expectClosing(tok::r_brack, "unit");
+    if (List.empty())
+      List.push_back(badExpr(Lbrack.getLocWithOffset(1), Rbrack));
+    return packIndexExpr(X, Lbrack, List, Rbrack);
+  }
+
+  /// At `[` after `.In`: does the bracket hold a unit expression with a power
+  /// `^`? Only then the unit grammar reads it (`x.In[M/S^2]()`); without `^`
+  /// an expression and a unit expression have the same tree. (A field or a
+  /// method named `In` indexed with a xor is therefore read as a power; the
+  /// checker says so, UNI-7.)
+  bool inBracketHasPower() {
+    unsigned Depth = 0;
+    bool Power = false;
+    for (unsigned I = 0; I < 512; ++I) {
+      const Token &T = I == 0 ? Tok : peek(I);
+      switch (T.Kind) {
+      case tok::l_brack:
+      case tok::l_paren:
+        ++Depth;
+        break;
+      case tok::r_brack:
+      case tok::r_paren:
+        if (--Depth == 0)
+          return Power && T.is(tok::r_brack);
+        break;
+      case tok::xor_:
+        Power = true;
+        break;
+      case tok::ident:
+      case tok::period:
+      case tok::mul:
+      case tok::quo:
+      case tok::sub:
+      case tok::int_lit:
+        break;
+      default:
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// A parenthesized element of a type argument list: a unit expression
+  /// (`(M/S)^2`, `(KM)/(H)`) or a parenthesized type? A unit if an operator
+  /// of the unit grammar is inside at depth one, or follows the `)`.
+  bool parenStartsUnit() {
+    unsigned Depth = 0;
+    for (unsigned I = 0; I < 512; ++I) {
+      const Token &T = I == 0 ? Tok : peek(I);
+      switch (T.Kind) {
+      case tok::eof:
+        return false;
+      case tok::l_paren:
+      case tok::l_brack:
+      case tok::l_brace:
+        ++Depth;
+        break;
+      case tok::r_paren:
+      case tok::r_brack:
+      case tok::r_brace:
+        if (--Depth == 0) {
+          const Token &A = peek(I + 1);
+          return A.is(tok::quo) || A.is(tok::xor_) || A.is(tok::mul);
+        }
+        break;
+      case tok::quo:
+      case tok::xor_:
+        if (Depth == 1)
+          return true;
+        break;
+      default:
+        break;
+      }
+    }
+    return false;
+  }
+
+  /// One element of a type argument list. `Vec2[KM/H]`, `Vec2[1/S]` and
+  /// `Vec2[(M/S)^2]` hold unit expressions: a type element that is followed
+  /// by `/`, `^` or `*` continues as one (a type is never followed by these).
+  Expr *parseTypeArg() {
+    if (Opts.AllowUnits) {
+      if (is(tok::int_lit) && text(Tok) == "1")
+        return parseUnitExpr(false);
+      if (is(tok::l_paren) && parenStartsUnit())
+        return parseUnitExpr(false);
+    }
+    Expr *T = parseType();
+    if (Opts.AllowUnits && (is(tok::quo) || is(tok::xor_) || is(tok::mul)) &&
+        (isa<Ident>(T) || isa<SelectorExpr>(T)))
+      return parseUnitExpr(false, T);
+    return T;
+  }
+
+  /// At the contextual word `unit` that starts a declaration (UNI-1): an
+  /// identifier or `(` follows on the same line.
+  bool atUnitDecl() {
+    return Opts.AllowUnits && isWord(Tok, "unit") &&
+           (peek(1).is(tok::ident) || peek(1).is(tok::l_paren));
+  }
+
+  /// UnitSpec = identifier [ "=" [ Factor ] UnitExpr ].
+  Spec *parseUnitSpec() {
+    ast::UnitSpec *S = mk<ast::UnitSpec>(Tok.Loc);
+    S->Name = parseIdent();
+    if (is(tok::assign)) {
+      S->Eq = Tok.Loc;
+      next();
+      if (is(tok::int_lit) && text(Tok) == "1" && !peek(1).is(tok::ident) &&
+          !peek(1).is(tok::l_paren)) {
+        S->Unit = parseUnitExpr(false); // `unit X = 1`: the unit expression 1
+      } else {
+        if (is(tok::int_lit) || is(tok::float_lit) || is(tok::imag_lit) ||
+            is(tok::string_lit) || is(tok::char_lit)) {
+          // (Only a number is a factor; the checker says so for the others.)
+          S->Factor = parseBasicLit();
+        } else if (is(tok::sub) || is(tok::add)) {
+          // A signed factor: the checker says it must be greater than zero.
+          UnaryExpr *U = mk<UnaryExpr>(Tok.Loc);
+          U->OpLoc = Tok.Loc;
+          U->Op = Tok.Kind;
+          next();
+          U->X = is(tok::int_lit) || is(tok::float_lit) || is(tok::imag_lit)
+                     ? static_cast<Expr *>(parseBasicLit())
+                     : badExprHere(Tok.Loc);
+          setEnd(U, PrevEnd);
+          S->Factor = U;
+        } else if (is(tok::l_paren) && parenIsFactor()) {
+          SourceLoc Lparen = Tok.Loc;
+          next();
+          ++ExprLev;
+          Expr *X = parseRhs();
+          --ExprLev;
+          SourceLoc Rparen = expect(tok::r_paren);
+          ParenExpr *P = mk<ParenExpr>(Lparen);
+          P->Lparen = Lparen;
+          P->Rparen = Rparen;
+          P->X = X;
+          S->Factor = P;
+        }
+        if (atUnitFactorStart())
+          S->Unit = parseUnitExpr(false);
+        else if (!S->Factor)
+          errorExpected(Tok.Loc, "unit expression");
+      }
+    }
+    setEnd(S, PrevEnd);
+    expectSemi();
+    return S;
+  }
+
+  /// At `(` in `unit X = (...)`: a factor `(1609344 / 1000) M` or the start
+  /// of a unit expression `(KM)/(H)`? A factor when a unit factor follows the
+  /// matching `)` directly.
+  bool parenIsFactor() {
+    unsigned Depth = 0;
+    for (unsigned I = 0; I < 512; ++I) {
+      const Token &T = I == 0 ? Tok : peek(I);
+      switch (T.Kind) {
+      case tok::eof:
+        return false;
+      case tok::l_paren:
+      case tok::l_brack:
+      case tok::l_brace:
+        ++Depth;
+        break;
+      case tok::r_paren:
+      case tok::r_brack:
+      case tok::r_brace:
+        if (--Depth == 0) {
+          const Token &A = peek(I + 1);
+          return A.is(tok::ident) || A.is(tok::l_paren) ||
+                 (A.is(tok::int_lit) && text(A) == "1");
+        }
+        break;
+      default:
+        break;
+      }
+    }
+    return false;
+  }
+
+  /// `unit` at the top level, single or grouped; attributes (`@Symbol`) were
+  /// parsed by the caller.
+  GenDecl *parseUnitDecl(ArrayRef<Attribute *> Attrs) {
+    SourceLoc Pos = Tok.Loc;
+    next(); // `unit`
+    GenDecl *D = mk<GenDecl>(Attrs.empty() ? Pos : Attrs.front()->Begin);
+    D->Attrs = Attrs;
+    D->KeywordLoc = Pos;
+    D->IsUnit = true;
+    D->Keyword = tok::ident;
+    SmallVector<Spec *, 8> List;
+    if (is(tok::l_paren)) {
+      D->Lparen = Tok.Loc;
+      next();
+      while (!is(tok::r_paren) && !is(tok::eof)) {
+        SourceLoc Before = Tok.Loc;
+        if (is(tok::ident))
+          List.push_back(parseUnitSpec());
+        else
+          errorExpected(Tok.Loc, "unit name");
+        if (Tok.Loc == Before && !is(tok::eof))
+          next(); // no progress: never loop forever on bad input
+      }
+      D->Rparen = expect(tok::r_paren);
+      setEnd(D, PrevEnd);
+      expectSemi();
+    } else {
+      List.push_back(parseUnitSpec());
+      D->End = List.back()->End;
+    }
+    D->Specs = Ctx.copy(ArrayRef<Spec *>(List));
+    return D;
+  }
+
   Expr *parseTypeInstance(Expr *Type) {
     SourceLoc Opening = expect(tok::l_brack);
     ++ExprLev;
     SmallVector<Expr *, 8> List;
     while (!is(tok::r_brack) && !is(tok::eof)) {
-      List.push_back(parseType());
+      List.push_back(parseTypeArg());
       if (!atComma("type argument list", tok::r_brack))
         break;
       next();
@@ -1985,7 +2326,7 @@ private:
       }
       Expr *T = parseTypeName(nullptr);
       if (is(tok::l_brack))
-        T = parseTypeInstance(T);
+        T = isNumericIdent(T) ? parseUnitBracket(T) : parseTypeInstance(T);
       return T;
     }
     case tok::l_brack: {
@@ -2156,6 +2497,28 @@ private:
     return L;
   }
 
+  /// `100.0[KM]`: the number literal L and a `[` on its line (EXP-31).
+  Expr *parseUnitLit(BasicLit *L) {
+    SourceLoc Lbrack = expect(tok::l_brack);
+    ++ExprLev;
+    Expr *U = nullptr;
+    if (is(tok::r_brack)) {
+      errorExpected(Tok.Loc, "unit");
+      U = badExprHere(Tok.Loc);
+    } else {
+      U = parseUnitExpr(false);
+    }
+    --ExprLev;
+    SourceLoc Rbrack = expectClosing(tok::r_brack, "unit");
+    ast::UnitLit *N = mk<ast::UnitLit>(L->Begin, after(Rbrack));
+    N->Lit = L;
+    N->Lbrack = Lbrack;
+    N->Rbrack = Rbrack;
+    N->Unit = U;
+    setEnd(N, PrevEnd < after(Rbrack) ? after(Rbrack) : PrevEnd);
+    return N;
+  }
+
   Expr *parseFuncTypeOrLit() {
     FuncType *FT = parseFuncType();
     if (!is(tok::l_brace))
@@ -2180,7 +2543,12 @@ private:
       return parseIdent();
     case tok::int_lit:
     case tok::float_lit:
-    case tok::imag_lit:
+    case tok::imag_lit: {
+      BasicLit *L = parseBasicLit();
+      if (Opts.AllowUnits && is(tok::l_brack))
+        return parseUnitLit(L);
+      return L;
+    }
     case tok::char_lit:
     case tok::string_lit:
       return parseBasicLit();
@@ -2441,7 +2809,13 @@ private:
         }
         break;
       case tok::l_brack:
-        X = parseIndexOrSliceOrInstance(X);
+        if (isNumericIdent(X) ||
+            (Opts.AllowUnits && isa<SelectorExpr>(X) &&
+             cast<SelectorExpr>(X)->Sel->Name.str() == "In" &&
+             inBracketHasPower()))
+          X = parseUnitBracket(X);
+        else
+          X = parseIndexOrSliceOrInstance(X);
         break;
       case tok::l_paren:
         X = parseCallOrConversion(X, SourceLoc());
@@ -3453,6 +3827,14 @@ private:
     }
     // tokens that may start an expression
     case tok::ident:
+      if (Opts.AllowUnits && isWord(Tok, "unit") && peek(1).is(tok::ident)) {
+        // UNI-1: units are declared at package level
+        SourceLoc L = Tok.Loc;
+        error(L, diag::err_unit_in_func);
+        next();
+        parseUnitSpec();
+        return mk<BadStmt>(L, PrevEnd);
+      }
       if (tailoredStmtWord())
         return parseStmt();
       [[fallthrough]];
@@ -4240,6 +4622,8 @@ private:
     default:
       break;
     }
+    if (atUnitDecl())
+      return parseUnitDecl({});
     if (is(tok::ident) || is(tok::kw_struct))
       if (Decl *D = tailoredDecl())
         return D;
@@ -4403,6 +4787,8 @@ private:
     case tok::kw_func:
       return parseFuncDecl(A);
     default: {
+      if (atUnitDecl())
+        return parseUnitDecl(A);
       SourceLoc L = Tok.Loc;
       if (is(tok::kw_import))
         error(L, diag::err_attr_on_import);

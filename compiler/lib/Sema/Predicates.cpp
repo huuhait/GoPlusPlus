@@ -280,6 +280,21 @@ Type *Checker::derefStructPtr(Type *T) {
 
 Type *Checker::defaultType(Type *T) {
   if (auto *B = dyn_cast<BasicType>(T)) {
+    // `100.0[KM]` has the default type `float64[KM]` (EXP-31).
+    if (B->Unit && (B->Info & IsUntyped)) {
+      switch (B->BK) {
+      case BasicKind::UntypedInt:
+        return Ctx.unitType(BasicKind::Int, B->Unit);
+      case BasicKind::UntypedRune:
+        return Ctx.unitType(BasicKind::Int32, B->Unit);
+      case BasicKind::UntypedFloat:
+        return Ctx.unitType(BasicKind::Float64, B->Unit);
+      case BasicKind::UntypedComplex:
+        return Ctx.unitType(BasicKind::Complex128, B->Unit);
+      default:
+        return T;
+      }
+    }
     switch (B->BK) {
     case BasicKind::UntypedBool:
       return typ(BasicKind::Bool);
@@ -303,11 +318,15 @@ Type *Checker::defaultType(Type *T) {
 Type *Checker::maxType(Type *X, Type *Y) {
   if (X == Y)
     return X;
-  if (isUntypedNumeric(X) && isUntypedNumeric(Y))
+  if (isUntypedNumeric(X) && isUntypedNumeric(Y)) {
+    // Two units never merge here: EXP-34 converts them first.
+    if (cast<BasicType>(X)->Unit != cast<BasicType>(Y)->Unit)
+      return nullptr;
     return static_cast<unsigned>(cast<BasicType>(X)->BK) >
                    static_cast<unsigned>(cast<BasicType>(Y)->BK)
                ? X
                : Y;
+  }
   return nullptr;
 }
 
@@ -466,7 +485,8 @@ bool Checker::identicalImpl(const Type *X0, const Type *Y0, bool IgnoreTags,
   };
   switch (X->getKind()) {
   case Type::Kind::Basic:
-    return cast<BasicType>(X)->BK == cast<BasicType>(Y)->BK;
+    return cast<BasicType>(X)->BK == cast<BasicType>(Y)->BK &&
+           cast<BasicType>(X)->Unit == cast<BasicType>(Y)->Unit; // UNI-5
   case Type::Kind::TypeParam:
     return false;
   case Type::Kind::Array: {

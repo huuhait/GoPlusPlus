@@ -13,10 +13,11 @@
 // generic entity with type arguments that mention a type parameter Q of the
 // enclosing declaration gives an edge from Q to the instantiated parameter:
 // weight 0 when the argument is exactly Q, weight 1 when Q is inside a bigger
-// type. A cycle with a weight-1 edge makes the type arguments grow without
-// end. types2 finds it with a Bellman-Ford variant (quadratic in the worst
-// case); here the strongly connected components decide it in linear time: a
-// weight-1 edge inside one component lies on a cycle.
+// type (or inside a bigger unit: `F[U*M]` for a unit parameter, GEN-14). A
+// cycle with a weight-1 edge makes the type arguments grow without end. types2
+// finds it with a Bellman-Ford variant (quadratic in the worst case); here the
+// strongly connected components decide it in linear time: a weight-1 edge
+// inside one component lies on a cycle.
 //
 //===----------------------------------------------------------------------===//
 
@@ -45,6 +46,18 @@ static void walkMonoSources(Type *Arg, bool Locals,
     switch (X->getKind()) {
     case Type::Kind::TypeParam:
       Fn(X, X == Arg);
+      break;
+    case Type::Kind::Basic:
+      // GEN-14: a unit (`float64[U*M]`, the unit argument `U*M`) that
+      // mentions a unit parameter. The parameter alone is the TypeParam
+      // itself (TypeContext::unitArgType), so here it is always inside a
+      // bigger unit: a growing edge, as `*T` is for a type (`F[U]` calling
+      // `F[U*M]` makes F[M], F[M*M], ...).
+      if (Locals)
+        if (auto *B = cast<BasicType>(X); B->Unit && B->Unit->HasParam)
+          for (const UnitDim &D : B->Unit->Dims)
+            if (D.Param)
+              Fn(const_cast<TypeParamType *>(D.Param), false);
       break;
     case Type::Kind::Pointer:
       Work.push_back(cast<PointerType>(X)->Elem);
@@ -102,8 +115,6 @@ static void walkMonoSources(Type *Arg, bool Locals,
       for (Type *A : cast<NamedType>(X)->TArgs)
         Work.push_back(A);
       break;
-    default:
-      break;
     }
   }
 }
@@ -122,11 +133,18 @@ void sema::forEachMonoSource(Type *Arg,
 
 void Checker::recordMono(SourceLoc Pos, NamedType *Orig,
                          ArrayRef<TypeParamType *> TParams,
-                         ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos) {
+                         ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos,
+                         bool BindRecv) {
   if (NoMono)
     return;
   MonoInst M;
   M.Pos = Pos;
+  if (!S.Opts.GoCompat) {
+    M.SkipOwn = MonoInSig > 0;
+    M.SrcRaw =
+        !M.SkipOwn && MonoFn && MonoFn->Recv && !MonoFn->OwnTParams.empty();
+    M.DstRaw = BindRecv;
+  }
   M.Orig = Orig;
   M.TParams.assign(TParams.begin(), TParams.end());
   M.TArgs.assign(TArgs.begin(), TArgs.end());
@@ -138,6 +156,29 @@ void Checker::recordMono(SourceLoc Pos, NamedType *Orig,
     forEachMonoSource(A, [&](Type *, bool) { Any = true; });
   if (Any)
     MonoInsts.push_back(std::move(M));
+}
+
+void Checker::monoBindRecv(SourceLoc Pos, const ast::Expr *Ex) {
+  if (S.Opts.GoCompat || NoMono)
+    return;
+  while (Ex) {
+    if (auto *P = dyn_cast<ast::ParenExpr>(Ex))
+      Ex = P->X;
+    else if (auto *Ix = dyn_cast<ast::IndexExpr>(Ex))
+      Ex = Ix->X;
+    else
+      break;
+  }
+  auto *Sel = dyn_cast_or_null<ast::SelectorExpr>(Ex);
+  auto It = Sel ? I.Selections.find(Sel) : I.Selections.end();
+  if (It == I.Selections.end())
+    return;
+  auto *F = dyn_cast_or_null<Func>(It->second.Obj);
+  if (!F || !F->RecvInst || !F->Origin || F->Origin->OwnTParams.empty() ||
+      F->Origin->RecvTParams.size() != F->RecvInst->TArgs.size())
+    return;
+  recordMono(Pos, nullptr, F->Origin->RecvTParams, F->RecvInst->TArgs, {},
+             /*BindRecv=*/true);
 }
 
 bool Checker::monoCheck(ArrayRef<MonoInst> Insts, bool Report) {
@@ -158,8 +199,9 @@ bool Checker::monoCheck(ArrayRef<MonoInst> Insts, bool Report) {
   // types2 localNamedVertex: a type declared inside a generic function is
   // implicitly parameterized by the type parameters around it (weight 1),
   // from the first time it is mentioned.
-  std::function<unsigned(Type *)> Vertex = [&](Type *P) -> unsigned {
-    if (auto *TP = dyn_cast<TypeParamType>(P))
+  std::function<unsigned(Type *, bool)> Vertex = [&](Type *P,
+                                                     bool Raw) -> unsigned {
+    if (auto *TP = dyn_cast<TypeParamType>(P); TP && !Raw)
       if (auto C = Canon.find(TP); C != Canon.end())
         P = C->second;
     auto [It, New] = Index.try_emplace(P, Verts.size());
@@ -169,17 +211,32 @@ bool Checker::monoCheck(ArrayRef<MonoInst> Insts, bool Report) {
     Verts.push_back(P);
     if (auto *N = dyn_cast<NamedType>(P))
       for (TypeParamType *Q : N->ImplicitTParams) {
-        unsigned From = Vertex(Q);
+        unsigned From = Vertex(Q, false);
         Edges.push_back({From, Id, 1u, N->Obj->Pos, Q, nullptr});
       }
     return Id;
   };
   for (const MonoInst &M : Insts)
     for (size_t K = 0; K < M.TParams.size() && K < M.TArgs.size(); ++K) {
-      unsigned To = Vertex(M.TParams[K]);
       Type *Arg = M.TArgs[K];
+      // GEN-14 (owner decision 2026-10-30): in a method's signature, an
+      // argument made with the method's own type parameter (`Vec[U/V]` in
+      // `Per[V unit]`, `List[Pair[T, U]]` in `Zip[U any]`) depends on what
+      // each call gives: no edge. Only the receiver type's own parameters
+      // can grow a cycle there. A body keeps the full rule (SrcRaw).
+      if (M.SkipOwn && !MonoMethodOwn.empty()) {
+        bool OwnArg = false;
+        forEachMonoSource(Arg, [&](Type *X, bool) {
+          if (auto *Q = dyn_cast<TypeParamType>(X))
+            OwnArg |=
+                MonoMethodOwn.count(Q->RenamedFrom ? Q->RenamedFrom : Q) > 0;
+        });
+        if (OwnArg)
+          continue;
+      }
+      unsigned To = Vertex(M.TParams[K], M.DstRaw);
       forEachMonoSource(Arg, [&](Type *Q, bool Exact) {
-        unsigned From = Vertex(Q);
+        unsigned From = Vertex(Q, M.SrcRaw);
         Edges.push_back({From, To, Exact ? 0u : 1u,
                          K < M.ArgPos.size() ? M.ArgPos[K] : M.Pos, Arg,
                          M.Orig});

@@ -1,0 +1,12 @@
+package mlib
+
+unit M
+unit S
+
+type Next[U unit, V unit] struct{}
+
+func (x Next[U, V]) Next() Option[*Next[U, U*V]] { return nil }
+
+type Same[U unit, V unit] struct{}
+
+func (x Same[U, V]) Swap() Option[*Same[V, U]] { return nil }

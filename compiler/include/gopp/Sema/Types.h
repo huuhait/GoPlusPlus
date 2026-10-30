@@ -70,6 +70,11 @@ class TypeName;
 class Package;
 class Scope;
 class TypeContext;
+class UnitCanon;
+struct UnitRangeSum;
+namespace units {
+struct Namer;
+}
 
 //===----------------------------------------------------------------------===//
 // Arena for the objects and scopes of one checker
@@ -139,6 +144,9 @@ enum class BasicKind : uint8_t {
   UntypedComplex,
   UntypedString,
   UntypedNil,
+  /// A unit used as a type argument (`Vec2[KM]`, GEN-14): a basic type that
+  /// carries only a unit (BasicType::Unit). It has no values.
+  UnitArg,
   NumBasicKinds
 };
 
@@ -183,6 +191,64 @@ private:
   Kind K;
 };
 
+/// A unit of measure in canonical form (UNI-5): the base units (or unit type
+/// parameters) with their exponents, sorted by name, and the exact factor
+/// that turns one of the unit into the base units. Uniqued by
+/// TypeContext::unitCanon, so two units are identical exactly when the
+/// pointers are equal.
+struct UnitDim {
+  /// The declared base unit, or null for a unit type parameter.
+  const Object *Unit = nullptr;
+  /// The unit type parameter (GEN-14), or null.
+  const TypeParamType *Param = nullptr;
+  int32_t Exp = 0;
+};
+
+class UnitCanon {
+public:
+  /// Sorted by name, no zero exponent, no duplicate.
+  llvm::ArrayRef<UnitDim> Dims;
+  /// Exact (a rational): see Real::isRat.
+  Real Factor;
+  bool dimensionless() const { return Dims.empty(); }
+  /// Does it mention a unit type parameter?
+  bool HasParam = false;
+};
+
+/// A display form of a unit (UNI-5): the unit names as written, or as
+/// combined by the arithmetic from the forms of the operands (`KM` divided by
+/// `H` is `KM/H`), with equal names merged and cancelled. A part is a
+/// declared unit (base or derived; UnitDim::Unit) or a unit parameter, and
+/// the parts are sorted like the dimensions of a UnitCanon. Interned by
+/// TypeContext::unitDisplay: equal forms are one pointer. Names (the number
+/// of names, counted with their exponents) and then Key (the text with every
+/// name qualified by its package path) are the fixed order that picks the
+/// printed form when one type has several (UNI-5): never the order in which
+/// the forms were made.
+class UnitDisplay {
+public:
+  llvm::ArrayRef<UnitDim> Parts;
+  uint64_t Names = 0;
+  llvm::StringRef Key;
+  /// The canonical form the parts make (units::displayCanon), once asked: a
+  /// function of the parts alone, so it does not matter which thread stores
+  /// it first.
+  mutable std::atomic<const UnitCanon *> Canon{nullptr};
+  /// Does A come before B in the fixed order (fewest names, then the smaller
+  /// text)?
+  static bool before(const UnitDisplay *A, const UnitDisplay *B) {
+    if (A->Names != B->Names)
+      return A->Names < B->Names;
+    return A->Key < B->Key;
+  }
+};
+
+/// One entry of a package's table of display forms (Package::UnitNames).
+struct UnitNameEntry {
+  const UnitCanon *Canon = nullptr;
+  const UnitDisplay *Disp = nullptr;
+};
+
 class BasicType : public Type {
 public:
   BasicType(BasicKind BK, unsigned Info, const char *Name)
@@ -192,6 +258,11 @@ public:
   BasicKind BK;
   uint16_t Info;
   const char *Name;
+  /// `float64[KM]` (UNI-6): the unit; null for the predeclared types. The
+  /// kind and the info are those of the base type, so every rule for
+  /// numbers holds; identity needs the same unit too (TypeContext::unitType
+  /// makes one type per (kind, unit)).
+  const UnitCanon *Unit = nullptr;
 };
 
 class PointerType : public Type, public llvm::FoldingSetNode {
@@ -373,7 +444,7 @@ struct TypeSet {
 
 class InterfaceType : public Type {
 public:
-  enum Special : uint8_t { None, Comparable, Copy, Clone };
+  enum Special : uint8_t { None, Comparable, Copy, Clone, Unit };
   InterfaceType() : Type(Kind::Interface) {}
   static bool classof(const Type *T) { return T->getKind() == Kind::Interface; }
   llvm::ArrayRef<Func *> Methods;   // explicitly declared methods
@@ -418,6 +489,10 @@ public:
       Make,    // a value of T made or held: `var z T`, `T{}`, `make([]T, n)`
       Method,  // the receiver of Member bound, deferred or moved
       ViewArg, // `View[T]` written: T must be no pointer kind and no view
+      // GEN-14: the code needs the unit of this unit parameter at run time
+      // (its unit dictionary): a collapse site mentions it (Info::UnitSites),
+      // or it is passed on to a generic whose code needs it. Never an error.
+      UnitDict,
     };
     /// Where the receiver of a Method use is: `x.M` (a T value), `(*p).M`
     /// (through a pointer to T) or `p.M` (p a pointer, owning pointer or
@@ -576,6 +651,10 @@ public:
   /// are final. An instance holding a type parameter is answered from these.
   std::atomic<uint64_t> HeldParams{0};
   std::atomic<bool> HeldKnown{false};
+  /// GEN-14, UNI-2: the bounds of the unit types the fields and methods of
+  /// this generic declaration reach, through the generic types they hold
+  /// (Checker::unitRangeSum), once the types are final.
+  std::atomic<const UnitRangeSum *> URange{nullptr};
   /// Checker::gcLayout: the gc size and alignment of the type (Sizes.cpp).
   /// LayoutState 0 not known, 1 known; the two numbers are written before it.
   /// Stored only when exact (no by-value cycle was cut below the type and
@@ -614,7 +693,8 @@ public:
     Func,
     Label,
     Builtin,
-    Nil
+    Nil,
+    Unit
   };
   Kind getKind() const { return K; }
   llvm::StringRef Name;
@@ -754,6 +834,8 @@ enum class BuiltinId : uint8_t {
   SliceData,
   String,
   StringData,
+  // ADR-0025: `x.In[U]()` on a unit value (a member, not a function).
+  UnitIn,
 };
 
 class Builtin : public Object {
@@ -767,6 +849,26 @@ class Nil : public Object {
 public:
   Nil() : Object(Kind::Nil) {}
   static bool classof(const Object *O) { return O->getKind() == Kind::Nil; }
+};
+
+/// A declared unit (UNI-1): a base unit (its own dimension) or a derived one.
+/// It lives in the package block with types, functions and variables, and is
+/// valid only inside the unit grammar.
+class UnitObj : public Object {
+public:
+  UnitObj() : Object(Kind::Unit) {}
+  static bool classof(const Object *O) { return O->getKind() == Kind::Unit; }
+  /// No `=`: the unit is a dimension of its own.
+  bool IsBase = false;
+  /// Set when the declaration is resolved; null for a unit that is invalid
+  /// (a cycle, a bad factor): every use of it is silently invalid.
+  const UnitCanon *Canon = nullptr;
+  /// The text that `fmt` prints for the unit (`@Symbol`, UNI-13); empty: the
+  /// name.
+  llvm::StringRef Symbol;
+  bool Resolved = false;
+  /// The declaration was in error; uses of the unit are not reported again.
+  bool Bad = false;
 };
 
 class Label : public Object {
@@ -871,8 +973,9 @@ public:
   }
   bool IsInterfaceMethod = false;
   bool Fails = false;
-  bool IsBuiltinMethod = false; // x.Clone() / p.IsNil() of a pointer kind
-  Func *Origin = nullptr;       // for an instantiated method
+  bool IsBuiltinMethod = false;  // x.Clone() / p.IsNil() of a pointer kind
+  Func *Origin = nullptr;        // for an instantiated method
+  NamedType *RecvInst = nullptr; // its instance, for an instantiated method
   /// Type parameters of the receiver base type (methods of generic types) and
   /// own type parameters (generic methods, D1.10).
   llvm::ArrayRef<TypeParamType *> RecvTParams;
@@ -920,6 +1023,13 @@ public:
   /// A package made from a C/C++ header: exported-name rule does not apply.
   bool IsForeign = false;
   ForeignScope *Foreign = nullptr;
+  /// The display form that this package prints for a unit (UNI-5), by
+  /// canonical form: the first in the fixed order among the forms of its
+  /// declarations and of its imports (export data carries the table, so an
+  /// importer prints the same names). Set once, before the bodies are
+  /// checked; sorted by Canon for lookup (unitName).
+  llvm::ArrayRef<UnitNameEntry> UnitNames;
+  const UnitDisplay *unitName(const UnitCanon *C) const;
 };
 
 //===----------------------------------------------------------------------===//
@@ -946,6 +1056,27 @@ public:
   Type *runeType() { return RuneType; }
   Package *unsafePackage() { return Unsafe; }
   Scope *universe() { return Universe; }
+
+  /// The unit with these dimensions and factor (UNI-5). Dims must be sorted
+  /// by UnitDim order, merged and without zero exponents (Units.cpp does
+  /// that); Factor must be an exact rational.
+  const UnitCanon *unitCanon(llvm::ArrayRef<UnitDim> Dims, const Real &Factor);
+  /// The display form with these parts (sorted like UnitCanon::Dims, merged,
+  /// no zero exponent: units::display makes them so); null for no parts.
+  const UnitDisplay *unitDisplay(llvm::ArrayRef<UnitDim> Parts);
+  /// The basic type of kind BK with unit U: BK itself if U is null.
+  BasicType *unitType(BasicKind BK, const UnitCanon *U);
+  /// The type argument that stands for the unit U: a unit parameter alone is
+  /// the parameter itself, any other unit is a UnitArg type.
+  Type *unitArgType(const UnitCanon *U);
+  /// Set once a unit exists (a unit declaration, a unit read from export
+  /// data, a unit type) or a type parameter has the constraint `unit`: in
+  /// phase 1, before anything is decided about the program that has it.
+  /// Until then no operand has a unit and no type argument is one, so the
+  /// checks of EXP-31 to EXP-37 and GEN-14 are skipped and a program without
+  /// units pays nothing. Only ever set.
+  bool unitsSeen() const { return UnitsSeen.load(std::memory_order_relaxed); }
+  void noteUnits() { UnitsSeen.store(true, std::memory_order_relaxed); }
 
   PointerType *pointer(Type *Elem);
   SliceType *slice(Type *Elem);
@@ -1132,6 +1263,13 @@ private:
   Table<SignatureType> Signatures;
   Table<StructType> Structs;
   Table<NamedType> Instances;
+  std::atomic<bool> UnitsSeen{false};
+  std::mutex UnitMu; // UnitCanons, UnitTypes, UnitDisplays; before AllocMu
+  std::deque<UnitCanon> UnitStore;
+  llvm::StringMap<UnitCanon *> UnitCanons;
+  std::deque<UnitDisplay> UnitDisplayStore;
+  llvm::StringMap<UnitDisplay *> UnitDisplays;
+  llvm::DenseMap<std::pair<unsigned, const UnitCanon *>, BasicType *> UnitTypes;
   std::mutex CanonMu; // CanonParams; taken before AllocMu
   llvm::DenseMap<std::pair<Type *, unsigned>, TypeParamType *> CanonParams;
   Type *ErrorType = nullptr, *AnyType = nullptr, *ComparableType = nullptr,
@@ -1183,7 +1321,10 @@ void fieldTable(Type *T, llvm::SmallVectorImpl<const Var *> &Out);
 
 /// Go-style text of a type for messages; types of package Qual are printed
 /// without a package name.
-std::string typeString(const Type *T, const Package *Qual = nullptr);
+/// UN, if given, names a unit by a declared unit of the package or its imports
+/// (units::Namer); without it a unit prints in its canonical form.
+std::string typeString(const Type *T, const Package *Qual = nullptr,
+                       const units::Namer *UN = nullptr);
 
 } // namespace sema
 } // namespace gopp

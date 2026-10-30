@@ -71,6 +71,10 @@ struct ParseOptions {
   /// (`func (a T) + (b T) T`, TYP-27) and the token `<=>` (LEX-13). In Go
   /// mode they are syntax errors, and `<=>` is `<=` then `>`.
   bool AllowOperators = true;
+  /// Accept units of measure (ADR-0025): `unit` declarations, `100.0[KM]`,
+  /// `float64[KM/H]` and `.In[U]()` (LEX-12, UNI-7). In Go mode `unit` is an
+  /// ordinary name and `[` after a number literal is the normal error.
+  bool AllowUnits = true;
 };
 
 /// Parses File (a file of SM) into Ctx. The returned File lives in Ctx; it

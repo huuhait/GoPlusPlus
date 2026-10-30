@@ -1,0 +1,9 @@
+// RUN: %python %S/Inputs/gen-units-oracle-ops.py %gopp %t 12 | FileCheck %s
+// P03.25 (GEN-14, R12 to R14): the final reviewer's plain-vs-generic oracle
+// (Inputs/gen-units-oracle-ops.py): random bodies over `*`, `/`, `+` with a
+// scale change, `.In`, conversions and literals with parameter units, at
+// every pair of instance units, those that are empty at the instance too (a
+// caller that passes `X/Y`); the quantity that the generic code computes from
+// the records gopp dumps equals the plain one, and every parameter it needs
+// is in `unit-dict`. A small sample; 400 programs: units-generic-oracle-ops.long.
+// CHECK: oracle: 12 programs (0 rejected by gopp), {{[0-9]+}} instances, 0 programs with mismatches

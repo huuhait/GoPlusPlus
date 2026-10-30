@@ -57,6 +57,11 @@ void Checker::ident(Operand &X, const ast::Ident *Id, NamedType *Def,
       markUsed(It->second);
   }
 
+  // UNI-1: a unit is not a type and not a value.
+  if (isa<UnitObj>(Obj)) {
+    unitNotExpr(Id);
+    return;
+  }
   // A type is wanted but the name is not one: stop before the declaration is
   // checked (a cycle there would hide this more useful error; types2,
   // go.dev/issue/65344).
@@ -265,10 +270,20 @@ Type *Checker::genericType(const ast::Expr *Ex, std::string *Cause,
   return X.Ty;
 }
 
-bool Checker::typeList(ArrayRef<ast::Expr *> Es, SmallVector<Type *, 4> &Out) {
+bool Checker::typeList(ArrayRef<ast::Expr *> Es, SmallVector<Type *, 4> &Out,
+                       ArrayRef<TypeParamType *> Want) {
   bool Ok = true;
-  for (const ast::Expr *Ex : Es) {
-    Type *T = varType(Ex, /*ValueUse=*/false);
+  for (size_t I = 0; I < Es.size(); ++I) {
+    const ast::Expr *Ex = Es[I];
+    // GEN-14: the argument of a unit parameter is a unit expression (2: a
+    // unit for a type parameter, reported). (This frame recurses per level
+    // of a nested type: unitArgAt is out of line, M4.)
+    const int Read = Ctx.unitsSeen() && !Want.empty() && !S.Opts.GoCompat
+                         ? unitArgAt(Ex, Want, I)
+                         : 0;
+    Type *T = Read == 2   ? invalid()
+              : Read == 1 ? unitArgType(Ex)
+                          : varType(Ex, /*ValueUse=*/false);
     if (!isValid(T))
       Ok = false;
     Out.push_back(T);
@@ -287,6 +302,8 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
     ident(X, cast<ast::Ident>(Ex), Def, true);
     switch (X.M) {
     case Mode::TypeExpr:
+      if (isUnitParam(X.Ty)) // GEN-14: a unit parameter is no type
+        return unitParamAsType(Ex);
       return X.Ty;
     case Mode::Invalid:
       return invalid();
@@ -313,6 +330,9 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
   }
   case K::IndexExpr:
     return instantiatedType(cast<IndexExpr>(Ex), Def);
+  case K::UnitExpr:
+  case K::UnitLit:
+    return unitAsType(Ex);
   case K::ParenExpr:
     return definedType(cast<ParenExpr>(Ex)->X, Def);
   case K::ArrayType: {
@@ -863,6 +883,8 @@ Type *Checker::unionTypeExpr(const ast::Expr *Ex) {
         err(TE, diag::err_union_type_param);
       T.T = invalid();
     }
+    if (Ctx.unitsSeen())
+      unitTermCheck(TE, T.T); // GEN-14 (R1)
     if (Parts.size() == 1 && !T.Tilde)
       return T.T;
     if (Terms.size() >= MaxTermCount) {
@@ -988,6 +1010,13 @@ Type *Checker::interfaceTypeExpr(const ast::InterfaceType *It, NamedType *Def) {
     }
   }
   (void)Def;
+  // GEN-14: `unit` is the whole constraint of a unit parameter.
+  for (size_t K = 0; K < Embeds.size(); ++K)
+    if (isUnitBound(Embeds[K]) &&
+        (Embeds.size() > 1 || !Methods.empty() || Ext)) {
+      unitCombinedConstraint(EmbLocs[K]);
+      break;
+    }
   InterfaceType *Ity = Ctx.newInterface(Mem.copy(ArrayRef<Func *>(Methods)),
                                         Mem.copy(ArrayRef<Type *>(Embeds)),
                                         Mem.copy(ArrayRef<SourceLoc>(EmbLocs)));
@@ -1006,7 +1035,10 @@ Type *Checker::boundTypeNoWrap(const ast::Expr *Ex) {
     IsUnion = true;
   if (IsUnion)
     return unionTypeExpr(Ex);
-  return typ(Ex);
+  Type *T = typ(Ex);
+  if (Ctx.unitsSeen())
+    unitTermCheck(Ex, T); // GEN-14 (R1): `[T float64[M]]`
+  return T;
 }
 
 Type *Checker::boundType(const ast::Expr *Ex, bool) {
@@ -1045,6 +1077,9 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   (void)Def;
   if (Type *Foreign = foreignInstantiate(Ix))
     return Foreign;
+  // `float64[KM]` (UNI-6, UNI-7): the base name decides.
+  if (Type *UT = unitTypeIndex(Ix))
+    return UT;
   std::string Cause;
   TypeName *Alias = nullptr;
   Type *G = genericType(Ix->X, &Cause, &Alias);
@@ -1057,7 +1092,7 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   }
   if (Alias) {
     SmallVector<Type *, 4> AArgs;
-    if (!typeList(Ix->Indices, AArgs))
+    if (!typeList(Ix->Indices, AArgs, Alias->AliasTParams))
       return invalid();
     size_t AGot = AArgs.size(), AWant = Alias->AliasTParams.size();
     if (AGot != AWant) {
@@ -1102,7 +1137,7 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   // What a View or a pointer kind looks at is no value of the holder.
   const unsigned ArgsBehind = N->IsView || N->Ptr != PtrKind::None;
   E.Behind += ArgsBehind;
-  bool Ok = typeList(Ix->Indices, TArgs);
+  bool Ok = typeList(Ix->Indices, TArgs, N->TParams);
   E.Behind -= ArgsBehind;
   if (!Ok)
     return invalid();
@@ -1422,6 +1457,10 @@ SmallVector<TypeParamType *, 4> Checker::collectTypeParams(
       LastE = P.Bound;
     }
     P.TP->Bound = Last && isValid(Last) ? Last : Ctx.anyType();
+    // GEN-14: a unit parameter turns the unit rules on before any use of it
+    // (`type T[U unit] struct{ next *T[U] }` reads U as a unit).
+    if (!S.Opts.GoCompat && !Ctx.unitsSeen() && isUnitBound(P.TP->Bound))
+      Ctx.noteUnits();
   }
   E.InTParamList = Saved;
   return TPs;

@@ -260,7 +260,7 @@ Checker::LookupResult Checker::lookupImpl(Type *T, bool Addressable,
 
 std::string Checker::funcString(const Func *F, bool) {
   std::string Name(F->Name);
-  std::string Sig = typeString(F->Ty, S.Pkg);
+  std::string Sig = typeString(F->Ty, S.Pkg, &unitNamer());
   if (StringRef(Sig).starts_with("func"))
     Sig = Sig.substr(4);
   return Name + Sig;

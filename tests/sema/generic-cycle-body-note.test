@@ -1,0 +1,19 @@
+// P03.25 (R22): the instantiation cycle through a method body keeps Go's
+// positions (go build: `./main.go:3:8: instantiation cycle:` and
+// `./main.go:5:27: T instantiated as *T`, the column of the argument `*T`),
+// in Go mode and in a .gopp file, with 1 and 8 body threads. Method
+// signatures now being edges outside Go mode (GEN-14) does not move it.
+// RUN: not %gopp check --go -check-j=1 %S/Inputs/cycle-body-note.go 2>&1 | FileCheck %s
+// RUN: not %gopp check --go -check-j=8 %S/Inputs/cycle-body-note.go 2>&1 | FileCheck %s
+// RUN: not %gopp check -check-j=1 %s 2>&1 | FileCheck --check-prefix=GOPP %s
+// RUN: not %gopp check -check-j=8 %s 2>&1 | FileCheck --check-prefix=GOPP %s
+// CHECK: cycle-body-note.go:3:8: error[E0366]: instantiation cycle
+// CHECK: cycle-body-note.go:5:27: note: T instantiated as *T
+// GOPP: generic-cycle-body-note.test:[[@LINE+3]]:8: error[E0366]: instantiation cycle
+// GOPP: generic-cycle-body-note.test:[[@LINE+4]]:27: note: T instantiated as *T
+package main
+type U[T any] []int
+
+func (U[T]) m() { var _ U[*T] }
+
+func main() {}

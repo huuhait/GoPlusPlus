@@ -1,0 +1,110 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (EXP-31, EXP-32, UNI-6, UNI-7): unit literals, unit types and conversions, bad side. Lines with no CHECK are accepted (the literal in a const, a conversion that gives or changes a unit, the plain float64 literal 1.5[M] in a float64[M]).
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit Z = 2 M
+
+type Distance float64[M]
+type MyInt int
+type Pair struct{ a int }
+
+// A field named In is an ordinary field; after `.In` a bracket with `^` is
+// read as a unit (UNI-7), so an index with an xor is reported with the fix.
+type WithIn struct{ In []int }
+
+func main() {
+	var d float64[KM] = 2.5[KM]
+	var n int[M] = 1999[M]
+	var f float64 = 1.5
+
+	// literals (EXP-31)
+// (M5: one error each.)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid unit expression: a rune or string literal cannot take a unit: 'a'[M] (UNI-4)
+	_ = 'a'[M]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid unit expression: a rune or string literal cannot take a unit: "s"[M / S] (UNI-4)
+	_ = "s"[M/S]
+	_ = "s"[0] // (an index of a string is no unit)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: undefined: Missing
+	_ = 3[Missing]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: d is a variable, not a unit (UNI-3)
+	_ = 3[d]
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: 3[M] + 4[S]: cannot add M and S (different dimensions) (EXP-34)
+	_ = 3[M] + 4[S]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit expression: M/M has an empty dimension, so it is not a unit (UNI-4)
+	_ = 5[M/M]
+	const big = 100000000000000000000[M]
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use 200[M] (untyped int constant 200) as int8[M] value in variable declaration (overflows)
+	var small int8[M] = 200[M]
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use 1.5[M] (untyped float constant 1.5) as int[M] value in variable declaration (truncated)
+	var fr int[M] = 1.5[M]
+	var okfr float64[M] = 1.5[M]
+	_, _, _ = small, fr, okfr
+
+	// types (UNI-6, UNI-7)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit type string[M]: units apply to numeric types only, and string is not one (UNI-6)
+	var s string[M]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit type uintptr[M]: uintptr cannot have a unit (UNI-6)
+	var u uintptr[M]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit type Pair[M]: Pair is a type you declared: only a predeclared number type takes a unit in brackets; declare a type over a unit type (`type Distance float64[M]`) or make the type generic over a unit (`type Pair[U unit] ...`) (UNI-6)
+	var p Pair[M]
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: invalid unit type MyInt[M]: MyInt is a type you declared: only a predeclared number type takes a unit in brackets; declare a type over a unit type (`type Distance float64[M]`) or make the type generic over a unit (`type MyInt[U unit] ...`) (UNI-6)
+	var md MyInt[M]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid unit type bool[M]: units apply to numeric types only, and bool is not one (UNI-6)
+	var b bool[M]
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid unit type float64[M, S]: expected one unit in the brackets, found 2 (UNI-6)
+	var two float64[M, S]
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid unit type float64[1]: the unit 1 has an empty dimension, so it is not a unit (UNI-6)
+	var zero float64[1]
+// CHECK-DAG: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: invalid unit type Distance[S]: Distance is a type you declared: only a predeclared number type takes a unit in brackets; declare a type over a unit type (`type Distance float64[S]`) or make the type generic over a unit (`type Distance[U unit] ...`) (UNI-6)
+	var dd Distance[S]
+	_, _, _, _, _, _, _, _ = s, u, p, md, b, two, zero, dd
+
+	// conversions (EXP-32)
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot convert d (variable of type float64[KM]) to float64[S]: KM and S have different dimensions (EXP-32)
+	_ = float64[S](d)
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: invalid use of .In: f has no unit, so it has no In: In is a member of unit values only; give the value a unit first, as in float64[KM](f) (EXP-32)
+	_ = float64[M](f.In[M]())
+	_ = float64[M](n)
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert n (variable of type int[M]) to int[S]: M and S have different dimensions (EXP-32)
+	_ = int[S](n)
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: invalid use of .In: f has no unit, so it has no In: In is a member of unit values only; give the value a unit first, as in float64[KM](f) (EXP-32)
+	_ = f.In[M]()
+// R6: a literal takes the unit after it; the hint does not print `untyped float[KM](5.0)`.
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid use of .In: 5.0 has no unit, so it has no In: In is a member of unit values only; give the value a unit first, as in 5.0[KM] (EXP-32)
+	_ = 5.0.In[M]()
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: d.In (built-in) must be called
+	g := d.In
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: d.In[M] (built-in) must be called
+	h := d.In[M]
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: invalid use of .In: `In[U]()` takes no arguments, found 1 (EXP-32)
+	i := d.In[M](1)
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: invalid use of .In: d.In[S](): KM and S have different dimensions (EXP-32)
+	j := d.In[S]()
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid use of .In: M / M has an empty dimension, so it is not a unit (EXP-32)
+	_ = d.In[M/M]()
+	_ = Distance(d)
+	_ = Distance(f)
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid unit type string[M]: units apply to numeric types only, and string is not one (UNI-6)
+	_ = string[M](f)
+	_, _, _, _ = g, h, i, j
+	var w WithIn
+	_ = w.In[0]
+	idx := 1
+	_ = w.In[idx]
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid unit expression: idx^2 is a unit expression, not a value; after `.In` a `^` in the brackets is a power (UNI-7): if `In` is a field or a method of your own, compute the index first, as in j := i^2; x.In[j] (UNI-4)
+	_ = w.In[idx^2]
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: cannot use n (variable of type int[M]) as int[KM] value in variable declaration: an assignment never rescales a value; convert it with n.In[KM]()
+	var k int[KM] = n
+	_ = k
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot convert ([]float64[M])(nil) (value of type []float64[M]) to type []float64
+	_ = []float64(([]float64[M])(nil))
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot convert "x" (untyped string constant) to float64[M]: only a number can be given a unit (EXP-32)
+	_ = float64[M]("x")
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot convert 1.5[M] (untyped float constant 0.0015) to type int
+	_ = int[KM](1.5[M])
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: cannot convert 1.5[M] (untyped float constant 1.5) to type int
+	_ = int[M](1.5[M])
+}

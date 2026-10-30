@@ -1,0 +1,4 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-units-oracle-ops.py %gopp %t 200 200 | FileCheck %s
+// P03.25 (GEN-14, R12 to R14): units-generic-oracle-ops, seeds 200 to 399.
+// CHECK: oracle: 200 programs (0 rejected by gopp), {{[0-9]+}} instances, 0 programs with mismatches

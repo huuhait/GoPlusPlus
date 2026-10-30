@@ -1,0 +1,12 @@
+// RUN: %python %S/Inputs/gen-units-oracle.py --gopp %gopp --out %t --seeds 3 --j1 | FileCheck %s
+// P03.25 (GEN-14, R10, owner decision 2026-10-30): generic unit code computes
+// what plain code computes. Random programs of unit-generic functions
+// (products and quotients of their values and unit literals, calls of other
+// generics with unit arguments made of their parameters) are checked by gopp
+// (no error) and every value at every instance that main reaches is
+// evaluated twice with exact rationals: as plain code with the real units
+// (EXP-33), and as the generic code runs once for all instances with the
+// collapse sites that gopp records (`unit-site`); the quantities must agree.
+// A small sample here; more seeds with 1 and 8 body threads:
+// units-generic-oracle.long, longer chains: units-generic-oracle-deep.long.
+// CHECK: oracle: 3 programs, {{[0-9]+}} instances, 0 mismatches

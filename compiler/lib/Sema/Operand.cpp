@@ -142,7 +142,10 @@ std::string Checker::operandString(const Operand &X) {
         else if (auto *B = dyn_cast<BasicType>(under(X.Ty)))
           Desc += std::string(B->Name) + " "; // a defined basic type
       }
-      Buf += " of " + Desc + "type " + str(X.Ty);
+      // (A unit type with the form of its expression, UNI-5: `d / t` is a
+      // value of type float64[KM/H].)
+      Buf += " of " + Desc + "type " +
+             (Ctx.unitsSeen() ? unitTypeStrOf(X) : str(X.Ty));
       if (TP) {
         Buf += " constrained by " + str(TP->Bound);
         TypeSet *TS = typeSetOf(TP);
@@ -368,6 +371,11 @@ Type *Checker::implicitTypeAndValue(Operand &X, Type *Target,
     return Fail();
   }
   if (auto *B = dyn_cast<BasicType>(U)) {
+    // EXP-35: an untyped value takes the unit of its target exactly; only a
+    // plain constant zero fits any unit.
+    if (Ctx.unitsSeen() && cast<BasicType>(X.Ty)->Unit != B->Unit &&
+        !unitZeroFits(X, B))
+      return Fail();
     if (X.M == Mode::Constant) {
       ConstValue V;
       ReprCode C = representation(X, B, V);
@@ -879,6 +887,8 @@ void Checker::conversion(Operand &X, Type *T) {
     X.Ty = T;
     return;
   }
+  if (Ctx.unitsSeen() && !S.Opts.GoCompat && unitConversion(X, T))
+    return;
   bool ConstArg = X.M == Mode::Constant;
   bool Ok = false;
   std::string Cause;

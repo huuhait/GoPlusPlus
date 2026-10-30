@@ -144,6 +144,53 @@ struct OperatorUse {
   bool Inherited = false;
 };
 
+/// A scale change that the units checker decided (ADR-0025, EXP-32 to
+/// EXP-36), for the lowering (P04.24): the value of the expression is
+/// multiplied by Factor, an exact rational > 0 (the factor of the unit it has
+/// over the factor of the unit it gets). Keyed by the operand that is
+/// rescaled: an operand of `+ - % <=>`, a comparison, `min`, `max`, a `case`
+/// value or the right side of `x op= y` that goes to the finer unit (or to
+/// the unit of x), the operand of a conversion `T[U](x)`, the receiver of
+/// `x.In[U]()`; and, for a product or quotient whose dimension is empty
+/// (`d / 500.0[M]`), the expression itself (its value is multiplied by the
+/// factor that remains). A constant is folded instead (its value is already
+/// in the new unit). Truncate: an integer kind with a ratio that is no
+/// integer, which only an explicit conversion may do (it truncates toward
+/// zero, EXP-32). Tag: the entry of a `case` value whose comparison converts
+/// the switch tag (the coarser side) to the unit of the case value; the tag is
+/// one expression for all the cases, so its scale change is kept per case.
+struct UnitConv {
+  Real Factor;
+  bool Truncate = false;
+  bool Tag = false;
+};
+
+/// An operation of unit-generic code whose value depends on whether a unit
+/// has an empty dimension at the instance (GEN-14, for the lowering P04.24).
+/// A value whose unit has an empty dimension at the instance is the plain
+/// number, as in plain code (EXP-33); every other value is the number in its
+/// unit. With c(E) = the factor of E where E has an empty dimension at the
+/// instance and 1 elsewhere (a unit parameter may itself be empty: a caller
+/// may pass `V/W`), the value is multiplied by:
+///   Mul   `x * y`: c(Res) / (c(X) * c(Y));
+///   Quo   `x / y`: c(Res) * c(Y) / c(X);
+///   Conv  a scale change of the keyed operand from X to Res, beside its
+///         UnitConvs factor: c(Res) / c(X) (X null: a number given the unit
+///         Res, `T[Res](v)`); Tag as in UnitConv;
+///   Const a constant whose number is in the unit Res: the number times
+///         c(Res) (a literal, a folded constant expression, a named constant,
+///         a constant that a scale change folded).
+/// Res null is a plain result (its static factor is in UnitConvs). The units
+/// are written over the unit parameters of the generic; c comes from its unit
+/// dictionary. A node has at most one site of each role: its own value
+/// (Mul, Quo or Const) and its scale change as an operand (Conv).
+struct UnitSite {
+  enum Kind : uint8_t { Mul, Quo, Conv, Const };
+  Kind K = Conv;
+  bool Tag = false;
+  const UnitCanon *Res = nullptr, *X = nullptr, *Y = nullptr;
+};
+
 /// The typed side table (D3.4): the AST stays immutable.
 struct Info {
   llvm::DenseMap<const ast::Expr *, TypeAndValue> Types;
@@ -159,6 +206,18 @@ struct Info {
   /// UnaryExpr, StarExpr, IndexExpr, CallExpr, AssignStmt, IncDecStmt,
   /// SendStmt, RangeStmt, a `case` value) (ADR-0024).
   llvm::DenseMap<const ast::Node *, OperatorUse> Operators;
+  /// Every scale change of a value with a unit (ADR-0025); an expression with
+  /// no entry is not rescaled.
+  llvm::DenseMap<const ast::Expr *, UnitConv> UnitConvs;
+  /// The collapse sites of unit-generic code (GEN-14), keyed like UnitConvs:
+  /// at most one per role (UnitSite).
+  llvm::DenseMap<const ast::Expr *, llvm::SmallVector<UnitSite, 1>> UnitSites;
+  /// The display form (UNI-5) of each expression that makes one: a unit
+  /// literal, a conversion `T[U](x)`, `x.In[U]()`, and an operator whose
+  /// result unit comes from its operands (`d / t` is `KM/H`). The lowering
+  /// picks the printed form of a type among these and the package tables by
+  /// the fixed order (P04.24).
+  llvm::DenseMap<const ast::Expr *, const UnitDisplay *> UnitDisplays;
 
   const TypeAndValue *lookup(const ast::Expr *E) const {
     auto It = Types.find(E);

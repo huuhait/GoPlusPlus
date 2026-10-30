@@ -1,0 +1,68 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (UNI-7, GEN-14): inference of a unit parameter. Accepted: Avg(xs) for any dimension, Avg[M](ys), Sqrt[M](sq), Two with equal units, Vec[M/S^2] as a type (a type argument list is parsed as a unit list). Rejected: a power in an explicit argument of a call (^ is xor there; the message says what to do), U^2 not inferred, two units for one parameter, a plain number where U goes, a type where a unit goes and the reverse.
+package main
+
+unit M
+unit S
+
+func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }
+func Sqrt[U unit](x float64[U^2]) float64[U] { return 0.0[U] }
+func Two[U unit](x float64[U], y float64[U]) {}
+
+type Vec[U unit] struct{ X float64[U] }
+type Plain float64
+
+// R6 (GEN-14): the order of the arguments does not matter: U/V waits until V is known.
+func Sp[U unit, V unit](a float64[U/V], b float64[V]) float64[U]  { return 0.0[U] }
+func Sp2[U unit, V unit](b float64[V], a float64[U/V]) float64[U] { return 0.0[U] }
+func Lone[U unit, V unit](a float64[U/V])                       {}
+func SpS[U unit, V unit](a []float64[U/V], b []float64[V])        {}
+
+func order(v float64[M/S], t float64[S], vs []float64[M/S], ts []float64[S]) {
+	_ = Sp(v, t)
+	_ = Sp2(t, v)
+	_ = Sp(1.0[M/S], t)
+	_ = Sp(v, 2.0[S])
+	SpS(vs, ts)
+	var m float64[M] = Sp(v, t)
+	_ = m
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use Sp(v, t) (value of type float64[M]) as float64[S] value in variable declaration
+	var s float64[S] = Sp(v, t)
+	_ = s
+// Still an error when no argument gives V:
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: in call to Lone, type float64[M/S] of v does not match float64[U/V] (cannot infer U and V)
+	Lone(v)
+}
+
+func f(xs []float64[M/S^2], ys []float64[M], sq float64[M^2]) {
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: invalid unit expression: `^` is Go's xor in an expression, so it is not a power here; name the unit with a `unit` declaration, or let inference find it (UNI-7) (UNI-4)
+	_ = Avg[M/S^2](xs)
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: invalid unit expression: `^` is Go's xor in an expression, so it is not a power here; name the unit with a `unit` declaration, or let inference find it (UNI-7) (UNI-4)
+	_ = Avg[(M/S)^2](xs)
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid unit expression: `^` is Go's xor in an expression, so it is not a power here; name the unit with a `unit` declaration, or let inference find it (UNI-7) (UNI-4)
+	_ = Avg[M^2](xs)
+	_ = Avg[M](ys)
+	_ = Avg(ys)
+	_ = Avg(xs)
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: in call to Sqrt, type float64[M^2] of sq does not match float64[U^2] (cannot infer U); the unit parameter U has the power 2, which is not inferred: give it explicitly, as in f[KM](...)
+	_ = Sqrt(sq)
+	_ = Sqrt[M](sq)
+	Two(1.0[M], 2.0[M])
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: in call to Two, type untyped float[S] of 2.0[S] does not match inferred type float64[M] for float64[U]
+	Two(1.0[M], 2.0[S])
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: cannot use 2.0 (untyped float constant 2) as float64[M] value in argument to Two
+	Two(1.0[M], 2.0)
+	var v Vec[M/S^2]
+	var w Vec[M^2]
+	_, _ = v, w
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: Plain is a type, not a unit (UNI-3)
+	var _ Vec[Plain]
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: float64 is a type, not a unit (UNI-3)
+	var _ Vec[float64]
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: expected type, found 3
+	var _ Vec[3]
+// CHECK-DAG: [[@LINE+1]]:8: error{{\[E[0-9]+\]}}: Avg is not a type
+	var _ Avg[M]
+}
+
+func main() {}

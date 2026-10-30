@@ -1,0 +1,11 @@
+// RUN: %python %S/Inputs/gen-units-typegraph.py --gopp %gopp --out %t --seeds 8 | FileCheck %s
+// P03.25 (GEN-14, UNI-2, R15 to R20): the range of the unit types of the
+// instances of generic types on random graphs of declarations (cycles of 1
+// to k declarations, mutual recursion, permuted and growing parameters,
+// methods that return nested instances, generic aliases), against a
+// brute-force expansion of every instance main reaches; the same text with 1
+// and 8 body threads. The summaries of the declarations are made one strongly
+// connected set at a time (Checker::unitRangeSum), so every input ends.
+// More seeds and the timing: units-generic-typegraph*.long; through export
+// data: Serialize.UnitRangeOfImportedInstances.
+// CHECK: typegraph: 8 programs, {{[0-9]+}} rejected ({{[0-9]+}} instantiation cycles, {{[0-9]+}} out of range), 0 mismatches

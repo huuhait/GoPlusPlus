@@ -83,6 +83,10 @@ TEST(DeepChain, EveryPostfixForm) {
                 "*T\n}\nfunc (t *T) me() *T { return t }\n"
                 "func f(t *T) *T { return t" +
                     repeat(".s.a[0].me().f().s", Links / 8) + " }\n"},
+      // P03.25 (ADR-0025): `x.In[U]()` is a selector, an index and a call.
+      {"unit-in", "package p\nunit M\nunit KM = 1000 M\n"
+                  "func f(a float64[M]) float64[KM] { return a" +
+                      repeat(".In[KM]().In[M]()", Links / 6) + ".In[KM]() }\n"},
   };
   for (const Form &F : Forms)
     EXPECT_EQ(errorsOf(F.Src), std::vector<std::string>{}) << F.Name;
@@ -156,6 +160,45 @@ TEST(DeepChain, NestedFormsAtTheParserLimit) {
     }
     EXPECT_EQ(Errs, std::vector<std::string>{}) << F.Name << " at " << N;
     EXPECT_GE(N, 250u) << F.Name; // at the limit (a closure is 4 levels)
+  }
+}
+
+TEST(DeepChain, UnitFormsAtTheParserLimit) {
+  // P03.25 (M4): the unit forms nested as deep as the parser allows, on the
+  // checker stack sized from the worst form above: conversions that scale,
+  // `min` over units, inference of a unit parameter, unit products, unit
+  // literals in literals, `.In` under parentheses. The unit rules run after
+  // the operands are checked, out of line, so a level costs what the form
+  // costs without units.
+  struct Form {
+    const char *Name, *Open, *Bottom, *Close;
+  } Forms[] = {
+      {"conversion", "float64[KM](", "d", ")"},
+      {"min", "min(", "d", ", 1.0[M])"},
+      {"inference", "id(", "d", ")"},
+      {"explicit", "id[M](", "d", ")"},
+      {"product", "(d*", "d", ")"},
+      {"sum", "(1.0[KM] + ", "d", ")"},
+      {"literal", "[]any{", "1.0[M]", "}"},
+      {"in", "(", "d", ").In[KM]()"},
+  };
+  for (const Form &F : Forms) {
+    unsigned N = 1024;
+    std::vector<std::string> Errs;
+    for (; N > 0; N -= 4) {
+      Errs = errorsAtTheLimit(
+          "package p\nunit M\nunit KM = 1000 M\n"
+          "func use(x ...any) {}\n"
+          "func id[U unit](x float64[U]) float64[U] { return x }\n"
+          "func f(d float64[M]) {\n\tuse(" +
+          repeat(F.Open, N) + F.Bottom + repeat(F.Close, N) + ")\n}\n");
+      if (Errs.empty() ||
+          (Errs[0].find("exceeded max") == std::string::npos &&
+           Errs[0].find("too deeply nested") == std::string::npos))
+        break; // (the parser's two limits)
+    }
+    EXPECT_EQ(Errs, std::vector<std::string>{}) << F.Name << " at " << N;
+    EXPECT_GE(N, 250u) << F.Name;
   }
 }
 

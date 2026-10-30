@@ -1,0 +1,9 @@
+package main
+
+import "mlib"
+
+func main() {
+	var a mlib.Next[mlib.M, mlib.S]
+	var b mlib.Same[mlib.M, mlib.S]
+	_, _ = a, b
+}

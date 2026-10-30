@@ -16,6 +16,8 @@
 #ifndef GOPP_SEMA_CHECKER_H
 #define GOPP_SEMA_CHECKER_H
 
+#include "Units.h"
+
 #include "gopp/Sema/Foreign.h"
 #include "gopp/Sema/Sema.h"
 
@@ -125,6 +127,7 @@ struct DeclInfo {
   const ast::Expr *Init = nullptr;
   bool Inherited = false;
   const TypeSpec *TDecl = nullptr;
+  const ast::UnitSpec *UDecl = nullptr; // a unit declaration (UNI-1)
   const FuncDecl *FDecl = nullptr;
   unsigned IotaVal = 0;
   bool Pinned = false;   // `@Pinned` type declaration (OWN-R10)
@@ -182,6 +185,13 @@ struct PackageState {
   llvm::StringMap<SmallVector<std::pair<NamedType *, Object *>, 2>> HierNames;
   llvm::DenseSet<NamedType *> HierIndexed;
   llvm::DenseMap<StringRef, Package *> ImportedByPath;
+  /// The declared units that messages name a unit by (UNI-5), added in
+  /// phase 1 only: the units of the package as they are resolved and those of
+  /// its imports as they are imported.
+  units::Namer UNamer;
+  /// The display forms of the package-level variables initialized from a
+  /// unit expression (phase 1 only writes it).
+  llvm::DenseMap<const Var *, const UnitDisplay *> UnitVarDisplays;
   /// (file scope, name) of a dot-imported object -> its import.
   llvm::DenseMap<std::pair<const Scope *, StringRef>, PkgName *> DotImportMap;
   PackageState(TypeContext &Ctx, const SourceManager &SM, Importer &Imp,
@@ -268,7 +278,9 @@ public:
     return err(X.pos(), ID, std::move(Args));
   }
   void emit(Diagnostic D);
-  std::string str(const Type *T) const { return typeString(T, S.Pkg); }
+  std::string str(const Type *T) const {
+    return typeString(T, S.Pkg, &unitNamer());
+  }
   std::string str(const ast::Expr *E) const;
   std::string str(const Operand &X) const;
   std::string str(const ConstValue &V) const { return V.str(); }
@@ -321,6 +333,11 @@ public:
     bool HasLabel = false;
     bool HasCallOrRecv = false;
     bool InTParamList = false;
+    /// The factor of a unit is being evaluated: `/` of two integer
+    /// constants is the exact quotient, not Go's integer division (UNI-2).
+    /// (In the environment, so a constant declared elsewhere that the factor
+    /// names is checked without it.)
+    bool ExactQuo = false;
     const void *FuncId = nullptr;
     /// The implicit `error` result of a `!` function (a `return` can fail
     /// with it, ERR-3).
@@ -339,6 +356,15 @@ public:
     SmallVector<TypeParamType *, 2> TParams;
     SmallVector<Type *, 2> TArgs;
     SmallVector<SourceLoc, 2> ArgPos; // of the written arguments, for notes
+    // GEN-14 (owner decisions 2026-10-30), outside Go mode:
+    // SkipOwn: in a method's signature: an argument made with the method's
+    //   own type parameter is no edge (the caller gives it at each call).
+    // SrcRaw: in the body of a generic method, which is instantiated per
+    //   call, not per receiver instance: its receiver parameters are
+    //   vertices of their own (as a generic function's are), not the type's.
+    // DstRaw: the receiver of a generic method call: the receiver
+    //   instance's arguments bind those vertices.
+    bool SkipOwn = false, SrcRaw = false, DstRaw = false;
   };
   /// A type declared in the current scope inside a generic function or method
   /// is implicitly parameterized by the type parameters around it (types2
@@ -350,9 +376,19 @@ public:
   std::vector<MonoInst> MonoInsts;
   unsigned NoMono = 0; // > 0: instantiations are not recorded (Mono.cpp)
   std::vector<std::pair<TypeParamType *, TypeParamType *>> MonoCanon;
+  /// The own type parameters of the generic methods of this package: an
+  /// argument that mentions one is no edge of the cycle check (the caller
+  /// gives it at each call; owner decision 2026-10-30, GEN-14).
+  llvm::DenseSet<const TypeParamType *> MonoMethodOwn;
+  unsigned MonoInSig = 0;       // > 0: recording a method's signature
+  const Func *MonoFn = nullptr; // the function whose body is checked
   void recordMono(SourceLoc Pos, NamedType *Orig,
                   ArrayRef<TypeParamType *> TParams, ArrayRef<Type *> TArgs,
-                  ArrayRef<SourceLoc> ArgPos = {});
+                  ArrayRef<SourceLoc> ArgPos = {}, bool BindRecv = false);
+  /// Ex names a generic method of an instance (`l.Deep[*U]`): its receiver
+  /// parameters (vertices of their own, SrcRaw) are bound to the instance's
+  /// arguments, as a call's type arguments are.
+  void monoBindRecv(SourceLoc Pos, const ast::Expr *Ex);
   /// Finds the instantiation cycles among Insts (true if there is one) and
   /// marks the generic types on them (InstCycle). Report: also report each
   /// cycle (E0366); the caller asks only for a package without other errors, as
@@ -630,6 +666,9 @@ public:
   void unary(Operand &X, const UnaryExpr *E);
   void binary(Operand &X, const ast::Expr *E, const ast::Expr *L,
               const ast::Expr *R, tok::Kind Op, SourceLoc OpLoc);
+  void binaryRest(Operand &X, Operand &Y, const ast::Expr *E,
+                  const ast::Expr *L, const ast::Expr *R, tok::Kind Op,
+                  SourceLoc OpLoc);
   void shift(Operand &X, Operand &Y, const ast::Expr *E, tok::Kind Op);
   void comparison(Operand &X, Operand &Y, tok::Kind Op);
   void matchTypes(Operand &X, Operand &Y);
@@ -971,7 +1010,8 @@ public:
   FuncInfo funcSignature(const ast::FuncType *E, Scope *Sc, Func *ForFunc);
   Type *unionTypeExpr(const ast::Expr *E);
   Type *instantiatedType(const IndexExpr *E, NamedType *Def);
-  bool typeList(ArrayRef<ast::Expr *> Es, SmallVector<Type *, 4> &Out);
+  bool typeList(ArrayRef<ast::Expr *> Es, SmallVector<Type *, 4> &Out,
+                ArrayRef<TypeParamType *> Want = {});
   void validVarType(const ast::Expr *E, Type *T);
   void collectParams(Scope *Sc, const FieldList *L, bool IsResult,
                      SmallVector<Var *, 8> &Vars, SmallVector<Type *, 8> &Types,
@@ -1179,6 +1219,51 @@ public:
     TypeParamType::Use U;
   };
   std::vector<UseRec> TPUses;
+  /// GEN-14: the instance of a generic whose unit parameter TPar gets the
+  /// unit TArg: a unit argument made of this code's unit parameters is
+  /// decided like the other uses (Use::UnitDict passes on to them).
+  void unitDictUses(SourceLoc Pos, Type *TArg, TypeParamType *TPar);
+  /// GEN-14, UNI-2: an instance in which a unit type of the generic's
+  /// signature or fields (Generic) leaves the range of units (an exponent
+  /// past MaxExp, a factor past Real::MaxRatBits) is E0435, as the same type
+  /// written in plain code is. True if it reported.
+  bool unitInstanceRange(SourceLoc Pos, Type *Generic,
+                         ArrayRef<TypeParamType *> TPs, ArrayRef<Type *> TAs,
+                         StringRef Name);
+  /// The message of unitInstanceRange, or empty.
+  std::string unitRangeWhy(Type *Generic, ArrayRef<TypeParamType *> TPs,
+                           ArrayRef<Type *> TAs, StringRef Name);
+  /// After the bodies: every instance of a generic type that the package's
+  /// code reaches (any route) whose fields or methods leave the range of
+  /// units is E0435, once, at its first place in the source.
+  void unitRangeScan();
+  /// The UnitRangeSum of the generic declaration O (memoized, iterative).
+  const UnitRangeSum *unitRangeSum(NamedType *O);
+  /// Do the bounds of O's declaration prove that the instance with the
+  /// arguments TArgs keeps every unit in range?
+  bool unitRangeSafe(NamedType *O, ArrayRef<Type *> TArgs);
+  /// A generic type held by the declaration D (in its fields or the
+  /// signatures of its methods), as written there over Ps.
+  struct UnitHeld {
+    NamedType *To;
+    NamedType *Inst;
+    ArrayRef<TypeParamType *> Ps;
+  };
+  void unitHeldInstances(NamedType *D, llvm::SmallVectorImpl<UnitHeld> &Out);
+  /// The first instance out of range among O[TArgs] and the instances its
+  /// fields and method signatures hold, followed as (declaration, units)
+  /// pairs, each once (no instance is made but the one reported).
+  std::pair<NamedType *, std::string> unitRangeExact(NamedType *O,
+                                                     ArrayRef<Type *> TArgs);
+  /// GEN-14: an operation of generic code whose value depends on whether a
+  /// unit becomes a plain number at the instance (Info::UnitSites): recorded
+  /// for the lowering, and its unit parameters need their run-time units.
+  /// Replace: a Const that recordTypeAndValue notes keeps the one a scale
+  /// change made (its number is in the new unit).
+  void recordUnitSite(const ast::Expr *Ex, UnitSite::Kind K,
+                      const UnitCanon *Res, const UnitCanon *X,
+                      const UnitCanon *Y = nullptr, bool Tag = false,
+                      bool Replace = true);
   std::vector<UseRec> *UseSink = &TPUses;
   bool NotingPassed = false; // the uses noted now are given on (Use::Passed)
   /// Notes U for T if T is a type parameter (its original, RenamedFrom).
@@ -1744,6 +1829,126 @@ public:
   FlowTarget flowPopTarget();
   void flowBeginBody(const BlockStmt *Body);
   void markNoNarrow(const ast::Expr *Ex);
+
+  // =========================================================================
+  // Units of measure (UnitCheck.cpp, ADR-0025)
+  // =========================================================================
+  /// The unit of a type: a unit type, or a named type over one (UNI-8); null
+  /// for every other type. The one question every unit rule asks.
+  const UnitCanon *unitOf(Type *T);
+  BasicKind baseKind(Type *T);
+  Type *withUnit(BasicKind BK, const UnitCanon *U);
+  bool isUnitBound(Type *Bound);
+  bool isUnitParam(Type *T);
+  const UnitCanon *unitArgCanon(Type *T);
+  // --- declarations (UNI-1 to UNI-3)
+  SmallVector<UnitObj *, 8> UnitPath;
+  void resolveUnit(UnitObj *U);
+  void unitDecl(UnitObj *U, DeclInfo *D);
+  void reportUnitCycle(UnitObj *At);
+  bool unitFactorValue(UnitObj *U, const ast::Expr *Factor, Real &Out);
+  void readUnitSymbol(const GenDecl *GD, UnitObj *U);
+  void addImportedUnits(Package *P);
+  // --- unit expressions (UNI-4, UNI-5, UNI-7)
+  Object *unitLookup(const ast::Expr *N);
+  bool unitNamePart(const ast::Expr *N, UnitDim &Part, const UnitCanon *&Canon);
+  /// The canonical form of a unit expression, and its display form in Disp
+  /// when asked (UNI-4, UNI-5); null after an error. Iterative.
+  const UnitCanon *unitExpr(const ast::Expr *X,
+                            const UnitDisplay **Disp = nullptr);
+  Type *unitArgType(const ast::Expr *X);
+  void unitStatusError(const ast::Node *At, UnitStatus St, StringRef What);
+  Type *unitTypeIndex(const IndexExpr *Ix);
+  bool unitZeroFits(const Operand &X, const BasicType *Target);
+  std::string unitStr(const UnitCanon *U) const {
+    return units::str(U, S.Pkg, &unitNamer());
+  }
+  /// The display forms this checker prints (UNI-5): the package's, and in a
+  /// body checker the forms of the body on top of them.
+  units::Namer BodyUnitNames;
+  units::Namer &unitNamer() { return Bodies ? BodyUnitNames : S.UNamer; }
+  const units::Namer &unitNamer() const {
+    return Bodies ? BodyUnitNames : S.UNamer;
+  }
+  // --- display forms (UNI-5)
+  /// The forms of the local variables initialized from a unit expression
+  /// (those of package variables are in PackageState).
+  llvm::DenseMap<const Var *, const UnitDisplay *> UnitVarDisplays;
+  /// The form of the result of the last `x *= y` / `x /= y` (no expression
+  /// of its own: the left operand `x` is the operand of the message).
+  const ast::Expr *CompoundE = nullptr;
+  const UnitDisplay *CompoundD = nullptr;
+  const UnitDisplay *unitDisplayOf(const ast::Expr *Ex, const UnitCanon *U);
+  std::string unitStrOf(const Operand &O);
+  std::string unitTypeStrOf(const Operand &O);
+  void noteUnitDisplay(const ast::Expr *Ex, const UnitCanon *U,
+                       const UnitDisplay *D);
+  void noteUnitVar(Var *V, const Operand &X);
+  void noteUnitVarType(Var *V, const ast::Expr *TypeExpr);
+  // --- values (EXP-31 to EXP-37)
+  Type *unitRetype(Type *T, const UnitCanon *U);
+  bool unitConversion(Operand &X, Type *T);
+  void unitNoteConversion(Operand &X, const CallExpr *Call);
+  /// The receiver of each `x.In` selector, and the unit (with its form) of
+  /// each `x.In[U]`.
+  llvm::DenseMap<const SelectorExpr *, Operand> UnitRecv;
+  llvm::DenseMap<const IndexExpr *,
+                 std::pair<const UnitCanon *, const UnitDisplay *>>
+      UnitInArg;
+  bool unitInSelector(Operand &X, const SelectorExpr *Ex);
+  void unitInIndex(Operand &X, const IndexExpr *Ix);
+  void unitInCall(Operand &X, const CallExpr *Call);
+  void unitLit(Operand &X, const ast::UnitLit *Lit);
+  void recordUnitConv(const ast::Expr *Ex, const Real &Factor, bool Truncate,
+                      bool Tag);
+  bool unitScale(Operand &O, const UnitCanon *To, Type *NewTy, bool Explicit,
+                 const ast::Node *At, const ast::Expr *Key = nullptr,
+                 bool Tag = false);
+  bool unitMatch(Operand &X, Operand &Y, tok::Kind Op, bool Compound,
+                 const ast::Expr *Ex, const ast::Expr *CaseKey = nullptr);
+  bool unitMinMax(llvm::SmallVectorImpl<Operand> &Args, const CallExpr *Call);
+  bool unitBinary(Operand &X, Operand &Y, const ast::Expr *Ex,
+                  const ast::Expr *L, const ast::Expr *R, tok::Kind Op,
+                  SourceLoc OpLoc);
+  /// EXP-33 (R5): `x / y` of two integer values of one dimension: both go to
+  /// the finer unit first, then the numbers divide, as `+` does. False after
+  /// an error (X invalid).
+  /// `real`, `imag` and `complex` keep the unit of the argument: Res, the
+  /// plain result type, with the unit of From (EXP-35). Out of line: the
+  /// caller recurses.
+  Type *unitPartType(Type *From, Type *Res);
+  /// GEN-14 (R1): a term of a type set (`interface{ float64[M] | float64[S]
+  /// }`, `~float64[M]`) that has a unit is an error: the body would take the
+  /// term for a plain number type. Decided later, when the type is complete.
+  void unitTermCheck(const ast::Expr *Term, Type *T);
+  /// R3: the factor R that a scale change applies to a value of type Ty must
+  /// be a number of that kind: not 0 or infinite in a float kind, a whole
+  /// number (or, truncating, a ratio of two numbers) that fits an integer
+  /// kind. One error at At if not; false then.
+  bool unitFactorFits(const ast::Node *At, const Real &R, Type *Ty);
+  bool unitIntQuo(Operand &X, Operand &Y, const ast::Expr *Ex);
+  bool unitMulDiv(Operand &X, Operand &Y, const ast::Expr *Ex,
+                  const ast::Expr *L, const ast::Expr *R, tok::Kind Op,
+                  SourceLoc OpLoc);
+  // --- out of line for the frames that recurse per nesting level (M4)
+  Type *unitParamAsType(const ast::Expr *Ex);
+  Type *unitAsType(const ast::Expr *Ex);
+  void unitNotExpr(const ast::Expr *Ex);
+  void unitExprAsValue(const ast::Expr *Ex);
+  bool unitBitNot(Operand &X, const ast::UnaryExpr *Ex);
+  void unitParamCall(const CallExpr *Call);
+  bool unitIncDec(const ast::IncDecStmt *ID, const Operand &X);
+  bool unitInAfterError(const IndexExpr *Ex);
+  void unitCombinedConstraint(SourceLoc At);
+  /// How typeList reads the type argument Ex for the parameter Want[I]: 0
+  /// as a type, 1 as a unit (GEN-14), 2 not at all (a unit for a type
+  /// parameter: reported).
+  int unitArgAt(const ast::Expr *Ex, ArrayRef<TypeParamType *> Want, size_t I);
+  /// Is Ex written as a unit: a unit expression, a unit name, or `*`, `/`
+  /// and parentheses of such names and `1`? (No errors, no uses recorded.)
+  bool unitLooksLike(const ast::Expr *Ex);
+  Type *unitSubstBasic(Type *T, const llvm::DenseMap<const Type *, Type *> &M);
+  bool unitIndexLiteral(Operand &X, const IndexExpr *Ex);
 
   // --- scopes
   Object *lookup(StringRef Name) { return E.Sc->lookup(Name, E.Pos); }

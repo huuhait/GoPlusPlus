@@ -1,0 +1,40 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (EXP-34, EXP-37, R3): a scale change applies its factor in the kind
+// of the operand, so the factor must be a number of that kind: not 0 or
+// infinite in a float kind, a whole number that fits an integer kind (for a
+// truncating conversion, the numerator and the denominator fit). A factor
+// that does not is an error, not a silent Inf, 0 or wrapped number. The
+// same factor in a kind that holds it is fine.
+package main
+
+unit M
+unit KM = 1000 M
+unit BIG = 1e60 M
+unit TINY = 1e-60 M
+
+// Accepted: float64 holds 1e60 and 1e-60; uint16 holds 1000; int holds 1000.
+func ok64(a float64[BIG], b float64[M], c float64[M]) float64[M] {
+	_ = c.In[TINY]()
+	return a + b
+}
+func ok16(a uint16[KM], b uint16[M]) bool { return a < b }
+func okInt(a int[KM], b int[M]) int[M]    { return a + b }
+func okTrunc(a int[M]) int[KM]            { return int[KM](a) }
+func okU16T(a uint16[M]) uint16[KM]       { return uint16[KM](a) }
+
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: unit factor out of range: the factor 1000000000000000000000000000000000000000000000000000000000000 of the conversion is not a float32 number (UNI-2)
+func f32(a float32[BIG], b float32[M]) float32[M] { return a + b }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: unit factor out of range: the factor 1/1000000000000000000000000000000000000000000000000000000000000 of the conversion is not a float32 number (UNI-2)
+func f32b(a float32[M]) float32[BIG] { return a.In[BIG]() }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: unit factor out of range: the factor 1000 of the conversion is not a uint8 number (UNI-2)
+func u8lt(a uint8[KM], b uint8[M]) bool { return a < b }
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: unit factor out of range: the factor 1000 of the conversion is not a int8 number (UNI-2)
+func i8add(a int8[KM], b int8[M]) int8[M] { return a + b }
+// A truncating conversion: the denominator 1000 does not fit uint8.
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: unit factor out of range: the factor 1/1000 of the conversion is not a uint8 number (UNI-2)
+func u8trunc(a uint8[M]) uint8[KM] { return uint8[KM](a) }
+// The remaining factor of a ratio: float32 [BIG] / [M] is the plain 1e60.
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: unit factor out of range: the factor 1000000000000000000000000000000000000000000000000000000000000 of the conversion is not a float32 number (UNI-2)
+func f32div(a float32[BIG], b float32[M]) float32 { return a / b }
+
+func main() {}

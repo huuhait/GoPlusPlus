@@ -1,0 +1,25 @@
+package main
+
+import (
+	. "units"
+	u "units"
+)
+
+func main() {
+	var a float64[KM] = 1.0[KM]
+	var b float64[u.hidden]
+	var c float64[u.Missing]
+	var d float64[u.M] = a
+	var e = u.KM
+	var f float64[u.Meters]
+	var g = 2.0[u]
+	var h float64[u.M] = 1.0[KM].In[u.M]()
+	_ = a.In[u.hidden]()
+	// two instances of a generic type are two types; the importer prints the
+	// display forms of the exporting package (KM/H, not 5/18 M/S)
+	_ = u.Vec[u.KM]{} + u.Vec[u.M]{}
+	var s float64[u.M] = u.Speed()
+	_ = s
+	_, _, _, _, _, _, _ = a, b, c, d, e, f, g
+	_ = h
+}

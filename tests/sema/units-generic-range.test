@@ -1,0 +1,140 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/units-range-pkg 2>&1 | FileCheck "--implicit-check-not=error[E" --check-prefix=PKG %s
+// P03.25 (GEN-14, UNI-2, R15, R15b): an instance whose unit types (of its
+// fields or methods, or of a generic function's signature) leave the range of
+// units (an exponent past 2^20, a factor of more than 4096 bits) is E0435, as
+// the same type written in plain code is. Every route to an instance of a
+// generic type is decided in one place after the bodies
+// (Checker::unitRangeScan, bounded per declaration: R18): written, through
+// a generic alias, a function's
+// inferred result, a method's result, inside another instance, a method of
+// the instance, from another package; each instance once, at its first place
+// in the source. The type of such an instance's part is invalid and silences
+// no error: the E0435 is there, and no follow-on error comes from it. The
+// same code with a unit whose power stays in range (M^1000, factor 1) is
+// accepted, and so is a unit that only a body makes (decided at run time,
+// P04.24).
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+unit KS = 1000 S
+unit KH = 1000 H
+
+type T[U unit] struct{ f float64[U^1000] }
+
+// The boundary: KM^411 is 4095.9 bits of factor (in range), KM^412 is not;
+// and through a held generic type (the bound of the declaration it holds).
+type T411[U unit] struct{ f float64[U^411] }
+type T412[U unit] struct{ f float64[U^412] }
+type Hold412[U unit] struct{ t T412[U] }
+
+// R19: mutually recursive declarations (a linked list) end, in or out of
+// range; R20: a method's result is followed (G[KM^35].Get makes C[KM^140]).
+type Node[U unit] struct {
+	v    float64[U]
+	next Option[*List[U]]
+}
+type List[U unit] struct {
+	head Option[*Node[U]]
+	w    float64[U^412]
+}
+type C3[U unit] struct{ F float64[U^3] }
+type B3[U unit] struct{ C C3[U*U] }
+type G3[U unit] struct{}
+
+func (G3[U]) Get() Option[*B3[U^2]] { return nil }
+type Al[U unit] = T[U]
+type Box[U unit] struct{ t T[U] }
+type W[U unit] struct{}
+
+func (w W[U]) Make() T[U] {
+	var t T[U]
+	return t
+}
+
+type MT[U unit] struct{}
+
+func (m MT[U]) Big() float64[U^1000] {
+	var x float64[U^1000]
+	return x
+}
+
+func G[U unit](x float64[U]) T[U] {
+	var t T[U]
+	_ = x
+	return t
+}
+
+func P2[U unit](x float64[U^1000]) float64[U^1000] { return x }
+func P1[U unit](x float64[U^1000000]) {}
+
+func Ok[U unit](x float64[U]) float64[U^1000] {
+	var y float64[U^1000]
+	_ = x
+	return y
+}
+
+// A unit of the body only: the code runs with the units of the instance
+// (P04.24 stops with "unit out of range" if a run-time unit leaves the range).
+func Body[U unit](x float64[U]) {
+	var y float64[U^1000]
+	_, _ = x, y
+}
+
+func main() {
+	var m T[M]
+	_ = m.f + m.f
+	var am Al[M]
+	_ = am
+	_ = G(1.0[M]).f
+	_ = P2[M]
+	_ = Ok(1.0[M])
+	Body(1.0[KM])
+	// W[KM] has the method Make() T[KM] (R20): its first place.
+// CHECK-DAG: [[@LINE+1]]:8: error[E0435]: unit factor out of range: in the instance of T with U = KM, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var w W[KM]
+	var nm Node[M]
+	var g3 G3[KM]
+	_, _ = nm, g3
+// CHECK-DAG: [[@LINE+1]]:9: error[E0435]: unit factor out of range: in the instance of List with U = KM, float64[U^412]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var nk Node[KM]
+// CHECK-DAG: [[@LINE+1]]:9: error[E0435]: unit factor out of range: in the instance of C3 with U = {{.*}} M^140, float64[U^3]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var gk G3[KM^35]
+	_, _ = nk, gk
+	var k411 T411[KM]
+	_ = k411
+	var h411 Hold412[M]
+	_ = h411
+// CHECK-DAG: [[@LINE+1]]:11: error[E0435]: unit factor out of range: in the instance of T412 with U = KM, float64[U^412]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var k412 Hold412[KM]
+	_ = k412
+	var a T[KM] // T[KM] again: reported once, above
+// CHECK-DAG: [[@LINE+1]]:8: error[E0435]: unit factor out of range: in the instance of T with U = H, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var c Al[H]
+	_ = a.f + c.f // no follow-on error
+	a.f = c.f
+	g := G(1.0[KM]) // T[KM] again
+	_ = g.f
+	var bx Box[KM]
+	_ = bx
+	_ = w.Make()
+// CHECK-DAG: [[@LINE+1]]:9: error[E0435]: unit factor out of range: in the instance of MT with U = KM, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var mt MT[KM]
+	_ = mt
+// CHECK-DAG: [[@LINE+1]]:6: error[E0435]: unit factor out of range: in the instance of T with U = KS, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	_ = G(1.0[KS]).f // only through the inferred result
+// CHECK-DAG: [[@LINE+1]]:6: error[E0435]: unit factor out of range: in the instance of T with U = KH, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	_ = W[KH]{}.Make() // only through a method's result
+// CHECK-DAG: [[@LINE+1]]:6: error[E0435]: unit factor out of range: in the instance of P2[KM] with U = KM, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	_ = P2[KM]
+// CHECK-DAG: [[@LINE+1]]:2: error[E0435]: unit factor out of range: in the instance of P1[M * M] with U = M^2, float64[U^1000000]: an exponent is out of range (at most 1048576) (UNI-2)
+	P1[M * M](1.0)
+// CHECK-DAG: [[@LINE+1]]:16: error[E0435]: unit factor out of range: in KM^1000: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)
+	var p float64[KM^1000]
+	_ = p
+}
+
+// PKG-DAG: main.gopp:6:8: error[E0435]: unit factor out of range: in the instance of T with U = rlib.KM, float64[U^1000]: the factor is no longer an exact rational (it needs more than 4096 bits) (UNI-2)

@@ -1,0 +1,82 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (UNI-8, UNI-15): named types over a unit type: arithmetic keeps the named type for a scalar and gives the unnamed unit type for a product, mixing the named and the unnamed type is an error, an operator method on a unit type (named too) is an error and the built-in operator stays, ordinary methods are fine.
+package main
+
+import "unsafe"
+
+unit M
+unit S
+unit KM = 1000 M
+
+type Distance float64[M]
+type Meters = float64[M]
+type Km2 float64[KM*KM]
+type Count int[M]
+
+func (d Distance) String() string { return "d" }
+func (d Distance) Double() Distance { return d * 2 }
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot declare the operator method `+` on Distance: the operators of a unit type are the built-in ones (UNI-15)
+func (d Distance) + (e Distance) Distance { return d }
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot declare the operator method `<=>` on Distance: the operators of a unit type are the built-in ones (UNI-15)
+func (d Distance) <=> (e Distance) int { return 0 }
+// CHECK-DAG: [[@LINE+1]]:19: error{{\[E[0-9]+\]}}: cannot declare the operator method `-` on Distance: the operators of a unit type are the built-in ones (UNI-15)
+func (d Distance) - () Distance { return d }
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot declare the operator method `==` on Count: the operators of a unit type are the built-in ones (UNI-15)
+func (c Count) == (o Count) bool { return true }
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: cannot declare the operator method `++` on Count: the operators of a unit type are the built-in ones (UNI-15)
+func (c *Count) ++() {}
+func (c Count) Ok() bool { return c > 0 }
+
+type Vec[U unit] struct{ X float64[U] }
+
+func (v Vec[U]) + (o Vec[U]) Vec[U] { return v }
+func (v Vec[U]) == (o Vec[U]) bool  { return true }
+
+func main() {
+	var d Distance = 4.0[M]
+	var m Meters = 5.0[M]
+	var f float64[M] = m
+	var s float64[S] = 2.0[S]
+	var speed float64[M/S] = d / s
+	var area float64[M*M] = d * d
+	var dd Distance = d * 2
+	var ee Distance = 2 * d
+	var ff Distance = d / 2
+	var gg Distance = d + d
+	var hh Distance = d + 0
+	var ii Distance = d * 2.0
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use Distance(f) (value of float64 type Distance) as float64[M] value in variable declaration
+	var jj float64[M] = Distance(f)
+	var kk float64[M] = float64[M](d)
+	var ll float64 = float64(d)
+	_, _, _, _, _, _, _, _, _, _ = speed, area, dd, ee, ff, gg, hh, ii, jj, kk
+	_ = ll
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d + f (mismatched types Distance and float64[M])
+	_ = d + f
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: f + d (mismatched types float64[M] and Distance)
+	_ = f + d
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: invalid operation: d + m (mismatched types Distance and float64[M])
+	_ = d + m
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid operation: d == m (mismatched types Distance and float64[M])
+	_ = d == m
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d < f (mismatched types Distance and float64[M])
+	_ = d < f
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid operation: d + 1.0: cannot add a number without a unit to a value in M; write the number with its unit, as in 1.0[M] (only an untyped zero needs no unit) (EXP-35)
+	_ = d + 1.0
+	_ = d * d * 1.0[M]
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: cannot use 3 (untyped int constant) as Count value in variable declaration
+	var c Count = 3
+	_ = c
+	var km2 Km2 = Km2(area)
+	_ = km2
+// CHECK-DAG: [[@LINE+1]]:20: error{{\[E[0-9]+\]}}: cannot use f (variable of type float64[M]) as Distance value in variable declaration
+	var e1 Distance = f
+// CHECK-DAG: [[@LINE+1]]:22: error{{\[E[0-9]+\]}}: cannot use d (variable of float64 type Distance) as float64[M] value in variable declaration
+	var e2 float64[M] = d
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: cannot use area (variable of type float64[M^2]) as Km2 value in variable declaration
+	var e3 Km2 = area
+	_, _, _ = e1, e2, e3
+	_ = unsafe.Sizeof(d)
+	_ = d.Double()
+	_ = d.In[KM]()
+}

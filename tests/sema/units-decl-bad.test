@@ -1,0 +1,76 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (UNI-1 to UNI-3): the declaration errors, one per line, the cycles with every member listed, and the later errors still reported.
+package main
+
+unit M
+unit S
+unit KG
+unit KM = 1000 M
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: unit X has no dimension: a factor alone has no dimension; declare a base unit (`unit RAD`) or write a unit after the factor (`unit KM = 1000 M`) (UNI-2)
+unit X = 100
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: invalid factor for unit Y: 0 must be greater than zero (UNI-2)
+unit Y = 0 M
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: invalid factor for unit Neg: (-2) must be greater than zero (UNI-2)
+unit Neg = (-2) M
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: invalid factor for unit Typed: (float64(2)) is a typed constant (float64); the factor must be an untyped numeric constant (UNI-2)
+unit Typed = (float64(2)) M
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: invalid factor for unit Str: ("a") is not a number (UNI-2)
+unit Str = ("a") M
+// CHECK-DAG: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: invalid factor for unit Cx: (2i) is a complex constant (UNI-2)
+unit Cx = (2i) M
+// A bare sign, string, rune or imaginary literal is read as a factor too, so
+// the checker says why it is wrong (one error) and the next declarations are
+// still checked.
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: invalid factor for unit Neg2: -2 must be greater than zero (UNI-2)
+unit Neg2 = -2 M
+// CHECK-DAG: [[@LINE+1]]:14: error{{\[E[0-9]+\]}}: invalid factor for unit Plus0: +0 must be greater than zero (UNI-2)
+unit Plus0 = +0 M
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: invalid factor for unit Str2: "a" is not a number (UNI-2)
+unit Str2 = "a" M
+// CHECK-DAG: [[@LINE+1]]:13: error{{\[E[0-9]+\]}}: invalid factor for unit Rune: 'a' is not a number (UNI-2)
+unit Rune = 'a' M
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: invalid factor for unit Cx2: 2i is a complex constant (UNI-2)
+unit Cx2 = 2i M
+unit AfterBad = 2 M
+// The exact quotient is for the factor only: a constant it names keeps Go's
+// integer division (Seven2 is 3, so THREE is 3 M and THREEHALF 7/2 M).
+const Seven2 = 7 / 2
+unit THREE = (Seven2) M
+unit THREEHALF = (7 / 2) M
+// CHECK-DAG: [[@LINE+1]]:24: error{{\[E[0-9]+\]}}: cannot use 1.0[THREEHALF] (untyped float constant 1) as float64[THREE] value in variable declaration
+var _ float64[THREE] = 1.0[THREEHALF]
+// CHECK-DAG: [[@LINE+1]]:10: error{{\[E[0-9]+\]}}: unit Z has no dimension: M/M has an empty dimension; a dimensionless quantity such as an angle is made from a base unit (`unit RAD`) (UNI-2)
+unit Z = M / M
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: M redeclared in this block
+unit M
+// CHECK-DAG: [[@LINE+1]]:15: error{{\[E[0-9]+\]}}: int is a type, not a unit (UNI-3)
+unit Unit = 2 int
+// CHECK-DAG: [[@LINE+1]]:12: error{{\[E[0-9]+\]}}: undefined: undefinedName
+unit V = 2 undefinedName
+unit W = 1000 M
+var notUnit = 3
+
+// CHECK-DAG: [[@LINE+1]]:17: error{{\[E[0-9]+\]}}: notUnit is a variable, not a unit (UNI-3)
+unit BadVar = 2 notUnit
+
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: unit cycle: A -> B -> A (UNI-3)
+unit A = 2 B
+unit B = 3 A
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: unit cycle: Self -> Self (UNI-3)
+unit Self = 2 Self
+// CHECK-DAG: [[@LINE+1]]:6: error{{\[E[0-9]+\]}}: unit cycle: P -> Q -> R -> P (UNI-3)
+unit P = 2 Q
+unit Q = 2 R
+unit R = 2 P
+unit DependsOnCycle = 2 A
+
+func main() {
+// CHECK-DAG: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: KM is a unit, not an expression (UNI-1); a unit is valid only inside [ ] after a number literal or a numeric type, in a unit declaration, or as a unit argument
+	x := KM
+// CHECK-DAG: [[@LINE+1]]:16: error{{\[E[0-9]+\]}}: undefined: Missing
+	var y float64[Missing]
+// CHECK-DAG: [[@LINE+1]]:18: error{{\[E[0-9]+\]}}: M is a unit, not an expression (UNI-1); a unit is valid only inside [ ] after a number literal or a numeric type, in a unit declaration, or as a unit argument
+	var z float64 = M
+	_, _, _ = x, y, z
+}

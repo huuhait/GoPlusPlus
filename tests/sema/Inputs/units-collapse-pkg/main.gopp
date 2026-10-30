@@ -1,0 +1,30 @@
+package main
+
+import "ratio"
+
+// Generic code of this package that passes its units on to generics of
+// ratio whose code needs them (the export data's uses): Fwd needs P and Q;
+// Keep calls a generic that needs none.
+func Fwd[P unit, Q unit](a float64[P], b float64[Q]) float64 { return ratio.Via(a, b) }
+func Keep[P unit](a float64[P]) float64[P]                   { return ratio.Just(a) }
+func Meth[P unit, Q unit](a float64[P], b float64[Q]) float64 {
+	return ratio.Vec[P]{X: a}.Div(b)
+}
+
+func main() {
+	// Accepted, the units that cancel too: the generic code computes what
+	// plain code does (GEN-14).
+	_ = ratio.Rt(1.0[ratio.M], 2.0[ratio.M])
+	_ = ratio.Rt(1.0[ratio.KM], 2.0[ratio.KM])
+	_ = ratio.Just(1.0[ratio.KM])
+	var ok ratio.Box[ratio.KM, ratio.KM]
+	_ = ok.Ratio()
+	_ = ratio.Rt(1.0[ratio.KM], 2.0[ratio.M])
+	_ = ratio.Via(1.0[ratio.M], 2.0[ratio.KM])
+	var bad ratio.Box[ratio.KM, ratio.M]
+	_ = bad
+	_ = ratio.Vec[ratio.KM]{}.Div(2.0[ratio.M])
+	_ = Fwd(1.0[ratio.KM], 2.0[ratio.M])
+	_ = Keep(1.0[ratio.KM])
+	_ = Meth(1.0[ratio.KM], 2.0[ratio.M])
+}

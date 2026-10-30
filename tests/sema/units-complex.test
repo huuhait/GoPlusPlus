@@ -1,0 +1,44 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.25 (EXP-35, R4): `real`, `imag` and `complex` keep the unit, so none of
+// them launders it away. `real(c)` and `imag(c)` of a complex128[M] are
+// float64[M]; `complex(a, b)` needs the same unit on both arguments and is a
+// complex128[U]. Each accepted line states the type it gets; the rejected
+// lines are the ones that dropped the unit before.
+package main
+
+unit M
+unit S
+
+func main() {
+	var c complex128[M]
+	var c64 complex64[M]
+	var f, f2 float64[M]
+	var g float64[S]
+	var p float64
+	var a float64[M] = real(c)
+	var b float64[M] = imag(c)
+	var a32 float32[M] = real(c64)
+	var z complex128[M] = complex(f, f2)
+	var z64 complex64[M] = complex(float32[M](f), float32[M](f2))
+	var z2 = complex(1.0[M], 2.0[M])
+	var z3 complex128[M] = z2
+	var z4 complex128[M] = complex(f, 0)
+	var k float64[M] = imag(2.0i[M])
+	_, _, _, _, _, _, _, _ = a, b, a32, z, z64, z3, z4, k
+	var pc complex128
+	_ = real(pc) + p
+	_ = complex(p, p) + pc
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use real(c) (value of type float64[M]) as float64 value in variable declaration
+	var x float64 = real(c)
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use imag(c) (value of type float64[M]) as float64 value in variable declaration
+	var y float64 = imag(c)
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use complex(f, f2) (value of type complex128[M]) as complex128 value in variable declaration
+	var w complex128 = complex(f, f2)
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid operation: complex(f, g) (mismatched types float64[M] and float64[S])
+	_ = complex(f, g)
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: invalid operation: complex(f, p) (mismatched types float64[M] and float64)
+	_ = complex(f, p)
+// CHECK-DAG: [[@LINE+1]]:{{[0-9]+}}: error{{\[E[0-9]+\]}}: cannot use real(c) (value of type float64[M]) as float64[S] value in variable declaration
+	var s float64[S] = real(c)
+	_, _, _, _ = x, y, w, s
+}

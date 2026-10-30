@@ -1,0 +1,32 @@
+package ratio
+
+unit M
+unit KM = 1000 M
+
+// The code cancels its two unit parameters: it needs their units at run time,
+// and the export data says so (Use::UnitDict), so an importer that passes its
+// own units on needs them too (GEN-14).
+func Rt[U unit, V unit](a float64[U], b float64[V]) float64 {
+	r := a / b
+	return float64(r)
+}
+
+func Just[U unit](a float64[U]) float64[U] { return a + a }
+
+type Box[U unit, V unit] struct {
+	A float64[U]
+	B float64[V]
+}
+
+func (b Box[U, V]) Ratio() float64 { return float64(b.A / b.B) }
+
+// Through another generic of this package.
+func Via[U unit, V unit](a float64[U], b float64[V]) float64 { return Rt(a, b) }
+
+// A generic method of a generic type: its own unit and the receiver's.
+type Vec[U unit] struct{ X float64[U] }
+
+func (v Vec[U]) Div[V unit](d float64[V]) float64 {
+	r := v.X / d
+	return float64(r)
+}

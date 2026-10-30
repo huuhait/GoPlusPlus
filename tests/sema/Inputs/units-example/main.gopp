@@ -1,0 +1,44 @@
+// P03.25: the accepted examples of ADR-0025 as one program.
+package main
+
+unit M
+unit S
+unit KG
+unit KM = 1000 M
+unit H = 3600 S
+unit N = KG*M/S^2
+
+func Travel(speed float64[M/S], t float64[S]) float64[M] { return speed * t }
+
+func Avg[U unit](xs []float64[U]) float64[U] {
+	var s float64[U]
+	for _, x := range xs {
+		s += x
+	}
+	return s / float64(len(xs))
+}
+
+func demo(v float64) {
+	d := 100.0[KM]
+	t := 2.0[H]
+	speed := d / t
+	area := d * d
+	total := d + 500.0[M]
+	ratio := 5.0[KM] / 2.0[M]
+	var z float64[KM] = 0
+	x := float64[KM](v)
+	raw := float64(d)
+	ms := speed.In[M/S]()
+	var f float64[N] = 2.0[KG] * 9.81[M/S^2]
+	var sk float64[KM/H] = speed
+	var ar float64[KM^2] = area
+	var tm float64[M] = total
+	var rt float64 = ratio
+	_ = Travel(ms, 3.0[S])
+	_ = Avg([]float64[KM]{d, x})
+	_ = 2[KM] + 3[M]
+	_ = 3[M] + 2[KM]
+	_, _, _, _, _, _, _, _ = z, raw, f, sk, ar, tm, rt, t
+}
+
+func main() { demo(1) }

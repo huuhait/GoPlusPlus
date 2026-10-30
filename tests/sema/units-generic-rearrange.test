@@ -1,0 +1,11 @@
+// RUN: %python %S/Inputs/gen-units-rearrange.py --gopp %gopp --out %t --sizes 10 --shapes two --leaves cancel --j1 | FileCheck %s
+// P03.25 (GEN-14, R10, owner decision 2026-10-30): a chain of unit-generic
+// functions that rearrange their unit parameters at each level (`F_i[U, V]`
+// calls `F_{i-1}[U*V, U]` and `F_{i-1}[V, U]`), so the units the code reaches
+// double at each level. Nothing is followed per instance: each `a*b` is a
+// collapse site of its own function (`unit-site`), and which unit parameters
+// need their units at run time (`unit-dict`) passes on through the use
+// fixpoint. Accepted (the units that cancel are computed at run time, as in
+// plain code). The other shapes, sizes up to 200 and 10000 straight levels,
+// 8 body threads and the timing: units-generic-*.long.
+// CHECK: two cancel n=10              errors=0 dicts=11 sites=11 j1==j8:- ok

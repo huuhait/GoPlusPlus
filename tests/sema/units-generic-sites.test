@@ -1,0 +1,134 @@
+// RUN: %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --check-prefix=ERR --allow-empty %s
+// RUN: %gopp check --dump-types %s | FileCheck %s
+// RUN: %gopp check --dump-types %s | FileCheck --check-prefix=NO %s
+// P03.25 (GEN-14, R12 to R14): every way a value of generic code depends on
+// whether a unit is empty at the instance is a collapse site, recorded in one
+// place (Checker::recordUnitSite) with one predicate: a unit that mentions a
+// unit parameter may be empty, since a parameter itself may be (a caller
+// passes `V/W`). R12: every constant of such a unit (a literal, a constant
+// conversion, a named constant, a constant that a scale change folded, in
+// `+`, `<`, `min`, `+=`) is its number times c(E) (`const`). R13: a unit with
+// one parameter and a factor (`1000 U`) is a scale change and a collapse
+// site. R14: a node keeps its own value's site and its scale change as an
+// operand (in a conversion, `+`, `<`, `min`, `+=`, a `case`, and the integer
+// quotient that converts its coarser operand first). A product whose
+// correction is 1 at every instance (`a * a`, `a / a`, a scalar) is no site
+// and needs no units (Sq, Twice, Same).
+// ERR-NOT: error
+// NO-NOT: unit-dict Sq
+// NO-NOT: unit-dict Twice
+// NO-NOT: unit-dict Same
+// NO-NOT: unit-site `a * a`
+// NO-NOT: unit-site `a / a`
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+
+// R12: constants whose unit mentions a unit parameter (a number times c(E)).
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict L1: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `3.0[U/V]` U/V const
+func L1[U unit, V unit]() float64 { return float64(3.0[U/V]) }
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict L2: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `float64[U/V](3.0)` U/V const
+func L2[U unit, V unit]() float64 { return float64(float64[U/V](3.0)) }
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict L3: U V
+func L3[U unit, V unit]() float64 {
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `3.0[U/V]` U/V const
+	const k = 3.0[U/V]
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `k` U/V const
+	return float64(k)
+}
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict L4: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `3.0[U*KM/V]` M*U/V const
+func L4[U unit, V unit](x float64[U*M/V]) float64[U*M/V] { return x + 3.0[U*KM/V] }
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict L5: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `3.0[U*KM/V]` M*U/V const
+func L5[U unit, V unit](x float64[U*M/V]) bool           { return x < 3.0[U*KM/V] }
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict L6: U V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `3.0[U*KM/V]` M*U/V const
+func L6[U unit, V unit](x float64[U*M/V]) float64[U*M/V] { return min(x, 3.0[U*KM/V]) }
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict L7: U V
+func L7[U unit, V unit](x float64[U*M/V]) float64[U*M/V] {
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `3.0[U*KM/V]` M*U/V const
+	x += 3.0[U*KM/V]
+	return x
+}
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict L8: U
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `2.0[U]` U const
+func L8[U unit](x float64[U]) float64[U] { return x + 2.0[U] }
+
+// R13: one parameter beside a factor: U itself may be empty (a caller
+// passes V/W), so `1000 U` is a scale change and a collapse site.
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict N1: U
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `x` 1000 U from U
+func N1[U unit](x float64[U]) float64[U*KM/M] { return x.In[U*KM/M]() }
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-dict N2: U
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `x / y` plain = 1000 U / U
+func N2[U unit](x float64[U*KM/M], y float64[U]) float64 { return float64(x / y) }
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict N3: V W
+func N3[V unit, W unit](a float64[V], b float64[W]) float64 {
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a / b` V/W = V / W
+	return float64(N1[V/W](a / b))
+}
+
+// No correction at any instance: no site, no units at run time.
+func Sq[U unit](a float64[U]) float64[U*U] { return a * a }
+func Twice[U unit](a float64[U]) float64[U] { return a + a * 2 }
+func Same[U unit](a float64[U]) float64 { return float64(a / a) }
+
+// R14: a node with its own value and a scale change as an operand.
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R1: U V
+func R1[U unit, V unit](a float64[U], b float64[V]) float64 {
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a / b` (1/1000) U/V from U/V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a / b` U/V = U / V
+	return float64(float64[U*M/(V*KM)](a / b))
+}
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R2: U V
+func R2[U unit, V unit](a float64[U], b float64[V], c float64[U*M/(V*KM)]) float64 {
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a/b` (1/1000) U/V from U/V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a/b` U/V = U / V
+	return float64(a/b + c)
+}
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R3: U V
+func R3[U unit, V unit](a float64[U], b float64[V], c float64[U*M/(V*KM)]) bool {
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a/b` (1/1000) U/V from U/V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a/b` U/V = U / V
+	return a/b < c
+}
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R4: U V
+func R4[U unit, V unit](a float64[U], b float64[V], c float64[U*M/(V*KM)]) float64 {
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a/b` (1/1000) U/V from U/V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a/b` U/V = U / V
+	return float64(min(a/b, c))
+}
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R5: U V
+func R5[U unit, V unit](a float64[U], b float64[V], c float64[U*M/(V*KM)]) float64 {
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a / b` (1/1000) U/V from U/V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a / b` U/V = U / V
+	c += a / b
+	return float64(c)
+}
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R6: U V
+func R6[U unit, V unit](a float64[U], b float64[V], c float64[U*M/(V*KM)]) int {
+	switch c {
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a / b` (1/1000) U/V from U/V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `a / b` U/V = U / V
+	case a / b:
+		return 1
+	}
+	return 0
+}
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-dict R7: U V
+func R7[U unit, V unit](a int[U*KM], b int[U*M], c int[V]) int {
+// CHECK: [[@LINE+3]]:{{[0-9]+}} unit-site `(a * c)` M*U*V from 1000 M*U*V
+// CHECK: [[@LINE+2]]:{{[0-9]+}} unit-site `a * c` 1000 M*U*V = 1000 M*U * V
+// CHECK: [[@LINE+1]]:{{[0-9]+}} unit-site `b * c` M*U*V = M*U * V
+	return int((a * c) / (b * c))
+}
+
+func main() {
+	_ = L1[KM, M]()
+	_ = N3(1.0[KM], 1.0[M])
+}

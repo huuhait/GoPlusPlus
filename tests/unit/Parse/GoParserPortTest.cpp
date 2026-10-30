@@ -292,6 +292,7 @@ TEST(GoParserPort, Invalid) {
     Go.AllowNamespaceTypes = false;
     Go.AllowExtends = false;
     Go.AllowOperators = false;
+    Go.AllowUnits = false;
     Parsed P(I.Src, Go);
     std::vector<std::string> Errs = P.errors();
     ASSERT_FALSE(Errs.empty()) << "no error reported";
@@ -325,6 +326,7 @@ TEST(GoParserPort, OperatorMethodsAreGoPlusPlusOnly) {
     Go.AllowNamespaceTypes = false;
     Go.AllowExtends = false;
     Go.AllowOperators = false;
+    Go.AllowUnits = false;
     Parsed InGo(Src, Go);
     EXPECT_GT(InGo.numErrors(), 0u);
     ParseOptions Gopp;
