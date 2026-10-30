@@ -1,0 +1,11 @@
+// EXPECT: exit 0
+// A package variable starts at its initial value in every run, also in an
+// executor that ran this program before.
+package main
+
+var counter = 41
+
+func main() {
+	counter++
+	println("counter", counter)
+}

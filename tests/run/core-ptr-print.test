@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %t.exe | FileCheck %s
+// RUN: %python %S/Inputs/run-output.py --src %s | FileCheck %s
 // P04.04: println prints a pointer as Go does, `0x` and lowercase hex digits
 // without leading zeros. The address changes from run to run, so the shape
 // is checked, not the value. Both sides: `p == &x` is true and the two

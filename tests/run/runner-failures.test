@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py start-fail --work %t.d --programs %S/Inputs/runner
+// RUN: %python %S/Inputs/runner-scenarios.py link-error --work %t.d --programs %S/Inputs/runner
+// RUN: %python %S/Inputs/runner-scenarios.py compile-error --work %t.d --programs %S/Inputs/runner
+// P04.19 (D4.14): failures that are not the program's own. An executor that
+// does not start (no such program, one that ends at once, one that never says
+// it is ready) gives every program the same `internal` result in bounded time
+// (after three failed starts in a row no more are tried) and `gopp test-run`
+// exits 1; a JIT link error (undefined C functions, named in sorted order) and
+// a compile error are results of their program, and the others still run, on
+// the same executor.

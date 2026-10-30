@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py cleanup --signal INT --work %t.d --programs %S/Inputs/runner
+// P04.19 (R6): `gopp test-run` stopped by SIGINT (SIGTERM: runner-cleanup-term.test; a cancelled lit
+// run, `timeout`) removes the temporary directory of its objects and output
+// files and ends with 128 + the signal, with a program (loop.gopp) running.

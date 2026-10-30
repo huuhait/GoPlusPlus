@@ -1,0 +1,7 @@
+// RUN: %python %S/Inputs/check-job-key.py | FileCheck %s
+// P04.19 (manager decision M3): the key under which the batch of the run
+// tests keeps a program's result (tests/run/Inputs/runlib.py job_key) is a
+// hash of the sources (bytes, paths, file order), the gopp binary (size and
+// time stamp) and the protocol version. Both sides of each: unchanged, the
+// same key; changed, another key.
+// CHECK: job keys: all checks passed

@@ -1,0 +1,19 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp -r %S/Inputs/batch-suite %t/suite
+// RUN: env GOPP_R5_PROBE=1 %lit %t/suite -a -j 1 --order=lexical -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/exec 2>&1 | FileCheck %s
+// P04.19 (manager decision M3): the batch of the run tests, run by a nested
+// lit on Inputs/batch-suite (a copy, because a test changes a source). When
+// lit finds the tests, ONE `gopp test-run` runs the programs of both, keyed by
+// a hash of the sources, the gopp binary and the protocol version. same.test
+// takes its result from the batch. stale.test changes its program after the
+// batch ran: the key no longer matches, so it does not get the batch's stale
+// result ("old") but runs the new program alone ("new"). The key itself, side
+// by side for each of its parts, is runner-key.test.
+
+// CHECK-NOT: warning
+// CHECK: PASS: batch-suite :: run/same.test
+// CHECK: runlib: fast, from the batch
+// CHECK: PASS: batch-suite :: run/stale.test
+// CHECK: runlib: fast, alone
+// CHECK: Passed: 3

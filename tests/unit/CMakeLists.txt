@@ -32,14 +32,16 @@ add_executable(GoppUnitTests
   GIR/GlueTest.cpp
   CodeGen/CodeGenTest.cpp
   CodeGen/LayoutTest.cpp
-  CodeGen/OptionHashTest.cpp)
+  CodeGen/OptionHashTest.cpp
+  TestRun/TestRunTest.cpp)
 # The glue and Option hash tests run GIR in LLJIT.
 gopp_llvm_libs(_unit_llvm orcjit native support core target)
 target_link_libraries(GoppUnitTests PRIVATE
   ${_unit_llvm}
-  goppBasic goppLex goppAST goppParse goppSema goppMangle goppFormat goppBuild goppGIR goppCodeGen goppImport
+  goppBasic goppLex goppAST goppParse goppSema goppMangle goppFormat goppBuild goppGIR goppCodeGen goppImport goppTestRun
   GTest::gtest_main)
 target_compile_definitions(GoppUnitTests PRIVATE
+  GOPP_TEST_GOPP_BIN="$<TARGET_FILE:gopp>"
   GOPP_TEST_INPUTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Build/Inputs"
   GOPP_EXAMPLES_DIR="${GOPP_SOURCE_DIR}/docs/spec/examples"
   GOPP_CONFORMANCE_DIR="${GOPP_SOURCE_DIR}/tests/sema/conformance"
@@ -47,6 +49,9 @@ target_compile_definitions(GoppUnitTests PRIVATE
   GOPP_SPEC_DIR="${GOPP_SOURCE_DIR}/docs/spec"
   GOPP_FUZZ_SYMBOL_DIR="${GOPP_SOURCE_DIR}/tests/fuzz/symbol-corpus"
   GOPP_FUZZ_REGRESSIONS_DIR="${GOPP_SOURCE_DIR}/tests/fuzz/regressions")
+
+# The runner tests start `gopp test-exec`.
+add_dependencies(GoppUnitTests gopp)
 
 configure_file(lit.site.cfg.py.in lit.site.cfg.py @ONLY)
 

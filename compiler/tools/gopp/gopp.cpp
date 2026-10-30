@@ -30,8 +30,11 @@
 #include "gopp/Parse/Parser.h"
 #include "gopp/Sema/ExampleMocks.h"
 #include "gopp/Sema/Loader.h"
+#include "gopp/TestRun/Executor.h"
+#include "gopp/TestRun/Runner.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
@@ -43,6 +46,9 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+
+#include <algorithm>
+#include <random>
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -251,6 +257,76 @@ static cl::opt<std::string>
                    cl::desc("TEST ONLY: standard packages from this "
                             "directory"),
                    cl::sub(BuildCmd));
+
+static cl::SubCommand
+    TestRunCmd("test-run", "Compile many programs in this process and run "
+                           "them in executor processes (JIT); one JSON line "
+                           "of result per program");
+static cl::list<std::string>
+    TestRunInputs(cl::Positional, cl::desc("<program files or directories>"),
+                  cl::sub(TestRunCmd));
+static cl::opt<std::string>
+    TestRunManifest("manifest",
+                    cl::desc("JSON lines of jobs (id, inputs, target, "
+                             "timeout_ms); - is standard input"),
+                    cl::value_desc("file"), cl::sub(TestRunCmd));
+static cl::opt<std::string> TestRunOutput("o",
+                                          cl::desc("Results file (default: "
+                                                   "standard output)"),
+                                          cl::value_desc("file"),
+                                          cl::sub(TestRunCmd));
+static cl::opt<unsigned>
+    TestRunJobs("j", cl::desc("Compile threads (default: one per core)"),
+                cl::init(0), cl::sub(TestRunCmd));
+static cl::opt<unsigned> TestRunExecutors(
+    "executors",
+    cl::desc("Executor processes (default: a quarter of the cores, 2 to 16)"),
+    cl::init(0), cl::sub(TestRunCmd));
+static cl::opt<unsigned> TestRunTimeout("timeout-ms",
+                                        cl::desc("Run time limit of a program"),
+                                        cl::init(60000), cl::sub(TestRunCmd));
+static cl::opt<std::string>
+    TestRunWorkDir("work-dir",
+                   cl::desc("Keep objects and outputs here (default: a "
+                            "temporary directory, removed at the end)"),
+                   cl::sub(TestRunCmd));
+static cl::opt<uint64_t> TestRunMaxOutput(
+    "max-output",
+    cl::desc("Most bytes a program may write to one stream; past it the "
+             "program gets SIGXFSZ (0 = no limit)"),
+    cl::init(256ull << 20), cl::sub(TestRunCmd));
+static cl::opt<bool>
+    TestRunMergeOutput("merge-output",
+                       cl::desc("Standard output and error of every program "
+                                "in one stream, in the order written (2>&1)"),
+                       cl::sub(TestRunCmd));
+static cl::opt<bool> TestRunSummary("summary",
+                                    cl::desc("Print a summary to stderr"),
+                                    cl::sub(TestRunCmd));
+// Test hooks (tests/run/runner-failures.test, runner-determinism.test).
+static cl::opt<std::string>
+    TestRunExecutor("executor", cl::Hidden,
+                    cl::desc("TEST ONLY: start this program as the executor"),
+                    cl::sub(TestRunCmd));
+static cl::opt<unsigned> TestRunStartupTimeout(
+    "startup-timeout-ms", cl::Hidden,
+    cl::desc("TEST ONLY: how long an executor may take to start"),
+    cl::init(20000), cl::sub(TestRunCmd));
+static cl::opt<bool> TestRunShareExecutors(
+    "share-executors", cl::Hidden,
+    cl::desc("TEST ONLY: programs that keep C library state share executors "
+             "too"),
+    cl::init(false), cl::sub(TestRunCmd));
+static cl::opt<std::string>
+    TestRunSchedule("schedule", cl::Hidden,
+                    cl::desc("TEST ONLY: the order programs are compiled and "
+                             "run in: forward, reverse or shuffle:SEED"),
+                    cl::init("forward"), cl::sub(TestRunCmd));
+static cl::opt<std::string>
+    TestRunTestStubs("build-test-stubs", cl::Hidden,
+                     cl::desc("TEST ONLY: standard packages from this "
+                              "directory"),
+                     cl::sub(TestRunCmd));
 
 static cl::SubCommand GirCmd("gir", "Work with GIR files: gopp gir dump "
                                     "<file.girb>");
@@ -669,6 +745,113 @@ static int runBuild() {
   return finishBuild(What, SM, Diags, L, CP);
 }
 
+/// `gopp test-run`: P04.19. Exit status 0 when every program was run, whatever
+/// the programs did; 1 when the runner could not do its job (also for a
+/// program that got no executor: outcome "internal").
+static int runTestRun() {
+  std::vector<gopp::testrun::JobSpec> Jobs;
+  if (!TestRunManifest.empty()) {
+    auto M = gopp::testrun::readManifest(TestRunManifest);
+    if (!M) {
+      errs() << "gopp: error: test-run: " << toString(M.takeError()) << '\n';
+      return 1;
+    }
+    Jobs = std::move(*M);
+  }
+  StringSet<> Ids;
+  for (const gopp::testrun::JobSpec &J : Jobs)
+    Ids.insert(J.Id);
+  for (const std::string &P : TestRunInputs) {
+    if (!Ids.insert(P).second) {
+      errs() << "gopp: error: test-run: '" << P << "' is given twice\n";
+      return 1;
+    }
+    gopp::testrun::JobSpec J;
+    J.Id = P;
+    J.Inputs = {P};
+    Jobs.push_back(std::move(J));
+  }
+  if (Jobs.empty()) {
+    errs() << "gopp: error: test-run: no programs (give files or "
+              "-manifest)\n";
+    return 1;
+  }
+  if (TestRunMergeOutput)
+    for (gopp::testrun::JobSpec &J : Jobs)
+      J.MergeOutput = true;
+  // The order the programs are handed to the compile threads (results are
+  // the same in any order: runner-determinism.test).
+  StringRef Sched = TestRunSchedule;
+  if (Sched == "reverse") {
+    std::reverse(Jobs.begin(), Jobs.end());
+  } else if (Sched.consume_front("shuffle:")) {
+    unsigned Seed = 0;
+    if (Sched.getAsInteger(10, Seed)) {
+      errs() << "gopp: error: test-run: bad -schedule\n";
+      return 1;
+    }
+    std::mt19937 Rng(Seed);
+    std::shuffle(Jobs.begin(), Jobs.end(), Rng);
+  } else if (Sched != "forward") {
+    errs() << "gopp: error: test-run: bad -schedule\n";
+    return 1;
+  }
+  gopp::testrun::RunnerConfig Cfg;
+  Cfg.Self = TestRunExecutor.empty() ? SelfPath : TestRunExecutor.getValue();
+  Cfg.CompileThreads = TestRunJobs;
+  Cfg.Executors = TestRunExecutors;
+  Cfg.TimeoutMs = TestRunTimeout;
+  Cfg.StartupTimeoutMs = TestRunStartupTimeout;
+  Cfg.MaxOutputBytes = TestRunMaxOutput;
+  Cfg.ShareExecutors = TestRunShareExecutors;
+  Cfg.WorkDir = TestRunWorkDir;
+  Cfg.KeepWorkDir = !TestRunWorkDir.empty();
+  Cfg.Compile.StdRoot = TestRunTestStubs;
+
+  std::unique_ptr<raw_fd_ostream> File;
+  raw_ostream *Out = &outs();
+  if (!TestRunOutput.empty() && TestRunOutput != "-") {
+    std::error_code EC;
+    File = std::make_unique<raw_fd_ostream>(TestRunOutput, EC);
+    if (EC) {
+      errs() << "gopp: error: " << TestRunOutput << ": " << EC.message()
+             << '\n';
+      return 1;
+    }
+    Out = File.get();
+  }
+  using gopp::testrun::Outcome;
+  unsigned Counts[6] = {};
+  gopp::testrun::RunStats Stats;
+  llvm::Error E = gopp::testrun::runBatch(
+      Jobs, Cfg,
+      [&](gopp::testrun::JobResult &&R) {
+        ++Counts[unsigned(R.O)];
+        if (R.O == Outcome::Internal)
+          errs() << "gopp: error: test-run: " << R.Id << ": " << R.Message
+                 << '\n';
+        // One line at a time, so a reader sees results as they come.
+        *Out << gopp::testrun::encodeJobResult(R) << '\n';
+        Out->flush();
+      },
+      &Stats);
+  if (E) {
+    errs() << "gopp: error: test-run: " << toString(std::move(E)) << '\n';
+    return 1;
+  }
+  if (TestRunSummary) {
+    errs() << "test-run: " << Jobs.size()
+           << " programs: " << Counts[unsigned(Outcome::Exited)] << " exited, "
+           << Counts[unsigned(Outcome::Signaled)] << " signaled, "
+           << Counts[unsigned(Outcome::TimedOut)] << " timed out, "
+           << Counts[unsigned(Outcome::CompileFailed)] << " did not compile, "
+           << Counts[unsigned(Outcome::LoadFailed)] << " did not load, "
+           << Counts[unsigned(Outcome::Internal)] << " internal errors; "
+           << Stats.ProcessesStarted << " executor processes started\n";
+  }
+  return Counts[unsigned(Outcome::Internal)] ? 1 : 0;
+}
+
 /// `gopp gir dump file.girb`: the text form of a GIR bitstream.
 static int runGir() {
   if (GirArgs.size() != 2 || GirArgs[0] != "dump") {
@@ -865,6 +1048,11 @@ static int runFmt() {
 }
 
 int main(int argc, char **argv) {
+  // `gopp test-exec` is an executor process of `gopp test-run` (P04.19). It
+  // runs programs, so it starts before InitLLVM: that would install crash
+  // handlers that print a trace and change how a program's crash looks.
+  if (argc == 2 && StringRef(argv[1]) == "test-exec")
+    gopp::testrun::runExecutor(gopp::testrun::ExecutorControlFd);
   InitLLVM X(argc, argv);
   SelfPath = sys::fs::getMainExecutable(argv[0],
                                         reinterpret_cast<void *>(&runVersion));
@@ -898,6 +1086,8 @@ int main(int argc, char **argv) {
     return runCheck(true);
   if (BuildCmd)
     return runBuild();
+  if (TestRunCmd)
+    return runTestRun();
   if (GirCmd)
     return runGir();
   if (ExplainCmd)

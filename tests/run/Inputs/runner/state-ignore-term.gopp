@@ -1,0 +1,12 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): ignores SIGTERM. killself.gopp after
+// it in the same executor must still end with SIGTERM.
+package main
+
+@Extern("C")
+func signal(sig int32, handler uintptr) uintptr
+
+func main() {
+	signal(15, 1) // SIG_IGN
+	println("SIGTERM ignored")
+}

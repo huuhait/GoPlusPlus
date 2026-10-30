@@ -1,0 +1,11 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): the working directory.
+package main
+
+@Extern("C")
+func chdir(path *byte) int32
+
+func main() {
+	p := [2]byte{'/', 0}
+	println("chdir", chdir(&p[0]))
+}

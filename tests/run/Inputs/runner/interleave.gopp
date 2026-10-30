@@ -1,0 +1,21 @@
+// EXPECT: exit 0
+// Standard output and error alternate; with one file for both (2>&1) the
+// bytes arrive in the order they were written.
+package main
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func main() {
+	o := [2]byte{'o', '\n'}
+	e := [2]byte{'E', '\n'}
+	for i := 0; i < 300; i++ {
+		write(1, &o[0], 2)
+		write(2, &e[0], 2)
+		if i%7 == 0 {
+			println("p", i)
+		}
+	}
+	t := [5]byte{'t', 'a', 'i', 'l', '!'}
+	write(2, &t[0], 5)
+}

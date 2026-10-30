@@ -1,12 +1,8 @@
 // REQUIRES: long, host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/float_float32.gopp -o %t.float32
-// RUN: %python %S/Inputs/run-golden.py %t.float32 %S/Inputs/diff/float_float32.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/float_float64.gopp -o %t.float64
-// RUN: %python %S/Inputs/run-golden.py %t.float64 %S/Inputs/diff/float_float64.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/complex_complex64.gopp -o %t.complex64
-// RUN: %python %S/Inputs/run-golden.py %t.complex64 %S/Inputs/diff/complex_complex64.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/complex_complex128.gopp -o %t.complex128
-// RUN: %python %S/Inputs/run-golden.py %t.complex128 %S/Inputs/diff/complex_complex128.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/float_float32.gopp %S/Inputs/diff/float_float32.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/float_float64.gopp %S/Inputs/diff/float_float64.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/complex_complex64.gopp %S/Inputs/diff/complex_complex64.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/complex_complex128.gopp %S/Inputs/diff/complex_complex128.out
 // P04.04 differential table (D4.12): float32, float64, complex64 and complex128, hundreds
 // of expressions per type over its edge values. The programs and their
 // expected output come from Inputs/gen-diff.py: Inputs/diff/NAME.out is what

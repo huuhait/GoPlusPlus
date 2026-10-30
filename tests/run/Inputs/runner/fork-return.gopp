@@ -1,0 +1,18 @@
+// EXPECT: exit 0
+// REAL: no
+// Forks; parent and child both return from main. The child must end there and
+// never take part in the executor's talk with the pool: the programs after
+// this one in the same executor get their own results (P04.19, M2). Which of
+// the two writes first is not fixed, so the output is not compared.
+package main
+
+@Extern("C")
+func fork() int32
+
+func main() {
+	if fork() == 0 {
+		println("child")
+	} else {
+		println("parent")
+	}
+}

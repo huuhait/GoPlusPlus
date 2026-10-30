@@ -2,7 +2,8 @@
 """D0.13 gate: fail if the test suite got slower than the committed baseline.
 
 Runs lit on the given test directories several times. The measure is the SUM of
-the per-test times (total test work), not the wall clock: tests run in
+the per-test times (total test work) plus the CPU time of the run tests' batch
+runner (tests/lit.cfg.py), not the wall clock: tests run in
 parallel, so a new test would hide behind the slowest one in the wall time. The
 minimum over the runs filters machine noise. Fails when
   * that time is more than --tolerance (default 10%) above the baseline, or
@@ -25,17 +26,27 @@ import tempfile
 def run_lit(lit, jobs, dirs):
     with tempfile.TemporaryDirectory() as tmp:
         out = os.path.join(tmp, "results.json")
+        stats = os.path.join(tmp, "fastrun.json")
+        # tests/lit.cfg.py runs the programs of the run tests in one batch
+        # before the tests start (P04.19) and writes the CPU time of that
+        # batch here; the tests themselves then only compare results.
         proc = subprocess.run(
             [lit, "-j", str(jobs), "-q", "-o", out] + dirs,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=dict(os.environ, GOPP_FASTRUN_STATS=stats),
         )
         if proc.returncode != 0:
             sys.stdout.write(proc.stdout)
             sys.exit("error: the test suite failed; timing is meaningless")
         with open(out) as f:
-            return json.load(f)
+            data = json.load(f)
+        data["batch_cpu"] = 0.0
+        if os.path.exists(stats):
+            with open(stats) as f:
+                data["batch_cpu"] = json.load(f)["cpu_seconds"]
+        return data
 
 
 def main():
@@ -61,7 +72,8 @@ def main():
         best = None
         for _ in range(args.runs):
             data = run_lit(args.lit, args.jobs, args.dirs)
-            data["work"] = sum(t["elapsed"] for t in data["tests"])
+            data["work"] = (sum(t["elapsed"] for t in data["tests"])
+                            + data["batch_cpu"])
             if best is None or data["work"] < best["work"]:
                 best = data
     else:

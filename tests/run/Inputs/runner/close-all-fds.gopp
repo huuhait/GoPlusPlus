@@ -1,0 +1,13 @@
+// EXPECT: exit 0
+// Closes every descriptor above 2, the executor's socket to the pool too. A
+// binary does not mind; the executor cannot answer any more, so it leaves
+// with the status main returned, which is the program's result (P04.19, M2).
+package main
+
+@Extern("C")
+func close_range(first uint32, last uint32, flags int32) int32
+
+func main() {
+	println("closing every descriptor above 2")
+	println("close_range", close_range(3, 4294967295, 0))
+}

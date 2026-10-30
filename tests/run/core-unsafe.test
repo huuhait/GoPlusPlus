@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-unsafe.out 0
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-unsafe.out 0
 // unsafe.Sizeof, Alignof, Offsetof and unsafe.Pointer conversions
 // The expected output is what `go run` prints for this very file
 // (Inputs/regen-goldens.py); core-arm64.long.test runs it for linux/arm64.

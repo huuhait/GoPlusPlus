@@ -1,0 +1,5 @@
+// RUN: cp %S/../prog/new.gopp %S/../prog/stale.gopp
+// RUN: %python %inputs/run-golden.py --src %S/../prog/stale.gopp %S/../prog/new.out
+// The program is batched when lit finds this test (it prints "old"), then
+// changed before it runs: its key is not the batch's any more, so the test
+// runs the new program alone and gets "new".

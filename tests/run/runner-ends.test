@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-check.py --work %t.d %S/Inputs/runner --names abort,exit7,killself,panic2,recurse,segv,stdio-exit,stdio-return,close-all-fds,counter,quiet
+// P04.19 (D4.14): the ways a program can end. In the fast runner a crash, an
+// abort, a signal it sends itself, exit(n), a panic, a stack overflow and a
+// normal return each end the executor process, or not, and the program's
+// result is recorded: the status, the standard output and the standard error
+// are the bytes of a real binary built from the same file (C's buffered
+// stream included: flushed by exit and by the return from main). A program
+// that closes every descriptor above 2 (the executor's own too) still gets
+// its own status: the executor leaves with it. The programs
+// are in Inputs/runner; each says what it must do in its `// EXPECT:` line.

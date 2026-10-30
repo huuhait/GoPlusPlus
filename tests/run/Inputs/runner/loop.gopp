@@ -1,0 +1,9 @@
+// EXPECT: timeout
+// TIMEOUT: 400
+// REAL: no
+package main
+
+func main() {
+	for {
+	}
+}

@@ -1,0 +1,3 @@
+// RUN: %python %inputs/run-golden.py --src %S/../prog/same.gopp %S/../prog/same.out
+// The program is batched when lit finds this test, and is not changed after:
+// the test takes its result from the batch.

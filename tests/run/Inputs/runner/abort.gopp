@@ -1,0 +1,10 @@
+// EXPECT: signal 6
+package main
+
+@Extern("C")
+func abort()
+
+func main() {
+	println("before abort")
+	abort()
+}

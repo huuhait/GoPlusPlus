@@ -1,49 +1,52 @@
 #!/usr/bin/env python3
-"""Builds and runs the panic programs of Inputs/panics/ and checks each one.
+"""Runs the panic programs of Inputs/panics/ and checks each one.
 
-usage: run-panics.py DIR [--names a,b,...] [--qemu SYSROOT] -- BUILD_COMMAND...
+usage: run-panics.py DIR [--names a,b,...] [--real]
+       run-panics.py DIR [--names a,b,...] --qemu SYSROOT -- BUILD_COMMAND...
 
-For every NAME.gopp in DIR (or only the --names): BUILD_COMMAND FILE -o EXE
-builds it; running EXE must give exit status 2, the standard output of
-NAME.out, and a standard error whose first line is NAME.err (Go's first line,
-D4.12: "panic: runtime error: ..."). With --qemu the executable is for
-linux/arm64 and runs under qemu-aarch64.
+For every NAME.gopp in DIR (or only the --names): running it must give exit
+status 2, the standard output of NAME.out, and a standard error whose first
+line is NAME.err (Go's first line, D4.12: "panic: runtime error: ...").
+
+The first form compiles and runs the programs with the fast runner
+(runlib.py), or as real binaries with --real. The second builds real
+binaries with BUILD_COMMAND FILE -o EXE; with --qemu the executables are for
+linux/arm64 and run under qemu-aarch64.
 """
 import os
 import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runlib  # noqa: E402
+
 argv = sys.argv[1:]
-dash = argv.index("--")
-build = argv[dash + 1:]
-opts = argv[:dash]
-d = opts[0]
-names = None
-qemu = []
-i = 1
-while i < len(opts):
-    if opts[i] == "--names":
-        names = opts[i + 1].split(",")
-        i += 2
-    elif opts[i] == "--qemu":
-        qemu = ["qemu-aarch64", "-L", opts[i + 1]]
-        i += 2
-    else:
-        sys.exit("bad option " + opts[i])
-if names is None:
-    names = sorted(f[:-5] for f in os.listdir(d) if f.endswith(".gopp"))
+build = None
+if "--" in argv:
+    dash = argv.index("--")
+    build = argv[dash + 1:]
+    argv = argv[:dash]
+opts, pos = runlib.split_args(argv)
+d = pos[0]
+programs = runlib.panic_programs(d, opts["names"])
+prefix = ["qemu-aarch64", "-L", opts["qemu"]] if opts["qemu"] else []
 fails = []
 with tempfile.TemporaryDirectory() as tmp:
-    for n in names:
-        exe = os.path.join(tmp, n)
-        b = subprocess.run(build + [os.path.join(d, n + ".gopp"), "-o", exe],
-                           capture_output=True, timeout=60)
-        if b.returncode != 0:
-            fails.append("%s: build failed: %s" % (n, b.stderr[:300]))
+    for n, src in programs:
+        if build is None:
+            r = runlib.run_sources([src], real=opts["real"])
+        else:
+            exe = os.path.join(tmp, n)
+            b = subprocess.run(build + [src, "-o", exe], capture_output=True,
+                               timeout=60)
+            if b.returncode != 0:
+                fails.append("%s: build failed: %s" % (n, b.stderr[:300]))
+                continue
+            r = runlib.run_exe(exe, prefix)
+        if r.failure():
+            fails.append("%s: %s" % (n, r.failure()))
             continue
-        r = subprocess.run(qemu + [exe], stdin=subprocess.DEVNULL,
-                           capture_output=True, timeout=60)
         want_out = open(os.path.join(d, n + ".out"), "rb").read()
         want_err = open(os.path.join(d, n + ".err"), "rb").read()
         first = r.stderr.split(b"\n")[0] + b"\n"

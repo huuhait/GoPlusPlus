@@ -1,0 +1,24 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp -r %S/Inputs/batch-suite %t/exit
+// RUN: %lit %t/exit -a -j 1 --order=lexical -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/exit-out -Dfastrun_batch_gopp=false 2>&1 | FileCheck --check-prefixes=EXIT,CHECK %s
+// RUN: cp -r %S/Inputs/batch-suite %t/missing
+// RUN: %lit %t/missing -a -j 1 --order=lexical -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/missing-out -Dfastrun_batch_gopp=%t/no-such-gopp 2>&1 | FileCheck --check-prefixes=MISSING,CHECK %s
+// RUN: cp -r %S/Inputs/batch-suite %t/garbage
+// RUN: %lit %t/garbage -a -j 1 --order=lexical -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/garbage-out "-Dfastrun_batch_gopp=%python %S/Inputs/batch-suite/fake-batch.py" 2>&1 | FileCheck --check-prefixes=GARBAGE,CHECK %s
+// P04.19 (manager decision M3): when the batch of the run tests fails, lit
+// says so and every test runs its program alone, with the same result. The
+// batch is made to fail three ways (the TEST ONLY lit parameter
+// fastrun_batch_gopp runs another command in place of gopp): it exits with
+// status 1, it cannot be started, and it exits 0 but leaves results that are
+// not results. No test takes anything from such a batch.
+
+// EXIT: warning: the batch run of the run tests failed (exit status 1{{.*}}); each test runs its program alone
+// MISSING: warning: the batch run of the run tests failed ({{.*}}no-such-gopp{{.*}}); each test runs its program alone
+// GARBAGE: warning: the batch run of the run tests failed (unreadable results: {{.*}}); each test runs its program alone
+// CHECK: PASS: batch-suite :: run/same.test
+// CHECK: runlib: fast, alone
+// CHECK: PASS: batch-suite :: run/stale.test
+// CHECK: runlib: fast, alone
+// CHECK-NOT: from the batch
+// CHECK: Passed: 3

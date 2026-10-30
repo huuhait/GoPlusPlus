@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-expect.py %t.exe 0 %S/Inputs/eval-order.out
+// RUN: %python %S/Inputs/run-expect.py --src %s 0 %S/Inputs/eval-order.out
 // P04.02: Go evaluates every operand of println before it prints anything,
 // left to right: the calls print their lines first, then println prints the
 // results.

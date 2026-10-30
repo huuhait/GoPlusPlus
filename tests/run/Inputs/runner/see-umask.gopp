@@ -1,0 +1,12 @@
+// EXPECT: exit 0
+// Prints the file creation mask.
+package main
+
+@Extern("C")
+func umask(mask uint32) uint32
+
+func main() {
+	old := umask(18)
+	umask(old)
+	println("umask", old)
+}

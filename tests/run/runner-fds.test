@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py fds --work %t.d --programs %S/Inputs/runner
+// P04.19 (R2): with the descriptor limit at 1024, a program opens more than
+// 900 files and leaves them open; the executor closes every descriptor from 3
+// up that is not its own (the gap below 900 and the ones above its four), so
+// the next program opens exactly as many (1017). A binary opens 4 more
+// (1021): the executor holds a socket, a /dev/null and its own stdout and
+// stderr at 900 to 903 (docs/design/test-runner.md).

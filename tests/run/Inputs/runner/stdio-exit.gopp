@@ -1,0 +1,16 @@
+// EXPECT: exit 5
+// C's buffered stream: exit flushes it, in a binary and here.
+package main
+
+@Extern("C")
+func exit(code int32)
+
+@Extern("C")
+func puts(s *byte) int32
+
+func main() {
+	msg := [12]byte{'b', 'u', 'f', 'f', 'e', 'r', 'e', 'd', ' ', 'c', '\n', 0}
+	puts(&msg[0])
+	println("written first")
+	exit(5)
+}

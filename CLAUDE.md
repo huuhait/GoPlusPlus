@@ -47,6 +47,7 @@ A task is not done until:
   - Test (one file): `nix develop -c lit -sv build/tests/driver/version.test` (lit test), or `nix develop -c build/bin/GoppUnitTests --gtest_filter='HostToolchain.*'` (unit tests)
   - Lint/format: `nix develop -c ninja -C build format-check` (fix with `... format`); header rule: `... check-includes`
   - Suite-time gate: `nix develop -c ninja -C build check-suite-time` (fails if >10% slower than `tests/suite-time-baseline.json`; refresh with `nix develop -c ninja -C build check-suite-time-update`, key from `-DGOPP_SUITE_TIME_KEY`, default `dev`)
+  - Run tests (`tests/run`) run their programs through the fast runner (`gopp test-run`: batch compile, JIT in executor processes; `docs/design/test-runner.md`). Real binaries instead: `nix develop -c ninja -C build check-run-real` (or `lit -Dreal_binaries=1 ...`, or `GOPP_FAST_RUN=0`), or `--real` in one RUN line.
   - Run locally: `nix develop -c build/bin/gopp version` (also `gopp host-toolchain`)
   - Assertions-enabled LLVM (compiles LLVM/Clang/LLD from source the first time): `nix develop .#assertions -c ...` with its own build dir, e.g. `-B build-assert`
 

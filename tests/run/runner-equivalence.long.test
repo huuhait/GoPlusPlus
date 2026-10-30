@@ -1,0 +1,18 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/compare-runner.py --scale 1,4 | FileCheck %s
+// RUN: %python %S/Inputs/check-scaling.py | FileCheck --check-prefix=SCALE %s
+// P04.19 (D4.14): the whole run corpus (every program of tests/run, the
+// panic and differential programs, the multi-file ones) runs once through
+// ONE `gopp test-run` and once as real binaries; the outcome (status or
+// signal), standard output and standard error must be equal byte for byte
+// (an address a program prints is masked: a stack is in another place in the
+// executor). It prints both times. The second command checks that the
+// cost per program stays the same as the corpus grows 1x, 4x, 16x (CPU time,
+// best of two), after a control: a child whose work is quadratic in its size,
+// measured the same way, must fail the same check.
+
+// CHECK: fast runner: {{.*}} wall
+// CHECK: real binaries: {{.*}} wall
+// CHECK: all {{[0-9]+}} results equal, byte for byte
+// SCALE: control: a quadratic child grows by {{.*}} (must be over 2.0)
+// SCALE: cost per program grows by {{.*}} (limit 2.0)

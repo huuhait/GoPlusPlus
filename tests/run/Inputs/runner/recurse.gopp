@@ -1,0 +1,14 @@
+// EXPECT: signal 11
+// A stack overflow ends the program with SIGSEGV, in a binary and here.
+package main
+
+func down(n int) int {
+	var pad [64]int
+	pad[n%64] = n
+	return down(n+1) + pad[(n+1)%64]
+}
+
+func main() {
+	println("start")
+	println(down(0))
+}

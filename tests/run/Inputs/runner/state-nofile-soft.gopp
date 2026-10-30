@@ -1,0 +1,17 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): lowers the soft limit of open files
+// (RLIMIT_NOFILE, 7 on Linux), which the executor can raise again.
+package main
+
+@Extern("C")
+func getrlimit(resource int32, limits *[2]uint64) int32
+
+@Extern("C")
+func setrlimit(resource int32, limits *[2]uint64) int32
+
+func main() {
+	var l [2]uint64
+	getrlimit(7, &l)
+	l[0] = 64
+	println("setrlimit", setrlimit(7, &l))
+}

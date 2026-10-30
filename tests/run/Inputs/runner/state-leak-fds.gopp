@@ -1,0 +1,10 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): leaves two descriptors open.
+package main
+
+@Extern("C")
+func dup(fd int32) int32
+
+func main() {
+	println("opened", dup(0), dup(0))
+}

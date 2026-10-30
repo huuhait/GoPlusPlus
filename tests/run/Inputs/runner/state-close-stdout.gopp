@@ -1,0 +1,13 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): closes standard output. The next
+// program in the same executor must print normally.
+package main
+
+@Extern("C")
+func close(fd int32) int32
+
+func main() {
+	println("closing standard output")
+	close(1)
+	println("lost")
+}

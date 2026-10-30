@@ -1,0 +1,10 @@
+// EXPECT: exit 0
+// The program after rand-a: the same numbers as its own binary gives.
+package main
+
+@Extern("C")
+func rand() int32
+
+func main() {
+	println("b", rand(), rand())
+}

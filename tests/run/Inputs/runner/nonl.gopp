@@ -1,0 +1,13 @@
+// EXPECT: exit 0
+// Output with no newline at the end, on both streams.
+package main
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func main() {
+	a := [3]byte{'a', 'b', 'c'}
+	write(1, &a[0], 3)
+	b := [4]byte{'e', 'r', 'r', '!'}
+	write(2, &b[0], 4)
+}

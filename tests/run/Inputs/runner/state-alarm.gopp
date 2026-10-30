@@ -1,0 +1,12 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): an alarm 50 ms from now. A binary
+// ends before it rings; a later program in the same executor must not get it.
+package main
+
+@Extern("C")
+func ualarm(usecs uint32, interval uint32) uint32
+
+func main() {
+	ualarm(50000, 0)
+	println("alarm set")
+}

@@ -1,5 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names div-int,shift-left,index-array,index-after-output,assign-order-call,assign-order-tuple -- %gopp build %gopp_link_flags
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names div-int,shift-left,index-array,index-after-output,assign-order-call,assign-order-tuple
 // P04.04 (D4.12, ADR-0028 rule 3.3): a failed check ends the program with
 // exit status 2 and Go's first line on standard error ("panic: runtime
 // error: ..."), after the output that came before. Division and shift

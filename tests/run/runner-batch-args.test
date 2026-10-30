@@ -1,0 +1,17 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp -r %S/Inputs/batch-suite %t/suite
+// RUN: %lit %t/suite -a -j 12 --order=lexical -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/exec "-Dfastrun_batch_gopp=%python %S/Inputs/batch-suite/record-args.py %t/args.txt %gopp" 2>&1 | FileCheck --check-prefix=LIT %s
+// RUN: FileCheck --input-file=%t/args.txt %s
+// RUN: %python %S/Inputs/runner-scenarios.py batch-workdir --work %t/exec --programs %t/args.txt
+// RUN: %lit %t/suite --show-tests -j 12 -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/exec2 "-Dfastrun_batch_gopp=%python %S/Inputs/batch-suite/record-args.py %t/args2.txt %gopp" 2>&1 | FileCheck --check-prefix=LIST %s
+// RUN: %python -c "import os,sys; sys.exit(os.path.exists(sys.argv[1]))" %t/args2.txt
+// P04.19 (R6, R7): the batch of the run tests is told how much of the machine
+// lit has (lit's -j 12: 12 compile threads, 3 executors, a quarter), keeps its
+// files in a directory inside lit's own output that is removed when the batch
+// ends (also when gopp was killed: lit removes it), and caps one output
+// stream at 16 MiB. Listing the tests (--show-tests) runs no batch.
+
+// LIT: Passed: 3
+// CHECK: test-run -manifest {{.*}}manifest.jsonl -o {{.*}}results.jsonl -work-dir {{.*}}/work -j 12 -executors 3 -max-output 16777216
+// LIST: run/same.test

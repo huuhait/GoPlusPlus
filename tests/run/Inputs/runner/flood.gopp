@@ -1,0 +1,10 @@
+// EXPECT: signal 25
+// REAL: no
+// Output without end: the output limit ends the program (SIGXFSZ).
+package main
+
+func main() {
+	for i := 0; ; i++ {
+		println("flood", i)
+	}
+}

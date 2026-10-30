@@ -1,0 +1,12 @@
+// EXPECT: signal 11
+package main
+
+import "unsafe"
+
+func main() {
+	println("before the crash")
+	var a uintptr = 8
+	p := (*int)(unsafe.Pointer(a))
+	*p = 1
+	println("not reached")
+}

@@ -1,0 +1,16 @@
+// EXPECT: signal 15
+// A signal the program sends itself ends it; "survived" shows that a
+// disposition left by an earlier program in the same executor leaked.
+package main
+
+@Extern("C")
+func getpid() int32
+
+@Extern("C")
+func kill(pid int32, sig int32) int32
+
+func main() {
+	println("before kill")
+	kill(getpid(), 15)
+	println("survived SIGTERM")
+}

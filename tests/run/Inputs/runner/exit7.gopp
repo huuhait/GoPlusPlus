@@ -1,0 +1,11 @@
+// EXPECT: exit 7
+package main
+
+@Extern("C")
+func exit(code int32)
+
+func main() {
+	println("bye")
+	exit(7)
+	println("not reached")
+}

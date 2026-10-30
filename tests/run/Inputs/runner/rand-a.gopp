@@ -1,0 +1,11 @@
+// EXPECT: exit 0
+// Keeps C library state (P04.19, R1): rand's generator moves on. A later
+// program must get the first numbers again, as in a binary of its own.
+package main
+
+@Extern("C")
+func rand() int32
+
+func main() {
+	println("a", rand(), rand())
+}

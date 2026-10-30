@@ -1,10 +1,7 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init-order/a.gopp %S/Inputs/core-init-order/b.gopp %S/Inputs/core-init-order/c.gopp -o %t.abc
-// RUN: %python %S/Inputs/run-golden.py %t.abc %S/golden/core-init-order.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init-order/c.gopp %S/Inputs/core-init-order/b.gopp %S/Inputs/core-init-order/a.gopp -o %t.cba
-// RUN: %python %S/Inputs/run-golden.py %t.cba %S/golden/core-init-order-cba.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/core-init-order -o %t.dir
-// RUN: %python %S/Inputs/run-golden.py %t.dir %S/golden/core-init-order.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/core-init-order/a.gopp --src %S/Inputs/core-init-order/b.gopp --src %S/Inputs/core-init-order/c.gopp %S/golden/core-init-order.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/core-init-order/c.gopp --src %S/Inputs/core-init-order/b.gopp --src %S/Inputs/core-init-order/a.gopp %S/golden/core-init-order-cba.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/core-init-order %S/golden/core-init-order.out
 // ORDER: cba c.gopp b.gopp a.gopp
 // P04.04: package variables and the order they start in. The three files of
 // Inputs/core-init-order depend on each other's variables (also through

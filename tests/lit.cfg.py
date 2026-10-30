@@ -5,6 +5,10 @@ import sys
 
 import lit.formats
 
+# tests/lit_gopp_format.py: the test format class lives in a module, because lit
+# pickles it for its worker processes.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 config.name = "Go++"
 config.test_format = lit.formats.ShTest(execute_external=False)
 config.suffixes = [".test", ".gopp"]
@@ -103,10 +107,18 @@ def host_link_flags():
         return ""
     return "-crt-dir=%s -dynamic-linker=%s" % (os.path.dirname(crt1), ld)
 
-config.substitutions.append(("%gopp_link_flags", host_link_flags()))
+_link_flags = host_link_flags()
+config.substitutions.append(("%gopp_link_flags", _link_flags))
+# For the run scripts (tests/run/Inputs/runlib.py).
+config.environment["GOPP_LINK_FLAGS"] = _link_flags
+config.environment["GOPP"] = os.path.join(config.gopp_tools_dir, "gopp")
 
 # For test inputs that are generated (too big or too repetitive to check in).
 config.substitutions.append(("%python", sys.executable))
+# A nested lit, for the tests of this suite's own test format (the batch of
+# the run tests: tests/run/runner-batch*.test).
+config.substitutions.append(
+    ("%lit", '%s -c "from lit.main import main; main()"' % sys.executable))
 config.substitutions.append(("%gopp_unit_tests", os.path.join(config.gopp_tools_dir, "GoppUnitTests")))
 config.substitutions.append(("%gopp", os.path.join(config.gopp_tools_dir, "gopp")))
 # The spec examples (docs/spec/examples/<name>/main.gopp) must always parse.
@@ -119,3 +131,30 @@ config.substitutions.append(
 if config.llvm_lib_dirs.strip():
     config.available_features.add("shared-llvm")
 config.substitutions.append(("%llvm_lib_dirs", config.llvm_lib_dirs))
+
+# The fast runner for the run tests (P04.19, D4.14). The run scripts
+# (tests/run/Inputs/run-*.py) take their program as `--src` and run it through
+# `gopp test-run`: compiled in one process, run in an ORC JIT in an executor
+# process, no link. Before the tests of tests/run start, ONE `gopp test-run`
+# compiles and runs the programs of all of them on every core; each test then
+# reads its program's result (same stdout, stderr and exit status as a real
+# binary) from $GOPP_FASTRUN_DIR. A test run alone runs its own program the
+# same way, and so does every test when the batch fails (a warning says so).
+# Switches back to real binaries (`gopp build` + exec):
+#   lit -Dreal_binaries=1 ...     all tests (`ninja check-run-real`)
+#   GOPP_FAST_RUN=0               same, from the environment
+#   --real in a test's RUN line   that one test
+# -Dfastrun_batch_gopp=CMD (TEST ONLY) runs the batch with CMD in place of
+# gopp, to make it fail (tests/run/runner-batch-fallback.test).
+if lit_config.params.get("real_binaries") or os.environ.get("GOPP_FAST_RUN") == "0":
+    config.environment["GOPP_TEST_REAL"] = "1"
+
+
+import lit_gopp_format  # noqa: E402  (tests/lit_gopp_format.py)
+
+config.test_format = lit_gopp_format.GoppTestFormat(
+    source_dir=config.gopp_source_dir,
+    binary_dir=config.gopp_binary_dir,
+    tools_dir=config.gopp_tools_dir,
+    run_long=bool(lit_config.params.get("run_long")),
+)

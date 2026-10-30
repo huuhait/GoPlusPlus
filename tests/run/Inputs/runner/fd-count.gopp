@@ -1,0 +1,29 @@
+// EXPECT: exit 0
+// REAL: no
+// Opens /dev/null until it cannot and leaves every descriptor open (P04.19,
+// R2): how many a program can open, and what the next program finds left.
+// Not compared with a binary by the corpus: the executor holds 4 descriptors,
+// so the count differs by 4 (runner-fds.test checks exactly that).
+package main
+
+@Extern("C")
+func open(path *byte, flags int32, mode int32) int32
+
+func main() {
+	p := [10]byte{'/', 'd', 'e', 'v', '/', 'n', 'u', 'l', 'l', 0}
+	n := 0
+	first := int32(-1)
+	last := int32(0)
+	for i := 0; i < 3000; i++ {
+		fd := open(&p[0], 0, 0)
+		if fd < 0 {
+			break
+		}
+		if first < 0 {
+			first = fd
+		}
+		last = fd
+		n++
+	}
+	println("opened", n, "first", first, "last", last)
+}

@@ -1,0 +1,10 @@
+// EXPECT: exit 0
+// The lowest free descriptor: 3 in a binary started with 0, 1 and 2 only.
+package main
+
+@Extern("C")
+func dup(fd int32) int32
+
+func main() {
+	println("first free descriptor", dup(0))
+}

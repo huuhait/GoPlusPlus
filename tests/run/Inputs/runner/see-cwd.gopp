@@ -1,0 +1,19 @@
+// EXPECT: exit 0
+// Prints the working directory.
+package main
+
+@Extern("C")
+func getcwd(buf *byte, size uint) uintptr
+
+@Extern("C")
+func strlen(s *byte) uint
+
+@Extern("C")
+func write(fd int32, p *byte, n uint) int
+
+func main() {
+	var buf [4096]byte
+	getcwd(&buf[0], 4096)
+	write(1, &buf[0], strlen(&buf[0]))
+	println()
+}

@@ -1,0 +1,17 @@
+// EXPECT: exit 0
+// Starts a thread (P04.19, R1) that runs C's `pause` for ever (the address
+// comes from dlsym: Go++ cannot pass a function to C yet). Its executor has a
+// thread of this program's left: it must end with the program.
+package main
+
+@Extern("C")
+func dlsym(handle uint64, name *byte) *byte
+
+@Extern("C")
+func pthread_create(t *uint64, attr uint64, fn *byte, arg uint64) int32
+
+func main() {
+	var t uint64
+	name := [6]byte{'p', 'a', 'u', 's', 'e', 0}
+	println("thread", pthread_create(&t, 0, dlsym(0, &name[0]), 0))
+}

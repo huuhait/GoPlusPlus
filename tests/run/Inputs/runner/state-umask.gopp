@@ -1,0 +1,11 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): the file creation mask.
+package main
+
+@Extern("C")
+func umask(mask uint32) uint32
+
+func main() {
+	umask(63) // 0o77
+	println("umask set")
+}

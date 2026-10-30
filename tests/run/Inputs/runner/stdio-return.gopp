@@ -1,0 +1,12 @@
+// EXPECT: exit 0
+// C's buffered stream is flushed when main returns.
+package main
+
+@Extern("C")
+func puts(s *byte) int32
+
+func main() {
+	msg := [10]byte{'v', 'i', 'a', ' ', 'p', 'u', 't', 's', '\n', 0}
+	puts(&msg[0])
+	println("direct")
+}

@@ -1,0 +1,18 @@
+// EXPECT: load-failed
+// REAL: no
+// Three missing C functions: the message names them sorted, whatever order
+// the JIT finds them in.
+package main
+
+@Extern("C")
+func zz_missing_b() int32
+
+@Extern("C")
+func aa_missing_a() int32
+
+@Extern("C")
+func mm_missing_c() int32
+
+func main() {
+	println(aa_missing_a(), zz_missing_b(), mm_missing_c())
+}

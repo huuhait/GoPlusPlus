@@ -1,0 +1,16 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-check.py --work %t.d/rand %S/Inputs/runner --sequence rand-a,rand-b --expect-starts 2
+// RUN: %python %S/Inputs/runner-check.py --work %t.d/pure %S/Inputs/runner --sequence ok,ok2,counter,quiet,ok --expect-starts 1
+// RUN: %python %S/Inputs/runner-check.py --work %t.d/thread %S/Inputs/runner --sequence thread,ok,ok2 --expect-starts 2 -- -share-executors
+// RUN: not %python %S/Inputs/runner-check.py --work %t.d/shared %S/Inputs/runner --sequence rand-a,rand-b --expect-starts 1 -- -share-executors
+// P04.19 (R1): a reused executor must not leak C library state. `rand-a` then
+// `rand-b`: rand-b gives what its own binary gives (the generator starts
+// anew), because a program that calls a function off the allowlist (see
+// docs/design/test-runner.md) never shares its executor: 2 processes. A row
+// of pure programs (write/exit only) does share one: exactly 1 process.
+// A program that starts a thread ends its executor even when sharing is
+// forced (-share-executors, TEST ONLY): 2 processes for thread, ok, ok2.
+// The last line is the control: with sharing forced, rand-a and rand-b share
+// one process and runner-check.py fails (`not`): rand-b differs from its real
+// binary. So the first check is not passing by chance.

@@ -1,0 +1,19 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): lowers the hard limit of open files,
+// which no unprivileged process can raise again: the executor asks the pool
+// for a new process.
+package main
+
+@Extern("C")
+func getrlimit(resource int32, limits *[2]uint64) int32
+
+@Extern("C")
+func setrlimit(resource int32, limits *[2]uint64) int32
+
+func main() {
+	var l [2]uint64
+	getrlimit(7, &l)
+	l[0] = 64
+	l[1] = 64
+	println("setrlimit", setrlimit(7, &l))
+}

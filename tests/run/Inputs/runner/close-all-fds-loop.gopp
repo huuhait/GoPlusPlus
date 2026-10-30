@@ -1,0 +1,18 @@
+// EXPECT: timeout
+// TIMEOUT: 400
+// REAL: no
+// Closes every descriptor above 2, the executor's socket too, and never
+// ends: the pool sees the socket close with no answer and no end of the
+// process. It must still stop at the time limit, not wait for ever.
+package main
+
+@Extern("C")
+func close_range(first uint32, last uint32, flags int32) int32
+
+func main() {
+	close_range(3, 4294967295, 0)
+	n := 0
+	for {
+		n++
+	}
+}

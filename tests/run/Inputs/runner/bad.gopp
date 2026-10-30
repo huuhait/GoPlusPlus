@@ -1,0 +1,5 @@
+// EXPECT: compile-failed
+// REAL: no
+package main
+
+func main() { x := }

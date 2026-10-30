@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py determinism --work %t.d --programs %S/Inputs/runner --names abort,bad,exit7,interleave,killself,nolink3,nonl,counter,quiet,segv,stdio-exit,stdio-return,state-ignore-term,state-chdir,see-cwd,state-leak-fds,see-first-fd,state-setenv,see-env
+// P04.19 (D4.14): the results of a batch (outcome, status, both streams,
+// messages, whether the executor ended) are the same bytes for one thread and
+// one executor, for sixteen of each, and for three orders of the manifest.
+// Nothing a program or an error message says depends on which thread or
+// executor handled it, or on what that executor ran before (the state the
+// programs change is put back, M2).

@@ -1,0 +1,10 @@
+// EXPECT: load-failed
+// REAL: no
+package main
+
+@Extern("C")
+func no_such_function_xyz()
+
+func main() {
+	no_such_function_xyz()
+}

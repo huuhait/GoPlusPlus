@@ -54,6 +54,15 @@ add_subdirectory(unit)
 set(GOPP_CHECK_TARGETS ${GOPP_CHECK_TARGETS} check-unit)
 set(GOPP_STAGE_DIRS ${GOPP_STAGE_DIRS} ${CMAKE_CURRENT_BINARY_DIR}/unit)
 
+# check-run-real: the run tests again, every program built and run as a real
+# executable instead of in the fast runner's executors (P04.19, D4.14): the
+# same tests and goldens must pass both ways (lit -Dreal_binaries=1).
+add_custom_target(check-run-real
+  COMMAND ${GOPP_LIT} ${GOPP_LIT_ARGS} -Dreal_binaries=1
+          ${CMAKE_CURRENT_BINARY_DIR}/run
+  DEPENDS gopp
+  USES_TERMINAL)
+
 add_custom_target(check-includes
   COMMAND ${GOPP_SOURCE_DIR}/tools/check-frontend-includes.sh ${GOPP_SOURCE_DIR}
   USES_TERMINAL)

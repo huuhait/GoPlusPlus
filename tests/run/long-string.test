@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
 // RUN: %python %S/Inputs/gen-long.py 300000 %t.gopp %t.expected
-// RUN: %gopp build %gopp_link_flags %t.gopp -o %t.exe
-// RUN: %python %S/Inputs/run-expect.py %t.exe 0 %t.expected
+// RUN: %python %S/Inputs/run-expect.py --src %t.gopp 0 %t.expected
 // P04.02: a 300000-byte literal, far larger than a pipe buffer, comes out
 // whole (the literal in read-only data, its length, one write).

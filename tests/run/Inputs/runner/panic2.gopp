@@ -1,0 +1,9 @@
+// EXPECT: exit 2
+package main
+
+func main() {
+	println("before")
+	var x [3]int
+	i := 5
+	println(x[i%7])
+}

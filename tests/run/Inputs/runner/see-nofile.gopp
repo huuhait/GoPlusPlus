@@ -1,0 +1,12 @@
+// EXPECT: exit 0
+// Prints the limits of open files.
+package main
+
+@Extern("C")
+func getrlimit(resource int32, limits *[2]uint64) int32
+
+func main() {
+	var l [2]uint64
+	getrlimit(7, &l)
+	println("open files", l[0], l[1])
+}

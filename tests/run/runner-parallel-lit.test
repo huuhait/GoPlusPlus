@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/par-lit.py --gopp %gopp --source-dir %S/../.. --work %t.d
+// P04.19 (R3): lit runs that share one build directory (two `ninja check`
+// targets, an editor and a terminal) remove each other's stale batch
+// directories; the cleanup must not crash on one the other run removed first.

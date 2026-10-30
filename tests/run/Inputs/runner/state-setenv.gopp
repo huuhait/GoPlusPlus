@@ -1,0 +1,12 @@
+// EXPECT: exit 0
+// Changes process state (P04.19, M2): sets an environment variable.
+package main
+
+@Extern("C")
+func setenv(name *byte, value *byte, overwrite int32) int32
+
+func main() {
+	n := [18]byte{'G', 'O', 'P', 'P', '_', 'R', 'U', 'N', 'N', 'E', 'R', '_', 'P', 'R', 'O', 'B', 'E', 0}
+	v := [7]byte{'l', 'e', 'a', 'k', 'e', 'd', 0}
+	println("setenv", setenv(&n[0], &v[0], 1))
+}

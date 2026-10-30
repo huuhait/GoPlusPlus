@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-expect.py %t.exe 0 %S/Inputs/non-ascii.out
+// RUN: %python %S/Inputs/run-expect.py --src %s 0 %S/Inputs/non-ascii.out
 // P04.02: strings are bytes: UTF-8 and the escapes of a literal come out as
 // they are in the literal's value.
 package main

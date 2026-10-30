@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-argslots.out
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-argslots.out
 // RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
 // RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/core-argslots.out %}
 // P04.04 (review R3): the copy of an aggregate argument lives in a slot of the

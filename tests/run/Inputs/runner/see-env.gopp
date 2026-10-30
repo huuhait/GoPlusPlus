@@ -1,0 +1,11 @@
+// EXPECT: exit 0
+// Prints whether the variable state-setenv.gopp sets is set.
+package main
+
+@Extern("C")
+func getenv(name *byte) uintptr
+
+func main() {
+	n := [18]byte{'G', 'O', 'P', 'P', '_', 'R', 'U', 'N', 'N', 'E', 'R', '_', 'P', 'R', 'O', 'B', 'E', 0}
+	println("GOPP_RUNNER_PROBE set:", getenv(&n[0]) != 0)
+}

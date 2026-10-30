@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
-"""Run a built program and check its exact standard output and exit code.
+"""Run a program and check its exact standard output and exit code.
 
-usage: run-expect.py EXE EXPECTED_EXIT [EXPECTED_STDOUT_FILE]
+usage: run-expect.py [--real] (--src PATH... | EXE) EXPECTED_EXIT [EXPECTED_STDOUT_FILE]
 
-The expected file is compared byte for byte (no text mode, no newline
-translation). Without it, the output must be empty.
+--src: the fast runner compiles and runs the sources (runlib.py); --real: a
+real binary. EXE is a program that is already built. The expected file is
+compared byte for byte (no text mode, no newline translation). Without it,
+the output must be empty. Standard error must be empty.
 """
-import subprocess
+import os
 import sys
 
-exe, code = sys.argv[1], int(sys.argv[2])
-want = open(sys.argv[3], "rb").read() if len(sys.argv) > 3 else b""
-r = subprocess.run([exe], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE, timeout=20)
-if r.returncode != code:
-    sys.exit("exit code %d, expected %d" % (r.returncode, code))
-if r.stdout != want:
-    sys.exit("stdout differs:\n got:  %r\n want: %r" % (r.stdout[:300], want[:300]))
-if r.stderr:
-    sys.exit("unexpected stderr: %r" % r.stderr[:300])
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import runlib  # noqa: E402
+
+opts, pos = runlib.split_args(sys.argv[1:])
+if opts["src"]:
+    res = runlib.run_sources(opts["src"], real=opts["real"], timeout=20)
+else:
+    res = runlib.run_exe(pos[0], [], 20)
+    pos = pos[1:]
+code = int(pos[0])
+want = open(pos[1], "rb").read() if len(pos) > 1 else b""
+if res.failure():
+    sys.exit(res.failure())
+if res.returncode != code:
+    sys.exit("exit code %d, expected %d" % (res.returncode, code))
+if res.stdout != want:
+    sys.exit("stdout differs:\n got:  %r\n want: %r" % (res.stdout[:300], want[:300]))
+if res.stderr:
+    sys.exit("unexpected stderr: %r" % res.stderr[:300])

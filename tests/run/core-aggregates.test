@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-aggregates.out
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-aggregates.out
 // P04.04: structs and arrays. Literals (positional, keyed, sparse, nested,
 // with `...`), copies that really copy, == and != (floats compare by value
 // so NaN differs from itself and -0 equals 0; blank fields are skipped),

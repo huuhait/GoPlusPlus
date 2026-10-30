@@ -1,0 +1,11 @@
+// EXPECT: exit 0
+// Sleeps 150 ms: long enough for an alarm left by an earlier program to ring.
+package main
+
+@Extern("C")
+func usleep(usecs uint32) int32
+
+func main() {
+	usleep(150000)
+	println("slept")
+}

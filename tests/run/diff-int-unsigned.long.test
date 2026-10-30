@@ -1,16 +1,10 @@
 // REQUIRES: long, host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/int_uint8.gopp -o %t.uint8
-// RUN: %python %S/Inputs/run-golden.py %t.uint8 %S/Inputs/diff/int_uint8.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/int_uint16.gopp -o %t.uint16
-// RUN: %python %S/Inputs/run-golden.py %t.uint16 %S/Inputs/diff/int_uint16.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/int_uint32.gopp -o %t.uint32
-// RUN: %python %S/Inputs/run-golden.py %t.uint32 %S/Inputs/diff/int_uint32.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/int_uint64.gopp -o %t.uint64
-// RUN: %python %S/Inputs/run-golden.py %t.uint64 %S/Inputs/diff/int_uint64.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/int_uint.gopp -o %t.uint
-// RUN: %python %S/Inputs/run-golden.py %t.uint %S/Inputs/diff/int_uint.out
-// RUN: %gopp build %gopp_link_flags %S/Inputs/diff/int_uintptr.gopp -o %t.uintptr
-// RUN: %python %S/Inputs/run-golden.py %t.uintptr %S/Inputs/diff/int_uintptr.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/int_uint8.gopp %S/Inputs/diff/int_uint8.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/int_uint16.gopp %S/Inputs/diff/int_uint16.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/int_uint32.gopp %S/Inputs/diff/int_uint32.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/int_uint64.gopp %S/Inputs/diff/int_uint64.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/int_uint.gopp %S/Inputs/diff/int_uint.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/diff/int_uintptr.gopp %S/Inputs/diff/int_uintptr.out
 // P04.04 differential table (D4.12): the unsigned integer types, hundreds
 // of expressions per type over its edge values. The programs and their
 // expected output come from Inputs/gen-diff.py: Inputs/diff/NAME.out is what

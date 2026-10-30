@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %t.exe | FileCheck %s
+// RUN: %python %S/Inputs/run-output.py --src %s | FileCheck %s
 // P04.02, D4.12: the Go results of the operations that are undefined in LLVM,
 // and the control flow of the subset, run for real. Both sides of every rule:
 // the special case and the ordinary case next to it.

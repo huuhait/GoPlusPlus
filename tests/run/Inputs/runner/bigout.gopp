@@ -1,0 +1,9 @@
+// EXPECT: exit 0
+// A few MiB of output, more than a pipe or socket holds.
+package main
+
+func main() {
+	for i := 0; i < 200000; i++ {
+		println("line", i, "of a long output")
+	}
+}

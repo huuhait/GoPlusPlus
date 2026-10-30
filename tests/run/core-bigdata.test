@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-bigdata.out
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-bigdata.out
 // P04.04: values too big for registers are copied, compared, passed and
 // returned by memory (the code generator never makes an LLVM first-class
 // value of an array: a [100000]int64 would not compile). A global of 8 MB

@@ -1,0 +1,11 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-check.py --work %t.d %S/Inputs/runner --names loop,flood,close-all-fds-loop,counter -- -max-output 65536
+// P04.19 (D4.14): a program that never ends is killed after the time limit
+// (outcome "timeout"); a program that prints without end stops at the output
+// limit with SIGXFSZ (signal 25), so it fills neither the disk nor the
+// runner's memory; a program that closes the executor's socket and never ends
+// is stopped at the time limit too; a program next to them is not touched.
+// Only the two programs that never end have a short limit (400 ms, a
+// `// TIMEOUT:` line in the program, sent in the manifest); flood and counter
+// must exit and keep the 60 s default, so a loaded machine cannot fail them.

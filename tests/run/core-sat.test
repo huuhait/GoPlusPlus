@@ -1,6 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %gopp build %gopp_link_flags %s -o %t.exe
-// RUN: %python %S/Inputs/run-golden.py %t.exe %S/golden/core-sat.out
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-sat.out
 // GOLDEN: by-hand
 // P04.04, D4.12: a float converted to an integer type it does not fit in
 // saturates (`llvm.fptosi.sat` / `llvm.fptoui.sat`): the nearest end of the

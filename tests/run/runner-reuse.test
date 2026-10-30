@@ -1,0 +1,16 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-check.py --work %t.d %S/Inputs/runner --expect-starts 3 --sequence state-close-stdout,ok,state-chdir,see-cwd,state-leak-fds,see-first-fd,state-umask,see-umask,state-setenv,see-env,state-nofile-soft,see-nofile,state-alarm,see-sleep,fork-return,counter,counter,state-ignore-term,killself,state-nofile-hard,see-nofile -- -share-executors
+// P04.19 (manager decision M2): one executor runs many programs, so a program
+// must not see what the one before it did to the process. Every pair runs on
+// the same executor (one executor, one program at a time): a program that
+// closes standard output, changes the working directory, leaves descriptors
+// open, changes the umask, sets an environment variable, lowers a resource
+// limit, starts an alarm, or ignores SIGTERM, then one that looks at that
+// state; each gives exactly the result of its own real binary. A program that
+// forks: its child ends when it returns from main, and the programs after it
+// get their own results (counter twice: its package variable starts anew in
+// every run). Three
+// executor processes in all: the first, one after killself's SIGTERM, and
+// one because the executor cannot raise a lowered hard limit again (it asks
+// for a new process); so every other pair really shared a process.
