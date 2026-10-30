@@ -210,6 +210,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
   - escape analysis decides cells vs. plain references, using the "callee keeps this parameter" bits from export data (P01 D1.11);
   - panics as native C++ exceptions, with catch-all trampolines (D4.6);
   - `Option[F]` for a func type with the null-`code*` nil (D4.5);
+  - an `@Extern("C")` function used as a func value (moved from P04.11, which lowers only direct calls of C functions, the only calls of them before func values exist): the func value calls C through P04.11's lowering (`cabi::Classifier`, `lowerCArgs`/`lowerCResult`, e.g. in a thunk with the Go convention), or taking the value is one E0439 (*done when, both sides:* a C function that takes and returns a struct, called through a func value, passes and returns the same bytes as its direct call on amd64 and arm64 (the P04.11 harness, `tests/run/Inputs/gen-cabi.py`), and a Go++ function of the same type called through a func value still uses the Go convention);
   - per-iteration loop variables (spec CLO-8, Go 1.22; moved from P04.04, manager decision M4): P04.04 gives a `for` loop variable one storage for the whole loop, which is observable only through a closure (here) or a pointer kept past its iteration (P04.20 rejects that); a captured loop variable gets one cell per iteration, copied forward before the post statement as Go does (*done when, both sides, against `go run`:* closures that capture the variable of a three-clause loop and run after the loop print 0, 1, 2, and the same closures capturing a variable declared before the loop print 3, 3, 3; a `continue` and a `break` inside the body keep the per-iteration value; a loop whose variable no closure captures keeps one storage, FileCheck on the GIR);
   - starts after the P04.15 spike;
   - EH lowering for FastISel (ADR-0028 decision 3):
@@ -401,6 +402,9 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 - **P07.15 Header torture tests**: all public libc headers, plus zlib, sqlite3, SDL2 and libcurl. *Done when:* each imports without errors, and a sample of declarations is checked against Clang.
 - **P07.16 Struct tags & transparent unions** (D7.3). *Done when:* `stat.stat` (function) and `stat.struct_stat` (type) both work, and `socket.bind` accepts a `*sockaddr_in`.
 - **P07.17 Decide P07 Q1–Q3**: ADRs. *Done when:* merged.
+- **P07.18 Go++-only types across the C ABI** (P04.11 decision M6): decide how `Option[T]` by value with a non-pointer `T`, `complex64`/`complex128` and other Go++-only types map to C (a layout C can name, written down in an ADR and `docs/design/c-abi.md`). Until then they are refused in C signatures (E0442, V067) and `Option[*T]` (a nullable C pointer) works. *Done when:*
+  - the decision is an ADR and the tests that now expect E0442 for `Option[int32]` and `complex128` in a C signature (`tests/gir/extern-bad-option-complex.test`, `CTypeRules.TheLimitsBothSides`, `GIRVerifier.V067_CSignatures`) are changed to the decided behavior;
+  - every type the ADR allows runs byte for byte against Clang-built C on both targets (`gen-cabi.py`), and every type it keeps refusing still gives E0442 naming this decision.
 
 ## P08 — C++ interop ([README](08-cpp-interop/README.md))
 

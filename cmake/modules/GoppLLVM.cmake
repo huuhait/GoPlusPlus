@@ -107,11 +107,25 @@ else()
 endif()
 
 # gopp_llvm_libs(<out> <components...>)
+#
+# The names are mapped and checked in both linkages: llvm_map_components_to_libnames
+# turns an unknown name (a target spelled `x86` instead of `X86`) into a
+# library that does not exist, which only the static link would notice (the
+# Release build did not link from P04.01-03 until P04.11). Here every
+# configure fails on it. LLVMs that export no component archives skip it.
 function(gopp_llvm_libs out)
+  llvm_map_components_to_libnames(libs ${ARGN})
+  if(TARGET LLVMSupport)
+    foreach(_lib IN LISTS libs)
+      if(NOT TARGET ${_lib})
+        message(FATAL_ERROR "LLVM component '${_lib}' (from: ${ARGN}) does not "
+          "exist in ${LLVM_DIR}; component names are case-sensitive (X86, AArch64)")
+      endif()
+    endforeach()
+  endif()
   if(GOPP_LLVM_SHARED)
     set(${out} LLVM PARENT_SCOPE)
   else()
-    llvm_map_components_to_libnames(libs ${ARGN})
     set(${out} ${libs} PARENT_SCOPE)
   endif()
 endfunction()

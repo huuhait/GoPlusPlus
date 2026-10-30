@@ -371,12 +371,20 @@ void Lowering::declareLocalType(const S::TypeName *TN, const sym::Node *Scope,
 // Functions of the module
 //===----------------------------------------------------------------------===//
 
-/// The @Extern attribute of FD, or null.
-static const ast::Attribute *externAttr(const ast::FuncDecl *FD) {
+static const ast::Attribute *findAttr(const ast::FuncDecl *FD, StringRef Name) {
   for (const ast::Attribute *A : FD->Attrs)
-    if (!A->Pkg && A->Name && A->Name->Name.str() == "Extern")
+    if (!A->Pkg && A->Name && A->Name->Name.str() == Name)
       return A;
   return nullptr;
+}
+
+static bool hasAttr(const ast::FuncDecl *FD, StringRef Name) {
+  return findAttr(FD, Name) != nullptr;
+}
+
+/// The @Extern attribute of FD, or null.
+static const ast::Attribute *externAttr(const ast::FuncDecl *FD) {
+  return findAttr(FD, "Extern");
 }
 
 /// Why an @Extern attribute is not `@Extern("C")` on a function without a
@@ -398,12 +406,6 @@ static std::string externProblem(const ast::FuncDecl *FD,
   return "";
 }
 
-/// A type a C function can take or return in M0: a bool, an integer, a float
-/// or a pointer (P04.11 adds aggregates through Clang's ABI classification).
-static bool isCScalar(const Type *T) {
-  return T->isBool() || T->isInt() || T->isFloat() || T->isPtr();
-}
-
 static bool isInitDecl(const ast::FuncDecl *FD) {
   return !FD->Recv && FD->Name->Name.str() == "init";
 }
@@ -419,6 +421,14 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   }
   if (Name == "_")
     return;
+  if (hasAttr(FD, "Export")) {
+    // C calling Go++ needs a thunk with the C ABI (P04.18). Declined: a call
+    // of the function from Go++ is not reported again.
+    if (Obj)
+      Declined.insert(Obj);
+    unsupported(FD->getBegin(), "an @Export function (P04.18)");
+    return;
+  }
   if (isInitDecl(FD)) {
     // Run before main.main, in source order after the sorted files.
     if (!FD->Body) {
@@ -466,6 +476,23 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     unsupported(FD->getBegin(), "a variadic function (P04.05)");
     return;
   }
+  // C calling Go++ (a callback, an exported function) needs thunks with the C
+  // ABI: P04.18. Said here, before the generic "function value" message.
+  if (Ext) {
+    auto IsFunc = [](S::Type *T) {
+      return isa_and_nonnull<S::SignatureType>(S::under(T));
+    };
+    for (S::Type *P : Sig->Params->Elems)
+      if (IsFunc(P)) {
+        unsupported(FD->getBegin(),
+                    "a function passed to C: a callback (P04.18)");
+        return;
+      }
+    if (Sig->Results->size() == 1 && IsFunc(Sig->Results->Elems[0])) {
+      unsupported(FD->getBegin(), "a function returned from C (P04.18)");
+      return;
+    }
+  }
   SmallVector<Type *, 4> Params;
   for (S::Type *P : Sig->Params->Elems) {
     Type *T = lowerType(P, FD->getBegin());
@@ -481,18 +508,31 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   if (!Ret)
     return;
   if (Ext) {
-    for (Type *T : Params)
-      if (!isCScalar(T)) {
+    // The types C can take by value (P04.11): gir::CTypeRules decides.
+    auto Refuse = [&](Type *T, gir::CUse Use, const char *What) {
+      gir::CVerdict V = CRules.check(T, Use);
+      // Several results and one complex result are both Tuple{f, f}; here
+      // the source tells them apart.
+      if (Use == gir::CUse::Result && T->getKind() == Type::Kind::Tuple &&
+          !V.ok())
+        V.Why = Sig->Results->size() > 1
+                    ? "a C function has one result (return a struct)"
+                    : "complex numbers have no C mapping yet (P07)";
+      if (V.ok())
+        return false;
+      if (V.K == gir::CVerdict::Unsupported)
+        unsupported(FD->getBegin(), V.Why);
+      else
         badExtern(FD->getBegin(), Name,
-                  "parameter type " + T->str() +
-                      " is not a C scalar or pointer");
+                  std::string(What) + " type " + T->str() +
+                      " cannot cross the C ABI: " + V.Why);
+      return true;
+    };
+    for (Type *T : Params)
+      if (Refuse(T, gir::CUse::Param, "parameter"))
         return;
-      }
-    if (!Ret->isUnit() && !isCScalar(Ret)) {
-      badExtern(FD->getBegin(), Name,
-                "result type " + Ret->str() + " is not a C scalar or pointer");
+    if (Refuse(Ret, gir::CUse::Result, "result"))
       return;
-    }
   }
   auto F = std::make_unique<Function>();
   if (Ext) {

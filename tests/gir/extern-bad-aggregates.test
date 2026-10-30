@@ -1,0 +1,56 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.11: more aggregates a C function cannot take or return by value (the
+// rest are in extern-bad.test): one E0442 at the declaration that names the
+// type and says why, and a call of the function is not reported again. A
+// string two structs down is still a string. An array of zero-size elements
+// (of empty structs, or of zero-length arrays) is refused whatever its
+// length (Clang crashes on it; the text does not say so). Both sides: a
+// zero-length array of a sized type and an empty struct are C types (`fine`).
+package main
+
+type HasString struct {
+	n int32
+	s string
+}
+
+type Inner struct{ h HasString }
+
+type Empty struct{}
+
+type EmptyArr struct{ e [3]Empty }
+
+type EmptyArr2 struct{ e [2][0]int32 }
+
+type EmptyArr3 struct{ e [0]Empty }
+
+type Fine struct {
+	none [0]int32
+	e    Empty
+	n    int8
+}
+
+@Extern("C")
+func nested(i Inner) int32
+
+@Extern("C")
+func emptyArray(e EmptyArr)
+
+@Extern("C")
+func emptyArray2() EmptyArr2
+
+@Extern("C")
+func emptyArray3(e EmptyArr3)
+
+@Extern("C")
+func fine(f Fine, e Empty) Fine
+
+func main() {
+	_ = nested(Inner{})
+	_ = fine(Fine{}, Empty{})
+}
+
+// CHECK: :32:1: error[E0442]: invalid @Extern on nested: parameter type main.Inner cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :35:1: error[E0442]: invalid @Extern on emptyArray: parameter type main.EmptyArr cannot cross the C ABI: an array of zero-size elements, [3]main.Empty, is not supported
+// CHECK: :38:1: error[E0442]: invalid @Extern on emptyArray2: result type main.EmptyArr2 cannot cross the C ABI: an array of zero-size elements, [2][0]i32, is not supported
+// CHECK: :41:1: error[E0442]: invalid @Extern on emptyArray3: parameter type main.EmptyArr3 cannot cross the C ABI: an array of zero-size elements, [0]main.Empty, is not supported
+// CHECK-NOT: error

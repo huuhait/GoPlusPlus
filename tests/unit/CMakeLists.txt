@@ -30,6 +30,7 @@ add_executable(GoppUnitTests
   GIR/StressTest.cpp
   GIR/DeepTest.cpp
   GIR/GlueTest.cpp
+  CodeGen/CABITest.cpp
   CodeGen/CodeGenTest.cpp
   CodeGen/LayoutTest.cpp
   CodeGen/OptionHashTest.cpp

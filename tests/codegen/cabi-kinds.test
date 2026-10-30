@@ -1,0 +1,117 @@
+// RUN: %gopp build -target=linux/amd64 -emit=llvm %s | FileCheck --check-prefixes=BOTH,AMD %s
+// RUN: %gopp build -target=linux/arm64 -emit=llvm %s | FileCheck --check-prefixes=BOTH,ARM %s
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck --check-prefix=GIR %s
+// RUN: %gopp build -target=linux/amd64 -emit=llvm -no-debug %s | FileCheck --check-prefix=ZERO %s
+// P04.11 (docs/design/c-abi.md): a struct, an Option[*T] and an empty struct cross
+// the C ABI as Clang's classification says, on both targets. Every ABIArgInfo
+// kind a Go++ target can produce is here: Direct (coerced to an integer, a
+// pair, an SSE vector, an array for an HFA; flattened into one IR argument
+// each), Extend (amd64 only: arm64 leaves the extension to the callee),
+// Indirect (byval on amd64; a pointer to a copy on arm64; sret on both) and
+// Ignore (an empty struct has no IR argument). The run tests
+// (cabi-amd64.test, cabi-arm64.test) check the same classification against C
+// built by Clang; extern-bad.test has what stays invalid.
+package main
+
+type P2 struct{ a, b int32 }
+type L2 struct{ a, b int64 }
+type L3 struct{ a, b, c int64 }
+type F2 struct{ a, b float32 }
+type F3 struct{ a, b, c float32 }
+type D4 struct{ a, b, c, d float64 }
+type FI struct {
+	a float64
+	b int64
+}
+type E struct{}
+type T3 struct{ a, b, c int32 }
+
+@Extern("C")
+func small(a P2) P2
+
+@Extern("C")
+func two(a L2) L2
+
+@Extern("C")
+func big(a L3) L3
+
+@Extern("C")
+func hfa2(a F2) F2
+
+@Extern("C")
+func hfa3(a F3) F3
+
+@Extern("C")
+func hfa4(a D4) D4
+
+@Extern("C")
+func mixed(a FI) FI
+
+@Extern("C")
+func empty(a E) E
+
+@Extern("C")
+func narrow(a int8, b uint16, c bool) bool
+
+@Extern("C")
+func nullable(p Option[*byte], q Option[*byte]) Option[*byte]
+
+@Extern("C")
+func three(t T3) T3
+
+func main() {
+	var a P2
+	_ = small(a)
+	_ = three(T3{1, 2, 3})
+}
+
+// The GIR keeps the Go++ types: the ABI is the code generator's business.
+// GIR: declare fn small(_1: main.P2) -> main.P2 [c, external, nounwind]
+// GIR: declare fn empty(_1: main.E) -> main.E [c, external, nounwind]
+
+// Up to 16 bytes, integers: the eightbytes in integer registers.
+// AMD: declare i64 @small(i64)
+// AMD: declare { i64, i64 } @two(i64, i64)
+// ARM: declare i64 @small(i64)
+// ARM: declare [2 x i64] @two([2 x i64])
+
+// Over 16 bytes: a hidden result pointer; the argument by value on the stack
+// (amd64), or a pointer to the caller's copy (arm64: dead_on_return, the copy
+// is the callee's).
+// AMD: declare void @big(ptr sret(%main.L3) align 8, ptr byval(%main.L3) align 8)
+// ARM: declare void @big(ptr sret(%main.L3) align 8, ptr align 8 dead_on_return)
+
+// Floats: two floats in one SSE register; arm64 passes homogeneous
+// floating-point aggregates (up to four members) in vector registers.
+// AMD: declare <2 x float> @hfa2(<2 x float>)
+// AMD: declare { <2 x float>, float } @hfa3(<2 x float>, float)
+// AMD: declare void @hfa4(ptr sret(%main.D4) align 8, ptr byval(%main.D4) align 8)
+// ARM: declare { float, float } @hfa2([2 x float] alignstack(8))
+// ARM: declare { float, float, float } @hfa3([3 x float] alignstack(8))
+// ARM: declare { double, double, double, double } @hfa4([4 x double] alignstack(8))
+
+// A double and an integer: one SSE and one integer eightbyte on amd64, two
+// integer registers on arm64 (not an HFA).
+// AMD: declare { double, i64 } @mixed(double, i64)
+// ARM: declare [2 x i64] @mixed([2 x i64])
+
+// An empty struct is not passed.
+// BOTH: declare void @empty()
+
+// Narrow scalars: extended on amd64.
+// AMD: declare zeroext i1 @narrow(i8 signext, i16 zeroext, i1 zeroext)
+// ARM: declare i1 @narrow(i8, i16, i1)
+
+// Option[*byte] is a pointer (Option[int32] by value is refused: M6).
+// BOTH: declare ptr @nullable(ptr, ptr)
+
+// A 12-byte struct travels as { i64, i32 }, whose 16 bytes reach past the
+// value: it is copied into a zeroed scratch first, so no byte past it is read
+// and C sees zeros there; the result comes back through a zeroed scratch too,
+// and only its 12 bytes are kept.
+// ZERO: call void @llvm.memset.p0.i64(ptr align 8 %[[IN:coerce[0-9]*]], i8 0, i64 16, i1 false)
+// ZERO-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[IN]], ptr align 8 %{{[a-z0-9]+}}, i64 12, i1 false)
+// ZERO: call { i64, i32 } @three(i64 %{{[0-9]+}}, i32 %{{[0-9]+}})
+// ZERO-NEXT: call void @llvm.memset.p0.i64(ptr align 8 %[[OUT:coerce[0-9]*]], i8 0, i64 16, i1 false)
+// ZERO-NEXT: store { i64, i32 } %{{[0-9]+}}, ptr %[[OUT]], align 8
+// ZERO-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 4 %{{[0-9]+}}, ptr align 8 %[[OUT]], i64 12, i1 false)

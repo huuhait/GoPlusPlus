@@ -1373,6 +1373,120 @@ TEST(GIRVerifier, V066_HiddenResultPointer) {
   }
 }
 
+/// A declaration with the C convention and this signature.
+FuncId cDecl(PlaceFixture &X, const std::string &Name,
+             llvm::ArrayRef<Type *> Ps, Type *Ret) {
+  FuncId F = declare(X.M, Name, X.C.func(Ps, Ret));
+  X.M.func(F).CC = CallConv::C;
+  return F;
+}
+
+/// The struct test.<Name> with these fields.
+Type *structOf(PlaceFixture &X, const std::string &Name,
+               llvm::ArrayRef<Type *> Fs) {
+  Type *S = X.C.structTy("test." + Name);
+  X.C.setStructBody(S, Fs);
+  return S;
+}
+
+TEST(GIRVerifier, V067_CSignatures) {
+  // Accepted: scalars, pointers, structs of these (nested, with arrays inside,
+  // also of length 0, empty ones, one that points to itself); a struct or
+  // nothing as the result; a C function with a body (the entry point) that
+  // takes and returns scalars.
+  {
+    PlaceFixture X;
+    Type *Outer =
+        structOf(X, "COuter",
+                 {X.Pair, X.C.array(X.Pair, 3), X.C.ptr(X.I64), X.F64, X.Bool,
+                  X.C.array(X.I32, 0), X.C.ptr(X.C.ptr(X.I32))});
+    Type *Empty = structOf(X, "CEmpty", {});
+    Type *Node = X.C.structTy("test.CNode");
+    X.C.setStructBody(Node, {X.C.ptr(Node), X.I64});
+    cDecl(X, "ok1", {Outer, X.I32, Empty, Node}, Outer);
+    cDecl(X, "ok2", {}, Empty);
+    cDecl(X, "ok3", {X.Bool, X.F64, X.C.ptr(X.Pair)}, X.Unit);
+    FuncId Main = cDecl(X, "cmain", {X.I32}, X.I32);
+    FuncBuilder B(X.M, X.fn(Main));
+    B.assign(B.local(0), B.use(constInt(X.I32, 0)));
+    B.ret();
+    EXPECT_GIR_VALID(X.M);
+  }
+  // Refused: each is V067.
+  auto Bad = [](void (*Make)(PlaceFixture &)) {
+    PlaceFixture X;
+    Make(X);
+    EXPECT_GIR_RULE(X.M, "V067");
+  };
+  // A string, a struct that holds one, a slice, a tuple result, unit as a
+  // parameter.
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.Str}, X.Unit); });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {}, structOf(X, "HasStr", {X.I32, X.Str}));
+  });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.slice(X.I32)}, X.Unit); });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {}, X.C.tuple({X.I32, X.I32})); });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.Unit}, X.Unit); });
+  // Option[T] by value (M6: no C type until P07), alone, as a result and in a
+  // struct; Option[*T] is a pointer type and is accepted above.
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.option(X.I32)}, X.Unit); });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {}, X.C.option(X.Pair)); });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {structOf(X, "HasOpt", {X.I32, X.C.option(X.I32)})},
+          X.Unit);
+  });
+  // An array alone: C passes it as a pointer.
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.array(X.I32, 4)}, X.Unit); });
+  // A function value is a callback (P04.18).
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.func({}, X.Unit)}, X.Unit); });
+  // An array of zero-size elements (Clang cannot classify it), also of
+  // zero-length arrays.
+  Bad([](PlaceFixture &X) {
+    Type *E = structOf(X, "ZEmpty", {});
+    cDecl(X, "bad", {structOf(X, "ZArr", {X.C.array(E, 2)})}, X.Unit);
+  });
+  Bad([](PlaceFixture &X) {
+    Type *Z = X.C.array(X.I32, 0);
+    cDecl(X, "bad", {structOf(X, "ZArr2", {X.C.array(Z, 2)})}, X.Unit);
+  });
+  // Over the limits: more than 4096 fields written out (a DAG that doubles),
+  // more than 1 GiB.
+  Bad([](PlaceFixture &X) {
+    Type *Prev = X.U8;
+    for (int I = 0; I < 12; ++I)
+      Prev = structOf(X, "Dag" + std::to_string(I), {Prev, Prev});
+    cDecl(X, "bad", {Prev}, X.Unit);
+  });
+  Bad([](PlaceFixture &X) {
+    Type *Big = structOf(X, "Big", {X.C.array(X.U8, (uint64_t(1) << 30) + 1)});
+    cDecl(X, "bad", {Big}, X.Unit);
+  });
+  // A C function with a body takes no struct (C-ABI thunks are P04.18).
+  Bad([](PlaceFixture &X) {
+    FuncId Id = cDecl(X, "cb", {X.Pair}, X.Unit);
+    FuncBuilder B(X.M, X.fn(Id));
+    B.ret();
+  });
+  // Nesting: 64 levels are a C type, 65 are not.
+  for (unsigned Depth : {64u, 65u}) {
+    PlaceFixture X;
+    Type *Cur = X.I64;
+    for (unsigned I = 0; I < Depth; ++I)
+      Cur = structOf(X, "L" + std::to_string(I), {Cur});
+    cDecl(X, "c", {Cur}, X.Unit);
+    if (Depth == 64)
+      EXPECT_GIR_VALID(X.M);
+    else
+      EXPECT_GIR_RULE(X.M, "V067");
+  }
+  // The Go convention takes anything.
+  {
+    PlaceFixture X;
+    X.M.func(declare(X.M, "go", X.C.func({X.Str}, X.Str))).CC = CallConv::Go;
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
 Global globalOf(const char *Name, Type *Ty, Constant Init = Constant()) {
   Global G;
   G.Name = Name;

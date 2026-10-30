@@ -22,7 +22,7 @@ The data layout of each target is pinned in the table (D4.5 relies on it: 64-bit
 
 ## Code
 
-`lowerToLLVM` verifies the GIR it is given, lowers it (one `alloca` per local, one LLVM block per GIR block, the Go semantics of D4.12 in the operations) and runs the LLVM verifier on the result, so `-emit=llvm` output is checked too. Every function Go++ defines has unwind tables (`uwtable`, D4.6: a stack trace works through any frame); a `NoUnwind` function is `nounwind`, a `NoReturn` one `noreturn`. A bool and an integer narrower than 32 bits are widened across the C ABI (`zeroext`/`signext`, at the declaration and at the call, as clang does). DWARF 5 line tables come from the GIR spans (D4.7; `-no-debug` leaves them out).
+`lowerToLLVM` verifies the GIR it is given, lowers it (one `alloca` per local, one LLVM block per GIR block, the Go semantics of D4.12 in the operations) and runs the LLVM verifier on the result, so `-emit=llvm` output is checked too. Every function Go++ defines has unwind tables (`uwtable`, D4.6: a stack trace works through any frame); a `NoUnwind` function is `nounwind`, a `NoReturn` one `noreturn`. A call of a C function follows the target's C ABI as Clang classifies it (P04.11, `docs/design/c-abi.md`): on amd64 a bool and an integer narrower than 32 bits are widened (`zeroext`/`signext`, at the declaration and at the call), on arm64 they are not (AAPCS64 leaves it to the callee), and structs travel in registers or memory as Clang says. DWARF 5 line tables come from the GIR spans (D4.7; `-no-debug` leaves them out).
 
 ## Linking
 
@@ -65,3 +65,10 @@ Two things are added to the dev shell (`flake.nix`, x86-64 hosts only):
 **Why.** A developer on an x86-64 machine can then run what the arm64 target produces, and see a wrong constant, a wrong calling convention or a wrong `/` at once, instead of finding it on the CI runner after the push. **The alternative** is to run arm64 programs on the arm64 CI runner only: no new dependency, but every arm64 failure comes one push later, and the inspection-only test (`codegen/arm64-link.test`) cannot see a wrong result.
 
 The lit feature `qemu-aarch64` is set when `qemu-aarch64` is on `PATH` and `GOPP_AARCH64_SYSROOT` has a `lib/crt1.o`; the substitution `%aarch64_sysroot` is its value. `tests/run/arm64-qemu-hello.test` and `arm64-qemu-features.test` build hello and the feature programs of the other run tests (exit code, D4.12 semantics, `println` of every argument kind, non-ASCII strings, evaluation order) for `linux/arm64` against that sysroot, run them as `qemu-aarch64 -L <sysroot>` under `timeout 60` (`tests/run/Inputs/run-compare-arm64.py`), and require the same stdout, stderr and exit code as the amd64 run. They take 0.1 s and 0.4 s. The stub-sysroot link test stays: it needs neither QEMU nor the download.
+
+## The static Release build
+
+A Release build links LLVM, Clang and LLD statically (`cmake/modules/GoppLLVM.cmake`). It broke from P04.01 to P04.11 without any test noticing (`library not found: LLVMx86`: the CodeGen library named its target components `x86 aarch64`, and LLVM's component names are case-sensitive, `X86 AArch64`; the shared Dev build links `libLLVM.so` and never looks at them). Two checks now:
+
+- `gopp_llvm_libs` maps and checks the component names in every configure, shared or static, so a wrong name fails the Dev configure at once;
+- the link itself, in CI's `release` job and by hand: `nix develop -c cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release && nix develop -c ninja -C build-release gopp check` (a build directory of its own; `ldd build-release/bin/gopp` shows no `libLLVM` or `libclang-cpp`).

@@ -1,0 +1,4 @@
+// REQUIRES: long, host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" --edges 1 %gopp %t.d 0 100000
+// P04.11: every enumerated edge signature (about 2150) on linux/amd64 (see
+// cabi-edges-amd64.test).

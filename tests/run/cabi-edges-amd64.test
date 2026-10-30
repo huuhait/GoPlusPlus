@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" --edges 16 %gopp %t.d 0 1000
+// P04.11 (D4.4): the enumerated signatures at the edges of the register
+// classes (Inputs/gen-cabi.py --mode edges, c2's set: every struct of one and
+// two scalars, of three and four from smaller sets, arrays of every length
+// around 8, 16 and 32 bytes, nested structs and arrays of structs, empty
+// structs and zero-length arrays, a struct after enough scalars to use the
+// integer or vector registers up, two structs in a row, narrow integers and
+// bools among wide ones; each as an argument, a
+// result and both) against C built by Clang, byte for byte, as
+// cabi-amd64.test does for random ones. One in 16 here; all of them in
+// cabi-edges-amd64.long.test, on arm64 in cabi-edges-arm64*.test.

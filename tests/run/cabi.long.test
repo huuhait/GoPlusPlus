@@ -1,0 +1,3 @@
+// REQUIRES: long, host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" %gopp %t.d 101 100 102 100 103 100 104 100 105 100 106 100
+// P04.11: cabi-amd64.test with 600 signatures (more seeds, bigger programs).

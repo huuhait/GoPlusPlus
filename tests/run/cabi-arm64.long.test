@@ -1,0 +1,3 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64, clang
+// RUN: %python %S/Inputs/run-cabi.py --arm64 %aarch64_sysroot %gopp %t.d 201 100 202 100 203 100 204 100 205 100 206 100
+// P04.11: cabi-arm64.test with 600 signatures, under QEMU.

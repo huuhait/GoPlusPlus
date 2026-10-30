@@ -1,0 +1,13 @@
+// REQUIRES: clang
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 1 40 amd64 %t.amd64
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 2 40 arm64 %t.arm64
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 0 300 amd64 %t.ea --edges
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 1000 300 arm64 %t.eb --edges
+// P04.11 (D4.4): the IR signature of a C function as Go++ declares it (the
+// parameter and result types, signext/zeroext, byval and sret with their
+// types and alignment, alignstack, dead_on_return) is the one Clang gives
+// the same C function, for generated signatures (Inputs/check-cabi-sigs.py;
+// tests/run/Inputs/gen-cabi.py makes them). It needs no run, so it also holds
+// on a machine that cannot run arm64. The same for 300 of the enumerated edge
+// signatures (gen-cabi.py --mode edges) per target. Many more, and every
+// edge: cabi-signatures.long.test.

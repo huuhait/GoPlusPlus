@@ -1,0 +1,53 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.11 (decision M6): `Option[T]` by value with a value type T is refused in
+// a C signature, as a parameter, as a result and as a struct field: C has no
+// such type, and its {T, flag} layout (D4.5) is not a C ABI promise, until P07
+// defines how Go++-only types map to C. `Option[*T]` is a C pointer and is
+// accepted (`okPtr`). `complex` has its own text (it is a pair of floats in
+// GIR), and several results keep the text about results.
+package main
+
+type Pair struct{ a, b int32 }
+
+type HasOpt struct {
+	n int32
+	o Option[int32]
+}
+
+type HasComplex struct{ c complex128 }
+
+@Extern("C")
+func optParam(o Option[int32]) int32
+
+@Extern("C")
+func optResult() Option[Pair]
+
+@Extern("C")
+func optField(h HasOpt)
+
+@Extern("C")
+func okPtr(p Option[*byte]) Option[*Pair]
+
+@Extern("C")
+func cxParam(a complex128, b complex64)
+
+@Extern("C")
+func cxResult() complex64
+
+@Extern("C")
+func cxField(h HasComplex)
+
+@Extern("C")
+func two() (float64, float64)
+
+func main() {}
+
+// CHECK: :19:1: error[E0442]: invalid @Extern on optParam: parameter type Option<i32> cannot cross the C ABI: Option[T] of a value has no C type until P07 defines how Go++-only types map to C (Option[*T] is a C pointer)
+// CHECK: :22:1: error[E0442]: invalid @Extern on optResult: result type Option<main.Pair> cannot cross the C ABI: Option[T] of a value has no C type until P07
+// CHECK: :25:1: error[E0442]: invalid @Extern on optField: parameter type main.HasOpt cannot cross the C ABI: Option[T] of a value has no C type until P07
+// CHECK-NOT: okPtr
+// CHECK: :31:1: error[E0442]: invalid @Extern on cxParam: parameter type (f64, f64) cannot cross the C ABI: complex numbers have no C mapping yet (P07)
+// CHECK: :34:1: error[E0442]: invalid @Extern on cxResult: result type (f32, f32) cannot cross the C ABI: complex numbers have no C mapping yet (P07)
+// CHECK: :37:1: error[E0442]: invalid @Extern on cxField: parameter type main.HasComplex cannot cross the C ABI: complex numbers have no C mapping yet (P07)
+// CHECK: :40:1: error[E0442]: invalid @Extern on two: result type (f64, f64) cannot cross the C ABI: a C function has one result (return a struct)
+// CHECK-NOT: error

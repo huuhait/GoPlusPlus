@@ -1,0 +1,71 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// RUN: %gopp build -target=linux/amd64 -emit=llvm %s | FileCheck --check-prefix=AMD %s
+// RUN: %gopp build -target=linux/arm64 -emit=llvm %s | FileCheck --check-prefix=ARM %s
+// P04.11: what a C function can take and return by value (c2's accepted
+// side; extern-bad*.test and extern-deep.test have the refused side): a bool,
+// an integer, a float, a pointer (every pointer kind, `Option[*T]`), and
+// structs of these, nested, with arrays inside (also arrays of arrays, and
+// of length 0), empty structs, and a struct that points to itself. The
+// declarations are the ones Clang gives the same C (checked by hand against
+// clang 23: `struct Outer { struct Mixed m; struct Pair rows[2][2]; int
+// none[0]; }` and so on; the generated comparison is
+// codegen/cabi-signatures.test).
+package main
+
+type Pair struct{ a, b int32 }
+
+type Mixed struct {
+	flag bool
+	n    int8
+	f    float32
+	p    *byte
+	o    Option[*byte]
+	arr  [3]uint16
+}
+
+type Outer struct {
+	m    Mixed
+	rows [2][2]Pair
+	none [0]int32
+}
+
+type Empty struct{}
+
+type Node struct {
+	next Option[*Node]
+	val  int64
+}
+
+@Extern("C")
+func pair(p Pair) Pair
+
+@Extern("C")
+func mixed(m Mixed, o Outer) Mixed
+
+@Extern("C")
+func empty(e Empty) Empty
+
+@Extern("C")
+func node(n Node) *Node
+
+func main() {
+	_ = pair(Pair{1, 2})
+	_ = empty(Empty{})
+	_ = node(Node{})
+	var b byte
+	m := Mixed{p: &b}
+	_ = mixed(m, Outer{m: m})
+}
+
+// CHECK: declare fn pair(_1: main.Pair) -> main.Pair [c, external, nounwind]
+// CHECK: declare fn mixed(_1: main.Mixed, _2: main.Outer) -> main.Mixed [c, external, nounwind]
+// CHECK: declare fn empty(_1: main.Empty) -> main.Empty [c, external, nounwind]
+// CHECK: declare fn node(_1: main.Node) -> *main.Node [c, external, nounwind]
+// AMD: declare i64 @pair(i64)
+// AMD: declare void @mixed(ptr sret(%main.Mixed) align 8, ptr byval(%main.Mixed) align 8, ptr byval(%main.Outer) align 8)
+// AMD: declare void @empty()
+// AMD: declare ptr @node(ptr, i64)
+// ARM: declare i64 @pair(i64)
+// ARM: declare void @mixed(ptr sret(%main.Mixed) align 8, ptr align 8 dead_on_return, ptr align 8 dead_on_return)
+// ARM: declare void @empty()
+// ARM: declare ptr @node([2 x i64])

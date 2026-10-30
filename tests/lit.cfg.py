@@ -57,6 +57,12 @@ if (
     config.available_features.add("qemu-aarch64")
     config.substitutions.append(("%aarch64_sysroot", _sysroot))
 
+# The C ABI tests (P04.11) compile C with Clang for the target: the flake's
+# clang, which compiles for aarch64 against no headers (the generated C
+# declares what it uses). Tests that need it say "REQUIRES: clang".
+if shutil.which("clang"):
+    config.available_features.add("clang")
+
 # M0 on an FHS distro (P04.02 Done-when): run/debian.test runs on a Debian or
 # Ubuntu host; run/debian-container.long.test builds and runs hello in Debian
 # containers from any host. The second is opt-in (it needs docker or podman

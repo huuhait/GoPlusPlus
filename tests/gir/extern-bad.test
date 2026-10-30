@@ -1,9 +1,10 @@
 // RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
 // RUN: not %gopp build -emit=gir %S/Inputs/write-mismatch.gopp 2>&1 | FileCheck --check-prefix=WRITE %s
 // RUN: %gopp build -emit=gir %S/Inputs/write-unused.gopp | FileCheck --check-prefix=UNUSED %s
-// P04.02: what @Extern accepts is decided in one place
-// (Lowering::declareFunction): the string "C", no body, C scalar or pointer
-// types, not the entry point's name. Each wrong declaration is one error at
+// P04.02, P04.11: what @Extern accepts is decided in one place (Lowering::
+// declareFunction): the string "C", no body, types gir::CTypeRules accepts
+// (extern-aggregates.test has accepted ones, extern-deep.test the limits,
+// extern-bad-aggregates.test more), not the entry point. Each wrong declaration is one error at
 // its attribute or declaration, and a call of it is not reported again.
 // Both sides: `ok` is accepted (extern.test has the rest).
 package main
@@ -27,16 +28,44 @@ func e()
 @Extern("C")
 func ok(x int32) int32
 
+@Extern("C")
+func arr(a [4]int32)
+
+@Extern("C")
+func two() (int32, int32)
+
+type HasString struct {
+	n int32
+	s string
+}
+
+@Extern("C")
+func inner(h HasString)
+
+type Huge struct {
+	a [1 << 28]int64
+}
+
+@Extern("C")
+func huge(h Huge)
+
 func main() {
 	a()
 	_ = ok(1)
 }
 
-// CHECK: :11:1: error[E0442]: invalid @Extern on a: only the "C" ABI exists
-// CHECK: :14:1: error[E0442]: invalid @Extern on b: parameter type string is not a C scalar or pointer
-// CHECK: :17:1: error[E0442]: invalid @Extern on c: result type string is not a C scalar or pointer
-// CHECK: :20:1: error[E0442]: invalid @Extern on d: a C function has no body
-// CHECK: :24:1: error[E0442]: invalid @Extern on e: write @Extern("C")
+// CHECK: :12:1: error[E0442]: invalid @Extern on a: only the "C" ABI exists
+// CHECK: :15:1: error[E0442]: invalid @Extern on b: parameter type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :18:1: error[E0442]: invalid @Extern on c: result type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :21:1: error[E0442]: invalid @Extern on d: a C function has no body
+// CHECK: :25:1: error[E0442]: invalid @Extern on e: write @Extern("C")
+// An array is not a C parameter, several results are not a C result, a
+// string inside a struct is still a string, and a by-value type over 1 GiB is
+// refused before Clang is asked about it.
+// CHECK: :31:1: error[E0442]: invalid @Extern on arr: parameter type [4]i32 cannot cross the C ABI: an array is not passed by value in C (wrap it in a struct)
+// CHECK: :34:1: error[E0442]: invalid @Extern on two: result type (i32, i32) cannot cross the C ABI: a C function has one result (return a struct)
+// CHECK: :42:1: error[E0442]: invalid @Extern on inner: parameter type main.HasString cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :49:1: error[E0442]: invalid @Extern on huge: parameter type main.Huge cannot cross the C ABI: type main.Huge is larger than 1 GiB
 // CHECK-NOT: error
 
 // println needs the C `write` it was given the type of; the program's own

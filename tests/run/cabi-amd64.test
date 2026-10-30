@@ -1,0 +1,11 @@
+// REQUIRES: host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" %gopp %t.d 1 30 2 30
+// P04.11 (D4.4): Go++ calls C with the exact C ABI of linux/amd64. A generator
+// (Inputs/gen-cabi.py) makes random signatures: scalars, structs of mixed
+// scalars (floats, bool, char, pointers, Option[*byte]), arrays in structs, nested
+// and empty structs, small and large, and up to 16 parameters (so the integer
+// and SSE registers run out). The C is built by Clang; every argument is
+// printed by the C function from the bytes it received, every result is
+// printed by Go++ from the bytes it got back, and the output must equal what
+// the generator computed from the values it chose (byte for byte). The same
+// on arm64 under QEMU: cabi-arm64.test; many more signatures: cabi.long.test.

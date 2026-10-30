@@ -41,6 +41,13 @@ namespace gopp {
 struct LowerToLLVMOptions {
   /// DWARF line tables (D4.7). Variables and types come with P04.12.
   bool DebugInfo = true;
+  /// The target's CPU and features, for the C ABI classification (P04.11);
+  /// lowerToLLVM fills them from the TargetMachine.
+  std::string TargetCPU, TargetFeatures;
+  /// Test-only work counter (M8) of the C ABI (P04.11): the aggregates whose
+  /// layout is checked against Clang's, the signatures classified and the
+  /// GIR types mapped to Clang, the IR arguments of the calls of C.
+  uint64_t *CABIWork = nullptr;
 };
 
 /// Lowers a GIR module. The result has the target's triple and data layout.

@@ -1,0 +1,6 @@
+// REQUIRES: long
+// P04.11: the timed half of the C ABI stress tests (the normal suite counts
+// work instead, tests/unit/CodeGen/CABITest.cpp CABIStress): classifying
+// four times the signatures costs at most 12 times as much, and the timing
+// check fails a quadratic loop.
+// RUN: timeout 300 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='CABIStressLong.*'

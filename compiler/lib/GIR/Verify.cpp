@@ -18,6 +18,7 @@
 #include "gopp/GIR/Verify.h"
 
 #include "gopp/Basic/WorkCount.h"
+#include "gopp/GIR/CType.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -100,7 +101,9 @@ const char *unwindName(UnwindAction::Kind K) {
 
 class Verifier {
 public:
-  Verifier(const Module &M, unsigned Max) : M(M), Max(std::max(Max, 1u)) {}
+  Verifier(const Module &M, unsigned Max) : M(M), Max(std::max(Max, 1u)) {
+    CTypes.Work = &Steps;
+  }
 
   std::vector<VerifyError> run() {
     functionNames();
@@ -123,6 +126,9 @@ private:
   int64_t Block = -1, Index = -1;
   /// The locals whose address some AddrOf takes (V066), of the function.
   llvm::DenseSet<LocalId> AddrTaken;
+  /// The C types decided so far (V067), for the module: a type that many C
+  /// functions use is walked once.
+  CTypeRules CTypes;
   /// The types the module uses, each once (V002, V003 look at them last).
   llvm::DenseSet<const Type *> SeenTypes;
   std::vector<const Type *> TypeWork;
@@ -326,7 +332,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V070
+  // A function: V010-V013, V022, V067, V070
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -336,6 +342,8 @@ private:
     if (!signature(Fn))
       return;
     span(Fn.Loc);
+    if (Fn.CC == CallConv::C)
+      cSignature(Fn);
     if (Fn.isDeclaration()) {
       declaration(Fn);
       return;
@@ -363,6 +371,27 @@ private:
     }
     Block = Index = -1;
     reachable(Fn);
+  }
+
+  /// V067: a function with the C convention takes and returns C types (the
+  /// rules of gir::CTypeRules, which also decide the front end's E0442 and
+  /// E0439), and one with a body (the C entry point) only scalars until
+  /// P04.18 makes C-ABI thunks: the code generator lowers C bodies with the
+  /// scalar convention.
+  void cSignature(const Function &Fn) {
+    auto One = [&](const Type *T, CUse Use, const std::string &What) {
+      CVerdict V = CTypes.check(T, Use);
+      if (!V.ok())
+        err("V067", What + " of a C function, " + str(T) +
+                        ", cannot cross the C ABI: " + V.Why);
+      else if (!Fn.isDeclaration() && !T->isUnit() && !T->isScalar())
+        err("V067", What + " of a C function with a body, " + str(T) +
+                        ", is not a scalar (C-ABI thunks are P04.18)");
+    };
+    for (size_t I = 0; I < Fn.Sig->elems().size(); ++I)
+      One(Fn.Sig->elems()[I], CUse::Param,
+          "parameter " + std::to_string(I + 1));
+    One(Fn.Sig->ret(), CUse::Result, "the result");
   }
 
   /// V010: the signature is a function type.

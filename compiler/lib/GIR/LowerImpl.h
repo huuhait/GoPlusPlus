@@ -35,6 +35,7 @@
 #include "gopp/AST/AST.h"
 #include "gopp/Basic/NewStack.h"
 #include "gopp/GIR/Builder.h"
+#include "gopp/GIR/CType.h"
 #include "gopp/GIR/Glue.h"
 #include "gopp/GIR/Lower.h"
 #include "gopp/Sema/Constant.h"
@@ -90,6 +91,8 @@ public:
   /// Functions whose declaration was reported: their calls are not reported
   /// again.
   llvm::DenseSet<const S::Func *> Declined;
+  /// Which types C can take by value, memoized (P04.11).
+  CTypeRules CRules;
 
   void unsupported(SourceLoc At, const llvm::Twine &What);
   void badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why);

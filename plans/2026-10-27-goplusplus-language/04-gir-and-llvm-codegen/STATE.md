@@ -17,7 +17,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.08 Monomorphization
 - [ ] P04.09 Flow-sensitive ownership
 - [ ] P04.10 `!` lowering
-- [ ] P04.11 C ABI via Clang
+- [x] P04.11 C ABI via Clang: `cabi::Classifier` (Clang CodeGen classification, cached by signature; the Clang world is made once per target per process, and a module that passes only scalars to C never starts it) plus Go++'s own lowering of every `ABIArgInfo` kind (`CodeGen/CABILower`, also the reverse for P04.18); structs and empty structs cross by value (`Option[T]` by value and complex are refused with E0442 until P07, decision M6; `Option[*T]` is a pointer) on amd64 and arm64; `gir::CTypeRules` decides E0442/E0439 and V067 (64 levels, 4096 fields written out, 1 GiB; no array of zero-size elements); Clang's layouts are checked against Go++'s before code. Generated and enumerated (about 2150) signatures run byte for byte against Clang-built C on both targets; IR signatures equal Clang's. Expand, CoerceAndExpand, InAlloca reachable only off-target (unit tests); HVA untestable (no vector types). The static Release link is fixed (was broken since P04.01). Design: `docs/design/c-abi.md`.
 - [ ] P04.12 DWARF
 - [ ] P04.13 Codegen pipelines per `opt`
 - [ ] P04.14 Differential tests vs Go

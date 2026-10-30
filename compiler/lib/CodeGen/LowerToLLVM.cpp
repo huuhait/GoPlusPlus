@@ -19,11 +19,14 @@
 
 #include "gopp/Basic/Diagnostics.h"
 #include "gopp/Basic/NewStack.h"
+#include "gopp/CodeGen/CABILower.h"
 #include "gopp/CodeGen/CodeGen.h"
 #include "gopp/GIR/GIR.h"
 #include "gopp/GIR/Verify.h"
+#include "gopp/Import/CABI.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Constants.h"
@@ -38,6 +41,7 @@
 #include "llvm/Target/TargetMachine.h"
 
 #include <map>
+#include <optional>
 #include <tuple>
 
 using namespace gopp;
@@ -64,6 +68,31 @@ private:
   const LowerToLLVMOptions &Opts;
   llvm::DIBuilder DIB;
   llvm::DenseMap<const G::Type *, llvm::Type *> MemTypes;
+  /// A declared C function: how its signature crosses the C ABI (P04.11,
+  /// CABILower.h). Keyed by the function's index in the module.
+  struct CFunction {
+    cabi::CallInfo Info;
+    cabi::IRSignature Sig;
+  };
+  llvm::DenseMap<G::FuncId, CFunction> CFuncs;
+  /// Made for the first signature with an aggregate (scalars need no Clang).
+  std::unique_ptr<cabi::Classifier> Classifier;
+  /// The aggregates whose layout has been checked against Clang's.
+  llvm::DenseSet<const G::Type *> CLayoutChecked;
+  void cabiWork(uint64_t N = 1) {
+    if (Opts.CABIWork)
+      *Opts.CABIWork += N;
+  }
+  /// Scratch slots of the call being made (CABILower's temporaries): one per
+  /// (type, alignment, use in this call), shared by all calls of the
+  /// function, as ArgSlots is.
+  std::map<std::tuple<llvm::Type *, uint64_t, unsigned>, llvm::AllocaInst *>
+      CScratch;
+  std::map<std::pair<llvm::Type *, uint64_t>, unsigned> CScratchUsed;
+  llvm::Error classifyCFunctions();
+  llvm::Error checkCLayout(const G::Type *T);
+  llvm::AllocaInst *cScratchSlot(llvm::Type *Ty, llvm::Align A,
+                                 const llvm::Twine &Name);
   llvm::SmallVector<llvm::Function *, 16> Funcs;
   llvm::SmallVector<llvm::GlobalVariable *, 16> Globals;
   llvm::SmallVector<llvm::GlobalVariable *, 16> Strings;
@@ -201,7 +230,7 @@ private:
     return T->isBool() ? llvm::Type::getInt1Ty(C) : memTy(T);
   }
   llvm::FunctionType *fnType(const G::Type *Sig);
-  llvm::Function *declare(const G::Function &F);
+  llvm::Function *declare(G::FuncId Id, const G::Function &F);
   llvm::Constant *stringConst(uint64_t Id);
   void setLoc(const G::Span &S);
 
@@ -365,15 +394,121 @@ static void extAttr(llvm::LLVMContext &C, llvm::AttributeList &AL, unsigned Idx,
                                               : llvm::Attribute::ZExt));
 }
 
-llvm::Function *Lowering::declare(const G::Function &F) {
+/// Classifies every declared C function (P04.11). A signature of scalars only
+/// has the classification Clang would give without asking Clang
+/// (cabi::classifyScalars); Clang is asked from the first signature with an
+/// aggregate on (its world is made once per process, M3), so a module that
+/// passes no aggregate to C never starts it.
+llvm::Error Lowering::classifyCFunctions() {
+  const std::string Triple = LM.getTargetTriple().str();
+  for (size_t I = 0; I < GM.Funcs.size(); ++I) {
+    const G::Function &F = *GM.Funcs[I];
+    if (F.CC != G::CallConv::C || !F.isDeclaration())
+      continue;
+    cabiWork();
+    std::optional<cabi::CallInfo> CI = cabi::classifyScalars(Triple, F.Sig);
+    if (!CI) {
+      if (!Classifier) {
+        cabi::ClassifierOptions CO;
+        CO.Triple = Triple;
+        CO.CPU = Opts.TargetCPU;
+        CO.Features = Opts.TargetFeatures;
+        auto Made = cabi::Classifier::create(CO);
+        if (!Made)
+          return Made.takeError();
+        Classifier = std::move(*Made);
+        if (Classifier->dataLayout() !=
+            LM.getDataLayout().getStringRepresentation())
+          return llvm::createStringError(
+              std::errc::invalid_argument,
+              "internal error: Clang's data layout for %s is %s, LLVM's is %s",
+              Triple.c_str(), Classifier->dataLayout().c_str(),
+              LM.getDataLayout().getStringRepresentation().c_str());
+      }
+      for (const G::Type *P : F.Sig->elems())
+        if (llvm::Error E = checkCLayout(P))
+          return E;
+      if (llvm::Error E = checkCLayout(F.Sig->ret()))
+        return E;
+      CI = Classifier->classify(F.Sig);
+    }
+    if (llvm::Error E = cabi::checkSupported(*CI))
+      return llvm::createStringError(
+          std::errc::not_supported, "code generation: %s in %s",
+          llvm::toString(std::move(E)).c_str(), F.Name.c_str());
+    cabi::IRSignature Sig =
+        cabi::irSignature(C, *CI, [&](const G::Type *T) { return memTy(T); });
+    CFuncs[I] = {std::move(*CI), std::move(Sig)};
+  }
+  if (Classifier)
+    cabiWork(Classifier->stats().TypesMapped);
+  return llvm::Error::success();
+}
+
+/// Clang and Go++ lay out every aggregate that crosses the C ABI the same
+/// way: size, alignment and the offset of every field (of T and of the
+/// structs, arrays and Options inside it), checked before any code is made.
+/// They agree by construction (gir::CTypeRules, memTy); a difference would be
+/// a compiler bug that corrupts calls, so it is an internal error here. The
+/// walk is bounded by gir::MaxCTypeDepth (the verifier's V067 ran first).
+llvm::Error Lowering::checkCLayout(const G::Type *T) {
+  if (!isAggregate(T) || !CLayoutChecked.insert(T).second)
+    return llvm::Error::success();
+  cabiWork();
+  const llvm::DataLayout &DL = LM.getDataLayout();
+  llvm::Type *MT = memTy(T);
+  cabi::ClangLayout CL = Classifier->layoutOf(T);
+  bool Same = CL.Size == DL.getTypeAllocSize(MT) &&
+              CL.Align == DL.getABITypeAlign(MT).value();
+  if (Same && (T->getKind() == G::Type::Kind::Struct || T->isOption())) {
+    const llvm::StructLayout *SL =
+        DL.getStructLayout(cast<llvm::StructType>(MT));
+    Same = CL.Offsets.size() == MT->getStructNumElements();
+    for (unsigned K = 0; Same && K < CL.Offsets.size(); ++K) {
+      cabiWork();
+      Same = CL.Offsets[K] == SL->getElementOffset(K);
+    }
+  }
+  if (!Same)
+    return llvm::createStringError(
+        std::errc::invalid_argument,
+        "internal error: Clang lays %s out in %llu bytes aligned to %llu, "
+        "Go++ in %llu aligned to %llu, or puts a field elsewhere",
+        T->str().c_str(), (unsigned long long)CL.Size,
+        (unsigned long long)CL.Align,
+        (unsigned long long)DL.getTypeAllocSize(MT),
+        (unsigned long long)DL.getABITypeAlign(MT).value());
+  if (T->getKind() == G::Type::Kind::Array || T->isOption())
+    return checkCLayout(T->elem());
+  for (const G::Type *F : T->elems())
+    if (llvm::Error E = checkCLayout(F))
+      return E;
+  return llvm::Error::success();
+}
+
+llvm::AllocaInst *Lowering::cScratchSlot(llvm::Type *Ty, llvm::Align A,
+                                         const llvm::Twine &Name) {
+  unsigned &Used = CScratchUsed[{Ty, A.value()}];
+  llvm::AllocaInst *&Slot = CScratch[{Ty, A.value(), Used++}];
+  if (!Slot) {
+    Slot = entryAlloca(Ty, Name);
+    Slot->setAlignment(std::max(A, LM.getDataLayout().getABITypeAlign(Ty)));
+  }
+  return Slot;
+}
+
+llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
+  auto CFIt = CFuncs.find(Id);
   llvm::Function *LF = llvm::Function::Create(
-      fnType(F.Sig),
+      CFIt != CFuncs.end() ? CFIt->second.Sig.Type : fnType(F.Sig),
       F.Link == G::Linkage::Internal ? llvm::GlobalValue::InternalLinkage
       : F.Link == G::Linkage::LinkOnceODR
           ? llvm::GlobalValue::LinkOnceODRLinkage
           : llvm::GlobalValue::ExternalLinkage,
       F.Name, &LM);
   llvm::AttributeList AL = LF->getAttributes();
+  if (CFIt != CFuncs.end())
+    AL = CFIt->second.Sig.Attrs; // the C ABI's: extension, byval, sret, ...
   if (F.NoUnwind)
     AL = AL.addFnAttribute(C, llvm::Attribute::NoUnwind);
   if (F.NoReturn)
@@ -383,12 +518,14 @@ llvm::Function *Lowering::declare(const G::Function &F) {
   if (!F.isDeclaration())
     AL = AL.addFnAttribute(
         C, llvm::Attribute::getWithUWTableKind(C, llvm::UWTableKind::Async));
-  unsigned Sret = isAggregate(F.Sig->ret()) ? 1 : 0;
-  for (unsigned I = 0; I < F.Sig->elems().size(); ++I)
-    extAttr(C, AL, llvm::AttributeList::FirstArgIndex + Sret + I,
-            F.Sig->elems()[I]);
-  if (!F.Sig->ret()->isUnit() && !Sret)
-    extAttr(C, AL, llvm::AttributeList::ReturnIndex, F.Sig->ret());
+  if (CFIt == CFuncs.end()) {
+    unsigned Sret = isAggregate(F.Sig->ret()) ? 1 : 0;
+    for (unsigned I = 0; I < F.Sig->elems().size(); ++I)
+      extAttr(C, AL, llvm::AttributeList::FirstArgIndex + Sret + I,
+              F.Sig->elems()[I]);
+    if (!F.Sig->ret()->isUnit() && !Sret)
+      extAttr(C, AL, llvm::AttributeList::ReturnIndex, F.Sig->ret());
+  }
   LF->setAttributes(AL);
   return LF;
 }
@@ -831,6 +968,67 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
       return E;
     const G::Type *Sig = T.Discr.type();
     llvm::Value *Callee = operand(T.Discr);
+    auto CFIt =
+        T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func
+            ? CFuncs.find(T.Discr.C.Bits)
+            : CFuncs.end();
+    if (CFIt != CFuncs.end()) {
+      // A C function: the C ABI decides how each argument and the result
+      // travel (CABILower.h).
+      const CFunction &CF = CFIt->second;
+      llvm::SmallVector<cabi::Value, 4> Vals;
+      unsigned AggIdx = 0;
+      for (const G::Operand &A : T.Args) {
+        cabi::Value V;
+        V.Ty = A.type();
+        if (!isAggregate(A.type())) {
+          V.V = operand(A);
+          Vals.push_back(V);
+          continue;
+        }
+        // The callee owns its argument: a copy of its own (C may write to an
+        // argument passed by pointer).
+        llvm::Type *MT = memTy(A.type());
+        llvm::AllocaInst *&Tmp = ArgSlots[{MT, AggIdx++}];
+        if (!Tmp)
+          Tmp = entryAlloca(MT, "arg");
+        emitInto(Tmp, A);
+        V.V = Tmp;
+        V.Known = Tmp->getAlign();
+        Vals.push_back(V);
+      }
+      cabi::Value Dest;
+      Dest.Ty = Sig->ret();
+      if (isAggregate(Sig->ret())) {
+        Dest.V = placeAddr(T.Dest);
+        Dest.Known = LM.getDataLayout().getABITypeAlign(memTy(Sig->ret()));
+      }
+      CScratchUsed.clear();
+      auto MemTyFn = [this](const G::Type *T) { return memTy(T); };
+      auto AllocaFn = [this](llvm::Type *Ty, llvm::Align A,
+                             const llvm::Twine &Name) {
+        return cScratchSlot(Ty, A, Name);
+      };
+      cabi::Env Env{B, LM.getDataLayout(), MemTyFn, AllocaFn};
+      cabi::PreparedCall PC =
+          cabi::lowerCArgs(Env, CF.Info, CF.Sig, Vals, Dest);
+      cabiWork(PC.Args.size() + 1);
+      llvm::CallInst *CI = B.CreateCall(CF.Sig.Type, Callee, PC.Args);
+      // The call repeats the C ABI's attributes of the declaration
+      // (extension, byval, sret, alignment), as the internal path does.
+      CI->setAttributes(
+          Funcs[T.Discr.C.Bits]->getAttributes().removeFnAttributes(C));
+      if (T.Unwind.K == G::UnwindAction::Unreachable)
+        CI->addFnAttr(llvm::Attribute::NoUnwind);
+      llvm::Value *R = cabi::lowerCResult(Env, CF.Info, CF.Sig, PC, CI, Dest);
+      if (R && !Sig->ret()->isUnit())
+        storePlace(T.Dest, R);
+      if (T.Target == G::NoId)
+        B.CreateUnreachable();
+      else
+        B.CreateBr(Blocks[T.Target]);
+      return llvm::Error::success();
+    }
     llvm::SmallVector<llvm::Value *, 4> Args;
     bool Sret = isAggregate(Sig->ret());
     if (Sret)
@@ -1112,6 +1310,7 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
   Blocks.clear();
   Products.clear();
   ArgSlots.clear();
+  CScratch.clear();
   DomReady = false;
   Panics.clear();
   countUses(F);
@@ -1246,8 +1445,10 @@ llvm::Error Lowering::run() {
       GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     Globals.push_back(GV);
   }
-  for (const auto &F : GM.Funcs)
-    Funcs.push_back(declare(*F));
+  if (llvm::Error E = classifyCFunctions())
+    return E;
+  for (size_t I = 0; I < GM.Funcs.size(); ++I)
+    Funcs.push_back(declare(I, *GM.Funcs[I]));
   for (size_t I = 0; I < GM.Funcs.size(); ++I)
     if (!GM.Funcs[I]->isDeclaration())
       if (llvm::Error E = function(*GM.Funcs[I], Funcs[I]))
@@ -1281,7 +1482,10 @@ gopp::lowerToLLVM(llvm::LLVMContext &Ctx, const gir::Module &M,
       std::make_unique<llvm::Module>(M.Name.empty() ? "gopp" : M.Name, Ctx);
   LM->setTargetTriple(TM.getTargetTriple());
   LM->setDataLayout(TM.createDataLayout());
-  Lowering L(Ctx, M, *LM, Opts);
+  LowerToLLVMOptions O = Opts;
+  O.TargetCPU = TM.getTargetCPU().str();
+  O.TargetFeatures = TM.getTargetFeatureString().str();
+  Lowering L(Ctx, M, *LM, O);
   if (llvm::Error E = L.run())
     return std::move(E);
   std::string Problems;

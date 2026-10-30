@@ -1,0 +1,57 @@
+# The C ABI layer (P04.11, D4.4)
+
+Go++ calls C with the exact C ABI of the target. Clang decides what the ABI is; Go++ writes the lowering. One layer serves P04.11 now and P04.18 (`@Export`, callbacks) and P07 (header import) later.
+
+## Pieces
+
+| Piece | Where | Job |
+|---|---|---|
+| `gir::CTypeRules` | `GIR/CType.h` | Which Go++ types may cross the C ABI, for the front end (E0442 invalid, E0439 unsupported, `Lowering::declareFunction`) and the verifier (V067). No Clang. |
+| `cabi::Classifier` | `Import/CABI.h` | Maps a Go++ function type to a C declaration, asks Clang CodeGen (`arrangeFreeFunctionCall`) for the `CGFunctionInfo`, returns a context-free `CallInfo` (one `ArgInfo` per result and argument; LLVM types as `LTy`, which belong to no `LLVMContext`). Cached by the uniqued `gir::Type*` of the signature, so a classifier lives no longer than its module's `gir::Context`. Thread-safe. The type mapping (struct to record, pointers to `void *`, arrays, and `Option[T]` to `{T v; unsigned char set;}` (the mapping exists for P07; the rules refuse it, see below), `_Bool`, sized integers) is the one P07's import shares; `layoutOf` gives Clang's layout of a type. |
+| `cabi::classifyScalars` | `Import/CABI.h` | The answer for a signature of scalars only, made without Clang (below). |
+| `cabi::irSignature`, `lowerCArgs`, `lowerCResult` | `CodeGen/CABILower.h` | Go++ lowers every `ABIArgInfo` kind itself. Calling C: `lowerCArgs` / `lowerCResult`. The reverse, for P04.18's thunks: `unpackCParams` / `packCReturn` (the two directions share the IR layout and the memory primitives, and a round-trip test runs one against the other). |
+| `LowerToLLVM` | `CodeGen/LowerToLLVM.cpp` | Classifies every C declaration before any code is made (`classifyCFunctions`), checks Clang's layouts against Go++'s, declares the C functions with the ABI's types and attributes and lowers every direct call of one through `CABILower`. |
+
+## Which types cross (gir::CTypeRules)
+
+Accepted: `bool`, integers, floats, pointers (every pointer kind, `Option[*T]`), structs of C types (nested, empty, with arrays inside, also of length 0). Refused with E0442: `Option[T]` by value with a non-pointer `T` (decision M6: C has no such type, and its `{T, flag}` layout, D4.5, is not a C ABI promise; P07 decides how Go++-only types map to C, and until then `Option[*T]`, a plain nullable pointer, is the way), `complex64` and `complex128` (no C mapping yet, P07), a string, a slice, a tuple (several results), an array as a parameter or result by itself (C passes arrays as pointers), unit as a parameter, an array of zero-size elements (an array of empty structs or of zero-length arrays, whatever its length: Clang's x86-64 classification divides by the element size, and Clang itself crashes on the C declaration), and anything over the limits. A func value passed to or returned from C, and `@Export`, are E0439 naming P04.18 (the thunks); a func value inside an `Option` or a struct is E0439 naming P04.07 (no func value has a GIR type before it).
+
+Three limits keep every walk of a C type small, ours and Clang's (Clang's classification walks the fields of nested structs recursively, without a memo: its arm64 homogeneous-aggregate and empty-record walks visit every path of a DAG of structs):
+
+- **depth 64**: levels of structs and arrays;
+- **4096 fields when the structs are written out**: a struct counts itself and each field, an array its element once; a DAG that doubles at each level is over it after 11 levels;
+- **1 GiB**: the size of a parameter or result.
+
+The memo holds only facts of a type itself (its verdict as a field, layout, height, written-out field count; never the depth at which it was reached), so no answer depends on the order the types are asked in (`CTypeRules.TheOrderOfQuestionsChangesNoAnswer`). The walk recurses at most 65 levels below the asked type; a walk cut there is never memoized (the asked type is refused whatever is below). When a type breaks several rules, the depth is reported first (a cut walk has not seen the rest), then the first part that is not a C type, then the field count, then the size.
+
+## The Clang world (manager decision M3)
+
+A classifier needs a Clang target, an AST context to make C types in and the code generator whose `CodeGenModule` `CodeGenABITypes` wants (it never generates anything). That world is made the first time a process asks for a target (triple, CPU, features) and kept until the process ends (`worlds()` in `CABI.cpp`); every later module and classifier of the target reuses it. It keeps one C record per structure (keyed by the canonical field types), so it grows with the distinct structures, not with the modules compiled. Clang is not thread-safe: every use of a world holds its mutex.
+
+A module whose C signatures are all scalars never starts Clang: `classifyScalars` gives the answer Clang would, which is short on the two targets (amd64 extends a `bool` and an integer narrower than 32 bits, `zeroext`/`signext`; AAPCS64 on Linux extends nothing, the callee does; everything else is `Direct` as its own type). `CABIKinds.ScalarsWithoutClangAreClangs` compares every fact of it with Clang's for every scalar, as a parameter and a result, alone and past every register class, on both targets. (Before P04.11 the scalar path put `signext`/`zeroext` on arm64 too: on a result that tells LLVM the callee extended the value, which AAPCS64 does not promise.)
+
+Measured (Dev build, a quiet machine): `gopp build -emit=llvm` of a small program takes 8.5 ms with only scalar C functions and 9.4 ms with one that takes a struct; making the world is under 1 ms. `CABIWorld.OneWorldPerTargetPerProcess` checks that scalars make no world and that three modules with aggregates make one.
+
+## Large structs reach Clang flat
+
+A struct of more than 128 bytes (`ClassifierOptions::FlatSize`) is classified as a record of the same size and alignment with one array field. Both targets pass such a struct in memory (amd64 over 64 bytes, arm64 over 16 that are not a homogeneous aggregate, which is at most 32 bytes of Go++ floats), decided by size and alignment alone, with no coerce type: the answer is the same, and Clang never walks the fields. `CABIFlat.FlatStructsClassifyLikeTheOriginals` compares every fact, coerce types included, with and without it on 1500 random structs per target. A struct of no bytes is not flattened: nested in a struct Clang passes `Direct`, its stand-in changed the coerce type Clang derives from the record (an arm64 HFA result), which that test found. Layouts (`layoutOf`) always use the real record.
+
+## Layouts are checked before code
+
+Before the first call is lowered, `LowerToLLVM::checkCLayout` compares Clang's layout of every aggregate in a C signature (and of the structs and arrays inside) with Go++'s LLVM layout: size, alignment and the offset of every field; and Clang's data layout string with the module's. They agree by construction (`CTypeRules`, `memTy`, the pinned data layouts); a difference would be a compiler bug that corrupts calls, so it is an internal error.
+
+## Kinds
+
+Direct (coerce type, flattening of a struct coerce type into one IR argument per field, offset, `alignstack`), Extend (`signext` / `zeroext`), Indirect (`byval` with alignment on the stack; a plain pointer to the callee's own copy, `dead_on_return`, on arm64; `sret` for results, always through a scratch slot copied out afterwards, so `x = f(&x)` is safe), Ignore (empty struct), Expand (one argument per leaf), CoerceAndExpand. InAlloca, IndirectAliased and TargetSpecific are refused (an internal error naming the kind; no Go++ target produces them). A value is loaded as its coerce type from its own memory when the type fits in it, else from a zeroed scratch copy (so no byte past the value is read and the bytes C sees past it are zero); a result is stored back the same way.
+
+Reachable on the Go++ targets: amd64 uses Direct, Extend, Indirect, Ignore; arm64 uses Direct (integer arrays, HFA arrays), Indirect, Ignore. Expand is reachable only on i686, CoerceAndExpand only with `swiftcc`, InAlloca only on 32-bit Windows. Those are covered by unit tests (`CABIKinds`, `CABIRoundTrip`) that classify for the other triples and run caller against callee in an LLJIT. Homogeneous vector aggregates (HVA) are not testable: Go++ has no vector types.
+
+Only direct calls of a C function use the C ABI. A C function's address as a value, called indirectly, would use the Go convention: no func value exists before P04.07, which must lower an indirect call of a C function through `CABILower` (or refuse it). A C function with a body (only the program's entry point `main` today) keeps the scalar convention; V067 refuses an aggregate in one until P04.18's thunks.
+
+## Tests
+
+- `tests/run/cabi-amd64.test`, `cabi-arm64.test` (QEMU): a generator (`Inputs/gen-cabi.py`) makes random signatures (scalars, structs of mixed scalars, `bool`, `char`, floats, HFAs, nested structs, arrays in structs, empty structs, `Option[*byte]`, small and large, up to 24 parameters, and signatures of floats and HFAs only, so every register class runs out) and a C file; Clang builds the C; every argument is printed by the C function from the bytes it received and every result by Go++ from the bytes it got back, against what the generator computed (byte for byte). `cabi-edges-*.test`: the enumerated signatures at the edges of the register classes (`--mode edges`, about 2150), one in 16 in the normal suite. `cabi.long.test`, `cabi-arm64.long.test`: 600 random signatures each; `cabi-edges-*.long.test`: every edge signature on each target.
+- `tests/codegen/cabi-signatures.test`: the IR signature equals Clang's for the same C function (`Inputs/check-cabi-sigs.py`), no run needed; the long version: 1200 random per target with `--cover` (every kind of decision reached) and every edge signature.
+- `tests/codegen/cabi-kinds.test`: FileCheck of the attributes per kind, and of the zeroed scratch a coerce type that reaches past the value is loaded from. `tests/gir/extern-aggregates.test` (accepted shapes, IR as Clang's), `extern-bad*.test`, `extern-deep.test` (both sides of each limit), `extern-unsupported.test` (E0439).
+- `tests/unit/CodeGen/CABITest.cpp`: classification kind by kind and both sides of the register and size boundaries, scalars without Clang, layout agreement (GIR, LLVM, Clang), the cache and threads, the flat records, the world per process, `CTypeRules` (limits, order), the round trips, and counted-work stress with a quadratic control (each type rule dimension, and from source through the whole path). `CABIStressLong` has the timing. `tests/unit/GIR/VerifierTest.cpp`: V067, both sides.
+- `gopp build -link-obj=FILE.o` (hidden, test only) links an extra object.

@@ -1,0 +1,11 @@
+// REQUIRES: long, clang
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 101 400 amd64 %t.a1 --cover
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 102 400 amd64 %t.a2
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 103 400 amd64 %t.a3
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 104 400 arm64 %t.b1 --cover
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 105 400 arm64 %t.b2
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 106 400 arm64 %t.b3
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 0 100000 amd64 %t.ea --edges
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 0 100000 arm64 %t.eb --edges
+// P04.11: cabi-signatures.test with 1200 random signatures per target, and
+// every enumerated edge signature (about 2150) per target.

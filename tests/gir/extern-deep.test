@@ -1,0 +1,42 @@
+// RUN: %python %S/Inputs/gen-cdeep.py 63 > %t.ok.gopp
+// RUN: %gopp build -emit=gir %t.ok.gopp | FileCheck --check-prefix=OK %s
+// RUN: %gopp build -emit=llvm %t.ok.gopp | FileCheck --check-prefix=LL %s
+// RUN: %python %S/Inputs/gen-cdeep.py 64 > %t.deep.gopp
+// RUN: not %gopp build -emit=gir %t.deep.gopp 2>&1 | FileCheck --check-prefix=DEEP %s
+// RUN: %python %S/Inputs/gen-cdeep.py 10 diamond > %t.dia10.gopp
+// RUN: %gopp build -emit=llvm %t.dia10.gopp | FileCheck --check-prefix=DIA10 %s
+// RUN: %python %S/Inputs/gen-cdeep.py 11 diamond > %t.dia11.gopp
+// RUN: not %gopp build -emit=gir %t.dia11.gopp 2>&1 | FileCheck --check-prefix=FIELDS -DT=main.L11 %s
+// RUN: %python %S/Inputs/gen-cdeep.py 60 diamond > %t.dia60.gopp
+// RUN: not %gopp build -emit=gir %t.dia60.gopp 2>&1 | FileCheck --check-prefix=FIELDS -DT=main.L60 %s
+// RUN: %python %S/Inputs/gen-cdeep.py 4095 wide > %t.w4095.gopp
+// RUN: %gopp build -emit=llvm %t.w4095.gopp | FileCheck --check-prefix=WIDE %s
+// RUN: %python %S/Inputs/gen-cdeep.py 4096 wide > %t.w4096.gopp
+// RUN: not %gopp build -emit=gir %t.w4096.gopp 2>&1 | FileCheck --check-prefix=FIELDS -DT=main.W %s
+// RUN: %python %S/Inputs/gen-cdeep.py 134217728 gib > %t.gib.gopp
+// RUN: %gopp build -emit=gir %t.gib.gopp | FileCheck --check-prefix=GIB %s
+// RUN: %python %S/Inputs/gen-cdeep.py 134217729 gib > %t.over.gopp
+// RUN: not %gopp build -emit=gir %t.over.gopp 2>&1 | FileCheck --check-prefix=OVER %s
+// P04.11: the three limits of a by-value C type (gir::CTypeRules), both
+// sides of each, so no walk recurses with the program and Clang's
+// classification, which walks the fields of nested structs without a memo,
+// stays small:
+//   - 64 levels of nesting are accepted (and lowered: Clang passes the int32
+//     inside), 65 are refused with one error;
+//   - 4096 fields when the structs are written out: a diamond of 11 types
+//     that holds the level below twice has 4095 and is accepted (and passed
+//     in memory), one more level has 8191; one of 61 levels (2^62 fields) is
+//     refused just as fast, as the walk is by distinct type; a struct of
+//     4095 fields counts 4096, one of 4096 counts 4097;
+//   - 1 GiB: a struct of exactly 1 GiB is accepted, 8 bytes more are not.
+// OK: declare fn deep(_1: main.L63) -> () [c, external, nounwind]
+// LL: declare void @deep(i32)
+// DEEP: error[E0442]: invalid @Extern on deep: parameter type main.L64 cannot cross the C ABI: a C type nested more than 64 levels deep
+// DEEP-NOT: error
+// DIA10: declare void @deep(ptr byval(%main.L10) align 8)
+// FIELDS: error[E0442]: invalid @Extern on deep: parameter type [[T]] cannot cross the C ABI: a C type of more than 4096 fields when its structs are written out
+// FIELDS-NOT: error
+// WIDE: declare void @deep(ptr byval(%main.W) align 8)
+// GIB: declare fn deep(_1: main.G) -> () [c, external, nounwind]
+// OVER: error[E0442]: invalid @Extern on deep: parameter type main.G cannot cross the C ABI: type main.G is larger than 1 GiB
+// OVER-NOT: error

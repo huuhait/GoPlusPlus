@@ -1,0 +1,42 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.11 (D4.4): C calling Go++ is P04.18's (the callback and @Export
+// thunks). Each is one E0439 that names the task, at the declaration, and a
+// call of the @Export function from Go++ is not reported again. A function
+// inside an Option or a struct is a function value, which no code has before
+// P04.07: one E0439 for that type, naming P04.07. The C function next to
+// them, which takes only what Go++ passes by value, is fine (extern.test,
+// cabi-kinds.test).
+package main
+
+type HasFunc struct{ f func() }
+
+@Extern("C")
+func qsortlike(cmp func(a, b int32) int32)
+
+@Extern("C")
+func registrar() func()
+
+@Export("go_callback")
+func callback(x int32) int32 {
+	return x
+}
+
+@Extern("C")
+func callbackOpt(f Option[func()])
+
+@Extern("C")
+func callbackField(h HasFunc)
+
+@Extern("C")
+func fine(x int32) int32
+
+func main() {
+	_ = fine(1)
+	_ = callback(2)
+}
+
+// CHECK: :13:1: error[E0439]: a function passed to C: a callback (P04.18) is not supported by code generation yet (P04)
+// CHECK: :16:1: error[E0439]: a function returned from C (P04.18) is not supported by code generation yet (P04)
+// CHECK: :19:1: error[E0439]: an @Export function (P04.18) is not supported by code generation yet (P04)
+// CHECK: :24:1: error[E0439]: a function value (P04.07) is not supported by code generation yet (P04)
+// CHECK-NOT: error

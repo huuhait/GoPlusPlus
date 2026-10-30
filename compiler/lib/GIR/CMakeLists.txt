@@ -2,6 +2,7 @@
 # LLVM IR headers here (check-includes); only ADT, Support and Bitstream.
 add_gopp_library(GIR
   Builder.cpp
+  CType.cpp
   GIR.cpp
   Lower.cpp
   Glue.cpp

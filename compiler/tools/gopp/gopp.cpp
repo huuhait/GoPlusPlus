@@ -243,6 +243,11 @@ static cl::opt<std::string>
                        cl::desc("Path of the dynamic linker the program asks "
                                 "for at run time"),
                        cl::sub(BuildCmd));
+static cl::list<std::string>
+    BuildLinkObjs("link-obj", cl::Hidden,
+                  cl::desc("TEST ONLY: link this object file into the "
+                           "program (the C an @Extern(\"C\") test calls)"),
+                  cl::value_desc("file"), cl::sub(BuildCmd));
 static cl::opt<bool> BuildNoDebug("no-debug", cl::desc("No DWARF line tables"),
                                   cl::sub(BuildCmd));
 static cl::opt<bool> BuildNoLocs("gir-no-locs",
@@ -663,8 +668,10 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
   llvm::FileRemover Remove(Obj);
   if (llvm::Error E = gopp::emitObject(**LM, **TM, Obj))
     return reportCodegen(SM, Diags, std::move(E));
-  if (llvm::Error E =
-          gopp::linkExecutable(SelfPath, *T, *In, {std::string(Obj)}, Out))
+  std::vector<std::string> Objects = {std::string(Obj)};
+  for (const std::string &O : BuildLinkObjs)
+    Objects.push_back(O);
+  if (llvm::Error E = gopp::linkExecutable(SelfPath, *T, *In, Objects, Out))
     return reportCodegen(SM, Diags, std::move(E));
   return 0;
 }
