@@ -34,8 +34,8 @@
 #include "llvm/Target/TargetMachine.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
+#include <ctime>
 #include <fstream>
 
 using namespace gopp;
@@ -190,12 +190,21 @@ void manyFields(GoodModule &G, unsigned N) {
   B.ret();
 }
 
-/// The time of one run of Run, in seconds.
+/// The CPU time of the calling thread, in seconds. Other processes on a busy
+/// machine take the CPU away without adding to this clock; what is left is
+/// cache and memory contention.
+static double threadCpuSeconds() {
+  timespec Ts;
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &Ts);
+  return static_cast<double>(Ts.tv_sec) +
+         1e-9 * static_cast<double>(Ts.tv_nsec);
+}
+
+/// The time of one run of Run, in seconds (thread CPU time, not wall time).
 template <class Fn> double best1(Fn Run) {
-  auto T0 = std::chrono::steady_clock::now();
+  double T0 = threadCpuSeconds();
   Run();
-  return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0)
-      .count();
+  return threadCpuSeconds() - T0;
 }
 
 /// Timing (long suite only, M8): the times of Small and Big (the same work at
@@ -203,9 +212,10 @@ template <class Fn> double best1(Fn Run) {
 /// several probe runs and doubles until Small takes at least 20 ms, so the
 /// times are far above the clock's noise. Each time is the least of five
 /// runs of Small and Big taken in turn, so a machine that gets busier or
-/// quieter during the test changes both.
+/// quieter during the test changes both. The times are of the thread's CPU
+/// (best1), so other processes do not add to them.
 template <class FnA, class FnB>
-std::pair<double, double> bestOfBoth(FnA Small, FnB Big) {
+std::pair<double, double> bestOfBothOnce(FnA Small, FnB Big) {
   double Probe = 1e9;
   for (int I = 0; I < 5; ++I)
     Probe = std::min(Probe, best1(Small));
@@ -227,10 +237,25 @@ std::pair<double, double> bestOfBoth(FnA Small, FnB Big) {
   return {A, B};
 }
 
-/// The time that a run of 4N units may take when the run of N took T1: 12
-/// times (linear is 4, quadratic 16). No floor: bestOfBoth makes T1 long
-/// enough to mean something.
-double nearLinearLimit(double T1) { return 12 * T1; }
+/// The time that a run of Scale times the units may take when the run of N
+/// took T1: 3 * Scale times (linear is Scale, quadratic Scale squared). No
+/// floor: bestOfBoth makes T1 long enough to mean something.
+double nearLinearLimit(double T1, double Scale = 4) { return 3 * Scale * T1; }
+
+/// bestOfBothOnce, measured again (twice at most) while the pair is over the
+/// limit, keeping the least time of each side over all the rounds. A busy
+/// machine only slows a run down; a quadratic walk is over the limit in every
+/// round. The controls, which must fail, call bestOfBothOnce.
+template <class FnA, class FnB>
+std::pair<double, double> bestOfBoth(FnA Small, FnB Big) {
+  auto R = bestOfBothOnce(Small, Big);
+  for (int Round = 0; Round < 2 && R.second >= nearLinearLimit(R.first);
+       ++Round) {
+    auto Again = bestOfBothOnce(Small, Big);
+    R = {std::min(R.first, Again.first), std::min(R.second, Again.second)};
+  }
+  return R;
+}
 
 /// Counting (normal suite, M8): the work of N units and of 4N units is at
 /// most C per unit, and four times the input costs at most 4.5 times the work
@@ -312,14 +337,15 @@ TEST(GIRStress, TheStepCountHelperFailsAQuadraticWalk) {
 }
 
 TEST(GIRStressLong, DISABLED_TheTimingHelperFailsAQuadraticWalk) {
-  std::vector<unsigned> Small = iota(1000), Big = iota(4000);
-  auto [Q1, Q4] = bestOfBoth([&] { walkUnits(Small, true); },
-                             [&] { walkUnits(Big, true); });
-  EXPECT_GE(Q4, nearLinearLimit(Q1))
-      << "a quadratic walk passed: T(N) = " << Q1 << ", T(4N) = " << Q4;
-  auto [L1, L4] = bestOfBoth([&] { walkUnits(Small, false); },
-                             [&] { walkUnits(Big, false); });
-  EXPECT_LT(L4, nearLinearLimit(L1)) << L1 << " s, " << L4 << " s";
+  // Eight times the size: linear is 8, quadratic 64, the limit 24.
+  std::vector<unsigned> Small = iota(1000), Big = iota(8000);
+  auto [Q1, Q8] = bestOfBothOnce([&] { walkUnits(Small, true); },
+                                 [&] { walkUnits(Big, true); });
+  EXPECT_GE(Q8, nearLinearLimit(Q1, 8))
+      << "a quadratic walk passed: T(N) = " << Q1 << ", T(8N) = " << Q8;
+  auto [L1, L8] = bestOfBothOnce([&] { walkUnits(Small, false); },
+                                 [&] { walkUnits(Big, false); });
+  EXPECT_LT(L8, nearLinearLimit(L1, 8)) << L1 << " s, " << L8 << " s";
 }
 
 TEST(GIRStress, VerifierOnALadderOf80000Blocks) {

@@ -18,13 +18,16 @@ import argparse
 import os
 import subprocess
 import sys
-import time
+import resource
 
 
 def once(cmd):
-    s = time.time()
+    # The CPU time of the child (user + system), not wall time: other
+    # processes on a busy machine do not add to it.
+    c0 = resource.getrusage(resource.RUSAGE_CHILDREN)
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    t = time.time() - s
+    c1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+    t = (c1.ru_utime - c0.ru_utime) + (c1.ru_stime - c0.ru_stime)
     if r.returncode not in (0, 1):
         print("crash: " + r.stderr[:200])
         sys.exit(1)
