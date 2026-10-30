@@ -92,6 +92,7 @@ A task is not done until:
 - For a safety rule, first list every way the language could break it, then block them all in one place; don't patch one reported case at a time.
 - Make safety decisions from the checker's real types, never from a guess made before the code is type-checked. A guess is wrong both ways: it rejects good code and lets bad code through.
 - Every new analysis gets a generated stress test (thousands of nested and sibling cases) that proves its check time stays near-linear.
+- Speed checks in the normal test suite count work (steps), never wall time; timing-ratio checks only run in long tests with a quadratic control.
 - Wrap every timing or benchmark run in `timeout 60` (or less), and never wait on a run that has no time limit.
 - Never wait in a polling loop (`until … sleep`) without a timeout; run checks in the foreground with `timeout`, or the agent can wait forever.
 - When a rule must also hold in generic code, record each use in the generic body and decide it at instantiation with the same function plain code uses; prove it with a generated plain-vs-generic table test.
