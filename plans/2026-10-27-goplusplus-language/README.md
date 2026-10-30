@@ -259,7 +259,7 @@ Every "Decision" in a phase README is the plan's current position. It stays in f
 |---|---|---|---|
 | C++ interop complexity (templates, exceptions, ABI) | Could stall M5 | Five shippable stages; Clang Sema/CodeGen own all C++ semantics; do C first | P08 |
 | LLVM makes debug builds slow | Misses R4 | Shrink the work at GIR level, use O0 + FastISel, parallel codegen, pipelining and caching, with budgets measured from P06. Fallback: a baseline backend for debug builds only | P06 |
-| Panic cleanup turns most calls into `invoke`, which x86-64 FastISel can't handle | Slow debug builds (R4) | A spike (P04.15) measures it before the panic design is fixed. Options: patch FastISel, use GlobalISel, or the D6.9 fallback | P04, P06 |
+| Panic cleanup turns most calls into `invoke`, which x86-64 FastISel can't handle | Slow debug builds (R4) | Measured by the P04.15 spike (ADR-0028): 1.7 to 1.8× codegen time, 1.3 to 1.4× with the D4.6 lowering rules (each `invoke` alone in its block, one state-driven pad per function). FastISel stays; P06.01 re-measures, and a FastISel patch is the owner's call if the budget is missed | P04, P06 |
 | Clang is single-threaded | Races, or all C++ work serialized | One Clang worker per package; packages share only PCH files (P07 D7.1) | P06, P07 |
 | Ownership model feels un-Go-like | Adoption | Write the sample programs before implementing; keep a spec-revision window after M2 | P01, P05 |
 | Dangling views/pointers | Memory bugs | Borrow checker without annotations (ADR-0021, P04.20), view types that make borrows visible, inferred borrow summaries, one writable borrow per place, sanitizers behind one flag for the residue (`unsafe`, C interop) | P01, P03, P05 |

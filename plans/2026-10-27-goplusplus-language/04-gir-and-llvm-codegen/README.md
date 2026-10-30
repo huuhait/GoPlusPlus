@@ -76,6 +76,13 @@
 - **Catch-all trampolines** at `main`, at goroutine entry and at C-callback entry print an unrecovered panic, stop the other goroutines (P12 D12.12) and exit with code 2.
 - **One unwinder per binary:** libunwind with libc++; libgcc_s with libstdc++.
 - Calls to functions known to be `nounwind` get no landing pad.
+- **Lowering for FastISel (ADR-0028 decision 3, P04.15):**
+  - every `invoke` is alone in its block when instruction selection starts (a codegen-time pass after the `opt 0` passes, with `lower-switch`);
+  - one landing pad per function, driven by a cleanup-state index that each site stores, so drops and deferred calls run in exactly the per-scope order (P01 D1.4 rule 2, D1.9);
+  - one panic call per function and panic kind; each check passes its source position;
+  - no pad for calls that cannot unwind, by the sound rule of ADR-0028 (a wrong `nounwind` is UB-4), carried in export data.
+
+  FastISel can't select `invoke` or `landingpad` and hands the whole block to SelectionDAG; these rules halve that cost.
 - **Under `-panic=abort`:** Go++ code gets no cleanup landing pads. Calls to C++ functions that may throw get abort-on-unwind landing pads, and functions keep `uwtable`, so stack traces still work.
 - Under `-panic=abort` a panic prints the trace and exits with code 2, `recover()` returns nil and nothing unwinds. Whether deferred calls run on that path is decided in P01.06.
 - Windows support (MSVC EH with funclets) is tier-3 work (P16).
@@ -97,7 +104,7 @@
 
 Bounds, nil and division checks stay on in every profile unless explicitly disabled with `@NoBounds` or a per-package flag.
 
-*Risk:* `invoke` and x86-64 FastISel. FastISel can't select `invoke`, so blocks that end in `invoke` fall back to the slower SelectionDAG. See the P04.15 spike.
+*Risk:* `invoke` and x86-64 FastISel. FastISel can't select `invoke`, so blocks that end in `invoke` fall back to the slower SelectionDAG. Measured by the P04.15 spike (ADR-0028): EH makes FastISel codegen 1.7 to 1.8 times slower on Go++-shaped IR, and 1.3 to 1.4 times with the D4.6 lowering rules. FastISel stays; no GlobalISel on x86-64, no LLVM patch, no D6.9 backend for this.
 
 **D4.9 — Linking with the bundled LLD.**
 - `ld.lld` runs as a subprocess; `ld64.lld` and `lld-link` follow later. The LLD bundled inside `gopp` is started as `gopp lld …` (one file to ship; owner decision, P06 Q3). Library-mode LLD only if measurements justify it.
@@ -178,7 +185,7 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 ## Risks
 
 - **ABI corner cases** → Clang classifies every C signature (D4.4); generated ABI tests in P07.12.
-- **`invoke` makes debug codegen slow on x86-64** → the P04.15 spike runs before P04.07.
+- **`invoke` makes debug codegen slow on x86-64** → measured by the P04.15 spike (ADR-0028): 1.7 to 1.8× codegen time. P04.07 implements the ADR-0028 lowering rules (D4.6), which bring it to 1.3 to 1.4×; P06.01 re-measures.
 - **LLVM compile time** → measure from the first slice (`-trace`, P06.09) and keep GIR output lean.
 - **EH overhead in hot code** → `nounwind` inference and `-panic=abort`; measured in P15.
 

@@ -97,3 +97,30 @@ diagnostics and the side table are the same for every thread count
 (`ParallelCheck.*` in `tests/unit/Sema/ParallelTest.cpp`: 1, 2, 3, 4, 8, 12
 and 16 threads, a shared pool, the error limit, the whole conformance corpus),
 and the unit tests pass under ASan+UBSan and under TSan with no report.
+
+## Exception-handling cost at -O0 (P04.15, ADR-0028)
+
+`bench/eh/` holds the tools of the EH cost spike: what `invoke`s and landing
+pads (panics are C++ exceptions, P04 D4.6) cost LLVM's `-O0` codegen. All are
+plain scripts; nothing is built.
+
+| Tool | What |
+|---|---|
+| `goshape.go` | measures the shapes that decide the EH code (calls, checks, owners live at a call, function sizes) on Go packages, type-checked from source |
+| `gen-eh-ir.py` | writes about 100k lines of Go++-shaped `-O0` IR from those rates; `--mode eh/noeh/shape`, `--abi agg/split`, `--pads chain/single/state`, `--panics each/shared` render the same program differently |
+| `split-invokes.py` | moves each `invoke` into a block of its own (the codegen-time pass of ADR-0028 decision 3) |
+| `measure-eh.py` | best-of-N CPU time of `llc` per selector (round-robin, each run under `timeout 60`), codegen and ISel pass times, FastISel / GlobalISel fallback counts |
+
+    nix develop -c go run bench/eh/goshape.go strings strconv fmt ...
+    python3 bench/eh/gen-eh-ir.py --abi split --mode eh > eh.ll
+    nix develop -c taskset -c 191 python3 bench/eh/measure-eh.py eh.ll noeh.ll
+
+Result (x86-64, 100k IR lines as bitcode, FastISel, CPU seconds; plain `-O0` /
+after the `opt 0` passes): no EH 0.121 / 0.078, planned EH 0.202 / 0.142
+(+67% / +82%); in a later session, EH with the ADR-0028 lowering (state-driven
+pad, `--pads state`) 0.159 / 0.111 against no EH 0.122 / 0.078 (+30% / +42%).
+Time bitcode, not `.ll` text: parsing the text is about half of `llc`'s time.
+On a shared machine add `--perf PATH` for instruction counts. The full tables,
+the GlobalISel, SelectionDAG and aarch64 numbers and the decision are in
+`docs/adr/0028-eh-cost-at-o0.md`. `tests/driver/eh-spike-tools.test` keeps the
+tools working.

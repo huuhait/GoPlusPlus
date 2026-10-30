@@ -97,7 +97,7 @@
 - Size: XL.
 - It must emit exception tables (LSDA), unwind info (CFI) and DWARF, and match Clang's C ABI, so panics, C++ exceptions, debuggers and C calls keep working.
 - LLVM remains the only backend for every profile and stays mandatory (R11).
-- This work doesn't start unless P06 measurements (or the P04.15 spike) demand it.
+- This work doesn't start unless P06 measurements demand it. The P04.15 spike did not (ADR-0028): EH costs FastISel 1.3 to 1.4 times the codegen time after the D4.6 lowering rules, about 0.37 s of CPU per 100k lines at `opt 0`.
 
 **D6.10 — Verification model.** Task P06.12 builds it.
 - Hashes are checked when a module or cdep tree is downloaded and extracted into the read-only cache.

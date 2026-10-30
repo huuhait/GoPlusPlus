@@ -1,0 +1,59 @@
+// The tools of the EH cost spike (P04.15, ADR-0028, bench/eh/) keep working:
+// the generator writes valid IR in every mode; in `eh` mode x86-64 FastISel
+// hands the invokes and landing pads to SelectionDAG, in `noeh` and `shape`
+// mode there are none to hand over; `--pads state` has one landing pad per
+// function and dispatches without a `switch`; split-invokes.py keeps the IR
+// valid (also with PHIs in both successors of an invoke) and puts every
+// invoke alone in its block; measure-eh.py reads the counts.
+// RUN: %python %S/../../bench/eh/gen-eh-ir.py --source-lines 400 --mode eh --abi split 2> %t.eh.txt > %t.eh.ll
+// RUN: FileCheck --check-prefix=SHAPE %s < %t.eh.txt
+// RUN: opt -passes=verify -disable-output %t.eh.ll
+// RUN: llc -O0 -filetype=null -pass-remarks-missed=sdagisel %t.eh.ll 2>&1 | FileCheck --check-prefix=EH %s
+// RUN: %python %S/../../bench/eh/gen-eh-ir.py --source-lines 400 --mode noeh --abi split 2>/dev/null > %t.noeh.ll
+// RUN: %python %S/../../bench/eh/gen-eh-ir.py --source-lines 400 --mode shape --abi split 2>/dev/null > %t.shape.ll
+// RUN: opt -passes=verify -disable-output %t.noeh.ll
+// RUN: opt -passes=verify -disable-output %t.shape.ll
+// RUN: llc -O0 -filetype=null -pass-remarks-missed=sdagisel %t.noeh.ll 2>&1 | FileCheck --allow-empty --check-prefix=NOEH %s
+// RUN: llc -O0 -filetype=null -pass-remarks-missed=sdagisel %t.shape.ll 2>&1 | FileCheck --allow-empty --check-prefix=NOEH %s
+// RUN: %python %S/../../bench/eh/gen-eh-ir.py --source-lines 400 --mode eh --abi split --pads state --panics shared 2>/dev/null > %t.ehm.ll
+// RUN: %python %S/../../bench/eh/split-invokes.py < %t.ehm.ll > %t.ehms.ll
+// RUN: opt -passes=verify -disable-output %t.ehms.ll
+// RUN: FileCheck --check-prefix=SPLIT %s < %t.ehms.ll
+// RUN: FileCheck --check-prefix=STATE %s < %t.ehms.ll
+// RUN: %python %S/../../bench/eh/split-invokes.py < %S/Inputs/split-invokes-phis.ll > %t.phis.ll
+// RUN: opt -passes=verify -disable-output %t.phis.ll
+// RUN: FileCheck --check-prefix=PHIS %s < %t.phis.ll
+// RUN: %python %S/../../bench/eh/measure-eh.py --runs 1 --selectors fast,gisel %t.eh.ll | FileCheck --check-prefix=MEASURE %s
+
+// SHAPE: functions {{[0-9]+}}, source lines {{[0-9]+}}, IR lines {{[0-9]+}}
+// SHAPE: as invoke {{[0-9]+}}
+
+// EH-DAG: FastISel missed terminator: {{.*}}invoke
+// EH-DAG: FastISel missed: {{.*}}landingpad
+
+// NOEH-NOT: invoke
+// NOEH-NOT: landingpad
+
+// SPLIT: br label %invoke.alone1
+// SPLIT-NEXT: invoke.alone1:
+// SPLIT-NEXT: invoke
+
+// STATE-NOT: switch
+// STATE: store i32 {{[0-9]+}}, ptr %eh.state
+// STATE: lpad.state:
+// STATE-NEXT: landingpad
+// STATE-NOT: switch
+
+// PHIS:      other:
+// PHIS-NEXT:   invoke void @g(i64 0)
+// PHIS:      call:
+// PHIS-NEXT:   %y = add i64 %x, 1
+// PHIS-NEXT:   br label %invoke.alone1
+// PHIS-NEXT: invoke.alone1:
+// PHIS-NEXT:   invoke void @g(i64 %y)
+// PHIS:        %r = phi i64 [ 0, %other ], [ %y, %invoke.alone1 ]
+// PHIS:        %v = phi i64 [ 1, %other ], [ %y, %invoke.alone1 ]
+
+// MEASURE: | IR | selector | wall (s) | CPU (s)
+// MEASURE: | fast | {{.*}} | total {{[0-9]+}}, term invoke {{[0-9]+}}
+// MEASURE: | gisel | {{.*}} | functions 0 |
