@@ -1,0 +1,28 @@
+// RUN: %gopp check --dump-types %s 2>&1 | FileCheck '--implicit-check-not=value func(int) *N' %s
+// P03.26 + P03.24: the receiver of an operator method is evaluated once and
+// handed to the synthesized call (Checker::PreEval); a long chain under it
+// (past 16 links, Checker::prepareChain) ends there, so the receiver's links
+// are not evaluated a second time and the use stays recorded as the operator
+// (a second evaluation records the operand `a[i]` as a method value).
+package main
+
+type N struct{ n *N }
+
+func (a N) [] (k int) *N { return a.n }
+func (a N) () (k int) *N { return a.n }
+func (a *N) []= (k int, b *N) { a.n = b }
+
+func use(x ...any) {}
+
+func f(p, q *N) {
+	// `a[i] = v` with a `[]=` method on a receiver of 26 parentheses that
+	// holds a `[]` use: the inner use is checked (and recorded) once.
+	// CHECK: {{^}}[[@LINE+1]]:30 operator {{.*}} index [](int) *N
+	((((((((((((((((((((((((((*(((*(p.n)))[1])))))))))))))))))))))))))))[0] = q
+	// CHECK: {{^}}[[@LINE+1]]:6 operator {{.*}} index [](int) *N
+	use((*p.n.n.n.n.n.n.n.n.n.n.n.n.n.n.n.n.n.n.n.n)[1])
+	// CHECK: {{^}}[[@LINE+1]]:6 operator {{.*}} call ()(int) *N
+	use((*((((((((((((((((((p)))))))))))))))))))(2))
+}
+
+func main() {}

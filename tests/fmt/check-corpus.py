@@ -32,12 +32,16 @@ def run(args, data=None):
     return subprocess.run(args, input=data, capture_output=True)
 
 
-def tree(gopp, extra, data):
-    r = run([gopp, "parse", *extra, "-dump-ast", "-"], data)
+def dump(gopp, extra, data):
+    """The normalized syntax tree and the comments of one source, from one
+    `gopp parse` run (the token dump comes first, the tree from its `File`
+    line on); None if it does not parse."""
+    r = run([gopp, "parse", *extra, "-dump-tokens", "-dump-comments", "-dump-ast", "-"], data)
     if r.returncode != 0:
         return None
-    text = POS.sub("", r.stdout.decode("utf-8", "replace"))
-    return normalize(text)
+    text = r.stdout.decode("utf-8", "replace")
+    at = text.find("\nFile ") + 1 if not text.startswith("File ") else 0
+    return normalize(POS.sub("", text[at:])), comments(text[:at])
 
 
 def normalize_lit(rest, is_import_path):
@@ -94,10 +98,9 @@ def normalize(text):
     return "\n".join(out)
 
 
-def comments(gopp, extra, data):
-    r = run([gopp, "parse", *extra, "-dump-tokens", "-dump-comments", "-"], data)
+def comments(tokens):
     out = []
-    for line in r.stdout.decode("utf-8", "replace").splitlines():
+    for line in tokens.splitlines():
         m = re.match(r"\d+:\d+ comment (.*)$", line)
         if m:
             text = m.group(1)
@@ -110,23 +113,23 @@ def comments(gopp, extra, data):
 def check(gopp, path):
     extra = ["-language-rules=false"]
     src = open(path, "rb").read()
-    t0 = tree(gopp, extra, src)
-    if t0 is None:
+    d0 = dump(gopp, extra, src)
+    if d0 is None:
         return "skip", ""
     f1 = run([gopp, "fmt", "-no-sort-imports", "-"], src)
     if f1.returncode != 0:
         return "fail", "fmt failed: " + f1.stderr.decode("utf-8", "replace")[:300]
-    t1 = tree(gopp, extra, f1.stdout)
-    if t1 is None:
+    d1 = dump(gopp, extra, f1.stdout)
+    if d1 is None:
         return "fail", "output does not parse"
-    if t0 != t1:
+    if d0[0] != d1[0]:
         return "fail", "syntax tree changed"
     # Idempotence, with import sorting on.
     s1 = run([gopp, "fmt", "-"], src)
     s2 = run([gopp, "fmt", "-"], s1.stdout)
     if s1.returncode != 0 or s2.returncode != 0 or s2.stdout != s1.stdout:
         return "fail", "not idempotent"
-    if comments(gopp, extra, src) != comments(gopp, extra, f1.stdout):
+    if d0[1] != d1[1]:
         return "fail", "comments changed"
     return "ok", ""
 

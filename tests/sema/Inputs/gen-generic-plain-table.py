@@ -16,7 +16,10 @@ pair:
   - when the plain form is E0395 (a partial place), the generic form is
     rejected with E0316 (the instantiation) or E0395 (a body that is partial
     for every type of its constraint);
-  - an "implicit requirement" error only comes with a rejected plain form.
+  - an "implicit requirement" error only comes with a rejected plain form;
+  - when the plain form is E0371 (a View of a pointer kind or of a view,
+    OWN-V1), the generic form is rejected with E0371 too, at the
+    instantiation (P03.26).
 
 KNOWN lists the pairs where the two differ by a rule that is not about
 partial places, with the reason; the script fails if one of them stops
@@ -82,6 +85,11 @@ type Box[T any] struct{ x T }
 type PBox[T any] struct{ p *T }
 
 type MkF[T any] func() T
+
+type VAlias[T any] = View[T]
+
+@View
+type VBox[T any] struct{ v View[T] }
 """
 
 # (name, type, method-expression spelling, is a struct type (extends works))
@@ -130,6 +138,14 @@ USES = [
     ("clone", "Clone", "(p *{T})", "_ = (*p).Clone()"),
     ("clone-builtin", "Clone", "(p *{T})", "_ = clone(*p)"),
     ("view-clone", "exact", "(v View[{T}])", "var c {T} = v.Clone(); _ = c"),
+    ("view-sig", "any", "(v View[{T}])", "_ = v"),
+    ("view-result", "any", "(v View[{T}]) View[{T}]", "return v"),
+    ("view-body", "any", "(p *{T})", "var v View[{T}] = *p; _ = v"),
+    ("view-closure", "any", "()", "f := func(v View[{T}]) {{}}; _ = f"),
+    ("view-alias", "any", "(v VAlias[{T}])", "_ = v"),
+    ("view-type", "any", "(v VBox[{T}])", "_ = v"),
+    ("view-instance", "any", "(v View[Box[{T}]])", "_ = v"),
+    ("ptr-instance", "any", "(p *Box[{T}])", "_ = p"),
     ("make", "any", "() int", "s := make([]{T}, 0); return len(s)"),
     ("hold", "any", "() int", "var s []{T}; return len(s)"),
     ("hold-option", "any", "()", "var z Option[{T}]; _ = z"),
@@ -143,18 +159,57 @@ USES = [
     ("literal", "exact", "()", "z := {T}{{}}; _ = z"),
 ]
 
+# The method route (P03.26, R1): the signature of a method of a generic type,
+# `func (r G[T]) m<sig>`, against the plain `func (r P) m<sig>`; the body is
+# None. Each row is also written through a generic function that holds
+# `G[U]` (the "-via" rows), whose instantiation is the pair's second line.
+USES += [
+    ("method-param", "any", "(x {T})", None),
+    ("method-slice", "any", "(x []{T})", None),
+    ("method-result", "any", "() {T}", None),
+    ("method-box", "any", "(b Box[{T}])", None),
+    ("method-ptr-box", "any", "(b *Box[{T}])", None),
+    ("method-view-box", "any", "(b View[Box[{T}]])", None),
+    ("method-option", "any", "(o Option[{T}])", None),
+    ("method-func", "any", "(f func({T}))", None),
+    ("method-ptr-func", "any", "(f *func({T}))", None),
+    ("method-via", "any", "(x []{T})", "via"),
+    ("method-ptr-recv", "any", "(x []{T})", "ptr"),
+    ("method-ptr-pointer", "any", "(x *{T})", None),
+]
+
+# A value of T written only inside a type argument that the generic holds
+# behind a pointer (P03.26, R12): `PBox[[]T]` is refused for an abstract T as
+# the plain `PBox[[]Shape]` is (E0389 at the written `[]Shape`), on every
+# route: a signature (function rows), a field of a generic type ("field";
+# "fieldrec" a recursive one, instantiated behind a pointer), a method
+# signature (body None, "via"), a generic alias ("alias"). The controls:
+# `Box[[]T]` (held by value), `PBox[*T]` and `PBox[T]` (no value of T).
+USES += [
+    ("arg-slice", "any", "(x PBox[[]{T}])", "_ = x"),
+    ("arg-array", "any", "(x PBox[[1]{T}])", "_ = x"),
+    ("arg-box", "any", "(x PBox[Box[{T}]])", "_ = x"),
+    ("arg-func", "any", "(x PBox[func({T})])", "_ = x"),
+    ("arg-func-result", "any", "(x PBox[func() {T}])", "_ = x"),
+    ("arg-result", "any", "() PBox[[]{T}]", "panic(1)"),
+    ("arg-nested", "any", "(x Box[PBox[[]{T}]])", "_ = x"),
+    ("arg-held", "any", "(x Box[[]{T}])", "_ = x"),
+    ("arg-pointer", "any", "(x PBox[*{T}])", "_ = x"),
+    ("arg-bare", "any", "(x PBox[{T}])", "_ = x"),
+    ("field-arg-slice", "any", "PBox[[]{T}]", "field"),
+    ("field-arg-box", "any", "PBox[Box[{T}]]", "field"),
+    ("field-arg-func", "any", "PBox[func({T})]", "field"),
+    ("field-arg-pointer", "any", "PBox[*{T}]", "field"),
+    ("fieldrec-arg-array", "any", "PBox[[1]{T}]", "fieldrec"),
+    ("method-arg-slice", "any", "(x PBox[[]{T}])", None),
+    ("method-arg-func", "any", "(x PBox[func({T})])", None),
+    ("method-arg-box", "any", "(x PBox[Box[{T}]])", "via"),
+    ("alias-arg-slice", "any", "PBox[[]{T}]", "alias"),
+    ("alias-arg-array", "any", "PBox[[1]{T}]", "alias"),
+]
+
 # Differences that are not about partial places (use, argument): reason.
-KNOWN = {
-    ("swap", "view"): "OWN-V1: the plain code reads *p of a *View[Animal] as "
-    "a place reached through a view (read-only); the generic swap of two "
-    "View[Animal] values copies no parent part",
-    ("view-clone", "unique"): "OWN-V1 (ADR-0020): View[Unique[*Animal]] "
-    "is refused where it is written; the generic View[T] is not checked "
-    "again on its type argument (no partial place: the clone of a Unique "
-    "copies the whole value through the table)",
-    ("view-clone", "shared"): "the same for View[Shared[*Animal]]",
-    ("view-clone", "view"): "the same for View[View[Animal]]",
-}
+KNOWN = {}
 
 ERR = re.compile(r"^[^:]+:(\d+):\d+: error\[(E\d+)\]: (.*)$")
 
@@ -168,6 +223,48 @@ def build():
             if cons in ("ext", "root") and not struct:
                 continue
             name = "u%d_a%d" % (ui, ai)
+            if body in ("field", "fieldrec", "alias"):
+                # A type (or alias) declaration holding the written type,
+                # instantiated behind a pointer.
+                rec = "next *{}; " if body == "fieldrec" else ""
+                if body == "alias":
+                    plain.append("type P%s = %s" % (name, sig.format(T=ty)))
+                else:
+                    plain.append("type P%s struct{ %sf %s }" % (
+                        name, rec.format("P" + name), sig.format(T=ty)))
+                g1 = len(generic) + 1
+                if body == "alias":
+                    generic.append("type G%s[T %s] = %s" % (
+                        name, cons, sig.format(T="T")))
+                else:
+                    generic.append("type G%s[T %s] struct{ %sf %s }" % (
+                        name, cons, rec.format("G%s[T]" % name),
+                        sig.format(T="T")))
+                generic.append("func i%s() { var z Option[*G%s[%s]]; _ = z }" % (
+                    name, name, ty))
+                lines[(use, arg)] = (len(plain), {g1, g1 + 1})
+                continue
+            if body is None or body in ("via", "ptr"):
+                rc = "*" if body == "ptr" else ""
+                res = "panic(1)" if sig.startswith("() ") else ""
+                plain.append("type P%s struct{}; func (r %sP%s) m%s { %s }" % (
+                    name, rc, name, sig.format(T=ty), res))
+                g1 = len(generic) + 1
+                generic.append(
+                    "type G%s[T %s] struct{}; func (r %sG%s[T]) m%s { %s }" % (
+                        name, cons, rc, name, sig.format(T="T"), res))
+                if body == "via":
+                    generic.append(
+                        "func v%s[U any]() { var z G%s[U]; _ = z }" % (
+                            name, name))
+                    generic.append("func i%s() { v%s[%s]() }" % (
+                        name, name, ty))
+                    lines[(use, arg)] = (len(plain), {g1, g1 + 1, g1 + 2})
+                    continue
+                generic.append("func i%s() { var z G%s[%s]; _ = z }" % (
+                    name, name, ty))
+                lines[(use, arg)] = (len(plain), {g1, g1 + 1})
+                continue
             plain.append("func p%s%s { %s }" % (
                 name, sig.format(T=ty), body.format(T=ty, ME=me)))
             c = {"ext": "extends " + ty, "root": "extends Animal",
@@ -244,6 +341,8 @@ def main():
                     "rejected" if g else "accepted")
             elif "E0395" in pcodes and not gcodes & {"E0316", "E0395"}:
                 why = "plain E0395, generic not E0316/E0395"
+            elif "E0371" in pcodes and "E0371" not in gcodes:
+                why = "plain E0371, generic not E0371"
             elif implicit and not p:
                 why = "implicit requirement with an accepted plain form"
             if (use, arg) in KNOWN:

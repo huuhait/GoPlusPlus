@@ -1,0 +1,12 @@
+// P03.26 (R11): the check of an instance for an abstract type argument does
+// not look at every method of every instance: n methods x n abstract
+// instances took 2.5 s and 2.7 GB at n = 4000 (quadratic). The held type
+// arguments come from the declaration (heldParams, over its fields and method
+// signatures), so it is linear. Accepted when the methods hold T behind a
+// pointer, n errors when one method holds it by value. The .long test has the
+// size 4000.
+// RUN: %python %S/Inputs/gen-abstract-instances.py 400 ptr > %t.p.gopp
+// RUN: timeout 10 %gopp check %t.p.gopp
+// RUN: %python %S/Inputs/gen-abstract-instances.py 400 value > %t.v.gopp
+// RUN: not timeout 10 %gopp check --check-error-limit=0 %t.v.gopp 2>&1 | grep -c 'error\[E0389\]' | FileCheck %s
+// CHECK: 800

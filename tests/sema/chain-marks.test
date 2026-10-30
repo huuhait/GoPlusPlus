@@ -1,0 +1,20 @@
+// P03.26 (R10b): a long chain is evaluated bottom-up (Checker::prepareChain),
+// and each operand still starts with the values the forms above it set on
+// the way down (Checker::ChainCtx): the mark of a selector or `&` (`*p` and
+// the parent part `dog.Animal` may start a selector or be taken the address
+// of, EXP-15), the Option receiver of IsNil / Get or `&o` that is not
+// narrowed, and the callee of a call (a call on a checked Option is no method
+// value, OWN-P10), and the mark of an index or a call on the receiver of an
+// operator method (`(*p)[i]`, `(*p)[i] = v`, `(*p)[i] += v`, `(*p)(x)`,
+// ADR-0024). Every link kind is under and above the marked form, with
+// 3, 14 and 30 parentheses between, short and long (past 16 links). The
+// accepted side has no error; the side without the allowing form has exactly
+// the errors listed by `expect`, at every size (one program per side).
+// RUN: %python %S/Inputs/gen-chain-marks.py ok 3 14 30 > %t.ok.gopp
+// RUN: %gopp check %t.ok.gopp
+// RUN: %python %S/Inputs/gen-chain-marks.py bad 3 14 30 > %t.bad.gopp
+// RUN: %python %S/Inputs/gen-chain-marks.py expect 3 14 30 > %t.exp
+// RUN: not %gopp check --check-error-limit=0 %t.bad.gopp 2>&1 | sed -n 's/^[^:]*:\([0-9]*\):[0-9]*: error\[\(E[0-9]*\)\].*/\1 \2/p' > %t.got
+// RUN: diff %t.exp %t.got
+// RUN: wc -l < %t.exp | FileCheck %s --check-prefix=COUNT
+// COUNT: 126

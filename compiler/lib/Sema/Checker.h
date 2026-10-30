@@ -196,6 +196,10 @@ enum class Category : uint8_t { Trivial, Owning, SharedHandle };
 /// Arg is Q itself. Iterative, each type once (Mono.cpp).
 void forEachTypeParam(Type *Arg,
                       llvm::function_ref<void(TypeParamType *, bool)> Fn);
+/// The same for the vertices of the instantiation cycle check: the type
+/// parameters Arg mentions and the generic origins of the types declared
+/// inside generic functions it mentions (NamedType::ImplicitTParams).
+void forEachMonoSource(Type *Arg, llvm::function_ref<void(Type *, bool)> Fn);
 
 class Checker;
 
@@ -304,6 +308,12 @@ public:
     bool GenericOk = false;  // a generic type or alias may be named here
     DeclInfo *Cur = nullptr; // declaration whose dependencies are recorded
     Scope *Sc = nullptr;
+    /// How many pointers, views, pointer kinds and interfaces (a method, an
+    /// embedded type, a constraint) the type expression being evaluated is
+    /// behind. An instance there is no value of the declaration, so the
+    /// check on the instance (holdsByValue, which stops at those) does not
+    /// see it, and noteHeldTParams notes it as a use instead (P03.26).
+    unsigned Behind = 0;
     SourceLoc Pos;
     const ConstValue *Iota = nullptr;
     SignatureType *Sig = nullptr;
@@ -328,12 +338,21 @@ public:
     NamedType *Orig = nullptr; // the generic type, null for a function
     SmallVector<TypeParamType *, 2> TParams;
     SmallVector<Type *, 2> TArgs;
+    SmallVector<SourceLoc, 2> ArgPos; // of the written arguments, for notes
   };
+  /// A type declared in the current scope inside a generic function or method
+  /// is implicitly parameterized by the type parameters around it (types2
+  /// localNamedVertex).
+  void noteImplicitTParams(TypeName *TN);
+  /// The type parameters declared in a type-parameter or function scope,
+  /// collected on the first local type below it (noteImplicitTParams).
+  llvm::DenseMap<const Scope *, SmallVector<TypeParamType *, 4>> ScopeTParams;
   std::vector<MonoInst> MonoInsts;
   unsigned NoMono = 0; // > 0: instantiations are not recorded (Mono.cpp)
   std::vector<std::pair<TypeParamType *, TypeParamType *>> MonoCanon;
   void recordMono(SourceLoc Pos, NamedType *Orig,
-                  ArrayRef<TypeParamType *> TParams, ArrayRef<Type *> TArgs);
+                  ArrayRef<TypeParamType *> TParams, ArrayRef<Type *> TArgs,
+                  ArrayRef<SourceLoc> ArgPos = {});
   /// Finds the instantiation cycles among Insts (true if there is one) and
   /// marks the generic types on them (InstCycle). Report: also report each
   /// cycle (E0366); the caller asks only for a package without other errors, as
@@ -479,8 +498,16 @@ public:
   unsigned long long sizeofType(Type *T);
   /// The gc sizes for amd64 (a port of types2's gcsizes.go); a negative size
   /// or offset means the type is too large.
-  int64_t gcSizeof(Type *T);
-  int64_t gcAlignof(Type *T);
+  int64_t gcSizeof(Type *T) { return gcLayout(T).Size; }
+  int64_t gcAlignof(Type *T) { return gcLayout(T).Align; }
+  struct Layout {
+    int64_t Size = 0, Align = 1;
+  };
+  /// The size and alignment of T, with an explicit stack (a struct may hold
+  /// another 10000 levels deep by value) and a memo per named type and
+  /// instance; a by-value cycle or an instance that holds itself (which
+  /// grows without end) is cut at one word (Sizes.cpp).
+  Layout gcLayout(Type *T);
   void gcOffsetsof(const StructType *S, llvm::SmallVectorImpl<int64_t> &Offs);
   int64_t gcOffsetof(Type *T, llvm::ArrayRef<int> Index);
   /// Whether the size of T depends on a type parameter (builtins.go).
@@ -639,11 +666,52 @@ public:
 
   // --- calls (Call.cpp)
   ExprKind callExpr(Operand &X, const CallExpr *E);
+  /// The setup of a selector that comes before its operand is evaluated: a
+  /// receiver that is an Option and meets IsNil / Get is not narrowed.
+  void noNarrowReceiver(const SelectorExpr *Ex);
   void selector(Operand &X, const SelectorExpr *E, bool WantType,
                 NamedType *Def = nullptr);
   /// The package an expression like `pkg` or `pkg.ns` denotes (marking the
   /// import used), or null.
   Package *qualifierPackage(const ast::Expr *X);
+  /// qualifierPackage of the prefixes of the long paths met so far.
+  llvm::DenseMap<const SelectorExpr *, Package *> QualMemo;
+  /// Long chains (`a.b.c.d…`, `f()()()…`, `a[0][0]…`, `((((a))))`, mixes of
+  /// them): the checker would recurse once per link. The operand part of a
+  /// selector, call, index, slice, type assertion, `*` or parentheses is
+  /// evaluated by chainOperand. When a chain below is long, prepareChain
+  /// first evaluates its links bottom-up in a loop and parks their operands
+  /// in ChainOperands, so the evaluation above takes the parked operand
+  /// instead of recursing (P03.26).
+  ///
+  /// The forms read a few values that the forms above them set on the way
+  /// down (ChainCtx). prepareChain first walks the chain top-down and does
+  /// what each form does before its operand (enterChainForm, chainSetup),
+  /// keeping the values each operand starts with; the bottom-up loop then
+  /// evaluates each operand with exactly those values, and keeps the values
+  /// it ends with, which the form above gets back when it takes the operand.
+  struct ChainCtx {
+    const ast::Expr *PartialOk = nullptr;
+    bool PartialOkAddr = false;
+    const ast::Expr *CalleeSel = nullptr;
+    bool CalleeSuspended = false;
+    const ast::Expr *NoNarrowExpr = nullptr;
+  };
+  ChainCtx chainCtx() const;
+  void setChainCtx(const ChainCtx &C);
+  struct ChainEntry {
+    Operand Op;
+    ExprKind Kind = ExprKind::Expression;
+    ChainCtx After; // the values when the operand was done
+  };
+  llvm::DenseMap<const ast::Expr *, ChainEntry> ChainOperands;
+  ExprKind chainOperand(Operand &X, const ast::Expr *Parent);
+  /// What the form Eval sets before it evaluates its operand Child, and puts
+  /// back after (the values it changes are returned).
+  ChainCtx chainSetup(const ast::Expr *Eval, const ast::Expr *Child);
+  void chainRestore(const ast::Expr *Eval, const ChainCtx &Saved);
+  ExprKind chainEval(Operand &X, const ast::Expr *Eval, const ast::Expr *Child);
+  void prepareChain(const ast::Expr *Parent);
   // --- foreign (C/C++ header) packages (Call.cpp, D3.7)
   Object *foreignTemplateOf(const IndexExpr *IE);
   Object *foreignCallee(const ast::Expr *Fun, const ast::Expr *&Recv);
@@ -659,6 +727,12 @@ public:
   void markUsed(PkgName *PN);
   llvm::SmallPtrSetImpl<PkgName *> *UsedImports = nullptr;
   bool builtin(Operand &X, const CallExpr *E, BuiltinId Id);
+  /// The checks of a built-in after its arguments are evaluated, and those
+  /// of make (which evaluates its own): out of builtin's frame (R13).
+  bool builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
+                     SmallVector<Operand, 4> &Args, size_t NArgs,
+                     bool HadCallOrRecv);
+  bool builtinMake(Operand &X, const CallExpr *Call, size_t NArgs);
   void arguments(const CallExpr *Call, SignatureType *Sig,
                  ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos,
                  SmallVector<Operand, 4> &Args, bool HasDots,
@@ -739,8 +813,10 @@ public:
   /// TYP-19 through type arguments: an abstract argument that the instance
   /// (a named type, an Option, or the signature of a generic function) holds
   /// by value, decided on the substituted types. Called once the instance
-  /// is verified (a delayed check).
-  void noAbstractArgs(SourceLoc At, Type *Holder, ArrayRef<Type *> Args);
+  /// is verified (a delayed check). Behind: the type expression of the
+  /// instance was behind a pointer, a view or an interface (Env::Behind).
+  void noAbstractArgs(SourceLoc At, Type *Holder, ArrayRef<Type *> Args,
+                      bool Behind = false);
   /// TYP-22: reports the `extends` rings among Types (their origins) and
   /// makes their types invalid.
   void checkExtendsCycles(ArrayRef<NamedType *> Types);
@@ -809,6 +885,11 @@ public:
   bool PartialOkAddr = false;
   void markPartialOk(const ast::Expr *E, bool Addr);
   PartialMark takePartialMark(const ast::Expr *E);
+  /// What a selector or `*p` does on entry, before its operand: it takes its
+  /// mark, and a selector keeps an Option receiver from narrowing. The one
+  /// place for the forms and for prepareChain's top-down walk; the other
+  /// chain forms do nothing on entry.
+  PartialMark enterChainForm(const ast::Expr *E);
   /// The one decision for every partial place: true if this use is allowed,
   /// else reports. PartTy is the type of the place, Whole the child (for
   /// messages).
@@ -949,6 +1030,15 @@ public:
   /// Is the place Ex a part of a view (reached through a View-typed
   /// operand, at any depth)?
   bool viewPlace(const ast::Expr *Ex);
+  /// viewPlace of the operand of each slice expression checked (sliceExpr):
+  /// a slice of a slice asks it, so a long chain is walked once, not once per
+  /// link.
+  llvm::DenseMap<const SliceExpr *, bool> SliceInView;
+  /// Is Place (of type T) a view variable that is no part of a view or an
+  /// interface box? It may be re-pointed, also through a pointer to it, and
+  /// moved (a copy of the view): what it looks at stays read-only by its
+  /// type (OWN-V1, "re-pointing"). The one test of this rule.
+  bool viewVariable(const ast::Expr *Place, Type *T);
   bool rejectViewWrite(const ast::Expr *At, const ast::Expr *Place,
                        const std::string &What, bool Self = false);
   llvm::DenseSet<const ast::Expr *> ViewWriteReported;
@@ -1060,11 +1150,16 @@ public:
   Type *instantiateSignature(SourceLoc Pos, SignatureType *Sig,
                              ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos,
                              const ast::Expr *Ex = nullptr);
+  /// ViewWhy: set (and Cause too) when the argument fails because generic
+  /// code writes View[T] and the argument is a pointer kind or a view; the
+  /// caller then reports it as the written View[X] is (E0371).
   int verify(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
-             ArrayRef<Type *> TArgs, std::string *Cause, bool ForType = false);
+             ArrayRef<Type *> TArgs, std::string *Cause, bool ForType = false,
+             std::string *ViewWhy = nullptr);
   bool satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
                  ArrayRef<TypeParamType *> TParams, ArrayRef<Type *> TArgs,
-                 std::string *Cause, bool ForType = false);
+                 std::string *Cause, bool ForType = false,
+                 std::string *ViewWhy = nullptr);
   /// An instantiation of a generic of this package whose type argument may
   /// break a use of the generic code (GEN-12, EXP-15, TYP-19; mayBreakUses).
   /// The generic's bodies are not all checked yet, so the answer waits for
@@ -1089,8 +1184,11 @@ public:
   /// Notes U for T if T is a type parameter (its original, RenamedFrom).
   void noteUse(Type *T, TypeParamType::Use U);
   /// Notes a Make use for every type parameter that the instance Holder of
-  /// generic code holds by value (TYP-19, M3: `Option[T]`, `Box[T]`).
-  void noteHeldTParams(Type *Holder, ArrayRef<Type *> Args);
+  /// generic code holds by value (TYP-19, M3: `Option[T]`, `Box[T]`): in a
+  /// body, and in a signature, a generic type or an alias where the instance
+  /// is Behind a pointer, a view or an interface (`*Box[T]`, `View[Box[T]]`).
+  void noteHeldTParams(Type *Holder, ArrayRef<Type *> Args,
+                       bool Behind = false);
   /// NamedType::HeldParams of the generic declaration O, computed
   /// iteratively over the declarations it holds (no instance is expanded).
   uint64_t heldParams(NamedType *O);

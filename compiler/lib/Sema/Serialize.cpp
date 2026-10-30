@@ -991,7 +991,7 @@ bool TypeReader::record(const Record &Rec) {
     for (uint64_t K = 0; K < NUses && !Bad; ++K) {
       uint64_t Kind = Next(), Place = Next(), Flags = Next();
       StringRef Member = Str();
-      if (Kind > TypeParamType::Use::Method ||
+      if (Kind > TypeParamType::Use::ViewArg ||
           Place > TypeParamType::Use::Pointer || Flags > 3) {
         Bad = true;
         break;

@@ -562,8 +562,10 @@ void Checker::noAbstract(const ast::Expr *At, Type *T, const char *What) {
   // A generic body that makes or holds a value of its type parameter (`var z
   // T`, `T{}`, `make([]T, n)`, a by-value local) records a Make use of T,
   // decided on every type argument (R8, useWhy). The signature of a generic
-  // is checked on its instance (noAbstractArgs), so only bodies note it.
-  if (Bodies && T && isa<TypeParamType>(T))
+  // is checked on its instance (noAbstractArgs), so only bodies note it,
+  // and a value of T behind a pointer, a view or an interface there
+  // (`*[]T`, `View[[2]T]`), which that check does not look at (P03.26).
+  if ((Bodies || E.Behind) && T && isa<TypeParamType>(T))
     noteUse(T, {TypeParamType::Use::Make});
   if (S.Opts.GoCompat || !T || !isa<NamedType>(T))
     return;
@@ -637,6 +639,17 @@ static bool holdsByValue(Checker &C, Type *T, Type *A) {
         break;
       if (Type *U = C.under(N))
         Work.push_back(U);
+      // The method signatures of the declaration hold their parameters and
+      // results by value too (P03.26, R1): the type arguments they hold are
+      // in the declaration's mask (heldParams, in its own type parameters),
+      // so no method is instantiated here (an instance's method may name a
+      // bigger instance of the type, R8).
+      if (N->Orig->Methods && !N->TArgs.empty()) {
+        uint64_t M = C.heldParams(N->origin());
+        for (unsigned J = 0; J < N->TArgs.size(); ++J)
+          if (M & (1ull << (J < 63 ? J : 63)))
+            Work.push_back(N->TArgs[J]);
+      }
       break;
     }
     case Type::Kind::Struct:
@@ -674,11 +687,11 @@ static bool holdsByValue(Checker &C, Type *T, Type *A) {
   return false;
 }
 
-void Checker::noAbstractArgs(SourceLoc At, Type *Holder,
-                             ArrayRef<Type *> Args) {
+void Checker::noAbstractArgs(SourceLoc At, Type *Holder, ArrayRef<Type *> Args,
+                             bool Behind) {
   if (S.Opts.GoCompat || !Holder || Args.empty())
     return;
-  noteHeldTParams(Holder, Args);
+  noteHeldTParams(Holder, Args, Behind);
   for (Type *A : Args) {
     if (!isAbstractType(A))
       continue;
@@ -1843,6 +1856,24 @@ uint64_t Checker::heldParams(NamedType *O) {
     // declaration is not known yet is walked first.
     SmallVector<NamedType *, 4> Need;
     SmallVector<Type *, 8> Work{under(D)};
+    // The method signatures of a generic declaration hold their parameters
+    // and results by value as the fields do (holdsByValue; P03.26, R1), in
+    // the declaration's own type parameters. An answer that missed a method
+    // (its signature not resolved yet) is not stored.
+    bool Complete = true;
+    if (!D->TParams.empty() && D->Methods) {
+      SmallVector<Type *, 4> Own(D->TParams.begin(), D->TParams.end());
+      for (Func *M : *D->Methods) {
+        if (!M->Ty)
+          objDecl(M, nullptr);
+        if (!M->Ty) {
+          Complete = false;
+          continue;
+        }
+        if (M->RecvTParams.size() == Own.size())
+          Work.push_back(subst(M->Ty, M->RecvTParams, Own));
+      }
+    }
     llvm::SmallPtrSet<const Type *, 8> Seen;
     while (!Work.empty()) {
       Type *X = Work.pop_back_val();
@@ -1867,7 +1898,7 @@ uint64_t Checker::heldParams(NamedType *O) {
     }
     Done[D] = M;
     Open.erase(D);
-    if (Store && declFinished(D)) {
+    if (Store && Complete && declFinished(D)) {
       D->HeldParams.store(M, std::memory_order_relaxed);
       D->HeldKnown.store(true, std::memory_order_release);
     }
@@ -1895,29 +1926,56 @@ bool Checker::holdsTParam(Type *T, TypeParamType *TP) {
   return false;
 }
 
-void Checker::noteHeldTParams(Type *Holder, ArrayRef<Type *> Args) {
+void Checker::noteHeldTParams(Type *Holder, ArrayRef<Type *> Args,
+                              bool Behind) {
   // The plain code refuses an instance that holds an abstract type by value
-  // (M3: `Option[Shape]`, `Box[Shape]`); in generic code the instance
-  // `Box[T]` holds T, so T has a Make use, decided on every type argument.
-  if (S.Opts.GoCompat || !own() || !Bodies)
+  // (M3: `Option[Shape]`, `Box[Shape]`), wherever it is written; in generic
+  // code the instance `Box[T]` holds T, so T has a Make use, decided on every
+  // type argument. A signature, a generic type or an alias is checked on its
+  // instance instead (noAbstractArgs on the substituted type), but that walk
+  // (holdsByValue) stops at a pointer, a view and an interface: an instance
+  // written behind one (`func f[T any](p *Box[T])`, `View[Box[T]]`, `type
+  // H[T any] struct{ p *Box[T] }`) is noted here too (P03.26).
+  if (S.Opts.GoCompat || !own())
     return;
-  SmallVector<TypeParamType *, 4> TPs;
-  for (Type *A : Args)
-    heldTParams(A, TPs, TPs);
-  for (TypeParamType *TP : TPs) {
-    bool Held;
+  auto HolderHolds = [&](TypeParamType *TP) {
     if (auto *Sig = dyn_cast<SignatureType>(Holder))
-      Held = holdsTParam(Sig->Params, TP) || holdsTParam(Sig->Results, TP);
-    else
-      Held = holdsTParam(Holder, TP);
-    if (Held)
-      noteUse(TP, {Use::Make});
+      return holdsTParam(Sig->Params, TP) || holdsTParam(Sig->Results, TP);
+    return holdsTParam(Holder, TP);
+  };
+  SmallVector<TypeParamType *, 4> TPs;
+  if (Bodies || Behind) {
+    for (Type *A : Args)
+      heldTParams(A, TPs, TPs);
+    for (TypeParamType *TP : TPs)
+      if (HolderHolds(TP))
+        noteUse(TP, {Use::Make});
+    return;
+  }
+  // Elsewhere (a signature, a field, a method signature, an alias) the
+  // check on the instance sees what the holder holds by value. A value of T
+  // written inside an argument that the holder does not hold by value
+  // (`PtrHold[[]T]`, `PtrHold[Box[T]]`, `PtrHold[func(T)]` with `type
+  // PtrHold[T any] struct{ p *T }`) is a value as the plain `[]Shape` in
+  // `PtrHold[[]Shape]` is (E0389 where it is written), so T has a Make use
+  // (R12). Decided on the declaration's real mask (holdsTParam, heldParams);
+  // an argument that is T itself is no value of T.
+  for (Type *A : Args) {
+    if (isa<TypeParamType>(A))
+      continue;
+    TPs.clear();
+    heldTParams(A, TPs, TPs);
+    for (TypeParamType *TP : TPs)
+      if (holdsTParam(A, TP) && !HolderHolds(TP))
+        noteUse(TP, {Use::Make});
   }
 }
 
 bool Checker::mayBreakUses(Type *TArg) {
   if (!TArg)
     return false;
+  if (badViewArg(TArg)) // a pointer kind or a view: View[TArg] is an error
+    return true;
   // A struct type (tagged, abstract, or a child with inherited methods), a
   // pointer to one, or a type parameter the uses travel to.
   Type *X = pointeeOf(TArg, true);
@@ -1984,6 +2042,20 @@ std::string Checker::useWhy(Type *TArg, TypeParamType *TPar, const Use &U) {
     return Head() + What + ", and " + A +
            " is abstract, so no value of it can exist; use a concrete child "
            "(GEN-12, TYP-19)";
+  }
+  case Use::ViewArg: {
+    // The plain code's `View[TArg]` (badViewArg, Typexpr.cpp): one predicate
+    // for the written type and for every instantiation, reported with the
+    // written type's error (E0371). A type parameter given as TArg gives the
+    // use on.
+    noteUse(TArg, U);
+    const char *Bad = badViewArg(TArg);
+    if (!Bad)
+      return {};
+    return std::string(Bad) + "; the generic code " +
+           (U.Passed
+                ? "passes " + T + " on to a generic that writes a View of it"
+                : "writes View[" + T + "]");
   }
   case Use::Method: {
     // The plain code's `x.M`, `(*p).M` or `p.M` on TArg: the same lookup
@@ -2125,8 +2197,11 @@ void Checker::untaggedCheck(ArrayRef<UntaggedPending> Pend) {
       std::string Why = useWhy(P.TArg, P.TPar, U);
       if (Why.empty())
         continue;
-      err(P.Pos, P.ForType ? diag::err_sema_typexpr : diag::err_sema_call,
-          {Why});
+      if (U.K == Use::ViewArg) // the error of the written View[TArg]
+        err(P.Pos, diag::err_view_bad_arg, {str(P.TArg), Why});
+      else
+        err(P.Pos, P.ForType ? diag::err_sema_typexpr : diag::err_sema_call,
+            {Why});
       break;
     }
   }

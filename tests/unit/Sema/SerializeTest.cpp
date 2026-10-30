@@ -673,6 +673,179 @@ func g(a *Animal, b *Animal, x *Plain, y *Plain) bool {
   EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
 }
 
+// P03.26: a View[T] of generic code is judged on each type argument as the
+// written View[X] is (E0371), also for a generic of another package: the
+// ViewArg use travels with the type parameter in the export data, for a View
+// in a signature, in a body only, in a generic type and in a generic alias,
+// and through a generic that passes its parameter on (in either package).
+// The same for an instance held behind a view (`View[Box[T]]`, a Make use):
+// an abstract type argument is refused as the plain `Box[Shape]` is.
+TEST(Serialize, ViewArgOfAGenericIsDecidedAcrossPackages) {
+  Loaded L(R"(package lib
+
+func Sig[T any](v View[T]) {}
+
+func Body[T any](p *T) {
+	f := func(v View[T]) {}
+	_ = f
+}
+
+func Pass[T any](p *T) { Body[T](p) }
+
+type Fn[T any] func(View[T])
+
+type Al[T any] = View[T]
+
+type Box[T any] struct{ x T }
+
+func Held[T any](v View[Box[T]]) {}
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Bad = R"(package main
+import "lib"
+type Shape struct{ N int }
+@Abstract
+func (s *Shape) Area() int
+func outer[U any](p *U) { lib.Pass(p) }
+func f(pp **int, f lib.Fn[*int], a lib.Al[Unique[*int]]) {
+	_ = lib.Sig[*int]
+	lib.Body(pp)
+	_ = lib.Pass[View[int]]
+	outer(pp)
+	_ = lib.Held[Shape]
+	_, _ = f, a
+}
+)";
+  const char *Good = R"(package main
+import "lib"
+type Plain struct{ N int }
+func outer[U any](p *U) { lib.Pass(p) }
+func g(p *int, x *Plain, f lib.Fn[int], a lib.Al[string], s lib.Al[[]*int]) {
+	_ = lib.Sig[int]
+	lib.Body(p)
+	_ = lib.Pass[Plain]
+	outer(x)
+	_ = lib.Held[Plain]
+	_, _, _ = f, a, s
+}
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  auto Count = [&](llvm::StringRef Sub) {
+    return std::count_if(Decoded.begin(), Decoded.end(),
+                         [&](const std::string &E) {
+                           return E.find(Sub.str()) != std::string::npos;
+                         });
+  };
+  // lib.Fn[*int], lib.Sig[*int], lib.Body(pp) and outer(pp).
+  EXPECT_EQ(Count("cannot use View[*int]: a View holds a value, not a "
+                  "pointer"),
+            4);
+  EXPECT_EQ(Count("cannot use View[Unique[*int]]: a View holds a value"), 1);
+  EXPECT_EQ(Count("cannot use View[View[int]]: a View of a View"), 1);
+  EXPECT_EQ(Count("the generic code passes U on to a generic that writes a "
+                  "View of it"),
+            1);
+  EXPECT_TRUE(anyHas(Decoded, "Shape does not satisfy the implicit "
+                              "requirement of T: the generic code makes or "
+                              "holds a value of T"));
+  EXPECT_EQ(Decoded.size(), 7u);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
+TEST(Serialize,
+     MethodSignaturesOfAGenericHoldTheirTypeArgumentsAcrossPackages) {
+  Loaded L(R"(package lib
+
+type Box[T any] struct{ x T }
+
+type W[T any] struct{ n int }
+
+func (w W[T]) M(x []T) {}
+
+type PW[T any] struct{ n int }
+
+func (w *PW[T]) M(b *Box[T]) {}
+
+type Q[T any] struct{ n int }
+
+func (q Q[T]) M(p *T) {}
+
+func Hold[T any]() {
+	var w W[T]
+	_ = w
+}
+)");
+  ASSERT_NE(L.CP, nullptr);
+  ASSERT_TRUE(L.Collect.Diags.empty());
+  MemoryRecordStream Stream;
+  TypeWriter(Stream).writePackage(*L.CP->Pkg);
+  std::string Bytes = Stream.toBytes();
+  MemoryRecordStream In;
+  ASSERT_TRUE(In.fromBytes(Bytes));
+  TypeContext Ctx2;
+  Arena Mem;
+  Resolver PR;
+  std::string Err;
+  Package *P2 = TypeReader(In, Ctx2, Mem, PR).readPackage(Err);
+  ASSERT_NE(P2, nullptr) << Err;
+  const char *Bad = R"(package main
+import "lib"
+type Shape struct{ N int }
+@Abstract
+func (s *Shape) Area() int
+func f() {
+	var w lib.W[Shape]
+	var p lib.PW[Shape]
+	_, _ = w, p
+}
+func g() { lib.Hold[Shape]() }
+)";
+  const char *Good = R"(package main
+import "lib"
+type Plain struct{ N int }
+type Shape struct{ N int }
+@Abstract
+func (s *Shape) Area() int
+func f() {
+	var w lib.W[Plain]
+	var q lib.Q[Shape]
+	_, _ = w, q
+}
+func g() { lib.Hold[Plain]() }
+)";
+  auto Direct = checkMain(L.Ctx, L.CP->Pkg, Bad);
+  auto Decoded = checkMain(Ctx2, P2, Bad);
+  EXPECT_EQ(Direct, Decoded);
+  EXPECT_EQ(Decoded.size(), 3u) << ::testing::PrintToString(Decoded);
+  EXPECT_TRUE(anyHas(Decoded, "type argument of lib.W[Shape], which holds it "
+                              "by value"));
+  // lib.PW[Shape] (a *Box[T] in a method) and lib.Hold[Shape].
+  EXPECT_EQ(std::count_if(Decoded.begin(), Decoded.end(),
+                          [](const std::string &E) {
+                            return E.find("Shape does not satisfy the "
+                                          "implicit requirement of T") !=
+                                   std::string::npos;
+                          }),
+            2);
+  EXPECT_EQ(checkMain(L.Ctx, L.CP->Pkg, Good), std::vector<std::string>{});
+  EXPECT_EQ(checkMain(Ctx2, P2, Good), std::vector<std::string>{});
+}
+
 TEST(Serialize, ViewGenericStructsSurviveTheRoundTripAcrossPackages) {
   Loaded L(R"(package lib
 

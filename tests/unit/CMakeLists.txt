@@ -16,6 +16,7 @@ add_executable(GoppUnitTests
   Sema/ConformanceTest.cpp
   Sema/ConstantTest.cpp
   Sema/CorpusTest.cpp
+  Sema/DeepTest.cpp
   Sema/FlowTest.cpp
   Sema/ForeignTest.cpp
   Sema/SerializeTest.cpp

@@ -176,7 +176,20 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         {str(Call), num(Bin.NArgs), num(NArgs)});
     return false;
   }
+  // The checks of each built-in have a large frame (a local of every case);
+  // it is made only after the arguments are evaluated, so a nesting of
+  // built-ins (`min(min(…))`, `len([]T{len(…)})`) costs the stack of a call
+  // per level (R13). make evaluates its sizes itself (builtinMake).
+  if (Id == BuiltinId::Make)
+    return builtinMake(X, Call, NArgs);
+  return builtinChecks(X, Call, Id, Args, NArgs, HadCallOrRecv);
+}
 
+LLVM_ATTRIBUTE_NOINLINE bool
+Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
+                       SmallVector<Operand, 4> &Args, size_t NArgs,
+                       bool HadCallOrRecv) {
+  BuiltinInfo Bin = builtinInfo(Id);
   auto Sig1 = [&](Type *Res, ArrayRef<Type *> Ps) {
     return Ctx.signature(
         Ctx.tuple(Ps),
@@ -676,59 +689,8 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
     X.M = Mode::NoValue;
     break;
   }
-  case BuiltinId::Make: {
-    const ast::Expr *Arg0 = Call->Args[0];
-    Type *T = varType(Arg0);
-    if (!isValid(T))
-      return false;
-    unsigned Min;
-    std::string Why;
-    Type *C = commonUnder(
-        T,
-        [&](Type *, Type *U) -> std::string {
-          if (!U)
-            return "no specific type";
-          if (isa<SliceType>(U) || isa<sema::MapType>(U) ||
-              isa<sema::ChanType>(U))
-            return "";
-          return "type must be slice, map, or channel";
-        },
-        &Why);
-    if (!C) {
-      err(Arg0, diag::err_sema_builtin,
-          {"invalid argument: cannot make " + str(Arg0) + ": " + Why});
-      return false;
-    }
-    Min = isa<SliceType>(C) ? 2 : 1;
-    if (NArgs < Min || Min + 1 < NArgs) {
-      err(Call, diag::err_sema_builtin,
-          {str(Call) + " expects " + num(Min) + " or " + num(Min + 1) +
-           " arguments; found " + num(NArgs)});
-      return false;
-    }
-    SmallVector<int64_t, 2> Sizes;
-    bool ZeroLen = false;
-    for (size_t K = 1; K < NArgs; ++K) {
-      int64_t Sz = index(Call->Args[K], -1);
-      if (Sz >= 0)
-        Sizes.push_back(Sz);
-      if (K == 1 && Sz == 0)
-        ZeroLen = true;
-    }
-    // TYP-15, OWN-R9: `make([]T, n)` creates n zero values; only a constant
-    // length 0 (`make([]T, 0, c)`) creates none.
-    if (own() && !ZeroLen)
-      if (auto *Sl = dyn_cast<SliceType>(C))
-        needZeroValue(Call->Args[1]->getBegin(), Sl->Elem,
-                      str(Call) + " creates zero values",
-                      "use make(" + str(Arg0) + ", 0, n) and append");
-    if (Sizes.size() == 2 && Sizes[0] > Sizes[1])
-      err(Call->Args[1], diag::err_sema_builtin,
-          {"invalid argument: length and capacity swapped"});
-    X.M = Mode::Value;
-    X.Ty = T;
+  case BuiltinId::Make: // (builtinMake)
     break;
-  }
   case BuiltinId::Max:
   case BuiltinId::Min: {
     tok::Kind Op = Id == BuiltinId::Max ? tok::gtr : tok::lss;
@@ -834,7 +796,11 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
         return false;
       }
       // P03.19: moving out of a map or slice of an interface box writes it.
-      if (rejectBoxWrite(Call, Arg, true, str(Call)))
+      // A view variable that is no part of a view or a box is a trivial
+      // value: moving it copies the view and writes nothing it looks at
+      // (OWN-V1, re-pointing), so `*p, *q = move(*q), move(*p)` swaps views.
+      if (!viewVariable(Arg, X.Ty) &&
+          rejectBoxWrite(Call, Arg, true, str(Call)))
         return false;
       if (isPinned(X.Ty)) {
         err(Arg, diag::err_own_pinned_move, {str(Arg), str(X.Ty)});
@@ -1089,5 +1055,60 @@ bool Checker::builtin(Operand &X, const CallExpr *Call, BuiltinId Id) {
   }
   }
   (void)Sig1;
+  return true;
+}
+
+LLVM_ATTRIBUTE_NOINLINE bool
+Checker::builtinMake(Operand &X, const CallExpr *Call, size_t NArgs) {
+  const ast::Expr *Arg0 = Call->Args[0];
+  Type *T = varType(Arg0);
+  if (!isValid(T))
+    return false;
+  unsigned Min;
+  std::string Why;
+  Type *C = commonUnder(
+      T,
+      [&](Type *, Type *U) -> std::string {
+        if (!U)
+          return "no specific type";
+        if (isa<SliceType>(U) || isa<sema::MapType>(U) ||
+            isa<sema::ChanType>(U))
+          return "";
+        return "type must be slice, map, or channel";
+      },
+      &Why);
+  if (!C) {
+    err(Arg0, diag::err_sema_builtin,
+        {"invalid argument: cannot make " + str(Arg0) + ": " + Why});
+    return false;
+  }
+  Min = isa<SliceType>(C) ? 2 : 1;
+  if (NArgs < Min || Min + 1 < NArgs) {
+    err(Call, diag::err_sema_builtin,
+        {str(Call) + " expects " + num(Min) + " or " + num(Min + 1) +
+         " arguments; found " + num(NArgs)});
+    return false;
+  }
+  SmallVector<int64_t, 2> Sizes;
+  bool ZeroLen = false;
+  for (size_t K = 1; K < NArgs; ++K) {
+    int64_t Sz = index(Call->Args[K], -1);
+    if (Sz >= 0)
+      Sizes.push_back(Sz);
+    if (K == 1 && Sz == 0)
+      ZeroLen = true;
+  }
+  // TYP-15, OWN-R9: `make([]T, n)` creates n zero values; only a constant
+  // length 0 (`make([]T, 0, c)`) creates none.
+  if (own() && !ZeroLen)
+    if (auto *Sl = dyn_cast<SliceType>(C))
+      needZeroValue(Call->Args[1]->getBegin(), Sl->Elem,
+                    str(Call) + " creates zero values",
+                    "use make(" + str(Arg0) + ", 0, n) and append");
+  if (Sizes.size() == 2 && Sizes[0] > Sizes[1])
+    err(Call->Args[1], diag::err_sema_builtin,
+        {"invalid argument: length and capacity swapped"});
+  X.M = Mode::Value;
+  X.Ty = T;
   return true;
 }

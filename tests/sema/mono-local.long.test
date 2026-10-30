@@ -1,0 +1,11 @@
+// REQUIRES: long
+// P03.26: instantiation cycles through types declared in generic functions
+// and methods: 16 small programs, in Go mode and in Go++ mode, each with the
+// cycle exactly as `go build` reports it (the error, then each note with its
+// position), or accepted; and the stress: 3000 local types in one generic
+// function, 3000 functions with one each, a chain and a ring of 3000
+// functions through local types and 1000 rings of 3 (the graph has a vertex
+// per local type and an edge per type parameter around it: near-linear),
+// in both modes. mono-local-go.long.test runs the table through `go build`.
+// RUN: %python %S/Inputs/check-mono-local.py %gopp %t.d
+// RUN: %python %S/Inputs/check-mono-local.py %gopp %t.s stress

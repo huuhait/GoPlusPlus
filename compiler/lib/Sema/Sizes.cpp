@@ -27,42 +27,6 @@ constexpr int64_t MaxInt64 = INT64_MAX;
 int64_t alignTo(int64_t X, int64_t A) { return (X + A - 1) & ~(A - 1); }
 } // namespace
 
-int64_t Checker::gcAlignof(Type *T) {
-  DepthGuard DG(RecDepth);
-  if (RecDepth > MaxRecDepth)
-    return 1;
-  Type *U = under(T);
-  switch (U->getKind()) {
-  case Type::Kind::Array:
-    return gcAlignof(cast<ArrayType>(U)->Elem);
-  case Type::Kind::Struct: {
-    int64_t Max = 1;
-    for (Var *F : cast<StructType>(U)->Fields)
-      Max = std::max(Max, gcAlignof(F->Ty));
-    return Max;
-  }
-  case Type::Kind::Slice:
-  case Type::Kind::Interface:
-  case Type::Kind::Ref:
-    return WordSize;
-  case Type::Kind::Basic:
-    if (cast<BasicType>(U)->BK == BasicKind::String)
-      return WordSize;
-    break;
-  case Type::Kind::Option:
-    return gcAlignof(cast<OptionType>(U)->Elem);
-  default:
-    break;
-  }
-  int64_t A = gcSizeof(T); // may be 0 or negative
-  if (A < 1)
-    return 1;
-  // complex{64,128} are aligned like [2]float{32,64}.
-  if (isComplex(T))
-    A /= 2;
-  return std::min(A, MaxAlign);
-}
-
 void Checker::gcOffsetsof(const StructType *S, SmallVectorImpl<int64_t> &Offs) {
   int64_t Off = 0;
   for (Var *F : S->Fields) {
@@ -70,62 +34,24 @@ void Checker::gcOffsetsof(const StructType *S, SmallVectorImpl<int64_t> &Offs) {
       Offs.push_back(-1);
       continue;
     }
-    Off = alignTo(Off, gcAlignof(F->Ty));
+    Layout L = gcLayout(F->Ty);
+    Off = alignTo(Off, L.Align);
     Offs.push_back(Off);
-    int64_t D = gcSizeof(F->Ty);
-    if (D >= 0 && Off >= 0)
-      Off += D; // ok to overflow to < 0
+    if (L.Size >= 0 && Off >= 0)
+      Off += L.Size; // ok to overflow to < 0
     else
       Off = -1; // F->Ty or Off is too large
   }
 }
 
-int64_t Checker::gcSizeof(Type *T) {
-  DepthGuard DG(RecDepth);
-  if (RecDepth > MaxRecDepth)
-    return WordSize;
-  Type *U = under(T);
+/// The size and alignment of a type that has no parts to walk (a basic type,
+/// a slice, an interface, a view, anything that is one word): gcsizes.go.
+static Checker::Layout leafLayout(Type *U, bool Complex) {
   switch (U->getKind()) {
-  case Type::Kind::Basic:
-    switch (cast<BasicType>(U)->BK) {
-    case BasicKind::Bool:
-    case BasicKind::Int8:
-    case BasicKind::Uint8:
-      return 1;
-    case BasicKind::Int16:
-    case BasicKind::Uint16:
-      return 2;
-    case BasicKind::Int32:
-    case BasicKind::Uint32:
-    case BasicKind::Float32:
-      return 4;
-    case BasicKind::Int64:
-    case BasicKind::Uint64:
-    case BasicKind::Float64:
-    case BasicKind::Complex64:
-      return 8;
-    case BasicKind::Complex128:
-    case BasicKind::String:
-      return 16;
-    default:
-      return WordSize;
-    }
-  case Type::Kind::Array: {
-    auto *A = cast<ArrayType>(U);
-    int64_t N = A->Len;
-    if (N <= 0)
-      return 0;
-    int64_t ES = gcSizeof(A->Elem);
-    if (ES < 0)
-      return -1; // element too large
-    if (ES == 0)
-      return 0; // 0-size element
-    if (ES > MaxInt64 / N)
-      return -1; // ES * N overflows
-    return ES * N;
-  }
   case Type::Kind::Slice:
-    return WordSize * 3;
+    return {WordSize * 3, WordSize};
+  case Type::Kind::Interface:
+    return {WordSize * 2, WordSize};
   case Type::Kind::Ref: {
     // ADR-0020 point 7: a view of a string or a slice (named or not, and the
     // borrowed []T of slicing) is (ptr, len); every other view is one
@@ -134,40 +60,258 @@ int64_t Checker::gcSizeof(Type *T) {
     bool PtrLen =
         isa<SliceType>(EU) ||
         (isa<BasicType>(EU) && cast<BasicType>(EU)->BK == BasicKind::String);
-    return PtrLen ? WordSize * 2 : WordSize;
+    return {PtrLen ? WordSize * 2 : WordSize, WordSize};
   }
-  case Type::Kind::Struct: {
-    auto *St = cast<StructType>(U);
-    if (St->Fields.empty())
-      return 0;
-    SmallVector<int64_t, 8> Offs;
-    gcOffsetsof(St, Offs);
-    int64_t Off = Offs.back();
-    int64_t Size = gcSizeof(St->Fields.back()->Ty);
-    if (Off < 0 || Size < 0)
-      return -1; // type too large
-    // gc: the last field of a non-zero-sized struct is not allowed to have
-    // size 0.
-    if (Off > 0 && Size == 0)
+  case Type::Kind::Basic: {
+    int64_t Size;
+    switch (cast<BasicType>(U)->BK) {
+    case BasicKind::Bool:
+    case BasicKind::Int8:
+    case BasicKind::Uint8:
       Size = 1;
-    // gc: the size includes alignment padding.
-    return alignTo(Off + Size, gcAlignof(T));
+      break;
+    case BasicKind::Int16:
+    case BasicKind::Uint16:
+      Size = 2;
+      break;
+    case BasicKind::Int32:
+    case BasicKind::Uint32:
+    case BasicKind::Float32:
+      Size = 4;
+      break;
+    case BasicKind::Int64:
+    case BasicKind::Uint64:
+    case BasicKind::Float64:
+    case BasicKind::Complex64:
+      Size = 8;
+      break;
+    case BasicKind::Complex128:
+      Size = 16;
+      break;
+    case BasicKind::String:
+      return {16, WordSize};
+    default:
+      Size = WordSize;
+      break;
+    }
+    // complex{64,128} are aligned like [2]float{32,64}.
+    return {Size, std::min(Complex ? Size / 2 : Size, MaxAlign)};
   }
-  case Type::Kind::Interface:
-    return WordSize * 2;
-  case Type::Kind::Option: {
-    // ADR-0018: a pointer kind's nil is its empty bit pattern; any other T
-    // gets a hidden "is set" flag.
-    auto *O = cast<OptionType>(U);
-    int64_t ES = gcSizeof(O->Elem);
-    if (ES < 0)
-      return -1;
-    if (O->usesNiche())
-      return ES;
-    return alignTo(ES + 1, gcAlignof(O->Elem));
+  default: // catch-all
+    return {WordSize, WordSize};
   }
-  default:
-    return WordSize; // catch-all
+}
+
+Checker::Layout Checker::gcLayout(Type *Root) {
+  // A named type (or instance) is a node of the walk, memoized on the type
+  // when the answer is exact and in Local for the rest of this query. A
+  // frame is a type with parts: an array, a struct, an Option or a named
+  // type (its one part is its underlying type); the parts are laid out
+  // first, then the frame combines them. A named type met again while it is
+  // on the stack is a by-value cycle (an invalid type, reported by its
+  // declaration): it counts one word, and nothing the cut touched is stored.
+  // So is an instance of a generic type that holds an instance of itself by
+  // value: its instances grow without end, so none is expanded. Neither is
+  // asked for by unsafe.Sizeof and its kin (hasVarSize is true for both), so
+  // the word is only a fallback; the walk of any other type is exact however
+  // deep it goes.
+  struct Frame {
+    Type *T;           // the type
+    NamedType *N;      // named: the node, else null
+    Type *U;           // the type with parts (T, or under(T) for a named)
+    unsigned FirstKid; // index of the first part in Kids
+    size_t NumKids;    // number of parts
+    size_t Done;       // parts laid out so far
+    unsigned CutsAtStart;
+  };
+  // Local: a type laid out in this query, and whether a cut was below it
+  // (its answer then depends on where the walk entered the cycle, so a type
+  // above it is not stored either).
+  llvm::DenseMap<NamedType *, std::pair<Layout, bool>> Local;
+  llvm::DenseMap<NamedType *, bool> Grow;
+  llvm::SmallPtrSet<NamedType *, 16> Busy;
+  SmallVector<Frame, 32> St;
+  // The parts of each frame, as one flat list (a frame's parts are the last
+  // NumKids entries of Parts while it is on top) and their layouts.
+  SmallVector<Type *, 64> Parts;
+  SmallVector<Layout, 64> Lays;
+  unsigned Cuts = 0;
+  bool Exact = true; // every named type met so far is declared
+
+  auto Grows = [&](NamedType *Inst) {
+    NamedType *O = Inst->origin();
+    if (auto It = Grow.find(O); It != Grow.end())
+      return It->second;
+    uint8_t St = O->GrowState.load(std::memory_order_acquire);
+    bool G;
+    if (St)
+      G = St == 2;
+    else {
+      G = (varParams(O) >> 63) != 0;
+      if (typesFinal())
+        O->GrowState.store(G ? 2 : 1, std::memory_order_release);
+    }
+    return Grow[O] = G;
+  };
+
+  // Lays T out now if it needs no walk (true, with R), else pushes it.
+  auto Visit = [&](Type *T, Layout &R) -> bool {
+    NamedType *N = dyn_cast<NamedType>(T);
+    Type *U = T;
+    if (N) {
+      if (N->LayoutState.load(std::memory_order_acquire) == 1) {
+        R = {N->LayoutSize.load(std::memory_order_relaxed),
+             N->LayoutAlign.load(std::memory_order_relaxed)};
+        return true;
+      }
+      if (auto It = Local.find(N); It != Local.end()) {
+        R = It->second.first;
+        if (It->second.second)
+          ++Cuts;
+        return true;
+      }
+      if (Busy.count(N) || (N->Orig && Grows(N))) {
+        ++Cuts;
+        R = {WordSize, WordSize};
+        return true;
+      }
+      if (!declFinished(N))
+        Exact = false;
+      U = under(T);
+    }
+    switch (U->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+    case Type::Kind::Struct:
+      break;
+    default: {
+      R = leafLayout(U, isComplex(T));
+      if (N) // a named leaf (cheap, but memoize the ones in Local)
+        Local[N] = {R, false};
+      return true;
+    }
+    }
+    Frame F{T, N, U, static_cast<unsigned>(Parts.size()), 0, 0, Cuts};
+    switch (U->getKind()) {
+    case Type::Kind::Array:
+      Parts.push_back(cast<sema::ArrayType>(U)->Elem);
+      break;
+    case Type::Kind::Option:
+      Parts.push_back(cast<OptionType>(U)->Elem);
+      break;
+    default:
+      for (Var *Fld : cast<StructType>(U)->Fields)
+        Parts.push_back(Fld->Ty);
+      break;
+    }
+    F.NumKids = Parts.size() - F.FirstKid;
+    if (N)
+      Busy.insert(N);
+    St.push_back(F);
+    return false;
+  };
+
+  Layout Result;
+  if (Visit(Root, Result))
+    return Result;
+  while (true) {
+    Frame &F = St.back();
+    if (F.Done < F.NumKids) {
+      Layout R;
+      if (Visit(Parts[F.FirstKid + F.Done], R)) {
+        Lays.push_back(R);
+        ++St.back().Done;
+      }
+      continue; // (a pushed frame lays out its parts, then delivers here)
+    }
+    // All parts are laid out: combine.
+    const Layout *Kids = Lays.data() + (Lays.size() - F.NumKids);
+    Layout R;
+    switch (F.U->getKind()) {
+    case Type::Kind::Array: {
+      auto *A = cast<sema::ArrayType>(F.U);
+      int64_t N = A->Len, ES = Kids[0].Size;
+      R.Align = Kids[0].Align;
+      if (N <= 0)
+        R.Size = 0;
+      else if (ES < 0)
+        R.Size = -1; // element too large
+      else if (ES == 0)
+        R.Size = 0; // 0-size element
+      else if (ES > MaxInt64 / N)
+        R.Size = -1; // ES * N overflows
+      else
+        R.Size = ES * N;
+      break;
+    }
+    case Type::Kind::Option: {
+      // ADR-0018: a pointer kind's nil is its empty bit pattern; any other T
+      // gets a hidden "is set" flag.
+      auto *O = cast<OptionType>(F.U);
+      R.Align = Kids[0].Align;
+      if (Kids[0].Size < 0)
+        R.Size = -1;
+      else if (O->usesNiche())
+        R.Size = Kids[0].Size;
+      else
+        R.Size = alignTo(Kids[0].Size + 1, Kids[0].Align);
+      break;
+    }
+    default: { // a struct
+      if (F.NumKids == 0) {
+        R = {0, 1};
+        break;
+      }
+      int64_t Align = 1;
+      for (size_t K = 0; K < F.NumKids; ++K)
+        Align = std::max(Align, Kids[K].Align);
+      // gcOffsetsof, on the layouts of the fields.
+      int64_t Off = 0, Last = 0;
+      for (size_t K = 0; K < F.NumKids; ++K) {
+        if (Off < 0) { // all remaining offsets are too large
+          Last = -1;
+          continue;
+        }
+        Off = alignTo(Off, Kids[K].Align);
+        Last = Off;
+        int64_t D = Kids[K].Size;
+        if (D >= 0 && Off >= 0)
+          Off += D; // ok to overflow to < 0
+        else
+          Off = -1; // the field or Off is too large
+      }
+      int64_t Size = Kids[F.NumKids - 1].Size;
+      if (Last < 0 || Size < 0) {
+        R = {-1, Align}; // type too large
+        break;
+      }
+      // gc: the last field of a non-zero-sized struct is not allowed to have
+      // size 0.
+      if (Last > 0 && Size == 0)
+        Size = 1;
+      // gc: the size includes alignment padding.
+      R = {alignTo(Last + Size, Align), Align};
+      break;
+    }
+    }
+    NamedType *N = F.N;
+    bool Own = F.CutsAtStart == Cuts;
+    Lays.resize(Lays.size() - F.NumKids);
+    Parts.resize(F.FirstKid);
+    St.pop_back();
+    if (N) {
+      Busy.erase(N);
+      Local[N] = {R, !Own};
+      if (Own && Exact && declFinished(N)) {
+        N->LayoutSize.store(R.Size, std::memory_order_relaxed);
+        N->LayoutAlign.store(R.Align, std::memory_order_relaxed);
+        N->LayoutState.store(1, std::memory_order_release);
+      }
+    }
+    if (St.empty())
+      return R;
+    Lays.push_back(R);
+    ++St.back().Done;
   }
 }
 
@@ -194,58 +338,107 @@ unsigned long long Checker::sizeofType(Type *T) {
   return S < 0 ? WordSize : static_cast<unsigned long long>(S);
 }
 
-bool Checker::hasVarSize(Type *T, llvm::DenseMap<NamedType *, bool> *Seen) {
+bool Checker::hasVarSize(Type *Root, llvm::DenseMap<NamedType *, bool> *Seen) {
   // Cycles are only possible through named types: Seen detects them and
   // records the results of the types seen before. An instance is answered
   // from its generic declaration (varParams: the type parameters it holds by
   // value) and its arguments, never expanded: an instance that holds
   // another instance of its own generic type by value (`type N0[P any]
   // [1][0]N0[[0]P]`) grows without end, and the declaration check may ask
-  // before any cycle check has run (review R23).
+  // before any cycle check has run (review R23). Walked with an explicit
+  // stack: the parts of a type may be nested to any depth.
   llvm::DenseMap<NamedType *, bool> Local;
-  NamedType *Named = dyn_cast<NamedType>(T);
-  if (Named && Named->Orig) {
-    uint64_t Mask = varParams(Named->Orig);
-    if (Mask >> 63)
-      return true;
-    for (unsigned J = 0; J < Named->TArgs.size() && J < 63; ++J)
-      if ((Mask & (uint64_t(1) << J)) && hasVarSize(Named->TArgs[J], Seen))
+  if (!Seen)
+    Seen = &Local;
+  struct Frame {
+    Type *T;
+    NamedType *Named; // a declared (not instantiated) named type, else null
+    SmallVector<Type *, 4> Kids;
+    size_t Next = 0;
+  };
+  SmallVector<Frame, 16> St;
+  // Starts the walk of T: true if its answer is known now (in Known), else a
+  // frame was pushed.
+  auto Start = [&](Type *T, bool &Known) -> bool {
+    Known = false;
+    NamedType *Named = dyn_cast<NamedType>(T);
+    Frame F{T, nullptr, {}, 0};
+    if (Named && Named->Orig) {
+      uint64_t Mask = varParams(Named->Orig);
+      if (Mask >> 63) {
+        Known = true;
         return true;
-    return false;
-  }
-  if (Named) {
-    if (!Seen)
-      Seen = &Local;
-    auto It = Seen->find(Named);
-    if (It != Seen->end())
-      return It->second;
-    (*Seen)[Named] = true; // possibly cyclic until proven otherwise
-  }
-  bool Var = false;
-  Type *U = under(T);
-  switch (U->getKind()) {
-  case Type::Kind::Array:
-    Var = hasVarSize(cast<ArrayType>(U)->Elem, Seen);
-    break;
-  case Type::Kind::Struct:
-    for (sema::Var *F : cast<StructType>(U)->Fields)
-      if (hasVarSize(F->Ty, Seen)) {
-        Var = true;
-        break;
       }
-    break;
-  case Type::Kind::Interface:
-    Var = isTypeParam(T);
-    break;
-  case Type::Kind::Option: // Go++: Option[T] has the size of T (and a flag)
-    Var = hasVarSize(cast<OptionType>(U)->Elem, Seen);
-    break;
-  default:
-    break;
+      for (unsigned J = 0; J < Named->TArgs.size() && J < 63; ++J)
+        if (Mask & (uint64_t(1) << J))
+          F.Kids.push_back(Named->TArgs[J]);
+      St.push_back(std::move(F));
+      return false;
+    }
+    if (Named) {
+      auto It = Seen->find(Named);
+      if (It != Seen->end()) {
+        Known = It->second;
+        return true;
+      }
+      (*Seen)[Named] = true; // possibly cyclic until proven otherwise
+      F.Named = Named;
+    }
+    Type *U = under(T);
+    switch (U->getKind()) {
+    case Type::Kind::Array:
+      F.Kids.push_back(cast<sema::ArrayType>(U)->Elem);
+      break;
+    case Type::Kind::Struct:
+      for (sema::Var *Fld : cast<StructType>(U)->Fields)
+        F.Kids.push_back(Fld->Ty);
+      break;
+    case Type::Kind::Interface:
+      if (isTypeParam(T)) {
+        Known = true;
+        if (Named)
+          (*Seen)[Named] = true;
+        return true;
+      }
+      break;
+    case Type::Kind::Option: // Go++: Option[T] has the size of T (and a flag)
+      F.Kids.push_back(cast<OptionType>(U)->Elem);
+      break;
+    default:
+      break;
+    }
+    if (F.Kids.empty()) {
+      if (Named)
+        (*Seen)[Named] = false;
+      return true; // Known stays false: no variable size
+    }
+    St.push_back(std::move(F));
+    return false;
+  };
+  bool Known;
+  if (Start(Root, Known))
+    return Known;
+  while (true) {
+    Frame &F = St.back();
+    if (F.Next < F.Kids.size()) {
+      Type *K = F.Kids[F.Next++];
+      bool KnownK;
+      if (Start(K, KnownK) && KnownK) {
+        // One part of variable size makes every type above it so.
+        for (Frame &A : St)
+          if (A.Named)
+            (*Seen)[A.Named] = true;
+        return true;
+      }
+      continue;
+    }
+    // No part is of variable size.
+    if (F.Named)
+      (*Seen)[F.Named] = false;
+    St.pop_back();
+    if (St.empty())
+      return false;
   }
-  if (Named)
-    (*Seen)[Named] = Var;
-  return Var;
 }
 
 /// The type parameters of generic type O (bit per index below 63) that its

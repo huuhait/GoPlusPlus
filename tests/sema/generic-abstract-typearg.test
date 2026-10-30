@@ -1,0 +1,85 @@
+// RUN: not %gopp check --check-error-limit=0 --test-stubs=%S/Inputs/typeargstub %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.26 (R12, TYP-19, GEN-12): a value of T written only inside a type
+// argument that the generic holds behind a pointer (`PBox[[]T]`,
+// `PBox[Box[T]]`, `PBox[func(T)]`, `PBox[[1]T]`) is a value of T, as the
+// plain `PBox[[]Shape]` is (E0389 where `[]Shape` is written): T has a Make
+// use, so an abstract type argument is refused on every route (a function,
+// a generic type, a method signature, an alias), in this package and
+// through the export data of another (package q). The same generics with a
+// concrete type, and `PBox[*T]` / `PBox[T]` with an abstract one, are
+// accepted. The table extends-generic-plain-table.test has the same rows
+// (arg-, field-, method-arg-, alias-arg-) against every argument kind.
+package main
+
+import "q"
+
+type Shape struct{ N int }
+
+@Abstract
+func (s *Shape) Area() int
+
+type Circle extends Shape { R int }
+
+@Override
+func (c *Circle) Area() int { return c.R }
+
+type PBox[T any] struct{ p *T }
+
+type Box[T any] struct{ x T }
+
+// The plain side.
+// CHECK-DAG: [[@LINE+1]]:18: error[E0389]: cannot use the abstract type Shape for an element type
+func p1(x PBox[[]Shape]) {}
+
+// This package.
+func g[T any](x PBox[[]T])        {}
+func gf[T any](x PBox[func(T)])   {}
+type h[T any] struct{ h PBox[Box[T]] }
+type w[T any] struct{ n int }
+func (v w[T]) m(x PBox[[1]T])     {}
+type a[T any] = PBox[[]T]
+
+func uses() {
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = g[Shape]
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T
+	_ = gf[Shape]
+	// CHECK-DAG: [[@LINE+1]]:16: error[E0323]: Shape does not satisfy the implicit requirement of T
+	var x Option[*h[Shape]]
+	// CHECK-DAG: [[@LINE+1]]:16: error[E0323]: Shape does not satisfy the implicit requirement of T
+	var y Option[*w[Shape]]
+	// CHECK-DAG: [[@LINE+1]]:16: error[E0323]: Shape does not satisfy the implicit requirement of T
+	var z Option[*a[Shape]]
+	_, _, _ = x, y, z
+	// Concrete: accepted.
+	_ = g[Circle]
+	_ = gf[Circle]
+	var cx Option[*h[Circle]]
+	var cy Option[*w[Circle]]
+	var cz Option[*a[Circle]]
+	_, _, _ = cx, cy, cz
+}
+
+// Package q (export data).
+func usesQ() {
+	// CHECK-DAG: [[@LINE+1]]:10: error[E0316]: Shape does not satisfy the implicit requirement of T
+	_ = q.G[Shape]
+	// CHECK-DAG: [[@LINE+1]]:11: error[E0316]: Shape does not satisfy the implicit requirement of T
+	_ = q.GF[Shape]
+	// CHECK-DAG: [[@LINE+1]]:20: error[E0323]: Shape does not satisfy the implicit requirement of T
+	var x Option[*q.H[Shape]]
+	// CHECK-DAG: [[@LINE+1]]:20: error[E0323]: Shape does not satisfy the implicit requirement of T
+	var y Option[*q.W[Shape]]
+	// CHECK-DAG: [[@LINE+1]]:20: error[E0323]: Shape does not satisfy the implicit requirement of T
+	var z Option[*q.A[Shape]]
+	_, _, _ = x, y, z
+	_ = q.G[Circle]
+	_ = q.GF[Circle]
+	var cx Option[*q.H[Circle]]
+	var cy Option[*q.W[Circle]]
+	var cz Option[*q.A[Circle]]
+	_, _, _ = cx, cy, cz
+	_ = q.Ok[Shape]
+}
+
+func main() {}

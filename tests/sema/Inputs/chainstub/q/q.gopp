@@ -1,0 +1,12 @@
+// A declaration-only package for chain-stress.test: a variable and a function
+// whose results are the start of a long chain of selectors and indexes.
+package q
+
+type S struct {
+	L []S
+	V int
+}
+
+var V S
+
+func New() S

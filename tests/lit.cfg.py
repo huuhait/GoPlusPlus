@@ -27,6 +27,17 @@ config.environment["LC_ALL"] = "C"
 if lit_config.params.get("run_long"):
     config.available_features.add("long")
 
+# A sanitizer build reserves terabytes of address space for its shadow, so a
+# test that lowers the address-space limit (`ulimit -v`) needs "no-sanitizer".
+if not config.gopp_sanitizer.strip():
+    config.available_features.add("no-sanitizer")
+
+# A time limit that fails a walk that is not linear: 10 s, five times that in
+# a sanitizer build, which is about five times slower (a chain of 100000
+# selectors: 1.0 s, 5.3 s under ASan).
+config.substitutions.append(
+    ("%{timeout10}", "timeout %d" % (50 if config.gopp_sanitizer.strip() else 10)))
+
 # The Go tool chain, for the tests that compare `gopp fmt` with gofmt and run it
 # over the standard library (they also need "long").
 if shutil.which("go") and shutil.which("gofmt"):

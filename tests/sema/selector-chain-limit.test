@@ -1,0 +1,11 @@
+// P03.26: the height limit of the parser still counts a selector chain for
+// the tools whose passes recurse (`gopp parse`, `gopp fmt`); only the checker
+// (check, vet) lifts it for selectors on selectors. Calls and indexes in the
+// chain count as before for every tool.
+// RUN: %python %S/Inputs/gen-selector-chain.py chain 2000 1 > %t.gopp
+// RUN: not %gopp parse %t.gopp 2>&1 | FileCheck --check-prefix=LIM %s
+// RUN: not %gopp fmt %t.gopp 2>&1 | FileCheck --check-prefix=LIM %s
+// RUN: %python %S/Inputs/gen-selector-chain.py callchain 2000 > %t.calls.gopp
+// RUN: not %gopp check %t.calls.gopp 2>&1 | FileCheck --check-prefix=LIM %s
+// LIM: error{{\[E0031\]}}: expression too deeply nested (limit 1024)
+package main

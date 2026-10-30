@@ -1,0 +1,20 @@
+package q
+
+type Box[T any] struct{ x T }
+
+type PBox[T any] struct{ p *T }
+
+func G[T any](x PBox[[]T]) {}
+
+func GF[T any](x PBox[func(T)]) {}
+
+type H[T any] struct{ h PBox[Box[T]] }
+
+type W[T any] struct{ n int }
+
+func (w W[T]) M(x PBox[[1]T]) {}
+
+type A[T any] = PBox[[]T]
+
+// The controls: no value of T.
+func Ok[T any](x PBox[*T], y PBox[T]) {}

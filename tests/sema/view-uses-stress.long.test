@@ -1,0 +1,26 @@
+// REQUIRES: long
+// P03.26 (stress): the uses a View[T] gives a type parameter (ViewArg) and
+// those an instance held behind a pointer or a view gives (`*Box[T]`,
+// `View[Box[T]]`: Make), decided on every type argument (untaggedCheck): 2000
+// sibling generics with View[T] in the signature, a chain of 2000 generics
+// passing T on to one with View[T] in its body, 2000 generic types with a
+// View[T] field, a chain of 2000 generic types each behind a pointer over
+// the next (the first over *Box[T]), and 2000 generics with View[Box[T]].
+// Each program has exactly one bad instantiation, so exactly one error says
+// that every other case is accepted; `timeout` fails the test if the uses
+// stop being near-linear.
+// RUN: %python %S/Inputs/gen-view-uses-stress.py sigs 2000 > %t.sigs.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.sigs.gopp 2>&1 | FileCheck --check-prefix=VIEW %s
+// RUN: %python %S/Inputs/gen-view-uses-stress.py chain 2000 > %t.chain.gopp
+// RUN: not timeout 10 %gopp check -check-j=8 --check-error-limit=0 %t.chain.gopp 2>&1 | FileCheck --check-prefix=VIEW %s
+// RUN: %python %S/Inputs/gen-view-uses-stress.py types 2000 > %t.types.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.types.gopp 2>&1 | FileCheck --check-prefix=VIEW %s
+// RUN: %python %S/Inputs/gen-view-uses-stress.py behind 2000 > %t.behind.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.behind.gopp 2>&1 | FileCheck --check-prefix=ABS %s
+// RUN: %python %S/Inputs/gen-view-uses-stress.py views 2000 > %t.views.gopp
+// RUN: not timeout 10 %gopp check -check-j=8 --check-error-limit=0 %t.views.gopp 2>&1 | FileCheck --check-prefix=ABS %s
+// VIEW: error[E0371]: cannot use View[*int]: a View holds a value, not a pointer
+// VIEW-NOT: error[E
+// ABS: error[E{{[0-9]+}}]: Shape does not satisfy the implicit requirement of T: the generic code {{makes or holds a value of T|passes T on to a generic that makes or holds a value of it}}
+// ABS-NOT: error[E
+package main

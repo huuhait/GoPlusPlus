@@ -335,15 +335,21 @@ Type *Checker::typInternal(const ast::Expr *Ex, NamedType *Def) {
   case K::StructType:
     return structTypeExpr(cast<ast::StructType>(Ex));
   case K::StarExpr: {
+    ++E.Behind; // what a pointer points to is no value of the holder
     Type *El = varType(cast<StarExpr>(Ex)->X, /*ValueUse=*/false);
+    --E.Behind;
     return isValid(El) ? static_cast<Type *>(Ctx.pointer(El)) : El;
   }
   case K::FuncType: {
     FuncInfo FI = funcSignature(cast<ast::FuncType>(Ex), nullptr, nullptr);
     return FI.Sig ? static_cast<Type *>(FI.Sig) : invalid();
   }
-  case K::InterfaceType:
-    return interfaceTypeExpr(cast<ast::InterfaceType>(Ex), Def);
+  case K::InterfaceType: {
+    ++E.Behind; // an interface holds no value of its methods' types
+    Type *T = interfaceTypeExpr(cast<ast::InterfaceType>(Ex), Def);
+    --E.Behind;
+    return T;
+  }
   case K::MapType: {
     auto *M = cast<ast::MapType>(Ex);
     Type *Key = varType(M->Key, true, "a map key type");
@@ -1004,7 +1010,9 @@ Type *Checker::boundTypeNoWrap(const ast::Expr *Ex) {
 }
 
 Type *Checker::boundType(const ast::Expr *Ex, bool) {
+  ++E.Behind; // a constraint holds no value
   Type *T = boundTypeNoWrap(Ex);
+  --E.Behind;
   if (!T || !isValid(T))
     return T;
   bool NeedsWrap = true;
@@ -1066,29 +1074,41 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     SmallVector<TypeParamType *, 4> ATPs(Alias->AliasTParams.begin(),
                                          Alias->AliasTParams.end());
     SourceLoc APos = Ix->getBegin();
+    const bool ABehind = E.Behind > 0; // (noteHeldTParams)
     Type *Res = subst(G, Alias->AliasTParams, AArgs);
     // An instantiation of a generic alias is an edge of the cycle check like
     // any other (types2 mono.go: the alias's type parameters are vertices;
     // its right-hand side records the edges out of them).
-    recordMono(APos, nullptr, ATPs, AArgs);
-    later([this, APos, ATPs, AArgs, ALocs, Res]() {
-      std::string Why;
-      int Bad = verify(APos, ATPs, AArgs, &Why, /*ForType=*/true);
-      if (Bad >= 0)
-        err(static_cast<size_t>(Bad) < ALocs.size() ? ALocs[Bad] : APos,
-            diag::err_sema_typexpr, {Why});
-      else {
+    recordMono(APos, nullptr, ATPs, AArgs, ALocs);
+    later([this, APos, ATPs, AArgs, ALocs, Res, ABehind]() {
+      std::string Why, ViewWhy;
+      int Bad = verify(APos, ATPs, AArgs, &Why, /*ForType=*/true, &ViewWhy);
+      if (Bad >= 0) {
+        SourceLoc At =
+            static_cast<size_t>(Bad) < ALocs.size() ? ALocs[Bad] : APos;
+        if (!ViewWhy.empty())
+          err(At, diag::err_view_bad_arg, {str(AArgs[Bad]), ViewWhy});
+        else
+          err(At, diag::err_sema_typexpr, {Why});
+      } else {
         checkOptionFields(APos, Res);
-        noAbstractArgs(APos, Res, AArgs); // TYP-19
+        noAbstractArgs(APos, Res, AArgs, ABehind); // TYP-19
       }
     });
     return Res;
   }
   auto *N = cast<NamedType>(G);
   SmallVector<Type *, 4> TArgs;
+  // What a View or a pointer kind looks at is no value of the holder.
+  const unsigned ArgsBehind = N->IsView || N->Ptr != PtrKind::None;
+  E.Behind += ArgsBehind;
   bool Ok = typeList(Ix->Indices, TArgs);
+  E.Behind -= ArgsBehind;
   if (!Ok)
     return invalid();
+  // Is this instance behind a pointer, a view or an interface
+  // (noteHeldTParams)?
+  const bool Behind = E.Behind > 0;
   size_t Got = TArgs.size();
   // The type parameters of a generic type that is still being declared are
   // available from the declaration (collected before the right hand side).
@@ -1115,6 +1135,9 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
       err(Ix->Indices[0], diag::err_view_bad_arg, {str(Arg), Why});
       return invalid();
     }
+    // View[T] of a type parameter: judged on every type argument, as the
+    // written View[X] is (useWhy, Use::ViewArg, GEN-12).
+    noteUse(Arg, {TypeParamType::Use::ViewArg});
     RefType *V = Ctx.ref(Arg);
     recordInstance(Ix, TArgs, V);
     return V;
@@ -1126,11 +1149,11 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
     recordInstance(Ix, TArgs, Opt);
     if (isValid(Arg)) {
       SourceLoc ArgPos = Ix->Indices[0]->getBegin();
-      later([this, Arg, ArgPos, Opt]() {
+      later([this, Arg, ArgPos, Opt, Behind]() {
         if (const char *Why = badOptionArg(Arg))
           err(ArgPos, diag::err_option_bad_arg, {str(Arg), Why});
         else
-          noAbstractArgs(ArgPos, Opt, Arg); // TYP-19: Option holds it
+          noAbstractArgs(ArgPos, Opt, Arg, Behind); // TYP-19: Option holds it
       });
     }
     return Opt;
@@ -1146,22 +1169,25 @@ Type *Checker::instantiatedType(const IndexExpr *Ix, NamedType *Def) {
   }
   NamedType *Inst = instantiateNamed(N, TArgs);
   recordInstance(Ix, TArgs, Inst);
-  recordMono(Ix->getBegin(), N->origin(), N->TParams, TArgs);
   SmallVector<SourceLoc, 4> Locs;
   for (const ast::Expr *A : Ix->Indices)
     Locs.push_back(A->getBegin());
+  recordMono(Ix->getBegin(), N->origin(), N->TParams, TArgs, Locs);
   SmallVector<TypeParamType *, 4> TPs(N->TParams.begin(), N->TParams.end());
   SourceLoc Pos = Ix->getBegin();
-  later([this, Pos, TPs, TArgs, Locs, Inst]() {
-    std::string Why;
-    int Bad = verify(Pos, TPs, TArgs, &Why, /*ForType=*/true);
+  later([this, Pos, TPs, TArgs, Locs, Inst, Behind]() {
+    std::string Why, ViewWhy;
+    int Bad = verify(Pos, TPs, TArgs, &Why, /*ForType=*/true, &ViewWhy);
     if (Bad >= 0) {
-      err(static_cast<size_t>(Bad) < Locs.size() ? Locs[Bad] : Pos,
-          diag::err_sema_typexpr, {Why});
+      SourceLoc At = static_cast<size_t>(Bad) < Locs.size() ? Locs[Bad] : Pos;
+      if (!ViewWhy.empty())
+        err(At, diag::err_view_bad_arg, {str(TArgs[Bad]), ViewWhy});
+      else
+        err(At, diag::err_sema_typexpr, {Why});
     } else {
       checkOptionArgs(Pos, Inst, TArgs);
       checkOptionFields(Pos, Inst);
-      noAbstractArgs(Pos, Inst, TArgs); // TYP-19
+      noAbstractArgs(Pos, Inst, TArgs, Behind); // TYP-19
     }
   });
   return Inst;

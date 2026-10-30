@@ -46,6 +46,11 @@ struct ParseOptions {
   /// (`a+b+c...` is a left-deep tree). Every later pass walks the tree
   /// recursively, so this keeps their stack use bounded.
   unsigned MaxHeight = 1024;
+  /// A selector on a selector (`a.b.c.d`) does not count towards MaxHeight.
+  /// Only for callers whose passes walk such a chain with a loop or an
+  /// explicit stack (the checker and vet do, P03.26); the formatter and the
+  /// tree dump still recurse, so they keep the default.
+  bool UncountedSelectors = false;
   /// Report the Go++ rules that need only the syntax to check: `&T{...}`
   /// (OWN-P4), redeclaring a loop variable (RNG-8), a `!` function with an
   /// `error` result (ERR-15) and `//gopp:cflags` in a source file (LEX-11).

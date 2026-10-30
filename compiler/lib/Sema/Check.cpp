@@ -14,7 +14,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <functional>
 #include <iterator>
+#include <memory>
+#include <mutex>
+#include <optional>
+
+#include <pthread.h>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -314,15 +321,142 @@ static unsigned bodyThreads(const CheckOptions &O, size_t N) {
       1, std::min<size_t>(Threads, (N + PerThread - 1) / PerThread)));
 }
 
+/// The checker recurses once per level of a nested expression or statement.
+/// The parser lets a declaration be 1024 levels tall, and a level costs up to
+/// 16.3 KB of stack in a sanitizer build (measured over every expression
+/// kind at the parser's limit, the smallest stack that passes: nested
+/// built-ins `unsafe.Sizeof(…)`, `clone(…)`, `move(…)` need 16191 KB at 996
+/// levels; calls, inference, method calls and `()` methods 13.2 KB,
+/// composite literals 14.3 KB, conversions 12.0 KB, closures 9.3 KB, `[]`
+/// methods 8.5 KB, a postfix chain 0.1 KB, as it is a loop; R13), so every
+/// piece of checking runs on a thread with a stack of 16.3 KB x 1024 x 2 = 32.5
+/// MiB, rounded up: phase 1, each worker of phase 2 (also on a lent pool) and
+/// the checks after the bodies (P03.26). The answer never depends on the thread
+/// that runs the work. Only the pages that are touched use memory. A thread
+/// that cannot be made (address space limit) is never an abort: the work runs
+/// on fewer threads, or on the calling thread.
+static constexpr size_t CheckStackBytes = 40u << 20;
+
+/// Is this thread a checker thread (a CheckerStack, or a phase-2 worker)? A
+/// job that needs a checker stack while it runs on one runs right there: a
+/// nested import chain does not make a thread per level (P03.26, R4).
+static thread_local bool OnCheckerThread = false;
+
+namespace {
+/// A thread with a checker stack. Creating it can fail; then Ok is false and
+/// the caller does the work itself.
+class BigThread {
+public:
+  BigThread() = default;
+  BigThread(const BigThread &) = delete;
+  bool start(std::function<void()> Fn) {
+    Body = std::move(Fn);
+    pthread_attr_t Attr;
+    if (pthread_attr_init(&Attr) != 0)
+      return false;
+    bool Ok = pthread_attr_setstacksize(&Attr, CheckStackBytes) == 0 &&
+              pthread_create(&Id, &Attr, &BigThread::entry, this) == 0;
+    pthread_attr_destroy(&Attr);
+    Started = Ok;
+    return Ok;
+  }
+  void join() {
+    if (Started)
+      pthread_join(Id, nullptr);
+    Started = false;
+  }
+  ~BigThread() { join(); }
+
+private:
+  static void *entry(void *Self) {
+    OnCheckerThread = true;
+    static_cast<BigThread *>(Self)->Body();
+    return nullptr;
+  }
+  pthread_t Id{};
+  bool Started = false;
+  std::function<void()> Body;
+};
+
+/// A thread with a checker stack that runs the jobs of the one thread that
+/// owns it, one at a time, while the owner waits. Each calling thread keeps
+/// its own for its lifetime: a new thread per package would start cold (its
+/// stack pages and its allocator) at every call. Without the thread (it could
+/// not be made) a job runs on the caller.
+class CheckerStack {
+public:
+  CheckerStack() {
+    Ok = T.start([this] { loop(); });
+  }
+  void run(llvm::function_ref<void()> Fn) {
+    if (!Ok) {
+      Fn();
+      return;
+    }
+    std::unique_lock<std::mutex> L(M);
+    Job = Fn;
+    Pending = true;
+    CV.notify_all();
+    CV.wait(L, [this] { return !Pending; });
+  }
+  ~CheckerStack() {
+    if (!Ok)
+      return;
+    {
+      std::lock_guard<std::mutex> L(M);
+      Quit = true;
+    }
+    CV.notify_all();
+    T.join();
+  }
+
+private:
+  void loop() {
+    std::unique_lock<std::mutex> L(M);
+    for (;;) {
+      CV.wait(L, [this] { return Pending || Quit; });
+      if (Quit)
+        return;
+      L.unlock();
+      Job();
+      L.lock();
+      Pending = false;
+      CV.notify_all();
+    }
+  }
+  std::mutex M;
+  std::condition_variable CV;
+  llvm::function_ref<void()> Job;
+  bool Pending = false, Quit = false, Ok = false;
+  BigThread T; // (the last member)
+};
+} // namespace
+
+/// Runs Fn on a checker stack and waits for it, or right here when this
+/// thread is one already (Here, or OnCheckerThread). One CheckerStack per
+/// calling thread, which is no checker thread.
+static void onCheckerStack(llvm::function_ref<void()> Fn, bool Here = false) {
+  if (Here || OnCheckerThread) {
+    Fn();
+    return;
+  }
+  static thread_local CheckerStack Stack;
+  Stack.run(Fn);
+}
+
 /// Checks every body; Diags[K] gets the diagnostics of S.Bodies[K]. Workers
 /// take the next body from a shared counter: the order of the bodies in time
-/// is free, their diagnostics go to their own slots.
+/// is free, their diagnostics go to their own slots. Each worker runs on a
+/// checker stack (OnStack: the calling thread is one); the wait is on the
+/// calling thread, so a caller that is a worker of the lent pool runs tasks
+/// of the group while it waits.
 static void runBodies(PackageState &S, const SourceManager &SM,
                       std::vector<BodyWorker> &Workers,
                       std::vector<std::vector<Diagnostic>> &Diags,
                       std::vector<std::vector<Checker::MonoInst>> &Monos,
                       std::vector<std::vector<Checker::UntaggedPending>> &Pend,
-                      std::vector<std::vector<Checker::UseRec>> &Uses) {
+                      std::vector<std::vector<Checker::UseRec>> &Uses,
+                      bool OnStack) {
   size_t N = S.Bodies.size();
   std::atomic<size_t> Next{0};
   auto Run = [&](BodyWorker &W) {
@@ -342,26 +476,56 @@ static void runBodies(PackageState &S, const SourceManager &SM,
     }
   };
   if (Workers.size() == 1) {
-    Run(Workers[0]);
+    onCheckerStack([&] { Run(Workers[0]); }, OnStack);
+    return;
+  }
+  if (S.Opts.Pool && OnStack) {
+    // A checker thread (a nested import) must not wait for the pool: every
+    // worker of the pool may be waiting for a checker thread like this one
+    // (R5). Its bodies run right here; the answer does not depend on the
+    // thread that ran them.
+    for (BodyWorker &W : Workers)
+      Run(W);
     return;
   }
   if (llvm::ThreadPoolInterface *Pool = S.Opts.Pool) {
     llvm::ThreadPoolTaskGroup Group(*Pool);
     for (BodyWorker &W : Workers)
-      Group.async([&Run, &W] { Run(W); });
+      Group.async([&Run, &W] { onCheckerStack([&] { Run(W); }); });
     Group.wait();
     return;
   }
-  llvm::DefaultThreadPool Pool(llvm::hardware_concurrency(Workers.size()));
-  for (BodyWorker &W : Workers)
-    Pool.async([&Run, &W] { Run(W); });
-  Pool.wait();
+  // Threads of their own with a checker stack. One that cannot be made
+  // (address space) is left out: the bodies are taken from a shared counter,
+  // so the others, and the calling thread when it has a checker stack or
+  // when none could be made, do the work.
+  std::vector<std::unique_ptr<BigThread>> Threads;
+  Threads.reserve(Workers.size());
+  size_t Made = 0;
+  for (BodyWorker &W : Workers) {
+    auto T = std::make_unique<BigThread>();
+    if (T->start([&Run, &W] { Run(W); })) {
+      Threads.push_back(std::move(T));
+      ++Made;
+    } else {
+      break;
+    }
+  }
+  // The workers without a thread: this thread runs them one after the other
+  // (it takes whatever the others have not taken).
+  for (size_t K = Made; K < Workers.size(); ++K)
+    Run(Workers[K]);
+  for (auto &T : Threads)
+    T->join();
 }
 
-std::unique_ptr<CheckedPackage>
-sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
-                   ArrayRef<const ast::File *> Files, Importer &Imp,
-                   DiagnosticsEngine &Diags, const CheckOptions &Opts) {
+/// checkPackage; OnStack: this thread has a checker stack, so phase 1, a
+/// single worker of phase 2 and the checks after the bodies run right here.
+static std::unique_ptr<CheckedPackage>
+checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
+                 ArrayRef<const ast::File *> Files, Importer &Imp,
+                 DiagnosticsEngine &Diags, const CheckOptions &Opts,
+                 bool OnStack) {
   auto CP = std::make_unique<CheckedPackage>();
   CP->Mem.push_back(std::make_unique<Arena>());
   Arena &Mem = *CP->Mem.back();
@@ -376,7 +540,7 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   PackageState S(Ctx, SM, Imp, Opts);
   S.Pkg = Pkg;
   Checker C(S, CP->I, Mem, Diags);
-  C.checkFiles(Files);
+  onCheckerStack([&] { C.checkFiles(Files); }, OnStack);
 
   // Phase 2: one checker per body, on one or more threads. A body writes only
   // to its worker; the diagnostics are replayed in declaration order, so the
@@ -389,7 +553,7 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   std::vector<std::vector<Checker::MonoInst>> BodyMonos(S.Bodies.size());
   std::vector<std::vector<Checker::UntaggedPending>> BodyPend(S.Bodies.size());
   std::vector<std::vector<Checker::UseRec>> BodyUses(S.Bodies.size());
-  runBodies(S, SM, Workers, BodyDiags, BodyMonos, BodyPend, BodyUses);
+  runBodies(S, SM, Workers, BodyDiags, BodyMonos, BodyPend, BodyUses, OnStack);
   for (std::vector<Diagnostic> &DL : BodyDiags)
     for (Diagnostic &D : DL) {
       if (D.Sev == Severity::Error) {
@@ -410,28 +574,52 @@ sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   }
   CP->I.merge(Tables);
   C.FirstErr = C.NumErrors > 0;
-  // GEN-12, EXP-15: the bodies are all checked, so the uses of this
-  // package's type parameters are known.
-  for (std::vector<Checker::UntaggedPending> &PB : BodyPend)
-    C.UntaggedPend.insert(C.UntaggedPend.end(), PB.begin(), PB.end());
-  for (std::vector<Checker::UseRec> &UB : BodyUses)
-    C.TPUses.insert(C.TPUses.end(), UB.begin(), UB.end());
-  C.noteIntrinsicUses();
-  C.untaggedCheck(C.UntaggedPend);
-  C.checkInitOrder();
-  C.unusedImports();
-  // Instantiation cycles, of the declarations and the bodies (taken in
-  // declaration order): reported, as by Go, only when the package has no
-  // other error (types2 check.go runs monomorph last, if firstErr is nil).
-  if (C.NumErrors == 0) {
-    for (std::vector<Checker::MonoInst> &MB : BodyMonos)
-      for (Checker::MonoInst &M : MB)
-        C.MonoInsts.push_back(std::move(M));
-    C.monoCheck(C.MonoInsts, /*Report=*/true);
-  }
-  Pkg->Complete = true;
-  if (Opts.Vet)
-    vetPackage(SM, *CP, Files, Diags);
+  onCheckerStack(
+      [&] {
+        // GEN-12, EXP-15: the bodies are all checked, so the uses of this
+        // package's type parameters are known.
+        for (std::vector<Checker::UntaggedPending> &PB : BodyPend)
+          C.UntaggedPend.insert(C.UntaggedPend.end(), PB.begin(), PB.end());
+        for (std::vector<Checker::UseRec> &UB : BodyUses)
+          C.TPUses.insert(C.TPUses.end(), UB.begin(), UB.end());
+        C.noteIntrinsicUses();
+        C.untaggedCheck(C.UntaggedPend);
+        C.checkInitOrder();
+        C.unusedImports();
+        // Instantiation cycles, of the declarations and the bodies (taken in
+        // declaration order): reported, as by Go, only when the package has no
+        // other error (types2 check.go runs monomorph last, if firstErr is
+        // nil).
+        if (C.NumErrors == 0) {
+          for (std::vector<Checker::MonoInst> &MB : BodyMonos)
+            for (Checker::MonoInst &M : MB)
+              C.MonoInsts.push_back(std::move(M));
+          C.monoCheck(C.MonoInsts, /*Report=*/true);
+        }
+        Pkg->Complete = true;
+        if (Opts.Vet)
+          vetPackage(SM, *CP, Files, Diags);
+      },
+      OnStack);
+  return CP;
+}
+
+std::unique_ptr<CheckedPackage>
+sema::checkPackage(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
+                   ArrayRef<const ast::File *> Files, Importer &Imp,
+                   DiagnosticsEngine &Diags, const CheckOptions &Opts) {
+  // The whole check runs on one checker stack. With a lent pool the calling
+  // thread must wait for the pool's tasks itself (runBodies), so then each
+  // piece gets a checker stack of its own. A call from a checker thread (an
+  // import of a package being checked) runs right there.
+  if (OnCheckerThread)
+    return checkPackageHere(Ctx, SM, PkgPath, Files, Imp, Diags, Opts, true);
+  if (Opts.Pool)
+    return checkPackageHere(Ctx, SM, PkgPath, Files, Imp, Diags, Opts, false);
+  std::unique_ptr<CheckedPackage> CP;
+  onCheckerStack([&] {
+    CP = checkPackageHere(Ctx, SM, PkgPath, Files, Imp, Diags, Opts, true);
+  });
   return CP;
 }
 

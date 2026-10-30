@@ -1,0 +1,12 @@
+// P03.26: the errors on a chain of 4000 selectors name the chain in the
+// shortened form and are reported once each, in linear time (the printing of
+// the expression is not recursive either).
+// RUN: %python %S/Inputs/gen-selector-chain.py chain-errors 4000 > %t.gopp
+// RUN: not timeout 3 %gopp check --check-error-limit=0 %t.gopp > %t.out 2>&1
+// RUN: grep -c "error\[E" %t.out | FileCheck --check-prefix=COUNT %s
+// RUN: grep "error\[E" %t.out | FileCheck --check-prefix=ERR %s
+// COUNT: {{^3$}}
+// ERR: 6:{{[0-9]+}}: error{{\[E0178\]}}: …{{[.a]*}}.zzz undefined (type *S has no field or method zzz)
+// ERR: 7:{{[0-9]+}}: error{{\[E0314\]}}: cannot use "x" (untyped string constant) as int value in assignment
+// ERR: 8:14: error{{\[E0314\]}}: cannot use …{{[.a]*}} (variable of type *S) as int value in variable declaration
+package main

@@ -1,0 +1,10 @@
+// REQUIRES: long
+// P03.26 (M9, R3): many local types in one function cost near-linear time.
+// noteImplicitTParams looked at every object of the function scope for each
+// local type (30000 types: 2.1 s, 100000 types: 25 s); the type parameters of
+// a scope are now collected once. A plain and a generic function (the local
+// types still depend on T: see instantiation-cycle-local.test).
+// RUN: %python %S/Inputs/gen-local-types.py 100000 > %t.p.gopp
+// RUN: timeout 5 %gopp check %t.p.gopp
+// RUN: %python %S/Inputs/gen-local-types.py 100000 generic > %t.g.gopp
+// RUN: timeout 5 %gopp check %t.g.gopp

@@ -1,0 +1,9 @@
+// REQUIRES: long
+// P03.26: long chains of selectors, calls, indexes, mixes of them, method
+// calls and chains that start at a package name, 150 functions each at the
+// depth the parser accepts: near-linear time (a cost per link that grows with
+// the chain, or with the chains before it, would not finish in time). The
+// links of a long chain are evaluated in a loop (Checker::prepareChain).
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d many-sel,call,idx
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d many-mix,method
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d many-qual

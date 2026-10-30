@@ -150,7 +150,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 - Message text of stack traces.
 - The size of `ffi.LongDouble` and the mapping of C `long` on Windows.
 
-**Implementation limit.** The v0 compiler limits the AST height of one declaration to 1024 levels (nesting and operator, selector, index and call chains together). A flat chain of about 1000 terms (`a + b + ...`) or about 1000 `else if` branches is rejected with the error "expression too deeply nested". This is an implementation choice, not part of the language, and it may be raised.
+**Implementation limit.** The v0 compiler limits the AST height of one declaration to 1024 levels (nesting and operator, selector, index and call chains together; `gopp check` and `gopp vet` do not count a selector on a selector, so `a.b.c...` may be as long as memory allows, and `gopp parse` and `gopp fmt` keep the limit for them). A flat chain of about 1000 terms (`a + b + ...`) or about 1000 `else if` branches is rejected with the error "expression too deeply nested". This is an implementation choice, not part of the language, and it may be raised.
 
 ## 16.4 What catches what
 

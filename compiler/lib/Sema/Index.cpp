@@ -97,12 +97,7 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
     }
     return false;
   }
-  // ADR-0024: the operand may be the receiver of a `[]` method; a partial
-  // place is decided with the method (opReceiverOk), and a struct has no
-  // built-in index anyway.
-  if (!S.Opts.GoCompat && Ctx.operatorsSeen())
-    markPartialOk(Ex->X, /*Addr=*/false);
-  exprOrType(X, Ex->X, true);
+  chainOperand(X, Ex); // (chainSetup: the ADR-0024 mark)
   switch (X.M) {
   case Mode::Invalid:
     for (const ast::Expr *I : Ex->Indices)
@@ -310,7 +305,7 @@ bool Checker::indexExpr(Operand &X, const IndexExpr *Ex) {
 }
 
 void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
-  expr(X, Ex->X);
+  chainOperand(X, Ex);
   if (X.M == Mode::Invalid) {
     use(Ex->Lo);
     use(Ex->Hi);
@@ -322,7 +317,12 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
   Type *Orig = X.Ty;
   bool OrigIsRef = isa<RefType>(Orig);
   // The operand may not be written: a View, or a part of one (OWN-V2).
-  const bool ReadOnlySrc = own() && (isViewType(Orig) || viewPlace(Ex->X));
+  bool InView = false;
+  if (own() && !isViewType(Orig)) {
+    InView = viewPlace(Ex->X);
+    SliceInView[Ex] = InView; // (viewPlace of a slice chain asks it)
+  }
+  const bool ReadOnlySrc = own() && (isViewType(Orig) || InView);
   Type *U = nullptr;
   if (auto *TP = dyn_cast<TypeParamType>(X.Ty)) {
     // types2: all types of the type set slice alike; a string counts as a

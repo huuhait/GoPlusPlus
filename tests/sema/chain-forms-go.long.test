@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P03.26: the long chains of chain-forms-gopp.test (selectors, calls, indexes,
+// slices, type assertions, `*`, parentheses and mixes of them, at the depth
+// the parser accepts, about 1000 levels) in Go mode.
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d forms-go

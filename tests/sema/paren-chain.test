@@ -1,0 +1,17 @@
+// P03.26 (R10): a chain of parentheses is evaluated bottom-up past 16 links
+// (prepareChain), and the forms above it still do their setup first: the
+// receiver of IsNil / Get is not narrowed (E0178 came for 15 or more
+// parentheses), and the `&` above the chain still allows the part it takes
+// the address of (E0395 came). Accepted at 14 and 30 parentheses; the same
+// shapes without the setup stay errors at both sizes.
+// RUN: %python %S/Inputs/gen-paren-chain.py 14 ok > %t.14ok.gopp
+// RUN: %gopp check %t.14ok.gopp
+// RUN: %python %S/Inputs/gen-paren-chain.py 30 ok > %t.30ok.gopp
+// RUN: %gopp check %t.30ok.gopp
+// RUN: %python %S/Inputs/gen-paren-chain.py 14 bad > %t.14bad.gopp
+// RUN: not %gopp check --check-error-limit=0 %t.14bad.gopp 2>&1 | grep -o 'error\[E[0-9]*\]' | FileCheck %s
+// RUN: %python %S/Inputs/gen-paren-chain.py 30 bad > %t.30bad.gopp
+// RUN: not %gopp check --check-error-limit=0 %t.30bad.gopp 2>&1 | grep -o 'error\[E[0-9]*\]' | FileCheck %s
+// CHECK: error[E0178]
+// CHECK-NEXT: error[E0395]
+// CHECK-NEXT: error[E0395]

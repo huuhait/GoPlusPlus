@@ -24,14 +24,18 @@
 
 #include "llvm/ADT/DenseMap.h"
 
+#include <algorithm>
+#include <functional>
+
 using namespace gopp;
 using namespace gopp::sema;
 using llvm::cast;
 using llvm::dyn_cast;
+using llvm::dyn_cast_or_null;
 using llvm::isa;
 
-void sema::forEachTypeParam(
-    Type *Arg, llvm::function_ref<void(TypeParamType *, bool)> Fn) {
+static void walkMonoSources(Type *Arg, bool Locals,
+                            llvm::function_ref<void(Type *, bool)> Fn) {
   SmallVector<Type *, 16> Work{Arg};
   llvm::SmallPtrSet<const Type *, 16> Seen;
   while (!Work.empty()) {
@@ -40,7 +44,7 @@ void sema::forEachTypeParam(
       continue;
     switch (X->getKind()) {
     case Type::Kind::TypeParam:
-      Fn(cast<TypeParamType>(X), X == Arg);
+      Fn(X, X == Arg);
       break;
     case Type::Kind::Pointer:
       Work.push_back(cast<PointerType>(X)->Elem);
@@ -91,6 +95,10 @@ void sema::forEachTypeParam(
     case Type::Kind::Named:
       // The arguments of an instance; a named type's own body is not part
       // of the argument (its instantiations are edges of their own).
+      if (Locals)
+        if (NamedType *O = cast<NamedType>(X)->origin();
+            !O->ImplicitTParams.empty())
+          Fn(O, X == Arg);
       for (Type *A : cast<NamedType>(X)->TArgs)
         Work.push_back(A);
       break;
@@ -100,9 +108,21 @@ void sema::forEachTypeParam(
   }
 }
 
+void sema::forEachTypeParam(
+    Type *Arg, llvm::function_ref<void(TypeParamType *, bool)> Fn) {
+  walkMonoSources(Arg, false, [&](Type *X, bool Exact) {
+    Fn(cast<TypeParamType>(X), Exact);
+  });
+}
+
+void sema::forEachMonoSource(Type *Arg,
+                             llvm::function_ref<void(Type *, bool)> Fn) {
+  walkMonoSources(Arg, true, Fn);
+}
+
 void Checker::recordMono(SourceLoc Pos, NamedType *Orig,
                          ArrayRef<TypeParamType *> TParams,
-                         ArrayRef<Type *> TArgs) {
+                         ArrayRef<Type *> TArgs, ArrayRef<SourceLoc> ArgPos) {
   if (NoMono)
     return;
   MonoInst M;
@@ -110,10 +130,12 @@ void Checker::recordMono(SourceLoc Pos, NamedType *Orig,
   M.Orig = Orig;
   M.TParams.assign(TParams.begin(), TParams.end());
   M.TArgs.assign(TArgs.begin(), TArgs.end());
-  // Only an argument that mentions a type parameter can be part of a cycle.
+  M.ArgPos.assign(ArgPos.begin(), ArgPos.end());
+  // Only an argument that mentions a type parameter (or a type declared in a
+  // generic function) can be part of a cycle.
   bool Any = false;
   for (Type *A : M.TArgs)
-    forEachTypeParam(A, [&](TypeParamType *, bool) { Any = true; });
+    forEachMonoSource(A, [&](Type *, bool) { Any = true; });
   if (Any)
     MonoInsts.push_back(std::move(M));
 }
@@ -129,23 +151,38 @@ bool Checker::monoCheck(ArrayRef<MonoInst> Insts, bool Report) {
   llvm::DenseMap<const TypeParamType *, TypeParamType *> Canon;
   for (auto &[Method, Type] : MonoCanon)
     Canon[Method] = Type;
-  llvm::DenseMap<const TypeParamType *, unsigned> Index;
-  SmallVector<TypeParamType *, 16> Verts;
-  auto Vertex = [&](TypeParamType *P) {
-    if (auto C = Canon.find(P); C != Canon.end())
-      P = C->second;
-    auto [It, New] = Index.try_emplace(P, Verts.size());
-    if (New)
-      Verts.push_back(P);
-    return It->second;
-  };
+  llvm::DenseMap<const Type *, unsigned> Index;
+  SmallVector<Type *, 16> Verts; // type parameters and types declared in
+                                 // generic functions
   std::vector<Edge> Edges;
+  // types2 localNamedVertex: a type declared inside a generic function is
+  // implicitly parameterized by the type parameters around it (weight 1),
+  // from the first time it is mentioned.
+  std::function<unsigned(Type *)> Vertex = [&](Type *P) -> unsigned {
+    if (auto *TP = dyn_cast<TypeParamType>(P))
+      if (auto C = Canon.find(TP); C != Canon.end())
+        P = C->second;
+    auto [It, New] = Index.try_emplace(P, Verts.size());
+    if (!New)
+      return It->second;
+    unsigned Id = It->second; // (try_emplace of the others may rehash)
+    Verts.push_back(P);
+    if (auto *N = dyn_cast<NamedType>(P))
+      for (TypeParamType *Q : N->ImplicitTParams) {
+        unsigned From = Vertex(Q);
+        Edges.push_back({From, Id, 1u, N->Obj->Pos, Q, nullptr});
+      }
+    return Id;
+  };
   for (const MonoInst &M : Insts)
     for (size_t K = 0; K < M.TParams.size() && K < M.TArgs.size(); ++K) {
       unsigned To = Vertex(M.TParams[K]);
       Type *Arg = M.TArgs[K];
-      forEachTypeParam(Arg, [&](TypeParamType *Q, bool Exact) {
-        Edges.push_back({Vertex(Q), To, Exact ? 0u : 1u, M.Pos, Arg, M.Orig});
+      forEachMonoSource(Arg, [&](Type *Q, bool Exact) {
+        unsigned From = Vertex(Q);
+        Edges.push_back({From, To, Exact ? 0u : 1u,
+                         K < M.ArgPos.size() ? M.ArgPos[K] : M.Pos, Arg,
+                         M.Orig});
       });
     }
   if (Edges.empty())
@@ -258,28 +295,80 @@ bool Checker::monoCheck(ArrayRef<MonoInst> Insts, bool Report) {
         Queue.push_back(E.To);
       }
     }
-    SmallVector<const Edge *, 8> Cycle{Bad};
+    SmallVector<const Edge *, 8> Cycle{Bad}; // forward: Bad, then To ... From
     for (unsigned V = Bad->From; V != Bad->To;) {
       const Edge &E = Edges[Pre[V]];
       Cycle.push_back(&E);
       V = E.From;
     }
+    std::reverse(Cycle.begin() + 1, Cycle.end());
     for (unsigned V : Queue) // only what this search touched
       Reached[V] = false;
     // Reported at the first type parameter of the cycle in source order.
-    TypeParamType *P0 = Verts[Bad->To];
+    auto ObjOf = [&](Type *V) -> TypeName * {
+      if (auto *TP = dyn_cast<TypeParamType>(V))
+        return TP->Obj;
+      return cast<NamedType>(V)->Obj;
+    };
+    Type *P0 = Verts[Bad->To];
     for (const Edge *E : Cycle) {
-      TypeParamType *P = Verts[E->To];
-      if (P->Obj && (!P0->Obj || P->Obj->Pos.getRaw() < P0->Obj->Pos.getRaw()))
+      Type *P = Verts[E->To];
+      if (ObjOf(P) &&
+          (!ObjOf(P0) || ObjOf(P)->Pos.getRaw() < ObjOf(P0)->Pos.getRaw()))
         P0 = P;
     }
-    Err Er =
-        err(P0->Obj ? P0->Obj->Pos : Bad->Pos, diag::err_instantiation_cycle);
-    for (const Edge *E : Cycle) {
-      TypeParamType *P = Verts[E->To];
-      Er.note(E->Pos, std::string(P->Obj ? StringRef(P->Obj->Name) : "?") +
-                          " instantiated as " + str(E->Arg));
+    Err Er = err(ObjOf(P0) ? ObjOf(P0)->Pos : Bad->Pos,
+                 diag::err_instantiation_cycle);
+    // As types2's reportInstanceLoop: the edge into the reported vertex
+    // first, then backwards round the cycle.
+    size_t Start = 0;
+    for (size_t K = 0; K < Cycle.size(); ++K)
+      if (Verts[Cycle[K]->To] == P0)
+        Start = K;
+    for (size_t K = 0; K < Cycle.size(); ++K) {
+      const Edge *E = Cycle[(Start + Cycle.size() - K) % Cycle.size()];
+      Type *P = Verts[E->To];
+      Er.note(E->Pos, std::string(ObjOf(P) ? StringRef(ObjOf(P)->Name)
+                                           : StringRef("?")) +
+                          (isa<NamedType>(P) ? " implicitly parameterized by "
+                                             : " instantiated as ") +
+                          str(E->Arg));
     }
   }
   return true;
+}
+
+void Checker::noteImplicitTParams(TypeName *TN) {
+  auto *N = dyn_cast_or_null<NamedType>(TN->Ty);
+  if (!N || TN->IsAlias || NoMono)
+    return;
+  SmallVector<TypeParamType *, 4> Around;
+  for (Scope *Sc = E.Sc; Sc && !Sc->isPackageScope(); Sc = Sc->Parent) {
+    // Type parameters live in a type parameter list or (a receiver's) in a
+    // function scope; the blocks of a body hold the other locals. The
+    // function scope holds the body's top-level locals as well, so its type
+    // parameters are collected once per scope (all are declared before the
+    // body is checked): a function with many local types costs one scan.
+    StringRef Kind = Sc->Comment ? Sc->Comment : "";
+    if (Kind != "type parameters" && Kind != "function")
+      continue;
+    auto It = ScopeTParams.find(Sc);
+    if (It == ScopeTParams.end()) {
+      SmallVector<TypeParamType *, 4> Own;
+      for (auto &KV : Sc->Elems)
+        if (auto *T = dyn_cast<TypeName>(KV.second); T && !T->IsAlias)
+          if (auto *TP = dyn_cast_or_null<TypeParamType>(T->Ty))
+            Own.push_back(TP);
+      It = ScopeTParams.try_emplace(Sc, std::move(Own)).first;
+    }
+    Around.append(It->second.begin(), It->second.end());
+  }
+  if (Around.empty())
+    return;
+  // The scopes hold their objects in no fixed order; the cycle report must
+  // not depend on it.
+  llvm::sort(Around, [](TypeParamType *A, TypeParamType *B) {
+    return A->Obj->Pos.getRaw() < B->Obj->Pos.getRaw();
+  });
+  N->ImplicitTParams = Mem.copy(ArrayRef<TypeParamType *>(Around));
 }

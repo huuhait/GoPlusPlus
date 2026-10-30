@@ -1,0 +1,8 @@
+// REQUIRES: no-sanitizer
+// P03.26 (R4): a package that is checked from a checker thread (an import of
+// a package being checked) runs on that thread: a chain of 16 nested imports
+// is one checker thread, not 16 threads of 256 MiB of address space each (the
+// compiler before this fails under this limit: pthread_create failed).
+// RUN: %python %S/Inputs/gen-import-chain.py %t.d 16
+// RUN: sh -c 'ulimit -v 3000000; timeout 60 %gopp check --test-stubs=%t.d/stubs %t.d/main/m.gopp'
+// RUN: sh -c 'ulimit -v 3000000; timeout 60 %gopp check -check-j=4 --test-stubs=%t.d/stubs %t.d/main/m.gopp'

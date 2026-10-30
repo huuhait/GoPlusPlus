@@ -33,6 +33,10 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 using namespace llvm;
 
 static cl::SubCommand VersionCmd("version",
@@ -550,6 +554,16 @@ static int runFmt() {
 
 int main(int argc, char **argv) {
   InitLLVM X(argc, argv);
+#if defined(__GLIBC__)
+  // glibc grows the heap of a thread that is not the main one (the checker
+  // threads) one request at a time: about 2000 mprotect calls, 6% of the
+  // check of a big file. A larger step fixes that; setting it turns off
+  // glibc's dynamic mmap/trim thresholds, so they are set by hand. This is
+  // the program's policy, not a library's (P03.26, M8, R7).
+  mallopt(M_TOP_PAD, 16 << 20);
+  mallopt(M_MMAP_THRESHOLD, 32 << 20);
+  mallopt(M_TRIM_THRESHOLD, 64 << 20);
+#endif
   cl::ParseCommandLineOptions(argc, argv, "Go++ compiler driver\n");
 
   if (VersionCmd)

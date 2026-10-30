@@ -7,7 +7,25 @@
 // returning a tagged and an abstract type), the plain form and the generic
 // form, checks both (with one body thread and with eight) and compares them
 // pair by pair (the legend is in the script). The whole table is pinned
-// here; the compiler before R18 fails it (14 pairs).
+// here; the compiler before R18 fails it (14 pairs). P03.26 added the View
+// rows (a View[T] in a signature, a result, a body, a closure, an alias and a
+// @View generic struct): an instance whose T is a pointer kind or a view is
+// refused as the written View is, with E0371 on both sides; the swap through
+// *View[X] is a re-point on both sides (OWN-V1), so the table has no KNOWN
+// rows left. The rows view-instance and ptr-instance (`View[Box[T]]`,
+// `*Box[T]` in a signature) are refused for an abstract T as the plain
+// `Box[Shape]` is (the compiler before P03.26 fails them, 2 pairs). The
+// method rows write the signature of a method of a generic type (`func (r
+// G[T]) m(x []T)`, also behind a pointer receiver and through a generic
+// function that holds G[U]): G[Shape] is refused as the plain method
+// signature is (the compiler before P03.26 accepts them and fails the table).
+// The arg-, field-, fieldrec-, method-arg- and alias-arg- rows (R12) write a
+// value of T only inside a type argument that the generic holds behind a
+// pointer (`PBox[[]T]`, `PBox[Box[T]]`, `PBox[func(T)]`), in a signature, a
+// field, a recursive type, a method signature and an alias: refused for an
+// abstract T as the plain `PBox[[]Shape]` is (the compiler before R12 accepts
+// them, 16 pairs); arg-held, arg-pointer, arg-bare and field-arg-pointer are
+// the controls.
 // RUN: %python %S/Inputs/gen-generic-plain-table.py --gopp %gopp --out %t | FileCheck %s
 // CHECK: args: 0=child-inherited 1=child-own 2=tagged 3=ptr-tagged 4=ptr-child 5=untagged-child 6=untagged-root 7=unique 8=shared 9=view 10=plain 11=int 12=abstract 13=func-tagged 14=func-abstract
 // CHECK-NEXT: method-value             R..RRR.ccc.cccR
@@ -26,11 +44,19 @@
 // CHECK-NEXT: go-root                  Rc.--cc---c-c--
 // CHECK-NEXT: move-recv-root           Rc.--cc---c-c--
 // CHECK-NEXT: copy                     ccc....cc...ccR
-// CHECK-NEXT: swap                     RRR......k..R.R
+// CHECK-NEXT: swap                     RRR.........R.R
 // CHECK-NEXT: assign                   ccc....cc...ccR
 // CHECK-NEXT: clone                    RRRcc.......c.R
 // CHECK-NEXT: clone-builtin            RRRcc.......c.R
-// CHECK-NEXT: view-clone               xxxxx..kkk..R.R
+// CHECK-NEXT: view-clone               xxxxx..xxx..R.R
+// CHECK-NEXT: view-sig                 ...xx..xxx....R
+// CHECK-NEXT: view-result              ...xx..xxx....R
+// CHECK-NEXT: view-body                RRRxx..xxx..R.R
+// CHECK-NEXT: view-closure             ...xx..xxx....R
+// CHECK-NEXT: view-alias               ...xx..xxx....R
+// CHECK-NEXT: view-type                ...xx..xxx....R
+// CHECK-NEXT: view-instance            ............R.R
+// CHECK-NEXT: ptr-instance             ............R.R
 // CHECK-NEXT: make                     ............R.R
 // CHECK-NEXT: hold                     ............R.R
 // CHECK-NEXT: hold-option              ............R.R
@@ -42,11 +68,40 @@
 // CHECK-NEXT: hold-func-instance       ............R.R
 // CHECK-NEXT: zero                     ...xx..xx...RxR
 // CHECK-NEXT: literal                  ...xx....x.xRxR
-// CHECK-NEXT: pairs: 400 (accepted 232, rule 82, other 17, constraint 65, known 4), mismatches: 0
-// CHECK-NEXT: KNOWN swap x view: OWN-V1: the plain code reads *p of a *View[Animal] as a place reached through a view (read-only); the generic swap of two View[Animal] values copies no parent part
-// CHECK-NEXT: KNOWN view-clone x shared: the same for View[Shared[*Animal]]
-// CHECK-NEXT: KNOWN view-clone x unique: OWN-V1 (ADR-0020): View[Unique[*Animal]] is refused where it is written; the generic View[T] is not checked again on its type argument (no partial place: the clone of a Unique copies the whole value through the table)
-// CHECK-NEXT: KNOWN view-clone x view: the same for View[View[Animal]]
+// CHECK-NEXT: method-param             ............R.R
+// CHECK-NEXT: method-slice             ............R.R
+// CHECK-NEXT: method-result            ............R.R
+// CHECK-NEXT: method-box               ............R.R
+// CHECK-NEXT: method-ptr-box           ............R.R
+// CHECK-NEXT: method-view-box          ............R.R
+// CHECK-NEXT: method-option            ............R.R
+// CHECK-NEXT: method-func              ............R.R
+// CHECK-NEXT: method-ptr-func          ............R.R
+// CHECK-NEXT: method-via               ............R.R
+// CHECK-NEXT: method-ptr-recv          ............R.R
+// CHECK-NEXT: method-ptr-pointer       ..............R
+// CHECK-NEXT: arg-slice                ............R.R
+// CHECK-NEXT: arg-array                ............R.R
+// CHECK-NEXT: arg-box                  ............R.R
+// CHECK-NEXT: arg-func                 ............R.R
+// CHECK-NEXT: arg-func-result          ............R.R
+// CHECK-NEXT: arg-result               ............R.R
+// CHECK-NEXT: arg-nested               ............R.R
+// CHECK-NEXT: arg-held                 ............R.R
+// CHECK-NEXT: arg-pointer              ..............R
+// CHECK-NEXT: arg-bare                 ..............R
+// CHECK-NEXT: field-arg-slice          ............R.R
+// CHECK-NEXT: field-arg-box            ............R.R
+// CHECK-NEXT: field-arg-func           ............R.R
+// CHECK-NEXT: field-arg-pointer        ..............R
+// CHECK-NEXT: fieldrec-arg-array       ............R.R
+// CHECK-NEXT: method-arg-slice         ............R.R
+// CHECK-NEXT: method-arg-func          ............R.R
+// CHECK-NEXT: method-arg-box           ............R.R
+// CHECK-NEXT: alias-arg-slice          ............R.R
+// CHECK-NEXT: alias-arg-array          ............R.R
+// CHECK-NEXT: pairs: 1000 (accepted 729, rule 156, other 50, constraint 65, known 0), mismatches: 0
 // CHECK-NOT: MISMATCH
 // CHECK-NOT: STRAY
+// CHECK-NOT: KNOWN
 package main

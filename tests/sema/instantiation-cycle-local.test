@@ -1,0 +1,85 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.26: Go's instantiation cycle through a type declared inside a generic
+// function (mono.go: such a type is implicitly parameterized by the type
+// parameters of its function, so `f[L]()` inside f instantiates f over a type
+// that is new for every instance). Rejected with Go's text (compare
+// `go build`): directly, through a pointer or a slice, through a local type
+// that holds another, through a second generic function, from a function
+// literal, and from a method of a generic type (its type parameters are the
+// type's). Accepted: the same functions without the recursive call, a local
+// type of a function that is not generic, and a local type passed on to a
+// generic that does not call back. mono-local.long.test and
+// mono-local-go.long.test compare the positions and notes with `go build`
+// one by one (16 programs, Go and Go++ mode).
+package main
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: instantiation cycle
+func f1[P any]() {
+	type L struct{ x []P }
+	f1[L]()
+}
+// CHECK: note: P instantiated as L
+// CHECK: note: L implicitly parameterized by P
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: instantiation cycle
+func f2[P any]() {
+	type L struct{ x int }
+	f2[*L]()
+}
+// CHECK: note: P instantiated as *L
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: instantiation cycle
+func f3[P any]() {
+	type L struct{ x int }
+	type M []L
+	f3[M]()
+}
+// CHECK: note: P instantiated as M
+// CHECK: note: M implicitly parameterized by P
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: instantiation cycle
+func f4[P any]() {
+	type L struct{ x int }
+	g4[L]()
+}
+func g4[Q any]() { f4[Q]() }
+// CHECK: note: P instantiated as Q
+// CHECK: note: Q instantiated as L
+// CHECK: note: L implicitly parameterized by P
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: instantiation cycle
+func f5[P any]() {
+	type L struct{ x int }
+	_ = func() {
+		type M struct{ l L }
+		f5[M]()
+	}
+}
+
+// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: instantiation cycle
+type T6[A any] struct{ a A }
+
+func (T6[A]) m() {
+	type L struct{ x []A }
+	var _ T6[L]
+}
+
+// The same without the recursive call: accepted.
+func ok1[P any]() {
+	type L struct{ x []P }
+	var l L
+	_ = l
+}
+
+func ok2[P any]() {
+	type L struct{ x int }
+	ok3[L]()
+}
+func ok3[Q any]() {}
+
+func ok4() {
+	type L struct{ x int }
+	ok3[L]()
+	ok4a[L]()
+}
+func ok4a[Q any]() { ok3[Q]() }

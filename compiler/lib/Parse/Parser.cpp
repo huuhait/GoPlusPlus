@@ -572,8 +572,14 @@ private:
       auto [N, H] = Work.pop_back_val();
       if (H > Opts.MaxHeight)
         return true;
-      forEachChild(
-          N, [&](const char *, const Node *C) { Work.emplace_back(C, H + 1); });
+      // The base of a selector adds nothing (see parsePrimaryExpr).
+      const bool Sel = Opts.UncountedSelectors && isa<SelectorExpr>(N);
+      forEachChild(N, [&](const char *, const Node *C) {
+        Work.emplace_back(C, Sel && C == cast<SelectorExpr>(N)->X &&
+                                     isa<SelectorExpr>(C)
+                                 ? H
+                                 : H + 1);
+      });
     }
     return false;
   }
@@ -2404,6 +2410,8 @@ private:
   Expr *parsePrimaryExpr(Expr *X) {
     if (!X)
       X = parseOperand();
+    // With UncountedSelectors, a selector on a selector (`a.b.c`) is not
+    // counted (P03.26).
     for (unsigned N = 1;; ++N) {
       if (chainTooLong(N))
         return X;
@@ -2412,6 +2420,8 @@ private:
         next();
         switch (Tok.Kind) {
         case tok::ident:
+          if (Opts.UncountedSelectors && isa<SelectorExpr>(X))
+            --N;
           X = parseSelector(X);
           break;
         case tok::l_paren:

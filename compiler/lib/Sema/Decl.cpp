@@ -1591,6 +1591,7 @@ void Checker::declStmt(const DeclStmt *DS) {
       if (auto *LN = dyn_cast_or_null<NamedType>(TN->Ty); LN && !TN->IsAlias)
         LN->AbstractAttr = !S.Opts.GoCompat && TS->Extends &&
                            hasDeclAttr(GD, "Abstract"); // TYP-19
+      noteImplicitTParams(TN);
       ObjPath.pop_back();
       TN->Color = 1;
       break;

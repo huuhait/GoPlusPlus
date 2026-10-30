@@ -1,0 +1,103 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.26 (TYP-19, GEN-12): the plain code refuses a type that holds an
+// abstract type by value wherever it is written, also behind a pointer, a
+// view or an interface (`*Box[Shape]`, `View[Box[Shape]]`, `*[]Shape`). A
+// signature, a generic type and a generic alias are checked on their
+// instance, but that check stops at a pointer, a view and an interface; so
+// generic code that writes such a type with T there gives T a Make use,
+// decided on every type argument: refused for an abstract T exactly when the
+// plain form is (E0316 for a function, E0323 for a type), on every route.
+// Accepted: the same generics with a concrete type, and generic code that
+// holds T only behind a pointer (`*T`, `View[T]`, PBox[T]). The table
+// extends-generic-plain-table.test has the rows view-instance and
+// ptr-instance; across packages: Serialize.ViewArgOfAGenericIsDecidedAcrossPackages.
+package main
+
+type Shape struct{ N int }
+
+@Abstract
+func (s *Shape) Area() int
+
+type Box[T any] struct{ x T }
+
+type PBox[T any] struct{ p *T }
+
+// The plain side.
+// CHECK-DAG: [[@LINE+1]]:16: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+func p1(v View[Box[Shape]]) {}
+
+// CHECK-DAG: [[@LINE+1]]:12: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+func p2(p *Box[Shape]) {}
+
+// CHECK-DAG: [[@LINE+1]]:14: error[E0389]: cannot use the abstract type Shape for an element type
+func p3(p *[]Shape) {}
+
+// CHECK-DAG: [[@LINE+1]]:27: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+func p4(i interface{ M() *Box[Shape] }) {}
+
+// CHECK-DAG: [[@LINE+1]]:19: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+func p5(o Option[*Box[Shape]]) {}
+
+// CHECK-DAG: [[@LINE+1]]:20: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+type HP struct{ p *Box[Shape] }
+
+// CHECK-DAG: [[@LINE+1]]:12: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+type AP = *Box[Shape]
+
+// The generic side.
+func g1[T any](v View[Box[T]])                {}
+func g2[T any](p *Box[T])                      {}
+func g3[T any](p *[]T)                         {}
+func g4[T any](i interface{ M() *Box[T] })    {}
+func g5[T any](o Option[*Box[T]])              {}
+func g6[T any, S interface{ *Box[T] }](s S)    {}
+func g7[T any](p *T) { _ = g2[T] }
+
+type H[T any] struct{ p *Box[T] }
+
+type A[T any] = *Box[T]
+
+@View
+type VB[T any] struct{ v View[Box[T]] }
+
+// (The plain argument for g6 is refused where it is written.)
+// CHECK-DAG: [[@LINE+1]]:13: error[E0389]: cannot use the abstract type Shape for a type argument of Box[Shape], which holds it by value
+func bad(b *Box[Shape]) {
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = g1[Shape]
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = g2[Shape]
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = g3[Shape]
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = g4[Shape]
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	_ = g5[Shape]
+	// CHECK-DAG: [[@LINE+1]]:2: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+	g6[Shape](b)
+	// Through a generic that passes T on.
+	// CHECK-DAG: [[@LINE+1]]:6: error[E0316]: Shape does not satisfy the implicit requirement of T: the generic code passes T on to a generic that makes or holds a value of it
+	_ = g7[Shape]
+}
+
+// CHECK-DAG: [[@LINE+3]]:18: error[E0323]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+// CHECK-DAG: [[@LINE+2]]:30: error[E0323]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+// CHECK-DAG: [[@LINE+1]]:42: error[E0323]: Shape does not satisfy the implicit requirement of T: the generic code makes or holds a value of T
+func badTypes(h *H[Shape], a A[Shape], v VB[Shape]) {}
+
+// Accepted: a concrete type, and T held only behind a pointer.
+func gp[T any](p *PBox[T])            {}
+func gv[T any](p *T, v View[T], s []*T) {}
+
+func good(h *H[int], a A[int], v VB[int], pb *PBox[Shape]) {
+	_ = g1[int]
+	_ = g2[int]
+	_ = g3[int]
+	_ = g4[int]
+	_ = g5[int]
+	_ = g7[int]
+	_ = gp[Shape]
+	_ = gv[Shape]
+}
+
+func main() {}

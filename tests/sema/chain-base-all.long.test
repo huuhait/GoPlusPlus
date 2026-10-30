@@ -1,0 +1,5 @@
+// REQUIRES: long
+// P03.26 (R2): every base that is no name (`(a).s...`, `sg(a).s...`,
+// `a[0].s...`, `a.(*S).s...`, `(*a).s...`), 100000 links, Go++ and Go mode,
+// and the error side. chain-base.test has the parenthesized base alone.
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d base-all

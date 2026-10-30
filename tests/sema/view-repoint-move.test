@@ -1,0 +1,53 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.26 (OWN-V1: "a view variable that is not itself a part of a view or a
+// box may be re-pointed, also through a pointer to it"): a view is trivial, so
+// `move` of a view variable copies it and empties nothing. Swapping two view
+// variables through pointers is accepted, in plain and in generic code alike
+// (the plain form used to say "cannot write *p"). A write through a view
+// stays an error, and so does moving a part out of a view (a field, which
+// reads as a view or as a copied-out int): it is no view variable
+// (Checker::viewVariable, the same test as `&`).
+package main
+
+type Animal struct {
+	N    int
+	Tags []string
+}
+
+func adv(p *View[string])                     { *p = (*p)[1:] }
+func swapV(p *View[Animal], q *View[Animal])  { *p, *q = move(*q), move(*p) }
+func swapS(p *View[string], q *View[string])  { *p, *q = move(*q), move(*p) }
+func plainCopy(p *View[Animal], q *View[Animal]) { *p, *q = *q, *p }
+func moveLocal(a View[Animal]) View[Animal]   { b := move(a); return b }
+func moveOut(p *View[Animal]) View[Animal]    { return move(*p) }
+func gswap[T any](p *T, q *T)                 { *p, *q = move(*q), move(*p) }
+func vswap[T any](p, q *View[T])              { *p, *q = move(*q), move(*p) }
+func repoint(p, q *View[Animal])              { *p = *q; *p = move(*q) }
+func moveElem(s []View[Animal]) View[Animal]  { return move(s[0]) }
+func owned(p *Animal, q *Animal)              { *p, *q = move(*q), move(*p) }
+
+func use(a View[Animal], s View[string]) {
+	gswap[View[Animal]](&a, &a)
+	gswap[View[string]](&s, &s)
+	vswap(&a, &a)
+	vswap[string](&s, &s)
+	adv(&s)
+}
+
+// Still errors: a write through a view, and a part moved out of one.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0368\]}}: cannot write v.N: it is read-only
+func writeField(v View[Animal]) { v.N = 1 }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0368\]}}: cannot write (*p).N: it is read-only
+func writeThrough(p *View[Animal]) { (*p).N = 1 }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0368\]}}: cannot write v.N: it is read-only
+func moveInt(v View[Animal]) int { return move(v.N) }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0368\]}}: cannot write v.Tags: it is read-only
+func moveTags(v View[Animal]) View[[]string] { return move(v.Tags) }
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0368\]}}: cannot write s[0]: it is read-only
+func movePart(s View[[]View[Animal]]) View[Animal] { return move(s[0]) }
+
+func main() {}

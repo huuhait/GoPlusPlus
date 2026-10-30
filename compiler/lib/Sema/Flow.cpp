@@ -545,9 +545,8 @@ struct AssignScan {
     if (auto *Id = dyn_cast_or_null<ast::Ident>(E))
       Into.insert(Id->Name.str());
   }
-  void walk(const ast::Node *N, unsigned ClosureDepth) {
-    if (!N)
-      return;
+  /// What a node does before its children; true if it opened a scope.
+  bool enter(const ast::Node *N, unsigned ClosureDepth) {
     bool Scope = isa<BlockStmt>(N) || isa<IfStmt>(N) || isa<ForStmt>(N) ||
                  isa<RangeStmt>(N) || isa<SwitchStmt>(N) ||
                  isa<TypeSwitchStmt>(N) || isa<CaseClause>(N) ||
@@ -630,8 +629,10 @@ struct AssignScan {
       if (Br->Keyword == tok::kw_goto && Br->Label)
         Gotos.insert(Br->Label->Name.str());
     }
-    unsigned D = ClosureDepth + (isa<FuncLit>(N) ? 1 : 0);
-    ast::forEachChild(N, [&](const char *, const ast::Node *C) { walk(C, D); });
+    return Scope;
+  }
+  /// What a node does after its children.
+  void leave(const ast::Node *N, bool Scope) {
     // A declaration is in scope after its statement.
     if (auto *AS = dyn_cast<AssignStmt>(N); AS && AS->Op == tok::define)
       for (const ast::Expr *L : AS->Lhs)
@@ -644,6 +645,43 @@ struct AssignScan {
               declare(Id);
     if (Scope)
       Scopes.pop_back();
+  }
+  /// Walks the tree under Root with an explicit stack (an expression chain
+  /// can be as tall as the parser allows, and far taller in a test).
+  void walk(const ast::Node *Root, unsigned ClosureDepth) {
+    if (!Root)
+      return;
+    struct Frame {
+      const ast::Node *N;
+      unsigned CD;
+      bool Scope;
+      SmallVector<const ast::Node *, 4> Kids;
+      size_t Next = 0;
+    };
+    SmallVector<Frame, 16> Stack;
+    auto Push = [&](const ast::Node *N, unsigned CD) {
+      Frame F{N, CD, enter(N, CD), {}, 0};
+      unsigned D = CD + (isa<FuncLit>(N) ? 1 : 0);
+      ast::forEachChild(N, [&](const char *, const ast::Node *C) {
+        if (C)
+          F.Kids.push_back(C);
+      });
+      F.CD = D;
+      Stack.push_back(std::move(F));
+    };
+    Push(Root, ClosureDepth);
+    while (!Stack.empty()) {
+      Frame &F = Stack.back();
+      if (F.Next < F.Kids.size()) {
+        const ast::Node *C = F.Kids[F.Next++];
+        Push(C, F.CD);
+        continue;
+      }
+      const ast::Node *N = F.N;
+      bool Scope = F.Scope;
+      Stack.pop_back();
+      leave(N, Scope);
+    }
   }
 };
 } // namespace

@@ -212,6 +212,203 @@ ExprKind Checker::rawExpr(Operand &X, const ast::Expr *Ex, Type *Hint,
   return Kind;
 }
 
+//===----------------------------------------------------------------------===//
+// Long chains
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// Eval is the node whose checker evaluates the operand Child (a call of an
+/// index expression evaluates it as the operand of the index).
+struct ChainLink {
+  const ast::Expr *Eval = nullptr, *Child = nullptr;
+};
+} // namespace
+
+static ChainLink chainLinkOf(const ast::Expr *E) {
+  if (auto *S = dyn_cast<SelectorExpr>(E))
+    return {E, S->X};
+  if (auto *I = dyn_cast<IndexExpr>(E))
+    return {E, I->X};
+  if (auto *S = dyn_cast<SliceExpr>(E))
+    return {E, S->X};
+  if (auto *T = dyn_cast<TypeAssertExpr>(E))
+    return {E, T->X};
+  if (auto *S = dyn_cast<StarExpr>(E))
+    return {E, S->X};
+  if (auto *P = dyn_cast<ParenExpr>(E))
+    return {E, P->X};
+  if (auto *C = dyn_cast<CallExpr>(E)) {
+    if (auto *I = dyn_cast<IndexExpr>(C->Fun))
+      return {I, I->X};
+    return {E, C->Fun};
+  }
+  return {};
+}
+
+Checker::ChainCtx Checker::chainCtx() const {
+  return {PartialOk, PartialOkAddr, CalleeSel, CalleeSuspended, NoNarrowExpr};
+}
+
+void Checker::setChainCtx(const ChainCtx &C) {
+  PartialOk = C.PartialOk;
+  PartialOkAddr = C.PartialOkAddr;
+  CalleeSel = C.CalleeSel;
+  CalleeSuspended = C.CalleeSuspended;
+  NoNarrowExpr = C.NoNarrowExpr;
+}
+
+Checker::PartialMark Checker::enterChainForm(const ast::Expr *E) {
+  if (isa<StarExpr>(E))
+    return takePartialMark(E);
+  auto *Sel = dyn_cast<SelectorExpr>(E);
+  if (!Sel)
+    return {};
+  const PartialMark M = takePartialMark(E);
+  // (No-op for `pkg.Name`: a package name is no Option variable.)
+  noNarrowReceiver(Sel);
+  return M;
+}
+
+Checker::ChainCtx Checker::chainSetup(const ast::Expr *Eval,
+                                      const ast::Expr *Child) {
+  ChainCtx Saved = chainCtx();
+  if (isa<SelectorExpr>(Eval)) {
+    markPartialOk(Child, /*Addr=*/false); // the start of this selector
+  } else if (auto *Call = dyn_cast<CallExpr>(Eval)) {
+    CalleeSel = Child;
+    while (auto *Pa = dyn_cast<ParenExpr>(CalleeSel))
+      CalleeSel = Pa->X;
+    CalleeSuspended = Call == GoCall || Call == DeferCall;
+    // ADR-0024: the callee may be the receiver of a `()` method; a partial
+    // place is decided with the method (opReceiverOk), and a struct is no
+    // function anyway.
+    if (!S.Opts.GoCompat && Ctx.operatorsSeen())
+      markPartialOk(Child, /*Addr=*/false);
+  } else if (isa<IndexExpr>(Eval)) {
+    // ADR-0024: the operand may be the receiver of a `[]` method; a partial
+    // place is decided with the method (opReceiverOk), and a struct has no
+    // built-in index anyway.
+    if (!S.Opts.GoCompat && Ctx.operatorsSeen())
+      markPartialOk(Child, /*Addr=*/false);
+  }
+  return Saved;
+}
+
+void Checker::chainRestore(const ast::Expr *Eval, const ChainCtx &Saved) {
+  if (isa<SelectorExpr>(Eval)) {
+    PartialOk = nullptr;
+  } else if (isa<CallExpr>(Eval)) {
+    CalleeSel = Saved.CalleeSel;
+    CalleeSuspended = Saved.CalleeSuspended;
+  }
+}
+
+ExprKind Checker::chainEval(Operand &X, const ast::Expr *Eval,
+                            const ast::Expr *Child) {
+  // The one place that evaluates the operand part of each of these forms.
+  if (isa<SelectorExpr>(Eval) || isa<StarExpr>(Eval))
+    exprOrType(X, Child, false);
+  else if (isa<CallExpr>(Eval) || isa<IndexExpr>(Eval))
+    exprOrType(X, Child, true);
+  else if (isa<ParenExpr>(Eval))
+    return rawExpr(X, Child, nullptr, false);
+  else // slice, type assertion
+    expr(X, Child);
+  return ExprKind::Expression;
+}
+
+ExprKind Checker::chainOperand(Operand &X, const ast::Expr *Parent) {
+  ChainLink L = chainLinkOf(Parent);
+  if (!ChainOperands.count(L.Child))
+    prepareChain(Parent);
+  const ChainCtx Saved = chainSetup(L.Eval, L.Child);
+  ExprKind Kind;
+  if (auto It = ChainOperands.find(L.Child); It != ChainOperands.end()) {
+    // Parked by prepareChain: the values are those the evaluation ended with.
+    X = It->second.Op;
+    Kind = It->second.Kind;
+    setChainCtx(It->second.After);
+    ChainOperands.erase(It);
+  } else {
+    Kind = chainEval(X, L.Eval, L.Child);
+  }
+  chainRestore(L.Eval, Saved);
+  return Kind;
+}
+
+void Checker::prepareChain(const ast::Expr *Parent) {
+  constexpr unsigned ShortChain = 16;
+  // An operand the operator code evaluated already (PreEval, ADR-0024) ends
+  // the chain: rawExpr hands it over without evaluating its parts.
+  auto PreEvaluated = [&](const ast::Expr *E) {
+    return !PreEval.empty() && PreEval.count(E);
+  };
+  // A short chain (nearly every one) is left to the forms themselves: count
+  // its links first, without asking for package names.
+  unsigned Links = 0;
+  for (const ast::Expr *P = Parent; Links <= ShortChain; ++Links) {
+    ChainLink L = chainLinkOf(P);
+    if (!L.Child)
+      break;
+    P = L.Child;
+    if (PreEvaluated(P)) {
+      ++Links;
+      break;
+    }
+  }
+  if (Links <= ShortChain)
+    return;
+  // The links below Parent, nearest first. The chain ends at an operand that
+  // is no link, and above a form whose operand is no expression of its own
+  // (a package name in `pkg.Name` or `pkg.tmpl[int]`).
+  llvm::SmallVector<ChainLink, 32> Spine;
+  for (const ast::Expr *P = Parent;;) {
+    ChainLink L = chainLinkOf(P);
+    if (!L.Child)
+      break;
+    if (auto *Sel = dyn_cast<SelectorExpr>(L.Eval)) {
+      if (qualifierPackage(Sel->X))
+        break;
+    } else if (auto *IE = dyn_cast<IndexExpr>(L.Eval)) {
+      const ast::Expr *F = IE->X;
+      while (auto *Pa = dyn_cast<ParenExpr>(F))
+        F = Pa->X;
+      if (auto *Sel = dyn_cast<SelectorExpr>(F))
+        if (qualifierPackage(Sel->X))
+          break;
+    }
+    Spine.push_back(L);
+    P = L.Child;
+    if (PreEvaluated(P))
+      break;
+  }
+  if (Spine.size() <= ShortChain)
+    return;
+  // Top-down, as the recursive evaluation goes down the chain (it evaluates
+  // nothing on the way down): each form does its entry (Parent has done its
+  // own) and its setup, and the values its operand starts with are kept
+  // (R10: the mark of a selector or `&` above many parentheses, the
+  // receiver that is not narrowed, the callee of a call).
+  const ChainCtx Entry = chainCtx();
+  llvm::SmallVector<ChainCtx, 32> Start(Spine.size());
+  for (size_t I = 0; I < Spine.size(); ++I) {
+    if (I > 0) // Spine[I].Eval is (in) the operand of Spine[I - 1]
+      enterChainForm(Spine[I].Eval);
+    chainSetup(Spine[I].Eval, Spine[I].Child);
+    Start[I] = chainCtx();
+  }
+  // Bottom-up: each operand is evaluated with its start values and parked
+  // with its end values before its parent asks.
+  for (size_t I = Spine.size(); I-- > 0;) {
+    setChainCtx(Start[I]);
+    ChainEntry E;
+    E.Kind = chainEval(E.Op, Spine[I].Eval, Spine[I].Child);
+    E.After = chainCtx();
+    ChainOperands[Spine[I].Child] = std::move(E);
+  }
+  setChainCtx(Entry);
+}
+
 void Checker::exclude(Operand &X, unsigned ModeSet) {
   if (!(ModeSet & bit(X.M)))
     return;
@@ -1018,7 +1215,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
       return Error();
     break;
   case K::ParenExpr: {
-    ExprKind PK = rawExpr(X, cast<ParenExpr>(Ex)->X, nullptr, false);
+    ExprKind PK = chainOperand(X, Ex);
     X.E = Ex;
     return PK;
   }
@@ -1038,7 +1235,7 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
     break;
   case K::TypeAssertExpr: {
     auto *TA = cast<TypeAssertExpr>(Ex);
-    expr(X, TA->X);
+    chainOperand(X, Ex);
     if (X.M == Mode::Invalid)
       return Error();
     if (!TA->Type) {
@@ -1088,8 +1285,8 @@ ExprKind Checker::exprInternal(Operand &X, const ast::Expr *Ex, Type *Hint) {
   case K::StarExpr: {
     auto *St = cast<StarExpr>(Ex);
     // Is `*p` the start of a selector, or the operand of `&` (EXP-15)?
-    const PartialMark PM = takePartialMark(Ex);
-    exprOrType(X, St->X, false);
+    const PartialMark PM = enterChainForm(Ex);
+    chainOperand(X, Ex);
     switch (X.M) {
     case Mode::Invalid:
       return Error();

@@ -1,0 +1,9 @@
+// P03.26: unsafe.Sizeof, Alignof and Offsetof of types nested by value (the struct shape at 70 and 1000 levels; sizeof-nest-all.long.test runs every shape at 70, 200 and 1000), and a wrong size given for generic instances is refused (so the checks are real).
+// The sizes were worked out by a recursion that stopped at depth 64 and
+// answered one word below it; they are now worked out with a stack of their
+// own and a memo for every type (Checker::gcLayout), so there is no limit on
+// the depth and a type that is used twice (`dag`) is worked out once. The
+// numbers come from a model of the gc layout in Inputs/check-sizeof-nest.py,
+// which sizeof-nest-go.long.test compares with `go run`.
+// RUN: %python %S/Inputs/check-sizeof-nest.py %gopp %t.d gopp
+// RUN: %python %S/Inputs/check-sizeof-nest.py %gopp %t.d wrong

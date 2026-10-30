@@ -1,0 +1,143 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P03.26: a View[T] in generic code is judged on each type argument, as the
+// written View[X] is (OWN-V1: X is no pointer kind, no unsafe.Pointer and no
+// view). The plain form is E0371 where the type is written; the generic form
+// is E0371 where the generic is instantiated, on every route: an explicit
+// call, an inferred call, a generic type with the View in a method or a
+// function type, a generic alias, and a generic that hands T on to another
+// one, a View written only in a body, a @View generic struct and a variadic
+// inferred call. A type argument that is a value type (int, string, a struct,
+// a slice, a map) stays accepted, and so does View[[]T] (a slice of T is no
+// pointer kind, whatever T is). The written types come first: the same text
+// (E0371) for each kind of argument. The same requirement in the table
+// extends-generic-plain-table.test; across packages in the unit test
+// Serialize.ViewArgOfAGenericIsDecidedAcrossPackages.
+package main
+
+import "unsafe"
+
+type Animal struct{ N int }
+
+// A named pointer type is a pointer kind too.
+type PA *Animal
+
+// The written types (the plain side).
+// CHECK: [[@LINE+1]]:16: error{{\[E0371\]}}: cannot use View[*Animal]: a View holds a value, not a pointer
+func w1(v View[*Animal]) {}
+
+// CHECK: [[@LINE+1]]:16: error{{\[E0371\]}}: cannot use View[Unique[*Animal]]: a View holds a value, not a pointer
+func w2(v View[Unique[*Animal]]) {}
+
+// CHECK: [[@LINE+1]]:16: error{{\[E0371\]}}: cannot use View[unsafe.Pointer]: a View holds a value, not a pointer
+func w3(v View[unsafe.Pointer]) {}
+
+// CHECK: [[@LINE+1]]:16: error{{\[E0371\]}}: cannot use View[View[Animal]]: a View of a View is the same as one View
+func w4(v View[View[Animal]]) {}
+
+// CHECK: [[@LINE+1]]:16: error{{\[E0371\]}}: cannot use View[PA]: a View holds a value, not a pointer
+func w5(v View[PA]) {}
+
+func inSig[T any](v View[T]) {}
+func inBody[T any](x T, v View[T]) { w := v; _ = w }
+func bodyOnly[T any](x T) {
+	f := func(w View[T]) {}
+	_ = f
+}
+func inSlice[T any](x T, v View[[]T]) { w := v; _ = w }
+func through[U any](x U, v View[U])    { inBody[U](x, v) }
+func throughTwo[V any](x V, v View[V]) { through[V](x, v) }
+
+type Fn[T any] func(View[T])
+
+type Acc[T any] struct{ n int }
+
+func (a Acc[T]) peek(w View[T]) {}
+
+type Alias[T any] = View[T]
+
+type FAlias[T any] = func(View[T])
+
+@View
+type Hold[T any] struct{ s View[T] }
+
+func variadic[T any](x T, v ...View[T]) {}
+
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+func holdBad(h Hold[*int]) {}
+func holdOk(h Hold[int])   {}
+
+// A View inside the right-hand side of an alias.
+// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+func faliasBad(a FAlias[*int]) {}
+func faliasOk(a FAlias[[]*int]) {}
+
+func takeFn[T any](f Fn[T])          {}
+func takeAcc[T any](a Acc[T])         {}
+func takeAlias[T any](a Alias[T])     {}
+
+func use(u Unique[*Animal], s Shared[*Animal], w Weak[*Animal], p *int,
+	up unsafe.Pointer, v View[Animal], n int, str string, an Animal) {
+	// An explicit call: a pointer kind, a raw pointer, unsafe.Pointer, a view.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[Unique[*Animal]]: a View holds a value, not a pointer
+	_ = inBody[Unique[*Animal]]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[Shared[*Animal]]: a View holds a value, not a pointer
+	_ = inBody[Shared[*Animal]]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[Weak[*Animal]]: a View holds a value, not a pointer
+	_ = inBody[Weak[*Animal]]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+	_ = inBody[*int]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[unsafe.Pointer]: a View holds a value, not a pointer
+	_ = inBody[unsafe.Pointer]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[View[Animal]]: a View of a View is the same as one View
+	_ = inBody[View[Animal]]
+	// The View in the signature only.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+	_ = inSig[*int]
+	// A View written only in a body, an inferred call.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[Unique[*Animal]]: a View holds a value, not a pointer
+	bodyOnly(u)
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+	bodyOnly(p)
+	// A generic type: the View is in a function type, in a method, in an alias.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+	_ = takeFn[*int]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[Shared[*Animal]]: a View holds a value, not a pointer
+	_ = takeAcc[Shared[*Animal]]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+	_ = takeAlias[*int]
+	// Through other generics.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer
+	_ = throughTwo[*int]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[Unique[*Animal]]: a View holds a value, not a pointer
+	_ = through[Unique[*Animal]]
+	// A named pointer type and a variadic inferred call.
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[PA]: a View holds a value, not a pointer
+	_ = inSig[PA]
+	// CHECK: [[@LINE+1]]:{{[0-9]+}}: error{{\[E0371\]}}: cannot use View[*int]: a View holds a value, not a pointer{{.*}}; the generic code writes View[T]
+	variadic(p)
+
+	// Accepted: a value type, and a View of a slice, of any T.
+	_ = inBody[int]
+	_ = inBody[string]
+	_ = inBody[Animal]
+	_ = inBody[[]*int]
+	_ = inBody[map[string]int]
+	_ = inSig[struct{ p *Animal }]
+	_ = inSig[Option[Animal]]
+	_ = inSig[Option[*Animal]]
+	_ = inSlice[*int]
+	_ = inSlice[Unique[*Animal]]
+	_ = inSlice[View[Animal]]
+	_ = through[Animal]
+	_ = throughTwo[int]
+	_ = takeFn[Animal]
+	_ = takeAcc[int]
+	_ = takeAlias[string]
+	inBody(an, v)
+	variadic(n)
+	bodyOnly(n)
+	bodyOnly(an)
+	bodyOnly(str)
+}
+
+func main() {}

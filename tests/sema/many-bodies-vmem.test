@@ -1,0 +1,10 @@
+// REQUIRES: no-sanitizer
+// P03.26 (R9): the threads that check the function bodies have a stack of 32
+// MiB (13 KB per nesting level measured, x 1024 levels x 2), not 256 MiB, so
+// a package with many bodies at the default thread count fits in 3 GB of
+// address space (it aborted with "pthread_create failed"); under a much
+// lower limit the check still ends with the same result, on fewer threads.
+// RUN: %python %S/Inputs/gen-many-bodies.py 4000 > %t.gopp
+// RUN: sh -c 'ulimit -v 3000000; timeout 60 %gopp check %t.gopp'
+// RUN: sh -c 'ulimit -v 3000000; timeout 60 %gopp check -check-j=16 %t.gopp'
+// RUN: sh -c 'ulimit -v 700000; timeout 60 %gopp check -check-j=8 %t.gopp'

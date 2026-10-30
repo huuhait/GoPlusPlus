@@ -1,0 +1,7 @@
+// P03.26 (R2): a selector chain over a base that is no name is checked in
+// linear time: qualifierPackage memoizes every prefix of a chain, whatever
+// its base is (before: 20000 links 0.4 s, 100000 links 9.1 s). 100000 links
+// over a parenthesized base here, the other bases (`sg(a).s...`, `a[0].s...`,
+// `a.(*S).s...`, `(*a).s...`) at 3000 (and `(a).s...` in Go mode), and the
+// error side; chain-base-all.long.test has every base at 100000.
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d base

@@ -80,26 +80,56 @@ void Checker::checkMoveRecvUse(const SelectorExpr *Sel, const char *What) {
 }
 
 Package *Checker::qualifierPackage(const ast::Expr *X) {
-  if (auto *Id = dyn_cast<ast::Ident>(X)) {
+  // A package name or a namespace path: `pkg`, `pkg.ns`, `pkg.ns.Name`.
+  // Walked with a loop, from the top of the path down to its start and back
+  // up; a path of many selectors keeps the answer of each prefix in
+  // QualMemo, so the selectors of a long chain ask once, not once each.
+  auto Base = [&](const ast::Ident *Id) -> Package * {
     auto *PN = dyn_cast_or_null<PkgName>(E.Sc->lookup(name(Id), E.Pos));
     if (!PN)
       return nullptr;
     recordUse(Id, PN);
     markUsed(PN);
     return PN->Imported;
+  };
+  if (auto *Id = dyn_cast<ast::Ident>(X))
+    return Base(Id);
+  SmallVector<const SelectorExpr *, 8> Path;
+  const ast::Expr *Cur = X;
+  Package *P = nullptr;
+  bool Known = false;
+  while (auto *Sel = dyn_cast<SelectorExpr>(Cur)) {
+    if (!QualMemo.empty())
+      if (auto It = QualMemo.find(Sel); It != QualMemo.end()) {
+        P = It->second;
+        Known = true;
+        break;
+      }
+    Path.push_back(Sel);
+    Cur = Sel->X;
   }
-  // `pkg.ns.Name`: a namespace of a foreign package is a PkgName again.
-  auto *Sel = dyn_cast<SelectorExpr>(X);
-  if (!Sel)
-    return nullptr;
-  Package *P = qualifierPackage(Sel->X);
-  if (!P || !P->Foreign)
-    return nullptr;
-  auto *PN = dyn_cast_or_null<PkgName>(P->Foreign->lookup(name(Sel->Sel)).Obj);
-  if (!PN)
-    return nullptr;
-  recordUse(Sel->Sel, PN);
-  return PN->Imported;
+  if (!Known) {
+    // A base that is no name (`(a).s`, `g(a).s`, `a[0].s`) has no package;
+    // the prefixes of its chain are memoized as well (below).
+    auto *Id = dyn_cast<ast::Ident>(Cur);
+    P = Id ? Base(Id) : nullptr;
+  }
+  const bool Memo = Path.size() >= 8;
+  for (size_t J = Path.size(); J-- > 0;) {
+    const SelectorExpr *Sel = Path[J];
+    // `pkg.ns.Name`: a namespace of a foreign package is a PkgName again.
+    Package *Up = nullptr;
+    if (P && P->Foreign)
+      if (auto *PN = dyn_cast_or_null<PkgName>(
+              P->Foreign->lookup(name(Sel->Sel)).Obj)) {
+        recordUse(Sel->Sel, PN);
+        Up = PN->Imported;
+      }
+    P = Up;
+    if (Memo)
+      QualMemo[Sel] = P;
+  }
+  return P;
 }
 
 void Checker::markUsed(PkgName *PN) {
@@ -112,6 +142,30 @@ void Checker::markUsed(PkgName *PN) {
     PN->Used = true;
 }
 
+void Checker::noNarrowReceiver(const SelectorExpr *Ex) {
+  StringRef Sel = name(Ex->Sel);
+  // Flow typing: a receiver that is known to be set has the type of its value
+  // here, so `l.Get(k)` after `l != nil` calls the method of T. Option's own
+  // IsNil and Get stay reachable on it when T has no member of that name.
+  if (own() && (Sel == "IsNil" || Sel == "Get")) {
+    // `move(o).Get()` takes the Option o itself (ADR-0018 point 11).
+    const ast::Expr *Rcv = unparen(Ex->X);
+    if (auto *C = dyn_cast<CallExpr>(Rcv))
+      if (auto *F = dyn_cast<ast::Ident>(unparen(C->Fun));
+          F && name(F) == "move" && C->Args.size() == 1 &&
+          llvm::isa_and_nonnull<Builtin>(lookup(name(F))))
+        Rcv = unparen(C->Args[0]);
+    if (auto *Id = dyn_cast<ast::Ident>(Rcv))
+      if (auto *V = dyn_cast_or_null<Var>(lookup(name(Id))))
+        if (auto *Op = V->Ty ? dyn_cast<OptionType>(under(V->Ty)) : nullptr)
+          // (A narrowing that only a loop's assumption gives never picks T's
+          // method over the Option's own, P03.19.)
+          if (!isNarrowed(V) || Cur.TentN.count(V) ||
+              !valueHasMember(Op->Elem, Sel))
+            markNoNarrow(Id);
+  }
+}
+
 void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
                        NamedType *Def) {
   StringRef Sel = name(Ex->Sel);
@@ -120,8 +174,9 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     X.E = Ex;
   };
   // Is this selector the start of a longer one, or the operand of `&`? (The
-  // parent part `c.Payment` is allowed only there, EXP-15.)
-  const PartialMark SelfMark = takePartialMark(Ex);
+  // parent part `c.Payment` is allowed only there, EXP-15.) An Option
+  // receiver of IsNil / Get is not narrowed.
+  const PartialMark SelfMark = enterChainForm(Ex);
   // Package-qualified identifier (`pkg.Name`), or a name in a namespace of a
   // C++ header (`pkg.ns.Name`, ADR-0010 Q4).
   if (Package *P = qualifierPackage(Ex->X)) {
@@ -198,29 +253,7 @@ void Checker::selector(Operand &X, const SelectorExpr *Ex, bool WantType,
     return;
   }
 
-  // Flow typing: a receiver that is known to be set has the type of its value
-  // here, so `l.Get(k)` after `l != nil` calls the method of T. Option's own
-  // IsNil and Get stay reachable on it when T has no member of that name.
-  if (own() && (Sel == "IsNil" || Sel == "Get")) {
-    // `move(o).Get()` takes the Option o itself (ADR-0018 point 11).
-    const ast::Expr *Rcv = unparen(Ex->X);
-    if (auto *C = dyn_cast<CallExpr>(Rcv))
-      if (auto *F = dyn_cast<ast::Ident>(unparen(C->Fun));
-          F && name(F) == "move" && C->Args.size() == 1 &&
-          llvm::isa_and_nonnull<Builtin>(lookup(name(F))))
-        Rcv = unparen(C->Args[0]);
-    if (auto *Id = dyn_cast<ast::Ident>(Rcv))
-      if (auto *V = dyn_cast_or_null<Var>(lookup(name(Id))))
-        if (auto *Op = V->Ty ? dyn_cast<OptionType>(under(V->Ty)) : nullptr)
-          // (A narrowing that only a loop's assumption gives never picks T's
-          // method over the Option's own, P03.19.)
-          if (!isNarrowed(V) || Cur.TentN.count(V) ||
-              !valueHasMember(Op->Elem, Sel))
-            markNoNarrow(Id);
-  }
-  markPartialOk(Ex->X, /*Addr=*/false); // the start of this selector
-  exprOrType(X, Ex->X, false);
-  PartialOk = nullptr;
+  chainOperand(X, Ex); // marks Ex->X as the start of this selector
   switch (X.M) {
   case Mode::TypeExpr:
     // `type T T.x` (go.dev/issue/51509).
@@ -777,18 +810,21 @@ Type *Checker::instantiateSignature(SourceLoc Pos, SignatureType *Sig,
   SignatureType *Inst = instantiateFuncSig(Sig, TArgs);
   if (Ex)
     recordInstance(Ex, TArgs, Inst);
-  recordMono(Pos, nullptr, Sig->TParams, TArgs);
+  recordMono(Pos, nullptr, Sig->TParams, TArgs, ArgPos);
   SmallVector<Type *, 4> TA(TArgs.begin(), TArgs.end());
   SmallVector<SourceLoc, 4> AP(ArgPos.begin(), ArgPos.end());
   SmallVector<TypeParamType *, 4> TP(Sig->TParams.begin(), Sig->TParams.end());
   later([this, Pos, TP, TA, AP, Inst]() {
-    std::string Cause;
-    int Bad = verify(Pos, TP, TA, &Cause);
+    std::string Cause, ViewWhy;
+    int Bad = verify(Pos, TP, TA, &Cause, false, &ViewWhy);
     if (Bad >= 0) {
       SourceLoc At = Pos;
       if (static_cast<size_t>(Bad) < AP.size() && AP[Bad].isValid())
         At = AP[Bad];
-      err(At, diag::err_sema_call, {Cause});
+      if (!ViewWhy.empty())
+        err(At, diag::err_view_bad_arg, {str(TA[Bad]), ViewWhy});
+      else
+        err(At, diag::err_sema_call, {Cause});
     } else {
       checkOptionArgs(Pos, Inst, TA);
       noAbstractArgs(Pos, Inst, TA); // TYP-19, on the substituted signature
@@ -1068,20 +1104,7 @@ ExprKind Checker::callExpr(Operand &X, const CallExpr *Call) {
     if (X.M != Mode::Invalid && !Inst)
       recordTypeAndValue(IE, X.M, X.Ty, nullptr);
   } else {
-    const ast::Expr *SavedCallee = CalleeSel;
-    CalleeSel = Call->Fun;
-    while (auto *Pa = dyn_cast<ParenExpr>(CalleeSel))
-      CalleeSel = Pa->X;
-    bool SavedSusp = CalleeSuspended;
-    CalleeSuspended = Call == GoCall || Call == DeferCall;
-    // ADR-0024: the callee may be the receiver of a `()` method; a partial
-    // place is decided with the method (opReceiverOk), and a struct is no
-    // function anyway.
-    if (!S.Opts.GoCompat && Ctx.operatorsSeen())
-      markPartialOk(Call->Fun, /*Addr=*/false);
-    exprOrType(X, Call->Fun, true);
-    CalleeSuspended = SavedSusp;
-    CalleeSel = SavedCallee;
+    chainOperand(X, Call); // (chainSetup: the callee, ADR-0024 mark)
   }
 
   auto UseArgs = [&]() {

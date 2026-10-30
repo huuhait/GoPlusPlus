@@ -29,7 +29,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <thread>
 
 using namespace gopp;
 using namespace gopp::sema;
@@ -698,6 +700,88 @@ TEST(ParallelCheck, ASharedPoolGivesTheSameOutput) {
   Output O = run(Src, 4, 0, &Pool);
   EXPECT_EQ(O.Diags, Ref.Diags);
   EXPECT_EQ(O.Types, Ref.Types);
+}
+
+/// Imports "p<N>" by checking it, with the same options (and so the same
+/// pool), from the thread that asks: a package checked inside another's
+/// check, as the build driver does.
+class NestedImporter : public Importer {
+public:
+  NestedImporter(TypeContext &Ctx, const CheckOptions &Opts)
+      : Ctx(Ctx), Opts(Opts) {}
+  Package *import(llvm::StringRef Path, std::string &Error) override {
+    if (Path == "unsafe")
+      return Ctx.unsafePackage();
+    unsigned N = 0;
+    if (!Path.consume_front("p") || Path.getAsInteger(10, N)) {
+      Error = "no such package";
+      return nullptr;
+    }
+    std::string Src = "package p" + std::to_string(N) + "\n\n";
+    if (N)
+      Src += "import _ \"p" + std::to_string(N - 1) + "\"\n\n";
+    for (int K = 0; K < 8; ++K)
+      Src +=
+          "func f" + std::to_string(K) + "(a int) int { b := a; return b }\n";
+    auto F = SM.addBuffer(llvm::MemoryBuffer::getMemBufferCopy(Src, "p.gopp"));
+    CollectingDiagnosticConsumer Quiet;
+    DiagnosticsEngine PD(SM, Quiet, 0);
+    ASTs.push_back(std::make_unique<ast::ASTContext>());
+    ast::File *AST = parseFile(*ASTs.back(), SM, *F, PD, ParseOptions{});
+    const ast::File *Files[] = {AST};
+    DiagnosticsEngine Diags(SM, Quiet, 0);
+    auto CP = checkPackage(Ctx, SM, "p", Files, *this, Diags, Opts);
+    if (Diags.hasErrors()) {
+      Error = "errors";
+      return nullptr;
+    }
+    Done.push_back(std::move(CP));
+    return Done.back()->Pkg;
+  }
+  TypeContext &Ctx;
+  CheckOptions Opts;
+  SourceManager SM;
+  std::vector<std::unique_ptr<ast::ASTContext>> ASTs;
+  std::vector<std::unique_ptr<CheckedPackage>> Done;
+};
+
+TEST(ParallelCheck, NestedImportsThroughALentPoolDoNotDeadlock) {
+  // Every worker of the pool checks a package whose imports are checked from
+  // inside (the build driver's shape): a checker thread must not wait for
+  // pool tasks that no free worker could run (P03.26, R5). The watchdog turns
+  // a hang into a failure.
+  std::atomic<bool> Finished{false};
+  std::thread Watchdog([&] {
+    for (int I = 0; I < 300 && !Finished; ++I)
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (!Finished) {
+      std::fprintf(stderr, "deadlock: nested imports through a pool\n");
+      std::_Exit(3);
+    }
+  });
+  {
+    llvm::DefaultThreadPool Pool(llvm::hardware_concurrency(2));
+    unsigned Workers = Pool.getMaxConcurrency();
+    ASSERT_GE(Workers, 1u);
+    std::atomic<unsigned> Ok{0};
+    llvm::ThreadPoolTaskGroup Group(Pool);
+    for (unsigned I = 0; I < Workers + 2; ++I)
+      Group.async([&] {
+        CheckOptions Opts;
+        Opts.BodyThreads = 4;
+        Opts.MinBodiesPerThread = 1;
+        Opts.Pool = &Pool;
+        TypeContext Ctx;
+        NestedImporter Imp(Ctx, Opts);
+        std::string Error;
+        if (Imp.import("p6", Error) && Imp.Done.size() == 7)
+          ++Ok;
+      });
+    Group.wait();
+    EXPECT_EQ(Ok.load(), Workers + 2);
+  }
+  Finished = true;
+  Watchdog.join();
 }
 
 TEST(ParallelCheck, ErrorLimitCutsAtTheSameDiagnostic) {

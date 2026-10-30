@@ -2177,10 +2177,8 @@ void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
   // A pointer to a view variable that is no part of a view or a box only
   // re-points that variable (as `s = s[1:]` does); what it looks at stays
   // read-only by its type (OWN-V1).
-  Type *IT = I.typeOf(Inner);
-  bool ViewVar = IT && isViewType(IT) && !viewPlace(Inner) &&
-                 boxPlace(Inner) == BoxKind::None;
-  if (!ViewVar && rejectBoxWrite(Ex, Inner, true, "through " + str(Ex)))
+  if (!viewVariable(Inner, I.typeOf(Inner)) &&
+      rejectBoxWrite(Ex, Inner, true, "through " + str(Ex)))
     return;
   // ADR-0016 point 8: nil could be written through the pointer; only
   // mem.Replace(&c.F, v) may take it, and v must not be nil either.
@@ -2701,8 +2699,17 @@ bool Checker::viewPlace(const ast::Expr *Ex) {
     Type *T = I.typeOf(Base);
     if (T && isViewType(T))
       return true;
+    // A slice of a slice: sliceExpr kept the answer for its operand.
+    if (auto *Sl = dyn_cast<SliceExpr>(Ex))
+      if (auto It = SliceInView.find(Sl); It != SliceInView.end())
+        return It->second;
     Ex = Base;
   }
+}
+
+bool Checker::viewVariable(const ast::Expr *Place, Type *T) {
+  return own() && T && isViewType(T) && !viewPlace(Place) &&
+         boxPlace(Place) == BoxKind::None;
 }
 
 bool Checker::rejectViewWrite(const ast::Expr *At, const ast::Expr *Place,

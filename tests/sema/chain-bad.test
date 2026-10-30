@@ -1,0 +1,5 @@
+// P03.26: the error side of the long chains. An undefined field at the bottom
+// of a chain of 1000, and an undefined name at its start, give one error per
+// function with the right text. (Past the parser's limit, E0031, for the
+// forms it counts: selector-chain-limit.test.)
+// RUN: %python %S/Inputs/check-chains.py %gopp %t.d bad

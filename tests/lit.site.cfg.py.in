@@ -6,5 +6,6 @@ config.gopp_source_dir = "@GOPP_SOURCE_DIR@"
 config.gopp_tools_dir = "@CMAKE_BINARY_DIR@/bin"
 config.llvm_tools_dir = "@GOPP_FILECHECK_DIR@"
 config.llvm_lib_dirs = "@GOPP_SHARED_LLVM_LIB_DIRS@"
+config.gopp_sanitizer = "@GOPP_USE_SANITIZER@"
 
 lit_config.load_config(config, os.path.join("@GOPP_SOURCE_DIR@", "tests", "lit.cfg.py"))

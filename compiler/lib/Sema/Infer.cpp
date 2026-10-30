@@ -281,11 +281,13 @@ SignatureType *Checker::instantiateFuncSig(SignatureType *Sig,
 //===----------------------------------------------------------------------===//
 
 int Checker::verify(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
-                    ArrayRef<Type *> TArgs, std::string *Cause, bool ForType) {
+                    ArrayRef<Type *> TArgs, std::string *Cause, bool ForType,
+                    std::string *ViewWhy) {
   for (size_t I = 0; I < TParams.size() && I < TArgs.size(); ++I) {
     if (!TArgs[I] || !isValid(TArgs[I]))
       continue;
-    if (!satisfies(Pos, TArgs[I], TParams[I], TParams, TArgs, Cause, ForType))
+    if (!satisfies(Pos, TArgs[I], TParams[I], TParams, TArgs, Cause, ForType,
+                   ViewWhy))
       return static_cast<int>(I);
   }
   return -1;
@@ -294,7 +296,7 @@ int Checker::verify(SourceLoc Pos, ArrayRef<TypeParamType *> TParams,
 bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
                         ArrayRef<TypeParamType *> TParams,
                         ArrayRef<Type *> TArgs, std::string *Cause,
-                        bool ForType) {
+                        bool ForType, std::string *ViewWhy) {
   Type *Bound = TPar->Bound;
   if (!Bound)
     return true;
@@ -327,13 +329,18 @@ bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
       bool Saved = NotingPassed;
       NotingPassed = true;
       std::string Why;
+      bool IsView = false;
       for (const TypeParamType::Use &U : Root->uses())
-        if (Why = useWhy(TArg, Root, U); !Why.empty())
+        if (Why = useWhy(TArg, Root, U); !Why.empty()) {
+          IsView = U.K == TypeParamType::Use::ViewArg;
           break;
+        }
       NotingPassed = Saved;
       if (!Why.empty()) {
         if (Cause)
           *Cause = Why;
+        if (IsView && ViewWhy)
+          *ViewWhy = Why;
         return false;
       }
     }

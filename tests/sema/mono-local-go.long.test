@@ -1,0 +1,4 @@
+// REQUIRES: long
+// REQUIRES: go
+// P03.26: the table of mono-local.long.test against the real `go build`.
+// RUN: %python %S/Inputs/check-mono-local.py %gopp %t.d go

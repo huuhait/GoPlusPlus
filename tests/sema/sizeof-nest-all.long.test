@@ -1,0 +1,6 @@
+// REQUIRES: long
+// P03.26: unsafe.Sizeof, Alignof and Offsetof of types nested by value, 70,
+// 200 and 1000 levels of every shape (struct, array, generic, dag, wide)
+// against the model of Inputs/check-sizeof-nest.py, which
+// sizeof-nest-go.long.test compares with `go run`.
+// RUN: %python %S/Inputs/check-sizeof-nest.py %gopp %t.d all

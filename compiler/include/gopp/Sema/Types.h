@@ -413,10 +413,11 @@ public:
   /// (Checker::useWhy), so the two cannot differ (GEN-12).
   struct Use {
     enum Kind : uint8_t {
-      Copy,   // `*p` used as a value: copied, moved, assigned through
-      Clone,  // a value clone through a pointer or a view: `(*p).Clone()`
-      Make,   // a value of T made or held: `var z T`, `T{}`, `make([]T, n)`
-      Method, // the receiver of Member bound, deferred or moved
+      Copy,    // `*p` used as a value: copied, moved, assigned through
+      Clone,   // a value clone through a pointer or a view: `(*p).Clone()`
+      Make,    // a value of T made or held: `var z T`, `T{}`, `make([]T, n)`
+      Method,  // the receiver of Member bound, deferred or moved
+      ViewArg, // `View[T]` written: T must be no pointer kind and no view
     };
     /// Where the receiver of a Method use is: `x.M` (a T value), `(*p).M`
     /// (through a pointer to T) or `p.M` (p a pointer, owning pointer or
@@ -486,6 +487,11 @@ public:
   TypeName *Obj;
   Type *Underlying = nullptr;
   NamedType *Orig = nullptr; // the generic type, for an instance
+  /// A type declared inside a generic function or method: the type
+  /// parameters of the enclosing declarations (in source order). It is
+  /// implicitly parameterized by them, a vertex of the instantiation cycle
+  /// check (Mono.cpp). Empty for every other type.
+  llvm::ArrayRef<TypeParamType *> ImplicitTParams;
   llvm::ArrayRef<TypeParamType *> TParams;
   llvm::ArrayRef<Type *> TArgs;
   PtrKind Ptr = PtrKind::None;
@@ -570,6 +576,17 @@ public:
   /// are final. An instance holding a type parameter is answered from these.
   std::atomic<uint64_t> HeldParams{0};
   std::atomic<bool> HeldKnown{false};
+  /// Checker::gcLayout: the gc size and alignment of the type (Sizes.cpp).
+  /// LayoutState 0 not known, 1 known; the two numbers are written before it.
+  /// Stored only when exact (no by-value cycle was cut below the type and
+  /// every type below it is declared): the answer is a function of the type
+  /// alone, so every thread that stores it stores the same value.
+  std::atomic<int64_t> LayoutSize{0};
+  std::atomic<int64_t> LayoutAlign{0};
+  std::atomic<uint8_t> LayoutState{0};
+  /// Generic declaration: does it hold an instance of itself by value, so
+  /// its instances grow without end (varParams)? 0 not known, 1 no, 2 yes.
+  std::atomic<uint8_t> GrowState{0};
   /// Instance: Underlying is set. Written once, with release order, after
   /// Underlying: another body thread may read it (P03.10).
   std::atomic<bool> Expanded{false};

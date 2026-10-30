@@ -54,6 +54,27 @@ void forEachChild(const ast::Node *N,
   ast::forEachChild(N, [&](const char *, const ast::Node *C) { F(C); });
 }
 
+/// A pre-order walk with an explicit stack, so a deep tree (a selector chain
+/// of any length) does not use the call stack. Fn(N, State, Push) calls
+/// Push(Child, State) for each child it wants walked, in order.
+template <class S, class F>
+void walkNodes(const ast::Node *Root, S Init, F Fn) {
+  llvm::SmallVector<std::pair<const ast::Node *, S>, 64> Stack;
+  llvm::SmallVector<std::pair<const ast::Node *, S>, 16> Kids;
+  Stack.emplace_back(Root, std::move(Init));
+  while (!Stack.empty()) {
+    auto [N, St] = std::move(Stack.back());
+    Stack.pop_back();
+    if (!N)
+      continue;
+    Kids.clear();
+    Fn(N, St,
+       [&](const ast::Node *C, S CS) { Kids.emplace_back(C, std::move(CS)); });
+    Stack.append(std::make_move_iterator(Kids.rbegin()),
+                 std::make_move_iterator(Kids.rend()));
+  }
+}
+
 const ast::Expr *unparen(const ast::Expr *E) {
   while (auto *P = dyn_cast<ast::ParenExpr>(E))
     E = P->X;
@@ -190,7 +211,7 @@ private:
     // terms: it is not looked at.
     llvm::SmallPtrSet<const Var *, 4> Guarded;
     llvm::SmallVector<std::pair<const Var *, SourceLoc>, 4> Uses;
-    auto Visit = [&](auto &&Self, const ast::Node *N) -> void {
+    auto Visit = [&](const ast::Node *N, bool, auto &&Push) -> void {
       if (isa<ast::FuncLit>(N))
         return;
       if (auto *B = dyn_cast<ast::BinaryExpr>(N);
@@ -220,9 +241,9 @@ private:
       if (Through)
         if (const Var *V = receiverField(Through, Recv); V && mayBeNil(V))
           Uses.push_back({V, Through->getBegin()});
-      forEachChild(N, [&](const ast::Node *C) { Self(Self, C); });
+      forEachChild(N, [&](const ast::Node *C) { Push(C, false); });
     };
-    Visit(Visit, FD->Body);
+    walkNodes(FD->Body, false, Visit);
     llvm::SmallPtrSet<const Var *, 4> Seen;
     for (auto &[V, Loc] : Uses)
       if (!Guarded.count(V) && Seen.insert(V).second)
@@ -272,16 +293,17 @@ private:
     std::set<std::string> R;
     if (!M->Decl || !M->Decl->Body)
       return R;
-    auto Visit = [&](auto &&Self, const ast::Node *N) -> void {
-      if (auto *Sel = dyn_cast<ast::SelectorExpr>(N)) {
-        auto It = I.Selections.find(Sel);
-        if (It != I.Selections.end() && It->second.K == Selection::FieldVal &&
-            It->second.Obj)
-          R.insert(It->second.Obj->Name.str());
-      }
-      forEachChild(N, [&](const ast::Node *C) { Self(Self, C); });
-    };
-    Visit(Visit, M->Decl->Body);
+    // (An explicit stack: a body may hold a chain of any length.)
+    walkNodes(M->Decl->Body, false,
+              [&](const ast::Node *N, bool, auto &&Push) -> void {
+                if (auto *Sel = dyn_cast<ast::SelectorExpr>(N)) {
+                  auto It = I.Selections.find(Sel);
+                  if (It != I.Selections.end() &&
+                      It->second.K == Selection::FieldVal && It->second.Obj)
+                    R.insert(It->second.Obj->Name.str());
+                }
+                forEachChild(N, [&](const ast::Node *C) { Push(C, false); });
+              });
     return R;
   }
 
@@ -360,7 +382,8 @@ private:
   }
 
   void userEqBuiltin(const ast::File *F) {
-    auto Visit = [&](auto &&Self, const ast::Node *N) -> void {
+    // (An explicit stack: a declaration may hold a chain of any length.)
+    auto Visit = [&](const ast::Node *N, bool, auto &&Push) -> void {
       if (auto *MT = dyn_cast<ast::MapType>(N); MT && MT->Key) {
         Type *K = I.typeOf(MT->Key);
         if (hasUserEq(K))
@@ -395,17 +418,17 @@ private:
                    "the `comparable` parameter " + TPs[K]->Obj->Name.str()});
         }
       }
-      forEachChild(N, [&](const ast::Node *C) { Self(Self, C); });
+      forEachChild(N, [&](const ast::Node *C) { Push(C, false); });
     };
     for (const ast::Decl *Dl : F->Decls)
-      Visit(Visit, Dl);
+      walkNodes(Dl, false, Visit);
   }
 
   // --- ! outside main (ERR-10) and defer in a loop (D3.9) ------------------
 
   void bangsAndDefers(const ast::File *F) {
     bool InMain = P.Pkg->Name == "main";
-    auto Visit = [&](auto &&Self, const ast::Node *N, unsigned Loops) -> void {
+    auto Visit = [&](const ast::Node *N, unsigned Loops, auto &&Push) -> void {
       if (auto *C = dyn_cast<ast::CallExpr>(N); C && C->isMust() && !InMain) {
         auto It = I.Bangs.find(C);
         if (It != I.Bangs.end() && It->second == BangKind::Panic)
@@ -417,14 +440,14 @@ private:
         // A function literal starts a new function: its defers run at its
         // end, whatever loop the literal is in.
         if (L->Body)
-          Self(Self, L->Body, 0);
+          Push(L->Body, 0u);
         return;
       }
       unsigned Inner = Loops + (isLoop(N) ? 1 : 0);
-      forEachChild(N, [&](const ast::Node *C) { Self(Self, C, Inner); });
+      forEachChild(N, [&](const ast::Node *C) { Push(C, Inner); });
     };
     for (const ast::Decl *Dl : F->Decls)
-      Visit(Visit, Dl, 0);
+      walkNodes(Dl, 0u, Visit);
   }
 
   const CheckedPackage &P;
