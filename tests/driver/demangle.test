@@ -1,0 +1,53 @@
+// P04.17 (D4.13): `gopp demangle` prints readable names, filters text like
+// c++filt, and refuses what is not a name. The names are those of
+// docs/spec/appendix-a-symbol-names.md.
+
+// RUN: %gopp demangle _GPF4mainE3Foo _GPF3std7stringsE5Index '_GPF4mainE18$65e5$$672c$$8a9e$' | FileCheck %s --check-prefix=PLAIN
+// PLAIN: main.Foo
+// PLAIN-NEXT: std/strings.Index
+// PLAIN-NEXT: main.日本語
+
+// Operator methods, generic instances, closures in generic methods.
+// RUN: %gopp demangle '_GPTo6op_addN4mainE4Vec2LB12_E' '_GPIF3std6slicesE3MapirE' '_GPC2_M3GetIN4mainE3BoxiE' | FileCheck %s --check-prefix=KINDS
+// KINDS: main.Vec2.+(main.Vec2)
+// KINDS-NEXT: std/slices.Map[int, string]
+// KINDS-NEXT: main.Box[int].Get.func2
+
+// `@Right` is part of an operator method's name (EXP-26), and a fallible
+// func type is its `error` form (ERR-2: one type).
+// RUN: %gopp demangle '_GPTo6op_quoN4mainE4Vec2LdE' '_GPTo7opr_quoN4mainE4Vec2LdE' '_GPTiG0_0_LiELru5errorE' | FileCheck %s --check-prefix=RIGHT
+// RIGHT: main.Vec2./(float64)
+// RIGHT-NEXT: main.Vec2./(float64) @Right
+// RIGHT-NEXT: typeinfo for func(int) (string, error)
+// RUN: not %gopp demangle '_GPTiG2_0_LiELru5errorE' 2>&1 | FileCheck %s --check-prefix=NOFAILS
+// NOFAILS: a bad signature flag
+
+// A unit type is named by its canonical form.
+// RUN: %gopp demangle '_GPTiUdk5_18_o5unitsE1M1_o5unitsE1Sn1_E' | FileCheck %s --check-prefix=UNIT
+// UNIT: typeinfo for float64[(5/18) units.M/units.S]
+
+// As a filter: only the words that start with the prefix change, and a word
+// that does not parse stays as it is.
+// RUN: printf 'at _GPF4mainE3Foo+0x10 (_GPJ4mainE) and _GPnonsense, main, _Z3foov\n' | %gopp demangle | FileCheck %s --check-prefix=FILTER
+// FILTER: at main.Foo+0x10 (main.init) and _GPnonsense, main, _Z3foov
+
+// Not a name: a message with the offset, status 1, nothing on stdout.
+// RUN: not %gopp demangle _GPF4mainE 2>&1 | FileCheck %s --check-prefix=BAD1
+// BAD1: gopp: error: demangle: _GPF4mainE: {{.*}} (at offset
+// RUN: not %gopp demangle main 2>&1 | FileCheck %s --check-prefix=BAD2
+// BAD2: gopp: error: demangle: main: not a Go++ symbol
+// RUN: not %gopp demangle '_GPF4mainE3Foo' _Z3foov 2>&1 | FileCheck %s --check-prefix=MIX
+// MIX-DAG: main.Foo
+// MIX-DAG: gopp: error: demangle: _Z3foov
+// RUN: not %gopp demangle '_GPTiB0_' 2>&1 | FileCheck %s --check-prefix=BACK
+// BACK: back reference
+
+// The text must be what the mangler writes: a back reference where the
+// mangler would write the type again is not accepted.
+// RUN: not %gopp demangle '_GPTiHN4mainE3FooN4mainE3Foo' 2>&1 | FileCheck %s --check-prefix=CANON
+// CANON: not in the canonical form
+
+// A repeated type that is long when written out is cut at the limit, with a
+// message (a type that doubles at every level is astronomically long).
+// RUN: not %gopp demangle -max-output=40 '_GPTiIN4mainE4PairIB6_iiEB18_E' 2>&1 | FileCheck %s --check-prefix=LIMIT
+// LIMIT: gopp: error: demangle: {{.*}}limit

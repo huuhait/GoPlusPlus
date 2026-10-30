@@ -45,6 +45,7 @@ if shutil.which("go") and shutil.which("gofmt"):
 
 # For test inputs that are generated (too big or too repetitive to check in).
 config.substitutions.append(("%python", sys.executable))
+config.substitutions.append(("%gopp_unit_tests", os.path.join(config.gopp_tools_dir, "GoppUnitTests")))
 config.substitutions.append(("%gopp", os.path.join(config.gopp_tools_dir, "gopp")))
 # The spec examples (docs/spec/examples/<name>/main.gopp) must always parse.
 config.substitutions.append(

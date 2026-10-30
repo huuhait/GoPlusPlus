@@ -141,7 +141,7 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 - Stable across packages.
 - Readable in traces, gdb and perf.
 - A fixed prefix, so they never collide with C names.
-- Specified in a spec appendix, with a demangler.
+- Specified in a spec appendix, with a demangler: [docs/spec/appendix-a-symbol-names.md](../../../docs/spec/appendix-a-symbol-names.md) (rules SYM-1 to SYM-6). Code: the library `compiler/lib/Mangle` (above Sema, below GIR and CodeGen), which codegen calls to name what it emits; `gopp demangle`.
 
 **D4.14 — A fast test runner** (P00 D0.13; task P04.19).
 - Run tests compile many programs in one `gopp` process, on every core, with the runtime and std from the cache.

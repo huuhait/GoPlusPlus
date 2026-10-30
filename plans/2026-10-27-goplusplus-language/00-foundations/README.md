@@ -41,6 +41,7 @@ GoPlusPlus/
     lib/Basic         source manager, diagnostics, arenas, interning
     lib/Lex lib/Parse lib/AST lib/Format
     lib/Sema          types, checker, type-level ownership rules
+    lib/Mangle        symbol names: mangler, demangler (D4.13, spec appendix A)
     lib/GIR           mid-level IR: lowering, ownership flow checks, drops, mono, interpreter
     lib/CodeGen       GIR → LLVM IR, ABI, debug info, LLD driver
     lib/Import        Clang-based C/C++ importer

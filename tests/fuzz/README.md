@@ -46,6 +46,26 @@ The regular build replays `corpus/` and `regressions/` with every check and
 every variant in the unit test `FuzzCorpus.*` (`ninja check-unit`): no fuzzer
 needed to keep the bugs fixed.
 
+## The symbol demangler (P04.17)
+
+`gopp-fuzz-symbol` (`SymbolFuzzer.cpp`) feeds arbitrary bytes to the demangler
+of `docs/spec/appendix-a-symbol-names.md`, as a symbol, as a type and behind the
+`_GP` prefix. For every input it returns; text it accepts is exactly what the
+mangler writes for the tree it read (canonical), prints, and reads back as the
+same node; text it refuses has a reason. The seeds are in `symbol-corpus/`
+(replayed by the unit test `SymbolName.TheFuzzSeedsAreValidNames`). It is built
+only from `compiler/lib/Mangle/SymbolName.cpp`, so the instrumented build is
+small:
+
+```
+nix develop -c cmake -S . -B build-fuzz -G Ninja -DGOPP_BUILD_FUZZERS=ON
+nix develop -c ninja -C build-fuzz gopp-fuzz-symbol
+mkdir -p .scratch/symfuzz && cp tests/fuzz/symbol-corpus/* .scratch/symfuzz/
+timeout 100 build-fuzz/bin/gopp-fuzz-symbol -max_total_time=60 -max_len=2048 .scratch/symfuzz
+```
+
+(1.9 million runs in 60 s under ASan and UBSan found nothing at the time of P04.17.)
+
 ## Build
 
 The fuzzer needs sanitizers and coverage instrumentation in every library, so it

@@ -1,0 +1,8 @@
+// P04.17 (D4.13): the slow part of the symbol-name tests (unit tests named
+// SymbolNameLong.* and SemaSymbolsLong.*, disabled in `check-unit`): 1.5
+// million mutated names, a corpus of 40000 entities, a name a million levels
+// deep, and the near-linear checks (eight shapes of name at 4000 and 64000,
+// five shapes of checker type at 10000 and 160000; a fifth of the work under
+// ASan where noted in the tests).
+// REQUIRES: long
+// RUN: timeout 120 %gopp_unit_tests --gtest_also_run_disabled_tests --gtest_filter='SymbolNameLong.*:SemaSymbolsLong.*'

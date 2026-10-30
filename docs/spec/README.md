@@ -28,6 +28,8 @@ Start with the [overview](01-overview.md).
 
 All `@` attributes on one page: [attributes cheat sheet](../attributes.md).
 
+Appendix: [A. Symbol names](appendix-a-symbol-names.md) (how the compiler names functions, methods, generic instances and type tables in object files, and `gopp demangle`; D4.13).
+
 ## Samples (D1.16)
 
 Each sample has `main.gopp`, a Go counterpart `main.go`, `expected_output.txt` and a README with the spec rules it uses.

@@ -2,7 +2,7 @@
 
 Legend: `[ ] not_started` · `[~] in_progress` · `[x] completed`
 Phase status: `[~] in_progress`
-Last updated: 2026-10-30 (P04.15 EH cost spike done, ADR-0028)
+Last updated: 2026-10-30 (P04.15 EH cost spike done, ADR-0028; P04.17 done)
 Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](README.md)
 
 ## Tasks
@@ -23,7 +23,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.14 Differential tests vs Go
 - [x] P04.15 EH cost spike: ADR-0028. On Go++-shaped IR, EH makes x86-64 FastISel codegen 1.7 to 1.8 times slower (the `invoke` and `landingpad` fallbacks to SelectionDAG); the ADR-0028 lowering rules (each `invoke` alone in its block, one state-driven pad per function, shared panic calls) bring it to 1.3 to 1.4. Kept: D4.6 and FastISel; no GlobalISel on x86-64, no LLVM patch, D6.9 not triggered. Tools in `bench/eh/`.
 - [ ] P04.16 Bootstrap mode
-- [ ] P04.17 Symbol names
+- [x] P04.17 Symbol names (D4.13): spec appendix A, library `compiler/lib/Mangle` (mangler, demangler, names of checked types), `gopp demangle`
 - [ ] P04.18 Internal calling convention
 - [ ] P04.19 Fast test runner
 - [ ] P04.20 Borrow checker (ADR-0021)
@@ -48,6 +48,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-30 (P04.17, manager decision): symbol names live in their own library `compiler/lib/Mangle` (`gopp/Mangle`, above Sema, below GIR and CodeGen; bound by `check-includes`), not in GIR; D0.5's layout lists it. Open items stay with their tasks: the `_GP` check of `@Export` names (P04.18), names of local types, closures and `init` functions (P04.04, P04.07), DWARF linkage names (P04.12).
 - 2026-10-30 (ADR-0028, P04.15): D4.6 keeps native EH and FastISel; P04.07 gets four EH lowering rules for FastISel (each `invoke` alone in its block before ISel, one landing pad per function driven by a cleanup-state index, one panic call per kind with per-check source positions, no pad for callees that cannot unwind) and a fallback-count test; P04.13 chooses the arm64 `opt 0` selector with the ADR's numbers; P04.18 gets the aggregate-ABI cost at `opt 0`. Proposed, for the owner only if P06.01 triggers it: patching FastISel (an LLVM build from source).
 - 2026-10-28 (ADR-0025, owner decision): new task P04.24 and design D4.20, units lowering (units erased to the base kind, scale conversions as constant `fmul` or `mul`, type descriptors with the canonical and display form for boxed unit values, `fmt` printing). Task count 261.
 - 2026-10-28 (ADR-0023, owner decision): new task P04.22 and design D4.18, lowering of `extends` (type tables only for types with `@Virtual` / `@Abstract` methods, indirect calls through parent pointers, free upcast, checked downcast, `base` calls, drop order child then parent). Depends on P03.22. Final-only hierarchies have no table; owning upcasts and downcasts there are checker errors (P03.22).
@@ -62,7 +63,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Notes / blockers
 
+- P04.17 (done, team build `p04-sym`, merged from three coders, base c2): `_GP` + a prefix-free tagged tree (62 kinds; spec appendix A, rules SYM-1 to SYM-6), interned nodes, repeated types as back references (linear on `Pair[Pair[...]]`), a canonical demangler (parse, re-mangle, compare). `SemaNames` (`gopp/Mangle/SemaSymbols.h`) names the checker's types and objects; one type has one name exactly when the checker's identity says so (no `!` in a func type, ERR-2; every field mark; flattened interface method sets, never the lazily cached type set); operator methods are named by the fixed `op_` table, their declared parameters and `@Right` (`opr_`), so overloads stay apart in every instance. `gopp demangle` (arguments, or a c++filt-style filter). Tests: generated corpus over every kind with an independent oracle, all code points, 12 build orders, 4 packages in 8 orders at 1 and 16 threads, the checker as the oracle on every pair of 56 type spellings, the readable name equal to TypeString on a checked package (c3's drift test), prefix rejection, mutation fuzz, libFuzzer `gopp-fuzz-symbol` (27+5 seeds), near-linear walks (8 name shapes, 5 checker-type shapes) in `symbol-names.long.test`. Not wired to codegen yet (P04.02+).
 - The M0 slice (P04.01–P04.03) can start as soon as P02/P03 handle the hello subset. It doesn't need to wait for those phases to finish.
-- P04.15 (EH cost spike) runs before P04.07.
+- P04.15 (EH cost spike) is done: P04.07 follows the ADR-0028 lowering rules.
 - P04.14 prints through the bootstrap std (P05.15), so P05.15 must be done before M1.
 - P04.19 (fast test runner) comes early, before the differential corpus grows.

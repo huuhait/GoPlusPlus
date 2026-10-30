@@ -21,10 +21,12 @@
 #include "gopp/Format/Format.h"
 #include "gopp/Import/ClangInfo.h"
 #include "gopp/Lex/Lexer.h"
+#include "gopp/Mangle/SymbolName.h"
 #include "gopp/Parse/Parser.h"
 #include "gopp/Sema/ExampleMocks.h"
 #include "gopp/Sema/Loader.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -162,6 +164,19 @@ static cl::list<std::string>
 static cl::opt<bool> ExplainList("list",
                                  cl::desc("List every code with its message"),
                                  cl::sub(ExplainCmd));
+
+static cl::SubCommand
+    DemangleCmd("demangle",
+                "Print Go++ symbol names (_GP...) as readable text; with no "
+                "names, filter standard input like c++filt");
+static cl::list<std::string> DemangleNames(cl::Positional,
+                                           cl::desc("[symbol names]"),
+                                           cl::sub(DemangleCmd));
+static cl::opt<unsigned> DemangleMaxOut(
+    "max-output",
+    cl::desc("Longest readable name printed, in bytes (a repeated type may "
+             "be astronomically long once written out)"),
+    cl::init(1u << 20), cl::sub(DemangleCmd));
 
 static cl::SubCommand
     FmtCmd("fmt", "Format Go++ files (gofmt's rules, extended to Go++)");
@@ -457,6 +472,54 @@ static int runExplain() {
   return Status;
 }
 
+/// `gopp demangle _GPF4mainE3Foo ...` prints one readable name per argument
+/// (exit status 1 and a message for a name that is not a Go++ symbol). With no
+/// argument it copies standard input, replacing every `_GP...` word.
+static int runDemangle() {
+  if (!DemangleNames.empty()) {
+    int Status = 0;
+    for (const std::string &N : DemangleNames) {
+      gopp::sym::DemangleResult R = gopp::sym::demangle(N, DemangleMaxOut);
+      if (R.Ok) {
+        outs() << R.Text << '\n';
+        continue;
+      }
+      errs() << "gopp: error: demangle: " << N << ": " << R.Error
+             << " (at offset " << R.ErrorPos << ")\n";
+      Status = 1;
+    }
+    return Status;
+  }
+  auto Buf = MemoryBuffer::getSTDIN();
+  if (!Buf) {
+    errs() << "gopp: error: demangle: " << Buf.getError().message() << '\n';
+    return 1;
+  }
+  StringRef In = (*Buf)->getBuffer();
+  auto isSym = [](char C) {
+    return isAlnum(static_cast<unsigned char>(C)) || C == '_' || C == '$';
+  };
+  for (size_t I = 0; I < In.size();) {
+    if (!isSym(In[I])) {
+      outs() << In[I++];
+      continue;
+    }
+    size_t J = I;
+    while (J < In.size() && isSym(In[J]))
+      ++J;
+    StringRef Word = In.substr(I, J - I);
+    gopp::sym::DemangleResult R;
+    if (gopp::sym::isReservedName(Word))
+      R = gopp::sym::demangle(Word, DemangleMaxOut);
+    if (R.Ok)
+      outs() << R.Text;
+    else
+      outs() << Word;
+    I = J;
+  }
+  return 0;
+}
+
 /// The .gopp files below Dir, sorted; as gofmt, files whose name starts with
 /// a dot are left out. Returns false (after a message) if Dir cannot be read.
 static bool collectFiles(const std::string &Dir,
@@ -580,6 +643,8 @@ int main(int argc, char **argv) {
     return runExplain();
   if (FmtCmd)
     return runFmt();
+  if (DemangleCmd)
+    return runDemangle();
 
   cl::PrintHelpMessage();
   return 1;
