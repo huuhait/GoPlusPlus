@@ -12,7 +12,7 @@
 **D5.2 — Allocation API.**
 - `mem.Allocator` provides alloc, resize and free, each taking a size and an alignment.
 - The default global allocator is mimalloc, and for now the only one (ADR-0027). C and C++ code keeps its own `malloc`; memory is freed by the allocator that made it.
-- `new_unique`, `new_shared`, `make`, and string and slice growth all use the default allocator. Per-container allocators depend on P01 Q4.
+- `new_unique`, `new_shared`, `make`, and string and slice growth all use the default allocator. Per-container allocators: owned slices and maps carry an allocator word (ADR-0029).
 
 **D5.3 — Arenas.**
 - `mem.Arena` is a chunked bump allocator with `Reset` and `Free`.

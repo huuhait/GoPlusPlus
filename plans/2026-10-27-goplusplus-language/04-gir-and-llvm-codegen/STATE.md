@@ -31,6 +31,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 - [ ] P04.22 `extends` lowering (ADR-0023)
 - [ ] P04.23 Operator lowering (ADR-0024)
 - [ ] P04.24 Units lowering (ADR-0025)
+- [ ] P04.25 Slice and map allocator word (ADR-0029): an owned `[]T` is `{ptr, len, cap, allocator}`, a map header stores its allocator (wave 2; the real arena API comes with P05.03)
 
 ## Notes of finished tasks
 
@@ -56,6 +57,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P04) · Design: [README.md](
 
 ## Decision changes
 
+- 2026-10-30 (ADR-0029, owner decision): an owned `[]T` is four words, `{ptr, len, cap, allocator}`, and a map header stores its allocator (option A); option B (3 words like Go) is rejected because `append` and drop on an arena or custom-allocator slice would use the wrong allocator. D4.5 is updated; borrowed slices and views stay 2 words, `string` stays 3 (ADR-0026). New task P04.25 (wave 2); P04.04 and P04.05 still lower 3 words until then. `docs/design/gir.md` section 15 points to it.
 - 2026-10-30 (P04.17, manager decision): symbol names live in their own library `compiler/lib/Mangle` (`gopp/Mangle`, above Sema, below GIR and CodeGen; bound by `check-includes`), not in GIR; D0.5's layout lists it. Open items stay with their tasks: the `_GP` check of `@Export` names (P04.18), names of local types, closures and `init` functions (P04.04, P04.07), DWARF linkage names (P04.12).
 - 2026-10-30 (ADR-0028, P04.15): D4.6 keeps native EH and FastISel; P04.07 gets four EH lowering rules for FastISel (each `invoke` alone in its block before ISel, one landing pad per function driven by a cleanup-state index, one panic call per kind with per-check source positions, no pad for callees that cannot unwind) and a fallback-count test; P04.13 chooses the arm64 `opt 0` selector with the ADR's numbers; P04.18 gets the aggregate-ABI cost at `opt 0`. Proposed, for the owner only if P06.01 triggers it: patching FastISel (an LLVM build from source).
 - 2026-10-28 (ADR-0025, owner decision): new task P04.24 and design D4.20, units lowering (units erased to the base kind, scale conversions as constant `fmul` or `mul`, type descriptors with the canonical and display form for boxed unit values, `fmt` printing). Task count 261.

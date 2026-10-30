@@ -8,13 +8,15 @@ Syntax: one change, the `&` mark in the range clause ([8.3](#83-range-loops-d121
 
 ## 8.1 Layout and allocators (D1.22)
 
-**SLC-1.** An owned `[]T` is 4 words: pointer, length, capacity, allocator. A map header also stores its allocator. A view (`View[[]T]`, `View[string]`) and a borrowed `[]T` made by slicing are 2 words.
+**SLC-1.** An owned `[]T` is 4 words: pointer, length, capacity, allocator. A map header also stores its allocator ([ADR-0029](../adr/0029-slice-and-map-allocator-word.md)). So `unsafe.Sizeof([]int{})` is 32 on a 64-bit target, and `unsafe.Sizeof(View[[]int])` is 16. A view (`View[[]T]`, `View[string]`) and a borrowed `[]T` made by slicing are 2 words.
 
 **SLC-2.** A **nil allocator means the global allocator**, so zero values stay valid. `make`, `append`, literals and conversions use the global allocator unless told otherwise; the global allocator is mimalloc ([ADR-0027](../adr/0027-mimalloc-global-allocator.md)). This nil is the hidden allocator word of the slice or map header, which Go++ code never sees. In Go++ code an allocator is a `mem.Allocator`, an interface with methods, so it is never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an allocator parameter or field that may be absent is written `Option[mem.Allocator]`, nil meaning the global allocator.
 
 **SLC-3.** Functions in package `mem` create a slice or map in another allocator, such as a `mem.Arena` (P05 D5.3). Growth (`append`), `Clone` and drop use the value's **own** allocator. A clone stays in the same allocator.
 
-**SLC-4.** Views and borrowed `[]T` parameters stay `(ptr, len)`: reading and writing elements needs no allocator. A `move` `[]T` parameter passes all 4 words.
+**SLC-4.** Views and borrowed `[]T` parameters stay `(ptr, len)`: reading and writing elements needs no allocator. A `move` `[]T` parameter passes all 4 words. Passing an owned slice to a borrowed `[]T` parameter, or making a view of it, drops the allocator word.
+
+**SLC-4a.** A slice or a map is never passed to C by value, so C never sees the allocator word. A slice argument for a C pointer parameter becomes a pointer to its elements ([FOR rules](14-foreign-surface.md)); the C ABI refuses a slice or a map in a C signature (P04.11).
 
 **SLC-5.** `string` always uses the global allocator, so strings stay 3 words. There is no small-string optimization: the text is never stored inside the string value ([ADR-0026](../adr/0026-no-small-string-optimization.md)). The allocator word points to an allocator object whose first word is its function table, so one pointer is enough.
 
@@ -24,6 +26,14 @@ xs := mem.MakeIn[int](&arena, 0, 100)   // illustrative name: P05.03 sets the re
 xs = append(xs, 1, 2, 3)                // grows inside the arena
 ys := xs.Clone()                         // ys also lives in the arena
 arena.Reset()                           // compile error if xs or ys is used later (OWN-B2, UB-5)
+```
+
+Normal code never names the allocator and is the same as Go. The slice below has a nil allocator word, so it uses the global allocator:
+
+```go
+xs := []int{1, 2, 3}
+xs = append(xs, 4)                       // grows with the global allocator
+fmt.Println(unsafe.Sizeof(xs))           // 32
 ```
 
 *Why:* arena- and pool-backed collections keep the same `[]T` and `map` types everywhere. *Cost:* one more word in every owned slice and map header.
