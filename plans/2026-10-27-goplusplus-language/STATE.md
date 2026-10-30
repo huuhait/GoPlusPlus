@@ -30,7 +30,7 @@ Last updated: 2026-10-30
 
 ## Milestones
 
-- [ ] M0 Hello, LLVM: one-file `package main` → native binary via LLVM + LLD (P00, P02–P04 slice)
+- [x] M0 Hello, LLVM: one-file `package main` → native binary via LLVM + LLD (P00, P02–P04 slice). Done 2026-10-30 (linux/amd64 native, linux/arm64 under QEMU; the native arm64 CI run waits for a push)
 - [ ] M1 Go core: ≥ 100 differential tests vs `go run` pass (P02–P04)
 - [ ] M2 No-GC core: ownership, destructors, `!`, panic/defer/recover; ASan/LSan clean (P05)
 - [ ] M3 Fast builds: export data + cache; compile budgets enforced in CI (P06)
@@ -46,8 +46,8 @@ Last updated: 2026-10-30
 - P00 is done locally. What's left needs a push: the first GitHub CI run (P00.07, P00.08, P00.13 and the CI exit criteria), then CI suite-time baselines.
 - P01: the spec is written, reviewed by the owner (D1–D25) and applied (ADR-0006). P01 is complete.
 - P03 (semantic analysis) is complete (2026-10-30), including `extends` (P03.22), operators (P03.24), units (P03.25) and the leftovers (P03.26).
-- Next: P04 in three waves (owner decision 2026-10-29): wave 1 foundation (P04.01 GIR design → P04.02 hello → P04.03 linking; P04.17 + P04.18; P04.19; P04.15), wave 2 the language (P04.04–08, P04.10–13), wave 3 safety, new features and proof (P04.09 → P04.20 → P04.21; P04.22–24; P04.14 + P04.16).
-- P04 wave 1: P04.01–P04.03 are done (2026-10-30): hello builds and runs on linux/amd64, on NixOS and in a Debian container; linux/arm64 builds and links, and running it waits for the arm64 CI runner (M0 stays open until then).
+- P04 in three waves (owner decision 2026-10-29): wave 1 foundation (P04.01 GIR design → P04.02 hello → P04.03 linking; P04.17; P04.15), wave 2 the language (P04.04–08, P04.10–13, plus P04.18 and P04.19, moved from wave 1 because both need codegen), wave 3 safety, new features and proof (P04.09 → P04.20 → P04.21; P04.22–24; P04.14 + P04.16).
+- P04 wave 1 is complete (2026-10-30): P04.01–P04.03 (hello builds and runs on linux/amd64 on NixOS and in a Debian container, and on linux/arm64 under QEMU user mode), P04.15 (ADR-0028) and P04.17 (symbol names). Next: wave 2, starting with P04.04; one team at a time, because parallel teams overloaded the machine and spoiled test timings. Still open from wave 1: a run on the native arm64 CI runner (needs a push).
 - Build profiles (owner request) are in the plan: P06 D6.12, P09 D9.12, P10 D10.11, P11 D11.13, ADR-0007; tasks P06.14–16, P09.13, P10.12, P11.19–20, P14.11 (240 tasks).
 
 ## Log
