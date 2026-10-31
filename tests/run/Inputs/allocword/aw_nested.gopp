@@ -1,0 +1,185 @@
+package main
+
+// P04.25 (ADR-0029): a slice or a map nested in another value keeps its own
+// allocator word: in a struct field, an array element, a slice element and a
+// map value. Growing the container grows it in the container's allocator,
+// growing the part grows it in the part's, and moving a value from one place
+// to another takes the word along. Allocator 1 and allocator 2 are told apart
+// by their counters. Built with -test-intrinsics; the output is "ok".
+
+@Extern("C") func gopp_test_make_slice_int(which int, n int, c int) []int
+@Extern("C") func gopp_test_make_slice_ints(which int, n int, c int) [][]int
+@Extern("C") func gopp_test_make_slice_tt(which int, n int, c int) []T
+@Extern("C") func gopp_test_make_map_si(which int) map[string][]int
+@Extern("C") func gopp_test_make_map_sm(which int) map[string]map[string]int
+@Extern("C") func gopp_test_word_int(s []int) int
+@Extern("C") func gopp_test_word_ints(s [][]int) int
+@Extern("C") func gopp_test_word_tt(s []T) int
+@Extern("C") func gopp_test_word_map_si(m map[string][]int) int
+@Extern("C") func gopp_test_word_map_sm(m map[string]map[string]int) int
+@Extern("C") func gopp_test_word_map_ss(m map[string]int) int
+@Extern("C") func gopp_test_count(which int, what int) int
+
+type T struct {
+	n  int
+	xs []int
+	m  map[int]int
+}
+
+var fails int
+
+func check(name string, got, want int) {
+	if got != want {
+		println("FAIL", name, got, "want", want)
+		fails++
+	}
+}
+
+func snap() [6]int {
+	return [6]int{gopp_test_count(0, 0), gopp_test_count(0, 2), gopp_test_count(1, 0), gopp_test_count(1, 2),
+		gopp_test_count(2, 0), gopp_test_count(2, 2)}
+}
+
+// expect: allocs of the global allocator, of 1 and of 2 (frees are not made
+// here).
+func expect(name string, before [6]int, g, a, b int) {
+	now := snap()
+	check(name+": global", now[0]-before[0], g)
+	check(name+": A", now[2]-before[2], a)
+	check(name+": B", now[4]-before[4], b)
+	check(name+": frees", (now[1]-before[1])+(now[3]-before[3])+(now[5]-before[5]), 0)
+}
+
+func grow(move xs []int, n int) []int {
+	for i := 0; i < n; i++ {
+		xs = append(xs, i)
+	}
+	return xs
+}
+
+func take(move xs []int) []int { return xs }
+
+func main() {
+	var b [6]int
+
+	// Slices in the fields of a struct, each in its own allocator.
+	var t T
+	t.xs = gopp_test_make_slice_int(1, 0, 0)
+	b = snap()
+	// (a result of a call is moved into a move parameter: P04.09 adds move(x))
+	t.xs = grow(gopp_test_make_slice_int(1, 0, 0), 5) // cap 0 -> 1 -> 2 -> 4 -> 8
+	expect("field in A grows in A", b, 0, 5, 0)
+	other := gopp_test_make_slice_int(2, 0, 0)
+	b = snap()
+	other = append(other, 1, 2, 3)
+	expect("a slice in B grows in B", b, 0, 0, 1)
+	check("words", gopp_test_word_int(t.xs)*10+gopp_test_word_int(other), 12)
+
+	// Appending to the field directly.
+	b = snap()
+	for i := 0; i < 10; i++ {
+		t.xs = append(t.xs, i)
+	}
+	// cap 8 holds 8: 3 more elements need cap 16
+	expect("append(t.xs)", b, 0, 1, 0)
+	check("field word", gopp_test_word_int(t.xs), 1)
+
+	// A struct copied into a slice of structs made in allocator 2: the part
+	// keeps the word it has, the container grows in its own.
+	ts := gopp_test_make_slice_tt(2, 0, 0)
+	b = snap()
+	ts = append(ts, T{n: 1, xs: grow(gopp_test_make_slice_int(1, 0, 0), 11), m: nil})
+	expect("append(ts, T{...})", b, 0, 6, 1) // the part: make and five growths
+	check("outer word", gopp_test_word_tt(ts), 2)
+	check("part word kept", gopp_test_word_int(ts[0].xs), 1)
+	b = snap()
+	ts[0].xs = append(ts[0].xs, 1)
+	ts[0].xs = append(ts[0].xs, 2)
+	expect("append(ts[0].xs) with room", b, 0, 0, 0)
+	b = snap()
+	for i := 0; i < 20; i++ {
+		ts[0].xs = append(ts[0].xs, i)
+	}
+	// 13 elements in cap 16; 20 more: 16 -> 32 -> 64, in the part's allocator
+	// and not in the container's
+	expect("part grows in its own", b, 0, 2, 0)
+	check("part word still", gopp_test_word_int(ts[0].xs), 1)
+
+	// A slice of slices: the outer in allocator 1, each inner in allocator 2.
+	outer := gopp_test_make_slice_ints(1, 0, 0)
+	b = snap()
+	for i := 0; i < 3; i++ {
+		in := grow(gopp_test_make_slice_int(2, 0, 0), 3)
+		outer = append(outer, in)
+	}
+	// each inner: a make and three growths (0 -> 1 -> 2 -> 4) in B; the outer
+	// grows 0 -> 1 -> 2 -> 4: three in A
+	expect("slices of slices", b, 0, 3, 12)
+	check("outer", gopp_test_word_ints(outer), 1)
+	for i := 0; i < 3; i++ {
+		check("inner", gopp_test_word_int(outer[i]), 2)
+	}
+	b = snap()
+	for i := 0; i < 3; i++ {
+		outer[i] = append(outer[i], 9, 9)
+	}
+	// 3 elements in cap 3: five need cap 6 (round up to the size class):
+	// one growth in B each, none in A.
+	expect("grow the inner ones", b, 0, 0, 3)
+	for i := 0; i < 3; i++ {
+		check("inner after", gopp_test_word_int(outer[i]), 2)
+	}
+	check("outer after", gopp_test_word_ints(outer), 1)
+
+	// An array of slices.
+	var arr [3][]int
+	b = snap()
+	arr[0] = gopp_test_make_slice_int(1, 0, 0)
+	arr[1] = gopp_test_make_slice_int(2, 0, 0)
+	arr[2] = append(arr[2], 5)
+	expect("array of slices: made", b, 1, 1, 1)
+	b = snap()
+	arr[0] = append(arr[0], 1)
+	arr[1] = append(arr[1], 1)
+	arr[2] = append(arr[2], 1, 2)
+	expect("array of slices: grown", b, 1, 1, 1)
+	check("array words", gopp_test_word_int(arr[0])*100+gopp_test_word_int(arr[1])*10+gopp_test_word_int(arr[2]), 120)
+
+	// A slice moved between variables takes its word along.
+	moved := take(gopp_test_make_slice_int(2, 0, 0))
+	check("moved word", gopp_test_word_int(moved), 2)
+
+	// A map of slices: the map in allocator 1, the values in allocator 2.
+	m := gopp_test_make_map_si(1)
+	b = snap()
+	m["a"] = gopp_test_make_slice_int(2, 0, 0)
+	m["b"] = gopp_test_make_slice_int(2, 0, 0)
+	// two makes in B; the map's header was made above: its tables come now
+	expect("map of slices: insert", b, 0, 2, 2)
+	b = snap()
+	m["a"] = append(m["a"], 1, 2, 3)
+	m["a"] = append(m["a"], 4)
+	expect("map value grows in its own allocator", b, 0, 0, 2)
+	check("map word", gopp_test_word_map_si(m), 1)
+	check("value word", gopp_test_word_int(m["a"]), 2)
+	// A new key from nothing is a nil slice: the global allocator.
+	b = snap()
+	m["c"] = append(m["c"], 1)
+	expect("append to an absent entry", b, 1, 0, 0)
+	check("absent entry word", gopp_test_word_int(m["c"]), 0)
+
+	// A map of maps: a nil inner map is made by the write in the global
+	// allocator; an inner map made in allocator 2 stays there.
+	mm := gopp_test_make_map_sm(1)
+	b = snap()
+	mm["x"] = nil
+	mm["x"]["k"] = 1
+	// the outer's tables (2 in A); the inner's header and tables (3 global)
+	expect("map of maps: a write makes the inner map", b, 3, 2, 0)
+	check("inner map word", gopp_test_word_map_ss(mm["x"]), 0)
+	check("outer map word", gopp_test_word_map_sm(mm), 1)
+
+	if fails == 0 {
+		println("ok")
+	}
+}

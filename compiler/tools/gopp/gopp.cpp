@@ -280,6 +280,12 @@ static cl::opt<bool> BuildNoLocs("gir-no-locs",
 static cl::opt<std::string> BuildOutput("o", cl::desc("Output file"),
                                         cl::value_desc("file"),
                                         cl::sub(BuildCmd));
+static cl::opt<bool> BuildTestIntrinsics(
+    "test-intrinsics", cl::Hidden,
+    cl::desc("TEST ONLY: @Extern(\"C\") functions named gopp_test_* are "
+             "intrinsics that build slices and maps around a counting "
+             "allocator (P04.25, ADR-0029)"),
+    cl::sub(BuildCmd));
 static cl::opt<std::string>
     BuildTestStubs("build-test-stubs", cl::Hidden,
                    cl::desc("TEST ONLY: standard packages from this "
@@ -748,8 +754,10 @@ static int finishBuild(Emit What, gopp::SourceManager &SM,
     return 1;
   }
   gopp::gir::Context GCtx;
+  gopp::gir::LowerOptions LowerOpts;
+  LowerOpts.TestIntrinsics = BuildTestIntrinsics;
   std::unique_ptr<gopp::gir::Module> M =
-      gopp::gir::lowerPackage(GCtx, SM, *CP, L.filesOf(CP), Diags);
+      gopp::gir::lowerPackage(GCtx, SM, *CP, L.filesOf(CP), Diags, LowerOpts);
   Diags.finish();
   if (!M)
     return 1;

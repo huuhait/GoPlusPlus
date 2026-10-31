@@ -182,11 +182,16 @@ void makeTable(std::vector<std::string> &Decls, std::vector<Entry> &Table) {
   Table.push_back({"Nest", 3});
   Decls.push_back("type Cx struct { f0 bool; f1 complex64; f2 complex128 }");
   Table.push_back({"Cx", 3});
-  // P04.05: slices (three words), maps (one pointer), the self-naming types
-  // and structs that hold them.
+  // P04.05, P04.25: slices (four words, ADR-0029), maps (one pointer), the
+  // self-naming types and structs that hold them.
   Decls.push_back("type WithSlice struct { f0 int8; f1 []int16; f2 "
                   "map[int]string; f3 bool; f4 [2][]byte }");
   Table.push_back({"WithSlice", 5});
+  // The word after the slice moves the next field (ADR-0029): offsets 0, 32,
+  // 40, 72 and 168, size 176.
+  Decls.push_back("type SliceFirst struct { f0 []int; f1 int8; f2 []int8; "
+                  "f3 [3][]int16; f4 map[int]int }");
+  Table.push_back({"SliceFirst", 5});
   Decls.push_back("type RecS []RecS");
   Decls.push_back("type RecM map[string]RecM");
   Decls.push_back("type RecO Option[*RecO]");
@@ -201,6 +206,9 @@ void makeTable(std::vector<std::string> &Decls, std::vector<Entry> &Table) {
                        "map[int]int8",
                        "map[string]PadB",
                        "[3][]int32",
+                       "[]int",
+                       "[0][]int",
+                       "[2][2][]string",
                        "RecS",
                        "RecM",
                        "RecO",
@@ -247,6 +255,17 @@ TEST(Layout, TheCheckersSizesAreTheDataLayoutsOnBothTargets) {
   // (`dummy` is the first global.)
   ASSERT_EQ(B.GM->Globals.size(), Table.size() + 1);
   EXPECT_GT(Table.size(), 250u);
+  // ADR-0029 / P04.25: the sizes are written down here too, so a change of
+  // both sides together still fails: an owned slice is 32 bytes.
+  for (size_t I = 0; I < Table.size(); ++I) {
+    std::string T = Table[I].Type;
+    if (T == "[]int" || T == "[]int8" || T == "[]int64")
+      EXPECT_EQ(Want[I].Size, 32) << T;
+    else if (T == "[2][2][]string")
+      EXPECT_EQ(Want[I].Size, 128) << T;
+    else if (T == "SliceFirst")
+      EXPECT_EQ(Want[I].Size, 176) << T;
+  }
 
   for (const char *Name : {"linux/amd64", "linux/arm64"}) {
     auto T = parseTarget(Name);
@@ -314,8 +333,9 @@ TEST(Layout, WhatTheCodeGeneratorDoesNotLowerYetStillHasD45Sizes) {
     const char *Type;
     int64_t Size, Align;
   };
-  const Row Rows[] = {{"[]int", 24, 8},
-                      {"[]byte", 24, 8},
+  const Row Rows[] = {{"[]int", 32, 8}, // ADR-0029: ptr, len, cap, allocator
+                      {"[]byte", 32, 8},
+                      {"[3][]int", 96, 8},
                       {"func()", 16, 8},
                       {"func(int) int", 16, 8},
                       {"any", 16, 8},

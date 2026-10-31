@@ -9,7 +9,8 @@ usage: run-opt-matrix.py --gopp GOPP --root TESTS/RUN [options]
 The corpus (under --root, the tests/run directory):
   * every NAME.test that holds a Go++ program (`package main`);
   * the directories of several files (Inputs/core-init, Inputs/core-init-order);
-  * every program of Inputs/diff, Inputs/coll, Inputs/opt, and the panic
+  * every program of Inputs/diff, Inputs/coll, Inputs/opt, Inputs/allocword
+    (the allocator word, P04.25: built with -test-intrinsics), and the panic
     programs of Inputs/panics, Inputs/panics-seq, Inputs/panics-gopp and
     Inputs/oom (an allocation that fails);
   * with --cabi SEED:COUNT (repeatable; needs clang): the C ABI program of
@@ -102,8 +103,10 @@ def corpus(root):
             g = os.path.join(root, "golden", d)
             progs.append(Program("Inputs/" + d, files, g if os.path.exists(g + ".out") else None))
     for d, kind in (("diff", "golden"), ("coll", "golden"), ("opt", "golden"),
+                    ("allocword", "golden"),
                     ("panics", "panic"), ("panics-seq", "panic"),
-                    ("panics-gopp", "panic"), ("oom", "panic")):
+                    ("panics-gopp", "panic"), ("panics-allocword", "panic"),
+                    ("oom", "panic")):
         p = os.path.join(root, "Inputs", d)
         if not os.path.isdir(p):
             continue
@@ -155,8 +158,18 @@ class Env:
     pass
 
 
+def uses_intrinsics(path):
+    try:
+        with open(path, "rb") as f:
+            return b"gopp_test_" in f.read()
+    except OSError:
+        return False
+
+
 def build_cmd(env, prog, cfg, out, extra=()):
     cmd = [env.gopp, "build"] + env.build_flags + CONFIGS[cfg] + list(extra)
+    if any(uses_intrinsics(f) for f in prog.files):
+        cmd.append("-test-intrinsics")  # P04.25: the allocator-word programs
     cmd += ["-link-obj=" + o for o in prog.link_objs]
     return cmd + prog.files + ["-o", out]
 

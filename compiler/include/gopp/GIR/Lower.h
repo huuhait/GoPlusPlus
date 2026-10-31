@@ -43,6 +43,13 @@ struct LowerOptions {
   /// Test-only: a call emits GIR for every pair of its map-entry arguments
   /// (the quadratic emission the stress test's control must catch).
   bool PairwiseEntryArgs = false;
+  /// Test-only (P04.25, ADR-0029): `@Extern("C")` declarations named
+  /// `gopp_test_*` are compiler intrinsics that build a slice or a map around
+  /// a counting allocator object (two exist; a unit test may pass its own),
+  /// read its counters and call the runtime's free and clone routines (the
+  /// ones P04.09's drop glue and `Clone` will call). Removed once P05.03 has
+  /// real arenas, or kept for runtime unit tests only.
+  bool TestIntrinsics = false;
 };
 
 /// Test-only (M8): the steps the lowering walks that make no GIR statement

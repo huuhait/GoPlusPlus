@@ -967,11 +967,30 @@ void Body::lower(const ast::FuncDecl *FD) {
     }
     for (size_t K = 0; K < Params.size(); ++K) {
       // A borrowed map is a pointer to the caller's header (PAR-10).
-      if (L.mapByPointer(Obj->sig(), K))
-        Aliases[Params[K]] = FB.param(K);
-      else
-        Vars[Params[K]] = FB.param(K);
       F.Locals[FB.param(K)].Name = Params[K]->Name.str();
+      if (L.mapByPointer(Obj->sig(), K)) {
+        Aliases[Params[K]] = FB.param(K);
+      } else if (F.Locals[FB.param(K)].Ty->getKind() == Type::Kind::Tuple &&
+                 L.sliceBorrowed(Obj->sig(), K)) {
+        // A borrowed []T arrives as (ptr, len) (ADR-0029 point 7); the body
+        // works on a []T of its own, with a null allocator word that nothing
+        // reads (a borrowed slice is never grown, cloned or freed) and the
+        // length as capacity (SLC-12).
+        Rt E(M, FB);
+        Type *ST = ctx().slice(F.Locals[FB.param(K)].Ty->elems()[0]->elem());
+        LocalId Loc = FB.newLocal(ST, Local::Var, Params[K]->Name.str());
+        FB.storageLive(Loc);
+        Val P = E.param(K);
+        Val Ptr = E.fld(P, 0), Len = E.fld(P, 1);
+        FB.assign(FB.local(Loc),
+                  FB.aggregate(AggKind::Slice, ST,
+                               {Ptr.Op, Len.Op, Len.Op,
+                                E.null(ctx().ptr(ctx().u8())).Op}));
+        Scopes.back().Locals.push_back(Loc);
+        Vars[Params[K]] = Loc;
+      } else {
+        Vars[Params[K]] = FB.param(K);
+      }
     }
     // Named results are variables, set to their zero values.
     bool Named = false;

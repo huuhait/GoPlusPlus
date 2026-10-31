@@ -29,6 +29,7 @@ add_executable(GoppUnitTests
   GIR/VerifierTest.cpp
   GIR/StressTest.cpp
   GIR/DeepTest.cpp
+  GIR/AllocatorTest.cpp
   GIR/GlueTest.cpp
   GIR/InlineTest.cpp
   CodeGen/CABITest.cpp
@@ -37,7 +38,7 @@ add_executable(GoppUnitTests
   CodeGen/OptionHashTest.cpp
   CodeGen/PipelineTest.cpp
   TestRun/TestRunTest.cpp)
-# The glue and Option hash tests run GIR in LLJIT.
+# The glue, Option hash and allocator tests run GIR in LLJIT.
 gopp_llvm_libs(_unit_llvm orcjit native support core target)
 target_link_libraries(GoppUnitTests PRIVATE
   ${_unit_llvm}

@@ -715,6 +715,40 @@ std::string sliceOpsOfN(unsigned N) {
   return S + "\tprintln(t, len(s))\n}\n";
 }
 
+/// P04.25: one function with N borrowed slice parameters (each arrives as the
+/// pair (ptr, len) and the body gets a slice of its own with a null word), one
+/// call that passes N owned slices (each call argument makes its pair), and
+/// the function again with `move` parameters (each passes all four words).
+std::string borrowedSliceParamsOfN(unsigned N) {
+  std::string Ps, Body, As, Mv, MvAs;
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    Ps += std::string(I ? ", " : "") + "a" + K;
+    Body += "\tt += len(a" + K + ")\n";
+    As += std::string(I ? ", " : "") + "s";
+    Mv += std::string(I ? ", " : "") + "move m" + K + " []int";
+    MvAs += std::string(I ? ", " : "") + "[]int{" + K + "}";
+  }
+  return "package main\n\nfunc f(" + Ps + " []int) int {\n\tt := 0\n" + Body +
+         "\treturn t\n}\n\nfunc g(" + Mv +
+         ") int {\n\treturn 1\n}\n\nfunc main() {\n\ts := "
+         "[]int{1, 2}\n\tprintln(f(" +
+         As + "), g(" + MvAs + "))\n}\n";
+}
+
+/// N calls of a function that takes a borrowed slice, an owned slice and
+/// returns one (append through a `move` parameter): the word is passed on N
+/// times.
+std::string wordPassedOnOfN(unsigned N) {
+  std::string S = "package main\n\nfunc sum(xs []int) int {\n\treturn "
+                  "len(xs)\n}\n\nfunc grow(move xs []int) []int {\n\t"
+                  "return append(xs, 1)\n}\n\nfunc main() {\n\tvar s "
+                  "[]int\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\ts = grow(s)\n\tt += sum(s)\n";
+  return S + "\tprintln(t, len(s))\n}\n";
+}
+
 /// The steps the verifier counts on the lowered program of N units.
 uint64_t lowerAndCount(unsigned N, std::string (*Make)(unsigned)) {
   Checked P(Make(N));
@@ -759,6 +793,12 @@ TEST(GIRStress, LoweringManyMapOperationsIsLinear) {
 }
 TEST(GIRStress, LoweringManyAppendsAndConversionsIsLinear) {
   expectLoweredStepsLinear(300, sliceOpsOfN);
+}
+TEST(GIRStress, LoweringManyBorrowedSliceParametersIsLinear) {
+  expectLoweredStepsLinear(300, borrowedSliceParamsOfN);
+}
+TEST(GIRStress, LoweringTheAllocatorWordPassedOnManyTimesIsLinear) {
+  expectLoweredStepsLinear(300, wordPassedOnOfN);
 }
 TEST(GIRStress, LoweringManyMapRangesAndTheirExitsIsLinear) {
   expectLoweredStepsLinear(200, mapRangesOfN);

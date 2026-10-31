@@ -1,0 +1,10 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -test-intrinsics -crt-dir=%aarch64_sysroot/lib %S/Inputs/allocword/aw_nested.gopp -o %t.nested
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.nested %S/Inputs/allocword/aw_nested.out
+// RUN: %gopp build -target=linux/arm64 -test-intrinsics -crt-dir=%aarch64_sysroot/lib %S/Inputs/allocword/aw_append_scalar.gopp -o %t.scalar
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.scalar %S/Inputs/allocword/aw_append_scalar.out
+// RUN: %gopp build -target=linux/arm64 -test-intrinsics -crt-dir=%aarch64_sysroot/lib %S/Inputs/allocword/aw_append_pointer.gopp -o %t.pointer
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.pointer %S/Inputs/allocword/aw_append_pointer.out
+// GOLDEN: by-hand
+// P04.25: the rest of the allocator-word programs on linux/arm64 under QEMU
+// (the element-size tables are 41 element types of 700 appends each).

@@ -1,0 +1,17 @@
+ok ptr
+ok ptr2
+ok ptr3
+ok ptr5
+ok ptr10
+ok ptr64
+ok ptr65
+ok ptr200
+ok sp
+ok sbig
+ok sbig2
+ok string
+ok slice
+ok slices2
+ok map
+ok sstr
+ok sslice

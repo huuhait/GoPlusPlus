@@ -67,7 +67,15 @@ extern thread_local uint64_t LowerSteps;
 /// signatures are the contract with the code that calls them (LowerStr.cpp);
 /// P05 replaces the bodies, not the calls. gir.md section 15 lists them.
 enum class RtFn : unsigned {
-  MemResize,    // gopp.mem_resize(p *u8, size u64, zero bool) *u8
+  MemResize,   // gopp.mem_resize(p *u8, size u64, zero bool) *u8  (global)
+  MemResizeIn, // gopp.mem_resize_in(alloc *u8, p *u8, old u64, size u64,
+               // zero bool) *u8   (alloc null: mem_resize; ADR-0029)
+  MemFreeIn,   // gopp.mem_free_in(alloc *u8, p *u8, size u64)  (p null: no-op)
+  SliceClone,  // gopp.slice_clone(alloc *u8, p *u8, len, esz u64) *u8
+  SliceFree,   // gopp.slice_free(alloc *u8, p *u8, cap, esz u64)
+  TestAlloc,   // gopp.test_alloc/_resize/_free(self *u8, ...): the counting
+  TestResize,  // allocator's table entries (Opts.TestIntrinsics only)
+  TestFree,
   PanicText,    // gopp.panic_text(kind i32, text *u8, len u64)  [noreturn]
   StrConcat,    // gopp.str_concat(parts *string, n u64) string
   StrEq,        // gopp.str_eq(ap *u8, an u64, bp *u8, bn u64) bool
@@ -82,19 +90,20 @@ enum class RtFn : unsigned {
   RoundUpSize,  // gopp.round_up_size(size u64, noscan bool) u64
   GrowSlice,    // gopp.grow_slice(p *u8, len, cap, newlen, elemsize u64, noscan
                 // bool) (*u8, u64)
-  MakeSlice,    // gopp.make_slice(elemsize u64, len i64, cap i64) *u8   zeroed
-  MemFree,      // gopp.mem_free(p *u8)  (beside mem_resize)
-  MapNew,       // gopp.map_new(info *MapInfo, hint u64) *Map
-  MapFind,      // gopp.map_find(info, m, key, hash) *u8  (internal)
-  MapGrow,      // gopp.map_grow(info, m)  (internal)
-  MapGet,       // gopp.map_get(info, m *Map, key *u8) *u8   (null: absent)
-  MapAssign,    // gopp.map_assign(info, mp **Map, key *u8) *u8
-  MapDelete,    // gopp.map_delete(info, m *Map, key *u8)
-  MapClear,     // gopp.map_clear(info, m *Map)
-  MapIterInit,  // gopp.map_iter_init(it *MapIter, m *Map)   (counts it)
-  MapIterNext,  // gopp.map_iter_next(info, it *MapIter, k **u8, v **u8) bool
-  MapIterDone,  // gopp.map_iter_done(it *MapIter)   (ends it; once)
-  MapRand,      // gopp.map_rand() u64   (internal: the start of a range)
+  MakeSlice,   // gopp.make_slice(alloc *u8, elemsize u64, len i64, cap i64) *u8
+  MemFree,     // gopp.mem_free(p *u8)  (beside mem_resize)
+  MapNew,      // gopp.map_new(info *MapInfo, hint u64, alloc *u8) *Map
+  MapFree,     // gopp.map_free(info, m *Map)  (the map's own allocator)
+  MapFind,     // gopp.map_find(info, m, key, hash) *u8  (internal)
+  MapGrow,     // gopp.map_grow(info, m)  (internal)
+  MapGet,      // gopp.map_get(info, m *Map, key *u8) *u8   (null: absent)
+  MapAssign,   // gopp.map_assign(info, mp **Map, key *u8) *u8
+  MapDelete,   // gopp.map_delete(info, m *Map, key *u8)
+  MapClear,    // gopp.map_clear(info, m *Map)
+  MapIterInit, // gopp.map_iter_init(it *MapIter, m *Map)   (counts it)
+  MapIterNext, // gopp.map_iter_next(info, it *MapIter, k **u8, v **u8) bool
+  MapIterDone, // gopp.map_iter_done(it *MapIter)   (ends it; once)
+  MapRand,     // gopp.map_rand() u64   (internal: the start of a range)
   MapEntryArgs, // gopp.map_entry_args(recs *MapEntryArg, n u64)  (copy-in and
                 // aliasing of a call's map-entry arguments)
   MapEntryBack, // gopp.map_entry_back(recs *MapEntryArg, n u64)  (copy-out)
@@ -204,6 +213,34 @@ public:
   FuncId RtIds[unsigned(RtFn::Count)];
   /// The global that holds gopp.map_rand's state (made with it).
   uint32_t MapSeed = ~0u;
+  /// The allocator word (ADR-0029): the table every allocator object starts
+  /// with (alloc, resize, free), the counting objects of the test intrinsics
+  /// (1 and 2; Opts.TestIntrinsics), and the global allocator's own counters
+  /// (the three calls of mem_resize and mem_free).
+  Type *allocTableType();
+  Type *testAllocType();
+  uint32_t testAllocGlobal(unsigned Which);
+  uint32_t TestAllocs[2] = {~0u, ~0u};
+  uint32_t TestGlobalCalls = ~0u;
+  uint32_t testGlobalCalls();
+  /// The test intrinsics (`gopp_test_*`) by checker function.
+  enum class TestFn {
+    MakeSlice,
+    MakeMap,
+    CloneSlice,
+    FreeSlice,
+    FreeMap,
+    Count,
+    Word
+  };
+  llvm::DenseMap<const S::Func *, TestFn> TestIntrinsics;
+  /// Is parameter K of Sig a borrowed `[]T` (no `move`)? It passes as a view,
+  /// (ptr, len), without the allocator word (ADR-0029 point 7, D4.4); the
+  /// callee makes its own `[]T` local from it with a null word.
+  bool sliceBorrowed(S::SignatureType *Sig, size_t K) const {
+    return !Sig->isMove(K) && K < Sig->Params->Elems.size() &&
+           llvm::isa<S::SliceType>(S::under(Sig->Params->Elems[K]));
+  }
   /// A libc function the runtime calls (malloc, memmove, ...).
   FuncId libc(StringRef Name, SourceLoc At);
   llvm::StringMap<FuncId> LibcIds;
@@ -556,6 +593,9 @@ private:
   Operand sliceLiteral(const ast::CompositeLit *CL, S::SliceType *ST, Type *Ty);
   Operand mapLiteral(const ast::CompositeLit *CL, S::MapType *MT);
   Operand lowerMake(const ast::CallExpr *C);
+  /// A `gopp_test_*` intrinsic (LowerTest.cpp; Opts.TestIntrinsics only).
+  Operand lowerTestIntrinsic(const ast::CallExpr *C, const S::Func *F,
+                             Lowering::TestFn Fn);
   Operand lowerAppend(const ast::CallExpr *C);
   Operand lowerCopy(const ast::CallExpr *C);
   Operand lowerLenCap(const ast::CallExpr *C, bool Cap);

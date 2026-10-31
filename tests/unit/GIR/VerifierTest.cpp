@@ -1189,6 +1189,93 @@ TEST(GIRVerifier, V055_Aggregate) {
   });
 }
 
+TEST(GIRVerifier, V055_V032_TheFourWordSlice) {
+  // P04.25 (ADR-0029): a slice is {ptr, len, cap, allocator}, with the
+  // allocator word a *u8 (null: the global allocator). The three-word form of
+  // P04.05 is no longer a slice; a view and a borrowed []T are the pair.
+  auto SliceOps = [](PlaceFixture &X, Type *Elem, bool Alloc, Type *AllocTy) {
+    std::vector<Operand> Ops = {nullOf(X.C.ptr(Elem)), constInt(X.U64, 0),
+                                constInt(X.U64, 0)};
+    if (Alloc)
+      Ops.push_back(AllocTy->isPtr() ? nullOf(AllocTy) : constInt(AllocTy, 0));
+    return Ops;
+  };
+  {
+    PlaceFixture X; // good: four words
+    Type *S = X.C.slice(X.I64);
+    X.set(S, agg(AggKind::Slice, S, SliceOps(X, X.I64, true, X.C.ptr(X.U8))));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // bad: the three words of P04.05
+    Type *S = X.C.slice(X.I64);
+    X.set(S, agg(AggKind::Slice, S, SliceOps(X, X.I64, false, nullptr)));
+    EXPECT_GIR_RULE(X.M, "V055");
+  }
+  {
+    PlaceFixture X; // bad: the allocator word is not a *u8
+    Type *S = X.C.slice(X.I64);
+    X.set(S, agg(AggKind::Slice, S, SliceOps(X, X.I64, true, X.U64)));
+    EXPECT_GIR_RULE(X.M, "V055");
+  }
+  {
+    PlaceFixture X; // bad: nor a pointer of another type (the element's)
+    Type *S = X.C.slice(X.I64);
+    X.set(S, agg(AggKind::Slice, S, SliceOps(X, X.I64, true, X.PI64)));
+    EXPECT_GIR_RULE(X.M, "V055");
+  }
+  {
+    PlaceFixture X; // bad: five operands
+    Type *S = X.C.slice(X.I64);
+    std::vector<Operand> Ops = SliceOps(X, X.I64, true, X.C.ptr(X.U8));
+    Ops.push_back(nullOf(X.C.ptr(X.U8)));
+    X.set(S, agg(AggKind::Slice, S, Ops));
+    EXPECT_GIR_RULE(X.M, "V055");
+  }
+  {
+    PlaceFixture X; // bad: field 3 read as a u64 (it is the *u8 word)
+    Type *S = X.C.slice(X.I64);
+    LocalId L = X.local(S);
+    X.set(X.U64,
+          useOf(copyOf(placeOf(L, X.U64, {elem(PlaceElem::Field, 3, X.U64)})),
+                X.U64));
+    EXPECT_GIR_RULE(X.M, "V033");
+  }
+  {
+    PlaceFixture X; // bad: a string stays three words
+    X.set(X.Str, agg(AggKind::String, X.Str,
+                     {nullOf(X.C.ptr(X.U8)), constInt(X.U64, 0),
+                      constInt(X.U64, 0), nullOf(X.C.ptr(X.U8))}));
+    EXPECT_GIR_RULE(X.M, "V055");
+  }
+  {
+    PlaceFixture X; // good: the word is field 3, a *u8; a string has no field 3
+    Type *S = X.C.slice(X.I64);
+    LocalId L = X.local(S);
+    Type *PU = X.C.ptr(X.U8);
+    X.set(PU,
+          useOf(copyOf(placeOf(L, PU, {elem(PlaceElem::Field, 3, PU)})), PU));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // bad: field 4 does not exist
+    Type *S = X.C.slice(X.I64);
+    LocalId L = X.local(S);
+    X.set(X.U64,
+          useOf(copyOf(placeOf(L, X.U64, {elem(PlaceElem::Field, 4, X.U64)})),
+                X.U64));
+    EXPECT_GIR_RULE(X.M, "V032");
+  }
+  {
+    PlaceFixture X; // bad: a string has no allocator word
+    LocalId L = X.local(X.Str);
+    Type *PU = X.C.ptr(X.U8);
+    X.set(PU,
+          useOf(copyOf(placeOf(L, PU, {elem(PlaceElem::Field, 3, PU)})), PU));
+    EXPECT_GIR_RULE(X.M, "V032");
+  }
+}
+
 TEST(GIRVerifier, V057_AggregateBuiltInPlace) {
   {
     PlaceFixture X; // s = Pair{a[0], b}: the operands read other locals

@@ -1,0 +1,17 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-allocword.py %t.gen
+// RUN: cmp %t.gen/aw_append_scalar.gopp %S/Inputs/allocword/aw_append_scalar.gopp
+// RUN: cmp %t.gen/aw_append_pointer.gopp %S/Inputs/allocword/aw_append_pointer.gopp
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/allocword/aw_append_scalar.gopp %S/Inputs/allocword/aw_append_scalar.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/allocword/aw_append_pointer.gopp %S/Inputs/allocword/aw_append_pointer.out
+// GOLDEN: by-hand
+// P04.25, ADR-0029: `append` grows through the allocator word of the slice, for
+// every element size. For each of 41 element types (every size class of Go's
+// allocator, with and without a pointer, zero-size, and the Go++ string (24
+// bytes), slice (32 bytes), map and structs of them) a slice made in the
+// counting allocator 1 grows by 700 single appends, by one append of a spread
+// slice and by an append of several values; every growth is exactly one `alloc`
+// call of allocator 1, the global allocator is never called, the word stays,
+// the elements are intact, a clone stays in allocator 1, and the two frees go
+// to allocator 1. The programs are made by Inputs/gen-allocword.py (checked
+// here against the files).

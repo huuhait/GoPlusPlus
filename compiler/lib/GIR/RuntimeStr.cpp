@@ -11,11 +11,19 @@
 // first use by Lowering::rt and is internal to the module. The calls the
 // lowering makes (LowerStr.cpp) are the contract; P05 changes the bodies:
 //
-//   gopp.mem_resize    THE allocator entry point. Every byte a string, slice
-//                      or map owns comes from here (ADR-0027: P05 makes it
-//                      mimalloc; today malloc, calloc and realloc). Frees come
-//                      with drop elaboration (P04.09), so until then an owned
-//                      value that goes out of scope leaks (gir.md section 15).
+//   gopp.mem_resize    THE entry point of the global allocator. Every byte a
+//                      string owns comes from here, and so does a slice made
+//                      with a null allocator word (`make`, a literal, a
+//                      conversion; ADR-0027: P05 makes it mimalloc; today
+//                      malloc, calloc and realloc). Frees come with drop
+//                      elaboration (P04.09), so until then an owned value
+//                      that goes out of scope leaks (gir.md section 15).
+//   gopp.mem_resize_in, mem_free_in
+//                      the entry points of slice and map memory that has an
+//                      owner's word (ADR-0029): the allocator object it names
+//                      (its function table, P05 D5.3), else mem_resize /
+//                      mem_free. slice_clone, slice_free and map_free are the
+//                      routines P04.09's Clone and drop glue call.
 //   gopp.panic_text    a runtime panic with a fixed text: Go's first line on
 //                      standard error, exit status 2.
 //   str_*, *_from_*    concatenation, comparison, conversions (Go's rules,
@@ -83,10 +91,17 @@ struct X : Rt {
     Return();
   }
   void retSlice(Type *Elem, Val P, Val Len, Val Cap) {
-    FB.assign(
-        FB.local(FB.returnPlace()),
-        FB.aggregate(AggKind::Slice, C.slice(Elem), {P.Op, Len.Op, Cap.Op}));
+    FB.assign(FB.local(FB.returnPlace()),
+              FB.aggregate(AggKind::Slice, C.slice(Elem),
+                           {P.Op, Len.Op, Cap.Op, null(PU8).Op}));
     Return();
+  }
+  /// Test intrinsics: one more call of the global allocator, counted in
+  /// gopp.test_calls[K] (0 alloc, 1 resize, 2 free).
+  void bumpGlobal(unsigned K) {
+    Val G = {this, constGlobal(*L.M, L.testGlobalCalls())};
+    Val Slot = padd(G, u(K * 8));
+    store(Slot, U64, load(Slot, U64) + 1);
   }
   void retTuple(Type *T, Val A, Val B) {
     FB.assign(FB.local(FB.returnPlace()),
@@ -157,6 +172,61 @@ FuncId Lowering::libc(StringRef Name, SourceLoc At) {
   return Id;
 }
 
+//===----------------------------------------------------------------------===//
+// The allocator word (ADR-0029)
+//===----------------------------------------------------------------------===//
+
+/// The function table an allocator object starts with, inline (P05 D5.3;
+/// gir.md section 15 has the contract), then the allocator's own state:
+///   offset  0  alloc   func(self *u8, size u64, zero bool) *u8
+///   offset  8  resize  func(self *u8, p *u8, old u64, size u64, zero bool) *u8
+///   offset 16  free    func(self *u8, p *u8, size u64)
+///   offset 24  state
+Type *Lowering::allocTableType() {
+  Type *S = Ctx.structTy("gopp.alloctable");
+  if (!S->hasBody()) {
+    Type *U = Ctx.u64(), *P = Ctx.ptr(Ctx.u8()), *B = Ctx.boolean();
+    Ctx.setStructBody(S, {Ctx.func({P, U, B}, P), Ctx.func({P, P, U, U, B}, P),
+                          Ctx.func({P, P, U}, Ctx.unit())});
+  }
+  return S;
+}
+
+/// The counting allocator of the test intrinsics: the table, then one call
+/// counter per entry (alloc, resize, free).
+Type *Lowering::testAllocType() {
+  Type *S = Ctx.structTy("gopp.testalloc");
+  if (!S->hasBody()) {
+    Type *U = Ctx.u64();
+    Ctx.setStructBody(S, {allocTableType(), U, U, U});
+  }
+  return S;
+}
+
+uint32_t Lowering::testAllocGlobal(unsigned Which) {
+  uint32_t &Slot = TestAllocs[Which - 1];
+  if (Slot == ~0u) {
+    Global G;
+    G.Name = symbolOf(SymbolKind::Runtime, CP.Pkg,
+                      "test_alloc." + std::to_string(Which));
+    G.Ty = testAllocType();
+    G.Link = Linkage::Internal;
+    Slot = M->addGlobal(std::move(G));
+  }
+  return Slot;
+}
+
+uint32_t Lowering::testGlobalCalls() {
+  if (TestGlobalCalls == ~0u) {
+    Global G;
+    G.Name = symbolOf(SymbolKind::Runtime, CP.Pkg, "test_calls");
+    G.Ty = Ctx.array(Ctx.u64(), 3);
+    G.Link = Linkage::Internal;
+    TestGlobalCalls = M->addGlobal(std::move(G));
+  }
+  return TestGlobalCalls;
+}
+
 Layout Lowering::layout(Type *T) {
   auto It = Layouts.find(T);
   if (It != Layouts.end())
@@ -218,6 +288,12 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
         },
         [&] { R = E.libc("realloc", {E.param(0), N}); });
     E.If(R == E.null(PU8), [&] { E.panicText(2, "runtime: out of memory"); });
+    // Test intrinsics: the calls of the global allocator are counted (the
+    // test reads them beside the counters of a second allocator).
+    if (Opts.TestIntrinsics)
+      E.IfElse(
+          E.param(0) == E.null(PU8), [&] { E.bumpGlobal(0); },
+          [&] { E.bumpGlobal(1); });
     E.Return(R);
     E.finish();
     return Slot;
@@ -228,7 +304,136 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
     Function *F = makeFn(*this, "mem_free", Ctx.func({PU8}, Unit), Slot);
     X E(*this, *F);
     E.At = At;
+    if (Opts.TestIntrinsics)
+      E.bumpGlobal(2);
     E.libc("free", {E.param(0)});
+    E.finish();
+    return Slot;
+  }
+  case RtFn::MemResizeIn: {
+    // The one entry point of slice and map memory (ADR-0029): the allocator
+    // object named by the owner's word, else the global allocator. The
+    // object starts with its table (P05 D5.3, gir.md section 15): alloc,
+    // resize, free. `old` is the size of the block being resized. What every
+    // allocator object gets from here: no size 0 (one byte, as mem_resize
+    // does, so a block is never null), and a null result is the runtime's
+    // out-of-memory panic, checked here once for all of them.
+    if (!Dep({RtFn::MemResize, RtFn::PanicText}))
+      return NoId;
+    Type *Table = allocTableType();
+    Function *F = makeFn(*this, "mem_resize_in",
+                         Ctx.func({PU8, PU8, U64, U64, Bool}, PU8), Slot);
+    X E(*this, *F);
+    E.At = At;
+    Val A = E.param(0), P = E.param(1), Zero = E.param(4);
+    E.If(A == E.null(PU8),
+         [&] { E.Return(E.rt(RtFn::MemResize, {P, E.param(3), Zero})); });
+    Var Sz = E.var(U64, E.param(3), "n");
+    E.If(Sz == 0, [&] { Sz = E.u(1); });
+    Var R = E.var(PU8, "r");
+    // Only a new block: nothing resizes through the word yet (the table's
+    // resize slot is P05 D5.3's; the call that uses it is TODO P05.05). A
+    // resize request is a bug of the compiler, said here.
+    E.If(P != E.null(PU8), [&] {
+      E.panicText(2, "runtime: mem_resize_in: resize through an "
+                     "allocator word is not built (P05.05)");
+    });
+    Val Fn = E.snap(E.val(E.FB.field(E.at(A, Table), 0)));
+    R = E.callIndirect(Fn, {A, Sz, Zero});
+    E.If(R == E.null(PU8), [&] { E.panicText(2, "runtime: out of memory"); });
+    E.Return(R);
+    E.finish();
+    return Slot;
+  }
+  case RtFn::MemFreeIn: {
+    if (!Dep({RtFn::MemFree}))
+      return NoId;
+    Type *Table = allocTableType();
+    Function *F =
+        makeFn(*this, "mem_free_in", Ctx.func({PU8, PU8, U64}, Unit), Slot);
+    X E(*this, *F);
+    E.At = At;
+    Val A = E.param(0), P = E.param(1);
+    E.If(P == E.null(PU8), [&] { E.Return(); });
+    E.IfElse(
+        A == E.null(PU8), [&] { E.rt(RtFn::MemFree, {P}); },
+        [&] {
+          // The size the block was made with (size 0 was made as one byte).
+          Var Sz = E.var(U64, E.param(2), "n");
+          E.If(Sz == 0, [&] { Sz = E.u(1); });
+          Val Fn = E.snap(E.val(E.FB.field(E.at(A, Table), 2)));
+          E.callIndirect(Fn, {A, P, Sz});
+        });
+    E.finish();
+    return Slot;
+  }
+  case RtFn::SliceClone: {
+    // A copy of len elements in the allocator the slice names (SLC-3: a clone
+    // stays where its original is). P04.09's Clone calls it.
+    if (!Need({"memmove"}) || !Dep({RtFn::MemResizeIn}))
+      return NoId;
+    Function *F =
+        makeFn(*this, "slice_clone", Ctx.func({PU8, PU8, U64, U64}, PU8), Slot);
+    X E(*this, *F);
+    E.At = At;
+    Val Bytes = E.param(2) * E.param(3);
+    E.If(E.param(1) == E.null(PU8), [&] { E.Return(E.null(PU8)); });
+    Val Buf = E.rt(RtFn::MemResizeIn,
+                   {E.param(0), E.null(PU8), E.u(0), Bytes, E.boolean(false)});
+    E.If(Bytes != 0, [&] { E.libc("memmove", {Buf, E.param(1), Bytes}); });
+    E.Return(Buf);
+    E.finish();
+    return Slot;
+  }
+  case RtFn::SliceFree: {
+    // The free of an owned slice's buffer, into the allocator it names (drop
+    // glue, P04.09, calls it with the slice's words). A nil slice owns
+    // nothing.
+    if (!Dep({RtFn::MemFreeIn}))
+      return NoId;
+    Function *F =
+        makeFn(*this, "slice_free", Ctx.func({PU8, PU8, U64, U64}, Unit), Slot);
+    X E(*this, *F);
+    E.At = At;
+    E.rt(RtFn::MemFreeIn, {E.param(0), E.param(1), E.param(2) * E.param(3)});
+    E.finish();
+    return Slot;
+  }
+  case RtFn::TestAlloc:
+  case RtFn::TestResize:
+  case RtFn::TestFree: {
+    // The table entries of the counting allocator (Opts.TestIntrinsics): a
+    // counter each, then libc. Like any allocator object they rely on
+    // mem_resize_in: no size 0, and a null result is checked there.
+    if (!Need({"malloc", "calloc", "realloc", "free"}))
+      return NoId;
+    Type *TA = testAllocType();
+    bool IsAlloc = Which == RtFn::TestAlloc, IsFree = Which == RtFn::TestFree;
+    Type *Sig = IsAlloc  ? Ctx.func({PU8, U64, Bool}, PU8)
+                : IsFree ? Ctx.func({PU8, PU8, U64}, Unit)
+                         : Ctx.func({PU8, PU8, U64, U64, Bool}, PU8);
+    Function *F = makeFn(*this,
+                         IsAlloc  ? "test_alloc"
+                         : IsFree ? "test_free"
+                                  : "test_resize",
+                         Sig, Slot);
+    X E(*this, *F);
+    E.At = At;
+    Place Cnt = E.FB.field(E.at(E.param(0), TA), IsAlloc ? 1 : IsFree ? 3 : 2);
+    E.FB.assign(Cnt, E.FB.use((E.val(Cnt) + 1).Op));
+    if (IsFree) {
+      E.libc("free", {E.param(1)});
+      E.finish();
+      return Slot;
+    }
+    Var R = E.var(PU8, "r");
+    if (IsAlloc)
+      E.IfElse(
+          E.param(2), [&] { R = E.libc("calloc", {E.u(1), E.param(1)}); },
+          [&] { R = E.libc("malloc", {E.param(1)}); });
+    else
+      R = E.libc("realloc", {E.param(1), E.param(3)});
+    E.Return(R);
     E.finish();
     return Slot;
   }
@@ -580,19 +785,23 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
   }
   case RtFn::GrowSlice: {
     if (!Need({"memmove"}) ||
-        !Dep({RtFn::MemResize, RtFn::RoundUpSize, RtFn::PanicText}))
+        !Dep({RtFn::MemResizeIn, RtFn::RoundUpSize, RtFn::PanicText}))
       return NoId;
     Type *Ret = Ctx.tuple({PU8, U64});
-    Function *F = makeFn(*this, "grow_slice",
-                         Ctx.func({PU8, U64, U64, U64, U64, Bool}, Ret), Slot);
+    // (alloc, p, len, cap, newlen, esz, noscan): the new buffer comes from
+    // the allocator the slice names (ADR-0029 point 6).
+    Function *F =
+        makeFn(*this, "grow_slice",
+               Ctx.func({PU8, PU8, U64, U64, U64, U64, Bool}, Ret), Slot);
     X E(*this, *F);
     E.At = At;
-    Val P = E.param(0), Len = E.param(1), Cap = E.param(2), NewLen = E.param(3),
-        Esz = E.param(4);
+    Val A = E.param(0), P = E.param(1), Len = E.param(2), Cap = E.param(3),
+        NewLen = E.param(4), Esz = E.param(5);
     // A zero-size element needs no memory.
     E.If(Esz == 0, [&] {
       E.retTuple(Ret,
-                 E.rt(RtFn::MemResize, {E.null(PU8), E.u(0), E.boolean(false)}),
+                 E.rt(RtFn::MemResizeIn,
+                      {A, E.null(PU8), E.u(0), E.u(0), E.boolean(false)}),
                  NewLen);
     });
     // nextslicecap
@@ -617,23 +826,27 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
         });
     E.If(NewCap > E.u(MaxAlloc) / Esz,
          [&] { E.panicText(0, "growslice: len out of range"); });
-    Val CapMem = E.rt(RtFn::RoundUpSize, {NewCap * Esz, E.param(5)});
+    Val CapMem = E.rt(RtFn::RoundUpSize, {NewCap * Esz, E.param(6)});
     NewCap = CapMem / Esz;
     Val Bytes = NewCap * Esz;
-    Val Buf = E.rt(RtFn::MemResize, {E.null(PU8), Bytes, E.boolean(true)});
+    Val Buf = E.rt(RtFn::MemResizeIn,
+                   {A, E.null(PU8), E.u(0), Bytes, E.boolean(true)});
     E.If(Len != 0, [&] { E.libc("memmove", {Buf, P, Len * Esz}); });
     E.retTuple(Ret, Buf, NewCap);
     E.finish();
     return Slot;
   }
   case RtFn::MakeSlice: {
-    if (!Dep({RtFn::MemResize, RtFn::PanicText}))
+    if (!Dep({RtFn::MemResizeIn, RtFn::PanicText}))
       return NoId;
+    // (alloc, elemsize, len, cap): Go's makeslice checks, then a zeroed block
+    // from the allocator the slice will name (null: the global one; only the
+    // test intrinsics pass another).
     Function *F =
-        makeFn(*this, "make_slice", Ctx.func({U64, I64, I64}, PU8), Slot);
+        makeFn(*this, "make_slice", Ctx.func({PU8, U64, I64, I64}, PU8), Slot);
     X E(*this, *F);
     E.At = At;
-    Val Esz = E.param(0), Len = E.param(1), Cap = E.param(2);
+    Val Esz = E.param(1), Len = E.param(2), Cap = E.param(3);
     auto Fits = [&](Val N) {
       return E.land(N >= E.i(0), [&] {
         return E.lor(Esz == 0,
@@ -649,8 +862,8 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
            [&] { E.panicText(0, "makeslice: len out of range"); });
       E.panicText(0, "makeslice: cap out of range");
     });
-    E.Return(E.rt(RtFn::MemResize,
-                  {E.null(PU8), Esz * E.to(U64, Cap), E.boolean(true)}));
+    E.Return(E.rt(RtFn::MemResizeIn, {E.param(0), E.null(PU8), E.u(0),
+                                      Esz * E.to(U64, Cap), E.boolean(true)}));
     E.finish();
     return Slot;
   }

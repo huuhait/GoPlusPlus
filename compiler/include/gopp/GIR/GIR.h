@@ -151,7 +151,7 @@ enum class AggKind : uint8_t {
   Tuple,  // Ops are the fields
   Array,  // Ops are the elements
   String, // Ops: ptr, len, cap
-  Slice,  // Ops: ptr, len, cap
+  Slice,  // Ops: ptr, len, cap, alloc (ADR-0029)
   Struct, // Ops are the fields in declaration order
 };
 

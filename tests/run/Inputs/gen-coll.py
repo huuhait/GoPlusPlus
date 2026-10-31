@@ -64,16 +64,17 @@ POINTER = [
     ("sbig", "struct{ p *int; b [100]byte }", "struct{ p *int; b [100]byte }{p: &dummy}", True),
     ("sbig2", "struct{ b [600]byte; p *int }", "struct{ b [600]byte; p *int }{p: &dummy}", True),
 ]
-# A Go++ string and slice are 24 bytes (ptr, len, cap), Go's are 16 and 24:
-# the capacity of a []string differs from Go's by design. The
-# expected output is Go's for a type of the same size that holds a pointer.
+# A Go++ string is 24 bytes (ptr, len, cap) and an owned slice 32 (ptr, len,
+# cap, allocator; ADR-0029), Go's are 16 and 24: the capacity of a []string and
+# of a [][]int differs from Go's by design. The expected output is Go's for a
+# type of the same size that holds a pointer.
 STRINGS = [
     ("str", "string", '"x"', True),
     ("strs", "[]int", "nil", True),
 ]
 STANDIN = [
     ("str", "struct{ p *int; a, b int }", "struct{ p *int; a, b int }{}", True),
-    ("strs", "struct{ p *int; a, b int }", "struct{ p *int; a, b int }{}", True),
+    ("strs", "struct{ p *int; a, b, c int }", "struct{ p *int; a, b, c int }{}", True),
 ]
 
 
@@ -218,7 +219,7 @@ def main():
     sd = os.path.join(os.path.dirname(out.rstrip("/")), "coll-standin")
     os.makedirs(sd, exist_ok=True)
     with open(os.path.join(sd, "append_string.gopp"), "w") as f:
-        f.write(program("append growth: the stand-in of strings and slices (24 bytes, with a pointer)", STANDIN, False, 2500))
+        f.write(program("append growth: the stand-in of strings and slices (24 and 32 bytes, with a pointer)", STANDIN, False, 2500))
     with open(os.path.join(out, "append_convert.gopp"), "w") as f:
         f.write(FROM_STRINGS)
 

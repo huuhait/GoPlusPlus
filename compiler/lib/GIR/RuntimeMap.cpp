@@ -59,8 +59,10 @@ Type *Lowering::mapType() {
   Type *S = Ctx.structTy("gopp.map");
   if (!S->hasBody()) {
     Type *U = Ctx.u64(), *P = Ctx.ptr(Ctx.u8());
-    // count, nents, ecap, icap, entries, index, iters (running iterations)
-    Ctx.setStructBody(S, {U, U, U, U, P, P, U});
+    // count, nents, ecap, icap, entries, index, iters (running iterations),
+    // the allocator that owns the header, the entries and the index
+    // (ADR-0029; null: the global allocator)
+    Ctx.setStructBody(S, {U, U, U, U, P, P, U, P});
   }
   return Ctx.ptr(S);
 }
@@ -172,14 +174,6 @@ struct MapX : Rt {
         Va = align8(snap(val(inf(Info, 1))));
     return {Ka, Va, Ka + Va + 8};
   }
-  Val callIndirect(Val Fn, std::initializer_list<Val> Args) {
-    SmallVec Ops;
-    for (const Val &A : Args)
-      Ops.push_back(A.Op);
-    LocalId R = FB.newTemp(Fn.ty()->ret());
-    FB.call(Fn.Op, Ops, FB.local(R), {UnwindAction::Continue, NoId});
-    return {this, copyOf(FB.local(R))};
-  }
   Val hashOf(Val Info, Val Key) {
     Val H = callIndirect(snap(val(inf(Info, 2))), {Key, u(HashSeed)});
     return H | LiveBit;
@@ -218,15 +212,38 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
   };
   switch (Which) {
   case RtFn::MapNew: {
-    if (!Dep({RtFn::MemResize}))
+    if (!Dep({RtFn::MemResizeIn}))
       return NoId;
-    MapX E(*this, *Make("map_new", Ctx.func({InfoPtr, U64}, MapPtr)));
+    MapX E(*this, *Make("map_new", Ctx.func({InfoPtr, U64, PU8}, MapPtr)));
     E.At = At;
     // The tables are made by the first insert; hint only reserves nothing.
-    Val Obj =
-        E.rt(RtFn::MemResize,
-             {E.null(PU8), E.u(layout(MapPtr->elem()).Size), E.boolean(true)});
-    E.Return(E.to(MapPtr, Obj));
+    // The allocator is chosen here, once (ADR-0029 point 5).
+    uint64_t HSz = layout(MapPtr->elem()).Size;
+    Val Obj = E.rt(RtFn::MemResizeIn, {E.param(2), E.null(PU8), E.u(0),
+                                       E.u(HSz), E.boolean(true)});
+    Val M_ = E.to(MapPtr, Obj);
+    E.set(M_, 7, E.param(2));
+    E.Return(M_);
+    E.finish();
+    return Slot;
+  }
+  case RtFn::MapFree: {
+    // The memory a map owns, returned to the allocator in its header: the
+    // entries, the index and the header (P04.09's drop glue calls it, after
+    // the drops of the keys and values).
+    if (!Dep({RtFn::MemFreeIn}))
+      return NoId;
+    MapX E(*this, *Make("map_free", Ctx.func({InfoPtr, MapPtr}, Unit)));
+    E.At = At;
+    Val Info = E.param(0), M_ = E.param(1);
+    E.If(M_ == E.null(MapPtr), [&] { E.Return(); });
+    auto En = E.ent(Info);
+    Val A = E.get(M_, 7), Ents = E.get(M_, 4);
+    E.If(Ents != E.null(PU8), [&] {
+      E.rt(RtFn::MemFreeIn, {A, Ents, E.get(M_, 2) * En.Esz});
+      E.rt(RtFn::MemFreeIn, {A, E.get(M_, 5), E.get(M_, 3) * 8});
+    });
+    E.rt(RtFn::MemFreeIn, {A, E.to(PU8, M_), E.u(layout(MapPtr->elem()).Size)});
     E.finish();
     return Slot;
   }
@@ -258,7 +275,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     return Slot;
   }
   case RtFn::MapGrow: {
-    if (!Dep({RtFn::MemResize, RtFn::MemFree}) || !Need({"memmove"}))
+    if (!Dep({RtFn::MemResizeIn, RtFn::MemFreeIn}) || !Need({"memmove"}))
       return NoId;
     MapX E(*this, *Make("map_grow", Ctx.func({InfoPtr, MapPtr}, Unit)));
     E.At = At;
@@ -271,10 +288,13 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     E.If(Ecap == 0, [&] { NewCap = E.u(8); });
     E.If(E.land(Ecap != 0, [&] { return Live * 2 <= Ecap; }),
          [&] { NewCap = Ecap; });
-    Val NewEnts =
-        E.rt(RtFn::MemResize, {E.null(PU8), NewCap * En.Esz, E.boolean(true)});
-    Val NewIdx =
-        E.rt(RtFn::MemResize, {E.null(PU8), NewCap * 16, E.boolean(true)});
+    // The new tables come from the map's own allocator, and so does the free
+    // of the old ones (ADR-0029 point 6).
+    Val A = E.get(M_, 7);
+    Val NewEnts = E.rt(RtFn::MemResizeIn, {A, E.null(PU8), E.u(0),
+                                           NewCap * En.Esz, E.boolean(true)});
+    Val NewIdx = E.rt(RtFn::MemResizeIn,
+                      {A, E.null(PU8), E.u(0), NewCap * 16, E.boolean(true)});
     Val Mask = NewCap * 2 - 1, OldEnts = E.get(M_, 4);
     Var N = E.var(U64, E.u(0), "n"), K = E.var(U64, E.u(0), "k");
     E.While([&] { return K < Nents; },
@@ -292,8 +312,8 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
               K = K + 1;
             });
     E.If(OldEnts != E.null(PU8), [&] {
-      E.rt(RtFn::MemFree, {OldEnts});
-      E.rt(RtFn::MemFree, {E.get(M_, 5)});
+      E.rt(RtFn::MemFreeIn, {A, OldEnts, Ecap * En.Esz});
+      E.rt(RtFn::MemFreeIn, {A, E.get(M_, 5), E.get(M_, 3) * 8});
     });
     E.set(M_, 4, NewEnts);
     E.set(M_, 5, NewIdx);
@@ -329,7 +349,8 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     // The first write creates the map in the variable (no nil-map panic).
     Var M_ = E.var(MapPtr, E.load(Mp, MapPtr), "m");
     E.If(M_ == E.null(MapPtr), [&] {
-      M_ = E.rt(RtFn::MapNew, {Info, E.u(0)});
+      // (A map made by a write has the global allocator.)
+      M_ = E.rt(RtFn::MapNew, {Info, E.u(0), E.null(PU8)});
       E.store(Mp, MapPtr, M_);
     });
     auto En = E.ent(Info);

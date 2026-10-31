@@ -135,7 +135,10 @@ def main():
 
     def check(prog, target):
         cmd = [a.gopp, "build", "-target=linux/" + target, "-pipeline=fastisel",
-               "-emit=llvm"] + prog.files + ["-o", "-"]
+                "-emit=llvm"]
+        if any(m.uses_intrinsics(f) for f in prog.files):
+            cmd.append("-test-intrinsics")  # P04.25: the allocator-word programs
+        cmd += prog.files + ["-o", "-"]
         with procslots.slot():
             r = subprocess.run(cmd, capture_output=True, timeout=60)
         if r.returncode:

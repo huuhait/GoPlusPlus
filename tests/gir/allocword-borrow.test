@@ -1,0 +1,43 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.25, ADR-0029 point 7: an owned []T is four words, {ptr, len, cap,
+// allocator}; a borrowed []T parameter and a view are two, (ptr, len). Passing
+// an owned slice to a borrowed parameter drops the word (the dump shows a
+// 2-tuple built from fields 0 and 1, no read of field 3); the callee makes a
+// slice of its own with a null word, which nothing reads; a `move []T`
+// parameter passes all four, and `append` hands the word to the growth
+// routine and into the result.
+package main
+
+func sum(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func take(move xs []int) []int { return append(xs, 1) }
+
+func main() {
+	a := []int{1, 2, 3}
+	println(sum(a))
+	b := take(a)
+	println(len(b))
+}
+
+// The borrowed parameter is the pair; the body's slice has a null word.
+// CHECK-LABEL: fn _GPF4mainE3sum(_1: (*i64, u64)) -> i64
+// CHECK: = slice []i64 {copy _1.0, copy _1.1, copy _1.1, const null: *u8}
+// The move parameter is the whole slice; the growth takes its word (field 3)
+// first, and the result keeps it.
+// CHECK-LABEL: fn _GPF4mainE4take(_1: []i64) -> []i64
+// CHECK: call const fn @_GPF4goppE10grow_slice(copy _3.3,
+// CHECK: = slice []i64 {copy {{_[0-9]+}}, copy {{_[0-9]+}}, copy {{_[0-9]+}}, copy _18}
+// A literal has the global allocator (a null word); the call of the borrowed
+// parameter makes the pair and never reads field 3 of `a`.
+// CHECK-LABEL: fn _GPF4mainE4main() -> ()
+// CHECK: = slice []i64 {copy {{_[0-9]+}}, const 3: u64, const 3: u64, const null: *u8}
+// CHECK: = tuple (*i64, u64) {copy _6.0, copy _6.1}
+// CHECK-NOT: _6.3
+// CHECK: call const fn @_GPF4mainE3sum(copy _7)
+// CHECK: call const fn @_GPF4mainE4take(copy _6)

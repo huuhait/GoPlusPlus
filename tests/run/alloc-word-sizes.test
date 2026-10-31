@@ -1,0 +1,52 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/alloc-word-sizes.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/alloc-word-sizes.out %}
+// GOLDEN: by-hand
+// P04.25 (ADR-0029): the sizes of the slice header on both targets (amd64
+// natively, arm64 under QEMU): an owned `[]T` is four words (ptr, len, cap,
+// allocator), a borrowed `[]T` and a View[[]T] or View[string] are two, a view
+// of a map or a struct is one pointer, and `string` stays three words. The
+// numbers are the constants of the checker (tests/sema/sizes.test); here they
+// are also read at run time from values the program built, and the length and
+// capacity of a slice the program grows prove the header is laid out right.
+package main
+
+import "unsafe"
+
+type Pt struct{ x, y int32 }
+
+type Holder struct {
+	flag bool
+	rows []int
+}
+
+func views(vs View[[]int], vstr View[string], vm View[map[int]int], vp View[Pt], b []int, st string) {
+	println("view of a slice", unsafe.Sizeof(vs))
+	println("view of a string", unsafe.Sizeof(vstr))
+	println("view of a map", unsafe.Sizeof(vm))
+	println("view of a struct", unsafe.Sizeof(vp))
+	println("[]int parameter (the type; the argument passes as a pair)", unsafe.Sizeof(b))
+	println("string", unsafe.Sizeof(st))
+}
+
+func main() {
+	s := []int{1, 2, 3}
+	println("owned []int", unsafe.Sizeof(s), unsafe.Alignof(s))
+	println("[]int{}", unsafe.Sizeof([]int{}))
+	println("part of a slice", unsafe.Sizeof(s[1:]))
+	println("[2][]int", unsafe.Sizeof([2][]int{}))
+	println("struct{bool; []int}", unsafe.Sizeof(Holder{}))
+	println("string", unsafe.Sizeof(""))
+	var m map[int]int
+	views(s[1:], "abc", m, Pt{}, s, "x")
+	// The header holds up through growth, in a struct and in an array.
+	h := Holder{true, nil}
+	var rows [2][]int
+	for i := 0; i < 40; i++ {
+		h.rows = append(h.rows, i)
+		rows[i%2] = append(rows[i%2], i)
+	}
+	println(len(h.rows), cap(h.rows), h.flag, h.rows[39])
+	println(len(rows[0]), cap(rows[0]), rows[1][19])
+}

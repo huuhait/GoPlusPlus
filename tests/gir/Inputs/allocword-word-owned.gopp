@@ -1,0 +1,14 @@
+package main
+
+@Extern("C") func gopp_test_word(s []int) int
+@Extern("C") func gopp_test_word_map(m map[int]int) int
+
+// The same call is fine on an owned slice (a local, a parameter with `move`)
+// and on a map (the word is in the map's header).
+func peek(move xs []int) int { return gopp_test_word(xs) }
+
+func main() {
+	a := []int{1, 2, 3}
+	m := map[int]int{1: 2}
+	println(gopp_test_word(a), gopp_test_word_map(m), peek([]int{4}))
+}

@@ -9,5 +9,6 @@
 // bytes over 512 bytes), one append at a time and by slices of many lengths,
 // and the capacity of []byte(s), []rune(s), make and literals. The expected
 // output is Go's (see coll-diff-text.test), except append_string: a Go++
-// string and slice are 24 bytes, so its expected output is Go's for a
-// 24-byte element that holds a pointer (Inputs/coll-standin/append_string.gopp).
+// string is 24 bytes and an owned slice 32 (ADR-0029), so its expected output
+// is Go's for a 24-byte and a 32-byte element that hold a pointer
+// (Inputs/coll-standin/append_string.gopp).

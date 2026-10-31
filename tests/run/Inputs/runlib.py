@@ -73,6 +73,20 @@ def trace(mode):
         sys.stderr.write("runlib: %s\n" % mode)
 
 
+def uses_test_intrinsics(srcs):
+    """Does a program use the test intrinsics of P04.25 (gopp_test_*, ADR-0029)?
+    They exist only with `gopp build -test-intrinsics`, so the program is built
+    for real with that flag (the fast runner has no such option)."""
+    for s in srcs:
+        paths = [os.path.join(s, n) for n in sorted(os.listdir(s))] if os.path.isdir(s) else [s]
+        for p in paths:
+            if p.endswith(".gopp") and os.path.isfile(p):
+                with open(p, "rb") as f:
+                    if b"gopp_test_" in f.read():
+                        return True
+    return False
+
+
 def want_real(flag=False):
     return flag or os.environ.get("GOPP_TEST_REAL") == "1"
 
@@ -164,9 +178,11 @@ def run_exe(exe, prefix, timeout=TIMEOUT, merge=False):
 
 def run_sources(srcs, real=False, timeout=TIMEOUT):
     """Compiles and runs the program made of srcs (files, or one directory)."""
-    if want_real(real):
+    if want_real(real) or uses_test_intrinsics(srcs):
         trace("real binary")
         flags = os.environ.get("GOPP_LINK_FLAGS", "").split()
+        if uses_test_intrinsics(srcs):
+            flags.append("-test-intrinsics")
         return _run_real(srcs, flags, timeout)
     d = os.environ.get("GOPP_FASTRUN_DIR")
     if d:
@@ -226,7 +242,7 @@ def plan(script, argv):
     if "--" in argv:  # the old form: a build command, a real binary
         return []
     opts, pos = split_args(argv)
-    if opts["real"] or opts["qemu"]:
+    if opts["real"] or opts["qemu"] or uses_test_intrinsics(opts["src"]):
         return []
     if base == "run-panics.py":
         return [[p] for _, p in panic_programs(pos[0], opts["names"])]

@@ -1,0 +1,14 @@
+owned []int 32 8
+[]int{} 32
+part of a slice 16
+[2][]int 64
+struct{bool; []int} 40
+string 24
+view of a slice 16
+view of a string 16
+view of a map 8
+view of a struct 8
+[]int parameter (the type; the argument passes as a pair) 32
+string 24
+40 64 true 39
+20 32 39

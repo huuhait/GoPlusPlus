@@ -49,7 +49,9 @@ public:
     Float,  // Bits (32, 64)
     String, // {ptr *u8, len u64, cap u64} (ADR-0026); fields 0, 1, 2
     Ptr,    // a pointer to Elem (every pointer kind of the language)
-    Slice,  // {ptr *Elem, len u64, cap u64}; fields 0, 1, 2
+    Slice,  // {ptr *Elem, len u64, cap u64, alloc *u8} (ADR-0029); fields 0-3.
+            // alloc is the allocator object that owns the buffer (null: the
+            // global allocator). A borrowed []T is a Tuple(ptr, len) instead.
     Array,  // [Len]Elem
     Tuple,  // Elems, laid out like a struct
     Struct, // nominal: Name, fields set once with Context::setStructBody

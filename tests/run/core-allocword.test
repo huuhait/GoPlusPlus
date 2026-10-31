@@ -1,0 +1,27 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/allocword/aw_paths.gopp %S/Inputs/allocword/aw_paths.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/allocword/aw_maps.gopp %S/Inputs/allocword/aw_maps.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/allocword/aw_nested.gopp %S/Inputs/allocword/aw_nested.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/allocword/aw_borrow.gopp %S/Inputs/allocword/aw_borrow.out
+// GOLDEN: by-hand
+// P04.25, ADR-0029: an owned slice carries its allocator ({ptr, len, cap,
+// allocator}, 32 bytes) and a map header stores its allocator. These programs
+// use the test intrinsics (gopp_test_*, `gopp build -test-intrinsics`, the
+// runlib builds a real binary for them): a slice or a map made around one of
+// two counting allocators with the function table of P05 D5.3, and the call
+// counters of both them and the global allocator. The programs print "ok" when
+// every count is right:
+//   aw_paths   make, literals, conversions, append on a nil slice (the global
+//              allocator); append growth, Clone and the free routine (the
+//              slice's own); copy, writes, re-slicing, views, unsafe.Slice (no
+//              allocator at all);
+//   aw_maps    make, literal and the first write to a nil map (global); a map
+//              made in another allocator grows, is cleared, deleted from and
+//              freed there; map-entry arguments copied in and out;
+//   aw_nested  slices in struct fields, array elements, slice elements and
+//              map values, and a map of maps, each with its own word;
+//   aw_borrow  a borrowed []T, a view and a variadic call have no word; a
+//              `move []T` parameter takes all four.
+// The element-size tables are core-allocword-append.test. The programs are
+// Go++ only (the intrinsics are not Go); the Go-defined behaviour they use is
+// checked against `go run` by every other run test, which all still pass.

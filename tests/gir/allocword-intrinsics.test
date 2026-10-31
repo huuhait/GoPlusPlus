@@ -1,0 +1,47 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --check-prefix=OFF %s
+// RUN: %gopp build -test-intrinsics -emit=gir %s | FileCheck --check-prefix=ON %s
+// RUN: not %gopp build -test-intrinsics -emit=gir %S/Inputs/allocword-word-borrowed.gopp 2>&1 | FileCheck --check-prefix=WORD %s
+// RUN: %gopp build -test-intrinsics -emit=gir %S/Inputs/allocword-word-owned.gopp | FileCheck --check-prefix=OWNED %s
+// P04.25, ADR-0029: the test intrinsics (gopp_test_*) exist only with the
+// hidden flag -test-intrinsics. Without it a declaration of one is an
+// ordinary @Extern("C") function, and the C ABI still refuses a slice or a map
+// in a C signature (P04.11, E0442; extern-bad.test and Inputs/extern-gopp-types
+// also keep the pointer forms accepted). With it the function is the compiler's.
+// The word of a view or of a borrowed slice cannot be read: it has none (the
+// third command: a borrowed parameter; the fourth: the same call on owned
+// slices and on a map builds).
+package main
+
+@Extern("C") func gopp_test_make_slice(which int, n int, c int) []int
+@Extern("C") func gopp_test_make_map(which int) map[string]int
+@Extern("C") func gopp_test_word(s []int) int
+@Extern("C") func gopp_test_free_slice(s []int)
+
+func main() {
+	s := gopp_test_make_slice(1, 0, 0)
+	println(gopp_test_word(s))
+	gopp_test_free_slice(s)
+	m := gopp_test_make_map(1)
+	println(len(m))
+}
+
+// OFF: error[E0442]: {{.*}}cannot cross the C ABI: a slice has no C layout
+// OFF: error[E0442]: {{.*}}cannot cross the C ABI: a map has no C layout
+// ON-LABEL: fn _GPF4mainE4main() -> ()
+// The made slice carries the address of a counting allocator object as its
+// word, and the free hands that word to the runtime's routine.
+// ON: call const fn @_GPF4goppE10make_slice(
+// ON: call const fn @_GPF4goppE10slice_free(
+// ON: call const fn @_GPF4goppE7map_new(
+// WORD: error[E0439]: the allocator word of a view or a borrowed slice: it has none (ADR-0029 point 7)
+// OWNED: fn _GPF4mainE4main() -> ()
+// P04.25 review R5: mem_resize_in takes a new block only (p == null) and says
+// so if it is asked to resize; the table's resize slot (offset 8) is not read.
+// ON-LABEL: fn _GPF4goppE13mem_resize_in(
+// ON: ne(copy _2, const null: *u8)
+// ON: resize through an allocator word is not built (P05.05)
+// ON: [[T:_[0-9]+]] = ptr_to_ptr({{.*}}) as *gopp.alloctable
+// ON-NOT: (*[[T]]).1
+// ON: copy (*[[T]]).0
+// ON-NOT: (*[[T]]).1
+// ON: {{^}}}

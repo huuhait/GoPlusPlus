@@ -1,0 +1,8 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 allocword/aw_maps allocword/aw_borrow
+// P04.25, P04.13 (D4.8): the allocator-word programs give the same output
+// ("ok": every allocator call counted as the program expects) at every `opt`
+// level and with -pipeline=fastisel, so no pass moves, merges or drops a call
+// of the slice's or the map's allocator. The matrix builds them with
+// -test-intrinsics. All of them: core-opt-matrix.long.test (the corpus holds
+// Inputs/allocword); on arm64: core-opt-matrix-arm64.long.test.

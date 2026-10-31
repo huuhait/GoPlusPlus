@@ -132,9 +132,14 @@ public:
     return tmp(
         FB.aggregate(AggKind::String, C.string(), {P.Op, Len.Op, Cap.Op}));
   }
+  /// A slice header. The allocator word (ADR-0029) is the global allocator
+  /// (null) unless one is given.
   Val slice(Type *Elem, Val P, Val Len, Val Cap) {
-    return tmp(
-        FB.aggregate(AggKind::Slice, C.slice(Elem), {P.Op, Len.Op, Cap.Op}));
+    return slice(Elem, P, Len, Cap, null(PU8));
+  }
+  Val slice(Type *Elem, Val P, Val Len, Val Cap, Val Alloc) {
+    return tmp(FB.aggregate(AggKind::Slice, C.slice(Elem),
+                            {P.Op, Len.Op, Cap.Op, Alloc.Op}));
   }
   Val tuple(Type *T, std::initializer_list<Val> Parts) {
     llvm::SmallVector<Operand, 4> Ops;
@@ -198,6 +203,15 @@ public:
       Ops.push_back(A.Op);
     LocalId R = FB.newTemp(Ret);
     FB.call(constFunc(M, Id), Ops, FB.local(R), {UnwindAction::Continue, NoId});
+    return {this, copyOf(FB.local(R))};
+  }
+  /// A call of a function value (a table entry).
+  Val callIndirect(Val Fn, std::initializer_list<Val> Args) {
+    SmallVec Ops;
+    for (const Val &A : Args)
+      Ops.push_back(A.Op);
+    LocalId R = FB.newTemp(Fn.ty()->ret());
+    FB.call(Fn.Op, Ops, FB.local(R), {UnwindAction::Continue, NoId});
     return {this, copyOf(FB.local(R))};
   }
   /// A call of a C function (it cannot unwind).

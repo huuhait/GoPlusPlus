@@ -272,8 +272,10 @@ Layout gir::layoutOf(const Type *T) {
       L = {8, 8};
       break;
     case Type::Kind::String:
-    case Type::Kind::Slice:
       L = {24, 8};
+      break;
+    case Type::Kind::Slice:
+      L = {32, 8}; // ptr, len, cap and the allocator word (ADR-0029)
       break;
     case Type::Kind::Array: {
       Layout E = Memo[Cur->elem()];
@@ -307,8 +309,9 @@ Layout gir::layoutOf(const Type *T) {
 unsigned Type::numFields() const {
   switch (K) {
   case Kind::String:
-  case Kind::Slice:
     return 3;
+  case Kind::Slice:
+    return 4;
   case Kind::Option:
     return 2;
   case Kind::Tuple:
@@ -326,7 +329,7 @@ Type *Type::fieldType(unsigned I, Context &C) const {
   case Kind::String:
     return I == 0 ? C.ptr(C.u8()) : C.u64();
   case Kind::Slice:
-    return I == 0 ? C.ptr(Elem) : C.u64();
+    return I == 0 ? C.ptr(Elem) : I == 3 ? C.ptr(C.u8()) : C.u64();
   case Kind::Option:
     return I == 0 ? Elem : C.boolean();
   default:

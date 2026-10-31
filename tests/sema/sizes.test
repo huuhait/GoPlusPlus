@@ -35,6 +35,29 @@ const (
 	// A string is {ptr, len, cap}: three words (ADR-0026, D4.5).
 	_ = uint(unsafe.Sizeof("") - 24)
 	_ = uint(24 - unsafe.Sizeof(""))
+	// An owned slice is {ptr, len, cap, allocator}: four words (ADR-0029); a
+	// borrowed slice (the part of a slice) and View[[]T], View[string] are two
+	// words; a view of a map or of a struct is one pointer.
+	_ = uint(unsafe.Sizeof([]int{}) - 32)
+	_ = uint(32 - unsafe.Sizeof([]int{}))
+	_ = uint(unsafe.Sizeof(sl) - 32)
+	_ = uint(32 - unsafe.Sizeof(sl))
+	_ = uint(unsafe.Sizeof(sl[1:]) - 16)
+	_ = uint(16 - unsafe.Sizeof(sl[1:]))
+	_ = uint(unsafe.Sizeof(vs) - 16)
+	_ = uint(16 - unsafe.Sizeof(vs))
+	_ = uint(unsafe.Sizeof(vstr) - 16)
+	_ = uint(16 - unsafe.Sizeof(vstr))
+	_ = uint(unsafe.Sizeof(vm) - 8)
+	_ = uint(8 - unsafe.Sizeof(vm))
+	_ = uint(unsafe.Sizeof(vp) - 8)
+	_ = uint(8 - unsafe.Sizeof(vp))
+	_ = uint(unsafe.Sizeof([2][]int{}) - 64)
+	_ = uint(64 - unsafe.Sizeof([2][]int{}))
+	_ = uint(unsafe.Sizeof(WithSlice{}) - 40)
+	_ = uint(40 - unsafe.Sizeof(WithSlice{}))
+	_ = uint(unsafe.Alignof(sl) - 8)
+	_ = uint(8 - unsafe.Alignof(sl))
 	_ = uint(unsafe.Sizeof(complex64(0)) - 8) // aligned like two float32
 	_ = uint(8 - unsafe.Sizeof(complex64(0)))
 	_ = uint(unsafe.Alignof(complex64(0)) - 4) // not like a word
@@ -59,10 +82,28 @@ const (
 	// Positive controls, one for each direction of a pair: -1 fails.
 	_ = uint(unsafe.Sizeof(S{}) - 25)
 	_ = uint(23 - unsafe.Sizeof(S{}))
+	// ... and for the slice: three words (the old size) is now an error.
+	_ = uint(unsafe.Sizeof(sl) - 33) // (was 24 before ADR-0029)
+	_ = uint(31 - unsafe.Sizeof(sl))
 )
 
 var f = func() {}
 
+type WithSlice struct {
+	a bool
+	s []int
+}
+
+var sl = []int{1, 2, 3}
+var m map[int]int
+var vs View[[]int] = sl[1:]
+var vstr View[string] = "abc"
+var vm View[map[int]int] = m
+var gs S
+var vp View[S] = gs
+
+// CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
+// CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
 // CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
 // CHECK: error[E{{[0-9]+}}]: {{.*}}-1{{.*}}
 // CHECK: error[E{{[0-9]+}}]: huge {{.*}} is too large

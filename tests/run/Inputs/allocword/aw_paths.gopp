@@ -1,0 +1,213 @@
+package main
+
+import "unsafe"
+
+// P04.25 (ADR-0029): every path that makes, grows, copies or frees slice
+// memory, with the counters of the two allocators (the global one, 0, and the
+// counting allocator 1) read around it. Built with -test-intrinsics; Go++ only,
+// so the output is the lines "ok" and nothing else.
+//
+//   make, literals, conversions, append on a nil slice  the global allocator
+//   append growth, Clone, free of an owned slice         the slice's allocator
+//   copy, element writes, re-slicing, views, unsafe.Slice  no allocator at all
+
+@Extern("C") func gopp_test_make_slice_int(which int, n int, c int) []int
+@Extern("C") func gopp_test_make_slice_byte(which int, n int, c int) []byte
+@Extern("C") func gopp_test_clone_slice_int(s []int) []int
+@Extern("C") func gopp_test_free_slice_int(s []int)
+@Extern("C") func gopp_test_free_slice_byte(s []byte)
+@Extern("C") func gopp_test_word_int(s []int) int
+@Extern("C") func gopp_test_word_byte(s []byte) int
+@Extern("C") func gopp_test_count(which int, what int) int
+
+var fails int
+
+func check(name string, got, want int) {
+	if got != want {
+		println("FAIL", name, got, "want", want)
+		fails++
+	}
+}
+
+// The calls so far: [0] global alloc, [1] global free, [2] A alloc, [3] A free.
+func snap() [4]int {
+	return [4]int{gopp_test_count(0, 0), gopp_test_count(0, 2), gopp_test_count(1, 0), gopp_test_count(1, 2)}
+}
+
+// expect checks the calls made since `before`: the global allocs and frees,
+// the allocator-1 allocs and frees.
+func expect(name string, before [4]int, ga, gf, aa, af int) {
+	now := snap()
+	check(name+": global allocs", now[0]-before[0], ga)
+	check(name+": global frees", now[1]-before[1], gf)
+	check(name+": A allocs", now[2]-before[2], aa)
+	check(name+": A frees", now[3]-before[3], af)
+}
+
+func readOnly(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t + len(xs) + cap(xs)
+}
+
+func main() {
+	var b [4]int
+
+	// make: the global allocator, a nil word.
+	b = snap()
+	s0 := make([]int, 3, 10)
+	expect("make", b, 1, 0, 0, 0)
+	check("make word", gopp_test_word_int(s0), 0)
+
+	// A literal.
+	b = snap()
+	s1 := []int{1, 2, 3}
+	expect("literal", b, 1, 0, 0, 0)
+	check("literal word", gopp_test_word_int(s1), 0)
+
+	// Conversions from strings and from a view.
+	b = snap()
+	bs := []byte("héllo")
+	expect("[]byte(string)", b, 1, 0, 0, 0)
+	check("[]byte(string) word", gopp_test_word_byte(bs), 0)
+	b = snap()
+	rs := []rune("héllo")
+	expect("[]rune(string)", b, 1, 0, 0, 0)
+	b = snap()
+	str := string(bs)
+	expect("string([]byte)", b, 1, 0, 0, 0)
+	b = snap()
+	arr := [5]int{1, 2, 3, 4, 5}
+	cv := []int(arr[1:4])
+	expect("[]int(view)", b, 1, 0, 0, 0)
+	check("[]int(view) word", gopp_test_word_int(cv), 0)
+	check("conversions", len(rs)+len(str)+len(cv), 5+6+3)
+
+	// append on a nil slice: the global allocator; with room: nothing.
+	b = snap()
+	var n []int
+	n = append(n, 1)
+	expect("append(nil)", b, 1, 0, 0, 0)
+	check("append(nil) word", gopp_test_word_int(n), 0)
+	b = snap()
+	n = append(n, 2)
+	n = append(n, 3, 4)
+	check("append grows twice", len(n), 4)
+	expect("append(global)", b, 2, 0, 0, 0)
+	check("append(global) word", gopp_test_word_int(n), 0)
+
+	// A slice of allocator 1 grows in allocator 1.
+	b = snap()
+	a := gopp_test_make_slice_int(1, 0, 0)
+	expect("make in A", b, 0, 0, 1, 0)
+	b = snap()
+	for i := 0; i < 20; i++ {
+		a = append(a, i)
+	}
+	// cap 0 -> 1 -> 2 -> 4 -> 8 -> 16 -> 32: six growths (gc's sizes)
+	expect("append(A) x20", b, 0, 0, 6, 0)
+	check("append(A) word", gopp_test_word_int(a), 1)
+	check("append(A) cap", cap(a), 32)
+	// Room left: no call at all.
+	b = snap()
+	a = append(a, 100)
+	a = append(a, 101, 102)
+	expect("append(A) with room", b, 0, 0, 0, 0)
+	// A spread append that fits, and one of nothing: no call.
+	b = snap()
+	var none []int
+	a = append(a, s1...)
+	a = append(a, none...)
+	expect("append(A, s...)", b, 0, 0, 0, 0)
+	check("spread len", len(a), 26)
+	b = snap()
+	big := make([]int, 40)
+	a = append(a, big...)
+	expect("append(A, big...)", b, 1, 0, 1, 0)
+	check("spread word", gopp_test_word_int(a), 1)
+
+	// copy: memmove, no allocator.
+	b = snap()
+	d := gopp_test_make_slice_int(1, 5, 5)
+	k := copy(d, a)
+	k += copy(s0, a)
+	check("copy n", k, 5+3)
+	expect("copy", b, 0, 0, 1, 0) // (the make of d is the one call)
+
+	// Element writes, re-slicing in place, views and their reads.
+	b = snap()
+	d[0] = 7
+	d = d[1:]
+	v := d[1:3]
+	check("view", v[0]+len(v)+cap(v), d[1]+2+2)
+	expect("reslice", b, 0, 0, 0, 0)
+	check("reslice keeps the word", gopp_test_word_int(d), 1)
+	// A shrink from the end keeps the buffer too: the word and the capacity
+	// stay (SLC-6).
+	b = snap()
+	c5 := cap(d)
+	d = d[:2]
+	check("shrink keeps the word", gopp_test_word_int(d), 1)
+	check("shrink keeps the capacity", cap(d), c5)
+	check("shrink len", len(d), 2)
+	expect("shrink", b, 0, 0, 0, 0)
+
+	// A borrowed parameter: a view has no word, the call allocates nothing.
+	b = snap()
+	check("borrowed", readOnly(a)-len(a)-cap(a), readOnly(a[:0])+readOnly(a)-len(a)-cap(a))
+	expect("borrowed param", b, 0, 0, 0, 0)
+
+	// unsafe.Slice owns nothing it shows.
+	b = snap()
+	us := unsafe.Slice(&arr[0], 3)
+	check("unsafe.Slice", us[2]+len(us)+cap(us), 3+3+3)
+	expect("unsafe.Slice", b, 0, 0, 0, 0)
+
+	// A copy made from a slice of A is a new slice of the global allocator.
+	b = snap()
+	cp := append([]int(nil), a[:4]...)
+	expect("append(nil, A...)", b, 1, 0, 0, 0)
+	check("copy-out word", gopp_test_word_int(cp), 0)
+
+	// Clone stays in the allocator of its slice.
+	b = snap()
+	c1 := gopp_test_clone_slice_int(a)
+	expect("Clone(A)", b, 0, 0, 1, 0)
+	check("Clone(A) word", gopp_test_word_int(c1), 1)
+	check("Clone(A) len", len(c1), len(a))
+	b = snap()
+	c0 := gopp_test_clone_slice_int(s1)
+	expect("Clone(global)", b, 1, 0, 0, 0)
+	check("Clone(global) word", gopp_test_word_int(c0), 0)
+	var nilc []int
+	b = snap()
+	c2 := gopp_test_clone_slice_int(nilc)
+	expect("Clone(nil)", b, 0, 0, 0, 0)
+	check("Clone(nil)", len(c2), 0)
+
+	// Freeing an owned slice returns it to its own allocator.
+	b = snap()
+	gopp_test_free_slice_int(c1)
+	expect("free(A)", b, 0, 0, 0, 1)
+	b = snap()
+	gopp_test_free_slice_int(c0)
+	expect("free(global)", b, 0, 1, 0, 0)
+	b = snap()
+	gopp_test_free_slice_int(nilc)
+	gopp_test_free_slice_int(c2)
+	expect("free(nil)", b, 0, 0, 0, 0)
+
+	// A zero-size request still has a block (a slice made empty is not nil),
+	// and it is freed where it came from.
+	b = snap()
+	e := gopp_test_make_slice_byte(1, 0, 0)
+	e = e[:0]
+	gopp_test_free_slice_byte(e)
+	expect("empty in A", b, 0, 0, 1, 1)
+
+	if fails == 0 {
+		println("ok")
+	}
+}

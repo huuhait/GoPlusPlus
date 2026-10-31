@@ -423,8 +423,10 @@ llvm::Type *Lowering::memTy(const G::Type *T) {
                           : llvm::Type::getDoubleTy(C);
       break;
     case G::Type::Kind::String:
-    case G::Type::Kind::Slice:
       R = llvm::StructType::get(C, {Ptr, I64, I64});
+      break;
+    case G::Type::Kind::Slice:
+      R = llvm::StructType::get(C, {Ptr, I64, I64, Ptr});
       break;
     case G::Type::Kind::Ptr:
     case G::Type::Kind::Func:
@@ -540,6 +542,18 @@ static void extAttr(llvm::LLVMContext &C, llvm::AttributeList &AL, unsigned Idx,
         C, Idx,
         llvm::Attribute::get(C, T->isSigned() ? llvm::Attribute::SExt
                                               : llvm::Attribute::ZExt));
+}
+
+/// The extension of every narrow parameter and result of the internal
+/// convention's signature Sig (Sret: the result goes through a hidden first
+/// parameter).
+static void extAttrs(llvm::LLVMContext &C, llvm::AttributeList &AL,
+                     const G::Type *Sig, bool Sret) {
+  for (unsigned I = 0; I < Sig->elems().size(); ++I)
+    extAttr(C, AL, llvm::AttributeList::FirstArgIndex + Sret + I,
+            Sig->elems()[I]);
+  if (!Sig->ret()->isUnit() && !Sret)
+    extAttr(C, AL, llvm::AttributeList::ReturnIndex, Sig->ret());
 }
 
 /// Classifies every declared C function (P04.11). A signature of scalars only
@@ -690,14 +704,8 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   if (!F.isDeclaration())
     AL = AL.addFnAttribute(
         C, llvm::Attribute::getWithUWTableKind(C, llvm::UWTableKind::Async));
-  if (CFIt == CFuncs.end()) {
-    unsigned Sret = isAggregate(F.Sig->ret()) ? 1 : 0;
-    for (unsigned I = 0; I < F.Sig->elems().size(); ++I)
-      extAttr(C, AL, llvm::AttributeList::FirstArgIndex + Sret + I,
-              F.Sig->elems()[I]);
-    if (!F.Sig->ret()->isUnit() && !Sret)
-      extAttr(C, AL, llvm::AttributeList::ReturnIndex, F.Sig->ret());
-  }
+  if (CFIt == CFuncs.end())
+    extAttrs(C, AL, F.Sig, isAggregate(F.Sig->ret()));
   LF->setAttributes(AL);
   return LF;
 }
@@ -1243,10 +1251,18 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
     }
     llvm::CallInst *CI = B.CreateCall(fnType(Sig), Callee, Args);
     // The ABI's extension of narrow arguments and results is repeated at the
-    // call (the callee's own attributes stay on the callee).
-    if (T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func)
+    // call (the callee's own attributes stay on the callee). A call through a
+    // pointer (a map's hash, an allocator's table entry, ADR-0029) gets the
+    // extension every definition of its signature has, so a callee written
+    // in C gets a `bool` as the C ABI passes it.
+    if (T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func) {
       CI->setAttributes(
           Funcs[T.Discr.C.Bits]->getAttributes().removeFnAttributes(C));
+    } else {
+      llvm::AttributeList AL;
+      extAttrs(C, AL, Sig, Sret);
+      CI->setAttributes(AL);
+    }
     if (T.Unwind.K == G::UnwindAction::Unreachable)
       CI->addFnAttr(llvm::Attribute::NoUnwind);
     if (!Sig->ret()->isUnit() && !Sret)

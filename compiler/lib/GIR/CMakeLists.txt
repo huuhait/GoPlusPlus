@@ -10,6 +10,7 @@ add_gopp_library(GIR
   LowerExpr.cpp
   LowerStmt.cpp
   LowerStr.cpp
+  LowerTest.cpp
   Runtime.cpp
   RuntimeMap.cpp
   RuntimeStr.cpp

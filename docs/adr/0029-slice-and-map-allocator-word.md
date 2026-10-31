@@ -55,6 +55,7 @@ zs := ys.Clone()                         // also lives in the arena
 - The cost is 8 bytes per owned slice and one word in each map header. Moving a slice copies 4 words, not 3.
 - `unsafe.Sizeof([]int{})` is 32 and `unsafe.Sizeof(View[[]int])` is 16 on both targets. `string` stays 24.
 - The runtime's growth and free go through the allocator word. Until P05 has arenas, P04.25 proves this with a test-only second allocator.
+- A `Clone` of a borrowed `[]T` parameter, or of a part of a slice, has no word to stay in (point 7) and uses the global allocator; `Clone` of the owned slice stays in its allocator.
 - The C ABI still refuses slices and maps by value (P04.11). A slice passes to C as a pointer (FOR rules), which drops the word.
 - Code that reads the layout of a slice (P04.04/P04.05 lowering, the runtime helpers, debug info, `unsafe.Slice`) changes in P04.25.
 

@@ -13,8 +13,10 @@
 //
 // How the values look (gir.md section 15):
 //   string      String(ptr, len, cap), built by an aggregate;
-//   []T         Slice(ptr, len, cap);
-//   View[string], View[[]T]    Tuple(ptr, len);   View[T] otherwise: *T;
+//   []T         Slice(ptr, len, cap, allocator) (ADR-0029: the allocator word
+//               is null for the global allocator);
+//   View[string], View[[]T]    Tuple(ptr, len);   View[T] otherwise: *T; a
+//               borrowed []T parameter is a Tuple(ptr, len) too;
 //   map[K]V     a pointer to the runtime's object (RuntimeMap.cpp).
 // Every one of them is read and written in memory, as the other aggregates
 // are. What needs the runtime (allocation, concatenation, growth, UTF-8, the
@@ -83,9 +85,13 @@ Place Body::seqPlace(Operand V, const SeqInfo &SI) {
   Operand Ptr = copyOf(FB.field(P, 0)), Len = copyOf(FB.field(P, 1));
   Type *T = SI.K == SeqKind::ViewString ? ctx().string()
                                         : ctx().slice(P.Ty->elems()[0]->elem());
-  return FB.temp(FB.aggregate(SI.K == SeqKind::ViewString ? AggKind::String
-                                                          : AggKind::Slice,
-                              T, {Ptr, Len, Len}));
+  // (A view has no allocator word: the slice made from it has none.)
+  if (SI.K == SeqKind::ViewSlice) {
+    Rt E(M, FB);
+    return FB.temp(FB.aggregate(
+        AggKind::Slice, T, {Ptr, Len, Len, E.null(ctx().ptr(ctx().u8())).Op}));
+  }
+  return FB.temp(FB.aggregate(AggKind::String, T, {Ptr, Len, Len}));
 }
 
 Operand Body::callFn(FuncId F, ArrayRef<Operand> Args, bool Owned) {
@@ -235,6 +241,7 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
   using V = Val;
   Type *U64 = ctx().u64();
   V Ptr, Len, Cap, OwnCap;
+  V Word = E.null(ctx().ptr(ctx().u8())); // the allocator of an owned slice
   Type *ElemG = nullptr;
   bool ByLength = true; // "with length" (string, array), else "with capacity"
   switch (SI.K) {
@@ -255,6 +262,10 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
     bool Str = SI.K == SeqKind::String || SI.K == SeqKind::ViewString;
     Cap = Str || SI.K == SeqKind::ViewSlice ? Len : E.val(FB.field(H, 2));
     OwnCap = Cap;
+    // Read where it is used, from the snapshot H: an in-place re-slice keeps
+    // the word; a view made from the slice never reads it (ADR-0029 point 7).
+    if (SI.K == SeqKind::Slice)
+      Word = E.val(FB.field(H, 3));
     ElemG = Str ? ctx().u8() : H.Ty->elem();
     ByLength = Str;
     break;
@@ -359,7 +370,8 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
     Move->Dst = E.to(PU8, Ptr).Op;
     Move->Src = E.to(PU8, NewPtr).Op;
     Move->Bytes = (NewLen * Esz).Op;
-    return E.slice(ElemG, Ptr, NewLen, OwnCap).Op;
+    // (The same slice, shorter: it keeps its allocator.)
+    return E.slice(ElemG, Ptr, NewLen, OwnCap, Word).Op;
   }
   switch (ResG->getKind()) {
   case Type::Kind::Slice:
@@ -532,7 +544,9 @@ Operand Body::lowerMake(const ast::CallExpr *C) {
         C->Args.size() > 1 ? intArg(C->Args[1]) : constInt(ctx().i64(), 0);
     at(C);
     Operand Info = mapInfoPtr(MT, C);
-    return callRt(RtFn::MapNew, {Info, u64Of(Hint)}, C, /*Owned=*/true);
+    return callRt(RtFn::MapNew,
+                  {Info, u64Of(Hint), E.null(ctx().ptr(ctx().u8())).Op}, C,
+                  /*Owned=*/true);
   }
   if (!isa_and_nonnull<S::SliceType>(U) || C->Args.size() < 2) {
     unsupported(C, "this make");
@@ -543,7 +557,9 @@ Operand Body::lowerMake(const ast::CallExpr *C) {
   Val Cap = C->Args.size() > 2 ? E.snap(Val{&E, intArg(C->Args[2])}) : Len;
   at(C);
   Operand Buf = callRt(RtFn::MakeSlice,
-                       {E.u(L.layout(ElemG).Size).Op, Len.Op, Cap.Op}, C);
+                       {E.null(ctx().ptr(ctx().u8())).Op,
+                        E.u(L.layout(ElemG).Size).Op, Len.Op, Cap.Op},
+                       C);
   Val P = E.to(ctx().ptr(ElemG), Val{&E, Buf});
   return E
       .owned(E.slice(ElemG, P, E.to(ctx().u64(), Len), E.to(ctx().u64(), Cap)))
@@ -602,17 +618,17 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
   at(C);
   Place H = FB.temp(FB.use(Base));
   Val Ptr0 = E.val(FB.field(H, 0)), Len0 = E.val(FB.field(H, 1)),
-      Cap0 = E.val(FB.field(H, 2));
+      Cap0 = E.val(FB.field(H, 2)), Word0 = E.val(FB.field(H, 3));
   uint64_t Esz = L.layout(ElemG).Size;
   Val NewLen = Len0 + N;
   Var P = E.var(ctx().ptr(ElemG), Ptr0, "p");
   Var Cap = E.var(U64, Cap0, "cap");
   E.If(NewLen > Cap0, [&] {
-    Operand G =
-        callRt(RtFn::GrowSlice,
-               {E.to(ctx().ptr(ctx().u8()), Ptr0).Op, Len0.Op, Cap0.Op,
-                NewLen.Op, E.u(Esz).Op, constBool(ctx(), !hasPointers(ElemG))},
-               C);
+    Operand G = callRt(RtFn::GrowSlice,
+                       {Word0.Op, E.to(ctx().ptr(ctx().u8()), Ptr0).Op, Len0.Op,
+                        Cap0.Op, NewLen.Op, E.u(Esz).Op,
+                        constBool(ctx(), !hasPointers(ElemG))},
+                       C);
     Place GP = placeOf(G);
     P = E.to(ctx().ptr(ElemG), E.val(FB.field(GP, 0)));
     Cap = E.val(FB.field(GP, 1));
@@ -630,7 +646,8 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
       FB.assign(E.at(At, ElemG), FB.use(Vals[K]));
     }
   }
-  return E.slice(ElemG, Base1, NewLen, E.snap(Cap)).Op;
+  // The result lives in the allocator of the slice it grew from.
+  return E.slice(ElemG, Base1, NewLen, E.snap(Cap), E.snap(Word0)).Op;
 }
 
 Operand Body::lowerCopy(const ast::CallExpr *C) {
@@ -915,7 +932,9 @@ Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
   Operand Info = mapInfoPtr(MT, CL);
   FB.assign(FB.local(Mv),
             FB.use(callRt(RtFn::MapNew,
-                          {Info, constInt(ctx().u64(), CL->Elts.size())}, CL)));
+                          {Info, constInt(ctx().u64(), CL->Elts.size()),
+                           E.null(ctx().ptr(ctx().u8())).Op},
+                          CL)));
   Operand Addr = copyOf(FB.temp(FB.addrOf(FB.local(Mv), true)));
   for (const ast::Expr *Ex : CL->Elts) {
     auto *KV = dyn_cast<ast::KeyValueExpr>(Ex);

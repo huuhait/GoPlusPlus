@@ -1,0 +1,8 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-allocword
+// P04.25 review R1: the test intrinsic gopp_test_make_slice (built with
+// -test-intrinsics, which runlib adds for a program that uses gopp_test_) has
+// the checks of `make` (Go's makeslice): a capacity whose byte size overflows,
+// a length over the capacity and a negative length or capacity panic with
+// Go's first line and exit status 2 before any allocator is called. Written
+// by hand: the intrinsic is not Go.

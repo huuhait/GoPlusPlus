@@ -1,0 +1,11 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -test-intrinsics -crt-dir=%aarch64_sysroot/lib %S/Inputs/allocword/aw_paths.gopp -o %t.paths
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.paths %S/Inputs/allocword/aw_paths.out
+// RUN: %gopp build -target=linux/arm64 -test-intrinsics -crt-dir=%aarch64_sysroot/lib %S/Inputs/allocword/aw_maps.gopp -o %t.maps
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.maps %S/Inputs/allocword/aw_maps.out
+// RUN: %gopp build -target=linux/arm64 -test-intrinsics -crt-dir=%aarch64_sysroot/lib %S/Inputs/allocword/aw_borrow.gopp -o %t.borrow
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.borrow %S/Inputs/allocword/aw_borrow.out
+// GOLDEN: by-hand
+// P04.25: core-allocword.test on linux/arm64 under QEMU: the allocator word
+// and the 32-byte slice on the second target (aw_nested and the element tables
+// are in core-allocword-arm64.long.test).

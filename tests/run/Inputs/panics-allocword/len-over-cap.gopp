@@ -1,0 +1,12 @@
+package main
+
+// P04.25 review R1: the test intrinsic make_slice has the checks of make
+// (Go's makeslice), so a capacity the block cannot hold is refused before any
+// allocator call. Go++ only (the intrinsic is not Go).
+@Extern("C") func gopp_test_make_slice_int(which int, n int, c int) []int
+
+func main() {
+	println("before")
+	s := gopp_test_make_slice_int(1, 3, 2)
+	println("not reached", len(s))
+}

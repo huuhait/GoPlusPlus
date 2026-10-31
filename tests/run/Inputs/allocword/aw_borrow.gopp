@@ -1,0 +1,159 @@
+package main
+
+import "unsafe"
+
+// P04.25 (ADR-0029 point 7): a borrowed []T and a view are two words; the
+// allocator word stays with the owner. Passing an owned slice to a borrowed
+// parameter, slicing, and making a view drop it; the checker never lets a
+// borrowed slice grow or free (PAR-1), so the word is never read through one.
+// A `move []T` parameter takes all four words, and what it appends to grows in
+// the allocator the caller's slice had. Built with -test-intrinsics; the
+// output is "ok".
+
+@Extern("C") func gopp_test_make_slice_int(which int, n int, c int) []int
+@Extern("C") func gopp_test_word_int(s []int) int
+@Extern("C") func gopp_test_count(which int, what int) int
+
+var fails int
+
+func check(name string, got, want int) {
+	if got != want {
+		println("FAIL", name, got, "want", want)
+		fails++
+	}
+}
+
+func calls() [2]int { return [2]int{gopp_test_count(0, 0) + gopp_test_count(0, 2), gopp_test_count(1, 0) + gopp_test_count(1, 2)} }
+
+// quiet checks that nothing was allocated or freed anywhere since `b`.
+func quiet(name string, b [2]int) {
+	now := calls()
+	check(name+": global", now[0]-b[0], 0)
+	check(name+": A", now[1]-b[1], 0)
+}
+
+func sum(xs []int) int {
+	t := 0
+	for i := 0; i < len(xs); i++ {
+		t += xs[i]
+	}
+	return t
+}
+
+// A borrowed slice has the length as its capacity (SLC-12).
+func capLen(xs []int) int { return cap(xs)*1000 + len(xs) }
+
+func pass(xs []int) int { return sum(xs) + capLen(xs) }
+
+func ranged(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func head(xs []int) View[[]int] { return xs[:2] }
+
+func viewSum(v View[[]int]) int {
+	t := 0
+	for _, x := range v {
+		t += x
+	}
+	return t + len(v)*100 + cap(v)*10000
+}
+
+func many(xs ...int) int { return sum(xs) + len(xs) }
+
+// A move parameter takes the whole slice: it grows in the caller's allocator
+// and the result has the same word.
+func extend(move xs []int, n int) []int {
+	for i := 0; i < n; i++ {
+		xs = append(xs, i)
+	}
+	return xs
+}
+
+// A borrowed slice copied out is a new owned slice of the global allocator.
+func copyOut(xs []int) []int { return append([]int(nil), xs...) }
+
+func main() {
+	a := gopp_test_make_slice_int(1, 0, 0)
+	for i := 1; i <= 10; i++ {
+		a = append(a, i)
+	}
+	// 10 elements, cap 16
+	check("a", len(a)*100+cap(a), 1016)
+
+	b := calls()
+	check("sum", sum(a), 55)
+	check("pass: length is capacity", capLen(a), 10*1000+10)
+	check("pass", pass(a), 55+10010)
+	check("ranged", ranged(a), 55)
+	quiet("borrowed parameter", b)
+
+	// Slicing: a view, a borrowed slice; nothing is allocated.
+	b = calls()
+	check("slice of a", sum(a[2:5]), 3+4+5)
+	check("slice cap", capLen(a[2:5]), 3*1000+3)
+	check("head", viewSum(head(a[3:])), 4+5+200+20000)
+	check("view", viewSum(a[1:4]), 2+3+4+300+30000)
+	arr := [4]int{1, 2, 3, 4}
+	check("array slice", pass(arr[:]), 10+4004)
+	us := unsafe.Slice(&arr[0], 3)
+	check("unsafe.Slice", pass(us), 6+3003)
+	check("variadic spread", many(a...), 55+10)
+	quiet("views", b)
+
+	// A variadic call packs its arguments in a new slice (global).
+	b = calls()
+	check("variadic", many(1, 2, 3), 9)
+	now := calls()
+	check("variadic packs globally: global", now[0]-b[0], 1)
+	check("variadic packs globally: A", now[1]-b[1], 0)
+
+	// The owner is intact afterwards: still allocator 1, growth still there.
+	check("owner word", gopp_test_word_int(a), 1)
+	b = calls()
+	a = append(a, 11, 12, 13, 14, 15, 16)
+	quiet("room left", b)
+	b = calls() // (quiet builds strings)
+	a = append(a, 17)
+	now = calls()
+	check("grows in A: global", now[0]-b[0], 0)
+	check("grows in A", now[1]-b[1], 1)
+	check("grown word", gopp_test_word_int(a), 1)
+
+	// A copy made from a borrowed parameter is global.
+	b = calls()
+	c := copyOut(a)
+	now = calls()
+	check("copy out: global", now[0]-b[0], 1)
+	check("copy out: A", now[1]-b[1], 0)
+	check("copy out word", gopp_test_word_int(c), 0)
+	check("copy out", sum(c), sum(a))
+
+	// A move parameter: the word travels with the slice.
+	d := extend(gopp_test_make_slice_int(1, 0, 0), 9)
+	check("move param: word", gopp_test_word_int(d), 1)
+	check("move param: len", len(d), 9)
+	b = calls()
+	d = extend(d, 100)
+	now = calls()
+	check("move param grows in A: global", now[0]-b[0], 0)
+	check("move param grows in A", b2i(now[1]-b[1] > 0), 1)
+	check("move param result word", gopp_test_word_int(d), 1)
+	e := extend(make([]int, 0), 3)
+	check("move param, global slice", gopp_test_word_int(e), 0)
+
+	if fails == 0 {
+		println("ok")
+	}
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

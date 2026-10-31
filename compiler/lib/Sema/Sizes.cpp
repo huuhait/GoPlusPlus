@@ -5,7 +5,8 @@
 //
 // Go++ code (not CheckOptions::GoCompat) follows the layout of D4.5 and of
 // the code generator (LLVM's data layout for the GIR types): `string` is
-// {ptr, len, cap} = 24 bytes (ADR-0026), a func value is {code, env} = 16, and
+// {ptr, len, cap} = 24 bytes (ADR-0026), an owned `[]T` is {ptr, len, cap,
+// allocator} = 32 (ADR-0029), a func value is {code, env} = 16, and
 // a struct whose last field has size 0 gets no padding byte (gc adds one).
 // P04.04 tests the two agree for a generated table of types, on both targets.
 //
@@ -55,7 +56,8 @@ void Checker::gcOffsetsof(const StructType *S, SmallVectorImpl<int64_t> &Offs) {
 static Checker::Layout leafLayout(Type *U, bool Complex, bool Go) {
   switch (U->getKind()) {
   case Type::Kind::Slice:
-    return {WordSize * 3, WordSize};
+    // ADR-0029: {ptr, len, cap, allocator} for Go++ (gc: three words).
+    return {Go ? WordSize * 3 : WordSize * 4, WordSize};
   case Type::Kind::Interface:
     return {WordSize * 2, WordSize};
   case Type::Kind::Signature:

@@ -1,0 +1,205 @@
+package main
+
+// P04.25 (ADR-0029): a map header stores its allocator when the map is made.
+// Growth and free go through that word; `make`, a literal and the first write
+// to a nil map use the global allocator (word 0). Delete, clear, range,
+// lookups, and the copy-in and copy-out of map-entry arguments allocate
+// nothing and free nothing in the map's allocator. Built with
+// -test-intrinsics; Go++ only: the output is "ok".
+
+@Extern("C") func gopp_test_make_map_ii(which int) map[int]int
+@Extern("C") func gopp_test_make_map_mm(which int) map[int]map[int]int
+@Extern("C") func gopp_test_free_map_ii(m map[int]int)
+@Extern("C") func gopp_test_free_map_mm(m map[int]map[int]int)
+@Extern("C") func gopp_test_word_map_ii(m map[int]int) int
+@Extern("C") func gopp_test_word_map_mm(m map[int]map[int]int) int
+@Extern("C") func gopp_test_count(which int, what int) int
+
+var fails int
+
+func check(name string, got, want int) {
+	if got != want {
+		println("FAIL", name, got, "want", want)
+		fails++
+	}
+}
+
+func snap() [6]int {
+	return [6]int{gopp_test_count(0, 0), gopp_test_count(0, 2), gopp_test_count(1, 0), gopp_test_count(1, 2),
+		gopp_test_count(2, 0), gopp_test_count(2, 2)}
+}
+
+// expect: global allocs and frees, then allocator 1's, then allocator 2's.
+func expect(name string, before [6]int, ga, gf, aa, af, ba, bf int) {
+	now := snap()
+	check(name+": global allocs", now[0]-before[0], ga)
+	check(name+": global frees", now[1]-before[1], gf)
+	check(name+": A allocs", now[2]-before[2], aa)
+	check(name+": A frees", now[3]-before[3], af)
+	check(name+": B allocs", now[4]-before[4], ba)
+	check(name+": B frees", now[5]-before[5], bf)
+}
+
+func put(m map[int]int, k, v int) { m[k] = v }
+
+func fill(m map[int]int, n int) {
+	for i := 0; i < n; i++ {
+		m[i] = i * i
+	}
+}
+
+func total(m map[int]int) int {
+	t := 0
+	for k, v := range m {
+		t += k + v
+	}
+	return t
+}
+
+func main() {
+	var b [6]int
+
+	// The default: make, a literal and a nil map's first write are global.
+	b = snap()
+	m0 := make(map[int]int)
+	expect("make", b, 1, 0, 0, 0, 0, 0)
+	check("make word", gopp_test_word_map_ii(m0), 0)
+	b = snap()
+	ml := map[int]int{1: 1, 2: 4, 3: 9}
+	check("literal len", len(ml), 3)
+	check("literal word", gopp_test_word_map_ii(ml), 0)
+	var nm map[int]int
+	check("nil word", gopp_test_word_map_ii(nm), 0)
+	b = snap()
+	nm[5] = 6
+	// header, entries, index
+	expect("first write to a nil map", b, 3, 0, 0, 0, 0, 0)
+	check("created word", gopp_test_word_map_ii(nm), 0)
+	// A write through a borrowed parameter creates it in the caller's variable.
+	var nm2 map[int]int
+	b = snap()
+	put(nm2, 1, 2)
+	expect("nil map through a parameter", b, 3, 0, 0, 0, 0, 0)
+	check("nil map through a parameter len", len(nm2), 1)
+	check("nil map through a parameter word", gopp_test_word_map_ii(nm2), 0)
+
+	// A map made in allocator 1: the header is one call; the tables come with
+	// the first insert; growth at 8, 16, 32, 64 entries.
+	b = snap()
+	a := gopp_test_make_map_ii(1)
+	expect("make in A", b, 0, 0, 1, 0, 0, 0)
+	check("make in A word", gopp_test_word_map_ii(a), 1)
+	b = snap()
+	a[0] = 0
+	expect("first insert in A", b, 0, 0, 2, 0, 0, 0)
+	b = snap()
+	fill(a, 100)
+	// capacities 8 -> 16 -> 32 -> 64 -> 128: the first table is made by the
+	// first insert (above); four more growths, two tables each, each freeing
+	// the two old ones.
+	expect("100 inserts in A", b, 0, 0, 8, 8, 0, 0)
+	check("A len", len(a), 100)
+	check("A word after growth", gopp_test_word_map_ii(a), 1)
+
+	// Overwrite, lookup, range, delete and clear: no call.
+	b = snap()
+	a[7] = 1
+	a[8]++
+	_, ok := a[1000]
+	v, ok2 := a[9]
+	check("lookup", v, 81)
+	check("lookup ok", b2i(ok)*10+b2i(ok2), 1)
+	t := total(a)
+	delete(a, 3)
+	delete(a, 4000)
+	check("range", b2i(t > 0), 1)
+	expect("overwrite, lookup, range, delete", b, 0, 0, 0, 0, 0, 0)
+	check("delete len", len(a), 99)
+	b = snap()
+	clear(a)
+	check("clear len", len(a), 0)
+	expect("clear", b, 0, 0, 0, 0, 0, 0)
+	// After clear the tables are reused: 100 inserts fit without growth.
+	b = snap()
+	fill(a, 100)
+	expect("refill after clear", b, 0, 0, 0, 0, 0, 0)
+	check("refill len", len(a), 100)
+	check("refill word", gopp_test_word_map_ii(a), 1)
+
+	// Two allocators at once: each map uses its own.
+	b2 := gopp_test_make_map_ii(2)
+	b = snap()
+	fill(b2, 20)
+	fill(a, 120)
+	// b2: its header was made before the snapshot; 20 entries are 8 -> 16 ->
+	// 32: three growths, two tables each, four old tables freed. a: its
+	// tables hold 128 entries, so 120 fit.
+	expect("A and B", b, 0, 0, 0, 0, 6, 4)
+
+	// Freeing a map: the entries, the index and the header, to its allocator.
+	b = snap()
+	gopp_test_free_map_ii(b2)
+	expect("free(B)", b, 0, 0, 0, 0, 0, 3)
+	b = snap()
+	gopp_test_free_map_ii(a)
+	expect("free(A)", b, 0, 0, 0, 3, 0, 0)
+	// A map that never grew has a header only.
+	e := gopp_test_make_map_ii(1)
+	b = snap()
+	gopp_test_free_map_ii(e)
+	expect("free(empty A)", b, 0, 0, 0, 1, 0, 0)
+	b = snap()
+	gopp_test_free_map_ii(m0)
+	gopp_test_free_map_ii(nm)
+	// (m0 never grew: its header; nm: two tables and its header.)
+	expect("free(global)", b, 0, 4, 0, 0, 0, 0)
+
+	// Map entries passed on: the entry of a map in allocator 1 is a map of
+	// allocator 2; the callee grows it in its own allocator, and the copy-in
+	// and the copy-out of the argument allocate nothing.
+	outer := gopp_test_make_map_mm(1)
+	inner := gopp_test_make_map_ii(2)
+	outer[7] = inner
+	check("outer word", gopp_test_word_map_mm(outer), 1)
+	check("inner word", gopp_test_word_map_ii(outer[7]), 2)
+	b = snap()
+	fill(outer[7], 50)
+	// 8 -> 16 -> 32 -> 64 entries: four growths in allocator 2 (eight tables
+	// made, six freed) and no call elsewhere.
+	expect("entry argument: grows in its own allocator", b, 0, 0, 0, 0, 8, 6)
+	check("entry argument len", len(outer[7]), 50)
+	check("entry word kept", gopp_test_word_map_ii(outer[7]), 2)
+	// An absent key is an argument that inserts nothing; a present nil map
+	// entry gets a map made by the callee in the global allocator.
+	outer[8] = nil
+	b = snap()
+	fill(outer[8], 3)
+	expect("nil entry argument", b, 3, 0, 0, 0, 0, 0)
+	check("nil entry argument len", len(outer[8]), 3)
+	check("nil entry argument word", gopp_test_word_map_ii(outer[8]), 0)
+	b = snap()
+	fill(outer[99], 3)
+	check("absent entry len", len(outer[99]), 0)
+	check("absent entry did not insert", len(outer), 2)
+	// the callee wrote into a temporary map that is dropped with it
+	expect("absent entry argument", b, 3, 0, 0, 0, 0, 0)
+
+	// An insert of a new inner map by mm[k][j] = v is global (a map made by a
+	// write); the outer map's own tables grow in allocator 1.
+	b = snap()
+	for i := 100; i < 130; i++ {
+		outer[i] = nil
+	}
+	expect("30 more entries in the outer map", b, 0, 0, 4, 4, 0, 0)
+
+	if fails == 0 {
+		println("ok")
+	}
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

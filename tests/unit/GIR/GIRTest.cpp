@@ -152,10 +152,18 @@ TEST(GIRTypes, AreUniquedAndPrinted) {
   EXPECT_TRUE(C.setStructBody(S, {C.i64(), C.ptr(S)}));
   EXPECT_FALSE(C.setStructBody(S, {}));
   EXPECT_EQ(S->fieldType(1, C), C.ptr(S));
-  // The fields of string and slice are (ptr, len, cap).
+  // The fields of a string are (ptr, len, cap); a slice's are (ptr, len, cap,
+  // allocator) (ADR-0029).
   EXPECT_EQ(C.string()->fieldType(0, C), C.ptr(C.u8()));
   EXPECT_EQ(C.slice(C.i64())->fieldType(2, C), C.u64());
   EXPECT_EQ(C.string()->fieldType(3, C), nullptr);
+  EXPECT_EQ(C.slice(C.i64())->fieldType(0, C), C.ptr(C.i64()));
+  EXPECT_EQ(C.slice(C.i64())->fieldType(3, C), C.ptr(C.u8()));
+  EXPECT_EQ(C.slice(C.i64())->fieldType(4, C), nullptr);
+  EXPECT_EQ(C.slice(C.i64())->numFields(), 4u);
+  EXPECT_EQ(C.string()->numFields(), 3u);
+  EXPECT_EQ(layoutOf(C.slice(C.i64())).Size, 32u);
+  EXPECT_EQ(layoutOf(C.string()).Size, 24u);
 }
 
 TEST(GIRVerify, AcceptsTheSample) {

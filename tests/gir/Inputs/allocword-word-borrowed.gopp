@@ -1,0 +1,11 @@
+package main
+
+@Extern("C") func gopp_test_word(s []int) int
+
+// A borrowed parameter has no allocator word to read (it is two words).
+func peek(xs []int) int { return gopp_test_word(xs) }
+
+func main() {
+	a := []int{1, 2, 3}
+	println(peek(a))
+}

@@ -565,6 +565,27 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   // Every return below that is not the last one has reported an error.
   Declined.insert(Obj);
   const ast::Attribute *Ext = externAttr(FD);
+  if (Ext && Opts.TestIntrinsics && Name.starts_with("gopp_test_")) {
+    // A test intrinsic, not a C function (ADR-0029, P04.25).
+    // The name is the stem, then perhaps `_` and a suffix: a program that
+    // uses several element types declares one function per type.
+    static const std::pair<const char *, TestFn> Table[] = {
+        {"gopp_test_make_slice", TestFn::MakeSlice},
+        {"gopp_test_make_map", TestFn::MakeMap},
+        {"gopp_test_clone_slice", TestFn::CloneSlice},
+        {"gopp_test_free_slice", TestFn::FreeSlice},
+        {"gopp_test_free_map", TestFn::FreeMap},
+        {"gopp_test_count", TestFn::Count},
+        {"gopp_test_word", TestFn::Word}};
+    for (const auto &[N, K] : Table)
+      if (Name == N || (Name.starts_with(N) && Name[strlen(N)] == '_')) {
+        Declined.erase(Obj);
+        TestIntrinsics[Obj] = K;
+        return;
+      }
+    unsupported(FD->getBegin(), "the test intrinsic " + Name);
+    return;
+  }
   if (Ext) {
     std::string Why = externProblem(FD, Ext, SM);
     if (!Why.empty()) {
@@ -628,6 +649,9 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
       return;
     if (!Ext && mapByPointer(Sig, Params.size()))
       T = Ctx.ptr(T);
+    else if (!Ext && sliceBorrowed(Sig, Params.size()) &&
+             T->getKind() == Type::Kind::Slice)
+      T = Ctx.tuple({T->fieldType(0, Ctx), Ctx.u64()});
     Params.push_back(T);
   }
   Type *Ret = Ctx.unit();

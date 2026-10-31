@@ -55,7 +55,7 @@
 | struct | declaration order, C alignment |
 | `string` | `{ptr, len, cap}`; a literal points into rodata with cap 0 and is never freed; no small-string optimization (ADR-0026) |
 | `View[T]` where `T`'s underlying type is `string` or a slice (`View[string]`, `View[Bytes]`) | `{ptr, len}` |
-| `[]T` (owned) | `{ptr, len, cap, allocator}`: 4 words, 32 bytes; a nil allocator word is the global mimalloc allocator (ADR-0029). A borrowed `[]T` is `{ptr, len}` |
+| `[]T` (owned) | `{ptr, len, cap, allocator}`: 4 words, 32 bytes; a nil allocator word is the global mimalloc allocator (ADR-0029). A borrowed `[]T` made by slicing, and a view, is `{ptr, len}` (16 bytes); `unsafe.Sizeof` of a borrowed `[]T` parameter is the size of the type `[]T`, 32, and it passes as `(ptr, len)` |
 | `View[T]` (every other `T`, including map, chan, func, interface, `Option`, structs) | `{ptr}` |
 | interface | `{itab*, data}` |
 | func value | `{code*, env*}` |
@@ -66,7 +66,7 @@
 | `Option[T]` for other `T` | `T` followed by a one-byte "is set" flag (padded to `T`'s alignment) |
 | `map[K]V`, `chan T` | pointer to the runtime object; a map's header stores its allocator (ADR-0029) |
 
-The 4-word owned slice and the allocator in the map header are the owner's decision of 2026-10-30 (ADR-0029, task P04.25). Until P04.25 is done, the code still lowers `[]T` as `{ptr, len, cap}`.
+The 4-word owned slice and the allocator in the map header are the owner's decision of 2026-10-30 (ADR-0029, task P04.25). P04.25 is done: the code lowers `[]T` as `{ptr, len, cap, allocator}`.
 
 `Option[T]` is comparable when `T` is (ADR-0018 amendment point 1): GIR `==` on it is "both nil, or both set and `T`'s equality"; for a pointer kind it is the plain pointer compare, and for an `Option[I]` the nil bit pattern (null `itab*`) is nil. The flag byte and its padding must not take part in the comparison or the hash (P05 D5.4, map keys).
 

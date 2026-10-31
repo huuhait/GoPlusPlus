@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerImpl.h"
+#include "RtEmit.h"
 
 #include <cstring>
 
@@ -234,11 +235,14 @@ Operand Body::argAs(Operand V, S::SignatureType *Sig, size_t K,
   }
   if (Sig->isMove(K) || !T || T->getKind() != Type::Kind::Slice)
     return V;
+  // A borrowed []T passes as a view, (ptr, len): the allocator word stays
+  // behind (ADR-0029 point 7, D4.4), and the callee's capacity is its length
+  // (SLC-12).
   Place P = placeOf(std::move(V));
   at(N);
-  Operand Len = copyOf(FB.field(P, 1));
-  return copyOf(FB.temp(
-      FB.aggregate(AggKind::Slice, T, {copyOf(FB.field(P, 0)), Len, Len})));
+  Type *VT = ctx().tuple({T->fieldType(0, ctx()), ctx().u64()});
+  return copyOf(FB.temp(FB.aggregate(
+      AggKind::Tuple, VT, {copyOf(FB.field(P, 0)), copyOf(FB.field(P, 1))})));
 }
 
 Operand Body::borrowedSeq(Operand V, Type *G, const ast::Node *N) {
@@ -257,9 +261,15 @@ Operand Body::borrowedSeq(Operand V, Type *G, const ast::Node *N) {
   if (Ptr.type() != G->fieldType(0, ctx()))
     Ptr = copyOf(FB.temp(
         FB.cast(CastKind::PtrToPtr, std::move(Ptr), G->fieldType(0, ctx()))));
-  Operand Cap = Str ? constInt(ctx().u64(), 0) : Len;
-  return copyOf(FB.temp(FB.aggregate(Str ? AggKind::String : AggKind::Slice, G,
-                                     {std::move(Ptr), Len, std::move(Cap)})));
+  if (!Str) {
+    // A borrowed []T owns nothing: no allocator (ADR-0029 point 7).
+    Rt E(M, FB);
+    return copyOf(FB.temp(FB.aggregate(
+        AggKind::Slice, G,
+        {std::move(Ptr), Len, Len, E.null(ctx().ptr(ctx().u8())).Op})));
+  }
+  return copyOf(FB.temp(FB.aggregate(
+      AggKind::String, G, {std::move(Ptr), Len, constInt(ctx().u64(), 0)})));
 }
 
 Operand Body::lowerNarrowed(const ast::Ident *Id, S::Type *Payload) {
@@ -1424,6 +1434,9 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
   auto U = Id ? I.Uses.find(Id) : I.Uses.end();
   if (U != I.Uses.end()) {
     if (auto *F = dyn_cast<S::Func>(U->second)) {
+      auto TI = L.TestIntrinsics.find(F);
+      if (TI != L.TestIntrinsics.end())
+        return lowerTestIntrinsic(C, F, TI->second);
       auto FI = L.FuncIds.find(F);
       if (FI == L.FuncIds.end() && L.Declined.count(F))
         return Unit; // its declaration was reported
@@ -1475,7 +1488,7 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
           }
           Args.push_back(argFor(C->Args.back(), Sig, Fixed));
         } else {
-          Args.push_back(packVariadic(C, Sig, Fixed));
+          Args.push_back(argAs(packVariadic(C, Sig, Fixed), Sig, Fixed, C));
         }
       } else if (C->EllipsisLoc.isValid() || Ps.size() != C->Args.size()) {
         unsupported(C, "this call form");
