@@ -6,12 +6,14 @@
 // and 0.02 s), and the operator path adds little stack over a method call, so
 // the default stack is enough (R17: 700 levels overflowed before; 950 pass in
 // the Dev build, and 600 is the most that an ASan build passes, so the test
-// stays at 600 for both).
+// stays at 600 for both). The parser caps the depth, so the input cannot grow
+// for a ratio check: each run's CPU time may be at most three times what it is
+// alone, counted in units of `gopp version` (tests/cpu-limit.py).
 // RUN: %python %S/Inputs/gen-ops-stress.py nestidx 950 > %t.ni.gopp
-// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.ni.gopp
+// RUN: %{cpu_limit} 3 5 -- %gopp check -check-j=1 --check-error-limit=0 %t.ni.gopp
 // RUN: %python %S/Inputs/gen-ops-stress.py nestcall 600 > %t.nc.gopp
-// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.nc.gopp
-// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.nc.gopp
+// RUN: %{cpu_limit} 4 4 -- %gopp check -check-j=1 --check-error-limit=0 %t.nc.gopp
+// RUN: %{cpu_limit} 4 5 -- %gopp check -check-j=8 --check-error-limit=0 %t.nc.gopp
 // RUN: %python %S/Inputs/gen-ops-stress.py nestplus 450 > %t.np.gopp
-// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.np.gopp
+// RUN: %{cpu_limit} 4 5 -- %gopp check -check-j=1 --check-error-limit=0 %t.np.gopp
 package main

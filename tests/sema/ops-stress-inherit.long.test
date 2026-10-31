@@ -4,6 +4,5 @@
 // of each at every level. The operator table of a type is built once and
 // shared down the chain, and the receiver lookup uses the chain's index, so
 // the check time stays near-linear.
-// RUN: %python %S/Inputs/gen-ops-stress.py inherit 40000 > %t.gopp
-// RUN: timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+// RUN: %python %S/Inputs/check-linear.py --label ops-stress-inherit --out %t.lin1 --n 40000 --gen "%S/Inputs/gen-ops-stress.py inherit {n}" -- %gopp check -check-j=1 --check-error-limit=0 {file}
 package main

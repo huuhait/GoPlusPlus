@@ -7,18 +7,19 @@
 // View[T] field, a chain of 2000 generic types each behind a pointer over
 // the next (the first over *Box[T]), and 2000 generics with View[Box[T]].
 // Each program has exactly one bad instantiation, so exactly one error says
-// that every other case is accepted; `timeout` fails the test if the uses
-// stop being near-linear.
-// RUN: %python %S/Inputs/gen-view-uses-stress.py sigs 2000 > %t.sigs.gopp
-// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.sigs.gopp 2>&1 | FileCheck --check-prefix=VIEW %s
-// RUN: %python %S/Inputs/gen-view-uses-stress.py chain 2000 > %t.chain.gopp
-// RUN: not timeout 10 %gopp check -check-j=8 --check-error-limit=0 %t.chain.gopp 2>&1 | FileCheck --check-prefix=VIEW %s
-// RUN: %python %S/Inputs/gen-view-uses-stress.py types 2000 > %t.types.gopp
-// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.types.gopp 2>&1 | FileCheck --check-prefix=VIEW %s
-// RUN: %python %S/Inputs/gen-view-uses-stress.py behind 2000 > %t.behind.gopp
-// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.behind.gopp 2>&1 | FileCheck --check-prefix=ABS %s
-// RUN: %python %S/Inputs/gen-view-uses-stress.py views 2000 > %t.views.gopp
-// RUN: not timeout 10 %gopp check -check-j=8 --check-error-limit=0 %t.views.gopp 2>&1 | FileCheck --check-prefix=ABS %s
+// that every other case is accepted; Inputs/check-linear.py (1000 and 16000, at
+// most 48
+// times the CPU time) fails the test if the uses stop being near-linear.
+// RUN: %python %S/Inputs/check-linear.py --label view-uses-stress --out %t.sigs.lin1 --n 16000 --gen "%S/Inputs/gen-view-uses-stress.py sigs {n}" --status 1 --output %t.sigs.lin1.out -- %gopp check -check-j=1 --check-error-limit=0 {file}
+// RUN: cat %t.sigs.lin1.out | FileCheck --check-prefix=VIEW %s
+// RUN: %python %S/Inputs/check-linear.py --label view-uses-stress-2 --out %t.chain.lin2 --n 16000 --gen "%S/Inputs/gen-view-uses-stress.py chain {n}" --status 1 --output %t.chain.lin2.out -- %gopp check -check-j=8 --check-error-limit=0 {file}
+// RUN: cat %t.chain.lin2.out | FileCheck --check-prefix=VIEW %s
+// RUN: %python %S/Inputs/check-linear.py --label view-uses-stress-3 --out %t.types.lin3 --n 16000 --gen "%S/Inputs/gen-view-uses-stress.py types {n}" --status 1 --output %t.types.lin3.out -- %gopp check -check-j=1 --check-error-limit=0 {file}
+// RUN: cat %t.types.lin3.out | FileCheck --check-prefix=VIEW %s
+// RUN: %python %S/Inputs/check-linear.py --label view-uses-stress-4 --out %t.behind.lin4 --n 16000 --gen "%S/Inputs/gen-view-uses-stress.py behind {n}" --status 1 --output %t.behind.lin4.out -- %gopp check -check-j=1 --check-error-limit=0 {file}
+// RUN: cat %t.behind.lin4.out | FileCheck --check-prefix=ABS %s
+// RUN: %python %S/Inputs/check-linear.py --label view-uses-stress-5 --out %t.views.lin5 --n 16000 --gen "%S/Inputs/gen-view-uses-stress.py views {n}" --status 1 --output %t.views.lin5.out -- %gopp check -check-j=8 --check-error-limit=0 {file}
+// RUN: cat %t.views.lin5.out | FileCheck --check-prefix=ABS %s
 // VIEW: error[E0371]: cannot use View[*int]: a View holds a value, not a pointer
 // VIEW-NOT: error[E
 // ABS: error[E{{[0-9]+}}]: Shape does not satisfy the implicit requirement of T: the generic code {{makes or holds a value of T|passes T on to a generic that makes or holds a value of it}}

@@ -12,11 +12,16 @@ like type errors for gofmt, they do not stop formatting.
 | `roundtrip.test` | the ten spec examples, every valid parse/lex/sema test, the goldens: `parse(print(parse(src))) == parse(src)`, `fmt(fmt(x)) == fmt(x)`, no comment lost |
 | `header-imports.test` | header imports keep their order; groups without one are sorted |
 | `flags.test` | `-l`, `-w`, `-d`, stdin, directories, exit status 2 on syntax errors |
+| `batch.test` | `-batch` of `gopp fmt` and `gopp parse` (each record is the run on that file alone, as standard input); `check-corpus.py` with one failing file among good ones, also when the batch process dies |
 | `goroot.long.test` (`REQUIRES: long, go`; `ninja check-long`) | the same round-trip checks and the gofmt comparison on `$(go env GOROOT)/src`, about 7350 files (eight shards, `goroot-1.long` to `goroot-7.long`) |
 | `../unit/Format/` | layout rules by example, import rules, the header rule hook, the fuzz corpus replay |
 
 `check-corpus.py` runs the round-trip checks on a list of files or directories.
-`compare-gofmt.py` compares with the real gofmt. Regenerate the goldens with
+`compare-gofmt.py` compares with the real gofmt. Both give the files to `gopp`
+in batches of up to 32 (`gopp fmt -batch`, `gopp parse -batch`:
+`tests/gopp_batch.py`), so a sanitizer build pays one process start per batch,
+not per file; each file is still checked on its own, and a batch whose process
+dies is run again one file per process. Regenerate the goldens with
 `tests/update-goldens fmt` and review the diff.
 
 ## The round-trip tree

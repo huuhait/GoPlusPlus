@@ -1,10 +1,11 @@
 // REQUIRES: long
 // P03.24 Done-when size for the operator checks, shape `generic`: a generated
 // program of size 5000 checks without a crash and in near-linear time
-// (`timeout`, also in the ASan build). One test per shape so lit runs the
+// (Inputs/check-linear.py: N/16 and N, N at most 48 times the CPU time; a
+// quadratic check takes 256 times, also
+// in the ASan build). One test per shape so lit runs the
 // shapes in parallel. The parser allows 1024 levels of nesting, so a chain of
 // operands is cut into expressions of 1000 operands (the same limit holds for
 // an `int` sum).
-// RUN: %python %S/Inputs/gen-ops-stress.py generic 5000 > %t.gopp
-// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+// RUN: %python %S/Inputs/check-linear.py --label ops-stress-generic --out %t.lin1 --n 5000 --gen "%S/Inputs/gen-ops-stress.py generic {n}" -- %gopp check -check-j=1 --check-error-limit=0 {file}
 package main

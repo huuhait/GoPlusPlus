@@ -8,8 +8,9 @@ about a third of the cores' worth of such processes at once, the kernel's
 memory paths contend and the cost per process grows several times (measured on
 a 192-thread host, ASan `gopp fmt`: 16 at a time 15 ms of kernel time each, 64
 at a time 28 ms, 128 at a time 95 ms, and the wall time grows too). A script
-that runs one process per file or per program in many threads
-(check-corpus.py, run-opt-matrix.py, ...) takes a slot around each process;
+that runs one process per file or per program, or per batch of them
+(tests/gopp_batch.py), in many threads (check-corpus.py, run-opt-matrix.py,
+...) takes a slot around each process;
 with the slots of all the tests together the machine stays below that point
 however many such tests run at once.
 

@@ -10,15 +10,19 @@ line is NAME.err (Go's first line, D4.12: "panic: runtime error: ...").
 
 The first form compiles and runs the programs with the fast runner
 (runlib.py), or as real binaries with --real. The second builds real
-binaries with BUILD_COMMAND FILE -o EXE; with --qemu the executables are for
+binaries with BUILD_COMMAND FILE -o EXE (all of them in one BUILD_COMMAND
+-batch: tests/gopp_batch.py); with --qemu the executables are for
 linux/arm64 and run under qemu-aarch64.
 """
+import json
 import os
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import gopp_batch  # noqa: E402
 import runlib  # noqa: E402
 
 argv = sys.argv[1:]
@@ -33,13 +37,23 @@ programs = runlib.panic_programs(d, opts["names"])
 prefix = ["qemu-aarch64", "-L", opts["qemu"]] if opts["qemu"] else []
 fails = []
 with tempfile.TemporaryDirectory() as tmp:
+    if build is not None:
+        srcs = dict(programs)
+
+        def single(n):
+            return subprocess.run(build + [srcs[n], "-o", os.path.join(tmp, n)],
+                                  capture_output=True, timeout=60)
+
+        man = "".join(json.dumps({"id": n, "inputs": [src], "o": os.path.join(tmp, n)}) + "\n"
+                      for n, src in programs)
+        built = gopp_batch.run(build + ["-batch", "-"], [n for n, _ in programs], single,
+                               stdin=man.encode())
     for n, src in programs:
         if build is None:
             r = runlib.run_sources([src], real=opts["real"])
         else:
             exe = os.path.join(tmp, n)
-            b = subprocess.run(build + [src, "-o", exe], capture_output=True,
-                               timeout=60)
+            b = built[n]
             if b.returncode != 0:
                 fails.append("%s: build failed: %s" % (n, b.stderr[:300]))
                 continue

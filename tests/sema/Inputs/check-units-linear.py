@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """P03.25: the check time of a unit stress shape grows near-linearly. Runs
-gen-units-stress.py <shape> N and 4N, takes the best of four runs of each, small and big in turn, and
+gen-units-stress.py <shape> N and 4N, takes the best of four runs of each, small and big in turn (see best_of_both), and
 fails if the larger run takes more than 12 times the smaller (a quadratic
-analysis takes 16 times). A small run under 0.05 s is
+analysis takes 16 times). The cost of a run is its CPU time less that of the
+program of size 1 (process start and fixed work: it would flatten the ratio
+and let a quadratic walk on a small N pass). A small cost under 0.05 s is
 clock noise: N doubles until it is not (the limit itself has no floor).
 --control PROG runs a program that is quadratic in N instead of gopp; it must
 be reported as NOT near-linear (tests/sema/linear-control.long.test).
@@ -21,26 +23,37 @@ import sys
 import resource
 
 
-def once(cmd):
+def once(cmd, base=False):
     # The CPU time of the child (user + system), not wall time: other
     # processes on a busy machine do not add to it.
     c0 = resource.getrusage(resource.RUSAGE_CHILDREN)
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
     c1 = resource.getrusage(resource.RUSAGE_CHILDREN)
     t = (c1.ru_utime - c0.ru_utime) + (c1.ru_stime - c0.ru_stime)
-    if r.returncode not in (0, 1):
+    if r.returncode not in (0, 1) and not base:
         print("crash: " + r.stderr[:200])
         sys.exit(1)
     return t
 
 
-def best_of_both(small, big, runs=4):
-    """The least of `runs` runs of each, taken in turn: a machine that gets
-    busier or quieter during the test changes both."""
+def best_of_both(small, big, base, limit, runs=4):
+    """The costs over base of small and big: the least of `runs` runs of
+    small, and of big, taken in turn (a machine that gets busier or quieter
+    during the test changes both). Big runs only while the pair is over the
+    limit, `runs` times at most: a busy machine only adds time, so more runs
+    could only lower its cost, and the verdict is the one `runs` runs of
+    each give. The small side, which a quadratic walk needs to be too slow
+    to pass, always gets all its runs."""
     a = b = 1e9
+    nb = 0
     for _ in range(runs):
-        a = min(a, once(small))
-        b = min(b, once(big))
+        a = min(a, once(small) - base)
+        if nb == 0 or b > limit * a:
+            b = min(b, once(big) - base)
+            nb += 1
+    while nb < runs and b > limit * a:
+        b = min(b, once(big) - base)
+        nb += 1
     return a, b
 
 
@@ -69,9 +82,12 @@ def main():
             subprocess.run([sys.executable, a.gen, a.shape, str(n)], stdout=f, check=True)
         return [a.gopp, "check", "-check-j=1", "--check-error-limit=0", p]
 
+    # The base: process start and fixed work (the program of 1), the least of
+    # three runs, taken off both sides so it does not flatten the ratio.
+    base = min(once(command(1), base=True) for _ in range(3))
     n = a.n
     for _ in range(4):
-        small, big = best_of_both(command(n), command(4 * n))
+        small, big = best_of_both(command(n), command(4 * n), base, a.max_ratio)
         if small >= MIN_SMALL:
             break
         n *= 2  # too short to judge: a bigger N

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Runs the whole run corpus twice, through the fast runner (ONE `gopp
-test-run`) and as real binaries (`gopp build` + exec, one by one), and
+test-run`) and as real binaries (`gopp build` in batches, then each exec), and
 requires equal results byte for byte: outcome (exit status or signal), standard
 output and standard error. Prints both times (P04.19, D4.14).
 
@@ -23,6 +23,9 @@ import time
 
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, here)
+sys.path.insert(0, os.path.dirname(os.path.dirname(here)))
+import gopp_batch  # noqa: E402
+import procslots  # noqa: E402
 import runlib  # noqa: E402
 
 RUN = os.path.dirname(here)
@@ -78,15 +81,40 @@ def run_fast(jobs, copies=1):
         return runlib.decode_results(p.stdout.decode()), wall, cpu
 
 
-def run_real_one(item):
-    i, srcs = item
-    return i, runlib._run_real(srcs, os.environ.get("GOPP_LINK_FLAGS", "").split(), 60)
+def run_real_batch(part):
+    """{id: Result} of the programs of part as real binaries: built by one
+    `gopp build -batch` (tests/gopp_batch.py; each build the one
+    runlib._run_real makes), then each run."""
+    flags = os.environ.get("GOPP_LINK_FLAGS", "").split()
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = {i: os.path.join(tmp, str(n), "prog") for n, (i, _) in enumerate(part)}
+        for e in exe.values():
+            os.mkdir(os.path.dirname(e))
+        srcs = dict(part)
+
+        def single(i):
+            with procslots.slot():
+                return subprocess.run([runlib.gopp(), "build"] + flags + list(srcs[i]) + ["-o", exe[i]],
+                                      capture_output=True, timeout=60)
+
+        man = "".join(json.dumps({"id": i, "inputs": s, "o": exe[i]}) + "\n" for i, s in part)
+        built = gopp_batch.run([runlib.gopp(), "build"] + flags + ["-batch", "-"], [i for i, _ in part],
+                               single, stdin=man.encode())
+        out = {}
+        for i, _ in part:
+            if built[i].returncode != 0:
+                out[i] = runlib.Result("compile-failed", message=built[i].stderr.decode(errors="replace"))
+            else:
+                out[i] = runlib.run_exe(exe[i], [], 60)
+        return out
 
 
 def run_real(jobs, workers):
     t0, c0 = time.time(), cpu_children()
+    out = {}
     with concurrent.futures.ThreadPoolExecutor(workers) as ex:
-        out = dict(ex.map(run_real_one, jobs))
+        for res in ex.map(run_real_batch, gopp_batch.chunks(jobs, 16)):
+            out.update(res)
     return out, time.time() - t0, cpu_children() - c0
 
 
@@ -124,7 +152,7 @@ def main():
             bad.append("%s: did not run: %s" % (i, f.failure()))
     print("corpus: %d programs" % len(jobs))
     print("fast runner: %.2f s wall, %.2f s cpu (one gopp test-run)" % (fw, fc))
-    print("real binaries: %.2f s wall, %.2f s cpu (%d at a time, gopp build + exec)" % (rw, rc, a.workers))
+    print("real binaries: %.2f s wall, %.2f s cpu (%d at a time, gopp build -batch + exec)" % (rw, rc, a.workers))
     for n in [int(x) for x in a.scale.split(",") if x]:
         _, w, c = run_fast(jobs, n)
         print("fast runner x%d (%d programs): %.2f s wall, %.2f s cpu" % (n, n * len(jobs), w, c))

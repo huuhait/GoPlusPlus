@@ -8,9 +8,12 @@
 // RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d typestruct 5000
 // RUN: %python %S/Inputs/check-gir-linear.py --gopp %gopp --gen %S/Inputs/gen-gir-stress.py --out %t.d --emits girb typearr 5000
 // A chain of 20000 (arrays) or 10000 (structs: LLVM's own StructType::setBody
-// is quadratic in the chain) is lowered, with == and a copy, to an object file.
+// is quadratic in the chain) is lowered, with == and a copy, to an object file,
+// within a CPU-time ceiling of three times the cost alone, counted in units
+// of `gopp version` (tests/cpu-limit.py),
+// never a wall-clock limit; the growth is judged by the two checks above.
 // RUN: %python %S/Inputs/gen-gir-stress.py typearr 20000 > %t.arr.gopp
 // RUN: %python %S/Inputs/gen-gir-stress.py typestruct 10000 > %t.st.gopp
-// RUN: %{timeout10} %gopp build -emit=girb %t.arr.gopp -o %t.arr.girb
-// RUN: timeout 60 %gopp build -emit=obj %t.arr.gopp -o %t.arr.o
-// RUN: timeout 60 %gopp build -emit=obj %t.st.gopp -o %t.st.o
+// RUN: %{cpu_limit} 24 62 -- %gopp build -emit=girb %t.arr.gopp -o %t.arr.girb
+// RUN: %{cpu_limit} 475 405 -- %gopp build -emit=obj %t.arr.gopp -o %t.arr.o
+// RUN: %{cpu_limit} 132 167 -- %gopp build -emit=obj %t.st.gopp -o %t.st.o

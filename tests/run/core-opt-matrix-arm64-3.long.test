@@ -1,0 +1,3 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 8 --verify-dwarf --shard 2/3
+// Shard 3 of 3 of core-opt-matrix-arm64.long.test: see there.

@@ -1,0 +1,8 @@
+// REQUIRES: long
+// The control of Inputs/check-linear.py, the near-linear check of the size
+// tests of the long suite (extends-stress-*, ops-stress-*, decl-chains,
+// local-types-many, ...): a program quadratic in N, at N/16 and N, must be
+// reported as NOT near-linear (256 times the cost, limit 48), measured the
+// way the checks measure it.
+// RUN: not %python %S/Inputs/check-linear.py --label control --control %S/Inputs/quadratic.py --n 12800 | FileCheck %s
+// CHECK: control: near-linear NO

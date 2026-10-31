@@ -1,0 +1,84 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// `gopp build -batch` (tests/gopp_batch.py): many builds in one process, each
+// the build `gopp build` makes with the same arguments, with its own record.
+// A program that does not compile has its own record (exit status 1, its
+// diagnostics, the same bytes as alone) and the programs after it are still
+// built. And run-opt-matrix.py, which builds in batches: one bad program among
+// good ones fails the run and is named, the good ones are still built, run
+// and compared; the good ones alone pass. A batch whose process dies is built
+// again one program per process, so the failure still names its program.
+
+// RUN: rm -rf %t && mkdir -p %t/good %t/mixed %t/broken
+// RUN: printf 'package main\n\nfunc main() {\n\tprintln("one", 1+2)\n}\n' > %t/good/one.test
+// RUN: printf 'package main\n\nfunc main() {\n\tprintln("two")\n}\n' > %t/good/two.test
+// RUN: cp %t/good/one.test %t/good/two.test %t/mixed/
+// RUN: printf 'package main\n\nfunc main() {\n\tvar x int = "s"\n\tprintln(x)\n}\n' > %t/mixed/bad.test
+
+// RUN: printf '{"id":"one","inputs":["%t/mixed/one.test"],"o":"%t/one.exe"}\n{"id":"bad","inputs":["%t/mixed/bad.test"],"o":"%t/bad.exe"}\n{"id":"two","inputs":["%t/mixed/two.test"],"o":"%t/two.exe"}\n' > %t/jobs
+// RUN: %gopp build %gopp_link_flags -batch %t/jobs > %t/records
+// RUN: %python %S/../gopp_batch.py show < %t/records | FileCheck %s --check-prefix=RECORDS
+// RECORDS: one: exit 0, 0 bytes out, 0 bytes err
+// RECORDS-NEXT: bad: exit 1, 0 bytes out, {{[1-9][0-9]*}} bytes err
+// RECORDS-NEXT: two: exit 0, 0 bytes out, 0 bytes err
+// RUN: %t/one.exe | FileCheck %s --check-prefix=ONE
+// ONE: one 3
+// RUN: %t/two.exe | FileCheck %s --check-prefix=TWO
+// TWO: two
+// RUN: not test -e %t/bad.exe
+// The record of the bad program is its build alone, byte for byte.
+// RUN: %python %S/../gopp_batch.py show bad < %t/records > %t/bad.batch
+// RUN: not %gopp build %gopp_link_flags %t/mixed/bad.test -o %t/bad.exe 2> %t/bad.alone
+// RUN: diff %t/bad.batch %t/bad.alone
+// RUN: FileCheck %s --check-prefix=BAD < %t/bad.alone
+// BAD: {{.*}}bad.test:4:{{[0-9]+}}: error
+
+// A link that fails: the linker's own message is in the build's record, as
+// it is on the standard error of the build alone; the batch itself prints
+// nothing and the next build is made.
+// RUN: printf '{"id":"nolink","inputs":["%t/mixed/one.test"],"o":"%t/nolink.exe","link_obj":["%t/missing.o"]}\n{"id":"two","inputs":["%t/mixed/two.test"],"o":"%t/two2.exe"}\n' > %t/linkjobs
+// RUN: %gopp build %gopp_link_flags -batch %t/linkjobs > %t/linkrecords 2> %t/linkbatch.err
+// RUN: count 0 < %t/linkbatch.err
+// RUN: %python %S/../gopp_batch.py show < %t/linkrecords | FileCheck %s --check-prefix=LINK
+// LINK: nolink: exit 1, 0 bytes out, {{[1-9][0-9]*}} bytes err
+// LINK-NEXT: two: exit 0, 0 bytes out, 0 bytes err
+// RUN: %python %S/../gopp_batch.py show nolink < %t/linkrecords > %t/nolink.batch
+// RUN: not %gopp build %gopp_link_flags -link-obj=%t/missing.o %t/mixed/one.test -o %t/nolink.exe 2> %t/nolink.alone
+// RUN: diff %t/nolink.batch %t/nolink.alone
+// RUN: FileCheck %s --check-prefix=NOLINK < %t/nolink.alone
+// NOLINK: ld.lld: error: cannot open {{.*}}missing.o
+// NOLINK-NEXT: error[E0441]: code generation failed: the linker failed (exit status 1)
+// RUN: %t/two2.exe | FileCheck %s --check-prefix=TWO
+
+// A bad line builds nothing.
+// RUN: printf '{"id":"one","inputs":["%t/mixed/one.test"],"o":"%t/x.exe"}\n{"id":"no inputs"}\n' > %t/badjobs
+// RUN: not %gopp build -batch %t/badjobs 2>&1 | FileCheck %s --check-prefix=BADLINE
+// BADLINE: gopp: error: {{.*}}badjobs:2: a build needs "id" and "inputs"
+// RUN: not test -e %t/x.exe
+// RUN: not %gopp build -batch %t/jobs %t/mixed/one.test 2>&1 | FileCheck %s --check-prefix=INPUTS
+// INPUTS: gopp: error: build: -batch takes the inputs and -o of each build from its file
+
+// run-opt-matrix.py: the bad program fails at both levels and is named; the
+// good ones are built, run and equal.
+// RUN: not %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %t/mixed --link-flags "%gopp_link_flags" --configs 0 --jobs 1 > %t/mixed.out 2>&1
+// RUN: FileCheck %s --check-prefix=MIXED < %t/mixed.out
+// MIXED: 3 programs x 2 configurations on amd64 in {{.*}}: 2 problems
+// MIXED-DAG: bad [fastisel]: build failed: {{.*}}bad.test:4:{{[0-9]+}}: error
+// MIXED-DAG: bad [0]: build failed: {{.*}}bad.test:4:{{[0-9]+}}: error
+// MIXED-NOT: {{^(one|two) \[}}
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %t/good --link-flags "%gopp_link_flags" --configs 0 --jobs 1 | FileCheck %s --check-prefix=GOOD
+// GOOD: 2 programs x 2 configurations on amd64 in {{.*}}: all equal
+
+// A gopp whose batch dies (Inputs/fake-gopp.py: the program with BREAK): the
+// builds are made again one per process; the program that fails alone is
+// named, the others pass. Without it, the same gopp passes.
+// RUN: printf '#!/bin/sh\nexec %python %S/../fmt/Inputs/fake-gopp.py %gopp "$@"\n' > %t/fake-gopp
+// RUN: chmod +x %t/fake-gopp
+// RUN: cp %t/good/one.test %t/good/two.test %t/broken/
+// RUN: printf 'package main\n\n// BREAK\nfunc main() {\n\tprintln("brk")\n}\n' > %t/broken/brk.test
+// RUN: not %python %S/Inputs/run-opt-matrix.py --gopp %t/fake-gopp --root %t/broken --link-flags "%gopp_link_flags" --configs 0 --jobs 1 > %t/broken.out 2>&1
+// RUN: FileCheck %s --check-prefix=BROKEN < %t/broken.out
+// BROKEN: 3 programs x 2 configurations on amd64 in {{.*}}: 2 problems
+// BROKEN-DAG: brk [fastisel]: build failed: fake gopp: cannot build brk.test
+// BROKEN-DAG: brk [0]: build failed: fake gopp: cannot build brk.test
+// BROKEN-NOT: {{^(one|two) \[}}
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %t/fake-gopp --root %t/good --link-flags "%gopp_link_flags" --configs 0 --jobs 1 | FileCheck %s --check-prefix=GOOD

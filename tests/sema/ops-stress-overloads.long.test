@@ -1,10 +1,17 @@
 // REQUIRES: long
 // P03.24 Done-when size for the operator checks, shape `overloads`: a generated
-// program of size 400 checks without a crash and in near-linear time
-// (`timeout`, also in the ASan build). One test per shape so lit runs the
+// program of size 400 checks without a crash, within a CPU-time ceiling of
+// three times its cost alone, counted in units of `gopp version`
+// (tests/cpu-limit.py; also in the ASan build). No
+// ratio check: the generator makes about 5000
+// uses for any N up to 5000, so N and 16 N are not the same work scaled, and
+// past about 3000 overloads the check grows quadratically with their number
+// (default build: 3200 0.13 s, 6400 0.49 s, 12800 1.98 s: task P03.27, which
+// replaces the ceiling with a ratio check). One test per
+// shape so lit runs the
 // shapes in parallel. The parser allows 1024 levels of nesting, so a chain of
 // operands is cut into expressions of 1000 operands (the same limit holds for
 // an `int` sum).
 // RUN: %python %S/Inputs/gen-ops-stress.py overloads 400 > %t.gopp
-// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
+// RUN: %{cpu_limit} 14 24 -- %gopp check -check-j=1 --check-error-limit=0 %t.gopp
 package main

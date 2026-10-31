@@ -1,5 +1,5 @@
 // REQUIRES: long, host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --shard 0/3
 // RUN: %if clang %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --no-corpus --cabi 1:30 --cabi 2:30 --cabi 101:100 %}
 // P04.13 (D4.8): every program of the run corpus (the run tests, the
 // differential tables of Inputs/diff and Inputs/coll, the stress set
@@ -10,3 +10,8 @@
 // (cabi-amd64.test) and 101 (cabi.long.test), their C built once by Clang and
 // linked into every configuration. On linux/arm64:
 // core-opt-matrix-arm64.long.test.
+// The corpus runs in 3 shards side by side (core-opt-matrix.long.test and
+// core-opt-matrix-2.long.test to -3.long.test: the programs whose place in the
+// sorted corpus is K modulo 3, every configuration of each;
+// core-opt-matrix-shards.test checks that together they are the whole
+// corpus, each program once); the C ABI programs are in the first.

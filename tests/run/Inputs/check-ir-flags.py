@@ -32,6 +32,7 @@ section 1).
 import argparse
 import concurrent.futures
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -39,6 +40,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import gopp_batch  # noqa: E402
 import procslots  # noqa: E402
 
 INT = re.compile(
@@ -47,6 +49,15 @@ INT = re.compile(
 FLOAT = re.compile(
     r"\b(fadd|fsub|fmul|fdiv|frem|fneg|fcmp|fpext|fptrunc|call)\b[^\n]*"
     r"\b(fast|nnan|ninf|nsz|arcp|contract|afn|reassoc)\b")
+
+
+def instructions(text):
+    """The lines of LLVM IR text that can carry a flag: instructions, global
+    initializers and their constant expressions, declarations. Not the
+    metadata (`!...`), comments (`; ModuleID = ...`) and `source_filename`,
+    whose strings (a file name, the build directory) may hold any word."""
+    return "\n".join(l for l in text.split("\n")
+                     if not l.startswith(("!", ";", "source_filename")))
 
 
 DEFINE = re.compile(r"^define [^\n]*?\(([^\n]*)\)[^\n]*\{$", re.M)
@@ -108,6 +119,16 @@ def self_test():
     assert scan_alloc_builtin("declare ptr @mallocx(i64)\n") == []
     # the flag scans
     assert INT.search("%3 = add nsw i32 %1, %2") and not INT.search("%3 = add i32 %1, %2")
+    # only instructions: a path in the debug metadata is no flag
+    meta = ('; ModuleID = \'/w/call/fast/a.gopp\'\n'
+            'source_filename = "/w/call/fast/a.gopp"\n'
+            '!1 = !DIFile(filename: "assign-order-call.gopp", directory: "/w/asan-long-fast")\n'
+            '!2 = !DIFile(filename: "add.gopp", directory: "/w/nsw")\n')
+    assert FLOAT.search(meta) and INT.search(meta)
+    assert not FLOAT.search(instructions(meta)) and not INT.search(instructions(meta))
+    assert FLOAT.search(instructions(meta + "  %r = call fast double @f()\n"))
+    # a global initializer (a constant expression) is scanned too
+    assert INT.search(instructions(meta + "@g = global i64 add nsw (i64 ptrtoint (ptr @h to i64), i64 1)\n"))
     print("self-test ok")
 
 
@@ -133,32 +154,56 @@ def main():
     env.target = "amd64"
     progs += m.cabi_programs(env, a.root, a.cabi, tmp.name, build_c=False)
 
-    def check(prog, target):
-        cmd = [a.gopp, "build", "-target=linux/" + target, "-pipeline=fastisel",
-                "-emit=llvm"]
+    def common(target):
+        return [a.gopp, "build", "-target=linux/" + target, "-pipeline=fastisel", "-emit=llvm"]
+
+    def cmd(prog, target):
+        c = common(target)
         if any(m.uses_intrinsics(f) for f in prog.files):
-            cmd.append("-test-intrinsics")  # P04.25: the allocator-word programs
-        cmd += prog.files + ["-o", "-"]
-        with procslots.slot():
-            r = subprocess.run(cmd, capture_output=True, timeout=60)
-        if r.returncode:
-            return ["%s [%s]: build failed: %s" % (prog.name, target, r.stderr.decode()[:200])]
+            c.append("-test-intrinsics")  # P04.25: the allocator-word programs
+        return c + prog.files + ["-o", "-"]
+
+    def build(ps, target):
+        """{name: result} of building ps: one `gopp build -batch`
+        (tests/gopp_batch.py), each build exactly cmd's."""
+        jobs = "".join(json.dumps({
+            "id": p.name, "inputs": p.files, "o": "-",
+            "test_intrinsics": any(m.uses_intrinsics(f) for f in p.files)}) + "\n"
+            for p in ps)
+        by_name = {p.name: p for p in ps}
+
+        def single(name):
+            with procslots.slot():
+                return subprocess.run(cmd(by_name[name], target), capture_output=True, timeout=60)
+
+        return gopp_batch.run(common(target) + ["-batch", "-"], [p.name for p in ps],
+                              single, stdin=jobs.encode())
+
+    def check(ps, target):
         out = []
-        text = r.stdout.decode()
-        for rx in (INT, FLOAT):
-            mm = rx.search(text)
-            if mm:
-                out.append("%s [%s]: %s" % (prog.name, target, mm.group(0)[:160]))
-        for d in scan_alloc_builtin(text)[:1]:
-            out.append("%s [%s]: %s is not nobuiltin" % (prog.name, target, d))
-        if target == "arm64":
-            for u in scan_arg_ext(text)[:1]:
-                out.append("%s [arm64]: %s of an argument" % (prog.name, u))
+        built = build(ps, target)
+        for prog in ps:
+            r = built[prog.name]
+            if r.returncode:
+                out.append("%s [%s]: build failed: %s" % (prog.name, target, r.stderr.decode()[:200]))
+                continue
+            text = r.stdout.decode()
+            for rx in (INT, FLOAT):
+                mm = rx.search(instructions(text))
+                if mm:
+                    out.append("%s [%s]: %s" % (prog.name, target, mm.group(0)[:160]))
+            for d in scan_alloc_builtin(text)[:1]:
+                out.append("%s [%s]: %s is not nobuiltin" % (prog.name, target, d))
+            if target == "arm64":
+                for u in scan_arg_ext(text)[:1]:
+                    out.append("%s [arm64]: %s of an argument" % (prog.name, u))
         return out
 
     bad = []
+    # The programs go to gopp in batches, one `gopp build` per batch.
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        for res in ex.map(lambda pt: check(*pt), [(p, t) for p in progs for t in ("amd64", "arm64")]):
+        for res in ex.map(lambda pt: check(*pt), [(ps, t) for t in ("amd64", "arm64")
+                                                  for ps in gopp_batch.chunks(progs, a.jobs)]):
             bad += res
     print("%d programs x 2 targets: %s" % (len(progs), "%d problems" % len(bad) if bad else "no flags"))
     if bad:

@@ -1,8 +1,10 @@
 // REQUIRES: long
 // P03.25 (ADR-0025, CLAUDE.md lessons): the unit analysis stays near-linear:
-// 10,000 instances of one generic function with 10,000 different units. The input is generated (Inputs/gen-units-stress.py) and checked under a
-// time limit; nothing nests deeper than the parser allows and no walk is
+// 10,000 instances of one generic function with 10,000 different units. The
+// input is generated (Inputs/gen-units-stress.py) and checked under a
+// hang guard (`timeout`; the time is judged by the near-linear check); nothing
+// nests deeper than the parser allows and no walk is
 // recursive over the size of the input.
 // RUN: %python %S/Inputs/gen-units-stress.py inst 10000 > %t.inst.gopp
-// RUN: timeout 20 %gopp check %t.inst.gopp
+// RUN: timeout 240 %gopp check %t.inst.gopp
 // The timing check is units-stress-inst-lin.long.test.

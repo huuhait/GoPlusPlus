@@ -1,0 +1,3 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --shard 2/3
+// Shard 3 of 3 of core-opt-matrix.long.test: see there.

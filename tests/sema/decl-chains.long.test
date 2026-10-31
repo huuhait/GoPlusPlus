@@ -3,14 +3,12 @@
 // (a copy and a Clone() of the last), the same chain naming each type twice
 // and a chain of 50000 generic types; a ring of 30000 types under a slice
 // (and the 40- and 5-slice rings); and the invalid rings at 30000 (one error
-// each). Each checks without a crash and in near-linear time (`timeout`,
-// also in the ASan build).
-// RUN: %python %S/Inputs/gen-decl-stress.py chains 200000 > %t.c.gopp
-// RUN: timeout 60 %gopp check -check-j=1 --check-error-limit=0 %t.c.gopp
-// RUN: %python %S/Inputs/gen-decl-stress.py rings 30000 > %t.r.gopp
-// RUN: timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.r.gopp
-// RUN: %python %S/Inputs/gen-decl-stress.py invalid 30000 > %t.i.gopp
-// RUN: not timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.i.gopp > %t.i.out 2>&1
+// each). Each checks without a crash and in near-linear time
+// (Inputs/check-linear.py: N/16 and N, N at most 48 times the CPU time; a
+// quadratic check takes 256 times, also in the ASan build).
+// RUN: %python %S/Inputs/check-linear.py --label decl-chains --out %t.c.lin1 --n 200000 --gen "%S/Inputs/gen-decl-stress.py chains {n}" -- %gopp check -check-j=1 --check-error-limit=0 {file}
+// RUN: %python %S/Inputs/check-linear.py --label decl-chains-2 --out %t.r.lin2 --n 30000 --gen "%S/Inputs/gen-decl-stress.py rings {n}" -- %gopp check -check-j=1 --check-error-limit=0 {file}
+// RUN: %python %S/Inputs/check-linear.py --label decl-chains-3 --out %t.i.lin3 --n 30000 --gen "%S/Inputs/gen-decl-stress.py invalid {n}" --status 1 --output %t.i.out -- %gopp check -check-j=1 --check-error-limit=0 {file}
 // RUN: FileCheck --implicit-check-not=error %s < %t.i.out
 // CHECK-DAG: :30003:6: error[E0139]: invalid recursive type M0
 // CHECK-DAG: :3:6: error[E0139]: invalid recursive type L0

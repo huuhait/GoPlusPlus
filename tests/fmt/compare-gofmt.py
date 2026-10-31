@@ -23,6 +23,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import gopp_batch  # noqa: E402
 import procslots  # noqa: E402
 
 
@@ -35,14 +36,22 @@ def comment_free(text):
     return [l for l in text.split(b"\n") if l.strip() and not l.lstrip().startswith(b"//")]
 
 
-def classify(gopp, path):
-    src = open(path, "rb").read()
+def classify(gopp, paths):
+    """The class of each file of paths; `gopp fmt` runs in one batch over
+    the files gofmt accepts (tests/gopp_batch.py)."""
     # By path, not stdin: gofmt accepts an empty text on stdin but rejects an
     # empty file, like `gopp fmt`.
-    g = run(["gofmt", path])
+    gofmt = {p: run(["gofmt", p]) for p in paths}
+    ok = [p for p in paths if gofmt[p].returncode == 0]
+    fmt = gopp_batch.run([gopp, "fmt", "-batch", *ok], ok,
+                         lambda p: run([gopp, "fmt", "-"], open(p, "rb").read())) if ok else {}
+    return [classify_one(gofmt[p], fmt.get(p)) for p in paths]
+
+
+def classify_one(g, o):
+    """g: gofmt of the file, o: `gopp fmt -` of its bytes (None if g failed)."""
     if g.returncode != 0:
         return "skipped"
-    o = run([gopp, "fmt", "-"], src)
     if o.returncode != 0:
         return "go++-syntax"
     if o.stdout == g.stdout:
@@ -93,14 +102,17 @@ def main():
     # --shard K/N: the files whose place in the sorted list is K modulo N.
     files = files[shard[0] :: shard[1]]
     counts = {}
-    # Threads suit a small set; a large one (the standard library) needs processes,
-    # because the Python work per file runs under one interpreter lock.
-    pool = concurrent.futures.ProcessPoolExecutor if len(files) > 1000 else concurrent.futures.ThreadPoolExecutor
+    # Threads suit a small set; a large one (the standard library, also one
+    # shard of it: about 920 files) needs processes, because the Python work
+    # per file runs under one interpreter lock.
+    pool = concurrent.futures.ProcessPoolExecutor if len(files) > 500 else concurrent.futures.ThreadPoolExecutor
+    batches = gopp_batch.chunks(files, jobs)
     with pool(max_workers=jobs) as ex:
-        for f, c in zip(files, ex.map(functools.partial(classify, gopp), files, chunksize=16)):
-            counts[c] = counts.get(c, 0) + 1
-            if c in ("other", "fixed-point", "go++-syntax") or (show and c != "identical"):
-                print("%s: %s" % (c, f))
+        for fs, cs in zip(batches, ex.map(functools.partial(classify, gopp), batches)):
+            for f, c in zip(fs, cs):
+                counts[c] = counts.get(c, 0) + 1
+                if c in ("other", "fixed-point", "go++-syntax") or (show and c != "identical"):
+                    print("%s: %s" % (c, f))
     print("compared %d files:" % len(files))
     for c in ("identical", "doc-comments", "fixed-point", "go++-syntax", "skipped", "other"):
         print("  %-13s %d" % (c, counts.get(c, 0)))

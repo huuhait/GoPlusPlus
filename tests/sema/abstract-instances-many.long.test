@@ -1,13 +1,9 @@
 // REQUIRES: long
 // P03.26 (R11): n methods x n abstract instances at n = 1000, 2000 and 4000
-// (0.03, 0.04 and 0.07 s; 2.5 s and 2.7 GB before at 4000): a limit of 5 s
-// fails a quadratic walk.
-// RUN: %python %S/Inputs/gen-abstract-instances.py 1000 ptr > %t.1.gopp
-// RUN: timeout 5 %gopp check %t.1.gopp
-// RUN: %python %S/Inputs/gen-abstract-instances.py 2000 ptr > %t.2.gopp
-// RUN: timeout 5 %gopp check %t.2.gopp
-// RUN: %python %S/Inputs/gen-abstract-instances.py 4000 ptr > %t.4.gopp
-// RUN: timeout 5 %gopp check %t.4.gopp
-// RUN: %python %S/Inputs/gen-abstract-instances.py 4000 value > %t.v.gopp
-// RUN: not timeout 5 %gopp check --check-error-limit=0 %t.v.gopp 2>&1 | grep -c 'error\[E0389\]' | FileCheck %s
-// CHECK: 8000
+// (0.03, 0.04 and 0.07 s; 2.5 s and 2.7 GB before at 4000). Checked at 2000
+// and 32000 (Inputs/check-linear.py: at most 48 times the CPU time; a
+// quadratic walk takes 256 times).
+// RUN: %python %S/Inputs/check-linear.py --label abstract-instances-many --out %t.ptr --n 32000 --gen "%S/Inputs/gen-abstract-instances.py {n} ptr" -- %gopp check {file}
+// RUN: %python %S/Inputs/check-linear.py --label abstract-instances-many-value --out %t.value --n 32000 --gen "%S/Inputs/gen-abstract-instances.py {n} value" --status 1 --output %t.value.out -- %gopp check --check-error-limit=0 {file}
+// RUN: cat %t.value.out | grep -c 'error\[E0389\]' | FileCheck %s
+// CHECK: 64000

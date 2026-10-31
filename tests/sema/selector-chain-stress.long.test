@@ -1,16 +1,15 @@
 // REQUIRES: long
 // P03.26: a selector chain of 100000 selectors is checked with no recursion
 // per selector (the stack of an ASan build held about 600) and in linear time
-// (no step walks the chain again): `%{timeout10}` (10 s, 50 s in a
-// sanitizer build) fails a quadratic walk. Every
+// (no step walks the chain again): Inputs/check-linear.py (6250 and 100000
+// selectors, at most 48 times the CPU time) fails a quadratic walk. Every
 // form of use (13 statements: write, increment, calls with both receiver
 // kinds, address, closure, defer, go, if, composite literal, func-valued
 // field), checked with one and with eight body threads and by `gopp vet`
 // (whose walks have an explicit stack too). The default suite has the
 // chains of selector-chain-errors.test (4000) and the unit test
 // DeepChain.EveryPostfixForm (30000 links of every postfix form).
-// RUN: %python %S/Inputs/gen-selector-chain.py chain 100000 > %t.gopp
-// RUN: %{timeout10} %gopp check -check-j=1 %t.gopp
-// RUN: %{timeout10} %gopp check -check-j=8 %t.gopp
-// RUN: %{timeout10} %gopp vet %t.gopp
+// RUN: %python %S/Inputs/check-linear.py --label selector-chain-stress --out %t.lin1 --n 100000 --gen "%S/Inputs/gen-selector-chain.py chain {n}" -- %gopp check -check-j=1 {file}
+// RUN: %python %S/Inputs/check-linear.py --label selector-chain-stress-2 --out %t.lin2 --n 100000 --gen "%S/Inputs/gen-selector-chain.py chain {n}" -- %gopp check -check-j=8 {file}
+// RUN: %python %S/Inputs/check-linear.py --label selector-chain-stress-3 --out %t.lin3 --n 100000 --gen "%S/Inputs/gen-selector-chain.py chain {n}" -- %gopp vet {file}
 package main

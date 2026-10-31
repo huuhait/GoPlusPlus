@@ -365,6 +365,14 @@ Place Body::followFields(Place Base, S::Type *BaseTy, ArrayRef<int> Path,
       unsupported(N, "this field access");
       return Place();
     }
+    // The base may be the stand-in of an operand refused before (errorValue:
+    // `(a + b).x` with an operator method, P04.23), which has no fields; that
+    // refusal is the error.
+    if (!Base.Ty || !Base.Ty->fieldType(unsigned(Idx), ctx())) {
+      if (!L.Failed)
+        unsupported(N, "this field access");
+      return Place();
+    }
     Base = FB.field(std::move(Base), Idx);
     Cur = ST->Fields[Idx]->Ty;
   }

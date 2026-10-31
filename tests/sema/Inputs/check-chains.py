@@ -6,7 +6,8 @@ usage: check-chains.py <gopp> <work dir> <suite>
 The suites `forms-go` and `forms-gopp` run every form at the depth the parser
 allows (about 1000 levels), one function each, in Go mode (one program per
 form) and in Go++ mode (all forms in one program): no
-error, no crash, under a time limit. The suite `many-<case>,<case>` runs deep forms in 150 functions each,
+error, no crash, within a limit on CPU time (not wall time: a busy machine
+does not move it). The suite `many-<case>,<case>` runs deep forms in 150 functions each,
 which a check that costs more than a constant per link (or per link and
 chain length) would not finish. The suite `bad` checks the error side: one
 error per function with the right text (the parser's own limit for the
@@ -16,6 +17,8 @@ selector is not counted by `gopp check`, ParseOptions::UncountedSelectors).
 import os
 import subprocess
 import sys
+import tempfile
+import threading
 
 gopp, work, suite = sys.argv[1], sys.argv[2], sys.argv[3]
 here = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +26,22 @@ gen = os.path.join(here, "gen-chain-stress.py")
 stubs = os.path.join(here, "chainstub")
 os.makedirs(work, exist_ok=True)
 failed = []
+
+
+def run_cpu(cmd):
+    """(exit status, CPU seconds of that process, output, hung): the limit
+    of a case is on CPU time, which other processes on a busy machine do not
+    add to; 240 s of wall time only guards against a hang."""
+    with tempfile.TemporaryFile() as out:
+        p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
+        hung = []
+        guard = threading.Timer(240, lambda: (hung.append(1), p.kill()))
+        guard.start()
+        _, status, ru = os.wait4(p.pid, 0)
+        guard.cancel()
+        out.seek(0)
+        text = out.read().decode(errors="replace")
+    return os.waitstatus_to_exitcode(status), ru.ru_utime + ru.ru_stime, text, bool(hung)
 
 
 def run(case, depth, count, mode, expect, limit):
@@ -33,16 +52,16 @@ def run(case, depth, count, mode, expect, limit):
     with open(path, "w") as f:
         args = [case] if many else [case, str(depth), str(count)]
         subprocess.run([sys.executable, gen] + args, stdout=f, check=True)
-    cmd = ["timeout", str(limit), gopp, "check", "--check-error-limit=0", "-check-j=1",
-           "--test-stubs=" + stubs]
+    cmd = [gopp, "check", "--check-error-limit=0", "-check-j=1", "--test-stubs=" + stubs]
     if mode == "go":
         cmd.append("--go")
-    r = subprocess.run(cmd + [path], capture_output=True, text=True)
-    out = r.stdout + r.stderr
+    code, cpu, out, hung = run_cpu(cmd + [path])
     errs = [l for l in out.splitlines() if "error[" in l]
     tag = "%s %s" % (mode, case) if many else "%s %s depth=%d count=%d" % (mode, case, depth, count)
-    if r.returncode in (124, -9) or r.returncode < 0 or "Sanitizer" in out:
-        failed.append(tag + ": crashed or timed out (%d)\n%s" % (r.returncode, out[:600]))
+    if hung or code < 0 or "Sanitizer" in out:
+        failed.append(tag + ": crashed or hung (%d)\n%s" % (code, out[:600]))
+    elif cpu > limit:
+        failed.append(tag + ": %.2f s of CPU, over the limit of %d s" % (cpu, limit))
     elif expect is None:
         if errs:
             failed.append(tag + ": unexpected errors\n" + "\n".join(errs[:3])[:600])

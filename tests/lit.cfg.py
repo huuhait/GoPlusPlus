@@ -99,11 +99,19 @@ if (shutil.which("docker") or shutil.which("podman")) and os.environ.get(
         ("%debian_image", os.environ["GOPP_TEST_DEBIAN_IMAGE"])
     )
 
-# A time limit that fails a walk that is not linear: 10 s, five times that in
-# a sanitizer build, which is about five times slower (a chain of 100000
-# selectors: 1.0 s, 5.3 s under ASan).
+# A time limit for the default suite's stress inputs: 10 s, five times that in
+# a sanitizer build, which is about five times slower. The long suite judges
+# time by CPU-time ratios (tests/sema/Inputs/check-linear.py), never by it.
 config.substitutions.append(
     ("%{timeout10}", "timeout %d" % (50 if config.gopp_sanitizer.strip() else 10)))
+# A ceiling on the CPU time of one gopp run, in units of `gopp version`
+# (tests/cpu-limit.py): `%{cpu_limit} DEFAULT SANITIZER [--status K] -- GOPP
+# ARGS`, the second number in a sanitizer build. For size runs whose input
+# cannot grow enough for a ratio check.
+config.substitutions.append(
+    ("%{cpu_limit}", "%s %s --sanitizer=%d" % (
+        sys.executable, os.path.join(config.gopp_source_dir, "tests", "cpu-limit.py"),
+        1 if config.gopp_sanitizer.strip() else 0)))
 
 # The Go tool chain, for the tests that compare `gopp fmt` with gofmt and run it
 # over the standard library (they also need "long").

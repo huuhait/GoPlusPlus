@@ -6,8 +6,14 @@
 // check does not repeat the walk of the chain for every use (1600 levels took
 // 11 s before). Measured: 400 levels 0.03 s, 800 0.06 s, 1600 0.2 s, 3200
 // 0.8 s: the overload set of a level grows with the level, so the picks are
-// quadratic by nature.
+// quadratic by nature: Inputs/check-linear.py --power 2 (N/8 and N, N at most
+// 192 times the CPU time; a cubic check takes 512 times: linear-control-3).
+// RUN: %python %S/Inputs/check-linear.py --label ops-stress-extover --out %t.lin1 --n 3200 --power 2 --scale 8 --gen "%S/Inputs/gen-ops-stress.py extover {n}" -- %gopp check -check-j=1 --check-error-limit=0 {file}
+// The same program with eight body threads must give the same result; its
+// growth is judged by the run above with one thread: with eight, the threads
+// that wait burn CPU time (default build: 1.4 s of wall time, 9.9 s of CPU
+// for 0.7 s with one thread), so its CPU time says nothing about the work.
+// `timeout` is a hang guard only, until P03.28 brings its ratio check back.
 // RUN: %python %S/Inputs/gen-ops-stress.py extover 3200 > %t.gopp
-// RUN: timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.gopp
-// RUN: timeout 30 %gopp check -check-j=8 --check-error-limit=0 %t.gopp
+// RUN: timeout 240 %gopp check -check-j=8 --check-error-limit=0 %t.gopp
 package main

@@ -140,10 +140,15 @@ int runLLD(llvm::ArrayRef<std::string> Argv);
 
 /// Links with the LLD bundled in the program Self (`Self lld ...` runs as a
 /// subprocess, so a linker crash or exit cannot take the compiler with it).
+/// The linker writes to this process's standard output and error, or, given
+/// Out and Err (`gopp build -batch`: the streams of one build), its output is
+/// appended to them when it ends.
 llvm::Error linkExecutable(llvm::StringRef Self, const TargetSpec &T,
                            const LinkInputs &In,
                            llvm::ArrayRef<std::string> Objects,
-                           llvm::StringRef Output);
+                           llvm::StringRef Output,
+                           llvm::raw_ostream *Out = nullptr,
+                           llvm::raw_ostream *Err = nullptr);
 
 } // namespace gopp
 

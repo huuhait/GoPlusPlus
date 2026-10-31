@@ -1,0 +1,15 @@
+// tests/cpu-limit.py (`%{cpu_limit}`), the CPU-time ceiling of the size runs
+// of the long suite, in units of the `version` run of the same program, on
+// both sides. The program here (Inputs/burn.py) burns its argument in
+// seconds of CPU; its `version` only starts. A run that burns 0.05 s passes a
+// ceiling of 15 (about 3.5 alone), the same run ten times slower fails it; the
+// exit status must be the expected one.
+// RUN: printf '#!/bin/sh\nexec %python %S/Inputs/burn.py "$@"\n' > %t.burn
+// RUN: chmod +x %t.burn
+// RUN: %{cpu_limit} 15 15 -- %t.burn 0.05
+// RUN: not %{cpu_limit} 15 15 -- %t.burn 0.5 2> %t.err
+// RUN: FileCheck %s --check-prefix=SLOW < %t.err
+// SLOW: cpu-limit: {{[0-9.]+}} times the CPU time of `gopp version`, over the ceiling of 15.0
+// RUN: %{cpu_limit} 15 15 --status 3 -- %t.burn 0 3
+// RUN: not %{cpu_limit} 15 15 -- %t.burn 0 3 2>&1 | FileCheck %s --check-prefix=STATUS
+// STATUS: cpu-limit: exit status 3, expected 0

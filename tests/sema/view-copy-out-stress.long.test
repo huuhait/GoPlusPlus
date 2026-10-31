@@ -2,9 +2,10 @@
 // P03.21 review (R9, R11): view-copy-out-stress.test at 30000 per shape
 // (90000 struct types, 30000 E0373 errors): 1.6 s in the default build; the
 // walk that went down the chain again for each query took 6 s at 16000 and
-// grows four times with each doubling. Near-linear, also in the ASan build.
-// RUN: %python %S/Inputs/gen-copy-out-stress.py 30000 > %t.gopp
-// RUN: not timeout 30 %gopp check -check-j=1 --check-error-limit=0 %t.gopp > %t.out 2>&1
+// grows four times with each doubling. Near-linear, also in the ASan build
+// (Inputs/check-linear.py: N/16 and N, N at most 48 times the CPU time; a
+// quadratic check takes 256 times).
+// RUN: %python %S/Inputs/check-linear.py --label view-copy-out-stress --out %t.lin1 --n 30000 --gen "%S/Inputs/gen-copy-out-stress.py {n}" --status 1 --output %t.out -- %gopp check -check-j=1 --check-error-limit=0 {file}
 // RUN: grep -c "error\[E0373\]" %t.out | FileCheck --check-prefix=N %s
 // RUN: grep -c "error\[" %t.out | FileCheck --check-prefix=N %s
 // N: {{^30000$}}

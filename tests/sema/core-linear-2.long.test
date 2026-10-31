@@ -8,13 +8,13 @@
 // RUN: %python %S/Inputs/check-units-linear.py --gopp %gopp --gen %S/Inputs/gen-core-stress.py --out %t.d --max-ratio 8 keyed 10000
 // A chain three times longer than the one that overflowed the checker's
 // stack in the normal build (16000) is checked without a crash.
-// RUN: %python %S/Inputs/gen-core-stress.py initchain 64000 > %t.chain.gopp
-// RUN: %{timeout10} %gopp check -check-j=1 %t.chain.gopp
+// RUN: %python %S/Inputs/check-linear.py --label core-linear-2 --out %t.chain.lin1 --n 64000 --gen "%S/Inputs/gen-core-stress.py initchain {n}" -- %gopp check -check-j=1 {file}
 // A ring of constants of 20000 links, and a ring of 32000 variables, are
-// reported once, without a crash.
-// RUN: %python %S/Inputs/gen-core-stress.py constcycle 20000 > %t.cring.gopp
-// RUN: not %{timeout10} %gopp check -check-j=1 %t.cring.gopp 2>&1 | FileCheck --check-prefix=CONST %s
+// reported once, without a crash. The three are timed by
+// Inputs/check-linear.py (N/16 and N, at most 48 times the CPU time).
+// RUN: %python %S/Inputs/check-linear.py --label core-linear-2-2 --out %t.cring.lin2 --n 20000 --gen "%S/Inputs/gen-core-stress.py constcycle {n}" --status 1 --output %t.cring.lin2.out -- %gopp check -check-j=1 {file}
+// RUN: cat %t.cring.lin2.out | FileCheck --check-prefix=CONST %s
 // CONST: error[E0142]: initialization cycle for c0
-// RUN: %python %S/Inputs/gen-core-stress.py cycle 32000 > %t.ring.gopp
-// RUN: not %{timeout10} %gopp check -check-j=1 %t.ring.gopp 2>&1 | FileCheck %s
+// RUN: %python %S/Inputs/check-linear.py --label core-linear-2-3 --out %t.ring.lin3 --n 32000 --gen "%S/Inputs/gen-core-stress.py cycle {n}" --status 1 --output %t.ring.lin3.out -- %gopp check -check-j=1 {file}
+// RUN: cat %t.ring.lin3.out | FileCheck %s
 // CHECK: error[E0142]: initialization cycle for v0

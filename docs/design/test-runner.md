@@ -151,6 +151,23 @@ These are the known differences. None changes what the run tests check (stdout, 
 - A link error is a `load-failed` result when the program runs, where a real build fails to link (`compile-failed` in `runlib.py`'s real mode).
 - JIT code is not PIE-loaded by the system loader: a test about how the binary is linked or loaded must be real.
 
+## Batches of `gopp parse`, `fmt` and `build` (`-batch`)
+
+The fast runner is for programs the tests run. The scripts that start one `gopp` per file or per program for other reasons (`tests/fmt/check-corpus.py` and `compare-gofmt.py` over the Go tree, `tests/run/Inputs/run-opt-matrix.py`, `check-ir-flags.py`, the real half of `compare-runner.py`, `run-panics.py` with a build command) give `gopp` many runs at once instead: in a sanitizer build most of their time was process start and end. `-batch` is hidden and for these scripts only.
+
+- `gopp parse -batch FILE...` and `gopp fmt -batch FILE...`: one run per file, each reading the file as `gopp parse -` / `gopp fmt -` reads standard input (the same buffer name, so the same bytes out).
+- `gopp build [options] -batch FILE` (`-` is standard input): one build per JSON line, `{"id", "inputs", "o", "link_obj", "test_intrinsics"}` (`id` and `inputs` required, `link_obj` adds to `-link-obj`); every other option comes from the command line and is the same for all builds (debug info, `-opt`, `-pipeline`, `-target` included). Each build is `buildOne`, the function a plain `gopp build` calls, and a bad line builds nothing.
+
+Each run prints one record on standard output as it ends, a header line and then the bytes the run wrote, exactly what the run alone exits with and prints:
+
+```
+gopp-batch <exit status> <stdout bytes> <stderr bytes> <name>\n<stdout><stderr>
+```
+
+The batch process itself exits 0 when every run has its record. `tests/gopp_batch.py` reads the records and trusts a batch only when it is clean: every record there, in order, nothing else on standard output or standard error, exit status 0, and no longer than `batch_timeout` (60 s and 5 s a run). Otherwise (a crash, a sanitizer report, a fatal error, a hang) every run of that batch is made again in a process of its own, the way the script made it before, so each result and the name of the one that failed are what they were without batches (`tests/fmt/batch.test`, `tests/run/build-batch.test`, with a `gopp` whose batches die or hang).
+
+Linking stays in `gopp lld`, one subprocess per link as in a plain build (D4.9): its standard output and error go into the build's record. LLD in the batch process itself was tried: from the second link on it wrote different executables, so a batch saves the compiler's start, not the linker's.
+
 ## Lit integration
 
 `tests/run` tests call the run scripts with `--src` instead of building a binary first:

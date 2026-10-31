@@ -1,7 +1,8 @@
 // REQUIRES: long
 // P03.22 Done-when size for the hierarchy checks: the `clone` shape of
 // extends-stress.test at 200000 types, one test per shape so lit runs the
-// shapes in parallel (the ASan build must stay under 60 s for all of them).
-// RUN: %python %S/Inputs/gen-extends-stress.py clone 200000 > %t.gopp
-// RUN: timeout 60 %gopp check -check-j=1 %t.gopp
+// shapes in parallel. Near-linear:
+// Inputs/check-linear.py: N/16 and N, N at most 48 times the CPU time; a
+// quadratic check takes 256 times.
+// RUN: %python %S/Inputs/check-linear.py --label extends-stress-clone --out %t.lin1 --n 200000 --gen "%S/Inputs/gen-extends-stress.py clone {n}" -- %gopp check -check-j=1 {file}
 package main

@@ -1,7 +1,7 @@
 // REQUIRES: long
 // P03.22: a field-name clash found at the end of a 200000-type chain.
-// RUN: %python %S/Inputs/gen-extends-stress.py clash 200000 > %t.gopp
-// RUN: not timeout 60 %gopp check -check-j=1 %t.gopp 2>&1 | FileCheck %s
+// RUN: %python %S/Inputs/check-linear.py --label extends-stress-clash --out %t.lin1 --n 200000 --gen "%S/Inputs/gen-extends-stress.py clash {n}" --status 1 --output %t.lin1.out -- %gopp check -check-j=1 {file}
+// RUN: cat %t.lin1.out | FileCheck %s
 // CHECK: :200003:{{[0-9]+}}: error[E{{[0-9]+}}]: field x of C200000 has the name of the field x of its ancestor C0
 // CHECK-NOT: error
 package main

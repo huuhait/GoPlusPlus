@@ -24,9 +24,12 @@ The corpus (under --root, the tests/run directory):
     generator's, and it must exit with status 0 (as in run-cabi.py).
 With names, only the programs of the corpus whose name contains one of them
 (e.g. `diff/int_`); the --cabi programs are always run. --no-corpus: only
-the --cabi programs.
+the --cabi programs. --shard K/N: only the corpus programs whose place in the
+sorted corpus is K modulo N, every configuration of each (the long tests run
+the corpus in shards side by side). --list prints the builds and stops.
 
-Each program is built once per configuration and run (stdin empty, 60 s limit,
+Each program is built once per configuration (one `gopp build -batch` builds
+a batch of programs: tests/gopp_batch.py) and run (stdin empty, 60 s limit,
 under qemu-aarch64 for --target arm64). The configurations:
   fastisel       -pipeline=fastisel: plain O0, no IR passes (the baseline;
                  FastISel on both targets)
@@ -55,6 +58,7 @@ The compile times of the configurations: bench/pipelines/measure-opt.py.
 """
 import argparse
 import concurrent.futures
+import json
 import os
 import re
 import shutil
@@ -64,6 +68,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import gopp_batch  # noqa: E402
 import procslots  # noqa: E402
 
 CONFIGS = {
@@ -249,21 +254,52 @@ def verify_self_test(gopp):
     print("verify-dwarf self-test: a good object passes, a broken one fails")
 
 
-def one(env, prog, cfg, tmp):
-    safe = prog.name.replace("/", "_")
-    exe = os.path.join(tmp, "%s.%s" % (safe, cfg))
-    with procslots.slot():
-        b = subprocess.run(build_cmd(env, prog, cfg, exe), capture_output=True, timeout=60)
-    if b.returncode != 0:
-        return (prog.name, cfg, "build failed: " + b.stderr.decode(errors="replace")[:300])
-    if env.verify_dwarf:
-        why = dwarf_problems(exe)
-        if why:
-            os.unlink(exe)
-            return (prog.name, cfg, "llvm-dwarfdump --verify failed: " + why)
-    res = run_exe(env, exe)
-    os.unlink(exe)
-    return (prog.name, cfg, res)
+def exe_path(prog, cfg, tmp):
+    return os.path.join(tmp, "%s.%s" % (prog.name.replace("/", "_"), cfg))
+
+
+def build_batch(env, progs, cfg, tmp):
+    """{name: CompletedProcess-like} of building each program of progs in
+    configuration cfg: one `gopp build -batch` for all of them
+    (tests/gopp_batch.py), each build exactly the build_cmd one."""
+    jobs = "".join(json.dumps({
+        "id": p.name, "inputs": p.files, "o": exe_path(p, cfg, tmp),
+        "link_obj": p.link_objs,
+        "test_intrinsics": any(uses_intrinsics(f) for f in p.files)}) + "\n"
+        for p in progs)
+    by_name = {p.name: p for p in progs}
+
+    def single(name):
+        p = by_name[name]
+        with procslots.slot():
+            return subprocess.run(build_cmd(env, p, cfg, exe_path(p, cfg, tmp)),
+                                  capture_output=True, timeout=60)
+
+    cmd = [env.gopp, "build"] + env.build_flags + CONFIGS[cfg] + ["-batch", "-"]
+    return gopp_batch.run(cmd, [p.name for p in progs], single, stdin=jobs.encode())
+
+
+def some(env, progs, cfg, tmp):
+    """[(name, cfg, result)] of progs in configuration cfg: built in one
+    batch, then each run."""
+    built = build_batch(env, progs, cfg, tmp)
+    out = []
+    for prog in progs:
+        b = built[prog.name]
+        if b.returncode != 0:
+            out.append((prog.name, cfg, "build failed: " + b.stderr.decode(errors="replace")[:300]))
+            continue
+        exe = exe_path(prog, cfg, tmp)
+        if env.verify_dwarf:
+            why = dwarf_problems(exe)
+            if why:
+                os.unlink(exe)
+                out.append((prog.name, cfg, "llvm-dwarfdump --verify failed: " + why))
+                continue
+        res = run_exe(env, exe)
+        os.unlink(exe)
+        out.append((prog.name, cfg, res))
+    return out
 
 
 def golden_text(env, base):
@@ -350,6 +386,12 @@ def main():
                          "broken object and accepts a good one")
     ap.add_argument("--no-corpus", action="store_true",
                     help="run only the --cabi programs")
+    ap.add_argument("--shard", default=None, metavar="K/N",
+                    help="only the corpus programs whose place in the sorted "
+                         "corpus is K modulo N (every configuration of each)")
+    ap.add_argument("--list", action="store_true",
+                    help="print the builds this run would make, one `TARGET "
+                         "CONFIGURATION PROGRAM` line each, and stop")
     ap.add_argument("names", nargs="*")
     a = ap.parse_args()
     if a.verify_dwarf_self_test:
@@ -379,15 +421,30 @@ def main():
         progs = [] if a.no_corpus else corpus(a.root)
         if a.names:
             progs = [p for p in progs if any(n in p.name for n in a.names)]
+        if a.shard:
+            # The corpus is sorted (corpus()), so the shards of one N split it
+            # into disjoint parts that together are all of it
+            # (core-opt-matrix-shards.test checks the long tests' shards).
+            k, n = map(int, a.shard.split("/"))
+            progs = progs[k::n]
+        if a.list:
+            names = [p.name for p in progs] + ["cabi/seed" + c.split(":")[0] for c in a.cabi]
+            for name in names:
+                for c in cfgs:
+                    print("%s %s %s" % (a.target, c, name))
+            return
         progs += cabi_programs(env, a.root, a.cabi, tmp)
         if not progs:
             sys.exit("no program matches")
         results = {p.name: {} for p in progs}
+        # Each configuration builds its programs in batches (one `gopp
+        # build` per batch), and each batch runs its programs.
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-            futs = [ex.submit(one, env, p, c, tmp) for p in progs for c in cfgs]
+            futs = [ex.submit(some, env, ps, c, tmp)
+                    for c in cfgs for ps in gopp_batch.chunks(progs, a.jobs)]
             for f in concurrent.futures.as_completed(futs):
-                name, cfg, res = f.result()
-                results[name][cfg] = res
+                for name, cfg, res in f.result():
+                    results[name][cfg] = res
         problems = []  # the C ABI programs' expected output is in tmp
         for p in progs:
             problems += check(env, p, results[p.name])

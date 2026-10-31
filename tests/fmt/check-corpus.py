@@ -22,8 +22,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import gopp_batch  # noqa: E402
 import procslots  # noqa: E402
 
 POS = re.compile(r"<\d+:\d+, \d+:\d+>")
@@ -36,11 +38,19 @@ def run(args, data=None):
         return subprocess.run(args, input=data, capture_output=True)
 
 
-def dump(gopp, extra, data):
+def batch(gopp, args, paths):
+    """{path: result} of `gopp ARGS -` on the bytes of each file, from
+    `gopp ARGS -batch PATHS` (tests/gopp_batch.py)."""
+    if not paths:
+        return {}
+    return gopp_batch.run([gopp, *args, "-batch", *paths], paths,
+                          lambda p: run([gopp, *args, "-"], open(p, "rb").read()))
+
+
+def dump(r):
     """The normalized syntax tree and the comments of one source, from one
     `gopp parse` run (the token dump comes first, the tree from its `File`
     line on); None if it does not parse."""
-    r = run([gopp, "parse", *extra, "-dump-tokens", "-dump-comments", "-dump-ast", "-"], data)
     if r.returncode != 0:
         return None
     text = r.stdout.decode("utf-8", "replace")
@@ -102,10 +112,13 @@ def normalize(text):
     return "\n".join(out)
 
 
+COMMENT = re.compile(r"\d+:\d+ comment (.*)$")
+
+
 def comments(tokens):
     out = []
     for line in tokens.splitlines():
-        m = re.match(r"\d+:\d+ comment (.*)$", line)
+        m = COMMENT.match(line) if " comment " in line else None
         if m:
             text = m.group(1)
             if len(text) >= 2 and text[0] == "'" and text[-1] == "'":
@@ -114,23 +127,48 @@ def comments(tokens):
     return out
 
 
-def check(gopp, path):
-    extra = ["-language-rules=false"]
-    src = open(path, "rb").read()
-    d0 = dump(gopp, extra, src)
+PARSE = ["parse", "-language-rules=false", "-dump-tokens", "-dump-comments", "-dump-ast"]
+
+
+def check(gopp, paths):
+    """[(status, why)] of each file of paths. Each step is one batch over the
+    files that need it; the checks and their order are those of one file."""
+    d0 = {p: dump(r) for p, r in batch(gopp, PARSE, paths).items()}
+    live = [p for p in paths if d0[p] is not None]
+    f1 = batch(gopp, ["fmt", "-no-sort-imports"], live)
+    # Idempotence, with import sorting on.
+    s1 = batch(gopp, ["fmt"], live)
+    with tempfile.TemporaryDirectory() as tmp:
+        again = {}  # source path -> (output of f1, output of s1) as files
+        for i, p in enumerate(live):
+            again[p] = (os.path.join(tmp, "%d.f1" % i), os.path.join(tmp, "%d.s1" % i))
+            for f, r in zip(again[p], (f1[p], s1[p])):
+                if r.returncode == 0:
+                    with open(f, "wb") as out:
+                        out.write(r.stdout)
+        d1 = batch(gopp, PARSE, [again[p][0] for p in live if f1[p].returncode == 0])
+        s2 = batch(gopp, ["fmt"], [again[p][1] for p in live if s1[p].returncode == 0])
+    out = []
+    for p in paths:
+        f1p, s1p = again.get(p, (None, None))
+        out.append(verdict(d0[p], f1.get(p), d1.get(f1p), s1.get(p), s2.get(s1p)))
+    return out
+
+
+def verdict(d0, f1, d1, s1, s2):
+    """The checks of one file, in order: d0 the dump of the source, f1 `fmt
+    -no-sort-imports` of it and d1 that output's parse; s1 `fmt` of the
+    source and s2 `fmt` of s1's output. A step after one that failed is
+    None."""
     if d0 is None:
         return "skip", ""
-    f1 = run([gopp, "fmt", "-no-sort-imports", "-"], src)
     if f1.returncode != 0:
         return "fail", "fmt failed: " + f1.stderr.decode("utf-8", "replace")[:300]
-    d1 = dump(gopp, extra, f1.stdout)
+    d1 = dump(d1)
     if d1 is None:
         return "fail", "output does not parse"
     if d0[0] != d1[0]:
         return "fail", "syntax tree changed"
-    # Idempotence, with import sorting on.
-    s1 = run([gopp, "fmt", "-"], src)
-    s2 = run([gopp, "fmt", "-"], s1.stdout)
     if s1.returncode != 0 or s2.returncode != 0 or s2.stdout != s1.stdout:
         return "fail", "not idempotent"
     if d0[1] != d1[1]:
@@ -184,14 +222,18 @@ def main():
     # --shard K/N: the files whose place in the sorted list is K modulo N.
     files = files[shard[0] :: shard[1]]
     counts = {"ok": 0, "skip": 0, "fail": 0}
-    # Threads suit a small set; a large one (the standard library) needs processes,
-    # because the Python work per file runs under one interpreter lock.
-    pool = concurrent.futures.ProcessPoolExecutor if len(files) > 1000 else concurrent.futures.ThreadPoolExecutor
+    # Threads suit a small set; a large one (the standard library, also one
+    # shard of it: about 920 files) needs processes, because the Python work
+    # per file runs under one interpreter lock.
+    pool = concurrent.futures.ProcessPoolExecutor if len(files) > 500 else concurrent.futures.ThreadPoolExecutor
+    # The files go to gopp in batches (tests/gopp_batch.py).
+    batches = gopp_batch.chunks(files, jobs)
     with pool(max_workers=jobs) as ex:
-        for f, (status, why) in zip(files, ex.map(functools.partial(check, gopp), files, chunksize=16)):
-            counts[status] += 1
-            if status == "fail":
-                print("FAIL %s: %s" % (f, why))
+        for fs, res in zip(batches, ex.map(functools.partial(check, gopp), batches)):
+            for f, (status, why) in zip(fs, res):
+                counts[status] += 1
+                if status == "fail":
+                    print("FAIL %s: %s" % (f, why))
     print(
         "checked %d files: %d ok, %d skipped (syntax errors), %d failed"
         % (len(files), counts["ok"], counts["skip"], counts["fail"])

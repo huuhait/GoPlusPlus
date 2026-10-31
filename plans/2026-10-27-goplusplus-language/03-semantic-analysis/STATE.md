@@ -33,6 +33,8 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.24 Operator overloading (ADR-0024)
 - [x] P03.25 Units of measure (ADR-0025)
 - [x] P03.26 Leftovers from the `p03-lang` batch: selector-chain stack depth, `gcSizeof` depth cut, mono vertices for local types, views in generics
+- [ ] P03.27 Overload sets of thousands of methods: near-linear check time
+- [ ] P03.28 Idle body-check threads burn CPU (`-check-j=8` on the `extover` shape)
 
 ## Open questions
 

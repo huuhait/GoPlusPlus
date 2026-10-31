@@ -209,15 +209,24 @@ template <class Fn> double best1(Fn Run) {
   return processCpuSeconds() - T0;
 }
 
+/// The time that a run of Scale times the units may take when the run of N
+/// took T1: 3 * Scale times (linear is Scale, quadratic Scale squared). No
+/// floor: bestOfBoth makes T1 long enough to mean something.
+double nearLinearLimit(double T1, double Scale = 4) { return 3 * Scale * T1; }
+
 /// Timing (long suite only, M8): the times of Small and Big (the same work at
-/// four times the size). Reps is calibrated: it starts from the best of
+/// Scale times the size). Reps is calibrated: it starts from the best of
 /// several probe runs and doubles until Small takes at least 20 ms, so the
 /// times are far above the clock's noise. Each time is the least of five
 /// runs of Small and Big taken in turn, so a machine that gets busier or
-/// quieter during the test changes both. The times are of the process's CPU
-/// (best1), so other processes do not add to them.
+/// quieter during the test changes both. Big runs only while the pair is at
+/// or over nearLinearLimit (five times at most): a busy machine only adds
+/// time, so more runs could only lower Big, and the comparison with the
+/// limit comes out as with five runs of each; Small, which a quadratic walk
+/// needs to be too slow to pass, always gets its five. The times are of the
+/// process's CPU (best1), so other processes do not add to them.
 template <class FnA, class FnB>
-std::pair<double, double> bestOfBothOnce(FnA Small, FnB Big) {
+std::pair<double, double> bestOfBothOnce(FnA Small, FnB Big, double Scale = 4) {
   double Probe = 1e9;
   for (int I = 0; I < 5; ++I)
     Probe = std::min(Probe, best1(Small));
@@ -232,17 +241,20 @@ std::pair<double, double> bestOfBothOnce(FnA Small, FnB Big) {
   while (Many(Small) < 0.020 && Reps < (1L << 24))
     Reps *= 2;
   double A = 1e9, B = 1e9;
+  int RunsOfBig = 0;
+  auto RunBig = [&] {
+    B = std::min(B, Many(Big));
+    ++RunsOfBig;
+  };
   for (int I = 0; I < 5; ++I) {
     A = std::min(A, Many(Small));
-    B = std::min(B, Many(Big));
+    if (RunsOfBig == 0 || B >= nearLinearLimit(A, Scale))
+      RunBig();
   }
+  while (RunsOfBig < 5 && B >= nearLinearLimit(A, Scale))
+    RunBig();
   return {A, B};
 }
-
-/// The time that a run of Scale times the units may take when the run of N
-/// took T1: 3 * Scale times (linear is Scale, quadratic Scale squared). No
-/// floor: bestOfBoth makes T1 long enough to mean something.
-double nearLinearLimit(double T1, double Scale = 4) { return 3 * Scale * T1; }
 
 /// bestOfBothOnce, measured again (twice at most) while the pair is over the
 /// limit, keeping the least time of each side over all the rounds. A busy
@@ -342,11 +354,11 @@ TEST(GIRStressLong, DISABLED_TheTimingHelperFailsAQuadraticWalk) {
   // Eight times the size: linear is 8, quadratic 64, the limit 24.
   std::vector<unsigned> Small = iota(1000), Big = iota(8000);
   auto [Q1, Q8] = bestOfBothOnce([&] { walkUnits(Small, true); },
-                                 [&] { walkUnits(Big, true); });
+                                 [&] { walkUnits(Big, true); }, 8);
   EXPECT_GE(Q8, nearLinearLimit(Q1, 8))
       << "a quadratic walk passed: T(N) = " << Q1 << ", T(8N) = " << Q8;
   auto [L1, L8] = bestOfBothOnce([&] { walkUnits(Small, false); },
-                                 [&] { walkUnits(Big, false); });
+                                 [&] { walkUnits(Big, false); }, 8);
   EXPECT_LT(L8, nearLinearLimit(L1, 8)) << L1 << " s, " << L8 << " s";
 }
 
@@ -1292,7 +1304,7 @@ void expectEntryArgsTiming(unsigned N, bool Pairwise) {
     };
   };
   if (Pairwise) {
-    auto [T1, T8] = bestOfBothOnce(Lower(P1), Lower(PS));
+    auto [T1, T8] = bestOfBothOnce(Lower(P1), Lower(PS), 8);
     EXPECT_GE(T8, nearLinearLimit(T1, 8)) << T1 << " s, " << T8 << " s";
   } else {
     auto [T1, T4] = bestOfBoth(Lower(P1), Lower(PS));
@@ -1303,12 +1315,22 @@ void expectEntryArgsTiming(unsigned N, bool Pairwise) {
 TEST(GIRStressLong, DISABLED_LoweringManyEntryArguments) {
   expectEntryArgsTiming(250, false);
 }
+// The control is sized for itself: at 100 arguments one lowering of the small
+// side takes about 20 ms, the floor bestOfBothOnce calibrates to, so the five
+// rounds of the 64 times bigger side cost 8 s in the ASan build (at 250: 114
+// ms a run and 23 s), and the ratio stays as far over the limit (about 40
+// against 24 there, 41 in the default build).
 TEST(GIRStressLong, DISABLED_TheEntryArgumentTimingFailsAPairwiseEmission) {
-  expectEntryArgsTiming(250, true);
+  expectEntryArgsTiming(100, true);
 }
 
+// The control of the lowering timing checks: measured once (bestOfBothOnce;
+// bestOfBoth measures again while the pair is over the limit, which for a
+// control only looks for a pass), at eight times the size as the other
+// controls (linear 8, quadratic 64, limit 24: at four times, 16 against 12
+// left too little room on a busy machine).
 TEST(GIRStressLong, DISABLED_TheLoweringTimingCheckFailsAQuadraticProgram) {
-  Checked P1(concatSquareOfN(100)), P4(concatSquareOfN(400));
+  Checked P1(concatSquareOfN(100)), P8(concatSquareOfN(800));
   auto Lower = [](Checked &P) {
     return [&P] {
       gir::Context C;
@@ -1316,8 +1338,8 @@ TEST(GIRStressLong, DISABLED_TheLoweringTimingCheckFailsAQuadraticProgram) {
       EXPECT_NE(M, nullptr);
     };
   };
-  auto [T1, T4] = bestOfBoth(Lower(P1), Lower(P4));
-  EXPECT_GE(T4, nearLinearLimit(T1)) << T1 << " s, " << T4 << " s";
+  auto [T1, T8] = bestOfBothOnce(Lower(P1), Lower(P8), 8);
+  EXPECT_GE(T8, nearLinearLimit(T1, 8)) << T1 << " s, " << T8 << " s";
 }
 
 TEST(GIRStressLong, DISABLED_CodeGenerationOfTheCoreSubsetIsNearLinear) {

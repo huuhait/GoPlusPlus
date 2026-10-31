@@ -34,8 +34,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <deque>
 #include <fstream>
 #include <map>
@@ -1211,8 +1211,9 @@ TEST(SemaSymbolsLong, DISABLED_NearLinearOnDeepAndWideTypes) {
   };
   // The proof is the count of steps (the walk with its memo does work linear
   // in the types: a walk that forgot the memo would take 2^n steps on
-  // "shared halves", one that rescanned would take n^2). Time is a coarse
-  // guard only: small and big runs alternate, the least of five each.
+  // "shared halves", one that rescanned would take n^2). Time (CPU time of
+  // the thread, not a wall clock) is a coarse guard only: small and big runs
+  // alternate, the least of five each.
   for (const Shape &S : Shapes) {
     constexpr size_t N = 40000;
     struct Sized {
@@ -1223,8 +1224,16 @@ TEST(SemaSymbolsLong, DISABLED_NearLinearOnDeepAndWideTypes) {
     } Small, Big;
     Small.T = S.Fn(Small.Ctx, Small.Names, N);
     Big.T = S.Fn(Big.Ctx, Big.Names, N * 4);
+    // CPU time of this thread (the walk runs on it): other processes on a
+    // busy machine do not add to it, as they add to a wall clock.
+    auto ThreadCpu = [] {
+      timespec Ts;
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &Ts);
+      return static_cast<double>(Ts.tv_sec) +
+             1e-9 * static_cast<double>(Ts.tv_nsec);
+    };
     auto Once = [&](Sized &Z) {
-      auto T0 = std::chrono::steady_clock::now();
+      double T0 = ThreadCpu();
       Context C;
       SemaNames SN(C);
       const Node *Nd = SN.type(Z.T);
@@ -1232,9 +1241,7 @@ TEST(SemaSymbolsLong, DISABLED_NearLinearOnDeepAndWideTypes) {
       EXPECT_FALSE(mangleType(Nd).empty());
       Z.Visits = SN.workCounts().Visits;
       Z.Misses = SN.workCounts().Misses;
-      return std::chrono::duration<double>(std::chrono::steady_clock::now() -
-                                           T0)
-          .count();
+      return ThreadCpu() - T0;
     };
     double TSmall = 1e9, TBig = 1e9;
     for (int I = 0; I < 5; ++I) {

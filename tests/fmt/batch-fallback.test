@@ -1,0 +1,24 @@
+// check-corpus.py (tests/gopp_batch.py) with a gopp that breaks on purpose
+// (Inputs/fake-gopp.py), the other half of batch.test: one failing file among
+// good ones fails the check and is named, the others are checked; a batch
+// whose process dies is run again one file per process (batch-hang.test:
+// one that hangs).
+
+// RUN: rm -rf %t && mkdir -p %t/good
+// RUN: printf 'package a\nfunc f( ){x:=1\n_=x}\n' > %t/good/a.gopp
+// RUN: printf 'package b\n\n// comment\nfunc g() {\n\treturn\n}\n' > %t/good/b.gopp
+// RUN: mkdir -p %t/broken
+
+// A gopp that cannot format one file (Inputs/fake-gopp.py: its batches die,
+// alone it fails on the file with BREAK): that file fails and is named, the
+// two others are checked and pass. Without it, the same gopp passes.
+// RUN: printf '#!/bin/sh\nexec %python %S/Inputs/fake-gopp.py %gopp "$@"\n' > %t/fake-gopp
+// RUN: chmod +x %t/fake-gopp
+// RUN: cp %t/good/a.gopp %t/good/b.gopp %t/broken/
+// RUN: printf 'package d\n\n// BREAK\nfunc k() {}\n' > %t/broken/break.gopp
+// RUN: not %python %S/check-corpus.py %t/fake-gopp --jobs 1 --min 2 %t/broken > %t/broken.out
+// RUN: FileCheck %s --check-prefix=CORPUS-BROKEN < %t/broken.out
+// CORPUS-BROKEN: FAIL {{.*}}broken/break.gopp: fmt failed: fake gopp: cannot format
+// CORPUS-BROKEN: checked 3 files: 2 ok, 0 skipped (syntax errors), 1 failed
+// RUN: %python %S/check-corpus.py %t/fake-gopp --jobs 1 --min 2 %t/good | FileCheck %s --check-prefix=CORPUS-GOOD
+// CORPUS-GOOD: checked 2 files: 2 ok, 0 skipped (syntax errors), 0 failed

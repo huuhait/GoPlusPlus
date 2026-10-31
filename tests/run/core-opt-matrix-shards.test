@@ -1,0 +1,10 @@
+// The long opt matrices (core-opt-matrix.long.test, core-opt-matrix-arm64.long.test
+// and their -2, -3 shards) run the corpus in shards side by side; together
+// the shards are the whole matrix, every program at every configuration once
+// on each target (Inputs/check-matrix-shards.py: the --shard K/N of the RUN
+// lines, and `run-opt-matrix.py --list` of each shard against the whole). The
+// self-test shows a missing or a doubled shard is refused.
+// RUN: %python %S/Inputs/check-matrix-shards.py --self-test | FileCheck %s --check-prefix=SELF
+// SELF: self-test ok
+// RUN: %python %S/Inputs/check-matrix-shards.py %S | FileCheck %s
+// CHECK: 2 sharded matrices: every shard once; the shards of 3 are the whole corpus on both targets ({{[0-9]+}} builds a target)

@@ -1,0 +1,14 @@
+// check-corpus.py (tests/gopp_batch.py) with a gopp whose batches hang
+// (Inputs/fake-gopp.py, on a file with HANG).
+// RUN: rm -rf %t && mkdir -p %t/hang
+// RUN: printf 'package a\nfunc f( ){x:=1\n_=x}\n' > %t/hang/a.gopp
+// RUN: printf 'package b\n\n// comment\nfunc g() {\n\treturn\n}\n' > %t/hang/b.gopp
+// RUN: printf '#!/bin/sh\nexec %python %S/Inputs/fake-gopp.py %gopp "$@"\n' > %t/fake-gopp
+// RUN: chmod +x %t/fake-gopp
+// A batch that hangs (the fake gopp, on a file with HANG) is stopped after
+// gopp_batch.batch_timeout (GOPP_BATCH_TIMEOUT, TEST ONLY: here 0.05 s and a
+// twelfth of it a run, 60 s and 5 s by default) and run again one file per
+// process: every file is checked, none hangs.
+// RUN: printf 'package e\n\n// HANG\nfunc m() {}\n' > %t/hang/hang.gopp
+// RUN: env GOPP_BATCH_TIMEOUT=0.05 %python %S/check-corpus.py %t/fake-gopp --jobs 1 --min 3 %t/hang | FileCheck %s --check-prefix=HANG
+// HANG: checked 3 files: 3 ok, 0 skipped (syntax errors), 0 failed

@@ -1,0 +1,6 @@
+// REQUIRES: long
+// The control of Inputs/check-linear.py --power 2 (ops-stress-extover: the
+// picks are quadratic by nature): a program cubic in N, at N/8 and N, must be
+// reported as over the limit (512 times the cost, limit 192).
+// RUN: not %python %S/Inputs/check-linear.py --label control --control %S/Inputs/cubic.py --power 2 --scale 8 --n 560 | FileCheck %s
+// CHECK: control: near-linear NO

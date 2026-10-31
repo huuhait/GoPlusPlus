@@ -1,24 +1,31 @@
 // REQUIRES: long
 // P03.25 (ADR-0025, CLAUDE.md lessons): the unit analysis stays near-linear:
-// a chain of 10,000 units; the factor limit; the parser depth limit. The input is generated (Inputs/gen-units-stress.py) and checked under a
-// time limit; nothing nests deeper than the parser allows and no walk is
+// a chain of 10,000 units; the factor limit; the parser depth limit. The input
+// is generated (Inputs/gen-units-stress.py) and checked within a CPU-time
+// ceiling of three times its cost alone, counted in units of `gopp version`
+// (tests/cpu-limit.py; the growth is
+// judged by the near-linear checks); nothing
+// nests deeper than the parser allows and no walk is
 // recursive over the size of the input.
 // RUN: %python %S/Inputs/gen-units-stress.py chain 10000 > %t.chain.gopp
-// RUN: timeout 20 %gopp check %t.chain.gopp
+// RUN: %{cpu_limit} 16 30 -- %gopp check %t.chain.gopp
 // RUN: %python %S/Inputs/gen-units-stress.py overflow 5000 > %t.over.gopp
-// RUN: not timeout 20 %gopp check %t.over.gopp 2>&1 | FileCheck %s --check-prefix=OVER
+// RUN: %{cpu_limit} 400 310 --status 1 -- %gopp check %t.over.gopp 2>&1 | FileCheck %s --check-prefix=OVER
 // OVER: error[E0435]: unit factor out of range: unit U4096: the factor is no longer an exact rational (it needs more than 4096 bits)
 // OVER-NOT: error[E
 // Parentheses nest only as deep as the parser allows: an error, not a crash.
 // RUN: %python %S/Inputs/gen-units-stress.py nest 10000 > %t.nest.gopp
-// RUN: not timeout 20 %gopp check %t.nest.gopp 2>&1 | FileCheck %s --check-prefix=NEST
+// RUN: %{cpu_limit} 4 4 --status 1 -- %gopp check %t.nest.gopp 2>&1 | FileCheck %s --check-prefix=NEST
 // NEST: error[E0030]: exceeded max nesting depth
 // A ring of 10,000 units: one error that lists every member (found by the
 // iterative walk), the same with one body thread and with eight, and nothing
-// more for a unit that depends on the ring.
+// more for a unit that depends on the ring; the ring is near-linear up to
+// 160000 (Inputs/check-linear.py: 10000 and 160000, at most 48 times the CPU
+// time). The factor limit and the parser's depth limit bound the other two.
 // RUN: %python %S/Inputs/gen-units-stress.py ring 10000 > %t.ring.gopp
-// RUN: not timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.ring.gopp > %t.ring.out 2>&1
-// RUN: not timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.ring.gopp > %t.ring.8 2>&1
+// RUN: not timeout 240 %gopp check -check-j=1 --check-error-limit=0 %t.ring.gopp > %t.ring.out 2>&1
+// RUN: not timeout 240 %gopp check -check-j=8 --check-error-limit=0 %t.ring.gopp > %t.ring.8 2>&1
+// RUN: %python %S/Inputs/check-linear.py --label ring --out %t.ringlin --n 160000 --status 1 --gen "%S/Inputs/gen-units-stress.py ring {n}" -- %gopp check -check-j=1 --check-error-limit=0 {file}
 // RUN: diff %t.ring.out %t.ring.8
 // RUN: FileCheck --check-prefix=RINGTEXT %s < %t.ring.out
 // RUN: grep -c 'error\[E' %t.ring.out | FileCheck --check-prefix=RING %s

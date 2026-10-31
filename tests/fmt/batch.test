@@ -1,0 +1,59 @@
+// `gopp fmt -batch` and `gopp parse -batch` (tests/gopp_batch.py): one run per
+// file, each the run `gopp fmt -` / `gopp parse -` makes with the file on
+// standard input, as one record each. A file that fails has its own record
+// (its exit status, its diagnostics) and the files after it still get theirs.
+// And check-corpus.py, which sends the files to gopp in batches: a failing
+// file among good ones fails the check and is named, the others are still
+// checked; the good ones alone pass (batch-fallback.test: also when a batch
+// dies or hangs).
+
+// RUN: rm -rf %t && mkdir -p %t/good %t/mixed
+// RUN: printf 'package a\nfunc f( ){x:=1\n_=x}\n' > %t/good/a.gopp
+// RUN: printf 'package b\n\n// comment\nfunc g() {\n\treturn\n}\n' > %t/good/b.gopp
+// RUN: cp %t/good/a.gopp %t/good/b.gopp %t/mixed/
+// RUN: printf 'package c\nfunc h( {\n' > %t/mixed/bad.gopp
+
+// RUN: %python %S/Inputs/batch-vs-alone.py %gopp fmt -- %t/mixed/a.gopp %t/mixed/bad.gopp %t/mixed/b.gopp | FileCheck %s --check-prefix=FMT
+// FMT: batch: exit 0, 3 records
+// FMT-NEXT: a.gopp: exit 0, same as alone
+// FMT-NEXT: bad.gopp: exit 2, same as alone
+// FMT-NEXT: b.gopp: exit 0, same as alone
+// FMT-NEXT: bad.gopp: stderr: <standard input>:2:9: error[E0026]: expected {{.*}}
+
+// RUN: %python %S/Inputs/batch-vs-alone.py %gopp fmt -no-sort-imports -- %t/good/a.gopp %t/good/b.gopp | FileCheck %s --check-prefix=FMT-GOOD
+// FMT-GOOD: batch: exit 0, 2 records
+// FMT-GOOD-NEXT: a.gopp: exit 0, same as alone
+// FMT-GOOD-NEXT: b.gopp: exit 0, same as alone
+// FMT-GOOD-NOT: stderr
+
+// RUN: %python %S/Inputs/batch-vs-alone.py %gopp parse -language-rules=false -dump-tokens -dump-comments -dump-ast -- %t/mixed/bad.gopp %t/mixed/a.gopp %t/mixed/b.gopp | FileCheck %s --check-prefix=PARSE
+// PARSE: batch: exit 0, 3 records
+// PARSE-NEXT: bad.gopp: exit 1, same as alone
+// PARSE-NEXT: a.gopp: exit 0, same as alone
+// PARSE-NEXT: b.gopp: exit 0, same as alone
+// PARSE-NEXT: bad.gopp: stderr: <stdin>:2:9: error[E0026]: expected {{.*}}
+// PARSE-NOT: stderr
+
+// The record format, byte for byte: a header line, then stdout, then stderr.
+// RUN: %gopp fmt -batch %t/good/b.gopp %t/mixed/bad.gopp > %t/records
+// RUN: FileCheck %s --check-prefix=RECORD --match-full-lines < %t/records
+// RECORD: gopp-batch 0 43 0 {{.*}}good/b.gopp
+// RECORD-NEXT: package b
+// RECORD: gopp-batch 2 0 {{[0-9]+}} {{.*}}mixed/bad.gopp
+// RECORD-NEXT: <standard input>:2:9: error[E0026]: {{.*}}
+
+// What -batch does not take.
+// RUN: not %gopp fmt -batch 2>&1 | FileCheck %s --check-prefix=NOFILES
+// NOFILES: gopp: error: fmt: -batch needs file names and cannot -w
+// RUN: not %gopp fmt -batch -w %t/good/a.gopp 2>&1 | FileCheck %s --check-prefix=NOFILES
+// RUN: not %gopp parse -batch -fixit %t/good/a.gopp 2>&1 | FileCheck %s --check-prefix=NOFIX
+// NOFIX: gopp: error: parse: -batch cannot apply fix-its
+// A file that cannot be read is that run's failure, not the batch's.
+// RUN: %gopp fmt -batch %t/missing.gopp %t/good/b.gopp | FileCheck %s --check-prefix=MISSING
+// MISSING: gopp-batch 2 0 {{[0-9]+}} {{.*}}missing.gopp
+// MISSING-NEXT: gopp: error: cannot read '{{.*}}missing.gopp': {{.*}}
+// MISSING-NEXT: gopp-batch 0 43 0 {{.*}}good/b.gopp
+
+// check-corpus.py on good files, with the batches of the real gopp: passes.
+// RUN: %python %S/check-corpus.py %gopp --min 2 %t/good | FileCheck %s --check-prefix=CORPUS-GOOD
+// CORPUS-GOOD: checked 2 files: 2 ok, 0 skipped (syntax errors), 0 failed

@@ -23,6 +23,8 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
@@ -179,13 +181,36 @@ int gopp::runLLD(llvm::ArrayRef<std::string> Argv) {
 Error gopp::linkExecutable(StringRef Self, const TargetSpec &T,
                            const LinkInputs &In,
                            llvm::ArrayRef<std::string> Objects,
-                           StringRef Output) {
+                           StringRef Output, llvm::raw_ostream *Out,
+                           llvm::raw_ostream *Err) {
   std::vector<std::string> Argv = {Self.str(), "lld"};
   for (std::string &A : lldArguments(T, In, Objects, Output))
     Argv.push_back(std::move(A));
   std::vector<StringRef> Refs(Argv.begin(), Argv.end());
+  // With Out and Err the linker writes to two files, appended to them after.
+  llvm::SmallString<128> OutPath, ErrPath;
+  std::optional<llvm::FileRemover> RemoveOut, RemoveErr;
+  std::vector<std::optional<StringRef>> Redirects;
+  if (Out && Err) {
+    if (std::error_code EC =
+            llvm::sys::fs::createTemporaryFile("gopp-lld", "out", OutPath))
+      return llvm::errorCodeToError(EC);
+    RemoveOut.emplace(OutPath);
+    if (std::error_code EC =
+            llvm::sys::fs::createTemporaryFile("gopp-lld", "err", ErrPath))
+      return llvm::errorCodeToError(EC);
+    RemoveErr.emplace(ErrPath);
+    Redirects = {std::nullopt, StringRef(OutPath), StringRef(ErrPath)};
+  }
   std::string Msg;
-  int Rc = llvm::sys::ExecuteAndWait(Self, Refs, std::nullopt, {}, 0, 0, &Msg);
+  int Rc = llvm::sys::ExecuteAndWait(Self, Refs, std::nullopt, Redirects, 0, 0,
+                                     &Msg);
+  if (Out && Err) {
+    for (auto [Path, OS] : {std::pair(StringRef(OutPath), Out),
+                            std::pair(StringRef(ErrPath), Err)})
+      if (auto Buf = llvm::MemoryBuffer::getFile(Path))
+        *OS << (*Buf)->getBuffer();
+  }
   if (Rc != 0)
     return llvm::createStringError(std::errc::io_error,
                                    "the linker failed (exit status %d)%s%s", Rc,

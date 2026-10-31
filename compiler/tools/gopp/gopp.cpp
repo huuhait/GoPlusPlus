@@ -44,6 +44,7 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
@@ -95,6 +96,13 @@ static cl::opt<bool> FixItStdout(
     "fixit-stdout",
     cl::desc("Like -fixit, but print the fixed text of the single input file "
              "to stdout and leave the file alone"),
+    cl::sub(ParseCmd));
+
+static cl::opt<bool> ParseBatch(
+    "batch", cl::Hidden,
+    cl::desc("FOR TEST SCRIPTS: one run per file, each reading the file as "
+             "`gopp parse -` reads standard input; each run's exit status, "
+             "output and diagnostics as a record on standard output"),
     cl::sub(ParseCmd));
 
 enum class DiagFormat { Text, JSON };
@@ -212,6 +220,12 @@ static cl::opt<bool> FmtDiff("d", cl::desc("Print diffs instead of the result"),
 static cl::opt<bool> FmtNoSortImports("no-sort-imports",
                                       cl::desc("Do not sort import groups"),
                                       cl::sub(FmtCmd));
+static cl::opt<bool> FmtBatch(
+    "batch", cl::Hidden,
+    cl::desc("FOR TEST SCRIPTS: one run per file, each reading the file as "
+             "`gopp fmt -` reads standard input; each run's exit status, "
+             "output and diagnostics as a record on standard output"),
+    cl::sub(FmtCmd));
 
 static cl::SubCommand
     BuildCmd("build", "Compile a package: GIR, LLVM IR, an object or an "
@@ -291,6 +305,14 @@ static cl::opt<bool> BuildTestIntrinsics(
              "intrinsics that build slices and maps around a counting "
              "allocator (P04.25, ADR-0029)"),
     cl::sub(BuildCmd));
+static cl::opt<std::string> BuildBatch(
+    "batch", cl::Hidden,
+    cl::desc("FOR TEST SCRIPTS: the builds in this file (JSON lines: id, "
+             "inputs, o, link_obj, test_intrinsics; - is standard input), "
+             "one after the other with the other options of the command "
+             "line; each build's exit status, output and diagnostics as a "
+             "record on standard output"),
+    cl::value_desc("file"), cl::sub(BuildCmd));
 static cl::opt<std::string>
     BuildTestStubs("build-test-stubs", cl::Hidden,
                    cl::desc("TEST ONLY: standard packages from this "
@@ -443,10 +465,112 @@ static bool writeFile(StringRef Path, StringRef Text) {
 
 /// With several input files each dump starts with `==> path <==` (as tail
 /// does); the dump of a single file has no header.
-static void dumpHeader(const gopp::SourceManager &SM, gopp::FileID F,
-                       size_t NumFiles) {
+static void dumpHeader(raw_ostream &Out, const gopp::SourceManager &SM,
+                       gopp::FileID F, size_t NumFiles) {
   if (NumFiles > 1)
-    outs() << "==> " << SM.getFilename(F) << " <==\n";
+    Out << "==> " << SM.getFilename(F) << " <==\n";
+}
+
+/// -batch (parse, fmt, build): one record per run, written as the run ends: a
+/// header line, then the bytes the run wrote to standard output and to
+/// standard error:
+///   gopp-batch <exit status> <stdout bytes> <stderr bytes> <name>\n
+///   <stdout><stderr>
+/// A reader that gets no record for a run (the process died) runs it alone
+/// (tests/gopp_batch.py).
+static void writeBatchRecord(int Status, StringRef Name, StringRef Out,
+                             StringRef Err) {
+  outs() << "gopp-batch " << Status << ' ' << Out.size() << ' ' << Err.size()
+         << ' ' << Name << '\n'
+         << Out << Err;
+  outs().flush();
+}
+
+/// -batch of parse and fmt: the bytes of Path, for a run that reads them as
+/// it would read standard input. Prints the error and returns null if the
+/// file cannot be read.
+static std::unique_ptr<MemoryBuffer> readBatchInput(StringRef Path,
+                                                    raw_ostream &Err) {
+  auto Buf = MemoryBuffer::getFile(Path, /*IsText=*/false,
+                                   /*RequiresNullTerminator=*/false);
+  if (!Buf) {
+    Err << "gopp: error: cannot read '" << Path
+        << "': " << Buf.getError().message() << '\n';
+    return nullptr;
+  }
+  return std::move(*Buf);
+}
+
+/// The diagnostics and dumps of `gopp parse` for Files (one package: one
+/// diagnostics engine, one error limit). Returns whether there were errors;
+/// Seen, if given, gets every diagnostic (for -fixit).
+static bool parseAndDump(gopp::SourceManager &SM, ArrayRef<gopp::FileID> Files,
+                         raw_ostream &Out, raw_ostream &Err,
+                         std::vector<gopp::Diagnostic> *Seen) {
+  std::unique_ptr<gopp::DiagnosticConsumer> Printer;
+  if (DiagFormatOpt == DiagFormat::JSON)
+    Printer = std::make_unique<gopp::JSONDiagnosticPrinter>(Err, SM);
+  else
+    Printer = std::make_unique<gopp::TextDiagnosticPrinter>(Err, SM);
+  TeeConsumer Consumer(*Printer);
+  gopp::DiagnosticsEngine Diags(SM, Consumer, ErrorLimit);
+
+  gopp::ParseOptions PO;
+  PO.CheckLanguageRules = LanguageRules;
+  if (DumpTokens && !DumpAST) {
+    // Lexing only: the lexer reports its own errors.
+    for (gopp::FileID F : Files) {
+      dumpHeader(Out, SM, F, Files.size());
+      gopp::dumpTokens(Out, SM, F, Diags, DumpComments);
+    }
+  } else {
+    std::vector<gopp::ParsedFile> Parsed =
+        gopp::parseFiles(SM, Files, Diags, PO, Jobs);
+    for (size_t I = 0; I < Files.size(); ++I) {
+      if (DumpTokens || DumpAST)
+        dumpHeader(Out, SM, Files[I], Files.size());
+      if (DumpTokens) {
+        // The parse reported the lexer errors; the dump stays quiet.
+        gopp::CollectingDiagnosticConsumer Quiet;
+        gopp::DiagnosticsEngine QuietDiags(SM, Quiet, 0);
+        gopp::dumpTokens(Out, SM, Files[I], QuietDiags, DumpComments);
+      }
+      if (DumpAST)
+        gopp::ast::dump(Out, SM, Parsed[I].AST);
+    }
+  }
+  Diags.finish();
+  if (Seen)
+    *Seen = std::move(Consumer.Seen);
+  return Diags.hasErrors();
+}
+
+/// `gopp parse -batch FILE...`: one run per file, each reading the file as
+/// `gopp parse -` reads standard input (the same name, so the same bytes
+/// out); a record per run (writeBatchRecord). Exit status 0 when every run
+/// has its record.
+static int runParseBatch() {
+  if (FixIt || FixItStdout) {
+    errs() << "gopp: error: parse: -batch cannot apply fix-its\n";
+    return 1;
+  }
+  for (const std::string &Path : ParseInputs) {
+    std::string O, E;
+    raw_string_ostream Out(O), Err(E);
+    int Status = 1;
+    if (std::unique_ptr<MemoryBuffer> Buf = readBatchInput(Path, Err)) {
+      gopp::SourceManager SM;
+      // MemoryBuffer::getSTDIN's name.
+      llvm::Expected<gopp::FileID> F =
+          SM.addMemoryBuffer("<stdin>", Buf->getBuffer());
+      if (!F)
+        Err << "gopp: error: " << toString(F.takeError()) << '\n';
+      else
+        Status = parseAndDump(SM, *F, Out, Err, nullptr) ? 1 : 0;
+    }
+    writeBatchRecord(Status, Path, O, E);
+  }
+  return 0;
 }
 
 /// `gopp parse`: all files are one package (one diagnostics engine, one error
@@ -458,6 +582,8 @@ static int runParse() {
     errs() << "gopp: error: parse: no input files\n";
     return 1;
   }
+  if (ParseBatch)
+    return runParseBatch();
   gopp::SourceManager SM;
   std::vector<gopp::FileID> Files;
   for (const std::string &Path : ParseInputs) {
@@ -482,49 +608,20 @@ static int runParse() {
     return 1;
   }
 
-  std::unique_ptr<gopp::DiagnosticConsumer> Printer;
-  if (DiagFormatOpt == DiagFormat::JSON)
-    Printer = std::make_unique<gopp::JSONDiagnosticPrinter>(errs(), SM);
-  else
-    Printer = std::make_unique<gopp::TextDiagnosticPrinter>(errs(), SM);
-  TeeConsumer Consumer(*Printer);
-  gopp::DiagnosticsEngine Diags(SM, Consumer, ErrorLimit);
-
-  gopp::ParseOptions PO;
-  PO.CheckLanguageRules = LanguageRules;
-  if (DumpTokens && !DumpAST) {
-    // Lexing only: the lexer reports its own errors.
-    for (gopp::FileID F : Files) {
-      dumpHeader(SM, F, Files.size());
-      gopp::dumpTokens(outs(), SM, F, Diags, DumpComments);
-    }
-  } else {
-    std::vector<gopp::ParsedFile> Parsed =
-        gopp::parseFiles(SM, Files, Diags, PO, Jobs);
-    for (size_t I = 0; I < Files.size(); ++I) {
-      if (DumpTokens || DumpAST)
-        dumpHeader(SM, Files[I], Files.size());
-      if (DumpTokens) {
-        // The parse reported the lexer errors; the dump stays quiet.
-        gopp::CollectingDiagnosticConsumer Quiet;
-        gopp::DiagnosticsEngine QuietDiags(SM, Quiet, 0);
-        gopp::dumpTokens(outs(), SM, Files[I], QuietDiags, DumpComments);
-      }
-      if (DumpAST)
-        gopp::ast::dump(outs(), SM, Parsed[I].AST);
-    }
-  }
-  Diags.finish();
+  std::vector<gopp::Diagnostic> Seen;
+  bool Errors = parseAndDump(SM, Files, outs(), errs(), &Seen);
   if (!FixIt && !FixItStdout)
-    return Diags.hasErrors() ? 1 : 0;
+    return Errors ? 1 : 0;
 
   // Apply the fix-its, then parse the result again: the exit status says
   // whether the fixed files are clean. All texts are made before any file is
   // written (the SourceManager may have the files mapped).
+  gopp::ParseOptions PO;
+  PO.CheckLanguageRules = LanguageRules;
   std::vector<std::string> Fixed(Files.size());
   std::vector<unsigned> Applied(Files.size(), 0);
   for (size_t I = 0; I < Files.size(); ++I)
-    Fixed[I] = gopp::applyFixIts(SM, Files[I], Consumer.Seen, &Applied[I]);
+    Fixed[I] = gopp::applyFixIts(SM, Files[I], Seen, &Applied[I]);
   // Standard input cannot be rewritten: say so before any file is written.
   if (!FixItStdout)
     for (size_t I = 0; I < Files.size(); ++I)
@@ -619,10 +716,26 @@ static int runCheck(bool Vet) {
   return checkStatus(CP, Diags, Vet);
 }
 
-/// Writes Bytes to OutFile, or stdout if it is empty.
-static bool writeOutput(StringRef OutFile, StringRef Bytes) {
+/// What differs between the builds of `gopp build`: the command line's, or
+/// one job of -batch (the rest comes from the command line), and where the
+/// build's output and diagnostics go.
+struct BuildJob {
+  std::string Id; // -batch: the name of the build's record
+  std::vector<std::string> Inputs;
+  std::string Output;
+  std::vector<std::string> LinkObjs;
+  bool TestIntrinsics = false;
+  raw_ostream *Out = &outs();
+  raw_ostream *Err = &errs();
+  /// -batch: what the linker prints goes to Out and Err too.
+  bool CaptureLinker = false;
+};
+
+/// Writes Bytes to the job's output file, or its stdout if it has none.
+static bool writeOutput(const BuildJob &J, StringRef Bytes) {
+  StringRef OutFile = J.Output;
   if (OutFile.empty() || OutFile == "-") {
-    outs() << Bytes;
+    *J.Out << Bytes;
     return true;
   }
   if (llvm::Error E =
@@ -630,7 +743,7 @@ static bool writeOutput(StringRef OutFile, StringRef Bytes) {
             OS << Bytes;
             return llvm::Error::success();
           })) {
-    errs() << "gopp: error: " << OutFile << ": " << toString(std::move(E))
+    *J.Err << "gopp: error: " << OutFile << ": " << toString(std::move(E))
            << '\n';
     return false;
   }
@@ -651,14 +764,15 @@ static int reportCodegen(gopp::SourceManager &SM,
 
 /// `gopp build` from GIR on: LLVM IR, assembly, an object, an executable.
 static int codegenAndLink(Emit What, gopp::SourceManager &SM,
-                          gopp::DiagnosticsEngine &Diags,
-                          gopp::gir::Module &M) {
+                          gopp::DiagnosticsEngine &Diags, gopp::gir::Module &M,
+                          const BuildJob &J) {
+  raw_ostream &Err = *J.Err;
   Expected<gopp::TargetSpec> T = gopp::parseTarget(BuildTarget);
   if (!T)
     return reportCodegen(SM, Diags, T.takeError());
   if (BuildPipeline != "default" && BuildPipeline != "fastisel") {
-    errs() << "gopp: error: build: unknown -pipeline '" << BuildPipeline
-           << "' (use fastisel)\n";
+    Err << "gopp: error: build: unknown -pipeline '" << BuildPipeline
+        << "' (use fastisel)\n";
     return 1;
   }
   gopp::PipelineRequest Req;
@@ -677,16 +791,17 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
   struct PrintTimes {
     const gopp::PipelineSpec &Spec;
     gopp::PipelineTimes &T;
+    raw_ostream &Err;
     ~PrintTimes() {
       if (!BuildTimes)
         return;
-      errs() << "gopp: pipeline " << Spec.Name << ":";
+      Err << "gopp: pipeline " << Spec.Name << ":";
       for (const auto &S : T.Stages)
-        errs() << ' ' << S.Name << '=' << llvm::format("%.4f", S.Seconds) << '/'
-               << llvm::format("%.4f", S.CpuSeconds);
-      errs() << '\n';
+        Err << ' ' << S.Name << '=' << llvm::format("%.4f", S.Seconds) << '/'
+            << llvm::format("%.4f", S.CpuSeconds);
+      Err << '\n';
     }
-  } Report{*Spec, Times};
+  } Report{*Spec, Times, Err};
   auto Timed = [&](const char *Name, auto &&Fn) {
     gopp::StageTimer T(Name, &Times);
     return Fn();
@@ -707,7 +822,7 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
     std::string Text;
     raw_string_ostream OS(Text);
     (*LM)->print(OS, nullptr);
-    return writeOutput(BuildOutput, Text) ? 0 : 1;
+    return writeOutput(J, Text) ? 0 : 1;
   }
   if (What == Emit::Asm) {
     std::string Text;
@@ -715,15 +830,14 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
     if (llvm::Error E = Timed(
             "codegen", [&] { return gopp::emitAssembly(**LM, **TM, OS); }))
       return reportCodegen(SM, Diags, std::move(E));
-    return writeOutput(BuildOutput, Text) ? 0 : 1;
+    return writeOutput(J, Text) ? 0 : 1;
   }
   // The name of the result: -o, else the first input without its extension.
-  std::string Stem = llvm::sys::path::stem(BuildInputs[0]).str();
+  std::string Stem = llvm::sys::path::stem(J.Inputs[0]).str();
   if (Stem.empty() || Stem == ".")
     Stem = "a";
   if (What == Emit::Obj) {
-    std::string Out =
-        BuildOutput.empty() ? Stem + ".o" : BuildOutput.getValue();
+    std::string Out = J.Output.empty() ? Stem + ".o" : J.Output;
     if (llvm::Error E =
             Timed("codegen", [&] { return gopp::emitObject(**LM, **TM, Out); }))
       return reportCodegen(SM, Diags, std::move(E));
@@ -733,7 +847,7 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
       gopp::findLinkInputs(*T, BuildCrtDir, BuildDynamicLinker);
   if (!In)
     return reportCodegen(SM, Diags, In.takeError());
-  std::string Out = BuildOutput.empty() ? Stem : BuildOutput.getValue();
+  std::string Out = J.Output.empty() ? Stem : J.Output;
   llvm::SmallString<128> Obj;
   if (std::error_code EC = llvm::sys::fs::createTemporaryFile("gopp", "o", Obj))
     return reportCodegen(SM, Diags, llvm::errorCodeToError(EC));
@@ -742,9 +856,11 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
           Timed("codegen", [&] { return gopp::emitObject(**LM, **TM, Obj); }))
     return reportCodegen(SM, Diags, std::move(E));
   std::vector<std::string> Objects = {std::string(Obj)};
-  for (const std::string &O : BuildLinkObjs)
+  for (const std::string &O : J.LinkObjs)
     Objects.push_back(O);
-  if (llvm::Error E = gopp::linkExecutable(SelfPath, *T, *In, Objects, Out))
+  if (llvm::Error E = gopp::linkExecutable(SelfPath, *T, *In, Objects, Out,
+                                           J.CaptureLinker ? J.Out : nullptr,
+                                           J.CaptureLinker ? J.Err : nullptr))
     return reportCodegen(SM, Diags, std::move(E));
   return 0;
 }
@@ -752,17 +868,17 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
 /// The part of `gopp build` after the package is checked.
 static int finishBuild(Emit What, gopp::SourceManager &SM,
                        gopp::DiagnosticsEngine &Diags, gopp::sema::Loader &L,
-                       gopp::sema::CheckedPackage *CP) {
+                       gopp::sema::CheckedPackage *CP, const BuildJob &J) {
   if (What == Emit::Exe && CP->Pkg && CP->Pkg->Name != "main") {
     Diags.finish();
-    errs() << "gopp: error: build: package " << CP->Pkg->Name
+    *J.Err << "gopp: error: build: package " << CP->Pkg->Name
            << " is not package main, so it is no program (-emit=obj, llvm, "
               "asm or gir build a library; linking libraries comes with P06)\n";
     return 1;
   }
   gopp::gir::Context GCtx;
   gopp::gir::LowerOptions LowerOpts;
-  LowerOpts.TestIntrinsics = BuildTestIntrinsics;
+  LowerOpts.TestIntrinsics = J.TestIntrinsics;
   std::unique_ptr<gopp::gir::Module> M =
       gopp::gir::lowerPackage(GCtx, SM, *CP, L.filesOf(CP), Diags, LowerOpts);
   Diags.finish();
@@ -775,29 +891,25 @@ static int finishBuild(Emit What, gopp::SourceManager &SM,
     gopp::gir::PrintOptions PO;
     PO.Spans = !BuildNoLocs;
     gopp::gir::print(OS, *M, PO);
-    return writeOutput(BuildOutput, Text) ? 0 : 1;
+    return writeOutput(J, Text) ? 0 : 1;
   }
   case Emit::GIRBitstream:
-    if (BuildOutput.empty()) {
-      errs() << "gopp: error: build: -emit=girb needs -o\n";
+    if (J.Output.empty()) {
+      *J.Err << "gopp: error: build: -emit=girb needs -o\n";
       return 1;
     }
-    return writeOutput(BuildOutput, gopp::gir::writeModule(*M)) ? 0 : 1;
+    return writeOutput(J, gopp::gir::writeModule(*M)) ? 0 : 1;
   default:
     break;
   }
-  return codegenAndLink(What, SM, Diags, *M);
+  return codegenAndLink(What, SM, Diags, *M, J);
 }
 
-/// `gopp build`: load and check the package, lower it to GIR, then emit.
-static int runBuild() {
-  if (BuildInputs.empty()) {
-    errs() << "gopp: error: build: no input files\n";
-    return 1;
-  }
+/// One `gopp build`: load and check the package, lower it to GIR, then emit.
+static int buildOne(const BuildJob &J) {
   Emit What = BuildDumpGIR ? Emit::GIR : BuildEmit.getValue();
   gopp::SourceManager SM;
-  gopp::TextDiagnosticPrinter Printer(errs(), SM);
+  gopp::TextDiagnosticPrinter Printer(*J.Err, SM);
   gopp::DiagnosticsEngine Diags(SM, Printer,
                                 gopp::DiagnosticsEngine::DefaultErrorLimit);
   gopp::sema::LoadOptions LO;
@@ -805,26 +917,117 @@ static int runBuild() {
   gopp::sema::CheckOptions CO;
   gopp::sema::TypeContext TCtx(false);
   gopp::sema::MockForeignProvider Foreign;
-  bool IsDir =
-      BuildInputs.size() == 1 && llvm::sys::fs::is_directory(BuildInputs[0]);
+  bool IsDir = J.Inputs.size() == 1 && llvm::sys::fs::is_directory(J.Inputs[0]);
   if (IsDir) {
-    LO.Root = BuildInputs[0];
+    LO.Root = J.Inputs[0];
   } else {
-    LO.Root = llvm::sys::path::parent_path(BuildInputs[0]).str();
+    LO.Root = llvm::sys::path::parent_path(J.Inputs[0]).str();
     if (LO.Root.empty())
       LO.Root = ".";
   }
   gopp::sema::Loader L(SM, Diags, TCtx, LO, CO);
   L.setForeignProvider(&Foreign);
   gopp::sema::CheckedPackage *CP =
-      IsDir ? L.loadDir(BuildInputs[0], "")
-            : L.loadFiles(std::vector<std::string>(BuildInputs.begin(),
-                                                   BuildInputs.end()));
+      IsDir ? L.loadDir(J.Inputs[0], "") : L.loadFiles(J.Inputs);
   if (!CP || Diags.hasErrors()) {
     Diags.finish();
     return 1;
   }
-  return finishBuild(What, SM, Diags, L, CP);
+  return finishBuild(What, SM, Diags, L, CP, J);
+}
+
+/// `gopp build -batch FILE`: the builds of FILE (JSON lines, `-` is standard
+/// input), one after the other in this process, each with the options of the
+/// command line and its own
+///   {"id":"name","inputs":["a.gopp"],"o":"out","link_obj":["c.o"],
+///    "test_intrinsics":false}
+/// (only "id" and "inputs" are required; "link_obj" adds to -link-obj). A
+/// record per build (writeBatchRecord, named by the id): exactly what `gopp
+/// build` with the same arguments exits with and prints, the output of its
+/// `gopp lld` included. Exit status 0 when every build has its record, 1 if
+/// the file cannot be read or a line is not a build.
+static int runBuildBatch() {
+  if (!BuildInputs.empty() || !BuildOutput.empty()) {
+    errs() << "gopp: error: build: -batch takes the inputs and -o of each "
+              "build from its file\n";
+    return 1;
+  }
+  auto Buf = BuildBatch == "-" ? MemoryBuffer::getSTDIN()
+                               : MemoryBuffer::getFile(BuildBatch);
+  if (!Buf) {
+    errs() << "gopp: error: " << BuildBatch << ": " << Buf.getError().message()
+           << '\n';
+    return 1;
+  }
+  // Every line is read before the first build: a bad line builds nothing.
+  std::vector<BuildJob> Jobs;
+  SmallVector<StringRef> Lines;
+  (*Buf)->getBuffer().split(Lines, '\n', -1, /*KeepEmpty=*/false);
+  for (size_t N = 0; N < Lines.size(); ++N) {
+    auto Bad = [&](const Twine &Why) {
+      errs() << "gopp: error: " << BuildBatch << ":" << N + 1 << ": " << Why
+             << '\n';
+      return 1;
+    };
+    Expected<json::Value> V = json::parse(Lines[N]);
+    if (!V)
+      return Bad(toString(V.takeError()));
+    const json::Object *O = V->getAsObject();
+    if (!O)
+      return Bad("not a JSON object");
+    BuildJob J;
+    std::optional<StringRef> Id = O->getString("id");
+    const json::Array *Inputs = O->getArray("inputs");
+    if (!Id || !Inputs || Inputs->empty())
+      return Bad("a build needs \"id\" and \"inputs\"");
+    auto Strings = [](const json::Array *A, std::vector<std::string> &To) {
+      for (const json::Value &E : *A) {
+        std::optional<StringRef> S = E.getAsString();
+        if (!S)
+          return false;
+        To.push_back(S->str());
+      }
+      return true;
+    };
+    if (!Strings(Inputs, J.Inputs))
+      return Bad("\"inputs\" must be strings");
+    if (std::optional<StringRef> Out = O->getString("o"))
+      J.Output = Out->str();
+    J.LinkObjs.assign(BuildLinkObjs.begin(), BuildLinkObjs.end());
+    if (const json::Array *L = O->getArray("link_obj"))
+      if (!Strings(L, J.LinkObjs))
+        return Bad("\"link_obj\" must be strings");
+    J.TestIntrinsics =
+        BuildTestIntrinsics || O->getBoolean("test_intrinsics").value_or(false);
+    J.Id = Id->str();
+    Jobs.push_back(std::move(J));
+  }
+  for (BuildJob &J : Jobs) {
+    std::string O, E;
+    raw_string_ostream Out(O), Err(E);
+    J.Out = &Out;
+    J.Err = &Err;
+    J.CaptureLinker = true;
+    int Status = buildOne(J);
+    writeBatchRecord(Status, J.Id, O, E);
+  }
+  return 0;
+}
+
+/// `gopp build`.
+static int runBuild() {
+  if (!BuildBatch.empty())
+    return runBuildBatch();
+  if (BuildInputs.empty()) {
+    errs() << "gopp: error: build: no input files\n";
+    return 1;
+  }
+  BuildJob J;
+  J.Inputs.assign(BuildInputs.begin(), BuildInputs.end());
+  J.Output = BuildOutput;
+  J.LinkObjs.assign(BuildLinkObjs.begin(), BuildLinkObjs.end());
+  J.TestIntrinsics = BuildTestIntrinsics;
+  return buildOne(J);
 }
 
 /// `gopp test-run`: P04.19. Exit status 0 when every program was run, whatever
@@ -1058,13 +1261,18 @@ static bool collectFiles(const std::string &Dir,
 
 /// `gopp fmt [-l] [-w] [-d] [files or directories]`. Like gofmt: with no flags
 /// the result goes to stdout; with no files stdin is read. Exit status 2 if a
-/// file has syntax errors.
+/// file has syntax errors. With -batch every file is a run of its own that
+/// reads the file as standard input, and prints a record (writeBatchRecord).
 static int runFmt() {
   std::vector<std::string> Paths;
   bool FromStdin =
       FmtInputs.empty() || (FmtInputs.size() == 1 && FmtInputs[0] == "-");
   if (FromStdin && FmtWrite) {
     errs() << "gopp: error: fmt: -w needs file names\n";
+    return 2;
+  }
+  if (FmtBatch && (FromStdin || FmtWrite)) {
+    errs() << "gopp: error: fmt: -batch needs file names and cannot -w\n";
     return 2;
   }
   int Status = 0;
@@ -1080,52 +1288,64 @@ static int runFmt() {
   gopp::FormatOptions Opts;
   Opts.SortImports = !FmtNoSortImports;
 
-  auto formatOne = [&](const std::string &Path) {
+  // One run: the file Path, or, given Stdin, the text of standard input
+  // (with -batch, Path's bytes read as standard input would be). Returns the
+  // exit status of the run.
+  auto formatOne = [&](const std::string &Path,
+                       std::unique_ptr<MemoryBuffer> Stdin, raw_ostream &OS,
+                       raw_ostream &ES) -> int {
+    bool AsStdin = Stdin != nullptr;
     gopp::SourceManager SM;
-    llvm::Expected<gopp::FileID> F = [&]() -> llvm::Expected<gopp::FileID> {
-      if (!FromStdin)
-        return SM.addFile(Path);
-      auto Buf = MemoryBuffer::getSTDIN();
-      if (!Buf)
-        return llvm::errorCodeToError(Buf.getError());
-      // gofmt names standard input "<standard input>" everywhere.
-      return SM.addMemoryBuffer("<standard input>", (*Buf)->getBuffer());
-    }();
+    // gofmt names standard input "<standard input>" everywhere.
+    llvm::Expected<gopp::FileID> F =
+        AsStdin ? SM.addMemoryBuffer("<standard input>", Stdin->getBuffer())
+                : SM.addFile(Path);
     if (!F) {
-      errs() << "gopp: error: " << toString(F.takeError()) << '\n';
-      Status = 2;
-      return;
+      ES << "gopp: error: " << toString(F.takeError()) << '\n';
+      return 2;
     }
-    gopp::TextDiagnosticPrinter Printer(errs(), SM);
+    gopp::TextDiagnosticPrinter Printer(ES, SM);
     gopp::DiagnosticsEngine Diags(SM, Printer, 0);
     std::string Out;
     bool Ok = gopp::formatFile(SM, *F, Diags, Out, Opts);
     Diags.finish();
-    if (!Ok) {
-      Status = 2;
-      return;
-    }
+    if (!Ok)
+      return 2;
     StringRef Orig = SM.getBuffer(*F);
-    std::string Name = FromStdin ? "<standard input>" : Path;
+    std::string Name = AsStdin ? "<standard input>" : Path;
     bool Differs = Out != Orig;
     // The diff is made before -w rewrites the file: SM may have it mapped.
     std::string Diff = FmtDiff ? gopp::unifiedDiff(Name, Orig, Out) : "";
     if (FmtList && Differs)
-      outs() << Name << '\n';
-    if (FmtWrite && Differs && !writeFile(Path, Out)) {
-      Status = 2;
-      return;
-    }
-    outs() << Diff;
+      OS << Name << '\n';
+    if (FmtWrite && Differs && !writeFile(Path, Out))
+      return 2;
+    OS << Diff;
     if (!FmtList && !FmtWrite && !FmtDiff)
-      outs() << Out;
+      OS << Out;
+    return 0;
   };
 
-  if (FromStdin)
-    formatOne("-");
-  else
-    for (const std::string &P : Paths)
-      formatOne(P);
+  if (FromStdin) {
+    auto Buf = MemoryBuffer::getSTDIN();
+    if (!Buf) {
+      errs() << "gopp: error: " << Buf.getError().message() << '\n';
+      return 2;
+    }
+    return formatOne("-", std::move(*Buf), outs(), errs());
+  }
+  for (const std::string &P : Paths) {
+    if (!FmtBatch) {
+      Status = std::max(Status, formatOne(P, nullptr, outs(), errs()));
+      continue;
+    }
+    std::string O, E;
+    raw_string_ostream OS(O), ES(E);
+    int S = 2;
+    if (std::unique_ptr<MemoryBuffer> Buf = readBatchInput(P, ES))
+      S = formatOne(P, std::move(Buf), OS, ES);
+    writeBatchRecord(S, P, O, E);
+  }
   return Status;
 }
 
