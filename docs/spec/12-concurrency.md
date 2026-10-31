@@ -75,12 +75,15 @@ A value that is allowed by this list must also pass the race rules of [CON-13](#
 - values whose type is `Send` and that are **copied in**;
 - `Sync` values that are **shared**.
 
-Capturing a **writable variable** that the starting goroutine or anyone else can still touch is a compile error. The message suggests `Mutex[T]`, `Atomic[T]` or a channel. A variable that nobody else touches after the `go` counts as moved in. The check is conservative.
+Capturing a **writable variable** that the starting goroutine or anyone else can still touch is a compile error. The message suggests `Mutex[T]`, `Atomic[T]` or a channel. A variable that nobody else touches after the `go` counts as moved in: "can still touch" means a use that the compiler can see after the `go` (in the spawner, in another goroutine, or in a later iteration of a loop that holds the `go`), not merely that the variable is still in scope (owner decision 2026-10-31, ADR-0022 open point 2). The check is conservative.
 
 ```go
 x := 0
-go func() { x++ }()          // error: x is written by the goroutine and the spawner can touch it.
-                             // Fix: sync.Atomic[int], sync.Mutex[int], or send results on a channel
+go func() { x++ }()          // error: x is written by the goroutine and the spawner uses it below.
+println(x)                   // Fix: sync.Atomic[int], sync.Mutex[int], or send results on a channel
+
+y := 0
+go func() { y++; println(y) }()   // ok: nobody touches y after the `go`, so it is moved in
 var n sync.Atomic[int]
 go func() { n.Add(1) }()     // ok: Atomic is Sync, shared
 
