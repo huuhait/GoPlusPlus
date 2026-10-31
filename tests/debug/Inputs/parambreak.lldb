@@ -1,0 +1,67 @@
+breakpoint set -n main.scalars
+breakpoint set -n main.words
+breakpoint set -n main.place
+breakpoint set -n main.view
+breakpoint set -n main.grow
+breakpoint set -f parambreak.gopp -l 53
+breakpoint set -n main.named
+breakpoint set -n main.misc
+breakpoint set -n main.Nums.Len
+breakpoint set -n main.Pair.Sum
+breakpoint set -n main.Pair.Add
+breakpoint set -f parambreak.gopp -l 79
+breakpoint set -n main.tsc
+breakpoint set -n main.tpair
+breakpoint set -n main.tplace
+breakpoint set -n main.tstr
+breakpoint set -n main.tslice
+breakpoint set -n main.Nums.First
+run
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+next
+frame variable
+continue
+frame variable
+next
+next
+frame variable
+continue
+frame variable
+continue
+frame variable
+up
+frame variable
+continue
+frame variable
+continue
+frame variable
+frame variable *p
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+continue
+frame variable
+up
+frame variable
+continue

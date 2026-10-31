@@ -992,6 +992,10 @@ void Body::lower(const ast::FuncDecl *FD) {
       unsupported(FD, "this parameter list");
       return;
     }
+    // The statements that make a parameter's variable or a named result
+    // before the body runs, each of them, are the function's entry
+    // (Statement::Prologue, V077).
+    auto Prologue = [&] { F.Blocks[FB.block()].Stmts.back().Prologue = true; };
     // A borrowed string or `[]T` arrives as the pair (ptr, len) (D4.4,
     // ADR-0029 point 7): a parameter or receiver that passOf makes a View.
     // The body works on a variable of its own made from it: a string with
@@ -1013,6 +1017,7 @@ void Body::lower(const ast::FuncDecl *FD) {
       F.Locals[Loc].Source = true;
       F.Locals[Loc].ArgNo = K + 1;
       FB.storageLive(Loc);
+      Prologue();
       Val In = E.param(K);
       Val Ptr = E.fld(In, 0), Len = E.fld(In, 1);
       if (Str)
@@ -1024,6 +1029,7 @@ void Body::lower(const ast::FuncDecl *FD) {
                   FB.aggregate(AggKind::Slice, GT,
                                {Ptr.Op, Len.Op, Len.Op,
                                 E.null(ctx().ptr(ctx().u8())).Op}));
+      Prologue();
       Scopes.back().Locals.push_back(Loc);
       Vars[V] = Loc;
     };
@@ -1069,7 +1075,9 @@ void Body::lower(const ast::FuncDecl *FD) {
         NamedResults.push_back(Loc);
         Scopes.back().Locals.push_back(Loc);
         FB.storageLive(Loc);
+        Prologue();
         FB.assign(FB.local(Loc), FB.use(zeroOf(T)));
+        Prologue();
       }
   }
   RootBody = FD->Body;

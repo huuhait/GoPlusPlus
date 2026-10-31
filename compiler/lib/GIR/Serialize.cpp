@@ -450,6 +450,7 @@ private:
         Rec R{F_Stmt, {S.K}};
         put(R.Vals, S.Loc);
         R.Vals.push_back(S.Scope);
+        R.Vals.push_back(S.Prologue);
         switch (S.K) {
         case Statement::Assign:
           put(R.Vals, S.Dest);
@@ -1131,6 +1132,7 @@ private:
         S.K = enumVal(R, Statement::Nop);
         S.Loc = span(R);
         S.Scope = R.next();
+        S.Prologue = R.next();
         switch (S.K) {
         case Statement::Assign:
           S.Dest = place(R, *F);

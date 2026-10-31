@@ -1,0 +1,8 @@
+// REQUIRES: gdb, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/parambreak.gopp -o %t
+// RUN: %python %S/Inputs/gdb-qemu.py %aarch64_sysroot %t %S/Inputs/parambreak.gdb | FileCheck %S/params-break.test --check-prefix=GDB
+// RUN: %python %S/Inputs/gdb-qemu.py %aarch64_sysroot %t %S/Inputs/parambreak-step.gdb | FileCheck %S/params-break.test --check-prefix=GDBSTEP
+// P04.12: debug/params-break.test's gdb session on linux/arm64, under
+// user-mode QEMU's gdb stub: every kind of parameter is right at `break f`
+// and at `step` into the function on the other target too (gdb's aarch64
+// prologue analyser trusts the line table). The CHECK lines are that test's.

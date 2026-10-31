@@ -456,7 +456,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V067, V070, V073-V075
+  // A function: V010-V013, V022, V067, V070, V073-V075, V077
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -489,6 +489,10 @@ private:
       for (const Statement &S : counted(Steps, BB.Stmts))
         if (S.K == Statement::Assign && S.RV.K == Rvalue::AddrOf)
           AddrTaken.insert(S.RV.P.Local);
+    // V077: the function's entry (Statement::Prologue) is the first
+    // statements of the entry block: the code generator gives them no line,
+    // so the place where a debugger stops at `break f` comes after all of it.
+    bool InEntry = true;
     for (BlockId B = 0; B < Fn.Blocks.size() && !full(); ++B) {
       Block = B;
       const BasicBlock &BB = Fn.Blocks[B];
@@ -496,8 +500,15 @@ private:
       for (size_t I = 0; I < BB.Stmts.size(); ++I) {
         ++Steps;
         Index = I;
-        statement(BB.Stmts[I]);
+        const Statement &S = BB.Stmts[I];
+        if (S.Prologue && !InEntry)
+          err("V077", "a statement of the function's entry (prologue) " +
+                          std::string(B ? "outside the entry block"
+                                        : "after a statement of the body"));
+        InEntry = InEntry && S.Prologue;
+        statement(S);
       }
+      InEntry = false;
       Index = BB.Stmts.size();
       terminator(BB);
     }

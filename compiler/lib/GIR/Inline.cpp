@@ -140,10 +140,19 @@ void inlineCall(Function &Caller, size_t Bi, FuncId CalleeId,
   // file, which the caller's line table does not have), in the copies of the
   // callee's scopes: the code generator puts them in the callee's scope,
   // inlined at the call (P04.12). The copies of the parameters and the
-  // result, and the jump back, are the call's: its position and scope.
+  // result, and the jump back, are the call's: its position and scope. So is
+  // the copy of the callee's entry (Statement::Prologue, the variable of a
+  // borrowed string or `[]T`): the inlined frame, where a debugger stops at
+  // `break callee`, starts with every parameter set.
   for (const Statement &S : counted(Steps, Body.Stmts)) {
     BB.Stmts.push_back(remapStatement(S, Base));
-    BB.Stmts.back().Scope = ScopeMap[S.Scope];
+    Statement &N = BB.Stmts.back();
+    N.Scope = ScopeMap[S.Scope];
+    if (S.Prologue) {
+      N.Loc = Call.Loc;
+      N.Scope = Call.Scope;
+      N.Prologue = false;
+    }
   }
   if (!Callee.Locals[0].Ty->isUnit()) {
     Operand R;

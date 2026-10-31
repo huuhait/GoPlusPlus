@@ -151,7 +151,8 @@ def corpus(root):
     for stem, files in (("locals", ["locals.gopp"]), ("chain", ["chain.gopp"]),
                         ("types", ["types.gopp"]), ("scopes", ["scopes.gopp"]),
                         ("inl", ["inl/a.gopp", "inl/b.gopp"]),
-                        ("deep", ["deep.gopp"]), ("params", ["params.gopp"])):
+                        ("deep", ["deep.gopp"]), ("params", ["params.gopp"]),
+                        ("parambreak", ["parambreak.gopp"])):
         if os.path.isfile(os.path.join(dbg, files[0])):
             base = os.path.join(dbg, stem)
             progs.append(Program("debug/" + stem, [os.path.join(dbg, f) for f in files],

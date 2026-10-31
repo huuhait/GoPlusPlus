@@ -1,0 +1,140 @@
+package main
+
+// Every kind of parameter at `break f` (debug/params-break.test): the
+// debuggers stop where LLVM puts prologue_end, which must come after the
+// code that puts each parameter where its variable says it is.
+
+type Pair struct {
+	X, Y int
+}
+
+type Tri struct {
+	A, B, C int
+}
+
+type Big struct {
+	A, B, C, D, E int
+}
+
+type Doc struct {
+	N    int
+	Name string
+}
+
+type Nums []int
+
+type Lener interface {
+	Len() int
+	First() int
+}
+
+func scalars(a int, b int32, c bool, f float64) int {
+	println(a, b, c, f)
+	return a
+}
+
+func words(p Pair, t Tri, g Big, k int) int {
+	println(p.X, t.C, g.E, k)
+	return p.Y + t.A + g.A + k
+}
+
+func place(d Doc, m map[string]int) int {
+	println(d.N, len(m))
+	return d.N + len(m)
+}
+
+func view(s string, xs []int) int {
+	println(s, len(xs))
+	return len(s) + len(xs)
+}
+
+func grow(move xs []int, n int) []int {
+	println(n)
+	xs = append(xs, n)
+	return xs
+}
+
+func named(a int) (r int, ok bool) {
+	println(a)
+	r = a * 2
+	ok = true
+	return
+}
+
+func misc(l Lener, o Option[int]) int {
+	println(o != nil)
+	return l.Len()
+}
+
+func (p Pair) Sum(k int) int {
+	println(k)
+	return p.X + p.Y + k
+}
+
+func (p *Pair) Add(k int) {
+	println(k)
+	p.X += k
+}
+
+func (d Doc) Count(k int) int {
+	println(k)
+	return len(d.Name) + k
+}
+
+func (n Nums) Len() int {
+	return len(n)
+}
+
+func (n Nums) First() int {
+	println(len(n))
+	return n[0]
+}
+
+func tsc(a int, b int) int {
+	return a*b + 1
+}
+
+func tpair(p Pair, t Tri) int {
+	return p.X + t.C
+}
+
+func tplace(d Doc) int {
+	return d.N + len(d.Name)
+}
+
+func tstr(s string) int {
+	return len(s)
+}
+
+func tslice(xs []int) int {
+	return len(xs)
+}
+
+func call(l Lener) int {
+	return l.Len() + l.First()
+}
+
+func main() {
+	r := scalars(20, -7, true, 2.5)
+	r += words(Pair{3, 4}, Tri{5, 6, 7}, Big{8, 9, 10, 11, 12}, 13)
+	m := map[string]int{"a": 1}
+	r += place(Doc{14, "doc"}, m)
+	r += view("hey", []int{1, 2, 3, 4})
+	g := grow([]int{7, 8}, 15)
+	r += len(g)
+	n, ok := named(16)
+	println(n, ok)
+	r += misc(Nums{17, 18}, 19)
+	p := Pair{21, 22}
+	r += p.Sum(23)
+	p.Add(24)
+	d := Doc{25, "abcd"}
+	r += d.Count(26)
+	r += tsc(27, 28)
+	r += tpair(Pair{29, 30}, Tri{31, 32, 33})
+	r += tplace(Doc{34, "tp"})
+	r += tstr("str")
+	r += tslice([]int{35, 36})
+	r += call(Nums{37, 38, 39})
+	println(r)
+}

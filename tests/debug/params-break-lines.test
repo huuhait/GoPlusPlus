@@ -1,0 +1,52 @@
+// RUN: %gopp build -target=linux/amd64 -emit=obj %S/Inputs/parambreak.gopp -o %t.amd64.o
+// RUN: llvm-dwarfdump --debug-line %t.amd64.o | FileCheck %s
+// RUN: %gopp build -target=linux/arm64 -emit=obj %S/Inputs/parambreak.gopp -o %t.arm64.o
+// RUN: llvm-dwarfdump --debug-line %t.arm64.o | FileCheck %s
+// P04.12, the line table of debug/params-break.test on both targets, with no
+// debugger. Each function's first row is its declaration line (column 0,
+// the row of the frame setup and of the entry that puts the parameters in
+// their slots, which has no line of its own); the next row is the first
+// line of the body and has prologue_end, where gdb and lldb stop at
+// `break f`. Before the fix the next row was the declaration line again
+// (column 1, the stores into the slots) with prologue_end, so the debuggers
+// stopped before the stores. The other side: the table still starts at the
+// declaration line, so a breakpoint on it finds the function.
+//
+// CHECK:      {{^0x[0-9a-f]+}} 31 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 32 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 36 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 37 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 41 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 42 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 46 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 47 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 51 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 52 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 57 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 58 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 64 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 65 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 69 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 70 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 74 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 75 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 79 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 80 2 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 84 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 85 9 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 88 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 89 10 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 93 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 94 9 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 97 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 98 9 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 101 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 102 15 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 105 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 106 9 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 109 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 110 9 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 113 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 114 9 0 0 0 0 is_stmt prologue_end{{$}}
+// CHECK:      {{^0x[0-9a-f]+}} 117 0 0 0 0 0 is_stmt{{$}}
+// CHECK-NEXT: {{^0x[0-9a-f]+}} 118 7 0 0 0 0 is_stmt prologue_end{{$}}

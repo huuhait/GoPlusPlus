@@ -117,10 +117,11 @@ func main() {
 // ASM-AMD-NOT: (%rax)
 // ASM-AMD: retq
 // The fifth integer does not fit: stored through the hidden pointer, which
-// arrives as the first argument (rdi).
+// arrives as the first argument (rdi). (The slot is off rbp: unoptimized
+// code with DWARF keeps the frame pointer, debug-info.md section 3.)
 // ASM-AMD-LABEL: _GPF4mainE4five:
-// ASM-AMD: movq %rdi, [[SLOT:-?[0-9]+]](%rsp)
-// ASM-AMD: movq [[SLOT]](%rsp), %rax
+// ASM-AMD: movq %rdi, [[SLOT:-?[0-9]+]](%[[BASE:r[sb]p]])
+// ASM-AMD: movq [[SLOT]](%[[BASE]]), %rax
 // ASM-AMD: movq %rcx, 32(%rax)
 // ASM-AMD: retq
 

@@ -709,6 +709,14 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   if (!F.isDeclaration())
     AL = AL.addFnAttribute(
         C, llvm::Attribute::getWithUWTableKind(C, llvm::UWTableKind::Async));
+  // Unoptimized code with DWARF keeps the frame pointer, as Clang's `-O0`:
+  // gdb's amd64 prologue analyser (which trusts the line table only for a
+  // producer that starts with "clang ") then finds `push %rbp; mov %rsp,
+  // %rbp` and `step` into a function goes on to the end of the declaration
+  // line's row, past the stores into the parameters' slots. Without it gdb
+  // stops at the first instruction, before them (debug-info.md section 3).
+  if (!F.isDeclaration() && Opts.DebugInfo && !Opts.Optimized)
+    AL = AL.addFnAttribute(C, "frame-pointer", "all");
   LF->setAttributes(AL);
   return LF;
 }
@@ -2087,7 +2095,12 @@ llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
   for (size_t I = 0; I < F.Blocks.size(); ++I)
     Blocks.push_back(llvm::BasicBlock::Create(C, "bb" + llvm::Twine(I), Fn));
   B.SetInsertPoint(Entry);
-  setLoc(F.Loc, 0);
+  // The entry block puts the parameters where their variables say they are
+  // (their slots). It has no location, as in Clang: it stays in the row of
+  // the function's first line, and the first instruction with a line, where
+  // LLVM puts `prologue_end` and the debuggers stop at `break f`, comes after
+  // it, so every parameter is in its slot there (debug/params-break.test).
+  B.SetCurrentDebugLocation(llvm::DebugLoc());
   // The parameters and the result place, as the convention hands them over:
   // the values of the IR arguments (an aggregate: the address of its bytes).
   auto CFIt = CFuncs.find(Id);
@@ -2147,7 +2160,11 @@ llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
     if (BB.Catch)
       return fail("a catch block, the handler of `defer` (P04.07)");
     for (const G::Statement &S : BB.Stmts) {
-      setLoc(S.Loc, S.Scope);
+      // The rest of the entry has no line either (Statement::Prologue).
+      if (S.Prologue)
+        B.SetCurrentDebugLocation(llvm::DebugLoc());
+      else
+        setLoc(S.Loc, S.Scope);
       switch (S.K) {
       case G::Statement::Assign: {
         if (S.Dest.Ty->isUnit()) {

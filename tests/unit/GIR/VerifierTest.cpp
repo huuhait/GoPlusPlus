@@ -2130,4 +2130,50 @@ TEST(GIRVerifier, OptionIsATupleOfValueAndFlag) {
   }
 }
 
+TEST(GIRVerifier, V077_TheEntryIsTheFirstStatementsOfTheEntryBlock) {
+  // P04.12: the statements of a function's entry (Statement::Prologue: a
+  // borrowed string's or slice's variable, a named result's zero value) have
+  // no line, so `break f` stops after them; they must all come first.
+  // f's entry block has one statement (t = a + 1), its `then` block one.
+  auto Entry = [](GoodModule &G) -> std::vector<Statement> & {
+    return G.fn(G.F).Blocks[0].Stmts;
+  };
+  auto Nop = [] {
+    Statement S;
+    S.K = Statement::Nop;
+    return S;
+  };
+  {
+    GoodModule G; // the first statement of the entry block: valid
+    Entry(G)[0].Prologue = true;
+    EXPECT_GIR_VALID(G.M);
+  }
+  {
+    GoodModule G; // two in a row, then the body: valid
+    Statement P = Nop();
+    P.Prologue = true;
+    Entry(G)[0].Prologue = true;
+    Entry(G).insert(Entry(G).begin(), P);
+    EXPECT_GIR_VALID(G.M);
+  }
+  {
+    GoodModule G; // after a statement of the body
+    Entry(G).insert(Entry(G).begin(), Nop());
+    Entry(G)[1].Prologue = true;
+    EXPECT_GIR_RULE(G.M, "V077");
+  }
+  {
+    GoodModule G; // the body, then the entry again
+    Statement P = Nop();
+    P.Prologue = true;
+    Entry(G).push_back(P);
+    EXPECT_GIR_RULE(G.M, "V077");
+  }
+  {
+    GoodModule G; // outside the entry block (f's `then` block)
+    G.fn(G.F).Blocks[1].Stmts[0].Prologue = true;
+    EXPECT_GIR_RULE(G.M, "V077");
+  }
+}
+
 } // namespace

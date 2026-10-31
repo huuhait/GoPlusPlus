@@ -1,5 +1,7 @@
 // RUN: %gopp build -emit=llvm -pipeline=fastisel %s | FileCheck %s
 // RUN: %gopp build -emit=llvm %s | FileCheck %s --check-prefix=OPT0
+// RUN: %gopp build -emit=llvm -no-debug %s | FileCheck %s --check-prefix=NOFP
+// RUN: %gopp build -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=NOFP
 // P04.13: -emit=llvm prints the IR the back end gets. By default that is the
 // IR after the curated opt-0 passes (second RUN line: SROA has put the string
 // constants straight into the call). With -pipeline=fastisel it is the IR as
@@ -29,7 +31,13 @@ func main() {
 // CHECK: define i32 @main() #[[UW]] !dbg
 // CHECK: call swiftcc void @_GPF4mainE4main()
 // CHECK: ret i32
-// CHECK: attributes #[[UW]] = { uwtable }
+// Unwind tables, and the frame pointer that unoptimized code with DWARF
+// keeps for gdb's `step` (debug-info.md section 3).
+// CHECK: attributes #[[UW]] = { uwtable "frame-pointer"="all" }
+// The other side: without DWARF, or above `opt 0`, no frame pointer.
+// NOFP-NOT: "frame-pointer"
+// NOFP: attributes #{{[0-9]+}} = { {{.*}}uwtable
+// NOFP-NOT: "frame-pointer"
 // CHECK: !llvm.dbg.cu
 // CHECK: !{i32 {{[0-9]+}}, !"Dwarf Version", i32 5}
 

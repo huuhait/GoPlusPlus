@@ -199,6 +199,8 @@ struct Printer {
     }
     span(S.Loc);
     scope(S.Scope);
+    if (Opts.Scopes && S.Prologue)
+      OS << " [prologue]";
     OS << '\n';
   }
 

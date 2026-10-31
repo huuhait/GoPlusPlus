@@ -1,0 +1,21 @@
+breakpoint set -f parambreak.gopp -l 118
+breakpoint set -f parambreak.gopp -l 121
+breakpoint set -f parambreak.gopp -l 122
+breakpoint set -f parambreak.gopp -l 125
+breakpoint set -f parambreak.gopp -l 136
+run
+step
+frame variable
+continue
+step
+frame variable
+continue
+step
+frame variable
+continue
+step
+frame variable
+continue
+step
+frame variable
+continue

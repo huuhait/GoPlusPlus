@@ -475,6 +475,88 @@ TEST(GIRScopes, InliningMakesARealInlinedScopeAndCopiesTheCalleesBlocks) {
   EXPECT_TRUE(H.Scopes.size() == 1u);
 }
 
+TEST(GIRScopes, InliningMakesTheCalleesEntryTheCalls) {
+  // v(a) = w, where w is the variable a borrowed parameter's pair is made
+  // into (P04.25), set by the callee's entry (Statement::Prologue). Its copy
+  // is the call's (position and scope) and no entry of the caller, so the
+  // inlined frame starts with w set (debug/params-break.test). The other
+  // side: the callee's other statement stays in the inlined scope with its
+  // own line. The flag survives the bitstream.
+  Scoped S;
+  uint32_t VFile = S.M.addFile("v.gopp") + 1;
+  Span Site{S.M.addFile("c.gopp") + 1, 9, 4};
+  FuncId V = declare(S.M, "v", S.C.func({S.I64}, S.I64));
+  {
+    FuncBuilder B(S.M, S.M.func(V));
+    Function &Fn = S.M.func(V);
+    Fn.Loc = {VFile, 5, 1};
+    Fn.Locals[1].Name = "w";
+    LocalId W = B.newLocal(S.I64, Local::Var, "w");
+    Fn.Locals[W].Source = true;
+    Fn.Locals[W].ArgNo = 1;
+    B.setSpan({VFile, 5, 1});
+    B.assign(B.local(W), B.use(copyOf(B.local(1))));
+    Fn.Blocks[0].Stmts.back().Prologue = true;
+    B.setSpan({VFile, 6, 2});
+    B.assign(B.local(0), B.use(copyOf(B.local(W))));
+    B.ret();
+  }
+  FuncId Id = declare(S.M, "cv", S.C.func({S.I64}, S.I64));
+  {
+    FuncBuilder B(S.M, S.M.func(Id));
+    B.setSpan(Site);
+    B.call(constFunc(S.M, V), {copyOf(B.local(1))}, B.local(0));
+    B.ret();
+  }
+  ASSERT_EQ(errorsOf(S.M), "");
+  // The text shows the flag only when asked, as it shows the scopes.
+  EXPECT_EQ(textOf(S.M).find("[prologue]"), std::string::npos);
+  std::string With;
+  llvm::raw_string_ostream OS(With);
+  PrintOptions PO;
+  PO.Scopes = true;
+  print(OS, S.M, PO);
+  EXPECT_NE(With.find("[prologue]"), std::string::npos);
+
+  std::string Bytes = writeModule(S.M);
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(writeModule(**R), Bytes);
+  const Function *G = nullptr;
+  for (const auto &Fn : (*R)->Funcs)
+    if (Fn && Fn->Name == "v")
+      G = Fn.get();
+  ASSERT_NE(G, nullptr);
+  ASSERT_EQ(G->Blocks[0].Stmts.size(), 2u);
+  EXPECT_TRUE(G->Blocks[0].Stmts[0].Prologue);
+  EXPECT_FALSE(G->Blocks[0].Stmts[1].Prologue);
+
+  ASSERT_GE(inlineTrivial(S.M).Inlined, 1u);
+  EXPECT_GIR_VALID(S.M);
+  Function &F = S.M.func(Id);
+  ASSERT_EQ(F.Scopes.size(), 1u);
+  ASSERT_EQ(F.Scopes[0].K, DebugScope::Inlined);
+  unsigned Entry = 0, Body = 0;
+  for (const Statement &St : F.Blocks[0].Stmts) {
+    EXPECT_FALSE(St.Prologue);
+    if (St.K != Statement::Assign)
+      continue;
+    const Local &D = F.Locals[St.Dest.Local];
+    if (D.Source && D.Name == "w") {
+      ++Entry; // w = a: the call's position and scope
+      EXPECT_EQ(St.Loc, Site);
+      EXPECT_EQ(St.Scope, 0u);
+    } else if (St.Loc.File == VFile) {
+      ++Body; // the callee's line, in the callee's scope
+      EXPECT_EQ(St.Loc.Line, 6u);
+      EXPECT_EQ(St.Scope, 1u);
+    }
+  }
+  EXPECT_EQ(Entry, 1u);
+  EXPECT_EQ(Body, 1u);
+}
+
 TEST(GIRScopes, ACalleeWithoutScopesStillGetsItsInlinedScope) {
   // Both sides: a function of GoodModule has no user variables and no
   // scopes; inlining it is a scope with no blocks below.

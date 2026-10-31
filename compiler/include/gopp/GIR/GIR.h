@@ -203,6 +203,14 @@ struct Statement {
   /// code generator's FMA matcher does not look through it, so inlining a
   /// call never fuses a product with a sum that the call kept apart.
   bool Boundary = false;
+  /// Part of the function's entry (P04.12; V077: the first statements of the
+  /// entry block): it makes the variable that a borrowed string or `[]T`
+  /// parameter's pair stands for, or sets a named result to its zero value
+  /// (and their StorageLive). The code generator gives it no line, so the
+  /// place where the debuggers stop at `break f` (prologue_end) comes after
+  /// it, and GIR inlining makes its copy the call's, as the copies of the
+  /// arguments are (docs/design/debug-info.md section 3).
+  bool Prologue = false;
   /// The debug scope the statement belongs to (Function::Scopes, V074). In
   /// code that GIR inlining copied the span is a position in the callee and
   /// the scope lies under the `Inlined` scope of the call (P04.12).
