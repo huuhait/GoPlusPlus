@@ -37,6 +37,7 @@ using namespace gopp::gir::impl;
 
 FuncId Lowering::ensureCFunc(StringRef Name, Type *Sig, SourceLoc At,
                              bool NoReturn, StringRef Who, StringRef Needs) {
+  Sig = Ctx.withCallConv(Sig, CallConv::C);
   std::string Sym = symbolOf(SymbolKind::ExternC, CP.Pkg, Name);
   FuncId Id = M->lookupFunction(Sym);
   if (BadC.count(Name))

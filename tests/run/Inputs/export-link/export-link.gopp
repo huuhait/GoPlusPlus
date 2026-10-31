@@ -1,0 +1,24 @@
+package main
+
+@Extern("C")
+func c_run()
+
+@Export("C")
+func GPx(x int32) int32 { return x + 1 }
+
+@Export("C")
+func _G(x int32) int32 { return x + 2 }
+
+@Export("C")
+func _gpx(x int32) int32 { return x + 3 }
+
+@Export("C")
+func _Gx(x int32) int32 { return x + 4 }
+
+@Export("C")
+func writeLog(x int32) int32 { return x + 5 }
+
+func main() {
+	c_run()
+	println("done", writeLog(1))
+}

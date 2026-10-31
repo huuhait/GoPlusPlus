@@ -1,0 +1,54 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// RUN: %gopp build -emit=llvm -pipeline=fastisel -target=linux/amd64 %s | FileCheck --check-prefix=LL %s
+// P04.18 (D4.4, appendix A.8): `@Export("C")` makes the C symbol of a
+// function, its declared name exactly: a thunk with the C convention that
+// calls it. The function keeps its mangled name and the Go++ convention, and
+// calls from Go++ go to it, not to the thunk. The thunk has the C types by
+// value (a struct too: the code generator unpacks and packs them with the C
+// ABI of the target, cabi::unpackCParams and packCReturn). The names `GPx`
+// and `_G` are fine: only the prefix `_GP` is reserved (export-bad.test).
+// C calling these: export-link.test, cabi-reverse-*.test.
+package main
+
+type S struct {
+	a int64
+	b float64
+}
+
+@Export("C")
+func go_add(a, b int32) int32 { return a + b }
+
+@Export("C")
+func go_mk(s S, k int64) S { return S{s.a + k, s.b * 2} }
+
+@Export("C")
+func GPx(x int32) {}
+
+@Export("C")
+func _G() {}
+
+func main() {
+	_ = go_add(1, 2)
+	_ = go_mk(S{}, 1)
+	GPx(1)
+	_G()
+}
+
+// CHECK-LABEL: fn _GPF4mainE6go_add(_1: i32, _2: i32) -> i32 [go, external]
+// CHECK-LABEL: fn go_add(_1: i32, _2: i32) -> i32 [c, external]
+// CHECK: call const fn @_GPF4mainE6go_add(copy _1, copy _2)
+// CHECK-LABEL: fn go_mk(_1: main.S, _2: i64) -> main.S [c, external]
+// CHECK: call const fn @_GPF4mainE5go_mk(copy _1, copy _2)
+// CHECK-LABEL: fn GPx(_1: i32) -> () [c, external]
+// CHECK-LABEL: fn _G() -> () [c, external]
+// The calls in main go to the Go++ functions.
+// CHECK-LABEL: fn _GPF4mainE4main()
+// CHECK: call const fn @_GPF4mainE6go_add(
+// CHECK: call const fn @_GPF4mainE5go_mk(
+// CHECK-NOT: call const fn @go_add
+
+// The thunk unpacks a struct with the C ABI of the target (amd64: a pair of
+// registers) and calls the function with the Go++ convention.
+// LL: define swiftcc { i64, double } @_GPF4mainE5go_mk(i64 %0, double %1, i64 %2)
+// LL: define { i64, double } @go_mk(i64 %0, double %1, i64 %2)
+// LL: call swiftcc { i64, double } @_GPF4mainE5go_mk(i64 {{.*}}, double {{.*}}, i64 {{.*}})

@@ -36,7 +36,7 @@
 *Why:* without one home, every package compiles its own copy of each instance, and debug builds pay for it many times.
 
 **D4.4 — Calling conventions: internal for Go++, the exact C ABI for C.**
-- **Go++ → Go++ calls** use an internal convention that returns `(T, error)` and other aggregates in registers, like Go's ABIInternal (P04.18).
+- **Go++ → Go++ calls** use an internal convention that returns `(T, error)` and other aggregates in registers, like Go's ABIInternal (P04.18). The LLVM convention is `swiftcc` on both targets (ADR-0030; regcall on amd64 was measured and rejected): 8 integer and 8 float result registers on arm64, 4 and 4 on amd64. So on amd64 `(T, error)` stays in registers while T is at most 2 words, and a result of more than 4 integer words (`(string, error)`, `([]T, error)`) goes through memory, measured at no runtime difference (307 vs 303 ms over 400M calls).
 - **C-ABI entry points:** functions used as C callbacks or marked `@Export` get C-ABI thunks, like Go's ABI0 wrappers.
 - **C calls** use the exact C ABI. Clang's `CodeGenABITypes` only *classifies* a signature, so Go++ writes the lowering for each `ABIArgInfo` kind itself. P04.11 is sized L.
 - **Parameters** (P01 D1.5):

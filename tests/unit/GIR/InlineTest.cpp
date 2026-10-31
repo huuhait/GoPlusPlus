@@ -345,8 +345,9 @@ TEST(GIRInline, SameResultsBeforeAndAfter) {
   Jit A(Plain.M), B(Inlined.M);
   if (!A.J || !B.J)
     GTEST_SKIP() << "the host is not a supported target";
-  using Fn2 = int64_t (*)(int64_t, int64_t);
-  using Fn1 = int64_t (*)(int64_t);
+  // (Go++ functions: the Go++ convention of the host, GOPP_GO_CC.)
+  using Fn2 = int64_t(GOPP_GO_CC *)(int64_t, int64_t);
+  using Fn1 = int64_t(GOPP_GO_CC *)(int64_t);
   auto CallerA = A.find<Fn2>("caller"), CallerB = B.find<Fn2>("caller");
   auto AliasA = A.find<Fn1>("alias"), AliasB = B.find<Fn1>("alias");
   ASSERT_TRUE(CallerA && CallerB && AliasA && AliasB);

@@ -661,6 +661,7 @@ std::optional<CallInfo> cabi::classifyScalars(llvm::StringRef Triple,
       L.K = Ty->bits() == 32 ? LTy::Float : LTy::Double;
       break;
     case gir::Type::Kind::Ptr:
+    case gir::Type::Kind::Func: // a C function pointer (a callback)
       L.K = LTy::Ptr;
       break;
     default:

@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <fstream>
 #include <set>
+#include <tuple>
 
 using namespace gopp;
 
@@ -460,46 +461,62 @@ func main() {
 }
 
 TEST(DebugInfo, AnAggregateParameterIsReadThroughASlotOfItsAddress) {
-  // The address the caller passed lives in a slot of its own; the variable
-  // is read through it (DW_OP_deref), as Clang does for an indirect argument.
+  // An aggregate the convention passes by address (P04.18: more than four
+  // scalars) is the address the caller passed: it lives in a slot of its
+  // own and the variable is read through it (DW_OP_deref), as Clang does for
+  // an indirect argument. The other side: one passed as its scalars is the
+  // body's own copy, read in place (no deref).
   Built C(R"(package main
+
+type Big struct {
+	a, b, c, d, e int
+}
 
 type Pair struct {
 	a, b int
 }
 
-func sum(p Pair) int {
-	return p.a + p.b
+func sum(p Big) int {
+	return p.a + p.e
+}
+
+func add(q Pair) int {
+	return q.a + q.b
 }
 
 func main() {
-	println(sum(Pair{1, 2}))
+	println(sum(Big{1, 2, 3, 4, 5}), add(Pair{1, 2}))
 }
 )");
   ASSERT_TRUE(C.LM) << C.Error;
-  bool Found = false;
-  for (llvm::Instruction &I : llvm::instructions(*C.fn("main.sum")))
-    for (llvm::DbgRecord &R : I.getDbgRecordRange())
-      if (auto *V = llvm::dyn_cast<llvm::DbgVariableRecord>(&R))
-        if (V->getVariable()->getName() == "p") {
-          Found = true;
-          EXPECT_EQ(V->getVariable()->getArg(), 1u);
-          auto *Slot =
-              llvm::dyn_cast<llvm::AllocaInst>(V->getVariableLocationOp(0));
-          ASSERT_NE(Slot, nullptr);
-          EXPECT_EQ(Slot->getName(), "p.addr");
-          EXPECT_TRUE(V->getExpression()->isDeref() ||
-                      V->getExpression()->startsWithDeref());
-        }
-  EXPECT_TRUE(Found);
+  for (auto [Fn, Name, Deref] : {std::tuple{"main.sum", "p", true},
+                                 std::tuple{"main.add", "q", false}}) {
+    SCOPED_TRACE(Fn);
+    bool Found = false;
+    for (llvm::Instruction &I : llvm::instructions(*C.fn(Fn)))
+      for (llvm::DbgRecord &R : I.getDbgRecordRange())
+        if (auto *V = llvm::dyn_cast<llvm::DbgVariableRecord>(&R))
+          if (V->getVariable()->getName() == Name) {
+            Found = true;
+            EXPECT_EQ(V->getVariable()->getArg(), 1u);
+            auto *Slot =
+                llvm::dyn_cast<llvm::AllocaInst>(V->getVariableLocationOp(0));
+            ASSERT_NE(Slot, nullptr);
+            EXPECT_EQ(Slot->getName() == std::string(Name) + ".addr", Deref);
+            EXPECT_EQ(V->getExpression()->isDeref() ||
+                          V->getExpression()->startsWithDeref(),
+                      Deref);
+          }
+    EXPECT_TRUE(Found);
+  }
 }
 
 TEST(DebugInfo, ABorrowedSliceParameterIsTheSliceTheBodyMakes) {
   // P04.25's hand-off: a borrowed []T arrives as a (ptr, len) pair, which the
   // body makes into a slice of its own. That slice is the debugger's
   // parameter `xs` (ArgNo 1); the pair is no variable. A `move []T` is the
-  // whole slice, read through the address the caller passed. Both are
-  // {ptr, len, cap, alloc}, 32 bytes.
+  // whole slice, its four words passed as scalars (P04.18) into the body's
+  // own slot. Both are {ptr, len, cap, alloc}, 32 bytes, read in place.
   Built C(R"(package main
 
 func sum(xs []int) int {
@@ -541,9 +558,9 @@ func main() {
           auto *Slot =
               llvm::dyn_cast<llvm::AllocaInst>(V->getVariableLocationOp(0));
           ASSERT_NE(Slot, nullptr);
-          // sum: the slice the body made (no deref); grow: the caller's.
-          EXPECT_EQ(V->getExpression()->startsWithDeref(),
-                    std::string(Fn) == "main.grow");
+          // sum: the slice the body made; grow: the body's copy of the
+          // four words. Neither is read through an address.
+          EXPECT_FALSE(V->getExpression()->startsWithDeref());
         }
     EXPECT_EQ(Named, 1u); // one `xs`, not the pair as well
     EXPECT_EQ(Params, std::string(Fn) == "main.sum" ? 1u : 2u);

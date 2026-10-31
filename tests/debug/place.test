@@ -1,0 +1,56 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/place.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/place.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/place.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// RUN: %gopp build -emit=obj %S/Inputs/place.gopp -o %t.o
+// RUN: llvm-dwarfdump --name=main.fill -c %t.o | FileCheck %s --check-prefix=DWARF
+// RUN: llvm-dwarfdump --name=main -c %t.o | FileCheck %s --check-prefix=CMAIN
+// P04.18, the hand-offs of P04.12. A parameter passed by a hidden pointer to
+// the caller's place (PAR-10: a borrowed struct that holds a map, a borrowed
+// map, a value receiver that holds one) and a `&` range variable (RNG-1a)
+// are described as the place they point to (Local::Deref: `DW_OP_deref`, the
+// pointee's type), so gdb and lldb print `d` as the struct, `m` as the map
+// (`m->count` is its length) and `x` as the element, AND a plain pointer
+// parameter `p *Doc` still prints as the pointer. A Go++ function carries
+// its calling convention, swiftcc (ADR-0030), AND the C entry point `main`
+// carries none.
+//
+// GDB: main.fill (d=..., m={{0x[0-9a-f]+}}, p={{0x[0-9a-f]+}})
+// GDB: @@FILL
+// GDB-NEXT: $1 = {N = 3, Index = {{0x[0-9a-f]+}}}
+// GDB-NEXT: $2 = 3
+// GDB-NEXT: $3 = 2
+// GDB-NEXT: $4 = (struct main.Doc *) {{0x[0-9a-f]+}}
+// GDB-NEXT: $5 = 5
+// GDB: main.Doc.Count (d=...)
+// GDB: @@COUNT
+// GDB-NEXT: $6 = 3
+// GDB: @@RANGE
+// GDB-NEXT: $7 = {N = 7, Index = 0x0}
+// GDB-NEXT: $8 = 7
+//
+// LLDB: @@FILL
+// LLDB: (long) d.N = 3
+// LLDB-NEXT: (unsigned long) m->count = 2
+// LLDB-NEXT: (long) p->N = 5
+// LLDB: @@RANGE
+// LLDB: (long) x.N = 7
+//
+// DWARF: DW_AT_name ("main.fill")
+// DWARF: DW_AT_calling_convention (DW_CC_LLVM_Swift)
+// DWARF: DW_TAG_formal_parameter
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}}, DW_OP_deref)
+// DWARF-NEXT: DW_AT_name ("d")
+// DWARF: DW_AT_type ({{.*}} "main.Doc")
+// DWARF: DW_TAG_formal_parameter
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}}, DW_OP_deref)
+// DWARF-NEXT: DW_AT_name ("m")
+// DWARF: DW_AT_type ({{.*}} "gopp.map *")
+// DWARF: DW_TAG_formal_parameter
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}})
+// DWARF-NEXT: DW_AT_name ("p")
+// DWARF: DW_AT_type ({{.*}} "main.Doc *")
+//
+// CMAIN: DW_AT_name ("main")
+// CMAIN-NOT: DW_AT_calling_convention
+// CMAIN: DW_AT_external

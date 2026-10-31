@@ -2163,15 +2163,47 @@ void Checker::checkRangeMutation(const ast::Expr *Lhs, const char *What) {
   }
 }
 
+/// OWN-R3b: a borrowed variable is read-only at the top level, so nothing may
+/// make a writable reference into its own storage: the variable, its fields,
+/// fields of fields and array elements held by value, at any depth and also
+/// through a checked Option (borrowedRoot decides: the "top level" line of
+/// PAR-1). Every way the language has asks it here:
+///   `&x`, an error                   checkAddressOf;
+///   a pointer-receiver call or method value (an implicit `&x`), an error
+///                                    checkPtrRecvCall;
+///   slicing an array, `x[i:j]` and `x[i:j:k]` (`(&x)[i:j]` in Go): the
+///   slice is a view, read-only like a slice of a view, so a write through
+///   it, `copy` into it or passing it where a `[]T` may be written is an
+///   error (OWN-V1), and reading it, also as a `View` argument, is fine
+///                                    sliceExpr, borrowedStorageSlice;
+///   an `&` range variable over an array (RNG-1a), an error with its own
+///   message                          RangeStmt.
+/// What is reached through a slice, map or pointer stays writable. This
+/// matters beyond the checker: P04.18 passes a borrowed owning parameter by
+/// a pointer to the caller's place, so a write through such a reference
+/// would reach the caller.
+bool Checker::rejectBorrowedRef(const ast::Node *At, const ast::Expr *Inner,
+                                BorrowedRef How, StringRef Method) {
+  if (!own() || !borrowedRoot(Inner))
+    return false;
+  if (How == BorrowedRef::Address)
+    err(At, diag::err_own_borrowed_address, {str(Inner)});
+  else
+    err(At, diag::err_own_borrowed_ptr_call, {Method.str(), str(Inner)});
+  return true;
+}
+
+bool Checker::borrowedStorageSlice(const SliceExpr *Ex) {
+  return own() && borrowedRoot(unparen(Ex->X));
+}
+
 void Checker::checkAddressOf(const UnaryExpr *Ex, Operand &X) {
   if (!own())
     return;
   (void)X;
   const ast::Expr *Inner = unparen(Ex->X);
-  if (borrowedRoot(Inner)) {
-    err(Ex, diag::err_own_borrowed_address, {str(Inner)});
+  if (rejectBorrowedRef(Ex, Inner, BorrowedRef::Address))
     return;
-  }
   // P03.19: a pointer into a map or slice of an interface box could write
   // into it (a binding itself and its by-value parts are the case above).
   // A pointer to a view variable that is no part of a view or a box only
@@ -2203,10 +2235,7 @@ void Checker::checkPtrRecvCall(const SelectorExpr *Sel, Func *M) {
   Type *BT = I.typeOf(Sel->X);
   if (!BT || isa<PointerType>(under(BT)))
     return;
-  if (borrowedRoot(Sel->X))
-    err(Sel, diag::err_own_borrowed_ptr_call,
-        {std::string(M->Name), str(Sel->X)});
-  else
+  if (!rejectBorrowedRef(Sel, Sel->X, BorrowedRef::PtrMethod, M->Name))
     rejectBoxWrite(Sel, Sel->X, true,
                    "through the pointer receiver of " + str(Sel));
 }

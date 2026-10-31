@@ -35,17 +35,17 @@ func sum(n int) int {
 func main() { println(sum(10)) }
 
 // The baseline: no pass has run. Locals live in memory, inc is called.
-// BASE-LABEL: define i64 @_GPF4mainE3sum(
+// BASE-LABEL: define swiftcc i64 @_GPF4mainE3sum(
 // BASE: alloca
-// BASE: call i64 @_GPF4mainE3inc(
+// BASE: call swiftcc i64 @_GPF4mainE3inc(
 // BASE-NOT: phi
 // BASE-NOT: volatile
 
 // opt 0: GIR inlining has removed the call and SROA has made the locals
 // registers (phi nodes, no alloca), here without debug information.
-// O0-LABEL: define i64 @_GPF4mainE3sum(
+// O0-LABEL: define swiftcc i64 @_GPF4mainE3sum(
 // O0-NOT: alloca
-// O0-NOT: call i64 @_GPF4mainE3inc
+// O0-NOT: call swiftcc i64 @_GPF4mainE3inc
 // O0: phi i64
 // O0-NOT: volatile
 
@@ -53,17 +53,17 @@ func main() { println(sum(10)) }
 // temporaries are registers, but every variable of the source stays in memory
 // with volatile accesses, so a debugger prints it at any line
 // (docs/design/pipelines.md section 7).
-// O0DBG-LABEL: define i64 @_GPF4mainE3sum(
+// O0DBG-LABEL: define swiftcc i64 @_GPF4mainE3sum(
 // O0DBG: %s = alloca i64
-// O0DBG-NOT: call i64 @_GPF4mainE3inc
+// O0DBG-NOT: call swiftcc i64 @_GPF4mainE3inc
 // O0DBG: #dbg_declare(ptr %s,
 // O0DBG: load volatile i64, ptr %s
 
 // opt 1 and up run LLVM's pipeline (at 2 and above it may even replace the
 // loop by a closed form, so only the absence of memory and calls is checked).
-// O1-LABEL: define i64 @_GPF4mainE3sum(
+// O1-LABEL: define swiftcc i64 @_GPF4mainE3sum(
 // O1-NOT: alloca
-// O1-NOT: call i64 @_GPF4mainE3inc
+// O1-NOT: call swiftcc i64 @_GPF4mainE3inc
 // O1-NOT: volatile
 // O1: ret i64
 

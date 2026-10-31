@@ -199,6 +199,19 @@ public:
   /// An internal error (E0440): a fact the lowering needs is missing.
   void internalError(SourceLoc At, const llvm::Twine &What);
   void badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why);
+  void badExport(SourceLoc At, StringRef Name, const llvm::Twine &Why);
+  /// The C-ABI function that calls Target (P04.18): an @Export function's C
+  /// symbol, and the callback a Go++ function passed to C is wrapped in.
+  FuncId makeCThunk(FuncId Target, const std::string &Name, Linkage Link);
+  FuncId callbackThunk(const S::Func *Fn, FuncId Target);
+  /// The callback thunk of each Go++ function passed to C, by its FuncId.
+  llvm::DenseMap<FuncId, FuncId> CThunks;
+  /// Can the Go++ function Fn (declared as Target) be called by C? Reports
+  /// why not and returns false.
+  bool checkCallbackTarget(const S::Func *Fn, FuncId Target, SourceLoc At);
+  /// The GIR type of a function type passed to a C function: a C function
+  /// pointer (Func), whose parameters and result are lowered as C wants.
+  Type *callbackType(S::Type *T, SourceLoc At, StringRef Fn);
   Span spanOf(SourceLoc L);
 
   /// The GIR type of a checked type; null after a report.
@@ -229,13 +242,54 @@ public:
   FuncId ensurePanic(AssertKind K, bool Unsigned, SourceLoc At);
   /// Go's == and the hash of a checker type (glue); NoId after a report.
   FuncId eqGlue(S::Type *T, SourceLoc At);
+  /// How parameter K of Sig is handed over (P04.18, PAR-10, D4.4). The ONE
+  /// decision: every declaration and every call of a function, and later the
+  /// methods (P04.06), the func values and closures (P04.07) and the
+  /// instances (P04.08), must ask it. What the parameter's GIR type is:
+  ///   Value  a `move` parameter, or a type that is not owning (scalars,
+  ///          trivial structs, pointers, views, shared handles): its own
+  ///          type; the code generator (GoABI.h) passes a small one as its
+  ///          scalars, a big one by address, and either way it is the
+  ///          callee's own copy;
+  ///   Place  a borrowed owning type that is not a string or `[]T` (a map,
+  ///          or a struct, array or Option that holds a string, slice or map
+  ///          by value, holdsOwned): a pointer to the caller's place, so the
+  ///          first write to a nil map in it creates the map there (PAR-1,
+  ///          ADR-0018 amendment point 5). The body reaches it through
+  ///          Body::Aliases;
+  ///   View   a borrowed string or `[]T` (sliceBorrowed, P04.25's pair):
+  ///          Tuple(ptr, len) (D4.4); the body has a variable of the string
+  ///          or slice type made from it with the capacity set to the length
+  ///          (SLC-12) and a null allocator word, or capacity 0 for a string.
+  enum class Pass : uint8_t { Value, Place, View };
+  Pass passOf(S::SignatureType *Sig, size_t K);
+  /// The receiver of the method F, by the same rule (PAR-1: "a parameter or
+  /// receiver"): a pointer receiver and a `move` receiver are Values, a
+  /// borrowed value receiver is what a borrowed parameter of its type is
+  /// (P04.18). The one decision of declarations, bodies, static calls and
+  /// itab thunks.
+  Pass passOfRecv(const S::Func *F);
+  /// The rule itself, for a parameter or receiver of type T.
+  Pass passOfType(S::Type *T, bool Move);
   /// Is parameter K of Sig a borrowed map (no `move`)? It passes by a hidden
-  /// pointer to the owner's map header (PAR-10), so the callee's first write
-  /// to a nil map creates it in the caller's variable (PAR-1, ADR-0018
-  /// amendment point 5). The parameter's GIR type is a pointer to the map.
+  /// pointer to the owner's map header (PAR-10): the Place case with a map.
   bool mapByPointer(S::SignatureType *Sig, size_t K) const {
     return !Sig->isMove(K) && K < Sig->Params->Elems.size() &&
            llvm::isa<S::MapType>(S::under(Sig->Params->Elems[K]));
+  }
+  /// Does a value of the type hold a string, a slice or a map by value
+  /// (through struct fields, arrays and Options; not through pointers)?
+  /// These are the owning types GIR lowers today; a `Unique` pointer (P05)
+  /// and a type with a `drop` method (methods, P04.06) join them with TODO
+  /// P04.09 item (7). Memoized; one step per distinct type, no recursion.
+  /// MapsOnly: does it hold a map (where a borrowed variable may create
+  /// one, PAR-1)?
+  bool holdsOwned(S::Type *T, bool MapsOnly = false);
+  llvm::DenseMap<S::Type *, bool> OwnedMemo, MapMemo;
+  /// The type a View parameter has: Tuple(ptr, len) of the string or slice
+  /// type G.
+  Type *viewTypeOf(Type *G) {
+    return Ctx.tuple({G->fieldType(0, Ctx), Ctx.u64()});
   }
   FuncId hashGlue(S::Type *T, SourceLoc At);
 
@@ -280,30 +334,33 @@ public:
     return !Sig->isMove(K) && K < Sig->Params->Elems.size() &&
            llvm::isa<S::SliceType>(S::under(Sig->Params->Elems[K]));
   }
-  /// Is the receiver of the method F a borrowed []T, a value receiver
-  /// without `move` of a slice type (PAR-1)? It passes as (ptr, len), as a
-  /// borrowed []T parameter does (P04.06).
-  static bool recvBorrowedSlice(const S::Func *F) {
-    return F->Recv && !F->HasPtrRecv && !F->MoveRecv &&
-           llvm::isa<S::SliceType>(S::under(F->Recv->Ty));
-  }
-  /// The (ptr, len) a borrowed []T of the GIR slice type T passes as.
-  Type *borrowedSliceType(Type *T) {
-    return Ctx.tuple({T->fieldType(0, Ctx), Ctx.u64()});
-  }
   /// The GIR type parameter K of Sig passes as, T being the type of its
-  /// value: a borrowed map is a pointer to the caller's header (PAR-10), a
-  /// borrowed []T is (ptr, len) (ADR-0029 point 7), anything else T. The one
-  /// rule of declarations, method signatures and itab slots.
+  /// value, as passOf decides (P04.18): a Place is a pointer to the caller's
+  /// place (a borrowed map, PAR-10, or a struct or array that holds a string,
+  /// a slice or a map), a View is (ptr, len) (a borrowed string or []T,
+  /// ADR-0029 point 7), a Value is T. The one rule of declarations, method
+  /// signatures and itab slots.
   Type *paramType(S::SignatureType *Sig, size_t K, Type *T) {
-    if (mapByPointer(Sig, K))
+    return passType(passOf(Sig, K), T);
+  }
+  /// The GIR type a value of type T passes as in mode P.
+  Type *passType(Pass P, Type *T) {
+    switch (P) {
+    case Pass::Place:
       return Ctx.ptr(T);
-    if (sliceBorrowed(Sig, K) && T->getKind() == Type::Kind::Slice)
-      return borrowedSliceType(T);
+    case Pass::View:
+      return viewTypeOf(T);
+    case Pass::Value:
+      break;
+    }
     return T;
   }
   /// A libc function the runtime calls (malloc, memmove, ...).
   FuncId libc(StringRef Name, SourceLoc At);
+  /// Is Name a C function the runtime calls (libc, and the memcpy and bcmp
+  /// LLVM makes of its memmove and memcmp)? An @Export of that name would
+  /// take the place of the C library's (P04.18).
+  static bool isRuntimeCName(StringRef Name);
   llvm::StringMap<FuncId> LibcIds;
   /// The size and alignment of a GIR type (gir::layoutOf, cached).
   Layout layout(Type *T);
@@ -582,6 +639,16 @@ private:
   Operand argFor(const ast::Expr *E, S::SignatureType *Sig, size_t K);
   /// The value V passed for parameter K of Sig (argFor's capacity rule).
   Operand argAs(Operand V, S::SignatureType *Sig, size_t K, const ast::Node *N);
+  /// V, a result of a multi-value call of checker type From passed on to a
+  /// parameter of type Want (`f(g())`), with the conversion valueFor gives
+  /// an argument expression: a view, else convertResult's (an interface, an
+  /// Option).
+  Operand resultArg(Operand V, S::Type *From, S::Type *Want,
+                    const ast::Node *N);
+  /// The argument for a parameter of a C function that is a function (a
+  /// callback, P04.18): a top-level function's thunk, or a C function
+  /// itself. Anything else is a closure or function value (P04.07).
+  Operand callbackArg(const ast::Expr *E);
   Operand lowerBinary(const ast::BinaryExpr *B);
   Operand lowerLogical(const ast::BinaryExpr *B);
   Operand lowerUnary(const ast::UnaryExpr *U);
@@ -589,9 +656,13 @@ private:
   /// The arguments of C for the signature Sig (GSig: the callee's GIR
   /// signature; Lead are its first parameters, a method's receiver, already
   /// made) and the call of CalleeOp: a function constant, or a pointer of a
-  /// function type (an interface method, P04.06).
+  /// function type (an interface method, P04.06). With Recv, Lead[0] is a
+  /// receiver passed by the address of its place, which is taken after the
+  /// arguments, as a Place argument's is.
+  struct LateRecv;
   Operand callWith(const ast::CallExpr *C, S::SignatureType *Sig, Type *GSig,
-                   Operand CalleeOp, ArrayRef<Operand> Lead, bool NoUnwind);
+                   Operand CalleeOp, ArrayRef<Operand> Lead, bool NoUnwind,
+                   LateRecv *Recv = nullptr);
   Operand lowerConversion(const ast::CallExpr *C);
   Operand lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B);
   // Methods and interfaces (LowerIface.cpp, P04.06).
@@ -721,6 +792,14 @@ private:
     }
     ~ReplayScope() { B.Replay = Prev; }
   };
+  /// A receiver passed by the address of its place (passOfRecv: Place):
+  /// the place expression, its operands recorded before the arguments, and
+  /// whether it is a map (mapArgAddr; a map entry is copied in and out).
+  struct LateRecv {
+    const ast::Expr *E = nullptr;
+    bool Map = false;
+    LateOps Ops;
+  };
 
   // Operators and checks.
   /// Assert(Cond) with the panic function of kind K made (Unsigned: the
@@ -827,8 +906,16 @@ private:
   Operand lowerMinMaxString(const ast::CallExpr *C, bool Min);
   void lowerDelete(const ast::CallExpr *C);
   void lowerClear(const ast::CallExpr *C);
+  /// The slice the variadic parameter of Sig gets in the call C: the
+  /// arguments past the Fixed ones.
   Operand packVariadic(const ast::CallExpr *C, S::SignatureType *Sig,
                        size_t Fixed);
+  /// The slice of N elements a variadic parameter of Sig gets, element K made
+  /// by ElemAt (given the element's checker type): an argument expression,
+  /// or a result of `vf(g())` past the fixed parameters (P04.18).
+  Operand
+  packVariadicWith(const ast::CallExpr *C, S::SignatureType *Sig, size_t N,
+                   llvm::function_ref<Operand(size_t K, S::Type *Elem)> ElemAt);
   /// A value of a string, slice, array or other type as a view of it.
   Operand makeView(const ast::Expr *E, S::Type *Want);
   /// A view of the element at P (a value read through a view).
@@ -899,6 +986,48 @@ private:
   void store(Dest &D, Operand V, const ast::Node *N);
   /// The address of the map at E for a borrowed map parameter (PAR-10).
   Operand mapArgAddr(const ast::Expr *E, LateOps &R);
+  /// The same for a borrowed aggregate that holds a map, string or slice
+  /// (Pass::Place): the address of the place E names, taken under R's replay.
+  Operand placeArgAddr(const ast::Expr *E, LateOps &R);
+  /// The address of a copy of V in a new temporary: a Place receiver or
+  /// argument that is no place the callee may change (placeHow: Copy).
+  Operand addrOfCopy(Operand V, const ast::Node *N);
+
+  /// Where the value a borrowed Place receiver or argument E names lives
+  /// (P04.18, reviews R9 to R11; the table of calling-convention.md). The
+  /// walk goes from E toward its root; a field or an array element held by
+  /// value is no step (the walk goes on into what holds it); the first step
+  /// that leaves the value's storage decides:
+  ///   `*p`, `p.f` with p a pointer, `a[i]` with a a `*[N]T`   Stable
+  ///   `s[i]` with s a slice                                    Stable (the
+  ///       buffer), or ReadOnly when the header is (readOnlyContainer)
+  ///   `m[k]` with m a map                                      MapEntry
+  ///       (Direct when E is `m[k]` itself), or ReadOnly when the map is
+  ///   `x.(T)`, T not a pointer: in the shared, immutable box   ReadOnly
+  ///       (TYP-5, TYP-9; `x.(*T).f` stopped at the pointer: Stable)
+  ///   a field or an element of a view                          ReadOnly
+  ///       (OWN-V1)
+  ///   a variable (local, parameter, package variable; a borrowed one
+  ///       is its owner's place; a checked Option its payload,
+  ///       OWN-P10)                                             Stable
+  ///   anything else: a call, a literal, a conversion, a constant Temp
+  enum class PlaceRoot : uint8_t { Stable, ReadOnly, MapEntry, Temp };
+  struct PlacePath {
+    PlaceRoot R = PlaceRoot::Temp;
+    bool Direct = false;
+  };
+  PlacePath placePath(const ast::Expr *E);
+  /// Is the slice header or map X read-only: in an interface's box or a
+  /// view, before any pointer (a container held in a read-only one is)?
+  bool readOnlyContainer(const ast::Expr *X);
+  /// How a Place receiver or argument E of checker type T is passed (Same:
+  /// E has exactly that type, no conversion): by the address of its place,
+  /// taken after the arguments (a map entry of a map type is copied in and
+  /// out there); as a copy in a temporary (no place, or one the callee must
+  /// not change); or refused (a value that holds a map, in a map entry: the
+  /// map the callee makes would be lost with the copy; TODO P04.09 item 6).
+  enum class PlaceHow : uint8_t { Address, Copy, Refuse };
+  PlaceHow placeHow(const ast::Expr *E, S::Type *T, bool Same);
   void lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
                         BlockId Default, BlockId Exit);
   /// A source scope of the lowering. With Debug it is also a lexical block

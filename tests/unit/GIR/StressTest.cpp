@@ -956,6 +956,97 @@ void expectWalksFollow(unsigned N, std::string (*Make)(unsigned)) {
   EXPECT_TRUE(walksFollow(S1, S16, N));
 }
 
+// P04.18: how a borrowed parameter is passed (Lowering::passOf) asks whether
+// its type holds a string, a slice or a map by value (holdsOwned): a walk over
+// the type, memoized per type. One generator per shape of type: a chain of N
+// structs each holding the one before (depth), a diamond (each struct holds
+// the one before twice: 2^N paths, one visit each with the memo), and one
+// struct of N fields of N different struct types (width). The type is passed
+// borrowed to N functions, so passOf runs at every declaration and call.
+std::string ownedChainOfN(unsigned N) {
+  std::string S = "package main\n\ntype T0 struct{ m map[int]int }\n";
+  for (unsigned I = 1; I <= N; ++I)
+    S += "type T" + std::to_string(I) + " struct{ a T" + std::to_string(I - 1) +
+         " }\n";
+  S += "func f(t T" + std::to_string(N) + ") int { return 1 }\n";
+  return S + "func main() {\n\tvar t T" + std::to_string(N) +
+         "\n\tprintln(f(t), f(t))\n}\n";
+}
+
+std::string ownedDiamondOfN(unsigned N) {
+  std::string S = "package main\n\ntype T0 struct{ m map[int]int }\n";
+  for (unsigned I = 1; I <= N; ++I) {
+    std::string P = "T" + std::to_string(I - 1);
+    S += "type T" + std::to_string(I) + " struct{ a, b " + P + " }\n";
+  }
+  S += "func f(t T" + std::to_string(N) + ") int { return 1 }\n";
+  return S + "func main() {\n\tvar t T" + std::to_string(N) +
+         "\n\tprintln(f(t), f(t))\n}\n";
+}
+
+std::string ownedWideOfN(unsigned N) {
+  std::string S = "package main\n\n", F, Call;
+  for (unsigned I = 0; I < N; ++I) {
+    S += "type T" + std::to_string(I) + " struct{ x int }\n";
+    F += "\tf" + std::to_string(I) + " T" + std::to_string(I) + "\n";
+  }
+  S += "type W struct {\n" + F + "\tm map[int]int\n}\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func g" + std::to_string(I) + "(w W) int { return " +
+         std::to_string(I) + " }\n";
+  S += "func main() {\n\tvar w W\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += g" + std::to_string(I) + "(w)\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+// The fourth dimension (from the c2 coder's stress test): one function of N
+// borrowed parameters of the type, each decided by passOf at the declaration
+// and at the call.
+std::string ownedParamsOfN(unsigned N) {
+  std::string S = "package main\n\ntype P struct {\n\tx []int\n\ty int\n}\n"
+                  "func f(";
+  for (unsigned I = 0; I < N; ++I)
+    S += (I ? ", p" : "p") + std::to_string(I) + " P";
+  S += ") int { return p0.y }\nfunc main() {\n\tvar p P\n\tprintln(f(";
+  for (unsigned I = 0; I < N; ++I)
+    S += I ? ", p" : "p";
+  return S + "))\n}\n";
+}
+
+// The receiver (Lowering::passOfRecv, review R9): a value receiver that
+// holds a map, called on a selector path N deep, so the decision, the test
+// for a map entry and the late address each walk the path once per call.
+std::string ownedRecvOfN(unsigned N) {
+  std::string S = "package main\n\ntype T0 struct{ m map[int]int }\n";
+  for (unsigned I = 1; I <= N; ++I)
+    S += "type T" + std::to_string(I) + " struct{ a T" + std::to_string(I - 1) +
+         " }\n";
+  S += "func (t T0) M() int { return len(t.m) }\n";
+  std::string Path = "t";
+  for (unsigned I = 0; I < N; ++I)
+    Path += ".a";
+  return S + "func main() {\n\tvar t T" + std::to_string(N) + "\n\tprintln(" +
+         Path + ".M(), " + Path + ".M())\n}\n";
+}
+
+TEST(GIRStress, ThePassModeWalkIsCountedOnChains) {
+  expectWalksFollow(20, ownedChainOfN);
+}
+TEST(GIRStress, TheReceiverPassModeIsCountedOnDeepPaths) {
+  expectWalksFollow(20, ownedRecvOfN);
+}
+TEST(GIRStress, ThePassModeWalkVisitsADiamondOnce) {
+  // 2^N paths, N visits: a walk without the memo does not finish at N = 320.
+  expectWalksFollow(40, ownedDiamondOfN);
+}
+TEST(GIRStress, ThePassModeWalkIsCountedOnWideStructs) {
+  expectWalksFollow(20, ownedWideOfN);
+}
+TEST(GIRStress, ThePassModeWalkIsCountedOnParameters) {
+  expectWalksFollow(20, ownedParamsOfN);
+}
+
 TEST(GIRStress, TheLoweringCountsTupleTargets) {
   expectWalksFollow(20, tupleTargetsOfN);
 }

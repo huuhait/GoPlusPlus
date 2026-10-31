@@ -4,7 +4,8 @@
 // construct (an unsupported type at its first use), and the module never
 // reaches the printer. Both sides: `type Celsius int` and `ok` are in the
 // subset and draw no error, and neither do the map, the range loop and the
-// slice (P04.05). (Two files: the driver stops after 10 errors.)
+// slice (P04.05) and the method on a map type (P04.18). (Two files: the
+// driver stops after 10 errors.)
 package main
 
 type T struct{ x int }
@@ -45,9 +46,8 @@ func main() {
 	println(ok(20))
 }
 
-// CHECK: :14:1: error[E0439]: a method on a map type (P04.18) is not supported by code generation yet (P04)
-// CHECK: :33:2: error[E0439]: a defer statement (P04.07) is not supported by code generation yet (P04)
-// CHECK: :37:6: error[E0439]: Unique, Shared and Weak pointers (P05, P04.09) is not supported by code generation yet (P04)
+// CHECK: :34:2: error[E0439]: a defer statement (P04.07) is not supported by code generation yet (P04)
+// CHECK: :38:6: error[E0439]: Unique, Shared and Weak pointers (P05, P04.09) is not supported by code generation yet (P04)
 // CHECK-NOT: error
 // CHECK-NOT: fn {{.*}}2ok
 

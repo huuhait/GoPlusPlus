@@ -432,6 +432,13 @@ Type *Checker::implicitTypeAndValue(Operand &X, Type *Target,
 // Assignability
 //===----------------------------------------------------------------------===//
 
+bool Checker::assignableAsIs(Type *V, Type *T) {
+  if (identical(V, T))
+    return true;
+  return identical(under(V), under(T)) && (!hasName(V) || !hasName(T)) &&
+         !isa<TypeParamType>(V) && !isa<TypeParamType>(T);
+}
+
 bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
   if (X.M == Mode::Invalid || !isValid(T))
     return true;
@@ -453,7 +460,7 @@ bool Checker::assignableTo(Operand &X, Type *T, std::string *Cause) {
     return implicitTypeAndValue(X, T, nullptr, nullptr) != nullptr;
   }
 
-  if (identical(Vu, Tu) && (!hasName(V) || !hasName(T)) && !Vp && !Tp)
+  if (assignableAsIs(V, T))
     return true;
 
   // Go++ (ADR-0018): T converts to Option[T] (also a Unique/Shared place to

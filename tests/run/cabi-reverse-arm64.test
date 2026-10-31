@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64, clang
+// RUN: %python %S/Inputs/run-cabi.py --reverse --arm64 %aarch64_sysroot %gopp %t.d 3 20 4 20
+// RUN: %python %S/Inputs/run-cabi.py --reverse --arm64 %aarch64_sysroot --edges 40 %gopp %t.e 0 1000
+// P04.18: cabi-reverse-amd64.test for linux/arm64 under QEMU: the homogeneous
+// floating-point aggregates in vector registers, a large struct by pointer,
+// a result over 16 bytes through x8, now in a function C calls.

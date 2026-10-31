@@ -1,0 +1,43 @@
+package main
+
+// P04.18 review R3, a known gap until the borrow checker (TODO P04.20 item
+// 8): a borrowed owning struct is passed by a pointer to the caller's place
+// (PAR-10), so a callee that also writes that variable another way, through
+// a pointer it is given too or through the global it was passed, sees its
+// own write in the borrowed parameter. Such a call breaks OWN-B4 / OWN-B9 and
+// P04.20 rejects it; Go, which copies, prints 1 and 2 where this prints 99
+// and 77. NOT a Go program, so the expected output is written by hand
+// (alias.out). The calls next to them are fine and stay so.
+
+type Doc struct {
+	N int
+	S string
+}
+
+var g Doc
+
+func viaPtr(d Doc, p *Doc) int {
+	p.N = 99
+	return d.N
+}
+
+func viaGlobal(d Doc) int {
+	g.N = 77
+	return d.N
+}
+
+func readsGlobal(d Doc) int { return d.N + g.N }
+
+func main() {
+	x := Doc{1, "a"}
+	println(viaPtr(x, &x)) // P04.20 rejects it
+	x2 := Doc{1, "a"}
+	y := Doc{5, "b"}
+	println(viaPtr(x2, &y), x2.N, y.N)
+	g = Doc{2, "b"}
+	println(viaGlobal(g)) // P04.20 rejects it
+	h := Doc{2, "c"}
+	println(viaGlobal(h), h.N, g.N)
+	g = Doc{3, "d"}
+	println(readsGlobal(g))
+}

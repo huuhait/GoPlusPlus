@@ -1,0 +1,19 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-place-paths.py program > %t.gopp
+// RUN: %python %S/Inputs/gen-place-paths.py want > %t.out
+// RUN: %python %S/Inputs/run-golden.py --src %t.gopp %t.out
+// RUN: %python %S/Inputs/gen-place-paths.py refused > %t.refused.gopp
+// RUN: not %gopp build -emit=gir %t.refused.gopp 2> %t.refused.err
+// RUN: %python %S/Inputs/gen-place-paths.py check-refused %t.refused.err
+// P04.18 (reviews R9 to R11): where a borrowed Place receiver or argument
+// lives, the one decision Body::placeHow makes (the table of
+// docs/design/calling-convention.md). Inputs/gen-place-paths.py uses every
+// path shape as a receiver and as an argument of a value that holds a nil
+// map, which the callee makes: through a variable, field, array element,
+// pointer, slice element (also of a slice read from a map entry, R10) and a
+// pointer assertion (`x.(*Doc).Put()`) it is made in the original (PAR-1);
+// in an interface's box (`x.(Doc)`, an array or a slice in it: TYP-5, TYP-9,
+// R11), a call result or a map in a box, the callee gets a copy and the
+// original is unchanged; a map entry of a map type is copied in and out; a
+// value that holds a map in another map entry is one E0439 naming P04.09.
+// The same table runs on arm64 (cc-calls-arm64.test).

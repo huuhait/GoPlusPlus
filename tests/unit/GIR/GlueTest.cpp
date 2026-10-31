@@ -23,6 +23,8 @@
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/TargetSelect.h"
+
+#include "../Support/GIRTestSupport.h"
 #include "llvm/Target/TargetMachine.h"
 
 #include <gtest/gtest.h>
@@ -39,8 +41,9 @@ using namespace gopp::gir;
 namespace {
 
 struct Jit {
-  using EqFn = bool (*)(const void *, const void *);
-  using HashFn = uint64_t (*)(const void *, uint64_t);
+  // The glue is Go++ code: called with the Go++ convention (GOPP_GO_CC).
+  using EqFn = bool(GOPP_GO_CC *)(const void *, const void *);
+  using HashFn = uint64_t(GOPP_GO_CC *)(const void *, uint64_t);
   std::unique_ptr<llvm::orc::LLJIT> J;
   bool ok = false;
 

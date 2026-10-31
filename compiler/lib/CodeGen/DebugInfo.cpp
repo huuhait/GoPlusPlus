@@ -420,8 +420,11 @@ llvm::DISubroutineType *DebugInfoBuilder::subroutineType(const G::Type *Sig,
   Ts.push_back(Sig->ret()->isUnit() ? nullptr : target(Sig->ret(), Height));
   for (const G::Type *P : Sig->elems())
     Ts.push_back(target(P, Height));
-  return DIB.createSubroutineType(DIB.getOrCreateTypeArray(Ts),
-                                  llvm::DINode::FlagPrototyped);
+  // A Go++ function is swiftcc on every target (P04.18, ADR-0030): the
+  // debugger must not take its results for the C convention's.
+  return DIB.createSubroutineType(
+      DIB.getOrCreateTypeArray(Ts), llvm::DINode::FlagPrototyped,
+      Sig->callConv() == G::CallConv::Go ? llvm::dwarf::DW_CC_LLVM_Swift : 0);
 }
 
 void DebugInfoBuilder::makeType(const G::Type *T) {
@@ -828,7 +831,8 @@ llvm::DILocalVariable *DebugInfoBuilder::variable(G::FuncId Owner,
   const G::Local &Lo = F.Locals[L];
   llvm::DIScope *Scope = funcInfo(Owner).Native[Lo.Scope];
   llvm::DIFile *File = Lo.Loc.isValid() ? fileOf(Lo.Loc) : fileOfFunction(F);
-  llvm::DIType *Ty = typeOf(Lo.Ty);
+  // A pointer that stands for its place is shown as that place (Deref).
+  llvm::DIType *Ty = typeOf(Lo.Deref && Lo.Ty->isPtr() ? Lo.Ty->elem() : Lo.Ty);
   // A parameter has no position of its own: the function's line.
   unsigned Line = Lo.Loc.isValid() ? Lo.Loc.Line : F.Loc.Line;
   // Kept even when an optimizer drops every use: the debugger then says
@@ -875,6 +879,12 @@ llvm::Value *DebugInfoBuilder::declareLocal(G::LocalId L, llvm::Value *Addr,
     Where = Keep = Slot;
     uint64_t Ops[] = {llvm::dwarf::DW_OP_deref};
     Expr = DIB.createExpression(Ops);
+  } else if (Lo.Deref && Lo.Ty->isPtr()) {
+    // The slot holds the pointer: the variable is what it points to (a
+    // parameter passed by a hidden pointer, PAR-10; a `&` range variable).
+    uint64_t Ops[] = {llvm::dwarf::DW_OP_deref};
+    Expr = DIB.createExpression(Ops);
+    Keep = Addr;
   } else if (Lo.Origin == G::NoId || allocBits(Lo.Ty) <= MaxKeptBits) {
     Keep = Addr;
   }

@@ -1,0 +1,35 @@
+package main
+
+// The parameters that pass by a hidden pointer to the caller's place
+// (P04.18, PAR-10): a borrowed struct that holds a map and a borrowed map,
+// a value receiver that holds one, and a `&` range variable. The debugger
+// shows each as the place it points to; a plain pointer parameter stays the
+// pointer.
+
+type Doc struct {
+	N     int
+	Index map[string]int
+}
+
+func fill(d Doc, m map[string]int, p *Doc) int {
+	d.Index["x"] = 1
+	m["y"] = 2
+	return d.N + len(m) + p.N
+}
+
+func (d Doc) Count() int {
+	return len(d.Index) + d.N
+}
+
+func main() {
+	d := Doc{N: 3}
+	m := map[string]int{"a": 1}
+	e := Doc{N: 5}
+	r := fill(d, m, &e)
+	r += d.Count()
+	docs := []Doc{{N: 7}, {N: 8}}
+	for _, &x := range docs {
+		r += x.N
+	}
+	println(r)
+}

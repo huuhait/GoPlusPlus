@@ -144,6 +144,13 @@ TEST(GIRTypes, AreUniquedAndPrinted) {
   EXPECT_EQ(F, C.func({C.i64(), C.string()}, C.unit(), true));
   EXPECT_NE(F, C.func({C.i64(), C.string()}, C.unit(), false));
   EXPECT_EQ(F->str(), "fn(i64, string)! -> ()");
+  // The calling convention is part of a function type (P04.18).
+  Type *CF = C.func({C.i64()}, C.unit(), false, CallConv::C);
+  EXPECT_NE(CF, C.func({C.i64()}, C.unit()));
+  EXPECT_EQ(CF, C.withCallConv(C.func({C.i64()}, C.unit()), CallConv::C));
+  EXPECT_EQ(CF->callConv(), CallConv::C);
+  EXPECT_EQ(C.func({C.i64()}, C.unit())->callConv(), CallConv::Go);
+  EXPECT_EQ(CF->str(), "fn \"C\"(i64) -> ()");
   EXPECT_EQ(C.array(C.slice(C.u8()), 3)->str(), "[3][]u8");
   // Structs are nominal and get a body once.
   Type *S = C.structTy("p.S");
@@ -425,6 +432,34 @@ TEST(GIRSerialize, CatchBlocksRoundTrip) {
   EXPECT_EQ(writeModule(**R), Bytes);
   EXPECT_TRUE((*R)->Funcs[1]->Blocks[Catch].Catch);
   EXPECT_FALSE((*R)->Funcs[1]->Blocks[Plain].Catch);
+}
+
+// P04.18: the calling convention of a function type survives the bitstream
+// (a C function that takes a C callback, a Go++ function beside it).
+TEST(GIRSerialize, CallingConventionsRoundTrip) {
+  Context C1;
+  auto M = std::make_unique<Module>(C1, "cc");
+  Type *Cb = C1.func({C1.i32()}, C1.i32(), false, CallConv::C);
+  auto Takes = std::make_unique<Function>();
+  Takes->Name = "takes";
+  Takes->Sig = C1.func({Cb}, C1.unit(), false, CallConv::C);
+  Takes->CC = CallConv::C;
+  M->addFunction(std::move(Takes));
+  auto G = std::make_unique<Function>();
+  G->Name = "cc.g";
+  G->Sig = C1.func({C1.func({C1.i32()}, C1.i32())}, C1.unit());
+  M->addFunction(std::move(G));
+  ASSERT_EQ(errorsOf(*M), "");
+  std::string Bytes = writeModule(*M);
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(text(**R), text(*M));
+  EXPECT_EQ(writeModule(**R), Bytes);
+  EXPECT_EQ((*R)->Funcs[0]->Sig->callConv(), CallConv::C);
+  EXPECT_EQ((*R)->Funcs[0]->Sig->elems()[0]->callConv(), CallConv::C);
+  EXPECT_EQ((*R)->Funcs[1]->Sig->callConv(), CallConv::Go);
+  EXPECT_EQ((*R)->Funcs[1]->Sig->elems()[0]->callConv(), CallConv::Go);
 }
 
 // P04.05: the self-naming types (`type S []S`, `type O Option[*O]`, `type A

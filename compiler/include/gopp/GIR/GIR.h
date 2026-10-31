@@ -332,6 +332,11 @@ struct Local {
   /// these are variables to the debugger (P04.12); a parameter or variable
   /// only (V011).
   bool Source = false;
+  /// A pointer that stands for the place it points to (P04.18): a parameter
+  /// passed by a hidden pointer to the caller's place (PAR-10) and a `&`
+  /// range variable (RNG-1a). The debugger shows that place, with its type
+  /// (`DW_OP_deref`), not the pointer.
+  bool Deref = false;
   Span Loc;
   /// The debug scope the variable is visible in (Function::Scopes, V074).
   ScopeId Scope = 0;
@@ -375,17 +380,14 @@ struct DebugScope {
 };
 
 enum class Linkage : uint8_t { External, Internal, LinkOnceODR };
-enum class CallConv : uint8_t {
-  Go, // the internal convention (P04.18; M0: the C one)
-  C,  // the exact C ABI (D4.4)
-};
-
 class Function {
 public:
   std::string Name;    // the final symbol: gir::symbolOf (Lower.h) makes it
   Type *Sig = nullptr; // a Func type
   Linkage Link = Linkage::External;
-  CallConv CC = CallConv::C;
+  /// The convention of Sig (V075): a function is Go++'s unless it is a C
+  /// function (a declaration, a C-ABI thunk, the entry point).
+  CallConv CC = CallConv::Go;
   bool NoUnwind = false;
   /// Never returns: a call of it may have no return target (V028).
   bool NoReturn = false;

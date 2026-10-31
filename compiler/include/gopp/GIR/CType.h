@@ -21,10 +21,13 @@
 // Everything else is refused with a reason: strings, slices, tuples (several
 // results), complex numbers and `Option[T]` by value (C has no such type; P07
 // decides how Go++-only types map to C), an array of zero-size elements
-// (Clang's x86-64 classification divides by the element size), and, until
-// P04.18 builds the callback thunks, a func value. Three limits keep every walk
-// of a C type small, ours and Clang's (its classification recurses through the
-// fields of every nested struct, without a memo):
+// (Clang's x86-64 classification divides by the element size). A func value
+// is a C type in one place only (P04.18): a parameter, where it is a C
+// function pointer (a callback: a Func type of the C convention) whose own
+// parameters and result are C types; as a result or inside a struct it needs
+// P04.07's closures. Three limits keep
+// every walk of a C type small, ours and Clang's (its classification recurses
+// through the fields of every nested struct, without a memo):
 //
 //   MaxCTypeDepth   levels of structs and arrays;
 //   MaxCTypeFields  fields when the structs are written out (a struct counts
@@ -99,6 +102,10 @@ private:
     bool TooDeep = false; // the walk was cut: never memoized
   };
   Info info(const Type *T, unsigned Depth);
+  /// A callback: a parameter of Func type (P04.18), of the C convention. Its
+  /// parameters and result are checked as a C function's; one callback is as
+  /// deep as a signature.
+  CVerdict checkCallback(const Type *T);
   llvm::DenseMap<const Type *, Info> Memo;
 };
 

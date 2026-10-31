@@ -637,4 +637,6 @@ DIAG(err_gir_no_main, 443, Error, "function main is undeclared in the main packa
 
 DIAG(err_no_stack, 444, Error, "nesting too deep: could not get stack for %0 levels")
 
+DIAG(err_gir_export_bad, 445, Error, "invalid @Export on %0: %1")
+
 #undef DIAG

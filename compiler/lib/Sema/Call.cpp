@@ -1649,6 +1649,10 @@ void Checker::arguments(const CallExpr *Call, SignatureType *Sig,
     RefToOwnedOk = own() && !Mv;
     assignment(A, SigParams[K], Context);
     RefToOwnedOk = Saved;
+    // Taken as it is with another type: no new value (Info::AsIsArgs).
+    if (A.M != Mode::Invalid && A.E && A.Ty && A.Ty != SigParams[K] &&
+        assignableAsIs(A.Ty, SigParams[K]))
+      I.AsIsArgs.insert(A.E);
     if (Mv && A.M != Mode::Invalid && !isImplicitMove(A.E, Call))
       needOwnership(A, "pass as a `move` argument");
     // OWN-R10: a by-value parameter of a @Pinned type copies the argument.

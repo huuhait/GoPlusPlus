@@ -1,5 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --verify-dwarf core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --verify-dwarf core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow cc/calls0
 // P04.13 (D4.8): the pipeline decides speed, never what a program does. A
 // representative set of the run corpus is built at every `opt` level and with
 // -pipeline=fastisel on the host, and every build must give the baseline's exit
@@ -12,5 +12,6 @@
 // are Inputs/opt (gen-opt.py, gen-shape.py), the checks that must stay
 // Inputs/panics/opt-*; an allocation that must fail at every level is
 // opt-oom.test (Inputs/oom). Strings, slices and maps (P04.05) are in the set
-// too. The set is small (21 builds, 4 at a time) so that the test stays well
+// too, and so are Go++ to Go++ calls of every shape (cc/calls0, gen-cc.py,
+// P04.18). The set is small (21 builds, 4 at a time) so that the test stays well
 // under the 2 s limit on a loaded machine.

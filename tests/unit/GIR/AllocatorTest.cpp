@@ -125,9 +125,9 @@ struct Ran {
   std::string Errors;
 };
 
-/// Checks, lowers with the test intrinsics (host target) and runs main.main
-/// of Source in LLJIT, with `gopp_unit_cpp_allocator` bound to the test's C++
-/// allocator.
+/// Checks, lowers with the test intrinsics (host target) and runs the program
+/// Source (its C `main`) in LLJIT, with `gopp_unit_cpp_allocator` bound to
+/// the test's C++ allocator.
 Ran runProgram(const std::string &Source) {
   Ran R;
   llvm::SmallString<128> D;
@@ -176,6 +176,16 @@ Ran runProgram(const std::string &Source) {
     R.Errors += llvm::toString(LM.takeError());
     return R;
   }
+  // The program is entered as C enters it: the C `main`, which runs the
+  // package's init and main.main. The test calls it through a C function
+  // pointer, so it must have the C convention (main.main itself is a Go++
+  // function, P04.18, and cannot be called that way).
+  const char *Entry = "main";
+  llvm::Function *EntryFn = (*LM)->getFunction(Entry);
+  if (!EntryFn || EntryFn->getCallingConv() != llvm::CallingConv::C) {
+    R.Errors += std::string("no C entry point ") + Entry + "\n";
+    return R;
+  }
   auto Made = llvm::orc::LLJITBuilder().create();
   if (!Made) {
     R.Errors += llvm::toString(Made.takeError());
@@ -206,7 +216,7 @@ Ran runProgram(const std::string &Source) {
     R.Errors += llvm::toString(std::move(E));
     return R;
   }
-  auto Main = J->lookup("_GPF4mainE4main");
+  auto Main = J->lookup(Entry);
   if (!Main) {
     R.Errors += llvm::toString(Main.takeError());
     return R;
@@ -216,7 +226,7 @@ Ran runProgram(const std::string &Source) {
 #ifdef GOPP_LSAN
   __lsan_disable();
 #endif
-  Main->toPtr<void (*)()>()();
+  EXPECT_EQ(Main->toPtr<int (*)()>()(), 0);
 #ifdef GOPP_LSAN
   __lsan_enable();
 #endif

@@ -170,7 +170,7 @@ Trivial and shared-handle range variables and bindings are **not** borrowed vari
 
 A borrowed variable is **read-only at the top level**. This is the one rule for all kinds, and PAR-1 and PAR-2 refer to it. These are compile errors:
 - assigning the variable itself, or assigning its own fields (the fields of the struct value it holds), and `append` to it. In the same scope, a `:=` that reuses the name `v` assigns to `v`, so it is an error; use a new name;
-- taking its address (`&d`), or calling a method with a pointer receiver on it (an implicit `&d`). This covers the variable **and any part of it reached without going through a slice, map or pointer**: its fields, fields of fields, and array elements held by value (`&d.Buf`, `d.Buf.Reset()`). The line is the same "top level" line as PAR-1: going through a slice, map or pointer is allowed; staying inside the value is not;
+- taking its address (`&d`), or calling a method with a pointer receiver on it (an implicit `&d`). This covers the variable **and any part of it reached without going through a slice, map or pointer**: its fields, fields of fields, and array elements held by value (`&d.Buf`, `d.Buf.Reset()`). The line is the same "top level" line as PAR-1: going through a slice, map or pointer is allowed; staying inside the value is not. Slicing an array held by value in it (`d.Arr[:]`) takes its address too, so the slice is a read-only view ([OWN-V2](#44-views-d16));
 - `move(x)` of it. A range variable can never be moved from in the plain form, because moving a key would corrupt the map and moving a value is ambiguous with `move(m[k])`. Fix-its: `&v` (the `&` form can be moved from, [RNG-1a](08-slices-and-range.md)) or `v.Clone()`.
 
 These stay allowed: data reached **through** slices, maps and pointers, as in Go and PAR-1. Elements of a `[]T`, map entries and pointer targets are mutable (except through an assertion or type-switch binding, whose box is immutable: see below and [TYP-9](03-types.md)). For example `row[j] = 0` for `row` in `range grid`, and `d.Tags[0] = "x"` for `d` in `range docs`, write through the shared slice and change the collection, exactly as Go does (Go's copy shares the backing array). Also allowed: **re-pointing** a borrowed `string` or `[]T` variable as a local borrow (`s = s[1:]`, [PAR-2](05-parameters.md)); it still cannot be appended to. Re-pointing holds for parameters, range variables and assertion bindings alike, because it only changes the local borrow. The data-mutability rule above holds for parameters and range variables alike.
@@ -514,6 +514,31 @@ Syntax: `View[X]` is a predeclared generic type ([3.1](03-types.md)). `X` may be
 **OWN-V2.** *Slicing.* No allocation. `:=` infers the type. The result depends on what is sliced:
 - Slicing a `string` or a view gives a **view**: `s[i:j]` on a `string` gives a `View[string]`, on a `View[[]T]` a `View[[]T]`.
 - Slicing a slice or array that you may write (owned, or a borrowed writable one) gives a **borrowed `[]T`**. This is the same thing as a borrowed `[]T` parameter ([PAR-1](05-parameters.md), [PAR-2](05-parameters.md), [OWN-R3b](#42-ownership-rules-d14)): its elements can be written, but it cannot grow (`append` is an error), cannot be moved, and cannot outlive its owner. It is never an owned value: every owning destination (an `append` element, a slice, map or struct literal, an element or field store, a send, a return, a `move` argument) rejects it; copy it with `[]T(t)` or `t.Clone()`. Its elements are its owner's, so `append(out, t...)` and `copy(dst, t)` of owning elements need `t.Clone()`.
+- Slicing an array **held by value in a borrowed variable** ([OWN-R3b](#42-ownership-rules-d14)) gives a **view**, `View[[]T]`. That is the variable itself (`a[:]` for a borrowed `[2]string` parameter), or an array in a field, a field of a field or an array element of it held by value, at any depth (`d.Arr[:]`, `d.In.Arr[1:]`, `d.Ins[1].Arr[:]`). It holds for every kind of borrowed variable: a borrowed parameter or receiver, a plain range variable. Slicing an array takes its address (`(&d.Arr)[i:j]` in Go), and a borrowed variable is read-only at the top level, so the slice is read-only like a slice of a view. A write through it, `copy` into it, and passing it where a `[]T` may be written are compile errors (OWN-V1). Reading it is fine, also as a `View` argument. To write, copy it: `xs := []int(d.Arr[:])`. An array reached through a slice, map or pointer is not held by value in the variable (`d.Rows[0][:]`, `p.Arr[:]` with `p *Doc`); such an array, and one that is no part of a borrowed variable (an owned local, a `move` parameter, a trivial array parameter, which is the callee's own copy), gives a borrowed `[]T`, as above. Slicing an array inside the payload of a checked Option is an error anyway ([OWN-P10](#43-pointers-and-heap-allocation-d17)).
+
+  ```go
+  type In struct{ Arr [2]int }
+  type Doc struct {
+      Arr  [3]int
+      In   In
+      Rows [][3]int
+  }
+
+  func f(d Doc, docs []Doc) {
+      t := d.Arr[:]          // View[[]int]: d is borrowed, Arr is held by value
+      n := t[0] + len(t)     // ok: reading
+      n += sum(d.In.Arr[:])  // ok: a View[[]int] argument (func sum(xs View[[]int]) int)
+      t[0] = 9               // error: read-only (OWN-V1)
+      fill(d.Arr[:])         // error: a View[[]int] is not a []int (func fill(xs []int))
+      fill([]int(d.Arr[:]))  // ok: a copy
+      d.Rows[0][:][0] = 1    // ok: reached through a slice
+      for _, e := range docs {
+          u := e.Arr[:]      // View[[]int]: e is a borrowed range variable
+          u[1] = 2           // error: read-only
+      }
+      _ = n
+  }
+  ```
 - So `sort.Ints(nums[1:3])`, `r.Read(buf[n:])`, `copy(dst[2:], src)` and `s := nums[1:3]; s[0] = 9` all work.
 - The one exception is re-slicing an owned slice into itself: `s = s[i:j]` shrinks it in place ([SLC-6](08-slices-and-range.md)).
 

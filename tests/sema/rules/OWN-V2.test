@@ -1,7 +1,11 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-V2 (and SLC-8): slicing a string, slice or array gives a ref; `:=`
 // infers the ref type. Slicing into a different owned variable is an error
-// (copy with []T(v)).
+// (copy with []T(v)). Slicing an array held by value in a borrowed variable
+// (OWN-R3b: a borrowed parameter, receiver or range variable; the array
+// itself or one in a field or array element held by value, at any depth)
+// gives a View[[]T]: reading it is fine, also as a View argument; writing
+// through it, or using it as a []T, is an error. OWN-R3b.test has more.
 package main
 
 func positive(s string, xs []int) int {
@@ -18,4 +22,45 @@ func negative(xs []int) {
 	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use xs[1:] (value of type borrowed []int) as []int value in assignment: a borrowed slice is not an owning value: write []int(xs[1:]) to copy (TYP-2)
 	ys = xs[1:]
 	_ = ys
+}
+
+type In struct{ Arr [2]int }
+
+type Doc struct {
+	Arr  [3]int
+	In   In
+	Rows [][3]int
+}
+
+func sumView(xs View[[]int]) int { return len(xs) }
+
+func (d Doc) First() int {
+	t := d.Arr[:]
+	return t[0]
+}
+
+func borrowedArrayReads(d Doc, docs []Doc, a [2]string) int {
+	t := d.Arr[:]
+	var v View[[]int] = d.In.Arr[1:]
+	n := t[0] + len(t) + len(v) + sumView(d.Arr[:]) + len(a[:])
+	for _, e := range docs {
+		n += sumView(e.Arr[:]) + e.First()
+	}
+	d.Rows[0][:][0] = 1 // through a slice: a borrowed []int, writable
+	return n + len([]int(d.Arr[:]))
+}
+
+func borrowedArrayWrites(d Doc, docs []Doc) {
+	t := d.Arr[:]
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write t[0]: it is read-only, it is reached through a View (OWN-V1)
+	t[0] = 9
+	var ys []int
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use d.Arr[:] (value of type View{{.}}{{.}}]int]) as []int value in assignment
+	ys = d.Arr[:]
+	_ = ys
+	for _, e := range docs {
+		u := e.Arr[:]
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot write u[1]: it is read-only, it is reached through a View (OWN-V1)
+		u[1] = 2
+	}
 }

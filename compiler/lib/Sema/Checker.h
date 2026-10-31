@@ -669,6 +669,11 @@ public:
   // --- operands & conversion (Operand.cpp)
   std::string operandString(const Operand &X);
   bool assignableTo(Operand &X, Type *T, std::string *Cause);
+  /// Is a value of type V a T as it is, with no new value made: identical
+  /// types (an alias included), or identical underlying types where one of
+  /// them is unnamed (neither a type parameter)? The part of assignableTo
+  /// that needs no conversion (P04.18, review R14: Info::AsIsArgs).
+  bool assignableAsIs(Type *V, Type *T);
   bool convertibleTo(Operand &X, Type *T, std::string *Cause);
   void conversion(Operand &X, Type *T);
   bool representableConst(const ConstValue &X, BasicType *T,
@@ -1422,6 +1427,14 @@ public:
   void checkWrite(const ast::Expr *Lhs, bool Repoint = false,
                   bool Redeclare = false);
   void checkAddressOf(const UnaryExpr *E, Operand &X);
+  /// OWN-R3b: the one rule for a writable reference into a borrowed
+  /// variable's own storage (Ownership.cpp); true after a report.
+  enum class BorrowedRef { Address, PtrMethod };
+  bool rejectBorrowedRef(const ast::Node *At, const ast::Expr *Inner,
+                         BorrowedRef How, StringRef Method = "");
+  /// The same rule for slicing an array: is the array held by value in a
+  /// borrowed variable (its slice is then a view)?
+  bool borrowedStorageSlice(const SliceExpr *Ex);
   // --- writes into maps and slices (P03.19, Ownership.cpp)
   /// How the storage an expression denotes relates to the shared box of an
   /// interface value: not in one; the value the box holds (or a part of it by

@@ -37,19 +37,19 @@ func viaCall(x, y, z float64) float64 { return mul(x, y) + z }
 
 func main() { println(fused(1, 2, 3), rounded(1, 2, 3), viaCall(1, 2, 3)) }
 
-// ARM-LABEL: define double @_GPF4mainE5fused(
+// ARM-LABEL: define swiftcc double @_GPF4mainE5fused(
 // ARM: call double @llvm.fma.f64(
-// ARM-LABEL: define double @_GPF4mainE7rounded(
+// ARM-LABEL: define swiftcc double @_GPF4mainE7rounded(
 // ARM-NOT: call double @llvm.fma
 // ARM: fmul double
 // ARM: fadd double
-// ARM-LABEL: define double @_GPF4mainE7viaCall(
+// ARM-LABEL: define swiftcc double @_GPF4mainE7viaCall(
 // ARM-NOT: call double @llvm.fma
 // ARM-NOT: contract
 // ARM-NOT: arithmetic.fence
 // (The label ends viaCall: main, where GIR inlining put `fused`, has its fma;
 // at opt 0 with DWARF the variables stay in memory, so nothing folds it.)
-// ARM-LABEL: define void @_GPF4mainE4main(
+// ARM-LABEL: define swiftcc void @_GPF4mainE4main(
 
 // AMD-NOT: call double @llvm.fma
 // AMD-NOT: contract

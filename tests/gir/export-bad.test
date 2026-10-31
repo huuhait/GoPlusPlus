@@ -1,0 +1,61 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.18 (appendix A.8, SYM-4): the C name of an @Export function is its
+// declared name, exactly, and a C-visible name never starts with `_GP`, the
+// prefix of every Go++ symbol: `sym::isReservedName` is the one test. An
+// @Export or @Extern name that starts with it is an error that names the
+// prefix, and so is `@Export("_GPz")`: the argument is the ABI, never a C
+// name (the C name is the function's own), and the message says that and
+// names the prefix. The names next to it that only look like it, `GPx`,
+// `_G` and `_Gx`, are fine (export-link.test links them). The other ways an
+// @Export is wrong are E0445 at the attribute (also export-bad-names.test).
+package main
+
+@Export("C")
+func _GPx(a int32) int32 { return a }
+
+@Extern("C")
+func _GPy(a int32) int32
+
+@Export("C")
+func GPx(a int32) int32 { return a }
+
+@Export("C")
+func _G(a int32) int32 { return a }
+
+@Export("C")
+func _Gx(a int32) int32 { return a }
+
+@Export("Rust")
+func other() {}
+
+@Export("_GPz")
+func gpz() {}
+
+@Export
+func noargs() {}
+
+@Export("C")
+func nobody()
+
+@Extern("C")
+@Export("C")
+func both()
+
+@Export("C")
+func withString(s string) {}
+
+@Export("C")
+func withSlice() []int { return nil }
+
+func main() {}
+
+// CHECK: :13:1: error[E0445]: invalid @Export on _GPx: the C name _GPx starts with the reserved prefix _GP, which is the prefix of every Go++ symbol (SYM-4); choose another name
+// CHECK: :16:1: error[E0442]: invalid @Extern on _GPy: the C name _GPy starts with the reserved prefix _GP
+// CHECK: :28:1: error[E0445]: invalid @Export on other: only the "C" ABI exists, and the C name is the function's own name
+// CHECK: :31:1: error[E0445]: invalid @Export on gpz: only the "C" ABI exists, and the C name is the function's own name; the C name _GPz starts with the reserved prefix _GP
+// CHECK: :34:1: error[E0445]: invalid @Export on noargs: write @Export("C")
+// CHECK: :37:1: error[E0445]: invalid @Export on nobody: an exported function needs a body
+// CHECK: :41:1: error[E0445]: invalid @Export on both: a function is @Extern("C")
+// CHECK: :44:1: error[E0445]: invalid @Export on withString: parameter type string cannot cross the C ABI
+// CHECK: :47:1: error[E0445]: invalid @Export on withSlice: result type []int cannot cross the C ABI
+// CHECK-NOT: error

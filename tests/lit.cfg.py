@@ -112,6 +112,11 @@ config.substitutions.append(
     ("%{cpu_limit}", "%s %s --sanitizer=%d" % (
         sys.executable, os.path.join(config.gopp_source_dir, "tests", "cpu-limit.py"),
         1 if config.gopp_sanitizer.strip() else 0)))
+# The Slow factor of the generated sweeps of check-long (the `Slow` constant
+# of the C++ stress tests): a sanitizer build runs one in five of their
+# builds (`--slow` of run-cc.py and run-cabi.py, P04.18), a normal build all.
+config.substitutions.append(
+    ("%{slow}", "5" if config.gopp_sanitizer.strip() else "1"))
 
 # The Go tool chain, for the tests that compare `gopp fmt` with gofmt and run it
 # over the standard library (they also need "long").

@@ -1,0 +1,92 @@
+package main
+
+// P04.18 on P04.06: the pass modes through an itab. A method's parameters
+// are passOf's (paramType: declarations, method signatures and itab slots
+// agree): a borrowed string or slice as (ptr, len), a borrowed struct that
+// holds a map as a pointer to the caller's place, a scalar or a trivial
+// struct by value; results in registers. The same calls directly and through
+// the interface give the same output. Valid Go; iface.out is Go's output.
+
+type errT struct{ code int }
+
+func (e *errT) Error() string {
+	if e.code == 1 {
+		return "empty"
+	}
+	return "other"
+}
+
+var errEmpty = errT{1}
+
+type Doc struct {
+	Name  string
+	Index map[string]int
+}
+
+type P struct{ X, Y int }
+
+type proc interface {
+	Name(s string) (string, error)
+	Fill(d Doc, k string) int
+	Sum(xs []int) (int, error)
+	Move(p P) P
+}
+
+type impl struct{ base int }
+
+func (q *impl) Name(s string) (string, error) {
+	if s == "" {
+		return "", &errEmpty
+	}
+	return s + "?", nil
+}
+
+func (q *impl) Fill(d Doc, k string) int {
+	d.Index[k] = q.base
+	return len(d.Index) + len(d.Name)
+}
+
+func (q *impl) Sum(xs []int) (int, error) {
+	if len(xs) == 0 {
+		return 0, &errEmpty
+	}
+	t := q.base
+	for _, x := range xs {
+		t += x
+	}
+	return t, nil
+}
+
+func (q *impl) Move(p P) P {
+	p.X += q.base
+	return P{p.Y, p.X}
+}
+
+func use(pr proc, d Doc) {
+	s, err := pr.Name("go")
+	println(s, err == nil)
+	_, err = pr.Name("")
+	println(err.Error())
+	println(pr.Fill(d, "a"), pr.Fill(d, "b"), len(d.Index), d.Index["a"])
+	n, err := pr.Sum([]int{1, 2, 3})
+	println(n, err == nil)
+	_, err = pr.Sum(nil)
+	println(err.Error())
+	p := P{1, 2}
+	r := pr.Move(p)
+	println(r.X, r.Y, p.X, p.Y)
+}
+
+func main() {
+	q := impl{10}
+	d := Doc{"doc", map[string]int{}}
+	// Directly.
+	s, err := q.Name("go")
+	println(s, err == nil)
+	println(q.Fill(d, "z"), len(d.Index))
+	n, err := q.Sum([]int{4})
+	println(n, err == nil)
+	// Through the interface.
+	use(&q, d)
+	println(len(d.Index), d.Index["b"])
+}

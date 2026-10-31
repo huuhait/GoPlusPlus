@@ -1,0 +1,11 @@
+// REQUIRES: host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --reverse --flags "%gopp_link_flags" %gopp %t.d 1 20 2 20
+// RUN: %python %S/Inputs/run-cabi.py --reverse --flags "%gopp_link_flags" --edges 40 %gopp %t.e 0 1000
+// P04.18 (D4.4): the other direction of cabi-amd64.test. C, built by Clang,
+// calls Go++ with random struct signatures: through an @Export("C") function
+// (even numbers; C calls it by name) and through a callback (odd numbers; Go++
+// passes the function to a C function that calls the pointer). The Go++
+// function prints the bytes of every scalar it received and returns the values
+// the generator chose; C prints the bytes of the result. The output is
+// compared byte for byte with what the generator computed. The second line
+// runs a stride of the enumerated edges (cabi-edges-amd64.test).

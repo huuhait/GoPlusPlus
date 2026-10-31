@@ -1,0 +1,42 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.18: what C may be given as a callback is a top-level function (its
+// C-ABI thunk) or a C function. A function literal (a closure), a variable
+// that holds a function and a method value are P04.07's: one E0439 each (the
+// method itself is lowered, P04.06). A callback with a Go++-only type in its
+// signature is invalid, as for @Extern (E0442; a variadic callback takes a
+// slice).
+package main
+
+@Extern("C")
+func apply(cb func(a, b int32) int32, x int32) int32
+
+@Extern("C")
+func bad1(cb func(s string))
+
+@Extern("C")
+func bad2(cb func() []int32)
+
+@Extern("C")
+func bad3(cb func(a ...int32))
+
+func plus(a, b int32) int32 { return a + b }
+
+type T struct{}
+
+func (T) M(a, b int32) int32 { return a }
+
+func main() {
+	var f = plus
+	_ = apply(func(a, b int32) int32 { return a }, 1)
+	_ = apply(f, 1)
+	_ = apply(T{}.M, 1)
+}
+
+// CHECK: :13:1: error[E0442]: invalid @Extern on bad1: callback parameter type string cannot cross the C ABI: a string has no C layout (pass a *byte and a length)
+// CHECK: :16:1: error[E0442]: invalid @Extern on bad2: callback result type []int32 cannot cross the C ABI: a slice has no C layout (pass a *T and a length)
+// CHECK: :19:1: error[E0442]: invalid @Extern on bad3: callback parameter type []int32 cannot cross the C ABI
+// CHECK: :29:10: error[E0439]: a function value (P04.07) is not supported by code generation yet (P04)
+// CHECK: :30:12: error[E0439]: a closure, method or function value passed to C (P04.07) is not supported by code generation yet (P04)
+// CHECK: :31:12: error[E0439]: a closure, method or function value passed to C (P04.07) is not supported by code generation yet (P04)
+// CHECK: :32:12: error[E0439]: a closure, method or function value passed to C (P04.07) is not supported by code generation yet (P04)
+// CHECK-NOT: error

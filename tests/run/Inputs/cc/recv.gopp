@@ -1,0 +1,130 @@
+package main
+
+// P04.18, review R9: a borrowed value receiver passes as a borrowed
+// parameter of its type does (PAR-1: "a parameter or receiver", passOf), so
+// the first write to a nil map in it creates the map in the caller's value,
+// directly, through a pointer and through an interface holding a pointer.
+// A value an interface holds is immutable all the way down (TYP-5): the
+// method gets a copy of the box (or of the data word), so a map it makes
+// there is dropped and the box stays as it was, as with Go's value receiver.
+// A trivial struct receiver is the method's own copy, a slice or string
+// receiver the (ptr, len) view. A map receiver is the caller's map; in a map
+// entry it is copied in and out. By hand: Go panics on the nil-map writes
+// (the other lines are Go's output).
+
+type Doc struct {
+	N     int
+	Index map[string]int
+}
+
+func (d Doc) Put() int {
+	d.Index["x"] = 1
+	return len(d.Index)
+}
+
+func (d Doc) Count() int { return len(d.Index) }
+
+// Was the map nil when the method began? (It makes it.)
+func (d Doc) Fresh() bool {
+	was := d.Index == nil
+	d.Index["f"] = 1
+	return was
+}
+
+func putDoc(d Doc) int {
+	d.Index["z"] = 1
+	return len(d.Index)
+}
+
+type Putter interface {
+	Put() int
+	Fresh() bool
+	Count() int
+}
+
+type P struct{ X, Y int }
+
+func (p P) SetX() int {
+	p.X = 1
+	return p.X
+}
+
+type Ints []int
+
+func (s Ints) Caps() (int, int) { return len(s), cap(s) }
+
+type Name string
+
+func (n Name) Len() int { return len(n) }
+
+type Tab map[string]int
+
+func (t Tab) Add(k string) int {
+	t[k] = 1
+	return len(t)
+}
+
+func (t Tab) Count() int { return len(t) }
+
+type Adder interface{ Add(k string) int }
+
+type Holder struct {
+	T Tab
+}
+
+func main() {
+	// Directly: the nil map is made in the caller's Doc.
+	var d Doc
+	println(d.Put(), len(d.Index))
+	// Through a pointer variable.
+	var d2 Doc
+	p := &d2
+	println(p.Put(), len(d2.Index))
+	// Through an interface holding &e.
+	var e Doc
+	var i Putter = &e
+	println(i.Put(), len(e.Index))
+	// Through an interface holding a value: each call gets a copy of the box,
+	// so the map made in it is dropped and the box is unchanged.
+	var j Putter = Doc{N: 7}
+	println(j.Fresh(), j.Fresh(), j.Put(), j.Count(), j.(Doc).N)
+	// A trivial struct receiver is the method's own copy.
+	q := P{5, 6}
+	println(q.SetX(), q.X)
+	// A slice receiver is (ptr, len): its capacity is its length.
+	xs := make(Ints, 2, 10)
+	println(xs.Caps())
+	println(Name("hello").Len())
+	// A map receiver: the caller's map.
+	var t Tab
+	println(t.Add("a"), len(t), t.Count())
+	full := Tab{"x": 1, "y": 2}
+	println(full.Count(), full.Add("z"), len(full))
+	// A map receiver in a field, and in a map entry (copied in and out).
+	var h Holder
+	println(h.T.Add("b"), len(h.T))
+	mm := map[string]Tab{"k": nil}
+	println(mm["k"].Add("c"), len(mm["k"]))
+	// Through an interface holding a map: a copy of the data word, so a nil
+	// map made there is dropped; a full map is shared.
+	var nilTab Tab
+	var a Adder = nilTab
+	println(a.Add("d"), len(nilTab))
+	var b Adder = full
+	println(b.Add("w"), len(full))
+	// Review R10: a slice element read from a map entry lives in the slice's
+	// buffer, so the receiver and the argument are the element itself.
+	ms := map[string][]Doc{"k": make([]Doc, 2)}
+	println(ms["k"][1].Put(), len(ms["k"][1].Index), putDoc(ms["k"][0]),
+		len(ms["k"][0].Index))
+	// Review R11: what an assertion gives is in the interface's box, which is
+	// immutable all the way down (TYP-5): the callee gets a copy.
+	var x any = Doc{}
+	println(x.(Doc).Put(), putDoc(x.(Doc)), len(x.(Doc).Index))
+	var qa any = [2]Doc{}
+	println(qa.([2]Doc)[1].Put(), len(qa.([2]Doc)[1].Index))
+	// An assertion to a pointer gives the pointer: the pointee is written.
+	var e2 Doc
+	var xp any = &e2
+	println(xp.(*Doc).Put(), putDoc(*xp.(*Doc)), len(e2.Index))
+}

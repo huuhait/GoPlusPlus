@@ -1,14 +1,15 @@
 // REQUIRES: long, host-linux-amd64 || host-linux-arm64
 // RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --shard 0/3
-// RUN: %if clang %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --no-corpus --cabi 1:30 --cabi 2:30 --cabi 101:100 %}
+// RUN: %if clang %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --no-corpus --cabi 1:30 --cabi 2:30 --cabi 101:100 --cabi reverse:1:30 --cabi reverse:2:30 --cabi reverse:301:100 %}
 // P04.13 (D4.8): every program of the run corpus (the run tests, the
 // differential tables of Inputs/diff and Inputs/coll, the stress set
 // Inputs/opt, the panic programs of Inputs/panics, Inputs/panics-seq and
 // Inputs/panics-gopp) at every `opt` level and with -pipeline=fastisel on the
 // host: the same exit status, output and panic line at every level (see
 // core-opt-matrix.test). With clang, also the C ABI programs of seeds 1, 2
-// (cabi-amd64.test) and 101 (cabi.long.test), their C built once by Clang and
-// linked into every configuration. On linux/arm64:
+// (cabi-amd64.test) and 101 (cabi.long.test), and their reverse (C calling
+// Go++, P04.18: seeds 1, 2 and 301), their C built once by Clang and linked
+// into every configuration. On linux/arm64:
 // core-opt-matrix-arm64.long.test.
 // The corpus runs in 3 shards side by side (core-opt-matrix.long.test and
 // core-opt-matrix-2.long.test to -3.long.test: the programs whose place in the

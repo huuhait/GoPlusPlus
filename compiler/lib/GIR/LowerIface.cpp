@@ -25,6 +25,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include <algorithm>
+#include <optional>
 
 using namespace gopp;
 using namespace gopp::gir;
@@ -60,13 +61,6 @@ bool Lowering::methodSupported(const S::Func *F, SourceLoc At) {
   }
   if (!F->OwnTParams.empty()) {
     unsupported(At, "a generic method (P04.08)");
-    return false;
-  }
-  S::Type *R = F->Recv->Ty;
-  if (auto *P = dyn_cast<S::PointerType>(R))
-    R = P->Elem;
-  if (isa<S::MapType>(S::under(R))) {
-    unsupported(At, "a method on a map type (P04.18)");
     return false;
   }
   return true;
@@ -534,26 +528,35 @@ FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
   FuncBuilder &FB = E.FB;
   FB.setSpan(FP->Loc);
   Val Data = E.param(0);
+  // The receiver as passOfRecv says. A pointer the interface holds (`&e`)
+  // makes the pointed-to value the place (PAR-1). A value the interface
+  // holds, in its box or its data word, is immutable all the way down
+  // (TYP-5), so a Place receiver is the thunk's own copy of it: a map the
+  // method makes in a nil map there is dropped with the copy, as with Go's
+  // value receiver, and the box stays as it was.
+  const Pass RP = passOfRecv(F);
   Operand Recv;
   if (DynPtr) {
-    Recv = F->HasPtrRecv ? E.to(Ctx.ptr(RecvG), Data).Op
-                         : copyOf(E.at(Data, RecvG));
+    Recv = F->HasPtrRecv || RP == Pass::Place ? E.to(Ctx.ptr(RecvG), Data).Op
+                                              : copyOf(E.at(Data, RecvG));
   } else if (isInline(RecvG)) {
-    // The value is in the data word, in its low bytes.
+    // The value is in the data word, in its low bytes; W is the copy.
     Var W = E.var(Ctx.u64(), "w");
     W = E.to(Ctx.u64(), Data);
-    Recv = copyOf(E.at(E.addrOf(W), RecvG));
+    Recv = RP == Pass::Place ? E.to(Ctx.ptr(RecvG), E.addrOf(W)).Op
+                             : copyOf(E.at(E.addrOf(W), RecvG));
+  } else if (RP == Pass::Place) {
+    Var Copy = E.var(RecvG, E.val(E.at(Data, RecvG)), "recv");
+    Recv = E.addrOf(Copy).Op;
   } else {
     Recv = copyOf(E.at(Data, RecvG));
   }
-  // A borrowed slice receiver takes (ptr, len) of the boxed slice.
-  Type *Want0 = RealSig->elems()[0];
-  if (Want0 != Recv.type() && Want0->getKind() == Type::Kind::Tuple &&
-      Recv.type()->getKind() == Type::Kind::Slice) {
-    Place RP = Recv.P; // (a place: the box or the pointed-to slice)
+  // A borrowed string or slice receiver takes (ptr, len) of the value.
+  if (RP == Pass::View) {
+    Place VP = Recv.P; // (a place: the box or the pointed-to value)
     Recv = copyOf(FB.temp(
-        FB.aggregate(AggKind::Tuple, Want0,
-                     {copyOf(FB.field(RP, 0)), copyOf(FB.field(RP, 1))})));
+        FB.aggregate(AggKind::Tuple, RealSig->elems()[0],
+                     {copyOf(FB.field(VP, 0)), copyOf(FB.field(VP, 1))})));
   }
   SmallVector<Operand, 4> Args{Recv};
   for (size_t K = 1; K < Params.size(); ++K)
@@ -826,7 +829,9 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
       return Unit();
     }
     bool BasePtr = isa<S::PointerType>(BT);
+    const Lowering::Pass RP = L.passOfRecv(F);
     Operand Recv;
+    std::optional<LateRecv> Late;
     if (F->HasPtrRecv) {
       if (BasePtr) {
         Recv = lowerExpr(Sel->X);
@@ -837,6 +842,38 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
         at(C);
         Recv = copyOf(FB.temp(FB.addrOf(std::move(P))));
       }
+    } else if (RP == Lowering::Pass::Place) {
+      // A borrowed receiver that holds a string, slice or map is the
+      // caller's place (PAR-1, PAR-10), as a borrowed parameter of its type
+      // is: through a pointer, the pointer; else placeHow decides, as for
+      // an argument (its address taken after the arguments, a copy, or
+      // refused).
+      if (BasePtr) {
+        Recv = lowerExpr(Sel->X);
+      } else {
+        switch (placeHow(Sel->X, F->Recv->Ty, BT == F->Recv->Ty)) {
+        case PlaceHow::Address:
+          Late.emplace();
+          Late->E = Sel->X;
+          Late->Map = isa<S::MapType>(S::under(F->Recv->Ty));
+          recordOps(Sel->X, Late->Ops);
+          break;
+        case PlaceHow::Copy: {
+          Operand V = lowerExpr(Sel->X);
+          if (!V.type())
+            return failed(Sel->X, Unit());
+          Recv = addrOfCopy(std::move(V), Sel->X);
+          break;
+        }
+        case PlaceHow::Refuse:
+          // A map the method makes in it would be lost with the copy a map
+          // entry is (only one of a map type is copied in and out); TODO
+          // P04.09 item 6 copies the others in and out.
+          unsupported(Sel->X, "a value that holds a map passed from a map "
+                              "entry (P04.09)");
+          return Unit();
+        }
+      }
     } else if (BasePtr) {
       Operand P = lowerExpr(Sel->X);
       if (!P.type() || !P.type()->isPtr())
@@ -846,24 +883,24 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
     } else {
       Recv = lowerExpr(Sel->X);
     }
-    if (!Recv.type())
+    if (!Late && !Recv.type())
       return failed(Sel->X, Unit());
-    if (L.recvBorrowedSlice(F) && Recv.type()->getKind() == Type::Kind::Slice) {
-      // A borrowed slice receiver passes as (ptr, len), read now, before
-      // the arguments (ADR-0029 point 7).
-      Type *VT = L.borrowedSliceType(Recv.type());
+    if (RP == Lowering::Pass::View) {
+      // A borrowed string or slice receiver passes as (ptr, len), read now,
+      // before the arguments (ADR-0029 point 7).
+      Type *VT = L.viewTypeOf(Recv.type());
       Place P = placeOf(std::move(Recv));
       at(C);
       Recv = copyOf(FB.temp(
           FB.aggregate(AggKind::Tuple, VT,
                        {copyOf(FB.field(P, 0)), copyOf(FB.field(P, 1))})));
-    } else if (Recv.K != Operand::Const && !C->Args.empty()) {
+    } else if (!Late && Recv.K != Operand::Const && !C->Args.empty()) {
       at(C);
       Recv = copyOf(FB.temp(FB.use(std::move(Recv))));
     }
     const Function &Real = M.func(FI->second);
     return callWith(C, Sig, Real.Sig, constFunc(M, FI->second), {Recv},
-                    Real.NoUnwind);
+                    Real.NoUnwind, Late ? &*Late : nullptr);
   }
   // Through the itab.
   const Lowering::IfaceMethods *Ms = L.ifaceMethods(BT, C->getBegin());

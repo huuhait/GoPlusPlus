@@ -97,6 +97,13 @@ llvm::Expected<std::unique_ptr<llvm::Module>>
 lowerToLLVM(llvm::LLVMContext &Ctx, const gir::Module &M,
             const llvm::TargetMachine &TM, const LowerToLLVMOptions &Opts = {});
 
+/// The checks lowerToLLVM runs on the module it made (P04.18): a direct call
+/// uses its callee's calling convention, and every function in static data
+/// (itabs, method tables, type descriptors: called through pointers of Go++
+/// function types) has the Go++ convention of the module's target. A failure
+/// is an internal error (`gopp build` reports it as E0441).
+llvm::Error checkCalls(const llvm::Module &M);
+
 /// Replaces Path with what Write produces, all or nothing: Write fills a
 /// temporary file in Path's directory, and the rename onto Path happens only
 /// if Write succeeded. On failure Path is as it was and no temporary file

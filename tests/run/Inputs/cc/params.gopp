@@ -1,0 +1,143 @@
+package main
+
+// P04.18 (PAR-1, PAR-10, SLC-12, D4.4): how a parameter is handed over. NOT
+// a Go program: Go copies the Doc and panics on the nil map, Go++ passes a
+// borrowed owning struct as a pointer to the caller's place, so the map the
+// callee creates is the caller's. The expected output is written by hand
+// (params.out).
+
+type Doc struct {
+	N     int
+	Index map[string]int
+}
+
+type Wrap struct {
+	D    Doc
+	Name string
+}
+
+type P struct{ X, Y int }
+
+func put(d Doc)          { d.Index["x"] = 1 }
+func putDeep(w Wrap)     { w.D.Index["deep"] = 2 }
+func get(d Doc) int      { return d.Index["x"] }
+func setX(p P) int       { p.X = 100; return p.X }
+func capOf(xs []int) int { return cap(xs) }
+func lenOf(s string) int { return len(s) }
+func sum(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+func first(move xs []int) int { return xs[0] }
+
+// More places (P04.18 merge, from the c1 coder's core-params-gopp).
+type Mixed struct {
+	Q    P
+	Tags []string
+}
+
+func through(d Doc)    { put(d) }
+func elem(a [2]Doc)    { a[1].Index["z"] = 3 }
+func mk() Doc          { return Doc{7, nil} }
+func read(m Mixed) int { return m.Q.X + len(m.Tags) }
+func repoint(s string) int {
+	s = s[1:]
+	return len(s)
+}
+
+// An argument that a conversion makes is a new value (P04.18 review R2): a
+// `Doc` passed to an `Option[Doc]` parameter is a temporary Option, so the map
+// the callee creates in it is not the caller's, and so are the results of a
+// multi-value call passed on (`f(g())`) when they are converted.
+func onOpt(o Option[Doc]) int {
+	if o != nil {
+		o.Index["k"] = 1
+		return o.N
+	}
+	return -1
+}
+func optStr(s Option[string]) int {
+	if s != nil {
+		return len(s)
+	}
+	return -1
+}
+func fwdOpt(d Doc) int                  { return onOpt(d) }
+func pairDoc() (Doc, int)               { return Doc{8, nil}, 1 }
+func twoOpt(o Option[Doc], n int) int   { return onOpt(o) + n }
+func strInt() (string, int)             { return "abc", 1 }
+func viewLen(s View[string], n int) int { return len(s) + n }
+func tail(xs []int) int {
+	xs = xs[1:]
+	return len(xs) + cap(xs)
+}
+
+func main() {
+	// PAR-1: the nil map in the caller's struct is created by the callee.
+	var d Doc
+	put(d)
+	println(len(d.Index), get(d))
+	// Through a field of a struct holding the Doc.
+	var w Wrap
+	putDeep(w)
+	println(len(w.D.Index), w.D.Index["deep"])
+	// A trivial struct is the callee's own copy.
+	p := P{1, 2}
+	println(setX(p), p.X)
+	// cap of a borrowed slice is its length (SLC-12).
+	xs := make([]int, 3, 10)
+	println(len(xs), cap(xs), capOf(xs), sum(xs))
+	println(capOf(xs[1:2]), capOf(nil))
+	println(lenOf("hello"), lenOf(""))
+	println(first([]int{7, 8}))
+	// The place is passed on by another call.
+	var d2 Doc
+	through(d2)
+	println(len(d2.Index))
+	// An array element and a slice element are places too.
+	var arr [2]Doc
+	elem(arr)
+	println(len(arr[0].Index), len(arr[1].Index))
+	docs := make([]Doc, 2)
+	put(docs[1])
+	println(len(docs[0].Index), len(docs[1].Index))
+	// Through a pointer.
+	var d3 Doc
+	pd := &d3
+	put(*pd)
+	println(len(pd.Index), len(d3.Index))
+	// A value that is no place (a call result) is a temporary: what the
+	// callee creates in it goes with it.
+	put(mk())
+	println(mk().N)
+	// A borrowed string or slice may be re-pointed (PAR-2); its capacity is
+	// its length.
+	ys := make([]int, 4, 8)
+	println(tail(ys), len(ys), cap(ys))
+	println(repoint("hello"))
+	// A borrowed struct that holds a slice is read in place.
+	m := Mixed{P{1, 2}, []string{"a", "b"}}
+	println(read(m))
+	// A map entry is no address (P04.05): a value that holds a map passed
+	// from one is refused (E0439 naming P04.09, cc-place-paths.test; TODO
+	// P04.09 item 6 copies it in and out), and a trivial entry is a copy
+	// that stays as it was.
+	pts := map[string]P{"k": {5, 6}}
+	println(setX(pts["k"]), pts["k"].X)
+	// Converted arguments: a variable, a field, an element, a forwarded
+	// borrowed parameter, a string to Option[string], and the results of a
+	// multi-value call to an Option and to a view.
+	od := Doc{3, nil}
+	println(onOpt(od), len(od.Index))
+	ow := Wrap{D: Doc{4, nil}}
+	println(onOpt(ow.D), len(ow.D.Index))
+	oarr := [2]Doc{{5, nil}, {6, nil}}
+	println(onOpt(oarr[1]), len(oarr[1].Index))
+	println(fwdOpt(od), len(od.Index))
+	str := "abc"
+	println(optStr(str), optStr("de"))
+	println(twoOpt(pairDoc()), viewLen(strInt()))
+}

@@ -1,0 +1,118 @@
+// RUN: %gopp build -pipeline=fastisel -emit=llvm -target=linux/amd64 %s | FileCheck %s --check-prefixes=LL,LL-AMD
+// RUN: %gopp build -pipeline=fastisel -emit=llvm -target=linux/arm64 %s | FileCheck %s --check-prefixes=LL,LL-ARM
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/amd64 %s | FileCheck %s --check-prefixes=O1-AMD
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/arm64 %s | FileCheck %s --check-prefixes=O1-ARM
+// P04.18 (D4.4, ADR-0030): go-abi.test with the real `error` interface. An
+// interface is {itab, data} (D4.5), so `(int, error)` is three scalars and
+// `(string, error)` five. Go++ calls Go++ with `swiftcc` on both targets:
+// `(int, error)` comes back in registers on both, `(string, error)` in
+// registers on arm64 and through a hidden first pointer on amd64 (four
+// integer result registers there: the known limit, measured at no runtime
+// difference, ADR-0030), through a direct call and through an itab (P04.06).
+// Methods, itab thunks and the call through an itab slot all use swiftcc.
+// Run on both targets: run/cc-params.test and run/cc-calls-arm64.test
+// (Inputs/cc/errors.gopp).
+package main
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string { return "bad" }
+
+var errBad = codeErr{7}
+
+func tErr(a int) (int, error) {
+	if a < 0 {
+		return 0, &errBad
+	}
+	return a + 1, nil
+}
+
+func sErr(move s string) (string, error) {
+	if len(s) == 0 {
+		return s, &errBad
+	}
+	return s, nil
+}
+
+type source interface {
+	Next() (string, error)
+}
+
+type words struct{ n int }
+
+func (w *words) Next() (string, error) {
+	if w.n == 0 {
+		return "", &errBad
+	}
+	w.n--
+	return "w", nil
+}
+
+func nextLen(s source) int {
+	w, err := s.Next()
+	if err != nil {
+		return -1
+	}
+	return len(w)
+}
+
+func main() {
+	n, err := tErr(41)
+	println(n, err == nil)
+	s, err2 := sErr("go")
+	println(s, err2 == nil)
+	w := words{3}
+	println(nextLen(&w))
+}
+
+// LL: define swiftcc { ptr, i64, i64 } @_GPM5ErrorN4mainE7codeErr(ptr
+// LL: define swiftcc { i64, ptr, ptr } @_GPF4mainE4tErr(i64
+// LL-AMD: define swiftcc void @_GPF4mainE4sErr(ptr {{.*}}, ptr {{.*}}, i64 {{.*}}, i64
+// LL-ARM: define swiftcc { ptr, i64, i64, ptr, ptr } @_GPF4mainE4sErr(ptr {{.*}}, i64 {{.*}}, i64
+// LL-AMD: define swiftcc void @_GPM4NextN4mainE5words(ptr {{.*}}, ptr
+// LL-ARM: define swiftcc { ptr, i64, i64, ptr, ptr } @_GPM4NextN4mainE5words(ptr
+// The call through the itab slot: the slot's type is the method's, with the
+// Go++ convention (on amd64 the result's address first, then the data word).
+// LL: define swiftcc i64 @_GPF4mainE7nextLen(ptr {{.*}}, ptr
+// LL-AMD: call swiftcc void %{{[0-9]+}}(ptr {{.*}}, ptr
+// LL-ARM: call swiftcc { ptr, i64, i64, ptr, ptr } %{{[0-9]+}}(ptr
+// LL: define swiftcc void @_GPF4mainE4main(
+// LL: call swiftcc { i64, ptr, ptr } @_GPF4mainE4tErr(i64
+// LL: call swiftcc {{.*}}@_GPF4mainE4sErr(
+// The thunks the itabs hold: the Go++ convention too.
+// LL-DAG: define linkonce_odr swiftcc { ptr, i64, i64 } @_GPTIM5ErrorN4mainE7codeErr(ptr
+// LL-AMD-DAG: define linkonce_odr swiftcc void @_GPTIM4NextN4mainE5words(ptr {{.*}}, ptr
+// LL-ARM-DAG: define linkonce_odr swiftcc { ptr, i64, i64, ptr, ptr } @_GPTIM4NextN4mainE5words(ptr
+
+// At -opt=1 `(int, error)` is never stored: rax, rdx, rcx on amd64 (the
+// error's itab and data from the globals), x0-x2 on arm64. `(string, error)`
+// is stored through the hidden pointer in rdi on amd64 and stays in x0-x4 on
+// arm64; the itab call reads its result from the caller's frame on amd64
+// (the slot gets the frame's address in rdi) and from x1 and x3 on arm64.
+// O1-AMD-LABEL: _GPF4mainE4tErr:
+// O1-AMD-NOT: mov{{.}} {{.*}}, ({{.*}})
+// O1-AMD: _GPTaPN4mainE7codeErru5error@GOTPCREL(%rip), %rdx
+// O1-AMD-NOT: mov{{.}} {{.*}}, ({{.*}})
+// O1-AMD: retq
+// O1-AMD-LABEL: _GPF4mainE4sErr:
+// O1-AMD: movq %rsi, (%rdi)
+// O1-AMD: retq
+// O1-AMD-LABEL: _GPF4mainE7nextLen:
+// O1-AMD: movq %rsp, %rdi
+// O1-AMD-NEXT: callq *8(%r{{[a-z0-9]+}})
+// O1-AMD: 24(%rsp)
+// O1-AMD: 8(%rsp)
+// O1-AMD: retq
+// O1-ARM-LABEL: _GPF4mainE4tErr:
+// O1-ARM-NOT: str
+// O1-ARM: and x2,
+// O1-ARM-NOT: str
+// O1-ARM: ret
+// O1-ARM-LABEL: _GPF4mainE4sErr:
+// O1-ARM-NOT: str
+// O1-ARM: csel x4,
+// O1-ARM-NEXT: ret
+// O1-ARM-LABEL: _GPF4mainE7nextLen:
+// O1-ARM: blr x{{[0-9]+}}
+// O1-ARM-NEXT: cmp x3, #0
+// O1-ARM-NEXT: csinv x0, x1, xzr, eq

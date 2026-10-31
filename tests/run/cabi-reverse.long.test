@@ -1,0 +1,11 @@
+// REQUIRES: long, host-linux-amd64, clang, qemu-aarch64
+// RUN: %python %S/Inputs/run-cabi.py --reverse --slow %{slow} --flags "%gopp_link_flags" %gopp %t.a 11 150 12 150 13 150
+// RUN: %python %S/Inputs/run-cabi.py --reverse --slow %{slow} --flags "%gopp_link_flags" --edges 1 %gopp %t.b 0 100000
+// RUN: %python %S/Inputs/run-cabi.py --reverse --slow %{slow} --arm64 %aarch64_sysroot %gopp %t.c 14 150 15 150
+// RUN: %python %S/Inputs/run-cabi.py --reverse --slow %{slow} --arm64 %aarch64_sysroot --edges 1 %gopp %t.d 0 100000
+// RUN: %python %S/Inputs/run-cabi.py --reverse --slow %{slow} --flags "%gopp_link_flags -opt=2" --edges 3 %gopp %t.e 0 100000
+// RUN: %python %S/Inputs/run-cabi.py --reverse --slow %{slow} --flags "%gopp_link_flags -opt=3" --edges 3 %gopp %t.f 0 100000
+// P04.18: the reverse direction at full size: more random seeds and every
+// enumerated edge signature (about 2150), on both targets, and a third of the
+// edges at -opt=2 and -opt=3. A sanitizer build runs one in five of the
+// signatures (%{slow}).

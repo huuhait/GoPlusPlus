@@ -1,0 +1,105 @@
+package main
+
+// P04.18 (ADR-0030): `(T, error)` with the real `error` interface, directly
+// and through an itab: `(int, error)` comes back in registers on both
+// targets, `(string, error)` on arm64 (x0-x4) and through memory on amd64.
+// Valid Go; errors.out is Go's output.
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string {
+	if e.code == 7 {
+		return "seven"
+	}
+	return "other"
+}
+
+var errSeven = codeErr{7}
+var errOther = codeErr{1}
+
+func tErr(a int) (int, error) {
+	if a < 0 {
+		return 0, &errSeven
+	}
+	return a + 1, nil
+}
+
+func sErr(s string) (string, error) {
+	if len(s) == 0 {
+		return "", &errOther
+	}
+	return s + "!", nil
+}
+
+func fErr(x float64) (float64, error) {
+	if x != x {
+		return 0, &errSeven
+	}
+	return x * 2, nil
+}
+
+func pairErr(a, b int) (int, int, string, error) {
+	if a == b {
+		return 0, 0, "", &errOther
+	}
+	return b, a, "swapped", nil
+}
+
+type source interface {
+	Next() (string, error)
+}
+
+type words struct{ n int }
+
+func (w *words) Next() (string, error) {
+	if w.n == 0 {
+		return "", &errSeven
+	}
+	w.n--
+	if w.n%2 == 0 {
+		return "even", nil
+	}
+	return "odd", nil
+}
+
+func drain(s source) int {
+	k := 0
+	for {
+		w, err := s.Next()
+		if err != nil {
+			println("stop:", err.Error(), k)
+			return k
+		}
+		println(w)
+		k++
+	}
+}
+
+func check(n int, err error) {
+	if err != nil {
+		println("error:", err.Error())
+		return
+	}
+	println("ok:", n)
+}
+
+func main() {
+	n, err := tErr(41)
+	println(n, err == nil)
+	_, err = tErr(-1)
+	println(err.Error())
+	s, err := sErr("go")
+	println(s, err == nil)
+	s, err = sErr("")
+	println(len(s), err.Error())
+	f, err := fErr(1.25)
+	println(f == 2.5, err == nil)
+	a, b, t, err := pairErr(3, 4)
+	println(a, b, t, err == nil)
+	_, _, _, err = pairErr(5, 5)
+	println(err.Error())
+	check(tErr(9))
+	check(tErr(-9))
+	w := words{3}
+	println(drain(&w))
+}

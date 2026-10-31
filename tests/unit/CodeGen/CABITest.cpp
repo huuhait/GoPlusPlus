@@ -738,7 +738,7 @@ namespace {
 void declareC(gir::Module &M, const char *Name, gir::Type *Sig) {
   auto F = std::make_unique<gir::Function>();
   F->Name = Name;
-  F->Sig = Sig;
+  F->Sig = M.Ctx.withCallConv(Sig, gir::CallConv::C);
   F->CC = gir::CallConv::C;
   F->NoUnwind = true;
   M.addFunction(std::move(F));

@@ -1,0 +1,8 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-cc.py --opts 0,1,2,3,s,z --slow %{slow} --flags "%gopp_link_flags" %gopp %t.d 201 60 202 60 203 60 204 60 205 60 206 60
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/calls4.gopp %S/Inputs/cc/calls4.out
+// P04.18: six more generated programs of 60 functions (more seeds, bigger
+// programs), each built at every `opt` level (the pipeline decides speed, never
+// what a program does) and compared with the generator's text, which Go
+// agrees with (Inputs/check-cc-go.py). A sanitizer build makes one in five of
+// the builds (%{slow}: every seed, every level over the six seeds).

@@ -447,3 +447,4 @@ E0441 err_codegen
 E0442 err_gir_extern_bad
 E0443 err_gir_no_main
 E0444 err_no_stack
+E0445 err_gir_export_bad

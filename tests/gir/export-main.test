@@ -1,0 +1,10 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.18: the C symbol `main` is the program's entry point (the same rule as
+// for @Extern, extern-bad.test); an @Export of it is one E0445.
+package main
+
+@Export("C")
+func main() {}
+
+// CHECK: :6:1: error[E0445]: invalid @Export on main: the C symbol main is the program's entry point
+// CHECK-NOT: error

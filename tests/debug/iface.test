@@ -19,6 +19,7 @@
 // DWARF-NEXT: DW_AT_decl_file ({{.*}}iface.gopp")
 // DWARF-NEXT: DW_AT_decl_line (16)
 // DWARF-NEXT: DW_AT_prototyped (true)
+// DWARF-NEXT: DW_AT_calling_convention (DW_CC_LLVM_Swift)
 // DWARF-NEXT: DW_AT_type ({{.*}} "int64")
 // DWARF-NEXT: DW_AT_artificial (true)
 //

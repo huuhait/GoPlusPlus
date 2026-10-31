@@ -40,6 +40,9 @@ public:
   std::string pkgInit(const sema::Package *P);
   /// EqGlue or HashGlue of T.
   std::string glue(sym::Kind K, const sema::Type *T);
+  /// The C-ABI thunk of F, the function a Go++ function passed to C is
+  /// wrapped in (`_GPTC...`).
+  std::string thunk(const sema::Func *F);
   /// The node of the function F, for the scope of a local type.
   const sym::Node *funcNode(const sema::Func *F) { return Names.func(F); }
 

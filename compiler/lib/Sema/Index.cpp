@@ -423,7 +423,10 @@ void Checker::sliceExpr(Operand &X, const SliceExpr *Ex) {
     }
     X.Ty = Ctx.slice(A->Elem);
     if (own()) {
-      X.Ty = Ctx.ref(X.Ty, !ReadOnlySrc);
+      // An array held by value in a borrowed variable is read-only at the
+      // top level, so its slice is a view (OWN-R3b: rejectBorrowedRef has the
+      // list of the ways into a borrowed variable's storage).
+      X.Ty = Ctx.ref(X.Ty, !ReadOnlySrc && !borrowedStorageSlice(Ex));
       // The ref points into the array itself (OWN-P10).
       rejectPayloadAddress(Ex->X, "slicing an array held by value");
       noteReference(Ex->X);

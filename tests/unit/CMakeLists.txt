@@ -36,6 +36,7 @@ add_executable(GoppUnitTests
   CodeGen/CABITest.cpp
   CodeGen/CodeGenTest.cpp
   CodeGen/DebugInfoTest.cpp
+  CodeGen/GoABITest.cpp
   CodeGen/LayoutTest.cpp
   CodeGen/OptionHashTest.cpp
   CodeGen/PipelineTest.cpp

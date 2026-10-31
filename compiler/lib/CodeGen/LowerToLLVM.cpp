@@ -23,6 +23,7 @@
 #include "gopp/CodeGen/CABILower.h"
 #include "gopp/CodeGen/CodeGen.h"
 #include "gopp/CodeGen/DebugInfo.h"
+#include "gopp/CodeGen/GoABI.h"
 #include "gopp/GIR/GIR.h"
 #include "gopp/GIR/Verify.h"
 #include "gopp/Import/CABI.h"
@@ -88,6 +89,12 @@ private:
     cabi::IRSignature Sig;
   };
   llvm::DenseMap<G::FuncId, CFunction> CFuncs;
+  /// The C ABI of a call through a C function pointer, by its Func type
+  /// (P04.18: the type says the convention, V075).
+  std::map<const G::Type *, CFunction> CPointers;
+  /// The convention of Go++ calling Go++ (P04.18, GoABI.h): the one place
+  /// that decides how a parameter and a result travel.
+  std::unique_ptr<goabi::GoAbi> Abi;
   /// Made for the first signature with an aggregate (scalars need no Clang).
   std::unique_ptr<cabi::Classifier> Classifier;
   /// The aggregates whose layout has been checked against Clang's.
@@ -102,6 +109,28 @@ private:
   std::map<std::tuple<llvm::Type *, uint64_t, unsigned>, llvm::AllocaInst *>
       CScratch;
   std::map<std::pair<llvm::Type *, uint64_t>, unsigned> CScratchUsed;
+  /// Where a convention's temporaries go: the entry block (a prologue
+  /// has no terminator yet, so it allocates at the insert point), or the
+  /// slots shared by the calls of the function (cScratchSlot).
+  enum AllocaWhere { AllocaPrologue, AllocaEntry, AllocaScratch };
+  cabi::Env makeEnv(AllocaWhere W) {
+    auto MemTyFn = [this](const G::Type *T) { return memTy(T); };
+    auto AllocaFn = [this, W](llvm::Type *Ty, llvm::Align A,
+                              const llvm::Twine &Name) -> llvm::AllocaInst * {
+      if (W == AllocaScratch)
+        return cScratchSlot(Ty, A, Name);
+      llvm::AllocaInst *Slot = W == AllocaEntry
+                                   ? entryAlloca(Ty, Name)
+                                   : B.CreateAlloca(Ty, nullptr, Name);
+      Slot->setAlignment(std::max(A, LM.getDataLayout().getABITypeAlign(Ty)));
+      return Slot;
+    };
+    return cabi::Env{B, LM.getDataLayout(), MemTyFn, AllocaFn};
+  }
+  /// The function being made, and (when it has the C convention: a thunk or
+  /// the entry point) its IR arguments.
+  G::FuncId GFId = G::NoId;
+  llvm::SmallVector<llvm::Argument *, 8> CArgs;
   llvm::Error classifyCFunctions();
   llvm::Error checkCLayout(const G::Type *T);
   llvm::AllocaInst *cScratchSlot(llvm::Type *Ty, llvm::Align A,
@@ -329,10 +358,9 @@ private:
 
   /// Aggregates (strings, slices, arrays, tuples, structs, Options) live in
   /// memory: they are copied with memmove, zeroed with memset and built in
-  /// place, and the internal convention (until P04.18, D4.4) passes them by
-  /// address: a parameter is a pointer to the caller's own copy, a result is
-  /// written through a hidden first parameter. LLVM never sees a first-class
-  /// value of one (a [100000]int64 would not compile).
+  /// place. LLVM never sees a first-class value of one (a [100000]int64
+  /// would not compile); the calling convention (GoABI.h) passes the small
+  /// ones as their scalars and the others by address.
   static bool isAggregate(const G::Type *T) {
     switch (T->getKind()) {
     case G::Type::Kind::String:
@@ -383,7 +411,6 @@ private:
   llvm::Type *valTy(const G::Type *T) {
     return T->isBool() ? llvm::Type::getInt1Ty(C) : memTy(T);
   }
-  llvm::FunctionType *fnType(const G::Type *Sig);
   llvm::Function *declare(G::FuncId Id, const G::Function &F);
   llvm::Constant *stringConst(uint64_t Id);
   void setLoc(const G::Span &S, G::ScopeId Scope);
@@ -403,6 +430,12 @@ private:
                     llvm::Value *V);
   llvm::Error function(G::FuncId Id, const G::Function &F, llvm::Function *LF);
   llvm::Error terminator(const G::Terminator &T);
+  /// Makes a call: the only place that does (P04.18). P04.07 makes it an
+  /// invoke when U unwinds into this function.
+  llvm::CallBase *emitCall(llvm::FunctionType *FT, llvm::Value *Callee,
+                           llvm::ArrayRef<llvm::Value *> Args,
+                           llvm::CallingConv::ID CC, llvm::AttributeList AL,
+                           const G::UnwindAction &U);
   /// The symbol of the runtime function a failed Assert calls.
   static std::string panicName(const G::Terminator &T);
 };
@@ -522,47 +555,6 @@ void Lowering::prepareTypes() {
   }
 }
 
-/// The internal convention until P04.18 (D4.4): a value that is not one
-/// scalar goes by address. An aggregate parameter is a pointer to the
-/// caller's own copy, which the callee uses as the storage of the parameter;
-/// an aggregate result is written through a hidden first parameter, the
-/// address of the result place. The C convention has scalars only (P04.11).
-llvm::FunctionType *Lowering::fnType(const G::Type *Sig) {
-  llvm::SmallVector<llvm::Type *, 4> Params;
-  llvm::Type *Ptr = llvm::PointerType::getUnqual(C);
-  bool Sret = isAggregate(Sig->ret());
-  if (Sret)
-    Params.push_back(Ptr);
-  for (const G::Type *P : Sig->elems())
-    Params.push_back(isAggregate(P) ? Ptr : valTy(P));
-  llvm::Type *Ret = Sig->ret()->isUnit() || Sret ? llvm::Type::getVoidTy(C)
-                                                 : valTy(Sig->ret());
-  return llvm::FunctionType::get(Ret, Params, false);
-}
-
-/// The C ABI wants the extension of an integer narrower than 32 bits spelled
-/// out (clang does the same).
-static void extAttr(llvm::LLVMContext &C, llvm::AttributeList &AL, unsigned Idx,
-                    const G::Type *T) {
-  if (T->isBool() || (T->isInt() && T->bits() < 32))
-    AL = AL.addAttributeAtIndex(
-        C, Idx,
-        llvm::Attribute::get(C, T->isSigned() ? llvm::Attribute::SExt
-                                              : llvm::Attribute::ZExt));
-}
-
-/// The extension of every narrow parameter and result of the internal
-/// convention's signature Sig (Sret: the result goes through a hidden first
-/// parameter).
-static void extAttrs(llvm::LLVMContext &C, llvm::AttributeList &AL,
-                     const G::Type *Sig, bool Sret) {
-  for (unsigned I = 0; I < Sig->elems().size(); ++I)
-    extAttr(C, AL, llvm::AttributeList::FirstArgIndex + Sret + I,
-            Sig->elems()[I]);
-  if (!Sig->ret()->isUnit() && !Sret)
-    extAttr(C, AL, llvm::AttributeList::ReturnIndex, Sig->ret());
-}
-
 /// Classifies every declared C function (P04.11). A signature of scalars only
 /// has the classification Clang would give without asking Clang
 /// (cabi::classifyScalars); Clang is asked from the first signature with an
@@ -572,8 +564,8 @@ llvm::Error Lowering::classifyCFunctions() {
   const std::string Triple = LM.getTargetTriple().str();
   for (size_t I = 0; I < GM.Funcs.size(); ++I) {
     const G::Function &F = *GM.Funcs[I];
-    if (F.CC != G::CallConv::C || !F.isDeclaration())
-      continue;
+    if (F.CC != G::CallConv::C)
+      continue; // (a C function with a body is a thunk or the entry point)
     cabiWork();
     std::optional<cabi::CallInfo> CI = cabi::classifyScalars(Triple, F.Sig);
     if (!CI) {
@@ -689,16 +681,22 @@ static bool isCAllocationFunction(llvm::StringRef Name) {
 
 llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   auto CFIt = CFuncs.find(Id);
+  const goabi::FnInfo *GI =
+      CFIt == CFuncs.end() ? &Abi->classify(F.Sig) : nullptr;
   llvm::Function *LF = llvm::Function::Create(
-      CFIt != CFuncs.end() ? CFIt->second.Sig.Type : fnType(F.Sig),
+      CFIt != CFuncs.end() ? CFIt->second.Sig.Type : GI->Type,
       F.Link == G::Linkage::Internal ? llvm::GlobalValue::InternalLinkage
       : F.Link == G::Linkage::LinkOnceODR
           ? llvm::GlobalValue::LinkOnceODRLinkage
           : llvm::GlobalValue::ExternalLinkage,
       F.Name, &LM);
   llvm::AttributeList AL = LF->getAttributes();
-  if (CFIt != CFuncs.end())
+  if (CFIt != CFuncs.end()) {
     AL = CFIt->second.Sig.Attrs; // the C ABI's: extension, byval, sret, ...
+  } else {
+    AL = GI->Attrs; // the extension of narrow scalars (GoABI.h)
+    LF->setCallingConv(GI->CC);
+  }
   if (F.CC == G::CallConv::C && F.isDeclaration() &&
       isCAllocationFunction(F.Name))
     AL = AL.addFnAttribute(C, llvm::Attribute::NoBuiltin);
@@ -711,8 +709,6 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   if (!F.isDeclaration())
     AL = AL.addFnAttribute(
         C, llvm::Attribute::getWithUWTableKind(C, llvm::UWTableKind::Async));
-  if (CFIt == CFuncs.end())
-    extAttrs(C, AL, F.Sig, isAggregate(F.Sig->ret()));
   LF->setAttributes(AL);
   return LF;
 }
@@ -1210,12 +1206,23 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
   }
   case G::Terminator::Return: {
     G::Type *R = GF->Sig->ret();
-    if (R->isUnit() || isAggregate(R)) {
-      B.CreateRetVoid(); // an aggregate was built in the caller's buffer
-    } else {
-      G::Place P = G::localPlace(0, R);
-      B.CreateRet(loadPlace(P));
+    cabi::Value Res;
+    Res.Ty = R;
+    if (!R->isUnit() && !isAggregate(R))
+      Res.V = loadPlace(G::localPlace(0, R));
+    else if (!R->isUnit()) {
+      Res.V = Slots[0];
+      Res.Known = LM.getDataLayout().getABITypeAlign(memTy(R));
     }
+    // (A scratch copy of the result goes to the entry block, as every
+    // alloca does.)
+    cabi::Env Env = makeEnv(AllocaEntry);
+    auto CFIt = CFuncs.find(GFId);
+    if (CFIt != CFuncs.end()) // a thunk or the entry point: the C ABI
+      cabi::packCReturn(Env, CFIt->second.Info, CFIt->second.Sig,
+                        llvm::ArrayRef<llvm::Argument *>(CArgs), Res);
+    else
+      Abi->packReturn(Env, Abi->classify(GF->Sig), Res);
     return llvm::Error::success();
   }
   case G::Terminator::Unreachable:
@@ -1226,14 +1233,35 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
       return E;
     const G::Type *Sig = T.Discr.type();
     llvm::Value *Callee = operand(T.Discr);
-    auto CFIt =
-        T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func
-            ? CFuncs.find(T.Discr.C.Bits)
-            : CFuncs.end();
-    if (CFIt != CFuncs.end()) {
+    bool Direct =
+        T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func;
+    auto CFIt = Direct ? CFuncs.find(T.Discr.C.Bits) : CFuncs.end();
+    const CFunction *CFn = CFIt != CFuncs.end() ? &CFIt->second : nullptr;
+    if (!CFn && Sig->callConv() == G::CallConv::C) {
+      // A call through a C function pointer (an allocator's table entry,
+      // ADR-0029): the C ABI of the pointer's type. Its scalars are
+      // classified without Clang; an aggregate needs P04.07 (V076).
+      auto [It, New] = CPointers.try_emplace(Sig);
+      if (New) {
+        cabiWork();
+        std::optional<cabi::CallInfo> CI =
+            cabi::classifyScalars(LM.getTargetTriple().str(), Sig);
+        if (!CI)
+          return llvm::createStringError(
+              std::errc::not_supported,
+              "internal error: a call through a C function pointer of type "
+              "%s, which is not scalars only (V076)",
+              Sig->str().c_str());
+        cabi::IRSignature IS = cabi::irSignature(
+            C, *CI, [&](const G::Type *Ty) { return memTy(Ty); });
+        It->second = {std::move(*CI), std::move(IS)};
+      }
+      CFn = &It->second;
+    }
+    if (CFn) {
       // A C function: the C ABI decides how each argument and the result
       // travel (CABILower.h).
-      const CFunction &CF = CFIt->second;
+      const CFunction &CF = *CFn;
       llvm::SmallVector<cabi::Value, 4> Vals;
       unsigned AggIdx = 0;
       for (const G::Operand &A : T.Args) {
@@ -1262,22 +1290,18 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
         Dest.Known = LM.getDataLayout().getABITypeAlign(memTy(Sig->ret()));
       }
       CScratchUsed.clear();
-      auto MemTyFn = [this](const G::Type *T) { return memTy(T); };
-      auto AllocaFn = [this](llvm::Type *Ty, llvm::Align A,
-                             const llvm::Twine &Name) {
-        return cScratchSlot(Ty, A, Name);
-      };
-      cabi::Env Env{B, LM.getDataLayout(), MemTyFn, AllocaFn};
+      cabi::Env Env = makeEnv(AllocaScratch);
       cabi::PreparedCall PC =
           cabi::lowerCArgs(Env, CF.Info, CF.Sig, Vals, Dest);
       cabiWork(PC.Args.size() + 1);
-      llvm::CallInst *CI = B.CreateCall(CF.Sig.Type, Callee, PC.Args);
       // The call repeats the C ABI's attributes of the declaration
-      // (extension, byval, sret, alignment), as the internal path does.
-      CI->setAttributes(
-          Funcs[T.Discr.C.Bits]->getAttributes().removeFnAttributes(C));
-      if (T.Unwind.K == G::UnwindAction::Unreachable)
-        CI->addFnAttr(llvm::Attribute::NoUnwind);
+      // (extension, byval, sret, alignment), as the internal path does; a
+      // call through a pointer has those of the pointer's type.
+      llvm::CallBase *CI = emitCall(
+          CF.Sig.Type, Callee, PC.Args, llvm::CallingConv::C,
+          Direct ? Funcs[T.Discr.C.Bits]->getAttributes().removeFnAttributes(C)
+                 : CF.Sig.Attrs,
+          T.Unwind);
       llvm::Value *R = cabi::lowerCResult(Env, CF.Info, CF.Sig, PC, CI, Dest);
       if (R && !Sig->ret()->isUnit())
         storePlace(T.Dest, R);
@@ -1287,45 +1311,62 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
         B.CreateBr(Blocks[T.Target]);
       return llvm::Error::success();
     }
-    llvm::SmallVector<llvm::Value *, 4> Args;
-    bool Sret = isAggregate(Sig->ret());
-    if (Sret)
-      Args.push_back(placeAddr(T.Dest));
+    // Go++ calling Go++ (GoABI.h), directly or through a pointer of a Go++
+    // function type.
+    const goabi::FnInfo &FI = Abi->classify(Sig);
+    llvm::SmallVector<cabi::Value, 4> Vals;
     unsigned AggIdx = 0;
-    for (const G::Operand &A : T.Args) {
-      if (!isAggregate(A.type())) {
-        Args.push_back(operand(A));
-        continue;
+    for (size_t K = 0; K < T.Args.size(); ++K) {
+      const G::Operand &A = T.Args[K];
+      cabi::Value V;
+      V.Ty = A.type();
+      switch (FI.Params[K].K) {
+      case goabi::Kind::Ignore:
+        break;
+      case goabi::Kind::Scalar:
+        V.V = operand(A);
+        break;
+      case goabi::Kind::Direct:
+        if (A.K != G::Operand::Const) {
+          // Read where it is: the callee gets the scalars, its own copy.
+          V.V = placeAddr(A.P);
+          V.Known = LM.getDataLayout().getABITypeAlign(memTy(A.type()));
+          break;
+        }
+        [[fallthrough]];
+      case goabi::Kind::Indirect: {
+        // The callee owns its parameter: it gets a copy (a constant is
+        // stored in a scratch slot of this frame; the slot is reused by the
+        // next call that passes this type in this position, ArgSlots).
+        llvm::Type *MT = memTy(A.type());
+        llvm::AllocaInst *&Tmp = ArgSlots[{MT, AggIdx++}];
+        if (!Tmp)
+          Tmp = entryAlloca(MT, "arg");
+        emitInto(Tmp, A);
+        V.V = Tmp;
+        V.Known = Tmp->getAlign();
+        break;
       }
-      // The callee owns its parameter: it gets a copy (a constant is stored
-      // in a scratch slot of this frame; the slot is reused by the next call
-      // that passes this type in this position, ArgSlots).
-      llvm::Type *MT = memTy(A.type());
-      llvm::AllocaInst *&Tmp = ArgSlots[{MT, AggIdx++}];
-      if (!Tmp)
-        Tmp = entryAlloca(MT, "arg");
-      emitInto(Tmp, A);
-      Args.push_back(Tmp);
+      }
+      Vals.push_back(V);
     }
-    llvm::CallInst *CI = B.CreateCall(fnType(Sig), Callee, Args);
-    // The ABI's extension of narrow arguments and results is repeated at the
-    // call (the callee's own attributes stay on the callee). A call through a
-    // pointer (a map's hash, an allocator's table entry, ADR-0029; an itab
-    // slot, P04.06) gets the extension every definition of its signature
-    // has, so a callee written in C gets a `bool` as the C ABI passes it, and
-    // a thunk its narrow arguments as its definition expects them.
-    if (T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func) {
-      CI->setAttributes(
-          Funcs[T.Discr.C.Bits]->getAttributes().removeFnAttributes(C));
-    } else {
-      llvm::AttributeList AL;
-      extAttrs(C, AL, Sig, Sret);
-      CI->setAttributes(AL);
+    cabi::Value Dest;
+    Dest.Ty = Sig->ret();
+    if (isAggregate(Sig->ret()) && FI.Ret.K != goabi::Kind::Ignore) {
+      Dest.V = placeAddr(T.Dest);
+      Dest.Known = LM.getDataLayout().getABITypeAlign(memTy(Sig->ret()));
     }
-    if (T.Unwind.K == G::UnwindAction::Unreachable)
-      CI->addFnAttr(llvm::Attribute::NoUnwind);
-    if (!Sig->ret()->isUnit() && !Sret)
-      storePlace(T.Dest, CI);
+    cabi::Env Env = makeEnv(AllocaScratch);
+    std::vector<llvm::Value *> Args = Abi->lowerArgs(Env, FI, Vals, Dest);
+    // The extension of narrow scalars is repeated at the call (the callee's
+    // own attributes stay on the callee). A call through a pointer (a map's
+    // hash, an itab slot, P04.06) gets what every definition of its
+    // signature has, a thunk's included: one classification per signature.
+    llvm::CallBase *CI =
+        emitCall(FI.Type, Callee, Args, FI.CC, FI.Attrs, T.Unwind);
+    llvm::Value *R = Abi->lowerResult(Env, FI, CI, Dest);
+    if (R && !Sig->ret()->isUnit())
+      storePlace(T.Dest, R);
     if (T.Target == G::NoId)
       B.CreateUnreachable();
     else
@@ -1369,7 +1410,11 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
       CallArgs.push_back(B.CreateLoad(llvm::PointerType::getUnqual(C), PS.Pos));
       for (llvm::AllocaInst *A : PS.Args)
         CallArgs.push_back(B.CreateLoad(A->getAllocatedType(), A));
-      B.CreateCall(Funcs[Rt], CallArgs);
+      // (A panic does not unwind until P04.07, which gives this call the
+      // unwind action of its checks.)
+      emitCall(Funcs[Rt]->getFunctionType(), Funcs[Rt], CallArgs,
+               Funcs[Rt]->getCallingConv(), llvm::AttributeList(),
+               G::UnwindAction());
       B.CreateUnreachable();
     }
     // The failing edge: store the constant position and the values, then
@@ -2019,6 +2064,7 @@ llvm::Value *Lowering::contracted(const G::Rvalue &R, llvm::Value *X,
 llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
                                llvm::Function *Fn) {
   GF = &F;
+  GFId = Id;
   LF = Fn;
   Slots.clear();
   Blocks.clear();
@@ -2042,23 +2088,40 @@ llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
     Blocks.push_back(llvm::BasicBlock::Create(C, "bb" + llvm::Twine(I), Fn));
   B.SetInsertPoint(Entry);
   setLoc(F.Loc, 0);
-  bool Sret = isAggregate(F.Sig->ret());
+  // The parameters and the result place, as the convention hands them over:
+  // the values of the IR arguments (an aggregate: the address of its bytes).
+  auto CFIt = CFuncs.find(Id);
+  const goabi::FnInfo *GI =
+      CFIt == CFuncs.end() ? &Abi->classify(F.Sig) : nullptr;
+  CArgs.clear();
+  for (llvm::Argument &A : Fn->args())
+    CArgs.push_back(&A);
+  std::vector<cabi::Value> Params;
+  {
+    cabi::Env Env = makeEnv(AllocaPrologue);
+    Params = GI ? Abi->unpackParams(Env, *GI, CArgs)
+                : cabi::unpackCParams(Env, CFIt->second.Info, CFIt->second.Sig,
+                                      CArgs);
+  }
+  bool SRetResult = GI ? GI->Ret.K == goabi::Kind::Indirect : false;
   for (size_t I = 0; I < F.Locals.size(); ++I) {
     const G::Local &L = F.Locals[I];
     bool Param = I >= 1 && I <= F.numParams();
-    if (L.Ty->isUnit())
+    if (L.Ty->isUnit()) {
       Slots.push_back(nullptr);
-    else if ((I == 0 && Sret) || (Param && isAggregate(L.Ty)))
-      Slots.push_back(Fn->getArg(I == 0 ? 0 : (Sret ? 1 : 0) + I - 1));
-    else
+    } else if (I == 0 && SRetResult) {
+      Slots.push_back(Fn->getArg(GI->SRet)); // built in the caller's buffer
+    } else if (Param && isAggregate(L.Ty) && Params[I - 1].V) {
+      Slots.push_back(Params[I - 1].V); // the body's copy
+    } else {
       Slots.push_back(B.CreateAlloca(memTy(L.Ty), nullptr, L.Name));
+    }
   }
   for (unsigned I = 0; I < F.numParams(); ++I) {
     G::Type *PT = F.Locals[1 + I].Ty;
     if (isAggregate(PT) || PT->isUnit())
-      continue; // the caller's copy is the storage
-    llvm::Value *A = Fn->getArg((Sret ? 1 : 0) + I);
-    storePlace(G::localPlace(1 + I, PT), A);
+      continue;
+    storePlace(G::localPlace(1 + I, PT), Params[I].V);
   }
   llvm::Instruction *EntryBr = B.CreateBr(Blocks[0]);
   // Every named parameter and variable is declared at its storage for the
@@ -2199,6 +2262,10 @@ llvm::Error Lowering::run() {
     if (Opts.DebugInfo)
       DI.declareGlobal(Gl, GV);
   }
+  Abi = std::make_unique<goabi::GoAbi>(
+      C, LM.getDataLayout(), goabi::Policy::forTriple(LM.getTargetTriple()),
+      [this](const G::Type *T) { return memTy(T); });
+  Abi->Work = Opts.CABIWork;
   if (llvm::Error E = classifyCFunctions())
     return E;
   for (size_t I = 0; I < GM.Funcs.size(); ++I)
@@ -2232,6 +2299,82 @@ llvm::Error Lowering::run() {
 
 } // namespace
 
+llvm::CallBase *Lowering::emitCall(llvm::FunctionType *FT, llvm::Value *Callee,
+                                   llvm::ArrayRef<llvm::Value *> Args,
+                                   llvm::CallingConv::ID CC,
+                                   llvm::AttributeList AL,
+                                   const G::UnwindAction &U) {
+  // An unwind edge into this function (Cleanup, Terminate) makes an invoke:
+  // P04.07, until which terminator() refuses them, so this is a call.
+  // (swiftcc keeps across a call the registers C keeps, which the unwinder
+  // restores as it does for C: rbx, rbp and r12-r15 on amd64, no XMM
+  // register; x19-x28, fp, lr and d8-d15 on arm64. An invoke needs nothing
+  // more, ADR-0030.)
+  llvm::CallInst *Call = B.CreateCall(FT, Callee, Args);
+  Call->setCallingConv(CC);
+  Call->setAttributes(AL);
+  if (U.K == G::UnwindAction::Unreachable)
+    Call->addFnAttr(llvm::Attribute::NoUnwind);
+  return Call;
+}
+
+llvm::Error gopp::checkCalls(const llvm::Module &M) {
+  for (const llvm::Function &F : M)
+    for (const llvm::BasicBlock &BB : F)
+      for (const llvm::Instruction &I : BB) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&I);
+        if (!Call)
+          continue;
+        // A direct call must use its callee's convention: LLVM's verifier
+        // does not say so, and the program would run with its arguments in
+        // the wrong registers (swiftcc and ccc put them elsewhere).
+        if (const llvm::Function *Callee = Call->getCalledFunction())
+          if (!Callee->isIntrinsic() &&
+              Call->getCallingConv() != Callee->getCallingConv())
+            return llvm::createStringError(
+                std::errc::invalid_argument,
+                "internal error: the call of %s in %s does not use its "
+                "calling convention",
+                Callee->getName().str().c_str(), F.getName().str().c_str());
+      }
+  // P04.06: static data (an itab, a method table, a type
+  // descriptor's == and hash) holds the functions Go++ calls through a
+  // pointer of a Go++ function type (an itab slot), so each must have the
+  // Go++ convention of the target: a thunk or glue of another convention
+  // would get its arguments in other registers. (A C function's address goes
+  // only to C, or to a typed allocator table entry at run time.)
+  const llvm::CallingConv::ID GoCC =
+      goabi::Policy::forTriple(M.getTargetTriple()).CC;
+  llvm::SmallVector<const llvm::Constant *, 16> Work;
+  llvm::SmallPtrSet<const llvm::Constant *, 32> Seen;
+  for (const llvm::GlobalVariable &GV : M.globals()) {
+    if (!GV.hasInitializer() || GV.getName().starts_with("llvm."))
+      continue;
+    Work.push_back(GV.getInitializer());
+    while (!Work.empty()) {
+      const llvm::Constant *K = Work.pop_back_val();
+      if (const auto *Fn = llvm::dyn_cast<llvm::Function>(K)) {
+        if (Fn->getCallingConv() != GoCC)
+          return llvm::createStringError(
+              std::errc::invalid_argument,
+              "internal error: the static data %s holds %s, which does not "
+              "have the Go++ calling convention of the target (it is called "
+              "through a pointer of a Go++ function type)",
+              GV.getName().str().c_str(), Fn->getName().str().c_str());
+        continue;
+      }
+      // (Another global's address: its own initializer is walked.)
+      if (llvm::isa<llvm::GlobalValue>(K))
+        continue;
+      for (const llvm::Use &U : K->operands())
+        if (const auto *Op = llvm::dyn_cast<llvm::Constant>(U.get());
+            Op && Seen.insert(Op).second)
+          Work.push_back(Op);
+    }
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<std::unique_ptr<llvm::Module>>
 gopp::lowerToLLVM(llvm::LLVMContext &Ctx, const gir::Module &M,
                   const llvm::TargetMachine &TM,
@@ -2257,6 +2400,10 @@ gopp::lowerToLLVM(llvm::LLVMContext &Ctx, const gir::Module &M,
   O.Optimized = TM.getOptLevel() != llvm::CodeGenOptLevel::None;
   Lowering L(Ctx, M, *LM, O);
   if (llvm::Error E = L.run())
+    return std::move(E);
+  // Every call as the conventions want it: an internal error here, never a
+  // wrong program.
+  if (llvm::Error E = checkCalls(*LM))
     return std::move(E);
   std::string Problems;
   llvm::raw_string_ostream PS(Problems);

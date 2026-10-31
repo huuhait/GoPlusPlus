@@ -33,6 +33,8 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
 
+#include "../Support/GIRTestSupport.h"
+
 #include <gtest/gtest.h>
 
 #include <cstring>
@@ -43,7 +45,8 @@ using namespace gopp;
 
 namespace {
 
-using HashFn = uint64_t (*)(const void *, uint64_t);
+// The glue is Go++ code: called with the Go++ convention (GOPP_GO_CC).
+using HashFn = uint64_t(GOPP_GO_CC *)(const void *, uint64_t);
 
 /// Checks and lowers a program that declares `var g Option[...]`, adds the
 /// hash glue of g's GIR type as `hash_g`, and compiles the module in a JIT

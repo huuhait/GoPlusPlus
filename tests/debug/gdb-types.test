@@ -61,6 +61,8 @@
 // CHECK: #0 {{.*}}main.aggregates (d=..., arr=..., p={{0x[0-9a-f]+}}) at {{.*}}types.gopp:46
 // CHECK: #1 {{.*}}main.main () at {{.*}}types.gopp:58
 // CHECK: @@CALLER
-// CHECK: d = {title =
-// CHECK: v = {x = 10, y = 20}
-// CHECK: w = {x = 11, y = 21}
+// (The order of `info locals` is LLVM's order of the variables, which P04.18
+// changes: `d` is passed by its address, PAR-10. Each is checked.)
+// CHECK-DAG: d = {title =
+// CHECK-DAG: v = {x = 10, y = 20}
+// CHECK-DAG: w = {x = 11, y = 21}

@@ -1,12 +1,12 @@
-// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error %s
-// P04.06 (the call lowering of P04.04, met while porting `f(g())` with
-// interface parameters): the results of a call spread over a variadic
-// parameter (`vf(g())`, Go packs the ones past the fixed parameters) are
-// refused with one E0439 naming P04.18, which packs them (TODO P04.18), where
-// the call is; they were an internal error (V062: the second result passed
-// as the `[]int`). The other side: the spread into plain parameters,
-// `two(pair())`, and a variadic call with only its fixed argument, `vf(1)`
-// (core-variadic.test runs both), draw no error.
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.18 (moved from P04.06, review R5): the results of a call spread over a
+// variadic parameter, `vf(g())`, bind the fixed parameters to the first
+// results and fill the variadic slice with the rest, as Go does. P04.06
+// refused it (one E0439 naming P04.18); before that it was an internal error
+// (V062: the second result passed as the `[]int`). The spread into plain
+// parameters, `two(pair())`, and a variadic call with only its fixed
+// argument, `vf(1)`, are as they were. run/core-variadic.test runs these and
+// more (three results, none left for the slice, `...any`) against Go.
 package main
 
 func vf(a int, rest ...int) int { return a + len(rest) }
@@ -20,4 +20,12 @@ func main() {
 	println(vf(pair()))
 }
 
-// CHECK: call-spread.test:20:10: error[E0439]: spreading the results of a call over a variadic parameter (P04.18) is not supported by code generation yet (P04)
+// CHECK-LABEL: fn _GPF4mainE4main(
+// CHECK: [[T:_[0-9]+]] = call const fn @_GPF4mainE4pair()
+// CHECK: call const fn @_GPF4mainE3two(copy [[T]].0, copy [[T]].1)
+// CHECK: call const fn @_GPF4mainE2vf(const 1: i64,
+// CHECK: [[U:_[0-9]+]] = call const fn @_GPF4mainE4pair()
+// CHECK: (*{{_[0-9]+}})[0] = copy [[U]].1
+// CHECK: [[S:_[0-9]+]] = slice []i64 {{{.*}}, const 1: u64, const 1: u64,
+// CHECK: [[V:_[0-9]+]] = tuple (*i64, u64) {copy [[S]].0, copy [[S]].1}
+// CHECK: call const fn @_GPF4mainE2vf(copy [[U]].0, copy [[V]])

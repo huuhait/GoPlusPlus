@@ -404,7 +404,7 @@ TEST(CodeGen, EveryRvalueAndTerminatorLowers) {
                            "switch i64",
                            "@llvm.trap",
                            "unreachable",
-                           "call i64 @callee(i64"})
+                           "call swiftcc i64 @callee(i64"})
     EXPECT_NE(IR.find(Want), std::string::npos) << Want << "\n" << IR;
   // Both back ends generate code for it.
   for (const char *Target : {"linux/amd64", "linux/arm64"}) {
@@ -423,11 +423,14 @@ TEST(CodeGen, EveryRvalueAndTerminatorLowers) {
 TEST(CodeGen, FunctionAttributes) {
   // A function that never returns is `noreturn`, one that cannot unwind is
   // `nounwind`, and every function Go++ defines has unwind tables (D4.6).
-  // A bool crosses the C ABI zero-extended.
+  // A bool crosses the C ABI zero-extended; a Go++ function is swiftcc
+  // (P04.18, ADR-0030).
   using namespace gir;
   Context C;
   Module M(C, "m");
-  FuncId Die = test::declare(M, "die", C.func({C.boolean()}, C.unit()));
+  FuncId Die = test::declare(
+      M, "die", C.func({C.boolean()}, C.unit(), false, CallConv::C));
+  M.func(Die).CC = CallConv::C;
   M.func(Die).NoReturn = M.func(Die).NoUnwind = true;
   Function &Fn = newFunction(M, "m.f", C.func({}, C.unit()));
   FuncBuilder B(M, Fn);
@@ -440,7 +443,7 @@ TEST(CodeGen, FunctionAttributes) {
   std::string IR = irOf(M);
   EXPECT_NE(IR.find("declare void @die(i1 zeroext)"), std::string::npos) << IR;
   EXPECT_NE(IR.find("noreturn nounwind"), std::string::npos) << IR;
-  EXPECT_NE(IR.find("define void @m.f()"), std::string::npos) << IR;
+  EXPECT_NE(IR.find("define swiftcc void @m.f()"), std::string::npos) << IR;
   EXPECT_NE(IR.find("uwtable"), std::string::npos) << IR;
   EXPECT_NE(IR.find("call void @die(i1 zeroext true)"), std::string::npos)
       << IR;

@@ -15,7 +15,7 @@ func main() {
 }
 
 // CHECK: c"runtime: out of memory\00"
-// CHECK: define void @_GPF4mainE4main()
+// CHECK: define swiftcc void @_GPF4mainE4main()
 // CHECK: %[[P:[0-9]+]] = tail call ptr @calloc(i64 1, i64 1099511627776)
 // CHECK-NEXT: icmp eq ptr %[[P]], null
 // CHECK: call {{.*}}@_GPF4goppE10panic_text()

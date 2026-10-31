@@ -51,6 +51,12 @@ inline std::string textOf(const gir::Module &M) {
 /// The module passes the verifier.
 #define EXPECT_GIR_VALID(M) EXPECT_EQ(::gopp::test::errorsOf(M), "")
 
+/// The calling convention of a Go++ function (P04.18: swiftcc, ADR-0030),
+/// for a test that calls one it built and JIT-compiled through a function
+/// pointer: `using Fn = int64_t (GOPP_GO_CC *)(int64_t);`. A plain C pointer
+/// would read a result of several values from the wrong registers.
+#define GOPP_GO_CC __attribute__((swiftcall))
+
 /// The module breaks Rule, and the verifier says so under that id.
 #define EXPECT_GIR_RULE(M, Rule)                                               \
   EXPECT_TRUE(::gopp::test::hasRule(M, Rule)) << "expected " Rule ", got:\n"   \

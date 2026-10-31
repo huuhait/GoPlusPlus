@@ -1,0 +1,55 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.18, review R9: the itab thunk of a method whose value receiver holds a
+// map (passOfRecv: Place). A value the interface holds is immutable all the
+// way down (TYP-5), so the thunk passes the address of its own copy: of the
+// boxed value (Doc, 16 bytes), or of the data word (Tab, a map, inline); a
+// nil map the method makes goes into the copy and is dropped with it. The
+// other side: a pointer the interface holds (`&e`) is passed as it is, so
+// the map is made in the pointed-to value (PAR-1). run/cc-params.test runs
+// it (Inputs/cc/recv.gopp).
+package main
+
+type Doc struct {
+	N     int
+	Index map[string]int
+}
+
+func (d Doc) Put() { d.Index["x"] = 1 }
+
+type Putter interface{ Put() }
+
+type Tab map[string]int
+
+func (t Tab) Add() { t["x"] = 1 }
+
+type Adder interface{ Add() }
+
+func main() {
+	var e Doc
+	var a Putter = Doc{N: 1}
+	var b Putter = &e
+	var c Adder = Tab(nil)
+	a.Put()
+	b.Put()
+	c.Add()
+}
+
+// The boxed value: copied into the thunk's local, whose address is passed.
+// CHECK-LABEL: fn _GPTIM3PutN4mainE3Doc(_1: *u8) -> () [go, linkonce_odr] {
+// CHECK: let [[COPY:_[0-9]+]]: main.Doc ; recv
+// CHECK: [[BOX:_[0-9]+]] = ptr_to_ptr(copy _1) as *main.Doc
+// CHECK-NEXT: [[COPY]] = copy (*[[BOX]])
+// CHECK-NEXT: [[ADDR:_[0-9]+]] = &[[COPY]]
+// CHECK-NEXT: {{_[0-9]+}} = call const fn @_GPM3PutN4mainE3Doc(copy [[ADDR]])
+// The pointer `&e`: passed as it is (no copy).
+// CHECK-LABEL: fn _GPTpM3PutN4mainE3Doc(_1: *u8) -> () [go, linkonce_odr] {
+// CHECK-NOT: copy (*
+// CHECK: [[P:_[0-9]+]] = ptr_to_ptr(copy _1) as *main.Doc
+// CHECK-NEXT: {{_[0-9]+}} = call const fn @_GPM3PutN4mainE3Doc(copy [[P]])
+// The map in the data word: the thunk's copy of the word.
+// CHECK-LABEL: fn _GPTIM3AddN4mainE3Tab(_1: *u8) -> () [go, linkonce_odr] {
+// CHECK: let [[W:_[0-9]+]]: u64 ; w
+// CHECK: [[WORD:_[0-9]+]] = ptr_to_int(copy _1) as u64
+// CHECK-NEXT: [[W]] = copy [[WORD]]
+// CHECK-NEXT: {{_[0-9]+}} = &[[W]]
+// CHECK: call const fn @_GPM3AddN4mainE3Tab(

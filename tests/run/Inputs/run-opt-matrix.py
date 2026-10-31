@@ -4,7 +4,7 @@
 the pipeline decides speed, never what a program does).
 
 usage: run-opt-matrix.py --gopp GOPP --root TESTS/RUN [options]
-                         [--cabi SEED:COUNT ...] [NAME ...]
+                         [--cabi [reverse:]SEED:COUNT ...] [NAME ...]
 
 The corpus (under --root, the tests/run directory):
   * every NAME.test that holds a Go++ program (`package main`);
@@ -14,11 +14,14 @@ The corpus (under --root, the tests/run directory):
     types, the parameter shapes of P04.25);
   * every program of Inputs/diff, Inputs/coll, Inputs/opt, Inputs/allocword
     (the allocator word, P04.25: built with -test-intrinsics), Inputs/iface
-    and Inputs/iface-gopp, and the panic programs of Inputs/panics,
-    Inputs/panics-seq, Inputs/panics-gopp, Inputs/panics-allocword,
-    Inputs/panics-iface and Inputs/oom (an allocation that fails);
+    and Inputs/iface-gopp, Inputs/cc (the calling convention, P04.18), and
+    the panic programs of Inputs/panics, Inputs/panics-seq, Inputs/panics-gopp,
+    Inputs/panics-allocword, Inputs/panics-iface and Inputs/oom (an
+    allocation that fails);
   * with --cabi SEED:COUNT (repeatable; needs clang): the C ABI program of
-    gen-cabi.py for that seed with COUNT signatures, named cabi/seedSEED. Its
+    gen-cabi.py for that seed with COUNT signatures, named cabi/seedSEED
+    (--cabi reverse:SEED:COUNT: C calling Go++ through @Export and callbacks,
+    gen-cabi.py --direction reverse, P04.18; named cabi/reverseSEED). Its
     C half is built once by Clang (for aarch64 with --target arm64) and
     linked into every configuration (-link-obj); its expected output is the
     generator's, and it must exit with status 0 (as in run-cabi.py).
@@ -122,7 +125,7 @@ def corpus(root):
             progs.append(Program("Inputs/" + d, files, g if os.path.exists(g + ".out") else None))
     for d, kind in (("diff", "golden"), ("coll", "golden"), ("opt", "golden"),
                     ("allocword", "golden"), ("iface", "golden"),
-                    ("iface-gopp", "golden"),
+                    ("iface-gopp", "golden"), ("cc", "golden"),
                     ("panics", "panic"), ("panics-seq", "panic"),
                     ("panics-gopp", "panic"), ("panics-allocword", "panic"),
                     ("panics-iface", "panic"),
@@ -164,11 +167,17 @@ def cabi_programs(env, root, specs, work, build_c=True):
         sys.exit("--cabi needs clang on the PATH")
     progs = []
     for spec in specs:
-        seed, count = spec.split(":")
-        d = os.path.join(work, "cabi-seed" + seed)
+        # SEED:COUNT, or reverse:SEED:COUNT for C calling Go++ (P04.18)
+        parts = spec.split(":")
+        reverse = parts[0] == "reverse"
+        seed, count = parts[-2:]
+        name = ("reverse" if reverse else "seed") + seed
+        d = os.path.join(work, "cabi-" + name)
         os.makedirs(d, exist_ok=True)
         gen = [sys.executable, os.path.join(root, "Inputs", "gen-cabi.py"),
                "--seed", seed, "--count", count, "--dir", d]
+        if reverse:
+            gen += ["--direction", "reverse"]
         cc = [clang, "-O1", "-w", "-c", os.path.join(d, "lib.c"), "-o",
               os.path.join(d, "lib.o")]
         if env.target == "arm64":
@@ -180,7 +189,7 @@ def cabi_programs(env, root, specs, work, build_c=True):
                 sys.exit("%s failed for C ABI seed %s:\n%s" %
                          (os.path.basename(cmd[1] if cmd is gen else cmd[0]), seed,
                           r.stderr.decode(errors="replace")[:2000]))
-        p = Program("cabi/seed" + seed, [os.path.join(d, "main.gopp")])
+        p = Program("cabi/" + name, [os.path.join(d, "main.gopp")])
         p.expected = os.path.join(d, "expected.txt")
         p.link_objs = [os.path.join(d, "lib.o")]
         progs.append(p)

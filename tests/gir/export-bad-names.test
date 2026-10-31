@@ -1,0 +1,36 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.18 (review R5, R6): an @Export that would make no C symbol, or one that
+// takes another function's, is one E0445 at the attribute. C has no name for
+// the blank function `_`, and an init function runs once before main. A C
+// name may not be a C library function the Go++ runtime calls (println calls
+// `write`, the allocator `malloc`, LLVM turns `memmove` into `memcpy`): the
+// exported thunk would take its place for the whole program. Other names next
+// to them link (export-link.test, which also uses println).
+package main
+
+@Export("C")
+func init() {}
+
+@Export("C")
+func _() {}
+
+@Export("C")
+func write(fd int32, p *byte, n uint) int { return 0 }
+
+@Export("C")
+func memcpy(d *byte, s *byte, n uint) *byte { return d }
+
+@Export("C")
+func malloc(n uint) uint { return n }
+
+@Export("C")
+func writeLog(fd int32) int32 { return fd }
+
+func main() { println("x") }
+
+// CHECK: :11:1: error[E0445]: invalid @Export on init: an init function runs once before main; C cannot call it
+// CHECK: :14:1: error[E0445]: invalid @Export on _: the blank function has no name C could call
+// CHECK: :17:1: error[E0445]: invalid @Export on write: the C symbol write is used by another function, the C library's, which the Go++ runtime calls
+// CHECK: :20:1: error[E0445]: invalid @Export on memcpy: the C symbol memcpy is used by another function, the C library's
+// CHECK: :23:1: error[E0445]: invalid @Export on malloc: the C symbol malloc is used by another function, the C library's
+// CHECK-NOT: error

@@ -1,0 +1,15 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/calls1.gopp %S/Inputs/cc/calls1.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/calls2.gopp %S/Inputs/cc/calls2.out
+// P04.18 (D4.4): calls from Go++ to Go++ use the internal convention. The
+// programs of Inputs/cc are made by Inputs/gen-cc.py (see its comment for what
+// they hold: functions of up to 24 parameters of scalars and of structs from
+// no bytes to hundreds, results of nothing, one value, a struct or two to five
+// values (the shape of `(T, error)`), functions that forward their parameters,
+// recursion, trivial parameters that the callee changes, borrowed and `move`
+// parameters that own memory). Every callee prints every scalar it received,
+// every caller prints every scalar that came back, and the text is Go's:
+// Inputs/cc/*.out is what `go run` prints for the same program (the `move`
+// marks left out), checked by Inputs/check-cc-go.py (Go is needed there, never
+// in the tests). The same programs at every `opt` level: core-opt-matrix.*; on
+// arm64: cc-calls-arm64.test; many more seeds: cc.long.test.

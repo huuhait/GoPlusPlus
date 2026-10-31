@@ -1,0 +1,69 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// RUN: %gopp build -emit=llvm -pipeline=fastisel -target=linux/amd64 %s | FileCheck --check-prefix=LL %s
+// P04.18 (D4.4): a top-level function passed to a C function is a callback.
+// The parameter's type is a C function pointer (`fn "C"`: the calling
+// convention is part of a function type), whose parameters and result are C
+// types by value (a struct too). C gets the function's C-ABI thunk, a
+// function with the C convention whose body calls the Go++ one: its symbol is
+// the function's, wrapped (`_GPTC`, appendix A.5), it is made once however
+// often the function is passed, and it is linkonce_odr like the glue, so every
+// package that passes the function gives C the same pointer. A C function is
+// passed as itself. What is not a top-level function (a closure, a method
+// value, a variable) is P04.07's (callback-bad.test); the run tests with C
+// calling these are cabi-reverse-*.test.
+package main
+
+type Pt struct{ x, y int32 }
+
+@Extern("C")
+func apply(cb func(a, b int32) int32, x int32) int32
+
+@Extern("C")
+func mk(cb func(p Pt, k int64) Pt) int64
+
+@Extern("C")
+func twice(cb func(), x int32)
+
+@Extern("C")
+func cfn(a, b int32) int32
+
+func plus(a, b int32) int32 { return a + b }
+func shift(p Pt, k int64) Pt { return Pt{p.x + int32(k), p.y} }
+func noop()                  {}
+
+func main() {
+	_ = apply(plus, 1)
+	_ = apply(plus, 2)
+	_ = apply(cfn, 3)
+	_ = mk(shift)
+	twice(noop, 1)
+}
+
+// CHECK: declare fn apply(_1: fn "C"(i32, i32) -> i32, _2: i32) -> i32 [c, external, nounwind]
+// CHECK: declare fn mk(_1: fn "C"(main.Pt, i64) -> main.Pt) -> i64 [c, external, nounwind]
+// CHECK: declare fn twice(_1: fn "C"() -> (), _2: i32) -> () [c, external, nounwind]
+// CHECK-LABEL: fn _GPF4mainE4main()
+// CHECK: call const fn @apply(const fn @_GPTCF4mainE4plus, const 1: i32)
+// CHECK: call const fn @apply(const fn @_GPTCF4mainE4plus, const 2: i32)
+// CHECK: call const fn @apply(const fn @cfn, const 3: i32)
+// CHECK: call const fn @mk(const fn @_GPTCF4mainE5shift)
+// CHECK: call const fn @twice(const fn @_GPTCF4mainE4noop, const 1: i32)
+// The thunks: the C convention, the function's parameters and result, one
+// call of the Go++ function, made once each.
+// CHECK-LABEL: fn _GPTCF4mainE4plus(_1: i32, _2: i32) -> i32 [c, linkonce_odr]
+// CHECK: call const fn @_GPF4mainE4plus(copy _1, copy _2)
+// CHECK-NOT: fn _GPTCF4mainE4plus
+// CHECK-LABEL: fn _GPTCF4mainE5shift(_1: main.Pt, _2: i64) -> main.Pt [c, linkonce_odr]
+// CHECK: call const fn @_GPF4mainE5shift(copy _1, copy _2)
+// CHECK-LABEL: fn _GPTCF4mainE4noop() -> () [c, linkonce_odr]
+// CHECK-NOT: fn _GPTCF4mainE
+
+// C gets the thunk's address; the thunk of shift takes and returns the struct
+// with the C ABI (amd64 packs an 8-byte struct in one register) and calls the
+// function with the Go++ convention (swiftcc: its scalars, two registers
+// back).
+// LL: declare i32 @apply(ptr, i32)
+// LL: call i32 @apply(ptr @_GPTCF4mainE4plus, i32 1)
+// LL: call i32 @apply(ptr @cfn, i32 3)
+// LL-LABEL: define linkonce_odr i64 @_GPTCF4mainE5shift(i64 %0, i64 %1)
+// LL: call swiftcc { i32, i32 } @_GPF4mainE5shift(i32 {{.*}}, i32 {{.*}}, i64 {{.*}})

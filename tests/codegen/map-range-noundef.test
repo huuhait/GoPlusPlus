@@ -15,6 +15,6 @@ func main() {
 	println(s)
 }
 
-// CHECK: define void @_GPF4mainE4main()
+// CHECK: define swiftcc void @_GPF4mainE4main()
 // CHECK-NOT: undef,
 // CHECK: ret void

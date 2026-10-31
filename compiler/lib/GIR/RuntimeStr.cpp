@@ -130,7 +130,17 @@ Function *makeFn(Lowering &L, StringRef Name, Type *Sig, FuncId &Slot,
 // libc
 //===----------------------------------------------------------------------===//
 
+bool Lowering::isRuntimeCName(StringRef Name) {
+  // libc's below, and what LLVM turns the runtime's memmove and memcmp into.
+  static const char *const Names[] = {"write",   "exit",   "malloc", "calloc",
+                                      "realloc", "free",   "memset", "memmove",
+                                      "memcmp",  "memcpy", "bcmp"};
+  return llvm::is_contained(Names, Name);
+}
+
 FuncId Lowering::libc(StringRef Name, SourceLoc At) {
+  assert(isRuntimeCName(Name) && "a C function of the runtime is listed in "
+                                 "Lowering::isRuntimeCName");
   auto It = LibcIds.find(Name);
   if (It != LibcIds.end())
     return It->second;
@@ -182,12 +192,17 @@ FuncId Lowering::libc(StringRef Name, SourceLoc At) {
 ///   offset  8  resize  func(self *u8, p *u8, old u64, size u64, zero bool) *u8
 ///   offset 16  free    func(self *u8, p *u8, size u64)
 ///   offset 24  state
+/// The entries are C function pointers (CallConv::C, P04.18): an allocator
+/// written in C or C++ fits, and a call through one uses the C ABI.
 Type *Lowering::allocTableType() {
   Type *S = Ctx.structTy("gopp.alloctable");
   if (!S->hasBody()) {
     Type *U = Ctx.u64(), *P = Ctx.ptr(Ctx.u8()), *B = Ctx.boolean();
-    Ctx.setStructBody(S, {Ctx.func({P, U, B}, P), Ctx.func({P, P, U, U, B}, P),
-                          Ctx.func({P, P, U}, Ctx.unit())});
+    auto CFn = [&](ArrayRef<Type *> Ps, Type *R) {
+      return Ctx.func(Ps, R, false, CallConv::C);
+    };
+    Ctx.setStructBody(S, {CFn({P, U, B}, P), CFn({P, P, U, U, B}, P),
+                          CFn({P, P, U}, Ctx.unit())});
   }
   return S;
 }
@@ -411,14 +426,15 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
       return NoId;
     Type *TA = testAllocType();
     bool IsAlloc = Which == RtFn::TestAlloc, IsFree = Which == RtFn::TestFree;
-    Type *Sig = IsAlloc  ? Ctx.func({PU8, U64, Bool}, PU8)
-                : IsFree ? Ctx.func({PU8, PU8, U64}, Unit)
-                         : Ctx.func({PU8, PU8, U64, U64, Bool}, PU8);
+    // A table entry is a C function (allocTableType): the entry's type, the
+    // C convention.
+    Type *Sig = allocTableType()->elems()[IsAlloc ? 0 : IsFree ? 2 : 1];
     Function *F = makeFn(*this,
                          IsAlloc  ? "test_alloc"
                          : IsFree ? "test_free"
                                   : "test_resize",
                          Sig, Slot);
+    F->CC = CallConv::C;
     X E(*this, *F);
     E.At = At;
     Place Cnt = E.FB.field(E.at(E.param(0), TA), IsAlloc ? 1 : IsFree ? 3 : 2);

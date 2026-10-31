@@ -1,0 +1,46 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.18, review R9: a borrowed value receiver that holds a map is the
+// caller's place (passOfRecv: Place), but a map entry is no place a call may
+// hold (P04.05, review R11), and only a map entry of a map type is copied in
+// and out around the call (as a map argument's is). So a method call whose
+// receiver holds a map and is a map entry, or a field or array element of
+// one, is one E0439 naming P04.09 (TODO P04.09 item 6 copies it in and out),
+// instead of a copy that silently drops the map the method makes; an
+// argument is the same (Body::placeHow, run/cc-place-paths.test). The other
+// side: a map entry of a map type (copied in and out), a map entry whose
+// type holds no map (a copy changes nothing), and a field read draw no error.
+package main
+
+type Doc struct {
+	N     int
+	Index map[string]int
+}
+
+func (d Doc) Put() { d.Index["x"] = 1 }
+
+type Tab map[string]int
+
+func (t Tab) Add(k string) { t[k] = 1 }
+
+type Holder struct{ T Tab }
+
+type Named struct{ S string }
+
+func (n Named) Len() int { return len(n.S) }
+
+func main() {
+	docs := map[string]Doc{"k": {}}
+	docs["k"].Put()
+	hm := map[string]Holder{"k": {}}
+	hm["k"].T.Add("x")
+	arr := map[string][2]Doc{}
+	arr["k"][1].Put()
+	mm := map[string]Tab{"k": nil}
+	mm["k"].Add("y")
+	names := map[string]Named{"k": {"abc"}}
+	println(names["k"].Len(), docs["k"].N, len(mm["k"]))
+}
+
+// CHECK: recv-map-entry.test:33:2: error[E0439]: a value that holds a map passed from a map entry (P04.09) is not supported by code generation yet (P04)
+// CHECK: recv-map-entry.test:35:2: error[E0439]: a value that holds a map passed from a map entry (P04.09)
+// CHECK: recv-map-entry.test:37:2: error[E0439]: a value that holds a map passed from a map entry (P04.09)

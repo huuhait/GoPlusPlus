@@ -224,6 +224,14 @@ struct Info {
   /// capacity stays). Any other slice expression makes a borrowed slice or a
   /// view (SLC-8), whose type is in Types.
   llvm::DenseSet<const ast::SliceExpr *> Reslices;
+  /// Every call argument whose value its parameter takes as it is, although
+  /// the two types differ (Checker::assignableAsIs: identical underlying
+  /// types, one of them unnamed, as `struct{...}` into a struct type or
+  /// `[2]T` into `type P [2]T`): no new value, unlike an Option made from a
+  /// value, a view or an interface. The lowering passes such an argument
+  /// where it is, as an argument of the parameter's own type (P04.18, review
+  /// R14).
+  llvm::DenseSet<const ast::Expr *> AsIsArgs;
 
   const TypeAndValue *lookup(const ast::Expr *E) const {
     auto It = Types.find(E);

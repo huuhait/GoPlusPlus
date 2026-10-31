@@ -58,17 +58,19 @@ func main() {
 // memory, P04.12, and the word of `s` is loaded, not folded); append's growth passes the slice's word to grow_slice, whose
 // allocation goes through mem_resize_in: a null word is mem_resize, another
 // one the table of the allocator object, called with the C ABI of its scalar
-// signature (the `zero` flag is extended as a C `bool`). Only the table's
-// alloc is called: no resize call (P04.25 review R5, resize is P05.05).
-// LL: call ptr @_GPF4goppE10mem_resize(ptr null, i64 24, i1 zeroext true)
-// LL: call void @_GPF4goppE10grow_slice(ptr nonnull {{%[0-9]+}}, ptr null, ptr nonnull
-// LL-LABEL: define internal ptr @_GPF4goppE13mem_resize_in(ptr %0, ptr %1, i64 %2, i64 %3, i1 zeroext %4)
-// LL: call ptr @_GPF4goppE10mem_resize(ptr %1, i64 %3, i1 zeroext %4)
+// signature (the `zero` flag is extended as a C `bool`; the call is the C
+// convention, not the Go++ one, swiftcc: the table's entries are C function
+// pointers, P04.18). Only the table's alloc is called: no resize call (P04.25
+// review R5, resize is P05.05).
+// LL: call swiftcc ptr @_GPF4goppE10mem_resize(ptr null, i64 24, i1 zeroext true)
+// LL: call swiftcc { ptr, i64 } @_GPF4goppE10grow_slice(ptr null, ptr nonnull
+// LL-LABEL: define internal swiftcc ptr @_GPF4goppE13mem_resize_in(ptr %0, ptr %1, i64 %2, i64 %3, i1 zeroext %4)
+// LL: call swiftcc ptr @_GPF4goppE10mem_resize(ptr %1, i64 %3, i1 zeroext %4)
 // LL: call ptr %{{[0-9]+}}(ptr {{.*}}%0, i64 {{.*}}, i1 zeroext %4)
 // LL-NOT: call ptr %{{[0-9]+}}(ptr {{.*}}%0, ptr {{.*}}%1, i64 {{.*}}, i64 {{.*}}, i1 zeroext %4)
-// LL: call void @_GPF4goppE10panic_text(
-// LL-LABEL: define internal void @_GPF4goppE10grow_slice(
-// LL: call ptr @_GPF4goppE13mem_resize_in(ptr %1, ptr null, i64 0,
+// LL: call swiftcc void @_GPF4goppE10panic_text(
+// LL-LABEL: define internal swiftcc { ptr, i64 } @_GPF4goppE10grow_slice(
+// LL: call swiftcc ptr @_GPF4goppE13mem_resize_in(ptr %0, ptr null, i64 0,
 
 // At opt 2 the null-word path is inlined and folds: append's growth of the
 // literal is a bare calloc, with no call of the dispatch or the table.

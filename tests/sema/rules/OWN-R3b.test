@@ -1,4 +1,4 @@
-// RUN: not %gopp check %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
 // Rule OWN-R3b (also PAR-1, PAR-3): a borrowed variable is read-only at the
 // top level: no assignment to it or its fields, no &, no pointer-receiver
 // call, no move. Data reached through a slice, map or pointer stays mutable.
@@ -37,4 +37,77 @@ func negative(d D, p *Buf) {
 	d.Buf.Reset()
 	// CHECK: [[@LINE+1]]:11: error{{\[E[0-9]+\]}}: cannot move d: it is a borrowed variable (OWN-R3b)
 	_ = move(d)
+}
+
+// Slicing an array takes its address (`(&a)[i:j]` in Go): a slice of an
+// array held by value in a borrowed variable, at any depth, is a view, so a
+// write through it, `copy` into it and passing it to a `[]T` parameter are
+// errors (P04.18 passes a borrowed owning parameter by a pointer to the
+// caller's place, so such a write would reach the caller). Reading it, also
+// as a `View` argument, is fine. A slice field, an array reached through a
+// slice or a pointer, an owned array, a `move` parameter and a trivial array
+// parameter (the callee's own copy) give writable slices as before.
+type In struct{ Arr [3]int }
+
+type S struct {
+	Str  string
+	Arr  [3]int
+	Mat  [2][2]int
+	In   In
+	Ins  [2]In
+	Tags []string
+	Rows [][3]int
+}
+
+func fill(xs []int)              {}
+func sumv(xs View[[]int]) int    { return len(xs) }
+func sums(xs View[[]string]) int { return len(xs) }
+
+func sliceNegative(s S, a [2]string) {
+	t := s.Arr[:]
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write t[0]: it is read-only, it is reached through a View (OWN-V1)
+	t[0] = 9
+	u := s.Arr[1:2]
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write u[0]: it is read-only
+	u[0] = 9
+	w := s.Arr[0:1:2]
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write w[0]: it is read-only
+	w[0] = 9
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write s.Mat[1][:][0]: it is read-only
+	s.Mat[1][:][0] = 9
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write s.In.Arr[:][0]: it is read-only
+	s.In.Arr[:][0] = 9
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write s.Ins[1].Arr[:][0]: it is read-only
+	s.Ins[1].Arr[:][0] = 9
+	b := a[:]
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write b[0]: it is read-only
+	b[0] = "z"
+	// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot use s.Arr[:] (value of type View{{.}}{{.}}]int]) as []int value in argument to fill
+	fill(s.Arr[:])
+	// CHECK: [[@LINE+1]]:2: error{{\[E[0-9]+\]}}: cannot write s.Arr[:]: it is read-only
+	copy(s.Arr[:], []int{1})
+	for i := range s.Arr {
+		// CHECK: [[@LINE+1]]:7: error{{\[E[0-9]+\]}}: cannot take the address of s.Arr[i]: it is a borrowed variable (OWN-R3b)
+		_ = &s.Arr[i]
+	}
+	for _, x := range [][2]string{} {
+		y := x[:]
+		// CHECK: [[@LINE+1]]:3: error{{\[E[0-9]+\]}}: cannot write y[0]: it is read-only
+		y[0] = "q"
+	}
+}
+
+func slicePositive(s S, p *S, move m S, t [3]int, a [2]string) int {
+	s.Tags[:][0] = "x"
+	s.Rows[0][:][0] = 1
+	var own [3]int
+	own[:][0] = 1
+	p.Arr[:][0] = 1
+	m.Arr[:][0] = 1
+	t[:][0] = 1
+	n := sumv(s.Arr[:]) + sumv(s.In.Arr[1:]) + sums(a[:])
+	for _, x := range s.Arr[:] {
+		n += x
+	}
+	return n
 }

@@ -1,0 +1,163 @@
+// RUN: %gopp build -pipeline=fastisel -emit=llvm -target=linux/amd64 %s | FileCheck %s --check-prefixes=LL,LL-AMD
+// RUN: %gopp build -pipeline=fastisel -emit=llvm -target=linux/arm64 %s | FileCheck %s --check-prefixes=LL,LL-ARM
+// RUN: %gopp build -pipeline=fastisel -emit=asm -target=linux/amd64 %s | FileCheck %s --check-prefixes=ASM-AMD
+// RUN: %gopp build -pipeline=fastisel -emit=asm -target=linux/arm64 %s | FileCheck %s --check-prefixes=ASM-ARM
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/amd64 %s | FileCheck %s --check-prefixes=O1-AMD
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/arm64 %s | FileCheck %s --check-prefixes=O1-ARM
+// P04.18 (D4.4, ADR-0030): the internal calling convention, decided by GoAbi
+// (CodeGen/GoABI.h). Go++ calling Go++ is `swiftcc` on both targets: a result
+// of several values (what `(T, error)` is) and a small struct come back in
+// registers (a literal struct of their scalars in the IR), not through memory
+// as with the C convention; a result over the registers of the target goes
+// through a hidden first pointer. Both sides, on both targets: the result
+// registers are four integer and four float on amd64 (rax, rdx, rcx, r8;
+// xmm0-3) and eight and eight on arm64 (x0-x7, v0-v7), so five integers come
+// back through memory on amd64 and in registers on arm64, and nine and twelve
+// through memory on both. Struct parameters are passed as their scalars, a
+// borrowed string or slice as (ptr, len) (D4.4), a trivial struct parameter
+// is the callee's own copy.
+//
+// `(T, error)`: an interface is {itab, data} (D4.5), two pointers; `iface`
+// stands in for it (go-abi-error.test has the real `error`). `(int, error)`
+// is three scalars: in registers on both targets, and at -opt=1 nothing is
+// stored (amd64: rax, rdx, rcx; arm64: x0-x2). `(string, error)` is five (a
+// Go++ string is three words) and `([]T, error)` six: in registers on arm64,
+// through the hidden pointer on amd64, the known limit ADR-0030 measured (no
+// runtime difference) and keeps. A `move []T` is four words (ADR-0029) and
+// travels as them; a borrowed struct that holds a map is one pointer to the
+// caller's place (PAR-10).
+package main
+
+type Pair struct{ a, b int }
+
+func two(a, b int) (int, int)                 { return b, a }
+func three(a int) (int, int, int)             { return a, a + 1, a + 2 }
+func mixed(a float64) (float64, int, float64) { return a, 1, a * 2 }
+func five(a int) (int, int, int, int, int)    { return a, a, a, a, a }
+func nine(a int) (int, int, int, int, int, int, int, int, int) {
+	return a, a, a, a, a, a, a, a, a
+}
+func str(move s string) (string, int) { return s, 4 }
+func pair(p Pair, q Pair) Pair        { return Pair{p.a + q.a, p.b + q.b} }
+func view(s string, xs []int) int     { return len(s) + len(xs) + cap(xs) }
+
+type iface struct{ tab, data *byte }
+
+var g byte
+
+func tErr(a int) (int, iface)            { return a, iface{&g, &g} }
+func sErr(move s string) (string, iface) { return s, iface{&g, &g} }
+func sl(move xs []int) ([]int, iface)    { return xs, iface{&g, &g} }
+func moved(move xs []int) []int          { return xs }
+func twelve(a int) (int, int, int, int, int, int, int, int, int, int, int, int) {
+	return a, a, a, a, a, a, a, a, a, a, a, a
+}
+
+type Doc struct {
+	n     int
+	Index map[string]int
+}
+
+func doc(d Doc) int { return d.n }
+
+func main() {
+	println(view("x", nil))
+	a, b := two(1, 2)
+	println(a, b)
+	println(pair(Pair{1, 2}, Pair{3, 4}).a)
+	c, d, e := three(1)
+	println(c, d, e)
+	f, g, h := mixed(1.5)
+	println(f, g, h)
+	i, j, k, l, m := five(2)
+	println(i, j, k, l, m)
+	n, o, p, q, r, s, t, u, v := nine(3)
+	println(n, o, p, q, r, s, t, u, v)
+	w, x := str("abc")
+	println(w, x)
+	y, _ := tErr(1)
+	z, _ := sErr("x")
+	zs, _ := sl([]int{1})
+	var dd Doc
+	println(y, z, len(zs), len(moved([]int{1})), doc(dd))
+	t1, _, _, _, _, _, _, _, _, _, _, t12 := twelve(4)
+	println(t1, t12)
+}
+
+// LL: define swiftcc { i64, i64 } @_GPF4mainE3two(i64 %0, i64 %1)
+// LL: define swiftcc { i64, i64, i64 } @_GPF4mainE5three(i64 %0)
+// LL: define swiftcc { double, i64, double } @_GPF4mainE5mixed(double %0)
+// LL-AMD: define swiftcc void @_GPF4mainE4five(ptr %0, i64 %1)
+// LL-ARM: define swiftcc { i64, i64, i64, i64, i64 } @_GPF4mainE4five(i64 %0)
+// LL: define swiftcc void @_GPF4mainE4nine(ptr %0, i64 %1)
+// LL: define swiftcc { ptr, i64, i64, i64 } @_GPF4mainE3str(ptr %0, i64 %1, i64 %2)
+// A struct of two integers: two parameters each, two registers back.
+// LL: define swiftcc { i64, i64 } @_GPF4mainE4pair(i64 %0, i64 %1, i64 %2, i64 %3)
+// A borrowed string and a borrowed slice: (ptr, len) each, no capacity.
+// LL: define swiftcc i64 @_GPF4mainE4view(ptr %0, i64 %1, ptr %2, i64 %3)
+// (T, error): three scalars in registers on both targets; five and six only
+// on arm64, through the hidden pointer on amd64.
+// LL: define swiftcc { i64, ptr, ptr } @_GPF4mainE4tErr(i64 %0)
+// LL-AMD: define swiftcc void @_GPF4mainE4sErr(ptr %0, ptr %1, i64 %2, i64 %3)
+// LL-ARM: define swiftcc { ptr, i64, i64, ptr, ptr } @_GPF4mainE4sErr(ptr %0, i64 %1, i64 %2)
+// LL-AMD: define swiftcc void @_GPF4mainE2sl(ptr %0, ptr %1, i64 %2, i64 %3, ptr %4)
+// LL-ARM: define swiftcc { ptr, i64, i64, ptr, ptr, ptr } @_GPF4mainE2sl(ptr %0, i64 %1, i64 %2, ptr %3)
+// A moved slice: four words each way. A borrowed Doc: a pointer.
+// LL: define swiftcc { ptr, i64, i64, ptr } @_GPF4mainE5moved(ptr %0, i64 %1, i64 %2, ptr %3)
+// Twelve integers are over both budgets: a hidden result pointer.
+// LL: define swiftcc void @_GPF4mainE6twelve(ptr %0, i64 %1)
+// LL: define swiftcc i64 @_GPF4mainE3doc(ptr %0)
+// The calls use the same convention.
+// LL: call swiftcc { i64, i64 } @_GPF4mainE3two(i64 1, i64 2)
+
+// ASM-AMD-LABEL: _GPF4mainE3two:
+// ASM-AMD-NOT: (%rax)
+// ASM-AMD: retq
+// ASM-AMD-LABEL: _GPF4mainE5three:
+// ASM-AMD-NOT: (%rax)
+// ASM-AMD: retq
+// The fifth integer does not fit: stored through the hidden pointer, which
+// arrives as the first argument (rdi).
+// ASM-AMD-LABEL: _GPF4mainE4five:
+// ASM-AMD: movq %rdi, [[SLOT:-?[0-9]+]](%rsp)
+// ASM-AMD: movq [[SLOT]](%rsp), %rax
+// ASM-AMD: movq %rcx, 32(%rax)
+// ASM-AMD: retq
+
+// ASM-ARM-LABEL: _GPF4mainE3two:
+// ASM-ARM-NOT: [x8
+// ASM-ARM: ret
+// ASM-ARM-LABEL: _GPF4mainE4five:
+// ASM-ARM: ldr x4, [sp, #{{[0-9]+}}]
+// ASM-ARM: ret
+// The ninth does not: stored through the pointer in x0.
+// ASM-ARM-LABEL: _GPF4mainE4nine:
+// ASM-ARM: str x8, [x9, #64]
+// ASM-ARM: ret
+
+// At -opt=1 nothing is stored for `(int, error)`: rax (its argument came in
+// rdi), rdx and rcx; x0-x2 on arm64. `(string, error)` is stored through the
+// hidden pointer in rdi on amd64, five words (the known limit), and stays in
+// x0-x4 on arm64 (its string comes in and goes out in x0-x2: no move at
+// all). Twelve integers go through the pointer on both.
+// O1-AMD-LABEL: _GPF4mainE4tErr:
+// O1-AMD-NOT: mov{{.}} {{.*}}, ({{.*}})
+// O1-AMD: movq %rdi, %rax
+// O1-AMD-NOT: mov{{.}} {{.*}}, ({{.*}})
+// O1-AMD: retq
+// O1-AMD-LABEL: _GPF4mainE4sErr:
+// O1-AMD: movq %rsi, (%rdi)
+// O1-AMD: movq %rax, 32(%rdi)
+// O1-AMD-NEXT: retq
+// O1-AMD-LABEL: _GPF4mainE6twelve:
+// O1-AMD: movq %rsi, (%rdi)
+// O1-AMD: movq %rsi, 88(%rdi)
+// O1-AMD: retq
+// O1-ARM-LABEL: _GPF4mainE4tErr:
+// O1-ARM-NOT: str
+// O1-ARM: mov x2, x1
+// O1-ARM-NEXT: ret
+// O1-ARM-LABEL: _GPF4mainE4sErr:
+// O1-ARM-NOT: str
+// O1-ARM: mov x4, x3
+// O1-ARM-NEXT: ret

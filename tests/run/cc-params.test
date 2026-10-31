@@ -1,0 +1,25 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/params.gopp %S/Inputs/cc/params.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/results.gopp %S/Inputs/cc/results.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/alias.gopp %S/Inputs/cc/alias.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/errors.gopp %S/Inputs/cc/errors.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/iface.gopp %S/Inputs/cc/iface.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/cc/recv.gopp %S/Inputs/cc/recv.out
+// P04.18 (the internal calling convention, docs/design/calling-convention.md):
+// Inputs/cc/params.gopp is what a parameter means. A borrowed struct that holds
+// a map is the caller's own place, so a callee that fills a nil map creates it
+// in the caller's struct (PAR-1); a trivial struct is the callee's own copy; a
+// borrowed slice has capacity = length (SLC-12); an argument that a conversion
+// makes (to an Option, a view; also the results of `f(g())`) is a new value.
+// Its expected output is written by hand: Go panics on the nil map.
+// Inputs/cc/results.gopp is results of many shapes (several values, structs,
+// floats, strings, over the register budget); it is valid Go, results.out is
+// Go's output. Inputs/cc/alias.gopp pins the aliasing the borrow checker
+// rejects later (TODO P04.20 item 8): a borrowed place written another way
+// during the call; by hand. Inputs/cc/errors.gopp is `(T, error)` with the
+// real `error` interface, directly and through an itab, and
+// Inputs/cc/iface.gopp the pass modes of method parameters through an itab
+// (both valid Go; Go's output). Inputs/cc/recv.gopp is the same for value
+// receivers (review R9: PAR-1 through a receiver, directly, through a
+// pointer and through interfaces; map receivers); by hand where Go panics
+// on a nil-map write.

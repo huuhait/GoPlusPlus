@@ -77,6 +77,8 @@ const std::map<std::string, const char *> Unchecked = {
     {"err_codegen", "reported after GIR is built; tests/codegen"},
     {"err_gir_extern_bad", "reported by the code generator, not the "
                            "checker; tests/gir/extern-bad.test"},
+    {"err_gir_export_bad", "reported by the code generator, not the "
+                           "checker; tests/gir/export-bad.test"},
     {"err_gir_no_main", "reported by the code generator, not the checker; "
                         "tests/gir/no-main.test"},
     {"err_no_stack", "needs no thread to be had: DeepChain."

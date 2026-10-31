@@ -4,12 +4,12 @@
 more than Go does (P04.13).
 
 usage: check-ir-flags.py --gopp GOPP --root TESTS/RUN [--jobs N]
-                         [--cabi SEED:COUNT ...] [NAME...]
+                         [--cabi [reverse:]SEED:COUNT ...] [NAME...]
        check-ir-flags.py --self-test
 
 With NAMEs only the programs whose name contains one are scanned. --cabi adds
-the C ABI program of gen-cabi.py for SEED (as in run-opt-matrix.py; only its
-Go++ half is built here). On arm64 the IR also
+the C ABI program of gen-cabi.py for SEED (as in run-opt-matrix.py, also
+reverse:SEED:COUNT, C calling Go++; only its Go++ half is built here). On arm64 the IR also
 must not extend or truncate a function argument directly (the arm64 baseline,
 -pipeline=fastisel, would hand LLVM 23.1.0's AArch64 FastISel the pattern
 `sext (signext i8 arg) to i64`, which it miscompiles as a zero-extend: ADR-0028

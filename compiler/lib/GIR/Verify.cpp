@@ -456,7 +456,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V067, V070, V073, V074
+  // A function: V010-V013, V022, V067, V070, V073-V075
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -466,6 +466,13 @@ private:
     if (!signature(Fn))
       return;
     span(Fn.Loc);
+    // V075: the convention of a function is the one its type says, so a
+    // pointer to it (Constant::Func, whose type is the signature) is called
+    // with the convention it has (P04.18).
+    if (Fn.CC != Fn.Sig->callConv())
+      err("V075", std::string("a function with the ") +
+                      (Fn.CC == CallConv::C ? "C" : "Go++") +
+                      " convention has the signature " + str(Fn.Sig));
     if (Fn.CC == CallConv::C)
       cSignature(Fn);
     if (Fn.isDeclaration()) {
@@ -500,18 +507,15 @@ private:
 
   /// V067: a function with the C convention takes and returns C types (the
   /// rules of gir::CTypeRules, which also decide the front end's E0442 and
-  /// E0439), and one with a body (the C entry point) only scalars until
-  /// P04.18 makes C-ABI thunks: the code generator lowers C bodies with the
-  /// scalar convention.
+  /// E0439). That holds for one with a body too: the C entry point, an
+  /// @Export function's thunk and the thunk of a callback (P04.18), which the
+  /// code generator lowers with the C ABI on both sides.
   void cSignature(const Function &Fn) {
     auto One = [&](const Type *T, CUse Use, const std::string &What) {
       CVerdict V = CTypes.check(T, Use);
       if (!V.ok())
         err("V067", What + " of a C function, " + str(T) +
                         ", cannot cross the C ABI: " + V.Why);
-      else if (!Fn.isDeclaration() && !T->isUnit() && !T->isScalar())
-        err("V067", What + " of a C function with a body, " + str(T) +
-                        ", is not a scalar (C-ABI thunks are P04.18)");
     };
     for (size_t I = 0; I < Fn.Sig->elems().size(); ++I)
       One(Fn.Sig->elems()[I], CUse::Param,
@@ -1149,7 +1153,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // Terminators and edges: V013, V020-V028, V060-V064
+  // Terminators and edges: V013, V020-V028, V060-V064, V076
   //===--------------------------------------------------------------------===//
 
   void terminator(const BasicBlock &BB) {
@@ -1237,7 +1241,8 @@ private:
   /// so the destination is a place of the frame (no Deref: another pointer
   /// may alias it) in a temporary whose address is never taken (nothing else
   /// reads it half written or holds it across the call; the builder calls
-  /// into a fresh temporary).
+  /// into a fresh temporary). V076: a call through a C function pointer
+  /// passes scalars.
   void call(const Terminator &T) {
     if (!operand(T.Discr))
       return;
@@ -1256,6 +1261,19 @@ private:
           err("V062", "argument " + num(I) + " has type " +
                           str(T.Args[I].type()) + ", the parameter is " +
                           str(Ps[I]));
+    }
+    // V076: a call through a C function pointer (an allocator's table entry)
+    // passes and returns scalars: the code generator lowers it with the C ABI
+    // of scalars, which needs no Clang (an aggregate is P04.07's, with the
+    // C function values).
+    if (CT->callConv() == CallConv::C && !directCallee(T)) {
+      auto Scalar = [](const Type *X) { return X->isUnit() || X->isScalar(); };
+      bool Ok = Scalar(CT->ret());
+      for (const Type *P : counted(Steps, Ps))
+        Ok &= Scalar(P);
+      if (!Ok)
+        err("V076", "a call through the C function pointer type " + str(CT) +
+                        ", which takes or returns an aggregate");
     }
     if (place(T.Dest) && T.Dest.Ty != CT->ret())
       err("V063", "the call's result is " + str(CT->ret()) +

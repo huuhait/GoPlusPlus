@@ -20,7 +20,7 @@
 // column 10 of main (one distinct location per inline site). At opt 0 the
 // copies of add's variables stay in memory for the debugger (pipelines.md
 // section 7), so the sum is an `add`; without them it folds to a shift.
-// SITE-LABEL: define void @_GPF4mainE4main()
+// SITE-LABEL: define swiftcc void @_GPF4mainE4main()
 // SITE: {{add|shl}} i64 {{.*}}, !dbg ![[SITE:[0-9]+]]
 // SITE-DAG: ![[SITE]] = !DILocation(line: 17, column: 7, scope: ![[ADD:[0-9]+]], inlinedAt: ![[AT:[0-9]+]])
 // SITE-DAG: ![[ADD]] = distinct !DISubprogram(name: "main.add", scope: {{.*}}, line: 16,

@@ -1107,12 +1107,20 @@ Operand Body::convertStrings(const ast::CallExpr *C, Operand X, S::Type *FromS,
 /// The arguments from index Fixed on, as the slice the variadic parameter is.
 Operand Body::packVariadic(const ast::CallExpr *C, S::SignatureType *Sig,
                            size_t Fixed) {
+  return packVariadicWith(C, Sig, C->Args.size() - Fixed,
+                          [&](size_t K, S::Type *Elem) {
+                            return valueFor(C->Args[Fixed + K], Elem);
+                          });
+}
+
+Operand Body::packVariadicWith(
+    const ast::CallExpr *C, S::SignatureType *Sig, size_t N,
+    llvm::function_ref<Operand(size_t K, S::Type *Elem)> ElemAt) {
   S::Type *ParamS = Sig->Params->Elems.back();
   auto *SliceS = dyn_cast<S::SliceType>(S::under(ParamS));
   Type *SG = L.lowerType(ParamS, C->getBegin());
   if (!SliceS || !SG)
     return errorValue(ctx());
-  size_t N = C->Args.size() - Fixed;
   if (N == 0)
     return zeroOf(SG);
   Rt E(M, FB);
@@ -1126,7 +1134,7 @@ Operand Body::packVariadic(const ast::CallExpr *C, S::SignatureType *Sig,
   Val P = E.snap(E.to(ctx().ptr(ElemG), Val{&E, Buf}));
   Place Arr = E.at(P, ctx().array(ElemG, N));
   for (size_t K = 0; K < N; ++K) {
-    Operand V = valueFor(C->Args[Fixed + K], SliceS->Elem);
+    Operand V = ElemAt(K, SliceS->Elem);
     at(C);
     FB.assign(FB.constIndex(Arr, uint32_t(K)), FB.use(V));
   }

@@ -1,0 +1,8 @@
+breakpoint set -f place.gopp -l 17
+breakpoint set -f place.gopp -l 32
+run
+script print("@@FILL")
+frame variable d.N m->count p->N
+continue
+script print("@@RANGE")
+frame variable x.N

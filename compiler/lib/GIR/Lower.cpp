@@ -66,6 +66,12 @@ void Lowering::badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why) {
   Diags.report(At, diag::err_gir_extern_bad) << Name.str() << Why.str();
 }
 
+void Lowering::badExport(SourceLoc At, StringRef Name, const llvm::Twine &Why) {
+  Failed = true;
+  ++Reported;
+  Diags.report(At, diag::err_gir_export_bad) << Name.str() << Why.str();
+}
+
 Span Lowering::spanOf(SourceLoc L) {
   Span Sp;
   if (!L.isValid())
@@ -483,10 +489,6 @@ static const ast::Attribute *findAttr(const ast::FuncDecl *FD, StringRef Name) {
   return nullptr;
 }
 
-static bool hasAttr(const ast::FuncDecl *FD, StringRef Name) {
-  return findAttr(FD, Name) != nullptr;
-}
-
 /// The @Extern attribute of FD, or null.
 static const ast::Attribute *externAttr(const ast::FuncDecl *FD) {
   return findAttr(FD, "Extern");
@@ -541,6 +543,129 @@ static const char *goppOnlyLayout(S::Type *T) {
   return nullptr;
 }
 
+bool Lowering::holdsOwned(S::Type *Root, bool MapsOnly) {
+  llvm::DenseMap<S::Type *, bool> &Memo = MapsOnly ? MapMemo : OwnedMemo;
+  if (auto It = Memo.find(Root); It != Memo.end())
+    return It->second;
+  struct Frame {
+    S::Type *T;
+    SmallVector<S::Type *, 4> Kids;
+    size_t Next = 0;
+    bool Acc = false;
+  };
+  SmallVector<Frame, 16> Stack;
+  llvm::SmallPtrSet<S::Type *, 16> Open; // (a cycle by value is an error)
+  bool Result = false;
+  // Delivers the answer of a finished type to its parent.
+  auto Done = [&](bool V) {
+    if (Stack.empty())
+      Result = V;
+    else
+      Stack.back().Acc |= V;
+  };
+  auto Visit = [&](S::Type *T) {
+    ++LowerSteps;
+    if (auto It = Memo.find(T); It != Memo.end())
+      return Done(It->second);
+    S::Type *U = S::under(T);
+    if (!U)
+      return Done(false);
+    if (isa<S::MapType>(U) ||
+        (!MapsOnly && (isStringType(U) || isa<S::SliceType>(U)))) {
+      Memo[T] = true;
+      return Done(true);
+    }
+    Frame F;
+    F.T = T;
+    if (auto *ST = dyn_cast<S::StructType>(U)) {
+      for (S::Var *Fl : ST->Fields)
+        F.Kids.push_back(Fl->Ty);
+    } else if (auto *AT = dyn_cast<S::ArrayType>(U)) {
+      F.Kids.push_back(AT->Elem);
+    } else if (auto *OT = dyn_cast<S::OptionType>(U)) {
+      F.Kids.push_back(OT->Elem);
+    }
+    if (F.Kids.empty() || !Open.insert(T).second) {
+      Memo[T] = false;
+      return Done(false);
+    }
+    Stack.push_back(std::move(F));
+  };
+  Visit(Root);
+  while (!Stack.empty()) {
+    Frame &F = Stack.back();
+    if (!F.Acc && F.Next < F.Kids.size()) {
+      S::Type *Kid = F.Kids[F.Next++];
+      Visit(Kid);
+      continue;
+    }
+    S::Type *T = F.T;
+    bool V = F.Acc;
+    Stack.pop_back();
+    Open.erase(T);
+    Memo[T] = V;
+    Done(V);
+  }
+  return Result;
+}
+
+Lowering::Pass Lowering::passOfType(S::Type *T, bool Move) {
+  if (Move)
+    return Pass::Value;
+  // A borrowed `[]T` is P04.25's pair (sliceBorrowed, ADR-0029 point 7); a
+  // borrowed string is the same pair.
+  if (isa<S::SliceType>(S::under(T)) || isStringType(S::under(T)))
+    return Pass::View;
+  return holdsOwned(T) ? Pass::Place : Pass::Value;
+}
+
+Lowering::Pass Lowering::passOf(S::SignatureType *Sig, size_t K) {
+  if (K >= Sig->Params->Elems.size())
+    return Pass::Value;
+  return passOfType(Sig->Params->Elems[K], Sig->isMove(K));
+}
+
+Lowering::Pass Lowering::passOfRecv(const S::Func *F) {
+  if (!F->Recv || F->HasPtrRecv || F->MoveRecv)
+    return Pass::Value;
+  return passOfType(F->Recv->Ty, false);
+}
+
+static std::string reservedNameWhy(StringRef Name) {
+  return "the C name " + Name.str() +
+         " starts with the reserved prefix _GP, which is the prefix of every "
+         "Go++ symbol (SYM-4); choose another name";
+}
+
+/// Why an @Export attribute is not `@Export("C")` on a function with a body;
+/// empty if it is.
+static std::string exportProblem(const ast::FuncDecl *FD,
+                                 const ast::Attribute *A,
+                                 const SourceManager &SM) {
+  if (!A->HasArgs || A->Args.size() != 1 || A->Args[0].Kind != tok::string_lit)
+    return "write @Export(\"C\")";
+  StringRef Buf = SM.getBuffer(SM.getFileID(A->Args[0].Loc));
+  std::string ABI;
+  if (!sema::unquoteString(
+          Buf.substr(SM.getFileOffset(A->Args[0].Loc), A->Args[0].Length),
+          ABI) ||
+      ABI != "C") {
+    // `@Export("name")` is the spelling of other languages: the argument is
+    // the ABI, and the C name is the function's own (appendix A.8).
+    std::string Why = "only the \"C\" ABI exists, and the C name is the "
+                      "function's own name";
+    if (sym::isReservedName(ABI))
+      Why += "; " + reservedNameWhy(ABI);
+    return Why;
+  }
+  if (!FD->Body)
+    return "an exported function needs a body";
+  StringRef Name = FD->Name->Name.str();
+  if (sym::isReservedName(Name))
+    return reservedNameWhy(Name);
+  return "";
+}
+
 static bool isInitDecl(const ast::FuncDecl *FD) {
   return !FD->Recv && FD->Name->Name.str() == "init";
 }
@@ -550,16 +675,18 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   auto D = I.Defs.find(FD->Name);
   auto *Obj =
       D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::Func>(D->second);
-  if (Name == "_")
-    return;
-  if (hasAttr(FD, "Export")) {
-    // C calling Go++ needs a thunk with the C ABI (P04.18). Declined: a call
-    // of the function from Go++ is not reported again.
-    if (Obj)
-      Declined.insert(Obj);
-    unsupported(FD->getBegin(), "an @Export function (P04.18)");
+  // C has no name to call `_` by, and an init function runs once, before
+  // main: neither can be exported (P04.18).
+  if (const ast::Attribute *Exp = findAttr(FD, "Export");
+      Exp && (Name == "_" || isInitDecl(FD))) {
+    badExport(Exp->getBegin(), Name,
+              Name == "_" ? "the blank function has no name C could call"
+                          : "an init function runs once before main; C "
+                            "cannot call it");
     return;
   }
+  if (Name == "_")
+    return;
   if (isInitDecl(FD)) {
     // Run before main.main, in source order after the sorted files.
     if (!FD->Body) {
@@ -607,6 +734,32 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     unsupported(FD->getBegin(), "the test intrinsic " + Name);
     return;
   }
+  const ast::Attribute *Exp = findAttr(FD, "Export");
+  if (Exp && FD->Recv) {
+    badExport(Exp->getBegin(), Name,
+              "a method cannot be a C function (export a function that "
+              "calls it)");
+    return;
+  }
+  // C-visible names are never ours (SYM-4, appendix A.8): `sym::isReservedName`
+  // is the one test.
+  if (Ext && sym::isReservedName(Name)) {
+    badExtern(Ext->getBegin(), Name, reservedNameWhy(Name));
+    return;
+  }
+  if (Ext && Exp) {
+    badExport(Exp->getBegin(), Name,
+              "a function is @Extern(\"C\") (defined in C) or @Export(\"C\") "
+              "(defined here), not both");
+    return;
+  }
+  if (Exp) {
+    std::string Why = exportProblem(FD, Exp, SM);
+    if (!Why.empty()) {
+      badExport(Exp->getBegin(), Name, Why);
+      return;
+    }
+  }
   if (Ext) {
     std::string Why = externProblem(FD, Ext, SM);
     if (!Why.empty()) {
@@ -632,14 +785,23 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     return;
   // A Go++ string, slice, map or view in a C signature (also inside a struct
   // or an array passed by value): one decision, on the checker's types.
-  if (Ext) {
+  const bool ToC = Ext || Exp;
+  auto BadC = [&](const llvm::Twine &Why) {
+    if (Exp)
+      badExport(FD->getBegin(), Name, Why);
+    else
+      badExtern(FD->getBegin(), Name, Why);
+  };
+  auto IsFunc = [](S::Type *T) {
+    return isa_and_nonnull<S::SignatureType>(S::under(T));
+  };
+  if (ToC) {
     auto Refuse = [&](S::Type *T, const char *What) {
       const char *Why = goppOnlyLayout(T);
       if (!Why)
         return false;
-      badExtern(FD->getBegin(), Name,
-                llvm::Twine(What) + " type " + S::typeString(T) +
-                    " cannot cross the C ABI: " + Why);
+      BadC(llvm::Twine(What) + " type " + S::typeString(T) +
+           " cannot cross the C ABI: " + Why);
       return true;
     };
     for (S::Type *P : Sig->Params->Elems)
@@ -648,40 +810,43 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     if (Sig->Results->size() == 1 && Refuse(Sig->Results->Elems[0], "result"))
       return;
   }
-  // C calling Go++ (a callback, an exported function) needs thunks with the C
-  // ABI: P04.18. Said here, before the generic "function value" message.
-  if (Ext) {
-    auto IsFunc = [](S::Type *T) {
-      return isa_and_nonnull<S::SignatureType>(S::under(T));
-    };
-    for (S::Type *P : Sig->Params->Elems)
-      if (IsFunc(P)) {
-        unsupported(FD->getBegin(),
-                    "a function passed to C: a callback (P04.18)");
-        return;
-      }
+  // A function value in a C signature: a parameter of an @Extern function is
+  // a callback (a top-level Go++ function, wrapped in a C-ABI thunk where it
+  // is passed, P04.18). Calling a function value, which an @Export function
+  // would do with one, and returning one are closures (P04.07).
+  if (ToC) {
+    if (Exp)
+      for (S::Type *P : Sig->Params->Elems)
+        if (IsFunc(P)) {
+          unsupported(FD->getBegin(),
+                      "a function parameter of an @Export function (P04.07)");
+          return;
+        }
     if (Sig->Results->size() == 1 && IsFunc(Sig->Results->Elems[0])) {
-      unsupported(FD->getBegin(), "a function returned from C (P04.18)");
+      unsupported(FD->getBegin(),
+                  Exp ? "a function returned from an @Export function (P04.07)"
+                      : "a function returned from C (P04.07)");
       return;
     }
   }
   SmallVector<Type *, 4> Params;
   if (FD->Recv) {
-    // The receiver is parameter 0 (a pointer, or the value; PAR-5); a
-    // borrowed slice receiver is (ptr, len), as a borrowed []T parameter.
+    // The receiver is parameter 0 (PAR-5), passed as passOfRecv says: a
+    // pointer receiver is the pointer; a borrowed value receiver is a
+    // pointer to the caller's place, a (ptr, len) view or the value, as a
+    // borrowed parameter of its type.
     Type *T = lowerType(Obj->Recv->Ty, FD->getBegin());
     if (!T)
       return;
-    if (recvBorrowedSlice(Obj) && T->getKind() == Type::Kind::Slice)
-      T = borrowedSliceType(T);
-    Params.push_back(T);
+    Params.push_back(passType(passOfRecv(Obj), T));
   }
   const size_t Lead = Params.size();
   for (S::Type *P : Sig->Params->Elems) {
-    Type *T = lowerType(P, FD->getBegin());
+    Type *T = Ext && IsFunc(P) ? callbackType(P, FD->getBegin(), Name)
+                               : lowerType(P, FD->getBegin());
     if (!T)
       return;
-    if (!Ext)
+    if (!ToC)
       T = paramType(Sig, Params.size() - Lead, T);
     Params.push_back(T);
   }
@@ -692,7 +857,7 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     Ret = lowerType(Sig->Results, FD->getBegin());
   if (!Ret)
     return;
-  if (Ext) {
+  if (ToC) {
     // The types C can take by value (P04.11): gir::CTypeRules decides.
     auto Refuse = [&](Type *T, gir::CUse Use, const char *What) {
       gir::CVerdict V = CRules.check(T, Use);
@@ -708,9 +873,8 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
       if (V.K == gir::CVerdict::Unsupported)
         unsupported(FD->getBegin(), V.Why);
       else
-        badExtern(FD->getBegin(), Name,
-                  std::string(What) + " type " + T->str() +
-                      " cannot cross the C ABI: " + V.Why);
+        BadC(std::string(What) + " type " + T->str() +
+             " cannot cross the C ABI: " + V.Why);
       return true;
     };
     for (Type *T : Params)
@@ -727,21 +891,192 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     if (F->Name.empty())
       F->Name = symbolOf(SymbolKind::Func, CP.Pkg, Name);
   }
-  if (Ext && F->Name == symbolOf(SymbolKind::Entry, CP.Pkg, "")) {
-    badExtern(Ext->getBegin(), Name,
-              "the C symbol " + F->Name + " is the program's entry point");
+  // The C symbol of an @Export function is its declared name, exactly: the
+  // thunk's (the function itself keeps its Go++ symbol).
+  std::string CName = Exp ? symbolOf(SymbolKind::ExternC, CP.Pkg, Name) : "";
+  if ((Ext && F->Name == symbolOf(SymbolKind::Entry, CP.Pkg, "")) ||
+      (Exp && CName == symbolOf(SymbolKind::Entry, CP.Pkg, ""))) {
+    BadC("the C symbol " + (Ext ? F->Name : CName) +
+         " is the program's entry point");
+    return;
+  }
+  // The C name may be another function's: one declared here, or a C
+  // library function the runtime calls (println's `write`; what the runtime
+  // declares when a body needs it, after every declaration), whose place the
+  // exported thunk would take for the whole program.
+  if (Exp && (M->lookupFunction(CName) != NoId || isRuntimeCName(CName))) {
+    badExport(Exp->getBegin(), Name,
+              "the C symbol " + CName + " is used by another function" +
+                  (isRuntimeCName(CName)
+                       ? ", the C library's, which the Go++ runtime calls"
+                       : ""));
     return;
   }
   if (M->lookupFunction(F->Name) != NoId) {
     unsupported(FD->getBegin(), "a second function named " + Name.str());
     return;
   }
-  F->Sig = Ctx.func(Params, Ret);
   F->CC = Ext ? CallConv::C : CallConv::Go;
+  F->Sig = Ctx.func(Params, Ret, false, F->CC);
   F->NoUnwind = Ext;
   F->Loc = spanOf(FD->getBegin());
-  FuncIds[Obj] = M->addFunction(std::move(F));
+  FuncId Id = M->addFunction(std::move(F));
+  FuncIds[Obj] = Id;
+  if (Exp)
+    makeCThunk(Id, CName, Linkage::External);
   Declined.erase(Obj);
+}
+
+Type *Lowering::callbackType(S::Type *T, SourceLoc At, StringRef Fn) {
+  auto *SG = cast<S::SignatureType>(S::under(T));
+  if (SG->Fails) {
+    unsupported(At, "a callback that fails with ! (P04.10)");
+    return nullptr;
+  }
+  auto IsFunc = [](S::Type *X) {
+    return isa_and_nonnull<S::SignatureType>(S::under(X));
+  };
+  SmallVector<Type *, 4> Ps;
+  for (S::Type *P : SG->Params->Elems) {
+    if (IsFunc(P)) {
+      unsupported(At, "a callback that takes a function (P04.07)");
+      return nullptr;
+    }
+    if (const char *Why = goppOnlyLayout(P)) {
+      badExtern(At, Fn,
+                "callback parameter type " + S::typeString(P) +
+                    " cannot cross the C ABI: " + Why);
+      return nullptr;
+    }
+    Type *G = lowerType(P, At);
+    if (!G)
+      return nullptr;
+    Ps.push_back(G);
+  }
+  Type *Ret = Ctx.unit();
+  if (SG->Results->size() > 1) {
+    badExtern(At, Fn, "a C callback has one result (return a struct)");
+    return nullptr;
+  }
+  if (SG->Results->size() == 1) {
+    S::Type *R = SG->Results->Elems[0];
+    if (IsFunc(R)) {
+      unsupported(At, "a callback that returns a function (P04.07)");
+      return nullptr;
+    }
+    if (const char *Why = goppOnlyLayout(R)) {
+      badExtern(At, Fn,
+                "callback result type " + S::typeString(R) +
+                    " cannot cross the C ABI: " + Why);
+      return nullptr;
+    }
+    Ret = lowerType(R, At);
+    if (!Ret)
+      return nullptr;
+  }
+  // A C function pointer: what C calls through it has the C ABI.
+  return Ctx.func(Ps, Ret, false, CallConv::C);
+}
+
+bool Lowering::checkCallbackTarget(const S::Func *Fn, FuncId Target,
+                                   SourceLoc At) {
+  S::SignatureType *Sig = Fn->sig();
+  StringRef Name = Fn->Name;
+  const Function &T = M->func(Target);
+  auto IsFunc = [](S::Type *X) {
+    return isa_and_nonnull<S::SignatureType>(S::under(X));
+  };
+  auto Bad = [&](const llvm::Twine &Why) {
+    badExtern(At, Name,
+              "the function " + Name.str() + " cannot be called by C: " + Why);
+    return false;
+  };
+  if (Sig->Variadic)
+    return Bad("it is variadic");
+  size_t K = 0;
+  for (S::Type *P : Sig->Params->Elems) {
+    ++K;
+    if (IsFunc(P)) {
+      unsupported(At, "a callback that takes a function (P04.07)");
+      return false;
+    }
+    if (const char *Why = goppOnlyLayout(P))
+      return Bad("parameter " + std::to_string(K) + " of type " +
+                 S::typeString(P) + ": " + Why);
+  }
+  if (Sig->Results->size() > 1)
+    return Bad("a C function has one result (return a struct)");
+  if (Sig->Results->size() == 1) {
+    S::Type *R = Sig->Results->Elems[0];
+    if (IsFunc(R)) {
+      unsupported(At, "a callback that returns a function (P04.07)");
+      return false;
+    }
+    if (const char *Why = goppOnlyLayout(R))
+      return Bad(std::string("the result of type ") + S::typeString(R) + ": " +
+                 Why);
+  }
+  K = 0;
+  for (Type *P : T.Sig->elems()) {
+    gir::CVerdict V = CRules.check(P, gir::CUse::Param);
+    if (!V.ok())
+      return Bad("parameter " + std::to_string(++K) + ": " + V.Why);
+    ++K;
+  }
+  gir::CVerdict V = CRules.check(T.Sig->ret(), gir::CUse::Result);
+  if (!V.ok())
+    return Bad("the result: " + V.Why);
+  return true;
+}
+
+/// The C-ABI function that calls the Go++ function Target (P04.18, D4.4): its
+/// parameters and result are the target's, which are C types (CTypeRules
+/// decided before), its calling convention is the C one, so the code
+/// generator unpacks the parameters with the C ABI (cabi::unpackCParams) and
+/// packs the result (cabi::packCReturn). Used for an @Export function (named
+/// by its C name) and for a Go++ function passed to C (named `_GPTC...`).
+FuncId Lowering::makeCThunk(FuncId Target, const std::string &Name,
+                            Linkage Link) {
+  const Function &T = M->func(Target);
+  auto F = std::make_unique<Function>();
+  F->Name = Name;
+  F->Sig = Ctx.withCallConv(T.Sig, CallConv::C);
+  F->Link = Link;
+  F->CC = CallConv::C;
+  F->Loc = T.Loc;
+  Type *Ret = T.Sig->ret();
+  unsigned NParams = T.Sig->elems().size();
+  FuncId Id = M->addFunction(std::move(F));
+  Function &Fn = M->func(Id);
+  FuncBuilder FB(*M, Fn);
+  FB.setSpan(Fn.Loc);
+  SmallVector<Operand, 4> Args;
+  for (unsigned K = 0; K < NParams; ++K)
+    Args.push_back(copyOf(FB.local(FB.param(K))));
+  LocalId Res = FB.newTemp(Ret);
+  FB.call(constFunc(*M, Target), Args, FB.local(Res),
+          {UnwindAction::Continue, NoId});
+  if (!Ret->isUnit())
+    FB.assign(FB.local(FB.returnPlace()), FB.use(copyOf(FB.local(Res))));
+  FB.ret();
+  return Id;
+}
+
+/// The thunk for passing the top-level function Target to C (once per
+/// function). Its symbol is the function's own, wrapped (`_GPTC...`, appendix
+/// A.5), and its body is the same wherever it is made, so it is linkonce_odr
+/// like the glue: every package that passes the function to C gives C the
+/// same pointer (C code that registers and later unregisters a callback by
+/// its address sees one function).
+FuncId Lowering::callbackThunk(const S::Func *Fn, FuncId Target) {
+  auto [It, New] = CThunks.try_emplace(Target, NoId);
+  if (New) {
+    std::string Name = Syms.thunk(Fn);
+    if (Name.empty())
+      Name = M->func(Target).Name + "$C";
+    It->second = makeCThunk(Target, Name, Linkage::LinkOnceODR);
+  }
+  return It->second;
 }
 
 void Lowering::lowerBody(const ast::FuncDecl *FD) {
@@ -900,7 +1235,7 @@ void Lowering::addEntry(const ast::FuncDecl *Main, FuncId PkgInit) {
     return;
   auto F = std::make_unique<Function>();
   F->Name = symbolOf(SymbolKind::Entry, CP.Pkg, "");
-  F->Sig = Ctx.func({}, Ctx.i32());
+  F->Sig = Ctx.func({}, Ctx.i32(), false, CallConv::C);
   F->CC = CallConv::C;
   F->Loc = M->func(It->second).Loc;
   Function &Fn = *F;

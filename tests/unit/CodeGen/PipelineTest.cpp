@@ -34,6 +34,8 @@
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Target/TargetMachine.h"
 
+#include "../Support/GIRTestSupport.h"
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -285,8 +287,10 @@ TEST(Pipeline, Opt0PromotesLocalsAndInlinesTrivialCalls) {
   // promotes the locals (SROA) and has inlined add3 in GIR.
   EXPECT_GT(Base.count(llvm::Instruction::Alloca, "4mainE1f"), 0u);
   EXPECT_EQ(O0.count(llvm::Instruction::Alloca, "4mainE1f"), 0u) << O0.ir();
-  EXPECT_NE(Base.ir().find("call i64 @_GPF4mainE4add3"), std::string::npos);
-  EXPECT_EQ(O0.ir().find("call i64 @_GPF4mainE4add3"), std::string::npos)
+  EXPECT_NE(Base.ir().find("call swiftcc i64 @_GPF4mainE4add3"),
+            std::string::npos);
+  EXPECT_EQ(O0.ir().find("call swiftcc i64 @_GPF4mainE4add3"),
+            std::string::npos)
       << O0.ir();
   EXPECT_EQ(Base.Inlined.Inlined, 0u);
   EXPECT_EQ(O0.Inlined.Inlined, 1u);
@@ -440,18 +444,21 @@ TEST(Pipeline, SameResultsInEveryPipeline) {
       EXPECT_TRUE(static_cast<bool>(A)) << toString(A.takeError());
       return A ? A->getValue() : 0;
     };
-    auto Wrap = reinterpret_cast<int32_t (*)(int32_t, int32_t)>(
+    // Go++ functions: the Go++ convention of the host (GOPP_GO_CC).
+    auto Wrap = reinterpret_cast<int32_t(GOPP_GO_CC *)(int32_t, int32_t)>(
         Find("_GPF4mainE4wrap"));
-    auto Gt = reinterpret_cast<bool (*)(int64_t)>(Find("_GPF4mainE2gt"));
-    auto Count8 =
-        reinterpret_cast<int64_t (*)(int8_t)>(Find("_GPF4mainE6count8"));
-    auto Shl = reinterpret_cast<int32_t (*)(int32_t, uint64_t)>(
+    auto Gt =
+        reinterpret_cast<bool(GOPP_GO_CC *)(int64_t)>(Find("_GPF4mainE2gt"));
+    auto Count8 = reinterpret_cast<int64_t(GOPP_GO_CC *)(int8_t)>(
+        Find("_GPF4mainE6count8"));
+    auto Shl = reinterpret_cast<int32_t(GOPP_GO_CC *)(int32_t, uint64_t)>(
         Find("_GPF4mainE3shl"));
-    auto Shr = reinterpret_cast<int32_t (*)(int32_t, uint64_t)>(
+    auto Shr = reinterpret_cast<int32_t(GOPP_GO_CC *)(int32_t, uint64_t)>(
         Find("_GPF4mainE3shr"));
-    auto DivMin = reinterpret_cast<int64_t (*)(int64_t, int64_t)>(
+    auto DivMin = reinterpret_cast<int64_t(GOPP_GO_CC *)(int64_t, int64_t)>(
         Find("_GPF4mainE6divmin"));
-    auto Sat = reinterpret_cast<int8_t (*)(double)>(Find("_GPF4mainE3sat"));
+    auto Sat =
+        reinterpret_cast<int8_t(GOPP_GO_CC *)(double)>(Find("_GPF4mainE3sat"));
     ASSERT_TRUE(Wrap && Gt && Count8 && Shl && Shr && DivMin && Sat);
     for (int32_t X : {0, 1, -7, 2147483000, INT32_MIN}) {
       uint32_t U = static_cast<uint32_t>(X);

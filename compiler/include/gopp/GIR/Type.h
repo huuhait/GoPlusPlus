@@ -40,6 +40,16 @@
 namespace gopp {
 namespace gir {
 
+/// How a function takes its parameters and gives its result (D4.4). It is
+/// part of a function type (P04.18): a call through a pointer uses the
+/// convention of the pointer's type, and a function's own convention is its
+/// signature's (V075), so a pointer to a Go++ function cannot reach a C
+/// caller, nor a C function a Go++ caller, without a thunk.
+enum class CallConv : uint8_t {
+  Go, // the internal convention (CodeGen/GoABI.h, calling-convention.md)
+  C,  // the exact C ABI (CodeGen/CABILower.h, c-abi.md)
+};
+
 class Type : public llvm::FoldingSetNode {
 public:
   enum class Kind : uint8_t {
@@ -55,7 +65,8 @@ public:
     Array,  // [Len]Elem
     Tuple,  // Elems, laid out like a struct
     Struct, // nominal: Name, fields set once with Context::setStructBody
-    Func,   // a function pointer: Elems = parameters, Ret, Fails
+    Func,   // a function pointer: Elems = parameters, Ret, Fails, its
+            // calling convention (callConv)
     Option, // Option[T] of a type that has no nil of its own: T followed by a
             // one-byte "is set" flag, padded (D4.5); fields 0 (T) and 1 (bool).
             // Its == and hash ignore the flag's padding and, when the flag is
@@ -86,6 +97,8 @@ public:
   llvm::ArrayRef<Type *> elems() const { return Elems; }
   Type *ret() const { return Ret; }
   bool fails() const { return Fails; }
+  /// The calling convention of a Func type (Go for every other kind).
+  CallConv callConv() const { return CC; }
   llvm::StringRef name() const { return Name; }
   bool hasBody() const { return Body; }
   /// The source name of field I of a struct, or empty when none was recorded
@@ -120,6 +133,7 @@ private:
   Kind K;
   bool Signed = false;
   bool Fails = false;
+  CallConv CC = CallConv::Go;
   bool Body = false;
   bool Rec = false;
   unsigned Bits = 0;
@@ -167,7 +181,12 @@ public:
   Type *option(Type *Elem);
   /// The empty list is Unit; a list of one stays a 1-tuple.
   Type *tuple(llvm::ArrayRef<Type *> Elems);
-  Type *func(llvm::ArrayRef<Type *> Params, Type *Ret, bool Fails = false);
+  Type *func(llvm::ArrayRef<Type *> Params, Type *Ret, bool Fails = false,
+             CallConv CC = CallConv::Go);
+  /// The Func type Sig with the calling convention CC.
+  Type *withCallConv(Type *Sig, CallConv CC) {
+    return func(Sig->elems(), Sig->ret(), Sig->fails(), CC);
+  }
   /// The struct called Name (created without a body on first use).
   Type *structTy(llvm::StringRef Name);
   /// Sets the fields of a struct once; false if it already has a body.

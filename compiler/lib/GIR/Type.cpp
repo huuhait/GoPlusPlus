@@ -23,6 +23,7 @@ struct Context::Key {
   Type::Kind K;
   unsigned Bits = 0;
   bool Signed = false, Fails = false;
+  CallConv CC = CallConv::Go;
   uint64_t Len = 0;
   Type *Elem = nullptr, *Ret = nullptr;
   ArrayRef<Type *> Elems;
@@ -32,6 +33,7 @@ struct Context::Key {
     ID.AddInteger(Bits);
     ID.AddBoolean(Signed);
     ID.AddBoolean(Fails);
+    ID.AddInteger(static_cast<unsigned>(CC));
     ID.AddInteger(Len);
     ID.AddPointer(Elem);
     ID.AddPointer(Ret);
@@ -46,6 +48,7 @@ void Type::Profile(llvm::FoldingSetNodeID &ID) const {
   Kx.Bits = Bits;
   Kx.Signed = Signed;
   Kx.Fails = Fails;
+  Kx.CC = CC;
   Kx.Len = Len;
   Kx.Elem = Elem;
   Kx.Ret = Ret;
@@ -77,6 +80,7 @@ Type *Context::get(const Key &K) {
   T->Bits = K.Bits;
   T->Signed = K.Signed;
   T->Fails = K.Fails;
+  T->CC = K.CC;
   T->Len = K.Len;
   T->Elem = K.Elem;
   T->Ret = K.Ret;
@@ -138,11 +142,13 @@ Type *Context::tuple(ArrayRef<Type *> Elems) {
   return get(K);
 }
 
-Type *Context::func(ArrayRef<Type *> Params, Type *Ret, bool Fails) {
+Type *Context::func(ArrayRef<Type *> Params, Type *Ret, bool Fails,
+                    CallConv CC) {
   Key K(Type::Kind::Func);
   K.Elems = Params;
   K.Ret = Ret;
   K.Fails = Fails;
+  K.CC = CC;
   return get(K);
 }
 
@@ -424,7 +430,7 @@ void Type::printOne(llvm::raw_ostream &OS) const {
     OS << Name;
     return;
   case Kind::Func: {
-    OS << "fn(";
+    OS << (CC == CallConv::C ? "fn \"C\"(" : "fn(");
     bool First = true;
     for (Type *T : Elems) {
       if (!First)

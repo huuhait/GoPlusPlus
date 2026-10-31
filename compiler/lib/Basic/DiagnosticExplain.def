@@ -4264,6 +4264,15 @@ func f()
 
 func main() { f() }
 )X")
+EXPLAIN(err_gir_export_bad,
+        "`@Export(\"C\")` makes a function of this package callable from C under its own name: the function needs a body, the attribute takes the one string \"C\", its parameter and result types are C types (the same as for `@Extern`), and the name is not the C entry point `main`, a name another function already uses, or a name that starts with `_GP`. `_GP` is the prefix of every Go++ symbol (SYM-4), so no C name may start with it. The function keeps its Go++ symbol; the exported C symbol is a thunk with the C ABI that calls it.",
+        R"X(package main
+
+@Export("C")
+func _GPcallback(x int32) int32 { return x }
+
+func main() {}
+)X")
 EXPLAIN(err_gir_no_main,
         "A program starts at `func main()` of package main, and `gopp build` found no such function in the package it was asked to build. Declare `func main()`, or build the package as a library (`-emit=obj`).",
         R"X(package main

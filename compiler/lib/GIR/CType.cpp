@@ -42,7 +42,52 @@ static bool isFloatPair(const Type *T) {
          T->elems()[0]->isFloat() && T->elems()[0] == T->elems()[1];
 }
 
+CVerdict CTypeRules::checkCallback(const Type *T) {
+  auto Unsupported = [](std::string Why) {
+    CVerdict V;
+    V.K = CVerdict::Unsupported;
+    V.Why = std::move(Why);
+    return V;
+  };
+  if (T->fails())
+    return invalid("a callback that fails with ! has no C type");
+  // C calls the pointer with the C ABI: a Go++ function reaches C only
+  // through its C-ABI thunk (V075).
+  if (T->callConv() != CallConv::C)
+    return invalid("a function pointer passed to C has the C convention "
+                   "(a Go++ function is passed through its C-ABI thunk)");
+  unsigned N = 0;
+  for (const Type *E : T->elems()) {
+    ++N;
+    if (E->getKind() == Type::Kind::Func)
+      return Unsupported("a callback that takes a function (P04.07)");
+    CVerdict V = check(E, CUse::Param);
+    if (!V.ok()) {
+      V.Why = "callback parameter " + std::to_string(N) + ": " + V.Why;
+      return V;
+    }
+  }
+  if (T->ret()->getKind() == Type::Kind::Func)
+    return Unsupported("a callback that returns a function (P04.07)");
+  CVerdict V = check(T->ret(), CUse::Result);
+  if (!V.ok())
+    V.Why = "callback result: " + V.Why;
+  return V;
+}
+
 CVerdict CTypeRules::check(const Type *T, CUse Use) {
+  if (T->getKind() == Type::Kind::Func) {
+    // A Go++ function passed to C is a C function pointer to its thunk
+    // (P04.18); a function value in any other place needs P04.07's closures.
+    if (Use == CUse::Result) {
+      CVerdict V;
+      V.K = CVerdict::Unsupported;
+      V.Why = "a function returned from C (P04.07)";
+      return V;
+    }
+    if (Use == CUse::Param)
+      return checkCallback(T);
+  }
   if (Use == CUse::Result && isFloatPair(T))
     // The same GIR type as a complex number (the front end tells them apart
     // before it asks: Lowering::declareFunction).
@@ -124,7 +169,7 @@ CTypeRules::Info CTypeRules::info(const Type *T, unsigned Depth) {
     break;
   case Type::Kind::Func:
     R.V.K = CVerdict::Unsupported;
-    R.V.Why = "a func value passed to C (P04.18)";
+    R.V.Why = "a func value inside a C type (P04.07)";
     break;
   case Type::Kind::Array: {
     Info E = info(T->elem(), Depth + 1);

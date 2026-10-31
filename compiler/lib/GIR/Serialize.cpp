@@ -309,7 +309,9 @@ private:
           R.Vals.push_back(TypeIds[E]);
         break;
       case Type::Kind::Func:
-        R = {T_Func, {TypeIds[T->ret()], T->fails()}};
+        R = {T_Func,
+             {TypeIds[T->ret()], T->fails(),
+              static_cast<uint64_t>(T->callConv())}};
         for (const Type *E : T->elems())
           R.Vals.push_back(TypeIds[E]);
         break;
@@ -436,8 +438,8 @@ private:
     }
     for (const Local &L : F.Locals) {
       Rec R{F_Local,
-            {L.K, typeId(L.Ty), L.Mutable, L.Owned, L.Source, L.Scope, L.ArgNo,
-             L.Origin}};
+            {L.K, typeId(L.Ty), L.Mutable, L.Owned, L.Source, L.Deref, L.Scope,
+             L.ArgNo, L.Origin}};
       put(R.Vals, L.Loc);
       R.Vals.append(chars(L.Name));
       Out.push_back(std::move(R));
@@ -740,10 +742,11 @@ private:
     case T_Func: {
       Type *Ret = type(R);
       bool Fails = R.next();
+      CallConv CC = enumVal(R, CallConv::C);
       SmallVector<Type *, 4> Params;
       while (R.Pos < R.V.size())
         Params.push_back(type(R));
-      T = Ctx.func(Params, Ret, Fails);
+      T = Ctx.func(Params, Ret, Fails, CC);
       break;
     }
     case T_Struct:
@@ -1096,6 +1099,7 @@ private:
         L.Mutable = R.next();
         L.Owned = R.next();
         L.Source = R.next();
+        L.Deref = R.next();
         L.Scope = R.next();
         L.ArgNo = R.next();
         L.Origin = static_cast<LocalId>(R.next());

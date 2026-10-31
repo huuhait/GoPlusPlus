@@ -306,6 +306,8 @@ struct Printer {
       if (Opts.Scopes) {
         if (L.Source)
           OS << " [source]";
+        if (L.Deref)
+          OS << " [deref]";
         if (L.ArgNo)
           OS << " [param " << L.ArgNo << ']';
         if (L.Origin != NoId)

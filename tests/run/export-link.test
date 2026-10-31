@@ -1,0 +1,17 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64, clang
+// RUN: clang -O1 -w -c %S/Inputs/export-link/export-link.c -o %t.o
+// RUN: %gopp build %gopp_link_flags -link-obj=%t.o %S/Inputs/export-link/export-link.gopp -o %t.exe
+// RUN: %t.exe | FileCheck %s
+// RUN: %if qemu-aarch64 %{ clang --target=aarch64-linux-gnu -O1 -w -c %S/Inputs/export-link/export-link.c -o %t.arm64.o %}
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib -link-obj=%t.arm64.o %S/Inputs/export-link/export-link.gopp -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ qemu-aarch64 -L %aarch64_sysroot %t.arm64 | FileCheck %s %}
+// P04.18 (SYM-4, appendix A.8): only the prefix `_GP` is reserved for C names
+// (export-bad.test), so `@Export("C")` functions named `GPx`, `_G`, `_gpx`
+// and `_Gx` link under those names and C calls each, on both targets. An
+// export whose name only looks like a C library function the runtime calls
+// (`writeLog`, not `write`: export-bad-names.test) links beside println.
+// CHECK: GPx=11
+// CHECK-NEXT: _G=12
+// CHECK-NEXT: _gpx=13
+// CHECK-NEXT: _Gx=14
+// CHECK-NEXT: done 6

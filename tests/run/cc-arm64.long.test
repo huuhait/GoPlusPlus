@@ -1,0 +1,4 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-cc.py --arm64 %aarch64_sysroot --opts 0,1,2,3,s,z --slow %{slow} %gopp %t.d 301 60 302 60 303 60 304 60
+// P04.18: cc.long.test on linux/arm64 under QEMU (one in five of the builds
+// in a sanitizer build, %{slow}).

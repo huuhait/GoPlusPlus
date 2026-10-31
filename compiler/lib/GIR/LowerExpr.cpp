@@ -18,6 +18,7 @@
 #include "RtEmit.h"
 
 #include <cstring>
+#include <optional>
 
 using namespace gopp;
 using namespace gopp::gir;
@@ -234,6 +235,18 @@ Operand Body::argFor(const ast::Expr *E, S::SignatureType *Sig, size_t K) {
   return argAs(valueFor(E, Sig->Params->Elems[K]), Sig, K, E);
 }
 
+Operand Body::resultArg(Operand V, S::Type *From, S::Type *Want,
+                        const ast::Node *N) {
+  // A result passed on as an argument, `f(g())`: a view of a string or a
+  // slice where a view is wanted (the results' temporary lives through the
+  // call), else what any result converts to (convertResult: an interface,
+  // an Option).
+  if (From && Want && From != Want && isa<S::RefType>(S::under(Want)) &&
+      !isa<S::RefType>(S::under(From)))
+    return viewOfPlace(placeOf(std::move(V)), Want, N);
+  return convertResult(std::move(V), From, Want, N);
+}
+
 Operand Body::mapArgAddr(const ast::Expr *E, LateOps &R) {
   // PAR-10: the address of the variable, field or element that holds the
   // map (a map entry is copied in and out around the call instead: lowerCall,
@@ -251,27 +264,210 @@ Operand Body::mapArgAddr(const ast::Expr *E, LateOps &R) {
   return copyOf(std::move(P));
 }
 
+Operand Body::callbackArg(const ast::Expr *E) {
+  // (A func is never nil, OWN-P9: a C callback that may be absent is an
+  // Option[func], P04.07's.)
+  E = unparen(E);
+  const S::Func *Fn = nullptr;
+  if (auto *Id = dyn_cast<ast::Ident>(E)) {
+    auto U = I.Uses.find(Id);
+    if (U != I.Uses.end())
+      Fn = dyn_cast<S::Func>(U->second);
+  }
+  if (!Fn || Fn->Recv || Fn->IsInterfaceMethod) {
+    unsupported(E, "a closure, method or function value passed to C (P04.07)");
+    return errorValue(ctx());
+  }
+  auto FI = L.FuncIds.find(Fn);
+  if (FI == L.FuncIds.end()) {
+    if (!L.Declined.count(Fn)) // (a declined function has been reported)
+      unsupported(E, "the function " + Fn->Name.str());
+    return errorValue(ctx());
+  }
+  const Function &Callee = M.func(FI->second);
+  // A C function is its own address; a Go++ function goes through its thunk.
+  if (Callee.CC == CallConv::C)
+    return constFunc(M, FI->second);
+  if (!L.checkCallbackTarget(Fn, FI->second, E->getBegin()))
+    return errorValue(ctx());
+  return constFunc(M, L.callbackThunk(Fn, FI->second));
+}
+
+Operand Body::addrOfCopy(Operand V, const ast::Node *N) {
+  at(N);
+  LocalId Tmp = FB.newTemp(V.type());
+  FB.assign(FB.local(Tmp), FB.use(std::move(V)));
+  return copyOf(FB.temp(FB.addrOf(FB.local(Tmp), true)));
+}
+
+bool Body::readOnlyContainer(const ast::Expr *X) {
+  for (;;) {
+    ++LowerSteps;
+    X = unparen(X);
+    if (S::Type *T = sTyOf(X); T && isa<S::RefType>(T))
+      return true; // a view (OWN-V1)
+    if (auto *Sel = dyn_cast<ast::SelectorExpr>(X)) {
+      auto It = I.Selections.find(Sel);
+      if (It == I.Selections.end() || It->second.K != S::Selection::FieldVal ||
+          It->second.Indirect)
+        return false; // a package variable, or behind a pointer
+      X = Sel->X;
+      continue;
+    }
+    if (auto *IE = dyn_cast<ast::IndexExpr>(X)) {
+      S::Type *T = sTyOf(IE->X);
+      if (I.Operators.count(IE) || !T || isa<S::PointerType>(S::under(T)))
+        return false;
+      X = IE->X; // held in an array, a slice or a map: read-only if it is
+      continue;
+    }
+    if (auto *TA = dyn_cast<ast::TypeAssertExpr>(X)) {
+      S::Type *T = sTyOf(TA);
+      return !T || !isa<S::PointerType>(S::under(T)); // in the box (TYP-9)
+    }
+    return false; // a variable, a call, a dereference
+  }
+}
+
+Body::PlacePath Body::placePath(const ast::Expr *E) {
+  E = unparen(E);
+  const ast::Expr *Leaf = E;
+  for (;;) {
+    ++LowerSteps;
+    E = unparen(E);
+    switch (E->getKind()) {
+    case ast::Node::Kind::Ident: {
+      // A variable; a checked Option "simply is a T" (OWN-P10, review R12):
+      // its payload, a part of the variable (lowerPlace).
+      auto U = I.Uses.find(cast<ast::Ident>(E));
+      bool Var = U != I.Uses.end() && isa_and_nonnull<S::Var>(U->second);
+      return {Var ? PlaceRoot::Stable : PlaceRoot::Temp};
+    }
+    case ast::Node::Kind::SelectorExpr: {
+      auto *Sel = cast<ast::SelectorExpr>(E);
+      auto It = I.Selections.find(Sel);
+      if (It == I.Selections.end()) { // a qualified name, `pkg.V`
+        auto U = I.Uses.find(Sel->Sel);
+        return {U != I.Uses.end() && isa_and_nonnull<S::Var>(U->second)
+                    ? PlaceRoot::Stable
+                    : PlaceRoot::Temp};
+      }
+      if (It->second.K != S::Selection::FieldVal)
+        return {PlaceRoot::Temp};
+      if (It->second.Indirect)
+        return {PlaceRoot::Stable}; // behind a pointer
+      if (S::Type *XT = sTyOf(Sel->X); XT && isa<S::RefType>(XT))
+        return {PlaceRoot::ReadOnly}; // a field of a view
+      E = Sel->X;
+      continue;
+    }
+    case ast::Node::Kind::StarExpr:
+      return {PlaceRoot::Stable};
+    case ast::Node::Kind::IndexExpr: {
+      auto *IE = cast<ast::IndexExpr>(E);
+      if (I.Operators.count(IE))
+        return {PlaceRoot::Temp};
+      if (isMapIndex(IE))
+        return {readOnlyContainer(IE->X) ? PlaceRoot::ReadOnly
+                                         : PlaceRoot::MapEntry,
+                IE == Leaf};
+      S::Type *XT = sTyOf(IE->X);
+      if (!XT)
+        return {PlaceRoot::Temp};
+      if (isa<S::RefType>(XT))
+        return {PlaceRoot::ReadOnly}; // an element of a view
+      S::Type *U = S::under(XT);
+      if (isa<S::SliceType>(U))
+        return {readOnlyContainer(IE->X) ? PlaceRoot::ReadOnly
+                                         : PlaceRoot::Stable};
+      if (isa<S::PointerType>(U))
+        return {PlaceRoot::Stable}; // an element of a `*[N]T`
+      if (!isa<S::ArrayType>(U))
+        return {PlaceRoot::Temp}; // a byte of a string
+      E = IE->X;
+      continue;
+    }
+    case ast::Node::Kind::TypeAssertExpr: {
+      S::Type *T = sTyOf(E);
+      return {T && isa<S::PointerType>(S::under(T)) ? PlaceRoot::Temp
+                                                    : PlaceRoot::ReadOnly};
+    }
+    default:
+      return {PlaceRoot::Temp};
+    }
+  }
+}
+
+Body::PlaceHow Body::placeHow(const ast::Expr *E, S::Type *T, bool Same) {
+  PlacePath P = placePath(E);
+  bool Map = isa<S::MapType>(S::under(T));
+  switch (P.R) {
+  case PlaceRoot::Stable:
+    // (A conversion makes a new value; a map is its header either way.)
+    return Same || Map ? PlaceHow::Address : PlaceHow::Copy;
+  case PlaceRoot::MapEntry:
+    if (Map && P.Direct)
+      return PlaceHow::Address; // copied in and out (mapEntryArg)
+    // A copy of what holds no map changes nothing the callee may change.
+    return L.holdsOwned(T, /*MapsOnly=*/true) ? PlaceHow::Refuse
+                                              : PlaceHow::Copy;
+  case PlaceRoot::ReadOnly:
+  case PlaceRoot::Temp:
+    break;
+  }
+  return PlaceHow::Copy;
+}
+
+Operand Body::placeArgAddr(const ast::Expr *E, LateOps &R) {
+  // (placeHow said Address: a place the callee may change.)
+  ReplayScope Scope(*this, R);
+  Place P = lowerPlace(E);
+  if (!P.Ty)
+    return errorValue(ctx());
+  at(E);
+  return copyOf(FB.temp(FB.addrOf(std::move(P), true)));
+}
+
 Operand Body::argAs(Operand V, S::SignatureType *Sig, size_t K,
                     const ast::Node *N) {
   Type *T = V.type();
-  if (L.mapByPointer(Sig, K) && T == L.mapType()) {
-    // A map that is no place: its own temporary (a result's temporary may
-    // not have its address taken, V066).
-    at(N);
-    LocalId Tmp = FB.newTemp(T);
-    FB.assign(FB.local(Tmp), FB.use(std::move(V)));
-    return copyOf(FB.temp(FB.addrOf(FB.local(Tmp), true)));
-  }
-  if (Sig->isMove(K) || !T || T->getKind() != Type::Kind::Slice)
+  switch (L.passOf(Sig, K)) {
+  case Lowering::Pass::Value:
     return V;
-  // A borrowed []T passes as a view, (ptr, len): the allocator word stays
-  // behind (ADR-0029 point 7, D4.4), and the callee's capacity is its length
-  // (SLC-12).
-  Place P = placeOf(std::move(V));
-  at(N);
-  Type *VT = ctx().tuple({T->fieldType(0, ctx()), ctx().u64()});
-  return copyOf(FB.temp(FB.aggregate(
-      AggKind::Tuple, VT, {copyOf(FB.field(P, 0)), copyOf(FB.field(P, 1))})));
+  case Lowering::Pass::Place: {
+    if (!T)
+      return V;
+    // (A place the callee may change was passed by its address in callWith's
+    // late step, placeHow; a pointer here is already one. An argument the
+    // checker assigns as it is from another type, Info::AsIsArgs, has the
+    // parameter's layout under another GIR name: its address is cast.)
+    // Anything else is a copy of its own: no place, or one in a box, a view
+    // or a map entry.
+    if (T->isPtr() && T != L.mapType()) {
+      Type *PG = L.lowerType(Sig->Params->Elems[K], N->getBegin());
+      if (!PG || T == ctx().ptr(PG))
+        return V;
+      at(N);
+      return copyOf(
+          FB.temp(FB.cast(CastKind::PtrToPtr, std::move(V), ctx().ptr(PG))));
+    }
+    return addrOfCopy(std::move(V), N);
+  }
+  case Lowering::Pass::View: {
+    if (!T || (T->getKind() != Type::Kind::Slice &&
+               T->getKind() != Type::Kind::String))
+      return V;
+    // (ptr, len), fields 0 and 1: a borrowed `[]T` leaves its capacity and
+    // its allocator word behind (SLC-12, ADR-0029 point 7, D4.4), a borrowed
+    // string its capacity.
+    Place P = placeOf(std::move(V));
+    at(N);
+    return copyOf(FB.temp(
+        FB.aggregate(AggKind::Tuple, L.viewTypeOf(T),
+                     {copyOf(FB.field(P, 0)), copyOf(FB.field(P, 1))})));
+  }
+  }
+  return V;
 }
 
 Operand Body::borrowedSeq(Operand V, Type *G, const ast::Node *N) {
@@ -1456,19 +1652,60 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
 
 Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
                        Type *GSig, Operand CalleeOp, ArrayRef<Operand> Lead,
-                       bool NoUnwind) {
+                       bool NoUnwind, LateRecv *Recv) {
   Operand Unit = unitValue();
   ArrayRef<Type *> Ps = GSig->elems().drop_front(Lead.size());
   SmallVector<Operand, 4> Args(Lead.begin(), Lead.end());
   const size_t Base = Lead.size();
-  // A borrowed map's address is taken after the other arguments, as a
-  // move out of a place is (EXP-3): it may point into a container one of
-  // them grows. Its operands are evaluated in their turn.
-  SmallVector<std::pair<size_t, LateOps>, 1> Late;
+  // The address of a borrowed place (a map, or a value that holds one) is
+  // taken after the other arguments, as a move out of a place is (EXP-3):
+  // it may point into a container one of them grows. Its operands are
+  // evaluated in their turn. Slot is the argument's index in Args, K its
+  // parameter in Sig (none for a receiver, whose operands the caller
+  // recorded first).
+  struct LateArg {
+    size_t Slot;
+    std::optional<size_t> K;
+    const ast::Expr *E;
+    bool Map;
+    LateOps Ops;
+  };
+  SmallVector<LateArg, 1> Late;
+  if (Recv)
+    Late.push_back({0, std::nullopt, Recv->E, Recv->Map, std::move(Recv->Ops)});
   auto AddArg = [&](size_t K, const ast::Expr *A) {
-    if (L.mapByPointer(Sig, K) && !isNilValue(A)) {
-      Late.push_back({K, LateOps()});
-      recordOps(A, Late.back().second);
+    if (Ps[K]->getKind() == Type::Kind::Func &&
+        Ps[K]->callConv() == CallConv::C) {
+      // A C function pointer: a callback of a C function (P04.18).
+      Args.push_back(callbackArg(A));
+      return;
+    }
+    // A borrowed place is passed by its address only where placeHow says
+    // so: an argument that a conversion makes (`Doc` to `Option[Doc]`) is a
+    // new value, which argFor converts and argAs puts in a temporary, and so
+    // is one in an interface's box or a view.
+    bool Late1 = false;
+    if (L.passOf(Sig, K) == Lowering::Pass::Place) {
+      // The same value: the parameter's type, or one the checker assigns to
+      // it as it is (Info::AsIsArgs, review R14). A conversion makes a new
+      // one (an Option, a view, an interface).
+      S::Type *PT = Sig->Params->Elems[K];
+      switch (placeHow(A, PT, sTyOf(A) == PT || I.AsIsArgs.count(A))) {
+      case PlaceHow::Address:
+        Late1 = true;
+        break;
+      case PlaceHow::Copy:
+        break;
+      case PlaceHow::Refuse:
+        unsupported(A, "a value that holds a map passed from a map entry "
+                       "(P04.09)");
+        Args.push_back(errorValue(ctx()));
+        return;
+      }
+    }
+    if (Late1) {
+      Late.push_back({Base + K, K, A, L.mapByPointer(Sig, K), LateOps()});
+      recordOps(A, Late.back().Ops);
       Args.push_back(Operand());
       return;
     }
@@ -1479,25 +1716,33 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
   auto *TT = C->Args.size() == 1
                  ? dyn_cast_or_null<S::TupleType>(sTyOf(C->Args[0]))
                  : nullptr;
-  if (TT && Ps.size() > 1) {
-    // The results of a call spread over a variadic parameter, `vf(g())`,
-    // are packed into the slice by P04.18 (TODO P04.18).
-    if (Sig->Variadic) {
-      unsupported(C, "spreading the results of a call over a variadic "
-                     "parameter (P04.18)");
-      return Unit;
-    }
+  if (TT && (Ps.size() > 1 || Sig->Variadic)) {
+    // Go binds the fixed parameters to the first results and packs the rest
+    // into the variadic parameter's slice (`vf(g())`; none left is an empty
+    // slice).
+    const size_t N = TT->Elems.size();
+    const size_t Fixed = Sig->Variadic ? Ps.size() - 1 : Ps.size();
     Operand T = lowerExpr(C->Args[0]);
     if (T.type()->getKind() != Type::Kind::Tuple ||
-        T.type()->numFields() != Ps.size() || TT->Elems.size() != Ps.size()) {
+        T.type()->numFields() != N || N < Fixed ||
+        (!Sig->Variadic && N != Fixed)) {
       unsupported(C, "this call form");
       return Unit;
     }
     Place TP = placeOf(std::move(T));
-    for (size_t K = 0; K < Ps.size(); ++K)
-      Args.push_back(argAs(convertResult(copyOf(FB.field(TP, K)), TT->Elems[K],
-                                         Sig->Params->Elems[K], C),
+    for (size_t K = 0; K < Fixed; ++K)
+      Args.push_back(argAs(resultArg(copyOf(FB.field(TP, K)), TT->Elems[K],
+                                     Sig->Params->Elems[K], C),
                            Sig, K, C));
+    if (Sig->Variadic)
+      Args.push_back(
+          argAs(packVariadicWith(C, Sig, N - Fixed,
+                                 [&](size_t K, S::Type *Elem) {
+                                   return convertResult(
+                                       copyOf(FB.field(TP, Fixed + K)),
+                                       TT->Elems[Fixed + K], Elem, C);
+                                 }),
+                Sig, Fixed, C));
   } else if (Sig->Variadic) {
     // f(a, b, xs...) passes the slice; f(a, b, x, y) packs x and y.
     size_t Fixed = Ps.size() - 1;
@@ -1527,8 +1772,8 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
   // frame, copied in and aliased by one runtime call, copied out by
   // another after the call (mapEntryArg; linear GIR per call).
   unsigned NE = 0;
-  for (auto &[K, R] : Late)
-    if (auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
+  for (const LateArg &LA : Late)
+    if (auto *IE = dyn_cast<ast::IndexExpr>(unparen(LA.E));
         IE && isMapIndex(IE))
       ++NE;
   Place Recs;
@@ -1539,18 +1784,23 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
                                 Local::Var, "entries"));
     RecsAddr = copyOf(FB.temp(FB.addrOf(FB.constIndex(Recs, 0), true)));
   }
-  SmallVector<std::pair<size_t, unsigned>, 1> EntryArgs;
-  for (auto &[K, R] : Late) {
+  // The value an argument's address becomes (a receiver's is the pointer).
+  auto Pass = [&](const LateArg &LA, Operand Addr) {
+    return LA.K ? argAs(std::move(Addr), Sig, *LA.K, LA.E) : Addr;
+  };
+  SmallVector<std::pair<const LateArg *, unsigned>, 1> EntryArgs;
+  for (LateArg &LA : Late) {
     ++LowerSteps;
-    auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
+    auto *IE = dyn_cast<ast::IndexExpr>(unparen(LA.E));
     if (IE && isMapIndex(IE)) {
-      ReplayScope Scope(*this, R);
+      ReplayScope Scope(*this, LA.Ops);
       unsigned Idx = EntryArgs.size();
       mapEntryArg(IE, Recs, Idx);
-      EntryArgs.push_back({K, Idx});
+      EntryArgs.push_back({&LA, Idx});
       continue;
     }
-    Args[Base + K] = argAs(mapArgAddr(C->Args[K], R), Sig, K, C->Args[K]);
+    Args[LA.Slot] = Pass(LA, LA.Map ? mapArgAddr(LA.E, LA.Ops)
+                                    : placeArgAddr(LA.E, LA.Ops));
   }
   if (NE) {
     // (Test-only: GIR for every pair, the quadratic control.)
@@ -1562,10 +1812,9 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
                             copyOf(FB.field(FB.constIndex(Recs, B), 1))));
     at(C);
     callRt(RtFn::MapEntryArgs, {RecsAddr, constInt(ctx().u64(), NE)}, C);
-    for (auto &[K, Idx] : EntryArgs) {
-      at(C->Args[K]);
-      Args[Base + K] = argAs(copyOf(FB.field(FB.constIndex(Recs, Idx), 5)), Sig,
-                             K, C->Args[K]);
+    for (auto &[LA, Idx] : EntryArgs) {
+      at(LA->E);
+      Args[LA->Slot] = Pass(*LA, copyOf(FB.field(FB.constIndex(Recs, Idx), 5)));
     }
   }
   at(C);

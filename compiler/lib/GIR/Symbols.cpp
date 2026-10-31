@@ -19,6 +19,11 @@ std::string Symbols::func(const sema::Func *F) {
   return N ? sym::mangle(N) : std::string();
 }
 
+std::string Symbols::thunk(const sema::Func *F) {
+  const sym::Node *N = Names.func(F);
+  return N ? sym::mangle(Ctx.wrapper(sym::Kind::CABIThunk, N)) : std::string();
+}
+
 std::string Symbols::var(const sema::Var *V) {
   const sym::Node *N = Names.var(V);
   return N ? sym::mangle(N) : std::string();

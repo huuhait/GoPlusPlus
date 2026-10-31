@@ -1,0 +1,45 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// P04.18 (D4.4, PAR-10): how a parameter is handed over is one decision
+// (Lowering::passOf), made from the signature, for every declaration and call:
+//   - a `move` parameter and a trivial type (a copy: scalars, a struct of
+//     scalars) keep their type, and the callee owns its copy;
+//   - a borrowed owning aggregate (here a struct holding a map) is a pointer to
+//     the caller's place, so `d.Index["x"] = 1` on a nil `Index` creates the
+//     map in the caller's `Doc` (PAR-1);
+//   - a borrowed string or `[]T` is (ptr, len) (D4.4): the body's variable is
+//     made from it with capacity = length (SLC-12), 0 for a string.
+// The other side of each: a `move` string keeps its three words.
+package main
+
+type Doc struct {
+	n     int
+	Index map[string]int
+}
+
+type P struct{ X, Y int }
+
+func f(d Doc)              { d.Index["x"] = 1 }
+func g(p P) int            { return p.X }
+func h(xs []int) int       { return cap(xs) }
+func s(x string) int       { return len(x) }
+func mv(move x string) int { return len(x) }
+
+func main() {
+	var d Doc
+	f(d)
+	println(g(P{1, 2}), h(nil), s("a"), mv("b"))
+}
+
+// CHECK: fn _GPF4mainE1f(_1: *main.Doc) -> () [go, external]
+// CHECK: = &mut (*_1).1
+// CHECK: = call const fn @_GPF4goppE10map_assign(
+// CHECK: fn _GPF4mainE1g(_1: main.P) -> i64 [go, external]
+// CHECK: fn _GPF4mainE1h(_1: (*i64, u64)) -> i64 [go, external]
+// CHECK: _2 = slice []i64 {copy _1.0, copy _1.1, copy _1.1, const null: *u8}
+// CHECK: fn _GPF4mainE1s(_1: (*u8, u64)) -> i64 [go, external]
+// CHECK: _2 = string string {copy _1.0, copy _1.1, const 0: u64}
+// CHECK: fn _GPF4mainE2mv(_1: string) -> i64 [go, external]
+// The call of f passes the address of the caller's own `d`, not a copy.
+// CHECK: fn _GPF4mainE4main()
+// CHECK: [[A:_[0-9]+]] = &mut _1
+// CHECK: call const fn @_GPF4mainE1f(copy [[A]])

@@ -1631,9 +1631,15 @@ TEST(GIRVerifier, V066_HiddenResultPointer) {
 /// A declaration with the C convention and this signature.
 FuncId cDecl(PlaceFixture &X, const std::string &Name,
              llvm::ArrayRef<Type *> Ps, Type *Ret) {
-  FuncId F = declare(X.M, Name, X.C.func(Ps, Ret));
+  FuncId F = declare(X.M, Name, X.C.func(Ps, Ret, false, CallConv::C));
   X.M.func(F).CC = CallConv::C;
   return F;
+}
+
+/// A C function pointer type (a callback, P04.18).
+Type *cFn(PlaceFixture &X, llvm::ArrayRef<Type *> Ps, Type *R,
+          bool Fails = false) {
+  return X.C.func(Ps, R, Fails, CallConv::C);
 }
 
 /// The struct test.<Name> with these fields.
@@ -1642,6 +1648,138 @@ Type *structOf(PlaceFixture &X, const std::string &Name,
   Type *S = X.C.structTy("test." + Name);
   X.C.setStructBody(S, Fs);
   return S;
+}
+
+TEST(GIRVerifier, V075_AFunctionHasTheConventionOfItsType) {
+  // P04.18: the calling convention is part of a function type, and a
+  // function's own convention is its signature's. So a pointer to a function
+  // (Constant::Func, typed by the signature) says how to call it, and the
+  // types keep a Go++ function away from C and a C function away from a
+  // Go++ call through a pointer of the other kind.
+  auto Body = [](PlaceFixture &X, FuncId F) {
+    FuncBuilder B(X.M, X.fn(F));
+    B.assign(B.local(0), B.use(constInt(X.I32, 0)));
+    B.ret();
+  };
+  for (CallConv Fn : {CallConv::Go, CallConv::C})
+    for (CallConv Ty : {CallConv::Go, CallConv::C}) {
+      PlaceFixture X;
+      FuncId F = declare(X.M, "cc", X.C.func({X.I32}, X.I32, false, Ty));
+      X.M.func(F).CC = Fn;
+      Body(X, F);
+      if (Fn == Ty)
+        EXPECT_GIR_VALID(X.M);
+      else
+        EXPECT_GIR_RULE(X.M, "V075");
+    }
+  // A callback (a C function that takes a function): the parameter is a C
+  // function pointer.
+  auto CallTakes = [](PlaceFixture &X, Type *Param, Operand Arg) {
+    FuncId Takes = cDecl(X, "takes", {Param}, X.Unit);
+    BlockId B1 = X.fn(X.P).addBlock();
+    X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+    LocalId T = X.local(X.Unit);
+    X.fn(X.P).Blocks[0].Term = callOf(constFunc(X.M, Takes), {std::move(Arg)},
+                                      localPlace(T, X.Unit), B1);
+  };
+  {
+    PlaceFixture X; // the C-ABI thunk of a Go++ function: valid
+    Type *Cb = X.C.func({X.I32}, X.I32, false, CallConv::C);
+    FuncId Th = cDecl(X, "thunk", {X.I32}, X.I32);
+    Body(X, Th);
+    CallTakes(X, Cb, constFunc(X.M, Th));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a variable of the C function type: its type says it
+    Type *Cb = X.C.func({X.I32}, X.I32, false, CallConv::C);
+    CallTakes(X, Cb, copyOf(localPlace(X.local(Cb), Cb)));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // the Go++ function itself: not the parameter's type
+    Type *Cb = X.C.func({X.I32}, X.I32, false, CallConv::C);
+    FuncId G = declare(X.M, "gofn", X.C.func({X.I32}, X.I32));
+    Body(X, G);
+    CallTakes(X, Cb, constFunc(X.M, G));
+    EXPECT_GIR_RULE(X.M, "V062");
+  }
+  {
+    PlaceFixture X; // a C function taking a Go++ function pointer
+    Type *GoCb = X.C.func({X.I32}, X.I32);
+    FuncId G = declare(X.M, "gofn", GoCb);
+    Body(X, G);
+    CallTakes(X, GoCb, constFunc(X.M, G));
+    EXPECT_GIR_RULE(X.M, "V067");
+  }
+  {
+    PlaceFixture X; // Go++ calling Go++ with a Go++ function: free
+    Type *Cb = X.C.func({X.I32}, X.I32);
+    FuncId G = declare(X.M, "gotakes", X.C.func({Cb}, X.Unit));
+    FuncBuilder GB(X.M, X.fn(G));
+    GB.ret();
+    FuncId F2 = declare(X.M, "gofn", Cb);
+    Body(X, F2);
+    BlockId B1 = X.fn(X.P).addBlock();
+    X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+    LocalId T = X.local(X.Unit);
+    X.fn(X.P).Blocks[0].Term = callOf(constFunc(X.M, G), {constFunc(X.M, F2)},
+                                      localPlace(T, X.Unit), B1);
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
+TEST(GIRVerifier, V076_ACallThroughACFunctionPointerPassesScalars) {
+  // P04.18: a call through a C function pointer (an allocator's table entry,
+  // ADR-0029) is lowered with the C ABI of scalars; an aggregate needs
+  // Clang's classification of a function value, which is P04.07's. A direct
+  // call of a C function and a call through a Go++ function pointer take
+  // anything.
+  auto CallThrough = [](PlaceFixture &X, Type *Fn, std::vector<Operand> Args) {
+    BlockId B1 = X.fn(X.P).addBlock();
+    X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+    LocalId T = X.local(Fn->ret());
+    X.fn(X.P).Blocks[0].Term =
+        callOf(copyOf(localPlace(X.local(Fn), Fn)), std::move(Args),
+               localPlace(T, Fn->ret()), B1);
+  };
+  {
+    PlaceFixture X; // scalars: valid
+    Type *Fn = X.C.func({X.PI64, X.U64, X.Bool}, X.PI64, false, CallConv::C);
+    CallThrough(X, Fn,
+                {copyOf(localPlace(X.LP, X.PI64)), constInt(X.U64, 1),
+                 constBool(X.C, true)});
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a struct parameter
+    Type *Fn = X.C.func({X.Pair}, X.Unit, false, CallConv::C);
+    CallThrough(X, Fn, {copyOf(localPlace(X.LS, X.Pair))});
+    EXPECT_GIR_RULE(X.M, "V076");
+  }
+  {
+    PlaceFixture X; // a struct result
+    Type *Fn = X.C.func({}, X.Pair, false, CallConv::C);
+    CallThrough(X, Fn, {});
+    EXPECT_GIR_RULE(X.M, "V076");
+  }
+  {
+    PlaceFixture X; // through a Go++ function pointer: anything
+    Type *Fn = X.C.func({X.Pair}, X.Pair);
+    CallThrough(X, Fn, {copyOf(localPlace(X.LS, X.Pair))});
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a direct call of a C function with a struct
+    FuncId F = cDecl(X, "takespair", {X.Pair}, X.Unit);
+    BlockId B1 = X.fn(X.P).addBlock();
+    X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
+    LocalId T = X.local(X.Unit);
+    X.fn(X.P).Blocks[0].Term =
+        callOf(constFunc(X.M, F), {copyOf(localPlace(X.LS, X.Pair))},
+               localPlace(T, X.Unit), B1);
+    EXPECT_GIR_VALID(X.M);
+  }
 }
 
 /// A map as the lowering makes it (P04.05): a pointer to gopp.map.
@@ -1713,8 +1851,33 @@ TEST(GIRVerifier, V067_CSignatures) {
   });
   // An array alone: C passes it as a pointer.
   Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.array(X.I32, 4)}, X.Unit); });
-  // A function value is a callback (P04.18).
+  // A function value is a C type as a parameter only, where it is a callback
+  // whose own parameters and result are C types (P04.18); as a result, a
+  // field, or a callback with a string, a callback taking a function or one
+  // that fails, it is not.
+  // (A callback is a C function pointer: its type has the C convention.)
+  {
+    PlaceFixture X;
+    cDecl(X, "okcb", {cFn(X, {}, X.Unit)}, X.Unit);
+    cDecl(X, "okcb2", {cFn(X, {X.Pair, X.I32}, X.Pair), X.I64}, X.I32);
+    EXPECT_GIR_VALID(X.M);
+  }
+  // A Go++ function pointer: C would call it with the C ABI (V075).
   Bad([](PlaceFixture &X) { cDecl(X, "bad", {X.C.func({}, X.Unit)}, X.Unit); });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {}, cFn(X, {}, X.Unit)); });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {structOf(X, "HasCb", {cFn(X, {}, X.Unit)})}, X.Unit);
+  });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {cFn(X, {X.Str}, X.Unit)}, X.Unit);
+  });
+  Bad([](PlaceFixture &X) { cDecl(X, "bad", {cFn(X, {}, X.Str)}, X.Unit); });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {cFn(X, {cFn(X, {}, X.Unit)}, X.Unit)}, X.Unit);
+  });
+  Bad([](PlaceFixture &X) {
+    cDecl(X, "bad", {cFn(X, {}, X.Unit, /*Fails=*/true)}, X.Unit);
+  });
   // An array of zero-size elements (Clang cannot classify it), also of
   // zero-length arrays.
   Bad([](PlaceFixture &X) {
@@ -1737,9 +1900,18 @@ TEST(GIRVerifier, V067_CSignatures) {
     Type *Big = structOf(X, "Big", {X.C.array(X.U8, (uint64_t(1) << 30) + 1)});
     cDecl(X, "bad", {Big}, X.Unit);
   });
-  // A C function with a body takes no struct (C-ABI thunks are P04.18).
-  Bad([](PlaceFixture &X) {
+  // A C function with a body may take and return a struct: the thunk of an
+  // @Export function or a callback (P04.18).
+  {
+    PlaceFixture X;
     FuncId Id = cDecl(X, "cb", {X.Pair}, X.Unit);
+    FuncBuilder B(X.M, X.fn(Id));
+    B.ret();
+    EXPECT_GIR_VALID(X.M);
+  }
+  // ... but not a type that is no C type (a string).
+  Bad([](PlaceFixture &X) {
+    FuncId Id = cDecl(X, "cb", {X.Str}, X.Unit);
     FuncBuilder B(X.M, X.fn(Id));
     B.ret();
   });

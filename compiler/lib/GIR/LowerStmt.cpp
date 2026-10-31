@@ -992,53 +992,67 @@ void Body::lower(const ast::FuncDecl *FD) {
       unsupported(FD, "this parameter list");
       return;
     }
-    // A borrowed []T arrives as (ptr, len) (ADR-0029 point 7): a parameter
-    // without `move`, and a value receiver of a slice type (PAR-1). The body
-    // works on a []T of its own, with a null allocator word that nothing
-    // reads (a borrowed slice is never grown, cloned or freed) and the
-    // length as capacity (SLC-12).
-    auto OwnSlice = [&](unsigned K, const S::Var *V) {
+    // A borrowed string or `[]T` arrives as the pair (ptr, len) (D4.4,
+    // ADR-0029 point 7): a parameter or receiver that passOf makes a View.
+    // The body works on a variable of its own made from it: a string with
+    // capacity 0 (it owns no buffer), a `[]T` with the length as capacity
+    // (SLC-12) and a null allocator word that nothing reads (a borrowed slice
+    // is never grown, cloned in its allocator or freed). The pair and the
+    // variable both carry the parameter's name (the debug-info hand-off, gir.md
+    // section 15).
+    auto OwnView = [&](unsigned K, const S::Var *V) {
+      // (The pair of a string and of a []byte are alike: the variable's
+      // type tells them apart.)
+      Type *GT = L.lowerType(V->Ty, FD->getBegin());
+      if (!GT)
+        return;
+      bool Str = GT->getKind() == Type::Kind::String;
       Rt E(M, FB);
-      Type *ST = ctx().slice(F.Locals[FB.param(K)].Ty->elems()[0]->elem());
-      LocalId Loc = FB.newLocal(ST, Local::Var, V->Name.str());
-      // The debugger's parameter is this slice, not the pair (P04.12).
+      LocalId Loc = FB.newLocal(GT, Local::Var, V->Name.str());
+      // The debugger's parameter is this variable, not the pair (P04.12).
       F.Locals[Loc].Source = true;
       F.Locals[Loc].ArgNo = K + 1;
       FB.storageLive(Loc);
-      Val P = E.param(K);
-      Val Ptr = E.fld(P, 0), Len = E.fld(P, 1);
-      FB.assign(FB.local(Loc),
-                FB.aggregate(AggKind::Slice, ST,
-                             {Ptr.Op, Len.Op, Len.Op,
-                              E.null(ctx().ptr(ctx().u8())).Op}));
+      Val In = E.param(K);
+      Val Ptr = E.fld(In, 0), Len = E.fld(In, 1);
+      if (Str)
+        FB.assign(FB.local(Loc),
+                  FB.aggregate(AggKind::String, GT,
+                               {Ptr.Op, Len.Op, constInt(ctx().u64(), 0)}));
+      else
+        FB.assign(FB.local(Loc),
+                  FB.aggregate(AggKind::Slice, GT,
+                               {Ptr.Op, Len.Op, Len.Op,
+                                E.null(ctx().ptr(ctx().u8())).Op}));
       Scopes.back().Locals.push_back(Loc);
       Vars[V] = Loc;
     };
-    if (Obj->Recv) {
-      F.Locals[FB.param(0)].Name = Obj->Recv->Name.str();
-      if (F.Locals[FB.param(0)].Ty->getKind() == Type::Kind::Tuple &&
-          L.recvBorrowedSlice(Obj)) {
-        OwnSlice(0, Obj->Recv);
-      } else {
-        Vars[Obj->Recv] = FB.param(0);
-        F.Locals[FB.param(0)].Source = true;
+    // Each parameter, the receiver first, as passOf decided its mode. The
+    // debugger shows the parameter (P04.12): the value, or, for a Place, the
+    // caller's place it points to (Local::Deref); for a View, the variable
+    // made from the pair.
+    auto Bind = [&](unsigned K, const S::Var *V, Lowering::Pass P) {
+      F.Locals[FB.param(K)].Name = V->Name.str();
+      switch (P) {
+      case Lowering::Pass::Place:
+        // A pointer to the caller's place (PAR-10).
+        Aliases[V] = FB.param(K);
+        F.Locals[FB.param(K)].Source = true;
+        F.Locals[FB.param(K)].Deref = true;
+        break;
+      case Lowering::Pass::View:
+        OwnView(K, V);
+        break;
+      case Lowering::Pass::Value:
+        Vars[V] = FB.param(K);
+        F.Locals[FB.param(K)].Source = true;
+        break;
       }
-    }
-    for (size_t K = 0; K < Params.size(); ++K) {
-      // A borrowed map is a pointer to the caller's header (PAR-10).
-      F.Locals[FB.param(K + Lead)].Name = Params[K]->Name.str();
-      if (L.mapByPointer(Obj->sig(), K)) {
-        Aliases[Params[K]] = FB.param(K + Lead);
-        F.Locals[FB.param(K + Lead)].Source = true;
-      } else if (F.Locals[FB.param(K + Lead)].Ty->getKind() ==
-                     Type::Kind::Tuple &&
-                 L.sliceBorrowed(Obj->sig(), K)) {
-        OwnSlice(K + Lead, Params[K]);
-      } else {
-        Vars[Params[K]] = FB.param(K + Lead);
-        F.Locals[FB.param(K + Lead)].Source = true;
-      }
-    }
+    };
+    if (Obj->Recv)
+      Bind(0, Obj->Recv, L.passOfRecv(Obj));
+    for (size_t K = 0; K < Params.size(); ++K)
+      Bind(K + Lead, Params[K], L.passOf(Obj->sig(), K));
     // Named results are variables, set to their zero values.
     bool Named = false;
     for (const S::Var *R : Obj->Results)
@@ -1283,6 +1297,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       ValLoc = FB.newLocal(ctx().ptr(VG), Local::Var,
                            cast<ast::Ident>(unparen(R->Value))->Name.str());
       FB.function().Locals[ValLoc].Source = true;
+      FB.function().Locals[ValLoc].Deref = true;
       Scopes.back().Locals.push_back(ValLoc);
       FB.storageLive(ValLoc);
       Aliases[ValVar] = ValLoc;

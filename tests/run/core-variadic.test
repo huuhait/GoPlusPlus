@@ -6,8 +6,11 @@
 // several parameters for the spread of a call with several results, `f(g())`,
 // and refused it (E0439 "this call form"). The spread still works,
 // `two(pair())`, and so does the same call of a method, directly and through
-// an interface. The expected output is what `go run` prints for this very
-// file (Inputs/regen-goldens.py).
+// an interface. P04.18 (moved from P04.06, review R5): the results of a call
+// spread over a variadic parameter, `vf(g())`, bind the fixed parameters
+// and fill the slice with the rest (none left is an empty slice), converted
+// to its element type (`...any`). The expected output is what `go run`
+// prints for this very file (Inputs/regen-goldens.py).
 package main
 
 func vf(a int, rest ...int) int { return a*10 + len(rest) }
@@ -15,6 +18,24 @@ func vf(a int, rest ...int) int { return a*10 + len(rest) }
 func vs(rest ...bool) int { return len(rest) }
 
 func pair() (int, int) { return 3, 4 }
+
+func three() (int, int, int) { return 5, 6, 7 }
+
+func one() int { return 9 }
+
+func bools() (bool, bool) { return true, false }
+
+func intStr() (int, string) { return 2, "x" }
+
+func vsum(a int, rest ...int) int {
+	s := a * 100
+	for _, r := range rest {
+		s += r
+	}
+	return s
+}
+
+func vany(a int, rest ...any) int { return a + len(rest) }
 
 func two(a, b int) int { return a*10 + b }
 
@@ -28,6 +49,9 @@ func main() {
 	println(vf(1), vf(1, 2), vf(1, 2, 3))
 	println(vs(), vs(true))
 	println(two(pair()))
+	println(vf(pair()), vf(three()), vf(one()))
+	println(vsum(pair()), vsum(three()), vsum(one()))
+	println(vs(bools()), vany(intStr()))
 	t := T{100}
 	var i VM = t
 	println(t.Vm(1), t.Vm(1, 2), i.Vm(5), i.Vm(5, 6, 7))
