@@ -1,0 +1,178 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-misc.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-misc.out 0 %}
+// P04.23: channel `<-` as a send method, a receive method and the
+// `v, ok := <-q` form; lazy `&&`/`||` (the right side is a func() bool and
+// runs only if the method calls it; an eager `&&` takes a value and always
+// evaluates it); unary `!`, `^`, `+`; call `n(3)`, `n(3, 4)`; `@Convert`;
+// `[]`/`[]=` on a ring buffer; `<`, `<=`, `>`, `>=` through `<=>`;
+// `==` in a switch case; `*bx` giving a View[P].
+// By hand (evals counts the right-side evaluations): Queue: j=1, n=1; after
+// the discarded receive n=0; Rcv: "7 true", "8 true", "0 false";
+// Flag{true} && true: right side is a constant, evals 0; Flag{false} &&
+// side(true): right side not run, evals 0; Flag{false} || side(true): runs,
+// evals 1; Never never calls it, evals 1; Eager{true} && sideE(true) runs
+// it, evals 2, and so does Eager{false} && sideE(true), evals 3.
+// Num{5}: !n = -5, ^n = 5^0xff = 250, +n = 105, n(3) = 15, n(3,4) = 19.
+// Cel{1.5}: float64(c) = 3 (printed +3.000000e+000). Ring: rg[5] = 9 goes
+// to slot 1, += 4 gives 13, rg[0] = 0. a={1,2}, b={1,3}: a<b true, a<=b
+// true, a>b false, a>=b false, a==b false, a!=b true, a<=>b = 2-3 = -1.
+// The switch picks the second case ("a"). *bx is pp={4,5}: "4 5"; *bx +
+// P{1,1} == P{5,6} is true.
+package main
+
+type Job struct{ id int }
+
+type Queue struct {
+	items []Job
+	n     int
+}
+
+func (q *Queue) <- (v Job) {
+	q.items = append(q.items, v)
+	q.n++
+}
+func (q *Queue) <- () Job {
+	j := q.items[0]
+	q.items = q.items[1:]
+	q.n--
+	return j
+}
+
+type Rcv struct{ items []int }
+
+func (q *Rcv) <- () (int, bool) {
+	if len(q.items) == 0 {
+		return 0, false
+	}
+	j := q.items[0]
+	q.items = q.items[1:]
+	return j, true
+}
+
+type Flag struct{ v bool }
+
+var evals int
+
+func (f Flag) && (g func() bool) Flag {
+	if !f.v {
+		return f
+	}
+	return Flag{g()}
+}
+func (f Flag) || (g func() bool) Flag {
+	if f.v {
+		return f
+	}
+	return Flag{g()}
+}
+
+type Never struct{ v bool }
+
+func (f Never) && (g func() bool) Never { return Never{false} }
+
+type Eager struct{ v bool }
+
+func (f Eager) && (g Eager) Eager { return Eager{f.v && g.v} }
+
+func side(b bool) bool {
+	evals++
+	return b
+}
+func sideE(b bool) Eager {
+	evals++
+	return Eager{b}
+}
+
+type Num struct{ n int }
+
+func (n Num) ! () Num       { return Num{-n.n} }
+func (n Num) ^ () Num       { return Num{n.n ^ 0xff} }
+func (n Num) + () Num       { return Num{n.n + 100} }
+func (n Num) () (k int) int { return n.n * k }
+func (n Num) () (k, l int) int { return n.n * k + l }
+
+type Cel struct{ f float64 }
+
+@Convert
+func (c Cel) Float64() float64 { return c.f * 2 }
+
+type Ring struct {
+	buf [4]int
+}
+
+func (r Ring) [] (i int) int      { return r.buf[i%4] }
+func (r *Ring) []= (i int, v int) { r.buf[i%4] = v }
+
+type P struct{ a, b int }
+
+func (p P) <=> (o P) int {
+	if p.a != o.a {
+		return p.a - o.a
+	}
+	return p.b - o.b
+}
+func (p P) + (o P) P { return P{p.a + o.a, p.b + o.b} }
+func (p P) == (o P) bool { return p.a == o.a && p.b == o.b }
+
+type Box struct{ v *P }
+
+func (b Box) * () View[P] { return *b.v }
+
+func main() {
+	var q Queue
+	q <- Job{1}
+	q <- Job{2}
+	j := <-q
+	println(j.id, q.n)
+	<-q
+	println(q.n)
+
+	r := Rcv{[]int{7, 8}}
+	v, ok := <-r
+	println(v, ok)
+	v, ok = <-r
+	println(v, ok)
+	v, ok = <-r
+	println(v, ok)
+
+	f := Flag{true}
+	g := f && true
+	println(g.v, evals)
+	h := Flag{false} && side(true)
+	println(h.v, evals)
+	k := Flag{false} || side(true)
+	println(k.v, evals)
+	nv := Never{true} && side(true)
+	println(nv.v, evals)
+	e := Eager{true} && sideE(true)
+	println(e.v, evals)
+	e = Eager{false} && sideE(true)
+	println(e.v, evals)
+
+	n := Num{5}
+	println((!n).n, (^n).n, (+n).n, n(3), n(3, 4))
+	c := Cel{1.5}
+	println(float64(c), c.Float64())
+	var rg Ring
+	rg[5] = 9
+	rg[1] += 4
+	println(rg[1], rg[0])
+
+	a := P{1, 2}
+	b := P{1, 3}
+	println(a < b, a <= b, a > b, a >= b, a == b, a != b, a <=> b)
+	switch a {
+	case b:
+		println("b")
+	case P{1, 2}:
+		println("a")
+	}
+	pp := P{4, 5}
+	bx := Box{&pp}
+	w := *bx
+	println(w.a, (*bx).b)
+	println(*bx + P{1, 1} == P{5, 6})
+}

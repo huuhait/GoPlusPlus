@@ -452,3 +452,4 @@ E0446 err_inst_option
 E0447 err_inst_view
 E0448 err_inst_checked_result
 E0449 err_inst_too_large
+E0450 err_inline_marks_conflict

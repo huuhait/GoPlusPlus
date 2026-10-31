@@ -1,0 +1,23 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-generic-r2.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-generic-r2.out 0 %}
+// P04.23 review R2. In a body constrained by `<=> (T) int`, `a < b` is
+// `(a <=> b) < 0` (GEN-13), so at a float instance a NaN follows cmp.Compare
+// (NaN is less than every other value, equal to a NaN): Lt(nan, 1) true,
+// Lt(1, nan) false, Ge(1, nan) true, Ge(nan, nan) true; C(nan, 1) = -1. The
+// other side, plain `nan < 1.0`, stays IEEE (false), printed last.
+package main
+
+func Lt[T interface{ <=> (T) int }](a, b T) bool { return a < b }
+func Ge[T interface{ <=> (T) int }](a, b T) bool { return a >= b }
+func C[T interface{ <=> (T) int }](a, b T) int  { return a <=> b }
+
+func main() {
+	z := 0.0
+	nan := z / z
+	println(Lt(nan, 1.0), Lt(1.0, nan), Ge(1.0, nan), Ge(nan, nan))
+	println(C(nan, 1.0))
+	println(nan < 1.0, nan >= nan)
+}

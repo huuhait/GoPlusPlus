@@ -5,8 +5,14 @@
 // RUN: %gopp gir dump %t.a.girb > %t.dump
 // RUN: diff %t.txt %t.dump
 // RUN: FileCheck %s --input-file=%t.dump
+// RUN: FileCheck %s --input-file=%t.dump --check-prefix=HINT
+// RUN: printf 'GIR\262\000\000\000\000' > %t.old.girb
+// RUN: not %gopp gir dump %t.old.girb 2>&1 | FileCheck %s --check-prefix=OLD
 // P04.01, D4.15: the bitstream is deterministic (two builds, same bytes), and
-// reading it gives back the module the builder made (the dumps are equal).
+// reading it gives back the module the builder made (the dumps are equal),
+// with the inline hints (P04.23: `Function::Inline` is in the format, which is
+// version 0xB3). A file of the previous version (0xB2) has no hint field and
+// is refused, not read as another layout.
 package main
 
 func fib(n int) int {
@@ -17,9 +23,19 @@ func fib(n int) int {
 	return a
 }
 
+@Inline
+func inl(a int) int { return a + 1 }
+
+@NoInline
+func noinl(a int) int { return a + 2 }
+
 func main() {
+	println(inl(1), noinl(1))
 	println("fib", fib(10), true)
 }
 // CHECK: fn _GPF4mainE3fib(_1: i64) -> i64
 // CHECK: fn _GPF4mainE4main() -> ()
 // CHECK: fn _GPF4goppE9print_i64
+// HINT: fn _GPF4mainE3inl(_1: i64) -> i64 [go, external, alwaysinline]
+// HINT: fn _GPF4mainE5noinl(_1: i64) -> i64 [go, external, noinline]
+// OLD: bad GIR file

@@ -330,9 +330,16 @@ Operand Body::lowerFuncLit(const ast::FuncLit *Lit) {
     if (!mayHold(V, LF.Escapes, Lit))
       return errorValue(ctx());
   }
+  const sym::Node *CN = L.Syms.Ctx.closure(ScopeNode, LF.Ordinal);
+  return makeClosure(Lit, LF, VT, CN,
+                     [&](Body &B) { B.lowerLit(Lit, LF, Sig); });
+}
+
+Operand Body::makeClosure(const ast::Expr *Lit, const LitFacts &LF, Type *VT,
+                          const sym::Node *CN,
+                          llvm::function_ref<void(Body &)> Fill) {
   // The closure function: a function of its own, named by its place in the
   // enclosing function (sym::Context::closure).
-  const sym::Node *CN = L.Syms.Ctx.closure(ScopeNode, LF.Ordinal);
   auto Fn = std::make_unique<Function>();
   Fn->Name = sym::mangle(CN);
   Fn->Sig = VT->elems()[0];
@@ -346,7 +353,7 @@ Operand Body::lowerFuncLit(const ast::FuncLit *Lit) {
     Body B(L, M.func(Id), nullptr, CurInst);
     B.ScopeNode = CN;
     B.Facts = Facts;
-    B.lowerLit(Lit, LF, Sig);
+    Fill(B);
   }
   // The environment: a pointer to each captured variable's storage.
   Type *PU8 = ctx().ptr(ctx().u8());
@@ -370,17 +377,8 @@ Operand Body::lowerFuncLit(const ast::FuncLit *Lit) {
   return funcValue(Id, std::move(Env), VT);
 }
 
-void Body::lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
-                    S::SignatureType *Sig) {
+bool Body::bindCaptures(const LitFacts &LF, const ast::Node *At) {
   Function &F = FB.function();
-  at(Lit);
-  pushScope(false);
-  FnSig = Sig;
-  const unsigned Lead = 1; // the environment
-  if (Sig->Params->Elems.size() + Lead != F.numParams()) {
-    unsupported(Lit, "this parameter list");
-    return;
-  }
   // The captured variables: the environment points at a tuple of pointers.
   // Reading them is the function's entry (Statement::Prologue, V077), so a
   // debugger that stops at the closure shows them already.
@@ -391,9 +389,9 @@ void Body::lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
       ++EscapeSteps;
       // (The type the enclosing function's varAddr gives: a pointer to the
       // variable, also for a cell and for a Place parameter.)
-      Type *T = L.lowerType(tyOfObj(V), Lit->getBegin());
+      Type *T = L.lowerType(tyOfObj(V), At->getBegin());
       if (!T)
-        return;
+        return false;
       PTys.push_back(ctx().ptr(T));
     }
     Type *EnvT = ctx().tuple(PTys);
@@ -415,6 +413,22 @@ void Body::lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
     }
     prologueSince(Mark);
   }
+  return true;
+}
+
+void Body::lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
+                    S::SignatureType *Sig) {
+  Function &F = FB.function();
+  at(Lit);
+  pushScope(false);
+  FnSig = Sig;
+  const unsigned Lead = 1; // the environment
+  if (Sig->Params->Elems.size() + Lead != F.numParams()) {
+    unsupported(Lit, "this parameter list");
+    return;
+  }
+  if (!bindCaptures(LF, Lit))
+    return;
   // The parameters, in the order of the signature.
   SmallVector<S::Var *, 4> Params;
   unsigned K = 0;

@@ -75,7 +75,7 @@ enum FuncCode : unsigned {
 enum IndexCode : unsigned { X_Body = 1 };
 
 constexpr unsigned CodeWidth = 3;
-constexpr uint8_t Magic[4] = {'G', 'I', 'R', 0xB2};
+constexpr uint8_t Magic[4] = {'G', 'I', 'R', 0xB3};
 
 struct Rec {
   unsigned Code;
@@ -368,8 +368,12 @@ private:
 
   Rec funcDecl(const Function &F) {
     Rec R{M_FuncDecl, {}};
-    R.Vals = {typeId(F.Sig), static_cast<uint64_t>(F.Link),
-              static_cast<uint64_t>(F.CC), F.NoUnwind, F.NoReturn};
+    R.Vals = {typeId(F.Sig),
+              static_cast<uint64_t>(F.Link),
+              static_cast<uint64_t>(F.CC),
+              F.NoUnwind,
+              F.NoReturn,
+              static_cast<uint64_t>(F.Inline)};
     put(R.Vals, F.Loc);
     R.Vals.append(chars(F.Name));
     return R;
@@ -962,6 +966,7 @@ private:
         F->CC = enumVal(R, CallConv::C);
         F->NoUnwind = R.next();
         F->NoReturn = R.next();
+        F->Inline = enumVal(R, Function::InlineHint::Never);
         F->Loc = span(R);
         F->Name = R.rest();
         if (R.Failed || F->Sig->getKind() != Type::Kind::Func)

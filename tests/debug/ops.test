@@ -1,0 +1,22 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/ops.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/ops.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/ops.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// P04.23, both sides. A frame in an operator method is named in the readable
+// form of appendix A.9, `main.Vec2.+(main.Vec2)` (the overload is told apart
+// by its parameter types), and a plain function keeps `main.f`. The choice is
+// not `Vec2::operator+`: it is the one spelling all Go++ frames use
+// (docs/design/debug-info.md section "Operator frames").
+//
+// GDB: Breakpoint 1, main.Vec2.+(main.Vec2) (a=..., b=...) at {{.*}}ops.gopp:15
+// GDB: #0 {{ *}}main.Vec2.+(main.Vec2) (a=..., b=...) at {{.*}}ops.gopp:15
+// GDB-NEXT: #1 {{.*}} in main.f (a=..., b=...) at {{.*}}ops.gopp:26
+// GDB: a = {X = 1, Y = 2}
+// GDB: b = {X = 3, Y = 4}
+// GDB: Breakpoint 2.{{[0-9]}}, main.Vec2.*(float64) (a=..., k=2)
+// GDB-NOT: _GP
+//
+// LLDB: frame #0: {{.*}}`main.Vec2.+(a=(X = 1, Y = 2), b=(X = 3, Y = 4)) at ops.gopp:15
+// LLDB: frame #1: {{.*}}`main.f(a=(X = 1, Y = 2), b=(X = 3, Y = 4)) at ops.gopp:26
+// LLDB: `main.Vec2.*(a=(X = 4, Y = 6), k=2) at ops.gopp:20
+// LLDB-NOT: _GP

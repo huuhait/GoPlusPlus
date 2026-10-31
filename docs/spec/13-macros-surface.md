@@ -56,7 +56,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 |---|---|---|---|
 | `@Extern("C")` | function | the function is defined in C | P07 |
 | `@Export("C")` | function | emit a C-ABI symbol | P07 |
-| `@Inline`, `@NoInline` | function | inlining hint | P04 |
+| `@Inline`, `@NoInline` | function | inlining hint; a function with both is an error (`err_inline_marks_conflict`, E0450) | P04 |
 | `@Packed` | struct type | no padding | P07 |
 | `@Align(N)` | type | minimum alignment `N` | P07 |
 | `@View` | struct type | the struct may hold view fields; without it a view field is a compile error (`err_view_field_without_attr`) ([OWN-V5](04-ownership.md#44-views-d16)) | this spec |

@@ -1,0 +1,29 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.23: an operator in generic code is decided at the instance, from the
+// instance's real types. `Sum[int]` has the built-in `+` (an `add`, no call
+// of a method); `Sum[Vec2]` calls the user's method. A plain function does
+// the same for the same types (the plain-vs-generic table).
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+
+func Sum[T interface{ + (T) T; Copy }](a, b T) T { return a + b }
+
+func plainInt(a, b int) int       { return a + b }
+func plainVec(a, b Vec2) Vec2     { return a + b }
+
+func main() {
+	println(Sum(1, 2), plainInt(1, 2))
+	v := Sum(Vec2{1, 2}, Vec2{3, 4})
+	w := plainVec(Vec2{1, 2}, Vec2{3, 4})
+	println(v.X, w.Y)
+}
+
+// CHECK-LABEL: fn _GPIF4mainE3SumiE(
+// CHECK-NOT: call
+// CHECK: add
+// CHECK: return
+// CHECK-LABEL: fn _GPIF4mainE3Sum
+// CHECK: call const fn @_GPTo6op_addN4mainE4Vec2LB{{[0-9]+}}_E(

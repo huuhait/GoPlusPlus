@@ -645,5 +645,6 @@ DIAG(err_inst_option, 446, Error, "cannot instantiate %0: its body makes %1, whi
 DIAG(err_inst_view, 447, Error, "cannot instantiate %0: its body makes %1, which is no type: %2 (ADR-0020, GEN-2a)")
 DIAG(err_inst_checked_result, 448, Error, "cannot instantiate %0: its body calls %1, whose last result %2 is error here, so the other results are a checked result (OWN-P10) that the generic body cannot check")
 DIAG(err_inst_too_large, 449, Error, "cannot instantiate %0: %1 (GEN-5)")
+DIAG(err_inline_marks_conflict, 450, Error, "function %0 has both @Inline and @NoInline: the two marks contradict each other")
 
 #undef DIAG

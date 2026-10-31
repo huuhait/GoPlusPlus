@@ -303,6 +303,46 @@ TEST(GIRInline, LeavesWhatIsNotTrivial) {
   EXPECT_GIR_VALID(G.M);
 }
 
+TEST(GIRInline, TheInlineHintsDecideBothSides) {
+  // P04.23: @NoInline keeps a trivial callee a call, @Inline inlines one over
+  // the statement limit, and the same bodies without a mark behave as before.
+  // Returns the calls left in the caller of both.
+  auto Run = [](Function::InlineHint ShortHint, Function::InlineHint LongHint) {
+    GoodModule G;
+    FuncId Short = makeAdd3(G, "short");
+    FuncId Long = declare(G.M, "long", G.C.func({G.I64}, G.I64));
+    {
+      FuncBuilder B(G.M, G.fn(Long));
+      for (unsigned I = 0; I < InlineOptions().MaxStatements + 5; ++I)
+        B.assign(B.local(0),
+                 B.binary(BinOp::Add, copyOf(B.local(1)), constInt(G.I64, I)));
+      B.ret();
+    }
+    G.fn(Short).Inline = ShortHint;
+    G.fn(Long).Inline = LongHint;
+    FuncId Caller = declare(G.M, "caller2", G.C.func({G.I64}, G.I64));
+    {
+      FuncBuilder B(G.M, G.fn(Caller));
+      B.call(constFunc(G.M, Short), {copyOf(B.local(1)), copyOf(B.local(1))},
+             B.local(B.newTemp(G.I64)), {UnwindAction::Continue, NoId});
+      B.call(constFunc(G.M, Long), {copyOf(B.local(1))},
+             B.local(B.newTemp(G.I64)), {UnwindAction::Continue, NoId});
+      B.ret();
+    }
+    inlineTrivial(G.M);
+    EXPECT_GIR_VALID(G.M);
+    return callsIn(G.fn(Caller));
+  };
+  EXPECT_EQ(Run(Function::InlineHint::None, Function::InlineHint::None), 1u);
+  // ^ the trivial one is inlined, the long one stays
+  EXPECT_EQ(Run(Function::InlineHint::Never, Function::InlineHint::None), 2u);
+  // ^ @NoInline: both stay
+  EXPECT_EQ(Run(Function::InlineHint::None, Function::InlineHint::Always), 0u);
+  // ^ @Inline: the long one is inlined too
+  EXPECT_EQ(Run(Function::InlineHint::Never, Function::InlineHint::Always), 1u);
+  // ^ @NoInline stays a call, @Inline is inlined
+}
+
 TEST(GIRInline, LeavesACallWhoseUnwindEdgeIsACleanupBlock) {
   // Inlining would leave the cleanup block without an edge into it (V022).
   GoodModule G;

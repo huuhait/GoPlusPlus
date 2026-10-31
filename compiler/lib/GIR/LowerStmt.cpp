@@ -108,7 +108,7 @@ void Body::recordOps(const ast::Expr *E, LateOps &R) {
     }
     case ast::Node::Kind::IndexExpr: {
       auto *IE = cast<ast::IndexExpr>(X);
-      if (IE->Indices.size() != 1 || I.Operators.count(IE)) {
+      if (IE->Indices.size() != 1 || hasOpMethod(IE)) {
         Root = X;
         X = nullptr;
       } else {
@@ -126,7 +126,7 @@ void Body::recordOps(const ast::Expr *E, LateOps &R) {
       break;
     case ast::Node::Kind::UnaryExpr: {
       auto *U = cast<ast::UnaryExpr>(X);
-      if (U->Op == tok::and_ && !I.Operators.count(U) &&
+      if (U->Op == tok::and_ && !hasOpMethod(U) &&
           !isa<ast::CompositeLit>(unparen(U->X))) {
         X = U->X; // &x: the address is taken where the place is made
       } else {
@@ -195,6 +195,23 @@ Body::Dest Body::recordDest(const ast::Expr *E) {
     }
     return D;
   }
+  if (auto *IE = dyn_cast<ast::IndexExpr>(E)) {
+    // `a[i] = v` through the user's `[]=` (P04.23): not a place. Its
+    // operands are evaluated now (phase 1), the call is the store.
+    const S::OperatorUse *U = opUse(IE);
+    if (U && U->Op == S::OpKind::IndexSet && U->Call && opResolved(*U)) {
+      const S::Selection *SL = selOf(cast<ast::SelectorExpr>(U->Call->Fun));
+      auto *F = SL ? dyn_cast_or_null<S::Func>(SL->Obj) : nullptr;
+      if (F && !sigOf(F)->Params->Elems.empty()) {
+        D.OpSet = U;
+        D.STy = sigOf(F)->Params->Elems.back();
+        recordOps(IE->X, D.Ops);
+        for (const ast::Expr *Idx : IE->Indices)
+          saveOp(Idx, D.Ops);
+        return D;
+      }
+    }
+  }
   if (auto *IE = dyn_cast<ast::IndexExpr>(E); IE && isMapIndex(IE))
     D.STy = mapTypeOf(sTyOf(IE->X))->Elem;
   else
@@ -208,6 +225,8 @@ void Body::deriveDest(Dest &D) {
   if (D.Blank || D.Derived)
     return;
   D.Derived = true;
+  if (D.OpSet)
+    return;
   ReplayScope Scope(*this, D.Ops);
   if (auto *Id = dyn_cast<ast::Ident>(D.E)) {
     D.P = identPlace(Id);
@@ -224,6 +243,10 @@ void Body::store(Dest &D, Operand V, const ast::Node *N) {
   ++LowerSteps;
   if (D.Blank)
     return;
+  if (D.OpSet) {
+    opSetStore(D, std::move(V), N);
+    return;
+  }
   deriveDest(D);
   // Phase 2 of the assignment: the index checks of this target just before
   // its store (the spec: `x[1], x[3] = 4, 5` sets x[1], then panics for x[3]),
@@ -281,7 +304,7 @@ bool Body::multiValues(const ast::Expr *E, size_t Want,
 // Assignment
 //===----------------------------------------------------------------------===//
 
-static bool compoundOp(tok::Kind T, BinOp &Op) {
+bool impl::compoundOp(tok::Kind T, BinOp &Op) {
   switch (T) {
   case tok::add_assign:
     Op = BinOp::Add;
@@ -450,8 +473,12 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
 
 void Body::lowerOpAssign(const ast::AssignStmt *A) {
   BinOp Op;
-  if (!compoundOp(A->Op, Op) || A->Lhs.size() != 1 || A->Rhs.size() != 1 ||
-      I.Operators.count(A)) {
+  if (const S::OperatorUse *U = opUse(A);
+      U && (U->IndexSet || opResolved(*U))) {
+    lowerOpAssignStmt(A, *U);
+    return;
+  }
+  if (!compoundOp(A->Op, Op) || A->Lhs.size() != 1 || A->Rhs.size() != 1) {
     unsupported(A, "this assignment");
     return;
   }
@@ -498,6 +525,10 @@ void Body::lowerAssign(const ast::AssignStmt *A) {
 
 void Body::lowerIncDec(const ast::IncDecStmt *S) {
   at(S);
+  if (const S::OperatorUse *U = opUse(S); U && opResolved(*U)) {
+    lowerOpCallStmt(S, *U);
+    return;
+  }
   Dest D = recordDest(S->X);
   if (D.Blank)
     return;
@@ -686,7 +717,7 @@ void Body::lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
   if (AllConst)
     for (const ast::Stmt *St : Clauses)
       for (const ast::Expr *E : cast<ast::CaseClause>(St)->List)
-        if (!isConst(E))
+        if (!isConst(E) || I.CaseOperators.count(E))
           AllConst = false;
   if (AllConst) {
     SmallVector<SwitchCase, 8> Cases;
@@ -705,7 +736,9 @@ void Body::lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
     auto *CC = cast<ast::CaseClause>(Clauses[K]);
     for (const ast::Expr *E : CC->List) {
       Operand Cond;
-      if (Tag != NoId) {
+      if (Tag != NoId && opSwitchCase(Sw->Tag, Tag, E, Cond)) {
+        // (a `==` method: the tag against the case value)
+      } else if (Tag != NoId) {
         Operand V = valueFor(E, TagS);
         Cond = equality(true, copyOf(FB.local(Tag)), std::move(V), TagS, E);
       } else {
@@ -982,6 +1015,12 @@ void Body::lowerStmt(const ast::Stmt *St) {
       lowerCall(C);
       return;
     }
+    // `<-q` through a `<-` method (CON-22).
+    if (hasOpMethod(E)) {
+      at(St);
+      lowerExpr(E);
+      return;
+    }
     unsupported(St, "this expression statement");
     return;
   }
@@ -1035,9 +1074,16 @@ void Body::lowerStmt(const ast::Stmt *St) {
   case K::DeferStmt:
     unsupported(St, "a defer statement (P04.26)");
     return;
+  case K::SendStmt:
+    // `q <- v` through a `<-` method (CON-22): an ordinary call.
+    if (const S::OperatorUse *U = opUse(St); U && opResolved(*U)) {
+      lowerOpCallStmt(St, *U);
+      return;
+    }
+    unsupported(St, "concurrency statements (P12)");
+    return;
   case K::GoStmt:
   case K::SelectStmt:
-  case K::SendStmt:
     unsupported(St, "concurrency statements (P12)");
     return;
   default:
@@ -1358,6 +1404,12 @@ void Body::endMapIteration(LocalId It) {
 /// running iteration of the map until the loop is left on any path (RNG-4).
 void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
   ++LowerSteps;
+  if (hasOpMethod(R)) {
+    // `for v := range t` through a `range` method lowers as range-over-func.
+    unsupported(R, "a range over a user type with a range method "
+                   "(range over func, P04.27)");
+    return;
+  }
   pushScope();
   S::Type *XS = sTyOf(R->X);
   S::Type *U = XS ? S::under(XS) : nullptr;

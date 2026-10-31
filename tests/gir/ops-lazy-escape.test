@@ -1,0 +1,46 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.23 review R3: the closure of a lazy `&&` is decided like a func literal
+// passed to the operator method. A method that keeps it (`K`) gets a closure
+// whose captured variable lives in a heap cell; a method that only calls it
+// (`N`) gets a frame closure: no allocation in the caller.
+package main
+
+var kept func() bool = func() bool { return false }
+
+type K struct{ v bool }
+
+func (f K) && (g func() bool) K {
+	kept = g
+	return f
+}
+
+type N struct{ v bool }
+
+func (f N) && (g func() bool) N {
+	if !f.v {
+		return f
+	}
+	return N{g()}
+}
+
+func keptCase(k int) K {
+	x := k
+	return K{true} && (x > 1)
+}
+
+func frameCase(k int) N {
+	x := k
+	return N{true} && (x > 1)
+}
+
+func main() {
+	keptCase(3)
+	println(kept(), frameCase(3).v)
+}
+
+// CHECK-LABEL: fn _GPF4mainE8keptCase(
+// CHECK: mem_resize
+// CHECK: op_land
+// CHECK-LABEL: fn _GPF4mainE9frameCase(
+// CHECK-NOT: mem_resize
+// CHECK: op_land

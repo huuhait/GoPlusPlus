@@ -1,0 +1,20 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.23 review R7: a lazy operator in the initializer of a blank package
+// variable has no function to give its closure a symbol context: one E0439
+// naming P04.27. The other side: the same expression in a function is fine.
+package main
+
+type L struct{ v bool }
+
+func (f L) && (g func() bool) L { return L{g()} }
+
+var _ = L{true} && (1 > 0)
+
+func ok(x int) bool {
+	r := L{true} && (x > 0)
+	return r.v
+}
+
+func main() { println(ok(1)) }
+
+// CHECK: : error[E0439]: a lazy operator in the initializer of a blank variable (P04.27)

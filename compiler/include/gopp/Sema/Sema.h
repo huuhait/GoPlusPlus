@@ -207,6 +207,11 @@ struct Info {
   /// UnaryExpr, StarExpr, IndexExpr, CallExpr, AssignStmt, IncDecStmt,
   /// SendStmt, RangeStmt, a `case` value) (ADR-0024).
   llvm::DenseMap<const ast::Node *, OperatorUse> Operators;
+  /// The comparison of a `switch` tag with a case value through a `==`
+  /// method (EXP-20), keyed by the case value. Not in Operators: the case
+  /// value is an expression with an operator record of its own when it is
+  /// `a + b`, and the key is that node.
+  llvm::DenseMap<const ast::Expr *, OperatorUse> CaseOperators;
   /// Every scale change of a value with a unit (ADR-0025); an expression with
   /// no entry is not rescaled.
   llvm::DenseMap<const ast::Expr *, UnitConv> UnitConvs;
@@ -475,8 +480,13 @@ public:
   /// In.Recv) resolved on Recv, the receiver's type at an instance: the
   /// field or method the plain code `x.f` would find (the same lookup, so a
   /// method of a type parameter's constraint is the concrete type's
-  /// method). False if there is none (the caller reports).
-  bool resolveSelection(const Selection &In, Type *Recv, Selection &Out);
+  /// method). False if there is none (the caller reports). For an operator
+  /// element of a constraint (In.Obj is an operator method) ElemSig is the
+  /// element's signature at the instance: the method is then the one of the
+  /// overload set with that signature (Checker::opAtInstance), and false
+  /// means the built-in operator.
+  bool resolveSelection(const Selection &In, Type *Recv, Selection &Out,
+                        Type *ElemSig = nullptr);
   /// ADR-0018 point 11 and ADR-0020 on a type argument at an instance: why
   /// Option[Arg] or View[Arg] is not allowed, or null (the plain code's
   /// predicates, Checker::badOptionArg and badViewArg).

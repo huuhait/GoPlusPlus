@@ -43,6 +43,10 @@ struct LowerOptions {
   /// Test-only: a call emits GIR for every pair of its map-entry arguments
   /// (the quadratic emission the stress test's control must catch).
   bool PairwiseEntryArgs = false;
+  /// Test-only (P04.23): an operator call copies every enclosing replay of
+  /// saved operands into its own, the quadratic algorithm that a nest of
+  /// `@Right` calls would make (the stress test's control must catch it).
+  bool CopyEnclosingReplays = false;
   /// Test-only (P04.25, ADR-0029): `@Extern("C")` declarations named
   /// `gopp_test_*` are compiler intrinsics that build a slice or a map around
   /// a counting allocator object (two exist; a unit test may pass its own),

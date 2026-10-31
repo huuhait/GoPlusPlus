@@ -3614,6 +3614,14 @@ type P struct{ N int }
 @Abstract
 func (p *P) M()
 )X")
+EXPLAIN(err_inline_marks_conflict,
+        "A function has at most one of @Inline and @NoInline: the first asks for the call to be inlined whatever the size, the second forbids it. Remove one.",
+        R"X(package p
+
+@Inline
+@NoInline
+func f(a int) int { return a + 1 }
+)X")
 EXPLAIN(err_abstract_body,
         "An @Abstract method has no body: every child must write it (TYP-18). Remove the body, or remove @Abstract and keep the body as a @Virtual method.",
         R"X(package p

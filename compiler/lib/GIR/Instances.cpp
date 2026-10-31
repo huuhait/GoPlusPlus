@@ -408,7 +408,12 @@ const S::Selection *InstanceWalk::selection(GenericInst *Cur,
   auto [CIt, New] = Cur->Sels.try_emplace(E, std::nullopt);
   if (New) {
     S::Selection Out;
-    if (MS.resolveSelection(In, Recv, Out))
+    // An operator element: its signature at the instance picks the overload.
+    S::Type *ElemSig = nullptr;
+    if (auto *OF = llvm::dyn_cast_or_null<S::Func>(In.Obj);
+        OF && OF->Op != S::OpKind::None)
+      ElemSig = inst(Cur, OF->Ty);
+    if (MS.resolveSelection(In, Recv, Out, ElemSig))
       CIt->second = Out;
   }
   return CIt->second ? &*CIt->second : nullptr;
@@ -770,6 +775,23 @@ void InstanceWalk::visitExpr(GenericInst *Cur, const ast::Expr *E) {
               TA->getBegin());
 }
 
+void InstanceWalk::visitOperator(GenericInst *Cur, const ast::Node *N) {
+  auto Visit = [&](const S::OperatorUse &U) {
+    for (const ast::CallExpr *C : {U.Call, U.SetCall})
+      if (C)
+        if (auto *Sel = dyn_cast<ast::SelectorExpr>(C->Fun)) {
+          ++Steps;
+          onSelection(Cur, Sel);
+        }
+  };
+  if (auto It = I.Operators.find(N); It != I.Operators.end())
+    Visit(It->second);
+  // (The comparison of a case value with the tag.)
+  if (auto *E = dyn_cast<ast::Expr>(N))
+    if (auto It = I.CaseOperators.find(E); It != I.CaseOperators.end())
+      Visit(It->second);
+}
+
 void InstanceWalk::scanTree(GenericInst *Cur, const ast::Node *Root,
                             const S::Func *Obj) {
   // Each node with the signature of the function, or the function literal,
@@ -802,6 +824,8 @@ void InstanceWalk::scanTree(GenericInst *Cur, const ast::Node *Root,
         if (auto *CC = dyn_cast<ast::CaseClause>(St))
           for (const ast::Expr *T : CC->List)
             described(Cur, inst(Cur, I.typeOf(T)), I.typeOf(T), T->getBegin());
+    if (!I.Operators.empty() || !I.CaseOperators.empty())
+      visitOperator(Cur, N);
     if (auto *E = dyn_cast<ast::Expr>(N)) {
       visitExpr(Cur, E);
       if (auto *C = dyn_cast<ast::CallExpr>(E))

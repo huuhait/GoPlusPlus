@@ -15,7 +15,9 @@
 // has no call, no assertion (so no bounds, nil, division or overflow check),
 // no drop and no cleanup, takes no address (`AddrOf`), has no owned
 // temporary (`Local::Owned`, a drop of P04.09), and has at most
-// MaxStatements statements. Such a function cannot panic and cannot reach any
+// MaxStatements statements (a function marked `@Inline` has no limit on the
+// statements, one marked `@NoInline` is never trivial: `Function::Inline`,
+// P04.23). Such a function cannot panic and cannot reach any
 // other function, so inlining it changes nothing a program can observe: the
 // order of evaluation, the panics and the output are those of the call. In
 // particular it never makes a float product and a sum meet that were not

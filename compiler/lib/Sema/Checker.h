@@ -2222,6 +2222,14 @@ public:
   bool satisfiesOpElem(Type *V, Func *M,
                        const std::function<bool(Type *, Type *)> &Equiv,
                        std::string *Cause);
+  /// The operator method that stands for the constraint element of operator K
+  /// with the signature ElemSig (the element's, written over the instance's
+  /// types) on the concrete type V: the method of V's overload set whose
+  /// signature is identical (the rule satisfiesOpElem applies to meet the
+  /// element), or null when V meets the element with its built-in operator
+  /// (the built-in is then the meaning). The one place that decides what an
+  /// operator element means at an instance (GEN-13, EXP-17).
+  Func *opAtInstance(Type *V, OpKind K, Type *ElemSig);
 };
 
 /// Scope position helper: variables declared in a statement become visible at

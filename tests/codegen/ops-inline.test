@@ -1,0 +1,80 @@
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=O2
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=O0
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=ATTR
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=INC
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=INC
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 -target=linux/arm64 %s | FileCheck %s --check-prefix=O2
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 -target=linux/arm64 %s | FileCheck %s --check-prefix=O0
+// P04.23: `@Inline` and `@NoInline`, both sides, on operator methods.
+//  - `@NoInline` stays a call at opt 2 (the attribute is `noinline`), and
+//    the same body without the mark (`+`) is inlined.
+//  - `@Inline` is inlined by the opt-0 pipeline (the GIR inliner) although
+//    the body is longer than `isTrivial` allows (a loop); the same long body
+//    without the mark (`-`) is not. (From opt 1 LLVM's own inliner takes
+//    both, so the attribute `alwaysinline` is what the opt-2 run checks.)
+//  - a pointer-receiver method that reads and writes one field (`++`) is
+//    trivial: no call in the code at opt 2 and opt 0.
+package main
+
+type V struct{ n int }
+
+func (a V) + (b V) V { return V{a.n + b.n} }
+
+@NoInline
+func (a V) * (b V) V { return V{a.n * b.n} }
+
+@Inline
+func (a V) / (b V) V {
+	s := 0
+	for i := 0; i < b.n; i++ {
+		s += a.n
+	}
+	return V{s}
+}
+
+func (a V) - (b V) V {
+	s := 0
+	for i := 0; i < b.n; i++ {
+		s += a.n
+	}
+	return V{s}
+}
+
+func (a *V) ++ () { a.n = a.n + 1 }
+
+func useAdd(a, b V) V   { return a + b }
+func useMul(a, b V) V   { return a * b }
+func useInl(a, b V) V   { return a / b }
+func useLong(a, b V) V  { return a - b }
+func useInc(a V) V      { a++; return a }
+
+func main() {
+	x := V{3}
+	x = useInc(x)
+	r := useAdd(x, x)
+	r = useMul(r, x)
+	r = useInl(r, x)
+	r = useLong(r, x)
+	println(r.n)
+}
+
+// O2-LABEL: define {{.*}}@_GPF4mainE6useAdd(
+// O2-NOT: call
+// O2: add i64
+// O2-LABEL: define {{.*}}@_GPF4mainE6useMul(
+// O2: call {{.*}}@_GPTo6op_mulN4mainE1VLB{{[0-9]+}}_E(
+// The callee itself carries `noinline`; `@Inline` carries `alwaysinline`.
+// ATTR: ; Function Attrs: {{.*}}noinline
+// ATTR-NEXT: define {{.*}}@_GPTo6op_mulN4mainE1VLB{{[0-9]+}}_E(
+// ATTR: ; Function Attrs: {{.*}}alwaysinline
+// ATTR-NEXT: define {{.*}}@_GPTo6op_quoN4mainE1VLB{{[0-9]+}}_E(
+
+// O0-LABEL: define {{.*}}@_GPF4mainE6useInl(
+// O0-NOT: call {{.*}}op_quo
+// O0: ret
+// O0-LABEL: define {{.*}}@_GPF4mainE7useLong(
+// O0: call {{.*}}@_GPTo6op_subN4mainE1VLB{{[0-9]+}}_E(
+
+// INC-LABEL: define {{.*}}@_GPF4mainE6useInc(
+// INC-NOT: call
+// INC: ret

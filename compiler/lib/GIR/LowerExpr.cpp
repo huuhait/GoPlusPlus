@@ -333,7 +333,7 @@ bool Body::readOnlyContainer(const ast::Expr *X) {
     }
     if (auto *IE = dyn_cast<ast::IndexExpr>(X)) {
       S::Type *T = sTyOf(IE->X);
-      if (I.Operators.count(IE) || !T || isa<S::PointerType>(S::under(T)))
+      if (hasOpMethod(IE) || !T || isa<S::PointerType>(S::under(T)))
         return false;
       X = IE->X; // held in an array, a slice or a map: read-only if it is
       continue;
@@ -382,7 +382,7 @@ Body::PlacePath Body::placePath(const ast::Expr *E) {
       return {PlaceRoot::Stable};
     case ast::Node::Kind::IndexExpr: {
       auto *IE = cast<ast::IndexExpr>(E);
-      if (I.Operators.count(IE))
+      if (hasOpMethod(IE))
         return {PlaceRoot::Temp};
       if (isMapIndex(IE))
         return {readOnlyContainer(IE->X) ? PlaceRoot::ReadOnly
@@ -682,7 +682,7 @@ Place Body::checkedIndex(Place Arr, Operand Idx, uint64_t Len, bool IdxConst,
 }
 
 Place Body::indexPlace(const ast::IndexExpr *IE, Pending *Pend) {
-  if (IE->Indices.size() != 1 || I.Operators.count(IE)) {
+  if (IE->Indices.size() != 1 || hasOpMethod(IE)) {
     unsupported(IE, "this index expression");
     return Place();
   }
@@ -761,10 +761,15 @@ Place Body::lowerPlace(const ast::Expr *E, Pending *Pend) {
       return selectorPlace(cast<ast::SelectorExpr>(E), Pend);
     break;
   case ast::Node::Kind::IndexExpr:
-    if (!isConst(E))
+    // (An operator method's `a[i]` is a value, not a place.)
+    if (!isConst(E) && !hasOpMethod(E))
       return indexPlace(cast<ast::IndexExpr>(E), Pend);
     break;
   case ast::Node::Kind::StarExpr:
+    // A user `*` gives a view, a value like any other call result: the
+    // place of the view (what a reader dereferences, Selection::Indirect).
+    if (hasOpMethod(E))
+      break;
     return starPlace(cast<ast::StarExpr>(E));
   default:
     break;
@@ -794,9 +799,9 @@ Operand Body::lowerIdent(const ast::Ident *Id) {
 
 Operand Body::lowerExpr(const ast::Expr *E) {
   // An operand evaluated before (recordOps): its value then.
-  if (Replay) {
-    auto It = Replay->Saved.find(E);
-    if (It != Replay->Saved.end())
+  for (const LateOps *R = Replay; R; R = R == Replay ? R->Outer : nullptr) {
+    auto It = R->Saved.find(E);
+    if (It != R->Saved.end())
       return copyOf(FB.local(It->second));
   }
   if (isConst(E))
@@ -804,6 +809,12 @@ Operand Body::lowerExpr(const ast::Expr *E) {
   if (I.UnitConvs.count(E)) {
     unsupported(E, "a unit conversion (P04.24)");
     return errorValue(ctx());
+  }
+  // An operator method (P04.23): a call of it.
+  if (!I.Operators.empty()) {
+    Operand Out;
+    if (lowerOperatorExpr(E, Out))
+      return Out;
   }
   switch (E->getKind()) {
   case ast::Node::Kind::ParenExpr:
@@ -1121,10 +1132,6 @@ Operand Body::equality(bool Eq, Operand X, Operand Y, S::Type *T,
 }
 
 Operand Body::lowerBinary(const ast::BinaryExpr *B) {
-  if (I.Operators.count(B)) {
-    unsupported(B, "an operator method (P04.23)");
-    return errorValue(ctx());
-  }
   if (B->Op == tok::land || B->Op == tok::lor)
     return lowerLogical(B);
   BinOp Op;
@@ -1221,10 +1228,6 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
 }
 
 Operand Body::lowerUnary(const ast::UnaryExpr *U) {
-  if (I.Operators.count(U)) {
-    unsupported(U, "an operator method (P04.23)");
-    return errorValue(ctx());
-  }
   if (U->Op == tok::and_) {
     // &x of a variable, a field or an element: a raw pointer to it. A
     // composite literal would be allocated (P05).
@@ -1762,6 +1765,12 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
   if (Recv)
     Late.push_back({0, std::nullopt, Recv->E, Recv->Map, std::move(Recv->Ops)});
   auto AddArg = [&](size_t K, const ast::Expr *A) {
+    // An argument the operator lowering made (the closure of a lazy `&&`, the
+    // value of a `[]=`): it is the value, passed as the parameter says.
+    if (auto R = Ready.find(A); R != Ready.end()) {
+      Args.push_back(argAs(R->second, Sig, K, A));
+      return;
+    }
     if (Ps[K]->getKind() == Type::Kind::Func &&
         Ps[K]->callConv() == CallConv::C) {
       // A C function pointer: a callback of a C function (P04.18).
@@ -1918,6 +1927,12 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
 }
 
 Operand Body::lowerCall(const ast::CallExpr *C) {
+  // `a(x)` through a `()` method, `R(a)` through @Convert (P04.23).
+  if (!I.Operators.empty()) {
+    Operand Out;
+    if (lowerOperatorExpr(C, Out))
+      return Out;
+  }
   return C->isMust() ? lowerBang(C) : lowerPlainCall(C);
 }
 

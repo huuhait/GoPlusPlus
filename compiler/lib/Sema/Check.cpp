@@ -293,6 +293,7 @@ void Info::merge(ArrayRef<Info *> Others) {
   One(&Info::Instances);
   One(&Info::Bangs);
   One(&Info::Operators);
+  One(&Info::CaseOperators);
   One(&Info::UnitConvs);
   One(&Info::UnitSites);
   One(&Info::UnitDisplays);
@@ -698,8 +699,15 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
   // The calls the checker made for operator expressions (ADR-0024) are not
   // source expressions: they are shown as the operator lines below.
   llvm::DenseSet<const ast::Node *> Made;
+  // The uses of the nodes the source wrote, and of the case values compared
+  // with the tag through a `==` method.
+  SmallVector<std::pair<const ast::Node *, const OperatorUse *>, 16> AllOps;
   for (auto &KV : P.I.Operators)
-    for (const ast::CallExpr *C : {KV.second.Call, KV.second.SetCall})
+    AllOps.push_back({KV.first, &KV.second});
+  for (auto &KV : P.I.CaseOperators)
+    AllOps.push_back({KV.first, &KV.second});
+  for (auto &KV : AllOps)
+    for (const ast::CallExpr *C : {KV.second->Call, KV.second->SetCall})
       if (C) {
         Made.insert(C);
         Made.insert(C->Fun);
@@ -772,9 +780,9 @@ void sema::dumpTypes(llvm::raw_ostream &OS, const SourceManager &SM,
   auto Method = [&](const Func *M) {
     return std::string(M->Name) + typeString(M->Ty, Pkg).substr(4);
   };
-  for (auto &KV : P.I.Operators) {
+  for (auto &KV : AllOps) {
     const ast::Node *N = KV.first;
-    const OperatorUse &U = KV.second;
+    const OperatorUse &U = *KV.second;
     if (!N->getBegin().isValid())
       continue;
     std::string L = Loc(N->getBegin()) + " operator `" + Text(N) + "` " +

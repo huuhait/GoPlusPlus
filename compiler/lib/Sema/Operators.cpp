@@ -2295,6 +2295,9 @@ bool Checker::opCompound(const ast::AssignStmt *AS) {
     }
     Elem.M = Mode::Value;
     Elem.E = Ix;
+    // The element is the receiver or an operand of the middle step, which the
+    // lowering reads by this node: its type is recorded (P04.23 review R1).
+    recordOperand(Elem);
     // The middle step: elem op rhs, through the binary rule.
     Operand Y;
     expr(Y, Rhs);
@@ -2640,4 +2643,28 @@ bool Checker::satisfiesOpElem(Type *V, Func *M,
     return false;
   }
   return Fail("");
+}
+
+Func *Checker::opAtInstance(Type *V, OpKind K, Type *ElemSig) {
+  auto *Want = dyn_cast_or_null<SignatureType>(ElemSig);
+  if (!Want || !V || !isValid(V))
+    return nullptr;
+  Type *PV = V;
+  bool IsPtr = false;
+  if (auto *P = dyn_cast<PointerType>(V); P && throughPtr(K)) {
+    PV = P->Elem;
+    IsPtr = true;
+  }
+  SmallVector<Func *, 4> Cs;
+  opCandidates(opBase(PV), K, Cs);
+  for (Func *F : Cs) {
+    if (!identical(F->Ty, Want))
+      continue;
+    if (F->Right && !isCommutativeOp(K))
+      continue;
+    if (F->HasPtrRecv && !IsPtr)
+      continue;
+    return F;
+  }
+  return nullptr;
 }

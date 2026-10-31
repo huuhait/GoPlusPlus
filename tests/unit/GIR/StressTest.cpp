@@ -2013,4 +2013,94 @@ TEST(GIRStress, TheInstanceCheckFailsAScanOfTheInstances) {
   EXPECT_FALSE(walksFollow(M1, M16, 25)) << M1 << " -> " << M16;
 }
 
+// P04.23: operator lowering. Each shape grows one dimension of the operator
+// walks: a @Right chain nested N deep (every level saves its operand and
+// opens a replay), a left chain of N `+` calls, N lazy `&&` operands (each
+// gets a closure frame in the escape analysis), N compound index updates
+// (the receiver and the indices are saved) and N `x++` on a user type. The
+// replay of an operator call sees its own statement's operands one level
+// deep, not a copy of every enclosing replay: the first shape would be
+// quadratic with the copy. The control nests a chain inside a chain.
+const char *OpsPrelude =
+    "package main\n\ntype V struct{ x float64 }\n\n@Right\nfunc (a V) * "
+    "(s float64) V { return V{a.x * s} }\nfunc (a V) + (b V) V { return "
+    "V{a.x + b.x} }\nfunc k() float64 { return 1.5 }\nfunc (a *V) ++ () { a.x "
+    "= a.x + 1 }\n\ntype F struct{ "
+    "v bool }\n\nfunc (f F) && (g func() bool) F {\n\tif !f.v {\n\t\treturn "
+    "f\n\t}\n\treturn F{g()}\n}\n\ntype M struct{ d []float64 }\n\nfunc (m "
+    "M) [] (i, j int) float64 { return m.d[i+j] }\nfunc (m *M) []= (i, j "
+    "int, v float64) { m.d[i+j] = v }\n\n";
+
+std::string opsSwappedNestOfN(unsigned N) {
+  std::string E = "v";
+  for (unsigned I = 0; I < N; ++I)
+    E = "k() * (" + E + ")";
+  return std::string(OpsPrelude) + "func main() {\n\tv := V{1}\n\tr := " + E +
+         "\n\tprintln(r.x)\n}\n";
+}
+std::string opsLeftChainOfN(unsigned N) {
+  std::string E = "v";
+  for (unsigned I = 0; I < N; ++I)
+    E += " + v";
+  return std::string(OpsPrelude) + "func main() {\n\tv := V{1}\n\tr := " + E +
+         "\n\tprintln(r.x)\n}\n";
+}
+std::string opsLazyChainOfN(unsigned N) {
+  std::string E = "F{true}";
+  for (unsigned I = 0; I < N; ++I)
+    E += " && (n > " + std::to_string(I) + ")";
+  return std::string(OpsPrelude) + "func main() {\n\tn := 5\n\tr := " + E +
+         "\n\tprintln(r.v)\n}\n";
+}
+std::string opsCompoundOfN(unsigned N) {
+  std::string S = std::string(OpsPrelude) +
+                  "func main() {\n\tm := M{make([]float64, 64)}\n\tv := "
+                  "V{1}\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tm[" + std::to_string(I % 8) + ", " + std::to_string(I % 5) +
+         "] += 1.5\n\tv++\n";
+  return S + "\tprintln(m[1, 1], v.x)\n}\n";
+}
+/// Steps S1 for N units and S16 for 16N: the dimension is counted (S16 at
+/// least 4 * S1; the runtime's fixed steps flatten the ratio, and the
+/// parser's nesting limit is 1024) and linear (S16 at most 64 * 16N).
+bool opsFollow(uint64_t S1, uint64_t S16, unsigned N) {
+  return S1 != 0 && S16 >= 4 * S1 && S16 <= 64ull * 16 * N;
+}
+void expectOpsFollow(unsigned N, std::string (*Make)(unsigned),
+                     uint64_t (*Count)(unsigned, std::string (*)(unsigned))) {
+  uint64_t S1 = Count(N, Make), S16 = Count(16 * N, Make);
+  EXPECT_TRUE(opsFollow(S1, S16, N)) << S1 << " -> " << S16;
+}
+uint64_t walksOf(unsigned N, std::string (*Make)(unsigned)) {
+  return lowerAndCountWalks(N, Make);
+}
+uint64_t escapeOf(unsigned N, std::string (*Make)(unsigned)) {
+  return lowerAndCountEscape(N, Make);
+}
+
+TEST(GIRStress, OperatorLoweringOfASwappedNestIsLinear) {
+  expectOpsFollow(30, opsSwappedNestOfN, walksOf);
+}
+TEST(GIRStress, OperatorLoweringOfALeftChainIsLinear) {
+  expectOpsFollow(60, opsLeftChainOfN, walksOf);
+}
+TEST(GIRStress, OperatorLoweringOfCompoundUpdatesIsLinear) {
+  expectOpsFollow(20, opsCompoundOfN, walksOf);
+}
+TEST(GIRStress, LazyOperandsAreLinearInTheEscapeAnalysis) {
+  expectOpsFollow(60, opsLazyChainOfN, escapeOf);
+  expectOpsFollow(60, opsLazyChainOfN, walksOf);
+}
+TEST(GIRStress, TheOperatorNestControlFailsTheLinearCheck) {
+  // The control runs the quadratic algorithm (every call copies the replays
+  // around it, LowerOptions::CopyEnclosingReplays) on the same nest.
+  LowerOptions Copy;
+  Copy.CopyEnclosingReplays = true;
+  uint64_t S1 = lowerAndCountWalks(30, opsSwappedNestOfN, Copy),
+           S16 = lowerAndCountWalks(480, opsSwappedNestOfN, Copy);
+  EXPECT_FALSE(opsFollow(S1, S16, 30)) << S1 << " -> " << S16;
+  EXPECT_GT(S16, 64ull * 16 * 30); // over the linear bound, not just flat
+}
+
 } // namespace

@@ -1,0 +1,20 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-generic-index.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-generic-index.out 0 %}
+// P04.23 review R5. `[] (int) E` is met by []E, [N]E and string with the
+// built-in index (GEN-13), also when the constraint has an operator: no
+// refusal at an instance. By hand: GIdx([4,5], 1) = 5, ("hey", 1) = 'e' = 101,
+// ([7,8,9], 2) = 9.
+package main
+
+// GEN-13: `[] (int) E` is met by []E, [N]E and string with the built-in
+// index. Want: 5, 101 (byte 'e'), 9.
+func GIdx[S interface{ [] (int) E }, E Copy](s S, i int) E { return s[i] }
+
+func main() {
+	println(GIdx[[]int, int]([]int{4, 5}, 1))
+	println(GIdx[string, byte]("hey", 1))
+	println(GIdx[[3]int, int]([3]int{7, 8, 9}, 2))
+}

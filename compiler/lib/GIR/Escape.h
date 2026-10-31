@@ -94,7 +94,7 @@ struct LitFacts {
   /// the function), in source order, from 1 (appendix A.5). 0 for a method
   /// value, which is no literal and is named by its method (`TV`).
   unsigned Ordinal = 0;
-  const ast::FuncLit *Parent = nullptr;
+  const ast::Expr *Parent = nullptr;
   /// A literal: the variables of enclosing functions it (or a literal inside
   /// it) uses, in order of first use. A method value of a pointer method:
   /// the variable whose storage holds its receiver (none when the receiver is

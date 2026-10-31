@@ -1,0 +1,46 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.23: what operator lowering leaves to later tasks is refused once each
+// with an E0439 that names the owner: a range over a user type with a `range`
+// method (range over func, P04.27), a func literal as the right operand of
+// a lazy `&&`, a `defer`
+// of an operator call (P04.26) and a `go` (P12). The other side: the operators in `ok` (a call, `+`,
+// `x++`) draw nothing.
+package main
+
+type P struct{ n int }
+
+func (p P) + (o P) P { return P{p.n + o.n} }
+func (p *P) () (k int) int { return p.n + k }
+func (p *P) ++ () { p.n++ }
+
+type T struct{ n int }
+
+func (t *T) range () func(yield func(int) bool) {
+	return func(yield func(int) bool) { yield(t.n) }
+}
+
+type F struct{ v bool }
+
+func (f F) && (g func() func() bool) F { return F{g()()} }
+
+func ok(p P) int {
+	p++
+	q := p + p
+	return q.n
+}
+
+func bad(t T, p P) {
+	_ = F{true} && func() bool { return true }
+	for v := range t {
+		println(v)
+	}
+	defer p(1)
+	go p(2)
+}
+
+func main() { println(ok(P{1})) }
+
+// CHECK: : error[E0439]: a function value as the right operand of a lazy `&&` or `||` (P04.27)
+// CHECK: : error[E0439]: a range over a user type with a range method (range over func, P04.27) is not supported
+// CHECK: : error[E0439]: a defer statement (P04.26) is not supported
+// CHECK: : error[E0439]: concurrency statements (P12) is not supported

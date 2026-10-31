@@ -555,6 +555,18 @@ static const ast::Attribute *findAttr(const ast::FuncDecl *FD, StringRef Name) {
   return nullptr;
 }
 
+/// `@Inline` / `@NoInline` (P04.23). Both on one function: the safer one,
+/// `@NoInline`, wins.
+static Function::InlineHint inlineHintOf(const ast::FuncDecl *FD) {
+  if (!FD->Body)
+    return Function::InlineHint::None;
+  if (findAttr(FD, "NoInline"))
+    return Function::InlineHint::Never;
+  if (findAttr(FD, "Inline"))
+    return Function::InlineHint::Always;
+  return Function::InlineHint::None;
+}
+
 /// The @Extern attribute of FD, or null.
 static const ast::Attribute *externAttr(const ast::FuncDecl *FD) {
   return findAttr(FD, "Extern");
@@ -1021,6 +1033,7 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   F->CC = Ext ? CallConv::C : CallConv::Go;
   F->Sig = Ctx.func(Params, Ret, false, F->CC);
   F->NoUnwind = Ext;
+  F->Inline = inlineHintOf(FD);
   F->Loc = spanOf(FD->getBegin());
   FuncId Id = M->addFunction(std::move(F));
   FuncIds[Obj] = Id;
@@ -1283,6 +1296,7 @@ void Lowering::declareInstance(GenericInst &In) {
   F->Link = Linkage::LinkOnceODR;
   F->CC = CallConv::Go;
   F->Sig = Ctx.func(Params, Ret, false, F->CC);
+  F->Inline = inlineHintOf(FD);
   F->Loc = spanOf(At);
   if (M->lookupFunction(F->Name) != NoId) {
     unsupported(At, "a second function named " + F->Name);

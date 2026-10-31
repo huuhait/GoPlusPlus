@@ -162,7 +162,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // The module: V001-V003, V078
+  // The module: V001-V003, V078, V079
   //===--------------------------------------------------------------------===//
 
   /// V001: every function exists and has a name that no other function has
@@ -178,6 +178,10 @@ private:
         err("V001", "function #" + num(I) + " has no name");
       else if (!Names.insert(Fn->Name).second)
         err("V001", "two functions are named " + Fn->Name);
+      // V079: an inline hint (`@Inline` / `@NoInline`) is on a function with
+      // a body; a declaration has no code to inline or to keep.
+      if (Fn && Fn->Inline != Function::InlineHint::None && Fn->isDeclaration())
+        err("V079", "@" + Fn->Name + " is a declaration with an inline hint");
     }
   }
 

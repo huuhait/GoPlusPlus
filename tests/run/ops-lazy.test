@@ -1,0 +1,73 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-lazy.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-lazy.out 0 %}
+// P04.23: lazy `&&` and `||` (the method takes func() bool, so the right
+// side is a closure that runs only when the method calls it), in plain and in
+// generic code, chained, and inside a closure.
+// By hand: x=5. F{true} && (x++ > 5): runs, x=6, true: "true 6".
+// F{false} && ...: right side not run: "false 6". F{true} && (x>100) ||
+// (x==6): (true && false) = false, then || (6==6) = true: "true".
+// twice(F{true},2): tick(true) and tick(true) both run: n=2: "true 2".
+// twice(F{false},2): neither runs: "false 2". cond: n reset to 0;
+// a && (x>0) || tick(false) && F{true}.v : a && true = true, so the
+// || does not run tick: "true 0". d = F{true} && tick(true) && tick(false)
+// && tick(true): the third is skipped once tick(false) makes it false:
+// n = 2, "false 2". fn(3): 3>2 and x+3 = 9 > 7: true; fn(1): 1>2 false.
+package main
+
+type F struct{ v bool }
+
+func (f F) && (g func() bool) F {
+	if !f.v {
+		return f
+	}
+	return F{g()}
+}
+func (f F) || (g func() bool) F {
+	if f.v {
+		return f
+	}
+	return F{g()}
+}
+
+var n int
+
+func tick(b bool) bool {
+	n++
+	return b
+}
+
+func twice[T interface{ && (func() bool) T }](a T, k int) T {
+	return a && tick(k > 0) && tick(k > 1)
+}
+
+func cond(a F, x int) bool {
+	r := a && (x > 0) || tick(false) && F{true}.v
+	return r.v
+}
+
+func main() {
+	x := 5
+	a := F{true}
+	r := a && func() bool { x++; return x > 5 }()
+	println(r.v, x)
+	b := F{false} && func() bool { x++; return true }()
+	println(b.v, x)
+	c := F{true} && (x > 100) || (x == 6)
+	println(c.v)
+	t := twice(F{true}, 2)
+	println(t.v, n)
+	t = twice(F{false}, 2)
+	println(t.v, n)
+	n = 0
+	println(cond(F{true}, 1), n)
+	d := F{true} && tick(true) && tick(false) && tick(true)
+	println(d.v, n)
+	fn := func(y int) bool {
+		z := F{true} && (y > 2) && (x+y > 7)
+		return z.v
+	}
+	println(fn(3), fn(1))
+}

@@ -1,0 +1,107 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-generic.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-generic.out 0 %}
+// P04.23: operators in generic code. `Sum[int]` is the built-in `+` (no
+// method call; the table in gir/ops-generic.test shows it), `Sum[Vec2]`
+// calls the user's method. Max with `<=>`, Less with `<`, Eq with `==`.
+// By hand: Sum([1,2,3]) = 6 and Sum3(Vec2{1,1},{2,2},{3,3}).X = 6;
+// Sum([1.5,2]) = 3.5; Sum([{1,2},{3,4}]) = {4,6}; Sum3 of three Big =
+// {9,12} with 2 allocations (a+b, then +c); Max(3,4)=4, Max(2.5,1.5)=2.5,
+// Max(Vec2{1,0},Vec2{2,0}).X = 2; Less(1,2) true, Less(2.5,1.0) false,
+// Less(Vec2{1,1},Vec2{2,2}) true; Eq(1,1): `a == b && !(a != b) == false`
+// is true && (!false == false) = true && false = false (also for Vec2{}); 10*Km + 500*M =
+// 10500; Vec[int]{1,2}+Vec[int]{3,4} = {1,4}; SumPlain = 9.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) Clone() Vec2    { return a }
+func (a Vec2) <=> (b Vec2) int {
+	if a.X < b.X {
+		return -1
+	}
+	if a.X > b.X {
+		return 1
+	}
+	return 0
+}
+
+var allocs int
+
+type Big struct{ d []int }
+
+func (a Big) + (b Big) Big {
+	allocs++
+	r := make([]int, len(a.d))
+	for i := 0; i < len(a.d); i++ {
+		r[i] = a.d[i] + b.d[i]
+	}
+	return Big{r}
+}
+func (a Big) Clone() Big {
+	allocs++
+	r := make([]int, len(a.d))
+	copy(r, a.d)
+	return Big{r}
+}
+
+func Sum3[T interface{ + (T) T }](a, b, c T) T { return a + b + c }
+
+func Sum[T interface{ + (T) T; Copy }](xs []T) T {
+	acc := xs[0]
+	for i := 1; i < len(xs); i++ {
+		acc = acc + xs[i]
+	}
+	return acc
+}
+
+func Max[T interface{ Copy; <=> (T) int }](a, b T) T {
+	if a <=> b >= 0 {
+		return a
+	}
+	return b
+}
+
+func Less[T interface{ <=> (T) int }](a, b T) bool { return a < b }
+func Eq[T interface{ == (T) bool }](a, b T) bool { return a == b && !(a != b) == false }
+
+type Meters float64
+
+const (
+	M  Meters = 1
+	Km Meters = 1000
+)
+
+type Vec[T Copy] struct{ a, b T }
+
+func (v Vec[T]) + (o Vec[T]) Vec[T] { return Vec[T]{v.a, o.b} }
+
+func SumPlain(xs []int) int {
+	acc := 0
+	for i := 0; i < len(xs); i++ {
+		acc = acc + xs[i]
+	}
+	return acc
+}
+
+func main() {
+	println(Sum([]int{1, 2, 3}), Sum3(Vec2{1, 1}, Vec2{2, 2}, Vec2{3, 3}).X)
+	println(Sum([]float64{1.5, 2}))
+	s := Sum([]Vec2{{1, 2}, {3, 4}})
+	println(s.X, s.Y)
+	b := Sum3(Big{[]int{1, 2}}, Big{[]int{3, 4}}, Big{[]int{5, 6}})
+	println(b.d[0], b.d[1], allocs)
+	println(Max(3, 4), Max(2.5, 1.5))
+	m := Max(Vec2{1, 0}, Vec2{2, 0})
+	println(m.X)
+	println(Less(1, 2), Less(2.5, 1.0), Less(Vec2{1, 1}, Vec2{2, 2}))
+	println(Eq(1, 1), Eq(Vec2{}, Vec2{}))
+	d := 10*Km + 500*M
+	println(d)
+	v := Vec[int]{1, 2} + Vec[int]{3, 4}
+	println(v.a, v.b)
+	println(SumPlain([]int{4, 5}))
+}

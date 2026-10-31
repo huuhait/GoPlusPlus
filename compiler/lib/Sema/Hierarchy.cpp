@@ -88,6 +88,23 @@ static Func::Mark markOfAttr(StringRef N) {
 void Checker::readMethodMarks(const FuncDecl *FD, Func *Fn) {
   if (S.Opts.GoCompat)
     return;
+  // P04.23: the inlining hints contradict each other (reported once, at the
+  // second of the two marks).
+  {
+    bool In = false, No = false, Reported = false;
+    for (const Attribute *A : FD->Attrs) {
+      if (A->Pkg || !A->Name)
+        continue;
+      StringRef AN = name(A->Name);
+      In |= AN == "Inline";
+      No |= AN == "NoInline";
+      if (In && No && !Reported && (AN == "Inline" || AN == "NoInline")) {
+        Reported = true;
+        err(A->AtLoc, diag::err_inline_marks_conflict,
+            {std::string(name(FD->Name))});
+      }
+    }
+  }
   Func::Mark First = Func::Mark::None;
   bool Conflict = false;
   for (const Attribute *A : FD->Attrs) {

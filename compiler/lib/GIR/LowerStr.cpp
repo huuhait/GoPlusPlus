@@ -411,7 +411,7 @@ Operand Body::lowerStringAdd(const ast::BinaryExpr *B) {
   const ast::Expr *Cur = B;
   while (true) {
     auto *BE = dyn_cast<ast::BinaryExpr>(unparen(Cur));
-    if (!BE || BE->Op != tok::add || isConst(BE) || I.Operators.count(BE) ||
+    if (!BE || BE->Op != tok::add || isConst(BE) || hasOpMethod(BE) ||
         !isStringType(sTyOf(BE)))
       break;
     Leaves.push_back(BE->Y);
@@ -752,8 +752,7 @@ S::MapType *Body::mapTypeOf(S::Type *T) {
 }
 
 bool Body::isMapIndex(const ast::IndexExpr *IE) {
-  return mapTypeOf(sTyOf(IE->X)) && IE->Indices.size() == 1 &&
-         !I.Operators.count(IE);
+  return mapTypeOf(sTyOf(IE->X)) && IE->Indices.size() == 1 && !hasOpMethod(IE);
 }
 
 Operand Body::mapValue(const ast::Expr *E) {

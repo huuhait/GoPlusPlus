@@ -281,6 +281,9 @@ struct Printer {
            : F.Link == Linkage::Internal ? "internal"
                                          : "linkonce_odr")
        << (F.NoUnwind ? ", nounwind" : "") << (F.NoReturn ? ", noreturn" : "")
+       << (F.Inline == Function::InlineHint::Always  ? ", alwaysinline"
+           : F.Inline == Function::InlineHint::Never ? ", noinline"
+                                                     : "")
        << ']';
     if (F.isDeclaration()) {
       OS << '\n';

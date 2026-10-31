@@ -1,0 +1,75 @@
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=ADD
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=ADD
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 -target=linux/arm64 %s | FileCheck %s --check-prefix=ADD
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 -target=linux/arm64 %s | FileCheck %s --check-prefix=ADD
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=SCALED
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=LOOP
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 %s | sed -n '/^define.*@_GPF4mainE7loopOps(/,/^}/p' | sed -E 's/%[A-Za-z0-9_.]+/%v/g;s/@\.pos[.0-9]*/@pos/g;s/!llvm.loop ![0-9]+/!llvm.loop !N/g;s/E7loopOps|E8loopHand/E4loop/g' > %t.ops
+// RUN: %gopp build -no-debug -emit=llvm -opt=2 %s | sed -n '/^define.*@_GPF4mainE8loopHand(/,/^}/p' | sed -E 's/%[A-Za-z0-9_.]+/%v/g;s/@\.pos[.0-9]*/@pos/g;s/!llvm.loop ![0-9]+/!llvm.loop !N/g;s/E7loopOps|E8loopHand/E4loop/g' > %t.hand
+// RUN: test -s %t.ops
+// RUN: diff %t.ops %t.hand
+// P04.23 (ADR-0024): `a + b` on a two-float struct is two `fadd` and nothing
+// else: the operator method is a trivial function, the GIR inliner of every
+// pipeline (opt 0 too) inlines it, so the caller has no call and no
+// allocation. A loop of `acc = acc + x` is the same IR as the hand-written
+// field math `loopHand`: at opt 2 the two bodies are diffed with the value
+// names made equal; at opt 0 the loop has two `fadd` and no call. The other side: `scaled` calls an operator that has a loop, so it
+// is not inlined by the GIR inliner of opt 0 and its call stays (LLVM's own
+// inliner may take it from opt 1).
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+
+func add(a, b Vec2) Vec2 { return a + b }
+
+func (a Vec2) * (k int) Vec2 {
+	r := Vec2{}
+	for i := 0; i < k; i++ {
+		r = Vec2{r.X + a.X, r.Y + a.Y}
+	}
+	return r
+}
+
+func scaled(a Vec2, k int) Vec2 { return a * k }
+
+func loopOps(xs []Vec2) Vec2 {
+	var acc Vec2
+	for i := 0; i < len(xs); i++ {
+		acc = acc + xs[i]
+	}
+	return acc
+}
+
+func loopHand(xs []Vec2) Vec2 {
+	var acc Vec2
+	for i := 0; i < len(xs); i++ {
+		x := xs[i]
+		acc = Vec2{acc.X + x.X, acc.Y + x.Y}
+	}
+	return acc
+}
+
+func main() {
+	println(scaled(Vec2{1, 1}, 2).X, loopOps(nil).X, loopHand(nil).X)
+	r := add(Vec2{1, 2}, Vec2{3, 4})
+	println(r.X, r.Y)
+}
+
+// ADD-LABEL: define {{.*}}@_GPF4mainE3add(
+// ADD-NOT: call
+// ADD-NOT: alloca
+// ADD: fadd double
+// ADD: fadd double
+// ADD-NOT: fadd
+// ADD-NOT: call
+// ADD: ret
+
+// SCALED-LABEL: define {{.*}}@_GPF4mainE6scaled(
+// SCALED: call {{.*}}@_GPTo6op_mulN4mainE4Vec2L{{[A-Za-z0-9_]+}}E(
+
+// LOOP-LABEL: define {{.*}}@_GPF4mainE7loopOps(
+// LOOP-NOT: call swiftcc { double, double }
+// LOOP: fadd double
+// LOOP: fadd double

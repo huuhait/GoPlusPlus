@@ -12,6 +12,7 @@ add_gopp_library(GIR
   LowerExpr.cpp
   LowerFunc.cpp
   LowerIface.cpp
+  LowerOps.cpp
   LowerBang.cpp
   LowerStmt.cpp
   LowerStr.cpp

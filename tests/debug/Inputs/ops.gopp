@@ -1,0 +1,33 @@
+package main
+
+// P04.23: a backtrace stopped in an operator method shows its readable name
+// (appendix A.9, `main.Vec2.+(main.Vec2)`), a plain function's frame still
+// shows `main.f`, and the overloads of one operator are told apart by their
+// parameter types. `+` is @NoInline, so the frame exists; `*` is inlined and
+// shows as an inlined frame of the same kind.
+
+type Vec2 struct {
+	X, Y float64
+}
+
+@NoInline
+func (a Vec2) + (b Vec2) Vec2 {
+	s := Vec2{a.X + b.X, a.Y + b.Y}
+	return s
+}
+
+func (a Vec2) * (k float64) Vec2 {
+	r := Vec2{a.X * k, a.Y * k}
+	return r
+}
+
+//go:noinline
+func f(a, b Vec2) Vec2 {
+	c := a + b
+	return c * 2.0
+}
+
+func main() {
+	v := f(Vec2{1, 2}, Vec2{3, 4})
+	println(v.X, v.Y)
+}

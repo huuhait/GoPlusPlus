@@ -1,0 +1,23 @@
+// RUN: %gopp build -emit=llvm %s -o %t.ll
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P03.24 review, then P04.23: a field of an operator call's result,
+// `(a + b).x`, and a call that is the operand of a compound assignment. While
+// operator methods were not lowered the operator was refused with E0439 and
+// the lowering went on with the refused operand's stand-in, which has no
+// fields (an assertion in FuncBuilder::field). The operator is a call now, so
+// the field is a field of its result.
+package main
+
+type V struct{ x int }
+
+func (a V) + (b V) V { return V{a.x + b.x} }
+
+func inner(n int, a, b V) int {
+	n += (a + b).x
+	return n
+}
+
+func main() { println(inner(1, V{2}, V{3})) }
+
+// CHECK-LABEL: fn _GPF4mainE5inner(
+// CHECK: call const fn @_GPTo6op_addN4mainE1VLB{{[0-9]+}}_E(

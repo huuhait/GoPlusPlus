@@ -1,0 +1,86 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-more.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-more.out 0 %}
+// P04.23: `==` on a user type, `[]=` and `[]` on a ring buffer through a
+// pointer, `++` through slice elements, fields and map elements, @Right
+// operand order and the order of evaluation, a global initialised with an
+// operator, an operator in a closure and in an assignment target.
+// By hand: "xy" == "xy" true, != "z" gives false for ==; r[2]=7, r[3]+=5:
+// "7 5"; arr[1]++ : 3; h.c++ twice: 2; m["a"] += 4 : 1+4 = 5;
+// mk("L",3) * mkv("R",4): @Right makes the V the receiver: x = 4*3 = 12,
+// and the operands are evaluated left to right: log "LR"; `-` @Right is
+// s - a.x = 10 - 4 = 6 (log "LR"); g = V{2}*3.0 = 6; f() = 9+1 = 10;
+// cc += 5 gives 5; arr[0] = arr[1] + 100 = 3 + 100 = 103.
+package main
+
+type Str struct{ s string }
+
+func (a Str) + (b Str) Str { return Str{a.s + b.s} }
+func (a Str) == (b Str) bool { return a.s == b.s }
+
+type Ring struct{ buf [4]int }
+
+func (r Ring) [] (i int) int      { return r.buf[i%4] }
+func (r *Ring) []= (i int, v int) { r.buf[i%4] = v }
+
+type C struct{ n int }
+
+func (c *C) ++ () { c.n++ }
+func (c C) + (k int) C { return C{c.n + k} }
+
+type H struct{ c C }
+
+type V struct{ x float64 }
+
+@Right
+func (a V) * (s float64) V { return V{a.x * s} }
+@Right
+func (a V) - (s float64) V { return V{s - a.x} }
+
+var log string
+
+func mk(tag string, x float64) float64 {
+	log = log + tag
+	return x
+}
+func mkv(tag string, x float64) V {
+	log = log + tag
+	return V{x}
+}
+
+var g = V{2} * 3.0
+
+func main() {
+	a := Str{"x"} + Str{"y"}
+	println(a.s, a == Str{"xy"}, a == Str{"z"})
+	var rr Ring
+	r := &rr
+	r[2] = 7
+	r[3] += 5
+	println(r[2], r[3])
+	arr := []C{{1}, {2}}
+	arr[1]++
+	println(arr[1].n)
+	h := H{}
+	h.c++
+	h.c++
+	println(h.c.n)
+	m := map[string]C{"a": {1}}
+	m["a"] += 4
+	println(m["a"].n)
+	x := mk("L", 3) * mkv("R", 4)
+	println(x.x, log)
+	log = ""
+	y := mk("L", 10) - mkv("R", 4)
+	println(y.x, log)
+	println(g.x)
+	f := func() C { return C{9} + 1 }
+	println(f().n)
+	var cc C
+	cc += 5
+	println(cc.n)
+	arr[0] = arr[1] + 100
+	println(arr[0].n)
+}

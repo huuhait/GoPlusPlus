@@ -1,0 +1,35 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-generic-builtin.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-generic-builtin.out 0 %}
+// P04.23 review R6. Meters has a `*` method only for Seconds, so a generic
+// `*` over two Meters is the built-in one: 3 * 2 = 6 (the method would
+// print "speed" and 6000). The unary/binary pair: `GNeg` finds the unary `-`
+// of U, `GSub` the binary one: -3 and 2.
+package main
+
+type Seconds float64
+type Speed float64
+type Meters float64
+
+func (a Meters) * (b Seconds) Speed { return Speed(float64(a) * float64(b) * 1000) }
+
+func GMul[T interface{ Copy; * (T) T }](a, b T) T { return a * b }
+
+func main() {
+	println(Meters(3) * Meters(2))
+	println(GMul(Meters(3), Meters(2)))
+}
+
+type V struct{ n int }
+
+func (a V) - (b V) V { return V{a.n - b.n} }
+func (a V) - () V    { return V{-a.n} }
+
+func GNeg[T interface{ Copy; - () T }](a T) T { return -a }
+func GSub[T interface{ Copy; - (T) T }](a, b T) T { return a - b }
+
+func init() {
+	println(GNeg(V{3}).n, GSub(V{3}, V{1}).n)
+}

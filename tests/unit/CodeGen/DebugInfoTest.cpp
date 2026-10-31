@@ -905,8 +905,9 @@ func main() {
 }
 
 TEST(DebugInfo, FunctionsGetTheirReadableName) {
-  // An operator method can not run yet (P04.23): its name is checked on the
-  // symbol, on both targets, with and without the linkage name.
+  // An operator method runs since P04.23 (tests/debug/ops.test); here its name
+  // is checked on the symbol, on both targets, with and without the linkage
+  // name.
   Mini X;
   const char *Op = "_GPTo6op_addN4mainE4Vec2LB12_E"; // main.Vec2.+(main.Vec2)
   const char *Fn = "_GPF4mainE3Foo";

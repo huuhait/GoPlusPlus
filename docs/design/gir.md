@@ -256,6 +256,7 @@ An error is `VerifyError{Rule, Func, Block, Index, Message}` and prints as `V027
 | V076 | a call through a C function pointer (not a direct call of a C function) takes and returns scalars: the code generator lowers it with the C ABI of scalars (an allocator's table entry, ADR-0029); an aggregate is P07.08's |
 | V077 | a statement of the function's entry (`Statement::Prologue`: the making of a borrowed string's or `[]T`'s variable, a named result's zero value, a closure's pointers to its captured variables, the pointer of a captured parameter's or result's cell set to its slot (P04.07), their `StorageLive`) lies in the entry block before every other statement: the code generator gives the entry no line, so `break f` stops after all of it (P04.12, `debug-info.md` section 3) |
 | V078 | a function type with a closure environment (`Type::hasEnv`, the code of a func value, P04.07) takes it first, a `*u8`, and has the Go++ convention: the code generator passes it in `swiftself`, which C has no counterpart of |
+| V079 | an inline hint (`Function::Inline`, `@Inline` / `@NoInline`, P04.23) is on a function with a body: a declaration has no code to inline or to keep |
 
 `tests/unit/GIR/VerifierTest.cpp` has both sides of every rule (V073 and V074: `ScopeTest.cpp`): the module that breaks it is rejected under that rule's id, and the nearby module that keeps it passes.
 
@@ -473,7 +474,7 @@ Built today (P04.04; `Lower.cpp` types, declarations, globals and init order; `L
 | P04.18 | done: `goabi::GoAbi` (`swiftcc` on both targets, ADR-0030; results of several values in registers, `(ptr, len)` views, borrowed owning parameters by pointer to the caller's place), the calling convention in the `Func` type, C-ABI thunks for callbacks and `@Export` (`cabi::unpackCParams` / `packCReturn`), V067 for C bodies with aggregates, V073, V074 (`docs/design/calling-convention.md`) |
 | P04.20/21 | borrow and concurrency checks |
 | P04.22 | `extends` type tables |
-| P04.23 | operator calls |
+| P04.23 | done: operator expressions lowered as calls of the checked method (`LowerOps.cpp`), the `cmp.Compare` sequence for the built-in `<=>`, lazy `&&`/`||` as a non-escaping closure frame, `Function::Inline` (`@Inline`/`@NoInline`; `alwaysinline`/`noinline`, `isTrivial`, V079, GIR magic 0xB3), `Info::CaseOperators` for switch cases; `extends` operators (P04.22), `defer`/`go` forms (P04.26/P12) and a `range` method (P04.27) are one E0439 each |
 | P04.24 | units |
 
 ## 16. Tests

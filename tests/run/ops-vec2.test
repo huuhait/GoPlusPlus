@@ -1,0 +1,41 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-vec2.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-vec2.out 0 %}
+// P04.23 (ADR-0024): operator methods run as calls. The golden is by hand
+// (Go has no operator methods). a={1,2}, b={3,4}:
+//   a+b = {4,6}; -a*2.0 = {-2,-4}; 2.0*a = {2,4} (@Right: the receiver is
+//   the right operand, so 2.0*a == a*2.0); 1.0/a = {1/1, 1/2} = {1,0.5}
+//   (@Right swaps: s / a.X); c += b : c = {4,6}+{3,4} = {7,10};
+//   a != b is the negation of ==: true; a == a: true;
+//   built-in <=>: 3<=>4 = -1, 4<=>3 = 1, 3<=>3 = 0.
+package main
+
+type Vec2 struct{ X, Y float64 }
+
+func (a Vec2) + (b Vec2) Vec2    { return Vec2{a.X + b.X, a.Y + b.Y} }
+func (a Vec2) - (b Vec2) Vec2    { return Vec2{a.X - b.X, a.Y - b.Y} }
+@Right
+func (a Vec2) * (s float64) Vec2 { return Vec2{a.X * s, a.Y * s} }
+func (a Vec2) - () Vec2          { return Vec2{-a.X, -a.Y} }
+func (a Vec2) == (b Vec2) bool   { return a.X == b.X && a.Y == b.Y }
+@Right
+func (a Vec2) / (s float64) Vec2 { return Vec2{s / a.X, s / a.Y} }
+
+func main() {
+	a := Vec2{1, 2}
+	b := Vec2{3, 4}
+	c := a + b
+	println(c.X, c.Y)
+	d := -a * 2.0
+	println(d.X, d.Y)
+	e := 2.0 * a
+	println(e.X, e.Y)
+	f := 1.0 / a
+	println(f.X, f.Y)
+	c += b
+	println(c.X, c.Y)
+	println(a != b, a == a)
+	println(3 <=> 4, 4 <=> 3, 3 <=> 3)
+}

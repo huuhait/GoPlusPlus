@@ -1050,6 +1050,9 @@ private:
   /// the place are read then, and nothing is evaluated twice.
   struct LateOps {
     llvm::SmallDenseMap<const ast::Expr *, LocalId, 4> Saved;
+    /// The replay this one was opened inside (an operator call opened in the
+    /// replay of its statement): looked up second, one level only.
+    const LateOps *Outer = nullptr;
   };
   void recordOps(const ast::Expr *E, LateOps &R);
   const LateOps *Replay = nullptr;
@@ -1236,6 +1239,9 @@ private:
     Pending Checks; // index checks to make before the store
     bool Blank = false;
     S::Type *STy = nullptr;
+    /// `a[i] = v` through the user's `[]=` method (P04.23): no place; the
+    /// operands are recorded in Ops, and the store is the call.
+    const S::OperatorUse *OpSet = nullptr;
     /// `m[k] = v`, `mm[a][b] = v`: each entry is made when the value is
     /// stored, not before: `m[k] = len(m)` reads the map without k, and an
     /// earlier store of the statement may grow the map and move its entries.
@@ -1245,7 +1251,7 @@ private:
     };
     SmallVector<MapKey, 1> MapKeys; // outer to inner
     Operand MapAddr; // the address of the variable that holds the outer map
-    bool ok() const { return Blank || !MapKeys.empty() || P.Ty; }
+    bool ok() const { return Blank || OpSet || !MapKeys.empty() || P.Ty; }
   };
   Dest recordDest(const ast::Expr *E);
   void deriveDest(Dest &D);
@@ -1253,6 +1259,68 @@ private:
   void resolveDest(Dest &D, const ast::Node *N);
   /// The checks of D, its entries, then the store of V.
   void store(Dest &D, Operand V, const ast::Node *N);
+
+  // Operator expressions and statements (LowerOps.cpp, P04.23, ADR-0024).
+  // Every operator that the checker resolved to a method is a call of it
+  // (Info::Operators: OperatorUse::Call is the method call the use stands
+  // for, checked by the ordinary call rules and lowered by lowerPlainCall).
+  // This file's code only decides the order of the operands, the closure of a
+  // lazy `&&`/`||`, the sign tests of `<=>` and where a compound form's
+  // operands are evaluated once.
+  const S::OperatorUse *opUse(const ast::Node *N) const {
+    auto It = I.Operators.find(N);
+    return It == I.Operators.end() ? nullptr : &It->second;
+  }
+  /// Does the use have a method at this instance? A constraint element
+  /// (GEN-13) that a built-in type satisfies has none: its operation is the
+  /// built-in one.
+  bool opResolved(const S::OperatorUse &U);
+  /// Is N an operator use whose method is found at this instance?
+  bool hasOpMethod(const ast::Node *N) {
+    const S::OperatorUse *U = opUse(N);
+    return U && opResolved(*U);
+  }
+  /// The call of U, at the node At. First: the operand that the source
+  /// writes first when the call is the swapped one (`@Right`: the receiver
+  /// is the right operand), else null.
+  Operand opCall(const ast::CallExpr *Call, const S::OperatorUse &U,
+                 const ast::Expr *First, const ast::Node *At);
+  /// E, an operator expression of the checker's record: false when the
+  /// ordinary lowering is the one (no record, or a built-in operation at an
+  /// instance).
+  bool lowerOperatorExpr(const ast::Expr *E, Operand &Out);
+  Operand builtinCmp(const ast::Expr *X, const ast::Expr *Y, S::Type *ResS,
+                     const ast::Node *N);
+  /// The closure of the right operand R of a lazy `&&`/`||`, of func type
+  /// FT (non-escaping: the operator method only calls it).
+  Operand lazyClosure(const ast::Expr *R, S::Type *FT);
+  void lowerOpAssignStmt(const ast::AssignStmt *A, const S::OperatorUse &U);
+  void lowerOpIndexCompound(const ast::AssignStmt *A, const S::OperatorUse &U);
+  /// `x++`, `x--`, `q <- v`: a call of the method.
+  void lowerOpCallStmt(const ast::Stmt *St, const S::OperatorUse &U);
+  /// The store of V through the `[]=` method of D.OpSet.
+  void opSetStore(Dest &D, Operand V, const ast::Node *N);
+  /// The case value E of the switch whose tag is in Tag, when the checker
+  /// compares them through a `==` method; false: the ordinary comparison.
+  bool opSwitchCase(const ast::Expr *Tag, LocalId TagLocal, const ast::Expr *E,
+                    Operand &Cond);
+  /// Evaluates E now and keeps its value for the replay of a later lowering
+  /// of E (recordOps' rule).
+  void saveOp(const ast::Expr *E, LateOps &R);
+  /// Arguments the call being lowered takes as they are (the closure of a
+  /// lazy operator, the value of a `[]=`): keyed by the argument expression
+  /// of the checker's call that stands for them. The value is the argument's
+  /// own value, passed as its parameter says (argAs).
+  llvm::SmallDenseMap<const ast::Expr *, Operand, 2> Ready;
+  /// A closure's code: its captured variables, bound as the first thing it
+  /// does (V077).
+  bool bindCaptures(const LitFacts &LF, const ast::Node *At);
+  /// The closure value of a literal, a method value or a lazy operand N: the
+  /// code (lowered by Fill into the new Body) and the environment.
+  Operand makeClosure(const ast::Expr *N, const LitFacts &LF, Type *VT,
+                      const sym::Node *CN,
+                      llvm::function_ref<void(Body &)> Fill);
+  void lowerLazy(const ast::Expr *R, const LitFacts &LF, S::SignatureType *Sig);
   /// The address of the map at E for a borrowed map parameter (PAR-10).
   Operand mapArgAddr(const ast::Expr *E, LateOps &R);
   /// The same for a borrowed aggregate that holds a map, string or slice
@@ -1331,6 +1399,10 @@ private:
   /// ones.
   void finish();
 };
+
+/// The operation of a compound assignment token (`+=` is Add); false for any
+/// other token.
+bool compoundOp(tok::Kind T, BinOp &Op);
 
 } // namespace impl
 } // namespace gir

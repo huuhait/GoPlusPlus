@@ -1,0 +1,23 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-generic-overload.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-generic-overload.out 0 %}
+// P04.23 review R6. `GMul[T interface{ *(T) T }]` at U picks the overload
+// of U's set whose signature is `*(U) U`, not the first `*` by name: U has
+// `*(W)` ("scale", x100) and `*(U)` ("mul"). By hand: U{3}*U{2} prints
+// "mul" and 6, in plain code and through GMul.
+package main
+
+type W struct{ n int }
+type U struct{ n int }
+
+func (a U) * (k W) U { println("scale"); return U{a.n * k.n * 100} }
+func (a U) * (b U) U { println("mul"); return U{a.n * b.n} }
+
+func GMul[T interface{ Copy; * (T) T }](a, b T) T { return a * b }
+
+func main() {
+	println((U{3} * U{2}).n)
+	println(GMul(U{3}, U{2}).n)
+}

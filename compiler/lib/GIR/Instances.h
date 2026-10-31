@@ -249,6 +249,10 @@ private:
   void scanFunc(GenericInst *Cur, const ast::FuncDecl *FD, const S::Func *Obj);
   void scanTree(GenericInst *Cur, const ast::Node *Root, const S::Func *Obj);
   void visitExpr(GenericInst *Cur, const ast::Expr *E);
+  /// The method calls an operator expression or statement stands for
+  /// (Info::Operators, P04.23) are no node of the tree: their selectors are
+  /// met here, so a method of an instance of a generic type is requested.
+  void visitOperator(GenericInst *Cur, const ast::Node *N);
   void onInstance(GenericInst *Cur, const ast::Expr *E, const S::Instance &In);
   void onSelection(GenericInst *Cur, const ast::SelectorExpr *E);
   /// (FnSig: the signature, as written, of the function or function literal

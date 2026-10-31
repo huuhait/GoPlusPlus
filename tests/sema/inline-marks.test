@@ -1,0 +1,29 @@
+// RUN: not %gopp check %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.23: `@Inline` and `@NoInline` on one function contradict each other
+// (E0450), on a function and on a method, in either order, reported once at
+// the second mark. The other side: each mark alone is accepted.
+package main
+
+type V struct{ n int }
+
+@Inline
+func okInline(a int) int { return a + 1 }
+
+@NoInline
+func okNoInline(a int) int { return a + 2 }
+
+@Inline
+func (v V) okM() int { return v.n }
+
+@Inline
+@NoInline
+func both(a int) int { return a }
+
+@NoInline
+@Inline
+func (v V) bothM() int { return v.n }
+
+func main() { println(okInline(1), okNoInline(1), both(1), V{1}.okM(), V{1}.bothM()) }
+
+// CHECK: :19:1: error[E0450]: function both has both @Inline and @NoInline
+// CHECK: :23:1: error[E0450]: function bothM has both @Inline and @NoInline

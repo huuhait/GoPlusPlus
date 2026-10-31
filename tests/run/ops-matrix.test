@@ -1,0 +1,127 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-matrix.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-matrix.out 0 %}
+// P04.23: `[]` and `[]=` with two indices, compound `m[i, j] += v` (the
+// receiver and the indices are evaluated once: idx() is called once), `+=`
+// in place (a pointer-receiver method, no temporary), `x++`, `x--`.
+// By hand: m[1,2]=5 -> "5 0"; +=1.5 -> 6.5; m[idx(),2] += 1 -> 7.5 with
+// calls==1; o = m+n: o[0,0] = 0+1 = 1, o[1,2] = 7.5+0 = 7.5, allocs = 3
+// (m, n, o); Acc has `+=` so a += 5 gives 5 (the `+` with +1000 is not
+// used); Plain has only `+`: p += 5 is p = p + 5 = 5; ps[idx()] += 10 calls
+// idx once more (calls==2) and ps[1] = 12; c++ c++ c-- = 1+1-10 = -8.
+// Mat2 += allocates nothing (allocs-before = 0, data {11,22}); Mat3 has no
+// `+=`, so `x3 += y3` allocates one temporary (allocs-before = 1, {11,22}).
+package main
+
+var allocs int
+
+type Matrix struct {
+	rows, cols int
+	data       []float64
+}
+
+func NewMatrix(r, c int) Matrix {
+	allocs++
+	return Matrix{r, c, make([]float64, r*c)}
+}
+
+func (m Matrix) [] (i, j int) float64      { return m.data[i*m.cols+j] }
+func (m *Matrix) []= (i, j int, v float64) { m.data[i*m.cols+j] = v }
+func (m Matrix) + (o Matrix) Matrix {
+	r := NewMatrix(m.rows, m.cols)
+	for k := 0; k < len(m.data); k++ {
+		r.data[k] = m.data[k] + o.data[k]
+	}
+	return r
+}
+
+type Acc struct{ n int }
+
+func (a *Acc) += (k int) { a.n += k }
+func (a Acc) + (k int) Acc { return Acc{a.n + k + 1000} }
+
+type Plain struct{ n int }
+
+func (a Plain) + (k int) Plain { return Plain{a.n + k} }
+
+var calls int
+
+func idx() int {
+	calls++
+	return 1
+}
+
+func getp(ps []Plain) *Plain { calls++; return &ps[0] }
+
+type Ctr struct{ n int }
+
+func (c *Ctr) ++ ()   { c.n++ }
+func (c *Ctr) -- ()   { c.n -= 10 }
+
+type Mat2 struct{ data []float64 }
+
+func (m *Mat2) += (o Mat2) {
+	for k := 0; k < len(m.data); k++ {
+		m.data[k] += o.data[k]
+	}
+}
+func (m Mat2) + (o Mat2) Mat2 {
+	allocs++
+	r := make([]float64, len(m.data))
+	for k := 0; k < len(m.data); k++ {
+		r[k] = m.data[k] + o.data[k]
+	}
+	return Mat2{r}
+}
+
+type Mat3 struct{ data []float64 }
+
+func (m Mat3) + (o Mat3) Mat3 {
+	allocs++
+	r := make([]float64, len(m.data))
+	for k := 0; k < len(m.data); k++ {
+		r[k] = m.data[k] + o.data[k]
+	}
+	return Mat3{r}
+}
+
+func main() {
+	m := NewMatrix(2, 3)
+	m[1, 2] = 5.0
+	println(m[1, 2], m[0, 0])
+	m[1, 2] += 1.5
+	println(m[1, 2])
+	m[idx(), 2] += 1.0
+	println(m[1, 2], calls)
+	n := NewMatrix(2, 3)
+	n[0, 0] = 1
+	o := m + n
+	println(o[0, 0], o[1, 2], allocs)
+	var a Acc
+	a += 5
+	println(a.n)
+	var p Plain
+	p += 5
+	println(p.n)
+	ps := []Plain{{1}, {2}}
+	ps[idx()] += 10
+	println(ps[1].n, calls)
+	var c Ctr
+	c++
+	c++
+	c--
+	println(c.n)
+	// In place: no allocation. Without `+=` the same source allocates one
+	// temporary for `x = x + y`.
+	before := allocs
+	x := Mat2{[]float64{1, 2}}
+	y := Mat2{[]float64{10, 20}}
+	x += y
+	println(x.data[0], x.data[1], allocs-before)
+	x3 := Mat3{[]float64{1, 2}}
+	y3 := Mat3{[]float64{10, 20}}
+	x3 += y3
+	println(x3.data[0], x3.data[1], allocs-before)
+}

@@ -392,7 +392,7 @@ Type *MethodSets::subst(Type *T, const TypeMap &Map) {
 }
 
 bool MethodSets::resolveSelection(const Selection &In, Type *Recv,
-                                  Selection &Out) {
+                                  Selection &Out, Type *ElemSig) {
   Out = In;
   Out.Recv = Recv;
   if (!P)
@@ -410,6 +410,12 @@ bool MethodSets::resolveSelection(const Selection &In, Type *Recv,
   Type *LookupT = Recv;
   if (auto *R = dyn_cast<RefType>(C.under(Recv)); R && !R->Borrowed)
     LookupT = R->Elem;
+  Func *Pick = nullptr;
+  if (F && F->Op != OpKind::None && ElemSig) {
+    Pick = C.opAtInstance(LookupT, F->Op, ElemSig);
+    if (!Pick)
+      return false; // the built-in operator
+  }
   Checker::LookupResult R =
       C.lookupFieldOrMethod(LookupT, /*Addressable=*/true,
                             In.Obj->Pkg ? In.Obj->Pkg : P->S.Pkg, In.Obj->Name);
@@ -418,6 +424,10 @@ bool MethodSets::resolveSelection(const Selection &In, Type *Recv,
   if (auto *RF = dyn_cast<Func>(R.Obj)) {
     if (In.K != Selection::MethodVal)
       return false;
+    if (Pick) {
+      RF = Pick;
+      R.Obj = Pick;
+    }
     C.objDecl(RF, nullptr);
     Out.Ty = RF->Ty;
   } else if (auto *V = dyn_cast<Var>(R.Obj)) {

@@ -749,7 +749,7 @@ void Checker::caseValues(Operand &X, ArrayRef<ast::Expr *> Values,
       L.E = Ex; // an error is reported at the case value
       if (opBinary(L, R, nullptr, X.E, Ex, tok::eql, Ex->getBegin())) {
         if (L.M != Mode::Invalid && LastOp.Call)
-          I.Operators[Ex] = LastOp;
+          I.CaseOperators[Ex] = LastOp;
         continue;
       }
     }

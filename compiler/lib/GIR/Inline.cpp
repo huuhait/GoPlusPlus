@@ -23,11 +23,15 @@ bool readsAddress(const Rvalue &R) { return R.K == Rvalue::AddrOf; }
 
 /// Is F a trivial function (see Inline.h)?
 bool isTrivial(const Function &F, const InlineOptions &Opts) {
-  if (F.isDeclaration() || F.Blocks.size() != 1 || F.NoReturn)
+  if (F.isDeclaration() || F.Blocks.size() != 1 || F.NoReturn ||
+      F.Inline == Function::InlineHint::Never)
     return false;
   const BasicBlock &BB = F.Blocks[0];
+  // `@Inline` widens the size limit (nothing else: a call, an assertion or an
+  // address still keeps the function a call here, and LLVM inlines it).
   if (BB.Cleanup || BB.Catch || BB.Term.K != Terminator::Return ||
-      BB.Stmts.size() > Opts.MaxStatements)
+      (BB.Stmts.size() > Opts.MaxStatements &&
+       F.Inline != Function::InlineHint::Always))
     return false;
   for (const Statement &S : counted(Steps, BB.Stmts))
     if (S.K == Statement::Assign && readsAddress(S.RV))

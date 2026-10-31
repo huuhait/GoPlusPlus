@@ -1,0 +1,39 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// GOLDEN: by-hand
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/ops-lazy-kept.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/ops-lazy-kept.out 0 %}
+// P04.23 review R3: a lazy `&&` whose method KEEPS the closure (stores it in
+// a global) must get a closure that outlives the call: its captures live in
+// heap cells, the same decision a func literal passed to that method gets.
+// `mk` returns, its frame is then overwritten by `clobber`, and the kept
+// closure is called: it must still see x = 21 and y[7] = 21. By hand:
+// clobber(1,2,3,4,5): z[3] = 4 and z[15] = 1 (z[15] = a = 1), so 5; the kept
+// closure computes x + y[7] == 2*k = 21 + 21 == 42: true.
+package main
+
+type F struct{ v bool }
+
+var kept func() bool = func() bool { return false }
+
+func (f F) && (g func() bool) F {
+	kept = g
+	return f
+}
+
+func mk(k int) F {
+	x := k
+	y := [8]int{k, k, k, k, k, k, k, k}
+	return F{true} && (x+y[7] == 2*k)
+}
+
+func clobber(a, b, c, d, e int) int {
+	z := [16]int{a, b, c, d, e, a, b, c, d, e, a, b, c, d, e, a}
+	return z[3] + z[15]
+}
+
+func main() {
+	mk(21)
+	println(clobber(1, 2, 3, 4, 5))
+	println(kept())
+}

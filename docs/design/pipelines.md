@@ -39,7 +39,7 @@ The stages, in order. Each one is a `gopp.<stage>` trace scope and is recorded i
 
 ## 3. GIR inlining
 
-`gir::inlineTrivial` (`Inline.h`) inlines a direct call of a *trivial* function: defined in the module, one block ending in `return`, at most 12 statements, no call, no assertion, no drop, no `AddrOf`, no owned temporary (`Local::Owned`, P04.05: a drop P04.09 must place in the callee). Such a function cannot panic and cannot reach any other function, so inlining it changes nothing a program can observe. A call whose unwind edge is a cleanup block is left alone (dead-block removal comes with P04.26).
+`gir::inlineTrivial` (`Inline.h`) inlines a direct call of a *trivial* function: defined in the module, one block ending in `return`, at most 12 statements, no call, no assertion, no drop, no `AddrOf`, no owned temporary (`Local::Owned`, P04.05: a drop P04.09 must place in the callee). A function marked `@NoInline` (`Function::Inline` is `Never`) is never trivial, and one marked `@Inline` (`Always`) is trivial whatever its statement count (the other conditions hold; P04.23); both become the LLVM attributes `noinline` and `alwaysinline`. Such a function cannot panic and cannot reach any other function, so inlining it changes nothing a program can observe. A call whose unwind edge is a cleanup block is left alone (dead-block removal comes with P04.26).
 
 What it makes: the call's block gets `param = arg` copies, the callee's statements on new locals, and `dest = ret` as a copy, then `goto` the call's return block. The copies carry `Statement::Boundary`, which the FMA matcher reads (section 4). The callee stays in the module.
 

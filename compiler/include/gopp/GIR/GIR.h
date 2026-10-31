@@ -403,6 +403,12 @@ public:
   bool NoUnwind = false;
   /// Never returns: a call of it may have no return target (V028).
   bool NoReturn = false;
+  /// `@Inline` / `@NoInline` (P04.23): the function is inlined at every call
+  /// (`alwaysinline`, and GIR inlining ignores its size), or never
+  /// (`noinline`, and GIR inlining leaves its calls). Only a function with a
+  /// body has one (V079).
+  enum class InlineHint : uint8_t { None, Always, Never };
+  InlineHint Inline = InlineHint::None;
   Span Loc;
   /// Local 0 is the return place, locals 1..N the parameters, then the rest.
   std::vector<Local> Locals;

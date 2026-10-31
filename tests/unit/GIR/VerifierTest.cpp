@@ -1729,6 +1729,33 @@ TEST(GIRVerifier, V075_AFunctionHasTheConventionOfItsType) {
   }
 }
 
+TEST(GIRVerifier, V079_AnInlineHintIsOnAFunctionWithABody) {
+  // P04.23: `@Inline` / `@NoInline` are hints for the code of a function; a
+  // declaration (a C function, an @Extern) has none.
+  for (Function::InlineHint H :
+       {Function::InlineHint::Always, Function::InlineHint::Never}) {
+    {
+      PlaceFixture X; // a defined function: valid
+      FuncId F = declare(X.M, "def", X.C.func({}, X.Unit));
+      FuncBuilder B(X.M, X.fn(F));
+      B.ret();
+      X.fn(F).Inline = H;
+      EXPECT_GIR_VALID(X.M);
+    }
+    {
+      PlaceFixture X; // a declaration with a hint: rejected
+      FuncId F = declare(X.M, "decl", X.C.func({}, X.Unit));
+      X.fn(F).Inline = H;
+      EXPECT_GIR_RULE(X.M, "V079");
+    }
+  }
+  {
+    PlaceFixture X; // the other side: a declaration with no hint
+    declare(X.M, "decl", X.C.func({}, X.Unit));
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
 TEST(GIRVerifier, V078_TheEnvironmentIsTheFirstParameterOfTheGoConvention) {
   // P04.07: a Func type with an environment (the code of a closure) takes a
   // *u8 first, in the Go++ convention: the code generator passes it in

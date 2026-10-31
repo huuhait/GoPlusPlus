@@ -100,7 +100,16 @@ UseKind classify(const llvm::SmallVectorImpl<const ast::Node *> &Path,
       auto *Id = dyn_cast<ast::Ident>(unparen(CE->Fun));
       auto It = Id ? I.Uses.find(Id) : I.Uses.end();
       auto *F = It == I.Uses.end() ? nullptr : dyn_cast<S::Func>(It->second);
-      if (F && !F->Recv && !F->IsInterfaceMethod &&
+      // `x.M(arg)`: the method the checker selected (a method of a type of
+      // this package that no child can override; the table knows no other).
+      if (!F)
+        if (auto *Sel = dyn_cast<ast::SelectorExpr>(unparen(CE->Fun))) {
+          auto SI = I.Selections.find(Sel);
+          if (SI != I.Selections.end() &&
+              SI->second.K == S::Selection::MethodVal && !SI->second.Base)
+            F = dyn_cast_or_null<S::Func>(SI->second.Obj);
+        }
+      if (F && !F->IsInterfaceMethod && !F->IsBuiltinMethod &&
           !CE->EllipsisLoc.isValid()) {
         U.Kind = UseKind::Arg;
         U.Callee = F;
@@ -307,12 +316,15 @@ void KeepTable::compute(llvm::ArrayRef<const ast::File *> Files,
   for (const ast::File *File : Files)
     for (const ast::Decl *D : File->Decls) {
       auto *FD = dyn_cast<ast::FuncDecl>(D);
-      if (!FD || !FD->Body || FD->Recv || !FD->Name)
+      if (!FD || !FD->Body || !FD->Name)
         continue;
       auto Def = I.Defs.find(FD->Name);
       auto *Obj =
           Def == I.Defs.end() ? nullptr : dyn_cast<S::Func>(Def->second);
-      if (!Obj || Base.count(Obj))
+      // (A method that a child may override is any of its overrides at a
+      // call: the table does not know it, so its parameters are kept.)
+      if (!Obj || Base.count(Obj) || Obj->IsInterfaceMethod ||
+          Obj->MethodMark != S::Func::Mark::None)
         continue;
       Base[Obj] = Total;
       Total += Obj->Params.size();
@@ -396,7 +408,9 @@ struct VarFacts {
 };
 
 struct Frame {
-  const ast::FuncLit *Lit;
+  /// A function literal, or the right operand of a lazy `&&`/`||` (a closure
+  /// of its own that no literal writes, P04.23).
+  const ast::Expr *Lit;
   const ast::BlockStmt *Body;
   llvm::DenseSet<const S::Var *> Seen;
   unsigned NextOrdinal = 0; // of the literals directly inside this one
@@ -447,6 +461,12 @@ void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
   };
   llvm::DenseMap<const ast::Expr *, Ctx> Ctxs;
   llvm::DenseMap<const S::Var *, const ast::Expr *> HolderOf;
+  /// The right operands of the lazy `&&`/`||` met so far (EXP-21): each is
+  /// a closure over what it uses, passed to the operator method, which is
+  /// borrowed and cannot keep it (it is never a `move` parameter, so it
+  /// never escapes).
+  llvm::DenseSet<const ast::Node *> LazyOperands;
+  llvm::DenseMap<const ast::Node *, const S::Func *> LazyMethod;
   SmallVector<Frame, 8> Frames;
   SmallVector<const ast::Expr *, 8> Order;
   unsigned RootOrdinal = 0;
@@ -509,7 +529,9 @@ void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
           OutT[ScopeStack.back()] = Tick++;
           ScopeStack.pop_back();
         }
-        if (isa<ast::FuncLit>(N)) {
+        if (isa<ast::FuncLit>(N) ||
+            (!Frames.empty() && Frames.back().Lit == N &&
+             LazyOperands.count(N))) {
           Frame F = std::move(Frames.back());
           Frames.pop_back();
           // What the literal captures, its parent captures too, unless the
@@ -530,6 +552,38 @@ void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
         ScopeStack.push_back(In.size());
         In.push_back(Tick++);
         OutT.push_back(~0u);
+      }
+      // A lazy operator's right operand is a closure: its own frame, with
+      // the ordinal a literal in its place would have (appendix A.5), and
+      // always local.
+      if (auto *BE = dyn_cast<ast::BinaryExpr>(N);
+          BE && (BE->Op == tok::land || BE->Op == tok::lor)) {
+        auto OU = I.Operators.find(BE);
+        if (OU != I.Operators.end() && OU->second.Lazy &&
+            !isa<ast::FuncLit>(BE->Y)) {
+          LazyOperands.insert(BE->Y);
+          LazyMethod[BE->Y] = OU->second.Method;
+        }
+      }
+      if (LazyOperands.count(N)) {
+        auto *E = cast<ast::Expr>(N);
+        LitFacts &LF = Out.Lits[E];
+        LF.Parent = Frames.empty() ? nullptr : Frames.back().Lit;
+        LF.Ordinal =
+            Frames.empty() ? ++RootOrdinal : ++Frames.back().NextOrdinal;
+        Order.push_back(E);
+        Frames.push_back({E, nullptr, {}, 0});
+        // The operator method receives the closure as its parameter 0, like
+        // a literal passed in the call `x.M(lit)`: it escapes if the method
+        // keeps it (an interface method, a constraint element or a method the
+        // table does not know keeps it).
+        Ctx &LC = Ctxs[E];
+        LC.Kind = Ctx::Arg;
+        LC.Callee = LazyMethod.lookup(E);
+        LC.Index = 0;
+        // (Not a ParenExpr's inner expression: the frame is the node written
+        // as the operand, whose type is the closure's result.)
+        // The operand is also a node of the scope tree it is in.
       }
       if (auto *Lit = dyn_cast<ast::FuncLit>(N)) {
         LitFacts &LF = Out.Lits[Lit];

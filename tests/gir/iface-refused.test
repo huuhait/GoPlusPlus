@@ -2,15 +2,14 @@
 // RUN: not %gopp build -emit=gir %S/Inputs/iface-refused.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
 // P04.06: what the lowering of methods and interfaces leaves to a later task
 // is refused with one E0439 that names it, where it is: an `@Virtual` method and a child
-// type in an interface (P04.22, once, where the child is made), an operator
-// method (P04.23); a method marked
-// `@Extern("C")` is no C function (E0442). The other side: `Sq.Area` as a
+// type in an interface (P04.22, once, where the child is made); a method marked
+// `@Extern("C")` is no C function (E0442). An operator method is lowered
+// since P04.23 (`Vec.+` in the input draws nothing). The other side: `Sq.Area` as a
 // plain method with `Shape` is fine (the iface run tests run it), and so is
 // a method value and a method expression since P04.07 (`values` in the
 // input), and a method on a map type since P04.18 (its receiver goes by a hidden pointer
 // to the caller's map, PAR-1, PAR-10; run/cc-params.test runs them), and
 // nothing else in this file draws an error.
 // CHECK: :5:1: error[E0439]: a method with @Virtual, @Abstract or @Override (P04.22) is not supported
-// CHECK: :12:1: error[E0439]: an operator method (P04.23) is not supported
 // CHECK: :38:1: error[E0442]: invalid @Extern on Ext: a method cannot be a C function
 // CHECK: :48:6: error[E0439]: a type that extends another (P04.22) is not supported

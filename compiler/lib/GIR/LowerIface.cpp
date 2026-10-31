@@ -51,10 +51,6 @@ bool Lowering::methodSupported(const S::Func *F, SourceLoc At) {
     unsupported(At, "a method with @Virtual, @Abstract or @Override (P04.22)");
     return false;
   }
-  if (F->isOperator() || F->Op != S::OpKind::None) {
-    unsupported(At, "an operator method (P04.23)");
-    return false;
-  }
   // (A method of a generic type is lowered per instance, P04.08; a generic
   // method of a plain type is an instance of its own, P04.28.)
   if (!F->OwnTParams.empty()) {

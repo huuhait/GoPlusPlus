@@ -712,6 +712,10 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
     AL = AL.addFnAttribute(C, llvm::Attribute::NoBuiltin);
   if (F.NoUnwind)
     AL = AL.addFnAttribute(C, llvm::Attribute::NoUnwind);
+  if (F.Inline == G::Function::InlineHint::Always)
+    AL = AL.addFnAttribute(C, llvm::Attribute::AlwaysInline);
+  else if (F.Inline == G::Function::InlineHint::Never)
+    AL = AL.addFnAttribute(C, llvm::Attribute::NoInline);
   if (F.NoReturn)
     AL = AL.addFnAttribute(C, llvm::Attribute::NoReturn)
              .addFnAttribute(C, llvm::Attribute::Cold);

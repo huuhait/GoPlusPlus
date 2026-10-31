@@ -1,0 +1,7 @@
+breakpoint set -f ops.gopp -l 15
+breakpoint set -f ops.gopp -l 20
+run
+bt
+frame variable
+continue
+bt
