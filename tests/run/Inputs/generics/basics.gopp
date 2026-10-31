@@ -1,0 +1,119 @@
+// P04.08: generics against go run (see ../generics-diff.test). A Go program: the .out is `go run`'s.
+package main
+
+type Number interface {
+	~int | ~int32 | ~int64 | ~float64
+}
+
+type Celsius float64
+type ID int32
+
+func Sum[T Number](xs []T) T {
+	var s T
+	for i := 0; i < len(xs); i++ {
+		s += xs[i]
+	}
+	return s
+}
+
+func Abs[T ~int | ~int32 | ~int64 | ~float64](x T) T {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func Index[T comparable](xs []T, v T) int {
+	for i := 0; i < len(xs); i++ {
+		if xs[i] == v {
+			return i
+		}
+	}
+	return -1
+}
+
+type Shape interface{ Area() int }
+type Sq struct{ S int }
+type Rc struct{ W, H int }
+
+func (s Sq) Area() int  { return s.S * s.S }
+func (r *Rc) Area() int { return r.W * r.H }
+
+func Total[S Shape](xs []S) int {
+	t := 0
+	for i := 0; i < len(xs); i++ {
+		t += xs[i].Area()
+	}
+	return t
+}
+
+type Stack[T int | float64 | bool] struct {
+	items []T
+}
+
+func (s *Stack[T]) Push(v T) { s.items = append(s.items, v) }
+func (s *Stack[T]) Len() int { return len(s.items) }
+func (s *Stack[T]) Top() T   { return s.items[len(s.items)-1] }
+func (s Stack[T]) Count() int { return len(s.items) }
+
+type Pair[A, B int | float64 | bool] struct {
+	First  A
+	Second B
+}
+
+func MakePair[A, B int | float64 | bool](a A, b B) Pair[A, B] {
+	return Pair[A, B]{a, b}
+}
+
+func (p Pair[A, B]) Swap() Pair[B, A] { return Pair[B, A]{p.Second, p.First} }
+
+func Fact[T ~int | ~int64](n T) T {
+	if n <= 1 {
+		return 1
+	}
+	return n * Fact(n-1)
+}
+
+func IsEven[T ~int](n T) bool {
+	if n == 0 {
+		return true
+	}
+	return IsOdd(n - 1)
+}
+
+func IsOdd[T ~int](n T) bool {
+	if n == 0 {
+		return false
+	}
+	return IsEven(n - 1)
+}
+
+func Describe[T any](x T) string {
+	switch any(x).(type) {
+	case int:
+		return "int"
+	case string:
+		return "string"
+	}
+	return "other"
+}
+
+func main() {
+	r1, r2 := Rc{2, 3}, Rc{4, 5}
+	println(Sum([]int{1, 2, 3}), Sum([]float64{1.5, 2.5}), Sum([]Celsius{1, 2.5}))
+	println(Abs(-3), Abs(2.5), Abs(ID(-7)))
+	println(Index([]int{4, 5, 6}, 6), Index([]string{"a", "b"}, "b"), Index([]string{"a"}, "z"))
+	println(Total([]Sq{{1}, {2}, {3}}), Total([]*Rc{&r1, &r2}))
+	var s Stack[int]
+	s.Push(10)
+	s.Push(20)
+	println(s.Len(), s.Top(), s.Count())
+	var f Stack[float64]
+	f.Push(1.5)
+	println(f.Len(), f.Top())
+	p := MakePair(1, 2.5)
+	q := p.Swap()
+	println(p.First, p.Second, q.First, q.Second)
+	println(Fact(5), Fact(int64(10)), IsEven(10), IsOdd(7), IsEven(3))
+	println(Describe(1), Describe("s"), Describe(2.5))
+}

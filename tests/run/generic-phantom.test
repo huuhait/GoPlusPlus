@@ -1,0 +1,44 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-phantom.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-phantom.out 0 %}
+// P04.08, review round 1: the instances of a generic type whose fields do
+// not use its type parameters (`Tag[int]`, `Tag[string]` of a
+// `struct{ n int }`) have the checker's one underlying struct, and so one GIR
+// struct, as two defined types of one struct do: a conversion between them,
+// or to and from a plain type of that struct, is no code, in plain and in
+// generic code, by value and by pointer. Their descriptors stay two (a type
+// assertion tells them apart). The expected output is what `go run` prints
+// for this very file (Inputs/regen-goldens.py).
+package main
+
+type Tag[T any] struct{ n int }
+
+type S struct{ n int }
+
+type Two[A, B any] struct {
+	n int
+	s []string
+}
+
+func Conv[T, U any](t Tag[T]) Tag[U] { return Tag[U](t) }
+
+func main() {
+	a := Tag[int]{n: 5}
+	b := Tag[string](a)
+	c := S(b)
+	d := Tag[float64](c)
+	e := Conv[float64, bool](d)
+	println(a.n, b.n, c.n, d.n, e.n)
+	var x any = b
+	_, ok1 := x.(Tag[int])
+	_, ok2 := x.(Tag[string])
+	println(ok1, ok2)
+	t := Two[int, int]{n: 1, s: []string{"a"}}
+	u := Two[Tag[int], S](t)
+	println(u.n, len(u.s), u.s[0])
+	p := &a
+	q := (*Tag[bool])(p)
+	q.n = 9
+	println(a.n)
+}

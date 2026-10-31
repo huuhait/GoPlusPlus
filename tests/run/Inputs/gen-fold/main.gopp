@@ -1,0 +1,11 @@
+package main
+
+@Extern("C")
+func use1() int
+
+@Extern("C")
+func use2() int
+
+func main() {
+	println(use1(), use2())
+}

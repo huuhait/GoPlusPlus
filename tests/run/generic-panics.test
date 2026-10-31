@@ -1,0 +1,15 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names generic-index,generic-assert,generic-assert-nested,generic-assert-fields
+// P04.08: a failed check inside an instance of generic code ends the program
+// as it does in plain code (exit status 2, Go's first line on standard
+// error, after the output that came before). Inputs/panics/generic-index
+// runs At[int], At[string], Div[int], Div[int32] and then At[float64] fails
+// the slice bound check. generic-assert and generic-assert-nested fail a type
+// assertion: the message names the instances as Go does (decision M8, the
+// type descriptor's name, Lowering::rtypeName): `main.Pair[int,string]`,
+// `main.Box[int]`, `main.Box[main.Box[main.Point]]`; generic-assert-fields
+// a struct type argument, whose unexported fields Go spells with the package
+// (`struct { main.a int; main.b int; C string "json:\"c\"" }`, review R3).
+// The expected output and
+// message are `go run`'s (Inputs/gen-goldens.py). core-panics.long.test runs
+// them with every other program of the directory.

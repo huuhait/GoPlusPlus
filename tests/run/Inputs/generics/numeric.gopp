@@ -1,0 +1,75 @@
+// P04.08: generics against go run (see ../generics-diff.test). A Go program: the .out is `go run`'s.
+package main
+
+type Int interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint8 | ~uint32 | ~uint64
+}
+
+type Float interface{ ~float32 | ~float64 }
+
+type Num interface{ Int | Float }
+
+func Conv[T, U Num](x T) U { return U(x) }
+
+func AddOne[T Num](x T) T { return x + 1 }
+
+func Scale[T Float](x T) T { return x * 2.5 }
+
+func Shl[T Int](x T, n uint) T { return x << n }
+
+func Min3[T Int](a, b, c T) T { return min(a, b, c) }
+
+func Len[T ~[]int | ~string](x T) int { return len(x) }
+
+func Make[T Num](n int) []T { return make([]T, n) }
+
+func Fill[T Num](xs []T, v T) {
+	for i := range xs {
+		xs[i] = v
+	}
+}
+
+func SumRange[T Int](n T) T {
+	var s T
+	for i := T(0); i < n; i++ {
+		s += i
+	}
+	return s
+}
+
+func Swap[T Num](a, b *T) {
+	*a, *b = *b, *a
+}
+
+func Cmp[T Int | Float | ~string](a, b T) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+type MyInt int8
+
+func main() {
+	println(Conv[int, float64](3), Conv[float64, int](3.9), Conv[int, uint8](300%256))
+	println(AddOne(41), AddOne(1.5), AddOne(MyInt(5)), AddOne(uint8(255)))
+	println(Scale(2.0), Scale(float32(1.5)), Shl(3, 4), Shl(uint8(200), 1), Shl(int64(1), 40))
+	println(Min3(3, 1, 2), Min3(int8(25), 5, 10))
+	println(Len("hello"), Len([]int{1, 2}))
+	xs := Make[int32](3)
+	Fill(xs, 7)
+	println(len(xs), xs[0], xs[2])
+	ys := Make[float64](2)
+	Fill(ys, 1.5)
+	println(ys[1])
+	println(SumRange(10), SumRange(uint8(20)), SumRange(int64(100000)))
+	a, b := 1, 2
+	Swap(&a, &b)
+	f, g := 1.5, 2.5
+	Swap(&f, &g)
+	println(a, b, f, g)
+	println(Cmp(1, 2), Cmp("b", "a"), Cmp(2.5, 2.5))
+}

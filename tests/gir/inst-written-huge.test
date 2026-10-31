@@ -1,0 +1,17 @@
+// RUN: %gopp check %S/Inputs/inst-written-huge.gopp
+// RUN: %gopp build -emit=gir %S/Inputs/inst-written-huge.gopp | FileCheck %s
+// RUN: %gopp build -emit=obj %S/Inputs/inst-written-huge.gopp -o %t.o
+// RUN: llvm-dwarfdump --debug-info %t.o | FileCheck %s --check-prefix=DWARF
+// P04.08, review R4: GEN-5 bounds only the types an instance makes, so the
+// source may write a type far larger as a tree than as text: a 30-level alias
+// chain of P[A, A] is 2^31 - 1 parts. Every name the build makes of it is
+// bounded (each was as large as the tree: the build hung): the name in its
+// descriptor and in a panic message stops at 65536 parts (`main.P[...]`,
+// Lowering::rtypeShown), its GIR label at 4096 bytes (uniqueTypeName), and
+// its debugger name at 200 bytes per level (DebugInfoBuilder::spell); its
+// symbol shares its repeated parts (P04.17). The checker's own text of such a
+// type is TODO P03.30 (a generic call or an error that names it hangs the
+// checker).
+// CHECK-DAG: str#{{[0-9]+}} "main.P[...]"
+// CHECK-DAG: let _1: main.P[main.P[{{.*}}main.P[...  ; v
+// DWARF: DW_AT_name ("main.P[main.P[main.P[

@@ -954,6 +954,7 @@ void Checker::conversion(Operand &X, Type *T) {
     X.M = Mode::Invalid;
     return;
   }
+  noteIfaceConversion(X.E, X.Ty, T);
   if (checkNilableToNeverNil(X, T))
     return;
   if (own()) {

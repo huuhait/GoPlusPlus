@@ -1,0 +1,53 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/view-option.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/view-option.out 0 %}
+// GOLDEN: by-hand
+// ADR-0031 (a view of a single value has no zero value): the accepted forms
+// run (sema/rules/ADR-0031-example.test has the rejected ones). An
+// Option[View[int]] is nil at first (its nil is the null pointer, as for
+// Option[*T]), `Get` gives nothing, and after it is set from a value `Get`
+// gives the value it looks at; an @View struct set from a value; the empty
+// View[string] and View[[]int]; a map of views read in the comma-ok form; a
+// slice made with length 0 and appended to; two views of equal values
+// compare by value (R10's programs with non-zero views). Go has no views,
+// so the golden is by hand.
+package main
+
+type P struct{ n int }
+
+@View
+type Win struct{ Cur View[P] }
+
+func show(o Option[View[int]]) {
+	if v, ok := o.Get(); ok {
+		println("set", int(v))
+	} else {
+		println("nil")
+	}
+}
+
+func main() {
+	x := 3
+	var o Option[View[int]]
+	show(o)
+	println(o == nil)
+	o = View[int](x)
+	show(o)
+	println(o == nil)
+	p := P{7}
+	w := Win{Cur: View[P](p)}
+	println(w.Cur.n)
+	var sv View[string]
+	var t View[[]int]
+	println(len(sv), len(t))
+	m := map[int]View[int]{1: View[int](x)}
+	if r, ok := m[1]; ok {
+		println(int(r))
+	}
+	s := make([]View[int], 0, 2)
+	s = append(s, View[int](x))
+	println(len(s), int(s[0]))
+	y, z := 5, 5
+	println(View[int](y) == View[int](z))
+}

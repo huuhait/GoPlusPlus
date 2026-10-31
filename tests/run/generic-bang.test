@@ -1,0 +1,124 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-bang.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-bang.out 0 %}
+// P04.08 with P04.10: `!` on instances of generic code, both paths. A generic
+// function that fails with `!` (half), one with Go's `(T, error)` results
+// (pick, also with explicit type arguments), and methods of a generic type
+// that fail (Acc.add, Acc.get), and an instance whose last result is a type
+// parameter that is `error` (Two[error]): `f!(...)` inside a function that can fail
+// returns the error to the caller, zero values for the other results, and
+// on success gives the results without the error; the caller's `v, err :=`
+// sees it. Each instance's error word is the last value of its own result,
+// as the instance's real types lay it out (a T of int or float64). The panic
+// path (a `!` in main) is Inputs/panics-bang/generic.gopp. Go has no `!`, so
+// the golden is `go run`'s of the mechanical Go form of this program
+// (Inputs/go-bang/generic-bang.go), checked by Inputs/check-bang-go.py.
+package main
+
+type negErr struct{}
+
+func (e *negErr) Error() string { return "negative" }
+
+type bigErr struct{}
+
+func (e *bigErr) Error() string { return "too big" }
+
+type shortErr struct{}
+
+func (e *shortErr) Error() string { return "too short" }
+
+var neg negErr
+var big bigErr
+var short shortErr
+
+type Num interface{ ~int | ~float64 }
+
+func half[T Num]!(x T) T {
+	if x < 0 {
+		return 0, &neg
+	}
+	return x / 2
+}
+
+func pick[T Num](xs []T, i int) (T, error) {
+	if i >= len(xs) {
+		return 0, &short
+	}
+	return xs[i], nil
+}
+
+type Acc[T Num] struct{ sum T }
+
+func (a *Acc[T]) add!(x T) {
+	if x < 0 {
+		return &neg
+	}
+	a.sum += x
+}
+
+func (a Acc[T]) get!() T {
+	if a.sum > 100 {
+		return 0, &big
+	}
+	return a.sum
+}
+
+func total[T Num]!(xs []T) T {
+	var a Acc[T]
+	for _, x := range xs {
+		a.add!(x)
+	}
+	return half!(a.get!())
+}
+
+func second[T Num]!(xs []T) T {
+	return pick!(xs, 1) + pick[T]!(xs, 0)
+}
+
+// The last result is the type parameter T, which is `error` in Two[error]:
+// at the call the checker sees `(int, error)`, so `!` applies, and it reads
+// the instance's last word, the same "last result identical to error" that the
+// per-instance check of a checked result uses (gir/inst-checked.test).
+func Two[T any](n int, move x T) (int, T) { return n, x }
+
+func sum!(a, b error) int {
+	return Two[error]!(1, a) + Two[error]!(10, b)
+}
+
+func report(name string, err error) {
+	if err != nil {
+		println(name, "failed:", err.Error())
+	} else {
+		println(name, "ok")
+	}
+}
+
+func main() {
+	v, err := total([]int{4, 6})
+	println(v)
+	report("total[int]", err)
+	v, err = total([]int{4, -1})
+	println(v)
+	report("total[int] negative", err)
+	f, err := total([]float64{60, 50})
+	println(f)
+	report("total[float64] large", err)
+	f, err = total([]float64{3, 4})
+	println(f)
+	report("total[float64]", err)
+	s, err := second([]int{3, 4})
+	println(s)
+	report("second[int]", err)
+	g, err := second([]float64{1})
+	println(g)
+	report("second[float64] short", err)
+	n, err := sum(nil, nil)
+	println(n)
+	report("sum", err)
+	n, err = sum(nil, &neg)
+	println(n)
+	report("sum failing", err)
+	var e error
+	println(half[int]!(9), half!(2.5), Two[error]!(3, e))
+}

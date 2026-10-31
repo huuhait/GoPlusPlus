@@ -1,0 +1,68 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/gen-tree.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/gen-tree.out %}
+// P04.08: a recursive generic type (`Tree[T]` holds a `[]Tree[T]`) with
+// recursive methods, generic types of generic types, and a generic function that
+// builds instances of a generic type. The expected output is what `go run`
+// prints for this very file.
+package main
+
+type Number interface{ ~int | ~float64 }
+
+// A recursive generic type (through a slice) and recursive methods.
+type Tree[T Number] struct {
+	Val  T
+	Kids []Tree[T]
+}
+
+func (t Tree[T]) Sum() T {
+	s := t.Val
+	for _, k := range t.Kids {
+		s += k.Sum()
+	}
+	return s
+}
+
+func (t *Tree[T]) Add(v T) {
+	t.Kids = append(t.Kids, Tree[T]{Val: v})
+}
+
+func (t Tree[T]) Depth() int {
+	d := 0
+	for _, k := range t.Kids {
+		if kd := k.Depth(); kd > d {
+			d = kd
+		}
+	}
+	return d + 1
+}
+
+// a generic type of a generic type of a generic type
+type Wrap[T Number] struct{ In Tree[T] }
+type Wrap2[T Number] struct{ In Wrap[T] }
+
+func (w Wrap2[T]) Total() T { return w.In.In.Sum() }
+
+// a generic function that builds the instances of a generic type
+func Build[T Number](n int, v T) Tree[T] {
+	t := Tree[T]{Val: v}
+	if n > 0 {
+		t.Kids = append(t.Kids, Build(n-1, v+1))
+		t.Kids = append(t.Kids, Build(n-1, v+2))
+	}
+	return t
+}
+
+func main() {
+	t := Build(3, 1)
+	println(t.Sum(), t.Depth())
+	u := Build(2, 0.5)
+	u.Add(10)
+	println(u.Sum(), u.Depth(), len(u.Kids))
+	w := Wrap2[int]{Wrap[int]{t}}
+	println(w.Total())
+	var x Wrap2[float64]
+	x.In.In = u
+	println(x.Total())
+}

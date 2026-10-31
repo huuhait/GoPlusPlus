@@ -1,0 +1,19 @@
+package main
+
+func Max[T ~int | ~float64](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Min[T ~int | ~float64](a, b T) T {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func main() {
+	println(Max(3, 4), Min(1.5, 2.5))
+}

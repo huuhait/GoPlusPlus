@@ -1,0 +1,39 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/view-box-uncomparable.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/view-box-uncomparable.out 0 %}
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics --names view-uncomparable
+// GOLDEN: by-hand
+// Review R8 (P04.08): a view is comparable only when the value it looks at is
+// (OWN-V; sema/view-comparable.test has the checker's side), so a View[[]int]
+// and an @View struct that holds one have no equality and no hash: boxing
+// them builds no glue (the lowering asks the checker's predicate,
+// MethodSets::comparable), they are boxed, stored as a map value and taken
+// out again, and `==` of two interfaces holding one panics as Go's does
+// (Inputs/panics/view-uncomparable). The R7 glue had made them comparable
+// and refused them with three E0439s. The other side: a struct holding a
+// View[int] still compares by value (run/view-compare.test). Go has no
+// views, so the golden is by hand: the struct's int and the slice's second
+// element, the map's length, the boxed view's length.
+package main
+
+@View
+type K struct {
+	s View[[]int]
+	k int
+}
+
+func main() {
+	x := []int{1, 2}
+	var a any = K{s: x, k: 3}
+	if k, ok := a.(K); ok {
+		println(k.k, k.s[1])
+	}
+	m := map[int]K{1: {s: x}}
+	println(len(m))
+	var v View[[]int] = x
+	var b any = v
+	if w, ok := b.(View[[]int]); ok {
+		println(len(w))
+	}
+}

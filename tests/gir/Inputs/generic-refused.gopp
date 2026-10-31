@@ -1,0 +1,36 @@
+package main
+
+type Box[T Copy] struct{ V T }
+
+// A type declared inside generic code: P04.28.
+func Local[T Copy](x T) int {
+	type pair struct{ a, b int }
+	p := pair{1, 2}
+	return p.a + p.b
+}
+
+// The same in a plain function is fine.
+func Plain() int {
+	type pair struct{ a, b int }
+	p := pair{3, 4}
+	return p.a + p.b
+}
+
+// @Export on generic code: P04.28 (a C name cannot depend on a type
+// argument).
+@Export("C")
+func Twice[T int | float64](x T) T { return x + x }
+
+// A closure in generic code lowers per instance (P04.07, decision M6): no
+// error (run/generic-closures.test runs it).
+func Apply[T Copy](x T) T {
+	f := func(y T) T { return y }
+	return f(x)
+}
+
+// A generic function that is never instantiated draws nothing.
+func Unused[T Copy](x T) T { return x }
+
+func main() {
+	println(Local(1), Local(2.5), Plain(), Twice(2), Apply(1), Apply(2.5))
+}

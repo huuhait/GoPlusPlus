@@ -1,0 +1,16 @@
+package main
+
+type Pair[K, V ~int | ~float64] struct{ A K; B V }
+
+func (p Pair[K, V]) First() K { return p.A }
+
+func Max[T ~int | ~float64](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func main() {
+	println(Max(1, 2), Max(2.5, 1.0), Pair[int, float64]{1, 2}.First())
+}

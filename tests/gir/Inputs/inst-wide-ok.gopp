@@ -1,0 +1,23 @@
+package main
+
+// The accepted side of inst-wide.gopp: the chain ends at F11, whose type
+// argument has 4095 parts as a tree (the limit is 4096).
+type P[A, B any] struct {
+	a []A
+	b []B
+}
+
+func F0[T any](x []T) int { return F1([]P[T, T]{}) + len(x) }
+func F1[T any](x []T) int { return F2([]P[T, T]{}) + len(x) }
+func F2[T any](x []T) int { return F3([]P[T, T]{}) + len(x) }
+func F3[T any](x []T) int { return F4([]P[T, T]{}) + len(x) }
+func F4[T any](x []T) int { return F5([]P[T, T]{}) + len(x) }
+func F5[T any](x []T) int { return F6([]P[T, T]{}) + len(x) }
+func F6[T any](x []T) int { return F7([]P[T, T]{}) + len(x) }
+func F7[T any](x []T) int { return F8([]P[T, T]{}) + len(x) }
+func F8[T any](x []T) int { return F9([]P[T, T]{}) + len(x) }
+func F9[T any](x []T) int { return F10([]P[T, T]{}) + len(x) }
+func F10[T any](x []T) int { return F11([]P[T, T]{}) + len(x) }
+func F11[T any](x []T) int { return len(x) }
+
+func main() { println(F0([]int{1})) }

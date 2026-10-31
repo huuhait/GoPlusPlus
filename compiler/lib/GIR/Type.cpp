@@ -201,6 +201,17 @@ bool Context::setFieldNames(Type *S, ArrayRef<llvm::StringRef> Names) {
   return true;
 }
 
+bool Context::setTypeArgs(Type *S, ArrayRef<Type *> Args) {
+  std::lock_guard<std::mutex> G(Mu);
+  assert(S->getKind() == Type::Kind::Struct);
+  if (!S->TypeArgs.empty() || Args.empty())
+    return false;
+  Type **Mem = Alloc.Allocate<Type *>(Args.size());
+  std::copy(Args.begin(), Args.end(), Mem);
+  S->TypeArgs = ArrayRef<Type *>(Mem, Args.size());
+  return true;
+}
+
 Type *Context::recTy(llvm::StringRef Name) {
   std::lock_guard<std::mutex> G(Mu);
   auto It = Structs.find(Name);

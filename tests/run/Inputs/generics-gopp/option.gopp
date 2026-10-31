@@ -1,0 +1,26 @@
+// P04.08: Go++ only (an Option of a type parameter, in a result and in a field
+// of a generic type). The .out is by hand: Get of First([]int{4,5}) is 4 (and
+// true), First of an empty slice is nil (true), Holder[int]{Val: 3} is not
+// nil (true).
+package main
+
+func First[T int | float64](xs []T) Option[T] {
+	if len(xs) == 0 {
+		return nil
+	}
+	return xs[0]
+}
+
+type Holder[T int | float64] struct {
+	Val Option[T]
+}
+
+func main() {
+	o := First([]int{4, 5})
+	if o != nil {
+		println(o.Get())
+	}
+	println(First([]float64{}) == nil)
+	h := Holder[int]{Val: 3}
+	println(h.Val != nil)
+}

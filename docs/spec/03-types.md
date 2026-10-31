@@ -55,7 +55,7 @@ Other notes on type syntax:
 
 **TYP-1.** `View[T]` and `T` are different types for every `T` (`View[string]` and `string`, `View[[]T]` and `[]T`). Identity follows [Type identity](https://go.dev/ref/spec#Type_identity): `View[string]` is identical only to `View[string]`.
 
-**TYP-2.** *Assignability additions.* `nil` is assignable only to `error`, `any` (the empty interface), `unsafe.Pointer`, slices, maps, channels and `Option` types, not to a pointer kind, a func or an interface with methods, which are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Besides Go's rules, a value `x` is assignable to type `V` if:
+**TYP-2.** *Assignability additions.* `nil` is assignable only to `error`, `any` (the empty interface), `unsafe.Pointer`, slices, maps, channels and `Option` types, not to a pointer kind, a func or an interface with methods, which are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)), nor to a view. Besides Go's rules, a value `x` is assignable to type `V` if:
 - `x` has type `T` (owned or borrowed) and `V` is `View[T]` (owned to view, borrowing, [OWN-V3](04-ownership.md#44-views-d16));
 - `x` is a `Unique[*T]` or `Shared[*T]` stored in a place and `V` is `*T` or `Option[*T]` ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17));
 - `x` has type `T` and `V` is `Option[T]`, or `x` is `nil` and `V` is an `Option` ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an `Option[T]` is assignable to `T` only where it is checked ([OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17));
@@ -202,7 +202,7 @@ type Job struct{ Done chan bool @Required }   // a channel field: @Required make
 
 `@Option` is a built-in field attribute, written after the field's type ([MAC-12](13-macros-surface.md#132-rules)). It means "this field may be left out of a literal and gets its zero value". The field is a plain Go field: an `error`, map or `any` field marked `@Option` may be nil, so `Err: nil` is fine. These are compile errors:
 - `@Option` in a struct that is not `@Strict` (the message says fields are optional there by default);
-- `@Option` on a field whose type has no zero value (a pointer kind, a func, an interface with methods, a struct with required fields, a C++ type without a default constructor), because it can't be left out; use `Option[T]`;
+- `@Option` on a field whose type has no zero value (a pointer kind, a func, an interface with methods, a view of a single value ([OWN-V1](04-ownership.md#44-views-d16), ADR-0031), a struct with required fields, a C++ type without a default constructor), because it can't be left out; use `Option[T]`;
 - `@Option` on an `Option[T]` field (redundant);
 - `@Option` on a blank `_` field (redundant: `_` is never required);
 - `@Option` together with `@Required`;

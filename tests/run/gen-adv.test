@@ -1,0 +1,123 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/gen-adv.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/gen-adv.out %}
+// P04.08 (D4.3): the edges of the instances. A constraint with a method
+// called on a plain type, on a value type and on an interface type argument
+// (`Total[Shape]`); a map with a comparable key type argument; an array field
+// of a generic type; a type switch on a type parameter's value; a generic
+// method that changes a field; an alias of an instance; an instance used as an
+// interface value; several type parameters; a generic function that calls
+// itself with a changed value. The expected output is what `go run` prints
+// for this very file.
+package main
+
+type Number interface{ ~int | ~int64 | ~float64 }
+
+type Shape interface{ Area() int }
+
+type Sq struct{ S int }
+
+func (s Sq) Area() int { return s.S * s.S }
+
+type Circ struct{ R int }
+
+func (c *Circ) Area() int { return 3 * c.R * c.R }
+
+type Areaer interface{ Area() int }
+
+func Total[T Areaer](xs []T) int {
+	t := 0
+	for _, x := range xs {
+		t += x.Area()
+	}
+	return t
+}
+
+func Count[K comparable](xs []K) map[K]int {
+	m := map[K]int{}
+	for _, x := range xs {
+		m[x]++
+	}
+	return m
+}
+
+func Keys[K comparable, V Number](m map[K]V) int { return len(m) }
+
+type Matrix[T Number] struct {
+	Cells [2][2]T
+}
+
+func (m Matrix[T]) Trace() T { return m.Cells[0][0] + m.Cells[1][1] }
+
+func Describe[T any](x T) string {
+	switch any(x).(type) {
+	case int:
+		return "int"
+	case string:
+		return "string"
+	case float64:
+		return "float"
+	}
+	return "other"
+}
+
+type Counter[T Number] struct{ n T }
+
+func (c *Counter[T]) Inc() { c.n += 1 }
+func (c Counter[T]) Value() T { return c.n }
+
+func Run[T Number](n int) T {
+	var c Counter[T]
+	for i := 0; i < n; i++ {
+		c.Inc()
+	}
+	return c.Value()
+}
+
+type Gen interface{ Value() int }
+
+type IntCounter = Counter[int]
+
+func UseIface(g Gen) int { return g.Value() }
+
+func Show[T Number](x T) {
+	println(x)
+}
+
+func Pick[A, B Number](a A, b B, first bool) float64 {
+	if first {
+		return float64(a)
+	}
+	return float64(b)
+}
+
+func Apply[T Number](x T, n int) T {
+	if n == 0 {
+		return x
+	}
+	return Apply(x*2, n-1)
+}
+
+func main() {
+	println(Total([]Sq{{1}, {2}}), Total([]Shape{Sq{3}, Sq{1}}))
+	m := Count([]string{"a", "b", "a"})
+	println(len(m), m["a"], m["b"])
+	m2 := Count([]int{1, 1, 1})
+	println(m2[1], Keys(map[string]float64{"x": 1}))
+	mm := Matrix[int]{[2][2]int{{1, 2}, {3, 4}}}
+	println(mm.Trace())
+	mf := Matrix[float64]{}
+	mf.Cells[1][1] = 2.5
+	println(mf.Trace())
+	println(Describe(1), Describe("s"), Describe(2.5), Describe(true))
+	println(Run[int](5), Run[float64](3))
+	var c IntCounter
+	c.Inc()
+	c.Inc()
+	println(UseIface(c))
+	Show(3)
+	Show(2.5)
+	println(Pick(1, 2.5, true), Pick(1, 2.5, false))
+	println(Apply(3, 4), Apply(1.5, 2))
+}

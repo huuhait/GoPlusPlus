@@ -1,0 +1,62 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/view-read.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/view-read.out 0 %}
+// GOLDEN: by-hand
+// Review R9 (P04.08; on master too): reading the value a view looks at
+// (OWN-V1, Body::viewValue, the one place). A copy-out conversion `int(v)`,
+// `float64(f)`, `P(p)`, `[2]int8(a)`, `uint8(u)`, `bool(b)` read the
+// view's target (they read its address, or were an E0439); println of a
+// View[int], View[float64], View[bool] and View[uint8] prints the value
+// (it printed the address); arithmetic on the copied-out values; a copied
+// value passed to a value parameter and put in composite literals; the
+// deliberate pointer uses stay: a field and an element read through the
+// view, `len`, and a range over a view of an array or a slice. Go has no
+// views, so the golden is by hand: the values the views look at.
+package main
+
+type P struct{ n int }
+
+type A [2]int8
+
+func takeInt(x int) int { return x * 2 }
+
+func conv(v View[int], f View[float64], p View[P], a View[A], u View[uint8], b View[bool]) {
+	println(int(v), float64(f), P(p).n, A(a)[1], uint8(u), bool(b))
+	println(int(v)+1, int(v)*int(v), -int(v), float64(f)*2, uint8(u)<<1, !bool(b))
+	q := P(p)
+	q.n++
+	println(q.n, p.n)
+}
+
+func prints(v View[int], f View[float64], b View[bool], u View[uint8], s View[string]) {
+	println(v, f, b, u, s)
+}
+
+func values(v View[int], p View[P]) {
+	xs := []int{int(v), takeInt(int(v))}
+	ps := []P{P(p)}
+	arr := [2]int{int(v), 1}
+	st := struct{ a int }{int(v)}
+	m := map[int]int{int(v): int(v)}
+	println(xs[1], ps[0].n, arr[0], st.a, m[v])
+}
+
+func through(a View[A], s View[[]int], p View[P]) {
+	println(a[1], len(a), p.n, len(s))
+	for i, x := range a {
+		println(i, x)
+	}
+	for _, x := range s {
+		println(x)
+	}
+}
+
+func main() {
+	x, y, t, w := 7, 2.5, true, uint8(3)
+	p, a := P{9}, A{4, 5}
+	conv(x, y, p, a, w, t)
+	prints(x, y, t, w, "ab")
+	values(x, p)
+	through(a, []int{6}, p)
+}

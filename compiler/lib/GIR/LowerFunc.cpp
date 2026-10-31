@@ -51,14 +51,25 @@ FuncId Lowering::funcAdapter(const S::Func *F, SourceLoc At) {
       unsupported(At, "the function " + F->Name.str() + " as a value");
     return NoId;
   }
+  return adapterOf(FI->second, Syms.Names.func(F));
+}
+
+FuncId Lowering::instanceAdapter(const GenericInst &GI) {
+  // An instance of a generic function as a value (P04.08): the same adapter,
+  // named by the instance's symbol (`TE` of `F[int]`).
+  auto II = InstIds.find(&GI);
+  if (II == InstIds.end())
+    return NoId; // (the instance was refused where it is declared)
+  return adapterOf(II->second, Syms.Names.funcInstance(GI.Decl, GI.TArgs));
+}
+
+FuncId Lowering::adapterOf(FuncId Real, const sym::Node *MN) {
   // The code of the func value of F: F with the environment in front, the
   // shape of a method expression's code, so it has that wrapper's name
   // (appendix A.5, `TE`). linkonce_odr: every package that takes F as a
   // value makes the same code, and the copies fold.
   // (Without a symbol node, the name of the function's own symbol keeps the
   // adapter's unique: never a name built from a spelling, review R3.)
-  FuncId Real = FI->second;
-  const sym::Node *MN = Syms.Names.func(F);
   std::string Name =
       MN ? sym::mangle(Syms.Ctx.wrapper(sym::Kind::MethodExpr, MN))
          : runtimeSymbol("fnval_" + M->func(Real).Name);
@@ -107,7 +118,8 @@ Operand Body::funcValue(FuncId Code, Operand Env, Type *VT) {
       FB.aggregate(AggKind::Tuple, VT, {constFunc(M, Code), std::move(Env)})));
 }
 
-Operand Body::funcValueOfFunc(const S::Func *F, const ast::Node *N) {
+Operand Body::funcValueOfFunc(const S::Func *F, const ast::Node *N,
+                              const ast::Expr *Name) {
   if (F->Recv || F->IsInterfaceMethod || F->IsBuiltinMethod) {
     unsupported(N, "this function value");
     return errorValue(ctx());
@@ -117,7 +129,22 @@ Operand Body::funcValueOfFunc(const S::Func *F, const ast::Node *N) {
     VT = tyOf(E);
   if (!VT || !VT->isFuncValue())
     return errorValue(ctx());
-  FuncId A = L.funcAdapter(F, N->getBegin());
+  FuncId A = NoId;
+  if (L.isGenericDecl(F)) {
+    // An instance: the walk found it where Name is (the same decision for
+    // the check and the build).
+    const GenericInst *GI = L.Walk.funcRef(CurInst, Name);
+    if (!GI) {
+      if (!L.Failed)
+        L.internalError(N->getBegin(), "the instance of " + F->Name.str() +
+                                           " is missing (the walk did not "
+                                           "find it)");
+      return errorValue(ctx());
+    }
+    A = L.instanceAdapter(*GI);
+  } else {
+    A = L.funcAdapter(F, N->getBegin());
+  }
   if (A == NoId)
     return errorValue(ctx());
   if (M.func(A).Sig != VT->elems()[0]) {
@@ -162,20 +189,29 @@ bool Body::mayHold(const S::Var *V, bool Escapes, const ast::Node *N) {
   // `Checker::containsView` on the variable's type). The borrow checker
   // makes it a compile error (OWN-B5, P04.20); until then it is one E0439
   // that says so.
-  if (L.Methods.holdsBorrow(V)) {
+  // (In generic code, the variable's type and mode at the instance: a `T`
+  // is borrowed, or holds a view, when the type argument makes it one, by
+  // the rule plain code uses: modeOf, decision M6 and review R5.)
+  S::Type *VT = tyOfObj(V);
+  const S::Var::Borrow Mode = modeOf(V);
+  const bool Held =
+      CurInst ? L.Methods.holdsBorrowAt(V, VT) : L.Methods.holdsBorrow(V);
+  if (Held) {
     // What the borrow is, and CLO-3a's fix (never `.Clone()` here; a copy
     // never reuses the name, RNG-8; copying a view takes a conversion).
-    const bool Itself = V->isBorrow();
-    const bool Alias = V->Mode == S::Var::Alias;
-    StringRef What = Alias                         ? "the & range variable "
-                     : V->Mode == S::Var::Borrowed ? "the borrowed variable "
-                     : Itself ? "the view or borrowed slice "
-                              : "the variable ";
+    const bool Alias = Mode == S::Var::Alias;
+    const bool Borrowed = Mode == S::Var::Borrowed;
+    const bool Itself =
+        Alias || Borrowed || llvm::isa_and_nonnull<S::RefType>(VT);
+    StringRef What = Alias      ? "the & range variable "
+                     : Borrowed ? "the borrowed variable "
+                     : Itself   ? "the view or borrowed slice "
+                                : "the variable ";
     StringRef Fix = "copy it into a differently named local";
     if (Alias)
       Fix = "range by value, or copy the element into a differently named "
             "local";
-    else if (llvm::isa_and_nonnull<S::RefType>(V->Ty))
+    else if (llvm::isa_and_nonnull<S::RefType>(VT))
       Fix = "copy it into an owned local with a conversion (`string(v)`, "
             "`[]T(v)`: OWN-V3)";
     else if (V->IsRecv)
@@ -186,7 +222,12 @@ bool Body::mayHold(const S::Var *V, bool Escapes, const ast::Node *N) {
       Fix = "copy what its views show into owned values (a conversion "
             "such as `string(v)` or `[]T(v)` copies one: OWN-V3)";
     std::string Name = V->Name.str();
-    refuseBorrow(N, What + Name + (Itself ? "" : ", whose type holds a view"),
+    // (In generic code, the instance whose type argument makes it a borrow:
+    // the same literal is fine in another, decision M6.)
+    std::string In =
+        CurInst ? " (in the instance " + L.Walk.nameOf(*CurInst) + ")" : "";
+    refuseBorrow(N,
+                 What + Name + (Itself ? "" : ", whose type holds a view") + In,
                  Name + (Itself ? " is a borrow"
                                 : " holds a borrow (a view inside its value)"),
                  Fix);
@@ -214,6 +255,25 @@ Operand Body::varAddr(const S::Var *V, const ast::Node *N) {
     return errorValue(ctx());
   }
   return copyOf(FB.temp(FB.addrOf(FB.local(It->second), true)));
+}
+
+Operand Body::ownBoxCopy(Operand View, const S::Var *V, const ast::Node *N) {
+  // TYP-9: a box binding is a view of the box. Where plain code binds a copy
+  // instead (the case type is a plain copy at this instance: modeOf), a
+  // closure that outlives the call and holds the binding holds a copy of its
+  // own, never the box (review R5): the view points at a heap copy made
+  // here, as plain code's binding is a heap cell then. (A binding no such
+  // closure holds stays a view of the box: it does not outlive the call.)
+  if (!CurInst || !V || !V->BoxBinding || !Facts || !Facts->Cells.count(V) ||
+      modeOf(V) != S::Var::Owned)
+    return View;
+  Type *PT = View.type();
+  if (!PT || !PT->isPtr() || !isa<S::RefType>(tyOfObj(V)))
+    return View;
+  Operand Val = copyOf(FB.deref(FB.local(localOf(std::move(View)))));
+  Operand Raw = envPtr(PT->elem(), std::move(Val), /*Heap=*/true, N);
+  at(N);
+  return copyOf(FB.temp(FB.cast(CastKind::PtrToPtr, std::move(Raw), PT)));
 }
 
 Operand Body::envPtr(Type *EnvT, Operand Val, bool Heap, const ast::Node *N) {
@@ -281,7 +341,9 @@ Operand Body::lowerFuncLit(const ast::FuncLit *Lit) {
   Fn->Loc = L.spanOf(Lit->getBegin());
   FuncId Id = M.addFunction(std::move(Fn));
   {
-    Body B(L, M.func(Id), nullptr);
+    // (In generic code, with the instance's types: the closure belongs to
+    // the instance, decision M6.)
+    Body B(L, M.func(Id), nullptr, CurInst);
     B.ScopeNode = CN;
     B.Facts = Facts;
     B.lowerLit(Lit, LF, Sig);
@@ -329,7 +391,7 @@ void Body::lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
       ++EscapeSteps;
       // (The type the enclosing function's varAddr gives: a pointer to the
       // variable, also for a cell and for a Place parameter.)
-      Type *T = L.lowerType(V->Ty, Lit->getBegin());
+      Type *T = L.lowerType(tyOfObj(V), Lit->getBegin());
       if (!T)
         return;
       PTys.push_back(ctx().ptr(T));
@@ -383,8 +445,8 @@ void Body::lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
         auto D = I.Defs.find(Nm);
         const S::Var *V =
             D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::Var>(D->second);
-        if (V && V->Ty)
-          Rs.push_back({V, V->Ty, V->Name});
+        if (S::Type *T = V ? tyOfObj(V) : nullptr)
+          Rs.push_back({V, T, V->Name});
       }
   const size_t Declared = Sig->Results->size() - (Sig->Fails ? 1 : 0);
   if (!Rs.empty() && Rs.size() == Declared && !bindResults(Rs, Lit->getBegin()))
@@ -692,7 +754,7 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
                        "(P04.09)");
       return errorValue(ctx());
     }
-    if (!F->HasPtrRecv && F->Recv && F->Recv->Mode == S::Var::Borrowed) {
+    if (!F->HasPtrRecv && F->Recv && L.recvModeOf(F) == S::Var::Borrowed) {
       // CLO-5a: a value receiver of an owning type would need a copy no one
       // writes (or would see later writes): a compile error with the fix-its
       // `x.Clone().M` and `move(x).M`, which are not lowered either.
@@ -723,7 +785,8 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
       // holds a view is a borrow (OWN-B1), which a method value that
       // outlives the call may not hold (CLO-3a), as with a captured
       // variable (mayHold).
-      if (Escapes && L.Methods.holdsView(F->Recv->Ty)) {
+      S::Type *RecvTy = L.recvTypeOf(F);
+      if (Escapes && L.Methods.holdsView(RecvTy)) {
         refuseBorrow(Sel, "a copy of its receiver, whose type holds a view",
                      "the copy holds a borrow (a view inside its value)",
                      "copy what its views show into owned values (a "
@@ -731,7 +794,7 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
                      "OWN-V3)");
         return errorValue(ctx());
       }
-      StoreTy = L.lowerType(F->Recv->Ty, Sel->getBegin());
+      StoreTy = L.lowerType(RecvTy, Sel->getBegin());
       if (!StoreTy)
         return errorValue(ctx());
       if (BasePtr) {

@@ -1,0 +1,17 @@
+// RUN: %gopp build -emit=obj %S/Inputs/generic-phantom.gopp -o %t.o
+// RUN: llvm-dwarfdump --debug-info %t.o | FileCheck %s
+// RUN: %gopp build -emit=gir %S/Inputs/generic-phantom.gopp | FileCheck %s --check-prefix=GIR
+// P04.08, found with review round 1: the instances of a generic type whose
+// fields do not use its type parameters have the checker's one underlying
+// struct, so one GIR struct (a conversion between them is no code,
+// run/generic-phantom.test), named after the first one lowered, as two
+// defined types of one struct are; the debugger shows that name for each.
+// The struct can be among its own type arguments: then it has none (its
+// name is the debugger's), and behind a pointer the debugger spells it by
+// its plain name (DebugInfoBuilder::spelling). Each spelling recursed
+// without end: the build hung.
+// CHECK-DAG: DW_AT_name ("main.Tag[int64]")
+// CHECK-DAG: DW_AT_name ("main.P[main.P[int, int], int]")
+// CHECK-DAG: DW_AT_name ("main.Q[*main.Q[*main.Q[int, int], int], int64]")
+// GIR: let _1: main.Tag[int]  ; t
+// GIR: let _2: main.Tag[int]  ; u

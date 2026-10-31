@@ -193,8 +193,19 @@ uint64_t DebugInfoBuilder::hashOf(const G::Type *T) {
 /// parts stops once the name will be cut anyway.
 std::string DebugInfoBuilder::spell(const G::Type *T) {
   using K = G::Type::Kind;
-  if (T->isNominal() && !isAnonymousStruct(T))
+  if (T->isNominal() && !isAnonymousStruct(T)) {
+    // An instance of a generic type: `main.Pair[int64, string]`, the stem of
+    // its name and the arguments as the debugger spells any type.
+    if (!T->typeArgs().empty()) {
+      llvm::StringRef N = T->name();
+      std::string S = N.substr(0, N.find('[')).str() + "[";
+      for (size_t I = 0; I < T->typeArgs().size() && S.size() <= MaxNameLength;
+           ++I, ++Work.TypeSteps)
+        S += (I ? ", " : "") + spelling(T->typeArgs()[I]);
+      return S + "]";
+    }
     return T->name().str();
+  }
   switch (T->getKind()) {
   case K::Unit:
     return "()";
@@ -259,6 +270,12 @@ std::string DebugInfoBuilder::spelling(const G::Type *T) {
   if (auto It = Spelled.find(T); It != Spelled.end())
     return It->second;
   ++Work.TypeSteps;
+  // A struct that is among its own type arguments, behind a pointer or
+  // deeper (the instances of a generic type whose fields do not use its type
+  // parameters share one struct, Lowering::lowerStruct), is its plain name
+  // there: each type is spelled once, not without end.
+  if (T->isNominal())
+    Spelled[T] = T->name().str();
   std::string S;
   if (!Walk.level([&] { S = spell(T); }))
     S = "<too deep>"; // the lowering reports the depth (failedAt)

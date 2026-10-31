@@ -1,0 +1,91 @@
+// P04.08: generics against go run (see ../generics-diff.test). A Go program: the .out is `go run`'s.
+package main
+
+type Num interface{ ~int | ~float64 }
+
+type Container[T Num] interface {
+	Put(v T)
+	Get() T
+	Size() int
+}
+
+type Stack[T Num] struct {
+	items []T
+}
+
+func (s *Stack[T]) Put(v T) { s.items = append(s.items, v) }
+func (s *Stack[T]) Get() T {
+	v := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return v
+}
+func (s *Stack[T]) Size() int { return len(s.items) }
+
+type Cell[T Num] struct{ v T }
+
+func (c *Cell[T]) Put(v T) { c.v = v }
+func (c *Cell[T]) Get() T  { return c.v }
+func (c *Cell[T]) Size() int { return 1 }
+
+func Fill[T Num](c Container[T], n int) T {
+	var t T
+	for i := 0; i < n; i++ {
+		var v T = T(i + 1)
+		c.Put(v)
+		t += v
+	}
+	return t
+}
+
+func Drain[T Num, C Container[T]](c C) T {
+	var t T
+	for c.Size() > 0 {
+		t += c.Get()
+	}
+	return t
+}
+
+type Named interface{ Name() string }
+
+type Tag[T Num] struct{ id T }
+
+func (t Tag[T]) Name() string { return "tag" }
+
+func Names[N Named](xs []N) int {
+	n := 0
+	for i := 0; i < len(xs); i++ {
+		n += len(xs[i].Name())
+	}
+	return n
+}
+
+func main() {
+	var s0 Stack[int]
+	s := &s0
+	println(Fill[int](s, 4), s.Size(), Drain[int](s), s.Size())
+	var f0 Stack[float64]
+	f := &f0
+	println(Fill(Container[float64](f), 3), Drain[float64](f))
+	var c0 Cell[int]
+	c := &c0
+	var ci Container[int] = c
+	ci.Put(9)
+	println(ci.Get(), ci.Size(), c.v)
+	var a any = ci
+	_, ok := a.(Container[float64])
+	_, ok2 := a.(Container[int])
+	println(ok, ok2)
+	println(Names([]Tag[int]{{1}, {2}}), Names([]Tag[float64]{{1.5}}))
+	var nm Named = Tag[float64]{2}
+	println(nm.Name())
+	var x any = Tag[int]{3}
+	if t, ok := x.(Tag[int]); ok {
+		println(t.id)
+	}
+	switch x.(type) {
+	case Tag[float64]:
+		println("f")
+	case Tag[int]:
+		println("i")
+	}
+}

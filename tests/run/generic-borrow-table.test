@@ -1,0 +1,42 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: %python %S/Inputs/gen-borrow-table.py --gopp %gopp --out %t > %t/table.txt
+// RUN: FileCheck %s < %t/table.txt
+// RUN: sed -e '1,/^runs: same$/d' %t/table.txt | diff - %S/golden/generic-borrow-table.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %t/run-generic.gopp -o %t/run.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t/run.arm64 %S/golden/generic-borrow-table.out 0 %}
+// P04.08, review R5: a closure in generic code may hold a variable exactly
+// when the same code written for the type argument may (CLO-3a, CLO-5a),
+// because the variable's mode at an instance is the checker's own decision
+// made again with the real type (MethodSets::modeAt, read by Body::modeOf,
+// the one place the lowering reads a mode): a parameter and a value receiver
+// (PAR-1), a range value and key (RNG-1), a type switch binding and an
+// assertion (TYP-9: a binding of a plain copy is a copy), an Option's Get, an
+// `&` range alias (always a borrow). Inputs/gen-borrow-table.py writes each
+// form for each type argument as plain code and as generic code, the closure
+// escaping, and compares what the compiler says; the rows both sides accept
+// run, the generic program's output equals the plain one's, and both are what
+// `go run` prints for the plain program (golden/generic-borrow-table.out; the
+// Go++-only rows, alias and optget, are refused or known). Cell = plain /
+// generic: `.` accepted and run, `3` CLO-3a, `c` the checker's error (string
+// is not Copy; copying a string into a map or a box), `K` the checker's
+// false E0350 for a comma-ok binding of a Copy type parameter that a literal
+// captures (TODO P03.31: the generic side stops before the lowering). Before
+// the fix the generic rangeval, tswitch and assert rows at int, P and A were
+// CLO-3a, and a box binding compared with its value read its address
+// (OWN-V: a view compares as the value it looks at). The generic run also
+// builds for arm64 and runs under QEMU.
+// CHECK:      types: int P A string
+// CHECK-NEXT: param     ./. ./. ./. 3/3
+// CHECK-NEXT: rangeval  ./. ./. ./. 3/3
+// CHECK-NEXT: rangekey  ./. ./. ./. c/c
+// CHECK-NEXT: mapval    ./. ./. ./. c/c
+// CHECK-NEXT: tswitch   ./. ./. ./. c/c
+// CHECK-NEXT: assert    ./. ./. ./. c/c
+// CHECK-NEXT: assertok  ./K ./K ./K c/c
+// CHECK-NEXT: mapok     ./K ./K ./K c/c
+// CHECK-NEXT: alias     3/3 3/3 3/3 3/c
+// CHECK-NEXT: optget    ./K ./K ./K c/c
+// CHECK-NEXT: recv      ./. ./. ./. 3/3
+// CHECK-NEXT: differ: 0
+// CHECK-NEXT: runs: same

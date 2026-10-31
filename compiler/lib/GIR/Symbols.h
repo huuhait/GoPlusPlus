@@ -33,6 +33,9 @@ public:
   /// The symbol of a package-level function. Empty (and why()) if the
   /// checker's object has no name.
   std::string func(const sema::Func *F);
+  /// The symbol of the instance F[TArgs] of a generic function (P04.08).
+  std::string funcInstance(const sema::Func *F,
+                           llvm::ArrayRef<sema::Type *> TArgs);
   std::string var(const sema::Var *V);
   /// The ordinal-th `init` function of the package.
   std::string initFunc(const sema::Package *P, uint64_t Ordinal);

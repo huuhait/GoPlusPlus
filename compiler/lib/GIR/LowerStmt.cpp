@@ -97,8 +97,8 @@ void Body::recordOps(const ast::Expr *E, LateOps &R) {
       break;
     case ast::Node::Kind::SelectorExpr: {
       auto *Sel = cast<ast::SelectorExpr>(X);
-      auto It = I.Selections.find(Sel);
-      if (It == I.Selections.end() || It->second.K != S::Selection::FieldVal) {
+      const S::Selection *SL = selOf(Sel);
+      if (!SL || SL->K != S::Selection::FieldVal) {
         Root = X;
         X = nullptr;
       } else {
@@ -187,11 +187,11 @@ Body::Dest Body::recordDest(const ast::Expr *E) {
       return D;
     }
     D.STy = sTyOf(E);
-    if (I.narrowedType(Id)) {
+    if (narrowed(Id)) {
       // The variable itself is assigned: it is the Option, not its payload.
       auto U = I.Uses.find(Id);
       if (U != I.Uses.end())
-        D.STy = U->second->Ty;
+        D.STy = tyOfObj(U->second);
     }
     return D;
   }
@@ -347,7 +347,7 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
       auto Def = I.Defs.find(Id);
       if (Def != I.Defs.end() && Def->second) {
         T.New = Id;
-        T.STy = Def->second->Ty;
+        T.STy = tyOfObj(Def->second);
         Targets_.push_back(std::move(T));
         continue;
       }
@@ -420,8 +420,14 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
       Type *Ty = L.lowerType(T.STy, T.New->getBegin());
       if (!Ty)
         return;
+      // (A box binding a closure that outlives the call holds: ownBoxCopy.)
+      auto D = I.Defs.find(T.New);
+      Operand Val = ownBoxCopy(
+          std::move(Vals[K]),
+          D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::Var>(D->second),
+          T.New);
       VarSlot Sl = declareVar(T.New, Ty);
-      FB.assign(Sl.P, FB.use(Vals[K]));
+      FB.assign(Sl.P, FB.use(std::move(Val)));
       continue;
     }
     store(T.D, Vals[K], A);
@@ -519,7 +525,8 @@ void Body::lowerValueSpec(const ast::ValueSpec *VS) {
   SmallVector<S::Type *, 2> STys;
   for (size_t K = 0; K < N; ++K) {
     auto D = I.Defs.find(VS->Names[K]);
-    STys.push_back(D != I.Defs.end() && D->second ? D->second->Ty : nullptr);
+    STys.push_back(D != I.Defs.end() && D->second ? tyOfObj(D->second)
+                                                  : nullptr);
   }
   SmallVector<Operand, 2> Vals;
   if (VS->Values.empty()) {
@@ -553,8 +560,13 @@ void Body::lowerValueSpec(const ast::ValueSpec *VS) {
     if (!T)
       return;
     at(VS);
+    auto D = I.Defs.find(VS->Names[K]);
+    Operand Val = ownBoxCopy(
+        std::move(Vals[K]),
+        D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::Var>(D->second),
+        VS->Names[K]);
     VarSlot Sl = declareVar(VS->Names[K], T);
-    FB.assign(Sl.P, FB.use(Vals[K]));
+    FB.assign(Sl.P, FB.use(std::move(Val)));
   }
 }
 
@@ -564,17 +576,16 @@ void Body::lowerTypeDecl(const ast::GenDecl *GD) {
     if (!TS || TS->AssignLoc.isValid())
       continue;
     if (TS->TypeParams && TS->TypeParams->numFields()) {
-      unsupported(TS, "a generic type (P04.08)");
+      unsupported(TS, "a generic type declared inside a function (P04.28)");
       continue;
     }
-    auto D = I.Defs.find(TS->Name);
-    auto *TN =
-        D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::TypeName>(D->second);
-    // Each declaration gets the next ordinal of this function, so two types
-    // with one name (in two blocks) get two symbols.
-    if (TN && ScopeNode)
-      L.declareLocalType(TN, ScopeNode, LocalTypes);
-    ++LocalTypes;
+    if (CurInst) {
+      unsupported(TS, "a type declared inside generic code (P04.28)");
+      continue;
+    }
+    // (Its symbol was given before the bodies were lowered, with the next
+    // ordinal of this function, so two types with one name in two blocks
+    // have two: impl::declareLocalTypes.)
   }
 }
 
@@ -1120,7 +1131,7 @@ void Body::bindParam(unsigned K, const S::Var *V, Lowering::Pass P,
   }
   // (The pair of a string and of a []byte are alike: the variable's type
   // tells them apart.)
-  Type *GT = L.lowerType(V->Ty, At);
+  Type *GT = L.lowerType(tyOfObj(V), At);
   if (!GT)
     return;
   bool Str = GT->getKind() == Type::Kind::String;
@@ -1237,18 +1248,20 @@ void Body::lower(const ast::FuncDecl *FD) {
       unsupported(FD, "this parameter list");
       return;
     }
-    FnSig = Obj->sig();
+    // (At an instance of generic code, the types of the instance: P04.08.)
+    FnSig = sigOf(Obj);
     if (Obj->Recv)
-      bindParam(0, Obj->Recv, L.passOfRecv(Obj), FD->getBegin());
+      bindParam(0, Obj->Recv, L.passOfRecvAt(Obj, tyOfObj(Obj->Recv)),
+                FD->getBegin());
     for (size_t K = 0; K < Params.size(); ++K)
-      bindParam(K + Lead, Params[K], L.passOf(Obj->sig(), K), FD->getBegin());
+      bindParam(K + Lead, Params[K], L.passOf(FnSig, K), FD->getBegin());
     for (const S::Var *R : Obj->Results)
-      ResultTys.push_back(R->Ty);
+      ResultTys.push_back(tyOfObj(R));
     // Named results are variables, set to their zero values.
     SmallVector<ResultVar, 2> Rs;
     bool Named = false;
     for (const S::Var *R : Obj->Results) {
-      Rs.push_back({R, R->Ty, R->Name});
+      Rs.push_back({R, tyOfObj(R), R->Name});
       Named |= !R->Name.empty();
     }
     if (Named && !bindResults(Rs, FD->getBegin()))
@@ -1288,7 +1301,7 @@ void Body::lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs) {
     } Reset{*this, PkgScope};
     if (E.Lhs.size() == 1) {
       S::Var *V = E.Lhs[0];
-      Operand Val = valueFor(E.Init, V->Ty);
+      Operand Val = valueFor(E.Init, tyOfObj(V));
       auto G = L.Globals.find(V);
       if (G != L.Globals.end()) {
         at(E.Init);
@@ -1299,7 +1312,7 @@ void Body::lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs) {
     SmallVector<Operand, 2> Vals;
     SmallVector<S::Type *, 2> To;
     for (S::Var *V : E.Lhs)
-      To.push_back(V->Ty);
+      To.push_back(tyOfObj(V));
     if (!multiValues(E.Init, E.Lhs.size(), Vals, To))
       continue;
     for (size_t K = 0; K < E.Lhs.size(); ++K) {
@@ -1408,7 +1421,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
         ValVar = dyn_cast_or_null<S::Var>(D->second);
     }
   bool CopyArray =
-      WantVal && !Alias && !(ValVar && ValVar->Mode == S::Var::Borrowed);
+      WantVal && !Alias && !(ValVar && modeOf(ValVar) == S::Var::Borrowed);
 
   // The range expression, once.
   LocalId IdxL = NoId, LenL = NoId;
@@ -1474,7 +1487,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       unsupported(T, "this range variable");
       return false;
     }
-    Type *Ty = L.lowerType(D->second->Ty, Id->getBegin());
+    Type *Ty = L.lowerType(tyOfObj(D->second), Id->getBegin());
     if (!Ty)
       return false;
     Sl = declareVar(Id, Ty, /*AllocNow=*/false);
@@ -1559,7 +1572,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
     S::Type *Want = nullptr;
     if (Define) {
       auto D = I.Defs.find(cast<ast::Ident>(unparen(T)));
-      Want = D != I.Defs.end() && D->second ? D->second->Ty : nullptr;
+      Want = D != I.Defs.end() && D->second ? tyOfObj(D->second) : nullptr;
     } else {
       Want = sTyOf(T);
     }

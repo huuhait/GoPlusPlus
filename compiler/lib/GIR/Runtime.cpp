@@ -611,6 +611,8 @@ FuncId Lowering::ensurePanicMust(SourceLoc At) {
 //===----------------------------------------------------------------------===//
 
 FuncId Lowering::eqGlue(S::Type *T, SourceLoc At) {
+  if (holdsViewPart(T))
+    return viewPartsGlue(T, /*Hash=*/false, At);
   Type *G = lowerType(T, At);
   if (!G)
     return NoId;
@@ -629,6 +631,8 @@ FuncId Lowering::eqGlue(S::Type *T, SourceLoc At) {
 }
 
 FuncId Lowering::hashGlue(S::Type *T, SourceLoc At) {
+  if (holdsViewPart(T))
+    return viewPartsGlue(T, /*Hash=*/true, At);
   Type *G = lowerType(T, At);
   if (!G)
     return NoId;
@@ -644,6 +648,162 @@ FuncId Lowering::hashGlue(S::Type *T, SourceLoc At) {
   if (Sym.empty())
     Sym = runtimeSymbol("hash_" + G->str());
   return addHashGlue(*M, G, Sym);
+}
+
+bool Lowering::holdsViewPart(S::Type *T) {
+  if (auto It = ViewParts.find(T); It != ViewParts.end())
+    return It->second;
+  // (A walk with a memo: the types a type holds by value are finite and form
+  // no cycle, a by-value cycle being an invalid recursive type.)
+  bool R = false;
+  S::Type *U = S::under(T);
+  if (llvm::isa_and_nonnull<S::RefType>(U))
+    R = true;
+  else if (auto *ST = llvm::dyn_cast_or_null<S::StructType>(U))
+    R = llvm::any_of(ST->Fields,
+                     [&](const S::Var *F) { return holdsViewPart(F->Ty); });
+  else if (auto *AT = llvm::dyn_cast_or_null<S::ArrayType>(U))
+    R = holdsViewPart(AT->Elem);
+  else if (auto *OT = llvm::dyn_cast_or_null<S::OptionType>(U))
+    R = holdsViewPart(OT->Elem);
+  return ViewParts[T] = R;
+}
+
+FuncId Lowering::viewPartsGlue(S::Type *T, bool Hash, SourceLoc At) {
+  auto Key = std::make_pair(T, unsigned(Hash));
+  if (auto It = ViewPartsGlues.find(Key); It != ViewPartsGlues.end())
+    return It->second;
+  Type *G = lowerType(T, At);
+  if (!G)
+    return NoId;
+  std::string Sym =
+      Syms.glue(Hash ? sym::Kind::HashGlue : sym::Kind::EqGlue, T);
+  if (Sym.empty())
+    Sym = runtimeSymbol((Hash ? "hash_" : "eq_") + G->str());
+  if (FuncId Id = M->lookupFunction(Sym); Id != NoId)
+    return ViewPartsGlues[Key] = Id;
+  Type *PU8 = Ctx.ptr(Ctx.u8()), *U64 = Ctx.u64(), *PG = Ctx.ptr(G);
+  auto Fn = std::make_unique<Function>();
+  Fn->Name = Sym;
+  Fn->Sig = Hash ? Ctx.func({PG, U64}, U64) : Ctx.func({PG, PG}, Ctx.boolean());
+  Fn->Link = Linkage::LinkOnceODR;
+  Fn->CC = CallConv::Go;
+  Function *F = Fn.get();
+  FuncId Id = M->addFunction(std::move(Fn));
+  ViewPartsGlues[Key] = Id;
+  Rt X(*M, *F);
+  FuncBuilder &FB = X.FB;
+  FB.setSpan(F->Loc);
+  Var Ok = X.var(Ctx.boolean(), X.boolean(true), "ok");
+  Var H = X.var(U64, Hash ? X.param(1) : X.u(0), "h");
+  bool Bad = false;
+  // One part: A and B point at it (B unused for a hash). A view's part is
+  // the value it looks at: a string's bytes ({ptr, len}), any other value
+  // through the pointer; any other part is eqGlue's (or hashGlue's).
+  auto Part = [&](Val A, Val B, S::Type *PT) {
+    S::Type *PU = S::under(PT);
+    if (auto *R = llvm::dyn_cast<S::RefType>(PU)) {
+      Type *EG = lowerType(R->Elem, At);
+      if (!EG) {
+        Bad = true;
+        return;
+      }
+      if (EG->getKind() == Type::Kind::String) {
+        auto Ptr = [&](Val P) { return X.load(P, PU8); };
+        auto Len = [&](Val P) { return X.load(X.padd(P, X.u(8)), U64); };
+        if (!Hash) {
+          FuncId StrEq = rt(RtFn::StrEq, At);
+          if (StrEq == NoId) {
+            Bad = true;
+            return;
+          }
+          X.If(Ok,
+               [&] { Ok = X.call(StrEq, {Ptr(A), Len(A), Ptr(B), Len(B)}); });
+          return;
+        }
+        FuncId Hs = hashGlue(CP.Ctx->typ(S::BasicKind::String), At);
+        if (Hs == NoId) {
+          Bad = true;
+          return;
+        }
+        Var S = X.var(Ctx.string(), "s");
+        FB.assign(FB.local(S.L),
+                  FB.aggregate(AggKind::String, Ctx.string(),
+                               {Ptr(A).Op, Len(A).Op, X.u(0).Op}));
+        H = X.call(Hs, {X.addrOf(S), H});
+        return;
+      }
+      FuncId E = Hash ? hashGlue(R->Elem, At) : eqGlue(R->Elem, At);
+      if (E == NoId) {
+        Bad = true;
+        return;
+      }
+      Type *PE = Ctx.ptr(EG);
+      if (Hash)
+        H = X.call(E, {X.load(A, PE), H});
+      else
+        X.If(Ok, [&] { Ok = X.call(E, {X.load(A, PE), X.load(B, PE)}); });
+      return;
+    }
+    FuncId E = Hash ? hashGlue(PT, At) : eqGlue(PT, At);
+    if (E == NoId) {
+      Bad = true;
+      return;
+    }
+    if (Hash)
+      H = X.call(E, {A, H});
+    else
+      X.If(Ok, [&] { Ok = X.call(E, {A, B}); });
+  };
+  Val A = X.param(0), B = Hash ? X.param(0) : X.param(1);
+  S::Type *U = S::under(T);
+  auto Addr = [&](Val P, auto Proj) { return X.addrOf(Proj(X.at(P, G))); };
+  if (llvm::isa<S::RefType>(U)) {
+    // (A view as the whole value: a map key of a view type.) The parts'
+    // pointers are the parameters themselves.
+    Part(A, B, T);
+  } else if (auto *ST = llvm::dyn_cast<S::StructType>(U)) {
+    for (unsigned K = 0; K < ST->Fields.size(); ++K) {
+      auto Fld = [&](Place P) { return FB.field(std::move(P), K); };
+      Part(Addr(A, Fld), Addr(B, Fld), ST->Fields[K]->Ty);
+    }
+  } else if (auto *AT = llvm::dyn_cast<S::ArrayType>(U)) {
+    Var I = X.var(U64, X.u(0), "i");
+    X.While([&] { return X.bin(BinOp::Lt, I, X.u(G->length())); },
+            [&] {
+              auto Elt = [&](Place P) { return FB.index(std::move(P), I.L); };
+              Part(Addr(A, Elt), Addr(B, Elt), AT->Elem);
+              I = X.bin(BinOp::Add, I, X.u(1));
+            });
+  } else if (auto *OT = llvm::dyn_cast<S::OptionType>(U);
+             OT && G->getKind() == Type::Kind::Option) {
+    // Both clear, or both set and the values equal (a hash: the flag, then
+    // the value when set).
+    auto Flag = [&](Val P) { return X.val(FB.field(X.at(P, G), 1)); };
+    auto Pay = [&](Place P) { return FB.field(std::move(P), 0); };
+    if (Hash) {
+      Val Set = X.snap(Flag(A));
+      H = X.call(hashGlue(CP.Ctx->typ(S::BasicKind::Bool), At),
+                 {X.addrOf(FB.field(X.at(A, G), 1)), H});
+      X.If(Set, [&] { Part(Addr(A, Pay), Addr(B, Pay), OT->Elem); });
+    } else {
+      Val FA = X.snap(Flag(A)), FBv = X.snap(Flag(B));
+      Ok = X.bin(BinOp::Eq, FA, FBv);
+      X.If(Ok, [&] {
+        X.If(FA, [&] { Part(Addr(A, Pay), Addr(B, Pay), OT->Elem); });
+      });
+    }
+  } else {
+    Bad = true;
+  }
+  if (Bad) {
+    unsupported(At, "comparing this value that holds a view");
+    X.Return(Hash ? Val(H) : X.boolean(false));
+  } else {
+    X.Return(Hash ? Val(H) : Val(Ok));
+  }
+  X.finish();
+  return Id;
 }
 
 //===----------------------------------------------------------------------===//

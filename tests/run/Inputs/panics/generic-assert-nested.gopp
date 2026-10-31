@@ -1,0 +1,13 @@
+package main
+
+// P04.08: an instance whose argument is an instance of a defined type keeps
+// every package: `main.Box[main.Box[main.Point]]`, as Go spells it.
+type Box[T any] struct{ V T }
+
+type Point struct{ X, Y int }
+
+func main() {
+	var b any = Box[Box[Point]]{}
+	println(b.(Box[Box[Point]]).V.V.X)
+	println(b.(Box[Point]).V.X)
+}

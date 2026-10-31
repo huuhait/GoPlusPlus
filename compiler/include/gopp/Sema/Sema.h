@@ -232,6 +232,18 @@ struct Info {
   /// where it is, as an argument of the parameter's own type (P04.18, review
   /// R14).
   llvm::DenseSet<const ast::Expr *> AsIsArgs;
+  /// Every place where a value of a type that is no interface (a concrete
+  /// type, or a type parameter, which may be one at an instance) becomes an
+  /// interface value: an assignment to an interface or an `Option` of one (an
+  /// argument, a result, a literal element, a send, `panic`), a conversion
+  /// `I(x)`, and an operand compared with an interface. Keyed by the
+  /// expression the checker checked, with the type each value had (several
+  /// for the results of one call). Such a value needs the type descriptor of
+  /// its dynamic type, which lists its whole method set, so the instance walk
+  /// takes the methods of an instance of a generic type from here, for `gopp
+  /// check` and the build alike (P04.08, M3).
+  llvm::DenseMap<const ast::Expr *, llvm::SmallVector<Type *, 1>>
+      IfaceConversions;
 
   const TypeAndValue *lookup(const ast::Expr *E) const {
     auto It = Types.find(E);
@@ -337,6 +349,10 @@ checkPackage(TypeContext &Ctx, const SourceManager &SM, llvm::StringRef PkgPath,
              llvm::ArrayRef<const ast::File *> Files, Importer &Imp,
              DiagnosticsEngine &Diags, const CheckOptions &Opts = {});
 
+/// The declared method an instantiated method comes from (itself for a method
+/// of a plain type).
+const Func *declaredMethod(const Func *F);
+
 /// A method found in the method set of a type (MethodSets::lookup).
 struct MethodHit {
   /// The method; null if the type has no such method in its method set (a
@@ -398,8 +414,82 @@ public:
   /// map or channel of views). A closure or method value that outlives the
   /// call may not hold it (CLO-3a; P04.07 review R7).
   bool holdsBorrow(const Var *V);
+  /// The same at an instance of generic code, where V's type is Ty (P04.08,
+  /// decision M6; GEN-5: the instance has the real category of each type
+  /// argument): V borrows by its mode there (modeAt), and a `T` that is a
+  /// view or holds one holds a borrow. A box binding that the instance
+  /// copies out is a copy (the lowering points its view at a copy of its
+  /// own, never into the box).
+  bool holdsBorrowAt(const Var *V, Type *Ty);
+  /// V's mode at an instance of generic code where its type is Ty: every
+  /// decision of the checker that reads the variable's type, made again with
+  /// the real type, by the rule plain code uses (review R5): a parameter or
+  /// a value receiver borrows when Ty is owning (PAR-1,
+  /// Checker::checkSigOwnership and checkMoveRecvSig); a range key or value
+  /// and an Option's Get binding when Ty is owning (RNG-1, ADR-0018 point
+  /// 11); a box binding when its case type, Ty's view target, is not a plain
+  /// copy (TYP-9, Checker::bindsBox). A mode the syntax gives (`move`, `&`)
+  /// and a variable the checker left owned keep theirs (a category is never
+  /// better at the generic code than at an instance: OWN-C5).
+  Var::Borrow modeAt(const Var *V, Type *Ty);
+  /// Is T of the owning category (OWN-C1: a string, slice or map, or a type
+  /// that holds one by value; an unconstrained type parameter too, OWN-C5)?
+  /// What makes a parameter or a value receiver of type T borrowed (PAR-1).
+  bool isOwning(Type *T);
   /// Test-only work count: the steps of holdsView's walks so far.
   uint64_t viewSteps() const;
+
+  //===------------------------------------------------------------------===//
+  // Generics (P04.08): the checker's own substitution and lookups, so the
+  // instance of a generic body is decided by the code that decided the
+  // generic body (GEN-5, GEN-12).
+  //===------------------------------------------------------------------===//
+  using TypeMap = llvm::DenseMap<const Type *, Type *>;
+  /// T with the type parameters of Map replaced (Checker::substImpl). Every
+  /// instance of a generic type the result reaches is expanded, so
+  /// sema::under sees its fields, and its methods are instantiated.
+  /// Memoized per (Map, T) by the caller; the result mentions no type
+  /// parameter unless the substitution is too deep (mentionsTypeParam).
+  Type *subst(Type *T, const TypeMap &Map);
+  /// Expands every instance of a generic type that T reaches (its
+  /// underlying type and methods exist), so sema::under works on them. The
+  /// lowering calls it on every checker type it takes from Info.
+  void expand(Type *T);
+  /// Does T mention a type parameter (in an instance's arguments, a field, a
+  /// signature, a constraint) or a type declared inside generic code? One
+  /// memoized, iterative walk: linear over all the types asked.
+  bool mentionsTypeParam(Type *T);
+  /// The height of T (levels of nesting through its parts; a named type
+  /// counts as its type arguments only) and its size as a tree (a part
+  /// shared n times counts n times, saturating at SizeCap). A generic that
+  /// instantiates itself with ever larger arguments grows one or the other,
+  /// and the instance walk stops at a bound (GEN-5, E0449). One memoized
+  /// post-order walk over the types as a DAG: a diamond of 2^n paths costs n.
+  struct Extent {
+    unsigned Height = 0;
+    uint64_t Size = 0;
+  };
+  static constexpr uint64_t SizeCap = uint64_t(1) << 32;
+  Extent extent(Type *T);
+  /// The selection In (recorded for generic code, on a receiver of type
+  /// In.Recv) resolved on Recv, the receiver's type at an instance: the
+  /// field or method the plain code `x.f` would find (the same lookup, so a
+  /// method of a type parameter's constraint is the concrete type's
+  /// method). False if there is none (the caller reports).
+  bool resolveSelection(const Selection &In, Type *Recv, Selection &Out);
+  /// ADR-0018 point 11 and ADR-0020 on a type argument at an instance: why
+  /// Option[Arg] or View[Arg] is not allowed, or null (the plain code's
+  /// predicates, Checker::badOptionArg and badViewArg).
+  const char *badOptionArg(Type *Arg);
+  const char *badViewArg(Type *Arg);
+  /// Go++'s spelling of a type in a message.
+  std::string typeText(Type *T);
+  /// Are the two types identical (Go's rule, `byte` and `uint8` too)?
+  bool identical(Type *A, Type *B);
+  /// Does a value of T have a zero value (TYP-15, OWN-R9)? The predicate of
+  /// the checked results (OWN-P10): a result without one is unset when the
+  /// call fails.
+  bool hasZeroValue(Type *T);
 
 private:
   struct Impl;

@@ -1,0 +1,19 @@
+package main
+
+// P04.08, review R3: in the name of an instance, a type argument that is a
+// struct spells an unexported field with its package, as Go does
+// (`main.Box[struct { main.a int }]`), also in a slice of structs with a tag
+// and inside a map; an exported field and a struct that is no type argument
+// keep the plain name.
+type Box[T any] struct{ n int }
+
+func main() {
+	var s any = struct{ a int }{1}
+	_, ok := s.(struct{ a int })
+	println(ok)
+	var x any = Box[[]struct {
+		a, b int
+		C    string `json:"c"`
+	}]{1}
+	_ = x.(Box[map[string]struct{ d int }])
+}

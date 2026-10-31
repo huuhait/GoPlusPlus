@@ -33,6 +33,7 @@ add_executable(GoppUnitTests
   GIR/GlueTest.cpp
   GIR/InlineTest.cpp
   GIR/ScopeTest.cpp
+  GIR/InstancesTest.cpp
   CodeGen/CABITest.cpp
   CodeGen/CodeGenTest.cpp
   CodeGen/DebugInfoTest.cpp

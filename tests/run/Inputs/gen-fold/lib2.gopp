@@ -1,0 +1,8 @@
+package lib
+
+type Num interface{ ~int | ~float64 }
+
+func Twice[T Num](x T) T { return x + x }
+
+@Export("C")
+func use2() int { return Twice(2 * 10) }

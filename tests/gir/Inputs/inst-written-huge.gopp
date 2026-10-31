@@ -1,0 +1,48 @@
+package main
+
+// A type written as a DAG of 2^31 - 1 parts as a tree: a 30-level alias chain
+// of P[A, A] (GEN-5 bounds only the types an instance makes, review R4). Its
+// name in a descriptor and in a panic message stops at 65536 parts
+// (`main.P[...]`), its GIR label at 4096 bytes, its debugger name at 200, so
+// the build costs what the source does.
+type P[A, B any] struct{ n int }
+
+type A0 = int
+type A1 = P[A0, A0]
+type A2 = P[A1, A1]
+type A3 = P[A2, A2]
+type A4 = P[A3, A3]
+type A5 = P[A4, A4]
+type A6 = P[A5, A5]
+type A7 = P[A6, A6]
+type A8 = P[A7, A7]
+type A9 = P[A8, A8]
+type A10 = P[A9, A9]
+type A11 = P[A10, A10]
+type A12 = P[A11, A11]
+type A13 = P[A12, A12]
+type A14 = P[A13, A13]
+type A15 = P[A14, A14]
+type A16 = P[A15, A15]
+type A17 = P[A16, A16]
+type A18 = P[A17, A17]
+type A19 = P[A18, A18]
+type A20 = P[A19, A19]
+type A21 = P[A20, A20]
+type A22 = P[A21, A21]
+type A23 = P[A22, A22]
+type A24 = P[A23, A23]
+type A25 = P[A24, A24]
+type A26 = P[A25, A25]
+type A27 = P[A26, A26]
+type A28 = P[A27, A27]
+type A29 = P[A28, A28]
+type A30 = P[A29, A29]
+
+func main() {
+	var v A30
+	var x any = v
+	y := x.(A30)
+	_, ok := x.(A29)
+	println(y.n, ok)
+}

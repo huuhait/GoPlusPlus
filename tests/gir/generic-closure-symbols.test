@@ -1,0 +1,32 @@
+// RUN: %gopp build -build-check-j=1 -emit=gir %S/../run/generic-closures.test > %t.1.gir
+// RUN: %gopp build -build-check-j=16 -emit=gir %S/../run/generic-closures.test > %t.16.gir
+// RUN: diff %t.1.gir %t.16.gir
+// RUN: FileCheck %s < %t.1.gir
+// RUN: %gopp demangle _GPC1_M4EachIN4mainE3BoxiE _GPC1_M4EachIN4mainE3BoxdE _GPC1_C1_IF4mainE6NestediE _GPTEIF4mainE2IdiE _GPTVM3SetIN4mainE3BoxiE | FileCheck --check-prefix=DEM %s
+// P04.08, decision M6 (TODO P04.07's "a literal in two instances of a
+// generic method get distinct symbols, the same with -check-j 1 and 16"): a
+// function literal in generic code is named by its instance (appendix A.5,
+// `sym::Context::closure` of the instance's node): the literal in
+// Box[T].Each is `Box[int].Each.func1` and `Box[float64].Each.func1`, a
+// nested one `Nested[int].func1.func1`; an instance of a generic function
+// as a value is `TE` of the instance, a method value of an instance's
+// method `TV` of it. The output is the same with 1 and 16 checker threads
+// (also the unit test GIRStress.ClosureSymbolsDoNotDependOnTheCheckThreads);
+// run/generic-closures.test runs the file against Go. The other side: a
+// literal in a plain function keeps its one symbol (`main.main.func1`, and
+// gir/closure-symbols.test).
+// CHECK-DAG: fn _GPC1_M4EachIN4mainE3BoxiE(
+// CHECK-DAG: fn _GPC1_M4EachIN4mainE3BoxdE(
+// CHECK-DAG: fn _GPC1_C1_IF4mainE6NestediE(
+// CHECK-DAG: fn _GPC1_C1_IF4mainE6NestedbE(
+// CHECK-DAG: fn _GPC1_IF4mainE6PrefixiE(
+// CHECK-DAG: fn _GPC1_IF4mainE6PrefixrE(
+// CHECK-DAG: fn _GPC1_F4mainE4main(
+// CHECK-DAG: fn _GPTEIF4mainE2IdiE(
+// CHECK-DAG: fn _GPTEIF4mainE2IddE(
+// CHECK-DAG: fn _GPTVM3SetIN4mainE3BoxiE(
+// DEM: main.Box[int].Each.func1
+// DEM-NEXT: main.Box[float64].Each.func1
+// DEM-NEXT: main.Nested[int].func1.func1
+// DEM-NEXT: method expression main.Id[int]
+// DEM-NEXT: method value main.Box[int].Set

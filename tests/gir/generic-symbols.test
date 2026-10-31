@@ -1,0 +1,37 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build -emit=obj %S/Inputs/generic-symbols.gopp -o %t.1.o
+// RUN: %gopp build -emit=obj %S/Inputs/generic-symbols.gopp -o %t.16.o
+// RUN: cmp %t.1.o %t.16.o
+// RUN: llvm-nm %t.1.o | FileCheck --check-prefix=NM %s
+// RUN: llvm-readelf -g %t.1.o | FileCheck --check-prefix=GROUP %s
+// RUN: sh -c "llvm-nm %t.1.o | grep -o '_GP[A-Za-z0-9_$]*' | sort -u | xargs %gopp demangle" | FileCheck --check-prefix=DEM %s
+// RUN: %gopp build -emit=obj %S/Inputs/generic-symbols-b.gopp -o %t.b.o
+// RUN: llvm-nm %t.b.o | FileCheck --check-prefix=NMB %s
+// RUN: llvm-readelf -g %t.b.o | FileCheck --check-prefix=GROUPB %s
+// P04.08: an instance of generic code is named by P04.17's grammar (appendix
+// A: `I` for a function, `M` ... `I` for a method of an instance of a type),
+// by the content of its type arguments, so two builds give the same
+// object (the order of the instances is the order of the source; the
+// -check-j independence of the walk: tests/gir/inst-bad.test); it is weak (linkonce_odr) and in a COMDAT group of
+// its own, so the linker keeps one of the copies two objects have. The other
+// side: a function that is not generic is a plain strong symbol with no group.
+//
+// Two objects (this program and Inputs/generic-symbols-b.gopp) both
+// instantiate Max[int]: the weak symbol and the group have the same name in
+// both, which is what folds them (the linker keeps the first group of a
+// name).
+// NM-DAG: W _GPIF4mainE3MaxdE
+// NM-DAG: W _GPIF4mainE3MaxiE
+// NM-DAG: W _GPM5FirstIN4mainE4PairidE
+// NM-DAG: T _GPF4mainE4main
+// GROUP-DAG: COMDAT group section {{.*}} `.group' [_GPIF4mainE3MaxdE]
+// GROUP-DAG: COMDAT group section {{.*}} `.group' [_GPIF4mainE3MaxiE]
+// GROUP-DAG: COMDAT group section {{.*}} `.group' [_GPM5FirstIN4mainE4PairidE]
+// DEM-DAG: main.Max[float64]
+// DEM-DAG: main.Max[int]
+// DEM-DAG: main.Pair[int, float64].First
+// NMB-DAG: W _GPIF4mainE3MaxiE
+// NMB-DAG: W _GPIF4mainE3MindE
+// NMB-DAG: T _GPF4mainE4main
+// GROUPB-DAG: [_GPIF4mainE3MaxiE]
+// GROUPB-DAG: [_GPIF4mainE3MindE]

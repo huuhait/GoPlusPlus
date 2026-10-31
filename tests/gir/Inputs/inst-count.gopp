@@ -1,0 +1,53 @@
+package main
+
+// A chain of generics that each call the next twice with two different
+// bigger type arguments: F_k has 2^(40-k) instances, far past the limit of
+// 100000 instances in one package (inst-count.long.test).
+type P[A, B any] struct {
+	a []A
+	b []B
+}
+
+func F0[T any](x []T) int { return len(x) }
+func F1[T any](x []T) int { return F0([]P[T, int]{}) + F0([]P[int, T]{}) }
+func F2[T any](x []T) int { return F1([]P[T, int]{}) + F1([]P[int, T]{}) }
+func F3[T any](x []T) int { return F2([]P[T, int]{}) + F2([]P[int, T]{}) }
+func F4[T any](x []T) int { return F3([]P[T, int]{}) + F3([]P[int, T]{}) }
+func F5[T any](x []T) int { return F4([]P[T, int]{}) + F4([]P[int, T]{}) }
+func F6[T any](x []T) int { return F5([]P[T, int]{}) + F5([]P[int, T]{}) }
+func F7[T any](x []T) int { return F6([]P[T, int]{}) + F6([]P[int, T]{}) }
+func F8[T any](x []T) int { return F7([]P[T, int]{}) + F7([]P[int, T]{}) }
+func F9[T any](x []T) int { return F8([]P[T, int]{}) + F8([]P[int, T]{}) }
+func F10[T any](x []T) int { return F9([]P[T, int]{}) + F9([]P[int, T]{}) }
+func F11[T any](x []T) int { return F10([]P[T, int]{}) + F10([]P[int, T]{}) }
+func F12[T any](x []T) int { return F11([]P[T, int]{}) + F11([]P[int, T]{}) }
+func F13[T any](x []T) int { return F12([]P[T, int]{}) + F12([]P[int, T]{}) }
+func F14[T any](x []T) int { return F13([]P[T, int]{}) + F13([]P[int, T]{}) }
+func F15[T any](x []T) int { return F14([]P[T, int]{}) + F14([]P[int, T]{}) }
+func F16[T any](x []T) int { return F15([]P[T, int]{}) + F15([]P[int, T]{}) }
+func F17[T any](x []T) int { return F16([]P[T, int]{}) + F16([]P[int, T]{}) }
+func F18[T any](x []T) int { return F17([]P[T, int]{}) + F17([]P[int, T]{}) }
+func F19[T any](x []T) int { return F18([]P[T, int]{}) + F18([]P[int, T]{}) }
+func F20[T any](x []T) int { return F19([]P[T, int]{}) + F19([]P[int, T]{}) }
+func F21[T any](x []T) int { return F20([]P[T, int]{}) + F20([]P[int, T]{}) }
+func F22[T any](x []T) int { return F21([]P[T, int]{}) + F21([]P[int, T]{}) }
+func F23[T any](x []T) int { return F22([]P[T, int]{}) + F22([]P[int, T]{}) }
+func F24[T any](x []T) int { return F23([]P[T, int]{}) + F23([]P[int, T]{}) }
+func F25[T any](x []T) int { return F24([]P[T, int]{}) + F24([]P[int, T]{}) }
+func F26[T any](x []T) int { return F25([]P[T, int]{}) + F25([]P[int, T]{}) }
+func F27[T any](x []T) int { return F26([]P[T, int]{}) + F26([]P[int, T]{}) }
+func F28[T any](x []T) int { return F27([]P[T, int]{}) + F27([]P[int, T]{}) }
+func F29[T any](x []T) int { return F28([]P[T, int]{}) + F28([]P[int, T]{}) }
+func F30[T any](x []T) int { return F29([]P[T, int]{}) + F29([]P[int, T]{}) }
+func F31[T any](x []T) int { return F30([]P[T, int]{}) + F30([]P[int, T]{}) }
+func F32[T any](x []T) int { return F31([]P[T, int]{}) + F31([]P[int, T]{}) }
+func F33[T any](x []T) int { return F32([]P[T, int]{}) + F32([]P[int, T]{}) }
+func F34[T any](x []T) int { return F33([]P[T, int]{}) + F33([]P[int, T]{}) }
+func F35[T any](x []T) int { return F34([]P[T, int]{}) + F34([]P[int, T]{}) }
+func F36[T any](x []T) int { return F35([]P[T, int]{}) + F35([]P[int, T]{}) }
+func F37[T any](x []T) int { return F36([]P[T, int]{}) + F36([]P[int, T]{}) }
+func F38[T any](x []T) int { return F37([]P[T, int]{}) + F37([]P[int, T]{}) }
+func F39[T any](x []T) int { return F38([]P[T, int]{}) + F38([]P[int, T]{}) }
+func F40[T any](x []T) int { return F39([]P[T, int]{}) + F39([]P[int, T]{}) }
+
+func main() { println(F40([]int{})) }

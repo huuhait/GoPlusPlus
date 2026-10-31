@@ -126,6 +126,7 @@ def corpus(root):
     for d, kind in (("diff", "golden"), ("coll", "golden"), ("opt", "golden"),
                     ("allocword", "golden"), ("iface", "golden"),
                     ("iface-gopp", "golden"), ("cc", "golden"),
+                    ("generics", "golden"), ("generics-gopp", "golden"),
                     ("panics", "panic"), ("panics-seq", "panic"),
                     ("panics-gopp", "panic"), ("panics-allocword", "panic"),
                     ("panics-iface", "panic"), ("panics-bang", "panic"),
@@ -152,7 +153,8 @@ def corpus(root):
                         ("types", ["types.gopp"]), ("scopes", ["scopes.gopp"]),
                         ("inl", ["inl/a.gopp", "inl/b.gopp"]),
                         ("deep", ["deep.gopp"]), ("params", ["params.gopp"]),
-                        ("parambreak", ["parambreak.gopp"])):
+                        ("parambreak", ["parambreak.gopp"]),
+                        ("generic", ["generic.gopp"])):
         if os.path.isfile(os.path.join(dbg, files[0])):
             base = os.path.join(dbg, stem)
             progs.append(Program("debug/" + stem, [os.path.join(dbg, f) for f in files],

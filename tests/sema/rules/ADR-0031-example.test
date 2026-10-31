@@ -1,0 +1,71 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// ADR-0031 (owner decision 2026-10-31, option A; spec OWN-V1 "Zero value",
+// OWN-R9): a view of a single value always looks at a value, so it has no
+// zero value, as a pointer kind has none; the checker's one zero-value query
+// (OWN-R9's machinery, with the pointer kinds' codes) says so. Rejected: a
+// view declared with no value, a struct (an @View one) and an array that
+// hold one, a literal without the field, `make` with a length, an instance
+// of a generic type that holds one, `var zero T` that may be one, and a map
+// read outside the comma-ok form. Accepted: a view set from a value, the
+// struct with its field, `Option[View[int]]` (nil, and `Get`), the empty
+// `View[string]` and `View[[]int]`, `make` with length 0, and the comma-ok
+// read used where it is known found. run/view-option.test runs the accepted
+// forms.
+package main
+
+type P struct{ N int }
+
+@View
+type Win struct{ Cur View[P] }
+
+type Box[T any] struct{ v T }
+
+func zero[T any]() {
+	var z T
+	_ = z
+}
+
+func bad(m map[int]View[int]) {
+	var v View[int]
+	var w Win
+	w2 := Win{}
+	s := make([]View[int], 3)
+	var a [2]View[int]
+	var b Box[View[int]]
+	r := m[1]
+	_, _, _, _, _, _, _ = v, w, w2, s, a, b, r
+}
+
+func good(x int, p P, m map[int]View[int]) {
+	ok1 := View[int](x)
+	ok2 := Win{Cur: View[P](p)}
+	var o Option[View[int]]
+	o = ok1
+	if u, set := o.Get(); set {
+		println(int(u))
+	}
+	var sv View[string]
+	var sl View[[]int]
+	s2 := make([]View[int], 0, 3)
+	if r2, found := m[1]; found {
+		println(int(r2))
+	}
+	_, _, _, _ = ok2, sv, sl, s2
+}
+
+func main() {
+	x := 3
+	m := map[int]View[int]{1: View[int](x)}
+	bad(m)
+	good(x, P{1}, m)
+	zero[int]()
+}
+
+// CHECK: ADR-0031-example.test:24:6: error[E0333]: cannot declare z without a value: T has no zero value
+// CHECK: ADR-0031-example.test:29:6: error[E0333]: cannot declare v without a value: View{{\[}}int] has no zero value (a view always looks at a value (ADR-0031): set it from one, View{{\[}}int](x), or use Option{{\[}}View{{\[}}int]])
+// CHECK: ADR-0031-example.test:30:6: error[E0333]: cannot declare w without a value: Win has no zero value (field Cur of type View{{\[}}P] has none: a view always looks at a value (ADR-0031)
+// CHECK: ADR-0031-example.test:31:12: error[E0335]: missing required field Cur in Win literal (TYP-15)
+// CHECK: ADR-0031-example.test:32:25: error[E0333]: make([]View{{\[}}int], 3) creates zero values: View{{\[}}int] has no zero value
+// CHECK: ADR-0031-example.test:33:6: error[E0333]: cannot declare a without a value: [2]View{{\[}}int] has no zero value
+// CHECK: ADR-0031-example.test:34:6: error[E0333]: cannot declare b without a value: Box{{\[}}View{{\[}}int]] has no zero value
+// CHECK: ADR-0031-example.test:35:7: error[E0334]: m[1] may not exist: a missing key or a closed channel would give a View{{\[}}int], which has no zero value

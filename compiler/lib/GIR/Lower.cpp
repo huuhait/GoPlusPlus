@@ -42,6 +42,12 @@ static thread_local uint64_t CallerEscape = 0;
 
 uint64_t gir::loweringSteps() { return CallerSteps; }
 uint64_t gir::escapeSteps() { return CallerEscape; }
+
+/// The steps of the instance walks (instanceSteps).
+static thread_local uint64_t CallerInstanceSteps = 0;
+static thread_local uint64_t WalkSteps = 0;
+
+uint64_t gir::instanceSteps() { return CallerInstanceSteps; }
 using llvm::cast;
 using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
@@ -55,7 +61,12 @@ using llvm::isa_and_nonnull;
 void Lowering::unsupported(SourceLoc At, const llvm::Twine &What) {
   Failed = true;
   ++Reported;
-  Diags.report(At, diag::err_gir_unsupported) << What.str();
+  // Generic code is lowered once per instance: a construct that is refused is
+  // said once, at its place (P04.08).
+  std::string Text = What.str();
+  if (!Said.insert({At.getRaw(), Text}).second)
+    return;
+  Diags.report(At, diag::err_gir_unsupported) << Text;
 }
 
 void Lowering::unsupported(SourceLoc At, const llvm::Twine &What,
@@ -130,7 +141,7 @@ static const char *kindName(S::Type::Kind K) {
   case S::Type::Kind::Named:
     return "named type";
   case S::Type::Kind::TypeParam:
-    return "a type parameter (P04.08)";
+    return "a type parameter";
   case S::Type::Kind::Option:
     return "Option";
   }
@@ -193,6 +204,19 @@ Type *Lowering::lowerType(S::Type *T, SourceLoc At) {
                           ", which refers to itself through no named type,");
     return nullptr;
   }
+  // A type of generic code is lowered at an instance, with its type
+  // arguments applied (Body::inst): a type parameter here is a missing
+  // substitution, never a type to guess (P04.08).
+  Methods.expand(T);
+  if (Methods.mentionsTypeParam(T)) {
+    // (A local type of generic code is refused where it is declared, P04.28:
+    // its uses are no second error.)
+    if (!Failed)
+      internalError(At, "the type " + S::typeString(T) +
+                            " still names a type parameter (not substituted "
+                            "for the instance)");
+    return nullptr;
+  }
   Type *R = nullptr;
   unsigned Before = Reported;
   InProgress[T] = StructsActive;
@@ -231,8 +255,10 @@ Type *Lowering::lowerType(S::Type *T, SourceLoc At) {
 std::string Lowering::uniqueTypeName(S::NamedType *Named) {
   std::string Name;
   if (Named) {
+    // (A readable label: an instance written as a DAG of 2^n parts, an alias
+    // chain of P[A, A], stops at MaxTypeName bytes and `...`.)
     if (const sym::Node *N = Syms.Names.type(Named))
-      Name = sym::print(N).Text;
+      Name = sym::print(N, MaxTypeName).Text;
     else
       Name = (Named->Obj->Pkg ? Named->Obj->Pkg->Path.str() + "." : "") +
              Named->Obj->Name.str();
@@ -308,6 +334,19 @@ Type *Lowering::lowerStruct(S::Type *Whole, S::StructType *ST,
   for (S::Var *F : ST->Fields)
     Names.push_back(F->Name);
   Ctx.setFieldNames(Str, Names);
+  // An instance of a generic type: the debugger spells the arguments. (Not
+  // when one is the struct itself: the instances of a generic type whose
+  // fields do not use its type parameters have one struct, the checker's,
+  // `P[int, int]` and `P[P[int, int], int]` of a `struct{ n int }`; the
+  // debugger then shows the name of the first, P04.08.)
+  if (Named && !Named->TArgs.empty()) {
+    SmallVector<Type *, 4> Args;
+    for (S::Type *A : Named->TArgs)
+      if (Type *G = lowerType(A, At); G && G != Str)
+        Args.push_back(G);
+    if (Args.size() == Named->TArgs.size())
+      Ctx.setTypeArgs(Str, Args);
+  }
   return Str;
 }
 
@@ -464,10 +503,16 @@ Type *Lowering::lowerTypeOnce(S::Type *T, SourceLoc At) {
       unsupported(At, "Unique, Shared and Weak pointers (P05, P04.09)");
       return nullptr;
     }
-    if (N->Orig || !N->TParams.empty()) {
-      unsupported(At, "a generic type (P04.08)");
-      return nullptr;
-    }
+    // An instance of a generic type is one type for each content of its type
+    // arguments, however the checker spells it (`Box[byte]` and `Box[uint8]`
+    // are two checker types): one GIR struct, one name, as its symbol (the
+    // key of its methods' instances, Instances.h) is one.
+    if (N->Orig && !N->TArgs.empty())
+      if (const sym::Node *SN = Syms.Names.type(N)) {
+        auto [It, New] = InstanceTypes.try_emplace(sym::mangleType(SN), N);
+        if (!New && It->second != N && Methods.identical(It->second, N))
+          return lowerType(It->second, At);
+      }
     S::Type *U = S::under(N);
     if (!U) {
       unsupported(At, "the defined type " + N->Obj->Name.str());
@@ -497,11 +542,6 @@ Type *Lowering::lowerTypeOnce(S::Type *T, SourceLoc At) {
     return nullptr;
   }
   return R;
-}
-
-void Lowering::declareLocalType(const S::TypeName *TN, const sym::Node *Scope,
-                                unsigned Ordinal) {
-  Syms.Names.declareLocalType(TN, Scope, Ordinal);
 }
 
 //===----------------------------------------------------------------------===//
@@ -651,10 +691,44 @@ Lowering::Pass Lowering::passOf(S::SignatureType *Sig, size_t K) {
   return passOfType(Sig->Params->Elems[K], Sig->isMove(K));
 }
 
+S::Type *Lowering::recvTypeOf(const S::Func *F) {
+  if (!F->Recv)
+    return nullptr;
+  if (!F->RecvInst)
+    return F->Recv->Ty;
+  // A method of an instance of a generic type: its declaration's receiver
+  // type names the declaration's own parameters.
+  const GenericInst *In = Walk.methodInst(F);
+  if (!In) {
+    internalError(F->Pos, "the method " + F->Name.str() + " of " +
+                              S::typeString(F->RecvInst) +
+                              " is no instance the walk found");
+    return nullptr;
+  }
+  return Walk.inst(const_cast<GenericInst *>(In), F->Recv->Ty);
+}
+
+S::SignatureType *Lowering::instanceSig(const GenericInst *GI) {
+  return cast<S::SignatureType>(
+      Walk.inst(const_cast<GenericInst *>(GI), GI->Decl->Ty));
+}
+
+Lowering::Pass Lowering::passOfRecvAt(const S::Func *F, S::Type *RecvTy) {
+  if (!F->Recv || F->HasPtrRecv || F->MoveRecv || !RecvTy)
+    return Pass::Value;
+  return passOfType(RecvTy, false);
+}
+
+S::Var::Borrow Lowering::recvModeOf(const S::Func *F) {
+  if (!F->Recv)
+    return S::Var::Owned;
+  return F->RecvInst ? Methods.modeAt(F->Recv, recvTypeOf(F)) : F->Recv->Mode;
+}
+
 Lowering::Pass Lowering::passOfRecv(const S::Func *F) {
   if (!F->Recv || F->HasPtrRecv || F->MoveRecv)
     return Pass::Value;
-  return passOfType(F->Recv->Ty, false);
+  return passOfRecvAt(F, recvTypeOf(F));
 }
 
 static std::string reservedNameWhy(StringRef Name) {
@@ -732,6 +806,9 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   }
   if (!Obj)
     return;
+  // Generic code is declared and lowered per instance (Instances.h).
+  if (isGenericDecl(Obj))
+    return;
   // Every return below that is not the last one has reported an error.
   Declined.insert(Obj);
   const ast::Attribute *Ext = externAttr(FD);
@@ -796,10 +873,6 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     unsupported(
         FD->getBegin(),
         "a function without a body (a C function needs @Extern(\"C\"))");
-    return;
-  }
-  if (FD->Type->TypeParams && FD->Type->TypeParams->numFields()) {
-    unsupported(FD->getBegin(), "a generic function (P04.08)");
     return;
   }
   S::SignatureType *Sig = Obj->sig();
@@ -1126,7 +1199,7 @@ void Lowering::lowerBody(const ast::FuncDecl *FD) {
   } else {
     auto D = I.Defs.find(FD->Name);
     Obj = D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::Func>(D->second);
-    if (!Obj)
+    if (!Obj || isGenericDecl(Obj))
       return;
     auto It = FuncIds.find(Obj);
     if (It == FuncIds.end())
@@ -1135,7 +1208,9 @@ void Lowering::lowerBody(const ast::FuncDecl *FD) {
   }
   Function &F = M->func(Id);
   Body B(*this, F, Obj);
-  // The scope of the types declared in this body (their symbols name it).
+  // The scope of the function literals declared in this body: their symbols
+  // name it. (Its types were named before the instance walk, with the same
+  // scopes: declareLocalTypes.)
   B.ScopeNode = Obj ? Syms.funcNode(Obj)
                     : Syms.Ctx.initFunc(Syms.Names.pathOf(CP.Pkg), Ordinal);
   // The function literals inside: what they capture, which escape (P04.07).
@@ -1148,6 +1223,133 @@ void Lowering::lowerBody(const ast::FuncDecl *FD) {
       Outer.push_back(Obj->Recv);
   }
   analyzeEntity({FD->Body}, FD->Body, Outer, Keeps, FuncHolders, I, Facts);
+  B.Facts = &Facts;
+  B.lower(FD);
+}
+
+//===----------------------------------------------------------------------===//
+// Instances of generic code (P04.08)
+//===----------------------------------------------------------------------===//
+
+void Lowering::declareInstance(GenericInst &In) {
+  if (In.Bad)
+    return;
+  const S::Func *Obj = In.Decl;
+  const ast::FuncDecl *FD = Obj->Decl;
+  if (!FD)
+    return;
+  SourceLoc At = FD->getBegin();
+  if (!FD->Body) {
+    unsupported(At, "a generic function without a body");
+    return;
+  }
+  if (externAttr(FD) || findAttr(FD, "Export")) {
+    unsupported(At, "an @Extern or @Export attribute on generic code (P04.28)");
+    return;
+  }
+  if (FD->Recv && !methodSupported(Obj, At))
+    return;
+  // (A function that fails with `!` has the failure as its last result, as
+  // in plain code: P04.10.)
+  auto *Sig = cast<S::SignatureType>(Walk.inst(&In, Obj->Ty));
+  SmallVector<Type *, 4> Params;
+  if (FD->Recv) {
+    // The receiver is parameter 0, passed as the instance's receiver type
+    // says (passOfRecvAt: the same rule as plain code, on real types).
+    S::Type *RT = Walk.inst(&In, Obj->Recv->Ty);
+    Type *T = lowerType(RT, At);
+    if (!T)
+      return;
+    Params.push_back(passType(passOfRecvAt(Obj, RT), T));
+  }
+  const size_t Lead = Params.size();
+  for (S::Type *P : Sig->Params->Elems) {
+    Type *T = lowerType(P, At);
+    if (!T)
+      return;
+    Params.push_back(paramType(Sig, Params.size() - Lead, T));
+  }
+  Type *Ret = Ctx.unit();
+  if (Sig->Results->size() == 1)
+    Ret = lowerType(Sig->Results->Elems[0], At);
+  else if (Sig->Results->size() > 1)
+    Ret = lowerType(Sig->Results, At);
+  if (!Ret)
+    return;
+  auto F = std::make_unique<Function>();
+  F->Name = In.Symbol;
+  // One home per instance: every package that needs it emits the same
+  // function under the same symbol, and the linker keeps one (D4.3).
+  F->Link = Linkage::LinkOnceODR;
+  F->CC = CallConv::Go;
+  F->Sig = Ctx.func(Params, Ret, false, F->CC);
+  F->Loc = spanOf(At);
+  if (M->lookupFunction(F->Name) != NoId) {
+    unsupported(At, "a second function named " + F->Name);
+    return;
+  }
+  FuncId Id = M->addFunction(std::move(F));
+  InstIds[&In] = Id;
+  if (In.Method) {
+    FuncIds[In.Method] = Id;
+    for (const S::Func *A : In.Aliases)
+      FuncIds[A] = Id;
+  }
+}
+
+void Lowering::declareNewInstances() {
+  // (The list grows while it is declared: declareInstance asks the walk for
+  // nothing, but the types it lowers may.)
+  for (; InstDeclared < Walk.list().size(); ++InstDeclared)
+    declareInstance(*Walk.list()[InstDeclared]);
+}
+
+void Lowering::lowerPendingInstances() {
+  for (; InstLowered < Walk.list().size(); ++InstLowered) {
+    declareNewInstances();
+    lowerInstanceBody(*Walk.list()[InstLowered]);
+  }
+  declareNewInstances();
+}
+
+bool Lowering::ensureMethod(const S::Func *F, SourceLoc At) {
+  if (FuncIds.count(F))
+    return true;
+  if (!F->RecvInst)
+    return false;
+  if (!Walk.needMethod(F, At))
+    return false;
+  declareNewInstances();
+  return FuncIds.count(F) != 0;
+}
+
+void Lowering::lowerInstanceBody(GenericInst &In) {
+  auto It = InstIds.find(&In);
+  if (It == InstIds.end())
+    return;
+  Function &F = M->func(It->second);
+  const S::Func *Obj = In.Decl;
+  const ast::FuncDecl *FD = Obj->Decl;
+  Body B(*this, F, Obj, &In);
+  // A function literal in generic code belongs to the instance (decision
+  // M6, appendix A.5): its symbol is named by the instance's, so each
+  // instance has closures of its own.
+  B.ScopeNode = In.Method ? Syms.Names.func(In.Method)
+                          : Syms.Names.funcInstance(Obj, In.TArgs);
+  if (!B.ScopeNode || sym::mangle(B.ScopeNode) != In.Symbol) {
+    internalError(FD->getBegin(), "the instance " + In.Symbol +
+                                      " has no symbol node of its own");
+    return;
+  }
+  // What its literals capture and which escape, decided on the instance's
+  // types (a variable of type T may hold a func value at one instance only).
+  EntityFacts Facts;
+  SmallVector<const S::Var *, 8> Outer(Obj->Params.begin(), Obj->Params.end());
+  Outer.append(Obj->Results.begin(), Obj->Results.end());
+  if (Obj->Recv)
+    Outer.push_back(Obj->Recv);
+  analyzeEntity({FD->Body}, FD->Body, Outer, Keeps, FuncHolders, I, Facts,
+                [&](S::Type *T) { return Walk.inst(&In, T); });
   B.Facts = &Facts;
   B.lower(FD);
 }
@@ -1263,7 +1465,6 @@ FuncId Lowering::lowerPackageInit() {
   Function &Fn = *F;
   FuncId Id = M->addFunction(std::move(F));
   Body B(*this, Fn, nullptr);
-  B.ScopeNode = Syms.Ctx.pkgInit(Syms.Names.pathOf(CP.Pkg));
   B.lowerInit(Order, Inits);
   return Id;
 }
@@ -1295,6 +1496,17 @@ void Lowering::addEntry(const ast::FuncDecl *Main, FuncId PkgInit) {
 
 std::unique_ptr<Module> Lowering::run() {
   const ast::FuncDecl *Main = nullptr;
+  // The types declared in function bodies get their symbols first: an
+  // instance may have one as a type argument (Instances.h).
+  declareLocalTypes(CP, Files, Syms);
+  // The instances of generic code the package needs, and what is wrong with
+  // any of them, before anything is declared (Instances.h).
+  const bool Walked = Walk.run();
+  WalkSteps = Walk.steps();
+  if (!Walked) {
+    Failed = true;
+    return nullptr;
+  }
   // The files in the order the checker was given them (a directory's are
   // sorted by name, the command line's are as written): the init functions
   // run in this order, as the variables' declaration order does (spec,
@@ -1319,6 +1531,7 @@ std::unique_ptr<Module> Lowering::run() {
     }
   }
   declareGlobals();
+  declareNewInstances();
   // A function that was declined has had its error reported: none leaves the
   // module without one (a bug in a step that returned null silently).
   if (!Declined.empty() && !Failed)
@@ -1329,7 +1542,9 @@ std::unique_ptr<Module> Lowering::run() {
     for (const ast::Decl *D : File->Decls)
       if (auto *FD = dyn_cast<ast::FuncDecl>(D))
         lowerBody(FD);
+  lowerPendingInstances();
   FuncId PkgInit = Failed ? NoId : lowerPackageInit();
+  lowerPendingInstances(); // (the initializers may need more methods)
   if (Opts.Entry && CP.Pkg && CP.Pkg->Name == "main") {
     if (Main) {
       addEntry(Main, PkgInit);
@@ -1363,10 +1578,11 @@ std::unique_ptr<Module> gir::lowerPackage(Context &Ctx, const SourceManager &SM,
                                           DiagnosticsEngine &Diags,
                                           const LowerOptions &Opts) {
   std::unique_ptr<Module> M;
-  uint64_t Steps = 0, Escapes = 0;
+  uint64_t Steps = 0, Escapes = 0, Walked = 0;
   runOnNewStackOrHere(
       [&] {
         uint64_t Before = LowerSteps, EscBefore = EscapeSteps;
+        WalkSteps = 0;
         Lowering L(Ctx, SM, CP, Files, Diags, Opts);
         M = L.run();
         // (The checker's lookups for the method sets count too.)
@@ -1374,9 +1590,11 @@ std::unique_ptr<Module> gir::lowerPackage(Context &Ctx, const SourceManager &SM,
         // (The checker's walk over the types that hold a view, which the
         // closures ask, counts with them.)
         Escapes = EscapeSteps - EscBefore + L.Methods.viewSteps();
+        Walked = WalkSteps;
       },
       LowerStackBytes);
   CallerSteps += Steps;
   CallerEscape += Escapes;
+  CallerInstanceSteps += Walked;
   return M;
 }

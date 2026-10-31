@@ -59,9 +59,10 @@ enum TypeCode : unsigned {
   T_Func,
   T_Struct,
   T_StructBody,
-  T_Rec,         // a self-naming type: [name chars]
-  T_RecBody,     // [id, kind (a TypeCode), length, n, part ids...]
-  T_StructFields // [id, n, then per field: length, name chars...]
+  T_Rec,          // a self-naming type: [name chars]
+  T_RecBody,      // [id, kind (a TypeCode), length, n, part ids...]
+  T_StructFields, // [id, n, then per field: length, name chars...]
+  T_StructArgs    // [id, n, then the type ids of the type arguments]
 };
 enum FuncCode : unsigned {
   F_Body = 1,
@@ -271,6 +272,14 @@ private:
       }
       if (Any)
         Bodies.push_back(std::move(N));
+      // The type arguments of an instance of a generic type (P04.08, debug
+      // information only).
+      if (!S->typeArgs().empty()) {
+        Rec A{T_StructArgs, {TypeIds[S], S->typeArgs().size()}};
+        for (const Type *Arg : S->typeArgs())
+          A.Vals.push_back(typeId(Arg));
+        Bodies.push_back(std::move(A));
+      }
     }
     std::vector<Rec> Out;
     for (const Type *T : TypeOrder) {
@@ -830,6 +839,19 @@ private:
       // A context that knows the struct already keeps its own names.
       SmallVector<StringRef, 4> Refs(Names.begin(), Names.end());
       Ctx.setFieldNames(Types[Id], Refs);
+      return Error::success();
+    }
+    case T_StructArgs: {
+      uint64_t Id = R.next(), N = R.next();
+      if (Id >= Types.size() || Types[Id]->getKind() != Type::Kind::Struct ||
+          Types[Id]->isRec() || N == 0)
+        return bad("type arguments for another type");
+      SmallVector<Type *, 4> Args;
+      for (uint64_t I = 0; I < N && !R.Failed; ++I)
+        Args.push_back(type(R));
+      if (R.Failed)
+        return bad("type arguments");
+      Ctx.setTypeArgs(Types[Id], Args);
       return Error::success();
     }
     default:

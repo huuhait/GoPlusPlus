@@ -1,0 +1,20 @@
+// RUN: %python %S/Inputs/check-raw-types.py %S/../../compiler/lib/GIR/Lower*.cpp %S/../../compiler/lib/GIR/LowerImpl.h | FileCheck --check-prefix=OK %s
+// RUN: not %python %S/Inputs/check-raw-types.py %S/Inputs/raw-types/bad.cpp | FileCheck %s
+// P04.08, review R1: generic code is lowered by the plain `Body` per
+// instance, so a checker type a `Body` reads without its instance accessors
+// (sTyOf, tyOfObj, sigOf, selOf, narrowed) is a type parameter at an
+// instance: an internal error (E0440) from valid source, as the type switch
+// binding was (run/generic-tswitch.test). Every `Body::` function and the
+// `Body` class are scanned for a raw read (`->Ty`, `->sig()`, `I.typeOf(`,
+// `I.narrowedType(`); only the accessors may make one. The other side: the
+// bad fixture, with each raw read in Body code, is rejected, and its
+// `Lowering::` function (which reads real types) is not.
+// OK: {{^}}ok{{$}}
+// CHECK: bad.cpp:5: a raw checker type in Body code: Type *VG = L.lowerType(V->Ty, CC->getBegin());
+// CHECK: bad.cpp:6: a raw checker type in Body code: S::SignatureType *Sig = F->sig();
+// CHECK: bad.cpp:7: a raw checker type in Body code: S::Type *T = I.typeOf(E);
+// CHECK: bad.cpp:8: a raw checker type in Body code: S::Type *N = I.narrowedType(Id);
+// CHECK: bad.cpp:9: a raw checker type in Body code: auto SI = I.Selections.find(Sel);
+// CHECK: bad.cpp:10: a raw checker type in Body code: bool B = V->Mode == S::Var::Borrowed;
+// CHECK-NOT: bad.cpp:14
+// CHECK: 6 raw reads

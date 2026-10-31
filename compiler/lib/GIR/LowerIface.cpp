@@ -55,12 +55,10 @@ bool Lowering::methodSupported(const S::Func *F, SourceLoc At) {
     unsupported(At, "an operator method (P04.23)");
     return false;
   }
-  if (!F->RecvTParams.empty() || F->Origin || F->RecvInst) {
-    unsupported(At, "a method of a generic type (P04.08)");
-    return false;
-  }
+  // (A method of a generic type is lowered per instance, P04.08; a generic
+  // method of a plain type is an instance of its own, P04.28.)
   if (!F->OwnTParams.empty()) {
-    unsupported(At, "a generic method (P04.08)");
+    unsupported(At, "a generic method (P04.28)");
     return false;
   }
   return true;
@@ -182,7 +180,16 @@ const SmallVector<Lowering::MethodEntry, 4> *Lowering::methodSet(S::Type *Dyn,
 // Go's spelling of a type, and comparability
 //===----------------------------------------------------------------------===//
 
-std::string Lowering::rtypeName(S::Type *T) {
+std::string Lowering::rtypeShown(S::Type *T) {
+  if (Methods.extent(T).Size <= MaxNameParts)
+    return rtypeName(T);
+  if (auto *N = dyn_cast<S::NamedType>(T))
+    return (N->Obj->Pkg ? N->Obj->Pkg->Name.str() + "." : std::string()) +
+           N->Obj->Name.str() + "[...]";
+  return "...";
+}
+
+std::string Lowering::rtypeName(S::Type *T, bool InArg) {
   switch (T->getKind()) {
   case S::Type::Kind::Basic: {
     switch (cast<S::BasicType>(T)->BK) {
@@ -232,22 +239,30 @@ std::string Lowering::rtypeName(S::Type *T) {
     if (N->Obj->Pkg)
       R = N->Obj->Pkg->Name.str() + ".";
     R += N->Obj->Name.str();
+    // An instance of a generic type: `main.Pair[int,string]`, as Go's
+    // reflect spells it (the arguments in full, no space).
+    if (!N->TArgs.empty()) {
+      R += "[";
+      for (size_t K = 0; K < N->TArgs.size(); ++K)
+        R += (K ? "," : "") + rtypeName(N->TArgs[K], /*InArg=*/true);
+      R += "]";
+    }
     return R;
   }
   case S::Type::Kind::Pointer:
-    return "*" + rtypeName(cast<S::PointerType>(T)->Elem);
+    return "*" + rtypeName(cast<S::PointerType>(T)->Elem, InArg);
   case S::Type::Kind::Slice:
-    return "[]" + rtypeName(cast<S::SliceType>(T)->Elem);
+    return "[]" + rtypeName(cast<S::SliceType>(T)->Elem, InArg);
   case S::Type::Kind::Array:
     return "[" + std::to_string(cast<S::ArrayType>(T)->Len) + "]" +
-           rtypeName(cast<S::ArrayType>(T)->Elem);
+           rtypeName(cast<S::ArrayType>(T)->Elem, InArg);
   case S::Type::Kind::Map:
-    return "map[" + rtypeName(cast<S::MapType>(T)->Key) + "]" +
-           rtypeName(cast<S::MapType>(T)->Elem);
+    return "map[" + rtypeName(cast<S::MapType>(T)->Key, InArg) + "]" +
+           rtypeName(cast<S::MapType>(T)->Elem, InArg);
   case S::Type::Kind::Option:
-    return "Option[" + rtypeName(cast<S::OptionType>(T)->Elem) + "]";
+    return "Option[" + rtypeName(cast<S::OptionType>(T)->Elem, InArg) + "]";
   case S::Type::Kind::Ref:
-    return "View[" + rtypeName(cast<S::RefType>(T)->Elem) + "]";
+    return "View[" + rtypeName(cast<S::RefType>(T)->Elem, InArg) + "]";
   case S::Type::Kind::Interface: {
     // Go's spelling: the methods (embedded interfaces flattened) in the
     // order of Go's type descriptors, exported names first, then by name;
@@ -271,7 +286,7 @@ std::string Lowering::rtypeName(S::Type *T) {
         R += "; ";
       if (!S::isExportedName(Ms[K]->Name) && Ms[K]->Pkg)
         R += Ms[K]->Pkg->Name.str() + ".";
-      R += Ms[K]->Name.str() + sigText(Ms[K]->sig());
+      R += Ms[K]->Name.str() + sigText(Ms[K]->sig(), InArg);
     }
     return R + " }";
   }
@@ -285,20 +300,24 @@ std::string Lowering::rtypeName(S::Type *T) {
       if (!First)
         R += "; ";
       First = false;
-      R += F->Name.str() + " " + rtypeName(F->Ty);
+      // In a type argument Go qualifies an unexported field name with its
+      // package (`struct { main.a int }`).
+      if (InArg && !S::isExportedName(F->Name) && F->Pkg)
+        R += F->Pkg->Name.str() + ".";
+      R += F->Name.str() + " " + rtypeName(F->Ty, InArg);
       if (!F->Tag.empty()) // `A int "json:\"a\""`: strconv.Quote's tag
         R += " " + unicode::quote(F->Tag);
     }
     return R + " }";
   }
   case S::Type::Kind::Signature:
-    return "func" + sigText(cast<S::SignatureType>(T));
+    return "func" + sigText(cast<S::SignatureType>(T), InArg);
   default:
     return S::typeString(T);
   }
 }
 
-std::string Lowering::sigText(S::SignatureType *SG) {
+std::string Lowering::sigText(S::SignatureType *SG, bool InArg) {
   std::string R = "(";
   const size_t NP = SG->Params->size();
   for (size_t K = 0; K < NP; ++K) {
@@ -308,20 +327,20 @@ std::string Lowering::sigText(S::SignatureType *SG) {
     // (A variadic parameter is a slice: Go spells it `...T`.)
     if (SG->Variadic && K + 1 == NP)
       if (auto *Sl = dyn_cast<S::SliceType>(S::under(P))) {
-        R += "..." + rtypeName(Sl->Elem);
+        R += "..." + rtypeName(Sl->Elem, InArg);
         continue;
       }
-    R += rtypeName(P);
+    R += rtypeName(P, InArg);
   }
   R += ")";
   if (SG->Results->size() == 1)
-    R += " " + rtypeName(SG->Results->Elems[0]);
+    R += " " + rtypeName(SG->Results->Elems[0], InArg);
   else if (SG->Results->size() > 1) {
     R += " (";
     for (size_t K = 0; K < SG->Results->size(); ++K) {
       if (K)
         R += ", ";
-      R += rtypeName(SG->Results->Elems[K]);
+      R += rtypeName(SG->Results->Elems[K], InArg);
     }
     R += ")";
   }
@@ -330,28 +349,8 @@ std::string Lowering::sigText(S::SignatureType *SG) {
 
 bool Lowering::comparable(S::Type *T) {
   // The checker decides (Go's comparable, with an interface part decided at
-  // run time). A view compares as the value it shows (OWN-V): a view itself
-  // gets viewGlue, but the glue of a struct or an array that holds one
-  // compares its words, so such a value is not comparable in an interface
-  // (gir.md section 15, "Known gaps").
-  SmallVector<S::Type *, 8> Work{T};
-  llvm::SmallPtrSet<S::Type *, 8> Seen;
-  while (!Work.empty()) {
-    ++LowerSteps;
-    S::Type *U = S::under(Work.pop_back_val());
-    if (!U || !Seen.insert(U).second)
-      continue;
-    if (auto *ST = dyn_cast<S::StructType>(U)) {
-      for (const S::Var *F : ST->Fields)
-        Work.push_back(F->Ty);
-    } else if (auto *AT = dyn_cast<S::ArrayType>(U)) {
-      Work.push_back(AT->Elem);
-    } else if (auto *OT = dyn_cast<S::OptionType>(U)) {
-      Work.push_back(OT->Elem);
-    } else if (isa<S::RefType>(U)) {
-      return false;
-    }
-  }
+  // run time). A view compares as the value it shows (OWN-V), also inside a
+  // struct, an array or an Option (eqGlue: viewPartsGlue, review R7).
   return Methods.comparable(T);
 }
 
@@ -470,7 +469,7 @@ uint32_t Lowering::ifaceDesc(S::Type *I, SourceLoc At) {
   G.Ty = Ctx.tuple({Str, U64, Ctx.array(Str, std::max<size_t>(Ms->size(), 1))});
   G.Link = Linkage::LinkOnceODR;
   G.ReadOnly = true;
-  G.Parts.push_back(partStr(*M, rtypeName(I)));
+  G.Parts.push_back(partStr(*M, rtypeShown(I)));
   G.Parts.push_back(partInt(U64, Ms->size()));
   for (const MethodEntry &E : *Ms)
     G.Parts.push_back(partStr(*M, E.Key));
@@ -481,6 +480,13 @@ uint32_t Lowering::ifaceDesc(S::Type *I, SourceLoc At) {
 }
 
 FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
+  // A method of an instance of a generic type that no call names: the table
+  // lists the whole method set. The walk took it where a value of the type
+  // became an interface value (Info::IfaceConversions) or a type test named
+  // the type, so `gopp check` saw it too; one it did not take is taken now
+  // (P04.08).
+  if (F->RecvInst && !FuncIds.count(F))
+    ensureMethod(F, At);
   auto RealIt = FuncIds.find(F);
   if (RealIt == FuncIds.end())
     return NoId;
@@ -703,7 +709,7 @@ uint32_t Lowering::typeInfo(S::Type *T, SourceLoc At) {
   std::vector<Constant> P;
   P.push_back(partGlobal(*M, Id));
   P.push_back(partInt(U64, layout(G).Size));
-  P.push_back(partStr(*M, rtypeName(T)));
+  P.push_back(partStr(*M, rtypeShown(T)));
   P.push_back(EqC);
   P.push_back(HashC);
   P.push_back(partInt(U32, reflectKind(T)));
@@ -817,7 +823,7 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
   S::Type *BT = sTyOf(Sel->X);
   if (!BT)
     return failed(Sel->X, Unit());
-  S::SignatureType *Sig = F->sig();
+  S::SignatureType *Sig = sigOf(F);
   Type *PU8 = ctx().ptr(ctx().u8());
   if (!F->IsInterfaceMethod) {
     auto FI = L.FuncIds.find(F);
@@ -849,11 +855,14 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
       if (BasePtr) {
         Recv = lowerExpr(Sel->X);
       } else {
-        switch (placeHow(Sel->X, F->Recv->Ty, BT == F->Recv->Ty)) {
+        S::Type *RT = L.recvTypeOf(F);
+        if (!RT)
+          return failed(C, Unit());
+        switch (placeHow(Sel->X, RT, BT == RT)) {
         case PlaceHow::Address:
           Late.emplace();
           Late->E = Sel->X;
-          Late->Map = isa<S::MapType>(S::under(F->Recv->Ty));
+          Late->Map = isa<S::MapType>(S::under(RT));
           recordOps(Sel->X, Late->Ops);
           break;
         case PlaceHow::Copy: {
@@ -1186,9 +1195,9 @@ Operand Body::lowerTypeAssert(const ast::TypeAssertExpr *TA, bool CommaOk,
       if (D != ~0u)
         Desc = globalPtr(D);
     }
-    std::string Inter = TIface ? "interface" : L.rtypeName(XS);
+    std::string Inter = TIface ? "interface" : L.rtypeShown(XS);
     callFn(L.rt(RtFn::PanicAssert, TA->getBegin()),
-           {Text(Inter), Ti, Text(L.rtypeName(T)), Desc});
+           {Text(Inter), Ti, Text(L.rtypeShown(T)), Desc});
     FB.unreachable();
     FB.setBlock(FB.newBlock());
   });
@@ -1270,7 +1279,10 @@ void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
     auto Imp = I.Implicits.find(CC);
     if (Imp != I.Implicits.end()) {
       if (auto *V = dyn_cast_or_null<S::Var>(Imp->second)) {
-        Type *VG = L.lowerType(V->Ty, CC->getBegin());
+        // (At an instance the variable's type is the instance's: `case T`
+        // binds a T, P04.08.)
+        S::Type *VT = tyOfObj(V);
+        Type *VG = L.lowerType(VT, CC->getBegin());
         if (VG) {
           at(CC);
           Operand Val_;
@@ -1283,11 +1295,13 @@ void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
             Val_ = ifaceConvert(copyOf(SW), XS, CT, CC);
           } else if (Type *CG = L.lowerType(CT, CC->getBegin())) {
             Place PV = boxedPlace(SW, CG);
-            Val_ =
-                VG == CG ? copyOf(PV) : viewOfPlace(std::move(PV), V->Ty, CC);
+            Val_ = VG == CG ? copyOf(PV) : viewOfPlace(std::move(PV), VT, CC);
           } else {
             Val_ = failed(CC, zeroOf(VG));
           }
+          // (A box binding a closure that outlives the call holds:
+          // ownBoxCopy, review R5.)
+          Val_ = ownBoxCopy(std::move(Val_), V, CC);
           VarSlot Sl = declareSlot(V, CC, V->Name.str(), VG);
           FB.assign(Sl.P, FB.use(Val_));
         }

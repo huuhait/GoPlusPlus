@@ -1,0 +1,37 @@
+package main
+
+// Each W[X] below becomes an interface value, and nothing calls its method by
+// name: the method is made for the type descriptor and the itab only. Its
+// body forms Option[X], which for an X that is an Option is no type, so each
+// instance is one error (E0446), in `gopp check` as in the build. The forms
+// that make an interface value: a result, a variable, an argument, an element
+// of a struct, slice or map literal, a conversion.
+type W[T any] struct{ n int }
+
+func (w W[T]) Show() int {
+	var o Option[T]
+	_ = o
+	return w.n
+}
+
+type Shower interface{ Show() int }
+
+type Holder struct{ S Shower }
+
+func arg(s Shower) int { return s.Show() }
+
+func res() Shower { return W[Option[int8]]{1} }
+
+func main() {
+	var a Shower = W[Option[int]]{1}
+	_ = arg(W[Option[int16]]{1})
+	h := Holder{S: W[Option[int32]]{1}}
+	xs := []Shower{W[Option[int64]]{1}}
+	m := map[string]Shower{"k": W[Option[uint64]]{1}}
+	var x any = W[Option[uint]]{1}
+	// Only named, never an interface value: its method is never made, so
+	// this instance is no error.
+	var named W[Option[bool]]
+	println(a.Show(), h.S.Show(), len(xs), len(m), x != nil, res().Show(),
+		named.n)
+}

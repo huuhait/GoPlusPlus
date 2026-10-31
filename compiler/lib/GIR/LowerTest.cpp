@@ -80,7 +80,7 @@ Operand Body::lowerTestIntrinsic(const ast::CallExpr *C, const S::Func *F,
   // The declared type of the argument (a map entry passed on has none of its
   // own in the checker's table).
   auto ParamTy = [&](size_t K) -> S::Type * {
-    S::SignatureType *Sig = F->sig();
+    S::SignatureType *Sig = sigOf(F);
     return K < Sig->Params->Elems.size() ? Sig->Params->Elems[K] : nullptr;
   };
   auto Bad = [&](const char *Why) {
@@ -212,7 +212,7 @@ Operand Body::lowerTestIntrinsic(const ast::CallExpr *C, const S::Func *F,
       auto U = I.Uses.find(Id);
       if (U != I.Uses.end() && Obj)
         for (size_t K = 0; K < Obj->Params.size(); ++K)
-          if (Obj->Params[K] == U->second && L.sliceBorrowed(Obj->sig(), K))
+          if (Obj->Params[K] == U->second && L.sliceBorrowed(sigOf(Obj), K))
             return Bad("the allocator word of a view or a borrowed slice: it "
                        "has none (ADR-0029 point 7)");
     }

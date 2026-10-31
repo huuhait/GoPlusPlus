@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is main.Box[[]struct { main.a int; main.b int; C string "json:\"c\"" }], not main.Box[map[string]struct { main.d int }]

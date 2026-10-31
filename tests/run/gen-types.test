@@ -1,0 +1,103 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/gen-types.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/gen-types.out %}
+// P04.08: generic types with value and pointer methods, a method that
+// returns another instance (`Pair[V, K]`), instances inside an interface
+// (`Box[T]` is a `Summer`, `*Stack[int]` a `Sized`), instances inside maps and
+// slices, and a constraint with a method. The expected output is what `go
+// run` prints for this very file.
+package main
+
+type Number interface{ ~int | ~int64 | ~float64 }
+
+type Pair[K Number, V Number] struct {
+	Key K
+	Val V
+}
+
+func (p Pair[K, V]) Get() V       { return p.Val }
+func (p *Pair[K, V]) Set(v V)     { p.Val = v }
+func (p Pair[K, V]) Swap() Pair[V, K] { return Pair[V, K]{p.Val, p.Key} }
+
+type Stack[T Number] struct {
+	items []T
+}
+
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
+func (s *Stack[T]) Len() int { return len(s.items) }
+func (s *Stack[T]) Sum() T {
+	var t T
+	for _, x := range s.items {
+		t += x
+	}
+	return t
+}
+
+// a generic type inside an interface
+type Summer interface {
+	Sum() float64
+}
+
+type Box[T Number] struct{ V T }
+
+func (b Box[T]) Sum() float64 { return float64(b.V) }
+
+type Sized interface{ Len() int }
+
+// a generic type holding generic types
+type Grid[T Number] struct {
+	Rows []Stack[T]
+	ByID map[int]Pair[int, T]
+}
+
+// a constraint with a method
+type Valuer interface {
+	~int | ~float64
+	Double() float64
+}
+
+type D1 int
+
+func (d D1) Double() float64 { return float64(d) * 2 }
+
+type D2 float64
+
+func (d D2) Double() float64 { return float64(d) * 4 }
+
+func Doubled[T Valuer](x T) float64 { return x.Double() + 1 }
+
+func Total(ss []Summer) float64 {
+	t := 0.0
+	for _, s := range ss {
+		t += s.Sum()
+	}
+	return t
+}
+
+func main() {
+	p := Pair[int, float64]{1, 2.5}
+	println(p.Get(), p.Key)
+	p.Set(4.5)
+	println(p.Val, p.Swap().Key, p.Swap().Val)
+
+	var s Stack[int]
+	s.Push(3)
+	s.Push(4)
+	println(s.Len(), s.Sum())
+	var f Stack[float64]
+	f.Push(1.5)
+	println(f.Len(), f.Sum())
+
+	ss := []Summer{Box[int]{2}, Box[float64]{0.5}, Box[int64]{9}}
+	println(Total(ss))
+	var z Sized = &s
+	println(z.Len())
+
+	var g Grid[int]
+	g.Rows = append(g.Rows, s)
+	g.ByID = map[int]Pair[int, int]{7: {1, 2}}
+	println(len(g.Rows), g.Rows[0].Len(), g.ByID[7].Val)
+
+	println(Doubled(D1(3)), Doubled(D2(1.5)))
+}

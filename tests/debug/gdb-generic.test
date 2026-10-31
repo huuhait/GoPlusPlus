@@ -1,0 +1,30 @@
+// REQUIRES: host-linux-amd64, gdb
+// RUN: %gopp build %S/Inputs/generic.gopp -o %t
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/generic.gdb %t 2>&1 | FileCheck %s
+// RUN: %gopp build -emit=obj %S/Inputs/generic.gopp -o %t.o
+// RUN: llvm-dwarfdump --debug-info %t.o | FileCheck %s --check-prefix=DWARF
+// P04.08: the DWARF name of an instance of a generic type is `Name[args]`,
+// the arguments spelled as the debugger spells any type (DebugInfoBuilder::
+// spell): `whatis` of a `Pair[int, string]` local reads
+// `main.Pair[int64, string]` (GIR's int is int64), an argument that is a
+// defined type keeps its package (`main.Box[main.Point]`), and an instance
+// inside an instance nests (`main.Pair[main.Box[int64], float64]`). The
+// other side: the name of a type that is not generic is what it was
+// (`main.Point`), with no brackets.
+// CHECK: Breakpoint 1
+// CHECK-LABEL: @@WHATIS
+// CHECK: type = struct main.Pair[int64, string]
+// CHECK: type = struct main.Box[main.Point]
+// CHECK: type = struct main.Pair[main.Box[int64], float64]
+// CHECK-LABEL: @@PRINT
+// CHECK: $1 = {Key = 1, Val = {ptr = {{0x[0-9a-f]+}} "a", len = 1, cap = 0}}
+// CHECK: $2 = {V = {X = 3, Y = 4}}
+// CHECK: $3 = {V = 5}
+// CHECK-LABEL: @@PLAIN
+// CHECK: type = struct main.Point
+// CHECK-NOT: main.Point[
+// DWARF-DAG: DW_AT_name ("main.Pair[int64, string]")
+// DWARF-DAG: DW_AT_name ("main.Box[main.Point]")
+// DWARF-DAG: DW_AT_name ("main.Pair[main.Box[int64], float64]")
+// DWARF-DAG: DW_AT_name ("main.Box[int64]")
+// DWARF-DAG: DW_AT_name ("main.Point")

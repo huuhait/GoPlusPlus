@@ -1,0 +1,21 @@
+package main
+
+// Instances of generic types whose fields do not use their type parameters:
+// the instances of each have one struct (the checker's), named after the
+// first one lowered, which may be among its own type arguments (P04.08,
+// review round 1). (Three shapes of struct: one struct is one GIR struct.)
+type Tag[T any] struct{ n int }
+
+type P[A, B any] struct{ p int8 }
+
+type Q[A, B any] struct{ q int16 }
+
+func main() {
+	var t Tag[int]
+	var u Tag[string]
+	var v P[P[int, int], int]
+	var w P[int, int]
+	var x Q[*Q[int, int], int]
+	var y Q[int, int]
+	println(t.n, u.n, v.p, w.p, x.q, y.q)
+}

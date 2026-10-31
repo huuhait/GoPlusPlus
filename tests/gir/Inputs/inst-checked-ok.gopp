@@ -1,0 +1,62 @@
+package main
+
+// The accepted side of inst-checked.gopp: the same calls where no checked
+// result is left unchecked.
+type Cfg struct {
+	N int @Required
+}
+
+func Mk[T any](move t T) (Cfg, T) { return Cfg{N: 1}, t }
+
+func Count[T any](move t T) (int, T) { return 1, t }
+
+// T is no error: no checked result.
+func Use[T any](move t T) int {
+	c, x := Mk(move(t))
+	_ = x
+	return c.N
+}
+
+// (int, T) with T = error: an int has a zero value.
+func Plain[T any](move t T) int {
+	n, x := Count(move(t))
+	_ = x
+	return n
+}
+
+// `return f()` hands the results on: the caller checks them.
+func Fwd[T any](move t T) (Cfg, T) { return Mk(move(t)) }
+
+// The Cfg is dropped with `_`: nothing is left unset that is used.
+func Drop[T any](move t T) int {
+	_, x := Mk(move(t))
+	_ = x
+	return 2
+}
+
+// `return g()` in a function literal hands the results on to the literal's
+// caller (its results end in the same T), not to the function around it
+// (P04.08, decision M6: closures in generic code).
+func InLit[T any](g func() (Cfg, T)) int {
+	f := func() (Cfg, T) {
+		return g()
+	}
+	_, _ = f()
+	return 3
+}
+
+func okCfg() (Cfg, error) { return Cfg{N: 1}, nil }
+
+func main() {
+	var e error
+	println(InLit(okCfg))
+	println(Use(5), Use("a"))
+	println(Plain(e), Plain(1))
+	c, err := Fwd(e)
+	if err != nil {
+		println("failed")
+	} else {
+		println(c.N)
+	}
+	println(Drop(e))
+}

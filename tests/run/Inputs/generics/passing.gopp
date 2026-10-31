@@ -1,0 +1,61 @@
+// P04.08: generics against go run (see ../generics-diff.test). A Go program: the .out is `go run`'s.
+package main
+
+type Name string
+type Reg map[string]int
+
+func Cat[S ~string](a, b S) S { return a + b }
+
+func Count[M ~map[string]int](m M) int {
+	n := 0
+	for range m {
+		n++
+	}
+	return n
+}
+
+func Put[M ~map[string]int](m M, k string) { m[k] = len(k) }
+
+func Total[S ~[]int](xs S) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+type Reg2[V int | float64] struct {
+	m map[string]V
+	n []V
+}
+
+func (r Reg2[V]) Put(k string, v V) { r.m[k] = v }
+func (r Reg2[V]) Get(k string) V    { return r.m[k] }
+func (r Reg2[V]) Len() int          { return len(r.n) + len(r.m) }
+
+func Keep[T int | string](xs []T, v T) int {
+	for i, x := range xs {
+		if x == v {
+			return i
+		}
+	}
+	return -1
+}
+
+func main() {
+	println(Cat("a", "b"), Cat(Name("x"), Name("yz")), len(Cat(Name("1"), "2")))
+	m := map[string]int{"a": 1}
+	println(Count(m), Count(Reg{"x": 1, "y": 2}))
+	Put(m, "hello")
+	r := Reg{}
+	Put(r, "xy")
+	println(len(m), m["hello"], len(r), r["xy"])
+	var nm map[string]int
+	println(Count(nm))
+	println(Total([]int{1, 2, 3}), Total([]int(nil)))
+	g := Reg2[float64]{m: map[string]float64{}}
+	g.Put("k", 2.5)
+	println(g.Get("k"), g.Len())
+	var z Reg2[int]
+	println(z.Len(), Keep([]string{"a", "b"}, "b"), Keep([]int{3, 4}, 9))
+}

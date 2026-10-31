@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is main.Pair[int,string], not main.Box[int]

@@ -1,0 +1,61 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-gopp.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-gopp.out 0 %}
+// GOLDEN: by-hand
+// P04.08: the Go++ forms in generic code, per instance: Copy constraints,
+// Option[T] and View[T] in a signature, a field and a body (Option[int],
+// Option[Point], Option[float64] are three instances), and a generic type
+// that holds an Option of its parameter. Go has no Option, View or Copy, so
+// the golden is by hand: Cell[Point] starts empty (false), after Put it has a
+// value (true) with Y 2; First of {4, 5} is 4; First of no Points is nil
+// (true); Or gives the default 9 for no int and the value 2.5 for a float;
+// Look(xs, 1) is xs[1] = 8. println prints floats as Go does (+2.500000e+000).
+package main
+
+type Point struct{ X, Y int }
+
+type Cell[T Copy] struct {
+	v T
+	o Option[T]
+}
+
+func (c *Cell[T]) Put(x T)  { c.o = x; c.v = x }
+func (c Cell[T]) Has() bool { return c.o != nil }
+func (c Cell[T]) Value() T  { return c.v }
+
+func First[T Copy](xs []T) Option[T] {
+	if len(xs) == 0 {
+		return nil
+	}
+	return xs[0]
+}
+
+func Look[T Copy](xs []T, i int) T {
+	var v View[T] = xs[i]
+	_ = v
+	return xs[i]
+}
+
+func Or[T Copy](o Option[T], d T) T {
+	x, ok := o.Get()
+	if ok {
+		return x
+	}
+	return d
+}
+
+func main() {
+	var c Cell[Point]
+	println(c.Has())
+	c.Put(Point{1, 2})
+	println(c.Has(), c.Value().Y)
+	o := First([]int{4, 5})
+	if o != nil {
+		x, _ := o.Get()
+		println(x)
+	}
+	println(First([]Point{}) == nil)
+	println(Or(First([]int{}), 9), Or(First([]float64{2.5}), 1.0))
+	println(Look([]int{7, 8}, 1))
+}

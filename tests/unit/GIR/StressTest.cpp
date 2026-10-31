@@ -1589,6 +1589,21 @@ TEST(GIRStressLong, DISABLED_CodeGenerationOfTheCoreSubsetIsNearLinear) {
 // literals that each capture all of N variables (N * N captures) must fail
 // the same check.
 
+/// N methods of a generic type, each with a literal inside a literal over
+/// its receiver, called on two instances (B[int], B[float64]).
+std::string genericLitsOfN(unsigned N) {
+  std::string S = "package main\n\ntype B[T Copy] struct{ v T }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func (b B[T]) g" + std::to_string(I) +
+         "() T {\n\treturn func() T { return func() T { return b.v }() }()\n"
+         "}\n";
+  S += "\nfunc main() {\n\ti, f := B[int]{1}, B[float64]{2}\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tprintln(i.g" + std::to_string(I) + "(), f.g" + std::to_string(I) +
+         "())\n";
+  return S + "}\n";
+}
+
 /// N literals in one function, all capturing the same three variables.
 std::string siblingLitsOfN(unsigned N) {
   std::string S = "package main\n\nfunc main() {\n\tx, y, z := 0, 0, 0\n"
@@ -1824,6 +1839,178 @@ TEST(GIRStress, ClosureSymbolsDoNotDependOnTheCheckThreads) {
   EXPECT_EQ(Sib, Text(siblingLitsOfN(200), 16));
   for (std::string (*Make)(unsigned) : {keepChainOfN, methodValuesOfN})
     EXPECT_EQ(Text(Make(40), 1), Text(Make(40), 16));
+  // P04.08 (decision M6): a literal in a method of a generic type belongs to
+  // the instance: one symbol per instance, the same with any number of
+  // threads.
+  std::string Gen = Text(genericLitsOfN(40), 1);
+  EXPECT_NE(Gen.find("_GPC1_C1_M2g0IN4mainE1BiE"), std::string::npos) << Gen;
+  EXPECT_NE(Gen.find("_GPC1_C1_M2g0IN4mainE1BdE"), std::string::npos) << Gen;
+  EXPECT_EQ(Gen, Text(genericLitsOfN(40), 16));
+}
+
+// P04.08: the instance walk (lib/GIR/Instances.cpp) takes each instance once,
+// found by its symbol; the steps it counts (gir::instanceSteps) must follow
+// the number of instances: N instances of one generic function, a chain of N
+// generic functions each calling the next (N instances, the walk is a queue,
+// not a recursion), a generic type of N methods (N method instances), and N
+// instances of a generic type that has a method (N method instances, one per
+// type). The control scans the instances found so far for each new one
+// (LowerOptions::ScanInstances) and must fail the same check.
+
+/// The steps the instance walk counted on the program of N units.
+uint64_t lowerAndCountInstances(unsigned N, std::string (*Make)(unsigned),
+                                const LowerOptions &Opts = {}) {
+  Checked P(Make(N));
+  EXPECT_EQ(P.errors(), "") << "N = " << N;
+  gir::Context C;
+  uint64_t A = instanceSteps();
+  auto M = P.lower(C, Opts);
+  EXPECT_NE(M, nullptr) << P.errors();
+  return instanceSteps() - A;
+}
+
+void expectInstanceStepsFollow(unsigned N, std::string (*Make)(unsigned)) {
+  uint64_t S1 = lowerAndCountInstances(N, Make);
+  uint64_t S16 = lowerAndCountInstances(16 * N, Make);
+  EXPECT_TRUE(walksFollow(S1, S16, N));
+}
+
+/// One generic function instantiated with N different struct types.
+std::string instancesOfN(unsigned N) {
+  std::string S = "package main\n\nfunc G[T any](x T) int { return 1 }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type S" + std::to_string(I) + " struct{ x int }\n";
+  S += "\nfunc main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += G(S" + std::to_string(I) + "{})\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// F0[T] calls F1[T] calls ... FN[T]: N + 1 instances for one type.
+std::string instanceChainOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func F" + std::to_string(I) + "[T any](x T) int { return F" +
+         std::to_string(I + 1) + "[T](x) + 1 }\n";
+  S += "func F" + std::to_string(N) + "[T any](x T) int { return 0 }\n";
+  return S + "\nfunc main() { println(F0(1), F0(2.5)) }\n";
+}
+
+/// A generic type of N methods, instantiated twice.
+std::string typeMethodsOfN(unsigned N) {
+  std::string S = "package main\n\ntype Box[T any] struct{ v int }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func (b Box[T]) M" + std::to_string(I) + "() int { return b.v + " +
+         std::to_string(I) + " }\n";
+  S +=
+      "\nfunc main() {\n\tvar a Box[int]\n\tvar b Box[string]\n\tt := b.M0()\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += a.M" + std::to_string(I) + "()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// N instances of a generic type of 20 methods that are only named (a
+/// parameter type), none called: a method is an instance when something
+/// needs it, so n methods of n instances are not n squared.
+std::string namedInstancesOfN(unsigned N) {
+  std::string S = "package main\n\ntype W[T any] struct{ v int }\n\n";
+  for (unsigned I = 0; I < 20; ++I)
+    S += "func (w W[T]) M" + std::to_string(I) + "() int { return w.v }\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type S" + std::to_string(I) + " struct{ x int }\nfunc u" +
+         std::to_string(I) + "(w W[S" + std::to_string(I) + "]) {}\n";
+  return S + "\nfunc main() {}\n";
+}
+
+/// N instances of a generic type (one per struct type), each with a method.
+std::string typeInstancesOfN(unsigned N) {
+  std::string S = "package main\n\ntype W[T any] struct{ v int }\n\n"
+                  "func (w W[T]) Get() int { return w.v }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type S" + std::to_string(I) + " struct{ x int }\n";
+  S += "\nfunc main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tvar w" + std::to_string(I) + " W[S" + std::to_string(I) +
+         "]\n\tt += w" + std::to_string(I) + ".Get()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+TEST(GIRStress, TheInstanceWalkIsLinearInTheInstancesOfAFunction) {
+  expectInstanceStepsFollow(250, instancesOfN);
+}
+TEST(GIRStress, TheInstanceWalkIsLinearInAChainOfInstances) {
+  expectInstanceStepsFollow(200, instanceChainOfN);
+}
+TEST(GIRStress, TheInstanceWalkIsLinearInTheMethodsOfAType) {
+  expectInstanceStepsFollow(200, typeMethodsOfN);
+}
+TEST(GIRStress, TheInstanceWalkIsLinearInTheInstancesOfAType) {
+  expectInstanceStepsFollow(250, typeInstancesOfN);
+}
+TEST(GIRStress, NamedInstancesOfATypeBringNoMethods) {
+  uint64_t S1 = lowerAndCountInstances(100, namedInstancesOfN),
+           S16 = lowerAndCountInstances(1600, namedInstancesOfN);
+  // Linear in the instances named, and no 20 methods each: the walk takes a
+  // few steps per named type, far fewer than one per method.
+  EXPECT_TRUE(walksFollow(S1, S16, 100)) << S1 << " -> " << S16;
+  EXPECT_LT(S16, 1600u * 20u);
+}
+TEST(GIRStress, LoweringManyInstancesIsLinear) {
+  expectLoweredStepsLinear(250, instancesOfN);
+  expectLoweredStepsLinear(200, typeInstancesOfN);
+}
+/// One instance of a generic type of N methods made an interface value N
+/// times (M3: the walk takes its method set where a value becomes an
+/// interface value): the method set is taken once, so the work is N + N.
+std::string boxedOftenOfN(unsigned N) {
+  std::string S = "package main\n\ntype W[T any] struct{ v int }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func (w W[T]) M" + std::to_string(I) + "() int { return w.v }\n";
+  S += "\ntype I interface{ M0() int }\n\nfunc main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tvar x" + std::to_string(I) + " I = W[int]{" + std::to_string(I) +
+         "}\n\tt += x" + std::to_string(I) + ".M0()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// N instances of a generic type of 3 methods, each made an interface value
+/// once: N method sets of 3 methods.
+std::string boxedInstancesOfN(unsigned N) {
+  std::string S = "package main\n\ntype W[T any] struct{ v int }\n\n"
+                  "func (w W[T]) A() int { return w.v }\n"
+                  "func (w W[T]) B() int { return w.v + 1 }\n"
+                  "func (w *W[T]) C() int { return w.v + 2 }\n\n"
+                  "type I interface{ A() int }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type S" + std::to_string(I) + " struct{ x int }\n";
+  S += "\nfunc main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tvar x" + std::to_string(I) + " I = W[S" + std::to_string(I) +
+         "]{1}\n\tt += x" + std::to_string(I) + ".A()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+TEST(GIRStress, TheInstanceWalkTakesAMethodSetOnce) {
+  expectInstanceStepsFollow(64, boxedOftenOfN);
+  expectInstanceStepsFollow(128, boxedInstancesOfN);
+}
+TEST(GIRStress, TheMethodSetCheckFailsTakingItAtEveryConversion) {
+  LowerOptions Again;
+  Again.RedescribeTypes = true;
+  uint64_t S1 = lowerAndCountInstances(25, boxedOftenOfN, Again);
+  uint64_t S16 = lowerAndCountInstances(400, boxedOftenOfN, Again);
+  EXPECT_FALSE(walksFollow(S1, S16, 25)) << S1 << " -> " << S16;
+}
+
+TEST(GIRStress, TheInstanceCheckFailsAScanOfTheInstances) {
+  LowerOptions Scan;
+  Scan.ScanInstances = true;
+  uint64_t S1 = lowerAndCountInstances(25, instancesOfN, Scan);
+  uint64_t S16 = lowerAndCountInstances(400, instancesOfN, Scan);
+  EXPECT_FALSE(walksFollow(S1, S16, 25)) << S1 << " -> " << S16;
+  uint64_t M1 = lowerAndCountInstances(25, typeInstancesOfN, Scan);
+  uint64_t M16 = lowerAndCountInstances(400, typeInstancesOfN, Scan);
+  EXPECT_FALSE(walksFollow(M1, M16, 25)) << M1 << " -> " << M16;
 }
 
 } // namespace

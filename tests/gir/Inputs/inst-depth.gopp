@@ -1,0 +1,16 @@
+package main
+
+type L[T any] struct{ x [1]int }
+
+func G[T any]() int { return 1 }
+
+// F's type argument is written in main, 40 levels deep; the substitution in F
+// makes G's 48 + 1 levels deep, past the bound of 48 for a type an instance
+// makes: one error, at the instantiation in F, with the generic function
+// named and the instantiation of F that led there. A type written in the
+// source has no bound (inst-depth-ok.gopp).
+func F[T any]() int { return G[L[L[L[L[L[L[L[L[T]]]]]]]]]() }
+
+func main() {
+	println(F[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]())
+}

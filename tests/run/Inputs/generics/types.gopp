@@ -1,0 +1,81 @@
+// P04.08: generics against go run (see ../generics-diff.test). A Go program: the .out is `go run`'s.
+package main
+
+type Num interface{ ~int | ~float64 }
+
+type Pair[A, B Num] struct {
+	First  A
+	Second B
+}
+
+func (p Pair[A, B]) Sum() float64 { return float64(p.First) + float64(p.Second) }
+
+type Box[T Num] struct {
+	Val T
+}
+
+func (b Box[T]) Get() T      { return b.Val }
+func (b *Box[T]) Set(v T)    { b.Val = v }
+func (b Box[T]) Double() T   { return b.Val + b.Val }
+
+type Getter[T Num] interface{ Get() T }
+
+func Read[T Num, G Getter[T]](g G) T { return g.Get() }
+
+func ReadI[T Num](g Getter[T]) T { return g.Get() }
+
+type Grid[T Num] struct {
+	Cells [3]T
+	M     map[int]T
+}
+
+func Keys[K ~int, V Num](m map[K]V) int {
+	n := 0
+	for k := range m {
+		n += int(k)
+	}
+	return n
+}
+
+func Zero[T Num]() T {
+	var z T
+	return z
+}
+
+func Wrap[T Num](v T) Box[T] { return Box[T]{v} }
+
+type Two[T Num] struct {
+	A T
+	B Box[T]
+}
+
+func Nested[T Num](v T) Two[T] { return Two[T]{v, Wrap(v)} }
+
+func (b Box[T]) Pairup(o Box[T]) Pair[T, T] { return Pair[T, T]{b.Val, o.Val} }
+
+func main() {
+	p := Pair[int, float64]{3, 4.5}
+	println(p.Sum())
+	b := Box[int]{7}
+	b.Set(9)
+	println(b.Get(), b.Double(), Read[int](b), ReadI[int](b))
+	var g Getter[float64] = Box[float64]{2.5}
+	println(g.Get(), ReadI(g))
+	var a any = b
+	if bb, ok := a.(Box[int]); ok {
+		println("boxint", bb.Val)
+	}
+	_, ok2 := a.(Box[float64])
+	println(ok2)
+	gr := Grid[int]{M: map[int]int{1: 10, 2: 20}}
+	gr.Cells[1] = 5
+	println(gr.Cells[1], len(gr.M), Keys(gr.M))
+	println(Zero[int](), Zero[float64]())
+	n := Nested(3)
+	println(n.A, n.B.Val, Wrap(2).Pairup(Wrap(5)).Second)
+	pp := Pair[int, int]{1, 2}
+	pq := Pair[int, int]{1, 2}
+	println(pp == pq)
+	m := map[Box[int]]int{{1}: 5}
+	println(m[Box[int]{1}])
+}

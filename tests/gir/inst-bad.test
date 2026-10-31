@@ -1,0 +1,25 @@
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/inst-bad.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-bad.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/inst-bad.gopp > %t.check 2>&1
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-bad.gopp > /dev/null 2> %t.build
+// RUN: cmp %t.check %t.build
+// RUN: %gopp check %S/Inputs/inst-good.gopp
+// RUN: %gopp build -emit=gir %S/Inputs/inst-good.gopp > /dev/null
+// P04.08, D4.3: the checker checks generic code once, so what depends on the
+// type argument is decided per instance, by `gopp check` and by the build,
+// from one walk of the instances (lib/GIR/Instances.cpp), with the same text
+// (the cmp above): Option[T] where the instance's T has a nil of its own or
+// is an Option is E0446. Each error is at the first instantiation site, with a
+// note at the generic code; one that comes through another generic (Via) is
+// at the call in it and has a note for the instantiation that led there. One
+// error per instance. Both sides: inst-good.gopp, the same code with valid arguments, draws no
+// error, and in this file Zero[int], Zero[string] and Via[int] are accepted;
+// so are Both[error] (its other result, an int, has a zero value, so it is no
+// checked result: inst-checked.test) and Fwd[error] (`return f()` hands the
+// result on). -check-j: inst-determinism.test.
+// CHECK: inst-bad.gopp:29:39: error[E0446]: cannot instantiate Zero{{\[}}Option{{\[}}int]]: its body makes Option{{\[}}Option{{\[}}int]], which is no type: an Option already has a nil (ADR-0018 point 11, OWN-P9)
+// CHECK-NEXT: {{ +}}29 |
+// CHECK: inst-bad.gopp:5:6: note: formed here, in the generic body of Zero{{\[}}Option{{\[}}int]]
+// CHECK: inst-bad.gopp:12:32: error[E0446]: cannot instantiate Zero{{\[}}{{\[}}]int]: its body makes Option{{\[}}{{\[}}]int], which is no type: it already has a nil (ADR-0018 point 11, OWN-P9)
+// CHECK: inst-bad.gopp:5:6: note: formed here, in the generic body of Zero{{\[}}{{\[}}]int]
+// CHECK: inst-bad.gopp:30:22: note: instantiated from Via{{\[}}{{\[}}]int] here

@@ -1,0 +1,63 @@
+// RUN: %gopp check %s
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: sed -e '/BAD$/d' %s > %t.ok.gopp
+// RUN: %gopp build -emit=gir %t.ok.gopp > /dev/null
+// P04.08, decision M6: what a closure or method value in generic code may
+// hold is decided on the instance's types (GEN-5: the instance has the real
+// category of each type argument; MethodSets::holdsBorrowAt, isOwning). A
+// closure that outlives the call may not hold a variable whose value holds a
+// borrow (CLO-3a), and a method value may not copy a value receiver of an
+// owning type (CLO-5a), one E0439 each as in plain code, naming the instance
+// where the same literal is fine in another. Both sides:
+//   - Keep[W] (W a `@View` struct: the escaping closure holds a view) and
+//     KeepAny[string] (its parameter is a borrowed string there) are
+//     refused; Keep[int], KeepAny[int] and Use[W] (the closure does not
+//     escape) lower;
+//   - Box2[string].Len as a method value is refused (Box2[string] owns its
+//     string); Box2[int].Len lowers (the checker's mode of the generic
+//     receiver says borrowed for every T: decided again on the instance).
+// Without the lines marked BAD the file lowers with no error. `gopp check`
+// reports none (code generation is not its business).
+package main
+
+@View
+type W struct{ s View[string] }
+
+func Keep[T Copy](x T) func() int {
+	return func() int {
+		_ = x
+		return 1
+	}
+}
+
+func KeepAny[T any](x T, f func(T) int) func() int {
+	return func() int { return f(x) }
+}
+
+func Use[T Copy](x T) int {
+	f := func() int {
+		_ = x
+		return 2
+	}
+	return f()
+}
+
+type Box2[T any] struct{ v T }
+
+func (b Box2[T]) Len() int { return 1 }
+
+func main() {
+	w := W{s: "ab"}
+	println(Keep(3)(), Use(w), Use(4), KeepAny(5, func(n int) int { return n })())
+	b, s := Box2[int]{3}, Box2[string]{"x"}
+	g := b.Len
+	println(g(), s.v)
+	println(Keep(w)()) // BAD
+	println(KeepAny("ab", func(s string) int { return len(s) })()) // BAD
+	h := s.Len // BAD
+	println(h()) // BAD
+}
+
+// CHECK-DAG: generic-closure-borrow.test:27:9: error[E0439]: a closure or method value that outlives the call and holds the variable x, whose type holds a view (in the instance Keep[W]) (CLO-3a, P04.20) is not supported
+// CHECK-DAG: generic-closure-borrow.test:34:9: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable x (in the instance KeepAny[string]) (CLO-3a, P04.20) is not supported
+// CHECK-DAG: generic-closure-borrow.test:57:7: error[E0439]: a method value of a value method of an owning type (CLO-5a, P04.27) is not supported

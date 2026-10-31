@@ -81,6 +81,15 @@ const std::map<std::string, const char *> Unchecked = {
                            "checker; tests/gir/export-bad.test"},
     {"err_gir_no_main", "reported by the code generator, not the checker; "
                         "tests/gir/no-main.test"},
+    {"err_inst_option", "reported by the instance walk (gopp check and "
+                        "build), not the checker; tests/gir/inst-bad.test"},
+    {"err_inst_view", "reported by the instance walk; the checker finds a "
+                      "View of a pointer kind first (E0371), so the walk is "
+                      "the second line: unit/Sema/InstancesTest.cpp"},
+    {"err_inst_checked_result", "reported by the instance walk, not the "
+                                "checker; tests/gir/inst-checked.test"},
+    {"err_inst_too_large", "reported by the instance walk, not the checker; "
+                           "tests/gir/inst-depth.test"},
     {"err_no_stack", "needs no thread to be had: DeepChain."
                      "NoStackForADeepChain, tests/sema/"
                      "no-stack.long.test"},

@@ -9,16 +9,16 @@
 //     the one bound receiver);
 //   - a method expression of an interface (P04.27);
 //   - a range over a func (P04.27; a channel's is P12's);
-//   - a generic function used as a value, `gen[int]` or inferred (P04.08):
-//     reported once, where it is declared, and nothing at the uses;
 //   - a closure given to C (P07.08: a C function pointer has no place for an
 //     environment).
 // (A literal in a blank variable's initializer is closure-blank-init.test:
 // the package's init function is not lowered after another error.)
 // The other side draws no error: the method expression of the owning type
 // (its receiver is an argument, passed as passOfRecv says), a value method
-// value of a type that owns nothing, and a top-level function given to C
-// (callback.test).
+// value of a type that owns nothing, a top-level function given to C
+// (callback.test), and an instance of a generic function as a value,
+// `gen[int]` or inferred (refused here until P04.08 landed:
+// run/generic-closures.test runs both).
 package main
 
 type Doc struct {
@@ -84,7 +84,6 @@ func main() {
 	_ = generic()
 }
 
-// CHECK: closure-refused-forms.test:62:1: error[E0439]: a generic function (P04.08) is not supported
 // CHECK: closure-refused-forms.test:44:7: error[E0439]: a method value of a value method of an owning type (CLO-5a, P04.27) is not supported
 // CHECK: closure-refused-forms.test:45:7: error[E0439]: a method value of a value method of an owning type (CLO-5a, P04.27) is not supported
 // CHECK: closure-refused-forms.test:46:7: error[E0439]: a method value of a method with a move receiver (P04.09) is not supported

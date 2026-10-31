@@ -1,0 +1,20 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build -emit=obj %S/Inputs/gen-fold/lib1.gopp -o %t.1.o
+// RUN: %gopp build -emit=obj %S/Inputs/gen-fold/lib2.gopp -o %t.2.o
+// RUN: llvm-nm %t.1.o | FileCheck --check-prefix=OBJ %s
+// RUN: llvm-nm %t.2.o | FileCheck --check-prefix=OBJ %s
+// RUN: llvm-readelf -g %t.1.o | FileCheck --check-prefix=GROUP %s
+// RUN: %gopp build %gopp_link_flags -link-obj=%t.1.o -link-obj=%t.2.o %S/Inputs/gen-fold/main.gopp -o %t.exe
+// RUN: %t.exe 2>&1 | FileCheck --check-prefix=OUT %s
+// RUN: llvm-nm %t.exe | FileCheck --check-prefix=EXE --implicit-check-not=Twice %s
+// P04.08 (D4.3): an instance is `linkonce_odr` in a COMDAT group of its
+// own name. Two objects (lib1 and lib2, the package `lib` twice, each with
+// the generic `Twice` and its instance `Twice[int]`) each hold the instance as
+// a weak symbol (`W`), and the program that links both has exactly one copy:
+// the other side of the fold is that the program runs with it. (At -opt=2 the
+// optimizer inlines the instance and drops it, which is why the check is at
+// the default level.)
+// OBJ: W _GPIF{{.*}}5TwiceiE
+// GROUP: COMDAT group section {{.*}} contains 1 sections
+// OUT: 20 40
+// EXE: W _GPIF{{.*}}5TwiceiE

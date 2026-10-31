@@ -1,0 +1,128 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-closures.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-closures.out 0 %}
+// GOLDEN: by-hand
+// P04.08, decision M6: closures in generic code belong to the instance. Each
+// instance lowers its own literals (named by the instance's symbol,
+// gir/generic-closure-symbols.test) with the instance's types, and the
+// escape analysis and what a closure may hold are decided on those types
+// (gir/generic-closure-borrow.test): a closure returned from Counter[int]
+// and Counter[float64] that captures a T value and updates it, literals
+// returned from Prefix[int] and Prefix[string] whose parameter is a T, a
+// literal called in place, nested literals that capture a T parameter, the
+// per-iteration cells of a three-clause loop and of a range loop in a
+// generic function, a literal in a method of a generic type (Box[int].Each,
+// Box[float64].Each), method values of an instance made inside generic code
+// (b.Set through a pointer, b.Get by value) and in plain code, a literal
+// that calls an instance and takes a method value, an instance of a generic
+// function as a value (`Id[int]`, and `Id` inferred from its destination)
+// and a method expression of an instance (`Box[int].Get`). The golden is by
+// hand only because Go has no `Copy`: it is what `go run` prints for this
+// file with `Copy` read as `any`, the same at every -opt on both targets
+// (checked when the test was written).
+package main
+
+type Box[T Copy] struct{ v T }
+
+func (b *Box[T]) Set(x T) { b.v = x }
+
+func (b Box[T]) Get() T { return b.v }
+
+// A literal in a method of a generic type: one per instance.
+func (b Box[T]) Each(n int, f func(int, T)) {
+	g := func(i int) { f(i, b.v) }
+	for i := 0; i < n; i++ {
+		g(i)
+	}
+}
+
+func Counter[T Copy](start T, step func(T) T) func() T {
+	cur := start
+	return func() T {
+		cur = step(cur)
+		return cur
+	}
+}
+
+func Prefix[T any](f func(T) string) func(T) string {
+	n := 0
+	return func(x T) string {
+		n++
+		return f(x) + string(rune('0'+n))
+	}
+}
+
+func Twice[T Copy](x T, f func(T) T) T {
+	g := func(y T) T { return f(f(y)) }
+	return g(x)
+}
+
+func Loops[T Copy](xs []T) ([]func() T, []func() int) {
+	var fs []func() T
+	var is []func() int
+	for i := 0; i < len(xs); i++ {
+		is = append(is, func() int { return i * 10 })
+	}
+	for _, x := range xs {
+		fs = append(fs, func() T { return x })
+	}
+	return fs, is
+}
+
+func Setter[T Copy](b *Box[T]) func(T) { return b.Set }
+
+func Getter[T Copy](b Box[T]) func() T { return b.Get }
+
+func Nested[T Copy](x T) func() func() T {
+	return func() func() T {
+		return func() T { return x }
+	}
+}
+
+func Id[T Copy](x T) T { return x }
+
+// A literal that calls an instance and makes a method value of an instance.
+func Wrap[T Copy](x T) func() T {
+	return func() T {
+		b := Box[T]{x}
+		get := b.Get
+		return Id(get())
+	}
+}
+
+func main() {
+	c := Counter(1, func(n int) int { return n * 2 })
+	println(c(), c(), c())
+	f := Counter(1.5, func(x float64) float64 { return x + 1 })
+	println(f(), f())
+	p := Prefix(func(x int) string { return string(rune('a' + x)) })
+	q := Prefix(func(s string) string { return s + "!" })
+	println(p(1), p(2), q("x"), q("y"))
+	println(Twice(3, func(x int) int { return x + 10 }), Twice(true, func(x bool) bool { return !x }))
+	fs, is := Loops([]int{7, 8})
+	for k := range fs {
+		println(fs[k](), is[k]())
+	}
+	gs, js := Loops([]bool{true, false})
+	println(gs[0](), gs[1](), js[1]())
+	var b Box[int]
+	set := Setter(&b)
+	set(42)
+	println(b.v, Getter(b)())
+	bf := Box[float64]{2.5}
+	println(Getter(bf)())
+	b.Each(2, func(i int, v int) { println("int", i, v) })
+	bf.Each(1, func(i int, v float64) { println("float", i, v) })
+	println(Nested(5)()(), Nested(false)()())
+	id := Id[int]
+	var idf func(float64) float64 = Id
+	println(id(3), idf(0.5))
+	get := Box[int].Get
+	println(get(b))
+	w1, w2 := Wrap(6), Wrap(true)
+	println(w1(), w2())
+	pset := b.Set
+	pset(7)
+	println(b.v)
+}

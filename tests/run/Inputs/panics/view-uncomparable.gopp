@@ -1,0 +1,23 @@
+package main
+
+// Review R8 (P04.08): a struct that holds a view of a slice is not
+// comparable (OWN-V: a view compares as the value it looks at, and a slice
+// cannot be compared), so its type descriptor has no equality: `==` of two
+// interfaces holding it panics as Go's does for a type that cannot be
+// compared. Boxing it, and taking it out again, is fine.
+@View
+type K struct {
+	s View[[]int]
+	k int
+}
+
+func main() {
+	x := []int{1, 2}
+	var a, b any = K{s: x, k: 1}, K{s: x, k: 1}
+	// (The binding is a View[K], which has no zero value: it is used where
+	// ok is known true, ADR-0031, OWN-P10.)
+	if k, ok := a.(K); ok {
+		println(ok, k.k, k.s[1])
+	}
+	println(a == b)
+}

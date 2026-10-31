@@ -296,6 +296,7 @@ void Info::merge(ArrayRef<Info *> Others) {
   One(&Info::UnitConvs);
   One(&Info::UnitSites);
   One(&Info::UnitDisplays);
+  One(&Info::IfaceConversions);
   for (const Info *O : Others) {
     Reslices.insert(O->Reslices.begin(), O->Reslices.end());
     AsIsArgs.insert(O->AsIsArgs.begin(), O->AsIsArgs.end());

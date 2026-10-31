@@ -812,6 +812,11 @@ public:
   } Mode = Owned;
   bool LoopVar = false;       // declared by a range/for clause (RNG-8)
   bool OptionBinding = false; // `v, ok := o.Get()` borrows from the Option
+  /// TYP-9: a binding of a type switch or an assertion (or of an Option in
+  /// a box) that borrows the box, its type the view of the case type that
+  /// Checker::boxBindingType made (OWN-V1). At an instance of generic code
+  /// the real case type decides again (MethodSets::modeAt).
+  bool BoxBinding = false;
   bool Result = false;
   llvm::StringRef Tag; // struct field tag
   Var *Origin = nullptr;

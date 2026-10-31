@@ -1,0 +1,31 @@
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/inst-checked.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-checked.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: %gopp check %S/Inputs/inst-checked-ok.gopp
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-checked-ok.gopp 2>&1 | FileCheck --check-prefix=OK --implicit-check-not=error[E %s
+// P04.08 (D4.3, OWN-P10, TODO `call[error](loadN)`): a call whose last result
+// is a type parameter T is a checked result at an instance where T is
+// `error` (the checker's guard and the word `f!()` tests are a last result
+// identical to `error`) and another result has no zero value (a Cfg with a
+// required field). The generic body cannot check it (it cannot compare a T
+// with nil), so binding the results (Use), handing them on to a call (Pass)
+// and the same reached through another generic (Deep, with the chain note)
+// are E0448, at the instantiation, in `gopp check` and in the build alike.
+// The other side (inst-checked-ok.gopp), accepted by both: T is no error
+// (Use[int]); `(int, T)` with T = error, an int having a zero value (Plain);
+// `return f()` into results that end in the same T, which the caller checks
+// (Fwd: main checks `err`), also from inside a function literal into the
+// literal's own results (InLit, decision M6: the walk takes the signature
+// of the literal a `return` is in); the result without a zero value dropped
+// with `_` (Drop). Its build stops only at the lowering's `move` (P04.09), after the
+// walk accepted it (a walk that fails stops the build before the lowering).
+// CHECK: inst-checked.gopp:34:10: error[E0448]: cannot instantiate Use{{\[}}error]: its body calls Mk(...), whose last result T is error here, so the other results are a checked result (OWN-P10) that the generic body cannot check
+// CHECK: inst-checked.gopp:12:10: note: called here, in the generic body of Use{{\[}}error]
+// CHECK: inst-checked.gopp:35:10: error[E0448]: cannot instantiate Pass{{\[}}error]: its body calls Mk(...)
+// CHECK: inst-checked.gopp:20:46: note: called here, in the generic body of Pass{{\[}}error]
+// CHECK: inst-checked.gopp:30:42: error[E0448]: cannot instantiate Deep{{\[}}error]: its body calls Mk(...)
+// CHECK: inst-checked.gopp:25:10: note: called here, in the generic body of Deep{{\[}}error]
+// CHECK: inst-checked.gopp:36:10: note: instantiated from Outer{{\[}}error] here
+// OK: inst-checked-ok.gopp:15:13: error[E0439]: the built-in move (P04.09)
+// OK: inst-checked-ok.gopp:22:16: error[E0439]: the built-in move (P04.09)
+// OK: inst-checked-ok.gopp:28:48: error[E0439]: the built-in move (P04.09)
+// OK: inst-checked-ok.gopp:32:13: error[E0439]: the built-in move (P04.09)

@@ -58,7 +58,7 @@ bool Body::isNilValue(const ast::Expr *E) {
     return false;
   if (TV->M == S::Mode::NilValue)
     return true;
-  auto *B = dyn_cast_or_null<S::BasicType>(TV->Ty);
+  auto *B = dyn_cast_or_null<S::BasicType>(sTyOf(E));
   return B && B->BK == S::BasicKind::UntypedNil;
 }
 
@@ -234,6 +234,16 @@ Operand Body::valueFor(const ast::Expr *E, S::Type *Want) {
       return zeroOf(G); // reported once, where it failed
     return borrowedSeq(std::move(V), G, E);
   }
+  // A view of any other value where the value is wanted (a comparison
+  // compares what it looks at): the value read through it.
+  if (ES && isa<S::RefType>(S::under(ES)))
+    if (Type *VG = L.lowerType(ES, E->getBegin());
+        VG && VG->isPtr() && VG->elem() == G) {
+      Operand V = lowerExpr(E);
+      if (V.type() != VG)
+        return failed(E, zeroOf(G));
+      return viewValue(std::move(V), ES, E);
+    }
   return lowerAs(E, G);
 }
 
@@ -315,9 +325,8 @@ bool Body::readOnlyContainer(const ast::Expr *X) {
     if (S::Type *T = sTyOf(X); T && isa<S::RefType>(T))
       return true; // a view (OWN-V1)
     if (auto *Sel = dyn_cast<ast::SelectorExpr>(X)) {
-      auto It = I.Selections.find(Sel);
-      if (It == I.Selections.end() || It->second.K != S::Selection::FieldVal ||
-          It->second.Indirect)
+      const S::Selection *SL = selOf(Sel);
+      if (!SL || SL->K != S::Selection::FieldVal || SL->Indirect)
         return false; // a package variable, or behind a pointer
       X = Sel->X;
       continue;
@@ -353,16 +362,16 @@ Body::PlacePath Body::placePath(const ast::Expr *E) {
     }
     case ast::Node::Kind::SelectorExpr: {
       auto *Sel = cast<ast::SelectorExpr>(E);
-      auto It = I.Selections.find(Sel);
-      if (It == I.Selections.end()) { // a qualified name, `pkg.V`
+      const S::Selection *SL = selOf(Sel);
+      if (!SL) { // a qualified name, `pkg.V`
         auto U = I.Uses.find(Sel->Sel);
         return {U != I.Uses.end() && isa_and_nonnull<S::Var>(U->second)
                     ? PlaceRoot::Stable
                     : PlaceRoot::Temp};
       }
-      if (It->second.K != S::Selection::FieldVal)
+      if (SL->K != S::Selection::FieldVal)
         return {PlaceRoot::Temp};
-      if (It->second.Indirect)
+      if (SL->Indirect)
         return {PlaceRoot::Stable}; // behind a pointer
       if (S::Type *XT = sTyOf(Sel->X); XT && isa<S::RefType>(XT))
         return {PlaceRoot::ReadOnly}; // a field of a view
@@ -578,18 +587,18 @@ Place Body::followFields(Place Base, S::Type *BaseTy, ArrayRef<int> Path,
       return Place();
     }
     Base = FB.field(std::move(Base), Idx);
-    Cur = ST->Fields[Idx]->Ty;
+    Cur = tyOfObj(ST->Fields[Idx]);
   }
   return Base;
 }
 
 Place Body::selectorPlace(const ast::SelectorExpr *Sel, Pending *Pend) {
-  auto It = I.Selections.find(Sel);
-  if (It == I.Selections.end()) {
+  const S::Selection *SLP = selOf(Sel);
+  if (!SLP) {
     unsupported(Sel, "a name from another package");
     return Place();
   }
-  const S::Selection &SL = It->second;
+  const S::Selection &SL = *SLP;
   if (SL.K != S::Selection::FieldVal) {
     unsupported(Sel, "this method value");
     return Place();
@@ -604,9 +613,9 @@ Place Body::selectorPlace(const ast::SelectorExpr *Sel, Pending *Pend) {
   SmallVector<const ast::SelectorExpr *, 8> Chain{Sel};
   const ast::Expr *Root = unparen(Sel->X);
   while (auto *Inner = dyn_cast<ast::SelectorExpr>(Root)) {
-    auto In = I.Selections.find(Inner);
-    if (isConst(Inner) || In == I.Selections.end() ||
-        In->second.K != S::Selection::FieldVal || In->second.ParentSteps)
+    const S::Selection *In = selOf(Inner);
+    if (isConst(Inner) || !In || In->K != S::Selection::FieldVal ||
+        In->ParentSteps)
       break;
     Chain.push_back(Inner);
     Root = unparen(Inner->X);
@@ -615,8 +624,7 @@ Place Body::selectorPlace(const ast::SelectorExpr *Sel, Pending *Pend) {
   for (size_t K = Chain.size(); K > 0 && Base.Ty; --K) {
     const ast::SelectorExpr *S = Chain[K - 1];
     at(S);
-    Base = followFields(std::move(Base), sTyOf(S->X),
-                        I.Selections.find(S)->second.Index, S, Pend);
+    Base = followFields(std::move(Base), sTyOf(S->X), selOf(S)->Index, S, Pend);
   }
   return Base;
 }
@@ -744,7 +752,7 @@ Place Body::lowerPlace(const ast::Expr *E, Pending *Pend) {
   switch (E->getKind()) {
   case ast::Node::Kind::Ident: {
     auto *Id = cast<ast::Ident>(E);
-    if (!isConst(E) && !I.narrowedType(Id))
+    if (!isConst(E) && !narrowed(Id))
       return identPlace(Id);
     break;
   }
@@ -773,11 +781,11 @@ Place Body::lowerPlace(const ast::Expr *E, Pending *Pend) {
 //===----------------------------------------------------------------------===//
 
 Operand Body::lowerIdent(const ast::Ident *Id) {
-  if (S::Type *N = I.narrowedType(Id))
+  if (S::Type *N = narrowed(Id))
     return lowerNarrowed(Id, N);
   if (auto U = I.Uses.find(Id); U != I.Uses.end())
     if (auto *F = dyn_cast<S::Func>(U->second))
-      return funcValueOfFunc(F, Id);
+      return funcValueOfFunc(F, Id, Id);
   Place P = identPlace(Id);
   if (!P.Ty)
     return errorValue(ctx());
@@ -812,14 +820,26 @@ Operand Body::lowerExpr(const ast::Expr *E) {
   case ast::Node::Kind::IndexExpr:
   case ast::Node::Kind::StarExpr: {
     if (auto *Sel = dyn_cast<ast::SelectorExpr>(E)) {
-      // A method value or expression used as a value.
-      auto SI = I.Selections.find(Sel);
-      if (SI != I.Selections.end() && SI->second.K != S::Selection::FieldVal)
-        return lowerMethodValue(Sel, SI->second);
+      // A method value or expression used as a value (the selection at the
+      // instance, in generic code).
+      if (const S::Selection *SL = selOf(Sel);
+          SL && SL->K != S::Selection::FieldVal)
+        return lowerMethodValue(Sel, *SL);
     }
-    // `gen[int]` as a value: an instance of a generic function (P04.08).
-    if (genericInstance(E, E))
-      return errorValue(ctx());
+    // `gen[int]` as a value: the func value of an instance (P04.08). (The
+    // walk records it at the name, `gen` or `lib.gen`; another package's
+    // instance is refused there, P06.06, and says nothing more here.)
+    if (auto *IX = dyn_cast<ast::IndexExpr>(E)) {
+      const ast::Expr *Key = unparen(IX->X);
+      const ast::Ident *Name = dyn_cast<ast::Ident>(Key);
+      if (auto *Sel = dyn_cast<ast::SelectorExpr>(Key))
+        Name = Sel->Sel;
+      auto U =
+          Name && I.Instances.count(Key) ? I.Uses.find(Name) : I.Uses.end();
+      if (U != I.Uses.end())
+        if (auto *F = dyn_cast<S::Func>(U->second); F && L.isGenericDecl(F))
+          return funcValueOfFunc(F, E, Key);
+    }
     Place P = lowerPlace(E);
     if (!P.Ty)
       return errorValue(ctx());
@@ -1039,8 +1059,34 @@ Operand Body::complexArith(BinOp Op, Operand X, Operand Y, S::Type *T,
   return copyOf(FB.temp(FB.aggregate(AggKind::Tuple, CT, {Re, Im})));
 }
 
+Operand Body::viewValue(Operand V, S::Type *ViewS, const ast::Node *N) {
+  // What a view looks at (OWN-V): a string or a slice from its {ptr, len},
+  // any other value read through the pointer.
+  auto *R = cast<S::RefType>(S::under(ViewS));
+  Type *G = L.lowerType(R->Elem, N->getBegin());
+  if (!G)
+    return errorValue(ctx());
+  if (G->getKind() == Type::Kind::String || G->getKind() == Type::Kind::Slice)
+    return borrowedSeq(std::move(V), G, N);
+  if (!V.type() || !V.type()->isPtr() || V.type()->elem() != G)
+    return failed(N, zeroOf(G));
+  at(N);
+  return copyOf(FB.deref(FB.local(localOf(std::move(V)))));
+}
+
 Operand Body::equality(bool Eq, Operand X, Operand Y, S::Type *T,
                        const ast::Node *N) {
+  // The one equality of the lowering (OWN-V, review R7): `==` and `!=`, a
+  // switch tag against its cases, and through eqGlue a map's keys, an
+  // interface's dynamic values, and every part of a struct, an array or an
+  // Option. A view compares as the value it looks at: both operands are
+  // read through it here, and a view inside a value by its glue
+  // (Lowering::viewPartsGlue), never by its address.
+  if (auto *R = dyn_cast_or_null<S::RefType>(T ? S::under(T) : nullptr)) {
+    Operand XV = viewValue(std::move(X), T, N);
+    Operand YV = viewValue(std::move(Y), T, N);
+    return equality(Eq, std::move(XV), std::move(YV), R->Elem, N);
+  }
   Type *G = X.type();
   at(N);
   if (G->isBool() || G->isInt() || G->isFloat() || G->isPtr())
@@ -1146,9 +1192,11 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
         }
       }
     }
-    // A View[string] is compared as the string it shows (a borrow).
-    if (auto *Rf = dyn_cast_or_null<S::RefType>(OpS ? S::under(OpS) : nullptr);
-        Rf && isStringType(Rf->Elem))
+    // A view compares as the value it looks at (OWN-V, "Comparing and
+    // re-pointing"): a View[string] as the string it shows, a View[int] as
+    // the int, never as its address (the box binding of a generic `case X`
+    // is one at every instance, review R5).
+    if (auto *Rf = dyn_cast_or_null<S::RefType>(OpS ? S::under(OpS) : nullptr))
       OpS = Rf->Elem;
     Operand X = valueFor(B->X, OpS), Y = valueFor(B->Y, OpS);
     if (Op == BinOp::Eq || Op == BinOp::Ne)
@@ -1308,6 +1356,15 @@ Operand Body::lowerConversion(const ast::CallExpr *C) {
       isConst(C->Args[0]) && !L.isComplexType(ToS) && !To->isPtr() && ConstTy
           ? constOperand(*I.lookup(C->Args[0])->Val, ConstTy, C)
           : lowerExpr(C->Args[0]);
+  // OWN-V1, review R9: `int(v)` of a View[int] copies out the value it looks
+  // at (a view of a string or a slice is copied by convertStrings, from its
+  // {ptr, len}).
+  if (auto *R = dyn_cast_or_null<S::RefType>(FromS ? S::under(FromS) : nullptr))
+    if (S::Type *EU = S::under(R->Elem);
+        !isStringType(EU) && !isa<S::SliceType>(EU)) {
+      X = viewValue(std::move(X), FromS, C->Args[0]);
+      FromS = R->Elem;
+    }
   return convert(C, std::move(X), FromS, ToS);
 }
 
@@ -1475,11 +1532,21 @@ void Body::lowerPrintln(const ast::CallExpr *C, bool Newline) {
     }
   for (const ast::Expr *Arg :
        Items.empty() ? C->Args : ArrayRef<ast::Expr *>()) {
-    Type *T = tyOf(Arg);
-    if (!T)
-      return;
     Item It;
     It.STy = sTyOf(Arg);
+    // A view prints the value it looks at (OWN-V, review R9; a view of a
+    // string or a slice prints as one already).
+    S::Type *ViewS = nullptr;
+    if (auto *R =
+            dyn_cast_or_null<S::RefType>(It.STy ? S::under(It.STy) : nullptr))
+      if (S::Type *EU = S::under(R->Elem);
+          !isStringType(EU) && !isa<S::SliceType>(EU)) {
+        ViewS = It.STy;
+        It.STy = R->Elem;
+      }
+    Type *T = ViewS ? L.lowerType(It.STy, Arg->getBegin()) : tyOf(Arg);
+    if (!T)
+      return;
     bool Printable = T->isInt() || T->isBool() || T->isFloat() || T->isPtr() ||
                      T->isIface() || T->getKind() == Type::Kind::String ||
                      (L.isComplexType(It.STy)) ||
@@ -1496,6 +1563,8 @@ void Body::lowerPrintln(const ast::CallExpr *C, bool Newline) {
     } else {
       It.IsValue = true;
       It.Val = lowerExpr(Arg);
+      if (ViewS)
+        It.Val = viewValue(std::move(It.Val), ViewS, Arg);
       // A variable is read now, not when it is printed.
       if (It.Val.K != Operand::Const &&
           (FB.function().Locals[It.Val.P.Local].K != Local::Temp ||
@@ -1848,23 +1917,6 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
   return copyOf(FB.local(Res));
 }
 
-bool Body::genericInstance(const ast::Expr *E, const ast::Node *At) {
-  auto *IE = dyn_cast<ast::IndexExpr>(unparen(E));
-  if (!IE)
-    return false;
-  const ast::Expr *Base = unparen(IE->X);
-  if (auto *Sel = dyn_cast<ast::SelectorExpr>(Base))
-    Base = Sel->Sel;
-  auto BU = isa<ast::Ident>(Base) ? I.Uses.find(cast<ast::Ident>(Base))
-                                  : I.Uses.end();
-  auto *GF = BU != I.Uses.end() ? dyn_cast<S::Func>(BU->second) : nullptr;
-  if (!GF || GF->OwnTParams.empty())
-    return false;
-  if (!L.Declined.count(GF))
-    unsupported(At, "a generic function (P04.08)");
-  return true;
-}
-
 Operand Body::lowerCall(const ast::CallExpr *C) {
   return C->isMust() ? lowerBang(C) : lowerPlainCall(C);
 }
@@ -1919,25 +1971,47 @@ Operand Body::lowerPlainCall(const ast::CallExpr *C) {
   }
   // An Option's IsNil and Get.
   if (auto *Sel = dyn_cast<ast::SelectorExpr>(Fun)) {
-    auto It = I.Selections.find(Sel);
-    if (It != I.Selections.end() && It->second.K == S::Selection::MethodVal) {
-      auto *F = dyn_cast_or_null<S::Func>(It->second.Obj);
+    const S::Selection *SL = selOf(Sel);
+    if (SL && SL->K == S::Selection::MethodVal) {
+      auto *F = dyn_cast_or_null<S::Func>(SL->Obj);
       if (F && F->IsBuiltinMethod && (F->Name == "IsNil" || F->Name == "Get") &&
           C->Args.empty())
         return lowerOptionMethod(C, Sel, F);
       if (F)
-        return lowerMethodCall(C, Sel, F, It->second);
+        return lowerMethodCall(C, Sel, F, *SL);
       unsupported(C, "this method call");
       return Unit;
     }
   }
-  auto *Id = dyn_cast<ast::Ident>(Fun);
+  // `F(x)` or `F[int](x)`: the name is what the checker recorded an
+  // instance for when F is generic.
+  const ast::Expr *Callee = Fun;
+  if (auto *IX = dyn_cast<ast::IndexExpr>(Fun))
+    if (I.Instances.count(unparen(IX->X)))
+      Callee = unparen(IX->X);
+  auto *Id = dyn_cast<ast::Ident>(Callee);
   auto U = Id ? I.Uses.find(Id) : I.Uses.end();
   if (U != I.Uses.end()) {
     if (auto *F = dyn_cast<S::Func>(U->second)) {
       auto TI = L.TestIntrinsics.find(F);
       if (TI != L.TestIntrinsics.end())
         return lowerTestIntrinsic(C, F, TI->second);
+      if (L.isGenericDecl(F)) {
+        // An instance of generic code: the walk found it (the same decision
+        // for the check and the build).
+        const GenericInst *GI = L.Walk.funcRef(CurInst, Callee);
+        auto IIt = GI ? L.InstIds.find(GI) : L.InstIds.end();
+        if (IIt == L.InstIds.end()) {
+          if (!L.Failed)
+            L.internalError(C->getBegin(),
+                            "the instance of " + F->Name.str() +
+                                " is missing (the walk did not find it)");
+          return Unit;
+        }
+        return callWith(C, L.instanceSig(GI), M.func(IIt->second).Sig,
+                        constFunc(M, IIt->second), {},
+                        M.func(IIt->second).NoUnwind);
+      }
       auto FI = L.FuncIds.find(F);
       if (FI == L.FuncIds.end() && L.Declined.count(F))
         return Unit; // its declaration was reported
@@ -1945,16 +2019,31 @@ Operand Body::lowerPlainCall(const ast::CallExpr *C) {
         unsupported(C, "a call of " + F->Name.str());
         return Unit;
       }
-      return callWith(C, F->sig(), M.func(FI->second).Sig,
+      return callWith(C, sigOf(F), M.func(FI->second).Sig,
                       constFunc(M, FI->second), {},
                       M.func(FI->second).NoUnwind);
     }
   }
-  // `gen[int](x)`: an instantiation used as the callee is a generic function
-  // (P04.08), not a func value. Its declaration was reported where it was
-  // declared (once), so the call says nothing more.
-  if (genericInstance(Fun, C))
-    return Unit;
+  // A generic function named otherwise (`lib.F[int](x)`, `lib.F(x)`) is
+  // never a func value: the walk took its instance or refused it (another
+  // package's is P06.06), so it is never a silent call of a value.
+  {
+    const ast::Expr *Base = Fun;
+    if (auto *IE = dyn_cast<ast::IndexExpr>(Base))
+      Base = unparen(IE->X);
+    if (auto *Sel = dyn_cast<ast::SelectorExpr>(Base))
+      Base = Sel->Sel;
+    auto BU = isa<ast::Ident>(Base) ? I.Uses.find(cast<ast::Ident>(Base))
+                                    : I.Uses.end();
+    auto *GF = BU != I.Uses.end() ? dyn_cast<S::Func>(BU->second) : nullptr;
+    if (GF && L.isGenericDecl(GF)) {
+      if (!L.Failed)
+        L.internalError(C->getBegin(), "the instance of " + GF->Name.str() +
+                                           " is missing (the walk did not "
+                                           "find it)");
+      return Unit;
+    }
+  }
   // A call of a value (a func value, a method value): its type says what is
   // missing, reported once (lowerType).
   if (!tyOf(Fun))
@@ -1996,6 +2085,14 @@ Operand Body::lowerStructLit(const ast::CompositeLit *CL, S::StructType *ST,
           if (ST->Fields[F] == Fld)
             Field = F;
       }
+      // The key of a literal of an instance names the field of the generic
+      // struct (or of another instance of it): the same name, in a struct
+      // that has each name once.
+      if (Field == N && Fld && !ST->Fields.empty())
+        for (size_t F = 0; F < N; ++F)
+          if (ST->Fields[F]->Name == Name->Name.str() &&
+              Fld->Name == Name->Name.str())
+            Field = F;
       if (Field == N) {
         unsupported(E, "this struct literal");
         return errorValue(ctx());
@@ -2005,7 +2102,7 @@ Operand Body::lowerStructLit(const ast::CompositeLit *CL, S::StructType *ST,
       unsupported(E, "this struct literal");
       return errorValue(ctx());
     }
-    Operand V = valueFor(E, ST->Fields[Field]->Ty);
+    Operand V = valueFor(E, tyOfObj(ST->Fields[Field]));
     // Evaluated now, in source order: a later element must not change it.
     if (V.K == Operand::Copy &&
         !(V.P.Proj.empty() &&

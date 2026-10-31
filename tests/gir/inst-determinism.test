@@ -1,0 +1,33 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build -build-check-j=1 -emit=gir %S/../run/gen-types.test > %t.1.gir
+// RUN: %gopp build -build-check-j=16 -emit=gir %S/../run/gen-types.test > %t.16.gir
+// RUN: cmp %t.1.gir %t.16.gir
+// RUN: %gopp build -build-check-j=1 -emit=gir %S/../run/gen-funcs.test > %t.f1.gir
+// RUN: %gopp build -build-check-j=16 -emit=gir %S/../run/gen-funcs.test > %t.f16.gir
+// RUN: cmp %t.f1.gir %t.f16.gir
+// RUN: %gopp build -build-check-j=1 -emit=gir %S/../run/generic-types.test > %t.t1.gir
+// RUN: %gopp build -build-check-j=16 -emit=gir %S/../run/generic-types.test > %t.t16.gir
+// RUN: cmp %t.t1.gir %t.t16.gir
+// RUN: FileCheck %s < %t.1.gir
+// RUN: FileCheck %s --check-prefix=TYPES < %t.t1.gir
+// P04.08 (D4.3): the instances, their names and their order do not depend on
+// the number of checker threads (-check-j for `gopp check`, the hidden
+// -build-check-j for the build): the GIR of generic run programs is the same
+// at 1 and 16. Instances are named by content (P04.17) and found in the order
+// of the source (lib/GIR/Instances.cpp). The control: the instances are there
+// (an empty module would be equal too).
+// CHECK: fn _GPM3GetIN{{.*}}[go, linkonce_odr]
+// CHECK: fn _GPM4PushIN{{.*}}[go, linkonce_odr]
+// TYPES: fn _GPM4SwapIN{{.*}}[go, linkonce_odr]
+// The per-instance errors do not depend on it either, in the check and in
+// the build (the walk runs after the threads); the control is that there
+// are errors to compare.
+// RUN: not %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/inst-bad.gopp > %t.e1 2>&1
+// RUN: not %gopp check -check-j=16 --check-error-limit=0 %S/Inputs/inst-bad.gopp > %t.e16 2>&1
+// RUN: cmp %t.e1 %t.e16
+// RUN: not %gopp build -build-check-j=1 -emit=gir %S/Inputs/inst-bad.gopp > %t.b1 2>&1
+// RUN: not %gopp build -build-check-j=16 -emit=gir %S/Inputs/inst-bad.gopp > %t.b16 2>&1
+// RUN: cmp %t.b1 %t.b16
+// RUN: FileCheck %s --check-prefix=ERR < %t.e16
+// RUN: FileCheck %s --check-prefix=ERR < %t.b16
+// ERR: error[E0446]: cannot instantiate Zero[Option[int]]

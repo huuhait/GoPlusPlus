@@ -1,0 +1,26 @@
+// REQUIRES: long
+// RUN: %python %S/Inputs/gen-inst-work.py 16 1000 > %t.big.gopp
+// RUN: not %gopp check %t.big.gopp > %t.check 2>&1
+// RUN: FileCheck %s < %t.check
+// RUN: grep -c 'error\[' %t.check | FileCheck %s --check-prefix=ONE
+// RUN: not %gopp build -emit=gir %t.big.gopp > %t.build 2>&1
+// RUN: diff %t.check %t.build
+// RUN: %python %S/Inputs/gen-inst-work.py 9 1000 > %t.ok.gopp
+// RUN: %gopp check %t.ok.gopp
+// P04.08 (GEN-5), review R4: the code the instances of a package hold is
+// bounded, not only their number. The walk visits at most 4000000 nodes of
+// code (LowerOptions::MaxWalkedNodes), or 16 per byte of the source if that
+// is more; past it is one error, the same text from `gopp check` and the
+// build (the walk is one, in one order), and no more instances, so a
+// 20 KB file of 2^15 instances of a 1000-statement body (about 230 million
+// nodes) stops at once instead of filling the memory. The other side: 2^8
+// instances of the body (about 1.8 million nodes) check. Long: the walk
+// visits 4 million nodes first (under a second, more under ASan). The fast
+// side is the unit test GIRInstances.TheWorkBudgetIsOneErrorAndStopsTheWalk.
+// (One error is counted with grep, not --implicit-check-not, so that
+// sema/exact-errors.test, which reruns such commands, leaves this long input
+// to check-long.)
+// CHECK: big.gopp:81:16: error[E0449]: cannot instantiate F0: the instances of the package hold more than 4000000 nodes of code (GEN-5)
+// CHECK: note: instantiated from F0[
+// CHECK: note: ... and 13 more instantiations
+// ONE: {{^}}1{{$}}

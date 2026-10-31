@@ -1,0 +1,89 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-tswitch.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-tswitch.out 0 %}
+// P04.08, review R1: generic code that binds or declares a variable whose
+// type comes from a type parameter, lowered per instance with the instance's
+// types (the variable bound by a type switch was read with its generic type,
+// an internal error from valid source): a type switch that binds its value
+// over `case nil`, `case T`, `case []T`, `case Box[T]`, `case *T` and a
+// several-type `case int, T` (the binding keeps the switch's interface type),
+// a comma-ok assertion to `T` and to `Box[T]`, the range variables of a
+// `[]T`, a named result of type `T`, `:=` of a `T` expression, at T = int,
+// float64 and a defined type. The expected output is what `go run` prints
+// for this very file (Inputs/regen-goldens.py).
+package main
+
+type Num interface{ ~int | ~float64 }
+
+type Box[T any] struct{ V T }
+
+type MyInt int
+
+func Kind[T Num](x any) T {
+	switch v := x.(type) {
+	case nil:
+		return -1
+	case T:
+		return v + 1
+	case []T:
+		var s T
+		for _, e := range v {
+			s += e
+		}
+		return s
+	case Box[T]:
+		return v.V * 10
+	case *T:
+		return *v * 2
+	}
+	return 0
+}
+
+func Either[T Num](x any) int {
+	switch v := x.(type) {
+	case int, T:
+		if v == nil {
+			return -2
+		}
+		return 1
+	case string:
+		return len(v)
+	}
+	return 0
+}
+
+func Get[T Num](x any) (T, bool) {
+	v, ok := x.(T)
+	return v, ok
+}
+
+func Unbox[T Num](x any) T {
+	if b, ok := x.(Box[T]); ok {
+		return b.V
+	}
+	return 0
+}
+
+func Sum[T Num](xs []T) (total T) {
+	for i, x := range xs {
+		y := x + x
+		total += y - x + T(i) - T(i)
+	}
+	return
+}
+
+func main() {
+	n := 4
+	f := 2.5
+	println(Kind[int](nil), Kind[int](3), Kind[int]([]int{1, 2, 3}), Kind[int](Box[int]{7}), Kind[int](&n), Kind[int]("x"))
+	println(Kind[float64](1.5), Kind[float64]([]float64{0.5, 0.25}), Kind[float64](Box[float64]{2}), Kind[float64](&f), Kind[float64](3))
+	println(Kind[MyInt](MyInt(5)), Kind[MyInt](5), Kind[MyInt]([]MyInt{2, 2}))
+	println(Either[float64](1), Either[float64](2.5), Either[float64]("abc"), Either[float64](true), Either[MyInt](MyInt(1)))
+	a, ok := Get[int](9)
+	b, ok2 := Get[int](9.5)
+	c, ok3 := Get[float64](9.5)
+	println(a, ok, b, ok2, c, ok3)
+	println(Unbox[int](Box[int]{6}), Unbox[int](Box[float64]{6}), Unbox[float64](Box[float64]{1.5}))
+	println(Sum([]int{1, 2, 3}), Sum([]float64{0.5, 1.5}), Sum([]MyInt{}))
+}

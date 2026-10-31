@@ -318,6 +318,12 @@ static cl::opt<std::string>
                    cl::desc("TEST ONLY: standard packages from this "
                             "directory"),
                    cl::sub(BuildCmd));
+static cl::opt<unsigned> BuildCheckJobs(
+    "build-check-j", cl::Hidden,
+    cl::desc("TEST ONLY: threads that check function bodies, as -check-j of "
+             "`gopp check` (0 = one per core; 1, the default, the calling "
+             "thread); the output does not depend on it"),
+    cl::init(1), cl::sub(BuildCmd));
 
 static cl::SubCommand
     TestRunCmd("test-run", "Compile many programs in this process and run "
@@ -700,6 +706,9 @@ static int runCheck(bool Vet) {
     CP = L.loadDir(CheckInputs[0], "");
     if (CP && CheckDumpTypes)
       gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
+    // The per-instance errors of generic code (P04.08, D4.3).
+    if (CP && !Diags.hasErrors() && !CheckGoMode)
+      gopp::gir::checkInstances(*CP, L.filesOf(CP), Diags);
     Diags.finish();
     return checkStatus(CP, Diags, Vet);
   }
@@ -712,6 +721,8 @@ static int runCheck(bool Vet) {
       std::vector<std::string>(CheckInputs.begin(), CheckInputs.end()));
   if (CP && CheckDumpTypes)
     gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
+  if (CP && !Diags.hasErrors() && !CheckGoMode)
+    gopp::gir::checkInstances(*CP, L.filesOf(CP), Diags);
   Diags.finish();
   return checkStatus(CP, Diags, Vet);
 }
@@ -915,6 +926,7 @@ static int buildOne(const BuildJob &J) {
   gopp::sema::LoadOptions LO;
   LO.StdRoot = BuildTestStubs;
   gopp::sema::CheckOptions CO;
+  CO.BodyThreads = BuildCheckJobs;
   gopp::sema::TypeContext TCtx(false);
   gopp::sema::MockForeignProvider Foreign;
   bool IsDir = J.Inputs.size() == 1 && llvm::sys::fs::is_directory(J.Inputs[0]);

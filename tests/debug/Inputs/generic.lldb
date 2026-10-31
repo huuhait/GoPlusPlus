@@ -1,0 +1,6 @@
+breakpoint set -n main.show
+run
+script print("@@VARS")
+frame variable p b q
+script print("@@TYPES")
+image lookup -t main.Point

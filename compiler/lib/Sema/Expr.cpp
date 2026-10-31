@@ -851,6 +851,10 @@ void Checker::comparison(Operand &X, Operand &Y, tok::Kind Op) {
     ErrOp = &Y;
     Cause = "mismatched types " + str(X.Ty) + " and " + str(Y.Ty);
     Fail = true;
+  } else if ((Op == tok::eql || Op == tok::neq) && !X.isNil() && !Y.isNil()) {
+    // A value compared with an interface is compared as that interface.
+    noteIfaceConversion(X.E, X.Ty, Y.Ty);
+    noteIfaceConversion(Y.E, Y.Ty, X.Ty);
   }
   auto IncomparableCause = [&](Type *T) {
     Type *U = under(T);

@@ -1,0 +1,117 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-funcs.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-funcs.out 0 %}
+// P04.08: generic functions are instantiated per type argument: explicit and
+// inferred arguments, several parameters, a generic calling a generic (with
+// its own parameter as the argument), recursion, a constraint with a type
+// set and one with a method, and one instance used from many places (it is
+// emitted once). The expected output is what `go run` prints for this very
+// file (Inputs/regen-goldens.py).
+package main
+
+type Number interface {
+	~int | ~int32 | ~int64 | ~float64
+}
+
+type MyInt int
+
+func Max[T Number](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Sum[T Number](xs []T) T {
+	var s T
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
+func Map[T, U Number](xs []T, f func(T) U) []U {
+	return nil
+}
+
+func Convert[T, U Number](x T) U { return U(x) }
+
+func Twice[T Number](x T) T { return Max(x+x, x) }
+
+func Fact[T Number](n T) T {
+	if n <= 1 {
+		return 1
+	}
+	return n * Fact(n-1)
+}
+
+type Shape interface{ Area() int }
+
+type Sq struct{ S int }
+type Rect struct{ W, H int }
+
+func (s Sq) Area() int   { return s.S * s.S }
+func (r Rect) Area() int { return r.W * r.H }
+
+func Total[T Shape](xs []T) int {
+	t := 0
+	for _, x := range xs {
+		t += x.Area()
+	}
+	return t
+}
+
+func Describe[T Shape](x T) int { return x.Area() + 1000 }
+
+func Pick[A, B any](a A, b B, first bool) int {
+	if first {
+		return 1
+	}
+	return 2
+}
+
+func Idx[T comparable](xs []T, v T) int {
+	for i, x := range xs {
+		if x == v {
+			return i
+		}
+	}
+	return -1
+}
+
+func Len[T any](xs []T) int { return len(xs) }
+
+func Both[T Number](x T) (T, T) { return x, x + 1 }
+
+type Num[T Number] struct{ N T }
+
+func (n Num[T]) Add(o Num[T]) Num[T] { return Num[T]{n.N + o.N} }
+
+type Adder[T Number] interface{ Add(Num[T]) Num[T] }
+
+// A constraint that is an instance of a generic interface, and a partial
+// explicit instantiation (T given, A inferred).
+func Fold[T Number, A Adder[T]](xs []A, z Num[T]) Num[T] {
+	for _, x := range xs {
+		z = x.Add(z)
+	}
+	return z
+}
+
+func main() {
+	println(Max(3, 4), Max(2.5, 1.5), Max[int64](7, 2), Max(MyInt(5), 9))
+	println(Sum([]int{1, 2, 3}), Sum([]float64{1.5, 2.5}), Sum([]int32{7, 8}))
+	println(Convert[int, float64](3), Convert[float64, int](7.9), Convert[int, MyInt](4))
+	println(Twice(21), Twice(1.5), Fact(5), Fact(10.0), Fact(MyInt(6)))
+	println(Total([]Sq{{1}, {2}, {3}}), Total([]Rect{{2, 3}, {4, 5}}))
+	println(Describe(Sq{3}), Describe(Rect{2, 5}), Describe[Shape](Sq{2}))
+	println(Pick(1, "a", true), Pick("x", 2.5, false), Pick([]int{1}, Sq{1}, true))
+	println(Idx([]int{5, 6, 7}, 7), Idx([]string{"a", "b"}, "c"), Idx([]Sq{{1}, {2}}, Sq{2}))
+	println(Len([]int{1, 2}), Len([]string{"a"}), Len([]Sq{}), Len[Rect](nil))
+	a, b := Both(10)
+	c, d := Both(0.5)
+	println(a, b, c, d)
+	println(Fold([]Num[int]{{1}, {2}, {3}}, Num[int]{10}).N)
+	println(Fold[float64]([]Num[float64]{{1.5}}, Num[float64]{1}).N)
+}

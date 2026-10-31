@@ -1,0 +1,34 @@
+// RUN: not %gopp check %S/Inputs/inst-depth.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-depth.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: %gopp check %S/Inputs/inst-depth-ok.gopp
+// RUN: %gopp build -emit=gir %S/Inputs/inst-depth-ok.gopp > /dev/null
+// RUN: %gopp build -emit=obj %S/Inputs/inst-depth-ok.gopp -o %t.o
+// RUN: not %gopp check %S/Inputs/inst-wide.gopp 2>&1 | FileCheck --check-prefix=WIDE --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-wide.gopp 2>&1 | FileCheck --check-prefix=WIDE --implicit-check-not=error[E %s
+// RUN: %gopp check %S/Inputs/inst-wide-ok.gopp
+// RUN: %gopp build -emit=gir %S/Inputs/inst-wide-ok.gopp > /dev/null
+// P04.08 (GEN-5): the type arguments an instance makes by substitution are
+// bounded, so no input expands without end and every name of an instance
+// stays short: a type argument that generic code builds around a type
+// parameter (`L[T]`, `P[T, T]`; not `T` itself, passed on as it is) nests at
+// most 48 levels and has at most 4096 parts as a tree, counted at the
+// instance. Past a bound is one error (E0449) at the instantiation, naming the
+// generic and the bound, by `gopp check` and by the build alike, not a stack
+// overflow or a hang; the walk makes no more instances after it. The other
+// sides: 48 levels (inst-depth-ok.gopp), and a chain whose last type argument
+// has 4095 parts (inst-wide-ok.gopp), check and build; and a type written in
+// the source is never past the bounds, review R4 (inst-depth-ok.gopp: 50
+// levels, and a 13-level alias chain of P[A, A] with 8191 parts, as variables
+// and as type arguments passed on; it builds to an object with its debug
+// information, and run/generic-written-large.test runs it). The plain cycle
+// (`F[T]` calling `F[[]T]`) is the checker's E0366 (tests/sema). The limit
+// on the number of instances (100000, or the source size) is
+// inst-count.long.test and the unit test
+// GIRInstances.TheInstanceLimitIsOneErrorAndStopsTheWalk; the limit on the
+// code they hold is inst-work.long.test and
+// GIRInstances.TheWorkBudgetIsOneErrorAndStopsTheWalk.
+// CHECK: inst-depth.gopp:12:30: error[E0449]: cannot instantiate G: a type argument nests more than 48 levels (GEN-5)
+// CHECK: inst-depth.gopp:15:10: note: instantiated from F[L[L[L[
+// WIDE: inst-wide.gopp:23:37: error[E0449]: cannot instantiate F12: a type argument has more than 4096 parts as a tree (GEN-5)
+// WIDE: inst-wide.gopp:22:37: note: instantiated from F11[P[P[
+// WIDE: inst-wide.gopp:18:36: note: ... and 8 more instantiations

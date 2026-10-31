@@ -841,9 +841,10 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
         }
         // ADR-0016 point 5: moving out of a non-local place of a type with
         // no zero value would leave zero bytes that later code reads as a
-        // real value.
+        // real value. (Moving a view variable copies it and empties nothing,
+        // OWN-V1, so it leaves no zero view either: ADR-0031.)
         if (!Refilled && placeKind(A0) == PlaceKind::OtherPlace &&
-            lacksGoZeroValue(X.Ty)) {
+            lacksGoZeroValue(X.Ty) && !viewVariable(Arg, X.Ty)) {
           // `*p` is replaced through p itself.
           std::string Place = "&" + str(A0);
           if (auto *St = dyn_cast<StarExpr>(A0))

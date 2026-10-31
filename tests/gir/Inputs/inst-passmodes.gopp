@@ -1,0 +1,14 @@
+package main
+
+type Pair[K any, V any] struct {
+	Key K
+	Val V
+}
+
+func Len[K any, V any](p Pair[K, V]) int { return 1 }
+
+func main() {
+	a := Pair[int, string]{1, "x"}
+	b := Pair[int, int]{1, 2}
+	println(Len(a), Len(b))
+}

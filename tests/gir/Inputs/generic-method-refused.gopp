@@ -1,0 +1,21 @@
+package main
+
+type S struct{ n int }
+
+// A method with type parameters of its own: P04.28, one error where it is
+// declared, however many calls and instances use it.
+func (s S) Conv[U int | float64](k U) U { return k + k }
+
+type Box[T Copy] struct{ v T }
+
+func (b Box[T]) Pair[U Copy](u U) int { return 1 }
+
+// One that is never called draws nothing.
+func (s S) Unused[U Copy](u U) U { return u }
+
+func main() {
+	s := S{1}
+	println(s.Conv(2), s.Conv[float64](1.5))
+	b := Box[int]{1}
+	println(b.Pair(2), b.Pair(3.5), Box[float64]{1.5}.Pair(1))
+}

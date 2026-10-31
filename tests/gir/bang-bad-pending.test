@@ -1,15 +1,15 @@
-// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error %s
+// RUN: %gopp build -emit=gir %s 2>&1 | FileCheck --allow-empty --implicit-check-not=error %s
 // P04.10: a `!` call that needs a feature of another task is reported ONCE,
 // naming that task (E0439), and nothing follows from it. When the task lands
-// the form lowers and this test moves into run/bang-return.test (the checks
-// below are the "before" side; bang.test and bang-return.test the "after"):
-//   - a generic function (P04.08): refused where it is declared, the `!` call
-//     of it says nothing more, with or without the explicit instantiation
-//     `gen[int]!(2)` (an instantiation used as a callee is P04.08, not a
-//     func value).
-// A call through a func value was here until P04.07 lowered func values: it
-// is the "after" side in run/bang-funcvalue.test (`viaValue` below lowers
-// and draws no error).
+// the form lowers and its case moves into a run test (the checks of this file
+// are the "before" side; bang.test and bang-return.test the "after"). None is
+// pending now:
+//   - a call through a func value was here until P04.07 lowered func values:
+//     it is the "after" side in run/bang-funcvalue.test (`viaValue` below
+//     lowers and draws no error);
+//   - a generic function with `!`, `gen!(1)` and `gen[int]!(2)`, was here
+//     until P04.08: run/generic-bang.test and Inputs/panics-bang/generic.gopp
+//     have both paths.
 package main
 
 type e1 struct{}
@@ -18,20 +18,11 @@ func (e1) Error() string { return "x" }
 
 func g(n int) (int, error) { return n, nil }
 
-func gen[T any]!(x T) int { return 1 }
-
 func viaValue() {
 	fv := g
 	println(fv!(1))
 }
 
-func generic() int {
-	return gen!(1) + gen[int]!(2)
-}
-
 func main() {
 	viaValue()
-	println(generic())
 }
-
-// CHECK: bang-bad-pending.test:{{[0-9]+}}:1: error[E0439]: a generic function (P04.08) is not supported

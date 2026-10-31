@@ -1,0 +1,14 @@
+package main
+
+func At[T any](xs []T, i int) int {
+	println("at", i)
+	return len(xs[i:i+1]) + i
+}
+
+func Div[T ~int | ~int32](a, b T) T { return a / b }
+
+func main() {
+	println(At([]int{1, 2}, 1), At([]string{"a"}, 0), Div(7, 2), Div(int32(9), 3))
+	println(At([]float64{1}, 5))
+	println("not reached")
+}

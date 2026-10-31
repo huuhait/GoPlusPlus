@@ -1,0 +1,73 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-localtype.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-localtype.out 0 %}
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.08, review R2: a type declared in a plain function is a type argument
+// like any other. Its symbol (the function and its ordinal among the
+// function's types, P04.04) is given before the instance walk names the
+// instance (impl::declareLocalTypes), so `Is[L]` of local1's `L`, of main's
+// `L`, of the `L` of a nested block of main and of init's `L` are four
+// instances with four symbols that do not collide (the `L` of init is ordinal
+// 0 of init 0, `K4mainE0_`; main's two are `g0_` and `g1_`), and so are the
+// `Box[L]`s. A type declared in a function literal (P04.07) is named by the
+// literal's closure, as the closure is: the `L` of main's literal is
+// ordinal 0 of `main.main.func1` (`C1_F4mainE4main`), and the `L` of the
+// literal that initializes `fromVar` ordinal 0 of `main.fromVar.func1`
+// (`C1_R4mainE7fromVar`). The expected output is what `go run` prints for
+// this very file (Inputs/regen-goldens.py). Before the fix each was an E0439
+// that named no task.
+// CHECK-DAG: fn _GPIF4mainE2Isg0_1LK4mainE0_E(
+// CHECK-DAG: fn _GPIF4mainE2Isg0_1LF4mainE6local1E(
+// CHECK-DAG: fn _GPIF4mainE2IsIN4mainE3Boxg0_1LF4mainE6local1EE(
+// CHECK-DAG: fn _GPIF4mainE2Isg0_1LF4mainE4mainE(
+// CHECK-DAG: fn _GPIF4mainE2IsIN4mainE3Boxg0_1LF4mainE4mainEE(
+// CHECK-DAG: fn _GPIF4mainE2Isg1_1LF4mainE4mainE(
+// CHECK-DAG: fn _GPIF4mainE2Isg0_1LC1_F4mainE4mainE(
+// CHECK-DAG: fn _GPIF4mainE2Isg0_1LC1_R4mainE7fromVarE(
+package main
+
+type Box[T any] struct{ v T }
+
+func Is[T any](x any) bool {
+	_, ok := x.(T)
+	return ok
+}
+
+var fromInit any
+
+func init() {
+	type L struct{ a int }
+	fromInit = L{4}
+	println("init", Is[L](fromInit), Is[L](1))
+}
+
+func local1() any {
+	type L struct{ a int }
+	println("local1", Is[L](L{1}), Is[Box[L]](Box[L]{}))
+	return L{1}
+}
+
+func local2() any {
+	type L struct{ a int }
+	return Box[L]{}
+}
+
+var fromVar = func() bool {
+	type L struct{ c bool }
+	return Is[L](L{true}) && !Is[L](fromInit)
+}()
+
+func main() {
+	type L struct{ a int }
+	println(Is[L](local1()), Is[L](L{2}), Is[Box[L]](Box[L]{}), Is[Box[L]](local2()))
+	if true {
+		type L struct{ b string }
+		println(Is[L](L{"x"}), Is[L](local1()), Is[L](fromInit))
+	}
+	f := func() bool {
+		type L struct{ a int }
+		return Is[L](L{5}) && !Is[L](local1())
+	}
+	println(f(), fromVar)
+}

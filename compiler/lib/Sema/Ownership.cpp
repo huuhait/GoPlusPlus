@@ -1147,13 +1147,44 @@ struct ZeroQuery {
         *Why = FirstWhy;
       return !PolyFail;
     }
-    case Type::Kind::Ref:
-      // A View[T] stands for a T that is there: a view of a type with no zero
-      // value has none either (a binding of such a value is unset until the
-      // check, OWN-P10).
-      if (!cast<RefType>(T)->Borrowed)
-        return has(cast<RefType>(T)->Elem, Why);
-      return true;
+    case Type::Kind::Ref: {
+      // A View[T] stands for a T that is there. A view of a single value
+      // always looks at one, so it has no zero value, as a pointer has none
+      // (ADR-0031, OWN-V); a view of a string or a slice is empty at zero,
+      // as they are, and a view of a type with no zero value has none either
+      // (a binding of such a value is unset until the check, OWN-P10).
+      auto *R = cast<RefType>(T);
+      if (R->Borrowed)
+        return true;
+      auto Seq = [&](Type *X) {
+        Type *XU = C.under(X);
+        return C.isString(XU) || isa<SliceType>(XU);
+      };
+      auto None = [&] {
+        if (Why)
+          *Why = "a view always looks at a value (ADR-0031): set it from "
+                 "one, " +
+                 C.str(T) + "(x), or use Option[" + C.str(T) + "]";
+        return false;
+      };
+      if (auto *TP = dyn_cast<TypeParamType>(R->Elem)) {
+        // A view of a type parameter (the generic body is checked once):
+        // none, unless every type its constraint allows is a string or a
+        // slice; the instance decides (Poly), as for the parameter itself.
+        auto *I = dyn_cast_or_null<InterfaceType>(C.under(TP));
+        TypeSet *TS = I ? C.typeSet(I) : nullptr;
+        if (TS && TS->hasTerms() && !TS->Terms.empty() &&
+            llvm::all_of(TS->Terms, [&](const Term &Tm) { return Seq(Tm.T); }))
+          return true;
+        None();
+        Poly = true;
+        PolyMask |= bitOf(TP->Index);
+        return false;
+      }
+      if (C.isValid(C.under(R->Elem)) && !Seq(R->Elem))
+        return None();
+      return has(R->Elem, Why);
+    }
     case Type::Kind::TypeParam: {
       // A generic body is checked once: T may be anything its constraint
       // allows. Only a constraint whose terms all have a zero value says so.

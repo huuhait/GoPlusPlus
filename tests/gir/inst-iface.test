@@ -1,0 +1,35 @@
+// RUN: not %gopp check %S/Inputs/inst-iface.gopp > %t.check 2>&1
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-iface.gopp > /dev/null 2> %t.build
+// RUN: cmp %t.check %t.build
+// RUN: FileCheck --implicit-check-not=error[E %s < %t.check
+// RUN: not %gopp check %S/Inputs/inst-iface-tests.gopp > %t.tcheck 2>&1
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-iface-tests.gopp > /dev/null 2> %t.tbuild
+// RUN: cmp %t.tcheck %t.tbuild
+// RUN: FileCheck --check-prefix=TESTS --implicit-check-not=error[E %s < %t.tcheck
+// P04.08 (decision M3): `gopp check` and the build report the same
+// per-instance errors, also for a method that only a type descriptor or an
+// itab needs (no call names it). The instance walk takes the whole method
+// set of an instance of a generic type where a value of it becomes an
+// interface value (the checker's record Info::IfaceConversions: a result, a
+// variable, an argument, a struct, slice or map literal element, a
+// conversion, a comparison with an interface, a send, an Option of an
+// interface, `panic`) and where a type assertion or a type switch case names
+// it, which is where the lowering makes the descriptor. The output of both is
+// the same, byte for byte. The other side: in each file an instance that is
+// only named (`var named W[Option[bool]]`) brings no method, so no error (n
+// methods of n named instances are not n squared:
+// GIRStress.NamedInstancesOfATypeBringNoMethods).
+// CHECK: inst-iface.gopp:23:28: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}int8]].Show: its body makes Option{{\[}}Option{{\[}}int8]]
+// CHECK: inst-iface.gopp:12:6: note: formed here, in the generic body of W{{\[}}Option{{\[}}int8]].Show
+// CHECK: inst-iface.gopp:26:17: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}int]].Show
+// CHECK: inst-iface.gopp:27:10: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}int16]].Show
+// CHECK: inst-iface.gopp:28:17: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}int32]].Show
+// CHECK: inst-iface.gopp:29:17: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}int64]].Show
+// CHECK: inst-iface.gopp:30:30: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}uint64]].Show
+// CHECK: inst-iface.gopp:31:14: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}uint]].Show
+// TESTS: inst-iface-tests.gopp:19:11: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}uint8]].Show
+// TESTS: inst-iface-tests.gopp:21:7: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}uint16]].Show
+// TESTS: inst-iface-tests.gopp:23:11: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}uint32]].Show
+// TESTS: inst-iface-tests.gopp:25:8: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}float32]].Show
+// TESTS: inst-iface-tests.gopp:26:25: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}float64]].Show
+// TESTS: inst-iface-tests.gopp:29:8: error[E0446]: cannot instantiate W{{\[}}Option{{\[}}complex128]].Show

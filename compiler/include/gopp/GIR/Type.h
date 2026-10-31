@@ -119,6 +119,11 @@ public:
   llvm::StringRef fieldName(unsigned I) const {
     return I < FieldNames.size() ? FieldNames[I] : llvm::StringRef();
   }
+  /// The type arguments of a struct that is an instance of a generic type
+  /// (`Pair[int, string]`: int64 and string), for the debugger's name of it
+  /// (DebugInfo spell). Empty for every other type. Not part of the type's
+  /// identity (its name is); the bitstream keeps it.
+  llvm::ArrayRef<Type *> typeArgs() const { return TypeArgs; }
   /// A self-naming type (Context::recTy): a named type whose body is any
   /// structural kind, made for a type that reaches itself through no struct
   /// (`type S []S`, `type A [2]*A`). Once its body is set it behaves as the
@@ -156,6 +161,7 @@ private:
   llvm::ArrayRef<Type *> Elems;
   llvm::StringRef Name;
   llvm::ArrayRef<llvm::StringRef> FieldNames;
+  llvm::ArrayRef<Type *> TypeArgs;
 };
 
 /// The size and alignment of a value in memory, in bytes, as the code
@@ -209,6 +215,10 @@ public:
   /// the debugger (Type::fieldName). Once: false if S already has names or
   /// the count differs from the fields'.
   bool setFieldNames(Type *S, llvm::ArrayRef<llvm::StringRef> Names);
+  /// Records the type arguments of a struct that is an instance of a generic
+  /// type (Type::typeArgs). Once: false if S already has them or Args is
+  /// empty.
+  bool setTypeArgs(Type *S, llvm::ArrayRef<Type *> Args);
 
   /// The self-naming type called Name (created without a body on first
   /// use). Its parts may name it: `type S []S` is recTy("S") whose body is

@@ -1,0 +1,1 @@
+panic: must: a.add(-1) at generic.gopp:36:2: negative

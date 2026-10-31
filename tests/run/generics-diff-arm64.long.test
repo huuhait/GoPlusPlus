@@ -1,0 +1,6 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/generics/numeric.gopp -o %t.numeric
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.numeric %S/Inputs/generics/numeric.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/generics/passing.gopp -o %t.passing
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.passing %S/Inputs/generics/passing.out 0
+// P04.08 on linux/arm64: the rest of the programs of generics-diff.test.

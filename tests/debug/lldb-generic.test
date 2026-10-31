@@ -1,0 +1,19 @@
+// REQUIRES: host-linux-amd64, lldb
+// RUN: %gopp build %S/Inputs/generic.gopp -o %t
+// RUN: timeout 60 lldb --no-lldbinit -b -s %S/Inputs/generic.lldb %t 2>&1 | FileCheck %s
+// P04.08 (decision M8): the same names as gdb-generic.test, in lldb: an
+// instance of a generic type is `Name[args]`, the arguments spelled as the
+// debugger spells any type (`main.Pair[int64, string]` for a Pair[int,
+// string]), a defined type argument with its package, an instance inside an
+// instance. The other side: a type that is not generic keeps its name
+// (`main.Point`).
+// CHECK: @@VARS
+// CHECK: (main.Pair[int64, string]) p = {
+// CHECK: Key = 1
+// CHECK: (main.Box[main.Point]) b = {
+// CHECK: V = (X = 3, Y = 4)
+// CHECK: (main.Pair[main.Box[int64], float64]) q = {
+// CHECK: Key = (V = 5)
+// CHECK: @@TYPES
+// CHECK: name = "main.Point", byte-size = 16
+// CHECK-NOT: main.Point[

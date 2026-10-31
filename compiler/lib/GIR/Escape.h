@@ -43,6 +43,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace gopp {
@@ -111,16 +112,23 @@ struct EntityFacts {
   llvm::DenseSet<const S::Var *> Cells;
 };
 
+/// The type a checker type is at the instance being analyzed (P04.08: the
+/// instance's substitution, InstanceWalk::inst); null for plain code, whose
+/// types are the checker's.
+using TypeAt = llvm::function_ref<S::Type *(S::Type *)>;
+
 /// Analyzes the function literals and method values inside Roots (a function
 /// body, or the initializer of a package variable). Body is the block whose
 /// locals are the entity's own (a literal's body is another function), null for
 /// an initializer; Outer are variables declared outside Roots that belong to
-/// the entity (its parameters and results).
+/// the entity (its parameters and results). At an instance of generic code
+/// (P04.08, decision M6) every type it asks about is At's: which variables
+/// may hold a func value, and through what a receiver is reached.
 void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
                    const ast::BlockStmt *Body,
                    llvm::ArrayRef<const S::Var *> Outer, const KeepTable &Keeps,
-                   FuncHolderTypes &Holders, const S::Info &I,
-                   EntityFacts &Out);
+                   FuncHolderTypes &Holders, const S::Info &I, EntityFacts &Out,
+                   TypeAt At = nullptr);
 
 } // namespace impl
 } // namespace gir

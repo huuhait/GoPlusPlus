@@ -1,0 +1,47 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-alias.out 0
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.08 (decision M7): `byte` is `uint8`, so `Box[byte]` and `Box[uint8]`
+// are one type (Go's identity), although the checker has two objects for
+// them: one GIR struct with one name (no `main.Box[uint8]#2`), one instance
+// of each method and of `Sum`, one type descriptor (an interface value of one
+// is a value of the other: the type assertion holds), and one map key type.
+// Before the fix the program was an internal error (V050: a value of one
+// struct stored in a place of the other). The expected output is what `go
+// run` prints for this very file (Inputs/regen-goldens.py).
+// CHECK-NOT: main.Box{{\[}}uint8]#
+// CHECK: fn _GPM3GetIN4mainE3BoxhE(
+// CHECK-NOT: fn _GPM3GetIN4mainE3BoxhE(
+// CHECK: fn _GPIF4mainE3SumhE(
+// CHECK-NOT: fn _GPIF4mainE3SumhE(
+// CHECK-NOT: fn _GPM3GetIN4mainE3BoxhE(
+// CHECK-NOT: main.Box{{\[}}uint8]#
+package main
+
+type Box[T ~uint8 | ~int] struct{ V T }
+
+func (b Box[T]) Get() T { return b.V }
+
+type Getter interface{ Get() uint8 }
+
+func Sum[T ~uint8 | ~int](xs []T) T {
+	var s T
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
+func main() {
+	var a Box[byte] = Box[byte]{1}
+	var b Box[uint8] = a
+	b.V++
+	var g Getter = b
+	var h Getter = a
+	m := map[Box[byte]]int{a: 1}
+	m[b] = 2
+	println(a.Get(), b.Get(), g.Get(), h.Get(), len(m), m[Box[uint8]{1}])
+	var x any = a
+	_, ok := x.(Box[uint8])
+	println(ok, Sum([]byte{1, 2}), Sum([]uint8{3}))
+}

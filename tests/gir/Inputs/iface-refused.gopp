@@ -15,9 +15,9 @@ type Counts map[string]int
 
 func (c Counts) Total() int { return 0 }
 
-type Box[T any] struct{ V T }
-
-func (b Box[T]) Size() int { return 1 }
+// (A method of a generic type is lowered per instance, P04.08:
+// gir/generic-*.test.)
+//
 
 type Shape interface{ Area() int }
 type Sq struct{ S int }

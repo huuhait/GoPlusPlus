@@ -1746,6 +1746,10 @@ public:
   /// An `error` (maybe nil) converted to an interface with methods (never
   /// nil), where it is not known set: report it, return true.
   bool checkNilableToNeverNil(Operand &X, Type *T);
+  /// Records Info::IfaceConversions when a value of type From (no interface,
+  /// or a type parameter) at E becomes a value of the interface type To, or
+  /// of an Option of one (P04.08).
+  void noteIfaceConversion(const ast::Expr *E, Type *From, Type *To);
   /// What kind of checked form `v, x := Rhs` (operands Ops) is.
   GuardKind guardKindOf(const ast::Expr *Rhs, ArrayRef<Operand> Ops,
                         bool CommaOk);

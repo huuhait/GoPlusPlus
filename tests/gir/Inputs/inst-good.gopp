@@ -1,0 +1,29 @@
+package main
+
+// The accepted side of inst-bad.gopp: the same generic code with type
+// arguments that are valid in it.
+func Zero[T any]() int {
+	var z Option[T]
+	_ = z
+	return 1
+}
+
+func Via[U any]() int { return Zero[U]() }
+
+func Two[T any](move x T) (int, T) { return 1, x }
+
+func Both[T any](move x T) int {
+	n, v := Two[T](x)
+	_ = v
+	return n
+}
+
+func Fwd[T any](move x T) (int, T) { return Two[T](x) }
+
+func main() {
+	var e error
+	println(Zero[int](), Zero[string](), Zero[float64]())
+	println(Via[int](), Via[string]())
+	println(Both[int](1), Both[string]("a"))
+	_, _ = Fwd[error](e)
+}

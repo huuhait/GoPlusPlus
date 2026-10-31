@@ -1,0 +1,83 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/gen-funcs.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/gen-funcs.out %}
+// P04.08 (D4.3): generic functions are lowered once per instance: inference,
+// explicit type arguments, a named type argument, core types (`S ~[]E`),
+// mutual recursion between generic functions, one instance used from many
+// places. The expected output is what `go run` prints for this very file.
+package main
+
+type Number interface{ ~int | ~int64 | ~float64 }
+
+type MyInt int
+
+func Sum[T Number](xs []T) T {
+	var s T
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
+func Max[T Number](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Map[A, B Number](xs []A, k B) []B {
+	out := make([]B, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, B(x)*k)
+	}
+	return out
+}
+
+// core type: the type set has one underlying type, the slice
+func First[S ~[]E, E Number](s S) E {
+	return s[0]
+}
+
+type Ints []int
+
+func Fill[S ~[]E, E Number](s S, v E) {
+	for i := range s {
+		s[i] = v
+	}
+}
+
+// mutual recursion between generic functions
+func Even[T Number](n T) bool {
+	if n == 0 {
+		return true
+	}
+	return Odd(n - 1)
+}
+
+func Odd[T Number](n T) bool {
+	if n == 0 {
+		return false
+	}
+	return Even(n - 1)
+}
+
+func Twice[T Number](x T) T { return Add(x, x) }
+func Add[T Number](a, b T) T { return a + b }
+
+// the same instance from many places
+func Use() int { return Max(1, 2) + Max(3, 4) + Twice(5) }
+
+func main() {
+	println(Sum([]int{1, 2, 3}), Sum([]float64{1.5, 2.25}), Sum([]MyInt{4, 5}))
+	println(Max(3, 9), Max(2.5, 1.5), Max[int64](7, 5), Max(MyInt(2), 8))
+	m := Map([]int{1, 2, 3}, 2.5)
+	println(len(m), m[0], m[2])
+	println(First(Ints{7, 8}), First([]float64{0.5}))
+	xs := make(Ints, 3)
+	Fill(xs, 4)
+	println(xs[0], xs[1], xs[2])
+	println(Even(10), Odd(10), Even(7), Even(int64(4)), Odd(3.0))
+	println(Use(), Twice(MyInt(21)))
+}

@@ -1,0 +1,30 @@
+package main
+
+// As inst-iface.gopp, with the other forms that need the type descriptor of a
+// W[X]: a type assertion, a type switch case, a comparison with an interface,
+// a send on a channel of interfaces, an Option of an interface, `panic`.
+type W[T any] struct{ n int }
+
+func (w W[T]) Show() int {
+	var o Option[T]
+	_ = o
+	return w.n
+}
+
+type Shower interface{ Show() int }
+
+func main() {
+	var x any = 1
+	var a Shower = W[int]{1}
+	_, ok := x.(W[Option[uint8]])
+	switch x.(type) {
+	case W[Option[uint16]]:
+	}
+	_ = a == W[Option[uint32]]{1}
+	ch := make(chan Shower, 1)
+	ch <- W[Option[float32]]{1}
+	var o Option[Shower] = W[Option[float64]]{1}
+	var named W[Option[bool]]
+	println(ok, o != nil, named.n)
+	panic(W[Option[complex128]]{1})
+}

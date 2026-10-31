@@ -8,6 +8,7 @@ add_gopp_library(GIR
   Lower.cpp
   Glue.cpp
   Inline.cpp
+  Instances.cpp
   LowerExpr.cpp
   LowerFunc.cpp
   LowerIface.cpp

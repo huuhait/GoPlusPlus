@@ -4273,6 +4273,66 @@ func _GPcallback(x int32) int32 { return x }
 
 func main() {}
 )X")
+EXPLAIN(err_inst_option,
+        "The checker checks a generic body once, with its type parameters, so it cannot see that `Option[T]` in the body is `Option[Option[int]]` for T = Option[int], or `Option[error]` for T = error. An Option holds a value that has no nil of its own: a pointer kind, a func, an interface with methods, a slice, a map and an Option already have one (ADR-0018 point 11). The compiler checks every instance of the generic code (`gopp check` too) and reports the first place that asks for the instance, with a note at the place in the body that makes the type and one for each instantiation that led there. Instantiate with a type that has no nil, or make the body not wrap it.",
+        R"X(package p
+
+func First[T any](xs []T) Option[T] {
+	if len(xs) == 0 {
+		return nil
+	}
+	return xs[0]
+}
+
+func use() {
+	_ = First[Option[int]](nil)
+}
+)X")
+EXPLAIN(err_inst_view,
+        "A `View[X]` is a read-only look at a value of type X, so X cannot be a pointer kind (`*T`, Unique, Shared, Weak), `unsafe.Pointer` or another View (ADR-0020). The checker checks a generic body once, where `View[T]` is allowed for a type parameter; for T = `*int` the instance makes `View[*int]`. The compiler checks every instance (`gopp check` too). The checker already rejects most such instantiations where it sees them (E0371), so this error is the check on the instance itself.",
+        R"X(package p
+
+func Look[T any](x View[T]) {}
+
+func use() {
+	Look[*int](nil)
+}
+)X")
+EXPLAIN(err_inst_checked_result,
+        "A call whose last result is `error` returns a checked result when one of its other results has no zero value: that result may be used only where the error is known to be nil (OWN-P10), and `f!()` tests the same last result. The checker knows this only for a last result written as `error`. In generic code the last result can be a type parameter; for T = error the instance has a checked result that the generic body cannot check, because it cannot compare a T with nil. Handing the results on with `return f()` into results that end in the same type parameter is fine (the caller checks them), and so is dropping them with `_`. Instantiate with a type other than `error`, or give the generic code an `error` result of its own.",
+        R"X(package p
+
+type Cfg struct {
+	N int @Required
+}
+
+func Mk[T any](move t T) (Cfg, T) { return Cfg{N: 1}, t }
+
+func Use[T any](move t T) int {
+	c, x := Mk(move(t))
+	_ = x
+	return c.N
+}
+
+func use() {
+	var e error
+	_ = Use(e)
+}
+)X")
+EXPLAIN(err_inst_too_large,
+        "A generic function that calls itself, or another generic, with a bigger type argument (`F[T]` calling `F[[]T]`, or a chain of functions that each call the next with `Pair[T, T]`) would need an instance for every size. The checker rejects the plain cycles (E0366); the compiler bounds what it cannot see. A type argument that an instance makes by substitution, one that generic code builds around a type parameter (`[]T`, `Pair[T, T]`; not `T` itself, passed on as it is), may nest at most 48 levels and have at most 4096 parts as a tree, counted with the real types of the instance; a type written out in the source has no such bound. One package may have at most 100000 instances, or one per byte of its source if that is more (a chain of functions that each call the next twice with two different bigger type arguments has 2^n of them), and its code with the bodies of all its instances at most 4000000 nodes of syntax, or 16 per byte of its source if that is more (2^15 instances of a 1000-statement body are a 20 KB file). The first instance past a limit is the one error, at the place that asks for it, with the chain of instantiations that led there; the compiler makes no more instances after it. Here G's type argument is made in F from F's: 49 levels around `int`, 50 in all.",
+        R"X(package p
+
+type L[T any] struct{ x [1]int }
+
+func G[T any]() int { return 1 }
+
+func F[T any]() int {
+	return G[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[T]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]()
+}
+
+func use() int { return F[int]() }
+)X")
 EXPLAIN(err_gir_no_main,
         "A program starts at `func main()` of package main, and `gopp build` found no such function in the package it was asked to build. Declare `func main()`, or build the package as a library (`-emit=obj`).",
         R"X(package main

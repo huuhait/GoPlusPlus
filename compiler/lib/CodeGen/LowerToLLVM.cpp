@@ -695,6 +695,11 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
           ? llvm::GlobalValue::LinkOnceODRLinkage
           : llvm::GlobalValue::ExternalLinkage,
       F.Name, &LM);
+  // A function emitted by every object that needs it (an instance of generic
+  // code, P04.08; glue) folds into one at link time: its own COMDAT group.
+  if (F.Link == G::Linkage::LinkOnceODR &&
+      LM.getTargetTriple().isOSBinFormatELF())
+    LF->setComdat(LM.getOrInsertComdat(F.Name));
   llvm::AttributeList AL = LF->getAttributes();
   if (CFIt != CFuncs.end()) {
     AL = CFIt->second.Sig.Attrs; // the C ABI's: extension, byval, sret, ...
@@ -2296,6 +2301,9 @@ llvm::Error Lowering::run() {
             ? llvm::GlobalValue::LinkOnceODRLinkage
             : llvm::GlobalValue::ExternalLinkage,
         Init, Gl.Name);
+    if (Gl.Link == G::Linkage::LinkOnceODR &&
+        LM.getTargetTriple().isOSBinFormatELF())
+      GV->setComdat(LM.getOrInsertComdat(Gl.Name));
     // (A table with pointers in it is a type descriptor or an itab: its
     // address is its identity, so it is never merged with another.)
     if (Gl.ReadOnly && Gl.Parts.empty())

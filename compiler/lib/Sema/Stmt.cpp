@@ -1043,8 +1043,10 @@ void Checker::typeSwitchStmt(unsigned Ctx, const TypeSwitchStmt *S0) {
       Var *V = newVar(name(Lhs), VT, Lhs->getBegin());
       declare(E.Sc, nullptr, V, CC->Colon);
       recordImplicit(CC, V);
-      if (Box)
+      if (Box) {
         V->Mode = Var::Borrowed; // TYP-9
+        V->BoxBinding = true;
+      }
       LhsVars.push_back(V);
     }
     stmtList(Ctx, CC->Body);

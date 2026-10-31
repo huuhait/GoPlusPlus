@@ -1,0 +1,37 @@
+package main
+
+// A Cfg has no zero value (a required field): a failing call leaves it unset.
+type Cfg struct {
+	N int @Required
+}
+
+func Mk[T any](move t T) (Cfg, T) { return Cfg{N: 1}, t }
+
+// Bound: `c` is used, and nothing in the generic code can check `x`.
+func Use[T any](move t T) int {
+	c, x := Mk(move(t))
+	_ = x
+	return c.N
+}
+
+// Handed on to a call, unchecked.
+func Sink[T any](c Cfg, move x T) int { return c.N }
+
+func Pass[T any](move t T) int { return Sink(Mk(move(t))) }
+
+// Reached only through another generic: the error is at the call in Outer,
+// with a note for the instantiation of Outer that led there.
+func Deep[T any](move t T) int {
+	c, x := Mk(move(t))
+	_ = x
+	return c.N
+}
+
+func Outer[T any](move t T) int { return Deep(move(t)) }
+
+func main() {
+	var e, e2, e3 error
+	println(Use(e))
+	println(Pass(e2))
+	println(Outer(e3))
+}

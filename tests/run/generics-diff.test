@@ -1,0 +1,14 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/generics/basics.gopp %S/Inputs/generics/basics.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/generics/types.gopp %S/Inputs/generics/types.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/generics/numeric.gopp %S/Inputs/generics/numeric.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/generics/iface.gopp %S/Inputs/generics/iface.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/generics/passing.gopp %S/Inputs/generics/passing.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/generics-gopp/option.gopp %S/Inputs/generics-gopp/option.out
+// P04.08 monomorphization, run against Go's output: generic functions and
+// recursion, generic types with value and pointer methods, nested instances,
+// type-set constraints (conversions, shifts, ranges), ~[]/~map/~string
+// arguments, generic interfaces with itabs and assertions. generics-gopp is
+// Go++ only (Option[T]): its .out is written by hand (the reasoning is in
+// the file). The arm64 subset is
+// generics-diff-arm64.test, every opt level in the opt matrix.

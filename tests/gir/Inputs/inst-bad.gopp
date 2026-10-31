@@ -1,0 +1,33 @@
+package main
+
+// Option[T]: a T with a nil of its own, or an Option, is no Option[T].
+func Zero[T any]() int {
+	var z Option[T]
+	_ = z
+	return 1
+}
+
+// The same through another generic: the error names Zero, the site is the
+// call in Via, and a note names the instantiation of Via that led there.
+func Via[U any]() int { return Zero[U]() }
+
+// `(int, T)` with T = error is no checked result: an int has a zero value, so
+// Both[error] is fine (inst-checked.gopp has one with no zero value).
+func Two[T any](move x T) (int, T) { return 1, x }
+
+func Both[T any](move x T) int {
+	n, v := Two[T](x)
+	_ = v
+	return n
+}
+
+// `return f()` hands the result on unchecked: fine for T = error.
+func Fwd[T any](move x T) (int, T) { return Two[T](x) }
+
+func main() {
+	var e error
+	println(Zero[int](), Zero[string](), Zero[Option[int]]())
+	println(Via[int](), Via[[]int]())
+	println(Both[int](1), Both[error](e))
+	_, _ = Fwd[error](e)
+}

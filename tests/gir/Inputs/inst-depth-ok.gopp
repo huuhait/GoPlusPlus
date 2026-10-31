@@ -1,0 +1,47 @@
+package main
+
+// The accepted side of inst-depth.gopp (GEN-5): the bounds are on the types
+// an instance makes by substitution, never on a type written in the source.
+type L[T any] struct{ x [1]int }
+
+type P[A, B any] struct{ n int }
+
+// A 13-level alias chain of P[A, A]: 8191 parts as a tree.
+type A0 = int
+type A1 = P[A0, A0]
+type A2 = P[A1, A1]
+type A3 = P[A2, A2]
+type A4 = P[A3, A3]
+type A5 = P[A4, A4]
+type A6 = P[A5, A5]
+type A7 = P[A6, A6]
+type A8 = P[A7, A7]
+type A9 = P[A8, A8]
+type A10 = P[A9, A9]
+type A11 = P[A10, A10]
+type A12 = P[A11, A11]
+type A13 = P[A12, A12]
+
+func G[T any]() int { return 1 }
+
+// The substitution makes G's type argument 48 levels deep: at the bound.
+func F[T any]() int { return G[L[L[L[L[L[L[L[T]]]]]]]]() }
+
+// A type parameter passed on as it is makes no type: no bound.
+func H[T any](a any) int {
+	if _, ok := a.(T); ok {
+		return K[T]()
+	}
+	return 0
+}
+
+func K[T any]() int { return 1 }
+
+func main() {
+	println(F[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]())
+	// Written in the source: 50 levels, and 8191 parts.
+	var v L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+	var w A13
+	println(len(v.x), w.n)
+	println(H[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]](v) + H[A13](w))
+}

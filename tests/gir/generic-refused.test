@@ -1,0 +1,20 @@
+// RUN: %gopp check %S/Inputs/generic-refused.gopp
+// RUN: not %gopp build -emit=gir %S/Inputs/generic-refused.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: %gopp check %S/Inputs/generic-method-refused.gopp
+// RUN: not %gopp build -emit=gir %S/Inputs/generic-method-refused.gopp 2>&1 | FileCheck --check-prefix=METHOD --implicit-check-not=error[E %s
+// P04.08: what the lowering of generic code leaves to a later task is refused
+// with one E0439 that names it, where it is, once however many times the code
+// is instantiated and however often it is used: `@Export` on generic code and
+// a type declared inside generic code (P04.28), and a method with type
+// parameters of its own, of a plain or of a generic type (P04.28, reported by
+// the instance walk where the method is declared, so the lowering of a call of
+// it says nothing more). `gopp check` reports none of them (code generation
+// is not its business). The other side: the same type declaration in a plain
+// function lowers, a closure in generic code lowers per instance (decision
+// M6; it was refused here until then), a generic function and a generic
+// method that are never used draw nothing, and nothing else in the files
+// draws an error.
+// CHECK: :21:1: error[E0439]: an @Extern or @Export attribute on generic code (P04.28) is not supported
+// CHECK: :7:7: error[E0439]: a type declared inside generic code (P04.28) is not supported
+// METHOD: :7:1: error[E0439]: a generic method (P04.28) is not supported
+// METHOD: :11:1: error[E0439]: a generic method (P04.28) is not supported

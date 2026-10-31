@@ -31,6 +31,7 @@
 #define GOPP_LIB_GIR_LOWERIMPL_H
 
 #include "Escape.h"
+#include "Instances.h"
 #include "Symbols.h"
 
 #include "gopp/AST/AST.h"
@@ -45,6 +46,8 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
+
+#include <set>
 
 namespace gopp {
 namespace gir {
@@ -154,7 +157,11 @@ public:
       : Ctx(Ctx), SM(SM), CP(CP), I(CP.I), Files(Files), Diags(Diags),
         Opts(Opts),
         M(std::make_unique<Module>(Ctx, CP.Pkg ? CP.Pkg->Path.str() : "")),
-        Methods(CP, Opts.ScanMethodLookups) {
+        Methods(CP, Opts.ScanMethodLookups),
+        Walk(CP, Files, Methods, Syms, Diags, /*Quiet=*/false,
+             Opts.MaxInstances, Opts.MaxWalkedNodes) {
+    Walk.ScanTable = Opts.ScanInstances;
+    Walk.Redescribe = Opts.RedescribeTypes;
     for (FuncId &Id : RtIds)
       Id = NoId;
     for (auto &Row : Panics)
@@ -175,6 +182,42 @@ public:
   /// decision of which methods a type or an interface has is the checker's.
   S::MethodSets Methods;
   Symbols Syms;
+  /// The instances of generic code the package needs (P04.08, Instances.h):
+  /// the one place that decides them, run before anything is declared.
+  InstanceWalk Walk;
+  /// The function of each instance (a generic function, or a method of an
+  /// instance of a generic type; the latter is also in FuncIds under its
+  /// method objects).
+  llvm::DenseMap<const GenericInst *, FuncId> InstIds;
+  /// Declares and lowers an instance (its symbol is `linkonce_odr`, D4.3).
+  void declareInstance(GenericInst &In);
+  void lowerInstanceBody(GenericInst &In);
+  /// Declares the instances the walk has found since the last call, and
+  /// lowers the bodies of those not lowered yet (lowering one can find more).
+  void declareNewInstances();
+  void lowerPendingInstances();
+  /// The method F of an instance of a generic type as a function: the walk
+  /// takes it (and what it needs) if it did not, and it is declared. False
+  /// after an error (a type descriptor or an itab lists the whole method set,
+  /// P04.08).
+  bool ensureMethod(const S::Func *F, SourceLoc At);
+  size_t InstDeclared = 0, InstLowered = 0;
+  /// The first checker type of each instance of a generic type, by symbol:
+  /// another spelling of it lowers to the same GIR type (lowerTypeOnce).
+  llvm::StringMap<S::NamedType *> InstanceTypes;
+  /// The signature of the instance GI (its declaration's with the instance's
+  /// type arguments): what a call of it passes.
+  S::SignatureType *instanceSig(const GenericInst *GI);
+  /// The type of the receiver of the method F as its body sees it: the
+  /// declared receiver type for a method of a plain type, the instance's
+  /// for a method of an instance of a generic type.
+  S::Type *recvTypeOf(const S::Func *F);
+  /// Is the function or method generic code (lowered per instance only)?
+  bool isGenericDecl(const S::Func *F) const {
+    auto *Sig = llvm::dyn_cast_or_null<S::SignatureType>(F->Ty);
+    return !F->RecvTParams.empty() || !F->OwnTParams.empty() ||
+           (Sig && !Sig->TParams.empty());
+  }
   bool Failed = false;
   /// Errors reported so far (unsupported, badExtern, ...): a step that
   /// returns null must have raised it (lowerType checks).
@@ -204,6 +247,8 @@ public:
   /// The same, with a note at At (what breaks which rule, the fix-it).
   void unsupported(SourceLoc At, const llvm::Twine &What,
                    const llvm::Twine &Note);
+  /// What unsupported() said, by place and text (said once).
+  std::set<std::pair<unsigned, std::string>> Said;
   /// An internal error (E0440): a fact the lowering needs is missing.
   void internalError(SourceLoc At, const llvm::Twine &What);
   void badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why);
@@ -230,9 +275,6 @@ public:
   /// True for the checker types that are one machine pointer for `Option`:
   /// a raw pointer, unsafe.Pointer or a defined type over them.
   bool isRawPointer(S::Type *T);
-  /// A type declared inside a function: the function whose body declares it.
-  void declareLocalType(const S::TypeName *TN, const sym::Node *Scope,
-                        unsigned Ordinal);
   static bool isComplexType(S::Type *T);
 
   // The functions the compiler writes (Runtime.cpp).
@@ -251,8 +293,20 @@ public:
   /// The panic of a `!` that fails outside a function that can fail (ERR-9):
   /// `panic_must(expr string, pos string, err error)`.
   FuncId ensurePanicMust(SourceLoc At);
-  /// Go's == and the hash of a checker type (glue); NoId after a report.
+  /// Go's == and the hash of a checker type (glue); NoId after a report. A
+  /// view compares and hashes as the value it looks at (OWN-V), also as a
+  /// part of a struct, an array or an Option (viewPartsGlue, review R7).
   FuncId eqGlue(S::Type *T, SourceLoc At);
+  /// Does a value of T hold a view by value: it is one, or a field, an
+  /// array element or an Option's value is (not behind a pointer, a slice,
+  /// a map or an interface)? Memoized.
+  bool holdsViewPart(S::Type *T);
+  /// The equality (Hash: the hash) of a T that holds a view: each part as
+  /// eqGlue says, a view's part being the value it looks at. One level per
+  /// function; the parts' glue is eqGlue's.
+  FuncId viewPartsGlue(S::Type *T, bool Hash, SourceLoc At);
+  llvm::DenseMap<S::Type *, bool> ViewParts;
+  llvm::DenseMap<std::pair<S::Type *, unsigned>, FuncId> ViewPartsGlues;
   /// How parameter K of Sig is handed over (P04.18, PAR-10, D4.4). The ONE
   /// decision: every declaration and every call of a function, and later the
   /// methods (P04.06), the func values and closures (P04.07) and the
@@ -280,6 +334,12 @@ public:
   /// (P04.18). The one decision of declarations, bodies, static calls and
   /// itab thunks.
   Pass passOfRecv(const S::Func *F);
+  /// The mode of F's receiver: for a method of an instance of a generic
+  /// type, the checker's decision made again with the instance's receiver
+  /// type (MethodSets::modeAt: PAR-1 on the real type, review R5).
+  S::Var::Borrow recvModeOf(const S::Func *F);
+  /// The same for a method of the instance In (its receiver's real type).
+  Pass passOfRecvAt(const S::Func *F, S::Type *RecvTy);
   /// The rule itself, for a parameter or receiver of type T.
   Pass passOfType(S::Type *T, bool Move);
   /// Is parameter K of Sig a borrowed map (no `move`)? It passes by a hidden
@@ -430,11 +490,21 @@ public:
   /// report.
   Type *methodSig(S::SignatureType *Sig, Type *Lead, SourceLoc At);
   /// Go's spelling of a type for panic messages and the descriptor (`main.T`,
-  /// `[]int`, `*main.T`, `interface {}`, `map[string]int`).
-  std::string rtypeName(S::Type *T);
+  /// `[]int`, `*main.T`, `interface {}`, `map[string]int`). InArg: T is (in)
+  /// a type argument of an instance, where Go qualifies an unexported field
+  /// name with its package (`main.Box[struct { main.a int }]`; a struct
+  /// alone is `struct { a int }`).
+  std::string rtypeName(S::Type *T, bool InArg = false);
+  /// rtypeName as a descriptor and a panic message show it: a type of more
+  /// than MaxNameParts parts as a tree (MethodSets::extent; only the source
+  /// can write one, `type A2 = P[A1, A1]` doubling at every level) is
+  /// `main.P[...]`, so a name costs at most that, P04.08 (Go's would be as
+  /// large as the tree).
+  std::string rtypeShown(S::Type *T);
+  static constexpr uint64_t MaxNameParts = uint64_t(1) << 16;
   /// `(params) results` of a signature in that spelling (`(int, ...string)
   /// (bool, error)`).
-  std::string sigText(S::SignatureType *SG);
+  std::string sigText(S::SignatureType *SG, bool InArg = false);
   /// Can values of T be compared with == (Go's comparable, at run time for an
   /// interface)?
   bool comparable(S::Type *T);
@@ -465,6 +535,11 @@ public:
   /// function (@Extern) gets the same adapter, which calls it with the C
   /// ABI. NoId after a report.
   FuncId funcAdapter(const S::Func *F, SourceLoc At);
+  /// The same for an instance of a generic function (P04.08); NoId when the
+  /// instance was refused where it is declared.
+  FuncId instanceAdapter(const GenericInst &GI);
+  /// The adapter of the function Real, named by its symbol node MN.
+  FuncId adapterOf(FuncId Real, const sym::Node *MN);
   /// The code of the method value `x.M` / the method expression `T.M`
   /// (LowerFunc.cpp). NoId after a report.
   FuncId methodValueThunk(const S::Func *F, Type *CodeTy, SourceLoc At);
@@ -533,8 +608,10 @@ private:
   Type *lowerTypeOnce(S::Type *T, SourceLoc At);
   /// The self-naming type of T, made on the first call (T is under way).
   Type *recShell(S::Type *T);
-  /// A unique name for a type of the module (structs and self-naming types).
+  /// A unique name for a type of the module (structs and self-naming types),
+  /// the readable symbol of Named cut at MaxTypeName bytes.
   std::string uniqueTypeName(S::NamedType *Named);
+  static constexpr size_t MaxTypeName = 4096;
   Type *lowerStruct(S::Type *Whole, S::StructType *ST, S::NamedType *Named,
                     SourceLoc At);
 };
@@ -556,15 +633,22 @@ struct BranchTarget {
 class Body {
 public:
   /// A function with a declaration (Obj may be null for the package init).
-  Body(Lowering &L, Function &F, const S::Func *Obj)
-      : L(L), M(*L.M), FB(*L.M, F), I(L.I), Obj(Obj) {}
+  /// CurInst: the instance of generic code whose body this is (null for plain
+  /// code). Every checker type of the body is read through inst(): the type
+  /// arguments applied, never a type parameter (P04.08).
+  Body(Lowering &L, Function &F, const S::Func *Obj,
+       GenericInst *CurInst = nullptr)
+      : L(L), M(*L.M), FB(*L.M, F), I(L.I), Obj(Obj), CurInst(CurInst) {}
 
   void lower(const ast::FuncDecl *FD);
   /// The package init function: the variable initializations in order, then
   /// the `init` functions.
   void lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs);
 
-  /// The scope node of a type declared here (the function's symbol node).
+  /// The scope node of a function literal declared here: the symbol node of
+  /// the function, of the instance (P04.08), of the literal around it or of
+  /// the package variable it initializes. (A type declared here was named
+  /// before the instance walk, with the same scopes: declareLocalTypes.)
   const sym::Node *ScopeNode = nullptr;
   /// The function literals' facts of the entity being lowered (null: none).
   const EntityFacts *Facts = nullptr;
@@ -575,6 +659,7 @@ private:
   FuncBuilder FB;
   const S::Info &I;
   const S::Func *Obj;
+  GenericInst *CurInst;
   llvm::DenseMap<const S::Var *, LocalId> Vars;
   /// A range over a map whose iteration ends with the scope it is in.
   struct MapIteration {
@@ -611,7 +696,6 @@ private:
   BlockId Fallthrough = NoId;
   /// Named results, as locals (empty when the results are unnamed).
   SmallVector<Place, 2> NamedResults;
-  unsigned LocalTypes = 0;
 
   Context &ctx() { return L.Ctx; }
   void at(const ast::Node *N) {
@@ -645,10 +729,44 @@ private:
       E = P->X;
     return E;
   }
-  Type *tyOf(const ast::Expr *E) {
-    return L.lowerType(I.typeOf(E), E->getBegin());
+  // The checker types a body reads (P04.08). Body code reads a checker type
+  // only through these: an expression's (sTyOf, tyOf), an object's
+  // (tyOfObj), a function's signature (sigOf), a selection (selOf) and a
+  // narrowed variable's (narrowed), which apply the instance's type
+  // arguments in generic code and are the identity in plain code. A raw
+  // read (`->Ty`, `->sig()`, `I.typeOf`, `I.narrowedType`) elsewhere in Body
+  // code is a type parameter left for an instance: gir/inst-raw-types.test
+  // rejects it.
+  /// A checker type of the body at the instance (Instances.h).
+  S::Type *inst(S::Type *T) { return L.Walk.inst(CurInst, T); }
+  /// The type of a variable or field object at the instance.
+  S::Type *tyOfObj(const S::Object *O) { return inst(O->Ty); } // raw: accessor
+  /// The signature of the function Obj at the instance.
+  S::SignatureType *sigOf(const S::Func *F) {
+    return llvm::cast<S::SignatureType>(inst(F->Ty)); // raw: accessor
   }
-  S::Type *sTyOf(const ast::Expr *E) { return I.typeOf(E); }
+  /// The narrowed type of a use of an Option variable (Info::narrowedType)
+  /// at the instance; null if the use is not narrowed.
+  S::Type *narrowed(const ast::Ident *Id) {
+    return inst(I.narrowedType(Id)); // raw: accessor
+  }
+  /// The selection of E at the instance (null: none).
+  const S::Selection *selOf(const ast::SelectorExpr *E) {
+    return L.Walk.selection(CurInst, E);
+  }
+  /// The mode of V where it is: the checker's, or at an instance of generic
+  /// code the checker's decision made again with V's real type
+  /// (MethodSets::modeAt, review R5). The one place Body code reads a
+  /// variable's mode.
+  S::Var::Borrow modeOf(const S::Var *V) {
+    return CurInst ? L.Methods.modeAt(V, tyOfObj(V)) : V->Mode; // raw: accessor
+  }
+  Type *tyOf(const ast::Expr *E) {
+    return L.lowerType(sTyOf(E), E->getBegin());
+  }
+  S::Type *sTyOf(const ast::Expr *E) {
+    return inst(I.typeOf(E)); // raw: accessor
+  }
   bool isConst(const ast::Expr *E) {
     const S::TypeAndValue *TV = I.lookup(E);
     return TV && TV->Val && TV->M == S::Mode::Constant;
@@ -687,7 +805,6 @@ private:
   Operand lowerCall(const ast::CallExpr *C);
   /// Is E an instance of a generic function, `gen[int]` or `pkg.gen[int]`
   /// (P04.08)? Reported at At unless its declaration was (one report).
-  bool genericInstance(const ast::Expr *E, const ast::Node *At);
   /// The call C without the `!` (lowerCall minus the unwrapping).
   Operand lowerPlainCall(const ast::CallExpr *C);
   // `f!(...)` (ERR-5 to ERR-9, LowerBang.cpp): the plain call, a test of the
@@ -775,7 +892,11 @@ private:
   Operand lowerIdent(const ast::Ident *Id);
   // Func values and closures (LowerFunc.cpp, P04.07).
   /// The func value of the function F used as a value.
-  Operand funcValueOfFunc(const S::Func *F, const ast::Node *N);
+  /// The func value of the function F, the expression N; for a generic F,
+  /// of the instance the checker recorded for Name (`gen[int]`, or `gen`
+  /// inferred from where it goes).
+  Operand funcValueOfFunc(const S::Func *F, const ast::Node *N,
+                          const ast::Expr *Name);
   /// The func value (code, env) made of a code function and an environment.
   Operand funcValue(FuncId Code, Operand Env, Type *VT);
   Operand lowerFuncLit(const ast::FuncLit *Lit);
@@ -806,6 +927,12 @@ private:
   /// Val, of type EnvT: a frame temporary, or a heap block when the func
   /// value escapes (it leaks until P04.09 gives it a drop).
   Operand envPtr(Type *EnvT, Operand Val, bool Heap, const ast::Node *N);
+  /// View, the value bound to V, unless V is a box binding that the instance
+  /// copies out (modeOf) and an escaping closure holds: then a view of a
+  /// heap copy of what it views, so the closure never holds the box.
+  Operand ownBoxCopy(Operand View, const S::Var *V, const ast::Node *N);
+  /// The value the view V (of the checker's type ViewS) looks at (OWN-V).
+  Operand viewValue(Operand V, S::Type *ViewS, const ast::Node *N);
   /// The storage of a variable made at its declaration: a local, or a heap
   /// cell when a literal that escapes captures it.
   struct VarSlot {

@@ -1,0 +1,157 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-types.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-types.out 0 %}
+// P04.08: generic types and their methods: value and pointer receivers, a
+// struct literal of an instance (keyed and positional), an instance inside
+// another instance (Wrap[Box[Point]], Stack[Pair[int, Point]]), an array and a map of T,
+// a method calling another method and a generic function, an instance
+// stored in an interface (its itab holds the instance's methods) and read
+// back by a type assertion and a type switch. The expected output is what
+// `go run` prints for this very file (Inputs/regen-goldens.py). The type
+// arguments are copyable (Leaf, Wide: type sets, as Go++ needs Copy for T).
+package main
+
+type Point struct{ X, Y int }
+
+type Leaf interface {
+	~int | ~float64 | Point
+}
+
+type Wide interface {
+	~int | Point | Box[Point] | Pair[int, Point]
+}
+
+type Pair[K, V Leaf] struct {
+	Key K
+	Val V
+}
+
+func (p Pair[K, V]) Swap() Pair[V, K] { return Pair[V, K]{p.Val, p.Key} }
+func (p *Pair[K, V]) SetVal(v V)      { p.Val = v }
+func (p Pair[K, V]) Show() int        { return 1 }
+
+type Stack[T Wide] struct {
+	items []T
+}
+
+func (s *Stack[T]) Push(x T) { s.items = append(s.items, x) }
+func (s *Stack[T]) Pop() T {
+	x := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return x
+}
+func (s *Stack[T]) Len() int { return len(s.items) }
+func (s Stack[T]) Show() int { return 2 }
+
+type Box[T Leaf] struct{ V T }
+
+func (b Box[T]) Get() T { return b.V }
+func (b Box[T]) Show() int { return 3 }
+
+func NewBox[T Leaf](v T) Box[T] { return Box[T]{V: v} }
+
+type Wrap[T Wide] struct{ In T }
+
+func (w Wrap[T]) Inner() T { return w.In }
+
+type Grid[T Leaf] struct {
+	cells [4]T
+	named map[int]T
+}
+
+func (g *Grid[T]) Set(i int, v T) {
+	g.cells[i] = v
+	if g.named == nil {
+		g.named = map[int]T{}
+	}
+	g.named[i] = v
+}
+func (g Grid[T]) At(i int) T { return g.cells[i] }
+
+type Shower interface{ Show() int }
+
+func Count[S Shower](xs []S) int {
+	n := 0
+	for _, x := range xs {
+		n += x.Show()
+	}
+	return n
+}
+
+func kind(x any) int {
+	switch v := x.(type) {
+	case Box[int]:
+		return 10 + v.V
+	case Box[Point]:
+		return 20 + v.V.Y
+	case Stack[int]:
+		return 30
+	case Pair[int, int]:
+		return 40 + v.Key
+	case Wrap[Box[Point]]:
+		return 50 + v.In.V.X
+	}
+	return 0
+}
+
+type Nm interface{ ~int | ~float64 }
+
+// Generic types over an array and a map, and a string-like constraint.
+type Arr3[T Nm] [3]T
+
+func (a Arr3[T]) Sum() T { return a[0] + a[1] + a[2] }
+
+type Dict[T Nm] map[string]T
+
+func (m Dict[T]) Get(k string) T { return m[k] }
+
+func Fib[T Nm](n T) T {
+	if n < 2 {
+		return n
+	}
+	return Fib(n-1) + Fib(n-2)
+}
+
+func main() {
+	p := Pair[int, int]{1, 2}
+	p.SetVal(5)
+	q := p.Swap()
+	println(p.Key, p.Val, q.Key, q.Val, p.Show())
+
+	var s Stack[int]
+	s.Push(3)
+	s.Push(4)
+	println(s.Len(), s.Pop(), s.Len(), s.Show())
+
+	var sp Stack[Pair[int, Point]]
+	sp.Push(Pair[int, Point]{1, Point{2, 3}})
+	println(sp.Pop().Val.Y, sp.Len())
+
+	b := NewBox(Point{7, 8})
+	println(b.Get().X, b.V.Y, NewBox(2.5).Get(), NewBox[int](4).Get())
+
+	w := Wrap[Box[Point]]{b}
+	w2 := Wrap[Pair[int, Point]]{Pair[int, Point]{Key: 9, Val: Point{1, 2}}}
+	println(w.Inner().V.X, w.In.Get().Y, w2.Inner().Key, w2.In.Swap().Key.Y)
+
+	var g Grid[Point]
+	g.Set(2, Point{5, 6})
+	println(g.At(2).Y, g.At(0).X, len(g.named))
+
+	var sh Shower = b
+	println(sh.Show())
+	sh = &s
+	println(sh.Show())
+	sh = Pair[int, Point]{}
+	println(sh.Show())
+	println(Count([]Box[int]{{1}, {2}}), Count([]Shower{b, p, &s}))
+
+	println(kind(Box[int]{5}), kind(b), kind(s), kind(p), kind(w), kind(Box[float64]{}))
+	var a any = w
+	_, ok := a.(Wrap[Box[Point]])
+	_, bad := a.(Box[Point])
+	println(ok, bad)
+	println(Arr3[int]{1, 2, 3}.Sum(), Arr3[float64]{0.5, 1, 1.5}.Sum())
+	println(Dict[int]{"a": 4}.Get("a"), Dict[float64]{}.Get("z"), Fib(10), Fib(7.0))
+}

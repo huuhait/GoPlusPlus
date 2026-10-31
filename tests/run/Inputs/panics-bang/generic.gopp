@@ -1,0 +1,38 @@
+package main
+
+// P04.08 with P04.10: a `!` on an instance of generic code that fails where
+// the function cannot fail (main) panics with ERR-9's first line, as in plain
+// code: half[int] and half[float64] succeed, Acc[float64].add succeeds once
+// and then fails.
+type negErr struct{}
+
+func (e *negErr) Error() string { return "negative" }
+
+var neg negErr
+
+type Num interface{ ~int | ~float64 }
+
+func half[T Num]!(x T) T {
+	if x < 0 {
+		return 0, &neg
+	}
+	return x / 2
+}
+
+type Acc[T Num] struct{ sum T }
+
+func (a *Acc[T]) add!(x T) {
+	if x < 0 {
+		return &neg
+	}
+	a.sum += x
+}
+
+func main() {
+	println(half[int]!(8), half!(3.0))
+	var a Acc[float64]
+	a.add!(1.5)
+	println(a.sum)
+	a.add!(-1)
+	println("not reached")
+}

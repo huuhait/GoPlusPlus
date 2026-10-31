@@ -1,0 +1,7 @@
+init true false
+local1 true true
+false true true false
+local1 true true
+true false false
+local1 true true
+true true

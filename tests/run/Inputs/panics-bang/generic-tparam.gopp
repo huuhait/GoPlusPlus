@@ -1,0 +1,21 @@
+package main
+
+// P04.08 with P04.10: `!` on an instance whose last result is the type
+// parameter T = error (Two[error]): the call's results are `(int, error)`,
+// the `!` tests the instance's last word, and in main a failure panics with
+// ERR-9's first line.
+type negErr struct{}
+
+func (e *negErr) Error() string { return "negative" }
+
+var neg negErr
+
+func Two[T any](n int, move x T) (int, T) { return n, x }
+
+func main() {
+	var e error
+	println(Two[error]!(1, e))
+	var f error = &neg
+	println(Two[error]!(2, f))
+	println("not reached")
+}

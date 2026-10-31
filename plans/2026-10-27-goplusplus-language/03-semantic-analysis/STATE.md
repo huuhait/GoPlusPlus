@@ -36,6 +36,9 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [ ] P03.27 Overload sets of thousands of methods: near-linear check time
 - [ ] P03.28 Idle body-check threads burn CPU (`-check-j=8` on the `extover` shape)
 - [ ] P03.29 False E0350 when a function literal declares its own `ok` (found in review of P04.07)
+- [ ] P03.30 Leftovers found in the P04.08 review: `abstract-instances-many` near-linear; a bounded text of a type written as a DAG of 2^n parts
+- [ ] P03.31 False E0350 for a comma-ok binding of a type parameter that a literal captures (CLO-9 per instance); `w := v` of a box binding at a copy-out instance
+- [ ] P03.32 A view compared with an untyped constant (E0160 where OWN-V compares the value); also a `View[T]` to `T` conversion in generic code, `View[any]` from an `any` value, `min`/`max` of views
 
 ## Open questions
 
@@ -94,3 +97,4 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - P03.08–P03.14 team build: ledger `.claude/team/p03-sema-tools-ledger.md` (8 findings fixed; two were nondeterminism under parallel checking: type-set errors of shared generic interface instances, and a depth cut-off published to every body).
 - Known limits (deterministic, valid code only, for later throughput work, P15): a generic interface chain deeper than `MaxTypeSetDepth` (1000) can give a wrong "undefined" error; `substImpl` stops at depth 64, so a type nested more than 64 deep inside a generic (e.g. a field `*`×70 `T`) is not substituted (also before P03.10); a generic interface DAG `I_k[T] interface{ J_k[T]; I_{k-1}[T] }` with `J_k[T] interface{ I_{k-1}[T] }` takes exponential time in phase 1 (0.6 s at 20 levels, over 60 s at 400; the non-generic form is linear).
 - 2026-10-30: P03.25 (units, `78ad9f5`) merged; every P03 task and exit criterion is `[x]`. **P03 complete.** Next: P04 in three waves (owner decision 2026-10-29).
+- 2026-10-31 (owner decision, ADR-0031, made in P04.08's review round 4): a view of a single value has no zero value. The rule lives in the checker's one zero-value query (`ZeroQuery`, Ownership.cpp, the view case), so every rule of P03.15–P03.17 (OWN-R9, OWN-P10) covers it with its existing codes; `move` of a view copies and is exempt from E0341 (Builtins.cpp).

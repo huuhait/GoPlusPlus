@@ -1,0 +1,151 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/view-compare.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/view-compare.out 0 %}
+// GOLDEN: by-hand
+// OWN-V ("Comparing and re-pointing"): a view compares as the value it looks
+// at, with `==`, `!=` and, for an ordered type, `<`, `<=`, `>`, `>=`. The
+// lowering compared a view of anything but a string by its address (found
+// with review R5: the box binding of a generic `case X` is a view at every
+// instance, and `v == y` of it was false at X = int). Here: a View[int], a
+// View of a struct and of an array against a value and against another view
+// of an equal value elsewhere, the ordered operators on a View[int] and a
+// View[float64], a View[string] (which compared right before), and the box
+// bindings of a generic type switch and assertion at int, a struct and an
+// array. Review R7, every other construct that tests equality (one
+// equality, Body::equality, and for a value that holds a view
+// Lowering::viewPartsGlue): a view as a switch tag (View[int], View[P],
+// View[string], a case list, the box binding of a generic `case X` as a
+// tag); a struct, an array and an Option that hold views compared with
+// `==`; such a struct in an interface (`==` of two interfaces) and as a map
+// key. Go has no views, so the golden is by hand: each line is the
+// comparisons in order, as the values compare (the switches print the case
+// they take).
+package main
+
+type P struct{ n int }
+
+type A [2]int
+
+@View
+type W struct {
+	v View[int]
+	s View[string]
+}
+
+func ints(v View[int], w View[int], y, two, four int) {
+	println(v == y, v != y, v == w, v < four, v <= y, v > two, v >= four, y == v)
+}
+
+func structs(v View[P], w View[P], y P) {
+	println(v == y, v != y, v == w, y == v)
+}
+
+func arrays(v View[A], w View[A], y A) {
+	println(v == y, v != y, v == w)
+}
+
+func floats(v View[float64], y, z float64) {
+	println(v < y, v > y, v == z)
+}
+
+func strs(v View[string], y, b string) {
+	println(v == y, v < b, v != y)
+}
+
+func box[X interface{ comparable; Copy }](y X, z X) {
+	var a any = y
+	switch v := a.(type) {
+	case X:
+		println(v == y, v == z, v != z)
+	}
+	w := a.(X)
+	println(w == y, w != z)
+}
+
+func swInt(v View[int], one, three int) int {
+	switch v {
+	case one:
+		return 10
+	case three:
+		return 30
+	}
+	return 0
+}
+
+func swP(v View[P], a, b P) int {
+	switch v {
+	case a, b:
+		return 1
+	}
+	return 0
+}
+
+func swStr(v View[string], a, b string) int {
+	switch v {
+	case a:
+		return 5
+	case b:
+		return 6
+	}
+	return 0
+}
+
+func swBox[X interface{ comparable; Copy }](y, z X) int {
+	var a any = y
+	switch v := a.(type) {
+	case X:
+		switch v {
+		case z:
+			return 2
+		case y:
+			return 1
+		}
+	}
+	return 0
+}
+
+func holders(x, y, z int, s, t string) {
+	w1, w2, w3 := W{x, s}, W{y, t}, W{z, s}
+	println(w1 == w2, w1 == w3, w1 != w3)
+	a1, a2, a3 := [2]View[int]{x, y}, [2]View[int]{y, x}, [2]View[int]{x, z}
+	println(a1 == a2, a1 == a3)
+	var o1, o2 Option[W] = w1, w2
+	var o3 Option[W]
+	println(o1 == o2, o1 == o3)
+	var i1, i2, i3 any = w1, w2, w3
+	println(i1 == i2, i1 == i3)
+	m := map[W]int{w1: 7}
+	println(m[w2], m[w3])
+	switch w1 {
+	case w3:
+		println("w3")
+	case w2:
+		println("w2")
+	}
+}
+
+func main() {
+	x, x2 := 3, 3
+	ints(x, x2, 3, 2, 4)
+	p, p2 := P{1}, P{1}
+	structs(p, p2, P{1})
+	a, a2 := A{1, 2}, A{1, 2}
+	arrays(a, a2, A{1, 3})
+	f := 1.5
+	floats(f, 2.5, 1.5)
+	s := "ab"
+	strs(s, "ab", "b")
+	box(1, 2)
+	box(P{1}, P{2})
+	box(A{1, 2}, A{1, 2})
+	i1, i3, i5 := 1, 3, 5
+	println(swInt(i1, 1, 3), swInt(i3, 1, 3), swInt(i5, 1, 3))
+	p1, p2, p3 := P{1}, P{2}, P{3}
+	println(swP(p1, P{1}, P{2}), swP(p2, P{1}, P{2}), swP(p3, P{1}, P{2}))
+	str := "xab"
+	println(swStr(str[1:], "ab", "xab"), swStr(str, "ab", "xab"), swStr(str[2:], "ab", "xab"))
+	println(swBox(1, 2), swBox(P{1}, P{1}), swBox(A{1, 2}, A{2, 1}))
+	s1, s2 := "ab", "xab"
+	holders(1, 1, 2, s1, s2[1:])
+}

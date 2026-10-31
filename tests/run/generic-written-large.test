@@ -1,0 +1,53 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/generic-written-large.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/generic-written-large.out 0 %}
+// P04.08, review R4: a type written out in the source is never past the
+// bounds of GEN-5 (they are on the types an instance makes by substitution,
+// tests/gir/inst-depth.test): a type 50 levels deep, a 13-level alias chain
+// of P[A, A] (8191 parts as a tree), each as a variable, boxed in an
+// interface value, and the type argument of a generic function that passes
+// it on to another as it is. The expected output is what `go run` prints for
+// this very file (Inputs/regen-goldens.py).
+package main
+
+type L[T any] struct{ x [1]int }
+
+type P[A, B any] struct{ n int }
+
+type A0 = int
+type A1 = P[A0, A0]
+type A2 = P[A1, A1]
+type A3 = P[A2, A2]
+type A4 = P[A3, A3]
+type A5 = P[A4, A4]
+type A6 = P[A5, A5]
+type A7 = P[A6, A6]
+type A8 = P[A7, A7]
+type A9 = P[A8, A8]
+type A10 = P[A9, A9]
+type A11 = P[A10, A10]
+type A12 = P[A11, A11]
+type A13 = P[A12, A12]
+
+func Is[T any](a any) int {
+	if _, ok := a.(T); ok {
+		return Count[T](a)
+	}
+	return 0
+}
+
+func Count[T any](a any) int {
+	if _, ok := a.(T); ok {
+		return 1
+	}
+	return 0
+}
+
+func main() {
+	var v L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+	var w A13
+	println(len(v.x), w.n)
+	var a, b any = v, w
+	println(Is[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[L[int]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]](a), Is[A13](b), Is[A13](a), Is[A12](b))
+}

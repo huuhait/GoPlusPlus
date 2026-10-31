@@ -1,0 +1,17 @@
+5
+total[int] ok
+0
+total[int] negative failed: negative
++0.000000e+000
+total[float64] large failed: too big
++3.500000e+000
+total[float64] ok
+7
+second[int] ok
++0.000000e+000
+second[float64] short failed: too short
+11
+sum ok
+0
+sum failing failed: negative
+4 +1.250000e+000 3

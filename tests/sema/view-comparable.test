@@ -1,0 +1,53 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// Review R8 (P04.08): OWN-V says a view compares as the value it looks at,
+// so a view is comparable exactly when that value is (Checker::comparableType,
+// the one predicate of `==`, a map key, the `comparable` constraint and an
+// interface's dynamic value, which the lowering asks through
+// MethodSets::comparable). A view of a slice is not: `==` of two of them, of
+// a struct that holds one, a map keyed by such a struct and the `comparable`
+// constraint are errors with Go's words for a type that cannot be compared.
+// The other side: a struct that holds a View[int] and a View[string]
+// compares (by value, run/view-compare.test), keys a map and satisfies
+// `comparable`; a view of a slice is still boxed, stored as a map value and
+// taken out again (run/view-box-uncomparable.test).
+package main
+
+@View
+type K struct {
+	s View[[]int]
+	k int
+}
+
+@View
+type KI struct {
+	v View[int]
+	t View[string]
+}
+
+func eq[T comparable](a, b T) bool { return a == b }
+
+func bad(x []int) {
+	a, b := K{s: x, k: 1}, K{s: x, k: 1}
+	println(a == b)
+	var m map[K]int
+	_ = m
+	var v, w View[[]int] = x, x
+	println(v == w, eq(v, w))
+}
+
+func good(y, z int, s, t string) {
+	a, b := KI{y, s}, KI{z, t}
+	println(a == b, eq(a, b))
+	m := map[KI]int{a: 1}
+	println(m[b])
+}
+
+func main() {
+	bad([]int{1})
+	good(1, 1, "a", "a")
+}
+
+// CHECK: view-comparable.test:31:10: error[E0168]: invalid operation: a == b (struct containing View{{\[\[}}]int] cannot be compared)
+// CHECK: view-comparable.test:32:12: error[E0148]: invalid map key type K
+// CHECK: view-comparable.test:35:10: error[E0168]: invalid operation: v == w (View{{\[\[}}]int] cannot be compared)
+// CHECK: view-comparable.test:35:18: error[E0316]: View{{\[\[}}]int] does not satisfy comparable

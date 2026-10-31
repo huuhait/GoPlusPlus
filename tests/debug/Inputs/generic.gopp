@@ -1,0 +1,23 @@
+package main
+
+type Point struct{ X, Y int }
+
+type Pair[K, V any] struct {
+	Key K
+	Val V
+}
+
+type Box[T Copy] struct{ V T }
+
+func (b Box[T]) Get() T { return b.V }
+
+func show(p Pair[int, string], b Box[Point], q Pair[Box[int], float64]) int {
+	return b.V.X + p.Key + q.Key.V
+}
+
+func main() {
+	p := Pair[int, string]{1, "a"}
+	b := Box[Point]{Point{3, 4}}
+	q := Pair[Box[int], float64]{Box[int]{5}, 2.5}
+	println(show(p, b, q), b.Get().Y)
+}

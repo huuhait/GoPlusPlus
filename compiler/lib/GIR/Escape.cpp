@@ -147,7 +147,12 @@ bool isLocalVar(const S::Var *V);
 /// variable, a call). The variable is what the method value holds, decided
 /// like a captured variable (Body::mayHold): a cell when the value escapes,
 /// or refused when it is a borrow (a slice of a local array, a view).
-const S::Var *receiverRoot(const ast::Expr *X, const S::Info &I) {
+const S::Var *receiverRoot(const ast::Expr *X, const S::Info &I, TypeAt At) {
+  // (The type of an expression at the instance being analyzed.)
+  auto TypeOf = [&](const S::TypeAndValue *TV) -> S::Type * {
+    S::Type *T = TV ? TV->Ty : nullptr;
+    return T && At ? At(T) : T;
+  };
   for (;;) {
     ++EscapeSteps;
     X = unparen(X);
@@ -159,10 +164,9 @@ const S::Var *receiverRoot(const ast::Expr *X, const S::Info &I) {
     if (auto *Sel = dyn_cast<ast::SelectorExpr>(X)) {
       // (A field through a pointer, also an embedded one, is in the pointee.)
       auto SI = I.Selections.find(Sel);
-      const S::TypeAndValue *BT = I.lookup(Sel->X);
+      S::Type *BT = TypeOf(I.lookup(Sel->X));
       if (SI == I.Selections.end() || SI->second.K != S::Selection::FieldVal ||
-          SI->second.Indirect || !BT || !BT->Ty ||
-          isa<S::PointerType>(S::under(BT->Ty)))
+          SI->second.Indirect || !BT || isa<S::PointerType>(S::under(BT)))
         return nullptr;
       X = Sel->X;
       continue;
@@ -172,8 +176,8 @@ const S::Var *receiverRoot(const ast::Expr *X, const S::Info &I) {
       Base = IE->X;
     else if (auto *SE = dyn_cast<ast::SliceExpr>(X))
       Base = SE->X;
-    const S::TypeAndValue *BT = Base ? I.lookup(Base) : nullptr;
-    S::Type *U = BT && BT->Ty ? S::under(BT->Ty) : nullptr;
+    S::Type *BT = Base ? TypeOf(I.lookup(Base)) : nullptr;
+    S::Type *U = BT ? S::under(BT) : nullptr;
     // (A map entry, a string and a pointer to an array hold no element of a
     // variable's own.)
     if (!U ||
@@ -420,8 +424,12 @@ bool opensScope(const ast::Node *N) {
 void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
                    const ast::BlockStmt *Body,
                    llvm::ArrayRef<const S::Var *> Outer, const KeepTable &Keeps,
-                   FuncHolderTypes &Holders, const S::Info &I,
-                   EntityFacts &Out) {
+                   FuncHolderTypes &Holders, const S::Info &I, EntityFacts &Out,
+                   TypeAt At) {
+  // (A variable's type at the instance being analyzed.)
+  auto VarType = [&](const S::Var *V) {
+    return V->Ty && At ? At(V->Ty) : V->Ty;
+  };
   llvm::DenseMap<const S::Var *, VarFacts> Vars;
   // Scope intervals (an Euler tour): scope 0 is the entity itself.
   SmallVector<unsigned, 32> In{0}, OutT{~0u};
@@ -484,7 +492,7 @@ void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
       auto *V = D == I.Defs.end() ? nullptr : dyn_cast<S::Var>(D->second);
       // (Only a variable whose every use is followed can hold it: the same
       // predicate as the walk below.)
-      if (V && isLocalVar(V) && Holders.mayContainFuncValue(V->Ty)) {
+      if (V && isLocalVar(V) && Holders.mayContainFuncValue(VarType(V))) {
         C.Kind = Ctx::Holder;
         C.Var = V;
         HolderOf[V] = E;
@@ -551,7 +559,7 @@ void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
         MF.Method = true;
         MF.Parent = Frames.empty() ? nullptr : Frames.back().Lit;
         if (F->HasPtrRecv && !F->IsInterfaceMethod)
-          if (const S::Var *Root = receiverRoot(Sel->X, I))
+          if (const S::Var *Root = receiverRoot(Sel->X, I, At))
             MF.Captures.push_back(Root);
         Order.push_back(Sel);
         contextOf(Sel);
@@ -572,7 +580,7 @@ void analyzeEntity(llvm::ArrayRef<const ast::Node *> Roots,
         Out.Lits[Frames.back().Lit].Captures.push_back(V);
       // A variable that may hold a closure or a method value (it may be a
       // holder, R1): how each use treats it.
-      if (!Holders.mayContainFuncValue(V->Ty))
+      if (!Holders.mayContainFuncValue(VarType(V)))
         return;
       UseKind K = classify(Path, I);
       VarFacts &VF = Vars[V];

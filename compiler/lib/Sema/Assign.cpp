@@ -155,9 +155,26 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
     X.M = Mode::Invalid;
     return;
   }
+  noteIfaceConversion(X.E, X.Ty, T);
   // An `error` (which may be nil) converts to `type MyErr error`, an
   // interface with methods that is never nil, only where it is known set.
   checkNilableToNeverNil(X, T);
+}
+
+void Checker::noteIfaceConversion(const ast::Expr *E, Type *From, Type *To) {
+  if (!E || !From || !To || !isValid(From) || isUntyped(From) ||
+      isTypeParam(To))
+    return;
+  Type *TU = under(To);
+  if (auto *O = dyn_cast<OptionType>(TU))
+    TU = isTypeParam(O->Elem) ? nullptr : under(O->Elem);
+  if (!TU || !isa<InterfaceType>(TU))
+    return;
+  // An interface converted to another keeps its dynamic type: no descriptor
+  // is made. A type parameter may be a concrete type at an instance.
+  if (!isTypeParam(From) && isa<InterfaceType>(under(From)))
+    return;
+  I.IfaceConversions[E].push_back(From);
 }
 
 bool Checker::checkNilableToNeverNil(Operand &X, Type *T) {
@@ -230,6 +247,7 @@ void Checker::initVar(Var *Lhs, Operand &X, StringRef Context) {
   if (!IsReturn && !Lhs->Parent && isa<TypeAssertExpr>(unparen(X.E)) &&
       bindsBox(Lhs->Ty)) {
     Lhs->Mode = Var::Borrowed;
+    Lhs->BoxBinding = true;
     Lhs->Ty = boxBindingType(Lhs->Ty); // OWN-V1: a view of the boxed value
     return;
   }
@@ -525,8 +543,10 @@ void Checker::initVars(ArrayRef<Var *> Lhs, ArrayRef<ast::Expr *> OrigRhs,
           Lhs[0]->OptionBinding = true;
           notePayloadBorrow(Lhs[0], Sel->X);
           noteBoxGet(Lhs[0], Sel->X); // TYP-9: an Option in a box
-          if (BoxGetBindings.count(Lhs[0]))
+          if (BoxGetBindings.count(Lhs[0])) {
+            Lhs[0]->BoxBinding = true;
             Lhs[0]->Ty = boxBindingType(Lhs[0]->Ty); // OWN-V1
+          }
         }
     }
     // `d, ok := w.Get()` with w a box binding of an Option (a view of it,

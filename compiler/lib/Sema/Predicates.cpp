@@ -412,7 +412,17 @@ bool Checker::comparableType(Type *T, bool Dynamic,
     return cast<BasicType>(U)->BK != BasicKind::UntypedNil;
   case Type::Kind::Pointer:
   case Type::Kind::Chan:
+    return true;
   case Type::Kind::Ref:
+    // OWN-V: a view compares as the value it looks at, so it is comparable
+    // when that value is: a view of a slice or of a map is not (review R8).
+    // The one predicate of `==`, a map key, the `comparable` constraint and
+    // an interface's dynamic value (MethodSets::comparable, the lowering's).
+    if (!comparableType(cast<RefType>(U)->Elem, Dynamic, Seen)) {
+      if (Cause)
+        *Cause = str(T) + " cannot be compared";
+      return false;
+    }
     return true;
   case Type::Kind::Option:
     // ADR-0018: Option[T] compares like T (both nil, or both set and equal).

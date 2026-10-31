@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build -emit=gir %S/Inputs/inst-passmodes.gopp 2>&1 | FileCheck %s
+// P04.08 with P04.18: the pass mode of a parameter (passOf) is decided on the
+// instance's real types, not on the generic body's. `Len` takes a borrowed
+// `Pair[K, V]`: with a string in it, the instance takes the caller's place (a
+// pointer, PAR-10); with two ints it is a copy. Both are `linkonce_odr`
+// (they fold across objects).
+// CHECK-DAG: fn _GPIF4mainE3LenirE(_1: *main.Pair[int, string]) -> i64 [go, linkonce_odr]
+// CHECK-DAG: fn _GPIF4mainE3LeniiE(_1: main.Pair[int, int]) -> i64 [go, linkonce_odr]

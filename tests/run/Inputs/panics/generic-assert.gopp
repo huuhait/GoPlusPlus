@@ -1,0 +1,19 @@
+package main
+
+// P04.08: Go's name of an instance in a panic message: a failed type
+// assertion names the dynamic type `main.Pair[int,string]` (Go's spelling:
+// the arguments in full, no space) and the asserted `main.Box[int]`.
+type Pair[K, V any] struct {
+	Key K
+	Val V
+}
+
+type Box[T any] struct{ V T }
+
+func main() {
+	var a any = Pair[int, string]{1, "a"}
+	_, ok := a.(Box[int])
+	println(ok)
+	b := a.(Box[int])
+	println(b.V)
+}

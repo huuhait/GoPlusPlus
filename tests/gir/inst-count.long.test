@@ -1,0 +1,22 @@
+// REQUIRES: long
+// RUN: not %gopp check %S/Inputs/inst-count.gopp > %t.check 2>&1
+// RUN: FileCheck %s < %t.check
+// RUN: grep -c 'error\[' %t.check | FileCheck %s --check-prefix=ONE
+// RUN: not %gopp build -emit=gir %S/Inputs/inst-count.gopp > %t.build 2>&1
+// RUN: diff %t.check %t.build
+// P04.08 (GEN-5, M2): a package has at most 100000 instances of generic code
+// (LowerOptions::MaxInstances), or one per byte of its source if that is
+// more (the other side: sema/extends-stress-untag.long.test checks a written
+// chain of 200000 generic functions). Inputs/inst-count.gopp would need 2^40: the
+// walk stops at the limit with one error, naming the generic and the limit,
+// in `gopp check` and in the build alike (no silent stop, no hang). Long: the
+// walk makes 100000 instances first (under a second, more under ASan). The
+// fast side is the unit test GIRInstances.TheInstanceLimitIsOneErrorAndStopsTheWalk
+// (a lower limit), the accepted side every generic run test.
+// (One error is counted with grep, not --implicit-check-not, so that
+// sema/exact-errors.test, which reruns such commands, leaves this long input
+// to check-long.)
+// CHECK: inst-count.gopp:{{[0-9]+}}:{{[0-9]+}}: error[E0449]: cannot instantiate F{{[0-9]+}}: the package needs more than 100000 instances (GEN-5)
+// CHECK: note: instantiated from F{{[0-9]+}}[
+// CHECK: note: ... and {{[0-9]+}} more instantiations
+// ONE: {{^}}1{{$}}
