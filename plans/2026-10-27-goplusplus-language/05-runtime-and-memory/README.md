@@ -150,3 +150,23 @@ P13's full packages replace them later.
 - **Q1** (decided 2026-10-27) Arenas with destructors: support both. `mem.Arena` stays `Copy`-only; `mem.DropArena` records drops and runs them on `Free`/`Reset` (D5.3, P05.17).
 - **Q2** (decided 2026-10-29) mimalloc is the global allocator, the only one for now (ADR-0027).
 - **Q3** (decided 2026-10-27) Package-level variables are never destroyed at exit, not even as an opt-in (P01 D1.18).
+
+## References (libraries to use and prior art to read)
+
+Libraries that P05 can use directly:
+- **mimalloc** (Microsoft): the global allocator (ADR-0027, P05.03).
+- **LLVM libunwind** and **libbacktrace**: walk the stack and turn addresses into file:line for traces (P05.10, P05.14).
+- **libc++abi / the libgcc unwinder** (Itanium C++ ABI): panics as native exceptions (P04 D4.6).
+- **Ryu** or **Dragonbox**: shortest float-to-text, so `fmt` prints floats exactly as Go does (P05.15).
+- **simdutf**: optional fast UTF-8 validation (P05.04).
+- **compiler-rt**: ASan, LSan and UBSan (P05.12).
+
+Projects to learn from (ideas, not code):
+- **Maps:** Abseil `flat_hash_map`, Rust hashbrown, and Go 1.24's Swiss-table maps, which are the reference for Go-like behaviour: random iteration start and growth (P05.06).
+- **Map hashing:** wyhash / rapidhash and Go's runtime hash, for fast seeded hashing.
+- **Allocator interface:** Zig `std.mem.Allocator`, the Rust Allocator API and Odin's allocators, for the shape of `mem.Allocator` (P05.03).
+- **Arenas:** Rust bumpalo and Zig's `ArenaAllocator`, for `mem.Arena` and `mem.DropArena` (P05.03, P05.17).
+- **`Shared` / `Weak`:** Swift ARC, Rust `Arc`/`Weak` and C++ `shared_ptr`, for one allocation with a control block and weak counts (P05.07).
+- **Stack traces:** Go's runtime (`pclntab`, traceback), for Go-style traces with a compact line table (D5.7).
+- **`fmt` / `strconv`:** Go's own source, for the exact output rules to match (P05.15).
+- **Runtime layout:** Go's runtime and the Swift runtime, for startup, exit and type descriptors (P05.02, P05.08).
