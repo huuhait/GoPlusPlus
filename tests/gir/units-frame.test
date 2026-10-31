@@ -1,0 +1,39 @@
+// RUN: %gopp build -no-debug -emit=llvm %s | FileCheck %s
+// RUN: %gopp build -opt=2 -no-debug -emit=llvm %s | FileCheck %s
+// P04.24 (review round 1 of TODO item 1, R1): a unit factor of up to 4096
+// bits needs no room for it in a generic's frame. A site's units are made
+// inside the helpers, in their own frames (never inlined), from constant
+// recipes: the frame of Rec, recursive with one site, holds the array of its
+// two descriptor pointers and nothing of the factors (its descriptor slots
+// were 2 x 5 words on master and 2 x 133 words before this round). Pass hands
+// U*U to Leaf: one small slot of 1 + 2 cap + 2 + 4 words (cap 1 here; a
+// wider factor spills to the heap), not a fraction at the bound. The other
+// side: the slot and the array are there.
+// CHECK-LABEL: define {{.*}}@_GPIF4mainE3Rec
+// CHECK: alloca [2 x i64]
+// CHECK-NOT: alloca [{{[0-9][0-9]+}} x i64]
+// CHECK: ret double
+// CHECK-LABEL: define {{.*}}@_GPIF4mainE4Pass
+// CHECK: alloca [9 x i64]
+// CHECK-NOT: alloca [{{[0-9][0-9]+}} x i64]
+// CHECK: ret double
+package main
+
+unit M
+unit KM = 1000 M
+
+@NoInline
+func Rec[U unit, V unit](n int, a float64[U], b float64[V]) float64 {
+	if n == 0 {
+		return float64(a / b)
+	}
+	return Rec(n-1, a, b) + float64(a/b)
+}
+
+@NoInline
+func Leaf[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+
+@NoInline
+func Pass[U unit](a float64[U]) float64 { return Leaf(a*a, a) }
+
+func main() { println(Rec(3, 1.0[KM], 1.0[M]), Pass(2.0[KM])) }

@@ -27,6 +27,9 @@ for var in ("NIX_CFLAGS_COMPILE", "NIX_LDFLAGS", "HOME", "TMPDIR"):
 
 # Tests must not depend on the user's locale.
 config.environment["LC_ALL"] = "C"
+# The GIR verifier's V085 reports a use whose check ran out of its search
+# budget (gopp/GIR/Verify.h): no program of the suite may reach it.
+config.environment["GOPP_VERIFY_BUDGET_STRICT"] = "1"
 
 # The scripts that start a process per file or per program in many threads
 # share this many slots (tests/procslots.py): a third of the cores, past which

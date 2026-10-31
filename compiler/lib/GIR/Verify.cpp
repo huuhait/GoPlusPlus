@@ -26,6 +26,7 @@
 #include "llvm/ADT/StringSet.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 using namespace gopp;
 using namespace gopp::gir;
@@ -48,10 +49,24 @@ namespace {
 
 /// Test-only work counter (M8): the units the verifier visits on this thread.
 thread_local uint64_t Steps = 0;
+/// Test-only: V085 without its dominance test, its memo and its budget (the
+/// control of the counted test, which must then be quadratic).
+thread_local bool TempSearchControl = false;
+/// V085's uses left unchecked because the search budget ran out, and whether
+/// that is an error (GOPP_VERIFY_BUDGET_STRICT, which the lit suite sets: no
+/// program of the suite reaches the budget).
+thread_local uint64_t UncheckedUses = 0;
+thread_local bool BudgetStrict = std::getenv("GOPP_VERIFY_BUDGET_STRICT");
 
 } // namespace
 
 uint64_t gir::verifierSteps() { return Steps; }
+
+void gir::setVerifierTempSearchControl(bool On) { TempSearchControl = On; }
+
+uint64_t gir::verifierUncheckedUses() { return UncheckedUses; }
+
+void gir::setVerifierBudgetStrict(bool On) { BudgetStrict = On; }
 
 namespace {
 
@@ -471,7 +486,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V067, V070, V073-V075, V077, V079-V081
+  // A function: V010-V013, V022, V067, V070, V073-V075, V077, V079-V081, V085
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -529,6 +544,352 @@ private:
     }
     Block = Index = -1;
     reachable(Fn);
+    tempsDefined(Fn);
+  }
+
+  /// V085: a temporary is defined before every use of it, on every path: a
+  /// use follows a definition in its own block, or the block of a definition
+  /// dominates the block of the use, or (a temporary defined on several
+  /// branches) every path from the entry to the use's block passes a block
+  /// that defines it (a search backwards from the use, within a budget in
+  /// proportion to the function: see Reaches). A definition is an assignment to
+  /// the temporary or to a part of it, or a call's result (defined from the
+  /// call's target block on). A temporary whose address is taken is not
+  /// checked (it may be written through the address), nor an unreachable
+  /// block (V022). The dominators are Lengauer and Tarjan's, with path
+  /// compression: near linear in the blocks and edges.
+  void tempsDefined(const Function &Fn) {
+    const uint32_t NB = Fn.Blocks.size();
+    // The CFG: normal edges and the edges to cleanup blocks.
+    std::vector<llvm::SmallVector<uint32_t, 2>> Succ(NB), Pred(NB);
+    for (uint32_t B = 0; B < NB; ++B) {
+      const Terminator &T = Fn.Blocks[B].Term;
+      if (!T.Set)
+        continue;
+      auto Edge = [&](BlockId S) {
+        if (S < NB) {
+          Succ[B].push_back(S);
+          Pred[S].push_back(B);
+        }
+      };
+      forEachNormalEdge(T, Edge);
+      if (hasUnwind(T) && T.Unwind.K == UnwindAction::Cleanup)
+        Edge(T.Unwind.Target);
+    }
+    // Depth-first numbers 1..N (0: unreachable), iteratively.
+    std::vector<uint32_t> Num(NB, 0), Vertex(1, 0), Parent(NB + 1, 0);
+    {
+      llvm::SmallVector<std::pair<uint32_t, uint32_t>, 32> Stack{{0, 0}};
+      Num[0] = 1;
+      Vertex.push_back(0);
+      while (!Stack.empty()) {
+        auto &[B, K] = Stack.back();
+        if (K == Succ[B].size()) {
+          Stack.pop_back();
+          continue;
+        }
+        uint32_t S = Succ[B][K++];
+        if (Num[S])
+          continue;
+        Num[S] = Vertex.size();
+        Vertex.push_back(S);
+        Parent[Num[S]] = Num[B];
+        Stack.push_back({S, 0});
+      }
+    }
+    const uint32_t N = Vertex.size() - 1;
+    // Lengauer-Tarjan over the depth-first numbers.
+    std::vector<uint32_t> Semi(N + 1), Idom(N + 1, 0), Anc(N + 1, 0),
+        Label(N + 1);
+    std::vector<llvm::SmallVector<uint32_t, 2>> Bucket(N + 1);
+    for (uint32_t V = 1; V <= N; ++V)
+      Semi[V] = Label[V] = V;
+    llvm::SmallVector<uint32_t, 16> Path;
+    auto Eval = [&](uint32_t V) {
+      if (!Anc[V])
+        return V;
+      Path.clear();
+      uint32_t X = V;
+      while (Anc[Anc[X]]) {
+        ++Steps;
+        Path.push_back(X);
+        X = Anc[X];
+      }
+      for (size_t I = Path.size(); I-- > 0;) {
+        ++Steps;
+        uint32_t Y = Path[I], A = Anc[Y];
+        if (Semi[Label[A]] < Semi[Label[Y]])
+          Label[Y] = Label[A];
+        Anc[Y] = Anc[A];
+      }
+      return Label[V];
+    };
+    for (uint32_t W = N; W >= 2; --W) {
+      for (uint32_t P : Pred[Vertex[W]]) {
+        if (!Num[P])
+          continue;
+        uint32_t U = Eval(Num[P]);
+        if (Semi[U] < Semi[W])
+          Semi[W] = Semi[U];
+      }
+      Bucket[Semi[W]].push_back(W);
+      Anc[W] = Parent[W];
+      for (uint32_t V : Bucket[Parent[W]]) {
+        uint32_t U = Eval(V);
+        Idom[V] = Semi[U] < Semi[V] ? U : Parent[W];
+      }
+      Bucket[Parent[W]].clear();
+    }
+    for (uint32_t W = 2; W <= N; ++W) {
+      if (Idom[W] != Semi[W])
+        Idom[W] = Idom[Idom[W]];
+    }
+    // The dominator tree's entry and exit numbers: A dominates B when B's
+    // interval lies in A's (the intervals of a temporary's definitions,
+    // below).
+    std::vector<uint32_t> In(N + 1), Out(N + 1);
+    {
+      std::vector<llvm::SmallVector<uint32_t, 2>> Kids(N + 1);
+      for (uint32_t W = 2; W <= N; ++W)
+        Kids[Idom[W]].push_back(W);
+      uint32_t Clock = 0;
+      llvm::SmallVector<std::pair<uint32_t, uint32_t>, 32> Stack{{1, 0}};
+      In[1] = Clock++;
+      while (!Stack.empty()) {
+        auto &[V, K] = Stack.back();
+        if (K == Kids[V].size()) {
+          Out[V] = Clock++;
+          Stack.pop_back();
+          continue;
+        }
+        uint32_t C = Kids[V][K++];
+        In[C] = Clock++;
+        Stack.push_back({C, 0});
+      }
+    }
+    // The temporaries checked, and where each is defined: (block, index);
+    // the index of a call's result is -1 in its target block.
+    auto Checked = [&](LocalId L) {
+      return L < Fn.Locals.size() && Fn.Locals[L].K == Local::Temp &&
+             !AddrTaken.count(L);
+    };
+    llvm::DenseMap<LocalId, llvm::SmallVector<std::pair<uint32_t, int64_t>, 1>>
+        Defs;
+    llvm::DenseMap<LocalId, llvm::SmallVector<std::pair<uint32_t, uint32_t>, 1>>
+        EdgeDefs;
+    auto WritesWhole = [](const Place &P) {
+      return llvm::none_of(
+          P.Proj, [](const PlaceElem &E) { return E.K == PlaceElem::Deref; });
+    };
+    // (Counted once per block and statement: the passes over them are
+    // linear; the compression above and the search below count their own.)
+    uint64_t StmtCount = 0;
+    for (uint32_t B = 0; B < NB; ++B) {
+      ++Steps;
+      if (!Num[B])
+        continue;
+      const BasicBlock &BB = Fn.Blocks[B];
+      StmtCount += BB.Stmts.size() + 1;
+      for (size_t I = 0; I < BB.Stmts.size(); ++I) {
+        ++Steps;
+        const Statement &S = BB.Stmts[I];
+        if (S.K == Statement::Assign && Checked(S.Dest.Local) &&
+            WritesWhole(S.Dest))
+          Defs[S.Dest.Local].push_back({B, int64_t(I)});
+      }
+      // A call's result: from the start of its target when the call is the
+      // target's only way in, else on the call's edge alone (the target's
+      // other predecessors did not run it).
+      const Terminator &T = BB.Term;
+      if (T.Set && T.K == Terminator::Call && T.Target < NB &&
+          Checked(T.Dest.Local) && WritesWhole(T.Dest)) {
+        if (Pred[T.Target].size() == 1)
+          Defs[T.Dest.Local].push_back({T.Target, -1});
+        else
+          EdgeDefs[T.Dest.Local].push_back({B, T.Target});
+      }
+    }
+    // The uses, collected, then checked one temporary at a time: a
+    // definition before the use in its block (one compare), else, for one
+    // definition, its block dominates the use's (one compare), else (a
+    // temporary defined on several branches, a phi) no path from the entry
+    // reaches the use's block without passing a block that defines it: a
+    // search backwards from the use that stops at those blocks and at the
+    // blocks an earlier search of the temporary proved covered, so each
+    // temporary walks its region once. One error per temporary.
+    struct UseAt {
+      LocalId L;
+      uint32_t B;
+      int64_t I;
+    };
+    std::vector<UseAt> Uses;
+    auto Use = [&](LocalId L, uint32_t B, int64_t I) {
+      if (Checked(L))
+        Uses.push_back({L, B, I});
+    };
+    auto PlaceUses = [&](const Place &P, bool Dest, uint32_t B, int64_t I) {
+      for (const PlaceElem &E : P.Proj)
+        if (E.K == PlaceElem::Index)
+          Use(E.Val, B, I);
+      if (!Dest || !WritesWhole(P))
+        Use(P.Local, B, I);
+    };
+    auto OperandUses = [&](const Operand &O, uint32_t B, int64_t I) {
+      if (O.K != Operand::Const)
+        PlaceUses(O.P, false, B, I);
+    };
+    for (uint32_t B = 0; B < NB; ++B) {
+      if (!Num[B])
+        continue;
+      const BasicBlock &BB = Fn.Blocks[B];
+      for (size_t I = 0; I < BB.Stmts.size(); ++I) {
+        const Statement &S = BB.Stmts[I];
+        if (S.K != Statement::Assign)
+          continue;
+        const Rvalue &R = S.RV;
+        OperandUses(R.A, B, I);
+        OperandUses(R.B, B, I);
+        for (const Operand &O : R.Ops)
+          OperandUses(O, B, I);
+        if (R.K == Rvalue::Len)
+          PlaceUses(R.P, false, B, I);
+        PlaceUses(S.Dest, true, B, I);
+      }
+      const Terminator &T = BB.Term;
+      if (!T.Set)
+        continue;
+      const int64_t I = BB.Stmts.size();
+      OperandUses(T.Discr, B, I);
+      for (const Operand &O : T.Args)
+        OperandUses(O, B, I);
+      if (T.K == Terminator::Drop)
+        PlaceUses(T.Dest, false, B, I);
+      else if (T.K == Terminator::Call)
+        PlaceUses(T.Dest, true, B, I);
+    }
+    llvm::stable_sort(Uses,
+                      [](const UseAt &X, const UseAt &Y) { return X.L < Y.L; });
+    std::vector<uint32_t> Wall(NB, 0), Covered(NB, 0), Seen(NB, 0);
+    std::vector<int64_t> First(NB, 0);
+    std::vector<std::pair<uint32_t, uint32_t>> Spans;
+    uint32_t Stamp = 0, Search = 0;
+    llvm::SmallVector<uint32_t, 16> Work;
+    // Can a path from the entry reach the start of B without passing a
+    // definition (a wall)? The blocks of a search that fails are covered.
+    // (The searches of a function have a budget in proportion to its size:
+    // within it the rule is exact; a function whose phis are read far from
+    // their joins, which the lowering does not make, is checked up to it.)
+    uint64_t Budget =
+        TempSearchControl ? ~uint64_t(0) : 32 * (uint64_t(NB) + StmtCount) + 64;
+    // (A call's edge that defines the temporary is not walked back over.)
+    const llvm::SmallVectorImpl<std::pair<uint32_t, uint32_t>> *Edges = nullptr;
+    auto PushPreds = [&](uint32_t X) {
+      for (uint32_t P : Pred[X])
+        if (!Edges || llvm::none_of(*Edges, [&](auto &E) {
+              return E.first == P && E.second == X;
+            }))
+          Work.push_back(P);
+    };
+    // Unchecked: the budget ran out (counted; an error where strict).
+    bool OutOfBudget = false;
+    auto Reaches = [&](uint32_t B) {
+      if (B == 0)
+        return true;
+      if (!Budget) {
+        OutOfBudget = true;
+        return false;
+      }
+      ++Search;
+      Work.clear();
+      llvm::SmallVector<uint32_t, 16> Visited;
+      PushPreds(B);
+      while (!Work.empty() && Budget) {
+        ++Steps;
+        --Budget;
+        uint32_t X = Work.pop_back_val();
+        if (!Num[X] || Wall[X] == Stamp ||
+            (Covered[X] == Stamp && !TempSearchControl) || Seen[X] == Search)
+          continue;
+        Seen[X] = Search;
+        if (X == 0)
+          return true;
+        Visited.push_back(X);
+        PushPreds(X);
+      }
+      if (!Work.empty()) {
+        OutOfBudget = true; // (unchecked, not covered)
+        return false;
+      }
+      for (uint32_t X : Visited)
+        Covered[X] = Stamp;
+      return false;
+    };
+    for (size_t K = 0; K < Uses.size();) {
+      const LocalId L = Uses[K].L;
+      size_t End = K;
+      while (End < Uses.size() && Uses[End].L == L)
+        ++End;
+      ++Stamp;
+      auto It = Defs.find(L);
+      auto EIt = EdgeDefs.find(L);
+      Edges = EIt == EdgeDefs.end() ? nullptr : &EIt->second;
+      const bool HasDef = It != Defs.end() || Edges;
+      // The definitions' blocks as intervals of the dominator tree, the
+      // outermost ones, sorted: a block has a definition strictly above it
+      // when an interval holds its own and is not its own (a binary search).
+      Spans.clear();
+      if (It != Defs.end())
+        for (auto [DB, DI] : It->second) {
+          if (Wall[DB] != Stamp || DI < First[DB])
+            First[DB] = DI;
+          Wall[DB] = Stamp;
+          Spans.push_back({In[Num[DB]], Out[Num[DB]]});
+        }
+      llvm::sort(Spans);
+      size_t Kept = 0;
+      for (auto Sp : Spans)
+        if (!Kept || Sp.first > Spans[Kept - 1].second)
+          Spans[Kept++] = Sp;
+      Spans.resize(Kept);
+      auto Above = [&](uint32_t B) {
+        uint32_t BI = In[Num[B]], BO = Out[Num[B]];
+        auto Up = std::upper_bound(Spans.begin(), Spans.end(),
+                                   std::make_pair(BI, ~uint32_t(0)));
+        if (Up == Spans.begin())
+          return false;
+        --Up;
+        return Up->first < BI && BO <= Up->second;
+      };
+      // (The definitions and the uses are parts of the statements counted
+      // above; the searches count their own blocks.)
+      for (; K < End; ++K) {
+        auto [UL, B, I] = Uses[K];
+        if (Wall[B] == Stamp && First[B] < I)
+          continue;
+        OutOfBudget = false;
+        if (HasDef && ((!TempSearchControl && Above(B)) || !Reaches(B))) {
+          if (!OutOfBudget)
+            continue;
+          ++UncheckedUses;
+          if (!BudgetStrict)
+            continue;
+          Block = B;
+          Index = I;
+          err("V085", "_" + num(UL) +
+                          " is used where the search for its definitions "
+                          "ran out of its budget (unchecked)");
+          K = End;
+          continue;
+        }
+        Block = B;
+        Index = I;
+        err("V085", "_" + num(UL) +
+                        " is used where no definition of it reaches on every "
+                        "path");
+        K = End;
+      }
+    }
+    Block = Index = -1;
   }
 
   /// V067: a function with the C convention takes and returns C types (the

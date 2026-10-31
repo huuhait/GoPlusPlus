@@ -1,0 +1,111 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-bigfactor.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-bigfactor.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (TODO item 1, owner decision 2026-10-31: ADR-0025's 4096 bits; GEN-14,
+// UNI-2): the factor of a run-time unit descriptor is an exact fraction of up
+// to 4096 bits each way, as the checker's factor of plain code is, so generic
+// code computes what plain code computes for the units of science. Each line
+// prints the bits of the plain value and of the generic one and whether they
+// are equal; the golden values are those of Python's exact fractions, rounded
+// once (float(Fraction) for float64; float32 by hand, to nearest even), never
+// the compiler's:
+//  - the electronvolt (exact since 2019, a denominator past 64 bits), eV^2,
+//    the dalton (CODATA 2018), and the dalton's energy in eV (Da c^2 / eV);
+//  - (KM/M)^8 = 10^24 through a descriptor made in the caller (Top), past the
+//    64 bits of the old descriptor; U^7/V^7 with U = V = KM (10^21 on the way,
+//    1 at the end) and with U = KM, V = M; a factor at the bound, Q^8/M^8
+//    with 4096 bits each way (one more bit is the panic of
+//    Inputs/panics-gopp/unit-range-factor.gopp);
+//  - integers by a factor whose denominator passes 64 bits: the quotient of
+//    two units of one dimension scales the coarser operand and truncates
+//    toward zero (EXP-33; plain code refuses a factor that is no integer, so
+//    the reference is a method of an instance of a generic type, whose units
+//    the compiler knows, Pair.Ratio, against the generic function, RatioI,
+//    whose units come at run time), negative values too, and a product of
+//    J^2 by 1/eV^2 whose scaled value wraps in 64 bits as plain code's
+//    integer conversions do;
+//  - a static factor past 64 bits in generic code, beside the sites of its
+//    unit parameters (GS: eV/J times the factor of U/V; an E0439 before), in
+//    float64 and int64.
+package main
+
+import "unsafe"
+
+unit M
+unit KG
+unit S
+unit KM = 1000 M
+unit J = KG * M^2 / S^2
+unit EV = (1602176634 / 10000000000000000000000000000) J
+unit DA = (166053906660 / 100000000000000000000000000000000000000) KG
+unit C = 299792458 M / S
+unit P1 = (2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397533 / 2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397761) M
+unit Q = (6376330159619673413350505582409733206808101479330121970475860087 / 6376330159619673413350505582409733206808101479330121970475860373) P1
+
+func bits(x float64) uint64   { return *(*uint64)(unsafe.Pointer(&x)) }
+func bits32(x float32) uint32 { return *(*uint32)(unsafe.Pointer(&x)) }
+
+func Ratio[U unit, V unit](a float64[U], b float64[V]) float64     { return float64(a / b) }
+func Ratio32[U unit, V unit](a float32[U], b float32[V]) float32   { return float32(a / b) }
+func RatioI[U unit, V unit](a int64[U], b int64[V]) int64          { return int64(a / b) }
+
+// eV/J is a static factor of the site; the factor of U/V comes at run time.
+func GS[U unit, V unit](a float64[U*EV], b float64[V*J]) float64 { return float64(a / b) }
+func GSI[U unit, V unit](a int64[U*EV], b int64[V*J]) int64    { return int64(a / b) }
+
+func Leaf[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+
+// The descriptors of U^8 and V^8 are made here, for Leaf.
+func Top[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return Leaf(a*a*a*a*a*a*a*a, b*b*b*b*b*b*b*b)
+}
+
+func P7[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return float64((a * a * a * a * a * a * a) / (b * b * b * b * b * b * b))
+}
+
+type Pair[U unit, V unit] struct {
+	a int64[U]
+	b int64[V]
+}
+
+func (p Pair[U, V]) Ratio() int64 { return int64(p.a / p.b) }
+
+func row(name string, p, g float64) { println(name, bits(p), bits(g), p == g) }
+
+func main() {
+	e, j, d, k, c := 1.0[EV], 1.0[J], 1.0[DA], 1.0[KG], 1.0[C]
+	row("eV/J", float64(e/j), Ratio(e, j))
+	row("eV^2/J^2", float64(e*e/(j*j)), Ratio(e*e, j*j))
+	row("J/eV", float64(j/e), Ratio(j, e))
+	row("Da/KG", float64(d/k), Ratio(d, k))
+	row("Da*c^2/eV", float64(d*c*c/e), Ratio(d*c*c, e))
+	e32, j32 := float32[EV](1), float32[J](1)
+	println("eV/J f32", bits32(float32(e32/j32)), bits32(Ratio32(e32, j32)))
+	println("J/eV f32", bits32(float32(j32/e32)), bits32(Ratio32(j32, e32)))
+
+	x, y := 1.0[KM], 1.0[M]
+	row("(KM/M)^8", float64((x*x*x*x*x*x*x*x)/(y*y*y*y*y*y*y*y)), Top(x, y))
+	row("KM^7/KM^7", float64((x*x*x*x*x*x*x)/(x*x*x*x*x*x*x)), P7(x, x))
+	row("KM^7/M^7", float64((x*x*x*x*x*x*x)/(y*y*y*y*y*y*y)), P7(x, y))
+	q := 1.0[Q]
+	row("Q^8/M^8", float64((q*q*q*q*q*q*q*q)/(y*y*y*y*y*y*y*y)), Top(q, y))
+
+	println("int 7e18 eV / 1 J", Pair[EV, J]{7000000000000000000[EV], 1[J]}.Ratio(),
+		RatioI(7000000000000000000[EV], 1[J]))
+	println("int 1 J / 7 eV", Pair[J, EV]{1[J], 7[EV]}.Ratio(), RatioI(1[J], 7[EV]))
+	println("int -1 J / 7 eV", Pair[J, EV]{-1[J], 7[EV]}.Ratio(), RatioI(-1[J], 7[EV]))
+	println("int -7e18 eV / 1 J", Pair[EV, J]{-7000000000000000000[EV], 1[J]}.Ratio(),
+		RatioI(-7000000000000000000[EV], 1[J]))
+	println("int 5 J^2 / 3 eV^2", Pair[J * J, EV * EV]{5[J*J], 3[EV*EV]}.Ratio(),
+		RatioI(5[J*J], 3[EV*EV]))
+
+	ke, mj := 1.0[KM*EV], 1.0[M*J]
+	row("KM*eV/(M*J)", float64(ke/mj), GS(ke, mj))
+	println("int 7e18 KM*eV / 1 M*J", Pair[KM * EV, M * J]{7000000000000000000[KM*EV], 1[M*J]}.Ratio(),
+		GSI(7000000000000000000[KM*EV], 1[M*J]))
+	println("int 1 KM*J / 7 M*eV", Pair[KM * J, M * EV]{1[KM*J], 7[M*EV]}.Ratio(),
+		GSI(1[KM*J], 7[M*EV]))
+}

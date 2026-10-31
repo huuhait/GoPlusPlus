@@ -123,7 +123,11 @@ public:
   /// The value as an integer if it has no fraction.
   bool toInt(llvm::APInt &Out) const;
   BigFloat toBigFloat() const;
-  double toIEEE(unsigned P) const { return toBigFloat().toIEEE(P); }
+  /// The value rounded once to an IEEE binary format with P mantissa bits
+  /// (as BigFloat::toIEEE): an exact rational from its exact value (as Go's
+  /// big.Rat.Float64; not through the 512-bit BigFloat, which would round
+  /// twice).
+  double toIEEE(unsigned P) const;
   bool overflows() const { return !Rat && F.overflows(); }
 
   Real neg() const;

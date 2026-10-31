@@ -25,6 +25,7 @@
 
 #include "LowerImpl.h"
 #include "RtEmit.h"
+#include "gopp/GIR/UnitRuntime.h"
 
 #include <cmath>
 
@@ -612,7 +613,7 @@ FuncId Lowering::ensurePanicMust(SourceLoc At) {
 
 // `panic_unit(unit string)`: a run-time unit descriptor that leaves the range
 // of units (an exponent past 2^20, a factor whose numerator or denominator
-// passes 64 bits: a chain of 25 generics that each pass `U*U` on) stops the
+// passes 4096 bits: a chain of 25 generics that each pass `U*U` on) stops the
 // program with
 //
 //   panic: unit out of range: <the unit as the generic code wrote it>
@@ -650,29 +651,33 @@ FuncId Lowering::ensurePanicUnit(SourceLoc At) {
 //===----------------------------------------------------------------------===//
 
 // A unit at run time is a descriptor in memory, self-describing (it does not
-// depend on how many base units the program has):
+// depend on how many base units the program has; gopp/GIR/UnitRuntime.h):
 //
-//   +0   num    u64 \  the factor, a reduced fraction of two u64; den 0 marks a
-//   +8   den    u64 /  factor that left the 64 bits
-//   +16  count  u64    the number of base units the unit has (exponent != 0)
-//   +24  pairs  { id u64, exp i64 } x count, sorted by id; the id of a base
+//   +0   count  u64    the number of base units the unit has (exponent != 0);
+//                      ~0 marks an exponent out of range
+//   +8   pairs  { id u64, exp i64 } x count, sorted by id; the id of a base
 //                      unit is a 63-bit hash of its qualified name
 //                      (Lowering::unitBaseId)
+//   then   the factor, an exact fraction {nn, nd, limbs}: the reduced
+//          numerator and denominator of at most 4096 bits each (UNI-2); nn 0
+//          marks a factor past them
 //
 // A generic that has a collapse site (Info::UnitSites) takes one pointer to
-// such a descriptor for each of its unit parameters; a caller makes the
-// callee's from the constants it knows and from its own descriptors with
-// unit_mulpow (`U*V` is the descriptor of U times V, `1/U` U to the power -1).
-// A site asks unit_site for the factor c(E) of GEN-14 (the factor of E where
-// it has no base unit, 1 elsewhere), combined as the site's kind says.
-// Everything is exact: fractions are kept reduced. An exponent that would pass
-// +-2^20 (UNI-2) marks the descriptor out of range (count ~0, and so every
-// product of it); a factor whose numerator or denominator would pass 64 bits
-// is marked (denominator 0) and stays so. Nothing panics where a descriptor
-// or a site's fraction is made (that is at the entry of the function, whether
-// or not the branch runs): unit_site returns 0 / 0 for a site that needs an
-// out-of-range unit or a marked factor, and the site that uses it tests the
-// mark and calls panic_unit with its own text.
+// such a descriptor for each of its unit parameters. A caller passes a
+// constant, a descriptor of its own, or one unit_make builds from a recipe (a
+// constant: a base descriptor times its own descriptors to their exponents)
+// in a small frame slot, a wide factor spilled to a heap chain that the
+// function's owned spill local frees. A site is a site group, a constant of
+// recipes: unit_site_f and unit_site_i evaluate it at the entry in their own
+// frames into the factor c(E) of GEN-14 (the factor of E where it has no base
+// unit, 1 elsewhere), combined as the site's kind says, times the static
+// factor of the expression, as a float or as integer words. Everything is
+// exact (RuntimeUnits.cpp). An exponent that would pass +-2^20 marks the
+// descriptor out of range (count ~0); a factor past 4096 bits is marked and
+// stays so, and so is a float factor that rounds to +inf or 0. Nothing panics
+// where a descriptor or a site's factor is made (that is at the entry of the
+// function, whether or not the branch runs): the site that uses a marked
+// factor tests the mark and calls panic_unit with its own text.
 
 unsigned Lowering::unitK() {
   if (UnitBaseList.empty() && !UnitBasesDone) {
@@ -683,8 +688,8 @@ unsigned Lowering::unitK() {
 }
 
 uint64_t Lowering::unitBaseId(const S::Object *O) {
-  // FNV-1a over "package path.name", 63 bits (the largest id is the end mark
-  // of unit_mulpow's merge).
+  // FNV-1a over "package path.name", 63 bits (~0 is above every id: the start
+  // of unit_make's merge).
   uint64_t H = 0xcbf29ce484222325ull;
   auto Mix = [&](StringRef S) {
     for (unsigned char C : S) {
@@ -700,415 +705,54 @@ uint64_t Lowering::unitBaseId(const S::Object *O) {
 }
 
 Lowering::UnitRtFns *Lowering::unitRt(SourceLoc At) {
-  if (UnitRt.Site != NoId)
+  if (UnitRt.SiteF != NoId)
     return &UnitRt;
   FuncId Panic = ensurePanicUnit(At);
   if (Panic == NoId)
     return nullptr;
-  Type *U64 = Ctx.u64(), *I64 = Ctx.i64(), *Str = Ctx.string(),
-       *PU8 = Ctx.ptr(Ctx.u8()), *F64 = Ctx.floatTy(64);
-  Type *Pair = Ctx.tuple({U64, U64});
-  const int64_t MaxExp = 1 << 20;
+  FuncId Alloc = rt(RtFn::MemResize, At), Free = rt(RtFn::MemFree, At);
+  if (Alloc == NoId || Free == NoId)
+    return nullptr;
+  Type *U64 = Ctx.u64(), *Str = Ctx.string();
+  UnitArith A = addUnitArith(
+      *M,
+      [&](StringRef Name) {
+        return symbolOf(SymbolKind::Runtime, CP.Pkg, Name);
+      },
+      Linkage::LinkOnceODR, Alloc, Free);
 
-  // gcd(a, b): Euclid's algorithm on non-zero numbers.
-  FuncId Gcd = NoId;
-  {
-    Function *F = newHelper(*this, "unit_gcd", Ctx.func({U64, U64}, U64),
-                            Linkage::LinkOnceODR, Gcd);
-    Rt R(*M, *F);
-    Var A = R.var(U64, R.param(0)), B = R.var(U64, R.param(1));
-    R.While([&] { return B != 0; },
-            [&] {
-              Val T = R.snap(A % B.v());
-              A = B.v();
-              B = T;
-            });
-    R.Return(A.v());
-    R.finish();
-  }
-
-  // unit_ratmul(n1, d1, n2, d2, what) (n, d): n1/d1 * n2/d2, reduced.
-  FuncId RatMul = NoId;
-  {
-    Function *F = newHelper(*this, "unit_ratmul",
-                            Ctx.func({U64, U64, U64, U64, Str}, Pair),
-                            Linkage::LinkOnceODR, RatMul);
-    Rt R(*M, *F);
-    Val N1 = R.param(0), D1 = R.param(1), N2 = R.param(2), D2 = R.param(3);
-    // A fraction with the denominator 0 is a factor that left the 64 bits: it
-    // stays so, and only a site that needs it panics (unit_site).
-    R.If(R.lor(R.snap(D1 == 0), [&] { return R.snap(D2 == 0); }),
-         [&] { R.Return(R.tuple(Pair, {R.u(0), R.u(0)})); });
-    Val G1 = R.call(Gcd, {N1, D2}), G2 = R.call(Gcd, {N2, D1});
-    Val A = R.snap(N1 / G1), B = R.snap(D2 / G1);
-    Val C = R.snap(N2 / G2), E = R.snap(D1 / G2);
-    Val N = R.snap(A * C), D = R.snap(E * B);
-    // (Every part is at least 1, so the product wrapped if it does not divide
-    // back.)
-    Val Bad = R.lor(R.snap(N / A != C), [&] { return R.snap(D / E != B); });
-    R.If(Bad, [&] { R.Return(R.tuple(Pair, {R.u(0), R.u(0)})); });
-    R.Return(R.tuple(Pair, {N, D}));
-    R.finish();
-  }
-
-  // unit_mulpow(dst, cap, a, b, e, what): dst = a * b^e. dst is not a or b;
-  // it has room for cap base units.
-  FuncId MulPow = NoId;
+  // unit_scale_int(x, signed, a, n, d, what): trunc(x * (a + n / d)) wrapping
+  // in 64 bits, n < d, as unit_intfactor gives it: |x| * a + |x| / d * n +
+  // (|x| % d) * n / d with the last product in 128 bits, the sign put back;
+  // d 0 is a marked factor, the panic of the site.
   {
     Function *F =
-        newHelper(*this, "unit_mulpow",
-                  Ctx.func({PU8, U64, PU8, PU8, Ctx.i32(), Str}, Ctx.unit()),
-                  Linkage::LinkOnceODR, MulPow);
+        newHelper(*this, "unit_scale_int",
+                  Ctx.func({U64, Ctx.boolean(), U64, U64, U64, Str}, U64),
+                  Linkage::LinkOnceODR, UnitRt.ScaleInt);
     Rt R(*M, *F);
-    Val Dst = R.param(0), Cap = R.param(1), A = R.param(2), B = R.param(3);
-    Val E = R.to(I64, R.param(4));
-    Val What = R.param(5);
-    const uint64_t End = ~uint64_t(0);
-    auto Num = [&](Val P) { return R.load(P, U64); };
-    auto Den = [&](Val P) { return R.load(R.padd(P, R.u(8)), U64); };
-    auto Cnt = [&](Val P) { return R.load(R.padd(P, R.u(16)), U64); };
-    auto Id = [&](Val P, Val I) {
-      return R.load(R.padd(P, R.u(24) + I * 16), U64);
-    };
-    auto Ex = [&](Val P, Val I) {
-      return R.load(R.padd(P, R.u(32) + I * 16), I64);
-    };
-    // A descriptor out of range (count End) makes every product of it so.
-    auto MarkOut = [&] {
-      R.store(Dst, U64, R.u(0));
-      R.store(R.padd(Dst, R.u(8)), U64, R.u(0));
-      R.store(R.padd(Dst, R.u(16)), U64, R.u(End));
-    };
-    R.If(R.lor(R.snap(Cnt(A) == End), [&] { return R.snap(Cnt(B) == End); }),
-         [&] {
-           MarkOut();
-           R.Return();
-         });
-    // The factor: B to the power |e| by squaring, inverted if e < 0.
-    Var Pn = R.var(U64, Num(B)), Pd = R.var(U64, Den(B));
-    Var Left = R.var(I64, E);
-    R.If(R.snap(E < R.i(0)), [&] {
-      Left = R.snap(R.i(0) - E);
-      Val T = R.snap(Pn.v());
-      Pn = Pd.v();
-      Pd = T;
-    });
-    // (A marked factor has the denominator 0; its inverse is marked too.)
-    Var Rn = R.var(U64, R.u(1)), Rd = R.var(U64, R.u(1));
-    R.While([&] { return Left.v() > R.i(0); },
-            [&] {
-              R.If(R.snap((Left.v() & R.i(1)) != R.i(0)), [&] {
-                Val T = R.call(RatMul, {Rn.v(), Rd.v(), Pn.v(), Pd.v(), What});
-                Rn = R.snap(R.fld(T, 0));
-                Rd = R.snap(R.fld(T, 1));
-              });
-              Left = R.snap(Left.v() >> R.i(1));
-              R.If(Left.v() > R.i(0), [&] {
-                Val T = R.call(RatMul, {Pn.v(), Pd.v(), Pn.v(), Pd.v(), What});
-                Pn = R.snap(R.fld(T, 0));
-                Pd = R.snap(R.fld(T, 1));
-              });
-            });
-    // (A marked factor whose numerator is 0 stays marked: den 0.)
-    R.If(R.snap(Pn.v() == 0), [&] {
-      Rn = R.u(0);
-      Rd = R.u(0);
-    });
-    Val T = R.call(RatMul, {Num(A), Den(A), Rn.v(), Rd.v(), What});
-    Val N = R.snap(R.fld(T, 0)), D = R.snap(R.fld(T, 1));
-    // The base units: the merge of two lists sorted by id.
-    Val CA = Cnt(A), CB = Cnt(B);
-    Var I = R.var(U64, R.u(0)), J = R.var(U64, R.u(0)), K = R.var(U64, R.u(0));
-    Var Out = R.var(R.Bool, R.boolean(false));
-    R.While(
-        [&] {
-          return R.lor(R.snap(I.v() < CA), [&] { return R.snap(J.v() < CB); });
-        },
-        [&] {
-          Var Ia = R.var(U64, R.u(End)), Ib = R.var(U64, R.u(End));
-          R.If(R.snap(I.v() < CA), [&] { Ia = Id(A, I.v()); });
-          R.If(R.snap(J.v() < CB), [&] { Ib = Id(B, J.v()); });
-          Var Cur = R.var(U64, Ia.v());
-          R.If(R.snap(Ib.v() < Ia.v()), [&] { Cur = Ib.v(); });
-          Var X = R.var(I64, R.i(0));
-          R.If(R.snap(Ia.v() == Cur.v()), [&] {
-            X = Ex(A, I.v());
-            I = R.snap(I.v() + 1);
-          });
-          R.If(R.snap(Ib.v() == Cur.v()), [&] {
-            X = R.snap(X.v() + R.snap(E * Ex(B, J.v())));
-            J = R.snap(J.v() + 1);
-          });
-          // (An exponent past +-2^20, or more base units than the slot has:
-          // the descriptor is marked out of range, and the panic comes where
-          // a site uses it, not here: a branch that is not taken is no error.)
-          R.If(R.snap(R.lor(X.v() > R.i(MaxExp),
-                            [&] { return R.snap(X.v() < R.i(-MaxExp)); })),
-               [&] { Out = R.boolean(true); });
-          R.If(R.snap(R.land(R.snap(X.v() != R.i(0)),
-                             [&] { return R.snap(K.v() >= Cap); })),
-               [&] { Out = R.boolean(true); });
-          R.If(R.snap(R.land(R.snap(X.v() != R.i(0)),
-                             [&] { return R.snap(K.v() < Cap); })),
-               [&] {
-                 R.store(R.padd(Dst, R.u(24) + K.v() * 16), U64, Cur.v());
-                 R.store(R.padd(Dst, R.u(32) + K.v() * 16), I64, X.v());
-                 K = R.snap(K.v() + 1);
-               });
-        });
-    R.If(Out.v(), [&] {
-      MarkOut();
-      R.Return();
-    });
-    R.store(Dst, U64, N);
-    R.store(R.padd(Dst, R.u(8)), U64, D);
-    R.store(R.padd(Dst, R.u(16)), U64, K.v());
-    R.finish();
-  }
-
-  // unit_site(kind, res, x, y, sp, sq, what) (n, d): the factor of a collapse
-  // site times sp/sq. kind: 0 Mul, 1 Quo, 2 Conv, 3 Const.
-  {
-    Function *F =
-        newHelper(*this, "unit_site",
-                  Ctx.func({Ctx.i32(), PU8, PU8, PU8, U64, U64, Str}, Pair),
-                  Linkage::LinkOnceODR, UnitRt.Site);
-    Rt R(*M, *F);
-    Val Kind = R.param(0), What = R.param(6);
-    // c(D): its factor where it has no base unit, else 1.
-    auto C = [&](Val P, Var &N, Var &D) {
-      N = R.u(1);
-      D = R.u(1);
-      Val Cn = R.load(R.padd(P, R.u(16)), U64);
-      R.If(R.lor(R.snap(Cn == 0), [&] { return R.snap(Cn == ~uint64_t(0)); }),
-           [&] {
-             N = R.load(P, U64);
-             D = R.load(R.padd(P, R.u(8)), U64);
-           });
-    };
-    Var Rn = R.var(U64), Rd = R.var(U64), Xn = R.var(U64), Xd = R.var(U64),
-        Yn = R.var(U64), Yd = R.var(U64);
-    C(R.param(1), Rn, Rd);
-    C(R.param(2), Xn, Xd);
-    C(R.param(3), Yn, Yd);
-    auto Mul = [&](Var &N, Var &D, Val N2, Val D2) {
-      Val T = R.call(RatMul, {N.v(), D.v(), N2, D2, What});
-      N = R.snap(R.fld(T, 0));
-      D = R.snap(R.fld(T, 1));
-    };
-    // Mul: c(Res) / (c(X) c(Y)); Quo: c(Res) c(Y) / c(X); Conv: c(Res) / c(X).
-    // (A marked c has the denominator 0 in its numerator's place after the
-    // swap: the product is marked, and so the panic below.)
-    R.If(R.snap(Kind == 0), [&] {
-      Mul(Rn, Rd, Xd.v(), Xn.v());
-      Mul(Rn, Rd, Yd.v(), Yn.v());
-    });
-    R.If(R.snap(Kind == 1), [&] {
-      Mul(Rn, Rd, Yn.v(), Yd.v());
-      Mul(Rn, Rd, Xd.v(), Xn.v());
-    });
-    R.If(R.snap(Kind == 2), [&] { Mul(Rn, Rd, Xd.v(), Xn.v()); });
-    Mul(Rn, Rd, R.param(4), R.param(5));
-    // (No panic here: a factor out of range comes back as 0 / 0, and the site
-    // that uses it panics, unit_site's caller.)
-    R.If(
-        R.snap(R.lor(R.snap(Rd.v() == 0), [&] { return R.snap(Rn.v() == 0); })),
-        [&] { R.Return(R.tuple(Pair, {R.u(0), R.u(0)})); });
-    R.Return(R.tuple(Pair, {Rn.v(), Rd.v()}));
-    R.finish();
-  }
-
-  // unit_mul128(a, b) (hi, lo): the 128-bit product.
-  FuncId Mul128 = NoId;
-  {
-    Function *F = newHelper(*this, "unit_mul128", Ctx.func({U64, U64}, Pair),
-                            Linkage::LinkOnceODR, Mul128);
-    Rt R(*M, *F);
-    Val A = R.param(0), B = R.param(1);
-    const uint64_t M32 = 0xffffffffull;
-    Val Al = R.snap(A & M32), Ah = R.snap(A >> 32);
-    Val Bl = R.snap(B & M32), Bh = R.snap(B >> 32);
-    Val LL = R.snap(Al * Bl), LH = R.snap(Al * Bh);
-    Val HL = R.snap(Ah * Bl), HH = R.snap(Ah * Bh);
-    Val Mid = R.snap(R.snap(LL >> 32) + R.snap(LH & M32) + R.snap(HL & M32));
-    Val Lo = R.snap(R.snap(LL & M32) | R.snap(Mid << 32));
-    Val Hi =
-        R.snap(HH + R.snap(LH >> 32) + R.snap(HL >> 32) + R.snap(Mid >> 32));
-    R.Return(R.tuple(Pair, {Hi, Lo}));
-    R.finish();
-  }
-
-  // unit_divmod128(hi, lo, d) (q, rem): (hi*2^64 + lo) / d, hi < d.
-  FuncId DivMod128 = NoId;
-  {
-    Function *F =
-        newHelper(*this, "unit_divmod128", Ctx.func({U64, U64, U64}, Pair),
-                  Linkage::LinkOnceODR, DivMod128);
-    Rt R(*M, *F);
-    Val Lo = R.param(1), D = R.param(2);
-    Var Rem = R.var(U64, R.param(0)), Q = R.var(U64, R.u(0));
-    Var N = R.var(U64, R.u(64));
-    R.While([&] { return R.snap(N.v() > R.u(0)); },
-            [&] {
-              N = R.snap(N.v() - 1);
-              Val Carry = R.snap(Rem.v() >> 63);
-              Val Bit = R.snap(R.snap(Lo >> N.v()) & 1);
-              Rem = R.snap(R.snap(Rem.v() << 1) | Bit);
-              Q = R.snap(Q.v() << 1);
-              R.If(R.snap(R.lor(R.snap(Carry != 0),
-                                [&] { return R.snap(Rem.v() >= D); })),
-                   [&] {
-                     Rem = R.snap(Rem.v() - D);
-                     Q = R.snap(Q.v() | 1);
-                   });
-            });
-    R.Return(R.tuple(Pair, {Q.v(), Rem.v()}));
-    R.finish();
-  }
-
-  // unit_muldiv(r, n, d): floor(r * n / d) for r < d, the product in 128 bits.
-  FuncId MulDiv = NoId;
-  {
-    Function *F =
-        newHelper(*this, "unit_muldiv", Ctx.func({U64, U64, U64}, U64),
-                  Linkage::LinkOnceODR, MulDiv);
-    Rt R(*M, *F);
-    Val Rr = R.param(0), N = R.param(1), D = R.param(2);
-    Val P = R.call(Mul128, {Rr, N});
-    Val Hi = R.snap(R.fld(P, 0)), Lo = R.snap(R.fld(P, 1));
-    R.If(R.snap(Hi == 0), [&] { R.Return(R.snap(Lo / D)); });
-    Val QR = R.call(DivMod128, {Hi, Lo, D});
-    R.Return(R.snap(R.fld(QR, 0)));
-    R.finish();
-  }
-
-  // unit_scale_int(x, signed, n, d): x * n / d truncated toward zero, exact
-  // (the result wraps in 64 bits like every integer product): x / d * n plus
-  // (x % d) * n / d with the second product in 128 bits.
-  {
-    Function *F = newHelper(*this, "unit_scale_int",
-                            Ctx.func({U64, Ctx.boolean(), U64, U64, Str}, U64),
-                            Linkage::LinkOnceODR, UnitRt.ScaleInt);
-    Rt R(*M, *F);
-    Val X = R.param(0), N = R.param(2), D = R.param(3);
-    // (A fraction that left the 64 bits: marked as 0 / 0.)
-    R.If(R.lor(R.snap(N == 0), [&] { return R.snap(D == 0); }),
-         [&] { R.callNoReturn(Panic, {R.param(4)}); });
-    Val Neg = R.land(R.param(1), [&] { return R.snap(R.to(I64, X) < R.i(0)); });
+    Val X = R.param(0), Aw = R.param(2), N = R.param(3), D = R.param(4);
+    R.If(R.snap(D == 0), [&] { R.callNoReturn(Panic, {R.param(5)}); });
+    Val Neg =
+        R.land(R.param(1), [&] { return R.snap(R.to(Ctx.i64(), X) < R.i(0)); });
     Var Ax = R.var(U64, X);
     R.If(Neg, [&] { Ax = R.snap(R.u(0) - X); });
-    Val Q = R.snap(Ax.v() / D), Rm = R.snap(Ax.v() % D);
-    Val Part = R.call(MulDiv, {Rm, N, D});
-    Var Res = R.var(U64, R.snap(R.snap(Q * N) + Part));
+    // (An integer factor, n 0, is the product alone.)
+    Var Res = R.var(U64, R.snap(Ax.v() * Aw));
+    R.If(R.snap(N != 0), [&] {
+      Val Q = R.snap(Ax.v() / D), Rm = R.snap(Ax.v() % D);
+      Val Part = R.call(A.MulDiv, {Rm, N, D});
+      Res = R.snap(R.snap(Res.v() + R.snap(Q * N)) + Part);
+    });
     R.If(Neg, [&] { Res = R.snap(R.u(0) - Res.v()); });
     R.Return(Res.v());
     R.finish();
   }
 
-  // unit_bitlen(x): the number of bits of x >= 1.
-  FuncId BitLen = NoId;
-  {
-    Function *F = newHelper(*this, "unit_bitlen", Ctx.func({U64}, U64),
-                            Linkage::LinkOnceODR, BitLen);
-    Rt R(*M, *F);
-    Var X = R.var(U64, R.param(0)), N = R.var(U64, R.u(1));
-    for (unsigned S : {32, 16, 8, 4, 2, 1})
-      R.If(R.snap(R.snap(X.v() >> S) != 0), [&] {
-        X = R.snap(X.v() >> S);
-        N = R.snap(N.v() + S);
-      });
-    R.Return(N.v());
-    R.finish();
-  }
-
-  // unit_pow2(k): 2^k as a double (|k| below 1000).
-  FuncId Pow2 = NoId;
-  {
-    Function *F = newHelper(*this, "unit_pow2", Ctx.func({I64}, F64),
-                            Linkage::LinkOnceODR, Pow2);
-    Rt R(*M, *F);
-    Val K = R.param(0);
-    auto Fl = [&](double V) { return Val{&R, constFloat(F64, V)}; };
-    Var Left = R.var(I64, K), Base = R.var(F64, Fl(2.0));
-    Var Res = R.var(F64, Fl(1.0));
-    R.If(R.snap(K < R.i(0)), [&] {
-      Left = R.snap(R.i(0) - K);
-      Base = Fl(0.5);
-    });
-    R.While([&] { return R.snap(Left.v() > R.i(0)); },
-            [&] {
-              R.If(R.snap(R.snap(Left.v() & R.i(1)) != R.i(0)),
-                   [&] { Res = R.bin(BinOp::Mul, Res.v(), Base.v()); });
-              Base = R.bin(BinOp::Mul, Base.v(), Base.v());
-              Left = R.snap(Left.v() >> R.i(1));
-            });
-    R.Return(Res.v());
-    R.finish();
-  }
-
-  // unit_ratio(n, d, p): n / d (n, d >= 1) rounded once to p significant bits
-  // (to nearest, ties to even) as a double: the factor of a float32 (p = 24)
-  // or float64 (p = 53) as the compiler rounds a constant factor.
-  {
-    Function *F =
-        newHelper(*this, "unit_ratio", Ctx.func({U64, U64, U64, Str}, F64),
-                  Linkage::LinkOnceODR, UnitRt.Ratio);
-    Rt R(*M, *F);
-    Val N = R.param(0), D = R.param(1), P = R.param(2);
-    // (A factor out of range, 0 / 0, gives 0: the site that uses it panics
-    // before it uses the value.)
-    R.If(R.lor(R.snap(N == 0), [&] { return R.snap(D == 0); }),
-         [&] { R.Return(Val{&R, constFloat(F64, 0.0)}); });
-    Val Bn = R.call(BitLen, {N}), Bd = R.call(BitLen, {D});
-    // q = n * 2^s / d has p + 2 or p + 3 bits.
-    Val S = R.snap(R.snap(R.to(I64, P) + R.i(2)) + R.snap(R.to(I64, Bd)) -
-                   R.to(I64, Bn));
-    Var Q = R.var(U64, R.u(0)), Sticky = R.var(R.Bool, R.boolean(false));
-    R.IfElse(
-        R.snap(S >= R.i(0)),
-        [&] {
-          Var Hi = R.var(U64, R.u(0)), Lo = R.var(U64, R.u(0));
-          Val Su = R.to(U64, S);
-          R.IfElse(
-              R.snap(Su >= 64), [&] { Hi = R.snap(N << R.snap(Su - 64)); },
-              [&] {
-                R.If(R.snap(Su == 0), [&] { Lo = N; });
-                R.If(R.snap(Su != 0), [&] {
-                  Hi = R.snap(N >> R.snap(R.u(64) - Su));
-                  Lo = R.snap(N << Su);
-                });
-              });
-          Val QR = R.call(DivMod128, {Hi.v(), Lo.v(), D});
-          Q = R.snap(R.fld(QR, 0));
-          Sticky = R.snap(R.fld(QR, 1) != 0);
-        },
-        [&] {
-          Val T = R.to(U64, R.snap(R.i(0) - S));
-          Val N2 = R.snap(N >> T);
-          Val Lost = R.snap(N & R.snap(R.snap(R.u(1) << T) - 1));
-          Q = R.snap(N2 / D);
-          Sticky = R.snap(R.lor(R.snap(R.snap(N2 % D) != 0),
-                                [&] { return R.snap(Lost != 0); }));
-        });
-    // Round q to p bits.
-    Val Sh = R.snap(R.call(BitLen, {Q.v()}) - P);
-    Val Low = R.snap(Q.v() & R.snap(R.snap(R.u(1) << Sh) - 1));
-    Val Half = R.snap(R.u(1) << R.snap(Sh - 1));
-    Var Q2 = R.var(U64, R.snap(Q.v() >> Sh));
-    Val Up = R.lor(R.snap(Low > Half), [&] {
-      return R.land(R.snap(Low == Half), [&] {
-        return R.lor(Sticky.v(),
-                     [&] { return R.snap(R.snap(Q2.v() & 1) != 0); });
-      });
-    });
-    R.If(Up, [&] { Q2 = R.snap(Q2.v() + 1); });
-    Val Pw = R.call(Pow2, {R.snap(R.to(I64, Sh) - S)});
-    R.Return(R.bin(BinOp::Mul, R.to(F64, Q2.v()), Pw));
-    R.finish();
-  }
-
-  UnitRt.RatMul = RatMul;
-  UnitRt.MulPow = MulPow;
+  UnitRt.Make = A.Make;
+  UnitRt.SiteF = A.SiteF;
+  UnitRt.SiteI = A.SiteI;
+  UnitRt.SpillFree = A.SpillFree;
   return &UnitRt;
 }
 

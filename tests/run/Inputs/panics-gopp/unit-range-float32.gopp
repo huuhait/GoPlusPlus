@@ -1,0 +1,21 @@
+// P04.24 (ADR-0025 Amendment point 6, UNI-2; review round 1, R2): a factor
+// that is no number of the float type is out of range in generic code, as
+// plain code refuses it (E0435, Checker::unitFactorFits). F32MAX / M is the
+// largest float32 and runs; 2^128 / M is +inf in float32: the site stops the
+// program with "unit out of range" and the unit as the generic code wrote it
+// (`U/V`), exit status 2, after the output that came before. (The same
+// factor in float64 is a number: tests/run/units-bigfactor-table.test.)
+// Written by hand: Go has no units.
+package main
+
+unit M
+unit F32MAX = 340282346638528859811704183484516925440 M
+unit F128 = 340282366920938463463374607431768211456 M
+
+func R[U unit, V unit](a float32[U], b float32[V]) float32 { return float32(a / b) }
+
+func main() {
+	println("start")
+	println(R(float32[F32MAX](1), float32[M](1)))
+	println(R(float32[F128](1), float32[M](1)))
+}

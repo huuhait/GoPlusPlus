@@ -32,6 +32,7 @@ add_executable(GoppUnitTests
   GIR/DeepTest.cpp
   GIR/AllocatorTest.cpp
   GIR/GlueTest.cpp
+  GIR/UnitRuntimeTest.cpp
   GIR/InlineTest.cpp
   GIR/ScopeTest.cpp
   GIR/InstancesTest.cpp

@@ -1,23 +1,26 @@
 // P04.24 (R13): the branch of a site whose factor is out of range is the
-// branch taken: the quotient of the 7th powers of KM and M is 1000^7 = 10^21,
-// past 64 bits in the descriptor's fraction, so the site stops the program
-// with "unit out of range" and the unit as the generic code wrote it (`U^7/V^7`),
-// exit status 2, after the output that came before. (With the branch not
-// taken it runs: tests/run/units-lazy.test.) Written by hand: Go has no units.
+// branch taken: the quotient of the 8th powers of P (about 1 M, a factor of
+// 513 bits each way) and M has a factor of 4097 bits each way, past the 4096
+// bits of a factor (UNI-2), so the site stops the program with "unit out of range" and
+// the unit as the generic code wrote it (`U^8/V^8`), exit status 2, after the
+// output that came before. The factor was made at the entry of F in both
+// calls: the first call, whose branch is not taken, runs (also
+// tests/run/units-lazy.test). Written by hand: Go has no units.
 package main
 
 unit M
-unit KM = 1000 M
+unit P1 = (2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397533 / 2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397761) M
+unit P = (6582018229284824168619876730229402019930943462534319453394436153 / 6582018229284824168619876730229402019930943462534319453394436319) P1
 
 func F[U unit, V unit](a float64[U], b float64[V], take bool) float64 {
 	if take {
-		return float64((a * a * a * a * a * a * a) / (b * b * b * b * b * b * b))
+		return float64((a * a * a * a * a * a * a * a) / (b * b * b * b * b * b * b * b))
 	}
 	return float64(a / b)
 }
 
 func main() {
 	println("start")
-	println(F(1.0[KM], 1.0[M], false))
-	println(F(1.0[KM], 1.0[M], true))
+	println(F(1.0[P], 1.0[M], false))
+	println(F(1.0[P], 1.0[M], true))
 }

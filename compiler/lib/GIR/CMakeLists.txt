@@ -25,6 +25,7 @@ add_gopp_library(GIR
   RuntimeMap.cpp
   RuntimeIface.cpp
   RuntimeStr.cpp
+  RuntimeUnits.cpp
   Print.cpp
   Serialize.cpp
   Symbols.cpp

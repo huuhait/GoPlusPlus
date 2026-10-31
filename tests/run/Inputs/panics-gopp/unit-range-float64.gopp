@@ -1,0 +1,20 @@
+// P04.24 (ADR-0025 Amendment point 6, UNI-2; review round 1, R2): a float64
+// factor that rounds to 0 is out of range in generic code, as plain code
+// refuses it (E0435). M^3 / (T500 T500 T74) is 2^-1074, the smallest
+// float64 subnormal, and runs; with T75 it is 2^-1075, which rounds to 0: the
+// site stops the program with "unit out of range: U/V", exit status 2.
+// Written by hand: Go has no units.
+package main
+
+unit M
+unit T500 = 3273390607896141870013189696827599152216642046043064789483291368096133796404674554883270092325904157150886684127560071009217256545885393053328527589376 M
+unit T74 = 18889465931478580854784 M
+unit T75 = 37778931862957161709568 M
+
+func R[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+
+func main() {
+	println("start")
+	println(R(float64[M*M*M](1), float64[T500*T500*T74](1)) > 0)
+	println(R(float64[M*M*M](1), float64[T500*T500*T75](1)) > 0)
+}

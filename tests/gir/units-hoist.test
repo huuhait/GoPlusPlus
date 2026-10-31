@@ -2,27 +2,29 @@
 // RUN: %gopp build -opt=2 -no-debug -emit=llvm %s | FileCheck %s --check-prefix=LL
 // P04.24 (GEN-14): the factor of a collapse site and the descriptors of a call
 // are made once, at the entry of the function, not in the loop that uses
-// them. SumG divides in a loop: its one unit_site call comes before the
+// them. SumG divides in a loop: its one unit_site_f call comes before the
 // loop (it is in the block the entry jumps through), and the loop holds none;
 // Pass builds the descriptor `U*U` for the call of Leaf in its loop: one
-// unit_mulpow call, outside it. The other side: the calls are there (one
-// each), and a function with no site (Plain) has none.
+// unit_make call, outside it. The other side: the calls are there (one
+// each), and a function with no site (Plain) has none. (The StorageLive at
+// the entry is the function's spill chain, unit_make's.)
 // CHECK-LABEL: fn _GPIF4mainE4SumG
 // CHECK: bb0:
+// CHECK-NEXT: StorageLive({{_[0-9]+}})
 // CHECK-NEXT: goto -> bb1
 // CHECK: bb1:
-// CHECK: call const fn @_GPF4goppE9unit_site
+// CHECK: call const fn @_GPF4goppE11unit_site_f
 // CHECK-NOT: unit_site
-// CHECK-NOT: unit_mulpow
+// CHECK-NOT: unit_make
 // CHECK-LABEL: fn _GPIF4mainE4Pass
-// CHECK: call const fn @_GPF4goppE11unit_mulpow
-// CHECK-NOT: unit_mulpow
+// CHECK: call const fn @_GPF4goppE9unit_make
+// CHECK-NOT: unit_make
 // CHECK-LABEL: fn _GPIF4mainE5Plain
 // CHECK-NOT: unit_
 // CHECK-LABEL: fn _GPIF4mainE4Leaf
 // LL-LABEL: define {{.*}} @_GPIF4mainE4SumG
 // LL: entry:
-// LL: call {{.*}}@_GPF4goppE9unit_site
+// LL: call {{.*}}@_GPF4goppE11unit_site_f
 // LL: bb4:
 // LL-NOT: call
 // LL: bb6.loopexit
@@ -31,6 +33,8 @@ package main
 unit M
 unit KM = 1000 M
 
+// (Not inlined into main at -O2, so the LL lines see its own loop.)
+@NoInline
 func SumG[U unit, V unit](a float64[U], b float64[V], n int) float64 {
 	s := 0.0
 	for i := 0; i < n; i++ {

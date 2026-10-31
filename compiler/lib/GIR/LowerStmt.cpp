@@ -1681,6 +1681,7 @@ void Body::lower(const ast::FuncDecl *FD) {
       LocalId P = FB.param(Params.size() + Lead + K);
       F.Locals[P].Name = "unit";
       DictLocals[CurInst->DictParams[K]] = P;
+      DictIndex[CurInst->DictParams[K]] = K;
     }
     // (At an instance of generic code, the types of the instance: P04.08.)
     FnSig = sigOf(Obj);
@@ -1711,6 +1712,12 @@ void Body::lower(const ast::FuncDecl *FD) {
   // jumps through and the body's uses fill (Hoist).
   BlockId BodyStart = NoId;
   if (dictMode() && !DictLocals.empty()) {
+    // (The spill chain of the descriptors this body makes: in the function's
+    // scope before any return is lowered, so every exit drops it; owned only
+    // if a descriptor slot uses it, below.)
+    SpillLocal = FB.newLocal(ctx().ptr(ctx().u8()), Local::Var, "unitspill");
+    Scopes.back().Locals.push_back(SpillLocal);
+    FB.storageLive(SpillLocal);
     HoistBlock = FB.newBlock();
     HoistScope = FB.scope();
     BodyStart = FB.newBlock();
@@ -1724,6 +1731,11 @@ void Body::lower(const ast::FuncDecl *FD) {
     FB.setSpan(L.spanOf(FD->getBegin()));
     FB.gotoBlock(BodyStart);
     HoistBlock = NoId;
+  }
+  if (SpillUsed) {
+    Local &Lo = F.Locals[SpillLocal];
+    Lo.Owned = true;
+    Lo.Glue = L.UnitRt.SpillFree;
   }
   Scopes.pop_back();
   finish();

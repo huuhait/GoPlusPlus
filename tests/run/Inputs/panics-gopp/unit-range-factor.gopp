@@ -1,15 +1,20 @@
-// P04.24 (UNI-2): the factor of a unit descriptor is a fraction of two 64-bit
-// numbers; `(KM/M)^8` is 1000^8 = 10^24, past them. The descriptor of Leaf's
-// unit is marked, and the site `a / b`, whose units cancel and so need the
-// factor, stops the program with "unit out of range" and the unit as the
-// generic code wrote it (`U/V`), exit status 2, after the output that came
-// before. (The same code with the 4th power runs: tests/run/
-// units-dict-chain.test; a unit that is not empty at the instance needs no
-// factor and does not panic.)
+// P04.24 (UNI-2): the factor of a run-time unit is an exact fraction whose
+// numerator and denominator have at most 4096 bits each (the checker's bound
+// for plain code). P is about 1 M, its factor a product of two primes over a
+// product of two others, 513 bits each way, so the unit P^8/M^8 of Leaf's
+// site `a / b` (U = P^8, V = M^8: the units cancel, and the site needs the
+// factor) has a numerator and a denominator of 4097 bits: just past the
+// bound. Top marks the descriptor it makes for P^8, and the site stops the
+// program with "unit out of range" and the unit as the generic code wrote it
+// (`U/V`), exit status 2, after the output that came before. (The same chain
+// with a factor of 512 bits each way, 4096 bits at the 8th power, runs, as
+// does (KM/M)^8 = 10^24: tests/run/units-bigfactor.test.) Written by hand:
+// Go has no units.
 package main
 
 unit M
-unit KM = 1000 M
+unit P1 = (2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397533 / 2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397761) M
+unit P = (6582018229284824168619876730229402019930943462534319453394436153 / 6582018229284824168619876730229402019930943462534319453394436319) P1
 
 func Leaf[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
 
@@ -19,5 +24,5 @@ func Top[U unit, V unit](a float64[U], b float64[V]) float64 {
 
 func main() {
 	println("start")
-	println(Top(1.0[KM], 1.0[M]))
+	println(Top(1.0[P], 1.0[M]))
 }

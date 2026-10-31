@@ -19,11 +19,15 @@ unit M
 unit S
 unit KM = 1000 M
 unit X = M^400000
+unit P1 = (2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397533 / 2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397761) M
+unit P = (6582018229284824168619876730229402019930943462534319453394436153 / 6582018229284824168619876730229402019930943462534319453394436319) P1
 
-// (1) The branch with the 7th powers is not taken: 1000 for KM / M.
+// (1) The branch with the 8th powers is not taken: P^8/M^8 has a factor of
+// 4097 bits each way (P's has 513), past the 4096 bits of a factor; P / M is
+// 1 (rounded).
 func F[U unit, V unit](a float64[U], b float64[V], take bool) float64 {
 	if take {
-		return float64((a * a * a * a * a * a * a) / (b * b * b * b * b * b * b))
+		return float64((a * a * a * a * a * a * a * a) / (b * b * b * b * b * b * b * b))
 	}
 	return float64(a / b)
 }
@@ -57,7 +61,7 @@ func PMin[T ~int](a, b T) T                 { return min(a, b) }
 func PMax[T ~int](a, b T) T                 { return max(a, b) }
 
 func main() {
-	println(F(1.0[KM], 1.0[M], false))
+	println(F(1.0[P], 1.0[M], false))
 	println(E(1.0[X], 1.0[S], false))
 	vs := []Vec[KM]{{1.0[KM], 2.0[KM]}, {3.0[KM], 4.0[KM]}}
 	s := Sum(vs)

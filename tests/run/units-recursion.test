@@ -1,0 +1,39 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-recursion.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-recursion.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (review round 1 of TODO item 1, R1): generic code whose unit factors
+// may be 4096 bits wide recurses as deep as plain code. Rec goes 5000 levels
+// deep (with frames sized by the factor's bound, 3 KB a level, it crashed at
+// 3000 on 8 MB); at each level it makes the descriptor U*U for Leaf and
+// compares Leaf's value with the one main computed in plain code. With KM and
+// M the factor is 10^6, in the descriptor's slot; with Q (a factor of 512
+// bits each way) Q^2/M^2 has 1024 bits each way, spilled to the heap at every
+// level and freed when the level returns (check-run-leaks); its value rounds
+// to 1. Every level agrees with plain code: the count is the depth.
+package main
+
+unit M
+unit KM = 1000 M
+unit P1 = (2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397533 / 2037035976334486086268445688409378161051468393665936250636140449354381299763336706183397761) M
+unit Q = (6376330159619673413350505582409733206808101479330121970475860087 / 6376330159619673413350505582409733206808101479330121970475860373) P1
+
+func Leaf[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+
+func Rec[U unit, V unit](n int, a float64[U], b float64[V], want float64) int {
+	if n == 0 {
+		return 0
+	}
+	same := 0
+	if Leaf(a*a, b*b) == want {
+		same = 1
+	}
+	return Rec(n-1, a, b, want) + same
+}
+
+func main() {
+	k, m, q := 1.0[KM], 1.0[M], 1.0[Q]
+	println(Rec(5000, k, m, float64((k*k)/(m*m))), float64((k*k)/(m*m)))
+	println(Rec(5000, q, m, float64((q*q)/(m*m))), float64((q*q)/(m*m)) == 1)
+}

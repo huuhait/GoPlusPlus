@@ -561,6 +561,58 @@ BigFloat Real::toBigFloat() const {
   return Num.isNegative() ? R.neg() : R;
 }
 
+double Real::toIEEE(unsigned P) const {
+  if (!Rat)
+    return F.toIEEE(P);
+  if (Num.isZero())
+    return 0;
+  bool Neg = Num.isNegative();
+  APInt N = absS(Num);
+  unsigned W = std::max(N.getBitWidth(), Den.getBitWidth()) + 2;
+  N = N.zext(W);
+  APInt D = Den.zext(W);
+  // E = floor(log2(N/D)): N/D is in [2^E, 2^(E+1)).
+  int64_t E = int64_t(N.getActiveBits()) - int64_t(D.getActiveBits());
+  {
+    unsigned SW = W + 2;
+    APInt X = N.zext(SW), Y = D.zext(SW);
+    if (E >= 0)
+      Y <<= unsigned(E);
+    else
+      X <<= unsigned(-E);
+    if (X.ult(Y))
+      --E;
+  }
+  int64_t EMin = P == 24 ? -126 : -1022;
+  int64_t EMax = P == 24 ? 127 : 1023;
+  double Inf = std::numeric_limits<double>::infinity();
+  if (E > EMax)
+    return Neg ? -Inf : Inf;
+  // Bits kept: P for a normal result, fewer for a subnormal one.
+  int64_t Keep = E >= EMin ? P : P - (EMin - E);
+  if (Keep < 0)
+    return 0; // below half the smallest subnormal
+  // Q2 = floor(N/D * 2^(Keep - E)) has Keep + 1 bits: Keep of the result
+  // and the half bit; the remainder is the sticky bit.
+  int64_t S = Keep - E;
+  unsigned SW = W + unsigned(std::abs(S)) + 2;
+  APInt X = N.zext(SW), Y = D.zext(SW);
+  if (S >= 0)
+    X <<= unsigned(S);
+  else
+    Y <<= unsigned(-S);
+  APInt Q2, R;
+  APInt::udivrem(X, Y, Q2, R);
+  uint64_t Q = Q2.lshr(1).getZExtValue();
+  bool Half = Q2[0];
+  if (Half && (!R.isZero() || (Q & 1)))
+    ++Q; // may carry into the next binade: still exact below
+  double V = std::ldexp(static_cast<double>(Q), static_cast<int>(E - Keep + 1));
+  if (P == 24 && std::fabs(V) > std::numeric_limits<float>::max())
+    V = Inf;
+  return Neg ? -V : V;
+}
+
 Real Real::neg() const {
   if (!Rat)
     return big(F.neg());

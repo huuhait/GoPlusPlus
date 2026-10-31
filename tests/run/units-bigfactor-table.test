@@ -1,0 +1,1259 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-units-bigtable.py --check %s %S/golden/units-bigfactor-table.out
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-bigfactor-table.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-bigfactor-table.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (TODO item 1): written by Inputs/gen-units-bigtable.py (see there); do
+// not edit. Plain code against generic code for random rationals made of the SI
+// and CODATA factors and for the float32 and float64 boundaries; the golden is
+// computed by the script with exact fractions.
+package main
+
+import "unsafe"
+
+unit M
+unit KG
+unit S
+unit KM = 1000 M
+unit MI = (1609344 / 1000) M
+unit IN = (254 / 10000) M
+unit AU = 149597870700 M
+unit LY = 9460730472580800 M
+unit ANG = (1 / 10000000000) M
+unit G = (1 / 1000) KG
+unit LB = (45359237 / 100000000) KG
+unit DA = (166053906660 / 100000000000000000000000000000000000000) KG
+unit ME = (91093837015 / 100000000000000000000000000000000000000000) KG
+unit MP = (167262192369 / 100000000000000000000000000000000000000) KG
+unit MIN = 60 S
+unit H = 3600 S
+unit YR = 31557600 S
+unit NS = (1 / 1000000000) S
+unit J = KG * M^2 / S^2
+unit EV = (1602176634 / 10000000000000000000000000000) J
+unit CAL = (4184 / 1000) J
+unit KWH = 3600000 J
+unit EH = (43597447222071 / 10000000000000000000000000000000) J
+unit FMAX = 340282346638528859811704183484516925440 M
+unit F128 = 340282366920938463463374607431768211456 M
+unit FTIE = 340282356779733661637539395458142568448 M
+unit TWO400 = 2582249878086908589655919172003011874329705792829223512830659356540647622016841194629645353280137831435903171972747493376 M
+unit TWO500 = 3273390607896141870013189696827599152216642046043064789483291368096133796404674554883270092325904157150886684127560071009217256545885393053328527589376 M
+unit D53 = 9007199254740991 M
+unit D54 = 18014398509481983 M
+unit TWO71 = 2361183241434822606848 M
+unit TWO70 = 1180591620717411303424 M
+unit TWO24 = 16777216 M
+unit TWO74 = 18889465931478580854784 M
+unit TWO75 = 37778931862957161709568 M
+unit TWO149 = 713623846352979940529142984724747568191373312 M
+unit TWO150 = 1427247692705959881058285969449495136382746624 M
+unit TWO151 = 2854495385411919762116571938898990272765493248 M
+unit THREE = 3 M
+unit X24 = (16777217 / 16777216) M
+unit X53 = (9007199254740993 / 9007199254740992) M
+unit Y1 = (6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216824503042048 / 6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216824503042047) M
+unit Y2 = (6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216824503042049 / 6703903964971298549787012499102923063739682910296196688861780721860882015036773488400937149083451713845015929093243025426876941405973284973216824503042048) M
+
+func bits(x float64) uint64   { return *(*uint64)(unsafe.Pointer(&x)) }
+func bits32(x float32) uint32 { return *(*uint32)(unsafe.Pointer(&x)) }
+
+func GQ64[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+func GP64[U unit, V unit](a float64[U], b float64[1/V]) float64 { return float64(a * b) }
+func GQ32[U unit, V unit](a float32[U], b float32[V]) float32 { return float32(a / b) }
+func GP32[U unit, V unit](a float32[U], b float32[1/V]) float32 { return float32(a * b) }
+func GQI[U unit, V unit](a int64[U], b int64[V]) int64 { return int64(a / b) }
+func GPI[U unit, V unit](a int64[U], b int64[1/V]) int64 { return int64(a * b) }
+
+// The units are known in a method of an instance (the reference for int64).
+type Pair[U unit, V unit] struct {
+	a int64[U]
+	b int64[V]
+	c int64[1/V]
+}
+
+func (p Pair[U, V]) Q() int64 { return int64(p.a / p.b) }
+func (p Pair[U, V]) P() int64 { return int64(p.a * p.c) }
+
+// A method of an instance of a generic type (its units known) calling the
+// generic that takes descriptors: the constant descriptors of its units.
+func (p Pair[U, V]) QG() int64 { return GQI(p.a, p.b) }
+
+type PairF[U unit, V unit] struct {
+	a float64[U]
+	b float64[V]
+}
+
+func (p PairF[U, V]) Q() float64  { return GQ64(p.a, p.b) }
+func (p PairF[U, V]) QQ() float64 { return GQ64(p.a*p.a, p.b*p.b) }
+func (p PairF[U, V]) QL() float64 {
+	f := func() float64 { return GQ64(p.a, p.b) }
+	return f()
+}
+
+type T0 = Pair[AU/KG^3, KM/G^3]
+type TF0 = PairF[AU/KG^3, KM/G^3]
+type T1 = Pair[1/ANG^2/ME^3, 1/ANG^2/ME^3]
+type TF1 = PairF[1/ANG^2/ME^3, 1/ANG^2/ME^3]
+type T2 = Pair[1/KG^2, 1/G^2]
+type TF2 = PairF[1/KG^2, 1/G^2]
+type T3 = Pair[MIN^3*M^2/J, YR^3*LY^2/EV]
+type TF3 = PairF[MIN^3*M^2/J, YR^3*LY^2/EV]
+type T4 = Pair[DA/H, MP/H]
+type TF4 = PairF[DA/H, MP/H]
+type T5 = Pair[LB^2*EV^3, KG^2*KWH^3]
+type TF5 = PairF[LB^2*EV^3, KG^2*KWH^3]
+type T6 = Pair[KG, ME]
+type TF6 = PairF[KG, ME]
+type T7 = Pair[1/M^2, 1/AU^2]
+type TF7 = PairF[1/M^2, 1/AU^2]
+type T8 = Pair[1/EH^2, 1/EV^2]
+type TF8 = PairF[1/EH^2, 1/EV^2]
+type T9 = Pair[1/CAL^2, 1/KWH^2]
+type TF9 = PairF[1/CAL^2, 1/KWH^2]
+type T10 = Pair[KM^2*KWH^2/YR^2, LY^2*EH^2/MIN^2]
+type TF10 = PairF[KM^2*KWH^2/YR^2, LY^2*EH^2/MIN^2]
+type T11 = Pair[1/J^3/LY/S^3, 1/J^3/LY/S^3]
+type TF11 = PairF[1/J^3/LY/S^3, 1/J^3/LY/S^3]
+type T12 = Pair[NS^3/ANG^2, H^3/MI^2]
+type TF12 = PairF[NS^3/ANG^2, H^3/MI^2]
+type T13 = Pair[1/MP^2, 1/ME^2]
+type TF13 = PairF[1/MP^2, 1/ME^2]
+type T14 = Pair[DA*EH^3, KG*J^3]
+type TF14 = PairF[DA*EH^3, KG*J^3]
+type T15 = Pair[DA^2, ME^2]
+type TF15 = PairF[DA^2, ME^2]
+type T16 = Pair[FMAX, M]
+type T17 = Pair[FTIE, M]
+type T18 = Pair[F128, M]
+type T19 = Pair[M, TWO149]
+type T20 = Pair[M, TWO150]
+type T21 = Pair[THREE, TWO151]
+type T22 = Pair[D53*TWO400*TWO500*TWO71, M*M*M*M]
+type T23 = Pair[D54*TWO400*TWO500*TWO70, M*M*M*M]
+type T24 = Pair[TWO500*TWO500*TWO24, M*M*M]
+type T25 = Pair[M*M*M, TWO500*TWO500*TWO74]
+type T26 = Pair[M*M*M, TWO500*TWO500*TWO75]
+type T27 = Pair[THREE*M*M*M, TWO500*TWO500*TWO75*M]
+type T28 = Pair[X24*Y1, M*Y2]
+type T29 = Pair[X53*Y1, M*Y2]
+type T30 = Pair[X24, M]
+type T31 = Pair[X53, M]
+
+func main() {
+	{
+		a, b, c := 1.0[AU/KG^3], 1.0[KM/G^3], 1.0[1/(KM/G^3)]
+		println("r0", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r0", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF0{a, b}
+		println("r0", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r0", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r0", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[AU/KG^3](1), float32[KM/G^3](1), float32[1/(KM/G^3)](1)
+		println("r0", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r0", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[AU/KG^3], 7.0[KM/G^3], 7.0[1/(KM/G^3)]
+		println("r0", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r0", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF0{a, b}
+		println("r0", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r0", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r0", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[AU/KG^3](3), float32[KM/G^3](7), float32[1/(KM/G^3)](7)
+		println("r0", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r0", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[AU/KG^3], 7.0[KM/G^3], 7.0[1/(KM/G^3)]
+		println("r0", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r0", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF0{a, b}
+		println("r0", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r0", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r0", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[AU/KG^3](-3), float32[KM/G^3](7), float32[1/(KM/G^3)](7)
+		println("r0", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r0", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T0{int64[AU/KG^3](123456789012345), int64[KM/G^3](7), int64[1/(KM/G^3)](7)}
+		println("r0", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r0", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r0", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T0{int64[AU/KG^3](-123456789012345), int64[KM/G^3](7), int64[1/(KM/G^3)](7)}
+		println("r0", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r0", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r0", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T0{int64[AU/KG^3](7), int64[KM/G^3](123456789012345), int64[1/(KM/G^3)](123456789012345)}
+		println("r0", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r0", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r0", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/ANG^2/ME^3], 1.0[1/ANG^2/ME^3], 1.0[1/(1/ANG^2/ME^3)]
+		println("r1", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r1", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF1{a, b}
+		println("r1", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r1", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r1", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/ANG^2/ME^3](1), float32[1/ANG^2/ME^3](1), float32[1/(1/ANG^2/ME^3)](1)
+		println("r1", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r1", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/ANG^2/ME^3], 7.0[1/ANG^2/ME^3], 7.0[1/(1/ANG^2/ME^3)]
+		println("r1", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r1", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF1{a, b}
+		println("r1", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r1", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r1", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/ANG^2/ME^3](3), float32[1/ANG^2/ME^3](7), float32[1/(1/ANG^2/ME^3)](7)
+		println("r1", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r1", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/ANG^2/ME^3], 7.0[1/ANG^2/ME^3], 7.0[1/(1/ANG^2/ME^3)]
+		println("r1", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r1", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF1{a, b}
+		println("r1", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r1", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r1", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/ANG^2/ME^3](-3), float32[1/ANG^2/ME^3](7), float32[1/(1/ANG^2/ME^3)](7)
+		println("r1", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r1", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T1{int64[1/ANG^2/ME^3](123456789012345), int64[1/ANG^2/ME^3](7), int64[1/(1/ANG^2/ME^3)](7)}
+		println("r1", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r1", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r1", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T1{int64[1/ANG^2/ME^3](-123456789012345), int64[1/ANG^2/ME^3](7), int64[1/(1/ANG^2/ME^3)](7)}
+		println("r1", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r1", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r1", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T1{int64[1/ANG^2/ME^3](7), int64[1/ANG^2/ME^3](123456789012345), int64[1/(1/ANG^2/ME^3)](123456789012345)}
+		println("r1", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r1", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r1", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/KG^2], 1.0[1/G^2], 1.0[1/(1/G^2)]
+		println("r2", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r2", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF2{a, b}
+		println("r2", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r2", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r2", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/KG^2](1), float32[1/G^2](1), float32[1/(1/G^2)](1)
+		println("r2", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r2", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/KG^2], 7.0[1/G^2], 7.0[1/(1/G^2)]
+		println("r2", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r2", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF2{a, b}
+		println("r2", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r2", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r2", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/KG^2](3), float32[1/G^2](7), float32[1/(1/G^2)](7)
+		println("r2", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r2", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/KG^2], 7.0[1/G^2], 7.0[1/(1/G^2)]
+		println("r2", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r2", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF2{a, b}
+		println("r2", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r2", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r2", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/KG^2](-3), float32[1/G^2](7), float32[1/(1/G^2)](7)
+		println("r2", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r2", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T2{int64[1/KG^2](123456789012345), int64[1/G^2](7), int64[1/(1/G^2)](7)}
+		println("r2", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r2", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r2", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T2{int64[1/KG^2](-123456789012345), int64[1/G^2](7), int64[1/(1/G^2)](7)}
+		println("r2", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r2", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r2", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T2{int64[1/KG^2](7), int64[1/G^2](123456789012345), int64[1/(1/G^2)](123456789012345)}
+		println("r2", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r2", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r2", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[MIN^3*M^2/J], 1.0[YR^3*LY^2/EV], 1.0[1/(YR^3*LY^2/EV)]
+		println("r3", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r3", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF3{a, b}
+		println("r3", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r3", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r3", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		a, b, c := 3.0[MIN^3*M^2/J], 7.0[YR^3*LY^2/EV], 7.0[1/(YR^3*LY^2/EV)]
+		println("r3", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r3", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF3{a, b}
+		println("r3", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r3", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r3", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		a, b, c := -3.0[MIN^3*M^2/J], 7.0[YR^3*LY^2/EV], 7.0[1/(YR^3*LY^2/EV)]
+		println("r3", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r3", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF3{a, b}
+		println("r3", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r3", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r3", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		p := T3{int64[MIN^3*M^2/J](123456789012345), int64[YR^3*LY^2/EV](7), int64[1/(YR^3*LY^2/EV)](7)}
+		println("r3", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r3", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r3", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T3{int64[MIN^3*M^2/J](-123456789012345), int64[YR^3*LY^2/EV](7), int64[1/(YR^3*LY^2/EV)](7)}
+		println("r3", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r3", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r3", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T3{int64[MIN^3*M^2/J](7), int64[YR^3*LY^2/EV](123456789012345), int64[1/(YR^3*LY^2/EV)](123456789012345)}
+		println("r3", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r3", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r3", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[DA/H], 1.0[MP/H], 1.0[1/(MP/H)]
+		println("r4", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r4", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF4{a, b}
+		println("r4", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r4", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r4", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[DA/H](1), float32[MP/H](1), float32[1/(MP/H)](1)
+		println("r4", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r4", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[DA/H], 7.0[MP/H], 7.0[1/(MP/H)]
+		println("r4", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r4", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF4{a, b}
+		println("r4", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r4", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r4", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[DA/H](3), float32[MP/H](7), float32[1/(MP/H)](7)
+		println("r4", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r4", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[DA/H], 7.0[MP/H], 7.0[1/(MP/H)]
+		println("r4", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r4", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF4{a, b}
+		println("r4", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r4", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r4", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[DA/H](-3), float32[MP/H](7), float32[1/(MP/H)](7)
+		println("r4", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r4", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T4{int64[DA/H](123456789012345), int64[MP/H](7), int64[1/(MP/H)](7)}
+		println("r4", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r4", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r4", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T4{int64[DA/H](-123456789012345), int64[MP/H](7), int64[1/(MP/H)](7)}
+		println("r4", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r4", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r4", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T4{int64[DA/H](7), int64[MP/H](123456789012345), int64[1/(MP/H)](123456789012345)}
+		println("r4", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r4", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r4", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[LB^2*EV^3], 1.0[KG^2*KWH^3], 1.0[1/(KG^2*KWH^3)]
+		println("r5", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r5", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF5{a, b}
+		println("r5", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r5", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r5", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		a, b, c := 3.0[LB^2*EV^3], 7.0[KG^2*KWH^3], 7.0[1/(KG^2*KWH^3)]
+		println("r5", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r5", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF5{a, b}
+		println("r5", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r5", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r5", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		a, b, c := -3.0[LB^2*EV^3], 7.0[KG^2*KWH^3], 7.0[1/(KG^2*KWH^3)]
+		println("r5", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r5", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF5{a, b}
+		println("r5", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r5", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r5", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		p := T5{int64[LB^2*EV^3](123456789012345), int64[KG^2*KWH^3](7), int64[1/(KG^2*KWH^3)](7)}
+		println("r5", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r5", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r5", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T5{int64[LB^2*EV^3](-123456789012345), int64[KG^2*KWH^3](7), int64[1/(KG^2*KWH^3)](7)}
+		println("r5", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r5", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r5", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T5{int64[LB^2*EV^3](7), int64[KG^2*KWH^3](123456789012345), int64[1/(KG^2*KWH^3)](123456789012345)}
+		println("r5", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r5", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r5", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[KG], 1.0[ME], 1.0[1/(ME)]
+		println("r6", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r6", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF6{a, b}
+		println("r6", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r6", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r6", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[KG](1), float32[ME](1), float32[1/(ME)](1)
+		println("r6", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r6", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[KG], 7.0[ME], 7.0[1/(ME)]
+		println("r6", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r6", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF6{a, b}
+		println("r6", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r6", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r6", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[KG](3), float32[ME](7), float32[1/(ME)](7)
+		println("r6", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r6", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[KG], 7.0[ME], 7.0[1/(ME)]
+		println("r6", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r6", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF6{a, b}
+		println("r6", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r6", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r6", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[KG](-3), float32[ME](7), float32[1/(ME)](7)
+		println("r6", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r6", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T6{int64[KG](123456789012345), int64[ME](7), int64[1/(ME)](7)}
+		println("r6", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r6", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r6", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T6{int64[KG](-123456789012345), int64[ME](7), int64[1/(ME)](7)}
+		println("r6", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r6", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r6", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T6{int64[KG](7), int64[ME](123456789012345), int64[1/(ME)](123456789012345)}
+		println("r6", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r6", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r6", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/M^2], 1.0[1/AU^2], 1.0[1/(1/AU^2)]
+		println("r7", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r7", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF7{a, b}
+		println("r7", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r7", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r7", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/M^2](1), float32[1/AU^2](1), float32[1/(1/AU^2)](1)
+		println("r7", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r7", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/M^2], 7.0[1/AU^2], 7.0[1/(1/AU^2)]
+		println("r7", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r7", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF7{a, b}
+		println("r7", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r7", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r7", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/M^2](3), float32[1/AU^2](7), float32[1/(1/AU^2)](7)
+		println("r7", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r7", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/M^2], 7.0[1/AU^2], 7.0[1/(1/AU^2)]
+		println("r7", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r7", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF7{a, b}
+		println("r7", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r7", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r7", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/M^2](-3), float32[1/AU^2](7), float32[1/(1/AU^2)](7)
+		println("r7", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r7", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T7{int64[1/M^2](123456789012345), int64[1/AU^2](7), int64[1/(1/AU^2)](7)}
+		println("r7", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r7", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r7", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T7{int64[1/M^2](-123456789012345), int64[1/AU^2](7), int64[1/(1/AU^2)](7)}
+		println("r7", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r7", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r7", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T7{int64[1/M^2](7), int64[1/AU^2](123456789012345), int64[1/(1/AU^2)](123456789012345)}
+		println("r7", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r7", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r7", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/EH^2], 1.0[1/EV^2], 1.0[1/(1/EV^2)]
+		println("r8", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r8", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF8{a, b}
+		println("r8", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r8", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r8", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/EH^2](1), float32[1/EV^2](1), float32[1/(1/EV^2)](1)
+		println("r8", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r8", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/EH^2], 7.0[1/EV^2], 7.0[1/(1/EV^2)]
+		println("r8", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r8", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF8{a, b}
+		println("r8", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r8", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r8", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/EH^2](3), float32[1/EV^2](7), float32[1/(1/EV^2)](7)
+		println("r8", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r8", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/EH^2], 7.0[1/EV^2], 7.0[1/(1/EV^2)]
+		println("r8", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r8", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF8{a, b}
+		println("r8", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r8", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r8", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/EH^2](-3), float32[1/EV^2](7), float32[1/(1/EV^2)](7)
+		println("r8", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r8", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T8{int64[1/EH^2](123456789012345), int64[1/EV^2](7), int64[1/(1/EV^2)](7)}
+		println("r8", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r8", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r8", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T8{int64[1/EH^2](-123456789012345), int64[1/EV^2](7), int64[1/(1/EV^2)](7)}
+		println("r8", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r8", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r8", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T8{int64[1/EH^2](7), int64[1/EV^2](123456789012345), int64[1/(1/EV^2)](123456789012345)}
+		println("r8", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r8", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r8", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/CAL^2], 1.0[1/KWH^2], 1.0[1/(1/KWH^2)]
+		println("r9", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r9", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF9{a, b}
+		println("r9", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r9", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r9", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/CAL^2](1), float32[1/KWH^2](1), float32[1/(1/KWH^2)](1)
+		println("r9", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r9", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/CAL^2], 7.0[1/KWH^2], 7.0[1/(1/KWH^2)]
+		println("r9", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r9", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF9{a, b}
+		println("r9", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r9", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r9", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/CAL^2](3), float32[1/KWH^2](7), float32[1/(1/KWH^2)](7)
+		println("r9", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r9", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/CAL^2], 7.0[1/KWH^2], 7.0[1/(1/KWH^2)]
+		println("r9", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r9", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF9{a, b}
+		println("r9", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r9", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r9", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/CAL^2](-3), float32[1/KWH^2](7), float32[1/(1/KWH^2)](7)
+		println("r9", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r9", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T9{int64[1/CAL^2](123456789012345), int64[1/KWH^2](7), int64[1/(1/KWH^2)](7)}
+		println("r9", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r9", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r9", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T9{int64[1/CAL^2](-123456789012345), int64[1/KWH^2](7), int64[1/(1/KWH^2)](7)}
+		println("r9", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r9", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r9", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T9{int64[1/CAL^2](7), int64[1/KWH^2](123456789012345), int64[1/(1/KWH^2)](123456789012345)}
+		println("r9", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r9", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r9", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[KM^2*KWH^2/YR^2], 1.0[LY^2*EH^2/MIN^2], 1.0[1/(LY^2*EH^2/MIN^2)]
+		println("r10", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r10", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF10{a, b}
+		println("r10", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r10", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r10", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[KM^2*KWH^2/YR^2](1), float32[LY^2*EH^2/MIN^2](1), float32[1/(LY^2*EH^2/MIN^2)](1)
+		println("r10", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r10", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[KM^2*KWH^2/YR^2], 7.0[LY^2*EH^2/MIN^2], 7.0[1/(LY^2*EH^2/MIN^2)]
+		println("r10", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r10", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF10{a, b}
+		println("r10", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r10", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r10", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[KM^2*KWH^2/YR^2](3), float32[LY^2*EH^2/MIN^2](7), float32[1/(LY^2*EH^2/MIN^2)](7)
+		println("r10", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r10", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[KM^2*KWH^2/YR^2], 7.0[LY^2*EH^2/MIN^2], 7.0[1/(LY^2*EH^2/MIN^2)]
+		println("r10", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r10", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF10{a, b}
+		println("r10", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r10", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r10", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[KM^2*KWH^2/YR^2](-3), float32[LY^2*EH^2/MIN^2](7), float32[1/(LY^2*EH^2/MIN^2)](7)
+		println("r10", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r10", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T10{int64[KM^2*KWH^2/YR^2](123456789012345), int64[LY^2*EH^2/MIN^2](7), int64[1/(LY^2*EH^2/MIN^2)](7)}
+		println("r10", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r10", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r10", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T10{int64[KM^2*KWH^2/YR^2](-123456789012345), int64[LY^2*EH^2/MIN^2](7), int64[1/(LY^2*EH^2/MIN^2)](7)}
+		println("r10", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r10", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r10", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T10{int64[KM^2*KWH^2/YR^2](7), int64[LY^2*EH^2/MIN^2](123456789012345), int64[1/(LY^2*EH^2/MIN^2)](123456789012345)}
+		println("r10", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r10", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r10", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/J^3/LY/S^3], 1.0[1/J^3/LY/S^3], 1.0[1/(1/J^3/LY/S^3)]
+		println("r11", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r11", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF11{a, b}
+		println("r11", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r11", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r11", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/J^3/LY/S^3](1), float32[1/J^3/LY/S^3](1), float32[1/(1/J^3/LY/S^3)](1)
+		println("r11", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r11", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/J^3/LY/S^3], 7.0[1/J^3/LY/S^3], 7.0[1/(1/J^3/LY/S^3)]
+		println("r11", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r11", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF11{a, b}
+		println("r11", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r11", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r11", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/J^3/LY/S^3](3), float32[1/J^3/LY/S^3](7), float32[1/(1/J^3/LY/S^3)](7)
+		println("r11", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r11", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/J^3/LY/S^3], 7.0[1/J^3/LY/S^3], 7.0[1/(1/J^3/LY/S^3)]
+		println("r11", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r11", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF11{a, b}
+		println("r11", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r11", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r11", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/J^3/LY/S^3](-3), float32[1/J^3/LY/S^3](7), float32[1/(1/J^3/LY/S^3)](7)
+		println("r11", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r11", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T11{int64[1/J^3/LY/S^3](123456789012345), int64[1/J^3/LY/S^3](7), int64[1/(1/J^3/LY/S^3)](7)}
+		println("r11", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r11", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r11", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T11{int64[1/J^3/LY/S^3](-123456789012345), int64[1/J^3/LY/S^3](7), int64[1/(1/J^3/LY/S^3)](7)}
+		println("r11", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r11", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r11", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T11{int64[1/J^3/LY/S^3](7), int64[1/J^3/LY/S^3](123456789012345), int64[1/(1/J^3/LY/S^3)](123456789012345)}
+		println("r11", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r11", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r11", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[NS^3/ANG^2], 1.0[H^3/MI^2], 1.0[1/(H^3/MI^2)]
+		println("r12", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r12", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF12{a, b}
+		println("r12", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r12", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r12", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[NS^3/ANG^2](1), float32[H^3/MI^2](1), float32[1/(H^3/MI^2)](1)
+		println("r12", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r12", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[NS^3/ANG^2], 7.0[H^3/MI^2], 7.0[1/(H^3/MI^2)]
+		println("r12", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r12", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF12{a, b}
+		println("r12", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r12", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r12", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[NS^3/ANG^2](3), float32[H^3/MI^2](7), float32[1/(H^3/MI^2)](7)
+		println("r12", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r12", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[NS^3/ANG^2], 7.0[H^3/MI^2], 7.0[1/(H^3/MI^2)]
+		println("r12", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r12", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF12{a, b}
+		println("r12", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r12", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r12", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[NS^3/ANG^2](-3), float32[H^3/MI^2](7), float32[1/(H^3/MI^2)](7)
+		println("r12", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r12", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T12{int64[NS^3/ANG^2](123456789012345), int64[H^3/MI^2](7), int64[1/(H^3/MI^2)](7)}
+		println("r12", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r12", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r12", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T12{int64[NS^3/ANG^2](-123456789012345), int64[H^3/MI^2](7), int64[1/(H^3/MI^2)](7)}
+		println("r12", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r12", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r12", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T12{int64[NS^3/ANG^2](7), int64[H^3/MI^2](123456789012345), int64[1/(H^3/MI^2)](123456789012345)}
+		println("r12", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r12", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r12", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[1/MP^2], 1.0[1/ME^2], 1.0[1/(1/ME^2)]
+		println("r13", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r13", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF13{a, b}
+		println("r13", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r13", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r13", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/MP^2](1), float32[1/ME^2](1), float32[1/(1/ME^2)](1)
+		println("r13", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r13", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[1/MP^2], 7.0[1/ME^2], 7.0[1/(1/ME^2)]
+		println("r13", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r13", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF13{a, b}
+		println("r13", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r13", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r13", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/MP^2](3), float32[1/ME^2](7), float32[1/(1/ME^2)](7)
+		println("r13", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r13", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[1/MP^2], 7.0[1/ME^2], 7.0[1/(1/ME^2)]
+		println("r13", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r13", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF13{a, b}
+		println("r13", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r13", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r13", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[1/MP^2](-3), float32[1/ME^2](7), float32[1/(1/ME^2)](7)
+		println("r13", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r13", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T13{int64[1/MP^2](123456789012345), int64[1/ME^2](7), int64[1/(1/ME^2)](7)}
+		println("r13", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r13", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r13", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T13{int64[1/MP^2](-123456789012345), int64[1/ME^2](7), int64[1/(1/ME^2)](7)}
+		println("r13", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r13", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r13", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T13{int64[1/MP^2](7), int64[1/ME^2](123456789012345), int64[1/(1/ME^2)](123456789012345)}
+		println("r13", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r13", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r13", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[DA*EH^3], 1.0[KG*J^3], 1.0[1/(KG*J^3)]
+		println("r14", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r14", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF14{a, b}
+		println("r14", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r14", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r14", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		a, b, c := 3.0[DA*EH^3], 7.0[KG*J^3], 7.0[1/(KG*J^3)]
+		println("r14", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r14", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF14{a, b}
+		println("r14", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r14", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r14", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		a, b, c := -3.0[DA*EH^3], 7.0[KG*J^3], 7.0[1/(KG*J^3)]
+		println("r14", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r14", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF14{a, b}
+		println("r14", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r14", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r14", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+	}
+	{
+		p := T14{int64[DA*EH^3](123456789012345), int64[KG*J^3](7), int64[1/(KG*J^3)](7)}
+		println("r14", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r14", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r14", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T14{int64[DA*EH^3](-123456789012345), int64[KG*J^3](7), int64[1/(KG*J^3)](7)}
+		println("r14", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r14", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r14", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T14{int64[DA*EH^3](7), int64[KG*J^3](123456789012345), int64[1/(KG*J^3)](123456789012345)}
+		println("r14", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r14", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r14", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[DA^2], 1.0[ME^2], 1.0[1/(ME^2)]
+		println("r15", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r15", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF15{a, b}
+		println("r15", "method", "1/1", bits(float64(a/b)), bits(q.Q()))
+		println("r15", "literal", "1/1", bits(float64(a/b)), bits(q.QL()))
+		println("r15", "method", "1^2/1^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[DA^2](1), float32[ME^2](1), float32[1/(ME^2)](1)
+		println("r15", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r15", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[DA^2], 7.0[ME^2], 7.0[1/(ME^2)]
+		println("r15", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r15", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF15{a, b}
+		println("r15", "method", "3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r15", "literal", "3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r15", "method", "3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[DA^2](3), float32[ME^2](7), float32[1/(ME^2)](7)
+		println("r15", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r15", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[DA^2], 7.0[ME^2], 7.0[1/(ME^2)]
+		println("r15", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("r15", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		q := TF15{a, b}
+		println("r15", "method", "-3/7", bits(float64(a/b)), bits(q.Q()))
+		println("r15", "literal", "-3/7", bits(float64(a/b)), bits(q.QL()))
+		println("r15", "method", "-3^2/7^2", bits(float64((a*a)/(b*b))), bits(q.QQ()))
+		a32, b32, c32 := float32[DA^2](-3), float32[ME^2](7), float32[1/(ME^2)](7)
+		println("r15", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("r15", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		p := T15{int64[DA^2](123456789012345), int64[ME^2](7), int64[1/(ME^2)](7)}
+		println("r15", "i64", "123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r15", "i64", "123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r15", "i64-method", "123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T15{int64[DA^2](-123456789012345), int64[ME^2](7), int64[1/(ME^2)](7)}
+		println("r15", "i64", "-123456789012345/7", p.Q(), GQI(p.a, p.b))
+		println("r15", "i64", "-123456789012345*7", p.P(), GPI(p.a, p.c))
+		println("r15", "i64-method", "-123456789012345/7", p.Q(), p.QG())
+	}
+	{
+		p := T15{int64[DA^2](7), int64[ME^2](123456789012345), int64[1/(ME^2)](123456789012345)}
+		println("r15", "i64", "7/123456789012345", p.Q(), GQI(p.a, p.b))
+		println("r15", "i64", "7*123456789012345", p.P(), GPI(p.a, p.c))
+		println("r15", "i64-method", "7/123456789012345", p.Q(), p.QG())
+	}
+	{
+		a, b, c := 1.0[FMAX], 1.0[M], 1.0[1/(M)]
+		println("f32 max", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f32 max", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[FMAX](1), float32[M](1), float32[1/(M)](1)
+		println("f32 max", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("f32 max", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[FMAX], 7.0[M], 7.0[1/(M)]
+		println("f32 max", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f32 max", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[FMAX](3), float32[M](7), float32[1/(M)](7)
+		println("f32 max", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("f32 max", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[FMAX], 7.0[M], 7.0[1/(M)]
+		println("f32 max", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f32 max", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[FMAX](-3), float32[M](7), float32[1/(M)](7)
+		println("f32 max", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("f32 max", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 1.0[FTIE], 1.0[M], 1.0[1/(M)]
+		println("f32 max tie", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f32 max tie", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 3.0[FTIE], 7.0[M], 7.0[1/(M)]
+		println("f32 max tie", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f32 max tie", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := -3.0[FTIE], 7.0[M], 7.0[1/(M)]
+		println("f32 max tie", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f32 max tie", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 1.0[F128], 1.0[M], 1.0[1/(M)]
+		println("2^128", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^128", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 3.0[F128], 7.0[M], 7.0[1/(M)]
+		println("2^128", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^128", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := -3.0[F128], 7.0[M], 7.0[1/(M)]
+		println("2^128", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^128", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 1.0[M], 1.0[TWO149], 1.0[1/(TWO149)]
+		println("2^-149", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-149", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[M](1), float32[TWO149](1), float32[1/(TWO149)](1)
+		println("2^-149", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("2^-149", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[M], 7.0[TWO149], 7.0[1/(TWO149)]
+		println("2^-149", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-149", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[M](3), float32[TWO149](7), float32[1/(TWO149)](7)
+		println("2^-149", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("2^-149", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[M], 7.0[TWO149], 7.0[1/(TWO149)]
+		println("2^-149", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-149", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[M](-3), float32[TWO149](7), float32[1/(TWO149)](7)
+		println("2^-149", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("2^-149", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 1.0[M], 1.0[TWO150], 1.0[1/(TWO150)]
+		println("2^-150", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-150", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 3.0[M], 7.0[TWO150], 7.0[1/(TWO150)]
+		println("2^-150", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-150", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := -3.0[M], 7.0[TWO150], 7.0[1/(TWO150)]
+		println("2^-150", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-150", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 1.0[THREE], 1.0[TWO151], 1.0[1/(TWO151)]
+		println("3*2^-151", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("3*2^-151", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[THREE](1), float32[TWO151](1), float32[1/(TWO151)](1)
+		println("3*2^-151", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("3*2^-151", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[THREE], 7.0[TWO151], 7.0[1/(TWO151)]
+		println("3*2^-151", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("3*2^-151", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[THREE](3), float32[TWO151](7), float32[1/(TWO151)](7)
+		println("3*2^-151", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("3*2^-151", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[THREE], 7.0[TWO151], 7.0[1/(TWO151)]
+		println("3*2^-151", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("3*2^-151", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[THREE](-3), float32[TWO151](7), float32[1/(TWO151)](7)
+		println("3*2^-151", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("3*2^-151", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 1.0[D53*TWO400*TWO500*TWO71], 1.0[M*M*M*M], 1.0[1/(M*M*M*M)]
+		println("f64 max", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f64 max", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 3.0[D53*TWO400*TWO500*TWO71], 7.0[M*M*M*M], 7.0[1/(M*M*M*M)]
+		println("f64 max", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f64 max", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := -3.0[D53*TWO400*TWO500*TWO71], 7.0[M*M*M*M], 7.0[1/(M*M*M*M)]
+		println("f64 max", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("f64 max", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+	}
+	{
+	}
+	{
+	}
+	{
+	}
+	{
+	}
+	{
+	}
+	{
+		a, b, c := 1.0[M*M*M], 1.0[TWO500*TWO500*TWO74], 1.0[1/(TWO500*TWO500*TWO74)]
+		println("2^-1074", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-1074", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 3.0[M*M*M], 7.0[TWO500*TWO500*TWO74], 7.0[1/(TWO500*TWO500*TWO74)]
+		println("2^-1074", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-1074", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := -3.0[M*M*M], 7.0[TWO500*TWO500*TWO74], 7.0[1/(TWO500*TWO500*TWO74)]
+		println("2^-1074", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("2^-1074", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+	}
+	{
+	}
+	{
+	}
+	{
+		a, b, c := 1.0[THREE*M*M*M], 1.0[TWO500*TWO500*TWO75*M], 1.0[1/(TWO500*TWO500*TWO75*M)]
+		println("3*2^-1075 tie", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("3*2^-1075 tie", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 3.0[THREE*M*M*M], 7.0[TWO500*TWO500*TWO75*M], 7.0[1/(TWO500*TWO500*TWO75*M)]
+		println("3*2^-1075 tie", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("3*2^-1075 tie", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := -3.0[THREE*M*M*M], 7.0[TWO500*TWO500*TWO75*M], 7.0[1/(TWO500*TWO500*TWO75*M)]
+		println("3*2^-1075 tie", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("3*2^-1075 tie", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+	}
+	{
+		a, b, c := 1.0[X24*Y1], 1.0[M*Y2], 1.0[1/(M*Y2)]
+		println("1+2^-24+far", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-24+far", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X24*Y1](1), float32[M*Y2](1), float32[1/(M*Y2)](1)
+		println("1+2^-24+far", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-24+far", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[X24*Y1], 7.0[M*Y2], 7.0[1/(M*Y2)]
+		println("1+2^-24+far", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-24+far", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X24*Y1](3), float32[M*Y2](7), float32[1/(M*Y2)](7)
+		println("1+2^-24+far", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-24+far", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[X24*Y1], 7.0[M*Y2], 7.0[1/(M*Y2)]
+		println("1+2^-24+far", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-24+far", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X24*Y1](-3), float32[M*Y2](7), float32[1/(M*Y2)](7)
+		println("1+2^-24+far", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-24+far", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 1.0[X53*Y1], 1.0[M*Y2], 1.0[1/(M*Y2)]
+		println("1+2^-53+far", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-53+far", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X53*Y1](1), float32[M*Y2](1), float32[1/(M*Y2)](1)
+		println("1+2^-53+far", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-53+far", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[X53*Y1], 7.0[M*Y2], 7.0[1/(M*Y2)]
+		println("1+2^-53+far", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-53+far", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X53*Y1](3), float32[M*Y2](7), float32[1/(M*Y2)](7)
+		println("1+2^-53+far", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-53+far", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[X53*Y1], 7.0[M*Y2], 7.0[1/(M*Y2)]
+		println("1+2^-53+far", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-53+far", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X53*Y1](-3), float32[M*Y2](7), float32[1/(M*Y2)](7)
+		println("1+2^-53+far", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-53+far", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 1.0[X24], 1.0[M], 1.0[1/(M)]
+		println("1+2^-24", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-24", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X24](1), float32[M](1), float32[1/(M)](1)
+		println("1+2^-24", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-24", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[X24], 7.0[M], 7.0[1/(M)]
+		println("1+2^-24", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-24", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X24](3), float32[M](7), float32[1/(M)](7)
+		println("1+2^-24", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-24", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[X24], 7.0[M], 7.0[1/(M)]
+		println("1+2^-24", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-24", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X24](-3), float32[M](7), float32[1/(M)](7)
+		println("1+2^-24", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-24", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 1.0[X53], 1.0[M], 1.0[1/(M)]
+		println("1+2^-53", "f64", "1/1", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-53", "f64", "1*1", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X53](1), float32[M](1), float32[1/(M)](1)
+		println("1+2^-53", "f32", "1/1", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-53", "f32", "1*1", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := 3.0[X53], 7.0[M], 7.0[1/(M)]
+		println("1+2^-53", "f64", "3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-53", "f64", "3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X53](3), float32[M](7), float32[1/(M)](7)
+		println("1+2^-53", "f32", "3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-53", "f32", "3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+	{
+		a, b, c := -3.0[X53], 7.0[M], 7.0[1/(M)]
+		println("1+2^-53", "f64", "-3/7", bits(float64(a/b)), bits(GQ64(a, b)))
+		println("1+2^-53", "f64", "-3*7", bits(float64(a*c)), bits(GP64(a, c)))
+		a32, b32, c32 := float32[X53](-3), float32[M](7), float32[1/(M)](7)
+		println("1+2^-53", "f32", "-3/7", bits32(float32(a32/b32)), bits32(GQ32(a32, b32)))
+		println("1+2^-53", "f32", "-3*7", bits32(float32(a32*c32)), bits32(GP32(a32, c32)))
+	}
+}
+

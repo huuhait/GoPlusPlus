@@ -370,6 +370,74 @@ TEST(GIRStress, VerifierOnWideCleanupRegions) {
   expectVerifierSteps(20000, cleanups);
 }
 
+/// V085 (a temporary is defined on every path to its uses): one function of
+/// N diamonds. Diamond i sets t_i on one arm (t_i is zeroed in the entry, as
+/// drop elaboration zeroes an owned temporary) and p_i on both arms, read at
+/// its join (a phi); the last block reads every t_i. The entry's definition
+/// dominates each use of t_i (one binary search), and a search from a join
+/// stops at its two arms: the steps follow N. The control (no dominance test,
+/// no memo, no budget) searches back through every diamond from the last
+/// block for each t_i, N times N blocks.
+void v085Diamonds(GoodModule &G, unsigned N) {
+  using namespace gir;
+  FuncId F = declare(G.M, "diamonds", G.C.func({G.Bool}, G.I64));
+  FuncBuilder B(G.M, G.fn(F));
+  std::vector<LocalId> Ts(N), Ps(N);
+  for (unsigned I = 0; I < N; ++I) {
+    Ts[I] = B.newTemp(G.I64);
+    Ps[I] = B.newTemp(G.I64);
+    B.assign(B.local(Ts[I]), B.use(constInt(G.I64, 0)));
+  }
+  LocalId Sum = B.newTemp(G.I64);
+  B.assign(B.local(Sum), B.use(constInt(G.I64, 0)));
+  for (unsigned I = 0; I < N; ++I) {
+    BlockId Then = B.newBlock(), Else = B.newBlock(), Join = B.newBlock();
+    B.branch(copyOf(B.local(1)), Then, Else);
+    B.setBlock(Then);
+    B.assign(B.local(Ts[I]), B.use(constInt(G.I64, I)));
+    B.assign(B.local(Ps[I]), B.use(constInt(G.I64, 1)));
+    B.gotoBlock(Join);
+    B.setBlock(Else);
+    B.assign(B.local(Ps[I]), B.use(constInt(G.I64, 2)));
+    B.gotoBlock(Join);
+    B.setBlock(Join);
+    LocalId S2 = B.newTemp(G.I64);
+    B.assign(B.local(S2), B.binary(BinOp::Add, copyOf(B.local(Sum)),
+                                   copyOf(B.local(Ps[I]))));
+  }
+  LocalId R = B.newTemp(G.I64);
+  B.assign(B.local(R), B.use(constInt(G.I64, 0)));
+  for (unsigned I = 0; I < N; ++I) {
+    LocalId R2 = B.newTemp(G.I64);
+    B.assign(B.local(R2),
+             B.binary(BinOp::Add, copyOf(B.local(R)), copyOf(B.local(Ts[I]))));
+  }
+  B.assign(B.local(0), B.use(copyOf(B.local(R))));
+  B.ret();
+}
+
+/// The steps of verifying v085Diamonds(N), valid.
+uint64_t v085Steps(unsigned N) {
+  GoodModule G;
+  v085Diamonds(G, N);
+  uint64_t A = verifierSteps();
+  EXPECT_TRUE(verify(G.M).empty());
+  return verifierSteps() - A;
+}
+
+TEST(GIRStress, V085TheDefinitionCheckIsLinear) {
+  const unsigned N = 300;
+  uint64_t S1 = v085Steps(N), S4 = v085Steps(4 * N);
+  // Four times the diamonds: at most 4.5 times the steps (16 if quadratic).
+  EXPECT_TRUE(S1 > 0 && 2 * S4 <= 9 * S1) << S1 << " " << S4;
+  // The control: the same check without the dominance test, the memo and the
+  // budget fails the same predicate.
+  gir::setVerifierTempSearchControl(true);
+  uint64_t C1 = v085Steps(N), C4 = v085Steps(4 * N);
+  gir::setVerifierTempSearchControl(false);
+  EXPECT_FALSE(2 * C4 <= 9 * C1) << C1 << " " << C4;
+}
+
 TEST(GIRStress, VerifierOnManyFunctions) {
   expectVerifierSteps(5000, manyFunctions);
 }

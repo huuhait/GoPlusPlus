@@ -39,6 +39,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerImpl.h"
+#include "RtEmit.h"
+#include "gopp/GIR/UnitRuntime.h"
+
+#include "llvm/ADT/SmallString.h"
+
+#include <array>
 
 using namespace gopp;
 using namespace gopp::gir;
@@ -48,6 +54,56 @@ using llvm::dyn_cast_or_null;
 
 namespace {
 bool isRoleOwn(const S::UnitSite &S) { return S.K != S::UnitSite::Conv; }
+
+/// The integer scaling by p/q as unit_intfactor makes it at run time (the
+/// same words, so plain and generic code truncate alike): trunc(x * p / q) =
+/// x * A + trunc(x * N / D) modulo 2^64 for every |x| < 2^64. A = floor(p/q)
+/// mod 2^64; N / D = (p mod q) / q when q has at most 64 bits, else its best
+/// lower approximation with a denominator of at most 2^64 - 1 (no fraction
+/// with such a denominator lies between the two, so the floor of x times
+/// either is the same).
+struct IntFactorWords {
+  uint64_t A, N, D;
+};
+IntFactorWords intFactorOf(const llvm::APInt &P0, const llvm::APInt &Q0) {
+  unsigned W = std::max(P0.getBitWidth(), Q0.getBitWidth()) + 2;
+  llvm::APInt P = P0.zext(W), Q = Q0.zext(W), Aq, B;
+  llvm::APInt::udivrem(P, Q, Aq, B);
+  uint64_t A = Aq.zextOrTrunc(64).getZExtValue();
+  if (Q.getActiveBits() <= 64)
+    return {A, B.getZExtValue(), Q.getZExtValue()};
+  if (B.isZero())
+    return {A, 0, 1};
+  // The Stern-Brocot walk with jumps from L = 0/1, U = 1/1 (Euclid on
+  // R = B ld - ln q and S = un q - B ud), as unit_intfactor.
+  const uint64_t Top = ~uint64_t(0);
+  llvm::APInt R = B, S = Q - B, T, Rm;
+  uint64_t Ln = 0, Ld = 1, Un = 1, Ud = 1;
+  for (;;) {
+    uint64_t CapL = (Top - Ld) / Ud;
+    llvm::APInt::udivrem(R, S, T, Rm);
+    if (T.getActiveBits() > 64 || T.getZExtValue() > CapL) {
+      Ln += CapL * Un;
+      Ld += CapL * Ud;
+      break;
+    }
+    Ln += T.getZExtValue() * Un;
+    Ld += T.getZExtValue() * Ud;
+    R = Rm;
+    if (R.isZero())
+      break;
+    uint64_t CapU = (Top - Ud) / Ld;
+    llvm::APInt::udivrem(S, R, T, Rm);
+    if (T.getActiveBits() > 64 || T.getZExtValue() > CapU)
+      break;
+    Un += T.getZExtValue() * Ln;
+    Ud += T.getZExtValue() * Ld;
+    S = Rm;
+    if (S.isZero())
+      break;
+  }
+  return {A, Ln, Ld};
+}
 } // namespace
 
 bool Body::erasedUnit(const S::UnitCanon *U) const {
@@ -137,23 +193,56 @@ const S::UnitCanon *argCanon(S::TypeContext &Ctx, S::Type *A) {
 }
 } // namespace
 
-uint32_t Lowering::unitDescGlobal(const S::UnitCanon *U) {
-  auto [It, New] = UnitDescGlobals.try_emplace(U, 0);
-  if (!New)
-    return It->second;
+namespace {
+/// The limbs of the non-negative A, the least significant first, no top zero.
+void appendLimbs(const llvm::APInt &A, llvm::SmallVectorImpl<uint64_t> &Out) {
+  unsigned N = (A.getActiveBits() + 63) / 64;
+  for (unsigned I = 0; I < N; ++I)
+    Out.push_back(A.extractBitsAsZExtValue(
+        std::min(64u, A.getBitWidth() - 64 * I), 64 * I));
+}
+
+/// The words of the fraction F (gopp/GIR/UnitRuntime.h): {nn, nd, limbs};
+/// {0, 0} if F is not an exact positive rational within the bound.
+void fracWords(const S::Real &F, llvm::SmallVectorImpl<uint64_t> &Out) {
+  if (!F.isRat() || F.sign() <= 0 ||
+      F.ratNum().getActiveBits() > 64 * UnitMaxLimbs ||
+      F.ratDen().getActiveBits() > 64 * UnitMaxLimbs) {
+    Out.append({0, 0});
+    return;
+  }
+  SmallVector<uint64_t, 8> N, D;
+  appendLimbs(F.ratNum(), N);
+  appendLimbs(F.ratDen(), D);
+  Out.push_back(N.size());
+  Out.push_back(D.size());
+  Out.append(N.begin(), N.end());
+  Out.append(D.begin(), D.end());
+}
+} // namespace
+
+uint32_t Lowering::unitWordsGlobal(ArrayRef<uint64_t> Words, const char *Kind,
+                                   size_t Number) {
   Type *U64 = Ctx.u64();
-  // {num, den, count, (id, exp) x count}, sorted by id (Runtime.cpp).
-  uint64_t Num = 1, Den = 1;
+  SmallVector<Type *, 8> Fields(Words.size(), U64);
+  Global G;
+  G.Name = symbolOf(SymbolKind::Runtime, CP.Pkg,
+                    std::string(Kind) + "." + std::to_string(Number));
+  G.Ty = Ctx.tuple(Fields);
+  G.Link = Linkage::Internal;
+  G.ReadOnly = true;
+  for (uint64_t W : Words)
+    G.Parts.push_back(constInt(U64, W).C);
+  return M->addGlobal(std::move(G));
+}
+
+void Lowering::unitDescWords(const S::UnitCanon *U,
+                             llvm::SmallVectorImpl<uint64_t> &Words) {
+  // {count, (id, exp) x count sorted by id, the factor} (Runtime.cpp).
   SmallVector<std::pair<uint64_t, int64_t>, 4> Pairs;
+  S::Real F = S::Real::fromInt(llvm::APInt(2, 1));
   if (U) {
-    llvm::APInt N = U->Factor.ratNum(), D = U->Factor.ratDen();
-    if (N.getActiveBits() > 64 || D.getActiveBits() > 64) {
-      // Past 64 bits: marked, as the run-time operations mark it (Runtime.cpp).
-      Num = Den = 0;
-    } else {
-      Num = N.getZExtValue();
-      Den = D.getZExtValue();
-    }
+    F = U->Factor;
     for (const S::UnitDim &Dm : U->Dims)
       if (Dm.Exp != 0)
         Pairs.push_back({unitBaseId(Dm.Unit), Dm.Exp});
@@ -164,22 +253,32 @@ uint32_t Lowering::unitDescGlobal(const S::UnitCanon *U) {
           Pairs.push_back({unitBaseId(B), 0});
     llvm::sort(Pairs);
   }
-  LowerSteps += 3 + 2 * Pairs.size(); // test-only: the size is counted
-  SmallVector<Type *, 8> Fields(3 + 2 * Pairs.size(), U64);
-  Global G;
-  G.Name = symbolOf(SymbolKind::Runtime, CP.Pkg,
-                    "unit." + std::to_string(UnitDescGlobals.size()));
-  G.Ty = Ctx.tuple(Fields);
-  G.Link = Linkage::Internal;
-  G.ReadOnly = true;
-  G.Parts.push_back(constInt(U64, Num).C);
-  G.Parts.push_back(constInt(U64, Den).C);
-  G.Parts.push_back(constInt(U64, Pairs.size()).C);
+  size_t Start = Words.size();
+  Words.push_back(Pairs.size());
   for (auto &[Id, Exp] : Pairs) {
-    G.Parts.push_back(constInt(U64, Id).C);
-    G.Parts.push_back(constInt(U64, uint64_t(Exp)).C);
+    Words.push_back(Id);
+    Words.push_back(uint64_t(Exp));
   }
-  It->second = M->addGlobal(std::move(G));
+  fracWords(F, Words);
+  LowerSteps += Words.size() - Start; // test-only: the size is counted
+}
+
+uint32_t Lowering::unitDescGlobal(const S::UnitCanon *U) {
+  auto [It, New] = UnitDescGlobals.try_emplace(U, 0);
+  if (!New)
+    return It->second;
+  SmallVector<uint64_t, 16> Words;
+  unitDescWords(U, Words);
+  It->second = unitWordsGlobal(Words, "unit", UnitDescGlobals.size());
+  return It->second;
+}
+
+uint32_t Lowering::unitRecipeGlobal(ArrayRef<uint64_t> Words) {
+  std::vector<uint64_t> Key(Words.begin(), Words.end());
+  auto [It, New] = UnitRecipeGlobals.try_emplace(std::move(Key), 0);
+  if (!New)
+    return It->second;
+  It->second = unitWordsGlobal(Words, "unitr", UnitRecipeGlobals.size());
   return It->second;
 }
 
@@ -232,21 +331,17 @@ void Body::unitUnsupported(const ast::Node *N, const std::string &What) {
   unsupported(N, What + " (P04.24 follow-up)");
 }
 
-/// A pointer to the descriptor of the unit U (over the unit parameters of the
-/// generic code), at this instance: a constant of the module where every
-/// parameter has its unit here, else made in a local of the frame from the
-/// instance's own descriptors (unit_mulpow), once at the entry of the
-/// function. Null U is the empty unit with the factor 1.
-Operand Body::unitDesc(const S::UnitCanon *U, const ast::Node *N) {
-  Type *PU8 = ctx().ptr(ctx().u8());
-  auto Const = [&](const S::UnitCanon *C) {
-    return copyOf(FB.temp(
-        FB.cast(CastKind::PtrToPtr, constGlobal(M, L.unitDescGlobal(C)), PU8)));
-  };
-  if (!U || !U->HasParam)
-    return Const(U);
-  if (auto It = DescMemo.find(U); It != DescMemo.end())
-    return It->second;
+/// The recipe of the unit U (over the unit parameters of the generic code) at
+/// this instance (gopp/GIR/UnitRuntime.h): the parameters it knows (a method
+/// of an instance of a generic type) substituted, each other parameter by the
+/// index of its descriptor. False after a report.
+bool Body::unitRecipe(const S::UnitCanon *U, const ast::Node *N,
+                      llvm::SmallVectorImpl<uint64_t> &Words) {
+  if (!U || !U->HasParam) {
+    Words.push_back(0);
+    L.unitDescWords(U, Words);
+    return true;
+  }
   // (A unit of a type argument that generic code shared across unit
   // arguments passed on: the instance has no descriptor of it, and its types
   // have it erased. The walk refuses the request of such an instance first.)
@@ -257,87 +352,159 @@ Operand Body::unitDesc(const S::UnitCanon *U, const ast::Node *N) {
                        CurInst->FromCaller.count(D.Param->RenamedFrom)))) {
         unitUnsupported(N, "a unit descriptor of a unit that generic code "
                            "shared across unit arguments passed on");
-        return Const(nullptr);
+        return false;
       }
-  // The parameters this instance knows (a method of an instance of a
-  // generic type), else only the descriptors of the function's own.
-  const S::UnitCanon *C = S::substituteUnit(
-      *L.CP.Ctx, U, [&](const S::TypeParamType *P) -> const S::UnitCanon * {
-        if (!CurInst)
-          return nullptr;
-        auto It = CurInst->Map.find(P);
-        if (It == CurInst->Map.end())
-          return nullptr;
-        auto *B = dyn_cast<S::BasicType>(It->second);
-        return B && B->BK == S::BasicKind::UnitArg && B->Unit &&
-                       !B->Unit->dimensionless()
-                   ? B->Unit
-                   : nullptr;
-      });
+  auto Known = [&](const S::TypeParamType *P) -> const S::UnitCanon * {
+    if (!CurInst)
+      return nullptr;
+    auto It = CurInst->Map.find(P);
+    if (It == CurInst->Map.end())
+      return nullptr;
+    auto *B = dyn_cast<S::BasicType>(It->second);
+    return B && B->BK == S::BasicKind::UnitArg && B->Unit &&
+                   !B->Unit->dimensionless()
+               ? B->Unit
+               : nullptr;
+  };
+  const S::UnitCanon *C = S::substituteUnit(*L.CP.Ctx, U, Known);
   if (!C) {
-    unitUnsupported(N, "a unit whose exponent is past 2^20 in generic code");
-    return Const(nullptr);
+    // (The known units leave the range of units: the recipe is the unit out
+    // of range, so a site that needs it panics, as for one made at run time.)
+    Words.push_back(0);
+    Words.push_back(UnitCountOut);
+    return true;
   }
   SmallVector<S::UnitDim, 4> Rest;
-  SmallVector<std::pair<const S::TypeParamType *, int32_t>, 2> Params;
+  SmallVector<std::pair<uint64_t, int64_t>, 2> Params;
   for (const S::UnitDim &D : C->Dims) {
-    if (D.Param)
-      Params.push_back({D.Param, D.Exp});
-    else
+    if (!D.Param) {
       Rest.push_back(D);
+      continue;
+    }
+    auto It = DictIndex.find(D.Param);
+    if (It == DictIndex.end() && D.Param->RenamedFrom)
+      It = DictIndex.find(D.Param->RenamedFrom);
+    if (It == DictIndex.end()) {
+      unitUnsupported(N, "a function literal that needs the unit "
+                         "descriptors of its function");
+      return false;
+    }
+    Params.push_back({It->second, D.Exp});
   }
-  const S::UnitCanon *Base = L.CP.Ctx->unitCanon(Rest, C->Factor);
-  if (Params.empty())
-    return Const(Base);
+  Words.push_back(Params.size());
+  for (auto &[Idx, Exp] : Params) {
+    Words.push_back(Idx);
+    Words.push_back(uint64_t(Exp));
+  }
+  L.unitDescWords(L.CP.Ctx->unitCanon(Rest, C->Factor), Words);
+  return true;
+}
+
+/// The array of the instance's descriptor pointers, by parameter index, made
+/// once at the entry of the function.
+Operand Body::unitDicts() {
+  Type *PU8 = ctx().ptr(ctx().u8());
+  Hoist H(*this);
+  auto Addr = [&] {
+    return copyOf(FB.temp(
+        FB.cast(CastKind::PtrToPtr,
+                copyOf(FB.temp(FB.addrOf(FB.local(DictsSlot), true))), PU8)));
+  };
+  const unsigned N = CurInst ? CurInst->DictParams.size() : 0;
+  const bool New = DictsFn != &FB.function();
+  if (New) {
+    DictsFn = &FB.function();
+    DictsSlot = FB.newLocal(ctx().array(ctx().u64(), std::max(N, 1u)),
+                            Local::Var, "unitd");
+  }
+  // (Filled once where it is made at the entry; else at each use, which the
+  // first use need not dominate.)
+  if (New || HoistBlock == NoId) {
+    Operand A = Addr();
+    Rt E(M, FB);
+    for (unsigned K = 0; K < N; ++K)
+      if (auto It = DictLocals.find(CurInst->DictParams[K]);
+          It != DictLocals.end())
+        E.store(E.padd(Val{&E, A}, E.u(8 * K)), PU8,
+                Val{&E, copyOf(FB.local(It->second))});
+  }
+  return Addr();
+}
+
+/// A pointer to the descriptor of the unit U (over the unit parameters of the
+/// generic code), at this instance, to pass to a callee: a constant of the
+/// module where every parameter has its unit here, a parameter's own
+/// descriptor, else made by unit_make in a small slot of the frame (a wide
+/// factor spills to the function's owned spill chain), once at the entry of
+/// the function. Null U is the empty unit with the factor 1.
+Operand Body::unitDesc(const S::UnitCanon *U, const ast::Node *N) {
+  Type *PU8 = ctx().ptr(ctx().u8());
+  auto Const = [&](const S::UnitCanon *C) {
+    return copyOf(FB.temp(
+        FB.cast(CastKind::PtrToPtr, constGlobal(M, L.unitDescGlobal(C)), PU8)));
+  };
+  if (!U || !U->HasParam)
+    return Const(U);
+  if (auto It = DescMemo.find(U); It != DescMemo.end())
+    return It->second;
+  SmallVector<uint64_t, 16> Words;
+  if (!unitRecipe(U, N, Words))
+    return Const(nullptr);
+  // Every parameter known here (a method of an instance of a generic type, a
+  // function literal in one): the recipe is its base, a constant descriptor.
+  // (A cast made at each use, as Const: this body may have no entry block to
+  // hoist into, and a temp of one branch is not defined in another.)
+  if (Words[0] == 0)
+    return copyOf(FB.temp(FB.cast(
+        CastKind::PtrToPtr,
+        constGlobal(M,
+                    L.unitRecipeGlobal(ArrayRef<uint64_t>(Words).drop_front())),
+        PU8)));
+  // A parameter alone, to the power 1 (no base unit, the factor 1): its own
+  // descriptor. {np 1, index, exp 1, count 0, nn 1, nd 1, 1, 1}
+  if (Words.size() == 8 && Words[0] == 1 && Words[2] == 1 && Words[3] == 0 &&
+      Words[4] == 1 && Words[5] == 1 && Words[6] == 1 && Words[7] == 1 &&
+      CurInst && Words[1] < CurInst->DictParams.size())
+    if (auto D = DictLocals.find(CurInst->DictParams[Words[1]]);
+        D != DictLocals.end())
+      return DescMemo[U] = copyOf(FB.local(D->second));
   Lowering::UnitRtFns *RT = L.unitRt(N->getBegin());
   if (!RT)
     return Const(nullptr);
-  // A parameter alone, to the power 1: its own descriptor.
-  if (Params.size() == 1 && Params[0].second == 1 && Rest.empty() &&
-      C->Factor.isRat() && C->Factor.ratNum().isOne() &&
-      C->Factor.ratDen().isOne()) {
-    const S::TypeParamType *P = Params[0].first;
-    auto D = DictLocals.find(P);
-    if (D == DictLocals.end() && P->RenamedFrom)
-      D = DictLocals.find(P->RenamedFrom);
-    if (D != DictLocals.end())
-      return DescMemo[U] = copyOf(FB.local(D->second));
+  // (A run-time parameter needs the descriptors of this body: a body with no
+  // spill chain has none, and the empty unit would be a wrong value.)
+  if (SpillLocal == LocalId(NoId) || DictLocals.empty()) {
+    unitUnsupported(N, "a function literal that needs the unit "
+                       "descriptors of its function");
+    return Const(nullptr);
   }
   Hoist H(*this);
-  // One frame slot for each parameter's product (the helper does not write
-  // over its inputs): room for the most base units a unit can have.
+  // A slot with room for the most base units a unit can have and a fraction
+  // of UnitSmallLimbs limbs; a wider one goes to the spill chain.
   const uint64_t Cap = L.unitK();
-  const unsigned Words = 3 + 2 * Cap;
-  LowerSteps += Words * Params.size(); // test-only: the size is counted
-  Operand Cur = Const(Base);
+  const unsigned Slot = 1 + 2 * Cap + 2 + UnitSmallLimbs;
+  LowerSteps += Slot; // test-only: the size is counted
+  Operand Dicts = unitDicts();
+  Operand Recipe = copyOf(FB.temp(FB.cast(
+      CastKind::PtrToPtr, constGlobal(M, L.unitRecipeGlobal(Words)), PU8)));
   at(N);
-  for (auto &[P, Exp] : Params) {
-    auto D = DictLocals.find(P);
-    if (D == DictLocals.end() && P->RenamedFrom)
-      D = DictLocals.find(P->RenamedFrom);
-    if (D == DictLocals.end()) {
-      unitUnsupported(N, "a function literal that needs the unit "
-                         "descriptors of its function");
-      return Const(nullptr);
-    }
-    LocalId Slot =
-        FB.newLocal(ctx().array(ctx().u64(), Words), Local::Var, "unit");
-    Operand Dst = copyOf(FB.temp(
-        FB.cast(CastKind::PtrToPtr,
-                copyOf(FB.temp(FB.addrOf(FB.local(Slot), true))), PU8)));
-    FB.call(constFunc(M, RT->MulPow),
-            {Dst, constInt(ctx().u64(), Cap), Cur, copyOf(FB.local(D->second)),
-             constInt(ctx().i32(), uint64_t(int64_t(Exp))),
-             constStr(M, unitText(U))},
-            FB.local(FB.newTemp(ctx().unit())), {UnwindAction::Continue, NoId});
-    Cur = Dst;
-  }
-  return DescMemo[U] = Cur;
+  LocalId S = FB.newLocal(ctx().array(ctx().u64(), Slot), Local::Var, "unit");
+  Operand Dst = copyOf(FB.temp(FB.cast(
+      CastKind::PtrToPtr, copyOf(FB.temp(FB.addrOf(FB.local(S), true))), PU8)));
+  Operand Spill = copyOf(FB.temp(
+      FB.cast(CastKind::PtrToPtr,
+              copyOf(FB.temp(FB.addrOf(FB.local(SpillLocal), true))), PU8)));
+  SpillUsed = true;
+  FB.call(constFunc(M, RT->Make),
+          {Dst, constInt(ctx().u64(), Cap),
+           constInt(ctx().u64(), UnitSmallLimbs), Recipe, Dicts, Spill},
+          FB.local(FB.newTemp(ctx().unit())), {UnwindAction::Continue, NoId});
+  // (Memoized only where it was made at the entry: it dominates every use.)
+  if (HoistBlock != NoId)
+    DescMemo[U] = Dst;
+  return Dst;
 }
 
-/// The descriptors a call of the instance GI passes after its arguments: the
-/// unit arguments of the call (Key's Info::Instances entry, over this
-/// instance's own parameters) for GI's dictionary parameters.
 void Body::dictArgsFor(const GenericInst *GI, const ast::Expr *Key,
                        llvm::SmallVectorImpl<const S::UnitCanon *> &Out) {
   if (GI->DictParams.empty())
@@ -357,48 +524,103 @@ void Body::dictArgsFor(const GenericInst *GI, const ast::Expr *Key,
   }
 }
 
-/// The run-time factor of one collapse site, times Sp/Sq: (num, den), made
-/// once at the entry of the function.
-std::pair<Operand, Operand> Body::dynSite(const S::UnitSite &St, uint64_t Sp,
-                                          uint64_t Sq, const ast::Node *N) {
+/// The site group of U (its run-time sites and static factor, UnitRuntime.h)
+/// as a constant of the module; NoId after a report.
+uint32_t Body::unitGroup(const UnitScale &U, const ast::Node *N) {
+  SmallVector<uint64_t, 32> Words;
+  fracWords(U.DynStatic, Words);
+  Words.push_back(U.DynSites.size());
+  for (const S::UnitSite *St : U.DynSites) {
+    unsigned Kind = 0;
+    switch (St->K) {
+    case S::UnitSite::Mul:
+      Kind = 0;
+      break;
+    case S::UnitSite::Quo:
+      Kind = 1;
+      break;
+    case S::UnitSite::Conv:
+      Kind = 2;
+      break;
+    case S::UnitSite::Const:
+      Kind = 3;
+      break;
+    }
+    Words.push_back(Kind);
+    if (!unitRecipe(St->Res, N, Words) || !unitRecipe(St->X, N, Words) ||
+        !unitRecipe(St->Y, N, Words))
+      return NoId;
+  }
+  return L.unitRecipeGlobal(Words);
+}
+
+/// The float factor of U for a float of type FT, made once at the entry
+/// (unit_site_f: rounded as the compiler rounds a constant factor): in FT,
+/// and as the f64 that is 0 for a factor out of range.
+std::pair<Operand, Operand> Body::dynFloat(const UnitScale &U, Type *FT,
+                                           const ast::Node *N) {
+  uint64_t P = FT->bits() == 32 ? 24 : 53;
   Lowering::UnitRtFns *RT = L.unitRt(N->getBegin());
-  Type *U64 = ctx().u64();
-  if (!RT)
-    return {constInt(U64, 1), constInt(U64, 1)};
-  auto Key = std::make_tuple(unsigned(St.K), St.Res, St.X, St.Y, Sp, Sq);
-  if (auto It = SiteMemo.find(Key); It != SiteMemo.end())
+  uint32_t G = unitGroup(U, N);
+  if (!RT || G == NoId)
+    return {errorValue(ctx()), constFloat(ctx().floatTy(64), 1.0)};
+  auto Key = std::make_pair(G, P);
+  if (auto It = DynFloatMemo.find(Key); It != DynFloatMemo.end())
     return It->second;
   Hoist H(*this);
-  Operand Res = unitDesc(St.Res, N), X = unitDesc(St.X, N),
-          Y = unitDesc(St.Y, N);
-  unsigned Kind = 0;
-  switch (St.K) {
-  case S::UnitSite::Mul:
-    Kind = 0;
-    break;
-  case S::UnitSite::Quo:
-    Kind = 1;
-    break;
-  case S::UnitSite::Conv:
-    Kind = 2;
-    break;
-  case S::UnitSite::Const:
-    Kind = 3;
-    break;
-  }
-  const S::UnitCanon *Shown = St.Res ? St.Res : (St.X ? St.X : St.Y);
+  Type *PU8 = ctx().ptr(ctx().u8()), *F64 = ctx().floatTy(64);
+  Operand Dicts = unitDicts();
+  Operand Grp =
+      copyOf(FB.temp(FB.cast(CastKind::PtrToPtr, constGlobal(M, G), PU8)));
   at(N);
-  Type *Pair = ctx().tuple({U64, U64});
-  LocalId R = FB.newTemp(Pair);
-  FB.call(constFunc(M, RT->Site),
-          {constInt(ctx().i32(), Kind), Res, X, Y, constInt(U64, Sp),
-           constInt(U64, Sq), constStr(M, Shown ? siteText(Shown, N) : "unit")},
+  LocalId R = FB.newTemp(F64);
+  FB.call(constFunc(M, RT->SiteF), {Grp, Dicts, constInt(ctx().u64(), P)},
           FB.local(R), {UnwindAction::Continue, NoId});
-  Place PR = FB.local(R);
-  std::pair<Operand, Operand> Out{
-      copyOf(FB.temp(FB.use(copyOf(FB.field(PR, 0))))),
-      copyOf(FB.temp(FB.use(copyOf(FB.field(PR, 1)))))};
-  return SiteMemo[Key] = Out;
+  Operand Q64 = copyOf(FB.local(R)), Q = Q64;
+  if (FT != F64)
+    Q = copyOf(FB.temp(FB.cast(CastKind::FloatToFloat, Q, FT)));
+  if (HoistBlock != NoId)
+    DynFloatMemo[Key] = {Q, Q64};
+  return {Q, Q64};
+}
+
+/// The integer factor of U (unit_site_i with Mode): {A, n, d, inverted}, made
+/// once at the entry.
+std::array<Operand, 4> Body::dynInt(const UnitScale &U, unsigned Mode,
+                                    const ast::Node *N) {
+  Type *U64 = ctx().u64();
+  Lowering::UnitRtFns *RT = L.unitRt(N->getBegin());
+  uint32_t G = unitGroup(U, N);
+  if (!RT || G == NoId)
+    return {constInt(U64, 0), constInt(U64, 0), constInt(U64, 1),
+            constInt(U64, 0)};
+  auto Key = std::make_pair(G, uint64_t(100 + Mode));
+  if (auto It = DynIntMemo.find(Key); It != DynIntMemo.end())
+    return It->second;
+  Hoist H(*this);
+  Type *PU8 = ctx().ptr(ctx().u8());
+  Operand Dicts = unitDicts();
+  Operand Grp =
+      copyOf(FB.temp(FB.cast(CastKind::PtrToPtr, constGlobal(M, G), PU8)));
+  at(N);
+  // (One slot for the words of every site of the function: they are read
+  // into temporaries at once.)
+  if (OutFn != &FB.function()) {
+    OutFn = &FB.function();
+    OutSlot = FB.newLocal(ctx().array(U64, 4), Local::Var, "unitk");
+  }
+  Operand OutP = copyOf(FB.temp(
+      FB.cast(CastKind::PtrToPtr,
+              copyOf(FB.temp(FB.addrOf(FB.local(OutSlot), true))), PU8)));
+  FB.call(constFunc(M, RT->SiteI), {OutP, Grp, Dicts, constInt(U64, Mode)},
+          FB.local(FB.newTemp(ctx().unit())), {UnwindAction::Continue, NoId});
+  Rt E(M, FB);
+  std::array<Operand, 4> W;
+  for (unsigned K = 0; K < 4; ++K)
+    W[K] = E.load(E.padd(Val{&E, OutP}, E.u(8 * K)), U64).Op;
+  if (HoistBlock != NoId)
+    DynIntMemo[Key] = W;
+  return W;
 }
 
 /// EXP-33: the quotient of two integer values of one dimension and two scales
@@ -485,51 +707,16 @@ Body::UnitScale Body::unitScaleOf(const ast::Expr *E, bool Tag, bool Own) {
       U.Any = true;
     }
   if (!Dyn.empty()) {
-    // The static factor goes into the first site's call, and the sites'
-    // fractions are multiplied as exact fractions at run time, once at the
-    // entry of the function (GEN-14).
-    uint64_t Sp = 1, Sq = 1;
-    if (!U.F.isRat() || U.F.ratNum().getActiveBits() > 64 ||
-        U.F.ratDen().getActiveBits() > 64) {
-      unitUnsupported(E, "a unit conversion whose factor does not fit 64 bits "
-                         "in generic code");
-      U.Bad = true;
-      return U;
-    }
-    Sp = U.F.ratNum().getZExtValue();
-    Sq = U.F.ratDen().getZExtValue();
-    Hoist H(*this);
-    Type *U64 = ctx().u64();
-    auto Plain = [&](Operand O) {
-      return copyOf(FB.temp(FB.use(std::move(O))));
-    };
-    std::pair<Operand, Operand> NQ{constInt(U64, 1), constInt(U64, 1)};
-    bool First = true;
-    for (const S::UnitSite *St : Dyn) {
-      auto SQ = dynSite(*St, Sp, Sq, E);
-      Sp = Sq = 1;
-      if (First) {
-        NQ = SQ;
-        First = false;
-        continue;
-      }
-      Lowering::UnitRtFns *RT = L.unitRt(E->getBegin());
-      if (!RT)
-        break;
-      LocalId R = FB.newTemp(ctx().tuple({U64, U64}));
-      FB.call(constFunc(M, RT->RatMul),
-              {NQ.first, NQ.second, SQ.first, SQ.second, constStr(M, "unit")},
-              FB.local(R), {UnwindAction::Continue, NoId});
-      NQ = {Plain(copyOf(FB.field(FB.local(R), 0))),
-            Plain(copyOf(FB.field(FB.local(R), 1)))};
-    }
-    {
-      const S::UnitSite &St0 = *Dyn.front();
-      const S::UnitCanon *Shown = St0.Res ? St0.Res : (St0.X ? St0.X : St0.Y);
-      U.DynWhat = Shown ? siteText(Shown, E) : "unit";
-    }
-    U.DynN = NQ.first;
-    U.DynD = NQ.second;
+    // The static factor and the sites' fractions are multiplied as exact
+    // fractions at run time, once at the entry of the function (GEN-14),
+    // where the value's type turns the product into its factor (scaleDyn).
+    // (A static factor past the bound is a marked fraction: the site panics
+    // with "unit out of range" where it is used.)
+    const S::UnitSite &St0 = *Dyn.front();
+    const S::UnitCanon *Shown = St0.Res ? St0.Res : (St0.X ? St0.X : St0.Y);
+    U.DynWhat = Shown ? siteText(Shown, E) : "unit";
+    U.DynSites.assign(Dyn.begin(), Dyn.end());
+    U.DynStatic = U.F;
     U.Dyn = true;
     U.Any = true;
     U.F = S::Real::fromInt(llvm::APInt(2, 1));
@@ -607,20 +794,17 @@ Operand Body::scaleInt(Operand V, const S::Real &F, const ast::Node *N) {
     return errorValue(ctx());
   }
   llvm::APInt P = F.ratNum(), Q = F.ratDen();
-  if (P.getActiveBits() > 64 || Q.getActiveBits() > 64) {
-    unitUnsupported(N, "an integer unit conversion by " + F.str() +
-                           ", whose numerator or denominator is past 64 bits "
-                           "(convert to float first)");
-    return errorValue(ctx());
-  }
-  llvm::APInt Prod = P.zext(130) * Q.zext(130);
-  if (Prod.getActiveBits() > 62) {
-    // The parts of x / q * p + (x % q) * p / q could overflow 64 bits: the
-    // exact helper (a 128-bit product), as generic code does.
-    Operand Dyn =
-        scaleIntExact(std::move(V), constInt(ctx().u64(), P.getZExtValue()),
-                      constInt(ctx().u64(), Q.getZExtValue()), N, F.str());
-    return Dyn;
+  llvm::APInt Prod = P.zext(P.getBitWidth() + Q.getBitWidth()) *
+                     Q.zext(P.getBitWidth() + Q.getBitWidth());
+  if (P.getActiveBits() > 64 || Q.getActiveBits() > 64 ||
+      Prod.getActiveBits() > 62) {
+    // The parts of x / q * p + (x % q) * p / q could overflow 64 bits, or p
+    // or q has more: the exact helper, with the three words generic code
+    // computes at run time (unit_intfactor), so both truncate alike.
+    IntFactorWords W = intFactorOf(P, Q);
+    Type *U64 = ctx().u64();
+    return scaleIntExact(std::move(V), constInt(U64, W.A), constInt(U64, W.N),
+                         constInt(U64, W.D), N, F.str());
   }
   uint64_t Pn = P.getZExtValue(), Qd = Q.getZExtValue();
   bool Signed = T->isSigned();
@@ -647,9 +831,10 @@ Operand Body::scaleInt(Operand V, const S::Real &F, const ast::Node *N) {
   return R;
 }
 
-/// The integer V times N / D (u64 operands), truncating toward zero, exact
-/// (unit_scale_int: the second part of the product in 128 bits).
-Operand Body::scaleIntExact(Operand V, Operand N, Operand D,
+/// The integer V times A + N / D (u64 operands, N < D, unit_intfactor's
+/// words), truncating toward zero and wrapping, exact (unit_scale_int: the
+/// second part of the product in 128 bits); D 0 panics with What.
+Operand Body::scaleIntExact(Operand V, Operand A, Operand N, Operand D,
                             const ast::Node *N0, const std::string &What) {
   Lowering::UnitRtFns *RT = L.unitRt(N0->getBegin());
   if (!RT)
@@ -670,69 +855,42 @@ Operand Body::scaleIntExact(Operand V, Operand N, Operand D,
   }
   LocalId R = FB.newTemp(U64);
   FB.call(constFunc(M, RT->ScaleInt),
-          {X, constBool(ctx(), Signed), std::move(N), std::move(D),
-           constStr(M, What)},
+          {X, constBool(ctx(), Signed), std::move(A), std::move(N),
+           std::move(D), constStr(M, What)},
           FB.local(R), {UnwindAction::Continue, NoId});
   Operand Res = copyOf(FB.local(R));
   return T == U64 ? Res : Cast(CastKind::IntToInt, std::move(Res), T);
 }
 
-/// V * N / D with N and D run-time fractions (u64), as the factor of a site
-/// at an instance that takes unit descriptors. A float is multiplied by
-/// N / D rounded once to its type (unit_ratio: as the compiler rounds a
-/// constant factor, so generic code and plain code agree to the bit); an
-/// integer by unit_scale_int, truncating toward zero.
-Operand Body::scaleDyn(Operand V, Operand N, Operand D, const ast::Node *N0,
-                       const std::string &What) {
+/// V times the run-time factor of U, at an instance that takes unit
+/// descriptors. A float is multiplied by the factor rounded once to its type
+/// (unit_ratio: as the compiler rounds a constant factor, so generic code and
+/// plain code agree to the bit); an integer by unit_scale_int, truncating
+/// toward zero (unit_intfactor's words, as plain code's).
+Operand Body::scaleDyn(Operand V, const UnitScale &U, const ast::Node *N0) {
   Type *T = V.type();
-  Type *F64 = ctx().floatTy(64);
   auto Cast = [&](CastKind K, Operand X, Type *To) {
     return copyOf(FB.temp(FB.cast(K, std::move(X), To)));
   };
   at(N0);
   if (T->isFloat() || (T->getKind() == Type::Kind::Tuple &&
                        T->numFields() == 2 && T->elems()[0]->isFloat())) {
-    Lowering::UnitRtFns *RT = L.unitRt(N0->getBegin());
-    if (!RT)
-      return errorValue(ctx());
     Type *FT0 = T->isFloat() ? T : T->elems()[0];
-    uint64_t P = FT0->bits() == 32 ? 24 : 53;
-    // The factor as a float of the type, made once at the entry.
-    Operand Q;
-    {
-      std::tuple<LocalId, LocalId, uint64_t> Key{NoId, NoId, P};
-      bool Memo = N.K == Operand::Copy && D.K == Operand::Copy &&
-                  N.P.Proj.empty() && D.P.Proj.empty();
-      if (Memo)
-        Key = {N.P.Local, D.P.Local, P};
-      auto It = Memo ? RatioMemo.find(Key) : RatioMemo.end();
-      if (It != RatioMemo.end()) {
-        Q = It->second;
-      } else {
-        Hoist H(*this);
-        LocalId R = FB.newTemp(F64);
-        FB.call(constFunc(M, RT->Ratio),
-                {N, D, constInt(ctx().u64(), P), constStr(M, What)},
-                FB.local(R), {UnwindAction::Continue, NoId});
-        Q = copyOf(FB.local(R));
-        if (FT0 != F64)
-          Q = Cast(CastKind::FloatToFloat, Q, FT0);
-        if (Memo)
-          RatioMemo[Key] = Q;
-      }
-    }
-    // A factor out of range (0 / 0) is the panic of this site, one compare
-    // where the factor is used (the work to make it was done at the entry).
+    auto [Q, Q64] = dynFloat(U, FT0, N0);
+    at(N0);
+    // A factor out of range (of units, or of the float type: 0) is the panic
+    // of this site, one compare where the factor is used (the work to make it
+    // was done at the entry).
     {
       FuncId Panic = L.ensurePanicUnit(N0->getBegin());
       if (Panic == NoId)
         return errorValue(ctx());
-      Operand Marked =
-          copyOf(FB.temp(FB.binary(BinOp::Eq, D, constInt(ctx().u64(), 0))));
+      Operand Marked = copyOf(FB.temp(
+          FB.binary(BinOp::Eq, Q64, constFloat(ctx().floatTy(64), 0.0))));
       BlockId Bad = FB.newBlock(), Ok = FB.newBlock();
       FB.branch(Marked, Bad, Ok);
       FB.setBlock(Bad);
-      FB.call(constFunc(M, Panic), {constStr(M, What)},
+      FB.call(constFunc(M, Panic), {constStr(M, U.DynWhat)},
               FB.local(FB.newTemp(ctx().unit())),
               {UnwindAction::Continue, NoId});
       FB.unreachable();
@@ -754,7 +912,8 @@ Operand Body::scaleDyn(Operand V, Operand N, Operand D, const ast::Node *N0,
     unitUnsupported(N0, "a unit conversion of this type");
     return errorValue(ctx());
   }
-  return scaleIntExact(std::move(V), std::move(N), std::move(D), N0, What);
+  std::array<Operand, 4> W = dynInt(U, 0, N0);
+  return scaleIntExact(std::move(V), W[0], W[1], W[2], N0, U.DynWhat);
 }
 
 Operand Body::scaleValue(Operand V, const UnitScale &U, const ast::Node *N) {
@@ -764,7 +923,7 @@ Operand Body::scaleValue(Operand V, const UnitScale &U, const ast::Node *N) {
     return V;
   at(N);
   if (U.Dyn)
-    return scaleDyn(std::move(V), U.DynN, U.DynD, N, U.DynWhat);
+    return scaleDyn(std::move(V), U, N);
   if (T->isFloat())
     return scaleFloat(std::move(V), U.F);
   if (T->isInt())

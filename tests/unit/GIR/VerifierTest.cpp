@@ -114,7 +114,16 @@ struct PlaceFixture : GoodModule {
     LStr = B.newLocal(Str, Local::Var, "str");
     B.ret();
   }
+  /// A variable of p (a value the function holds; a temporary would have to
+  /// be defined before its use, V085).
   LocalId local(Type *T) {
+    Local L;
+    L.Ty = T;
+    L.K = Local::Var;
+    return fn(P).addLocal(L);
+  }
+  /// A temporary of p (defined by the statement or call that writes it).
+  LocalId temp(Type *T) {
     Local L;
     L.Ty = T;
     return fn(P).addLocal(L);
@@ -1633,7 +1642,7 @@ void callMk(PlaceFixture &X, Place Dest) {
 TEST(GIRVerifier, V066_HiddenResultPointer) {
   {
     PlaceFixture X; // a fresh temporary: the builder's shape
-    LocalId T = X.local(X.Pair);
+    LocalId T = X.temp(X.Pair);
     callMk(X, localPlace(T, X.Pair));
     EXPECT_GIR_VALID(X.M);
   }
@@ -1641,7 +1650,7 @@ TEST(GIRVerifier, V066_HiddenResultPointer) {
     PlaceFixture X; // a field of a temporary is a place of the frame as well
     Type *Outer = X.C.structTy("test.Outer");
     X.C.setStructBody(Outer, {X.Pair});
-    LocalId F = X.local(Outer);
+    LocalId F = X.temp(Outer);
     callMk(X, placeOf(F, X.Pair, {elem(PlaceElem::Field, 0, X.Pair)}));
     EXPECT_GIR_VALID(X.M);
   }
@@ -1910,7 +1919,7 @@ TEST(GIRVerifier, V076_ACallThroughACFunctionPointerPassesScalars) {
   auto CallThrough = [](PlaceFixture &X, Type *Fn, std::vector<Operand> Args) {
     BlockId B1 = X.fn(X.P).addBlock();
     X.fn(X.P).Blocks[B1].Term = term(Terminator::Return);
-    LocalId T = X.local(Fn->ret());
+    LocalId T = X.temp(Fn->ret());
     X.fn(X.P).Blocks[0].Term =
         callOf(copyOf(localPlace(X.local(Fn), Fn)), std::move(Args),
                localPlace(T, Fn->ret()), B1);
@@ -2349,3 +2358,224 @@ TEST(GIRVerifier, V077_TheEntryIsTheFirstStatementsOfTheEntryBlock) {
 }
 
 } // namespace
+
+//===----------------------------------------------------------------------===//
+// V085: a temporary is defined on every path to its uses
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// The shapes of f(x i64, c bool) i64 for V085, by number.
+enum V085Shape {
+  SameBlock,        // t = x + 1; return t
+  Dominating,       // t = x + 1 in the entry; branch; both arms read t
+  PhiBothArms,      // t = 1 in one arm, t = 2 in the other; the join reads t
+  CallResult,       // t = ext(x); the call's target reads t
+  EntryAndArm,      // t = 0 in the entry and t = 5 in one arm; the join reads
+  UseBeforeDef,     // u = t; t = x: the read comes first
+  OneArmOnly,       // t = 1 in one arm only; the join reads t
+  LoopHeader,       // the loop header reads t; only the body sets it
+  CallInCleanup,    // t = ext(x), unwinding to a cleanup block that reads t
+  CallOtherPred,    // t = ext(x) -> J, and J has another way in: J reads t
+  CallOtherPredSet, // the same, the other way in sets t too (a phi)
+};
+
+std::vector<gir::VerifyError> v085(V085Shape Sh) {
+  using namespace gir;
+  GoodModule G;
+  FuncId Ext = G.Ext;
+  FuncId F = declare(G.M, "v", G.C.func({G.I64, G.Bool}, G.I64));
+  FuncBuilder B(G.M, G.fn(F));
+  LocalId T = B.newTemp(G.I64);
+  auto X = [&] { return copyOf(B.local(1)); };
+  auto C = [&] { return copyOf(B.local(2)); };
+  auto Set = [&](uint64_t V) {
+    B.assign(B.local(T), B.use(constInt(G.I64, V)));
+  };
+  auto RetT = [&] {
+    B.assign(B.local(0), B.use(copyOf(B.local(T))));
+    B.ret();
+  };
+  switch (Sh) {
+  case SameBlock:
+    B.assign(B.local(T), B.binary(BinOp::Add, X(), constInt(G.I64, 1)));
+    RetT();
+    break;
+  case Dominating:
+  case EntryAndArm:
+  case PhiBothArms:
+  case OneArmOnly: {
+    if (Sh == Dominating)
+      B.assign(B.local(T), B.binary(BinOp::Add, X(), constInt(G.I64, 1)));
+    if (Sh == EntryAndArm)
+      Set(0);
+    BlockId Then = B.newBlock(), Else = B.newBlock(), Join = B.newBlock();
+    B.branch(C(), Then, Else);
+    B.setBlock(Then);
+    if (Sh != Dominating)
+      Set(1);
+    B.gotoBlock(Join);
+    B.setBlock(Else);
+    if (Sh == PhiBothArms)
+      Set(2);
+    B.gotoBlock(Join);
+    B.setBlock(Join);
+    RetT();
+    break;
+  }
+  case CallResult: {
+    B.call(constFunc(G.M, Ext), {X()}, B.local(T),
+           {UnwindAction::Continue, NoId});
+    RetT();
+    break;
+  }
+  case UseBeforeDef: {
+    LocalId U = B.newTemp(G.I64);
+    B.assign(B.local(U), B.use(copyOf(B.local(T))));
+    B.assign(B.local(T), B.use(X()));
+    B.assign(B.local(0), B.use(copyOf(B.local(U))));
+    B.ret();
+    break;
+  }
+  case LoopHeader: {
+    BlockId Head = B.newBlock(), Body = B.newBlock(), Exit = B.newBlock();
+    B.gotoBlock(Head);
+    B.setBlock(Head);
+    LocalId K = B.newTemp(G.Bool);
+    B.assign(B.local(K), B.binary(BinOp::Lt, copyOf(B.local(T)), X()));
+    B.branch(copyOf(B.local(K)), Body, Exit);
+    B.setBlock(Body);
+    Set(3);
+    B.gotoBlock(Head);
+    B.setBlock(Exit);
+    B.assign(B.local(0), B.use(X()));
+    B.ret();
+    break;
+  }
+  case CallOtherPred:
+  case CallOtherPredSet: {
+    // (R3 of the final review: the result is defined on the call's edge only.)
+    BlockId Call = B.newBlock(), Other = B.newBlock();
+    B.branch(C(), Call, Other);
+    B.setBlock(Call);
+    B.call(constFunc(G.M, Ext), {X()}, B.local(T),
+           {UnwindAction::Continue, NoId});
+    BlockId Join = B.block();
+    RetT();
+    B.setBlock(Other);
+    if (Sh == CallOtherPredSet)
+      Set(4);
+    B.gotoBlock(Join);
+    break;
+  }
+  case CallInCleanup: {
+    BlockId Cl = B.newBlock(/*Cleanup=*/true);
+    B.call(constFunc(G.M, Ext), {X()}, B.local(T), {UnwindAction::Cleanup, Cl});
+    RetT();
+    B.setBlock(Cl);
+    LocalId U = B.newTemp(G.I64);
+    B.assign(B.local(U), B.use(copyOf(B.local(T))));
+    B.resume();
+    break;
+  }
+  }
+  return verify(G.M);
+}
+
+std::string v085Rules(V085Shape Sh) {
+  std::string S;
+  for (const gir::VerifyError &E : v085(Sh))
+    S += E.str() + "\n";
+  return S;
+}
+} // namespace
+
+TEST(GIRVerifier, V085_ATemporaryIsDefinedOnEveryPathToItsUses) {
+  // Valid: a definition before the use in its block, one whose block
+  // dominates, one on each arm of a branch (a phi), a call's result in its
+  // target, and a temporary zeroed in the entry and set on one arm.
+  for (V085Shape Sh : {SameBlock, Dominating, PhiBothArms, CallResult,
+                       EntryAndArm, CallOtherPredSet})
+    EXPECT_EQ(v085Rules(Sh), "") << Sh;
+  // V085: a read before the definition, a definition on one arm only, a loop
+  // header that reads what only its body sets, and a call's result read in
+  // the cleanup block its unwind goes to.
+  // And a call's result read in its target where another way into the
+  // target did not run the call.
+  for (V085Shape Sh :
+       {UseBeforeDef, OneArmOnly, LoopHeader, CallInCleanup, CallOtherPred}) {
+    std::string R = v085Rules(Sh);
+    EXPECT_NE(R.find("V085"), std::string::npos) << Sh << ": " << R;
+  }
+}
+
+namespace {
+/// NT temporaries set on both arms of one branch (the last on one arm only)
+/// and read after a chain of Chain blocks, each in a block of its own.
+std::vector<gir::VerifyError> farPhis(unsigned NT, unsigned Chain) {
+  using namespace gir;
+  GoodModule G;
+  FuncId F = declare(G.M, "b", G.C.func({G.I64, G.Bool}, G.I64));
+  FuncBuilder B(G.M, G.fn(F));
+  std::vector<LocalId> Ts;
+  for (unsigned K = 0; K <= NT; ++K)
+    Ts.push_back(B.newTemp(G.I64));
+  BlockId Then = B.newBlock(), Else = B.newBlock(), Join = B.newBlock();
+  B.branch(copyOf(B.local(2)), Then, Else);
+  B.setBlock(Then);
+  for (unsigned K = 0; K <= NT; ++K)
+    B.assign(B.local(Ts[K]), B.use(constInt(G.I64, K)));
+  B.gotoBlock(Join);
+  B.setBlock(Else);
+  for (unsigned K = 0; K < NT; ++K)
+    B.assign(B.local(Ts[K]), B.use(constInt(G.I64, K + 1)));
+  B.gotoBlock(Join);
+  B.setBlock(Join);
+  for (unsigned K = 0; K < Chain; ++K) {
+    BlockId N = B.newBlock();
+    B.gotoBlock(N);
+    B.setBlock(N);
+  }
+  LocalId Acc = B.newTemp(G.I64);
+  B.assign(B.local(Acc), B.use(constInt(G.I64, 0)));
+  for (unsigned K = 0; K <= NT; ++K) {
+    BlockId N = B.newBlock();
+    B.gotoBlock(N);
+    B.setBlock(N);
+    LocalId A2 = B.newTemp(G.I64);
+    B.assign(B.local(A2), B.binary(BinOp::Add, copyOf(B.local(Acc)),
+                                   copyOf(B.local(Ts[K]))));
+    Acc = A2;
+  }
+  B.assign(B.local(0), B.use(copyOf(B.local(Acc))));
+  B.ret();
+  return verify(G.M);
+}
+
+std::string rulesOf(const std::vector<gir::VerifyError> &E) {
+  std::string S;
+  for (const gir::VerifyError &X : E)
+    S += X.str() + "\n";
+  return S;
+}
+} // namespace
+
+TEST(GIRVerifier, V085_TheSearchBudgetIsVisible) {
+  // Few far phis: within the budget, the one set on one arm only is found.
+  gir::setVerifierBudgetStrict(false);
+  uint64_t U0 = gir::verifierUncheckedUses();
+  std::string Small = rulesOf(farPhis(3, 3));
+  EXPECT_NE(Small.find("no definition of it reaches"), std::string::npos)
+      << Small;
+  EXPECT_EQ(gir::verifierUncheckedUses(), U0);
+  // 200 phis read 200 blocks after their join: the searches pass the budget
+  // (each walks the chain again), so uses are left unchecked and counted,
+  // and the bad one is not found...
+  std::string Big = rulesOf(farPhis(200, 200));
+  EXPECT_GT(gir::verifierUncheckedUses(), U0);
+  EXPECT_EQ(Big.find("no definition of it reaches"), std::string::npos) << Big;
+  // ...which strict mode (the lit suite's) reports.
+  gir::setVerifierBudgetStrict(true);
+  std::string Strict = rulesOf(farPhis(200, 200));
+  EXPECT_NE(Strict.find("ran out of its budget"), std::string::npos) << Strict;
+  gir::setVerifierBudgetStrict(std::getenv("GOPP_VERIFY_BUDGET_STRICT"));
+}

@@ -1,0 +1,19 @@
+// P04.24 (ADR-0025 Amendment point 6, UNI-2; review round 1, R2): a factor
+// that rounds to 0 in the float type is out of range in generic code, as
+// plain code refuses it (E0435). M / T149 is 2^-149, the smallest float32
+// subnormal, and runs; M / T150 is 2^-150, half of it, which rounds to 0: the
+// site stops the program with "unit out of range: U/V", exit status 2.
+// Written by hand: Go has no units.
+package main
+
+unit M
+unit T149 = 713623846352979940529142984724747568191373312 M
+unit T150 = 1427247692705959881058285969449495136382746624 M
+
+func R[U unit, V unit](a float32[U], b float32[V]) float32 { return float32(a / b) }
+
+func main() {
+	println("start")
+	println(R(float32[M](1), float32[T149](1)) > 0)
+	println(R(float32[M](1), float32[T150](1)) > 0)
+}

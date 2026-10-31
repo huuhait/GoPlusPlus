@@ -410,6 +410,38 @@ TEST(Constant, RoundingToFloat32AndFloat64) {
   EXPECT_FALSE(std::isinf(lit("3.4e38", tok::float_lit).float32()));
 }
 
+TEST(Constant, AnExactRationalRoundsOnceNotThrough512Bits) {
+  // P04.24: a rational is rounded from its exact value, as Go's
+  // big.Rat.Float64 (and the run-time unit_ratio of generic unit code) does.
+  // 1 + 2^-53 + 2^-700 is above the tie between 1 and 1 + 2^-52, so it goes
+  // up; rounded to 512 bits first it would be the tie and go to 1 (even).
+  llvm::APInt Den = llvm::APInt::getOneBitSet(702, 700);
+  llvm::APInt Num = Den + llvm::APInt::getOneBitSet(702, 647) + 1;
+  Real X = Real::fromRat(Num, Den);
+  ASSERT_TRUE(X.isRat());
+  EXPECT_EQ(X.toIEEE(53), 1.0 + 0x1p-52);
+  EXPECT_EQ(ConstValue::makeFloat(X).float64(), 1.0 + 0x1p-52);
+  EXPECT_EQ(X.neg().toIEEE(53), -(1.0 + 0x1p-52));
+  // The same for float32 (1 + 2^-24 + 2^-700), and the nearby exact tie,
+  // which still goes to even.
+  llvm::APInt Num32 = Den + llvm::APInt::getOneBitSet(702, 676) + 1;
+  EXPECT_EQ(Real::fromRat(Num32, Den).toIEEE(24), double(1.0f + 0x1p-23f));
+  llvm::APInt Tie = Den + llvm::APInt::getOneBitSet(702, 647);
+  EXPECT_EQ(Real::fromRat(Tie, Den).toIEEE(53), 1.0);
+  // The range: subnormals, half the smallest (0), overflow.
+  llvm::APInt One(2, 1);
+  EXPECT_EQ(
+      Real::fromRat(One, llvm::APInt::getOneBitSet(1100, 1074)).toIEEE(53),
+      4.9e-324);
+  EXPECT_EQ(
+      Real::fromRat(One, llvm::APInt::getOneBitSet(1100, 1075)).toIEEE(53),
+      0.0);
+  EXPECT_TRUE(std::isinf(
+      Real::fromRat(llvm::APInt::getOneBitSet(1100, 1024), One).toIEEE(53)));
+  EXPECT_TRUE(std::isinf(
+      Real::fromRat(llvm::APInt::getAllOnes(128).zext(129), One).toIEEE(24)));
+}
+
 TEST(Constant, Strings) {
   EXPECT_EQ(val("\"foo\"").str(), "\"foo\"");
   EXPECT_EQ(lit("1e9999", tok::float_lit).str(), "1e+9999");

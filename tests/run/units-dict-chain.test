@@ -422,9 +422,9 @@ func P198[U unit](a float64[U]) float64 { return P197[U*S/S](a) }
 func P199[U unit](a float64[U]) float64 { return P198[U*S/S](a) }
 func P200[U unit](a float64[U]) float64 { return P199[U*S/S](a) }
 
-// KM^4 / M^4: the factor 1000^4 = 10^12, inside the 64 bits of a descriptor
-// (a factor past them, 1000^8, is the panic of Inputs/panics-gopp/
-// unit-range-factor.gopp).
+// KM^4 / M^4: the factor 1000^4 = 10^12 (a descriptor's factor is exact up
+// to 4096 bits each way: (KM/M)^8 and more in units-bigfactor.test; past
+// them, the panic of Inputs/panics-gopp/unit-range-factor.gopp).
 func Top4[U unit, V unit](a float64[U], b float64[V]) float64 {
 	return Ratio(a*a*a*a, b*b*b*b)
 }

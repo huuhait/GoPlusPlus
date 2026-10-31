@@ -88,9 +88,13 @@ DEFAULT_CONFIGS = list(CONFIGS)
 # Tests whose program is not a plain `package main` run (core-ptr-print and
 # iface-print print addresses, which move with the frame size and the
 # optimizer's layout of the data; the others test the toolchain: a probe,
-# links with other flags, containers).
+# links with other flags, containers). units-bigfactor-table.long is the
+# program of units-bigfactor-table (in the corpus: every shape, the method and
+# closure rows and the float boundaries) with 96 random rows instead of 16; a
+# build of it at every level is minutes of the matrix for no new shape.
 SKIP_TESTS = {"core-ptr-print", "iface-print", "debian", "debian-container.long", "link-flags",
-              "deterministic", "arm64-qemu-features", "arm64-qemu-hello"}
+              "deterministic", "arm64-qemu-features", "arm64-qemu-hello",
+              "units-bigfactor-table.long"}
 
 
 class Program:

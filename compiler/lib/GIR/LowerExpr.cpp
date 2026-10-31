@@ -1353,18 +1353,25 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
       if (auto SIt = I.UnitSites.find(B); SIt != I.UnitSites.end())
         for (const S::UnitSite &St : SIt->second)
           if (St.K == S::UnitSite::Quo) {
-            auto NQ = dynSite(St, 1, 1, B);
+            // (unit_intfactor's mode 2: the factor or its inverse, the one
+            // that is at least 1, and which of the two.)
+            UnitScale Q;
+            Q.Dyn = Q.Any = true;
+            Q.DynSites.push_back(&St);
+            Q.DynStatic = S::Real::fromInt(llvm::APInt(2, 1));
+            std::array<Operand, 4> W = dynInt(Q, 2, B);
             Rt E(M, FB);
-            Val N{&E, NQ.first}, D{&E, NQ.second};
             Var XV = E.var(X.type(), Val{&E, X});
             Var YV = E.var(Y.type(), Val{&E, Y});
             E.IfElse(
-                E.snap(N >= D),
+                E.snap(Val{&E, W[3]} == 0),
                 [&] {
-                  XV = Val{&E, scaleDyn(XV.v().Op, N.Op, D.Op, B, "unit")};
+                  XV = Val{&E, scaleIntExact(XV.v().Op, W[0], W[1], W[2], B,
+                                             "unit")};
                 },
                 [&] {
-                  YV = Val{&E, scaleDyn(YV.v().Op, D.Op, N.Op, B, "unit")};
+                  YV = Val{&E, scaleIntExact(YV.v().Op, W[0], W[1], W[2], B,
+                                             "unit")};
                 });
             X = E.snap(XV.v()).Op;
             Y = E.snap(YV.v()).Op;

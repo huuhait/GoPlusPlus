@@ -50,6 +50,20 @@ std::vector<VerifyError> verify(const Module &M, unsigned MaxErrors = 20);
 /// the count grows in step with the size of the input, not with the clock.
 uint64_t verifierSteps();
 
+/// Test-only: V085 (a temporary is defined on every path to its uses) without
+/// its dominance test, its memo of covered blocks and its search budget, the
+/// quadratic control of its counted test; on this thread.
+void setVerifierTempSearchControl(bool On);
+
+/// The uses V085 left unchecked on this thread because the backward search of
+/// a function ran out of its budget (a temporary defined on several branches
+/// and read far from them). Not an error, unless strict: on this thread, set
+/// by setVerifierBudgetStrict or from the environment variable
+/// GOPP_VERIFY_BUDGET_STRICT (the lit suite sets it, so no program of the
+/// suite reaches the budget).
+uint64_t verifierUncheckedUses();
+void setVerifierBudgetStrict(bool On);
+
 /// verify, printing one "gir verifier: ..." line per error to OS; true if M
 /// is valid.
 bool verify(const Module &M, llvm::raw_ostream &OS);

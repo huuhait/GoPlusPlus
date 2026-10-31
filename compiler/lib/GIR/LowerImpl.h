@@ -47,6 +47,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 
+#include <array>
 #include <map>
 #include <set>
 
@@ -345,8 +346,8 @@ public:
   /// The run-time units (GEN-14, Runtime.cpp): the descriptor layout, the
   /// functions that combine descriptors and decide a collapse site.
   struct UnitRtFns {
-    FuncId Site = NoId, RatMul = NoId, MulPow = NoId, ScaleInt = NoId,
-           Ratio = NoId;
+    FuncId Make = NoId, SiteF = NoId, SiteI = NoId, ScaleInt = NoId,
+           SpillFree = NoId;
   };
   UnitRtFns UnitRt;
   llvm::SmallVector<const S::Object *, 8> UnitBaseList;
@@ -360,6 +361,15 @@ public:
   UnitRtFns *unitRt(SourceLoc At);
   /// The constant descriptor of a unit with no unit parameter.
   uint32_t unitDescGlobal(const S::UnitCanon *U);
+  /// The words of the descriptor of U (UnitRuntime.h), appended to Words.
+  void unitDescWords(const S::UnitCanon *U,
+                     llvm::SmallVectorImpl<uint64_t> &Words);
+  /// A recipe or a site group as a constant of the module, one per content.
+  uint32_t unitRecipeGlobal(llvm::ArrayRef<uint64_t> Words);
+  std::map<std::vector<uint64_t>, uint32_t> UnitRecipeGlobals;
+  /// A read-only internal global of u64 words named `<Kind>.<Number>`.
+  uint32_t unitWordsGlobal(llvm::ArrayRef<uint64_t> Words, const char *Kind,
+                           size_t Number);
   /// Go's == and the hash of a checker type (glue); NoId after a report. A
   /// view compares and hashes as the value it looks at (OWN-V), also as a
   /// part of a struct, an array or an Option (viewPartsGlue, review R7).
@@ -979,10 +989,12 @@ private:
     bool Any = false;   // a factor other than 1
     bool Trunc = false; // an explicit conversion to a coarser integer unit
     bool Bad = false;   // a unit that cannot be made at the instance
-    /// The factor is a run-time fraction (an instance that takes unit
-    /// descriptors): DynN / DynD, F is 1.
+    /// The factor is made at run time (an instance that takes unit
+    /// descriptors): the product of the sites DynSites and the static
+    /// factor DynStatic; F is 1.
     bool Dyn = false;
-    Operand DynN, DynD;
+    llvm::SmallVector<const S::UnitSite *, 2> DynSites;
+    S::Real DynStatic;
     /// The unit in the panic text, should the fraction be marked.
     std::string DynWhat;
   };
@@ -1017,11 +1029,20 @@ private:
   ScopeId HoistScope = 0;
   unsigned HoistDepth = 0;
   llvm::DenseMap<const S::UnitCanon *, Operand> DescMemo;
-  std::map<std::tuple<unsigned, const S::UnitCanon *, const S::UnitCanon *,
-                      const S::UnitCanon *, uint64_t, uint64_t>,
-           std::pair<Operand, Operand>>
-      SiteMemo;
-  std::map<std::tuple<LocalId, LocalId, uint64_t>, Operand> RatioMemo;
+  std::map<std::pair<uint32_t, uint64_t>, std::pair<Operand, Operand>>
+      DynFloatMemo;
+  std::map<std::pair<uint32_t, uint64_t>, std::array<Operand, 4>> DynIntMemo;
+  /// The index of each dictionary parameter (GenericInst::DictParams), the
+  /// frame's array of the descriptor pointers (unitDicts), and the slot the
+  /// integer words of a site are read from.
+  llvm::DenseMap<const S::TypeParamType *, uint64_t> DictIndex;
+  const Function *DictsFn = nullptr, *OutFn = nullptr;
+  LocalId DictsSlot = 0, OutSlot = 0;
+  /// The chain of the factors too wide for a descriptor's slot (unit_make),
+  /// an owned local of a function that takes descriptors once a slot uses it
+  /// (its drop glue frees the chain at every exit).
+  LocalId SpillLocal = NoId;
+  bool SpillUsed = false;
   /// Emits into the hoisting block while it lives (nested ones are no-ops).
   class Hoist {
   public:
@@ -1046,12 +1067,17 @@ private:
   Operand unitDesc(const S::UnitCanon *U, const ast::Node *N);
   void dictArgsFor(const GenericInst *GI, const ast::Expr *Key,
                    llvm::SmallVectorImpl<const S::UnitCanon *> &Out);
-  std::pair<Operand, Operand> dynSite(const S::UnitSite &St, uint64_t Sp,
-                                      uint64_t Sq, const ast::Node *N);
-  Operand scaleDyn(Operand V, Operand N, Operand D, const ast::Node *N0,
-                   const std::string &What);
-  Operand scaleIntExact(Operand V, Operand N, Operand D, const ast::Node *N0,
-                        const std::string &What);
+  bool unitRecipe(const S::UnitCanon *U, const ast::Node *N,
+                  llvm::SmallVectorImpl<uint64_t> &Words);
+  Operand unitDicts();
+  uint32_t unitGroup(const UnitScale &U, const ast::Node *N);
+  std::pair<Operand, Operand> dynFloat(const UnitScale &U, Type *FT,
+                                       const ast::Node *N);
+  std::array<Operand, 4> dynInt(const UnitScale &U, unsigned Mode,
+                                const ast::Node *N);
+  Operand scaleDyn(Operand V, const UnitScale &U, const ast::Node *N0);
+  Operand scaleIntExact(Operand V, Operand A, Operand N, Operand D,
+                        const ast::Node *N0, const std::string &What);
   bool physicalIntQuo(const ast::BinaryExpr *B, S::Real &Ratio, bool &ScaleX);
   const S::UnitCanon *unitAtInstance(const S::UnitCanon *U);
   bool unitCorrection(const S::UnitCanon *U, S::Real &C);
