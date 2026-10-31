@@ -1,0 +1,114 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-generic.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-generic.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (ADR-0025 and its amendment, GEN-14): generic code over unit
+// parameters. The unit arguments are no part of an instance: `Avg[KM]` and
+// `Avg[M]` are one body (it has no collapse site, so it takes nothing), and
+// `Ratio`, whose quotient is plain where the units cancel, takes a run-time
+// descriptor of each unit parameter and decides its collapse sites
+// (Info::UnitSites) from them, so generic code computes what plain code
+// computes: Ratio(1.0[KM], 1.0[M]) is 1000 whether the units are passed
+// straight, through three generics, or by a generic type's method. Go has no
+// units: the golden is by hand and each value is worked out before it
+// (println prints +3.000000e+000 for 3.0).
+package main
+
+import "unsafe"
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+unit IKM = 1 / KM
+
+// No collapse site: a sum and a scalar, no unit needed at run time.
+func Avg[U unit](xs []float64[U]) float64[U] {
+	var s float64[U]
+	for _, x := range xs {
+		s += x
+	}
+	return s / float64(len(xs))
+}
+
+func Twice[U unit](a float64[U]) float64[U] { return a + a }
+
+// A quotient whose units cancel at an instance: the factor of the instance.
+func Ratio[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return float64(a / b)
+}
+
+// Three generics that pass their units on.
+func R1[U unit, V unit](a float64[U], b float64[V]) float64 { return R2(a, b) }
+func R2[U unit, V unit](a float64[U], b float64[V]) float64 { return R3[U, V](a, b) }
+func R3[U unit, V unit](a float64[U], b float64[V]) float64 { return Ratio(a, b) }
+
+func Speed[U unit, V unit](d float64[U], t float64[V]) float64[U/V] { return d / t }
+
+// A constant of a unit with a parameter is its number times the instance's
+// factor (1 when the unit has a dimension).
+func Plus2[U unit](x float64[U]) float64[U] { return x + 2.0[U] }
+
+// A scale change in the body: x in U goes to U*KM/M, which is 1000 U.
+func Scaled[U unit](x float64[U]) float64[U*KM/M] { return x.In[U*KM/M]() }
+
+// Units that cancel only at the instance, passed to another generic.
+func Cancel[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return Doubled[U/V](a / b)
+}
+func Doubled[W unit](x float64[W]) float64 { return float64(x + x) }
+
+// An integer kind truncates a factor that is no integer (ADR-0025 amendment
+// point 7).
+func IProd[U unit, V unit](a int[U], b int[V]) int { return int(a * b) }
+
+type Vec2[U unit] struct{ X, Y float64[U] }
+
+func (v Vec2[U]) Add(o Vec2[U]) Vec2[U] { return Vec2[U]{v.X + o.X, v.Y + o.Y} }
+func (v Vec2[U]) Len2() float64[U*U]    { return v.X*v.X + v.Y*v.Y }
+
+func PerS[U unit](v Vec2[U], t float64[S]) Vec2[U/S] {
+	return Vec2[U/S]{v.X / t, v.Y / t}
+}
+
+func main() {
+	// Avg of 1, 2, 6 KM = 3; of 1, 2, 6, 7 M = 4; Twice(1.5 KM) = 3.
+	println(float64(Avg([]float64[KM]{1.0[KM], 2.0[KM], 6.0[KM]})))
+	println(float64(Avg([]float64[M]{1.0[M], 2.0[M], 6.0[M], 7.0[M]})))
+	println(float64(Twice(1.5[KM])))
+
+	// Ratio: 1 KM / 1 M = 1000, M / M = 1, 1 M / 1 KM = 1/1000, 3 KM / 2 KM
+	// = 1.5. Through three generics: 1000. Explicit units: the same.
+	println(Ratio(1.0[KM], 1.0[M]), Ratio(1.0[M], 1.0[M]), Ratio(1.0[M], 1.0[KM]), Ratio(3.0[KM], 2.0[KM]))
+	println(R1(1.0[KM], 1.0[M]), Ratio[KM, M](2.0[KM], 4.0[M]))
+
+	// Speed(100 KM, 2 H) = 50 KM/H; in M/S: 50 * 1000 / 3600 = 13.888889.
+	sp := Speed(100.0[KM], 2.0[H])
+	println(float64(sp), float64(sp.In[M/S]()))
+
+	// Plus2(1 KM) = 3 KM; Plus2(5 M) = 7 M.
+	println(float64(Plus2(1.0[KM])), float64(Plus2(5.0[M])))
+	// Scaled: U*KM/M is 1000 U, so 5 U is 5/1000 of it: 0.005 (for U = M, 5 M
+	// is 0.005 of 1000 M).
+	println(float64(Scaled(5.0[M])))
+
+	// Units that cancel: Cancel(1 KM, 1 M): a / b = 1000, doubled = 2000.
+	println(Cancel(1.0[KM], 1.0[M]), Cancel(1.0[M], 1.0[M]))
+
+	// An integer factor that is no integer: M * IKM = 1/1000 (plain). 1000 *
+	// 1 / 1000 = 1; 999 * 1 / 1000 = 0 (truncated).
+	println(IProd(1000[M], 1[IKM]), IProd(999[M], 1[IKM]))
+
+	// A generic type: methods per instance, one layout (erasure): 3,4 KM has
+	// the length^2 25 KM^2; per 2 S it is 1.5, 2 KM/S.
+	v := Vec2[KM]{1.0[KM], 2.0[KM]}.Add(Vec2[KM]{2.0[KM], 2.0[KM]})
+	println(float64(v.X), float64(v.Y), float64(v.Len2()))
+	w := PerS(v, 2.0[S])
+	println(float64(w.X), float64(w.Y))
+	// Vec2[KM] and Vec2[M] are two types with the layout of struct{ X, Y
+	// float64 }.
+	println(unsafe.Sizeof(Vec2[KM]{}), unsafe.Sizeof(Vec2[M]{}), unsafe.Offsetof(Vec2[M]{}.Y))
+	// The same unit written in two ways is one instance.
+	println(float64(Avg([]float64[KM/H]{4.0[KM/H], 8.0[KM*H^-1]})))
+}

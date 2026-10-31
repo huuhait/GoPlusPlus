@@ -70,7 +70,8 @@ enum FuncCode : unsigned {
   F_Block,
   F_Stmt,
   F_Term,
-  F_Scope // [kind, parent, callee, origin, span(3)]: before the locals
+  F_Scope,    // [kind, parent, callee, origin, span(3)]: before the locals
+  F_LocalUnit // [name chars]: the unit name of the local just before (P04.24)
 };
 enum IndexCode : unsigned { X_Body = 1 };
 
@@ -456,6 +457,8 @@ private:
       put(R.Vals, L.Loc);
       R.Vals.append(chars(L.Name));
       Out.push_back(std::move(R));
+      if (!L.UnitName.empty())
+        Out.push_back({F_LocalUnit, chars(L.UnitName)});
     }
     for (const BasicBlock &B : F.Blocks) {
       Out.push_back({F_Block, {B.Cleanup, B.Catch, B.Cold}});
@@ -1135,6 +1138,12 @@ private:
         L.Loc = span(R);
         L.Name = R.rest();
         F->Locals.push_back(std::move(L));
+        break;
+      }
+      case F_LocalUnit: {
+        if (F->Locals.empty())
+          return bad("a unit name without a local");
+        F->Locals.back().UnitName = R.rest();
         break;
       }
       case F_Scope: {

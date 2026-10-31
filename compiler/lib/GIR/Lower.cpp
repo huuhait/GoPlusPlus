@@ -252,12 +252,117 @@ Type *Lowering::lowerType(S::Type *T, SourceLoc At) {
   return R;
 }
 
+/// Does a type argument of Named, or one inside one, hold a unit (a unit
+/// argument, or a number type with a unit)?
+bool Lowering::namesAUnit(S::NamedType *Named) {
+  if (!CP.Ctx->unitsSeen())
+    return false;
+  // Iterative over the named arguments; each type is looked at once.
+  SmallVector<S::Type *, 8> Work(Named->TArgs.begin(), Named->TArgs.end());
+  llvm::SmallPtrSet<S::Type *, 16> Seen;
+  while (!Work.empty()) {
+    S::Type *T = Work.pop_back_val();
+    if (!Seen.insert(T).second)
+      continue;
+    if (auto *B = dyn_cast<S::BasicType>(T)) {
+      if (B->Unit)
+        return true;
+    } else if (auto *N = dyn_cast<S::NamedType>(T)) {
+      Work.append(N->TArgs.begin(), N->TArgs.end());
+    } else if (auto *P = dyn_cast<S::PointerType>(T)) {
+      Work.push_back(P->Elem);
+    } else if (auto *Sl = dyn_cast<S::SliceType>(T)) {
+      Work.push_back(Sl->Elem);
+    } else if (auto *A = dyn_cast<S::ArrayType>(T)) {
+      Work.push_back(A->Elem);
+    }
+  }
+  return false;
+}
+
+const sym::Node *Lowering::unitFree(S::Type *T) {
+  // (A program without units: every type is its own.)
+  if (!CP.Ctx->unitsSeen())
+    return nullptr;
+  const sym::Node *Root = Syms.Names.type(T);
+  if (!Root)
+    return nullptr;
+  // One iterative post-order walk over the node DAG, memoized: each node is
+  // rebuilt once. (Test-only: the stress test's control forgets.)
+  if (Opts.ForgetErasedUnits)
+    UnitFreeMemo.clear();
+  sym::Context &C = Syms.Ctx;
+  struct Frame {
+    const sym::Node *N;
+    size_t Next = 0;
+  };
+  SmallVector<Frame, 16> Stack{{Root}};
+  SmallVector<const sym::Node *, 8> Kids;
+  while (!Stack.empty()) {
+    ++LowerSteps; // test-only: counted
+    Frame &Fr = Stack.back();
+    const sym::Node *N = Fr.N;
+    if (UnitFreeMemo.count(N)) {
+      Stack.pop_back();
+      continue;
+    }
+    if (Fr.Next < N->Kids.size()) {
+      const sym::Node *K = N->Kids[Fr.Next++];
+      if (!UnitFreeMemo.count(K))
+        Stack.push_back({K});
+      continue;
+    }
+    const sym::Node *R = N;
+    if (N->K == sym::Kind::UnitType) {
+      // The number type: the kind whose tag is the letter.
+      for (unsigned K = unsigned(sym::Kind::Int);
+           K <= unsigned(sym::Kind::Complex128); ++K)
+        if (sym::kindPrefix(sym::Kind(K))[0] == N->Sub)
+          R = C.basic(sym::Kind(K));
+    } else if (N->K == sym::Kind::Unit) {
+      R = C.named("", "unit");
+    } else if (!N->Kids.empty()) {
+      Kids.clear();
+      bool Same = true;
+      for (const sym::Node *K : N->Kids) {
+        Kids.push_back(UnitFreeMemo[K]);
+        Same &= Kids.back() == K;
+      }
+      if (!Same)
+        R = C.make(N->K, Kids, N->Sub, N->Num, N->Aux, N->A, N->B, N->C);
+    }
+    UnitFreeMemo[N] = R;
+    Stack.pop_back();
+  }
+  return UnitFreeMemo[Root];
+}
+
+bool Lowering::isUnitArg(S::Type *T) {
+  auto *B = dyn_cast<S::BasicType>(T);
+  return B && B->BK == S::BasicKind::UnitArg;
+}
+
+bool Lowering::hasUnitArg(S::NamedType *Named) {
+  return llvm::any_of(Named->TArgs, [&](S::Type *A) { return isUnitArg(A); });
+}
+
 std::string Lowering::uniqueTypeName(S::NamedType *Named) {
   std::string Name;
   if (Named) {
     // (A readable label: an instance written as a DAG of 2^n parts, an alias
     // chain of P[A, A], stops at MaxTypeName bytes and `...`.)
-    if (const sym::Node *N = Syms.Names.type(Named))
+    if (hasUnitArg(Named))
+      // (The layout of every unit it can have: `main.Vec2[unit]`.)
+      Name = rtypeShown(Named)
+                 .substr(0, MaxTypeName)
+                 .substr(0, rtypeShown(Named).find('[')) +
+             "[unit]";
+    else if (const sym::Node *F = namesAUnit(Named) ? unitFree(Named) : nullptr)
+      // (A unit inside an argument, `Box[float64[KM]]`: one struct for every
+      // unit, named with the units erased, `main.Box[float64]`, the name of
+      // the struct of `Box[float64]` too, whichever comes first; P04.24.)
+      Name = sym::print(F, MaxTypeName).Text;
+    else if (const sym::Node *N = Syms.Names.type(Named))
       Name = sym::print(N, MaxTypeName).Text;
     else
       Name = (Named->Obj->Pkg ? Named->Obj->Pkg->Path.str() + "." : "") +
@@ -305,12 +410,20 @@ Type *Lowering::lowerStruct(S::Type *Whole, S::StructType *ST,
                             S::NamedType *Named, SourceLoc At) {
   if (auto It = StructCache.find(ST); It != StructCache.end())
     return It->second;
+  // (A struct type that differs from another only in its units is its GIR
+  // struct, UnitFreeTypes.)
+  const sym::Node *Free = Named ? nullptr : unitFree(Whole);
+  if (Free)
+    if (auto It = UnitFreeStructs.find(Free); It != UnitFreeStructs.end())
+      return StructCache[ST] = It->second;
   // A defined type and its underlying struct are one GIR struct, so a
   // conversion between two defined types of one struct is no code. The name
   // is the readable symbol of the first type that reaches it.
   std::string Name = uniqueTypeName(Named);
   Type *Str = Ctx.structTy(Name);
   StructCache[ST] = Str;
+  if (Free)
+    UnitFreeStructs[Free] = Str;
   ++StructsActive;
   struct Done {
     unsigned &N;
@@ -341,10 +454,18 @@ Type *Lowering::lowerStruct(S::Type *Whole, S::StructType *ST,
   // debugger then shows the name of the first, P04.08.)
   if (Named && !Named->TArgs.empty()) {
     SmallVector<Type *, 4> Args;
-    for (S::Type *A : Named->TArgs)
+    // (A unit argument has no GIR type: units are erased, UNI-9.)
+    size_t Units = 0;
+    for (S::Type *A : Named->TArgs) {
+      if (auto *UB = dyn_cast<S::BasicType>(A);
+          UB && UB->BK == S::BasicKind::UnitArg) {
+        ++Units;
+        continue;
+      }
       if (Type *G = lowerType(A, At); G && G != Str)
         Args.push_back(G);
-    if (Args.size() == Named->TArgs.size())
+    }
+    if (Args.size() + Units == Named->TArgs.size() && !Units)
       Ctx.setTypeArgs(Str, Args);
   }
   return Str;
@@ -507,6 +628,16 @@ Type *Lowering::lowerTypeOnce(S::Type *T, SourceLoc At) {
     // arguments, however the checker spells it (`Box[byte]` and `Box[uint8]`
     // are two checker types): one GIR struct, one name, as its symbol (the
     // key of its methods' instances, Instances.h) is one.
+    // Instances that differ only in their unit arguments (`Vec2[KM]`,
+    // `Vec2[M]`, and the `Vec2[]` of generic code that takes the units at
+    // run time) have one layout: one GIR struct (units are erased, UNI-9;
+    // the checker's types stay apart in the type descriptors).
+    if (N->Orig && !N->TArgs.empty())
+      if (const sym::Node *F = unitFree(N)) {
+        auto [It, New] = UnitFreeTypes.try_emplace(F, N);
+        if (!New && It->second != N)
+          return lowerType(It->second, At);
+      }
     if (N->Orig && !N->TArgs.empty())
       if (const sym::Node *SN = Syms.Names.type(N)) {
         auto [It, New] = InstanceTypes.try_emplace(sym::mangleType(SN), N);
@@ -1282,6 +1413,10 @@ void Lowering::declareInstance(GenericInst &In) {
       return;
     Params.push_back(paramType(Sig, Params.size() - Lead, T));
   }
+  // The run-time unit descriptors the instance takes (GEN-14), after the
+  // declared parameters.
+  for (size_t K = 0; K < In.DictParams.size(); ++K)
+    Params.push_back(Ctx.ptr(Ctx.u8()));
   Type *Ret = Ctx.unit();
   if (Sig->Results->size() == 1)
     Ret = lowerType(Sig->Results->Elems[0], At);
@@ -1305,9 +1440,18 @@ void Lowering::declareInstance(GenericInst &In) {
   FuncId Id = M->addFunction(std::move(F));
   InstIds[&In] = Id;
   if (In.Method) {
-    FuncIds[In.Method] = Id;
+    // A method is called by its checker object. An instance that generic code
+    // shared across unit arguments asked for (In.Shared) has the types of the
+    // one with real units and, refused otherwise, the same code: a call goes
+    // to the one with real units when there is one.
+    auto Bind = [&](const S::Func *F) {
+      auto [It, New] = FuncIds.try_emplace(F, Id);
+      if (!New && !In.Shared)
+        It->second = Id;
+    };
+    Bind(In.Method);
     for (const S::Func *A : In.Aliases)
-      FuncIds[A] = Id;
+      Bind(A);
   }
 }
 
@@ -1348,8 +1492,7 @@ void Lowering::lowerInstanceBody(GenericInst &In) {
   // A function literal in generic code belongs to the instance (decision
   // M6, appendix A.5): its symbol is named by the instance's, so each
   // instance has closures of its own.
-  B.ScopeNode = In.Method ? Syms.Names.func(In.Method)
-                          : Syms.Names.funcInstance(Obj, In.TArgs);
+  B.ScopeNode = Walk.nodeOf(In);
   if (!B.ScopeNode || sym::mangle(B.ScopeNode) != In.Symbol) {
     internalError(FD->getBegin(), "the instance " + In.Symbol +
                                       " has no symbol node of its own");
@@ -1534,9 +1677,10 @@ std::unique_ptr<Module> Lowering::run() {
       } else if (auto *GD = dyn_cast<ast::GenDecl>(D)) {
         // Constants are folded by the checker; types are lowered where they
         // are used (lowerType); variables are declared below.
-        if (GD->Keyword == tok::kw_import || GD->Keyword == tok::kw_type ||
-            GD->Keyword == tok::kw_var ||
-            (GD->Keyword == tok::kw_const && !GD->IsUnit))
+        // (A unit declaration has no code, UNI-9.)
+        if (GD->IsUnit || GD->Keyword == tok::kw_import ||
+            GD->Keyword == tok::kw_type || GD->Keyword == tok::kw_var ||
+            GD->Keyword == tok::kw_const)
           continue;
         unsupported(GD->getBegin(), "this package-level declaration");
       } else {

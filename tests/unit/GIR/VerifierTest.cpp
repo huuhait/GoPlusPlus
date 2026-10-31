@@ -1800,6 +1800,59 @@ TEST(GIRVerifier, V078_TheEnvironmentIsTheFirstParameterOfTheGoConvention) {
   }
 }
 
+TEST(GIRVerifier, V080_AUnitNameBelongsToASourceVariableOfANumberType) {
+  // P04.24: units are erased (UNI-9); a source variable of a unit type keeps
+  // the unit's name for the debugger. The name is only for a source variable
+  // whose type (what it stands for) is a number.
+  {
+    GoodModule X; // the source variable of an int: valid
+    X.fn(X.F).Locals[1].Source = true;
+    X.fn(X.F).Locals[1].UnitName = "int[M]";
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    GoodModule X; // a float, and a pair of floats (a complex number)
+    Function &Fn = X.fn(X.F);
+    LocalId A = Fn.addLocal([&] {
+      Local L;
+      L.K = Local::Var;
+      L.Ty = X.F64;
+      L.Source = true;
+      L.Name = "d";
+      L.UnitName = "float64[KM]";
+      return L;
+    }());
+    LocalId B = Fn.addLocal([&] {
+      Local L;
+      L.K = Local::Var;
+      L.Ty = X.C.tuple({X.F64, X.F64});
+      L.Source = true;
+      L.Name = "c";
+      L.UnitName = "complex128[A]";
+      return L;
+    }());
+    (void)A;
+    (void)B;
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    GoodModule X; // a temporary has no unit name
+    X.fn(X.F).Locals[3].UnitName = "int[M]";
+    EXPECT_GIR_RULE(X.M, "V080");
+  }
+  {
+    GoodModule X; // a source variable that is no number
+    X.fn(X.F).Locals[2].Source = true;
+    X.fn(X.F).Locals[2].UnitName = "bool[M]";
+    EXPECT_GIR_RULE(X.M, "V080");
+  }
+  {
+    GoodModule X; // the other side: no name on the same bool variable
+    X.fn(X.F).Locals[2].Source = true;
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
 TEST(GIRVerifier, V076_ACallThroughACFunctionPointerPassesScalars) {
   // P04.18: a call through a C function pointer (an allocator's table entry,
   // ADR-0029) is lowered with the C ABI of scalars; an aggregate needs

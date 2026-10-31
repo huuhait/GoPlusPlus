@@ -1,0 +1,158 @@
+ratio f64 M M +1.500000e+000 +1.500000e+000 true
+via f64 M M +1.500000e+000 +1.500000e+000 true
+ratio f64 KM M +1.500000e+003 +1.500000e+003 true
+via f64 KM M +1.500000e+003 +1.500000e+003 true
+ratio f64 M KM +1.500000e-003 +1.500000e-003 true
+via f64 M KM +1.500000e-003 +1.500000e-003 true
+ratio f64 KM KM +1.500000e+000 +1.500000e+000 true
+via f64 KM KM +1.500000e+000 +1.500000e+000 true
+ratio f64 M M neg -1.500000e+000 -1.500000e+000 true
+via f64 M M neg -1.500000e+000 -1.500000e+000 true
+ratio f64 KM M neg -1.500000e+003 -1.500000e+003 true
+via f64 KM M neg -1.500000e+003 -1.500000e+003 true
+ratio f64 M KM neg -1.500000e-003 -1.500000e-003 true
+via f64 M KM neg -1.500000e-003 -1.500000e-003 true
+ratio f64 KM KM neg -1.500000e+000 -1.500000e+000 true
+via f64 KM KM neg -1.500000e+000 -1.500000e+000 true
+product f64 M IM +6.000000e+000 +6.000000e+000 true
+product f64 KM IM +6.000000e+003 +6.000000e+003 true
+product f64 M IKM +6.000000e-003 +6.000000e-003 true
+product f64 KM IKM +6.000000e+000 +6.000000e+000 true
+product f64 M IM neg -6.000000e+000 -6.000000e+000 true
+product f64 KM IM neg -6.000000e+003 -6.000000e+003 true
+product f64 M IKM neg -6.000000e-003 -6.000000e-003 true
+product f64 KM IKM neg -6.000000e+000 -6.000000e+000 true
+compound f64 S*KM / S*M +1.500000e+003 +1.500000e+003 true
+compound f64 H*KM / S*M +5.400000e+006 +5.400000e+006 true
+compound f64 S*KM / H*M +4.166667e-001 +4.166667e-001 true
+compound f64 S*KM / S*M neg -1.500000e+003 -1.500000e+003 true
+compound f64 H*KM / S*M neg -5.400000e+006 -5.400000e+006 true
+compound f64 S*KM / H*M neg -4.166667e-001 -4.166667e-001 true
+ratio f32 M M +1.500000e+000 +1.500000e+000 true
+via f32 M M +1.500000e+000 +1.500000e+000 true
+ratio f32 KM M +1.500000e+003 +1.500000e+003 true
+via f32 KM M +1.500000e+003 +1.500000e+003 true
+ratio f32 M KM +1.500000e-003 +1.500000e-003 true
+via f32 M KM +1.500000e-003 +1.500000e-003 true
+ratio f32 KM KM +1.500000e+000 +1.500000e+000 true
+via f32 KM KM +1.500000e+000 +1.500000e+000 true
+ratio f32 M M neg -1.500000e+000 -1.500000e+000 true
+via f32 M M neg -1.500000e+000 -1.500000e+000 true
+ratio f32 KM M neg -1.500000e+003 -1.500000e+003 true
+via f32 KM M neg -1.500000e+003 -1.500000e+003 true
+ratio f32 M KM neg -1.500000e-003 -1.500000e-003 true
+via f32 M KM neg -1.500000e-003 -1.500000e-003 true
+ratio f32 KM KM neg -1.500000e+000 -1.500000e+000 true
+via f32 KM KM neg -1.500000e+000 -1.500000e+000 true
+product f32 M IM +6.000000e+000 +6.000000e+000 true
+product f32 KM IM +6.000000e+003 +6.000000e+003 true
+product f32 M IKM +6.000000e-003 +6.000000e-003 true
+product f32 KM IKM +6.000000e+000 +6.000000e+000 true
+product f32 M IM neg -6.000000e+000 -6.000000e+000 true
+product f32 KM IM neg -6.000000e+003 -6.000000e+003 true
+product f32 M IKM neg -6.000000e-003 -6.000000e-003 true
+product f32 KM IKM neg -6.000000e+000 -6.000000e+000 true
+compound f32 S*KM / S*M +1.500000e+003 +1.500000e+003 true
+compound f32 H*KM / S*M +5.400000e+006 +5.400000e+006 true
+compound f32 S*KM / H*M +4.166667e-001 +4.166667e-001 true
+compound f32 S*KM / S*M neg -1.500000e+003 -1.500000e+003 true
+compound f32 H*KM / S*M neg -5.400000e+006 -5.400000e+006 true
+compound f32 S*KM / H*M neg -4.166667e-001 -4.166667e-001 true
+ratio int M M 1 1 true
+via int M M 1 1 true
+ratio int KM M 1500 1500 true
+via int KM M 1500 1500 true
+ratio int M KM 0 0 true
+via int M KM 0 0 true
+ratio int KM KM 1 1 true
+via int KM KM 1 1 true
+ratio int M M neg -1 -1 true
+via int M M neg -1 -1 true
+ratio int KM M neg -1500 -1500 true
+via int KM M neg -1500 -1500 true
+ratio int M KM neg 0 0 true
+via int M KM neg 0 0 true
+ratio int KM KM neg -1 -1 true
+via int KM KM neg -1 -1 true
+product int M IM 24 24 true
+product int KM IM 24000 24000 true
+product int KM IKM 24 24 true
+product int M IM neg -24 -24 true
+product int KM IM neg -24000 -24000 true
+product int KM IKM neg -24 -24 true
+compound int S*KM / S*M 1500 1500 true
+compound int H*KM / S*M 5400000 5400000 true
+compound int S*KM / S*M neg -1500 -1500 true
+compound int H*KM / S*M neg -5400000 -5400000 true
+ratio i64 M M 1 1 true
+via i64 M M 1 1 true
+ratio i64 KM M 1500 1500 true
+via i64 KM M 1500 1500 true
+ratio i64 M KM 0 0 true
+via i64 M KM 0 0 true
+ratio i64 KM KM 1 1 true
+via i64 KM KM 1 1 true
+ratio i64 M M neg -1 -1 true
+via i64 M M neg -1 -1 true
+ratio i64 KM M neg -1500 -1500 true
+via i64 KM M neg -1500 -1500 true
+ratio i64 M KM neg 0 0 true
+via i64 M KM neg 0 0 true
+ratio i64 KM KM neg -1 -1 true
+via i64 KM KM neg -1 -1 true
+product i64 M IM 24 24 true
+product i64 KM IM 24000 24000 true
+product i64 KM IKM 24 24 true
+product i64 M IM neg -24 -24 true
+product i64 KM IM neg -24000 -24000 true
+product i64 KM IKM neg -24 -24 true
+compound i64 S*KM / S*M 1500 1500 true
+compound i64 H*KM / S*M 5400000 5400000 true
+compound i64 S*KM / S*M neg -1500 -1500 true
+compound i64 H*KM / S*M neg -5400000 -5400000 true
+min int 1999 1999 true
+max int 2000 2000 true
+min i64 1999 1999 true
+max i64 2000 2000 true
+const M +5.000000e+000 +5.000000e+000 true
+const KM +5.000000e+000 +5.000000e+000 true
+conv M +3.000000e-003 +3.000000e-003 true
+conv KM +3.000000e-003 +3.000000e-003 true
+const int LAdd pos 4007 4007 true
+const int RAdd pos 4007 4007 true
+const float LAdd pos +4.007000e+003 +4.007000e+003 true
+const float RAdd pos +4.007000e+003 +4.007000e+003 true
+const int LSub pos 3993 3993 true
+const int RSub pos -3993 -3993 true
+const float LSub pos +3.993000e+003 +3.993000e+003 true
+const float RSub pos -3.993000e+003 -3.993000e+003 true
+const int LAdd neg 3993 3993 true
+const int RAdd neg 3993 3993 true
+const float LAdd neg +3.993000e+003 +3.993000e+003 true
+const float RAdd neg +3.993000e+003 +3.993000e+003 true
+const int LSub neg 4007 4007 true
+const int RSub neg -4007 -4007 true
+const float LSub neg +4.007000e+003 +4.007000e+003 true
+const float RSub neg -4.007000e+003 -4.007000e+003 true
+cmp LLt 3999 false false true
+cmp RLt 3999 true true true
+cmp LEq 3999 false false true
+cmp REq 3999 false false true
+cmp LGe 3999 true true true
+cmp RGe 3999 false false true
+cmp LLt 4000 false false true
+cmp RLt 4000 false false true
+cmp LEq 4000 true true true
+cmp REq 4000 true true true
+cmp LGe 4000 true true true
+cmp RGe 4000 true true true
+cmp LLt 4001 true true true
+cmp RLt 4001 false false true
+cmp LEq 4001 false false true
+cmp REq 4001 false false true
+cmp LGe 4001 false false true
+cmp RGe 4001 true true true
+case 3999 0 0 true
+case 4000 1 1 true
+method over +4.000000e+000 +4.000000e+000 true
+method twice +6.000000e+000 +6.000000e+000 true

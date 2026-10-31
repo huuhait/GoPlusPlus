@@ -70,6 +70,18 @@ struct LowerOptions {
   /// every place one of its values becomes an interface value, instead of
   /// once: the quadratic walk the stress test's control must catch.
   bool RedescribeTypes = false;
+  /// Test-only: a unit descriptor lists every base unit of the program, not
+  /// only those its unit has (the first layout), so its size follows the
+  /// program: the quadratic layout the stress test's control must catch
+  /// (GEN-14, P04.24).
+  bool DenseUnitDescriptors = false;
+  /// Test-only: the question whether a type mentions a unit that a body
+  /// shared across unit arguments does not know (GEN-14, P04.24,
+  /// InstanceWalk::mentionsErasedUnit) walks the type every time it is
+  /// asked, not once per instance, and the unit-free identity of a type
+  /// (Lowering::unitFree) walks all of it every time: the quadratic walks
+  /// the stress test's control must catch.
+  bool ForgetErasedUnits = false;
   /// The most instances of generic code one package may have, or its source
   /// size in bytes if that is more (GEN-5, P04.08: a chain of generics that
   /// each call the next twice with two bigger type arguments has 2^n, a

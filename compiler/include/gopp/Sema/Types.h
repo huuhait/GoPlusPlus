@@ -1021,6 +1021,12 @@ public:
   /// own type parameters (generic methods, D1.10).
   llvm::ArrayRef<TypeParamType *> RecvTParams;
   llvm::ArrayRef<TypeParamType *> OwnTParams;
+  /// GEN-14: the receiver type parameters (RecvTParams, by position) whose
+  /// unit this method's own code needs at run time: a collapse site that
+  /// mentions it, or an instance of a generic it is passed on to (a bit for
+  /// each, before the uses are folded into the type's parameter). Not in the
+  /// export data (P06.06).
+  mutable uint64_t UnitDictRecv = 0;
   SignatureType *sig() const { return llvm::cast<SignatureType>(Ty); }
 };
 
@@ -1105,6 +1111,8 @@ public:
   /// The display form with these parts (sorted like UnitCanon::Dims, merged,
   /// no zero exponent: units::display makes them so); null for no parts.
   const UnitDisplay *unitDisplay(llvm::ArrayRef<UnitDim> Parts);
+  /// Calls F for every unit made so far.
+  void forEachUnit(llvm::function_ref<void(const UnitCanon &)> F);
   /// The basic type of kind BK with unit U: BK itself if U is null.
   BasicType *unitType(BasicKind BK, const UnitCanon *U);
   /// The type argument that stands for the unit U: a unit parameter alone is

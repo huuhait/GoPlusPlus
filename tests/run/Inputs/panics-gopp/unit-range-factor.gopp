@@ -1,0 +1,23 @@
+// P04.24 (UNI-2): the factor of a unit descriptor is a fraction of two 64-bit
+// numbers; `(KM/M)^8` is 1000^8 = 10^24, past them. The descriptor of Leaf's
+// unit is marked, and the site `a / b`, whose units cancel and so need the
+// factor, stops the program with "unit out of range" and the unit as the
+// generic code wrote it (`U/V`), exit status 2, after the output that came
+// before. (The same code with the 4th power runs: tests/run/
+// units-dict-chain.test; a unit that is not empty at the instance needs no
+// factor and does not panic.)
+package main
+
+unit M
+unit KM = 1000 M
+
+func Leaf[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+
+func Top[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return Leaf(a*a*a*a*a*a*a*a, b*b*b*b*b*b*b*b)
+}
+
+func main() {
+	println("start")
+	println(Top(1.0[KM], 1.0[M]))
+}

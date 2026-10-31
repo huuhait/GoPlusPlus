@@ -1,0 +1,17 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-shared-units.py --run %gopp --jobs 2 | FileCheck %s
+// P04.24 (GEN-14, R19, R20): a unit of a body shared across unit arguments
+// leaves it by a type argument (a type parameter, a slice, map or func type,
+// a nested generic type, a func value of a generic function, a method or a
+// method value of a generic type, a unit-generic layer), and a decision that
+// needs it (a method that needs the unit of its type, its method value, a
+// type assertion, a type switch, interface ==, a map key of interface type)
+// is exactly one E0439 at the call that passes the unit on, never a program
+// with a wrong value; a method that needs no unit, and the same chains from
+// plain code (with a real unit, and with the empty unit of factor 1 that a
+// real instance makes, the twin of the erased one), build and print the
+// values of plain code. Both orders of the twin and the shared call, at
+// -build-check-j 1 and 16. Chains of depth 0 and 1 here; every chain of
+// depth 0 to 3 with every leaf in units-shared-routes.long.test.
+// CHECK: 48 cases (36 refused), 24 programs
+// CHECK-NEXT: OK

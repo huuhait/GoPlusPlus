@@ -545,7 +545,7 @@ public:
 
   /// Any entity.
   G entity(int Depth) {
-    switch (pick(23)) {
+    switch (pick(24)) {
     case 0:
     case 1:
     case 2:
@@ -624,6 +624,22 @@ public:
       std::string N = name();
       return {C.wrapper(Kind::IfacePtrThunk, C.method(Recv.N, N)),
               "interface thunk for (*" + Recv.T + ")." + N};
+    }
+    case 22: {
+      // An instance that generic code shared across unit arguments asked
+      // for: a method of an instance, or an instance of a generic function.
+      uint64_t Mask = 1 + static_cast<uint64_t>(pick(1000));
+      std::string Shown = " (shared units " + std::to_string(Mask) + ")";
+      if (coin(50)) {
+        G Recv = instanceG(Depth - 1 < 0 ? 0 : Depth - 1);
+        std::string N = name();
+        return {C.sharedUnits(C.method(Recv.N, N), Mask),
+                Recv.T + "." + N + Shown};
+      }
+      std::string P = path(), N = name();
+      G A = type(Depth);
+      return {C.sharedUnits(C.instance(C.func(P, N), {A.N}), Mask),
+              qual(P, N) + "[" + A.T + "]" + Shown};
     }
     default: {
       // A generic function instance.

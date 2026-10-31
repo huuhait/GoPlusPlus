@@ -309,6 +309,41 @@ struct CheckOptions {
   unsigned GoVersion = 0;
 };
 
+/// The spelling of unit types for the lowering (descriptor names, panic
+/// messages, debug info; ADR-0025, UNI-5, UNI-12): for each canonical unit the
+/// display form that comes first in the fixed order (fewest names, then text)
+/// among the forms the package's own expressions make (Info::UnitDisplays) and
+/// the package table (declarations and imports), so `KM/H` and never
+/// `(5/18) M/S` when any spelling of it was written, whatever the order the
+/// code was checked or lowered in. A unit that has no written form prints in
+/// its canonical text.
+class UnitSpeller {
+public:
+  UnitSpeller(TypeContext &Ctx, const Package *Pkg, const Info &I);
+  /// `float64[KM]` for a unit type, `KM` for a unit argument. Units of the
+  /// package Qual are written bare, others as `pkg.Name`.
+  std::string text(const BasicType *T, const Package *Qual) const;
+  /// A display form D as written (`U/KM`); Qual as in text.
+  static std::string display(const UnitDisplay *D, const Package *Qual);
+
+private:
+  const Package *Pkg;
+  llvm::DenseMap<const UnitCanon *, const UnitDisplay *> Best;
+};
+
+/// The unit U with the unit parameters Rep answers for replaced by their
+/// units (a parameter Rep gives null for stays). Null if the result leaves
+/// the range of units (UNI-2).
+const UnitCanon *substituteUnit(
+    TypeContext &Ctx, const UnitCanon *U,
+    llvm::function_ref<const UnitCanon *(const TypeParamType *)> Rep);
+
+/// The declared base units any unit of the program mentions, in the order of
+/// their package path and name (the run-time unit descriptors have one
+/// exponent for each, P04.24).
+void unitBaseUnits(TypeContext &Ctx,
+                   llvm::SmallVectorImpl<const Object *> &Out);
+
 /// Resolves import paths. The loader implements it for source packages; the
 /// foreign hook (P03.09) answers C/C++ header paths.
 class Importer {
@@ -464,6 +499,13 @@ public:
   /// signature, a constraint) or a type declared inside generic code? One
   /// memoized, iterative walk: linear over all the types asked.
   bool mentionsTypeParam(Type *T);
+  /// Does T mention a type parameter for which Pick is true (as a type, or
+  /// in a unit)? A type declared in generic code, or a generic type without
+  /// arguments, counts as mentioning every one. The same iterative walk as
+  /// mentionsTypeParam, memoized in the caller's Memo (one per Pick).
+  bool mentionsTypeParamIf(Type *T,
+                           llvm::function_ref<bool(const TypeParamType *)> Pick,
+                           llvm::DenseMap<const Type *, bool> &Memo);
   /// The height of T (levels of nesting through its parts; a named type
   /// counts as its type arguments only) and its size as a tree (a part
   /// shared n times counts n times, saturating at SizeCap). A generic that

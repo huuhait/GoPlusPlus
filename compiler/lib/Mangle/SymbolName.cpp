@@ -105,6 +105,7 @@ constexpr KindInfo Kinds[] = {
     {"Tm", 1},                                          // MethodTable
     {"Tn", 1},                                          // IfaceDesc
     {"Tp", 1},                                          // IfacePtrThunk
+    {"Tu", 1},                                          // SharedUnits
 };
 static_assert(sizeof(Kinds) / sizeof(Kinds[0]) ==
                   static_cast<size_t>(Kind::NumKinds),
@@ -412,6 +413,7 @@ void writeHeader(const Node &N, std::string &Out) {
   case Kind::Struct:
   case Kind::TypeParam:
   case Kind::Closure:
+  case Kind::SharedUnits:
     appendNum(Out, N.Num);
     break;
   case Kind::Chan:
@@ -515,7 +517,7 @@ const char *sym::kindName(Kind K) {
       "EqGlue",        "HashGlue",      "DropGlue",    "CloneGlue",
       "Data",          "CABIThunk",     "MethodValue", "MethodExpr",
       "Promoted",      "IfaceThunk",    "MethodTable", "IfaceDesc",
-      "IfacePtrThunk",
+      "IfacePtrThunk", "SharedUnits",
   };
   static_assert(sizeof(Names) / sizeof(Names[0]) ==
                     static_cast<size_t>(Kind::NumKinds),
@@ -741,6 +743,10 @@ const Node *Context::wrapper(Kind K, const Node *E) {
          K == Kind::IfaceThunk || K == Kind::IfacePtrThunk);
   return make(K, {E});
 }
+const Node *Context::sharedUnits(const Node *E, uint64_t Mask) {
+  assert(Mask != 0);
+  return make(Kind::SharedUnits, {E}, 0, Mask);
+}
 
 //===----------------------------------------------------------------------===//
 // The mangler
@@ -827,6 +833,7 @@ bool isDeclaring(const Node *N) {
   case Kind::Var:
   case Kind::Closure:
   case Kind::InitFunc:
+  case Kind::SharedUnits:
     return true;
   case Kind::Instance:
     return N->isEntity();
@@ -894,6 +901,12 @@ bool kidOk(Kind Parent, size_t Idx, const Node *Kid) {
     const Node *M = Kid->K == Kind::Instance ? Kid->Kids[0] : Kid;
     return M->K == Kind::Method || M->K == Kind::OpMethod;
   }
+  case Kind::SharedUnits:
+    // An instance: of a generic function, or a method (an operator method)
+    // of an instance of a generic type.
+    return (Kid->K == Kind::Instance && Kid->isEntity()) ||
+           ((Kid->K == Kind::Method || Kid->K == Kind::OpMethod) &&
+            Kid->Kids[0]->K == Kind::Instance);
   default:
     return false;
   }
@@ -1136,10 +1149,13 @@ struct Parser {
     case Kind::Struct:
     case Kind::TypeParam:
     case Kind::Closure:
+    case Kind::SharedUnits:
       if (!readNum(O.Num))
         return false;
       if (O.K == Kind::Struct && O.Num > 1)
         return fail("a bad struct flag");
+      if (O.K == Kind::SharedUnits && O.Num == 0)
+        return fail("a shared-units mark with no type parameter");
       break;
     case Kind::Chan:
       if (!readChar(O.Sub, "bsr"))
@@ -1807,6 +1823,12 @@ struct Printer {
       // `(*main.T).M`.
       lit("interface thunk for ");
       node(N->Kids[0], PtrRecv);
+      break;
+    case Kind::SharedUnits:
+      node(N->Kids[0]);
+      lit(" (shared units ");
+      dyn(std::to_string(N->Num));
+      lit(")");
       break;
     case Kind::Dim:
     case Kind::ParamDim:

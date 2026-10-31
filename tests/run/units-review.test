@@ -1,0 +1,81 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-review.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-review.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (ADR-0025, GEN-14), the results of review round 1; every value is
+// worked out in the comment before it.
+//  1. A typed unit constant is rescaled like any operand, in plain and in
+//     generic code (`d += LT` with LT = 4 KM is 4 M + 4000 M), in a
+//     comparison, a float sum, a `case` and a generic constant.
+//  2. A quotient of integers of two compound units is computed once, not
+//     twice, in generic code (S*KM / S*M = 1500).
+//  3. An integer conversion by a fraction p/q with p*q past 62 bits (plain
+//     code) and the generic product with the same factor are exact: the
+//     second part of x/q*p + (x%q)*p/q is a 128-bit product.
+//  4. float32: the factor is rounded once to float32 (not to float64 first)
+//     in generic code, as in plain code.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+unit A = 8589934583 M
+unit B = 8589934609 M
+unit IB = 1 / B
+unit X = (1099511693307 / 1099511627771) M
+unit AM = (10000000019 / 10000000033) M
+
+const LT int[KM] = 4[KM]
+const LF float64[KM] = 4.0[KM]
+
+func G[U unit](a float64[U*M]) float64[U*M] { return a + float64[U*KM](4) }
+
+func Q2[U unit, V unit](a int[U*KM], b int[V*M]) int { return int(a / b) }
+
+func IProd[U unit, V unit](a int[U], b int[V]) int { return int(a * b) }
+
+func Ratio32[U unit, V unit](a float32[U], b float32[V]) float32 { return float32(a / b) }
+
+func main() {
+	var d int[M] = 4[M]
+	d += LT
+	println(int(d)) // 4 M + 4 KM = 4004
+	d = 4[M]
+	d = d + int[KM](4)
+	println(int(d)) // 4004
+	d = 4[M]
+	println(d < int[KM](1), d < LT) // 4 M < 1000 M, 4 M < 4000 M: true true
+	f := 4.0[M]
+	f = f + LF
+	println(float64(f)) // 4004
+	switch d {
+	case LT:
+		println("WRONG: 4 M matched 4 KM")
+	default:
+		println("no match")
+	}
+	d = 4000[M]
+	switch d {
+	case LT:
+		println("match")
+	default:
+		println("WRONG: 4000 M missed 4 KM")
+	}
+	println(float64(G[S](4.0[S*M]))) // 4 S*M + 4 S*KM = 4004
+
+	println(int(6[S*KM]/4[S*M]), Q2[S, S](6[S*KM], 4[S*M])) // 6000 / 4 = 1500
+	println(int(6[H*KM]/4[S*M]), Q2[H, S](6[H*KM], 4[S*M])) // 5400000 (6000 * 3600 / 4)
+
+	// (q-1) * p / q = 8589934582.99.. -> 8589934582, and its negative.
+	println(IProd(8589934608[A], 1[IB]))
+	println(IProd(-8589934608[A], 1[IB]))
+
+	var a32 float32[X] = 1[X]
+	var b32 float32[M] = 1[M]
+	println(float32(a32/b32) == Ratio32(a32, b32)) // true
+
+	var x int[AM] = 5[AM]
+	println(int(int[M](x))) // 5 * 10000000019 / 10000000033 = 4.99.. -> 4
+}

@@ -1,0 +1,44 @@
+// P04.24 (UNI-2, ADR-0025 amendment 6): a chain of 25 generics that each pass
+// `U*U` on reaches the unit M^(2^24) at the last level and M^(2^25) in the
+// call of it: past the range of units (an exponent of 2^20), so the descriptor
+// the level before builds for it is marked out of range, and the site that
+// uses it (`x / 1.0[KM]` in F25) stops the program with "unit out of range"
+// and the unit of the site as the generic code wrote it (`U/KM`), exit status 2, after
+// the output that came before. Written by hand: Go has no units. The 19-level
+// chain runs (units-chain.test); the same site on a branch not taken is no
+// panic (units-lazy.test).
+package main
+
+unit M
+unit KM = 1000 M
+
+func F1[U unit](x float64[U]) float64 { return F2[U*U](x*x) }
+func F2[U unit](x float64[U]) float64 { return F3[U*U](x*x) }
+func F3[U unit](x float64[U]) float64 { return F4[U*U](x*x) }
+func F4[U unit](x float64[U]) float64 { return F5[U*U](x*x) }
+func F5[U unit](x float64[U]) float64 { return F6[U*U](x*x) }
+func F6[U unit](x float64[U]) float64 { return F7[U*U](x*x) }
+func F7[U unit](x float64[U]) float64 { return F8[U*U](x*x) }
+func F8[U unit](x float64[U]) float64 { return F9[U*U](x*x) }
+func F9[U unit](x float64[U]) float64 { return F10[U*U](x*x) }
+func F10[U unit](x float64[U]) float64 { return F11[U*U](x*x) }
+func F11[U unit](x float64[U]) float64 { return F12[U*U](x*x) }
+func F12[U unit](x float64[U]) float64 { return F13[U*U](x*x) }
+func F13[U unit](x float64[U]) float64 { return F14[U*U](x*x) }
+func F14[U unit](x float64[U]) float64 { return F15[U*U](x*x) }
+func F15[U unit](x float64[U]) float64 { return F16[U*U](x*x) }
+func F16[U unit](x float64[U]) float64 { return F17[U*U](x*x) }
+func F17[U unit](x float64[U]) float64 { return F18[U*U](x*x) }
+func F18[U unit](x float64[U]) float64 { return F19[U*U](x*x) }
+func F19[U unit](x float64[U]) float64 { return F20[U*U](x*x) }
+func F20[U unit](x float64[U]) float64 { return F21[U*U](x*x) }
+func F21[U unit](x float64[U]) float64 { return F22[U*U](x*x) }
+func F22[U unit](x float64[U]) float64 { return F23[U*U](x*x) }
+func F23[U unit](x float64[U]) float64 { return F24[U*U](x*x) }
+func F24[U unit](x float64[U]) float64 { return F25[U*U](x*x) }
+func F25[U unit](x float64[U]) float64 { return float64(x / 1.0[KM]) }
+
+func main() {
+	println("start")
+	println(F1(1.0[M]))
+}

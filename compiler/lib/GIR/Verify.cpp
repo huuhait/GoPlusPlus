@@ -471,7 +471,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V067, V070, V073-V075, V077
+  // A function: V010-V013, V022, V067, V070, V073-V075, V077, V079, V080
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -592,6 +592,23 @@ private:
                         "variable");
       if (Lo.Owned && Lo.K != Local::Temp)
         err("V014", "local _" + num(L) + " is owned and not a temporary");
+      if (!Lo.UnitName.empty()) {
+        // V080: a unit name (the debugger's name for the base type, UNI-9)
+        // belongs to a source variable of a number type (what the local
+        // stands for, if it is a pointer to its place).
+        const Type *Num = Lo.Deref && Lo.Ty->isPtr() ? Lo.Ty->elem() : Lo.Ty;
+        bool Complex = Num->getKind() == Type::Kind::Tuple &&
+                       Num->numFields() == 2 && Num->elems()[0] &&
+                       Num->elems()[0]->isFloat() &&
+                       Num->elems()[1] == Num->elems()[0];
+        if (!Lo.Source)
+          err("V080", "local _" + num(L) +
+                          " has a unit name and is no source "
+                          "variable");
+        else if (!Num->isInt() && !Num->isFloat() && !Complex)
+          err("V080", "local _" + num(L) + " has a unit name and the type " +
+                          str(Num) + ", which is no number");
+      }
       localScope(L, Lo);
       const Type *Want = L == 0   ? Fn.Sig->ret()
                          : L <= N ? Fn.Sig->elems()[L - 1]

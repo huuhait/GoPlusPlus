@@ -123,6 +123,11 @@ enum class Kind : uint8_t {
                  ///< of a pointer to its type, which reads the value through
                  ///< the pointer (an IfaceThunk of the method reads it from
                  ///< the interface's data word)
+  SharedUnits,   ///< Num = the mask of the type parameters whose arguments
+                 ///< carry units of generic code shared across unit
+                 ///< arguments (bit 63: 63 and up; never 0); kid: an instance
+                 ///< of a generic function, or a method of an instance of a
+                 ///< generic type (GEN-14, P04.24)
   NumKinds
 };
 
@@ -252,6 +257,11 @@ public:
   /// CABIThunk, MethodValue, MethodExpr, Promoted, IfaceThunk or
   /// IfacePtrThunk of Entity.
   const Node *wrapper(Kind K, const Node *Entity);
+  /// The instance Entity (a generic function's, or a method of a generic
+  /// type's instance) as one that generic code shared across unit arguments
+  /// asked for: the type parameters in Mask (non-zero) carry its erased
+  /// units, so it is never the instance of the same types with real units.
+  const Node *sharedUnits(const Node *Entity, uint64_t Mask);
 
   /// The general constructor (used by the parser and the builders).
   const Node *make(Kind K, llvm::ArrayRef<const Node *> Kids, char Sub = 0,

@@ -1,0 +1,116 @@
+// RUN: %gopp build -opt=2 -no-debug -emit=llvm -target=linux/amd64 %s | FileCheck %s
+// RUN: %gopp build -opt=2 -no-debug -emit=llvm -target=linux/arm64 %s | FileCheck %s
+// RUN: %gopp build -pipeline=fastisel -no-debug -emit=llvm -target=linux/amd64 %s > %t.amd64.ll
+// RUN: %gopp build -pipeline=fastisel -no-debug -emit=llvm -target=linux/arm64 %s > %t.arm64.ll
+// RUN: sed -n '/define.*TwicePlain/,/^}/p' %t.amd64.ll | sed 1d > %t.amd64.plain
+// RUN: sed -n '/define.*@_GPIF4mainE5Twice/,/^}/p' %t.amd64.ll | sed 1d > %t.amd64.generic
+// RUN: sed -n '/define.*TwicePlain/,/^}/p' %t.arm64.ll | sed 1d > %t.arm64.plain
+// RUN: sed -n '/define.*@_GPIF4mainE5Twice/,/^}/p' %t.arm64.ll | sed 1d > %t.arm64.generic
+// RUN: grep -c fadd %t.amd64.plain | FileCheck %s --check-prefix=ONE
+// RUN: diff %t.amd64.plain %t.amd64.generic
+// RUN: diff %t.arm64.plain %t.arm64.generic
+// RUN: grep -c 'define.*@_GPIF4mainE5Twice' %t.amd64.ll | FileCheck %s --check-prefix=ONE
+// ONE: 1
+// P04.24 (ADR-0025, UNI-9, EXP-32 to EXP-37): units are erased and a scale
+// change is one multiplication by an exact constant, on both targets. A
+// float sum of two scales is one fmul and one fadd (either order); `+=` on
+// the coarser side is one fadd of the converted constant (500 M = 0.5 KM);
+// integers: `mul 1000`, and the conversion to a coarser unit is an sdiv (it
+// truncates toward zero, which is what sdiv does, so a negative value
+// works); `.In[M/S]` is one fmul by 5/18 rounded once; a quotient of two
+// scales divides and then multiplies by the factor. The other side: Travel
+// (M/S * S, no scale) is the code of the plain float64 function, KM/H,
+// KM*H^-1 spell one type (same code), and the loop over `[]float64[M]` is
+// vectorized as the plain one is. A generic with no collapse site (Twice)
+// has the code of the plain function (the bodies are compared line by line)
+// and one symbol for KM and M.
+
+// CHECK-LABEL: define {{.*}} @_GPF4mainE5AddKM(
+// CHECK: [[A:%.*]] = fmul double %0, 1.000000e+03
+// CHECK-NEXT: [[B:%.*]] = fadd double [[A]], %1
+// CHECK-NEXT: ret double [[B]]
+// CHECK-LABEL: define {{.*}} @_GPF4mainE6AddKMR(
+// CHECK: [[A:%.*]] = fmul double %0, 1.000000e+03
+// CHECK-NEXT: [[B:%.*]] = fadd double %1, [[A]]
+// CHECK-LABEL: define {{.*}} @_GPF4mainE8AddConst(
+// CHECK: fmul double %0, 1.000000e+03
+// CHECK-NEXT: fadd double {{.*}}, 5.000000e+02
+// CHECK-LABEL: define {{.*}} @_GPF4mainE9AddConstR(
+// CHECK: fmul double %0, 1.000000e+03
+// CHECK-NEXT: fadd double {{.*}}, 5.000000e+02
+// CHECK-LABEL: define {{.*}} @_GPF4mainE6PlusEq(
+// CHECK-NEXT: entry:
+// CHECK-NEXT: fadd double %0, 5.000000e-01
+// CHECK-NEXT: ret double
+// CHECK-LABEL: define {{.*}} @_GPF4mainE6IntAdd(
+// CHECK: mul i64 %1, 1000
+// CHECK-NEXT: add i64
+// CHECK-LABEL: define {{.*}} @_GPF4mainE8IntTrunc(
+// CHECK: sdiv i64 %0, 1000
+// CHECK-LABEL: define {{.*}} @_GPF4mainE5IntUp(
+// CHECK: mul i64 %0, 1000
+// CHECK-LABEL: define {{.*}} @_GPF4mainE4InMS(
+// CHECK-NEXT: entry:
+// CHECK-NEXT: fmul double %0, f0x3FD1C71C71C71C72
+// CHECK-NEXT: ret double
+// CHECK-LABEL: define {{.*}} @_GPF4mainE5Ratio(
+// CHECK: fdiv double %0, 5.000000e+02
+// CHECK-NEXT: fmul double {{.*}}, 1.000000e+03
+// CHECK-LABEL: define {{.*}} @_GPF4mainE6Travel(
+// CHECK-NEXT: entry:
+// CHECK-NEXT: [[T:%.*]] = fmul double %0, %1
+// CHECK-NEXT: ret double [[T]]
+// CHECK-LABEL: define {{.*}} @_GPF4mainE11TravelPlain(
+// CHECK-NEXT: entry:
+// CHECK-NEXT: [[T:%.*]] = fmul double %0, %1
+// CHECK-NEXT: ret double [[T]]
+// CHECK-LABEL: define {{.*}} @_GPF4mainE6SpellA(
+// CHECK-NEXT: entry:
+// CHECK-NEXT: fmul double %0, %1
+// CHECK-NEXT: ret double
+// CHECK-LABEL: define {{.*}} @_GPF4mainE6SpellB(
+// CHECK-NEXT: entry:
+// CHECK-NEXT: fmul double %0, %1
+// CHECK-NEXT: ret double
+// CHECK-LABEL: define {{.*}} @_GPF4mainE3Add(
+// CHECK: fadd <2 x double>
+// CHECK-LABEL: define {{.*}} @_GPF4mainE8AddPlain(
+// CHECK: fadd <2 x double>
+
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+unit MM = (1 / 1000) M
+
+func AddKM(d float64[KM], m float64[M]) float64[M]   { return d + m }
+func AddKMR(d float64[KM], m float64[M]) float64[M]  { return m + d }
+func AddConst(d float64[KM]) float64[M]              { return d + 500.0[M] }
+func AddConstR(d float64[KM]) float64[M]             { return 500.0[M] + d }
+func PlusEq(d float64[KM]) float64[KM]               { d += 500.0[M]; return d }
+func IntAdd(a int[M], b int[KM]) int[M]              { a += b; return a }
+func IntTrunc(m int[M]) int[KM]                      { return int[KM](m) }
+func IntUp(m int[M]) int[MM]                         { return int[MM](m) }
+func InMS(s float64[KM/H]) float64[M/S]              { return s.In[M/S]() }
+func Ratio(d float64[KM]) float64                    { return float64(d / 500.0[M]) }
+func Travel(speed float64[M/S], t float64[S]) float64[M] { return speed * t }
+func TravelPlain(speed float64, t float64) float64   { return speed * t }
+func SpellA(a float64[KM/H], b float64[H]) float64[KM] { return a * b }
+func SpellB(a float64[KM*H^-1], b float64[H]) float64[KM] { return a * b }
+func Add(dst, a, b []float64[M]) {
+	for i := range dst {
+		dst[i] = a[i] + b[i]
+	}
+}
+func AddPlain(dst, a, b []float64) {
+	for i := range dst {
+		dst[i] = a[i] + b[i]
+	}
+}
+func Twice[U unit](a float64[U]) float64[U] { return a + a }
+func TwicePlain(a float64) float64 { return a + a }
+func main() {
+	println(float64(AddKM(1.0[KM], 2.0[M])), float64(Twice(1.0[KM])), float64(Twice(1.0[M])), TwicePlain(1.0))
+}

@@ -17,6 +17,7 @@ add_gopp_library(GIR
   LowerStmt.cpp
   LowerStr.cpp
   LowerTest.cpp
+  LowerUnits.cpp
   Runtime.cpp
   RuntimeMap.cpp
   RuntimeIface.cpp

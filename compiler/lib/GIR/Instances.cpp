@@ -142,32 +142,150 @@ bool InstanceWalk::isOurs(const S::Func *F) const {
 // Requests
 //===----------------------------------------------------------------------===//
 
+bool InstanceWalk::erasedParam(const GenericInst *Cur,
+                               const S::TypeParamType *P) {
+  return Cur && P &&
+         (Cur->Erased.count(P) ||
+          (P->RenamedFrom && Cur->Erased.count(P->RenamedFrom)));
+}
+
+bool InstanceWalk::mentionsErasedUnit(const GenericInst *Cur, S::Type *T) {
+  // (Plain code and an instance whose units are all known: nothing to ask.)
+  if (!Cur || !T || Cur->Erased.empty())
+    return false;
+  // A type is walked once per instance (the memo); its steps are the walk's.
+  uint64_t Before = MS.steps();
+  llvm::DenseMap<const S::Type *, bool> Forget;
+  bool R = MS.mentionsTypeParamIf(
+      T, [&](const S::TypeParamType *P) { return erasedParam(Cur, P); },
+      ForgetErased ? Forget : Cur->ErasedMemo);
+  Steps += MS.steps() - Before;
+  return R;
+}
+
+bool InstanceWalk::fromCaller(const GenericInst *Cur, S::Type *T) {
+  if (!Cur || !T || Cur->FromCaller.empty())
+    return false;
+  uint64_t Before = MS.steps();
+  llvm::DenseMap<const S::Type *, bool> Forget;
+  bool R = MS.mentionsTypeParamIf(
+      T,
+      [&](const S::TypeParamType *P) {
+        return Cur->FromCaller.count(P) ||
+               (P->RenamedFrom && Cur->FromCaller.count(P->RenamedFrom));
+      },
+      ForgetErased ? Forget : Cur->CallerMemo);
+  Steps += MS.steps() - Before;
+  return R;
+}
+
+void InstanceWalk::refuseErased(GenericInst *Cur, SourceLoc At, S::Type *T,
+                                const std::string &What) {
+  if (Quiet)
+    return;
+  if (!Cur || !Cur->Shared || !fromCaller(Cur, T)) {
+    // The body's own unit parameters: every instance of it is refused here.
+    unsupported(At, What);
+    return;
+  }
+  // A unit of the caller's: one error at the call in the outermost shared
+  // body it came from (however many decisions, and instances on the way,
+  // need it), with a note at the decision.
+  Cur->Bad = true;
+  if (!Said.insert({Cur->Origin.getRaw(), "\x01shared"}).second)
+    return;
+  Failed = true;
+  // (Named as the code writes it: the instance's own name has the unit
+  // erased.)
+  std::string Name = Cur->Decl->Name.str();
+  if (Cur->Method && Cur->Method->RecvInst)
+    Name = Cur->Method->RecvInst->Obj->Name.str() + "." + Name;
+  auto B = Diags.report(Cur->Origin, diag::err_gir_unsupported);
+  B << "a unit parameter passed on in a type argument to " + Name +
+           ", whose code needs the unit (P04.24 follow-up)";
+  B.note(At, "the unit is needed here: " + What);
+  chainNotes(B, Cur->From);
+}
+
+const sym::Node *InstanceWalk::nodeOf(const S::Func *Decl, const S::Func *M,
+                                      llvm::ArrayRef<S::Type *> TArgs,
+                                      uint64_t Shared) {
+  const sym::Node *N =
+      M ? Syms.Names.func(M) : Syms.Names.funcInstance(Decl, TArgs);
+  if (N && Shared)
+    N = Syms.Ctx.sharedUnits(N, Shared);
+  return N;
+}
+
+const sym::Node *InstanceWalk::nodeOf(const GenericInst &In) {
+  return nodeOf(In.Decl, In.Method, In.TArgs, In.Shared);
+}
+
+namespace {
+/// The bit of the Shared mask for type parameter K.
+uint64_t sharedBit(size_t K) { return uint64_t(1) << std::min<size_t>(K, 63); }
+} // namespace
+
 GenericInst *InstanceWalk::make(GenericInst *Cur, const S::Func *Decl,
                                 const S::Func *M,
                                 llvm::ArrayRef<S::Type *> TArgs,
-                                std::string Symbol, SourceLoc Site) {
+                                std::string Symbol, SourceLoc Site,
+                                uint64_t Shared, SourceLoc Origin) {
   auto In = std::make_unique<GenericInst>();
+  In->Shared = Shared;
+  In->Origin = Origin;
   In->Decl = Decl;
   In->Method = M;
   In->TArgs.assign(TArgs.begin(), TArgs.end());
   In->Site = Site;
   In->From = Cur;
   In->Depth = Cur ? Cur->Depth + 1 : 0;
+  In->Index = Insts.size();
   In->Symbol = std::move(Symbol);
-  // Decl's type parameters: the receiver's, then its own.
+  // Decl's type parameters: the receiver's, then its own. Those whose units
+  // the instance does not know (GEN-14): the ones the caller shared, and
+  // every unit parameter of a generic function (one body for every unit).
   size_t K = 0;
+  auto Bind = [&](S::TypeParamType *P) {
+    In->Map[P] = TArgs[K];
+    auto *B = dyn_cast<S::BasicType>(TArgs[K]);
+    if (Shared & sharedBit(K)) {
+      In->Erased.insert(P);
+      In->FromCaller.insert(P);
+    } else if (!M && B && B->BK == S::BasicKind::UnitArg) {
+      In->Erased.insert(P);
+    }
+    ++K;
+  };
   for (S::TypeParamType *P : Decl->RecvTParams)
     if (K < TArgs.size())
-      In->Map[P] = TArgs[K++];
+      Bind(P);
   if (!Decl->OwnTParams.empty()) {
     for (S::TypeParamType *P : Decl->OwnTParams)
       if (K < TArgs.size())
-        In->Map[P] = TArgs[K++];
+        Bind(P);
   } else if (auto *Sig = dyn_cast_or_null<S::SignatureType>(Decl->Ty)) {
     for (S::TypeParamType *P : Sig->TParams)
       if (K < TArgs.size())
-        In->Map[P] = TArgs[K++];
+        Bind(P);
   }
+  // The unit parameters whose descriptor the instance takes (GEN-14: the
+  // parameters with Use::UnitDict, in the order of the declaration).
+  if (!M)
+    if (auto *Sig = dyn_cast_or_null<S::SignatureType>(Decl->Ty))
+      for (size_t K = 0; K < Sig->TParams.size() && K < TArgs.size(); ++K) {
+        auto *A = dyn_cast<S::BasicType>(TArgs[K]);
+        if (!A || A->BK != S::BasicKind::UnitArg)
+          continue;
+        const S::TypeParamType *P = Sig->TParams[K];
+        const S::TypeParamType *Root = P->RenamedFrom ? P->RenamedFrom : P;
+        if (llvm::any_of(Root->uses(), [](const S::TypeParamType::Use &U) {
+              return U.K == S::TypeParamType::Use::UnitDict;
+            })) {
+          In->DictParams.push_back(P);
+          In->DictArgIdx.push_back(K);
+        }
+      }
   GenericInst *Raw = In.get();
   BySymbol[Raw->Symbol] = Raw;
   Insts.push_back(std::move(In));
@@ -181,12 +299,6 @@ static const ast::Attribute *findAttrNamed(const ast::FuncDecl *FD,
     if (!A->Pkg && A->Name && A->Name->Name.str() == Name)
       return A;
   return nullptr;
-}
-
-/// A unit used as a type argument (GEN-14, `Vec2[KM]`): units are P04.24's.
-static bool isUnitArg(const S::Type *T) {
-  auto *B = dyn_cast_or_null<S::BasicType>(T);
-  return B && B->BK == S::BasicKind::UnitArg;
 }
 
 bool InstanceWalk::madeType(GenericInst *Cur, S::Type *Generic) {
@@ -244,19 +356,41 @@ GenericInst *InstanceWalk::requestFunc(GenericInst *Cur, const S::Func *Decl,
   ++Steps;
   if (Stopped)
     return nullptr;
-  // The instances of code with a unit parameter are not followed: the units
-  // are erased (D4.20), the checker does not follow them either (they can
-  // double at every level), and the lowering of units is P04.24.
-  for (S::Type *T : TArgs)
-    if (isUnitArg(T)) {
-      unsupported(Site, "a generic function with a unit parameter (P04.24)");
-      return nullptr;
-    }
   if (!isOurs(Decl)) {
     unsupported(Site, "an instance of the generic function " +
                           Decl->Name.str() + " of another package (P06.06)");
     return nullptr;
   }
+  // The unit arguments are no part of an instance (GEN-14, ADR-0025
+  // Amendment): the code is one body, and a generic that needs the units of
+  // its instance takes them at run time, as a hidden descriptor for each
+  // unit parameter (Lowering::declareInstance). Every unit argument is the
+  // empty unit here, so `Avg[KM]` and `Avg[M]` are one instance, and a chain
+  // that rearranges its units (`F[U*V, U]`, `F[V, U]`) has one instance per
+  // function.
+  //
+  // A type argument that is no unit and mentions a unit the caller does not
+  // know (`F[W[U]]`, `F[[]float64[U]]` in a body shared across unit
+  // arguments, or a type parameter that carries one, mentionsErasedUnit)
+  // makes a Shared instance: its own instance, never the one of the same
+  // types with real units (`F[W[KM*IKM]]`, `F[float64]` of plain code).
+  llvm::SmallVector<S::Type *, 4> Plain(TArgs.begin(), TArgs.end());
+  uint64_t Shared = 0;
+  bool Own = false; // a unit of Cur's own made one
+  for (size_t K = 0; K < Plain.size(); ++K) {
+    S::Type *&T = Plain[K];
+    if (auto *B = dyn_cast<S::BasicType>(T);
+        B && B->BK == S::BasicKind::UnitArg && B->Unit) {
+      T = CP.Ctx->unitArgType(
+          CP.Ctx->unitCanon({}, S::Real::fromInt(llvm::APInt(2, 1))));
+      continue;
+    }
+    if (K < Generic.size() && mentionsErasedUnit(Cur, Generic[K])) {
+      Shared |= sharedBit(K);
+      Own |= !fromCaller(Cur, Generic[K]);
+    }
+  }
+  TArgs = Plain;
   // (Before the symbol: the bounds keep every name of an instance made by
   // substitution short.)
   if (argsTooLarge(
@@ -266,13 +400,20 @@ GenericInst *InstanceWalk::requestFunc(GenericInst *Cur, const S::Func *Decl,
           },
           Site, Decl->Name.str()))
     return nullptr;
-  std::string Sym = Syms.funcInstance(Decl, TArgs);
+  const sym::Node *SymN = nodeOf(Decl, nullptr, TArgs, Shared);
+  // (Found by its node, which is its content: the text of a large type is
+  // written once, for a new instance.)
+  if (SymN && !ScanTable)
+    if (auto It = ByNode.find(SymN); It != ByNode.end())
+      return It->second;
+  std::string Sym = SymN ? sym::mangle(SymN) : std::string();
   if (Sym.empty()) {
     if (Quiet) {
       // A key that is good enough to tell the checker's types apart.
       Sym = "?" + llvm::utohexstr(reinterpret_cast<uintptr_t>(Decl));
       for (S::Type *T : TArgs)
         Sym += "," + llvm::utohexstr(reinterpret_cast<uintptr_t>(T));
+      Sym += "/" + llvm::utohexstr(Shared);
     } else {
       unsupported(Site, "an instance of " + Decl->Name.str() + " (" +
                             Syms.why() + ")");
@@ -285,30 +426,36 @@ GenericInst *InstanceWalk::requestFunc(GenericInst *Cur, const S::Func *Decl,
       if (I->Symbol == Sym)
         return I.get();
     }
-  if (auto It = BySymbol.find(Sym); It != BySymbol.end())
+  if (auto It = BySymbol.find(Sym); It != BySymbol.end()) {
+    if (SymN)
+      ByNode[SymN] = It->second;
     return It->second;
+  }
   if (Insts.size() >= MaxInstances) {
     tooLarge(Cur, Site, Decl->Name.str(),
              "the package needs more than " + std::to_string(MaxInstances) +
                  " instances");
     return nullptr;
   }
-  return make(Cur, Decl, nullptr, TArgs, std::move(Sym), Site);
+  // (The outermost shared body: this call, unless every unit it shares came
+  // from Cur's own caller.)
+  SourceLoc Origin;
+  if (Shared)
+    Origin = Own || !Cur->Shared ? Site : Cur->Origin;
+  GenericInst *In =
+      make(Cur, Decl, nullptr, TArgs, std::move(Sym), Site, Shared, Origin);
+  if (SymN)
+    ByNode[SymN] = In;
+  return In;
 }
 
 GenericInst *InstanceWalk::requestMethod(GenericInst *Cur, const S::Func *M,
                                          SourceLoc Site, S::Type *GenericRecv) {
   ++Steps;
-  if (auto It = ByMethod.find(M); It != ByMethod.end())
-    return It->second;
-  if (Stopped)
-    return nullptr;
-  if (M->RecvInst)
-    for (S::Type *T : M->RecvInst->TArgs)
-      if (isUnitArg(T)) {
-        unsupported(Site, "a generic type with a unit parameter (P04.24)");
-        return nullptr;
-      }
+  if (Stopped) {
+    auto Known = ByMethod.find(M);
+    return Known != ByMethod.end() ? Known->second : nullptr;
+  }
   const S::Func *Decl = S::declaredMethod(M);
   if (!M->RecvInst || !Decl || !Decl->Decl)
     return nullptr;
@@ -321,35 +468,94 @@ GenericInst *InstanceWalk::requestMethod(GenericInst *Cur, const S::Func *M,
     unsupported(Decl->Decl->getBegin(), "a generic method (P04.28)");
     return nullptr;
   }
+  // The receiver's type arguments whose units the caller does not know
+  // (GEN-14; mentionsErasedUnit on the receiver as the caller's code writes
+  // it): each, for a receiver that is the instance itself (`W[U]`, `*W[U]`);
+  // all of them for any other way to reach the method (a type parameter
+  // whose argument carries such a unit, `x.A()` with `T = W[U]`; a promoted
+  // method of an embedding type), which says less about which one.
+  const S::NamedType *Orig = M->RecvInst->Orig;
+  const size_t NParams =
+      Orig ? Orig->TParams.size() : M->RecvInst->TArgs.size();
+  uint64_t Shared = 0;
+  if (Cur && GenericRecv && !Cur->Erased.empty()) {
+    S::Type *G = GenericRecv;
+    for (;;) {
+      if (auto *P = dyn_cast<S::PointerType>(G))
+        G = P->Elem;
+      else if (auto *R = dyn_cast<S::RefType>(G))
+        G = R->Elem;
+      else
+        break;
+    }
+    auto *GN = dyn_cast<S::NamedType>(G);
+    if (GN && Orig && GN->Orig == Orig && GN->TArgs.size() == NParams) {
+      for (size_t K = 0; K < NParams; ++K)
+        if (mentionsErasedUnit(Cur, GN->TArgs[K]))
+          Shared |= sharedBit(K);
+    } else if (mentionsErasedUnit(Cur, GenericRecv)) {
+      for (size_t K = 0; K < NParams; ++K)
+        Shared |= sharedBit(K);
+    }
+  }
+  // A method that needs the unit of a type parameter of its type (the
+  // checker's record, Func::UnitDictRecv: its own collapse sites and the
+  // units it passes on), on a receiver whose unit there the caller does not
+  // know: the instance the types name (`W[U]` is `W[]`) would compute with
+  // the wrong unit. The method would have to take descriptors itself,
+  // through every itab and method value (P04.24 follow-up). Refused, decided
+  // from the key (the method and Shared) alone, so no order of requests can
+  // bypass it. (A type of more than 63 parameters: bit 63 stands for the
+  // rest, whose needs the checker does not record.)
+  if (Shared &&
+      ((Shared & Decl->UnitDictRecv) || ((Shared >> 63 & 1) && NParams > 63))) {
+    refuseErased(Cur, Site, GenericRecv,
+                 "a method of the generic type " +
+                     M->RecvInst->Obj->Name.str() +
+                     " that needs the unit of its type, called from generic "
+                     "code on a receiver whose unit is a unit parameter "
+                     "(P04.24 follow-up)");
+    return nullptr;
+  }
+  if (auto It = ByKey.find({M, Shared}); It != ByKey.end())
+    return It->second;
   if (argsTooLarge(
           Cur, M->RecvInst->TArgs,
           [&](size_t K) { return madeArg(Cur, GenericRecv, K); }, Site,
           M->RecvInst->Obj->Name.str()))
     return nullptr;
-  std::string Sym = Syms.func(M);
+  const sym::Node *SymN = nodeOf(Decl, M, {}, Shared);
+  std::string Sym = SymN ? sym::mangle(SymN) : std::string();
   if (Sym.empty()) {
     if (Quiet) {
-      Sym = "?" + llvm::utohexstr(reinterpret_cast<uintptr_t>(M));
+      Sym = "?" + llvm::utohexstr(reinterpret_cast<uintptr_t>(M)) + "/" +
+            llvm::utohexstr(Shared);
     } else {
       unsupported(Site, "the method " + Decl->Name.str() + " of " +
                             typeText(M->RecvInst) + " (" + Syms.why() + ")");
       return nullptr;
     }
   }
+  auto Remember = [&](GenericInst *In) {
+    ByKey[{M, Shared}] = In;
+    // (The lowering's methodInst: the instance with real units if any.)
+    auto [It, New] = ByMethod.try_emplace(M, In);
+    if (!New && !Shared)
+      It->second = In;
+    return In;
+  };
   if (ScanTable)
     for (const auto &I : Insts) {
       ++Steps;
       if (I->Symbol == Sym) {
         I->Aliases.push_back(M);
-        ByMethod[M] = I.get();
-        return I.get();
+        return Remember(I.get());
       }
     }
   if (auto It = BySymbol.find(Sym); It != BySymbol.end()) {
     // The same instance spelled otherwise (`Box[byte]`, `Box[uint8]`).
     It->second->Aliases.push_back(M);
-    ByMethod[M] = It->second;
-    return It->second;
+    return Remember(It->second);
   }
   if (Insts.size() >= MaxInstances) {
     tooLarge(Cur, Site, M->RecvInst->Obj->Name.str(),
@@ -357,10 +563,13 @@ GenericInst *InstanceWalk::requestMethod(GenericInst *Cur, const S::Func *M,
                  " instances");
     return nullptr;
   }
-  GenericInst *In =
-      make(Cur, Decl, M, M->RecvInst->TArgs, std::move(Sym), Site);
-  ByMethod[M] = In;
-  return In;
+  // (The outermost shared body: this call, unless the units came from Cur's
+  // own caller.)
+  SourceLoc Origin;
+  if (Shared)
+    Origin = Cur->Shared && fromCaller(Cur, GenericRecv) ? Cur->Origin : Site;
+  return Remember(make(Cur, Decl, M, M->RecvInst->TArgs, std::move(Sym), Site,
+                       Shared, Origin));
 }
 
 const GenericInst *InstanceWalk::methodInst(const S::Func *F) const {
@@ -555,6 +764,18 @@ void InstanceWalk::described(GenericInst *Cur, S::Type *T, S::Type *Generic,
   for (size_t J = 0; J < Ts.size(); ++J) {
     S::Type *D = Ts[J];
     S::Type *G = J < Gs.size() ? Gs[J] : nullptr;
+    // A type that mentions a unit parameter, in a body shared across unit
+    // arguments: its type descriptor (the dynamic type of a boxed value, the
+    // type a test names) would be that of the unit-erased type, the same for
+    // every unit. Decided from the generic-level type.
+    if (S::Type *GT = G ? G : (Ts.size() == 1 ? Generic : nullptr);
+        mentionsErasedUnit(Cur, GT)) {
+      refuseErased(Cur, At, GT,
+                   "a value of a type with a unit parameter becoming an "
+                   "interface value, or a type test naming it, in generic "
+                   "code (the dynamic type would lose the unit; P05.08)");
+      return;
+    }
     // An Option[X] becomes an interface value as its X (or as nil).
     if (auto *O = dyn_cast_or_null<S::OptionType>(D))
       D = O->Elem;

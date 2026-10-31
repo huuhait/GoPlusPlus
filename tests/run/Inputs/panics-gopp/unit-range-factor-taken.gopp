@@ -1,0 +1,23 @@
+// P04.24 (R13): the branch of a site whose factor is out of range is the
+// branch taken: the quotient of the 7th powers of KM and M is 1000^7 = 10^21,
+// past 64 bits in the descriptor's fraction, so the site stops the program
+// with "unit out of range" and the unit as the generic code wrote it (`U^7/V^7`),
+// exit status 2, after the output that came before. (With the branch not
+// taken it runs: tests/run/units-lazy.test.) Written by hand: Go has no units.
+package main
+
+unit M
+unit KM = 1000 M
+
+func F[U unit, V unit](a float64[U], b float64[V], take bool) float64 {
+	if take {
+		return float64((a * a * a * a * a * a * a) / (b * b * b * b * b * b * b))
+	}
+	return float64(a / b)
+}
+
+func main() {
+	println("start")
+	println(F(1.0[KM], 1.0[M], false))
+	println(F(1.0[KM], 1.0[M], true))
+}

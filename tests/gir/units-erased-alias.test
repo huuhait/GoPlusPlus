@@ -1,0 +1,39 @@
+// RUN: grep -v 'BADB$' %s | sed -e 's/ *BADA$//' > %t.ab.gopp
+// RUN: grep -v 'BADA$' %s | sed -e 's/ *BADB$//' > %t.ba.gopp
+// RUN: grep -v 'BAD[AB]$' %s > %t.plain.gopp
+// RUN: not %gopp build -emit=gir -build-check-j=1 %t.ab.gopp 2>&1 | grep -c 'error\[E0439\]' | FileCheck %s
+// RUN: not %gopp build -emit=gir -build-check-j=16 %t.ab.gopp 2>&1 | grep -c 'error\[E0439\]' | FileCheck %s
+// RUN: not %gopp build -emit=gir -build-check-j=1 %t.ba.gopp 2>&1 | grep -c 'error\[E0439\]' | FileCheck %s
+// RUN: not %gopp build -emit=gir -build-check-j=16 %t.ba.gopp 2>&1 | grep -c 'error\[E0439\]' | FileCheck %s
+// RUN: %gopp build -emit=gir %t.plain.gopp > /dev/null
+// P04.24 (GEN-14, R18): the instance of W that generic code shares across
+// unit arguments (`W[U]` in G) and the instance of W of a known empty unit
+// that a real instance makes (`W[U*IKM]` at U = KM, factor 1) have the same
+// types, and two keys and two symbols (GenericInst::Shared, the `Tu` mark of
+// appendix A). Whichever the walk meets first, the call in G of A, which
+// needs the unit of its type, is the one E0439. The plain code alone builds
+// (tests/run/units-erased-empty.test runs it). Both statement orders, 1 and
+// 16 threads; every route and order: units-shared-routes.test.
+// CHECK: {{^1$}}
+package main
+
+unit M
+unit KM = 1000 M
+unit IKM = 1 / KM
+
+type W[U unit] struct{ X float64[U] }
+
+func (w W[U]) A(m float64[M]) float64 { return float64(w.X / m) }
+
+func G[U unit](w W[U], m float64[M]) float64 { return w.A(m) }
+
+type Vec[U unit] struct{ X float64[U] }
+
+// (At U = KM the unit U*IKM is empty, factor 1.)
+func (v Vec[U]) Q(m float64[M]) float64 { return W[U*IKM]{v.X * 1.0[IKM]}.A(m) }
+
+func main() {
+	println(G(W[KM]{1.0[KM]}, 1.0[M])) BADB
+	println(Vec[KM]{2.0[KM]}.Q(1.0[M]))
+	println(G(W[KM]{1.0[KM]}, 1.0[M])) BADA
+}

@@ -1,0 +1,358 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-units-table.py --check %s %S/golden/units-generic-table.out
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-generic-table.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-generic-table.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (GEN-14): the parity table at run time. Each row runs one operation
+// on units twice, in plain code (its units are known: every scale change is a
+// constant) and in a body generic over unit parameters (the run-time descriptors
+// of its units decide the collapse sites, Info::UnitSites), for float64,
+// float32 and int:
+// the ratio of two lengths (M and KM in either order, 1000 or 1/1000), the
+// same through a second generic, the product of a length and an inverse
+// length (IM = 1/M, IKM = 1/KM: 1, 1000 or 1/1000), a constant of a unit with
+// a parameter, and a scale change in the body. A row prints the plain value,
+// the generic value and whether they are equal; the expected values are
+// computed by Inputs/gen-units-table.py with exact fractions (the compiler is
+// not asked), and the same script, run with --check, fails if this file is not
+// what it writes. The table also runs negative operands, int64, compound
+// units that mention the parameters (`a T[U*KM] / b T[V*M]` with U, V in S, H),
+// typed unit constants on both sides of `+`, `-`, `<`, `==`, `>=` and in a
+// `case` (a constant in U*KM against a value in U*M), and methods of generic
+// types (a unit method with a known unit; one that needs no unit, from generic
+// code), and min and max of two values in U*KM and U*M. Integers: 6 U / 4 V takes the coarser operand to the finer
+// unit first, in generic code too (EXP-33); the product M * IKM is left out,
+// its factor 1/1000 is no integer and plain code refuses it.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+unit IM = 1 / M
+unit IKM = 1 / KM
+
+func gRatioF64[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+func gViaF64[U unit, V unit](a float64[U], b float64[V]) float64 { return gRatioF64(a, b) }
+func gProdF64[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a * b) }
+func gRatioCF64[U unit, V unit](a float64[U*KM], b float64[V*M]) float64 { return float64(a / b) }
+func gRatioF32[U unit, V unit](a float32[U], b float32[V]) float32 { return float32(a / b) }
+func gViaF32[U unit, V unit](a float32[U], b float32[V]) float32 { return gRatioF32(a, b) }
+func gProdF32[U unit, V unit](a float32[U], b float32[V]) float32 { return float32(a * b) }
+func gRatioCF32[U unit, V unit](a float32[U*KM], b float32[V*M]) float32 { return float32(a / b) }
+func gRatioINT[U unit, V unit](a int[U], b int[V]) int { return int(a / b) }
+func gViaINT[U unit, V unit](a int[U], b int[V]) int { return gRatioINT(a, b) }
+func gProdINT[U unit, V unit](a int[U], b int[V]) int { return int(a * b) }
+func gRatioCINT[U unit, V unit](a int[U*KM], b int[V*M]) int { return int(a / b) }
+func gMinINT[U unit](a int[U*KM], b int[U*M]) int[U*M] { return min(a, b) }
+func pMinINT(a int[S*KM], b int[S*M]) int[S*M] { return min(a, b) }
+func gMaxINT[U unit](a int[U*KM], b int[U*M]) int[U*M] { return max(a, b) }
+func pMaxINT(a int[S*KM], b int[S*M]) int[S*M] { return max(a, b) }
+func gRatioI64[U unit, V unit](a int64[U], b int64[V]) int64 { return int64(a / b) }
+func gViaI64[U unit, V unit](a int64[U], b int64[V]) int64 { return gRatioI64(a, b) }
+func gProdI64[U unit, V unit](a int64[U], b int64[V]) int64 { return int64(a * b) }
+func gRatioCI64[U unit, V unit](a int64[U*KM], b int64[V*M]) int64 { return int64(a / b) }
+func gMinI64[U unit](a int64[U*KM], b int64[U*M]) int64[U*M] { return min(a, b) }
+func pMinI64(a int64[S*KM], b int64[S*M]) int64[S*M] { return min(a, b) }
+func gMaxI64[U unit](a int64[U*KM], b int64[U*M]) int64[U*M] { return max(a, b) }
+func pMaxI64(a int64[S*KM], b int64[S*M]) int64[S*M] { return max(a, b) }
+
+func gPlus[U unit](x float64[U]) float64[U] { return x + 2.0[U] }
+func gConv[U unit](x float64[U]) float64[U*KM/M] { return x.In[U*KM/M]() }
+func pPlusM(x float64[M]) float64[M] { return x + 2.0[M] }
+func pPlusKM(x float64[KM]) float64[KM] { return x + 2.0[KM] }
+func pConvM(x float64[M]) float64[KM] { return x.In[KM]() }
+func pConvKM(x float64[KM]) float64[KM*KM/M] { return x.In[KM*KM/M]() }
+
+const CI int[KM] = 4[KM]
+const CF float64[KM] = 4.0[KM]
+func pCLAdd(x int[M]) int[M] { return CI + x }
+func pCRAdd(x int[M]) int[M] { return x + CI }
+func pFLAdd(x float64[M]) float64[M] { return CF + x }
+func pFRAdd(x float64[M]) float64[M] { return x + CF }
+func gCLAdd[U unit](x int[U*M]) int[U*M] { return int[U*KM](4) + x }
+func gCRAdd[U unit](x int[U*M]) int[U*M] { return x + int[U*KM](4) }
+func gFLAdd[U unit](x float64[U*M]) float64[U*M] { return float64[U*KM](4) + x }
+func gFRAdd[U unit](x float64[U*M]) float64[U*M] { return x + float64[U*KM](4) }
+func pCLSub(x int[M]) int[M] { return CI - x }
+func pCRSub(x int[M]) int[M] { return x - CI }
+func pFLSub(x float64[M]) float64[M] { return CF - x }
+func pFRSub(x float64[M]) float64[M] { return x - CF }
+func gCLSub[U unit](x int[U*M]) int[U*M] { return int[U*KM](4) - x }
+func gCRSub[U unit](x int[U*M]) int[U*M] { return x - int[U*KM](4) }
+func gFLSub[U unit](x float64[U*M]) float64[U*M] { return float64[U*KM](4) - x }
+func gFRSub[U unit](x float64[U*M]) float64[U*M] { return x - float64[U*KM](4) }
+func pCmpLLt(x int[M]) bool { return CI < x }
+func pCmpRLt(x int[M]) bool { return x < CI }
+func gCmpLLt[U unit](x int[U*M]) bool { return int[U*KM](4) < x }
+func gCmpRLt[U unit](x int[U*M]) bool { return x < int[U*KM](4) }
+func pCmpLEq(x int[M]) bool { return CI == x }
+func pCmpREq(x int[M]) bool { return x == CI }
+func gCmpLEq[U unit](x int[U*M]) bool { return int[U*KM](4) == x }
+func gCmpREq[U unit](x int[U*M]) bool { return x == int[U*KM](4) }
+func pCmpLGe(x int[M]) bool { return CI >= x }
+func pCmpRGe(x int[M]) bool { return x >= CI }
+func gCmpLGe[U unit](x int[U*M]) bool { return int[U*KM](4) >= x }
+func gCmpRGe[U unit](x int[U*M]) bool { return x >= int[U*KM](4) }
+func pCase(x int[M]) int { switch x { case CI: return 1 }; return 0 }
+func gCase[U unit](x int[U*M]) int { switch x { case int[U*KM](4): return 1 }; return 0 }
+
+type Vec[U unit] struct{ X float64[U] }
+func (v Vec[U]) Over(w float64[M]) float64 { return float64(v.X / w) }
+type Row[U unit] struct{ X float64[U] }
+func (v Row[U]) Twice() Row[U] { return Row[U]{v.X + v.X} }
+func gTwice[U unit](v Row[U]) float64 { return float64(v.Twice().X) }
+func pTwiceM(x float64[M]) float64 { return float64(Row[M]{x}.Twice().X) }
+
+func pRatioF64_M_M(a float64[M], b float64[M]) float64 { return float64(a / b) }
+func pRatioF64_KM_M(a float64[KM], b float64[M]) float64 { return float64(a / b) }
+func pRatioF64_M_KM(a float64[M], b float64[KM]) float64 { return float64(a / b) }
+func pRatioF64_KM_KM(a float64[KM], b float64[KM]) float64 { return float64(a / b) }
+func pRatioF64_M_MN(a float64[M], b float64[M]) float64 { return float64(a / b) }
+func pRatioF64_KM_MN(a float64[KM], b float64[M]) float64 { return float64(a / b) }
+func pRatioF64_M_KMN(a float64[M], b float64[KM]) float64 { return float64(a / b) }
+func pRatioF64_KM_KMN(a float64[KM], b float64[KM]) float64 { return float64(a / b) }
+func pProductF64_M_IM(a float64[M], b float64[IM]) float64 { return float64(a * b) }
+func pProductF64_KM_IM(a float64[KM], b float64[IM]) float64 { return float64(a * b) }
+func pProductF64_M_IKM(a float64[M], b float64[IKM]) float64 { return float64(a * b) }
+func pProductF64_KM_IKM(a float64[KM], b float64[IKM]) float64 { return float64(a * b) }
+func pProductF64_M_IMN(a float64[M], b float64[IM]) float64 { return float64(a * b) }
+func pProductF64_KM_IMN(a float64[KM], b float64[IM]) float64 { return float64(a * b) }
+func pProductF64_M_IKMN(a float64[M], b float64[IKM]) float64 { return float64(a * b) }
+func pProductF64_KM_IKMN(a float64[KM], b float64[IKM]) float64 { return float64(a * b) }
+func pRatioCF64_S_S(a float64[S*KM], b float64[S*M]) float64 { return float64(a / b) }
+func pRatioCF64_H_S(a float64[H*KM], b float64[S*M]) float64 { return float64(a / b) }
+func pRatioCF64_S_H(a float64[S*KM], b float64[H*M]) float64 { return float64(a / b) }
+func pRatioCF64_S_SN(a float64[S*KM], b float64[S*M]) float64 { return float64(a / b) }
+func pRatioCF64_H_SN(a float64[H*KM], b float64[S*M]) float64 { return float64(a / b) }
+func pRatioCF64_S_HN(a float64[S*KM], b float64[H*M]) float64 { return float64(a / b) }
+func pRatioF32_M_M(a float32[M], b float32[M]) float32 { return float32(a / b) }
+func pRatioF32_KM_M(a float32[KM], b float32[M]) float32 { return float32(a / b) }
+func pRatioF32_M_KM(a float32[M], b float32[KM]) float32 { return float32(a / b) }
+func pRatioF32_KM_KM(a float32[KM], b float32[KM]) float32 { return float32(a / b) }
+func pRatioF32_M_MN(a float32[M], b float32[M]) float32 { return float32(a / b) }
+func pRatioF32_KM_MN(a float32[KM], b float32[M]) float32 { return float32(a / b) }
+func pRatioF32_M_KMN(a float32[M], b float32[KM]) float32 { return float32(a / b) }
+func pRatioF32_KM_KMN(a float32[KM], b float32[KM]) float32 { return float32(a / b) }
+func pProductF32_M_IM(a float32[M], b float32[IM]) float32 { return float32(a * b) }
+func pProductF32_KM_IM(a float32[KM], b float32[IM]) float32 { return float32(a * b) }
+func pProductF32_M_IKM(a float32[M], b float32[IKM]) float32 { return float32(a * b) }
+func pProductF32_KM_IKM(a float32[KM], b float32[IKM]) float32 { return float32(a * b) }
+func pProductF32_M_IMN(a float32[M], b float32[IM]) float32 { return float32(a * b) }
+func pProductF32_KM_IMN(a float32[KM], b float32[IM]) float32 { return float32(a * b) }
+func pProductF32_M_IKMN(a float32[M], b float32[IKM]) float32 { return float32(a * b) }
+func pProductF32_KM_IKMN(a float32[KM], b float32[IKM]) float32 { return float32(a * b) }
+func pRatioCF32_S_S(a float32[S*KM], b float32[S*M]) float32 { return float32(a / b) }
+func pRatioCF32_H_S(a float32[H*KM], b float32[S*M]) float32 { return float32(a / b) }
+func pRatioCF32_S_H(a float32[S*KM], b float32[H*M]) float32 { return float32(a / b) }
+func pRatioCF32_S_SN(a float32[S*KM], b float32[S*M]) float32 { return float32(a / b) }
+func pRatioCF32_H_SN(a float32[H*KM], b float32[S*M]) float32 { return float32(a / b) }
+func pRatioCF32_S_HN(a float32[S*KM], b float32[H*M]) float32 { return float32(a / b) }
+func pRatioINT_M_M(a int[M], b int[M]) int { return int(a / b) }
+func pRatioINT_KM_M(a int[KM], b int[M]) int { return int(a / b) }
+func pRatioINT_M_KM(a int[M], b int[KM]) int { return int(a / b) }
+func pRatioINT_KM_KM(a int[KM], b int[KM]) int { return int(a / b) }
+func pRatioINT_M_MN(a int[M], b int[M]) int { return int(a / b) }
+func pRatioINT_KM_MN(a int[KM], b int[M]) int { return int(a / b) }
+func pRatioINT_M_KMN(a int[M], b int[KM]) int { return int(a / b) }
+func pRatioINT_KM_KMN(a int[KM], b int[KM]) int { return int(a / b) }
+func pProductINT_M_IM(a int[M], b int[IM]) int { return int(a * b) }
+func pProductINT_KM_IM(a int[KM], b int[IM]) int { return int(a * b) }
+func pProductINT_KM_IKM(a int[KM], b int[IKM]) int { return int(a * b) }
+func pProductINT_M_IMN(a int[M], b int[IM]) int { return int(a * b) }
+func pProductINT_KM_IMN(a int[KM], b int[IM]) int { return int(a * b) }
+func pProductINT_KM_IKMN(a int[KM], b int[IKM]) int { return int(a * b) }
+func pRatioCINT_S_S(a int[S*KM], b int[S*M]) int { return int(a / b) }
+func pRatioCINT_H_S(a int[H*KM], b int[S*M]) int { return int(a / b) }
+func pRatioCINT_S_SN(a int[S*KM], b int[S*M]) int { return int(a / b) }
+func pRatioCINT_H_SN(a int[H*KM], b int[S*M]) int { return int(a / b) }
+func pRatioI64_M_M(a int64[M], b int64[M]) int64 { return int64(a / b) }
+func pRatioI64_KM_M(a int64[KM], b int64[M]) int64 { return int64(a / b) }
+func pRatioI64_M_KM(a int64[M], b int64[KM]) int64 { return int64(a / b) }
+func pRatioI64_KM_KM(a int64[KM], b int64[KM]) int64 { return int64(a / b) }
+func pRatioI64_M_MN(a int64[M], b int64[M]) int64 { return int64(a / b) }
+func pRatioI64_KM_MN(a int64[KM], b int64[M]) int64 { return int64(a / b) }
+func pRatioI64_M_KMN(a int64[M], b int64[KM]) int64 { return int64(a / b) }
+func pRatioI64_KM_KMN(a int64[KM], b int64[KM]) int64 { return int64(a / b) }
+func pProductI64_M_IM(a int64[M], b int64[IM]) int64 { return int64(a * b) }
+func pProductI64_KM_IM(a int64[KM], b int64[IM]) int64 { return int64(a * b) }
+func pProductI64_KM_IKM(a int64[KM], b int64[IKM]) int64 { return int64(a * b) }
+func pProductI64_M_IMN(a int64[M], b int64[IM]) int64 { return int64(a * b) }
+func pProductI64_KM_IMN(a int64[KM], b int64[IM]) int64 { return int64(a * b) }
+func pProductI64_KM_IKMN(a int64[KM], b int64[IKM]) int64 { return int64(a * b) }
+func pRatioCI64_S_S(a int64[S*KM], b int64[S*M]) int64 { return int64(a / b) }
+func pRatioCI64_H_S(a int64[H*KM], b int64[S*M]) int64 { return int64(a / b) }
+func pRatioCI64_S_SN(a int64[S*KM], b int64[S*M]) int64 { return int64(a / b) }
+func pRatioCI64_H_SN(a int64[H*KM], b int64[S*M]) int64 { return int64(a / b) }
+
+func row(name string, p, g float64, k string) {
+	println(name, p, g, p == g)
+}
+func irow(name string, p, g int) {
+	println(name, p, g, p == g)
+}
+func brow(name string, p, g bool) {
+	println(name, p, g, p == g)
+}
+
+func main() {
+	row("ratio f64 M M", float64(pRatioF64_M_M(3.0[M], 2.0[M])), float64(gRatioF64(3.0[M], 2.0[M])), "f64")
+	row("via f64 M M", float64(pRatioF64_M_M(3.0[M], 2.0[M])), float64(gViaF64(3.0[M], 2.0[M])), "f64")
+	row("ratio f64 KM M", float64(pRatioF64_KM_M(3.0[KM], 2.0[M])), float64(gRatioF64(3.0[KM], 2.0[M])), "f64")
+	row("via f64 KM M", float64(pRatioF64_KM_M(3.0[KM], 2.0[M])), float64(gViaF64(3.0[KM], 2.0[M])), "f64")
+	row("ratio f64 M KM", float64(pRatioF64_M_KM(3.0[M], 2.0[KM])), float64(gRatioF64(3.0[M], 2.0[KM])), "f64")
+	row("via f64 M KM", float64(pRatioF64_M_KM(3.0[M], 2.0[KM])), float64(gViaF64(3.0[M], 2.0[KM])), "f64")
+	row("ratio f64 KM KM", float64(pRatioF64_KM_KM(3.0[KM], 2.0[KM])), float64(gRatioF64(3.0[KM], 2.0[KM])), "f64")
+	row("via f64 KM KM", float64(pRatioF64_KM_KM(3.0[KM], 2.0[KM])), float64(gViaF64(3.0[KM], 2.0[KM])), "f64")
+	row("ratio f64 M M neg", float64(pRatioF64_M_MN(-3.0[M], 2.0[M])), float64(gRatioF64(-3.0[M], 2.0[M])), "f64")
+	row("via f64 M M neg", float64(pRatioF64_M_MN(-3.0[M], 2.0[M])), float64(gViaF64(-3.0[M], 2.0[M])), "f64")
+	row("ratio f64 KM M neg", float64(pRatioF64_KM_MN(-3.0[KM], 2.0[M])), float64(gRatioF64(-3.0[KM], 2.0[M])), "f64")
+	row("via f64 KM M neg", float64(pRatioF64_KM_MN(-3.0[KM], 2.0[M])), float64(gViaF64(-3.0[KM], 2.0[M])), "f64")
+	row("ratio f64 M KM neg", float64(pRatioF64_M_KMN(-3.0[M], 2.0[KM])), float64(gRatioF64(-3.0[M], 2.0[KM])), "f64")
+	row("via f64 M KM neg", float64(pRatioF64_M_KMN(-3.0[M], 2.0[KM])), float64(gViaF64(-3.0[M], 2.0[KM])), "f64")
+	row("ratio f64 KM KM neg", float64(pRatioF64_KM_KMN(-3.0[KM], 2.0[KM])), float64(gRatioF64(-3.0[KM], 2.0[KM])), "f64")
+	row("via f64 KM KM neg", float64(pRatioF64_KM_KMN(-3.0[KM], 2.0[KM])), float64(gViaF64(-3.0[KM], 2.0[KM])), "f64")
+	row("product f64 M IM", float64(pProductF64_M_IM(3.0[M], 2.0[IM])), float64(gProdF64(3.0[M], 2.0[IM])), "f64")
+	row("product f64 KM IM", float64(pProductF64_KM_IM(3.0[KM], 2.0[IM])), float64(gProdF64(3.0[KM], 2.0[IM])), "f64")
+	row("product f64 M IKM", float64(pProductF64_M_IKM(3.0[M], 2.0[IKM])), float64(gProdF64(3.0[M], 2.0[IKM])), "f64")
+	row("product f64 KM IKM", float64(pProductF64_KM_IKM(3.0[KM], 2.0[IKM])), float64(gProdF64(3.0[KM], 2.0[IKM])), "f64")
+	row("product f64 M IM neg", float64(pProductF64_M_IMN(-3.0[M], 2.0[IM])), float64(gProdF64(-3.0[M], 2.0[IM])), "f64")
+	row("product f64 KM IM neg", float64(pProductF64_KM_IMN(-3.0[KM], 2.0[IM])), float64(gProdF64(-3.0[KM], 2.0[IM])), "f64")
+	row("product f64 M IKM neg", float64(pProductF64_M_IKMN(-3.0[M], 2.0[IKM])), float64(gProdF64(-3.0[M], 2.0[IKM])), "f64")
+	row("product f64 KM IKM neg", float64(pProductF64_KM_IKMN(-3.0[KM], 2.0[IKM])), float64(gProdF64(-3.0[KM], 2.0[IKM])), "f64")
+	row("compound f64 S*KM / S*M", float64(pRatioCF64_S_S(3.0[S*KM], 2.0[S*M])), float64(gRatioCF64[S, S](3.0[S*KM], 2.0[S*M])), "f64")
+	row("compound f64 H*KM / S*M", float64(pRatioCF64_H_S(3.0[H*KM], 2.0[S*M])), float64(gRatioCF64[H, S](3.0[H*KM], 2.0[S*M])), "f64")
+	row("compound f64 S*KM / H*M", float64(pRatioCF64_S_H(3.0[S*KM], 2.0[H*M])), float64(gRatioCF64[S, H](3.0[S*KM], 2.0[H*M])), "f64")
+	row("compound f64 S*KM / S*M neg", float64(pRatioCF64_S_SN(-3.0[S*KM], 2.0[S*M])), float64(gRatioCF64[S, S](-3.0[S*KM], 2.0[S*M])), "f64")
+	row("compound f64 H*KM / S*M neg", float64(pRatioCF64_H_SN(-3.0[H*KM], 2.0[S*M])), float64(gRatioCF64[H, S](-3.0[H*KM], 2.0[S*M])), "f64")
+	row("compound f64 S*KM / H*M neg", float64(pRatioCF64_S_HN(-3.0[S*KM], 2.0[H*M])), float64(gRatioCF64[S, H](-3.0[S*KM], 2.0[H*M])), "f64")
+	row("ratio f32 M M", float64(pRatioF32_M_M(3.0[M], 2.0[M])), float64(gRatioF32(3.0[M], 2.0[M])), "f32")
+	row("via f32 M M", float64(pRatioF32_M_M(3.0[M], 2.0[M])), float64(gViaF32(3.0[M], 2.0[M])), "f32")
+	row("ratio f32 KM M", float64(pRatioF32_KM_M(3.0[KM], 2.0[M])), float64(gRatioF32(3.0[KM], 2.0[M])), "f32")
+	row("via f32 KM M", float64(pRatioF32_KM_M(3.0[KM], 2.0[M])), float64(gViaF32(3.0[KM], 2.0[M])), "f32")
+	row("ratio f32 M KM", float64(pRatioF32_M_KM(3.0[M], 2.0[KM])), float64(gRatioF32(3.0[M], 2.0[KM])), "f32")
+	row("via f32 M KM", float64(pRatioF32_M_KM(3.0[M], 2.0[KM])), float64(gViaF32(3.0[M], 2.0[KM])), "f32")
+	row("ratio f32 KM KM", float64(pRatioF32_KM_KM(3.0[KM], 2.0[KM])), float64(gRatioF32(3.0[KM], 2.0[KM])), "f32")
+	row("via f32 KM KM", float64(pRatioF32_KM_KM(3.0[KM], 2.0[KM])), float64(gViaF32(3.0[KM], 2.0[KM])), "f32")
+	row("ratio f32 M M neg", float64(pRatioF32_M_MN(-3.0[M], 2.0[M])), float64(gRatioF32(-3.0[M], 2.0[M])), "f32")
+	row("via f32 M M neg", float64(pRatioF32_M_MN(-3.0[M], 2.0[M])), float64(gViaF32(-3.0[M], 2.0[M])), "f32")
+	row("ratio f32 KM M neg", float64(pRatioF32_KM_MN(-3.0[KM], 2.0[M])), float64(gRatioF32(-3.0[KM], 2.0[M])), "f32")
+	row("via f32 KM M neg", float64(pRatioF32_KM_MN(-3.0[KM], 2.0[M])), float64(gViaF32(-3.0[KM], 2.0[M])), "f32")
+	row("ratio f32 M KM neg", float64(pRatioF32_M_KMN(-3.0[M], 2.0[KM])), float64(gRatioF32(-3.0[M], 2.0[KM])), "f32")
+	row("via f32 M KM neg", float64(pRatioF32_M_KMN(-3.0[M], 2.0[KM])), float64(gViaF32(-3.0[M], 2.0[KM])), "f32")
+	row("ratio f32 KM KM neg", float64(pRatioF32_KM_KMN(-3.0[KM], 2.0[KM])), float64(gRatioF32(-3.0[KM], 2.0[KM])), "f32")
+	row("via f32 KM KM neg", float64(pRatioF32_KM_KMN(-3.0[KM], 2.0[KM])), float64(gViaF32(-3.0[KM], 2.0[KM])), "f32")
+	row("product f32 M IM", float64(pProductF32_M_IM(3.0[M], 2.0[IM])), float64(gProdF32(3.0[M], 2.0[IM])), "f32")
+	row("product f32 KM IM", float64(pProductF32_KM_IM(3.0[KM], 2.0[IM])), float64(gProdF32(3.0[KM], 2.0[IM])), "f32")
+	row("product f32 M IKM", float64(pProductF32_M_IKM(3.0[M], 2.0[IKM])), float64(gProdF32(3.0[M], 2.0[IKM])), "f32")
+	row("product f32 KM IKM", float64(pProductF32_KM_IKM(3.0[KM], 2.0[IKM])), float64(gProdF32(3.0[KM], 2.0[IKM])), "f32")
+	row("product f32 M IM neg", float64(pProductF32_M_IMN(-3.0[M], 2.0[IM])), float64(gProdF32(-3.0[M], 2.0[IM])), "f32")
+	row("product f32 KM IM neg", float64(pProductF32_KM_IMN(-3.0[KM], 2.0[IM])), float64(gProdF32(-3.0[KM], 2.0[IM])), "f32")
+	row("product f32 M IKM neg", float64(pProductF32_M_IKMN(-3.0[M], 2.0[IKM])), float64(gProdF32(-3.0[M], 2.0[IKM])), "f32")
+	row("product f32 KM IKM neg", float64(pProductF32_KM_IKMN(-3.0[KM], 2.0[IKM])), float64(gProdF32(-3.0[KM], 2.0[IKM])), "f32")
+	row("compound f32 S*KM / S*M", float64(pRatioCF32_S_S(3.0[S*KM], 2.0[S*M])), float64(gRatioCF32[S, S](3.0[S*KM], 2.0[S*M])), "f32")
+	row("compound f32 H*KM / S*M", float64(pRatioCF32_H_S(3.0[H*KM], 2.0[S*M])), float64(gRatioCF32[H, S](3.0[H*KM], 2.0[S*M])), "f32")
+	row("compound f32 S*KM / H*M", float64(pRatioCF32_S_H(3.0[S*KM], 2.0[H*M])), float64(gRatioCF32[S, H](3.0[S*KM], 2.0[H*M])), "f32")
+	row("compound f32 S*KM / S*M neg", float64(pRatioCF32_S_SN(-3.0[S*KM], 2.0[S*M])), float64(gRatioCF32[S, S](-3.0[S*KM], 2.0[S*M])), "f32")
+	row("compound f32 H*KM / S*M neg", float64(pRatioCF32_H_SN(-3.0[H*KM], 2.0[S*M])), float64(gRatioCF32[H, S](-3.0[H*KM], 2.0[S*M])), "f32")
+	row("compound f32 S*KM / H*M neg", float64(pRatioCF32_S_HN(-3.0[S*KM], 2.0[H*M])), float64(gRatioCF32[S, H](-3.0[S*KM], 2.0[H*M])), "f32")
+	irow("ratio int M M", int(pRatioINT_M_M(6[M], 4[M])), int(gRatioINT(6[M], 4[M])))
+	irow("via int M M", int(pRatioINT_M_M(6[M], 4[M])), int(gViaINT(6[M], 4[M])))
+	irow("ratio int KM M", int(pRatioINT_KM_M(6[KM], 4[M])), int(gRatioINT(6[KM], 4[M])))
+	irow("via int KM M", int(pRatioINT_KM_M(6[KM], 4[M])), int(gViaINT(6[KM], 4[M])))
+	irow("ratio int M KM", int(pRatioINT_M_KM(6[M], 4[KM])), int(gRatioINT(6[M], 4[KM])))
+	irow("via int M KM", int(pRatioINT_M_KM(6[M], 4[KM])), int(gViaINT(6[M], 4[KM])))
+	irow("ratio int KM KM", int(pRatioINT_KM_KM(6[KM], 4[KM])), int(gRatioINT(6[KM], 4[KM])))
+	irow("via int KM KM", int(pRatioINT_KM_KM(6[KM], 4[KM])), int(gViaINT(6[KM], 4[KM])))
+	irow("ratio int M M neg", int(pRatioINT_M_MN(-6[M], 4[M])), int(gRatioINT(-6[M], 4[M])))
+	irow("via int M M neg", int(pRatioINT_M_MN(-6[M], 4[M])), int(gViaINT(-6[M], 4[M])))
+	irow("ratio int KM M neg", int(pRatioINT_KM_MN(-6[KM], 4[M])), int(gRatioINT(-6[KM], 4[M])))
+	irow("via int KM M neg", int(pRatioINT_KM_MN(-6[KM], 4[M])), int(gViaINT(-6[KM], 4[M])))
+	irow("ratio int M KM neg", int(pRatioINT_M_KMN(-6[M], 4[KM])), int(gRatioINT(-6[M], 4[KM])))
+	irow("via int M KM neg", int(pRatioINT_M_KMN(-6[M], 4[KM])), int(gViaINT(-6[M], 4[KM])))
+	irow("ratio int KM KM neg", int(pRatioINT_KM_KMN(-6[KM], 4[KM])), int(gRatioINT(-6[KM], 4[KM])))
+	irow("via int KM KM neg", int(pRatioINT_KM_KMN(-6[KM], 4[KM])), int(gViaINT(-6[KM], 4[KM])))
+	irow("product int M IM", int(pProductINT_M_IM(6[M], 4[IM])), int(gProdINT(6[M], 4[IM])))
+	irow("product int KM IM", int(pProductINT_KM_IM(6[KM], 4[IM])), int(gProdINT(6[KM], 4[IM])))
+	irow("product int KM IKM", int(pProductINT_KM_IKM(6[KM], 4[IKM])), int(gProdINT(6[KM], 4[IKM])))
+	irow("product int M IM neg", int(pProductINT_M_IMN(-6[M], 4[IM])), int(gProdINT(-6[M], 4[IM])))
+	irow("product int KM IM neg", int(pProductINT_KM_IMN(-6[KM], 4[IM])), int(gProdINT(-6[KM], 4[IM])))
+	irow("product int KM IKM neg", int(pProductINT_KM_IKMN(-6[KM], 4[IKM])), int(gProdINT(-6[KM], 4[IKM])))
+	irow("compound int S*KM / S*M", int(pRatioCINT_S_S(6[S*KM], 4[S*M])), int(gRatioCINT[S, S](6[S*KM], 4[S*M])))
+	irow("compound int H*KM / S*M", int(pRatioCINT_H_S(6[H*KM], 4[S*M])), int(gRatioCINT[H, S](6[H*KM], 4[S*M])))
+	irow("compound int S*KM / S*M neg", int(pRatioCINT_S_SN(-6[S*KM], 4[S*M])), int(gRatioCINT[S, S](-6[S*KM], 4[S*M])))
+	irow("compound int H*KM / S*M neg", int(pRatioCINT_H_SN(-6[H*KM], 4[S*M])), int(gRatioCINT[H, S](-6[H*KM], 4[S*M])))
+	irow("ratio i64 M M", int(pRatioI64_M_M(6[M], 4[M])), int(gRatioI64(6[M], 4[M])))
+	irow("via i64 M M", int(pRatioI64_M_M(6[M], 4[M])), int(gViaI64(6[M], 4[M])))
+	irow("ratio i64 KM M", int(pRatioI64_KM_M(6[KM], 4[M])), int(gRatioI64(6[KM], 4[M])))
+	irow("via i64 KM M", int(pRatioI64_KM_M(6[KM], 4[M])), int(gViaI64(6[KM], 4[M])))
+	irow("ratio i64 M KM", int(pRatioI64_M_KM(6[M], 4[KM])), int(gRatioI64(6[M], 4[KM])))
+	irow("via i64 M KM", int(pRatioI64_M_KM(6[M], 4[KM])), int(gViaI64(6[M], 4[KM])))
+	irow("ratio i64 KM KM", int(pRatioI64_KM_KM(6[KM], 4[KM])), int(gRatioI64(6[KM], 4[KM])))
+	irow("via i64 KM KM", int(pRatioI64_KM_KM(6[KM], 4[KM])), int(gViaI64(6[KM], 4[KM])))
+	irow("ratio i64 M M neg", int(pRatioI64_M_MN(-6[M], 4[M])), int(gRatioI64(-6[M], 4[M])))
+	irow("via i64 M M neg", int(pRatioI64_M_MN(-6[M], 4[M])), int(gViaI64(-6[M], 4[M])))
+	irow("ratio i64 KM M neg", int(pRatioI64_KM_MN(-6[KM], 4[M])), int(gRatioI64(-6[KM], 4[M])))
+	irow("via i64 KM M neg", int(pRatioI64_KM_MN(-6[KM], 4[M])), int(gViaI64(-6[KM], 4[M])))
+	irow("ratio i64 M KM neg", int(pRatioI64_M_KMN(-6[M], 4[KM])), int(gRatioI64(-6[M], 4[KM])))
+	irow("via i64 M KM neg", int(pRatioI64_M_KMN(-6[M], 4[KM])), int(gViaI64(-6[M], 4[KM])))
+	irow("ratio i64 KM KM neg", int(pRatioI64_KM_KMN(-6[KM], 4[KM])), int(gRatioI64(-6[KM], 4[KM])))
+	irow("via i64 KM KM neg", int(pRatioI64_KM_KMN(-6[KM], 4[KM])), int(gViaI64(-6[KM], 4[KM])))
+	irow("product i64 M IM", int(pProductI64_M_IM(6[M], 4[IM])), int(gProdI64(6[M], 4[IM])))
+	irow("product i64 KM IM", int(pProductI64_KM_IM(6[KM], 4[IM])), int(gProdI64(6[KM], 4[IM])))
+	irow("product i64 KM IKM", int(pProductI64_KM_IKM(6[KM], 4[IKM])), int(gProdI64(6[KM], 4[IKM])))
+	irow("product i64 M IM neg", int(pProductI64_M_IMN(-6[M], 4[IM])), int(gProdI64(-6[M], 4[IM])))
+	irow("product i64 KM IM neg", int(pProductI64_KM_IMN(-6[KM], 4[IM])), int(gProdI64(-6[KM], 4[IM])))
+	irow("product i64 KM IKM neg", int(pProductI64_KM_IKMN(-6[KM], 4[IKM])), int(gProdI64(-6[KM], 4[IKM])))
+	irow("compound i64 S*KM / S*M", int(pRatioCI64_S_S(6[S*KM], 4[S*M])), int(gRatioCI64[S, S](6[S*KM], 4[S*M])))
+	irow("compound i64 H*KM / S*M", int(pRatioCI64_H_S(6[H*KM], 4[S*M])), int(gRatioCI64[H, S](6[H*KM], 4[S*M])))
+	irow("compound i64 S*KM / S*M neg", int(pRatioCI64_S_SN(-6[S*KM], 4[S*M])), int(gRatioCI64[S, S](-6[S*KM], 4[S*M])))
+	irow("compound i64 H*KM / S*M neg", int(pRatioCI64_H_SN(-6[H*KM], 4[S*M])), int(gRatioCI64[H, S](-6[H*KM], 4[S*M])))
+	irow("min int", int(pMinINT(2[S*KM], 1999[S*M])), int(gMinINT[S](2[S*KM], 1999[S*M])))
+	irow("max int", int(pMaxINT(2[S*KM], 1999[S*M])), int(gMaxINT[S](2[S*KM], 1999[S*M])))
+	irow("min i64", int(pMinI64(2[S*KM], 1999[S*M])), int(gMinI64[S](2[S*KM], 1999[S*M])))
+	irow("max i64", int(pMaxI64(2[S*KM], 1999[S*M])), int(gMaxI64[S](2[S*KM], 1999[S*M])))
+	row("const M", float64(pPlusM(3.0[M])), float64(gPlus(3.0[M])), "f64")
+	row("const KM", float64(pPlusKM(3.0[KM])), float64(gPlus(3.0[KM])), "f64")
+	row("conv M", float64(pConvM(3.0[M])), float64(gConv(3.0[M])), "f64")
+	row("conv KM", float64(pConvKM(3.0[KM])), float64(gConv(3.0[KM])), "f64")
+	irow("const int LAdd pos", int(pCLAdd(7[M])), int(gCLAdd(7[S*M])))
+	irow("const int RAdd pos", int(pCRAdd(7[M])), int(gCRAdd(7[S*M])))
+	row("const float LAdd pos", float64(pFLAdd(7.0[M])), float64(gFLAdd(7.0[S*M])), "f64")
+	row("const float RAdd pos", float64(pFRAdd(7.0[M])), float64(gFRAdd(7.0[S*M])), "f64")
+	irow("const int LSub pos", int(pCLSub(7[M])), int(gCLSub(7[S*M])))
+	irow("const int RSub pos", int(pCRSub(7[M])), int(gCRSub(7[S*M])))
+	row("const float LSub pos", float64(pFLSub(7.0[M])), float64(gFLSub(7.0[S*M])), "f64")
+	row("const float RSub pos", float64(pFRSub(7.0[M])), float64(gFRSub(7.0[S*M])), "f64")
+	irow("const int LAdd neg", int(pCLAdd(-7[M])), int(gCLAdd(-7[S*M])))
+	irow("const int RAdd neg", int(pCRAdd(-7[M])), int(gCRAdd(-7[S*M])))
+	row("const float LAdd neg", float64(pFLAdd(-7.0[M])), float64(gFLAdd(-7.0[S*M])), "f64")
+	row("const float RAdd neg", float64(pFRAdd(-7.0[M])), float64(gFRAdd(-7.0[S*M])), "f64")
+	irow("const int LSub neg", int(pCLSub(-7[M])), int(gCLSub(-7[S*M])))
+	irow("const int RSub neg", int(pCRSub(-7[M])), int(gCRSub(-7[S*M])))
+	row("const float LSub neg", float64(pFLSub(-7.0[M])), float64(gFLSub(-7.0[S*M])), "f64")
+	row("const float RSub neg", float64(pFRSub(-7.0[M])), float64(gFRSub(-7.0[S*M])), "f64")
+	brow("cmp LLt 3999", pCmpLLt(3999[M]), gCmpLLt(3999[S*M]))
+	brow("cmp RLt 3999", pCmpRLt(3999[M]), gCmpRLt(3999[S*M]))
+	brow("cmp LEq 3999", pCmpLEq(3999[M]), gCmpLEq(3999[S*M]))
+	brow("cmp REq 3999", pCmpREq(3999[M]), gCmpREq(3999[S*M]))
+	brow("cmp LGe 3999", pCmpLGe(3999[M]), gCmpLGe(3999[S*M]))
+	brow("cmp RGe 3999", pCmpRGe(3999[M]), gCmpRGe(3999[S*M]))
+	brow("cmp LLt 4000", pCmpLLt(4000[M]), gCmpLLt(4000[S*M]))
+	brow("cmp RLt 4000", pCmpRLt(4000[M]), gCmpRLt(4000[S*M]))
+	brow("cmp LEq 4000", pCmpLEq(4000[M]), gCmpLEq(4000[S*M]))
+	brow("cmp REq 4000", pCmpREq(4000[M]), gCmpREq(4000[S*M]))
+	brow("cmp LGe 4000", pCmpLGe(4000[M]), gCmpLGe(4000[S*M]))
+	brow("cmp RGe 4000", pCmpRGe(4000[M]), gCmpRGe(4000[S*M]))
+	brow("cmp LLt 4001", pCmpLLt(4001[M]), gCmpLLt(4001[S*M]))
+	brow("cmp RLt 4001", pCmpRLt(4001[M]), gCmpRLt(4001[S*M]))
+	brow("cmp LEq 4001", pCmpLEq(4001[M]), gCmpLEq(4001[S*M]))
+	brow("cmp REq 4001", pCmpREq(4001[M]), gCmpREq(4001[S*M]))
+	brow("cmp LGe 4001", pCmpLGe(4001[M]), gCmpLGe(4001[S*M]))
+	brow("cmp RGe 4001", pCmpRGe(4001[M]), gCmpRGe(4001[S*M]))
+	irow("case 3999", pCase(3999[M]), gCase(3999[S*M]))
+	irow("case 4000", pCase(4000[M]), gCase(4000[S*M]))
+	row("method over", float64(Vec[KM]{2.0[KM]}.Over(500.0[M])), 4.0, "f64")
+	row("method twice", float64(pTwiceM(3.0[M])), float64(gTwice(Row[S]{3.0[S]})), "f64")
+}

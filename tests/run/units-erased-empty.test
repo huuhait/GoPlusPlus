@@ -1,0 +1,37 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-erased-empty.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-erased-empty.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (GEN-14, R17): plain code makes an instance with a known empty unit,
+// `W[KM/M]` and `W[KM*IKM]` (both print 2, the values of plain code). Its
+// methods are the instances of their unit, not the shared body of a generic
+// function (InstanceWalk marks an instance shared by where it came from, not
+// by the value of its unit), so B calling A on its own receiver builds, in
+// plain code, with the values of plain code. The other side, a shared body
+// that reaches a method that needs the unit, is the E0439 of
+// tests/gir/units-method-chain.test.
+package main
+
+unit M
+unit KM = 1000 M
+unit IKM = 1 / KM
+
+type W[U unit] struct{ X float64[U] }
+
+// A has a site; B calls A on its own receiver.
+func (w W[U]) A(m float64[M]) float64 { return float64(w.X / m) }
+func (w W[U]) B(m float64[M]) float64 { return w.A(m) }
+
+type Vec[U unit] struct{ X float64[U] }
+
+// Plain code calls Vec[KM].P: W[U/M] is W[KM/M] there, a known empty unit
+// (the plain number with the factor 1000 applied).
+func (v Vec[U]) P(m float64[M]) float64 { return W[U/M]{v.X / 1.0[M]}.B(m) }
+// W[U*IKM] is W[KM*IKM]: empty with the factor 1.
+func (v Vec[U]) Q(m float64[M]) float64 { return W[U*IKM]{v.X * 1.0[IKM]}.B(m) }
+
+func main() {
+	v := Vec[KM]{2.0[KM]}
+	println(v.P(1.0[M]), v.Q(1.0[M]))
+}

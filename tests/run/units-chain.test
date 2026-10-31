@@ -1,0 +1,36 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-chain.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-chain.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (UNI-2): the same chain as Inputs/panics-gopp/unit-range.gopp with 19
+// levels: the last unit is M^(2^18) (the call of the 19th level), inside the
+// range of +-2^20, so it runs. Each level builds the descriptor of `U*U` from
+// its own; the last level divides by 1 KM, a quotient that is not plain there
+// (the units do not cancel), so the answer is the number: 1.
+package main
+
+unit M
+unit KM = 1000 M
+
+func F1[U unit](x float64[U]) float64 { return F2[U*U](x*x) }
+func F2[U unit](x float64[U]) float64 { return F3[U*U](x*x) }
+func F3[U unit](x float64[U]) float64 { return F4[U*U](x*x) }
+func F4[U unit](x float64[U]) float64 { return F5[U*U](x*x) }
+func F5[U unit](x float64[U]) float64 { return F6[U*U](x*x) }
+func F6[U unit](x float64[U]) float64 { return F7[U*U](x*x) }
+func F7[U unit](x float64[U]) float64 { return F8[U*U](x*x) }
+func F8[U unit](x float64[U]) float64 { return F9[U*U](x*x) }
+func F9[U unit](x float64[U]) float64 { return F10[U*U](x*x) }
+func F10[U unit](x float64[U]) float64 { return F11[U*U](x*x) }
+func F11[U unit](x float64[U]) float64 { return F12[U*U](x*x) }
+func F12[U unit](x float64[U]) float64 { return F13[U*U](x*x) }
+func F13[U unit](x float64[U]) float64 { return F14[U*U](x*x) }
+func F14[U unit](x float64[U]) float64 { return F15[U*U](x*x) }
+func F15[U unit](x float64[U]) float64 { return F16[U*U](x*x) }
+func F16[U unit](x float64[U]) float64 { return F17[U*U](x*x) }
+func F17[U unit](x float64[U]) float64 { return F18[U*U](x*x) }
+func F18[U unit](x float64[U]) float64 { return F19[U*U](x*x) }
+func F19[U unit](x float64[U]) float64 { return float64(x / 1.0[KM]) }
+
+func main() { println(F1(1.0[M])) }

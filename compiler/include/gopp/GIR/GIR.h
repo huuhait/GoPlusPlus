@@ -349,6 +349,11 @@ struct Local {
   /// range variable (RNG-1a). The debugger shows that place, with its type
   /// (`DW_OP_deref`), not the pointer.
   bool Deref = false;
+  /// The unit type of a source variable as the debugger names it, `float64[KM]`
+  /// (UNI-9, P04.24): units are erased, so the local has the base type and the
+  /// debug information gives it a typedef of this name. Empty: none; only a
+  /// source variable has one (V080).
+  std::string UnitName;
   Span Loc;
   /// The debug scope the variable is visible in (Function::Scopes, V074).
   ScopeId Scope = 0;
@@ -406,7 +411,7 @@ public:
   /// `@Inline` / `@NoInline` (P04.23): the function is inlined at every call
   /// (`alwaysinline`, and GIR inlining ignores its size), or never
   /// (`noinline`, and GIR inlining leaves its calls). Only a function with a
-  /// body has one (V079).
+  /// body has one (V080).
   enum class InlineHint : uint8_t { None, Always, Never };
   InlineHint Inline = InlineHint::None;
   Span Loc;

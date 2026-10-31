@@ -1,0 +1,15 @@
+// REQUIRES: host-linux-amd64, lldb
+// RUN: %gopp build %S/Inputs/units.gopp -o %t
+// RUN: timeout 60 lldb --no-lldbinit -b -s %S/Inputs/units.lldb %t 2>&1 | FileCheck %s
+// P04.24: the same names as units-gdb.test, in lldb: a parameter shows as
+// `(float64[KM])`, a local made by arithmetic as `(float64[KM/H])`, with the
+// numbers as values. The other side: a plain float64 shows as `(double)`,
+// as before.
+// CHECK: @@UNITS
+// CHECK: (float64[KM]) d = 100
+// CHECK: (int[M]) n = 7
+// CHECK: (double) p = 2.5
+// CHECK: @@LOCAL
+// CHECK: (float64[KM/H]) speed = 50
+// CHECK: @@PLAIN
+// CHECK: (double) plain = 2.5

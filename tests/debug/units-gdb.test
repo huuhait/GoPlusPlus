@@ -1,0 +1,29 @@
+// REQUIRES: host-linux-amd64, gdb
+// RUN: %gopp build %S/Inputs/units.gopp -o %t
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/units.gdb %t 2>&1 | FileCheck %s
+// RUN: %gopp build -emit=obj %S/Inputs/units.gopp -o %t.o
+// RUN: llvm-dwarfdump --debug-info %t.o | FileCheck %s --check-prefix=DWARF
+// P04.24 (ADR-0025 point 6, P04.12): units are erased from the code, but a
+// variable of a unit type keeps its type name in DWARF (a typedef of the
+// number type): `whatis d` reads `float64[KM]`, a parameter `int[M]`, a
+// local made by arithmetic `float64[KM/H]`, spelled as the program wrote it
+// (the checker's display form). The values are the numbers (100, 7, 50). The
+// other side: a plain float64 keeps `float64` (no typedef).
+// CHECK: Breakpoint 1
+// CHECK-LABEL: @@UNITS
+// CHECK: type = float64[KM]
+// CHECK: $1 = 100
+// CHECK: type = int[M]
+// CHECK: $2 = 7
+// CHECK: type = float64
+// CHECK: $3 = 2.5
+// CHECK-LABEL: @@LOCAL
+// CHECK: type = float64[KM/H]
+// CHECK: $4 = 50
+// CHECK-LABEL: @@PLAIN
+// CHECK: type = float64
+// CHECK-NOT: [
+// CHECK: $5 = 2.5
+// DWARF-DAG: DW_AT_name ("float64[KM]")
+// DWARF-DAG: DW_AT_name ("int[M]")
+// DWARF-DAG: DW_AT_name ("float64[KM/H]")

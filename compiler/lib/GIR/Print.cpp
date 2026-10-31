@@ -314,6 +314,8 @@ struct Printer {
           OS << " [source]";
         if (L.Deref)
           OS << " [deref]";
+        if (!L.UnitName.empty())
+          OS << " [unit " << L.UnitName << ']';
         if (L.ArgNo)
           OS << " [param " << L.ArgNo << ']';
         if (L.Origin != NoId)

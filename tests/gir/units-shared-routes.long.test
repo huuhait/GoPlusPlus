@@ -1,0 +1,7 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-shared-units.py --run %gopp --full --jobs 8 | FileCheck %s
+// The long form of units-shared-routes.test: every chain of depth 0 to 3 of
+// the routes, with every leaf, both carriers (W[U], float64[U]), both orders,
+// -build-check-j 1 and 16.
+// CHECK: 8844 cases (8040 refused), 4316 programs
+// CHECK-NEXT: OK

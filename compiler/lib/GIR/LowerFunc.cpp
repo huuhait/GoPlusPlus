@@ -60,7 +60,7 @@ FuncId Lowering::instanceAdapter(const GenericInst &GI) {
   auto II = InstIds.find(&GI);
   if (II == InstIds.end())
     return NoId; // (the instance was refused where it is declared)
-  return adapterOf(II->second, Syms.Names.funcInstance(GI.Decl, GI.TArgs));
+  return adapterOf(II->second, Walk.nodeOf(GI));
 }
 
 FuncId Lowering::adapterOf(FuncId Real, const sym::Node *MN) {
@@ -139,6 +139,11 @@ Operand Body::funcValueOfFunc(const S::Func *F, const ast::Node *N,
         L.internalError(N->getBegin(), "the instance of " + F->Name.str() +
                                            " is missing (the walk did not "
                                            "find it)");
+      return errorValue(ctx());
+    }
+    if (!GI->DictParams.empty()) {
+      unsupported(N, "a func value of a generic function that needs the "
+                     "units of its instance (P04.24 follow-up)");
       return errorValue(ctx());
     }
     A = L.instanceAdapter(*GI);

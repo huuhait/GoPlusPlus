@@ -1,0 +1,14 @@
+// P04.24: a failed assertion names a unit type with its unit (UNI-12, the
+// type descriptor's name): `float64[KM/H]`, the form the program wrote.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+
+func main() {
+	var e any = 5.0[KM/H]
+	println("boxed")
+	_ = e.(float64)
+}

@@ -732,8 +732,13 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
     }
     if (X.M != Mode::Constant) {
       X.M = Mode::Value;
+      // (A validity check only: `min` boxes nothing, so no interface
+      // conversion is recorded, which would give the type a descriptor.)
+      bool SavedNote = NoIfaceNote;
+      NoIfaceNote = true;
       assignment(X, Ctx.anyType(),
                  (std::string("argument to built-in ") + Bin.Name));
+      NoIfaceNote = SavedNote;
       if (X.M == Mode::Invalid)
         return false;
     }

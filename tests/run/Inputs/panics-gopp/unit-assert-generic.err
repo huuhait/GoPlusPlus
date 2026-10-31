@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is main.Vec2[KM], not main.Vec2[M]

@@ -1,0 +1,104 @@
+// RUN: sed -e '/BAD[2-7]$/d' %s > %t.1.gopp
+// RUN: sed -e '/BAD[134567]$/d' %s > %t.2.gopp
+// RUN: sed -e '/BAD[124567]$/d' %s > %t.3.gopp
+// RUN: sed -e '/BAD[123567]$/d' %s > %t.4.gopp
+// RUN: sed -e '/BAD[123467]$/d' %s > %t.5.gopp
+// RUN: sed -e '/BAD[123457]$/d' %s > %t.6.gopp
+// RUN: sed -e '/BAD[123456]$/d' %s > %t.7.gopp
+// RUN: sed -e '/BAD[1-7]$/d' %s > %t.ok.gopp
+// RUN: not %gopp build -emit=gir %t.1.gopp 2>&1 | FileCheck --check-prefix=C1 %s
+// RUN: not %gopp build -emit=gir %t.2.gopp 2>&1 | FileCheck --check-prefix=C2 %s
+// RUN: not %gopp build -emit=gir %t.3.gopp 2>&1 | FileCheck --check-prefix=C3 %s
+// RUN: not %gopp build -emit=gir %t.4.gopp 2>&1 | FileCheck --check-prefix=C4 %s
+// RUN: not %gopp build -emit=gir %t.5.gopp 2>&1 | FileCheck --check-prefix=C4 %s
+// RUN: not %gopp build -emit=gir %t.6.gopp 2>&1 | FileCheck --check-prefix=C4 %s
+// RUN: not %gopp build -emit=gir %t.7.gopp 2>&1 | FileCheck --check-prefix=C3 %s
+// RUN: %gopp build -emit=gir %t.ok.gopp > /dev/null
+// RUN: %gopp check %s
+// P04.24 (GEN-14): the forms that need the unit descriptors of an instance
+// and are not built yet are one E0439 each, naming the follow-up, never a
+// wrong value (the lines marked BAD1 to BAD7 are the forms, each built
+// alone; `gopp check` accepts them all: the source is valid):
+//   - BAD1: a function literal in a function that takes unit descriptors (the
+//     closure would have to capture them);
+//   - BAD2: a generic function that takes them as a func value (`g :=
+//     Ratio[U, V]`: the adapter would have to carry them);
+//   - BAD3, BAD7: a method of a generic type whose unit parameter is used by
+//     a site (the checker's Use::UnitDict), called from generic code on a
+//     receiver whose unit mentions a unit parameter (`Vec[U]`, `Vec[U*KM]`):
+//     the receiver carries no descriptor, and the instance its types name
+//     (`Vec[KM]`, the unit erased) would be the wrong one for `U*KM`;
+//   - BAD4, BAD5, BAD6: boxing, asserting or type-switching a type with a unit
+//     parameter (`float64[U]`) in a body shared across units: the dynamic
+//     type would lose the unit (P05.08, with the type descriptors).
+// The other side: the same calls with known units (`Vec[KM]{...}.Same(w)` in
+// plain code), a function literal that needs no unit, a boxing of a type
+// with a known unit, and a method of a type whose unit no site mentions
+// (`Row[U].Twice`, called from generic code) build. So does a method that
+// needs no unit of a type whose other methods do (`Vec[U].Plus`, called from
+// generic code: R12): the refusal is decided for each method from the unit
+// uses of its own body (Func::UnitDictRecv), not from the type's unit
+// parameter, so adding a method that needs a unit breaks no code that does
+// not call it.
+// C1: error[E0439]: a function literal that needs the unit descriptors of its function
+// C2: error[E0439]: a func value of a generic function that needs the units of its instance
+// C3: error[E0439]: a method of the generic type Vec that needs the unit of its type, called from generic code on a receiver whose unit is a unit parameter (P04.24 follow-up)
+// C4: error[E0439]: a value of a type with a unit parameter becoming an interface value, or a type test naming it, in generic code (the dynamic type would lose the unit; P05.08)
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+
+func Ratio[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return float64(a / b)
+}
+
+func WithClosure[U unit, V unit](a float64[U], b float64[V]) float64 { f := func() float64 { return float64(a / b) }; return f() } // BAD1
+
+func NoUnitInClosure[U unit](a float64[U]) float64 {
+	f := func() float64 { return 2.0 }
+	return f()
+}
+
+func AsValue[U unit, V unit](a float64[U], b float64[V]) float64 { g := Ratio[U, V]; return g(a, b) } // BAD2
+
+type Vec[U unit] struct{ X float64[U] }
+
+func (v Vec[U]) Same(w float64[M]) float64 { return float64(v.X / w) }
+func (v Vec[U]) Over(w float64[M]) float64 { return float64(v.X / w) }
+
+// Needs no unit, though Same and Over do.
+func (v Vec[U]) Plus(o Vec[U]) Vec[U] { return Vec[U]{v.X + o.X} }
+
+// A type whose unit parameter no site mentions (the checker's Use::UnitDict
+// is not on it): its methods are the same code for every unit.
+type Row[U unit] struct{ X float64[U] }
+
+func (v Row[U]) Twice() Row[U] { return Row[U]{v.X + v.X} }
+
+func FromGeneric[U unit](v Vec[U], w float64[M]) float64 { return v.Same(w) } // BAD3
+
+func Box[U unit](x float64[U]) any { return x } // BAD4
+
+func Assert[U unit](a any) bool { _, ok := a.(float64[U]); return ok } // BAD5
+
+func Switch[U unit](a any) int { switch a.(type) { case float64[U]: return 1 }; return 0 } // BAD6
+
+func Compound[U unit](x float64[U*KM], w float64[M]) float64 { return Vec[U*KM]{x}.Over(w) } // BAD7
+
+func Fine[U unit](v Row[U]) float64 { return float64(v.Twice().X) }
+
+func FineVec[U unit](a, b Vec[U]) float64 { return float64(a.Plus(b).X) }
+
+func main() {
+	println(any(1.0[KM]) == any(1.0[KM]))
+	println(Vec[KM]{1.0[KM]}.Same(1.0[M]), NoUnitInClosure(1.0[M]), Fine(Row[M]{1.0[M]}), FineVec(Vec[KM]{1.0[KM]}, Vec[KM]{2.0[KM]}))
+	println(WithClosure(1.0[KM], 1.0[M])) // BAD1
+	println(AsValue(1.0[KM], 1.0[M])) // BAD2
+	println(FromGeneric(Vec[KM]{1.0[KM]}, 1.0[M])) // BAD3
+	println(Box(1.0[KM])) // BAD4
+	println(Assert[KM](1.0)) // BAD5
+	println(Switch[KM](1.0)) // BAD6
+	println(Compound(1.0[S*KM], 1.0[M])) // BAD7
+}

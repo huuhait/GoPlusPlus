@@ -1,0 +1,36 @@
+// RUN: %gopp check %s
+// RUN: %gopp build -emit=gir %s | grep -c '^fn _GPIF4mainE3F10' | FileCheck %s
+// P04.24 (GEN-14, ADR-0025 Amendment): a chain of generics that rearrange
+// their units (`F[U*V, U]` and `F[V, U]`) has 2^n combinations of unit
+// arguments and one body per function: the unit arguments are no part of an
+// instance (they are run-time descriptors), so `gopp check` and the build
+// agree and make 21 instances, not 2^20. Both build and check are clean.
+// CHECK: 1
+
+package main
+
+unit M
+unit KM = 1000 M
+
+func main() { F20(1.0[KM], 1.0[M]) }
+func F20[U unit, V unit](a float64[U], b float64[V]) { F19[U*V, U](a*b, a); F19[V, U](b, a) }
+func F19[U unit, V unit](a float64[U], b float64[V]) { F18[U*V, U](a*b, a); F18[V, U](b, a) }
+func F18[U unit, V unit](a float64[U], b float64[V]) { F17[U*V, U](a*b, a); F17[V, U](b, a) }
+func F17[U unit, V unit](a float64[U], b float64[V]) { F16[U*V, U](a*b, a); F16[V, U](b, a) }
+func F16[U unit, V unit](a float64[U], b float64[V]) { F15[U*V, U](a*b, a); F15[V, U](b, a) }
+func F15[U unit, V unit](a float64[U], b float64[V]) { F14[U*V, U](a*b, a); F14[V, U](b, a) }
+func F14[U unit, V unit](a float64[U], b float64[V]) { F13[U*V, U](a*b, a); F13[V, U](b, a) }
+func F13[U unit, V unit](a float64[U], b float64[V]) { F12[U*V, U](a*b, a); F12[V, U](b, a) }
+func F12[U unit, V unit](a float64[U], b float64[V]) { F11[U*V, U](a*b, a); F11[V, U](b, a) }
+func F11[U unit, V unit](a float64[U], b float64[V]) { F10[U*V, U](a*b, a); F10[V, U](b, a) }
+func F10[U unit, V unit](a float64[U], b float64[V]) { F9[U*V, U](a*b, a); F9[V, U](b, a) }
+func F9[U unit, V unit](a float64[U], b float64[V]) { F8[U*V, U](a*b, a); F8[V, U](b, a) }
+func F8[U unit, V unit](a float64[U], b float64[V]) { F7[U*V, U](a*b, a); F7[V, U](b, a) }
+func F7[U unit, V unit](a float64[U], b float64[V]) { F6[U*V, U](a*b, a); F6[V, U](b, a) }
+func F6[U unit, V unit](a float64[U], b float64[V]) { F5[U*V, U](a*b, a); F5[V, U](b, a) }
+func F5[U unit, V unit](a float64[U], b float64[V]) { F4[U*V, U](a*b, a); F4[V, U](b, a) }
+func F4[U unit, V unit](a float64[U], b float64[V]) { F3[U*V, U](a*b, a); F3[V, U](b, a) }
+func F3[U unit, V unit](a float64[U], b float64[V]) { F2[U*V, U](a*b, a); F2[V, U](b, a) }
+func F2[U unit, V unit](a float64[U], b float64[V]) { F1[U*V, U](a*b, a); F1[V, U](b, a) }
+func F1[U unit, V unit](a float64[U], b float64[V]) { F0[U*V, U](a*b, a); F0[V, U](b, a) }
+func F0[U unit, V unit](a float64[U], b float64[V]) { r := a / b; _ = r }

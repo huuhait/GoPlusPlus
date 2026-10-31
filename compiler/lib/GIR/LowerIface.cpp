@@ -188,6 +188,13 @@ std::string Lowering::rtypeShown(S::Type *T) {
 std::string Lowering::rtypeName(S::Type *T, bool InArg) {
   switch (T->getKind()) {
   case S::Type::Kind::Basic: {
+    // A unit type is spelled with its unit, `float64[KM]` (UNI-12); the units
+    // of package main are bare, any other is `pkg.KM`, so the name never
+    // depends on the package that lowers the type.
+    if (cast<S::BasicType>(T)->Unit)
+      return unitSpeller().text(cast<S::BasicType>(T),
+                                CP.Pkg && CP.Pkg->Name == "main" ? CP.Pkg
+                                                                 : nullptr);
     switch (cast<S::BasicType>(T)->BK) {
     case S::BasicKind::Bool:
       return "bool";

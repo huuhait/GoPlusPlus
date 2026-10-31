@@ -1,0 +1,146 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-basic.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-basic.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (ADR-0025, UNI-9, EXP-32 to EXP-37): units are erased and a scale
+// change is one multiplication by an exact constant. Go has no units, so the
+// golden is by hand; every value below is worked out in the comment before
+// it (println prints a float as +1.005000e+005 and an integer in decimal).
+package main
+
+unit M
+unit S
+unit A
+unit KM = 1000 M
+unit H = 3600 S
+unit MA = (1 / 1000) A
+unit CM = (1 / 100) M
+unit IN = 2.54 CM
+
+type Pt struct{ X, Y float64[M] }
+
+type Dist float64[M]
+
+var base float64[KM] = 2.0[KM]
+
+// A package variable made by a scale change: 2 KM + 10 M = 2010 M.
+var sum = base + 10.0[M]
+
+func km(m float64[M]) float64[KM] { return float64[KM](m) }
+
+func main() {
+	d := 100.0[KM]
+	t := 2.0[H]
+
+	// ADR-0025: KM/H is the unit of d / t; 100 / 2 = 50 (no factor).
+	println(float64(d / t))
+	// d + 500.0[M]: 100 KM = 100000 M, plus 500 = 100500 M, in either order.
+	println(float64(d + 500.0[M]))
+	println(float64(500.0[M] + d))
+	// A constant on both sides is folded exactly: 1 KM + 500 M = 1500 M.
+	println(float64(1.0[KM] + 500.0[M]))
+	// d += 500.0[M]: the right side goes to KM, 500 / 1000 = 0.5, so 100.5.
+	d += 500.0[M]
+	println(float64(d))
+	// The same with a variable: 1 KM += 250 M is 1.25 KM.
+	one := 1.0[KM]
+	quarter := 250.0[M]
+	one += quarter
+	println(float64(one))
+	// sum was made at package initialization: 2010 M.
+	println(float64(sum))
+
+	// A ratio of two lengths is a plain number and keeps the factor:
+	// 100 KM / 500 M = 100000 / 500 = 200; 5 KM / 2 M = 2500;
+	// 100 KM / 250 M = 400.
+	h := 100.0[KM]
+	half := 500.0[M]
+	println(float64(h / half), float64(5.0[KM]/2.0[M]), float64(h/quarter))
+	// A scalar keeps the unit: 2 * 100 = 200, 100 / 2 = 50.
+	println(float64(2*h), float64(h/2))
+
+	// Conversions: float64[M](d) is d * 1000; .In[M]() the same.
+	// 100 KM -> 100000 M; km(250 M) -> 0.25 KM.
+	println(float64(float64[M](h)), float64(h.In[M]()), float64(km(quarter)))
+	// 50 KM/H in M/S: 50 * 1000 / 3600 = 13.888889 (50*5/18, rounded once).
+	speed := d / t
+	_ = speed
+	sp := 50.0[KM] / 1.0[H]
+	println(float64(sp.In[M/S]()))
+
+	// Integers: int[M] += int[KM] is a multiplication by 1000: 5 + 3*1000.
+	a := 5[M]
+	b := 3[KM]
+	a += b
+	println(int(a))
+	// int[KM] and int[M] in either order give int[M]: 2*1000 +- 3.
+	k := 2[KM]
+	m := 3[M]
+	println(int(k+m), int(m+k), int(k-m), int(m-k))
+	// min, max, comparisons: k = 2000 M, m = 3 M.
+	println(int(min(k, m)), int(max(k, m)), k > m, m == 3[M], k < m)
+	// A switch on the coarser tag: k = 2000 M equals the case 2000[M].
+	switch k {
+	case m:
+		println("case m")
+	case 2000[M]:
+		println("case 2000 M")
+	}
+	switch k {
+	case 2000[M], 5[M]:
+		println("const cases")
+	default:
+		println("default")
+	}
+	// An integer quotient of two scales: the coarser operand goes to the finer
+	// unit first (EXP-35: 8 KM = 8000 M, then 8000 / 4 = 2000; 2 KM / 4 M is
+	// 2000 / 4 = 500, not 0).
+	ka := 8[KM]
+	kb := 2[KM]
+	mb := 4[M]
+	println(int(ka/mb), int(kb/mb))
+
+	// An explicit integer conversion to a coarser unit truncates toward zero:
+	// 1999 M -> 1 KM, -1999 M -> -1 KM, 999 M -> 0 KM.
+	n := 1999[M]
+	println(int(int[KM](n)), int(int[KM](-n)), int(n.In[KM]()), int(int[KM](999[M]+n-n)))
+	u := uint[M](1999)
+	println(uint(uint[KM](u)))
+	// A ratio that is no integer: 1 IN = 2.54 CM = 127/50 CM, truncated.
+	// 10 IN -> 10*127/50 = 25.4 -> 25 CM; -10 IN -> -25 CM.
+	in := 10[IN]
+	println(int(int[CM](in)), int(int[CM](-in)))
+	// 26 CM -> 26 * 50/127 = 10.236 -> 10 IN; 127 CM -> exactly 50 IN.
+	c26 := 26[CM]
+	c127 := 127[CM]
+	println(int(int[IN](c26)), int(int[IN](c127)))
+	// A narrow kind: 100000000 IN -> 254000000 CM (fits an int32).
+	big := int32[IN](100000000)
+	println(int32(int32[CM](big)))
+
+	// A complex number with a unit: 1.5 A + 2i A = 1500 mA + 2000i mA.
+	z := 1.5[A] + 2i[A]
+	zm := complex128[MA](z)
+	println(real(zm), imag(zm))
+	// complex + finer unit: z in mA plus zm = 3000 + 4000i.
+	zz := z + zm
+	println(real(zz), imag(zz))
+
+	// float32 rounds the factor once to float32: 1.5 KM + 250 M = 1750 M.
+	f := float32[KM](1.5)
+	g := float32[M](250)
+	println(float32(f+g))
+
+	// Erasure: a struct of unit fields, a defined type over a unit type.
+	p := Pt{3.0[M], 4.0[M]}
+	println(float64(p.X*p.X + p.Y*p.Y))
+	var dd Dist = Dist(2.0[M])
+	println(float64(dd + dd*2))
+	xs := []float64[KM]{1.0[KM], 2.0[KM], 6.0[KM]}
+	var total float64[KM]
+	for _, x := range xs {
+		total += x
+	}
+	println(float64(total), float64(total.In[M]()))
+}

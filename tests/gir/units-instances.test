@@ -1,0 +1,34 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// P04.24 (ADR-0025, GEN-14): units are erased from GIR types, and the unit
+// arguments are no part of an instance. `Avg[KM]` and `Avg[M]` are ONE
+// instance (one symbol; `k1` is the empty unit of the erased argument) with
+// the signature of the same code on plain float64 slices, `(*f64, u64) -> f64`:
+// no hidden parameter, as it has no collapse site. `Ratio` has one (the
+// quotient `a / b` is plain where the units cancel) and takes one descriptor
+// pointer for each of its two unit parameters, after the others, however many
+// calls with other units there are. The method of `Vec2[KM]` takes the
+// struct, which keeps one name for every unit (`main.Vec2[unit]`) and has two
+// f64. The other side: a plain function over float64 has the same shape.
+// CHECK-DAG: fn _GPIF4mainE3Avgk1_{{[^(]*}}(_1: (*f64, u64)) -> f64
+// CHECK-DAG: fn _GPIF4mainE5Ratiok1_{{[^(]*}}(_1: f64, _2: f64, _3: *u8, _4: *u8) -> f64
+// CHECK-DAG: fn _GPM3LenIN4mainE4Vec2k1000_{{[^(]*}}(_1: {{.*}}Vec2[unit]) -> f64
+// CHECK-DAG: fn _GPF4mainE5Plain(_1: (*f64, u64)) -> f64
+// CHECK-DAG: = struct {{.*}}Vec2[unit] {const 0: f64, const 0: f64}
+// CHECK-NOT: fn _GPIF4mainE3Avgk1000
+
+package main
+unit M
+unit S
+unit KM = 1000 M
+func Avg[U unit](xs []float64[U]) float64[U] { return xs[0] }
+func Ratio[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+type Vec2[V unit] struct{ X, Y float64[V] }
+func (v Vec2[V]) Len() float64[V] { return v.X }
+func Plain(xs []float64) float64 { return xs[0] }
+
+func main() {
+	_ = Avg([]float64[KM]{1.0[KM]})
+	_ = Avg([]float64[M]{1.0[M]})
+	_ = Ratio(1.0[KM], 1.0[M])
+	_ = Vec2[KM]{}.Len()
+}

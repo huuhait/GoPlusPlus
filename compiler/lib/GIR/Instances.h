@@ -43,6 +43,14 @@
 // function of the content of its type arguments (`Box[byte]` and `Box[uint8]`
 // are one instance).
 //
+// Units (GEN-14, P04.24): a generic function is one body for every unit
+// argument (its unit parameters are the empty unit at the instance). An
+// instance it asks for with a type argument that carries one of those units
+// is a shared instance (GenericInst::Shared), its own instance with its own
+// symbol, and every decision that needs such a unit asks one predicate,
+// mentionsErasedUnit, and is refused (E0439) where it cannot be made: the
+// list of routes and decisions is in gir.md section 10.
+//
 // Per-instance checks (ADR-0018 point 11, ADR-0020, OWN-P10) run on the
 // substituted types of an instance with the checker's own predicates:
 // `Option[X]` with a nilable or Option X (E0446), `View[X]` with a pointer
@@ -77,6 +85,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -108,6 +117,12 @@ struct GenericInst {
   llvm::SmallVector<S::Type *, 4> TArgs;
   /// The type parameters of Decl (the receiver's, then its own) to TArgs.
   S::MethodSets::TypeMap Map;
+  /// The unit parameters whose run-time descriptor the instance takes as a
+  /// hidden parameter after the others, in this order (the parameters with
+  /// Use::UnitDict; a generic function only, GEN-14).
+  llvm::SmallVector<const S::TypeParamType *, 2> DictParams;
+  /// The position of each in the type arguments.
+  llvm::SmallVector<unsigned, 2> DictArgIdx;
   /// Where the first user named this instance, and who that was.
   SourceLoc Site;
   const GenericInst *From = nullptr;
@@ -118,6 +133,30 @@ struct GenericInst {
   std::string Symbol;
   /// An error was reported for this instance: it is not walked or lowered.
   bool Bad = false;
+  /// GEN-14 (P04.24): the type parameters whose type arguments carry a unit
+  /// of the generic code that asked for the instance, a body shared across
+  /// unit arguments (its unit parameters are the empty unit there, so `W[U]`
+  /// is `W[]` and `float64[U]` is `float64`): bit K for type parameter K (the
+  /// receiver's, then the function's own; bit 63 for 63 and up). Decided from
+  /// where the instance came from, never from the value of a unit: plain code
+  /// makes `W[KM*IKM]` (the empty unit too) and `float64`. Part of the key and
+  /// of the symbol (sym::Kind::SharedUnits), so such an instance is never the
+  /// one plain code makes, in any order.
+  uint64_t Shared = 0;
+  /// The type parameters the instance does not know the unit of (the one
+  /// predicate, InstanceWalk::mentionsErasedUnit): those in Shared, and every
+  /// unit parameter of a generic function (its body is one for every unit).
+  llvm::SmallPtrSet<const S::TypeParamType *, 4> Erased;
+  /// Those in Shared alone.
+  llvm::SmallPtrSet<const S::TypeParamType *, 4> FromCaller;
+  /// With Shared: the call in the outermost body shared across unit
+  /// arguments that the units came from (where a decision that needs them is
+  /// refused, InstanceWalk::refuseErased).
+  SourceLoc Origin;
+  /// The predicates' memos (types as the generic code wrote them).
+  mutable llvm::DenseMap<const S::Type *, bool> ErasedMemo, CallerMemo;
+  /// Its position in the list of instances.
+  size_t Index = 0;
   /// Substituted types and selections, per instance (the walk and the
   /// lowering ask the same questions).
   llvm::DenseMap<const S::Type *, S::Type *> Types;
@@ -178,6 +217,23 @@ public:
   /// The instance a method of an instance of a generic type is (any of its
   /// spellings); null for a method of a plain type.
   const GenericInst *methodInst(const S::Func *F) const;
+  /// The symbol node of In (sym::Kind::SharedUnits around it with a Shared
+  /// mask): its closures are named by it.
+  const sym::Node *nodeOf(const GenericInst &In);
+
+  /// THE predicate of GEN-14's shared bodies (P04.24): does T, a type as the
+  /// code of Cur writes it, mention a unit Cur does not know (a unit
+  /// parameter of a generic function, or a type parameter whose argument
+  /// carries a unit of the generic code that asked for Cur: GenericInst::
+  /// Erased)? Every decision that depends on a unit asks it, in the walk and
+  /// in the lowering: a type descriptor (boxing, a type assertion or switch,
+  /// `==` of interfaces, a map key of interface type), a method that needs
+  /// the unit of its type, an instance asked for (it is Shared then), a
+  /// collapse site, an integer quotient, a descriptor passed on, a debugger
+  /// name. Null Cur (plain code): false.
+  bool mentionsErasedUnit(const GenericInst *Cur, S::Type *T);
+  /// The same for one type parameter.
+  static bool erasedParam(const GenericInst *Cur, const S::TypeParamType *P);
 
   /// The method M of an instance of a generic type as an instance, asked for
   /// by the lowering when it needs the method without a call that names it
@@ -195,6 +251,10 @@ public:
   /// Test-only: take a type's method set at every conversion, not once (the
   /// control of the stress test, LowerOptions::RedescribeTypes).
   bool Redescribe = false;
+  /// Test-only: mentionsErasedUnit walks the type at every question, not
+  /// once per instance (the control of the stress test, LowerOptions::
+  /// ForgetErasedUnits).
+  bool ForgetErased = false;
 
 private:
   /// An `Option[X]` or `View[X]` that is no type at an instance.
@@ -230,7 +290,25 @@ private:
   uint64_t Steps = 0;
   std::vector<std::unique_ptr<GenericInst>> Insts;
   llvm::StringMap<GenericInst *> BySymbol;
+  /// The function instances by their symbol node.
+  llvm::DenseMap<const sym::Node *, GenericInst *> ByNode;
+  /// The method instances by method and Shared mask; ByMethod has the one
+  /// with real units if there is one (methodInst), else the first.
+  llvm::DenseMap<std::pair<const S::Func *, uint64_t>, GenericInst *> ByKey;
   llvm::DenseMap<const S::Func *, GenericInst *> ByMethod;
+  /// Mentions T (a type of Cur's code as written) a unit of Cur's that comes
+  /// from a caller (GenericInst::FromCaller)?
+  bool fromCaller(const GenericInst *Cur, S::Type *T);
+  /// One error for a decision in the code of Cur, at At, that needs a unit
+  /// that T (as Cur's code writes it) mentions and Cur does not know (What
+  /// says which): at the call it came from (Cur->Origin) if a caller shared
+  /// it, else at At. The instance is not walked further.
+  void refuseErased(GenericInst *Cur, SourceLoc At, S::Type *T,
+                    const std::string &What);
+  /// The symbol node of the instance (its Shared mark included).
+  const sym::Node *nodeOf(const S::Func *Decl, const S::Func *M,
+                          llvm::ArrayRef<S::Type *> TArgs, uint64_t Shared);
+
   llvm::DenseMap<std::pair<const GenericInst *, const ast::Expr *>,
                  const GenericInst *>
       Refs;
@@ -282,7 +360,7 @@ private:
                              S::Type *GenericRecv = nullptr);
   GenericInst *make(GenericInst *Cur, const S::Func *Decl, const S::Func *M,
                     llvm::ArrayRef<S::Type *> TArgs, std::string Symbol,
-                    SourceLoc Site);
+                    SourceLoc Site, uint64_t Shared, SourceLoc Origin);
   /// True (after E0449) if a type argument of Name that an instance made
   /// (Made says which) is past the limits. A type written in the source is
   /// never too large: it is as large as the source is.

@@ -45,7 +45,8 @@ symbol  = "_GP" entity .
 entity  = Func | Method | OpMethod | Var | Closure | PkgInit | InitFunc
         | TypeInfo | VTable | ITab | EqGlue | HashGlue | DropGlue | CloneGlue
         | Data | CABIThunk | MethodValue | MethodExpr | Promoted | IfaceThunk
-        | IfacePtrThunk | MethodTable | IfaceDesc | Instance(entity base) .
+        | IfacePtrThunk | MethodTable | IfaceDesc | SharedUnits
+        | Instance(entity base) .
 type    = Basic | Pointer | Slice | Array | Map | Option | View | Borrowed | Chan
         | Tuple | Signature | Struct | Interface | Named | LocalNamed | Universe
         | Instance(type base) | TypeParam | Unit | UnitType | BackRef .
@@ -120,6 +121,7 @@ Every node is a **tag** (one letter, or `T` and a letter), a header, and childre
 | `Tm` | MethodTable | | type |
 | `Tn` | IfaceDesc | | interface type |
 | `Tp` | IfacePtrThunk | | method |
+| `Tu` | SharedUnits | mask (number, not 0) | an instance of a generic function, or a method of an instance |
 
 Field flags, every mark of a field that type identity compares ([TYP-15](03-types.md#34-required-fields-d14-rule-11), [TYP-15a](03-types.md#34-required-fields-d14-rule-11)): 1 embedded, 2 the name is unexported so its package follows, 4 a tag follows, 8 the effective `@Required` bit, 16 `@Option`, 32 the hidden parent part of an `extends` type (ADR-0023), 64 `@Required` as written, 128 required in the "must be set" sense only (the field of an instance declared with a type parameter, ADR-0016 point 8). Signature flags: 1 variadic; the move mask has bit *i* set for a `move` parameter. There is no flag for `!`: `func!(P) R` is identical to `func(P) (R, error)` (ERR-2) and is written as that. Which child a node may have is fixed (a Method's child is a named type, an Instance's first child is a named type, function, method or operator method, an IfacePtrThunk's child is a method or operator method, or an instance of one, ...); the parser rejects any other.
 
@@ -132,6 +134,7 @@ Field flags, every mark of a field that type identity compares ([TYP-15](03-type
 - **Closure** `C`: a function literal is its ordinal (1, 2, ... in source order among the literals directly inside the enclosing function) and the enclosing entity, which is a function, method, instance, variable (for a package variable's initializer) or another closure. A closure in a generic method is a closure of the *instance*, so it has one name per instance. The ordinal is a property of the source text, never of the order the compiler met the literals.
 - **PkgInit** `J` and **InitFunc** `K`: the package's init entry point, and its *n*th `init` function (n from 0 in the order of the sorted file names, then source position). A package may declare many `init` functions, none of them in its scope, so an `init` function never has a Func name; nor does a blank function or method (`func _()`), which is never emitted.
 - **TypeInfo** `Ti`, **VTable** `Tv` (ADR-0023 type table), **ITab** `Ta` (concrete type then interface type), **EqGlue**, **HashGlue**, **DropGlue**, **CloneGlue**, **MethodTable** `Tm` (the methods of a type's method set with their keys, which an assertion to an interface walks; P04.06), **IfaceDesc** `Tn` (an interface type's method keys, for those assertions; P04.06): one per type. Two types that are identical have the same type node, hence the same names (A.6). `gopp demangle` prints them as "typeinfo for main.T", "method table for main.T", "interface descriptor for main.I".
+- **SharedUnits** `Tu` (GEN-14, P04.24): an instance that generic code shared across unit arguments asked for with a type argument that carries one of its units (`F[W[U]]`, `F[float64[U]]`, `W[U*KM].M`, or a type parameter whose argument carries one). Such code has its unit parameters as the empty unit, so the instance's type arguments are those of an instance with real units (`F[W[KM*IKM]]`, `F[float64]`, `W[KM].M`), which plain code may make too; the mark keeps the two apart. The mask has bit *k* set for each type parameter *k* (the receiver's, then the function's own; bit 63 for 63 and up) whose argument carries such a unit. The two have the same code whenever the program builds: a decision that needs such a unit is refused (E0439) where the shared instance is made. `gopp demangle` prints `main.Id[main.W[1]] (shared units 1)`.
 - **Data** `TD`: constant data, keyed by a content digest the caller computes (for example a hash of a string literal's bytes).
 - **CABIThunk** `TC` (D4.4), **MethodValue** `TV`, **MethodExpr** `TE`, **Promoted** `TP`, **IfaceThunk** `TI`: generated wrappers, named by the entity they wrap. A C-ABI thunk of an `@Export` function is *not* named like this: its symbol is the declared C name (A.8); `TC` names the thunk of a function used as a callback. The code of a func value (P04.07) is one of these, `linkonce_odr`: `TV` of a method is the code of a method value `x.M` (the receiver is in its environment); `TE` of a method is the code of the method expression `T.M`, and `TE` of a package-level function (an `@Extern` one too) is the code of the function used as a value (`f := add`), the same shape (the entity with the environment in front, which it ignores); `(*T).M` of a value method is `TE` of the method's `Tp` (it reads the value through the pointer). `gopp demangle` prints all `TE` as "method expression ...". The code of an interface method value (`i.M`) wraps no entity (an interface method has no symbol): it calls the function the value holds, so it is one internal function per code type in each module, never named after the interface.
 - **IfaceThunk** `TI` and **IfacePtrThunk** `Tp` (P04.06): the adapter an itab holds for a method, named by the method as the method's own symbol names it (a method belongs to its type, whatever its receiver). `TI` is the adapter for the method table of the method's type, and for that of the pointer type when the method has a pointer receiver; `Tp` is the adapter of a value method for the method table of the pointer type, which reads the value through the pointer, so the two adapters of one value method (`var s Summer = a` and `= &a`) have two names. `gopp demangle` prints them as `interface thunk for main.T.M` and `interface thunk for (*main.T).M`.
@@ -188,6 +191,8 @@ These rows are checked against the code by the unit tests `SymbolName.Goldens` a
 | `_GPTCF4mainE8Callback` | `C-ABI thunk for main.Callback` |
 | `_GPTIM4BumpN4mainE3Box` | `interface thunk for main.Box.Bump` |
 | `_GPTpM3SumN4mainE5Adder` | `interface thunk for (*main.Adder).Sum` |
+| `_GPTu1_IF4mainE2IdIN4mainE1Wk1_1_EEE` | `main.Id[main.W[1]] (shared units 1)` |
+| `_GPTu1_M3GetIN4mainE1Wk1_1_EE` | `main.W[1].Get (shared units 1)` |
 | `_GPTiUdk5_18_o5unitsE1M1_o5unitsE1Sn1_E` | `typeinfo for float64[(5/18) units.M/units.S]` |
 | `_GPTiIN4mainE4PairIB6_iiEB18_E` | `typeinfo for main.Pair[main.Pair[int, int], main.Pair[int, int]]` |
 | `_GPTiG0_0_LiELru5errorE` | `typeinfo for func(int) (string, error)` |

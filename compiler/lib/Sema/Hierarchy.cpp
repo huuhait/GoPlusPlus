@@ -1715,12 +1715,27 @@ void sema::fieldTable(Type *T, llvm::SmallVectorImpl<const Var *> &Out) {
 
 using Use = TypeParamType::Use;
 
+/// The method F needs the unit of its receiver type parameter TP (or the
+/// type's own parameter it was renamed from) at run time.
+void Checker::noteMethodUnitDict(const Func *F, const TypeParamType *TP) {
+  for (size_t K = 0; K < F->RecvTParams.size() && K < 64; ++K) {
+    const TypeParamType *R = F->RecvTParams[K];
+    if (R == TP ||
+        (R->RenamedFrom && R->RenamedFrom == TP->RenamedFrom &&
+         TP->RenamedFrom) ||
+        R->RenamedFrom == TP || R == TP->RenamedFrom)
+      F->UnitDictRecv |= uint64_t(1) << K;
+  }
+}
+
 void Checker::noteUse(Type *T, Use U) {
   if (S.Opts.GoCompat || !own())
     return;
   auto *TP = dyn_cast_or_null<TypeParamType>(T);
   if (!TP)
     return;
+  if (U.K == Use::UnitDict && MonoFn && !NoMethodNote)
+    noteMethodUnitDict(MonoFn, TP);
   if (TP->RenamedFrom)
     TP = TP->RenamedFrom;
   // The uses of a parameter of another package came with its export data.
@@ -2140,7 +2155,7 @@ void Checker::noteIntrinsicUses() {
 }
 
 void Checker::untaggedCheck(ArrayRef<UntaggedPending> Pend) {
-  if (Pend.empty() && TPUses.empty())
+  if (Pend.empty() && TPUses.empty() && MethodEdges.empty())
     return;
   // The vertices are type parameters (a method's stands for its type's, as
   // in monoCheck). Deciding a use on a type argument that is, or points to,
@@ -2193,6 +2208,9 @@ void Checker::untaggedCheck(ArrayRef<UntaggedPending> Pend) {
   std::vector<UseRec> *SavedSink = UseSink;
   UseSink = &Passed;
   NotingPassed = true;
+  // (The method that passed a unit on is Pend[I].Owner, below, not MonoFn.)
+  bool SavedNote = NoMethodNote;
+  NoMethodNote = true;
   while (!Work.empty()) {
     unsigned V = Work.back();
     Work.pop_back();
@@ -2203,12 +2221,17 @@ void Checker::untaggedCheck(ArrayRef<UntaggedPending> Pend) {
         Use U = Nodes[V].List[Done[I]];
         (void)useWhy(Pend[I].TArg, Pend[I].TPar, U);
       }
-      for (const UseRec &R : Passed)
+      for (const UseRec &R : Passed) {
+        // The method that passed its unit on needs it itself (GEN-14).
+        if (R.U.K == Use::UnitDict && Pend[I].Owner && !Pend[I].NamesType)
+          noteMethodUnitDict(Pend[I].Owner, R.TP);
         Add(R.TP, R.U);
+      }
       Passed.clear();
     }
   }
   NotingPassed = false;
+  NoMethodNote = SavedNote;
   // The sets are final: published for this package's parameters (the
   // export data carries them), then each instantiation is decided on its
   // parameter's sorted uses, so the error is the same on every run.
@@ -2232,6 +2255,33 @@ void Checker::untaggedCheck(ArrayRef<UntaggedPending> Pend) {
   }
   Passed.clear();
   UseSink = SavedSink;
+  // GEN-14: a method that names another method needs the unit of its own
+  // receiver parameters that the callee's need comes from (`func (v Vec[U])
+  // B() { return v.A() }`, `W[U]{v.X}.A()`). A worklist over the callees:
+  // a bit is set once, so the cost is linear in the edges times the bits.
+  if (!MethodEdges.empty()) {
+    llvm::DenseMap<const Func *, SmallVector<unsigned, 4>> ByCallee;
+    for (unsigned K = 0; K < MethodEdges.size(); ++K)
+      ByCallee[MethodEdges[K].Callee].push_back(K);
+    SmallVector<const Func *, 16> Todo;
+    for (auto &KV : ByCallee)
+      Todo.push_back(KV.first);
+    while (!Todo.empty()) {
+      const Func *Callee = Todo.pop_back_val();
+      for (unsigned K : ByCallee[Callee]) {
+        const MethodEdge &E = MethodEdges[K];
+        uint64_t Before = E.Caller->UnitDictRecv;
+        for (size_t J = 0; J < E.Recv->TArgs.size() && J < 64; ++J)
+          if (Callee->UnitDictRecv >> J & 1)
+            if (const UnitCanon *A = unitArgCanon(E.Recv->TArgs[J]); A)
+              for (const UnitDim &D : A->Dims)
+                if (D.Param)
+                  noteMethodUnitDict(E.Caller, D.Param);
+        if (E.Caller->UnitDictRecv != Before)
+          Todo.push_back(E.Caller);
+      }
+    }
+  }
 }
 
 static const ast::Expr *unparenPartial(const ast::Expr *E) {

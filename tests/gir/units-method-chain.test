@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/gen-method-chain.py --run %gopp 24
+// P04.24 (GEN-14, R15): a method of a generic type that reaches the unit
+// need of another method (a call on the receiver, through a pointer, on a
+// literal of another generic type, a method value, a call on a copy, from a
+// function literal, a branch not taken, a loop) needs the unit as well, in
+// either declaration order and at -build-check-j 1 and 16 (untaggedCheck
+// records every edge from a method to a method, Checker::recordSelection, and
+// settles the bits in one worklist). Generic code that calls one is the one
+// E0439 at that call, never a program with a wrong value; the methods that
+// need no unit (F, FP) and the same calls with known units build and print
+// the values of plain code. Written by Inputs/gen-method-chain.py.

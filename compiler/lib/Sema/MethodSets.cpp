@@ -303,10 +303,13 @@ void partsOf(const Type *T, llvm::SmallVectorImpl<Type *> &Out, bool &Direct) {
 }
 } // namespace
 
-bool MethodSets::mentionsTypeParam(Type *Root) {
-  if (!P || !Root)
-    return false;
-  auto &Memo = P->Mentions;
+namespace {
+/// Does Root mention generic code for which Leaf (asked of each type that
+/// partsOf marks Direct) is true? One iterative post-order walk over the
+/// types as a DAG, memoized in Memo; Steps counts its loop.
+bool mentionsWhere(Type *Root, llvm::DenseMap<const Type *, bool> &Memo,
+                   uint64_t &Steps, llvm::function_ref<bool(Type *)> Leaf,
+                   llvm::function_ref<bool(Type *)> Skip) {
   if (auto It = Memo.find(Root); It != Memo.end())
     return It->second;
   struct Frame {
@@ -320,13 +323,15 @@ bool MethodSets::mentionsTypeParam(Type *Root) {
   auto Push = [&](Type *T) {
     Frame F;
     F.T = T;
-    partsOf(T, F.Kids, F.Any);
+    bool Direct = false;
+    partsOf(T, F.Kids, Direct);
+    F.Any = Direct && Leaf(T);
     Active.insert(T);
     Stack.push_back(std::move(F));
   };
   Push(Root);
   while (!Stack.empty()) {
-    ++P->Steps;
+    ++Steps;
     Frame &F = Stack.back();
     if (F.Any || F.Next == F.Kids.size()) {
       bool R = F.Any;
@@ -339,7 +344,7 @@ bool MethodSets::mentionsTypeParam(Type *Root) {
       continue;
     }
     Type *K = F.Kids[F.Next++];
-    if (!K)
+    if (!K || Skip(K))
       continue;
     if (auto It = Memo.find(K); It != Memo.end()) {
       if (It->second)
@@ -351,6 +356,37 @@ bool MethodSets::mentionsTypeParam(Type *Root) {
     Push(K);
   }
   return Memo[Root];
+}
+} // namespace
+
+bool MethodSets::mentionsTypeParam(Type *Root) {
+  if (!P || !Root)
+    return false;
+  return mentionsWhere(
+      Root, P->Mentions, P->Steps, [](Type *) { return true; },
+      [](Type *) { return false; });
+}
+
+bool MethodSets::mentionsTypeParamIf(
+    Type *Root, llvm::function_ref<bool(const TypeParamType *)> Pick,
+    llvm::DenseMap<const Type *, bool> &Memo) {
+  if (!P || !Root || !mentionsTypeParam(Root))
+    return false;
+  return mentionsWhere(
+      Root, Memo, P->Steps,
+      [&](Type *T) {
+        if (auto *TP = llvm::dyn_cast<TypeParamType>(T))
+          return Pick(TP);
+        if (auto *B = llvm::dyn_cast<BasicType>(T))
+          return llvm::any_of(B->Unit->Dims, [&](const UnitDim &D) {
+            return D.Param && Pick(D.Param);
+          });
+        // (A generic type without arguments, a type declared in generic
+        // code: it may hold any of the parameters.)
+        return true;
+      },
+      // (A part that mentions no type parameter mentions none of these.)
+      [&](Type *K) { return !mentionsTypeParam(K); });
 }
 
 void MethodSets::expand(Type *Root) {

@@ -309,7 +309,7 @@ bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
     bool IsUnitArg = unitArgCanon(TArg) != nullptr;
     if (isUnitParam(TPar) || IsUnitArg) {
       if (isUnitParam(TPar) && IsUnitArg) {
-        unitDictUses(Pos, TArg, TPar);
+        unitDictUses(Pos, TArg, TPar, ForType);
         return true;
       }
       if (Cause)
@@ -343,7 +343,7 @@ bool Checker::satisfies(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
     // (A parameter copied for one call's inference stands for its original.)
     TypeParamType *Root = TPar->RenamedFrom ? TPar->RenamedFrom : TPar;
     if (Root->Obj && Root->Obj->Pkg == S.Pkg) {
-      UntaggedPend.push_back({Pos, TArg, Root, ForType});
+      UntaggedPend.push_back({Pos, TArg, Root, ForType, MonoFn});
     } else {
       // A use that TArg gives on to a type parameter of this package is
       // noted there.

@@ -717,7 +717,12 @@ void Body::lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
   if (AllConst)
     for (const ast::Stmt *St : Clauses)
       for (const ast::Expr *E : cast<ast::CaseClause>(St)->List)
-        if (!isConst(E) || I.CaseOperators.count(E))
+        // (A case value that makes the comparison rescale the tag, in units,
+        // is tested below one by one.)
+        if (!isConst(E) || I.CaseOperators.count(E) ||
+            (unitsRecorded() &&
+             (unitScaleOf(E, /*Tag=*/true, /*Own=*/false).Any ||
+              (dictMode() && I.UnitSites.count(E)))))
           AllConst = false;
   if (AllConst) {
     SmallVector<SwitchCase, 8> Cases;
@@ -740,7 +745,16 @@ void Body::lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
         // (a `==` method: the tag against the case value)
       } else if (Tag != NoId) {
         Operand V = valueFor(E, TagS);
-        Cond = equality(true, copyOf(FB.local(Tag)), std::move(V), TagS, E);
+        Operand T = copyOf(FB.local(Tag));
+        if (unitsRecorded()) {
+          // The case value is in a finer unit than the tag: the tag is
+          // converted for this comparison (ADR-0025, EXP-34).
+          UnitScale U = unitScaleOf(E, /*Tag=*/true, /*Own=*/false);
+          if (U.Bad)
+            return;
+          T = scaleValue(std::move(T), U, E);
+        }
+        Cond = equality(true, std::move(T), std::move(V), TagS, E);
       } else {
         Cond = lowerAs(E, ctx().boolean());
       }
@@ -1094,6 +1108,26 @@ void Body::lowerStmt(const ast::Stmt *St) {
 
 void Body::finish() {
   Function &F = FB.function();
+  // The unit types of the variables, for the debugger (UNI-9: the local has
+  // the base type; P04.24, DebugInfoBuilder::variable).
+  if (L.CP.Ctx->unitsSeen()) {
+    auto Name = [&](const S::Var *V, LocalId Loc) {
+      // (A unit this instance does not know has no name: the instance's type
+      // has it erased, `float64[U*KM]` is `float64[KM]` there.)
+      if (erasedUnitOf(V))
+        return;
+      auto *B = dyn_cast_or_null<S::BasicType>(tyOfObj(V));
+      if (!B || !B->Unit || B->BK == S::BasicKind::UnitArg ||
+          !F.Locals[Loc].Source)
+        return;
+      F.Locals[Loc].UnitName = L.unitSpeller().text(
+          B, L.CP.Pkg && L.CP.Pkg->Name == "main" ? L.CP.Pkg : nullptr);
+    };
+    for (auto &KV : Vars)
+      Name(KV.first, KV.second);
+    for (auto &KV : Aliases)
+      Name(KV.first, KV.second);
+  }
   for (BasicBlock &BB : F.Blocks)
     if (!BB.Term.Set) {
       BB.Term.K = Terminator::Unreachable;
@@ -1290,9 +1324,16 @@ void Body::lower(const ast::FuncDecl *FD) {
     ArrayRef<S::Var *> Params = Obj->Params;
     // The receiver of a method is parameter 0.
     const size_t Lead = Obj->Recv ? 1 : 0;
-    if (Params.size() + Lead != F.numParams()) {
+    const size_t Hidden = CurInst ? CurInst->DictParams.size() : 0;
+    if (Params.size() + Lead + Hidden != F.numParams()) {
       unsupported(FD, "this parameter list");
       return;
+    }
+    // The unit descriptors of the instance (GEN-14), the last parameters.
+    for (size_t K = 0; K < Hidden; ++K) {
+      LocalId P = FB.param(Params.size() + Lead + K);
+      F.Locals[P].Name = "unit";
+      DictLocals[CurInst->DictParams[K]] = P;
     }
     // (At an instance of generic code, the types of the instance: P04.08.)
     FnSig = sigOf(Obj);
@@ -1318,8 +1359,25 @@ void Body::lower(const ast::FuncDecl *FD) {
     enterCells(FD->Body);
   }
   RootBody = FD->Body;
+  // The unit descriptors and factors the body needs are made once, here at
+  // the entry of the function (GEN-14): a block of their own that the entry
+  // jumps through and the body's uses fill (Hoist).
+  BlockId BodyStart = NoId;
+  if (dictMode() && !DictLocals.empty()) {
+    HoistBlock = FB.newBlock();
+    HoistScope = FB.scope();
+    BodyStart = FB.newBlock();
+    FB.gotoBlock(HoistBlock);
+    FB.setBlock(BodyStart);
+  }
   lowerBlock(FD->Body);
   endBody(FD->Body);
+  if (HoistBlock != NoId) {
+    FB.setBlock(HoistBlock);
+    FB.setSpan(L.spanOf(FD->getBegin()));
+    FB.gotoBlock(BodyStart);
+    HoistBlock = NoId;
+  }
   Scopes.pop_back();
   finish();
 }

@@ -1,0 +1,24 @@
+// P04.24 (R13): the branch of a site whose exponent is out of range is the
+// branch taken: `a * a * a * b` with U = X (M^400000) is the exponent
+// 1200000, past 2^20 (UNI-2), so the site stops the program with "unit out of
+// range" and the unit as the generic code wrote it (`U^3*V`), exit status 2,
+// after the output that came before. (The same function with the branch not
+// taken runs: tests/run/units-lazy.test.) Written by hand: Go has no units.
+package main
+
+unit M
+unit S
+unit X = M^400000
+
+func E[U unit, V unit](a float64[U], b float64[V], take bool) float64 {
+	if take {
+		return float64(a * a * a * b)
+	}
+	return 1
+}
+
+func main() {
+	println("start")
+	println(E(1.0[X], 1.0[S], false))
+	println(E(1.0[X], 1.0[S], true))
+}

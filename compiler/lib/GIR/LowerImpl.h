@@ -47,6 +47,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 
+#include <map>
 #include <set>
 
 namespace gopp {
@@ -162,6 +163,7 @@ public:
              Opts.MaxInstances, Opts.MaxWalkedNodes) {
     Walk.ScanTable = Opts.ScanInstances;
     Walk.Redescribe = Opts.RedescribeTypes;
+    Walk.ForgetErased = Opts.ForgetErasedUnits;
     for (FuncId &Id : RtIds)
       Id = NoId;
     for (auto &Row : Panics)
@@ -293,6 +295,25 @@ public:
   /// The panic of a `!` that fails outside a function that can fail (ERR-9):
   /// `panic_must(expr string, pos string, err error)`.
   FuncId ensurePanicMust(SourceLoc At);
+  FuncId ensurePanicUnit(SourceLoc At);
+  /// The run-time units (GEN-14, Runtime.cpp): the descriptor layout, the
+  /// functions that combine descriptors and decide a collapse site.
+  struct UnitRtFns {
+    FuncId Site = NoId, RatMul = NoId, MulPow = NoId, ScaleInt = NoId,
+           Ratio = NoId;
+  };
+  UnitRtFns UnitRt;
+  llvm::SmallVector<const S::Object *, 8> UnitBaseList;
+  bool UnitBasesDone = false;
+  llvm::DenseMap<const S::UnitCanon *, uint32_t> UnitDescGlobals;
+  /// The number of declared base units of the program (at least 1): the most
+  /// base units a descriptor can have.
+  unsigned unitK();
+  /// The id of a base unit in a descriptor.
+  static uint64_t unitBaseId(const S::Object *O);
+  UnitRtFns *unitRt(SourceLoc At);
+  /// The constant descriptor of a unit with no unit parameter.
+  uint32_t unitDescGlobal(const S::UnitCanon *U);
   /// Go's == and the hash of a checker type (glue); NoId after a report. A
   /// view compares and hashes as the value it looks at (OWN-V), also as a
   /// part of a struct, an array or an Option (viewPartsGlue, review R7).
@@ -495,6 +516,13 @@ public:
   /// name with its package (`main.Box[struct { main.a int }]`; a struct
   /// alone is `struct { a int }`).
   std::string rtypeName(S::Type *T, bool InArg = false);
+  /// The spelling of unit types (made on first use).
+  const S::UnitSpeller &unitSpeller() {
+    if (!Speller)
+      Speller.emplace(*CP.Ctx, CP.Pkg, I);
+    return *Speller;
+  }
+  std::optional<S::UnitSpeller> Speller;
   /// rtypeName as a descriptor and a panic message show it: a type of more
   /// than MaxNameParts parts as a tree (MethodSets::extent; only the source
   /// can write one, `type A2 = P[A1, A1]` doubling at every level) is
@@ -590,7 +618,8 @@ public:
   unsigned AnonStructs = 0;
 
   FuncId WriteFn = NoId, ExitFn = NoId, PrintU = NoId, PrintI = NoId,
-         PrintHex = NoId, PrintF = NoId, ComplexDiv = NoId, PanicMust = NoId;
+         PrintHex = NoId, PrintF = NoId, ComplexDiv = NoId, PanicMust = NoId,
+         PanicUnit = NoId;
   FuncId Panics[unsigned(AssertKind::SliceConvert) + 1][2] = {};
   /// A C function the compiler needs that the program declares differently.
   llvm::StringSet<> BadC;
@@ -611,6 +640,22 @@ private:
   /// A unique name for a type of the module (structs and self-naming types),
   /// the readable symbol of Named cut at MaxTypeName bytes.
   std::string uniqueTypeName(S::NamedType *Named);
+  bool namesAUnit(S::NamedType *Named);
+  static bool isUnitArg(S::Type *T);
+  static bool hasUnitArg(S::NamedType *Named);
+  /// UNI-9: units are erased, so two types that differ only in their units
+  /// are one GIR type (`Vec2[KM]`, `Vec2[M]` and the `Vec2[]` of generic code
+  /// shared across unit arguments; `Box[float64[KM]]` and `Box[float64]`;
+  /// `struct{ f float64[KM] }` and `struct{ f float64 }`), so a value passes
+  /// between a caller with real units and a body shared across them. The
+  /// unit-free identity of a type: its symbol node with every unit type its
+  /// number type and every unit argument the name `unit`.
+  const sym::Node *unitFree(S::Type *T);
+  llvm::DenseMap<const sym::Node *, const sym::Node *> UnitFreeMemo;
+  /// The first instance of a generic type, and the GIR struct of the first
+  /// struct type, of each unit-free identity (lowerTypeOnce, lowerStruct).
+  llvm::DenseMap<const sym::Node *, S::NamedType *> UnitFreeTypes;
+  llvm::DenseMap<const sym::Node *, Type *> UnitFreeStructs;
   static constexpr size_t MaxTypeName = 4096;
   Type *lowerStruct(S::Type *Whole, S::StructType *ST, S::NamedType *Named,
                     SourceLoc At);
@@ -776,8 +821,113 @@ private:
   // Values.
   Operand unitValue() { return constBool(ctx(), false); }
   Operand zeroOf(Type *T);
-  Operand constOperand(const S::ConstValue &V, Type *Ty, const ast::Node *N);
+  /// Key: the expression whose collapse sites (Info::UnitSites) scale a
+  /// constant of generic code; null: N itself when it is an expression.
+  Operand constOperand(const S::ConstValue &V, Type *Ty, const ast::Node *N,
+                       const ast::Expr *Key = nullptr);
   Operand lowerExpr(const ast::Expr *E);
+  /// lowerExpr without the scale change of units (LowerUnits.cpp).
+  Operand lowerValue(const ast::Expr *E);
+
+  // Units of measure (ADR-0025, P04.24, LowerUnits.cpp).
+  /// How the value of an expression is rescaled: the exact factor of all the
+  /// checker's records for it at this instance, truncating or not.
+  struct UnitScale {
+    S::Real F;
+    bool Any = false;   // a factor other than 1
+    bool Trunc = false; // an explicit conversion to a coarser integer unit
+    bool Bad = false;   // a unit that cannot be made at the instance
+    /// The factor is a run-time fraction (an instance that takes unit
+    /// descriptors): DynN / DynD, F is 1.
+    bool Dyn = false;
+    Operand DynN, DynD;
+    /// The unit in the panic text, should the fraction be marked.
+    std::string DynWhat;
+  };
+  /// Tag: the scale change of a switch tag that a case value keys (the
+  /// comparison converts the tag, not the case value). Own: the expression's
+  /// own sites (Mul, Quo, Const) count too.
+  UnitScale unitScaleOf(const ast::Expr *E, bool Tag, bool Own);
+  /// The hidden unit-descriptor parameter of each dictionary parameter of the
+  /// instance being lowered (the function's own body only).
+  llvm::DenseMap<const S::TypeParamType *, LocalId> DictLocals;
+  /// Does this body take unit descriptors (an instance with a unit parameter
+  /// that the code needs the unit of)?
+  bool dictMode() const { return CurInst && !CurInst->DictParams.empty(); }
+  /// THE predicate of GEN-14 at this instance (InstanceWalk::
+  /// mentionsErasedUnit): does T, as the generic code writes it, or the unit
+  /// U, mention a unit this instance does not know?
+  bool erasedUnit(S::Type *T) { return L.Walk.mentionsErasedUnit(CurInst, T); }
+  bool erasedUnit(const S::UnitCanon *U) const;
+  /// The same of the type of E, and of V: the predicate reads the type as
+  /// the generic code writes it, never the instance's.
+  bool erasedUnitOf(const ast::Expr *E) {
+    return erasedUnit(I.typeOf(E)); // raw: accessor
+  }
+  bool erasedUnitOf(const S::Var *V) {
+    return erasedUnit(V->Ty); // raw: accessor
+  }
+  bool isIntQuo(const ast::Expr *E);
+  /// Computed once at the entry of the function, not in loops and branches
+  /// (GEN-14): the block the entry jumps through (Body::lower), and the
+  /// descriptors and fractions made there, by what they are made of.
+  BlockId HoistBlock = NoId;
+  ScopeId HoistScope = 0;
+  unsigned HoistDepth = 0;
+  llvm::DenseMap<const S::UnitCanon *, Operand> DescMemo;
+  std::map<std::tuple<unsigned, const S::UnitCanon *, const S::UnitCanon *,
+                      const S::UnitCanon *, uint64_t, uint64_t>,
+           std::pair<Operand, Operand>>
+      SiteMemo;
+  std::map<std::tuple<LocalId, LocalId, uint64_t>, Operand> RatioMemo;
+  /// Emits into the hoisting block while it lives (nested ones are no-ops).
+  class Hoist {
+  public:
+    explicit Hoist(Body &B);
+    ~Hoist();
+    Hoist(const Hoist &) = delete;
+    Hoist &operator=(const Hoist &) = delete;
+
+  private:
+    Body &B;
+    BlockId Saved = NoId;
+    ScopeId SavedScope = 0;
+    Span SavedSpan;
+    bool On = false;
+  };
+  /// An E0439 of the units that names its task.
+  void unitUnsupported(const ast::Node *N, const std::string &What);
+  std::string unitText(const S::UnitCanon *U);
+  /// The unit of a site as the generic code wrote it (`U/KM`, the form of the
+  /// expression N, units of package main bare), else the unit's best form.
+  std::string siteText(const S::UnitCanon *U, const ast::Node *N);
+  Operand unitDesc(const S::UnitCanon *U, const ast::Node *N);
+  void dictArgsFor(const GenericInst *GI, const ast::Expr *Key,
+                   llvm::SmallVectorImpl<const S::UnitCanon *> &Out);
+  std::pair<Operand, Operand> dynSite(const S::UnitSite &St, uint64_t Sp,
+                                      uint64_t Sq, const ast::Node *N);
+  Operand scaleDyn(Operand V, Operand N, Operand D, const ast::Node *N0,
+                   const std::string &What);
+  Operand scaleIntExact(Operand V, Operand N, Operand D, const ast::Node *N0,
+                        const std::string &What);
+  bool physicalIntQuo(const ast::BinaryExpr *B, S::Real &Ratio, bool &ScaleX);
+  const S::UnitCanon *unitAtInstance(const S::UnitCanon *U);
+  bool unitCorrection(const S::UnitCanon *U, S::Real &C);
+  bool unitSiteFactor(const S::UnitSite &St, S::Real &F);
+  S::ConstValue scaleConstant(const S::ConstValue &V, const S::Real &F,
+                              bool IntKind);
+  /// The constant V in the type Ty, no unit scale applied.
+  Operand plainConstOperand(const S::ConstValue &V, Type *Ty,
+                            const ast::Node *N);
+  Operand scaleValue(Operand V, const UnitScale &U, const ast::Node *N);
+  Operand scaleFloat(Operand V, const S::Real &F);
+  Operand scaleInt(Operand V, const S::Real &F, const ast::Node *N);
+  Operand lowerUnitIn(const ast::SelectorExpr *Sel);
+  /// Does the checker record any unit scale at all (a program with no unit
+  /// pays one test)?
+  bool unitsRecorded() const {
+    return !I.UnitConvs.empty() || !I.UnitSites.empty();
+  }
   Operand lowerAs(const ast::Expr *E, Type *Want);
   /// E converted to the checker type Want: a constant gets Want's GIR type,
   /// `nil` is Want's nil, a T for an Option[T] is wrapped.
@@ -839,7 +989,8 @@ private:
   struct LateRecv;
   Operand callWith(const ast::CallExpr *C, S::SignatureType *Sig, Type *GSig,
                    Operand CalleeOp, ArrayRef<Operand> Lead, bool NoUnwind,
-                   LateRecv *Recv = nullptr);
+                   LateRecv *Recv = nullptr,
+                   ArrayRef<const S::UnitCanon *> Dicts = {});
   Operand lowerConversion(const ast::CallExpr *C);
   Operand lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B);
   // Methods and interfaces (LowerIface.cpp, P04.06).

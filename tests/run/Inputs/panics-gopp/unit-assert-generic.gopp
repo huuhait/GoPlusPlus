@@ -1,0 +1,15 @@
+// P04.24: the descriptor of an instance of a generic type with a unit
+// argument names the unit: `main.Vec2[KM]` (Go spells an instance's
+// arguments in full, without a space).
+package main
+
+unit M
+unit KM = 1000 M
+
+type Vec2[U unit] struct{ X, Y float64[U] }
+
+func main() {
+	var e any = Vec2[KM]{1.0[KM], 2.0[KM]}
+	println("boxed")
+	_ = e.(Vec2[M])
+}

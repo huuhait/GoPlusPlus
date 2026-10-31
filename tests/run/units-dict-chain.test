@@ -1,0 +1,436 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-dict-chain.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-dict-chain.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (GEN-14, ADR-0025 Amendment): the unit descriptors travel through
+// long chains. 200 generics that swap their two units (S0..S200: after an even
+// number of swaps the units are as they were: Ratio(1 KM, 1 M) = 1000; after
+// an odd number, Ratio(1 M, 1 KM) = 1/1000 = 0.001); 200 generics that each
+// pass `U*S/S` on (the descriptor is multiplied by S and divided by S again at
+// every level, a net 1: the unit is KM at the end: 1000); and (KM/M)^4 =
+// 10^12. Each function is
+// one instance with one descriptor for each unit parameter, however deep.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+
+func Ratio[U unit, V unit](a float64[U], b float64[V]) float64 { return float64(a / b) }
+
+func S0[U unit, V unit](a float64[U], b float64[V]) float64 { return Ratio(a, b) }
+func S1[U unit, V unit](a float64[U], b float64[V]) float64 { return S0[V, U](b, a) }
+func S2[U unit, V unit](a float64[U], b float64[V]) float64 { return S1[V, U](b, a) }
+func S3[U unit, V unit](a float64[U], b float64[V]) float64 { return S2[V, U](b, a) }
+func S4[U unit, V unit](a float64[U], b float64[V]) float64 { return S3[V, U](b, a) }
+func S5[U unit, V unit](a float64[U], b float64[V]) float64 { return S4[V, U](b, a) }
+func S6[U unit, V unit](a float64[U], b float64[V]) float64 { return S5[V, U](b, a) }
+func S7[U unit, V unit](a float64[U], b float64[V]) float64 { return S6[V, U](b, a) }
+func S8[U unit, V unit](a float64[U], b float64[V]) float64 { return S7[V, U](b, a) }
+func S9[U unit, V unit](a float64[U], b float64[V]) float64 { return S8[V, U](b, a) }
+func S10[U unit, V unit](a float64[U], b float64[V]) float64 { return S9[V, U](b, a) }
+func S11[U unit, V unit](a float64[U], b float64[V]) float64 { return S10[V, U](b, a) }
+func S12[U unit, V unit](a float64[U], b float64[V]) float64 { return S11[V, U](b, a) }
+func S13[U unit, V unit](a float64[U], b float64[V]) float64 { return S12[V, U](b, a) }
+func S14[U unit, V unit](a float64[U], b float64[V]) float64 { return S13[V, U](b, a) }
+func S15[U unit, V unit](a float64[U], b float64[V]) float64 { return S14[V, U](b, a) }
+func S16[U unit, V unit](a float64[U], b float64[V]) float64 { return S15[V, U](b, a) }
+func S17[U unit, V unit](a float64[U], b float64[V]) float64 { return S16[V, U](b, a) }
+func S18[U unit, V unit](a float64[U], b float64[V]) float64 { return S17[V, U](b, a) }
+func S19[U unit, V unit](a float64[U], b float64[V]) float64 { return S18[V, U](b, a) }
+func S20[U unit, V unit](a float64[U], b float64[V]) float64 { return S19[V, U](b, a) }
+func S21[U unit, V unit](a float64[U], b float64[V]) float64 { return S20[V, U](b, a) }
+func S22[U unit, V unit](a float64[U], b float64[V]) float64 { return S21[V, U](b, a) }
+func S23[U unit, V unit](a float64[U], b float64[V]) float64 { return S22[V, U](b, a) }
+func S24[U unit, V unit](a float64[U], b float64[V]) float64 { return S23[V, U](b, a) }
+func S25[U unit, V unit](a float64[U], b float64[V]) float64 { return S24[V, U](b, a) }
+func S26[U unit, V unit](a float64[U], b float64[V]) float64 { return S25[V, U](b, a) }
+func S27[U unit, V unit](a float64[U], b float64[V]) float64 { return S26[V, U](b, a) }
+func S28[U unit, V unit](a float64[U], b float64[V]) float64 { return S27[V, U](b, a) }
+func S29[U unit, V unit](a float64[U], b float64[V]) float64 { return S28[V, U](b, a) }
+func S30[U unit, V unit](a float64[U], b float64[V]) float64 { return S29[V, U](b, a) }
+func S31[U unit, V unit](a float64[U], b float64[V]) float64 { return S30[V, U](b, a) }
+func S32[U unit, V unit](a float64[U], b float64[V]) float64 { return S31[V, U](b, a) }
+func S33[U unit, V unit](a float64[U], b float64[V]) float64 { return S32[V, U](b, a) }
+func S34[U unit, V unit](a float64[U], b float64[V]) float64 { return S33[V, U](b, a) }
+func S35[U unit, V unit](a float64[U], b float64[V]) float64 { return S34[V, U](b, a) }
+func S36[U unit, V unit](a float64[U], b float64[V]) float64 { return S35[V, U](b, a) }
+func S37[U unit, V unit](a float64[U], b float64[V]) float64 { return S36[V, U](b, a) }
+func S38[U unit, V unit](a float64[U], b float64[V]) float64 { return S37[V, U](b, a) }
+func S39[U unit, V unit](a float64[U], b float64[V]) float64 { return S38[V, U](b, a) }
+func S40[U unit, V unit](a float64[U], b float64[V]) float64 { return S39[V, U](b, a) }
+func S41[U unit, V unit](a float64[U], b float64[V]) float64 { return S40[V, U](b, a) }
+func S42[U unit, V unit](a float64[U], b float64[V]) float64 { return S41[V, U](b, a) }
+func S43[U unit, V unit](a float64[U], b float64[V]) float64 { return S42[V, U](b, a) }
+func S44[U unit, V unit](a float64[U], b float64[V]) float64 { return S43[V, U](b, a) }
+func S45[U unit, V unit](a float64[U], b float64[V]) float64 { return S44[V, U](b, a) }
+func S46[U unit, V unit](a float64[U], b float64[V]) float64 { return S45[V, U](b, a) }
+func S47[U unit, V unit](a float64[U], b float64[V]) float64 { return S46[V, U](b, a) }
+func S48[U unit, V unit](a float64[U], b float64[V]) float64 { return S47[V, U](b, a) }
+func S49[U unit, V unit](a float64[U], b float64[V]) float64 { return S48[V, U](b, a) }
+func S50[U unit, V unit](a float64[U], b float64[V]) float64 { return S49[V, U](b, a) }
+func S51[U unit, V unit](a float64[U], b float64[V]) float64 { return S50[V, U](b, a) }
+func S52[U unit, V unit](a float64[U], b float64[V]) float64 { return S51[V, U](b, a) }
+func S53[U unit, V unit](a float64[U], b float64[V]) float64 { return S52[V, U](b, a) }
+func S54[U unit, V unit](a float64[U], b float64[V]) float64 { return S53[V, U](b, a) }
+func S55[U unit, V unit](a float64[U], b float64[V]) float64 { return S54[V, U](b, a) }
+func S56[U unit, V unit](a float64[U], b float64[V]) float64 { return S55[V, U](b, a) }
+func S57[U unit, V unit](a float64[U], b float64[V]) float64 { return S56[V, U](b, a) }
+func S58[U unit, V unit](a float64[U], b float64[V]) float64 { return S57[V, U](b, a) }
+func S59[U unit, V unit](a float64[U], b float64[V]) float64 { return S58[V, U](b, a) }
+func S60[U unit, V unit](a float64[U], b float64[V]) float64 { return S59[V, U](b, a) }
+func S61[U unit, V unit](a float64[U], b float64[V]) float64 { return S60[V, U](b, a) }
+func S62[U unit, V unit](a float64[U], b float64[V]) float64 { return S61[V, U](b, a) }
+func S63[U unit, V unit](a float64[U], b float64[V]) float64 { return S62[V, U](b, a) }
+func S64[U unit, V unit](a float64[U], b float64[V]) float64 { return S63[V, U](b, a) }
+func S65[U unit, V unit](a float64[U], b float64[V]) float64 { return S64[V, U](b, a) }
+func S66[U unit, V unit](a float64[U], b float64[V]) float64 { return S65[V, U](b, a) }
+func S67[U unit, V unit](a float64[U], b float64[V]) float64 { return S66[V, U](b, a) }
+func S68[U unit, V unit](a float64[U], b float64[V]) float64 { return S67[V, U](b, a) }
+func S69[U unit, V unit](a float64[U], b float64[V]) float64 { return S68[V, U](b, a) }
+func S70[U unit, V unit](a float64[U], b float64[V]) float64 { return S69[V, U](b, a) }
+func S71[U unit, V unit](a float64[U], b float64[V]) float64 { return S70[V, U](b, a) }
+func S72[U unit, V unit](a float64[U], b float64[V]) float64 { return S71[V, U](b, a) }
+func S73[U unit, V unit](a float64[U], b float64[V]) float64 { return S72[V, U](b, a) }
+func S74[U unit, V unit](a float64[U], b float64[V]) float64 { return S73[V, U](b, a) }
+func S75[U unit, V unit](a float64[U], b float64[V]) float64 { return S74[V, U](b, a) }
+func S76[U unit, V unit](a float64[U], b float64[V]) float64 { return S75[V, U](b, a) }
+func S77[U unit, V unit](a float64[U], b float64[V]) float64 { return S76[V, U](b, a) }
+func S78[U unit, V unit](a float64[U], b float64[V]) float64 { return S77[V, U](b, a) }
+func S79[U unit, V unit](a float64[U], b float64[V]) float64 { return S78[V, U](b, a) }
+func S80[U unit, V unit](a float64[U], b float64[V]) float64 { return S79[V, U](b, a) }
+func S81[U unit, V unit](a float64[U], b float64[V]) float64 { return S80[V, U](b, a) }
+func S82[U unit, V unit](a float64[U], b float64[V]) float64 { return S81[V, U](b, a) }
+func S83[U unit, V unit](a float64[U], b float64[V]) float64 { return S82[V, U](b, a) }
+func S84[U unit, V unit](a float64[U], b float64[V]) float64 { return S83[V, U](b, a) }
+func S85[U unit, V unit](a float64[U], b float64[V]) float64 { return S84[V, U](b, a) }
+func S86[U unit, V unit](a float64[U], b float64[V]) float64 { return S85[V, U](b, a) }
+func S87[U unit, V unit](a float64[U], b float64[V]) float64 { return S86[V, U](b, a) }
+func S88[U unit, V unit](a float64[U], b float64[V]) float64 { return S87[V, U](b, a) }
+func S89[U unit, V unit](a float64[U], b float64[V]) float64 { return S88[V, U](b, a) }
+func S90[U unit, V unit](a float64[U], b float64[V]) float64 { return S89[V, U](b, a) }
+func S91[U unit, V unit](a float64[U], b float64[V]) float64 { return S90[V, U](b, a) }
+func S92[U unit, V unit](a float64[U], b float64[V]) float64 { return S91[V, U](b, a) }
+func S93[U unit, V unit](a float64[U], b float64[V]) float64 { return S92[V, U](b, a) }
+func S94[U unit, V unit](a float64[U], b float64[V]) float64 { return S93[V, U](b, a) }
+func S95[U unit, V unit](a float64[U], b float64[V]) float64 { return S94[V, U](b, a) }
+func S96[U unit, V unit](a float64[U], b float64[V]) float64 { return S95[V, U](b, a) }
+func S97[U unit, V unit](a float64[U], b float64[V]) float64 { return S96[V, U](b, a) }
+func S98[U unit, V unit](a float64[U], b float64[V]) float64 { return S97[V, U](b, a) }
+func S99[U unit, V unit](a float64[U], b float64[V]) float64 { return S98[V, U](b, a) }
+func S100[U unit, V unit](a float64[U], b float64[V]) float64 { return S99[V, U](b, a) }
+func S101[U unit, V unit](a float64[U], b float64[V]) float64 { return S100[V, U](b, a) }
+func S102[U unit, V unit](a float64[U], b float64[V]) float64 { return S101[V, U](b, a) }
+func S103[U unit, V unit](a float64[U], b float64[V]) float64 { return S102[V, U](b, a) }
+func S104[U unit, V unit](a float64[U], b float64[V]) float64 { return S103[V, U](b, a) }
+func S105[U unit, V unit](a float64[U], b float64[V]) float64 { return S104[V, U](b, a) }
+func S106[U unit, V unit](a float64[U], b float64[V]) float64 { return S105[V, U](b, a) }
+func S107[U unit, V unit](a float64[U], b float64[V]) float64 { return S106[V, U](b, a) }
+func S108[U unit, V unit](a float64[U], b float64[V]) float64 { return S107[V, U](b, a) }
+func S109[U unit, V unit](a float64[U], b float64[V]) float64 { return S108[V, U](b, a) }
+func S110[U unit, V unit](a float64[U], b float64[V]) float64 { return S109[V, U](b, a) }
+func S111[U unit, V unit](a float64[U], b float64[V]) float64 { return S110[V, U](b, a) }
+func S112[U unit, V unit](a float64[U], b float64[V]) float64 { return S111[V, U](b, a) }
+func S113[U unit, V unit](a float64[U], b float64[V]) float64 { return S112[V, U](b, a) }
+func S114[U unit, V unit](a float64[U], b float64[V]) float64 { return S113[V, U](b, a) }
+func S115[U unit, V unit](a float64[U], b float64[V]) float64 { return S114[V, U](b, a) }
+func S116[U unit, V unit](a float64[U], b float64[V]) float64 { return S115[V, U](b, a) }
+func S117[U unit, V unit](a float64[U], b float64[V]) float64 { return S116[V, U](b, a) }
+func S118[U unit, V unit](a float64[U], b float64[V]) float64 { return S117[V, U](b, a) }
+func S119[U unit, V unit](a float64[U], b float64[V]) float64 { return S118[V, U](b, a) }
+func S120[U unit, V unit](a float64[U], b float64[V]) float64 { return S119[V, U](b, a) }
+func S121[U unit, V unit](a float64[U], b float64[V]) float64 { return S120[V, U](b, a) }
+func S122[U unit, V unit](a float64[U], b float64[V]) float64 { return S121[V, U](b, a) }
+func S123[U unit, V unit](a float64[U], b float64[V]) float64 { return S122[V, U](b, a) }
+func S124[U unit, V unit](a float64[U], b float64[V]) float64 { return S123[V, U](b, a) }
+func S125[U unit, V unit](a float64[U], b float64[V]) float64 { return S124[V, U](b, a) }
+func S126[U unit, V unit](a float64[U], b float64[V]) float64 { return S125[V, U](b, a) }
+func S127[U unit, V unit](a float64[U], b float64[V]) float64 { return S126[V, U](b, a) }
+func S128[U unit, V unit](a float64[U], b float64[V]) float64 { return S127[V, U](b, a) }
+func S129[U unit, V unit](a float64[U], b float64[V]) float64 { return S128[V, U](b, a) }
+func S130[U unit, V unit](a float64[U], b float64[V]) float64 { return S129[V, U](b, a) }
+func S131[U unit, V unit](a float64[U], b float64[V]) float64 { return S130[V, U](b, a) }
+func S132[U unit, V unit](a float64[U], b float64[V]) float64 { return S131[V, U](b, a) }
+func S133[U unit, V unit](a float64[U], b float64[V]) float64 { return S132[V, U](b, a) }
+func S134[U unit, V unit](a float64[U], b float64[V]) float64 { return S133[V, U](b, a) }
+func S135[U unit, V unit](a float64[U], b float64[V]) float64 { return S134[V, U](b, a) }
+func S136[U unit, V unit](a float64[U], b float64[V]) float64 { return S135[V, U](b, a) }
+func S137[U unit, V unit](a float64[U], b float64[V]) float64 { return S136[V, U](b, a) }
+func S138[U unit, V unit](a float64[U], b float64[V]) float64 { return S137[V, U](b, a) }
+func S139[U unit, V unit](a float64[U], b float64[V]) float64 { return S138[V, U](b, a) }
+func S140[U unit, V unit](a float64[U], b float64[V]) float64 { return S139[V, U](b, a) }
+func S141[U unit, V unit](a float64[U], b float64[V]) float64 { return S140[V, U](b, a) }
+func S142[U unit, V unit](a float64[U], b float64[V]) float64 { return S141[V, U](b, a) }
+func S143[U unit, V unit](a float64[U], b float64[V]) float64 { return S142[V, U](b, a) }
+func S144[U unit, V unit](a float64[U], b float64[V]) float64 { return S143[V, U](b, a) }
+func S145[U unit, V unit](a float64[U], b float64[V]) float64 { return S144[V, U](b, a) }
+func S146[U unit, V unit](a float64[U], b float64[V]) float64 { return S145[V, U](b, a) }
+func S147[U unit, V unit](a float64[U], b float64[V]) float64 { return S146[V, U](b, a) }
+func S148[U unit, V unit](a float64[U], b float64[V]) float64 { return S147[V, U](b, a) }
+func S149[U unit, V unit](a float64[U], b float64[V]) float64 { return S148[V, U](b, a) }
+func S150[U unit, V unit](a float64[U], b float64[V]) float64 { return S149[V, U](b, a) }
+func S151[U unit, V unit](a float64[U], b float64[V]) float64 { return S150[V, U](b, a) }
+func S152[U unit, V unit](a float64[U], b float64[V]) float64 { return S151[V, U](b, a) }
+func S153[U unit, V unit](a float64[U], b float64[V]) float64 { return S152[V, U](b, a) }
+func S154[U unit, V unit](a float64[U], b float64[V]) float64 { return S153[V, U](b, a) }
+func S155[U unit, V unit](a float64[U], b float64[V]) float64 { return S154[V, U](b, a) }
+func S156[U unit, V unit](a float64[U], b float64[V]) float64 { return S155[V, U](b, a) }
+func S157[U unit, V unit](a float64[U], b float64[V]) float64 { return S156[V, U](b, a) }
+func S158[U unit, V unit](a float64[U], b float64[V]) float64 { return S157[V, U](b, a) }
+func S159[U unit, V unit](a float64[U], b float64[V]) float64 { return S158[V, U](b, a) }
+func S160[U unit, V unit](a float64[U], b float64[V]) float64 { return S159[V, U](b, a) }
+func S161[U unit, V unit](a float64[U], b float64[V]) float64 { return S160[V, U](b, a) }
+func S162[U unit, V unit](a float64[U], b float64[V]) float64 { return S161[V, U](b, a) }
+func S163[U unit, V unit](a float64[U], b float64[V]) float64 { return S162[V, U](b, a) }
+func S164[U unit, V unit](a float64[U], b float64[V]) float64 { return S163[V, U](b, a) }
+func S165[U unit, V unit](a float64[U], b float64[V]) float64 { return S164[V, U](b, a) }
+func S166[U unit, V unit](a float64[U], b float64[V]) float64 { return S165[V, U](b, a) }
+func S167[U unit, V unit](a float64[U], b float64[V]) float64 { return S166[V, U](b, a) }
+func S168[U unit, V unit](a float64[U], b float64[V]) float64 { return S167[V, U](b, a) }
+func S169[U unit, V unit](a float64[U], b float64[V]) float64 { return S168[V, U](b, a) }
+func S170[U unit, V unit](a float64[U], b float64[V]) float64 { return S169[V, U](b, a) }
+func S171[U unit, V unit](a float64[U], b float64[V]) float64 { return S170[V, U](b, a) }
+func S172[U unit, V unit](a float64[U], b float64[V]) float64 { return S171[V, U](b, a) }
+func S173[U unit, V unit](a float64[U], b float64[V]) float64 { return S172[V, U](b, a) }
+func S174[U unit, V unit](a float64[U], b float64[V]) float64 { return S173[V, U](b, a) }
+func S175[U unit, V unit](a float64[U], b float64[V]) float64 { return S174[V, U](b, a) }
+func S176[U unit, V unit](a float64[U], b float64[V]) float64 { return S175[V, U](b, a) }
+func S177[U unit, V unit](a float64[U], b float64[V]) float64 { return S176[V, U](b, a) }
+func S178[U unit, V unit](a float64[U], b float64[V]) float64 { return S177[V, U](b, a) }
+func S179[U unit, V unit](a float64[U], b float64[V]) float64 { return S178[V, U](b, a) }
+func S180[U unit, V unit](a float64[U], b float64[V]) float64 { return S179[V, U](b, a) }
+func S181[U unit, V unit](a float64[U], b float64[V]) float64 { return S180[V, U](b, a) }
+func S182[U unit, V unit](a float64[U], b float64[V]) float64 { return S181[V, U](b, a) }
+func S183[U unit, V unit](a float64[U], b float64[V]) float64 { return S182[V, U](b, a) }
+func S184[U unit, V unit](a float64[U], b float64[V]) float64 { return S183[V, U](b, a) }
+func S185[U unit, V unit](a float64[U], b float64[V]) float64 { return S184[V, U](b, a) }
+func S186[U unit, V unit](a float64[U], b float64[V]) float64 { return S185[V, U](b, a) }
+func S187[U unit, V unit](a float64[U], b float64[V]) float64 { return S186[V, U](b, a) }
+func S188[U unit, V unit](a float64[U], b float64[V]) float64 { return S187[V, U](b, a) }
+func S189[U unit, V unit](a float64[U], b float64[V]) float64 { return S188[V, U](b, a) }
+func S190[U unit, V unit](a float64[U], b float64[V]) float64 { return S189[V, U](b, a) }
+func S191[U unit, V unit](a float64[U], b float64[V]) float64 { return S190[V, U](b, a) }
+func S192[U unit, V unit](a float64[U], b float64[V]) float64 { return S191[V, U](b, a) }
+func S193[U unit, V unit](a float64[U], b float64[V]) float64 { return S192[V, U](b, a) }
+func S194[U unit, V unit](a float64[U], b float64[V]) float64 { return S193[V, U](b, a) }
+func S195[U unit, V unit](a float64[U], b float64[V]) float64 { return S194[V, U](b, a) }
+func S196[U unit, V unit](a float64[U], b float64[V]) float64 { return S195[V, U](b, a) }
+func S197[U unit, V unit](a float64[U], b float64[V]) float64 { return S196[V, U](b, a) }
+func S198[U unit, V unit](a float64[U], b float64[V]) float64 { return S197[V, U](b, a) }
+func S199[U unit, V unit](a float64[U], b float64[V]) float64 { return S198[V, U](b, a) }
+func S200[U unit, V unit](a float64[U], b float64[V]) float64 { return S199[V, U](b, a) }
+func P0[U unit](a float64[U]) float64 { return Ratio(a, 1.0[M]) }
+func P1[U unit](a float64[U]) float64 { return P0[U*S/S](a) }
+func P2[U unit](a float64[U]) float64 { return P1[U*S/S](a) }
+func P3[U unit](a float64[U]) float64 { return P2[U*S/S](a) }
+func P4[U unit](a float64[U]) float64 { return P3[U*S/S](a) }
+func P5[U unit](a float64[U]) float64 { return P4[U*S/S](a) }
+func P6[U unit](a float64[U]) float64 { return P5[U*S/S](a) }
+func P7[U unit](a float64[U]) float64 { return P6[U*S/S](a) }
+func P8[U unit](a float64[U]) float64 { return P7[U*S/S](a) }
+func P9[U unit](a float64[U]) float64 { return P8[U*S/S](a) }
+func P10[U unit](a float64[U]) float64 { return P9[U*S/S](a) }
+func P11[U unit](a float64[U]) float64 { return P10[U*S/S](a) }
+func P12[U unit](a float64[U]) float64 { return P11[U*S/S](a) }
+func P13[U unit](a float64[U]) float64 { return P12[U*S/S](a) }
+func P14[U unit](a float64[U]) float64 { return P13[U*S/S](a) }
+func P15[U unit](a float64[U]) float64 { return P14[U*S/S](a) }
+func P16[U unit](a float64[U]) float64 { return P15[U*S/S](a) }
+func P17[U unit](a float64[U]) float64 { return P16[U*S/S](a) }
+func P18[U unit](a float64[U]) float64 { return P17[U*S/S](a) }
+func P19[U unit](a float64[U]) float64 { return P18[U*S/S](a) }
+func P20[U unit](a float64[U]) float64 { return P19[U*S/S](a) }
+func P21[U unit](a float64[U]) float64 { return P20[U*S/S](a) }
+func P22[U unit](a float64[U]) float64 { return P21[U*S/S](a) }
+func P23[U unit](a float64[U]) float64 { return P22[U*S/S](a) }
+func P24[U unit](a float64[U]) float64 { return P23[U*S/S](a) }
+func P25[U unit](a float64[U]) float64 { return P24[U*S/S](a) }
+func P26[U unit](a float64[U]) float64 { return P25[U*S/S](a) }
+func P27[U unit](a float64[U]) float64 { return P26[U*S/S](a) }
+func P28[U unit](a float64[U]) float64 { return P27[U*S/S](a) }
+func P29[U unit](a float64[U]) float64 { return P28[U*S/S](a) }
+func P30[U unit](a float64[U]) float64 { return P29[U*S/S](a) }
+func P31[U unit](a float64[U]) float64 { return P30[U*S/S](a) }
+func P32[U unit](a float64[U]) float64 { return P31[U*S/S](a) }
+func P33[U unit](a float64[U]) float64 { return P32[U*S/S](a) }
+func P34[U unit](a float64[U]) float64 { return P33[U*S/S](a) }
+func P35[U unit](a float64[U]) float64 { return P34[U*S/S](a) }
+func P36[U unit](a float64[U]) float64 { return P35[U*S/S](a) }
+func P37[U unit](a float64[U]) float64 { return P36[U*S/S](a) }
+func P38[U unit](a float64[U]) float64 { return P37[U*S/S](a) }
+func P39[U unit](a float64[U]) float64 { return P38[U*S/S](a) }
+func P40[U unit](a float64[U]) float64 { return P39[U*S/S](a) }
+func P41[U unit](a float64[U]) float64 { return P40[U*S/S](a) }
+func P42[U unit](a float64[U]) float64 { return P41[U*S/S](a) }
+func P43[U unit](a float64[U]) float64 { return P42[U*S/S](a) }
+func P44[U unit](a float64[U]) float64 { return P43[U*S/S](a) }
+func P45[U unit](a float64[U]) float64 { return P44[U*S/S](a) }
+func P46[U unit](a float64[U]) float64 { return P45[U*S/S](a) }
+func P47[U unit](a float64[U]) float64 { return P46[U*S/S](a) }
+func P48[U unit](a float64[U]) float64 { return P47[U*S/S](a) }
+func P49[U unit](a float64[U]) float64 { return P48[U*S/S](a) }
+func P50[U unit](a float64[U]) float64 { return P49[U*S/S](a) }
+func P51[U unit](a float64[U]) float64 { return P50[U*S/S](a) }
+func P52[U unit](a float64[U]) float64 { return P51[U*S/S](a) }
+func P53[U unit](a float64[U]) float64 { return P52[U*S/S](a) }
+func P54[U unit](a float64[U]) float64 { return P53[U*S/S](a) }
+func P55[U unit](a float64[U]) float64 { return P54[U*S/S](a) }
+func P56[U unit](a float64[U]) float64 { return P55[U*S/S](a) }
+func P57[U unit](a float64[U]) float64 { return P56[U*S/S](a) }
+func P58[U unit](a float64[U]) float64 { return P57[U*S/S](a) }
+func P59[U unit](a float64[U]) float64 { return P58[U*S/S](a) }
+func P60[U unit](a float64[U]) float64 { return P59[U*S/S](a) }
+func P61[U unit](a float64[U]) float64 { return P60[U*S/S](a) }
+func P62[U unit](a float64[U]) float64 { return P61[U*S/S](a) }
+func P63[U unit](a float64[U]) float64 { return P62[U*S/S](a) }
+func P64[U unit](a float64[U]) float64 { return P63[U*S/S](a) }
+func P65[U unit](a float64[U]) float64 { return P64[U*S/S](a) }
+func P66[U unit](a float64[U]) float64 { return P65[U*S/S](a) }
+func P67[U unit](a float64[U]) float64 { return P66[U*S/S](a) }
+func P68[U unit](a float64[U]) float64 { return P67[U*S/S](a) }
+func P69[U unit](a float64[U]) float64 { return P68[U*S/S](a) }
+func P70[U unit](a float64[U]) float64 { return P69[U*S/S](a) }
+func P71[U unit](a float64[U]) float64 { return P70[U*S/S](a) }
+func P72[U unit](a float64[U]) float64 { return P71[U*S/S](a) }
+func P73[U unit](a float64[U]) float64 { return P72[U*S/S](a) }
+func P74[U unit](a float64[U]) float64 { return P73[U*S/S](a) }
+func P75[U unit](a float64[U]) float64 { return P74[U*S/S](a) }
+func P76[U unit](a float64[U]) float64 { return P75[U*S/S](a) }
+func P77[U unit](a float64[U]) float64 { return P76[U*S/S](a) }
+func P78[U unit](a float64[U]) float64 { return P77[U*S/S](a) }
+func P79[U unit](a float64[U]) float64 { return P78[U*S/S](a) }
+func P80[U unit](a float64[U]) float64 { return P79[U*S/S](a) }
+func P81[U unit](a float64[U]) float64 { return P80[U*S/S](a) }
+func P82[U unit](a float64[U]) float64 { return P81[U*S/S](a) }
+func P83[U unit](a float64[U]) float64 { return P82[U*S/S](a) }
+func P84[U unit](a float64[U]) float64 { return P83[U*S/S](a) }
+func P85[U unit](a float64[U]) float64 { return P84[U*S/S](a) }
+func P86[U unit](a float64[U]) float64 { return P85[U*S/S](a) }
+func P87[U unit](a float64[U]) float64 { return P86[U*S/S](a) }
+func P88[U unit](a float64[U]) float64 { return P87[U*S/S](a) }
+func P89[U unit](a float64[U]) float64 { return P88[U*S/S](a) }
+func P90[U unit](a float64[U]) float64 { return P89[U*S/S](a) }
+func P91[U unit](a float64[U]) float64 { return P90[U*S/S](a) }
+func P92[U unit](a float64[U]) float64 { return P91[U*S/S](a) }
+func P93[U unit](a float64[U]) float64 { return P92[U*S/S](a) }
+func P94[U unit](a float64[U]) float64 { return P93[U*S/S](a) }
+func P95[U unit](a float64[U]) float64 { return P94[U*S/S](a) }
+func P96[U unit](a float64[U]) float64 { return P95[U*S/S](a) }
+func P97[U unit](a float64[U]) float64 { return P96[U*S/S](a) }
+func P98[U unit](a float64[U]) float64 { return P97[U*S/S](a) }
+func P99[U unit](a float64[U]) float64 { return P98[U*S/S](a) }
+func P100[U unit](a float64[U]) float64 { return P99[U*S/S](a) }
+func P101[U unit](a float64[U]) float64 { return P100[U*S/S](a) }
+func P102[U unit](a float64[U]) float64 { return P101[U*S/S](a) }
+func P103[U unit](a float64[U]) float64 { return P102[U*S/S](a) }
+func P104[U unit](a float64[U]) float64 { return P103[U*S/S](a) }
+func P105[U unit](a float64[U]) float64 { return P104[U*S/S](a) }
+func P106[U unit](a float64[U]) float64 { return P105[U*S/S](a) }
+func P107[U unit](a float64[U]) float64 { return P106[U*S/S](a) }
+func P108[U unit](a float64[U]) float64 { return P107[U*S/S](a) }
+func P109[U unit](a float64[U]) float64 { return P108[U*S/S](a) }
+func P110[U unit](a float64[U]) float64 { return P109[U*S/S](a) }
+func P111[U unit](a float64[U]) float64 { return P110[U*S/S](a) }
+func P112[U unit](a float64[U]) float64 { return P111[U*S/S](a) }
+func P113[U unit](a float64[U]) float64 { return P112[U*S/S](a) }
+func P114[U unit](a float64[U]) float64 { return P113[U*S/S](a) }
+func P115[U unit](a float64[U]) float64 { return P114[U*S/S](a) }
+func P116[U unit](a float64[U]) float64 { return P115[U*S/S](a) }
+func P117[U unit](a float64[U]) float64 { return P116[U*S/S](a) }
+func P118[U unit](a float64[U]) float64 { return P117[U*S/S](a) }
+func P119[U unit](a float64[U]) float64 { return P118[U*S/S](a) }
+func P120[U unit](a float64[U]) float64 { return P119[U*S/S](a) }
+func P121[U unit](a float64[U]) float64 { return P120[U*S/S](a) }
+func P122[U unit](a float64[U]) float64 { return P121[U*S/S](a) }
+func P123[U unit](a float64[U]) float64 { return P122[U*S/S](a) }
+func P124[U unit](a float64[U]) float64 { return P123[U*S/S](a) }
+func P125[U unit](a float64[U]) float64 { return P124[U*S/S](a) }
+func P126[U unit](a float64[U]) float64 { return P125[U*S/S](a) }
+func P127[U unit](a float64[U]) float64 { return P126[U*S/S](a) }
+func P128[U unit](a float64[U]) float64 { return P127[U*S/S](a) }
+func P129[U unit](a float64[U]) float64 { return P128[U*S/S](a) }
+func P130[U unit](a float64[U]) float64 { return P129[U*S/S](a) }
+func P131[U unit](a float64[U]) float64 { return P130[U*S/S](a) }
+func P132[U unit](a float64[U]) float64 { return P131[U*S/S](a) }
+func P133[U unit](a float64[U]) float64 { return P132[U*S/S](a) }
+func P134[U unit](a float64[U]) float64 { return P133[U*S/S](a) }
+func P135[U unit](a float64[U]) float64 { return P134[U*S/S](a) }
+func P136[U unit](a float64[U]) float64 { return P135[U*S/S](a) }
+func P137[U unit](a float64[U]) float64 { return P136[U*S/S](a) }
+func P138[U unit](a float64[U]) float64 { return P137[U*S/S](a) }
+func P139[U unit](a float64[U]) float64 { return P138[U*S/S](a) }
+func P140[U unit](a float64[U]) float64 { return P139[U*S/S](a) }
+func P141[U unit](a float64[U]) float64 { return P140[U*S/S](a) }
+func P142[U unit](a float64[U]) float64 { return P141[U*S/S](a) }
+func P143[U unit](a float64[U]) float64 { return P142[U*S/S](a) }
+func P144[U unit](a float64[U]) float64 { return P143[U*S/S](a) }
+func P145[U unit](a float64[U]) float64 { return P144[U*S/S](a) }
+func P146[U unit](a float64[U]) float64 { return P145[U*S/S](a) }
+func P147[U unit](a float64[U]) float64 { return P146[U*S/S](a) }
+func P148[U unit](a float64[U]) float64 { return P147[U*S/S](a) }
+func P149[U unit](a float64[U]) float64 { return P148[U*S/S](a) }
+func P150[U unit](a float64[U]) float64 { return P149[U*S/S](a) }
+func P151[U unit](a float64[U]) float64 { return P150[U*S/S](a) }
+func P152[U unit](a float64[U]) float64 { return P151[U*S/S](a) }
+func P153[U unit](a float64[U]) float64 { return P152[U*S/S](a) }
+func P154[U unit](a float64[U]) float64 { return P153[U*S/S](a) }
+func P155[U unit](a float64[U]) float64 { return P154[U*S/S](a) }
+func P156[U unit](a float64[U]) float64 { return P155[U*S/S](a) }
+func P157[U unit](a float64[U]) float64 { return P156[U*S/S](a) }
+func P158[U unit](a float64[U]) float64 { return P157[U*S/S](a) }
+func P159[U unit](a float64[U]) float64 { return P158[U*S/S](a) }
+func P160[U unit](a float64[U]) float64 { return P159[U*S/S](a) }
+func P161[U unit](a float64[U]) float64 { return P160[U*S/S](a) }
+func P162[U unit](a float64[U]) float64 { return P161[U*S/S](a) }
+func P163[U unit](a float64[U]) float64 { return P162[U*S/S](a) }
+func P164[U unit](a float64[U]) float64 { return P163[U*S/S](a) }
+func P165[U unit](a float64[U]) float64 { return P164[U*S/S](a) }
+func P166[U unit](a float64[U]) float64 { return P165[U*S/S](a) }
+func P167[U unit](a float64[U]) float64 { return P166[U*S/S](a) }
+func P168[U unit](a float64[U]) float64 { return P167[U*S/S](a) }
+func P169[U unit](a float64[U]) float64 { return P168[U*S/S](a) }
+func P170[U unit](a float64[U]) float64 { return P169[U*S/S](a) }
+func P171[U unit](a float64[U]) float64 { return P170[U*S/S](a) }
+func P172[U unit](a float64[U]) float64 { return P171[U*S/S](a) }
+func P173[U unit](a float64[U]) float64 { return P172[U*S/S](a) }
+func P174[U unit](a float64[U]) float64 { return P173[U*S/S](a) }
+func P175[U unit](a float64[U]) float64 { return P174[U*S/S](a) }
+func P176[U unit](a float64[U]) float64 { return P175[U*S/S](a) }
+func P177[U unit](a float64[U]) float64 { return P176[U*S/S](a) }
+func P178[U unit](a float64[U]) float64 { return P177[U*S/S](a) }
+func P179[U unit](a float64[U]) float64 { return P178[U*S/S](a) }
+func P180[U unit](a float64[U]) float64 { return P179[U*S/S](a) }
+func P181[U unit](a float64[U]) float64 { return P180[U*S/S](a) }
+func P182[U unit](a float64[U]) float64 { return P181[U*S/S](a) }
+func P183[U unit](a float64[U]) float64 { return P182[U*S/S](a) }
+func P184[U unit](a float64[U]) float64 { return P183[U*S/S](a) }
+func P185[U unit](a float64[U]) float64 { return P184[U*S/S](a) }
+func P186[U unit](a float64[U]) float64 { return P185[U*S/S](a) }
+func P187[U unit](a float64[U]) float64 { return P186[U*S/S](a) }
+func P188[U unit](a float64[U]) float64 { return P187[U*S/S](a) }
+func P189[U unit](a float64[U]) float64 { return P188[U*S/S](a) }
+func P190[U unit](a float64[U]) float64 { return P189[U*S/S](a) }
+func P191[U unit](a float64[U]) float64 { return P190[U*S/S](a) }
+func P192[U unit](a float64[U]) float64 { return P191[U*S/S](a) }
+func P193[U unit](a float64[U]) float64 { return P192[U*S/S](a) }
+func P194[U unit](a float64[U]) float64 { return P193[U*S/S](a) }
+func P195[U unit](a float64[U]) float64 { return P194[U*S/S](a) }
+func P196[U unit](a float64[U]) float64 { return P195[U*S/S](a) }
+func P197[U unit](a float64[U]) float64 { return P196[U*S/S](a) }
+func P198[U unit](a float64[U]) float64 { return P197[U*S/S](a) }
+func P199[U unit](a float64[U]) float64 { return P198[U*S/S](a) }
+func P200[U unit](a float64[U]) float64 { return P199[U*S/S](a) }
+
+// KM^4 / M^4: the factor 1000^4 = 10^12, inside the 64 bits of a descriptor
+// (a factor past them, 1000^8, is the panic of Inputs/panics-gopp/
+// unit-range-factor.gopp).
+func Top4[U unit, V unit](a float64[U], b float64[V]) float64 {
+	return Ratio(a*a*a*a, b*b*b*b)
+}
+
+func main() {
+	println(Top4(1.0[KM], 1.0[M]))
+	println(S200(1.0[KM], 1.0[M]), S199(1.0[KM], 1.0[M]))
+	println(P200(1.0[KM]), P200(1.0[M]))
+}

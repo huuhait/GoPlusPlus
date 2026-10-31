@@ -8,6 +8,8 @@
 
 #include "Units.h"
 
+#include "gopp/Sema/Sema.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -139,6 +141,12 @@ BasicType *TypeContext::unitType(BasicKind BK, const UnitCanon *U) {
   T->Unit = U;
   UnitTypes.try_emplace(Key, T);
   return T;
+}
+
+void TypeContext::forEachUnit(llvm::function_ref<void(const UnitCanon &)> F) {
+  std::lock_guard<std::mutex> G(UnitMu);
+  for (const UnitCanon &U : UnitStore)
+    F(U);
 }
 
 Type *TypeContext::unitArgType(const UnitCanon *U) {
@@ -581,3 +589,66 @@ substitute(TypeContext &Ctx, const UnitCanon *A,
 }
 
 } // namespace gopp::sema::units
+
+//===----------------------------------------------------------------------===//
+// The spelling of unit types for the lowering
+//===----------------------------------------------------------------------===//
+
+sema::UnitSpeller::UnitSpeller(TypeContext &Ctx, const Package *Pkg,
+                               const Info &I)
+    : Pkg(Pkg) {
+  // A set and a fixed order (UnitDisplay::before), so the result is the same
+  // whatever order the map is walked in.
+  for (const auto &KV : I.UnitDisplays) {
+    const UnitCanon *C = units::displayCanon(Ctx, KV.second);
+    if (!C || C->dimensionless() || C->HasParam)
+      continue;
+    auto [It, New] = Best.try_emplace(C, KV.second);
+    if (!New && It->second != KV.second &&
+        UnitDisplay::before(KV.second, It->second))
+      It->second = KV.second;
+  }
+}
+
+std::string sema::UnitSpeller::text(const BasicType *T,
+                                    const Package *Qual) const {
+  const UnitCanon *U = T->Unit;
+  if (!U)
+    return T->Name;
+  const UnitDisplay *D = nullptr;
+  if (auto It = Best.find(U); It != Best.end())
+    D = It->second;
+  if (const UnitDisplay *P = Pkg ? Pkg->unitName(U) : nullptr;
+      P && (!D || UnitDisplay::before(P, D)))
+    D = P;
+  std::string S = D ? units::displayStr(D, Qual) : units::canonStr(U, Qual);
+  if (T->BK == BasicKind::UnitArg)
+    return S;
+  return std::string(T->Name) + "[" + S + "]";
+}
+
+std::string sema::UnitSpeller::display(const UnitDisplay *D,
+                                       const Package *Qual) {
+  return units::displayStr(D, Qual);
+}
+
+const sema::UnitCanon *sema::substituteUnit(
+    TypeContext &Ctx, const UnitCanon *U,
+    llvm::function_ref<const UnitCanon *(const TypeParamType *)> Rep) {
+  UnitStatus St;
+  return units::substitute(Ctx, U, Rep, St);
+}
+
+void sema::unitBaseUnits(TypeContext &Ctx,
+                         llvm::SmallVectorImpl<const Object *> &Out) {
+  Ctx.forEachUnit([&](const UnitCanon &U) {
+    for (const UnitDim &D : U.Dims)
+      if (D.Unit && !llvm::is_contained(Out, D.Unit))
+        Out.push_back(D.Unit);
+  });
+  auto Key = [](const Object *O) {
+    return (O->Pkg ? O->Pkg->Path.str() : std::string()) + "\n" + O->Name.str();
+  };
+  llvm::sort(Out,
+             [&](const Object *A, const Object *B) { return Key(A) < Key(B); });
+}

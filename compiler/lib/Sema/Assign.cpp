@@ -162,7 +162,7 @@ void Checker::assignment(Operand &X, Type *T, StringRef Context) {
 }
 
 void Checker::noteIfaceConversion(const ast::Expr *E, Type *From, Type *To) {
-  if (!E || !From || !To || !isValid(From) || isUntyped(From) ||
+  if (NoIfaceNote || !E || !From || !To || !isValid(From) || isUntyped(From) ||
       isTypeParam(To))
     return;
   Type *TU = under(To);

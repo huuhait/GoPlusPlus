@@ -1,0 +1,10 @@
+breakpoint set -n main.show
+run
+script print("@@UNITS")
+frame variable d n p
+thread step-over
+script print("@@LOCAL")
+frame variable speed
+frame select 1
+script print("@@PLAIN")
+frame variable plain

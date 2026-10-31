@@ -102,10 +102,33 @@ LocalId Body::localOf(Operand Op) {
 // Constants
 //===----------------------------------------------------------------------===//
 
-Operand Body::constOperand(const S::ConstValue &V, Type *Ty,
-                           const ast::Node *N) {
+Operand Body::constOperand(const S::ConstValue &V0, Type *Ty,
+                           const ast::Node *N, const ast::Expr *Key) {
   if (!Ty)
     return failed(N, constBool(ctx(), false));
+  // The one place a constant is scaled (ADR-0025): the checker's record for
+  // the expression that holds it (Info::UnitConvs: an operand in a finer or
+  // coarser unit, `d += LT` with LT in KM; Info::UnitSites: a constant of
+  // generic code in a unit with a parameter, GEN-14) is applied to the exact
+  // value, so the number is rounded once into its type, in plain and in
+  // generic code alike, on every path that makes a constant.
+  if (!Key)
+    Key = dyn_cast<ast::Expr>(N);
+  if (Key && unitsRecorded()) {
+    UnitScale U = unitScaleOf(Key, /*Tag=*/false, /*Own=*/true);
+    if (U.Bad)
+      return failed(N, errorValue(ctx()));
+    if (U.Any) {
+      if (U.Dyn)
+        return scaleValue(plainConstOperand(V0, Ty, N), U, N);
+      return plainConstOperand(scaleConstant(V0, U.F, Ty->isInt()), Ty, N);
+    }
+  }
+  return plainConstOperand(V0, Ty, N);
+}
+
+Operand Body::plainConstOperand(const S::ConstValue &V, Type *Ty,
+                                const ast::Node *N) {
   Constant C;
   if (L.constantOf(V, Ty, C)) {
     Operand O;
@@ -806,10 +829,18 @@ Operand Body::lowerExpr(const ast::Expr *E) {
   }
   if (isConst(E))
     return constOperand(*I.lookup(E)->Val, tyOf(E), E);
-  if (I.UnitConvs.count(E)) {
-    unsupported(E, "a unit conversion (P04.24)");
-    return errorValue(ctx());
+  if (unitsRecorded()) {
+    // A scale change of the checker (ADR-0025): the value times a constant.
+    UnitScale U = unitScaleOf(E, /*Tag=*/false, /*Own=*/true);
+    if (U.Bad)
+      return failed(E, zeroOfExpr(E));
+    if (U.Any)
+      return scaleValue(lowerValue(E), U, E);
   }
+  return lowerValue(E);
+}
+
+Operand Body::lowerValue(const ast::Expr *E) {
   // An operator method (P04.23): a call of it.
   if (!I.Operators.empty()) {
     Operand Out;
@@ -1224,6 +1255,44 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
     X = lowerAs(B->X, ResTy);
     Y = lowerAs(B->Y, ResTy);
   }
+  if (unitsRecorded()) {
+    // Generic code, an integer quotient of two scales of one dimension: the
+    // coarser operand first (LowerUnits.cpp, physicalIntQuo).
+    S::Real Ratio;
+    bool ScaleX;
+    if (physicalIntQuo(B, Ratio, ScaleX)) {
+      UnitScale U;
+      U.F = Ratio;
+      U.Any = true;
+      if (ScaleX)
+        X = scaleValue(std::move(X), U, B);
+      else
+        Y = scaleValue(std::move(Y), U, B);
+    }
+    // The same where the instance takes unit descriptors: which operand is
+    // the coarser one is known at run time.
+    if (dictMode() && Op == BinOp::Div && X.type()->isInt())
+      if (auto SIt = I.UnitSites.find(B); SIt != I.UnitSites.end())
+        for (const S::UnitSite &St : SIt->second)
+          if (St.K == S::UnitSite::Quo) {
+            auto NQ = dynSite(St, 1, 1, B);
+            Rt E(M, FB);
+            Val N{&E, NQ.first}, D{&E, NQ.second};
+            Var XV = E.var(X.type(), Val{&E, X});
+            Var YV = E.var(Y.type(), Val{&E, Y});
+            E.IfElse(
+                E.snap(N >= D),
+                [&] {
+                  XV = Val{&E, scaleDyn(XV.v().Op, N.Op, D.Op, B, "unit")};
+                },
+                [&] {
+                  YV = Val{&E, scaleDyn(YV.v().Op, D.Op, N.Op, B, "unit")};
+                });
+            X = E.snap(XV.v()).Op;
+            Y = E.snap(YV.v()).Op;
+            break;
+          }
+  }
   return arith(Op, std::move(X), std::move(Y), ResS, isConst(B->Y), B);
 }
 
@@ -1357,7 +1426,7 @@ Operand Body::lowerConversion(const ast::CallExpr *C) {
                       : To;
   Operand X =
       isConst(C->Args[0]) && !L.isComplexType(ToS) && !To->isPtr() && ConstTy
-          ? constOperand(*I.lookup(C->Args[0])->Val, ConstTy, C)
+          ? constOperand(*I.lookup(C->Args[0])->Val, ConstTy, C, C->Args[0])
           : lowerExpr(C->Args[0]);
   // OWN-V1, review R9: `int(v)` of a View[int] copies out the value it looks
   // at (a view of a string or a slice is copied by convertStrings, from its
@@ -1743,7 +1812,8 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
 
 Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
                        Type *GSig, Operand CalleeOp, ArrayRef<Operand> Lead,
-                       bool NoUnwind, LateRecv *Recv) {
+                       bool NoUnwind, LateRecv *Recv,
+                       ArrayRef<const S::UnitCanon *> Dicts) {
   Operand Unit = unitValue();
   ArrayRef<Type *> Ps = GSig->elems().drop_front(Lead.size());
   SmallVector<Operand, 4> Args(Lead.begin(), Lead.end());
@@ -1914,6 +1984,8 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
       Args[LA->Slot] = Pass(*LA, copyOf(FB.field(FB.constIndex(Recs, Idx), 5)));
     }
   }
+  for (const S::UnitCanon *UC : Dicts)
+    Args.push_back(unitDesc(UC, C));
   at(C);
   LocalId Res = FB.newTemp(GSig->ret());
   FB.call(
@@ -1948,6 +2020,11 @@ Operand Body::lowerPlainCall(const ast::CallExpr *C) {
     if (U != I.Uses.end())
       if (auto *B = dyn_cast<S::Builtin>(U->second))
         return lowerBuiltin(C, B);
+    // `x.In[U]()` of a unit value (ADR-0025, EXP-32).
+    if (auto *IX = dyn_cast<ast::IndexExpr>(Fun))
+      if (auto *InSel = dyn_cast<ast::SelectorExpr>(unparen(IX->X));
+          InSel && InSel->Sel->Name.str() == "In" && unitsRecorded())
+        return lowerUnitIn(InSel);
     // The functions of package unsafe (Sizeof, Alignof and Offsetof are
     // constants the checker folded).
     if (auto *Sel = dyn_cast<ast::SelectorExpr>(Fun)) {
@@ -2023,9 +2100,17 @@ Operand Body::lowerPlainCall(const ast::CallExpr *C) {
                                 " is missing (the walk did not find it)");
           return Unit;
         }
-        return callWith(C, L.instanceSig(GI), M.func(IIt->second).Sig,
-                        constFunc(M, IIt->second), {},
-                        M.func(IIt->second).NoUnwind);
+        // The unit descriptors of an instance that takes them follow the
+        // arguments (GEN-14); GSig is the signature without them.
+        Type *GSig = M.func(IIt->second).Sig;
+        SmallVector<const S::UnitCanon *, 2> Dicts;
+        if (!GI->DictParams.empty()) {
+          dictArgsFor(GI, Callee, Dicts);
+          GSig = ctx().func(GSig->elems().drop_back(GI->DictParams.size()),
+                            GSig->ret(), false, GSig->callConv());
+        }
+        return callWith(C, L.instanceSig(GI), GSig, constFunc(M, IIt->second),
+                        {}, M.func(IIt->second).NoUnwind, nullptr, Dicts);
       }
       auto FI = L.FuncIds.find(F);
       if (FI == L.FuncIds.end() && L.Declined.count(F))

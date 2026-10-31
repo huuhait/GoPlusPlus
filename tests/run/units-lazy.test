@@ -1,0 +1,68 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-lazy.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-lazy.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (ADR-0025, GEN-14), the results of review round 2.
+//  1. A collapse site is made at the entry of the function, but its error is
+//     the site's: a factor or an exponent out of range on a branch that is
+//     not taken is no panic, as in plain code (R13). The taken branch is
+//     tests/run/Inputs/panics-gopp/unit-range-taken*.
+//  2. A method of a generic type that needs the unit of its type (UnitX)
+//     makes no other method of the type refused in generic code: Sum calls
+//     Add (R12). Add and UnitX both work in plain code.
+//  3. min and max of a unit-parameter type in generic code are no boxing
+//     (R14), and the same generic code without units is as before.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit X = M^400000
+
+// (1) The branch with the 7th powers is not taken: 1000 for KM / M.
+func F[U unit, V unit](a float64[U], b float64[V], take bool) float64 {
+	if take {
+		return float64((a * a * a * a * a * a * a) / (b * b * b * b * b * b * b))
+	}
+	return float64(a / b)
+}
+
+// U^3*V at U = X has the exponent 1200000, past 2^20, on the branch not taken.
+func E[U unit, V unit](a float64[U], b float64[V], take bool) float64 {
+	if take {
+		return float64(a * a * a * b)
+	}
+	return 1
+}
+
+// (2)
+type Vec[U unit] struct{ X, Y float64[U] }
+
+func (v Vec[U]) UnitX() Vec[U]       { return Vec[U]{1.0[U], 0} }
+func (v Vec[U]) Add(o Vec[U]) Vec[U] { return Vec[U]{v.X + o.X, v.Y + o.Y} }
+
+func Sum[U unit](vs []Vec[U]) Vec[U] {
+	var s Vec[U]
+	for _, v := range vs {
+		s = s.Add(v)
+	}
+	return s
+}
+
+// (3)
+func GMin[U unit](a int[U], b int[U]) int[U]        { return min(a, b) }
+func GMax[U unit](a int[U*KM], b int[U*M]) int[U*M] { return max(a, b) }
+func PMin[T ~int](a, b T) T                 { return min(a, b) }
+func PMax[T ~int](a, b T) T                 { return max(a, b) }
+
+func main() {
+	println(F(1.0[KM], 1.0[M], false))
+	println(E(1.0[X], 1.0[S], false))
+	vs := []Vec[KM]{{1.0[KM], 2.0[KM]}, {3.0[KM], 4.0[KM]}}
+	s := Sum(vs)
+	println(float64(s.X), float64(s.Y))
+	println(float64(vs[0].UnitX().X)) // 1: the number of 1 KM
+	println(int(GMin(3[M], 4[M])), int(GMax[S](2[S*KM], 1999[S*M])))
+	println(PMin(3, 4), PMax(-2, 7))
+}

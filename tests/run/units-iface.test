@@ -1,0 +1,63 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/units-iface.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/units-iface.out 0 %}
+// GOLDEN: by-hand
+// P04.24 (ADR-0025 point 6, UNI-9): a unit type keeps its identity in an
+// interface: `any(d)` matches `case float64[KM]` and neither `case float64`
+// nor `case float64[M]`; the same unit written in two ways is one type
+// (`KM/H` and `KM*H^-1`); an instance of a generic type is a type per unit
+// (`Vec2[KM]`, `Vec2[M]`); a map key and `==` of boxed values compare the
+// number and the type. Go has no units: the golden is by hand.
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+
+type Vec2[U unit] struct{ X, Y float64[U] }
+
+type Dist float64[M]
+
+func kind(x any) string {
+	switch x.(type) {
+	case float64[KM]:
+		return "km"
+	case float64[M]:
+		return "m"
+	case float64[KM/H]:
+		return "km/h"
+	case float64:
+		return "plain"
+	case int[M]:
+		return "int m"
+	case Vec2[KM]:
+		return "vec km"
+	case Vec2[M]:
+		return "vec m"
+	case Dist:
+		return "dist"
+	}
+	return "other"
+}
+
+func main() {
+	println(kind(1.0[KM]), kind(1.0[M]), kind(1.0), kind(3[M]), kind(1))
+	println(kind(2.0[KM*H^-1]), kind(Vec2[KM]{}), kind(Vec2[M]{}), kind(Dist(1.0[M])), kind(2.0[KM/H]))
+	// A boxed value compares by type and number: 5 KM equals 5 KM only.
+	var e any = 5.0[KM]
+	println(e == any(5.0[KM]), e == any(5.0[M]), e == any(5.0), e == any(6.0[KM]))
+	// A map keyed by a unit type, and by an interface that holds one.
+	m := map[float64[KM]]int{1.0[KM]: 1}
+	m[2.0[KM]] = 2
+	println(len(m), m[1.0[KM]], m[3.0[KM]])
+	mi := map[any]int{1.0[KM]: 10, 1.0[M]: 20, 1.0: 30}
+	println(len(mi), mi[1.0[KM]], mi[1.0[M]], mi[1.0], mi[1.0[S]])
+	// An assertion with the right unit gives the number.
+	if v, ok := e.(float64[KM]); ok {
+		println(float64(v))
+	}
+	_, ok := e.(float64[M])
+	println(ok)
+}

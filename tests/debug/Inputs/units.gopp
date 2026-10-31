@@ -1,0 +1,18 @@
+package main
+
+unit M
+unit S
+unit KM = 1000 M
+unit H = 3600 S
+
+// show has a unit parameter of each kind of number (and a plain one), and a
+// local made by unit arithmetic.
+func show(d float64[KM], n int[M], p float64) float64 {
+	speed := d / 2.0[H]
+	return float64(speed) + p + float64(n)
+}
+
+func main() {
+	plain := 2.5
+	println(show(100.0[KM], 7[M], plain))
+}

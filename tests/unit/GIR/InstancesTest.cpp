@@ -303,3 +303,177 @@ TEST(GIRInstances, CheckFindsAMethodThatOnlyAnItabNeeds) {
     EXPECT_TRUE(P.lower()) << P.errors();
   }
 }
+
+//===----------------------------------------------------------------------===//
+// P04.24: the unit lowering is near-linear (counted, never timed)
+//===----------------------------------------------------------------------===//
+
+// N statements that each convert a scale (a sum of two scales, a compound
+// assignment, a conversion, a quotient with a factor left, a switch tag) and N
+// calls of a generic with a collapse site, which are N sites in generic code
+// and N constants at its instance. The lowering of the units takes a bounded
+// number of steps for each expression (LowerSteps), so the steps follow N.
+static std::string unitsProgram(unsigned N) {
+  std::string S =
+      "package main\n\nunit M\nunit KM = 1000 M\nunit MM = (1 / 1000) M\n\n"
+      "func Ratio[U unit, V unit](a float64[U], b float64[V]) float64 {\n"
+      "\treturn float64(a / b)\n}\n\n"
+      "func main() {\n\td := 1.0[KM]\n\tm := 2.0[M]\n\tn := 3[M]\n\tvar t "
+      "float64\n"
+      "\tvar k int\n";
+  for (unsigned I = 0; I < N; ++I) {
+    S += "\tt += float64(d + m)\n";
+    S += "\td += m\n";
+    S += "\tk += int(int[KM](n))\n";
+    S += "\tt += Ratio(d, m)\n";
+    S += "\tswitch n {\n\tcase 5[KM]:\n\t\tk++\n\t}\n";
+  }
+  S += "\tprintln(t, k)\n}\n";
+  return S;
+}
+
+static uint64_t unitLoweringSteps(unsigned N) {
+  Pkg P(unitsProgram(N));
+  EXPECT_EQ(P.errors(), "");
+  uint64_t Before = gir::loweringSteps();
+  EXPECT_TRUE(P.lower()) << P.errors();
+  return gir::loweringSteps() - Before;
+}
+
+// The control: the counted check below must fail a lowering that is quadratic
+// in the number of scale conversions (each one looking at all the others) and
+// pass the linear one.
+static bool stepsFollow(uint64_t S1, uint64_t S4) {
+  return S4 < 6 * S1; // 4N conversions: about 4 times the steps, not 16
+}
+
+TEST(GIRInstances, TheUnitLoweringIsLinearInTheScaleConversions) {
+  uint64_t S1 = unitLoweringSteps(100), S4 = unitLoweringSteps(400);
+  EXPECT_GT(S1, 100u) << "the conversions are counted";
+  EXPECT_TRUE(stepsFollow(S1, S4)) << S1 << " " << S4;
+  // The control: the quadratic walk's steps fail the same predicate.
+  EXPECT_FALSE(stepsFollow(100 * 100, 400 * 400));
+  EXPECT_TRUE(stepsFollow(100, 400));
+}
+
+//===----------------------------------------------------------------------===//
+// P04.24: unit descriptors are as large as their unit, not as the program
+//===----------------------------------------------------------------------===//
+
+// N base units, each used once as the unit argument of a generic that takes
+// descriptors (GEN-14). A descriptor lists only the base units its unit has,
+// so the N constant descriptors are N small ones; one that listed every base
+// unit of the program would make N descriptors of N entries. The steps count
+// the words of every descriptor made (LowerSteps).
+static std::string manyUnitsProgram(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "unit B" + std::to_string(I) + "\n";
+  S += "\nfunc Ratio[U unit, V unit](a float64[U], b float64[V]) float64 {\n"
+       "\treturn float64(a / b)\n}\n\n"
+       "func Twice[U unit](a float64[U]) float64 {\n"
+       "\treturn Ratio(a*a, a)\n}\n\nfunc main() {\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string B = "B" + std::to_string(I);
+    S += "\tprintln(Ratio(1.0[" + B + "], 2.0[" + B + "]), Twice(3.0[" + B +
+         "]))\n";
+  }
+  return S + "}\n";
+}
+
+static uint64_t manyUnitsSteps(unsigned N, bool Dense) {
+  Pkg P(manyUnitsProgram(N));
+  EXPECT_EQ(P.errors(), "");
+  gir::LowerOptions O;
+  O.DenseUnitDescriptors = Dense;
+  uint64_t Before = gir::loweringSteps();
+  EXPECT_TRUE(P.lower(O)) << P.errors();
+  return gir::loweringSteps() - Before;
+}
+
+TEST(GIRInstances, UnitDescriptorsFollowTheirUnitsNotTheProgram) {
+  uint64_t S1 = manyUnitsSteps(100, false), S4 = manyUnitsSteps(400, false);
+  EXPECT_GT(S1, 100u);
+  EXPECT_TRUE(stepsFollow(S1, S4)) << S1 << " " << S4;
+  // The control: with a descriptor entry for every base unit of the program
+  // the same programs fail the same predicate.
+  uint64_t D1 = manyUnitsSteps(100, true), D4 = manyUnitsSteps(400, true);
+  EXPECT_FALSE(stepsFollow(D1, D4)) << D1 << " " << D4;
+}
+
+//===----------------------------------------------------------------------===//
+// P04.24: the units a shared body does not know are found once per instance
+//===----------------------------------------------------------------------===//
+
+// GEN-14 (R19, R20): every decision that needs a unit asks whether a type, as
+// the generic code writes it, mentions a unit that the instance does not know
+// (InstanceWalk::mentionsErasedUnit), each time it is met: the type argument
+// of every call (the walk), the type of every variable (the debugger's name,
+// the lowering). In a body shared across unit arguments, a parameter of a
+// struct type of N fields and one that mentions its unit, passed to a generic
+// N times and copied into N variables, is asked about 2N times: the type is
+// walked once per instance, so the steps follow N. The control walks it at
+// every question (LowerOptions::ForgetErasedUnits), N times N fields, and must
+// fail the same check.
+static std::string sharedWideProgram(unsigned N) {
+  // (The field with the unit last: a walk that stops at the first part that
+  // answers goes through all of them.)
+  std::string Fields;
+  for (unsigned I = 0; I < N; ++I)
+    Fields += "f" + std::to_string(I) + " int; ";
+  std::string KFields = Fields + "u W[KM]";
+  Fields += "u W[U]";
+  std::string S = "package main\n\nunit M\nunit KM = 1000 M\n\n"
+                  "type W[U unit] struct{ X float64[U] }\n\n"
+                  "func F[T any](x T) int { return 1 }\n\n"
+                  "func G[U unit](x struct{ " +
+                  Fields + " }) int {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string A = "a" + std::to_string(I);
+    S += "\tt += F(x)\n\tif " + A + " := x; " + A + ".f0 > 0 {\n\t\tt++\n\t}\n";
+  }
+  return S + "\treturn t\n}\n\nfunc main() {\n\tvar x struct{ " + KFields +
+         " }\n\tprintln(G(x))\n}\n";
+}
+
+// UNI-9: two types that differ only in their units are one GIR type, found by
+// their unit-free identity (Lowering::unitFree, a walk of the type's symbol
+// node). N instances `Box[[I]S]` of a generic type around one struct S of N
+// fields and a unit: S is walked once, so the steps follow N; the control
+// walks it for each instance.
+static std::string unitFreeProgram(unsigned N) {
+  std::string S = "package main\n\nunit M\nunit KM = 1000 M\n\n"
+                  "type Box[T any] struct{ v T }\n\ntype S = struct{ ";
+  for (unsigned I = 0; I < N; ++I)
+    S += "f" + std::to_string(I) + " int; ";
+  S += "u float64[KM] }\n\nfunc main() {\n\tt := 0\n";
+  for (unsigned I = 1; I <= N; ++I) {
+    std::string B = "b" + std::to_string(I);
+    S += "\tvar " + B + " Box[[" + std::to_string(I) + "]S]\n\tt += " + B +
+         ".v[0].f0\n";
+  }
+  return S + "\tprintln(t)\n}\n";
+}
+
+static uint64_t countedSteps(const std::string &Source, bool Forget) {
+  Pkg P(Source);
+  EXPECT_EQ(P.errors(), "");
+  gir::LowerOptions O;
+  O.ForgetErasedUnits = Forget;
+  uint64_t Before = gir::loweringSteps() + gir::instanceSteps();
+  EXPECT_TRUE(P.lower(O)) << P.errors();
+  return gir::loweringSteps() + gir::instanceSteps() - Before;
+}
+
+TEST(GIRInstances, UnitsASharedBodyDoesNotKnowAreFoundOncePerInstance) {
+  for (auto *Make : {sharedWideProgram, unitFreeProgram}) {
+    uint64_t S1 = countedSteps(Make(100), false),
+             S4 = countedSteps(Make(400), false);
+    EXPECT_GT(S1, 100u);
+    EXPECT_TRUE(stepsFollow(S1, S4)) << S1 << " " << S4;
+    // The control: the type walked at every question fails the same check.
+    uint64_t F1 = countedSteps(Make(100), true),
+             F4 = countedSteps(Make(400), true);
+    EXPECT_FALSE(stepsFollow(F1, F4)) << F1 << " " << F4;
+  }
+}

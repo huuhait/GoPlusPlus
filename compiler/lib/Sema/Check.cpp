@@ -483,6 +483,7 @@ static void runBodies(PackageState &S, const SourceManager &SM,
                       std::vector<std::vector<Checker::MonoInst>> &Monos,
                       std::vector<std::vector<Checker::UntaggedPending>> &Pend,
                       std::vector<std::vector<Checker::UseRec>> &Uses,
+                      std::vector<std::vector<Checker::MethodEdge>> &Edges,
                       bool OnStack) {
   size_t N = S.Bodies.size();
   std::atomic<size_t> Next{0};
@@ -500,6 +501,7 @@ static void runBodies(PackageState &S, const SourceManager &SM,
       Monos[K] = std::move(BC.MonoInsts);
       Pend[K] = std::move(BC.UntaggedPend);
       Uses[K] = std::move(BC.TPUses);
+      Edges[K] = std::move(BC.MethodEdges);
     }
   };
   if (Workers.size() == 1) {
@@ -587,7 +589,9 @@ checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
   std::vector<std::vector<Checker::MonoInst>> BodyMonos(S.Bodies.size());
   std::vector<std::vector<Checker::UntaggedPending>> BodyPend(S.Bodies.size());
   std::vector<std::vector<Checker::UseRec>> BodyUses(S.Bodies.size());
-  runBodies(S, SM, Workers, BodyDiags, BodyMonos, BodyPend, BodyUses, OnStack);
+  std::vector<std::vector<Checker::MethodEdge>> BodyEdges(S.Bodies.size());
+  runBodies(S, SM, Workers, BodyDiags, BodyMonos, BodyPend, BodyUses, BodyEdges,
+            OnStack);
   for (std::vector<Diagnostic> &DL : BodyDiags)
     for (Diagnostic &D : DL) {
       if (D.Sev == Severity::Error) {
@@ -616,6 +620,8 @@ checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
           C.UntaggedPend.insert(C.UntaggedPend.end(), PB.begin(), PB.end());
         for (std::vector<Checker::UseRec> &UB : BodyUses)
           C.TPUses.insert(C.TPUses.end(), UB.begin(), UB.end());
+        for (std::vector<Checker::MethodEdge> &EB : BodyEdges)
+          C.MethodEdges.insert(C.MethodEdges.end(), EB.begin(), EB.end());
         C.noteIntrinsicUses();
         C.untaggedCheck(C.UntaggedPend);
         C.unitRangeScan(); // GEN-14, UNI-2: every instance, any route

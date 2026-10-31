@@ -1251,6 +1251,8 @@ public:
     Type *TArg;
     TypeParamType *TPar;
     bool ForType; // a type instantiation (E0323), else a call (E0316)
+    const Func *Owner = nullptr; // the method whose body made it (GEN-14)
+    bool NamesType = false;      // a written `Vec[U]`: Owner needs no unit
   };
   std::vector<UntaggedPending> UntaggedPend;
   /// The uses the generic code makes of its type parameters (TypeParamType::
@@ -1261,10 +1263,28 @@ public:
     TypeParamType::Use U;
   };
   std::vector<UseRec> TPUses;
+  /// Set while a check that converts to an interface only to test validity
+  /// runs (`min`, `max`): noteIfaceConversion records nothing.
+  bool NoIfaceNote = false;
+  /// GEN-14: a method of a generic type that names another method (a call, a
+  /// method value, a method expression, through a pointer, a promoted method)
+  /// whose receiver instance is Recv. The caller needs the unit of its own
+  /// receiver parameters that the callee's needs come from (untaggedCheck).
+  struct MethodEdge {
+    const Func *Caller;
+    const Func *Callee; // the declared method
+    const NamedType *Recv;
+  };
+  std::vector<MethodEdge> MethodEdges;
+  /// Set while the unit arguments of a written type (`Vec[U]`) pass their
+  /// uses on: naming a type needs no unit of the method that names it.
+  bool NoMethodNote = false;
+  void noteMethodUnitDict(const Func *F, const TypeParamType *TP);
   /// GEN-14: the instance of a generic whose unit parameter TPar gets the
   /// unit TArg: a unit argument made of this code's unit parameters is
   /// decided like the other uses (Use::UnitDict passes on to them).
-  void unitDictUses(SourceLoc Pos, Type *TArg, TypeParamType *TPar);
+  void unitDictUses(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
+                    bool ForType);
   /// GEN-14, UNI-2: an instance in which a unit type of the generic's
   /// signature or fields (Generic) leaves the range of units (an exponent
   /// past MaxExp, a factor past Real::MaxRatBits) is E0435, as the same type

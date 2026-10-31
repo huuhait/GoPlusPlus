@@ -30,6 +30,10 @@ static const ast::Expr *unparen(const ast::Expr *E) {
 
 void Checker::recordSelection(const SelectorExpr *Ex, const Selection &Sel) {
   I.Selections[Ex] = Sel;
+  if (MonoFn && !MonoFn->RecvTParams.empty() && own() && !S.Opts.GoCompat)
+    if (auto *F = dyn_cast_or_null<Func>(Sel.Obj);
+        F && F->RecvInst && F->Origin)
+      MethodEdges.push_back({MonoFn, declaredMethod(F), F->RecvInst});
 }
 
 //===----------------------------------------------------------------------===//

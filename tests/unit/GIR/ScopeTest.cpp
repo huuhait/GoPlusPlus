@@ -422,6 +422,29 @@ TEST(GIRScopes, ScopesSourceLocalsAndFieldNamesRoundTrip) {
   EXPECT_EQ(Q->fieldName(1), "ok");
 }
 
+TEST(GIRScopes, UnitNamesOfVariablesRoundTrip) {
+  // P04.24: the unit name of a source variable (the debugger's name for the
+  // base type) is in the bitstream, with the locals before and after it that
+  // have none.
+  Scoped S;
+  S.M.func(S.H).Locals[1].UnitName = "int[M]";
+  EXPECT_EQ(errorsOf(S.M), "");
+  std::string Bytes = writeModule(S.M);
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(writeModule(**R), Bytes);
+  const Function *H = nullptr;
+  for (const auto &Fn : (*R)->Funcs)
+    if (Fn && Fn->Name == "h")
+      H = Fn.get();
+  ASSERT_NE(H, nullptr);
+  ASSERT_GE(H->Locals.size(), 3u);
+  EXPECT_EQ(H->Locals[0].UnitName, "");
+  EXPECT_EQ(H->Locals[1].UnitName, "int[M]");
+  EXPECT_EQ(H->Locals[2].UnitName, "");
+}
+
 //===----------------------------------------------------------------------===//
 // The inliner
 //===----------------------------------------------------------------------===//

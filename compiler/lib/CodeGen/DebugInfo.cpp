@@ -872,6 +872,10 @@ llvm::DILocalVariable *DebugInfoBuilder::variable(G::FuncId Owner,
   llvm::DIFile *File = Lo.Loc.isValid() ? fileOf(Lo.Loc) : fileOfFunction(F);
   // A pointer that stands for its place is shown as that place (Deref).
   llvm::DIType *Ty = typeOf(Lo.Deref && Lo.Ty->isPtr() ? Lo.Ty->elem() : Lo.Ty);
+  // A unit type (UNI-9): the base type under the name `float64[KM]` (a
+  // typedef; the debugger prints the number and the type name).
+  if (!Lo.UnitName.empty())
+    Ty = DIB.createTypedef(Ty, Lo.UnitName, File, 0, nullptr);
   // A parameter has no position of its own: the function's line.
   unsigned Line = Lo.Loc.isValid() ? Lo.Loc.Line : F.Loc.Line;
   // Kept even when an optimizer drops every use: the debugger then says

@@ -1187,7 +1187,8 @@ Checker::unitRangeExact(NamedType *O, ArrayRef<Type *> TArgs) {
   return {nullptr, {}};
 }
 
-void Checker::unitDictUses(SourceLoc Pos, Type *TArg, TypeParamType *TPar) {
+void Checker::unitDictUses(SourceLoc Pos, Type *TArg, TypeParamType *TPar,
+                           bool ForType) {
   const UnitCanon *A = unitArgCanon(TArg);
   if (!A || !A->HasParam || !own() || S.Opts.GoCompat)
     return;
@@ -1195,15 +1196,17 @@ void Checker::unitDictUses(SourceLoc Pos, Type *TArg, TypeParamType *TPar) {
   // for all its bodies (untaggedCheck), one of another package is complete.
   TypeParamType *Root = TPar->RenamedFrom ? TPar->RenamedFrom : TPar;
   if (Root->Obj && Root->Obj->Pkg == S.Pkg) {
-    UntaggedPend.push_back({Pos, TArg, Root, false});
+    UntaggedPend.push_back({Pos, TArg, Root, false, MonoFn, ForType});
     return;
   }
-  bool Saved = NotingPassed;
+  bool Saved = NotingPassed, SavedNote = NoMethodNote;
   NotingPassed = true;
+  NoMethodNote = ForType;
   for (const TypeParamType::Use &U : Root->uses())
     if (U.K == TypeParamType::Use::UnitDict)
       (void)useWhy(TArg, Root, U);
   NotingPassed = Saved;
+  NoMethodNote = SavedNote;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1727,6 +1730,15 @@ bool Checker::unitScale(Operand &O, const UnitCanon *To, Type *NewTy,
     }
     O.Val = V;
     O.Ty = NewTy;
+    // The value recorded for the operand is the scaled one, so the lowering
+    // reads the number in the unit the operation needs. (An untyped operand
+    // still waiting for its type gets it from O.Val; one that has its type
+    // and value recorded already, such as a typed constant or a conversion
+    // `int[KM](4)`, is updated here.)
+    if (O.E && !Untyped.count(O.E))
+      if (auto TV = I.Types.find(O.E);
+          TV != I.Types.end() && TV->second.M == Mode::Constant)
+        TV->second.Val = Mem.constant(V);
     recordUnitSite(O.E, UnitSite::Const, To, nullptr); // GEN-14: folded
     if (isTyped(NewTy)) {
       auto *B = cast<BasicType>(under(NewTy));

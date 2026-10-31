@@ -39,6 +39,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [ ] P03.30 Leftovers found in the P04.08 review: `abstract-instances-many` near-linear; a bounded text of a type written as a DAG of 2^n parts
 - [ ] P03.31 False E0350 for a comma-ok binding of a type parameter that a literal captures (CLO-9 per instance); `w := v` of a box binding at a copy-out instance
 - [ ] P03.32 A view compared with an untyped constant (E0160 where OWN-V compares the value); also a `View[T]` to `T` conversion in generic code, `View[any]` from an `any` value, `min`/`max` of views
+- [ ] P03.33 Unit inference through a generic type's argument (`Box[float64[V]]` from `Box[float64[KM]]` is E0316; found in the P04.24 review)
 
 ## Open questions
 
