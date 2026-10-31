@@ -3,7 +3,8 @@
 shared across unit arguments can leave its body, composed, with every
 decision that needs the unit at the end of the chain.
 
-usage: gen-shared-units.py --run GOPP [--full] [--jobs N]
+usage: gen-shared-units.py --run GOPP [--full] [--jobs N] [--shard K/N]
+       gen-shared-units.py --check-shards N [--full]
 
 A body shared across unit arguments (`G[U unit]`, or a unit-generic layer of
 the chain) has its unit parameters as the empty unit, so `W[U]` there is the
@@ -51,12 +52,26 @@ erased instance):
 
 The normal suite runs a sample (depth 0 and 1, leaves A, box, N); --full
 (the .long test) runs every chain of depth 0 to 3 with every leaf.
+
+--shard K/N (from 1) runs the programs whose place in the list of programs is
+K - 1 modulo N (the .long test is cut in parts that run side by side);
+--check-shards N makes the programs of every part and requires that together
+they are the list, each program once.
+
+The builds of the programs go in batches (`gopp build -batch`,
+tests/gopp_batch.py): in a sanitizer build the start and end of a `gopp`
+process cost about as much as the check of a refused program.
 """
 import concurrent.futures
+import json
 import os
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+import gopp_batch  # noqa: E402
+import procslots  # noqa: E402
 
 ROUTES = ["tparam", "slice", "map", "func", "pair", "fval", "method", "mval"]
 # (Unit-generic layers, bodies shared across unit arguments themselves: the
@@ -321,41 +336,88 @@ def all_cases(full):
     return cs
 
 
-def check(gopp, d, idx, src, order, j, mode, expect):
+def check(res, d, idx, order, j, mode, expect):
+    """None if build result `res` (of program idx) is the expected one, else
+    the failure text. For a program that must build, runs it too."""
     path = os.path.join(d, "p%d.gopp" % idx)
-    with open(path, "w") as f:
-        f.write(src)
+    stderr = res.stderr.decode("utf-8", "replace")
     if mode == "run":
         exe = os.path.join(d, "p%d" % idx)
-        r = subprocess.run([gopp, "build", "-build-check-j=%d" % j, path, "-o", exe],
-                           capture_output=True, text=True, timeout=300)
-        if r.returncode != 0:
-            return "FAIL run %d %s j=%d: build\n%s" % (idx, order, j, r.stderr[:2000])
+        if res.returncode != 0:
+            return "FAIL run %d %s j=%d: build\n%s" % (idx, order, j, stderr[:2000])
         got = subprocess.run([exe], capture_output=True, text=True, timeout=60).stdout
         if got != expect:
             return "FAIL run %d %s j=%d: wrong output (%s)" % (idx, order, j, path)
         return None
-    r = subprocess.run([gopp, "build", "-build-check-j=%d" % j, "-emit=gir", path],
-                       capture_output=True, text=True, timeout=300)
-    lines = sorted(int(l.split(":")[1]) for l in r.stderr.splitlines()
+    lines = sorted(int(l.split(":")[1]) for l in stderr.splitlines()
                    if "error[" in l)
-    kinds = [l for l in r.stderr.splitlines() if "error[" in l and "error[E0439]" not in l]
-    if r.returncode == 0 or lines != expect or kinds:
+    kinds = [l for l in stderr.splitlines() if "error[" in l and "error[E0439]" not in l]
+    if res.returncode == 0 or lines != expect or kinds:
         return ("FAIL refuse %d %s j=%d: rc=%d, E0439 at lines %s, want %s (%s)\n%s"
-                % (idx, order, j, r.returncode, lines, expect, path, r.stderr[:1500]))
+                % (idx, order, j, res.returncode, lines, expect, path, stderr[:1500]))
     return None
 
 
-def run(gopp, full, jobs):
+def build_chunk(gopp, d, j, mode, items):
+    """{idx: result} of building the programs `items` (their indexes) at
+    -build-check-j j in one `gopp build -batch` (tests/gopp_batch.py): each
+    build is the one `gopp build` makes alone (a batch that is not clean is
+    made again one by one)."""
+    flags = ["-build-check-j=%d" % j] + ([] if mode == "run" else ["-emit=gir"])
+
+    def src(i):
+        return os.path.join(d, "p%d.gopp" % i)
+
+    def single(name):
+        i = int(name)
+        cmd = [gopp, "build"] + flags + [src(i)]
+        if mode == "run":
+            cmd += ["-o", os.path.join(d, "p%d" % i)]
+        with procslots.slot():
+            r = subprocess.run(cmd, capture_output=True, timeout=300)
+        return gopp_batch.Result(r.returncode, r.stdout, r.stderr)
+
+    jobs = "".join(json.dumps(dict(
+        {"id": str(i), "inputs": [src(i)]},
+        **({"o": os.path.join(d, "p%d" % i)} if mode == "run" else {}))) + "\n"
+        for i in items)
+    got = gopp_batch.run([gopp, "build"] + flags + ["-batch", "-"],
+                         [str(i) for i in items], single, stdin=jobs.encode())
+    return {int(n): r for n, r in got.items()}
+
+
+def programs(full):
+    """[(mode, cases)]: the programs of the run, in order."""
     cases = all_cases(full)
-    runs = cases
     needy = [c for c in cases if c[2] in NEEDY]
     progs = []
     step = 120 if full else 1000
-    for lo in range(0, len(runs), step):
-        progs.append(("run", runs[lo:lo + step]))
+    for lo in range(0, len(cases), step):
+        progs.append(("run", cases[lo:lo + step]))
     for lo in range(0, len(needy), 8):
         progs.append(("refuse", needy[lo:lo + 8]))
+    return progs, len(needy)
+
+
+def part_of(progs, shard):
+    """The programs of part K of N (shard = (K, N)), each with its place."""
+    k, n = shard
+    return [p for i, p in enumerate(progs) if i % n == k - 1]
+
+
+def check_shards(full, n):
+    progs, _ = programs(full)
+    seen = []
+    for k in range(1, n + 1):
+        seen += [id(p) for p in part_of(progs, (k, n))]
+    assert sorted(seen) == sorted(id(p) for p in progs), "the parts are not the programs, each once"
+    print("%d parts: %d programs, each once" % (n, len(progs)))
+    return 0
+
+
+def run(gopp, full, jobs, shard=(1, 1)):
+    all_progs, _ = programs(full)
+    progs = part_of(all_progs, shard)
     work = []
     for mode, cs in progs:
         for order in ("TG", "GT"):
@@ -364,14 +426,31 @@ def run(gopp, full, jobs):
                 work.append((src, order, j, mode, expect))
     fails = []
     with tempfile.TemporaryDirectory() as d:
+        for k, (src, *_rest) in enumerate(work):
+            with open(os.path.join(d, "p%d.gopp" % k), "w") as f:
+                f.write(src)
+        # One batch process per window of programs of the same kind (the
+        # mode and -build-check-j are the batch's options).
+        groups = {}
+        for k, (src, order, j, mode, expect) in enumerate(work):
+            groups.setdefault((mode, j), []).append(k)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-            futs = [ex.submit(check, gopp, d, k, *w) for k, w in enumerate(work)]
+            futs = []
+            for (mode, j), ks in sorted(groups.items()):
+                for part in gopp_batch.chunks(ks, jobs):
+                    futs.append(ex.submit(build_chunk, gopp, d, j, mode, part))
+            built = {}
             for f in futs:
+                built.update(f.result())
+            checks = [ex.submit(check, built[k], d, k, w[1], w[2], w[3], w[4])
+                      for k, w in enumerate(work)]
+            for f in checks:
                 r = f.result()
                 if r:
                     fails.append(r)
     nrun = sum(len(cs) for m, cs in progs if m == "run")
-    print("%d cases (%d refused), %d programs" % (nrun, len(needy), len(work)))
+    nref = sum(len(cs) for m, cs in progs if m == "refuse")
+    print("%d cases (%d refused), %d programs" % (nrun, nref, len(work)))
     for f in fails[:10]:
         print(f)
     print("OK" if not fails else "FAILED (%d)" % len(fails))
@@ -384,7 +463,13 @@ if __name__ == "__main__":
         jobs = 1
         if "--jobs" in a:
             jobs = int(a[a.index("--jobs") + 1])
-        sys.exit(run(a[1], "--full" in a, jobs))
+        shard = (1, 1)
+        if "--shard" in a:
+            k, n = a[a.index("--shard") + 1].split("/")
+            shard = (int(k), int(n))
+        sys.exit(run(a[1], "--full" in a, jobs, shard))
+    if a and a[0] == "--check-shards":
+        sys.exit(check_shards("--full" in a, int(a[1])))
     # Write one program: CHAIN(comma separated) CARRIER LEAF ORDER MODE
     chain = tuple(x for x in a[0].split(",") if x)
     src, _ = build_program([(chain, a[1], a[2])], a[3], a[4])

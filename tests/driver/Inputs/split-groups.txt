@@ -5,6 +5,7 @@ debug/gdb-inline 2
 debug/lldb-inline 2
 debug/params-break 2
 fmt/batch-fallback 2
+gir/units-shared-routes 4
 run/arm64-qemu-features 2
 run/build-batch-matrix 2
 run/cabi-amd64 2

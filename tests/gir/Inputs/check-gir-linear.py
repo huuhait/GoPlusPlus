@@ -17,6 +17,9 @@ import subprocess
 import sys
 import resource
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "sema", "Inputs"))
+import bestof  # noqa: E402
+
 
 def once(cmd, base=False):
     # The CPU time of the child (user + system), not wall time: other
@@ -31,25 +34,9 @@ def once(cmd, base=False):
     return t
 
 
-def best_of_both(small, big, base, limit, runs=4):
-    """The costs over base of small and big: the least of `runs` runs of
-    small, and of big, taken in turn (a machine that gets busier or quieter
-    during the test changes both). Big runs only while the pair is over the
-    limit, `runs` times at most: a busy machine only adds time, so more runs
-    could only lower its cost, and the verdict is the one `runs` runs of
-    each give. The small side, which a quadratic walk needs to be too slow
-    to pass, always gets all its runs."""
-    a = b = 1e9
-    nb = 0
-    for _ in range(runs):
-        a = min(a, once(small) - base)
-        if nb == 0 or b > limit * a:
-            b = min(b, once(big) - base)
-            nb += 1
-    while nb < runs and b > limit * a:
-        b = min(b, once(big) - base)
-        nb += 1
-    return a, b
+def best_of_both(small, big, base, limit):
+    """Inputs/bestof.py with this script's once()."""
+    return bestof.best_of_both(once, small, big, base, limit)
 
 
 MIN_SMALL = 0.05  # a run shorter than this is clock noise: N doubles

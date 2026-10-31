@@ -57,8 +57,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <random>
 #include <set>
@@ -1690,6 +1690,17 @@ TEST(CABIStress, TheFromSourceControlFailsAQuadraticCount) {
 }
 
 namespace {
+/// The CPU time of this process, in seconds: other processes on a busy
+/// machine take the CPU away without adding to it (a wall clock counted them,
+/// and the check failed at load; the classifier and the control run on the
+/// calling thread and nothing else runs in the process).
+double processCpuSeconds() {
+  timespec Ts;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &Ts);
+  return static_cast<double>(Ts.tv_sec) +
+         static_cast<double>(Ts.tv_nsec) * 1e-9;
+}
+
 /// Classifying N signatures, each over a struct of a shape no earlier call
 /// made: the Clang world keeps one record per shape for the life of the
 /// process (M3), so a repeated shape would time a cache.
@@ -1703,11 +1714,10 @@ double timeMapping(unsigned N) {
         F.st({F.I32, F.F64, F.C.array(F.I8, ++NextShape), F.I64, F.I8});
     Sigs.push_back(F.C.func({S, F.I8, S, F.I32}, S));
   }
-  auto T0 = std::chrono::steady_clock::now();
+  double T0 = processCpuSeconds();
   for (gir::Type *S : Sigs)
     Cl->classify(S);
-  return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0)
-      .count();
+  return processCpuSeconds() - T0;
 }
 } // namespace
 
@@ -1724,12 +1734,11 @@ TEST(CABIStressLong,
 TEST(CABIStressLong, DISABLED_TheTimingControlFailsAQuadraticLoop) {
   auto Quad = [](unsigned N) {
     volatile unsigned long Sink = 0;
-    auto T0 = std::chrono::steady_clock::now();
+    double T0 = processCpuSeconds();
     for (unsigned I = 0; I < N; ++I)
       for (unsigned J = 0; J < N; ++J)
         Sink = Sink + (I ^ J);
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - T0)
-        .count();
+    return processCpuSeconds() - T0;
   };
   double Best1 = 1e9, Best4 = 1e9;
   for (unsigned Round = 0; Round < 5; ++Round) {

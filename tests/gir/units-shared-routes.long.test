@@ -1,7 +1,13 @@
 // REQUIRES: long, host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/gen-shared-units.py --run %gopp --full --jobs 8 | FileCheck %s
+// SPLIT: units-shared-routes 1/4
+// RUN: %python %S/Inputs/gen-shared-units.py --run %gopp --full --jobs 8 --shard 1/4 | FileCheck %s
 // The long form of units-shared-routes.test: every chain of depth 0 to 3 of
 // the routes, with every leaf, both carriers (W[U], float64[U]), both orders,
-// -build-check-j 1 and 16.
-// CHECK: 8844 cases (8040 refused), 4316 programs
+// -build-check-j 1 and 16. In 4 parts that run side by side: part K has the
+// programs whose place in the list is K - 1 modulo 4 (together 8844 cases,
+// 8040 refused, 1079 programs built 4 times each; units-shared-routes.long.test checks that the
+// parts are the list, each program once).
+// RUN: %python %S/Inputs/gen-shared-units.py --check-shards 4 --full | FileCheck %s --check-prefix=SHARDS
+// SHARDS: 4 parts: 1079 programs, each once
+// CHECK: 2280 cases (2008 refused), 1080 programs
 // CHECK-NEXT: OK

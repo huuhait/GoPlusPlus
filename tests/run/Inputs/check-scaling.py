@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The fast runner's cost grows linearly with the number of programs (P04.19).
 
-Runs the run corpus through one `gopp test-run` with the corpus 1, 4 and 16
-times over and compares the CPU time (children of this process) per extra
+Runs every 4th program of the run corpus through one `gopp test-run` with the
+selection 1, 4 and 16 times over and compares the CPU time (children of this process) per extra
 program on the two steps: linear growth gives the same number twice, quadratic
 growth gives four times more on the second step. Each size is measured twice,
 the sizes in turn, and the smaller time counts (load from other work only
@@ -73,7 +73,12 @@ print("control: a quadratic child grows by %.2f (must be over %.1f)" % (g, LIMIT
 if g <= LIMIT:
     sys.exit("the check does not see a quadratic workload: it proves nothing")
 
-jobs = cr.corpus()
+# Every STRIDE-th program of the corpus: the check is about how the cost grows
+# with the NUMBER of programs, not about which ones (compare-runner.py runs
+# them all), and the 21 corpus-sizes of the two rounds took 800 s of CPU in the
+# ASan build with the whole corpus.
+STRIDE = 4
+jobs = cr.corpus()[::STRIDE]
 
 
 def corpus_copies(copies):
