@@ -4,6 +4,7 @@
 more than Go does (P04.13).
 
 usage: check-ir-flags.py --gopp GOPP --root TESTS/RUN [--jobs N]
+                         [--targets amd64,arm64] [--shard K/N]
                          [--cabi [reverse:]SEED:COUNT ...] [NAME...]
        check-ir-flags.py --self-test
 
@@ -17,7 +18,11 @@ P04.13 addendum): the lowering stores an argument to its slot first.
 Forbidden: `sext` or `trunc` of an argument, `zext` of an argument wider than
 i1.
 
-Both targets. Forbidden: `nsw`, `nuw`, `exact`, `nneg`, `disjoint`, `samesign`
+Both targets (--targets names the ones to scan, --shard K/N only the programs
+whose place in the corpus is K modulo N, as in run-opt-matrix.py; the normal
+tests scan one target and half of the programs each to stay under their 2 s
+limit). Forbidden: `nsw`, `nuw`, `exact`, `nneg`,
+`disjoint`, `samesign`
 on integer instructions (Go wraps, shifts past the width and compares
 anything; `inbounds nuw` on a getelementptr is allowed: every index is
 checked first) and any fast-math flag, `contract` included (FMA is decided by
@@ -140,6 +145,9 @@ def main():
     ap.add_argument("--gopp", required=True)
     ap.add_argument("--root", required=True)
     ap.add_argument("--jobs", type=int, default=8)
+    ap.add_argument("--shard", default=None, metavar="K/N")
+    ap.add_argument("--targets", default="amd64,arm64",
+                    help="comma-separated, default: both")
     ap.add_argument("--cabi", action="append", default=[], metavar="SEED:COUNT")
     a = ap.parse_args()
     spec = importlib.util.spec_from_file_location(
@@ -149,9 +157,15 @@ def main():
     progs = m.corpus(a.root)
     if a.files:
         progs = [p for p in progs if any(n in p.name for n in a.files)]
+    if a.shard:
+        k, n = map(int, a.shard.split("/"))
+        progs = progs[k::n]
     tmp = tempfile.TemporaryDirectory()
     env = m.Env()
     env.target = "amd64"
+    targets = a.targets.split(",")
+    if not targets or any(t not in ("amd64", "arm64") for t in targets):
+        sys.exit("--targets: amd64 and arm64 only")
     progs += m.cabi_programs(env, a.root, a.cabi, tmp.name, build_c=False)
 
     def common(target):
@@ -202,10 +216,10 @@ def main():
     bad = []
     # The programs go to gopp in batches, one `gopp build` per batch.
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        for res in ex.map(lambda pt: check(*pt), [(ps, t) for t in ("amd64", "arm64")
+        for res in ex.map(lambda pt: check(*pt), [(ps, t) for t in targets
                                                   for ps in gopp_batch.chunks(progs, a.jobs)]):
             bad += res
-    print("%d programs x 2 targets: %s" % (len(progs), "%d problems" % len(bad) if bad else "no flags"))
+    print("%d programs x %d targets: %s" % (len(progs), len(targets), "%d problems" % len(bad) if bad else "no flags"))
     if bad:
         sys.exit("\n".join(bad[:40]))
 

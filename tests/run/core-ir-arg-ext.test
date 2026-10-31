@@ -1,16 +1,18 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
 // RUN: %python %S/Inputs/check-ir-flags.py --self-test | FileCheck %s
-// RUN: %python %S/Inputs/check-ir-flags.py --gopp %gopp --root %S --jobs 8 opt/ oom/ | FileCheck %s --check-prefix=SCAN
+// RUN: %python %S/Inputs/check-ir-flags.py --gopp %gopp --root %S --jobs 8 --targets arm64 --shard 0/2 opt/ oom/ | FileCheck %s --check-prefix=SCAN
 // P04.13, ADR-0028 addendum: LLVM 23.1.0's AArch64 FastISel selects
 // `sext (signext i8 arg) to i64` as a zero-extend. The arm64 baseline
 // (-pipeline=fastisel) therefore must never contain a sext or trunc of a
 // function argument, nor a zext of one wider than i1: the lowering stores an
 // argument to its slot first. Both sides: the self-test shows the scan finds
 // a hand-made sample with the pattern and accepts one without it; the second
-// run scans the narrow-integer and conversion programs (opt/*) on both
-// targets (the whole corpus: core-opt-ir-flags.long.test). The same scan
+// run scans the narrow-integer and conversion programs (opt/*) for arm64, the
+// target of this rule, in two halves (--shard; the second is
+// core-ir-arg-ext-2.test; amd64: core-ir-flags-amd64*.test, split to stay
+// under the 2 s limit; the whole corpus: core-opt-ir-flags.long.test). The same scan
 // requires every C allocation function to be declared `nobuiltin` (review
 // R6: oom/*, and the self-test with and without the attribute).
 //
 // CHECK: self-test ok
-// SCAN: programs x 2 targets: no flags
+// SCAN: programs x 1 targets: no flags

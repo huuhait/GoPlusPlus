@@ -1,0 +1,7 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/check-ir-flags.py --gopp %gopp --root %S --jobs 8 --targets amd64 --shard 0/2 opt/ oom/ | FileCheck %s
+// P04.13: the amd64 scan of core-ir-arg-ext.test (the flag and `nobuiltin`
+// scans; the argument rule is arm64's), the first half of the programs. Split in
+// two so that each test stays under the 2 s limit of the normal suite.
+//
+// CHECK: programs x 1 targets: no flags

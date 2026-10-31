@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --verify-dwarf --shard 2/3 core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow cc/calls0
+// P04.13 (D4.8): the programs at place 2 modulo 3 of the set of
+// core-opt-matrix.test (see there).

@@ -1,0 +1,10 @@
+// The other side of cpu-limit.test: a run that burns 0.2 s of CPU (about 19
+// times the CPU time of its `version` run, 6 on a very busy machine) is over a
+// ceiling of 4, and the tool says so. It measures a failing run three times,
+// so this test burns about 0.6 s: a test of its own, so that each stays under
+// the 2 s limit.
+// RUN: printf '#!/bin/sh\nexec %python %S/Inputs/burn.py "$@"\n' > %t.burn
+// RUN: chmod +x %t.burn
+// RUN: not %{cpu_limit} 4 4 -- %t.burn 0.2 2> %t.err
+// RUN: FileCheck %s < %t.err
+// CHECK: cpu-limit: {{[0-9.]+}} times the CPU time of `gopp version`, over the ceiling of 4.0

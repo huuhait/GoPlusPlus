@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --target arm64 --sysroot %aarch64_sysroot --jobs 8 --verify-dwarf --shard 0/2 --configs 0,2 debug/ core-recursive
+// P04.12, D4.7: the arm64 half of dwarf-matrix.test (the first half of the programs;
+// dwarf-matrix-arm64-2.test has the second) (the same programs at
+// `opt` 0 and 2 and the baseline under QEMU; `llvm-dwarfdump --verify` accepts
+// the DWARF of each).
