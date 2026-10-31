@@ -31,6 +31,8 @@
 #include "LowerImpl.h"
 #include "RtEmit.h"
 
+#include "gopp/GIR/Glue.h"
+
 using namespace gopp;
 using namespace gopp::gir;
 using namespace gopp::gir::impl;
@@ -39,11 +41,6 @@ using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
 using llvm::isa;
 using llvm::isa_and_nonnull;
-
-namespace {
-/// The result when an expression could not be lowered (already reported).
-Operand errV(Context &C) { return constInt(C.i64(), 0); }
-} // namespace
 
 //===----------------------------------------------------------------------===//
 // Small helpers
@@ -96,7 +93,7 @@ Place Body::seqPlace(Operand V, const SeqInfo &SI) {
 
 Operand Body::callFn(FuncId F, ArrayRef<Operand> Args, bool Owned) {
   if (F == NoId)
-    return errV(ctx());
+    return errorValue(ctx());
   LocalId R = FB.newTemp(M.func(F).Sig->ret());
   if (Owned)
     FB.function().Locals[R].Owned = true;
@@ -122,7 +119,7 @@ Operand Body::intArg(const ast::Expr *E) {
       isConst(E) ? constOperand(*I.lookup(E)->Val, I64, E) : lowerExpr(E);
   if (!V.type()->isInt()) {
     unsupported(E, "an argument of type " + V.type()->str());
-    return errV(ctx());
+    return errorValue(ctx());
   }
   if (V.type() == I64)
     return V;
@@ -223,7 +220,7 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
   SeqInfo SI = seqInfo(XS);
   Type *ResG = Shrink ? L.lowerType(XS, SE->getBegin()) : tyOf(SE);
   if (!ResG)
-    return errV(ctx());
+    return errorValue(ctx());
   // (After a report the result is a zero of its type, so the code that uses
   // it is still well formed.)
   if (SI.K == SeqKind::None) {
@@ -253,7 +250,7 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
                   ? lowerPlace(SE->X)
                   : seqPlace(lowerExpr(SE->X), SI);
     if (!Q.Ty)
-      return zeroOf(ResG);
+      return failed(SE->X, zeroOf(ResG));
     at(SE);
     // The base as it is now: the bounds may be calls that change it.
     Place H = FB.temp(FB.use(copyOf(Q)));
@@ -273,7 +270,7 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
   case SeqKind::Array: {
     Place A = lowerPlace(SE->X);
     if (!A.Ty)
-      return zeroOf(ResG);
+      return failed(SE->X, zeroOf(ResG));
     at(SE);
     ElemG = A.Ty->elem();
     Ptr = E.to(ctx().ptr(ElemG), E.addrOf(A));
@@ -427,7 +424,7 @@ Operand Body::lowerStringAdd(const ast::BinaryExpr *B) {
   for (const ast::Expr *Leaf : Leaves) {
     Operand V = valueFor(Leaf, sTyOf(B));
     if (!V.type() || V.type() != Str)
-      return errV(ctx());
+      return errorValue(ctx());
     // Evaluated now: a later operand may change a variable read here.
     if (V.K == Operand::Copy &&
         !(V.P.Proj.empty() &&
@@ -457,7 +454,7 @@ Operand Body::stringArith(BinOp Op, Operand X, Operand Y, const ast::Node *N) {
     return concat({X, Y}, N);
   if (!isComparison(Op)) {
     unsupported(N, "this operator on strings");
-    return errV(ctx());
+    return errorValue(ctx());
   }
   if (Op == BinOp::Eq || Op == BinOp::Ne)
     return stringEqual(Op == BinOp::Eq, std::move(X), std::move(Y), N);
@@ -479,7 +476,7 @@ Operand Body::lowerLenCap(const ast::CallExpr *C, bool Cap) {
   S::Type *T = sTyOf(Arg);
   Type *Res = tyOf(C);
   if (!Res)
-    return errV(ctx());
+    return errorValue(ctx());
   Rt E(M, FB);
   if (mapTypeOf(T)) {
     Operand Mp = mapValue(Arg);
@@ -495,7 +492,7 @@ Operand Body::lowerLenCap(const ast::CallExpr *C, bool Cap) {
       SI.K == SeqKind::PtrArray) {
     unsupported(C, std::string("the built-in ") + (Cap ? "cap" : "len") +
                        " of this type");
-    return errV(ctx());
+    return errorValue(ctx());
   }
   Place Q = SI.K == SeqKind::String || SI.K == SeqKind::Slice
                 ? placeOf(lowerExpr(Arg))
@@ -537,7 +534,7 @@ Operand Body::lowerMake(const ast::CallExpr *C) {
   S::Type *U = RS ? S::under(RS) : nullptr;
   Type *G = tyOf(C);
   if (!G)
-    return errV(ctx());
+    return errorValue(ctx());
   Rt E(M, FB);
   if (auto *MT = dyn_cast_or_null<S::MapType>(U)) {
     Operand Hint =
@@ -550,7 +547,7 @@ Operand Body::lowerMake(const ast::CallExpr *C) {
   }
   if (!isa_and_nonnull<S::SliceType>(U) || C->Args.size() < 2) {
     unsupported(C, "this make");
-    return errV(ctx());
+    return errorValue(ctx());
   }
   Type *ElemG = G->elem();
   Val Len = E.snap(Val{&E, intArg(C->Args[1])});
@@ -572,7 +569,7 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
   auto *SliceS = RS ? dyn_cast<S::SliceType>(S::under(RS)) : nullptr;
   if (!SG || !SliceS || SG->getKind() != Type::Kind::Slice || C->Args.empty()) {
     unsupported(C, "this append");
-    return errV(ctx());
+    return errorValue(ctx());
   }
   Rt E(M, FB);
   Type *ElemG = SG->elem();
@@ -589,14 +586,14 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
   if (Spread) {
     if (C->Args.size() != 2) {
       unsupported(C, "this append");
-      return errV(ctx());
+      return errorValue(ctx());
     }
     S::Type *XS = sTyOf(C->Args[1]);
     SeqInfo SI = seqInfo(XS);
     if (SI.K != SeqKind::String && SI.K != SeqKind::ViewString &&
         SI.K != SeqKind::Slice && SI.K != SeqKind::ViewSlice) {
       unsupported(C, "append of this type");
-      return errV(ctx());
+      return errorValue(ctx());
     }
     Place Q = seqPlace(lowerExpr(C->Args[1]), SI);
     at(C);
@@ -653,14 +650,14 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
 Operand Body::lowerCopy(const ast::CallExpr *C) {
   if (C->Args.size() != 2) {
     unsupported(C, "this copy");
-    return errV(ctx());
+    return errorValue(ctx());
   }
   SeqInfo D = seqInfo(sTyOf(C->Args[0])), Sr = seqInfo(sTyOf(C->Args[1]));
   if ((D.K != SeqKind::Slice && D.K != SeqKind::ViewSlice) ||
       (Sr.K != SeqKind::String && Sr.K != SeqKind::ViewString &&
        Sr.K != SeqKind::Slice && Sr.K != SeqKind::ViewSlice)) {
     unsupported(C, "copy of these types");
-    return errV(ctx());
+    return errorValue(ctx());
   }
   Rt E(M, FB);
   Place DQ = seqPlace(lowerExpr(C->Args[0]), D);
@@ -698,7 +695,18 @@ void Body::lowerDelete(const ast::CallExpr *C) {
   at(C);
   Place KP = FB.temp(FB.use(K));
   Operand Info = mapInfoPtr(MT, C);
-  callRt(RtFn::MapDelete, {Info, Mv.Op, bytesAddr(KP)}, C);
+  Operand KA = bytesAddr(KP);
+  mapKeyCheck(MT, Info, Mv.Op, KA, C);
+  callRt(RtFn::MapDelete, {Info, Mv.Op, KA}, C);
+}
+
+void Body::mapKeyCheck(S::MapType *MT, const Operand &Info, const Operand &Mp,
+                       const Operand &KeyAddr, const ast::Node *N) {
+  // Only a key that may fail to hash (it holds an interface: Go's
+  // HashMightPanic) is hashed in a nil or empty map.
+  Type *KG = L.lowerType(MT->Key, N->getBegin());
+  if (KG && hasIface(KG))
+    callRt(RtFn::MapKeyCheck, {Info, Mp, KeyAddr}, N);
 }
 
 void Body::lowerClear(const ast::CallExpr *C) {
@@ -762,10 +770,10 @@ Operand Body::mapInfoPtr(S::MapType *MT, const ast::Node *N) {
   Type *KG = L.lowerType(MT->Key, N->getBegin());
   Type *VG = L.lowerType(MT->Elem, N->getBegin());
   if (!KG || !VG)
-    return errV(ctx());
+    return errorValue(ctx());
   auto [Hash, Eq] = L.mapKeyFns(MT->Key, N->getBegin());
   if (Hash == NoId || Eq == NoId)
-    return errV(ctx());
+    return errorValue(ctx());
   Type *IS = L.mapInfoType(), *U64 = ctx().u64();
   Place Info = FB.local(FB.newTemp(IS));
   at(N);
@@ -787,15 +795,16 @@ Operand Body::mapRead(const ast::IndexExpr *IE, bool CommaOk) {
   S::MapType *MT = mapTypeOf(sTyOf(IE->X));
   Type *VG = L.lowerType(MT->Elem, IE->getBegin());
   if (!VG)
-    return errV(ctx());
+    return errorValue(ctx());
   Rt E(M, FB);
   Val Mv = E.snap(Val{&E, mapValue(IE->X)});
   Operand K = valueFor(IE->Indices[0], MT->Key);
   at(IE);
   Place KP = FB.temp(FB.use(K));
   Operand Info = mapInfoPtr(MT, IE);
-  Val P =
-      E.snap(Val{&E, callRt(RtFn::MapGet, {Info, Mv.Op, bytesAddr(KP)}, IE)});
+  Operand KA = bytesAddr(KP);
+  mapKeyCheck(MT, Info, Mv.Op, KA, IE);
+  Val P = E.snap(Val{&E, callRt(RtFn::MapGet, {Info, Mv.Op, KA}, IE)});
   LocalId R = FB.newTemp(VG);
   FB.assign(FB.local(R), FB.use(zeroOf(VG)));
   E.If(P != E.null(P.ty()),
@@ -892,7 +901,7 @@ Operand Body::sliceLiteral(const ast::CompositeLit *CL, S::SliceType *ST,
       int64_t K = 0;
       if (!TV || !TV->Val || !TV->Val->toInt().fitsInt64(K) || K < 0) {
         unsupported(E, "this slice literal");
-        return errV(ctx());
+        return errorValue(ctx());
       }
       Next = K;
       E = KV->Value;
@@ -924,7 +933,7 @@ Operand Body::sliceLiteral(const ast::CompositeLit *CL, S::SliceType *ST,
 Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
   Type *VG = L.lowerType(MT->Elem, CL->getBegin());
   if (!VG)
-    return errV(ctx());
+    return errorValue(ctx());
   Rt E(M, FB);
   at(CL);
   LocalId Mv = FB.newTemp(L.mapType());
@@ -940,7 +949,7 @@ Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
     auto *KV = dyn_cast<ast::KeyValueExpr>(Ex);
     if (!KV) {
       unsupported(Ex, "this map literal");
-      return errV(ctx());
+      return errorValue(ctx());
     }
     Operand K = valueFor(KV->Key, MT->Key);
     at(Ex);
@@ -962,7 +971,7 @@ Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
 Operand Body::viewOfPlace(Place P, S::Type *ViewS, const ast::Node *N) {
   Type *VG = L.lowerType(ViewS, N->getBegin());
   if (!VG)
-    return errV(ctx());
+    return errorValue(ctx());
   Rt E(M, FB);
   if (VG->getKind() == Type::Kind::Tuple) {
     if (P.Ty->getKind() != Type::Kind::String &&
@@ -978,7 +987,7 @@ Operand Body::viewOfPlace(Place P, S::Type *ViewS, const ast::Node *N) {
 Operand Body::makeView(const ast::Expr *Ex, S::Type *Want) {
   Type *VG = L.lowerType(Want, Ex->getBegin());
   if (!VG)
-    return errV(ctx());
+    return errorValue(ctx());
   S::Type *Target = cast<S::RefType>(S::under(Want))->Elem;
   // The checker may have recorded the view type for an operand that is the
   // value itself (an implicit conversion), so the lowered value says which
@@ -991,7 +1000,7 @@ Operand Body::makeView(const ast::Expr *Ex, S::Type *Want) {
     P = lowerPlace(Ex);
   // (An operand that was reported is not reported again as a view.)
   if (!P.Ty || L.Reported != Before)
-    return zeroOf(VG);
+    return failed(Ex, zeroOf(VG));
   at(Ex);
   if (P.Ty == VG)
     return copyOf(std::move(P));
@@ -1006,7 +1015,7 @@ Operand Body::convertStrings(const ast::CallExpr *C, Operand X, S::Type *FromS,
                              S::Type *ToS) {
   Type *To = L.lowerType(ToS, C->getBegin());
   if (!To)
-    return errV(ctx());
+    return errorValue(ctx());
   Type *From = X.type();
   SeqInfo FS = seqInfo(FromS), TS = seqInfo(ToS);
   Rt E(M, FB);
@@ -1088,7 +1097,7 @@ Operand Body::convertStrings(const ast::CallExpr *C, Operand X, S::Type *FromS,
     return copyOf(Arr);
   }
   unsupported(C, "a conversion from " + From->str() + " to " + To->str());
-  return errV(ctx());
+  return errorValue(ctx());
 }
 
 //===----------------------------------------------------------------------===//
@@ -1102,7 +1111,7 @@ Operand Body::packVariadic(const ast::CallExpr *C, S::SignatureType *Sig,
   auto *SliceS = dyn_cast<S::SliceType>(S::under(ParamS));
   Type *SG = L.lowerType(ParamS, C->getBegin());
   if (!SliceS || !SG)
-    return errV(ctx());
+    return errorValue(ctx());
   size_t N = C->Args.size() - Fixed;
   if (N == 0)
     return zeroOf(SG);
@@ -1135,7 +1144,7 @@ Operand Body::packVariadic(const ast::CallExpr *C, S::SignatureType *Sig,
 Operand Body::lowerUnsafeSeq(const ast::CallExpr *C, S::BuiltinId Id) {
   Type *Res = tyOf(C);
   if (!Res)
-    return errV(ctx());
+    return errorValue(ctx());
   Rt E(M, FB);
   if (Id == S::BuiltinId::SliceData || Id == S::BuiltinId::StringData) {
     SeqInfo SI = seqInfo(sTyOf(C->Args[0]));
@@ -1160,7 +1169,7 @@ Operand Body::lowerUnsafeSeq(const ast::CallExpr *C, S::BuiltinId Id) {
   Operand P = lowerExpr(C->Args[0]);
   Operand N = intArg(C->Args[1]);
   if (!P.type()->isPtr())
-    return zeroOf(Res);
+    return failed(C->Args[0], zeroOf(Res));
   at(C);
   Type *U64 = ctx().u64();
   Val Ptr = E.snap(Val{&E, P}), Len = E.snap(Val{&E, N});
@@ -1171,7 +1180,7 @@ Operand Body::lowerUnsafeSeq(const ast::CallExpr *C, S::BuiltinId Id) {
   std::string Fn = IsSlice ? "unsafe.Slice: " : "unsafe.String: ";
   FuncId Panic = L.rt(RtFn::PanicText, C->getBegin());
   if (Panic == NoId)
-    return zeroOf(Res);
+    return failed(C, zeroOf(Res));
   auto Fail = [&](const std::string &Why) {
     Place S = FB.temp(FB.use(constStr(M, Fn + Why)));
     E.callNoReturn(Panic,

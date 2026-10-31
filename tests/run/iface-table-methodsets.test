@@ -1,0 +1,185 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-table-methodsets.out
+// P04.06: method sets and dynamic dispatch, a table. For every type form (a struct with value, pointer or both kinds of methods, named scalars, a slice, an array, an empty struct, a big struct) the value and a pointer to it are put in an `any`, asserted to four interfaces (one of them embeds the other two) and the methods are called through the interface that holds them. Go"s rule: a value has the methods of value receivers, a pointer has all of them.
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); Inputs/gen-iface.py wrote it.
+package main
+
+type VI interface{ V() int }
+type PI interface{ P() int }
+type BI interface {
+	V() int
+	P() int
+}
+type AI interface {
+	VI
+	PI
+}
+
+type TV struct{ n int }
+func (t TV) V() int { return t.n }
+
+type TP struct{ n int }
+func (t *TP) P() int { t.n++; return t.n }
+
+type TB struct{ n int }
+func (t TB) V() int { return t.n + 10 }
+func (t *TB) P() int { t.n++; return t.n + 20 }
+
+type NI int
+func (n NI) V() int { return int(n) }
+func (n *NI) P() int { *n += 5; return int(*n) }
+
+type NF float64
+func (f NF) V() int { return int(f * 2) }
+
+type NS string
+func (s NS) V() int { return len(s) }
+
+type NB bool
+func (b NB) V() int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+type SL []int
+func (s SL) V() int { return len(s) }
+
+type AR [3]int
+func (a AR) V() int { return a[0] + len(a) }
+func (a *AR) P() int { a[0]++; return a[0] }
+
+type BIG struct {
+	a, b, c, d int
+	s string
+}
+func (g BIG) V() int { return g.a + g.b + g.c + g.d + len(g.s) }
+
+type EM struct{}
+func (EM) V() int { return 42 }
+
+type PT struct{ x, y int32 }
+func (p PT) V() int { return int(p.x + p.y) }
+
+func check(name string, x any) {
+	_, v := x.(VI)
+	_, p := x.(PI)
+	_, b := x.(BI)
+	_, a := x.(AI)
+	println(name, v, p, b, a)
+	if vi, ok := x.(VI); ok {
+		println("  V", vi.V(), vi.V())
+	}
+	if pi, ok := x.(PI); ok {
+		println("  P", pi.P(), pi.P())
+	}
+	if bi, ok := x.(BI); ok {
+		println("  B", bi.V(), bi.P(), bi.V())
+	}
+	if ai, ok := x.(AI); ok {
+		println("  A", ai.P(), ai.V())
+	}
+}
+
+func direct(name string, vi VI) {
+	println("direct", name, vi.V())
+}
+
+func main() {
+	{
+		v := TV{1}
+		check("TV", v)
+		p := &v
+		check("*TV", p)
+		direct("TV", v)
+		direct("*TV", p)
+	}
+	{
+		v := TP{2}
+		check("TP", v)
+		p := &v
+		check("*TP", p)
+	}
+	{
+		v := TB{3}
+		check("TB", v)
+		p := &v
+		check("*TB", p)
+		direct("TB", v)
+		direct("*TB", p)
+	}
+	{
+		v := NI(4)
+		check("NI", v)
+		p := &v
+		check("*NI", p)
+		direct("NI", v)
+		direct("*NI", p)
+	}
+	{
+		v := NF(1.5)
+		check("NF", v)
+		p := &v
+		check("*NF", p)
+		direct("NF", v)
+		direct("*NF", p)
+	}
+	{
+		v := NS("abc")
+		check("NS", v)
+		p := &v
+		check("*NS", p)
+		direct("NS", v)
+		direct("*NS", p)
+	}
+	{
+		v := NB(true)
+		check("NB", v)
+		p := &v
+		check("*NB", p)
+		direct("NB", v)
+		direct("*NB", p)
+	}
+	{
+		v := SL{1, 2, 3}
+		check("SL", v)
+		p := &v
+		check("*SL", p)
+		direct("SL", v)
+		direct("*SL", p)
+	}
+	{
+		v := AR{7, 8, 9}
+		check("AR", v)
+		p := &v
+		check("*AR", p)
+		direct("AR", v)
+		direct("*AR", p)
+	}
+	{
+		v := BIG{1, 2, 3, 4, "five"}
+		check("BIG", v)
+		p := &v
+		check("*BIG", p)
+		direct("BIG", v)
+		direct("*BIG", p)
+	}
+	{
+		v := EM{}
+		check("EM", v)
+		p := &v
+		check("*EM", p)
+		direct("EM", v)
+		direct("*EM", p)
+	}
+	{
+		v := PT{3, 4}
+		check("PT", v)
+		p := &v
+		check("*PT", p)
+		direct("PT", v)
+		direct("*PT", p)
+	}
+}

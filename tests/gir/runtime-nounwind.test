@@ -1,0 +1,15 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.06 (decision M4): `gopp.str_eq` calls only memcmp, so it cannot unwind
+// and is NoUnwind (a NoUnwind runtime function may call it without an unwind
+// edge, V026); `gopp.str_concat` allocates through `gopp.mem_resize`, whose
+// failure panics, so it is not.
+package main
+
+func main() {
+	a, b := "x", "y"
+	c := a + b
+	println(a == b, c)
+}
+
+// CHECK: fn _GPF4goppE10str_concat(_1: *string, _2: u64) -> string [go, internal] {
+// CHECK: fn _GPF4goppE6str_eq(_1: *u8, _2: u64, _3: *u8, _4: u64) -> bool [go, internal, nounwind] {

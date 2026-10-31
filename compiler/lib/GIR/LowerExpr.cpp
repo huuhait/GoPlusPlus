@@ -32,11 +32,24 @@ using llvm::isa_and_nonnull;
 // Small helpers
 //===----------------------------------------------------------------------===//
 
-namespace {
-/// The result when an expression could not be lowered (already reported).
-Operand errorValue(Context &C) { return constInt(C.i64(), 0); }
+Operand Body::errorValue(Context &C) {
+  return failed(nullptr, constInt(C.i64(), 0));
+}
 
-} // namespace
+Operand Body::zeroOfExpr(const ast::Expr *E) {
+  if (S::Type *T = sTyOf(E))
+    if (Type *G = L.lowerType(T, E->getBegin()))
+      return zeroOf(G);
+  return constInt(ctx().i64(), 0);
+}
+
+Operand Body::failed(const ast::Node *N, Operand V) {
+  if (!L.Failed)
+    L.internalError(N ? N->getBegin() : Pos,
+                    "an expression could not be lowered and nothing said "
+                    "why (a fact of the checker is missing)");
+  return V;
+}
 
 bool Body::isNilValue(const ast::Expr *E) {
   const S::TypeAndValue *TV = I.lookup(E);
@@ -91,7 +104,7 @@ LocalId Body::localOf(Operand Op) {
 Operand Body::constOperand(const S::ConstValue &V, Type *Ty,
                            const ast::Node *N) {
   if (!Ty)
-    return constBool(ctx(), false);
+    return failed(N, constBool(ctx(), false));
   Constant C;
   if (L.constantOf(V, Ty, C)) {
     Operand O;
@@ -133,7 +146,8 @@ Operand Body::nilOf(S::Type *Want, const ast::Node *N) {
   if (!G)
     return errorValue(ctx());
   S::Type *WU = S::under(Want);
-  if (!asOption(Want) && !isa<S::SliceType>(WU) && !isa<S::MapType>(WU)) {
+  if (!asOption(Want) && !isa<S::SliceType>(WU) && !isa<S::MapType>(WU) &&
+      !G->isIface()) {
     unsupported(N, "nil of type " + G->str());
     return errorValue(ctx());
   }
@@ -144,7 +158,7 @@ Operand Body::wrapSome(Operand V, S::Type *OptionTy, const ast::Node *N) {
   Type *G = L.lowerType(OptionTy, N->getBegin());
   if (!G)
     return errorValue(ctx());
-  if (G->isPtr())
+  if (G->isPtr() || G->isIface())
     return V;
   at(N);
   Place P = FB.temp(
@@ -156,8 +170,14 @@ Operand Body::optionIsSet(Operand O, const ast::Node *N) {
   at(N);
   // An operand that could not be lowered (an error was reported) is not an
   // Option: no flag to read.
-  if (!O.type()->isPtr() && O.type()->getKind() != Type::Kind::Option)
-    return constBool(ctx(), false);
+  if (!O.type()->isPtr() && !O.type()->isIface() &&
+      O.type()->getKind() != Type::Kind::Option)
+    return failed(N, constBool(ctx(), false));
+  if (O.type()->isIface()) {
+    Place P = placeOf(std::move(O));
+    return copyOf(FB.temp(FB.binary(BinOp::Ne, copyOf(FB.field(P, 0)),
+                                    zeroOf(ctx().ptr(ctx().u8())))));
+  }
   if (O.type()->isPtr())
     return copyOf(
         FB.temp(FB.binary(BinOp::Ne, std::move(O), zeroOf(O.type()))));
@@ -165,7 +185,8 @@ Operand Body::optionIsSet(Operand O, const ast::Node *N) {
 }
 
 Operand Body::optionPayload(Operand O) {
-  if (O.type()->isPtr() || O.type()->getKind() != Type::Kind::Option)
+  if (O.type()->isPtr() || O.type()->isIface() ||
+      O.type()->getKind() != Type::Kind::Option)
     return O;
   return copyOf(FB.field(placeOf(std::move(O)), 0));
 }
@@ -173,14 +194,22 @@ Operand Body::optionPayload(Operand O) {
 Operand Body::valueFor(const ast::Expr *E, S::Type *Want) {
   if (isNilValue(E))
     return nilOf(Want, E);
-  if (S::OptionType *O = asOption(Want))
+  if (S::OptionType *O = asOption(Want)) {
     if (!asOption(sTyOf(E))) {
       Operand V = valueFor(E, O->Elem);
       return wrapSome(std::move(V), Want, E);
     }
+    // An Option[T] or Option[J] where an Option[I] is wanted: Option[I] is
+    // the interface itself (its nil the null itab), so a nil one stays nil
+    // and a set one is converted (boxed, or its itab made for I).
+    if (L.isInterface(O->Elem) && sTyOf(E) != Want)
+      return toIface(E, O->Elem);
+  }
   Type *G = L.lowerType(Want, E->getBegin());
   if (!G)
     return errorValue(ctx());
+  if (G->isIface() && L.isInterface(Want))
+    return toIface(E, Want);
   // A value for a View parameter or variable: the view of it.
   S::Type *WU = S::under(Want);
   S::Type *ES = sTyOf(E);
@@ -350,7 +379,7 @@ Place Body::selectorPlace(const ast::SelectorExpr *Sel, Pending *Pend) {
   }
   const S::Selection &SL = It->second;
   if (SL.K != S::Selection::FieldVal) {
-    unsupported(Sel, "a method value (P04.06)");
+    unsupported(Sel, "a method value or expression (P04.07)");
     return Place();
   }
   if (SL.ParentSteps) {
@@ -584,8 +613,7 @@ Operand Body::lowerExpr(const ast::Expr *E) {
     unsupported(E, "a function literal (P04.07)");
     break;
   case ast::Node::Kind::TypeAssertExpr:
-    unsupported(E, "a type assertion (P04.06)");
-    break;
+    return lowerTypeAssert(cast<ast::TypeAssertExpr>(E), false);
   default:
     unsupported(E, std::string("the expression ") + E->getKindName());
     break;
@@ -799,9 +827,22 @@ Operand Body::equality(bool Eq, Operand X, Operand Y, S::Type *T,
     return stringEqual(Eq, std::move(X), std::move(Y), N);
   FuncId Glue = L.eqGlue(T, N->getBegin());
   if (Glue == NoId)
-    return constBool(ctx(), false);
-  Place PX = placeOf(std::move(X)), PY = placeOf(std::move(Y));
-  Place A = FB.temp(FB.addrOf(PX)), B = FB.temp(FB.addrOf(PY));
+    return failed(N, constBool(ctx(), false));
+  // The glue takes addresses. A temporary (the result of a call, `f() ==
+  // err`, or a part of one) is copied first: the address of a call's result
+  // is never taken (V066).
+  auto Addr = [&](Operand V) {
+    Place P = placeOf(std::move(V));
+    bool ThroughPtr = llvm::any_of(
+        P.Proj, [](const PlaceElem &E) { return E.K == PlaceElem::Deref; });
+    if (!ThroughPtr && FB.function().Locals[P.Local].K == Local::Temp) {
+      LocalId C = FB.newTemp(P.Ty);
+      FB.assign(FB.local(C), FB.use(copyOf(std::move(P))));
+      P = FB.local(C);
+    }
+    return FB.temp(FB.addrOf(std::move(P)));
+  };
+  Place A = Addr(std::move(X)), B = Addr(std::move(Y));
   Place R = FB.local(FB.newTemp(ctx().boolean()));
   FB.call(constFunc(M, Glue), {copyOf(A), copyOf(B)}, R,
           {UnwindAction::Continue, NoId});
@@ -833,6 +874,13 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
       // `o == nil` on an Option: the flag is clear (or the pointer is null).
       Operand O = lowerExpr(Other);
       S::Type *OU = S::under(sTyOf(Other));
+      if (O.type() && O.type()->isIface() && !asOption(sTyOf(Other))) {
+        // An `error` or `any` is nil when it has no itab.
+        at(B);
+        Operand Itab = copyOf(FB.field(placeOf(std::move(O)), 0));
+        return copyOf(
+            FB.temp(FB.binary(Op, std::move(Itab), zeroOf(Itab.type()))));
+      }
       if (isa_and_nonnull<S::SliceType>(OU) ||
           isa_and_nonnull<S::MapType>(OU)) {
         // A nil slice has no data pointer, a nil map no object.
@@ -858,6 +906,23 @@ Operand Body::lowerBinary(const ast::BinaryExpr *B) {
     else if (S::OptionType *O2 = asOption(sTyOf(B->Y));
              O2 && !asOption(sTyOf(B->X)))
       OpS = sTyOf(B->Y);
+    // An interface against a value of another type: both as the interface
+    // (the one with fewer methods when both are interfaces).
+    {
+      S::Type *XT = sTyOf(B->X), *YT = sTyOf(B->Y);
+      bool XI = XT && L.isInterface(XT), YI = YT && L.isInterface(YT);
+      if (XI || YI) {
+        if (XI && YI) {
+          const Lowering::IfaceMethods *XM = L.ifaceMethods(XT, B->getBegin());
+          const Lowering::IfaceMethods *YM = L.ifaceMethods(YT, B->getBegin());
+          if (!XM || !YM)
+            return errorValue(ctx());
+          OpS = YM->List.size() < XM->List.size() ? YT : XT;
+        } else {
+          OpS = XI ? XT : YT;
+        }
+      }
+    }
     // A View[string] is compared as the string it shows (a borrow).
     if (auto *Rf = dyn_cast_or_null<S::RefType>(OpS ? S::under(OpS) : nullptr);
         Rf && isStringType(Rf->Elem))
@@ -1000,7 +1065,7 @@ Operand Body::lowerConversion(const ast::CallExpr *C) {
     return errorValue(ctx());
   }
   S::Type *ToS = sTyOf(C);
-  if (asOption(ToS) || isNilValue(C->Args[0]))
+  if (asOption(ToS) || isNilValue(C->Args[0]) || (ToS && L.isInterface(ToS)))
     return valueFor(C->Args[0], ToS);
   // View[T](x): the view of x, as for an implicit one (ADR-0020).
   if (ToS && isa<S::RefType>(S::under(ToS)))
@@ -1082,6 +1147,21 @@ void Body::printValue(Operand V, S::Type *ST, SourceLoc At) {
           FB.cast(CastKind::FloatToFloat, std::move(F), ctx().floatTy(64))));
     Call(L.ensurePrintF64(At), std::move(F));
   };
+  if (T->isIface()) {
+    // Go's form: (itab,data).
+    Place P = placeOf(std::move(V));
+    Type *U64 = ctx().u64();
+    writeString("(", At);
+    Call(L.ensurePrintHex(At),
+         copyOf(FB.temp(
+             FB.cast(CastKind::PtrToInt, copyOf(FB.field(P, 0)), U64))));
+    writeString(",", At);
+    Call(L.ensurePrintHex(At),
+         copyOf(FB.temp(
+             FB.cast(CastKind::PtrToInt, copyOf(FB.field(P, 1)), U64))));
+    writeString(")", At);
+    return;
+  }
   switch (T->getKind()) {
   case Type::Kind::String:
     callWrite(copyOf(FB.field(V.P, 0)), copyOf(FB.field(V.P, 1)), At);
@@ -1178,7 +1258,7 @@ void Body::lowerPrintln(const ast::CallExpr *C, bool Newline) {
     Item It;
     It.STy = sTyOf(Arg);
     bool Printable = T->isInt() || T->isBool() || T->isFloat() || T->isPtr() ||
-                     T->getKind() == Type::Kind::String ||
+                     T->isIface() || T->getKind() == Type::Kind::String ||
                      (L.isComplexType(It.STy)) ||
                      (It.STy && isa<S::RefType>(S::under(It.STy)) &&
                       T->getKind() == Type::Kind::Tuple);
@@ -1366,6 +1446,132 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
   return errorValue(ctx());
 }
 
+Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
+                       Type *GSig, Operand CalleeOp, ArrayRef<Operand> Lead,
+                       bool NoUnwind) {
+  Operand Unit = unitValue();
+  ArrayRef<Type *> Ps = GSig->elems().drop_front(Lead.size());
+  SmallVector<Operand, 4> Args(Lead.begin(), Lead.end());
+  const size_t Base = Lead.size();
+  // A borrowed map's address is taken after the other arguments, as a
+  // move out of a place is (EXP-3): it may point into a container one of
+  // them grows. Its operands are evaluated in their turn.
+  SmallVector<std::pair<size_t, LateOps>, 1> Late;
+  auto AddArg = [&](size_t K, const ast::Expr *A) {
+    if (L.mapByPointer(Sig, K) && !isNilValue(A)) {
+      Late.push_back({K, LateOps()});
+      recordOps(A, Late.back().second);
+      Args.push_back(Operand());
+      return;
+    }
+    Args.push_back(argFor(A, Sig, K));
+  };
+  // f(g()) where g returns several values (the one argument is a tuple; a
+  // variadic f(a int, rest ...int) called as f(1) is not this form).
+  auto *TT = C->Args.size() == 1
+                 ? dyn_cast_or_null<S::TupleType>(sTyOf(C->Args[0]))
+                 : nullptr;
+  if (TT && Ps.size() > 1) {
+    // The results of a call spread over a variadic parameter, `vf(g())`,
+    // are packed into the slice by P04.18 (TODO P04.18).
+    if (Sig->Variadic) {
+      unsupported(C, "spreading the results of a call over a variadic "
+                     "parameter (P04.18)");
+      return Unit;
+    }
+    Operand T = lowerExpr(C->Args[0]);
+    if (T.type()->getKind() != Type::Kind::Tuple ||
+        T.type()->numFields() != Ps.size() || TT->Elems.size() != Ps.size()) {
+      unsupported(C, "this call form");
+      return Unit;
+    }
+    Place TP = placeOf(std::move(T));
+    for (size_t K = 0; K < Ps.size(); ++K)
+      Args.push_back(argAs(convertResult(copyOf(FB.field(TP, K)), TT->Elems[K],
+                                         Sig->Params->Elems[K], C),
+                           Sig, K, C));
+  } else if (Sig->Variadic) {
+    // f(a, b, xs...) passes the slice; f(a, b, x, y) packs x and y.
+    size_t Fixed = Ps.size() - 1;
+    if (C->Args.size() < Fixed) {
+      unsupported(C, "this call form");
+      return Unit;
+    }
+    for (size_t K = 0; K < Fixed; ++K)
+      AddArg(K, C->Args[K]);
+    if (C->EllipsisLoc.isValid()) {
+      if (C->Args.size() != Ps.size()) {
+        unsupported(C, "this call form");
+        return Unit;
+      }
+      Args.push_back(argFor(C->Args.back(), Sig, Fixed));
+    } else {
+      Args.push_back(argAs(packVariadic(C, Sig, Fixed), Sig, Fixed, C));
+    }
+  } else if (C->EllipsisLoc.isValid() || Ps.size() != C->Args.size()) {
+    unsupported(C, "this call form");
+    return Unit;
+  } else {
+    for (size_t K = 0; K < C->Args.size(); ++K)
+      AddArg(K, C->Args[K]);
+  }
+  // The map entries among them: one record each in an array of the
+  // frame, copied in and aliased by one runtime call, copied out by
+  // another after the call (mapEntryArg; linear GIR per call).
+  unsigned NE = 0;
+  for (auto &[K, R] : Late)
+    if (auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
+        IE && isMapIndex(IE))
+      ++NE;
+  Place Recs;
+  Operand RecsAddr;
+  if (NE) {
+    at(C);
+    Recs = FB.local(FB.newLocal(ctx().array(L.mapEntryArgType(), NE),
+                                Local::Var, "entries"));
+    RecsAddr = copyOf(FB.temp(FB.addrOf(FB.constIndex(Recs, 0), true)));
+  }
+  SmallVector<std::pair<size_t, unsigned>, 1> EntryArgs;
+  for (auto &[K, R] : Late) {
+    ++LowerSteps;
+    auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
+    if (IE && isMapIndex(IE)) {
+      ReplayScope Scope(*this, R);
+      unsigned Idx = EntryArgs.size();
+      mapEntryArg(IE, Recs, Idx);
+      EntryArgs.push_back({K, Idx});
+      continue;
+    }
+    Args[Base + K] = argAs(mapArgAddr(C->Args[K], R), Sig, K, C->Args[K]);
+  }
+  if (NE) {
+    // (Test-only: GIR for every pair, the quadratic control.)
+    if (L.Opts.PairwiseEntryArgs)
+      for (unsigned A = 0; A < NE; ++A)
+        for (unsigned B = 0; B < A; ++B)
+          FB.temp(FB.binary(BinOp::Eq,
+                            copyOf(FB.field(FB.constIndex(Recs, A), 1)),
+                            copyOf(FB.field(FB.constIndex(Recs, B), 1))));
+    at(C);
+    callRt(RtFn::MapEntryArgs, {RecsAddr, constInt(ctx().u64(), NE)}, C);
+    for (auto &[K, Idx] : EntryArgs) {
+      at(C->Args[K]);
+      Args[Base + K] = argAs(copyOf(FB.field(FB.constIndex(Recs, Idx), 5)), Sig,
+                             K, C->Args[K]);
+    }
+  }
+  at(C);
+  LocalId Res = FB.newTemp(GSig->ret());
+  FB.call(
+      std::move(CalleeOp), Args, FB.local(Res),
+      {NoUnwind ? UnwindAction::Unreachable : UnwindAction::Continue, NoId});
+  if (NE) {
+    at(C);
+    callRt(RtFn::MapEntryBack, {RecsAddr, constInt(ctx().u64(), NE)}, C);
+  }
+  return copyOf(FB.local(Res));
+}
+
 Operand Body::lowerCall(const ast::CallExpr *C) {
   const ast::Expr *Fun = unparen(C->Fun);
   const S::TypeAndValue *FT = I.lookup(Fun);
@@ -1426,7 +1632,9 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
       if (F && F->IsBuiltinMethod && (F->Name == "IsNil" || F->Name == "Get") &&
           C->Args.empty())
         return lowerOptionMethod(C, Sel, F);
-      unsupported(C, "a method call (P04.06)");
+      if (F)
+        return lowerMethodCall(C, Sel, F, It->second);
+      unsupported(C, "this method call");
       return Unit;
     }
   }
@@ -1444,121 +1652,15 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
         unsupported(C, "a call of " + F->Name.str());
         return Unit;
       }
-      const Function &Callee = M.func(FI->second);
-      ArrayRef<Type *> Ps = Callee.Sig->elems();
-      S::SignatureType *Sig = F->sig();
-      SmallVector<Operand, 4> Args;
-      // A borrowed map's address is taken after the other arguments, as a
-      // move out of a place is (EXP-3): it may point into a container one of
-      // them grows. Its operands are evaluated in their turn.
-      SmallVector<std::pair<size_t, LateOps>, 1> Late;
-      auto AddArg = [&](size_t K, const ast::Expr *A) {
-        if (L.mapByPointer(Sig, K) && !isNilValue(A)) {
-          Late.push_back({K, LateOps()});
-          recordOps(A, Late.back().second);
-          Args.push_back(Operand());
-          return;
-        }
-        Args.push_back(argFor(A, Sig, K));
-      };
-      if (C->Args.size() == 1 && Ps.size() > 1) {
-        // f(g()) where g returns several values.
-        Operand T = lowerExpr(C->Args[0]);
-        if (T.type()->getKind() != Type::Kind::Tuple ||
-            T.type()->numFields() != Ps.size()) {
-          unsupported(C, "this call form");
-          return Unit;
-        }
-        Place TP = placeOf(std::move(T));
-        for (size_t K = 0; K < Ps.size(); ++K)
-          Args.push_back(argAs(copyOf(FB.field(TP, K)), Sig, K, C));
-      } else if (Sig->Variadic) {
-        // f(a, b, xs...) passes the slice; f(a, b, x, y) packs x and y.
-        size_t Fixed = Ps.size() - 1;
-        if (C->Args.size() < Fixed) {
-          unsupported(C, "this call form");
-          return Unit;
-        }
-        for (size_t K = 0; K < Fixed; ++K)
-          AddArg(K, C->Args[K]);
-        if (C->EllipsisLoc.isValid()) {
-          if (C->Args.size() != Ps.size()) {
-            unsupported(C, "this call form");
-            return Unit;
-          }
-          Args.push_back(argFor(C->Args.back(), Sig, Fixed));
-        } else {
-          Args.push_back(argAs(packVariadic(C, Sig, Fixed), Sig, Fixed, C));
-        }
-      } else if (C->EllipsisLoc.isValid() || Ps.size() != C->Args.size()) {
-        unsupported(C, "this call form");
-        return Unit;
-      } else {
-        for (size_t K = 0; K < C->Args.size(); ++K)
-          AddArg(K, C->Args[K]);
-      }
-      // The map entries among them: one record each in an array of the
-      // frame, copied in and aliased by one runtime call, copied out by
-      // another after the call (mapEntryArg; linear GIR per call).
-      unsigned NE = 0;
-      for (auto &[K, R] : Late)
-        if (auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
-            IE && isMapIndex(IE))
-          ++NE;
-      Place Recs;
-      Operand RecsAddr;
-      if (NE) {
-        at(C);
-        Recs = FB.local(FB.newLocal(ctx().array(L.mapEntryArgType(), NE),
-                                    Local::Var, "entries"));
-        RecsAddr = copyOf(FB.temp(FB.addrOf(FB.constIndex(Recs, 0), true)));
-      }
-      SmallVector<std::pair<size_t, unsigned>, 1> EntryArgs;
-      for (auto &[K, R] : Late) {
-        ++LowerSteps;
-        auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[K]));
-        if (IE && isMapIndex(IE)) {
-          ReplayScope Scope(*this, R);
-          unsigned Idx = EntryArgs.size();
-          mapEntryArg(IE, Recs, Idx);
-          EntryArgs.push_back({K, Idx});
-          continue;
-        }
-        Args[K] = argAs(mapArgAddr(C->Args[K], R), Sig, K, C->Args[K]);
-      }
-      if (NE) {
-        // (Test-only: GIR for every pair, the quadratic control.)
-        if (L.Opts.PairwiseEntryArgs)
-          for (unsigned A = 0; A < NE; ++A)
-            for (unsigned B = 0; B < A; ++B)
-              FB.temp(FB.binary(BinOp::Eq,
-                                copyOf(FB.field(FB.constIndex(Recs, A), 1)),
-                                copyOf(FB.field(FB.constIndex(Recs, B), 1))));
-        at(C);
-        callRt(RtFn::MapEntryArgs, {RecsAddr, constInt(ctx().u64(), NE)}, C);
-        for (auto &[K, Idx] : EntryArgs) {
-          at(C->Args[K]);
-          Args[K] = argAs(copyOf(FB.field(FB.constIndex(Recs, Idx), 5)), Sig, K,
-                          C->Args[K]);
-        }
-      }
-      at(C);
-      LocalId Res = FB.newTemp(Callee.Sig->ret());
-      FB.call(
-          constFunc(M, FI->second), Args, FB.local(Res),
-          {Callee.NoUnwind ? UnwindAction::Unreachable : UnwindAction::Continue,
-           NoId});
-      if (NE) {
-        at(C);
-        callRt(RtFn::MapEntryBack, {RecsAddr, constInt(ctx().u64(), NE)}, C);
-      }
-      return copyOf(FB.local(Res));
+      return callWith(C, F->sig(), M.func(FI->second).Sig,
+                      constFunc(M, FI->second), {},
+                      M.func(FI->second).NoUnwind);
     }
   }
   // A call of a value (a func value, a method value): its type says what is
   // missing, reported once (lowerType).
   if (!tyOf(Fun))
-    return Unit;
+    return failed(Fun, Unit);
   unsupported(C, "this call");
   return Unit;
 }

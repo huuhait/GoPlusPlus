@@ -1,0 +1,48 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-views.out
+// GOLDEN: by-hand
+// P04.06, TYP-9, OWN-V: a view boxed in an interface keeps the dynamic type
+// `View[T]`, which is not `T`: `case string` does not match a boxed
+// `View[string]`, `case View[string]` does, and a boxed view is not equal to
+// a boxed string with the same bytes. Two boxed views compare as the values
+// they show (deep): two `View[string]`s of equal bytes in different buffers
+// are equal, two `View[P]`s of equal structs too, and a boxed view is a map
+// key by those values. (A view of a slice compares as a slice does, not at
+// all: panics-gopp/eq-view-slice.) Go has no views: the output is by hand.
+package main
+
+type P struct{ a, b int }
+
+func eq(x, y any) bool { return x == y }
+
+func kind(x any) string {
+	switch x.(type) {
+	case string:
+		return "string"
+	case View[string]:
+		return "view of string"
+	case View[P]:
+		return "view of P"
+	}
+	return "other"
+}
+
+func main() {
+	s := "hello"
+	t := "xhello"
+	var v1 View[string] = s
+	var v2 View[string] = t[1:]
+	var v3 View[string] = t[:5]
+	println(eq(v1, v2), eq(v1, v3), eq(v1, s), eq(s, "hello"))
+	println(kind(v1), kind(s), kind(1))
+	p, q, r := P{1, 2}, P{1, 2}, P{2, 1}
+	var w1 View[P] = p
+	var w2 View[P] = q
+	var w3 View[P] = r
+	println(eq(w1, w2), eq(w1, w3), eq(w1, p), kind(w1))
+	m := map[any]int{}
+	m[v1] = 1
+	m[s] = 2
+	m[w1] = 3
+	println(len(m), m[v2], m[v3], m["hello"], m[w2], m[w3])
+}

@@ -100,6 +100,30 @@ template <class T> struct Bytes {
   void *get() { return B; }
 };
 
+TEST(Glue, InterfacesHaveGlueAndAreFoundInsideOtherTypes) {
+  // P04.06: an interface value is compared and hashed through the runtime
+  // (gopp.iface_eq, gopp.iface_hash), so the glue of a type that holds one
+  // exists, and hasIface tells the lowering to make those functions first.
+  Context C;
+  Type *I = C.iface();
+  EXPECT_TRUE(I->isIface());
+  EXPECT_TRUE(hasGlue(I));
+  EXPECT_TRUE(hasIface(I));
+  Type *S = C.structTy("glue.Holder");
+  C.setStructBody(S, {C.i64(), I});
+  EXPECT_TRUE(hasGlue(S));
+  EXPECT_TRUE(hasIface(S));
+  EXPECT_TRUE(hasIface(C.array(S, 3)));
+  EXPECT_TRUE(hasIface(C.option(I)));
+  // The other side: nothing in a plain type is an interface, and a pointer
+  // or a string is not one.
+  Type *P = C.structTy("glue.Plain");
+  C.setStructBody(P, {C.i64(), C.string(), C.ptr(I)});
+  EXPECT_FALSE(hasIface(P));
+  EXPECT_FALSE(hasIface(C.array(C.i64(), 3)));
+  EXPECT_FALSE(hasIface(C.tuple({C.floatTy(64), C.boolean()})));
+}
+
 TEST(Glue, OptionIgnoresFlagPaddingAndAnUnsetPayload) {
   Glued G;
   Type *O = G.C.option(G.C.i64());

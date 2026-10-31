@@ -30,8 +30,13 @@
 //   string                   ==: the same length and the same bytes; hash: the
 //                            length, then every byte (the pointer and the
 //                            capacity do not take part);
-// A type with a slice or a function pointer has no glue yet (P04.06,
-// P04.07): the builders return NoId.
+// interface value         ==: Go's rules on the dynamic types, through the
+//                            runtime's `gopp.iface_eq` / `gopp.iface_hash`
+//                            (two nil ones are equal; the same dynamic type
+//                            and equal values; an uncomparable dynamic type
+//                            panics);
+// A type with a slice or a function pointer has no glue yet (P04.07): the
+// builders return NoId.
 //
 // P04.06 (interfaces) and P05 (maps) call these; they are the one place that
 // decides how a type is compared and hashed.
@@ -48,6 +53,11 @@ namespace gir {
 
 /// Can eq and hash glue be made for T?
 bool hasGlue(const Type *T);
+
+/// Does T hold an interface value (Type::isIface)? Glue for such a type calls
+/// the runtime functions `gopp.iface_eq` and `gopp.iface_hash`, which must be
+/// in the module before the glue is made.
+bool hasIface(const Type *T);
 
 /// Adds the glue function named Symbol to M (LinkOnceODR, so a second module
 /// that makes the same glue folds with it), or returns the one that has the

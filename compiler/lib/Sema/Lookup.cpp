@@ -60,13 +60,54 @@ const Func *sema::declaredMethod(const Func *F) {
   return F;
 }
 
+const llvm::ArrayRef<uint32_t> *Checker::methodIndex(NamedType *O) {
+  if (const auto *Ix = O->MethodIndex.load(std::memory_order_acquire))
+    return Ix;
+  SmallVector<uint32_t, 16> Order(O->Methods->size());
+  for (uint32_t I = 0; I < Order.size(); ++I)
+    Order[I] = I;
+  std::stable_sort(Order.begin(), Order.end(), [&](uint32_t A, uint32_t B) {
+    return (*O->Methods)[A]->Name < (*O->Methods)[B]->Name;
+  });
+  const llvm::ArrayRef<uint32_t> *Ix = Ctx.newIndexList(Order);
+  // (Two threads may build it; the first one stored is kept.)
+  const llvm::ArrayRef<uint32_t> *First = nullptr;
+  if (!O->MethodIndex.compare_exchange_strong(First, Ix,
+                                              std::memory_order_acq_rel))
+    return First;
+  return Ix;
+}
+
 Func *Checker::lookupMethod(NamedType *N, Package *Pkg, StringRef Name,
                             bool Fold, int *Idx, const Func *Want) {
   NamedType *O = N->origin();
   if (!O->Methods)
     return nullptr;
+  // By name, once the method lists are final: the first method of the name
+  // in declaration order that is the one asked for, as the scan below finds
+  // it.
+  if (!Fold && !Want && !ScanMethods && typesFinal() &&
+      O->Methods->size() > IndexedMethods) {
+    const llvm::ArrayRef<uint32_t> &Ix = *methodIndex(O);
+    const auto *It = std::lower_bound(Ix.begin(), Ix.end(), Name,
+                                      [&](uint32_t I, StringRef K) {
+                                        ++LookupSteps;
+                                        return (*O->Methods)[I]->Name < K;
+                                      });
+    for (; It != Ix.end() && (*O->Methods)[*It]->Name == Name; ++It) {
+      ++LookupSteps;
+      Func *M = (*O->Methods)[*It];
+      if (sameId(M, Pkg, Name, false)) {
+        if (Idx)
+          *Idx = static_cast<int>(*It);
+        return N->Orig ? instantiatedMethod(N, *It) : M;
+      }
+    }
+    return nullptr;
+  }
   const Func *WantDecl = declaredMethod(Want);
   for (unsigned I = 0; I < O->Methods->size(); ++I) {
+    ++LookupSteps;
     Func *M = (*O->Methods)[I];
     if (Want ? M == WantDecl : sameId(M, Pkg, Name, Fold)) {
       if (Idx)

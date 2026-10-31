@@ -1,0 +1,28 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-narrow.out 0
+// P04.06: a call through an itab slot is a call through a pointer, which
+// names no callee, so the call site repeats the sign or zero extension of a
+// narrow argument and result itself (LowerToLLVM, the indirect Call): an
+// int8, uint8, bool, int16, uint16 and int32 cross the interface at every
+// `opt` level (the opt matrix runs this file). The expected output is what
+// `go run` prints for this very file.
+package main
+
+type A interface {
+	F(a int8, b uint8, c bool, d int16, e uint16, f int32) (int8, uint16, bool, int32)
+}
+type T struct{ k int8 }
+
+func (t T) F(a int8, b uint8, c bool, d int16, e uint16, f int32) (int8, uint16, bool, int32) {
+	return a + t.k, e + 1, !c, f - int32(d) + int32(b)
+}
+
+func main() {
+	var x A = T{-3}
+	a, b, c, d := x.F(-5, 200, true, -300, 65535, -70000)
+	println(a, b, c, d)
+	for i := 0; i < 3; i++ {
+		a, b, c, d = x.F(int8(-100+i), uint8(250+i), i%2 == 0, int16(-i), uint16(65530+i), int32(i))
+		println(a, b, c, d)
+	}
+}

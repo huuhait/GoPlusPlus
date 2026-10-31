@@ -70,6 +70,9 @@ public:
   bool isFloat() const { return K == Kind::Float; }
   bool isPtr() const { return K == Kind::Ptr; }
   bool isOption() const { return K == Kind::Option; }
+  /// The type of every interface value (Context::iface): a struct of two
+  /// pointers, the itab and the data word (P04.06).
+  bool isIface() const { return K == Kind::Struct && Name == "gopp.iface"; }
   /// Types whose value is one scalar in a register.
   bool isScalar() const {
     return K == Kind::Bool || K == Kind::Int || K == Kind::Float ||
@@ -143,6 +146,12 @@ public:
   Type *unit() { return Unit; }
   Type *boolean() { return Bool; }
   Type *string() { return String; }
+  /// An interface value (P04.06): `struct gopp.iface { itab *u8, data *u8 }`.
+  /// One type for every interface type; the itab says which methods it has,
+  /// and the lowering knows the static type. `Option[I]` has the same type,
+  /// its nil is a null itab (D4.5). Glue (Glue.h) compares and hashes it by
+  /// the dynamic type.
+  Type *iface() { return Iface; }
   Type *intTy(unsigned Bits, bool Signed);
   Type *floatTy(unsigned Bits);
   Type *ptr(Type *Elem);
@@ -191,7 +200,7 @@ private:
   /// The structural body of each self-naming type (setRecBody) to the type.
   llvm::DenseMap<Type *, Type *> Canon;
   std::atomic<bool> AnyCanon{false};
-  Type *Unit, *Bool, *String;
+  Type *Unit, *Bool, *String, *Iface;
 };
 
 } // namespace gir

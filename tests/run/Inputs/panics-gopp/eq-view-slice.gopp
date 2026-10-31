@@ -1,0 +1,13 @@
+package main
+
+// P04.06: a view boxed in an interface compares as the value it shows; a
+// slice compares not at all, so == of two boxed views of slices panics as Go
+// does for two boxed slices, naming the view's type.
+func eq(x, y any) bool { return x == y }
+
+func main() {
+	xs := []int{1, 2, 3}
+	println("before")
+	println(eq(xs[1:], xs[1:]))
+	println("not reached")
+}

@@ -107,8 +107,39 @@ enum class RtFn : unsigned {
   MapEntryArgs, // gopp.map_entry_args(recs *MapEntryArg, n u64)  (copy-in and
                 // aliasing of a call's map-entry arguments)
   MapEntryBack, // gopp.map_entry_back(recs *MapEntryArg, n u64)  (copy-out)
+  MapKeyCheck,  // gopp.map_key_check(info *MapInfo, m *Map, key *u8)  (a key
+                // that holds an interface, in a nil or empty map: Go's
+                // mapKeyError, P04.06)
+  // Interfaces (RuntimeIface.cpp, P04.06):
+  GetItab,   // gopp.get_itab(desc *u8, ti *u8) *u8   (null: ti lacks a method)
+  IfaceEq,   // gopp.iface_eq(a *iface, b *iface) bool
+  IfaceHash, // gopp.iface_hash(p *iface, h u64) u64
+  PanicAssert, // gopp.panic_assert(inter string, dyn *u8, asserted string,
+               // desc *u8)  [noreturn]
+  PanicUncomparable, // gopp.panic_uncomparable(ti *u8, hash bool)  [noreturn]
   Count
 };
+
+/// The fields of a type descriptor (`gopp.typeinfo`, gir.md section 15).
+namespace TI {
+enum : unsigned {
+  Self,     // *u8: the descriptor's own address, so it is the itab of (T, any)
+  Size,     // u64
+  Name,     // string: Go's spelling of the type
+  Eq,       // *u8: func(a, b *T) bool, or null (not comparable)
+  Hash,     // *u8: func(p *T, seed u64) u64, or null
+  Kind,     // u32: reflect.Kind numbers, then Option 27, View 28
+  Flags,    // u32: bit 0 = the value is in the data word (no box)
+  NMethods, // u64
+  Methods,  // *u8: NMethods x {key string, fn *u8}, sorted by key
+  Elem,     // *u8: P05 (reflection)
+  Fields,   // *u8: P05 (TYP-10 field table)
+  NFields,  // u64
+  VTable,   // *u8: P04.22 (`extends` type table)
+  Count
+};
+constexpr uint32_t FlagInline = 1;
+} // namespace TI
 
 class Lowering {
 public:
@@ -117,7 +148,8 @@ public:
            const LowerOptions &Opts)
       : Ctx(Ctx), SM(SM), CP(CP), I(CP.I), Files(Files), Diags(Diags),
         Opts(Opts),
-        M(std::make_unique<Module>(Ctx, CP.Pkg ? CP.Pkg->Path.str() : "")) {
+        M(std::make_unique<Module>(Ctx, CP.Pkg ? CP.Pkg->Path.str() : "")),
+        Methods(CP, Opts.ScanMethodLookups) {
     for (FuncId &Id : RtIds)
       Id = NoId;
     for (auto &Row : Panics)
@@ -134,6 +166,9 @@ public:
   DiagnosticsEngine &Diags;
   const LowerOptions &Opts;
   std::unique_ptr<Module> M;
+  /// The checker's method sets and interface method lists (P04.06): every
+  /// decision of which methods a type or an interface has is the checker's.
+  S::MethodSets Methods;
   Symbols Syms;
   bool Failed = false;
   /// Errors reported so far (unsupported, badExtern, ...): a step that
@@ -161,6 +196,8 @@ public:
   CTypeRules CRules;
 
   void unsupported(SourceLoc At, const llvm::Twine &What);
+  /// An internal error (E0440): a fact the lowering needs is missing.
+  void internalError(SourceLoc At, const llvm::Twine &What);
   void badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why);
   Span spanOf(SourceLoc L);
 
@@ -206,6 +243,8 @@ public:
   FuncId rt(RtFn F, SourceLoc At);
   /// The map functions of RtFn (RuntimeMap.cpp).
   FuncId buildMapRuntime(RtFn F, SourceLoc At);
+  /// The interface functions of RtFn (RuntimeIface.cpp).
+  FuncId buildIfaceRuntime(RtFn F, SourceLoc At);
   /// The hash and equality of map keys of the checker type K, as functions of
   /// `*u8` (the runtime does not know K); NoId after a report.
   std::pair<FuncId, FuncId> mapKeyFns(S::Type *K, SourceLoc At);
@@ -241,6 +280,28 @@ public:
     return !Sig->isMove(K) && K < Sig->Params->Elems.size() &&
            llvm::isa<S::SliceType>(S::under(Sig->Params->Elems[K]));
   }
+  /// Is the receiver of the method F a borrowed []T, a value receiver
+  /// without `move` of a slice type (PAR-1)? It passes as (ptr, len), as a
+  /// borrowed []T parameter does (P04.06).
+  static bool recvBorrowedSlice(const S::Func *F) {
+    return F->Recv && !F->HasPtrRecv && !F->MoveRecv &&
+           llvm::isa<S::SliceType>(S::under(F->Recv->Ty));
+  }
+  /// The (ptr, len) a borrowed []T of the GIR slice type T passes as.
+  Type *borrowedSliceType(Type *T) {
+    return Ctx.tuple({T->fieldType(0, Ctx), Ctx.u64()});
+  }
+  /// The GIR type parameter K of Sig passes as, T being the type of its
+  /// value: a borrowed map is a pointer to the caller's header (PAR-10), a
+  /// borrowed []T is (ptr, len) (ADR-0029 point 7), anything else T. The one
+  /// rule of declarations, method signatures and itab slots.
+  Type *paramType(S::SignatureType *Sig, size_t K, Type *T) {
+    if (mapByPointer(Sig, K))
+      return Ctx.ptr(T);
+    if (sliceBorrowed(Sig, K) && T->getKind() == Type::Kind::Slice)
+      return borrowedSliceType(T);
+    return T;
+  }
   /// A libc function the runtime calls (malloc, memmove, ...).
   FuncId libc(StringRef Name, SourceLoc At);
   llvm::StringMap<FuncId> LibcIds;
@@ -256,6 +317,96 @@ public:
   /// key kind, value, slot, wasnil, own}.
   Type *mapEntryArgType();
 
+  //===--------------------------------------------------------------------===//
+  // Methods and interfaces (LowerIface.cpp, P04.06; gir.md section 15)
+  //===--------------------------------------------------------------------===//
+  /// Is T an interface type that has values (not a constraint)?
+  static bool isInterface(S::Type *T);
+  /// An interface method of the flattened method set of an interface, or a
+  /// method of a type's method set, with the key that tells two methods
+  /// apart at run time: `Name \x01 [package path of an unexported name]
+  /// \x01 mangled signature`. Sets are sorted by Key (bytes), so a type
+  /// descriptor and an interface descriptor are walked together.
+  struct MethodEntry {
+    const S::Func *F = nullptr;
+    std::string Key;
+  };
+  /// The methods of interface I in itab order (sorted by Key), and the slot
+  /// of each key, so a call finds its slot in one lookup.
+  struct IfaceMethods {
+    SmallVector<MethodEntry, 4> List;
+    llvm::StringMap<unsigned> Slot;
+  };
+  /// The methods of interface I: the checker's list (MethodSets, embedded
+  /// interfaces flattened), sorted; null after a report. A method that fails
+  /// (`!`, P04.10) or is an operator element (P04.23) is reported.
+  const IfaceMethods *ifaceMethods(S::Type *I, SourceLoc At);
+  /// The itab slot of the interface method F in Ms, or ~0u.
+  unsigned ifaceSlot(const IfaceMethods &Ms, const S::Func *F);
+  /// Do interfaces with the methods A and B have one itab layout (the same
+  /// keys)? Cached per pair: N conversions between interfaces of N methods
+  /// compare the lists once.
+  bool sameItabs(const IfaceMethods &A, const IfaceMethods &B);
+  llvm::DenseMap<std::pair<const IfaceMethods *, const IfaceMethods *>, bool>
+      SameItabCache;
+  /// The method set of the dynamic type Dyn, as the checker decides it
+  /// (MethodSets: a value has the value-receiver methods, a pointer all of
+  /// them, a `move` receiver and an operator method neither), sorted by Key.
+  /// A method declined where it was declared is in it (it has no thunk; the
+  /// users skip it). Null after a report: a method inherited through
+  /// `extends` (P04.22).
+  const SmallVector<MethodEntry, 4> *methodSet(S::Type *Dyn, SourceLoc At);
+  std::string methodKey(const S::Func *F);
+  /// The GIR function type of a method signature with the parameter Lead in
+  /// front (a receiver, or the data word of an itab entry); null after a
+  /// report.
+  Type *methodSig(S::SignatureType *Sig, Type *Lead, SourceLoc At);
+  /// Go's spelling of a type for panic messages and the descriptor (`main.T`,
+  /// `[]int`, `*main.T`, `interface {}`, `map[string]int`).
+  std::string rtypeName(S::Type *T);
+  /// `(params) results` of a signature in that spelling (`(int, ...string)
+  /// (bool, error)`).
+  std::string sigText(S::SignatureType *SG);
+  /// Can values of T be compared with == (Go's comparable, at run time for an
+  /// interface)?
+  bool comparable(S::Type *T);
+  /// Does a value of the GIR type G live in the data word of an interface
+  /// (at most one word: no box)? One decision point (TYP-8).
+  bool isInline(Type *G) { return layout(G).Size <= 8; }
+  /// The static data (type descriptors, method tables, itabs, interface
+  /// descriptors): one global each, `LinkOnceODR`, named by P04.17. ~0u after
+  /// a report.
+  uint32_t typeInfo(S::Type *T, SourceLoc At);
+  /// The == and hash a descriptor holds for a view (G its GIR type): those
+  /// of the value it shows (OWN-V), as functions of the value's address; NoId
+  /// when that value is not comparable (a slice, a map).
+  std::pair<FuncId, FuncId> viewGlue(S::RefType *RT, Type *G, SourceLoc At);
+  llvm::DenseMap<S::RefType *, std::pair<FuncId, FuncId>> ViewGlues;
+  uint32_t itab(S::Type *Dyn, S::Type *I, SourceLoc At);
+  uint32_t ifaceDesc(S::Type *I, SourceLoc At);
+  /// The adapter that an itab calls for method F of Dyn: (data word,
+  /// arguments) -> results. NoId after a report.
+  FuncId ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At);
+  Type *tiType();
+  Type *mtEntType();
+  uint32_t ItabCache = ~0u;
+  uint32_t itabCacheGlobal();
+  /// A u64 set while gopp.map_key_check hashes a key: the unhashable panic
+  /// then says it as Go's map access of a nil or empty map does.
+  uint32_t PlainHash = ~0u;
+  uint32_t plainHashFlag();
+  llvm::StringMap<uint32_t> StaticData;
+  llvm::StringMap<FuncId> Thunks;
+  /// (Owned by pointer: a reference stays valid while the maps grow.)
+  llvm::DenseMap<S::Type *, std::unique_ptr<IfaceMethods>> IfaceMethodCache;
+  llvm::DenseMap<S::Type *, std::unique_ptr<SmallVector<MethodEntry, 4>>>
+      MethodSetCache;
+  llvm::DenseSet<S::Type *> IfaceBad, MethodSetBad;
+  llvm::DenseMap<const S::Func *, std::string> MethodKeys;
+
+  /// A method this task lowers: refuses (E0439, naming the task) a generic
+  /// receiver, a map receiver, an operator method and an `extends` mark.
+  bool methodSupported(const S::Func *F, SourceLoc At);
   void declareFunction(const ast::FuncDecl *FD);
   void declareGlobals();
   void lowerBody(const ast::FuncDecl *FD);
@@ -373,10 +524,32 @@ private:
   unsigned LocalTypes = 0;
 
   Context &ctx() { return L.Ctx; }
-  void at(const ast::Node *N) { FB.setSpan(L.spanOf(N->getBegin())); }
+  void at(const ast::Node *N) {
+    Pos = N->getBegin();
+    FB.setSpan(L.spanOf(Pos));
+  }
   void unsupported(const ast::Node *N, const llvm::Twine &What) {
     L.unsupported(N->getBegin(), What);
   }
+  /// The node `at` last named: where errorValue reports what nothing did.
+  SourceLoc Pos;
+  /// The value of an expression that could not be lowered: the module fails,
+  /// so nothing uses it. Something must have been reported (an unsupported
+  /// form, a type that cannot be lowered); when nothing was, a fact the
+  /// checker should have recorded is missing, and this reports it as an
+  /// internal error, so it never becomes a silent wrong value.
+  Operand errorValue(Context &C);
+  /// V after a step that could not lower N, under the same rule.
+  Operand failed(const ast::Node *N, Operand V);
+  /// errorValue, said at N.
+  Operand errorAt(const ast::Node *N) {
+    return failed(N, constInt(ctx().i64(), 0));
+  }
+  /// The zero of the type of E, as what a refused E gives (after a report):
+  /// later uses see a value of the right shape and report nothing more (a
+  /// tuple where several values are wanted, an interface where one is); an
+  /// i64 zero when E's type has no GIR type.
+  Operand zeroOfExpr(const ast::Expr *E);
   static const ast::Expr *unparen(const ast::Expr *E) {
     while (auto *P = llvm::dyn_cast<ast::ParenExpr>(E))
       E = P->X;
@@ -411,8 +584,54 @@ private:
   Operand lowerLogical(const ast::BinaryExpr *B);
   Operand lowerUnary(const ast::UnaryExpr *U);
   Operand lowerCall(const ast::CallExpr *C);
+  /// The arguments of C for the signature Sig (GSig: the callee's GIR
+  /// signature; Lead are its first parameters, a method's receiver, already
+  /// made) and the call of CalleeOp: a function constant, or a pointer of a
+  /// function type (an interface method, P04.06).
+  Operand callWith(const ast::CallExpr *C, S::SignatureType *Sig, Type *GSig,
+                   Operand CalleeOp, ArrayRef<Operand> Lead, bool NoUnwind);
   Operand lowerConversion(const ast::CallExpr *C);
   Operand lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B);
+  // Methods and interfaces (LowerIface.cpp, P04.06).
+  /// A call of a method: static (the receiver adapted: its address, or its
+  /// value) or through the itab of an interface.
+  Operand lowerMethodCall(const ast::CallExpr *C, const ast::SelectorExpr *Sel,
+                          const S::Func *F, const S::Selection &SL);
+  /// The value of E where an interface of type Want is wanted.
+  Operand toIface(const ast::Expr *E, S::Type *Want);
+  /// X, a value of the checker type From, as a value of the interface type
+  /// Want: boxed, converted between interfaces, or an Option's nil as the nil
+  /// interface (the one decision point of a conversion to an interface).
+  Operand toIfaceValue(Operand X, S::Type *From, S::Type *Want,
+                       const ast::Node *N);
+  /// V (of the checker type From) where a value of type To is wanted when
+  /// it comes out of a call with several results (`return f()`, `a, b =
+  /// f()`, `g(f())`): an interface or `Option[I]` target converts, an
+  /// `Option[T]` target wraps a T.
+  Operand convertResult(Operand V, S::Type *From, S::Type *To,
+                        const ast::Node *N);
+  /// V (of the concrete type Dyn) in an interface of type Want: inline in the
+  /// data word when it fits, else in a new box.
+  Operand boxAs(Operand V, S::Type *Dyn, S::Type *Want, const ast::Node *N);
+  /// The interface X of type From as one of type To (all methods of To are
+  /// in From). A nil one stays nil.
+  Operand ifaceConvert(Operand X, S::Type *From, S::Type *To,
+                       const ast::Node *N);
+  Operand ifaceFrom(Operand Itab, Operand Data);
+  /// x.(T): the value (a tuple of it and an ok flag when CommaOk).
+  Operand lowerTypeAssert(const ast::TypeAssertExpr *TA, bool CommaOk,
+                          S::Type *WantVal = nullptr);
+  /// The place of the value an interface holds, as a value of GIR type G.
+  Place boxedPlace(Place IfaceP, Type *G);
+  /// The descriptor of the dynamic type of the interface in IfaceP, or null
+  /// for a nil one.
+  Operand dynTypeInfo(Place IfaceP);
+  /// Does the dynamic type (Ti, never null here) satisfy `T`? For an
+  /// interface T: it has the methods; else it is T.
+  Operand typeMatches(Operand Ti, S::Type *T, const ast::Node *N);
+  void lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label);
+  /// The address of a global as a *u8.
+  Operand globalPtr(uint32_t G);
   Operand lowerOptionMethod(const ast::CallExpr *C,
                             const ast::SelectorExpr *Sel, const S::Func *F);
   Operand lowerCompositeLit(const ast::CompositeLit *CL);
@@ -531,14 +750,18 @@ private:
   void lowerIf(const ast::IfStmt *If);
   void lowerFor(const ast::ForStmt *For, std::string Label);
   void lowerSwitch(const ast::SwitchStmt *Sw, std::string Label);
+  // (lowerTypeSwitch: LowerIface.cpp)
   void lowerBranch(const ast::BranchStmt *B);
   void lowerLabeled(const ast::LabeledStmt *LS);
   void lowerReturn(const ast::ReturnStmt *R);
   void lowerIncDec(const ast::IncDecStmt *S);
   void lowerTypeDecl(const ast::GenDecl *GD);
   /// The values of a call used where several are wanted (`a, b := f()`).
+  /// Targets: the types the values go to (an interface target converts; the
+  /// first one is also the type a comma-ok assertion binds, a view, TYP-9).
   bool multiValues(const ast::Expr *E, size_t Want,
-                   SmallVector<Operand, 2> &Out);
+                   SmallVector<Operand, 2> &Out,
+                   ArrayRef<S::Type *> Targets = {});
   BlockId labelBlock(StringRef Name);
 
   struct Dest;
@@ -619,6 +842,10 @@ private:
   /// The map object of an expression of map type (read through a view).
   Operand mapValue(const ast::Expr *E);
   Operand mapInfoPtr(S::MapType *MT, const ast::Node *N);
+  /// Before a lookup or a delete: a key that holds an interface is hashed in
+  /// a nil or empty map too (gopp.map_key_check), as Go does.
+  void mapKeyCheck(S::MapType *MT, const Operand &Info, const Operand &Mp,
+                   const Operand &KeyAddr, const ast::Node *N);
   Operand bytesAddr(Place P);
   Operand mapRead(const ast::IndexExpr *IE, bool CommaOk);
   void lowerMapDest(const ast::IndexExpr *IE, Dest &D);

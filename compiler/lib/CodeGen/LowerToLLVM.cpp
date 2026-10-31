@@ -138,6 +138,7 @@ private:
   llvm::Constant *positionConst(const G::Span &S);
   /// A constant as it is stored in memory (a bool is a byte).
   llvm::Constant *memConstant(const G::Constant &K);
+  llvm::Constant *staticData(const G::Global &Gl);
 
   /// FMA contraction (D4.12): gc fuses a float x*y with the + or - that
   /// reads it on arm64, never on amd64. The code generator is the only place
@@ -827,6 +828,64 @@ llvm::Value *Lowering::constant(const G::Constant &K) {
   return nullptr;
 }
 
+/// The value of a global with static data (Global::Parts, V072): the leaves
+/// of its type in order, built bottom up with a stack of its own.
+llvm::Constant *Lowering::staticData(const G::Global &Gl) {
+  struct Frame {
+    const G::Type *T;
+    llvm::SmallVector<const G::Type *, 4> Kids;
+    llvm::SmallVector<llvm::Constant *, 4> Vals;
+    bool Open = false;
+  };
+  llvm::SmallVector<Frame, 8> Stack;
+  Stack.push_back({Gl.Ty, {}, {}, false});
+  size_t Pos = 0;
+  llvm::Constant *Done = nullptr;
+  while (!Stack.empty()) {
+    Frame &F = Stack.back();
+    llvm::Constant *Val = nullptr;
+    if (!F.Open) {
+      F.Open = true;
+      const G::Type *T = F.T;
+      const G::Constant &K = Gl.Parts[Pos < Gl.Parts.size() ? Pos : 0];
+      bool Compound = (T->getKind() == G::Type::Kind::Struct && T->hasBody()) ||
+                      T->getKind() == G::Type::Kind::Tuple ||
+                      T->getKind() == G::Type::Kind::Array;
+      if (T->isUnit()) {
+        Val = llvm::Constant::getNullValue(memTy(T));
+      } else if (K.K == G::Constant::Zero && K.Ty == T) {
+        ++Pos;
+        Val = llvm::Constant::getNullValue(memTy(T));
+      } else if (Compound && !T->isRec()) {
+        if (T->getKind() == G::Type::Kind::Array)
+          F.Kids.assign(T->length(), T->elem());
+        else
+          F.Kids.assign(T->elems().begin(), T->elems().end());
+      } else {
+        Val = memConstant(Gl.Parts[Pos++]);
+      }
+    }
+    if (!Val) {
+      if (F.Vals.size() < F.Kids.size()) {
+        const G::Type *Kid = F.Kids[F.Vals.size()];
+        Stack.push_back({Kid, {}, {}, false});
+        continue;
+      }
+      llvm::Type *MT = memTy(F.T);
+      if (F.T->getKind() == G::Type::Kind::Array)
+        Val = llvm::ConstantArray::get(cast<llvm::ArrayType>(MT), F.Vals);
+      else
+        Val = llvm::ConstantStruct::get(cast<llvm::StructType>(MT), F.Vals);
+    }
+    Stack.pop_back();
+    if (Stack.empty())
+      Done = Val;
+    else
+      Stack.back().Vals.push_back(Val);
+  }
+  return Done;
+}
+
 llvm::Constant *Lowering::memConstant(const G::Constant &K) {
   if (K.K == G::Constant::Zero)
     return llvm::Constant::getNullValue(memTy(K.Ty));
@@ -1252,9 +1311,10 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
     llvm::CallInst *CI = B.CreateCall(fnType(Sig), Callee, Args);
     // The ABI's extension of narrow arguments and results is repeated at the
     // call (the callee's own attributes stay on the callee). A call through a
-    // pointer (a map's hash, an allocator's table entry, ADR-0029) gets the
-    // extension every definition of its signature has, so a callee written
-    // in C gets a `bool` as the C ABI passes it.
+    // pointer (a map's hash, an allocator's table entry, ADR-0029; an itab
+    // slot, P04.06) gets the extension every definition of its signature
+    // has, so a callee written in C gets a `bool` as the C ABI passes it, and
+    // a thunk its narrow arguments as its definition expects them.
     if (T.Discr.K == G::Operand::Const && T.Discr.C.K == G::Constant::Func) {
       CI->setAttributes(
           Funcs[T.Discr.C.Bits]->getAttributes().removeFnAttributes(C));
@@ -2092,6 +2152,8 @@ llvm::Error Lowering::run() {
   if (NoStackAt)
     return nestingError();
   for (const G::Global &Gl : GM.Globals) {
+    // The static data (Global::Parts) names functions and other globals: its
+    // value is set below, once they exist.
     llvm::Constant *Init = Gl.Init.K == G::Constant::Zero
                                ? llvm::Constant::getNullValue(memTy(Gl.Ty))
                                : memConstant(Gl.Init);
@@ -2102,7 +2164,9 @@ llvm::Error Lowering::run() {
             ? llvm::GlobalValue::LinkOnceODRLinkage
             : llvm::GlobalValue::ExternalLinkage,
         Init, Gl.Name);
-    if (Gl.ReadOnly)
+    // (A table with pointers in it is a type descriptor or an itab: its
+    // address is its identity, so it is never merged with another.)
+    if (Gl.ReadOnly && Gl.Parts.empty())
       GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     Globals.push_back(GV);
   }
@@ -2110,6 +2174,9 @@ llvm::Error Lowering::run() {
     return E;
   for (size_t I = 0; I < GM.Funcs.size(); ++I)
     Funcs.push_back(declare(I, *GM.Funcs[I]));
+  for (size_t I = 0; I < GM.Globals.size(); ++I)
+    if (!GM.Globals[I].Parts.empty())
+      Globals[I]->setInitializer(staticData(GM.Globals[I]));
   for (size_t I = 0; I < GM.Funcs.size(); ++I)
     if (!GM.Funcs[I]->isDeclaration())
       if (llvm::Error E = function(*GM.Funcs[I], Funcs[I]))

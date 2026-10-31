@@ -1,0 +1,36 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-output.py --src %s | FileCheck %s
+// P04.06: println of an interface prints the two words as Go does,
+// `(0x4b5b00,0xc000012345)`: the itab (Go: the type descriptor for an empty
+// interface) and the data word, in lowercase hex without leading zeros. The
+// addresses change from run to run, so the shape is checked, not the values.
+// Both sides: a nil interface is (0x0,0x0), a set one has a non-zero itab, the
+// same value read twice prints the same words (the box is shared, not
+// copied), and a pointer in an interface prints the pointer itself as data.
+package main
+
+type I interface{ M() int }
+type A struct{ x int }
+
+func (a A) M() int { return a.x }
+
+func main() {
+	var e error
+	println(e)
+	var x any = 7
+	println(x)
+	y := x
+	println(y)
+	z := 5
+	p := &z
+	var q any = p
+	println(q, p)
+	var i I = A{1}
+	println(i)
+}
+
+// CHECK: (0x0,0x0)
+// CHECK-NEXT: ([[T:0x[1-9a-f][0-9a-f]*]],[[D:0x[1-9a-f][0-9a-f]*]])
+// CHECK-NEXT: ([[T]],[[D]])
+// CHECK-NEXT: (0x{{[1-9a-f][0-9a-f]*}},[[P:0x[1-9a-f][0-9a-f]*]]) [[P]]
+// CHECK-NEXT: (0x{{[1-9a-f][0-9a-f]*}},0x{{[1-9a-f][0-9a-f]*}})

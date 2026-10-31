@@ -8,11 +8,13 @@ add_gopp_library(GIR
   Glue.cpp
   Inline.cpp
   LowerExpr.cpp
+  LowerIface.cpp
   LowerStmt.cpp
   LowerStr.cpp
   LowerTest.cpp
   Runtime.cpp
   RuntimeMap.cpp
+  RuntimeIface.cpp
   RuntimeStr.cpp
   Print.cpp
   Serialize.cpp

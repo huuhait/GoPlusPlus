@@ -973,6 +973,239 @@ TEST(GIRStress, TheWalkCheckFailsAQuadraticLabelWalk) {
   EXPECT_FALSE(walksFollow(S1, S16, 20)) << S1 << " -> " << S16;
 }
 
+// P04.06: the walks of interfaces. A chain of N interfaces, each embedding
+// the one before and adding a method, satisfied by one type of N methods and
+// used as the top one (flattened once: N interfaces visited, an itab of N
+// methods made by a binary search in the type's sorted method set).
+std::string ifaceChainOfN(unsigned N) {
+  std::string S = "package main\n\ntype I0 interface{ M0() int }\n";
+  for (unsigned I = 1; I < N; ++I)
+    S += "type I" + std::to_string(I) + " interface {\n\tI" +
+         std::to_string(I - 1) + "\n\tM" + std::to_string(I) + "() int\n}\n";
+  S += "type T struct{}\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func (T) M" + std::to_string(I) + "() int { return " +
+         std::to_string(I) + " }\n";
+  S += "\nfunc main() {\n\tvar x I" + std::to_string(N - 1) +
+       " = T{}\n\tprintln(x.M0() + x.M" + std::to_string(N - 1) + "())\n}\n";
+  return S;
+}
+
+// The control: the same chain with a variable of every interface of it
+// (each flattened by itself: k interfaces for the k-th) is quadratic in N,
+// and the count must see it.
+std::string ifaceChainAllOfN(unsigned N) {
+  std::string S = ifaceChainOfN(N);
+  S.resize(S.rfind("\nfunc main()"));
+  S += "\nfunc main() {\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tvar x" + std::to_string(I) + " I" + std::to_string(I) +
+         " = T{}\n\t_ = x" + std::to_string(I) + "\n";
+  return S + "}\n";
+}
+
+// A type switch of N cases (N types) and N sibling assertions.
+std::string typeSwitchOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type T" + std::to_string(I) + " struct{ A int }\n";
+  S += "\nfunc f(x any) int {\n\tswitch x.(type) {\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tcase T" + std::to_string(I) + ":\n\t\treturn " + std::to_string(I) +
+         "\n";
+  S += "\t}\n\treturn -1\n}\n\nfunc main() {\n\tvar a any = T0{}\n\tn := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tif _, ok := a.(T" + std::to_string(I) + "); ok {\n\t\tn++\n\t}\n";
+  return S + "\tprintln(f(a), n)\n}\n";
+}
+
+TEST(GIRStress, TheLoweringCountsAChainOfEmbeddedInterfaces) {
+  expectWalksFollow(30, ifaceChainOfN);
+}
+TEST(GIRStress, TheLoweringCountsTypeSwitchCasesAndAssertions) {
+  expectWalksFollow(20, typeSwitchOfN);
+}
+TEST(GIRStress, TheInterfaceWalkCheckFailsAQuadraticChain) {
+  uint64_t S1 = lowerAndCountWalks(20, ifaceChainAllOfN);
+  uint64_t S16 = lowerAndCountWalks(320, ifaceChainAllOfN);
+  EXPECT_FALSE(walksFollow(S1, S16, 20)) << S1 << " -> " << S16;
+}
+TEST(GIRStress, LoweringInterfacesIsLinearInTheGIRItMakes) {
+  expectLoweredStepsLinear(60, ifaceChainOfN);
+  expectLoweredStepsLinear(60, typeSwitchOfN);
+}
+
+// The other dimensions of interfaces, each grown alone: an interface of N
+// methods that a type implements and N calls through it (a call finds its
+// itab slot by one lookup; the control scans for it, LowerOptions::
+// ScanItabSlots, and must fail the same check), N types converted to one
+// interface (a descriptor, an itab and a thunk each), N comma-ok assertions
+// and conversions between interfaces, one type of N methods asserted to N
+// interfaces of one method each, an interface that embeds N others, and a
+// type nested N deep in an `any` (its name is built once).
+
+/// An interface of N methods, a type that has them, and N calls through it.
+std::string ifaceMethodsOfN(unsigned N) {
+  std::string S = "package main\n\ntype I interface {\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tM" + std::to_string(I) + "() int\n";
+  S += "}\n\ntype T struct{ x int }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func (t T) M" + std::to_string(I) + "() int { return t.x + " +
+         std::to_string(I) + " }\n";
+  S += "\nfunc main() {\n\tvar i I = T{1}\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += i.M" + std::to_string(I) + "()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// N types with a method, each converted to one interface and called.
+std::string typesToIfaceOfN(unsigned N) {
+  std::string S = "package main\n\ntype I interface{ M() int }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type T" + std::to_string(I) + " struct{ x int }\n\nfunc (t T" +
+         std::to_string(I) + ") M() int { return t.x + " + std::to_string(I) +
+         " }\n";
+  S += "\nfunc main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += I(T" + std::to_string(I) + "{1}).M()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// N conversions between interfaces and N assertions, comma-ok.
+std::string assertionsOfN(unsigned N) {
+  std::string S = "package main\n\ntype A interface{ M() int }\ntype B "
+                  "interface {\n\tA\n\tN() int\n}\n\ntype T struct{ x "
+                  "int }\n\nfunc (t T) M() int { return t.x }\nfunc (t T) "
+                  "N() int { return 2 }\n\nfunc main() {\n\tvar b B = "
+                  "T{1}\n\tvar x any = b\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tvar a" + std::to_string(I) + " A = b\n\tt += a" +
+         std::to_string(I) +
+         ".M()\n\tif v, ok := x.(B); ok {\n\t\tt += v.N()\n\t}\n\tif v, ok := "
+         "x.(T); ok {\n\t\tt += v.x\n\t}\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// One type with N methods and N interfaces of one method each; the value is
+/// converted to each and asserted from an `any`.
+std::string ifaceInterfacesOfN(unsigned N) {
+  std::string S = "package main\n\ntype T struct{ n int }\n\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "func (t T) M" + K + "() int { return t.n + " + K + " }\n\ntype I" +
+         K + " interface{ M" + K + "() int }\n\n";
+  }
+  S += "func main() {\n\tvar x any = T{1}\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "\tif v, ok := x.(I" + K + "); ok {\n\t\tt += v.M" + K + "()\n\t}\n";
+  }
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// An interface that embeds N others, one method each, and a call of each.
+std::string ifaceEmbedsOfN(unsigned N) {
+  std::string S = "package main\n\ntype T struct{ n int }\n\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "func (t T) M" + K + "() int { return " + K + " }\n\ntype E" + K +
+         " interface{ M" + K + "() int }\n\n";
+  }
+  S += "type All interface {\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tE" + std::to_string(I) + "\n";
+  S += "}\n\nfunc main() {\n\tvar a All = T{1}\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += a.M" + std::to_string(I) + "()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// A type nested N deep ([][]...[]int) in an `any`, asserted back.
+std::string ifaceDeepTypeOfN(unsigned N) {
+  std::string Ty;
+  for (unsigned I = 0; I < N; ++I)
+    Ty += "[]";
+  return "package main\n\nfunc main() {\n\tvar x " + Ty +
+         "int\n\tvar a any = x\n\t_, ok := a.(" + Ty +
+         "int)\n\tprintln(ok)\n}\n";
+}
+
+/// N types and N interfaces, every type has every method: the size of what
+/// is lowered is the product, so the GIR check must fail (the control).
+std::string ifaceProductOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned J = 0; J < N; ++J)
+    S += "type I" + std::to_string(J) + " interface{ M" + std::to_string(J) +
+         "() int }\n\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string K = std::to_string(I);
+    S += "type T" + K + " struct{ n int }\n\n";
+    for (unsigned J = 0; J < N; ++J)
+      S += "func (t T" + K + ") M" + std::to_string(J) + "() int { return " +
+           std::to_string(J) + " }\n\n";
+  }
+  S += "func main() {\n\tt := 0\n\tvar x any\n";
+  for (unsigned I = 0; I < N; ++I) {
+    S += "\tx = T" + std::to_string(I) + "{1}\n";
+    S += "\tif v, ok := x.(I" + std::to_string(I) + "); ok {\n\t\tt += v.M" +
+         std::to_string(I) + "()\n\t}\n";
+  }
+  return S + "\tprintln(t)\n}\n";
+}
+
+TEST(GIRStress, TheLoweringCountsItabsAndDescriptors) {
+  expectWalksFollow(20, ifaceMethodsOfN);
+  expectWalksFollow(20, typesToIfaceOfN);
+}
+TEST(GIRStress, TheLoweringCountsAssertionsAndConversions) {
+  expectWalksFollow(20, assertionsOfN);
+}
+/// A type of N methods boxed in an `any` (its descriptor lists all of them:
+/// the checker's method set, one lookup per name, review R2).
+std::string boxedMethodsOfN(unsigned N) {
+  std::string S = "package main\n\ntype T struct{ n int }\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "func (t T) M" + std::to_string(I) + "() int { return t.n + " +
+         std::to_string(I) + " }\n";
+  return S + "\nfunc main() {\n\tvar a any = T{1}\n\t_ = a\n}\n";
+}
+
+TEST(GIRStress, TheLoweringCountsTheMethodSetOfABoxedType) {
+  expectWalksFollow(20, boxedMethodsOfN);
+}
+// The control: the checker's lookup by name scanning the type's methods (the
+// quadratic method set of review R2, LowerOptions::ScanMethodLookups) must
+// fail the same check, which counts the lookups' steps.
+TEST(GIRStress, TheMethodSetCheckFailsAScanForEachName) {
+  LowerOptions Scan;
+  Scan.ScanMethodLookups = true;
+  uint64_t S1 = lowerAndCountWalks(20, boxedMethodsOfN, Scan);
+  uint64_t S16 = lowerAndCountWalks(320, boxedMethodsOfN, Scan);
+  EXPECT_FALSE(walksFollow(S1, S16, 20)) << S1 << " -> " << S16;
+}
+TEST(GIRStress, TheItabCheckFailsAScanForTheSlot) {
+  LowerOptions Scan;
+  Scan.ScanItabSlots = true;
+  uint64_t S1 = lowerAndCountWalks(20, ifaceMethodsOfN, Scan);
+  uint64_t S16 = lowerAndCountWalks(320, ifaceMethodsOfN, Scan);
+  EXPECT_FALSE(walksFollow(S1, S16, 20)) << S1 << " -> " << S16;
+}
+TEST(GIRStress, LoweringManyInterfacesOfOneTypeIsLinear) {
+  expectLoweredStepsLinear(100, ifaceInterfacesOfN);
+}
+TEST(GIRStress, LoweringAnInterfaceThatEmbedsManyIsLinear) {
+  expectLoweredStepsLinear(100, ifaceEmbedsOfN);
+}
+TEST(GIRStress, LoweringADeepTypeInAnInterfaceIsLinear) {
+  expectLoweredStepsLinear(200, ifaceDeepTypeOfN);
+}
+TEST(GIRStress, TheInterfaceProductControlFailsTheLinearCheck) {
+  uint64_t S1 = lowerAndCount(10, ifaceProductOfN),
+           S4 = lowerAndCount(40, ifaceProductOfN);
+  EXPECT_GT(2 * S4, 9 * S1) << S1 << " -> " << S4;
+}
+
 // P04.05 review R15: the map-entry arguments of one call make GIR linear in
 // their number (one record each, one runtime call that resolves the
 // aliasing). One call with N entry arguments; the dimension is counted on

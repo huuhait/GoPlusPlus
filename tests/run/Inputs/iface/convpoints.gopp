@@ -1,0 +1,27 @@
+package main
+
+type E struct{}
+
+func (E) Error() string { return "E" }
+
+var ge E
+
+func a() (int, *E) { return 1, &ge }
+func two() (int, error) { return a() }
+
+func b() (int, int) { return 1, 2 }
+func c() (any, any) { return b() }
+
+func take(x any, y any) int { return 1 }
+
+func main() {
+	n, e := two()
+	println(n, e.Error())
+	x, y := c()
+	println(x.(int), y.(int))
+	var p, q any = b()
+	println(p.(int), q.(int))
+	println(take(b()))
+	p, q = b()
+	println(p == q)
+}

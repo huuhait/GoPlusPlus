@@ -1,0 +1,179 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-switch.out 0
+// P04.06: type switches with every case form (a type, several types, nil,
+// an interface type, default, a binding that is the value, the interface or
+// a view), type assertions to a type and to an interface, the comma-ok form,
+// and the dynamic type of a value in the data word (small) and in a box
+// (large). The expected output is what `go run` prints for this very file.
+package main
+
+type Shape interface{ Area() int }
+type Namer interface{ Name() string }
+
+type Sq struct{ S int }
+type Big struct{ A, B, C int }
+type Named struct{ N int }
+type Num int
+type Flag bool
+type Tiny struct{}
+
+func (s Sq) Area() int      { return s.S * s.S }
+func (b Big) Area() int     { return b.A + b.B + b.C }
+func (n *Named) Area() int  { return n.N }
+func (n *Named) Name() string { return "named" }
+func (n Num) Name() string  { return "num" }
+
+func kind(x any) int {
+	switch v := x.(type) {
+	case nil:
+		return 0
+	case int:
+		return 100 + v
+	case int8:
+		return 200 + int(v)
+	case uint16:
+		return 300 + int(v)
+	case float64:
+		return 400 + int(v)
+	case bool:
+		if v {
+			return 501
+		}
+		return 500
+	case string:
+		return 600 + len(v)
+	case Sq, Big:
+		return 700
+	case *Named:
+		return 800 + v.N
+	case Num:
+		return 900 + int(v)
+	case Flag:
+		return 950
+	case Tiny:
+		return 960
+	case []int:
+		return 1000 + len(v)
+	case [2]int:
+		return 1100 + v[1]
+	case map[string]int:
+		return 1200 + len(v)
+	case Shape:
+		return 1300 + v.Area()
+	case error:
+		return 1400
+	default:
+		return -1
+	}
+}
+
+func order(x any) string {
+	switch x.(type) {
+	case Shape:
+		return "shape"
+	case Namer:
+		return "namer"
+	case Sq:
+		return "sq"
+	}
+	return "none"
+}
+
+func iface(x any) int {
+	switch s := x.(type) {
+	case Shape:
+		return s.Area()
+	case Namer:
+		return len(s.Name())
+	}
+	return 0
+}
+
+func multi(x any) int {
+	switch s := x.(type) {
+	case Sq, Big:
+		if s == nil {
+			return -1
+		}
+		return 1
+	case nil:
+		return 2
+	}
+	return 3
+}
+
+func empty(x any) bool {
+	switch x.(type) {
+	}
+	return true
+}
+
+func label(x any) int {
+	n := 0
+L:
+	for i := 0; i < 3; i++ {
+		switch x.(type) {
+		case int:
+			n++
+			continue L
+		case string:
+			break L
+		default:
+			n += 10
+		}
+		n += 100
+	}
+	return n
+}
+
+func main() {
+	nm := Named{4}
+	m := map[string]int{"a": 1}
+	println(kind(nil), kind(5), kind(int8(-3)), kind(uint16(9)), kind(2.5))
+	println(kind(true), kind(false), kind("abc"), kind(Sq{2}), kind(Big{1, 2, 3}))
+	println(kind(&nm), kind(Num(6)), kind(Flag(true)), kind(Tiny{}))
+	println(kind([]int{1, 2}), kind([2]int{3, 4}), kind(m), kind(int64(1)))
+	println(order(Sq{1}), order(&nm), order(Num(1)), order(3))
+	println(iface(Sq{3}), iface(&nm), iface(Num(1)), iface(5))
+	println(multi(Sq{1}), multi(nil), multi(1))
+	println(empty(1), label(1), label("x"), label(2.5))
+
+	var a any = Big{1, 2, 3}
+	b, ok := a.(Big)
+	println(b.A, b.B, b.C, ok)
+	_, ok = a.(Sq)
+	println(ok)
+	s, ok := a.(Shape)
+	if ok {
+		println(s.Area(), ok)
+	}
+	_, ok = a.(Namer)
+	println(ok)
+	var z any
+	_, ok = z.(int)
+	println(ok)
+	_, ok = z.(Shape)
+	println(ok)
+	v := a.(Big)
+	println(v.C)
+	sh := a.(Shape)
+	println(sh.Area())
+	i, ok := any(7).(int)
+	println(i, ok)
+	str, ok := any("hello").(string)
+	println(len(str), ok)
+	n, ok := any(Num(3)).(Num)
+	println(n, ok)
+	if f, ok := any(Flag(true)).(Flag); ok {
+		println(bool(f))
+	}
+	var sq Shape = Sq{6}
+	if q, ok := sq.(Sq); ok {
+		println(q.S)
+	}
+	_, ok = sq.(Big)
+	println(ok)
+	any2 := sq.(any)
+	println(any2 != nil)
+	println(any(sq) == any(Sq{6}))
+}

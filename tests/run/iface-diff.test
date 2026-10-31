@@ -1,0 +1,39 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface/methods.gopp %S/Inputs/iface/methods.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface/dispatch.gopp %S/Inputs/iface/dispatch.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface/switches.gopp %S/Inputs/iface/switches.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface/boxing.gopp %S/Inputs/iface/boxing.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface/convpoints.gopp %S/Inputs/iface/convpoints.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface/params.gopp %S/Inputs/iface/params.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface-gopp/option.gopp %S/Inputs/iface-gopp/option.out
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/iface-gopp/nilmap.gopp %S/Inputs/iface-gopp/nilmap.out
+// P04.06 differential tables for methods and interfaces, with Go's output:
+//   methods     value and pointer receivers, methods of slice and struct
+//               types, a pointer where a value method is wanted, calls with
+//               several results through an interface, an interface stored in
+//               a struct, a method that returns its own interface type, errors
+//   dispatch    interface embedding, a conversion between interfaces (the itab
+//               is built from the method tables at run time), assertions to
+//               interfaces and concrete types, `error`, `any`, Sizeof
+//   switches    type switches: the nil case, interface cases in order (the
+//               first that matches), several types in one case, no binding,
+//               break and continue out of a case, a switch with an init
+//               statement; `==` on structs, arrays and maps with interface
+//               fields
+//   boxing      every kind of value in `any` and in an interface with methods:
+//               integers of each size, floats, bool, string, struct, array
+//               (inline in the data word or in a box), `==` and map keys
+//   params      methods with map, slice, variadic and string parameters, called
+//               directly and through an interface (a variadic call with one
+//               argument too)
+//   convpoints  where a value becomes an interface: the results of a call
+//               with several results (`return f()`, `take(f())`, `x, y :=
+//               c()`, `var p, q any = b()`, `p, q = b()`)
+// Inputs/iface/NAME.out is what Go prints for the same program (standard
+// error), so the test needs no Go; regenerate with `Inputs/gen-goldens.py
+// --go GO --dir Inputs/iface Inputs/iface/*.gopp`. option.gopp and
+// nilmap.gopp are Go++ only (Option[I] and the conversions of an Option[T] to
+// `any` and to Option[I]; a nil map passed to a method through an interface
+// is created in the caller's variable, PAR-1) and their output was written by
+// hand, from the spec. (A method of a map type is refused, P04.18:
+// gir/iface-refused.test.)

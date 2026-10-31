@@ -687,6 +687,13 @@ public:
   bool Expanding = false; // under the context's lock: a re-entrant expansion
   /// Declared methods (of the origin), in declaration order.
   llvm::SmallVector<Func *, 0> *Methods = nullptr;
+  /// Checker::lookupMethod's index of Methods by name (the indexes into
+  /// Methods sorted by name, then by index), on the origin of a type with
+  /// more than a few methods, made once the types are final: a lookup by
+  /// name costs log n, so a type of n methods asked for each of them costs
+  /// n log n, not n squared. A function of Methods alone: the first stored
+  /// stays.
+  std::atomic<const llvm::ArrayRef<uint32_t> *> MethodIndex{nullptr};
   /// Instance: methods instantiated so far, parallel to Orig->Methods.
   llvm::SmallVector<Func *, 0> *InstMethods = nullptr;
   NamedType *origin() { return Orig ? Orig : this; }
@@ -1146,6 +1153,8 @@ public:
   const OpTable *newOpTable(llvm::ArrayRef<Func *> Own, const OpTable *Next);
   /// A list kept for an OpTable::Merged slot.
   const llvm::ArrayRef<Func *> *newOpList(llvm::ArrayRef<Func *> L);
+  /// A list kept for a NamedType::MethodIndex.
+  const llvm::ArrayRef<uint32_t> *newIndexList(llvm::ArrayRef<uint32_t> L);
   static const OpTable *emptyOps();
   /// Set once any package (declared or imported) has an operator method, a
   /// @Convert method or an operator element (ADR-0024). Until then no
@@ -1236,6 +1245,7 @@ private:
   std::deque<llvm::SmallVector<Func *, 0>> MethodLists;
   std::deque<OpTable> OpTables;
   std::deque<llvm::ArrayRef<Func *>> OpLists;
+  std::deque<llvm::ArrayRef<uint32_t>> IndexLists;
   std::atomic<bool> OpsSeen{false};
   std::shared_mutex ChainMu;
   llvm::DenseMap<const NamedType *, ChainEntry> ChainTypes;

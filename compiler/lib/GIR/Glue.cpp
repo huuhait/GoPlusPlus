@@ -10,6 +10,9 @@
 
 #include "gopp/GIR/Builder.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
+
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -91,6 +94,7 @@ private:
   static bool nested(const Type *T) {
     switch (T->getKind()) {
     case Type::Kind::Struct:
+      return !T->isIface();
     case Type::Kind::Tuple:
     case Type::Kind::Array:
     case Type::Kind::Option:
@@ -135,8 +139,33 @@ private:
     FB.setBlock(Cont);
   }
 
+  /// An interface value: Go's rules, by the dynamic type (the runtime's
+  /// gopp.iface_eq and gopp.iface_hash, which the lowering made).
+  void ifaceEq(const Place &A, const Place &B, BlockId Fail) {
+    FuncId Id = FB.module().lookupFunction(runtimeSymbol("iface_eq"));
+    assert(Id != NoId && "iface_eq is made before glue of a type with one");
+    Place PA = FB.temp(FB.addrOf(A)), PB = FB.temp(FB.addrOf(B));
+    Place Same = FB.local(FB.newTemp(C.boolean()));
+    FB.call(constFunc(FB.module(), Id), {copyOf(PA), copyOf(PB)}, Same);
+    BlockId Cont = FB.newBlock();
+    FB.branch(copyOf(Same), Cont, Fail);
+    FB.setBlock(Cont);
+  }
+
+  void ifaceHash(const Place &P, LocalId H) {
+    FuncId Id = FB.module().lookupFunction(runtimeSymbol("iface_hash"));
+    assert(Id != NoId && "iface_hash is made before glue of a type with one");
+    Place PP = FB.temp(FB.addrOf(P));
+    FB.call(constFunc(FB.module(), Id), {copyOf(PP), copyOf(FB.local(H))},
+            FB.local(H));
+  }
+
   void eqOne(const Place &A, const Place &B, BlockId Fail) {
     Type *T = A.Ty;
+    if (T->isIface()) {
+      ifaceEq(A, B, Fail);
+      return;
+    }
     switch (T->getKind()) {
     case Type::Kind::Unit:
       return;
@@ -183,6 +212,10 @@ private:
 
   void hashOne(const Place &P, LocalId H) {
     Type *T = P.Ty;
+    if (T->isIface()) {
+      ifaceHash(P, H);
+      return;
+    }
     switch (T->getKind()) {
     case Type::Kind::Unit:
       return;
@@ -361,6 +394,31 @@ FuncId existing(Module &M, llvm::StringRef Symbol) {
 }
 
 } // namespace
+
+bool gir::hasIface(const Type *T) {
+  llvm::SmallVector<const Type *, 8> Work{T};
+  llvm::SmallPtrSet<const Type *, 8> Seen;
+  while (!Work.empty()) {
+    const Type *C = Work.pop_back_val();
+    if (!Seen.insert(C).second)
+      continue;
+    if (C->isIface())
+      return true;
+    switch (C->getKind()) {
+    case Type::Kind::Array:
+    case Type::Kind::Option:
+      Work.push_back(C->elem());
+      break;
+    case Type::Kind::Struct:
+    case Type::Kind::Tuple:
+      Work.append(C->elems().begin(), C->elems().end());
+      break;
+    default:
+      break;
+    }
+  }
+  return false;
+}
 
 bool gir::hasGlue(const Type *T) {
   llvm::SmallVector<const Type *, 8> Work{T};

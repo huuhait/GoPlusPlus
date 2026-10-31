@@ -1,0 +1,127 @@
+package main
+
+type Counter struct{ n int }
+
+func (c *Counter) Inc() int   { c.n++; return c.n }
+func (c Counter) Get() int    { return c.n }
+func (c *Counter) Add(d, e int) (int, int) { c.n += d + e; return c.n, d * e }
+
+type IntSlice []int
+
+func (s IntSlice) Sum() int {
+	t := 0
+	for _, v := range s {
+		t += v
+	}
+	return t
+}
+func (s IntSlice) Len() int { return len(s) }
+
+type Pair struct{ a, b int }
+
+func (p Pair) Swap() Pair { return Pair{p.b, p.a} }
+
+type Op interface {
+	Apply(a, b int) (int, bool)
+}
+type Add struct{}
+type Div struct{ safe bool }
+
+func (Add) Apply(a, b int) (int, bool) { return a + b, true }
+func (d Div) Apply(a, b int) (int, bool) {
+	if b == 0 {
+		return 0, !d.safe
+	}
+	return a / b, true
+}
+
+type Holder struct {
+	op   Op
+	name string
+}
+
+type Visitor interface{ Visit(n int) Visitor }
+type depth struct{ d int }
+
+func (v depth) Visit(n int) Visitor {
+	if n == 0 {
+		return v
+	}
+	return depth{v.d + 1}.Visit(n - 1)
+}
+
+type Getter interface{ Get() int }
+
+type ErrA struct{ code int }
+
+func (e *ErrA) Error() string { return "errA" }
+
+var ex = ErrA{1}
+var ey = ErrA{1}
+var errX = &ex
+var errY = &ey
+
+func mk(i int) error {
+	switch i {
+	case 0:
+		return nil
+	case 1:
+		return errX
+	}
+	return errY
+}
+
+func two() (int, error) { return 5, errX }
+
+func main() {
+	c := Counter{}
+	println(c.Inc(), c.Inc(), c.Get())
+	p := &c
+	println(p.Get(), p.Inc())
+	a, b := p.Add(2, 3)
+	println(a, b)
+	var g Getter = c
+	println(g.Get())
+	g = p
+	println(g.Get())
+	c.Inc()
+	println(g.Get())
+	s := IntSlice{1, 2, 3}
+	println(s.Sum(), s.Len(), IntSlice{4, 5}.Sum())
+	println(Pair{1, 2}.Swap().a)
+	ops := []Op{Add{}, Div{true}, Div{false}}
+	for _, o := range ops {
+		r, ok := o.Apply(7, 0)
+		println(r, ok)
+	}
+	h := Holder{Add{}, "h"}
+	r, _ := h.op.Apply(2, 3)
+	println(r)
+	var v Visitor = depth{0}
+	v = v.Visit(5)
+	println(v.(depth).d)
+	println(mk(0) == nil, mk(1) == errX, mk(1) == mk(2), mk(2) == errY)
+	n, err := two()
+	println(n, err == errX, err.Error())
+	var ge error = errX
+	if e, ok := ge.(*ErrA); ok {
+		println(e.code)
+	}
+	x := any(3).(int) + 4
+	println(x)
+	var cnt Getter = Counter{9}
+	switch q := cnt.(type) {
+	case Counter:
+		println("counter", q.n)
+	}
+	switch cnt.(type) {
+	case *Counter:
+		println("ptr")
+	case Counter:
+		println("val")
+	}
+	switch y := 5; z := any(y).(type) {
+	case int:
+		println(z + 1)
+	}
+}

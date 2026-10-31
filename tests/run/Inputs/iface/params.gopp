@@ -1,0 +1,41 @@
+package main
+
+type Store struct{ n int }
+
+func (s *Store) Put(m map[string]int, k string, v int) {
+	m[k] = v
+	s.n++
+}
+func (s Store) Sum(xs []int, ys ...int) int {
+	t := s.n
+	for _, x := range xs {
+		t += x
+	}
+	for _, y := range ys {
+		t += y
+	}
+	return t
+}
+func (s Store) Cat(a, b string) string { return a + b }
+
+type Putter interface {
+	Put(m map[string]int, k string, v int)
+	Sum(xs []int, ys ...int) int
+	Cat(a, b string) string
+}
+
+func vf(a int, rest ...int) int { return a + len(rest) }
+
+func main() {
+	// (A variadic call with one argument is not a spread call, f(g()).)
+	println(vf(1), vf(1, 2, 3))
+	m := map[string]int{}
+	var sv Store
+	st := &sv
+	var p Putter = st
+	p.Put(m, "a", 1)
+	p.Put(m, "b", 2)
+	st.Put(m, "c", 3)
+	println(len(m), m["a"]+m["b"]+m["c"], st.n)
+	println(p.Sum([]int{1, 2}, 3, 4), st.Sum(nil), p.Cat("x", "yz"))
+}

@@ -1,0 +1,24 @@
+0 105 197 309 402
+501 500 603 700 700
+804 906 950 960
+1002 1104 1201 -1
+shape shape namer none
+9 4 3 0
+1 2 3
+true 3 0 330
+1 2 3 true
+false
+6 true
+false
+false
+false
+3
+6
+7 true
+5 true
+3 true
+true
+6
+false
+true
+true

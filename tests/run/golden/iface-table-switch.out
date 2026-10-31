@@ -1,0 +1,21 @@
+nil 1 5 -2 unreachable
+int 11 0 -2 int
+int64 20 0 -2 any
+uint8 20 0 -2 any
+float64 30 0 -2 any
+string 41 0 -2 str
+bool 50 0 -2 any
+rune 50 0 -2 any
+TV 64 1 -2 any
+*TV 69 4 -2 any
+TB 65 4 -2 any
+*TB 69 2 -2 any
+SL 61 4 1 any
+[]int 90 0 -2 any
+[2]int 90 0 -2 any
+struct 106 0 -2 any
+map -1 0 8 any
+E -1 0 7 any
+error 73 0 -2 any
+*int 80 0 -2 any
+0 3 0

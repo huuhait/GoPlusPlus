@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is struct { A int "x\t\\y"; B int "\xff\u00a0\u200b\u00ad\U000e0001�ü😀" }, not int

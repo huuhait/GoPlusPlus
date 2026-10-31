@@ -1,0 +1,1 @@
+panic: interface conversion: main.A is not interface { M(); N(int) string }: missing method N

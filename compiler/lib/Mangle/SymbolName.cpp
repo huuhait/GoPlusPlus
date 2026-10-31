@@ -102,6 +102,8 @@ constexpr KindInfo Kinds[] = {
     {"TE", 1},                                          // MethodExpr
     {"TP", 1},                                          // Promoted
     {"TI", 1},                                          // IfaceThunk
+    {"Tm", 1},                                          // MethodTable
+    {"Tn", 1},                                          // IfaceDesc
 };
 static_assert(sizeof(Kinds) / sizeof(Kinds[0]) ==
                   static_cast<size_t>(Kind::NumKinds),
@@ -508,7 +510,7 @@ const char *sym::kindName(Kind K) {
       "Var",        "Closure",    "PkgInit",       "InitFunc",    "TypeInfo",
       "VTable",     "ITab",       "EqGlue",        "HashGlue",    "DropGlue",
       "CloneGlue",  "Data",       "CABIThunk",     "MethodValue", "MethodExpr",
-      "Promoted",   "IfaceThunk",
+      "Promoted",   "IfaceThunk", "MethodTable",   "IfaceDesc",
   };
   static_assert(sizeof(Names) / sizeof(Names[0]) ==
                     static_cast<size_t>(Kind::NumKinds),
@@ -718,7 +720,8 @@ const Node *Context::initFunc(StringRef Pkg, uint64_t Ordinal) {
 }
 const Node *Context::ofType(Kind K, const Node *T) {
   assert(K == Kind::TypeInfo || K == Kind::VTable || K == Kind::EqGlue ||
-         K == Kind::HashGlue || K == Kind::DropGlue || K == Kind::CloneGlue);
+         K == Kind::HashGlue || K == Kind::DropGlue || K == Kind::CloneGlue ||
+         K == Kind::MethodTable || K == Kind::IfaceDesc);
   return make(K, {T});
 }
 const Node *Context::itab(const Node *Concrete, const Node *Iface) {
@@ -845,6 +848,8 @@ bool kidOk(Kind Parent, size_t Idx, const Node *Kid) {
   case Kind::HashGlue:
   case Kind::DropGlue:
   case Kind::CloneGlue:
+  case Kind::MethodTable:
+  case Kind::IfaceDesc:
   case Kind::ITab:
     return Kid->isType();
   case Kind::Signature:
@@ -1751,6 +1756,14 @@ struct Printer {
       break;
     case Kind::CloneGlue:
       lit("clone glue for ");
+      node(N->Kids[0]);
+      break;
+    case Kind::MethodTable:
+      lit("method table for ");
+      node(N->Kids[0]);
+      break;
+    case Kind::IfaceDesc:
+      lit("interface descriptor for ");
       node(N->Kids[0]);
       break;
     case Kind::CABIThunk:

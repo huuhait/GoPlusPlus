@@ -1,0 +1,5 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-iface
+// P04.06: every program of Inputs/panics-iface (assertions to a type and to
+// an interface from a nil, a small and a boxed value, the missing method,
+// == and hash of uncomparable dynamic types, a nil `error` called).

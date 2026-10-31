@@ -1,0 +1,145 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-table-switch.out
+// P04.06: type switches of every case form over every kind of value: nil, one type, a list of types (the variable keeps the interface type), an interface type, a pointer type, a clause that binds nothing, default in the middle and no default. The first clause that matches wins.
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); Inputs/gen-iface.py wrote it.
+package main
+
+type TV struct{ n int }
+
+func (t TV) V() int { return t.n }
+
+type TB struct{ n int }
+
+func (t TB) V() int   { return t.n }
+func (t *TB) P() int  { return t.n }
+
+type SL []int
+
+func (s SL) V() int { return len(s) }
+
+type E struct{}
+
+type Err struct{}
+
+func (Err) Error() string { return "err" }
+
+type VI interface{ V() int }
+type PI interface{ P() int }
+
+func a(x any) int {
+	switch v := x.(type) {
+	case nil:
+		return 1
+	case int:
+		return 10 + v
+	case int64, uint8:
+		return 20
+	case float64:
+		if v > 1 {
+			return 30
+		}
+		return 31
+	case string:
+		return 40 + len(v)
+	case bool, rune:
+		return 50
+	case VI:
+		return 60 + v.V()
+	case error:
+		return 70 + len(v.Error())
+	case *int:
+		return 80
+	case []int, [2]int:
+		return 90
+	case struct{ a int }:
+		return 100 + v.a
+	default:
+		return -1
+	}
+}
+
+func b(x any) int {
+	switch x.(type) {
+	case TV:
+		return 1
+	case *TB:
+		return 2
+	case PI:
+		return 3
+	case VI:
+		return 4
+	case nil:
+		return 5
+	}
+	return 0
+}
+
+func c(x any) int {
+	switch v := x.(type) {
+	default:
+		_ = v
+		return -2
+	case SL:
+		return len(v)
+	case E:
+		return 7
+	case map[string]int:
+		return 8 + len(v)
+	}
+}
+
+func d(x error) int {
+	switch v := x.(type) {
+	case nil:
+		return 0
+	case Err:
+		return len(v.Error())
+	default:
+		return -3
+	}
+}
+
+func e(x any) string {
+	switch v := x.(type) {
+	case int, string:
+		_, isStr := v.(string)
+		if isStr {
+			return "str"
+		}
+		return "int"
+	case any:
+		_ = v
+		return "any"
+	}
+	return "unreachable"
+}
+
+func main() {
+	var iv int
+	tv := TV{9}
+	tb := TB{9}
+	_, _, _ = iv, tv, tb
+	println("nil", a(nil), b(nil), c(nil), e(nil))
+	println("int", a(1), b(1), c(1), e(1))
+	println("int64", a(int64(2)), b(int64(2)), c(int64(2)), e(int64(2)))
+	println("uint8", a(uint8(3)), b(uint8(3)), c(uint8(3)), e(uint8(3)))
+	println("float64", a(1.5), b(1.5), c(1.5), e(1.5))
+	println("string", a("s"), b("s"), c("s"), e("s"))
+	println("bool", a(true), b(true), c(true), e(true))
+	println("rune", a('x'), b('x'), c('x'), e('x'))
+	println("TV", a(TV{4}), b(TV{4}), c(TV{4}), e(TV{4}))
+	println("*TV", a(&tv), b(&tv), c(&tv), e(&tv))
+	println("TB", a(TB{5}), b(TB{5}), c(TB{5}), e(TB{5}))
+	println("*TB", a(&tb), b(&tb), c(&tb), e(&tb))
+	println("SL", a(SL{1}), b(SL{1}), c(SL{1}), e(SL{1}))
+	println("[]int", a([]int{1}), b([]int{1}), c([]int{1}), e([]int{1}))
+	println("[2]int", a([2]int{1, 2}), b([2]int{1, 2}), c([2]int{1, 2}), e([2]int{1, 2}))
+	println("struct", a(struct{ a int }{6}), b(struct{ a int }{6}), c(struct{ a int }{6}), e(struct{ a int }{6}))
+	println("map", a(map[string]int{}), b(map[string]int{}), c(map[string]int{}), e(map[string]int{}))
+	println("E", a(E{}), b(E{}), c(E{}), e(E{}))
+	println("error", a(error(Err{})), b(error(Err{})), c(error(Err{})), e(error(Err{})))
+	println("*int", a(&iv), b(&iv), c(&iv), e(&iv))
+	var nilerr error
+	println(d(nilerr), d(Err{}), d(nil))
+}

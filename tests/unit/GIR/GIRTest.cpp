@@ -339,6 +339,55 @@ TEST(GIRSerialize, RoundTripsAndIsDeterministic) {
   EXPECT_TRUE(C2.structTy("sample.Pair")->hasBody());
 }
 
+TEST(GIRSerialize, StaticDataAndTheInterfaceTypeRoundTrip) {
+  // P04.06: an itab-like global (a descriptor pointer, a function, null, a
+  // string, an integer) keeps its parts, and `gopp.iface` its body.
+  Context C1;
+  auto M = sample(C1);
+  Type *PU8 = C1.ptr(C1.u8());
+  uint32_t Tab = M->addGlobal([&] {
+    Global G;
+    G.Name = "tab";
+    G.Ty = C1.i64();
+    return G;
+  }());
+  Global D;
+  D.Name = "desc";
+  D.Ty = C1.tuple({PU8, PU8, PU8, C1.string(), C1.u64(), C1.iface()});
+  D.Link = Linkage::LinkOnceODR;
+  D.ReadOnly = true;
+  Constant Null;
+  Null.K = Constant::Null;
+  Null.Ty = PU8;
+  Constant Zero;
+  Zero.K = Constant::Zero;
+  Zero.Ty = C1.iface();
+  D.Parts = {constGlobal(*M, Tab).C, constFunc(*M, 0).C,      Null,
+             constStr(*M, "name").C, constInt(C1.u64(), 7).C, Zero};
+  M->addGlobal(std::move(D));
+  ASSERT_EQ(errorsOf(*M), "");
+  std::string Bytes = writeModule(*M);
+  EXPECT_EQ(Bytes, writeModule(*M));
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(text(**R), text(*M));
+  EXPECT_EQ(writeModule(**R), Bytes);
+  EXPECT_EQ(errorsOf(**R), "");
+  const Global &G = (**R).Globals[(**R).lookupGlobal("desc")];
+  ASSERT_EQ(G.Parts.size(), 6u);
+  EXPECT_EQ(G.Parts[4].Bits, 7u);
+  EXPECT_TRUE(C2.iface()->isIface());
+  EXPECT_TRUE(C2.iface()->hasBody());
+  // Cut short anywhere, the file is an error and never a crash.
+  for (size_t N = 12; N + 4 < Bytes.size(); N += 4) {
+    Context C3;
+    auto Cut = readModule(llvm::StringRef(Bytes).substr(0, N), C3);
+    if (!Cut)
+      llvm::consumeError(Cut.takeError());
+  }
+}
+
 TEST(GIRSerialize, CatchBlocksRoundTrip) {
   Context C1;
   auto M = std::make_unique<Module>(C1, "catchy");
@@ -581,6 +630,41 @@ TEST(GIRLower, EveryBuiltModuleVerifies) {
     auto R = readModule(writeModule(*M), C2);
     ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
     EXPECT_EQ(text(**R), text(*M));
+  }
+}
+
+TEST(GIRLower, InterfaceDataSymbolsFollowTheGrammar) {
+  // P04.06 review R7: the static data of interfaces is named by P04.17's
+  // grammar (appendix A: TypeInfo `Ti`, ITab `Ta`, IfaceThunk `TI`,
+  // MethodTable `Tm`, IfaceDesc `Tn`), the same text whatever the number of
+  // checker threads, and no name falls outside it (no `$`).
+  std::string Src = "package main\ntype I interface{ M() int }\n"
+                    "type J interface{ N() int }\n";
+  for (int K = 0; K < 8; ++K)
+    Src += "type T" + std::to_string(K) + " struct{ n int }\nfunc (t T" +
+           std::to_string(K) + ") M() int { return t.n }\n";
+  Src += "func main() {\n var x any = T0{1}\n";
+  for (int K = 0; K < 8; ++K)
+    Src += " var i" + std::to_string(K) + " I = T" + std::to_string(K) + "{" +
+           std::to_string(K) + "}\n println(i" + std::to_string(K) + ".M())\n";
+  Src += " _, ok := x.(J)\n println(ok)\n}\n";
+  std::string Want;
+  for (unsigned Threads : {1u, 2u, 8u, 0u}) {
+    Context C;
+    std::string Diag;
+    auto M = lower(C, Src, &Diag, Threads);
+    ASSERT_NE(M, nullptr) << Diag;
+    EXPECT_EQ(errorsOf(*M), "");
+    std::string T = text(*M);
+    if (Want.empty()) {
+      Want = T;
+      for (const char *Sym :
+           {"@_GPTiN4mainE2T0:", "@_GPTmN4mainE2T0:", "@_GPTnN4mainE1J:",
+            "@_GPTaN4mainE2T7N4mainE1I:", "fn _GPTIM1MN4mainE2T3("})
+        EXPECT_NE(T.find(Sym), std::string::npos) << Sym << "\n" << T;
+      EXPECT_EQ(T.find('$'), std::string::npos) << T;
+    }
+    EXPECT_EQ(T, Want) << Threads << " threads";
   }
 }
 

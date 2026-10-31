@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is struct { A int "json:\"a\""; b string }, not int

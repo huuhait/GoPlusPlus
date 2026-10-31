@@ -10,9 +10,10 @@ The corpus (under --root, the tests/run directory):
   * every NAME.test that holds a Go++ program (`package main`);
   * the directories of several files (Inputs/core-init, Inputs/core-init-order);
   * every program of Inputs/diff, Inputs/coll, Inputs/opt, Inputs/allocword
-    (the allocator word, P04.25: built with -test-intrinsics), and the panic
-    programs of Inputs/panics, Inputs/panics-seq, Inputs/panics-gopp and
-    Inputs/oom (an allocation that fails);
+    (the allocator word, P04.25: built with -test-intrinsics), Inputs/iface
+    and Inputs/iface-gopp, and the panic programs of Inputs/panics,
+    Inputs/panics-seq, Inputs/panics-gopp, Inputs/panics-allocword,
+    Inputs/panics-iface and Inputs/oom (an allocation that fails);
   * with --cabi SEED:COUNT (repeatable; needs clang): the C ABI program of
     gen-cabi.py for that seed with COUNT signatures, named cabi/seedSEED. Its
     C half is built once by Clang (for aarch64 with --target arm64) and
@@ -65,11 +66,12 @@ CONFIGS = {
 }
 DEFAULT_CONFIGS = list(CONFIGS)
 
-# Tests whose program is not a plain `package main` run (core-ptr-print prints
-# stack addresses, which move with the frame size; the others test the
-# toolchain: a probe, links with other flags, containers).
-SKIP_TESTS = {"core-ptr-print", "debian", "debian-container.long", "link-flags", "deterministic",
-              "arm64-qemu-features", "arm64-qemu-hello"}
+# Tests whose program is not a plain `package main` run (core-ptr-print and
+# iface-print print addresses, which move with the frame size and the
+# optimizer's layout of the data; the others test the toolchain: a probe,
+# links with other flags, containers).
+SKIP_TESTS = {"core-ptr-print", "iface-print", "debian", "debian-container.long", "link-flags",
+              "deterministic", "arm64-qemu-features", "arm64-qemu-hello"}
 
 
 class Program:
@@ -103,9 +105,11 @@ def corpus(root):
             g = os.path.join(root, "golden", d)
             progs.append(Program("Inputs/" + d, files, g if os.path.exists(g + ".out") else None))
     for d, kind in (("diff", "golden"), ("coll", "golden"), ("opt", "golden"),
-                    ("allocword", "golden"),
+                    ("allocword", "golden"), ("iface", "golden"),
+                    ("iface-gopp", "golden"),
                     ("panics", "panic"), ("panics-seq", "panic"),
                     ("panics-gopp", "panic"), ("panics-allocword", "panic"),
+                    ("panics-iface", "panic"),
                     ("oom", "panic")):
         p = os.path.join(root, "Inputs", d)
         if not os.path.isdir(p):

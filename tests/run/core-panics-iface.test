@@ -1,0 +1,19 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-iface --names assert-string-int,assert-nil-struct,assert-nil-iface,assert-missing-method,assert-iface-ptr,assert-anon-iface,assert-struct,eq-slice,eq-struct-iface,eq-diff-types-ok,hash-slice-key,hash-lookup-empty,hash-delete-empty,nil-error-call,assert-struct-tag-escapes
+// P04.06: a failed type assertion ends the program with exit status 2 and
+// Go's first line: "interface conversion: interface {} is string, not int",
+// "interface {} is nil, not main.Sq", "interface is nil, not main.Shape",
+// "main.Sq is not main.Namer: missing method Name", "main.Shape is *main.Rect,
+// not main.Sq", "main.A is not interface { M(); N(int) string }: missing
+// method N" (Go's spelling of a type written out); so does == on interfaces
+// whose dynamic type cannot be compared ("runtime error: comparing
+// uncomparable type []int", also inside a struct, and only once the dynamic
+// types are the same), a slice as a map key ("runtime error: hash of
+// unhashable type []int"; in a nil or empty map, looked up or deleted, Go's
+// "hash of unhashable type: []int") and a method call on a nil `error`
+// ("invalid memory address or nil pointer dereference"), and a struct type's
+// tags in strconv.Quote's escapes (review R9). A smoke of 15 programs here;
+// all of Inputs/panics-iface in core-panics-iface.long.test, on arm64 in
+// core-panics-iface-arm64.test.
+// Inputs/panics-iface/*.gopp are Go programs: .out and .err are `go run`'s,
+// made by Inputs/gen-panics-iface.py and Inputs/gen-goldens.py.

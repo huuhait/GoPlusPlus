@@ -1,0 +1,42 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-eq-calls.out
+// P04.06 (a bug of P04.04's == lowering, found with interfaces): `==` through
+// the eq glue takes the addresses of its operands, and the address of a
+// call's result is never taken (V066), so a result (or a part of one) is
+// copied first; `f(1) == f(1)` of a struct was an internal error, and so was
+// `h(1) == e` of an `error`. A variable and a part reached through a pointer
+// are compared in place. The expected output is what `go run` prints for
+// this very file (Inputs/regen-goldens.py).
+package main
+
+type P struct{ a, b int }
+
+type Q struct{ p P }
+
+type E struct{ c int }
+
+func (e E) Error() string { return "e" }
+
+func f(n int) P { return P{n, 2} }
+
+func g(n int) [2]int { return [2]int{n, 1} }
+
+func h(n int) error {
+	if n == 0 {
+		return nil
+	}
+	return E{n}
+}
+
+func q(n int) Q { return Q{P{n, 2}} }
+
+func main() {
+	println(f(1) == f(1), f(1) == f(2), f(1) != f(2))
+	println(g(1) == g(1), g(1) == g(2))
+	var e error = E{1}
+	println(h(1) == e, h(2) == e, h(0) == nil, h(1) == h(1), e != h(1))
+	println(q(1).p == f(1), q(3).p == q(4).p)
+	x := f(5)
+	p := &x
+	println(*p == f(5), x == *p)
+}

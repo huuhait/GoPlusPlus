@@ -9,7 +9,9 @@ package main
 
 type T struct{ x int }
 
-func (t T) method() {}
+type MM map[string]int
+
+func (m MM) method() {}
 
 func maps() {
 	var m map[string]int
@@ -43,9 +45,9 @@ func main() {
 	println(ok(20))
 }
 
-// CHECK: :12:1: error[E0439]: a method (P04.06) is not supported by code generation yet (P04)
-// CHECK: :31:2: error[E0439]: a defer statement (P04.07) is not supported by code generation yet (P04)
-// CHECK: :35:6: error[E0439]: Unique, Shared and Weak pointers (P05, P04.09) is not supported by code generation yet (P04)
+// CHECK: :14:1: error[E0439]: a method on a map type (P04.18) is not supported by code generation yet (P04)
+// CHECK: :33:2: error[E0439]: a defer statement (P04.07) is not supported by code generation yet (P04)
+// CHECK: :37:6: error[E0439]: Unique, Shared and Weak pointers (P05, P04.09) is not supported by code generation yet (P04)
 // CHECK-NOT: error
 // CHECK-NOT: fn {{.*}}2ok
 

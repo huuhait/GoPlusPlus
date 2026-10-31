@@ -1,0 +1,27 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build -emit=gir %S/Inputs/iface-shapes.gopp 2>&1 | FileCheck %s
+// RUN: %gopp build -emit=gir %S/Inputs/iface-shapes.gopp -o %t.txt
+// RUN: %gopp build -emit=girb %S/Inputs/iface-shapes.gopp -o %t.a.girb
+// RUN: %gopp build -emit=girb %S/Inputs/iface-shapes.gopp -o %t.b.girb
+// RUN: cmp %t.a.girb %t.b.girb
+// RUN: %gopp gir dump %t.a.girb > %t.dump
+// RUN: diff %t.txt %t.dump
+// P04.06 (gir.md section 15, "Interfaces"): the static data of dispatch.
+// A type descriptor per dynamic type (its own address first, then size, name,
+// eq, hash, kind, flags, method table), a method table sorted by key, an
+// itab per (type, interface) pair `[descriptor, method thunks...]` named by
+// P04.17 (`_GPTa<type><interface>`), a thunk per method (`_GPTI`, LinkOnceODR)
+// and an interface parameter that is the two words `gopp.iface`. `any` has no
+// itab of its own: the descriptor is the itab of (T, any). The static data
+// goes through the bitstream (GlobalData records) and back unchanged, and two
+// builds write the same bytes.
+// CHECK: constdata @_GPTiN4mainE2Sq: (*u8, u64, string, *u8, *u8, u32, u32, u64, *u8, *u8, *u8, u64, *u8) = { const global @_GPTiN4mainE2Sq, const 8: u64, const str#{{[0-9]+}} "main.Sq", const fn @_GPTeN4mainE2Sq
+// CHECK: constdata @_GPTmN4mainE2Sq: [1](string, *u8) = { const str#{{[0-9]+}} "Area\01\01
+// CHECK-SAME: const fn @_GPTIM4AreaN4mainE2Sq }
+// CHECK: constdata @_GPTaN4mainE2SqN4mainE5Shape: [2]*u8 = { const global @_GPTiN4mainE2Sq, const fn @_GPTIM4AreaN4mainE2Sq }
+// CHECK: constdata @_GPTiN4mainE3Big: {{.*}} const 24: u64
+// CHECK: constdata @_GPTaN4mainE3BigN4mainE5Shape: [2]*u8
+// CHECK: constdata @_GPTii: {{.*}} "int"
+// CHECK: fn _GPF4mainE4area(_1: gopp.iface) -> i64
+// CHECK: fn _GPTIM4AreaN4mainE2Sq(_1: *u8) -> i64 [go, linkonce_odr]
+// CHECK-NOT: _GPTaN4mainE2Sq{{.*}}any

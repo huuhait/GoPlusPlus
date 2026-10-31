@@ -1,0 +1,41 @@
+// RUN: %gopp check -dump-types %s | FileCheck %s
+// P04.06 review R1: every argument of a call has its type recorded, also a
+// plain index expression (`s[1]`, `m["a"]`, `a[0][1]`, a string byte) passed
+// as the whole argument, alone or among several, to a function, a variadic
+// one, a method and a generic one: genericExprList evaluates an index
+// argument itself (an instance `f[int]` may be the argument) and records it
+// with the record rawExpr makes (Checker::recordOperand). The lowering boxes
+// such an argument for an interface parameter from its type. The other side:
+// an argument that is no index (`x`) is recorded as before.
+package main
+
+type T struct{}
+
+func (T) M(a, b any) {}
+
+func one(a any)            {}
+func two(a, b int)         {}
+func vari(xs ...any)       {}
+func gen[X any](v X)       {}
+
+func main() {
+	s := []int{1, 2}
+	m := map[string]int{"a": 1}
+	a := [2][2]int{}
+	str := "ab"
+	x := 1
+	one(s[1])
+	two(s[0], m["a"])
+	vari(a[0][1], str[1])
+	T{}.M(m["a"], x)
+	gen(s[0])
+}
+
+// CHECK: 27:6 expr `s[1]` variable int
+// CHECK: 28:6 expr `s[0]` variable int
+// CHECK: 28:12 expr `m["a"]` map index expression int
+// CHECK: 29:7 expr `a[0][1]` variable int
+// CHECK: 29:16 expr `str[1]` value byte
+// CHECK: 30:8 expr `m["a"]` map index expression int
+// CHECK: 30:16 expr `x` variable int
+// CHECK: 31:6 expr `s[0]` variable int

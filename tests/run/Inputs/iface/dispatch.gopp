@@ -1,0 +1,116 @@
+package main
+
+import "unsafe"
+
+type Animal interface {
+	Sound() string
+}
+type Named interface {
+	Name() string
+}
+type Pet interface {
+	Animal
+	Named
+}
+
+type Dog struct{ name string }
+
+func (d Dog) Sound() string { return "woof" }
+func (d Dog) Name() string  { return "dog" }
+
+type Cat struct{ name string }
+
+func (c *Cat) Sound() string { return "meow" }
+func (c *Cat) Name() string  { return "cat" }
+
+type Wrap struct {
+	id    int
+	extra int
+}
+
+func (b Wrap) ID() int      { return b.id }
+func (b *Wrap) SetID(i int) { b.id = i }
+
+type IDer interface{ ID() int }
+
+type MyInt int
+
+func (m MyInt) String() string { return "myint" }
+
+type Stringer interface{ String() string }
+
+type E struct{ msg string }
+
+func (e *E) Error() string { return "boom" }
+
+var ge = E{"boom"}
+
+func f(fail bool) error {
+	if fail {
+		return &ge
+	}
+	return nil
+}
+
+func describe(x interface{}) string {
+	switch v := x.(type) {
+	case nil:
+		return "nil"
+	case int, int64:
+		return "integer"
+	case string:
+		println(v)
+		return "string"
+	case Stringer:
+		return "stringer " + v.String()
+	case []int:
+		return "slice"
+	case error:
+		return "error " + v.Error()
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case MyInt:
+		return "dup"
+	default:
+		return "other"
+	}
+}
+
+func main() {
+	d := Dog{"rex"}
+	c := Cat{"tom"}
+	var p Pet = d
+	println(p.Sound(), p.Name())
+	var a Animal = p
+	println(a.Sound())
+	var p2 Pet = &c
+	println(p2.Sound(), p2.Name())
+	if n, ok := a.(Named); ok {
+		println("named", n.Name())
+	}
+	_, ok := a.(*Cat)
+	println(ok)
+	w := Wrap{7, 1}
+	var ider IDer = w
+	println(ider.ID())
+	w.SetID(9)
+	println(w.ID())
+	var ip IDer = &w
+	println(ip.ID())
+	println(describe(nil), describe(1), describe(int64(2)), describe("x"), describe(MyInt(3)))
+	println(describe([]int{1}), describe(f(true)), describe(true), describe(1.5))
+	err := f(false)
+	println(err == nil)
+	err = f(true)
+	println(err != nil, err.Error())
+	var s Stringer = MyInt(5)
+	println(s.String())
+	var an any = 3
+	var an2 any = 3
+	println(an == an2, an == 4, an != nil)
+
+	println(unsafe.Sizeof(a))
+}

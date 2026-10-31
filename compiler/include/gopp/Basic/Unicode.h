@@ -7,7 +7,8 @@
 //===----------------------------------------------------------------------===//
 //
 // Strict UTF-8 decoding with Go's rules (no overlong forms, no surrogates,
-// nothing above U+10FFFF) and the character classes Go uses for identifiers.
+// nothing above U+10FFFF), the character classes Go uses for identifiers, and
+// Go's printable runes and quoting (strconv.IsPrint, strconv.Quote).
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,6 +16,8 @@
 #define GOPP_BASIC_UNICODE_H
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace gopp {
 namespace unicode {
@@ -46,6 +49,18 @@ inline bool isDigit(uint32_t CP) {
     return CP - '0' < 10u;
   return isDigitNonASCII(CP);
 }
+
+/// Go's strconv.IsPrint (the same set as unicode.IsPrint): letters, marks,
+/// numbers, punctuation, symbols and the ASCII space. No other space is
+/// printable (U+00A0 is not), and no control or format character (U+00AD,
+/// U+200B).
+bool isPrint(uint32_t CP);
+
+/// Go's strconv.Quote: S in double quotes, with `"` and `\` escaped, the
+/// escapes \a \b \f \n \r \t \v, \xNN for any other control below U+0080 and
+/// for each byte that is not part of valid UTF-8, \uXXXX or \UXXXXXXXX for a
+/// rune that is not printable (isPrint), and every other rune as it is.
+std::string quote(std::string_view S);
 
 } // namespace unicode
 } // namespace gopp

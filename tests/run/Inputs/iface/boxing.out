@@ -1,0 +1,22 @@
+int 1
+string 1
+float64 +2.500000e+000
+bool true
+P 1 2
+S 3 +1.500000e+000
+arr 3 4
+int8 -3
+uint16 9
+other
+7
+42
+4
+7
+1
+12
+true false false
+true
+true
+10 20 30 40 0 4
+true true
+true false

@@ -1,0 +1,112 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-option.out
+// GOLDEN: by-hand
+// P04.06, D4.5, ADR-0018: Option[I] of an interface with methods is the
+// interface itself, its nil a null itab: unsafe.Sizeof(Option[I]) ==
+// Sizeof(I) == 16. An Option[T] converts to `any` and `error` (nil stays
+// nil, a set one holds the payload) and to Option[J], whose itab is made for
+// J. Go has no Option, so the expected output is written by hand.
+package main
+
+import "unsafe"
+
+type Shape interface{ Area() int }
+type Named interface {
+	Shape
+	Name() string
+}
+
+type Sq struct{ S int }
+type Big struct{ A, B, C int }
+
+func (s Sq) Area() int     { return s.S * s.S }
+func (s Sq) Name() string  { return "sq" }
+func (b Big) Area() int    { return b.A + b.B + b.C }
+
+type MyErr struct{ Code int }
+
+func (e MyErr) Error() string { return "my error" }
+
+func find(i int) Option[Shape] {
+	if i > 0 {
+		return Sq{i}
+	}
+	return nil
+}
+
+func named(i int) Option[Named] {
+	if i > 0 {
+		return Sq{i}
+	}
+	return nil
+}
+
+func widen(o Option[Named]) Option[Shape] { return o }
+
+// Scaler's one method sorts after Area in Sized's itab: widening an
+// Option[Sized] to an Option[Scaler] makes the itab for Scaler, so Scale is
+// called and not Area.
+type Scaler interface{ Scale() int }
+type Sized interface {
+	Scaler
+	Area() int
+}
+
+func (s Sq) Scale() int { return s.S * 10 }
+
+func narrow(o Option[Sized]) Option[Scaler] { return o }
+
+// An Option[I] parameter given an index expression (review R1).
+func optArea(o Option[Shape]) int {
+	if s, ok := o.Get(); ok {
+		return s.Area()
+	}
+	return -1
+}
+
+func asAny(o Option[int]) any { return o }
+
+func asErr(o Option[MyErr]) error { return o }
+
+func main() {
+	var oi Option[Shape]
+	var si Shape = Sq{1}
+	println(unsafe.Sizeof(oi), unsafe.Sizeof(si), unsafe.Sizeof(oi) == unsafe.Sizeof(si))
+	println(find(0).IsNil(), find(2).IsNil())
+	if s, ok := find(3).Get(); ok {
+		println(s.Area())
+	}
+	if _, ok := find(0).Get(); !ok {
+		println("none")
+	}
+	println(widen(named(0)).IsNil(), widen(named(4)).IsNil())
+	if s, ok := widen(named(4)).Get(); ok {
+		println(s.Area())
+	}
+	var sz Option[Sized] = Sq{7}
+	if sc, ok := narrow(sz).Get(); ok {
+		println(sc.Scale())
+	}
+	var sc2 Option[Scaler] = sz
+	if sc, ok := sc2.Get(); ok {
+		println(sc.Scale())
+	}
+	sqs := []Sq{{6}}
+	println(optArea(sqs[0]))
+	var some Option[int] = 5
+	var none Option[int]
+	println(asAny(some) != nil, asAny(none) == nil)
+	if v, ok := asAny(some).(int); ok {
+		println(v)
+	}
+	var e1 Option[MyErr] = MyErr{3}
+	var e2 Option[MyErr]
+	println(asErr(e1) != nil, asErr(e2) == nil)
+	println(asErr(e1).Error())
+	var big Option[Big] = Big{1, 2, 3}
+	var ab any = big
+	if b, ok := ab.(Big); ok {
+		println(b.A, b.B, b.C)
+	}
+	println(ab != nil)
+}

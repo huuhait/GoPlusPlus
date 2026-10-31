@@ -199,11 +199,17 @@ void Body::store(Dest &D, Operand V, const ast::Node *N) {
 }
 
 bool Body::multiValues(const ast::Expr *E, size_t Want,
-                       SmallVector<Operand, 2> &Out) {
+                       SmallVector<Operand, 2> &Out,
+                       ArrayRef<S::Type *> Targets) {
   // v, ok := m[k]
   auto *MapIE = dyn_cast<ast::IndexExpr>(unparen(E));
+  auto *AssertE = dyn_cast<ast::TypeAssertExpr>(unparen(E));
+  S::Type *Want0 = Targets.empty() ? nullptr : Targets[0];
+  const bool CommaOk =
+      Want == 2 && ((MapIE && isMapIndex(MapIE)) || AssertE != nullptr);
   Operand T = MapIE && Want == 2 && isMapIndex(MapIE) ? mapRead(MapIE, true)
-                                                      : lowerExpr(unparen(E));
+              : AssertE && Want == 2 ? lowerTypeAssert(AssertE, true, Want0)
+                                     : lowerExpr(unparen(E));
   Type *Ty = T.type();
   if (Ty->getKind() != Type::Kind::Tuple || Ty->numFields() != Want) {
     unsupported(E, "this multi-value expression");
@@ -211,8 +217,20 @@ bool Body::multiValues(const ast::Expr *E, size_t Want,
   }
   Place P = placeOf(std::move(T));
   at(E);
+  // The checker types of the values: a call's results, or a comma-ok
+  // form's value and its untyped bool.
+  auto *TT = dyn_cast_or_null<S::TupleType>(sTyOf(E));
   for (size_t K = 0; K < Want; ++K) {
     Operand F = copyOf(FB.field(P, K));
+    S::Type *From = nullptr;
+    if (!CommaOk && TT && TT->Elems.size() == Want)
+      From = TT->Elems[K];
+    else if (CommaOk)
+      From = K == 0 ? sTyOf(E) : L.CP.Ctx->typ(S::BasicKind::Bool);
+    // (A view a comma-ok assertion binds is lowerTypeAssert's: no
+    // conversion goes to a view.)
+    if (K < Targets.size())
+      F = convertResult(std::move(F), From, Targets[K], E);
     Out.push_back(std::move(F));
   }
   return true;
@@ -336,7 +354,10 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
       Vals[K] = std::move(V);
     }
   } else if (A->Rhs.size() == 1) {
-    if (!multiValues(A->Rhs[0], N, Vals))
+    SmallVector<S::Type *, 2> To;
+    for (Target &T : Targets_)
+      To.push_back(T.STy);
+    if (!multiValues(A->Rhs[0], N, Vals, To))
       return;
   } else {
     unsupported(A, "this assignment");
@@ -478,7 +499,7 @@ void Body::lowerValueSpec(const ast::ValueSpec *VS) {
       Vals.push_back(std::move(V));
     }
   } else if (VS->Values.size() == 1) {
-    if (!multiValues(VS->Values[0], N, Vals))
+    if (!multiValues(VS->Values[0], N, Vals, STys))
       return;
   } else {
     unsupported(VS, "this declaration");
@@ -830,7 +851,10 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
       }
     } else if (R->Results.size() == 1 && Want > 1) {
       // return f() with several results.
-      if (!multiValues(R->Results[0], Want, Vals))
+      SmallVector<S::Type *, 2> To;
+      for (S::Var *V : Rs)
+        To.push_back(V->Ty);
+      if (!multiValues(R->Results[0], Want, Vals, To))
         return;
     } else {
       unsupported(R, "this return");
@@ -929,7 +953,7 @@ void Body::lowerStmt(const ast::Stmt *St) {
     lowerRange(cast<ast::RangeStmt>(St), std::move(Label));
     return;
   case K::TypeSwitchStmt:
-    unsupported(St, "a type switch (P04.06)");
+    lowerTypeSwitch(cast<ast::TypeSwitchStmt>(St), std::move(Label));
     return;
   case K::DeferStmt:
     unsupported(St, "a defer statement (P04.07)");
@@ -961,36 +985,50 @@ void Body::lower(const ast::FuncDecl *FD) {
   pushScope();
   if (Obj) {
     ArrayRef<S::Var *> Params = Obj->Params;
-    if (Params.size() != F.numParams()) {
+    // The receiver of a method is parameter 0.
+    const size_t Lead = Obj->Recv ? 1 : 0;
+    if (Params.size() + Lead != F.numParams()) {
       unsupported(FD, "this parameter list");
       return;
     }
+    // A borrowed []T arrives as (ptr, len) (ADR-0029 point 7): a parameter
+    // without `move`, and a value receiver of a slice type (PAR-1). The body
+    // works on a []T of its own, with a null allocator word that nothing
+    // reads (a borrowed slice is never grown, cloned or freed) and the
+    // length as capacity (SLC-12).
+    auto OwnSlice = [&](unsigned K, const S::Var *V) {
+      Rt E(M, FB);
+      Type *ST = ctx().slice(F.Locals[FB.param(K)].Ty->elems()[0]->elem());
+      LocalId Loc = FB.newLocal(ST, Local::Var, V->Name.str());
+      FB.storageLive(Loc);
+      Val P = E.param(K);
+      Val Ptr = E.fld(P, 0), Len = E.fld(P, 1);
+      FB.assign(FB.local(Loc),
+                FB.aggregate(AggKind::Slice, ST,
+                             {Ptr.Op, Len.Op, Len.Op,
+                              E.null(ctx().ptr(ctx().u8())).Op}));
+      Scopes.back().Locals.push_back(Loc);
+      Vars[V] = Loc;
+    };
+    if (Obj->Recv) {
+      F.Locals[FB.param(0)].Name = Obj->Recv->Name.str();
+      if (F.Locals[FB.param(0)].Ty->getKind() == Type::Kind::Tuple &&
+          L.recvBorrowedSlice(Obj))
+        OwnSlice(0, Obj->Recv);
+      else
+        Vars[Obj->Recv] = FB.param(0);
+    }
     for (size_t K = 0; K < Params.size(); ++K) {
       // A borrowed map is a pointer to the caller's header (PAR-10).
-      F.Locals[FB.param(K)].Name = Params[K]->Name.str();
-      if (L.mapByPointer(Obj->sig(), K)) {
-        Aliases[Params[K]] = FB.param(K);
-      } else if (F.Locals[FB.param(K)].Ty->getKind() == Type::Kind::Tuple &&
-                 L.sliceBorrowed(Obj->sig(), K)) {
-        // A borrowed []T arrives as (ptr, len) (ADR-0029 point 7); the body
-        // works on a []T of its own, with a null allocator word that nothing
-        // reads (a borrowed slice is never grown, cloned or freed) and the
-        // length as capacity (SLC-12).
-        Rt E(M, FB);
-        Type *ST = ctx().slice(F.Locals[FB.param(K)].Ty->elems()[0]->elem());
-        LocalId Loc = FB.newLocal(ST, Local::Var, Params[K]->Name.str());
-        FB.storageLive(Loc);
-        Val P = E.param(K);
-        Val Ptr = E.fld(P, 0), Len = E.fld(P, 1);
-        FB.assign(FB.local(Loc),
-                  FB.aggregate(AggKind::Slice, ST,
-                               {Ptr.Op, Len.Op, Len.Op,
-                                E.null(ctx().ptr(ctx().u8())).Op}));
-        Scopes.back().Locals.push_back(Loc);
-        Vars[Params[K]] = Loc;
-      } else {
-        Vars[Params[K]] = FB.param(K);
-      }
+      F.Locals[FB.param(K + Lead)].Name = Params[K]->Name.str();
+      if (L.mapByPointer(Obj->sig(), K))
+        Aliases[Params[K]] = FB.param(K + Lead);
+      else if (F.Locals[FB.param(K + Lead)].Ty->getKind() ==
+                   Type::Kind::Tuple &&
+               L.sliceBorrowed(Obj->sig(), K))
+        OwnSlice(K + Lead, Params[K]);
+      else
+        Vars[Params[K]] = FB.param(K + Lead);
     }
     // Named results are variables, set to their zero values.
     bool Named = false;
@@ -1042,7 +1080,10 @@ void Body::lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs) {
       continue;
     }
     SmallVector<Operand, 2> Vals;
-    if (!multiValues(E.Init, E.Lhs.size(), Vals))
+    SmallVector<S::Type *, 2> To;
+    for (S::Var *V : E.Lhs)
+      To.push_back(V->Ty);
+    if (!multiValues(E.Init, E.Lhs.size(), Vals, To))
       continue;
     for (size_t K = 0; K < E.Lhs.size(); ++K) {
       auto G = L.Globals.find(E.Lhs[K]);

@@ -1,0 +1,144 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-methods.out 0
+// P04.06: methods with value and pointer receivers, interfaces, the itab of
+// a (type, interface) pair, dynamic calls, embedded interfaces, the method
+// sets (a value has the value-receiver methods, a pointer has all), `error`
+// and `any`, an interface in a struct, a slice and a variadic. The expected
+// output is what `go run` prints for this very file (Inputs/regen-goldens.py).
+package main
+
+type Shape interface {
+	Area() int
+	Scale(k int) int
+}
+
+type Namer interface{ Name() string }
+
+type Named interface {
+	Shape
+	Namer
+}
+
+type Sq struct{ S int }
+type Rect struct{ W, H int }
+type Big struct{ A, B, C, D int }
+type Tiny struct{}
+type Flag bool
+type Num int
+
+func (s Sq) Area() int          { return s.S * s.S }
+func (s Sq) Scale(k int) int    { return s.S * k }
+func (s Sq) Name() string       { return "sq" }
+func (r *Rect) Area() int       { return r.W * r.H }
+func (r *Rect) Scale(k int) int { r.W *= k; r.H *= k; return r.W * r.H }
+func (r *Rect) Name() string    { return "rect" }
+func (b Big) Area() int         { return b.A + b.B + b.C + b.D }
+func (b Big) Scale(k int) int   { return b.A * k }
+func (Tiny) Area() int          { return 0 }
+func (Tiny) Scale(k int) int    { return k }
+func (f Flag) Area() int {
+	if f {
+		return 1
+	}
+	return 2
+}
+func (f Flag) Scale(k int) int { return k + 1 }
+func (n Num) Area() int        { return int(n) * 2 }
+func (n Num) Scale(k int) int  { return int(n) * k }
+func (n *Num) Bump()           { *n += 1 }
+
+type MyErr struct{ Code int }
+
+func (e MyErr) Error() string { return "my error" }
+
+type PtrErr struct{ Code int }
+
+func (e *PtrErr) Error() string { return "ptr error" }
+
+func fail(n int) error {
+	switch n {
+	case 0:
+		return nil
+	case 1:
+		return MyErr{n}
+	}
+	gp.Code = n
+	return &gp
+}
+
+var gp PtrErr
+
+type Pair struct {
+	First  Shape
+	Second any
+}
+
+func total(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.Area()
+	}
+	return t
+}
+
+func count(xs ...any) int { return len(xs) }
+
+func use(s Shape, k int) int { return s.Scale(k) + s.Area() }
+
+func main() {
+	a := Sq{3}
+	println(a.Area(), a.Scale(2), a.Name())
+	r := Rect{2, 5}
+	println(r.Area(), r.Scale(2), r.Area(), r.Name())
+	pr := &r
+	println(pr.Area(), pr.Name())
+	n := Num(4)
+	n.Bump()
+	println(n.Area(), n.Scale(3))
+	pn := &n
+	pn.Bump()
+	println(pn.Area())
+
+	var s Shape = a
+	println(s.Area(), s.Scale(4))
+	s = &r
+	println(s.Area(), s.Scale(1))
+	s = Big{1, 2, 3, 4}
+	println(s.Area(), s.Scale(5))
+	s = Tiny{}
+	println(s.Area(), s.Scale(6))
+	s = Flag(true)
+	println(s.Area(), s.Scale(6))
+	s = Flag(false)
+	println(s.Area())
+	s = Num(7)
+	println(s.Area(), s.Scale(2))
+	println(use(Sq{2}, 3), use(&r, 1), use(Big{4, 3, 2, 1}, 2))
+
+	var nm Named = Sq{5}
+	println(nm.Name(), nm.Area())
+	var sh Shape = nm
+	println(sh.Area())
+	var nn Namer = nm
+	println(nn.Name())
+	nm = &r
+	println(nm.Name())
+
+	shapes := []Shape{Sq{1}, &r, Big{1, 1, 1, 1}, Tiny{}}
+	println(total(shapes), len(shapes))
+
+	p := Pair{Sq{2}, 3.5}
+	println(p.First.Area())
+	p.Second = Sq{9}
+	println(p.Second != nil)
+
+	println(count(), count(1), count(1, "a", Sq{1}, nil, 2.5))
+
+	println(fail(0) == nil, fail(1) == nil, fail(2) == nil)
+	println(fail(1).Error(), fail(2).Error())
+	var e error = MyErr{1}
+	println(e == MyErr{1}, e == MyErr{2})
+	var ppe PtrErr
+	var pe error = &ppe
+	_ = pe
+}

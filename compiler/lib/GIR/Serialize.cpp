@@ -42,7 +42,8 @@ enum ModuleCode : unsigned {
   M_File,
   M_String,
   M_FuncDecl,
-  M_Global
+  M_Global,
+  M_GlobalData // [global index, (constKind, type, bits)...]: Global::Parts
 };
 enum TypeCode : unsigned {
   T_Unit = 1,
@@ -86,6 +87,9 @@ public:
     std::vector<Rec> Decls;
     for (const Global &G : M.Globals)
       Decls.push_back(globalDecl(G));
+    for (size_t I = 0; I < M.Globals.size(); ++I)
+      if (!M.Globals[I].Parts.empty())
+        Decls.push_back(globalData(I, M.Globals[I]));
     for (const auto &F : M.Funcs)
       Decls.push_back(funcDecl(*F));
     std::vector<std::vector<Rec>> Bodies(M.Funcs.size());
@@ -319,6 +323,17 @@ private:
     return R;
   }
 
+  Rec globalData(size_t Index, const Global &G) {
+    Rec R{M_GlobalData, {}};
+    R.Vals.push_back(Index);
+    for (const Constant &C : G.Parts) {
+      R.Vals.push_back(static_cast<uint64_t>(C.K));
+      R.Vals.push_back(typeId(C.Ty));
+      R.Vals.push_back(C.Bits);
+    }
+    return R;
+  }
+
   Rec funcDecl(const Function &F) {
     Rec R{M_FuncDecl, {}};
     R.Vals = {typeId(F.Sig), static_cast<uint64_t>(F.Link),
@@ -491,6 +506,7 @@ struct Vals {
     }
     return V[Pos++];
   }
+  bool done() const { return Pos >= V.size(); }
   std::string rest() {
     std::string S;
     while (Pos < V.size())
@@ -839,6 +855,27 @@ private:
         if (G.Init.K == Constant::Zero)
           G.Init.Ty = nullptr;
         Mod->addGlobal(std::move(G));
+        break;
+      }
+      case M_GlobalData: {
+        uint64_t Index = R.next();
+        if (R.Failed || Index >= Mod->Globals.size() ||
+            !Mod->Globals[Index].Parts.empty())
+          return bad("global data");
+        std::vector<Constant> Parts;
+        while (!R.done() && !R.Failed) {
+          Constant C;
+          uint64_t CK = R.next();
+          if (CK > Constant::Global)
+            R.Failed = true;
+          C.K = static_cast<Constant::Kind>(CK);
+          C.Ty = type(R);
+          C.Bits = R.next();
+          Parts.push_back(C);
+        }
+        if (R.Failed)
+          return bad("global data");
+        Mod->Globals[Index].Parts = std::move(Parts);
         break;
       }
       case M_FuncDecl: {

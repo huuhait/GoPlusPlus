@@ -1,0 +1,50 @@
+package main
+
+type Animal struct{ Name string }
+
+@Virtual
+func (a *Animal) Speak() int { return 1 }
+
+type Dog extends Animal { Tricks int }
+
+type Vec struct{ X int }
+
+func (v Vec) + (o Vec) Vec { return v }
+
+type Counts map[string]int
+
+func (c Counts) Total() int { return 0 }
+
+type Box[T any] struct{ V T }
+
+func (b Box[T]) Size() int { return 1 }
+
+type Shape interface{ Area() int }
+type Sq struct{ S int }
+
+func (s Sq) Area() int { return s.S }
+
+func values() {
+	var s Sq
+	f := s.Area
+	g := Sq.Area
+	_, _ = f, g
+}
+
+func main() {}
+
+type CT struct{ X int }
+
+@Extern("C")
+func (c CT) Ext() int
+
+type Base struct{ N int }
+
+func (b Base) Hello() int { return b.N }
+
+type Kid extends Base{ K int }
+
+func kid() any {
+	var k Kid
+	return k
+}

@@ -1,0 +1,40 @@
+// RUN: %gopp build -emit=gir %s | FileCheck %s
+// P04.06 with P04.25 (ADR-0029 point 7, PAR-1): a value receiver of a slice
+// type is a borrowed `[]T` and passes as (ptr, len), like a borrowed `[]T`
+// parameter (`Lowering::recvBorrowedSlice`, `Lowering::paramType`); the body
+// works on a slice of its own with the length as its capacity (SLC-12) and a
+// null allocator word. The other side: a `move` receiver, a pointer receiver
+// and a `move` parameter keep their own types (the four words, the pointer),
+// and the itab slot's function type has the same pairs as the method.
+package main
+
+type IntSlice []int
+
+func (s IntSlice) Len() int { return cap(s) }
+
+func (move s IntSlice) Take() int { return cap(s) }
+
+func (s *IntSlice) Grow(v int) { *s = append(*s, v) }
+
+func (s IntSlice) Add(xs []int, move ys []int) int { return len(xs) + len(ys) }
+
+type Lener interface {
+	Len() int
+	Add(xs []int, move ys []int) int
+}
+
+func main() {
+	s := IntSlice{1, 2}
+	var l Lener = s
+	println(l.Len(), l.Add(s, IntSlice{3}))
+	s.Grow(3)
+	println(s.Take())
+}
+
+// CHECK: fn _GPM3LenN4mainE8IntSlice(_1: (*i64, u64)) -> i64
+// CHECK: _2 = slice []i64 {copy _1.0, copy _1.1, copy _1.1, const null: *u8}
+// CHECK: fn _GPM4TakeN4mainE8IntSlice(_1: []i64) -> i64
+// CHECK: fn _GPM4GrowN4mainE8IntSlice(_1: *[]i64, _2: i64) -> ()
+// CHECK: fn _GPM3AddN4mainE8IntSlice(_1: (*i64, u64), _2: (*i64, u64), _3: []i64) -> i64
+// CHECK: fn _GPTIM3AddN4mainE8IntSlice(_1: *u8, _2: (*i64, u64), _3: []i64) -> i64
+// CHECK: fn _GPTIM3LenN4mainE8IntSlice(_1: *u8) -> i64

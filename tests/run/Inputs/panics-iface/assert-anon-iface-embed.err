@@ -1,0 +1,1 @@
+panic: interface conversion: main.A is not interface { Error() string; M(); main.m() }: missing method Error

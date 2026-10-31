@@ -1,0 +1,78 @@
+TV true false false false
+  V 1 1
+*TV true false false false
+  V 1 1
+direct TV 1
+direct *TV 1
+TP false false false false
+*TP false true false false
+  P 3 4
+TB true false false false
+  V 13 13
+*TB true true true true
+  V 13 13
+  P 24 25
+  B 15 26 16
+  A 27 17
+direct TB 17
+direct *TB 17
+NI true false false false
+  V 4 4
+*NI true true true true
+  V 4 4
+  P 9 14
+  B 14 19 19
+  A 24 24
+direct NI 24
+direct *NI 24
+NF true false false false
+  V 3 3
+*NF true false false false
+  V 3 3
+direct NF 3
+direct *NF 3
+NS true false false false
+  V 3 3
+*NS true false false false
+  V 3 3
+direct NS 3
+direct *NS 3
+NB true false false false
+  V 1 1
+*NB true false false false
+  V 1 1
+direct NB 1
+direct *NB 1
+SL true false false false
+  V 3 3
+*SL true false false false
+  V 3 3
+direct SL 3
+direct *SL 3
+AR true false false false
+  V 10 10
+*AR true true true true
+  V 10 10
+  P 8 9
+  B 12 10 13
+  A 11 14
+direct AR 14
+direct *AR 14
+BIG true false false false
+  V 14 14
+*BIG true false false false
+  V 14 14
+direct BIG 14
+direct *BIG 14
+EM true false false false
+  V 42 42
+*EM true false false false
+  V 42 42
+direct EM 42
+direct *EM 42
+PT true false false false
+  V 7 7
+*PT true false false false
+  V 7 7
+direct PT 7
+direct *PT 7

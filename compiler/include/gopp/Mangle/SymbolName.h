@@ -117,6 +117,8 @@ enum class Kind : uint8_t {
   MethodExpr,  ///< method expression `T.M`
   Promoted,    ///< wrapper of a promoted method of an `extends` child
   IfaceThunk,  ///< adapter of a method for an interface method table
+  MethodTable, ///< kid: type (its method table, P04.06)
+  IfaceDesc,   ///< kid: interface type (its method keys, P04.06)
   NumKinds
 };
 

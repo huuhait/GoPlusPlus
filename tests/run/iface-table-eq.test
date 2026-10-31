@@ -1,0 +1,107 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-table-eq.out
+// P04.06: == and != of interfaces, a table. The same dynamic type compares by value, different dynamic types are never equal (int and int64 with the same number are different), an interface and a concrete value compare as interfaces, NaN is never equal to itself inside an interface, +0 equals -0, interfaces nested in structs and arrays compare as their parts, pointers by address, and an interface is a map key. (Comparing uncomparable dynamic types panics: Inputs/panics-iface.)
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py); Inputs/gen-iface.py wrote it.
+package main
+
+type TV struct{ n int }
+
+func (t TV) V() int { return t.n }
+
+type VI interface{ V() int }
+
+type Box struct {
+	a any
+	n int
+}
+
+type Pair struct {
+	x, y any
+}
+
+type Err struct{ code int }
+
+func (e Err) Error() string { return "e" }
+
+func eq(name string, a, b any) {
+	println(name, a == b, a != b)
+}
+
+func main() {
+	var iv, iw int
+	nan := 0.0
+	nan = nan / nan
+	var negz float64 = 0
+	negz = -negz
+	tv := TV{1}
+	pa, pb := &iv, &iw
+	eq("int=int", 1, 1)
+	eq("int<>int", 1, 2)
+	eq("int<>int64", 1, int64(1))
+	eq("int<>uint", 1, uint(1))
+	eq("int8<>uint8", int8(1), uint8(1))
+	eq("str=str", "ab", "a"+"b")
+	eq("str<>str", "ab", "ba")
+	eq("str<>int", "1", 1)
+	eq("float=float", 1.5, 1.5)
+	eq("nan", nan, nan)
+	eq("0=-0", 0.0, negz)
+	eq("f32<>f64", float32(1), 1.0)
+	eq("bool", true, true)
+	eq("bool<>", true, false)
+	eq("nil=nil", nil, nil)
+	eq("nil<>int", nil, 0)
+	eq("int<>nil", 0, nil)
+	eq("struct=", TV{1}, TV{1})
+	eq("struct<>", TV{1}, TV{2})
+	eq("box=", Box{1, 2}, Box{1, 2})
+	eq("box<>type", Box{1, 2}, Box{int64(1), 2})
+	eq("box<>val", Box{"x", 2}, Box{"y", 2})
+	eq("box nil", Box{nil, 2}, Box{nil, 2})
+	eq("pair nested", Pair{Box{1, 1}, 2}, Pair{Box{1, 1}, 2})
+	eq("pair nested <>", Pair{Box{1, 1}, 2}, Pair{Box{1, 2}, 2})
+	eq("pair nan", Pair{nan, 1}, Pair{nan, 1})
+	eq("array=", [2]any{1, "a"}, [2]any{1, "a"})
+	eq("array<>", [2]any{1, "a"}, [2]any{1, "b"})
+	eq("ptr=", pa, pa)
+	eq("ptr<>", pa, pb)
+	eq("ptr<>val", pa, iv)
+	eq("tv ptr", &tv, &tv)
+	eq("err=", Err{1}, Err{1})
+	eq("err<>", Err{1}, Err{2})
+	var e1, e2 error = Err{1}, Err{1}
+	println("error", e1 == e2, e1 != e2, e1 == Err{1}, Err{2} == e1)
+	var v1 VI = tv
+	var v2 VI = TV{1}
+	var x any = tv
+	println("iface", v1 == v2, v1 == x, x == v1, x == any(v2), v1 == TV{1}, TV{1} == v1, v1 == TV{2})
+	var n1, n2 error
+	println("nil errors", n1 == n2, n1 == nil, nil == n1, n1 != nil)
+	var a1, a2 any
+	println("nil any", a1 == a2, a1 == nil, a1 != nil)
+	a1 = 1
+	println("set any", a1 == nil, a1 != nil, a1 == 1, 1 == a1, a1 == 2, a1 == "1")
+	m := map[any]int{}
+	m[1] = 1
+	m[int64(1)] = 2
+	m["a"] = 3
+	m[1.5] = 4
+	m[TV{1}] = 5
+	m[Box{1, 2}] = 6
+	m[nil] = 7
+	m[true] = 8
+	m[pa] = 9
+	m[[2]int{1, 2}] = 10
+	m[nan] = 11
+	m[nan] = 12
+	println(len(m), m[1], m[int64(1)], m["a"], m[1.5], m[TV{1}], m[Box{1, 2}], m[nil], m[true], m[pa], m[pb], m[[2]int{1, 2}], m[nan], m[2])
+	delete(m, 1)
+	delete(m, nil)
+	println(len(m), m[1], m[nil], m[int64(1)])
+	var key error = Err{3}
+	me := map[error]string{}
+	me[key] = "three"
+	me[Err{4}] = "four"
+	println(len(me), me[Err{3}], me[Err{4}], me[Err{5}] == "")
+}

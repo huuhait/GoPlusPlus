@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is main.Num, not int

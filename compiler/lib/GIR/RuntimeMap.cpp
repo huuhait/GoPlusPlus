@@ -379,6 +379,27 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     E.finish();
     return Slot;
   }
+  case RtFn::MapKeyCheck: {
+    // Go's mapKeyError: a lookup or a delete in a nil or empty map still
+    // hashes a key whose type holds an interface, so an unhashable dynamic
+    // type panics there too, in that path's words ("hash of unhashable type:
+    // []int", no "runtime error"). Only such keys' use sites call it. (The
+    // flag is cleared after the hash; a panic out of it exits today. Once a
+    // panic can be recovered, the unwind path must clear it too, TODO P04.07;
+    // goroutines race on it, TODO P12.06.)
+    MapX E(*this,
+           *Make("map_key_check", Ctx.func({InfoPtr, MapPtr, PU8}, Unit)));
+    E.At = At;
+    Val Info = E.param(0), M_ = E.param(1), Key = E.param(2);
+    E.If(M_ != E.null(MapPtr),
+         [&] { E.If(E.get(M_, 0) != 0, [&] { E.Return(); }); });
+    Val Flag{&E, constGlobal(*M, plainHashFlag())};
+    E.store(Flag, U64, E.u(1));
+    E.hashOf(Info, Key);
+    E.store(Flag, U64, E.u(0));
+    E.finish();
+    return Slot;
+  }
   case RtFn::MapDelete: {
     if (!Dep({RtFn::MapFind}) || !Need({"memset"}))
       return NoId;

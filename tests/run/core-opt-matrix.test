@@ -1,5 +1,5 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 core-maps opt/memory panics/opt-index-loop
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow
 // P04.13 (D4.8): the pipeline decides speed, never what a program does. A
 // representative set of the run corpus is built at every `opt` level and with
 // -pipeline=fastisel on the host, and every build must give the baseline's exit

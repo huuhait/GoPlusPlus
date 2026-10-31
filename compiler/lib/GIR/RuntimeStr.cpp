@@ -261,6 +261,8 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
         return false;
     return true;
   };
+  if (Which >= RtFn::GetItab)
+    return buildIfaceRuntime(Which, At);
   if (Which >= RtFn::MapNew) {
     FuncId Id = buildMapRuntime(Which, At);
     return Id;
@@ -494,6 +496,7 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
       return NoId;
     Function *F =
         makeFn(*this, "str_eq", Ctx.func({PU8, U64, PU8, U64}, Bool), Slot);
+    F->NoUnwind = true; // only memcmp
     X E(*this, *F);
     E.At = At;
     Val An = E.param(1);

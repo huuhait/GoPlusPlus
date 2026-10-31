@@ -209,22 +209,21 @@ ExprKind Checker::rawExpr(Operand &X, const ast::Expr *Ex, Type *Hint,
       X.Ty = invalid();
     }
   }
-  // record
-  switch (X.M) {
-  case Mode::Invalid:
-    break;
-  default: {
-    Type *T = X.Ty;
-    if (X.M == Mode::NoValue)
-      T = nullptr;
-    if (T && isUntyped(T))
-      rememberUntyped(X.E, false, X.M, cast<BasicType>(T), X.Val);
-    else
-      recordTypeAndValue(X.E, X.M, T,
-                         X.M == Mode::Constant ? Mem.constant(X.Val) : nullptr);
-  }
-  }
+  recordOperand(X);
   return Kind;
+}
+
+void Checker::recordOperand(const Operand &X) {
+  if (X.M == Mode::Invalid)
+    return;
+  Type *T = X.Ty;
+  if (X.M == Mode::NoValue)
+    T = nullptr;
+  if (T && isUntyped(T))
+    rememberUntyped(X.E, false, X.M, cast<BasicType>(T), X.Val);
+  else
+    recordTypeAndValue(X.E, X.M, T,
+                       X.M == Mode::Constant ? Mem.constant(X.Val) : nullptr);
 }
 
 //===----------------------------------------------------------------------===//

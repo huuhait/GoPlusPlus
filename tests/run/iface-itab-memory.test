@@ -1,0 +1,300 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --real --src %s %S/golden/iface-itab-memory.out
+// GOLDEN: by-hand
+// P04.06: an assertion or a conversion to an interface makes the itab of its
+// (interface, dynamic type) pair at run time once (gopp.get_itab keeps it, or
+// the fact that the type lacks a method, in a map of the pair), so a program
+// that asserts many values of many types again and again needs memory for
+// the pairs it meets, not for the assertions it makes. Here 64 types are
+// asserted 10000 times each to an interface they implement and to one they
+// do not: the bytes allocated and not freed (glibc's mallinfo2, in a real
+// binary of its own) may grow by less than 1 MB (a leak of the smallest
+// allocation per failed assertion alone is 10 MB). Go has no @Extern: the
+// output is by hand.
+package main
+
+type Mallinfo2 struct {
+	Arena, Ordblks, Smblks, Hblks, Hblkhd, Usmblks, Fsmblks uint64
+	Uordblks, Fordblks, Keepcost                         uint64
+}
+
+@Extern("C")
+func mallinfo2() Mallinfo2
+
+type I interface{ M() int }
+type J interface{ N() int }
+
+type T0 struct{ v int }
+
+func (t T0) M() int { return 0 }
+
+type T1 struct{ v int }
+
+func (t T1) M() int { return 1 }
+
+type T2 struct{ v int }
+
+func (t T2) M() int { return 2 }
+
+type T3 struct{ v int }
+
+func (t T3) M() int { return 3 }
+
+type T4 struct{ v int }
+
+func (t T4) M() int { return 4 }
+
+type T5 struct{ v int }
+
+func (t T5) M() int { return 5 }
+
+type T6 struct{ v int }
+
+func (t T6) M() int { return 6 }
+
+type T7 struct{ v int }
+
+func (t T7) M() int { return 7 }
+
+type T8 struct{ v int }
+
+func (t T8) M() int { return 8 }
+
+type T9 struct{ v int }
+
+func (t T9) M() int { return 9 }
+
+type T10 struct{ v int }
+
+func (t T10) M() int { return 10 }
+
+type T11 struct{ v int }
+
+func (t T11) M() int { return 11 }
+
+type T12 struct{ v int }
+
+func (t T12) M() int { return 12 }
+
+type T13 struct{ v int }
+
+func (t T13) M() int { return 13 }
+
+type T14 struct{ v int }
+
+func (t T14) M() int { return 14 }
+
+type T15 struct{ v int }
+
+func (t T15) M() int { return 15 }
+
+type T16 struct{ v int }
+
+func (t T16) M() int { return 16 }
+
+type T17 struct{ v int }
+
+func (t T17) M() int { return 17 }
+
+type T18 struct{ v int }
+
+func (t T18) M() int { return 18 }
+
+type T19 struct{ v int }
+
+func (t T19) M() int { return 19 }
+
+type T20 struct{ v int }
+
+func (t T20) M() int { return 20 }
+
+type T21 struct{ v int }
+
+func (t T21) M() int { return 21 }
+
+type T22 struct{ v int }
+
+func (t T22) M() int { return 22 }
+
+type T23 struct{ v int }
+
+func (t T23) M() int { return 23 }
+
+type T24 struct{ v int }
+
+func (t T24) M() int { return 24 }
+
+type T25 struct{ v int }
+
+func (t T25) M() int { return 25 }
+
+type T26 struct{ v int }
+
+func (t T26) M() int { return 26 }
+
+type T27 struct{ v int }
+
+func (t T27) M() int { return 27 }
+
+type T28 struct{ v int }
+
+func (t T28) M() int { return 28 }
+
+type T29 struct{ v int }
+
+func (t T29) M() int { return 29 }
+
+type T30 struct{ v int }
+
+func (t T30) M() int { return 30 }
+
+type T31 struct{ v int }
+
+func (t T31) M() int { return 31 }
+
+type T32 struct{ v int }
+
+func (t T32) M() int { return 32 }
+
+type T33 struct{ v int }
+
+func (t T33) M() int { return 33 }
+
+type T34 struct{ v int }
+
+func (t T34) M() int { return 34 }
+
+type T35 struct{ v int }
+
+func (t T35) M() int { return 35 }
+
+type T36 struct{ v int }
+
+func (t T36) M() int { return 36 }
+
+type T37 struct{ v int }
+
+func (t T37) M() int { return 37 }
+
+type T38 struct{ v int }
+
+func (t T38) M() int { return 38 }
+
+type T39 struct{ v int }
+
+func (t T39) M() int { return 39 }
+
+type T40 struct{ v int }
+
+func (t T40) M() int { return 40 }
+
+type T41 struct{ v int }
+
+func (t T41) M() int { return 41 }
+
+type T42 struct{ v int }
+
+func (t T42) M() int { return 42 }
+
+type T43 struct{ v int }
+
+func (t T43) M() int { return 43 }
+
+type T44 struct{ v int }
+
+func (t T44) M() int { return 44 }
+
+type T45 struct{ v int }
+
+func (t T45) M() int { return 45 }
+
+type T46 struct{ v int }
+
+func (t T46) M() int { return 46 }
+
+type T47 struct{ v int }
+
+func (t T47) M() int { return 47 }
+
+type T48 struct{ v int }
+
+func (t T48) M() int { return 48 }
+
+type T49 struct{ v int }
+
+func (t T49) M() int { return 49 }
+
+type T50 struct{ v int }
+
+func (t T50) M() int { return 50 }
+
+type T51 struct{ v int }
+
+func (t T51) M() int { return 51 }
+
+type T52 struct{ v int }
+
+func (t T52) M() int { return 52 }
+
+type T53 struct{ v int }
+
+func (t T53) M() int { return 53 }
+
+type T54 struct{ v int }
+
+func (t T54) M() int { return 54 }
+
+type T55 struct{ v int }
+
+func (t T55) M() int { return 55 }
+
+type T56 struct{ v int }
+
+func (t T56) M() int { return 56 }
+
+type T57 struct{ v int }
+
+func (t T57) M() int { return 57 }
+
+type T58 struct{ v int }
+
+func (t T58) M() int { return 58 }
+
+type T59 struct{ v int }
+
+func (t T59) M() int { return 59 }
+
+type T60 struct{ v int }
+
+func (t T60) M() int { return 60 }
+
+type T61 struct{ v int }
+
+func (t T61) M() int { return 61 }
+
+type T62 struct{ v int }
+
+func (t T62) M() int { return 62 }
+
+type T63 struct{ v int }
+
+func (t T63) M() int { return 63 }
+
+func main() {
+	xs := [64]any{T0{}, T1{}, T2{}, T3{}, T4{}, T5{}, T6{}, T7{}, T8{}, T9{}, T10{}, T11{}, T12{}, T13{}, T14{}, T15{}, T16{}, T17{}, T18{}, T19{}, T20{}, T21{}, T22{}, T23{}, T24{}, T25{}, T26{}, T27{}, T28{}, T29{}, T30{}, T31{}, T32{}, T33{}, T34{}, T35{}, T36{}, T37{}, T38{}, T39{}, T40{}, T41{}, T42{}, T43{}, T44{}, T45{}, T46{}, T47{}, T48{}, T49{}, T50{}, T51{}, T52{}, T53{}, T54{}, T55{}, T56{}, T57{}, T58{}, T59{}, T60{}, T61{}, T62{}, T63{}}
+	before := mallinfo2().Uordblks
+	n := 0
+	for r := 0; r < 10000; r++ {
+		for k := 0; k < 64; k++ {
+			if _, ok := xs[k].(J); ok {
+				n++
+			}
+			if v, ok := xs[k].(I); ok {
+				n += v.M()
+			}
+		}
+	}
+	after := mallinfo2().Uordblks
+	println(n)
+	println(after-before < 1<<20)
+}

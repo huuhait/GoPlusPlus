@@ -1,0 +1,34 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/core-variadic.out
+// P04.06 (a bug of P04.04's call lowering, decision M4): a variadic function
+// with fixed parameters called with only one argument (`vf(1)`) packs an
+// empty slice; the lowering took any one-argument call of a function of
+// several parameters for the spread of a call with several results, `f(g())`,
+// and refused it (E0439 "this call form"). The spread still works,
+// `two(pair())`, and so does the same call of a method, directly and through
+// an interface. The expected output is what `go run` prints for this very
+// file (Inputs/regen-goldens.py).
+package main
+
+func vf(a int, rest ...int) int { return a*10 + len(rest) }
+
+func vs(rest ...bool) int { return len(rest) }
+
+func pair() (int, int) { return 3, 4 }
+
+func two(a, b int) int { return a*10 + b }
+
+type T struct{ k int }
+
+func (t T) Vm(a int, rest ...int) int { return t.k + a + len(rest) }
+
+type VM interface{ Vm(a int, rest ...int) int }
+
+func main() {
+	println(vf(1), vf(1, 2), vf(1, 2, 3))
+	println(vs(), vs(true))
+	println(two(pair()))
+	t := T{100}
+	var i VM = t
+	println(t.Vm(1), t.Vm(1, 2), i.Vm(5), i.Vm(5, 6, 7))
+}

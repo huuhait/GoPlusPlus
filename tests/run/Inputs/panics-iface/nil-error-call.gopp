@@ -1,0 +1,10 @@
+package main
+
+
+
+func main() {
+	println("before")
+	var e error
+	println(e.Error())
+	println("not reached")
+}

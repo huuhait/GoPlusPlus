@@ -203,6 +203,13 @@ const llvm::ArrayRef<Func *> *TypeContext::newOpList(llvm::ArrayRef<Func *> L) {
   return &OpLists.back();
 }
 
+const llvm::ArrayRef<uint32_t> *
+TypeContext::newIndexList(llvm::ArrayRef<uint32_t> L) {
+  std::lock_guard<std::mutex> G(AllocMu);
+  IndexLists.push_back(Objs.copy(L));
+  return &IndexLists.back();
+}
+
 const OpTable *TypeContext::emptyOps() {
   static const OpTable Empty;
   return &Empty;

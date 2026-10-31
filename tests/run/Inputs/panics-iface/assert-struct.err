@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is struct { a int }, not struct { b int }

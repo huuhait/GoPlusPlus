@@ -32,6 +32,75 @@ bool unicode::isLetterNonASCII(uint32_t CP) {
 
 bool unicode::isDigitNonASCII(uint32_t CP) { return inRanges(DigitRanges, CP); }
 
+bool unicode::isPrint(uint32_t CP) {
+  if (CP < 0x80)
+    return CP >= 0x20 && CP < 0x7F;
+  return inRanges(PrintRanges, CP);
+}
+
+std::string unicode::quote(std::string_view S) {
+  static const char Hex[] = "0123456789abcdef";
+  std::string R = "\"";
+  auto Escape = [&](char Kind, uint32_t V, int Digits) {
+    R += '\\';
+    R += Kind;
+    for (int Shift = 4 * (Digits - 1); Shift >= 0; Shift -= 4)
+      R += Hex[(V >> Shift) & 15];
+  };
+  const char *P = S.data(), *End = P + S.size();
+  while (P < End) {
+    uint32_t CP;
+    bool Invalid;
+    unsigned Len = decodeUTF8(P, End, CP, Invalid);
+    if (Invalid) {
+      // A byte that is not part of valid UTF-8: \xNN, one byte at a time.
+      Escape('x', static_cast<unsigned char>(*P), 2);
+      ++P;
+      continue;
+    }
+    switch (CP) {
+    case '"':
+      R += "\\\"";
+      break;
+    case '\\':
+      R += "\\\\";
+      break;
+    case '\a':
+      R += "\\a";
+      break;
+    case '\b':
+      R += "\\b";
+      break;
+    case '\f':
+      R += "\\f";
+      break;
+    case '\n':
+      R += "\\n";
+      break;
+    case '\r':
+      R += "\\r";
+      break;
+    case '\t':
+      R += "\\t";
+      break;
+    case '\v':
+      R += "\\v";
+      break;
+    default:
+      if (isPrint(CP))
+        R.append(P, Len);
+      else if (CP < 0x20 || CP == 0x7F)
+        Escape('x', CP, 2);
+      else if (CP < 0x10000)
+        Escape('u', CP, 4);
+      else
+        Escape('U', CP, 8);
+    }
+    P += Len;
+  }
+  return R + "\"";
+}
+
 unsigned unicode::decodeUTF8(const char *P, const char *End, uint32_t &CP,
                              bool &Invalid) {
   Invalid = false;

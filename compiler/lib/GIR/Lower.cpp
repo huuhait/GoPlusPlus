@@ -54,6 +54,12 @@ void Lowering::unsupported(SourceLoc At, const llvm::Twine &What) {
   Diags.report(At, diag::err_gir_unsupported) << What.str();
 }
 
+void Lowering::internalError(SourceLoc At, const llvm::Twine &What) {
+  Failed = true;
+  ++Reported;
+  Diags.report(At, diag::err_gir_verify) << What.str();
+}
+
 void Lowering::badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why) {
   Failed = true;
   ++Reported;
@@ -101,7 +107,7 @@ static const char *kindName(S::Type::Kind K) {
   case S::Type::Kind::Struct:
     return "struct";
   case S::Type::Kind::Interface:
-    return "an interface (P04.06)";
+    return "an interface";
   case S::Type::Kind::Union:
     return "a union";
   case S::Type::Kind::Named:
@@ -234,8 +240,11 @@ Type *Lowering::recShell(S::Type *T) {
 
 Type *Lowering::lowerOption(S::OptionType *O, SourceLoc At) {
   // D4.5: the nil bit pattern of a pointer kind is nil; any other T gets a
-  // flag byte after it. Interfaces and funcs (P04.06, P04.07) reach lowerType
-  // below and are refused there.
+  // flag byte after it. An interface is two words and its nil is a null
+  // itab, so Option[I] is the interface type itself (D4.5); funcs (P04.07)
+  // reach lowerType below and are refused there.
+  if (isInterface(O->Elem))
+    return lowerType(O->Elem, At);
   if (O->usesNiche()) {
     if (!isRawPointer(O->Elem)) {
       unsupported(At, "an Option of a Unique, Shared or Weak pointer "
@@ -404,6 +413,13 @@ Type *Lowering::lowerTypeOnce(S::Type *T, SourceLoc At) {
     R = Ctx.ptr(E);
     break;
   }
+  case S::Type::Kind::Interface:
+    if (!isInterface(T)) {
+      unsupported(At, "an interface that is a constraint, used as a type");
+      return nullptr;
+    }
+    R = Ctx.iface();
+    break;
   case S::Type::Kind::Struct:
     return lowerStruct(T, cast<S::StructType>(T), nullptr, At);
   case S::Type::Kind::Option:
@@ -529,10 +545,6 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   auto D = I.Defs.find(FD->Name);
   auto *Obj =
       D == I.Defs.end() ? nullptr : dyn_cast_or_null<S::Func>(D->second);
-  if (FD->Recv) {
-    unsupported(FD->getBegin(), "a method (P04.06)");
-    return;
-  }
   if (Name == "_")
     return;
   if (hasAttr(FD, "Export")) {
@@ -565,6 +577,10 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   // Every return below that is not the last one has reported an error.
   Declined.insert(Obj);
   const ast::Attribute *Ext = externAttr(FD);
+  if (Ext && FD->Recv) {
+    badExtern(Ext->getBegin(), Name, "a method cannot be a C function");
+    return;
+  }
   if (Ext && Opts.TestIntrinsics && Name.starts_with("gopp_test_")) {
     // A test intrinsic, not a C function (ADR-0029, P04.25).
     // The name is the stem, then perhaps `_` and a suffix: a program that
@@ -607,6 +623,8 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     unsupported(FD->getBegin(), "a function that fails with ! (P04.10)");
     return;
   }
+  if (FD->Recv && !methodSupported(Obj, FD->getBegin()))
+    return;
   // A Go++ string, slice, map or view in a C signature (also inside a struct
   // or an array passed by value): one decision, on the checker's types.
   if (Ext) {
@@ -643,15 +661,23 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     }
   }
   SmallVector<Type *, 4> Params;
+  if (FD->Recv) {
+    // The receiver is parameter 0 (a pointer, or the value; PAR-5); a
+    // borrowed slice receiver is (ptr, len), as a borrowed []T parameter.
+    Type *T = lowerType(Obj->Recv->Ty, FD->getBegin());
+    if (!T)
+      return;
+    if (recvBorrowedSlice(Obj) && T->getKind() == Type::Kind::Slice)
+      T = borrowedSliceType(T);
+    Params.push_back(T);
+  }
+  const size_t Lead = Params.size();
   for (S::Type *P : Sig->Params->Elems) {
     Type *T = lowerType(P, FD->getBegin());
     if (!T)
       return;
-    if (!Ext && mapByPointer(Sig, Params.size()))
-      T = Ctx.ptr(T);
-    else if (!Ext && sliceBorrowed(Sig, Params.size()) &&
-             T->getKind() == Type::Kind::Slice)
-      T = Ctx.tuple({T->fieldType(0, Ctx), Ctx.u64()});
+    if (!Ext)
+      T = paramType(Sig, Params.size() - Lead, T);
     Params.push_back(T);
   }
   Type *Ret = Ctx.unit();
@@ -958,8 +984,10 @@ std::unique_ptr<Module> gir::lowerPackage(Context &Ctx, const SourceManager &SM,
   runOnNewStackOrHere(
       [&] {
         uint64_t Before = LowerSteps;
-        M = Lowering(Ctx, SM, CP, Files, Diags, Opts).run();
-        Steps = LowerSteps - Before;
+        Lowering L(Ctx, SM, CP, Files, Diags, Opts);
+        M = L.run();
+        // (The checker's lookups for the method sets count too.)
+        Steps = LowerSteps - Before + L.Methods.steps();
       },
       LowerStackBytes);
   CallerSteps += Steps;

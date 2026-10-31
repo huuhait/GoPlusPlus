@@ -1,0 +1,5 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-iface --names assert-string-int,assert-missing-method,assert-nil-iface,eq-slice,nil-error-call --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
+// P04.06: panics of interfaces on linux/arm64 under QEMU: the same exit
+// status, output and first line as Go's. Every program:
+// core-panics-iface-arm64.long.test.

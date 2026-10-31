@@ -1,0 +1,59 @@
+package main
+
+import "unsafe"
+
+type Shape interface{ Area() int }
+type R struct{ w, h int }
+
+func (r R) Area() int { return r.w * r.h }
+
+type Chain interface{ Next() Chain }
+type L struct{ n int }
+
+func (l L) Next() Chain { return L{l.n + 1} }
+
+func pick(b bool) Option[Shape] {
+	if b {
+		return R{2, 3}
+	}
+	return nil
+}
+
+func main() {
+	var o Option[Shape]
+	println(o == nil, unsafe.Sizeof(o) == unsafe.Sizeof(Shape(R{1, 1})))
+	o = R{4, 5}
+	println(o != nil)
+	if s, ok := o.Get(); ok {
+		println(s.Area())
+	}
+	println(pick(true).IsNil(), pick(false).IsNil())
+	// An Option[T] to any: nil when unset.
+	var oi Option[int]
+	var a any = oi
+	println(a == nil)
+	oi = 7
+	a = oi
+	println(a == nil, a.(int))
+	// An Option[T] to Option[I].
+	var or Option[R]
+	var os Option[Shape] = or
+	println(os == nil)
+	or = R{2, 2}
+	os = or
+	println(os == nil)
+	if s, ok := os.Get(); ok {
+		println(s.Area())
+	}
+	// A cycle through an interface.
+	var ch Chain = L{1}
+	ch = ch.Next().Next()
+	println(ch.(L).n)
+	// Go's nil for error and any; println of an interface.
+	var e error
+	var x any
+	println(e == nil, x == nil)
+	println(e)
+	println(x)
+	println(unsafe.Sizeof(e), unsafe.Sizeof(x), unsafe.Sizeof(o))
+}

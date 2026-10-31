@@ -1,0 +1,18 @@
+package main
+
+type Shape interface{ Area() int }
+type Sq struct{ S int }
+type Big struct{ A, B, C int }
+
+func (s Sq) Area() int  { return s.S }
+func (b Big) Area() int { return b.A }
+
+func area(s Shape) int { return s.Area() }
+
+func main() {
+	println(area(Sq{2}), area(Big{1, 2, 3}))
+	var a any = 5
+	if n, ok := a.(int); ok {
+		println(n)
+	}
+}

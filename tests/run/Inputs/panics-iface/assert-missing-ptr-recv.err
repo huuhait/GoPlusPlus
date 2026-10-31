@@ -1,0 +1,1 @@
+panic: interface conversion: main.B is not main.J: missing method N

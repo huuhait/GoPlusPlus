@@ -1,0 +1,1 @@
+panic: interface conversion: main.E is not main.I: missing method M

@@ -305,6 +305,11 @@ struct InitEntry {
 
 struct CheckedPackage {
   Package *Pkg = nullptr;
+  /// The context and source manager the package was checked with, and its
+  /// options (the lowering's MethodSets asks the checker's own lookup).
+  TypeContext *Ctx = nullptr;
+  const SourceManager *SM = nullptr;
+  CheckOptions Opts;
   Info I;
   /// The initializations of the package-level variables that have an
   /// initializer, in initialization order (a variable without one is zero).
@@ -323,6 +328,56 @@ std::unique_ptr<CheckedPackage>
 checkPackage(TypeContext &Ctx, const SourceManager &SM, llvm::StringRef PkgPath,
              llvm::ArrayRef<const ast::File *> Files, Importer &Imp,
              DiagnosticsEngine &Diags, const CheckOptions &Opts = {});
+
+/// A method found in the method set of a type (MethodSets::lookup).
+struct MethodHit {
+  /// The method; null if the type has no such method in its method set (a
+  /// pointer-receiver method of a value type, a move receiver, a field of
+  /// that name, an ambiguous name).
+  const Func *F = nullptr;
+  /// The embedded fields to follow from the type to the receiver of F: field
+  /// indexes (Selection::Index without the index of the method itself).
+  llvm::SmallVector<int, 4> Path;
+  /// A parent part of an `extends` chain stands before Path (the lowering of
+  /// `extends` is P04.22).
+  uint32_t ParentSteps = 0;
+  /// Some embedded field on the way is a pointer.
+  bool Indirect = false;
+};
+
+/// The checker's method lookup for the lowering of interfaces (P04.06): the
+/// method sets that decide which method an interface call reaches. It runs
+/// the checker's own lookup (Lookup.cpp), so the lowering never decides a
+/// second time what `x.M` means. Not thread safe; one per lowering.
+class MethodSets {
+public:
+  /// ScanMethods (test-only): the checker's lookup scans a type's methods
+  /// for each name instead of using its name index (a stress test's
+  /// quadratic control).
+  explicit MethodSets(const CheckedPackage &CP, bool ScanMethods = false);
+  ~MethodSets();
+  /// Test-only work count: the steps of the lookups so far (the methods the
+  /// checker compared, the names collected), for the lowering's count.
+  uint64_t steps() const;
+  /// The methods of the interface type Iface (it, or a defined type over
+  /// one), embedded interfaces flattened, in the type set's order (sorted
+  /// by name; an unexported name belongs to its package).
+  llvm::ArrayRef<Func *> interfaceMethods(Type *Iface);
+  /// The method of the type Dyn's method set that has the name and package
+  /// of M (Dyn is the dynamic type of an interface value: not addressable).
+  MethodHit lookup(Type *Dyn, const Func *M);
+  /// Every method in the method set of Dyn, in an order that depends only
+  /// on the names, without operator methods, generic methods and methods
+  /// with a `move` receiver.
+  void methodSet(Type *Dyn, llvm::SmallVectorImpl<MethodHit> &Out);
+  /// Can values of the dynamic type T be compared (`==` of two interface
+  /// values holding T does not panic)?
+  bool comparable(Type *T);
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> P;
+};
 
 /// The `gopp vet` lints (P03.12), run by checkPackage when CheckOptions::Vet
 /// is set: `drop` methods that may run on a zero value (a heuristic), a `!`

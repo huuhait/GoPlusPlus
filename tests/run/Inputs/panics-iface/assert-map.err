@@ -1,0 +1,1 @@
+panic: interface conversion: interface {} is map[string]int, not map[string]string

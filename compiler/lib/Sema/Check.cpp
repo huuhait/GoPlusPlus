@@ -559,6 +559,9 @@ checkPackageHere(TypeContext &Ctx, const SourceManager &SM, StringRef PkgPath,
                   : Mem.copy(Files[0]->Name->Name.str());
   Pkg->PkgScope = Mem.newScope(Ctx.universe(), {}, "package");
   CP->Pkg = Pkg;
+  CP->Ctx = &Ctx;
+  CP->SM = &SM;
+  CP->Opts = Opts;
 
   PackageState S(Ctx, SM, Imp, Opts);
   S.Pkg = Pkg;

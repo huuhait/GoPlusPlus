@@ -1,0 +1,84 @@
+package main
+
+type P struct{ x, y int }
+type S struct {
+	a string
+	b float64
+}
+type Big struct{ v [10]int }
+
+type Shower interface{ Show() int }
+
+func (p P) Show() int   { return p.x + p.y }
+func (b Big) Show() int { return b.v[3] }
+func (s S) Show() int   { return len(s.a) }
+
+type F32 float32
+
+func (f F32) Show() int { return int(f) }
+
+type B bool
+
+func (b B) Show() int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+type Arr [3]int
+
+func (a Arr) Show() int { return a[0] + a[2] }
+
+func main() {
+	var xs []any
+	xs = append(xs, 1, "a", 2.5, true, P{1, 2}, S{"hey", 1.5}, [2]int{3, 4}, int8(-3), uint16(9), F32(2.5))
+	for _, x := range xs {
+		switch v := x.(type) {
+		case int:
+			println("int", v)
+		case string:
+			println("string", len(v))
+		case float64:
+			println("float64", v)
+		case bool:
+			println("bool", v)
+		case P:
+			println("P", v.x, v.y)
+		case S:
+			println("S", len(v.a), v.b)
+		case [2]int:
+			println("arr", v[0], v[1])
+		case int8:
+			println("int8", v)
+		case uint16:
+			println("uint16", v)
+		default:
+			println("other")
+		}
+	}
+	var sh []Shower
+	var bg Big
+	bg.v[3] = 42
+	sh = append(sh, P{3, 4}, bg, S{"abcd", 0}, F32(7.5), B(true), Arr{5, 6, 7})
+	for _, s := range sh {
+		println(s.Show())
+	}
+	a, b := any(P{1, 2}), any(P{1, 2})
+	println(a == b, a == any(P{2, 1}), a == any(1))
+	var s1 any = "hello"
+	var s2 any = "hel" + "lo"
+	println(s1 == s2)
+	var f1 any = 0.0
+	println(f1 == any(-1*0.0))
+	m := map[any]int{}
+	m[1] = 10
+	m["a"] = 20
+	m[P{1, 2}] = 30
+	m[2.5] = 40
+	println(m[1], m["a"], m[P{1, 2}], m[2.5], m[3], len(m))
+	var e1, e2 any
+	println(e1 == e2, e1 == nil)
+	q := Shower(P{1, 1})
+	println(q == Shower(P{1, 1}), q == Shower(P{1, 2}))
+}

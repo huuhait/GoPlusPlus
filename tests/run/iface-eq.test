@@ -1,0 +1,86 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-eq.out 0
+// P04.06: == and != on interfaces with Go's rules: two nil interfaces are
+// equal; the same dynamic type and equal values; a different dynamic type is
+// never equal (also when the numbers are equal); a pointer is equal by
+// address; a struct, an array and a string by value; an interface against a
+// concrete value or another interface type; the comparison with nil. (The
+// run-time panic of an uncomparable dynamic type is in core-panics-iface.)
+// The expected output is what `go run` prints for this very file.
+package main
+
+type Shape interface{ Area() int }
+type Namer interface {
+	Shape
+	Name() string
+}
+
+type Sq struct{ S int }
+type Pair struct {
+	A int
+	B string
+}
+type Wrap struct {
+	V any
+	N int
+}
+type Num int
+type Num2 int
+
+func (s Sq) Area() int     { return s.S }
+func (s Sq) Name() string  { return "sq" }
+func (p *Pair) Area() int  { return p.A }
+func (n Num) Area() int    { return int(n) }
+func (n Num2) Area() int   { return int(n) }
+
+func main() {
+	var n1, n2 any
+	println(n1 == n2, n1 != n2, n1 == nil, nil == n2)
+	var a, b any = 1, 1
+	println(a == b, a != b, a == any(2))
+	var i64 any = int64(1)
+	println(a == i64, i64 == any(int64(1)))
+	var u8a, u8b any = uint8(200), uint8(200)
+	println(u8a == u8b, u8a == any(uint8(100)))
+	var f1, f2 any = 1.5, 1.5
+	println(f1 == f2, f1 == any(2.5))
+	var t, f any = true, false
+	println(t == f, t == any(true))
+	var s1, s2 any = "go", "go"
+	println(s1 == s2, s1 == any("gp"), s1 == any(""))
+	var p1, p2 any = Pair{1, "x"}, Pair{1, "x"}
+	println(p1 == p2, p1 == any(Pair{2, "x"}), p1 == any(Pair{1, "y"}))
+	var ar1, ar2 any = [3]int{1, 2, 3}, [3]int{1, 2, 3}
+	println(ar1 == ar2, ar1 == any([3]int{1, 2, 4}))
+	w1 := Wrap{Sq{1}, 2}
+	w2 := Wrap{Sq{1}, 2}
+	w3 := Wrap{Sq{2}, 2}
+	println(w1 == w2, w1 == w3)
+	var x, y Pair
+	var px, py any = &x, &y
+	println(px == px, px == py, px == any(&x))
+
+	var sh1, sh2 Shape = Sq{3}, Sq{3}
+	println(sh1 == sh2, sh1 != sh2, sh1 == Shape(Sq{4}))
+	var nm Namer = Sq{3}
+	println(sh1 == nm, nm == sh1)
+	println(sh1 == Sq{3}, Sq{3} == sh1, sh1 == Sq{9})
+	var any1 any = Sq{3}
+	println(any1 == sh1, sh1 == any1)
+	var n3 Shape = Num(4)
+	var n4 Shape = Num2(4)
+	println(n3 == n4, n3 == Num(4), n3 == Num2(4))
+	println(n3 == any(Num(4)), n3 != any(Num(5)))
+
+	var e1, e2 error
+	println(e1 == e2, e1 == nil)
+	var arr [2]any
+	arr[0] = 1
+	var arr2 [2]any
+	arr2[0] = 1
+	println(arr == arr2)
+	arr2[1] = "x"
+	println(arr == arr2)
+	m := w1
+	println(m == w1, any(m) == any(w1))
+}

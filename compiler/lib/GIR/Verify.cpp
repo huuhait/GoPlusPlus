@@ -200,6 +200,13 @@ private:
       }
       noteType(G.Ty);
       span(G.Loc);
+      if (!G.Parts.empty()) {
+        if (G.Init.K != Constant::Zero)
+          err("V072", Who + G.Name + ": static data and a scalar initializer");
+        else
+          staticData(Who + G.Name, G);
+        continue;
+      }
       if (G.Init.K == Constant::Zero) {
         if (G.Init.Ty)
           err("V071", Who + G.Name + ": a zero initializer has no type");
@@ -218,6 +225,90 @@ private:
         err("V071", Who + G.Name + " of type " + str(G.Ty) +
                         " has an initializer of type " + str(G.Init.Ty));
     }
+  }
+
+  /// V072: the static data of a global (Global::Parts) is a tree of
+  /// constants that follows its type: the leaves of the type in order, depth
+  /// first through the fields of a struct or tuple and the elements of an
+  /// array; a leaf is a constant of the leaf's type (V040), an address of a
+  /// global or function in a pointer field, or a Zero of the type of the part
+  /// it stands for (one leaf for the whole part). Nothing is left over. An
+  /// explicit work list: the type may be as deep as the compiler made it.
+  void staticData(const std::string &Who, const Global &G) {
+    std::vector<const Type *> Work{G.Ty};
+    size_t Pos = 0;
+    while (!Work.empty() && !full()) {
+      ++Steps;
+      const Type *T = Work.back();
+      Work.pop_back();
+      if (T->isUnit())
+        continue;
+      if (Pos >= G.Parts.size()) {
+        err("V072",
+            Who + ": the static data has too few parts for " + str(G.Ty));
+        return;
+      }
+      const Constant &C = G.Parts[Pos];
+      if (C.K == Constant::Zero && C.Ty == T) {
+        ++Pos;
+        continue;
+      }
+      const bool Compound =
+          (T->getKind() == Type::Kind::Struct && T->hasBody()) ||
+          T->getKind() == Type::Kind::Tuple ||
+          T->getKind() == Type::Kind::Array;
+      if (Compound && !T->isRec()) {
+        if (T->getKind() == Type::Kind::Array) {
+          // (Every element takes a part: a longer array cannot be covered.)
+          if (T->length() > G.Parts.size() - Pos) {
+            err("V072",
+                Who + ": the static data has too few parts for " + str(T));
+            return;
+          }
+          for (uint64_t K = T->length(); K > 0; --K)
+            Work.push_back(T->elem());
+        } else {
+          for (size_t K = T->elems().size(); K > 0; --K)
+            Work.push_back(T->elems()[K - 1]);
+        }
+        continue;
+      }
+      ++Pos;
+      if (!constant(C))
+        return;
+      bool Ok = false;
+      switch (T->getKind()) {
+      case Type::Kind::Int:
+        Ok = C.K == Constant::Int && C.Ty == T;
+        break;
+      case Type::Kind::Bool:
+        Ok = C.K == Constant::Bool;
+        break;
+      case Type::Kind::Float:
+        Ok = C.K == Constant::Float && C.Ty == T;
+        break;
+      case Type::Kind::String:
+        Ok = C.K == Constant::Str;
+        break;
+      case Type::Kind::Ptr:
+        Ok = C.K == Constant::Global || C.K == Constant::Func ||
+             (C.K == Constant::Null && C.Ty == T);
+        break;
+      case Type::Kind::Func:
+        Ok = C.K == Constant::Func && C.Ty == T;
+        break;
+      default:
+        break;
+      }
+      if (!Ok) {
+        err("V072", Who + ": a part of the static data (" + str(C.Ty) +
+                        ") does not fit the field of type " + str(T));
+        return;
+      }
+    }
+    if (Pos != G.Parts.size() && !full())
+      err("V072", Who + ": the static data has " + num(G.Parts.size() - Pos) +
+                      " parts too many for " + str(G.Ty));
   }
 
   /// V002: a type is well formed: integers are 8, 16, 32 or 64 bits wide,
@@ -815,7 +906,10 @@ private:
       Ok = A->isInt() && T->isPtr();
       break;
     case CastKind::PtrToPtr:
-      Ok = A->isPtr() && T->isPtr();
+      // (A function pointer is a pointer: an itab or a type descriptor holds
+      // methods as plain pointers, and a call turns one back, P04.06.)
+      Ok = (A->isPtr() || A->getKind() == Type::Kind::Func) &&
+           (T->isPtr() || T->getKind() == Type::Kind::Func);
       break;
     }
     if (!Ok)

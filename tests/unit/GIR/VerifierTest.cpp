@@ -1134,6 +1134,28 @@ TEST(GIRVerifier, V053_Cast) {
   Bad(
       CastKind::IntToPtr, [](PlaceFixture &X) { return nullOf(X.PI64); },
       [](PlaceFixture &X) { return X.PI64; });
+  // P04.06: an itab holds methods as plain pointers and a call turns one
+  // back, so PtrToPtr is also the cast between a pointer and a function;
+  // an integer is neither.
+  {
+    PlaceFixture X;
+    Type *PU8 = X.C.ptr(X.C.u8());
+    Type *FnTy = X.M.func(X.F).Sig;
+    X.set(PU8, castTo(CastKind::PtrToPtr, constFunc(X.M, X.F), PU8));
+    X.set(FnTy, castTo(CastKind::PtrToPtr, nullOf(PU8), FnTy));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X;
+    Type *FnTy = X.M.func(X.F).Sig;
+    X.set(FnTy, castTo(CastKind::PtrToPtr, constInt(X.I64, 1), FnTy));
+    EXPECT_GIR_RULE(X.M, "V053");
+  }
+  {
+    PlaceFixture X;
+    X.set(X.I64, castTo(CastKind::PtrToInt, constFunc(X.M, X.F), X.I64));
+    EXPECT_GIR_RULE(X.M, "V053");
+  }
   // (The good side is EveryKindOfStatementAndTerminatorIsValid: each kind
   // with the types it names.)
 }
@@ -1770,6 +1792,79 @@ TEST(GIRVerifier, V071_Globals) {
     One.Ty = X.Pair;
     X.M.addGlobal(globalOf("gl", X.Pair, One));
     EXPECT_GIR_RULE(X.M, "V071");
+  }
+}
+
+TEST(GIRVerifier, V072_StaticData) {
+  auto Data = [](PlaceFixture &X, const char *Name, Type *Ty,
+                 std::vector<Constant> Parts) {
+    Global G = globalOf(Name, Ty);
+    G.Parts = std::move(Parts);
+    X.M.addGlobal(std::move(G));
+  };
+  Type *PU8 = nullptr;
+  {
+    // The good side: an itab-like array of pointers (a global, a function,
+    // null), a descriptor-like tuple (a pointer, an integer, a string, a
+    // whole zero part), and an array of strings.
+    PlaceFixture X;
+    PU8 = X.C.ptr(X.C.u8());
+    uint32_t Tab = X.M.addGlobal(globalOf("tab", X.I64));
+    Data(X, "itab", X.C.array(PU8, 3),
+         {constGlobal(X.M, Tab).C, constFunc(X.M, X.F).C, nullOf(PU8).C});
+    Data(X, "desc", X.C.tuple({PU8, X.U64, X.Str, X.Pair}),
+         {constGlobal(X.M, Tab).C, constInt(X.U64, 5).C,
+          constStr(X.M, "name").C, Constant{}});
+    {
+      Global &Z = X.M.Globals.back();
+      Z.Parts.back().K = Constant::Zero;
+      Z.Parts.back().Ty = X.Pair;
+    }
+    Data(X, "keys", X.C.array(X.Str, 2),
+         {constStr(X.M, "a").C, constStr(X.M, "b").C});
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // too few parts
+    PU8 = X.C.ptr(X.C.u8());
+    Data(X, "itab", X.C.array(PU8, 3), {nullOf(PU8).C, nullOf(PU8).C});
+    EXPECT_GIR_RULE(X.M, "V072");
+  }
+  {
+    PlaceFixture X; // too many parts
+    PU8 = X.C.ptr(X.C.u8());
+    Data(X, "itab", X.C.array(PU8, 1), {nullOf(PU8).C, nullOf(PU8).C});
+    EXPECT_GIR_RULE(X.M, "V072");
+  }
+  {
+    PlaceFixture X; // an integer where a pointer goes
+    PU8 = X.C.ptr(X.C.u8());
+    Data(X, "itab", X.C.array(PU8, 1), {constInt(X.U64, 1).C});
+    EXPECT_GIR_RULE(X.M, "V072");
+  }
+  {
+    PlaceFixture X; // a string where an integer goes
+    Data(X, "d", X.C.tuple({X.U64}), {constStr(X.M, "s").C});
+    EXPECT_GIR_RULE(X.M, "V072");
+  }
+  {
+    PlaceFixture X; // an integer of another width
+    Data(X, "d", X.C.tuple({X.U64}), {constInt(X.I32, 1).C});
+    EXPECT_GIR_RULE(X.M, "V072");
+  }
+  {
+    PlaceFixture X; // static data and a scalar initializer
+    Global G = globalOf("d", X.I64, constInt(X.I64, 7).C);
+    G.Parts = {constInt(X.I64, 7).C};
+    X.M.addGlobal(std::move(G));
+    EXPECT_GIR_RULE(X.M, "V072");
+  }
+  {
+    PlaceFixture X; // a function in a func-typed field is the same function
+    Type *Fn = X.F ? X.M.func(X.F).Sig : nullptr;
+    ASSERT_NE(Fn, nullptr);
+    Data(X, "d", X.C.tuple({Fn}), {constFunc(X.M, X.F).C});
+    EXPECT_GIR_VALID(X.M);
   }
 }
 

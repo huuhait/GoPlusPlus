@@ -50,6 +50,14 @@ struct LowerOptions {
   /// ones P04.09's drop glue and `Clone` will call). Removed once P05.03 has
   /// real arenas, or kept for runtime unit tests only.
   bool TestIntrinsics = false;
+  /// Test-only: an interface method call finds its itab slot by a scan of the
+  /// interface's methods, the quadratic search the stress test's control must
+  /// catch.
+  bool ScanItabSlots = false;
+  /// Test-only: the checker's lookup of a method by name scans the type's
+  /// methods (sema::MethodSets), the quadratic walk the stress test's
+  /// control must catch.
+  bool ScanMethodLookups = false;
 };
 
 /// Test-only (M8): the steps the lowering walks that make no GIR statement

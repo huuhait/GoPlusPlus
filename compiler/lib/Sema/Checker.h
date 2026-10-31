@@ -640,6 +640,17 @@ public:
                           const Func *Want = nullptr);
   Func *lookupMethod(NamedType *N, Package *Pkg, StringRef Name, bool Fold,
                      int *Idx, const Func *Want = nullptr);
+  /// The name index of the methods of the origin O (NamedType::MethodIndex),
+  /// made on first use once the types are final.
+  const llvm::ArrayRef<uint32_t> *methodIndex(NamedType *O);
+  /// A type with more methods than this is looked up by its index.
+  static constexpr size_t IndexedMethods = 8;
+  /// Test-only work count: the methods lookupMethod compared (a stress test
+  /// counts a lookup per name instead of timing it).
+  uint64_t LookupSteps = 0;
+  /// Test-only: lookupMethod scans the methods, the walk the index replaces
+  /// (the control of the stress test).
+  bool ScanMethods = false;
   Func *namedMethod(NamedType *N, unsigned I); // instantiates lazily
   unsigned numMethods(NamedType *N);
   bool sameId(const Object *O, Package *Pkg, StringRef Name, bool Fold);
@@ -674,6 +685,11 @@ public:
   // --- expressions (Expr.cpp)
   ExprKind rawExpr(Operand &X, const ast::Expr *E, Type *Hint,
                    bool AllowGeneric);
+  /// Records what the operand X of the expression X.E is (its type and
+  /// value; an untyped one for later): the one record of an evaluated
+  /// expression, made by rawExpr and by every path that evaluates an
+  /// expression without it (a plain index argument, genericExprList).
+  void recordOperand(const Operand &X);
   ExprKind exprInternal(Operand &X, const ast::Expr *E, Type *Hint);
   void expr(Operand &X, const ast::Expr *E);
   void exprWithHint(Operand &X, const ast::Expr *E, Type *Hint);

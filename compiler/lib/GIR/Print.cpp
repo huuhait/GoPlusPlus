@@ -356,6 +356,18 @@ void gir::print(raw_ostream &OS, const Module &M, const PrintOptions &Opts) {
       Printer P{OS, M, Opts};
       P.constant(G.Init);
     }
+    if (!G.Parts.empty()) {
+      Printer P{OS, M, Opts};
+      OS << " = {";
+      bool First = true;
+      for (const Constant &C : G.Parts) {
+        ++printSteps();
+        OS << (First ? " " : ", ");
+        First = false;
+        P.constant(C);
+      }
+      OS << " }";
+    }
     OS << '\n';
   }
   for (const auto &F : M.Funcs) {

@@ -1,0 +1,1 @@
+panic: interface conversion: main.Shape is *main.Rect, not main.Sq

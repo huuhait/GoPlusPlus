@@ -45,7 +45,7 @@ symbol  = "_GP" entity .
 entity  = Func | Method | OpMethod | Var | Closure | PkgInit | InitFunc
         | TypeInfo | VTable | ITab | EqGlue | HashGlue | DropGlue | CloneGlue
         | Data | CABIThunk | MethodValue | MethodExpr | Promoted | IfaceThunk
-        | Instance(entity base) .
+        | MethodTable | IfaceDesc | Instance(entity base) .
 type    = Basic | Pointer | Slice | Array | Map | Option | View | Borrowed | Chan
         | Tuple | Signature | Struct | Interface | Named | LocalNamed | Universe
         | Instance(type base) | TypeParam | Unit | UnitType | BackRef .
@@ -117,6 +117,8 @@ Every node is a **tag** (one letter, or `T` and a letter), a header, and childre
 | `TE` | MethodExpr | | entity |
 | `TP` | Promoted | | entity |
 | `TI` | IfaceThunk | | entity |
+| `Tm` | MethodTable | | type |
+| `Tn` | IfaceDesc | | interface type |
 
 Field flags, every mark of a field that type identity compares ([TYP-15](03-types.md#34-required-fields-d14-rule-11), [TYP-15a](03-types.md#34-required-fields-d14-rule-11)): 1 embedded, 2 the name is unexported so its package follows, 4 a tag follows, 8 the effective `@Required` bit, 16 `@Option`, 32 the hidden parent part of an `extends` type (ADR-0023), 64 `@Required` as written, 128 required in the "must be set" sense only (the field of an instance declared with a type parameter, ADR-0016 point 8). Signature flags: 1 variadic; the move mask has bit *i* set for a `move` parameter. There is no flag for `!`: `func!(P) R` is identical to `func(P) (R, error)` (ERR-2) and is written as that. Which child a node may have is fixed (a Method's child is a named type, an Instance's first child is a named type, function, method or operator method, ...); the parser rejects any other.
 
@@ -128,7 +130,7 @@ Field flags, every mark of a field that type identity compares ([TYP-15](03-type
 - **Instance** `I`: a generic function, method or type with its type arguments. A method of a generic type is `Method(Instance(Named, args), name)`; a generic method (with its own type parameters) of it is `Instance(Method(...), method args)`. Symbols name instances, never generic declarations.
 - **Closure** `C`: a function literal is its ordinal (1, 2, ... in source order among the literals directly inside the enclosing function) and the enclosing entity, which is a function, method, instance, variable (for a package variable's initializer) or another closure. A closure in a generic method is a closure of the *instance*, so it has one name per instance. The ordinal is a property of the source text, never of the order the compiler met the literals.
 - **PkgInit** `J` and **InitFunc** `K`: the package's init entry point, and its *n*th `init` function (n from 0 in the order of the sorted file names, then source position). A package may declare many `init` functions, none of them in its scope, so an `init` function never has a Func name; nor does a blank function or method (`func _()`), which is never emitted.
-- **TypeInfo** `Ti`, **VTable** `Tv` (ADR-0023 type table), **ITab** `Ta` (concrete type then interface type), **EqGlue**, **HashGlue**, **DropGlue**, **CloneGlue**: one per type. Two types that are identical have the same type node, hence the same names (A.6).
+- **TypeInfo** `Ti`, **VTable** `Tv` (ADR-0023 type table), **ITab** `Ta` (concrete type then interface type), **EqGlue**, **HashGlue**, **DropGlue**, **CloneGlue**, **MethodTable** `Tm` (the methods of a type's method set with their keys, which an assertion to an interface walks; P04.06), **IfaceDesc** `Tn` (an interface type's method keys, for those assertions; P04.06): one per type. Two types that are identical have the same type node, hence the same names (A.6). `gopp demangle` prints them as "typeinfo for main.T", "method table for main.T", "interface descriptor for main.I".
 - **Data** `TD`: constant data, keyed by a content digest the caller computes (for example a hash of a string literal's bytes).
 - **CABIThunk** `TC` (D4.4), **MethodValue** `TV`, **MethodExpr** `TE`, **Promoted** `TP`, **IfaceThunk** `TI`: generated wrappers, named by the entity they wrap. A C-ABI thunk of an `@Export` function is *not* named like this: its symbol is the declared C name (A.8); `TC` names the thunk of a function used as a callback.
 
@@ -176,6 +178,8 @@ These rows are checked against the code by the unit tests `SymbolName.Goldens` a
 | `_GPC2_M3GetIN4mainE3BoxiE` | `main.Box[int].Get.func2` |
 | `_GPTiHrSi` | `typeinfo for map[string][]int` |
 | `_GPTvN4mainE3Dog` | `vtable for main.Dog` |
+| `_GPTmN4mainE3Dog` | `method table for main.Dog` |
+| `_GPTnN4mainE6Shaper` | `interface descriptor for main.Shaper` |
 | `_GPJ4mainE` | `main.init` |
 | `_GPK4mainE1_` | `main.init.1` |
 | `_GPR4mainE7counter` | `main.counter` |

@@ -1,0 +1,1 @@
+panic: interface conversion: main.Sq is not main.Namer: missing method Name

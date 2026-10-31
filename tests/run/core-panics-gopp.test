@@ -9,6 +9,9 @@
 //   one, and writing a key that is there is no insert);
 // - slicing an owned slice past its length, within its capacity, as a
 //   re-slice in place or as a borrowed slice (SLC-13: the elements past the
-//   length are not live): "slice bounds out of range [:5] with length 3".
+//   length are not live): "slice bounds out of range [:5] with length 3";
+// - `==` of two views of slices boxed in interfaces (P04.06: a boxed view
+//   compares as the value it shows, and a slice does not compare):
+//   "comparing uncomparable type View[[]int]".
 // Inputs/panics-gopp/*.out and .err are written by hand: Go has no such
 // program.

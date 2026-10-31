@@ -1,0 +1,23 @@
+package main
+
+type Store struct{ n int }
+
+func (s *Store) Put(m map[string]int, k string, v int) {
+	m[k] = v
+	s.n++
+}
+
+type Putter interface {
+	Put(m map[string]int, k string, v int)
+}
+
+func main() {
+	var sv Store
+	var p Putter = &sv
+	var mm map[string]int
+	p.Put(mm, "z", 1)
+	println(len(mm), sv.n)
+	var m2 map[string]int
+	sv.Put(m2, "q", 1)
+	println(len(m2))
+}

@@ -57,6 +57,9 @@ Context::Context() {
   Unit = get(Key(Type::Kind::Unit));
   Bool = get(Key(Type::Kind::Bool));
   String = get(Key(Type::Kind::String));
+  Iface = structTy("gopp.iface");
+  Type *P = ptr(intTy(8, false));
+  setStructBody(Iface, {P, P});
 }
 
 Type *Context::get(const Key &K) {

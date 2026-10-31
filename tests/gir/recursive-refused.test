@@ -4,13 +4,13 @@
 // RUN: %t.ok | FileCheck --check-prefix=OK %s
 // P04.05: a defined type that reaches itself through a slice, a map, an array
 // or an Option now lowers (gir.md section 3: the self-naming type;
-// core-recursive.test runs them). What stays refused is the cycle through
-// something that has no GIR type yet: a function value (P04.07) and an
-// interface (P04.06). Each is reported once, at its first use, as that
-// missing part, never as a type that "refers to itself", and the cycle
-// through a slice (`Fine`) draws no error.
+// core-recursive.test runs them), and so does one that reaches itself through
+// an interface (P04.06: `type I interface{ Next() I }`, `useI` below).
+// What stays refused is the cycle through something that has no GIR type
+// yet: a function value (P04.07). It is reported once, at its first use, as
+// that missing part, never as a type that "refers to itself", and the cycles
+// through a slice (`Fine`) and an interface draw no error.
 // CHECK: recursive-refused.gopp:10:1: error[E0439]: a function value (P04.07) is not supported
-// CHECK: recursive-refused.gopp:12:1: error[E0439]: an interface (P04.06) is not supported
 // CHECK-NOT: error
 // The other side, kept from P04.04: the cycles through a struct (a list, a
 // tree with Options, two structs that name each other) lower and run.

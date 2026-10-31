@@ -1,0 +1,40 @@
+package main
+
+type I interface{ M() }
+
+type J interface {
+	M()
+	N()
+}
+
+type A struct{}
+
+func (A) M() {}
+
+type B struct{ x int }
+
+func (B) M()  {}
+func (*B) N() {}
+
+type E struct{}
+
+func (E) Error() string { return "e" }
+
+type S struct {
+	f []int
+}
+
+type W struct {
+	a any
+	n int
+}
+
+type K struct{ a any }
+
+
+func main() {
+	println("before")
+	var x I = A{}
+	_ = x.(*A)
+	println("not reached")
+}

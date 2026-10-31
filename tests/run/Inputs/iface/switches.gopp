@@ -1,0 +1,99 @@
+package main
+
+type K struct {
+	a any
+	n int
+}
+
+type Stringer interface{ String() string }
+type Namer interface{ Name() string }
+type Both interface {
+	Stringer
+	Namer
+}
+type T1 struct{}
+
+func (T1) String() string { return "t1" }
+func (T1) Name() string   { return "n1" }
+
+type T2 struct{ v int }
+
+func (T2) String() string { return "t2" }
+
+func classify(x any) int {
+	switch x.(type) {
+	case Both:
+		return 1
+	case Stringer:
+		return 2
+	case Namer:
+		return 3
+	case nil:
+		return 4
+	}
+	return 0
+}
+
+func loop(xs []any) int {
+	total := 0
+outer:
+	for i, x := range xs {
+		switch v := x.(type) {
+		case int:
+			if v > 100 {
+				break outer
+			}
+			total += v
+		case string, []byte:
+			continue outer
+		case nil:
+			total += 1000
+		default:
+			_ = v
+			total += i
+		}
+	}
+	return total
+}
+
+func main() {
+	println(classify(T1{}), classify(T2{1}), classify(nil), classify(5))
+	println(loop([]any{1, "a", nil, 2.5, 7, 500, 9}))
+	k1, k2 := K{1, 2}, K{1, 2}
+	println(k1 == k2, k1 == K{2, 2})
+	m := map[K]string{}
+	m[k1] = "x"
+	m[K{"s", 1}] = "y"
+	println(m[k2], m[K{"s", 1}], len(m))
+	arr1 := [2]any{1, "a"}
+	arr2 := [2]any{1, "a"}
+	println(arr1 == arr2)
+	arr2[1] = "b"
+	println(arr1 == arr2)
+	var s Stringer = T2{3}
+	var s2 Stringer = T2{3}
+	println(s == s2)
+	var as any = s
+	println(as == any(T2{3}), as == s2)
+	var ps Stringer = T1{}
+	var n Namer = ps.(Namer)
+	println(n.Name())
+	st := ps.(Stringer)
+	println(st.String())
+	var e1 any = int32(5)
+	var e2 any = int64(5)
+	println(e1 == e2)
+	var u1 any = uint8(7)
+	_, isb := u1.(byte)
+	println(isb)
+	var f1 any = float32(1.5)
+	var f2 any = float32(1.5)
+	nan := 0.0
+	var f3 any = nan / nan
+	println(f1 == f2, f3 == f3)
+	var c1 any = complex(1, 2)
+	println(c1 == any(complex(1, 2)))
+	var pa any = &k1
+	var pb any = &k1
+	println(pa == pb)
+}

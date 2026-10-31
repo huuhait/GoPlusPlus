@@ -944,15 +944,17 @@ void Checker::genericExprList(ArrayRef<ast::Expr *> Es,
     // other evaluation path (exprList, multiExpr, exprOrType, use) reaches
     // rawExpr; this one and the callee of callExpr are the only direct
     // indexExpr calls, and an operator call has a selector as its callee.
+    // The record rawExpr would make is made here too, for an instance
+    // (`f[int]`) and for a plain index (`s[i]`, `m[k]`) alike: the lowering
+    // reads every argument's type (an interface parameter boxes it).
     auto *IE = dyn_cast<IndexExpr>(Ex);
     if (IE && !PreEval.count(Ex)) {
-      if (indexExpr(X, IE)) {
+      if (indexExpr(X, IE))
         funcInst(X, IE->getBegin(), IE, false, nullptr);
-        if (X.M != Mode::Invalid)
-          recordTypeAndValue(IE, X.M, X.Ty, nullptr);
-      }
-      if (X.M != Mode::Invalid)
+      if (X.M != Mode::Invalid) {
         X.E = IE; // the element, not the container, is the argument
+        recordOperand(X);
+      }
       return;
     }
     rawExpr(X, Ex, nullptr, true);

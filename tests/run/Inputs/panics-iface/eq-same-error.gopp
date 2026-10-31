@@ -1,0 +1,27 @@
+package main
+
+type Shape interface{ Area() int }
+type Namer interface{ Name() string }
+type Sq struct{ S int }
+type Big struct{ A, B, C int }
+type Rect struct{ W, H int }
+type Num int
+type Holder struct{ V any }
+type Bag struct{ Items []int }
+
+func (s Sq) Area() int      { return s.S }
+func (b Big) Area() int     { return b.A }
+func (r *Rect) Area() int   { return r.W }
+func (n Num) Area() int     { return int(n) }
+
+
+func main() {
+	println("before")
+	var a, b Shape = Sq{1}, Sq{1}
+	println(a == b)
+	var c, d any = Holder{1}, Holder{[]int{2}}
+	println(c == d)
+	var e, f any = Holder{[]int{1}}, Holder{[]int{1}}
+	println(e == f)
+	println("not reached")
+}

@@ -368,6 +368,15 @@ struct Global {
   /// Constant data: it goes to read-only memory (rodata).
   bool ReadOnly = false;
   Constant Init;
+  /// Static data with pointers in it (type descriptors, itabs, method
+  /// tables: P04.06). When not empty, the initial value is a tree of
+  /// constants: the leaves of Ty in order, depth first through the fields of
+  /// a struct or a tuple and the elements of an array. A leaf is a constant
+  /// of the leaf's type: an integer, bool, float or string constant, `Null`,
+  /// the address of a global or a function in a pointer field, a function
+  /// constant in a func field, or `Zero` of any type (one leaf for the whole
+  /// part). `Init` is then Zero (V072).
+  std::vector<Constant> Parts;
   Span Loc;
   Global() { Init.K = Constant::Zero; }
 };

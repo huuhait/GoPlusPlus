@@ -553,9 +553,12 @@ FuncId Lowering::eqGlue(S::Type *T, SourceLoc At) {
     return NoId;
   if (!hasGlue(G)) {
     unsupported(At, "comparing a value that holds a slice or a function "
-                    "(P04.06, P04.07)");
+                    "(P04.07)");
     return NoId;
   }
+  if (hasIface(G) &&
+      (rt(RtFn::IfaceEq, At) == NoId || rt(RtFn::IfaceHash, At) == NoId))
+    return NoId;
   std::string Sym = Syms.glue(sym::Kind::EqGlue, T);
   if (Sym.empty())
     Sym = runtimeSymbol("eq_" + G->str());
@@ -568,9 +571,12 @@ FuncId Lowering::hashGlue(S::Type *T, SourceLoc At) {
     return NoId;
   if (!hasGlue(G)) {
     unsupported(At, "hashing a value that holds a slice or a function "
-                    "(P04.06, P04.07)");
+                    "(P04.07)");
     return NoId;
   }
+  if (hasIface(G) &&
+      (rt(RtFn::IfaceEq, At) == NoId || rt(RtFn::IfaceHash, At) == NoId))
+    return NoId;
   std::string Sym = Syms.glue(sym::Kind::HashGlue, T);
   if (Sym.empty())
     Sym = runtimeSymbol("hash_" + G->str());

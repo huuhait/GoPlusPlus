@@ -545,7 +545,7 @@ public:
 
   /// Any entity.
   G entity(int Depth) {
-    switch (pick(20)) {
+    switch (pick(22)) {
     case 0:
     case 1:
     case 2:
@@ -608,6 +608,15 @@ public:
     case 18: {
       G E = entityBase(Depth);
       return {C.wrapper(Kind::IfaceThunk, E.N), "interface thunk for " + E.T};
+    }
+    case 19: {
+      G T = type(Depth);
+      return {C.ofType(Kind::MethodTable, T.N), "method table for " + T.T};
+    }
+    case 20: {
+      G T = type(Depth);
+      return {C.ofType(Kind::IfaceDesc, T.N),
+              "interface descriptor for " + T.T};
     }
     default: {
       // A generic function instance.
@@ -735,6 +744,10 @@ TEST(SymbolName, Goldens) {
        "typeinfo for map[string][]int"},
       {C.ofType(Kind::VTable, C.named("main", "Dog")), "_GPTvN4mainE3Dog",
        "vtable for main.Dog"},
+      {C.ofType(Kind::MethodTable, C.named("main", "Dog")), "_GPTmN4mainE3Dog",
+       "method table for main.Dog"},
+      {C.ofType(Kind::IfaceDesc, C.named("main", "Shaper")),
+       "_GPTnN4mainE6Shaper", "interface descriptor for main.Shaper"},
       {C.pkgInit("main"), "_GPJ4mainE", "main.init"},
       {C.initFunc("main", 1), "_GPK4mainE1_", "main.init.1"},
       {C.var("main", "counter"), "_GPR4mainE7counter", "main.counter"},

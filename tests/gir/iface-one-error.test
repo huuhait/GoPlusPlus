@@ -1,0 +1,56 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error %s
+// P04.06 review R4, R6: what the lowering refuses is reported once, naming
+// the task, and what follows it does not report again. A func value or a
+// func literal boxed in an interface is the type `func()` (P04.07), checked
+// before the operand is lowered. An interface with a method that fails with
+// `!` (P04.10) is reported where it is first lowered; its conversion, a call
+// of its method with the results taken apart, the nil check of the error,
+// an assertion to it, a type switch case of it and a comparison of two of
+// them give values of the right shape that report nothing more. The other
+// side: the interface `M` next to it lowers (nothing reported for it).
+package main
+
+type L interface{ Load!(p int) int }
+
+type M interface{ Get() int }
+
+type X struct{}
+
+func (X) Load(p int) (int, error) { return p, nil }
+func (X) Get() int                 { return 1 }
+
+func g() {}
+
+func funcs() {
+	var a any = g
+	var b any = func() {}
+	_, _ = a, b
+}
+
+func fails() {
+	var l L = X{}
+	n, err := l.Load(3)
+	if err == nil {
+		println(n)
+	}
+	var x any = X{}
+	if k, ok := x.(L); ok {
+		_ = k
+	}
+	switch x.(type) {
+	case L:
+		println("L")
+	}
+	var l2 L = X{}
+	println(l == l2)
+	var m M = X{}
+	println(m.Get())
+}
+
+func main() {
+	funcs()
+	fails()
+}
+
+// CHECK: iface-one-error.test:25:14: error[E0439]: a function value (P04.07) is not supported
+// CHECK: iface-one-error.test:31:12: error[E0439]: a method that fails with ! (P04.10) is not supported

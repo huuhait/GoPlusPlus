@@ -1,0 +1,64 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/iface-index-args.out
+// P04.06 review R1: an index expression passed as the whole argument to an
+// interface parameter is boxed with its element type: `show(s[1])`,
+// `show(m["a"])`, a string's byte, an element of an array of arrays and of a
+// map of maps, among several arguments, to a variadic `...any`, and to a
+// method called directly and through an interface. The checker used to
+// record no type for such an argument, and the lowering gave up without a
+// word (E0440). The expected output is what `go run` prints for this very
+// file (Inputs/regen-goldens.py).
+package main
+
+type I interface {
+	M(a any) int
+	N(a, b any) bool
+}
+
+type T struct{ n int }
+
+func (t T) M(a any) int { return t.n + a.(int) }
+
+func (t T) N(a, b any) bool { return a == b }
+
+func show(a any) {
+	switch v := a.(type) {
+	case int:
+		println("int", v)
+	case uint8:
+		println("byte", v)
+	case string:
+		println("string", v)
+	case T:
+		println("T", v.n)
+	default:
+		println("other")
+	}
+}
+
+func two(a any, b any) bool { return a == b }
+
+func vari(xs ...any) int { return len(xs) }
+
+func main() {
+	s := []int{1, 2}
+	m := map[string]int{"a": 2}
+	str := "xy"
+	grid := [2][2]int{{1, 2}, {3, 4}}
+	mm := map[string]map[string]string{"a": {"b": "c"}}
+	ts := []T{{7}}
+	show(s[1])
+	show(m["a"])
+	show(str[1])
+	show(grid[1][0])
+	show(mm["a"]["b"])
+	show(ts[0])
+	println(two(s[1], m["a"]), two(s[0], m["a"]))
+	println(vari(s[0], m["a"], str[0]), vari(s[1]))
+	t := T{10}
+	println(t.M(s[0]), t.N(s[1], m["a"]))
+	var i I = t
+	println(i.M(s[1]), i.N(m["a"], s[0]))
+	var j I = ts[0]
+	println(j.M(grid[0][1]))
+}
