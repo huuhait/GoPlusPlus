@@ -1,0 +1,3 @@
+// REQUIRES: long, host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-bang --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
+// P04.10: every program of Inputs/panics-bang on linux/arm64 under QEMU.

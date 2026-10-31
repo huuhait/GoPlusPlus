@@ -777,10 +777,6 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
     return;
   }
   S::SignatureType *Sig = Obj->sig();
-  if (Sig->Fails) {
-    unsupported(FD->getBegin(), "a function that fails with ! (P04.10)");
-    return;
-  }
   if (FD->Recv && !methodSupported(Obj, FD->getBegin()))
     return;
   // A Go++ string, slice, map or view in a C signature (also inside a struct
@@ -795,6 +791,12 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   auto IsFunc = [](S::Type *T) {
     return isa_and_nonnull<S::SignatureType>(S::under(T));
   };
+  // A C function has no error result: `!` is Go++'s (the interface word).
+  if (ToC && Sig->Fails) {
+    BadC("a C function cannot fail with ! (C has no error result; return a "
+         "status code)");
+    return;
+  }
   if (ToC) {
     auto Refuse = [&](S::Type *T, const char *What) {
       const char *Why = goppOnlyLayout(T);
@@ -930,7 +932,9 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
 Type *Lowering::callbackType(S::Type *T, SourceLoc At, StringRef Fn) {
   auto *SG = cast<S::SignatureType>(S::under(T));
   if (SG->Fails) {
-    unsupported(At, "a callback that fails with ! (P04.10)");
+    badExtern(At, Fn,
+              "a C callback cannot fail with ! (C has no error result; "
+              "return a status code)");
     return nullptr;
   }
   auto IsFunc = [](S::Type *X) {

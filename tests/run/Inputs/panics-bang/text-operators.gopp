@@ -1,0 +1,24 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+type T struct{}
+
+func (T) M!() int { return 0, e1{} }
+
+func mk!() T { return T{} }
+
+func g!(a int) int { return a }
+
+func f!(a ...any) int { return 0, e1{} }
+
+var s = []int{1, 2, 3}
+var n = 2
+var x any = T{}
+
+// Binary operators and unary ones keep the source spacing.
+func main() {
+	f!(-1 + 2*3, n<<2, !true, -n)
+}

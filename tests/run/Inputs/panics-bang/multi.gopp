@@ -1,0 +1,19 @@
+package main
+
+type pairErr struct{}
+
+func (pairErr) Error() string { return "no pair" }
+
+func pair!(n int) (int, string) {
+	if n > 0 {
+		return 0, "", pairErr{}
+	}
+	return n, "zero"
+}
+
+func main() {
+	a, s := pair!(0)
+	println(a, s)
+	b, t := pair!(1)
+	println("not reached", b, t)
+}

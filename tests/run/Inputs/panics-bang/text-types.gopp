@@ -1,0 +1,24 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+type T struct{}
+
+func (T) M!() int { return 0, e1{} }
+
+func mk!() T { return T{} }
+
+func g!(a int) int { return a }
+
+func f!(a ...any) int { return 0, e1{} }
+
+var s = []int{1, 2, 3}
+var n = 2
+var x any = T{}
+
+// Types in a call keep the source spacing: slice, array, map, pointer.
+func main() {
+	f!([]int{1}, []byte("x"), [...]int{1, 2}[0], map[string]int{"a": 1})
+}

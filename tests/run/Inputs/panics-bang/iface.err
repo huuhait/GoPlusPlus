@@ -1,0 +1,1 @@
+panic: must: l.Load("a.txt") at iface.gopp:17:10: no loader

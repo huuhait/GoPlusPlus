@@ -1,0 +1,21 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "inner failed" }
+
+func inner!(n int) int {
+	println("inner", n)
+	return 0, e1{}
+}
+
+func outer!(n int) int {
+	println("outer", n)
+	return n
+}
+
+// The inner call fails first: the outer one is never called, and the
+// message names the inner call.
+func main() {
+	println(outer!(inner!(7)))
+}

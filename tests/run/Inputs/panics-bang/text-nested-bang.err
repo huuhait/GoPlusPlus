@@ -1,0 +1,1 @@
+panic: must: f(g!(1)) at text-nested-bang.gopp:23:2: boom

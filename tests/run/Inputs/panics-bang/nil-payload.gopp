@@ -1,0 +1,16 @@
+package main
+
+// A non-nil error whose value is a nil slice is still an error (only the
+// interface word is tested): the panic calls its Error().
+type listErr []int
+
+func (e listErr) Error() string { return "list error" }
+
+func f!() int {
+	var l listErr
+	return 0, l
+}
+
+func main() {
+	f!()
+}

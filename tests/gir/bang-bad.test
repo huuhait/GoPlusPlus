@@ -1,0 +1,43 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error %s
+// P04.10: what `!` still cannot do is reported ONCE each, naming the task
+// that adds it, and nothing follows from it:
+//   - `go f!()` is the concurrency statement (P12), `defer f!()` the defer
+//     statement (the defer part of P04.07, now P04.26);
+//   - a C function or a C callback cannot fail with `!`: C has no error
+//     result (E0442, not a missing feature).
+// The other side (the calls of `ok` below, and the `!` function `f` itself)
+// lower and report nothing: bang.test and run/bang-return.test.
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "x" }
+
+func f!() int { return 0, e1{} }
+
+@Extern("C")
+func cfail!(x int32) int32
+
+@Extern("C")
+func qs(cb func!(int32) int32)
+
+func ok() int {
+	return f!()
+}
+
+func spawn() {
+	go f!()
+}
+
+func later() {
+	defer f!()
+}
+
+func main() {
+	println(ok())
+}
+
+// CHECK: bang-bad.test:{{[0-9]+}}:1: error[E0442]: invalid @Extern on cfail: a C function cannot fail with ! (C has no error result; return a status code)
+// CHECK: bang-bad.test:{{[0-9]+}}:1: error[E0442]: invalid @Extern on qs: a C callback cannot fail with ! (C has no error result; return a status code)
+// CHECK: bang-bad.test:{{[0-9]+}}:2: error[E0439]: concurrency statements (P12) is not supported
+// CHECK: bang-bad.test:{{[0-9]+}}:2: error[E0439]: a defer statement ({{P04\.[0-9]+}}) is not supported

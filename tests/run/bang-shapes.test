@@ -1,0 +1,45 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/bang-shapes.out 0
+// P04.10, ERR-3 and ERR-6: a failing `!` returns "zero values for the other
+// results" whatever their shapes: a string, a slice, a map, an array, a
+// struct (the tuple is too big for registers, so it goes through the hidden
+// result pointer), and the success side of the same functions. The golden is
+// `go run`'s of Inputs/go-bang/bang-shapes.go (see bang-return.test).
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "x" }
+
+type big struct {
+	a, b, c int
+	s       string
+}
+
+func fail!(n int) (string, []int, map[string]int, [3]int, big) {
+	if n > 0 {
+		return "", nil, nil, [3]int{}, big{}, e1{}
+	}
+	return "ok", []int{1}, map[string]int{"a": 1}, [3]int{1, 2, 3}, big{1, 2, 3, "z"}
+}
+
+func wrap!(n int) (string, []int, map[string]int, [3]int, big) {
+	s, l, m, a, b := fail!(n)
+	return s, l, m, a, b
+}
+
+func wrap2!(n int) (string, int) {
+	s, l, _, _, _ := fail!(n)
+	return s, len(l)
+}
+
+func main() {
+	s, l, m, a, b, err := wrap(1)
+	println(s == "", len(l), len(m), a[2], b.c, err != nil)
+	s, l, m, a, b, err = wrap(0)
+	println(s, len(l), len(m), a[2], b.s, err != nil)
+	s2, n, err := wrap2(1)
+	println(s2 == "", n, err != nil)
+	s2, n, err = wrap2(0)
+	println(s2, n, err != nil)
+}

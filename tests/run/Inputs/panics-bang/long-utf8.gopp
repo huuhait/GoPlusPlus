@@ -1,0 +1,13 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!(s string) int { return 0, e1{} }
+
+// The cut of a long call falls inside a two-byte character: the character
+// is dropped whole, never half of it.
+func main() {
+	f!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaééé")
+}

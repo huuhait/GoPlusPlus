@@ -1,0 +1,58 @@
+// RUN: %gopp build -pipeline=fastisel -no-debug -emit=llvm -target=linux/amd64 %s | FileCheck %s --check-prefixes=LL
+// RUN: %gopp build -pipeline=fastisel -no-debug -emit=llvm -target=linux/arm64 %s | FileCheck %s --check-prefixes=LL
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/amd64 %s | FileCheck %s --check-prefixes=O1-AMD
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/arm64 %s | FileCheck %s --check-prefixes=O1-ARM
+// P04.10 (ERR-8): the failure edge of `!` is cold. The branch into it carries
+// branch weights (the failing side has weight 1, the other 2000), and the
+// runtime function that panics is `cold noreturn`. The other side: a branch
+// between two ordinary blocks (the `if` in `inner`) has no weights.
+// `(int, error)` comes back in registers (swiftcc, calling-convention.md) and
+// the error word is read from the call's result, not from memory: at -opt=1
+// `mid` tests the itab register (rdx) right after the recursive call, with no
+// store to the stack before it. On arm64 the error word is x1: `cbnz x1`
+// follows the call (only the restore of the link register is between), and no
+// store to the stack comes after the call.
+package main
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string { return "bad" }
+
+var errBad = codeErr{7}
+
+func inner!(a int) int {
+	if a < 0 {
+		return 0, &errBad
+	}
+	return a + 1
+}
+
+func mid!(a int) int {
+	if a > 0 {
+		return mid!(a-1) + 1
+	}
+	return inner!(a) + 1
+}
+
+func main() {
+	println(mid!(1))
+}
+
+// LL-LABEL: define swiftcc { i64, ptr, ptr } @_GPF4mainE5inner(
+// LL-NOT: !prof
+// LL-LABEL: define swiftcc { i64, ptr, ptr } @_GPF4mainE3mid(
+// LL: br i1 {{.*}}, !prof [[W:![0-9]+]]
+// LL: icmp eq ptr {{.*}}, null
+// LL: br i1 {{.*}}, label %{{[a-z0-9]+}}, label %{{[a-z0-9]+}}, !prof [[W]]
+// LL: attributes #{{[0-9]+}} = { cold noreturn uwtable }
+// LL: [[W]] = !{!"branch_weights", i32 2000, i32 1}
+
+// O1-AMD-LABEL: _GPF4mainE3mid:
+// O1-AMD-NOT: (%rsp)
+// O1-AMD: callq _GPF4mainE3mid@PLT
+// O1-AMD-NEXT: testq %rdx, %rdx
+
+// O1-ARM-LABEL: _GPF4mainE3mid:
+// O1-ARM: bl _GPF4mainE3mid
+// O1-ARM-NOT: str
+// O1-ARM: cbnz x1,

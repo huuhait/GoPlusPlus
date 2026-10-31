@@ -1830,13 +1830,13 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
 }
 
 Operand Body::lowerCall(const ast::CallExpr *C) {
+  return C->isMust() ? lowerBang(C) : lowerPlainCall(C);
+}
+
+Operand Body::lowerPlainCall(const ast::CallExpr *C) {
   const ast::Expr *Fun = unparen(C->Fun);
   const S::TypeAndValue *FT = I.lookup(Fun);
   Operand Unit = unitValue();
-  if (C->isMust()) {
-    unsupported(C, "a call with ! (P04.10)");
-    return Unit;
-  }
   if (FT && FT->M == S::Mode::TypeExpr)
     return lowerConversion(C);
   if (FT && FT->M == S::Mode::Builtin) {
@@ -1912,6 +1912,22 @@ Operand Body::lowerCall(const ast::CallExpr *C) {
       return callWith(C, F->sig(), M.func(FI->second).Sig,
                       constFunc(M, FI->second), {},
                       M.func(FI->second).NoUnwind);
+    }
+  }
+  // `gen[int](x)`: an instantiation used as the callee is a generic function
+  // (P04.08), not a func value. Its declaration was reported where it was
+  // declared (once), so the call says nothing more.
+  if (auto *IE = dyn_cast<ast::IndexExpr>(Fun)) {
+    const ast::Expr *Base = unparen(IE->X);
+    if (auto *Sel = dyn_cast<ast::SelectorExpr>(Base))
+      Base = Sel->Sel;
+    auto BU = isa<ast::Ident>(Base) ? I.Uses.find(cast<ast::Ident>(Base))
+                                    : I.Uses.end();
+    auto *GF = BU != I.Uses.end() ? dyn_cast<S::Func>(BU->second) : nullptr;
+    if (GF && !GF->OwnTParams.empty()) {
+      if (!L.Declined.count(GF))
+        unsupported(C, "a generic function (P04.08)");
+      return Unit;
     }
   }
   // A call of a value (a func value, a method value): its type says what is

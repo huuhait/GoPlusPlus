@@ -1,0 +1,1 @@
+panic: must: f(`a\nb`, "") at text-raw-newline.gopp:17:2: boom

@@ -1,0 +1,24 @@
+package main
+
+type fileErr struct{ code int }
+
+func (e *fileErr) Error() string { return "closed" }
+
+var closed = fileErr{1}
+
+type Conn struct{ open bool }
+
+func (c *Conn) Send!(msg string) int {
+	if !c.open {
+		return 0, &closed
+	}
+	return len(msg)
+}
+
+func main() {
+	c := Conn{true}
+	println(c.Send!("hi"))
+	c.open = false
+	println(c.Send!("hi"))
+	println("not reached")
+}

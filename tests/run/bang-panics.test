@@ -1,0 +1,17 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-bang --names main-call,iface,nested,nil-payload,pkg-init,long-utf8,text-comma-paren,text-line-comment,text-selector-newline,text-cut-after-char,text-chain,text-types
+// P04.10, ERR-6 and ERR-9: a `!` that fails where the function cannot fail
+// (main, a function with no error result, a package variable's initializer,
+// init) ends the program with exit status 2 and the first line
+//   panic: must: <call> at <file>:<line>:<col>: <error text>
+// (the call without the `!`, rebuilt from its tokens: comments dropped, literals
+// unchanged, the source spacing; the position of
+// the call; the error's Error()). A smoke of six programs here (a function,
+// an interface method, nested calls where the inner one fails first, a
+// non-nil error holding a nil slice, a package initializer, a cut that falls
+// inside a UTF-8 character); all of Inputs/panics-bang in
+// bang-panics.long.test, on arm64 in bang-panics-arm64.test.
+// Go++-only syntax: the .out and .err files are written by hand from ERR-9
+// (there is no `go run`): .out is what was printed before the panic. The
+// error's trace (ERR-14) that ERR-9 puts after the first line comes with the
+// runtime (P05); the first line is what is tested.

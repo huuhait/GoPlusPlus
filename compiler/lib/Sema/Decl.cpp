@@ -421,8 +421,10 @@ void Checker::collectObjects() {
             if (FD->Type->TypeParams && FD->Type->TypeParams->numFields())
               err(FD->Type->TypeParams, diag::err_init_type_params,
                   {std::string(N)});
+            // (`func main!()` has the result `error`: ERR-1.)
             if ((FD->Type->Params && FD->Type->Params->numFields()) ||
-                (FD->Type->Results && FD->Type->Results->numFields()))
+                (FD->Type->Results && FD->Type->Results->numFields()) ||
+                FD->Type->Fails)
               err(FD->Name, diag::err_init_signature, {std::string(N)});
           }
           if (N == "init" && !FD->Body)

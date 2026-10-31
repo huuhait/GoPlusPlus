@@ -240,6 +240,9 @@ public:
   FuncId ensureComplexDiv(SourceLoc At);
   /// The panic function of an assert kind (Unsigned: the index is a u64).
   FuncId ensurePanic(AssertKind K, bool Unsigned, SourceLoc At);
+  /// The panic of a `!` that fails outside a function that can fail (ERR-9):
+  /// `panic_must(expr string, pos string, err error)`.
+  FuncId ensurePanicMust(SourceLoc At);
   /// Go's == and the hash of a checker type (glue); NoId after a report.
   FuncId eqGlue(S::Type *T, SourceLoc At);
   /// How parameter K of Sig is handed over (P04.18, PAR-10, D4.4). The ONE
@@ -486,7 +489,7 @@ public:
   unsigned AnonStructs = 0;
 
   FuncId WriteFn = NoId, ExitFn = NoId, PrintU = NoId, PrintI = NoId,
-         PrintHex = NoId, PrintF = NoId, ComplexDiv = NoId;
+         PrintHex = NoId, PrintF = NoId, ComplexDiv = NoId, PanicMust = NoId;
   FuncId Panics[unsigned(AssertKind::SliceConvert) + 1][2] = {};
   /// A C function the compiler needs that the program declares differently.
   llvm::StringSet<> BadC;
@@ -653,6 +656,31 @@ private:
   Operand lowerLogical(const ast::BinaryExpr *B);
   Operand lowerUnary(const ast::UnaryExpr *U);
   Operand lowerCall(const ast::CallExpr *C);
+  /// The call C without the `!` (lowerCall minus the unwrapping).
+  Operand lowerPlainCall(const ast::CallExpr *C);
+  // `f!(...)` (ERR-5 to ERR-9, LowerBang.cpp): the plain call, a test of the
+  // error word, and a cold failure edge that returns the error (Return) or
+  // panics (Panic). The one place that decides what a failing `!` does.
+  Operand lowerBang(const ast::CallExpr *C);
+  /// The failure edge of the `!` at C with the error Err: returns it from
+  /// this function, or goes to the shared panic block (bangPanic).
+  void bangFail(const ast::CallExpr *C, S::BangKind K, Operand Err);
+  /// Return the error: zero values for the other results (ERR-3, ERR-6).
+  void bangReturn(Operand Err);
+  /// Panic with MustError{Err, Expr, Pos} (ERR-9): the failing edge stores
+  /// its values and goes to the function's one block that calls the runtime
+  /// (ADR-0028 rule 3.3). P04.26 gives that one call its unwind action.
+  void bangPanic(const ast::CallExpr *C, Operand Err);
+  /// The shared block of the panics of `!`, made at the first one (NoId when
+  /// the runtime function cannot be made).
+  BlockId BangPanicBB = NoId;
+  LocalId BangExprSlot = NoId, BangPosSlot = NoId, BangErrSlot = NoId;
+  /// The text of the call as ERR-9 shows it (no `!`), and its position.
+  std::string bangExprText(const ast::CallExpr *C);
+  std::string bangPosText(const ast::CallExpr *C);
+  /// `return` in a function declared with `!` (ERR-3).
+  bool lowerFailsReturn(const ast::ReturnStmt *R,
+                        SmallVector<Operand, 2> &Vals);
   /// The arguments of C for the signature Sig (GSig: the callee's GIR
   /// signature; Lead are its first parameters, a method's receiver, already
   /// made) and the call of CalleeOp: a function constant, or a pointer of a

@@ -60,6 +60,7 @@ std::string repeat(const char *S, unsigned N) {
 
 std::string program(const Form &F, unsigned N) {
   return std::string("package main\n\nfunc g(x int) int { return x }\n\n"
+                     "func h!(x int) int { return x }\n\n"
                      "func main() {\n\tx := 1\n\tb := true\n\t_ = b\n"
                      "\ta := [1]int{0}\n\t_ = a\n\t_ = x\n") +
          F.Lead + repeat(F.Open, N) + F.Bottom + repeat(F.Close, N) + F.Tail +
@@ -134,6 +135,8 @@ TEST(DeepChain, ExpressionsThroughGIRAndLLVMAtTheParserLimit) {
       {"left-deep sums", "\ty := ", "", "x", " + x", "\n\tprintln(y)\n"},
       {"calls", "\ty := ", "g(", "x", ")", "\n\tprintln(y)\n"},
       {"conversions", "\ty := ", "int(", "x", ")", "\n\tprintln(y)\n"},
+      // P04.10: `!` calls (each a test and a cold edge).
+      {"bang calls", "\ty := ", "h!(", "x", ")", "\n\tprintln(y)\n"},
       {"right-nested &&", "\tc := ", "b && (", "b", ")", "\n\tprintln(c)\n"},
       {"left-deep ||", "\tc := ", "", "b", " || b", "\n\tprintln(c)\n"},
       {"not", "\tc := ", "!(", "b", ")", "\n\tprintln(c)\n"},

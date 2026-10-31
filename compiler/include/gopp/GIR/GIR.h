@@ -318,6 +318,10 @@ struct BasicBlock {
   /// the panic). Catch implies Cleanup (V024); only a catch block may branch
   /// into one (V023). A plain drop pad keeps the strict rules (V025).
   bool Catch = false;
+  /// Rarely run: the failure edge of a `!` (ERR-8). The code generator gives
+  /// the branch into it a small weight (gir.md section 6). No rule depends on
+  /// it, so it can be set on any block.
+  bool Cold = false;
 };
 
 //===----------------------------------------------------------------------===//

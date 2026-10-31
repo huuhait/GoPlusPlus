@@ -1,0 +1,1 @@
+panic: must: f(s[1:2], s[:n], s[n:], s[1 : n+1]) at text-slicing.gopp:23:2: boom

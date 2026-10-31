@@ -1,0 +1,22 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "first" }
+
+type e2 struct{}
+
+func (e2) Error() string { return "second" }
+
+func a!(n int) int { return 0, e1{} }
+func b!(n int) int { return 0, e2{} }
+
+// Two `!` in one function share the panic block; the second one fails here
+// and names itself, not the first.
+func main() {
+	x := 1
+	if x == 0 {
+		println(a!(1))
+	}
+	println(b!(2))
+}

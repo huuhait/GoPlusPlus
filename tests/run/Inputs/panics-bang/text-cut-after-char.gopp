@@ -1,0 +1,18 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!(a, b string) int { return 0, e1{} }
+
+type T struct{}
+
+func (T) M!() int { return 0, e1{} }
+
+var obj T
+
+// The cut falls right after a whole two-byte character: it stays.
+func main() {
+	f!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaéé", "")
+}

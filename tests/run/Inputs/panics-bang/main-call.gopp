@@ -1,0 +1,18 @@
+package main
+
+type fileErr struct{ code int }
+
+func (e *fileErr) Error() string { return "open /nope: no such file or directory" }
+
+var enoent = fileErr{2}
+
+func open!(path string) int {
+	println("open", path)
+	return 0, &enoent
+}
+
+func main() {
+	println("before")
+	f := open!("nope")
+	println("not reached", f)
+}

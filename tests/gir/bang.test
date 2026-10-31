@@ -1,0 +1,65 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// RUN: %gopp build -emit=girb %s -o %t.girb
+// RUN: %gopp gir dump %t.girb | FileCheck %s --check-prefix=DUMP
+// P04.10 (ERR-6, ERR-8): `f!(...)` is the call, a test of the error word (the
+// itab of the last value is null), and a cold failure edge:
+//   - in a function that can fail, the edge returns zero values and the error;
+//   - elsewhere it goes to the function's ONE block that calls panic_must
+//     (ADR-0028 rule 3.3), however many `!` the function has.
+// The block is marked `(cold)`, and the mark survives the bitstream (DUMP).
+// The other side: a function with no `!` has no cold block, and a call of the
+// same function without `!` has no test of the error word.
+package main
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string { return "bad" }
+
+var errBad = codeErr{7}
+
+func inner!(a int) int {
+	if a < 0 {
+		return 0, &errBad
+	}
+	return a + 1
+}
+
+func plain(a int) int {
+	v, _ := inner(a)
+	return v
+}
+
+func mid!(a int) int {
+	return inner!(a) + 1
+}
+
+func main() {
+	println(inner!(1))
+	println(inner!(2))
+}
+
+// CHECK-LABEL: fn _GPF4mainE5inner(
+// CHECK-NOT: (cold)
+// CHECK-LABEL: fn _GPF4mainE5plain(
+// CHECK-NOT: (cold)
+// CHECK-NOT: eq(
+// CHECK-LABEL: fn _GPF4mainE3mid(
+// CHECK: call const fn @_GPF4mainE5inner
+// CHECK: [[ITAB:_[0-9]+]] = copy _{{[0-9]+}}.1.0
+// CHECK: [[IS:_[0-9]+]] = eq(copy [[ITAB]], const null: *u8)
+// CHECK: switch copy [[IS]] [0: bb[[FAIL:[0-9]+]], otherwise: bb[[OK:[0-9]+]]]
+// CHECK: bb[[FAIL]] (cold):
+// CHECK-NEXT: _0 = tuple (i64, gopp.iface) {const 0: i64, copy _{{[0-9]+}}.1}
+// CHECK-NEXT: return
+// CHECK-LABEL: fn _GPF4mainE4main(
+// CHECK: bb{{[0-9]+}} (cold):
+// CHECK: goto -> bb[[PANIC:[0-9]+]]
+// CHECK: bb[[PANIC]] (cold):
+// CHECK-NEXT: call const fn @_GPF4goppE10panic_must(
+// CHECK: bb{{[0-9]+}} (cold):
+// CHECK: goto -> bb[[PANIC]]
+// CHECK-NOT: call const fn @_GPF4goppE10panic_must(
+// CHECK-LABEL: fn _GPF4goppE10panic_must(
+
+// DUMP-LABEL: fn _GPF4mainE3mid(
+// DUMP: (cold):

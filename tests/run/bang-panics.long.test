@@ -1,0 +1,8 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-bang
+// P04.10: every program of Inputs/panics-bang (bang-panics.test names the
+// smoke subset): methods, interface methods, multi-result calls, a function
+// that cannot fail, init, a call over several lines, a call cut at 120 bytes,
+// two `!` sharing one panic block, and the text of the call (text-*: literals
+// with blanks, parens and commas, comments, a newline after a dot, a raw
+// string, operators, nested and chained `!`, types, slicing, a cut right after a whole character; the source spacing is kept).

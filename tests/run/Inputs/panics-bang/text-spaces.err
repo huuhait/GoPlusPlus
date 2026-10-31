@@ -1,0 +1,1 @@
+panic: must: f("a  b", "") at text-spaces.gopp:17:2: boom

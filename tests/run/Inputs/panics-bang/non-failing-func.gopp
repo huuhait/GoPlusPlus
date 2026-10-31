@@ -1,0 +1,25 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!() int { return 0, e1{} }
+
+// helper cannot fail (no error result): the `!` panics here, not in main.
+func helper() int {
+	return f!()
+}
+
+// A function literal is judged by its own signature (ERR-2); there are no
+// closures yet (P04.07), so the Go-style form is what we have: this one can
+// fail, so main gets the error and only then panics.
+func canFail() (int, error) {
+	return f!(), nil
+}
+
+func main() {
+	_, err := canFail()
+	println(err != nil)
+	println(helper())
+}

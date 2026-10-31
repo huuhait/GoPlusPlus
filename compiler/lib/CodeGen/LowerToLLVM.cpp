@@ -41,6 +41,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/MathExtras.h"
@@ -60,6 +61,10 @@ using llvm::isa;
 namespace {
 
 namespace G = gopp::gir;
+
+/// The weight of the likely edge of a branch whose other edge goes to a cold
+/// block (the failure of a `!`); the cold edge has weight 1.
+constexpr uint32_t ColdWeight = 2000;
 
 class Lowering {
 public:
@@ -703,7 +708,8 @@ llvm::Function *Lowering::declare(G::FuncId Id, const G::Function &F) {
   if (F.NoUnwind)
     AL = AL.addFnAttribute(C, llvm::Attribute::NoUnwind);
   if (F.NoReturn)
-    AL = AL.addFnAttribute(C, llvm::Attribute::NoReturn);
+    AL = AL.addFnAttribute(C, llvm::Attribute::NoReturn)
+             .addFnAttribute(C, llvm::Attribute::Cold);
   // Unwind tables for every function Go++ defines, so a stack trace works
   // through any frame (D4.6; clang's default on Linux).
   if (!F.isDeclaration())
@@ -1201,7 +1207,16 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
     llvm::Value *D = operand(T.Discr);
     if (T.Cases.size() == 1 && T.Cases[0].Value == 0 &&
         D->getType()->isIntegerTy(1)) {
-      B.CreateCondBr(D, Blocks[T.Otherwise], Blocks[T.Cases[0].Target]);
+      llvm::Instruction *Br =
+          B.CreateCondBr(D, Blocks[T.Otherwise], Blocks[T.Cases[0].Target]);
+      // The edge into a cold block (the failure of a `!`) is unlikely.
+      const bool ColdThen = GF->Blocks[T.Otherwise].Cold,
+                 ColdElse = GF->Blocks[T.Cases[0].Target].Cold;
+      if (ColdThen != ColdElse)
+        Br->setMetadata(
+            llvm::LLVMContext::MD_prof,
+            llvm::MDBuilder(C).createBranchWeights(ColdThen ? 1 : ColdWeight,
+                                                   ColdElse ? 1 : ColdWeight));
       return llvm::Error::success();
     }
     llvm::SwitchInst *S =

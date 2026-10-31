@@ -16,7 +16,7 @@ The corpus (under --root, the tests/run directory):
     (the allocator word, P04.25: built with -test-intrinsics), Inputs/iface
     and Inputs/iface-gopp, Inputs/cc (the calling convention, P04.18), and
     the panic programs of Inputs/panics, Inputs/panics-seq, Inputs/panics-gopp,
-    Inputs/panics-allocword, Inputs/panics-iface and Inputs/oom (an
+    Inputs/panics-allocword, Inputs/panics-iface, Inputs/panics-bang and Inputs/oom (an
     allocation that fails);
   * with --cabi SEED:COUNT (repeatable; needs clang): the C ABI program of
     gen-cabi.py for that seed with COUNT signatures, named cabi/seedSEED
@@ -128,7 +128,7 @@ def corpus(root):
                     ("iface-gopp", "golden"), ("cc", "golden"),
                     ("panics", "panic"), ("panics-seq", "panic"),
                     ("panics-gopp", "panic"), ("panics-allocword", "panic"),
-                    ("panics-iface", "panic"),
+                    ("panics-iface", "panic"), ("panics-bang", "panic"),
                     ("oom", "panic")):
         p = os.path.join(root, "Inputs", d)
         if not os.path.isdir(p):

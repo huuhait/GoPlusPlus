@@ -1,0 +1,1 @@
+panic: must: c.Send("hi") at method.gopp:22:10: closed

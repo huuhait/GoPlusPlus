@@ -1,0 +1,12 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!(s string) int { return 0, e1{} }
+
+// A call longer than 120 bytes ends in "..." in the message.
+func main() {
+	f!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+}

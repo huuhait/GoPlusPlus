@@ -89,7 +89,7 @@ A thunk is a GIR function with the `C` convention whose body calls a Go++ functi
 | P04.06 itab calls | the itab's entries are Go++ `Func` types made with `passOf` for each parameter; `classify` the method's signature; the receiver is the first parameter (the itab's `data`; the thunk passes it as `passOfRecv` says); an interface value is `(ptr, ptr)`, Direct |
 | P04.07 closures, unwinding | `classify(Sig, HasEnv = true)` puts the environment in `swiftself`; `lowerArgs(..., EnvPtr)`. Whether a call unwinds is the call's business (invoke), not the convention's. A C function value (`fn "C"`) with aggregates is called through `CABILower` (V076 refuses it until then) |
 | P04.08 generic instances | `classify` the instantiated signature; `passOf` runs on it |
-| P04.10 `(T, error)` | the tuple GIR makes; Direct while it fits |
+| P04.10 `(T, error)` | done: the tuple GIR makes; Direct while it fits; `f!()` tests the itab scalar of the result with no store first (`tests/codegen/bang-cold.test`, both returns are shapes `tests/run/bang-*.test` run on both targets) |
 | P12 goroutine entry | a thunk whose signature is `func(ptr)` built with the same four functions |
 | P04.09 drops | decided by the checker's borrow of the parameter, not by its mode: the callee drops its `move` parameters only (a Place or View is the caller's; until item (7) a borrowed `drop` type is a bitwise copy the callee must not drop) |
 

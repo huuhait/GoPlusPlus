@@ -1,0 +1,1 @@
+panic: must: f("1", "2") at text-line-comment.gopp:17:2: boom

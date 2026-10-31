@@ -112,8 +112,6 @@ const Lowering::IfaceMethods *Lowering::ifaceMethods(S::Type *I, SourceLoc At) {
     ++LowerSteps;
     if (M->isOperator())
       return Bad("an interface with an operator element (P04.23)");
-    if (M->Fails || M->sig()->Fails)
-      return Bad("a method that fails with ! (P04.10)");
     Out->List.push_back({M, methodKey(M)});
   }
   sortByKey(Out->List);

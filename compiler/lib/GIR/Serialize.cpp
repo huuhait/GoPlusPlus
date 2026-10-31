@@ -445,7 +445,7 @@ private:
       Out.push_back(std::move(R));
     }
     for (const BasicBlock &B : F.Blocks) {
-      Out.push_back({F_Block, {B.Cleanup, B.Catch}});
+      Out.push_back({F_Block, {B.Cleanup, B.Catch, B.Cold}});
       for (const Statement &S : B.Stmts) {
         Rec R{F_Stmt, {S.K}};
         put(R.Vals, S.Loc);
@@ -1124,6 +1124,7 @@ private:
         Cur = &F->Blocks.back();
         Cur->Cleanup = R.next();
         Cur->Catch = R.next();
+        Cur->Cold = R.next();
         break;
       case F_Stmt: {
         if (!Cur)

@@ -1,0 +1,78 @@
+  id 1
+if ok 2 -1
+  id -1
+if fail 0 1
+  id 1
+switch ok 10 -1
+  id -1
+switch fail 0 1
+  id 3
+range ok 3 -1
+  id -3
+range fail 0 1
+  id 1
+  id 2
+  id 1
+map ok 2 -1
+  id -1
+map fail key 0 1
+  id 1
+  id -2
+map fail value 0 1
+  id 1
+  id 3
+slice ok 2 -1
+  id -1
+slice fail low 0 1
+  id 2
+  id 3
+compound ok 9 -1
+  id -1
+compound fail first 0 1
+  id 4
+  id 5
+compare false -1
+  id -1
+compare fail false 1
+  id 1
+  id 2
+append ok 2 -1
+  id -2
+append fail second 0 1
+  id 7
+convert 7 -1
+  id -7
+convert fail 0 1
+  id 9
+field ok 9 -1
+  id -9
+field fail 0 1
+  id 1
+  id 2
+declare ok 3 -1
+  id -1
+declare fail 0 1
+  id 1
+  id 2
+two 1 2 -1
+  id -1
+two fail 0 0 1
+  id 3
+  id 4
+  pair 3 4
+  mk 3
+  get 3
+chain ok 3 -1
+  mk -3
+chain fail mk 0 2
+  mk 8
+  get 8
+chain fail get 0 2
+  id 1
+go style ok 2 -1
+  id -1
+go style fail 0 1
+  id 5
+go style bare ok 5 -1
+  id -5
+go style bare fail 0 1

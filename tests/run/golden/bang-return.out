@@ -1,0 +1,79 @@
+  id 1
+  id 2
+args ok 3 -1
+  id 1
+  id -1
+args fail on b 0 1
+  id -1
+args fail on a 0 1
+  id 2
+  id 3
+  id 4
+binary ok 14 -1
+  id 2
+  id 3
+  id -4
+binary fail on c 0 1
+  id 0
+  id 1
+  id 2
+  id 3
+  id 0
+  id 1
+  id 2
+  id 1
+  id 7
+lits ok 13 -1
+  id -3
+lits fail first 0 1
+  id 1
+  id 0
+  id 2
+  id 2
+  id 2
+  id 1
+  id 1
+control ok 122 -1
+  id -1
+control fail 0 1
+  id 3
+conv +1.500000e+000 -1
+  id -3
+conv fail +0.000000e+000 1
+  id 4
+neg ok -4 -1
+  id 2
+  id 2
+  id 2
+nested ok 2 -1
+  id -2
+nested fail inner 0 1
+short circuit ok 2 -1
+  id -5
+short circuit fail 0 1
+  show 1 two
+  none 1
+multi ok 4 -1
+multi fail 0 2
+method ok 3 -1
+method fail second 0 2
+iface ok 203 -1
+iface fail 0 2
+go style ok 2 -1
+go style fail 0 3
+go style fail on the second 0 1
+  id 5
+fwd 5 -1
+fwdAll 0 3
+  id 6
+named 6 -1
+  id -6
+named fail 0 1
+  none 1
+ends ok 0 -1
+ends fail 0 3
+typed nil 0 true -2
+typed nil direct 0 true -2
+  id 8
+same type 8 -1
+done

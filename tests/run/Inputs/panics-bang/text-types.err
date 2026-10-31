@@ -1,0 +1,1 @@
+panic: must: f([]int{1}, []byte("x"), [...]int{1, 2}[0], map[string]int{"a": 1}) at text-types.gopp:23:2: boom

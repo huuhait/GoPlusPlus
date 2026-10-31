@@ -1,0 +1,19 @@
+package main
+
+type fileErr struct{ code int }
+
+func (e *fileErr) Error() string { return "no loader" }
+
+var noLoader = fileErr{3}
+
+type Loader interface{ Load!(path string) int }
+
+type L struct{}
+
+func (L) Load!(path string) int { return 0, &noLoader }
+
+func main() {
+	var l Loader = L{}
+	println(l.Load!("a.txt"))
+	println("not reached")
+}

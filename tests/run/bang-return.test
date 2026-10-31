@@ -1,0 +1,271 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/bang-return.out 0
+// P04.10, ERR-3 and ERR-6: `f!(...)` inside a function that can fail returns
+// the error to the caller (zero values for the other results) and the
+// caller's `v, err := f()` sees it; on success the value is the results
+// without the error. Every expression position, the evaluation order (Go's:
+// operands left to right, and the failing call ends the evaluation: nothing
+// after it runs), methods, interface methods, multi-result calls, `!` on
+// Go-style functions (a last result of type `error`) and a non-nil error that
+// holds a nil slice (it is an error: only the interface word is tested).
+//
+// Go has no `!`, so the golden is `go run`'s of the mechanical Go form of this
+// program (Inputs/go-bang/bang-return.go: `x := f!(a)` is `x, err := f(a); if
+// err != nil { return zero values, err }`, in the same order), checked by
+// Inputs/check-bang-go.py (needs Go; this test never does).
+package main
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string { return "code error" }
+
+// An error whose value is a nil slice: the interface that holds it is not nil.
+type listErr []int
+
+func (e listErr) Error() string { return "list error" }
+
+var errs = [4]codeErr{{0}, {1}, {2}, {3}}
+
+// id gives n back and prints it, so the order of evaluation shows.
+func id!(n int) int {
+	println("  id", n)
+	if n < 0 {
+		return 0, &errs[1]
+	}
+	return n
+}
+
+func none!(n int) {
+	if n > 1 {
+		return &errs[n]
+	}
+	println("  none", n)
+}
+
+func two!(n int) (int, string) {
+	if n > 1 {
+		return 0, "", &errs[n]
+	}
+	return n, "two"
+}
+
+func add(a, b int) int { return a + b }
+
+func show(n int, s string) { println("  show", n, s) }
+
+type pair struct{ a, b int }
+
+type T struct{ base int }
+
+func (t *T) get!(n int) int {
+	if n > t.base {
+		return 0, &errs[2]
+	}
+	return n
+}
+
+type Loader interface{ Load!(n int) int }
+
+func (t *T) Load!(n int) int { return t.get!(n) + 100 }
+
+// A Go-style function: the last result is error. `!` works on it too (ERR-5).
+func goStyle(n int) (int, error) {
+	if n > 5 {
+		return 0, &errs[3]
+	}
+	return n, nil
+}
+
+func fail(n int) error {
+	if n == 0 {
+		return nil
+	}
+	return &errs[n]
+}
+
+func typedNil!() int {
+	var l listErr
+	return 0, l
+}
+
+// What an error is: its code, or -1 for nil, -2 for the list error.
+func codeOf(err error) int {
+	if err == nil {
+		return -1
+	}
+	c, ok := err.(*codeErr)
+	if !ok {
+		return -2
+	}
+	return c.code
+}
+
+func args!(a, b int) int { return add(id!(a), id!(b)) }
+
+func binary!(a, b, c int) int { return id!(a) + id!(b)*id!(c) }
+
+func lits!(n int) int {
+	p := pair{id!(n), id!(n + 1)}
+	s := []int{id!(n + 2), id!(n + 3)}
+	arr := [3]int{id!(0), id!(1), id!(2)}
+	arr[id!(1)] = id!(7)
+	return p.a + p.b + s[0] + s[1] + arr[1]
+}
+
+func control!(n int) int {
+	t := 0
+	if id!(n) > 0 {
+		t += 1
+	}
+	for i := id!(0); i < id!(2); i++ {
+		t += 10
+	}
+	switch id!(n) {
+	case 1:
+		t += 100
+	default:
+		t += 1000
+	}
+	return t + id!(n)
+}
+
+func conv!(n int) float64 { return float64(id!(n)) / 2 }
+
+func neg!(n int) int { return -id!(n) }
+
+func nested!(n int) int { return id!(id!(id!(n))) }
+
+func shortCircuit!(n int) int {
+	t := 0
+	if n < 0 && id!(-5) > 0 {
+		t = 1
+	}
+	if n >= 0 || id!(-6) > 0 {
+		t += 2
+	}
+	return t
+}
+
+func multi!(n int) int {
+	a, s := two!(n)
+	show(two!(n))
+	none!(n)
+	return a + len(s)
+}
+
+var gt = T{base: 3}
+
+func method!(n int) int {
+	return gt.get!(n) + gt.get!(n+1)
+}
+
+func viaIface!(n int) int {
+	var l Loader = &gt
+	return l.Load!(n) + l.Load!(n+1)
+}
+
+func onGoStyle!(n int) int {
+	a := goStyle!(n)
+	failBang!(n - 2)
+	return a
+}
+
+func failBang!(n int) {
+	return fail(n)
+}
+
+func fwd!(n int) int { return idGo(n) }
+
+func idGo(n int) (int, error) { return id!(n), nil }
+
+func fwdAll!(n int) int { return goStyle(n) }
+
+func named!(n int) (r int) {
+	r = id!(n)
+	return
+}
+
+func ends!(n int) {
+	none!(n)
+}
+
+func typed!() int { return typedNil!() }
+
+func report(what string, v int, err error) {
+	println(what, v, codeOf(err))
+}
+
+func main() {
+	v, err := args(1, 2)
+	report("args ok", v, err)
+	v, err = args(1, -1)
+	report("args fail on b", v, err)
+	v, err = args(-1, 2)
+	report("args fail on a", v, err)
+	v, err = binary(2, 3, 4)
+	report("binary ok", v, err)
+	v, err = binary(2, 3, -4)
+	report("binary fail on c", v, err)
+	v, err = lits(0)
+	report("lits ok", v, err)
+	v, err = lits(-3)
+	report("lits fail first", v, err)
+	v, err = control(1)
+	report("control ok", v, err)
+	v, err = control(-1)
+	report("control fail", v, err)
+	var f float64
+	f, err = conv(3)
+	println("conv", f, codeOf(err))
+	f, err = conv(-3)
+	println("conv fail", f, codeOf(err))
+	v, err = neg(4)
+	report("neg ok", v, err)
+	v, err = nested(2)
+	report("nested ok", v, err)
+	v, err = nested(-2)
+	report("nested fail inner", v, err)
+	v, err = shortCircuit(1)
+	report("short circuit ok", v, err)
+	v, err = shortCircuit(-1)
+	report("short circuit fail", v, err)
+	v, err = multi(1)
+	report("multi ok", v, err)
+	v, err = multi(2)
+	report("multi fail", v, err)
+	v, err = method(1)
+	report("method ok", v, err)
+	v, err = method(3)
+	report("method fail second", v, err)
+	v, err = viaIface(1)
+	report("iface ok", v, err)
+	v, err = viaIface(3)
+	report("iface fail", v, err)
+	v, err = onGoStyle(2)
+	report("go style ok", v, err)
+	v, err = onGoStyle(6)
+	report("go style fail", v, err)
+	v, err = onGoStyle(3)
+	report("go style fail on the second", v, err)
+	v, err = fwd(5)
+	report("fwd", v, err)
+	v, err = fwdAll(9)
+	report("fwdAll", v, err)
+	v, err = named(6)
+	report("named", v, err)
+	v, err = named(-6)
+	report("named fail", v, err)
+	err = ends(1)
+	report("ends ok", 0, err)
+	err = ends(3)
+	report("ends fail", 0, err)
+	// A non-nil interface that holds a nil pointer is an error.
+	v, err = typed()
+	println("typed nil", v, err != nil, codeOf(err))
+	v, err = typedNil()
+	println("typed nil direct", v, err != nil, codeOf(err))
+	// A `!` function and its Go form are the same function (ERR-1).
+	v, err = idGo(8)
+	report("same type", v, err)
+	println("done")
+}

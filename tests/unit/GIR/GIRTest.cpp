@@ -434,6 +434,39 @@ TEST(GIRSerialize, CatchBlocksRoundTrip) {
   EXPECT_FALSE((*R)->Funcs[1]->Blocks[Plain].Catch);
 }
 
+// P04.10: a cold block (the failure edge of a `!`) keeps its mark through the
+// bitstream and the text; a block next to it does not get it.
+TEST(GIRSerialize, ColdBlocksRoundTrip) {
+  Context C1;
+  auto M = std::make_unique<Module>(C1, "cold");
+  auto H = std::make_unique<Function>();
+  H->Name = "cold.h";
+  H->Sig = C1.func({C1.boolean()}, C1.unit());
+  Function &Hn = *H;
+  M->addFunction(std::move(H));
+  FuncBuilder B(*M, Hn);
+  BlockId Fail = B.newBlock(), Ok = B.newBlock();
+  Hn.Blocks[Fail].Cold = true;
+  B.branch(copyOf(B.local(B.param(0))), Ok, Fail);
+  B.setBlock(Fail);
+  B.ret();
+  B.setBlock(Ok);
+  B.ret();
+  ASSERT_EQ(errorsOf(*M), "");
+  EXPECT_NE(text(*M).find("bb1 (cold):"), std::string::npos);
+  EXPECT_EQ(text(*M).find("bb2 (cold):"), std::string::npos);
+
+  std::string Bytes = writeModule(*M);
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(text(**R), text(*M));
+  EXPECT_EQ(writeModule(**R), Bytes);
+  EXPECT_TRUE((*R)->Funcs[0]->Blocks[Fail].Cold);
+  EXPECT_FALSE((*R)->Funcs[0]->Blocks[Ok].Cold);
+  EXPECT_FALSE((*R)->Funcs[0]->Blocks[0].Cold);
+}
+
 // P04.18: the calling convention of a function type survives the bitstream
 // (a C function that takes a C callback, a Go++ function beside it).
 TEST(GIRSerialize, CallingConventionsRoundTrip) {

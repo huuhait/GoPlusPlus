@@ -839,7 +839,11 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
       NamedResults.empty() ? (Ret->isUnit() ? 0 : 1) : NamedResults.size();
   if (Ret->getKind() == Type::Kind::Tuple && NamedResults.empty())
     Want = Ret->numFields();
-  if (R->Results.empty()) {
+  if (Obj && Obj->sig()->Fails) {
+    // `!` (ERR-3): the declared results, or them plus the failure.
+    if (!lowerFailsReturn(R, Vals))
+      return;
+  } else if (R->Results.empty()) {
     // A bare return gives the named results.
     for (LocalId N : NamedResults)
       Vals.push_back(copyOf(FB.local(N)));
@@ -1085,6 +1089,11 @@ void Body::lower(const ast::FuncDecl *FD) {
   if (!FB.terminated()) {
     FB.setSpan(L.spanOf(FD->Body->Rbrace));
     if (F.Sig->ret()->isUnit()) {
+      exitScopes(0);
+      FB.ret();
+    } else if (Obj->sig()->Fails && Obj->Results.empty()) {
+      // `func f!()` ends with a nil error (ERR-3).
+      FB.assign(FB.local(FB.returnPlace()), FB.use(zeroOf(F.Sig->ret())));
       exitScopes(0);
       FB.ret();
     } else {

@@ -1,0 +1,207 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/bang-positions.out 0
+// P04.10, ERR-5 to ERR-7: `!` in the other positions the checker allows: an
+// if or switch initializer, a range expression, a map key, a slice bound, a
+// compound assignment, a comparison of two calls, `append`, a conversion, a
+// field store, a variable declaration, `return f!(), g!()`, a chain
+// `mk!(n).get!()` (os.Open!(p).Close!()), and the same in a function with
+// a Go-style `(T, error)` result. Each function runs twice: once with a
+// value that succeeds and once with one that fails at that call; the failing
+// call returns its error at once (nothing after it prints, Go's order).
+// The golden is `go run`'s of Inputs/go-bang/bang-positions.go (see
+// bang-return.test and Inputs/check-bang-go.py).
+package main
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string { return "code error" }
+
+var errs = [3]codeErr{{0}, {1}, {2}}
+
+func id!(n int) int {
+	println("  id", n)
+	if n < 0 {
+		return 0, &errs[1]
+	}
+	return n
+}
+
+type box struct{ n int }
+
+func mk!(n int) box {
+	println("  mk", n)
+	if n < 0 {
+		return box{}, &errs[2]
+	}
+	return box{n}
+}
+
+func (b box) get!() int {
+	println("  get", b.n)
+	if b.n > 5 {
+		return 0, &errs[2]
+	}
+	return b.n
+}
+
+func codeOf(err error) int {
+	if err == nil {
+		return -1
+	}
+	return err.(*codeErr).code
+}
+
+func ifInit!(n int) int {
+	if v := id!(n); v > 0 {
+		return v * 2
+	}
+	return 0
+}
+
+func switchInit!(n int) int {
+	switch v := id!(n); v {
+	case 1:
+		return 10
+	}
+	return 0
+}
+
+func rangeOver!(n int) int {
+	t := 0
+	for i := range id!(n) {
+		t += i
+	}
+	return t
+}
+
+func mapKey!(k, w int) int {
+	m := map[int]int{}
+	m[id!(k)] = id!(w)
+	return m[id!(k)]
+}
+
+func sliceBound!(n int) int {
+	s := []int{1, 2, 3, 4, 5, 6}
+	return len(s[id!(n):id!(n + 2)])
+}
+
+func compound!(n int) int {
+	t := 1
+	t += id!(n)
+	t *= id!(n + 1)
+	return t
+}
+
+func compare!(n int) bool { return id!(n) == id!(n+1) }
+
+func appends!(n int) int {
+	var s []int
+	s = append(s, id!(n), id!(n+1))
+	return len(s)
+}
+
+type small int8
+
+func convert!(n int) small { return small(id!(n)) }
+
+type holder struct{ f int }
+
+func fieldStore!(n int) int {
+	var h holder
+	h.f = id!(n)
+	return h.f
+}
+
+func declare!(n int) int {
+	var v = id!(n)
+	var w int = id!(n + 1)
+	return v + w
+}
+
+func twoResults!(n int) (int, int) { return id!(n), id!(n + 1) }
+
+func chain!(n int) int { return mk!(n).get!() }
+
+func goStyleResult(n int) (int, error) {
+	return id!(n) + 1, nil
+}
+
+func goStyleBare(n int) (v int, err error) {
+	v = id!(n)
+	return v, nil
+}
+
+func pair(n int) { a, b := twoResults!(n); println("  pair", a, b) }
+
+func run(what string, v int, err error) {
+	println(what, v, codeOf(err))
+}
+
+func main() {
+	v, err := ifInit(1)
+	run("if ok", v, err)
+	v, err = ifInit(-1)
+	run("if fail", v, err)
+	v, err = switchInit(1)
+	run("switch ok", v, err)
+	v, err = switchInit(-1)
+	run("switch fail", v, err)
+	v, err = rangeOver(3)
+	run("range ok", v, err)
+	v, err = rangeOver(-3)
+	run("range fail", v, err)
+	v, err = mapKey(1, 2)
+	run("map ok", v, err)
+	v, err = mapKey(-1, 2)
+	run("map fail key", v, err)
+	v, err = mapKey(1, -2)
+	run("map fail value", v, err)
+	v, err = sliceBound(1)
+	run("slice ok", v, err)
+	v, err = sliceBound(-1)
+	run("slice fail low", v, err)
+	v, err = compound(2)
+	run("compound ok", v, err)
+	v, err = compound(-1)
+	run("compound fail first", v, err)
+	b, err := compare(4)
+	println("compare", b, codeOf(err))
+	b, err = compare(-1)
+	println("compare fail", b, codeOf(err))
+	v, err = appends(1)
+	run("append ok", v, err)
+	v, err = appends(-2)
+	run("append fail second", v, err)
+	var sm small
+	sm, err = convert(7)
+	println("convert", sm, codeOf(err))
+	sm, err = convert(-7)
+	println("convert fail", sm, codeOf(err))
+	v, err = fieldStore(9)
+	run("field ok", v, err)
+	v, err = fieldStore(-9)
+	run("field fail", v, err)
+	v, err = declare(1)
+	run("declare ok", v, err)
+	v, err = declare(-1)
+	run("declare fail", v, err)
+	x, y, err := twoResults(1)
+	println("two", x, y, codeOf(err))
+	x, y, err = twoResults(-1)
+	println("two fail", x, y, codeOf(err))
+	pair(3)
+	v, err = chain(3)
+	run("chain ok", v, err)
+	v, err = chain(-3)
+	run("chain fail mk", v, err)
+	v, err = chain(8)
+	run("chain fail get", v, err)
+	v, err = goStyleResult(1)
+	run("go style ok", v, err)
+	v, err = goStyleResult(-1)
+	run("go style fail", v, err)
+	v, err = goStyleBare(5)
+	run("go style bare ok", v, err)
+	v, err = goStyleBare(-5)
+	run("go style bare fail", v, err)
+}

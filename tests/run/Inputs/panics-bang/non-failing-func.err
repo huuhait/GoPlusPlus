@@ -1,0 +1,1 @@
+panic: must: f() at non-failing-func.gopp:11:9: boom

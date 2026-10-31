@@ -1,0 +1,1 @@
+panic: must: f(-1 + 2*3, n<<2, !true, -n) at text-operators.gopp:23:2: boom

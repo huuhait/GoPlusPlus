@@ -836,6 +836,71 @@ TEST(GIRStress, TheLoweringStepCheckFailsAQuadraticProgram) {
   EXPECT_GT(2 * S4, 9 * S1) << S1 << " -> " << S4;
 }
 
+// P04.10: `!`. The calls of a function that can fail (each a test and a cold
+// return), of one that cannot (each a store and a jump to the one shared panic
+// block), and a nest f!(f!(...)) (each call's text for the message is cut at
+// a fixed length, so the texts of the nest are not their sum).
+
+const char *BangPrelude = "package main\n\ntype e struct{}\n\nfunc (e) Error() "
+                          "string { return \"x\" }\n\nfunc f!(n int) int "
+                          "{\n\tif n < 0 {\n\t\treturn 0, e{}\n\t}\n\t"
+                          "return n\n}\n\n";
+
+/// N `!` calls in a function that can fail.
+std::string bangReturnsOfN(unsigned N) {
+  std::string S = std::string(BangPrelude) + "func g!(n int) int {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += f!(" + std::to_string(I) + ")\n";
+  return S + "\treturn t\n}\n\nfunc main() {\n\tprintln(g!(1))\n}\n";
+}
+
+/// N `!` calls in main (they panic): one shared block.
+std::string bangPanicsOfN(unsigned N) {
+  std::string S = std::string(BangPrelude) + "func main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += f!(" + std::to_string(I) + ")\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// f!(f!(f!(... 1 ...))) (N deep).
+std::string bangNestOfN(unsigned N) {
+  std::string S = std::string(BangPrelude) + "func main() {\n\tprintln(";
+  for (unsigned I = 0; I < N; ++I)
+    S += "f!(";
+  S += "1";
+  for (unsigned I = 0; I < N; ++I)
+    S += ")";
+  return S + ")\n}\n";
+}
+
+/// The control: N statements, each a nest N deep (the product).
+std::string bangNestSquareOfN(unsigned N) {
+  std::string Chain, Close;
+  for (unsigned I = 0; I < N; ++I) {
+    Chain += "f!(";
+    Close += ")";
+  }
+  std::string S = std::string(BangPrelude) + "func main() {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += " + Chain + "1" + Close + "\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+TEST(GIRStress, LoweringManyBangsInAFailingFunctionIsLinear) {
+  expectLoweredStepsLinear(400, bangReturnsOfN);
+}
+TEST(GIRStress, LoweringManyPanickingBangsIsLinear) {
+  expectLoweredStepsLinear(400, bangPanicsOfN);
+}
+TEST(GIRStress, LoweringADeepNestOfBangsIsLinear) {
+  expectLoweredStepsLinear(200, bangNestOfN);
+}
+TEST(GIRStress, TheBangStepCheckFailsAQuadraticProgram) {
+  uint64_t S1 = lowerAndCount(10, bangNestSquareOfN),
+           S4 = lowerAndCount(40, bangNestSquareOfN);
+  EXPECT_GT(2 * S4, 9 * S1) << S1 << " -> " << S4;
+}
+
 // P04.05 review R10: the lowering walks that make no GIR statement each (the
 // late reads of an assignment's targets, `op=`, `++`, a range clause, the
 // stores and shrink moves of a tuple, labelPos, exitScopes, the scopes a
@@ -942,8 +1007,9 @@ uint64_t lowerAndCountWalks(unsigned N, std::string (*Make)(unsigned),
 
 /// Steps S1 for N units and S16 for 16N: the dimension is counted (S16 at
 /// least 10 * S1) and linear (S16 at most C * 16N).
-::testing::AssertionResult walksFollow(uint64_t S1, uint64_t S16, unsigned N) {
-  const uint64_t C = 64; // walk steps one unit may take (at most 41 now)
+::testing::AssertionResult walksFollow(uint64_t S1, uint64_t S16, unsigned N,
+                                       uint64_t C = 64) {
+  // C: walk steps one unit may take (at most 41 now, 64 by default)
   if (S1 == 0 || S16 < 10 * S1 || S16 > C * 16 * N)
     return ::testing::AssertionFailure()
            << "steps(N) = " << S1 << ", steps(16N) = " << S16 << ", N = " << N;
@@ -954,6 +1020,52 @@ void expectWalksFollow(unsigned N, std::string (*Make)(unsigned)) {
   uint64_t S1 = lowerAndCountWalks(N, Make);
   uint64_t S16 = lowerAndCountWalks(16 * N, Make);
   EXPECT_TRUE(walksFollow(S1, S16, N));
+}
+
+// P04.10 review R2: the source scan for the text of a call
+// (Body::bangExprText) makes no GIR, so it counts its bytes in
+// gir::loweringSteps. One control per dimension: the depth of a nest (the text
+// of each call holds the calls inside it, up to the cap) and the length of
+// the call text below the cap; and the cap itself: a site costs at most about
+// the cap whatever the length of its call.
+std::string bangsWithText(unsigned N, unsigned Len) {
+  std::string S = std::string(BangPrelude) +
+                  "func s!(s string) int { return len(s) }\n\nfunc "
+                  "main() {\n\tt := 0\n";
+  std::string Arg(Len, 'a');
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += s!(\"" + Arg + "\")\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+uint64_t stepsOf(const std::string &Src) {
+  Checked P(Src);
+  EXPECT_EQ(P.errors(), "");
+  gir::Context C;
+  uint64_t A = loweringSteps();
+  auto M = P.lower(C);
+  EXPECT_NE(M, nullptr) << P.errors();
+  return loweringSteps() - A;
+}
+
+TEST(GIRStress, TheLoweringCountsTheTextOfANestOfBangs) {
+  // 20 -> 320 calls deep: the text of each call grows with the depth.
+  uint64_t S1 = lowerAndCountWalks(20, bangNestOfN),
+           S16 = lowerAndCountWalks(320, bangNestOfN);
+  EXPECT_TRUE(walksFollow(S1, S16, 20, 400));
+}
+TEST(GIRStress, TheLoweringCountsTheLengthOfACallText) {
+  const unsigned N = 50;
+  uint64_t Short = stepsOf(bangsWithText(N, 10)),
+           Long = stepsOf(bangsWithText(N, 100)); // 105 bytes: below the cap
+  EXPECT_GT(Long, Short + N * 80) << Short << " -> " << Long;
+}
+TEST(GIRStress, TheTextOfACallCostsAtMostTheCapAtASite) {
+  const unsigned N = 50;
+  uint64_t Base = stepsOf(bangsWithText(N, 100)),
+           Huge = stepsOf(bangsWithText(N, 5000));
+  // Past the cap a site reads no more (the scan is cut at 240 bytes).
+  EXPECT_LE(Huge, Base + N * 150) << Base << " -> " << Huge;
 }
 
 // P04.18: how a borrowed parameter is passed (Lowering::passOf) asks whether

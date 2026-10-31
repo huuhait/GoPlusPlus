@@ -1,0 +1,19 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck "--implicit-check-not=error[E" %s
+// P04.10 (ERR-1): `func main!()` and `func init!()` have the result `error`,
+// so they break the rule that main and init take no arguments and return
+// nothing (E0131), as `func main() error` does. The other side: `main` and
+// `init` without `!`, and a `!` function with another name, are fine.
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "x" }
+
+func init!() { return e1{} }
+
+func other!() { return e1{} }
+
+func main!() {}
+
+// CHECK: bang-main-signature.test:12:6: error[E0131]: func init must have no arguments and no return values
+// CHECK: bang-main-signature.test:16:6: error[E0131]: func main must have no arguments and no return values

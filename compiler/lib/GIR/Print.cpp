@@ -326,7 +326,7 @@ struct Printer {
          << (BB.Catch     ? " (catch)"
              : BB.Cleanup ? " (cleanup)"
                           : "")
-         << ":\n";
+         << (BB.Cold ? " (cold)" : "") << ":\n";
       for (const Statement &S : BB.Stmts) {
         ++printSteps();
         statement(S);

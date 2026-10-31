@@ -1,0 +1,19 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!(a, b string) int { return 0, e1{} }
+
+type T struct{}
+
+func (T) M!() int { return 0, e1{} }
+
+var obj T
+
+// A newline after the dot of a selector gives no blank.
+func main() {
+	obj.
+		M!()
+}

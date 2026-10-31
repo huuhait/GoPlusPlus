@@ -1,0 +1,16 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!(a, b int, s string) int { return 0, e1{} }
+
+// The text of the call is shown on one line, spaces collapsed.
+func main() {
+	f!(
+		1,
+		2,
+		"café",
+	)
+}

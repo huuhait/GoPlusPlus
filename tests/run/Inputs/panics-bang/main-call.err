@@ -1,0 +1,1 @@
+panic: must: open("nope") at main-call.gopp:16:7: open /nope: no such file or directory

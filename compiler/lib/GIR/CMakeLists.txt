@@ -9,6 +9,7 @@ add_gopp_library(GIR
   Inline.cpp
   LowerExpr.cpp
   LowerIface.cpp
+  LowerBang.cpp
   LowerStmt.cpp
   LowerStr.cpp
   LowerTest.cpp

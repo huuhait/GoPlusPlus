@@ -1,0 +1,1 @@
+panic: must: f(1, 2, "café") at multiline.gopp:11:2: boom

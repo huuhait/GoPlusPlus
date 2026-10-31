@@ -1,0 +1,16 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "in init" }
+
+func f!() int { return 0, e1{} }
+
+func init() {
+	println("init")
+	f!()
+}
+
+func main() {
+	println("not reached")
+}

@@ -1,0 +1,10 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/bang-return.test -o %t.bang-return
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.bang-return %S/golden/bang-return.out 0
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/bang-positions.test -o %t.bang-positions
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/bang-shapes.test -o %t.bang-shapes
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.bang-shapes %S/golden/bang-shapes.out 0
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.bang-positions %S/golden/bang-positions.out 0
+// P04.10: bang-return.test and bang-positions.test and bang-shapes.test on linux/arm64 under QEMU, same golden: `(T, error)`
+// comes back in registers on arm64 for more shapes than on amd64
+// (calling-convention.md), and the error word is read the same way.

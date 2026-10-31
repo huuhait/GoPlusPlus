@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerImpl.h"
+#include "RtEmit.h"
 
 #include <cmath>
 
@@ -542,6 +543,67 @@ FuncId Lowering::ensurePanic(AssertKind K, bool Unsigned, SourceLoc At) {
           {UnwindAction::Unreachable, NoId});
   FB.unreachable();
   return Slot;
+}
+
+//===----------------------------------------------------------------------===//
+// The panic of a `!` (ERR-9)
+//===----------------------------------------------------------------------===//
+
+// `panic_must(expr, pos string, err error)` writes the message of
+// `errors.MustError` (ERR-9) to standard error and exits with status 2:
+//
+//   panic: must: <expr> at <pos>: <err.Error()>
+//
+// The three arguments are the fields of the value (`Expr`, `Pos`, `Err`).
+// There is no `errors` package yet (P05.15 / P13), so no value is made: the
+// message is all a program can observe while a panic cannot be recovered.
+// P04.26 (unwinding) makes the call a throw of `MustError{Err, Expr, Pos}`
+// and prints this line only for a panic nobody recovers; the call site, the
+// arguments and the one shared block per function stay as they are
+// (Body::bangPanicBlock). The error's trace (ERR-14) comes with the runtime.
+FuncId Lowering::ensurePanicMust(SourceLoc At) {
+  if (PanicMust != NoId)
+    return PanicMust;
+  FuncId Write = ensureWrite(At), Exit = ensureExit(At);
+  if (Write == NoId || Exit == NoId)
+    return NoId;
+  Type *Str = Ctx.string(), *Err = Ctx.iface();
+  Type *PU8 = Ctx.ptr(Ctx.u8());
+  Function *F =
+      newHelper(*this, "panic_must", Ctx.func({Str, Str, Err}, Ctx.unit()),
+                Linkage::LinkOnceODR, PanicMust);
+  F->NoReturn = true;
+  Rt R(*M, *F);
+  FuncBuilder &FB = R.FB;
+  F->Locals[FB.param(0)].Name = "expr";
+  F->Locals[FB.param(1)].Name = "pos";
+  F->Locals[FB.param(2)].Name = "err";
+  auto Put = [&](Val S) {
+    Val P = R.snap(R.fld(S, 0)), N = R.snap(R.fld(S, 1));
+    R.callC(Write, {R.i32(2), P, N});
+  };
+  auto Text = [&](StringRef T) { Put(Val{&R, constStr(*M, T)}); };
+  Text("panic: must: ");
+  Put(R.param(0));
+  Text(" at ");
+  Put(R.param(1));
+  Text(": ");
+  // err.Error(): slot 0 of the itab of `error` (word 0 of the itab is its
+  // descriptor; a tagged pointer has its low bit cleared, as a call through
+  // an interface does, Body::lowerMethodCall).
+  Val E = R.param(2);
+  Val It = R.snap(R.fld(E, 0)), Data = R.snap(R.fld(E, 1));
+  Val Bits = R.to(Ctx.u64(), It);
+  Val Tab = R.to(PU8, Bits - (Bits & 1));
+  Val Fp = R.load(R.padd(Tab, R.u(8)), PU8);
+  Type *FT = Ctx.func({PU8}, Str);
+  Val Fn = R.tmp(FB.cast(CastKind::PtrToPtr, Fp.Op, FT));
+  Put(R.snap(R.callIndirect(Fn, {Data})));
+  Text("\n");
+  R.callC(Exit, {R.i32(2)});
+  FB.unreachable();
+  R.finish();
+  return PanicMust;
 }
 
 //===----------------------------------------------------------------------===//

@@ -1,0 +1,19 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "boom" }
+
+func f!(a, b string) int { return 0, e1{} }
+
+type T struct{}
+
+func (T) M!() int { return 0, e1{} }
+
+var obj T
+
+// A raw string keeps its text; its newline shows as \n.
+func main() {
+	f!(`a
+b`, "")
+}

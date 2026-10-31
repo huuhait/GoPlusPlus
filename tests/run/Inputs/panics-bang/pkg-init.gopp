@@ -1,0 +1,13 @@
+package main
+
+type e1 struct{}
+
+func (e1) Error() string { return "init failed" }
+
+func f!() int { return 0, e1{} }
+
+var x = f!()
+
+func main() {
+	println("not reached", x)
+}
