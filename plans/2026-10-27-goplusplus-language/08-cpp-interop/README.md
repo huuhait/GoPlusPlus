@@ -147,3 +147,23 @@ Task P08.15 decides Q3 and Q4. Task P08.16 decides Q5.
 - **Q3** (decided 2026-10-27, ADR-0010) Explicit template arguments use Go's generic brackets: `memory.make_unique[Foo](1, 2)` (D8.5).
 - **Q4** (decided 2026-10-27, ADR-0010) Deep names: `asio.tcp` while it is unique, and the full path `asio.ip.tcp` always works; collisions are errors on use, listing each candidate with its C++ name and location (D8.1).
 - **Q5** (open, decided in task P08.16) The construction syntax of a Go++ type that extends a C++ class (ADR-0023 decision 14, D8.8): a composite literal with the C++ constructor's arguments, or a constructor call, or both; how a C++ base with several constructors is chosen; and the conflicts in ADR-0023 open point 5.
+
+## References (prior art to read before building)
+
+What P08 builds on, and projects that solved parts of the same problem. None is a drop-in framework: Clang does the C++ "brain" work, and the Go++ glue (ownership, panics, caching) is ours.
+
+- **Clang as a library (in the flake, pinned LLVM):**
+  - *Sema:* overload resolution, default arguments, name lookup and template instantiation, so a call or a `vector[MyType]` resolves exactly as a C++ compiler would (D8.4, D8.5).
+  - *CodeGen and `clang/CodeGen/CodeGenABITypes.h`:* the exact record layout, vtables, and how C++ objects are passed and returned (D8.2, D8.8, D8.10).
+  - *Precompiled headers:* fast repeated imports of big headers (P07 D7.1, P07.11).
+- **Swift's ClangImporter (`swift/lib/ClangImporter`, Apache 2.0):** the closest model. It imports C++ headers through Clang (classes, templates, overloads, by-value objects with constructors, destructors and moves).
+- **Carbon (Google, `carbon-language`):** a language designed for C++ interop from the start; its design docs on interop, templates and memory safety.
+- **Rust bridges:**
+  - `bindgen` (headers read through Clang);
+  - `cxx` (a hand-declared bridge);
+  - `autocxx` (bridges generated from headers);
+  - Crubit (Google, two-way Rust and C++).
+
+  Each shows what crosses cleanly and what does not.
+- **cppyy (Python, Cling based):** calling C++ at run time, with templates instantiated on demand.
+- **D's `extern(C++)`:** a simpler model of classes, namespaces and mangling from another language.
