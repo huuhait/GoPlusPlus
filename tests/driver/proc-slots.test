@@ -1,0 +1,12 @@
+// tests/procslots.py: the processes that the test scripts start side by side
+// are bounded by GOPP_TEST_SLOTS, for the threads of one script and across
+// scripts (three processes of 8 threads here, 3 slots); without the setting
+// (a script run by hand) there is no bound.
+// RUN: rm -rf %t.slots
+// RUN: env GOPP_TEST_SLOTS=3 GOPP_TEST_SLOTS_DIR=%t.slots %python %S/Inputs/proc-slots-check.py 3 8 4 | FileCheck --check-prefix=BOUND %s
+// RUN: env -u GOPP_TEST_SLOTS -u GOPP_TEST_SLOTS_DIR %python %S/Inputs/proc-slots-check.py 1 8 1 | FileCheck --check-prefix=FREE %s
+
+// BOUND: spans: 96
+// BOUND-NEXT: most at once: 3
+// FREE: spans: 8
+// FREE-NEXT: most at once: {{[2-8]}}

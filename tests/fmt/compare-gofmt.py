@@ -22,9 +22,13 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import procslots  # noqa: E402
+
 
 def run(args, data=None):
-    return subprocess.run(args, input=data, capture_output=True)
+    with procslots.slot():
+        return subprocess.run(args, input=data, capture_output=True)
 
 
 def comment_free(text):

@@ -38,6 +38,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import procslots  # noqa: E402
+
 INT = re.compile(
     r"\b(add|sub|mul|shl|trunc|zext|uitofp|or|icmp|lshr|ashr|udiv|sdiv)\b[^\n]*"
     r"\b(nsw|nuw|exact|nneg|disjoint|samesign)\b")
@@ -133,7 +136,8 @@ def main():
     def check(prog, target):
         cmd = [a.gopp, "build", "-target=linux/" + target, "-pipeline=fastisel",
                "-emit=llvm"] + prog.files + ["-o", "-"]
-        r = subprocess.run(cmd, capture_output=True, timeout=60)
+        with procslots.slot():
+            r = subprocess.run(cmd, capture_output=True, timeout=60)
         if r.returncode:
             return ["%s [%s]: build failed: %s" % (prog.name, target, r.stderr.decode()[:200])]
         out = []

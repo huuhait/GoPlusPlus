@@ -23,13 +23,17 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import procslots  # noqa: E402
+
 POS = re.compile(r"<\d+:\d+, \d+:\d+>")
 SPACE = re.compile(r"[\x00-\x20]+")
 ESC_SPACE = re.compile(r"(\\[ntr]|\\x[01][0-9a-f]|\\0[0-3][0-7]|[\x00-\x20])+")  # the dump shows a newline as backslash-n
 
 
 def run(args, data=None):
-    return subprocess.run(args, input=data, capture_output=True)
+    with procslots.slot():
+        return subprocess.run(args, input=data, capture_output=True)
 
 
 def dump(gopp, extra, data):

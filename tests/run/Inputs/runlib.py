@@ -27,6 +27,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import procslots  # noqa: E402
+
 PROTOCOL_VERSION = 1
 TIMEOUT = 60
 
@@ -132,9 +135,10 @@ def _run_fast_single(srcs, timeout):
 def _run_real(srcs, link_flags, timeout, merge=False):
     with tempfile.TemporaryDirectory() as tmp:
         exe = os.path.join(tmp, "prog")
-        b = subprocess.run([gopp(), "build"] + link_flags + list(srcs) + ["-o", exe],
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           timeout=timeout)
+        with procslots.slot():
+            b = subprocess.run([gopp(), "build"] + link_flags + list(srcs) + ["-o", exe],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               timeout=timeout)
         if b.returncode != 0:
             return Result("compile-failed", message=b.stderr.decode(errors="replace"))
         return run_exe(exe, [], timeout, merge)
@@ -145,10 +149,11 @@ def run_exe(exe, prefix, timeout=TIMEOUT, merge=False):
     standard error goes where standard output goes (2>&1), as with the
     runner's merge_output."""
     try:
-        r = subprocess.run(prefix + [exe], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT if merge else subprocess.PIPE,
-                           timeout=timeout)
+        with procslots.slot():
+            r = subprocess.run(prefix + [exe], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT if merge else subprocess.PIPE,
+                               timeout=timeout)
     except subprocess.TimeoutExpired:
         return Result("timeout", message="no end in %d s" % timeout)
     err = r.stderr or b""

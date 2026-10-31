@@ -50,6 +50,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import procslots  # noqa: E402
+
 CONFIGS = {
     "fastisel": ["-pipeline=fastisel"],
     "0": ["-opt=0"],
@@ -161,8 +164,9 @@ def build_cmd(env, prog, cfg, out, extra=()):
 def run_exe(env, exe):
     cmd = (["qemu-aarch64", "-L", env.sysroot] if env.target == "arm64" else []) + [exe]
     try:
-        r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, timeout=60)
+        with procslots.slot():
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=60)
     except subprocess.TimeoutExpired:
         return (None, b"", b"timeout")
     return (r.returncode, r.stdout, r.stderr)
@@ -171,7 +175,8 @@ def run_exe(env, exe):
 def one(env, prog, cfg, tmp):
     safe = prog.name.replace("/", "_")
     exe = os.path.join(tmp, "%s.%s" % (safe, cfg))
-    b = subprocess.run(build_cmd(env, prog, cfg, exe), capture_output=True, timeout=60)
+    with procslots.slot():
+        b = subprocess.run(build_cmd(env, prog, cfg, exe), capture_output=True, timeout=60)
     if b.returncode != 0:
         return (prog.name, cfg, "build failed: " + b.stderr.decode(errors="replace")[:300])
     res = run_exe(env, exe)

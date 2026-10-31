@@ -28,6 +28,18 @@ for var in ("NIX_CFLAGS_COMPILE", "NIX_LDFLAGS", "HOME", "TMPDIR"):
 # Tests must not depend on the user's locale.
 config.environment["LC_ALL"] = "C"
 
+# The scripts that start a process per file or per program in many threads
+# share this many slots (tests/procslots.py): a third of the cores, past which
+# the kernel time of starting and ending processes grows several times. That
+# point is the machine's, so the slots are the user's, shared by every test run
+# of every build directory (several worktrees test at once); without a runtime
+# directory, those of this build directory.
+config.environment["GOPP_TEST_SLOTS"] = str(max(2, (os.cpu_count() or 6) // 3))
+config.environment["GOPP_TEST_SLOTS_DIR"] = (
+    os.path.join(os.environ["XDG_RUNTIME_DIR"], "gopp-proc-slots")
+    if os.path.isdir(os.environ.get("XDG_RUNTIME_DIR", ""))
+    else os.path.join(config.test_exec_root, ".proc-slots"))
+
 # Slow tests are opt-in: they say "REQUIRES: long" and run via `ninja check-long`.
 if lit_config.params.get("run_long"):
     config.available_features.add("long")
