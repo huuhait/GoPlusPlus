@@ -2,18 +2,13 @@
 // RUN: %gopp build %gopp_link_flags %S/exit-code.test -o %t.exit.amd64
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/exit-code.test -o %t.exit.arm64
 // RUN: %python %S/Inputs/run-compare-arm64.py %t.exit.amd64 %t.exit.arm64 %aarch64_sysroot 7
-// RUN: %gopp build %gopp_link_flags %S/semantics.test -o %t.sem.amd64
-// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/semantics.test -o %t.sem.arm64
-// RUN: %python %S/Inputs/run-compare-arm64.py %t.sem.amd64 %t.sem.arm64 %aarch64_sysroot 0
 // RUN: %gopp build %gopp_link_flags %S/println-args.test -o %t.pr.amd64
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/println-args.test -o %t.pr.arm64
 // RUN: %python %S/Inputs/run-compare-arm64.py %t.pr.amd64 %t.pr.arm64 %aarch64_sysroot 0
-// RUN: %gopp build %gopp_link_flags %S/non-ascii.test -o %t.na.amd64
-// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/non-ascii.test -o %t.na.arm64
-// RUN: %python %S/Inputs/run-compare-arm64.py %t.na.amd64 %t.na.arm64 %aarch64_sysroot 0
 // RUN: %gopp build %gopp_link_flags %S/eval-order.test -o %t.eo.amd64
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/eval-order.test -o %t.eo.arm64
 // RUN: %python %S/Inputs/run-compare-arm64.py %t.eo.amd64 %t.eo.arm64 %aarch64_sysroot 0
+// SPLIT: arm64-qemu-features 1/2
 // P04.03 (owner decision M6): the feature programs of the run tests (exit
 // code, Go integer and float rules and control flow, println of every kind of
 // argument, non-ASCII strings, evaluation order) built for linux/arm64 and

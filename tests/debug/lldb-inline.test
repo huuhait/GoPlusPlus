@@ -1,8 +1,7 @@
 // REQUIRES: host-linux-amd64, lldb
 // RUN: %gopp build %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t
 // RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/inl.lldb %t 2>&1 | FileCheck %s
-// RUN: %gopp build -pipeline=fastisel %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t.base
-// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/inl-base.lldb %t.base 2>&1 | FileCheck %s --check-prefix=BASE
+// SPLIT: lldb-inline 1/2
 // P04.12, D4.7: gdb-inline.test in lldb. Stopped in the inlined `add`, lldb
 // shows the callee's file and line (`b.gopp:20`), marks the frame `[inlined]`,
 // and lists the callers (`twice` at the call site in b.gopp, `main` in
@@ -22,6 +21,3 @@
 // CHECK: (long) r = 0
 // CHECK: @@STOP2
 // CHECK: (long) z = 10
-
-// BASE: frame #0: {{.*}}`main.add(x=5, y=5) at b.gopp:20
-// BASE-NOT: [inlined]

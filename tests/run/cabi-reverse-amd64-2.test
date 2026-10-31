@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --reverse --flags "%gopp_link_flags" %gopp %t.d 2 20
+// Part 2 of 3 of cabi-reverse-amd64.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: cabi-reverse-amd64 2/3

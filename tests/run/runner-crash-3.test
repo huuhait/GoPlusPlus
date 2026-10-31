@@ -1,0 +1,15 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp test-run -summary -j 1 -executors 1 %S/Inputs/runner/ok.gopp %S/Inputs/runner/segv.gopp %S/Inputs/runner/abort.gopp %S/Inputs/runner/exit7.gopp %S/Inputs/runner/ok2.gopp %S/Inputs/runner/panic2.gopp %S/Inputs/runner/counter.gopp 2>&1 > %t.one.jsonl | FileCheck --check-prefix=STARTS %s
+// RUN: %python %S/Inputs/show-results.py < %t.one.jsonl | FileCheck --check-prefix=ONE %s
+// Part 3 of 3 of runner-crash.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: runner-crash 3/3
+
+// STARTS: test-run: 7 programs: 5 exited, 2 signaled, 0 timed out, 0 did not compile, 0 did not load, 0 internal errors; 5 executor processes started
+
+// ONE: abort.gopp: signaled exit=0 signal=6 restarted=true stdout=b'before abort\n'
+// ONE-NEXT: counter.gopp: exited exit=0 signal=0 restarted=false stdout=b'counter 42\n'
+// ONE-NEXT: exit7.gopp: exited exit=7 signal=0 restarted=true stdout=b'bye\n'
+// ONE-NEXT: ok.gopp: exited exit=0 signal=0 restarted=false stdout=b'ok 1\n'
+// ONE-NEXT: ok2.gopp: exited exit=0 signal=0 restarted=false stdout=b'ok 2\n'
+// ONE-NEXT: panic2.gopp: exited exit=2 signal=0 restarted=true stdout=b'before\n'
+// ONE-NEXT: segv.gopp: signaled exit=0 signal=11 restarted=true stdout=b'before the crash\n'

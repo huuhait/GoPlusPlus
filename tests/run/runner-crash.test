@@ -2,16 +2,14 @@
 // RUN: %python %S/Inputs/make-manifest.py %S/Inputs/runner/ok.gopp %S/Inputs/runner/exit7.gopp %S/Inputs/runner/panic2.gopp %S/Inputs/runner/segv.gopp %S/Inputs/runner/abort.gopp %S/Inputs/runner/loop.gopp %S/Inputs/runner/nolink.gopp %S/Inputs/runner/bad.gopp > %t.man
 // RUN: %gopp test-run -manifest %t.man -executors 2 > %t.jsonl
 // RUN: %python %S/Inputs/show-results.py < %t.jsonl | FileCheck %s
-// RUN: %gopp test-run -summary %S/Inputs/runner/ok.gopp %S/Inputs/runner/segv.gopp %S/Inputs/runner/ok2.gopp 2>&1 >/dev/null | FileCheck --check-prefix=SUMMARY %s
-// RUN: %gopp test-run -summary -j 1 -executors 1 %S/Inputs/runner/ok.gopp %S/Inputs/runner/segv.gopp %S/Inputs/runner/abort.gopp %S/Inputs/runner/exit7.gopp %S/Inputs/runner/ok2.gopp %S/Inputs/runner/panic2.gopp %S/Inputs/runner/counter.gopp 2>&1 > %t.one.jsonl | FileCheck --check-prefix=STARTS %s
-// RUN: %python %S/Inputs/show-results.py < %t.one.jsonl | FileCheck --check-prefix=ONE %s
+// SPLIT: runner-crash 1/3
 // P04.19 (D4.14): one program's crash, exit, panic, hang, link failure or
 // compile error is that program's result and nothing else's. Eight programs
 // share two executors; the programs that did nothing wrong (ok.gopp, and the
 // second ok.gopp of the summary run, which comes after a crash) give their
 // normal result. Output before a crash is kept. `exit` and a panic's exit 2
 // end an executor, which is restarted (restarted=true).
-// Only loop.gopp, which never ends, has a short time limit (400 ms: a
+// Only loop.gopp, which never ends, has a short time limit (200 ms: a
 // `// TIMEOUT:` line, sent in the manifest); the others keep the 60 s default.
 // The output is sorted by program, not in the order the runs ended.
 //
@@ -29,15 +27,3 @@
 // CHECK-NEXT: ok.gopp: exited exit=0 signal=0 restarted=false stdout=b'ok 1\n' first-line=b''
 // CHECK-NEXT: panic2.gopp: exited exit=2 signal=0 restarted=true stdout=b'before\n' first-line=b'panic: runtime error: index out of range [5] with length 3'
 // CHECK-NEXT: segv.gopp: signaled exit=0 signal=11 restarted=true stdout=b'before the crash\n'
-
-// SUMMARY: test-run: 3 programs: 2 exited, 1 signaled, 0 timed out, 0 did not compile, 0 did not load, 0 internal errors; {{[0-9]+}} executor processes started
-
-// STARTS: test-run: 7 programs: 5 exited, 2 signaled, 0 timed out, 0 did not compile, 0 did not load, 0 internal errors; 5 executor processes started
-
-// ONE: abort.gopp: signaled exit=0 signal=6 restarted=true stdout=b'before abort\n'
-// ONE-NEXT: counter.gopp: exited exit=0 signal=0 restarted=false stdout=b'counter 42\n'
-// ONE-NEXT: exit7.gopp: exited exit=7 signal=0 restarted=true stdout=b'bye\n'
-// ONE-NEXT: ok.gopp: exited exit=0 signal=0 restarted=false stdout=b'ok 1\n'
-// ONE-NEXT: ok2.gopp: exited exit=0 signal=0 restarted=false stdout=b'ok 2\n'
-// ONE-NEXT: panic2.gopp: exited exit=2 signal=0 restarted=true stdout=b'before\n'
-// ONE-NEXT: segv.gopp: signaled exit=0 signal=11 restarted=true stdout=b'before the crash\n'

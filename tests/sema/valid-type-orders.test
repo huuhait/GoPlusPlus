@@ -1,3 +1,33 @@
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r1-forward-generic-rhs-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r1-forward-generic-rhs-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r1-instance-of-generic-rhs-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r1-instance-of-generic-rhs-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/mixed-direct-chain-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/mixed-direct-chain-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/plain-and-generic-ring-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/plain-and-generic-ring-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/issue65711-b-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/issue65711-b-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/issue65711-baz-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/issue65711-baz-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/ring-through-instances-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/ring-through-instances-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-copy-of-struct-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/stale-copy-of-struct-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/origin-cycle-via-instances-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/origin-cycle-via-instances-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/recursion-and-instantiation-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/recursion-and-instantiation-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/instantiation-cycle-only-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/instantiation-cycle-only-fwd.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-mixed-args-fwd.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-wrapped-fwd.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-shared-instance-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/invalid-through-argument-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/invalid-through-argument-fwd.gopp
+// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-argument-behind-pointer-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-instance-origins-invalid-fwd.gopp 2>&1 | FileCheck %S/Inputs/valid-type/stale-instance-origins-invalid-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-param-instance-fwd.gopp 2>&1 | FileCheck %S/Inputs/valid-type/stale-param-instance-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r12-cycle-report-lost-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r12-cycle-report-lost-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r13-alias-instantiation-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r13-alias-instantiation-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r13-hang-after-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r13-hang-after-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r14-alias-recursion-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r14-alias-recursion-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-alias-of-literal-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/valid-alias-of-literal-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-instance-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/stale-instance-on-inst-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/option-walk-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/option-walk-on-inst-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/ring-through-alias-deferred-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/ring-through-alias-deferred-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/zero-walk-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/zero-walk-on-inst-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/pinned-walk-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/pinned-walk-on-inst-cycle-fwd.gopp
+// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r22-ring-next-to-iface-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r22-ring-next-to-iface-fwd.gopp
+// SPLIT: valid-type-orders 1/2
 // P03.23 review (R1, R5): the check for a type that holds itself by value
 // gives the same answer whatever the order of the declarations, and always
 // ends (a copy, a Clone() and a zero value of each type follow each program;
@@ -22,62 +52,4 @@
 // zero-value query over such instances (it answered from the declaration,
 // which held a by-value cycle the expanded types did not, and overflowed the
 // stack), and the pinned walk over instances that grow by value.
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r1-forward-generic-rhs-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r1-forward-generic-rhs-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r1-forward-generic-rhs-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r1-forward-generic-rhs-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r1-instance-of-generic-rhs-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r1-instance-of-generic-rhs-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r1-instance-of-generic-rhs-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r1-instance-of-generic-rhs-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/mixed-direct-chain-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/mixed-direct-chain-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/mixed-direct-chain-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/mixed-direct-chain-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/plain-and-generic-ring-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/plain-and-generic-ring-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/plain-and-generic-ring-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/plain-and-generic-ring-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/issue65711-b-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/issue65711-b-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/issue65711-b-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/issue65711-b-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/issue65711-baz-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/issue65711-baz-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/issue65711-baz-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/issue65711-baz-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/ring-through-instances-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/ring-through-instances-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/ring-through-instances-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/ring-through-instances-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-copy-of-struct-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/stale-copy-of-struct-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-copy-of-struct-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/stale-copy-of-struct-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/origin-cycle-via-instances-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/origin-cycle-via-instances-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/origin-cycle-via-instances-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/origin-cycle-via-instances-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/recursion-and-instantiation-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/recursion-and-instantiation-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/recursion-and-instantiation-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/recursion-and-instantiation-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/instantiation-cycle-only-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/instantiation-cycle-only-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/instantiation-cycle-only-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/instantiation-cycle-only-rev.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-mixed-args-fwd.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-mixed-args-rev.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-wrapped-fwd.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-wrapped-rev.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-shared-instance-fwd.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-shared-instance-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/invalid-through-argument-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/invalid-through-argument-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/invalid-through-argument-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/invalid-through-argument-rev.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-argument-behind-pointer-fwd.gopp
-// RUN: timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-argument-behind-pointer-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-instance-origins-invalid-fwd.gopp 2>&1 | FileCheck %S/Inputs/valid-type/stale-instance-origins-invalid-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-instance-origins-invalid-rev.gopp 2>&1 | FileCheck %S/Inputs/valid-type/stale-instance-origins-invalid-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-param-instance-fwd.gopp 2>&1 | FileCheck %S/Inputs/valid-type/stale-param-instance-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-param-instance-rev.gopp 2>&1 | FileCheck %S/Inputs/valid-type/stale-param-instance-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r12-cycle-report-lost-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r12-cycle-report-lost-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r12-cycle-report-lost-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r12-cycle-report-lost-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r13-alias-instantiation-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r13-alias-instantiation-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r13-alias-instantiation-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r13-alias-instantiation-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r13-hang-after-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r13-hang-after-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r13-hang-after-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r13-hang-after-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r14-alias-recursion-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r14-alias-recursion-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r14-alias-recursion-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r14-alias-recursion-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-alias-of-literal-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/valid-alias-of-literal-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/valid-alias-of-literal-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/valid-alias-of-literal-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-instance-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/stale-instance-on-inst-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/stale-instance-on-inst-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/stale-instance-on-inst-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/option-walk-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/option-walk-on-inst-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/option-walk-on-inst-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/option-walk-on-inst-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/ring-through-alias-deferred-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/ring-through-alias-deferred-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/ring-through-alias-deferred-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/ring-through-alias-deferred-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/zero-walk-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/zero-walk-on-inst-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/zero-walk-on-inst-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/zero-walk-on-inst-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/pinned-walk-on-inst-cycle-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/pinned-walk-on-inst-cycle-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/pinned-walk-on-inst-cycle-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/pinned-walk-on-inst-cycle-rev.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r22-ring-next-to-iface-fwd.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r22-ring-next-to-iface-fwd.gopp
-// RUN: not timeout 3 %gopp check -check-j=1 --check-error-limit=0 %S/Inputs/valid-type/r22-ring-next-to-iface-rev.gopp 2>&1 | FileCheck --implicit-check-not=error %S/Inputs/valid-type/r22-ring-next-to-iface-rev.gopp
 package main

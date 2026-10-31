@@ -1,9 +1,8 @@
 // REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
 // RUN: %gopp build %S/Inputs/parambreak.gopp -o %t
 // RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/parambreak.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
-// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/parambreak.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
 // RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/parambreak-step.gdb %t 2>&1 | FileCheck %s --check-prefix=GDBSTEP
-// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/parambreak-step.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDBSTEP
+// SPLIT: params-break 1/2
 // P04.12 (every value at `opt 0` is right): `break f` stops where LLVM puts
 // prologue_end, the first instruction with a line. The code that puts the
 // parameters where their variables say they are (the stores into their
@@ -78,78 +77,6 @@
 // GDB: 1073
 // GDB-NOT: Breakpoint
 //
-// LLDB: frame #0: {{.*}}`main.scalars(a=20, b=-7, c=true, f=2.5) at parambreak.gopp:32
-// LLDB: (long) a = 20
-// LLDB-NEXT: (int) b = -7
-// LLDB-NEXT: (bool) c = true
-// LLDB-NEXT: (double) f = 2.5
-// LLDB: frame #0: {{.*}}`main.words(p=(X = 3, Y = 4), t=(A = 5, B = 6, C = 7), g=(A = 8, B = 9, C = 10, D = 11, E = 12), k=13) at parambreak.gopp:37
-// LLDB: (main.Big) g = (A = 8, B = 9, C = 10, D = 11, E = 12)
-// LLDB: frame #0: {{.*}}`main.place(
-// LLDB: (main.Doc) d = {
-// LLDB-NEXT: N = 14
-// LLDB-NEXT: Name = (ptr = "doc", len = 3, cap = 0)
-// LLDB: (gopp.map *) m = {{0x[0-9a-f]+}}
-// LLDB: frame #0: {{.*}}`main.view(s=(ptr = "hey", len = 3, cap = 0), {{.*}} at parambreak.gopp:47
-// LLDB: ([]int64) xs = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 4
-// LLDB: frame #0: {{.*}}`main.grow({{.*}}, n=15) at parambreak.gopp:52
-// LLDB: ([]int64) xs = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 2
-// LLDB: frame #0: {{.*}}`main.grow({{.*}}, n=15) at parambreak.gopp:53
-// LLDB: (lldb) next
-// LLDB: frame #0: {{.*}}`main.grow({{.*}}, n=15) at parambreak.gopp:54
-// LLDB: ([]int64) xs = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 3
-// LLDB: frame #0: {{.*}}`main.named(a=16) at parambreak.gopp:58
-// LLDB-NOT: (lldb) next
-// LLDB: (long) r = 0
-// LLDB-NEXT: (bool) ok = false
-// LLDB: frame #0: {{.*}}`main.named(a=16) at parambreak.gopp:60
-// LLDB: (long) a = 16
-// LLDB-NEXT: (long) r = 32
-// LLDB-NEXT: (bool) ok = false
-// LLDB: frame #0: {{.*}}`main.misc(l=(itab = {{0x[0-9a-f]+}}, data = {{0x[0-9a-f]+}}), o=(value = 19, set = true)) at parambreak.gopp:65
-// LLDB: frame #0: {{.*}}`main.Nums.Len({{.*}}) at parambreak.gopp:85{{.*}} [inlined]
-// LLDB: ([]int64) n = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 2
-// LLDB: frame #1: {{.*}}`interface thunk for main.Nums.Len at parambreak.gopp:84
-// LLDB: (lldb) frame variable
-// LLDB-NEXT: (lldb) continue
-// LLDB: frame #0: {{.*}}`main.Pair.Sum(p=(X = 21, Y = 22), k=23) at parambreak.gopp:70
-// LLDB: frame #0: {{.*}}`main.Pair.Add(p={{0x[0-9a-f]+}}, k=24) at parambreak.gopp:75
-// LLDB: (main.Pair) *p = (X = 21, Y = 22)
-// LLDB: frame #0: {{.*}}`main.Doc.Count({{.*}}, k=26) at parambreak.gopp:80
-// LLDB: (main.Doc) d = {
-// LLDB-NEXT: N = 25
-// LLDB-NEXT: Name = (ptr = "abcd", len = 4, cap = 0)
-// LLDB: frame #0: {{.*}}`main.tsc(a=27, b=28) at parambreak.gopp:94{{.*}} [inlined]
-// LLDB: frame #0: {{.*}}`main.tpair(p=(X = 29, Y = 30), t=(A = 31, B = 32, C = 33)) at parambreak.gopp:98{{.*}} [inlined]
-// LLDB: frame #0: {{.*}}`main.tplace({{.*}}) at parambreak.gopp:102{{.*}} [inlined]
-// LLDB: (main.Doc) d = {
-// LLDB-NEXT: N = 34
-// LLDB-NEXT: Name = (ptr = "tp", len = 2, cap = 0)
-// LLDB: frame #0: {{.*}}`main.tstr(s=(ptr = "str", len = 3, cap = 0)) at parambreak.gopp:106{{.*}} [inlined]
-// LLDB: frame #0: {{.*}}`main.tslice({{.*}}) at parambreak.gopp:110{{.*}} [inlined]
-// LLDB: ([]int64) xs = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 2
-// LLDB: frame #0: {{.*}}`main.Nums.Len({{.*}}) at parambreak.gopp:85{{.*}} [inlined]
-// LLDB: ([]int64) n = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 3
-// LLDB: frame #0: {{.*}}`main.Nums.First({{.*}}) at parambreak.gopp:89
-// LLDB: ([]int64) n = {
-// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDB-NEXT: len = 3
-// LLDB: frame #1: {{.*}}`interface thunk for main.Nums.First at parambreak.gopp:88
-// LLDB: (lldb) frame variable
-// LLDB-NEXT: (lldb) continue
-// LLDB: 1073
 //
 // GDBSTEP: Breakpoint 1, main.main () at {{.*}}parambreak.gopp:118
 // GDBSTEP-NEXT: 118
@@ -171,26 +98,3 @@
 // GDBSTEP-NEXT: main.tstr (s={ptr = {{0x[0-9a-f]+}} "str", len = 3, cap = 0}) at {{.*}}parambreak.gopp:106
 // GDBSTEP: 1073
 //
-// LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:118
-// LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.scalars(a=20, b=-7, c=true, f=2.5) at parambreak.gopp:32
-// LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:121
-// LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.place({{.*}}) at parambreak.gopp:42
-// LLDBSTEP: (main.Doc) d = {
-// LLDBSTEP-NEXT: N = 14
-// LLDBSTEP-NEXT: Name = (ptr = "doc", len = 3, cap = 0)
-// LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:122
-// LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.view(s=(ptr = "hey", len = 3, cap = 0), {{.*}}) at parambreak.gopp:47
-// LLDBSTEP: ([]int64) xs = {
-// LLDBSTEP-NEXT: ptr = {{0x[0-9a-f]+}}
-// LLDBSTEP-NEXT: len = 4
-// LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:125
-// LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.named(a=16) at parambreak.gopp:58
-// LLDBSTEP: (long) r = 0
-// LLDBSTEP-NEXT: (bool) ok = false
-// LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:136
-// LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.tstr(s=(ptr = "str", len = 3, cap = 0)) at parambreak.gopp:106{{.*}} [inlined]

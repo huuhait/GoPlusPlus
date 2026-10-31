@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64, qemu-aarch64
-// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 4 --verify-dwarf core-fma-vars core-strings panics/opt-index-invariant
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 4 --verify-dwarf --shard 0/3 core-fma-vars core-strings panics/opt-index-invariant
+// SPLIT: core-opt-matrix-arm64 1/3
 // P04.13 (D4.8): core-opt-matrix.test on linux/arm64 under QEMU: a few
 // programs of the run corpus at every `opt` level and with
 // -pipeline=fastisel give the baseline's result and gc's arm64 output (FMA

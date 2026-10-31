@@ -13,13 +13,11 @@ It is REAL_GOPP, except for an input that contains the word HANG (a
   * `build` of such a file fails with exit status 1 and "fake gopp: cannot
     build NAME".
 """
-import json
 import os
-import signal
-import subprocess
 import sys
-import time
 
+# Few imports: this starts once per run of the real tool (the tests that use it
+# start it dozens of times), and every import is part of that.
 real, args = sys.argv[1], sys.argv[2:]
 
 
@@ -33,12 +31,18 @@ if args[:1] != ["build"] or "-batch" in args:
     data = sys.stdin.buffer.read()
 if "-batch" in args:
     if args[0] == "build":
+        import json
+
         files = [i for line in data.decode().splitlines() for i in json.loads(line)["inputs"]]
     else:
         files = [a for a in args if os.path.isfile(a)]
     if any(broken(f) for f in files):
+        import signal
+
         os.kill(os.getpid(), signal.SIGKILL)
     if any(b"HANG" in open(f, "rb").read() for f in files):
+        import time
+
         time.sleep(3600)
 elif args[0] == "fmt" and b"BREAK" in data:
     sys.stderr.write("fake gopp: cannot format\n")
@@ -48,4 +52,21 @@ elif args[0] == "build":
         if a.endswith((".gopp", ".test")) and os.path.isfile(a) and broken(a):
             sys.stderr.write("fake gopp: cannot build %s\n" % os.path.basename(a))
             sys.exit(1)
-sys.exit(subprocess.run([real] + args, input=data).returncode)
+if data is None:
+    os.execv(real, [real] + args)
+# The real tool gets the standard input that was read here.
+r, w = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.dup2(r, 0)
+    os.close(r)
+    os.close(w)
+    os.execv(real, [real] + args)
+os.close(r)
+with os.fdopen(w, "wb") as f:
+    try:
+        f.write(data)
+    except BrokenPipeError:
+        pass
+_, status = os.waitpid(pid, 0)
+sys.exit(os.waitstatus_to_exitcode(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))

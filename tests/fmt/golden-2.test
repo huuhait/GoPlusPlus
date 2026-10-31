@@ -3,18 +3,19 @@
 // comparisons of Inputs/gofmt and Inputs/gopp; golden.test has those of
 // Inputs/goprinter: one test took 1.5 s of the 2 s limit).
 // RUN: %python %S/check-corpus.py %gopp %S/Inputs --ext .input --ext .golden --min 25 --shard 1/2
-// RUN: %gopp fmt %S/Inputs/gofmt/comments.input | diff - %S/Inputs/gofmt/comments.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/crlf.input | diff - %S/Inputs/gofmt/crlf.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/go2numbers.input | diff - %S/Inputs/gofmt/go2numbers.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/import.input | diff - %S/Inputs/gofmt/import.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/issue28082.input | diff - %S/Inputs/gofmt/issue28082.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/tabs.input | diff - %S/Inputs/gofmt/tabs.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/typealias.input | diff - %S/Inputs/gofmt/typealias.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/typeparams.input | diff - %S/Inputs/gofmt/typeparams.golden
-// RUN: %gopp fmt %S/Inputs/gofmt/typeswitch.input | diff - %S/Inputs/gofmt/typeswitch.golden
-// RUN: %gopp fmt %S/Inputs/gopp/comments.input | diff - %S/Inputs/gopp/comments.golden
-// RUN: %gopp fmt %S/Inputs/gopp/extends.input | diff - %S/Inputs/gopp/extends.golden
-// RUN: %gopp fmt %S/Inputs/gopp/extends.golden | diff - %S/Inputs/gopp/extends.golden
-// RUN: %gopp fmt %S/Inputs/gopp/headers.input | diff - %S/Inputs/gopp/headers.golden
-// RUN: %gopp fmt %S/Inputs/gopp/macros.input | diff - %S/Inputs/gopp/macros.golden
-// RUN: %gopp fmt %S/Inputs/gopp/syntax.input | diff - %S/Inputs/gopp/syntax.golden
+// RUN: %python %S/Inputs/check-golden.py %gopp \
+// RUN:   %S/Inputs/gofmt/comments.input %S/Inputs/gofmt/comments.golden \
+// RUN:   %S/Inputs/gofmt/crlf.input %S/Inputs/gofmt/crlf.golden \
+// RUN:   %S/Inputs/gofmt/go2numbers.input %S/Inputs/gofmt/go2numbers.golden \
+// RUN:   %S/Inputs/gofmt/import.input %S/Inputs/gofmt/import.golden \
+// RUN:   %S/Inputs/gofmt/issue28082.input %S/Inputs/gofmt/issue28082.golden \
+// RUN:   %S/Inputs/gofmt/tabs.input %S/Inputs/gofmt/tabs.golden \
+// RUN:   %S/Inputs/gofmt/typealias.input %S/Inputs/gofmt/typealias.golden \
+// RUN:   %S/Inputs/gofmt/typeparams.input %S/Inputs/gofmt/typeparams.golden \
+// RUN:   %S/Inputs/gofmt/typeswitch.input %S/Inputs/gofmt/typeswitch.golden \
+// RUN:   %S/Inputs/gopp/comments.input %S/Inputs/gopp/comments.golden \
+// RUN:   %S/Inputs/gopp/extends.input %S/Inputs/gopp/extends.golden \
+// RUN:   %S/Inputs/gopp/extends.golden %S/Inputs/gopp/extends.golden \
+// RUN:   %S/Inputs/gopp/headers.input %S/Inputs/gopp/headers.golden \
+// RUN:   %S/Inputs/gopp/macros.input %S/Inputs/gopp/macros.golden \
+// RUN:   %S/Inputs/gopp/syntax.input %S/Inputs/gopp/syntax.golden

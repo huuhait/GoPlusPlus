@@ -1,0 +1,18 @@
+// RUN: %python %S/Inputs/gen-ops-stress.py overloads 50 > %t.over.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.over.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py generic 100 > %t.gen.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.gen.gopp
+// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.gen.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py mixed 3000 > %t.mixed.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.mixed.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py extover 400 > %t.xo.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.xo.gopp
+// RUN: timeout 20 %gopp check -check-j=8 --check-error-limit=0 %t.xo.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py nestcall 100 > %t.nc.gopp
+// RUN: timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.nc.gopp
+// RUN: %python %S/Inputs/gen-ops-stress.py errors 500 > %t.err.gopp
+// RUN: not timeout 20 %gopp check -check-j=1 --check-error-limit=0 %t.err.gopp > %t.err.out 2>&1
+// RUN: %python -c "import sys; t=open(sys.argv[1]).read(); assert t.count('error[') == 500, t[:300]" %t.err.out
+// Part 2 of 2 of ops-stress.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: ops-stress 2/2
+package main

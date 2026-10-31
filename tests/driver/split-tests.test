@@ -1,0 +1,8 @@
+// A test that was cut in parts to stay under the 2 s limit of the normal suite
+// says `// SPLIT: NAME K/N` in each part. All N parts must be there, once each
+// (Inputs/check-split-tests.py); the self-test shows a missing, a doubled and
+// a disagreeing part are refused.
+// RUN: %python %S/Inputs/check-split-tests.py --self-test | FileCheck %s --check-prefix=SELF
+// SELF: self-test ok
+// RUN: %python %S/Inputs/check-split-tests.py %S/.. %S/Inputs/split-groups.txt | FileCheck %s
+// CHECK: {{[0-9]+}} split tests: every part once, {{[0-9]+}} parts

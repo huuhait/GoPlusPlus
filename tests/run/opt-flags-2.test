@@ -1,0 +1,37 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %gopp_link_flags -opt=0 %s -o %t.0
+// RUN: %t.0 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=2 %s -o %t.2
+// RUN: %t.2 | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -opt=s %s -o %t.s
+// RUN: %t.s | FileCheck %s
+// RUN: %gopp build %gopp_link_flags -pipeline=fastisel %s -o %t.base
+// RUN: %t.base | FileCheck %s
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib -opt=3 %s -o %t.a64o3 %}
+// RUN: %if qemu-aarch64 %{ qemu-aarch64 -L %aarch64_sysroot %t.a64o3 | FileCheck %s --check-prefixes=CHECK,ARM %}
+// Part 2 of 2 of opt-flags.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: opt-flags 2/2
+package main
+
+func fused(x, y, z float64) float64 {
+	t := x * y
+	return t + z
+}
+
+func sum(n int32) int32 {
+	var s int32 = 2147483000
+	for i := int32(0); i < n; i++ {
+		s += i * 7
+	}
+	return s
+}
+
+func main() {
+	x, y := 1.0000000074505806, 0.9999999925494194
+	println("sum", sum(1000))
+	println("fma", fused(x, y, -1))
+}
+
+// CHECK: sum -2143987796
+// ARM: fma -5.551115e-017
+// CHECK-NOT: fma -5.551115e-017

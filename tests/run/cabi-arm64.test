@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64, qemu-aarch64, clang
-// RUN: %python %S/Inputs/run-cabi.py --arm64 %aarch64_sysroot %gopp %t.d 3 25 4 25
+// RUN: %python %S/Inputs/run-cabi.py --arm64 %aarch64_sysroot %gopp %t.d 3 25
+// SPLIT: cabi-arm64 1/2
 // P04.11 (D4.4): the same generated programs as cabi-amd64.test for
 // linux/arm64: C built by the flake's Clang for aarch64 (no headers), the Go++
 // program linked against the aarch64 glibc of $GOPP_AARCH64_SYSROOT and run

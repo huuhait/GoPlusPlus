@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/check-ir-flags.py --gopp %gopp --root %S --jobs 8 --targets arm64 --shard 1/2 opt/ oom/ | FileCheck %s
-// P04.13: the second half of the programs of core-ir-arg-ext.test (arm64).
+// RUN: %python %S/Inputs/check-ir-flags.py --gopp %gopp --root %S --jobs 8 --targets arm64 --shard 1/3 opt/ oom/ | FileCheck %s
+// P04.13: part 2 of 3 of the programs of core-ir-arg-ext.test (arm64).
+// SPLIT: core-ir-arg-ext 2/3
 //
 // CHECK: programs x 1 targets: no flags

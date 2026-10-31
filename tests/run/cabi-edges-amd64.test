@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64, clang
-// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" --edges 16 %gopp %t.d 0 1000
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" --edges 32 %gopp %t.d 0 1000
+// SPLIT: cabi-edges-amd64 1/2
 // P04.11 (D4.4): the enumerated signatures at the edges of the register
 // classes (Inputs/gen-cabi.py --mode edges, c2's set: every struct of one and
 // two scalars, of three and four from smaller sets, arrays of every length

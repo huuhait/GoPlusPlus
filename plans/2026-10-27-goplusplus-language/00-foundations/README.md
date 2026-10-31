@@ -106,7 +106,7 @@ Every job runs `ninja check` and the format check.
   - Build folders are never deleted. Each worktree has its own build folder, and all of them share one sccache.
 - **Testing** (P00.14, P04.19):
   - Tests stop as early as they can: most check an AST or GIR dump with FileCheck and never generate code or link.
-  - Each stage has its own target (`check-parser`, `check-sema`, `check-gir`, `check-codegen`, …); `check` runs them all on every core.
+  - Each stage has its own target (`check-parser`, `check-sema`, `check-gir`, `check-codegen`, …); `check` runs them all on half the logical cores (at least 8): a worker a core oversubscribes the machine and the summed test time doubles (measured on 192 threads: the whole suite 1.7 s at 96 workers, 2.1 s at 192, and the slowest test 1.4 s against 2.0 s).
   - Slow tests are opt-in: cdep CMake builds, fuzzing and big benchmarks run in `check-long`, nightly, or when their own code changes.
   - Every run prints its 20 slowest tests, and CI fails when the suite gets more than 10% slower.
 - **Agents** follow these rules through the repo's `CLAUDE.md`: the narrowest test first, the full suite once before finishing, and never more than 2 minutes of waiting on one command.

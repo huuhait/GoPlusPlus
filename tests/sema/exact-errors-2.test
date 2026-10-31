@@ -1,0 +1,3 @@
+// Shard 1/3 of exact-errors.test (the same check on a third of the tests, split to stay well under the 2 s limit at load).
+// SPLIT: exact-errors 2/3
+// RUN: %python %S/check-exact-errors.py --gopp %gopp --examples %examples --root %S/.. --shard 1/3

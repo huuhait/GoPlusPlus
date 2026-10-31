@@ -1,0 +1,5 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py determinism --configs 2 --work %t.d --programs %S/Inputs/runner --names abort,bad,exit7,interleave,killself,nolink3,nonl,counter,quiet,segv,stdio-exit,stdio-return,state-ignore-term,state-chdir,see-cwd,state-leak-fds,see-first-fd,state-setenv,see-env
+// Part 2 of 3 of runner-determinism.test (the first configuration and number 2).
+// SPLIT: runner-determinism 2/3

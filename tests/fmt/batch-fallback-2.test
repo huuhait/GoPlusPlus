@@ -1,0 +1,13 @@
+// RUN: rm -rf %t && mkdir -p %t/good
+// RUN: printf 'package a\nfunc f( ){x:=1\n_=x}\n' > %t/good/a.gopp
+// RUN: printf 'package b\n\n// comment\nfunc g() {\n\treturn\n}\n' > %t/good/b.gopp
+// RUN: mkdir -p %t/broken
+// RUN: printf '#!/bin/sh\nexec %python %S/Inputs/fake-gopp.py %gopp "$@"\n' > %t/fake-gopp
+// RUN: chmod +x %t/fake-gopp
+// RUN: cp %t/good/a.gopp %t/good/b.gopp %t/broken/
+// RUN: printf 'package d\n\n// BREAK\nfunc k() {}\n' > %t/broken/break.gopp
+// RUN: %python %S/check-corpus.py %t/fake-gopp --jobs 1 --min 2 %t/good | FileCheck %s --check-prefix=CORPUS-GOOD
+// Part 2 of 2 of batch-fallback.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: batch-fallback 2/2
+
+// CORPUS-GOOD: checked 2 files: 2 ok, 0 skipped (syntax errors), 0 failed

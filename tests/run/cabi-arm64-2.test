@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64, clang
+// RUN: %python %S/Inputs/run-cabi.py --arm64 %aarch64_sysroot %gopp %t.d 4 25
+// Part 2 of 2 of cabi-arm64.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: cabi-arm64 2/2

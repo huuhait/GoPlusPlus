@@ -1,0 +1,8 @@
+// REQUIRES: host-linux-amd64, lldb
+// RUN: %gopp build -pipeline=fastisel %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t.base
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/inl-base.lldb %t.base 2>&1 | FileCheck %s --check-prefix=BASE
+// Part 2 of 2 of lldb-inline.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: lldb-inline 2/2
+
+// BASE: frame #0: {{.*}}`main.add(x=5, y=5) at b.gopp:20
+// BASE-NOT: [inlined]

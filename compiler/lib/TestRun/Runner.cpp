@@ -47,7 +47,14 @@ public:
         timespec Tick = {0, 50 * 1000 * 1000};
         int Sig = sigtimedwait(&Set, nullptr, &Tick);
         if (Sig > 0) {
-          llvm::sys::fs::remove_directories(Dir);
+          // The pool's threads may still make a file here (the stdout and
+          // stderr files of a program that starts just now), and a file made
+          // between listing and removing the directory keeps it. The
+          // directory is gone for good once a pass removes it, since nothing
+          // can be made in a missing directory; so remove it until it is.
+          for (unsigned Try = 0; Try < 1000 && llvm::sys::fs::exists(Dir);
+               ++Try)
+            llvm::sys::fs::remove_directories(Dir);
           _exit(128 + Sig);
         }
       }

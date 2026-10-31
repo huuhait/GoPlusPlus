@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64, clang
+// RUN: %python %S/Inputs/run-cabi.py --reverse --arm64 %aarch64_sysroot --edges 40 %gopp %t.e 0 1000
+// Part 3 of 3 of cabi-reverse-arm64.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: cabi-reverse-arm64 3/3

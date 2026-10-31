@@ -1,0 +1,18 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t && mkdir -p %t/good %t/mixed %t/broken
+// RUN: printf 'package main\n\nfunc main() {\n\tprintln("one", 1+2)\n}\n' > %t/good/one.test
+// RUN: printf 'package main\n\nfunc main() {\n\tprintln("two")\n}\n' > %t/good/two.test
+// RUN: printf '#!/bin/sh\nexec %python %S/../fmt/Inputs/fake-gopp.py %gopp "$@"\n' > %t/fake-gopp
+// RUN: chmod +x %t/fake-gopp
+// RUN: cp %t/good/one.test %t/good/two.test %t/broken/
+// RUN: printf 'package main\n\n// BREAK\nfunc main() {\n\tprintln("brk")\n}\n' > %t/broken/brk.test
+// RUN: not %python %S/Inputs/run-opt-matrix.py --gopp %t/fake-gopp --root %t/broken --link-flags "%gopp_link_flags" --configs 0 --jobs 1 > %t/broken.out 2>&1
+// RUN: FileCheck %s --check-prefix=BROKEN < %t/broken.out
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %t/fake-gopp --root %t/good --link-flags "%gopp_link_flags" --configs 0 --jobs 1 | FileCheck %s --check-prefix=GOOD
+// Part 2 of 2 of build-batch-matrix.test (the fake gopp whose batch dies; split to stay well under the 2 s limit at load).
+// SPLIT: build-batch-matrix 2/2
+// BROKEN: 3 programs x 2 configurations on amd64 in {{.*}}: 2 problems
+// BROKEN-DAG: brk [fastisel]: build failed: fake gopp: cannot build brk.test
+// BROKEN-DAG: brk [0]: build failed: fake gopp: cannot build brk.test
+// BROKEN-NOT: {{^(one|two) \[}}
+// GOOD: 2 programs x 2 configurations on amd64 in {{.*}}: all equal

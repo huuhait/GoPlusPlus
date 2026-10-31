@@ -1,0 +1,5 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py start-fail --only hangs --work %t.d --programs %S/Inputs/runner
+// Part 4 of 4 of runner-failures.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: runner-failures 4/4

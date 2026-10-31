@@ -1,5 +1,5 @@
 // EXPECT: timeout
-// TIMEOUT: 400
+// TIMEOUT: 200
 // REAL: no
 package main
 

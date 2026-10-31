@@ -1,0 +1,13 @@
+// REQUIRES: host-linux-amd64, gdb
+// RUN: %gopp build -opt=2 %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t.o2
+// RUN: timeout 30 gdb -batch -nx -x %S/Inputs/inl-o2.gdb %t.o2 2>&1 | FileCheck %s --check-prefix=O2
+// Part 2 of 2 of gdb-inline.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: gdb-inline 2/2
+
+// O2: @@STOP1
+// O2: #0 {{.*}}main.add (x=5, y=5) at {{.*}}b.gopp:2{{[01]}}
+// O2: #1 {{.*}}main.twice (n=5) at {{.*}}b.gopp:25
+// O2: #2 {{.*}}main.main () at {{.*}}a.gopp:6
+// O2: z = {{<optimized out>|10}}
+// O2: @@CALLER1
+// O2: n = 5

@@ -1,13 +1,14 @@
 // REQUIRES: host-linux-amd64
 // RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --verify-dwarf-self-test
-// RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --shard 0/2 --configs 0,2 debug/ core-recursive
+// RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --shard 0/3 --configs 0,2 debug/ core-recursive
+// SPLIT: dwarf-matrix 1/3
 // P04.12, D4.7: the programs of this directory (every type and variable kind,
 // a call chain, shadowed names and scopes, inlining across files) and the
 // self-naming and recursive types of run/core-recursive* (cycles, closed by
 // declarations) are built at `opt 0` and 2 (and the baseline), on amd64 and
 // arm64, give the same output everywhere (their saved one), and
-// `llvm-dwarfdump --verify` accepts the DWARF of each. Each half of the programs (--shard) and each target is a test of its own, to
-// stay under the 2 s limit of the normal suite: dwarf-matrix-2.test, and
+// `llvm-dwarfdump --verify` accepts the DWARF of each. Each third of the programs (--shard) and each target is a test of its own, to
+// stay under the 2 s limit of the normal suite: dwarf-matrix-2.test and -3.test, and
 // dwarf-matrix-arm64*.test for arm64. The first RUN is the check of the check: it refuses an
 // object whose .debug_info is broken and accepts the good one. The whole run
 // corpus at every `opt` is core-opt-matrix.long.test (and the arm64 one).

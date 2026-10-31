@@ -1,0 +1,12 @@
+// Inputs/check-golden.py fails a pair when `gopp fmt` exits with a status
+// other than 0, even if it printed the golden (the pipe it replaces did, under
+// pipefail); a gopp that exits 0 passes, and a wrong output fails.
+// RUN: printf '#!/bin/sh\nexec %gopp "$@"\n' > %t.ok
+// RUN: printf '#!/bin/sh\n%gopp "$@"\nexit 1\n' > %t.fail
+// RUN: chmod +x %t.ok %t.fail
+// RUN: %python %S/Inputs/check-golden.py %t.ok %S/Inputs/gopp/syntax.input %S/Inputs/gopp/syntax.golden | FileCheck %s --check-prefix=OK
+// RUN: not %python %S/Inputs/check-golden.py %t.fail %S/Inputs/gopp/syntax.input %S/Inputs/gopp/syntax.golden | FileCheck %s --check-prefix=EXIT
+// RUN: not %python %S/Inputs/check-golden.py %t.ok %S/Inputs/gopp/syntax.input %S/Inputs/gopp/macros.golden | FileCheck %s --check-prefix=DIFF
+// OK: 1 goldens ok
+// EXIT: DIFFERS: gopp fmt {{.*}}syntax.input exits 1 (golden {{.*}}syntax.golden)
+// DIFF: DIFFERS: gopp fmt {{.*}}syntax.input and {{.*}}macros.golden

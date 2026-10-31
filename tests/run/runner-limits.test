@@ -6,6 +6,6 @@
 // limit with SIGXFSZ (signal 25), so it fills neither the disk nor the
 // runner's memory; a program that closes the executor's socket and never ends
 // is stopped at the time limit too; a program next to them is not touched.
-// Only the two programs that never end have a short limit (400 ms, a
+// Only the two programs that never end have a short limit (200 ms, a
 // `// TIMEOUT:` line in the program, sent in the manifest); flood and counter
 // must exit and keep the 60 s default, so a loaded machine cannot fail them.

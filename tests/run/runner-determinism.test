@@ -1,9 +1,11 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
 // RUN: rm -rf %t.d
-// RUN: %python %S/Inputs/runner-scenarios.py determinism --work %t.d --programs %S/Inputs/runner --names abort,bad,exit7,interleave,killself,nolink3,nonl,counter,quiet,segv,stdio-exit,stdio-return,state-ignore-term,state-chdir,see-cwd,state-leak-fds,see-first-fd,state-setenv,see-env
+// RUN: %python %S/Inputs/runner-scenarios.py determinism --configs 1 --work %t.d --programs %S/Inputs/runner --names abort,bad,exit7,interleave,killself,nolink3,nonl,counter,quiet,segv,stdio-exit,stdio-return,state-ignore-term,state-chdir,see-cwd,state-leak-fds,see-first-fd,state-setenv,see-env
+// SPLIT: runner-determinism 1/3
 // P04.19 (D4.14): the results of a batch (outcome, status, both streams,
 // messages, whether the executor ended) are the same bytes for one thread and
 // one executor, for sixteen of each, and for three orders of the manifest.
 // Nothing a program or an error message says depends on which thread or
 // executor handled it, or on what that executor ran before (the state the
 // programs change is put back, M2).
+// Three tests (SPLIT, --configs 1, 2, 3) run the first configuration and one other each, to stay well under the 2 s limit at load.

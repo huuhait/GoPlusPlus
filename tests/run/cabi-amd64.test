@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64, clang
-// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" %gopp %t.d 1 30 2 30
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" %gopp %t.d 1 30
+// SPLIT: cabi-amd64 1/2
 // P04.11 (D4.4): Go++ calls C with the exact C ABI of linux/amd64. A generator
 // (Inputs/gen-cabi.py) makes random signatures: scalars, structs of mixed
 // scalars (floats, bool, char, pointers, Option[*byte]), arrays in structs, nested

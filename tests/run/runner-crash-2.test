@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %gopp test-run -summary %S/Inputs/runner/ok.gopp %S/Inputs/runner/segv.gopp %S/Inputs/runner/ok2.gopp 2>&1 >/dev/null | FileCheck --check-prefix=SUMMARY %s
+// Part 2 of 3 of runner-crash.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: runner-crash 2/3
+
+// SUMMARY: test-run: 3 programs: 2 exited, 1 signaled, 0 timed out, 0 did not compile, 0 did not load, 0 internal errors; {{[0-9]+}} executor processes started

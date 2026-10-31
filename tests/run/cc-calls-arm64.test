@@ -1,20 +1,15 @@
 // REQUIRES: host-linux-amd64, qemu-aarch64
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/calls3.gopp -o %t.calls3
 // RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.calls3 %S/Inputs/cc/calls3.out
-// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/params.gopp -o %t.params
-// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.params %S/Inputs/cc/params.out
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/results.gopp -o %t.results
 // RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.results %S/Inputs/cc/results.out
-// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/errors.gopp -o %t.errors
-// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.errors %S/Inputs/cc/errors.out
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/iface.gopp -o %t.iface
 // RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.iface %S/Inputs/cc/iface.out
-// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/recv.gopp -o %t.recv
-// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.recv %S/Inputs/cc/recv.out
 // RUN: %python %S/Inputs/gen-place-paths.py program > %t.paths.gopp
 // RUN: %python %S/Inputs/gen-place-paths.py want > %t.paths.out
 // RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %t.paths.gopp -o %t.paths
 // RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.paths %t.paths.out
+// SPLIT: cc-calls-arm64 1/2
 // P04.18: cc-calls.test and cc-params.test on linux/arm64 under QEMU, where
 // the Go++ convention (swiftcc) returns up to eight integer and eight float
 // scalars in registers (x0-x7, v0-v7) and on amd64 four and four.

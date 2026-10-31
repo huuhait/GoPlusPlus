@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --flags "%gopp_link_flags" --edges 32 %gopp %t.d 16 1000
+// Part 2 of 2 of cabi-edges-amd64.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: cabi-edges-amd64 2/2

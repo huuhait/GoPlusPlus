@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64
+// RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --shard 2/3 --configs 0,2 debug/ core-recursive
+// P04.12, D4.7: part 3 of 3 of the programs of dwarf-matrix.test.
+// SPLIT: dwarf-matrix 3/3

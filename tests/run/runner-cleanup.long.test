@@ -1,0 +1,9 @@
+// REQUIRES: long, host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-scenarios.py cleanup --signal INT --rounds 256 --work %t.d/int --programs %S/Inputs/runner
+// RUN: %python %S/Inputs/runner-scenarios.py cleanup --signal TERM --rounds 256 --work %t.d/term --programs %S/Inputs/runner
+// P04.19 (R6): runner-cleanup-int.test and runner-cleanup-term.test, 256 runners
+// at once each. The stop races with the runner's own threads (a program that
+// starts just now makes its stdout and stderr files in the work directory
+// while the signal thread removes it); the directory must still be gone every
+// time. One run of the normal tests failed about once in a hundred under load.

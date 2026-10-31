@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64, clang
-// RUN: %python %S/Inputs/run-cabi.py --via-value --flags "%gopp_link_flags" %gopp %t.d 5 30 6 30
+// RUN: %python %S/Inputs/run-cabi.py --via-value --flags "%gopp_link_flags" %gopp %t.d 5 30
+// SPLIT: cabi-value-amd64 1/2
 // P04.07 (D4.4): an `@Extern("C")` function used as a value. The generated
 // programs of cabi-amd64.test, but each C function is first made a func value
 // (`fv := cabi_fN`) and called through it. Go++ wraps the C function in an

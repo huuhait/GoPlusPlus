@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %gopp build %gopp_link_flags %S/semantics.test -o %t.sem.amd64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/semantics.test -o %t.sem.arm64
+// RUN: %python %S/Inputs/run-compare-arm64.py %t.sem.amd64 %t.sem.arm64 %aarch64_sysroot 0
+// RUN: %gopp build %gopp_link_flags %S/non-ascii.test -o %t.na.amd64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/non-ascii.test -o %t.na.arm64
+// RUN: %python %S/Inputs/run-compare-arm64.py %t.na.amd64 %t.na.arm64 %aarch64_sysroot 0
+// Part 2 of 2 of arm64-qemu-features.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: arm64-qemu-features 2/2

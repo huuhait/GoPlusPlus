@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/params.gopp -o %t.params
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.params %S/Inputs/cc/params.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/errors.gopp -o %t.errors
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.errors %S/Inputs/cc/errors.out
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/cc/recv.gopp -o %t.recv
+// RUN: %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.recv %S/Inputs/cc/recv.out
+// Part 2 of 2 of cc-calls-arm64.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: cc-calls-arm64 2/2

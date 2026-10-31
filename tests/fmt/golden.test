@@ -10,26 +10,27 @@
 //
 // Regenerate with tests/update-goldens fmt and review the diff.
 
-// RUN: %gopp fmt %S/Inputs/goprinter/alignment.input | diff - %S/Inputs/goprinter/alignment.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/comments.input | diff - %S/Inputs/goprinter/comments.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/comments2.input | diff - %S/Inputs/goprinter/comments2.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/complit.input | diff - %S/Inputs/goprinter/complit.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/declarations.input | diff - %S/Inputs/goprinter/declarations.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/doc.input | diff - %S/Inputs/goprinter/doc.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/empty.input | diff - %S/Inputs/goprinter/empty.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/expressions.input | diff - %S/Inputs/goprinter/expressions.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/generics.input | diff - %S/Inputs/goprinter/generics.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/go2numbers.input | diff - %S/Inputs/goprinter/go2numbers.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild1.input | diff - %S/Inputs/goprinter/gobuild1.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild2.input | diff - %S/Inputs/goprinter/gobuild2.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild3.input | diff - %S/Inputs/goprinter/gobuild3.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild4.input | diff - %S/Inputs/goprinter/gobuild4.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild5.input | diff - %S/Inputs/goprinter/gobuild5.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild6.input | diff - %S/Inputs/goprinter/gobuild6.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/gobuild7.input | diff - %S/Inputs/goprinter/gobuild7.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/linebreaks.input | diff - %S/Inputs/goprinter/linebreaks.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/slow.input | diff - %S/Inputs/goprinter/slow.golden
-// RUN: %gopp fmt %S/Inputs/goprinter/statements.input | diff - %S/Inputs/goprinter/statements.golden
+// RUN: %python %S/Inputs/check-golden.py %gopp \
+// RUN:   %S/Inputs/goprinter/alignment.input %S/Inputs/goprinter/alignment.golden \
+// RUN:   %S/Inputs/goprinter/comments.input %S/Inputs/goprinter/comments.golden \
+// RUN:   %S/Inputs/goprinter/comments2.input %S/Inputs/goprinter/comments2.golden \
+// RUN:   %S/Inputs/goprinter/complit.input %S/Inputs/goprinter/complit.golden \
+// RUN:   %S/Inputs/goprinter/declarations.input %S/Inputs/goprinter/declarations.golden \
+// RUN:   %S/Inputs/goprinter/doc.input %S/Inputs/goprinter/doc.golden \
+// RUN:   %S/Inputs/goprinter/empty.input %S/Inputs/goprinter/empty.golden \
+// RUN:   %S/Inputs/goprinter/expressions.input %S/Inputs/goprinter/expressions.golden \
+// RUN:   %S/Inputs/goprinter/generics.input %S/Inputs/goprinter/generics.golden \
+// RUN:   %S/Inputs/goprinter/go2numbers.input %S/Inputs/goprinter/go2numbers.golden \
+// RUN:   %S/Inputs/goprinter/gobuild1.input %S/Inputs/goprinter/gobuild1.golden \
+// RUN:   %S/Inputs/goprinter/gobuild2.input %S/Inputs/goprinter/gobuild2.golden \
+// RUN:   %S/Inputs/goprinter/gobuild3.input %S/Inputs/goprinter/gobuild3.golden \
+// RUN:   %S/Inputs/goprinter/gobuild4.input %S/Inputs/goprinter/gobuild4.golden \
+// RUN:   %S/Inputs/goprinter/gobuild5.input %S/Inputs/goprinter/gobuild5.golden \
+// RUN:   %S/Inputs/goprinter/gobuild6.input %S/Inputs/goprinter/gobuild6.golden \
+// RUN:   %S/Inputs/goprinter/gobuild7.input %S/Inputs/goprinter/gobuild7.golden \
+// RUN:   %S/Inputs/goprinter/linebreaks.input %S/Inputs/goprinter/linebreaks.golden \
+// RUN:   %S/Inputs/goprinter/slow.input %S/Inputs/goprinter/slow.golden \
+// RUN:   %S/Inputs/goprinter/statements.input %S/Inputs/goprinter/statements.golden
 
 // Every input and golden (in two shards: this one and golden-2.test, the
 // files whose place in the sorted list is 0 and 1 modulo 2): the output parses to the same tree, the comments are

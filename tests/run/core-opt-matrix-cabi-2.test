@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64, clang
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 4 --no-corpus --cabi 6:4 --cabi reverse:8:4 %}
+// Part 2 of 2 of core-opt-matrix-cabi.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: core-opt-matrix-cabi 2/2

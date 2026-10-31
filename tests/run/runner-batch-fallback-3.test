@@ -1,0 +1,14 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: cp -r %S/Inputs/batch-suite %t/garbage
+// RUN: %lit %t/garbage -a -j 1 --order=lexical -Dgopp=%gopp -Dgopp_source_dir=%S/../.. -Dexec_root=%t/garbage-out "-Dfastrun_batch_gopp=%python %S/Inputs/batch-suite/fake-batch.py" 2>&1 | FileCheck --check-prefixes=GARBAGE,CHECK %s
+// Part 3 of 3 of runner-batch-fallback.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: runner-batch-fallback 3/3
+
+// GARBAGE: warning: the batch run of the run tests failed (unreadable results: {{.*}}); each test runs its program alone
+// CHECK: PASS: batch-suite :: run/same.test
+// CHECK: runlib: fast, alone
+// CHECK: PASS: batch-suite :: run/stale.test
+// CHECK: runlib: fast, alone
+// CHECK-NOT: from the batch
+// CHECK: Passed: 3

@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --verify-dwarf --shard 0/6 --configs 3,s,z core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow cc/calls0
+// Part 7 of 7 of core-opt-matrix.test: shard 0/6 (core-maps) at the baseline and opt 3, s and z (split to stay well under the 2 s limit at load).
+// SPLIT: core-opt-matrix 7/7

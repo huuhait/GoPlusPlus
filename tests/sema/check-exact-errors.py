@@ -12,8 +12,10 @@ test is covered without a new RUN line). It runs each such gopp command again
 with no error limit and compares the output with the CHECK lines of the
 FileCheck prefix that RUN line uses.
 
-Usage: check-exact-errors.py --gopp PATH --examples DIR --root DIR [FILE...]
-With FILEs, only those tests are checked.
+Usage: check-exact-errors.py --gopp PATH --examples DIR --root DIR [--shard K/N] [FILE...]
+With FILEs, only those tests are checked. With --shard K/N only the tests at
+places K, K+N, K+2N ... of the sorted list (K from 0); the N shards together
+are all the tests (exact-errors.test, -2 and -3 are the three shards).
 """
 
 import argparse
@@ -180,14 +182,19 @@ def main():
     ap.add_argument("--gopp", required=True)
     ap.add_argument("--examples", required=True)
     ap.add_argument("--root", required=True)
+    ap.add_argument("--shard", default="0/1")
     ap.add_argument("files", nargs="*")
     args = ap.parse_args()
+    shard, shards = (int(x) for x in args.shard.split("/"))
+    if not 0 <= shard < shards:
+        ap.error("--shard K/N needs 0 <= K < N")
     args.root = os.path.normpath(args.root)
     files = args.files
     if not files:
         for d, subs, names in os.walk(args.root):
             subs[:] = sorted(s for s in subs if s not in ("Inputs", "unit"))
             files += [os.path.join(d, n) for n in sorted(names) if n.endswith(".test")]
+    files = files[shard::shards]
     # A few workers: lit runs the other tests at the same time, and one gopp
     # per core here would slow them all down (check-suite-time).
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:

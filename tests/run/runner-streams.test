@@ -1,7 +1,7 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
 // RUN: rm -rf %t.d
 // RUN: %python %S/Inputs/runner-check.py --work %t.d/split %S/Inputs/runner --names nonl,interleave,bigout
-// RUN: %python %S/Inputs/runner-check.py --work %t.d/merged --merge %S/Inputs/runner --names nonl,interleave,bigout
+// SPLIT: runner-streams 1/2
 // P04.19 (D4.14): output is the same bytes as from a binary: no newline at the
 // end, megabytes of it, and standard output and error written in turn. The
 // second run puts both streams in one file (`merge_output`, a binary's

@@ -1,0 +1,19 @@
+// RUN: %python %S/Inputs/gen-extends-stress.py upcast 4000 > %t.upcast.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.upcast.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py genover 4000 > %t.genover.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.genover.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py local 4000 > %t.local.gopp
+// RUN: timeout 10 %gopp check -check-j=8 %t.local.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py rootsel 2000 > %t.rootsel.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.rootsel.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py lits 2000 > %t.lits.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.lits.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py zero 2000 > %t.zero.gopp
+// RUN: timeout 10 %gopp check -check-j=1 %t.zero.gopp
+// RUN: %python %S/Inputs/gen-extends-stress.py undef 2000 > %t.undef.gopp
+// RUN: not timeout 10 %gopp check -check-j=1 --check-error-limit=0 %t.undef.gopp 2>&1 | FileCheck --check-prefix=UNDEF %s
+// Part 2 of 2 of extends-stress-uses.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: extends-stress-uses 2/2
+// UNDEF: error[E{{[0-9]+}}]: c.nope1 undefined
+// UNDEF: error[E{{[0-9]+}}]: c.nope2000 undefined
+package main

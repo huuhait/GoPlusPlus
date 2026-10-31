@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-seq --names idx-slice,idx-string-neg,sl-hi-cap,sl-lo-hi,sl3-hi-max,make-cap-small,conv-ptr-array --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
+// Part 2 of 2 of core-panics-arm64.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: core-panics-arm64 2/2

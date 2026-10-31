@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --verify-dwarf --shard 0/3 core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow cc/calls0
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 4 --verify-dwarf --shard 0/6 --configs 0,1,2 core-maps opt/memory panics/opt-index-loop iface-switch iface-narrow cc/calls0
+// SPLIT: core-opt-matrix 1/7
 // P04.13 (D4.8): the pipeline decides speed, never what a program does. A
 // representative set of the run corpus is built at every `opt` level and with
 // -pipeline=fastisel on the host, and every build must give the baseline's exit
@@ -13,7 +14,9 @@
 // Inputs/panics/opt-*; an allocation that must fail at every level is
 // opt-oom.test (Inputs/oom). Strings, slices and maps (P04.05) are in the set
 // too, and so are Go++ to Go++ calls of every shape (cc/calls0, gen-cc.py,
-// P04.18). The set is small and split in three tests by --shard (core-opt-matrix-2.test
-// and -3.test: the programs at places 1 and 2 modulo 3; 2 programs x 7 builds
-// each, 4 at a time) so that each stays well under the 2 s limit on a loaded
+// P04.18). The set is small and split in seven tests by --shard (core-opt-matrix-2.test
+// to -6.test: the programs at places 1 to 5 modulo 6; 1 program x 7 builds
+// each, 4 at a time; the program at place 0, core-maps, is the biggest: this
+// test builds it at the baseline and opt 0 to 2, core-opt-matrix-7.test at the
+// baseline and opt 3, s and z) so that each stays well under the 2 s limit on a loaded
 // machine.

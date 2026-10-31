@@ -3,8 +3,23 @@ find_program(GOPP_FILECHECK FileCheck HINTS ${LLVM_TOOLS_BINARY_DIR} REQUIRED)
 get_filename_component(GOPP_FILECHECK_DIR ${GOPP_FILECHECK} DIRECTORY)
 find_program(GOPP_PYTHON NAMES python3 python REQUIRED)
 
-# lit runs one worker per core (D0.13).
-cmake_host_system_information(RESULT GOPP_LIT_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+# lit runs one worker per two logical cores (at least 8, at most one per core):
+# the tests start processes and threads of their own, so a worker a core
+# oversubscribes the machine. Measured on a 192-thread host (the whole suite,
+# 1792 tests, three runs each): -j 192 took 2.1-2.3 s, 300 s of summed test
+# time, 55 tests over 1.3 s and the slowest test at 2.0 s (the 2 s limit);
+# -j 96 took 1.7 s, 150 s, none over 1.3 s but one, the slowest 1.4 s; -j 64
+# took 2.0 s, 115 s, the slowest 1.0 s (D0.13; the same cost per process that
+# tests/procslots.py bounds). Override with -DGOPP_LIT_JOBS=N.
+cmake_host_system_information(RESULT GOPP_LOGICAL_CORES QUERY NUMBER_OF_LOGICAL_CORES)
+math(EXPR GOPP_DEFAULT_LIT_JOBS "${GOPP_LOGICAL_CORES} / 2")
+if(GOPP_DEFAULT_LIT_JOBS LESS 8)
+  set(GOPP_DEFAULT_LIT_JOBS ${GOPP_LOGICAL_CORES})
+  if(GOPP_DEFAULT_LIT_JOBS GREATER 8)
+    set(GOPP_DEFAULT_LIT_JOBS 8)
+  endif()
+endif()
+set(GOPP_LIT_JOBS ${GOPP_DEFAULT_LIT_JOBS} CACHE STRING "Parallel lit workers for the check targets")
 # A normal test gets at most 2 s (D0.13); a slower one must be marked long.
 # Sanitizer builds raise the limit (CI passes -DGOPP_TEST_TIMEOUT=20).
 set(GOPP_TEST_TIMEOUT 2 CACHE STRING "Per-test time limit in seconds")

@@ -1,5 +1,5 @@
 // EXPECT: timeout
-// TIMEOUT: 400
+// TIMEOUT: 200
 // REAL: no
 // Closes every descriptor above 2, the executor's socket too, and never
 // ends: the pool sees the socket close with no answer and no end of the

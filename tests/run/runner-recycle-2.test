@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: rm -rf %t.d
+// RUN: %python %S/Inputs/runner-check.py --work %t.d/pure %S/Inputs/runner --sequence ok,ok2,counter,quiet,ok --expect-starts 1
+// RUN: not %python %S/Inputs/runner-check.py --work %t.d/shared %S/Inputs/runner --sequence rand-a,rand-b --expect-starts 1 -- -share-executors
+// Part 2 of 2 of runner-recycle.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: runner-recycle 2/2

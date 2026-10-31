@@ -1,5 +1,6 @@
 // REQUIRES: host-linux-amd64, qemu-aarch64, clang
-// RUN: %python %S/Inputs/run-cabi.py --arm64 %aarch64_sysroot --edges 16 %gopp %t.d 8 1000
+// RUN: %python %S/Inputs/run-cabi.py --arm64 %aarch64_sysroot --edges 32 %gopp %t.d 8 1000
+// SPLIT: cabi-edges-arm64 1/2
 // P04.11: cabi-edges-amd64.test for linux/arm64 under QEMU (another one in
 // 16 of the edges: here they are the edges of the x and v registers, of the
 // homogeneous floating-point aggregates and of the 16 bytes a struct may have

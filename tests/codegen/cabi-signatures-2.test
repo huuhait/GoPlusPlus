@@ -1,0 +1,5 @@
+// REQUIRES: clang
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 2 40 arm64 %t.arm64
+// RUN: %python %S/Inputs/check-cabi-sigs.py %gopp 1000 300 arm64 %t.eb --edges
+// Part 2 of 2 of cabi-signatures.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: cabi-signatures 2/2

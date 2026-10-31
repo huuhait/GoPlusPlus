@@ -1,9 +1,8 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
 // RUN: rm -rf %t.d
 // RUN: %python %S/Inputs/runner-check.py --work %t.d/rand %S/Inputs/runner --sequence rand-a,rand-b --expect-starts 2
-// RUN: %python %S/Inputs/runner-check.py --work %t.d/pure %S/Inputs/runner --sequence ok,ok2,counter,quiet,ok --expect-starts 1
 // RUN: %python %S/Inputs/runner-check.py --work %t.d/thread %S/Inputs/runner --sequence thread,ok,ok2 --expect-starts 2 -- -share-executors
-// RUN: not %python %S/Inputs/runner-check.py --work %t.d/shared %S/Inputs/runner --sequence rand-a,rand-b --expect-starts 1 -- -share-executors
+// SPLIT: runner-recycle 1/2
 // P04.19 (R1): a reused executor must not leak C library state. `rand-a` then
 // `rand-b`: rand-b gives what its own binary gives (the generator starts
 // anew), because a program that calls a function off the allowlist (see

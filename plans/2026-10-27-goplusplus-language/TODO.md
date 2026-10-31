@@ -45,7 +45,7 @@ Each task has a stable ID (`P03.07`). Its status lives in that phase's `STATE.md
 
   *Done when:* the same probe finds glibc headers and `crt1.o` on this NixOS machine and in a Debian container.
 - **P00.13 Fast compiler build** (D0.13): shared LLVM/Clang libraries in dev builds (static in release); precompiled headers for the codegen and interop libraries; dev build type `-O1 -g` + assertions; a CI check that front-end libraries include no LLVM IR or Clang headers. *Done when:* on the dev machine, editing one `.cpp` rebuilds `gopp` in ≤ 10 s, a clean build takes ≤ 2 min, and the header check runs in CI.
-- **P00.14 Fast test loop** (D0.13): per-stage `check-*` targets, lit on every core, `check-long` for opt-in slow tests, a slowest-20 report, and a CI gate on suite time. *Done when:* the targets exist, every run prints its slowest tests, and the gate fails on a seeded 10% slowdown.
+- **P00.14 Fast test loop** (D0.13): per-stage `check-*` targets, lit on half the cores (D0.13: a worker a core oversubscribes the machine), `check-long` for opt-in slow tests, a slowest-20 report, and a CI gate on suite time. *Done when:* the targets exist, every run prints its slowest tests, and the gate fails on a seeded 10% slowdown.
 
 ## P01 — Language specification v0 ([README](01-language-spec/README.md))
 

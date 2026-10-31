@@ -1,0 +1,4 @@
+// RUN: %python %S/Inputs/check-decl-orders.py %gopp %S/Inputs/decl-orders/r12b.go %t.r12b "invalid recursive type: N0" "invalid recursive type N1"
+// RUN: %python %S/Inputs/check-decl-orders.py %gopp %S/Inputs/decl-orders/r22b.go %t.r22b "invalid recursive type N1"
+// Part 2 of 2 of valid-type-all-orders.test (more of its checks, split to stay well under the 2 s limit at load).
+// SPLIT: valid-type-all-orders 2/2

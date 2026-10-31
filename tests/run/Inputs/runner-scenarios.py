@@ -4,7 +4,7 @@
 
 usage: runner-scenarios.py SCENARIO --work DIR --programs DIR [--names a,b,...]
 
-start-fail     an executor that does not start (no such program, one that
+start-fail     (--only missing,ends,hangs: some of the three) an executor that does not start (no such program, one that
                ends at once, one that never says it is ready): every program
                gets the same `internal` result, `gopp test-run` exits 1, and
                the run ends in bounded time
@@ -18,9 +18,9 @@ fds            descriptors above the executor's own (900 and up) are closed afte
 batch-workdir  (--programs is the record file of Inputs/batch-suite/record-args.py,
                --work the lit output directory) the work directory the lit batch
                gave gopp existed under the output directory and is gone now
-cleanup        (--signal TERM|INT) `gopp test-run` stopped by that signal removes its work
+cleanup        (--signal TERM|INT [--rounds N]) `gopp test-run` stopped by that signal removes its work
                directory and ends with 128 + the signal (SIGKILL cannot)
-determinism    the results (outcome, status, both streams, message, restart)
+determinism    (--configs K,...: only the first configuration and these) the results (outcome, status, both streams, message, restart)
                are the same bytes for any -j, any number of executors and any
                order of the manifest
 """
@@ -89,10 +89,13 @@ if scenario == "start-fail":
     # Only the executor that never says it is ready gets a short start-up
     # limit; the others end at once and keep the default (R4: a loaded
     # machine must not turn "ended before it was ready" into "not ready").
+    only = opts["--only"].split(",") if "--only" in opts else None
     for label, exe, why, startup in (
             ("missing", os.path.join(work, "no-such-program"), "cannot start", "20000"),
             ("ends", shutil.which("false"), "ended before it was ready", "20000"),
-            ("hangs", sleeper, "was not ready after 300 ms", "300")):
+            ("hangs", sleeper, "was not ready after 100 ms", "100")):
+        if only and label not in only:
+            continue
         t0 = time.time()
         res, err = run(label, entries,
                        ["-executor", exe, "-startup-timeout-ms", startup, "-j", "3"],
@@ -156,33 +159,44 @@ elif scenario == "batch-workdir":
 
 elif scenario == "cleanup":
     import signal
-    for sig in (getattr(signal, "SIG" + opts["--signal"]),):
-        tmp = os.path.join(work, "tmp-%d" % sig)
+    sig = getattr(signal, "SIG" + opts["--signal"])
+    # --rounds N: N runners at once, all stopped when each has its program
+    # running (the stop races with the runner's own threads: P04.19 R6).
+    rounds = int(opts.get("--rounds", "1"))
+    runners = []
+    for k in range(rounds):
+        tmp = os.path.join(work, "tmp-%d-%d" % (sig, k))
         os.makedirs(tmp, exist_ok=True)
         env = dict(os.environ, TMPDIR=tmp)
         p = subprocess.Popen([runlib.gopp(), "test-run", "-timeout-ms", "30000",
                               os.path.join(progs, "loop.gopp")], env=env,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
+        runners.append((tmp, p))
+    for tmp, p in runners:
         # Wait for the work directory (made first thing) and for the program
         # to be running (its object is in the directory).
         t0 = time.time()
-        while time.time() - t0 < 20:
+        while time.time() - t0 < 60:
             made = [os.path.join(tmp, n) for n in os.listdir(tmp)]
             if made and any(n.endswith(".o") for n in os.listdir(made[0])):
                 break
             time.sleep(0.05)
         else:
-            p.kill()
-            sys.exit("%s: the runner made no object in 20 s" % sig.name)
+            for _, q in runners:
+                q.kill()
+            sys.exit("%s: the runner made no object in 60 s" % sig.name)
         p.send_signal(sig)
+    for tmp, p in runners:
         try:
-            rc = p.wait(timeout=10)
+            rc = p.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            p.kill()
+            for _, q in runners:
+                q.kill()
             sys.exit("%s: the runner did not end" % sig.name)
         check(rc == 128 + sig, "%s: exit status %d" % (sig.name, rc))
-        check(os.listdir(tmp) == [], "%s left %r" % (sig.name, os.listdir(tmp)))
+        left = [os.path.join(r, n) for r, ds, fs in os.walk(tmp) for n in ds + fs]
+        check(not left, "%s left %r" % (sig.name, left))
 
 elif scenario == "determinism":
     names = opts["--names"].split(",")
@@ -191,14 +205,18 @@ elif scenario == "determinism":
                ["-j", "8", "-executors", "4", "-schedule", "reverse"],
                ["-j", "3", "-executors", "2", "-schedule", "shuffle:7"],
                ["-j", "16", "-executors", "16", "-schedule", "shuffle:99"]]
-    seen = []
-    for k, c in enumerate(configs):
-        res, _ = run("det%d" % k, entries, c)
-        seen.append({i: (r.outcome, r.code, r.signal, r.stdout, r.stderr, r.message,
-                         json.dumps(r.restarted))
-                     for i, r in res.items()})
+    # --configs K,...: the first configuration and these (default: all), each
+    # compared with the first; the tests that split the scenario take one each.
+    picked = [0] + [int(k) for k in opts["--configs"].split(",")] if "--configs" in opts \
+        else range(len(configs))
+    seen = {}
+    for k in picked:
+        res, _ = run("det%d" % k, entries, configs[k])
+        seen[k] = {i: (r.outcome, r.code, r.signal, r.stdout, r.stderr, r.message,
+                       json.dumps(r.restarted))
+                   for i, r in res.items()}
     for n in names:
-        for k in range(1, len(configs)):
+        for k in picked:
             check(seen[k][n] == seen[0][n], "%s differs between %r and %r:\n %r\n %r"
                   % (n, configs[0], configs[k], seen[0][n], seen[k][n]))
 else:

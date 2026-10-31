@@ -1,0 +1,4 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --target arm64 --sysroot %aarch64_sysroot --jobs 4 --verify-dwarf --shard 2/3 core-fma-vars core-strings panics/opt-index-invariant
+// Shard 3 of 3 of core-opt-matrix-arm64.test (the same checks on the program at place 2 modulo 3, split to stay well under the 2 s limit at load).
+// SPLIT: core-opt-matrix-arm64 3/3
