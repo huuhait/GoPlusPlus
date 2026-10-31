@@ -1,0 +1,16 @@
+// REQUIRES: gdb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build -opt=2 %S/Inputs/chain.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/chain.gdb %t 2>&1 | FileCheck %s
+// P04.12: at opt 2 the variables keep a location through the SSA values
+// where the optimizer keeps one, and the frames (the ones LLVM inlined too)
+// keep their readable names. A value the optimizer has dropped is
+// `<optimized out>`, which is gdb's honest answer, never a wrong value (the
+// breakpoint stops in the copy of `leaf` that LLVM inlined into `mid`).
+//
+// CHECK: main.leaf ({{.*}}) at {{.*}}chain.gopp:14
+// CHECK: #0 {{.*}}main.leaf
+// CHECK: #1 {{.*}}main.mid
+// CHECK: #2 {{.*}}main.outer
+// CHECK: v = {{[{]X = 1.5, Y = 2[}]|<optimized out>}}
+// CHECK: name = {ptr = {{0x[0-9a-f]+}} "outer", len = 5, cap = 0}
+// CHECK-NOT: _GP

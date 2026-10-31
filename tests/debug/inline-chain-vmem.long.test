@@ -1,0 +1,15 @@
+// REQUIRES: long, no-sanitizer
+// P04.12 (review R4): a chain of 1500 functions, each inlined into the next
+// at `opt 2`, is about 1.1 million inlined frames, each with its parameter
+// and variable described for the debugger (two records per frame, as LLVM's
+// own inliner makes them). That costs about twice the memory of the line
+// tables alone (1.46 GB against 0.70 GB measured, 18 s against 6 s; the
+// TODO item of P14.07 has the numbers): the bound keeps it from growing
+// further, as a type cut once made a debug build of one program take 76 GB.
+// RUN: %python %S/Inputs/gen-inline-chain.py 1500 > %t.gopp
+// RUN: sh -c 'ulimit -v 2500000; timeout 120 %gopp build -opt=2 -emit=obj %t.gopp -o %t.o'
+// RUN: llvm-dwarfdump --statistics %t.o | FileCheck %s
+// The frames (1500 * 1499 / 2 = 1124250 and a few more) and their
+// parameters are there:
+// CHECK: "#inlined functions": {{1[0-9][0-9][0-9][0-9][0-9][0-9],}}
+// CHECK: "#params": {{1[0-9][0-9][0-9][0-9][0-9][0-9],}}

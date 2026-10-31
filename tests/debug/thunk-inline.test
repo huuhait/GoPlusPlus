@@ -1,0 +1,29 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/thunk.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/thunk.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/thunk.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// P04.12 (review R5), at `opt 0`: GIR inlines Rect.Area into the interface
+// thunk `s.Area()` calls. The thunk has no source position, so its own
+// locals are no variables; the copy of the method keeps its receiver and its
+// local, which are the method's (decided by the method, not by the function
+// it was inlined into). Both sides: in the inlined frame r and a print their
+// values; in the thunk's own frame, at the method's declaration line (review
+// R8), there is nothing to show.
+//
+// GDB: #0 {{.*}}main.Rect.Area (r=...) at {{.*}}thunk.gopp:16
+// GDB-NEXT: #1 {{.*}}interface thunk for main.Rect.Area () at {{.*}}thunk.gopp:15
+// GDB-NEXT: $1 = {w = 3, h = 3}
+// GDB-NEXT: return a
+// GDB-NEXT: $2 = 9
+// GDB-NEXT: a = 9
+// GDB-NEXT: #1 {{.*}}interface thunk for main.Rect.Area () at {{.*}}thunk.gopp:15
+// GDB-NEXT: func (r Rect) Area() int {
+// GDB-NEXT: No arguments.
+// GDB-NEXT: No locals.
+//
+// LLDB: frame #0: {{.*}}`main.Rect.Area(r=(w = 3, h = 3)) at thunk.gopp:16:{{[0-9]+}} [inlined]
+// LLDB: (main.Rect) r = (w = 3, h = 3)
+// LLDB: (long) a = 9
+// LLDB: frame #1: {{.*}}`interface thunk for main.Rect.Area
+// LLDB: (lldb) frame variable
+// LLDB-NOT: =

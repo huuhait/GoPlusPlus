@@ -1,0 +1,39 @@
+package main
+
+// GIR inlines Rect.Area into the interface thunk that `s.Area()` calls; the
+// thunk has no source position, the method's copy keeps its variables
+// (debug/thunk-inline.test, review R5 of P04.12).
+
+type Shape interface {
+	Area() int
+}
+
+type Rect struct {
+	w, h int
+}
+
+func (r Rect) Area() int {
+	a := r.w * r.h
+	return a
+}
+
+func (r *Rect) Grow(k int) {
+	r.w += k
+	println(r.w)
+}
+
+func total(ss []Shape) int {
+	t := 0
+	for _, s := range ss {
+		t += s.Area()
+	}
+	return t
+}
+
+func main() {
+	r := Rect{2, 3}
+	r.Grow(1)
+	var s Shape = r
+	var os Option[Shape] = s
+	println(total([]Shape{s, Rect{1, 1}}), os != nil)
+}

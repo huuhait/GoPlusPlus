@@ -1,0 +1,66 @@
+// REQUIRES: host-linux-amd64, gdb
+// RUN: %gopp build %S/Inputs/types.gopp -o %t
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/types.gdb %t 2>&1 | FileCheck %s
+// P04.12, D4.7: gdb breaks at a line and prints the variables of every kind
+// of type: scalars, strings, slices, arrays, structs, pointers, Option, a
+// self-naming type, a map (opaque: a pointer to `gopp.map`), the parameters,
+// the locals and the globals. Names are the readable ones.
+
+// CHECK: @@SCALARS
+// CHECK: a = -1
+// CHECK: b = 2
+// CHECK: c = 3
+// CHECK: d = 4
+// CHECK: f = 1.5
+// CHECK: g = 2.5
+// CHECK: ok = true
+// CHECK: n = 8
+// The backtrace has the readable name, never the `_GP` symbol.
+// CHECK: #0 {{.*}}main.scalars (a=-1{{.*}}, b=2, c=3, d=4, f=1.5, g=2.5, ok=true)
+// CHECK-SAME: types.gopp:33
+// CHECK: #1 {{.*}}main.main () at {{.*}}types.gopp:57
+// CHECK-NOT: _GP
+// CHECK: @@AGGREGATES
+// A parameter that is an aggregate is read through the address passed.
+// CHECK: d = {title = {ptr = {{0x[0-9a-f]+}} "title", len = 5, cap = 0}, tags = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}, pos = {x = 1, y = 2}, ok = true}
+// CHECK: arr = {7, 8, 9}
+// CHECK: p = {{0x[0-9a-f]+}}
+// CHECK: xs = {ptr = {{0x[0-9a-f]+}}, len = 3, cap = 3, alloc = 0x0}
+// CHECK: o = {value = 3, set = true}
+// CHECK: t = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}
+// CHECK: h = {val = 1, next = {{0x[0-9a-f]+}}}
+// CHECK: s = {ptr = {{0x[0-9a-f]+}} "text", len = 4, cap = 0}
+// CHECK: m = {{0x[0-9a-f]+}}
+// CHECK: tail = {val = 2, next = 0x0}
+// CHECK: @@PRINT
+// CHECK: $1 = {title = {ptr = {{.*}} "title", len = 5, cap = 0}, tags = {{{.*}}}, pos = {x = 1, y = 2}, ok = true}
+// CHECK: $2 = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}
+// CHECK: $3 = {x = 1, y = 2}
+// CHECK: $4 = {7, 8, 9}
+// CHECK: $5 = 8
+// CHECK: $6 = {x = 11, y = 21}
+// CHECK: $7 = {value = 3, set = true}
+// CHECK: $8 = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}
+// CHECK: $9 = {val = 1, next = {{0x[0-9a-f]+}}}
+// CHECK: $10 = (struct gopp.map *) {{0x[0-9a-f]+}}
+// CHECK: $11 = {ptr = {{0x[0-9a-f]+}} "text", len = 4, cap = 0}
+// CHECK: $12 = {ptr = {{0x[0-9a-f]+}}, len = 3, cap = 3, alloc = 0x0}
+// The type names are the Go++ spelling.
+// CHECK: type = struct Option[int64]
+// CHECK: type = struct []int64
+// CHECK: type = struct string
+// CHECK: type = struct main.Tree
+// CHECK: type = struct main.Node {
+// CHECK: int64 val;
+// CHECK: struct main.Node *next;
+// CHECK: @@GLOBALS
+// CHECK: = 7
+// CHECK: = {ptr = {{0x[0-9a-f]+}} "global", len = 6, cap = 0}
+// CHECK: = {x = 5, y = 6}
+// CHECK: @@BACKTRACE
+// CHECK: #0 {{.*}}main.aggregates (d=..., arr=..., p={{0x[0-9a-f]+}}) at {{.*}}types.gopp:46
+// CHECK: #1 {{.*}}main.main () at {{.*}}types.gopp:58
+// CHECK: @@CALLER
+// CHECK: d = {title =
+// CHECK: v = {x = 10, y = 20}
+// CHECK: w = {x = 11, y = 21}

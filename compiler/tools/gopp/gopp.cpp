@@ -271,8 +271,13 @@ static cl::opt<bool>
                cl::desc("MEASURING: print each stage as name=wall/cpu "
                         "seconds to standard error"),
                cl::sub(BuildCmd));
-static cl::opt<bool> BuildNoDebug("no-debug", cl::desc("No DWARF line tables"),
+static cl::opt<bool> BuildNoDebug("no-debug", cl::desc("No DWARF"),
                                   cl::sub(BuildCmd));
+static cl::opt<bool> BuildLinkageNames(
+    "dwarf-linkage-names", cl::Hidden,
+    cl::desc("Write the _GP symbol as DW_AT_linkage_name too (gdb and lldb "
+             "then show it instead of the readable name)"),
+    cl::sub(BuildCmd));
 static cl::opt<bool> BuildNoLocs("gir-no-locs",
                                  cl::desc("With -emit=gir: leave out the "
                                           "source positions"),
@@ -690,6 +695,8 @@ static int codegenAndLink(Emit What, gopp::SourceManager &SM,
   llvm::LLVMContext LCtx;
   gopp::LowerToLLVMOptions LO;
   LO.DebugInfo = !BuildNoDebug;
+  LO.DwarfLinkageNames = BuildLinkageNames;
+  LO.KeepVariables = Spec->Opt == gopp::OptLevel::O0 && !Spec->Baseline;
   Expected<std::unique_ptr<llvm::Module>> LM =
       Timed("lower", [&] { return gopp::lowerToLLVM(LCtx, M, **TM, LO); });
   if (!LM)

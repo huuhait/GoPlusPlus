@@ -1,0 +1,55 @@
+// REQUIRES: host-linux-amd64, gdb
+// RUN: %gopp build %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -x %S/Inputs/inl.gdb %t 2>&1 | FileCheck %s
+// RUN: %gopp build -opt=2 %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t.o2
+// RUN: timeout 30 gdb -batch -nx -x %S/Inputs/inl-o2.gdb %t.o2 2>&1 | FileCheck %s --check-prefix=O2
+// RUN: %gopp build -pipeline=fastisel %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t.base
+// RUN: timeout 30 gdb -batch -nx -x %S/Inputs/inl-base.gdb %t.base 2>&1 | FileCheck %s --check-prefix=BASE
+// P04.12, D4.7 (both sides of the inlined-code rule, P04.13): GIR inlines
+// `add` into `twice` (in its own file) and into `main` (in a.gopp), at every
+// `opt` including 0. With the scopes of DWARF 5 (`DW_TAG_inlined_subroutine`)
+// a debugger stopped inside the inlined call shows the callee's file and
+// line, its parameters and locals, and a backtrace that lists the callee as
+// an inlined frame with the call site's line in the frame above. The other
+// side: the baseline (-pipeline=fastisel) inlines nothing, so its `add` is a
+// real frame; and no line-table entry is beyond the end of the caller's file
+// (codegen/inline-lines.test).
+
+// A breakpoint on a line of the callee has one location per copy.
+// CHECK: Breakpoint 1 at {{0x[0-9a-f]+}}: b.gopp:20. (3 locations)
+// CHECK: @@STOP1
+// The copy of `add` inlined into `twice`, which main calls.
+// CHECK: #0 {{.*}}main.add (x=5, y=5) at {{.*}}b.gopp:20
+// CHECK-NEXT: #1 {{ *}}main.twice (n=5) at {{.*}}b.gopp:25
+// CHECK-NEXT: #2 {{.*}} in main.main () at {{.*}}a.gopp:6
+// CHECK: inlined into frame 1
+// The callee's variables: z is set by this line, not yet.
+// CHECK: x = 5
+// CHECK: y = 5
+// CHECK: z = {{-?[0-9]+}}
+// CHECK: @@CALLER1
+// CHECK: n = 5
+// CHECK: @@CALLER2
+// CHECK: r = 0
+// The callee runs to its next line: the local has its value.
+// CHECK: @@STOP2
+// CHECK: z = 10
+// The copy of `add` inlined into `main` (x = 5, y = 15).
+// CHECK: @@STOP3
+// CHECK: #0 {{.*}}main.add (x=5, y=15) at {{.*}}b.gopp:20
+// CHECK-NEXT: #1 {{ *}}main.main () at {{.*}}a.gopp:7
+
+// At opt 2 the optimizer decides what is kept; the frames are still inlined
+// frames of the callee, and a variable is never shown with a wrong value.
+// O2: @@STOP1
+// O2: #0 {{.*}}main.add (x=5, y=5) at {{.*}}b.gopp:2{{[01]}}
+// O2: #1 {{.*}}main.twice (n=5) at {{.*}}b.gopp:25
+// O2: #2 {{.*}}main.main () at {{.*}}a.gopp:6
+// O2: z = {{<optimized out>|10}}
+// O2: @@CALLER1
+// O2: n = 5
+
+// BASE: main.add (x=5, y=5) at {{.*}}b.gopp:20
+// BASE: #0 {{ *}}main.add (x=5, y=5) at {{.*}}b.gopp:20
+// BASE-NEXT: #1 {{.*}} in main.twice (n=5) at {{.*}}b.gopp:25
+// BASE-NOT: inlined into

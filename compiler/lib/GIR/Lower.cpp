@@ -285,6 +285,11 @@ Type *Lowering::lowerStruct(S::Type *Whole, S::StructType *ST,
     Fields.push_back(FT);
   }
   Ctx.setStructBody(Str, Fields);
+  // The debugger shows the fields by their names (DebugInfo.h).
+  SmallVector<llvm::StringRef, 4> Names;
+  for (S::Var *F : ST->Fields)
+    Names.push_back(F->Name);
+  Ctx.setFieldNames(Str, Names);
   return Str;
 }
 

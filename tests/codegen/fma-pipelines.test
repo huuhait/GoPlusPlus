@@ -47,6 +47,9 @@ func main() { println(fused(1, 2, 3), rounded(1, 2, 3), viaCall(1, 2, 3)) }
 // ARM-NOT: call double @llvm.fma
 // ARM-NOT: contract
 // ARM-NOT: arithmetic.fence
+// (The label ends viaCall: main, where GIR inlining put `fused`, has its fma;
+// at opt 0 with DWARF the variables stay in memory, so nothing folds it.)
+// ARM-LABEL: define void @_GPF4mainE4main(
 
 // AMD-NOT: call double @llvm.fma
 // AMD-NOT: contract
@@ -59,3 +62,4 @@ func main() { println(fused(1, 2, 3), rounded(1, 2, 3), viaCall(1, 2, 3)) }
 // ASM: fadd
 // ASM-LABEL: _GPF4mainE7viaCall:
 // ASM-NOT: fmadd
+// ASM-LABEL: _GPF4mainE4main:

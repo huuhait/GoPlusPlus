@@ -35,7 +35,16 @@ LocalId FuncBuilder::newLocal(Type *Ty, Local::Kind K, llvm::StringRef Name,
   L.Name = Name.str();
   L.Mutable = Mutable;
   L.Loc = Loc;
+  L.Scope = Scope;
   return F.addLocal(std::move(L));
+}
+
+ScopeId FuncBuilder::newScope() {
+  DebugScope S;
+  S.K = DebugScope::Block;
+  S.Parent = Scope;
+  S.Loc = Loc;
+  return F.addScope(S);
 }
 
 Place FuncBuilder::local(LocalId L) const {
@@ -95,6 +104,7 @@ void FuncBuilder::assign(Place Dest, Rvalue RV) {
   S.Dest = std::move(Dest);
   S.RV = std::move(RV);
   S.Loc = Loc;
+  S.Scope = Scope;
   F.Blocks[Cur].Stmts.push_back(std::move(S));
 }
 
@@ -103,6 +113,7 @@ void FuncBuilder::storageLive(LocalId L) {
   S.K = Statement::StorageLive;
   S.L = L;
   S.Loc = Loc;
+  S.Scope = Scope;
   F.Blocks[Cur].Stmts.push_back(std::move(S));
 }
 
@@ -111,6 +122,7 @@ void FuncBuilder::storageDead(LocalId L) {
   S.K = Statement::StorageDead;
   S.L = L;
   S.Loc = Loc;
+  S.Scope = Scope;
   F.Blocks[Cur].Stmts.push_back(std::move(S));
 }
 
@@ -186,6 +198,7 @@ Place FuncBuilder::temp(Rvalue RV) {
 void FuncBuilder::terminate(Terminator T) {
   assert(!terminated() && "block already has a terminator");
   T.Loc = Loc;
+  T.Scope = Scope;
   T.Set = true;
   F.Blocks[Cur].Term = std::move(T);
 }

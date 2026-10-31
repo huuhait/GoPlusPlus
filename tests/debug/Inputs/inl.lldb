@@ -1,0 +1,15 @@
+breakpoint set --file b.gopp --line 20
+breakpoint set --file b.gopp --line 21
+run
+script print("@@STOP1")
+bt
+frame variable
+up
+script print("@@CALLER1")
+frame variable
+up
+script print("@@CALLER2")
+frame variable
+continue
+script print("@@STOP2")
+frame variable

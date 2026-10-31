@@ -1,0 +1,9 @@
+breakpoint set -f deepscopes.gopp -l 176
+breakpoint set -f deepscopes.gopp -l 23
+breakpoint set -f deepscopes.gopp -l 97
+run
+frame variable x w
+continue
+frame variable x
+continue
+frame variable y z

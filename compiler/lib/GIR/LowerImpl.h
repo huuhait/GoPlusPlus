@@ -497,6 +497,8 @@ private:
     SmallVector<LocalId, 4> Locals;
     /// gopp.map_iter_done runs for these on every way out (RNG-4).
     SmallVector<MapIteration, 1> MapIters;
+    /// The debug scope that was current before this one began (P04.12).
+    ScopeId Outer = 0;
   };
   /// `&` range variables (RNG-1a) and the parameters passed by a hidden
   /// pointer (a borrowed map, PAR-10): the pointer local that stands for the
@@ -899,9 +901,18 @@ private:
   Operand mapArgAddr(const ast::Expr *E, LateOps &R);
   void lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
                         BlockId Default, BlockId Exit);
-  void pushScope() { Scopes.emplace_back(); }
+  /// A source scope of the lowering. With Debug it is also a lexical block
+  /// for the debugger (P04.12); the function's own outermost scopes are not
+  /// (the parameters and the body's variables are the function's).
+  void pushScope(bool Debug = true) {
+    Scopes.emplace_back();
+    Scopes.back().Outer = FB.scope();
+    if (Debug)
+      FB.setScope(FB.newScope());
+  }
   void popScope() {
     exitScopes(Scopes.size() - 1);
+    FB.setScope(Scopes.back().Outer);
     Scopes.pop_back();
   }
   void exitScopes(size_t Depth) {

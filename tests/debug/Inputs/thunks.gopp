@@ -1,0 +1,61 @@
+package main
+
+// The thunks an itab holds (debug/thunks.test, P04.12 review R7 and R8):
+// `(*Box).Bump` has a pointer receiver; Dd.Twice is not inlined into its
+// thunk (it calls double); print_i64 and mem_resize are runtime code.
+
+type Counter interface {
+	Bump(k int) int
+}
+
+type Box struct {
+	n int
+}
+
+func (b *Box) Bump(k int) int {
+	m := b.n + k
+	b.n = m
+	return m
+}
+
+type Summer interface {
+	Sum(xs []int) int
+}
+
+type Adder struct {
+	base int
+}
+
+func (a Adder) Sum(xs []int) int {
+	t := a.base + len(xs)
+	return t
+}
+
+func double(v int) int {
+	d := v * 2
+	return d
+}
+
+type Doubler interface {
+	Twice(v int) int
+}
+
+type Dd struct {
+	off int
+}
+
+func (q Dd) Twice(v int) int {
+	w := double(v) + q.off
+	return w
+}
+
+func main() {
+	b := Box{5}
+	var c Counter = &b
+	r1 := c.Bump(3)
+	var s Summer = Adder{100}
+	r2 := s.Sum([]int{1, 2, 3})
+	var d Doubler = Dd{7}
+	r3 := d.Twice(4)
+	println(r1, r2, r3, b.n)
+}

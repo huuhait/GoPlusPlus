@@ -1,6 +1,8 @@
 // RUN: %gopp build -emit=llvm -pipeline=fastisel %s | FileCheck %s --check-prefix=BASE
-// RUN: %gopp build -emit=llvm %s | FileCheck %s --check-prefix=O0
-// RUN: %gopp build -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=O0
+// RUN: %gopp build -no-debug -emit=llvm %s | FileCheck %s --check-prefix=O0
+// RUN: %gopp build -no-debug -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=O0
+// RUN: %gopp build -emit=llvm %s | FileCheck %s --check-prefix=O0DBG
+// RUN: %gopp build -emit=llvm -opt=0 %s | FileCheck %s --check-prefix=O0DBG
 // RUN: %gopp build -emit=llvm -opt=1 %s | FileCheck %s --check-prefix=O1
 // RUN: %gopp build -emit=llvm -opt=2 %s | FileCheck %s --check-prefix=O1
 // RUN: %gopp build -emit=llvm -opt=3 %s | FileCheck %s --check-prefix=O1
@@ -37,19 +39,32 @@ func main() { println(sum(10)) }
 // BASE: alloca
 // BASE: call i64 @_GPF4mainE3inc(
 // BASE-NOT: phi
+// BASE-NOT: volatile
 
 // opt 0: GIR inlining has removed the call and SROA has made the locals
-// registers (phi nodes, no alloca).
+// registers (phi nodes, no alloca), here without debug information.
 // O0-LABEL: define i64 @_GPF4mainE3sum(
 // O0-NOT: alloca
 // O0-NOT: call i64 @_GPF4mainE3inc
 // O0: phi i64
+// O0-NOT: volatile
+
+// opt 0 with DWARF (the default, P04.12): the call is still inlined and the
+// temporaries are registers, but every variable of the source stays in memory
+// with volatile accesses, so a debugger prints it at any line
+// (docs/design/pipelines.md section 7).
+// O0DBG-LABEL: define i64 @_GPF4mainE3sum(
+// O0DBG: %s = alloca i64
+// O0DBG-NOT: call i64 @_GPF4mainE3inc
+// O0DBG: #dbg_declare(ptr %s,
+// O0DBG: load volatile i64, ptr %s
 
 // opt 1 and up run LLVM's pipeline (at 2 and above it may even replace the
 // loop by a closed form, so only the absence of memory and calls is checked).
 // O1-LABEL: define i64 @_GPF4mainE3sum(
 // O1-NOT: alloca
 // O1-NOT: call i64 @_GPF4mainE3inc
+// O1-NOT: volatile
 // O1: ret i64
 
 // opt s and z mark every function.

@@ -1,0 +1,179 @@
+package main
+
+// Blocks deeper than DebugInfoBuilder::MaxBlockDepth (64) share the 64th
+// lexical block (debug/deep-scopes.test): there a variable whose name
+// another one has has no location, so the debugger says it is optimized
+// out instead of showing the other one's value; a name of its own is shown.
+// The other side, below the limit: every shadowing x is its own. (The
+// blocks are written by a loop.)
+
+//go:noinline
+func shallow() int {
+	x := 0
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	println(x) // SHALLOW
+	}}}}}}}}}}
+	return x
+}
+
+//go:noinline
+func siblings() int {
+	s := 0
+	{ t0 := 0; s += t0
+	{ t1 := 1; s += t1
+	{ t2 := 2; s += t2
+	{ t3 := 3; s += t3
+	{ t4 := 4; s += t4
+	{ t5 := 5; s += t5
+	{ t6 := 6; s += t6
+	{ t7 := 7; s += t7
+	{ t8 := 8; s += t8
+	{ t9 := 9; s += t9
+	{ t10 := 10; s += t10
+	{ t11 := 11; s += t11
+	{ t12 := 12; s += t12
+	{ t13 := 13; s += t13
+	{ t14 := 14; s += t14
+	{ t15 := 15; s += t15
+	{ t16 := 16; s += t16
+	{ t17 := 17; s += t17
+	{ t18 := 18; s += t18
+	{ t19 := 19; s += t19
+	{ t20 := 20; s += t20
+	{ t21 := 21; s += t21
+	{ t22 := 22; s += t22
+	{ t23 := 23; s += t23
+	{ t24 := 24; s += t24
+	{ t25 := 25; s += t25
+	{ t26 := 26; s += t26
+	{ t27 := 27; s += t27
+	{ t28 := 28; s += t28
+	{ t29 := 29; s += t29
+	{ t30 := 30; s += t30
+	{ t31 := 31; s += t31
+	{ t32 := 32; s += t32
+	{ t33 := 33; s += t33
+	{ t34 := 34; s += t34
+	{ t35 := 35; s += t35
+	{ t36 := 36; s += t36
+	{ t37 := 37; s += t37
+	{ t38 := 38; s += t38
+	{ t39 := 39; s += t39
+	{ t40 := 40; s += t40
+	{ t41 := 41; s += t41
+	{ t42 := 42; s += t42
+	{ t43 := 43; s += t43
+	{ t44 := 44; s += t44
+	{ t45 := 45; s += t45
+	{ t46 := 46; s += t46
+	{ t47 := 47; s += t47
+	{ t48 := 48; s += t48
+	{ t49 := 49; s += t49
+	{ t50 := 50; s += t50
+	{ t51 := 51; s += t51
+	{ t52 := 52; s += t52
+	{ t53 := 53; s += t53
+	{ t54 := 54; s += t54
+	{ t55 := 55; s += t55
+	{ t56 := 56; s += t56
+	{ t57 := 57; s += t57
+	{ t58 := 58; s += t58
+	{ t59 := 59; s += t59
+	{ t60 := 60; s += t60
+	{ t61 := 61; s += t61
+	{ t62 := 62; s += t62
+	{ t63 := 63; s += t63
+	{ y := 1; s += y }
+	{ y := 2; z := s + y
+	println(y, z) // SIB
+	s += z }
+	}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+	return s
+}
+
+func main() {
+	x := 0
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	{ x := x + 1
+	w := x * 2
+	println(x, w) // DEEP
+	}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+	println(shallow(), siblings())
+}

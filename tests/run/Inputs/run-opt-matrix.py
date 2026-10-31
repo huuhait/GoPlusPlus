@@ -9,6 +9,9 @@ usage: run-opt-matrix.py --gopp GOPP --root TESTS/RUN [options]
 The corpus (under --root, the tests/run directory):
   * every NAME.test that holds a Go++ program (`package main`);
   * the directories of several files (Inputs/core-init, Inputs/core-init-order);
+  * the programs of ../debug/Inputs (the debugger sessions of P04.12: locals
+    and types, a call chain, scopes, inlining across files, a deep chain of
+    types, the parameter shapes of P04.25);
   * every program of Inputs/diff, Inputs/coll, Inputs/opt, Inputs/allocword
     (the allocator word, P04.25: built with -test-intrinsics), Inputs/iface
     and Inputs/iface-gopp, and the panic programs of Inputs/panics,
@@ -39,6 +42,14 @@ Inputs/diff/NAME.out, Inputs/opt/NAME.out, and the .arm64.out beside it for
 --target arm64), the baseline's standard output followed by its standard error
 must equal it, and a program of Inputs/panics must exit with status 2, print
 NAME.out and start its standard error with NAME.err.
+
+With --verify-dwarf every program built must also pass
+`llvm-dwarfdump --verify` (P04.12: the DWARF is well formed at every `opt`, on
+both targets). --verify-dwarf-self-test shows that this check refuses a broken
+object and accepts a good one (both sides), and runs nothing else. With
+--no-debug every build has no DWARF (`gopp build -no-debug`): the results must
+be the same without debug information as with it (P04.12 keeps the variables
+of `opt 0` in memory only with DWARF).
 
 The compile times of the configurations: bench/pipelines/measure-opt.py.
 """
@@ -124,6 +135,19 @@ def corpus(root):
             else:
                 progs.append(Program(d + "/" + stem, [os.path.join(p, f)],
                                      base if os.path.exists(base + ".out") else None))
+    # The programs of the debugger tests (P04.12: tests/debug/Inputs): the
+    # DWARF of every type and variable kind, a call chain, shadowed names and
+    # scopes, inlined code across files, and a chain of types that is cut. Their expected output is saved
+    # beside them (by hand: they are Go++ programs).
+    dbg = os.path.join(root, "..", "debug", "Inputs")
+    for stem, files in (("locals", ["locals.gopp"]), ("chain", ["chain.gopp"]),
+                        ("types", ["types.gopp"]), ("scopes", ["scopes.gopp"]),
+                        ("inl", ["inl/a.gopp", "inl/b.gopp"]),
+                        ("deep", ["deep.gopp"]), ("params", ["params.gopp"])):
+        if os.path.isfile(os.path.join(dbg, files[0])):
+            base = os.path.join(dbg, stem)
+            progs.append(Program("debug/" + stem, [os.path.join(dbg, f) for f in files],
+                                 base if os.path.exists(base + ".out") else None))
     return progs
 
 
@@ -159,7 +183,7 @@ def cabi_programs(env, root, specs, work, build_c=True):
 
 
 class Env:
-    pass
+    verify_dwarf = False
 
 
 def uses_intrinsics(path):
@@ -189,6 +213,42 @@ def run_exe(env, exe):
     return (r.returncode, r.stdout, r.stderr)
 
 
+def dwarf_problems(path):
+    """What `llvm-dwarfdump --verify` finds in an object or program ("": it
+    accepts it). Any error fails: nothing is excused."""
+    with procslots.slot():
+        v = subprocess.run(["llvm-dwarfdump", "--verify", path], capture_output=True,
+                           timeout=60)
+    text = (v.stdout + v.stderr).decode(errors="replace")
+    if v.returncode == 0 and "No errors." in text:
+        return ""
+    return text[:600] or "exit status %d" % v.returncode
+
+
+def verify_self_test(gopp):
+    """Both sides of --verify-dwarf: the object of a program passes; the same
+    object with the length of its first .debug_info unit broken does not."""
+    with tempfile.TemporaryDirectory() as d:
+        src, obj = os.path.join(d, "t.gopp"), os.path.join(d, "t.o")
+        open(src, "w").write("package main\n\nfunc main() {\n\tx := 1\n\tprintln(x)\n}\n")
+        subprocess.run([gopp, "build", "-emit=obj", src, "-o", obj], check=True,
+                       timeout=60)
+        why = dwarf_problems(obj)
+        if why:
+            sys.exit("self-test: a good object is refused: " + why)
+        info, bad = os.path.join(d, "info.bin"), os.path.join(d, "bad.o")
+        subprocess.run(["llvm-objcopy", "--dump-section", ".debug_info=" + info, obj],
+                       check=True, timeout=60)
+        data = bytearray(open(info, "rb").read())
+        data[0:4] = b"\x7f\x00\x00\x00"
+        open(info, "wb").write(data)
+        subprocess.run(["llvm-objcopy", "--update-section", ".debug_info=" + info,
+                        obj, bad], check=True, timeout=60)
+        if not dwarf_problems(bad):
+            sys.exit("self-test: a broken object passes")
+    print("verify-dwarf self-test: a good object passes, a broken one fails")
+
+
 def one(env, prog, cfg, tmp):
     safe = prog.name.replace("/", "_")
     exe = os.path.join(tmp, "%s.%s" % (safe, cfg))
@@ -196,6 +256,11 @@ def one(env, prog, cfg, tmp):
         b = subprocess.run(build_cmd(env, prog, cfg, exe), capture_output=True, timeout=60)
     if b.returncode != 0:
         return (prog.name, cfg, "build failed: " + b.stderr.decode(errors="replace")[:300])
+    if env.verify_dwarf:
+        why = dwarf_problems(exe)
+        if why:
+            os.unlink(exe)
+            return (prog.name, cfg, "llvm-dwarfdump --verify failed: " + why)
     res = run_exe(env, exe)
     os.unlink(exe)
     return (prog.name, cfg, res)
@@ -275,18 +340,33 @@ def main():
     ap.add_argument("--cabi", action="append", default=[], metavar="SEED:COUNT",
                     help="add the gen-cabi.py program of SEED with COUNT "
                          "signatures (needs clang)")
+    ap.add_argument("--verify-dwarf", action="store_true",
+                    help="also require `llvm-dwarfdump --verify` to pass on "
+                         "every program built (P04.12; DWARF is on by default)")
+    ap.add_argument("--no-debug", action="store_true",
+                    help="build every program without DWARF (-no-debug)")
+    ap.add_argument("--verify-dwarf-self-test", action="store_true",
+                    help="only show that the --verify-dwarf check refuses a "
+                         "broken object and accepts a good one")
     ap.add_argument("--no-corpus", action="store_true",
                     help="run only the --cabi programs")
     ap.add_argument("names", nargs="*")
     a = ap.parse_args()
+    if a.verify_dwarf_self_test:
+        return verify_self_test(a.gopp)
     env = Env()
     env.gopp, env.target, env.sysroot = a.gopp, a.target, a.sysroot
+    env.verify_dwarf = a.verify_dwarf
     if a.target == "arm64":
         if not a.sysroot:
             sys.exit("--target arm64 needs --sysroot")
         env.build_flags = ["-target=linux/arm64", "-crt-dir=" + os.path.join(a.sysroot, "lib")]
     else:
         env.build_flags = a.link_flags.split()
+    if a.no_debug:
+        if a.verify_dwarf:
+            sys.exit("--no-debug builds have no DWARF to verify")
+        env.build_flags.append("-no-debug")
     cfgs = a.configs.split(",") if a.configs else list(DEFAULT_CONFIGS)
     unknown = [c for c in cfgs if c not in CONFIGS]
     if unknown:

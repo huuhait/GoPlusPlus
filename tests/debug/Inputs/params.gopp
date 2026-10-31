@@ -1,0 +1,31 @@
+package main
+
+// The parameter shapes of P04.25 (ADR-0029): a borrowed []T arrives as a
+// (ptr, len) pair that the body makes into a slice of its own; a `move []T`
+// takes all four words; a borrowed map is a pointer to the caller's header.
+
+func sum(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func grow(move xs []int, n int) []int {
+	for i := 0; i < n; i++ {
+		xs = append(xs, i)
+	}
+	return xs
+}
+
+func size(m map[string]int) int {
+	return len(m)
+}
+
+func main() {
+	a := []int{1, 2, 3}
+	m := map[string]int{"a": 1, "b": 2}
+	b := grow([]int{7, 8}, 2)
+	println(sum(a), len(b), size(m))
+}

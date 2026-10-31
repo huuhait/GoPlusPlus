@@ -230,8 +230,10 @@ struct Built {
   PipelineSpec Spec;
   gir::InlineStats Inlined;
 
+  /// KeepVariables: as `gopp build` sets it (LowerToLLVMOptions), the
+  /// variables of opt 0 stay in memory for the debugger (P04.12).
   Built(const std::string &Source, const Setting &S,
-        const char *Target = "linux/amd64") {
+        const char *Target = "linux/amd64", bool KeepVariables = false) {
     Spec = specOf(S, Target);
     auto GM = lowerSource(GC, Source);
     EXPECT_NE(GM, nullptr);
@@ -240,7 +242,10 @@ struct Built {
     auto T = *parseTarget(Target);
     TM = std::move(*createTargetMachine(T, Spec));
     Inlined = runGIRPasses(*GM, Spec, &Times);
-    auto LM = lowerToLLVM(LC, *GM, *TM);
+    LowerToLLVMOptions LO;
+    LO.KeepVariables =
+        KeepVariables && Spec.Opt == OptLevel::O0 && !Spec.Baseline;
+    auto LM = lowerToLLVM(LC, *GM, *TM, LO);
     EXPECT_TRUE(static_cast<bool>(LM)) << toString(LM.takeError());
     if (!LM)
       return;
@@ -290,6 +295,24 @@ TEST(Pipeline, Opt0PromotesLocalsAndInlinesTrivialCalls) {
   EXPECT_EQ(O0.Times.Stages[0].Name, "gir-inline");
   EXPECT_EQ(O0.Times.Stages[1].Name, "ir-passes");
   EXPECT_TRUE(Base.Times.Stages.empty());
+}
+
+TEST(Pipeline, Opt0WithDwarfKeepsTheVariablesInMemory) {
+  // P04.12 (M2 of the team build): `gopp build` at opt 0 keeps the variables
+  // of the source in memory with volatile accesses, so a debugger prints them
+  // at any line (docs/design/pipelines.md section 7); the temporaries are
+  // registers as before and the call is still inlined.
+  Built O0(Loops, AllSettings[0], "linux/amd64", /*KeepVariables=*/true);
+  EXPECT_GT(O0.count(llvm::Instruction::Alloca, "4mainE1f"), 0u) << O0.ir();
+  EXPECT_EQ(O0.ir().find("call i64 @_GPF4mainE4add3"), std::string::npos);
+  EXPECT_NE(O0.ir().find("store volatile"), std::string::npos) << O0.ir();
+  EXPECT_NE(O0.ir().find("load volatile"), std::string::npos);
+  EXPECT_NE(O0.ir().find("#dbg_declare"), std::string::npos);
+  // The other side: without it opt 0 promotes them (the test above), and
+  // nothing is volatile. (`gopp build` sets it at opt 0 only:
+  // codegen/pipelines.test checks the other settings.)
+  Built Plain(Loops, AllSettings[0]);
+  EXPECT_EQ(Plain.ir().find("volatile"), std::string::npos) << Plain.ir();
 }
 
 TEST(Pipeline, SizeLevelsMarkTheirFunctions) {

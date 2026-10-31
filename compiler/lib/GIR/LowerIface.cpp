@@ -492,17 +492,23 @@ FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
   auto RealIt = FuncIds.find(F);
   if (RealIt == FuncIds.end())
     return NoId;
-  const sym::Node *DN = Syms.Names.type(Dyn);
+  // Named by the method it calls, as its own symbol names it (appendix A.5:
+  // a method belongs to its type, whatever its receiver). A value method in
+  // the table of a pointer to its type reads the value through the data word
+  // and is a thunk of its own (Tp); every other one is an IfaceThunk (TI).
+  bool DynPtr = isa<S::PointerType>(Dyn);
+  const sym::Node *MN = Syms.Names.func(F);
   std::string Name =
-      DN ? sym::mangle(Syms.Ctx.wrapper(sym::Kind::IfaceThunk,
-                                        Syms.Ctx.method(DN, F->Name)))
+      MN ? sym::mangle(Syms.Ctx.wrapper(DynPtr && !F->HasPtrRecv
+                                            ? sym::Kind::IfacePtrThunk
+                                            : sym::Kind::IfaceThunk,
+                                        MN))
          : runtimeSymbol("thunk_" + rtypeName(Dyn) + "." + F->Name.str());
   auto Hit = Thunks.find(Name);
   if (Hit != Thunks.end())
     return Hit->second;
   FuncId Real = RealIt->second;
   Type *RealSig = M->func(Real).Sig;
-  bool DynPtr = isa<S::PointerType>(Dyn);
   Type *PU8 = Ctx.ptr(Ctx.u8());
   Type *RecvG = lowerType(DynPtr ? cast<S::PointerType>(Dyn)->Elem : Dyn, At);
   if (!RecvG)
@@ -516,11 +522,17 @@ FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
   Fn->Link = Linkage::LinkOnceODR;
   Fn->CC = CallConv::Go;
   Fn->NoUnwind = M->func(Real).NoUnwind;
+  // The thunk and each of its statements are at the method's declaration,
+  // so a debugger shows that line for its frame, never a line of the code
+  // before it (P04.12, review R8); it stays artificial (its symbol says it
+  // is a thunk, DebugInfoBuilder::subprogramOf).
+  Fn->Loc = M->func(Real).Loc;
   Function *FP = Fn.get();
   FuncId Id = M->addFunction(std::move(Fn));
   Thunks[Name] = Id;
   Rt E(*M, *FP);
   FuncBuilder &FB = E.FB;
+  FB.setSpan(FP->Loc);
   Val Data = E.param(0);
   Operand Recv;
   if (DynPtr) {

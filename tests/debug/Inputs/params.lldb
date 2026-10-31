@@ -1,0 +1,8 @@
+breakpoint set -f params.gopp -l 12
+run
+script print("@@ALL")
+frame variable
+script print("@@LOCALS")
+frame variable -a
+script print("@@END")
+expression sizeof(xs)

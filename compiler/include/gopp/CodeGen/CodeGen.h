@@ -46,11 +46,37 @@ struct LowerWorkCounts {
   uint64_t FmaSccSteps = 0;  // the strongly connected components
   uint64_t FmaDefSteps = 0;  // the index of the writes
   uint64_t FmaWalkSteps = 0; // the walks that tell which writes lie between
+  /// The debug information (P04.12): the types made and the fields,
+  /// parameters and elements they visit, the variables declared, the
+  /// locations made, and the scopes (lexical blocks, inline sites) visited.
+  uint64_t DITypeSteps = 0, DIVariableSteps = 0, DILocationSteps = 0,
+           DIScopeSteps = 0;
 };
 
 struct LowerToLLVMOptions {
-  /// DWARF line tables (D4.7). Variables and types come with P04.12.
+  /// DWARF 5 with lines, variables and types (D4.7, P04.12;
+  /// docs/design/debug-info.md).
   bool DebugInfo = true;
+  /// Also write the `_GP` symbol as `DW_AT_linkage_name`. Off by default:
+  /// gdb and lldb show the linkage name instead of `DW_AT_name` whenever
+  /// there is one (they cannot demangle `_GP`), so a backtrace would read
+  /// `_GPF4mainE3add` and not `main.add`. The symbol table has it anyway.
+  bool DwarfLinkageNames = false;
+  /// Keep every variable of the program in its slot, as the code wrote it,
+  /// so a debugger prints it at every line (the `opt 0` pipeline, whose SROA
+  /// and instcombine would turn it into values that end at their last use;
+  /// the fastisel baseline runs no pass and needs none): every load and
+  /// store of the slot, and every memset and memcpy that writes it, is
+  /// volatile (LowerToLLVM keepInMemory; docs/design/pipelines.md section
+  /// 7). The copies of an inlined callee's variables bigger than 4 KB stay
+  /// the optimizer's (40 inlined calls with a 512 KB parameter would be 20 MB
+  /// of frame, run/core-argslots.test).
+  /// Ignored without DebugInfo. `gopp build` sets it for `opt 0`.
+  bool KeepVariables = false;
+  /// The code is optimized (`opt` above 0): the DWARF says so, and a debugger
+  /// expects values to be missing. lowerToLLVM fills it from the target
+  /// machine.
+  bool Optimized = false;
   /// The target's CPU and features, for the C ABI classification (P04.11);
   /// lowerToLLVM fills them from the TargetMachine.
   std::string TargetCPU, TargetFeatures;

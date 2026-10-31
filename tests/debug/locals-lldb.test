@@ -1,0 +1,30 @@
+// REQUIRES: lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/locals.gopp -o %t
+// RUN: timeout 30 lldb -b -s %S/Inputs/locals.lldb %t 2>&1 | FileCheck %s
+// P04.12 (D4.7): the same session as locals-gdb.test, in lldb. lldb spells an
+// int64 `long` and an array without a name (its own rules); the structs,
+// slices, strings and pointers carry their Go++ names.
+//
+// CHECK: frame #0: {{.*}}`main.main at locals.gopp:43
+// CHECK: (unsigned char) b = 'x'
+// CHECK: (char) i8 = '\xfb'
+// CHECK: (unsigned short) u16 = 65535
+// CHECK: (float) f32 = 2.5
+// CHECK: (bool) ok = true
+// CHECK: (long) count = 8
+// CHECK: (string) name = (ptr = "gopp", len = 4, cap = 0)
+// CHECK: ([]string) tags = {
+// CHECK: len = 2
+// CHECK: (long[3]) nums = ([0] = 10, [1] = 20, [2] = 30)
+// CHECK: (main.Doc) d = {
+// CHECK: Pos = (X = 1.5, Y = -2)
+// CHECK: Next = NULL
+// CHECK: Maybe = (value = 9, set = true)
+// CHECK: (main.Doc *) p = {{0x[0-9a-f]+}}
+// CHECK: (gopp.map *) m = {{0x[0-9a-f]+}}
+// CHECK: (long) sum = 35
+// CHECK-DAG: (long) main.counter = 7
+// CHECK-DAG: (string) main.label = (ptr = "global", len = 6, cap = 0)
+// CHECK: (main.Vec2) d.Pos = (X = 1.5, Y = -2)
+// CHECK: frame #0: {{.*}}main.main at locals.gopp:43
+// CHECK: frame #1: {{.*}}`main at

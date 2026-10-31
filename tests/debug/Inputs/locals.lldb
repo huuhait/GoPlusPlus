@@ -1,0 +1,6 @@
+breakpoint set -f locals.gopp -l 43
+run
+frame variable
+frame variable -g
+frame variable d.Pos
+bt

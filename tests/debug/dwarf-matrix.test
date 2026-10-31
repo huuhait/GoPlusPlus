@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64
+// RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --verify-dwarf-self-test
+// RUN: %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --link-flags "%gopp_link_flags" --jobs 8 --verify-dwarf --configs 0,2 debug/ core-recursive
+// RUN: %if qemu-aarch64 %{ %python %S/../run/Inputs/run-opt-matrix.py --gopp %gopp --root %S/../run --target arm64 --sysroot %aarch64_sysroot --jobs 8 --verify-dwarf --configs 0,2 debug/ core-recursive %}
+// P04.12, D4.7: the programs of this directory (every type and variable kind,
+// a call chain, shadowed names and scopes, inlining across files) and the
+// self-naming and recursive types of run/core-recursive* (cycles, closed by
+// declarations) are built at `opt 0` and 2 (and the baseline), on amd64 and
+// arm64, give the same output everywhere (their saved one), and
+// `llvm-dwarfdump --verify` accepts the DWARF of each. The first RUN is the check of the check: it refuses an
+// object whose .debug_info is broken and accepts the good one. The whole run
+// corpus at every `opt` is core-opt-matrix.long.test (and the arm64 one).

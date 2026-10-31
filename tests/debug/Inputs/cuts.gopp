@@ -1,0 +1,349 @@
+package main
+
+// The cuts of DebugInfoBuilder::typeOf (debug/type-cuts.test). A pointer
+// refers to a struct by a declaration of its name, and a part higher than
+// MaxTypeHeight (48) is referred to that way too: gdb and lldb must find
+// every value through them. (The chains are written by a loop.)
+
+// A struct that points to itself; walk asks for the pointer first.
+type Node struct {
+	val  int
+	next Option[*Node]
+}
+
+// Two structs that point to each other; look asks for *B first.
+type A struct {
+	b Option[*B]
+	v int
+}
+
+type B struct {
+	a Option[*A]
+	w int
+}
+
+// A chain of structs through pointers.
+type P0 struct{ v [1][1]int }
+type P1 struct {
+	v int
+	p *P0
+}
+type P2 struct {
+	v int
+	p *P1
+}
+type P3 struct {
+	v int
+	p *P2
+}
+type P4 struct {
+	v int
+	p *P3
+}
+type P5 struct {
+	v int
+	p *P4
+}
+type P6 struct {
+	v int
+	p *P5
+}
+type P7 struct {
+	v int
+	p *P6
+}
+type P8 struct {
+	v int
+	p *P7
+}
+type P9 struct {
+	v int
+	p *P8
+}
+type P10 struct {
+	v int
+	p *P9
+}
+type P11 struct {
+	v int
+	p *P10
+}
+type P12 struct {
+	v int
+	p *P11
+}
+type P13 struct {
+	v int
+	p *P12
+}
+type P14 struct {
+	v int
+	p *P13
+}
+type P15 struct {
+	v int
+	p *P14
+}
+type P16 struct {
+	v int
+	p *P15
+}
+type P17 struct {
+	v int
+	p *P16
+}
+type P18 struct {
+	v int
+	p *P17
+}
+type P19 struct {
+	v int
+	p *P18
+}
+
+// A chain of structs by value: T22 is 47 levels high, an array of it 48.
+type T0 struct{ v int }
+type T1 struct {
+	v  int
+	in T0
+}
+type T2 struct {
+	v  int
+	in T1
+}
+type T3 struct {
+	v  int
+	in T2
+}
+type T4 struct {
+	v  int
+	in T3
+}
+type T5 struct {
+	v  int
+	in T4
+}
+type T6 struct {
+	v  int
+	in T5
+}
+type T7 struct {
+	v  int
+	in T6
+}
+type T8 struct {
+	v  int
+	in T7
+}
+type T9 struct {
+	v  int
+	in T8
+}
+type T10 struct {
+	v  int
+	in T9
+}
+type T11 struct {
+	v  int
+	in T10
+}
+type T12 struct {
+	v  int
+	in T11
+}
+type T13 struct {
+	v  int
+	in T12
+}
+type T14 struct {
+	v  int
+	in T13
+}
+type T15 struct {
+	v  int
+	in T14
+}
+type T16 struct {
+	v  int
+	in T15
+}
+type T17 struct {
+	v  int
+	in T16
+}
+type T18 struct {
+	v  int
+	in T17
+}
+type T19 struct {
+	v  int
+	in T18
+}
+type T20 struct {
+	v  int
+	in T19
+}
+type T21 struct {
+	v  int
+	in T20
+}
+type T22 struct {
+	v  int
+	in T21
+}
+
+type Holder struct {
+	arr [2]T22
+	k   int
+}
+
+// A chain of 50 pointers with no struct in it.
+type Q0 struct{ q int }
+type Q1 *Q0
+type Q2 *Q1
+type Q3 *Q2
+type Q4 *Q3
+type Q5 *Q4
+type Q6 *Q5
+type Q7 *Q6
+type Q8 *Q7
+type Q9 *Q8
+type Q10 *Q9
+type Q11 *Q10
+type Q12 *Q11
+type Q13 *Q12
+type Q14 *Q13
+type Q15 *Q14
+type Q16 *Q15
+type Q17 *Q16
+type Q18 *Q17
+type Q19 *Q18
+type Q20 *Q19
+type Q21 *Q20
+type Q22 *Q21
+type Q23 *Q22
+type Q24 *Q23
+type Q25 *Q24
+type Q26 *Q25
+type Q27 *Q26
+type Q28 *Q27
+type Q29 *Q28
+type Q30 *Q29
+type Q31 *Q30
+type Q32 *Q31
+type Q33 *Q32
+type Q34 *Q33
+type Q35 *Q34
+type Q36 *Q35
+type Q37 *Q36
+type Q38 *Q37
+type Q39 *Q38
+type Q40 *Q39
+type Q41 *Q40
+type Q42 *Q41
+type Q43 *Q42
+type Q44 *Q43
+type Q45 *Q44
+type Q46 *Q45
+type Q47 *Q46
+type Q48 *Q47
+type Q49 *Q48
+type Q50 *Q49
+
+//go:noinline
+func walk(n *Node) int {
+	println(n.val) // WALK
+	return n.val
+}
+
+//go:noinline
+func look(p *B) int {
+	println(p.w) // LOOK
+	return p.w
+}
+
+func main() {
+	tail := Node{2, nil}
+	head := Node{1, &tail}
+	r := walk(&head)
+	var b1 B
+	b1.w = 5
+	a := A{b: &b1, v: 7}
+	b2 := B{a: &a, w: 9}
+	r += look(&b2)
+	x0 := P0{}
+	x1 := P1{v: 10, p: &x0}
+	x2 := P2{v: 20, p: &x1}
+	x3 := P3{v: 30, p: &x2}
+	x4 := P4{v: 40, p: &x3}
+	x5 := P5{v: 50, p: &x4}
+	x6 := P6{v: 60, p: &x5}
+	x7 := P7{v: 70, p: &x6}
+	x8 := P8{v: 80, p: &x7}
+	x9 := P9{v: 90, p: &x8}
+	x10 := P10{v: 100, p: &x9}
+	x11 := P11{v: 110, p: &x10}
+	x12 := P12{v: 120, p: &x11}
+	x13 := P13{v: 130, p: &x12}
+	x14 := P14{v: 140, p: &x13}
+	x15 := P15{v: 150, p: &x14}
+	x16 := P16{v: 160, p: &x15}
+	x17 := P17{v: 170, p: &x16}
+	x18 := P18{v: 180, p: &x17}
+	x19 := P19{v: 190, p: &x18}
+	var h Holder
+	h.arr[1].v = 5
+	h.k = 9
+	q0 := Q0{q: 7}
+	var q1 Q1 = &q0
+	var q2 Q2 = &q1
+	var q3 Q3 = &q2
+	var q4 Q4 = &q3
+	var q5 Q5 = &q4
+	var q6 Q6 = &q5
+	var q7 Q7 = &q6
+	var q8 Q8 = &q7
+	var q9 Q9 = &q8
+	var q10 Q10 = &q9
+	var q11 Q11 = &q10
+	var q12 Q12 = &q11
+	var q13 Q13 = &q12
+	var q14 Q14 = &q13
+	var q15 Q15 = &q14
+	var q16 Q16 = &q15
+	var q17 Q17 = &q16
+	var q18 Q18 = &q17
+	var q19 Q19 = &q18
+	var q20 Q20 = &q19
+	var q21 Q21 = &q20
+	var q22 Q22 = &q21
+	var q23 Q23 = &q22
+	var q24 Q24 = &q23
+	var q25 Q25 = &q24
+	var q26 Q26 = &q25
+	var q27 Q27 = &q26
+	var q28 Q28 = &q27
+	var q29 Q29 = &q28
+	var q30 Q30 = &q29
+	var q31 Q31 = &q30
+	var q32 Q32 = &q31
+	var q33 Q33 = &q32
+	var q34 Q34 = &q33
+	var q35 Q35 = &q34
+	var q36 Q36 = &q35
+	var q37 Q37 = &q36
+	var q38 Q38 = &q37
+	var q39 Q39 = &q38
+	var q40 Q40 = &q39
+	var q41 Q41 = &q40
+	var q42 Q42 = &q41
+	var q43 Q43 = &q42
+	var q44 Q44 = &q43
+	var q45 Q45 = &q44
+	var q46 Q46 = &q45
+	var q47 Q47 = &q46
+	var q48 Q48 = &q47
+	var q49 Q49 = &q48
+	var q50 Q50 = &q49
+	println(r, x19.v, h.arr[1].v, h.k, (**************************************************q50).q) // MAIN
+}

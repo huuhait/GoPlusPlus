@@ -33,6 +33,7 @@ using llvm::isa_and_nonnull;
 LocalId Body::declareVar(const ast::Ident *Id, Type *Ty) {
   auto D = I.Defs.find(Id);
   LocalId Loc = FB.newLocal(Ty, Local::Var, Id->Name.str());
+  FB.function().Locals[Loc].Source = true;
   if (D != I.Defs.end())
     if (auto *V = dyn_cast_or_null<S::Var>(D->second))
       Vars[V] = Loc;
@@ -879,7 +880,7 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
 //===----------------------------------------------------------------------===//
 
 void Body::lowerBlock(const ast::BlockStmt *B) {
-  pushScope();
+  pushScope(B != RootBody);
   for (const ast::Stmt *St : B->List)
     lowerStmt(St);
   popScope();
@@ -982,7 +983,7 @@ void Body::finish() {
 void Body::lower(const ast::FuncDecl *FD) {
   Function &F = FB.function();
   at(FD);
-  pushScope();
+  pushScope(false);
   if (Obj) {
     ArrayRef<S::Var *> Params = Obj->Params;
     // The receiver of a method is parameter 0.
@@ -1000,6 +1001,9 @@ void Body::lower(const ast::FuncDecl *FD) {
       Rt E(M, FB);
       Type *ST = ctx().slice(F.Locals[FB.param(K)].Ty->elems()[0]->elem());
       LocalId Loc = FB.newLocal(ST, Local::Var, V->Name.str());
+      // The debugger's parameter is this slice, not the pair (P04.12).
+      F.Locals[Loc].Source = true;
+      F.Locals[Loc].ArgNo = K + 1;
       FB.storageLive(Loc);
       Val P = E.param(K);
       Val Ptr = E.fld(P, 0), Len = E.fld(P, 1);
@@ -1013,22 +1017,27 @@ void Body::lower(const ast::FuncDecl *FD) {
     if (Obj->Recv) {
       F.Locals[FB.param(0)].Name = Obj->Recv->Name.str();
       if (F.Locals[FB.param(0)].Ty->getKind() == Type::Kind::Tuple &&
-          L.recvBorrowedSlice(Obj))
+          L.recvBorrowedSlice(Obj)) {
         OwnSlice(0, Obj->Recv);
-      else
+      } else {
         Vars[Obj->Recv] = FB.param(0);
+        F.Locals[FB.param(0)].Source = true;
+      }
     }
     for (size_t K = 0; K < Params.size(); ++K) {
       // A borrowed map is a pointer to the caller's header (PAR-10).
       F.Locals[FB.param(K + Lead)].Name = Params[K]->Name.str();
-      if (L.mapByPointer(Obj->sig(), K))
+      if (L.mapByPointer(Obj->sig(), K)) {
         Aliases[Params[K]] = FB.param(K + Lead);
-      else if (F.Locals[FB.param(K + Lead)].Ty->getKind() ==
-                   Type::Kind::Tuple &&
-               L.sliceBorrowed(Obj->sig(), K))
+        F.Locals[FB.param(K + Lead)].Source = true;
+      } else if (F.Locals[FB.param(K + Lead)].Ty->getKind() ==
+                     Type::Kind::Tuple &&
+                 L.sliceBorrowed(Obj->sig(), K)) {
         OwnSlice(K + Lead, Params[K]);
-      else
+      } else {
         Vars[Params[K]] = FB.param(K + Lead);
+        F.Locals[FB.param(K + Lead)].Source = true;
+      }
     }
     // Named results are variables, set to their zero values.
     bool Named = false;
@@ -1041,6 +1050,7 @@ void Body::lower(const ast::FuncDecl *FD) {
         if (!T)
           return;
         LocalId Loc = FB.newLocal(T, Local::Var, R->Name.str());
+        F.Locals[Loc].Source = true;
         Vars[R] = Loc;
         NamedResults.push_back(Loc);
         Scopes.back().Locals.push_back(Loc);
@@ -1066,7 +1076,7 @@ void Body::lower(const ast::FuncDecl *FD) {
 void Body::lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs) {
   Function &F = FB.function();
   FB.setSpan(F.Loc);
-  pushScope();
+  pushScope(false);
   for (const S::InitEntry &E : Order) {
     at(E.Init);
     if (E.Lhs.size() == 1) {
@@ -1272,6 +1282,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       }
       ValLoc = FB.newLocal(ctx().ptr(VG), Local::Var,
                            cast<ast::Ident>(unparen(R->Value))->Name.str());
+      FB.function().Locals[ValLoc].Source = true;
       Scopes.back().Locals.push_back(ValLoc);
       FB.storageLive(ValLoc);
       Aliases[ValVar] = ValLoc;

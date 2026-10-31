@@ -1,0 +1,26 @@
+package main
+
+// The callee lives in another file and far from its top, so its lines (20
+// and 21) are past the end of a.gopp (8 lines).
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+func add(x, y int) int {
+	z := x + y
+	return z
+}
+
+func twice(n int) int {
+	return add(n, n)
+}

@@ -22,20 +22,22 @@
 #include "gopp/Basic/WorkCount.h"
 #include "gopp/CodeGen/CABILower.h"
 #include "gopp/CodeGen/CodeGen.h"
+#include "gopp/CodeGen/DebugInfo.h"
 #include "gopp/GIR/GIR.h"
 #include "gopp/GIR/Verify.h"
 #include "gopp/Import/CABI.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -62,7 +64,10 @@ class Lowering {
 public:
   Lowering(llvm::LLVMContext &C, const G::Module &GM, llvm::Module &LM,
            const LowerToLLVMOptions &Opts)
-      : C(C), GM(GM), LM(LM), B(C), Opts(Opts), DIB(LM) {}
+      : C(C), GM(GM), LM(LM), B(C), Opts(Opts),
+        DI(
+            LM, GM, [this](const G::Type *T) { return memTy(T); },
+            Opts.DwarfLinkageNames, Opts.Optimized) {}
 
   llvm::Error run();
 
@@ -72,7 +77,9 @@ private:
   llvm::Module &LM;
   llvm::IRBuilder<> B;
   const LowerToLLVMOptions &Opts;
-  llvm::DIBuilder DIB;
+  /// All debug metadata is made by this (DebugInfo.h); unused without
+  /// Opts.DebugInfo.
+  DebugInfoBuilder DI;
   llvm::DenseMap<const G::Type *, llvm::Type *> MemTypes;
   /// A declared C function: how its signature crosses the C ABI (P04.11,
   /// CABILower.h). Keyed by the function's index in the module.
@@ -102,8 +109,6 @@ private:
   llvm::SmallVector<llvm::Function *, 16> Funcs;
   llvm::SmallVector<llvm::GlobalVariable *, 16> Globals;
   llvm::SmallVector<llvm::GlobalVariable *, 16> Strings;
-  llvm::SmallVector<llvm::DIFile *, 4> DIFiles;
-  llvm::DISubprogram *SP = nullptr;
 
   // Per function.
   const G::Function *GF = nullptr;
@@ -381,7 +386,8 @@ private:
   llvm::FunctionType *fnType(const G::Type *Sig);
   llvm::Function *declare(G::FuncId Id, const G::Function &F);
   llvm::Constant *stringConst(uint64_t Id);
-  void setLoc(const G::Span &S);
+  void setLoc(const G::Span &S, G::ScopeId Scope);
+  void keepInMemory(llvm::Value *Slot);
 
   llvm::Value *placeAddr(const G::Place &P);
   llvm::Value *loadPlace(const G::Place &P);
@@ -395,7 +401,7 @@ private:
                      const G::Type *CT, llvm::Value *Cnt);
   llvm::Value *cast(G::CastKind K, const G::Type *From, const G::Type *To,
                     llvm::Value *V);
-  llvm::Error function(const G::Function &F, llvm::Function *LF);
+  llvm::Error function(G::FuncId Id, const G::Function &F, llvm::Function *LF);
   llvm::Error terminator(const G::Terminator &T);
   /// The symbol of the runtime function a failed Assert calls.
   static std::string panicName(const G::Terminator &T);
@@ -726,19 +732,12 @@ llvm::Constant *Lowering::stringConst(uint64_t Id) {
   return Strings[Id];
 }
 
-void Lowering::setLoc(const G::Span &S) {
-  if (!Opts.DebugInfo || !SP) {
+void Lowering::setLoc(const G::Span &S, G::ScopeId Scope) {
+  if (!Opts.DebugInfo) {
     B.SetCurrentDebugLocation(llvm::DebugLoc());
     return;
   }
-  // Code the compiler made has no position: line 0, as in clang. A span of
-  // another file than the function's would name a line the function's scope
-  // does not have (the GIR passes give inlined code the call site's span):
-  // it has none either.
-  bool Ours = S.isValid() && (!GF->Loc.isValid() || S.File == GF->Loc.File);
-  assert((!S.isValid() || Ours) && "a span of another file in this function");
-  B.SetCurrentDebugLocation(
-      llvm::DILocation::get(C, Ours ? S.Line : 0, Ours ? S.Col : 0, SP));
+  B.SetCurrentDebugLocation(DI.location(S, Scope));
 }
 
 llvm::Value *Lowering::placeAddr(const G::Place &P) {
@@ -1180,7 +1179,7 @@ std::string Lowering::panicName(const G::Terminator &T) {
 }
 
 llvm::Error Lowering::terminator(const G::Terminator &T) {
-  setLoc(T.Loc);
+  setLoc(T.Loc, T.Scope);
   // Both need a landing pad (`invoke`, D4.6): P04.07. A plain call would
   // change what a panic does.
   auto Unwindless = [&](const G::UnwindAction &U) -> llvm::Error {
@@ -1365,7 +1364,7 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
       B.SetInsertPoint(PS.BB);
       // Shared by every check of the kind: no line of its own (the position
       // is the operand).
-      setLoc(G::Span());
+      setLoc(G::Span(), 0);
       llvm::SmallVector<llvm::Value *, 3> CallArgs;
       CallArgs.push_back(B.CreateLoad(llvm::PointerType::getUnqual(C), PS.Pos));
       for (llvm::AllocaInst *A : PS.Args)
@@ -2017,7 +2016,8 @@ llvm::Value *Lowering::contracted(const G::Rvalue &R, llvm::Value *X,
   return nullptr;
 }
 
-llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
+llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
+                               llvm::Function *Fn) {
   GF = &F;
   LF = Fn;
   Slots.clear();
@@ -2035,23 +2035,13 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
   SeenAfter.clear();
   Panics.clear();
   countUses(F);
-  SP = nullptr;
-  if (Opts.DebugInfo) {
-    uint32_t FileIdx = F.Loc.isValid() ? F.Loc.File - 1 : 0;
-    llvm::DISubroutineType *Ty =
-        DIB.createSubroutineType(DIB.getOrCreateTypeArray({}));
-    SP =
-        DIB.createFunction(DIFiles.empty() ? nullptr : DIFiles[FileIdx], F.Name,
-                           F.Name, DIFiles.empty() ? nullptr : DIFiles[FileIdx],
-                           F.Loc.Line, Ty, F.Loc.Line, llvm::DINode::FlagZero,
-                           llvm::DISubprogram::SPFlagDefinition);
-    Fn->setSubprogram(SP);
-  }
+  if (Opts.DebugInfo)
+    DI.beginFunction(Id, *Fn);
   llvm::BasicBlock *Entry = llvm::BasicBlock::Create(C, "entry", Fn);
   for (size_t I = 0; I < F.Blocks.size(); ++I)
     Blocks.push_back(llvm::BasicBlock::Create(C, "bb" + llvm::Twine(I), Fn));
   B.SetInsertPoint(Entry);
-  setLoc(F.Loc);
+  setLoc(F.Loc, 0);
   bool Sret = isAggregate(F.Sig->ret());
   for (size_t I = 0; I < F.Locals.size(); ++I) {
     const G::Local &L = F.Locals[I];
@@ -2070,7 +2060,15 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
     llvm::Value *A = Fn->getArg((Sret ? 1 : 0) + I);
     storePlace(G::localPlace(1 + I, PT), A);
   }
-  B.CreateBr(Blocks[0]);
+  llvm::Instruction *EntryBr = B.CreateBr(Blocks[0]);
+  // Every named parameter and variable is declared at its storage for the
+  // whole function (the debugger shows it in its scope, or in the scope of
+  // the inlined callee it came from).
+  llvm::SmallVector<llvm::Value *, 16> Kept;
+  if (Opts.DebugInfo)
+    for (size_t I = 0; I < F.Locals.size(); ++I)
+      if (llvm::Value *Slot = DI.declareLocal(I, Slots[I], EntryBr))
+        Kept.push_back(Slot);
   // With a float product to fuse, in the preorder of the dominator tree, so
   // that Products can be scoped by it (see FuseFMA); else in index order.
   Scoped = FuseFMA && HasFloatMul;
@@ -2086,7 +2084,7 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
     if (BB.Catch)
       return fail("a catch block, the handler of `defer` (P04.07)");
     for (const G::Statement &S : BB.Stmts) {
-      setLoc(S.Loc);
+      setLoc(S.Loc, S.Scope);
       switch (S.K) {
       case G::Statement::Assign: {
         if (S.Dest.Ty->isUnit()) {
@@ -2129,23 +2127,52 @@ llvm::Error Lowering::function(const G::Function &F, llvm::Function *Fn) {
     if (BB.Term.K == G::Terminator::Call && BB.Term.Dest.Local != G::NoId)
       setProduct(BB.Term.Dest.Local, std::nullopt);
   }
+  // `opt 0` with DWARF: the variables stay in memory as the code wrote them.
+  if (Opts.KeepVariables)
+    for (llvm::Value *Slot : Kept)
+      keepInMemory(Slot);
   return llvm::Error::success();
 }
 
-llvm::Error Lowering::run() {
-  if (Opts.DebugInfo) {
-    LM.addModuleFlag(llvm::Module::Warning, "Dwarf Version", 5);
-    LM.addModuleFlag(llvm::Module::Warning, "Debug Info Version",
-                     llvm::DEBUG_METADATA_VERSION);
-    for (const std::string &F : GM.Files)
-      DIFiles.push_back(DIB.createFile(llvm::sys::path::filename(F),
-                                       llvm::sys::path::parent_path(F)));
-    if (DIFiles.empty())
-      DIFiles.push_back(DIB.createFile("<unknown>", ""));
-    // Line tables only (D4.7); variables and types come with P04.12.
-    DIB.createCompileUnit(llvm::dwarf::DW_LANG_C11, DIFiles[0], "gopp", false,
-                          "", 0, "", llvm::DICompileUnit::LineTablesOnly);
+/// Marks the accesses of a variable's slot volatile (P04.12, M2 of the team
+/// build; docs/design/pipelines.md section 7): its loads and stores, and the
+/// memset and memcpy that write it. The passes of `opt 0` (SROA, and
+/// instcombine, which also promotes a slot and drops a store that the next
+/// one overwrites) then leave the variable and each of its stores as the code
+/// wrote them, so a debugger prints, at any line, the value the statements
+/// before it left. Volatile tells the optimizer only that an access must
+/// happen as written, which is true of every access, so no pass can use it
+/// to change what the program does. A memcpy out of the variable only reads
+/// it and stays plain: a volatile one would pin its destination too, and the
+/// temporaries are the optimizer's (SROA removes the copies of aggregates, a
+/// 512 KB array passed 40 times in run/core-argslots.test), as are the big
+/// copies of an inlined callee's variables (DebugInfoBuilder::declareLocal).
+void Lowering::keepInMemory(llvm::Value *Slot) {
+  llvm::SmallVector<llvm::Value *, 8> Work{Slot};
+  llvm::SmallPtrSet<llvm::Value *, 8> Seen{Slot};
+  while (!Work.empty()) {
+    llvm::Value *V = Work.pop_back_val();
+    for (llvm::Use &U : V->uses()) {
+      llvm::User *Usr = U.getUser();
+      if (auto *L = llvm::dyn_cast<llvm::LoadInst>(Usr)) {
+        L->setVolatile(true);
+      } else if (auto *S = llvm::dyn_cast<llvm::StoreInst>(Usr)) {
+        if (S->getPointerOperand() == V)
+          S->setVolatile(true);
+      } else if (auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(Usr)) {
+        if (Seen.insert(GEP).second)
+          Work.push_back(GEP);
+      } else if (auto *MI = llvm::dyn_cast<llvm::MemIntrinsic>(Usr)) {
+        if (U.getOperandNo() == 0) // the destination
+          MI->setVolatile(B.getInt1(true));
+      }
+    }
   }
+}
+
+llvm::Error Lowering::run() {
+  if (Opts.DebugInfo)
+    DI.start();
   // gc contracts on arm64 and not on amd64 (D4.12); see FuseFMA.
   FuseFMA = LM.getTargetTriple().isAArch64();
   prepareTypes();
@@ -2169,6 +2196,8 @@ llvm::Error Lowering::run() {
     if (Gl.ReadOnly && Gl.Parts.empty())
       GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     Globals.push_back(GV);
+    if (Opts.DebugInfo)
+      DI.declareGlobal(Gl, GV);
   }
   if (llvm::Error E = classifyCFunctions())
     return E;
@@ -2179,13 +2208,25 @@ llvm::Error Lowering::run() {
       Globals[I]->setInitializer(staticData(GM.Globals[I]));
   for (size_t I = 0; I < GM.Funcs.size(); ++I)
     if (!GM.Funcs[I]->isDeclaration())
-      if (llvm::Error E = function(*GM.Funcs[I], Funcs[I]))
+      if (llvm::Error E = function(I, *GM.Funcs[I], Funcs[I]))
         return E;
   if (NoStackAt)
     return nestingError();
   GF = nullptr;
-  if (Opts.DebugInfo)
-    DIB.finalize();
+  if (Opts.DebugInfo) {
+    // finish makes the structs that declarations stand for: it can fail too.
+    DI.finish();
+    if (DI.failedAt()) {
+      NoStackAt = DI.failedAt();
+      return nestingError();
+    }
+    if (Opts.Counts) {
+      Opts.Counts->DITypeSteps += DI.counts().TypeSteps;
+      Opts.Counts->DIVariableSteps += DI.counts().VariableSteps;
+      Opts.Counts->DILocationSteps += DI.counts().LocationSteps;
+      Opts.Counts->DIScopeSteps += DI.counts().ScopeSteps;
+    }
+  }
   return llvm::Error::success();
 }
 
@@ -2213,6 +2254,7 @@ gopp::lowerToLLVM(llvm::LLVMContext &Ctx, const gir::Module &M,
   LowerToLLVMOptions O = Opts;
   O.TargetCPU = TM.getTargetCPU().str();
   O.TargetFeatures = TM.getTargetFeatureString().str();
+  O.Optimized = TM.getOptLevel() != llvm::CodeGenOptLevel::None;
   Lowering L(Ctx, M, *LM, O);
   if (llvm::Error E = L.run())
     return std::move(E);

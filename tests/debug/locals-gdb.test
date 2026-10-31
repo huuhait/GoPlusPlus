@@ -1,0 +1,46 @@
+// REQUIRES: gdb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/locals.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/locals.gdb %t 2>&1 | FileCheck %s
+// P04.12 (D4.7): gdb stops at a line and prints the locals of every kind of
+// type, the globals, and the types by their Go++ names. The program is
+// Inputs/locals.gopp; the line is its `println`, after every variable is set.
+// This is the default build (`opt 0`): the named variables are kept in their
+// slots, so each is whole (a string literal's pointer, a nil pointer and an
+// Option are all printable).
+//
+// CHECK: Breakpoint 1, main.main () at {{.*}}locals.gopp:43
+// CHECK-DAG: b = 120 'x'
+// CHECK-DAG: i8 = -5
+// CHECK-DAG: u16 = 65535
+// CHECK-DAG: f32 = 2.5
+// CHECK-DAG: ok = true
+// CHECK-DAG: count = 8
+// CHECK-DAG: name = {ptr = {{0x[0-9a-f]+}} "gopp", len = 4, cap = 0}
+// CHECK-DAG: tags = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}
+// CHECK-DAG: nums = {10, 20, 30}
+// CHECK-DAG: d = {Name = {ptr = {{0x[0-9a-f]+}} "gopp", len = 4, cap = 0}, Pages = 4, Tags = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}, Pos = {X = 1.5, Y = -2}, Next = 0x0, Maybe = {value = 9, set = true}, Grid = {{[{][{]0, 0, 0[}], [{]0, 0, 6[}][}][}]}}
+// CHECK-DAG: p = {{0x[0-9a-f]+}}
+// CHECK-DAG: m = {{0x[0-9a-f]+}}
+// CHECK-DAG: sum = 35
+// The package variables, by their readable names.
+// CHECK: $1 = 7
+// CHECK: $2 = {ptr = {{0x[0-9a-f]+}} "global", len = 6, cap = 0}
+// CHECK: $3 = {X = 1.5, Y = -2}
+// CHECK: $4 = {{[{][{]0, 0, 0[}], [{]0, 0, 6[}][}]}}
+// CHECK: $5 = 4
+// The types, with Go++ spelling and the fields' names.
+// CHECK: type = struct main.Doc
+// CHECK: type = struct main.Doc {
+// CHECK-NEXT: struct string Name;
+// CHECK-NEXT: int64 Pages;
+// CHECK-NEXT: struct []string Tags;
+// CHECK-NEXT: struct main.Vec2 Pos;
+// CHECK-NEXT: struct main.Doc *Next;
+// CHECK-NEXT: struct Option[int64] Maybe;
+// CHECK-NEXT: [2][3]int32 Grid;
+// CHECK-NEXT: }
+// CHECK: type = [3]int64
+// CHECK: type = struct []string
+// CHECK: type = struct main.Doc *
+// CHECK: type = struct Option[int64]
+// CHECK: type = struct gopp.map *

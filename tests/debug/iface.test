@@ -1,0 +1,48 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/iface.gopp -o %t
+// RUN: llvm-dwarfdump --debug-info %t | FileCheck %s --check-prefix=DWARF
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/iface.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/iface.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// P04.12 with P04.06's methods and interfaces, both sides. An interface
+// value is its two words as addresses (`gopp.iface`: as byte pointers a
+// debugger would print text). A value receiver of a slice type arrives as a
+// (ptr, len) pair, and the slice the body makes of it is the parameter, once,
+// 32 bytes; the pair is no variable. A method's frame is `main.Nums.Sum`
+// and a function's `main.use`. The thunk an interface calls is artificial,
+// at the line of the method it calls (review R8), while the method is not
+// artificial.
+//
+// DWARF: DW_AT_name ("main.Sq.Area")
+// DWARF-NOT: DW_AT_artificial
+// DWARF: DW_TAG_formal_parameter
+// DWARF: DW_AT_name ("interface thunk for main.Sq.Area")
+// DWARF-NEXT: DW_AT_decl_file ({{.*}}iface.gopp")
+// DWARF-NEXT: DW_AT_decl_line (16)
+// DWARF-NEXT: DW_AT_prototyped (true)
+// DWARF-NEXT: DW_AT_type ({{.*}} "int64")
+// DWARF-NEXT: DW_AT_artificial (true)
+//
+// GDB: sh = {itab = 0x{{[0-9a-f]+}} <{{.*}}>, data = 0x3}
+// GDB: #0 {{.*}}main.use (sh=...) at {{.*}}iface.gopp:33
+// GDB: #1 {{.*}}main.main () at {{.*}}iface.gopp
+// GDB: Breakpoint 2, main.Nums.Sum (n=...) at {{.*}}iface.gopp:25
+// GDB-NEXT: t += v
+// GDB-NEXT: n = {ptr = 0x{{[0-9a-f]+}}, len = 3, cap = 3, alloc = 0x0}
+// GDB-NEXT: v = 1
+// GDB-NEXT: t = 0
+// GDB-NEXT: $1 = 32
+// GDB-NEXT: #0 {{.*}}main.Nums.Sum (n=...) at {{.*}}iface.gopp:25
+// GDB-NEXT: #1 {{.*}}main.main () at {{.*}}iface.gopp
+//
+// LLDB: (gopp.iface) sh = (itab = 0x{{[0-9a-f]+}}, data = 0x0000000000000003)
+// LLDB: ([]int64) n = {
+// LLDB-NEXT: ptr = 0x
+// LLDB-NEXT: len = 3
+// LLDB-NEXT: cap = 3
+// LLDB-NEXT: alloc = 0x0000000000000000
+// LLDB-NEXT: }
+// LLDB-NEXT: (long) t = 0
+// LLDB-NEXT: (long) v = 1
+// LLDB: (__size_t) $0 = 32
+// LLDB: frame #0: {{.*}}`main.Nums.Sum(n=[]int64 @ {{.*}}) at iface.gopp:25
+// LLDB-NEXT: frame #1: {{.*}}`main.main at iface.gopp

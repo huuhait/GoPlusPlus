@@ -1,0 +1,23 @@
+// REQUIRES: gdb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/chain.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/chain.gdb %t 2>&1 | FileCheck %s
+// P04.12: a backtrace names the functions by their Go++ names (the readable
+// form of the `_GP` symbol, not the symbol), with the arguments and the
+// lines; the callers' locals are printable.
+//
+// CHECK: Breakpoint 1, main.leaf (v=..., k=8) at {{.*}}chain.gopp:14
+// CHECK: #0 {{ *}}main.leaf (v=..., k=8) at {{.*}}chain.gopp:14
+// CHECK-NEXT: #1 {{.*}} in main.mid (n=8, name=...) at {{.*}}chain.gopp:20
+// CHECK-NEXT: #2 {{.*}} in main.outer (n=7) at {{.*}}chain.gopp:27
+// CHECK-NEXT: #3 {{.*}} in main.main () at {{.*}}chain.gopp:31
+// CHECK: v = {X = 1.5, Y = 2}
+// CHECK: k = 8
+// CHECK: acc = 17.5
+// The loop's `i` is in the loop's lexical block, which the line has left.
+// CHECK-NOT: i =
+// CHECK: #1 {{.*}} in main.mid
+// CHECK: n = 8
+// CHECK: name = {ptr = {{0x[0-9a-f]+}} "outer", len = 5, cap = 0}
+// CHECK: #2 {{.*}} in main.outer
+// CHECK: n = 7
+// CHECK-NOT: _GP

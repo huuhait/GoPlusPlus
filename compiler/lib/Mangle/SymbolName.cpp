@@ -104,6 +104,7 @@ constexpr KindInfo Kinds[] = {
     {"TI", 1},                                          // IfaceThunk
     {"Tm", 1},                                          // MethodTable
     {"Tn", 1},                                          // IfaceDesc
+    {"Tp", 1},                                          // IfacePtrThunk
 };
 static_assert(sizeof(Kinds) / sizeof(Kinds[0]) ==
                   static_cast<size_t>(Kind::NumKinds),
@@ -498,19 +499,23 @@ const char *sym::kindPrefix(Kind K) { return prefixOf(K).data(); }
 
 const char *sym::kindName(Kind K) {
   static const char *const Names[] = {
-      "Bool",       "Int",        "Int8",          "Int16",       "Int32",
-      "Int64",      "Uint",       "Uint8",         "Uint16",      "Uint32",
-      "Uint64",     "Uintptr",    "Float32",       "Float64",     "Complex64",
-      "Complex128", "String",     "UnsafePointer", "Pointer",     "Slice",
-      "Array",      "Map",        "Option",        "View",        "Borrowed",
-      "Chan",       "Tuple",      "Signature",     "Struct",      "Field",
-      "Interface",  "IMethod",    "Named",         "LocalNamed",  "Universe",
-      "Instance",   "TypeParam",  "Unit",          "UnitType",    "Dim",
-      "ParamDim",   "BackRef",    "Func",          "Method",      "OpMethod",
-      "Var",        "Closure",    "PkgInit",       "InitFunc",    "TypeInfo",
-      "VTable",     "ITab",       "EqGlue",        "HashGlue",    "DropGlue",
-      "CloneGlue",  "Data",       "CABIThunk",     "MethodValue", "MethodExpr",
-      "Promoted",   "IfaceThunk", "MethodTable",   "IfaceDesc",
+      "Bool",          "Int",           "Int8",        "Int16",
+      "Int32",         "Int64",         "Uint",        "Uint8",
+      "Uint16",        "Uint32",        "Uint64",      "Uintptr",
+      "Float32",       "Float64",       "Complex64",   "Complex128",
+      "String",        "UnsafePointer", "Pointer",     "Slice",
+      "Array",         "Map",           "Option",      "View",
+      "Borrowed",      "Chan",          "Tuple",       "Signature",
+      "Struct",        "Field",         "Interface",   "IMethod",
+      "Named",         "LocalNamed",    "Universe",    "Instance",
+      "TypeParam",     "Unit",          "UnitType",    "Dim",
+      "ParamDim",      "BackRef",       "Func",        "Method",
+      "OpMethod",      "Var",           "Closure",     "PkgInit",
+      "InitFunc",      "TypeInfo",      "VTable",      "ITab",
+      "EqGlue",        "HashGlue",      "DropGlue",    "CloneGlue",
+      "Data",          "CABIThunk",     "MethodValue", "MethodExpr",
+      "Promoted",      "IfaceThunk",    "MethodTable", "IfaceDesc",
+      "IfacePtrThunk",
   };
   static_assert(sizeof(Names) / sizeof(Names[0]) ==
                     static_cast<size_t>(Kind::NumKinds),
@@ -732,7 +737,8 @@ const Node *Context::data(StringRef Key) {
 }
 const Node *Context::wrapper(Kind K, const Node *E) {
   assert(K == Kind::CABIThunk || K == Kind::MethodValue ||
-         K == Kind::MethodExpr || K == Kind::Promoted || K == Kind::IfaceThunk);
+         K == Kind::MethodExpr || K == Kind::Promoted ||
+         K == Kind::IfaceThunk || K == Kind::IfacePtrThunk);
   return make(K, {E});
 }
 
@@ -883,6 +889,11 @@ bool kidOk(Kind Parent, size_t Idx, const Node *Kid) {
   case Kind::Promoted:
   case Kind::IfaceThunk:
     return Kid->isEntity();
+  case Kind::IfacePtrThunk: {
+    // A method (or an instance of a generic one).
+    const Node *M = Kid->K == Kind::Instance ? Kid->Kids[0] : Kid;
+    return M->K == Kind::Method || M->K == Kind::OpMethod;
+  }
   default:
     return false;
   }
@@ -1412,8 +1423,9 @@ const char *basicName(Kind K) {
 
 /// How a node is printed where it is: the last parameter of a variadic
 /// signature, the signature of an interface method (no `func`), a field of a
-/// `@Strict` struct (only a written `@Required` is shown, as TypeString does).
-enum Mode : unsigned { Normal, Variadic, SigOnly, StrictField };
+/// `@Strict` struct (only a written `@Required` is shown, as TypeString does),
+/// a method as a method of the pointer to its type (`(*main.T).M`).
+enum Mode : unsigned { Normal, Variadic, SigOnly, StrictField, PtrRecv };
 
 struct Item {
   const Node *N; // null: Text
@@ -1702,17 +1714,21 @@ struct Printer {
       break;
     }
     case Kind::Method:
-      node(N->Kids[0]);
-      lit(".");
-      Pending.push_back({nullptr, N->B});
-      break;
     case Kind::OpMethod:
-      node(N->Kids[0]);
+      if (It.M == PtrRecv) {
+        lit("(*");
+        node(N->Kids[0]);
+        lit(")");
+      } else {
+        node(N->Kids[0]);
+      }
       lit(".");
       Pending.push_back({nullptr, N->B});
-      node(N->Kids[1]);
-      if (N->Num)
-        lit(" @Right");
+      if (N->K == Kind::OpMethod) {
+        node(N->Kids[1]);
+        if (N->Num)
+          lit(" @Right");
+      }
       break;
     case Kind::Closure:
       node(N->Kids[0]);
@@ -1785,6 +1801,12 @@ struct Printer {
     case Kind::IfaceThunk:
       lit("interface thunk for ");
       node(N->Kids[0]);
+      break;
+    case Kind::IfacePtrThunk:
+      // The method as Go spells it in the method set of the pointer type:
+      // `(*main.T).M`.
+      lit("interface thunk for ");
+      node(N->Kids[0], PtrRecv);
       break;
     case Kind::Dim:
     case Kind::ParamDim:

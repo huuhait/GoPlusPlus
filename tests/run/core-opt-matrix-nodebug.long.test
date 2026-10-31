@@ -1,0 +1,9 @@
+// REQUIRES: long, no-sanitizer, host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %S --link-flags "%gopp_link_flags" --jobs 8 --no-debug
+// P04.12 (manager decision M2 of its team build): `opt 0` keeps the variables
+// in memory only with DWARF (docs/design/pipelines.md section 7). The whole
+// run corpus built without DWARF gives, at every `opt` and with
+// -pipeline=fastisel, the results it gives with DWARF (core-opt-matrix.long.test)
+// and Go's where they are saved. The run tests run without DWARF at `opt 0`
+// in the fast runner too. Not under a sanitizer: the build is the same and
+// the ASan long suite is over its time budget.

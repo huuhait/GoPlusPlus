@@ -1,0 +1,52 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/cuts.gopp -o %t
+// RUN: llvm-dwarfdump --debug-info %t | FileCheck %s --check-prefix=DWARF
+// RUN: llvm-dwarfdump --verify %t | FileCheck %s --check-prefix=VERIFY
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/cuts.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/cuts.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// P04.12: the cuts of DebugInfoBuilder::typeOf, both sides. A pointer refers
+// to a struct by a declaration of its name, and a part higher than
+// MaxTypeHeight is referred to that way too; a pointer or an array is never
+// a declaration itself. The DWARF has the declarations, and the struct that
+// holds a chain of 50 pointers past its 47th level, AND gdb and lldb find
+// every value through them: a struct that points to itself with the pointer
+// asked for first (walk), two structs that point to each other with *B asked
+// for first (look), a pointer that was 48 levels high before pointers
+// referred to declarations (x15.p), an array of a struct 47 levels high
+// (h.arr), the end of the chain of pointers (q50).
+//
+// DWARF: DW_TAG_structure_type
+// DWARF-NEXT: DW_AT_name ("***********************************************main.Q0")
+// DWARF: DW_TAG_member
+// DWARF-NEXT: DW_AT_name ("value")
+// DWARF: DW_AT_name ("*main.Node")
+// DWARF: DW_TAG_structure_type
+// DWARF-NEXT: DW_AT_name ("main.Node")
+// DWARF-NEXT: DW_AT_declaration (true)
+// VERIFY: No errors.
+//
+// GDB: $1 = {val = 1, next = 0x{{[0-9a-f]+}}}
+// GDB: $2 = {val = 2, next = 0x0}
+// GDB: $3 = {a = 0x0, w = 5}
+// GDB: $4 = 7
+// GDB: $5 = {v = 140, p = 0x{{[0-9a-f]+}}}
+// GDB: $6 = 130
+// GDB: $7 = 5
+// GDB: $8 = 9
+// GDB: $9 = {value = 0x{{[0-9a-f]+}}}
+// GDB: $10 = 7
+//
+// LLDB: (main.Node) $0 = {
+// LLDB-NEXT: val = 2
+// LLDB-NEXT: next = NULL
+// LLDB: (main.B) $1 = {
+// LLDB-NEXT: a = NULL
+// LLDB-NEXT: w = 5
+// LLDB: (long) $2 = 7
+// LLDB: (main.P14) $3 = {
+// LLDB-NEXT: v = 140
+// LLDB: (long) x15.p->p->v = 130
+// LLDB: (long) h.arr[1].v = 5
+// LLDB: $4 = {
+// LLDB-NEXT: value = 0x
+// LLDB: (long) $5 = 7

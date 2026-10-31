@@ -1,0 +1,14 @@
+breakpoint set -f cuts.gopp -l 255
+breakpoint set -f cuts.gopp -l 261
+breakpoint set -f cuts.gopp -l 348
+run
+expression *n->next
+continue
+expression *p->a->b
+expression p->a->v
+continue
+expression *x15.p
+frame variable x15.p->p->v
+frame variable h.arr[1].v
+expression ***q50
+expression (***********************************************(***q50).value).q

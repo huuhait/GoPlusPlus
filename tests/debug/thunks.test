@@ -1,0 +1,29 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/thunks.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/thunks.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB --implicit-check-not=_GP
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/thunks.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB --implicit-check-not=_GP
+// P04.12 reviews R7 and R8: an itab's thunk in a backtrace. Its name is
+// readable for a pointer receiver too (`(*Box).Bump`'s thunk is named by the
+// method, as the method's own symbol is), and its frame is at the method's
+// declaration line, whether the method is inlined into it (Bump) or called
+// (Twice), never line 0 or a line of the code before it. The other side: a
+// runtime function has no source and no line, and never shows the line of
+// another function (gdb: no line at all; lldb: line 0).
+//
+// GDB: @@BUMP
+// GDB-NEXT: #0 {{.*}}main.Box.Bump (b={{.*}}, k=3) at {{.*}}thunks.gopp:17
+// GDB-NEXT: #1 {{.*}}interface thunk for main.Box.Bump () at {{.*}}thunks.gopp:15
+// GDB: @@TWICE
+// GDB-NEXT: #0 {{.*}}main.Dd.Twice (q=..., v=4) at {{.*}}thunks.gopp:48
+// GDB-NEXT: #1 {{.*}} in interface thunk for main.Dd.Twice () at {{.*}}thunks.gopp:47
+// GDB: @@RUNTIME
+// GDB-NEXT: #0 {{.*}} in gopp.print_i64 (){{$}}
+// GDB-NEXT: #1 {{.*}} in main.main () at {{.*}}thunks.gopp:60
+//
+// LLDB: @@BUMP
+// LLDB: frame #1: {{.*}}`interface thunk for main.Box.Bump at thunks.gopp:15:1
+// LLDB: @@TWICE
+// LLDB: frame #1: {{.*}}`interface thunk for main.Dd.Twice at thunks.gopp:47:1
+// LLDB: frame #0: {{.*}}`gopp.print_i64 at thunks.gopp:0{{$}}
+// LLDB: @@RUNTIME
+// LLDB: frame #1: {{.*}}`main.main at thunks.gopp:60

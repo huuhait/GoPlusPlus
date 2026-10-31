@@ -111,14 +111,18 @@ enum class Kind : uint8_t {
   HashGlue,
   DropGlue,
   CloneGlue,
-  Data,        ///< B = a stable key (a content digest) of constant data
-  CABIThunk,   ///< kid: entity (D4.4)
-  MethodValue, ///< bound method value `x.M`
-  MethodExpr,  ///< method expression `T.M`
-  Promoted,    ///< wrapper of a promoted method of an `extends` child
-  IfaceThunk,  ///< adapter of a method for an interface method table
-  MethodTable, ///< kid: type (its method table, P04.06)
-  IfaceDesc,   ///< kid: interface type (its method keys, P04.06)
+  Data,          ///< B = a stable key (a content digest) of constant data
+  CABIThunk,     ///< kid: entity (D4.4)
+  MethodValue,   ///< bound method value `x.M`
+  MethodExpr,    ///< method expression `T.M`
+  Promoted,      ///< wrapper of a promoted method of an `extends` child
+  IfaceThunk,    ///< adapter of a method for an interface method table
+  MethodTable,   ///< kid: type (its method table, P04.06)
+  IfaceDesc,     ///< kid: interface type (its method keys, P04.06)
+  IfacePtrThunk, ///< kid: a value method; its adapter for the method table
+                 ///< of a pointer to its type, which reads the value through
+                 ///< the pointer (an IfaceThunk of the method reads it from
+                 ///< the interface's data word)
   NumKinds
 };
 
@@ -245,7 +249,8 @@ public:
   const Node *ofType(Kind K, const Node *T);
   const Node *itab(const Node *Concrete, const Node *Iface);
   const Node *data(llvm::StringRef Key);
-  /// CABIThunk, MethodValue, MethodExpr, Promoted or IfaceThunk of Entity.
+  /// CABIThunk, MethodValue, MethodExpr, Promoted, IfaceThunk or
+  /// IfacePtrThunk of Entity.
   const Node *wrapper(Kind K, const Node *Entity);
 
   /// The general constructor (used by the parser and the builders).

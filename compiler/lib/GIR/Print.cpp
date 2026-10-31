@@ -146,6 +146,11 @@ struct Printer {
     }
   }
 
+  void scope(ScopeId S) {
+    if (Opts.Scopes && S)
+      OS << "  ; scope " << S;
+  }
+
   void span(const Span &S) {
     if (!Opts.Spans || !S.isValid())
       return;
@@ -193,6 +198,7 @@ struct Printer {
       break;
     }
     span(S.Loc);
+    scope(S.Scope);
     OS << '\n';
   }
 
@@ -254,6 +260,7 @@ struct Printer {
       break;
     }
     span(T.Loc);
+    scope(T.Scope);
     OS << '\n';
   }
 
@@ -277,6 +284,17 @@ struct Printer {
       return;
     }
     OS << " {\n";
+    if (Opts.Scopes)
+      for (size_t K = 0; K < F.Scopes.size(); ++K, ++printSteps()) {
+        const DebugScope &D = F.Scopes[K];
+        OS << "  scope " << K + 1 << ": "
+           << (D.K == DebugScope::Block ? "block" : "inlined ");
+        if (D.K == DebugScope::Inlined)
+          OS << (D.Callee < M.Funcs.size() ? M.Funcs[D.Callee]->Name : "?");
+        OS << " in " << D.Parent;
+        span(D.Loc);
+        OS << '\n';
+      }
     for (LocalId I = 0; I < F.Locals.size(); ++I) {
       const Local &L = F.Locals[I];
       ++printSteps();
@@ -285,6 +303,16 @@ struct Printer {
         OS << " [owned]";
       if (!L.Name.empty())
         OS << "  ; " << L.Name;
+      if (Opts.Scopes) {
+        if (L.Source)
+          OS << " [source]";
+        if (L.ArgNo)
+          OS << " [param " << L.ArgNo << ']';
+        if (L.Origin != NoId)
+          OS << " [from _" << L.Origin << ']';
+        if (L.Scope)
+          OS << " [scope " << L.Scope << ']';
+      }
       OS << '\n';
     }
     for (BlockId B = 0; B < F.Blocks.size(); ++B) {

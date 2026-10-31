@@ -62,6 +62,12 @@ public:
   /// The span given to the statements and terminators made from now on.
   void setSpan(Span S) { Loc = S; }
   Span span() const { return Loc; }
+  /// The debug scope of the statements, terminators and locals made from now
+  /// on (P04.12), and a new lexical block inside the current one (not
+  /// entered; its position is the current span).
+  void setScope(ScopeId S) { Scope = S; }
+  ScopeId scope() const { return Scope; }
+  ScopeId newScope();
 
   // Statements.
   void assign(Place Dest, Rvalue RV);
@@ -106,6 +112,7 @@ private:
   Function &F;
   BlockId Cur = 0;
   Span Loc;
+  ScopeId Scope = 0;
 };
 
 /// Removes the blocks that no edge reaches (D4.2 step 6) and renumbers the

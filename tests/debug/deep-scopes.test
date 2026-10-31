@@ -1,0 +1,21 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/deepscopes.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/deepscopes.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/deepscopes.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// P04.12: lexical blocks nest at most DebugInfoBuilder::MaxBlockDepth (64)
+// deep; deeper blocks share the 64th. Both sides: in the shared block, 70
+// nested `x := x + 1` and two sibling blocks that both declare y are never
+// shown with another x's or y's value (optimized out), while w and z, names
+// of their own, are; below the limit, the innermost of 10 shadowing x is 10.
+//
+// GDB: $1 = <optimized out>
+// GDB-NEXT: $2 = 140
+// GDB: $3 = 10
+// GDB: $4 = <optimized out>
+// GDB-NEXT: $5 = 2019
+//
+// LLDB: (long) x = <no location, value may have been optimized out>
+// LLDB: (long) w = 140
+// LLDB: (long) x = 10
+// LLDB: (long) y = <no location, value may have been optimized out>
+// LLDB: (long) z = 2019

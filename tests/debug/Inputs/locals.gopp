@@ -1,0 +1,44 @@
+package main
+
+type Vec2 struct {
+	X, Y float64
+}
+
+type Doc struct {
+	Name  string
+	Pages int
+	Tags  []string
+	Pos   Vec2
+	Next  Option[*Doc]
+	Maybe Option[int]
+	Grid  [2][3]int32
+}
+
+var counter int = 7
+var label string = "global"
+
+func total(d Doc, k int) int {
+	n := d.Pages * k
+	for i := 0; i < 3; i++ {
+		n += i
+	}
+	return n
+}
+
+func main() {
+	var b byte = 'x'
+	var i8 int8 = -5
+	var u16 uint16 = 65535
+	var f32 float32 = 2.5
+	ok := true
+	count := counter + 1
+	name := "gopp"
+	tags := []string{"a", "bc"}
+	nums := [3]int{10, 20, 30}
+	d := Doc{Name: name, Pages: 4, Tags: tags, Pos: Vec2{1.5, -2}, Next: nil, Maybe: 9}
+	d.Grid[1][2] = 6
+	p := &d
+	m := map[string]int{"one": 1}
+	sum := total(d, count)
+	println(b, i8, u16, f32, ok, name, len(tags), nums[2], p.Pages, len(m), sum, label)
+}

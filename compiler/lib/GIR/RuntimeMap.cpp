@@ -63,6 +63,9 @@ Type *Lowering::mapType() {
     // the allocator that owns the header, the entries and the index
     // (ADR-0029; null: the global allocator)
     Ctx.setStructBody(S, {U, U, U, U, P, P, U, P});
+    // For the debugger (P04.12): `p m->count` is len(m).
+    Ctx.setFieldNames(S, {"count", "nents", "ecap", "icap", "entries", "index",
+                          "iters", "alloc"});
   }
   return Ctx.ptr(S);
 }

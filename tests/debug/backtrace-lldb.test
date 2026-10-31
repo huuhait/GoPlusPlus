@@ -1,0 +1,12 @@
+// REQUIRES: lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/chain.gopp -o %t
+// RUN: timeout 30 lldb -b -s %S/Inputs/chain.lldb %t 2>&1 | FileCheck %s
+// P04.12: the same backtrace in lldb: readable names, no `_GP` symbols.
+//
+// CHECK: frame #0: {{.*}}main.leaf(v=(X = 1.5, Y = 2), k=8) at chain.gopp:14
+// CHECK: frame #1: {{.*}}main.mid(n=8, name=(ptr = "outer", len = 5, cap = 0)) at chain.gopp:20
+// CHECK: frame #2: {{.*}}main.outer(n=7) at chain.gopp:27
+// CHECK: frame #3: {{.*}}main.main at chain.gopp:31
+// CHECK: (long) n = 7
+// CHECK: (string) label = (ptr = "outer", len = 5, cap = 0)
+// CHECK-NOT: _GP

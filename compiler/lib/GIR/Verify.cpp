@@ -126,6 +126,11 @@ private:
   int64_t Block = -1, Index = -1;
   /// The locals whose address some AddrOf takes (V066), of the function.
   llvm::DenseSet<LocalId> AddrTaken;
+  /// Per debug scope of the function (V073, V074): the function whose code it
+  /// holds (null after an error in the scope).
+  std::vector<const Function *> Owner;
+  /// Per parameter of the function (V074): a variable stands for it.
+  std::vector<uint8_t> StandsFor;
   /// The C types decided so far (V067), for the module: a type that many C
   /// functions use is walked once.
   CTypeRules CTypes;
@@ -451,7 +456,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V067, V070
+  // A function: V010-V013, V022, V067, V070, V073, V074
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -467,6 +472,7 @@ private:
       declaration(Fn);
       return;
     }
+    scopes(Fn);
     if (!locals(Fn))
       return;
     if (Fn.Blocks[0].Cleanup)
@@ -550,8 +556,13 @@ private:
                              : Lo.K == Local::Var || Lo.K == Local::Temp;
       if (!KindOk)
         err("V011", "local _" + num(L) + " has the wrong kind");
+      if (Lo.Source && Lo.K != Local::Arg && Lo.K != Local::Var)
+        err("V011", "local _" + num(L) +
+                        " is a source variable and not a parameter or a "
+                        "variable");
       if (Lo.Owned && Lo.K != Local::Temp)
         err("V014", "local _" + num(L) + " is owned and not a temporary");
+      localScope(L, Lo);
       const Type *Want = L == 0   ? Fn.Sig->ret()
                          : L <= N ? Fn.Sig->elems()[L - 1]
                                   : Lo.Ty;
@@ -562,10 +573,144 @@ private:
     return Typed;
   }
 
+  /// V073: the debug scopes form a tree: a scope's parent is a scope made
+  /// before it (0 is the function), so a walk up ends. An `Inlined` scope (an
+  /// inline site) names another function of the module that has a body, and
+  /// no origin; a `Block` names no callee. A block of the function itself
+  /// lies under no inlined scope; a block copied from a callee (Origin) lies
+  /// under one, and its Origin names a block of that callee's own (not a
+  /// copy). Owner[S] is the function whose code scope S holds: the callee of
+  /// the nearest inlined scope above it, or this function (null after an
+  /// error, which V074 then leaves alone).
+  void scopes(const Function &Fn) {
+    size_t N = Fn.Scopes.size();
+    Owner.assign(N + 1, nullptr);
+    Owner[0] = &Fn;
+    StandsFor.assign(Fn.numParams() + 1, 0);
+    for (size_t I = 0; I < N; ++I) {
+      ++Steps;
+      const DebugScope &D = Fn.Scopes[I];
+      auto Who = [&] { return "debug scope " + num(I + 1); };
+      span(D.Loc);
+      if (D.Parent > I) {
+        err("V073", Who() + " has parent " + num(D.Parent) +
+                        ", which is not an earlier scope");
+        continue;
+      }
+      const Function *Up = Owner[D.Parent];
+      if (D.K == DebugScope::Inlined) {
+        if (D.Origin != 0)
+          err("V073", Who() + " is an inline site with an origin");
+        if (D.Callee >= M.Funcs.size() || !M.Funcs[D.Callee] ||
+            M.Funcs[D.Callee].get() == &Fn ||
+            M.Funcs[D.Callee]->isDeclaration())
+          err("V073", Who() + " is an inline site of no other function of the "
+                              "module that has a body");
+        else
+          Owner[I + 1] = M.Funcs[D.Callee].get();
+        continue;
+      }
+      if (D.Callee != NoId)
+        err("V073", Who() + " is a block and names a callee");
+      if (!Up)
+        continue;
+      if (D.Origin == 0) {
+        if (Up != &Fn)
+          err("V073", Who() + " is a block of the function itself inside an "
+                              "inline site");
+        else
+          Owner[I + 1] = Up;
+        continue;
+      }
+      if (Up == &Fn)
+        err("V073", Who() + " is a copy of a callee's block outside every "
+                            "inline site");
+      else if (D.Origin > Up->Scopes.size() ||
+               Up->Scopes[D.Origin - 1].K != DebugScope::Block ||
+               Up->Scopes[D.Origin - 1].Origin != 0)
+        err("V073", Who() + " copies scope " + num(D.Origin) + " of " +
+                        Up->Name + ", which is no block of its own");
+      else
+        Owner[I + 1] = Up;
+    }
+  }
+
+  /// V074 for a local: its scope exists; Origin is set exactly when the scope
+  /// lies under an inline site, and then names a local of that site's
+  /// callee's own (not one the callee copied from another). ArgNo of a local
+  /// of the function itself is 0, a parameter's own number, or for a source
+  /// variable that stands for a parameter (the slice a borrowed `[]T`
+  /// parameter's (ptr, len) pair is made into) that parameter's number: the
+  /// parameter is then no source variable, and no other variable stands for
+  /// it. A copy has its origin's number (paramOf).
+  void localScope(LocalId L, const Local &Lo) {
+    auto Who = [&] { return "local _" + num(L); };
+    if (Lo.Scope >= Owner.size()) {
+      err("V074", Who() + " is in scope " + num(Lo.Scope) +
+                      ", the function has " + num(Owner.size() - 1));
+      return;
+    }
+    const Function *Up = Owner[Lo.Scope];
+    if (!Up)
+      return;
+    if (Up == F) {
+      if (Lo.Origin != NoId) {
+        err("V074",
+            Who() + " is a copy from a callee outside every inline site");
+        return;
+      }
+      if (Lo.ArgNo == 0 || (L <= F->numParams() && Lo.ArgNo == L))
+        return;
+      if (L <= F->numParams() || !Lo.Source || Lo.K != Local::Var ||
+          Lo.ArgNo > F->numParams())
+        err("V074", Who() + " says it is parameter " + num(Lo.ArgNo));
+      else if (F->Locals[Lo.ArgNo].Source)
+        err("V074", Who() + " stands for parameter " + num(Lo.ArgNo) +
+                        ", which is a source variable itself");
+      else if (StandsFor[Lo.ArgNo])
+        err("V074", Who() + " stands for parameter " + num(Lo.ArgNo) +
+                        ", for which another variable stands");
+      else
+        StandsFor[Lo.ArgNo] = 1;
+      return;
+    }
+    if (Lo.Origin == NoId) {
+      err("V074", Who() + " is the function's own and lies in an inline site");
+      return;
+    }
+    if (Lo.Origin >= Up->Locals.size() ||
+        Up->Locals[Lo.Origin].Origin != NoId) {
+      err("V074", Who() + " copies local _" + num(Lo.Origin) + " of " +
+                      Up->Name + ", which is no local of its own");
+      return;
+    }
+    uint32_t Want = paramOf(*Up, Lo.Origin);
+    if (Lo.ArgNo != Want)
+      err("V074", Who() + " is a copy of local _" + num(Lo.Origin) + " of " +
+                      Up->Name + " and says it is parameter " + num(Lo.ArgNo));
+  }
+
+  /// The parameter position local L of F stands for (0: none): its ArgNo, or
+  /// its own position for a parameter.
+  static uint32_t paramOf(const Function &Fn, LocalId L) {
+    if (Fn.Locals[L].ArgNo)
+      return Fn.Locals[L].ArgNo;
+    return L >= 1 && L <= Fn.numParams() ? L : 0;
+  }
+
+  /// V074 for a statement or a terminator: its scope exists.
+  void scopeId(ScopeId S, const char *What) {
+    if (S >= Owner.size())
+      err("V074", std::string(What) + " is in scope " + num(S) +
+                      ", the function has " + num(Owner.size() - 1));
+  }
+
   /// V012: a declaration (no blocks) has no locals.
   void declaration(const Function &Fn) {
     if (!Fn.Locals.empty())
       err("V012", "a declaration has locals");
+    if (!Fn.Scopes.empty())
+      err("V073", "a declaration has debug scopes");
   }
 
   /// V022: every block is reachable from the entry along normal and unwind
@@ -755,6 +900,7 @@ private:
 
   void statement(const Statement &S) {
     span(S.Loc);
+    scopeId(S.Scope, "the statement");
     switch (S.K) {
     case Statement::Assign:
       if (place(S.Dest)) {
@@ -1013,6 +1159,7 @@ private:
       return;
     }
     span(T.Loc);
+    scopeId(T.Scope, "the terminator");
     switch (T.K) {
     case Terminator::Switch:
       switchOn(T);

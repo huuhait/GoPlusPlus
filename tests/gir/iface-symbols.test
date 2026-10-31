@@ -3,26 +3,43 @@
 // RUN: llvm-nm %t.o | FileCheck --check-prefix=OUT %s
 // RUN: %gopp build -emit=obj %s -o %t.again.o
 // RUN: cmp %t.o %t.again.o
-// RUN: %gopp demangle _GPTiN4mainE1T _GPTmN4mainE1T _GPTnN4mainE1J _GPTaN4mainE1TN4mainE1I _GPTIM1MN4mainE1T | FileCheck --check-prefix=DEM %s
+// RUN: %gopp demangle _GPTiN4mainE1T _GPTmN4mainE1T _GPTnN4mainE1J _GPTaN4mainE1TN4mainE1I _GPTIM1MN4mainE1T _GPTpM1MN4mainE1T _GPTIM1BN4mainE1P | FileCheck --check-prefix=DEM %s
+// RUN: sh -c "llvm-nm %t.o | grep -o '_GP[A-Za-z0-9_$]*' | sort -u | xargs %gopp demangle" | FileCheck --check-prefix=ALL %s
 // P04.06 review R7: the static data of interfaces is named by P04.17's
 // grammar (appendix A.4, A.5): the type descriptor `Ti`, the method table
 // `Tm`, the interface descriptor `Tn` (the method keys an assertion to an
 // interface walks), the itab `Ta` and the thunk `TI`; `gopp demangle` reads
 // each back, two builds give the same object, and no symbol falls outside
-// the grammar (no `$`, no `idesc:` key).
+// the grammar (no `$`, no `idesc:` key; every `_GP` symbol demangles).
+// P04.12 review R7: a thunk is named by its method as the method's own
+// symbol is (`TI`, also for the pointer method `(*P).B`), and the value
+// method `M` in the table of `*T` reads through the pointer: `Tp`, a name
+// of its own next to `T`'s `TI`.
 package main
 
 type I interface{ M() int }
 type J interface{ N() int }
+type K interface{ B() int }
 type T struct{ n int }
 
 func (t T) M() int { return t.n }
 
+type P struct{ n int }
+
+func (p *P) B() int {
+	p.n++
+	return p.n
+}
+
 func main() {
 	var i I = T{1}
+	t := T{2}
+	var i2 I = &t
 	var x any = i
 	_, ok := x.(J)
-	println(i.M(), ok)
+	p := P{3}
+	var k K = &p
+	println(i.M(), i2.M(), k.B(), ok)
 }
 
 // OUT-NOT: {{\$|idesc}}
@@ -31,8 +48,16 @@ func main() {
 // NM-DAG: _GPTnN4mainE1J
 // NM-DAG: _GPTaN4mainE1TN4mainE1I
 // NM-DAG: _GPTIM1MN4mainE1T
+// NM-DAG: _GPTpM1MN4mainE1T
+// NM-DAG: _GPTIM1BN4mainE1P
 // DEM: typeinfo for main.T
 // DEM-NEXT: method table for main.T
 // DEM-NEXT: interface descriptor for main.J
 // DEM-NEXT: itab for main.T as main.I
 // DEM-NEXT: interface thunk for main.T.M
+// DEM-NEXT: interface thunk for (*main.T).M
+// DEM-NEXT: interface thunk for main.P.B
+// ALL-DAG: interface thunk for main.T.M
+// ALL-DAG: interface thunk for (*main.T).M
+// ALL-DAG: interface thunk for main.P.B
+// ALL-DAG: itab for *main.P as main.K

@@ -1,0 +1,49 @@
+// RUN: %gopp build -emit=obj %S/Inputs/types.gopp -o %t.o
+// RUN: llvm-dwarfdump --debug-info %t.o | FileCheck %s --check-prefix=READABLE
+// RUN: llvm-dwarfdump --debug-info %t.o | FileCheck %s --check-prefix=NOLINKAGE --implicit-check-not=DW_AT_linkage_name
+// RUN: %gopp build -emit=obj -dwarf-linkage-names %S/Inputs/types.gopp -o %t.l.o
+// RUN: llvm-dwarfdump --debug-info %t.l.o | FileCheck %s --check-prefix=LINKAGE
+// RUN: llvm-nm %t.l.o | FileCheck %s --check-prefix=SYMBOLS
+// RUN: %gopp build -emit=obj -no-debug %S/Inputs/types.gopp -o %t.n.o
+// RUN: llvm-dwarfdump --debug-info %t.n.o | FileCheck %s --check-prefix=NODEBUG --allow-empty
+// P04.12, D4.7: the names of DWARF. `DW_AT_name` is the readable Go++ form
+// (`main.scalars`, `[]string`, `main.Doc`) for functions, variables, globals
+// and types; the `_GP` symbol is `DW_AT_linkage_name` only with the hidden
+// flag `-dwarf-linkage-names`. By default it is left out (both sides here),
+// because gdb (in a C unit) and lldb show a linkage name that is not an
+// Itanium-mangled one in place of the name, and every backtrace would read
+// `_GPF4mainE4main`; the symbol table names the same address (the SYMBOLS
+// lines), so a debugger still finds it. `-no-debug` writes no DWARF at all.
+
+// READABLE-DAG: DW_AT_name ("main.scalars")
+// READABLE-DAG: DW_AT_name ("main.aggregates")
+// READABLE-DAG: DW_AT_name ("main.add")
+// READABLE-DAG: DW_AT_name ("main.Vec2")
+// READABLE-DAG: DW_AT_name ("main.main")
+// READABLE-DAG: DW_AT_name ("[]string")
+// READABLE-DAG: DW_AT_name ("main.gcount")
+// READABLE-DAG: DW_AT_name ("main.gname")
+// READABLE-DAG: DW_AT_name ("main.Doc")
+// READABLE-DAG: DW_AT_name ("Option[int64]")
+// READABLE-DAG: DW_AT_name ("main.Tree")
+// READABLE-DAG: DW_AT_name ("gopp.map")
+
+// Nothing but `DW_AT_name` for a function: no `_GP` string in the names.
+// NOLINKAGE: DW_AT_name ("main.scalars")
+
+// LINKAGE: DW_AT_linkage_name ("_GPF4mainE7scalars")
+// LINKAGE-NEXT: DW_AT_name ("main.scalars")
+// LINKAGE: DW_AT_linkage_name ("_GPF4mainE10aggregates")
+// LINKAGE-NEXT: DW_AT_name ("main.aggregates")
+// LINKAGE: DW_AT_linkage_name ("_GPF4mainE4main")
+// LINKAGE-NEXT: DW_AT_name ("main.main")
+// A global: its symbol is the linkage name (after the name).
+// LINKAGE: DW_AT_name ("main.gcount")
+// LINKAGE: DW_AT_linkage_name ("_GPR4mainE6gcount")
+
+// SYMBOLS-DAG: T _GPF4mainE7scalars
+// SYMBOLS-DAG: T _GPF4mainE10aggregates
+// SYMBOLS-DAG: T _GPF4mainE4main
+// SYMBOLS-DAG: {{[DdBb]}} _GPR4mainE6gcount
+
+// NODEBUG-NOT: DW_TAG

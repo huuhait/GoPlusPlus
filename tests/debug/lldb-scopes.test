@@ -1,0 +1,25 @@
+// REQUIRES: host-linux-amd64, lldb
+// RUN: %gopp build %S/Inputs/scopes.gopp -o %t
+// RUN: timeout 60 lldb --no-lldbinit -b -s %S/Inputs/scopes.lldb %t 2>&1 | FileCheck %s
+// P04.12, D4.7: shadowed names, nested blocks and loops, in lldb (see
+// gdb-scopes.test): the variables of the blocks that contain the line, and
+// not those of a block that has ended.
+
+// CHECK: @@INNER
+// The function's variables first, then those of the blocks inside it.
+// CHECK: (long) x = 7
+// CHECK-NEXT: (long) y = 8
+// CHECK-NEXT: (long) x = 16
+// CHECK-NEXT: (long) y = 21
+// CHECK: @@LOOP1
+// CHECK: (long) x = 7
+// CHECK-NEXT: (long) y = 8
+// CHECK-NEXT: (long) i = 0
+// CHECK-NEXT: (long) x = 100
+// CHECK: @@AFTER
+// CHECK: (long) x = 7
+// CHECK-NEXT: (long) y = 209
+// CHECK-NOT: (long) i =
+// CHECK: @@MAIN
+// CHECK: (long) x = 7
+// CHECK: (long) main.x = 1000

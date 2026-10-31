@@ -1,0 +1,12 @@
+breakpoint set -f thunks.gopp -l 17
+breakpoint set -f thunks.gopp -l 48
+breakpoint set -n gopp.print_i64
+run
+script print("@@BUMP")
+bt 2
+continue
+script print("@@TWICE")
+bt 2
+continue
+script print("@@RUNTIME")
+bt 2

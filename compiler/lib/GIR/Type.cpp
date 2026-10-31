@@ -60,6 +60,8 @@ Context::Context() {
   Iface = structTy("gopp.iface");
   Type *P = ptr(intTy(8, false));
   setStructBody(Iface, {P, P});
+  // The debugger shows an interface value as these two words (P04.12).
+  setFieldNames(Iface, {"itab", "data"});
 }
 
 Type *Context::get(const Key &K) {
@@ -169,6 +171,23 @@ bool Context::setStructBody(Type *S, ArrayRef<Type *> Fields) {
     S->Elems = ArrayRef<Type *>(Mem, Fields.size());
   }
   S->Body = true;
+  return true;
+}
+
+bool Context::setFieldNames(Type *S, ArrayRef<llvm::StringRef> Names) {
+  std::lock_guard<std::mutex> G(Mu);
+  assert(S->getKind() == Type::Kind::Struct);
+  if (!S->Body || !S->FieldNames.empty() || Names.size() != S->Elems.size() ||
+      Names.empty())
+    return false;
+  llvm::StringRef *Mem = Alloc.Allocate<llvm::StringRef>(Names.size());
+  for (size_t I = 0; I < Names.size(); ++I) {
+    char *Chars = Alloc.Allocate<char>(Names[I].size() + 1);
+    std::copy(Names[I].begin(), Names[I].end(), Chars);
+    Chars[Names[I].size()] = 0;
+    Mem[I] = llvm::StringRef(Chars, Names[I].size());
+  }
+  S->FieldNames = ArrayRef<llvm::StringRef>(Mem, Names.size());
   return true;
 }
 

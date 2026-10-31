@@ -1,0 +1,18 @@
+breakpoint set --file scopes.gopp --line 10
+breakpoint set --file scopes.gopp --line 14
+breakpoint set --file scopes.gopp --line 16
+breakpoint set --file scopes.gopp --line 22
+run
+script print("@@INNER")
+frame variable
+continue
+script print("@@LOOP1")
+frame variable
+continue
+continue
+script print("@@AFTER")
+frame variable
+continue
+script print("@@MAIN")
+frame variable
+target variable

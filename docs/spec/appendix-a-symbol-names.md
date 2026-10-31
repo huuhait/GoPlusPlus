@@ -45,7 +45,7 @@ symbol  = "_GP" entity .
 entity  = Func | Method | OpMethod | Var | Closure | PkgInit | InitFunc
         | TypeInfo | VTable | ITab | EqGlue | HashGlue | DropGlue | CloneGlue
         | Data | CABIThunk | MethodValue | MethodExpr | Promoted | IfaceThunk
-        | MethodTable | IfaceDesc | Instance(entity base) .
+        | IfacePtrThunk | MethodTable | IfaceDesc | Instance(entity base) .
 type    = Basic | Pointer | Slice | Array | Map | Option | View | Borrowed | Chan
         | Tuple | Signature | Struct | Interface | Named | LocalNamed | Universe
         | Instance(type base) | TypeParam | Unit | UnitType | BackRef .
@@ -119,8 +119,9 @@ Every node is a **tag** (one letter, or `T` and a letter), a header, and childre
 | `TI` | IfaceThunk | | entity |
 | `Tm` | MethodTable | | type |
 | `Tn` | IfaceDesc | | interface type |
+| `Tp` | IfacePtrThunk | | method |
 
-Field flags, every mark of a field that type identity compares ([TYP-15](03-types.md#34-required-fields-d14-rule-11), [TYP-15a](03-types.md#34-required-fields-d14-rule-11)): 1 embedded, 2 the name is unexported so its package follows, 4 a tag follows, 8 the effective `@Required` bit, 16 `@Option`, 32 the hidden parent part of an `extends` type (ADR-0023), 64 `@Required` as written, 128 required in the "must be set" sense only (the field of an instance declared with a type parameter, ADR-0016 point 8). Signature flags: 1 variadic; the move mask has bit *i* set for a `move` parameter. There is no flag for `!`: `func!(P) R` is identical to `func(P) (R, error)` (ERR-2) and is written as that. Which child a node may have is fixed (a Method's child is a named type, an Instance's first child is a named type, function, method or operator method, ...); the parser rejects any other.
+Field flags, every mark of a field that type identity compares ([TYP-15](03-types.md#34-required-fields-d14-rule-11), [TYP-15a](03-types.md#34-required-fields-d14-rule-11)): 1 embedded, 2 the name is unexported so its package follows, 4 a tag follows, 8 the effective `@Required` bit, 16 `@Option`, 32 the hidden parent part of an `extends` type (ADR-0023), 64 `@Required` as written, 128 required in the "must be set" sense only (the field of an instance declared with a type parameter, ADR-0016 point 8). Signature flags: 1 variadic; the move mask has bit *i* set for a `move` parameter. There is no flag for `!`: `func!(P) R` is identical to `func(P) (R, error)` (ERR-2) and is written as that. Which child a node may have is fixed (a Method's child is a named type, an Instance's first child is a named type, function, method or operator method, an IfacePtrThunk's child is a method or operator method, or an instance of one, ...); the parser rejects any other.
 
 ## A.5 What each entity is
 
@@ -133,6 +134,7 @@ Field flags, every mark of a field that type identity compares ([TYP-15](03-type
 - **TypeInfo** `Ti`, **VTable** `Tv` (ADR-0023 type table), **ITab** `Ta` (concrete type then interface type), **EqGlue**, **HashGlue**, **DropGlue**, **CloneGlue**, **MethodTable** `Tm` (the methods of a type's method set with their keys, which an assertion to an interface walks; P04.06), **IfaceDesc** `Tn` (an interface type's method keys, for those assertions; P04.06): one per type. Two types that are identical have the same type node, hence the same names (A.6). `gopp demangle` prints them as "typeinfo for main.T", "method table for main.T", "interface descriptor for main.I".
 - **Data** `TD`: constant data, keyed by a content digest the caller computes (for example a hash of a string literal's bytes).
 - **CABIThunk** `TC` (D4.4), **MethodValue** `TV`, **MethodExpr** `TE`, **Promoted** `TP`, **IfaceThunk** `TI`: generated wrappers, named by the entity they wrap. A C-ABI thunk of an `@Export` function is *not* named like this: its symbol is the declared C name (A.8); `TC` names the thunk of a function used as a callback.
+- **IfaceThunk** `TI` and **IfacePtrThunk** `Tp` (P04.06): the adapter an itab holds for a method, named by the method as the method's own symbol names it (a method belongs to its type, whatever its receiver). `TI` is the adapter for the method table of the method's type, and for that of the pointer type when the method has a pointer receiver; `Tp` is the adapter of a value method for the method table of the pointer type, which reads the value through the pointer, so the two adapters of one value method (`var s Summer = a` and `= &a`) have two names. `gopp demangle` prints them as `interface thunk for main.T.M` and `interface thunk for (*main.T).M`.
 
 ### A.5.1 Operator method names
 
@@ -184,6 +186,8 @@ These rows are checked against the code by the unit tests `SymbolName.Goldens` a
 | `_GPK4mainE1_` | `main.init.1` |
 | `_GPR4mainE7counter` | `main.counter` |
 | `_GPTCF4mainE8Callback` | `C-ABI thunk for main.Callback` |
+| `_GPTIM4BumpN4mainE3Box` | `interface thunk for main.Box.Bump` |
+| `_GPTpM3SumN4mainE5Adder` | `interface thunk for (*main.Adder).Sum` |
 | `_GPTiUdk5_18_o5unitsE1M1_o5unitsE1Sn1_E` | `typeinfo for float64[(5/18) units.M/units.S]` |
 | `_GPTiIN4mainE4PairIB6_iiEB18_E` | `typeinfo for main.Pair[main.Pair[int, int], main.Pair[int, int]]` |
 | `_GPTiG0_0_LiELru5errorE` | `typeinfo for func(int) (string, error)` |
@@ -210,9 +214,9 @@ What the demangler refuses (SYM-5, SYM-6): everything the mangler does not write
 
 These rules are also what keeps the demangler linear: every node the readable form expands prints at least one byte of its own (the one exception, an empty package path with an empty name, is too short to be a back reference), so the work for a name is the size of the text plus the size of the output, and the output is cut at `-max-output`. `SymbolNameLong.HostileTextCostsLinearTime` (long suite) times five hostile shapes (dimensions to the power 0, one dimension repeated, many dimensions under many back references, an empty struct under many back references, a wide tuple) at two sizes.
 
-Readable forms: a type is written as the type printer of the checker writes it (TypeString), with package paths in full in place of package names (`std/strings.Index`); the test `SemaSymbols.ReadableNameIsTheTypePrintersText` compares the two on every type of a checked package. Where one name stands for several spellings of one type, the demangler writes one of them: `uint8` and `int32` (for `byte` and `rune`), a fallible function type with its `error` result (`func(int) (string, error)`), an interface as its sorted method set, and the empty one as `any` (`SemaSymbols.SpellingDiffersOnlyForOneTypeWrittenTwoWays`). A generic instance is `Name[args]`, a method `Type.Name`, an operator method has its parameters (`main.Vec2.*(float64)`, `main.Vec2./(float64) @Right`), a closure is `parent.funcN`, a function type `func(a, b) (r, s)` (`...T` for a variadic last parameter), a unit is its canonical text (`(5/18) units.M/units.S`, `1000 units.M`), and the glue and tables are `typeinfo for T`, `vtable for T`, `itab for T as I`, `eq glue for T`, `hash glue for T`, `drop glue for T`, `clone glue for T`.
+Readable forms: a type is written as the type printer of the checker writes it (TypeString), with package paths in full in place of package names (`std/strings.Index`); the test `SemaSymbols.ReadableNameIsTheTypePrintersText` compares the two on every type of a checked package. Where one name stands for several spellings of one type, the demangler writes one of them: `uint8` and `int32` (for `byte` and `rune`), a fallible function type with its `error` result (`func(int) (string, error)`), an interface as its sorted method set, and the empty one as `any` (`SemaSymbols.SpellingDiffersOnlyForOneTypeWrittenTwoWays`). A generic instance is `Name[args]`, a method `Type.Name`, an operator method has its parameters (`main.Vec2.*(float64)`, `main.Vec2./(float64) @Right`), a closure is `parent.funcN`, a function type `func(a, b) (r, s)` (`...T` for a variadic last parameter), a unit is its canonical text (`(5/18) units.M/units.S`, `1000 units.M`), and the glue and tables are `typeinfo for T`, `vtable for T`, `itab for T as I`, `eq glue for T`, `hash glue for T`, `drop glue for T`, `clone glue for T`, `interface thunk for T.M` and, for the pointer type's table, `interface thunk for (*T).M`.
 
-The debug information (P04.12) is to carry the *readable* name as `DW_AT_name` and the mangled one as `DW_AT_linkage_name`, so a debugger shows the readable name. `gopp demangle` covers tools that only see the object's symbol table.
+The debug information (P04.12) carries the *readable* name as `DW_AT_name`. The mangled one is `DW_AT_linkage_name` only with the hidden option `-dwarf-linkage-names` (a deviation from the plan, P04 D4.7 and D4.13): gdb and lldb show a linkage name in place of `DW_AT_name` when it is not an Itanium one and cannot demangle `_GP`, so a default backtrace would read `_GPF4mainE4main`. The symbol table has the `_GP` name either way, and `gopp demangle` covers tools that only see it. The linkage name comes back when the debuggers demangle `_GP` (P14.07).
 
 ## A.10 How the guarantees are tested
 

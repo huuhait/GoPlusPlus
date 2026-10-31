@@ -545,7 +545,7 @@ public:
 
   /// Any entity.
   G entity(int Depth) {
-    switch (pick(22)) {
+    switch (pick(23)) {
     case 0:
     case 1:
     case 2:
@@ -617,6 +617,13 @@ public:
       G T = type(Depth);
       return {C.ofType(Kind::IfaceDesc, T.N),
               "interface descriptor for " + T.T};
+    }
+    case 21: {
+      // A value method's adapter for the method table of the pointer type.
+      G Recv = coin(50) ? namedLeaf() : instanceG(Depth - 1);
+      std::string N = name();
+      return {C.wrapper(Kind::IfacePtrThunk, C.method(Recv.N, N)),
+              "interface thunk for (*" + Recv.T + ")." + N};
     }
     default: {
       // A generic function instance.
@@ -753,6 +760,17 @@ TEST(SymbolName, Goldens) {
       {C.var("main", "counter"), "_GPR4mainE7counter", "main.counter"},
       {C.wrapper(Kind::CABIThunk, C.func("main", "Callback")),
        "_GPTCF4mainE8Callback", "C-ABI thunk for main.Callback"},
+      // An itab's adapters (P04.12 review R7): named by the method as its own
+      // symbol is, whatever its receiver; a value method in the table of the
+      // pointer type reads through the pointer and has a name of its own.
+      {C.wrapper(Kind::IfaceThunk, C.method(C.named("main", "Box"), "Bump")),
+       "_GPTIM4BumpN4mainE3Box", "interface thunk for main.Box.Bump"},
+      {C.wrapper(Kind::IfacePtrThunk,
+                 C.method(C.named("main", "Adder"), "Sum")),
+       "_GPTpM3SumN4mainE5Adder", "interface thunk for (*main.Adder).Sum"},
+      {C.wrapper(Kind::IfacePtrThunk, C.method(Vec2, "+", C.tuple({Vec2}))),
+       "_GPTpTo6op_addN4mainE4Vec2LB14_E",
+       "interface thunk for (*main.Vec2).+(main.Vec2)"},
       {C.ofType(Kind::TypeInfo, Speed),
        "_GPTiUdk5_18_o5unitsE1M1_o5unitsE1Sn1_E",
        "typeinfo for float64[(5/18) units.M/units.S]"},

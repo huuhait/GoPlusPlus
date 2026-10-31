@@ -122,6 +122,8 @@ CompiledProgram gopp::testrun::compileProgram(const JobSpec &Job,
   llvm::LLVMContext LCtx;
   LowerToLLVMOptions LLO;
   LLO.DebugInfo = Opts.DebugInfo;
+  // As `gopp build` does at `opt 0` (P04.12); without DebugInfo it is unused.
+  LLO.KeepVariables = Spec->Opt == OptLevel::O0 && !Spec->Baseline;
   llvm::Expected<std::unique_ptr<llvm::Module>> LM =
       lowerToLLVM(LCtx, *M, **TM, LLO);
   if (!LM)

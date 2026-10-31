@@ -1,0 +1,41 @@
+package main
+
+// P04.06 meets P04.12 (debug/iface.test): an interface value is its two
+// words, a value receiver of a slice type arrives as a (ptr, len) pair that
+// the body makes into the slice the debugger shows, a method's frame has its
+// readable name, and the thunk an interface calls is artificial.
+
+type Shape interface {
+	Area() int
+}
+
+type Sq struct {
+	s int
+}
+
+func (q Sq) Area() int {
+	return q.s * q.s
+}
+
+type Nums []int
+
+func (n Nums) Sum() int {
+	t := 0
+	for _, v := range n {
+		t += v
+	}
+	return t
+}
+
+//go:noinline
+func use(sh Shape) int {
+	a := sh.Area()
+	println(a)
+	return a
+}
+
+func main() {
+	var sh Shape = Sq{3}
+	n := Nums{1, 2, 3}
+	println(use(sh), n.Sum())
+}

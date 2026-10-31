@@ -1,23 +1,32 @@
 // RUN: %gopp build -emit=llvm -opt=0 %S/Inputs/inline-lines/a.gopp %S/Inputs/inline-lines/b.gopp -o %t.ll
-// RUN: %python %S/Inputs/check-di-lines.py %t.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6 b.gopp:17 b.gopp:18
+// RUN: %python %S/Inputs/check-di-lines.py %t.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6 b.gopp:17 b.gopp:18 --inlined b.gopp:17@a.gopp:6
 // RUN: FileCheck %s --check-prefix=SITE < %t.ll
 // RUN: %gopp build -emit=llvm -pipeline=fastisel %S/Inputs/inline-lines/a.gopp %S/Inputs/inline-lines/b.gopp -o %t.base.ll
 // RUN: %python %S/Inputs/check-di-lines.py %t.base.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6 b.gopp:17 b.gopp:18
+// RUN: not %python %S/Inputs/check-di-lines.py %t.base.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --inlined b.gopp:17@a.gopp:6 | FileCheck %s --check-prefix=NOINL
 // RUN: %gopp build -emit=llvm -opt=2 %S/Inputs/inline-lines/a.gopp %S/Inputs/inline-lines/b.gopp -o %t.o2.ll
 // RUN: %python %S/Inputs/check-di-lines.py %t.o2.ll a.gopp=%S/Inputs/inline-lines/a.gopp b.gopp=%S/Inputs/inline-lines/b.gopp --has a.gopp:6
 // RUN: not %python %S/Inputs/check-di-lines.py %S/Inputs/inline-lines/bad.ll a.gopp=%S/Inputs/inline-lines/a.gopp | FileCheck %s --check-prefix=BAD
-// P04.13: GIR inlining puts a callee of another file into main. The inlined
-// statements have the call site's line (a.gopp:6); the callee's own function
-// keeps its lines of b.gopp (17, 18). No location in a function of a.gopp
-// may name a line past the end of a.gopp (7 lines): the line table of a
-// function has the lines of its own file only. The last RUN proves the
-// check itself finds such a location (the input has line 17 in main's
-// scope, as before the fix). Showing the callee's lines inside the inlined
-// call is P04.12 (`inlinedAt` scopes).
+// P04.13, P04.12: GIR inlining puts a callee of another file into main. The
+// inlined statements keep the callee's own lines (b.gopp:17, 18), in the scope
+// of the callee, inlined at the call (a.gopp:6): a debugger stopped there shows
+// b.gopp and lists `add` as an inlined frame. No location in a scope of
+// a.gopp may name a line past the end of a.gopp (7 lines), which is what the
+// inliner gave before the scopes existed (the callee's line 17 in main's
+// scope): the last RUN proves the check itself finds such a location. The
+// line table of a function has the lines of its own file only.
 //
-// The inlined `x + y` (g + g*3, folded to a shift) is at the call site.
+// The inlined `x + y` is at the callee's line 17, inlined at the call, line 6
+// column 10 of main (one distinct location per inline site). At opt 0 the
+// copies of add's variables stay in memory for the debugger (pipelines.md
+// section 7), so the sum is an `add`; without them it folds to a shift.
 // SITE-LABEL: define void @_GPF4mainE4main()
-// SITE: shl i64 {{.*}}, !dbg ![[SITE:[0-9]+]]
-// SITE: ![[SITE]] = !DILocation(line: 6,
+// SITE: {{add|shl}} i64 {{.*}}, !dbg ![[SITE:[0-9]+]]
+// SITE-DAG: ![[SITE]] = !DILocation(line: 17, column: 7, scope: ![[ADD:[0-9]+]], inlinedAt: ![[AT:[0-9]+]])
+// SITE-DAG: ![[ADD]] = distinct !DISubprogram(name: "main.add", scope: {{.*}}, line: 16,
+// SITE-DAG: ![[AT]] = distinct !DILocation(line: 6, column: 10, scope: ![[MAIN:[0-9]+]])
+// SITE-DAG: ![[MAIN]] = distinct !DISubprogram(name: "main.main",
 //
+// NOINL: FAIL no location b.gopp:17 inlined at a.gopp:6
+// (the baseline pipeline inlines nothing: the call stays a call)
 // BAD: FAIL a.gopp: line 17, but the file has 7

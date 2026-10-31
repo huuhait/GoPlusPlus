@@ -69,6 +69,13 @@ if (
     config.available_features.add("qemu-aarch64")
     config.substitutions.append(("%aarch64_sysroot", _sysroot))
 
+# The debugger tests (P04.12) script gdb and lldb in batch mode on a program
+# the compiler built; both come from the flake. They run a program, so the
+# host must be a target too.
+for _dbg in ("gdb", "lldb"):
+    if shutil.which(_dbg):
+        config.available_features.add(_dbg)
+
 # The C ABI tests (P04.11) compile C with Clang for the target: the flake's
 # clang, which compiles for aarch64 against no headers (the generated C
 # declares what it uses). Tests that need it say "REQUIRES: clang".

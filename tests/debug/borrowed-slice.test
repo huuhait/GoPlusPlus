@@ -1,0 +1,56 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/params.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/params.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/params.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// RUN: %gopp build -emit=obj %S/Inputs/params.gopp -o %t.o
+// RUN: llvm-dwarfdump --name=main.sum -c %t.o | FileCheck %s --check-prefix=DWARF
+// P04.12, the hand-off of P04.25 (ADR-0029). A slice is 4 words, {ptr, len,
+// cap, alloc}: 32 bytes. A borrowed `[]T` parameter arrives as a (ptr, len)
+// pair that the body makes into a slice of its own (cap = len, alloc null):
+// that slice is the debugger's parameter `xs`, and the pair is no variable.
+// Both sides: `info args` shows `xs` as the slice and nothing else, AND
+// `info locals` does not show it again, in gdb and lldb; the DWARF has one
+// parameter for `sum`. A `move []T` parameter takes the 4 words (read through
+// the address the caller passed), and a map header names its fields, so
+// `m->count` is the map's length and `m->alloc` its allocator (null: the
+// global one).
+//
+// GDB: @@GROW
+// GDB-NEXT: xs = {ptr = {{0x[0-9a-f]+}}, len = 4, cap = 4, alloc = 0x0}
+// GDB-NEXT: n = 2
+// GDB-NEXT: $1 = 32
+// GDB: @@MAIN
+// GDB-NEXT: $2 = 2
+// GDB-NEXT: $3 = (uint8 *) 0x0
+// GDB-NEXT: $4 = 32
+// GDB: main.sum (xs=...) at {{.*}}params.gopp:12
+// GDB: @@SUM
+// GDB-NEXT: xs = {ptr = {{0x[0-9a-f]+}}, len = 3, cap = 3, alloc = 0x0}
+// GDB-NEXT: @@LOCALS
+// GDB-NEXT: t = 6
+// GDB-NEXT: @@END
+// GDB-NEXT: $5 = 32
+// GDB-NEXT: #0 {{ *}}main.sum (xs=...) at
+//
+// LLDB: @@ALL
+// LLDB: ([]int64) xs = {
+// LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
+// LLDB-NEXT: len = 3
+// LLDB-NEXT: cap = 3
+// LLDB-NEXT: alloc = 0x0000000000000000
+// LLDB-NEXT: }
+// LLDB-NEXT: (long) t = 6
+// LLDB: @@LOCALS
+// LLDB-NOT: xs
+// LLDB: (long) t = 6
+// LLDB: @@END
+// LLDB: $0 = 32
+//
+// DWARF: DW_TAG_subprogram
+// DWARF: DW_AT_name ("main.sum")
+// DWARF: DW_TAG_formal_parameter
+// DWARF-NEXT: DW_AT_location
+// DWARF-NEXT: DW_AT_name ("xs")
+// DWARF-NOT: DW_TAG_formal_parameter
+// DWARF: DW_TAG_variable
+// DWARF: DW_AT_name ("t")

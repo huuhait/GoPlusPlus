@@ -32,8 +32,10 @@ add_executable(GoppUnitTests
   GIR/AllocatorTest.cpp
   GIR/GlueTest.cpp
   GIR/InlineTest.cpp
+  GIR/ScopeTest.cpp
   CodeGen/CABITest.cpp
   CodeGen/CodeGenTest.cpp
+  CodeGen/DebugInfoTest.cpp
   CodeGen/LayoutTest.cpp
   CodeGen/OptionHashTest.cpp
   CodeGen/PipelineTest.cpp

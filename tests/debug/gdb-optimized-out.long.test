@@ -1,0 +1,32 @@
+// REQUIRES: long, host-linux-amd64, gdb
+// RUN: %gopp build -opt=1 %S/Inputs/scopes.gopp -o %t.1
+// RUN: %gopp build -opt=2 %S/Inputs/scopes.gopp -o %t.2
+// RUN: %gopp build -opt=3 %S/Inputs/scopes.gopp -o %t.3
+// RUN: %gopp build -opt=s %S/Inputs/scopes.gopp -o %t.s
+// RUN: %gopp build -opt=z %S/Inputs/scopes.gopp -o %t.z
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt.gdb %t.1 2>&1 | FileCheck %s
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt.gdb %t.2 2>&1 | FileCheck %s
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt.gdb %t.3 2>&1 | FileCheck %s
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt.gdb %t.s 2>&1 | FileCheck %s
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt.gdb %t.z 2>&1 | FileCheck %s
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt-after.gdb %t.1 2>&1 | FileCheck %s --check-prefix=AFTER
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt-after.gdb %t.2 2>&1 | FileCheck %s --check-prefix=AFTER
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt-after.gdb %t.s 2>&1 | FileCheck %s --check-prefix=AFTER
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes-opt-after.gdb %t.z 2>&1 | FileCheck %s --check-prefix=AFTER
+// P04.12, D4.7: at every optimizing `opt` a variable the optimizer has not
+// kept is reported `<optimized out>`, and one it has kept has its true value:
+// never a stale or a wrong one. The program is scopes.gopp, whose values at
+// line 10 are x = 16, y = 21 (the block's), the function's y = 8 and the
+// parameter x = 7, and at line 16 y = 209, x = 7. Every variable is checked
+// as either its value or optimized out.
+
+// CHECK: @@INNER
+// CHECK: $1 = {{16|<optimized out>}}
+// CHECK: $2 = {{21|<optimized out>}}
+// CHECK: x = {{7|<optimized out>}}
+// CHECK: @@MAIN
+// CHECK: $3 = {{7|<optimized out>}}
+
+// AFTER: @@AFTER
+// AFTER: $1 = {{209|<optimized out>}}
+// AFTER: $2 = {{7|<optimized out>}}

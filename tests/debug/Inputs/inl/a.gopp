@@ -1,0 +1,8 @@
+package main
+
+var g = 5
+
+func main() {
+	r := twice(g)
+	println(r, add(g, g*3))
+}

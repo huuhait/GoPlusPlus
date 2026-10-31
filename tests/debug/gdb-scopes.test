@@ -1,0 +1,36 @@
+// REQUIRES: host-linux-amd64, gdb
+// RUN: %gopp build %S/Inputs/scopes.gopp -o %t
+// RUN: timeout 60 gdb -batch -nx -x %S/Inputs/scopes.gdb %t 2>&1 | FileCheck %s
+// P04.12, D4.7: shadowed names, nested blocks and loops. In each block the
+// debugger shows the variable of that block (the innermost first), not the
+// one it shadows; a variable whose block has ended is not shown; and a global
+// is not hidden by a local of the same name (it is `main.x`).
+
+// CHECK: @@INNER
+// The block `{ x := y*2; y := x+5 }`: the inner x and y, then the function's y.
+// CHECK: x = 16
+// CHECK-NEXT: y = 21
+// CHECK-NEXT: y = 8
+// CHECK: $1 = 16
+// CHECK-NEXT: $2 = 21
+// CHECK: @@LOOP1
+// The loop body: its x and the loop's i, then the function's y.
+// CHECK: x = 100
+// CHECK-NEXT: i = 0
+// CHECK-NEXT: y = 8
+// CHECK: $3 = 100
+// CHECK-NEXT: $4 = 0
+// CHECK: @@LOOP2
+// CHECK: x = 101
+// CHECK-NEXT: i = 1
+// CHECK-NEXT: y = 108
+// After the loop and the block only the function's y is a local; x is the
+// parameter.
+// CHECK: @@AFTER
+// CHECK: y = 209
+// CHECK-NEXT: $5 = 209
+// CHECK: x = 7
+// main's x shadows the global.
+// CHECK: @@MAIN
+// CHECK: x = 7
+// CHECK: $6 = 1000

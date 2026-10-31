@@ -23,6 +23,10 @@ namespace gir {
 struct PrintOptions {
   /// Print `; file:line:col` after statements and terminators.
   bool Spans = true;
+  /// Print the debug scopes (P04.12): a `scope N` line per scope of a function
+  /// and ` scope N` after the position of a statement or terminator that is
+  /// in one. Off: the dump of a function is the same with or without them.
+  bool Scopes = false;
 };
 
 void print(llvm::raw_ostream &OS, const Module &M,

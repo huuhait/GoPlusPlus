@@ -1,0 +1,5 @@
+breakpoint set -f chain.gopp -l 14
+run
+bt
+frame select 2
+frame variable

@@ -59,10 +59,18 @@ enum TypeCode : unsigned {
   T_Func,
   T_Struct,
   T_StructBody,
-  T_Rec,    // a self-naming type: [name chars]
-  T_RecBody // [id, kind (a TypeCode), length, n, part ids...]
+  T_Rec,         // a self-naming type: [name chars]
+  T_RecBody,     // [id, kind (a TypeCode), length, n, part ids...]
+  T_StructFields // [id, n, then per field: length, name chars...]
 };
-enum FuncCode : unsigned { F_Body = 1, F_Local, F_Block, F_Stmt, F_Term };
+enum FuncCode : unsigned {
+  F_Body = 1,
+  F_Local,
+  F_Block,
+  F_Stmt,
+  F_Term,
+  F_Scope // [kind, parent, callee, origin, span(3)]: before the locals
+};
 enum IndexCode : unsigned { X_Body = 1 };
 
 constexpr unsigned CodeWidth = 3;
@@ -250,6 +258,19 @@ private:
       for (const Type *F : S->elems())
         R.Vals.push_back(typeId(F));
       Bodies.push_back(std::move(R));
+      // The source names of the fields (P04.12, debug information only), if
+      // the struct has them: a body read back keeps them, and renaming a
+      // field changes the bytes the build cache hashes.
+      bool Any = false;
+      Rec N{T_StructFields, {TypeIds[S], S->elems().size()}};
+      for (unsigned I = 0; I < S->elems().size(); ++I) {
+        StringRef Nm = S->fieldName(I);
+        Any |= !Nm.empty();
+        N.Vals.push_back(Nm.size());
+        N.Vals.append(chars(Nm));
+      }
+      if (Any)
+        Bodies.push_back(std::move(N));
     }
     std::vector<Rec> Out;
     for (const Type *T : TypeOrder) {
@@ -408,8 +429,15 @@ private:
   std::vector<Rec> body(FuncId Id, const Function &F) {
     std::vector<Rec> Out;
     Out.push_back({F_Body, {Id}});
+    for (const DebugScope &D : F.Scopes) {
+      Rec R{F_Scope, {D.K, D.Parent, D.Callee, D.Origin}};
+      put(R.Vals, D.Loc);
+      Out.push_back(std::move(R));
+    }
     for (const Local &L : F.Locals) {
-      Rec R{F_Local, {L.K, typeId(L.Ty), L.Mutable, L.Owned}};
+      Rec R{F_Local,
+            {L.K, typeId(L.Ty), L.Mutable, L.Owned, L.Source, L.Scope, L.ArgNo,
+             L.Origin}};
       put(R.Vals, L.Loc);
       R.Vals.append(chars(L.Name));
       Out.push_back(std::move(R));
@@ -419,6 +447,7 @@ private:
       for (const Statement &S : B.Stmts) {
         Rec R{F_Stmt, {S.K}};
         put(R.Vals, S.Loc);
+        R.Vals.push_back(S.Scope);
         switch (S.K) {
         case Statement::Assign:
           put(R.Vals, S.Dest);
@@ -436,6 +465,7 @@ private:
       const Terminator &T = B.Term;
       Rec R{F_Term, {T.K}};
       put(R.Vals, T.Loc);
+      R.Vals.push_back(T.Scope);
       switch (T.K) {
       case Terminator::Goto:
         R.Vals.push_back(T.Target);
@@ -777,6 +807,26 @@ private:
         return bad("struct " + Types[Id]->name() + " has two bodies");
       return Error::success();
     }
+    case T_StructFields: {
+      uint64_t Id = R.next(), N = R.next();
+      if (Id >= Types.size() || Types[Id]->getKind() != Type::Kind::Struct ||
+          Types[Id]->isRec() || !Types[Id]->hasBody() ||
+          N != Types[Id]->elems().size())
+        return bad("field names for another type");
+      std::vector<std::string> Names;
+      for (uint64_t I = 0; I < N && !R.Failed; ++I) {
+        std::string Nm;
+        for (uint64_t Len = R.next(), K = 0; K < Len && !R.Failed; ++K)
+          Nm += static_cast<char>(R.next());
+        Names.push_back(std::move(Nm));
+      }
+      if (R.Failed)
+        return bad("field names");
+      // A context that knows the struct already keeps its own names.
+      SmallVector<StringRef, 4> Refs(Names.begin(), Names.end());
+      Ctx.setFieldNames(Types[Id], Refs);
+      return Error::success();
+    }
     default:
       return bad("unknown type record");
     }
@@ -1032,7 +1082,7 @@ private:
         if (F || R.next() != Id)
           return bad("function body names another function");
         F = Funcs[Id];
-        if (!F->Locals.empty() || !F->Blocks.empty())
+        if (!F->Locals.empty() || !F->Blocks.empty() || !F->Scopes.empty())
           return bad("two bodies for @" + F->Name);
         continue;
       }
@@ -1045,9 +1095,23 @@ private:
         L.Ty = type(R);
         L.Mutable = R.next();
         L.Owned = R.next();
+        L.Source = R.next();
+        L.Scope = R.next();
+        L.ArgNo = R.next();
+        L.Origin = static_cast<LocalId>(R.next());
         L.Loc = span(R);
         L.Name = R.rest();
         F->Locals.push_back(std::move(L));
+        break;
+      }
+      case F_Scope: {
+        DebugScope D;
+        D.K = enumVal(R, DebugScope::Inlined);
+        D.Parent = R.next();
+        D.Callee = static_cast<FuncId>(R.next());
+        D.Origin = static_cast<ScopeId>(R.next());
+        D.Loc = span(R);
+        F->Scopes.push_back(D);
         break;
       }
       case F_Block:
@@ -1062,6 +1126,7 @@ private:
         Statement S;
         S.K = enumVal(R, Statement::Nop);
         S.Loc = span(R);
+        S.Scope = R.next();
         switch (S.K) {
         case Statement::Assign:
           S.Dest = place(R, *F);
@@ -1083,6 +1148,7 @@ private:
         Terminator &T = Cur->Term;
         T.K = enumVal(R, Terminator::Resume);
         T.Loc = span(R);
+        T.Scope = R.next();
         T.Set = true;
         switch (T.K) {
         case Terminator::Goto:

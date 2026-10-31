@@ -147,6 +147,85 @@ TEST(GIRInline, ParameterAndResultCopiesAreBoundaries) {
     EXPECT_FALSE(S.Boundary);
 }
 
+TEST(GIRInline, SitesKeepTheCalleesPositionsAndNameTheCall) {
+  // P04.12: each inlined call is an inline site (an `Inlined` scope at the
+  // call, in the call's scope); the callee's statements keep their positions
+  // in the callee and lie in the site, its locals are copies that name their
+  // origin; the copies of the arguments and the result are the call's.
+  GoodModule G;
+  uint32_t CalleeFile = G.M.addFile("callee.gopp") + 1;
+  uint32_t CallerFile = G.M.addFile("caller.gopp") + 1;
+  FuncId Callee = makeAdd3(G);
+  G.fn(Callee).Loc = {CalleeFile, 10, 1};
+  G.fn(Callee).Locals[1].Name = "a";
+  G.fn(Callee).Locals[1].Source = true;
+  unsigned Line = 11;
+  for (Statement &S : G.fn(Callee).Blocks[0].Stmts)
+    S.Loc = {CalleeFile, Line++, 3};
+  FuncId Caller = makeCaller(G, Callee);
+  G.fn(Caller).Loc = {CallerFile, 1, 1};
+  unsigned CallLine = 4;
+  for (BasicBlock &BB : G.fn(Caller).Blocks)
+    if (BB.Term.K == Terminator::Call)
+      BB.Term.Loc = {CallerFile, CallLine += 2, 9};
+  size_t CalleeLocals = G.fn(Callee).Locals.size();
+  size_t CallerLocals = G.fn(Caller).Locals.size();
+  inlineTrivial(G.M);
+  EXPECT_GIR_VALID(G.M);
+  const Function &F = G.fn(Caller);
+  ASSERT_EQ(F.Scopes.size(), 2u); // the callee has no block of its own
+  for (size_t I = 0; I < 2; ++I) {
+    const DebugScope &Site = F.Scopes[I];
+    EXPECT_EQ(Site.K, DebugScope::Inlined);
+    EXPECT_EQ(Site.Callee, Callee);
+    EXPECT_EQ(Site.Parent, 0u);
+    EXPECT_EQ(Site.Loc, (Span{CallerFile, unsigned(6 + 2 * I), 9}));
+    // The callee's locals are copied behind each other, in the site.
+    LocalId First = CallerLocals + I * CalleeLocals;
+    for (size_t L = 0; L < CalleeLocals; ++L) {
+      const Local &Copy = F.Locals[First + L];
+      EXPECT_EQ(Copy.Scope, I + 1);
+      EXPECT_EQ(Copy.Origin, L);
+      EXPECT_EQ(Copy.Name, G.fn(Callee).Locals[L].Name);
+    }
+    // The parameter became a variable of the caller and stays a source one,
+    // with its position among the parameters.
+    EXPECT_EQ(F.Locals[First + 1].K, Local::Var);
+    EXPECT_TRUE(F.Locals[First + 1].Source);
+    EXPECT_EQ(F.Locals[First + 1].ArgNo, 1u);
+    EXPECT_NE(F.Locals[First].K, Local::Return);
+    EXPECT_EQ(F.Locals[First].ArgNo, 0u);
+  }
+  for (LocalId L = 0; L < CallerLocals; ++L) {
+    EXPECT_EQ(F.Locals[L].Origin, NoId);
+    EXPECT_EQ(F.Locals[L].Scope, 0u);
+  }
+  unsigned FromCallee = 0, FromCall = 0;
+  for (const BasicBlock &BB : F.Blocks) {
+    EXPECT_EQ(BB.Term.Scope, 0u);
+    for (const Statement &S : BB.Stmts) {
+      if (S.Scope == 0 && S.Boundary) {
+        // A copy of an argument or of the result: the call's position.
+        EXPECT_EQ(S.Loc.File, CallerFile);
+        ++FromCall;
+      } else if (S.Scope != 0) {
+        EXPECT_FALSE(S.Boundary);
+        EXPECT_EQ(S.Loc.File, CalleeFile);
+        EXPECT_GE(S.Loc.Line, 11u);
+        ++FromCallee;
+      }
+    }
+  }
+  EXPECT_EQ(FromCallee, 2u * 3); // add3 has three statements
+  EXPECT_EQ(FromCall, 2u * 3);
+  // The callee itself is untouched.
+  EXPECT_TRUE(G.fn(Callee).Scopes.empty());
+  for (const Statement &S : G.fn(Callee).Blocks[0].Stmts)
+    EXPECT_EQ(S.Scope, 0u);
+  for (const Local &L : G.fn(Callee).Locals)
+    EXPECT_EQ(L.Origin, NoId);
+}
+
 TEST(GIRInline, LeavesWhatIsNotTrivial) {
   // A declaration, a callee with a call, an assertion, a second block, an
   // address-of, an owned temporary, and one over the statement limit: none

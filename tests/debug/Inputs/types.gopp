@@ -1,0 +1,60 @@
+package main
+
+type Vec2 struct {
+	x, y int
+}
+
+type Doc struct {
+	title string
+	tags  []string
+	pos   Vec2
+	ok    bool
+}
+
+type Node struct {
+	val  int
+	next Option[*Node]
+}
+
+type Tree []Tree
+
+var gcount int = 7
+var gname string = "global"
+var gvec Vec2 = Vec2{5, 6}
+
+func add(a, b Vec2) Vec2 {
+	sum := Vec2{a.x + b.x, a.y + b.y}
+	return sum
+}
+
+//go:noinline
+func scalars(a int8, b uint16, c int32, d uint64, f float32, g float64, ok bool) int {
+	n := int(a) + int(b) + int(c) + int(d)
+	return n + int(f) + int(g)
+}
+
+//go:noinline
+func aggregates(d Doc, arr [3]int, p *Vec2) int {
+	s := "text"
+	xs := []int{4, 5, 6}
+	m := map[string]int{"a": 1}
+	var o Option[int]
+	o = 3
+	t := Tree{nil, nil}
+	tail := Node{2, nil}
+	h := Node{1, &tail}
+	n := len(s) + len(xs) + len(m) + len(t) + h.val + arr[1] + p.x + len(d.tags)
+	if o != nil {
+		n += 1
+	}
+	return n
+}
+
+func main() {
+	d := Doc{"title", []string{"a", "b"}, Vec2{1, 2}, true}
+	v := Vec2{10, 20}
+	w := add(v, Vec2{1, 1})
+	r := scalars(-1, 2, 3, 4, 1.5, 2.5, true)
+	r += aggregates(d, [3]int{7, 8, 9}, &w)
+	println(r, gcount, gname, gvec.x)
+}

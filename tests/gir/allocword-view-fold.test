@@ -1,5 +1,5 @@
 // RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
-// RUN: %gopp build -emit=llvm %s | FileCheck --check-prefix=LL %s
+// RUN: %gopp build -emit=llvm -no-debug %s | FileCheck --check-prefix=LL %s
 // RUN: %gopp build -opt=2 -emit=llvm %s | FileCheck --check-prefix=O2 %s
 // P04.25 (ADR-0029): an owned `[]T` is Slice(ptr, len, cap, alloc). The word is
 // null (the global allocator) for what `make`, a literal and a conversion
@@ -54,7 +54,8 @@ func main() {
 // CHECK: call const fn @_GPF4mainE5moved(copy {{_[0-9]+}})
 
 // The global allocator is a direct call where the word is known to be null
-// (a literal); append's growth passes the slice's word to grow_slice, whose
+// (a literal; the LL run has no DWARF: with it `opt 0` keeps the variables in
+// memory, P04.12, and the word of `s` is loaded, not folded); append's growth passes the slice's word to grow_slice, whose
 // allocation goes through mem_resize_in: a null word is mem_resize, another
 // one the table of the allocator object, called with the C ABI of its scalar
 // signature (the `zero` flag is extended as a C `bool`). Only the table's

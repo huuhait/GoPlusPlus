@@ -471,6 +471,7 @@ TEST(GIRSerialize, SelfNamingTypesAndOwnedTemporariesRoundTrip) {
   EXPECT_EQ(writeModule(**R), Bytes);
   EXPECT_EQ(errorsOf(**R), "");
   EXPECT_TRUE((*R)->Funcs[0]->Locals[T].Owned);
+  EXPECT_FALSE((*R)->Funcs[0]->Locals[T].Source);
   Type *S2 = (*R)->Funcs[0]->Sig->elems()[0];
   ASSERT_TRUE(S2->isRec());
   EXPECT_EQ(S2->name(), "rec.S");
@@ -479,6 +480,50 @@ TEST(GIRSerialize, SelfNamingTypesAndOwnedTemporariesRoundTrip) {
   Type *A2 = (*R)->Funcs[0]->Sig->elems()[1];
   EXPECT_EQ(A2->getKind(), Type::Kind::Array);
   EXPECT_EQ(A2->elem()->getKind(), Type::Kind::Option);
+}
+
+// P04.12: the Source flag (a variable the program declared) and the field
+// names of a struct are in the bitstream; the names are debug information
+// only, not part of the type's identity (set once, for a struct with a body,
+// one per field).
+TEST(GIRSerialize, SourceVariablesAndFieldNamesRoundTrip) {
+  Context C1;
+  auto M = std::make_unique<Module>(C1, "src");
+  Type *St = C1.structTy("src.P");
+  ASSERT_TRUE(C1.setStructBody(St, {C1.i64(), C1.boolean()}));
+  EXPECT_EQ(St->fieldName(0), "");
+  ASSERT_TRUE(C1.setFieldNames(St, {"x", "ok"}));
+  EXPECT_EQ(St->fieldName(0), "x");
+  EXPECT_EQ(St->fieldName(1), "ok");
+  EXPECT_EQ(St->fieldName(2), "");
+  EXPECT_FALSE(C1.setFieldNames(St, {"a", "b"})); // once
+  Type *Other = C1.structTy("src.Q");
+  EXPECT_FALSE(C1.setFieldNames(Other, {"a"})); // no body yet
+  ASSERT_TRUE(C1.setStructBody(Other, {C1.i64()}));
+  EXPECT_FALSE(C1.setFieldNames(Other, {"a", "b"})); // count differs
+
+  auto F = std::make_unique<Function>();
+  F->Name = "src.f";
+  F->Sig = C1.func({C1.i64()}, C1.unit());
+  F->CC = CallConv::Go;
+  Function &Fn = *F;
+  M->addFunction(std::move(F));
+  FuncBuilder B(*M, Fn);
+  LocalId V = B.newLocal(St, Local::Var, "p");
+  Fn.Locals[V].Source = true;
+  LocalId H = B.newLocal(C1.i64(), Local::Var, "helper");
+  B.ret();
+  ASSERT_EQ(errorsOf(*M), "");
+  std::string Bytes = writeModule(*M);
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_TRUE((*R)->Funcs[0]->Locals[V].Source);
+  EXPECT_FALSE((*R)->Funcs[0]->Locals[H].Source);
+  EXPECT_EQ(writeModule(**R), Bytes);
+  EXPECT_EQ((*R)->Funcs[0]->Locals[V].Ty->fieldName(0), "x");
+  EXPECT_EQ((*R)->Funcs[0]->Locals[V].Ty->fieldName(1), "ok");
+  EXPECT_EQ(C2.structTy("src.P"), (*R)->Funcs[0]->Locals[V].Ty);
 }
 
 TEST(GIRSerialize, ReadsOneBodyThroughTheIndex) {

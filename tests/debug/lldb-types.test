@@ -1,0 +1,51 @@
+// REQUIRES: host-linux-amd64, lldb
+// RUN: %gopp build %S/Inputs/types.gopp -o %t
+// RUN: timeout 60 lldb --no-lldbinit -b -s %S/Inputs/types.lldb %t 2>&1 | FileCheck %s
+// P04.12, D4.7: the same as gdb-types.test, in lldb: every kind of type and
+// variable, and the readable names in the backtrace.
+
+// CHECK: @@SCALARS
+// CHECK: (char) a = '\xff'
+// CHECK: b = 2
+// CHECK: c = 3
+// CHECK: d = 4
+// CHECK: f = 1.5
+// CHECK: g = 2.5
+// CHECK: ok = true
+// CHECK: n = 8
+// CHECK: frame #0: {{.*}}`main.scalars(a='\xff', b=2, c=3, d=4, f=1.5, g=2.5, ok=true) at types.gopp:33
+// CHECK: frame #1: {{.*}}`main.main at types.gopp:57
+// CHECK-NOT: _GP
+// CHECK: @@AGGREGATES
+// CHECK: (main.Doc) d = {
+// CHECK: title = (ptr = "title", len = 5, cap = 0)
+// CHECK: pos = (x = 1, y = 2)
+// CHECK: ok = true
+// CHECK: arr = ([0] = 7, [1] = 8, [2] = 9)
+// CHECK: (main.Vec2 *) p = {{0x[0-9a-f]+}}
+// CHECK: ([]int64) xs = {
+// CHECK: len = 3
+// CHECK: (Option[int64]) o = (value = 3, set = true)
+// CHECK: (main.Tree) t = {
+// CHECK: len = 2
+// CHECK: (main.Node) h = {
+// CHECK: val = 1
+// CHECK: (string) s = (ptr = "text", len = 4, cap = 0)
+// CHECK: (gopp.map *) m = {{0x[0-9a-f]+}}
+// CHECK: (main.Node) tail = {
+// CHECK: val = 2
+// CHECK: next = NULL
+// CHECK: (main.Vec2) d.pos = (x = 1, y = 2)
+// CHECK: (long) arr[1] = 8
+// CHECK: (main.Vec2) *p = (x = 11, y = 21)
+// CHECK: (long) o.value = 3
+// CHECK: @@GLOBALS
+// CHECK-DAG: (long) main.gcount = 7
+// CHECK-DAG: (string) main.gname = (ptr = "global", len = 6, cap = 0)
+// CHECK-DAG: (main.Vec2) main.gvec = (x = 5, y = 6)
+// CHECK: @@BACKTRACE
+// CHECK: frame #0: {{.*}}`main.aggregates(d=main.Doc @ {{0x[0-9a-f]+}}, arr=([0] = 7, [1] = 8, [2] = 9), p={{0x[0-9a-f]+}}) at types.gopp:46
+// CHECK: frame #1: {{.*}}`main.main at types.gopp:58
+// CHECK: @@CALLER
+// CHECK: (main.Vec2) v = (x = 10, y = 20)
+// CHECK: (main.Vec2) w = (x = 11, y = 21)

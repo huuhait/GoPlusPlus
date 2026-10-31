@@ -1,0 +1,4 @@
+breakpoint set -f deep.gopp -l 250
+run
+frame variable x.v
+frame variable x.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.v

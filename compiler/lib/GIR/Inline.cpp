@@ -78,18 +78,45 @@ Statement remapStatement(const Statement &S, LocalId Base) {
 }
 
 /// Inlines the call that ends block Bi of Caller into it.
-void inlineCall(Function &Caller, size_t Bi, const Function &Callee) {
+void inlineCall(Function &Caller, size_t Bi, FuncId CalleeId,
+                const Function &Callee) {
   const BasicBlock &Body = Callee.Blocks[0];
+  BasicBlock &BB = Caller.Blocks[Bi];
+  Terminator Call = std::move(BB.Term);
+  // The inline site (P04.12): an `Inlined` scope at the call, in the call's
+  // scope. The callee's own scopes are copied below it (Origin names the
+  // callee's block), so a debugger shows the callee's lines inside the call
+  // and the callee as an inlined frame.
+  DebugScope Site;
+  Site.K = DebugScope::Inlined;
+  Site.Parent = Call.Scope;
+  Site.Loc = Call.Loc;
+  Site.Callee = CalleeId;
+  ScopeId Inl = Caller.addScope(Site);
+  std::vector<ScopeId> ScopeMap(Callee.Scopes.size() + 1, Inl);
+  for (size_t K = 0; K < Callee.Scopes.size(); ++K) {
+    ++Steps;
+    DebugScope D = Callee.Scopes[K];
+    D.Parent = ScopeMap[D.Parent];
+    if (D.K == DebugScope::Block && !D.Origin)
+      D.Origin = K + 1;
+    ScopeMap[K + 1] = Caller.addScope(D);
+  }
   LocalId Base = Caller.Locals.size();
+  LocalId Index = 0;
   for (const Local &L : counted(Steps, Callee.Locals)) {
     Local N = L;
     // The result and the parameters become ordinary locals of the caller.
     N.K = L.K == Local::Return ? Local::Temp
                                : (L.K == Local::Arg ? Local::Var : L.K);
+    N.Scope = ScopeMap[L.Scope];
+    if (L.K == Local::Arg)
+      N.ArgNo = Index;
+    if (L.Origin == NoId)
+      N.Origin = Index;
+    ++Index;
     Caller.addLocal(std::move(N));
   }
-  BasicBlock &BB = Caller.Blocks[Bi];
-  Terminator Call = std::move(BB.Term);
   auto Assign = [&](Place Dest, Operand From, Span Loc) {
     Statement S;
     S.K = Statement::Assign;
@@ -98,6 +125,7 @@ void inlineCall(Function &Caller, size_t Bi, const Function &Callee) {
     S.RV.Ty = S.Dest.Ty;
     S.RV.A = std::move(From);
     S.Loc = Loc;
+    S.Scope = Call.Scope;
     S.Boundary = true;
     BB.Stmts.push_back(std::move(S));
   };
@@ -108,12 +136,14 @@ void inlineCall(Function &Caller, size_t Bi, const Function &Callee) {
     if (!P.Ty->isUnit())
       Assign(localPlace(Base + 1 + I, P.Ty), std::move(Call.Args[I]), Call.Loc);
   }
-  // The callee's statements belong to the call site's position: a Span names
-  // a line of the callee's file, and the caller's line table is another
-  // file's. (A real `inlinedAt` scope shows the callee's lines: P04.12.)
+  // The callee's statements keep their own positions (a line of the callee's
+  // file, which the caller's line table does not have), in the copies of the
+  // callee's scopes: the code generator puts them in the callee's scope,
+  // inlined at the call (P04.12). The copies of the parameters and the
+  // result, and the jump back, are the call's: its position and scope.
   for (const Statement &S : counted(Steps, Body.Stmts)) {
     BB.Stmts.push_back(remapStatement(S, Base));
-    BB.Stmts.back().Loc = Call.Loc;
+    BB.Stmts.back().Scope = ScopeMap[S.Scope];
   }
   if (!Callee.Locals[0].Ty->isUnit()) {
     Operand R;
@@ -125,6 +155,7 @@ void inlineCall(Function &Caller, size_t Bi, const Function &Callee) {
   Go.K = Terminator::Goto;
   Go.Target = Call.Target;
   Go.Loc = Call.Loc;
+  Go.Scope = Call.Scope;
   Go.Set = true;
   BB.Term = std::move(Go);
 }
@@ -156,7 +187,7 @@ InlineStats gir::inlineTrivial(Module &M, const InlineOptions &Opts) {
       FuncId Callee = static_cast<FuncId>(T.Discr.C.Bits);
       if (Callee >= Trivial.size() || !Trivial[Callee])
         continue;
-      inlineCall(F, Bi, *M.Funcs[Callee]);
+      inlineCall(F, Bi, Callee, *M.Funcs[Callee]);
       ++Stats.Inlined;
     }
   }

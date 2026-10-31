@@ -1,0 +1,251 @@
+package main
+
+// A chain of 60 struct types, higher than the 48 levels a DWARF type may
+// have (DebugInfoBuilder::MaxTypeHeight): the types are cut, a member
+// refers to the rest by a declaration, and the definition is kept in the
+// unit, so a debugger finds every level by its name. (Written by a loop:
+// type Ti struct{ v int; in Ti-1 }.)
+type T0 struct{ v int }
+type T1 struct {
+	v  int
+	in T0
+}
+type T2 struct {
+	v  int
+	in T1
+}
+type T3 struct {
+	v  int
+	in T2
+}
+type T4 struct {
+	v  int
+	in T3
+}
+type T5 struct {
+	v  int
+	in T4
+}
+type T6 struct {
+	v  int
+	in T5
+}
+type T7 struct {
+	v  int
+	in T6
+}
+type T8 struct {
+	v  int
+	in T7
+}
+type T9 struct {
+	v  int
+	in T8
+}
+type T10 struct {
+	v  int
+	in T9
+}
+type T11 struct {
+	v  int
+	in T10
+}
+type T12 struct {
+	v  int
+	in T11
+}
+type T13 struct {
+	v  int
+	in T12
+}
+type T14 struct {
+	v  int
+	in T13
+}
+type T15 struct {
+	v  int
+	in T14
+}
+type T16 struct {
+	v  int
+	in T15
+}
+type T17 struct {
+	v  int
+	in T16
+}
+type T18 struct {
+	v  int
+	in T17
+}
+type T19 struct {
+	v  int
+	in T18
+}
+type T20 struct {
+	v  int
+	in T19
+}
+type T21 struct {
+	v  int
+	in T20
+}
+type T22 struct {
+	v  int
+	in T21
+}
+type T23 struct {
+	v  int
+	in T22
+}
+type T24 struct {
+	v  int
+	in T23
+}
+type T25 struct {
+	v  int
+	in T24
+}
+type T26 struct {
+	v  int
+	in T25
+}
+type T27 struct {
+	v  int
+	in T26
+}
+type T28 struct {
+	v  int
+	in T27
+}
+type T29 struct {
+	v  int
+	in T28
+}
+type T30 struct {
+	v  int
+	in T29
+}
+type T31 struct {
+	v  int
+	in T30
+}
+type T32 struct {
+	v  int
+	in T31
+}
+type T33 struct {
+	v  int
+	in T32
+}
+type T34 struct {
+	v  int
+	in T33
+}
+type T35 struct {
+	v  int
+	in T34
+}
+type T36 struct {
+	v  int
+	in T35
+}
+type T37 struct {
+	v  int
+	in T36
+}
+type T38 struct {
+	v  int
+	in T37
+}
+type T39 struct {
+	v  int
+	in T38
+}
+type T40 struct {
+	v  int
+	in T39
+}
+type T41 struct {
+	v  int
+	in T40
+}
+type T42 struct {
+	v  int
+	in T41
+}
+type T43 struct {
+	v  int
+	in T42
+}
+type T44 struct {
+	v  int
+	in T43
+}
+type T45 struct {
+	v  int
+	in T44
+}
+type T46 struct {
+	v  int
+	in T45
+}
+type T47 struct {
+	v  int
+	in T46
+}
+type T48 struct {
+	v  int
+	in T47
+}
+type T49 struct {
+	v  int
+	in T48
+}
+type T50 struct {
+	v  int
+	in T49
+}
+type T51 struct {
+	v  int
+	in T50
+}
+type T52 struct {
+	v  int
+	in T51
+}
+type T53 struct {
+	v  int
+	in T52
+}
+type T54 struct {
+	v  int
+	in T53
+}
+type T55 struct {
+	v  int
+	in T54
+}
+type T56 struct {
+	v  int
+	in T55
+}
+type T57 struct {
+	v  int
+	in T56
+}
+type T58 struct {
+	v  int
+	in T57
+}
+type T59 struct {
+	v  int
+	in T58
+}
+
+func main() {
+	var x T59
+	x.v = 7
+	x.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.v = 42
+	println(x.v, x.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.in.v)
+}

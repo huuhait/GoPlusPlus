@@ -96,7 +96,7 @@ The 4-word owned slice and the allocator in the map header are the owner's decis
 
 *Rejected:* a custom personality routine (duplicates libc++abi, needs interop glue); setjmp/longjmp (skips C++ destructors and slows the happy path).
 
-**D4.7 — DWARF 5 from day one.** M0 emits line tables; M1 adds variables and types. Type names use Go++ spelling (`main.Doc`, `[]string`). Pretty printers come in P14.
+**D4.7 — DWARF 5 from day one.** M0 emits line tables; M1 adds variables and types. Type names use Go++ spelling (`main.Doc`, `[]string`). Pretty printers come in P14. *Deviation (P04.12, manager decision M3 of its team build):* a function's `DW_AT_name` is its readable name and the `_GP` symbol is **not** written as `DW_AT_linkage_name` by default (hidden `-dwarf-linkage-names` writes it): gdb 17 and lldb 22 show a linkage name that is not an Itanium one instead of `DW_AT_name` and cannot demangle it, so every backtrace would read `_GP…`. The linkage name comes back with P14.07 (a debugger that demangles `_GP`). Design: `docs/design/debug-info.md`.
 
 **D4.8 — Build profiles, one semantics.** (Changed by ADR-0007; P06 D6.12 and D6.6 define the profiles and pipelines.)
 - `opt 0` (the default `debug` profile): GIR trivial inlining plus a small LLVM pass set, tuned in P06.
@@ -141,7 +141,7 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 **D4.13 — Symbol names.** Task P04.17 builds them.
 - Derived from content, never from creation order.
 - Stable across packages.
-- Readable in traces, gdb and perf.
+- Readable in traces, gdb and perf. (In gdb and lldb through `DW_AT_name`, not the symbol: P04.12 writes no `DW_AT_linkage_name` by default, D4.7.)
 - A fixed prefix, so they never collide with C names.
 - Specified in a spec appendix, with a demangler: [docs/spec/appendix-a-symbol-names.md](../../../docs/spec/appendix-a-symbol-names.md) (rules SYM-1 to SYM-6). Code: the library `compiler/lib/Mangle` (above Sema, below GIR and CodeGen), which codegen calls to name what it emits; `gopp demangle`.
 

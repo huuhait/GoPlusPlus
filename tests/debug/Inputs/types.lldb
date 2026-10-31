@@ -1,0 +1,17 @@
+breakpoint set --file types.gopp --line 33
+breakpoint set --file types.gopp --line 46
+run
+script print("@@SCALARS")
+frame variable
+bt
+continue
+script print("@@AGGREGATES")
+frame variable
+frame variable d.tags d.pos arr[1] *p o.value
+script print("@@GLOBALS")
+target variable
+script print("@@BACKTRACE")
+bt
+up
+script print("@@CALLER")
+frame variable

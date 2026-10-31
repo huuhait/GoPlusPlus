@@ -496,6 +496,27 @@ TEST(GIRVerifier, V014_OwnedIsATemporary) {
   }
 }
 
+TEST(GIRVerifier, V011_SourceIsAParameterOrAVariable) {
+  {
+    PlaceFixture X; // good: a source variable and a source parameter
+    X.fn(X.P).Locals[X.LStr].Source = true;
+    X.fn(X.P).Locals[1].Source = true;
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // bad: the result and a temporary
+    X.fn(X.P).Locals[0].Source = true;
+    EXPECT_GIR_RULE(X.M, "V011");
+  }
+  {
+    PlaceFixture X;
+    LocalId T = X.local(X.Str);
+    X.fn(X.P).Locals[T].K = Local::Temp;
+    X.fn(X.P).Locals[T].Source = true;
+    EXPECT_GIR_RULE(X.M, "V011");
+  }
+}
+
 TEST(GIRVerifier, V020_MissingTerminator) {
   GoodModule G;
   G.termOf(G.F, 1).Set = false;

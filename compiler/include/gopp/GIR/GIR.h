@@ -37,6 +37,9 @@ using LocalId = uint32_t;
 using BlockId = uint32_t;
 using FuncId = uint32_t;
 constexpr uint32_t NoId = UINT32_MAX;
+/// A debug scope of a function (P04.12): 0 is the function itself, N > 0 is
+/// Function::Scopes[N - 1].
+using ScopeId = uint32_t;
 
 /// A source position that needs no SourceManager: File indexes
 /// Module::Files plus one (0 = none), Line and Col are 1-based (D4.7).
@@ -200,6 +203,10 @@ struct Statement {
   /// code generator's FMA matcher does not look through it, so inlining a
   /// call never fuses a product with a sum that the call kept apart.
   bool Boundary = false;
+  /// The debug scope the statement belongs to (Function::Scopes, V074). In
+  /// code that GIR inlining copied the span is a position in the callee and
+  /// the scope lies under the `Inlined` scope of the call (P04.12).
+  ScopeId Scope = 0;
 };
 
 //===----------------------------------------------------------------------===//
@@ -285,7 +292,8 @@ struct Terminator {
   bool Expected = true;
   AssertKind AK = AssertKind::DivByZero;
   Span Loc;
-  bool Set = false; // false until the builder sets it
+  ScopeId Scope = 0; // as Statement::Scope
+  bool Set = false;  // false until the builder sets it
 };
 
 struct BasicBlock {
@@ -319,7 +327,51 @@ struct Local {
   /// of its statement unless a `Move` of it was made; until then it leaks
   /// (gir.md section 7). Only temporaries are owned (V014).
   bool Owned = false;
+  /// A parameter, variable, named result or range variable the program
+  /// declared (not a name the lowering gave to a helper's variable). Only
+  /// these are variables to the debugger (P04.12); a parameter or variable
+  /// only (V011).
+  bool Source = false;
   Span Loc;
+  /// The debug scope the variable is visible in (Function::Scopes, V074).
+  ScopeId Scope = 0;
+  /// The 1-based position of a parameter, kept when GIR inlining makes the
+  /// parameter an ordinary local of the caller (0: not a parameter; V074).
+  uint32_t ArgNo = 0;
+  /// A local that GIR inlining copied from a callee: its id in the function
+  /// whose body the nearest `Inlined` scope above Scope is (NoId: a local of
+  /// this function; V074). The debugger shows that function's variable for
+  /// all the copies.
+  LocalId Origin = NoId;
+};
+
+/// A lexical block of the source, or the body of a call that GIR inlining put
+/// into its caller (an inline site; P04.12, docs/design/debug-info.md). The
+/// scopes of a function form a tree: statements, terminators and locals name
+/// the scope they are in, and the code generator turns a `Block` into a
+/// `DILexicalBlock` and an `Inlined` scope into the callee's subprogram with
+/// an `inlinedAt` location at the call, so a debugger shows the callee's own
+/// file and line inside the call and lists the callee as an inlined frame
+/// (V073).
+struct DebugScope {
+  enum Kind : uint8_t {
+    Block,   // `{ ... }` of the source; Loc is where it begins
+    Inlined, // the body of Callee, inlined at the call at Loc
+  };
+  Kind K = Block;
+  /// The enclosing scope: a smaller id (0: the function).
+  ScopeId Parent = 0;
+  Span Loc;
+  /// Inlined: the function whose body it is.
+  FuncId Callee = NoId;
+  /// A Block that GIR inlining copied from a callee: its id among the scopes
+  /// of the function whose body the nearest `Inlined` scope above it is (0: a
+  /// block of this function).
+  ScopeId Origin = 0;
+  bool operator==(const DebugScope &O) const {
+    return K == O.K && Parent == O.Parent && Loc == O.Loc &&
+           Callee == O.Callee && Origin == O.Origin;
+  }
 };
 
 enum class Linkage : uint8_t { External, Internal, LinkOnceODR };
@@ -341,8 +393,15 @@ public:
   /// Local 0 is the return place, locals 1..N the parameters, then the rest.
   std::vector<Local> Locals;
   std::vector<BasicBlock> Blocks; // block 0 is the entry; empty: a declaration
+  /// The debug scopes below the function (ScopeId N is Scopes[N - 1]; V073).
+  std::vector<DebugScope> Scopes;
   bool isDeclaration() const { return Blocks.empty(); }
   unsigned numParams() const { return Sig->elems().size(); }
+
+  ScopeId addScope(DebugScope S) {
+    Scopes.push_back(S);
+    return Scopes.size();
+  }
 
   LocalId addLocal(Local L) {
     Locals.push_back(std::move(L));

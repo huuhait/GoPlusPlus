@@ -74,6 +74,13 @@
             ]))
             pkgs.go_1_25
             formatTools
+            # Debugger tests (P04.12): scripted gdb and lldb sessions read the
+            # DWARF the compiler writes. lldb is 22: nixpkgs' lldb 23.1.0 does
+            # not build (a patch fails), 22 comes from the binary cache and
+            # reads the DWARF 5 of LLVM 23. Alternative: only gdb, but the
+            # task needs both debuggers.
+            pkgs.gdb
+            pkgs.llvmPackages_22.lldb
           ]
           # Local arm64 runs (P04.03, owner decision M6): user-mode QEMU runs
           # the linux/arm64 programs the tests build, against the aarch64

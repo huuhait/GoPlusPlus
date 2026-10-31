@@ -1,0 +1,33 @@
+package main
+
+type Vec2 struct {
+	X, Y float64
+}
+
+var counter int = 7
+
+func leaf(v Vec2, k int) float64 {
+	acc := v.X
+	for i := 0; i < k; i++ {
+		acc += v.Y
+	}
+	println("leaf", acc)
+	return acc
+}
+
+func mid(n int, name string) float64 {
+	v := Vec2{1.5, 2}
+	r := leaf(v, n)
+	println(name, r)
+	return r
+}
+
+func outer(n int) float64 {
+	label := "outer"
+	return mid(n+1, label) + 1
+}
+
+func main() {
+	x := outer(counter)
+	println(x)
+}

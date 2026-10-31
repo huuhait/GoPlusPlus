@@ -88,6 +88,12 @@ public:
   bool fails() const { return Fails; }
   llvm::StringRef name() const { return Name; }
   bool hasBody() const { return Body; }
+  /// The source name of field I of a struct, or empty when none was recorded
+  /// (a tuple, a runtime struct). Debug information only (P04.12): it is not
+  /// part of the type's identity or its printed form; the bitstream keeps it.
+  llvm::StringRef fieldName(unsigned I) const {
+    return I < FieldNames.size() ? FieldNames[I] : llvm::StringRef();
+  }
   /// A self-naming type (Context::recTy): a named type whose body is any
   /// structural kind, made for a type that reaches itself through no struct
   /// (`type S []S`, `type A [2]*A`). Once its body is set it behaves as the
@@ -122,6 +128,7 @@ private:
   Type *Ret = nullptr;
   llvm::ArrayRef<Type *> Elems;
   llvm::StringRef Name;
+  llvm::ArrayRef<llvm::StringRef> FieldNames;
 };
 
 /// The size and alignment of a value in memory, in bytes, as the code
@@ -165,6 +172,10 @@ public:
   Type *structTy(llvm::StringRef Name);
   /// Sets the fields of a struct once; false if it already has a body.
   bool setStructBody(Type *S, llvm::ArrayRef<Type *> Fields);
+  /// Records the source names of the fields of a struct that has a body, for
+  /// the debugger (Type::fieldName). Once: false if S already has names or
+  /// the count differs from the fields'.
+  bool setFieldNames(Type *S, llvm::ArrayRef<llvm::StringRef> Names);
 
   /// The self-naming type called Name (created without a body on first
   /// use). Its parts may name it: `type S []S` is recTy("S") whose body is

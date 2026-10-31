@@ -1,0 +1,8 @@
+breakpoint set -f iface.gopp -l 33
+breakpoint set -f iface.gopp -l 25
+run
+frame variable sh
+continue
+frame variable
+expression sizeof(n)
+bt

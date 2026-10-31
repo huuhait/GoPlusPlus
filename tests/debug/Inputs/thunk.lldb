@@ -1,0 +1,7 @@
+breakpoint set -f thunk.gopp -l 16
+run
+frame variable r
+thread step-over
+frame variable a
+up
+frame variable

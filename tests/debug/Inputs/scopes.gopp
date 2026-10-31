@@ -1,0 +1,23 @@
+package main
+
+var x int = 1000
+
+func shadow(x int) int {
+	y := x + 1
+	{
+		x := y * 2
+		y := x + 5
+		println(x, y)
+	}
+	for i := 0; i < 2; i++ {
+		x := i + 100
+		y += x
+	}
+	return x + y
+}
+
+func main() {
+	x := 7
+	println(shadow(x))
+	println(x)
+}

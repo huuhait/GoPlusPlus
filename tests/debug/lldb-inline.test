@@ -1,0 +1,27 @@
+// REQUIRES: host-linux-amd64, lldb
+// RUN: %gopp build %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/inl.lldb %t 2>&1 | FileCheck %s
+// RUN: %gopp build -pipeline=fastisel %S/Inputs/inl/a.gopp %S/Inputs/inl/b.gopp -o %t.base
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/inl-base.lldb %t.base 2>&1 | FileCheck %s --check-prefix=BASE
+// P04.12, D4.7: gdb-inline.test in lldb. Stopped in the inlined `add`, lldb
+// shows the callee's file and line (`b.gopp:20`), marks the frame `[inlined]`,
+// and lists the callers (`twice` at the call site in b.gopp, `main` in
+// a.gopp) with their own variables; the baseline has no inlined frame.
+
+// CHECK: Breakpoint 1: 3 locations.
+// CHECK: @@STOP1
+// CHECK: frame #0: {{.*}}`main.add(x=5, y=5) at b.gopp:20:{{[0-9]+}} [inlined]
+// CHECK-NEXT: frame #1: {{.*}}`main.twice(n=5) at b.gopp:25:{{[0-9]+}}
+// CHECK-NEXT: frame #2: {{.*}}`main.main at a.gopp:6:{{[0-9]+}}
+// CHECK: (long) x = 5
+// CHECK-NEXT: (long) y = 5
+// CHECK-NEXT: (long) z = {{-?[0-9]+}}
+// CHECK: @@CALLER1
+// CHECK: (long) n = 5
+// CHECK: @@CALLER2
+// CHECK: (long) r = 0
+// CHECK: @@STOP2
+// CHECK: (long) z = 10
+
+// BASE: frame #0: {{.*}}`main.add(x=5, y=5) at b.gopp:20
+// BASE-NOT: [inlined]

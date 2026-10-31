@@ -1,0 +1,20 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/deep.gopp -o %t
+// RUN: llvm-dwarfdump --debug-info %t | FileCheck %s --check-prefix=DWARF
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/deep.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/deep.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// P04.12: a chain of types higher than DebugInfoBuilder::MaxTypeHeight (which
+// bounds the recursion of LLVM's DWARF writer) is cut: a member refers to the
+// rest by a declaration of its name, and the unit keeps the definition. Both
+// sides: the DWARF has such a declaration, AND gdb and lldb follow it by the
+// name to the true value 59 levels down.
+//
+// The program has no cycle, so a declaration is a cut.
+// DWARF: DW_AT_declaration (true)
+//
+// GDB: $1 = 7
+// GDB: $2 = 42
+// GDB: type = struct main.T29
+//
+// LLDB: (long) x.v = 7
+// LLDB: (long) x.in.{{(in\.)+}}v = 42
