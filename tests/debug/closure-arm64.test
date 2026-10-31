@@ -1,0 +1,8 @@
+// REQUIRES: gdb, host-linux-amd64, qemu-aarch64
+// RUN: %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/closure.gopp -o %t
+// RUN: %python %S/Inputs/gdb-qemu.py %aarch64_sysroot %t %S/Inputs/closure.gdb | FileCheck %S/closure.test --check-prefix=GDB
+// P04.07: debug/closure.test's gdb session on linux/arm64, under user-mode
+// QEMU's gdb stub: the captured variables by their source names in the
+// closure's frame (the environment arrives in x20, swiftself), the enclosing
+// function's own locals, the captured parameter at `break main.scaled` and
+// the shadowing local. The CHECK lines are that test's.

@@ -8,9 +8,11 @@
 //
 // P04.06. Which method a call through an interface reaches is the checker's
 // decision (Lookup.cpp: embedding, shadowing, pointer receivers, ambiguity).
-// The lowering asks it through this class and never decides again. A Checker
-// is made once, on the context the package was checked with; it reports to a
-// consumer that drops everything (the package is already checked).
+// The lowering asks it through this class and never decides again; so too
+// which types hold a view (P04.07: a closure that outlives the call may not
+// hold one, CLO-3a), the checker's containsView. A Checker is made once, on
+// the context the package was checked with; it reports to a consumer that
+// drops everything (the package is already checked).
 //
 //===----------------------------------------------------------------------===//
 
@@ -70,6 +72,17 @@ MethodSets::MethodSets(const CheckedPackage &CP, bool ScanMethods) {
 
 uint64_t MethodSets::steps() const {
   return P ? P->C.LookupSteps + P->Steps : 0;
+}
+
+uint64_t MethodSets::viewSteps() const { return P ? P->C.ViewSteps : 0; }
+
+bool MethodSets::holdsView(Type *T) {
+  // (Without a checker the answer that can only refuse: yes.)
+  return !P || (T && P->C.containsView(T));
+}
+
+bool MethodSets::holdsBorrow(const Var *V) {
+  return V->isBorrow() || holdsView(V->Ty);
 }
 
 MethodSets::~MethodSets() = default;

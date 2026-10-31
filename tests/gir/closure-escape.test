@@ -1,0 +1,187 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck %s
+// P04.07 (spec CLO-1 to CLO-4, D1.11): escape analysis, both sides. A
+// closure that does not escape keeps its captured variables where they are:
+// no heap cell, the environment is a local of the enclosing function (a
+// pointer to the variable inside it). One that may escape gets a heap cell
+// for the variable and a heap environment. A literal is NOT escaping when it
+// is called where it is written, is an argument for a parameter that the
+// callee (a function of this package) only calls or passes on to another
+// parameter that is not kept, or is held by a local variable that is only
+// called (CLO-1: assigning it to a local is no escape) and declared inside
+// the scope of what it captures. It escapes when the callee stores it,
+// returns it, or uses it inside another literal, when it is returned, when
+// a variable that holds it is captured by a closure that escapes, and when
+// it is assigned (`=`) to a variable. A method value `c.Inc` is a closure
+// over `&c` (CLO-5) and follows the same rules. A variable is followed when
+// its type can hold a func value (FuncHolderTypes: a func type, an
+// interface, a struct, array, slice, map or pointer that holds one), not
+// only when it is a func type (review R1): a literal or method value held by
+// an `any` that is returned escapes, one held by an `any` that is only
+// passed to a parameter that is not kept stays in the frame. (The boxing of
+// a func value in an interface is a heap copy of the 16 bytes either way:
+// `mem_resize` of 16 bytes, not zeroed; the cells and environments are
+// zeroed.)
+package main
+
+var saved = func() {}
+
+type C struct{ n int }
+
+func (c *C) Inc() { c.n++ }
+
+func callIt(f func())       { f() }
+func passOn(f func())       { callIt(f) }
+func keep(f func())         { saved = f }
+func passToKeeper(f func()) { keep(f) }
+func viaLiteral(f func())   { func() { f() }() }
+
+func nonEscaping() int {
+	n := 0
+	callIt(func() { n++ })
+	passOn(func() { n++ })
+	func() { n++ }()
+	f := func() { n++ }
+	f()
+	return n
+}
+
+func keptByCallee() int {
+	n := 0
+	keep(func() { n++ })
+	return n
+}
+
+func keptThroughAChain() int {
+	n := 0
+	passToKeeper(func() { n++ })
+	return n
+}
+
+func keptInsideALiteral() int {
+	n := 0
+	viaLiteral(func() { n++ })
+	return n
+}
+
+func heldThenCaptured() func() {
+	n := 0
+	f := func() { n++ }
+	return func() { f() }
+}
+
+func returned() func() int {
+	n := 0
+	return func() int { n++; return n }
+}
+
+func methodLocal() int {
+	var c C
+	m := c.Inc
+	m()
+	callIt(c.Inc)
+	return c.n
+}
+
+func methodEscapes() func() {
+	var c C
+	return c.Inc
+}
+
+func isSet(x any) bool { return x != nil }
+
+func anyLocal() bool {
+	n := 0
+	var i any = func() { n++ }
+	return isSet(i)
+}
+
+func anyEscapes() any {
+	n := 0
+	var i any = func() { n++ }
+	return i
+}
+
+func anyMethodLocal() bool {
+	var c C
+	var i any = c.Inc
+	return isSet(i)
+}
+
+func anyMethodEscapes() any {
+	var c C
+	var i any = c.Inc
+	return i
+}
+
+func main() {
+	println(nonEscaping(), keptByCallee(), keptThroughAChain(), keptInsideALiteral(), returned()(), methodLocal())
+	println(anyLocal(), anyEscapes() != nil, anyMethodLocal(), anyMethodEscapes() != nil)
+	heldThenCaptured()()
+	methodEscapes()()
+}
+
+// CHECK-LABEL: fn _GPF4mainE11nonEscaping(
+// CHECK-NOT: mem_resize
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE12keptByCallee(
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE17keptThroughAChain(
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE18keptInsideALiteral(
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: return
+
+// The cell of n, the environment of the literal held by f (it escapes with
+// the one that captures f) and the environment of the returned one.
+// CHECK-LABEL: fn _GPF4mainE16heldThenCaptured(
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE8returned(
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE11methodLocal(
+// CHECK-NOT: mem_resize
+// CHECK: return
+
+// The cell of c and the environment of the method value.
+// CHECK-LABEL: fn _GPF4mainE13methodEscapes(
+// CHECK: mem_resize
+// CHECK: mem_resize
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE8anyLocal(
+// CHECK-NOT: const true) ->
+// CHECK: mem_resize(const null: *u8, const 16: u64, const false)
+// CHECK-NOT: const true) ->
+// CHECK: return
+
+// The cell of n, the environment, the box.
+// CHECK-LABEL: fn _GPF4mainE10anyEscapes(
+// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 16: u64, const false)
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE14anyMethodLocal(
+// CHECK-NOT: const true) ->
+// CHECK: mem_resize(const null: *u8, const 16: u64, const false)
+// CHECK-NOT: const true) ->
+// CHECK: return
+
+// CHECK-LABEL: fn _GPF4mainE16anyMethodEscapes(
+// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
+// CHECK: return

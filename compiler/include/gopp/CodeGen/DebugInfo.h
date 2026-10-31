@@ -27,7 +27,7 @@
 //     to a DIType.
 //
 // Later tasks add a case to typeOf() (and nothing else here) when they add a
-// GIR type: P04.06 interfaces and itabs, P04.07 closure environments and
+// GIR type: P04.06 interfaces and itabs, P04.07 func values (done), P04.26
 // defer frames, P04.08 generic instance names, P04.22 `extends` parents, P04.24
 // units. A name the GIR type does not hold is recorded on it by the GIR
 // lowering (gir::Type::fieldName), next to lowerType.

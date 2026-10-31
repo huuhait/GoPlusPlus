@@ -1,0 +1,5 @@
+// REQUIRES: host-linux-amd64, qemu-aarch64, clang
+// RUN: %python %S/Inputs/run-cabi.py --via-value --arm64 %aarch64_sysroot %gopp %t.d 7 25
+// P04.07 (D4.4): cabi-value-amd64.test for linux/arm64 under qemu-aarch64: a C
+// function used as a func value, called through it, with homogeneous
+// floating-point aggregates in vector registers and large results through x8.

@@ -187,7 +187,7 @@ Each case is also in the UB list (P01.14) and in the differential corpus.
 ## Risks
 
 - **ABI corner cases** → Clang classifies every C signature (D4.4); generated ABI tests in P07.12.
-- **`invoke` makes debug codegen slow on x86-64** → measured by the P04.15 spike (ADR-0028): 1.7 to 1.8× codegen time. P04.07 implements the ADR-0028 lowering rules (D4.6), which bring it to 1.3 to 1.4×; P06.01 re-measures.
+- **`invoke` makes debug codegen slow on x86-64** → measured by the P04.15 spike (ADR-0028): 1.7 to 1.8× codegen time. P04.26 implements the ADR-0028 lowering rules (D4.6), which bring it to 1.3 to 1.4×; P06.01 re-measures.
 - **LLVM compile time** → measure from the first slice (`-trace`, P06.09) and keep GIR output lean.
 - **EH overhead in hot code** → `nounwind` inference and `-panic=abort`; measured in P15.
 

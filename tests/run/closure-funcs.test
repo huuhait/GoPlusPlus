@@ -1,0 +1,150 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-funcs.out 0
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07 (closures part; spec CLO-1 to CLO-8): func values of top-level
+// functions, closures that share their captured variables with the function
+// that made them, closures stored and called later (the `http.HandleFunc`
+// pattern: a handler table), nested closures, a closure made by a closure,
+// named results changed by a closure, a closure in a package variable's
+// initializer, func values in struct fields and slices, and a literal called
+// where it is written. The expected output is what `go run` prints for this
+// very file (Inputs/regen-goldens.py).
+package main
+
+func add(a, b int) int { return a + b }
+
+func apply(f func(int, int) int, x, y int) int { return f(x, y) }
+
+func counter() func() int {
+	n := 0
+	return func() int {
+		n++
+		return n
+	}
+}
+
+// A pair of closures over one variable.
+func pair() (func(), func() int) {
+	v := 10
+	return func() { v += 5 }, func() int { return v }
+}
+
+type Handler func(path string) string
+
+var routes = map[string]Handler{}
+
+func handle(pattern string, h Handler) { routes[pattern] = h }
+
+// The handlers keep a string the function owns (a borrowed parameter cannot
+// be held by an escaping closure, CLO-3a: gir/closure-refused.test).
+func register(name string, port int) {
+	prefix := name + ":" + string(rune('0'+port))
+	hits := 0
+	handle("/a", func(p string) string {
+		hits++
+		return prefix + p
+	})
+	handle("/hits", func(p string) string { return prefix + "hits" })
+	handle("/count", func(p string) string {
+		hits += 100
+		return prefix + string(rune('0'+hits%10))
+	})
+}
+
+func named(x int) (r int) {
+	defer0 := func() { r = x * 2 }
+	defer0()
+	return r + 1
+}
+
+var initFn = func() int { return 41 + 1 }
+
+var table = []func(int) int{
+	func(x int) int { return x + 1 },
+	func(x int) int { return x * x },
+}
+
+type Op struct {
+	name string
+	fn   func(int) int
+}
+
+func compose(f, g func(int) int) func(int) int {
+	return func(x int) int { return g(f(x)) }
+}
+
+func fibOf(n int, f func(int) int) int {
+	if n < 2 {
+		return n
+	}
+	return f(n-1) + f(n-2)
+}
+
+func fib(n int) int { return fibOf(n, fib) }
+
+func main() {
+	println(apply(add, 3, 4))
+	c := counter()
+	println(c(), c(), c())
+	d := counter()
+	println(d(), c())
+
+	inc, get := pair()
+	inc()
+	inc()
+	println(get())
+
+	register("srv", 8)
+	for _, k := range []string{"/a", "/hits", "/count", "/count"} {
+		if h, ok := routes[k]; ok {
+			println(k, h(k))
+		}
+	}
+
+	println(named(4))
+	println(initFn())
+	for _, f := range table {
+		println(f(7))
+	}
+	ops := []Op{{"inc", table[0]}, {"sq", table[1]}}
+	for _, o := range ops {
+		println(o.name, o.fn(5))
+	}
+	println(compose(table[0], table[1])(3))
+	println(fib(15))
+
+	// A literal called where it is written, and one that changes what it
+	// captures.
+	total := 0
+	func() { total += 7 }()
+	func(k int) { total += k }(3)
+	println(total)
+
+	// Nested: three levels share one variable.
+	x := 1
+	l1 := func() func() func() int {
+		return func() func() int {
+			x++
+			return func() int { x *= 3; return x }
+		}
+	}
+	println(l1()()(), x)
+
+	// A closure that takes a closure, and one that is passed to a function
+	// that stores it.
+	sum := 0
+	each := func(n int, g func(int)) {
+		for i := 0; i < n; i++ {
+			g(i)
+		}
+	}
+	each(5, func(i int) { sum += i })
+	println(sum)
+
+	// Shadowing: the inner x is another variable.
+	y := 1
+	sh := func() int { y := 5; y++; return y }
+	println(sh(), y)
+}

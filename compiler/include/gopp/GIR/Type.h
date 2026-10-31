@@ -97,6 +97,18 @@ public:
   llvm::ArrayRef<Type *> elems() const { return Elems; }
   Type *ret() const { return Ret; }
   bool fails() const { return Fails; }
+  /// A Func type whose first parameter is the closure's environment, a
+  /// `*u8` that the Go++ convention passes in the `swiftself` register, no
+  /// argument's (P04.07, calling-convention.md). The code part of a func
+  /// value has one; a top-level function does not.
+  bool hasEnv() const { return Env; }
+  /// The GIR type of a func value: the pair (code with an environment,
+  /// environment). `Option[func]` has the same type; its nil is a null code
+  /// pointer.
+  bool isFuncValue() const {
+    return K == Kind::Tuple && Elems.size() == 2 && Elems[0]->K == Kind::Func &&
+           Elems[0]->Env;
+  }
   /// The calling convention of a Func type (Go for every other kind).
   CallConv callConv() const { return CC; }
   llvm::StringRef name() const { return Name; }
@@ -133,6 +145,7 @@ private:
   Kind K;
   bool Signed = false;
   bool Fails = false;
+  bool Env = false;
   CallConv CC = CallConv::Go;
   bool Body = false;
   bool Rec = false;
@@ -181,11 +194,12 @@ public:
   Type *option(Type *Elem);
   /// The empty list is Unit; a list of one stays a 1-tuple.
   Type *tuple(llvm::ArrayRef<Type *> Elems);
+  /// Env: Params[0] is the closure environment, a `*u8` (Type::hasEnv).
   Type *func(llvm::ArrayRef<Type *> Params, Type *Ret, bool Fails = false,
-             CallConv CC = CallConv::Go);
+             CallConv CC = CallConv::Go, bool Env = false);
   /// The Func type Sig with the calling convention CC.
   Type *withCallConv(Type *Sig, CallConv CC) {
-    return func(Sig->elems(), Sig->ret(), Sig->fails(), CC);
+    return func(Sig->elems(), Sig->ret(), Sig->fails(), CC, Sig->hasEnv());
   }
   /// The struct called Name (created without a body on first use).
   Type *structTy(llvm::StringRef Name);

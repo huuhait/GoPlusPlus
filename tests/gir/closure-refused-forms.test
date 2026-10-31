@@ -1,0 +1,93 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.07: the func-value forms the lowering leaves to another task, one
+// E0439 each, where they are, naming the task (TODO), and nothing after it:
+//   - CLO-5a (P04.27): a method value of a value method of an owning type (a
+//     string type, a struct that holds a map), which Go copies and Go++ may
+//     not copy silently: a compile error with the fix-its `x.Clone().M` and
+//     `move(x).M`;
+//   - a method value of a `move` receiver (P04.09: each call would consume
+//     the one bound receiver);
+//   - a method expression of an interface (P04.27);
+//   - a range over a func (P04.27; a channel's is P12's);
+//   - a generic function used as a value, `gen[int]` or inferred (P04.08):
+//     reported once, where it is declared, and nothing at the uses;
+//   - a closure given to C (P07.08: a C function pointer has no place for an
+//     environment).
+// (A literal in a blank variable's initializer is closure-blank-init.test:
+// the package's init function is not lowered after another error.)
+// The other side draws no error: the method expression of the owning type
+// (its receiver is an argument, passed as passOfRecv says), a value method
+// value of a type that owns nothing, and a top-level function given to C
+// (callback.test).
+package main
+
+type Doc struct {
+	Name  string
+	Index map[string]int
+}
+
+type C struct{ n int }
+
+func (c C) Get() int { return c.n }
+
+func (move c C) Take() int { return c.n }
+
+type name string
+
+func (s name) hello() string { return string(s) + "!" }
+
+func (d Doc) Size() int { return len(d.Index) }
+
+type Shape interface{ Area() int }
+
+func methods(n name, d Doc, c C) int {
+	a := n.hello
+	b := d.Size
+	t := c.Take
+	s := Shape.Area
+	_, _, _, _ = a, b, t, s
+	h := name.hello
+	g := c.Get
+	return len(h(n)) + g()
+}
+
+@Extern("C")
+func apply(cb func(a int32) int32, x int32) int32
+
+func toC() int32 {
+	k := int32(4)
+	return apply(func(a int32) int32 { return a + k }, 1)
+}
+
+func gen[T Copy](x T) T { return x }
+
+func generic() int {
+	f := gen[int]
+	var g func(int) int = gen
+	return f(1) + g(2)
+}
+
+func seq(yield func(int) bool) {
+	_ = yield(1)
+}
+
+func ranges() {
+	for x := range seq {
+		println(x)
+	}
+}
+
+func main() {
+	_ = methods("x", Doc{}, C{})
+	_ = toC()
+	ranges()
+	_ = generic()
+}
+
+// CHECK: closure-refused-forms.test:62:1: error[E0439]: a generic function (P04.08) is not supported
+// CHECK: closure-refused-forms.test:44:7: error[E0439]: a method value of a value method of an owning type (CLO-5a, P04.27) is not supported
+// CHECK: closure-refused-forms.test:45:7: error[E0439]: a method value of a value method of an owning type (CLO-5a, P04.27) is not supported
+// CHECK: closure-refused-forms.test:46:7: error[E0439]: a method value of a method with a move receiver (P04.09) is not supported
+// CHECK: closure-refused-forms.test:47:7: error[E0439]: a method expression of an interface type (P04.27) is not supported
+// CHECK: closure-refused-forms.test:59:15: error[E0439]: a closure, method value or function variable passed to C (P07.08) is not supported
+// CHECK: closure-refused-forms.test:75:2: error[E0439]: a range over this type (P04.27, P12) is not supported

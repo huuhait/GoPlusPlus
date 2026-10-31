@@ -13,7 +13,7 @@
 //   print_u64, print_i64, print_hex, print_f64   Go's println formats
 //   panic_<kind>                                 the failure of an Assert:
 //       writes Go's first line (`panic: runtime error: ...`) to standard
-//       error and exits with status 2. There is no unwinding yet: P04.07
+//       error and exits with status 2. There is no unwinding yet: P04.26
 //       turns the call into an unwinding panic (the code generator calls
 //       these functions from one shared block per kind and function, ADR-0028
 //       rule 3.3) and P05 adds the stack trace.
@@ -616,7 +616,7 @@ FuncId Lowering::eqGlue(S::Type *T, SourceLoc At) {
     return NoId;
   if (!hasGlue(G)) {
     unsupported(At, "comparing a value that holds a slice or a function "
-                    "(P04.07)");
+                    "(never comparable)");
     return NoId;
   }
   if (hasIface(G) &&
@@ -634,7 +634,7 @@ FuncId Lowering::hashGlue(S::Type *T, SourceLoc At) {
     return NoId;
   if (!hasGlue(G)) {
     unsupported(At, "hashing a value that holds a slice or a function "
-                    "(P04.07)");
+                    "(never comparable)");
     return NoId;
   }
   if (hasIface(G) &&

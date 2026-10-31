@@ -1,0 +1,16 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.07 (appendix A.5): a function literal in a package variable's
+// initializer is a closure of that variable (`hook` below lowers, named
+// `_GPC1_R4mainE4hook`, closure-symbols.test). A blank variable (`var _ =
+// ...`) has no storage and no symbol, so a literal in its initializer has no
+// entity to be named by: one E0439 naming P04.27 (TODO: name it in the
+// package's init entity), and nothing else.
+package main
+
+var hook = func() int { return 5 }
+
+var _ = func() int { println("init"); return 1 }()
+
+func main() { println(hook()) }
+
+// CHECK: closure-blank-init.test:12:9: error[E0439]: a function literal in the initializer of a blank variable (P04.27) is not supported

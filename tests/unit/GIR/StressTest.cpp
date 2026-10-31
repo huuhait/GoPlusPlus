@@ -497,7 +497,8 @@ TEST(GIRStressLong, DISABLED_PrinterIsNearLinearInTime) {
 
 /// A program checked once, ready to be lowered many times.
 struct Checked {
-  explicit Checked(const std::string &Source) : Diags(SM, Collect, 0) {
+  explicit Checked(const std::string &Source, unsigned Threads = 1)
+      : Diags(SM, Collect, 0) {
     llvm::SmallString<128> D;
     EXPECT_FALSE(llvm::sys::fs::createUniqueDirectory("gopp-stress", D));
     Dir = std::string(D);
@@ -507,8 +508,9 @@ struct Checked {
     }
     sema::LoadOptions LO;
     LO.Root = Dir;
-    Ld = std::make_unique<sema::Loader>(SM, Diags, TCtx, LO,
-                                        sema::CheckOptions());
+    sema::CheckOptions CO;
+    CO.BodyThreads = Threads;
+    Ld = std::make_unique<sema::Loader>(SM, Diags, TCtx, LO, CO);
     CP = Ld->loadDir(Dir, "");
   }
   ~Checked() { llvm::sys::fs::remove_directories(Dir); }
@@ -1003,6 +1005,17 @@ uint64_t lowerAndCountWalks(unsigned N, std::string (*Make)(unsigned),
   auto M = P.lower(C, Opts);
   EXPECT_NE(M, nullptr) << P.errors();
   return loweringSteps() - A;
+}
+
+/// The steps the closure analysis counted on the program of N units.
+uint64_t lowerAndCountEscape(unsigned N, std::string (*Make)(unsigned)) {
+  Checked P(Make(N));
+  EXPECT_EQ(P.errors(), "") << "N = " << N;
+  gir::Context C;
+  uint64_t A = escapeSteps();
+  auto M = P.lower(C, {});
+  EXPECT_NE(M, nullptr) << P.errors();
+  return escapeSteps() - A;
 }
 
 /// Steps S1 for N units and S16 for 16N: the dimension is counted (S16 at
@@ -1564,6 +1577,253 @@ TEST(GIRStressLong, DISABLED_CodeGenerationOfTheCoreSubsetIsNearLinear) {
   auto [T1, T4] = bestOfBoth(Lower(*M1), Lower(*M4));
   EXPECT_LT(T4, nearLinearLimit(T1))
       << "T(N) = " << T1 << " s, T(4N) = " << T4 << " s";
+}
+
+// P04.07: function literals. The analysis of what a literal captures, whether
+// it escapes and which parameters a function keeps (Escape.cpp) is one walk of
+// the body (an explicit stack, any depth) plus a worklist; its steps count in
+// gir::loweringSteps like the other lowering walks. One generator per
+// dimension: sibling literals that share variables, nested literals, a
+// variable held by a literal that is called, and a chain of N functions that
+// pass a closure down to one that calls it (the keep bits). The control: N
+// literals that each capture all of N variables (N * N captures) must fail
+// the same check.
+
+/// N literals in one function, all capturing the same three variables.
+std::string siblingLitsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n\tx, y, z := 0, 0, 0\n"
+                  "\tvar fs []func() int\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tfs = append(fs, func() int { x += " + std::to_string(I) +
+         "; y++; return x + y + z })\n";
+  return S + "\tprintln(len(fs), fs[0]())\n}\n";
+}
+
+/// N functions, each with literals nested six deep around one variable.
+std::string nestedLitsOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned I = 0; I < N; ++I) {
+    S += "func g" + std::to_string(I) + "() int {\n\ta := 1\n\t";
+    S +=
+        "return func() int { a++; return func() int { a++; return "
+        "func() int { a++; return func() int { a++; return func() int { "
+        "a++; return func() int { a++; return a }() }() }() }() }() }()\n}\n\n";
+  }
+  S += "func main() { println(g0()) }\n";
+  return S;
+}
+
+/// N local variables each holding a literal that is only called.
+std::string heldLitsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n\tx := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\th" + std::to_string(I) + " := func() { x += " + std::to_string(I) +
+         " }\n\th" + std::to_string(I) + "()\n";
+  return S + "\tprintln(x)\n}\n";
+}
+
+/// A chain of N functions that pass a func down; main passes a literal.
+std::string keepChainOfN(unsigned N) {
+  std::string S = "package main\n\nfunc k0(f func()) { f() }\n";
+  for (unsigned I = 1; I < N; ++I)
+    S += "func k" + std::to_string(I) + "(f func()) { k" +
+         std::to_string(I - 1) + "(f) }\n";
+  S += "\nfunc main() {\n\tx := 0\n\tk" + std::to_string(N - 1) +
+       "(func() { x++ })\n\tprintln(x)\n}\n";
+  return S;
+}
+
+/// A ring of N mutually recursive functions that pass a func on (the keep
+/// bits of a cycle: the least fixpoint needs no special case).
+std::string keepRingOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned K = 0; K < N; ++K)
+    S += "func p" + std::to_string(K) +
+         "(f func() int, n int) int {\n\tif n == 0 {\n\t\treturn f()\n\t}\n"
+         "\treturn p" +
+         std::to_string((K + 1) % N) + "(f, n-1)\n}\n";
+  return S + "\nfunc main() {\n\tx := 1\n\tprintln(p0(func() int { x++; "
+             "return x }, 3))\n}\n";
+}
+
+/// N method values of pointer methods: half called where they are held, half
+/// kept (CLO-5: each is a closure over `&c`).
+std::string methodValuesOfN(unsigned N) {
+  std::string S = "package main\n\ntype C struct{ n int }\n\nfunc (c *C) "
+                  "Inc() int { c.n++; return c.n }\n\nvar keep []func() int\n"
+                  "\nfunc main() {\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string C = "c" + std::to_string(I);
+    S += "\tvar " + C + " C\n";
+    if (I % 2)
+      S += "\tkeep = append(keep, " + C + ".Inc)\n";
+    else
+      S += "\tm" + std::to_string(I) + " := " + C + ".Inc\n\tm" +
+           std::to_string(I) + "()\n";
+  }
+  return S + "\tprintln(len(keep))\n}\n";
+}
+
+/// Review R1: the types that can hold a func value (FuncHolderTypes). A chain
+/// of N struct types, each holding a slice of the next, the last an
+/// `Option[func()]`, and a local of each type that is used: every question
+/// reaches the end of the chain from another start, so an answer that only
+/// remembered the type asked about would cost N * N.
+std::string holderChainOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned K = 0; K + 1 < N; ++K)
+    S += "type T" + std::to_string(K) + " struct {\n\tk int\n\tn []T" +
+         std::to_string(K + 1) + "\n}\n\n";
+  S += "type T" + std::to_string(N - 1) +
+       " struct {\n\tk int\n\tf Option[func()]\n}\n\nfunc main() {\n\tt "
+       ":= 0\n";
+  for (unsigned K = 0; K < N; ++K)
+    S += "\tvar v" + std::to_string(K) + " T" + std::to_string(K) +
+         "\n\tt += v" + std::to_string(K) + ".k\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// The same with breadth: N struct types share one big struct of N fields of
+/// N types (none holds a func) beside an `Option[func()]`; an answer that
+/// stopped at the first func value found would walk the big one again for
+/// each.
+std::string holderFanOfN(unsigned N) {
+  std::string S = "package main\n\ntype Big struct {\n";
+  for (unsigned K = 0; K < N; ++K)
+    S += "\tb" + std::to_string(K) + " [" + std::to_string(K + 1) + "]int\n";
+  S += "}\n\n";
+  for (unsigned K = 0; K < N; ++K)
+    S += "type W" + std::to_string(K) +
+         " struct {\n\tf Option[func()]\n\ta []Big\n}\n\n";
+  S += "func main() {\n\tt := 0\n";
+  for (unsigned K = 0; K < N; ++K)
+    S += "\tvar w" + std::to_string(K) + " W" + std::to_string(K) + "\n\tif w" +
+         std::to_string(K) + ".f == nil {\n\t\tt++\n\t}\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// Review R7: a closure that outlives the call may not hold a value whose
+/// type holds a view, which the checker's walk over the types decides
+/// (Checker::containsView, through MethodSets::holdsBorrow; its steps are
+/// MethodSets::viewSteps). A chain of N `@View` structs, each holding a slice
+/// of the next and none a view, and a local of each type captured by a closure
+/// that escapes, in the chain's order: every question walks to the end of
+/// the chain unless the walk remembers what it proved.
+std::string viewChainOfN(unsigned N) {
+  std::string S = "package main\n\n";
+  for (unsigned K = 0; K + 1 < N; ++K)
+    S += "@View\ntype V" + std::to_string(K) + " struct {\n\tk int\n\tn []V" +
+         std::to_string(K + 1) + "\n}\n\n";
+  S += "@View\ntype V" + std::to_string(N - 1) +
+       " struct{ k int }\n\nvar keep []func() int\n\nfunc main() {\n";
+  for (unsigned K = 0; K < N; ++K)
+    S += "\tvar v" + std::to_string(K) + " V" + std::to_string(K) +
+         "\n\tkeep = append(keep, func() int { return v" + std::to_string(K) +
+         ".k })\n";
+  return S + "\tprintln(len(keep))\n}\n";
+}
+
+/// Literals nested N deep in one function, each calling the next on the spot.
+std::string deepLitsOfN(unsigned N) {
+  std::string S = "package main\n\nfunc f() int {\n\tx := 1\n\treturn ";
+  for (unsigned K = 0; K < N; ++K)
+    S += "func() int {\n\tx++\n\treturn ";
+  S += "x";
+  for (unsigned K = 0; K < N; ++K)
+    S += "\n}()";
+  return S + "\n}\n\nfunc main() { println(f()) }\n";
+}
+
+/// The control: N literals that each use all N variables.
+std::string captureSquareOfN(unsigned N) {
+  std::string S = "package main\n\nfunc main() {\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tv" + std::to_string(I) + " := " + std::to_string(I) + "\n";
+  std::string Sum = "v0";
+  for (unsigned I = 1; I < N; ++I)
+    Sum += " + v" + std::to_string(I);
+  S += "\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tt += func() int { return " + Sum + " }()\n";
+  return S + "\tprintln(t)\n}\n";
+}
+
+/// The steps for N and 16N units: the count sees the dimension (at least 10
+/// times more) and is linear in it (at most 18 times more: 16 plus the fixed
+/// part). (A literal costs tens of nodes, so the per-unit constant of
+/// expectWalksFollow is too small for these.)
+void expectLiteralWalksLinear(unsigned N, std::string (*Make)(unsigned)) {
+  uint64_t S1 = lowerAndCountEscape(N, Make);
+  uint64_t S16 = lowerAndCountEscape(16 * N, Make);
+  EXPECT_GE(S16, 10 * S1) << S1 << " -> " << S16;
+  EXPECT_LE(S16, 18 * S1) << S1 << " -> " << S16;
+}
+
+TEST(GIRStress, LoweringSiblingLiteralsIsLinear) {
+  expectLiteralWalksLinear(200, siblingLitsOfN);
+}
+TEST(GIRStress, LoweringNestedLiteralsIsLinear) {
+  expectLiteralWalksLinear(20, nestedLitsOfN);
+}
+TEST(GIRStress, LoweringHeldLiteralsIsLinear) {
+  expectLiteralWalksLinear(200, heldLitsOfN);
+}
+TEST(GIRStress, TheKeepBitsOfAChainOfFunctionsAreLinear) {
+  expectLiteralWalksLinear(100, keepChainOfN);
+}
+TEST(GIRStress, TheKeepBitsOfARingOfFunctionsAreLinear) {
+  expectLiteralWalksLinear(30, keepRingOfN);
+}
+TEST(GIRStress, LoweringMethodValuesIsLinear) {
+  expectLiteralWalksLinear(100, methodValuesOfN);
+}
+TEST(GIRStress, TheHolderTypesOfAChainOfTypesAreLinear) {
+  expectLiteralWalksLinear(40, holderChainOfN);
+}
+TEST(GIRStress, TheHolderTypesOfTypesThatShareABigOneAreLinear) {
+  expectLiteralWalksLinear(40, holderFanOfN);
+}
+TEST(GIRStress, TheViewTypesOfAChainOfViewStructsAreLinear) {
+  expectLiteralWalksLinear(40, viewChainOfN);
+}
+TEST(GIRStress, LoweringDeeplyNestedLiteralsIsLinear) {
+  // (Each literal's body is lowered inside the one around it: 160 levels
+  // also show that the stack of the lowering thread holds the deepest
+  // nesting the parser allows for this shape.)
+  expectLiteralWalksLinear(10, deepLitsOfN);
+}
+TEST(GIRStress, TheLiteralStepCheckFailsAQuadraticProgram) {
+  uint64_t S1 = lowerAndCountEscape(10, captureSquareOfN),
+           S4 = lowerAndCountEscape(40, captureSquareOfN);
+  EXPECT_GT(2 * S4, 9 * S1) << S1 << " -> " << S4;
+}
+
+// P04.07: the symbols of the closures (appendix A: `C<ordinal>` in the
+// enclosing entity, from 1) and the escape decisions (the GIR) do not depend
+// on how many threads checked the bodies: nested literals, many siblings in
+// one function (the ordinals are counted per parent by the analysis, never
+// indexed by a node: c2's ASan overflow), a chain of keep bits and method
+// values.
+TEST(GIRStress, ClosureSymbolsDoNotDependOnTheCheckThreads) {
+  auto Text = [](const std::string &Src, unsigned Threads) {
+    Checked P(Src, Threads);
+    EXPECT_EQ(P.errors(), "");
+    gir::Context C;
+    auto M = P.lower(C);
+    EXPECT_NE(M, nullptr) << P.errors();
+    std::string Out;
+    if (M)
+      Out = textOf(*M);
+    return Out;
+  };
+  std::string One = Text(nestedLitsOfN(30), 1);
+  EXPECT_NE(One.find("_GPC1_C1_C1_C1_C1_C1_F4mainE2g7"), std::string::npos);
+  EXPECT_EQ(One, Text(nestedLitsOfN(30), 16));
+  std::string Sib = Text(siblingLitsOfN(200), 1);
+  EXPECT_NE(Sib.find("_GPC200_F4mainE4main"), std::string::npos);
+  EXPECT_EQ(Sib, Text(siblingLitsOfN(200), 16));
+  for (std::string (*Make)(unsigned) : {keepChainOfN, methodValuesOfN})
+    EXPECT_EQ(Text(Make(40), 1), Text(Make(40), 16));
 }
 
 } // namespace

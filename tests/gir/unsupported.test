@@ -46,13 +46,11 @@ func main() {
 	println(ok(20))
 }
 
-// CHECK: :34:2: error[E0439]: a defer statement (P04.07) is not supported by code generation yet (P04)
+// CHECK: :34:2: error[E0439]: a defer statement (P04.26) is not supported by code generation yet (P04)
 // CHECK: :38:6: error[E0439]: Unique, Shared and Weak pointers (P05, P04.09) is not supported by code generation yet (P04)
 // CHECK-NOT: error
 // CHECK-NOT: fn {{.*}}2ok
 
 // The declarations are lowered before the bodies.
-// MORE: :7:7: error[E0439]: a function value (P04.07) is not supported
-// MORE-NOT: :8:
 // MORE: :21:10: error[E0439]: printing a value of type Option<i64> is not supported
 // MORE-NOT: error

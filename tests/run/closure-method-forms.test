@@ -1,0 +1,105 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-method-forms.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07: method values (the receiver is bound where the value is made, a
+// copy for a value receiver, the pointer for a pointer receiver), method
+// expressions `T.M` and `(*T).M`, and an interface method as a value. The
+// expected output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+type counter struct{ n int }
+
+func (c *counter) inc() int { c.n++; return c.n }
+
+func (c counter) get() int { return c.n }
+
+func (c counter) plus(d int) int { return c.n + d }
+
+type speaker interface {
+	speak(times int) int
+}
+
+type dog struct{ n int }
+
+func (d dog) speak(times int) int {
+	s := d.n
+	for i := 1; i < times; i++ {
+		s = s*10 + d.n
+	}
+	return s
+}
+
+type cat struct{ lives int }
+
+func (c *cat) speak(times int) int {
+	c.lives--
+	return 1000 + c.lives*10 + times
+}
+
+func call(f func() int) int { return f() }
+
+func call1(f func(int) int, v int) int { return f(v) }
+
+func main() {
+	c := counter{1}
+	inc := c.inc
+	get := c.get
+	plus := c.plus
+	inc()
+	inc()
+	println(c.n, get(), plus(10))
+	println(call(c.inc), call(c.get), c.n)
+
+	p := &c
+	pinc := p.inc
+	pget := p.get
+	pinc()
+	println(c.n, pget())
+
+	var fs []func() int
+	for i := 0; i < 3; i++ {
+		cc := counter{i * 10}
+		fs = append(fs, cc.inc)
+		fs = append(fs, cc.get)
+	}
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+
+	fmt := counter.plus
+	println(fmt(counter{4}, 5))
+	ginc := (*counter).inc
+	println(ginc(&c), c.n)
+	gget := (*counter).get
+	println(gget(&c))
+	gget2 := counter.get
+	println(gget2(c), call1(c.plus, 100))
+
+	sp := speaker(dog{7})
+	f := sp.speak
+	println(f(3))
+	sp = dog{8}
+	println(f(2))
+	k := cat{9}
+	var sp2 speaker = &k
+	g := sp2.speak
+	println(g(1), g(1), k.lives)
+
+	// the value is copied where the method value is made
+	d := dog{1}
+	h := d.speak
+	d.n = 2
+	println(h(2), d.speak(2))
+	m := map[string]func(int) int{}
+	m["d"] = d.speak
+	m["k"] = (&k).speak
+	if v, ok := m["d"]; ok {
+		println(v(2))
+	}
+	if v, ok := m["k"]; ok {
+		println(v(0))
+	}
+}

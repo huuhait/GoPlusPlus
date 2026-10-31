@@ -13,6 +13,8 @@
 
 #include "Checker.h"
 
+#include "gopp/Basic/WorkCount.h"
+
 using namespace gopp;
 using namespace gopp::sema;
 using llvm::cast;
@@ -512,6 +514,7 @@ bool Checker::containsView(Type *T) {
     SmallVector<Type *, 8> W(Args.begin(), Args.end());
     llvm::SmallPtrSet<const Type *, 8> Met;
     while (!W.empty()) {
+      ++ViewSteps;
       Type *X = W.pop_back_val();
       if (!X || !Met.insert(X).second)
         continue;
@@ -525,7 +528,7 @@ bool Checker::containsView(Type *T) {
         if (N->origin()->ViewAttr) // may hold views (OWN-V5)
           return true;
         if (N->Orig) {
-          for (Type *A : N->TArgs)
+          for (Type *A : counted(ViewSteps, N->TArgs))
             W.push_back(A);
         } else if (!isa_and_nonnull<StructType>(N->FromRHS) &&
                    !isa<BasicType>(under(N))) {
@@ -569,11 +572,12 @@ bool Checker::containsView(Type *T) {
   auto Found = [&](int Parent, const NamedType *Self) {
     if (Self)
       ViewHolders.insert(Self);
-    for (int I = Parent; I >= 0; I = Trail[I].second)
+    for (int I = Parent; I >= 0; I = Trail[I].second, ++ViewSteps)
       ViewHolders.insert(Trail[I].first);
     return true;
   };
   while (!Work.empty()) {
+    ++ViewSteps;
     auto [X, Parent] = Work.pop_back_val();
     if (!X || !Seen.insert(X).second)
       continue;
@@ -597,7 +601,7 @@ bool Checker::containsView(Type *T) {
         Expanded.push_back(N);
         Trail.push_back({N, Parent});
         Self = static_cast<int>(Trail.size()) - 1;
-        for (Var *F : St->Fields)
+        for (Var *F : counted(ViewSteps, St->Fields))
           Work.push_back({F->Ty, Self});
         continue;
       }

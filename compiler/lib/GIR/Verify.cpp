@@ -162,7 +162,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // The module: V001-V003
+  // The module: V001-V003, V078
   //===--------------------------------------------------------------------===//
 
   /// V001: every function exists and has a name that no other function has
@@ -318,7 +318,9 @@ private:
 
   /// V002: a type is well formed: integers are 8, 16, 32 or 64 bits wide,
   /// floats 32 or 64, a struct the module uses has its body, and no part is
-  /// missing. Each type is looked at once; its parts join the work list.
+  /// missing. V078: a function type with a closure environment takes it
+  /// first, a `*u8` of the Go++ convention. Each type is looked at once; its
+  /// parts join the work list.
   void typeShapes() {
     for (size_t I = 0; I < TypeWork.size() && !full(); ++I) {
       ++Steps;
@@ -357,6 +359,15 @@ private:
           continue;
         }
         noteType(T->ret());
+        // V078: the environment of a closure is the first parameter, a
+        // `*u8` of the Go++ convention (swiftself has no C counterpart).
+        if (T->hasEnv() &&
+            (T->callConv() != CallConv::Go || T->elems().empty() ||
+             !T->elems()[0] || !T->elems()[0]->isPtr() ||
+             T->elems()[0]->elem() != M.Ctx.u8()))
+          err("V078", "the function type " + str(T) +
+                          " has an environment, which must be the first "
+                          "parameter, a *u8, of the Go++ convention");
         break;
       default:
         break;
@@ -1275,7 +1286,7 @@ private:
     }
     // V076: a call through a C function pointer (an allocator's table entry)
     // passes and returns scalars: the code generator lowers it with the C ABI
-    // of scalars, which needs no Clang (an aggregate is P04.07's, with the
+    // of scalars, which needs no Clang (an aggregate is P07.08's, with the
     // C function values).
     if (CT->callConv() == CallConv::C && !directCallee(T)) {
       auto Scalar = [](const Type *X) { return X->isUnit() || X->isScalar(); };

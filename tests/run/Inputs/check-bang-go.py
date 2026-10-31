@@ -17,7 +17,7 @@ import sys
 here = os.path.dirname(os.path.abspath(__file__))
 go = sys.argv[sys.argv.index("--go") + 1] if "--go" in sys.argv else "go"
 bad = 0
-for n in ("bang-return", "bang-positions", "bang-shapes"):
+for n in ("bang-return", "bang-positions", "bang-shapes", "bang-funcvalue"):
     r = subprocess.run([go, "run", os.path.join(here, "go-bang", n + ".go")],
                        capture_output=True, timeout=120)
     got = r.stdout + r.stderr

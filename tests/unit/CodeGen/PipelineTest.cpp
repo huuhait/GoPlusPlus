@@ -939,7 +939,7 @@ TEST(Pipeline, Arm64SextOfSignextArgument) {
   // FastISel (movsbq, movswq). SROA turns an argument's stack slot into this
   // very pattern, so arm64 `opt 0` must not use FastISel (ADR-0028, P04.13
   // addendum). If the FastISel line below starts to fail, LLVM was fixed:
-  // measure the selectors again and revisit the choice (P04.07's TODO); do
+  // measure the selectors again and revisit the choice (P04.26's TODO); do
   // not delete the test.
   auto Build = [](const char *Target, const PipelineSpec &Spec) {
     auto T = *parseTarget(Target);

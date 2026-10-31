@@ -1002,9 +1002,9 @@ Operand Body::toIface(const ast::Expr *E, S::Type *Want) {
   S::Type *ES = sTyOf(E);
   if (!ES)
     return failed(E, zeroOf(ctx().iface()));
-  // The dynamic type first: one that cannot be lowered (a func value,
-  // P04.07) is reported once, as the type, and the operand is left alone
-  // (lowering it would report it a second time).
+  // The dynamic type first: one that cannot be lowered (a type
+  // with no GIR type yet) is reported once, as the type, and the operand is
+  // left alone (lowering it would report it a second time).
   if (!L.lowerType(ES, E->getBegin()))
     return failed(E, zeroOf(ctx().iface()));
   Operand X = lowerExpr(E);
@@ -1288,11 +1288,8 @@ void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
           } else {
             Val_ = failed(CC, zeroOf(VG));
           }
-          LocalId Loc = FB.newLocal(VG, Local::Var, V->Name.str());
-          Vars[V] = Loc;
-          Scopes.back().Locals.push_back(Loc);
-          FB.storageLive(Loc);
-          FB.assign(FB.local(Loc), FB.use(Val_));
+          VarSlot Sl = declareSlot(V, CC, V->Name.str(), VG);
+          FB.assign(Sl.P, FB.use(Val_));
         }
       }
     }

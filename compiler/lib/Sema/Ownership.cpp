@@ -2299,7 +2299,9 @@ void Checker::checkReturnRef(const ast::Expr *R, Type *Want) {
   Var *V = rootVar(Base, Through, true);
   if (!V || Through || V->IsPackageLevel || V->FuncOwner != E.FuncId)
     return;
-  if (V->Mode == Var::Borrowed || V->Mode == Var::Alias || isa<RefType>(V->Ty))
+  // (V's own storage is another's. A view held inside V's value does not
+  // make it so: Var::isBorrow, not MethodSets::holdsBorrow.)
+  if (V->isBorrow())
     return;
   err(R, diag::err_own_return_ref_local, {std::string(V->Name)});
 }

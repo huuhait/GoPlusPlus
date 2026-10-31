@@ -1,0 +1,47 @@
+// RUN: %gopp build -emit=gir %s 2>&1 | FileCheck %s
+// P04.07, CLO-8: where the variables of a loop live. A loop variable that no
+// closure which escapes captures keeps ONE storage (a plain local of the
+// frame): `local` below passes its closure to a function that does not keep
+// it, so `t` and `i` stay locals, no cell is allocated and the loop has no
+// copy step. The other side: `escaping` stores each closure, so `i` lives in
+// a heap cell, and the loop makes a new cell (copying the value) before the
+// post statement of every iteration: `gopp.mem_resize` in the loop and a
+// load and a store between the two cells. An escaping closure's environment
+// is a heap block too; the one that does not escape is a slot of the frame.
+package main
+
+func once(f func()) { f() }
+
+func local() int {
+	t := 0
+	for i := 0; i < 3; i++ {
+		once(func() { t += i })
+	}
+	return t
+}
+
+func escaping() []func() int {
+	var fs []func() int
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	return fs
+}
+
+func main() {
+	println(local(), len(escaping()))
+}
+
+// CHECK-LABEL: fn _GPF4mainE5local()
+// The variables are plain locals, not pointers to cells.
+// CHECK: let _{{[0-9]+}}: i64  ; t
+// CHECK: let _{{[0-9]+}}: i64  ; i
+// CHECK-NOT: mem_resize
+// CHECK-LABEL: fn _GPF4mainE8escaping()
+// The cell of `i` is a pointer local, made at the declaration, and again for
+// every iteration (after the first, in the block of the post statement).
+// CHECK: let _{{[0-9]+}}: *i64  ; i
+// CHECK: call const fn @_GPF4goppE10mem_resize
+// CHECK: call const fn @_GPF4goppE10mem_resize
+// CHECK: call const fn @_GPF4goppE10mem_resize
+// CHECK-LABEL: fn _GPF4mainE4main()

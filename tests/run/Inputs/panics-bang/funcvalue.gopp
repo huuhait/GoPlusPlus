@@ -1,0 +1,33 @@
+package main
+
+// P04.07 with P04.10: a `!` through a func value outside a function that can
+// fail panics with ERR-9's message, the call's text being the func value's
+// (`step(0)`), as for a direct call. The `!` before it, through a method
+// value and a `func!` literal, succeed.
+
+type stepErr struct{}
+
+func (*stepErr) Error() string { return "no more steps" }
+
+var done stepErr
+
+func next!(n int) int {
+	if n <= 0 {
+		return 0, &done
+	}
+	return n - 1
+}
+
+type T struct{ k int }
+
+func (t T) add!(n int) int { return t.k + n }
+
+func main() {
+	m := T{k: 3}.add
+	twice := func!(n int) int { return n * 2 }
+	println(m!(4), twice!(5))
+	step := next
+	println(step!(2))
+	println(step!(0))
+	println("not reached")
+}

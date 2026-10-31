@@ -1,0 +1,59 @@
+// RUN: %gopp build -pipeline=fastisel -no-debug -emit=llvm -target=linux/amd64 %s | FileCheck %s
+// RUN: %gopp build -pipeline=fastisel -no-debug -emit=llvm -target=linux/arm64 %s | FileCheck %s
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/amd64 %s | FileCheck %s --check-prefix=ASM-AMD
+// RUN: %gopp build -opt=1 -no-debug -emit=asm -target=linux/arm64 %s | FileCheck %s --check-prefix=ASM-ARM
+// P04.07 (ADR-0030): the environment of a closure is the `swiftself`
+// register on both targets (r13 on amd64, x20 on arm64), never an ABI
+// parameter. Both sides. With the environment: the closure's own function, a
+// call through a func value, and the adapter that makes a top-level function
+// a func value. Without it: a top-level function, and a direct call of one
+// (a plain call passes no environment). A func value travels as two
+// pointers (code, environment), also as a parameter. A C function used as a
+// value (`labs`, @Extern) gets the same Go++ adapter, which calls it with the
+// C convention (no swiftcc, no environment); a Go++ function of that type
+// used as a value keeps the Go++ convention (`neg`).
+package main
+
+func plain(a int) int { return a + 1 }
+
+func make1(k int) func(int) int {
+	return func(x int) int { k += x; return k }
+}
+
+func use(f func(int) int) int { return f(1) }
+
+@Extern("C")
+func labs(x int64) int64
+
+func neg(x int64) int64 { return -x }
+
+func useC(f func(int64) int64) int64 { return f(-4) }
+
+func main() {
+	f := make1(2)
+	println(f(3), plain(1), use(plain), useC(labs), useC(neg))
+}
+
+// A top-level function has no environment parameter.
+// CHECK: define swiftcc i64 @_GPF4mainE5plain(i64 %0)
+// A func value is two pointers as a parameter; the call through it passes the
+// environment in swiftself.
+// CHECK: define swiftcc i64 @_GPF4mainE3use(ptr %0, ptr %1)
+// CHECK: call swiftcc i64 %{{[0-9]+}}(ptr swiftself %{{[0-9]+}}, i64 1)
+// A direct call of a top-level function passes no environment.
+// CHECK: call swiftcc i64 @_GPF4mainE5plain(i64 1)
+// The closure: the environment is swiftself, then the parameters.
+// CHECK: define internal swiftcc i64 @_GPC1_F4mainE5make1(ptr swiftself %0, i64 %1)
+// The adapter of a top-level function used as a value.
+// CHECK: define linkonce_odr swiftcc i64 @_GPTEF4mainE5plain(ptr swiftself %0, i64 %1)
+// CHECK-NOT: swiftself @_GPF4mainE5plain
+// The adapter of the C function: the Go++ convention in, the C one out.
+// CHECK: define linkonce_odr swiftcc i64 @_GPTEF4mainE4labs(ptr swiftself %0, i64 %1)
+// CHECK: call i64 @labs(i64
+// CHECK: define linkonce_odr swiftcc i64 @_GPTEF4mainE3neg(ptr swiftself %0, i64 %1)
+// CHECK: call swiftcc i64 @_GPF4mainE3neg(i64
+
+// ASM-AMD: _GPC1_F4mainE5make1:
+// ASM-AMD: r13
+// ASM-ARM: _GPC1_F4mainE5make1:
+// ASM-ARM: x20

@@ -167,22 +167,30 @@ TEST(GoAbiKinds, EveryKindOnBothSidesOfItsBoundary) {
 }
 
 TEST(GoAbiKinds, TheEnvironmentIsSwiftself) {
-  // A closure's environment (P04.07): the swiftself register on both
-  // targets, a parameter of its own before the others. A plain function has
-  // none.
+  // A closure's environment (P04.07): the first parameter of a Func type
+  // that hasEnv(), the swiftself register on both targets, and no parameter
+  // of the ABI. A plain function has none.
   for (const char *Tg : Targets) {
     Abi X(Tg);
-    gir::Type *Sig = X.G.func({X.G.i64()}, X.G.i64());
-    const auto &Plain = X.A->classify(Sig);
-    const auto &Env = X.A->classify(Sig, true);
-    EXPECT_EQ(Plain.Env, -1) << Tg;
-    EXPECT_EQ(Plain.Type->getNumParams(), 1u) << Tg;
+    gir::Type *PU8 = X.G.ptr(X.G.u8());
+    gir::Type *Plain = X.G.func({X.G.i64()}, X.G.i64());
+    gir::Type *Clo =
+        X.G.func({PU8, X.G.i64()}, X.G.i64(), false, gir::CallConv::Go, true);
+    EXPECT_NE(Plain, Clo) << Tg;
+    EXPECT_TRUE(Clo->hasEnv());
+    EXPECT_FALSE(Plain->hasEnv());
+    const auto &P = X.A->classify(Plain);
+    const auto &Env = X.A->classify(Clo);
+    EXPECT_EQ(P.Env, -1) << Tg;
+    EXPECT_EQ(P.Type->getNumParams(), 1u) << Tg;
     EXPECT_EQ(Env.Env, 0) << Tg;
+    EXPECT_EQ(Env.Type->getNumParams(), 2u) << Tg;
+    EXPECT_EQ(Env.Params.size(), 1u) << "the environment is no parameter";
     EXPECT_EQ(Env.Params[0].First, 1u) << Tg;
     EXPECT_TRUE(Env.Attrs.hasParamAttr(0, llvm::Attribute::SwiftSelf)) << Tg;
-    EXPECT_FALSE(Plain.Attrs.hasParamAttr(0, llvm::Attribute::SwiftSelf)) << Tg;
-    EXPECT_NE(&Plain, &Env);
-    EXPECT_EQ(&X.A->classify(Sig, true), &Env) << "cached";
+    EXPECT_FALSE(P.Attrs.hasParamAttr(0, llvm::Attribute::SwiftSelf)) << Tg;
+    EXPECT_NE(&P, &Env);
+    EXPECT_EQ(&X.A->classify(Clo), &Env) << "cached";
   }
 }
 

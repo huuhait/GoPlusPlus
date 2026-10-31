@@ -141,7 +141,7 @@ std::vector<std::string> gopp::lldArguments(const TargetSpec &T,
   // A dynamic, non-PIE executable against the C library: crt1.o's _start
   // calls the `main` that the module defines. No crtbegin/crtend yet: they
   // matter for C++ static constructors and exception frame registration, and
-  // arrive with the EH runtime (P04.07). The line is a function of the input
+  // arrive with the EH runtime (P04.26). The line is a function of the input
   // only, so the same objects give the same executable bytes: no build id,
   // no time, no environment. --eh-frame-hdr lets the unwinder find the
   // frames (D4.6); -z relro and the GNU hash table are what the system C

@@ -1,0 +1,15 @@
+breakpoint set -f closure.gopp -l 13
+breakpoint set -n main.scaled
+breakpoint set -f closure.gopp -l 20
+run
+script print("@@CLOSURE")
+frame variable n step by m
+frame select 1
+script print("@@UP")
+frame variable m n
+continue
+script print("@@SCALED")
+frame variable k
+continue
+script print("@@SHADOW")
+frame variable x k

@@ -1,0 +1,178 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-escape.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07, CLO-3: closures that outlive their function (stored in a slice, a
+// map, a field or a global and called later: the `http.HandleFunc` pattern),
+// closures that are only passed down (a callee that keeps its parameter or
+// not, also through other functions, and through recursion), and closures held
+// in variables of an outer scope. The expected output is `go run` of this
+// text (Inputs/regen-goldens.py).
+package main
+
+type handler func(int) int
+
+type server struct {
+	routes map[int]handler
+	order  []int
+	hooks  []func()
+}
+
+func (s *server) handle(path int, h handler) {
+	s.routes[path] = h
+	s.order = append(s.order, path)
+}
+
+func (s *server) serve(path int) (int, bool) {
+	h, ok := s.routes[path]
+	if !ok {
+		return 404, false
+	}
+	return h(path), true
+}
+
+var registry []func() int
+var named = map[string]func(int) int{}
+
+func register(f func() int) { registry = append(registry, f) }
+
+// passDown calls f and does not keep it.
+func passDown(f func() int) int { return f() + f() }
+
+// relay passes f on to register: it keeps it.
+func relay(f func() int) { register(f) }
+
+// ping and pong pass their parameter to each other; pong keeps it.
+func ping(f func() int, n int) {
+	if n > 0 {
+		pong(f, n-1)
+	}
+}
+
+func pong(f func() int, n int) {
+	if n == 0 {
+		register(f)
+		return
+	}
+	ping(f, n)
+}
+
+func each(xs []int, f func(int)) {
+	for _, x := range xs {
+		f(x)
+	}
+}
+
+func mapper(xs []int, f func(int) int) []int {
+	out := []int{}
+	for _, x := range xs {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+func makeAdders() []func(int) int {
+	var fs []func(int) int
+	for i := 1; i <= 3; i++ {
+		fs = append(fs, func(x int) int { return x + i })
+	}
+	return fs
+}
+
+func outer() func() int {
+	count := 0
+	var hs []func() int
+	hs = append(hs, func() int { count += 1; return count })
+	hs = append(hs, func() int { count += 10; return count })
+	return func() int { return hs[0]() + hs[1]() }
+}
+
+func main() {
+	sv := server{routes: map[int]handler{}}
+	s := &sv
+	prefix := 1000
+	for i, p := range []int{10, 20} {
+		n := i
+		s.handle(p, func(path int) int {
+			n++
+			return prefix + path + n
+		})
+	}
+	prefix = 2000
+	for k := 0; k < 2; k++ {
+		for _, p := range s.order {
+			r, _ := s.serve(p)
+			println(r)
+		}
+	}
+	println(s.serve(99))
+
+	x := 5
+	println(passDown(func() int { x++; return x }), x)
+	y := 1
+	relay(func() int { y *= 3; return y })
+	register(func() int { return y + 100 })
+	y = 2
+	for _, f := range registry {
+		println(f())
+	}
+	z := 7
+	ping(func() int { z++; return z }, 4)
+	println(len(registry), registry[2](), registry[2](), z)
+
+	sum := 0
+	each([]int{1, 2, 3}, func(v int) { sum += v })
+	println(sum)
+	k := 10
+	println(mapper([]int{1, 2, 3}, func(v int) int { return v * k })[2])
+
+	for _, f := range makeAdders() {
+		print(f(10), " ")
+	}
+	println()
+
+	named["double"] = func(v int) int { return v * 2 }
+	base := 100
+	named["plus"] = func(v int) int { return v + base }
+	base = 200
+	if f, ok := named["plus"]; ok {
+		println(f(1))
+	}
+	if f, ok := named["double"]; ok {
+		println(f(21))
+	}
+
+	o := outer()
+	println(o(), o())
+
+	t := 0
+	helper := func(d int) { t += d }
+	helper(1)
+	other := helper
+	other(2)
+	wrap := func() { helper(10) }
+	wrap()
+	println(t)
+
+	var hooks []func()
+	cnt := 0
+	for i := 0; i < 3; i++ {
+		hooks = append(hooks, func() { cnt += i })
+	}
+	for _, h := range hooks {
+		h()
+	}
+	println(cnt)
+	s.hooks = append(s.hooks, func() { cnt = 0 })
+	s.hooks[0]()
+	println(cnt)
+
+	// a closure held by a variable of an outer scope, made in an inner scope
+	live := func() int { return -1 }
+	{
+		inner := 41
+		live = func() int { inner++; return inner }
+	}
+	println(live(), live())
+}

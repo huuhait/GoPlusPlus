@@ -35,6 +35,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P03) · Design: [README.md](
 - [x] P03.26 Leftovers from the `p03-lang` batch: selector-chain stack depth, `gcSizeof` depth cut, mono vertices for local types, views in generics
 - [ ] P03.27 Overload sets of thousands of methods: near-linear check time
 - [ ] P03.28 Idle body-check threads burn CPU (`-check-j=8` on the `extover` shape)
+- [ ] P03.29 False E0350 when a function literal declares its own `ok` (found in review of P04.07)
 
 ## Open questions
 

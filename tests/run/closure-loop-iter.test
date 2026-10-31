@@ -1,0 +1,114 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-loop-iter.out 0
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07 (spec CLO-8, Go 1.22): a variable of a loop that a closure captures
+// is a new variable for each iteration. The closures of a three-clause loop
+// that run after it print 0, 1, 2; the same closures over a variable declared
+// before the loop print 3, 3, 3; `continue` and `break` keep the value of the
+// iteration; a closure that changes the variable in the body changes what the
+// next iteration starts from; range keys and values are new each iteration;
+// loops nest. The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py).
+package main
+
+func collect(n int) []func() int {
+	var fs []func() int
+	for i := 0; i < n; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	return fs
+}
+
+func main() {
+	for _, f := range collect(3) {
+		println(f())
+	}
+
+	// One variable declared before the loop: all see the last value.
+	var shared []func() int
+	j := 0
+	for j = 0; j < 3; j++ {
+		shared = append(shared, func() int { return j })
+	}
+	for _, f := range shared {
+		println(f())
+	}
+
+	// continue and break keep the value of their iteration.
+	var cb []func() int
+	for i := 0; i < 10; i++ {
+		if i%2 == 1 {
+			continue
+		}
+		if i == 6 {
+			break
+		}
+		cb = append(cb, func() int { return i * 10 })
+	}
+	for _, f := range cb {
+		println(f())
+	}
+
+	// A closure changes the variable of its iteration; the copy made before
+	// the post statement carries it to the next one.
+	var steps []func()
+	for i := 0; i < 6; i++ {
+		inc := func() { i++ }
+		inc()
+		steps = append(steps, func() { println("step", i) })
+	}
+	for _, f := range steps {
+		f()
+	}
+
+	// Range: key and value are new variables each iteration.
+	var rs []func() (int, int)
+	for k, v := range []int{7, 8, 9} {
+		rs = append(rs, func() (int, int) { return k, v })
+	}
+	for _, f := range rs {
+		k, v := f()
+		println(k, v)
+	}
+
+	// A range over an integer and over a map with one entry.
+	var ints []func() int
+	for n := range 3 {
+		ints = append(ints, func() int { return n + 100 })
+	}
+	for _, f := range ints {
+		println(f())
+	}
+
+	// Nested loops, an inner closure over both variables.
+	var grid []func() int
+	for a := 1; a <= 2; a++ {
+		for b := 1; b <= 3; b++ {
+			grid = append(grid, func() int { return a*10 + b })
+		}
+	}
+	for _, f := range grid {
+		println(f())
+	}
+
+	// A loop whose variable no closure captures runs as before; a closure
+	// over another variable of the body does not change it.
+	sum := 0
+	for i := 0; i < 5; i++ {
+		add := func(d int) { sum += d }
+		add(i)
+	}
+	println(sum)
+
+	// A variable declared in the body is a new one each iteration anyway.
+	var bodyVars []func() int
+	for i := 0; i < 3; i++ {
+		v := i * i
+		bodyVars = append(bodyVars, func() int { v++; return v })
+	}
+	for _, f := range bodyVars {
+		println(f(), f())
+	}
+}

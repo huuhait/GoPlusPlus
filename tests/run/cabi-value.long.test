@@ -1,0 +1,10 @@
+// REQUIRES: long, host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --via-value --flags "%gopp_link_flags" --edges 4 %gopp %t.e 0 100000
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-cabi.py --via-value --arm64 %aarch64_sysroot --edges 8 %gopp %t.a 1 100000 %}
+// P04.07 (D4.4): the enumerated edge signatures of cabi-edges-*.long.test
+// (every register class running out, HFAs, large results through memory)
+// with each C function called through a func value (gen-cabi.py
+// --via-value): the adapter with the Go++ convention calls C with the exact C
+// ABI, so C receives and returns the same bytes as for the direct call, on
+// amd64 and on arm64 under QEMU. A quarter of the edges on amd64, an eighth
+// on arm64 (the direct calls run them all).

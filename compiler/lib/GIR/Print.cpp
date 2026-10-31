@@ -275,7 +275,8 @@ struct Printer {
       OS << '_' << I + 1 << ": " << F.Sig->elems()[I]->str();
     }
     OS << ')' << (F.Sig->fails() ? "!" : "") << " -> " << F.Sig->ret()->str()
-       << " [" << (F.CC == CallConv::C ? "c" : "go") << ", "
+       << " [" << (F.CC == CallConv::C ? "c" : "go")
+       << (F.Sig->hasEnv() ? " env" : "") << ", "
        << (F.Link == Linkage::External   ? "external"
            : F.Link == Linkage::Internal ? "internal"
                                          : "linkonce_odr")

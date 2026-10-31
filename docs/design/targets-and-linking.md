@@ -37,7 +37,7 @@ The link line is `lldArguments`, a pure function of its input (`Linker.LinkLineI
 
 - `--build-id=none` and the absence of any time, path or environment in the line make the executable a function of its input: the same program gives the same bytes (`tests/run/deterministic.test` compares objects and executables built into different directories).
 - `--eh-frame-hdr` gives the unwinder its frame index (D4.6: panics are C++ exceptions); `-z relro` and the GNU hash table are what the system C compiler's link line has (`tests/run/link-flags.test`).
-- The executable is dynamic, not PIE, against the C library: crt1.o's `_start` calls the C entry point `main` that the module defines (it calls `main.main` and returns 0). crtbegin/crtend (C++ static constructors, frame registration) arrive with the EH runtime (P04.07).
+- The executable is dynamic, not PIE, against the C library: crt1.o's `_start` calls the C entry point `main` that the module defines (it calls `main.main` and returns 0). crtbegin/crtend (C++ static constructors, frame registration) arrive with the EH runtime (P04.26).
 
 ### Where the C library comes from
 

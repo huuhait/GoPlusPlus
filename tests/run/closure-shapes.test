@@ -1,0 +1,87 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-shapes.out 0
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07: closures over every kind of variable and result: a string, a slice
+// and a map the function owns, kept by the closure it returns (cells); a
+// borrowed string, slice and map parameter used by a closure that only runs
+// during the call (an escaping one may not hold them, CLO-3a:
+// gir/closure-refused.test); named results set by a closure, several
+// results, a variadic closure, a func value in a struct that is copied, a
+// func value in a map, and a closure passed to a function that takes it with
+// a string and a slice.
+// The expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py).
+package main
+
+type S struct {
+	n  int
+	fn func(int) int
+}
+
+func mk(k int) S { return S{k, func(x int) int { return x + k }} }
+
+func two() func(int) (int, int) {
+	return func(a int) (int, int) { return a, a * 2 }
+}
+
+func vari() func(...int) int {
+	return func(xs ...int) int {
+		t := 0
+		for _, x := range xs {
+			t += x
+		}
+		return t
+	}
+}
+
+func strs(n int) func() int {
+	s := ""
+	for i := 0; i < n; i++ {
+		s += "x"
+	}
+	return func() int { return len(s) }
+}
+
+func slices(a, b int) func() int {
+	xs := []int{a, b}
+	return func() int { return len(xs) + xs[0] }
+}
+
+func maps(k int) func() int {
+	m := map[int]int{k: k}
+	return func() int { return len(m) }
+}
+
+func lens(s string, xs []int, m map[int]int) int {
+	return func() int { return len(s) + len(xs) + len(m) }()
+}
+
+func takes(f func(string, []int) int) int { return f("abc", []int{1, 2}) }
+
+func nres() (a, b int) {
+	f := func() { a, b = 3, 4 }
+	f()
+	return
+}
+
+func main() {
+	s := mk(5)
+	t := s
+	println(s.fn(1), t.fn(2), s.n)
+	a, b := two()(4)
+	println(a, b)
+	println(vari()(1, 2, 3), vari()())
+	println(strs(5)())
+	println(slices(9, 8)())
+	println(maps(1)())
+	println(lens("ab", []int{1, 2, 3}, map[int]int{1: 1}))
+	println(takes(func(s string, xs []int) int { return len(s) + len(xs) }))
+	println(nres())
+	m := map[string]func() int{}
+	m["a"] = func() int { return 1 }
+	if f, ok := m["a"]; ok {
+		println(f())
+	}
+}

@@ -1,12 +1,13 @@
-// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error %s
+// RUN: %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
 // P04.06 review R4, R6: what the lowering refuses is reported once, naming
-// the task, and what follows it does not report again. A func value or a
-// func literal boxed in an interface is the type `func()` (P04.07), checked
-// before the operand is lowered. The other side: an interface with a method
-// that fails with `!` (P04.10 lowers it like `Load(p int) (int, error)`: its
-// conversion, a call with the results taken apart, the nil check of the
-// error, an assertion to it, a type switch case of it, a comparison of two of
-// them) and the interface `M` next to it lower and report nothing.
+// the task, and what follows it does not report again. Since P04.07 and
+// P04.10 nothing in this file is refused any more, so it is all the other
+// side: a func value and a func literal boxed in an interface (`funcs`), an
+// interface with a method that fails with `!` (P04.10 lowers it like
+// `Load(p int) (int, error)`: its conversion, a call with the results taken
+// apart, the nil check of the error, an assertion to it, a type switch case
+// of it, a comparison of two of them) and the interface `M` next to it lower
+// and report nothing.
 package main
 
 type L interface{ Load!(p int) int }
@@ -51,4 +52,5 @@ func main() {
 	fails()
 }
 
-// CHECK: iface-one-error.test:24:14: error[E0439]: a function value (P04.07) is not supported
+// CHECK: fn _GPF4mainE5funcs(
+// CHECK: fn _GPF4mainE5fails(

@@ -1,0 +1,65 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-option-return.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// GOLDEN: by-hand
+// P04.07, D4.5: a func value is the pair {code, env} (16 bytes), and
+// Option[F] for a func type F is the same pair with a null code pointer for
+// nil: unsafe.Sizeof(Option[func()]) equals a func value's size, a nil
+// Option[func()] equals `nil`, and a set one holds a closure that still shares
+// its captured variable. A func value is never nil (OWN-P9): only an absent
+// Option is. Go has no Option, so the expected output is written by hand.
+package main
+
+import "unsafe"
+
+func plain() int { return 7 }
+
+func find(i int) Option[func() int] {
+	if i > 0 {
+		n := i
+		return func() int { n *= 2; return n }
+	}
+	return nil
+}
+
+func run(o Option[func() int]) int {
+	if f, ok := o.Get(); ok {
+		return f()
+	}
+	return -1
+}
+
+type Hooks struct {
+	before Option[func()]
+	after  Option[func()]
+}
+
+func main() {
+	var o Option[func() int]
+	f := plain
+	println(unsafe.Sizeof(o), unsafe.Sizeof(f), unsafe.Sizeof(o) == unsafe.Sizeof(f))
+	println(o == nil, o.IsNil())
+	o = f
+	println(o == nil, run(o))
+	println(find(0) == nil, find(4) == nil)
+	println(run(find(0)), run(find(4)))
+	g := find(5)
+	if h, ok := g.Get(); ok {
+		println(h(), h(), h())
+	}
+
+	count := 0
+	var hk Hooks
+	hk.after = func() { count++ }
+	if b, ok := hk.before.Get(); ok {
+		b()
+	}
+	if a, ok := hk.after.Get(); ok {
+		a()
+		a()
+	}
+	println(count, hk.before == nil, hk.after == nil)
+	println(unsafe.Sizeof(hk))
+}

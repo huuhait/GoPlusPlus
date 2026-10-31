@@ -1,0 +1,140 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-loop-forms.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07, CLO-8: each iteration of a loop has its own copy of its variable:
+// closures made in every form of loop that outlive the iteration see the
+// value of their own iteration. (A pointer to a loop variable kept past its
+// iteration, `ps = append(ps, &i)`, is the borrow checker's to reject,
+// P04.20; and a range variable of an owning element, a string key, is
+// borrowed, which an escaping closure may not hold, CLO-3a.) The expected
+// output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+type grid [3]int
+
+func main() {
+	var fs []func() int
+	for i := 0; i < 4; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+
+	fs = nil
+	for i := 0; i < 6; i++ {
+		if i%2 == 0 {
+			continue
+		}
+		fs = append(fs, func() int { i += 10; return i })
+	}
+	for _, f := range fs {
+		print(f(), f(), " ")
+	}
+	println()
+
+	fs = nil
+	for i := range 4 {
+		fs = append(fs, func() int { return i * i })
+	}
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+
+	fs = nil
+	for i, v := range []int{5, 6, 7} {
+		fs = append(fs, func() int { v++; return i*10 + v })
+	}
+	for _, f := range fs {
+		print(f(), f(), " ")
+	}
+	println()
+
+	fs = nil
+	for _, v := range [3]int{1, 2, 3} {
+		fs = append(fs, func() int { return v })
+	}
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+
+	var gs []func() string
+	for k, v := range map[int]int{7: 1} {
+		gs = append(gs, func() string { return string(rune('0'+k)) + string(rune('0'+v)) })
+	}
+	for _, g := range gs {
+		print(g(), " ")
+	}
+	println()
+
+	gs = nil
+	for i, r := range "héy" {
+		gs = append(gs, func() string { return string(r) + string(rune('0'+i)) })
+	}
+	for _, g := range gs {
+		print(g(), " ")
+	}
+	println()
+
+	fs = nil
+	for i := 0; i < 3; i++ {
+		j := i * 2
+		fs = append(fs, func() int { j++; return j })
+	}
+	for _, f := range fs {
+		print(f(), f(), " ")
+	}
+	println()
+
+	fs = nil
+	n := 0
+	for n < 3 {
+		m := n
+		fs = append(fs, func() int { return m + n })
+		n++
+	}
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+
+	fs = nil
+	for i := 0; i < 10; i++ {
+		if i == 3 {
+			fs = append(fs, func() int { return i })
+			break
+		}
+	}
+	println(fs[0]())
+
+	var hs []func() int
+	for i, j := 0, 10; i < 3; i, j = i+1, j-1 {
+		hs = append(hs, func() int { return i*100 + j })
+	}
+	for _, h := range hs {
+		print(h(), " ")
+	}
+	println()
+
+	total := 0
+	for i := 0; i < 3; i++ {
+		func() { total += i }()
+	}
+	println(total)
+
+	fs = nil
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 2; j++ {
+			fs = append(fs, func() int { return i*10 + j })
+		}
+	}
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+}

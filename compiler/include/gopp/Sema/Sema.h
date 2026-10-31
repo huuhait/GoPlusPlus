@@ -356,7 +356,8 @@ struct MethodHit {
 /// The checker's method lookup for the lowering of interfaces (P04.06): the
 /// method sets that decide which method an interface call reaches. It runs
 /// the checker's own lookup (Lookup.cpp), so the lowering never decides a
-/// second time what `x.M` means. Not thread safe; one per lowering.
+/// second time what `x.M` means; and the checker's own walk over the types
+/// that hold a view (P04.07). Not thread safe; one per lowering.
 class MethodSets {
 public:
   /// ScanMethods (test-only): the checker's lookup scans a type's methods
@@ -381,6 +382,24 @@ public:
   /// Can values of the dynamic type T be compared (`==` of two interface
   /// values holding T does not panic)?
   bool comparable(Type *T);
+  /// Does a value of type T hold a view (OWN-V5)? The checker's own walk
+  /// (Checker::containsView, the one that asks for `@View` on a struct whose
+  /// field holds one): a view, or a slice, array, map, channel, Option or
+  /// defined non-struct type of one, a `@View` struct and an instance of a
+  /// generic struct by their fields (instances are expanded as the checker
+  /// expands them). Pointer kinds, funcs and interfaces are not looked into
+  /// (what they point to or box is the borrow checker's, P04.20). Memoized
+  /// for the package (a walk that finds no view proves every struct it
+  /// expanded holds none), so the questions cost linear work in all.
+  bool holdsView(Type *T);
+  /// Does the value of V hold a borrow (OWN-B1)? It is one (Var::isBorrow:
+  /// borrowed, an `&` alias, a view or a borrowed `[]T`), or its type holds
+  /// a view inside it (holdsView: a `@View` struct, an array, Option, slice,
+  /// map or channel of views). A closure or method value that outlives the
+  /// call may not hold it (CLO-3a; P04.07 review R7).
+  bool holdsBorrow(const Var *V);
+  /// Test-only work count: the steps of holdsView's walks so far.
+  uint64_t viewSteps() const;
 
 private:
   struct Impl;

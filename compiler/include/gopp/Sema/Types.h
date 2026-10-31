@@ -817,6 +817,20 @@ public:
   Var *Origin = nullptr;
   uint32_t ScopeDepth = 0;
   const void *FuncOwner = nullptr; // function whose local this is
+
+  /// The variable is a borrow itself: a borrowed variable (OWN-R3b), an `&`
+  /// range alias (RNG-1a), or by its type a view or a borrowed `[]T` (a
+  /// `RefType`: a View parameter or variable, a local made by slicing). Its
+  /// own storage, or what it shows, is another's, so a view into it may be
+  /// returned (OWN-V7, Checker::checkReturnRef). A view held INSIDE its value
+  /// (a field of a `@View` struct) does not make the variable's own storage
+  /// another's: `return w.N[:]` of a local `@View` struct is still OWN-V7's
+  /// error, so this is not the deeper MethodSets::holdsBorrow (its value
+  /// holds a borrow), which the lowering asks for closures (CLO-3a).
+  bool isBorrow() const {
+    return Mode == Borrowed || Mode == Alias ||
+           llvm::isa_and_nonnull<RefType>(Ty);
+  }
 };
 
 enum class BuiltinId : uint8_t {

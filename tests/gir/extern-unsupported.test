@@ -2,8 +2,9 @@
 // P04.11/P04.18 (D4.4): what C and Go++ cannot yet exchange. A callback is a
 // parameter of an @Extern function (callback.test); a function
 // RETURNED from C, a function inside an Option or a struct, and a function
-// parameter of an @Export function are function values, which need P04.07's
-// closures: each is one E0439 naming P04.07, at the declaration. The C
+// parameter of an @Export function are function values, which have an
+// environment C cannot carry: each is one E0439 naming P07.08 (P07.13 for
+// the @Export one), at the declaration. The C
 // function next to them, which takes only what Go++ passes by value, and the
 // callback and @Export that work, are fine (extern.test, cabi-kinds.test).
 package main
@@ -40,7 +41,8 @@ func main() {
 	_ = callback(2)
 }
 
-// CHECK: :16:1: error[E0439]: a function returned from C (P04.07) is not supported by code generation yet (P04)
-// CHECK: :24:1: error[E0439]: a function parameter of an @Export function (P04.07) is not supported by code generation yet (P04)
-// CHECK: :29:1: error[E0439]: a function value (P04.07) is not supported by code generation yet (P04)
+// CHECK: :17:1: error[E0439]: a function returned from C (P07.08) is not supported by code generation yet (P04)
+// CHECK: :25:1: error[E0439]: a function parameter of an @Export function (P07.13) is not supported by code generation yet (P04)
+// CHECK: :30:1: error[E0439]: a func value passed to C (P07.08) is not supported by code generation yet (P04)
+// CHECK: :33:1: error[E0439]: a func value inside a C type (P07.08) is not supported by code generation yet (P04)
 // CHECK-NOT: error

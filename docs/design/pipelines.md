@@ -39,7 +39,7 @@ The stages, in order. Each one is a `gopp.<stage>` trace scope and is recorded i
 
 ## 3. GIR inlining
 
-`gir::inlineTrivial` (`Inline.h`) inlines a direct call of a *trivial* function: defined in the module, one block ending in `return`, at most 12 statements, no call, no assertion, no drop, no `AddrOf`, no owned temporary (`Local::Owned`, P04.05: a drop P04.09 must place in the callee). Such a function cannot panic and cannot reach any other function, so inlining it changes nothing a program can observe. A call whose unwind edge is a cleanup block is left alone (dead-block removal comes with P04.07).
+`gir::inlineTrivial` (`Inline.h`) inlines a direct call of a *trivial* function: defined in the module, one block ending in `return`, at most 12 statements, no call, no assertion, no drop, no `AddrOf`, no owned temporary (`Local::Owned`, P04.05: a drop P04.09 must place in the callee). Such a function cannot panic and cannot reach any other function, so inlining it changes nothing a program can observe. A call whose unwind edge is a cleanup block is left alone (dead-block removal comes with P04.26).
 
 What it makes: the call's block gets `param = arg` copies, the callee's statements on new locals, and `dest = ret` as a copy, then `goto` the call's return block. The copies carry `Statement::Boundary`, which the FMA matcher reads (section 4). The callee stays in the module.
 
@@ -48,7 +48,7 @@ Debug information (P04.12, `docs/design/gir.md` section 14): each inlined call i
 It is a hook, not the whole of D4.2 step 6. It starts small on purpose; later tasks widen the test in `isTrivial` and nothing else:
 
 - P04.06: methods and operator methods (the `@Inline` rules); a method of a value receiver is an ordinary function in GIR, so it is covered once `@Inline` is carried to `Function`.
-- P04.07: callees with asserts or calls need a cleanup-edge story first (what unwinds from the inlined body goes to the call's cleanup block).
+- P04.26: callees with asserts or calls need a cleanup-edge story first (what unwinds from the inlined body goes to the call's cleanup block).
 - P04.09: callees with drops.
 
 The pass is linear in the size of the module: one look at each function, one at each block, one copy of each statement and local of an inlined callee (`inlineSteps()`, counted in `GIRInlineStress.*`).
@@ -88,7 +88,7 @@ Tests: `run/core-fma.test`, `run/core-fma-vars.test` (values from Go's own amd64
 
 LLVM's default at O0 on arm64 is GlobalISel; x86-64 uses FastISel. P04.13 measured both on arm64 with Go++ IR. FastISel is cheaper there (2 to 5% of the CPU of a whole `gopp build`, 15 to 37% of code generation alone, for object code about 20% larger), but **`opt 0` on arm64 selects with GlobalISel**: LLVM 23.1.0's AArch64 FastISel compiles `sext` of a `signext` i8 or i16 argument to i64 as a 32-bit move, a zero-extension, and the SROA of `opt 0` makes exactly that pattern from a parameter's stack slot (`widen(-1, -2, 0)` in `run/opt-semantics.test` prints 17179869179 instead of -5 with FastISel). x86-64 FastISel is right on the same IR (`movsbq`, `movswq`), and the arm64 baseline (`-pipeline=fastisel`) keeps FastISel: it runs no SROA, so every argument goes to its slot first and no `sext` reads it.
 
-`Pipeline.Arm64SextOfSignextArgument` reproduces the bug on a hand-written module and fails when LLVM fixes it; that is the trigger to measure again (P04.07's TODO item) and maybe change the one line in `selectPipeline`. The numbers and the bug are in the P04.13 addendum of ADR-0028.
+`Pipeline.Arm64SextOfSignextArgument` reproduces the bug on a hand-written module and fails when LLVM fixes it; that is the trigger to measure again (P04.26's TODO item) and maybe change the one line in `selectPipeline`. The numbers and the bug are in the P04.13 addendum of ADR-0028.
 
 ## 6. Tests and the matrix
 
@@ -113,6 +113,6 @@ Above `opt 0` LLVM keeps or loses a variable's location by its own rules, and a 
 - **Profiles (P06 D6.12, tasks P06.14 to P06.16).** A profile's effective settings fill a `PipelineRequest` (`opt`, `lto`) and the driver calls `selectPipeline` once. A profile never builds passes itself. The cache key (D6.12) should hash what the spec contains (its name, the selector, the `Inline` limits), not the profile's name, so two profiles with the same settings share entries.
 - **`-trace` (D6.7).** `llvm::timeTraceProfilerInitialize` before the build and `timeTraceProfilerWrite` after: the five stages already open `gopp.<stage>` scopes, and LLVM's passes add theirs. No change to the pipeline.
 - **LTO (`opt 3` with `lto thin`, P15).** `PipelineSpec::LTO` is where it goes. `thin` makes `runIRPasses` run LLVM's ThinLTO pre-link pipeline and the driver write bitcode instead of an object; the link step runs the ThinLTO backend. `selectPipeline` refuses it until then, so nothing can ask for half of it.
-- **The ADR-0028 split pass (P04.07).** `PipelineSpec::PreISel` is its place: it is added for the specs that select with FastISel (x86-64 `opt 0` and both baselines; arm64 `opt 0` uses GlobalISel, section 5, unless P04.07's re-measure switches it), runs after the IR passes and before code generation. `Pipeline.PreISelHooksRunAfterTheIRPasses` tests the order.
+- **The ADR-0028 split pass (P04.26).** `PipelineSpec::PreISel` is its place: it is added for the specs that select with FastISel (x86-64 `opt 0` and both baselines; arm64 `opt 0` uses GlobalISel, section 5, unless P04.26's re-measure switches it), runs after the IR passes and before code generation. `Pipeline.PreISelHooksRunAfterTheIRPasses` tests the order.
 - **`@Inline` / `@NoInline` (P04.06).** They become `alwaysinline`/`noinline` function attributes in `LowerToLLVM.cpp`; `always-inline` is already the first pass of `opt 0`. GIR inlining honours them by widening `isTrivial`.
 - **The D6.8 budgets (P06.01).** `-pipeline-times` prints the stage times; P06.01 reads them. Compile times of each pipeline on the run corpus today are in the P04 STATE (P04.13 note).

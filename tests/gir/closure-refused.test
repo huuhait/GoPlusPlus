@@ -1,0 +1,101 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.07, CLO-3a (manager decision M6): a closure or method value that
+// outlives the call may not hold a borrowed variable (a borrowed struct,
+// string or slice parameter, a range variable or a type-switch binding of an
+// owning type) or an `&` range variable: its cell would outlive the borrow,
+// and a Place parameter or the `&` element of a local array is in a frame.
+// The borrow checker makes it a compile error (OWN-B5, P04.20); until then
+// it is one E0439 naming P04.20, where the literal or method value is, from
+// the checker's facts (MethodSets::holdsBorrow, the checker's rules) in one
+// place (Body::mayHold), with a note that says the program breaks CLO-3a
+// and how to fix it (CLO-3a's fix-its: a `move` parameter, a copy under
+// another name, a range by value, a conversion that copies a view; never
+// `.Clone()`), and nothing is reported after it: a refused literal's body is
+// not lowered, so the literal inside `outer` says nothing. The other side,
+// in the same file, draws no error: the same variables used by closures and
+// method values that do not outlive the call (`fine`). The accepted forms
+// run in run/closure-frames.test; views and borrowed slices are
+// closure-refused-views.test; the other refusals are
+// closure-refused-forms.test.
+package main
+
+type Doc struct {
+	Name  string
+	Index map[string]int
+}
+
+type C struct{ n int }
+
+func (c *C) Inc() int { c.n++; return c.n }
+
+var keep []func() int
+
+func place(d Doc) func() int { return func() int { return len(d.Index) } }
+
+func view(s string) func() int { return func() int { return len(s) } }
+
+func slice(xs []int) func() int { return func() int { return len(xs) } }
+
+func ranges(ss []string) {
+	for _, v := range ss {
+		keep = append(keep, func() int { return len(v) })
+	}
+}
+
+func alias(a [3]C) {
+	for _, &e := range a {
+		keep = append(keep, func() int { return e.n })
+	}
+	for _, &e := range a {
+		keep = append(keep, e.Inc)
+	}
+}
+
+func binding(x any) {
+	switch v := x.(type) {
+	case string:
+		keep = append(keep, func() int { return len(v) })
+	}
+}
+
+func outer(s string) {
+	keep = append(keep, func() int {
+		keep = append(keep, func() int { return len(s) })
+		return len(s)
+	})
+}
+
+func fine(d Doc, s string, xs []int, a [3]C, x any) int {
+	t := func() int { return len(d.Index) + len(s) + len(xs) }()
+	for _, &e := range a {
+		t += func() int { return e.Inc() }()
+		inc := e.Inc
+		t += inc()
+	}
+	switch v := x.(type) {
+	case string:
+		t += func() int { return len(v) }()
+	}
+	return t
+}
+
+func main() {
+	_ = fine(Doc{}, "x", nil, [3]C{}, 1)
+}
+
+// CHECK: closure-refused.test:33:39: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable d (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:33:39: note: the program breaks CLO-3a: d is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); make the parameter `move`, or copy it into a local
+// CHECK: closure-refused.test:35:41: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable s (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:35:41: note: the program breaks CLO-3a: s is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); make the parameter `move`, or copy it into a local
+// CHECK: closure-refused.test:37:42: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable xs (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:37:42: note: the program breaks CLO-3a: xs is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); make the parameter `move`, or copy it into a local
+// CHECK: closure-refused.test:41:23: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable v (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:41:23: note: the program breaks CLO-3a: v is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); copy it into a differently named local
+// CHECK: closure-refused.test:47:23: error[E0439]: a closure or method value that outlives the call and holds the & range variable e (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:47:23: note: the program breaks CLO-3a: e is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); range by value, or copy the element into a differently named local
+// CHECK: closure-refused.test:50:23: error[E0439]: a closure or method value that outlives the call and holds the & range variable e (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:50:23: note: the program breaks CLO-3a: e is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); range by value, or copy the element into a differently named local
+// CHECK: closure-refused.test:57:23: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable v (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:57:23: note: the program breaks CLO-3a: v is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); copy it into an owned local with a conversion (`string(v)`, `[]T(v)`: OWN-V3)
+// CHECK: closure-refused.test:62:22: error[E0439]: a closure or method value that outlives the call and holds the borrowed variable s (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused.test:62:22: note: the program breaks CLO-3a: s is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); make the parameter `move`, or copy it into a local

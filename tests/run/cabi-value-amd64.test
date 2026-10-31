@@ -1,0 +1,11 @@
+// REQUIRES: host-linux-amd64, clang
+// RUN: %python %S/Inputs/run-cabi.py --via-value --flags "%gopp_link_flags" %gopp %t.d 5 30 6 30
+// P04.07 (D4.4): an `@Extern("C")` function used as a value. The generated
+// programs of cabi-amd64.test, but each C function is first made a func value
+// (`fv := cabi_fN`) and called through it. Go++ wraps the C function in an
+// adapter with the Go++ convention (the environment parameter, ignored) that
+// calls it with the exact C ABI, so the arguments reach C in the same
+// registers and memory as a direct call. C is built by Clang and prints the
+// bytes it received; the output must equal what the generator computed
+// (byte for byte). The enumerated edges, through func values, are
+// cabi-value.long.test (a normal test stays under 2 s at load).

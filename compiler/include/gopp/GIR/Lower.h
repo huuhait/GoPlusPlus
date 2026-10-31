@@ -66,6 +66,10 @@ struct LowerOptions {
 /// stress test checks that it grows in step with the input.
 uint64_t loweringSteps();
 
+/// Test-only: the steps of the closure analysis (which literals capture what,
+/// which escape, which parameters a function keeps) on this thread so far.
+uint64_t escapeSteps();
+
 /// Lowers the package. Returns null after reporting the errors.
 std::unique_ptr<Module> lowerPackage(Context &Ctx, const SourceManager &SM,
                                      const sema::CheckedPackage &CP,

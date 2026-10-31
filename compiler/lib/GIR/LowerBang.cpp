@@ -280,8 +280,11 @@ Operand Body::lowerBang(const ast::CallExpr *C) {
 
 bool Body::lowerFailsReturn(const ast::ReturnStmt *R,
                             SmallVector<Operand, 2> &Vals) {
-  S::SignatureType *Sig = Obj->sig();
-  ArrayRef<S::Var *> Rs = Obj->Results;
+  // The signature of the function or literal being lowered (P04.07: a
+  // `func!` literal returns the same way): the declared results, then the
+  // error.
+  S::SignatureType *Sig = FnSig;
+  ArrayRef<S::Type *> Rs = ArrayRef<S::Type *>(Sig->Results->Elems).drop_back();
   const size_t N = Rs.size();
   S::Type *ErrTy = Sig->Results->Elems.back();
   Type *ErrG = L.lowerType(ErrTy, R->getBegin());
@@ -289,8 +292,8 @@ bool Body::lowerFailsReturn(const ast::ReturnStmt *R,
     return false;
   if (R->Results.empty()) {
     // A bare return: the named results and a nil error.
-    for (LocalId Nm : NamedResults)
-      Vals.push_back(copyOf(FB.local(Nm)));
+    for (const Place &Nm : NamedResults)
+      Vals.push_back(copyOf(Nm));
     Vals.push_back(zeroOf(ErrG));
     return true;
   }
@@ -301,9 +304,7 @@ bool Body::lowerFailsReturn(const ast::ReturnStmt *R,
                        : nullptr;
   if (TT && (TT->Elems.size() == N || TT->Elems.size() == N + 1)) {
     const size_t Want = TT->Elems.size();
-    SmallVector<S::Type *, 4> To;
-    for (S::Var *V : Rs)
-      To.push_back(V->Ty);
+    SmallVector<S::Type *, 4> To(Rs.begin(), Rs.end());
     if (Want == N + 1)
       To.push_back(ErrTy);
     if (!multiValues(R->Results[0], Want, Vals, To))
@@ -314,7 +315,7 @@ bool Body::lowerFailsReturn(const ast::ReturnStmt *R,
   }
   if (Have == N || Have == N + 1) {
     for (size_t K = 0; K < Have; ++K)
-      Vals.push_back(valueFor(R->Results[K], K < N ? Rs[K]->Ty : ErrTy));
+      Vals.push_back(valueFor(R->Results[K], K < N ? Rs[K] : ErrTy));
     if (Have == N)
       Vals.push_back(zeroOf(ErrG));
     return true;

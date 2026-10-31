@@ -312,7 +312,7 @@ struct BasicBlock {
   /// Resume, Unreachable or an edge to another cleanup block (V023, V025).
   bool Cleanup = false;
   /// A catch block is a cleanup block that may also end the unwind: it is the
-  /// catch-all handler of a function with `defer` (D4.6, P04.07). It runs the
+  /// catch-all handler of a function with `defer` (D4.6, P04.26). It runs the
   /// deferred calls and `recover`, so it may Return, branch to normal blocks,
   /// and its calls may unwind onward (a deferred call that panics replaces
   /// the panic). Catch implies Cleanup (V024); only a catch block may branch

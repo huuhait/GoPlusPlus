@@ -311,7 +311,7 @@ private:
       case Type::Kind::Func:
         R = {T_Func,
              {TypeIds[T->ret()], T->fails(),
-              static_cast<uint64_t>(T->callConv())}};
+              static_cast<uint64_t>(T->callConv()), T->hasEnv()}};
         for (const Type *E : T->elems())
           R.Vals.push_back(TypeIds[E]);
         break;
@@ -744,10 +744,11 @@ private:
       Type *Ret = type(R);
       bool Fails = R.next();
       CallConv CC = enumVal(R, CallConv::C);
+      bool Env = R.next();
       SmallVector<Type *, 4> Params;
       while (R.Pos < R.V.size())
         Params.push_back(type(R));
-      T = Ctx.func(Params, Ret, Fails, CC);
+      T = Ctx.func(Params, Ret, Fails, CC, Env);
       break;
     }
     case T_Struct:

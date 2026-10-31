@@ -1,0 +1,123 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-loops.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/closure-loops.out 0 %}
+// P04.07, CLO-8 (Go 1.22): every iteration of a loop has its own copy of the
+// loop variable. Closures made in a `for` clause loop, a range loop over a
+// slice, a string, an integer and a map see the value of their own
+// iteration (0 1 2, not 3 3 3), also when the body continues or breaks and
+// when the loop changes the variable after making the closure. The other
+// side: a closure that only runs inside the iteration, and a variable
+// declared outside the loop, share one storage (no copy is made for them).
+// The expected output is what `go run` prints for this very file.
+package main
+
+func main() {
+	var fs []func() int
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	for _, f := range fs {
+		println(f())
+	}
+
+	// The closure changes its iteration's variable; the next iteration
+	// starts from the value the post statement made of the copy.
+	var gs []func() int
+	for i := 0; i < 6; i += 2 {
+		gs = append(gs, func() int { i += 10; return i })
+	}
+	for _, g := range gs {
+		println(g(), g())
+	}
+
+	// continue and break
+	var hs []func() int
+	for i := 0; i < 10; i++ {
+		if i%2 == 0 {
+			continue
+		}
+		hs = append(hs, func() int { return i * 2 })
+		if i == 5 {
+			break
+		}
+	}
+	for _, h := range hs {
+		println(h())
+	}
+
+	// range over a slice, a string, an integer, a map (of elements that own
+	// nothing: a range variable of an owning element is borrowed, and an
+	// escaping closure may not hold it, CLO-3a: gir/closure-refused.test)
+	var rs []func() string
+	for i, v := range []byte{'a', 'b', 'c'} {
+		rs = append(rs, func() string { return string(rune(v)) + string(rune('0'+i)) })
+	}
+	for _, r := range rs {
+		println(r())
+	}
+	var ss []func() rune
+	for _, ch := range "xyz" {
+		ss = append(ss, func() rune { return ch })
+	}
+	for _, s := range ss {
+		println(s())
+	}
+	var ns []func() int
+	for n := range 4 {
+		ns = append(ns, func() int { return n * n })
+	}
+	for _, n := range ns {
+		println(n())
+	}
+	ms := map[int]func() int{}
+	for k, v := range map[int]int{1: 10, 2: 20} {
+		ms[k] = func() int { return k + v }
+	}
+	for k := 1; k <= 2; k++ {
+		if m, ok := ms[k]; ok {
+			println(m())
+		}
+	}
+
+	// a variable declared in the body is new each time it is declared
+	var bs []func() int
+	for i := 0; i < 3; i++ {
+		x := i * 10
+		bs = append(bs, func() int { x++; return x })
+	}
+	println(bs[0](), bs[0](), bs[1](), bs[2]())
+
+	// a variable declared outside the loop is shared by every closure
+	shared := 0
+	var ts []func() int
+	for i := 0; i < 3; i++ {
+		ts = append(ts, func() int { shared += i; return shared })
+	}
+	println(ts[0](), ts[1](), ts[2](), shared)
+
+	// closures that only run inside the iteration
+	total := 0
+	for i := 0; i < 5; i++ {
+		func() { total += i }()
+	}
+	println(total)
+
+	// labelled loops
+	var ls []func() int
+outer:
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			if j == 2 {
+				continue outer
+			}
+			if i == 2 {
+				break outer
+			}
+			ls = append(ls, func() int { return i*10 + j })
+		}
+	}
+	for _, l := range ls {
+		println(l())
+	}
+}

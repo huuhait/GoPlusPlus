@@ -194,8 +194,8 @@ static bool narrowInt(const gir::Type *T) {
   return T->isBool() || (T->isInt() && T->bits() < 32);
 }
 
-const FnInfo &GoAbi::classify(const gir::Type *Sig, bool HasEnv) {
-  std::unique_ptr<FnInfo> &Slot = Infos[{Sig, HasEnv}];
+const FnInfo &GoAbi::classify(const gir::Type *Sig) {
+  std::unique_ptr<FnInfo> &Slot = Infos[Sig];
   if (Slot)
     return *Slot;
   auto FI = std::make_unique<FnInfo>();
@@ -250,6 +250,9 @@ const FnInfo &GoAbi::classify(const gir::Type *Sig, bool HasEnv) {
       Push(Ptr);
     }
   }
+  // A closure's code takes its environment as the first parameter of its
+  // GIR type (Type::hasEnv); here it is no parameter of the others'.
+  const bool HasEnv = Sig->hasEnv();
   if (HasEnv) {
     // swiftcc has a register for it that is no argument's (swiftself).
     FI->Env = IR.size();
@@ -259,7 +262,7 @@ const FnInfo &GoAbi::classify(const gir::Type *Sig, bool HasEnv) {
   }
 
   // The parameters.
-  for (const gir::Type *T : Sig->elems()) {
+  for (const gir::Type *T : Sig->elems().drop_front(HasEnv ? 1 : 0)) {
     ArgInfo A;
     A.Ty = T;
     A.First = IR.size();

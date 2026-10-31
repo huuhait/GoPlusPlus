@@ -2045,6 +2045,9 @@ public:
   llvm::DenseSet<const NamedType *> ViewFree;
   /// Struct types found to hold a view (containsView).
   llvm::DenseSet<const NamedType *> ViewHolders;
+  /// Test-only work count of containsView's loops (the lowering asks it
+  /// through MethodSets::holdsBorrow, P04.07 review R7).
+  uint64_t ViewSteps = 0;
   /// Package-level types whose by-value recursion is not checked yet.
   std::vector<NamedType *> WalkQueue;
   /// validTypeWalk met a type inside its own definition.

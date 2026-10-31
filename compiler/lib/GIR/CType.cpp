@@ -60,7 +60,7 @@ CVerdict CTypeRules::checkCallback(const Type *T) {
   for (const Type *E : T->elems()) {
     ++N;
     if (E->getKind() == Type::Kind::Func)
-      return Unsupported("a callback that takes a function (P04.07)");
+      return Unsupported("a callback that takes a function (P07.08)");
     CVerdict V = check(E, CUse::Param);
     if (!V.ok()) {
       V.Why = "callback parameter " + std::to_string(N) + ": " + V.Why;
@@ -68,7 +68,7 @@ CVerdict CTypeRules::checkCallback(const Type *T) {
     }
   }
   if (T->ret()->getKind() == Type::Kind::Func)
-    return Unsupported("a callback that returns a function (P04.07)");
+    return Unsupported("a callback that returns a function (P07.08)");
   CVerdict V = check(T->ret(), CUse::Result);
   if (!V.ok())
     V.Why = "callback result: " + V.Why;
@@ -76,13 +76,23 @@ CVerdict CTypeRules::checkCallback(const Type *T) {
 }
 
 CVerdict CTypeRules::check(const Type *T, CUse Use) {
+  if (T->isFuncValue()) {
+    // A Go++ func value is (code, environment); C has no place for the
+    // environment (P07.08). A plain function is passed as a callback.
+    CVerdict V;
+    V.K = CVerdict::Unsupported;
+    V.Why = Use == CUse::Result ? "a function returned from C (P07.08)"
+                                : "a func value passed to C (P07.08)";
+    return V;
+  }
   if (T->getKind() == Type::Kind::Func) {
     // A Go++ function passed to C is a C function pointer to its thunk
-    // (P04.18); a function value in any other place needs P04.07's closures.
+    // (P04.18); a function value in any other place needs P07.08 (a Go++ func
+    // value has an environment).
     if (Use == CUse::Result) {
       CVerdict V;
       V.K = CVerdict::Unsupported;
-      V.Why = "a function returned from C (P04.07)";
+      V.Why = "a function returned from C (P07.08)";
       return V;
     }
     if (Use == CUse::Param)
@@ -162,14 +172,17 @@ CTypeRules::Info CTypeRules::info(const Type *T, unsigned Depth) {
   case Type::Kind::Tuple:
     // A complex number is lowered to Tuple{f, f}: as a parameter or a field
     // it can only be one, so it must not get the text about results.
-    if (isFloatPair(T))
+    if (T->isFuncValue()) {
+      R.V.K = CVerdict::Unsupported;
+      R.V.Why = "a func value inside a C type (P07.08)";
+    } else if (isFloatPair(T))
       R.V = invalid("complex numbers have no C mapping yet (P07)");
     else
       R.V = invalid("a C function has one result (return a struct)");
     break;
   case Type::Kind::Func:
     R.V.K = CVerdict::Unsupported;
-    R.V.Why = "a func value inside a C type (P04.07)";
+    R.V.Why = "a func value inside a C type (P07.08)";
     break;
   case Type::Kind::Array: {
     Info E = info(T->elem(), Depth + 1);

@@ -30,6 +30,7 @@
 #ifndef GOPP_LIB_GIR_LOWERIMPL_H
 #define GOPP_LIB_GIR_LOWERIMPL_H
 
+#include "Escape.h"
 #include "Symbols.h"
 
 #include "gopp/AST/AST.h"
@@ -61,6 +62,10 @@ class Body;
 /// labelPos, exitScopes, the scopes a goto leaves): gir::loweringSteps reads
 /// it (test-only, M8).
 extern thread_local uint64_t LowerSteps;
+
+/// The steps of the closure analysis and of the code it makes per capture
+/// (Escape.cpp, LowerFunc.cpp): gir::escapeSteps reads it (test-only).
+extern thread_local uint64_t EscapeSteps;
 
 /// The runtime functions the compiler writes in GIR for strings, slices and
 /// maps (RuntimeStr.cpp, RuntimeMap.cpp). Each is made on first use. The
@@ -196,6 +201,9 @@ public:
   CTypeRules CRules;
 
   void unsupported(SourceLoc At, const llvm::Twine &What);
+  /// The same, with a note at At (what breaks which rule, the fix-it).
+  void unsupported(SourceLoc At, const llvm::Twine &What,
+                   const llvm::Twine &Note);
   /// An internal error (E0440): a fact the lowering needs is missing.
   void internalError(SourceLoc At, const llvm::Twine &What);
   void badExtern(SourceLoc At, StringRef Name, const llvm::Twine &Why);
@@ -447,6 +455,24 @@ public:
   /// The adapter that an itab calls for method F of Dyn: (data word,
   /// arguments) -> results. NoId after a report.
   FuncId ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At);
+  /// Which parameters of the package's functions are kept (Escape.h).
+  KeepTable Keeps;
+  /// Which checker types can hold a func value (Escape.h), memoized for the
+  /// package.
+  FuncHolderTypes FuncHolders;
+  /// The adapter that makes the function F a func value (P04.07): the
+  /// function with the environment parameter in front, which it ignores. A C
+  /// function (@Extern) gets the same adapter, which calls it with the C
+  /// ABI. NoId after a report.
+  FuncId funcAdapter(const S::Func *F, SourceLoc At);
+  /// The code of the method value `x.M` / the method expression `T.M`
+  /// (LowerFunc.cpp). NoId after a report.
+  FuncId methodValueThunk(const S::Func *F, Type *CodeTy, SourceLoc At);
+  FuncId methodExprThunk(const S::Func *F, Type *CodeTy, bool ViaPointer,
+                         SourceLoc At);
+  /// The interface method value thunks, by their code type (one serves every
+  /// interface method of that type).
+  llvm::DenseMap<Type *, FuncId> IfaceValueThunks;
   Type *tiType();
   Type *mtEntType();
   uint32_t ItabCache = ~0u;
@@ -540,6 +566,8 @@ public:
 
   /// The scope node of a type declared here (the function's symbol node).
   const sym::Node *ScopeNode = nullptr;
+  /// The function literals' facts of the entity being lowered (null: none).
+  const EntityFacts *Facts = nullptr;
 
 private:
   Lowering &L;
@@ -582,7 +610,7 @@ private:
   /// Where `fallthrough` goes (the next case's body), or NoId.
   BlockId Fallthrough = NoId;
   /// Named results, as locals (empty when the results are unnamed).
-  SmallVector<LocalId, 2> NamedResults;
+  SmallVector<Place, 2> NamedResults;
   unsigned LocalTypes = 0;
 
   Context &ctx() { return L.Ctx; }
@@ -650,12 +678,16 @@ private:
                     const ast::Node *N);
   /// The argument for a parameter of a C function that is a function (a
   /// callback, P04.18): a top-level function's thunk, or a C function
-  /// itself. Anything else is a closure or function value (P04.07).
+  /// itself. Anything else (a closure, a method value, a func variable) has an
+  /// environment a C function pointer cannot carry (P07.08).
   Operand callbackArg(const ast::Expr *E);
   Operand lowerBinary(const ast::BinaryExpr *B);
   Operand lowerLogical(const ast::BinaryExpr *B);
   Operand lowerUnary(const ast::UnaryExpr *U);
   Operand lowerCall(const ast::CallExpr *C);
+  /// Is E an instance of a generic function, `gen[int]` or `pkg.gen[int]`
+  /// (P04.08)? Reported at At unless its declaration was (one report).
+  bool genericInstance(const ast::Expr *E, const ast::Node *At);
   /// The call C without the `!` (lowerCall minus the unwrapping).
   Operand lowerPlainCall(const ast::CallExpr *C);
   // `f!(...)` (ERR-5 to ERR-9, LowerBang.cpp): the plain call, a test of the
@@ -741,6 +773,88 @@ private:
   Operand lowerArrayLit(const ast::CompositeLit *CL, S::ArrayType *AT,
                         Type *Ty);
   Operand lowerIdent(const ast::Ident *Id);
+  // Func values and closures (LowerFunc.cpp, P04.07).
+  /// The func value of the function F used as a value.
+  Operand funcValueOfFunc(const S::Func *F, const ast::Node *N);
+  /// The func value (code, env) made of a code function and an environment.
+  Operand funcValue(FuncId Code, Operand Env, Type *VT);
+  Operand lowerFuncLit(const ast::FuncLit *Lit);
+  /// The body of a function literal (a Body of its own, over the function
+  /// Code made for it). Captured variables are reached through the
+  /// environment (the first parameter).
+  void lowerLit(const ast::FuncLit *Lit, const LitFacts &LF,
+                S::SignatureType *Sig);
+  /// `x.M` and `T.M` used as values.
+  Operand lowerMethodValue(const ast::SelectorExpr *Sel,
+                           const S::Selection &SL);
+  /// A call of a func value: `f(x)`, `obj.field(x)`, `func(){...}()`.
+  Operand lowerCallValue(const ast::CallExpr *C);
+  /// M6, CLO-3a: may a closure or a method value that escapes (or not) hold
+  /// the storage of the variable V of an enclosing function? The one place
+  /// that decides it, for every way a func value can point into a frame
+  /// (gir.md section 15, "What a func value may point to"). False after one
+  /// report.
+  bool mayHold(const S::Var *V, bool Escapes, const ast::Node *N);
+  /// CLO-3a's refusal where the closure or method value N is: one E0439
+  /// naming P04.20 ("... holds <Held>"), with a note that the program breaks
+  /// the rule (<Who>) and how to fix it.
+  void refuseBorrow(const ast::Node *N, const llvm::Twine &Held,
+                    const llvm::Twine &Who, StringRef Fix);
+  /// The address of the storage of the captured variable V, as a pointer.
+  Operand varAddr(const S::Var *V, const ast::Node *N);
+  /// The environment pointer (a `*u8`) of a func value whose environment is
+  /// Val, of type EnvT: a frame temporary, or a heap block when the func
+  /// value escapes (it leaks until P04.09 gives it a drop).
+  Operand envPtr(Type *EnvT, Operand Val, bool Heap, const ast::Node *N);
+  /// The storage of a variable made at its declaration: a local, or a heap
+  /// cell when a literal that escapes captures it.
+  struct VarSlot {
+    Place P;
+    LocalId Cell = NoId; // the local that holds the cell's address
+  };
+  VarSlot declareSlot(const S::Var *V, const ast::Node *N, StringRef Name,
+                      Type *Ty, bool AllocNow = true);
+  /// The cells declared since a mark (the variables of a `for` clause).
+  SmallVector<std::pair<LocalId, Type *>, 4> CellLog;
+  /// Allocates a zeroed cell of Ty and sets the pointer local Cell to it.
+  void allocCell(LocalId Cell, Type *Ty, const ast::Node *N);
+  /// The signature of the function or literal being lowered (null for the
+  /// package's init function): `return` of a `!` one (ERR-3) and its end.
+  S::SignatureType *FnSig = nullptr;
+  /// The types of the results, as the function declares them.
+  SmallVector<S::Type *, 2> ResultTys;
+  /// A named result: its variable, type and name.
+  struct ResultVar {
+    const S::Var *V;
+    S::Type *Ty;
+    StringRef Name;
+  };
+  /// Makes the named results variables, set to their zero values.
+  bool bindResults(ArrayRef<ResultVar> Rs, SourceLoc At);
+  /// Binds the parameter V at index K of the function (the environment, when
+  /// there is one, is index 0) as the pass mode P says.
+  void bindParam(unsigned K, const S::Var *V, Lowering::Pass P, SourceLoc At);
+  /// Makes the parameters that a closure captures live in cells: in the
+  /// function's entry (Statement::Prologue) the cell's pointer points at the
+  /// parameter itself; enterCells then moves each into its cell.
+  void cellParams(ArrayRef<S::Var *> Params);
+  /// The cells cellParams and bindResults set up: (pointer local, type).
+  SmallVector<std::pair<LocalId, Type *>, 2> EntryCells;
+  /// After the function's entry: allocates the cells of EntryCells, copies
+  /// each variable's value into its cell and points the variable at it, on
+  /// the first line of Block (the body).
+  void enterCells(const ast::BlockStmt *Block);
+  /// Marks the statements of the entry block from Mark on as the function's
+  /// entry (Statement::Prologue, V077).
+  void prologueSince(size_t Mark);
+  size_t entryMark() { return FB.function().Blocks[FB.block()].Stmts.size(); }
+  /// The end of a function or literal body that falls off its last
+  /// statement: a function with no result returns, `func f!()` returns a nil
+  /// error (ERR-3), anything else cannot get there.
+  void endBody(const ast::BlockStmt *Body);
+  /// The literal's body gets a debug scope of its own (its locals shadow the
+  /// captured variables of the same name for the debugger).
+  bool ShadowBody = false;
   Operand lowerNarrowed(const ast::Ident *Id, S::Type *Payload);
   void lowerPrintln(const ast::CallExpr *C, bool Newline);
   bool constText(const ast::Expr *Arg, Type *T, std::string &Out);
@@ -979,7 +1093,7 @@ private:
   // Range (LowerStmt.cpp).
   void lowerRange(const ast::RangeStmt *R, std::string Label);
 
-  LocalId declareVar(const ast::Ident *Id, Type *Ty);
+  VarSlot declareVar(const ast::Ident *Id, Type *Ty, bool AllocNow = true);
   /// A destination of an assignment, `op=`, `++` or a `range` clause: a
   /// place, or blank. Made in three steps (gir.md "Assignment order"):
   /// recordDest in phase 1 (its operands, recordOps), deriveDest after the

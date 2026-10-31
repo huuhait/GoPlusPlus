@@ -383,3 +383,7 @@ python3 tests/run/Inputs/gen-shape.py 101 250 > big101.gopp
 nix develop -c python3 bench/pipelines/measure-opt.py --gopp build/bin/gopp --target arm64 \
     --configs gir,fastisel,0,isel:fastisel,isel:globalisel --runs 5 --corpus tests/run big101.gopp
 ```
+
+## Update 2026-10-31: the task split
+
+P04.07 was split: closures stayed in P04.07 (done); defer, panics, recover and the EH lowering rules of decision 3 are P04.26 (it depends on P04.09). Every "P04.07" above that means the EH lowering now means P04.26.

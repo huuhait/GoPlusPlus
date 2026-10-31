@@ -1,0 +1,91 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-methods.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/closure-methods.out 0 %}
+// P04.07: method values and method expressions. `x.M` binds the receiver
+// when the value is made (Go): a value method gets a copy of x then (later
+// changes of x are not seen), a pointer method gets &x (they are), and
+// through a pointer a value method copies *p then (of a type that owns
+// nothing: CLO-5a). An interface method value holds the interface's value. `T.M` and `(*T).M` take the receiver as the
+// first argument; `(*T).M` of a value method reads through the pointer. The
+// expected output is what `go run` prints for this very file.
+package main
+
+type counter struct{ n int }
+
+func (c *counter) inc() int           { c.n++; return c.n }
+func (c counter) get() int            { return c.n }
+func (c counter) plus(k int) int      { return c.n + k }
+func (c counter) label(s string) string { return s + "!" }
+
+type name string
+
+func (s name) hello(k int) string { return string(s) + "?" }
+
+type shape interface{ area() int }
+
+type sq struct{ s int }
+
+func (q sq) area() int { return q.s * q.s }
+
+type rect struct{ w, h int }
+
+func (r *rect) area() int { return r.w * r.h }
+
+func call(f func() int) int { return f() }
+
+func makeInc() func() int {
+	c := counter{}
+	return c.inc
+}
+
+func main() {
+	c := counter{n: 5}
+	inc := c.inc
+	get := c.get
+	inc()
+	inc()
+	println(c.n, get(), c.get())
+
+	plus := c.plus
+	c.n = 100
+	println(plus(1), c.plus(1))
+
+	f := counter.get
+	g := (*counter).inc
+	h := (*counter).get
+	l := counter.label
+	println(f(c), g(&c), h(&c), l(c, "x"))
+
+	m := makeInc()
+	println(m(), m(), m())
+
+	// (A method value of a value method of an owning type, `n.hello`, is
+	// CLO-5a's compile error, gir/closure-refused.test; its method
+	// expression passes the receiver as a borrowed argument.)
+	n := name("hi")
+	hello := name.hello
+	println(hello(n, 3), name.hello("yo", 1))
+
+	var s shape = sq{3}
+	area := s.area
+	s = sq{4}
+	println(area(), s.area())
+
+	rv := rect{2, 5}
+	r := &rv
+	var s2 shape = r
+	a2 := s2.area
+	r.w = 10
+	println(a2(), call(r.area))
+
+	p := &c
+	pi := p.inc
+	pg := p.get
+	println(pi(), pg(), p.get())
+
+	fns := []func() int{c.get, p.inc, makeInc()}
+	for _, fn := range fns {
+		println(fn())
+	}
+}

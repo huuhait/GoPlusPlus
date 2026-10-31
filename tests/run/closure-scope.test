@@ -1,0 +1,49 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-scope.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07, CLO-3: a closure made in an inner block and held by a variable of
+// an outer block outlives the block's locals: its environment must not be a
+// stack local of the inner block. The other side: a closure held by a
+// variable of its own block (or an inner one) is confined and runs the same.
+// The expected output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+func burn(n int) int {
+	s := 0
+	for i := 0; i < n; i++ {
+		s += i
+	}
+	return s
+}
+
+func none() int { return 0 }
+
+func id(x int) int { return x }
+
+func main() {
+	g := none
+	for round := 0; round < 3; round++ {
+		if round == 1 {
+			k := round * 10
+			g = func() int { return k + 1 }
+		}
+		_ = burn(100 + round)
+	}
+	println(burn(50), g())
+
+	h := id
+	{
+		base := 5
+		h = func(x int) int { return x + base }
+	}
+	println(burn(10), h(3))
+
+	{
+		m := 4
+		inner := func() int { return m * 2 }
+		println(inner())
+	}
+	println(burn(5))
+}

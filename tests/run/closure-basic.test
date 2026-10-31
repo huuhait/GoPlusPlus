@@ -1,0 +1,128 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-basic.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/closure-basic.out 0 %}
+// P04.07: func values and closures. A top-level function as a value (passed,
+// returned, stored in a struct field), a call through a value, closures that
+// are stored and called later (they outlive the call that made them: the
+// counter's variable lives in a cell), closures nested three deep that share
+// one variable, a closure that is only called on the spot (its variable stays
+// in the frame), a closure passed to a function that does not keep it, and
+// results of every shape (a string, a struct, no result). The expected output
+// is what `go run` prints for this very file (Inputs/regen-goldens.py).
+package main
+
+type point struct{ x, y int }
+
+type op struct {
+	name string
+	f    func(int, int) int
+}
+
+func add(a, b int) int { return a + b }
+func mul(a, b int) int { return a * b }
+
+func apply(f func(int, int) int, a, b int) int { return f(a, b) }
+
+func pick(neg bool) func(int, int) int {
+	if neg {
+		return func(a, b int) int { return -add(a, b) }
+	}
+	return add
+}
+
+func counter() func() int {
+	n := 0
+	return func() int {
+		n++
+		return n
+	}
+}
+
+func accumulator(start int) (func(int), func() int) {
+	total := start
+	return func(k int) { total += k }, func() int { return total }
+}
+
+func nest() func() func() func() int {
+	x := 1
+	return func() func() func() int {
+		x += 10
+		return func() func() int {
+			x += 100
+			return func() int {
+				x += 1000
+				return x
+			}
+		}
+	}
+}
+
+func each(xs []int, f func(int)) {
+	for _, x := range xs {
+		f(x)
+	}
+}
+
+// The closure keeps a string the function owns (a borrowed parameter cannot
+// be held by an escaping closure, CLO-3a: gir/closure-refused.test).
+func greeter(times int) func(string) string {
+	greeting := "hello"
+	for i := 1; i < times; i++ {
+		greeting += "!"
+	}
+	return func(name string) string { return greeting + ", " + name }
+}
+
+func mk(x, y int) func() point {
+	return func() point {
+		x++
+		return point{x, y}
+	}
+}
+
+func main() {
+	println(apply(add, 3, 4), apply(mul, 3, 4))
+	println(pick(false)(1, 2), pick(true)(1, 2))
+	ops := []op{{"add", add}, {"mul", mul}, {"sub", func(a, b int) int { return a - b }}}
+	for _, o := range ops {
+		println(o.name, o.f(10, 3))
+	}
+
+	c := counter()
+	d := counter()
+	println(c(), c(), c(), d(), c())
+
+	put, get := accumulator(10)
+	put(5)
+	put(7)
+	println(get())
+
+	f1 := nest()
+	f2 := f1()
+	f3 := f2()
+	println(f3(), f3())
+
+	sum := 0
+	each([]int{1, 2, 3, 4}, func(x int) { sum += x * x })
+	println(sum)
+
+	local := 100
+	func() { local += 11 }()
+	println(local)
+
+	g := greeter(2)
+	println(g("world"), g("gopher"))
+
+	m := mk(1, 2)
+	p := m()
+	q := m()
+	println(p.x, p.y, q.x, q.y)
+
+	fs := []func() int{}
+	for i := 0; i < 3; i++ {
+		k := i * i
+		fs = append(fs, func() int { return k + i })
+	}
+	println(fs[0](), fs[1](), fs[2]())
+}

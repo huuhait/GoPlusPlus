@@ -1,0 +1,137 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-method-values.out 0
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07 (spec CLO-5): method values and method expressions. `x.M` binds the
+// receiver when it is evaluated (a value receiver is copied then, a pointer
+// receiver keeps the address), `T.M` and `(*T).M` are functions of the
+// receiver and the parameters, and `i.M` of an interface binds the interface
+// value. A method value is called later, passed on, stored in a slice and a
+// struct field. Two interfaces declared in two functions, both `I`, with a
+// `Get` of two types, and two interfaces of other names with a method of
+// one type: each method value calls its own method (one thunk per code
+// type, never one per interface name: review R3). The expected output is
+// what `go run` prints for this very file (Inputs/regen-goldens.py).
+package main
+
+type P struct{ x, y int }
+
+func (p P) Sum() int          { return p.x + p.y }
+func (p P) Scaled(k int) P    { return P{p.x * k, p.y * k} }
+func (p *P) Inc(d int)        { p.x += d }
+func (p *P) Total() int       { return p.x + p.y }
+
+type Big struct {
+	a, b, c, d int
+}
+
+func (b Big) Sum() int { return b.a + b.b + b.c + b.d }
+
+type Shape interface {
+	Area() int
+	Grow(k int) int
+}
+
+type Sq struct{ s int }
+
+func (s Sq) Area() int      { return s.s * s.s }
+func (s Sq) Grow(k int) int { return (s.s + k) * (s.s + k) }
+
+type Rect struct{ w, h int }
+
+func (r *Rect) Area() int      { return r.w * r.h }
+func (r *Rect) Grow(k int) int { r.w += k; return r.w * r.h }
+
+type Btn struct {
+	name    string
+	onClick func() int
+}
+
+func call(f func() int) int { return f() }
+
+type F struct{ f float64 }
+
+func (x F) Get() float64 { return x.f }
+
+func localInt() int {
+	type I interface{ Get() int }
+	var j I = getter{6}
+	g := j.Get
+	return g()
+}
+
+func localFloat() float64 {
+	type I interface{ Get() float64 }
+	var i I = F{2.5}
+	g := i.Get
+	return g()
+}
+
+type getter struct{ n int }
+
+func (x getter) Get() int   { return x.n }
+func (x getter) Twice() int { return 2 * x.n }
+
+type One interface{ Get() int }
+type Two interface {
+	Twice() int
+	Get() int
+}
+
+func main() {
+	p := P{1, 2}
+	f := p.Sum // the copy of p is taken here
+	p.x = 100
+	println(f(), p.Sum())
+
+	g := p.Inc // keeps &p
+	g(5)
+	g(1)
+	println(p.x)
+
+	t := p.Total
+	p.y = 1000
+	println(t())
+
+	sum := P.Sum
+	println(sum(P{3, 4}))
+	inc := (*P).Inc
+	inc(&p, 1)
+	println(p.x)
+	viaPtr := (*P).Sum // a value method through a pointer
+	println(viaPtr(&p))
+	scaled := P.Scaled
+	println(scaled(P{2, 3}, 4).Sum())
+
+	b := Big{1, 2, 3, 4}
+	bs := b.Sum
+	b.a = 50
+	println(bs(), call(bs))
+
+	var s Shape = Sq{3}
+	area := s.Area
+	grow := s.Grow
+	s = Sq{10}
+	println(area(), grow(1), s.Area())
+
+	rv := Rect{2, 5}
+	r := &rv
+	var s2 Shape = r
+	a2 := s2.Area
+	g2 := s2.Grow
+	println(g2(3), a2(), r.w)
+
+	fs := []func() int{p.Sum, b.Sum, area, a2}
+	for i, h := range fs {
+		println(i, h())
+	}
+
+	btn := Btn{"ok", p.Total}
+	println(btn.name, btn.onClick())
+
+	var o One = getter{7}
+	var w Two = getter{8}
+	og, wg, wt := o.Get, w.Get, w.Twice
+	println(localInt(), localFloat(), og(), wg(), wt())
+}

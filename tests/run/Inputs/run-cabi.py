@@ -2,7 +2,8 @@
 """Build and run one generated C ABI program (P04.11, gen-cabi.py).
 
 usage: run-cabi.py [--arm64 SYSROOT] [--flags "GOPP FLAGS"] [--edges STRIDE]
-                  [--reverse] [--slow N] GOPP DIR SEED COUNT [SEED COUNT]...
+                  [--reverse] [--via-value] [--slow N] GOPP DIR SEED COUNT
+                  [SEED COUNT]...
 
 For every SEED/COUNT pair: gen-cabi.py writes main.gopp, lib.c and
 expected.txt under DIR/seedSEED; Clang compiles lib.c for the target (the
@@ -13,6 +14,9 @@ equal expected.txt byte for byte. Every step is limited to 60 seconds.
 
 With --reverse the programs are the other direction (P04.18, gen-cabi.py
 --direction reverse): C calls Go++, through @Export and through callbacks.
+
+With --via-value (P04.07) the forward programs call the C functions through
+func values (gen-cabi.py --via-value).
 
 With --edges STRIDE the signatures are the enumerated edges (gen-cabi.py
 --mode edges): every STRIDE-th from SEED (the start), at most COUNT.
@@ -30,11 +34,16 @@ sysroot = None
 flags = []
 edges = None
 reverse = False
+via_value = False
 slow = 1
 while args and args[0] in ("--arm64", "--flags", "--edges", "--reverse",
-                           "--slow"):
+                           "--via-value", "--slow"):
     if args[0] == "--reverse":
         reverse = True
+        args = args[1:]
+        continue
+    if args[0] == "--via-value":
+        via_value = True
         args = args[1:]
         continue
     if args[0] == "--arm64":
@@ -71,6 +80,8 @@ for seed, count in pairs:
            str(seed), "--count", str(count), "--dir", d]
     if reverse:
         gen += ["--direction", "reverse"]
+    if via_value:
+        gen += ["--via-value"]
     if edges:
         gen += ["--mode", "edges", "--start", str(seed), "--stride", edges]
     r = run(gen)

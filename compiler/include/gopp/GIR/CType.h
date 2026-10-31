@@ -25,7 +25,8 @@
 // is a C type in one place only (P04.18): a parameter, where it is a C
 // function pointer (a callback: a Func type of the C convention) whose own
 // parameters and result are C types; as a result or inside a struct it needs
-// P04.07's closures. Three limits keep
+// P07.08 (a Go++ func value has an environment, C no place for it). Three
+// limits keep
 // every walk of a C type small, ours and Clang's (its classification recurses
 // through the fields of every nested struct, without a memo):
 //

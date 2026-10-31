@@ -1,0 +1,147 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-capture.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07: closures. Captured variables are shared (a counter, siblings that
+// see each other's writes), copied when no one changes them, and kept alive
+// when the closure outlives its function; parameters, named results and
+// receivers are captured; closures nest several deep.
+// The expected output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+type box struct{ n int }
+
+func (b *box) incr() func() int {
+	return func() int {
+		b.n++
+		return b.n
+	}
+}
+
+func (b box) peek() func() int {
+	return func() int { return b.n }
+}
+
+func counter() func() int {
+	n := 0
+	return func() int {
+		n++
+		return n
+	}
+}
+
+func pair() (func(), func() int) {
+	x := 100
+	return func() { x += 5 }, func() int { return x }
+}
+
+// A trivial parameter lives in a cell; a string the function makes is
+// captured too (a borrowed parameter cannot be held by an escaping closure,
+// CLO-3a: gir/closure-refused.test).
+func param(a int, s string) func() string {
+	t := s + "-"
+	return func() string {
+		a++
+		return t + string(rune('0'+a))
+	}
+}
+
+var keep []func() int
+
+func named() (r int) {
+	keep = append(keep, func() int { r += 10; return r })
+	r = 1
+	return r
+}
+
+func namedBare() (r int) {
+	g := func() { r = 7 }
+	g()
+	return
+}
+
+func deep() func() func() func() int {
+	a := 1
+	return func() func() func() int {
+		b := 2
+		return func() func() int {
+			c := 3
+			return func() int {
+				a++
+				b += 2
+				c += 3
+				return a*100 + b*10 + c
+			}
+		}
+	}
+}
+
+func shadow() int {
+	x := 1
+	f := func() int {
+		x := x + 10
+		return x
+	}
+	return f()*100 + x
+}
+
+func byValue() (int, int) {
+	k := 5
+	f := func() int { return k * 2 }
+	return f(), k
+}
+
+func chain(n int) func() int {
+	if n == 0 {
+		return func() int { return 0 }
+	}
+	prev := chain(n - 1)
+	return func() int { return prev() + n }
+}
+
+func main() {
+	c1, c2 := counter(), counter()
+	println(c1(), c1(), c2(), c1(), c2())
+	bx := box{1}
+	b := &bx
+	inc := b.incr()
+	inc()
+	inc()
+	println(b.n, b.peek()())
+	add, get := pair()
+	add()
+	add()
+	println(get())
+	p := param(3, "n")
+	println(p(), p())
+	println(named())
+	println(keep[0](), keep[0]())
+	println(named(), len(keep))
+	println(keep[1](), keep[0]())
+	println(namedBare())
+	d := deep()
+	e := d()
+	g := e()
+	println(g(), g())
+	g2 := d()()
+	println(g2())
+	println(shadow())
+	println(byValue())
+	println(chain(5)())
+	x := 0
+	up := func() { x++ }
+	down := func() { x-- }
+	up()
+	up()
+	down()
+	up()
+	println(x)
+	func() { x = 40 }()
+	println(x)
+	total := 0
+	for i := 0; i < 5; i++ {
+		func() { total += i }()
+	}
+	println(total)
+}

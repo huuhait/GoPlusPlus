@@ -30,16 +30,56 @@ using llvm::isa_and_nonnull;
 // Variables and destinations
 //===----------------------------------------------------------------------===//
 
-LocalId Body::declareVar(const ast::Ident *Id, Type *Ty) {
+Body::VarSlot Body::declareVar(const ast::Ident *Id, Type *Ty, bool AllocNow) {
   auto D = I.Defs.find(Id);
-  LocalId Loc = FB.newLocal(Ty, Local::Var, Id->Name.str());
-  FB.function().Locals[Loc].Source = true;
+  const S::Var *V = nullptr;
   if (D != I.Defs.end())
-    if (auto *V = dyn_cast_or_null<S::Var>(D->second))
-      Vars[V] = Loc;
+    V = dyn_cast_or_null<S::Var>(D->second);
+  return declareSlot(V, Id, Id->Name.str(), Ty, AllocNow);
+}
+
+Body::VarSlot Body::declareSlot(const S::Var *V, const ast::Node *N,
+                                StringRef Name, Type *Ty, bool AllocNow) {
+  VarSlot R;
+  Function &F = FB.function();
+  if (V && Facts && Facts->Cells.count(V)) {
+    // A literal that escapes captures V: it lives in a heap cell made where
+    // it is declared (a loop that declares it again makes a new one, CLO-8),
+    // and the variable is the pointer local's target.
+    LocalId Cell = FB.newLocal(ctx().ptr(Ty), Local::Var, Name.str());
+    F.Locals[Cell].Source = true;
+    F.Locals[Cell].Deref = true;
+    Aliases[V] = Cell;
+    Scopes.back().Locals.push_back(Cell);
+    FB.storageLive(Cell);
+    if (AllocNow)
+      allocCell(Cell, Ty, N);
+    CellLog.push_back({Cell, Ty});
+    R.Cell = Cell;
+    R.P = FB.deref(FB.local(Cell));
+    return R;
+  }
+  LocalId Loc = FB.newLocal(Ty, Local::Var, Name.str());
+  F.Locals[Loc].Source = true;
+  if (V)
+    Vars[V] = Loc;
   Scopes.back().Locals.push_back(Loc);
   FB.storageLive(Loc);
-  return Loc;
+  R.P = FB.local(Loc);
+  return R;
+}
+
+void Body::allocCell(LocalId Cell, Type *Ty, const ast::Node *N) {
+  if (N)
+    at(N);
+  Type *PU8 = ctx().ptr(ctx().u8());
+  Operand Raw =
+      callFn(L.rt(RtFn::MemResize, N ? N->getBegin() : Pos),
+             {zeroOf(PU8),
+              constInt(ctx().u64(), std::max<uint64_t>(L.layout(Ty).Size, 1)),
+              constBool(ctx(), true)});
+  FB.assign(FB.local(Cell),
+            FB.cast(CastKind::PtrToPtr, std::move(Raw), ctx().ptr(Ty)));
 }
 
 void Body::recordOps(const ast::Expr *E, LateOps &R) {
@@ -380,8 +420,8 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
       Type *Ty = L.lowerType(T.STy, T.New->getBegin());
       if (!Ty)
         return;
-      LocalId Loc = declareVar(T.New, Ty);
-      FB.assign(FB.local(Loc), FB.use(Vals[K]));
+      VarSlot Sl = declareVar(T.New, Ty);
+      FB.assign(Sl.P, FB.use(Vals[K]));
       continue;
     }
     store(T.D, Vals[K], A);
@@ -513,8 +553,8 @@ void Body::lowerValueSpec(const ast::ValueSpec *VS) {
     if (!T)
       return;
     at(VS);
-    LocalId Loc = declareVar(VS->Names[K], T);
-    FB.assign(FB.local(Loc), FB.use(Vals[K]));
+    VarSlot Sl = declareVar(VS->Names[K], T);
+    FB.assign(Sl.P, FB.use(Vals[K]));
   }
 }
 
@@ -567,10 +607,18 @@ void Body::lowerIf(const ast::IfStmt *If) {
 
 void Body::lowerFor(const ast::ForStmt *For, std::string Label) {
   pushScope();
+  size_t CellMark = CellLog.size();
   if (For->Init)
     lowerStmt(For->Init);
+  // The variables of the clause that a literal which escapes captures: each
+  // iteration has its own copy (CLO-8, Go 1.22), made before the post
+  // statement runs (`continue` goes there too).
+  SmallVector<std::pair<LocalId, Type *>, 2> LoopCells(
+      CellLog.begin() + CellMark, CellLog.end());
+  CellLog.resize(CellMark);
+  const bool HasPost = For->Post || !LoopCells.empty();
   BlockId Head = FB.newBlock(), BodyB = FB.newBlock(),
-          Post = For->Post ? FB.newBlock() : NoId, Exit = FB.newBlock();
+          Post = HasPost ? FB.newBlock() : NoId, Exit = FB.newBlock();
   FB.gotoBlock(Head);
   FB.setBlock(Head);
   if (For->Cond) {
@@ -581,15 +629,25 @@ void Body::lowerFor(const ast::ForStmt *For, std::string Label) {
     FB.gotoBlock(BodyB);
   }
   FB.setBlock(BodyB);
-  BlockId Next = For->Post ? Post : Head;
+  BlockId Next = HasPost ? Post : Head;
   Targets.push_back({Exit, Next, Scopes.size(), std::move(Label)});
   lowerBlock(For->Body);
   Targets.pop_back();
   if (!FB.terminated())
     FB.gotoBlock(Next);
-  if (For->Post) {
+  if (HasPost) {
     FB.setBlock(Post);
-    lowerStmt(For->Post);
+    for (auto &[Cell, Ty] : LoopCells) {
+      ++EscapeSteps;
+      at(For);
+      LocalId Old = FB.newTemp(FB.function().Locals[Cell].Ty);
+      FB.assign(FB.local(Old), FB.use(copyOf(FB.local(Cell))));
+      allocCell(Cell, Ty, For);
+      FB.assign(FB.deref(FB.local(Cell)),
+                FB.use(copyOf(FB.deref(FB.local(Old)))));
+    }
+    if (For->Post)
+      lowerStmt(For->Post);
     if (!FB.terminated())
       FB.gotoBlock(Head);
   }
@@ -835,30 +893,32 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
   Function &F = FB.function();
   Type *Ret = F.Sig->ret();
   SmallVector<Operand, 2> Vals;
-  size_t Want =
-      NamedResults.empty() ? (Ret->isUnit() ? 0 : 1) : NamedResults.size();
-  if (Ret->getKind() == Type::Kind::Tuple && NamedResults.empty())
-    Want = Ret->numFields();
-  if (Obj && Obj->sig()->Fails) {
+  // The number of results is the checker's: one func value or complex
+  // number is a pair in GIR, and no list of two (P04.07).
+  size_t Want = !NamedResults.empty() ? NamedResults.size()
+                : Ret->isUnit()       ? 0
+                : ResultTys.empty()   ? 1
+                                      : ResultTys.size();
+  if (FnSig && FnSig->Fails) {
     // `!` (ERR-3): the declared results, or them plus the failure.
     if (!lowerFailsReturn(R, Vals))
       return;
   } else if (R->Results.empty()) {
     // A bare return gives the named results.
-    for (LocalId N : NamedResults)
-      Vals.push_back(copyOf(FB.local(N)));
+    for (const Place &N : NamedResults)
+      Vals.push_back(copyOf(N));
   } else {
-    ArrayRef<S::Var *> Rs = Obj ? Obj->Results : ArrayRef<S::Var *>();
     if (R->Results.size() == Want) {
       for (size_t K = 0; K < Want; ++K) {
-        S::Type *Wanted = K < Rs.size() ? Rs[K]->Ty : sTyOf(R->Results[K]);
+        S::Type *Wanted =
+            K < ResultTys.size() ? ResultTys[K] : sTyOf(R->Results[K]);
         Vals.push_back(valueFor(R->Results[K], Wanted));
       }
     } else if (R->Results.size() == 1 && Want > 1) {
       // return f() with several results.
       SmallVector<S::Type *, 2> To;
-      for (S::Var *V : Rs)
-        To.push_back(V->Ty);
+      for (S::Type *T : ResultTys)
+        To.push_back(T);
       if (!multiValues(R->Results[0], Want, Vals, To))
         return;
     } else {
@@ -884,7 +944,8 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
 //===----------------------------------------------------------------------===//
 
 void Body::lowerBlock(const ast::BlockStmt *B) {
-  pushScope(B != RootBody);
+  pushScope(B != RootBody || ShadowBody);
+  ShadowBody = false;
   for (const ast::Stmt *St : B->List)
     lowerStmt(St);
   popScope();
@@ -961,7 +1022,7 @@ void Body::lowerStmt(const ast::Stmt *St) {
     lowerTypeSwitch(cast<ast::TypeSwitchStmt>(St), std::move(Label));
     return;
   case K::DeferStmt:
-    unsupported(St, "a defer statement (P04.07)");
+    unsupported(St, "a defer statement (P04.26)");
     return;
   case K::GoStmt:
   case K::SelectStmt:
@@ -984,6 +1045,186 @@ void Body::finish() {
   removeDeadBlocks(F);
 }
 
+void Body::prologueSince(size_t Mark) {
+  // (Only the entry block holds the function's entry, V077.)
+  if (FB.block() != 0)
+    return;
+  std::vector<Statement> &Stmts = FB.function().Blocks[0].Stmts;
+  for (size_t K = Mark; K < Stmts.size(); ++K)
+    Stmts[K].Prologue = true;
+}
+
+bool Body::bindResults(ArrayRef<ResultVar> Rs, SourceLoc At) {
+  Function &F = FB.function();
+  for (const ResultVar &R : Rs) {
+    Type *T = L.lowerType(R.Ty, At);
+    if (!T)
+      return false;
+    const size_t Mark = entryMark();
+    if (R.V && Facts && Facts->Cells.count(R.V)) {
+      // A named result that an escaping closure captures lives in a cell
+      // (enterCells). Until it is made, the variable is a zeroed slot of the
+      // frame, so a debugger never reads through a pointer not yet set.
+      LocalId Init = FB.newLocal(T, Local::Var, R.Name.str() + ".v");
+      LocalId Cell = FB.newLocal(ctx().ptr(T), Local::Var, R.Name.str());
+      F.Locals[Cell].Source = true;
+      F.Locals[Cell].Deref = true;
+      Aliases[R.V] = Cell;
+      Scopes.back().Locals.push_back(Init);
+      Scopes.back().Locals.push_back(Cell);
+      FB.storageLive(Init);
+      FB.assign(FB.local(Init), FB.use(zeroOf(T)));
+      FB.storageLive(Cell);
+      FB.assign(FB.local(Cell), FB.addrOf(FB.local(Init), true));
+      prologueSince(Mark);
+      EntryCells.push_back({Cell, T});
+      NamedResults.push_back(FB.deref(FB.local(Cell)));
+      continue;
+    }
+    VarSlot Sl = declareSlot(R.V, nullptr, R.Name, T);
+    FB.assign(Sl.P, FB.use(zeroOf(T)));
+    prologueSince(Mark);
+    NamedResults.push_back(Sl.P);
+  }
+  return true;
+}
+
+void Body::bindParam(unsigned K, const S::Var *V, Lowering::Pass P,
+                     SourceLoc At) {
+  Function &F = FB.function();
+  // A borrowed string or `[]T` arrives as the pair (ptr, len) (D4.4,
+  // ADR-0029 point 7): a parameter or receiver that passOf makes a View.
+  // The body works on a variable of its own made from it: a string with
+  // capacity 0 (it owns no buffer), a `[]T` with the length as capacity
+  // (SLC-12) and a null allocator word that nothing reads (a borrowed slice
+  // is never grown, cloned in its allocator or freed). The pair and the
+  // variable both carry the parameter's name (the debug-info hand-off, gir.md
+  // section 15).
+  // The debugger shows the parameter (P04.12): the value, or, for a Place, the
+  // caller's place it points to (Local::Deref); for a View, the variable
+  // made from the pair.
+  F.Locals[FB.param(K)].Name = V->Name.str();
+  switch (P) {
+  case Lowering::Pass::Place:
+    // A pointer to the caller's place (PAR-10).
+    Aliases[V] = FB.param(K);
+    F.Locals[FB.param(K)].Source = true;
+    F.Locals[FB.param(K)].Deref = true;
+    return;
+  case Lowering::Pass::Value:
+    Vars[V] = FB.param(K);
+    F.Locals[FB.param(K)].Source = true;
+    return;
+  case Lowering::Pass::View:
+    break;
+  }
+  // (The pair of a string and of a []byte are alike: the variable's type
+  // tells them apart.)
+  Type *GT = L.lowerType(V->Ty, At);
+  if (!GT)
+    return;
+  bool Str = GT->getKind() == Type::Kind::String;
+  Rt E(M, FB);
+  // The statements that make the variable are the function's entry
+  // (Statement::Prologue, V077): a debugger stops after them at `break f`.
+  const size_t Mark = entryMark();
+  LocalId Loc = FB.newLocal(GT, Local::Var, V->Name.str());
+  // The debugger's parameter is this variable, not the pair (P04.12).
+  F.Locals[Loc].Source = true;
+  F.Locals[Loc].ArgNo = K + 1;
+  FB.storageLive(Loc);
+  Val In = E.param(K);
+  Val Ptr = E.fld(In, 0), Len = E.fld(In, 1);
+  if (Str)
+    FB.assign(FB.local(Loc),
+              FB.aggregate(AggKind::String, GT,
+                           {Ptr.Op, Len.Op, constInt(ctx().u64(), 0)}));
+  else
+    FB.assign(FB.local(Loc), FB.aggregate(AggKind::Slice, GT,
+                                          {Ptr.Op, Len.Op, Len.Op,
+                                           E.null(ctx().ptr(ctx().u8())).Op}));
+  prologueSince(Mark);
+  Scopes.back().Locals.push_back(Loc);
+  Vars[V] = Loc;
+}
+
+void Body::cellParams(ArrayRef<S::Var *> Params) {
+  // A parameter that a literal which escapes captures moves into a cell (a
+  // Place parameter is the caller's storage, and an escaping closure may not
+  // hold it: mayHold, CLO-3a). In the function's entry the cell's pointer
+  // points at the parameter itself, so the variable a debugger shows is
+  // right from the first instruction; enterCells makes the cell.
+  Function &F = FB.function();
+  for (S::Var *V : Params) {
+    if (!Facts || !Facts->Cells.count(V) || Aliases.count(V))
+      continue;
+    auto It = Vars.find(V);
+    if (It == Vars.end())
+      continue;
+    LocalId Param = It->second;
+    Type *Ty = F.Locals[Param].Ty;
+    const size_t Mark = entryMark();
+    LocalId Cell = FB.newLocal(ctx().ptr(Ty), Local::Var, V->Name.str());
+    F.Locals[Cell].Source = true;
+    F.Locals[Cell].Deref = true;
+    // The cell stands for the parameter in the debugger: its number is the
+    // parameter's (a View's variable has it already; V074).
+    const uint32_t Arg = F.Locals[Param].ArgNo;
+    F.Locals[Cell].ArgNo = Arg ? Arg : (Param <= F.numParams() ? Param : 0);
+    F.Locals[Param].Source = false;
+    F.Locals[Param].ArgNo = 0;
+    Scopes.back().Locals.push_back(Cell);
+    FB.storageLive(Cell);
+    FB.assign(FB.local(Cell), FB.addrOf(FB.local(Param), true));
+    prologueSince(Mark);
+    EntryCells.push_back({Cell, Ty});
+    Vars.erase(V);
+    Aliases[V] = Cell;
+  }
+}
+
+void Body::enterCells(const ast::BlockStmt *Block) {
+  // After the entry (the allocation is a call): each variable moves from the
+  // slot its pointer points at into a new cell, the pointer last. This code
+  // is on the first line of the body (review R4): LLVM ends the prologue
+  // search at a call, so with no line (line 0) the call would get
+  // `prologue_end` and the declaration's line, and `break f` would stop on
+  // the declaration. On the body's first line, `prologue_end` is there, and
+  // the debugger reads each variable through its pointer: the parameter's
+  // own slot before the move, the cell after it.
+  if (EntryCells.empty())
+    return;
+  FB.setSpan(L.spanOf(Block->List.empty() ? Block->Rbrace
+                                          : Block->List.front()->getBegin()));
+  for (auto &[Cell, Ty] : EntryCells) {
+    ++EscapeSteps;
+    LocalId Old = FB.newTemp(ctx().ptr(Ty));
+    FB.assign(FB.local(Old), FB.use(copyOf(FB.local(Cell))));
+    allocCell(Cell, Ty, nullptr);
+    FB.assign(FB.deref(FB.local(Cell)),
+              FB.use(copyOf(FB.deref(FB.local(Old)))));
+  }
+  EntryCells.clear();
+}
+
+void Body::endBody(const ast::BlockStmt *Block) {
+  if (FB.terminated())
+    return;
+  Function &F = FB.function();
+  FB.setSpan(L.spanOf(Block->Rbrace));
+  if (F.Sig->ret()->isUnit()) {
+    exitScopes(0);
+    FB.ret();
+  } else if (FnSig && FnSig->Fails && FnSig->Results->size() == 1) {
+    // `func f!()` ends with a nil error (ERR-3).
+    FB.assign(FB.local(FB.returnPlace()), FB.use(zeroOf(F.Sig->ret())));
+    exitScopes(0);
+    FB.ret();
+  } else {
+    FB.unreachable();
+  }
+}
+
 void Body::lower(const ast::FuncDecl *FD) {
   Function &F = FB.function();
   at(FD);
@@ -996,110 +1237,30 @@ void Body::lower(const ast::FuncDecl *FD) {
       unsupported(FD, "this parameter list");
       return;
     }
-    // The statements that make a parameter's variable or a named result
-    // before the body runs, each of them, are the function's entry
-    // (Statement::Prologue, V077).
-    auto Prologue = [&] { F.Blocks[FB.block()].Stmts.back().Prologue = true; };
-    // A borrowed string or `[]T` arrives as the pair (ptr, len) (D4.4,
-    // ADR-0029 point 7): a parameter or receiver that passOf makes a View.
-    // The body works on a variable of its own made from it: a string with
-    // capacity 0 (it owns no buffer), a `[]T` with the length as capacity
-    // (SLC-12) and a null allocator word that nothing reads (a borrowed slice
-    // is never grown, cloned in its allocator or freed). The pair and the
-    // variable both carry the parameter's name (the debug-info hand-off, gir.md
-    // section 15).
-    auto OwnView = [&](unsigned K, const S::Var *V) {
-      // (The pair of a string and of a []byte are alike: the variable's
-      // type tells them apart.)
-      Type *GT = L.lowerType(V->Ty, FD->getBegin());
-      if (!GT)
-        return;
-      bool Str = GT->getKind() == Type::Kind::String;
-      Rt E(M, FB);
-      LocalId Loc = FB.newLocal(GT, Local::Var, V->Name.str());
-      // The debugger's parameter is this variable, not the pair (P04.12).
-      F.Locals[Loc].Source = true;
-      F.Locals[Loc].ArgNo = K + 1;
-      FB.storageLive(Loc);
-      Prologue();
-      Val In = E.param(K);
-      Val Ptr = E.fld(In, 0), Len = E.fld(In, 1);
-      if (Str)
-        FB.assign(FB.local(Loc),
-                  FB.aggregate(AggKind::String, GT,
-                               {Ptr.Op, Len.Op, constInt(ctx().u64(), 0)}));
-      else
-        FB.assign(FB.local(Loc),
-                  FB.aggregate(AggKind::Slice, GT,
-                               {Ptr.Op, Len.Op, Len.Op,
-                                E.null(ctx().ptr(ctx().u8())).Op}));
-      Prologue();
-      Scopes.back().Locals.push_back(Loc);
-      Vars[V] = Loc;
-    };
-    // Each parameter, the receiver first, as passOf decided its mode. The
-    // debugger shows the parameter (P04.12): the value, or, for a Place, the
-    // caller's place it points to (Local::Deref); for a View, the variable
-    // made from the pair.
-    auto Bind = [&](unsigned K, const S::Var *V, Lowering::Pass P) {
-      F.Locals[FB.param(K)].Name = V->Name.str();
-      switch (P) {
-      case Lowering::Pass::Place:
-        // A pointer to the caller's place (PAR-10).
-        Aliases[V] = FB.param(K);
-        F.Locals[FB.param(K)].Source = true;
-        F.Locals[FB.param(K)].Deref = true;
-        break;
-      case Lowering::Pass::View:
-        OwnView(K, V);
-        break;
-      case Lowering::Pass::Value:
-        Vars[V] = FB.param(K);
-        F.Locals[FB.param(K)].Source = true;
-        break;
-      }
-    };
+    FnSig = Obj->sig();
     if (Obj->Recv)
-      Bind(0, Obj->Recv, L.passOfRecv(Obj));
+      bindParam(0, Obj->Recv, L.passOfRecv(Obj), FD->getBegin());
     for (size_t K = 0; K < Params.size(); ++K)
-      Bind(K + Lead, Params[K], L.passOf(Obj->sig(), K));
-    // Named results are variables, set to their zero values.
-    bool Named = false;
+      bindParam(K + Lead, Params[K], L.passOf(Obj->sig(), K), FD->getBegin());
     for (const S::Var *R : Obj->Results)
-      if (!R->Name.empty())
-        Named = true;
-    if (Named)
-      for (const S::Var *R : Obj->Results) {
-        Type *T = L.lowerType(R->Ty, FD->getBegin());
-        if (!T)
-          return;
-        LocalId Loc = FB.newLocal(T, Local::Var, R->Name.str());
-        F.Locals[Loc].Source = true;
-        Vars[R] = Loc;
-        NamedResults.push_back(Loc);
-        Scopes.back().Locals.push_back(Loc);
-        FB.storageLive(Loc);
-        Prologue();
-        FB.assign(FB.local(Loc), FB.use(zeroOf(T)));
-        Prologue();
-      }
+      ResultTys.push_back(R->Ty);
+    // Named results are variables, set to their zero values.
+    SmallVector<ResultVar, 2> Rs;
+    bool Named = false;
+    for (const S::Var *R : Obj->Results) {
+      Rs.push_back({R, R->Ty, R->Name});
+      Named |= !R->Name.empty();
+    }
+    if (Named && !bindResults(Rs, FD->getBegin()))
+      return;
+    cellParams(Params);
+    if (Obj->Recv)
+      cellParams(ArrayRef<S::Var *>(Obj->Recv));
+    enterCells(FD->Body);
   }
   RootBody = FD->Body;
   lowerBlock(FD->Body);
-  if (!FB.terminated()) {
-    FB.setSpan(L.spanOf(FD->Body->Rbrace));
-    if (F.Sig->ret()->isUnit()) {
-      exitScopes(0);
-      FB.ret();
-    } else if (Obj->sig()->Fails && Obj->Results.empty()) {
-      // `func f!()` ends with a nil error (ERR-3).
-      FB.assign(FB.local(FB.returnPlace()), FB.use(zeroOf(F.Sig->ret())));
-      exitScopes(0);
-      FB.ret();
-    } else {
-      FB.unreachable();
-    }
-  }
+  endBody(FD->Body);
   Scopes.pop_back();
   finish();
 }
@@ -1108,8 +1269,23 @@ void Body::lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs) {
   Function &F = FB.function();
   FB.setSpan(F.Loc);
   pushScope(false);
+  const sym::Node *PkgScope = ScopeNode;
   for (const S::InitEntry &E : Order) {
     at(E.Init);
+    // The literals of an initializer are the closures of its variable.
+    EntityFacts EF;
+    analyzeEntity({E.Init}, nullptr, {}, L.Keeps, L.FuncHolders, I, EF);
+    Facts = &EF;
+    if (!E.Lhs.empty())
+      ScopeNode = L.Syms.Names.var(E.Lhs[0]);
+    struct Restore {
+      Body &B;
+      const sym::Node *Scope;
+      ~Restore() {
+        B.Facts = nullptr;
+        B.ScopeNode = Scope;
+      }
+    } Reset{*this, PkgScope};
     if (E.Lhs.size() == 1) {
       S::Var *V = E.Lhs[0];
       Operand Val = valueFor(E.Init, V->Ty);
@@ -1217,7 +1393,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       return;
     }
   } else {
-    unsupported(R, "a range over this type (P04.07, P12)");
+    unsupported(R, "a range over this type (P04.27, P12)");
     popScope();
     return;
   }
@@ -1287,8 +1463,9 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
 
   // The variables of `:=`, one per name, declared before the loop and set at
   // the start of each iteration; an `&` variable is a pointer to the element.
-  LocalId KeyLoc = NoId, ValLoc = NoId;
-  auto DeclareDef = [&](const ast::Expr *T, LocalId &Loc) {
+  LocalId ValLoc = NoId;
+  VarSlot KeyS, ValS;
+  auto DeclareDef = [&](const ast::Expr *T, VarSlot &Sl) {
     if (IsBlank(T))
       return true;
     auto *Id = cast<ast::Ident>(unparen(T));
@@ -1300,11 +1477,11 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
     Type *Ty = L.lowerType(D->second->Ty, Id->getBegin());
     if (!Ty)
       return false;
-    Loc = declareVar(Id, Ty);
+    Sl = declareVar(Id, Ty, /*AllocNow=*/false);
     return true;
   };
   if (Define) {
-    if (!DeclareDef(R->Key, KeyLoc))
+    if (!DeclareDef(R->Key, KeyS))
       return popScope();
     if (Alias) {
       if (!ValVar || !VG) {
@@ -1318,7 +1495,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       Scopes.back().Locals.push_back(ValLoc);
       FB.storageLive(ValLoc);
       Aliases[ValVar] = ValLoc;
-    } else if (!DeclareDef(R->Value, ValLoc)) {
+    } else if (!DeclareDef(R->Value, ValS)) {
       return popScope();
     }
   }
@@ -1442,15 +1619,17 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
   };
   if (Define) {
     at(R);
-    if (KeyLoc != NoId)
-      FB.assign(FB.local(KeyLoc),
-                FB.use(ToType(KeyOf(R->Key), FB.function().Locals[KeyLoc].Ty)));
+    // A variable a literal that escapes captures is new in each iteration.
+    if (KeyS.Cell != NoId)
+      allocCell(KeyS.Cell, KeyS.P.Ty, R);
+    if (ValS.Cell != NoId)
+      allocCell(ValS.Cell, ValS.P.Ty, R);
+    if (KeyS.P.Ty)
+      FB.assign(KeyS.P, FB.use(ToType(KeyOf(R->Key), KeyS.P.Ty)));
     if (Alias)
       FB.assign(FB.local(ValLoc), FB.addrOf(ValP, true));
-    else if (ValLoc != NoId)
-      FB.assign(
-          FB.local(ValLoc),
-          FB.use(ToType(ValueOf(R->Value), FB.function().Locals[ValLoc].Ty)));
+    else if (ValS.P.Ty)
+      FB.assign(ValS.P, FB.use(ToType(ValueOf(R->Value), ValS.P.Ty)));
   } else if (WantKey || WantVal) {
     // `for k, v = range x`: each iteration is the assignment `k, v = key,
     // value` (Go spec): the operands of both places first (phase 1), the

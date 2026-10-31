@@ -27,7 +27,7 @@
 //   - the map-entry arguments of a call are records in the caller's frame:
 //     map_entry_args copies them in and resolves which are the same entry,
 //     map_entry_back copies out after the call (gir.md section 15).
-//     (A panic does not unwind until P04.07, which ends the iteration on the
+//     (A panic does not unwind until P04.26, which ends the iteration on the
 //     unwind path too.)
 //
 // The object: count, then a dense array of entries in insertion order (hash
@@ -388,7 +388,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     // type panics there too, in that path's words ("hash of unhashable type:
     // []int", no "runtime error"). Only such keys' use sites call it. (The
     // flag is cleared after the hash; a panic out of it exits today. Once a
-    // panic can be recovered, the unwind path must clear it too, TODO P04.07;
+    // panic can be recovered, the unwind path must clear it too, TODO P04.26;
     // goroutines race on it, TODO P12.06.)
     MapX E(*this,
            *Make("map_key_check", Ctx.func({InfoPtr, MapPtr, PU8}, Unit)));

@@ -1,0 +1,31 @@
+package main
+
+// P04.07: a closure's frame shows the variables it captured by their source
+// names (they are reached through the environment), its own locals, and its
+// parameters; the enclosing function keeps its own locals.
+
+func counter(start int) func(int) int {
+	n := start
+	step := 1
+	return func(by int) int {
+		m := n * 2
+		n += by + step
+		return m + n
+	}
+}
+
+func scaled(k int) func(int) int {
+	return func(x int) int {
+		k := k * 10
+		return x + k
+	}
+}
+
+func main() {
+	m := 1000
+	n := 7
+	c := counter(5)
+	r := c(10)
+	s := scaled(3)
+	println(r, m, n, s(1))
+}

@@ -395,6 +395,41 @@ TEST(GIRSerialize, StaticDataAndTheInterfaceTypeRoundTrip) {
   }
 }
 
+TEST(GIRSerialize, AnEnvironmentFuncTypeRoundTrips) {
+  // P04.07: the environment flag is part of a function type, printed as
+  // `fn env(...)`, kept by the writer and the reader, and distinct from the
+  // type without it; withCallConv keeps it (a C-convention copy of an
+  // environment type is still one, which V078 then refuses). AND the plain
+  // function type next to it stays plain.
+  Context C1;
+  auto M = sample(C1);
+  Type *PU8 = C1.ptr(C1.u8());
+  Type *Env = C1.func({PU8, C1.i64()}, C1.i64(), false, CallConv::Go, true);
+  Type *Plain = C1.func({PU8, C1.i64()}, C1.i64());
+  EXPECT_NE(Env, Plain);
+  EXPECT_TRUE(Env->hasEnv());
+  EXPECT_FALSE(Plain->hasEnv());
+  EXPECT_TRUE(C1.withCallConv(Env, CallConv::C)->hasEnv());
+  EXPECT_FALSE(C1.withCallConv(Plain, CallConv::C)->hasEnv());
+  EXPECT_EQ(Env->str(), "fn env(*u8, i64) -> i64");
+  // A func value is the pair (code with an environment, environment).
+  EXPECT_TRUE(C1.tuple({Env, PU8})->isFuncValue());
+  EXPECT_FALSE(C1.tuple({Plain, PU8})->isFuncValue());
+  Global G;
+  G.Name = "fv";
+  G.Ty = C1.tuple({Env, PU8, Plain});
+  M->addGlobal(std::move(G));
+  std::string Bytes = writeModule(*M);
+  Context C2;
+  auto R = readModule(Bytes, C2);
+  ASSERT_TRUE(static_cast<bool>(R)) << toString(R.takeError());
+  EXPECT_EQ(text(**R), text(*M));
+  EXPECT_EQ(writeModule(**R), Bytes);
+  const Global &Back = (**R).Globals[(**R).lookupGlobal("fv")];
+  EXPECT_TRUE(Back.Ty->elems()[0]->hasEnv());
+  EXPECT_FALSE(Back.Ty->elems()[2]->hasEnv());
+}
+
 TEST(GIRSerialize, CatchBlocksRoundTrip) {
   Context C1;
   auto M = std::make_unique<Module>(C1, "catchy");
@@ -820,9 +855,13 @@ TEST(GIRLower, ReportsWhatItCannotLower) {
   EXPECT_NE(Diag.find("err_gir_unsupported"), std::string::npos) << Diag;
   Diag.clear();
   EXPECT_EQ(
-      lower(C, "package main\nfunc main() { f := func() {}; f() }\n", &Diag),
+      lower(C, "package main\nfunc main() { defer func() { recover() }() }\n",
+            &Diag),
       nullptr);
   EXPECT_NE(Diag.find("err_gir_unsupported"), std::string::npos) << Diag;
+  // A function literal is lowered since P04.07.
+  EXPECT_NE(lower(C, "package main\nfunc main() { f := func() {}; f() }\n"),
+            nullptr);
   // And the good side: a program in the subset is lowered, a map, a slice
   // and a range loop (P04.05) included.
   EXPECT_NE(lower(C, "package main\nfunc main() { x := 1; _ = x }\n"), nullptr);

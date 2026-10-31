@@ -166,7 +166,7 @@ gir::Function &newFunction(gir::Module &M, const char *Name, gir::Type *Sig) {
 
 TEST(CodeGen, RefusesGIRItCannotLowerYet) {
   // A drop (P04.09), an unwind edge into cleanup and an unwind action that
-  // terminates (both P04.07) are refused with the construct named: lowering
+  // terminates (both P04.26) are refused with the construct named: lowering
   // them as plain calls would change what a panic does.
   for (int Case = 0; Case < 3; ++Case) {
     gir::Context GC;
@@ -187,12 +187,12 @@ TEST(CodeGen, RefusesGIRItCannotLowerYet) {
       B.ret();
       B.setBlock(Pad);
       B.resume();
-      Want = "an unwind edge to a cleanup block (P04.07) in f";
+      Want = "an unwind edge to a cleanup block (P04.26) in f";
     } else {
       B.call(gir::constFunc(M, Ext), {}, B.local(B.newTemp(GC.unit())),
              {gir::UnwindAction::Terminate, gir::NoId});
       B.ret();
-      Want = "an unwind action that terminates (P04.07) in f";
+      Want = "an unwind action that terminates (P04.26) in f";
     }
     ASSERT_EQ(test::errorsOf(M), "") << Case;
     std::string IR = irOf(M);

@@ -435,7 +435,7 @@ private:
                     llvm::Value *V);
   llvm::Error function(G::FuncId Id, const G::Function &F, llvm::Function *LF);
   llvm::Error terminator(const G::Terminator &T);
-  /// Makes a call: the only place that does (P04.18). P04.07 makes it an
+  /// Makes a call: the only place that does (P04.18). P04.26 makes it an
   /// invoke when U unwinds into this function.
   llvm::CallBase *emitCall(llvm::FunctionType *FT, llvm::Value *Callee,
                            llvm::ArrayRef<llvm::Value *> Args,
@@ -1190,13 +1190,13 @@ std::string Lowering::panicName(const G::Terminator &T) {
 
 llvm::Error Lowering::terminator(const G::Terminator &T) {
   setLoc(T.Loc, T.Scope);
-  // Both need a landing pad (`invoke`, D4.6): P04.07. A plain call would
+  // Both need a landing pad (`invoke`, D4.6): P04.26. A plain call would
   // change what a panic does.
   auto Unwindless = [&](const G::UnwindAction &U) -> llvm::Error {
     if (U.K == G::UnwindAction::Cleanup)
-      return fail("an unwind edge to a cleanup block (P04.07)");
+      return fail("an unwind edge to a cleanup block (P04.26)");
     if (U.K == G::UnwindAction::Terminate)
-      return fail("an unwind action that terminates (P04.07)");
+      return fail("an unwind action that terminates (P04.26)");
     return llvm::Error::success();
   };
   switch (T.K) {
@@ -1263,7 +1263,7 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
     if (!CFn && Sig->callConv() == G::CallConv::C) {
       // A call through a C function pointer (an allocator's table entry,
       // ADR-0029): the C ABI of the pointer's type. Its scalars are
-      // classified without Clang; an aggregate needs P04.07 (V076).
+      // classified without Clang; an aggregate needs P07.08 (V076).
       auto [It, New] = CPointers.try_emplace(Sig);
       if (New) {
         cabiWork();
@@ -1339,11 +1339,15 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
     const goabi::FnInfo &FI = Abi->classify(Sig);
     llvm::SmallVector<cabi::Value, 4> Vals;
     unsigned AggIdx = 0;
-    for (size_t K = 0; K < T.Args.size(); ++K) {
+    // The environment of a closure is the first argument and travels in
+    // swiftself (GoAbi::classify): it is no parameter of the ABI.
+    const size_t EnvArgs = FI.Env >= 0 ? 1 : 0;
+    llvm::Value *EnvPtr = EnvArgs ? operand(T.Args[0]) : nullptr;
+    for (size_t K = EnvArgs; K < T.Args.size(); ++K) {
       const G::Operand &A = T.Args[K];
       cabi::Value V;
       V.Ty = A.type();
-      switch (FI.Params[K].K) {
+      switch (FI.Params[K - EnvArgs].K) {
       case goabi::Kind::Ignore:
         break;
       case goabi::Kind::Scalar:
@@ -1380,7 +1384,8 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
       Dest.Known = LM.getDataLayout().getABITypeAlign(memTy(Sig->ret()));
     }
     cabi::Env Env = makeEnv(AllocaScratch);
-    std::vector<llvm::Value *> Args = Abi->lowerArgs(Env, FI, Vals, Dest);
+    std::vector<llvm::Value *> Args =
+        Abi->lowerArgs(Env, FI, Vals, Dest, EnvPtr);
     // The extension of narrow scalars is repeated at the call (the callee's
     // own attributes stay on the callee). A call through a pointer (a map's
     // hash, an itab slot, P04.06) gets what every definition of its
@@ -1433,7 +1438,7 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
       CallArgs.push_back(B.CreateLoad(llvm::PointerType::getUnqual(C), PS.Pos));
       for (llvm::AllocaInst *A : PS.Args)
         CallArgs.push_back(B.CreateLoad(A->getAllocatedType(), A));
-      // (A panic does not unwind until P04.07, which gives this call the
+      // (A panic does not unwind until P04.26, which gives this call the
       // unwind action of its checks.)
       emitCall(Funcs[Rt]->getFunctionType(), Funcs[Rt], CallArgs,
                Funcs[Rt]->getCallingConv(), llvm::AttributeList(),
@@ -1457,7 +1462,7 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
   case G::Terminator::Drop:
     return fail("a drop (P04.09)");
   case G::Terminator::Resume:
-    return fail("a resume (P04.07)");
+    return fail("a resume (P04.26)");
   }
   return fail("a terminator");
 }
@@ -2132,24 +2137,29 @@ llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
                                       CArgs);
   }
   bool SRetResult = GI ? GI->Ret.K == goabi::Kind::Indirect : false;
+  // A closure's environment is parameter 1 of its type, but not one of the
+  // ABI's parameters: the swiftself register (GoAbi::classify).
+  const unsigned EnvParams = GI && GI->Env >= 0 ? 1 : 0;
   for (size_t I = 0; I < F.Locals.size(); ++I) {
     const G::Local &L = F.Locals[I];
-    bool Param = I >= 1 && I <= F.numParams();
+    bool Param = I > EnvParams && I <= F.numParams();
     if (L.Ty->isUnit()) {
       Slots.push_back(nullptr);
     } else if (I == 0 && SRetResult) {
       Slots.push_back(Fn->getArg(GI->SRet)); // built in the caller's buffer
-    } else if (Param && isAggregate(L.Ty) && Params[I - 1].V) {
-      Slots.push_back(Params[I - 1].V); // the body's copy
+    } else if (Param && isAggregate(L.Ty) && Params[I - 1 - EnvParams].V) {
+      Slots.push_back(Params[I - 1 - EnvParams].V); // the body's copy
     } else {
       Slots.push_back(B.CreateAlloca(memTy(L.Ty), nullptr, L.Name));
     }
   }
-  for (unsigned I = 0; I < F.numParams(); ++I) {
+  if (EnvParams)
+    B.CreateStore(Fn->getArg(GI->Env), Slots[1]);
+  for (unsigned I = EnvParams; I < F.numParams(); ++I) {
     G::Type *PT = F.Locals[1 + I].Ty;
     if (isAggregate(PT) || PT->isUnit())
       continue;
-    storePlace(G::localPlace(1 + I, PT), Params[I].V);
+    storePlace(G::localPlace(1 + I, PT), Params[I - EnvParams].V);
   }
   llvm::Instruction *EntryBr = B.CreateBr(Blocks[0]);
   // Every named parameter and variable is declared at its storage for the
@@ -2173,7 +2183,7 @@ llvm::Error Lowering::function(G::FuncId Id, const G::Function &F,
     if (Scoped)
       enterProductScope(Bi);
     if (BB.Catch)
-      return fail("a catch block, the handler of `defer` (P04.07)");
+      return fail("a catch block, the handler of `defer` (P04.26)");
     for (const G::Statement &S : BB.Stmts) {
       // The rest of the entry has no line either (Statement::Prologue).
       if (S.Prologue)
@@ -2337,7 +2347,7 @@ llvm::CallBase *Lowering::emitCall(llvm::FunctionType *FT, llvm::Value *Callee,
                                    llvm::AttributeList AL,
                                    const G::UnwindAction &U) {
   // An unwind edge into this function (Cleanup, Terminate) makes an invoke:
-  // P04.07, until which terminator() refuses them, so this is a call.
+  // P04.26, until which terminator() refuses them, so this is a call.
   // (swiftcc keeps across a call the registers C keeps, which the unwinder
   // restores as it does for C: rbx, rbp and r12-r15 on amd64, no XMM
   // register; x19-x28, fp, lr and d8-d15 on arm64. An invoke needs nothing

@@ -1,0 +1,112 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.07, CLO-3a, OWN-B1, OWN-V5 (review R7): a closure or method value that
+// outlives the call may not hold a value that holds a view inside it either:
+// a `@View` struct, an array, an Option, a slice or a map of views. Such a
+// variable is no view itself (closure-refused-views.test has those), so its
+// type is walked, by the checker's own walk (Checker::containsView, the
+// one that asks for `@View` on a struct, OWN-V5): MethodSets::holdsBorrow,
+// asked by Body::mayHold. A pointer method value holds its receiver's root variable
+// (receiverRoot), decided the same way; a value method value copies its
+// receiver into its environment, and a copy whose type holds a view is
+// refused the same way. One E0439 each, with the note that says how to fix
+// it. (A file of its own: `gopp build` stops after ten errors.) The other
+// side, in the same file, draws no error: the same values used by closures
+// and method values that do not outlive the call, and a `@View` struct that
+// holds no view, captured by a closure that does
+// (run/closure-view-holders.test runs them).
+package main
+
+@View
+type Win struct {
+	B View[[]int]
+	k int
+}
+
+func (w *Win) Bump() int { w.k++; return w.k + w.B[0] }
+
+func (w Win) At(i int) int { return w.B[i] + w.k }
+
+@View
+type Plain struct{ k int }
+
+var keep []func() int
+
+func viewStruct() {
+	arr := [3]int{10, 20, 30}
+	w := Win{B: arr[:]}
+	keep = append(keep, func() int { return w.B[1] })
+}
+
+func viewArray() {
+	arr := [3]int{10, 20, 30}
+	vs := [1]View[[]int]{arr[:]}
+	keep = append(keep, func() int { return vs[0][1] })
+}
+
+func viewOption() {
+	arr := [3]int{10, 20, 30}
+	var o Option[View[[]int]] = arr[:]
+	keep = append(keep, func() int {
+		if v, ok := o.Get(); ok {
+			return v[2]
+		}
+		return -1
+	})
+}
+
+func viewSlice() {
+	arr := [3]int{10, 20, 30}
+	vs := []View[[]int]{arr[:]}
+	keep = append(keep, func() int { return vs[0][0] })
+}
+
+func viewMap() {
+	arr := [3]int{10, 20, 30}
+	m := map[int]View[[]int]{1: arr[:]}
+	keep = append(keep, func() int { return len(m) })
+}
+
+func pointerMethod() {
+	arr := [3]int{10, 20, 30}
+	w := Win{B: arr[:]}
+	keep = append(keep, w.Bump)
+}
+
+func valueMethod() func(int) int {
+	arr := [3]int{10, 20, 30}
+	w := Win{B: arr[:]}
+	return w.At
+}
+
+func fine() int {
+	arr := [3]int{10, 20, 30}
+	w := Win{B: arr[:]}
+	vs := [1]View[[]int]{arr[:]}
+	var o Option[View[[]int]] = arr[:]
+	sl := []View[[]int]{arr[:]}
+	m := map[int]View[[]int]{1: arr[:]}
+	t := func() int { return w.B[1] + vs[0][1] + sl[0][0] + len(m) }()
+	if v, ok := o.Get(); ok {
+		t += func() int { return v[2] }()
+	}
+	bump := w.Bump
+	at := w.At
+	t += bump() + at(1)
+	p := Plain{k: 5}
+	keep = append(keep, func() int { p.k++; return p.k })
+	return t
+}
+
+func main() {
+	_ = fine()
+}
+
+// CHECK: closure-refused-view-holders.test:37:22: error[E0439]: a closure or method value that outlives the call and holds the variable w, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:37:22: note: the program breaks CLO-3a: w holds a borrow (a view inside its value), and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); copy what its views show into owned values (a conversion such as `string(v)` or `[]T(v)` copies one: OWN-V3)
+// CHECK: closure-refused-view-holders.test:43:22: error[E0439]: {{.*}} holds the variable vs, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:49:22: error[E0439]: {{.*}} holds the variable o, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:60:22: error[E0439]: {{.*}} holds the variable vs, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:66:22: error[E0439]: {{.*}} holds the variable m, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:72:22: error[E0439]: {{.*}} holds the variable w, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:78:9: error[E0439]: a closure or method value that outlives the call and holds a copy of its receiver, whose type holds a view (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-view-holders.test:78:9: note: the program breaks CLO-3a: the copy holds a borrow (a view inside its value), and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); copy what its views show into owned values (a conversion such as `string(v)` or `[]T(v)` copies one: OWN-V3)

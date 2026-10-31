@@ -35,8 +35,8 @@
 //                            (two nil ones are equal; the same dynamic type
 //                            and equal values; an uncomparable dynamic type
 //                            panics);
-// A type with a slice or a function pointer has no glue yet (P04.07): the
-// builders return NoId.
+// A type with a slice or a function pointer has no glue yet (never comparable):
+// the builders return NoId.
 //
 // P04.06 (interfaces) and P05 (maps) call these; they are the one place that
 // decides how a type is compared and hashed.

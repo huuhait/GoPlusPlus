@@ -1,0 +1,85 @@
+// RUN: %gopp build -emit=gir -gir-no-locs %s | FileCheck --check-prefix=GIR %s
+// RUN: %gopp build -emit=obj %s -o %t.o
+// RUN: llvm-nm %t.o | FileCheck --check-prefix=NM %s
+// RUN: %gopp demangle _GPC1_F4mainE3two _GPC2_F4mainE3two _GPC1_C1_F4mainE6nested _GPC2_C1_F4mainE6nested _GPC1_R4mainE4hook | FileCheck --check-prefix=DEM %s
+// RUN: %gopp demangle _GPTVM3IncN4mainE1T _GPTEM3GetN4mainE1T _GPTETpM3GetN4mainE1T _GPTEF4mainE3top | FileCheck --check-prefix=DEMW %s
+// P04.07 (P04.17, appendix A.5): a function literal is named by the function
+// around it and its ordinal in source order among the literals directly
+// inside that function. Both sides: two literals in one function get two
+// symbols (C1, C2); a literal inside a literal is named by the outer literal
+// (not the function) and its own ordinal; a literal in a package variable's
+// initializer is named by the variable; the same names come out with any
+// number of checker threads (the unit test
+// GIRStress.ClosureSymbolsDoNotDependOnTheCheckThreads: 1 and 16); and `gopp
+// demangle` reads each back. The code of the other func values is a wrapper
+// named by what it wraps (appendix A.5), one per entity, linkonce_odr: a
+// method value `t.Inc` is `TV` of the method, a method expression `T.Get`
+// and a function used as a value (`top`) are `TE` of it (the entity with the
+// environment in front), and `(*T).Get` of a value method is `TE` of the
+// method's pointer thunk `Tp` (it reads the value through the pointer).
+package main
+
+func two() (func() int, func() int) {
+	return func() int { return 1 }, func() int { return 2 }
+}
+
+func nested() func() func() int {
+	return func() func() int {
+		a := func() int { return 3 }
+		_ = a
+		return func() int { return 4 }
+	}
+}
+
+var hook = func() int { return 5 }
+
+type T struct{ n int }
+
+func (t *T) Inc() { t.n++ }
+
+func (t T) Get() int { return t.n }
+
+func top(x int) int { return x }
+
+func wrappers() int {
+	var t T
+	m := t.Inc
+	m()
+	g := T.Get
+	p := (*T).Get
+	v := top
+	return g(t) + p(&t) + v(1)
+}
+
+func main() {
+	a, b := two()
+	println(a(), b(), nested()()(), hook(), wrappers())
+}
+
+// GIR-DAG: fn _GPC1_F4mainE3two(
+// GIR-DAG: fn _GPC2_F4mainE3two(
+// GIR-DAG: fn _GPC1_F4mainE6nested(
+// GIR-DAG: fn _GPC1_C1_F4mainE6nested(
+// GIR-DAG: fn _GPC2_C1_F4mainE6nested(
+// GIR-DAG: fn _GPC1_R4mainE4hook(
+// NM-DAG: t _GPC1_F4mainE3two
+// NM-DAG: t _GPC2_F4mainE3two
+// NM-DAG: t _GPC1_F4mainE6nested
+// NM-DAG: t _GPC1_C1_F4mainE6nested
+// NM-DAG: t _GPC2_C1_F4mainE6nested
+// NM-DAG: t _GPC1_R4mainE4hook
+// DEM: main.two.func1
+// DEM-NEXT: main.two.func2
+// DEM-NEXT: main.nested.func1.func1
+// DEM-NEXT: main.nested.func1.func2
+// DEM-NEXT: main.hook.func1
+// GIR-DAG: fn _GPTVM3IncN4mainE1T(_1: *u8) -> () [go env, linkonce_odr]
+// GIR-DAG: fn _GPTEM3GetN4mainE1T(_1: *u8, _2: main.T) -> i64 [go env, linkonce_odr]
+// GIR-DAG: fn _GPTETpM3GetN4mainE1T(_1: *u8, _2: *main.T) -> i64 [go env, linkonce_odr]
+// GIR-DAG: fn _GPTEF4mainE3top(_1: *u8, _2: i64) -> i64 [go env, linkonce_odr]
+// NM-DAG: W _GPTVM3IncN4mainE1T
+// NM-DAG: W _GPTEF4mainE3top
+// DEMW: method value main.T.Inc
+// DEMW-NEXT: method expression main.T.Get
+// DEMW-NEXT: method expression interface thunk for (*main.T).Get
+// DEMW-NEXT: method expression main.top

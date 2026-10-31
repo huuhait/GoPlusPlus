@@ -92,7 +92,7 @@ struct LowerToLLVMOptions {
 /// The GIR verifier runs first and the LLVM verifier last; either failure is
 /// an internal error. Fails (with the construct named) on GIR the code
 /// generator cannot lower yet: drops before P04.09, cleanup edges and
-/// `terminate` unwind actions before P04.07.
+/// `terminate` unwind actions before P04.26.
 llvm::Expected<std::unique_ptr<llvm::Module>>
 lowerToLLVM(llvm::LLVMContext &Ctx, const gir::Module &M,
             const llvm::TargetMachine &TM, const LowerToLLVMOptions &Opts = {});

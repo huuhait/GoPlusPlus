@@ -216,15 +216,26 @@ std::string DebugInfoBuilder::spell(const G::Type *T) {
     return "Option[" + spelling(T->elem()) + "]";
   case K::Tuple:
   case K::Func: {
-    std::string S = T->getKind() == K::Func ? "func(" : "(";
-    for (size_t I = 0; I < T->elems().size() && S.size() <= MaxNameLength;
-         ++I, ++Work.TypeSteps)
-      S += (I ? ", " : "") + spelling(T->elems()[I]);
+    // A func value (P04.07) is spelled as Go spells the type: `func(int64)
+    // int64`; its code, which also takes the environment, is `func(env,
+    // int64) int64`.
+    const bool Value = T->isFuncValue();
+    const G::Type *Code = Value ? T->elems()[0] : T;
+    const bool IsFunc = Value || T->getKind() == K::Func;
+    std::string S = IsFunc ? "func(" : "(";
+    // (The value's own environment is no parameter of the type.)
+    for (size_t I = Value ? 1 : 0;
+         I < Code->elems().size() && S.size() <= MaxNameLength;
+         ++I, ++Work.TypeSteps) {
+      S += I > (Value ? 1u : 0u) ? ", " : "";
+      S += !Value && Code->hasEnv() && I == 0 ? std::string("env")
+                                              : spelling(Code->elems()[I]);
+    }
     S += ")";
-    if (T->getKind() == K::Func) {
-      if (!T->ret()->isUnit())
-        S += " " + spelling(T->ret());
-      if (T->fails())
+    if (IsFunc) {
+      if (!Code->ret()->isUnit())
+        S += " " + spelling(Code->ret());
+      if (Code->fails())
         S += "!";
     }
     return S;
@@ -574,6 +585,17 @@ llvm::DIType *DebugInfoBuilder::build(const G::Type *T, const std::string &Name,
     // T followed by the one-byte "is set" flag (D4.5).
     return Struct(Fields({{"value", T->elem()}, {"set", Ctx.boolean()}}));
   case K::Tuple: {
+    if (T->isFuncValue()) {
+      // A func value (P04.07): the code and its environment. The environment
+      // is shown as an address (the byte pointer GIR has would print text):
+      // for a closure it points at the pointers to the captured variables.
+      llvm::DIType *Env = DIB.createPointerType(nullptr, PtrBits);
+      Height = std::max(Height, 3u);
+      llvm::Metadata *Parts[] = {
+          member(nullptr, "code", typeOf(T->elems()[0]), 0, PtrBits),
+          member(nullptr, "env", Env, PtrBits, PtrBits)};
+      return Struct(Parts);
+    }
     llvm::SmallVector<std::pair<std::string, const G::Type *>, 4> Fs;
     for (size_t I = 0; I < T->elems().size(); ++I)
       Fs.push_back({"_" + std::to_string(I), T->elems()[I]});

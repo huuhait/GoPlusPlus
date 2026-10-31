@@ -159,7 +159,7 @@ Operand Body::wrapSome(Operand V, S::Type *OptionTy, const ast::Node *N) {
   Type *G = L.lowerType(OptionTy, N->getBegin());
   if (!G)
     return errorValue(ctx());
-  if (G->isPtr() || G->isIface())
+  if (G->isPtr() || G->isIface() || G->isFuncValue())
     return V;
   at(N);
   Place P = FB.temp(
@@ -171,13 +171,20 @@ Operand Body::optionIsSet(Operand O, const ast::Node *N) {
   at(N);
   // An operand that could not be lowered (an error was reported) is not an
   // Option: no flag to read.
-  if (!O.type()->isPtr() && !O.type()->isIface() &&
+  if (!O.type()->isPtr() && !O.type()->isIface() && !O.type()->isFuncValue() &&
       O.type()->getKind() != Type::Kind::Option)
     return failed(N, constBool(ctx(), false));
   if (O.type()->isIface()) {
     Place P = placeOf(std::move(O));
     return copyOf(FB.temp(FB.binary(BinOp::Ne, copyOf(FB.field(P, 0)),
                                     zeroOf(ctx().ptr(ctx().u8())))));
+  }
+  if (O.type()->isFuncValue()) {
+    // A func value is nil when its code pointer is null.
+    Type *PU8 = ctx().ptr(ctx().u8());
+    Operand Code = copyOf(FB.temp(FB.cast(
+        CastKind::PtrToPtr, copyOf(FB.field(placeOf(std::move(O)), 0)), PU8)));
+    return copyOf(FB.temp(FB.binary(BinOp::Ne, std::move(Code), zeroOf(PU8))));
   }
   if (O.type()->isPtr())
     return copyOf(
@@ -186,7 +193,7 @@ Operand Body::optionIsSet(Operand O, const ast::Node *N) {
 }
 
 Operand Body::optionPayload(Operand O) {
-  if (O.type()->isPtr() || O.type()->isIface() ||
+  if (O.type()->isPtr() || O.type()->isIface() || O.type()->isFuncValue() ||
       O.type()->getKind() != Type::Kind::Option)
     return O;
   return copyOf(FB.field(placeOf(std::move(O)), 0));
@@ -266,7 +273,7 @@ Operand Body::mapArgAddr(const ast::Expr *E, LateOps &R) {
 
 Operand Body::callbackArg(const ast::Expr *E) {
   // (A func is never nil, OWN-P9: a C callback that may be absent is an
-  // Option[func], P04.07's.)
+  // Option[func], refused below with P07.08.)
   E = unparen(E);
   const S::Func *Fn = nullptr;
   if (auto *Id = dyn_cast<ast::Ident>(E)) {
@@ -275,7 +282,8 @@ Operand Body::callbackArg(const ast::Expr *E) {
       Fn = dyn_cast<S::Func>(U->second);
   }
   if (!Fn || Fn->Recv || Fn->IsInterfaceMethod) {
-    unsupported(E, "a closure, method or function value passed to C (P04.07)");
+    unsupported(
+        E, "a closure, method value or function variable passed to C (P07.08)");
     return errorValue(ctx());
   }
   auto FI = L.FuncIds.find(Fn);
@@ -583,7 +591,7 @@ Place Body::selectorPlace(const ast::SelectorExpr *Sel, Pending *Pend) {
   }
   const S::Selection &SL = It->second;
   if (SL.K != S::Selection::FieldVal) {
-    unsupported(Sel, "a method value or expression (P04.07)");
+    unsupported(Sel, "this method value");
     return Place();
   }
   if (SL.ParentSteps) {
@@ -767,6 +775,9 @@ Place Body::lowerPlace(const ast::Expr *E, Pending *Pend) {
 Operand Body::lowerIdent(const ast::Ident *Id) {
   if (S::Type *N = I.narrowedType(Id))
     return lowerNarrowed(Id, N);
+  if (auto U = I.Uses.find(Id); U != I.Uses.end())
+    if (auto *F = dyn_cast<S::Func>(U->second))
+      return funcValueOfFunc(F, Id);
   Place P = identPlace(Id);
   if (!P.Ty)
     return errorValue(ctx());
@@ -800,6 +811,15 @@ Operand Body::lowerExpr(const ast::Expr *E) {
   case ast::Node::Kind::SelectorExpr:
   case ast::Node::Kind::IndexExpr:
   case ast::Node::Kind::StarExpr: {
+    if (auto *Sel = dyn_cast<ast::SelectorExpr>(E)) {
+      // A method value or expression used as a value.
+      auto SI = I.Selections.find(Sel);
+      if (SI != I.Selections.end() && SI->second.K != S::Selection::FieldVal)
+        return lowerMethodValue(Sel, SI->second);
+    }
+    // `gen[int]` as a value: an instance of a generic function (P04.08).
+    if (genericInstance(E, E))
+      return errorValue(ctx());
     Place P = lowerPlace(E);
     if (!P.Ty)
       return errorValue(ctx());
@@ -814,8 +834,7 @@ Operand Body::lowerExpr(const ast::Expr *E) {
   case ast::Node::Kind::SliceExpr:
     return lowerSliceExpr(cast<ast::SliceExpr>(E));
   case ast::Node::Kind::FuncLit:
-    unsupported(E, "a function literal (P04.07)");
-    break;
+    return lowerFuncLit(cast<ast::FuncLit>(E));
   case ast::Node::Kind::TypeAssertExpr:
     return lowerTypeAssert(cast<ast::TypeAssertExpr>(E), false);
   default:
@@ -1634,7 +1653,7 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
     return unitValue();
   case BI::Panic:
   case BI::Recover:
-    unsupported(C, std::string("the built-in ") + B->Name.str() + " (P04.07)");
+    unsupported(C, std::string("the built-in ") + B->Name.str() + " (P04.26)");
     break;
   case BI::Move:
   case BI::Clone:
@@ -1829,6 +1848,23 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
   return copyOf(FB.local(Res));
 }
 
+bool Body::genericInstance(const ast::Expr *E, const ast::Node *At) {
+  auto *IE = dyn_cast<ast::IndexExpr>(unparen(E));
+  if (!IE)
+    return false;
+  const ast::Expr *Base = unparen(IE->X);
+  if (auto *Sel = dyn_cast<ast::SelectorExpr>(Base))
+    Base = Sel->Sel;
+  auto BU = isa<ast::Ident>(Base) ? I.Uses.find(cast<ast::Ident>(Base))
+                                  : I.Uses.end();
+  auto *GF = BU != I.Uses.end() ? dyn_cast<S::Func>(BU->second) : nullptr;
+  if (!GF || GF->OwnTParams.empty())
+    return false;
+  if (!L.Declined.count(GF))
+    unsupported(At, "a generic function (P04.08)");
+  return true;
+}
+
 Operand Body::lowerCall(const ast::CallExpr *C) {
   return C->isMust() ? lowerBang(C) : lowerPlainCall(C);
 }
@@ -1917,25 +1953,13 @@ Operand Body::lowerPlainCall(const ast::CallExpr *C) {
   // `gen[int](x)`: an instantiation used as the callee is a generic function
   // (P04.08), not a func value. Its declaration was reported where it was
   // declared (once), so the call says nothing more.
-  if (auto *IE = dyn_cast<ast::IndexExpr>(Fun)) {
-    const ast::Expr *Base = unparen(IE->X);
-    if (auto *Sel = dyn_cast<ast::SelectorExpr>(Base))
-      Base = Sel->Sel;
-    auto BU = isa<ast::Ident>(Base) ? I.Uses.find(cast<ast::Ident>(Base))
-                                    : I.Uses.end();
-    auto *GF = BU != I.Uses.end() ? dyn_cast<S::Func>(BU->second) : nullptr;
-    if (GF && !GF->OwnTParams.empty()) {
-      if (!L.Declined.count(GF))
-        unsupported(C, "a generic function (P04.08)");
-      return Unit;
-    }
-  }
+  if (genericInstance(Fun, C))
+    return Unit;
   // A call of a value (a func value, a method value): its type says what is
   // missing, reported once (lowerType).
   if (!tyOf(Fun))
     return failed(Fun, Unit);
-  unsupported(C, "this call");
-  return Unit;
+  return lowerCallValue(C);
 }
 
 //===----------------------------------------------------------------------===//

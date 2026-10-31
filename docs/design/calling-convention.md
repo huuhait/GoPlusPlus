@@ -42,7 +42,7 @@ An argument the checker assigns to its parameter as it is although the types dif
 |---|---|
 | a Go++ function, or a pointer of a Go++ `Func` type (an itab slot: the method's signature with the data word first, `methodSig`; a type descriptor's and a map's hash and `==` glue) | Go++ (`swiftcc`, below) |
 | a C function (`@Extern("C")`, libc, a thunk, the entry point `main`) | the exact C ABI (`cabi::lowerCArgs`, `docs/design/c-abi.md`) |
-| a pointer of a C `Func` type (an allocator's table entry, ADR-0029: an allocator written in C or C++ fits) | the C ABI of its scalars (`cabi::classifyScalars`; V076: scalars only, aggregates are P04.07's) |
+| a pointer of a C `Func` type (an allocator's table entry, ADR-0029: an allocator written in C or C++ fits) | the C ABI of its scalars (`cabi::classifyScalars`; V076: scalars only, aggregates are P07.08's) |
 
 The counting allocator of the test intrinsics is a C function with a GIR body, so its table entries are C functions like any other allocator's. Methods, itab thunks (`_GPTI...`) and the glue in type descriptors are Go++ functions. After lowering, `gopp::checkCalls` checks the module: a direct call uses its callee's LLVM convention (an internal error otherwise: swiftcc and ccc put a result in other registers), and every function in static data (itabs, method tables, descriptors: called through pointers of Go++ function types) has the Go++ convention of the target (`GoAbiCalls.*`, both sides).
 
@@ -57,7 +57,7 @@ Every Go++ function is `swiftcc` on both targets (`goabi::Policy::CC`, per targe
 
 **The amd64 limit (ADR-0030).** A result of more than four integer-class or four float-class scalars goes through a hidden first pointer on amd64: `(string, error)` and `([]T, error)` do. Measured against `x86_regcallcc`, which returns them in registers: no runtime difference (307 vs 303 ms over 400M calls), while regcall made Go++ calls into C 16% slower, `.text` 6-11% larger and FastISel fall back on every call, and needed a workaround on every unwinding call. A P15 benchmark decides whether a custom convention (option C) is worth it.
 
-swiftcc keeps across a call the registers C keeps (amd64: rbx, rbp, r12-r15, no XMM register; arm64: x19-x28, fp, lr, d8-d15), and the unwinder restores them as it does for C, so an `invoke` (P04.07) needs nothing more. `Lowering::emitCall` is the only place that makes a call (P04.07 makes it an `invoke` there).
+swiftcc keeps across a call the registers C keeps (amd64: rbx, rbp, r12-r15, no XMM register; arm64: x19-x28, fp, lr, d8-d15), and the unwinder restores them as it does for C, so an `invoke` (P04.26) needs nothing more. `Lowering::emitCall` is the only place that makes a call (P04.26 makes it an `invoke` there).
 
 The rules read the LLVM memory type of the GIR type, so they are layout-blind: a four-word slice (ADR-0029) changes nothing here.
 
@@ -79,7 +79,7 @@ The four lowering functions mirror the C ones and share their `Env` and `Value`:
 A thunk is a GIR function with the `C` convention whose body calls a Go++ function. LowerToLLVM classifies C functions with bodies too; their prologue is `cabi::unpackCParams` and their return is `cabi::packCReturn`, and the call to the Go++ function is `lowerArgs` / `lowerResult`.
 
 - `@Export("C") func f(...)`: the symbol `f` is the thunk (external); the Go++ function keeps its mangled name and calls from Go++ go to it. The C name must not start with `_GP` (`sym::isReservedName` alone, appendix A.8, SYM-4): E0445 names the reserved prefix; `GPx`, `_G`, `_Gx` are fine (`tests/run/export-link.test` links them). Also E0445: another ABI than "C", no argument, no body, `@Extern` and `@Export` together, a type C cannot take, the name `main` (the entry point) or one another function has. The reserved prefix on an `@Extern` name is E0442.
-- A callback: a func-typed parameter of an `@Extern` function is a C function pointer (`fn "C"`). A top-level Go++ function passed there is wrapped in a thunk `sym::wrapper(CABIThunk, ...)` (`_GPTC...`), made once per function and linkonce_odr like the glue, so every package gives C the same pointer; a C function is passed as itself. Passing a closure, a method value or a variable is E0439 naming P04.07, as is a func result or field, and a func parameter or result of an `@Export` function.
+- A callback: a func-typed parameter of an `@Extern` function is a C function pointer (`fn "C"`). A top-level Go++ function passed there is wrapped in a thunk `sym::wrapper(CABIThunk, ...)` (`_GPTC...`), made once per function and linkonce_odr like the glue, so every package gives C the same pointer; a C function is passed as itself. Passing a closure, a method value or a variable is E0439 naming P07.08 (a C function pointer has no place for the environment), as is a func result or field; a func parameter or result of an `@Export` function names P07.13.
 - Verifier: V067 (C functions take C types, bodies too; a callback type has the C convention), V075 (a function's convention is its signature's), V076 (a call through a C function pointer passes scalars).
 
 ## How later tasks plug in
@@ -87,7 +87,9 @@ A thunk is a GIR function with the `C` convention whose body calls a Go++ functi
 | Task | Where |
 |---|---|
 | P04.06 itab calls | the itab's entries are Go++ `Func` types made with `passOf` for each parameter; `classify` the method's signature; the receiver is the first parameter (the itab's `data`; the thunk passes it as `passOfRecv` says); an interface value is `(ptr, ptr)`, Direct |
-| P04.07 closures, unwinding | `classify(Sig, HasEnv = true)` puts the environment in `swiftself`; `lowerArgs(..., EnvPtr)`. Whether a call unwinds is the call's business (invoke), not the convention's. A C function value (`fn "C"`) with aggregates is called through `CABILower` (V076 refuses it until then) |
+| P04.07 closures (done) | the code of a func value has the environment as parameter 0 of its `Func` type (`Type::hasEnv`, V078); `classify(Sig)` reads the flag and puts it in `swiftself`, no ABI parameter (`FnInfo::Env`); `lowerArgs(..., EnvPtr)`; a call through a func value and the closure's own code are `swiftcc` like every Go++ function, and the adapter of an `@Extern` function used as a value calls C with the C ABI (`tests/codegen/closure-env.test`, `run/cabi-value-*.test`) |
+| P04.26 unwinding | whether a call unwinds is the call's business (invoke), not the convention's |
+| P07.08 C function values | a C function pointer (`fn "C"`) with aggregates is called through `CABILower` (V076 refuses it until then); a closure given to C needs its environment carried (a trampoline or `ffi.Func`) |
 | P04.08 generic instances | `classify` the instantiated signature; `passOf` runs on it |
 | P04.10 `(T, error)` | done: the tuple GIR makes; Direct while it fits; `f!()` tests the itab scalar of the result with no store first (`tests/codegen/bang-cold.test`, both returns are shapes `tests/run/bang-*.test` run on both targets) |
 | P12 goroutine entry | a thunk whose signature is `func(ptr)` built with the same four functions |

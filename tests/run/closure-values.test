@@ -1,0 +1,104 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-values.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// P04.07: func values. A top-level function as a value, passed, returned,
+// stored in a struct field, a slice and a map, and called later; a function
+// that takes functions; a recursive function through a named func type. The
+// expected output is `go run` of this text (Inputs/regen-goldens.py).
+package main
+
+type binop func(int, int) int
+
+type rec func(rec, int) int
+
+type table struct {
+	name string
+	op   binop
+}
+
+func add(a, b int) int { return a + b }
+func sub(a, b int) int { return a - b }
+func mul(a, b int) int { return a * b }
+
+func apply(f binop, x, y int) int { return f(x, y) }
+
+func pick(i int) binop {
+	switch i {
+	case 0:
+		return add
+	case 1:
+		return sub
+	}
+	return mul
+}
+
+func compose(f, g func(int) int) func(int) int {
+	return func(x int) int { return f(g(x)) }
+}
+
+func inc(x int) int { return x + 1 }
+func dbl(x int) int { return x * 2 }
+
+func twice(f func(string) string, s string) string { return f(f(s)) }
+
+func bang(s string) string { return s + "!" }
+
+func multi(a int, b string) (int, string) { return a * 2, b + b }
+
+func sum(xs ...int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func fact(self rec, n int) int {
+	if n <= 1 {
+		return 1
+	}
+	return n * self(self, n-1)
+}
+
+func main() {
+	f := add
+	println(f(1, 2))
+	println(apply(sub, 10, 4), apply(mul, 6, 7))
+	for i := 0; i < 3; i++ {
+		println(pick(i)(8, 3))
+	}
+	ts := []table{{"add", add}, {"sub", sub}, {"mul", mul}}
+	for _, t := range ts {
+		println(t.name, t.op(9, 5))
+	}
+	m := map[string]binop{"a": add, "s": sub}
+	m["m"] = mul
+	if fa, ok := m["a"]; ok {
+		println(fa(1, 1))
+	}
+	if fs2, ok := m["s"]; ok {
+		println(fs2(1, 1))
+	}
+	if fm, ok := m["m"]; ok {
+		println(fm(3, 3), len(m))
+	}
+	_, missing := m["zz"]
+	println(missing)
+	c := compose(inc, dbl)
+	println(c(5), compose(dbl, inc)(5))
+	println(twice(bang, "hi"))
+	g := multi
+	n, s := g(4, "ab")
+	println(n, s)
+	h := sum
+	println(h(), h(1), h(1, 2, 3), h([]int{4, 5}...))
+	println(fact(fact, 10))
+	var r rec = fact
+	println(r(r, 5))
+	fs := [3]func(int) int{inc, dbl, func(x int) int { return -x }}
+	for i, fn := range fs {
+		println(i, fn(7))
+	}
+}

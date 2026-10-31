@@ -46,13 +46,15 @@
 // eight on arm64, so `(int, error)` comes back in registers on both and
 // `(string, error)` (five words) through memory on amd64. Like C, swiftcc
 // keeps no XMM or vector register across a call. A closure's environment
-// (HasEnv, P04.07) is the `swiftself` register, which is no argument's.
+// (a Func type with hasEnv(), P04.07) is the `swiftself` register, which is no
+// argument's.
 //
 // What plugs in here later, without a change to the rules:
 //   P04.06  a method call through an itab: classify the method's signature,
 //           the receiver is the first parameter (the itab's `data`);
 //           interface values are Tuple(ptr, ptr), Direct;
-//   P04.07  closures: classify(Sig, HasEnv = true), lowerArgs(..., Env);
+//   P04.07  closures (done): a Func type with hasEnv() puts its first
+//           parameter in `swiftself` (classify), lowerArgs(..., Env);
 //           panics: whether a call unwinds is the call's business (invoke),
 //           not the convention's;
 //   P04.08  generic instances: classify the instantiated signature;
@@ -131,10 +133,12 @@ public:
         std::function<llvm::Type *(const gir::Type *)> MemTy)
       : C(C), DL(DL), P(P), MemTy(std::move(MemTy)) {}
 
-  /// The decision for Sig (a Func type); HasEnv adds the environment
-  /// parameter. Cached by the uniqued type, so valid as long as the GIR
+  /// The decision for Sig (a Func type). A closure's code has the
+  /// environment as the first parameter of its type (Type::hasEnv): it is
+  /// the `swiftself` register (FnInfo::Env), no argument's, and Params
+  /// are the others. Cached by the uniqued type, so valid as long as the GIR
   /// context lives.
-  const FnInfo &classify(const gir::Type *Sig, bool HasEnv = false);
+  const FnInfo &classify(const gir::Type *Sig);
 
   /// The caller: the IR arguments. An aggregate Args[I] is the address of its
   /// bytes (an Indirect one must be the callee's own copy, the callee may
@@ -178,7 +182,7 @@ private:
   Policy P;
   std::function<llvm::Type *(const gir::Type *)> MemTy;
   llvm::DenseMap<llvm::Type *, Count> Counts;
-  std::map<std::pair<const gir::Type *, bool>, std::unique_ptr<FnInfo>> Infos;
+  std::map<const gir::Type *, std::unique_ptr<FnInfo>> Infos;
 };
 
 } // namespace goabi

@@ -1,0 +1,101 @@
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.07, CLO-3a, OWN-V (review R2): a closure or method value that outlives
+// the call may not hold a view or a borrowed slice either: a View
+// parameter, a substring of a local string, a slice of a local array or of
+// a local slice. The checker gives such a variable a View[X] or borrowed
+// []T type (a RefType), and its own rule for `return &v` says it is a
+// borrow (Var::isBorrow), which MethodSets::holdsBorrow, asked by
+// Body::mayHold,
+// includes. A method value of a pointer method binds its receiver's
+// address, so the receiver's path is walked to its root variable through
+// fields, indexes and slicing (`s[1].Inc`, `s[1:][0].Inc`), and the root is
+// decided like a captured variable: so is `xs[0].Inc` on a borrowed slice
+// parameter (round 1 accepted it: the method value held `&xs[0]` of the
+// caller's slice past the call). One E0439 each, with the note that says
+// how to copy the view; the rest of closure-refused.test's rules hold here
+// too; values whose type holds a view are
+// closure-refused-view-holders.test. The other side,
+// in the same file, draws no error: the same borrows used by closures and
+// method values that do not outlive the call, and a method value on an
+// element reached through a slice of a local array (`cs[:][1].Inc`): its
+// root is the array itself, which goes to a cell (run/closure-frames.test
+// runs it, and the non-escaping forms that Go also has).
+package main
+
+type C struct{ n int }
+
+func (c *C) Inc() int { c.n++; return c.n }
+
+var keep []func() int
+
+func sliceOfArray() {
+	arr := [3]int{1, 2, 3}
+	s := arr[:]
+	keep = append(keep, func() int { return s[0] })
+}
+
+func sliceOfSlice() {
+	xs := []int{1, 2, 3}
+	t := xs[1:]
+	keep = append(keep, func() int { return t[0] })
+}
+
+func viewParam(v View[string]) {
+	keep = append(keep, func() int { return len(v) })
+}
+
+func substring() {
+	name := "hello"
+	w := name[1:3]
+	keep = append(keep, func() int { return len(w) })
+}
+
+func throughSlice() func() int {
+	cs := [2]C{}
+	s := cs[:]
+	return s[1].Inc
+}
+
+func throughSlicing() {
+	cs := [2]C{}
+	s := cs[:]
+	keep = append(keep, s[1:][0].Inc)
+}
+
+func paramElem(xs []C) func() int { return xs[0].Inc }
+
+func paramElemFine(xs []C) int {
+	inc := xs[0].Inc
+	return inc() + func() int { return xs[1:][0].Inc() }()
+}
+
+func fine(v View[string], name string) int {
+	arr := [3]int{1, 2, 3}
+	s := arr[:]
+	xs := []int{1, 2, 3}
+	t := xs[1:]
+	w := name[1:3]
+	n := func() int { return s[0] + t[0] + len(v) + len(w) }()
+	cs := [2]C{}
+	cv := cs[:]
+	inc := cv[1].Inc
+	n += inc() + func() int { return cv[1:][0].Inc() }()
+	keep = append(keep, cs[:][1].Inc)
+	return n
+}
+
+func main() {
+	_ = fine("abc", "hello")
+	_ = paramElemFine([]C{{}, {}})
+}
+
+// CHECK: closure-refused-views.test:34:22: error[E0439]: a closure or method value that outlives the call and holds the view or borrowed slice s (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:34:22: note: the program breaks CLO-3a: s is a borrow, and the closure or method value would outlive it (the borrow checker, P04.20, makes this a compile error); copy it into an owned local with a conversion (`string(v)`, `[]T(v)`: OWN-V3)
+// CHECK: closure-refused-views.test:40:22: error[E0439]: {{.*}} holds the view or borrowed slice t (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:44:22: error[E0439]: {{.*}} holds the {{.*}} v (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:44:22: note: {{.*}}; copy it into an owned local with a conversion (`string(v)`, `[]T(v)`: OWN-V3)
+// CHECK: closure-refused-views.test:50:22: error[E0439]: {{.*}} holds the view or borrowed slice w (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:56:9: error[E0439]: {{.*}} holds the view or borrowed slice s (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:62:22: error[E0439]: {{.*}} holds the view or borrowed slice s (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:65:44: error[E0439]: {{.*}} holds the borrowed variable xs (CLO-3a, P04.20) is not supported
+// CHECK: closure-refused-views.test:65:44: note: {{.*}}; make the parameter `move`, or copy it into a local

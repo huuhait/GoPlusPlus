@@ -1,0 +1,70 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-view-holders.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/closure-view-holders.out %}
+// GOLDEN: by-hand
+// P04.07, CLO-1, CLO-3a (review R7): values that hold a view inside them (a
+// `@View` struct, an array, an Option, a slice and a map of views of a local
+// array) used by closures and method values that do not outlive the call:
+// their environments are in the frame, and they read what the views show
+// (`fine`). A pointer method value on the `@View` struct writes the struct
+// (`w.k` is 1 after it), a value method value bound before that call keeps
+// its copy (`k` 0). The other side: a `@View` struct that holds no view,
+// captured by a closure that outlives the call, lives in a cell, and the
+// closure still counts after `smash` wrote over the dead frame. The refused
+// forms (each of these held by one that outlives the call) are
+// gir/closure-refused-view-holders.test. Go has no views, so the expected
+// output is written by hand: fine is 20 + 20 + 10 + 1 (the closure) + 30 (the
+// Option's view) + 11 (Bump: k 1, plus B[0]) + 20 (At(1) of the copy) = 112.
+package main
+
+@View
+type Win struct {
+	B View[[]int]
+	k int
+}
+
+func (w *Win) Bump() int { w.k++; return w.k + w.B[0] }
+
+func (w Win) At(i int) int { return w.B[i] + w.k }
+
+@View
+type Plain struct{ k int }
+
+// smash writes over the stack below its caller.
+func smash(k int) int {
+	var a [256]int
+	for i := range a {
+		a[i] = k + i
+	}
+	return a[255] - 255
+}
+
+func fine() (int, int) {
+	arr := [3]int{10, 20, 30}
+	w := Win{B: arr[:]}
+	vs := [1]View[[]int]{arr[:]}
+	var o Option[View[[]int]] = arr[:]
+	sl := []View[[]int]{arr[:]}
+	m := map[int]View[[]int]{1: arr[:]}
+	t := func() int { return w.B[1] + vs[0][1] + sl[0][0] + len(m) }()
+	if v, ok := o.Get(); ok {
+		t += func() int { return v[2] }()
+	}
+	bump := w.Bump
+	at := w.At
+	t += bump() + at(1)
+	return t, w.k
+}
+
+func plain() func() int {
+	p := Plain{k: 5}
+	return func() int { p.k++; return p.k }
+}
+
+func main() {
+	println(fine())
+	f := plain()
+	println(smash(9))
+	println(f(), f())
+}

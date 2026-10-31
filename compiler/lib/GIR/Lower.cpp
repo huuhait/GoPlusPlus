@@ -32,12 +32,16 @@ using namespace gopp::gir;
 using namespace gopp::gir::impl;
 
 thread_local uint64_t gopp::gir::impl::LowerSteps = 0;
+thread_local uint64_t gopp::gir::impl::EscapeSteps = 0;
 
 /// The steps of the lowerings this thread asked for (each runs on a thread
 /// of its own, lowerPackage).
 static thread_local uint64_t CallerSteps = 0;
 
+static thread_local uint64_t CallerEscape = 0;
+
 uint64_t gir::loweringSteps() { return CallerSteps; }
+uint64_t gir::escapeSteps() { return CallerEscape; }
 using llvm::cast;
 using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
@@ -52,6 +56,13 @@ void Lowering::unsupported(SourceLoc At, const llvm::Twine &What) {
   Failed = true;
   ++Reported;
   Diags.report(At, diag::err_gir_unsupported) << What.str();
+}
+
+void Lowering::unsupported(SourceLoc At, const llvm::Twine &What,
+                           const llvm::Twine &Note) {
+  Failed = true;
+  ++Reported;
+  Diags.report(At, diag::err_gir_unsupported).note(At, Note) << What.str();
 }
 
 void Lowering::internalError(SourceLoc At, const llvm::Twine &What) {
@@ -109,7 +120,7 @@ static const char *kindName(S::Type::Kind K) {
   case S::Type::Kind::Tuple:
     return "tuple";
   case S::Type::Kind::Signature:
-    return "a function value (P04.07)";
+    return "a function value";
   case S::Type::Kind::Struct:
     return "struct";
   case S::Type::Kind::Interface:
@@ -247,9 +258,10 @@ Type *Lowering::recShell(S::Type *T) {
 Type *Lowering::lowerOption(S::OptionType *O, SourceLoc At) {
   // D4.5: the nil bit pattern of a pointer kind is nil; any other T gets a
   // flag byte after it. An interface is two words and its nil is a null
-  // itab, so Option[I] is the interface type itself (D4.5); funcs (P04.07)
-  // reach lowerType below and are refused there.
-  if (isInterface(O->Elem))
+  // itab, so Option[I] is the interface type itself (D4.5). A func value is
+  // (code, env) and its nil a null code pointer: Option[F] is F's own type
+  // (P04.07, gir.md section 15).
+  if (isInterface(O->Elem) || isa<S::SignatureType>(S::under(O->Elem)))
     return lowerType(O->Elem, At);
   if (O->usesNiche()) {
     if (!isRawPointer(O->Elem)) {
@@ -464,6 +476,20 @@ Type *Lowering::lowerTypeOnce(S::Type *T, SourceLoc At) {
     if (auto *ST = dyn_cast<S::StructType>(U))
       return lowerStruct(T, ST, N, At);
     R = lowerType(U, At);
+    break;
+  }
+  case S::Type::Kind::Signature: {
+    // A func value is the pair (code, env) (P04.07, gir.md section 15). A
+    // `func!` type is `func(...) (..., error)` (ERR-2): methodSig makes the
+    // error the last result, as for a declared `!` function.
+    auto *SG = cast<S::SignatureType>(T);
+    Type *PU8 = Ctx.ptr(Ctx.u8());
+    Type *Code = methodSig(SG, PU8, At);
+    if (!Code)
+      return nullptr;
+    R = Ctx.tuple({Ctx.func(Code->elems(), Code->ret(), false, CallConv::Go,
+                            /*Env=*/true),
+                   PU8});
     break;
   }
   default:
@@ -815,19 +841,20 @@ void Lowering::declareFunction(const ast::FuncDecl *FD) {
   // A function value in a C signature: a parameter of an @Extern function is
   // a callback (a top-level Go++ function, wrapped in a C-ABI thunk where it
   // is passed, P04.18). Calling a function value, which an @Export function
-  // would do with one, and returning one are closures (P04.07).
+  // would do with one (P07.13), and returning one (P07.13, P07.08) are not
+  // lowered: a closure has an environment, C has no place for it.
   if (ToC) {
     if (Exp)
       for (S::Type *P : Sig->Params->Elems)
         if (IsFunc(P)) {
           unsupported(FD->getBegin(),
-                      "a function parameter of an @Export function (P04.07)");
+                      "a function parameter of an @Export function (P07.13)");
           return;
         }
     if (Sig->Results->size() == 1 && IsFunc(Sig->Results->Elems[0])) {
       unsupported(FD->getBegin(),
-                  Exp ? "a function returned from an @Export function (P04.07)"
-                      : "a function returned from C (P04.07)");
+                  Exp ? "a function returned from an @Export function (P07.13)"
+                      : "a function returned from C (P07.08)");
       return;
     }
   }
@@ -943,7 +970,7 @@ Type *Lowering::callbackType(S::Type *T, SourceLoc At, StringRef Fn) {
   SmallVector<Type *, 4> Ps;
   for (S::Type *P : SG->Params->Elems) {
     if (IsFunc(P)) {
-      unsupported(At, "a callback that takes a function (P04.07)");
+      unsupported(At, "a callback that takes a function (P07.08)");
       return nullptr;
     }
     if (const char *Why = goppOnlyLayout(P)) {
@@ -965,7 +992,7 @@ Type *Lowering::callbackType(S::Type *T, SourceLoc At, StringRef Fn) {
   if (SG->Results->size() == 1) {
     S::Type *R = SG->Results->Elems[0];
     if (IsFunc(R)) {
-      unsupported(At, "a callback that returns a function (P04.07)");
+      unsupported(At, "a callback that returns a function (P07.08)");
       return nullptr;
     }
     if (const char *Why = goppOnlyLayout(R)) {
@@ -1001,7 +1028,7 @@ bool Lowering::checkCallbackTarget(const S::Func *Fn, FuncId Target,
   for (S::Type *P : Sig->Params->Elems) {
     ++K;
     if (IsFunc(P)) {
-      unsupported(At, "a callback that takes a function (P04.07)");
+      unsupported(At, "a callback that takes a function (P07.08)");
       return false;
     }
     if (const char *Why = goppOnlyLayout(P))
@@ -1013,7 +1040,7 @@ bool Lowering::checkCallbackTarget(const S::Func *Fn, FuncId Target,
   if (Sig->Results->size() == 1) {
     S::Type *R = Sig->Results->Elems[0];
     if (IsFunc(R)) {
-      unsupported(At, "a callback that returns a function (P04.07)");
+      unsupported(At, "a callback that returns a function (P07.08)");
       return false;
     }
     if (const char *Why = goppOnlyLayout(R))
@@ -1111,6 +1138,17 @@ void Lowering::lowerBody(const ast::FuncDecl *FD) {
   // The scope of the types declared in this body (their symbols name it).
   B.ScopeNode = Obj ? Syms.funcNode(Obj)
                     : Syms.Ctx.initFunc(Syms.Names.pathOf(CP.Pkg), Ordinal);
+  // The function literals inside: what they capture, which escape (P04.07).
+  EntityFacts Facts;
+  SmallVector<const S::Var *, 8> Outer;
+  if (Obj) {
+    Outer.append(Obj->Params.begin(), Obj->Params.end());
+    Outer.append(Obj->Results.begin(), Obj->Results.end());
+    if (Obj->Recv)
+      Outer.push_back(Obj->Recv);
+  }
+  analyzeEntity({FD->Body}, FD->Body, Outer, Keeps, FuncHolders, I, Facts);
+  B.Facts = &Facts;
   B.lower(FD);
 }
 
@@ -1286,6 +1324,7 @@ std::unique_ptr<Module> Lowering::run() {
   if (!Declined.empty() && !Failed)
     unsupported(Files.empty() ? SourceLoc() : Files[0]->PackageLoc,
                 "a function that could not be lowered");
+  Keeps.compute(Files, I);
   for (const ast::File *File : Files)
     for (const ast::Decl *D : File->Decls)
       if (auto *FD = dyn_cast<ast::FuncDecl>(D))
@@ -1324,16 +1363,20 @@ std::unique_ptr<Module> gir::lowerPackage(Context &Ctx, const SourceManager &SM,
                                           DiagnosticsEngine &Diags,
                                           const LowerOptions &Opts) {
   std::unique_ptr<Module> M;
-  uint64_t Steps = 0;
+  uint64_t Steps = 0, Escapes = 0;
   runOnNewStackOrHere(
       [&] {
-        uint64_t Before = LowerSteps;
+        uint64_t Before = LowerSteps, EscBefore = EscapeSteps;
         Lowering L(Ctx, SM, CP, Files, Diags, Opts);
         M = L.run();
         // (The checker's lookups for the method sets count too.)
         Steps = LowerSteps - Before + L.Methods.steps();
+        // (The checker's walk over the types that hold a view, which the
+        // closures ask, counts with them.)
+        Escapes = EscapeSteps - EscBefore + L.Methods.viewSteps();
       },
       LowerStackBytes);
   CallerSteps += Steps;
+  CallerEscape += Escapes;
   return M;
 }

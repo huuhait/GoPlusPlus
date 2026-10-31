@@ -1,0 +1,254 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-frames.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/closure-frames.out 0 %}
+// P04.07, manager decision M6: every way a func value can hold the storage of
+// a frame, in the form that is accepted (Body::mayHold, gir.md section 15
+// "What a func value may point to"), made in a call and called after that
+// call returned and `smash` wrote over its stack: what an escaping one holds
+// is a heap cell or a heap copy, never the dead frame. A local, a parameter,
+// a named result and a pointer receiver captured by a closure (cells); a
+// method value of a pointer method on a local, on a field of a local struct
+// and on an element of a local array (the variable goes to a cell, CLO-5); a
+// value method's receiver and an interface method value (copies in the
+// environment); a loop variable and a variable of a loop body (a cell per
+// iteration, CLO-8); a closure held by a variable that an escaping closure
+// captures (it escapes too); nested closures; `&x` of a captured variable
+// (the cell's address); and (review R1) a closure or method value held by a
+// variable of a type that can hold a func value without being a func type,
+// `any`, then returned, and closures in a struct, an array, a slice and a
+// map that are returned (every variable that may hold one is followed:
+// `FuncHolderTypes`); and (review R2) a method value of a pointer method on
+// an element reached through a slice of a local array, `cs[:][1].Inc` (the
+// receiver's path is walked to its root, the array, which goes to a cell).
+// The other side: a borrowed string, slice and map parameter used by
+// closures that run during the call (frame references, CLO-1, CLO-3a), and
+// borrows made in the function (a slice of a local array, a slice of a local
+// slice, a substring, a method value through a borrowed slice) used by a
+// closure and a method value that run during the call. The refused forms (an
+// escaping closure or method value that holds a borrowed variable, an `&`
+// range variable, a view or a borrowed slice) are gir/closure-refused.test
+// and gir/closure-refused-views.test.
+// Also run under the sanitizer build's fast runner by `check` there. The
+// expected output is what `go run` prints for this very file
+// (Inputs/regen-goldens.py).
+package main
+
+type C struct{ n int }
+
+func (c *C) Inc() int { c.n++; return c.n }
+
+func (c C) Get() int { return c.n }
+
+type Getter interface{ Get() int }
+
+type Box struct {
+	in  C
+	arr [2]C
+}
+
+type Doc struct {
+	Name  string
+	Index map[string]int
+}
+
+// smash writes over the stack below its caller.
+func smash(k int) int {
+	var a [256]int
+	for i := range a {
+		a[i] = k + i
+	}
+	s := 0
+	for i := range a {
+		s += a[i]
+	}
+	return s
+}
+
+func local() func() int {
+	x := 10
+	return func() int { x++; return x }
+}
+
+func param(p int) func() int {
+	return func() int { p += 2; return p }
+}
+
+var keep []func() int
+
+func named() (r int) {
+	keep = append(keep, func() int { r += 3; return r })
+	r = 1
+	return
+}
+
+func (c *C) adder() func() int {
+	return func() int { c.n += 5; return c.n }
+}
+
+func methodValue() func() int {
+	var c C
+	return c.Inc
+}
+
+func fieldValues() (func() int, func() int) {
+	var b Box
+	b.arr[1].n = 40
+	return b.in.Inc, b.arr[1].Inc
+}
+
+func valueMethod() func() int {
+	c := C{n: 7}
+	f := c.Get
+	c.n = 100
+	return f
+}
+
+func ifaceValue() func() int {
+	var g Getter = C{n: 9}
+	return g.Get
+}
+
+func loops() []func() int {
+	var fs []func() int
+	for i := 0; i < 3; i++ {
+		x := i * 10
+		fs = append(fs, func() int { return i + x })
+	}
+	return fs
+}
+
+func held() func() int {
+	y := 4
+	inner := func() int { y *= 2; return y }
+	return func() int { return inner() + 1 }
+}
+
+func nested() func() func() int {
+	a := 1
+	return func() func() int {
+		b := 10
+		return func() int { a++; b++; return a + b }
+	}
+}
+
+func addr() func() *int {
+	x := 5
+	return func() *int { x++; return &x }
+}
+
+func anyHolder(n int) any {
+	x := n * 3
+	var i any = func() int { x++; return x }
+	return i
+}
+
+func anyMethod() any {
+	c := C{n: 40}
+	var i any = c.Inc
+	return i
+}
+
+func anyValueMethod() any {
+	c := C{n: 50}
+	var i any = c.Get
+	c.n = 0
+	return i
+}
+
+func structHolder(n int) struct{ f func() int } {
+	x := n
+	s := struct{ f func() int }{func() int { x += 2; return x }}
+	return s
+}
+
+func arrayHolder() [2]func() int {
+	y := 1
+	a := [2]func() int{func() int { y++; return y }, func() int { return -y }}
+	return a
+}
+
+func sliceHolder() []any {
+	z := 7
+	var c C
+	return []any{func() int { z *= 2; return z }, c.Inc}
+}
+
+func mapHolder() map[int]func() int {
+	w := 100
+	return map[int]func() int{1: func() int { w--; return w }}
+}
+
+func borrowed(s string, xs []int, m map[string]int) int {
+	t := 0
+	for i := range xs {
+		func() { xs[i] += len(s); t += xs[i] }()
+	}
+	return t + func() int { m["k"]++; return len(m) }()
+}
+
+func views(name string) int {
+	arr := [3]int{1, 2, 3}
+	s := arr[:]
+	xs := []int{4, 5, 6}
+	t := xs[1:]
+	w := name[1:3]
+	n := func() int { s[0] += 10; return s[0] + t[0] + len(w) }()
+	cs := [2]C{{n: 5}, {n: 6}}
+	cv := cs[:]
+	inc := cv[1].Inc
+	n += inc() + inc()
+	return n + arr[0] + cs[1].n
+}
+
+func sliceElem() func() int {
+	cs := [2]C{{n: 7}, {n: 8}}
+	return cs[:][1].Inc
+}
+
+func place(d Doc) int {
+	return func() int { d.Index[d.Name]++; return len(d.Index) }()
+}
+
+func main() {
+	f1 := local()
+	f2 := param(5)
+	r := named()
+	f3 := keep[0]
+	c := C{n: 1}
+	f4 := c.adder()
+	f5 := methodValue()
+	f6, f7 := fieldValues()
+	f8 := valueMethod()
+	f9 := ifaceValue()
+	fs := loops()
+	f10 := held()
+	f11 := nested()()
+	p := addr()()
+	a1, a2, a3 := anyHolder(5), anyMethod(), anyValueMethod()
+	sh, ah, slh, mh := structHolder(3), arrayHolder(), sliceHolder(), mapHolder()
+	se := sliceElem()
+	println(smash(1))
+	println(f1(), f1(), f2(), f2(), r, f3(), f3(), f4(), f4())
+	println(smash(2))
+	println(f5(), f5(), f6(), f6(), f7(), f8(), f9())
+	println(smash(3))
+	for _, f := range fs {
+		print(f(), " ")
+	}
+	println()
+	println(f10(), f10(), f11(), f11(), *p)
+	println(smash(4))
+	g1, g2, g3 := a1.(func() int), a2.(func() int), a3.(func() int)
+	println(g1(), g1(), g2(), g2(), g3())
+	println(sh.f(), sh.f(), ah[0](), ah[1](), slh[0].(func() int)(), slh[1].(func() int)())
+	if mf, ok := mh[1]; ok {
+		println(mf(), mf())
+	}
+	println(se(), se(), views("hello"))
+	xs := []int{1, 2, 3}
+	m := map[string]int{}
+	println(borrowed("ab", xs, m), xs[0], xs[2], m["k"])
+	d := Doc{Name: "a", Index: map[string]int{}}
+	println(place(d), place(d), d.Index["a"])
+}

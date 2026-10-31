@@ -4228,7 +4228,7 @@ func f[U unit](x float64[U]) {
 }
 )X")
 EXPLAIN(err_gir_unsupported,
-        "The program is valid, but the code generator of this version of Go++ cannot lower it yet (milestone M0 builds a small subset: functions of integer, bool and string values, `if`, `for`, calls, and `println`). The construct is named in the message. The type checker accepts it; `gopp check` reports no error.",
+        "The program is valid, but the code generator of this version of Go++ cannot lower it yet (milestone M0 builds a small subset: functions of integer, bool and string values, `if`, `for`, calls, and `println`). The construct is named in the message. The type checker accepts it; `gopp check` reports no error. A few of these name a rule that the checker does not check yet, and then the program is not valid: a closure or method value that outlives the call and holds a borrow (CLO-3a) is refused here until the borrow checker (P04.20) makes it a compile error, and the note under the message says how to fix it.",
         R"X(package main
 
 type T struct{ x int }

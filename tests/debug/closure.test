@@ -1,0 +1,82 @@
+// REQUIRES: gdb, lldb, host-linux-amd64 || host-linux-arm64
+// RUN: %gopp build %S/Inputs/closure.gopp -o %t
+// RUN: timeout 30 gdb -batch -nx -q -x %S/Inputs/closure.gdb %t 2>&1 | FileCheck %s --check-prefix=GDB
+// RUN: timeout 30 lldb --no-lldbinit -b -s %S/Inputs/closure.lldb %t 2>&1 | FileCheck %s --check-prefix=LLDB
+// RUN: %gopp build -emit=obj %S/Inputs/closure.gopp -o %t.o
+// RUN: llvm-dwarfdump --name=main.counter.func1 -c %t.o | FileCheck %s --check-prefix=DWARF
+// P04.07, the hand-off of P04.12. A closure is a function of its own
+// (`main.counter.func1`, its place in the enclosing function), and its frame
+// shows what a debugger user expects of the source: the parameter `by`, the
+// closure's own local `m`, AND the variables it captured, `n` and `step`, by
+// their source names with the values they have (they are reached through the
+// environment, a pointer to each: Local::Deref, `DW_OP_deref`). The
+// environment itself is no parameter of the source. The other side: the
+// enclosing function keeps its own locals (`main`'s `m` is 1000 and `n` is 7,
+// while the closure's `m` is 10 and its captured `n` is 16), and a func value
+// `c` is shown as its code and its environment, of the type `func(int64)
+// int64`. Two more sides of "never a wrong value": a parameter that an
+// escaping closure captures lives in a cell made after the entry, and
+// `break main.scaled` stops on the first line of the body (18, not the
+// declaration's 17: the cell's code is on that line, review R4) with `k`
+// already 3 (read through its pointer: the parameter's own slot until the
+// cell is made) and an argument (`info args`); and in the closure, a local
+// that shadows a captured variable (`k := k * 10`) is 30, not the captured
+// 3, because the literal's body is a block of its own (Body::ShadowBody).
+//
+// GDB: @@MAIN
+// GDB-NEXT: $1 = 1000
+// GDB-NEXT: $2 = 7
+// GDB: main.counter.func1 (by=10)
+// GDB: @@CLOSURE
+// GDB-NEXT: $3 = 16
+// GDB-NEXT: $4 = 1
+// GDB-NEXT: $5 = 10
+// GDB-NEXT: $6 = 10
+// GDB-NEXT: by = 10
+// GDB: @@UP
+// GDB-NEXT: $7 = 1000
+// GDB-NEXT: $8 = 7
+// GDB: @@VALUE
+// GDB-NEXT: $9 = {code = {{0x[0-9a-f]+}} <main.counter.func1>, env = {{0x[0-9a-f]+}}}
+// GDB-NEXT: $10 = 16
+// GDB-NEXT: type = struct func(int64) int64
+// GDB: main.scaled (k=3) at {{.*}}closure.gopp:18
+// GDB-NEXT: 18 return func(x int) int {
+// GDB: @@SCALED
+// GDB-NEXT: $11 = 3
+// GDB-NEXT: k = 3
+// GDB: main.scaled.func1 (x=1)
+// GDB: @@SHADOW
+// GDB-NEXT: $12 = 30
+// GDB-NEXT: $13 = 1
+//
+// LLDB: @@CLOSURE
+// LLDB: (long) n = 16
+// LLDB-NEXT: (long) step = 1
+// LLDB-NEXT: (long) by = 10
+// LLDB-NEXT: (long) m = 10
+// LLDB: @@UP
+// LLDB: (long) m = 1000
+// LLDB-NEXT: (long) n = 7
+// LLDB: main.scaled(k=3) at closure.gopp:18
+// LLDB: @@SCALED
+// LLDB: (long) k = 3
+// LLDB: @@SHADOW
+// LLDB: (long) x = 1
+// LLDB-NEXT: (long) k = 30
+//
+// DWARF: DW_AT_name ("main.counter.func1")
+// DWARF: DW_AT_calling_convention (DW_CC_LLVM_Swift)
+// DWARF: DW_TAG_formal_parameter
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}})
+// DWARF-NEXT: DW_AT_name ("by")
+// DWARF: DW_TAG_variable
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}}, DW_OP_deref)
+// DWARF-NEXT: DW_AT_name ("n")
+// DWARF: DW_TAG_variable
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}}, DW_OP_deref)
+// DWARF-NEXT: DW_AT_name ("step")
+// DWARF: DW_TAG_variable
+// DWARF-NEXT: DW_AT_location (DW_OP_fbreg {{[+-][0-9]+}})
+// DWARF-NEXT: DW_AT_name ("m")
+// DWARF-NOT: DW_TAG_formal_parameter

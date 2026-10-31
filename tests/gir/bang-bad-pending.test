@@ -3,12 +3,13 @@
 // naming that task (E0439), and nothing follows from it. When the task lands
 // the form lowers and this test moves into run/bang-return.test (the checks
 // below are the "before" side; bang.test and bang-return.test the "after"):
-//   - a call through a func value (P04.07, closures): the func value itself
-//     is refused where it is made, so the call after it says nothing more;
 //   - a generic function (P04.08): refused where it is declared, the `!` call
 //     of it says nothing more, with or without the explicit instantiation
 //     `gen[int]!(2)` (an instantiation used as a callee is P04.08, not a
 //     func value).
+// A call through a func value was here until P04.07 lowered func values: it
+// is the "after" side in run/bang-funcvalue.test (`viaValue` below lowers
+// and draws no error).
 package main
 
 type e1 struct{}
@@ -34,4 +35,3 @@ func main() {
 }
 
 // CHECK: bang-bad-pending.test:{{[0-9]+}}:1: error[E0439]: a generic function (P04.08) is not supported
-// CHECK: bang-bad-pending.test:{{[0-9]+}}:8: error[E0439]: a function value (P04.07) is not supported

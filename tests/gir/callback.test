@@ -9,7 +9,7 @@
 // often the function is passed, and it is linkonce_odr like the glue, so every
 // package that passes the function gives C the same pointer. A C function is
 // passed as itself. What is not a top-level function (a closure, a method
-// value, a variable) is P04.07's (callback-bad.test); the run tests with C
+// value, a variable) is P07.08's (callback-bad.test); the run tests with C
 // calling these are cabi-reverse-*.test.
 package main
 

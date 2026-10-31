@@ -11,7 +11,7 @@
 // `-pipeline=fastisel`) into a PipelineSpec, and `runGIRPasses` and
 // `runIRPasses` run the stages the spec names. docs/design/pipelines.md says
 // how profiles (P06 D6.12), `-trace` (D6.7), LTO (P15) and the split pass of
-// ADR-0028 (P04.07) plug into it.
+// ADR-0028 (P04.26) plug into it.
 //
 // The stages, in order:
 //
@@ -83,7 +83,7 @@ struct PipelineRequest {
   std::string Selector;
 };
 
-/// A pass that runs on the module right before code generation. P04.07
+/// A pass that runs on the module right before code generation. P04.26
 /// registers the ADR-0028 split pass here.
 using PreISelHook = std::function<void(llvm::ModulePassManager &)>;
 

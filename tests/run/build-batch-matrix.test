@@ -1,0 +1,38 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// run-opt-matrix.py builds in batches (`gopp build -batch`, tests/gopp_batch.py;
+// the batch records themselves are build-batch.test): one bad program among
+// good ones fails the run and is named, the good ones are still built, run
+// and compared; the good ones alone pass. A batch whose process dies is built
+// again one program per process, so the failure still names its program.
+
+// RUN: rm -rf %t && mkdir -p %t/good %t/mixed %t/broken
+// RUN: printf 'package main\n\nfunc main() {\n\tprintln("one", 1+2)\n}\n' > %t/good/one.test
+// RUN: printf 'package main\n\nfunc main() {\n\tprintln("two")\n}\n' > %t/good/two.test
+// RUN: cp %t/good/one.test %t/good/two.test %t/mixed/
+// RUN: printf 'package main\n\nfunc main() {\n\tvar x int = "s"\n\tprintln(x)\n}\n' > %t/mixed/bad.test
+
+// run-opt-matrix.py: the bad program fails at both levels and is named; the
+// good ones are built, run and equal.
+// RUN: not %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %t/mixed --link-flags "%gopp_link_flags" --configs 0 --jobs 1 > %t/mixed.out 2>&1
+// RUN: FileCheck %s --check-prefix=MIXED < %t/mixed.out
+// MIXED: 3 programs x 2 configurations on amd64 in {{.*}}: 2 problems
+// MIXED-DAG: bad [fastisel]: build failed: {{.*}}bad.test:4:{{[0-9]+}}: error
+// MIXED-DAG: bad [0]: build failed: {{.*}}bad.test:4:{{[0-9]+}}: error
+// MIXED-NOT: {{^(one|two) \[}}
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %gopp --root %t/good --link-flags "%gopp_link_flags" --configs 0 --jobs 1 | FileCheck %s --check-prefix=GOOD
+// GOOD: 2 programs x 2 configurations on amd64 in {{.*}}: all equal
+
+// A gopp whose batch dies (Inputs/fake-gopp.py: the program with BREAK): the
+// builds are made again one per process; the program that fails alone is
+// named, the others pass. Without it, the same gopp passes.
+// RUN: printf '#!/bin/sh\nexec %python %S/../fmt/Inputs/fake-gopp.py %gopp "$@"\n' > %t/fake-gopp
+// RUN: chmod +x %t/fake-gopp
+// RUN: cp %t/good/one.test %t/good/two.test %t/broken/
+// RUN: printf 'package main\n\n// BREAK\nfunc main() {\n\tprintln("brk")\n}\n' > %t/broken/brk.test
+// RUN: not %python %S/Inputs/run-opt-matrix.py --gopp %t/fake-gopp --root %t/broken --link-flags "%gopp_link_flags" --configs 0 --jobs 1 > %t/broken.out 2>&1
+// RUN: FileCheck %s --check-prefix=BROKEN < %t/broken.out
+// BROKEN: 3 programs x 2 configurations on amd64 in {{.*}}: 2 problems
+// BROKEN-DAG: brk [fastisel]: build failed: fake gopp: cannot build brk.test
+// BROKEN-DAG: brk [0]: build failed: fake gopp: cannot build brk.test
+// BROKEN-NOT: {{^(one|two) \[}}
+// RUN: %python %S/Inputs/run-opt-matrix.py --gopp %t/fake-gopp --root %t/good --link-flags "%gopp_link_flags" --configs 0 --jobs 1 | FileCheck %s --check-prefix=GOOD

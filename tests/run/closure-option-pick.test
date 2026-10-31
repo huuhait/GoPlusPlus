@@ -1,0 +1,42 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-option-pick.out
+// (On arm64 under QEMU, run/core-opt-matrix-arm64*.long.test runs this
+// program at every `opt`; the normal suite runs a subset of the closure
+// programs there.)
+// GOLDEN: by-hand
+// P04.07: Option[func()] is Go++ only (Go has a nil func), so the golden is
+// written by hand from the program: a func value has no nil of its own (OWN-P9),
+// the Option has one (the null code pointer, D4.5). unsafe.Sizeof of the Option
+// equals that of a func value (two words), and a closure kept in an Option
+// runs after it is unwrapped.
+package main
+
+import "unsafe"
+
+func hello() { println("hello") }
+
+func pick(on bool) Option[func()] {
+	if on {
+		return hello
+	}
+	return nil
+}
+
+func main() {
+	var f func() = hello
+	println(unsafe.Sizeof(f) == unsafe.Sizeof(pick(true)))
+	a := pick(true)
+	b := pick(false)
+	println(a != nil, b == nil, a.IsNil())
+	if g, ok := a.Get(); ok {
+		g()
+	}
+	if _, ok := b.Get(); !ok {
+		println("none")
+	}
+	n := 7
+	var c Option[func()] = func() { println(n) }
+	if g, ok := c.Get(); ok {
+		g()
+	}
+}

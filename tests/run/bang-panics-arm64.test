@@ -1,4 +1,4 @@
 // REQUIRES: host-linux-amd64, qemu-aarch64
-// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-bang --names main-call,multi,nil-payload --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
+// RUN: %python %S/Inputs/run-panics.py %S/Inputs/panics-bang --names main-call,multi,nil-payload,funcvalue --qemu %aarch64_sysroot -- %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib
 // P04.10: the `!` panics on linux/arm64 under QEMU: the same exit status,
 // standard output and first line as on amd64.

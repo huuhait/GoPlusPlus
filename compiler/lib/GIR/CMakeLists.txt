@@ -4,10 +4,12 @@ add_gopp_library(GIR
   Builder.cpp
   CType.cpp
   GIR.cpp
+  Escape.cpp
   Lower.cpp
   Glue.cpp
   Inline.cpp
   LowerExpr.cpp
+  LowerFunc.cpp
   LowerIface.cpp
   LowerBang.cpp
   LowerStmt.cpp

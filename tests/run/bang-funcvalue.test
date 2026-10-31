@@ -1,0 +1,112 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/bang-funcvalue.out 0
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/bang-funcvalue.out 0 %}
+// P04.07 with P04.10: `f!(...)` through a func value is the same `!` as a
+// direct call (LowerBang.cpp wraps the call, whatever its callee): the error
+// word is tested, the failure edge is the cold block, and here (a function
+// that can fail) it returns the error. Every kind of func value: a Go-style
+// function (last result `error`), a `func!` function, a method value of a
+// `!` method, a `func!` literal (its own `return x` and `return 0, err`, and
+// a `func!()` literal that ends with no `return`: a nil error, ERR-3), an
+// `Option[func]` checked first, a `func!` parameter, and a `!` inside a
+// `func!` literal. Both paths for each:
+// the inputs make each callee fail once, and the calls before the failing
+// one ran (the evaluation order). The panic path (outside a function that
+// can fail) is Inputs/panics-bang/funcvalue.gopp (bang-panics.test).
+//
+// Go has no `!`, so the golden is `go run`'s of the mechanical Go form of this
+// program (Inputs/go-bang/bang-funcvalue.go), checked by
+// Inputs/check-bang-go.py (needs Go; this test never does).
+package main
+
+type codeErr struct{ code int }
+
+func (e *codeErr) Error() string { return "code " + string(rune('0'+e.code)) }
+
+var errs = [5]codeErr{{0}, {1}, {2}, {3}, {4}}
+
+// half fails for an odd n (Go style: the last result is an error).
+func half(n int) (int, error) {
+	if n%2 != 0 {
+		return 0, &errs[0]
+	}
+	return n / 2, nil
+}
+
+// dec fails for n <= 0.
+func dec!(n int) int {
+	if n <= 0 {
+		return 0, &errs[1]
+	}
+	return n - 1
+}
+
+type acc struct{ limit int }
+
+// take fails above the limit.
+func (a acc) take!(n int) int {
+	if n > a.limit {
+		return 0, &errs[2]
+	}
+	return n
+}
+
+func twice!(f func!(int) int, n int) int {
+	return f!(n) * 2
+}
+
+func run!(n int) int {
+	h := half
+	d := dec
+	a := acc{limit: 9}
+	t := a.take
+	lit := func!(x int) int {
+		if x == 2 {
+			return 0, &errs[3]
+		}
+		return x * 10
+	}
+	check := func!() {
+		if n == 6 {
+			return &errs[4]
+		}
+	}
+	var o Option[func(int) (int, error)] = half
+	total := h!(n)
+	println("half", total)
+	total += d!(n)
+	println("dec", total)
+	total += t!(n)
+	println("take", total)
+	total += lit!(n)
+	println("lit", total)
+	check!()
+	if f := o; f != nil {
+		total += f!(n)
+	}
+	total += twice!(dec, n-4)
+	return total
+}
+
+// A `!` inside a `func!` literal returns from the literal (ERR-6: the
+// innermost function decides), and the literal's `!` from this one.
+func nested!(n int) int {
+	via := func!(x int) int { return dec!(x) + 1 }
+	return via!(n) * 10
+}
+
+func main() {
+	for _, n := range []int{3, 0} {
+		v, err := nested(n)
+		println("nested", n, v, err != nil)
+	}
+	for _, n := range []int{8, 1, 0, 10, 2, 6, 4} {
+		v, err := run(n)
+		if err != nil {
+			println(n, "failed:", err.Error())
+		} else {
+			println(n, "=", v)
+		}
+	}
+}

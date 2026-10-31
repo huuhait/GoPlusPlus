@@ -1,0 +1,80 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/closure-option.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/closure-option.out %}
+// GOLDEN: by-hand
+// P04.07, D4.5, OWN-P9: a func is never nil in Go++; `Option[func]` is how a
+// callback may be absent. Go has no Option, so the expected output
+// (golden/closure-option.out) is written by hand from the rules: Option[F]
+// has the size of a func value (16: code and environment; nil is a null code
+// pointer, no flag), `== nil` and `!= nil` and flow typing make the call
+// legal, `Get` and `IsNil` work, a func value converts to Option[F], a
+// closure that captures a variable is a value of Option[F] too, and an
+// Option[F] field of a struct and a func value in an interface keep their
+// value. The other side: a func that was never absent is called without
+// a check, and a set Option calls the same code as the func it came from.
+package main
+
+import "unsafe"
+
+type handler struct {
+	name string
+	cb   Option[func(int) int]
+}
+
+func double(x int) int { return x * 2 }
+
+func run(h handler, v int) {
+	cb := h.cb
+	if cb == nil {
+		println(h.name, "none")
+		return
+	}
+	println(h.name, cb(v))
+}
+
+func firstSet(a, b Option[func() int]) int {
+	if a != nil {
+		return a()
+	}
+	if b != nil {
+		return b()
+	}
+	return -1
+}
+
+func main() {
+	f := func() {}
+	var o Option[func()]
+	println(unsafe.Sizeof(f), unsafe.Sizeof(o), unsafe.Sizeof(handler{}))
+	println(o == nil, o.IsNil())
+
+	base := 10
+	run(handler{"none", nil}, 1)
+	run(handler{"double", double}, 4)
+	run(handler{"closure", func(x int) int { return x + base }}, 5)
+	base = 20
+	run(handler{"later", func(x int) int { return x + base }}, 5)
+
+	hs := []handler{{"a", nil}, {"b", double}}
+	for _, h := range hs {
+		run(h, 7)
+	}
+
+	s := 5
+	var maybe Option[func() int] = func() int { return s }
+	println(firstSet(nil, maybe), firstSet(maybe, nil), firstSet(nil, nil))
+	s = 6
+	println(firstSet(nil, maybe))
+
+	if fn, ok := maybe.Get(); ok {
+		println(fn())
+	}
+	maybe = nil
+	println(maybe == nil, maybe != nil)
+
+	var any1 any = double
+	if g, ok := any1.(func(int) int); ok {
+		println(g(21))
+	}
+}

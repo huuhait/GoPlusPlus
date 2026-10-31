@@ -1,8 +1,7 @@
 package main
 
-// A type that refers to itself through a function value or an interface is
-// refused for the function value / the interface (P04.07, P04.06), once at
-// the type, and nothing else is reported for it.
+// A type that refers to itself through a function value or an interface
+// lowers (P04.07, P04.06).
 type F func() F
 
 type I interface{ Next() I }

@@ -59,3 +59,25 @@ func elemOk(d Page, xs []string) View[string] {
 	_ = d.Tags[0]
 	return xs[0]
 }
+
+// A view held inside a local `@View` struct does not make the struct's own
+// storage another's (Var::isBorrow, not the deeper MethodSets::holdsBorrow
+// that the lowering asks for closures, P04.07 review R7): a view into its array
+// field dies at the return. The view it holds, sliced again, shows what it
+// showed (the caller's string).
+@View
+type Win struct {
+	B View[string]
+	N [3]int
+}
+
+func viewHolder(s View[string]) View[[]int] {
+	w := Win{B: s}
+	// CHECK: [[@LINE+1]]:9: error{{\[E[0-9]+\]}}: cannot return a view into local w: it dies at the return (OWN-V7)
+	return w.N[:]
+}
+
+func viewHeld(s View[string]) View[string] {
+	w := Win{B: s}
+	return w.B[1:]
+}

@@ -602,7 +602,7 @@ TEST(GIRVerifier, V025_CleanupShape) {
 
 // A function `h`: bb0 calls ext with a landing block Pad (a catch block or a
 // plain cleanup block), bb1 is the normal return. Shape(B, Pad, Ret) fills the
-// landing block. This is what the P04.07 `defer` handler needs (D4.6,
+// landing block. This is what the P04.26 `defer` handler needs (D4.6,
 // ADR-0028).
 template <typename ShapeFn>
 static void landing(GoodModule &G, bool Catch, ShapeFn Shape) {
@@ -1729,10 +1729,54 @@ TEST(GIRVerifier, V075_AFunctionHasTheConventionOfItsType) {
   }
 }
 
+TEST(GIRVerifier, V078_TheEnvironmentIsTheFirstParameterOfTheGoConvention) {
+  // P04.07: a Func type with an environment (the code of a closure) takes a
+  // *u8 first, in the Go++ convention: the code generator passes it in
+  // swiftself, which a C function has no counterpart of.
+  auto Declared = [](PlaceFixture &X, Type *Sig) {
+    FuncId F = declare(X.M, "code", Sig);
+    FuncBuilder B(X.M, X.fn(F));
+    B.ret();
+  };
+  {
+    PlaceFixture X; // the right shape: valid
+    Type *PU8 = X.C.ptr(X.C.u8());
+    Declared(X, X.C.func({PU8, X.I64}, X.I64, false, CallConv::Go, true));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // no parameters at all
+    Declared(X, X.C.func({}, X.Unit, false, CallConv::Go, true));
+    EXPECT_GIR_RULE(X.M, "V078");
+  }
+  {
+    PlaceFixture X; // the first parameter is not a pointer
+    Declared(X, X.C.func({X.I64}, X.Unit, false, CallConv::Go, true));
+    EXPECT_GIR_RULE(X.M, "V078");
+  }
+  {
+    PlaceFixture X; // a pointer to something else
+    Declared(X, X.C.func({X.PI64}, X.Unit, false, CallConv::Go, true));
+    EXPECT_GIR_RULE(X.M, "V078");
+  }
+  {
+    PlaceFixture X; // the C convention has no environment
+    Type *PU8 = X.C.ptr(X.C.u8());
+    Declared(X, X.C.func({PU8}, X.Unit, false, CallConv::C, true));
+    EXPECT_GIR_RULE(X.M, "V078");
+  }
+  {
+    PlaceFixture X; // the other side: a *u8 first parameter without the flag
+    Type *PU8 = X.C.ptr(X.C.u8());
+    Declared(X, X.C.func({PU8, X.I64}, X.I64));
+    EXPECT_GIR_VALID(X.M);
+  }
+}
+
 TEST(GIRVerifier, V076_ACallThroughACFunctionPointerPassesScalars) {
   // P04.18: a call through a C function pointer (an allocator's table entry,
   // ADR-0029) is lowered with the C ABI of scalars; an aggregate needs
-  // Clang's classification of a function value, which is P04.07's. A direct
+  // Clang's classification of a function value, which is P04.27's. A direct
   // call of a C function and a call through a Go++ function pointer take
   // anything.
   auto CallThrough = [](PlaceFixture &X, Type *Fn, std::vector<Operand> Args) {

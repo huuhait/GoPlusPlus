@@ -3,6 +3,7 @@
 
 usage: gen-cabi.py --seed N --count K --dir DIR [--mode random|edges]
                   [--start S] [--stride T] [--direction forward|reverse]
+                  [--via-value]
 
 Writes DIR/main.gopp (the Go++ program), DIR/lib.c (the C functions, built by
 Clang) and DIR/expected.txt (what the program must print).
@@ -17,6 +18,10 @@ floats and HFAs only, make the register classes run out.
 --mode edges: the enumerated signatures at the edges of the register classes
 (edge_sigs, about 2150), every STRIDE-th from START, at most COUNT; the seed
 picks only the values.
+
+--via-value (P04.07): the forward programs call each C function through a
+func value of it (`f := cabi_fN; f(...)`: Go++ wraps the C function in an
+adapter that calls it with the exact C ABI); the output is the same text.
 
 --direction reverse (P04.18): the other way. The same signatures, but C calls
 Go++: for even N, the Go++ function `gopp_fN` is exported to C
@@ -585,6 +590,9 @@ def main():
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--direction", default="forward",
                     choices=["forward", "reverse"])
+    ap.add_argument("--via-value", action="store_true",
+                    help="forward only (P04.07): call each C function "
+                    "through a func value, `f := cabi_fN; f(...)`")
     args = ap.parse_args()
     g = Gen(args.seed)
     if args.mode == "edges":
@@ -675,7 +683,11 @@ def main():
         for j, p in enumerate(params):
             body.append("\tvar a%d %s = %s" % (
                 j, p.gopp, g.literal(p, iter(arg_vals[j]), arg_vals[j])))
-        call = "cabi_f%d(%s)" % (i, ", ".join("a%d" % j for j in range(len(params))))
+        callee = "cabi_f%d" % i
+        if args.via_value:
+            body.append("\tfv := %s" % callee)
+            callee = "fv"
+        call = "%s(%s)" % (callee, ", ".join("a%d" % j for j in range(len(params))))
         if ret is not None:
             body.append("\tr := " + call)
             body.append("\t_ = r")
