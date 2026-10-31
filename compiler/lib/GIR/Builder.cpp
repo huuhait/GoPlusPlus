@@ -281,12 +281,20 @@ BlockId FuncBuilder::assertThat(Operand Cond, bool Expected, AssertKind K,
   return Next;
 }
 
-BlockId FuncBuilder::drop(Place P, UnwindAction Unwind, BlockId Next) {
+BlockId FuncBuilder::drop(Place P, UnwindAction Unwind, BlockId Next,
+                          FuncId Glue) {
   if (Next == NoId)
     Next = newBlockLikeCurrent();
   Terminator T;
   T.K = Terminator::Drop;
   T.Dest = std::move(P);
+  if (Glue != NoId) {
+    T.Discr = constFunc(M, Glue);
+  } else {
+    T.Discr.K = Operand::Const;
+    T.Discr.C.K = Constant::Zero;
+    T.Discr.C.Ty = M.Ctx.unit();
+  }
   T.Target = Next;
   T.Unwind = Unwind;
   terminate(std::move(T));

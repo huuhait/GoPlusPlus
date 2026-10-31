@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/allocword.gopp %S/Inputs/own/allocword.out
+// GOLDEN: by-hand
+// P04.09 (the allocator-word items of TODO P04.09, P04.25, ADR-0029): a drop,
+// a clone and a growth go through the value's own allocator word, counted
+// with the test intrinsics. See Inputs/own/allocword.gopp.

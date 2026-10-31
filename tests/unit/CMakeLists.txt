@@ -28,6 +28,7 @@ add_executable(GoppUnitTests
   GIR/GIRTest.cpp
   GIR/VerifierTest.cpp
   GIR/StressTest.cpp
+  GIR/OwnershipTest.cpp
   GIR/DeepTest.cpp
   GIR/AllocatorTest.cpp
   GIR/GlueTest.cpp

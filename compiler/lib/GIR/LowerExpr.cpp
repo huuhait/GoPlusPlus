@@ -272,7 +272,25 @@ Operand Body::valueFor(const ast::Expr *E, S::Type *Want) {
 
 Operand Body::argFor(const ast::Expr *E, S::SignatureType *Sig, size_t K) {
   // (A borrowed map parameter is lowerCall's: mapArgAddr.)
-  return argAs(valueFor(E, Sig->Params->Elems[K]), Sig, K, E);
+  // A `move` parameter takes ownership; a borrowed one only looks.
+  S::Type *Want = Sig->Params->Elems[K];
+  if (Sig->isMove(K))
+    return argAs(ownedValue(E, Want), Sig, K, E);
+  Operand V = valueFor(E, Want);
+  return argAs(passArg(std::move(V), Sig, K), Sig, K, E);
+}
+
+Operand Body::passArg(Operand V, S::SignatureType *Sig, size_t K) {
+  // A parameter of a shared-handle type (an interface, a func value, OWN-C3)
+  // is a copy the callee owns and drops (P04.09): the caller retains it, or
+  // hands a fresh one on.
+  S::Type *Want = Sig->Params->Elems[K];
+  if (Sig->isMove(K))
+    return takeValue(std::move(V), Want);
+  if (L.passOf(Sig, K) == Lowering::Pass::Value && L.isSharedHandle(Want) &&
+      L.needsDrop(Want))
+    return passValue(std::move(V), Want);
+  return V;
 }
 
 Operand Body::resultArg(Operand V, S::Type *From, S::Type *Want,
@@ -299,6 +317,12 @@ Operand Body::mapArgAddr(const ast::Expr *E, LateOps &R) {
   if (!P.Ty)
     return errorValue(ctx());
   at(E);
+  // A value that is no place (nil, a call's result) is a temporary of the
+  // statement: what the callee creates there is dropped with it (P04.09).
+  if (P.Proj.empty() && FB.function().Locals[P.Local].K == Local::Temp &&
+      !FB.function().Locals[P.Local].Owned)
+    if (S::Type *T = sTyOf(E); T && L.needsDrop(T))
+      ownTemp(copyOf(P), T);
   if (P.Ty == L.mapType())
     return copyOf(FB.temp(FB.addrOf(std::move(P), true)));
   return copyOf(std::move(P));
@@ -334,11 +358,43 @@ Operand Body::callbackArg(const ast::Expr *E) {
   return constFunc(M, L.callbackThunk(Fn, FI->second));
 }
 
-Operand Body::addrOfCopy(Operand V, const ast::Node *N) {
+Operand Body::addrOfCopy(Operand V, const ast::Node *N, S::Type *T) {
   at(N);
+  // A fresh value (a call's result, a literal, nil) is the copy's own: what
+  // the callee makes in it (a map in a nil one) ends with the statement
+  // (P04.09). A copy of another owner's value (in a box, a view) shares its
+  // parts and owns nothing.
+  const bool Own = T && L.needsDrop(T) && (V.K == Operand::Const || isFresh(V));
+  if (Own && V.K == Operand::Copy)
+    V.K = Operand::Move;
   LocalId Tmp = FB.newTemp(V.type());
-  FB.assign(FB.local(Tmp), FB.use(std::move(V)));
+  if (!Own && T && L.holdsOwned(T, /*MapsOnly=*/true)) {
+    // A map the callee makes in a nil map of the copy is no one's: freed
+    // after the call (freeNewMaps; P04.18 review R9's rule for the thunk).
+    LocalId Snap = FB.newTemp(V.type());
+    FB.assign(FB.local(Snap), FB.use(V));
+    FB.assign(FB.local(Tmp), FB.use(copyOf(FB.local(Snap))));
+    PlaceCopies.push_back({Tmp, Snap, T});
+  } else {
+    FB.assign(FB.local(Tmp), FB.use(std::move(V)));
+  }
+  if (Own)
+    ownTemp(copyOf(FB.local(Tmp)), T);
   return copyOf(FB.temp(FB.addrOf(FB.local(Tmp), true)));
+}
+
+void Body::freeNewMaps(size_t Mark) {
+  if (PlaceCopies.size() <= Mark)
+    return;
+  Rt E(M, FB);
+  Type *PU8 = ctx().ptr(ctx().u8());
+  for (size_t K = Mark; K < PlaceCopies.size(); ++K) {
+    const PlaceCopy &PC = PlaceCopies[K];
+    if (FuncId NM = L.newMapsGlue(PC.T, Pos); NM != NoId)
+      callFn(NM, {E.to(PU8, E.addrOf(FB.local(PC.Copy))).Op,
+                  E.to(PU8, E.addrOf(FB.local(PC.Snap))).Op});
+  }
+  PlaceCopies.resize(Mark);
 }
 
 bool Body::readOnlyContainer(const ast::Expr *X) {
@@ -491,7 +547,7 @@ Operand Body::argAs(Operand V, S::SignatureType *Sig, size_t K,
       return copyOf(
           FB.temp(FB.cast(CastKind::PtrToPtr, std::move(V), ctx().ptr(PG))));
     }
-    return addrOfCopy(std::move(V), N);
+    return addrOfCopy(std::move(V), N, Sig->Params->Elems[K]);
   }
   case Lowering::Pass::View: {
     if (!T || (T->getKind() != Type::Kind::Slice &&
@@ -533,8 +589,12 @@ Operand Body::borrowedSeq(Operand V, Type *G, const ast::Node *N) {
         AggKind::Slice, G,
         {std::move(Ptr), Len, Len, E.null(ctx().ptr(ctx().u8())).Op})));
   }
-  return copyOf(FB.temp(FB.aggregate(
-      AggKind::String, G, {std::move(Ptr), Len, constInt(ctx().u64(), 0)})));
+  // (Its capacity is its length, as a borrowed slice's: the bytes are
+  // another's, so a clone of it, a map key made from it or a box of it kept
+  // copies them; capacity 0 is a literal's, which a clone shares. A borrowed
+  // header is never dropped. P04.09.)
+  return copyOf(
+      FB.temp(FB.aggregate(AggKind::String, G, {std::move(Ptr), Len, Len})));
 }
 
 Operand Body::lowerNarrowed(const ast::Ident *Id, S::Type *Payload) {
@@ -821,6 +881,24 @@ Operand Body::lowerIdent(const ast::Ident *Id) {
 }
 
 Operand Body::lowerExpr(const ast::Expr *E) {
+  // An operand evaluated before (recordOps) is the value of its first
+  // evaluation, which is the owner of it.
+  if (Replay && Replay->Saved.count(E)) {
+    Operand V = lowerExprImpl(E);
+    // (A value taken here is taken from that evaluation's temporary.)
+    const ast::Expr *U = unparen(E);
+    if (TakeNode && TakeNode == U) {
+      TakeNode = nullptr;
+      S::Type *T = sTyOf(U);
+      if (V.K == Operand::Copy && T && L.needsDrop(T))
+        V.K = Operand::Move;
+    }
+    return V;
+  }
+  return afterExpr(E, lowerExprImpl(E));
+}
+
+Operand Body::lowerExprImpl(const ast::Expr *E) {
   // An operand evaluated before (recordOps): its value then.
   for (const LateOps *R = Replay; R; R = R == Replay ? R->Outer : nullptr) {
     auto It = R->Saved.find(E);
@@ -849,7 +927,7 @@ Operand Body::lowerValue(const ast::Expr *E) {
   }
   switch (E->getKind()) {
   case ast::Node::Kind::ParenExpr:
-    return lowerExpr(cast<ast::ParenExpr>(E)->X);
+    return lowerExprImpl(cast<ast::ParenExpr>(E)->X);
   case ast::Node::Kind::Ident:
     return lowerIdent(cast<ast::Ident>(E));
   case ast::Node::Kind::BinaryExpr:
@@ -1408,8 +1486,19 @@ Operand Body::lowerConversion(const ast::CallExpr *C) {
     return errorValue(ctx());
   }
   S::Type *ToS = sTyOf(C);
-  if (asOption(ToS) || isNilValue(C->Args[0]) || (ToS && L.isInterface(ToS)))
-    return valueFor(C->Args[0], ToS);
+  if (asOption(ToS) || isNilValue(C->Args[0]) || (ToS && L.isInterface(ToS))) {
+    if (TakeNode != unparen(C))
+      return valueFor(C->Args[0], ToS);
+    // For a new owner the operand is what is taken, as in the implicit
+    // conversion: `x := any(a)` moves a into the box (TYP-6), `o :=
+    // Option[T](a)` into the Option (P04.09).
+    const ast::Expr *SavedConv = OwnedConv;
+    TakeNode = OwnedConv = unparen(C->Args[0]);
+    Operand V = valueFor(C->Args[0], ToS);
+    TakeNode = unparen(C);
+    OwnedConv = SavedConv;
+    return V;
+  }
   // View[T](x): the view of x, as for an implicit one (ADR-0020).
   if (ToS && isa<S::RefType>(S::under(ToS)))
     return makeView(C->Args[0], ToS);
@@ -1797,9 +1886,17 @@ Operand Body::lowerBuiltin(const ast::CallExpr *C, const S::Builtin *B) {
     unsupported(C, std::string("the built-in ") + B->Name.str() + " (P04.26)");
     break;
   case BI::Move:
+    if (C->Args.size() != 1) {
+      unsupported(C, "this move");
+      return errorValue(ctx());
+    }
+    return lowerMoveBuiltin(C);
   case BI::Clone:
-    unsupported(C, std::string("the built-in ") + B->Name.str() + " (P04.09)");
-    break;
+    if (C->Args.size() != 1) {
+      unsupported(C, "this clone");
+      return errorValue(ctx());
+    }
+    return lowerCloneOf(C->Args[0], C);
   case BI::Close:
     unsupported(C, "the built-in close (P12)");
     break;
@@ -1815,6 +1912,7 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
                        bool NoUnwind, LateRecv *Recv,
                        ArrayRef<const S::UnitCanon *> Dicts) {
   Operand Unit = unitValue();
+  const size_t CopyMark = PlaceCopies.size();
   ArrayRef<Type *> Ps = GSig->elems().drop_front(Lead.size());
   SmallVector<Operand, 4> Args(Lead.begin(), Lead.end());
   const size_t Base = Lead.size();
@@ -1838,7 +1936,7 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
     // An argument the operator lowering made (the closure of a lazy `&&`, the
     // value of a `[]=`): it is the value, passed as the parameter says.
     if (auto R = Ready.find(A); R != Ready.end()) {
-      Args.push_back(argAs(R->second, Sig, K, A));
+      Args.push_back(argAs(passArg(R->second, Sig, K), Sig, K, A));
       return;
     }
     if (Ps[K]->getKind() == Type::Kind::Func &&
@@ -1898,18 +1996,25 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
     }
     Place TP = placeOf(std::move(T));
     for (size_t K = 0; K < Fixed; ++K)
-      Args.push_back(argAs(resultArg(copyOf(FB.field(TP, K)), TT->Elems[K],
-                                     Sig->Params->Elems[K], C),
-                           Sig, K, C));
-    if (Sig->Variadic)
       Args.push_back(
-          argAs(packVariadicWith(C, Sig, N - Fixed,
-                                 [&](size_t K, S::Type *Elem) {
-                                   return convertResult(
-                                       copyOf(FB.field(TP, Fixed + K)),
-                                       TT->Elems[Fixed + K], Elem, C);
-                                 }),
-                Sig, Fixed, C));
+          argAs(passArg(resultArg(copyOf(FB.field(TP, K)), TT->Elems[K],
+                                  Sig->Params->Elems[K], C),
+                        Sig, K),
+                Sig, K, C));
+    if (Sig->Variadic) {
+      // (The results of g are its tuple's: a `move` pack takes them.)
+      const bool MovePack = Sig->isMove(Sig->Params->Elems.size() - 1);
+      Args.push_back(argAs(
+          packVariadicWith(C, Sig, N - Fixed,
+                           [&](size_t K, S::Type *Elem) {
+                             Operand V =
+                                 convertResult(copyOf(FB.field(TP, Fixed + K)),
+                                               TT->Elems[Fixed + K], Elem, C);
+                             return MovePack ? takeValue(std::move(V), Elem)
+                                             : V;
+                           }),
+          Sig, Fixed, C));
+    }
   } else if (Sig->Variadic) {
     // f(a, b, xs...) passes the slice; f(a, b, x, y) packs x and y.
     size_t Fixed = Ps.size() - 1;
@@ -1995,6 +2100,7 @@ Operand Body::callWith(const ast::CallExpr *C, S::SignatureType *Sig,
     at(C);
     callRt(RtFn::MapEntryBack, {RecsAddr, constInt(ctx().u64(), NE)}, C);
   }
+  freeNewMaps(CopyMark);
   return copyOf(FB.local(Res));
 }
 
@@ -2069,6 +2175,8 @@ Operand Body::lowerPlainCall(const ast::CallExpr *C) {
       if (F && F->IsBuiltinMethod && (F->Name == "IsNil" || F->Name == "Get") &&
           C->Args.empty())
         return lowerOptionMethod(C, Sel, F);
+      if (F && F->IsBuiltinMethod && F->Name == "Clone" && C->Args.empty())
+        return lowerCloneOf(Sel->X, C);
       if (F)
         return lowerMethodCall(C, Sel, F, *SL);
       unsupported(C, "this method call");
@@ -2202,7 +2310,7 @@ Operand Body::lowerStructLit(const ast::CompositeLit *CL, S::StructType *ST,
       unsupported(E, "this struct literal");
       return errorValue(ctx());
     }
-    Operand V = valueFor(E, tyOfObj(ST->Fields[Field]));
+    Operand V = ownedValue(E, tyOfObj(ST->Fields[Field]));
     // Evaluated now, in source order: a later element must not change it.
     if (V.K == Operand::Copy &&
         !(V.P.Proj.empty() &&
@@ -2251,7 +2359,7 @@ Operand Body::lowerArrayLit(const ast::CompositeLit *CL, S::ArrayType *AT,
   if (Dense && Elts.size() == Len && Len <= 32) {
     SmallVector<Operand, 8> Ops;
     for (auto &[Idx, E] : Elts) {
-      Operand V = valueFor(E, AT->Elem);
+      Operand V = ownedValue(E, AT->Elem);
       if (V.K == Operand::Copy &&
           !(V.P.Proj.empty() &&
             FB.function().Locals[V.P.Local].K == Local::Temp)) {
@@ -2263,12 +2371,15 @@ Operand Body::lowerArrayLit(const ast::CompositeLit *CL, S::ArrayType *AT,
     at(CL);
     return copyOf(FB.temp(FB.aggregate(AggKind::Array, Ty, Ops)));
   }
-  // The zero array, then each element into its place.
+  // The zero array, then each element into its place. The array owns its
+  // elements from the start: a `!` return out of an element drops the ones
+  // stored so far (P04.09 R7).
   at(CL);
   Place Arr = FB.local(FB.newTemp(Ty));
   FB.assign(Arr, FB.use(zeroOf(Ty)));
+  ownTemp(copyOf(Arr), AT);
   for (auto &[Idx, E] : Elts) {
-    Operand V = valueFor(E, AT->Elem);
+    Operand V = ownedValue(E, AT->Elem);
     at(E);
     FB.assign(FB.constIndex(Arr, uint32_t(Idx)), FB.use(V));
   }

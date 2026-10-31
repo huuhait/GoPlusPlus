@@ -109,7 +109,7 @@ func main() {
 	b = calls()
 	check("variadic", many(1, 2, 3), 9)
 	now := calls()
-	check("variadic packs globally: global", now[0]-b[0], 1)
+	check("variadic packs globally: global", now[0]-b[0], 2) // (the buffer and its free)
 	check("variadic packs globally: A", now[1]-b[1], 0)
 
 	// The owner is intact afterwards: still allocator 1, growth still there.
@@ -121,7 +121,7 @@ func main() {
 	a = append(a, 17)
 	now = calls()
 	check("grows in A: global", now[0]-b[0], 0)
-	check("grows in A", now[1]-b[1], 1)
+	check("grows in A", now[1]-b[1], 2) // (the alloc, and the free of the buffer it leaves: P04.09)
 	check("grown word", gopp_test_word_int(a), 1)
 
 	// A copy made from a borrowed parameter is global.

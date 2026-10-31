@@ -1,0 +1,53 @@
+package main
+
+// P04.09 with P04.24: a generic body that takes unit descriptors (hidden
+// parameters, frame slots, a hoisted entry block) owns strings and slices and
+// has `!` returns in the middle of its statements; types that differ only in
+// their units share one drop and one clone glue (UNI-9).
+
+unit M
+unit KM = 1000 M
+
+type errU struct{ s string }
+
+func (e errU) Error() string { return e.s.Clone() }
+
+type Rec[U unit] struct {
+	Name string
+	D    float64[U]
+	Tags []string
+}
+
+func mk(s string) string { return s + "!" }
+
+// A generic body that takes a unit descriptor, owns strings and slices, and
+// has a `!` failure path in the middle of a literal.
+func Scale[U unit, V unit]!(a float64[U], name string, fail bool) Rec[V] {
+	tags := []string{mk("t1"), mk("t2")}
+	r := Rec[V]{Name: name.Clone(), D: float64[V](float64(a)), Tags: move(tags)}
+	if fail {
+		return Rec[V]{}, errU{mk("boom")}
+	}
+	extra := []string{mk("e"), fail2!(fail)}
+	r.Tags = append(r.Tags, move(extra)...)
+	return r
+}
+
+func fail2!(f bool) string {
+	if f {
+		return "", errU{mk("inner")}
+	}
+	return mk("ok")
+}
+
+func main() {
+	r, err := Scale[KM, M](2.5[KM], mk("n"), false)
+	println(r.Name, float64(r.D), len(r.Tags), err == nil)
+	r2, err2 := Scale[M, KM](500.0[M], mk("m"), true)
+	println(len(r2.Name), err2 != nil)
+	a := Rec[M]{mk("a"), 1.0[M], []string{mk("x")}}
+	b := Rec[KM]{mk("b"), 2.0[KM], []string{mk("y")}}
+	ac := a.Clone()
+	bc := b.Clone()
+	println(ac.Name, bc.Name, len(ac.Tags), len(bc.Tags))
+}

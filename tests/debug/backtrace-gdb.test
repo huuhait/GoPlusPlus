@@ -17,7 +17,7 @@
 // CHECK-NOT: i =
 // CHECK: #1 {{.*}} in main.mid
 // CHECK: n = 8
-// CHECK: name = {ptr = {{0x[0-9a-f]+}} "outer", len = 5, cap = 0}
+// CHECK: name = {ptr = {{0x[0-9a-f]+}} "outer", len = 5, cap = 5}
 // CHECK: #2 {{.*}} in main.outer
 // CHECK: n = 7
 // CHECK-NOT: _GP

@@ -1,0 +1,95 @@
+package main
+
+func take(move s string) int { return len(s) }
+
+func size(p Pair) int { return len(p.a) + len(p.b) }
+
+type Pair struct {
+	a string
+	b string
+}
+
+// A plain use after the move.
+func plain() int {
+	s := "hello"
+	n := take(s)
+	return n + len(s) // use
+}
+
+// Moved on one branch only: still moved after the join.
+func branch(c bool) int {
+	s := "hello"
+	if c {
+		take(s)
+	}
+	return len(s) // joined
+}
+
+// Moved in a loop: the second trip reads it.
+func loop() {
+	s := "hello"
+	for i := 0; i < 2; i++ {
+		take(s) // loop
+	}
+}
+
+// A part moved: the whole is unreadable, another part is fine.
+func part() int {
+	p := Pair{"a", "b"}
+	t := move(p.a)
+	n := len(p.b)
+	return n + size(p) + len(t) // whole
+}
+
+// A variable a closure captured (its cell) read after the move.
+func captured() int {
+	s := "hello"
+	f := func() int { return len(s) }
+	n := take(move(s))
+	return n + len(s) + f() // captured
+}
+
+// The range variable of the entry `move(m[k])` took (ADR-0016 point 5).
+func entry(m map[string]string) int {
+	n := 0
+	for k, v := range m {
+		t, _ := move(m[k])
+		n += len(t) + len(v) // entry
+	}
+	return n
+}
+
+type Res struct{ name string }
+
+func (move r Res) Finish() string { return move(r.name) }
+
+// A method value of a `move` receiver owns the receiver (P04.09).
+func methodValue() int {
+	r := Res{"r"}
+	fin := r.Finish
+	return len(fin()) + len(r.name) // receiver
+}
+
+// STM-8: `t := s` moves s, so `s += "y"` reads a moved string.
+func appendAfterMove() int {
+	s := "a" + "b"
+	t := s
+	t += "x"
+	s += "y" // append
+	return len(t)
+}
+
+// Two results of one return: the second reads what the first took.
+func twice() (string, string) {
+	s := "a" + "b"
+	return s, s // twice
+}
+
+func main() {
+	println(plain(), branch(true), part(), captured(), methodValue())
+	println(appendAfterMove())
+	a, b := twice()
+	println(a, b)
+	println(entry(map[string]string{"a": "b"}))
+	loop()
+}

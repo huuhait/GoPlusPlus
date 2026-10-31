@@ -1628,8 +1628,11 @@ void Checker::arguments(const CallExpr *Call, SignatureType *Sig,
       auto It = I.Selections.find(Sel);
       if (It != I.Selections.end() && It->second.K == Selection::MethodVal)
         if (auto *MF = dyn_cast_or_null<Func>(It->second.Obj);
-            MF && MF->MoveRecv && !isImplicitMove(Sel->X, Call)) {
-          checkMoveRecvUse(Sel, "call a `move` method on");
+            MF && MF->MoveRecv) {
+          if (isImplicitMove(Sel->X, Call))
+            I.SelfMoves.insert(unparen(Call));
+          else
+            checkMoveRecvUse(Sel, "call a `move` method on");
         }
       // OWN-R10: a value receiver of a @Pinned type copies the receiver.
       if (It != I.Selections.end() && It->second.K == Selection::MethodVal)
@@ -1657,6 +1660,8 @@ void Checker::arguments(const CallExpr *Call, SignatureType *Sig,
     if (A.M != Mode::Invalid && A.E && A.Ty && A.Ty != SigParams[K] &&
         assignableAsIs(A.Ty, SigParams[K]))
       I.AsIsArgs.insert(A.E);
+    if (Mv && A.M != Mode::Invalid && isImplicitMove(A.E, Call))
+      I.SelfMoves.insert(unparen(Call));
     if (Mv && A.M != Mode::Invalid && !isImplicitMove(A.E, Call))
       needOwnership(A, "pass as a `move` argument");
     // OWN-R10: a by-value parameter of a @Pinned type copies the argument.

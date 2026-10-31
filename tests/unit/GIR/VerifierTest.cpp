@@ -475,24 +475,72 @@ TEST(GIRVerifier, V013_Entry) {
 // The CFG: V020-V028
 //===----------------------------------------------------------------------===//
 
-TEST(GIRVerifier, V014_OwnedIsATemporary) {
-  // P04.05: a value the runtime allocates is held by a temporary marked
-  // Owned, for drop elaboration (P04.09) to find; nothing else is marked.
+TEST(GIRVerifier, V014_OwnedHasDropGlue) {
+  // P04.09: a local marked Owned (a variable, a parameter or a temporary
+  // holding an owning value) names the drop glue that ends it, and a local
+  // with glue is owned; the return place is never owned (the caller owns it).
+  auto Glue = [](PlaceFixture &X, Type *Sig) {
+    FuncId G = declare(X.M, "glue", Sig);
+    FuncBuilder B(X.M, X.fn(G));
+    B.ret();
+    return G;
+  };
   {
-    PlaceFixture X; // good: an owned temporary
-    LocalId T = X.local(X.Str);
-    X.fn(X.P).Locals[T].K = Local::Temp;
-    X.fn(X.P).Locals[T].Owned = true;
+    PlaceFixture X; // good: an owned variable with glue
+
+    FuncId G =
+        Glue(X, X.C.func({X.C.ptr(X.C.u8())}, X.Unit, false, CallConv::Go));
+    X.fn(X.P).Locals[X.LStr].Owned = true;
+    X.fn(X.P).Locals[X.LStr].Glue = G;
     EXPECT_GIR_VALID(X.M);
   }
   {
-    PlaceFixture X; // bad: an owned variable
+    PlaceFixture X; // bad: owned, no glue
     X.fn(X.P).Locals[X.LStr].Owned = true;
     EXPECT_GIR_RULE(X.M, "V014");
   }
   {
-    PlaceFixture X; // and an unowned variable is fine
+    PlaceFixture X; // bad: glue, not owned
+    FuncId G =
+        Glue(X, X.C.func({X.C.ptr(X.C.u8())}, X.Unit, false, CallConv::Go));
+    X.fn(X.P).Locals[X.LStr].Glue = G;
+    EXPECT_GIR_RULE(X.M, "V014");
+  }
+  {
+    PlaceFixture X; // and an unowned variable without glue is fine
     EXPECT_GIR_VALID(X.M);
+  }
+}
+
+TEST(GIRVerifier, V081_DropGlueIsAGoFunctionFromU8PtrToUnit) {
+  // P04.09: the glue is erased (any type's glue fits a map's info or a
+  // closure's environment), so it takes the address of the value as *u8.
+  auto With = [](PlaceFixture &X, Type *Sig) {
+    FuncId G = declare(X.M, "glue", Sig);
+    FuncBuilder B(X.M, X.fn(G));
+    B.ret();
+    X.fn(X.P).Locals[X.LStr].Owned = true;
+    X.fn(X.P).Locals[X.LStr].Glue = G;
+  };
+  {
+    PlaceFixture X; // the right shape: valid
+    With(X, X.C.func({X.C.ptr(X.C.u8())}, X.Unit, false, CallConv::Go));
+    EXPECT_GIR_VALID(X.M);
+  }
+  {
+    PlaceFixture X; // a pointer to the type, not erased
+    With(X, X.C.func({X.PI64}, X.Unit, false, CallConv::Go));
+    EXPECT_GIR_RULE(X.M, "V081");
+  }
+  {
+    PlaceFixture X; // a result
+    With(X, X.C.func({X.C.ptr(X.C.u8())}, X.I64, false, CallConv::Go));
+    EXPECT_GIR_RULE(X.M, "V081");
+  }
+  {
+    PlaceFixture X; // two parameters
+    With(X, X.C.func({X.C.ptr(X.C.u8()), X.I64}, X.Unit, false, CallConv::Go));
+    EXPECT_GIR_RULE(X.M, "V081");
   }
 }
 

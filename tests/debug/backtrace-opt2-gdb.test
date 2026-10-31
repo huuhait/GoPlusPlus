@@ -12,5 +12,5 @@
 // CHECK: #1 {{.*}}main.mid
 // CHECK: #2 {{.*}}main.outer
 // CHECK: v = {{[{]X = 1.5, Y = 2[}]|<optimized out>}}
-// CHECK: name = {ptr = {{0x[0-9a-f]+}} "outer", len = 5, cap = 0}
+// CHECK: name = {ptr = {{0x[0-9a-f]+}} "outer", len = 5, cap = 5}
 // CHECK-NOT: _GP

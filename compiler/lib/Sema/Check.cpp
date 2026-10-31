@@ -184,6 +184,12 @@ void Checker::recordDef(const ast::Ident *Id, Object *O) {
 void Checker::recordUse(const ast::Ident *Id, Object *O) {
   if (Id)
     I.Uses[Id] = O;
+  // A variable of a three-clause for loop used inside a function literal
+  // (CLO-8, forStmt).
+  if (!ForVarsCaptured.empty())
+    if (auto *V = llvm::dyn_cast_or_null<Var>(O); V && V->FuncOwner != E.FuncId)
+      if (auto It = ForVarsCaptured.find(V); It != ForVarsCaptured.end())
+        It->second = true;
 }
 
 void Checker::recordImplicit(const ast::Node *N, Object *O) {
@@ -298,9 +304,12 @@ void Info::merge(ArrayRef<Info *> Others) {
   One(&Info::UnitSites);
   One(&Info::UnitDisplays);
   One(&Info::IfaceConversions);
+  One(&Info::ImplicitClones);
+  One(&Info::Swaps);
   for (const Info *O : Others) {
     Reslices.insert(O->Reslices.begin(), O->Reslices.end());
     AsIsArgs.insert(O->AsIsArgs.begin(), O->AsIsArgs.end());
+    SelfMoves.insert(O->SelfMoves.begin(), O->SelfMoves.end());
   }
 }
 

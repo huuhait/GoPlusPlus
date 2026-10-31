@@ -16,6 +16,8 @@
 
 #include "LowerImpl.h"
 #include "RtEmit.h"
+#include "gopp/GIR/DropElab.h"
+#include "gopp/GIR/MoveCheck.h"
 
 using namespace gopp;
 using namespace gopp::gir;
@@ -49,6 +51,7 @@ Body::VarSlot Body::declareSlot(const S::Var *V, const ast::Node *N,
     LocalId Cell = FB.newLocal(ctx().ptr(Ty), Local::Var, Name.str());
     F.Locals[Cell].Source = true;
     F.Locals[Cell].Deref = true;
+    ownCell(Cell, tyOfObj(V));
     Aliases[V] = Cell;
     Scopes.back().Locals.push_back(Cell);
     FB.storageLive(Cell);
@@ -61,6 +64,10 @@ Body::VarSlot Body::declareSlot(const S::Var *V, const ast::Node *N,
   }
   LocalId Loc = FB.newLocal(Ty, Local::Var, Name.str());
   F.Locals[Loc].Source = true;
+  // A variable that owns its value drops it where it dies (P04.09); a
+  // borrowed one (a range variable, an assertion binding) does not.
+  if (V && modeOf(V) == S::Var::Owned)
+    ownLocal(Loc, tyOfObj(V));
   if (V)
     Vars[V] = Loc;
   Scopes.back().Locals.push_back(Loc);
@@ -69,17 +76,39 @@ Body::VarSlot Body::declareSlot(const S::Var *V, const ast::Node *N,
   return R;
 }
 
-void Body::allocCell(LocalId Cell, Type *Ty, const ast::Node *N) {
+void Body::ownCell(LocalId Cell, S::Type *T) {
+  CellTypes[Cell] = T;
+  if (FuncId Rel = L.rt(RtFn::CellRelease, Pos); Rel != NoId) {
+    Local &Lo = FB.function().Locals[Cell];
+    Lo.Owned = true;
+    Lo.Glue = Rel;
+  }
+}
+
+void Body::allocCell(LocalId Cell, Type *Ty, const ast::Node *N, bool DropOld) {
   if (N)
     at(N);
   Type *PU8 = ctx().ptr(ctx().u8());
-  Operand Raw =
-      callFn(L.rt(RtFn::MemResize, N ? N->getBegin() : Pos),
-             {zeroOf(PU8),
-              constInt(ctx().u64(), std::max<uint64_t>(L.layout(Ty).Size, 1)),
-              constBool(ctx(), true)});
+  // [count, drop glue of the value, the value] (CLO-2: the last reference
+  // drops the variable, gopp.cell_release); the pointer is to the value.
+  Operand Raw = callFn(L.rt(RtFn::MemResize, N ? N->getBegin() : Pos),
+                       {zeroOf(PU8),
+                        constInt(ctx().u64(), L.layout(Ty).Size + TI::RcHeader),
+                        constBool(ctx(), true)});
+  Rt E(M, FB);
+  Val R = E.snap(Val{&E, Raw});
+  E.store(R, ctx().u64(), E.u(1));
+  auto CT = CellTypes.find(Cell);
+  FuncId Glue = CT == CellTypes.end() ? NoId : L.dropGlue(CT->second, Pos);
+  if (Glue != NoId)
+    E.store(E.padd(R, E.u(8)), PU8,
+            E.tmp(FB.cast(CastKind::PtrToPtr, E.func(Glue).Op, PU8)));
   FB.assign(FB.local(Cell),
-            FB.cast(CastKind::PtrToPtr, std::move(Raw), ctx().ptr(Ty)));
+            FB.cast(CastKind::PtrToPtr, E.snap(E.padd(R, E.u(TI::RcHeader))).Op,
+                    ctx().ptr(Ty)));
+  const Local &Lo = FB.function().Locals[Cell];
+  if (DropOld && Lo.Owned)
+    FB.function().Blocks[FB.block()].Stmts.back().DropOld = Lo.Glue;
 }
 
 void Body::recordOps(const ast::Expr *E, LateOps &R) {
@@ -239,7 +268,8 @@ void Body::deriveDest(Dest &D) {
   D.P = lowerPlace(D.E, &D.Checks);
 }
 
-void Body::store(Dest &D, Operand V, const ast::Node *N) {
+void Body::store(Dest &D, Operand V, const ast::Node *N, bool KeepOld,
+                 bool Defer) {
   ++LowerSteps;
   if (D.Blank)
     return;
@@ -256,10 +286,26 @@ void Body::store(Dest &D, Operand V, const ast::Node *N) {
   resolveDest(D, N);
   if (!D.P.Ty)
     return;
-  // The value it replaces is not dropped yet: it leaks until drop
-  // elaboration (P04.09).
   at(N);
+  // (A borrowed variable or parameter is re-pointed, never dropped: PAR-2.)
+  const Local &Root0 = FB.function().Locals[D.P.Local];
+  const bool Borrowed0 =
+      !Root0.Owned &&
+      (Root0.K == Local::Arg || (Root0.K == Local::Var && D.P.Proj.empty()));
+  if (Defer && D.STy && !KeepOld && !Borrowed0 && L.needsDrop(D.STy)) {
+    // The old value moves to a temporary that dies with the statement.
+    Operand Old = copyOf(D.P);
+    LocalId Tmp = FB.newTemp(Old.type());
+    FB.assign(FB.local(Tmp), FB.use(std::move(Old)));
+    FB.function().Blocks[FB.block()].Stmts.back().OldRead = true;
+    ownTemp(copyOf(FB.local(Tmp)), D.STy);
+    KeepOld = true;
+  }
   FB.assign(D.P, FB.use(std::move(V)));
+  // The value it replaces dies here (elaboration drops it first, P04.09).
+  if (D.STy && !KeepOld && !Borrowed0)
+    if (FuncId G = L.dropGlue(D.STy, N->getBegin()); G != NoId)
+      FB.function().Blocks[FB.block()].Stmts.back().DropOld = G;
 }
 
 bool Body::multiValues(const ast::Expr *E, size_t Want,
@@ -269,9 +315,24 @@ bool Body::multiValues(const ast::Expr *E, size_t Want,
   auto *MapIE = dyn_cast<ast::IndexExpr>(unparen(E));
   auto *AssertE = dyn_cast<ast::TypeAssertExpr>(unparen(E));
   S::Type *Want0 = Targets.empty() ? nullptr : Targets[0];
-  const bool CommaOk =
-      Want == 2 && ((MapIE && isMapIndex(MapIE)) || AssertE != nullptr);
-  Operand T = MapIE && Want == 2 && isMapIndex(MapIE) ? mapRead(MapIE, true)
+  // `v, ok := move(m[k])` and `v, ok := clone(m[k])` (OWN-R3a, OWN-R9).
+  const ast::IndexExpr *TakeIE = nullptr;
+  bool TakeMove = false;
+  if (auto *C = dyn_cast<ast::CallExpr>(unparen(E));
+      C && Want == 2 && C->Args.size() == 1)
+    if (auto *Id = dyn_cast<ast::Ident>(unparen(C->Fun)))
+      if (auto U = I.Uses.find(Id); U != I.Uses.end())
+        if (auto *B = dyn_cast<S::Builtin>(U->second);
+            B && (B->Id == S::BuiltinId::Move || B->Id == S::BuiltinId::Clone))
+          if (auto *IE = dyn_cast<ast::IndexExpr>(unparen(C->Args[0]));
+              IE && isMapIndex(IE)) {
+            TakeIE = IE;
+            TakeMove = B->Id == S::BuiltinId::Move;
+          }
+  const bool CommaOk = Want == 2 && ((MapIE && isMapIndex(MapIE)) ||
+                                     AssertE != nullptr || TakeIE);
+  Operand T = TakeIE ? mapEntryOwned(TakeIE, true, TakeMove)
+              : MapIE && Want == 2 && isMapIndex(MapIE) ? mapRead(MapIE, true)
               : AssertE && Want == 2 ? lowerTypeAssert(AssertE, true, Want0)
                                      : lowerExpr(unparen(E));
   Type *Ty = T.type();
@@ -290,11 +351,18 @@ bool Body::multiValues(const ast::Expr *E, size_t Want,
     if (!CommaOk && TT && TT->Elems.size() == Want)
       From = TT->Elems[K];
     else if (CommaOk)
-      From = K == 0 ? sTyOf(E) : L.CP.Ctx->typ(S::BasicKind::Bool);
+      From = K == 1   ? L.CP.Ctx->typ(S::BasicKind::Bool)
+             : TakeIE ? mapTypeOf(sTyOf(TakeIE->X))->Elem
+                      : sTyOf(E);
     // (A view a comma-ok assertion binds is lowerTypeAssert's: no
     // conversion goes to a view.)
     if (K < Targets.size())
       F = convertResult(std::move(F), From, Targets[K], E);
+    // Each value goes to a new owner (P04.09): moved out of a call's results
+    // (the rest end with the statement), a shared handle retained.
+    S::Type *To = K < Targets.size() && Targets[K] ? Targets[K] : From;
+    if (To)
+      F = takeValue(std::move(F), To);
     Out.push_back(std::move(F));
   }
   return true;
@@ -351,6 +419,131 @@ static bool isStable(const Operand &V, FuncBuilder &FB) {
          (V.P.Proj.empty() && FB.function().Locals[V.P.Local].K == Local::Temp);
 }
 
+bool Body::swapValues(const ast::AssignStmt *A, ArrayRef<S::Type *> Tys,
+                      bool MayAlias, llvm::SmallVectorImpl<Operand> &Vals) {
+  // A swap (OWN-R3a, Info::Swaps) moves the values between its places (P04.09
+  // R4): every place and every check first (spec 4.2), then every value is
+  // read, then the places that own their value are emptied, so a place named
+  // twice at run time (`xs[i], xs[j] = xs[j], xs[i]` with i == j, a map key
+  // twice) is read whole each time. The stores then fill the places. With two
+  // places that is always one value per place. With three or more, two names
+  // of one place can make Go's left-to-right stores write one value twice
+  // and none of another (`a[i], a[j], a[k] = a[j], a[k], a[i]`, i == k):
+  // when the checker cannot rule that out (MayAlias, R18: then every type is
+  // cloneable, E0452/E0453), each place gets a clone at run time, the values
+  // read are dropped once each, and the stores drop what they replace.
+  const size_t N = A->Rhs.size();
+  Rt E(M, FB);
+  Type *PU8 = ctx().ptr(ctx().u8());
+  struct Src {
+    Val Addr; // null: an absent map entry (its zero value)
+    Type *G = nullptr;
+    S::Type *T = nullptr;
+    bool Owns = false;
+  };
+  SmallVector<Src, 4> Srcs;
+  for (size_t K = 0; K < N; ++K) {
+    ++LowerSteps;
+    const ast::Expr *R = unparen(A->Rhs[K]);
+    Src S;
+    S.T = Tys[K] ? Tys[K] : sTyOf(R);
+    S.G = S.T ? L.lowerType(S.T, R->getBegin()) : nullptr;
+    if (!S.G)
+      return false;
+    S.Owns = L.needsDrop(S.T);
+    auto *IE = dyn_cast<ast::IndexExpr>(R);
+    if (IE && isMapIndex(IE)) {
+      // The entry's slot, or null when the key is absent (no insert).
+      S::MapType *MT = mapTypeOf(sTyOf(IE->X));
+      Val Mv = E.snap(Val{&E, mapValue(IE->X)});
+      Operand Key = valueFor(IE->Indices[0], MT->Key);
+      at(IE);
+      Place KP = FB.temp(FB.use(Key));
+      Operand Info = mapInfoPtr(MT, IE);
+      Operand KA = bytesAddr(KP);
+      mapKeyCheck(MT, Info, Mv.Op, KA, IE);
+      S.Addr = E.snap(Val{&E, callRt(RtFn::MapGet, {Info, Mv.Op, KA}, IE)});
+    } else {
+      Place P = lowerPlace(R);
+      if (!P.Ty)
+        return false;
+      at(A);
+      S.Addr = E.snap(E.addrOf(P));
+    }
+    S.Addr = E.snap(E.to(PU8, S.Addr));
+    Srcs.push_back(S);
+  }
+  at(A);
+  // Every value, then the emptied places.
+  SmallVector<Var, 4> Read;
+  for (const Src &S : Srcs) {
+    Var V = E.var(S.G, E.zero(S.G), "swap");
+    E.If(S.Addr != E.null(PU8), [&] { V = E.load(S.Addr, S.G); });
+    Read.push_back(V);
+  }
+  for (const Src &S : Srcs)
+    if (S.Owns)
+      E.If(S.Addr != E.null(PU8), [&] { E.store(S.Addr, S.G, E.zero(S.G)); });
+  // An interface value lent to this function stays in no place it could
+  // outlive the call from (R1).
+  for (size_t K = 0; K < N; ++K)
+    if (Srcs[K].Owns && Srcs[K].G->isIface())
+      if (FuncId Take = L.rt(RtFn::IfaceTake, A->getBegin()); Take != NoId)
+        E.call(Take,
+               {E.to(PU8, E.addrOf(Read[K])), E.to(PU8, E.addrOf(Read[K]))});
+  const bool Fix = N > 2 && MayAlias;
+  SmallVector<Var, 4> Put;
+  for (size_t K = 0; K < N; ++K)
+    Put.push_back(Fix && Srcs[K].Owns ? E.var(Srcs[K].G, Read[K], "put")
+                                      : Read[K]);
+  if (Fix) {
+    // Two names of one place among the sources.
+    Var Alias = E.var(ctx().boolean(), E.boolean(false), "alias");
+    for (size_t K = 1; K < N; ++K)
+      for (size_t J = 0; J < K; ++J) {
+        ++LowerSteps;
+        if (Srcs[J].Owns && Srcs[K].Owns && Srcs[J].G == Srcs[K].G)
+          E.If(E.land(Srcs[J].Addr != E.null(PU8),
+                      [&] { return Srcs[J].Addr == Srcs[K].Addr; }),
+               [&] { Alias = E.boolean(true); });
+      }
+    E.If(Alias, [&] {
+      for (size_t K = 0; K < N; ++K) {
+        if (!Srcs[K].Owns)
+          continue;
+        FuncId Clone = L.Methods.cloneable(Srcs[K].T)
+                           ? L.cloneGlue(Srcs[K].T, A->getBegin())
+                           : NoId;
+        if (Clone == NoId) {
+          // (The checker refuses such a swap of a type with no Clone.)
+          L.internalError(A->getBegin(), "a swap that may name one place "
+                                         "twice, of a type with no Clone");
+          return;
+        }
+        E.call(Clone,
+               {E.to(PU8, E.addrOf(Put[K])), E.to(PU8, E.addrOf(Read[K]))});
+      }
+      // Each value read is dropped once (its first read).
+      for (size_t K = 0; K < N; ++K) {
+        if (!Srcs[K].Owns)
+          continue;
+        FuncId Drop = L.dropGlue(Srcs[K].T, A->getBegin());
+        if (Drop == NoId)
+          continue;
+        Var First = E.var(ctx().boolean(), E.boolean(true), "first");
+        for (size_t J = 0; J < K; ++J)
+          if (Srcs[J].Owns && Srcs[J].G == Srcs[K].G)
+            E.If(Srcs[J].Addr == Srcs[K].Addr,
+                 [&] { First = E.boolean(false); });
+        E.If(First, [&] { E.call(Drop, {E.to(PU8, E.addrOf(Read[K]))}); });
+      }
+    });
+  }
+  for (size_t K = 0; K < N; ++K)
+    Vals.push_back(copyOf(FB.local(Put[K].L)));
+  return true;
+}
+
 void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
   bool Define = A->Op == tok::define;
   size_t N = A->Lhs.size();
@@ -388,7 +581,23 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
   // elements move after the stores.
   SmallVector<ShrinkMove, 1> Moves;
   SmallVector<std::pair<size_t, LateOps>, 1> Shrinks;
-  if (A->Rhs.size() == N) {
+  // A swap of values that own something moves them between the places,
+  // which may be one place at run time (swapValues, P04.09 R4).
+  auto SwapIt = I.Swaps.find(A->Lhs[0]);
+  bool Swap = !Define && A->Rhs.size() == N && N > 1 && SwapIt != I.Swaps.end();
+  if (Swap) {
+    bool Owns = false;
+    for (size_t K = 0; K < N; ++K)
+      Owns = Owns || (Targets_[K].STy && L.needsDrop(Targets_[K].STy));
+    Swap = Owns;
+  }
+  if (Swap) {
+    SmallVector<S::Type *, 2> Tys;
+    for (const Target &T : Targets_)
+      Tys.push_back(T.STy);
+    if (!swapValues(A, Tys, SwapIt->second, Vals))
+      return;
+  } else if (A->Rhs.size() == N) {
     for (size_t K = 0; K < N; ++K) {
       S::Type *Want = Targets_[K].STy ? Targets_[K].STy : sTyOf(A->Rhs[K]);
       if (auto *SE = dyn_cast<ast::SliceExpr>(unparen(A->Rhs[K]));
@@ -398,10 +607,10 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
         Vals.push_back(Operand());
         continue;
       }
-      Operand V = valueFor(A->Rhs[K], Want);
+      Operand V = ownedValue(A->Rhs[K], Want);
       if (N > 1 && !isStable(V, FB)) {
         at(A);
-        V = copyOf(FB.temp(FB.use(V)));
+        V = holdValue(std::move(V), Want);
       }
       Vals.push_back(std::move(V));
     }
@@ -451,9 +660,21 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
           T.New);
       VarSlot Sl = declareVar(T.New, Ty);
       FB.assign(Sl.P, FB.use(std::move(Val)));
+      if (D != I.Defs.end())
+        noteBorrowingDecl(dyn_cast_or_null<S::Var>(D->second));
       continue;
     }
-    store(T.D, Vals[K], A);
+    // (An in-place shrink keeps its block: the elements that leave end in
+    // step 5, nothing else does.)
+    auto *Sl = dyn_cast<ast::SliceExpr>(
+        unparen(A->Rhs.size() == N ? A->Rhs[K] : A->Rhs[0]));
+    // (A swap of two leaves nothing to drop: the places were emptied, and
+    // when they are one place both stores write the one value, swapValues.)
+    store(T.D, Vals[K], A,
+          (Swap && N == 2) ||
+              (A->Rhs.size() == N && (I.SelfMoves.count(unparen(A->Rhs[K])) ||
+                                      (Sl && I.Reslices.count(Sl)))),
+          /*Defer=*/N > 1);
   }
   // 5. SLC-7: the kept elements of each in-place shrink go down to the start
   //    of the block after every store of the statement, so a store to an
@@ -464,6 +685,20 @@ void Body::lowerDefineOrAssign(const ast::AssignStmt *A) {
       continue;
     at(A);
     Rt E(M, FB);
+    if (Mv.Glue != NoId) {
+      // The elements that leave the slice end here (OWN-R2).
+      Val Ptr{&E, Mv.Ptr}, Lo{&E, Mv.Lo}, Hi{&E, Mv.Hi}, Len{&E, Mv.Len};
+      auto Range = [&](Val From, Val To) {
+        Var K = E.var(ctx().u64(), From, "k");
+        E.While([&] { return E.bin(BinOp::Lt, K, To); },
+                [&] {
+                  E.call(Mv.Glue, {E.padd(Ptr, K * Mv.Esz)});
+                  K = K + 1;
+                });
+      };
+      Range(E.u(0), Lo);
+      Range(Hi, Len);
+    }
     Val Dst{&E, Mv.Dst}, Src{&E, Mv.Src};
     E.If(Dst != Src, [&] {
       callFn(L.libc("memmove", A->getBegin()), {Mv.Dst, Mv.Src, Mv.Bytes});
@@ -504,6 +739,19 @@ void Body::lowerOpAssign(const ast::AssignStmt *A) {
   if (!D.P.Ty)
     return;
   at(A);
+  // `s += x` on an owned string grows it in place (STM-8, P04.09): a string
+  // that was moved from is zero and owns no buffer, so no other string
+  // shares its bytes.
+  if (Op == BinOp::Add && G->getKind() == Type::Kind::String &&
+      isStringType(S::under(T))) {
+    Rt E(M, FB);
+    Place YP = placeOf(std::move(Y));
+    at(A);
+    callRt(RtFn::StrAppend,
+           {E.addrOf(D.P).Op, copyOf(FB.field(YP, 0)), copyOf(FB.field(YP, 1))},
+           A);
+    return;
+  }
   Operand X = copyOf(D.P);
   if (G->isInt() || G->isFloat()) {
     // The result goes straight into the place.
@@ -570,10 +818,10 @@ void Body::lowerValueSpec(const ast::ValueSpec *VS) {
   } else if (VS->Values.size() == N) {
     for (size_t K = 0; K < N; ++K) {
       S::Type *Want = STys[K] ? STys[K] : sTyOf(VS->Values[K]);
-      Operand V = valueFor(VS->Values[K], Want);
+      Operand V = ownedValue(VS->Values[K], Want);
       if (N > 1 && !isStable(V, FB)) {
         at(VS);
-        V = copyOf(FB.temp(FB.use(V)));
+        V = holdValue(std::move(V), Want);
       }
       Vals.push_back(std::move(V));
     }
@@ -598,7 +846,20 @@ void Body::lowerValueSpec(const ast::ValueSpec *VS) {
         VS->Names[K]);
     VarSlot Sl = declareVar(VS->Names[K], T);
     FB.assign(Sl.P, FB.use(std::move(Val)));
+    if (D != I.Defs.end())
+      noteBorrowingDecl(dyn_cast_or_null<S::Var>(D->second));
   }
+}
+
+void Body::noteBorrowingDecl(const S::Var *V) {
+  // A view, a borrowed variable (a box binding of an assertion), or a value
+  // that holds a view may point into a temporary of the statement.
+  if (!V)
+    return;
+  S::Type *T = tyOfObj(V);
+  if (modeOf(V) != S::Var::Owned || (T && isa<S::RefType>(S::under(T))) ||
+      (T && L.Methods.holdsView(T)))
+    ExtendTemps = true;
 }
 
 void Body::lowerTypeDecl(const ast::GenDecl *GD) {
@@ -627,7 +888,7 @@ void Body::lowerTypeDecl(const ast::GenDecl *GD) {
 void Body::lowerIf(const ast::IfStmt *If) {
   pushScope();
   if (If->Init)
-    lowerStmt(If->Init);
+    lowerStmt(If->Init, /*KeepTemps=*/true);
   Operand Cond = lowerAs(If->Cond, ctx().boolean());
   at(If);
   BlockId Then = FB.newBlock(), Else = If->Else ? FB.newBlock() : NoId,
@@ -685,8 +946,21 @@ void Body::lowerFor(const ast::ForStmt *For, std::string Label) {
       LocalId Old = FB.newTemp(FB.function().Locals[Cell].Ty);
       FB.assign(FB.local(Old), FB.use(copyOf(FB.local(Cell))));
       allocCell(Cell, Ty, For);
-      FB.assign(FB.deref(FB.local(Cell)),
-                FB.use(copyOf(FB.deref(FB.local(Old)))));
+      // The new iteration's variable starts as a copy of the last one's
+      // (CLO-8): the closures of that iteration keep theirs. An owned value
+      // is cloned; then this function's reference to the old cell ends.
+      Operand V = copyOf(FB.deref(FB.local(Old)));
+      if (auto CT = CellTypes.find(Cell);
+          CT != CellTypes.end() && L.needsDrop(CT->second)) {
+        V = cloneValue(std::move(V), CT->second, For);
+        if (V.K == Operand::Copy)
+          V.K = Operand::Move;
+      }
+      at(For);
+      FB.assign(FB.deref(FB.local(Cell)), FB.use(std::move(V)));
+      Rt E(M, FB);
+      callFn(L.rt(RtFn::CellRelease, For->getBegin()),
+             {E.to(ctx().ptr(ctx().u8()), E.addrOf(FB.local(Old))).Op});
     }
     if (For->Post)
       lowerStmt(For->Post);
@@ -770,7 +1044,7 @@ void Body::lowerSwitchTests(const ast::SwitchStmt *Sw, ArrayRef<BlockId> Bodies,
 void Body::lowerSwitch(const ast::SwitchStmt *Sw, std::string Label) {
   pushScope();
   if (Sw->Init)
-    lowerStmt(Sw->Init);
+    lowerStmt(Sw->Init, /*KeepTemps=*/true);
   ArrayRef<ast::Stmt *> Clauses = Sw->Body->List;
   SmallVector<BlockId, 8> Bodies;
   BlockId Default = NoId;
@@ -788,7 +1062,7 @@ void Body::lowerSwitch(const ast::SwitchStmt *Sw, std::string Label) {
     auto *CC = cast<ast::CaseClause>(Clauses[K]);
     FB.setBlock(Bodies[K]);
     Fallthrough = K + 1 < Clauses.size() ? Bodies[K + 1] : NoId;
-    pushScope();
+    pushScope(true, CC);
     ClauseDepth = Scopes.size();
     for (const ast::Stmt *St : CC->Body)
       lowerStmt(St);
@@ -814,6 +1088,7 @@ BlockId Body::labelBlock(StringRef Name) {
 
 void Body::lowerLabeled(const ast::LabeledStmt *LS) {
   BlockId B = labelBlock(LS->Label->Name.str());
+  LabelMarks[LS->Label->Name.str()] = Scopes.back().Locals.size();
   at(LS);
   if (!FB.terminated())
     FB.gotoBlock(B);
@@ -882,27 +1157,43 @@ SourceLoc Body::labelPos(StringRef Name) {
   return LabelPositions.lookup(Name);
 }
 
+void Body::leaveForGoto(StringRef Name) {
+  if (FB.terminated())
+    return;
+  // The label is in the statement list that holds the goto or in one around
+  // it (Go spec): the innermost list of the scopes that holds its position.
+  SourceLoc To = labelPos(Name);
+  size_t D = Scopes.size();
+  for (; D > 0; --D) {
+    ++LowerSteps;
+    const Scope &Sc = Scopes[D - 1];
+    if (Sc.ListBegin.isValid() && !(To < Sc.ListBegin) && To < Sc.ListEnd)
+      break;
+  }
+  if (D == 0) {
+    L.internalError(To, "a goto whose label is in no statement list around it");
+    return;
+  }
+  // Every scope inside the label's list ends (its map iterations too, RNG-4).
+  exitScopes(D);
+  // In the list: a jump back ends what was made after the label (variables
+  // it jumps back over, OWN-R2, and the temporaries of the statement); a jump
+  // forward ends the temporaries of the statement that holds the goto (Go
+  // jumps over no declaration).
+  SmallVector<LocalId, 4> &Locs = Scopes[D - 1].Locals;
+  auto LM = LabelMarks.find(Name);
+  size_t Mark = LM != LabelMarks.end() ? LM->second : Scopes[D - 1].StmtMark;
+  for (size_t K = Locs.size(); K > Mark; --K) {
+    ++LowerSteps;
+    FB.storageDead(Locs[K - 1]);
+  }
+}
+
 void Body::lowerBranch(const ast::BranchStmt *B) {
   at(B);
   switch (B->Keyword) {
   case tok::kw_goto: {
-    // A goto out of a range over a map ends that iteration (RNG-4). A label
-    // is in the same block as the goto or in one around it (Go spec), so the
-    // goto leaves exactly the ranges whose statement does not hold the label.
-    bool InMapRange = false;
-    for (const Scope &Sc : Scopes) {
-      ++LowerSteps;
-      InMapRange |= !Sc.MapIters.empty();
-    }
-    SourceLoc To = InMapRange ? labelPos(B->Label->Name.str()) : SourceLoc();
-    if (To.isValid())
-      for (size_t S = Scopes.size(); S > 0; --S)
-        for (size_t K = Scopes[S - 1].MapIters.size(); K > 0; --K) {
-          ++LowerSteps;
-          const MapIteration &MI = Scopes[S - 1].MapIters[K - 1];
-          if (To < MI.R->getBegin() || MI.R->getEnd() <= To)
-            endMapIteration(MI.It);
-        }
+    leaveForGoto(B->Label->Name.str());
     at(B);
     FB.gotoBlock(labelBlock(B->Label->Name.str()));
     startDeadBlock();
@@ -963,14 +1254,19 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
       return;
   } else if (R->Results.empty()) {
     // A bare return gives the named results.
-    for (const Place &N : NamedResults)
-      Vals.push_back(copyOf(N));
+    for (size_t K = 0; K < NamedResults.size(); ++K) {
+      Operand V = copyOf(NamedResults[K]);
+      // The result variable gives its value up (OWN-R3).
+      if (K < ResultTys.size() && L.needsDrop(ResultTys[K]))
+        V.K = Operand::Move;
+      Vals.push_back(std::move(V));
+    }
   } else {
     if (R->Results.size() == Want) {
       for (size_t K = 0; K < Want; ++K) {
         S::Type *Wanted =
             K < ResultTys.size() ? ResultTys[K] : sTyOf(R->Results[K]);
-        Vals.push_back(valueFor(R->Results[K], Wanted));
+        Vals.push_back(ownedValue(R->Results[K], Wanted));
       }
     } else if (R->Results.size() == 1 && Want > 1) {
       // return f() with several results.
@@ -1002,14 +1298,33 @@ void Body::lowerReturn(const ast::ReturnStmt *R) {
 //===----------------------------------------------------------------------===//
 
 void Body::lowerBlock(const ast::BlockStmt *B) {
-  pushScope(B != RootBody || ShadowBody);
+  pushScope(B != RootBody || ShadowBody, B);
   ShadowBody = false;
   for (const ast::Stmt *St : B->List)
     lowerStmt(St);
   popScope();
 }
 
-void Body::lowerStmt(const ast::Stmt *St) {
+void Body::lowerStmt(const ast::Stmt *St, bool KeepTemps) {
+  // The temporaries of a statement die at its end (OWN-R2): the owned ones
+  // made while it ran, in the scope it ran in. A declaration of a variable
+  // that borrows from them keeps them until the end of the block (OWN-V6,
+  // TYP-9: lifetime extension); they die with the block's variables.
+  const size_t Depth = Scopes.size(), Mark = Scopes.back().Locals.size();
+  const size_t SavedStmtMark = Scopes.back().StmtMark;
+  Scopes.back().StmtMark = Mark;
+  const bool SavedExtend = ExtendTemps;
+  ExtendTemps = false;
+  lowerStmtImpl(St);
+  if (Scopes.size() == Depth) {
+    if (!ExtendTemps && !KeepTemps)
+      dropTempsSince(Depth, Mark);
+    Scopes.back().StmtMark = SavedStmtMark;
+  }
+  ExtendTemps = SavedExtend;
+}
+
+void Body::lowerStmtImpl(const ast::Stmt *St) {
   using K = ast::Node::Kind;
   std::string Label;
   Label.swap(PendingLabel);
@@ -1026,7 +1341,7 @@ void Body::lowerStmt(const ast::Stmt *St) {
     const ast::Expr *E = unparen(cast<ast::ExprStmt>(St)->X);
     if (auto *C = dyn_cast<ast::CallExpr>(E)) {
       at(St);
-      lowerCall(C);
+      lowerExpr(C);
       return;
     }
     // `<-q` through a `<-` method (CON-22).
@@ -1134,6 +1449,26 @@ void Body::finish() {
       BB.Term.Set = true;
     }
   removeDeadBlocks(F);
+  // A body that could not be lowered whole is not checked (its moves and
+  // writes are partial); the module fails anyway.
+  if (L.Reported != StartReported)
+    return;
+  // Use after move (OWN-R3), on the graph with its moves in place.
+  for (const MoveError &E : checkMoves(F)) {
+    SourceLoc At = L.locOf(E.Use);
+    L.Failed = true;
+    ++L.Reported;
+    auto D = L.Diags.report(At, diag::err_use_after_move);
+    D << F.Locals[E.Local].Name;
+    if (SourceLoc From = L.locOf(E.Moved); From.isValid())
+      D.note(From, "moved here");
+  }
+  if (L.Opts.CheckOnly || L.Failed)
+    return;
+  // The drops (P04.09): the one pass that knows which owners are live.
+  std::string Err;
+  if (!elaborateDrops(M, F, &Err))
+    L.internalError(Pos, "drop elaboration of " + F.Name + ": " + Err);
 }
 
 void Body::prologueSince(size_t Mark) {
@@ -1160,6 +1495,7 @@ bool Body::bindResults(ArrayRef<ResultVar> Rs, SourceLoc At) {
       LocalId Cell = FB.newLocal(ctx().ptr(T), Local::Var, R.Name.str());
       F.Locals[Cell].Source = true;
       F.Locals[Cell].Deref = true;
+      ownCell(Cell, R.Ty);
       Aliases[R.V] = Cell;
       Scopes.back().Locals.push_back(Init);
       Scopes.back().Locals.push_back(Cell);
@@ -1205,6 +1541,9 @@ void Body::bindParam(unsigned K, const S::Var *V, Lowering::Pass P,
   case Lowering::Pass::Value:
     Vars[V] = FB.param(K);
     F.Locals[FB.param(K)].Source = true;
+    // A `move` parameter owns its value: the function drops it (P04.09).
+    if (modeOf(V) == S::Var::Owned || modeOf(V) == S::Var::MoveParam)
+      ownLocal(FB.param(K), tyOfObj(V));
     return;
   case Lowering::Pass::View:
     break;
@@ -1226,10 +1565,11 @@ void Body::bindParam(unsigned K, const S::Var *V, Lowering::Pass P,
   FB.storageLive(Loc);
   Val In = E.param(K);
   Val Ptr = E.fld(In, 0), Len = E.fld(In, 1);
+  // (A borrowed string's capacity is its length, as a borrowed slice's: its
+  // bytes are another's, which a clone copies; borrowedSeq.)
   if (Str)
     FB.assign(FB.local(Loc),
-              FB.aggregate(AggKind::String, GT,
-                           {Ptr.Op, Len.Op, constInt(ctx().u64(), 0)}));
+              FB.aggregate(AggKind::String, GT, {Ptr.Op, Len.Op, Len.Op}));
   else
     FB.assign(FB.local(Loc), FB.aggregate(AggKind::Slice, GT,
                                           {Ptr.Op, Len.Op, Len.Op,
@@ -1258,6 +1598,7 @@ void Body::cellParams(ArrayRef<S::Var *> Params) {
     LocalId Cell = FB.newLocal(ctx().ptr(Ty), Local::Var, V->Name.str());
     F.Locals[Cell].Source = true;
     F.Locals[Cell].Deref = true;
+    ownCell(Cell, tyOfObj(V));
     // The cell stands for the parameter in the debugger: its number is the
     // parameter's (a View's variable has it already; V074).
     const uint32_t Arg = F.Locals[Param].ArgNo;
@@ -1292,8 +1633,14 @@ void Body::enterCells(const ast::BlockStmt *Block) {
     LocalId Old = FB.newTemp(ctx().ptr(Ty));
     FB.assign(FB.local(Old), FB.use(copyOf(FB.local(Cell))));
     allocCell(Cell, Ty, nullptr);
-    FB.assign(FB.deref(FB.local(Cell)),
-              FB.use(copyOf(FB.deref(FB.local(Old)))));
+    // The value moves into the cell: the parameter's own slot is left zero
+    // (its drop at the return does nothing, P04.09). A cell may outlive the
+    // call, so an interface value lent to it is boxed (takeValue, R1).
+    Operand V = copyOf(FB.deref(FB.local(Old)));
+    if (auto CT = CellTypes.find(Cell);
+        CT != CellTypes.end() && L.needsDrop(CT->second))
+      V = takeValue(std::move(V), CT->second, /*Move=*/true);
+    FB.assign(FB.deref(FB.local(Cell)), FB.use(std::move(V)));
   }
   EntryCells.clear();
 }
@@ -1405,7 +1752,7 @@ void Body::lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs) {
     } Reset{*this, PkgScope};
     if (E.Lhs.size() == 1) {
       S::Var *V = E.Lhs[0];
-      Operand Val = valueFor(E.Init, tyOfObj(V));
+      Operand Val = ownedValue(E.Init, tyOfObj(V));
       auto G = L.Globals.find(V);
       if (G != L.Globals.end()) {
         at(E.Init);
@@ -1588,6 +1935,17 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
   // the start of each iteration; an `&` variable is a pointer to the element.
   LocalId ValLoc = NoId;
   VarSlot KeyS, ValS;
+  // RNG-1, P04.09: a borrowed value variable (an owning element) is the
+  // element itself, not a copy of its header: a nil map made through it
+  // (`d.Index["x"] = 1`, `put(d)`, `d.Put()`) is made in the collection
+  // (ADR-0018 amendment point 5). It is the `&` form's pointer, read only.
+  const bool InPlace =
+      Define && WantVal && !Alias && ValVar && VG &&
+      modeOf(ValVar) == S::Var::Borrowed &&
+      (W == Walk::Array || W == Walk::PtrArray || W == Walk::Map ||
+       (W == Walk::Seq && SI.K == SeqKind::Slice)) &&
+      L.lowerType(tyOfObj(ValVar), R->getBegin()) == VG &&
+      !(Facts && Facts->Cells.count(ValVar));
   auto DeclareDef = [&](const ast::Expr *T, VarSlot &Sl) {
     if (IsBlank(T))
       return true;
@@ -1606,7 +1964,7 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
   if (Define) {
     if (!DeclareDef(R->Key, KeyS))
       return popScope();
-    if (Alias) {
+    if (Alias || InPlace) {
       if (!ValVar || !VG) {
         unsupported(R->Value, "this `&` range variable");
         return popScope();
@@ -1623,6 +1981,20 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
     }
   }
 
+  // `move(m[k])` of the current entry moves the value variable (ADR-0016
+  // point 5): the map variable, the key variable and the value's place.
+  bool PushedRange = false;
+  if (W == Walk::Map && Define && (ValS.P.Ty || InPlace) && R->Key)
+    if (auto *MId = dyn_cast<ast::Ident>(unparen(R->X)))
+      if (auto *KId = dyn_cast<ast::Ident>(unparen(R->Key))) {
+        auto MU = I.Uses.find(MId);
+        auto KD = I.Defs.find(KId);
+        if (MU != I.Uses.end() && KD != I.Defs.end() && KD->second) {
+          MapRanges.push_back({MU->second, KD->second,
+                               InPlace ? FB.deref(FB.local(ValLoc)) : ValS.P});
+          PushedRange = true;
+        }
+      }
   // The map iterator (its iteration ends with this scope, on every way out)
   // and the entry pointers.
   LocalId ItL = NoId;
@@ -1740,19 +2112,36 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
   auto KeyOf = [&](const ast::Expr *T) {
     return W == Walk::Map ? ElemFor(placeOf(KeyV), T) : KeyV;
   };
+  // The value of a variable of the clause for this iteration: an owned one
+  // (a shared handle; RNG-1: an owning element is borrowed) gets a copy, and
+  // the one of the iteration before is dropped as it is replaced (P04.09).
+  auto SetVar = [&](VarSlot &Sl, const ast::Expr *T, Operand V) {
+    const S::Var *SV = nullptr;
+    if (auto D = I.Defs.find(cast<ast::Ident>(unparen(T))); D != I.Defs.end())
+      SV = dyn_cast_or_null<S::Var>(D->second);
+    S::Type *ST = SV ? tyOfObj(SV) : nullptr;
+    const bool Owns = ST && L.needsDrop(ST) && modeOf(SV) == S::Var::Owned;
+    if (Owns)
+      V = takeValue(std::move(V), ST);
+    FB.assign(Sl.P, FB.use(ToType(std::move(V), Sl.P.Ty)));
+    if (Owns && Sl.Cell == NoId)
+      if (FuncId G = L.dropGlue(ST, R->getBegin()); G != NoId)
+        FB.function().Blocks[FB.block()].Stmts.back().DropOld = G;
+  };
   if (Define) {
     at(R);
-    // A variable a literal that escapes captures is new in each iteration.
+    // A variable a literal that escapes captures is new in each iteration
+    // (the cell of the one before is released: CLO-2).
     if (KeyS.Cell != NoId)
-      allocCell(KeyS.Cell, KeyS.P.Ty, R);
+      allocCell(KeyS.Cell, KeyS.P.Ty, R, /*DropOld=*/true);
     if (ValS.Cell != NoId)
-      allocCell(ValS.Cell, ValS.P.Ty, R);
+      allocCell(ValS.Cell, ValS.P.Ty, R, /*DropOld=*/true);
     if (KeyS.P.Ty)
-      FB.assign(KeyS.P, FB.use(ToType(KeyOf(R->Key), KeyS.P.Ty)));
-    if (Alias)
+      SetVar(KeyS, R->Key, KeyOf(R->Key));
+    if (Alias || InPlace)
       FB.assign(FB.local(ValLoc), FB.addrOf(ValP, true));
     else if (ValS.P.Ty)
-      FB.assign(ValS.P, FB.use(ToType(ValueOf(R->Value), ValS.P.Ty)));
+      SetVar(ValS, R->Value, ValueOf(R->Value));
   } else if (WantKey || WantVal) {
     // `for k, v = range x`: each iteration is the assignment `k, v = key,
     // value` (Go spec): the operands of both places first (phase 1), the
@@ -1770,11 +2159,19 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       DoV = !VD.Blank;
     }
     at(R);
+    // (An owning key or element is cloned: the target gets a value of its
+    // own and the collection keeps its, as with `v = xs[i].Clone()`; P04.09.)
+    auto Snap = [&](Operand X, S::Type *From) {
+      if (From && L.needsDrop(From) && !L.isSharedHandle(From) &&
+          X.type() == L.lowerType(From, R->getBegin()))
+        return cloneValue(std::move(X), From, R);
+      return copyOf(FB.temp(FB.use(std::move(X))));
+    };
     Operand K, V;
     if (DoK)
-      K = copyOf(FB.temp(FB.use(KeyOf(R->Key))));
+      K = Snap(KeyOf(R->Key), MT ? MT->Key : nullptr);
     if (DoV)
-      V = copyOf(FB.temp(FB.use(ValueOf(R->Value))));
+      V = Snap(ValueOf(R->Value), MT ? MT->Elem : SI.Elem);
     if (DoK)
       deriveDest(KD);
     if (DoV)
@@ -1788,7 +2185,19 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
       if (!D.P.Ty)
         return;
       at(R);
+      // (The place's old value is dropped as it is replaced, and a shared
+      // handle stored is a copy: P04.09.)
+      const Local &Root = FB.function().Locals[D.P.Local];
+      const bool Borrowed =
+          !Root.Owned &&
+          (Root.K == Local::Arg || (Root.K == Local::Var && D.P.Proj.empty()));
+      const bool Owns = D.STy && L.needsDrop(D.STy) && !Borrowed;
+      if (Owns)
+        X = takeValue(std::move(X), D.STy);
       FB.assign(D.P, FB.use(ToType(std::move(X), D.P.Ty)));
+      if (Owns)
+        if (FuncId G = L.dropGlue(D.STy, R->getBegin()); G != NoId)
+          FB.function().Blocks[FB.block()].Stmts.back().DropOld = G;
     };
     if (DoK)
       Store(KD, std::move(K));
@@ -1818,7 +2227,9 @@ void Body::lowerRange(const ast::RangeStmt *R, std::string Label) {
     FB.unreachable();
   }
   FB.setBlock(Exit);
-  if (Alias)
+  if (Alias || InPlace)
     Aliases.erase(ValVar);
+  if (PushedRange)
+    MapRanges.pop_back();
   popScope(); // ends the map iteration on the way out of the loop
 }

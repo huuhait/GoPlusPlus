@@ -781,9 +781,48 @@ uint64_t lowerAndCount(unsigned N, std::string (*Make)(unsigned)) {
 /// runtime functions are a fixed part, which the per-unit limit allows for.
 void expectLoweredStepsLinear(unsigned N, std::string (*Make)(unsigned)) {
   uint64_t S1 = lowerAndCount(N, Make), S4 = lowerAndCount(4 * N, Make);
-  const uint64_t C = 400; // GIR steps one unit may make, runtime included
+  // GIR steps one unit may make, runtime included (drops and glue since
+  // P04.09; the linearity checks below are unchanged).
+  const uint64_t C = 600;
   EXPECT_TRUE(S1 != 0 && S1 <= C * N && S4 <= C * 4 * N && 2 * S4 <= 9 * S1)
       << "steps(N) = " << S1 << ", steps(4N) = " << S4 << ", N = " << N;
+}
+
+/// A body of N statements that move nothing out of a variable (P04.09):
+/// `gopp check` walks it once to see that (Body::mayMoveVariable) and lowers
+/// none of it.
+std::string unmovedOfN(unsigned N) {
+  std::string S = "package main\n\nfunc f(xs []int) int {\n\tn := 0\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "\tn += len(xs) + " + std::to_string(I) + "\n";
+  return S + "\treturn n\n}\n\nfunc main() { println(f(nil)) }\n";
+}
+
+/// The lowering steps `gopp check`'s ownership check takes on N units.
+uint64_t checkOwnershipSteps(unsigned N, bool Rescan) {
+  Checked P(unmovedOfN(N));
+  EXPECT_EQ(P.errors(), "") << "N = " << N;
+  LowerOptions O;
+  O.RescanMoveFilter = Rescan;
+  uint64_t A = loweringSteps();
+  EXPECT_TRUE(checkOwnership(*P.CP, P.Ld->filesOf(P.CP), P.Diags, O));
+  return loweringSteps() - A;
+}
+
+TEST(GIRStress, TheCheckOfMovesWalksABodyOnce) {
+  // Manager decision M3: a body that moves nothing is walked, not lowered,
+  // and the walk is linear; its quadratic mode (a rescan at each node) fails
+  // the same count (decision M6).
+  const unsigned N = 2000;
+  for (bool Rescan : {false, true}) {
+    uint64_t S1 = checkOwnershipSteps(N, Rescan),
+             S4 = checkOwnershipSteps(4 * N, Rescan);
+    const uint64_t C = 40;
+    const bool Linear =
+        S1 != 0 && S1 <= C * N && S4 <= C * 4 * N && 2 * S4 <= 9 * S1;
+    EXPECT_EQ(Linear, !Rescan) << "steps(N) = " << S1 << ", steps(4N) = " << S4
+                               << ", N = " << N << ", rescan " << Rescan;
+  }
 }
 
 TEST(GIRStress, LoweringALongConcatChainIsLinear) {
@@ -1033,6 +1072,43 @@ void expectWalksFollow(unsigned N, std::string (*Make)(unsigned)) {
   uint64_t S1 = lowerAndCountWalks(N, Make);
   uint64_t S16 = lowerAndCountWalks(16 * N, Make);
   EXPECT_TRUE(walksFollow(S1, S16, N));
+}
+
+// P04.09 review R17: the glue of each type of a chain of N asks whether a
+// `drop` or `Clone` the program wrote is reachable from it
+// (Lowering::reachesUserGlue, which decides whether types that differ only in
+// their units may share it): one walk of the chain in all, every type keeps
+// its answer. The control walks the type at every question
+// (LowerOptions::RewalkUserGlue, N walks of the chain) and must fail the same
+// check. Two chains: the last type has a drop method, or none has.
+std::string userGlueChainOfN(unsigned N, bool Drop) {
+  std::string S = "package main\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type G" + std::to_string(I) + " struct {\n\tx G" +
+         std::to_string(I + 1) + "\n\ts string\n}\n\n";
+  std::string Last = "G" + std::to_string(N);
+  S += "type " + Last + " struct{ s string }\n\n";
+  if (Drop)
+    S += "func (g *" + Last + ") drop() { println(g.s) }\n\n";
+  return S +
+         "func main() {\n\tvar g G0\n\tg.s = \"a\"\n\tprintln(len(g.s))\n}\n";
+}
+std::string userGlueDropChainOfN(unsigned N) {
+  return userGlueChainOfN(N, true);
+}
+std::string userGluePlainChainOfN(unsigned N) {
+  return userGlueChainOfN(N, false);
+}
+
+TEST(GIRStress, TheUserGlueQuestionWalksAChainOnce) {
+  for (auto *Make : {userGlueDropChainOfN, userGluePlainChainOfN}) {
+    expectWalksFollow(20, Make);
+    LowerOptions Rewalk;
+    Rewalk.RewalkUserGlue = true;
+    uint64_t S1 = lowerAndCountWalks(20, Make, Rewalk);
+    uint64_t S16 = lowerAndCountWalks(320, Make, Rewalk);
+    EXPECT_FALSE(walksFollow(S1, S16, 20)) << S1 << " -> " << S16;
+  }
 }
 
 // P04.10 review R2: the source scan for the text of a call

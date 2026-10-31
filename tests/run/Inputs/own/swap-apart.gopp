@@ -1,0 +1,61 @@
+package main
+
+type R struct{ s string }
+
+func (r *R) drop() { println("drop", r.s) }
+
+type Trio struct{ a, b, c R }
+
+type Arrs struct{ x, y, z [2]R }
+
+func mk(s string) R { return R{s + "!"} }
+
+func fields() {
+	t := Trio{mk("a"), mk("b"), mk("c")}
+	t.a, t.b, t.c = t.b, t.c, t.a
+	println(t.a.s, t.b.s, t.c.s)
+}
+
+func locals() {
+	a, b, c := mk("a"), mk("b"), mk("c")
+	a, b, c = b, c, a
+	println(a.s, b.s, c.s)
+}
+
+func elems() {
+	xs := []R{mk("a"), mk("b"), mk("c")}
+	xs[0], xs[1], xs[2] = xs[1], xs[2], xs[0]
+	println(xs[0].s, xs[1].s, xs[2].s)
+}
+
+func pointer(p *Trio) {
+	p.a, (*p).b, p.c = (*p).b, p.c, p.a
+}
+
+func arrays(h *Arrs, i, j, k int) {
+	h.x[i], h.y[j], h.z[k] = h.y[j], h.z[k], h.x[i]
+}
+
+func keys() {
+	m := map[string]R{}
+	m["a"] = mk("a")
+	m["b"] = mk("b")
+	m["c"] = mk("c")
+	m["a"], m["b"], m["c"] = m["b"], m["c"], m["a"]
+	println(m["a"].s, m["b"].s, m["c"].s)
+}
+
+func main() {
+	fields()
+	locals()
+	elems()
+	t := Trio{mk("a"), mk("b"), mk("c")}
+	pointer(&t)
+	println(t.a.s, t.b.s, t.c.s)
+	h := Arrs{[2]R{mk("x0"), mk("x1")}, [2]R{mk("y0"), mk("y1")},
+		[2]R{mk("z0"), mk("z1")}}
+	arrays(&h, 1, 0, 1)
+	println(h.x[1].s, h.y[0].s, h.z[1].s)
+	keys()
+	println("end")
+}

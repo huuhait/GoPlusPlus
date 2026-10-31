@@ -40,14 +40,17 @@ func snap() [6]int {
 		gopp_test_count(2, 0), gopp_test_count(2, 2)}
 }
 
-// expect: allocs of the global allocator, of 1 and of 2 (frees are not made
-// here).
-func expect(name string, before [6]int, g, a, b int) {
+// expect: allocs of the global allocator, of 1 and of 2, and the frees of all
+// three (the buffers growth left, P04.09; 0 when not given).
+func expect(name string, before [6]int, g, a, b int) { expectFrees(name, before, g, a, b, 0) }
+
+// (Not variadic: a variadic call would allocate in the global allocator.)
+func expectFrees(name string, before [6]int, g, a, b int, wantFrees int) {
 	now := snap()
 	check(name+": global", now[0]-before[0], g)
 	check(name+": A", now[2]-before[2], a)
 	check(name+": B", now[4]-before[4], b)
-	check(name+": frees", (now[1]-before[1])+(now[3]-before[3])+(now[5]-before[5]), 0)
+	check(name+": frees", (now[1]-before[1])+(now[3]-before[3])+(now[5]-before[5]), wantFrees)
 }
 
 func grow(move xs []int, n int) []int {
@@ -68,11 +71,11 @@ func main() {
 	b = snap()
 	// (a result of a call is moved into a move parameter: P04.09 adds move(x))
 	t.xs = grow(gopp_test_make_slice_int(1, 0, 0), 5) // cap 0 -> 1 -> 2 -> 4 -> 8
-	expect("field in A grows in A", b, 0, 5, 0)
+	expectFrees("field in A grows in A", b, 0, 5, 0, 5)
 	other := gopp_test_make_slice_int(2, 0, 0)
 	b = snap()
 	other = append(other, 1, 2, 3)
-	expect("a slice in B grows in B", b, 0, 0, 1)
+	expectFrees("a slice in B grows in B", b, 0, 0, 1, 1)
 	check("words", gopp_test_word_int(t.xs)*10+gopp_test_word_int(other), 12)
 
 	// Appending to the field directly.
@@ -81,7 +84,7 @@ func main() {
 		t.xs = append(t.xs, i)
 	}
 	// cap 8 holds 8: 3 more elements need cap 16
-	expect("append(t.xs)", b, 0, 1, 0)
+	expectFrees("append(t.xs)", b, 0, 1, 0, 1)
 	check("field word", gopp_test_word_int(t.xs), 1)
 
 	// A struct copied into a slice of structs made in allocator 2: the part
@@ -89,7 +92,7 @@ func main() {
 	ts := gopp_test_make_slice_tt(2, 0, 0)
 	b = snap()
 	ts = append(ts, T{n: 1, xs: grow(gopp_test_make_slice_int(1, 0, 0), 11), m: nil})
-	expect("append(ts, T{...})", b, 0, 6, 1) // the part: make and five growths
+	expectFrees("append(ts, T{...})", b, 0, 6, 1, 6) // the part: make and five growths
 	check("outer word", gopp_test_word_tt(ts), 2)
 	check("part word kept", gopp_test_word_int(ts[0].xs), 1)
 	b = snap()
@@ -102,7 +105,7 @@ func main() {
 	}
 	// 13 elements in cap 16; 20 more: 16 -> 32 -> 64, in the part's allocator
 	// and not in the container's
-	expect("part grows in its own", b, 0, 2, 0)
+	expectFrees("part grows in its own", b, 0, 2, 0, 2)
 	check("part word still", gopp_test_word_int(ts[0].xs), 1)
 
 	// A slice of slices: the outer in allocator 1, each inner in allocator 2.
@@ -114,7 +117,7 @@ func main() {
 	}
 	// each inner: a make and three growths (0 -> 1 -> 2 -> 4) in B; the outer
 	// grows 0 -> 1 -> 2 -> 4: three in A
-	expect("slices of slices", b, 0, 3, 12)
+	expectFrees("slices of slices", b, 0, 3, 12, 12)
 	check("outer", gopp_test_word_ints(outer), 1)
 	for i := 0; i < 3; i++ {
 		check("inner", gopp_test_word_int(outer[i]), 2)
@@ -125,7 +128,7 @@ func main() {
 	}
 	// 3 elements in cap 3: five need cap 6 (round up to the size class):
 	// one growth in B each, none in A.
-	expect("grow the inner ones", b, 0, 0, 3)
+	expectFrees("grow the inner ones", b, 0, 0, 3, 3)
 	for i := 0; i < 3; i++ {
 		check("inner after", gopp_test_word_int(outer[i]), 2)
 	}
@@ -142,7 +145,7 @@ func main() {
 	arr[0] = append(arr[0], 1)
 	arr[1] = append(arr[1], 1)
 	arr[2] = append(arr[2], 1, 2)
-	expect("array of slices: grown", b, 1, 1, 1)
+	expectFrees("array of slices: grown", b, 1, 1, 1, 3)
 	check("array words", gopp_test_word_int(arr[0])*100+gopp_test_word_int(arr[1])*10+gopp_test_word_int(arr[2]), 120)
 
 	// A slice moved between variables takes its word along.
@@ -159,7 +162,7 @@ func main() {
 	b = snap()
 	m["a"] = append(m["a"], 1, 2, 3)
 	m["a"] = append(m["a"], 4)
-	expect("map value grows in its own allocator", b, 0, 0, 2)
+	expectFrees("map value grows in its own allocator", b, 0, 0, 2, 2)
 	check("map word", gopp_test_word_map_si(m), 1)
 	check("value word", gopp_test_word_int(m["a"]), 2)
 	// A new key from nothing is a nil slice: the global allocator.

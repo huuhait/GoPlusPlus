@@ -39,8 +39,9 @@ func main() {
 // CHECK-NOT: mem_resize
 // CHECK-LABEL: fn _GPF4mainE8escaping()
 // The cell of `i` is a pointer local, made at the declaration, and again for
-// every iteration (after the first, in the block of the post statement).
-// CHECK: let _{{[0-9]+}}: *i64  ; i
+// every iteration (after the first, in the block of the post statement). It
+// owns one reference to its cell (released where it dies, P04.09).
+// CHECK: let _{{[0-9]+}}: *i64 [owned @_GPF4goppE12cell_release]  ; i
 // CHECK: call const fn @_GPF4goppE10mem_resize
 // CHECK: call const fn @_GPF4goppE10mem_resize
 // CHECK: call const fn @_GPF4goppE10mem_resize

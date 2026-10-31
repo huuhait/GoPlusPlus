@@ -558,12 +558,24 @@ TEST(GIRSerialize, SelfNamingTypesAndOwnedTemporariesRoundTrip) {
   Function &Fn = *F;
   M->addFunction(std::move(F));
   FuncBuilder B(*M, Fn);
+  FuncId Glue;
+  {
+    auto G = std::make_unique<Function>();
+    G->Name = "rec.glue";
+    G->Sig = C1.func({C1.ptr(C1.u8())}, C1.unit(), false, CallConv::Go);
+    G->CC = CallConv::Go;
+    Function &Gn = *G;
+    Glue = M->addFunction(std::move(G));
+    FuncBuilder GB(*M, Gn);
+    GB.ret();
+  }
   LocalId T = B.newTemp(S);
   Fn.Locals[T].Owned = true;
+  Fn.Locals[T].Glue = Glue;
   B.assign(B.local(T), B.use(copyOf(B.local(B.param(0)))));
   B.ret();
   ASSERT_EQ(errorsOf(*M), "");
-  EXPECT_NE(text(*M).find("[owned]"), std::string::npos) << text(*M);
+  EXPECT_NE(text(*M).find("[owned @rec.glue]"), std::string::npos) << text(*M);
 
   std::string Bytes = writeModule(*M);
   EXPECT_EQ(Bytes, writeModule(*M));
@@ -574,6 +586,7 @@ TEST(GIRSerialize, SelfNamingTypesAndOwnedTemporariesRoundTrip) {
   EXPECT_EQ(writeModule(**R), Bytes);
   EXPECT_EQ(errorsOf(**R), "");
   EXPECT_TRUE((*R)->Funcs[0]->Locals[T].Owned);
+  EXPECT_EQ((*R)->Funcs[0]->Locals[T].Glue, Glue);
   EXPECT_FALSE((*R)->Funcs[0]->Locals[T].Source);
   Type *S2 = (*R)->Funcs[0]->Sig->elems()[0];
   ASSERT_TRUE(S2->isRec());

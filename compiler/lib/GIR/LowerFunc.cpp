@@ -281,28 +281,81 @@ Operand Body::ownBoxCopy(Operand View, const S::Var *V, const ast::Node *N) {
   return copyOf(FB.temp(FB.cast(CastKind::PtrToPtr, std::move(Raw), PT)));
 }
 
-Operand Body::envPtr(Type *EnvT, Operand Val, bool Heap, const ast::Node *N) {
-  Type *PU8 = ctx().ptr(ctx().u8());
+Operand Body::envPtr(Type *EnvT, Operand Init, bool Heap, const ast::Node *N,
+                     FuncId Drop) {
+  Type *PU8 = ctx().ptr(ctx().u8()), *U64 = ctx().u64();
+  Rt E(M, FB);
   at(N);
   if (Heap) {
-    // On the heap (it leaks until P04.09 gives it a drop).
-    Operand Raw = callFn(
-        L.rt(RtFn::MemResize, N->getBegin()),
-        {zeroOf(PU8),
-         constInt(ctx().u64(), std::max<uint64_t>(L.layout(EnvT).Size, 1)),
-         constBool(ctx(), true)});
-    LocalId EP = localOf(copyOf(
-        FB.temp(FB.cast(CastKind::PtrToPtr, std::move(Raw), ctx().ptr(EnvT)))));
-    FB.assign(FB.deref(FB.local(EP)), FB.use(std::move(Val)));
-    return copyOf(
-        FB.temp(FB.cast(CastKind::PtrToPtr, copyOf(FB.local(EP)), PU8)));
+    // On the heap: [count 1, Drop, the value]; the last release of a func
+    // value that holds it drops the value and frees it (OWN-C3, P04.09).
+    Operand Raw =
+        callFn(L.rt(RtFn::MemResize, N->getBegin()),
+               {zeroOf(PU8), constInt(U64, L.layout(EnvT).Size + TI::RcHeader),
+                constBool(ctx(), true)});
+    Val R = E.snap(Val{&E, Raw});
+    E.store(R, U64, E.u(1));
+    if (Drop != NoId)
+      E.store(E.padd(R, E.u(8)), PU8,
+              E.tmp(FB.cast(CastKind::PtrToPtr, E.func(Drop).Op, PU8)));
+    Val EnvP = E.snap(E.padd(R, E.u(TI::RcHeader)));
+    E.store(EnvP, EnvT, Val{&E, std::move(Init)});
+    return EnvP.Op;
   }
-  // In the frame, for as long as the value is used (it does not escape).
-  LocalId Tmp = FB.newTemp(EnvT);
-  FB.assign(FB.local(Tmp), FB.use(std::move(Val)));
-  return copyOf(
-      FB.temp(FB.cast(CastKind::PtrToPtr,
-                      copyOf(FB.temp(FB.addrOf(FB.local(Tmp), true))), PU8)));
+  // In the frame, for as long as the value is used (it does not escape,
+  // CLO-1): the immortal count, which no copy changes and no release ends.
+  Type *Framed = ctx().tuple({U64, PU8, EnvT});
+  LocalId Tmp = FB.newTemp(Framed);
+  FB.assign(FB.field(FB.local(Tmp), 0), FB.use(constInt(U64, TI::Immortal)));
+  FB.assign(FB.field(FB.local(Tmp), 1), FB.use(zeroOf(PU8)));
+  FB.assign(FB.field(FB.local(Tmp), 2), FB.use(std::move(Init)));
+  return E.to(PU8, E.addrOf(FB.field(FB.local(Tmp), 2))).Op;
+}
+
+FuncId Lowering::envCellsDrop(unsigned First, unsigned N) {
+  auto Key = std::make_pair(First, N);
+  if (auto It = EnvCellDrops.find(Key); It != EnvCellDrops.end())
+    return It->second;
+  FuncId Rel = rt(RtFn::CellRelease, SourceLoc());
+  if (Rel == NoId)
+    return NoId;
+  auto Fn = std::make_unique<Function>();
+  Fn->Name = runtimeSymbol("env_cells_" + std::to_string(First) + "_" +
+                           std::to_string(N));
+  Type *PU8 = Ctx.ptr(Ctx.u8());
+  Fn->Sig = Ctx.func({PU8}, Ctx.unit());
+  Fn->Link = Linkage::Internal;
+  Fn->CC = CallConv::Go;
+  Function *FP = Fn.get();
+  FuncId Id = M->addFunction(std::move(Fn));
+  EnvCellDrops[Key] = Id;
+  Rt E(*M, *FP);
+  // Each field is a pointer: the field K is at 8 K.
+  for (unsigned K = First; K < First + N; ++K)
+    E.call(Rel, {E.padd(E.param(0), E.u(8 * uint64_t(K)))});
+  E.finish();
+  return Id;
+}
+
+FuncId Lowering::envIfaceDrop() {
+  if (EnvIfaceDrop != NoId)
+    return EnvIfaceDrop;
+  FuncId Rel = rt(RtFn::IfaceRelease, SourceLoc());
+  if (Rel == NoId)
+    return NoId;
+  auto Fn = std::make_unique<Function>();
+  Fn->Name = runtimeSymbol("env_iface");
+  Type *PU8 = Ctx.ptr(Ctx.u8());
+  Fn->Sig = Ctx.func({PU8}, Ctx.unit());
+  Fn->Link = Linkage::Internal;
+  Fn->CC = CallConv::Go;
+  Function *FP = Fn.get();
+  EnvIfaceDrop = M->addFunction(std::move(Fn));
+  Rt E(*M, *FP);
+  // (code, itab, data): the interface is the last two words.
+  E.call(Rel, {E.padd(E.param(0), E.u(8))});
+  E.finish();
+  return EnvIfaceDrop;
 }
 
 //===----------------------------------------------------------------------===//
@@ -342,7 +395,7 @@ Operand Body::lowerFuncLit(const ast::FuncLit *Lit) {
 
 Operand Body::makeClosure(const ast::Expr *Lit, const LitFacts &LF, Type *VT,
                           const sym::Node *CN,
-                          llvm::function_ref<void(Body &)> Fill) {
+                          llvm::function_ref<void(Body &)> Fill, S::Type *ST) {
   // The closure function: a function of its own, named by its place in the
   // enclosing function (sym::Context::closure).
   auto Fn = std::make_unique<Function>();
@@ -360,15 +413,22 @@ Operand Body::makeClosure(const ast::Expr *Lit, const LitFacts &LF, Type *VT,
     B.Facts = Facts;
     Fill(B);
   }
-  // The environment: a pointer to each captured variable's storage.
+  // The environment: a pointer to each captured variable's storage. One that
+  // escapes holds a reference to each cell (CLO-2), released with it.
   Type *PU8 = ctx().ptr(ctx().u8());
   Operand Env = zeroOf(PU8);
   if (!LF.Captures.empty()) {
     SmallVector<Operand, 4> Ptrs;
     SmallVector<Type *, 4> PTys;
+    FuncId Retain = LF.Escapes ? L.rt(RtFn::CellRetain, Lit->getBegin()) : NoId;
     for (const S::Var *V : LF.Captures) {
       ++EscapeSteps;
       Operand P = varAddr(V, Lit);
+      if (Retain != NoId) {
+        P = copyOf(FB.local(localOf(std::move(P))));
+        Rt E(M, FB);
+        callFn(Retain, {E.to(PU8, Val{&E, P}).Op});
+      }
       PTys.push_back(P.type());
       Ptrs.push_back(std::move(P));
     }
@@ -376,10 +436,12 @@ Operand Body::makeClosure(const ast::Expr *Lit, const LitFacts &LF, Type *VT,
     at(Lit);
     Env =
         envPtr(EnvT, copyOf(FB.temp(FB.aggregate(AggKind::Tuple, EnvT, Ptrs))),
-               LF.Escapes, Lit);
+               LF.Escapes, Lit,
+               LF.Escapes ? L.envCellsDrop(0, LF.Captures.size()) : NoId);
   }
   at(Lit);
-  return funcValue(Id, std::move(Env), VT);
+  // A fresh func value: the statement's until it is stored or passed.
+  return ownTemp(funcValue(Id, std::move(Env), VT), ST ? ST : sTyOf(Lit));
 }
 
 bool Body::bindCaptures(const LitFacts &LF, const ast::Node *At) {
@@ -577,18 +639,24 @@ FuncId Lowering::methodValueThunk(const S::Func *F, Type *CodeTy,
     Type *FT = methodSig(F->sig(), PU8, At);
     if (!FT)
       return Id;
-    // The environment is (code, data): the itab's entry and the data word.
-    Place Pair = E.at(Env, Ctx.tuple({PU8, PU8}));
+    // The environment is (code, itab, data): the itab's entry and the
+    // interface (its reference keeps the box alive: P04.09).
+    Place Pair = E.at(Env, Ctx.tuple({PU8, PU8, PU8}));
     Val Fp = E.snap(E.val(FB.field(Pair, 0)));
-    Val Data = E.snap(E.val(FB.field(Pair, 1)));
+    Val Data = E.snap(E.val(FB.field(Pair, 2)));
     LocalId FnL = FB.newTemp(FT);
     FB.assign(FB.local(FnL), FB.cast(CastKind::PtrToPtr, Fp.Op, FT));
     Callee = copyOf(FB.local(FnL));
     Args.push_back(Data.Op);
   } else {
-    // The pointer, or the copy of the value, the method value bound.
+    // The pointer, or the copy of the value, the method value bound. A
+    // `move` receiver is taken out of the environment by the call: a second
+    // call gets the zero value (OWN-R5), and the environment drops what is
+    // left once (P04.09).
     Type *P0 = M->func(Real).Sig->elems()[0];
     Args.push_back(E.load(Env, P0).Op);
+    if (F->MoveRecv)
+      E.store(Env, P0, E.zero(P0));
     Callee = constFunc(*M, Real);
   }
   for (size_t K = 1; K < CodeTy->elems().size(); ++K)
@@ -734,6 +802,8 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
     return failed(Sel->X, errorValue(ctx()));
   Type *StoreTy = nullptr;
   Operand SV;
+  // What the environment of an escaping one drops (P04.09).
+  FuncId EnvDrop = NoId;
   if (F->IsInterfaceMethod) {
     const Lowering::IfaceMethods *Ms = L.ifaceMethods(BT, Sel->getBegin());
     if (!Ms)
@@ -758,8 +828,22 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
     Val Bits = E.to(ctx().u64(), It);
     Val Tab = E.to(PU8, Bits - (Bits & 1));
     Val Fp = E.load(E.padd(Tab, E.u(8 * (uint64_t(Slot) + 1))), PU8);
-    StoreTy = ctx().tuple({PU8, PU8});
-    SV = copyOf(FB.temp(FB.aggregate(AggKind::Tuple, StoreTy, {Fp.Op, Data})));
+    if (Escapes) {
+      // It holds a reference to the box (a borrowed value is boxed: TYP-7),
+      // which its environment releases.
+      if (FuncId Cl = L.rt(RtFn::IfaceClone, Sel->getBegin()); Cl != NoId) {
+        LocalId Kept = FB.newTemp(ctx().iface());
+        FB.assign(FB.local(Kept), FB.use(zeroOf(ctx().iface())));
+        callFn(Cl, {E.to(PU8, E.addrOf(FB.local(Kept))).Op,
+                    E.to(PU8, E.addrOf(XP)).Op});
+        Itab = copyOf(FB.temp(FB.use(copyOf(FB.field(FB.local(Kept), 0)))));
+        Data = copyOf(FB.temp(FB.use(copyOf(FB.field(FB.local(Kept), 1)))));
+        EnvDrop = L.envIfaceDrop();
+      }
+    }
+    StoreTy = ctx().tuple({PU8, PU8, PU8});
+    SV = copyOf(
+        FB.temp(FB.aggregate(AggKind::Tuple, StoreTy, {Fp.Op, Itab, Data})));
   } else {
     auto FI = L.FuncIds.find(F);
     if (FI == L.FuncIds.end()) {
@@ -767,13 +851,8 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
         unsupported(Sel, "the method " + F->Name.str() + " as a value");
       return errorValue(ctx());
     }
-    if (F->MoveRecv) {
-      // Each call would consume the one bound receiver.
-      unsupported(Sel, "a method value of a method with a move receiver "
-                       "(P04.09)");
-      return errorValue(ctx());
-    }
-    if (!F->HasPtrRecv && F->Recv && L.recvModeOf(F) == S::Var::Borrowed) {
+    if (!F->HasPtrRecv && !F->MoveRecv && F->Recv &&
+        L.recvModeOf(F) == S::Var::Borrowed) {
       // CLO-5a: a value receiver of an owning type would need a copy no one
       // writes (or would see later writes): a compile error with the fix-its
       // `x.Clone().M` and `move(x).M`, which are not lowered either.
@@ -799,6 +878,26 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
         SV = copyOf(FB.temp(FB.addrOf(std::move(P), true)));
       }
       StoreTy = SV.type();
+      // One that escapes holds the cells of the variables its receiver is
+      // in (CLO-2), after the pointer.
+      if (Escapes && Known && !MIt->second.Captures.empty()) {
+        SmallVector<Operand, 4> Ops{SV};
+        SmallVector<Type *, 4> Tys{StoreTy};
+        FuncId Retain = L.rt(RtFn::CellRetain, Sel->getBegin());
+        for (const S::Var *V : MIt->second.Captures) {
+          Operand CP = copyOf(FB.local(localOf(varAddr(V, Sel))));
+          if (Retain != NoId) {
+            Rt E(M, FB);
+            callFn(Retain, {E.to(PU8, Val{&E, CP}).Op});
+          }
+          Tys.push_back(CP.type());
+          Ops.push_back(std::move(CP));
+        }
+        StoreTy = ctx().tuple(Tys);
+        at(Sel);
+        SV = copyOf(FB.temp(FB.aggregate(AggKind::Tuple, StoreTy, Ops)));
+        EnvDrop = L.envCellsDrop(1, MIt->second.Captures.size());
+      }
     } else {
       // The receiver is copied into the environment (CLO-5). A copy that
       // holds a view is a borrow (OWN-B1), which a method value that
@@ -825,6 +924,13 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
       } else {
         SV = lowerExpr(Sel->X);
       }
+      // The copy is the method value's own (P04.09): a `move` receiver is
+      // taken (OWN-R3; its environment is always on the heap, which drops
+      // what no call took), a shared handle retained in a heap environment.
+      if (L.needsDrop(RecvTy) && (F->MoveRecv || Escapes)) {
+        SV = takeValue(std::move(SV), RecvTy, /*Move=*/F->MoveRecv);
+        EnvDrop = L.dropGlue(RecvTy, Sel->getBegin());
+      }
     }
     if (!SV.type() || SV.type() != StoreTy)
       return failed(Sel->X, errorValue(ctx()));
@@ -832,7 +938,8 @@ Operand Body::lowerMethodValue(const ast::SelectorExpr *Sel,
   FuncId A = L.methodValueThunk(F, CodeTy, Sel->getBegin());
   if (A == NoId)
     return errorValue(ctx());
-  Operand Env = envPtr(StoreTy, std::move(SV), Escapes, Sel);
+  const bool Heap = Escapes || (F->MoveRecv && EnvDrop != NoId);
+  Operand Env = envPtr(StoreTy, std::move(SV), Heap, Sel, EnvDrop);
   at(Sel);
-  return funcValue(A, std::move(Env), VT);
+  return ownTemp(funcValue(A, std::move(Env), VT), sTyOf(Sel));
 }

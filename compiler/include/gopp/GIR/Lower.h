@@ -78,10 +78,16 @@ struct LowerOptions {
   /// Test-only: the question whether a type mentions a unit that a body
   /// shared across unit arguments does not know (GEN-14, P04.24,
   /// InstanceWalk::mentionsErasedUnit) walks the type every time it is
-  /// asked, not once per instance, and the unit-free identity of a type
-  /// (Lowering::unitFree) walks all of it every time: the quadratic walks
-  /// the stress test's control must catch.
+  /// asked, not once per instance, the unit-free identity of a type
+  /// (Lowering::unitFree) walks all of it every time, and so do the methods
+  /// a value's glue calls in such a body (InstanceWalk::userGlue, P04.09
+  /// review R17): the quadratic walks the stress test's control must catch.
   bool ForgetErasedUnits = false;
+  /// Test-only (P04.09 review R17): the question whether a type's glue calls
+  /// a `drop` or `Clone` the program wrote (Lowering::reachesUserGlue) walks
+  /// the type every time it is asked, not once: the quadratic walk the
+  /// stress test's control must catch.
+  bool RewalkUserGlue = false;
   /// The most instances of generic code one package may have, or its source
   /// size in bytes if that is more (GEN-5, P04.08: a chain of generics that
   /// each call the next twice with two bigger type arguments has 2^n, a
@@ -96,6 +102,16 @@ struct LowerOptions {
   /// per byte. Past it is one error (E0449) and no more instances. A test
   /// may lower it.
   uint64_t MaxWalkedNodes = 4000000;
+  /// `gopp check` (checkOwnership): lower the bodies that move out of a
+  /// variable (Body::mayMoveVariable) only to run the checks that need the
+  /// control-flow graph (use after move, P04.09). What the lowering cannot
+  /// do yet (E0439) and its internal errors are not reported, and a function
+  /// that hit one is not checked.
+  bool CheckOnly = false;
+  /// Test-only: the walk that decides which bodies `gopp check` lowers
+  /// rescans what it walked at each node (the quadratic control of the
+  /// stress test).
+  bool RescanMoveFilter = false;
 };
 
 /// Test-only (M8): the steps the lowering walks that make no GIR statement
@@ -129,6 +145,15 @@ std::unique_ptr<Module> lowerPackage(Context &Ctx, const SourceManager &SM,
 /// no zero value (E0448), and an instance past the limits (E0449). Only
 /// Opts.MaxInstances and Opts.MaxWalkedNodes are read. False after reporting.
 bool checkInstances(const sema::CheckedPackage &CP,
+                    llvm::ArrayRef<const ast::File *> Files,
+                    DiagnosticsEngine &Diags, const LowerOptions &Opts = {});
+
+/// The ownership checks of the control-flow graph (use after move, E0450)
+/// without code generation: `gopp check` calls it after the package
+/// type-checks and the instance checks pass. Lowers every body to GIR and
+/// runs the checks of drop elaboration's analyses on it, reporting only their
+/// errors. False after reporting.
+bool checkOwnership(const sema::CheckedPackage &CP,
                     llvm::ArrayRef<const ast::File *> Files,
                     DiagnosticsEngine &Diags, const LowerOptions &Opts = {});
 

@@ -61,11 +61,13 @@ Type *Lowering::mapType() {
     Type *U = Ctx.u64(), *P = Ctx.ptr(Ctx.u8());
     // count, nents, ecap, icap, entries, index, iters (running iterations),
     // the allocator that owns the header, the entries and the index
-    // (ADR-0029; null: the global allocator)
-    Ctx.setStructBody(S, {U, U, U, U, P, P, U, P});
+    // (ADR-0029; null: the global allocator), the running iterations
+    // themselves (a list through their `next`: map_delete asks which entry
+    // each is on, P04.09 R6)
+    Ctx.setStructBody(S, {U, U, U, U, P, P, U, P, P});
     // For the debugger (P04.12): `p m->count` is len(m).
     Ctx.setFieldNames(S, {"count", "nents", "ecap", "icap", "entries", "index",
-                          "iters", "alloc"});
+                          "iters", "alloc", "iterators"});
   }
   return Ctx.ptr(S);
 }
@@ -74,8 +76,13 @@ Type *Lowering::mapInfoType() {
   Type *S = Ctx.structTy("gopp.mapinfo");
   if (!S->hasBody()) {
     Type *U = Ctx.u64(), *P = Ctx.ptr(Ctx.u8());
-    Ctx.setStructBody(
-        S, {U, U, Ctx.func({P, U}, U), Ctx.func({P, P}, Ctx.boolean())});
+    // key size, value size, hash, eq, the drop glue of a key and of a value,
+    // and the clone glue of a key (a new entry owns a copy of its key,
+    // OWN-V4a); zero when the type owns nothing (P04.09)
+    Type *Drop = Ctx.func({P}, Ctx.unit());
+    Ctx.setStructBody(S, {U, U, Ctx.func({P, U}, U),
+                          Ctx.func({P, P}, Ctx.boolean()), Drop, Drop,
+                          Ctx.func({P, P}, Ctx.unit())});
   }
   return S;
 }
@@ -86,9 +93,11 @@ Type *Lowering::mapEntryArgType() {
     Type *U = Ctx.u64(), *P = Ctx.ptr(Ctx.u8()), *B = Ctx.boolean();
     // info, the map object, the key, the key kind (its eq glue's id), the
     // entry's map (copied in), the map the callee gets (an earlier equal
-    // entry's), the entry was there and nil, this one copies out
+    // entry's), the entry was there and nil, this one copies out, and the
+    // entry's map as it was copied in (a map the callee made that does not go
+    // back into the entry is dropped: P04.09)
     Ctx.setStructBody(S, {Ctx.ptr(mapInfoType()), mapType(), P, U, mapType(),
-                          Ctx.ptr(mapType()), B, B});
+                          Ctx.ptr(mapType()), B, B, mapType()});
   }
   return S;
 }
@@ -98,8 +107,12 @@ Type *Lowering::mapIterType() {
   if (!S->hasBody()) {
     Type *U = Ctx.u64();
     // the map (null once the iteration ended), the steps taken, the entries
-    // there were at the start, the entry it began at
-    Ctx.setStructBody(S, {mapType(), U, U, U});
+    // there were at the start, the entry it began at; the entry it is on
+    // (~0: none), whether that entry was removed with its key and value
+    // still to drop (spec 8.3: at the end of the iteration, P04.09 R6), the
+    // next running iteration of the map, the map's info (for that drop)
+    Type *P = Ctx.ptr(Ctx.u8());
+    Ctx.setStructBody(S, {mapType(), U, U, U, U, U, P, P});
   }
   return S;
 }
@@ -177,9 +190,54 @@ struct MapX : Rt {
         Va = align8(snap(val(inf(Info, 1))));
     return {Ka, Va, Ka + Va + 8};
   }
+  /// The drop glue of the key (K 4) or the value (K 5) as a *u8, null when
+  /// the type owns nothing.
+  Val glueOf(Val Info, unsigned K) {
+    return tmp(FB.cast(CastKind::PtrToPtr, snap(val(inf(Info, K))).Op, PU8));
+  }
+  /// Drops the key and the value of the entry at Ep (P04.09).
+  void dropEntry(Val Info, Val Ep) {
+    Ent En = ent(Info);
+    Val KD = snap(val(inf(Info, 4))), VD = snap(val(inf(Info, 5)));
+    If(glueOf(Info, 4) != null(PU8),
+       [&] { callIndirect(KD, {padd(Ep, u(8))}); });
+    If(glueOf(Info, 5) != null(PU8),
+       [&] { callIndirect(VD, {padd(Ep, u(8) + En.Ka)}); });
+  }
+  /// Drops every live entry of M_ (a live entry has a hash word).
+  void dropEntries(Val Info, Val M_) {
+    Var Any = var(U64, u(0), "any");
+    If(glueOf(Info, 4) != null(PU8), [&] { Any = u(1); });
+    If(glueOf(Info, 5) != null(PU8), [&] { Any = u(1); });
+    If(snap(Any) != 0, [&] {
+      Ent En = ent(Info);
+      Val Ents = get(M_, 4), N = get(M_, 1);
+      Var K = var(U64, u(0), "k");
+      While([&] { return K < N; },
+            [&] {
+              Val Ep = snap(padd(Ents, K * En.Esz));
+              If(load(Ep, U64) != 0, [&] { dropEntry(Info, Ep); });
+              K = K + 1;
+            });
+    });
+  }
   Val hashOf(Val Info, Val Key) {
     Val H = callIndirect(snap(val(inf(Info, 2))), {Key, u(HashSeed)});
     return H | LiveBit;
+  }
+  /// Field K of the iterator at It.
+  Place itf(Val It, unsigned K) { return FB.field(at(It, L.mapIterType()), K); }
+  /// The key and value of the entry the iteration It is on, removed during
+  /// its iteration, are dropped now that the iteration ends (P04.09 R6).
+  void dropPending(Val It) {
+    If(snap(val(itf(It, 5))) != 0, [&] {
+      FB.assign(itf(It, 5), FB.use(u(0).Op));
+      Val M_ = snap(val(itf(It, 0)));
+      Val Info = snap(to(L.Ctx.ptr(InfoS), val(itf(It, 7))));
+      Ent En = ent(Info);
+      Val Ep = snap(padd(get(M_, 4), snap(val(itf(It, 4))) * En.Esz));
+      dropEntry(Info, Ep);
+    });
   }
 };
 
@@ -240,6 +298,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     E.At = At;
     Val Info = E.param(0), M_ = E.param(1);
     E.If(M_ == E.null(MapPtr), [&] { E.Return(); });
+    E.dropEntries(Info, M_);
     auto En = E.ent(Info);
     Val A = E.get(M_, 7), Ents = E.get(M_, 4);
     E.If(Ents != E.null(PU8), [&] {
@@ -369,7 +428,16 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     Val Nents = E.get(M_, 1), Ents = E.get(M_, 4), Mask = E.get(M_, 3) - 1;
     Val Ep = E.padd(Ents, Nents * En.Esz);
     E.store(Ep, U64, H);
-    E.libc("memmove", {E.padd(Ep, E.u(8)), Key, E.snap(E.val(E.inf(Info, 0)))});
+    // A new entry owns its own copy of the key (OWN-V4a).
+    Val Cl = E.glueOf(Info, 6);
+    Val ClFn = E.snap(E.val(E.inf(Info, 6)));
+    E.IfElse(
+        Cl != E.null(PU8),
+        [&] { E.callIndirect(ClFn, {E.padd(Ep, E.u(8)), Key}); },
+        [&] {
+          E.libc("memmove",
+                 {E.padd(Ep, E.u(8)), Key, E.snap(E.val(E.inf(Info, 0)))});
+        });
     E.libc("memset", {E.padd(Ep, E.u(8) + En.Ka), E.i32(0), En.Va});
     Var I = E.var(U64, H & Mask, "i");
     Val Idx = E.get(M_, 5);
@@ -411,8 +479,26 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     Val Info = E.param(0), M_ = E.param(1), Key = E.param(2);
     E.If(M_ == E.null(MapPtr), [&] { E.Return(); });
     E.If(E.get(M_, 0) == 0, [&] { E.Return(); });
-    Val Ep = E.rt(RtFn::MapFind, {Info, M_, Key, E.hashOf(Info, Key)});
+    Val Ep = E.snap(E.rt(RtFn::MapFind, {Info, M_, Key, E.hashOf(Info, Key)}));
     E.If(Ep == E.null(PU8), [&] { E.Return(); });
+    // The entry a running iteration is on keeps its key and value until that
+    // iteration ends (spec 8.3: `k` and `v` stay valid to the end of the
+    // turn); the outermost such iteration drops them. Any other entry ends
+    // now (P04.09 R6).
+    auto En = E.ent(Info);
+    Val Pos = E.snap((E.to(U64, Ep) - E.to(U64, E.get(M_, 4))) / En.Esz);
+    Var Last = E.var(PU8, E.null(PU8), "last");
+    Var It = E.var(PU8, E.get(M_, 8), "it");
+    E.While([&] { return E.snap(It) != E.null(PU8); },
+            [&] {
+              E.If(E.snap(E.val(E.itf(It, 4))) == Pos,
+                   [&] { Last = E.snap(It); });
+              It = E.snap(E.val(E.itf(It, 6)));
+            });
+    E.IfElse(
+        E.snap(Last) != E.null(PU8),
+        [&] { E.FB.assign(E.itf(Last, 5), E.FB.use(E.u(1).Op)); },
+        [&] { E.dropEntry(Info, Ep); });
     E.store(Ep, U64, E.u(0));
     Val Left = E.get(M_, 0) - 1;
     E.set(M_, 0, Left);
@@ -431,6 +517,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     E.At = At;
     Val M_ = E.param(1);
     E.If(M_ == E.null(MapPtr), [&] { E.Return(); });
+    E.dropEntries(E.param(0), M_);
     E.If(E.get(M_, 3) != 0,
          [&] { E.libc("memset", {E.get(M_, 5), E.i32(0), E.get(M_, 3) * 8}); });
     E.set(M_, 0, E.u(0));
@@ -452,10 +539,16 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     Set(1, E.u(0));
     Set(2, E.u(0));
     Set(3, E.u(0));
+    Set(4, E.u(~uint64_t(0)));
+    Set(5, E.u(0));
+    Set(6, E.null(PU8));
+    Set(7, E.null(PU8));
     E.If(M_ != E.null(MapPtr), [&] {
-      // One more running iteration (RNG-4); the entries there are now, from
-      // a random one (spec chapter 16).
+      // One more running iteration (RNG-4), in the map's list (map_delete);
+      // the entries there are now, from a random one (spec chapter 16).
       E.set(M_, 6, E.get(M_, 6) + 1);
+      Set(6, E.get(M_, 8));
+      E.set(M_, 8, E.to(PU8, It));
       Val N = E.get(M_, 1);
       Set(2, N);
       E.If(N != 0, [&] { Set(3, E.rt(RtFn::MapRand, {}) % N); });
@@ -475,6 +568,9 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     auto ItF = [&](unsigned K) { return E.FB.field(E.at(It, IS), K); };
     Val M_ = E.snap(E.val(ItF(0)));
     E.If(M_ == E.null(MapPtr), [&] { E.Return(E.boolean(false)); });
+    // The last iteration's entry, if it was removed, ends with it (R6).
+    E.FB.assign(ItF(7), E.FB.use(E.to(PU8, Info).Op));
+    E.dropPending(It);
     auto En = E.ent(Info);
     Val End = E.snap(E.val(ItF(2))), Start = E.snap(E.val(ItF(3)));
     E.While([&] { return E.snap(E.val(ItF(1))) < End; },
@@ -490,6 +586,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
                 E.If(E.load(Ep, U64) != 0, [&] {
                   E.store(E.param(2), PU8, E.padd(Ep, E.u(8)));
                   E.store(E.param(3), PU8, E.padd(Ep, E.u(8) + En.Ka));
+                  E.FB.assign(ItF(4), E.FB.use(E.snap(Pos).Op));
                   E.Return(E.boolean(true));
                 });
               });
@@ -508,6 +605,23 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
     Place MF = E.FB.field(E.at(It, IS), 0);
     Val M_ = E.snap(E.val(MF));
     E.If(M_ != E.null(MapPtr), [&] {
+      E.dropPending(It);
+      // Out of the map's list of running iterations.
+      Val Self = E.snap(E.to(PU8, It)), Next = E.snap(E.val(E.itf(It, 6)));
+      E.IfElse(
+          E.get(M_, 8) == Self, [&] { E.set(M_, 8, Next); },
+          [&] {
+            Var P = E.var(PU8, E.get(M_, 8), "p");
+            E.While(
+                [&] {
+                  return E.land(E.snap(P) != E.null(PU8), [&] {
+                    return E.snap(E.val(E.itf(P, 6))) != Self;
+                  });
+                },
+                [&] { P = E.snap(E.val(E.itf(P, 6))); });
+            E.If(E.snap(P) != E.null(PU8),
+                 [&] { E.FB.assign(E.itf(P, 6), E.FB.use(Next.Op)); });
+          });
       E.set(M_, 6, E.get(M_, 6) - 1);
       E.FB.assign(E.FB.field(E.at(It, IS), 0), E.FB.use(E.null(MapPtr).Op));
     });
@@ -577,6 +691,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
               });
               Set(R, 5, E.addrOf(Fld(R, 4)));
               Set(R, 7, E.boolean(true));
+              Set(R, 8, Get(R, 4));
               I = I + 1;
             });
     // The same entry as R2: the same map (not nil), key kind and key.
@@ -682,6 +797,7 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
                 return E.snap(E.val(E.FB.field(E.at(R, RecS), K)));
               };
               Val V = Get(4);
+              Var Kept = E.var(Bool, E.boolean(false), "kept");
               E.If(E.land(Get(7),
                           [&] {
                             return E.land(Get(6),
@@ -690,9 +806,30 @@ FuncId Lowering::buildMapRuntime(RtFn Which, SourceLoc At) {
                    [&] {
                      Val P = E.rt(RtFn::MapGet, {Get(0), Get(1), Get(2)});
                      E.If(P != E.null(PU8), [&] {
-                       E.If(E.load(P, MapPtr) == E.null(MapPtr),
-                            [&] { E.store(P, MapPtr, V); });
+                       E.If(E.load(P, MapPtr) == E.null(MapPtr), [&] {
+                         E.store(P, MapPtr, V);
+                         Kept = E.boolean(true);
+                       });
                      });
+                   });
+              // A map the callee made that went nowhere (the key was absent,
+              // or the entry changed meanwhile): its value glue drops it.
+              E.If(E.land(Get(7),
+                          [&] {
+                            return E.land(V != Get(8), [&] {
+                              return E.land(V != E.null(MapPtr),
+                                            [&] { return E.not_(Kept); });
+                            });
+                          }),
+                   [&] {
+                     Val Glue = E.snap(E.val(E.inf(Get(0), 5)));
+                     E.If(E.tmp(E.FB.cast(CastKind::PtrToPtr, Glue.Op, PU8)) !=
+                              E.null(PU8),
+                          [&] {
+                            E.callIndirect(Glue,
+                                           {E.to(PU8, E.addrOf(E.FB.field(
+                                                          E.at(R, RecS), 4)))});
+                          });
                    });
               I = I + 1;
             });

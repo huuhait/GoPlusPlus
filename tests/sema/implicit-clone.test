@@ -1,0 +1,77 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.09 review R5: a copy the language makes for the program is a clone
+// (OWN-R6), so its type must be cloneable, by the same rule as `x.Clone()`
+// (Checker::satisfiesClone): E0452 at a map insert (OWN-V4: the map keeps a
+// clone of its key; an assignment, `op=`, a map literal), at the assignment
+// form of range (each key or element copied into the target), and at a
+// three-clause for loop whose variable a function literal captures (CLO-8:
+// each iteration has its own copy; an owner question, TODO P04.29 (l)).
+// The other side: cloneable types, the `:=` form of range,
+// a lookup, a loop variable no literal captures, a range variable captured.
+package main
+
+type F struct{ n int }
+
+func (f *F) drop() { println("drop", f.n) }
+
+type W struct {
+	f F
+	s string
+}
+
+func bad(xs []F, ws []W) {
+	m := map[F]int{}
+	// CHECK: [[@LINE+1]]:4: error[E0452]: a map insert makes a copy of its key (OWN-V4), and F can't be cloned: F has a drop method but no Clone() (OWN-R6)
+	m[F{1}] = 1
+	// CHECK: [[@LINE+1]]:4: error[E0452]: a map insert makes a copy of its key (OWN-V4), and F can't be cloned
+	m[F{2}] += 1
+	// CHECK: [[@LINE+1]]:17: error[E0452]: a map insert makes a copy of its key (OWN-V4), and F can't be cloned
+	n := map[F]int{F{3}: 3}
+	var v F
+	// CHECK: [[@LINE+1]]:9: error[E0452]: the assignment form of range makes a copy of each element, and F can't be cloned
+	for _, v = range xs {
+	}
+	var w W
+	// CHECK: [[@LINE+1]]:9: error[E0452]: the assignment form of range makes a copy of each element, and W can't be cloned: field f (F) has a drop method but no Clone() (OWN-R6)
+	for _, w = range ws {
+	}
+	var fs []func() int
+	i := 0
+	// CHECK: [[@LINE+1]]:6: error[E0452]: this loop (CLO-8: each iteration has its own copy of a variable a function literal captures) makes a copy of f, and F can't be cloned
+	for f := (F{4}); i < 2; i++ {
+		fs = append(fs, func() int { return f.n })
+	}
+	println(len(m), len(n), v.n, w.s, len(fs))
+}
+
+func good(xs []string, ys []F) {
+	m := map[string]int{}
+	m["k"] = 1
+	m["k"] += 1
+	n := map[string]int{"a": 1}
+	var v string
+	for _, v = range xs {
+	}
+	for _, y := range ys {
+		println(y.n)
+	}
+	k := map[F]int{}
+	println(k[F{9}])
+	var fs []func() int
+	i := 0
+	for f := (F{5}); i < 2; i++ {
+		println(f.n)
+	}
+	for s := "a" + "b"; i < 4; i++ {
+		fs = append(fs, func() int { return len(s) })
+	}
+	for _, y := range ys {
+		fs = append(fs, func() int { return y.n })
+	}
+	println(len(m), len(n), v, len(fs))
+}
+
+func main() {
+	bad(nil, nil)
+	good(nil, nil)
+}

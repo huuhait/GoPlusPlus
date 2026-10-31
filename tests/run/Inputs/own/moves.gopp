@@ -1,0 +1,53 @@
+package main
+
+// P04.09: moves (OWN-R3, OWN-R4, OWN-R5). `move(m[k])` takes the value and
+// removes the entry (OWN-R3a); its comma-ok form says whether k was there,
+// and so does `clone(m[k])`'s (OWN-R9). `move` of a view copies it and leaves
+// the place as it was (OWN-V1, ADR-0031). A store of a place's own value
+// (`s = s`) keeps it: the value is taken before the old one is dropped. A
+// swap moves both values. Go++ only: the output (moves.out) is written by
+// hand.
+
+type Rec struct {
+	name string
+	n    int
+}
+
+func (r *Rec) drop() { println("drop", r.name) }
+
+func entries() {
+	m := map[string]string{"a": "x", "b": "y", "c": "z"}
+	s := move(m["a"])
+	v, ok := move(m["b"])
+	w, ok2 := move(m["absent"])
+	c, ok3 := clone(m["c"])
+	println(s, v, ok, len(w), ok2, c, ok3, len(m), m["c"])
+	recs := map[int]Rec{1: {"one", 1}, 2: {"two", 2}}
+	r, found := move(recs[1])
+	println("took", r.name, found, len(recs))
+	_, _ = move(recs[2]) // the value is dropped with the statement
+	println("left", len(recs))
+}
+
+func views() {
+	a, b := 1, 2
+	vs := []View[int]{View[int](a), View[int](b)}
+	w := move(vs[0])
+	println(int(w), int(vs[0]), len(vs))
+}
+
+func self() {
+	s := "keep" + "me"
+	s = s
+	t := "t" + "1"
+	u := "u" + "2"
+	t, u = u, t
+	println(s, t, u)
+}
+
+func main() {
+	entries()
+	views()
+	self()
+	println("end")
+}

@@ -1,0 +1,7 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/frees.gopp %S/Inputs/own/frees.out
+// GOLDEN: by-hand
+// P04.09: one free per allocation for strings, slices (append growth, clone,
+// views), maps (keys, values, replace, delete), structs and arrays that hold
+// them, a `move` argument and a replaced variable. Counting allocator of the
+// test intrinsics; see Inputs/own/frees.gopp.

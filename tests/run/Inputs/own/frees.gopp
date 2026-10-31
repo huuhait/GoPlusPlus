@@ -1,0 +1,93 @@
+package main
+
+// P04.09: one free per allocation for every owning kind. The counters of the
+// global allocator are read around a function that makes, moves, replaces and
+// drops values of one kind; every allocation must have been freed when it
+// returns. Built with -test-intrinsics; Go++ only, so the output is the lines
+// "ok" and nothing else.
+
+@Extern("C") func gopp_test_count(which int, what int) int
+
+var fails int
+
+func check(name string, allocs, frees int) {
+	if allocs != frees || allocs == 0 {
+		println("FAIL", name, "allocs", allocs, "frees", frees)
+		fails++
+	}
+}
+
+type Rec struct {
+	name string
+	tags []string
+	n    int
+}
+
+func eat(move s string) int { return len(s) }
+
+func eatRec(move r Rec) int { return len(r.name) + len(r.tags) }
+
+func mkStr(a string, b string) string { return a + b }
+
+func strings(a string, b string) {
+	s := a + b
+	t := s + a
+	s = t + b // the old s is freed
+	u := move(s)
+	eat(u)
+	v := mkStr(a, b)
+	_ = len(v)
+}
+
+func slices(a string) {
+	var xs []string
+	for i := 0; i < 20; i++ {
+		xs = append(xs, a+a)
+	}
+	ys := xs.Clone()
+	zs := xs[2:5]
+	_ = len(zs) + len(ys)
+	xs = append(xs, a+a)
+}
+
+func maps(a string) {
+	m := map[string][]int{}
+	for i := 0; i < 10; i++ {
+		m[a+a+a] = []int{i, i}
+	}
+	m[a+a+a] = []int{1}
+	delete(m, a+a+a)
+	m[a] = append(m[a], 1, 2, 3)
+	n := map[string]string{a + a: a + a}
+	_ = len(n)
+}
+
+func structs(a string) {
+	r := Rec{a + a, []string{a + a, a + a}, 1}
+	r2 := Rec{name: r.name.Clone(), tags: r.tags.Clone()}
+	eatRec(r)
+	r2.name = a + a + a
+	rs := []Rec{{a + a, nil, 1}, {a + a, []string{a + a}, 2}}
+	_ = len(rs)
+	var arr [2]Rec
+	arr[0].name = a + a
+	arr[1] = Rec{a + a, nil, 3}
+}
+
+func run(name string, f func()) {
+	a0, f0 := gopp_test_count(0, 0), gopp_test_count(0, 2)
+	f()
+	check(name, gopp_test_count(0, 0)-a0, gopp_test_count(0, 2)-f0)
+}
+
+func main() {
+	x := "ab"
+	y := "cd"
+	run("strings", func() { strings(x, y) })
+	run("slices", func() { slices(x) })
+	run("maps", func() { maps(x) })
+	run("structs", func() { structs(x) })
+	if fails == 0 {
+		println("ok")
+	}
+}

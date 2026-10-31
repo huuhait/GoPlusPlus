@@ -368,7 +368,7 @@ Type *Lowering::mtEntType() {
 Type *Lowering::tiType() {
   Type *P = Ctx.ptr(Ctx.u8()), *U64 = Ctx.u64(), *U32 = Ctx.intTy(32, false);
   return Ctx.tuple(
-      {P, U64, Ctx.string(), P, P, U32, U32, U64, P, P, P, U64, P});
+      {P, U64, Ctx.string(), P, P, U32, U32, U64, P, P, P, U64, P, P, P});
 }
 
 namespace {
@@ -543,10 +543,11 @@ FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
   // value receiver, and the box stays as it was.
   const Pass RP = passOfRecv(F);
   Operand Recv;
+  LocalId PlaceCopy = NoId; // the thunk's copy of a boxed Place receiver
   if (DynPtr) {
     Recv = F->HasPtrRecv || RP == Pass::Place ? E.to(Ctx.ptr(RecvG), Data).Op
                                               : copyOf(E.at(Data, RecvG));
-  } else if (isInline(RecvG)) {
+  } else if (isInline(Dyn, RecvG)) {
     // The value is in the data word, in its low bytes; W is the copy.
     Var W = E.var(Ctx.u64(), "w");
     W = E.to(Ctx.u64(), Data);
@@ -555,6 +556,16 @@ FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
   } else if (RP == Pass::Place) {
     Var Copy = E.var(RecvG, E.val(E.at(Data, RecvG)), "recv");
     Recv = E.addrOf(Copy).Op;
+    PlaceCopy = Copy.L;
+  } else if (FuncId CG = isSharedHandle(Dyn) && needsDrop(Dyn)
+                             ? cloneGlue(Dyn, At)
+                             : NoId;
+             CG != NoId) {
+    // A value receiver the method owns (a shared handle, OWN-C3): a retained
+    // copy of the boxed one, which the method drops.
+    Var Copy = E.var(RecvG, E.zero(RecvG), "recv");
+    E.call(CG, {E.to(PU8, E.addrOf(Copy)), Data});
+    Recv = E.val(FB.local(Copy.L)).Op;
   } else {
     Recv = copyOf(E.at(Data, RecvG));
   }
@@ -573,6 +584,11 @@ FuncId Lowering::ifaceThunk(S::Type *Dyn, const S::Func *F, SourceLoc At) {
           {M->func(Real).NoUnwind ? UnwindAction::Unreachable
                                   : UnwindAction::Continue,
            NoId});
+  // A map the method made in a nil map of the copy belongs to no one: the
+  // box stays as it was (TYP-5), so it is freed here (P04.18 review R9).
+  if (PlaceCopy != NoId)
+    if (FuncId NM = newMapsGlue(Dyn, At); NM != NoId)
+      E.call(NM, {E.to(PU8, E.addrOf(FB.local(PlaceCopy))), Data});
   if (RealSig->ret()->isUnit())
     E.Return();
   else
@@ -716,13 +732,24 @@ uint32_t Lowering::typeInfo(S::Type *T, SourceLoc At) {
   P.push_back(EqC);
   P.push_back(HashC);
   P.push_back(partInt(U32, reflectKind(T)));
-  P.push_back(partInt(U32, isInline(G) ? TI::FlagInline : 0));
+  // The glue a box of the value needs (P04.09): its drop, and its clone for
+  // a borrowed interface argument the callee keeps (TYP-7); a type with a
+  // `drop` method and no Clone() cannot be kept that way.
+  const bool Owns = needsDrop(T);
+  const bool CanClone = !Owns || Methods.cloneable(T);
+  uint32_t Flags =
+      (isInline(T, G) ? TI::FlagInline : 0) | (CanClone ? 0 : TI::FlagNoClone);
+  FuncId DropG = Owns ? dropGlue(T, At) : NoId;
+  FuncId CloneG = Owns && CanClone ? cloneGlue(T, At) : NoId;
+  P.push_back(partInt(U32, Flags));
   P.push_back(partInt(U64, Kept.size()));
   P.push_back(Table == ~0u ? partNull(PU8) : partGlobal(*M, Table));
   P.push_back(partNull(PU8)); // Elem (P05)
   P.push_back(partNull(PU8)); // Fields (P05)
   P.push_back(partInt(U64, 0));
   P.push_back(partNull(PU8)); // VTable (P04.22)
+  P.push_back(DropG == NoId ? partNull(PU8) : partFunc(*M, DropG));
+  P.push_back(CloneG == NoId ? partNull(PU8) : partFunc(*M, CloneG));
   M->Globals[Id].Parts = std::move(P);
   return Id;
 }
@@ -839,6 +866,7 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
     const Lowering::Pass RP = L.passOfRecv(F);
     Operand Recv;
     std::optional<LateRecv> Late;
+    const size_t RecvCopies = PlaceCopies.size();
     if (F->HasPtrRecv) {
       if (BasePtr) {
         Recv = lowerExpr(Sel->X);
@@ -872,7 +900,7 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
           Operand V = lowerExpr(Sel->X);
           if (!V.type())
             return failed(Sel->X, Unit());
-          Recv = addrOfCopy(std::move(V), Sel->X);
+          Recv = addrOfCopy(std::move(V), Sel->X, RT);
           break;
         }
         case PlaceHow::Refuse:
@@ -895,6 +923,15 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
     }
     if (!Late && !Recv.type())
       return failed(Sel->X, Unit());
+    // A receiver the method owns (P04.09): a `move` receiver takes the value
+    // (OWN-R3), a shared handle gets a copy (OWN-C3).
+    if (!Late && !F->HasPtrRecv && RP == Lowering::Pass::Value)
+      if (S::Type *RT = L.recvTypeOf(F); RT && L.needsDrop(RT)) {
+        if (F->MoveRecv)
+          Recv = takeValue(std::move(Recv), RT, /*Move=*/true);
+        else if (L.isSharedHandle(RT))
+          Recv = passValue(std::move(Recv), RT);
+      }
     if (RP == Lowering::Pass::View) {
       // A borrowed string or slice receiver passes as (ptr, len), read now,
       // before the arguments (ADR-0029 point 7).
@@ -909,8 +946,10 @@ Operand Body::lowerMethodCall(const ast::CallExpr *C,
       Recv = copyOf(FB.temp(FB.use(std::move(Recv))));
     }
     const Function &Real = M.func(FI->second);
-    return callWith(C, Sig, Real.Sig, constFunc(M, FI->second), {Recv},
-                    Real.NoUnwind, Late ? &*Late : nullptr);
+    Operand R = callWith(C, Sig, Real.Sig, constFunc(M, FI->second), {Recv},
+                         Real.NoUnwind, Late ? &*Late : nullptr);
+    freeNewMaps(RecvCopies); // (the receiver's copy, made before)
+    return R;
   }
   // Through the itab.
   const Lowering::IfaceMethods *Ms = L.ifaceMethods(BT, C->getBegin());
@@ -954,10 +993,21 @@ Operand Body::boxAs(Operand V, S::Type *Dyn, S::Type *Want,
   Type *PU8 = ctx().ptr(ctx().u8()), *U64 = ctx().u64();
   Rt E(M, FB);
   at(N);
+  // Who owns what the interface holds (P04.09). A value that goes to a new
+  // owner (a store, a return: TYP-6; ownedValue's conversion), or that is
+  // fresh (a call's result, a literal, `move(x)`), moves into a counted box
+  // (TYP-5): the box owns it and the last copy of the interface drops it. A
+  // value the program still owns, converted for a parameter or a comparison
+  // (TYP-7), is lent: a copy in this frame and the borrow tag on the itab
+  // word, (itab | 1, &copy), no box; a copy of it that is kept is cloned into
+  // a box then (gopp.iface_clone).
+  const bool Fresh = V.K == Operand::Move || isFresh(V);
+  const bool Owner = Fresh || (OwnedConv && N == OwnedConv);
   Operand Data;
+  bool Boxed = false, Lent = false;
   if (L.layout(G).Size == 0) {
     Data = E.null(PU8).Op;
-  } else if (L.isInline(G)) {
+  } else if (L.isInline(Dyn, G)) {
     if (G->isPtr()) {
       Data = E.to(PU8, Val{&E, V}).Op;
     } else {
@@ -966,15 +1016,39 @@ Operand Body::boxAs(Operand V, S::Type *Dyn, S::Type *Want,
       E.store(E.to(ctx().ptr(G), E.addrOf(W)), G, Val{&E, V});
       Data = E.to(PU8, W).Op;
     }
+  } else if (!Owner) {
+    LocalId Copy = FB.newTemp(G);
+    FB.assign(FB.local(Copy), FB.use(std::move(V)));
+    Data = E.to(PU8, E.addrOf(FB.local(Copy))).Op;
+    Lent = true;
   } else {
+    if (V.K == Operand::Copy && !isFresh(V) && L.needsDrop(Dyn))
+      V = cloneValue(std::move(V), Dyn, N); // (the program keeps its own)
+    if (V.K == Operand::Copy && isFresh(V))
+      V.K = Operand::Move;
+    at(N);
     uint64_t Size = L.layout(G).Size;
-    Operand Box =
-        callRt(RtFn::MemResize,
-               {E.null(PU8).Op, E.u(Size).Op, constBool(ctx(), false)}, N);
+    Operand Raw = callRt(
+        RtFn::MemResize,
+        {E.null(PU8).Op, E.u(Size + TI::BoxHeader).Op, constBool(ctx(), false)},
+        N);
+    E.store(Val{&E, Raw}, U64, E.u(1));
+    Operand Box = E.snap(E.padd(Val{&E, Raw}, E.u(TI::BoxHeader))).Op;
     E.store(Val{&E, Box}, G, Val{&E, V});
     Data = Box;
+    Boxed = true;
   }
-  return ifaceFrom(globalPtr(Tab), Data);
+  Operand Itab = globalPtr(Tab);
+  if (Lent)
+    Itab = E.to(PU8, E.to(U64, Val{&E, Itab}) | 1).Op;
+  Operand R = ifaceFrom(std::move(Itab), std::move(Data));
+  // The new reference is the statement's until a store or a call takes it
+  // (a value in the data word holds none: owned all the same, it is moved
+  // on with no retain).
+  if (!Lent)
+    R = ownTemp(std::move(R), Want);
+  (void)Boxed;
+  return R;
 }
 
 Operand Body::ifaceConvert(Operand X, S::Type *From, S::Type *To,
@@ -990,11 +1064,15 @@ Operand Body::ifaceConvert(Operand X, S::Type *From, S::Type *To,
   if (!ToAny && Desc == ~0u)
     return failed(N, zeroOf(ctx().iface()));
   Type *PU8 = ctx().ptr(ctx().u8()), *U64 = ctx().u64();
+  // A fresh value's reference moves to the converted one (P04.09).
+  const bool Fresh = isFresh(X);
   Place XP = placeOf(std::move(X));
   at(N);
   Rt E(M, FB);
   Val It = E.snap(E.val(FB.field(XP, 0)));
   Val Dt = E.snap(E.val(FB.field(XP, 1)));
+  if (Fresh)
+    FB.assign(XP, FB.use(zeroOf(ctx().iface())));
   Var R = E.var(ctx().iface(), "conv");
   R = E.zero(ctx().iface());
   E.If(It != E.null(PU8), [&] {
@@ -1007,6 +1085,8 @@ Operand Body::ifaceConvert(Operand X, S::Type *From, S::Type *To,
     Val Tagged = E.to(PU8, E.to(U64, NewTab) | Tag);
     R = E.tmp(FB.aggregate(AggKind::Struct, ctx().iface(), {Tagged.Op, Dt.Op}));
   });
+  if (Fresh)
+    return ownTemp(copyOf(FB.local(R.L)), To);
   return copyOf(FB.local(R.L));
 }
 
@@ -1090,11 +1170,11 @@ Operand Body::dynTypeInfo(Place IP) {
   return E.snap(R).Op;
 }
 
-Place Body::boxedPlace(Place IP, Type *G) {
+Place Body::boxedPlace(Place IP, S::Type *T, Type *G) {
   Rt E(M, FB);
   if (L.layout(G).Size == 0)
     return placeOf(zeroOf(G));
-  if (L.isInline(G))
+  if (L.isInline(T, G))
     return E.at(E.addrOf(FB.field(IP, 1)), G);
   return E.at(E.snap(E.val(FB.field(IP, 1))), G);
 }
@@ -1168,7 +1248,7 @@ Operand Body::lowerTypeAssert(const ast::TypeAssertExpr *TA, bool CommaOk,
   auto Extract = [&]() -> Operand {
     if (TIface)
       return ifaceConvert(copyOf(SW), XS, T, TA);
-    Place PV = boxedPlace(SW, TG);
+    Place PV = boxedPlace(SW, T, TG);
     if (ResG == TG)
       return copyOf(PV);
     return viewOfPlace(std::move(PV), ResS, TA);
@@ -1210,7 +1290,7 @@ Operand Body::lowerTypeAssert(const ast::TypeAssertExpr *TA, bool CommaOk,
 void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
   pushScope();
   if (TS->Init)
-    lowerStmt(TS->Init);
+    lowerStmt(TS->Init, /*KeepTemps=*/true);
   const ast::TypeAssertExpr *Guard = nullptr;
   if (auto *AS = dyn_cast<ast::AssignStmt>(TS->Assign))
     Guard = AS->Rhs.size() == 1 ? dyn_cast<ast::TypeAssertExpr>(AS->Rhs[0])
@@ -1278,7 +1358,7 @@ void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
   for (size_t K = 0; K < Clauses.size(); ++K) {
     auto *CC = cast<ast::CaseClause>(Clauses[K]);
     FB.setBlock(Bodies[K]);
-    pushScope();
+    pushScope(true, CC);
     auto Imp = I.Implicits.find(CC);
     if (Imp != I.Implicits.end()) {
       if (auto *V = dyn_cast_or_null<S::Var>(Imp->second)) {
@@ -1297,7 +1377,7 @@ void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
           } else if (L.isInterface(CT)) {
             Val_ = ifaceConvert(copyOf(SW), XS, CT, CC);
           } else if (Type *CG = L.lowerType(CT, CC->getBegin())) {
-            Place PV = boxedPlace(SW, CG);
+            Place PV = boxedPlace(SW, CT, CG);
             Val_ = VG == CG ? copyOf(PV) : viewOfPlace(std::move(PV), VT, CC);
           } else {
             Val_ = failed(CC, zeroOf(VG));
@@ -1305,6 +1385,10 @@ void Body::lowerTypeSwitch(const ast::TypeSwitchStmt *TS, std::string Label) {
           // (A box binding a closure that outlives the call holds:
           // ownBoxCopy, review R5.)
           Val_ = ownBoxCopy(std::move(Val_), V, CC);
+          // A binding that is a copy (a shared handle, TYP-9) owns it: a
+          // retain (P04.09). A borrowed one is a view of the box.
+          if (modeOf(V) == S::Var::Owned)
+            Val_ = takeValue(std::move(Val_), VT);
           VarSlot Sl = declareSlot(V, CC, V->Name.str(), VG);
           FB.assign(Sl.P, FB.use(Val_));
         }

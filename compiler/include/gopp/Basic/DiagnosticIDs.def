@@ -647,4 +647,10 @@ DIAG(err_inst_checked_result, 448, Error, "cannot instantiate %0: its body calls
 DIAG(err_inst_too_large, 449, Error, "cannot instantiate %0: %1 (GEN-5)")
 DIAG(err_inline_marks_conflict, 450, Error, "function %0 has both @Inline and @NoInline: the two marks contradict each other")
 
+// Ownership on the control-flow graph (P04.09): the checker sees one
+// expression at a time, the graph sees the paths between a move and a use.
+DIAG(err_use_after_move, 451, Error, "use of moved value %0 (OWN-R3)")
+DIAG(err_own_implicit_clone, 452, Error, "%0 makes a copy of %1, and %2 can't be cloned%3 (OWN-R6)")
+DIAG(err_inst_implicit_clone, 453, Error, "cannot instantiate %0: %1 makes a copy of %2, and %3 can't be cloned here (OWN-R6)")
+
 #undef DIAG

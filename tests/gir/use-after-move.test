@@ -1,0 +1,41 @@
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/use-after-move.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %S/Inputs/use-after-move.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: %gopp check %S/Inputs/use-after-move-ok.gopp
+// RUN: %gopp build -emit=gir %S/Inputs/use-after-move-ok.gopp
+// P04.09 (OWN-R3): a use of a variable on a path after it was moved is E0451,
+// found on the control-flow graph (the checker sees one expression at a time):
+// a plain use, a use after a join where one branch moved, the second trip of
+// a loop, a whole read after a part (`move(p.a)`) was moved, a variable a
+// closure captured (it lives in a cell: the cell's pointer local stands for
+// it), the range variable of the entry `move(m[k])` took (ADR-0016 point 5),
+// the receiver a method value of a `move` receiver took, `s += "y"`
+// after `t := s` moved s (STM-8, an in-place append), and `return s, s`
+// (the second result reads what the first took; `gopp check` lowers a body
+// whose return has two results); conversions are in use-after-move-conv.test.
+// `gopp check` and the build report the same. The other side (use-after-move-ok.gopp),
+// accepted by both: the variable assigned again, a clone, the move on a path
+// that returns, a variable declared fresh each trip, the other part of a
+// struct read after one part moved and the moved part written again, the
+// range variable read before the move, a method value of a clone,
+// `return s, len(s)` (the operands are read before the move), and
+// conversions for borrowed parameters (`show(Option[string](a))`,
+// `look(any(a))`: lent, TYP-7).
+
+// CHECK: use-after-move.gopp:16:13: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move.gopp:15:7: note: moved here
+// CHECK: use-after-move.gopp:25:9: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move.gopp:23:3: note: moved here
+// CHECK: use-after-move.gopp:32:3: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move.gopp:32:3: note: moved here
+// CHECK: use-after-move.gopp:41:18: error[E0451]: use of moved value p (OWN-R3)
+// CHECK: use-after-move.gopp:39:7: note: moved here
+// CHECK: use-after-move.gopp:49:13: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move.gopp:48:12: note: moved here
+// CHECK: use-after-move.gopp:57:17: error[E0451]: use of moved value v (OWN-R3)
+// CHECK: use-after-move.gopp:56:16: note: moved here
+// CHECK: use-after-move.gopp:70:22: error[E0451]: use of moved value r (OWN-R3)
+// CHECK: use-after-move.gopp:69:9: note: moved here
+// CHECK: use-after-move.gopp:78:2: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move.gopp:76:2: note: moved here
+// CHECK: use-after-move.gopp:85:2: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move.gopp:85:2: note: moved here

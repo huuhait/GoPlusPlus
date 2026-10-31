@@ -8,14 +8,18 @@
 // RUN: diff %t.txt %t.dump
 // P04.06 (gir.md section 15, "Interfaces"): the static data of dispatch.
 // A type descriptor per dynamic type (its own address first, then size, name,
-// eq, hash, kind, flags, method table), a method table sorted by key, an
+// eq, hash, kind, flags, method table, ..., drop and clone glue), a method
+// table sorted by key, an
 // itab per (type, interface) pair `[descriptor, method thunks...]` named by
 // P04.17 (`_GPTa<type><interface>`), a thunk per method (`_GPTI`, LinkOnceODR)
 // and an interface parameter that is the two words `gopp.iface`. `any` has no
 // itab of its own: the descriptor is the itab of (T, any). The static data
 // goes through the bitstream (GlobalData records) and back unchanged, and two
 // builds write the same bytes.
-// CHECK: constdata @_GPTiN4mainE2Sq: (*u8, u64, string, *u8, *u8, u32, u32, u64, *u8, *u8, *u8, u64, *u8) = { const global @_GPTiN4mainE2Sq, const 8: u64, const str#{{[0-9]+}} "main.Sq", const fn @_GPTeN4mainE2Sq
+// (Since P04.09 the last two fields are the drop and the clone glue of the
+// value: null for a type that owns nothing, as Sq.)
+// CHECK: constdata @_GPTiN4mainE2Sq: (*u8, u64, string, *u8, *u8, u32, u32, u64, *u8, *u8, *u8, u64, *u8, *u8, *u8) = { const global @_GPTiN4mainE2Sq, const 8: u64, const str#{{[0-9]+}} "main.Sq", const fn @_GPTeN4mainE2Sq
+// CHECK-SAME: const null: *u8, const null: *u8 }
 // CHECK: constdata @_GPTmN4mainE2Sq: [1](string, *u8) = { const str#{{[0-9]+}} "Area\01\01
 // CHECK-SAME: const fn @_GPTIM4AreaN4mainE2Sq }
 // CHECK: constdata @_GPTaN4mainE2SqN4mainE5Shape: [2]*u8 = { const global @_GPTiN4mainE2Sq, const fn @_GPTIM4AreaN4mainE2Sq }

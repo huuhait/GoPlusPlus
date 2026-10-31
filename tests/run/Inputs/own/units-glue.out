@@ -1,0 +1,13 @@
+m km
+drop km km
+drop m m
+clone m m
+clone km km
+1 1 m-c km-c
+drop k
+r p 1 x-c
+drop x-c
+drop r
+drop p
++3.000000e+000
+drop x

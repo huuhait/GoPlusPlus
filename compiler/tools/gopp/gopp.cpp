@@ -707,8 +707,12 @@ static int runCheck(bool Vet) {
     if (CP && CheckDumpTypes)
       gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
     // The per-instance errors of generic code (P04.08, D4.3).
-    if (CP && !Diags.hasErrors() && !CheckGoMode)
+    if (CP && !Diags.hasErrors() && !CheckGoMode) {
       gopp::gir::checkInstances(*CP, L.filesOf(CP), Diags);
+      // The ownership checks of the control-flow graph (use after move).
+      if (!Diags.hasErrors())
+        gopp::gir::checkOwnership(*CP, L.filesOf(CP), Diags);
+    }
     Diags.finish();
     return checkStatus(CP, Diags, Vet);
   }
@@ -721,8 +725,11 @@ static int runCheck(bool Vet) {
       std::vector<std::string>(CheckInputs.begin(), CheckInputs.end()));
   if (CP && CheckDumpTypes)
     gopp::sema::dumpTypes(outs(), SM, *CP, L.filesOf(CP));
-  if (CP && !Diags.hasErrors() && !CheckGoMode)
+  if (CP && !Diags.hasErrors() && !CheckGoMode) {
     gopp::gir::checkInstances(*CP, L.filesOf(CP), Diags);
+    if (!Diags.hasErrors())
+      gopp::gir::checkOwnership(*CP, L.filesOf(CP), Diags);
+  }
   Diags.finish();
   return checkStatus(CP, Diags, Vet);
 }

@@ -1,0 +1,13 @@
+start
+inner 3
+close 3 f3
+consume 1
+close 1 f1
+after consume
+4 2
+2
+close 6 f6
+close 7 f7
+close 5 f5
+close 4 f4
+close 2 f2

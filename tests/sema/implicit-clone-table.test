@@ -1,0 +1,22 @@
+// RUN: %python %S/Inputs/gen-implicit-clone.py plain > %t.plain.gopp
+// RUN: %python %S/Inputs/gen-implicit-clone.py want-plain > %t.plain.want
+// RUN: not %gopp check --check-error-limit=0 %t.plain.gopp 2>%t.plain.err
+// RUN: grep -o ':[0-9]*:[0-9]*: error\[E[0-9]*\]: [^,]*' %t.plain.err | sort > %t.plain.got
+// RUN: diff %t.plain.want %t.plain.got
+// RUN: %python %S/Inputs/gen-implicit-clone.py generic > %t.generic.gopp
+// RUN: %python %S/Inputs/gen-implicit-clone.py want-generic > %t.generic.want
+// RUN: not %gopp check --check-error-limit=0 %t.generic.gopp 2>%t.generic.err
+// RUN: grep -o ':[0-9]*:[0-9]*: error\[E[0-9]*\]: [^,]*' %t.generic.err | sort > %t.generic.got
+// RUN: diff %t.generic.want %t.generic.got
+// RUN: not %gopp build -emit=gir %t.generic.gopp 2>%t.build.err
+// RUN: grep -o ':[0-9]*:[0-9]*: error\[E[0-9]*\]: [^,]*' %t.build.err | sort > %t.build.got
+// RUN: diff %t.generic.want %t.build.got
+// P04.09 review R5: the plain-vs-generic table of the copies the language
+// makes (a map insert by assignment and a map literal's key, OWN-V4; the
+// assignment form of range; a loop variable a function literal captures,
+// CLO-8), each for two cloneable types and two that are not (a drop and no
+// Clone, a struct holding one). Plain code is E0452 at the site; a generic
+// body is decided at each instance by the same rule (satisfiesClone), E0453
+// at the instantiation, by `gopp check` and the build alike; the cloneable
+// rows are accepted. Inputs/gen-implicit-clone.py writes the programs and
+// every error each must report, compared whole (no other error).

@@ -63,7 +63,9 @@ func main() {
 // pointers, P04.18). Only the table's alloc is called: no resize call (P04.25
 // review R5, resize is P05.05).
 // LL: call swiftcc ptr @_GPF4goppE10mem_resize(ptr null, i64 24, i1 zeroext true)
-// LL: call swiftcc { ptr, i64 } @_GPF4goppE10grow_slice(ptr null, ptr nonnull
+// (At opt 0 the variable `s` owns its header since P04.09, so the word is read
+// from its slot and no longer folds here; the O2 run below still folds it.)
+// LL: call swiftcc { ptr, i64 } @_GPF4goppE10grow_slice(ptr %{{[^,]+}}, ptr
 // LL-LABEL: define internal swiftcc ptr @_GPF4goppE13mem_resize_in(ptr %0, ptr %1, i64 %2, i64 %3, i1 zeroext %4)
 // LL: call swiftcc ptr @_GPF4goppE10mem_resize(ptr %1, i64 %3, i1 zeroext %4)
 // LL: call ptr %{{[0-9]+}}(ptr {{.*}}%0, i64 {{.*}}, i1 zeroext %4)

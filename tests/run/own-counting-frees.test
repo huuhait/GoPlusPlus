@@ -1,0 +1,18 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/counting.gopp %S/golden/own-counting-frees.out
+// GOLDEN: by-hand
+// P04.09 (D1 done-when): exactly one free per allocation, for every owning
+// kind. Built with -test-intrinsics: the counting allocator's global counters
+// (gopp_test_count(0, 0) allocations, (0, 2) frees) are read around each
+// case, and the case must have freed all it allocated, and have allocated.
+// Cases: a string built by `+`, a slice grown by append, a slice of strings,
+// a map with string keys (inserts and a delete), a map of slices (entries
+// replaced), a struct holding a string, a slice and a map (passed by borrow),
+// `move` parameters, nested slices and arrays, assignments that replace a
+// value, temporaries in a loop, an early return with a move on it, the
+// assignment form of range (the targets get clones), `range move(xs)`, and
+// explicit Option and interface conversions (lent to a borrowed parameter,
+// taken by a new owner), append and copy from a value of its own (review R2)
+// and a `!` return out of a literal, append's arguments or a tuple assignment
+// (review R7), and a borrowed string's bytes copied by a map key, a clone (of
+// a view too) and a kept box (found fixing R3).

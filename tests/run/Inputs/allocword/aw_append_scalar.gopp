@@ -110,7 +110,7 @@ func frees(which int) int  { return gopp_test_count(which, 2) }
 
 func case_u8() {
 	var z byte = 0
-	big := make([]byte, 0, 300)
+		big := make([]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -153,10 +153,10 @@ func case_u8() {
 		println("FAIL u8: clone", len(c), gopp_test_word_u8(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_u8(c)
 	gopp_test_free_slice_u8(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL u8: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -165,7 +165,7 @@ func case_u8() {
 
 func case_i16() {
 	var z int16 = 0
-	big := make([]int16, 0, 300)
+		big := make([]int16, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -208,10 +208,10 @@ func case_i16() {
 		println("FAIL i16: clone", len(c), gopp_test_word_i16(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i16(c)
 	gopp_test_free_slice_i16(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i16: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -220,7 +220,7 @@ func case_i16() {
 
 func case_b3() {
 	var z [3]byte = [3]byte{}
-	big := make([][3]byte, 0, 300)
+		big := make([][3]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -263,10 +263,10 @@ func case_b3() {
 		println("FAIL b3: clone", len(c), gopp_test_word_b3(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b3(c)
 	gopp_test_free_slice_b3(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b3: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -275,7 +275,7 @@ func case_b3() {
 
 func case_i32() {
 	var z int32 = 0
-	big := make([]int32, 0, 300)
+		big := make([]int32, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -318,10 +318,10 @@ func case_i32() {
 		println("FAIL i32: clone", len(c), gopp_test_word_i32(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i32(c)
 	gopp_test_free_slice_i32(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i32: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -330,7 +330,7 @@ func case_i32() {
 
 func case_b5() {
 	var z [5]byte = [5]byte{}
-	big := make([][5]byte, 0, 300)
+		big := make([][5]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -373,10 +373,10 @@ func case_b5() {
 		println("FAIL b5: clone", len(c), gopp_test_word_b5(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b5(c)
 	gopp_test_free_slice_b5(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b5: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -385,7 +385,7 @@ func case_b5() {
 
 func case_b6() {
 	var z [6]byte = [6]byte{}
-	big := make([][6]byte, 0, 300)
+		big := make([][6]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -428,10 +428,10 @@ func case_b6() {
 		println("FAIL b6: clone", len(c), gopp_test_word_b6(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b6(c)
 	gopp_test_free_slice_b6(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b6: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -440,7 +440,7 @@ func case_b6() {
 
 func case_b7() {
 	var z [7]byte = [7]byte{}
-	big := make([][7]byte, 0, 300)
+		big := make([][7]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -483,10 +483,10 @@ func case_b7() {
 		println("FAIL b7: clone", len(c), gopp_test_word_b7(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b7(c)
 	gopp_test_free_slice_b7(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b7: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -495,7 +495,7 @@ func case_b7() {
 
 func case_i64() {
 	var z int = 0
-	big := make([]int, 0, 300)
+		big := make([]int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -538,10 +538,10 @@ func case_i64() {
 		println("FAIL i64: clone", len(c), gopp_test_word_i64(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i64(c)
 	gopp_test_free_slice_i64(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i64: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -550,7 +550,7 @@ func case_i64() {
 
 func case_b12() {
 	var z [12]byte = [12]byte{}
-	big := make([][12]byte, 0, 300)
+		big := make([][12]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -593,10 +593,10 @@ func case_b12() {
 		println("FAIL b12: clone", len(c), gopp_test_word_b12(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b12(c)
 	gopp_test_free_slice_b12(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b12: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -605,7 +605,7 @@ func case_b12() {
 
 func case_i32x3() {
 	var z [3]int32 = [3]int32{}
-	big := make([][3]int32, 0, 300)
+		big := make([][3]int32, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -648,10 +648,10 @@ func case_i32x3() {
 		println("FAIL i32x3: clone", len(c), gopp_test_word_i32x3(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i32x3(c)
 	gopp_test_free_slice_i32x3(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i32x3: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -660,7 +660,7 @@ func case_i32x3() {
 
 func case_b16() {
 	var z [16]byte = [16]byte{}
-	big := make([][16]byte, 0, 300)
+		big := make([][16]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -703,10 +703,10 @@ func case_b16() {
 		println("FAIL b16: clone", len(c), gopp_test_word_b16(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b16(c)
 	gopp_test_free_slice_b16(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b16: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -715,7 +715,7 @@ func case_b16() {
 
 func case_i64x3() {
 	var z [3]int = [3]int{}
-	big := make([][3]int, 0, 300)
+		big := make([][3]int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -758,10 +758,10 @@ func case_i64x3() {
 		println("FAIL i64x3: clone", len(c), gopp_test_word_i64x3(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i64x3(c)
 	gopp_test_free_slice_i64x3(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i64x3: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -770,7 +770,7 @@ func case_i64x3() {
 
 func case_b40() {
 	var z [40]byte = [40]byte{}
-	big := make([][40]byte, 0, 300)
+		big := make([][40]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -813,10 +813,10 @@ func case_b40() {
 		println("FAIL b40: clone", len(c), gopp_test_word_b40(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b40(c)
 	gopp_test_free_slice_b40(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b40: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -825,7 +825,7 @@ func case_b40() {
 
 func case_i64x5() {
 	var z [5]int = [5]int{}
-	big := make([][5]int, 0, 300)
+		big := make([][5]int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -868,10 +868,10 @@ func case_i64x5() {
 		println("FAIL i64x5: clone", len(c), gopp_test_word_i64x5(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i64x5(c)
 	gopp_test_free_slice_i64x5(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i64x5: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -880,7 +880,7 @@ func case_i64x5() {
 
 func case_i64x10() {
 	var z [10]int = [10]int{}
-	big := make([][10]int, 0, 300)
+		big := make([][10]int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -923,10 +923,10 @@ func case_i64x10() {
 		println("FAIL i64x10: clone", len(c), gopp_test_word_i64x10(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i64x10(c)
 	gopp_test_free_slice_i64x10(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i64x10: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -935,7 +935,7 @@ func case_i64x10() {
 
 func case_b100() {
 	var z [100]byte = [100]byte{}
-	big := make([][100]byte, 0, 300)
+		big := make([][100]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -978,10 +978,10 @@ func case_b100() {
 		println("FAIL b100: clone", len(c), gopp_test_word_b100(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b100(c)
 	gopp_test_free_slice_b100(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b100: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -990,7 +990,7 @@ func case_b100() {
 
 func case_i64x33() {
 	var z [33]int = [33]int{}
-	big := make([][33]int, 0, 300)
+		big := make([][33]int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1033,10 +1033,10 @@ func case_i64x33() {
 		println("FAIL i64x33: clone", len(c), gopp_test_word_i64x33(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i64x33(c)
 	gopp_test_free_slice_i64x33(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i64x33: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1045,7 +1045,7 @@ func case_i64x33() {
 
 func case_b513() {
 	var z [513]byte = [513]byte{}
-	big := make([][513]byte, 0, 300)
+		big := make([][513]byte, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1088,10 +1088,10 @@ func case_b513() {
 		println("FAIL b513: clone", len(c), gopp_test_word_b513(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_b513(c)
 	gopp_test_free_slice_b513(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL b513: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1100,7 +1100,7 @@ func case_b513() {
 
 func case_i64x200() {
 	var z [200]int = [200]int{}
-	big := make([][200]int, 0, 300)
+		big := make([][200]int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1143,10 +1143,10 @@ func case_i64x200() {
 		println("FAIL i64x200: clone", len(c), gopp_test_word_i64x200(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_i64x200(c)
 	gopp_test_free_slice_i64x200(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL i64x200: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1155,7 +1155,7 @@ func case_i64x200() {
 
 func case_empty() {
 	var z struct{} = struct{}{}
-	big := make([]struct{}, 0, 300)
+		big := make([]struct{}, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1198,10 +1198,10 @@ func case_empty() {
 		println("FAIL empty: clone", len(c), gopp_test_word_empty(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_empty(c)
 	gopp_test_free_slice_empty(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL empty: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1210,7 +1210,7 @@ func case_empty() {
 
 func case_c128() {
 	var z complex128 = 0
-	big := make([]complex128, 0, 300)
+		big := make([]complex128, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1253,10 +1253,10 @@ func case_c128() {
 		println("FAIL c128: clone", len(c), gopp_test_word_c128(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_c128(c)
 	gopp_test_free_slice_c128(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL c128: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1265,7 +1265,7 @@ func case_c128() {
 
 func case_f32() {
 	var z float32 = 0
-	big := make([]float32, 0, 300)
+		big := make([]float32, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1308,10 +1308,10 @@ func case_f32() {
 		println("FAIL f32: clone", len(c), gopp_test_word_f32(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_f32(c)
 	gopp_test_free_slice_f32(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL f32: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1320,7 +1320,7 @@ func case_f32() {
 
 func case_bool() {
 	var z bool = false
-	big := make([]bool, 0, 300)
+		big := make([]bool, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1363,10 +1363,10 @@ func case_bool() {
 		println("FAIL bool: clone", len(c), gopp_test_word_bool(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_bool(c)
 	gopp_test_free_slice_bool(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL bool: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -1375,7 +1375,7 @@ func case_bool() {
 
 func case_padded() {
 	var z struct{ a int8; b int64; c int16 } = struct{ a int8; b int64; c int16 }{}
-	big := make([]struct{ a int8; b int64; c int16 }, 0, 300)
+		big := make([]struct{ a int8; b int64; c int16 }, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -1418,10 +1418,10 @@ func case_padded() {
 		println("FAIL padded: clone", len(c), gopp_test_word_padded(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_padded(c)
 	gopp_test_free_slice_padded(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL padded: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}

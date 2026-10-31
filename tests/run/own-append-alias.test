@@ -1,0 +1,30 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/own-append-alias.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/own-append-alias.out %}
+// GOLDEN: by-hand
+// P04.09 (review of the first round): a growth frees the old buffer, and the
+// spread source of the same append may lie in it (`append(s, s...)`,
+// `append(s, s[2:6]...)`, a part of s in the middle). The elements are read
+// from the new buffer's copy; the old buffer's first 16 bytes are a free
+// list's pointers once it is freed, so a read of the freed buffer shows in the
+// first two elements (and under ASan, `check` of the sanitizer build).
+package main
+
+func sum(xs []int) int {
+	t := 0
+	for i := 0; i < len(xs); i++ {
+		t = t*3 + xs[i]
+	}
+	return t
+}
+
+func main() {
+	a := []int{11, 22, 33}
+	a = append(a, a...)
+	println(len(a), sum(a))
+	d := []int{1, 2, 3, 4, 5, 6, 7, 8}
+	d = append(d, d[2:6]...)
+	d = append(d, d...)
+	println(len(d), sum(d))
+}

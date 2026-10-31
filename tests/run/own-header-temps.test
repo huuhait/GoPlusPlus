@@ -1,0 +1,7 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/header-temps.gopp %S/Inputs/own/header-temps.out
+// GOLDEN: by-hand
+// P04.09 review R10 (OWN-R2, D1.6): the temporaries of an `if` or `switch`
+// header, its init statement included, live to the end of the whole
+// statement; a three-clause `for` init's die with the init, a statement's
+// with the statement. The drops print (Go++ only).

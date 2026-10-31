@@ -1,0 +1,15 @@
+in if body
+drop ifhdr
+after if
+in init case
+drop swinit
+after switch init
+in case
+drop sw
+after switch
+drop for
+loop 3
+after for
+4 same stmt
+drop stmt
+next stmt

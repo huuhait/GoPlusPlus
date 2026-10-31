@@ -1,0 +1,7 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/append.gopp %S/Inputs/own/append.out
+// GOLDEN: by-hand
+// P04.09 (TODO P04.09 item 1, STM-8): in-place `+=` on an owned string,
+// O(log n) allocations for n appends, and Go's strings. The other side, `t :=
+// s; t += "x"; s += "y"`, is gir/use-after-move.test (E0451). See
+// Inputs/own/append.gopp.

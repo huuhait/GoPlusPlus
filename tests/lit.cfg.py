@@ -186,6 +186,12 @@ config.substitutions.append(("%llvm_lib_dirs", config.llvm_lib_dirs))
 # gopp, to make it fail (tests/run/runner-batch-fallback.test).
 if lit_config.params.get("real_binaries") or os.environ.get("GOPP_FAST_RUN") == "0":
     config.environment["GOPP_TEST_REAL"] = "1"
+#   lit -Dleak_check=1 ...        real binaries instrumented with the address
+#                                 and leak sanitizers (`ninja check-run-leaks`,
+#                                 P04.09; runlib.leak_check)
+if lit_config.params.get("leak_check"):
+    config.environment["GOPP_TEST_REAL"] = "1"
+    config.environment["GOPP_LEAKCHECK"] = "1"
 
 
 import lit_gopp_format  # noqa: E402  (tests/lit_gopp_format.py)

@@ -1,0 +1,10 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/lent.gopp %S/Inputs/own/lent.out
+// GOLDEN: by-hand
+// P04.09 review R1: a value lent to an interface parameter (TYP-7: the
+// tagged itab and a copy in the caller's frame) is boxed on every way it can
+// leave the parameter and outlive the call: a closure that captures the
+// parameter, `move(v)` into an append, into a literal, out of a return, and
+// a swap into a package variable (`gopp.iface_take`). Each value is read
+// after its caller returned and the stack was written over. Under
+// `check-run-leaks` a tagged value that escaped is a stack use after return.

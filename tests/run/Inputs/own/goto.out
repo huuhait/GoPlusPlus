@@ -1,0 +1,15 @@
+use loop0
+drop loop0
+drop loop1
+forward end
+drop blk0
+drop blk1
+use blk2
+drop blk2
+backward end
+drop decl0
+drop decl1
+use decl2
+drop decl2
+drop hdr
+header end

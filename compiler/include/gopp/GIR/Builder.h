@@ -104,7 +104,10 @@ public:
   BlockId assertThat(Operand Cond, bool Expected, AssertKind K,
                      UnwindAction Unwind = {}, BlockId Next = NoId,
                      llvm::ArrayRef<Operand> Args = {});
-  BlockId drop(Place P, UnwindAction Unwind = {}, BlockId Next = NoId);
+  /// Glue: the drop glue function of the place's type (a Drop with none has
+  /// nothing for the code generator to call: only a hand-built module).
+  BlockId drop(Place P, UnwindAction Unwind = {}, BlockId Next = NoId,
+               FuncId Glue = NoId);
 
 private:
   void terminate(Terminator T);

@@ -1,0 +1,34 @@
+package main
+
+// P04.09 (STM-8): `s += x` on an owned string grows it in place. 100000
+// appends of one byte make O(log n) allocations (counted at gopp.mem_resize
+// by the test intrinsics: fewer than 40), and the strings are the ones Go
+// prints (`go run` of the program without the counter and without `.Clone()`,
+// whose strings are copies anyway: the same output). A clone appended to
+// leaves the original as it was; `u += u` reads the old bytes before the
+// buffer moves. Built with -test-intrinsics: Go++ only, the golden written
+// by hand from Go's output (append.out).
+
+@Extern("C") func gopp_test_count(which int, what int) int
+
+func main() {
+	a0 := gopp_test_count(0, 0)
+	s := ""
+	for i := 0; i < 100000; i++ {
+		s += "x"
+	}
+	allocs := gopp_test_count(0, 0) - a0
+	println(len(s), allocs < 40, s[99999] == 'x')
+	t := s.Clone()
+	t += "x"
+	s += "y"
+	println(len(t), len(s), t[100000] == 'x', s[100000] == 'y')
+	u := "ab"
+	u += u
+	u += string(u[1:])
+	println(u)
+	var arr [2]string
+	arr[1] += "q"
+	arr[1] += "r"
+	println(arr[1])
+}

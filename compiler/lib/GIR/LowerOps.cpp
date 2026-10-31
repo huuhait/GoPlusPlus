@@ -301,7 +301,8 @@ Operand Body::lazyClosure(const ast::Expr *R, S::Type *FT) {
       return errorValue(ctx());
   }
   const sym::Node *CN = L.Syms.Ctx.closure(ScopeNode, LF.Ordinal);
-  return makeClosure(R, LF, VT, CN, [&](Body &B) { B.lowerLazy(R, LF, Sig); });
+  return makeClosure(
+      R, LF, VT, CN, [&](Body &B) { B.lowerLazy(R, LF, Sig); }, FT);
 }
 
 void Body::lowerLazy(const ast::Expr *R, const LitFacts &LF,

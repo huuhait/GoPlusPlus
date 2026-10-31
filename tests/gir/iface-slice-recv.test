@@ -25,7 +25,7 @@ type Lener interface {
 
 func main() {
 	s := IntSlice{1, 2}
-	var l Lener = s
+	var l Lener = s.Clone() // (the box owns its value: P04.09)
 	println(l.Len(), l.Add(s, IntSlice{3}))
 	s.Grow(3)
 	println(s.Take())

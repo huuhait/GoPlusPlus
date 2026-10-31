@@ -1,0 +1,47 @@
+package main
+
+// P04.09 (the P04.23 item, operators built before drops): the result of an
+// operator method that owns memory is an owned temporary like any call's.
+// Counted with the test intrinsics (global allocator): `m = m + n` drops the
+// old m and moves the result in, `a + b + c` drops its first result with the
+// statement, an unused `a + b` is dropped at the end of its statement, and an
+// in-place `+=` method allocates and frees nothing. Go++ only (operator
+// methods): the output (ops.out) is written by hand.
+
+@Extern("C") func gopp_test_count(which int, what int) int
+
+type Vec struct{ xs []int }
+
+func (a Vec) + (b Vec) Vec {
+	out := make([]int, len(a.xs))
+	for i := range out {
+		out[i] = a.xs[i] + b.xs[i]
+	}
+	return Vec{out}
+}
+
+func (a *Vec) += (b Vec) {
+	for i := range a.xs {
+		a.xs[i] += b.xs[i]
+	}
+}
+
+func allocs() int { return gopp_test_count(0, 0) }
+func frees() int  { return gopp_test_count(0, 2) }
+
+func main() {
+	m := Vec{[]int{1, 2}}
+	n := Vec{[]int{10, 20}}
+	a0, f0 := allocs(), frees()
+	m = m + n
+	println("m = m + n:", allocs()-a0, frees()-f0, m.xs[1])
+	a0, f0 = allocs(), frees()
+	s := m + n + n
+	println("a + b + c:", allocs()-a0, frees()-f0, s.xs[0])
+	a0, f0 = allocs(), frees()
+	_ = m + n
+	println("unused:", allocs()-a0, frees()-f0)
+	a0, f0 = allocs(), frees()
+	m += n
+	println("in place:", allocs()-a0, frees()-f0, m.xs[1])
+}

@@ -25,13 +25,14 @@
 // CHECK: d = {title = {ptr = {{0x[0-9a-f]+}} "title", len = 5, cap = 0}, tags = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}, pos = {x = 1, y = 2}, ok = true}
 // CHECK: arr = {7, 8, 9}
 // CHECK: p = {{0x[0-9a-f]+}}
-// CHECK: xs = {ptr = {{0x[0-9a-f]+}}, len = 3, cap = 3, alloc = 0x0}
-// CHECK: o = {value = 3, set = true}
-// CHECK: t = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}
-// CHECK: h = {val = 1, next = {{0x[0-9a-f]+}}}
-// CHECK: s = {ptr = {{0x[0-9a-f]+}} "text", len = 4, cap = 0}
-// CHECK: m = {{0x[0-9a-f]+}}
-// CHECK: tail = {val = 2, next = 0x0}
+// (The locals come in the order of their numbers, which owned locals changed: P04.09.)
+// CHECK-DAG: xs = {ptr = {{0x[0-9a-f]+}}, len = 3, cap = 3, alloc = 0x0}
+// CHECK-DAG: o = {value = 3, set = true}
+// CHECK-DAG: t = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}
+// CHECK-DAG: h = {val = 1, next = {{0x[0-9a-f]+}}}
+// CHECK-DAG: s = {ptr = {{0x[0-9a-f]+}} "text", len = 4, cap = 0}
+// CHECK-DAG: m = {{0x[0-9a-f]+}}
+// CHECK-DAG: tail = {val = 2, next = 0x0}
 // CHECK: @@PRINT
 // CHECK: $1 = {title = {ptr = {{.*}} "title", len = 5, cap = 0}, tags = {{{.*}}}, pos = {x = 1, y = 2}, ok = true}
 // CHECK: $2 = {ptr = {{0x[0-9a-f]+}}, len = 2, cap = 2, alloc = 0x0}

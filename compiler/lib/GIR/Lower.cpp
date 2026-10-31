@@ -61,6 +61,8 @@ using llvm::isa_and_nonnull;
 void Lowering::unsupported(SourceLoc At, const llvm::Twine &What) {
   Failed = true;
   ++Reported;
+  if (Opts.CheckOnly)
+    return;
   // Generic code is lowered once per instance: a construct that is refused is
   // said once, at its place (P04.08).
   std::string Text = What.str();
@@ -73,12 +75,16 @@ void Lowering::unsupported(SourceLoc At, const llvm::Twine &What,
                            const llvm::Twine &Note) {
   Failed = true;
   ++Reported;
+  if (Opts.CheckOnly)
+    return;
   Diags.report(At, diag::err_gir_unsupported).note(At, Note) << What.str();
 }
 
 void Lowering::internalError(SourceLoc At, const llvm::Twine &What) {
   Failed = true;
   ++Reported;
+  if (Opts.CheckOnly)
+    return;
   Diags.report(At, diag::err_gir_verify) << What.str();
 }
 
@@ -104,6 +110,8 @@ Span Lowering::spanOf(SourceLoc L) {
   Sp.File = M->addFile(P.Filename) + 1;
   Sp.Line = P.Line;
   Sp.Col = P.Column;
+  SpanLocs.try_emplace(
+      (uint64_t(Sp.File) << 40) ^ (uint64_t(Sp.Line) << 16) ^ Sp.Col, L);
   return Sp;
 }
 
@@ -1352,6 +1360,10 @@ void Lowering::lowerBody(const ast::FuncDecl *FD) {
   }
   Function &F = M->func(Id);
   Body B(*this, F, Obj);
+  // (`gopp check` lowers only a body that a use after a move is possible
+  // in: manager decision M3.)
+  if (Opts.CheckOnly && !B.mayMoveVariable(FD->Body))
+    return;
   // The scope of the function literals declared in this body: their symbols
   // name it. (Its types were named before the instance walk, with the same
   // scopes: declareLocalTypes.)
@@ -1489,6 +1501,8 @@ void Lowering::lowerInstanceBody(GenericInst &In) {
   const S::Func *Obj = In.Decl;
   const ast::FuncDecl *FD = Obj->Decl;
   Body B(*this, F, Obj, &In);
+  if (Opts.CheckOnly && !B.mayMoveVariable(FD->Body))
+    return;
   // A function literal in generic code belongs to the instance (decision
   // M6, appendix A.5): its symbol is named by the instance's, so each
   // instance has closures of its own.
@@ -1653,6 +1667,21 @@ void Lowering::addEntry(const ast::FuncDecl *Main, FuncId PkgInit) {
 
 std::unique_ptr<Module> Lowering::run() {
   const ast::FuncDecl *Main = nullptr;
+  // `gopp check`: nothing to lower when no body moves out of a variable (a
+  // generic body is asked at its own types: a type parameter counts as
+  // owning, OWN-C5), the common case (manager decision M3).
+  if (Opts.CheckOnly) {
+    Function Scratch; // (the walk makes no GIR)
+    Scratch.Sig = Ctx.func({}, Ctx.unit());
+    Body B(*this, Scratch, nullptr);
+    bool Any = false;
+    for (const ast::File *File : Files)
+      for (const ast::Decl *D : File->Decls)
+        if (auto *FD = dyn_cast<ast::FuncDecl>(D); FD && FD->Body && !Any)
+          Any = B.mayMoveVariable(FD->Body);
+    if (!Any)
+      return nullptr;
+  }
   // The types declared in function bodies get their symbols first: an
   // instance may have one as a type argument (Instances.h).
   declareLocalTypes(CP, Files, Syms);
@@ -1714,6 +1743,8 @@ std::unique_ptr<Module> Lowering::run() {
   }
   if (Failed)
     return nullptr;
+  if (Opts.CheckOnly)
+    return nullptr;
   std::vector<VerifyError> Errs = verify(*M, 5);
   for (const VerifyError &E : Errs)
     Diags.report(SourceLoc(), diag::err_gir_verify) << E.str();
@@ -1755,4 +1786,18 @@ std::unique_ptr<Module> gir::lowerPackage(Context &Ctx, const SourceManager &SM,
   CallerEscape += Escapes;
   CallerInstanceSteps += Walked;
   return M;
+}
+
+bool gir::checkOwnership(const sema::CheckedPackage &CP,
+                         ArrayRef<const ast::File *> Files,
+                         DiagnosticsEngine &Diags, const LowerOptions &Opts) {
+  if (CP.Opts.GoCompat || !CP.Ctx || !CP.SM)
+    return true;
+  const unsigned Before = Diags.getNumErrors();
+  LowerOptions O = Opts;
+  O.CheckOnly = true;
+  O.Entry = false;
+  Context Ctx;
+  lowerPackage(Ctx, *CP.SM, CP, Files, Diags, O);
+  return Diags.getNumErrors() == Before;
 }

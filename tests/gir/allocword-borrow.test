@@ -32,7 +32,7 @@ func main() {
 // first, and the result keeps it.
 // CHECK-LABEL: fn _GPF4mainE4take(_1: []i64) -> []i64
 // CHECK: call const fn @_GPF4goppE10grow_slice(copy _3.3,
-// CHECK: = slice []i64 {copy {{_[0-9]+}}, copy {{_[0-9]+}}, copy {{_[0-9]+}}, copy _18}
+// CHECK: = slice []i64 {copy {{_[0-9]+}}, copy {{_[0-9]+}}, copy {{_[0-9]+}}, copy {{_[0-9]+}}}
 // A literal has the global allocator (a null word); the call of the borrowed
 // parameter makes the pair and never reads field 3 of `a`.
 // CHECK-LABEL: fn _GPF4mainE4main() -> ()
@@ -40,4 +40,4 @@ func main() {
 // CHECK: = tuple (*i64, u64) {copy _6.0, copy _6.1}
 // CHECK-NOT: _6.3
 // CHECK: call const fn @_GPF4mainE3sum(copy _7)
-// CHECK: call const fn @_GPF4mainE4take(copy _6)
+// CHECK: call const fn @_GPF4mainE4take(copy {{_[0-9]+}})

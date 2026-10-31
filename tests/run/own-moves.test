@@ -1,0 +1,10 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/moves.gopp %S/Inputs/own/moves.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/own/moves.gopp -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/Inputs/own/moves.out %}
+// GOLDEN: by-hand
+// P04.09: `move(m[k])` takes the value and removes the entry, and its
+// comma-ok form and `clone(m[k])`'s say whether k was there (OWN-R3a,
+// OWN-R9; a blank one drops the value with the statement); `move` of a view
+// leaves its place unchanged (ADR-0031: `move(vs[0])` of a `[]View[int]`);
+// `s = s` keeps s; a swap moves both. See Inputs/own/moves.gopp.

@@ -113,6 +113,10 @@ func main() {
 // O1-ARM: csel x4,
 // O1-ARM-NEXT: ret
 // O1-ARM-LABEL: _GPF4mainE7nextLen:
+// (The string `w`, the error and the interface parameter, which the callee
+// owns, are dropped before the return: a free of the string's buffer when it
+// owns one and a release of each interface, P04.09; the error word is kept
+// in a callee-saved register.)
 // O1-ARM: blr x{{[0-9]+}}
-// O1-ARM-NEXT: cmp x3, #0
-// O1-ARM-NEXT: csinv x0, x1, xzr, eq
+// O1-ARM: cmp x{{[0-9]+}}, #0
+// O1-ARM: csinv x{{[0-9]+}}, x{{[0-9]+}}, xzr, eq

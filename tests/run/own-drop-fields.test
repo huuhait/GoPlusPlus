@@ -1,0 +1,49 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/own-drop-fields.out
+// RUN: %if qemu-aarch64 %{ %gopp build -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %s -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/golden/own-drop-fields.out %}
+// GOLDEN: by-hand
+// P04.09 (D1.4 rule 2, ADR-0023, OWN-R7): a type's `drop` method runs where
+// the owner ends, in the order the spec gives: variables in reverse
+// declaration order at the end of their block, on every path out of it (a
+// return in a branch drops the inner variables first), a moved value only at
+// its new owner (`eat(a)` drops in `eat`; a branch that did not move drops
+// `a` at the end), the value an assignment replaces right at the assignment,
+// each round's variable at the end of the round, and a call's result nobody
+// takes at the end of its statement. Fields drop in reverse declaration order
+// and slice elements in increasing index order (the second program).
+package main
+
+type File struct {
+	fd   int
+	name string
+}
+
+func (f *File) drop() { println("close", f.fd, f.name) }
+
+type Pair struct {
+	a File
+	b File
+}
+
+func open(fd int) File { return File{fd, "f" + string(rune(48+fd))} }
+
+func use(f File) int { return f.fd }
+
+func consume(move f File) { println("consume", f.fd) }
+
+func main() {
+	a := open(1)
+	b := open(2)
+	println("start")
+	{
+		c := open(3)
+		println("inner", c.fd)
+	}
+	consume(a)
+	println("after consume")
+	p := Pair{open(4), open(5)}
+	println(p.a.fd, b.fd)
+	xs := []File{open(6), open(7)}
+	println(len(xs))
+}

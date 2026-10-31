@@ -122,12 +122,6 @@ public:
     Place P = V.Op.K == Operand::Const ? FB.temp(FB.use(V.Op)) : V.Op.P;
     return val(FB.field(P, K));
   }
-  /// Marks the temporary that holds V as an owned value (P04.09 drops it
-  /// unless it is moved).
-  Val owned(Val V) {
-    F.Locals[V.Op.P.Local].Owned = true;
-    return V;
-  }
   Val str(Val P, Val Len, Val Cap) {
     return tmp(
         FB.aggregate(AggKind::String, C.string(), {P.Op, Len.Op, Cap.Op}));

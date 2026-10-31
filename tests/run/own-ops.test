@@ -1,0 +1,6 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/ops.gopp %S/Inputs/own/ops.out
+// GOLDEN: by-hand
+// P04.09 (the P04.23 item of TODO P04.09): operator results that own memory
+// are dropped like any call's result, counted at the global allocator; an
+// in-place `+=` method allocates and frees nothing. See Inputs/own/ops.gopp.

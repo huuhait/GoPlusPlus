@@ -1,0 +1,21 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.09 review R18 in generic code: a swap of three places that may be one
+// place, of a type parameter's values, is decided at each instance by the
+// rule of plain code (E0453): `[]R` with R holding a drop and no Clone is
+// refused, `[]string` accepted (sema/swap-alias.test is the plain side).
+package main
+
+type R struct{ n int }
+
+func (r *R) drop() { println("drop", r.n) }
+
+func rot[T any](xs []T, i, j, k int) {
+	xs[i], xs[j], xs[k] = xs[j], xs[k], xs[i]
+}
+
+func main() {
+	rot([]string{"a", "b", "c"}, 0, 1, 2)
+	// CHECK: [[@LINE+1]]:2: error[E0453]: cannot instantiate rot[R]: this swap of three or more places, two of which may be one place at run time, makes a copy of a value, and R can't be cloned here (OWN-R6)
+	rot([]R{{1}, {2}, {3}}, 0, 1, 2)
+}

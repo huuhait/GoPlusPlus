@@ -890,6 +890,7 @@ void Checker::compositeLit(Operand &X, const CompositeLit *Ex, Type *Hint) {
       if (K.M == Mode::Invalid)
         continue;
       storeLiteralElem(K, M->Key);
+      implicitClone(KV->Key, M->Key, "a map insert", "its key (OWN-V4)");
       if (K.M == Mode::Constant) {
         bool Dup = false;
         for (auto &[V, T] : Visited)

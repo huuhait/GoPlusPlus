@@ -1,0 +1,66 @@
+package main
+
+// P04.09: drop order (ADR-0023, D1.4 rule 2). A value's `drop` method runs
+// first, then its fields from the last to the first; locals die in reverse
+// order of declaration; a moved-from variable is not dropped again; an
+// assignment drops the old value before the new one is stored; a slice and an
+// array drop their elements in increasing index order (spec 8.3).
+
+type Part struct{ name string }
+
+func (p *Part) drop() { println("drop part", p.name) }
+
+type Whole struct {
+	a Part
+	b Part
+	n int
+}
+
+func (w *Whole) drop() { println("drop whole", w.n) }
+
+func sink(move p Part) { println("sink", p.name) }
+
+func (p Part) mk() Part { return Part{p.name + "!"} }
+
+func scope() {
+	x := Part{"x"}
+	y := Part{"y"}
+	println("scope", x.name, y.name)
+}
+
+func moved() {
+	p := Part{"p"}
+	sink(move(p))
+	println("after sink")
+}
+
+func reassign() {
+	p := Part{"old"}
+	p = Part{"new"}
+	println("reassigned", p.name)
+}
+
+func branches(c bool) {
+	p := Part{"b"}
+	if c {
+		sink(move(p))
+	}
+	println("end of branches", c)
+}
+
+func main() {
+	scope()
+	moved()
+	reassign()
+	branches(true)
+	branches(false)
+	w := Whole{Part{"first"}, Part{"second"}, 7}
+	println("whole", w.n)
+	ps := []Part{{"e0"}, {"e1"}, {"e2"}}
+	println(len(ps))
+	var arr [2]Part
+	arr[0].name = "a0"
+	arr[1].name = "a1"
+	println(arr[0].name)
+	println("end of main")
+}

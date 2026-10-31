@@ -56,7 +56,8 @@ class Result:
         """A text if the program did not run to an end of its own."""
         if self.outcome in ("exited", "signaled"):
             return None
-        return "%s: %s" % (self.outcome, self.message.strip()[:600])
+        limit = 4000 if self.outcome in ("leaked", "asan") else 600
+        return "%s: %s" % (self.outcome, self.message.strip()[:limit])
 
 
 def gopp():
@@ -88,7 +89,78 @@ def uses_test_intrinsics(srcs):
 
 
 def want_real(flag=False):
-    return flag or os.environ.get("GOPP_TEST_REAL") == "1"
+    return flag or os.environ.get("GOPP_TEST_REAL") == "1" or leak_check()
+
+
+def leak_check():
+    """GOPP_LEAKCHECK=1 (lit -Dleak_check=1, `ninja check-run-leaks`, P04.09):
+    every program is built as LLVM IR, every function of it marked
+    sanitize_address, compiled with clang -fsanitize=address and run as a real
+    binary, so a read or write of freed memory, a double free or an overflow
+    in the program's own code (the runtime's too: it is GIR) fails the test
+    with AddressSanitizer's report. A program that ends normally (status 0)
+    with a block no global reaches fails too (LeakSanitizer). The stacks are
+    not scanned for leaks: when main has returned no frame of the program is
+    left, so a stale pointer in dead stack memory cannot hide a leak. The leaks
+    of a program that stops with another status (a panic exits from inside its
+    frames, before any drop runs: unwinding is P04.26) are not checked. The
+    fast runner cannot do this: its executors leave with _exit, which skips
+    the check, and they are not instrumented."""
+    return os.environ.get("GOPP_LEAKCHECK") == "1"
+
+
+# (A program that tests a crash or an allocation failure keeps its own
+# signal and its null from malloc: the sanitizer handles neither. A report
+# does not change the exit status: the run script compares it as usual, and
+# runlib fails the run on the report itself.)
+ASAN_OPTIONS = ("detect_leaks=1:exitcode=0:handle_segv=0:handle_sigbus=0:"
+                "handle_sigfpe=0:handle_abort=0:allocator_may_return_null=1:"
+                "detect_stack_use_after_return=1")
+LSAN_OPTIONS = "use_stacks=0:use_registers=0"
+
+
+def _instrument(ll):
+    """Marks every function of an LLVM IR file sanitize_address (the address
+    sanitizer instruments only functions that carry the attribute)."""
+    import re
+    with open(ll) as f:
+        text = f.read()
+    text = re.sub(r"^(attributes #\d+ = \{)", r"\1 sanitize_address ", text,
+                  flags=re.M)
+    with open(ll, "w") as f:
+        f.write(text)
+
+
+def _split_leaks(err):
+    """(the output without LeakSanitizer's report, the report or None)."""
+    at = err.find(b"ERROR: LeakSanitizer: detected memory leaks")
+    if at < 0:
+        return err, None
+    line = err.rfind(b"\n", 0, at) + 1  # ==pid==ERROR: LeakSanitizer: ...
+    prev = err.rfind(b"\n", 0, max(line - 1, 0)) + 1  # the ===== rule above
+    start = prev if line > 0 and not err[prev:line].strip().strip(b"=") else line
+    s = err.find(b"SUMMARY: LeakSanitizer", at)
+    end = err.find(b"\n", s) if s >= 0 else -1
+    end = len(err) if end < 0 else end + 1
+    return err[:start] + err[end:], err[start:end]
+
+
+def _quiet(err):
+    """Drops the sanitizer's own warning when an allocation fails (the program
+    gets null, as from malloc, and says what it says itself)."""
+    import re
+    return re.sub(rb"==\d+==WARNING: (Leak|Address)Sanitizer failed to allocate [^\n]*\n",
+                  b"", err)
+
+
+def _leak_summary(report):
+    """The summary line, then the first leaks with their frames (at most 40
+    lines), for a failure message."""
+    lines = report.decode(errors="replace").splitlines()
+    summary = [l for l in lines if l.startswith("SUMMARY:")]
+    body = [l for l in lines if l.strip() and not l.startswith("=")
+            and not l.startswith("SUMMARY:")]
+    return "\n".join(summary + body[:40])
 
 
 def _file_digest(h, path):
@@ -150,9 +222,25 @@ def _run_real(srcs, link_flags, timeout, merge=False):
     with tempfile.TemporaryDirectory() as tmp:
         exe = os.path.join(tmp, "prog")
         with procslots.slot():
-            b = subprocess.run([gopp(), "build"] + link_flags + list(srcs) + ["-o", exe],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               timeout=timeout)
+            if leak_check():
+                ll = os.path.join(tmp, "prog.ll")
+                b = subprocess.run([gopp(), "build", "-emit=llvm"] + link_flags +
+                                   list(srcs) + ["-o", ll],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   timeout=timeout)
+                if b.returncode == 0:
+                    _instrument(ll)
+                    b = subprocess.run([os.environ.get("CC", "clang"),
+                                        "-fsanitize=address", "-O0",
+                                        "-Wno-override-module",
+                                        "-Wno-unused-command-line-argument",
+                                        ll, "-o", exe, "-lm"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       timeout=timeout)
+            else:
+                b = subprocess.run([gopp(), "build"] + link_flags + list(srcs) + ["-o", exe],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   timeout=timeout)
         if b.returncode != 0:
             return Result("compile-failed", message=b.stderr.decode(errors="replace"))
         return run_exe(exe, [], timeout, merge)
@@ -162,15 +250,36 @@ def run_exe(exe, prefix, timeout=TIMEOUT, merge=False):
     """Runs a built program (prefix: e.g. qemu-aarch64 -L SYSROOT). merge:
     standard error goes where standard output goes (2>&1), as with the
     runner's merge_output."""
+    env = None
+    if leak_check() and not prefix:
+        env = dict(os.environ)
+        env["ASAN_OPTIONS"] = ASAN_OPTIONS
+        env["LSAN_OPTIONS"] = LSAN_OPTIONS
     try:
         with procslots.slot():
             r = subprocess.run(prefix + [exe], stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT if merge else subprocess.PIPE,
-                               timeout=timeout)
+                               timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return Result("timeout", message="no end in %d s" % timeout)
     err = r.stderr or b""
+    if env is not None:
+        out = r.stdout
+        both = (out or b"") + (err or b"")
+        at = both.find(b"ERROR: AddressSanitizer")
+        if at >= 0:
+            return Result("asan", stdout=out, stderr=err,
+                          message=both[max(0, both.rfind(b"\n", 0, at)):]
+                          .decode(errors="replace")[:4000])
+        if merge:
+            out, report = _split_leaks(_quiet(out))
+        else:
+            err, report = _split_leaks(_quiet(err))
+        if report is not None and r.returncode == 0:
+            return Result("leaked", stdout=out, stderr=err,
+                          message=_leak_summary(report))
+        r = subprocess.CompletedProcess(r.args, r.returncode, out, err)
     if r.returncode < 0:
         return Result("signaled", signal=-r.returncode, stdout=r.stdout, stderr=err)
     return Result("exited", code=r.returncode, stdout=r.stdout, stderr=err)

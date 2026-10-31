@@ -471,7 +471,7 @@ private:
   }
 
   //===--------------------------------------------------------------------===//
-  // A function: V010-V013, V022, V067, V070, V073-V075, V077, V079, V080
+  // A function: V010-V013, V022, V067, V070, V073-V075, V077, V079-V081
   //===--------------------------------------------------------------------===//
 
   void function(const Function &Fn) {
@@ -590,8 +590,14 @@ private:
         err("V011", "local _" + num(L) +
                         " is a source variable and not a parameter or a "
                         "variable");
-      if (Lo.Owned && Lo.K != Local::Temp)
-        err("V014", "local _" + num(L) + " is owned and not a temporary");
+      if (Lo.Owned && Lo.K == Local::Return)
+        err("V014", "the return place is owned");
+      if (Lo.Owned != (Lo.Glue != NoId))
+        err("V014", "local _" + num(L) +
+                        (Lo.Owned ? " is owned and has no drop glue"
+                                  : " has drop glue and is not owned"));
+      else if (Lo.Glue != NoId)
+        dropGlue(Lo.Glue, Lo.Ty, "local _" + num(L));
       if (!Lo.UnitName.empty()) {
         // V080: a unit name (the debugger's name for the base type, UNI-9)
         // belongs to a source variable of a number type (what the local
@@ -954,6 +960,8 @@ private:
         assign(S.RV, S.Dest.Ty);
         if (S.RV.K == Rvalue::Aggregate)
           aggregateInPlace(S);
+        if (S.DropOld != NoId)
+          dropGlue(S.DropOld, S.Dest.Ty, "the old value of the store");
       }
       return;
     case Statement::StorageLive:
@@ -1353,10 +1361,34 @@ private:
                       ", whose address is taken");
   }
 
-  /// V064: a drop is of a place that holds a value.
+  /// V064: a drop is of a place that holds a value. V081: its glue, when it
+  /// names one, takes a pointer to the place's type.
   void drop(const Terminator &T) {
-    if (place(T.Dest) && T.Dest.Ty->isUnit())
+    if (!place(T.Dest))
+      return;
+    if (T.Dest.Ty->isUnit())
       err("V064", "a drop of a unit place");
+    else if (T.Discr.K == Operand::Const && T.Discr.C.K == Constant::Func)
+      dropGlue(static_cast<FuncId>(T.Discr.C.Bits), T.Dest.Ty, "the drop");
+  }
+
+  /// V081: a drop glue function is `fn(*u8) -> ()` of the Go++ convention
+  /// (its parameter is the address of the value it drops, gir.md section 7;
+  /// the type is erased so a map's info and a func value's environment can
+  /// hold the glue of any type).
+  void dropGlue(FuncId G, const Type *T, const std::string &What) {
+    (void)T;
+    if (G >= M.Funcs.size()) {
+      err("V081", What + " names no drop glue function");
+      return;
+    }
+    const Type *Sig = M.Funcs[G]->Sig;
+    if (!Sig || Sig->getKind() != Type::Kind::Func ||
+        Sig->elems().size() != 1 || !Sig->ret()->isUnit() ||
+        !Sig->elems()[0]->isPtr() || !Sig->elems()[0]->elem()->isInt() ||
+        Sig->elems()[0]->elem()->bits() != 8 || M.Funcs[G]->CC != CallConv::Go)
+      err("V081", What + " has drop glue @" + M.Funcs[G]->Name +
+                      " that is not a Go++ function from *u8 to unit");
   }
 
   const Function *directCallee(const Terminator &T) const {

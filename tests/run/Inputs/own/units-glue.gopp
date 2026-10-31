@@ -1,0 +1,78 @@
+package main
+
+// P04.09 review R17: the glue of types that differ only in their units is
+// shared only when it calls no method the program wrote; a `drop` or a
+// `Clone() T` method of an instance runs with that instance's units (the
+// dynamic type keeps them, spec 17). In a body shared across unit arguments
+// (shared below) such a method that needs no unit runs as well, once per
+// value (gir/units-glue-shared.test refuses one that needs the unit).
+
+unit M
+unit KM = 1000 M
+
+type Dropped[U unit] struct {
+	Name string
+	D    float64[U]
+}
+
+type Cloned[U unit] struct {
+	Name string
+	D    float64[U]
+}
+
+func kind(a any) string {
+	switch a.(type) {
+	case float64[KM]:
+		return "km"
+	case float64[M]:
+		return "m"
+	}
+	return "?"
+}
+
+func (r *Dropped[U]) drop() { println("drop", r.Name, kind(r.D)) }
+
+func (r Cloned[U]) Clone() Cloned[U] {
+	println("clone", r.Name, kind(r.D))
+	return Cloned[U]{r.Name + "-c", r.D}
+}
+
+func drops() {
+	x := Dropped[M]{"m" + "", 1.0[M]}
+	y := Dropped[KM]{"km" + "", 1.0[KM]}
+	println(kind(x.D), kind(y.D))
+}
+
+func clones() {
+	xs := []Cloned[M]{{"m" + "", 1.0[M]}}
+	ys := []Cloned[KM]{{"km" + "", 1.0[KM]}}
+	xc := xs.Clone()
+	yc := ys.Clone()
+	println(len(xc), len(yc), xc[0].Name, yc[0].Name)
+}
+
+type Named[U unit] struct {
+	Name string
+	D    float64[U]
+}
+
+func (r *Named[U]) drop() { println("drop", r.Name) }
+
+func (r Named[U]) Clone() Named[U] { return Named[U]{r.Name + "-c", r.D} }
+
+func keep[X any](move x X) {}
+
+func shared[U unit](d float64[U], move p Named[U], xs []Named[U]) float64[U] {
+	r := Named[U]{"r" + "", d}
+	ys := xs.Clone()
+	keep(Named[U]{"k" + "", d})
+	println(r.Name, p.Name, len(ys), ys[0].Name)
+	return r.D + ys[0].D
+}
+
+func main() {
+	drops()
+	clones()
+	xs := []Named[KM]{{"x" + "", 2.0[KM]}}
+	println(float64(shared(1.0[KM], Named[KM]{"p" + "", 1.0[KM]}, xs)))
+}

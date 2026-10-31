@@ -229,6 +229,26 @@ struct Info {
   /// capacity stays). Any other slice expression makes a borrowed slice or a
   /// view (SLC-8), whose type is in Types.
   llvm::DenseSet<const ast::SliceExpr *> Reslices;
+  /// Every call that takes a place by `move` (an `append` base, a `move`
+  /// argument or receiver) and stores its result back into that same place
+  /// (OWN-R4: `p = append(p, ...)`, `m[k] = f(m[k])`): the store does not
+  /// drop the old value, the call took it (P04.09).
+  llvm::DenseSet<const ast::Expr *> SelfMoves;
+  /// The first left side of every assignment that is a swap (OWN-R3a: the
+  /// left sides are the right sides' places, `a[i], a[j] = a[j], a[i]`): the
+  /// values move between the places (P04.09 R4). True for a swap of three or
+  /// more places two of which may be one place at run time
+  /// (Checker::swapMayAlias): Go's stores may then write one value twice, so
+  /// its types must be cloneable (E0452, R18).
+  llvm::DenseMap<const ast::Expr *, bool> Swaps;
+  /// A copy the language makes (Checker::implicitClone) of a type that
+  /// mentions a type parameter and is not cloneable as written: decided at
+  /// each instance by the same rule (OWN-R6; InstanceWalk, E0453).
+  struct ImplicitCloneUse {
+    Type *T = nullptr;
+    std::string What, Copied;
+  };
+  llvm::DenseMap<const ast::Node *, ImplicitCloneUse> ImplicitClones;
   /// Every call argument whose value its parameter takes as it is, although
   /// the two types differ (Checker::assignableAsIs: identical underlying
   /// types, one of them unnamed, as `struct{...}` into a struct type or
@@ -476,6 +496,20 @@ public:
   /// that holds one by value; an unconstrained type parameter too, OWN-C5)?
   /// What makes a parameter or a value receiver of type T borrowed (PAR-1).
   bool isOwning(Type *T);
+  /// Is T of the shared-handle category (OWN-C3: an interface value, a func
+  /// value, a channel, `Shared[*T]`, `Weak[*T]`, or a struct or array of
+  /// them only)? Copying one retains; ending a copy releases (P04.09).
+  bool isSharedHandle(Type *T);
+  /// The `drop` method (OWN-R7) of the defined type T (the instance's, for
+  /// an instance of a generic type), or null: only T itself, never a type
+  /// that holds one.
+  const Func *dropMethod(Type *T);
+  /// Is T cloneable (OWN-R6: Checker::satisfiesClone, the one decision)?
+  bool cloneable(Type *T);
+  /// The `Clone() T` method the program wrote for the defined type T (OWN-R6:
+  /// a value receiver), or null: the compiler's own clone then copies the
+  /// fields.
+  const Func *cloneMethod(Type *T);
   /// Test-only work count: the steps of holdsView's walks so far.
   uint64_t viewSteps() const;
 

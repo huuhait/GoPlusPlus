@@ -1,0 +1,36 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.09 (OWN-R3, TYP-6): a conversion given to a new owner takes its
+// operand, as the implicit conversion does: `x := any(a)` moves a into the
+// box, `o := Option[string](b)` into the Option, `n := Name(c)` hands c on;
+// and `e := append(d, "e")` takes d (only `d = append(d, ...)` gives it back).
+// A read of each afterwards is E0451, from `gopp check` (which lowers the
+// body: it sees through the conversion and the append base) and from the
+// build alike. The other side, conversions for borrowed parameters
+// (`show(Option[string](a))`, `look(any(a))`, lent by TYP-7, a stays), is in
+// Inputs/use-after-move-ok.gopp (use-after-move.test).
+package main
+
+type Name string
+
+func convs() int {
+	a, b, c, d := "a"+"1", "b"+"1", "c"+"1", []string{"d"}
+	x := any(a)
+	o := Option[string](b)
+	n := Name(c)
+	e := append(d, "e")
+	_, _, _, _ = x, o, n, e
+	// CHECK: [[@LINE+8]]:9: error[E0451]: use of moved value a (OWN-R3)
+	// CHECK: [[@LINE-6]]:11: note: moved here
+	// CHECK: [[@LINE+6]]:18: error[E0451]: use of moved value b (OWN-R3)
+	// CHECK: [[@LINE-7]]:22: note: moved here
+	// CHECK: [[@LINE+4]]:27: error[E0451]: use of moved value c (OWN-R3)
+	// CHECK: [[@LINE-8]]:2: note: moved here
+	// CHECK: [[@LINE+2]]:36: error[E0451]: use of moved value d (OWN-R3)
+	// CHECK: [[@LINE-9]]:7: note: moved here
+	return len(a) + len(b) + len(c) + len(d)
+}
+
+func main() {
+	println(convs())
+}

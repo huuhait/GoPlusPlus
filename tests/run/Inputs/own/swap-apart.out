@@ -1,0 +1,28 @@
+b! c! a!
+drop a!
+drop c!
+drop b!
+b! c! a!
+drop a!
+drop c!
+drop b!
+b! c! a!
+drop b!
+drop c!
+drop a!
+b! c! a!
+y0! z1! x1!
+b! c! a!
+drop b!
+drop c!
+drop a!
+end
+drop z0!
+drop x1!
+drop z1!
+drop y1!
+drop x0!
+drop y0!
+drop a!
+drop c!
+drop b!

@@ -1,0 +1,65 @@
+package main
+
+// P04.09 review R1: a value lent to an interface parameter, (itab | 1,
+// &copy) with the copy in the caller's frame (TYP-7), is boxed wherever it
+// can outlive the call: every way it leaves the parameter. Each `keep` runs in
+// a frame that has returned before the value is read, and `clobber` writes
+// over that stack; the box a kept value gets is one allocation.
+
+@Extern("C") func gopp_test_count(which int, what int) int
+
+type Big struct{ a, b, c, d int }
+
+type Holder struct{ v any }
+
+var saved []any
+var held Holder
+var glob any
+
+func allocs() int { return gopp_test_count(0, 0) }
+
+// A closure that captures the parameter (its cell outlives the call).
+func capture(v any) func() any { return func() any { return v } }
+
+// `move(v)` into an append, into a literal, out of a return, and a swap with
+// a package variable.
+func intoAppend(v any)       { saved = append(saved, move(v)) }
+func intoLiteral(v any)      { held = Holder{move(v)} }
+func outOfReturn(v any) any  { return move(v) }
+func intoSwap(v any)         { glob, v = v, glob }
+
+func clobber(n int) int {
+	var arr [64]int
+	for i := 0; i < 64; i++ {
+		arr[i] = n + i
+	}
+	return arr[n%64]
+}
+
+func viaCapture() func() any { b := Big{1, 2, 3, 4}; return capture(b) }
+func viaAppend()             { b := Big{5, 6, 7, 8}; intoAppend(b) }
+func viaLiteral()            { b := Big{9, 10, 11, 12}; intoLiteral(b) }
+func viaReturn() any         { b := Big{13, 14, 15, 16}; return outOfReturn(b) }
+func viaSwap()               { b := Big{17, 18, 19, 20}; intoSwap(b) }
+
+func main() {
+	a0 := allocs()
+	f := viaCapture()
+	clobber(1)
+	println(f().(Big).a, f().(Big).d)
+	viaAppend()
+	clobber(2)
+	println(saved[0].(Big).a, saved[0].(Big).d)
+	viaLiteral()
+	clobber(3)
+	println(held.v.(Big).a, held.v.(Big).d)
+	x := viaReturn()
+	clobber(4)
+	println(x.(Big).a, x.(Big).d)
+	viaSwap()
+	clobber(5)
+	println(glob.(Big).a, glob.(Big).d)
+	// A box for each kept value (and the closure's cell and environment,
+	// and the append's buffer): more than five allocations.
+	println(allocs()-a0 >= 5)
+}

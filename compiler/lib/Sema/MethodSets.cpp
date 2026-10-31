@@ -94,6 +94,63 @@ bool MethodSets::isOwning(Type *T) {
   return !P || (T && P->C.category(T) == Category::Owning);
 }
 
+bool MethodSets::isSharedHandle(Type *T) {
+  return P && T && P->C.category(T) == Category::SharedHandle;
+}
+
+const Func *MethodSets::dropMethod(Type *T) {
+  auto *N = P && T ? dyn_cast<NamedType>(T) : nullptr;
+  if (!N || N->Ptr != PtrKind::None)
+    return nullptr;
+  NamedType *O = N->origin();
+  if (!O->Methods)
+    return nullptr;
+  for (Func *M : *O->Methods) {
+    if (M->Name != "drop")
+      continue;
+    Checker &C = P->C;
+    // (A pointer-receiver method: T is addressable where it dies.)
+    Checker::LookupResult R = C.lookupFieldOrMethod(T, true, M->Pkg, M->Name);
+    auto *F = R.Obj ? dyn_cast<Func>(R.Obj) : nullptr;
+    if (!F || R.Index.empty())
+      return nullptr;
+    C.objDecl(F, nullptr);
+    return F;
+  }
+  return nullptr;
+}
+
+bool MethodSets::cloneable(Type *T) {
+  return !P || !T || P->C.satisfiesClone(T, nullptr);
+}
+
+const Func *MethodSets::cloneMethod(Type *T) {
+  auto *N = P && T ? dyn_cast<NamedType>(T) : nullptr;
+  if (!N || N->Ptr != PtrKind::None)
+    return nullptr;
+  NamedType *O = N->origin();
+  if (!O->Methods)
+    return nullptr;
+  for (Func *M : *O->Methods) {
+    if (M->Name != "Clone" || M->HasPtrRecv)
+      continue;
+    Checker &C = P->C;
+    Checker::LookupResult R = C.lookupFieldOrMethod(T, false, M->Pkg, M->Name);
+    auto *F = R.Obj ? dyn_cast<Func>(R.Obj) : nullptr;
+    if (!F || R.Index.empty() || F->HasPtrRecv)
+      return nullptr;
+    C.objDecl(F, nullptr);
+    // (Only the cloneable signature `Clone() T`, OWN-R6.)
+    auto *Sig = dyn_cast_or_null<SignatureType>(F->Ty);
+    if (!Sig || !Sig->Params->Elems.empty() ||
+        Sig->Results->Elems.size() != 1 ||
+        !C.identical(Sig->Results->Elems[0], T))
+      return nullptr;
+    return F;
+  }
+  return nullptr;
+}
+
 Var::Borrow MethodSets::modeAt(const Var *V, Type *Ty) {
   if (!P || !Ty || V->Mode == Var::MoveParam || V->Mode == Var::Alias)
     return V->Mode;

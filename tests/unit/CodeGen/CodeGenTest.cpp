@@ -179,7 +179,7 @@ TEST(CodeGen, RefusesGIRItCannotLowerYet) {
     if (Case == 0) {
       B.drop(B.local(S));
       B.ret();
-      Want = "a drop (P04.09) in f";
+      Want = "a drop without drop glue in f";
     } else if (Case == 1) {
       gir::BlockId Pad = B.newBlock(/*Cleanup=*/true);
       B.call(gir::constFunc(M, Ext), {}, B.local(B.newTemp(GC.unit())),

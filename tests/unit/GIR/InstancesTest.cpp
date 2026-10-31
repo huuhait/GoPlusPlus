@@ -455,6 +455,30 @@ static std::string unitFreeProgram(unsigned N) {
   return S + "\tprintln(t)\n}\n";
 }
 
+// P04.09 review R17: in a body shared across unit arguments, the glue of a
+// value calls the `drop` of the type the instance names, so the walk asks
+// for that method as a call would (InstanceWalk::userGlue). A chain of N
+// unit-generic types, the last with a drop that needs no unit, and N values
+// of the first in a shared body: the chain is walked once, so the steps
+// follow N; the control walks it for each value.
+static std::string sharedGlueProgram(unsigned N) {
+  std::string S = "package main\n\nunit M\nunit KM = 1000 M\n\n";
+  for (unsigned I = 0; I < N; ++I)
+    S += "type G" + std::to_string(I) + "[U unit] struct {\n\tx G" +
+         std::to_string(I + 1) + "[U]\n\td float64[U]\n}\n\n";
+  std::string Last = "G" + std::to_string(N);
+  S += "type " + Last +
+       "[U unit] struct {\n\ts string\n\td float64[U]\n}\n\nfunc (g *" + Last +
+       "[U]) drop() { println(len(g.s)) }\n\nfunc H[U unit](d " +
+       "float64[U]) int {\n\tt := 0\n";
+  for (unsigned I = 0; I < N; ++I) {
+    std::string V = "v" + std::to_string(I);
+    S += "\tvar " + V + " G0[U]\n\t" + V + ".d = d\n\tt += int(float64(" + V +
+         ".d))\n";
+  }
+  return S + "\treturn t\n}\n\nfunc main() { println(H(1.0[KM])) }\n";
+}
+
 static uint64_t countedSteps(const std::string &Source, bool Forget) {
   Pkg P(Source);
   EXPECT_EQ(P.errors(), "");
@@ -466,7 +490,7 @@ static uint64_t countedSteps(const std::string &Source, bool Forget) {
 }
 
 TEST(GIRInstances, UnitsASharedBodyDoesNotKnowAreFoundOncePerInstance) {
-  for (auto *Make : {sharedWideProgram, unitFreeProgram}) {
+  for (auto *Make : {sharedWideProgram, unitFreeProgram, sharedGlueProgram}) {
     uint64_t S1 = countedSteps(Make(100), false),
              S4 = countedSteps(Make(400), false);
     EXPECT_GT(S1, 100u);

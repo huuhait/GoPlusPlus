@@ -88,8 +88,14 @@ const std::map<std::string, const char *> Unchecked = {
                       "the second line: unit/Sema/InstancesTest.cpp"},
     {"err_inst_checked_result", "reported by the instance walk, not the "
                                 "checker; tests/gir/inst-checked.test"},
+    {"err_use_after_move",
+     "reported by the GIR lowering and by `gopp check`, "
+     "not the type checker; tests/gir/use-after-move.test"},
     {"err_inst_too_large", "reported by the instance walk, not the checker; "
                            "tests/gir/inst-depth.test"},
+    {"err_inst_implicit_clone",
+     "reported by the instance walk, not the checker; "
+     "tests/sema/implicit-clone-table.test"},
     {"err_no_stack", "needs no thread to be had: DeepChain."
                      "NoStackForADeepChain, tests/sema/"
                      "no-stack.long.test"},

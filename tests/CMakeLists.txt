@@ -79,6 +79,20 @@ add_custom_target(check-run-real
   DEPENDS gopp
   USES_TERMINAL)
 
+# check-run-leaks: the run tests again as real executables whose own code is
+# instrumented with AddressSanitizer (the LLVM IR of the program, compiled by
+# clang -fsanitize=address): a use of freed memory or a double free fails, and
+# so does a program that ends normally with a block no global reaches
+# (LeakSanitizer; P04.09, gir.md section 7, runlib.leak_check). amd64 hosts.
+# (An instrumented program is built by clang and runs several times slower:
+# the long tests' limit per test.)
+add_custom_target(check-run-leaks
+  COMMAND ${GOPP_LIT} -j ${GOPP_LIT_JOBS} --time-tests -sv
+          --timeout ${GOPP_LONG_TEST_TIMEOUT} -Dleak_check=1
+          ${CMAKE_CURRENT_BINARY_DIR}/run
+  DEPENDS gopp
+  USES_TERMINAL)
+
 add_custom_target(check-includes
   COMMAND ${GOPP_SOURCE_DIR}/tools/check-frontend-includes.sh ${GOPP_SOURCE_DIR}
   USES_TERMINAL)

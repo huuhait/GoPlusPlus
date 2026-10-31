@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/drop-order.gopp %S/Inputs/own/drop-order.out
+// GOLDEN: by-hand
+// P04.09: drop order. A type's `drop` method runs first, then its fields last
+// to first (OWN-R2, ADR-0023); locals die in reverse order of declaration; a
+// `move` argument is dropped by the callee, not again by the caller; an
+// assignment drops the old value before the new one is stored; a value moved
+// on one branch only is dropped on the other (it is zero where moved, so the
+// drop does nothing: OWN-R5). Elements of an array or a slice are dropped in
+// increasing index order (spec 8.3: what `range move(xs)` did not move is
+// freed so). Inputs/own/drop-order.out is the program's output
+// (Go++ only: `drop` is no Go).

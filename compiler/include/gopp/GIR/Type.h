@@ -176,6 +176,9 @@ struct Layout {
   uint64_t Size = 0, Align = 1;
 };
 Layout layoutOf(const Type *T);
+/// The same with a memo the caller keeps between calls (a chain of N nested
+/// types asked for one by one costs N, not N squared).
+Layout layoutOf(const Type *T, llvm::DenseMap<const Type *, Layout> &Memo);
 
 class Context {
 public:

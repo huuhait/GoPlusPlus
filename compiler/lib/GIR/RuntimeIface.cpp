@@ -87,6 +87,12 @@ struct X : Rt {
   }
 };
 
+/// The counts of the shared handles (P04.09) stay calls: a release has
+/// several branches, and one inlined into a prologue that LLVM shrink-wraps
+/// made it write a line-table row of file 1 into a DWARF 5 table that has
+/// only file 0 (`llvm-dwarfdump --verify`, run/core-opt-matrix at opt 3).
+void noInline(Function &F) { F.Inline = Function::InlineHint::Never; }
+
 Function *makeFn(Lowering &L, StringRef Name, Type *Sig, FuncId &Slot,
                  bool NoReturn = false) {
   auto Fn = std::make_unique<Function>();
@@ -181,10 +187,21 @@ FuncId Lowering::buildIfaceRuntime(RtFn Which, SourceLoc At) {
     Place Key = FB.local(FB.newTemp(KeyT));
     FB.assign(Key, FB.aggregate(AggKind::Tuple, KeyT, {Desc.Op, Ti.Op}));
     Place Info = FB.local(FB.newTemp(InfoS));
+    // (The key and the value own nothing: no drop and no clone glue.)
+    Type *DropT = Ctx.func({PU8}, Ctx.unit());
+    Type *CloneT = Ctx.func({PU8, PU8}, Ctx.unit());
+    auto ZeroOf = [&](Type *T) {
+      Operand Z;
+      Z.K = Operand::Const;
+      Z.C.K = Constant::Zero;
+      Z.C.Ty = T;
+      return Z;
+    };
     FB.assign(Info,
               FB.aggregate(AggKind::Struct, InfoS,
                            {constInt(U64, 16), constInt(U64, 8),
-                            constFunc(*M, KeyHash), constFunc(*M, KeyEq)}));
+                            constFunc(*M, KeyHash), constFunc(*M, KeyEq),
+                            ZeroOf(DropT), ZeroOf(DropT), ZeroOf(CloneT)}));
     Val InfoP = E.addrOf(Info);
     Val KeyP = E.to(PU8, E.addrOf(Key));
     Val CacheP = E.addrOf(FB.global(itabCacheGlobal()));
@@ -398,6 +415,208 @@ FuncId Lowering::buildIfaceRuntime(RtFn Which, SourceLoc At) {
         });
     E.write(2, "\n");
     E.die();
+    E.finish();
+    return Slot;
+  }
+  case RtFn::PanicKeep: {
+    if (!Need({"write", "exit"}))
+      return NoId;
+    Function *F =
+        makeFn(*this, "panic_keep", Ctx.func({PU8}, Unit), Slot, true);
+    X E(*this, *F);
+    E.At = At;
+    // TYP-7: a value of a type that cannot be cloned is passed to an
+    // interface parameter as a borrow; the callee may not keep it. (A
+    // compile error once the callee's "keeps it" bit exists: TODO P04.29.)
+    E.write(2, "panic: runtime error: an interface parameter that holds a "
+               "borrowed ");
+    E.writeStr(2, E.ti(E.param(0), TI::Name));
+    E.write(2, " was kept, and the type has no Clone (TYP-7)\n");
+    E.die();
+    E.finish();
+    return Slot;
+  }
+  case RtFn::IfaceRelease: {
+    // The drop glue of an interface value (TYP-5): the value is a borrowed
+    // one (the itab's tag bit: nothing is ours), one in the data word (a
+    // trivial value, TYP-8: nothing to do), or a box whose count is the word
+    // before the value: the last reference drops the value with the
+    // descriptor's glue and frees the box. The place is left zero.
+    if (!Dep({RtFn::MemFree}))
+      return NoId;
+    Function *F = makeFn(*this, "iface_release", Ctx.func({PU8}, Unit), Slot);
+    noInline(*F);
+    X E(*this, *F);
+    E.At = At;
+    FuncBuilder &FB = E.FB;
+    Place IP = E.at(E.param(0), Iface);
+    Val Itab = E.ld(FB.field(IP, 0));
+    Val Data = E.ld(FB.field(IP, 1));
+    FB.assign(IP, FB.use(E.zero(Iface).Op));
+    E.If(Itab == E.null(PU8), [&] { E.Return(); });
+    E.If((E.to(U64, Itab) & 1) != 0, [&] { E.Return(); });
+    Val Ti = E.load(Itab, PU8);
+    E.If((E.ld(E.ti(Ti, TI::Flags)) & TI::FlagInline) != 0,
+         [&] { E.Return(); });
+    E.If(Data == E.null(PU8), [&] { E.Return(); }); // (a value of size 0)
+    Val Hdr = E.snap(E.to(PU8, E.to(U64, Data) - TI::BoxHeader));
+    Val Rc = E.load(Hdr, U64);
+    E.If(Rc > 1, [&] {
+      E.store(Hdr, U64, Rc - 1);
+      E.Return();
+    });
+    Val Drop = E.ld(E.ti(Ti, TI::Drop));
+    E.If(Drop != E.null(PU8),
+         [&] { E.callPtr(Drop, Ctx.func({PU8}, Unit), {Data}); });
+    E.rt(RtFn::MemFree, {Hdr});
+    E.finish();
+    return Slot;
+  }
+  case RtFn::IfaceClone:
+  case RtFn::IfacePass:
+  case RtFn::IfaceTake: {
+    // A copy of an interface value (OWN-C3): one more reference to its box.
+    // A borrowed value (the tag bit, an interface argument made from a value
+    // the caller still owns, TYP-7) stays borrowed when it is passed on
+    // (IfacePass: the callee's frame ends first); kept anywhere else
+    // (IfaceClone) it is cloned into a box of its own, with a count of 1.
+    // IfaceTake is a move (the caller zeroes the source): the reference
+    // changes hands with no retain, and a borrowed value is cloned as
+    // IfaceClone does, so no tagged value outlives its call (P04.09 R1).
+    const bool Pass = Which == RtFn::IfacePass;
+    const bool Take = Which == RtFn::IfaceTake;
+    if (!Dep({RtFn::MemResize, RtFn::PanicKeep}) || !Need({"memmove"}))
+      return NoId;
+    Function *F = makeFn(*this,
+                         Pass   ? "iface_pass"
+                         : Take ? "iface_take"
+                                : "iface_clone",
+                         Ctx.func({PU8, PU8}, Unit), Slot);
+    noInline(*F);
+    X E(*this, *F);
+    E.At = At;
+    FuncBuilder &FB = E.FB;
+    Place DP = E.at(E.param(0), Iface), SP = E.at(E.param(1), Iface);
+    Val Itab = E.ld(FB.field(SP, 0));
+    Val Data = E.ld(FB.field(SP, 1));
+    FB.assign(DP, FB.use(copyOf(SP)));
+    E.If(Itab == E.null(PU8), [&] { E.Return(); });
+    Val Bits = E.to(U64, Itab);
+    E.If((Bits & 1) != 0, [&] {
+      if (Pass)
+        E.Return();
+      Val Ti = E.load(E.to(PU8, Bits - 1), PU8);
+      E.If((E.ld(E.ti(Ti, TI::Flags)) & TI::FlagNoClone) != 0,
+           [&] { E.rt(RtFn::PanicKeep, {Ti}); });
+      Val Size = E.ld(E.ti(Ti, TI::Size));
+      Val Raw = E.rt(RtFn::MemResize,
+                     {E.null(PU8), Size + TI::BoxHeader, E.boolean(false)});
+      E.store(Raw, U64, E.u(1));
+      Val Box = E.snap(E.padd(Raw, E.u(TI::BoxHeader)));
+      Val Cl = E.ld(E.ti(Ti, TI::Clone));
+      E.IfElse(
+          Cl != E.null(PU8),
+          [&] { E.callPtr(Cl, Ctx.func({PU8, PU8}, Unit), {Box, Data}); },
+          [&] { E.libc("memmove", {Box, Data, Size}); });
+      FB.assign(FB.field(DP, 0), FB.use(E.to(PU8, Bits - 1).Op));
+      FB.assign(FB.field(DP, 1), FB.use(Box.Op));
+      E.Return();
+    });
+    if (Take) {
+      E.finish();
+      return Slot;
+    }
+    Val Ti = E.load(Itab, PU8);
+    E.If((E.ld(E.ti(Ti, TI::Flags)) & TI::FlagInline) != 0,
+         [&] { E.Return(); });
+    E.If(Data == E.null(PU8), [&] { E.Return(); });
+    Val Hdr = E.snap(E.to(PU8, E.to(U64, Data) - TI::BoxHeader));
+    E.store(Hdr, U64, E.load(Hdr, U64) + 1);
+    E.finish();
+    return Slot;
+  }
+  case RtFn::FuncRelease:
+  case RtFn::CellRelease: {
+    // The end of one reference to a func value's environment or to a closure
+    // cell (CLO-2, OWN-C3): both have two words before what the pointer
+    // shows, the count and the function that drops the contents (null: none).
+    // An environment in the frame (CLO-1) has the immortal count. The place
+    // (the func value, or the cell pointer) is left zero.
+    const bool Cell = Which == RtFn::CellRelease;
+    if (!Dep({RtFn::MemFree}))
+      return NoId;
+    Function *F = makeFn(*this, Cell ? "cell_release" : "func_release",
+                         Ctx.func({PU8}, Unit), Slot);
+    noInline(*F);
+    X E(*this, *F);
+    E.At = At;
+    FuncBuilder &FB = E.FB;
+    Val Ptr;
+    if (Cell) {
+      Place PP = E.at(E.param(0), PU8);
+      Ptr = E.ld(PP);
+      FB.assign(PP, FB.use(E.null(PU8).Op));
+    } else {
+      Type *FV = Ctx.tuple({PU8, PU8});
+      Place FP = E.at(E.param(0), FV);
+      Ptr = E.ld(FB.field(FP, 1));
+      FB.assign(FP, FB.use(E.zero(FV).Op));
+    }
+    E.If(Ptr == E.null(PU8), [&] { E.Return(); });
+    Val Hdr = E.snap(E.to(PU8, E.to(U64, Ptr) - TI::RcHeader));
+    Val Rc = E.load(Hdr, U64);
+    E.If(Rc >= TI::Immortal, [&] { E.Return(); });
+    E.If(Rc > 1, [&] {
+      E.store(Hdr, U64, Rc - 1);
+      E.Return();
+    });
+    Val Drop = E.load(E.padd(Hdr, E.u(8)), PU8);
+    E.If(Drop != E.null(PU8),
+         [&] { E.callPtr(Drop, Ctx.func({PU8}, Unit), {Ptr}); });
+    E.rt(RtFn::MemFree, {Hdr});
+    E.finish();
+    return Slot;
+  }
+  case RtFn::PackFree: {
+    // A variadic pack lent to a borrowed `...T` parameter: its buffer is the
+    // caller's, its elements are borrowed (P04.09). Left zero.
+    if (!Dep({RtFn::MemFree}))
+      return NoId;
+    Function *F = makeFn(*this, "pack_free", Ctx.func({PU8}, Unit), Slot);
+    X E(*this, *F);
+    E.At = At;
+    Place PP = E.at(E.param(0), PU8);
+    Val Buf = E.ld(PP);
+    E.If(Buf != E.null(PU8), [&] { E.rt(RtFn::MemFree, {Buf}); });
+    E.libc("memset", {E.param(0), E.i32(0), E.u(32)});
+    E.finish();
+    return Slot;
+  }
+  case RtFn::FuncClone:
+  case RtFn::CellRetain: {
+    // One more reference (a copy of a func value; an environment that
+    // captures a cell).
+    const bool Cell = Which == RtFn::CellRetain;
+    Function *F =
+        Cell ? makeFn(*this, "cell_retain", Ctx.func({PU8}, Unit), Slot)
+             : makeFn(*this, "func_clone", Ctx.func({PU8, PU8}, Unit), Slot);
+    noInline(*F);
+    X E(*this, *F);
+    E.At = At;
+    FuncBuilder &FB = E.FB;
+    Val Ptr;
+    if (Cell) {
+      Ptr = E.param(0);
+    } else {
+      Type *FV = Ctx.tuple({PU8, PU8});
+      Place DP = E.at(E.param(0), FV), SP = E.at(E.param(1), FV);
+      FB.assign(DP, FB.use(copyOf(SP)));
+      Ptr = E.ld(FB.field(SP, 1));
+    }
+    E.If(Ptr == E.null(PU8), [&] { E.Return(); });
+    Val Hdr = E.snap(E.to(PU8, E.to(U64, Ptr) - TI::RcHeader));
+    Val Rc = E.load(Hdr, U64);
+    E.If(Rc < TI::Immortal, [&] { E.store(Hdr, U64, Rc + 1); });
     E.finish();
     return Slot;
   }

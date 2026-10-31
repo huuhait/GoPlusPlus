@@ -12,7 +12,7 @@ The corpus (under --root, the tests/run directory):
   * the programs of ../debug/Inputs (the debugger sessions of P04.12: locals
     and types, a call chain, scopes, inlining across files, a deep chain of
     types, the parameter shapes of P04.25);
-  * every program of Inputs/diff, Inputs/coll, Inputs/opt, Inputs/allocword
+  * every program of Inputs/diff, Inputs/coll, Inputs/opt, Inputs/own (ownership, P04.09), Inputs/allocword
     (the allocator word, P04.25: built with -test-intrinsics), Inputs/iface
     and Inputs/iface-gopp, Inputs/cc (the calling convention, P04.18), and
     the panic programs of Inputs/panics, Inputs/panics-seq, Inputs/panics-gopp,
@@ -124,7 +124,7 @@ def corpus(root):
             g = os.path.join(root, "golden", d)
             progs.append(Program("Inputs/" + d, files, g if os.path.exists(g + ".out") else None))
     for d, kind in (("diff", "golden"), ("coll", "golden"), ("opt", "golden"),
-                    ("allocword", "golden"), ("iface", "golden"),
+                    ("allocword", "golden"), ("own", "golden"), ("iface", "golden"),
                     ("iface-gopp", "golden"), ("cc", "golden"),
                     ("generics", "golden"), ("generics-gopp", "golden"),
                     ("panics", "panic"), ("panics-seq", "panic"),

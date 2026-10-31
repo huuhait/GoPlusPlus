@@ -1,0 +1,355 @@
+package main
+
+@Extern("C") func gopp_test_count(which int, what int) int
+
+type Doc struct {
+	Name string
+	Tags []string
+	Idx  map[string]int
+}
+
+type Inner struct{ xs []int }
+type Outer struct {
+	in  Inner
+	arr [2]string
+}
+
+var fails int
+
+func allocs() int { return gopp_test_count(0, 0) }
+func frees() int  { return gopp_test_count(0, 2) }
+
+// done: the allocations since a0 were all freed, and there were some.
+func done(name string, a0, f0 int) {
+	a, f := allocs()-a0, frees()-f0
+	if a == 0 || a != f {
+		println("FAIL", name, "allocs", a, "frees", f)
+		fails++
+	}
+}
+
+func grow(n int) string {
+	s := ""
+	for i := 0; i < n; i++ {
+		s = s + "ab"
+	}
+	return s
+}
+
+func takeSlice(move xs []int) int { return len(xs) }
+func takeStr(move s string) int   { return len(s) }
+func passDoc(d Doc) int           { return len(d.Name) }
+func takeDoc(move d Doc) int      { return len(d.Tags) }
+func mkDoc(n int) Doc {
+	return Doc{Name: grow(n), Tags: []string{grow(n), grow(n + 1)}, Idx: map[string]int{grow(n): n}}
+}
+
+func caseString() {
+	s := grow(5)
+	t := s + "x"
+	println(len(t))
+}
+
+func caseSlice() {
+	var xs []int
+	for i := 0; i < 100; i++ {
+		xs = append(xs, i)
+	}
+	println(len(xs))
+}
+
+func caseSliceOfStrings() {
+	var xs []string
+	for i := 0; i < 20; i++ {
+		xs = append(xs, grow(i+1))
+	}
+	println(len(xs))
+}
+
+func caseMap() {
+	m := map[string]int{}
+	for i := 0; i < 50; i++ {
+		m[grow(i+1)] = i
+	}
+	delete(m, grow(3))
+	println(len(m))
+}
+
+func caseMapOfSlices() {
+	m := map[string][]string{}
+	for i := 0; i < 10; i++ {
+		m[grow(i%3+1)] = []string{grow(i + 1), grow(2)}
+	}
+	println(len(m))
+}
+
+func caseStruct() {
+	d := mkDoc(3)
+	println(passDoc(d), len(d.Idx))
+}
+
+func caseMove() {
+	d := mkDoc(2)
+	xs := []int{1, 2, 3}
+	s := grow(4)
+	println(takeDoc(d), takeSlice(xs), takeStr(s))
+}
+
+func caseNested() {
+	o := Outer{in: Inner{xs: []int{1, 2}}, arr: [2]string{grow(1), grow(2)}}
+	var rows [][]int
+	for i := 0; i < 5; i++ {
+		rows = append(rows, []int{i, i + 1})
+	}
+	println(len(o.in.xs), len(rows))
+}
+
+func caseReplace() {
+	s := grow(2)
+	s = grow(3)
+	xs := []int{1}
+	xs = []int{1, 2, 3}
+	d := mkDoc(1)
+	d = mkDoc(2)
+	d.Name = grow(7)
+	println(len(s), len(xs), len(d.Name))
+}
+
+func caseLoopTemps() {
+	t := 0
+	for i := 0; i < 10; i++ {
+		t += len(grow(i) + grow(2))
+		t += len([]int{i, i})
+	}
+	println(t)
+}
+
+func caseBranches(c bool) {
+	s := grow(2)
+	xs := []string{grow(1)}
+	if c {
+		takeStr(s)
+		return
+	}
+	println(len(xs))
+}
+
+func caseReturnValue() {
+	d := mkDoc(2)
+	e := mkDoc(3)
+	e.Tags = move(d.Tags)
+}
+
+// The assignment form of range gives the targets copies of their own (each
+// turn is `k, v = key, value`): the collection keeps its strings.
+func caseRangeAssign() {
+	xs := []string{grow(1), grow(2)}
+	var v string
+	for _, v = range xs {
+	}
+	m := map[string]string{grow(3): grow(4)}
+	var k, w string
+	for k, w = range m {
+	}
+	println(len(v), len(xs[0]), len(xs[1]), len(k), len(w), len(m[k]))
+}
+
+// `range move(xs)`: each range variable owns its element.
+func caseRangeMove() {
+	xs := []string{grow(1), grow(2)}
+	m := map[string]string{grow(3): grow(4)}
+	n := 0
+	for i, s := range move(xs) {
+		n += i + len(s)
+	}
+	for k, v := range move(m) {
+		n += len(k) + len(v)
+	}
+	println(n)
+}
+
+// append and copy take the elements of a source that is a value of its own;
+// the elements copy replaces are dropped (review R2).
+func caseSpread() {
+	src := []string{grow(1), grow(2)}
+	more := []string{grow(1), grow(2)}
+	var dst []string
+	dst = append(dst, src.Clone()...)
+	dst = append(dst, move(src)...)
+	dst = append(dst, []string{grow(3)}...)
+	cp := []string{grow(4), grow(5), grow(6)}
+	n := copy(cp, more.Clone())
+	println(len(dst), len(dst[0]), len(dst[4]), n, len(cp[0]), len(cp[2]),
+		len(more[1]))
+}
+
+type failErr struct{ code int }
+
+func (e failErr) Error() string { return "fail" }
+
+func fail!(n int) string {
+	if n > 0 {
+		return "", failErr{n}
+	}
+	return grow(1)
+}
+
+// A `!` return in the middle of a construct drops what it made so far
+// (review R7): a slice literal, a map literal, append's arguments, an array
+// literal with keys, a tuple assignment.
+func bangSlice!(n int) int {
+	xs := []string{grow(1), fail!(n), grow(2)}
+	return len(xs)
+}
+
+func bangMap!(n int) int {
+	m := map[string]string{grow(3): grow(4), grow(5): fail!(n)}
+	return len(m)
+}
+
+func bangAppend!(n int) int {
+	var ys []string
+	ys = append(ys, grow(6), fail!(n))
+	return len(ys)
+}
+
+func bangArray!(n int) int {
+	arr := [3]string{2: grow(7), 0: fail!(n)}
+	return len(arr[2])
+}
+
+func bangTuple!(n int) int {
+	s := grow(8)
+	var a, b string
+	a, b = s, fail!(n)
+	return len(a) + len(b)
+}
+
+func caseBang() {
+	for n := 0; n < 2; n++ {
+		r1, e1 := bangSlice(n)
+		r2, e2 := bangMap(n)
+		r3, e3 := bangAppend(n)
+		r4, e4 := bangArray(n)
+		r5, e5 := bangTuple(n)
+		println(r1, r2, r3, r4, r5, e1 != nil, e2 != nil, e3 != nil, e4 != nil,
+			e5 != nil)
+	}
+}
+
+func addKey(m map[string]int, k string) { m[k] = len(k) }
+func cloneOf(n string) string          { return n.Clone() }
+func cloneView(v View[string]) string   { return v.Clone() }
+func cloneSlice(xs []string) []string   { return xs.Clone() }
+
+var keptStr any
+
+func keepStr(v any)  { keptStr = v }
+func passStr(s string) { keepStr(s) }
+
+// A borrowed string's bytes are another's: a map key made from it, a clone
+// of it (also of a view, or of a borrowed []string) and a box of it kept by
+// the callee copy them (found fixing review R3).
+func caseBorrowed() {
+	m := map[string]int{}
+	k := grow(3)
+	addKey(m, k)
+	a := cloneOf(k)
+	b := cloneView(k)
+	xs := []string{grow(1)}
+	c := cloneSlice(xs)
+	passStr(k)
+	k = grow(1)
+	xs = nil
+	n := 0
+	for key, v := range m {
+		n += len(key) + v
+	}
+	println(n, len(a), len(b), len(c[0]), len(keptStr.(string)))
+	keptStr = nil
+}
+
+func showOpt(o Option[string]) int {
+	v, ok := o.Get()
+	if !ok {
+		return 0
+	}
+	return len(v)
+}
+
+// Explicit conversions: an Option or an interface made for a borrowed
+// parameter lends the value; one made for a new owner takes it (TYP-6).
+func caseConversions() {
+	a := grow(1)
+	n := showOpt(Option[string](a)) + showOpt(Option[string](grow(2)))
+	o := Option[string](a)
+	x := any(mkDoc(1))
+	d := mkDoc(2)
+	y := any(d)
+	v, _ := o.Get()
+	println(n, len(v), len(x.(Doc).Name), len(y.(Doc).Tags))
+}
+
+func main() {
+	var a0, f0 int
+	a0, f0 = allocs(), frees()
+	caseString()
+	done("caseString", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseSlice()
+	done("caseSlice", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseSliceOfStrings()
+	done("caseSliceOfStrings", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseMap()
+	done("caseMap", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseMapOfSlices()
+	done("caseMapOfSlices", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseStruct()
+	done("caseStruct", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseMove()
+	done("caseMove", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseNested()
+	done("caseNested", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseReplace()
+	done("caseReplace", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseLoopTemps()
+	done("caseLoopTemps", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseBranches(false)
+	done("caseBranches", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseBranches(true)
+	done("caseBranches true", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseReturnValue()
+	done("caseReturnValue", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseRangeAssign()
+	done("caseRangeAssign", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseRangeMove()
+	done("caseRangeMove", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseConversions()
+	done("caseConversions", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseSpread()
+	done("caseSpread", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseBang()
+	done("caseBang", a0, f0)
+	a0, f0 = allocs(), frees()
+	caseBorrowed()
+	done("caseBorrowed", a0, f0)
+	if fails == 0 {
+		println("ok")
+	}
+}

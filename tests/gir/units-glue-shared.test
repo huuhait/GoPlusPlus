@@ -1,0 +1,107 @@
+// RUN: not %gopp build -emit=gir %s -o /dev/null 2>&1 | FileCheck --implicit-check-not=error %s
+// P04.09 review R17, the route through a body shared across unit arguments
+// (GEN-14): there `Rec[U]` is the type `Rec[]`, so the glue of a value of it
+// calls `Rec[]`'s drop or Clone, whatever U is. The instance walk asks for
+// that method as a call on a receiver of unknown units would
+// (InstanceWalk::userGlue: each value and declared name of the body, and its
+// `move` parameters), and the method's walk refuses what needs the unit: one
+// E0439 at the value, never a drop that runs with the wrong unit. A drop or
+// Clone that needs no unit is accepted in the same shapes (and runs:
+// run/own-units-glue.test), and plain code with real units is unchanged.
+// (Each case has its own type: a method instance is refused once.)
+package main
+
+unit M
+unit KM = 1000 M
+
+func kind(a any) string {
+	switch a.(type) {
+	case float64[KM]:
+		return "km"
+	}
+	return "?"
+}
+
+// The drops and the Clone of these need the unit (a boxed float64[U]).
+type NA[U unit] struct{ D float64[U] }
+
+func (r *NA[U]) drop() { println("drop", kind(r.D)) }
+
+type NB[U unit] struct{ D float64[U] }
+
+func (r *NB[U]) drop() { println("drop", kind(r.D)) }
+
+type NC[U unit] struct{ D float64[U] }
+
+func (r *NC[U]) drop() { println("drop", kind(r.D)) }
+
+type ND[U unit] struct{ D float64[U] }
+
+func (r *ND[U]) drop() { println("drop", kind(r.D)) }
+
+type NE[U unit] struct{ D float64[U] }
+
+func (r NE[U]) Clone() NE[U] {
+	println("clone", kind(r.D))
+	return NE[U]{r.D}
+}
+
+func (r *NE[U]) drop() {}
+
+// Plain's drop and Clone need none.
+type Plain[U unit] struct {
+	Name string
+	D    float64[U]
+}
+
+func (r *Plain[U]) drop() { println("drop", r.Name) }
+
+func (r Plain[U]) Clone() Plain[U] { return Plain[U]{r.Name + "-c", r.D} }
+
+func local[U unit](d float64[U]) {
+	// CHECK: [[@LINE+1]]:2: error[E0439]: a unit parameter passed on in a type argument to NA.drop, whose code needs the unit (P04.24 follow-up) is not supported by code generation yet (P04)
+	r := NA[U]{d}
+	_ = r
+}
+
+// CHECK: [[@LINE+1]]:1: error[E0439]: a unit parameter passed on in a type argument to NB.drop
+func sink[U unit](move r NB[U]) {}
+
+func del[U unit](m map[string]NC[U]) {
+	// CHECK: [[@LINE+1]]:9: error[E0439]: a unit parameter passed on in a type argument to NC.drop
+	delete(m, "a")
+}
+
+func own[X any](move x X) {}
+
+func viaParam[U unit](d float64[U]) {
+	// CHECK: [[@LINE+1]]:6: error[E0439]: a unit parameter passed on in a type argument to ND.drop
+	own(ND[U]{d})
+}
+
+func cl[U unit](xs []NE[U]) int {
+	// CHECK: [[@LINE+1]]:2: error[E0439]: a unit parameter passed on in a type argument to NE.Clone
+	ys := clone(xs)
+	return len(ys)
+}
+
+func fine[U unit](d float64[U], move p Plain[U], xs []Plain[U]) int {
+	r := Plain[U]{"c" + "", d}
+	ys := clone(xs)
+	own(Plain[U]{"e" + "", d})
+	return len(r.Name) + len(p.Name) + len(ys)
+}
+
+func main() {
+	local(1.0[KM])
+	sink(NB[KM]{1.0[KM]})
+	del(map[string]NC[KM]{})
+	viaParam(1.0[KM])
+	cl([]NE[KM]{})
+	println(fine(1.0[KM], Plain[KM]{"p" + "", 1.0[KM]}, nil))
+	// Plain code: real units, each type's own glue.
+	n := NA[KM]{1.0[KM]}
+	c := clone([]NE[KM]{{1.0[KM]}})
+	_ = n
+	println(len(c))
+}

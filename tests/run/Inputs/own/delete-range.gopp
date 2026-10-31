@@ -1,0 +1,38 @@
+package main
+
+// P04.09 review R6 (spec 8.3): removing the entry a range is on takes it out
+// of the map at once, but its key and value live to the end of that
+// iteration (k and v stay valid); removing any other entry frees it at once.
+// The drops print.
+
+type R struct{ n string }
+
+func (r *R) drop() { println("drop", r.n) }
+
+func mk(s string) string { return s + "xxxx" }
+
+func main() {
+	m := map[string]string{mk("k"): mk("v")}
+	for k, v := range m {
+		delete(m, k)
+		println("after delete:", k, v, len(m))
+	}
+	n := map[string]string{mk("a"): mk("b")}
+	for k := range n {
+		t, ok := move(n[k])
+		println("moved:", t, ok, "key:", k, len(n))
+	}
+	d := map[int]R{1: {"current"}}
+	for k, v := range d {
+		delete(d, k)
+		println("deleted, still", v.n)
+	}
+	println("after the loop")
+	e := map[int]R{1: {"other"}, 2: {"other"}}
+	for k := range e {
+		delete(e, 3-k)
+		println("deleted the other one")
+		break
+	}
+	println("end", len(e))
+}

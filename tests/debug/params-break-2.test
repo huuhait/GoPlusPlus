@@ -16,7 +16,7 @@
 // LLDB-NEXT: N = 14
 // LLDB-NEXT: Name = (ptr = "doc", len = 3, cap = 0)
 // LLDB: (gopp.map *) m = {{0x[0-9a-f]+}}
-// LLDB: frame #0: {{.*}}`main.view(s=(ptr = "hey", len = 3, cap = 0), {{.*}} at parambreak.gopp:47
+// LLDB: frame #0: {{.*}}`main.view(s=(ptr = "hey", len = 3, cap = 3), {{.*}} at parambreak.gopp:47
 // LLDB: ([]int64) xs = {
 // LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
 // LLDB-NEXT: len = 4
@@ -59,7 +59,7 @@
 // LLDB: (main.Doc) d = {
 // LLDB-NEXT: N = 34
 // LLDB-NEXT: Name = (ptr = "tp", len = 2, cap = 0)
-// LLDB: frame #0: {{.*}}`main.tstr(s=(ptr = "str", len = 3, cap = 0)) at parambreak.gopp:106{{.*}} [inlined]
+// LLDB: frame #0: {{.*}}`main.tstr(s=(ptr = "str", len = 3, cap = 3)) at parambreak.gopp:106{{.*}} [inlined]
 // LLDB: frame #0: {{.*}}`main.tslice({{.*}}) at parambreak.gopp:110{{.*}} [inlined]
 // LLDB: ([]int64) xs = {
 // LLDB-NEXT: ptr = {{0x[0-9a-f]+}}
@@ -87,7 +87,7 @@
 // LLDBSTEP-NEXT: Name = (ptr = "doc", len = 3, cap = 0)
 // LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:122
 // LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.view(s=(ptr = "hey", len = 3, cap = 0), {{.*}}) at parambreak.gopp:47
+// LLDBSTEP: frame #0: {{.*}}`main.view(s=(ptr = "hey", len = 3, cap = 3), {{.*}}) at parambreak.gopp:47
 // LLDBSTEP: ([]int64) xs = {
 // LLDBSTEP-NEXT: ptr = {{0x[0-9a-f]+}}
 // LLDBSTEP-NEXT: len = 4
@@ -98,4 +98,4 @@
 // LLDBSTEP-NEXT: (bool) ok = false
 // LLDBSTEP: frame #0: {{.*}}`main.main at parambreak.gopp:136
 // LLDBSTEP: (lldb) step
-// LLDBSTEP: frame #0: {{.*}}`main.tstr(s=(ptr = "str", len = 3, cap = 0)) at parambreak.gopp:106{{.*}} [inlined]
+// LLDBSTEP: frame #0: {{.*}}`main.tstr(s=(ptr = "str", len = 3, cap = 3)) at parambreak.gopp:106{{.*}} [inlined]

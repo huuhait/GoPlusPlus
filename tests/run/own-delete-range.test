@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/delete-range.gopp %S/Inputs/own/delete-range.out
+// GOLDEN: by-hand
+// P04.09 review R6 (spec 8.3): `delete(m, k)` and `move(m[k])` of the entry a
+// range is on take it out of the map at once, but its key and value are
+// dropped at the end of that iteration (`v` still reads the old value, as Go
+// prints it); removing another entry drops it at once. The map's running
+// iterations know the entry each is on (map_delete). The drops print (Go++
+// only).

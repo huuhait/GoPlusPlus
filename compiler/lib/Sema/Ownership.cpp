@@ -664,6 +664,79 @@ bool Checker::satisfiesClone(Type *T, std::string *Why, bool ByValue) {
   return cloneWalk(T, Why);
 }
 
+namespace {
+/// Does T mention a type parameter (iteratively, as canonicalParams walks)?
+bool mentionsParam(Type *Root) {
+  SmallVector<std::pair<Type *, unsigned>, 16> Work{{Root, 0}};
+  llvm::SmallPtrSet<const Type *, 16> Seen;
+  while (!Work.empty()) {
+    auto [X, D] = Work.pop_back_val();
+    if (!X || D > 60 || !Seen.insert(X).second)
+      continue;
+    auto Push = [&, D = D](Type *Y) { Work.push_back({Y, D + 1}); };
+    switch (X->getKind()) {
+    case Type::Kind::TypeParam:
+      return true;
+    case Type::Kind::Pointer:
+      Push(cast<PointerType>(X)->Elem);
+      break;
+    case Type::Kind::Slice:
+      Push(cast<SliceType>(X)->Elem);
+      break;
+    case Type::Kind::Ref:
+      Push(cast<RefType>(X)->Elem);
+      break;
+    case Type::Kind::Option:
+      Push(cast<OptionType>(X)->Elem);
+      break;
+    case Type::Kind::Array:
+      Push(cast<sema::ArrayType>(X)->Elem);
+      break;
+    case Type::Kind::Chan:
+      Push(cast<sema::ChanType>(X)->Elem);
+      break;
+    case Type::Kind::Map:
+      Push(cast<sema::MapType>(X)->Key);
+      Push(cast<sema::MapType>(X)->Elem);
+      break;
+    case Type::Kind::Tuple:
+      for (Type *E : cast<TupleType>(X)->Elems)
+        Push(E);
+      break;
+    case Type::Kind::Struct:
+      for (Var *F : cast<StructType>(X)->Fields)
+        Push(F->Ty);
+      break;
+    case Type::Kind::Named:
+      for (Type *A : cast<NamedType>(X)->TArgs)
+        Push(A);
+      break;
+    default:
+      break;
+    }
+  }
+  return false;
+}
+} // namespace
+
+void Checker::implicitClone(const ast::Node *At, Type *T, StringRef What,
+                            StringRef Copied) {
+  if (!own() || !At || !T || !isValid(T) || category(T) != Category::Owning)
+    return;
+  std::string Why;
+  if (satisfiesClone(T, &Why))
+    return;
+  // A type that mentions a type parameter is decided at each instance, by
+  // the same rule (InstanceWalk::implicitClone, E0453).
+  if (mentionsParam(T)) {
+    I.ImplicitClones[At] = {T, std::string(What), std::string(Copied)};
+    return;
+  }
+  err(At, diag::err_own_implicit_clone,
+      {std::string(What), std::string(Copied), str(T),
+       Why.empty() ? "" : ": " + Why});
+}
+
 bool Checker::cloneWalk(Type *T, std::string *Why) {
   auto Stored = [&](Type *X) -> uint8_t {
     auto *N = dyn_cast<NamedType>(X);

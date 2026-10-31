@@ -270,6 +270,8 @@ Checker::builtinChecks(Operand &X, const CallExpr *Call, BuiltinId Id,
           std::string S1 = str(X.E);
           err(X, diag::err_own_append_borrowed, {S1, S1});
         } else {
+          if (isImplicitMove(X.E, Call))
+            I.SelfMoves.insert(unparen(Call));
           // P03.19: `append([]int(v), x)` writes into the spare capacity of
           // the box's slice that the conversion shares.
           rejectBoxWrite(Call, X.E, true, str(Call));

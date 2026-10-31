@@ -1,0 +1,13 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/units.gopp %S/Inputs/own/units.out
+// RUN: %gopp build -emit=gir %S/Inputs/own/units.gopp -o - | FileCheck %s
+// GOLDEN: by-hand
+// P04.09 with P04.24 (units): a generic body that takes unit descriptors
+// (hidden `*u8` parameters built in frame slots and a hoisted entry block)
+// owns strings and slices and returns with `!` in the middle of a literal:
+// the descriptors are no owners, and the owners live on every path
+// (`check-run-leaks` runs it under the address and leak sanitizers). Types
+// that differ only in their units are one GIR type and share one drop and
+// one clone glue (Lowering::glueKey).
+// CHECK-COUNT-1: fn _GPTdIN4mainE3Rec
+// CHECK-NOT: fn _GPTdIN4mainE3Rec

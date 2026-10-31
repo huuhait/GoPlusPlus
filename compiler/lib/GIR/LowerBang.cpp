@@ -315,7 +315,7 @@ bool Body::lowerFailsReturn(const ast::ReturnStmt *R,
   }
   if (Have == N || Have == N + 1) {
     for (size_t K = 0; K < Have; ++K)
-      Vals.push_back(valueFor(R->Results[K], K < N ? Rs[K] : ErrTy));
+      Vals.push_back(ownedValue(R->Results[K], K < N ? Rs[K] : ErrTy));
     if (Have == N)
       Vals.push_back(zeroOf(ErrG));
     return true;

@@ -1,0 +1,9 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/goto.gopp %S/Inputs/own/goto.out
+// GOLDEN: by-hand
+// P04.09 review R3: a goto leaves every scope inside its label's statement
+// list, as break and continue do, and in that list what was made after the
+// label (a jump back over a declaration) or since the statement that holds
+// the goto began (a jump forward, the temporaries of an if header). The
+// drops print (Go++ only), so the output is the order of the ends; under
+// `check-run-leaks` nothing leaks.

@@ -265,9 +265,14 @@ Type *Context::canonical(Type *T) {
 }
 
 Layout gir::layoutOf(const Type *T) {
-  // Post-order over the parts, with an explicit stack and a memo for this
-  // call only (a type is as deep as the source).
   llvm::DenseMap<const Type *, Layout> Memo;
+  return layoutOf(T, Memo);
+}
+
+Layout gir::layoutOf(const Type *T,
+                     llvm::DenseMap<const Type *, Layout> &Memo) {
+  // Post-order over the parts, with an explicit stack (a type is as deep as
+  // the source).
   llvm::SmallVector<std::pair<const Type *, unsigned>, 16> Stack;
   auto Parts = [](const Type *X, llvm::SmallVectorImpl<const Type *> &Out) {
     switch (X->getKind()) {

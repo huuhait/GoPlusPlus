@@ -1,0 +1,12 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/units-glue.gopp %S/Inputs/own/units-glue.out
+// RUN: %gopp build -emit=gir %S/Inputs/own/units-glue.gopp -o - | FileCheck %s
+// GOLDEN: by-hand
+// P04.09 review R17: types that differ only in their units are one GIR type,
+// and their glue is shared only when it calls no method the program wrote
+// (Lowering::glueKey, reachesUserGlue): `Dropped[M]` and `Dropped[KM]` each
+// have a drop glue that calls their own `drop`, and the clone glue of a
+// slice of `Cloned[KM]` calls `Cloned[KM]`'s Clone, each with its own units.
+// (run/own-units.test is the other side: no such method, one glue.)
+// CHECK-COUNT-2: fn _GPTdIN4mainE7Dropped
+// CHECK-NOT: fn _GPTdIN4mainE7Dropped

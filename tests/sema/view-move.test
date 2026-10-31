@@ -1,0 +1,24 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.09 (ADR-0031, OWN-R5, the item "`move` of a view" of TODO P04.09):
+// `move` copies a view and leaves its place as it was, so `move(vs[0])` of a
+// `[]View[int]` is accepted (run/own-moves.test prints vs[0] after it); a
+// place that holds no view but has no zero value stays E0341: a `[]*int`
+// element, and an element of a slice of a `@View` struct that holds a view
+// (the struct is not itself a view).
+package main
+
+@View
+type Win struct{ Cur View[int] }
+
+func main() {
+	a, b := 1, 2
+	vs := []View[int]{View[int](a), View[int](b)}
+	v := move(vs[0])
+	ps := []*int{&a, &b}
+	// CHECK: [[@LINE+1]]:12: error[E0341]: cannot move ps[0]
+	p := move(ps[0])
+	ws := []Win{{View[int](a)}}
+	// CHECK: [[@LINE+1]]:12: error[E0341]: cannot move ws[0]
+	w := move(ws[0])
+	_, _, _ = v, p, w
+}

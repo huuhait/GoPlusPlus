@@ -79,15 +79,15 @@ func (b BigInt) Float64() float64 { return 0 }
 
 func sums() {
 	var x, y, z BigInt
-	_ = Sum([]int{1, 2, 3})         // 6: int satisfies + (int) int
-	_ = Sum([]Vec2{{1, 2}, {3, 4}}) // Vec2{4, 6}
-	_ = Sum([]BigInt{x, y, z})      // BigInt: the + method allocates the result
-	_ = Sum([]string{"a", "b"})     // string + string
-	_ = Max(Vec2{1, 0}, Vec2{2, 0}) // ok
-	_ = Max(1, 2)                   // ok: int has the built-in <=>
-	_ = Max("a", "b")               // ok: string too
-	f := float64(x)                 // ok: calls the @Convert method
-	n := x.Int64()                  // ok: a @Convert method is a normal method
+	_ = Sum([]int{1, 2, 3})            // 6: int satisfies + (int) int
+	_ = Sum([]Vec2{{1, 2}, {3, 4}})    // Vec2{4, 6}
+	_ = Sum([]BigInt{x.Clone(), y, z}) // BigInt: the + method allocates the result; x is used below, so a clone (OWN-R3)
+	_ = Sum([]string{"a", "b"})        // string + string
+	_ = Max(Vec2{1, 0}, Vec2{2, 0})    // ok
+	_ = Max(1, 2)                      // ok: int has the built-in <=>
+	_ = Max("a", "b")                  // ok: string too
+	f := float64(x)                    // ok: calls the @Convert method
+	n := x.Int64()                     // ok: a @Convert method is a normal method
 	_, _ = f, n
 }
 

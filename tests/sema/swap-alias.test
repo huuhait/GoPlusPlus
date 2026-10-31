@@ -1,0 +1,137 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.09 review R18: a swap of three or more places whose places the checker
+// cannot prove apart may write one value to two places at run time (Go's
+// stores, left to right, with two names of one place): that takes a clone,
+// so the type must be cloneable (E0452 at the swap, Checker::swapMayAlias;
+// E0453 at an instance of generic code, sema/swap-alias-generic.test).
+// A place is a path from its variable in the lowering's steps: a field by its
+// layout index (a parent's field through the parent part), a `*` wherever a
+// pointer is followed, an index or a key. Two places are apart when they part
+// at a field or at two constants (compared as values, of an exact type) with
+// no pointer, slice or map followed after that, or when they are in two
+// variables' own storage. Everything else may be one place: refused below.
+// The other side, accepted: places proven apart, a cloneable type (each
+// place gets a clone when two are one, run/own-swap.test), a swap of two
+// places (the one place gets its one value back); run/own-swap-apart.test
+// runs the proven ones.
+package main
+
+type R struct{ n int }
+
+func (r *R) drop() { println("drop", r.n) }
+
+type Trio struct{ a, b, c R }
+
+type Inner struct{ x R }
+
+type Holder struct {
+	s, u    []R
+	x, y, z [2]R
+}
+
+type Base struct{ a, b R }
+
+type Kid extends Base { c R }
+
+var ga, gb, gc R
+
+func dynamic(xs []R, i, j, k int) {
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places, two of which may be one place at run time, makes a copy of a value, and R can't be cloned: R has a drop method but no Clone() (OWN-R6)
+	xs[i], xs[j], xs[k] = xs[j], xs[k], xs[i]
+}
+
+func derefs(p, q, r *R) {
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	*p, *q, *r = *q, *r, *p
+}
+
+func pointerElems(ps [3]*Inner, h *Holder) {
+	// ps[0] and ps[1] may point at one Inner: after the places part, a
+	// pointer is followed (the checker does not ask where it may point, so
+	// ps[0].x and h.y[0] may be one place too).
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	ps[0].x, ps[1].x, ps[2].x = ps[1].x, ps[2].x, ps[0].x
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	ps[0].x, h.y[0], h.z[1] = h.y[0], h.z[1], ps[0].x
+}
+
+func sliceFields(h *Holder) {
+	// h.s and h.u may share their elements.
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	h.s[0], h.u[0], h.s[1] = h.u[0], h.s[1], h.s[0]
+}
+
+func sameConstant(xs []R) {
+	// 0 and 0+0 are one index.
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	xs[0], xs[0+0], xs[1] = xs[0+0], xs[1], xs[0]
+}
+
+func twice(xs []R) {
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	xs[0], xs[1], xs[0] = xs[1], xs[0], xs[0]
+}
+
+func floatKeys(m map[float64]R) {
+	// Two float constants may round to one key.
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	m[1], m[2], m[3] = m[2], m[3], m[1]
+}
+
+func keys(m map[string]R, a, b, c string) {
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	m[a], m[b], m[c] = m[b], m[c], m[a]
+}
+
+func otherSlices(xs, ys, zs []R) {
+	// Three slices may share their elements.
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	xs[0], ys[0], zs[0] = ys[0], zs[0], xs[0]
+}
+
+func arrayIndexes(h *Holder, i int) {
+	// i and 1-i are one index when the checker can't see them apart.
+	// CHECK: [[@LINE+1]]:2: error[E0452]: this swap of three or more places
+	h.x[i], h.y[0], h.x[1-i] = h.y[0], h.x[1-i], h.x[i]
+}
+
+func good(xs []R, ss []string, p *Trio, m map[string]R, h *Holder, k *Kid,
+	i, j, n int) {
+	t := Trio{R{1}, R{2}, R{3}}
+	t.a, t.b, t.c = t.b, t.c, t.a
+	var a, b, c R
+	a, b, c = b, c, a
+	ga, gb, a = gb, a, ga
+	xs[0], xs[1], xs[2] = xs[1], xs[2], xs[0]
+	p.a, p.b, p.c = p.b, p.c, p.a
+	(*p).a, p.b, (*p).c = p.b, (*p).c, (*p).a
+	k.a, k.b, k.c = k.b, k.c, k.a
+	m["a"], m["b"], m["c"] = m["b"], m["c"], m["a"]
+	h.x[i], h.y[j], h.z[n] = h.y[j], h.z[n], h.x[i]
+	var g [2][2]R
+	g[0][1], g[1][0], g[0][0] = g[1][0], g[0][0], g[0][1]
+	var x1, x2, x3 [2]R
+	x1[i], x2[j], x3[n] = x2[j], x3[n], x1[i]
+	ss[i], ss[j], ss[n] = ss[j], ss[n], ss[i]
+	xs[i], xs[j] = xs[j], xs[i]
+	println(t.a.n, a.n, b.n, c.n, g[0][0].n, x1[0].n)
+}
+
+func main() {
+	dynamic(nil, 0, 0, 0)
+	r := R{1}
+	derefs(&r, &r, &r)
+	var in Inner
+	var h Holder
+	pointerElems([3]*Inner{&in, &in, &in}, &h)
+	sliceFields(&h)
+	sameConstant(nil)
+	twice(nil)
+	floatKeys(nil)
+	keys(nil, "a", "b", "c")
+	otherSlices(nil, nil, nil)
+	arrayIndexes(&h, 0)
+	var tr Trio
+	var kd Kid
+	good(nil, nil, &tr, nil, &h, &kd, 0, 0, 0)
+}

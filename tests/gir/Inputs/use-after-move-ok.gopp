@@ -1,0 +1,111 @@
+package main
+
+func take(move s string) int { return len(s) }
+
+func size(p Pair) int { return len(p.a) + len(p.b) }
+
+type Pair struct {
+	a string
+	b string
+}
+
+// The other side: the same shapes, each fine.
+func assigned() int {
+	s := "hello"
+	n := take(s)
+	s = "again" // a new value
+	return n + len(s)
+}
+
+func cloned() int {
+	s := "hello"
+	return take(s.Clone()) + len(s)
+}
+
+func last(c bool) int {
+	s := "hello"
+	if c {
+		return take(s)
+	}
+	return len(s)
+}
+
+func fresh() {
+	for i := 0; i < 2; i++ {
+		s := "hello" // a new variable each trip
+		take(s)
+	}
+}
+
+func parts() int {
+	p := Pair{"a", "b"}
+	t := move(p.a)
+	n := len(p.b)
+	p.a = "c"
+	return n + size(p) + len(t)
+}
+
+// The other side of the closure, the range and the method value cases: the
+// variable assigned again, a clone, the range variable read before the move.
+func captured() int {
+	s := "hello"
+	f := func() int { return len(s) }
+	n := take(move(s))
+	s = "again"
+	return n + len(s) + f()
+}
+
+func entry(m map[string]string) int {
+	n := 0
+	for k, v := range m {
+		n += len(v)
+		t, _ := move(m[k])
+		n += len(t)
+	}
+	return n
+}
+
+type Res struct{ name string }
+
+func (move r Res) Finish() string { return move(r.name) }
+
+func methodValue() int {
+	r := Res{"r"}
+	fin := r.Clone().Finish
+	return len(fin()) + len(r.name)
+}
+
+// One return takes s and also reads it: the operands are read before the
+// move, so this is no use after it.
+func twice() (string, int) {
+	s := "a" + "b"
+	return s, len(s)
+}
+
+func show(o Option[string]) int {
+	v, ok := o.Get()
+	if !ok {
+		return 0
+	}
+	return len(v)
+}
+
+func look(v any) bool { return v != nil }
+
+// A conversion for a borrowed parameter lends its operand (TYP-7): a stays.
+func lent() int {
+	a := "a" + "1"
+	n := show(Option[string](a))
+	if look(any(a)) {
+		n++
+	}
+	return n + len(a)
+}
+
+func main() {
+	println(assigned(), cloned(), last(true), parts(), captured(), methodValue())
+	println(entry(map[string]string{"a": "b"}))
+	fresh()
+	t, n := twice()
+	println(t, n, lent())
+}

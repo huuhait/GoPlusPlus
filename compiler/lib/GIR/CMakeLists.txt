@@ -3,6 +3,8 @@
 add_gopp_library(GIR
   Builder.cpp
   CType.cpp
+  DropElab.cpp
+  MoveCheck.cpp
   GIR.cpp
   Escape.cpp
   Lower.cpp
@@ -14,6 +16,7 @@ add_gopp_library(GIR
   LowerIface.cpp
   LowerOps.cpp
   LowerBang.cpp
+  LowerDrop.cpp
   LowerStmt.cpp
   LowerStr.cpp
   LowerTest.cpp

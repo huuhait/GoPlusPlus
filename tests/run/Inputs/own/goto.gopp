@@ -1,0 +1,69 @@
+package main
+
+// P04.09 review R3: a goto leaves scopes as break and continue do. The drops
+// print, so the output is the order of the ends.
+
+type R struct{ n string }
+
+func (r *R) drop() { println("drop", r.n) }
+
+func mk(n string) R { return R{n.Clone()} }
+
+// Forward, out of a loop body and its if: the body's variable ends.
+func forward(k int) {
+	for i := 0; i < 3; i++ {
+		c := mk("loop" + string(rune('0'+i)))
+		if k == i {
+			goto out
+		}
+		println("use", c.n)
+	}
+out:
+	println("forward end")
+}
+
+// Backward, out of a block: each trip's variable ends before the next.
+func backward(k int) {
+	n := 0
+again:
+	{
+		c := mk("blk" + string(rune('0'+n)))
+		n++
+		if n < k {
+			goto again
+		}
+		println("use", c.n)
+	}
+	println("backward end")
+}
+
+// Backward over a declaration in the same block: the variable declared after
+// the label ends before it is declared again.
+func overDecl(k int) {
+	n := 0
+again:
+	c := mk("decl" + string(rune('0'+n)))
+	n++
+	if n < k {
+		goto again
+	}
+	println("use", c.n)
+}
+
+// Forward out of an if whose header made a temporary (it lives to the end of
+// the if statement, OWN-R2): the goto ends it.
+func header(k int) {
+	if n := len(mk("hdr").n); n > k {
+		goto done
+	}
+	println("not taken")
+done:
+	println("header end")
+}
+
+func main() {
+	forward(1)
+	backward(3)
+	overDecl(3)
+	header(0)
+}

@@ -87,6 +87,8 @@ enum class RtFn : unsigned {
   TestFree,
   PanicText,    // gopp.panic_text(kind i32, text *u8, len u64)  [noreturn]
   StrConcat,    // gopp.str_concat(parts *string, n u64) string
+  StrAppend,    // gopp.str_append(s *string, p *u8, n u64): `s += x` on an
+                // owned string, in place (STM-8, P04.09)
   StrEq,        // gopp.str_eq(ap *u8, an u64, bp *u8, bn u64) bool
   StrCmp,       // gopp.str_cmp(ap, an, bp, bn) i64   (-1, 0, 1)
   StrFromBytes, // gopp.str_from_bytes(p *u8, n u64) string   (copies)
@@ -101,6 +103,7 @@ enum class RtFn : unsigned {
                 // bool) (*u8, u64)
   MakeSlice,   // gopp.make_slice(alloc *u8, elemsize u64, len i64, cap i64) *u8
   MemFree,     // gopp.mem_free(p *u8)  (beside mem_resize)
+  IsZero,      // gopp.is_zero(p *u8, n u64) bool  (drop glue: OWN-R5)
   MapNew,      // gopp.map_new(info *MapInfo, hint u64, alloc *u8) *Map
   MapFree,     // gopp.map_free(info, m *Map)  (the map's own allocator)
   MapFind,     // gopp.map_find(info, m, key, hash) *u8  (internal)
@@ -126,6 +129,26 @@ enum class RtFn : unsigned {
   PanicAssert, // gopp.panic_assert(inter string, dyn *u8, asserted string,
                // desc *u8)  [noreturn]
   PanicUncomparable, // gopp.panic_uncomparable(ti *u8, hash bool)  [noreturn]
+  // Shared handles (RuntimeIface.cpp, P04.09; OWN-C3, TYP-5, CLO-2): a copy
+  // retains, the end of a copy releases, the last release frees. The counts
+  // are not atomic: no thread exists before P12 (TODO P12.06).
+  IfaceRelease, // gopp.iface_release(p *iface): drop glue of an interface
+  IfaceClone,   // gopp.iface_clone(dst, src *iface): its clone glue (a
+                // retain; a borrowed value is cloned into a box of its own)
+  IfacePass,    // gopp.iface_pass(dst, src *iface): the copy an interface
+                // argument is (a retain; a borrowed value stays borrowed)
+  IfaceTake,    // gopp.iface_take(dst, src *iface): the reference moves (no
+                // retain); a borrowed value is cloned into a box of its own,
+                // so it outlives the frame it was lent from (P04.09 R1)
+  FuncRelease,  // gopp.func_release(p *func): drop glue of a func value
+  FuncClone,    // gopp.func_clone(dst, src *func): its clone glue
+  CellRelease,  // gopp.cell_release(pp **u8): the end of one reference to a
+                // closure cell (CLO-2)
+  CellRetain,   // gopp.cell_retain(p *u8): one more reference to a cell
+  PanicKeep,    // gopp.panic_keep(ti *u8)  [noreturn]: a borrowed interface
+                // argument whose type has no Clone was kept (TYP-7)
+  PackFree,     // gopp.pack_free(p *[]T): the buffer of a variadic pack that
+                // borrows its elements (P04.09)
   Count
 };
 
@@ -145,9 +168,24 @@ enum : unsigned {
   Fields,   // *u8: P05 (TYP-10 field table)
   NFields,  // u64
   VTable,   // *u8: P04.22 (`extends` type table)
+  Drop,     // *u8: fn(p *u8), the drop glue of the value, or null (P04.09)
+  Clone,    // *u8: fn(dst, src *u8), its clone glue, or null: a bitwise
+            // copy (P04.09)
   Count
 };
 constexpr uint32_t FlagInline = 1;
+/// The type has a `drop` method and no `Clone() T`: a borrowed value of it
+/// cannot be copied into a box (TYP-7).
+constexpr uint32_t FlagNoClone = 2;
+/// The word before the value in an interface's box (TYP-5): its count.
+constexpr uint64_t BoxHeader = 8;
+/// The two words before the captures of a func value's environment and
+/// before the value of a closure cell: the count and the drop function
+/// (CLO-2, OWN-C3).
+constexpr uint64_t RcHeader = 16;
+/// The count of an environment in the frame (a closure that does not
+/// escape, CLO-1): never released.
+constexpr uint64_t Immortal = uint64_t(1) << 62;
 } // namespace TI
 
 class Lowering {
@@ -159,7 +197,7 @@ public:
         Opts(Opts),
         M(std::make_unique<Module>(Ctx, CP.Pkg ? CP.Pkg->Path.str() : "")),
         Methods(CP, Opts.ScanMethodLookups),
-        Walk(CP, Files, Methods, Syms, Diags, /*Quiet=*/false,
+        Walk(CP, Files, Methods, Syms, Diags, /*Quiet=*/Opts.CheckOnly,
              Opts.MaxInstances, Opts.MaxWalkedNodes) {
     Walk.ScanTable = Opts.ScanInstances;
     Walk.Redescribe = Opts.RedescribeTypes;
@@ -221,6 +259,14 @@ public:
            (Sig && !Sig->TParams.empty());
   }
   bool Failed = false;
+  /// The source place of every span the lowering made (the ownership checks
+  /// work on spans and report at places).
+  llvm::DenseMap<uint64_t, SourceLoc> SpanLocs;
+  SourceLoc locOf(Span S) const {
+    auto It = SpanLocs.find((uint64_t(S.File) << 40) ^
+                            (uint64_t(S.Line) << 16) ^ S.Col);
+    return It == SpanLocs.end() ? SourceLoc() : It->second;
+  }
   /// Errors reported so far (unsupported, badExtern, ...): a step that
   /// returns null must have raised it (lowerType checks).
   unsigned Reported = 0;
@@ -385,6 +431,62 @@ public:
   }
   FuncId hashGlue(S::Type *T, SourceLoc At);
 
+  // Ownership (P04.09, LowerDrop.cpp, gir.md section 7). The drop glue of an
+  // owning type is the one place that knows what ending its life does.
+  /// Does a value of T own something that ends with it (OWN-C1: a string,
+  /// slice or map, a type with a `drop` method, a struct, array or Option of
+  /// them)? holdsOwned, the lowering's one question.
+  bool needsDrop(S::Type *T);
+  llvm::DenseMap<S::Type *, bool> NeedsDropMemo;
+  /// Is T a shared handle (OWN-C3: an interface value, a func value, or a
+  /// struct, array or Option of only such and trivial parts)? A copy of one
+  /// retains (its clone glue), never moves.
+  bool isSharedHandle(S::Type *T) {
+    return T && !llvm::isa<S::TupleType>(T) && Methods.isSharedHandle(T);
+  }
+  /// The drop glue of T, `fn(p *u8)`: drops what the value at p owns and
+  /// leaves all-zero bytes there, so a second drop (or a drop of a moved-from
+  /// place) does nothing (OWN-R5). Memoized by T; NoId if T needs none, or
+  /// after a report. The bodies are built from a work list, never by
+  /// recursion.
+  FuncId dropGlue(S::Type *T, SourceLoc At);
+  llvm::DenseMap<S::Type *, FuncId> DropGlues;
+  /// The clone glue of T, `fn(dst *u8, src *u8)`: writes a deep copy of the
+  /// value at src to dst (dst holds no live value). A string or slice gets a
+  /// new buffer (in the allocator the slice names, SLC-3), a struct, array or
+  /// Option its parts cloned; a value that owns nothing is copied. NoId if T
+  /// owns nothing (a bitwise copy is right), or after a report (a map has no
+  /// clone glue yet).
+  FuncId cloneGlue(S::Type *T, SourceLoc At);
+  llvm::DenseMap<S::Type *, FuncId> CloneGlues;
+  /// The drop of a heap environment whose fields First .. First+N-1 are
+  /// pointers to closure cells (gopp.cell_release of each, CLO-2).
+  FuncId envCellsDrop(unsigned First, unsigned N);
+  std::map<std::pair<unsigned, unsigned>, FuncId> EnvCellDrops;
+  /// The env drop of an interface method value: (code, itab, data), the
+  /// interface at offset 8 released.
+  FuncId envIfaceDrop();
+  FuncId EnvIfaceDrop = NoId;
+  /// The glue `fn(copy, orig *u8)` that frees the maps a method made in nil
+  /// maps of `copy`, a bitwise copy of `orig` (the thunk's copy of a boxed
+  /// Place receiver, P04.18 review R9): each map held by value that differs
+  /// from the original's. NoId when T holds no map by value.
+  FuncId newMapsGlue(S::Type *T, SourceLoc At);
+  llvm::DenseMap<S::Type *, FuncId> NewMapsGlues;
+  struct DropWork {
+    S::Type *T;
+    FuncId Id;
+    SourceLoc At;
+    bool Clone = false;
+    bool NewMaps = false;
+  };
+  void buildNewMapsGlue(const DropWork &W);
+  std::vector<DropWork> DropPending;
+  bool BuildingDrops = false;
+  void buildDropGlue(const DropWork &W);
+  void buildCloneGlue(const DropWork &W);
+  FuncId glueFor(S::Type *T, SourceLoc At, bool Clone);
+
   /// The runtime function (made on first use); NoId after a report.
   FuncId rt(RtFn F, SourceLoc At);
   /// The map functions of RtFn (RuntimeMap.cpp).
@@ -456,11 +558,15 @@ public:
   llvm::StringMap<FuncId> LibcIds;
   /// The size and alignment of a GIR type (gir::layoutOf, cached).
   Layout layout(Type *T);
-  llvm::DenseMap<Type *, Layout> Layouts;
+  llvm::DenseMap<const Type *, Layout> Layouts; // (shared by all layouts)
   /// The GIR type of a map (the runtime object), of the map info and of the
   /// iterator the runtime keeps in the caller's frame.
   Type *mapType();
   Type *mapInfoType();
+  /// The fields of the `gopp.mapinfo` of MT, for an aggregate of mapInfoType
+  /// (false after a report).
+  bool mapInfoOperands(S::MapType *MT, SourceLoc At,
+                       llvm::SmallVectorImpl<Operand> &Ops);
   Type *mapIterType();
   /// One map-entry argument of a call (Body::mapEntryArg): {info, map, key,
   /// key kind, value, slot, wasnil, own}.
@@ -538,7 +644,12 @@ public:
   bool comparable(S::Type *T);
   /// Does a value of the GIR type G live in the data word of an interface
   /// (at most one word: no box)? One decision point (TYP-8).
-  bool isInline(Type *G) { return layout(G).Size <= 8; }
+  /// A value an interface holds in its data word (TYP-8): a trivial one of
+  /// at most a word. Every other value lives in a counted box (TYP-5): an
+  /// owning one of a word (a map) must be dropped once, by the last copy.
+  bool isInline(S::Type *T, Type *G) {
+    return layout(G).Size <= 8 && !needsDrop(T);
+  }
   /// The static data (type descriptors, method tables, itabs, interface
   /// descriptors): one global each, `LinkOnceODR`, named by P04.17. ~0u after
   /// a report.
@@ -656,6 +767,14 @@ private:
   /// struct type, of each unit-free identity (lowerTypeOnce, lowerStruct).
   llvm::DenseMap<const sym::Node *, S::NamedType *> UnitFreeTypes;
   llvm::DenseMap<const sym::Node *, Type *> UnitFreeStructs;
+  /// The type whose drop, clone and new-maps glue every type of a unit-free
+  /// identity uses (glueKey): one glue per GIR type (P04.09 with P04.24).
+  llvm::DenseMap<const sym::Node *, S::Type *> UnitFreeGlueKeys;
+  S::Type *glueKey(S::Type *T);
+  /// Does T's glue call a method the program wrote (a `drop` or a `Clone()
+  /// T`, at any depth)? Then it is never shared across units (R17).
+  bool reachesUserGlue(S::Type *T);
+  llvm::DenseMap<S::Type *, bool> UserGlueMemo;
   static constexpr size_t MaxTypeName = 4096;
   Type *lowerStruct(S::Type *Whole, S::StructType *ST, S::NamedType *Named,
                     SourceLoc At);
@@ -683,9 +802,17 @@ public:
   /// arguments applied, never a type parameter (P04.08).
   Body(Lowering &L, Function &F, const S::Func *Obj,
        GenericInst *CurInst = nullptr)
-      : L(L), M(*L.M), FB(*L.M, F), I(L.I), Obj(Obj), CurInst(CurInst) {}
+      : L(L), M(*L.M), FB(*L.M, F), I(L.I), Obj(Obj), CurInst(CurInst) {
+    StartReported = L.Reported;
+  }
+  /// What had been reported when this body began: a body that reported
+  /// something is partial, and the ownership checks skip it.
+  unsigned StartReported = 0;
 
   void lower(const ast::FuncDecl *FD);
+  /// Does the body move out of a variable (a use after a move is possible)?
+  /// `gopp check` lowers only the bodies that do (manager decision M3).
+  bool mayMoveVariable(const ast::Node *Root);
   /// The package init function: the variable initializations in order, then
   /// the `init` functions.
   void lowerInit(ArrayRef<S::InitEntry> Order, ArrayRef<FuncId> InitFuncs);
@@ -717,6 +844,12 @@ private:
     SmallVector<MapIteration, 1> MapIters;
     /// The debug scope that was current before this one began (P04.12).
     ScopeId Outer = 0;
+    /// The statement list this scope lowers (a block, a case clause), where
+    /// a label can be: a goto leaves every scope inside the label's list.
+    SourceLoc ListBegin, ListEnd;
+    /// Locals.size() when the statement of this scope being lowered began:
+    /// what a goto out of that statement leaves in this scope.
+    size_t StmtMark = 0;
   };
   /// `&` range variables (RNG-1a) and the parameters passed by a hidden
   /// pointer (a borrowed map, PAR-10): the pointer local that stands for the
@@ -726,6 +859,15 @@ private:
   const ast::BlockStmt *RootBody = nullptr;
   llvm::StringMap<SourceLoc> LabelPositions;
   bool LabelsScanned = false;
+  /// Locals.size() of the label's scope where each label lowered so far is:
+  /// a goto back to it ends what was made after it (P04.09 R3).
+  llvm::StringMap<size_t> LabelMarks;
+  /// Ends what is live at a goto to label Name and not at the label: every
+  /// scope inside the label's statement list, and in that list what was made
+  /// after the label (a jump back) or since the statement that holds the goto
+  /// began (a jump forward: its temporaries). As break and continue do
+  /// (exitScopes), in one place (P04.09 R3).
+  void leaveForGoto(StringRef Name);
   /// The position of the label Name in this function: the statements are
   /// walked once (iteratively), at the first goto that needs it.
   SourceLoc labelPos(StringRef Name);
@@ -928,6 +1070,107 @@ private:
   bool unitsRecorded() const {
     return !I.UnitConvs.empty() || !I.UnitSites.empty();
   }
+  /// lowerExpr without the ownership of its result (LowerDrop.cpp).
+  Operand lowerExprImpl(const ast::Expr *E);
+
+  // Ownership (P04.09, LowerDrop.cpp).
+  /// The expression whose value the next lowerExpr of it takes: a place is
+  /// moved from, a fresh owned value is handed on (ownedValue).
+  const ast::Expr *TakeNode = nullptr;
+  /// The value of E given to a new owner: `b := a`, `x.f = a`, `return a`,
+  /// `T{F: a}`, a `move` argument, an element of a literal or of an append
+  /// (OWN-R3). A place is moved from (a `Move` operand: elaboration zeroes it
+  /// after the read); a fresh owned temporary is handed on. A conversion of E
+  /// (an Option, an interface) holds what was taken.
+  Operand ownedValue(const ast::Expr *E, S::Type *Want);
+  /// `move(x)`: the value of x, taken (OWN-R4); a view is copied and x stays.
+  Operand lowerMoveBuiltin(const ast::CallExpr *C);
+  /// `move(m[k])` (Move: the entry is removed) or `clone(m[k])`, and their
+  /// comma-ok forms (a pair, the value and whether k was there).
+  Operand mapEntryOwned(const ast::IndexExpr *IE, bool CommaOk, bool Move);
+  /// The map ranges being lowered with `:=` variables: `move(m[k])` of the
+  /// current entry moves the value variable (ADR-0016 point 5).
+  struct MapRange {
+    const S::Object *Map, *Key;
+    Place Val;
+  };
+  SmallVector<MapRange, 1> MapRanges;
+  void markRangeValueMoved(const ast::IndexExpr *IE);
+  /// `clone(x)` and `x.Clone()` on a built-in type: a deep copy of the value
+  /// of Src, in a new owned temporary (cloneGlue).
+  Operand lowerCloneOf(const ast::Expr *Src, const ast::Node *At);
+  /// What lowerExpr(E) returns, V, made an owned temporary when E makes a
+  /// new owned value (a call, a literal, a `+`), and a `Move` when E is the
+  /// TakeNode.
+  Operand afterExpr(const ast::Expr *E, Operand V);
+  /// Does E make a new owned value (not read one from a place)?
+  bool makesOwned(const ast::Expr *E);
+  /// Makes the temporary V reads the owner of a value of type T (a statement
+  /// ends it, unless it is moved first); a copy of V in a new one if V is not
+  /// a plain temporary.
+  Operand ownTemp(Operand V, S::Type *T);
+  /// Marks the local as owned: its glue drops it where it dies.
+  void ownLocal(LocalId Loc, S::Type *T);
+
+  // The ways a value reaches a new owner (P04.09). A *fresh* value is held by
+  // an owned temporary (or a field of one: a call's results): it is handed on
+  // with a `Move`, which leaves the temporary zero. Anything else is a place:
+  // an owning value moves out of it (OWN-R3), a shared handle is copied with
+  // a retain (OWN-C3: its clone glue).
+  /// Does V read an owned temporary, or a field of one?
+  bool isFresh(const Operand &V);
+  /// V, of checker type T, given to a new owner (a store, a return, a field
+  /// of a literal, an element).
+  /// Move: `move(x)` takes it (a shared handle too).
+  Operand takeValue(Operand V, S::Type *T, bool Move = false);
+  /// The elements `append(dst, src...)` and `copy(dst, src)` copy from Src
+  /// (N of them, of checker type Elem): Src itself when they are taken (a
+  /// Fresh source) or own nothing, else a buffer of clones (P04.09 R2).
+  Operand spreadSource(Operand Src, Operand N, S::Type *Elem, Type *ElemG,
+                       const ast::Node *At, bool Fresh);
+  /// After the copy: the clone buffer From is freed, or the taken elements
+  /// leave the source place Src (All of them, an append; the first N, a
+  /// copy).
+  void spreadDone(Operand From, Place Src, S::Type *Elem, const ast::Node *At,
+                  bool Fresh, Operand N, bool All);
+  /// The values of the swap A (Info::Swaps; the targets' checker types Tys),
+  /// read whole before any place is emptied: P04.09 R4.
+  bool swapValues(const ast::AssignStmt *A, ArrayRef<S::Type *> Tys,
+                  bool MayAlias, llvm::SmallVectorImpl<Operand> &Vals);
+  /// V (of checker type T, given to a new owner) evaluated now and stored
+  /// later in the statement: an owning value is held by an owned temporary
+  /// until then, so a `!` return in between drops it (P04.09 R7).
+  Operand holdValue(Operand V, S::Type *T);
+  /// The interface value in place V (of checker type T) moved out of it: a
+  /// value lent to this function becomes a box of its own (gopp.iface_take),
+  /// so no tagged value outlives its call (P04.09 R1). An owned temporary.
+  Operand takeIface(Operand V, S::Type *T);
+  /// V, of checker type T, passed to a parameter of a shared-handle type,
+  /// which the callee owns (+1): handed on when fresh, else retained; a
+  /// borrowed interface value stays borrowed (gopp.iface_pass).
+  Operand passValue(Operand V, S::Type *T);
+  /// The value V of argument K of a call of Sig as the parameter owns it: a
+  /// `move` parameter takes it, a shared-handle one gets a copy (passValue),
+  /// a borrowed one borrows it.
+  Operand passArg(Operand V, S::SignatureType *Sig, size_t K);
+  /// A copy of the value V of type T in a new owned temporary, made by T's
+  /// clone glue (a retain for a shared handle).
+  Operand cloneValue(Operand V, S::Type *T, const ast::Node *At);
+  /// The operand `move(x)` is lowering: a shared handle moves too.
+  const ast::Expr *MoveNode = nullptr;
+  /// The expression whose value is converted for a new owner (ownedValue):
+  /// an interface box made for it is owned, never a borrow (boxAs).
+  const ast::Expr *OwnedConv = nullptr;
+  /// The statement declares a variable that borrows from its temporaries
+  /// (OWN-V6, TYP-9): they live until the end of the block.
+  bool ExtendTemps = false;
+  /// V, declared by the statement being lowered, may borrow from its
+  /// temporaries: ExtendTemps.
+  void noteBorrowingDecl(const S::Var *V);
+  /// Ends the owned temporaries of the statement that began with the scope
+  /// depth and local count given: StorageDead, which elaboration turns into
+  /// their drops (the variables the statement declared stay).
+  void dropTempsSince(size_t Depth, size_t Mark);
   Operand lowerAs(const ast::Expr *E, Type *Want);
   /// E converted to the checker type Want: a constant gets Want's GIR type,
   /// `nil` is Want's nil, a T for an Option[T] is wrapped.
@@ -1023,7 +1266,7 @@ private:
   Operand lowerTypeAssert(const ast::TypeAssertExpr *TA, bool CommaOk,
                           S::Type *WantVal = nullptr);
   /// The place of the value an interface holds, as a value of GIR type G.
-  Place boxedPlace(Place IfaceP, Type *G);
+  Place boxedPlace(Place IfaceP, S::Type *T, Type *G);
   /// The descriptor of the dynamic type of the interface in IfaceP, or null
   /// for a nil one.
   Operand dynTypeInfo(Place IfaceP);
@@ -1076,8 +1319,12 @@ private:
   Operand varAddr(const S::Var *V, const ast::Node *N);
   /// The environment pointer (a `*u8`) of a func value whose environment is
   /// Val, of type EnvT: a frame temporary, or a heap block when the func
-  /// value escapes (it leaks until P04.09 gives it a drop).
-  Operand envPtr(Type *EnvT, Operand Val, bool Heap, const ast::Node *N);
+  /// value escapes. Both have TI::RcHeader before the value: the count
+  /// (Immortal in the frame, CLO-1; 1 on the heap) and Drop, the function
+  /// that drops the contents when the last copy of the func value is
+  /// released (OWN-C3, gopp.func_release; NoId: nothing to drop).
+  Operand envPtr(Type *EnvT, Operand Val, bool Heap, const ast::Node *N,
+                 FuncId Drop = NoId);
   /// View, the value bound to V, unless V is a box binding that the instance
   /// copies out (modeOf) and an escaping closure holds: then a view of a
   /// heap copy of what it views, so the closure never holds the box.
@@ -1095,7 +1342,16 @@ private:
   /// The cells declared since a mark (the variables of a `for` clause).
   SmallVector<std::pair<LocalId, Type *>, 4> CellLog;
   /// Allocates a zeroed cell of Ty and sets the pointer local Cell to it.
-  void allocCell(LocalId Cell, Type *Ty, const ast::Node *N);
+  /// The cell holds a value with a count and the drop glue of the
+  /// variable's type before it (CLO-2, P04.09: TI::RcHeader); DropOld: the
+  /// cell the pointer held before is released (a new one each iteration).
+  void allocCell(LocalId Cell, Type *Ty, const ast::Node *N,
+                 bool DropOld = false);
+  /// The checker type of the variable each cell pointer local holds (its
+  /// drop glue is the cell's), and the cell pointer made owned (released
+  /// where it dies, gopp.cell_release).
+  llvm::DenseMap<LocalId, S::Type *> CellTypes;
+  void ownCell(LocalId Cell, S::Type *T);
   /// The signature of the function or literal being lowered (null for the
   /// package's init function): `return` of a `!` one (ERR-3) and its end.
   S::SignatureType *FnSig = nullptr;
@@ -1244,7 +1500,10 @@ private:
                   S::Type *To);
 
   // Statements.
-  void lowerStmt(const ast::Stmt *St);
+  /// KeepTemps: the statement's temporaries live on in its scope (the header
+  /// of an `if` or `switch`, OWN-R2: until the end of the whole statement).
+  void lowerStmt(const ast::Stmt *St, bool KeepTemps = false);
+  void lowerStmtImpl(const ast::Stmt *St);
   void lowerBlock(const ast::BlockStmt *B);
   void lowerStmts(ArrayRef<ast::Stmt *> List);
   void lowerAssign(const ast::AssignStmt *A);
@@ -1286,9 +1545,8 @@ private:
   SeqInfo seqInfo(S::Type *T);
   /// The String or Slice place of a string, slice or view operand.
   Place seqPlace(Operand V, const SeqInfo &SI);
-  Operand callFn(FuncId F, ArrayRef<Operand> Args, bool Owned = false);
-  Operand callRt(RtFn F, ArrayRef<Operand> Args, const ast::Node *N,
-                 bool Owned = false);
+  Operand callFn(FuncId F, ArrayRef<Operand> Args);
+  Operand callRt(RtFn F, ArrayRef<Operand> Args, const ast::Node *N);
   Operand u64Of(Operand V);
   /// An integer operand of the source (any integer type, or a constant) as an
   /// int64.
@@ -1303,6 +1561,12 @@ private:
   /// statement still reads them where they were.
   struct ShrinkMove {
     Operand Dst, Src, Bytes;
+    /// The elements that leave the slice (before lo, from hi on) are dropped
+    /// first when the elements own something (P04.09): the block, the bounds
+    /// and the length, and the element glue.
+    Operand Ptr, Lo, Hi, Len;
+    FuncId Glue = NoId;
+    uint64_t Esz = 0;
   };
   /// A slice expression. With Move, the in-place shrink the checker recorded
   /// (Info::Reslices): the result keeps the pointer and the capacity of the
@@ -1310,8 +1574,9 @@ private:
   Operand lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move = nullptr);
   /// A string or a slice header for a borrowed string or `[]T` (a parameter
   /// or a re-pointed borrowed variable, PAR-2) made from V, a view of one: a
-  /// borrowed slice's capacity is its length (SLC-12), and a borrowed string
-  /// owns no buffer, so its capacity is 0 (a literal's too).
+  /// borrowed slice's capacity is its length (SLC-12), and so is a borrowed
+  /// string's (its bytes are another's: a clone copies them, as the string
+  /// clone glue does for any capacity but a literal's 0; P04.09).
   Operand borrowedSeq(Operand V, Type *G, const ast::Node *N);
   Operand lowerStringAdd(const ast::BinaryExpr *B);
   Operand concat(ArrayRef<Operand> Parts, const ast::Node *N);
@@ -1409,7 +1674,12 @@ private:
   /// The map entries of D are made: D.P is the place of the value.
   void resolveDest(Dest &D, const ast::Node *N);
   /// The checks of D, its entries, then the store of V.
-  void store(Dest &D, Operand V, const ast::Node *N);
+  /// KeepOld: the value in the place was moved out by the right side, it is
+  /// not dropped (Info::SelfMoves).
+  /// Defer: the value it replaces ends with the statement, not here (a
+  /// tuple assignment: `s, s[0] = t, 50` still writes the old s, Go spec).
+  void store(Dest &D, Operand V, const ast::Node *N, bool KeepOld = false,
+             bool Defer = false);
 
   // Operator expressions and statements (LowerOps.cpp, P04.23, ADR-0024).
   // Every operator that the checker resolved to a method is a call of it
@@ -1470,7 +1740,8 @@ private:
   /// code (lowered by Fill into the new Body) and the environment.
   Operand makeClosure(const ast::Expr *N, const LitFacts &LF, Type *VT,
                       const sym::Node *CN,
-                      llvm::function_ref<void(Body &)> Fill);
+                      llvm::function_ref<void(Body &)> Fill,
+                      S::Type *ST = nullptr);
   void lowerLazy(const ast::Expr *R, const LitFacts &LF, S::SignatureType *Sig);
   /// The address of the map at E for a borrowed map parameter (PAR-10).
   Operand mapArgAddr(const ast::Expr *E, LateOps &R);
@@ -1479,7 +1750,17 @@ private:
   Operand placeArgAddr(const ast::Expr *E, LateOps &R);
   /// The address of a copy of V in a new temporary: a Place receiver or
   /// argument that is no place the callee may change (placeHow: Copy).
-  Operand addrOfCopy(Operand V, const ast::Node *N);
+  Operand addrOfCopy(Operand V, const ast::Node *N, S::Type *T = nullptr);
+  /// The copies addrOfCopy made of another owner's value that holds a map:
+  /// the copy, its state before the call, its checker type.
+  struct PlaceCopy {
+    LocalId Copy, Snap;
+    S::Type *T;
+  };
+  SmallVector<PlaceCopy, 2> PlaceCopies;
+  /// After a call: frees the maps the callee made in the copies since Mark
+  /// (Lowering::newMapsGlue), and forgets them.
+  void freeNewMaps(size_t Mark);
 
   /// Where the value a borrowed Place receiver or argument E names lives
   /// (P04.18, reviews R9 to R11; the table of calling-convention.md). The
@@ -1521,9 +1802,13 @@ private:
   /// A source scope of the lowering. With Debug it is also a lexical block
   /// for the debugger (P04.12); the function's own outermost scopes are not
   /// (the parameters and the body's variables are the function's).
-  void pushScope(bool Debug = true) {
+  void pushScope(bool Debug = true, const ast::Node *List = nullptr) {
     Scopes.emplace_back();
     Scopes.back().Outer = FB.scope();
+    if (List) {
+      Scopes.back().ListBegin = List->getBegin();
+      Scopes.back().ListEnd = List->getEnd();
+    }
     if (Debug)
       FB.setScope(FB.newScope());
   }

@@ -22,9 +22,10 @@
 // are. What needs the runtime (allocation, concatenation, growth, UTF-8, the
 // map) is a call of a function from RuntimeStr.cpp / RuntimeMap.cpp.
 //
-// A value the runtime allocates is returned in a temporary marked `Owned`
-// (Local::Owned): drop elaboration (P04.09) drops it at the end of the
-// statement unless it was moved to a variable. Until then it leaks.
+// A value the runtime allocates is returned in a temporary; the expression
+// that made it marks the temporary owned (afterExpr, LowerDrop.cpp), and drop
+// elaboration (P04.09) drops it at the end of the statement unless it was
+// moved to a new owner.
 //
 //===----------------------------------------------------------------------===//
 
@@ -91,19 +92,16 @@ Place Body::seqPlace(Operand V, const SeqInfo &SI) {
   return FB.temp(FB.aggregate(AggKind::String, T, {Ptr, Len, Len}));
 }
 
-Operand Body::callFn(FuncId F, ArrayRef<Operand> Args, bool Owned) {
+Operand Body::callFn(FuncId F, ArrayRef<Operand> Args) {
   if (F == NoId)
     return errorValue(ctx());
   LocalId R = FB.newTemp(M.func(F).Sig->ret());
-  if (Owned)
-    FB.function().Locals[R].Owned = true;
   FB.call(constFunc(M, F), Args, FB.local(R), {UnwindAction::Continue, NoId});
   return copyOf(FB.local(R));
 }
 
-Operand Body::callRt(RtFn F, ArrayRef<Operand> Args, const ast::Node *N,
-                     bool Owned) {
-  return callFn(L.rt(F, N->getBegin()), Args, Owned);
+Operand Body::callRt(RtFn F, ArrayRef<Operand> Args, const ast::Node *N) {
+  return callFn(L.rt(F, N->getBegin()), Args);
 }
 
 Operand Body::u64Of(Operand V) {
@@ -367,6 +365,15 @@ Operand Body::lowerSliceExpr(const ast::SliceExpr *SE, ShrinkMove *Move) {
     Move->Dst = E.to(PU8, Ptr).Op;
     Move->Src = E.to(PU8, NewPtr).Op;
     Move->Bytes = (NewLen * Esz).Op;
+    if (S::SliceType *ST = dyn_cast<S::SliceType>(S::under(XS)))
+      if (FuncId G = L.dropGlue(ST->Elem, SE->getBegin()); G != NoId) {
+        Move->Glue = G;
+        Move->Esz = Esz;
+        Move->Ptr = E.to(PU8, E.snap(Ptr)).Op;
+        Move->Lo = E.snap(Lo).Op;
+        Move->Hi = E.snap(Hi).Op;
+        Move->Len = E.snap(Len).Op;
+      }
     // (The same slice, shorter: it keeps its allocator.)
     return E.slice(ElemG, Ptr, NewLen, OwnCap, Word).Op;
   }
@@ -399,8 +406,8 @@ Operand Body::concat(ArrayRef<Operand> Parts, const ast::Node *N) {
   for (size_t K = 0; K < Parts.size(); ++K)
     FB.assign(FB.constIndex(Arr, uint32_t(K)), FB.use(Parts[K]));
   Val P = E.to(ctx().ptr(Str), E.addrOf(Arr));
-  return callRt(RtFn::StrConcat, {P.Op, constInt(ctx().u64(), Parts.size())}, N,
-                /*Owned=*/true);
+  return callRt(RtFn::StrConcat, {P.Op, constInt(ctx().u64(), Parts.size())},
+                N);
 }
 
 /// `a + b + c + ...` is one concatenation: the left-deep chain is flattened
@@ -542,8 +549,7 @@ Operand Body::lowerMake(const ast::CallExpr *C) {
     at(C);
     Operand Info = mapInfoPtr(MT, C);
     return callRt(RtFn::MapNew,
-                  {Info, u64Of(Hint), E.null(ctx().ptr(ctx().u8())).Op}, C,
-                  /*Owned=*/true);
+                  {Info, u64Of(Hint), E.null(ctx().ptr(ctx().u8())).Op}, C);
   }
   if (!isa_and_nonnull<S::SliceType>(U) || C->Args.size() < 2) {
     unsupported(C, "this make");
@@ -558,9 +564,7 @@ Operand Body::lowerMake(const ast::CallExpr *C) {
                         E.u(L.layout(ElemG).Size).Op, Len.Op, Cap.Op},
                        C);
   Val P = E.to(ctx().ptr(ElemG), Val{&E, Buf});
-  return E
-      .owned(E.slice(ElemG, P, E.to(ctx().u64(), Len), E.to(ctx().u64(), Cap)))
-      .Op;
+  return E.slice(ElemG, P, E.to(ctx().u64(), Len), E.to(ctx().u64(), Cap)).Op;
 }
 
 Operand Body::lowerAppend(const ast::CallExpr *C) {
@@ -582,6 +586,8 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
   // The values to add (evaluated before anything is stored), or the slice.
   SmallVector<Operand, 4> Vals;
   Val SrcPtr, N;
+  Place SrcPlace;
+  bool SpreadFresh = false;
   bool Spread = C->EllipsisLoc.isValid();
   if (Spread) {
     if (C->Args.size() != 2) {
@@ -595,22 +601,27 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
       unsupported(C, "append of this type");
       return errorValue(ctx());
     }
-    Place Q = seqPlace(lowerExpr(C->Args[1]), SI);
+    Operand SrcV = lowerExpr(C->Args[1]);
+    // (R2: owning elements are taken from a source that is a value of its
+    // own and cloned from any other: spreadSource.)
+    SpreadFresh = isFresh(SrcV);
+    Place Q = seqPlace(std::move(SrcV), SI);
     at(C);
+    SrcPlace = Q;
     SrcPtr = E.snap(E.val(FB.field(Q, 0)));
     N = E.snap(E.val(FB.field(Q, 1)));
   } else {
     for (size_t K = 1; K < C->Args.size(); ++K) {
-      Operand V = valueFor(C->Args[K], SliceS->Elem);
+      Operand V = ownedValue(C->Args[K], SliceS->Elem);
       at(C->Args[K]);
-      Vals.push_back(copyOf(FB.temp(FB.use(V))));
+      Vals.push_back(holdValue(std::move(V), SliceS->Elem));
     }
     N = E.u(Vals.size());
   }
   Operand Base;
   {
     ReplayScope Scope(*this, BaseOps);
-    Base = valueFor(C->Args[0], RS);
+    Base = ownedValue(C->Args[0], RS);
   }
   at(C);
   Place H = FB.temp(FB.use(Base));
@@ -620,6 +631,7 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
   Val NewLen = Len0 + N;
   Var P = E.var(ctx().ptr(ElemG), Ptr0, "p");
   Var Cap = E.var(U64, Cap0, "cap");
+  Val Grew = E.snap(NewLen > Cap0);
   E.If(NewLen > Cap0, [&] {
     Operand G = callRt(RtFn::GrowSlice,
                        {Word0.Op, E.to(ctx().ptr(ctx().u8()), Ptr0).Op, Len0.Op,
@@ -634,8 +646,12 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
   if (Spread) {
     E.If(N != 0, [&] {
       Val Dst = E.padd(E.to(ctx().ptr(ctx().u8()), Base1), Len0 * Esz);
+      Val From{&E, spreadSource(SrcPtr.Op, N.Op, SliceS->Elem, ElemG, C,
+                                SpreadFresh)};
       callFn(L.libc("memmove", C->getBegin()),
-             {Dst.Op, E.to(ctx().ptr(ctx().u8()), SrcPtr).Op, (N * Esz).Op});
+             {Dst.Op, E.to(ctx().ptr(ctx().u8()), From).Op, (N * Esz).Op});
+      spreadDone(From.Op, SrcPlace, SliceS->Elem, C, SpreadFresh, N.Op,
+                 /*All=*/true);
     });
   } else {
     for (size_t K = 0; K < Vals.size(); ++K) {
@@ -643,6 +659,20 @@ Operand Body::lowerAppend(const ast::CallExpr *C) {
       FB.assign(E.at(At, ElemG), FB.use(Vals[K]));
     }
   }
+  // The old buffer was the caller's, which gave the slice up to the append
+  // (OWN-R4): it ends after the copy (P04.09). (Elements of size 0 have a
+  // block of one byte all the same.)
+  E.If(E.land(Grew,
+              [&] {
+                return E.to(ctx().ptr(ctx().u8()), Ptr0) !=
+                       E.to(ctx().ptr(ctx().u8()), Base1);
+              }),
+       [&] {
+         callRt(RtFn::SliceFree,
+                {Word0.Op, E.to(ctx().ptr(ctx().u8()), Ptr0).Op, Cap0.Op,
+                 E.u(Esz).Op},
+                C);
+       });
   // The result lives in the allocator of the slice it grew from.
   return E.slice(ElemG, Base1, NewLen, E.snap(Cap), E.snap(Word0)).Op;
 }
@@ -662,9 +692,13 @@ Operand Body::lowerCopy(const ast::CallExpr *C) {
   Rt E(M, FB);
   Place DQ = seqPlace(lowerExpr(C->Args[0]), D);
   Place DH = FB.temp(FB.use(copyOf(DQ)));
-  Place SQ = seqPlace(lowerExpr(C->Args[1]), Sr);
+  Operand SrcV = lowerExpr(C->Args[1]);
+  const bool Fresh = isFresh(SrcV);
+  Place SQ = seqPlace(std::move(SrcV), Sr);
   at(C);
   Type *ElemG = DH.Ty->elem();
+  Type *PU8 = ctx().ptr(ctx().u8());
+  uint64_t Esz = L.layout(ElemG).Size;
   Val DPtr = E.val(FB.field(DH, 0)), DLen = E.val(FB.field(DH, 1));
   Val SPtr = E.snap(E.val(FB.field(SQ, 0))),
       SLen = E.snap(E.val(FB.field(SQ, 1)));
@@ -672,12 +706,84 @@ Operand Body::lowerCopy(const ast::CallExpr *C) {
   E.If(SLen < DLen, [&] { N = SLen; });
   Val Nb = E.snap(N);
   E.If(Nb != 0, [&] {
+    // (R2: the source's first n elements are taken or cloned, and the
+    // destination elements they replace are dropped first.)
+    Val From{&E, spreadSource(SPtr.Op, Nb.Op, D.Elem, ElemG, C, Fresh)};
+    if (FuncId Drop = D.Elem ? L.dropGlue(D.Elem, C->getBegin()) : NoId;
+        Drop != NoId) {
+      Val DP = E.snap(E.to(PU8, DPtr));
+      Var I = E.var(ctx().u64(), E.u(0), "i");
+      E.While([&] { return E.bin(BinOp::Lt, I, Nb); },
+              [&] {
+                E.call(Drop, {E.padd(DP, I * Esz)});
+                I = I + 1;
+              });
+    }
     callFn(L.libc("memmove", C->getBegin()),
-           {E.to(ctx().ptr(ctx().u8()), DPtr).Op,
-            E.to(ctx().ptr(ctx().u8()), SPtr).Op,
-            (Nb * L.layout(ElemG).Size).Op});
+           {E.to(PU8, DPtr).Op, E.to(PU8, From).Op, (Nb * Esz).Op});
+    spreadDone(From.Op, SQ, D.Elem, C, Fresh, Nb.Op, /*All=*/false);
   });
   return E.to(ctx().i64(), Nb).Op;
+}
+
+Operand Body::spreadSource(Operand SrcOp, Operand NOp, S::Type *Elem,
+                           Type *ElemG, const ast::Node *At, bool Fresh) {
+  // The elements `append(dst, src...)` and `copy(dst, src)` copy (P04.09
+  // R2), decided as for any value given to a new owner (takeValue): taken
+  // from a source that is a value of its own (`src.Clone()`, `move(src)`,
+  // a literal, a call's result: spreadDone then leaves them out of it),
+  // cloned from any other into a buffer of the statement's (freed by
+  // spreadDone), so the copy owns what it holds and no glue frees it twice.
+  if (!Elem || !L.needsDrop(Elem) || Fresh)
+    return SrcOp;
+  Rt E(M, FB);
+  Val Src{&E, SrcOp}, N{&E, NOp};
+  Type *PU8 = ctx().ptr(ctx().u8());
+  FuncId Clone =
+      L.Methods.cloneable(Elem) ? L.cloneGlue(Elem, At->getBegin()) : NoId;
+  if (Clone == NoId) {
+    // (The checker asks for a clone or a move of such a source: E0291,
+    // E0292; a type with no Clone cannot be cloned, OWN-R6.)
+    L.internalError(At->getBegin(), "a copy of elements that cannot be "
+                                    "cloned from a source that is not its own");
+    return SrcOp;
+  }
+  uint64_t Esz = L.layout(ElemG).Size;
+  Val Buf = E.snap(Val{
+      &E, callRt(RtFn::MemResize,
+                 {E.null(PU8).Op, (N * Esz).Op, constBool(ctx(), false)}, At)});
+  Val From = E.snap(E.to(PU8, Src));
+  Var I = E.var(ctx().u64(), E.u(0), "i");
+  E.While([&] { return E.bin(BinOp::Lt, I, N); },
+          [&] {
+            E.call(Clone, {E.padd(Buf, I * Esz), E.padd(From, I * Esz)});
+            I = I + 1;
+          });
+  return Buf.Op;
+}
+
+void Body::spreadDone(Operand FromOp, Place Src, S::Type *Elem,
+                      const ast::Node *At, bool Fresh, Operand NOp, bool All) {
+  if (!Elem || !L.needsDrop(Elem))
+    return;
+  Rt E(M, FB);
+  Val From{&E, FromOp}, N{&E, NOp};
+  Type *PU8 = ctx().ptr(ctx().u8());
+  if (!Fresh) {
+    // The clones were moved out of the buffer: only it is freed.
+    callRt(RtFn::MemFree, {E.to(PU8, From).Op}, At);
+    return;
+  }
+  // The taken elements are no longer the source's: all of them (append) by
+  // a length of 0, the first N (copy) by zero bytes; its glue frees the
+  // buffer and drops the rest.
+  if (All) {
+    FB.assign(FB.field(Src, 1), FB.use(E.u(0).Op));
+    return;
+  }
+  uint64_t Esz = L.layout(Src.Ty->elem()).Size;
+  callFn(L.libc("memset", At->getBegin()),
+         {E.to(PU8, From).Op, E.i32(0).Op, (N * Esz).Op});
 }
 
 void Body::lowerDelete(const ast::CallExpr *C) {
@@ -766,21 +872,57 @@ Operand Body::mapValue(const ast::Expr *E) {
 /// The MapInfo the runtime is told about K and V by: sizes and the hash and
 /// equality functions (the glue of P04.04), built where the map is used.
 Operand Body::mapInfoPtr(S::MapType *MT, const ast::Node *N) {
-  Type *KG = L.lowerType(MT->Key, N->getBegin());
-  Type *VG = L.lowerType(MT->Elem, N->getBegin());
-  if (!KG || !VG)
+  SmallVector<Operand, 7> Ops;
+  if (!L.mapInfoOperands(MT, N->getBegin(), Ops))
     return errorValue(ctx());
-  auto [Hash, Eq] = L.mapKeyFns(MT->Key, N->getBegin());
-  if (Hash == NoId || Eq == NoId)
-    return errorValue(ctx());
-  Type *IS = L.mapInfoType(), *U64 = ctx().u64();
+  Type *IS = L.mapInfoType();
   Place Info = FB.local(FB.newTemp(IS));
   at(N);
-  FB.assign(Info, FB.aggregate(AggKind::Struct, IS,
-                               {constInt(U64, L.layout(KG).Size),
-                                constInt(U64, L.layout(VG).Size),
-                                constFunc(M, Hash), constFunc(M, Eq)}));
+  FB.assign(Info, FB.aggregate(AggKind::Struct, IS, Ops));
   return copyOf(FB.temp(FB.addrOf(Info)));
+}
+
+bool Lowering::mapInfoOperands(S::MapType *MT, SourceLoc At,
+                               llvm::SmallVectorImpl<Operand> &Ops) {
+  Type *KG = lowerType(MT->Key, At);
+  Type *VG = lowerType(MT->Elem, At);
+  if (!KG || !VG)
+    return false;
+  auto [Hash, Eq] = mapKeyFns(MT->Key, At);
+  if (Hash == NoId || Eq == NoId)
+    return false;
+  Type *U64 = Ctx.u64();
+  Ops.clear();
+  Ops.push_back(constInt(U64, layout(KG).Size));
+  Ops.push_back(constInt(U64, layout(VG).Size));
+  Ops.push_back(constFunc(*M, Hash));
+  Ops.push_back(constFunc(*M, Eq));
+  // The drop glue of the key and of the value, for the entries the runtime
+  // ends (map_free, map_delete, map_clear); zero when the type owns nothing.
+  Type *DropTy = Ctx.func({Ctx.ptr(Ctx.u8())}, Ctx.unit());
+  for (S::Type *Part : {MT->Key, MT->Elem}) {
+    FuncId D = dropGlue(Part, At);
+    if (D != NoId) {
+      Ops.push_back(constFunc(*M, D));
+    } else {
+      Operand Z;
+      Z.K = Operand::Const;
+      Z.C.K = Constant::Zero;
+      Z.C.Ty = DropTy;
+      Ops.push_back(Z);
+    }
+  }
+  FuncId KC = cloneGlue(MT->Key, At);
+  if (KC != NoId) {
+    Ops.push_back(constFunc(*M, KC));
+  } else {
+    Operand Z;
+    Z.K = Operand::Const;
+    Z.C.K = Constant::Zero;
+    Z.C.Ty = Ctx.func({Ctx.ptr(Ctx.u8()), Ctx.ptr(Ctx.u8())}, Ctx.unit());
+    Ops.push_back(Z);
+  }
+  return true;
 }
 
 Operand Body::bytesAddr(Place P) {
@@ -806,8 +948,15 @@ Operand Body::mapRead(const ast::IndexExpr *IE, bool CommaOk) {
   Val P = E.snap(Val{&E, callRt(RtFn::MapGet, {Info, Mv.Op, KA}, IE)});
   LocalId R = FB.newTemp(VG);
   FB.assign(FB.local(R), FB.use(zeroOf(VG)));
-  E.If(P != E.null(P.ty()),
-       [&] { FB.assign(FB.local(R), FB.use(copyOf(E.at(P, VG)))); });
+  // A value taken (`move(m[k])`, `m[k] = append(m[k], ...)`) leaves its entry
+  // as zero bytes until the result is stored back (OWN-R4, OWN-R5).
+  const bool Take =
+      TakeNode && TakeNode == unparen(IE) && L.needsDrop(MT->Elem);
+  E.If(P != E.null(P.ty()), [&] {
+    FB.assign(FB.local(R), FB.use(copyOf(E.at(P, VG))));
+    if (Take)
+      FB.assign(E.at(P, VG), FB.use(zeroOf(VG)));
+  });
   if (!CommaOk)
     return copyOf(FB.local(R));
   Val Ok = E.snap(P != E.null(P.ty()));
@@ -917,16 +1066,19 @@ Operand Body::sliceLiteral(const ast::CompositeLit *CL, S::SliceType *ST,
                         constBool(ctx(), true)},
                        CL);
   Val P = E.snap(E.to(ctx().ptr(ElemG), Val{&E, Buf}));
+  // The slice owns its zeroed buffer from the start, so a `!` return out of
+  // an element drops what was stored so far (P04.09 R7).
+  Operand R = ownTemp(E.slice(ElemG, P, E.u(Len), E.u(Len)).Op, ST);
   if (Len) {
     Place Arr = E.at(P, ctx().array(ElemG, Len));
     for (auto &[Idx, Ex] : Elts) {
-      Operand V = valueFor(Ex, ST->Elem);
+      Operand V = ownedValue(Ex, ST->Elem);
       at(Ex);
       FB.assign(FB.constIndex(Arr, uint32_t(Idx)), FB.use(V));
     }
   }
   at(CL);
-  return E.owned(E.slice(ElemG, P, E.u(Len), E.u(Len))).Op;
+  return R;
 }
 
 Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
@@ -936,13 +1088,15 @@ Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
   Rt E(M, FB);
   at(CL);
   LocalId Mv = FB.newTemp(L.mapType());
-  FB.function().Locals[Mv].Owned = true;
   Operand Info = mapInfoPtr(MT, CL);
   FB.assign(FB.local(Mv),
             FB.use(callRt(RtFn::MapNew,
                           {Info, constInt(ctx().u64(), CL->Elts.size()),
                            E.null(ctx().ptr(ctx().u8())).Op},
                           CL)));
+  // The map owns its entries from the start: a `!` return out of a key or
+  // a value drops the entries made so far (P04.09 R7).
+  Operand Owned = ownTemp(copyOf(FB.local(Mv)), MT);
   Operand Addr = copyOf(FB.temp(FB.addrOf(FB.local(Mv), true)));
   for (const ast::Expr *Ex : CL->Elts) {
     auto *KV = dyn_cast<ast::KeyValueExpr>(Ex);
@@ -953,14 +1107,14 @@ Operand Body::mapLiteral(const ast::CompositeLit *CL, S::MapType *MT) {
     Operand K = valueFor(KV->Key, MT->Key);
     at(Ex);
     Place KP = FB.temp(FB.use(K));
-    Operand V = valueFor(KV->Value, MT->Elem);
+    Operand V = ownedValue(KV->Value, MT->Elem);
     at(Ex);
     Place VP = FB.temp(FB.use(V));
     Operand Inf = mapInfoPtr(MT, Ex);
     Operand Slot = callRt(RtFn::MapAssign, {Inf, Addr, bytesAddr(KP)}, Ex);
     FB.assign(E.at(Val{&E, Slot}, VG), FB.use(copyOf(VP)));
   }
-  return copyOf(FB.local(Mv));
+  return Owned;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1032,29 +1186,27 @@ Operand Body::convertStrings(const ast::CallExpr *C, Operand X, S::Type *FromS,
           From == ctx().i64()
               ? X
               : copyOf(FB.temp(FB.cast(CastKind::IntToInt, X, ctx().i64())));
-      return callRt(RtFn::StrFromRune, {V}, C, true);
+      return callRt(RtFn::StrFromRune, {V}, C);
     }
     if (IsStr(FS.K) || IsSlice(FS.K)) {
       Place Q = seqPlace(X, FS);
       Type *Elem = IsStr(FS.K) ? U8 : Q.Ty->elem();
       if (Elem == U8)
         return callRt(RtFn::StrFromBytes,
-                      {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C,
-                      true);
+                      {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C);
       if (Elem == I32)
         return callRt(RtFn::StrFromRunes,
-                      {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C,
-                      true);
+                      {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C);
     }
   } else if (TS.K == SeqKind::Slice && IsStr(FS.K)) {
     Place Q = seqPlace(X, FS);
     Type *Elem = To->elem();
     if (Elem == U8)
       return callRt(RtFn::BytesFromStr,
-                    {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C, true);
+                    {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C);
     if (Elem == I32)
       return callRt(RtFn::RunesFromStr,
-                    {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C, true);
+                    {copyOf(FB.field(Q, 0)), copyOf(FB.field(Q, 1))}, C);
   } else if (TS.K == SeqKind::Slice && FS.K == SeqKind::ViewSlice &&
              From->elems()[0]->elem() == To->elem()) {
     // A copy of what the view shows.
@@ -1070,7 +1222,7 @@ Operand Body::convertStrings(const ast::CallExpr *C, Operand X, S::Type *FromS,
       callFn(L.libc("memmove", C->getBegin()),
              {Buf, E.to(ctx().ptr(U8), Src).Op, (N * Esz).Op});
     });
-    return E.owned(E.slice(Elem, E.to(ctx().ptr(Elem), Val{&E, Buf}), N, N)).Op;
+    return E.slice(Elem, E.to(ctx().ptr(Elem), Val{&E, Buf}), N, N).Op;
   } else if ((FS.K == SeqKind::Slice || FS.K == SeqKind::ViewSlice) &&
              (To->getKind() == Type::Kind::Array ||
               (To->isPtr() && To->elem()->getKind() == Type::Kind::Array))) {
@@ -1106,9 +1258,13 @@ Operand Body::convertStrings(const ast::CallExpr *C, Operand X, S::Type *FromS,
 /// The arguments from index Fixed on, as the slice the variadic parameter is.
 Operand Body::packVariadic(const ast::CallExpr *C, S::SignatureType *Sig,
                            size_t Fixed) {
+  // A `move ...T` parameter takes the arguments; a borrowed one (PAR-1)
+  // borrows them: the pack holds copies of their bits (P04.09).
+  const bool Move = Sig->isMove(Sig->Params->Elems.size() - 1);
   return packVariadicWith(C, Sig, C->Args.size() - Fixed,
                           [&](size_t K, S::Type *Elem) {
-                            return valueFor(C->Args[Fixed + K], Elem);
+                            return Move ? ownedValue(C->Args[Fixed + K], Elem)
+                                        : valueFor(C->Args[Fixed + K], Elem);
                           });
 }
 
@@ -1137,7 +1293,26 @@ Operand Body::packVariadicWith(
     at(C);
     FB.assign(FB.constIndex(Arr, uint32_t(K)), FB.use(V));
   }
-  return E.owned(E.slice(ElemG, P, E.u(N), E.u(N))).Op;
+  // The packed slice is a temporary of the call (P04.09). Given to a `move`
+  // parameter it owns its elements and goes to the callee; lent to a borrowed
+  // one it holds borrowed copies, so only its buffer ends with the statement
+  // (gopp.pack_free).
+  Operand R = E.slice(ElemG, P, E.u(N), E.u(N)).Op;
+  if (Sig->isMove(Sig->Params->Elems.size() - 1)) {
+    R = ownTemp(std::move(R), ParamS);
+    if (R.K == Operand::Copy)
+      R.K = Operand::Move;
+    return R;
+  }
+  FuncId Free = L.rt(RtFn::PackFree, C->getBegin());
+  if (Free == NoId || R.K != Operand::Copy || !R.P.Proj.empty())
+    return R;
+  Local &Lo = FB.function().Locals[R.P.Local];
+  Lo.Owned = true;
+  Lo.Glue = Free;
+  Scopes.back().Locals.push_back(R.P.Local);
+  FB.storageLive(R.P.Local);
+  return R;
 }
 
 //===----------------------------------------------------------------------===//

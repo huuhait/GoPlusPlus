@@ -1,0 +1,183 @@
+package main
+
+// P04.09: shared handles (OWN-C3, TYP-5, CLO-2). An interface's box, a func
+// value's environment and a closure cell are counted: a copy retains, the end
+// of a copy releases, and the last release drops what it holds and frees it.
+// Each function below makes, copies, stores, passes and drops values of one
+// kind; the global allocator's counters (the test intrinsics) must show as
+// many frees as allocations when it returns. The values with a `drop` method
+// print, so the output also shows that a value in a box, and a variable a
+// closure captured, is dropped once, when its last holder goes. Built with
+// -test-intrinsics; Go++ only: the output (shared.out) is written by hand.
+
+@Extern("C") func gopp_test_count(which int, what int) int
+
+var fails int
+
+func check(name string, allocs, frees int) {
+	if allocs != frees || allocs == 0 {
+		println("FAIL", name, "allocs", allocs, "frees", frees)
+		fails++
+	}
+}
+
+func run(name string, f func()) {
+	a0, f0 := gopp_test_count(0, 0), gopp_test_count(0, 2)
+	f()
+	check(name, gopp_test_count(0, 0)-a0, gopp_test_count(0, 2)-f0)
+}
+
+type Res struct{ name string }
+
+func (r *Res) drop() { println("drop", r.name) }
+
+type Shape interface{ Area() int }
+
+type Sq struct {
+	s   int
+	tag string
+}
+
+func (q Sq) Area() int { return q.s * q.s }
+
+type Big struct{ a, b, c, d int }
+
+var kept any
+
+func keep(v any)     { kept = v }
+func look(v any) int { return len(v.(Big).name()) }
+func pass(v any) int { return look(v) }
+
+func (b Big) name() string { return "big" }
+
+// A box: a value moved in (TYP-6), copies of the interface share it, and it
+// is freed when the last one ends.
+func boxes(a string) {
+	var x any = a + a
+	y := x
+	var s Shape = Sq{3, a + a}
+	t := s
+	m := map[string]any{"k": x}
+	xs := []Shape{s, t}
+	_ = len(m) + len(xs) + t.Area()
+	_ = y
+	var r any = Res{"in a box"}
+	r2 := r
+	println("boxes end")
+	_ = r2
+}
+
+// TYP-7: an argument the callee only looks at is lent, with no box; one it
+// keeps is copied into a box of its own.
+func borrowed() {
+	b := Big{1, 2, 3, 4}
+	a0 := gopp_test_count(0, 0)
+	n := look(b) + pass(b)
+	if gopp_test_count(0, 0) != a0 || n != 6 {
+		println("FAIL a lent argument allocated", gopp_test_count(0, 0)-a0)
+		fails++
+	}
+	keep(b)
+	if gopp_test_count(0, 0) != a0+1 {
+		println("FAIL a kept argument: allocs", gopp_test_count(0, 0)-a0)
+		fails++
+	}
+	b.a = 9
+	if kept.(Big).a != 1 {
+		println("FAIL the kept copy changed")
+		fails++
+	}
+	kept = nil
+}
+
+func counter() func() int {
+	n := 0
+	return func() int {
+		n++
+		return n
+	}
+}
+
+func owner(move name string) func() string {
+	r := Res{name}
+	return func() string { return r.name.Clone() }
+}
+
+// Closures: cells and environments, made and dropped in a loop, and kept by
+// a copy, a slice and a closure that holds another one.
+func closures() {
+	total := 0
+	for i := 0; i < 10; i++ {
+		f := counter()
+		f()
+		g := f
+		total += g()
+	}
+	var fs []func() int
+	for i := 0; i < 5; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	f := counter()
+	h := func() int { return f() + 100 }
+	total += h() + h() + fs[4]()
+	g := owner("captured")
+	println("closures", total, g())
+}
+
+type C struct{ n int }
+
+func (c *C) Inc() int {
+	c.n++
+	return c.n
+}
+func (c C) Get() int { return c.n }
+
+func (move r Res) Finish() string { return "finish " + r.name }
+
+func methodValues() {
+	var c C
+	inc := c.Inc
+	get := c.Get
+	var s Shape = Sq{2, "sq"}
+	area := s.Area
+	total := inc() + inc() + get() + area()
+	r := Res{"receiver"}
+	fin := r.Finish
+	println(fin(), total)
+	r2 := Res{"never called"}
+	unused := r2.Finish
+	_ = unused
+}
+
+func two(a string) (string, string) { return a + "1", a + "2" }
+
+func vlen(move xs ...string) int {
+	n := 0
+	for _, x := range xs {
+		n += len(x)
+	}
+	return n
+}
+
+func vany(xs ...any) int { return len(xs) }
+
+// The results of a call (one taken, the other dropped), and variadic packs.
+func tuples(a string) {
+	x, _ := two(a)
+	_, y := two(a)
+	two(a)
+	n := vlen(a+a, a.Clone(), x) + vany(a+a, y, 3, Sq{1, a + a})
+	_ = n
+}
+
+func main() {
+	x := "ab"
+	run("boxes", func() { boxes(x) })
+	run("closures", closures)
+	run("method values", methodValues)
+	run("tuples", func() { tuples(x) })
+	borrowed()
+	if fails == 0 {
+		println("ok")
+	}
+}

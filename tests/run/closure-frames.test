@@ -224,7 +224,11 @@ func main() {
 	fs := loops()
 	f10 := held()
 	f11 := nested()()
-	p := addr()()
+	// (The closure is kept: `&x` points into its cell, which ends with the
+	// last copy of the closure since P04.09. `addr()()` would keep a borrow of
+	// a temporary, which the borrow checker rejects: TODO P04.20.)
+	fa := addr()
+	p := fa()
 	a1, a2, a3 := anyHolder(5), anyMethod(), anyValueMethod()
 	sh, ah, slh, mh := structHolder(3), arrayHolder(), sliceHolder(), mapHolder()
 	se := sliceElem()

@@ -1,0 +1,100 @@
+// RUN: not %gopp check --check-error-limit=0 %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %s 2>&1 | FileCheck --implicit-check-not=error[E %s
+// P04.09 review R8: an operator on a user type is the method call the
+// checker resolved (Info::Operators, P04.23), and it moves what the call
+// does: a `move` parameter (`x + y`, `x(y)`, `x += y`, `x[0] = y`, a
+// `switch` case compared with `==`, R16) or a `move` receiver (`x - y`, `-x`,
+// a conversion of a @Convert method). A use
+// afterwards is E0451, from `gopp check` (whose filter sees the operator's
+// call, Body::mayMoveVariable) and from the build alike.
+package main
+
+type B struct{ s string }
+
+func (a B) + (move b B) B   { return B{a.s + b.s} }
+func (move a B) - (b B) B   { return B{a.s + b.s} }
+func (a B) () (move b B) B  { return B{a.s + b.s} }
+func (move a B) - () B      { return B{a.s.Clone()} }
+func (a *B) []= (i int, move v B) { a.s = v.s.Clone() }
+
+@Convert func (move a B) String() string { return a.s.Clone() }
+
+func mk(s string) B { return B{s + "!"} }
+
+func binary() int {
+	x, y := mk("x"), mk("y")
+	z := x + y
+	// CHECK: [[@LINE+2]]:19: error[E0451]: use of moved value y (OWN-R3)
+	// CHECK: [[@LINE-2]]:7: note: moved here
+	return len(z.s + y.s)
+}
+
+func receiver() int {
+	x, y := mk("x"), mk("y")
+	z := x - y
+	// CHECK: [[@LINE+2]]:19: error[E0451]: use of moved value x (OWN-R3)
+	// CHECK: [[@LINE-2]]:7: note: moved here
+	return len(z.s + x.s)
+}
+
+func call() int {
+	x, y := mk("x"), mk("y")
+	z := x(y)
+	// CHECK: [[@LINE+2]]:19: error[E0451]: use of moved value y (OWN-R3)
+	// CHECK: [[@LINE-2]]:7: note: moved here
+	return len(z.s + y.s)
+}
+
+func unary() int {
+	x := mk("x")
+	z := -x
+	// CHECK: [[@LINE+2]]:19: error[E0451]: use of moved value x (OWN-R3)
+	// CHECK: [[@LINE-2]]:7: note: moved here
+	return len(z.s + x.s)
+}
+
+func convert() int {
+	x := mk("x")
+	z := string(x)
+	// CHECK: [[@LINE+2]]:17: error[E0451]: use of moved value x (OWN-R3)
+	// CHECK: [[@LINE-2]]:14: note: moved here
+	return len(z + x.s)
+}
+
+func opAssign() int {
+	x, y := mk("x"), mk("y")
+	x += y
+	// CHECK: [[@LINE+2]]:19: error[E0451]: use of moved value y (OWN-R3)
+	// CHECK: [[@LINE-2]]:2: note: moved here
+	return len(x.s + y.s)
+}
+
+func indexSet() int {
+	x, y := mk("x"), mk("y")
+	x[0] = y
+	// CHECK: [[@LINE+2]]:19: error[E0451]: use of moved value y (OWN-R3)
+	// CHECK: [[@LINE-2]]:2: note: moved here
+	return len(x.s + y.s)
+}
+
+type C struct{ s string }
+
+func (a C) == (move b C) bool { return a.s == b.s }
+
+// A `switch` compares its tag with a case value through `==`
+// (Info::CaseOperators, review R16): the case value moves.
+func caseValue() int {
+	x, y := C{"x" + "1"}, C{"y" + "1"}
+	switch x {
+	case y:
+		return 1
+	}
+	// CHECK: [[@LINE+2]]:9: error[E0451]: use of moved value y (OWN-R3)
+	// CHECK: [[@LINE-5]]:9: note: moved here
+	return len(y.s)
+}
+
+func main() {
+	println(binary(), receiver(), call(), unary(), convert(), opAssign(),
+		indexSet(), caseValue())
+}

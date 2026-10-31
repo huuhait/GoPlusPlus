@@ -453,3 +453,6 @@ E0447 err_inst_view
 E0448 err_inst_checked_result
 E0449 err_inst_too_large
 E0450 err_inline_marks_conflict
+E0451 err_use_after_move
+E0452 err_own_implicit_clone
+E0453 err_inst_implicit_clone

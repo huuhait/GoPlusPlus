@@ -275,6 +275,135 @@ void Checker::initVar(Var *Lhs, Operand &X, StringRef Context) {
   needOwnership(X, IsReturn ? "return" : "initialize from", Lhs->Ty);
 }
 
+bool Checker::swapMayAlias(ArrayRef<ast::Expr *> Lhs) {
+  // A place as a path from its variable, in the steps the lowering takes
+  // (Body::followFields): a field by its layout index (a parent's field
+  // through the parent part, field 0), a `*` wherever a pointer or a view is
+  // followed (`p.a` and `(*p).a` are one path), an index or a key.
+  // Out: the step leaves the storage of the place before it (a `*`, a
+  // slice's or a map's element), so what follows may be anywhere.
+  struct Step {
+    enum Kind : uint8_t { Field, Deref, Const, Dynamic } K;
+    int F = 0;
+    const ConstValue *C = nullptr;
+    bool Out = false;
+  };
+  struct Path {
+    const Var *Root = nullptr;
+    SmallVector<Step, 6> Steps;
+  };
+  auto Follow = [&](Type *&Cur, Path &P) {
+    if (!Cur)
+      return;
+    if (auto *PT = dyn_cast<PointerType>(under(Cur))) {
+      P.Steps.push_back({Step::Deref, 0, nullptr, true});
+      Cur = PT->Elem;
+    } else if (auto *RT = dyn_cast<RefType>(under(Cur))) {
+      P.Steps.push_back({Step::Deref, 0, nullptr, true});
+      Cur = RT->Elem;
+    }
+  };
+  auto PathOf = [&](const ast::Expr *E, Path &P) {
+    SmallVector<const ast::Expr *, 8> Chain;
+    E = unparen(E);
+    for (;;) {
+      Chain.push_back(E);
+      if (auto *Sel = dyn_cast<SelectorExpr>(E))
+        E = unparen(Sel->X);
+      else if (auto *IE = dyn_cast<IndexExpr>(E))
+        E = unparen(IE->X);
+      else if (auto *SE = dyn_cast<StarExpr>(E))
+        E = unparen(SE->X);
+      else
+        break;
+    }
+    auto *Id = dyn_cast<ast::Ident>(E);
+    auto U = Id ? I.Uses.find(Id) : I.Uses.end();
+    P.Root = U == I.Uses.end() ? nullptr : dyn_cast_or_null<Var>(U->second);
+    if (!P.Root)
+      return false;
+    for (size_t K = Chain.size() - 1; K-- > 0;) {
+      const ast::Expr *X = Chain[K];
+      if (auto *Sel = dyn_cast<SelectorExpr>(X)) {
+        auto It = I.Selections.find(Sel);
+        if (It == I.Selections.end() || It->second.K != Selection::FieldVal)
+          return false;
+        SmallVector<int, 8> Fields(It->second.ParentSteps, 0);
+        Fields.append(It->second.Index.begin(), It->second.Index.end());
+        Type *Cur = I.typeOf(Sel->X);
+        for (int F : Fields) {
+          Follow(Cur, P);
+          auto *ST = Cur ? dyn_cast<StructType>(under(Cur)) : nullptr;
+          if (!ST || F < 0 || size_t(F) >= ST->Fields.size())
+            return false;
+          P.Steps.push_back({Step::Field, F, nullptr, false});
+          Cur = ST->Fields[F]->Ty;
+        }
+      } else if (auto *IE = dyn_cast<IndexExpr>(X)) {
+        if (IE->Indices.size() != 1)
+          return false;
+        Type *Cur = I.typeOf(IE->X);
+        Follow(Cur, P);
+        bool Out = !Cur || !isa<ArrayType>(under(Cur));
+        // A constant index or key names one element when the values of its
+        // type are exact (not a float key: two constants may round to one).
+        const TypeAndValue *TV = I.lookup(IE->Indices[0]);
+        bool Exact =
+            TV && TV->M == Mode::Constant && TV->Val && !TV->Val->isUnknown() &&
+            TV->Ty &&
+            (isInteger(TV->Ty) || isString(TV->Ty) || isBoolean(TV->Ty));
+        if (Exact)
+          P.Steps.push_back({Step::Const, 0, TV->Val, Out});
+        else
+          P.Steps.push_back({Step::Dynamic, 0, nullptr, Out});
+      } else {
+        P.Steps.push_back({Step::Deref, 0, nullptr, true});
+      }
+    }
+    return true;
+  };
+  auto AnyOut = [](const Path &P, size_t From) {
+    for (size_t K = From; K < P.Steps.size(); ++K)
+      if (P.Steps[K].Out)
+        return true;
+    return false;
+  };
+  // A variable that holds its own value: a package variable or one of this
+  // function (not a borrow of another's place, not a closure's capture).
+  auto Own = [&](const Var *V) {
+    return !V->IsField && (V->IsPackageLevel || V->FuncOwner == E.FuncId) &&
+           (V->Mode == Var::Owned || V->Mode == Var::MoveParam);
+  };
+  // Two places are apart when they part at a field or at two constants, and
+  // neither leaves its storage after that (`o.p.x` may be `o.y.x` when o.p
+  // points into o); or when they are in two variables' own storage.
+  auto Apart = [&](const Path &P, const Path &Q) {
+    if (P.Root != Q.Root)
+      return Own(P.Root) && Own(Q.Root) && !AnyOut(P, 0) && !AnyOut(Q, 0);
+    for (size_t D = 0; D < P.Steps.size() && D < Q.Steps.size(); ++D) {
+      const Step &X = P.Steps[D], &Y = Q.Steps[D];
+      if (X.K != Y.K || X.K == Step::Dynamic)
+        return false;
+      bool Differ = X.K == Step::Field ? X.F != Y.F
+                    : X.K == Step::Const
+                        ? !ConstValue::compare(*X.C, tok::eql, *Y.C)
+                        : false;
+      if (Differ)
+        return !AnyOut(P, D + 1) && !AnyOut(Q, D + 1);
+    }
+    return false; // one place is a part of the other
+  };
+  SmallVector<Path, 4> Ps(Lhs.size());
+  for (size_t K = 0; K < Lhs.size(); ++K)
+    if (!PathOf(Lhs[K], Ps[K]))
+      return true;
+  for (size_t A = 0; A < Ps.size(); ++A)
+    for (size_t B = A + 1; B < Ps.size(); ++B)
+      if (!Apart(Ps[A], Ps[B]))
+        return true;
+  return false;
+}
+
 Type *Checker::lhsVar(const ast::Expr *Lhs) {
   // Assigning to a variable does not count as a use.
   Var *V = nullptr;
@@ -312,8 +441,15 @@ Type *Checker::lhsVar(const ast::Expr *Lhs) {
   switch (X.M) {
   case Mode::Invalid:
     return invalid();
-  case Mode::Variable:
   case Mode::MapIndex:
+    // OWN-V4: an insert keeps a clone of the key.
+    if (auto *IE = dyn_cast<IndexExpr>(unparen(X.E));
+        IE && !IE->Indices.empty())
+      if (auto *MT = dyn_cast_or_null<MapType>(under(I.typeOf(IE->X))))
+        implicitClone(IE->Indices[0], MT->Key, "a map insert",
+                      "its key (OWN-V4)");
+    break;
+  case Mode::Variable:
     break;
   default:
     if (auto *Sel = dyn_cast<SelectorExpr>(unparen(X.E))) {
@@ -626,6 +762,28 @@ void Checker::assignVars(ArrayRef<ast::Expr *> Lhs,
     for (size_t K = 0; K < L; ++K)
       assignVar(Lhs[K], OrigRhs[K], nullptr, "assignment");
     NoOwnCheck = Saved;
+    if (Swap) {
+      // Three or more places, two of which may be one place at run time:
+      // Go's stores, left to right, may then write one value to two places,
+      // which takes a clone (P04.09 R18; with two places the one place gets
+      // its one value back).
+      bool MayAlias = L > 2 && swapMayAlias(Lhs);
+      I.Swaps[Lhs[0]] = MayAlias;
+      if (MayAlias) {
+        // (One report for each type of the swap's places.)
+        SmallVector<Type *, 4> Seen;
+        for (size_t K = 0; K < L; ++K) {
+          Type *T = I.typeOf(Lhs[K]);
+          if (!T || llvm::is_contained(Seen, T))
+            continue;
+          Seen.push_back(T);
+          implicitClone(Lhs[K], T,
+                        "this swap of three or more places, two of which may "
+                        "be one place at run time,",
+                        "a value");
+        }
+      }
+    }
     return;
   }
   if (R != 1) {

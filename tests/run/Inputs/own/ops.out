@@ -1,0 +1,4 @@
+m = m + n: 1 1 22
+a + b + c: 2 1 31
+unused: 1 1
+in place: 0 0 42

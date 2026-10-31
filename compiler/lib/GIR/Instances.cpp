@@ -450,7 +450,8 @@ GenericInst *InstanceWalk::requestFunc(GenericInst *Cur, const S::Func *Decl,
 }
 
 GenericInst *InstanceWalk::requestMethod(GenericInst *Cur, const S::Func *M,
-                                         SourceLoc Site, S::Type *GenericRecv) {
+                                         SourceLoc Site, S::Type *GenericRecv,
+                                         bool AllShared) {
   ++Steps;
   if (Stopped) {
     auto Known = ByMethod.find(M);
@@ -498,6 +499,11 @@ GenericInst *InstanceWalk::requestMethod(GenericInst *Cur, const S::Func *M,
         Shared |= sharedBit(K);
     }
   }
+  // (A method the glue of a value calls, userGlue: which part carries which
+  // unit is not followed, so every unit argument counts as unknown.)
+  if (AllShared && Cur && !Cur->Erased.empty())
+    for (size_t K = 0; K < NParams; ++K)
+      Shared |= sharedBit(K);
   // A method that needs the unit of a type parameter of its type (the
   // checker's record, Func::UnitDictRecv: its own collapse sites and the
   // units it passes on), on a receiver whose unit there the caller does not
@@ -971,16 +977,20 @@ void InstanceWalk::visitExpr(GenericInst *Cur, const ast::Expr *E) {
     S::Type *T = inst(Cur, TV->Ty);
     // (The name of a generic function has a type with the callee's own
     // parameters: each call's instance is what is walked.)
-    if (!MS.mentionsTypeParam(T))
+    if (!MS.mentionsTypeParam(T)) {
       meet(Cur, T, E->getBegin());
+      userGlue(Cur, TV->Ty, T, E->getBegin());
+    }
   }
   // A name declared here (a variable, a parameter, a field): its type.
   if (auto *Id = dyn_cast<ast::Ident>(E))
     if (auto D = I.Defs.find(Id); D != I.Defs.end() && D->second)
       if (auto *V = dyn_cast<S::Var>(D->second); V && V->Ty) {
         S::Type *T = inst(Cur, V->Ty);
-        if (!MS.mentionsTypeParam(T))
+        if (!MS.mentionsTypeParam(T)) {
           meet(Cur, T, E->getBegin());
+          userGlue(Cur, V->Ty, T, E->getBegin());
+        }
       }
   if (auto It = I.Instances.find(E); It != I.Instances.end())
     onInstance(Cur, E, It->second);
@@ -994,6 +1004,47 @@ void InstanceWalk::visitExpr(GenericInst *Cur, const ast::Expr *E) {
   if (auto *TA = dyn_cast<ast::TypeAssertExpr>(E); TA && TA->Type)
     described(Cur, inst(Cur, I.typeOf(TA->Type)), I.typeOf(TA->Type),
               TA->getBegin());
+}
+
+void InstanceWalk::userGlue(GenericInst *Cur, S::Type *Generic, S::Type *T,
+                            SourceLoc At) {
+  if (!Cur || Cur->Bad || Cur->Erased.empty() || !T ||
+      !mentionsErasedUnit(Cur, Generic))
+    return;
+  if (ForgetErased)
+    GlueAsked.clear();
+  llvm::SmallVector<S::Type *, 8> Work{T};
+  while (!Work.empty() && !Stopped && !Cur->Bad) {
+    S::Type *X = Work.pop_back_val();
+    ++Steps;
+    if (!X || !MS.isOwning(X) || !GlueAsked.insert(X).second)
+      continue;
+    for (const S::Func *M : {MS.dropMethod(X), MS.cloneMethod(X)})
+      if (M && M->RecvInst)
+        requestMethod(Cur, M, At, Generic, /*AllShared=*/true);
+    forEachGluePart(X, [&](S::Type *P) { Work.push_back(P); });
+  }
+}
+
+void gir::impl::forEachGluePart(S::Type *T,
+                                llvm::function_ref<void(S::Type *)> Fn) {
+  S::Type *U = T ? S::under(T) : nullptr;
+  if (auto *ST = dyn_cast_or_null<S::StructType>(U)) {
+    for (S::Var *F : ST->Fields)
+      Fn(F->Ty);
+  } else if (auto *AT = dyn_cast_or_null<S::ArrayType>(U)) {
+    Fn(AT->Elem);
+  } else if (auto *SL = dyn_cast_or_null<S::SliceType>(U)) {
+    Fn(SL->Elem);
+  } else if (auto *MT = dyn_cast_or_null<S::MapType>(U)) {
+    Fn(MT->Key);
+    Fn(MT->Elem);
+  } else if (auto *OT = dyn_cast_or_null<S::OptionType>(U)) {
+    Fn(OT->Elem);
+  } else if (auto *TT = dyn_cast_or_null<S::TupleType>(U)) {
+    for (S::Type *E : TT->Elems)
+      Fn(E);
+  }
 }
 
 void InstanceWalk::visitOperator(GenericInst *Cur, const ast::Node *N) {
@@ -1011,6 +1062,20 @@ void InstanceWalk::visitOperator(GenericInst *Cur, const ast::Node *N) {
   if (auto *E = dyn_cast<ast::Expr>(N))
     if (auto It = I.CaseOperators.find(E); It != I.CaseOperators.end())
       Visit(It->second);
+}
+
+void InstanceWalk::implicitClone(GenericInst *Cur, const ast::Node *N) {
+  auto It = I.ImplicitClones.find(N);
+  if (It == I.ImplicitClones.end() || !Cur || Cur->Bad)
+    return;
+  S::Type *T = inst(Cur, It->second.T);
+  if (!T || MS.mentionsTypeParam(T) || MS.cloneable(T))
+    return;
+  Cur->Bad = true;
+  Failed = true;
+  auto B = Diags.report(Cur->Site, diag::err_inst_implicit_clone);
+  B << nameOf(*Cur) << It->second.What << It->second.Copied << typeText(T);
+  notes(B, *Cur, N->getBegin(), "copied here");
 }
 
 void InstanceWalk::scanTree(GenericInst *Cur, const ast::Node *Root,
@@ -1047,6 +1112,8 @@ void InstanceWalk::scanTree(GenericInst *Cur, const ast::Node *Root,
             described(Cur, inst(Cur, I.typeOf(T)), I.typeOf(T), T->getBegin());
     if (!I.Operators.empty() || !I.CaseOperators.empty())
       visitOperator(Cur, N);
+    if (!I.ImplicitClones.empty())
+      implicitClone(Cur, N);
     if (auto *E = dyn_cast<ast::Expr>(N)) {
       visitExpr(Cur, E);
       if (auto *C = dyn_cast<ast::CallExpr>(E))
@@ -1074,6 +1141,16 @@ void InstanceWalk::scanFunc(GenericInst *Cur, const ast::FuncDecl *FD,
   if (Obj->Ty)
     if (S::Type *Sg = inst(Cur, Obj->Ty); !MS.mentionsTypeParam(Sg))
       meet(Cur, Sg, At);
+  // A `move` parameter is dropped at the end of the body even if the body
+  // never names it (userGlue; every other value has a name or an expression
+  // in the body).
+  if (auto *Sig = dyn_cast_or_null<S::SignatureType>(Obj->Ty);
+      Sig && Sig->Params)
+    for (size_t K = 0; K < Sig->Params->Elems.size(); ++K)
+      if (Sig->isMove(K))
+        if (S::Type *P = Sig->Params->Elems[K], *T = inst(Cur, P);
+            !MS.mentionsTypeParam(T))
+          userGlue(Cur, P, T, At);
   if ((Cur && Cur->Bad) || Stopped)
     return;
   if (FD->Body)

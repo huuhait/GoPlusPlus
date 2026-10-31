@@ -211,6 +211,17 @@ struct Statement {
   /// it, and GIR inlining makes its copy the call's, as the copies of the
   /// arguments are (docs/design/debug-info.md section 3).
   bool Prologue = false;
+  /// Assign only (P04.09): the value in Dest is an owner's, and it is
+  /// dropped by this glue function (`fn(*T)`) just before the store. The
+  /// lowering sets it on a store that replaces a live owner (`s = t`, a
+  /// field, an element, a dereference); drop elaboration (DropElab.h) makes
+  /// the `Drop` of it. NoId: the store replaces nothing that owns.
+  FuncId DropOld = NoId;
+  /// Builder-only (not printed or serialized): this statement reads the value
+  /// a store of the same assignment is about to replace, to end it with the
+  /// statement (a tuple assignment). A place moved from holds zero bytes, so
+  /// the read is not a use after a move (MoveCheck).
+  bool OldRead = false;
   /// The debug scope the statement belongs to (Function::Scopes, V074). In
   /// code that GIR inlining copied the span is a position in the callee and
   /// the scope lies under the `Inlined` scope of the call (P04.12).
@@ -284,7 +295,8 @@ struct Terminator {
     Unreachable, // control cannot get here
     Call,        // Dest = Callee(Args); continue at Target (NoId: the callee
                  // is NoReturn); Unwind says what a panic does
-    Drop,        // run the drop glue of the owner in Dest, then Target
+    Drop,        // call the drop glue Discr (a function constant, `fn(*T)`) on
+                 // the owner in Dest, then continue at Target
     Assert,      // if Discr != Expected: fail (AK). Continue at Target
     Resume,      // cleanup blocks only: continue the unwind
   };
@@ -335,10 +347,16 @@ struct Local {
   bool Mutable = true;
   /// A temporary that holds a value which owns memory (a string, slice or
   /// map just made by `+`, `make`, `append`, a conversion, a literal) and that
-  /// no variable took over yet. Drop elaboration (P04.09) drops it at the end
-  /// of its statement unless a `Move` of it was made; until then it leaks
-  /// (gir.md section 7). Only temporaries are owned (V014).
+  /// no variable took over yet, or a variable, parameter or named result that
+  /// owns its value (P04.09). Drop elaboration drops it where it dies (gir.md
+  /// section 7). It holds a valid value or all-zero bytes from the function's
+  /// entry on, and a drop or a `Move` of it leaves all-zero bytes, so a drop
+  /// of it is always right (V014: an owned local has a drop glue).
   bool Owned = false;
+  /// The drop glue (`fn(*T)`, which leaves the value all zero) of an owned
+  /// local: drop elaboration drops the local with it where the local dies
+  /// (P04.09; NoId on a local that is not owned).
+  FuncId Glue = NoId;
   /// A parameter, variable, named result or range variable the program
   /// declared (not a name the lowering gave to a helper's variable). Only
   /// these are variables to the debugger (P04.12); a parameter or variable

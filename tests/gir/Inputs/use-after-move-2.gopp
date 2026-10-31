@@ -1,0 +1,63 @@
+package main
+
+type Doc struct {
+	Name string
+	Tags []string
+}
+
+func take(move s []int) int { return len(s) }
+
+func takeDoc(move d Doc) int { return len(d.Tags) }
+
+func peek(s []int) int { return len(s) }
+
+// A straight move, then a read.
+func straight() int {
+	xs := []int{1, 2, 3}
+	n := take(xs)
+	return n + len(xs)
+}
+
+// Moved on one branch only: a read after the join is an error.
+func branch(c bool) int {
+	xs := []int{1, 2, 3}
+	if c {
+		take(xs)
+	}
+	return len(xs)
+}
+
+// Moved in a loop: the next round reads it.
+func loop() int {
+	xs := []int{1}
+	t := 0
+	for i := 0; i < 3; i++ {
+		t += take(xs)
+	}
+	return t
+}
+
+// move(x) of a variable, then a read of x.
+func builtinMove() int {
+	s := "ab" + string(rune(65+len("c")))
+	t := move(s)
+	return len(t) + len(s)
+}
+
+// A struct that holds a slice, moved into a call.
+func structMove() int {
+	d := Doc{Name: "a" + "b", Tags: []string{"x" + "y"}}
+	n := takeDoc(d)
+	return n + len(d.Name)
+}
+
+// Stored into another variable (a plain assignment moves an owner).
+func store() int {
+	a := []int{1, 2}
+	b := a
+	return len(a) + len(b)
+}
+
+func main() {
+	println(straight(), branch(true), loop(), builtinMove(), structMove(), store())
+}

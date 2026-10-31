@@ -132,7 +132,7 @@ Operand Body::lowerTestIntrinsic(const ast::CallExpr *C, const S::Func *F,
         callRt(RtFn::MakeSlice,
                {W.Op, E.u(L.layout(ElemG).Size).Op, Len.Op, Cap.Op}, C);
     Val P = E.to(ctx().ptr(ElemG), Val{&E, Buf});
-    return E.owned(E.slice(ElemG, P, E.to(U64, Len), E.to(U64, Cap), W)).Op;
+    return E.slice(ElemG, P, E.to(U64, Len), E.to(U64, Cap), W).Op;
   }
   case TF::MakeMap: {
     auto *MT = dyn_cast_or_null<S::MapType>(RS ? S::under(RS) : nullptr);
@@ -143,7 +143,7 @@ Operand Body::lowerTestIntrinsic(const ast::CallExpr *C, const S::Func *F,
     initAllocs(L, E);
     Val W = ByObject ? Which : WordFor(Which);
     Operand Info = mapInfoPtr(MT, C);
-    return callRt(RtFn::MapNew, {Info, E.u(0).Op, W.Op}, C, /*Owned=*/true);
+    return callRt(RtFn::MapNew, {Info, E.u(0).Op, W.Op}, C);
   }
   case TF::CloneSlice:
   case TF::FreeSlice: {
@@ -163,22 +163,22 @@ Operand Body::lowerTestIntrinsic(const ast::CallExpr *C, const S::Func *F,
     Val W = E.snap(E.val(FB.field(H, 3)));
     if (Fn == TF::FreeSlice) {
       callRt(RtFn::SliceFree, {W.Op, Ptr.Op, Cap.Op, E.u(Esz).Op}, C);
+      // The slice is given up: its owner must not free it again (OWN-R5).
+      FB.assign(H, FB.use(zeroOf(SG)));
       return unitValue();
     }
     Operand Buf =
         callRt(RtFn::SliceClone, {W.Op, Ptr.Op, Len.Op, E.u(Esz).Op}, C);
-    return E
-        .owned(
-            E.slice(ElemG, E.to(ctx().ptr(ElemG), Val{&E, Buf}), Len, Len, W))
-        .Op;
+    return E.slice(ElemG, E.to(ctx().ptr(ElemG), Val{&E, Buf}), Len, Len, W).Op;
   }
   case TF::FreeMap: {
     auto *MT = dyn_cast_or_null<S::MapType>(S::under(ParamTy(0)));
     if (!MT)
       return Bad("a test free_map on a value that is no map");
-    Operand Mp = lowerExpr(C->Args[0]);
+    Place MP = placeOf(lowerExpr(C->Args[0]));
     at(C);
-    callRt(RtFn::MapFree, {mapInfoPtr(MT, C), Mp}, C);
+    callRt(RtFn::MapFree, {mapInfoPtr(MT, C), copyOf(MP)}, C);
+    FB.assign(MP, FB.use(zeroOf(MP.Ty)));
     return unitValue();
   }
   case TF::Count: {

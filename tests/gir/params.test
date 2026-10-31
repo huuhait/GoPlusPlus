@@ -37,7 +37,7 @@ func main() {
 // CHECK: fn _GPF4mainE1h(_1: (*i64, u64)) -> i64 [go, external]
 // CHECK: _2 = slice []i64 {copy _1.0, copy _1.1, copy _1.1, const null: *u8}
 // CHECK: fn _GPF4mainE1s(_1: (*u8, u64)) -> i64 [go, external]
-// CHECK: _2 = string string {copy _1.0, copy _1.1, const 0: u64}
+// CHECK: _2 = string string {copy _1.0, copy _1.1, copy _1.1}
 // CHECK: fn _GPF4mainE2mv(_1: string) -> i64 [go, external]
 // The call of f passes the address of the caller's own `d`, not a copy.
 // CHECK: fn _GPF4mainE4main()

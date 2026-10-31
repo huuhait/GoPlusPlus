@@ -37,6 +37,10 @@ struct Printer {
 
   void place(const Place &P) { gir::print(OS, P); }
 
+  std::string funcName(FuncId Id) {
+    return Id < M.Funcs.size() ? M.Funcs[Id]->Name : "?";
+  }
+
   void constant(const Constant &C) {
     switch (C.K) {
     case Constant::Int:
@@ -183,6 +187,8 @@ struct Printer {
     OS << "    ";
     switch (S.K) {
     case Statement::Assign:
+      if (S.DropOld != NoId)
+        OS << "drop_old @" << funcName(S.DropOld) << " ";
       place(S.Dest);
       OS << " = ";
       rvalue(S.RV);
@@ -240,6 +246,10 @@ struct Printer {
     case Terminator::Drop:
       OS << "drop(";
       place(T.Dest);
+      if (T.Discr.K == Operand::Const && T.Discr.C.K == Constant::Func) {
+        OS << " with ";
+        operand(T.Discr);
+      }
       OS << ") -> [return: bb" << T.Target << ", unwind: ";
       unwind(T.Unwind);
       OS << ']';
@@ -305,8 +315,12 @@ struct Printer {
       const Local &L = F.Locals[I];
       ++printSteps();
       OS << "  let _" << I << ": " << L.Ty->str();
-      if (L.Owned)
-        OS << " [owned]";
+      if (L.Owned) {
+        OS << " [owned";
+        if (L.Glue != NoId)
+          OS << " @" << funcName(L.Glue);
+        OS << ']';
+      }
       if (!L.Name.empty())
         OS << "  ; " << L.Name;
       if (Opts.Scopes) {

@@ -319,6 +319,8 @@ private:
   /// The types whose method sets have been taken (their values become
   /// interface values, or a type test names them).
   llvm::DenseSet<const S::Type *> Described;
+  /// The types whose glue's methods userGlue has requested.
+  llvm::DenseSet<const S::Type *> GlueAsked;
   std::set<std::pair<unsigned, std::string>> Said;
   llvm::DenseMap<const ast::CallExpr *, ResultUse> ResultUses;
 
@@ -327,10 +329,21 @@ private:
   void scanFunc(GenericInst *Cur, const ast::FuncDecl *FD, const S::Func *Obj);
   void scanTree(GenericInst *Cur, const ast::Node *Root, const S::Func *Obj);
   void visitExpr(GenericInst *Cur, const ast::Expr *E);
+  /// A value of T (Generic as the code writes it) in a body shared across
+  /// unit arguments: the `drop` and `Clone() T` methods the program wrote
+  /// that its glue calls are those of the types the instance names (`Rec[U]`
+  /// is `Rec[]`), so each is requested as a call on a receiver of unknown
+  /// units would be, and its walk refuses what needs the unit (P04.09 review
+  /// R17). Each type is walked once (GlueAsked).
+  void userGlue(GenericInst *Cur, S::Type *Generic, S::Type *T, SourceLoc At);
   /// The method calls an operator expression or statement stands for
   /// (Info::Operators, P04.23) are no node of the tree: their selectors are
   /// met here, so a method of an instance of a generic type is requested.
   void visitOperator(GenericInst *Cur, const ast::Node *N);
+  /// A copy the language makes at N (Info::ImplicitClones) of a value whose
+  /// type is a type parameter's: at this instance it must be cloneable, by
+  /// the rule of the plain code (E0453, P04.09 R5).
+  void implicitClone(GenericInst *Cur, const ast::Node *N);
   void onInstance(GenericInst *Cur, const ast::Expr *E, const S::Instance &In);
   void onSelection(GenericInst *Cur, const ast::SelectorExpr *E);
   /// (FnSig: the signature, as written, of the function or function literal
@@ -355,9 +368,11 @@ private:
                            llvm::ArrayRef<S::Type *> TArgs, SourceLoc Site,
                            llvm::ArrayRef<S::Type *> Generic = {});
   /// GenericRecv: the receiver type as the code that names the method wrote
-  /// it (null: none, the lowering's request), for madeArg.
+  /// it (null: none, the lowering's request), for madeArg. AllShared: every
+  /// unit argument of the receiver counts as one Cur does not know (userGlue).
   GenericInst *requestMethod(GenericInst *Cur, const S::Func *M, SourceLoc Site,
-                             S::Type *GenericRecv = nullptr);
+                             S::Type *GenericRecv = nullptr,
+                             bool AllShared = false);
   GenericInst *make(GenericInst *Cur, const S::Func *Decl, const S::Func *M,
                     llvm::ArrayRef<S::Type *> TArgs, std::string Symbol,
                     SourceLoc Site, uint64_t Shared, SourceLoc Origin);
@@ -393,6 +408,12 @@ private:
   void unsupported(SourceLoc At, const std::string &What);
   bool isOurs(const S::Func *F) const;
 };
+
+/// The parts of a value of T that its drop and clone glue walk (gir.md
+/// section 7): a struct's fields, an array's or a slice's elements, a map's
+/// keys and values, an Option's value, a tuple's elements. A pointer, a view,
+/// an interface and a func value have none here (their glue is no program's).
+void forEachGluePart(S::Type *T, llvm::function_ref<void(S::Type *)> Fn);
 
 } // namespace impl
 } // namespace gir

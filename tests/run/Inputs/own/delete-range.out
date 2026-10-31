@@ -1,0 +1,9 @@
+after delete: kxxxx vxxxx 0
+moved: bxxxx true key: axxxx 0
+deleted, still current
+drop current
+after the loop
+drop other
+deleted the other one
+end 1
+drop other

@@ -268,8 +268,15 @@ TEST(GIRInline, LeavesWhatIsNotTrivial) {
     // An owned temporary (P04.05; a drop of P04.09), even with no call.
     FuncId F = declare(G.M, "withOwned", G.C.func({G.I64}, G.I64));
     FuncBuilder B(G.M, G.fn(F));
+    FuncId Glue = declare(
+        G.M, "glue", G.C.func({G.C.ptr(G.U8)}, G.Unit, false, CallConv::Go));
+    {
+      FuncBuilder GB(G.M, G.fn(Glue));
+      GB.ret();
+    }
     LocalId T = B.newTemp(G.C.string());
     G.fn(F).Locals[T].Owned = true;
+    G.fn(F).Locals[T].Glue = Glue;
     B.assign(B.local(T), B.use(constStr(G.M, "s")));
     B.assign(B.local(0), B.use(copyOf(B.local(1))));
     B.ret();

@@ -181,8 +181,9 @@ func main() {
 	fill(outer[99], 3)
 	check("absent entry len", len(outer[99]), 0)
 	check("absent entry did not insert", len(outer), 2)
-	// the callee wrote into a temporary map that is dropped with it
-	expect("absent entry argument", b, 3, 0, 0, 0, 0, 0)
+	// the callee wrote into a temporary map that is dropped with it (P04.09:
+	// its three allocations are freed after the call)
+	expect("absent entry argument", b, 3, 3, 0, 0, 0, 0)
 
 	// An insert of a new inner map by mm[k][j] = v is global (a map made by a
 	// write); the outer map's own tables grow in allocator 1.

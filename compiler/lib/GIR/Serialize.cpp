@@ -452,8 +452,8 @@ private:
     }
     for (const Local &L : F.Locals) {
       Rec R{F_Local,
-            {L.K, typeId(L.Ty), L.Mutable, L.Owned, L.Source, L.Deref, L.Scope,
-             L.ArgNo, L.Origin}};
+            {L.K, typeId(L.Ty), L.Mutable, L.Owned, L.Glue, L.Source, L.Deref,
+             L.Scope, L.ArgNo, L.Origin}};
       put(R.Vals, L.Loc);
       R.Vals.append(chars(L.Name));
       Out.push_back(std::move(R));
@@ -467,6 +467,7 @@ private:
         put(R.Vals, S.Loc);
         R.Vals.push_back(S.Scope);
         R.Vals.push_back(S.Prologue);
+        R.Vals.push_back(S.DropOld);
         switch (S.K) {
         case Statement::Assign:
           put(R.Vals, S.Dest);
@@ -512,6 +513,7 @@ private:
           put(R.Vals, O);
         break;
       case Terminator::Drop:
+        put(R.Vals, T.Discr);
         put(R.Vals, T.Dest);
         R.Vals.push_back(T.Target);
         put(R.Vals, T.Unwind);
@@ -1130,6 +1132,7 @@ private:
         L.Ty = type(R);
         L.Mutable = R.next();
         L.Owned = R.next();
+        L.Glue = static_cast<FuncId>(R.next());
         L.Source = R.next();
         L.Deref = R.next();
         L.Scope = R.next();
@@ -1171,6 +1174,7 @@ private:
         S.Loc = span(R);
         S.Scope = R.next();
         S.Prologue = R.next();
+        S.DropOld = static_cast<FuncId>(R.next());
         switch (S.K) {
         case Statement::Assign:
           S.Dest = place(R, *F);
@@ -1225,6 +1229,7 @@ private:
           break;
         }
         case Terminator::Drop:
+          T.Discr = operand(R, *F);
           T.Dest = place(R, *F);
           T.Target = R.next();
           T.Unwind = unwind(R);

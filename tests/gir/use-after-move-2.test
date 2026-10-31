@@ -1,0 +1,24 @@
+// RUN: not %gopp check --check-error-limit=0 %S/Inputs/use-after-move-2.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: not %gopp build -emit=gir %S/Inputs/use-after-move-2.gopp 2>&1 | FileCheck --implicit-check-not=error[E %s
+// RUN: %gopp check %S/Inputs/use-after-move-2-ok.gopp
+// RUN: %gopp build -emit=gir %S/Inputs/use-after-move-2-ok.gopp -o /dev/null
+// P04.09 (OWN-R3, OWN-R4): more shapes of E0451 (from the c1 coder's round),
+// by `gopp check` and by the build alike. Bad side: a plain move then a read;
+// a move on one branch then a read after the join; a move in a loop (the next
+// round reads it); `move(x)`; a struct that holds a slice; a plain assignment
+// of an owner. Good side (use-after-move-2-ok.gopp): the variable assigned
+// again, a move on both branches, a variable made again in each round of a
+// loop, a borrow, `p = append(p, ...)` and `b = rebuild(b)`, a move with a
+// reassignment on the branch, and a trivial value.
+// CHECK: use-after-move-2.gopp:18:13: error[E0451]: use of moved value xs (OWN-R3)
+// CHECK: use-after-move-2.gopp:17:7: note: moved here
+// CHECK: use-after-move-2.gopp:27:9: error[E0451]: use of moved value xs (OWN-R3)
+// CHECK: use-after-move-2.gopp:25:3: note: moved here
+// CHECK: use-after-move-2.gopp:35:8: error[E0451]: use of moved value xs (OWN-R3)
+// CHECK: use-after-move-2.gopp:35:8: note: moved here
+// CHECK: use-after-move-2.gopp:44:18: error[E0451]: use of moved value s (OWN-R3)
+// CHECK: use-after-move-2.gopp:43:7: note: moved here
+// CHECK: use-after-move-2.gopp:51:13: error[E0451]: use of moved value d (OWN-R3)
+// CHECK: use-after-move-2.gopp:50:7: note: moved here
+// CHECK: use-after-move-2.gopp:58:9: error[E0451]: use of moved value a (OWN-R3)
+// CHECK: use-after-move-2.gopp:57:2: note: moved here

@@ -35,7 +35,7 @@ func main() {
 	name := "gopp"
 	tags := []string{"a", "bc"}
 	nums := [3]int{10, 20, 30}
-	d := Doc{Name: name, Pages: 4, Tags: tags, Pos: Vec2{1.5, -2}, Next: nil, Maybe: 9}
+	d := Doc{Name: name.Clone(), Pages: 4, Tags: tags.Clone(), Pos: Vec2{1.5, -2}, Next: nil, Maybe: 9}
 	d.Grid[1][2] = 6
 	p := &d
 	m := map[string]int{"one": 1}

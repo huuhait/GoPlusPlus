@@ -242,14 +242,7 @@ uint32_t Lowering::testGlobalCalls() {
   return TestGlobalCalls;
 }
 
-Layout Lowering::layout(Type *T) {
-  auto It = Layouts.find(T);
-  if (It != Layouts.end())
-    return It->second;
-  Layout L = layoutOf(T);
-  Layouts[T] = L;
-  return L;
-}
+Layout Lowering::layout(Type *T) { return layoutOf(T, Layouts); }
 
 //===----------------------------------------------------------------------===//
 // The runtime functions
@@ -324,6 +317,23 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
     if (Opts.TestIntrinsics)
       E.bumpGlobal(2);
     E.libc("free", {E.param(0)});
+    E.finish();
+    return Slot;
+  }
+  case RtFn::IsZero: {
+    // Is the value of n bytes at p all zero bytes? Drop glue skips a `drop`
+    // method then (OWN-R5).
+    Function *F = makeFn(*this, "is_zero", Ctx.func({PU8, U64}, Bool), Slot);
+    X E(*this, *F);
+    E.At = At;
+    Var K = E.var(U64, E.u(0), "k");
+    E.While([&] { return K < E.param(1); },
+            [&] {
+              E.If(E.load(E.padd(E.param(0), K), U8) != 0,
+                   [&] { E.Return(E.boolean(false)); });
+              K = K + 1;
+            });
+    E.Return(E.boolean(true));
     E.finish();
     return Slot;
   }
@@ -504,6 +514,44 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
               K = K + 1;
             });
     E.retString(Buf, Total, Total);
+    E.finish();
+    return Slot;
+  }
+  case RtFn::StrAppend: {
+    // `s += x` (STM-8): the bytes of x go after those of s, in the buffer s
+    // owns when it has the room; else into a new one of at least twice the
+    // capacity (so n appends make O(log n) allocations), the old one freed
+    // after the copy (x may be a part of it). A literal, or a part of a
+    // string, owns no buffer (capacity 0): it is copied first.
+    if (!Need({"memmove"}) || !Dep({RtFn::MemResize, RtFn::MemFree}))
+      return NoId;
+    Function *F = makeFn(*this, "str_append",
+                         Ctx.func({Ctx.ptr(Str), PU8, U64}, Unit), Slot);
+    X E(*this, *F);
+    E.At = At;
+    Val Sp = E.param(0), P = E.param(1), N = E.param(2);
+    Place S = E.at(Sp, Str);
+    Val Ptr = E.snap(E.val(E.FB.field(S, 0)));
+    Val Len = E.snap(E.val(E.FB.field(S, 1)));
+    Val Cap = E.snap(E.val(E.FB.field(S, 2)));
+    E.If(N == 0, [&] { E.Return(); });
+    Val Need = E.snap(Len + N);
+    E.If(E.land(Cap != 0, [&] { return Need <= Cap; }), [&] {
+      E.libc("memmove", {E.padd(Ptr, Len), P, N});
+      E.FB.assign(E.FB.field(S, 1), E.FB.use(Need.Op));
+      E.Return();
+    });
+    Var NewCap = E.var(U64, Cap * 2, "cap");
+    E.If(NewCap < Need, [&] { NewCap = Need; });
+    E.If(NewCap < 8, [&] { NewCap = E.u(8); });
+    Val Buf =
+        E.snap(E.rt(RtFn::MemResize, {E.null(PU8), NewCap, E.boolean(false)}));
+    E.If(Len != 0, [&] { E.libc("memmove", {Buf, Ptr, Len}); });
+    E.libc("memmove", {E.padd(Buf, Len), P, N});
+    E.If(Cap != 0, [&] { E.rt(RtFn::MemFree, {Ptr}); });
+    E.FB.assign(E.FB.field(S, 0), E.FB.use(Buf.Op));
+    E.FB.assign(E.FB.field(S, 1), E.FB.use(Need.Op));
+    E.FB.assign(E.FB.field(S, 2), E.FB.use(E.snap(NewCap).Op));
     E.finish();
     return Slot;
   }
@@ -851,6 +899,8 @@ FuncId Lowering::rt(RtFn Which, SourceLoc At) {
     Val Buf = E.rt(RtFn::MemResizeIn,
                    {A, E.null(PU8), E.u(0), Bytes, E.boolean(true)});
     E.If(Len != 0, [&] { E.libc("memmove", {Buf, P, Len * Esz}); });
+    // (The old buffer ends in the caller, after the copy of a spread source
+    // that may be a part of it: append(s, s...).)
     E.retTuple(Ret, Buf, NewCap);
     E.finish();
     return Slot;

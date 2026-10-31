@@ -1,12 +1,14 @@
 // RUN: %gopp build -emit=gir %s | FileCheck %s
 // P04.18, review R9: the itab thunk of a method whose value receiver holds a
 // map (passOfRecv: Place). A value the interface holds is immutable all the
-// way down (TYP-5), so the thunk passes the address of its own copy: of the
-// boxed value (Doc, 16 bytes), or of the data word (Tab, a map, inline); a
-// nil map the method makes goes into the copy and is dropped with it. The
-// other side: a pointer the interface holds (`&e`) is passed as it is, so
-// the map is made in the pointed-to value (PAR-1). run/cc-params.test runs
-// it (Inputs/cc/recv.gopp).
+// way down (TYP-5), so the thunk passes the address of its own copy of the
+// boxed value (Doc, 16 bytes; Tab, a map: an owning value is never in the
+// data word since P04.09, TYP-8); a nil map the method makes goes into the
+// copy, and is freed after the call (the copy's maps that differ from the
+// box's, P04.09: gopp.newmaps_*). The other side: a pointer the interface
+// holds (`&e`) is passed as it is, so the map is made in the pointed-to
+// value (PAR-1). run/cc-params.test runs it (Inputs/cc/recv.gopp), and
+// run/own-shared.test under LeakSanitizer.
 package main
 
 type Doc struct {
@@ -41,15 +43,18 @@ func main() {
 // CHECK-NEXT: [[COPY]] = copy (*[[BOX]])
 // CHECK-NEXT: [[ADDR:_[0-9]+]] = &[[COPY]]
 // CHECK-NEXT: {{_[0-9]+}} = call const fn @_GPM3PutN4mainE3Doc(copy [[ADDR]])
+// CHECK: call const fn @{{.*}}newmaps_main$2e$Doc(
 // The pointer `&e`: passed as it is (no copy).
 // CHECK-LABEL: fn _GPTpM3PutN4mainE3Doc(_1: *u8) -> () [go, linkonce_odr] {
 // CHECK-NOT: copy (*
 // CHECK: [[P:_[0-9]+]] = ptr_to_ptr(copy _1) as *main.Doc
 // CHECK-NEXT: {{_[0-9]+}} = call const fn @_GPM3PutN4mainE3Doc(copy [[P]])
-// The map in the data word: the thunk's copy of the word.
+// The map in its box: the thunk's copy of the boxed map, then the map the
+// method made in it (Tab(nil)) is freed.
 // CHECK-LABEL: fn _GPTIM3AddN4mainE3Tab(_1: *u8) -> () [go, linkonce_odr] {
-// CHECK: let [[W:_[0-9]+]]: u64 ; w
-// CHECK: [[WORD:_[0-9]+]] = ptr_to_int(copy _1) as u64
-// CHECK-NEXT: [[W]] = copy [[WORD]]
-// CHECK-NEXT: {{_[0-9]+}} = &[[W]]
-// CHECK: call const fn @_GPM3AddN4mainE3Tab(
+// CHECK: let [[TCOPY:_[0-9]+]]: *gopp.map ; recv
+// CHECK: [[TBOX:_[0-9]+]] = ptr_to_ptr(copy _1) as **gopp.map
+// CHECK-NEXT: [[TCOPY]] = copy (*[[TBOX]])
+// CHECK-NEXT: [[TADDR:_[0-9]+]] = &[[TCOPY]]
+// CHECK-NEXT: {{_[0-9]+}} = call const fn @_GPM3AddN4mainE3Tab(copy [[TADDR]])
+// CHECK: call const fn @{{.*}}newmaps_{{.*}}gopp{{.*}}map(

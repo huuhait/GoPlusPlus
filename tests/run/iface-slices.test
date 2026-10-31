@@ -51,7 +51,7 @@ func main() {
 	s := make(IntSlice, 3, 10)
 	s[0], s[1], s[2] = 1, 2, 3
 	println(s.Sum(), s.First(), len(s))
-	var i Summer = s
+	var i Summer = s.Clone() // (the box owns its value: P04.09)
 	println(i.Sum(), i.First())
 	p := &s
 	p.Push(4)

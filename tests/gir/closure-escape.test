@@ -162,26 +162,32 @@ func main() {
 // CHECK: mem_resize
 // CHECK: return
 
+// (Since P04.09 a box has its count before the value, 8 bytes, and a cell
+// and a heap environment their count and drop function, 16 bytes: a func
+// value's box is 24 bytes, a cell of an int 24, an environment of one
+// pointer 24.)
 // CHECK-LABEL: fn _GPF4mainE8anyLocal(
 // CHECK-NOT: const true) ->
-// CHECK: mem_resize(const null: *u8, const 16: u64, const false)
+// CHECK: mem_resize(const null: *u8, const 24: u64, const false)
 // CHECK-NOT: const true) ->
 // CHECK: return
 
 // The cell of n, the environment, the box.
 // CHECK-LABEL: fn _GPF4mainE10anyEscapes(
-// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
-// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
-// CHECK: mem_resize(const null: *u8, const 16: u64, const false)
+// CHECK: mem_resize(const null: *u8, const 24: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 24: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 24: u64, const false)
 // CHECK: return
 
 // CHECK-LABEL: fn _GPF4mainE14anyMethodLocal(
 // CHECK-NOT: const true) ->
-// CHECK: mem_resize(const null: *u8, const 16: u64, const false)
+// CHECK: mem_resize(const null: *u8, const 24: u64, const false)
 // CHECK-NOT: const true) ->
 // CHECK: return
 
+// The cell of c, the environment (the pointer to c and the cell it holds),
+// the box.
 // CHECK-LABEL: fn _GPF4mainE16anyMethodEscapes(
-// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
-// CHECK: mem_resize(const null: *u8, const 8: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 24: u64, const true)
+// CHECK: mem_resize(const null: *u8, const 32: u64, const true)
 // CHECK: return

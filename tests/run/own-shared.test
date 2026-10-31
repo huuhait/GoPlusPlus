@@ -1,0 +1,15 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/shared.gopp %S/Inputs/own/shared.out
+// RUN: %if qemu-aarch64 %{ %gopp build -test-intrinsics -target=linux/arm64 -crt-dir=%aarch64_sysroot/lib %S/Inputs/own/shared.gopp -o %t.arm64 %}
+// RUN: %if qemu-aarch64 %{ %python %S/Inputs/run-golden.py --qemu %aarch64_sysroot %t.arm64 %S/Inputs/own/shared.out %}
+// GOLDEN: by-hand
+// P04.09: the shared handles (OWN-C3, TYP-5, CLO-2): interface boxes, func
+// values' environments and closure cells are counted, and every allocation
+// is freed by the last copy (counting allocator of the test intrinsics); a
+// value in a box and a variable a closure captured are dropped once, when
+// the last holder goes (the `drop` prints); a method value of a `move`
+// receiver owns it (the call takes it, an uncalled one drops it); an
+// interface argument the callee only looks at allocates nothing and one it
+// keeps is copied into a box once (TYP-7); the results of a call and the
+// variadic packs end with their statement. `ninja check-run-leaks` runs it
+// under the address and leak sanitizers. See Inputs/own/shared.gopp.

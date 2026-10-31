@@ -4341,6 +4341,52 @@ func F[T any]() int {
 
 func use() int { return F[int]() }
 )X")
+EXPLAIN(err_use_after_move,
+        "A value was moved out of a variable (`move(x)`, `b := a`, `f(a)` for a `move` parameter, `return a`, a struct literal's `T{F: a}`, an `append` of it, a send) and the variable is read afterwards on some path of the function. The move left the variable without a value (OWN-R5), so the read is an error, also when only one branch of an `if`, or the previous trip of a loop, did the move. Assigning the variable again (`a = ...`) gives it a value again. A part of a variable that was moved (`x.f`) makes the whole variable unreadable until it is written. Clone the value instead of moving it (`a.Clone()`), or do the move last. The note shows the move.",
+        R"X(package main
+
+func take(move s string) int { return len(s) }
+
+func main() {
+	s := "hello"
+	n := take(s)
+	println(n, s)
+}
+)X")
+EXPLAIN(err_own_implicit_clone,
+        "Some statements make a copy the program does not write: a map insert keeps a clone of its key (OWN-V4, `m[k] = v`, a map literal), the assignment form of range copies each key or element into its target (`for _, v = range xs`), each iteration of a three-clause for loop has its own copy of a variable that a function literal captures (CLO-8), and a swap of three or more places two of which may be one place at run time (`xs[i], xs[j], xs[k] = xs[j], xs[k], xs[i]` with i == k) stores one value in two places (spec 4.2). The copy is made as `Clone()` makes it (OWN-R6), so the type must be cloneable: this one has a drop method and no Clone, or holds such a value, and a byte copy would drop the resource twice. Write a Clone() T method, use the `:=` form of range (its variable borrows each element), keep the value out of the map key, the range target or the captured loop variable, or swap two places at a time (or places the compiler sees apart: fields, constant indexes, two variables).",
+        R"X(package main
+
+type F struct{ n int }
+
+func (f *F) drop() { println("drop", f.n) }
+
+func main() {
+	xs := []F{{1}, {2}}
+	var v F
+	for _, v = range xs {
+	}
+	println(v.n)
+}
+)X")
+EXPLAIN(err_inst_implicit_clone,
+        "A copy the language makes (a map insert's key, the assignment form of range, the per-iteration copy of a captured loop variable, a swap of three places that may be one place: E0452) of a value whose type is a type parameter's is decided at each instance, by the rule of `Clone()` (OWN-R6): this instance's type has a drop method and no Clone, or holds such a value. Constrain the type parameter by `Clone`, write a Clone() T method for the type, or do not instantiate the function with it.",
+        R"X(package main
+
+type K struct{ n int }
+
+func (k *K) drop() {}
+
+func Count[T comparable](xs []T) map[T]int {
+	m := map[T]int{}
+	for _, x := range xs {
+		m[x]++
+	}
+	return m
+}
+
+func main() { println(len(Count([]K{{1}}))) }
+)X")
 EXPLAIN(err_gir_no_main,
         "A program starts at `func main()` of package main, and `gopp build` found no such function in the package it was asked to build. Declare `func main()`, or build the package as a library (`-emit=obj`).",
         R"X(package main

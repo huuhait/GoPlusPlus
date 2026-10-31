@@ -1,0 +1,59 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %s %S/golden/own-swap.out
+// RUN: %gopp build -emit=gir %s -o - | FileCheck %s
+// P04.09 review R4: a swap (OWN-R3a) moves the values between its places,
+// which may be one place at run time: every value is read before any place
+// is emptied, so `xs[i], xs[j] = xs[j], xs[i]` with i == j keeps the value,
+// and so do `xs[0], xs[0] = xs[0], xs[0]`, swaps of struct fields and of map
+// entries (a key named twice, an absent key). With three places, two names
+// of one place make Go's left-to-right stores write one value twice and drop
+// another: each place gets a clone then. Owned strings, so a lost value or a
+// double free shows (`check-run-leaks`). The expected output is `go run` of
+// this text (Inputs/gen-goldens.py). The places of rot may be one place
+// (Checker::swapMayAlias), so it has the run-time test (run/own-swap-apart.test
+// is the other side).
+// CHECK-LABEL: fn _GPF4mainE3rot(
+// CHECK: ; alias
+package main
+
+func mk(s string) string { return s + "xxxx" }
+
+type P struct{ a, b string }
+
+func sw(xs []string, i, j int) { xs[i], xs[j] = xs[j], xs[i] }
+
+func rot(xs []string, i, j, k int) { xs[i], xs[j], xs[k] = xs[j], xs[k], xs[i] }
+
+func sw3(xs []string, i, j, k int) { xs[i], xs[j], xs[k] = xs[j], xs[i], xs[k] }
+
+func main() {
+	xs := []string{mk("a"), mk("b"), mk("c")}
+	sw(xs, 0, 1)
+	println(xs[0], xs[1], xs[2])
+	sw(xs, 1, 1)
+	println(xs[0], xs[1], xs[2])
+	xs[0], xs[0] = xs[0], xs[0]
+	println(xs[0])
+	p := P{mk("p"), mk("q")}
+	p.a, p.b = p.b, p.a
+	println(p.a, p.b)
+	ps := []P{{mk("r"), mk("s")}}
+	ps[0].a, ps[0].b = ps[0].b, ps[0].a
+	println(ps[0].a, ps[0].b)
+	m := map[int]string{1: mk("m"), 2: mk("n")}
+	m[1], m[2] = m[2], m[1]
+	println(m[1], m[2])
+	k := 1
+	m[k], m[1] = m[1], m[k]
+	println(m[1], m[2])
+	m[3], m[1] = m[1], m[3]
+	println(m[1] == "", m[3], len(m))
+	rot(xs, 0, 1, 2)
+	println(xs[0], xs[1], xs[2])
+	rot(xs, 0, 1, 0)
+	println(xs[0], xs[1], xs[2])
+	sw3(xs, 0, 1, 0)
+	println(xs[0], xs[1], xs[2])
+	sw3(xs, 2, 2, 2)
+	println(xs[0], xs[1], xs[2])
+}

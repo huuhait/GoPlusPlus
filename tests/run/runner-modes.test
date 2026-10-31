@@ -1,19 +1,20 @@
 // REQUIRES: host-linux-amd64 || host-linux-arm64
-// RUN: env -u GOPP_TEST_REAL GOPP_RUNLIB_TRACE=1 %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/runner/ok.out 0 2>&1 | FileCheck --check-prefix=FAST %s
+// RUN: env -u GOPP_TEST_REAL -u GOPP_LEAKCHECK GOPP_RUNLIB_TRACE=1 %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/runner/ok.out 0 2>&1 | FileCheck --check-prefix=FAST %s
 // RUN: env GOPP_RUNLIB_TRACE=1 %python %S/Inputs/run-golden.py --real --src %S/Inputs/runner/ok.gopp %S/Inputs/runner/ok.out 0 2>&1 | FileCheck --check-prefix=REAL %s
 // RUN: env GOPP_TEST_REAL=1 GOPP_RUNLIB_TRACE=1 %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/runner/ok.out 0 2>&1 | FileCheck --check-prefix=REAL %s
-// RUN: not env -u GOPP_TEST_REAL %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/hello.out 0 2>&1 | FileCheck --check-prefix=DIFF %s
+// RUN: not env -u GOPP_TEST_REAL -u GOPP_LEAKCHECK %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/hello.out 0 2>&1 | FileCheck --check-prefix=DIFF %s
 // RUN: not %python %S/Inputs/run-golden.py --real --src %S/Inputs/runner/ok.gopp %S/Inputs/hello.out 0 2>&1 | FileCheck --check-prefix=DIFF %s
-// RUN: not env -u GOPP_TEST_REAL %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/runner/ok.out 3 2>&1 | FileCheck --check-prefix=CODE %s
-// RUN: not env -u GOPP_TEST_REAL %python %S/Inputs/run-expect.py --src %S/Inputs/runner/bad.gopp 0 2>&1 | FileCheck --check-prefix=BAD %s
-// RUN: env -u GOPP_TEST_REAL %python %S/Inputs/run-expect.py --src %S/Inputs/runner/exit7.gopp 7 %S/Inputs/runner/exit7.out
+// RUN: not env -u GOPP_TEST_REAL -u GOPP_LEAKCHECK %python %S/Inputs/run-golden.py --src %S/Inputs/runner/ok.gopp %S/Inputs/runner/ok.out 3 2>&1 | FileCheck --check-prefix=CODE %s
+// RUN: not env -u GOPP_TEST_REAL -u GOPP_LEAKCHECK %python %S/Inputs/run-expect.py --src %S/Inputs/runner/bad.gopp 0 2>&1 | FileCheck --check-prefix=BAD %s
+// RUN: env -u GOPP_TEST_REAL -u GOPP_LEAKCHECK %python %S/Inputs/run-expect.py --src %S/Inputs/runner/exit7.gopp 7 %S/Inputs/runner/exit7.out
 // RUN: %python %S/Inputs/run-expect.py --real --src %S/Inputs/runner/exit7.gopp 7 %S/Inputs/runner/exit7.out
 // P04.19 (D4.14): the run scripts run a program through the fast runner by
 // default; `--real` (one test) or GOPP_TEST_REAL=1 (all tests, lit
 // -Dreal_binaries=1) builds and runs a real binary instead, with the same
 // goldens and the same checks. Both sides fail on a wrong golden, a wrong
 // exit status and a program that does not compile. The fast lines say
-// `env -u GOPP_TEST_REAL`, so they stay fast under `ninja check-run-real`.
+// `env -u GOPP_TEST_REAL -u GOPP_LEAKCHECK`, so they stay fast under `ninja
+// check-run-real` and `ninja check-run-leaks`.
 
 // FAST: runlib: fast
 // REAL: runlib: real binary

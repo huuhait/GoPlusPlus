@@ -1468,8 +1468,28 @@ llvm::Error Lowering::terminator(const G::Terminator &T) {
     B.CreateBr(PS.BB);
     return llvm::Error::success();
   }
-  case G::Terminator::Drop:
-    return fail("a drop (P04.09)");
+  case G::Terminator::Drop: {
+    // The drop glue `fn(*T)` called on the address of the place: a call of
+    // Go++ by Go++ (P04.09; a module built by hand may name no glue).
+    if (T.Discr.K != G::Operand::Const || T.Discr.C.K != G::Constant::Func)
+      return fail("a drop without drop glue");
+    if (llvm::Error E = Unwindless(T.Unwind))
+      return E;
+    const G::Type *Sig = T.Discr.type();
+    llvm::Value *Callee = operand(T.Discr);
+    const goabi::FnInfo &FI = Abi->classify(Sig);
+    cabi::Value V;
+    V.Ty = Sig->elems()[0];
+    V.V = placeAddr(T.Dest);
+    cabi::Value NoDest;
+    NoDest.Ty = Sig->ret();
+    cabi::Env Env = makeEnv(AllocaScratch);
+    std::vector<llvm::Value *> Args =
+        Abi->lowerArgs(Env, FI, {V}, NoDest, nullptr);
+    emitCall(FI.Type, Callee, Args, FI.CC, FI.Attrs, T.Unwind);
+    B.CreateBr(Blocks[T.Target]);
+    return llvm::Error::success();
+  }
   case G::Terminator::Resume:
     return fail("a resume (P04.26)");
   }

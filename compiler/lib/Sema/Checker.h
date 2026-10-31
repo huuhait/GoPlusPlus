@@ -1414,6 +1414,20 @@ public:
   /// for the target of a clone through the type table (ADR-0023 decision 16).
   bool satisfiesClone(Type *T, std::string *Why, bool ByValue = true);
   bool cloneWalk(Type *T, std::string *Why); // satisfiesClone's walk
+  /// A copy the language makes for the program (no `x.Clone()` written): a
+  /// map insert keeps a clone of its key (OWN-V4), the assignment form of
+  /// range copies each element, a loop variable that a function literal
+  /// captures is copied into the next iteration (CLO-8). The value of type T
+  /// must be cloneable, by the rule of the explicit forms (OWN-R6,
+  /// satisfiesClone); else E0452 at At (P04.09 R5). What is the copy's
+  /// maker, Copied what it copies.
+  void implicitClone(const ast::Node *At, Type *T, StringRef What,
+                     StringRef Copied);
+  /// May two of the places of a swap be one place at run time? Two are
+  /// apart when they are parts of one variable that part at a field or a
+  /// constant index or key, or parts of two variables' own storage (fields
+  /// and array elements, no pointer, slice or map in the way).
+  bool swapMayAlias(ArrayRef<ast::Expr *> Lhs);
   bool hasPtrKind(Type *T, PtrKind *K, Type **Elem);
   bool isPlaceExpr(const ast::Expr *E);
   /// What an expression is for the rules of OWN-R3a.
@@ -2037,6 +2051,10 @@ public:
   /// Checking the init statement of a three-clause for: its temporaries are
   /// not kept (STM-4, OWN-V6).
   bool InForInit = false;
+  /// The variables of the three-clause for loops being checked, and whether
+  /// a function literal captured each (CLO-8: its copy for the next
+  /// iteration, implicitClone).
+  llvm::DenseMap<const Var *, bool> ForVarsCaptured;
   void headerInit(const ast::Stmt *Init);
   /// The selector being evaluated as the callee of a call.
   const ast::Expr *CalleeSel = nullptr;

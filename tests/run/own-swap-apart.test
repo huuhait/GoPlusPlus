@@ -1,0 +1,13 @@
+// REQUIRES: host-linux-amd64 || host-linux-arm64
+// RUN: %python %S/Inputs/run-golden.py --src %S/Inputs/own/swap-apart.gopp %S/Inputs/own/swap-apart.out
+// RUN: %gopp build -emit=gir %S/Inputs/own/swap-apart.gopp -o - | FileCheck %s
+// GOLDEN: by-hand
+// P04.09 review R18: a swap of three places the checker proves apart
+// (Checker::swapMayAlias: fields of one struct, through one pointer too,
+// locals, constant indexes and keys, arrays in different fields) of a type
+// with a drop and no Clone is accepted, and moves each value once: no
+// run-time test of two names of one place (Body::swapValues), no clone,
+// each value dropped once (owned strings, `check-run-leaks`).
+// run/own-swap.test is the other side: places that may be one place, a
+// cloneable type, the run-time test and its clones.
+// CHECK-NOT: ; alias

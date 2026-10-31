@@ -1,0 +1,37 @@
+package main
+
+// P04.09 review R10 (OWN-R2, D1.6): a temporary of an `if` or `switch`
+// header lives to the end of the whole statement, body included; one of a
+// three-clause `for` init dies with the init; one of a statement with the
+// statement. The drops print.
+
+type R struct{ n string }
+
+func (r *R) drop() { println("drop", r.n) }
+
+func mk(n string) R { return R{n.Clone()} }
+
+func (r R) Len() int { return len(r.n) }
+
+func main() {
+	if n := mk("ifhdr").Len(); n > 0 {
+		println("in if body")
+	}
+	println("after if")
+	switch n := mk("swinit").Len(); n {
+	case 6:
+		println("in init case")
+	}
+	println("after switch init")
+	switch mk("sw").Len() {
+	case 2:
+		println("in case")
+	}
+	println("after switch")
+	for i := mk("for").Len(); i < 4; i++ {
+		println("loop", i)
+	}
+	println("after for")
+	println(mk("stmt").Len(), "same stmt")
+	println("next stmt")
+}

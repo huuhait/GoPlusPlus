@@ -1,0 +1,26 @@
+scope x y
+drop part y
+drop part x
+sink p
+drop part p
+after sink
+drop part old
+reassigned new
+drop part new
+sink b
+drop part b
+end of branches true
+end of branches false
+drop part b
+whole 7
+3
+a0
+end of main
+drop part a0
+drop part a1
+drop part e0
+drop part e1
+drop part e2
+drop whole 7
+drop part second
+drop part first

@@ -23,18 +23,19 @@
 // CHECK: ok = true
 // CHECK: arr = ([0] = 7, [1] = 8, [2] = 9)
 // CHECK: (main.Vec2 *) p = {{0x[0-9a-f]+}}
-// CHECK: ([]int64) xs = {
-// CHECK: len = 3
-// CHECK: (Option[int64]) o = (value = 3, set = true)
-// CHECK: (main.Tree) t = {
-// CHECK: len = 2
-// CHECK: (main.Node) h = {
-// CHECK: val = 1
-// CHECK: (string) s = (ptr = "text", len = 4, cap = 0)
-// CHECK: (gopp.map *) m = {{0x[0-9a-f]+}}
-// CHECK: (main.Node) tail = {
-// CHECK: val = 2
-// CHECK: next = NULL
+// (The locals come in the order of their numbers, which owned locals changed: P04.09.)
+// CHECK-DAG: ([]int64) xs = {
+// CHECK-DAG: len = 3
+// CHECK-DAG: (Option[int64]) o = (value = 3, set = true)
+// CHECK-DAG: (main.Tree) t = {
+// CHECK-DAG: len = 2
+// CHECK-DAG: (main.Node) h = {
+// CHECK-DAG: val = 1
+// CHECK-DAG: (string) s = (ptr = "text", len = 4, cap = 0)
+// CHECK-DAG: (gopp.map *) m = {{0x[0-9a-f]+}}
+// CHECK-DAG: (main.Node) tail = {
+// CHECK-DAG: val = 2
+// CHECK-DAG: next = NULL
 // CHECK: (main.Vec2) d.pos = (x = 1, y = 2)
 // CHECK: (long) arr[1] = 8
 // CHECK: (main.Vec2) *p = (x = 11, y = 21)

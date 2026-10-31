@@ -518,6 +518,17 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
   InForInit = true;
   simpleStmt(S0->Init);
   InForInit = SavedForInit;
+  // CLO-8: the variables the init declares, for their captures below.
+  SmallVector<Var *, 2> LoopVars;
+  if (auto *AS = dyn_cast_or_null<AssignStmt>(S0->Init);
+      own() && AS && AS->Op == tok::define)
+    for (const ast::Expr *L : AS->Lhs)
+      if (auto *Id = dyn_cast<ast::Ident>(L))
+        if (auto D = I.Defs.find(Id); D != I.Defs.end())
+          if (auto *V = dyn_cast_or_null<Var>(D->second)) {
+            LoopVars.push_back(V);
+            ForVarsCaptured.try_emplace(V, false);
+          }
   // The loop head: the meet of what is known before the loop and at the back
   // edges, decided once the body is checked (Flow.cpp, flowLoopHead).
   int Region = flowLoopHead(S0, S0->Body->getBegin());
@@ -562,6 +573,18 @@ void Checker::forStmt(unsigned Ctx, const ForStmt *S0) {
     Exit = flowJoin(Exit, Done.Break);
   Cur = std::move(Exit);
   flowLoopClean(Region, Cur);
+  // CLO-8: each iteration has its own copy of a variable a function literal
+  // captures, made from the last one's (an owner question for a type with no
+  // Clone: TODO P04.29 (l)).
+  for (Var *V : LoopVars) {
+    auto It = ForVarsCaptured.find(V);
+    if (It != ForVarsCaptured.end() && It->second)
+      implicitClone(S0->Init, V->Ty,
+                    "this loop (CLO-8: each iteration has its own copy of a "
+                    "variable a function literal captures)",
+                    std::string(V->Name));
+    ForVarsCaptured.erase(V);
+  }
   closeScope();
 }
 
@@ -1485,6 +1508,11 @@ void Checker::rangeStmt(unsigned Ctx, const RangeStmt *S0) {
         NoOwnCheck = true;
         Type *Dst = assignVar(Lhs[K], nullptr, &Y, "assignment");
         NoOwnCheck = Saved;
+        // Each turn is the assignment `k, v = key, value`: the target gets
+        // a copy (a view target shows the element instead).
+        if (Y.M != Mode::Invalid && Dst && !isa<RefType>(Dst))
+          implicitClone(Lhs[K], T, "the assignment form of range",
+                        K == 0 ? "each key" : "each element");
         // OWN-V6: the `=` form stores into variables declared before the
         // statement, so a view into its temporary outlives it.
         if (FromTemp && Y.M != Mode::Invalid && Dst && isa<RefType>(Dst) &&

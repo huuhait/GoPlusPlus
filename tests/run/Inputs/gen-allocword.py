@@ -112,15 +112,23 @@ func frees(which int) int  { return gopp_test_count(which, 2) }
 	}
 	""" % t
         total = 703 if n in OWNING else 1003
+        # Each growth freed the buffer it left (P04.09): grows counts the make,
+        # so grows-1 growths, then the clone and the slice are two more frees.
+        # (Zero-size elements too: each buffer is a block of one byte.)
+        wantfree = "grows+1"
+        freecomment = "Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1."
+        # An owning element is moved by `append` (OWN-R3): each append gets a
+        # value of its own, not the variable z again (P04.09).
+        zv = z if n in OWNING else "z"
+        zdecl = "" if n in OWNING else f"var z {t} = {z}\n\t"
         out.append(f"""func case_{n}() {{
-	var z {t} = {z}
-	{mkbig}	g0, a0, f0 := allocs(0), allocs(1), frees(1)
+	{zdecl}	{mkbig}	g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_{n}(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {{
-		s = append(s, z)
+		s = append(s, {zv})
 		if cap(s) != last {{
 			last = cap(s)
 			grows++
@@ -129,7 +137,7 @@ func frees(which int) int  { return gopp_test_count(which, 2) }
 	before := cap(s)
 	{spread}// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, {zv}, {zv}, {zv})
 	if cap(s) != before {{
 		grows++
 	}}
@@ -148,10 +156,10 @@ func frees(which int) int  { return gopp_test_count(which, 2) }
 		println("FAIL {n}: clone", len(c), gopp_test_word_{n}(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// {freecomment}
 	gopp_test_free_slice_{n}(c)
 	gopp_test_free_slice_{n}(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {{
+	if frees(1)-f0 != {wantfree} || frees(0) != gf0 {{
 		println("FAIL {n}: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}}

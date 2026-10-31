@@ -82,7 +82,7 @@ func frees(which int) int  { return gopp_test_count(which, 2) }
 
 func case_ptr() {
 	var z *int = &dummy
-	big := make([]*int, 0, 300)
+		big := make([]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -125,10 +125,10 @@ func case_ptr() {
 		println("FAIL ptr: clone", len(c), gopp_test_word_ptr(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr(c)
 	gopp_test_free_slice_ptr(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -137,7 +137,7 @@ func case_ptr() {
 
 func case_ptr2() {
 	var z [2]*int = [2]*int{&dummy, &dummy}
-	big := make([][2]*int, 0, 300)
+		big := make([][2]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -180,10 +180,10 @@ func case_ptr2() {
 		println("FAIL ptr2: clone", len(c), gopp_test_word_ptr2(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr2(c)
 	gopp_test_free_slice_ptr2(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr2: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -192,7 +192,7 @@ func case_ptr2() {
 
 func case_ptr3() {
 	var z [3]*int = [3]*int{&dummy, &dummy, &dummy}
-	big := make([][3]*int, 0, 300)
+		big := make([][3]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -235,10 +235,10 @@ func case_ptr3() {
 		println("FAIL ptr3: clone", len(c), gopp_test_word_ptr3(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr3(c)
 	gopp_test_free_slice_ptr3(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr3: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -247,7 +247,7 @@ func case_ptr3() {
 
 func case_ptr5() {
 	var z [5]*int = [5]*int{&dummy, &dummy, &dummy, &dummy, &dummy}
-	big := make([][5]*int, 0, 300)
+		big := make([][5]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -290,10 +290,10 @@ func case_ptr5() {
 		println("FAIL ptr5: clone", len(c), gopp_test_word_ptr5(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr5(c)
 	gopp_test_free_slice_ptr5(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr5: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -302,7 +302,7 @@ func case_ptr5() {
 
 func case_ptr10() {
 	var z [10]*int = [10]*int{&dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy}
-	big := make([][10]*int, 0, 300)
+		big := make([][10]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -345,10 +345,10 @@ func case_ptr10() {
 		println("FAIL ptr10: clone", len(c), gopp_test_word_ptr10(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr10(c)
 	gopp_test_free_slice_ptr10(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr10: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -357,7 +357,7 @@ func case_ptr10() {
 
 func case_ptr64() {
 	var z [64]*int = [64]*int{&dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy}
-	big := make([][64]*int, 0, 300)
+		big := make([][64]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -400,10 +400,10 @@ func case_ptr64() {
 		println("FAIL ptr64: clone", len(c), gopp_test_word_ptr64(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr64(c)
 	gopp_test_free_slice_ptr64(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr64: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -412,7 +412,7 @@ func case_ptr64() {
 
 func case_ptr65() {
 	var z [65]*int = [65]*int{&dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy}
-	big := make([][65]*int, 0, 300)
+		big := make([][65]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -455,10 +455,10 @@ func case_ptr65() {
 		println("FAIL ptr65: clone", len(c), gopp_test_word_ptr65(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr65(c)
 	gopp_test_free_slice_ptr65(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr65: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -467,7 +467,7 @@ func case_ptr65() {
 
 func case_ptr200() {
 	var z [200]*int = [200]*int{&dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy, &dummy}
-	big := make([][200]*int, 0, 300)
+		big := make([][200]*int, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -510,10 +510,10 @@ func case_ptr200() {
 		println("FAIL ptr200: clone", len(c), gopp_test_word_ptr200(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_ptr200(c)
 	gopp_test_free_slice_ptr200(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL ptr200: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -522,7 +522,7 @@ func case_ptr200() {
 
 func case_sp() {
 	var z struct{ p *int; a int } = struct{ p *int; a int }{&dummy, 1}
-	big := make([]struct{ p *int; a int }, 0, 300)
+		big := make([]struct{ p *int; a int }, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -565,10 +565,10 @@ func case_sp() {
 		println("FAIL sp: clone", len(c), gopp_test_word_sp(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_sp(c)
 	gopp_test_free_slice_sp(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL sp: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -577,7 +577,7 @@ func case_sp() {
 
 func case_sbig() {
 	var z struct{ p *int; b [100]byte } = struct{ p *int; b [100]byte }{p: &dummy}
-	big := make([]struct{ p *int; b [100]byte }, 0, 300)
+		big := make([]struct{ p *int; b [100]byte }, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -620,10 +620,10 @@ func case_sbig() {
 		println("FAIL sbig: clone", len(c), gopp_test_word_sbig(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_sbig(c)
 	gopp_test_free_slice_sbig(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL sbig: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -632,7 +632,7 @@ func case_sbig() {
 
 func case_sbig2() {
 	var z struct{ b [600]byte; p *int } = struct{ b [600]byte; p *int }{p: &dummy}
-	big := make([]struct{ b [600]byte; p *int }, 0, 300)
+		big := make([]struct{ b [600]byte; p *int }, 0, 300)
 	for k := 0; k < 300; k++ {
 		big = append(big, z)
 	}
@@ -675,10 +675,10 @@ func case_sbig2() {
 		println("FAIL sbig2: clone", len(c), gopp_test_word_sbig2(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_sbig2(c)
 	gopp_test_free_slice_sbig2(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL sbig2: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -686,14 +686,13 @@ func case_sbig2() {
 }
 
 func case_string() {
-	var z string = "x"
-		g0, a0, f0 := allocs(0), allocs(1), frees(1)
+			g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_string(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {
-		s = append(s, z)
+		s = append(s, "x")
 		if cap(s) != last {
 			last = cap(s)
 			grows++
@@ -702,7 +701,7 @@ func case_string() {
 	before := cap(s)
 	// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, "x", "x", "x")
 	if cap(s) != before {
 		grows++
 	}
@@ -721,10 +720,10 @@ func case_string() {
 		println("FAIL string: clone", len(c), gopp_test_word_string(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_string(c)
 	gopp_test_free_slice_string(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL string: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -732,14 +731,13 @@ func case_string() {
 }
 
 func case_slice() {
-	var z []int = nil
-		g0, a0, f0 := allocs(0), allocs(1), frees(1)
+			g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_slice(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {
-		s = append(s, z)
+		s = append(s, nil)
 		if cap(s) != last {
 			last = cap(s)
 			grows++
@@ -748,7 +746,7 @@ func case_slice() {
 	before := cap(s)
 	// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, nil, nil, nil)
 	if cap(s) != before {
 		grows++
 	}
@@ -767,10 +765,10 @@ func case_slice() {
 		println("FAIL slice: clone", len(c), gopp_test_word_slice(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_slice(c)
 	gopp_test_free_slice_slice(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL slice: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -778,14 +776,13 @@ func case_slice() {
 }
 
 func case_slices2() {
-	var z [2][]byte = [2][]byte{}
-		g0, a0, f0 := allocs(0), allocs(1), frees(1)
+			g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_slices2(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {
-		s = append(s, z)
+		s = append(s, [2][]byte{})
 		if cap(s) != last {
 			last = cap(s)
 			grows++
@@ -794,7 +791,7 @@ func case_slices2() {
 	before := cap(s)
 	// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, [2][]byte{}, [2][]byte{}, [2][]byte{})
 	if cap(s) != before {
 		grows++
 	}
@@ -813,10 +810,10 @@ func case_slices2() {
 		println("FAIL slices2: clone", len(c), gopp_test_word_slices2(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_slices2(c)
 	gopp_test_free_slice_slices2(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL slices2: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -824,14 +821,13 @@ func case_slices2() {
 }
 
 func case_map() {
-	var z map[string]int = nil
-		g0, a0, f0 := allocs(0), allocs(1), frees(1)
+			g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_map(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {
-		s = append(s, z)
+		s = append(s, nil)
 		if cap(s) != last {
 			last = cap(s)
 			grows++
@@ -840,7 +836,7 @@ func case_map() {
 	before := cap(s)
 	// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, nil, nil, nil)
 	if cap(s) != before {
 		grows++
 	}
@@ -859,10 +855,10 @@ func case_map() {
 		println("FAIL map: clone", len(c), gopp_test_word_map(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_map(c)
 	gopp_test_free_slice_map(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL map: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -870,14 +866,13 @@ func case_map() {
 }
 
 func case_sstr() {
-	var z struct{ s string; n int } = struct{ s string; n int }{"y", 1}
-		g0, a0, f0 := allocs(0), allocs(1), frees(1)
+			g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_sstr(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {
-		s = append(s, z)
+		s = append(s, struct{ s string; n int }{"y", 1})
 		if cap(s) != last {
 			last = cap(s)
 			grows++
@@ -886,7 +881,7 @@ func case_sstr() {
 	before := cap(s)
 	// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, struct{ s string; n int }{"y", 1}, struct{ s string; n int }{"y", 1}, struct{ s string; n int }{"y", 1})
 	if cap(s) != before {
 		grows++
 	}
@@ -905,10 +900,10 @@ func case_sstr() {
 		println("FAIL sstr: clone", len(c), gopp_test_word_sstr(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_sstr(c)
 	gopp_test_free_slice_sstr(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL sstr: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}
@@ -916,14 +911,13 @@ func case_sstr() {
 }
 
 func case_sslice() {
-	var z struct{ n int8; xs []int16 } = struct{ n int8; xs []int16 }{}
-		g0, a0, f0 := allocs(0), allocs(1), frees(1)
+			g0, a0, f0 := allocs(0), allocs(1), frees(1)
 	gf0 := frees(0)
 	s := gopp_test_make_slice_sslice(1, 0, 0)
 	grows := 1
 	last := cap(s)
 	for k := 0; k < 700; k++ {
-		s = append(s, z)
+		s = append(s, struct{ n int8; xs []int16 }{})
 		if cap(s) != last {
 			last = cap(s)
 			grows++
@@ -932,7 +926,7 @@ func case_sslice() {
 	before := cap(s)
 	// Several values in one append.
 	before = cap(s)
-	s = append(s, z, z, z)
+	s = append(s, struct{ n int8; xs []int16 }{}, struct{ n int8; xs []int16 }{}, struct{ n int8; xs []int16 }{})
 	if cap(s) != before {
 		grows++
 	}
@@ -951,10 +945,10 @@ func case_sslice() {
 		println("FAIL sslice: clone", len(c), gopp_test_word_sslice(c), allocs(1)-a0, allocs(0)-g0)
 		return
 	}
-	// Freeing the slices is a free of allocator 1 and no free of the global one.
+	// Each growth freed the buffer it left (grows counts the make); freeing the clone and the slice is two more frees of allocator 1.
 	gopp_test_free_slice_sslice(c)
 	gopp_test_free_slice_sslice(s)
-	if frees(1)-f0 != 2 || frees(0) != gf0 {
+	if frees(1)-f0 != grows+1 || frees(0) != gf0 {
 		println("FAIL sslice: free calls", frees(1)-f0, frees(0)-gf0)
 		return
 	}

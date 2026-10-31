@@ -260,7 +260,7 @@ struct Fixture {
     TheAllocator = &A;
   }
   ~Fixture() {
-    // The old buffers append leaves behind until P04.09 drops them.
+    // Whatever a failed run left allocated.
     for (auto &[P, Size] : Live)
       std::free(P);
     Live.clear();
@@ -298,7 +298,10 @@ func main() {
   // cap 1 -> 2 -> 4 -> 8 -> 16 -> 32 -> 64 -> 128: seven growths. (gc's size
   // classes round the capacities the same way for 8-byte elements.)
   EXPECT_EQ(F.A.Allocs, 1u + 7u + 1u + 1u + 1u + 3u);
-  EXPECT_EQ(F.A.Frees, 4u);
+  // The four explicit frees, and the old buffer of each of the seven growths
+  // (OWN-R4: append took the slice, P04.09) and of the three growths of the
+  // zero-size slice (each buffer is a block of one byte).
+  EXPECT_EQ(F.A.Frees, 4u + 7u + 3u);
   EXPECT_EQ(F.A.Resizes, 0u); // append allocates and copies; it never resizes
   EXPECT_EQ(F.A.Bad, 0u) << "a size of 0, or a free of the wrong size";
 }
