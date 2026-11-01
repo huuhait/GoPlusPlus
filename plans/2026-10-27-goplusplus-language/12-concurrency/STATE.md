@@ -25,7 +25,7 @@ Task definitions: [../TODO.md](../TODO.md) (section P12) · Design: [README.md](
 
 - [x] Q1 Default stack size; guard pages vs prologue checks (decided: hybrid, 1 MiB, ADR-0013)
 - [x] Q2 io_uring for file I/O: decided, not in v1 (thread handoff like Go); maybe after v1 as a Linux-only speedup
-- [x] Q4 Race-free concurrency details (decided 2026-10-28, ADR-0022; leftovers: a `Send` func type spelling in P04.21, guard surface in P12.13, `.go` mode in P04 Q3, deferred by owner 2026-10-28)
+- [x] Q4 Race-free concurrency details (decided 2026-10-28, ADR-0022; leftovers: the `Send[F]` func type (decided 2026-10-31, built in P04.21), guard surface in P12.13, `.go` mode in P04 Q3, deferred by owner 2026-10-28)
 - [x] Q3 Async preemption: decided, no; smart compiler-placed checks only (D12.3: none in short known loops, every 1024 iterations in tight loops)
 
 ## Exit criteria

@@ -61,14 +61,31 @@ A value that is allowed by this list must also pass the race rules of [CON-13](#
 - Plain values with no pointers (numbers, `bool`, arrays and structs of them) are both.
 - An owning type (`string`, `[]T`, `map[K]V`, `Unique[*T]`, a type with `drop`) is `Send` if its parts are.
 - A struct or array has a label only if **all** its fields or elements have it.
-- A raw pointer, a borrow and a view are not `Send` across a `go`, unless the target is `Sync` and the use is inside a `sync.Scope` ([CON-16](#121-rules)).
+- A raw pointer, a borrow and a view are not `Send` across a `go`, unless the target is `Sync` and the use is inside a `sync.Scope` ([CON-16](#121-rules)). A raw pointer is never `Send`, also on conversion to `error` (`error` is declared `Send`; a raw pointer is a borrow as [CON-2](#121-rules) and [OWN-B5](04-ownership.md#45-borrow-checking-adr-0021) define it, and the `sync.Scope` exception just above does not apply to `error`): `return 0, &errBad` with a pointer-receiver `Error` method as a `Send` `error` is a compile error; an error type is converted by value, with value-receiver methods only.
 - `Mutex[T]` and `RWMutex[T]` are `Sync` only when `T` is `Send`. `Atomic[T]` is always `Sync` (for its allowed `T`). Channels, `WaitGroup`, `Once` and `context` are `Sync`. `Pool[T]` is `Sync` when `T` is `Send`; `sync.Map[K, V]` is `Sync` when `K` and `V` are `Send` (names illustrative, P12.13).
 - `Shared[*T]` is `Send` and `Sync` only when `T` is `Sync`. A non-`Sync` `T` cannot cross goroutines through `Shared` ([CON-19](#121-rules)). Plain data with no interior writes is `Sync`, so read-only sharing of ordinary structs works.
 - **Interfaces.** An interface type is `Send` / `Sync` only if it embeds the `Send` / `Sync` constraint, like Rust's `dyn Trait + Send`. The predeclared `error` is declared with `Send` and `Sync`: converting a value to `error` requires its dynamic type to be `Send` and `Sync` (most error types are plain data). `any` has no labels; `interface{ Send }` is a sendable `any`. A conversion into a labeled interface is checked at the conversion.
-- **Func values.** The labels of a func value come from its captures, and are checked where the value is created: a function literal, a method value, or a top-level function (no captures: always both). A func-typed variable or parameter whose origin is unknown is not `Send`. `go f()` with a top-level `f` is fine.
+- **Func values.** The labels of a func value come from its captures, and are checked where the value is created: a function literal, a method value, or a top-level function (no captures: always both). A func-typed variable or parameter whose origin is unknown is not `Send`. `go f()` with a top-level `f` is fine. To say that a func is `Send`, write the type `Send[F]` ([below](#121-rules), ADR-0022 amendment of 2026-10-31).
 - A map, a slice or a plain struct is `Sync` for reading, but no goroutine may write it while it is shared. Writing shared data needs `Mutex[T]` or `Atomic[T]` (for example `Mutex[map[string]int]`), or exclusive access through moving it or `Split`.
 
-`Send` and `Sync` are predeclared constraints, written like `Copy` and `Clone`: `[T Send]` ([GEN-11](10-generics.md)). How to write a `Send` func type is an open point (ADR-0022 open point 1).
+`Send` and `Sync` are predeclared constraints, written like `Copy` and `Clone`: `[T Send]` ([GEN-11](10-generics.md), [LEX-7](02-lexical.md)). A `Send` func type is written `Send[F]` with `F` a func type, with any signature (`Send[func()]`, `Send[func(int) string]`; ADR-0022 amendment of 2026-10-31). It is a type like `View[T]` and `Option[T]`: usable in parameters, fields, results, locals and channel elements; its value is called like the func and `go job()` is accepted. A func value converts to it only where the labels can be proved from the captures (a function literal, a method value, a top-level function); a capture that fails [CON-13](#121-rules) is a compile error at the conversion, and a plain `func()` of unknown origin does not convert. `Send[F]` converts to plain `F` freely. `Send[F]` is for func types only (`Send[int]` is an error); there is no `Sync[F]` for now; the constraint `[T Send]` is unchanged. In generic code `F` must be written as a func type (`func run[F any](f Send[F])` is refused).
+```go
+func sendEmail(m string) {}
+func pick() func() { return func() {} }
+
+func worker(jobs chan Send[func()]) { for job := range jobs { job() } }
+
+func demo(jobs chan Send[func()]) {
+    mail := "hello"                        // a string has a zero value
+    sent := 0
+    jobs <- func() { sendEmail(move(mail)) }   // ok (CLO-9): string has a zero value, so move of the capture is allowed
+    jobs <- func() { sent++ }                  // error: sent is used below
+    println(sent)
+    var plain func() = pick()
+    jobs <- plain                              // error: a func of unknown origin
+}
+```
+A `Send[func()]` may be called twice, so under [CLO-9](11-closures.md) `move(mail)` of a capture is allowed only for a type with a zero value, and the second call sees the zero value (`""`) after the first `move`; for a type with no zero value it is a compile error.
 
 **CON-13.** *What `go` may pass or capture.* `go f(args)` and `go func(){…}()` may pass or capture only:
 - values that are **moved in** (the caller loses them; later use is an error);

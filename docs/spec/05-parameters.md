@@ -21,7 +21,7 @@ Receiver      = Parameters .              /* one ParameterDecl; may use "move" *
 
 ## 5.2 Rules
 
-**PAR-1.** *Owning parameters borrow.* A parameter or receiver of an **owning** type borrows its argument. A borrowed parameter is a *borrowed variable*, so the read-only-at-the-top-level rule of [OWN-R3b](04-ownership.md#42-ownership-rules-d14) applies to it: no assigning the parameter or its fields, no `move(p)`, no `append`, no `&p`, no pointer-receiver call (a value-receiver call such as `p.Clone()` is fine). Data reached **through** slices, maps and pointers stays mutable, as in Go: elements of `[]T`, map entries, pointer targets. One more thing is allowed: the first write to a **nil** map creates it in the caller's variable, so the caller sees it. This holds for a map parameter and for a map field of a borrowed struct (`doc2.Index["x"] = 1`). Creating a nil map anywhere inside a borrowed variable is the one header change a borrowed variable may make ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)).
+**PAR-1.** *Owning parameters borrow.* A parameter or receiver of an **owning** type borrows its argument. A borrowed parameter is a *borrowed variable*, so the read-only-at-the-top-level rule of [OWN-R3b](04-ownership.md#42-ownership-rules-d14) applies to it: no assigning the parameter or its fields, no `move(p)`, no `append`, no `&p`, no pointer-receiver call (a value-receiver call such as `p.Clone()` is fine). Data reached **through** slices, maps and pointers stays mutable, as in Go: elements of `[]T`, map entries, pointer targets. One more thing is allowed: the first write to a **nil** map creates it in the caller's variable, so the caller sees it. This holds for a map parameter and for a map field of a borrowed struct (`doc2.Index["x"] = 1`). A map entry passed as the argument counts too, also when its key is absent: the callee's first write adds the key with the new map (`addScore(players["ann"], "chess", 10)` makes `players["ann"]`), and a callee that only reads adds no key ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), ADR-0018 amendment of 2026-10-31). Creating a nil map anywhere inside a borrowed variable is the one header change a borrowed variable may make ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)).
 
 ```go
 func fill(xs []int, m map[string]int, d *Doc, doc2 Doc) {
@@ -87,7 +87,7 @@ var f Finisher = b      // error (with interface Finisher{ Finish() string }): F
 
 **PAR-10.** *ABI (informative here, normative in P04 D4.4).*
 - Trivial parameters follow the C ABI (copies).
-- Borrowed owning parameters pass by hidden pointer. For a map, the pointer points at the owner's map header. This is one reason: the first write to a nil borrowed map creates the map in the caller's variable ([PAR-1](#52-rules)).
+- Borrowed owning parameters pass by hidden pointer. For a map, the pointer points at the owner's map header. This is one reason: the first write to a nil borrowed map creates the map in the caller's variable ([PAR-1](#52-rules)). For a map entry argument whose key is absent, the hidden pointer is to a place that adds the key at the callee's first write (a read-only callee adds nothing).
 - `string` and `[]T` pass as `(ptr, len)`, so callers can pass owned values, borrowed slices and literals at zero cost (and views, where the rules allow). A `View[…]` parameter passes the same way.
 - A `move` `[]T` parameter passes all 4 words ([SLC-4](08-slices-and-range.md)).
 - Go++ to Go++ calls may use the internal convention.

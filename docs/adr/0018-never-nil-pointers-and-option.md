@@ -129,3 +129,27 @@ In a review of the pointer design (2026-10-28), the owner chose **maximum safety
    ```
 
 The documents are updated in this change: spec chapters 3, 4, 6, 8, 9, 10, 11, 12 and 16, P01 D1.4, D1.7 and D1.22, and the P03, P04 and P05 plans. Task P03.18 builds the code for points 3 and 4 and migrates the existing tests, examples and explain examples.
+
+## Amendment (2026-10-31, owner decision): a map entry passed to a borrowed map parameter is a place, also when the key is absent
+
+**Decision.** In a call, a map entry that is passed to a borrowed map parameter (or a borrowed parameter that holds a map) is a *place*, even when its key is absent. An absent entry behaves like an entry that holds a nil map: the first write through the parameter adds the key with the new map, so the write belongs to the owner (point 5, "in a place, the map is created in place").
+
+Owner's words: "nil map mean empty map mean accessable like Go so B".
+
+```go
+func addScore(scores map[string]int, game string, points int) { scores[game] = points }
+
+players := map[string]map[string]int{}
+addScore(players["ann"], "chess", 10)
+println(len(players))             // 1
+println(players["ann"]["chess"])  // 10
+```
+
+Consequences:
+- **Reading never inserts.** A callee that does not write adds no key: passing `players["ann"]` to a function that only reads leaves `len(players)` at 0. The key is added at the callee's first write, not at the call.
+- **A nil outer map.** `var nm map[string]map[string]int; put(nm["k"], 1)`: if `nm` is held in a place, the first write creates `nm` in place and adds the key. An outer map held in a temporary is a compile error (`f()["a"] = 1` and its family, point 5), and **passing an entry of a temporary map to a borrowed map parameter that the callee writes becomes E0353 too** (`put(f()["k"], 1)`: the write would be lost). This last case is a new rule, not an existing one: it is not an error today. It is decided by the "writes this parameter" bit (TODO P04.29 (e)); an unknown callee (a func value, an interface method, a body-less declaration) counts as writing, and a read-only callee stays accepted.
+- **A nil map inside an aggregate entry** follows the same rule: with `docs` a `map[string]Doc` and an absent `"k"`, `put(docs["k"])` where the callee writes `d.Index["x"] = 1` adds `"k"` with a `Doc` whose `Index` holds the new map. A callee that creates no map adds no key. (OWN-R3b: creating a nil map anywhere inside a borrowed variable.)
+- **The write is visible from the callee's first write.** A callee that writes and then panics, with the panic recovered by the caller, leaves the key and the value in place.
+- Adding a key counts as an insert into the outer map for the active-iterator rule (RNG-4), as `mm[k1][k2] = v` does.
+
+**Supersedes.** The earlier behaviour of the compiler, "an argument never inserts: the callee gets a nil map of its own and its writes are dropped with it" (TODO P04.29 (a), option A). Point 5's text is unchanged: it already lists a map entry as a place; this amendment says that an absent entry is one too. ADR-0020 has no text on this and needs no change.

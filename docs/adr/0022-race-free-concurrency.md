@@ -47,7 +47,7 @@ On 2026-10-28 the owner decided ("B+"): data races are compile errors in normal 
    - `Mutex[T]` and `RWMutex[T]` are `Sync` only when `T` is `Send` (Rust's rule). `Atomic[T]` is always `Sync` for its allowed `T`.
    - `sync.Pool[T]` is `Sync` when `T` is `Send`. `sync.Map[K, V]` is `Sync` when `K` and `V` are `Send`.
    - **Interfaces.** An interface type is `Send` / `Sync` only if it embeds the `Send` / `Sync` constraint (like Rust's `dyn Trait + Send`). The predeclared `error` is declared with `Send` and `Sync`, so converting a value to `error` requires its dynamic type to be `Send` and `Sync` (most error types are plain data, so this is cheap). `any` has no labels; use `interface{ Send }` for a sendable any. A conversion into a labeled interface is checked at the conversion.
-   - **Func values.** The labels of a func value come from its captures and are checked where the value is created: a function literal, a method value, or a top-level function (no captures, always both). A func-typed variable or parameter whose origin is unknown is not `Send` (conservative). `go f()` with a top-level `f` is fine. A way to write a `Send` func type is open point 1.
+   - **Func values.** The labels of a func value come from its captures and are checked where the value is created: a function literal, a method value, or a top-level function (no captures, always both). A func-typed variable or parameter whose origin is unknown is not `Send` (conservative). `go f()` with a top-level `f` is fine. A `Send` func type is written `Send[F]` (amendment of 2026-10-31; open point 1 is closed).
 2. **`go` statement (CON-13).** `go f(args)` and `go func(){…}()` may pass or capture only:
    - values that are **moved in** (the caller loses them);
    - values whose type is `Send` and that are **copied in**;
@@ -246,8 +246,35 @@ No data race exists here (every access is locked), so no language rule can tell 
 
 ## Open points
 
-1. **A way to write a `Send` func type.** A func value's labels come from its captures (decision 1), and a func-typed variable or parameter of unknown origin is not `Send`. So a worker pool that takes `func()` jobs through a channel cannot say that the funcs are `Send`. The language needs a spelling (for example a constraint on the func type, or an interface with a method). Decide in P04.21.
+1. **A way to write a `Send` func type.** *Closed 2026-10-31 (owner decision, option A): the wrapper `Send[F]`, see the amendment at the end of this ADR.* (Was: a func-typed variable or parameter of unknown origin is not `Send`, so a worker pool that takes `func()` jobs through a channel could not say the funcs are `Send`.)
 2. **Writable-capture rule: "can still touch".** A closure that captures `i` (a loop variable, never written afterwards) is fine; a closure that writes a captured local that nobody else uses is also harmless. The exact flow rule is built in P04.21 and is conservative. **Decided 2026-10-31 (owner): option A.** "Can still touch" means a use the compiler can see after the `go`: in the spawner, in another goroutine, or in a later iteration of a loop that holds the `go`. A variable that is only in scope but never used again counts as moved in, so `x := 0; go func(){ x++ }()` with no later use of `x` is accepted, and adding `println(x)` after it is an error. Rejected option B: refuse any writable capture of a variable the spawner could still name, which refuses safe code and contradicts CON-13's "moved in" rule.
 3. **Guard access syntax.** The ADR shows `g.N--`, `g[k]` and `*ga += *gb`: the guard is used like a `*T`. P12.13 sets the real surface. All library names in this ADR (`sync.NewMutex`, `sync.Atomic[T]`, `sync.Scope(...)`, `sync.LockAll`, `cond.Wait(&g)`, `sync.Map[K, V]`) are illustrative.
 4. **Go mode** (`.go` files): do they get the borrow checker and the concurrency checks? This is one open question, P04 Q3 (it covers ADR-0021 open point 3 and this ADR). This ADR assumed yes. **Deferred by owner 2026-10-28:** Go mode is not a current focus, so P04 Q3 stays open and no new Go-mode work is planned; existing Go-mode rules and tests stay.
 5. **Locks in generic code and through function values.** Not checked for deadlocks (decision 9), but the labels are checked per instance, like `Option` (GEN-5, P04.08).
+
+## Amendment (2026-10-31, owner decision): `Send[F]` is the spelling of a `Send` func type
+
+Closes open point 1. The spelling is a wrapper type, `Send[F]` with `F` any func type: `Send[func()]`, `Send[func(int) string]`.
+
+- `Send[F]` is written like `View[T]` and `Option[T]`. It is usable in parameters, fields, results, locals and channel elements (`chan Send[func()]`). Its value is called like the func, and `go job()` on it is accepted.
+- A func value converts to `Send[F]` only where the checker can prove the labels from the captures: a function literal, a method value or a top-level function (always fine). A capture that fails the CON-13 rules is a compile error at the conversion. A plain `func()` of unknown origin does not convert: compile error.
+- `Send[F]` converts to plain `F` freely.
+- The constraint `[T Send]` is unchanged. `Send[F]` is for func types only: `Send[int]` is a compile error. There is no `Sync[F]` for now.
+- In generic code `Send[F]` is defined only when `F` is written as a func type (`Send[func(T) U]` with type parameters inside); `func run[F any](f Send[F])` is refused, the conservative choice. The instance is checked again with the real types (P04.08).
+
+```go
+func sendEmail(m string) {}
+
+func worker(jobs chan Send[func()]) { for job := range jobs { job() } }
+
+func demo(jobs chan Send[func()]) {
+    mail := "hello"                            // a string has a zero value
+    sent := 0
+    jobs <- func() { sendEmail(move(mail)) }   // ok (CLO-9): the type has a zero value; a second call sees ""
+    jobs <- func() { sent++ }                  // error: sent is used below
+    println(sent)
+}
+```
+A `Send[func()]` may be called twice, so `move(x)` of a capture needs a type with a zero value (CLO-9); with no zero value it is a compile error.
+
+Rejected alternatives: a `go func()` keyword type (a new type form for one use, and it would not cover a `Send` func that is only sent on a channel); an interface-only spelling (an interface with a `Call()` method makes every job a named type and cannot take a signature such as `func(int) string`). Owner chose the wrapper.

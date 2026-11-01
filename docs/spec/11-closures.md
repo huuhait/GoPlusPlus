@@ -61,7 +61,19 @@ For a pointer receiver, the variable is captured like any captured variable (as 
 
 The wide definition of "written" makes the borrow behave like Go's copy (Go prints `{old 1}` for a struct argument changed after the `defer`). A borrowed `defer` argument written after the `defer` is an error, and `defer show(d.Clone())` gives Go's snapshot.
 
-**CLO-8.** *Loop variables.* As in Go 1.22 and later, each iteration of a `for` loop has its own copy of the loop variable. A closure that captures it and escapes gets one cell per iteration.
+**CLO-8.** *Loop variables.* As in Go 1.22 and later, each iteration of a `for` loop has its own copy of the loop variable. A closure that captures it and escapes gets one cell per iteration. Each new copy is made from the previous iteration's variable, so the type needs a `Clone()` (or must be trivial or a shared handle). A loop variable of a type with `drop` and no `Clone()` that a function literal captures is **E0452 at the loop**: the value does not move forward to the next iteration, because the closures of the earlier iterations would silently read a zero value (ADR-0006 amendment of 2026-10-31). Until the escape facts are in the checker, E0452 is reported for any capture, so a literal that only runs inside its iteration will be accepted then.
+```go
+type F struct{ p unsafe.Pointer }        // has drop, no Clone()
+func (f F) drop() { free(f.p) }
+
+var fs []func() bool
+var i int
+for f := (F{malloc(16)}); i < 3; i++ {   // error E0452: f is captured and F has no Clone()
+    fs = append(fs, func() bool { return f.p != nil })
+}
+// fix: give F a Clone() method; then each iteration has its own copy of f
+func (f F) Clone() F { return F{malloc(16)} }
+```
 
 **CLO-9.** *Captured variables are "other places".* Inside a closure body, a captured owned variable is not a local of the closure, so [OWN-R3a](04-ownership.md#42-ownership-rules-d14) applies: using it as an operand or borrowed argument is fine; taking ownership of it needs `x.Clone()` or `move(x)`. After `move(x)` the variable holds the zero value ([OWN-R5](04-ownership.md#42-ownership-rules-d14)), so calling the closure again is safe. For a Go++ type with no zero value (a `@Required` or `@Strict` struct), `move(x)` of a captured variable is a compile error, because the next call would read zero bytes ([OWN-R4](04-ownership.md#42-ownership-rules-d14)). The opposite direction, moving a variable in the enclosing function while a closure that captured it may still run, is a compile error: [OWN-R3c](04-ownership.md#42-ownership-rules-d14). Flow typing does not reach into the body either: a captured `Option` or checked result (`v` of `v, err := f()`) is never known set inside the closure, even after a check outside or inside it, because the closure can run after the variable changes; copy it into a local first ([OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17)).
 

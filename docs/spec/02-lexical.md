@@ -67,13 +67,14 @@ Old uses stay: unary `!x` and the operator `!=`.
 | Kind | Names |
 |---|---|
 | functions | `move`, `clone`, `new_unique`, `new_shared`, `new_weak` |
-| generic types | `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]`, `View[X]` |
-| constraints | `Copy`, `Clone`, `unit` (the kind of a unit type parameter, [GEN-14](10-generics.md#102-rules)) |
+| generic types | `Unique[*T]`, `Shared[*T]`, `Weak[*T]`, `Option[T]`, `View[X]`, `Send[F]` |
+| constraints | `Copy`, `Clone`, `Send`, `Sync`, `unit` (the kind of a unit type parameter, [GEN-14](10-generics.md#102-rules)) |
 | std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `#Run`, `@Derive` |
 
 - Like Go's predeclared names, these can be redeclared in any scope, package level included (`type Option int` is accepted). The declaration hides the predeclared name in its scope. Do not do it. This holds for `View` as for `Option`.
 - `View` is a generic type name, not a keyword. `View[X]` is valid for every type `X` except the pointer kinds (`*T`, `Unique[*T]`, `Shared[*T]`, `Weak[*T]`), `unsafe.Pointer` and `View[…]` itself; those are compile errors that name the allowed forms ([OWN-V1](04-ownership.md#44-views-d16)). Named types are fine (`View[User]`, `View[Bytes]`).
-- In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `View`, `Copy`, `Clone`, `move`, `clone`, `new_unique`, `new_shared` and `new_weak` are ordinary names there (`Option[int]` is "undefined: Option").
+- `Send` is both a constraint and a generic type, by position ([GEN-11](10-generics.md), [CON-12](12-concurrency.md)). `Send` with no brackets in a constraint position (`[T Send]`, `interface{ Send; Clone }`) is the constraint. `Send[F]` in a type position, with `F` a func type, is the type (the `Send` func type, ADR-0022 amendment of 2026-10-31), written like `View[X]`. `Send[F]` used as a constraint, or a bare `Send` used as a type (`var x Send`), is a compile error. `interface{ Send[func()] }` is an interface with a type term, not an embedded constraint. `Sync` is only a constraint (there is no `Sync[F]`).
+- In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `View`, `Send`, `Sync`, `Copy`, `Clone`, `move`, `clone`, `new_unique`, `new_shared` and `new_weak` are ordinary names there (`Option[int]` is "undefined: Option").
 - In Go mode `extends` and `base` are ordinary names too ([TYP-26](03-types.md#35-single-inheritance-adr-0023)).
 - The macro names live in their own namespace (they are only used after `#` or `@`).
 

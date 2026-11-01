@@ -96,6 +96,17 @@ RangeVar    = [ "&" ] identifier .
 - **shared-handle elements** (`[]func()`, `[]error`, `[]chan T`, `[]Shared[*T]`) are copied with a retain, as in Go and as D1.3 says ("implicit; copying retains"). So `handlers[0] = other; f()` works inside the loop and `x` can be captured by an escaping closure. Because the range variable is a retained copy, it cannot dangle ([UB-2a](16-undefined-behavior.md) and [CLO-3a](11-closures.md) apply to owning elements only);
 - **ranging over a view** (`View[[]T]`, `View[map[K]V]`, or a view part): `x` is itself a view, read-only all the way down, except that a Copy element with no pointer kind is copied out ([OWN-V1](04-ownership.md#44-views-d16)). So `for _, d := range viewOfDocs { d.Tags[0] = "x" }` is an error, and so is `&d` here;
 - **owning elements** are **borrowed**: `x` is a borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), read-only, like Rust's `for d in &docs`. To keep it, write `x.Clone()` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). To change it, use the `&` form (RNG-1a). The error message for a write to a plain range variable suggests `&x` first.
+- **the assignment form `for _, v = range xs`** over owning keys or elements is a compile error, E0253 at the range clause, because each turn would be the assignment `v = xs[i]` that OWN-R3a rejects (ADR-0021 amendment of 2026-10-31). It applies to slices, arrays and maps, and to the key as well as the value. Trivial elements and shared-handle elements are fine. The `:=` form is unchanged.
+  ```go
+  names := []string{"a", "b"}
+  counts := []int{1, 2}
+  var v string
+  for _, v = range names {}                     // error E0253: names holds strings
+  for i := range names { v = names[i].Clone() } // fix-it
+  for _, w := range names { use(w) }            // fix-it: a new borrowed variable
+  var n int
+  for _, n = range counts {}                    // fine: a trivial element
+  ```
 
 **RNG-1a.** *The `&` form: the element itself.* In `for _, &d := range xs`, `d` is **the element itself**, not a copy and not a read-only borrow. It works for every element category.
 - Writes change the collection: `d.Title = "x"`, `d.Count++`, `d = Doc{}` (the old value is dropped), and pointer-receiver calls such as `d.Upper()`.
@@ -140,13 +151,31 @@ If the loop stops early (`break`, `return`, `goto` out, panic), the moved-out sl
 
 For an owned string: `for _, r := range s { s += "x" }` is a compile error. Fix-its: range over `s.Clone()`, or build into a new variable.
 
-`delete` on the ranged map is allowed, and so is removing an entry with `move(m[k])` or `v, ok := move(m[k])` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). For a value type with no zero value ([OWN-R9](04-ownership.md#42-ownership-rules-d14)), the borrowed `v` counts as moved after `move(m[k])` of the current entry, so reading it later in the body is a compile error (use after move). Removing the entry the loop is **currently on**, by either form, takes it out of the map at once. What stays owned by the map side is freed only at the end of that iteration: the key (both forms) and the value (`delete` only). So `k` and `v` stay valid to the end of the turn. A value moved out belongs to its new owner, and the slot it left holds the zero value ([OWN-R5](04-ownership.md#42-ownership-rules-d14)) until the end of the iteration: after `move(m[k])` a borrowed `v` reads the zero value (defined, but surprising), never the moved-out buffer. After `delete(m, k)`, `v` still reads the old value. Removing any **other** entry frees it at once. The map already counts its active iterators ([RNG-4](#83-range-loops-d121)), so it knows a `range` is active. This delay changes the timing of P05 D5.4 inside a `range` only. The loop variables of other entries are not alive, so nothing else is borrowed, unless the program kept a view or pointer into a removed entry: that is UB, as in [UB-2a](16-undefined-behavior.md).
+`delete` on the ranged map is allowed, and so is removing an entry with `move(m[k])` or `v, ok := move(m[k])` ([OWN-R3a](04-ownership.md#42-ownership-rules-d14)). The borrowed `v` counts as moved after `move(m[k])` of the current entry, for every value type, so reading it later in the body on that path is a compile error (use after move, E0451; ADR-0016 amendment of 2026-10-31). It never reads the zero value. This is reported as E0451 (use after move) at the later read, not as an OWN-B2 borrow error. Reading `v` before the move, or `continue` right after the move, is accepted.
+```go
+for k, v := range m {
+    t, _ := move(m[k])
+    keep(t)
+    use(v)                       // error E0451: v was moved with m[k]
+}
+for k, v := range m {
+    use(v)                       // fix 1: read v before the move
+    t, _ := move(m[k])
+    keep(t)
+}
+for k, v := range m {
+    t, _ := move(m[k])
+    keep(t)
+    continue                     // fix 2: leave the iteration
+}
+```
+ Removing the entry the loop is **currently on**, by either form, takes it out of the map at once. What stays owned by the map side is freed only at the end of that iteration: the key (both forms) and the value (`delete` only). So `k` and `v` stay valid to the end of the turn. A value moved out belongs to its new owner, and the slot it left holds the zero value ([OWN-R5](04-ownership.md#42-ownership-rules-d14)) until the end of the iteration; the borrowed `v` cannot be read after the move, so nothing reads the moved-out buffer or the zero value. After `delete(m, k)`, `v` still reads the old value. Removing any **other** entry frees it at once. The map already counts its active iterators ([RNG-4](#83-range-loops-d121)), so it knows a `range` is active. This delay changes the timing of P05 D5.4 inside a `range` only. The loop variables of other entries are not alive, so nothing else is borrowed, unless the program kept a view or pointer into a removed entry: that is UB, as in [UB-2a](16-undefined-behavior.md).
 
 Writing the element or entry the loop is on (`xs[i] = y`, `m[k] = y`) is **defined**: the old value is dropped. For the plain form, the problem is using the borrowed range variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) **after** such a write, because it borrowed the dropped value. When the compiler can see the write and a later use of the range variable in the body, that is a compile error (the same visible-write reading as [TYP-9](03-types.md)); a write through another pointer is a writable borrow of the slice and is an error too ([UB-2a](16-undefined-behavior.md), [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021), [OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). Range variables of trivial or shared-handle elements are copies and are not affected. An `&` variable is an alias of the slot, so it sees the new value and is not affected either. But a write to the element through anything other than `e` itself (`xs[i].f = 1`, a copy into the slice, another pointer) is an error while `e` is live ([RNG-1a](#83-range-loops-d121), [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)).
 
 Map range variables with an owning key or value type are borrowed variables in the plain form ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)). `move(k)` and `move(v)` are compile errors, because moving a key would corrupt the map and moving a value is ambiguous with `move(m[k])`. Write `v.Clone()`, or use `&v`, or `move(m[k])` to take the value out. A map range variable of trivial type (for example the `int` values of `map[string]int`) is a writable copy. The key can never be moved or aliased.
 
-Other operations on the ranged collection: `append`, assigning the collection, inserting a key and `clear` are compile errors (above); assigning an element or entry the loop is on, or `copy` into the ranged slice, is defined, and a later use of the borrowed range variable is a compile error ([UB-2a](16-undefined-behavior.md), [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)); `move(xs[i])` leaves the zero value in the element, so a borrowed `x` reads the zero value (defined, but surprising). Re-slicing the ranged slice in place is an assignment, so it is a compile error (strings have no in-place re-slice, [OWN-V2](04-ownership.md#44-views-d16)).
+Other operations on the ranged collection: `append`, assigning the collection, inserting a key and `clear` are compile errors (above); assigning an element or entry the loop is on, or `copy` into the ranged slice, is defined, and a later use of the borrowed range variable is a compile error ([UB-2a](16-undefined-behavior.md), [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)); after `move(xs[i])` (a slice or array; **not built yet, P04.29 (n)**) or `move(m[k])` (a map; built), a later read of the borrowed range variable on that path is a compile error, E0451, for every element type, never the zero value; reading it before the move, or `continue` right after, is accepted (see above and OWN-B2/OWN-B9). The element itself holds the zero value ([OWN-R5](04-ownership.md#42-ownership-rules-d14)). Re-slicing the ranged slice in place is an assignment, so it is a compile error (strings have no in-place re-slice, [OWN-V2](04-ownership.md#44-views-d16)).
 
 **RNG-3a.** *Evaluation of the range expression.* As in Go, the range expression is evaluated **once**, at loop start. For a slice or a string, the loop takes `(ptr, len)` at that moment and walks that buffer. If the buffer is reallocated or freed during the loop through `unsafe` or C code (a hidden `+=` on the ranged string is the same; for example `for _, v := range w.queue { w.push(10) }` where `push` appends to `w.queue`), the loop reads freed memory. A call whose receiver or argument overlaps the ranged place is a compile error ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021), [UB-2e](16-undefined-behavior.md)); a path through another pointer is a compile error too ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)), even for `[]int`; only `unsafe` and C code stay UB there. `-asan` catches those.
 

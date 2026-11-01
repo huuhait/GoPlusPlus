@@ -207,3 +207,7 @@ and UB-1.
   `go.mod`.
 - **D25:** leave it undefined behavior, with an optional vet warning (the
   earlier draft). Changed by the owner: it is a compile error, like Rust.
+
+## Amendment (2026-10-31, owner decision): a captured loop variable of a type with no Clone is E0452
+
+Each iteration of a three-clause `for` has its own copy of a loop variable that a function literal captures (CLO-8), made from the last iteration's variable. A variable of a type with `drop` and no `Clone()` cannot be copied, so a function literal that captures it is **E0452 at the loop**. The value does not move forward to the next iteration, because the closures of the earlier iterations would silently read a zero value. With a `Clone()` method it compiles and each iteration has its own copy. It lives here because this ADR holds the closure decisions (cells and captures, D1.9 and CLO-3b); no ADR owns the per-iteration loop variable rule itself (CLO-8). Owner chose option A (TODO P04.29 (l)); option B (move forward) is rejected. Supersedes nothing in the compiler: it is built that way already.

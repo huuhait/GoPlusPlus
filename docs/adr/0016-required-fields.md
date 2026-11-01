@@ -70,6 +70,10 @@ On 2026-10-27 the owner chose a built-in field attribute, `@Required`, over new 
 - Comma-ok lookups need no new analysis: P04.09's use-after-move check treats the `!ok` paths as moves. (Changed by ADR-0018 amendment point 4: P03 flow typing, task P03.18; P04.09 keeps them as GIR regression cases.)
 - Ported Go code that calls `json.Unmarshal` must switch to `json.Decode[T]`. How a type supplies custom decoding (Go's `UnmarshalJSON`) is designed in P13.08.
 
+## Amendment (2026-10-31, owner decision): a range variable is moved with `move(m[k])`
+
+Point 5 ends with `for k, v := range m { c, ok := move(m[k]); use(v) }   // error`. Decision: option A, the range variable is moved. After `t, _ := move(m[k])` inside `for k, v := range m`, on a path where `k` names the entry `v` looks at, a later read of `v` is a use after move, E0451, for every value type (not only a type with no zero value). It never reads the zero value. Reading `v` before the move, or leaving the iteration with `continue` right after the move, stays accepted. Fixes: read `v` before the move, or `continue`. Supersedes spec 8.3's "a borrowed `v` reads the zero value (defined, but surprising)" (changed in the same commit). Already built for the map case (`gir/use-after-move.test`). **Extension to slices and arrays (a manager decision under the owner's standing rule "I always want compile error"; the owner has been told):** after `move(xs[i])` of the element a `range` loop is on, a later read of the borrowed `x` on that path is E0451 too, for every element type, never the zero value. Not built yet, TODO P04.29 (n).
+
 ## Alternatives
 
 - **A keyword or mark** (`required ID int`, `ID! int`). Rejected: new grammar, and `!` already means "must".
