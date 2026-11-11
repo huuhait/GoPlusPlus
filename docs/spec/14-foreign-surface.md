@@ -65,7 +65,7 @@ HeaderExt        = ".h" | ".hh" | ".hpp" | ".hxx" .
 - `cflags …` (extra C/C++ compiler flags);
 - `ldflags …` (extra linker flags). The `ldflags` of all modules in the build are combined for the final link, in module order (the main module last).
 
-C/C++ dependencies (`cdep`) keep taking their flags from their own CMake target (P11). The only directive comment left in source files is `//gopp:build`, which works exactly like Go's `//go:build`: it goes above the `package` clause ([LEX-11](02-lexical.md)). It is a comment to the lexer; the build tool reads it. Its terms are OS, architecture and build tags, and also the name of the main module's active build profile: `//gopp:build debug` keeps a file out of every other profile (P06 D6.12). A profile name may not equal an OS, architecture or tag word.
+C/C++ dependencies (`cdep`) keep taking their flags from their own CMake target (P11). A `cdep` is always a CMake project: a library that has none is used through a `CMakeLists.txt` its user writes, in a local directory or in a repository of their own, and `replace` may point the `cdep` path there ([ADR-0038](../adr/0038-cdeps-cmake-only.md)). A library already installed on the machine is not a `cdep`: import its header with `<…>` and name it in `ldflags`. The only directive comment left in source files is `//gopp:build`, which works exactly like Go's `//go:build`: it goes above the `package` clause ([LEX-11](02-lexical.md)). It is a comment to the lexer; the build tool reads it. Its terms are OS, architecture and build tags, and also the name of the main module's active build profile: `//gopp:build debug` keeps a file out of every other profile (P06 D6.12). A profile name may not equal an OS, architecture or tag word.
 
 ## 14.3 Examples
 
