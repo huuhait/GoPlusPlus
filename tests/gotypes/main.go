@@ -15,6 +15,14 @@
 //	init <name>,<name>                          after the files: the variables
 //	                                            that one value initializes, in
 //	                                            the order of initialization
+//	obj <TAB> name <TAB> kind <TAB> type [<TAB> value]
+//	                                            each package-level object: for
+//	                                            a declared type the type it was
+//	                                            declared as, for a constant its
+//	                                            exact value
+//
+// A type is written in one spelling for all identical types: an interface
+// with all its methods in the order of their names, then its type terms.
 //
 // The records of a file follow its line. Only names that a scope holds are
 // printed: no fields, no methods, no labels.
@@ -25,6 +33,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -33,6 +42,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -146,6 +156,27 @@ func main() {
 			}
 			fmt.Fprintf(out, "init %s\n", strings.Join(lhs, ","))
 		}
+		for _, name := range pkg.Scope().Names() {
+			switch obj := pkg.Scope().Lookup(name).(type) {
+			case *types.Const:
+				// The bytes of a string, so that no rule of quoting matters.
+				value := obj.Val().ExactString()
+				if obj.Val().Kind() == constant.String {
+					value = fmt.Sprintf("bytes %x", constant.StringVal(obj.Val()))
+				}
+				fmt.Fprintf(out, "obj\t%s\tconst\t%s\t%s\n", name, canon(obj.Type()), value)
+			case *types.TypeName:
+				if obj.IsAlias() {
+					fmt.Fprintf(out, "obj\t%s\talias\t%s\n", name, canon(obj.Type()))
+				} else {
+					fmt.Fprintf(out, "obj\t%s\ttype\t%s\n", name, canon(obj.Type().Underlying()))
+				}
+			case *types.Var:
+				fmt.Fprintf(out, "obj\t%s\tvar\t%s\n", name, canon(obj.Type()))
+			case *types.Func:
+				fmt.Fprintf(out, "obj\t%s\tfunc\t%s\n", name, canon(obj.Type()))
+			}
+		}
 	}
 	check(list.Wait())
 }
@@ -163,6 +194,138 @@ func scoped(obj types.Object) bool {
 		return obj.Name() != "init"
 	}
 	return true
+}
+
+// canon writes a type in the one spelling of gopp for identical types.
+func canon(t types.Type) string {
+	list := func(n int, at func(int) types.Type) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = canon(at(i))
+		}
+		return strings.Join(parts, ", ")
+	}
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		if t.Kind() == types.UnsafePointer {
+			return "unsafe.Pointer"
+		}
+		// The name of the kind: `byte` is uint8, `rune` is int32.
+		return types.Typ[t.Kind()].Name()
+	case *types.Named:
+		name := t.Obj().Name()
+		if pkg := t.Obj().Pkg(); pkg != nil {
+			name = pkg.Name() + "." + name
+		}
+		if args := t.TypeArgs(); args.Len() > 0 {
+			name += "[" + list(args.Len(), func(i int) types.Type { return args.At(i) }) + "]"
+		}
+		return name
+	case *types.TypeParam:
+		return t.Obj().Name()
+	case *types.Pointer:
+		return "*" + canon(t.Elem())
+	case *types.Slice:
+		return "[]" + canon(t.Elem())
+	case *types.Array:
+		return fmt.Sprintf("[%d]%s", t.Len(), canon(t.Elem()))
+	case *types.Map:
+		return "map[" + canon(t.Key()) + "]" + canon(t.Elem())
+	case *types.Chan:
+		switch t.Dir() {
+		case types.SendOnly:
+			return "chan<- " + canon(t.Elem())
+		case types.RecvOnly:
+			return "<-chan " + canon(t.Elem())
+		}
+		return "chan " + canon(t.Elem())
+	case *types.Signature:
+		return "func" + signature(t)
+	case *types.Struct:
+		fields := make([]string, t.NumFields())
+		for i := range fields {
+			field := t.Field(i)
+			fields[i] = canon(field.Type())
+			if !field.Embedded() {
+				fields[i] = field.Name() + " " + fields[i]
+			}
+			if tag := t.Tag(i); tag != "" {
+				fields[i] += " " + strconv.Quote(tag)
+			}
+		}
+		return "struct{" + strings.Join(fields, "; ") + "}"
+	case *types.Interface:
+		var parts, terms []string
+		for i := 0; i < t.NumMethods(); i++ {
+			method := t.Method(i)
+			parts = append(parts, method.Name()+signature(method.Type().(*types.Signature)))
+		}
+		sort.Strings(parts)
+		typeTerms(t, map[*types.Interface]bool{}, &terms)
+		sort.Strings(terms)
+		for i, term := range terms {
+			if i == 0 || term != terms[i-1] {
+				parts = append(parts, term)
+			}
+		}
+		if len(parts) == 0 {
+			return "any"
+		}
+		return "interface{" + strings.Join(parts, "; ") + "}"
+	case *types.Union:
+		terms := make([]string, t.Len())
+		for i := range terms {
+			terms[i] = canon(t.Term(i).Type())
+			if t.Term(i).Tilde() {
+				terms[i] = "~" + terms[i]
+			}
+		}
+		return strings.Join(terms, " | ")
+	}
+	panic(fmt.Sprintf("type %T", t))
+}
+
+// typeTerms collects what an interface embeds that is no interface.
+func typeTerms(t *types.Interface, seen map[*types.Interface]bool, terms *[]string) {
+	if seen[t] {
+		return
+	}
+	seen[t] = true
+	for i := 0; i < t.NumEmbeddeds(); i++ {
+		embedded := types.Unalias(t.EmbeddedType(i))
+		if named, ok := embedded.(*types.Named); ok && named.Obj().Pkg() == nil && named.Obj().Name() == "comparable" {
+			*terms = append(*terms, "comparable")
+		} else if inner, ok := embedded.Underlying().(*types.Interface); ok {
+			typeTerms(inner, seen, terms)
+		} else {
+			*terms = append(*terms, canon(embedded))
+		}
+	}
+}
+
+// signature writes the parameters and results of a function type, without
+// their names.
+func signature(sig *types.Signature) string {
+	params := make([]string, sig.Params().Len())
+	for i := range params {
+		params[i] = canon(sig.Params().At(i).Type())
+		if sig.Variadic() && i == len(params)-1 {
+			params[i] = "..." + canon(sig.Params().At(i).Type().(*types.Slice).Elem())
+		}
+	}
+	results := make([]string, sig.Results().Len())
+	for i := range results {
+		results[i] = canon(sig.Results().At(i).Type())
+	}
+	out := "(" + strings.Join(params, ", ") + ")"
+	switch len(results) {
+	case 0:
+	case 1:
+		out += " " + results[0]
+	default:
+		out += " (" + strings.Join(results, ", ") + ")"
+	}
+	return out
 }
 
 func kind(obj types.Object) string {

@@ -214,6 +214,12 @@ impl fmt::Debug for Str {
     }
 }
 
+/// Whether `c` is one of the common characters that format text and show
+/// as nothing: zero-width marks, direction marks, the byte order mark.
+fn is_format(c: char) -> bool {
+    matches!(c, '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}')
+}
+
 /// The text between double quotes, in Go's spelling.
 fn quoted(bytes: &[u8]) -> String {
     let mut out = String::from("\"");
@@ -222,10 +228,18 @@ fn quoted(bytes: &[u8]) -> String {
             match c {
                 '"' => out.push_str("\\\""),
                 '\\' => out.push_str("\\\\"),
+                '\x07' => out.push_str("\\a"),
+                '\x08' => out.push_str("\\b"),
+                '\x0C' => out.push_str("\\f"),
                 '\n' => out.push_str("\\n"),
                 '\r' => out.push_str("\\r"),
                 '\t' => out.push_str("\\t"),
-                c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                '\x0B' => out.push_str("\\v"),
+                c if c.is_ascii_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+                // What shows as nothing or as a blank is written out.
+                c if c.is_control() || c != ' ' && c.is_whitespace() || is_format(c) => {
+                    out.push_str(&format!("\\u{:04x}", c as u32));
+                }
                 c => out.push(c),
             }
         }

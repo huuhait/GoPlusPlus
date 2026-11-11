@@ -7,6 +7,7 @@ mod literal;
 mod object;
 mod package;
 mod resolve;
+mod typecheck;
 pub mod types;
 mod universe;
 

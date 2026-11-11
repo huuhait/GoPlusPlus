@@ -16,10 +16,13 @@ use lasso::{Spur, ThreadedRodeo};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::constant::Value;
 use crate::decls;
 use crate::literal::unquote;
 use crate::object::{Body, FileInfo, Local, LocalId, LocalKind, ObjId, ObjKind, Object, Ref};
 use crate::package::{Package, PackageLoader};
+use crate::typecheck;
+use crate::types::Types;
 use crate::universe::Universe;
 
 /// One file of the package to check.
@@ -31,15 +34,17 @@ pub struct Unit<'a> {
 
 /// Checks the package at the import path `path`, made of `units`.
 ///
-/// `names` must be the interner of every package that `loader` returns.
+/// `names` and `types` must be those of every package that `loader`
+/// returns.
 pub fn check(
     path: &str,
     units: &[Unit<'_>],
     loader: &dyn PackageLoader,
     names: &ThreadedRodeo,
+    types: &Types,
     sink: &Sink,
 ) -> Package {
-    check_counted(path, units, loader, names, sink).0
+    check_counted(path, units, loader, names, types, sink).0
 }
 
 /// The package and the number of steps the checker took.
@@ -48,6 +53,7 @@ pub(crate) fn check_counted(
     units: &[Unit<'_>],
     loader: &dyn PackageLoader,
     names: &ThreadedRodeo,
+    types: &Types,
     sink: &Sink,
 ) -> (Package, u64) {
     let package_name = units.iter().find_map(|unit| unit.file.package);
@@ -105,6 +111,7 @@ pub(crate) fn check_counted(
         }
     }
     package.init_order = decls::order(&package, units, names, sink);
+    typecheck::declarations(&mut package, units, types, names, sink);
     (package, steps)
 }
 
@@ -195,7 +202,13 @@ impl Collector<'_> {
 
     fn object(&mut self, name: Spur, kind: ObjKind, span: Span) -> ObjId {
         let id = ObjId(self.package.objects.len() as u32);
-        self.package.objects.push(Object { name, kind, span });
+        self.package.objects.push(Object {
+            name,
+            kind,
+            span,
+            ty: Types::INVALID,
+            value: Value::Unknown,
+        });
         id
     }
 

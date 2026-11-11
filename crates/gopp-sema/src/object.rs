@@ -7,7 +7,9 @@ use gopp_syntax::ast::{ExprId, StmtId};
 use lasso::Spur;
 use rustc_hash::FxHashMap;
 
+use crate::constant::Value;
 use crate::package::Package;
+use crate::types::TypeId;
 use crate::universe::Predeclared;
 
 /// A package-level object or an import: an index into [`Package::objects`].
@@ -25,6 +27,10 @@ pub struct Object {
     pub kind: ObjKind,
     /// The declaring identifier; for an import without a name, its path.
     pub span: Span,
+    /// The type; invalid for what has none, and while it is not known.
+    pub ty: TypeId,
+    /// The value of a constant; unknown for anything else.
+    pub value: Value,
 }
 
 #[derive(Debug)]

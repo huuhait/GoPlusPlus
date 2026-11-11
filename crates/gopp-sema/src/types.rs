@@ -646,7 +646,53 @@ impl Types {
 
     /// The type as a program writes it.
     pub fn display(&self, id: TypeId, names: &ThreadedRodeo) -> String {
-        let show = |id: TypeId| self.display(id, names);
+        self.show(id, names, false)
+    }
+
+    /// The type in one spelling for all identical types: an interface is
+    /// written with all its methods, in the order of their names, then its
+    /// type terms.
+    pub fn canonical(&self, id: TypeId, names: &ThreadedRodeo) -> String {
+        self.show(id, names, true)
+    }
+
+    /// The methods and the type terms of an interface, each as text, with
+    /// those of the interfaces it embeds.
+    fn interface_parts(&self, id: TypeId, names: &ThreadedRodeo) -> (Vec<String>, Vec<String>) {
+        let (mut methods, mut terms) = (Vec::new(), Vec::new());
+        let mut seen = vec![self.underlying(id)];
+        let mut next = 0;
+        while let Some(&current) = seen.get(next) {
+            next += 1;
+            let Type::Interface {
+                methods: own,
+                embedded,
+            } = &*self.get(current)
+            else {
+                continue;
+            };
+            for method in own.iter() {
+                let name = names.resolve(&method.name);
+                methods.push(format!("{name}{}", self.signature(method.sig, names, true)));
+            }
+            for &inner in embedded.iter() {
+                let under = self.underlying(inner);
+                match &*self.get(under) {
+                    Type::Interface { .. } if !seen.contains(&under) => seen.push(under),
+                    Type::Interface { .. } => {}
+                    _ => terms.push(self.show(inner, names, true)),
+                }
+            }
+        }
+        methods.sort();
+        methods.dedup();
+        terms.sort();
+        terms.dedup();
+        (methods, terms)
+    }
+
+    fn show(&self, id: TypeId, names: &ThreadedRodeo, canonical: bool) -> String {
+        let show = |id: TypeId| self.show(id, names, canonical);
         let list = |ids: &[TypeId]| {
             ids.iter()
                 .map(|&id| show(id))
@@ -671,7 +717,7 @@ impl Types {
                 ChanDir::Recv => format!("<-chan {}", show(*elem)),
             },
             Type::Tuple(types) => format!("({})", list(types)),
-            Type::Func { .. } => format!("func{}", self.signature(id, names)),
+            Type::Func { .. } => format!("func{}", self.signature(id, names, canonical)),
             Type::Struct(fields) => {
                 let field = |f: &Field| {
                     let name = if f.embedded {
@@ -692,8 +738,17 @@ impl Types {
                 if methods.is_empty() && embedded.is_empty() {
                     return "any".to_owned();
                 }
+                if canonical {
+                    let (methods, terms) = self.interface_parts(id, names);
+                    let parts: Vec<String> = methods.into_iter().chain(terms).collect();
+                    return match parts.is_empty() {
+                        true => "any".to_owned(),
+                        false => format!("interface{{{}}}", parts.join("; ")),
+                    };
+                }
                 let method = |m: &Method| {
-                    format!("{}{}", names.resolve(&m.name), self.signature(m.sig, names))
+                    let name = names.resolve(&m.name);
+                    format!("{name}{}", self.signature(m.sig, names, false))
                 };
                 let parts: Vec<String> = methods
                     .iter()
@@ -706,6 +761,7 @@ impl Types {
                 let term = |t: &Term| format!("{}{}", if t.tilde { "~" } else { "" }, show(t.ty));
                 terms.iter().map(term).collect::<Vec<_>>().join(" | ")
             }
+            Type::Marker(Marker::Comparable) => "comparable".to_owned(),
             Type::Marker(marker) => format!("{marker:?}"),
             Type::Named { id: named, args } => {
                 let (name, package) = self.read(|inner| {
@@ -729,7 +785,7 @@ impl Types {
 
     /// `(int, ...string) (bool, error)`: the parameters and results of the
     /// function type `id`.
-    fn signature(&self, id: TypeId, names: &ThreadedRodeo) -> String {
+    fn signature(&self, id: TypeId, names: &ThreadedRodeo, canonical: bool) -> String {
         let Type::Func {
             params,
             results,
@@ -738,18 +794,24 @@ impl Types {
         else {
             return String::new();
         };
-        let mut shown: Vec<String> = params.iter().map(|&p| self.display(p, names)).collect();
+        let mut shown: Vec<String> = params
+            .iter()
+            .map(|&p| self.show(p, names, canonical))
+            .collect();
         if *variadic
             && let Some((last, &ty)) = shown.last_mut().zip(params.last())
             && let Type::Slice(elem) = &*self.get(ty)
         {
-            *last = format!("...{}", self.display(*elem, names));
+            *last = format!("...{}", self.show(*elem, names, canonical));
         }
         let results = match &results[..] {
             [] => String::new(),
-            [one] => format!(" {}", self.display(*one, names)),
+            [one] => format!(" {}", self.show(*one, names, canonical)),
             many => {
-                let many: Vec<String> = many.iter().map(|&r| self.display(r, names)).collect();
+                let many: Vec<String> = many
+                    .iter()
+                    .map(|&r| self.show(r, names, canonical))
+                    .collect();
                 format!(" ({})", many.join(", "))
             }
         };

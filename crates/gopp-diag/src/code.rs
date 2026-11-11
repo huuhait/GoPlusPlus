@@ -101,6 +101,7 @@ codes! {
     132 InitWithBody "err_init_with_body",
     133 InitTypeParams "err_init_type_params",
     136 ImportUnresolved "err_import_unresolved",
+    137 NotAType "err_not_a_type",
     139 InvalidRecursiveType "err_invalid_recursive_type",
     140 InvalidRecursiveTypeSelf "err_invalid_recursive_type_self",
     142 InitCycle "err_init_cycle",

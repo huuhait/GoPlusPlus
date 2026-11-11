@@ -12,6 +12,7 @@ use gopp_testutil::{linear, samples, stress};
 use lasso::ThreadedRodeo;
 
 use crate::resolve::check_counted;
+use crate::types::Types;
 use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Unit, check};
 
 /// Packages by import path. With `fake_rest`, any other path is a package
@@ -20,6 +21,8 @@ use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Unit, check};
 struct Loader {
     packages: HashMap<String, Arc<Package>>,
     fake_rest: bool,
+    /// The types of all packages checked with this loader.
+    types: std::sync::OnceLock<Types>,
 }
 
 impl PackageLoader for Loader {
@@ -64,7 +67,8 @@ fn check_texts(
         .zip(&sources)
         .map(|(file, source)| Unit { file, source })
         .collect();
-    let (package, steps) = check_counted(path, &units, loader, names, &sink);
+    let types = loader.types.get_or_init(|| Types::new(names));
+    let (package, steps) = check_counted(path, &units, loader, names, types, &sink);
     let mut messages = Vec::new();
     for diagnostic in sink.finish() {
         messages.push(format!(
@@ -219,6 +223,9 @@ struct Listed {
     /// The variables that each value initializes, in the order in which
     /// the values are computed.
     init_order: Vec<String>,
+    /// Each package-level object: its name, its kind, its type in the one
+    /// spelling for identical types, and the value of a constant.
+    objects: Vec<Vec<String>>,
     /// Built into Go's type checker, which says nothing about its files.
     builtin: bool,
 }
@@ -226,6 +233,11 @@ struct Listed {
 fn listed_packages(output: &str) -> Vec<Listed> {
     let mut packages: Vec<Listed> = Vec::new();
     for line in output.lines() {
+        if let Some(object) = line.strip_prefix("obj\t") {
+            let fields = object.split('\t').map(str::to_owned).collect();
+            packages.last_mut().unwrap().objects.push(fields);
+            continue;
+        }
         let mut words = line.split(' ');
         let record = words.next().unwrap();
         if record == "package" {
@@ -288,10 +300,12 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     assert!(packages.len() > 300, "only {} packages", packages.len());
 
     let names = ThreadedRodeo::new();
+    let types = Types::new(&names);
     let mut checked: HashMap<String, Arc<Package>> = HashMap::new();
     let mut failures = Vec::new();
     let (mut files_compared, mut names_compared, mut initializers_compared) = (0, 0, 0);
     let (mut packages_compared, mut same_order) = (0, 0);
+    let mut objects: BTreeMap<(String, bool), usize> = BTreeMap::new();
     for listed in packages {
         let map = SourceMap::new();
         let sink = Sink::new(100);
@@ -313,7 +327,7 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
             checked: &checked,
             import_map: listed.import_map,
         };
-        let package = check(&listed.path, &units, &loader, &names, &sink);
+        let package = check(&listed.path, &units, &loader, &names, &types, &sink);
         for diagnostic in sink.finish() {
             let place = map.location(diagnostic.span);
             failures.push(format!("{place}: reported: {}", diagnostic.message));
@@ -334,6 +348,44 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
             })
             .collect();
         let path = listed.path.clone();
+        // The types of the declarations and the values of the constants,
+        // where they are worked out already.
+        for fields in listed.objects.iter().filter(|_| !listed.builtin) {
+            let (name, kind) = (&fields[0], fields[1].as_str());
+            let declared = names.get(name).and_then(|name| package.scope.get(&name));
+            let Some(&object) = declared else {
+                failures.push(format!("{path}.{name}: not declared"));
+                continue;
+            };
+            let object = package.object(object);
+            let ty = match kind {
+                "type" => types.underlying(object.ty),
+                _ => object.ty,
+            };
+            let unknown = ty == Types::INVALID
+                || kind == "const" && object.value == crate::constant::Value::Unknown;
+            *objects.entry((kind.to_owned(), !unknown)).or_insert(0usize) += 1;
+            if unknown {
+                continue;
+            }
+            let mut ours = vec![types.canonical(ty, &names)];
+            if kind == "const" {
+                ours.push(match &object.value {
+                    crate::constant::Value::Str(text) => {
+                        let hex: String = text.bytes().iter().map(|b| format!("{b:02x}")).collect();
+                        format!("bytes {hex}")
+                    }
+                    value => value.exact_string(),
+                });
+            }
+            if ours[..] != fields[2..] {
+                let theirs = fields[2..].join(" = ");
+                failures.push(format!(
+                    "{path}.{name}: {} here, for go {theirs}",
+                    ours.join(" = ")
+                ));
+            }
+        }
         checked.insert(listed.path, Arc::new(package));
         if listed.builtin {
             continue;
@@ -394,6 +446,7 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
         "the order differs too often"
     );
     assert!(names_compared > 500_000, "only {names_compared} names");
+    println!("objects by kind and whether their type is worked out: {objects:?}");
     failures.dedup();
     let shown: Vec<&str> = failures.iter().take(40).map(String::as_str).collect();
     assert!(
@@ -532,14 +585,9 @@ fn an_assignment_in_a_gopp_file_counts_as_a_use() {
 /// A package `lib` with an exported and an unexported name.
 fn with_lib(names: &ThreadedRodeo) -> Loader {
     let text = "package lib\nfunc Exported() {}\nfunc hidden() {}\nvar Value int\n";
-    let lib = check_texts(
-        "example.com/lib",
-        &[("lib.go", text)],
-        &Loader::default(),
-        names,
-    );
-    assert_eq!(lib.messages, [] as [&str; 0]);
     let mut loader = Loader::default();
+    let lib = check_texts("example.com/lib", &[("lib.go", text)], &loader, names);
+    assert_eq!(lib.messages, [] as [&str; 0]);
     loader
         .packages
         .insert("example.com/lib".to_owned(), Arc::new(lib.package));
@@ -1082,4 +1130,149 @@ fn the_steps_of_ordering_grow_with_the_declarations_not_faster() {
     assert_eq!(order.len(), 20_002);
     assert_eq!(order[0], "v20000");
     assert_eq!(order[20_000], "v0");
+}
+
+/// The type of each package-level object of `text`, and the value of each
+/// constant, as `name: type = value`, in the order of the names.
+fn declared(file: &str, text: &str) -> (Vec<String>, Vec<String>) {
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[(file, text)], &loader, &names);
+    let types = loader.types.get().unwrap();
+    let mut lines = Vec::new();
+    for object in &checked.package.objects {
+        let name = names.resolve(&object.name);
+        let underlying = types.underlying(object.ty);
+        let mut line = format!("{name}: {}", types.display(object.ty, &names));
+        if underlying != object.ty {
+            line += &format!(" ({})", types.display(underlying, &names));
+        }
+        if object.value != crate::constant::Value::Unknown {
+            line += &format!(" = {}", object.value.exact_string());
+        }
+        lines.push(line);
+    }
+    lines.sort();
+    (lines, checked.messages)
+}
+
+#[test]
+fn declarations_get_their_types_and_constants_their_values() {
+    let text = "package p
+
+const (
+	KB = 1 << (10 * (iota + 1))
+	MB
+	GB
+)
+
+const Third = 1.0 / 3
+const Big = 1 << 100 >> 98
+const Typed int8 = 100 + 27
+const Name = \"go\" + \"pp\"
+const Size = len(Name) + 1
+const Mask uint8 = ^uint8(0x0f)
+const Less = Third < 0.5
+
+type Celsius float64
+const Boiling Celsius = 100
+const Twice = Boiling * 2
+
+type Node struct {
+	Name  string `json:\"name\"`
+	next  Option[*Node]
+	owner Shared[Node]
+	Size  int @Required
+}
+
+type Reader interface {
+	Read!(buf *[]byte) int
+	Close()
+}
+
+type List[E any] struct {
+	head *List[E]
+	item E
+}
+
+type Bytes = []byte
+
+var table map[string][]Node
+var ints List[int]
+
+func Open!(name string, flags ...int) Unique[Node]
+func Map[T, U any](xs []T, f func(T) U) []U
+";
+    let (lines, messages) = declared("a.gopp", text);
+    assert_eq!(messages, [] as [&str; 0]);
+    let expected = [
+        "Big: untyped int = 4",
+        "Boiling: p.Celsius (float64) = 100",
+        "Bytes: []uint8",
+        "Celsius: p.Celsius (float64)",
+        "GB: untyped int = 1073741824",
+        "KB: untyped int = 1024",
+        "Less: untyped bool = true",
+        "List: p.List (struct{head *p.List[E]; item E})",
+        "MB: untyped int = 1048576",
+        "Map: func([]T, func(T) U) []U",
+        "Mask: uint8 = 240",
+        "Name: untyped string = \"gopp\"",
+        "Node: p.Node (struct{Name string \"json:\\\"name\\\"\"; next Option[*p.Node]; owner \
+         Shared[p.Node]; Size int @Required})",
+        "Open: func(string, ...int) (Unique[p.Node], error)",
+        "Reader: p.Reader (interface{Close(); Read(*[]uint8) (int, error)})",
+        "Size: int = 5",
+        "Third: untyped float = 1/3",
+        "Twice: p.Celsius (float64) = 200",
+        "Typed: int8 = 127",
+        "ints: p.List[int] (struct{head *p.List[E]; item E})",
+        "table: map[string][]p.Node",
+    ];
+    assert_eq!(lines, expected);
+}
+
+#[test]
+fn a_name_that_is_no_type_is_refused_as_one() {
+    let text = "package p\nconst limit = 3\nvar x limit\nvar y len\nfunc f(a g) {}\nfunc g() {}\n";
+    let (_, messages) = declared("a.go", text);
+    assert_eq!(
+        messages,
+        [
+            "a.go:3:7: limit is not a type",
+            "a.go:4:7: len is not a type",
+            "a.go:5:10: g is not a type",
+        ]
+    );
+}
+
+#[test]
+fn the_methods_of_a_type_make_it_implement_an_interface() {
+    let text = "package p
+type File struct{}
+func (f File) Name() string
+func (f *File) Close()
+func (f *File) Read!(buf *[]byte) int
+type Reader interface {
+	Read(buf *[]byte) (int, error)
+	Close()
+}
+type Namer interface{ Name() string }
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let types = loader.types.get().unwrap();
+    let ty = |name: &str| {
+        let object = checked.package.scope[&names.get(name).unwrap()];
+        checked.package.object(object).ty
+    };
+    let (file, reader, namer) = (ty("File"), ty("Reader"), ty("Namer"));
+    let pointer = types.pointer(file);
+    assert!(types.implements(file, namer, &names));
+    assert!(types.implements(pointer, namer, &names));
+    // The methods of `Reader` have pointer receivers.
+    assert!(!types.implements(file, reader, &names));
+    assert!(types.implements(pointer, reader, &names));
 }
