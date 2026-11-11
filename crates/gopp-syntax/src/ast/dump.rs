@@ -122,12 +122,8 @@ impl<'a> Dumper<'a> {
 
     fn type_params(&mut self, params: &[TypeParam]) {
         for param in params {
-            let extends = if param.extends { " extends" } else { "" };
             let name = self.name(param.name);
-            self.line(
-                format_args!("TypeParam {name}{extends}"),
-                Some(param.name.span),
-            );
+            self.line(format_args!("TypeParam {name}"), Some(param.name.span));
             self.nested(|d| d.expr(param.bound));
         }
     }
@@ -174,7 +170,6 @@ impl<'a> Dumper<'a> {
                 name,
                 type_params,
                 alias,
-                extends,
                 ty,
             } => {
                 let alias = if *alias { " alias" } else { "" };
@@ -182,7 +177,6 @@ impl<'a> Dumper<'a> {
                 self.line(format_args!("Type {name}{alias}{group}"), span);
                 self.nested(|d| {
                     d.type_params(type_params);
-                    d.exprs("extends", extends);
                     d.expr(*ty);
                 });
             }
@@ -381,7 +375,6 @@ impl<'a> Dumper<'a> {
                                 d.nested(|d| d.expr(*ty));
                             }
                             InterfaceElem::Type(ty) => d.field("elem", |d| d.expr(*ty)),
-                            InterfaceElem::Extends(ty) => d.field("extends", |d| d.expr(*ty)),
                         }
                     }
                 });

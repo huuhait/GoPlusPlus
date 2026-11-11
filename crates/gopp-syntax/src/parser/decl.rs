@@ -224,8 +224,7 @@ impl Parser<'_> {
     fn type_spec(&mut self) -> DeclKind {
         let name = self.ident();
         let mut type_params = Vec::new();
-        let only = |ty: ExprId| (false, Vec::new(), Some(ty));
-        let (alias, extends, ty) = if self.at(T::LBrack) {
+        let (alias, ty) = if self.at(T::LBrack) {
             // `type T [N]E` or `type T[P any] ...`: only what follows the
             // `[` tells an array length from a type parameter.
             let lo = self.lo();
@@ -245,14 +244,14 @@ impl Parser<'_> {
                             type_params = self.type_param_list(Some(param), bound);
                             self.type_definition()
                         }
-                        _ => only(self.array_type(lo, Some(x))),
+                        _ => (false, Some(self.array_type(lo, Some(x)))),
                     }
                 }
                 T::RBrack => {
                     self.bump();
-                    only(self.slice_type(lo))
+                    (false, Some(self.slice_type(lo)))
                 }
-                _ => only(self.array_type(lo, None)),
+                _ => (false, Some(self.array_type(lo, None))),
             }
         } else {
             self.type_definition()
@@ -267,28 +266,15 @@ impl Parser<'_> {
             name,
             type_params,
             alias,
-            extends,
             ty,
         }
     }
 
     /// What follows the name and type parameters of a type declaration:
-    /// `= Type`, `Type`, or `extends A, B { fields }`. Returns the alias
-    /// mark, the parents and the type.
-    fn type_definition(&mut self) -> (bool, Vec<ExprId>, Option<ExprId>) {
-        if self.at_extends() {
-            self.bump();
-            let mut parents = vec![self.type_()];
-            while self.got(T::Comma) {
-                parents.push(self.type_());
-            }
-            let lo = self.lo();
-            let fields = self.struct_body();
-            let body = self.alloc_expr(ExprKind::StructType { fields }, lo);
-            return (false, parents, Some(body));
-        }
+    /// `= Type` or `Type`. Returns the alias mark and the type.
+    fn type_definition(&mut self) -> (bool, Option<ExprId>) {
         let alias = self.got_assign();
-        (alias, Vec::new(), self.type_or_none())
+        (alias, self.type_or_none())
     }
 
     /// Splits `x`, read as an expression after `type T[`, into a type

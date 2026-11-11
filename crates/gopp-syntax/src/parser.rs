@@ -90,11 +90,6 @@ impl Parser<'_> {
         self.tokens[index].kind
     }
 
-    /// Whether the current token is the identifier `word`.
-    fn at_word(&self, word: &str) -> bool {
-        self.at(TokenKind::Ident) && self.token_text(self.tokens[self.pos]) == word
-    }
-
     fn token_text(&self, token: Token) -> &str {
         &self.text[token.lo as usize..token.hi as usize]
     }

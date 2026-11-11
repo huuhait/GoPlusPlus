@@ -63,7 +63,7 @@ expression: report
 "package p\ntype S struct { *(T) }\n"
     E0033 2:18 syntax error: cannot parenthesize embedded type
 "package p\ntype S struct { T; sync.Mutex; *U; G[int] }\n"
-    E0377 2:17 struct embedding is not part of Go++: use `extends` to inherit from a struct, or give the field a name
+    E0377 2:17 struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name
 "package p\nfunc () m() {}\nfunc (a, b T) n() {}\n"
     E0157 2:6 method has no receiver
     E0156 3:6 method has multiple receivers

@@ -67,9 +67,6 @@ pub enum DeclKind {
         name: Ident,
         type_params: Vec<TypeParam>,
         alias: bool,
-        /// The parents of `type Name extends A, B { ... }`; `ty` is then the
-        /// struct type of the body.
-        extends: Vec<ExprId>,
         ty: ExprId,
     },
     Func {
@@ -118,8 +115,6 @@ pub struct MacroParam {
 #[derive(Debug)]
 pub struct TypeParam {
     pub name: Ident,
-    /// `[T extends P]`: the bound is the parent type, not a constraint.
-    pub extends: bool,
     pub bound: ExprId,
 }
 
@@ -150,8 +145,6 @@ pub enum InterfaceElem {
     },
     /// An embedded interface or a type set: `io.Reader`, `~int | string`.
     Type(ExprId),
-    /// `extends P` in a constraint.
-    Extends(ExprId),
 }
 
 #[derive(Debug)]

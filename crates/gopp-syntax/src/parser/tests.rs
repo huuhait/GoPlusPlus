@@ -167,7 +167,7 @@ type H func!(int) T
 }
 
 #[test]
-fn attributes_macros_and_extends() {
+fn attributes_macros_and_parents() {
     insta::assert_snapshot!(tree(
         "package p
 
@@ -181,17 +181,23 @@ type Config struct {
 func (a Vec2) Mul(s float64) Vec2
 
 @Pinned
-type Card extends Payment, audit.Trail[int] {
+@Extends(Payment)
+@Extends(audit.Trail[int])
+type Card struct {
 	Number string
 }
 
-type Box[T extends Animal, U any] struct{ v T }
+@Extends(Base[T]) @Abstract
+type Box[T any, extends any] struct{ v T }
 
+@Extends(Animal)
 type Pet interface {
-	extends Animal
 	Clone
+	extends
 	extends(n int) bool
 }
+
+type extends struct{ extends extends }
 
 macro Swap(a expr, rest ...tokens, t type) {
 	a, b = b, a
@@ -368,6 +374,17 @@ fn an_unknown_macro_fragment_kind_lists_the_kinds() {
 }
 
 #[test]
+fn extends_is_not_a_keyword() {
+    for source in [
+        "package p\ntype Card extends Payment { n int }\n",
+        "package p\ntype Box[T extends Animal] struct{}\n",
+        "package p\ntype Pet interface { extends Animal }\n",
+    ] {
+        assert_eq!(errors_in(source).len(), 1, "{source}");
+    }
+}
+
+#[test]
 fn an_attribute_does_not_end_the_imports() {
     assert_eq!(
         errors_in("package p\n@Inline\nimport \"a\"\n"),
@@ -403,7 +420,6 @@ func macro(extends, base int) int { return extends + base }
             "package p\nfunc (r R) m[T any]() {}\n",
             Code::MethodTypeParams,
         ),
-        ("package p\ntype T extends P { x int }\n", Code::Expected),
     ] {
         let diagnostics = parse_go(text).diagnostics;
         assert_eq!(diagnostics.first().map(|d| d.code), Some(code), "{text}");

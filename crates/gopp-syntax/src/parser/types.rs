@@ -12,7 +12,6 @@ use crate::with_stack;
 struct RawParam {
     name: Option<Ident>,
     ty: Option<ExprId>,
-    extends: bool,
 }
 
 impl Parser<'_> {
@@ -288,7 +287,6 @@ impl Parser<'_> {
             .filter_map(|param| {
                 Some(TypeParam {
                     name: param.name?,
-                    extends: param.extends,
                     bound: param.ty?,
                 })
             })
@@ -307,11 +305,7 @@ impl Parser<'_> {
         let mut list: Vec<RawParam> = Vec::new();
         if name.is_some() && ty.is_some() && self.at(close) {
             self.bump();
-            return vec![RawParam {
-                name,
-                ty,
-                extends: false,
-            }];
+            return vec![RawParam { name, ty }];
         }
         let context = if require_names {
             "type parameter list"
@@ -323,7 +317,6 @@ impl Parser<'_> {
                 Some(ty) => Some(RawParam {
                     name: name.take(),
                     ty: Some(ty),
-                    extends: false,
                 }),
                 None => p.param_decl(name.take(), close),
             };
@@ -348,10 +341,10 @@ impl Parser<'_> {
             }
         } else if named != list.len() {
             let mut error_at = None;
-            let mut current: Option<(ExprId, bool)> = None;
+            let mut current = None;
             for param in list.iter_mut().rev() {
                 if let Some(ty) = param.ty {
-                    current = Some((ty, param.extends));
+                    current = Some(ty);
                     if param.name.is_none() {
                         let span = self.exprs[ty].span;
                         error_at = Some(span.lo);
@@ -363,9 +356,8 @@ impl Parser<'_> {
                             },
                         });
                     }
-                } else if let Some((ty, extends)) = current {
+                } else if let Some(ty) = current {
                     param.ty = Some(ty);
-                    param.extends = extends;
                 } else if let Some(name) = param.name {
                     error_at = Some(name.span.lo);
                     param.ty = Some(self.exprs.alloc(Expr {
@@ -408,7 +400,6 @@ impl Parser<'_> {
         let mut param = RawParam {
             name: None,
             ty: None,
-            extends: false,
         };
         if name.is_none() && type_sets && self.at(T::Tilde) {
             param.ty = Some(self.type_set(None));
@@ -463,13 +454,6 @@ impl Parser<'_> {
             param.ty = Some(self.type_set(None));
             return Some(param);
         }
-        if type_sets && self.at_extends() {
-            self.bump();
-            param.extends = true;
-            param.ty = Some(self.type_());
-            return Some(param);
-        }
-
         param.ty = self.type_or_none();
         if let Some(ty) = param.ty {
             param.ty = Some(self.type_set_tail(ty, type_sets));
@@ -480,11 +464,6 @@ impl Parser<'_> {
         self.expected(super::fixed_text(close));
         self.advance(&[T::Comma, close]);
         None
-    }
-
-    /// LEX-12: `extends` is the keyword only before a type name.
-    pub(super) fn at_extends(&self) -> bool {
-        self.gopp && self.at_word("extends") && self.peek(1) == T::Ident
     }
 
     fn type_set_tail(&mut self, first: ExprId, type_sets: bool) -> ExprId {
@@ -527,19 +506,13 @@ impl Parser<'_> {
     fn struct_type(&mut self) -> ExprId {
         let lo = self.lo();
         self.want(T::Struct);
-        let fields = self.struct_body();
-        self.alloc_expr(ExprKind::StructType { fields }, lo)
-    }
-
-    /// `{ fields }` of a struct type or of an `extends` declaration.
-    pub(super) fn struct_body(&mut self) -> Vec<Field> {
-        let mut fields = Vec::new();
         self.want(T::LBrace);
+        let mut fields = Vec::new();
         self.list("struct type", T::Semi, T::RBrace, |p| {
             fields.extend(p.field_decl());
             false
         });
-        fields
+        self.alloc_expr(ExprKind::StructType { fields }, lo)
     }
 
     fn field_decl(&mut self) -> Option<Field> {
@@ -607,7 +580,7 @@ impl Parser<'_> {
         };
         if names.is_empty() && self.gopp {
             let span = self.span_from(lo);
-            let message = "struct embedding is not part of Go++: use `extends` to inherit from \
+            let message = "struct embedding is not part of Go++: use `@Extends` to inherit from \
                            a struct, or give the field a name";
             self.error_at(Code::StructEmbedding, span, message);
         }
@@ -638,10 +611,6 @@ impl Parser<'_> {
     }
 
     fn interface_elem(&mut self) -> InterfaceElem {
-        if self.at_extends() {
-            self.bump();
-            return InterfaceElem::Extends(self.type_());
-        }
         if !self.at(T::Ident) {
             return InterfaceElem::Type(self.type_set(None));
         }

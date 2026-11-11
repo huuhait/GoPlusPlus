@@ -1,0 +1,138 @@
+---
+source: crates/gopp-syntax/src/parser/tests.rs
+expression: "tree(\"package p\n\n@Derive(JSON, Equal)\ntype Config struct {\n\tID   int    @Required\n\tName string @json.Name(\\\"n\\\") @Required `x:\\\"y\\\"`\n}\n\n@Operator @Right\nfunc (a Vec2) Mul(s float64) Vec2\n\n@Pinned\n@Extends(Payment)\n@Extends(audit.Trail[int])\ntype Card struct {\n\tNumber string\n}\n\n@Extends(Base[T]) @Abstract\ntype Box[T any, extends any] struct{ v T }\n\n@Extends(Animal)\ntype Pet interface {\n\tClone\n\textends\n\textends(n int) bool\n}\n\ntype extends struct{ extends extends }\n\nmacro Swap(a expr, rest ...tokens, t type) {\n\ta, b = b, a\n}\n\nmacro func Equal!(target decl) decl\n\n#Register(Config)\n\nfunc use(extends, base int) {\n\t#Assert(extends > 0, \\\"positive\\\")\n\tx := #pkg.Make(func() { run() })\n\tfor _, &d := range docs {\n\t\td.n++\n\t}\n\tfor &p := range seq {\n\t}\n}\n\")"
+---
+File package=p
+  Attribute Derive() @11..31
+    Name JSON @19..23
+    Name Equal @25..30
+  Type Config @32..124
+    StructType @44..124
+      Field ID @54..75
+        Name int @59..62
+        Attribute Required @66..75
+      Field Name @77..122
+        Name string @82..88
+        Attribute json.Name() @89..104
+          BasicLit String "\"n\"" @100..103
+        Attribute Required @105..114
+        tag:
+          BasicLit String "`x:\"y\"`" @115..122
+  Attribute Operator @126..135
+  Attribute Right @136..142
+  Func Mul @143..176
+    Receiver a
+      Name Vec2 @151..155
+    FuncType @143..176
+      Param s
+        Name float64 @163..170
+      Result
+        Name Vec2 @172..176
+  Attribute Pinned @178..185
+  Attribute Extends() @186..203
+    Name Payment @195..202
+  Attribute Extends() @204..230
+    Index @213..229
+      Selector Trail @213..224
+        Name audit @213..218
+      indices:
+        Name int @225..228
+  Type Card @231..266
+    StructType @241..266
+      Field Number @251..264
+        Name string @258..264
+  Attribute Extends() @268..285
+    Index @277..284
+      Name Base @277..281
+      indices:
+        Name T @282..283
+  Attribute Abstract @286..295
+  Type Box @296..338
+    TypeParam T @305..306
+      Name any @307..310
+    TypeParam extends @312..319
+      Name any @320..323
+    StructType @325..338
+      Field v @333..336
+        Name T @335..336
+  Attribute Extends() @340..356
+    Name Animal @349..355
+  Type Pet @357..416
+    InterfaceType @366..416
+      elem:
+        Name Clone @379..384
+      elem:
+        Name extends @386..393
+      Method extends @395..402
+        FuncType @395..414
+          Param n
+            Name int @405..408
+          Result
+            Name bool @410..414
+  Type extends @418..456
+    StructType @431..456
+      Field extends @439..454
+        Name extends @447..454
+  Macro Swap @458..517
+    MacroParam a expr @469..470
+    MacroParam rest ...tokens @477..481
+    MacroParam t type @493..494
+    Block @501..517
+      Assign Assign @504..515
+        lhs:
+          Name a @504..505
+          Name b @507..508
+        rhs:
+          Name b @511..512
+          Name a @514..515
+  MacroFunc Equal @519..554
+    FuncType fails @519..554
+      Param target
+        Name decl @544..548
+      Result
+        Name decl @550..554
+  MacroCallDecl @556..573
+    MacroCall Register @556..573
+      Name Config @566..572
+  Func use @575..738
+    FuncType @575..602
+      Param extends
+        Name int @598..601
+      Param base
+        Name int @598..601
+    Block @603..738
+      ExprStmt @606..638
+        MacroCall Assert @606..638
+          Binary Gt @614..625
+            Name extends @614..621
+            BasicLit Int "0" @624..625
+          BasicLit String "\"positive\"" @627..637
+      Assign Define @640..672
+        lhs:
+          Name x @640..641
+        rhs:
+          MacroCall pkg.Make @645..672
+            FuncLit @655..671
+              FuncType @655..661
+              Block @662..671
+                ExprStmt @664..669
+                  Call @664..669
+                    Name run @664..667
+      Range define @674..710
+        lhs:
+          Name _ @678..679
+          Unary Addr @681..683
+            Name d @682..683
+        x:
+          Name docs @693..697
+        Block @698..710
+          IncDec ++ @702..707
+            Selector n @702..705
+              Name d @702..703
+      Range define @712..736
+        lhs:
+          Unary Addr @716..718
+            Name p @717..718
+        x:
+          Name seq @728..731
+        Block @732..736
