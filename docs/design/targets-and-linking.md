@@ -17,6 +17,7 @@ One table, `TargetSpec` (`crates/gopp-target`), owns all target properties; noth
 | `windows/arm64` | `aarch64-pc-windows-msvc` | 64-bit, LE, 4B (LLP64) | yes | `lld-link` | COFF/PE |
 | `wasip1/wasm32` | `wasm32-wasip1` | 32-bit, LE, 4B (ILP32) | C fallback | `wasm-ld` | Wasm |
 
+- **Supported in version 1 ([ADR-0037](../adr/0037-v1-targets.md)):** `linux/amd64` and `windows/amd64`. Both pass every test. The other six rows stay in the table so that no code assumes one platform, but they are not tested or promised until they are decided after version 1; a build for one of them says so.
 - **Target selection & deterministic CPU baseline:** `gopp build -target=linux/arm64` (or `GOOS`/`GOARCH` aliases) selects the target; the default is `host`. Unless a profile explicitly sets `cpu` ([ADR-0007](../adr/0007-build-profiles.md)), the CPU baseline is fixed per target (`-march=x86-64` on `amd64`, `-march=armv8-a` on `arm64`, `-march=rv64gc` on `riscv64`), never `-march=native`, so builds are byte-for-byte deterministic across machines.
 - **Pure-Rust object inspection:** Object files, symbol tables, undefined-symbol allowlists, and embedded `.gopx` sections are inspected in pure Rust via `object` `0.41.0` across ELF, Mach-O, COFF/PE, and Wasm.
 - **Compile-time layout guards:** Every generated C23 translation unit starts with `_Static_assert` checks verifying pointer width, `int64_t` alignment, `gopp_str` size (3 words), `gopp_slice` size (4 words), and `gopp_iface` size (2 words) against `TargetLayout`.
@@ -36,6 +37,8 @@ One table, `TargetSpec` (`crates/gopp-target`), owns all target properties; noth
 - **Pre-link validation:** `check_link_inputs` validates every startup object, library search directory, and loader path before invoking `lld`. Missing sysroot pieces produce a structured `ariadne` diagnostic naming the exact missing file and the `-crt-dir` / `--sysroot` flag (`E0441`), never a raw linker crash.
 
 ## Cross-target verification matrix
+
+For version 1 the second tested target is `windows/amd64`, run on a real Windows machine; the `linux/arm64` column below applies when that target is taken up ([ADR-0037](../adr/0037-v1-targets.md)).
 
 | Check | `linux/amd64` (host) | Cross targets (`linux/arm64`, `riscv64`, `darwin/*`, `windows/*`, `wasip1/wasm32`) |
 |---|---|---|
