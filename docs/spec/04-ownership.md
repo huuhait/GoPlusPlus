@@ -1,7 +1,5 @@
 # 4. Ownership
 
-> **One point is open.** [ADR-0041](../adr/0041-values-are-copied.md) (2026-11-11) removed the reference count of slice and map buffers. It does not say what now protects a pointer to an element (`&p.Items[i]`) when the slice is replaced through another `Shared[T]` handle or arena alias. On this point [OWN-B9](#45-borrow-checking-adr-0021) rule 5 and the field rule of [OWN-P8](#43-pointers-and-heap-allocation-d17) still describe the earlier model.
-
 Base: Go spec [Variables](https://go.dev/ref/spec#Variables), [The zero value](https://go.dev/ref/spec#The_zero_value), [Assignability](https://go.dev/ref/spec#Assignability), [Assignment statements](https://go.dev/ref/spec#Assignment_statements), [Pointer types](https://go.dev/ref/spec#Pointer_types), [Address operators](https://go.dev/ref/spec#Address_operators), [Allocation](https://go.dev/ref/spec#Allocation), [Making slices, maps and channels](https://go.dev/ref/spec#Making_slices_maps_and_channels).
 
 This is the core of Go++ ([ADR-0041](../adr/0041-values-are-copied.md), [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)). Go++ has **no garbage collector**:
@@ -24,7 +22,7 @@ Two questions decide which pointer you use: **do I own it on the heap?** and **o
 | change every element in a loop | `for _, &u := range users { u.Age++ }` | no (borrow) | [RNG-1a](08-slices-and-range.md) |
 | hand a value over without copying | `move(x)`; `x` cannot be read again until it is assigned | yes | [OWN-R3](#42-ownership-rules-d14) |
 | own a heap value, alone | `Unique[User]`, made with `NewUnique(User{…})`; freed when its owner ends; a copy allocates a new one | yes (1 owner) | [OWN-P2](#43-pointers-and-heap-allocation-d17) |
-| share a heap value | `Shared[User]`, made with `NewShared(User{…})`; writable in 1 goroutine (`u.Name = "x"`), freed when the last reference ends; across goroutines wrap mutable state in `Mutex` / `Atomic` ([CON-19](12-concurrency.md)) | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
+| share a heap value | `Shared[User]`, made with `NewShared(User{…})`; every holder can read it, nobody changes it directly; a part that changes is in a `Mutex` / `Atomic` ([ADR-0042](../adr/0042-shared-is-read-only.md)); freed when the last reference ends | yes, together | [OWN-P8](#43-pointers-and-heap-allocation-d17) |
 | point at a shared value without keeping it alive | `Weak[User]`, made with `NewWeak(s)`; read it with `if p := w.Lock(); p != nil { … }` | no | [OWN-P3, P5](#43-pointers-and-heap-allocation-d17) |
 | say "maybe nothing" | `Option[*User]`, `Option[int]`, `Option[Logger]`, `Option[func()]`, …; check with `o != nil`, `!o.IsNil()` or `v, ok := o.Get()` | — | [OWN-P9, P10](#43-pointers-and-heap-allocation-d17) |
 | make an independent copy | `t := u`; `u.Clone()` (short form `clone(u)`) says the copy is meant | yes (new copy) | [OWN-R3, R6](#42-ownership-rules-d14) |
@@ -153,7 +151,7 @@ f = openLog()            // assigned again: usable
 **OWN-R3b.** *Read-only bindings (interface assertions and plain range variables).*
 Two bindings are read-only names for an existing value:
 1. **Plain `range` variables over structs/arrays (`for _, d := range docs`):** for `OWN-C1` and `OWN-C2` elements, `d` is a read-only copy of the element, and the copy is not made when the body only reads `d` (top-level assignments `d.Title = "x"` and `&d` are compile errors so `d.Title = "x"` never silently mutates a discarded copy as in Go; fix-it `for _, &d := range docs { d.Title = "x" }`, [RNG-1, RNG-1a](08-slices-and-range.md)). Passing `d` or `d.Title` to functions and storing `out = append(out, d)` work as in Go. Writing to an element of a slice or map field (`d.Tags[0] = "x"`) is a write to `d` and is the same compile error. For `OWN-C3` elements, `d` is a read-only view of the element (`&d` in `for _, &d := range xs` gives writable access).
-2. **Type-assertion and type-switch bindings (`s, ok := v.(T)`, `switch x := v.(type)`):** an interface box is shared and immutable ([TYP-5, TYP-9](03-types.md)), so data held **by value** inside the box (including slices and maps inside the boxed value) is read-only through the binding; write `m := x` (or `m := x.Clone()`) to change a copy of your own, or box a `Shared[T]` to change the value every holder sees.
+2. **Type-assertion and type-switch bindings (`s, ok := v.(T)`, `switch x := v.(type)`):** an interface box is shared and immutable ([TYP-5, TYP-9](03-types.md)), so data held **by value** inside the box (including slices and maps inside the boxed value) is read-only through the binding; write `m := x` (or `m := x.Clone()`) to change a copy of your own, or box a `Shared[Mutex[T]]` to change a value every holder sees.
 
 **OWN-R3c.** *Locals captured by closures or `defer`.* A closure uses the captured variable itself, as if through `&x` ([CLO-1, CLO-3a](11-closures.md)). Moving a local (`move(x)`) while a closure or pending `defer` still refers to it is a compile error ([CLO-7, CLO-9](11-closures.md), [PAN-3](09-errors-and-panics.md)). `defer` arguments are evaluated at the `defer` statement and are copies like any other argument ([OWN-R3](#42-ownership-rules-d14)).
 
@@ -200,16 +198,17 @@ func (f *File) drop() {
 ```go
 type Node struct {
     Name     string                 // copyable (OWN-C2)
-    Children []Shared[Node]         // slice of handles to shared child nodes
+    Children Mutex[[]Shared[Node]]  // changes after the node is shared, so it is in a Mutex
     Parent   Option[Weak[Node]]     // back-pointer: does not keep Parent alive
 }
 
 func NewNode(name string, parent Option[Weak[Node]]) Shared[Node] {
-    return NewShared(Node{Name: name, Parent: parent})
+    return NewShared(Node{Name: name, Children: sync.NewMutex([]Shared[Node]{}), Parent: parent})
 }
 
 func Add(parent Shared[Node], child Shared[Node]) {
-    parent.Children = append(parent.Children, child)    // mutates Shared directly in 1 goroutine
+    kids := parent.Children.Lock()                      // a shared Node is changed under its lock
+    kids = append(kids, child)
 }
 
 func main() {
@@ -217,7 +216,7 @@ func main() {
     Add(root, NewNode("a", NewWeak(root)))
     b := NewNode("b", NewWeak(root))
     Add(root, b)                                        // a copy of b (another handle) goes into Children; b is usable below
-    b.Name = "b-renamed"                                // direct field write on Shared[Node]
+    // b.Name = "b-renamed"                             // compile error: b is shared, and Name is not in a Mutex
     if w, ok := b.Parent.Get(); ok {
         if p := w.Lock(); p != nil { fmt.Println(p.Name) }
     }
@@ -234,7 +233,7 @@ A heap pointer is made with `NewUnique`, `NewShared` or `NewWeak`. Go's `new` is
 |---|---|---|
 | `*T` | `&x` (address of a variable, field or element) | raw, non-owning tracked borrow, **never nil** (0 malloc, 0 counter) |
 | `Unique[T]` | `NewUnique(v)` | single heap owner (`OWN-C2`, or `OWN-C3` when `T` cannot be copied); a copy allocates a new one; dropped and freed when its owner ends; never nil |
-| `Shared[T]` | `NewShared(v)` | shared heap ownership (`OWN-C2`); writable in 1 goroutine (non-atomic refcount), `Send + Sync` (atomic refcount) when `T` is synchronized (`Mutex`, `Atomic`, `chan`, OWN-P8); never nil |
+| `Shared[T]` | `NewShared(v)` | shared heap ownership (`OWN-C2`); read-only through the handle, a part that changes is in a `Mutex` / `Atomic` (OWN-P8); `Send + Sync` with an atomic refcount when `T` is `Sync`; never nil |
 | `Weak[T]` | `NewWeak(s)`, from a `Shared[T]` | non-owning back-pointer (`OWN-C2`); `w.Lock()` returns `Option[Shared[T]]`, `nil` if freed |
 | `Option[T]` | `nil`, or any `T` (converts automatically) | "maybe nothing", zero value `nil`; the nilable form of pointers, funcs and interfaces with methods |
 
@@ -253,8 +252,9 @@ A heap pointer is made with `NewUnique`, `NewShared` or `NewWeak`. Go's `new` is
 **OWN-P7.** `make([]T, n)`, `make(map[K]V)` and `make(chan T, n)` work as in Go (with the allocator rules of [SLC-2](08-slices-and-range.md)).
 
 **OWN-P8.** `Unique[T]` has one owner and grants exclusive writable access. `Shared[T]` and `Weak[T]` are reference-counted handles (`OWN-C2`):
-- **Single-goroutine `Shared[T]`:** When `T` has plain writable fields (`Node{Name string, Children []Shared[Node]}`), fields and elements are directly readable and writable (`p.Name = "x"`, `p.Children = append(p.Children, c)`) and `Shared[T]` uses a fast non-atomic reference count. Unprotected fields that are or hold a `Unique[U]`, a value with a `drop` method (`File`) or a C++ class with a non-trivial destructor are not allowed directly inside `Shared[T]` (wrap them in `Mutex[U]`), so overwriting a field through one `Shared[T]` alias can never drop a unique resource while another alias borrows it ([OWN-B9](#45-borrow-checking-adr-0021) rule 5).
-- **Multi-goroutine `Shared[T]` (`Send + Sync`):** `Shared[T]` (and `Weak[T]`) can cross goroutines (`go` / `chan`) only when all of `T`'s state is thread-safe synchronized (`Mutex[U]`, `RWMutex[U]`, `Atomic[U]`, `chan U`, or nested structs of them, [CON-19](12-concurrency.md)), in which case `Shared[T]` uses an atomic reference count.
+- **Read-only through the handle** ([ADR-0042](../adr/0042-shared-is-read-only.md)): several handles are the same `T`, so what a `Shared[T]` holds cannot be changed through a handle, all the way down. Reading a field or an element, `len`, `range`, copying a part out, a method with a value receiver and a method with a pointer receiver that only reads through it are allowed. Assigning a field or an element, `append`, `delete`, `clear`, `mem.Take`, `mem.Replace` and a method that writes through its receiver are compile errors. A pointer taken into the value (`&p.Name`) is a read-only binding ([OWN-R3b](#42-ownership-rules-d14)). Any field type may sit in `T`: no handle can overwrite it.
+- **Changing shared data:** the part that changes is a `Mutex[U]`, `RWMutex[U]`, `Atomic[U]` or a channel and is changed through it (`kids := p.Children.Lock(); kids = append(kids, c)`), or the whole value is one (`Shared[Mutex[Node]]`). This is the same in one goroutine and across goroutines.
+- **Across goroutines:** `Shared[T]` and `Weak[T]` are `Send` and `Sync` when `T` is `Sync` ([CON-19](12-concurrency.md)), and the reference count is atomic exactly then.
 
 **OWN-P9.** *Never nil, and `Option[T]`* ([ADR-0018](../adr/0018-never-nil-pointers-and-option.md)).
 - `*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`, `func` types, and interface types with at least one method (except `error`) are **never nil** and have no zero value.
@@ -357,7 +357,7 @@ println(*p)
 2. **Disjointness.** Different local variables, different struct fields, different constant indexes (`&list[0]` and `&list[1]`), and the two views that `list.Split(k)` returns are provably disjoint. Variable indexes `list[i]` and `list[j]` overlap; use `list.Swap(i, j)` or `Split`.
 3. **Reborrowing.** `q := p` on a writable `*T` reborrows `p`: `p` cannot be used while `q` is live (`q := p; use(q); use(p)` is fine because `q` is dead before `use(p)`).
 4. **No raw `*T` in heap-owned `Unique`/`Shared` data.** Heap-owned structs and collections hold `Unique[T]`, `Shared[T]` or `Weak[T]`, never raw `*T` (`OWN-B5`); borrow-carrying structs live only on the stack or inside a `mem.Arena` whose lifetime bounds every node at once.
-5. **`Shared[T]`, `*T` interior slice borrows, and arena graphs** ([OWN-P8](#43-pointers-and-heap-allocation-d17), [CON-19](12-concurrency.md)): `Shared[T]` holds the fields [OWN-P8](#43-pointers-and-heap-allocation-d17) allows directly (or `Mutex`/`RWMutex`/`Atomic` for the others and for multi-goroutine state). Taking an interior slice borrow `&ptr.Slice[i]` (through `*U` or `Shared[U]`) retains a temporary `+1` reference on `Slice.backing` (and on `Shared[U]`) for the borrow's lifetime so `b.Slice = append(...)` through another alias detaches `b.Slice` via COW (`refcount >= 2`) instead of freeing the borrowed element. `*T` pointers omit C `restrict` qualifiers when `T` may sit inside `Shared[T]` or a borrow-carrying arena struct, and C23 output compiles with `-fno-strict-aliasing`.
+5. **`Shared[T]` and arena graphs** ([OWN-P8](#43-pointers-and-heap-allocation-d17), [CON-19](12-concurrency.md), [ADR-0042](../adr/0042-shared-is-read-only.md)): what a `Shared[T]` holds is read-only through the handle, so no handle can replace or free something that another handle points into; a part that changes sits in a `Mutex`, `RWMutex` or `Atomic` and is reached through a guard. `*T` pointers omit C `restrict` qualifiers when `T` may sit inside `Shared[T]` or a borrow-carrying arena struct, and C23 output compiles with `-fno-strict-aliasing`.
 6. **`Unique[T]` grants exclusive writable access** through its single owner.
 
 ```go

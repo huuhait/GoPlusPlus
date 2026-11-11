@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-11-11
 - **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** the shared, reference-counted buffers of `[]T` and `map[K]V` described here are replaced: a slice or a map is a value with one owner, and `t := s` is a copy. The borrow engine and the string rules stand.
+- **Status note (2026-11-11, [ADR-0042](0042-shared-is-read-only.md)):** a `Shared[T]` is no longer writable directly in a single goroutine: what it holds is read-only through the handle, and a part that changes is in a `Mutex`, `RWMutex` or `Atomic`, in one goroutine as across goroutines.
 - **Plan reference:** integrates with [ADR-0003](0003-memory-model-direction.md), [ADR-0016](0016-required-fields.md), [ADR-0018](0018-never-nil-pointers-and-option.md), [ADR-0021](0021-borrow-checking.md), [ADR-0022](0022-race-free-concurrency.md), [ADR-0026](0026-no-small-string-optimization.md) and [ADR-0029](0029-slice-and-map-allocator-word.md); `docs/spec/` chapters 01 to 16, `appendix-a-symbol-names.md`, `docs/attributes.md`, `docs/design/` (`gir.md`, `calling-convention.md`, `debug-info.md`) and `docs/spec/examples/`.
 
 ## Context
