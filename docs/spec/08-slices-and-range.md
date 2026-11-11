@@ -55,9 +55,11 @@ fmt.Println(unsafe.Sizeof(xs))           // 32
 
 **SLC-11.** For ring-buffer FIFO queues that recycle prefix capacity without reallocating, std provides `container/deque`.
 
-**SLC-12.** *Three-index slicing and `cap`.* Three-index slicing `s[i:j:k]` (`0 <= i <= j <= k <= cap(s)`) sets `len = j - i` and `cap = k - i`, as in Go, so an `append` to a capped sub-slice allocates a fresh backing buffer instead of overwriting elements at `k..`. On an array slice `arr[i:j]` (`backing == nil`), `cap` is `j - i` (`len`) unless capped smaller with `arr[i:j:j]`.
+**SLC-12.** *Three-index slicing and `cap`.* Three-index slicing `s[i:j:k]` (`0 <= i <= j <= len(s)` and `j <= k <= cap(s)`) sets `len = j - i` and `cap = k - i`, so an `append` to a capped sub-slice allocates a fresh backing buffer instead of overwriting elements at `k..`. Unlike Go, `j` may not pass `len(s)` (SLC-13). On an array slice `arr[i:j]` (`backing == nil`), `cap` is `j - i` (`len`) unless capped smaller with `arr[i:j:j]`.
 
-**SLC-13.** *Re-slicing past length.* `s = s[:n]` with `len(s) < n <= cap(s)` is a run-time **panic** ("slice bounds out of range"): elements past `len(s)` may have been dropped by `s[:0]` or never initialized, so extending length uses `append` rather than `s[:n]`.
+**SLC-13.** *No slicing past the length.* The high index of a slice expression on a slice may not pass its length: `s[:n]` and `s[i:n:k]` with `n > len(s)` are **out of range**, even when `n <= cap(s)`, and for every element type. Only `len(s)` elements exist: slots past the length may have been released by a shrink or never initialized, so a slice grows with `append`, not with `s[:n]`. This differs from Go, where `s[:cap(s)]` is legal.
+- It is a **compile error** when the length and the index are both written in the program: the operand is an array, or a local slice whose value on every path comes from `make` with a constant length or from a composite literal and has not been assigned or appended to since, and the index is a constant (`buf := make([]byte, 3, 10); full := buf[:10]`).
+- Otherwise it is a run-time **panic** ("slice bounds out of range"), as for any index that is only known when the program runs.
 
 ```go
 s := []string{"a", "b", "c"}
