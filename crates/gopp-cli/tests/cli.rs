@@ -139,3 +139,86 @@ fn host_toolchain_reports_a_missing_lld() {
     assert!(stderr(&output).starts_with("error: ld.lld not found: "));
     assert_eq!(output.status.code(), Some(1));
 }
+
+fn write_source(dir: &TempDir, name: &str, text: &str) -> PathBuf {
+    let path = dir.path().join(name);
+    fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn parse_prints_the_tree_on_request() {
+    let dir = TempDir::new().unwrap();
+    let file = write_source(
+        &dir,
+        "main.gopp",
+        "package main\n\nfunc main() { run!() }\n",
+    );
+    let quiet = gopp().arg("parse").arg(&file).output().unwrap();
+    assert_eq!(
+        (stdout(&quiet), stderr(&quiet)),
+        (String::new(), String::new())
+    );
+    assert_eq!(quiet.status.code(), Some(0));
+
+    let output = gopp()
+        .args(["parse", "-emit=ast"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(stdout(&output).starts_with("File package=main\n  Func main @14..36\n"));
+    assert!(stdout(&output).contains("Call unwrap"));
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn parse_reports_syntax_errors_and_fails() {
+    let dir = TempDir::new().unwrap();
+    let good = write_source(&dir, "good.go", "package p\n");
+    let bad = write_source(&dir, "bad.gopp", "package p\n\nfunc f() { g(1 2) }\n");
+    let output = gopp().arg("parse").arg(&good).arg(&bad).output().unwrap();
+    let header = format!(
+        "{}:3:16: error[E0028]: syntax error: unexpected literal 2 in argument list; possibly \
+         missing comma or )\n",
+        bad.display()
+    );
+    assert!(stderr(&output).starts_with(&header), "{}", stderr(&output));
+    assert!(stderr(&output).contains("func f() { g(1 2) }"));
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn parse_stops_reporting_after_ten_errors() {
+    let dir = TempDir::new().unwrap();
+    let bad = write_source(
+        &dir,
+        "bad.gopp",
+        &format!("package p\n{}", "func f() { g(1 2) }\n".repeat(30)),
+    );
+    let output = gopp().arg("parse").arg(&bad).output().unwrap();
+    assert_eq!(stderr(&output).matches("error[E0028]").count(), 10);
+    assert_eq!(
+        stderr(&output)
+            .matches("error[E0001]: too many errors")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn parse_refuses_files_it_cannot_read() {
+    let dir = TempDir::new().unwrap();
+    let other = write_source(&dir, "main.c", "int main;\n");
+    let output = gopp().arg("parse").arg(&other).output().unwrap();
+    assert!(stderr(&output).ends_with("main.c: not a .gopp or .go file\n"));
+    assert_eq!(output.status.code(), Some(1));
+
+    let missing = dir.path().join("missing.gopp");
+    let output = gopp().arg("parse").arg(&missing).output().unwrap();
+    assert!(stderr(&output).starts_with("error: "));
+    assert!(stderr(&output).contains("missing.gopp: "));
+    assert_eq!(output.status.code(), Some(1));
+
+    let none = gopp().arg("parse").output().unwrap();
+    assert_eq!(none.status.code(), Some(2));
+}

@@ -350,6 +350,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "gopp-codegen-c",
+ "gopp-diag",
+ "gopp-span",
+ "gopp-syntax",
+ "lasso",
  "tempfile",
 ]
 

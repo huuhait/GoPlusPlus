@@ -1,12 +1,14 @@
 //! The `gopp` command.
 
 mod args;
+mod parse;
 
 use std::env;
 use std::panic;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use gopp_codegen_c::toolchain::{CLANG_MAJOR, HostToolchain};
 
 const EXIT_ERRORS: u8 = 1;
@@ -25,6 +27,20 @@ enum Command {
     Version,
     /// Locate the host Clang and LLD and check their version
     HostToolchain,
+    /// Parse source files and report their syntax errors
+    Parse {
+        /// Print each file in this form
+        #[arg(long, value_enum)]
+        emit: Option<Emit>,
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum Emit {
+    /// The syntax tree, one node per line
+    Ast,
 }
 
 fn main() -> ExitCode {
@@ -36,6 +52,7 @@ fn run() -> ExitCode {
     match cli.command {
         Command::Version => version(),
         Command::HostToolchain => host_toolchain(),
+        Command::Parse { emit, files } => parse::run(&files, emit),
     }
 }
 

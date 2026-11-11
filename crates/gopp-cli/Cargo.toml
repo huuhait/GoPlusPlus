@@ -12,6 +12,10 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 gopp-codegen-c = { path = "../gopp-codegen-c" }
+gopp-diag = { path = "../gopp-diag" }
+gopp-span = { path = "../gopp-span" }
+gopp-syntax = { path = "../gopp-syntax" }
+lasso.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
