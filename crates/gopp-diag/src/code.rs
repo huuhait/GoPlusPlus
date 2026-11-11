@@ -97,7 +97,14 @@ codes! {
     114 DeclaredNotUsed "err_declared_not_used",
     127 UnexportedName "err_unexported_name",
     129 CannotUseBlank "err_cannot_use_blank",
+    131 InitSignature "err_init_signature",
+    132 InitWithBody "err_init_with_body",
+    133 InitTypeParams "err_init_type_params",
     136 ImportUnresolved "err_import_unresolved",
+    139 InvalidRecursiveType "err_invalid_recursive_type",
+    140 InvalidRecursiveTypeSelf "err_invalid_recursive_type_self",
+    142 InitCycle "err_init_cycle",
+    143 InitCycleSelf "err_init_cycle_self",
     156 ReceiverCount "err_receiver_count",
     157 ReceiverMissing "err_receiver_missing",
     210 DefineNoNewVars "err_define_no_new_vars",
@@ -105,6 +112,7 @@ codes! {
     312 UnusedImport "err_unused_import",
     313 UnusedImportAs "err_unused_import_as",
     377 StructEmbedding "err_struct_embedding",
+    454 NoteRefersTo "note_refers_to",
 }
 
 impl Code {

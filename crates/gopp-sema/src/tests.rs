@@ -137,6 +137,8 @@ fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Nam
         let kind = match &object.kind {
             ObjKind::Const => "const",
             ObjKind::Type => "type",
+            // A blank variable is in no scope.
+            ObjKind::Var if names.resolve(&object.name) == "_" => continue,
             ObjKind::Var => "var",
             ObjKind::Func => "func",
             // Go's checker has no object in a scope for `import . "p"`,
@@ -214,6 +216,9 @@ struct Listed {
     path: String,
     import_map: HashMap<String, String>,
     files: Vec<(PathBuf, Names)>,
+    /// The variables that each value initializes, in the order in which
+    /// the values are computed.
+    init_order: Vec<String>,
     /// Built into Go's type checker, which says nothing about its files.
     builtin: bool,
 }
@@ -242,6 +247,7 @@ fn listed_packages(output: &str) -> Vec<Listed> {
                 .files
                 .push((words.next().unwrap().into(), Names::default())),
             "builtin" => package.builtin = true,
+            "init" => package.init_order.push(words.next().unwrap().to_owned()),
             "def" | "use" => {
                 let offset = words.next().unwrap().parse().unwrap();
                 let rest = words.collect::<Vec<_>>().join(" ");
@@ -284,7 +290,8 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     let names = ThreadedRodeo::new();
     let mut checked: HashMap<String, Arc<Package>> = HashMap::new();
     let mut failures = Vec::new();
-    let (mut files_compared, mut names_compared) = (0, 0);
+    let (mut files_compared, mut names_compared, mut initializers_compared) = (0, 0, 0);
+    let (mut packages_compared, mut same_order) = (0, 0);
     for listed in packages {
         let map = SourceMap::new();
         let sink = Sink::new(100);
@@ -313,9 +320,40 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
         }
 
         let found = names_of(&package, &files, &names);
+        let init_order: Vec<String> = package
+            .init_order
+            .iter()
+            .map(|initializer| {
+                let name = |&object| names.resolve(&package.object(object).name);
+                initializer
+                    .lhs
+                    .iter()
+                    .map(name)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect();
+        let path = listed.path.clone();
         checked.insert(listed.path, Arc::new(package));
         if listed.builtin {
             continue;
+        }
+        // The same values are computed. Their order is Go's where no
+        // variable needs another through a method or through the key of a
+        // literal: what a selector and a key denote is not known yet.
+        initializers_compared += init_order.len();
+        same_order += usize::from(init_order == listed.init_order);
+        packages_compared += 1;
+        let sorted = |mut list: Vec<String>| {
+            list.sort();
+            list
+        };
+        if sorted(init_order.clone()) != sorted(listed.init_order.clone()) {
+            failures.push(format!(
+                "{path}: {} values are initialized, for go {}",
+                init_order.len(),
+                listed.init_order.len()
+            ));
         }
         for (((path, go), ours), source) in listed.files.iter().zip(&found).zip(&sources) {
             files_compared += 1;
@@ -347,7 +385,14 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
             }
         }
     }
-    println!("{files_compared} files, {names_compared} names");
+    println!(
+        "{files_compared} files, {names_compared} names, {initializers_compared} initial values; \
+         {same_order} of {packages_compared} packages in Go's order of initialization"
+    );
+    assert!(
+        same_order * 100 >= packages_compared * 95,
+        "the order differs too often"
+    );
     assert!(names_compared > 500_000, "only {names_compared} names");
     failures.dedup();
     let shown: Vec<&str> = failures.iter().take(40).map(String::as_str).collect();
@@ -589,7 +634,7 @@ fn an_import_belongs_to_its_file_and_a_declaration_to_the_package() {
             "a.go",
             "package p\nimport \"example.com/lib\"\nvar A = lib.Value + B\n",
         ),
-        ("b.go", "package p\nvar B = A\nvar _ = lib.Value\n"),
+        ("b.go", "package p\nvar B = 1\nvar _ = lib.Value\n"),
     ];
     let checked = check_texts("p", &files, &loader, &names);
     assert_eq!(checked.messages, ["b.go:3:9: undefined: lib"]);
@@ -712,14 +757,10 @@ func walk/*=walk*/(n/*=n1*/ *Node/*@Node*/, xs/*=xs*/ []int) (sum/*=sum*/ int) {
 }
 ";
     let (declared, used) = marks(text);
-    let checked = check_texts(
-        "p",
-        &[("a.gopp", text)],
-        &Loader::default(),
-        &ThreadedRodeo::new(),
-    );
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
     assert_eq!(checked.messages, [] as [&str; 0]);
-    let found = &names_of(&checked.package, &checked.files, &ThreadedRodeo::new())[0];
+    let found = &names_of(&checked.package, &checked.files, &names)[0];
 
     let mut offsets: Vec<u32> = found.defs.keys().copied().collect();
     let mut marked: Vec<u32> = declared.values().copied().collect();
@@ -815,4 +856,230 @@ fn the_result_does_not_depend_on_the_number_of_threads() {
     let one = run(1);
     assert_eq!(one.0.len(), 400);
     assert_eq!(one, run(8));
+}
+
+#[test]
+fn a_type_may_not_hold_a_value_of_itself() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "type T struct{ t T }",
+            &["a.gopp:2:6: invalid recursive type: T refers to itself"],
+        ),
+        (
+            "type T [2]T",
+            &["a.gopp:2:6: invalid recursive type: T refers to itself"],
+        ),
+        (
+            "type A struct{ b B }\ntype B struct{ c [3]C }\ntype C struct{ a A }",
+            &[
+                "a.gopp:2:6: invalid recursive type A",
+                "    a.gopp:2:6: A refers to B",
+                "    a.gopp:3:6: B refers to C",
+                "    a.gopp:4:6: C refers to A",
+            ],
+        ),
+        (
+            "type A B\ntype B A",
+            &[
+                "a.gopp:2:6: invalid recursive type A",
+                "    a.gopp:2:6: A refers to B",
+                "    a.gopp:3:6: B refers to A",
+            ],
+        ),
+        (
+            "type A = B\ntype B = *A",
+            &[
+                "a.gopp:2:6: invalid recursive type A",
+                "    a.gopp:2:6: A refers to B",
+                "    a.gopp:3:6: B refers to A",
+            ],
+        ),
+        // An option holds its value in place.
+        (
+            "type T struct{ next Option[T] }",
+            &["a.gopp:2:6: invalid recursive type: T refers to itself"],
+        ),
+        // Behind a pointer of any kind, in a slice, a map, a channel, a
+        // func or an interface, nothing is held.
+        (
+            "type T struct {\n\ta *T\n\tb []T\n\tc map[string]T\n\td chan T\n\te func(T) T\n\t\
+             f interface{ M(T) }\n\tg Option[*T]\n\th Unique[T]\n\ti Shared[T]\n}",
+            &[],
+        ),
+        ("type L[E any] struct{ next *L[E]; v E }\ntype B *B", &[]),
+        ("type A struct{ b *B }\ntype B struct{ a A }", &[]),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{body}\n");
+        assert_eq!(messages("a.gopp", &text), *expected, "{body}");
+    }
+}
+
+/// The variables that each step of the start of the program sets.
+fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.go", text)], &Loader::default(), &names);
+    let package = &checked.package;
+    let step = |initializer: &crate::Initializer| {
+        let name = |&object| names.resolve(&package.object(object).name);
+        initializer
+            .lhs
+            .iter()
+            .map(name)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    (
+        package.init_order.iter().map(step).collect(),
+        checked.messages,
+    )
+}
+
+#[test]
+fn variables_are_initialized_after_what_they_need() {
+    let cases: &[(&str, &[&str])] = &[
+        ("var a = 1\nvar b = 2\nvar c = 3", &["a", "b", "c"]),
+        ("var a = b + 1\nvar b = c\nvar c = 1", &["c", "b", "a"]),
+        // What a function needs, its callers need.
+        (
+            "var a = f()\nvar b = 1\nfunc f() int { return g() }\nfunc g() int { return b + c }\nvar c = 2",
+            &["b", "c", "a"],
+        ),
+        // Functions may call each other.
+        (
+            "var a = even(3)\nfunc even(n int) bool { return n == 0 || odd(n-1) }\n\
+             func odd(n int) bool { return n != 0 && even(n-1) && limit > 0 }\nvar limit = 9",
+            &["limit", "a"],
+        ),
+        // One value for two variables is one step; two values are two.
+        (
+            "var a, b = f()\nfunc f() (int, int) { return c, c }\nvar c = 1",
+            &["c", "a,b"],
+        ),
+        ("var a, b = d, 1\nvar d = 2", &["b", "d", "a"]),
+        // A variable without a value is no step, a blank one with a value is.
+        ("var a int\nvar _ = b\nvar b = a", &["b", "_"]),
+        // The first in the source that is ready goes first.
+        (
+            "var z = 1\nvar y = x\nvar x = 2\nvar w = 3",
+            &["z", "x", "y", "w"],
+        ),
+        (
+            "const k = 2\nvar a = k\nvar f = func() int { return b }\nvar b = 1",
+            &["a", "b", "f"],
+        ),
+    ];
+    for (body, expected) in cases {
+        let (order, messages) = init_order(&format!("package p\n{body}\n"));
+        assert_eq!(messages, [] as [&str; 0], "{body}");
+        assert_eq!(order, *expected, "{body}");
+    }
+}
+
+#[test]
+fn variables_that_need_each_other_are_an_error() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "var x = x",
+            &["a.go:2:5: initialization cycle: x refers to itself"],
+        ),
+        (
+            "var a = b\nvar b = a",
+            &[
+                "a.go:2:5: initialization cycle for a",
+                "    a.go:2:5: a refers to b",
+                "    a.go:3:5: b refers to a",
+            ],
+        ),
+        (
+            "var x = f()\nfunc f() int { return g() }\nfunc g() int { return x }",
+            &[
+                "a.go:2:5: initialization cycle for x",
+                "    a.go:2:5: x refers to f",
+                "    a.go:3:6: f refers to g",
+                "    a.go:4:6: g refers to x",
+            ],
+        ),
+        (
+            "const a = b\nconst b = a",
+            &[
+                "a.go:2:7: initialization cycle for a",
+                "    a.go:2:7: a refers to b",
+                "    a.go:3:7: b refers to a",
+            ],
+        ),
+        // A constant that repeats the value above it needs what that needs.
+        (
+            "const (\n\ta = c + iota\n\tb\n\tc\n)",
+            &["a.go:5:2: initialization cycle: c refers to itself"],
+        ),
+    ];
+    for (body, expected) in cases {
+        let (_, messages) = init_order(&format!("package p\n{body}\n"));
+        assert_eq!(messages, *expected, "{body}");
+    }
+}
+
+#[test]
+fn init_and_main_are_plain_functions() {
+    let check = |package: &str, body: &str| {
+        let text = format!("package {package}\n{body}\n");
+        let loader = Loader::default();
+        check_texts(package, &[("a.go", &text)], &loader, &ThreadedRodeo::new()).messages
+    };
+    assert_eq!(
+        check("main", "func init() {}\nfunc init() {}\nfunc main() {}"),
+        [] as [&str; 0]
+    );
+    assert_eq!(
+        check("p", "func main(x int) int { return x }\nvar _ = main"),
+        [] as [&str; 0]
+    );
+    assert_eq!(
+        check("main", "func init(x int) {}\nfunc main() int { return 0 }"),
+        [
+            "a.go:2:6: func init must have no arguments and no return values",
+            "a.go:3:6: func main must have no arguments and no return values",
+        ]
+    );
+    assert_eq!(
+        check("main", "func init[T any]() {}\nfunc init()"),
+        [
+            "a.go:2:11: func init must have no type parameters",
+            "a.go:3:6: func init must have a body",
+        ]
+    );
+    assert_eq!(
+        check("main", "var init = 1\ntype main int"),
+        [
+            "a.go:2:5: cannot declare init - must be func",
+            "a.go:3:6: cannot declare main - must be func",
+        ]
+    );
+}
+
+#[test]
+fn the_steps_of_ordering_grow_with_the_declarations_not_faster() {
+    // Wall time is not measured here; this only has to end. Each program
+    // is one long chain, the worst case for following references.
+    let chain = |count: usize| {
+        let vars: String = (0..count)
+            .map(|i| format!("var v{i} = v{}\n", i + 1))
+            .collect();
+        let funcs: String = (0..count)
+            .map(|i| format!("func f{i}() int {{ return f{}() }}\n", i + 1))
+            .collect();
+        let types: String = (0..count)
+            .map(|i| format!("type T{i} struct{{ t T{} }}\n", i + 1))
+            .collect();
+        format!(
+            "package p\n{vars}var v{count} = f0()\n{funcs}func f{count}() int {{ return 1 }}\n\
+             {types}type T{count} int\nvar _ = [1]T0{{}}\n"
+        )
+    };
+    let (order, messages) = init_order(&chain(20_000));
+    assert_eq!(messages, [] as [&str; 0]);
+    assert_eq!(order.len(), 20_002);
+    assert_eq!(order[0], "v20000");
+    assert_eq!(order[20_000], "v0");
 }

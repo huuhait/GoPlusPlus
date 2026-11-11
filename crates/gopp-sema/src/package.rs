@@ -5,6 +5,7 @@ use std::sync::Arc;
 use lasso::Spur;
 use rustc_hash::FxHashMap;
 
+use crate::decls::Initializer;
 use crate::object::{FileInfo, ObjId, Object};
 
 #[derive(Debug, Default)]
@@ -18,6 +19,9 @@ pub struct Package {
     /// The macros of the package, which have a namespace of their own.
     pub macros: FxHashMap<Spur, ObjId>,
     pub files: Vec<FileInfo>,
+    /// The values of the package-level variables in the order in which the
+    /// program computes them at its start.
+    pub init_order: Vec<Initializer>,
     /// Stands in for a package that could not be loaded. Every name is
     /// taken to exist in it, so that one failed import is one error.
     pub fake: bool,

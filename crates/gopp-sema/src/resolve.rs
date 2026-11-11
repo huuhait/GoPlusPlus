@@ -16,6 +16,7 @@ use lasso::{Spur, ThreadedRodeo};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::decls;
 use crate::literal::unquote;
 use crate::object::{Body, FileInfo, Local, LocalId, LocalKind, ObjId, ObjKind, Object, Ref};
 use crate::package::{Package, PackageLoader};
@@ -103,6 +104,7 @@ pub(crate) fn check_counted(
             sink.push(diagnostic);
         }
     }
+    package.init_order = decls::order(&package, units, names, sink);
     (package, steps)
 }
 
@@ -200,6 +202,11 @@ impl Collector<'_> {
     /// Declares `name` in the package scope, or among the macros.
     fn declare(&mut self, name: Ident, kind: ObjKind) {
         if name.name == self.blank {
+            // `var _ = f()` names nothing, but its value is computed when
+            // the program starts.
+            if matches!(kind, ObjKind::Var) {
+                self.object(name.name, kind, name.span);
+            }
             return;
         }
         let is_macro = matches!(kind, ObjKind::Macro);

@@ -12,6 +12,9 @@
 //	use <offset> obj <file index> <offset>      declared in this package
 //	use <offset> universe <name>
 //	use <offset> ext <import path> <name>       declared in another package
+//	init <name>,<name>                          after the files: the variables
+//	                                            that one value initializes, in
+//	                                            the order of initialization
 //
 // The records of a file follow its line. Only names that a scope holds are
 // printed: no fields, no methods, no labels.
@@ -30,6 +33,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 type listed struct {
@@ -134,6 +138,13 @@ func main() {
 				}
 				return true
 			})
+		}
+		for _, initializer := range info.InitOrder {
+			var lhs []string
+			for _, v := range initializer.Lhs {
+				lhs = append(lhs, v.Name())
+			}
+			fmt.Fprintf(out, "init %s\n", strings.Join(lhs, ","))
 		}
 	}
 	check(list.Wait())
