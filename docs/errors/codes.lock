@@ -1,8 +1,8 @@
 # The error codes of the diagnostics (D3.11, P03.14). A line is `E<number> <name>`,
-# the name of a DIAG row of compiler/include/gopp/Basic/DiagnosticIDs.def.
-# A code is never removed, renumbered or reused: tools/check-diag-codes.py (the
-# ninja target check-diag-codes, part of `check`) fails when the table
-# disagrees with this file. Add new rows with `--update`; never edit a line.
+# the name of a diagnostic in the table of crates/gopp-diag.
+# A code is never removed, renumbered or reused: the registry test of
+# gopp-diag (`cargo test -p gopp-diag`) fails when the table disagrees with
+# this file. Add new rows at the end with the next free number; never edit a line.
 E0001 err_too_many_errors
 E0002 err_lex_illegal_nul
 E0003 err_lex_utf16

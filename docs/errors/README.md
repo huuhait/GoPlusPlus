@@ -7,10 +7,10 @@ JSON output as `"id":"err_undefined","code":"E0111"`.
 example; `gopp explain --list` lists all codes.
 
 - `docs/errors/codes.lock` is the append-only source of truth recording every
-  diagnostic `Code\tName` ever assigned (`E0001`..). `crates/gopp-diag` parses
+  diagnostic as a line `E<number> <name>` (`E0001`..). `crates/gopp-diag` parses
   and validates the registry (`gopp_diag::LockRegistry`), and its unit tests
   fail when any row is malformed, duplicated, removed, or renumbered. A new
-  diagnostic takes the next free number (`tools/check-diag-codes.py --update`
+  diagnostic takes the next free number (`GOPP_UPDATE_CODES=1 cargo test -p gopp-diag`
   appends it; never edit or renumber existing rows in `docs/errors/codes.lock`).
   `custom` (a message given as a string by a tool or plugin) has no code.
 - The explanations live in `crates/gopp-diag/src/explain.rs`. Every explainable

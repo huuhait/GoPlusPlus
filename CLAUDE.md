@@ -16,7 +16,7 @@
 - Comments never mention the plan: no plan IDs (`P00`, `D0.13`), step or phase numbers, task names, or review rounds. Say what the code is, nothing about how the work was organized.
 
 ## Dev loop (speed)
-Budgets and design: plan P00 D0.13 (`plans/2026-10-27-goplusplus-language/00-foundations/README.md`) and ADR-0001 (100% Rust -> Clang-23 C23). A slow loop is a bug.
+Budgets and design: plan P00 D0.13 (`plans/2026-11-11-goplusplus-language/00-foundations/README.md`) and ADR-0001 (100% Rust -> Clang-23 C23). A slow loop is a bug.
 - After an edit, run the narrowest test first (one crate or test filter, e.g. `timeout 60 cargo test -p gopp-syntax`). Run the full suite (`timeout 120 cargo test --workspace`) once, before finishing the task.
 - If one command takes more than 2 minutes, stop and fix the slowness (a narrower target, a cache, a test that stops earlier) instead of waiting. Report it.
 - Run long jobs (full suite, cdep builds, benchmarks) in the background and keep working.

@@ -78,7 +78,7 @@ attach(&root, sub)    // moved into attach: sub is now consumed
 - Returning a raw `*T`, `Option[*T]`, or borrow-carrying struct/array borrows from the parameter(s) named in the function's pointer-borrow summary ([OWN-B3](04-ownership.md#45-borrow-checking-adr-0021)); returning `&local` or a stack-array slice `arr[:]` is a compile error.
 
 **PAR-10.** *ABI summary (informative here, normative in `docs/design/calling-convention.md`).*
-- Scalars and small aggregates (up to 4 scalars, including 3-word `string` and 4-word `[]T`) pass directly in registers under `swiftcc`; larger aggregates pass by pointer to a caller/callee copy.
+- Scalars and small aggregates (up to 4 scalars, including 3-word `string` and 4-word `[]T`) pass directly in registers under `swiftcall`; larger aggregates pass by pointer to a caller/callee copy.
 - Lent `OWN-C2` parameters require no retain/release in the caller or prologue; only stores to escaping destinations emit a retain.
 - `OWN-C3` value parameters transfer ownership from caller to callee, which runs drop glue on exit if not moved onward.
 

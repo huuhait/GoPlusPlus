@@ -330,3 +330,4 @@ Every statement and terminator carries a `Span` and a `ScopeId` into `Function::
   - Step-counting linearity stress tests (`4x` input `<= 4.5x` steps against a quadratic control) across `MoveCheck`, `BorrowCheck`, `InstanceWalk`, `verify_module`, FMA matching, and type emission.
 - **Differential & sanitizer execution (`gopp test-run`, `tests/run/`):**
   - Scalar, string/slice/map collection, generic, closure, interface, panic, and C-ABI differential suites verified against Go reference goldens across `-opt=0..z` on `amd64` and `arm64` (`qemu-aarch64`), plus AddressSanitizer + LeakSanitizer (`-sanitize=address`) zero-leak verification across all ownership categories.
+- **Fuzzing ([fuzzing.md](fuzzing.md)):** generated valid programs through every oracle, injected rule violations that `MoveCheck`/`BorrowCheck`/`ConcurrencyCheck` must reject, random GIR modules for pass equivalence, and mutated modules that test `verify_module` for missing rules.
