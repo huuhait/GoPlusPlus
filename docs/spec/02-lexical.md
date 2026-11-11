@@ -86,8 +86,6 @@ Old uses stay: unary `!x` and the operator `!=`.
 <a id="lex-12"></a>
 **LEX-12.** *`base` is contextual.* `base` is special only inside the methods of a type that has parents (`@Extends`, [TYP-16](03-types.md#35-inheritance-adr-0023)), where `base.M(…)` or `base[Parent].M(…)` calls a direct parent's method ([TYP-20](03-types.md#35-inheritance-adr-0023)). A local, parameter, result or receiver named `base` is an error there, with a rename hint. In any other function, method or scope `base` is an ordinary identifier.
 
-`extends` is not a keyword of any kind. A parent is named by the attribute `@Extends(Parent)` ([ADR-0034](../adr/0034-extends-attribute.md)), so `extends` is an ordinary identifier everywhere (`extends := 1`, `func extends()`, a field or a method named `extends`).
-
 
 ## 2.2 Examples
 

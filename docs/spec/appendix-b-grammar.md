@@ -15,7 +15,7 @@ keyword           = /* the 25 Go keywords */ | "macro" .        /* Go++ LEX-2 */
 operator_or_punct = /* Go tokens */ | "#" | "@" .               /* Go++ LEX-3 */
 ```
 
-`extends` and `base` are identifiers. Neither appears in a production: inheritance is the attribute `@Extends` ([TYP-16](03-types.md#35-inheritance-adr-0023)), and `base` gets its meaning from the checker ([LEX-12](02-lexical.md#lex-12)).
+`base` is an identifier. It appears in no production: it gets its meaning from the checker ([LEX-12](02-lexical.md#lex-12)). Inheritance has no production either: a parent is named by the attribute `@Extends` ([TYP-16](03-types.md#35-inheritance-adr-0023)).
 
 ## B.2 Source files
 
@@ -238,7 +238,7 @@ The fragment kinds are identifiers to the lexer; they are names only in a `Macro
 ## B.8 What the parser decides beyond the productions
 
 1. **`!` after an operand** ([LEX-5](02-lexical.md)). After a `PrimaryExpr`, a `!` followed by `(` is the unwrapping mark of `PrimaryExpr "!" Arguments`. A unary `!` can only start an operand, so the two never compete. `!=` is one token.
-2. **No `extends` keyword** ([LEX-12](02-lexical.md#lex-12)). A parent is named by the attribute `@Extends(Parent)` before a type declaration ([TYP-16](03-types.md#35-inheritance-adr-0023)). The parser reads it like any attribute: the argument is an expression, and the checker reads it as a type.
+2. **Inheritance.** A parent is named by the attribute `@Extends(Parent)` before a type declaration ([TYP-16](03-types.md#35-inheritance-adr-0023)). The parser reads it like any attribute: the argument is an expression, and the checker reads it as a type.
 3. **Semicolons after attributes** ([LEX-6](02-lexical.md)). An attribute line ends in an identifier or `)`, so the lexer inserts a `;` after it. `AttributedDecl` accepts that one `;` after each attribute.
 4. **Where attributes go** ([13.1](13-macros-surface.md)). Before a top-level declaration, and in a struct field after the field's type and before its tag. An attribute before a statement or before an import is an error.
 5. **Macro invocations** ([MAC-2](13-macros-surface.md#132-rules)). `#Name(args)` is an operand, so in statement position it is an `ExpressionStmt`, and at top level it is a declaration. Where a type is expected, `#` is a parse error.

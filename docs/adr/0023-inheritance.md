@@ -28,7 +28,6 @@ Go++ therefore provides explicit struct inheritance with `@Extends(P)`, one attr
 1. **Syntax (TYP-16, [ADR-0034](0034-extends-attribute.md)).** A type names each parent with the attribute `@Extends(Parent)` before `type Child struct { fields }`, one attribute per parent. The order of the attributes is the order of the parents `P1`, `P2`, ….
    - Each parent must be a struct type (possibly generic: `@Extends(A[T]) @Extends(Log[T]) type B[T any] struct { … }`), except that at most **one** C++ class may be a parent, as the **first** `@Extends` (`TYP-28`, decision 14). A child of a child is fine.
    - **No cycles, no duplicate parents, no diamonds.** Naming the same parent twice, two instantiations of the same generic parent (`Box[int]` and `Box[string]`), a parent that is already an ancestor of another parent (`Payment` and `Card`), or two parents that share any common ancestor (`B` and `C` with the parent `Entity`, as parents of `D`) is a compile error. Every ancestor appears at most once in a type's hierarchy.
-   - `extends` is not a keyword; it is an ordinary identifier.
    - `type X Y` where `Y` has parents, is a tagged type or is an abstract type is an error: write `@Extends(Y)` before `type X struct{}`.
    - A parent that is a non-struct type, an interface or a pointer is an error.
 
