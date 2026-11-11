@@ -1,5 +1,7 @@
 //! Name resolution, type checking, constants, generics, and flow typing.
 
+pub mod basic;
+pub mod constant;
 mod literal;
 mod object;
 mod package;

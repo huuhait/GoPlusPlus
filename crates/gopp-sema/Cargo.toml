@@ -13,6 +13,7 @@ gopp-diag = { path = "../gopp-diag" }
 gopp-span = { path = "../gopp-span" }
 gopp-syntax = { path = "../gopp-syntax" }
 lasso.workspace = true
+num-bigint.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 
