@@ -158,7 +158,7 @@ pub fn is_test_file(name: &str) -> bool {
 // ---- `@Build`
 
 /// Whether `attr` is `@Build`.
-pub(crate) fn is_build(attr: &Attribute, text: &str) -> bool {
+pub fn is_build(attr: &Attribute, text: &str) -> bool {
     let name = attr.path.name.span;
     attr.path.package.is_none() && &text[name.lo as usize..name.hi as usize] == "Build"
 }

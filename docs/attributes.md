@@ -69,6 +69,7 @@ A method with no mark is final.
 | `@` | On | Does |
 |---|---|---|
 | `@If(cond)` | any top-level declaration | always type-checked; emitted only when the constant `cond` is true ([MAC-15](spec/13-macros-surface.md#132-rules)) |
+| `@Build(cond)` | a file (above `package`), or a top-level declaration, an import included | part of the build only when `cond` holds; what it leaves out is parsed but not checked. `cond` is made of words (`linux`, `amd64`, a profile, a declared tag), `&&`, `\|\|` and `!` ([FOR-11](spec/14-foreign-surface.md#142-rules)) |
 
 ## Not built in
 
