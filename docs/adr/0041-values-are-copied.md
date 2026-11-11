@@ -2,7 +2,7 @@
 
 - **Status:** accepted (owner decision). The spec chapters named under "To do" still describe the earlier model until they are rewritten.
 - **Date:** 2026-11-11
-- **Plan reference:** P01.19; replaces [ADR-0040](0040-unshared-is-proven-at-compile-time.md) and the shared-buffer part of [ADR-0032](0032-shared-buffers-and-borrow-engine.md); changes OWN-C2, OWN-R3, OWN-R3d, OWN-P1, OWN-S2, PAR-1, SLC-6 to SLC-9, STM-7, TYP-6, TYP-7, CON-1, CON-4, CON-14
+- **Plan reference:** P01.19; reverses part of [ADR-0003](0003-memory-model-direction.md) (see Context); replaces [ADR-0040](0040-unshared-is-proven-at-compile-time.md) and the shared-buffer part of [ADR-0032](0032-shared-buffers-and-borrow-engine.md); changes OWN-C2, OWN-R3, OWN-R3d, OWN-P1, OWN-S2, PAR-1, SLC-6 to SLC-9, STM-7, TYP-6, TYP-7, CON-1, CON-4, CON-14
 
 ## Context
 
@@ -12,6 +12,8 @@ That one exception produced a growing set of rules: when a shared slice may be s
 
 The owner decided to remove the exception rather than refine it, and to do it the way C++ does.
 
+**This reverses an earlier decision.** [ADR-0003](0003-memory-model-direction.md), the founding memory model, made slices and maps shared handles, said that every heap allocation is spelled out and that deep copies are explicit (`Clone()`), and listed "C++-style implicit deep copies: hidden allocations" among the rejected alternatives. The spec repeats it ("Go++ never performs a hidden deep copy", TYP-6). This ADR chooses that alternative on purpose: a rule with no exception is worth more to the owner than copies that are always visible. The rest of ADR-0003 stands: no garbage collector, deterministic destruction, single-owner types, borrow checking without annotations.
+
 ## Decision
 
 1. **A value is a copy.** `t := s`, `t = s`, storing into a field or an element, returning, and passing an argument each give the destination its own value, for every type. After `t := s`, nothing done to `t` is seen through `s`.
@@ -20,13 +22,14 @@ The owner decided to remove the exception rather than refine it, and to do it th
 4. **A parameter is the function's own copy.** Changing it does not change the caller's variable. A function that changes the caller's value takes a pointer, and the caller writes `&`:
    ```go
    func addOne(xs []int)  { xs[0]++ }        // changes its copy
-   func addOne(xs *[]int) { (*xs)[0]++ }     // changes the caller's slice
+   func addOne(xs *[]int) { xs[0]++ }        // changes the caller's slice
 
    addOne(nums)     // nums is unchanged
    addOne(&nums)    // nums changes, and the call shows it
    ```
 5. **A copy that cannot be noticed is not made.** When the source is not used again, the copy is done as a move. When a function only reads a parameter, the argument is passed without copying. A program cannot tell the difference and must not depend on how many copies are made.
 6. **A type that cannot be copied** (a file, a mutex, anything with cleanup and no way to duplicate) makes a plain `t := s` a compile error. The fix-its are `move(s)` and `&s`.
+7. **A pointer to a slice, a map or an array is used without writing `*`** wherever only the pointed-to value fits: indexing (`xs[0]`, `m[k]`), slicing (`xs[i:j]`), `range xs`, `len`, `cap`, `delete` and `clear`. This is what field access and method calls already do for a pointer to a struct. Only the whole value is written with the star: `*xs = append(*xs, 4)`, `*xs = nil`.
 
 What a copy is, by type:
 
@@ -43,6 +46,7 @@ What a copy is, by type:
 - One rule for every type. Two names change one thing only when a type says so: a pointer, `Shared[T]`, a channel.
 - **A slice or a map always has exactly one owner.** Their buffers need no reference count. Sending one on a channel, passing it to `go` and storing it in an interface are plain copies or moves, so the "unshared" rule of ADR-0040 and OWN-R3d is no longer needed.
 - Shortening a shared slice, and which elements a shared buffer releases, are no longer questions: there is no shared slice.
+- **The promise "never a hidden deep copy" and "every heap allocation is spelled out" no longer holds** for assignment and argument passing; it is removed from the spec with the rewrite.
 - **Copies can be large and are not visible in the source.** `t := s` on a big slice copies it when `s` is used again. A tool should be able to list the copies a program makes.
 - **Go code changes meaning in two places, without an error.** A function that changes a slice or map it received by value now changes a copy (`sort.Ints(nums)` becomes `sort.Ints(&nums)`, `file.Read(buf)` becomes `file.Read(&buf)`), and two variables assigned from each other no longer see each other's changes. The library's signatures take pointers where Go's functions change their argument.
 - The samples in `docs/spec/examples` and their notes must be re-read against this rule.
