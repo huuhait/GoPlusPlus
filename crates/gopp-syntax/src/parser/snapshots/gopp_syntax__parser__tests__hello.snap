@@ -1,0 +1,16 @@
+---
+source: crates/gopp-syntax/src/parser/tests.rs
+expression: tree(source)
+---
+File package=main
+  Import @14..26
+    BasicLit String "\"fmt\"" @21..26
+  Func main @28..72
+    FuncType @28..39
+    Block @40..72
+      ExprStmt @43..70
+        Call @43..70
+          Selector Println @43..54
+            Name fmt @43..46
+          args:
+            BasicLit String "\"Hello, Go++!\"" @55..69

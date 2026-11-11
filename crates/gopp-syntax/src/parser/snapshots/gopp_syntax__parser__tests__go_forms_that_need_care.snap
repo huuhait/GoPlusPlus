@@ -1,0 +1,220 @@
+---
+source: crates/gopp-syntax/src/parser/tests.rs
+expression: "tree(\"package p\n\nimport (\n\t. \\\"dot\\\"\n\t_ \\\"blank\\\"\n\tname \\\"path\\\"\n)\n\nconst (\n\tA = iota\n\tB\n)\n\ntype (\n\tArr    [N]int\n\tSlice  []int\n\tDots   [...]int\n\tGen[P any, Q interface{ ~int | ~string }] struct{}\n\tPtr[P *T,]  struct{}\n\tAlias = map[string]chan<- int\n\tRecv  <-chan <-chan int\n)\n\nfunc f(a, b int, c ...string) (x int, err error) {\n\tif v, ok := m[k]; ok && v == (T{1, 2}) {\n\t}\n\tfor i := 0; i < 10; i++ {\n\t}\n\tfor {\n\t}\n\tswitch x := v.(type) {\n\tcase []int, *T:\n\tdefault:\n\t}\n\tswitch {\n\tcase a < b:\n\t\tfallthrough\n\tcase a > b:\n\t}\n\tselect {\n\tcase v := <-ch:\n\tcase ch <- 1:\n\tdefault:\n\t}\nL:\n\tfor range ch {\n\t\tbreak L\n\t}\n\tgo func() {}()\n\tdefer mu.Unlock()\n\ts = a[1:2:3]\n\ts = a[:]\n\tg := G[int, string]{k: {1, 2}, 3: v}\n\tx, y = y, x\n\tx <<= 2\n\tp := &T{}\n\treturn *p, nil\n}\n\")"
+---
+File package=p
+  Import . group=1 @21..28
+    BasicLit String "\"dot\"" @23..28
+  Import _ group=1 @30..39
+    BasicLit String "\"blank\"" @32..39
+  Import name group=1 @41..52
+    BasicLit String "\"path\"" @46..52
+  Const A group=2 @65..73
+    values:
+      Name iota @69..73
+  Const B group=2 @75..76
+  Type Arr group=3 @88..101
+    ArrayType @95..101
+      len:
+        Name N @96..97
+      Name int @98..101
+  Type Slice group=3 @103..115
+    SliceType @110..115
+      Name int @112..115
+  Type Dots group=3 @117..132
+    ArrayType @124..132
+      Name int @129..132
+  Type Gen group=3 @134..184
+    TypeParam P @138..139
+      Name any @140..143
+    TypeParam Q @145..146
+      InterfaceType @147..174
+        elem:
+          Binary Or @158..172
+            Unary Tilde @158..162
+              Name int @159..162
+            Unary Tilde @165..172
+              Name string @166..172
+    StructType @176..184
+  Type Ptr group=3 @186..206
+    TypeParam P @190..191
+      Unary Star @192..194
+        Name T @193..194
+    StructType @198..206
+  Type Alias alias group=3 @208..237
+    MapType @216..237
+      Name string @220..226
+      ChanType Send @227..237
+        Name int @234..237
+  Type Recv group=3 @239..262
+    ChanType Recv @245..262
+      ChanType Recv @252..262
+        Name int @259..262
+  Func f @266..743
+    FuncType @266..314
+      Param a
+        Name int @278..281
+      Param b
+        Name int @278..281
+      Param c
+        DotsType @285..294
+          Name string @288..294
+      Result x
+        Name int @299..302
+      Result err
+        Name error @308..313
+    Block @315..743
+      If @318..361
+        init:
+          Assign Define @321..334
+            lhs:
+              Name v @321..322
+              Name ok @324..326
+            rhs:
+              Index @330..334
+                Name m @330..331
+                indices:
+                  Name k @332..333
+        cond:
+          Binary AndAnd @336..356
+            Name ok @336..338
+            Binary Eq @342..356
+              Name v @342..343
+              Paren @347..356
+                CompositeLit @348..355
+                  type:
+                    Name T @348..349
+                  BasicLit Int "1" @350..351
+                  BasicLit Int "2" @353..354
+        Block @357..361
+      For @363..391
+        init:
+          Assign Define @367..373
+            lhs:
+              Name i @367..368
+            rhs:
+              BasicLit Int "0" @372..373
+        cond:
+          Binary Lt @375..381
+            Name i @375..376
+            BasicLit Int "10" @379..381
+        post:
+          IncDec ++ @383..386
+            Name i @383..384
+        Block @387..391
+      For @393..401
+        Block @397..401
+      Switch @403..455
+        tag:
+          TypeSwitchGuard x @410..423
+            Name v @415..416
+        Case @427..442
+          cases:
+            SliceType @432..437
+              Name int @434..437
+            Unary Star @439..441
+              Name T @440..441
+        Default @444..452
+      Switch @457..508
+        Case @467..493
+          cases:
+            Binary Lt @472..477
+              Name a @472..473
+              Name b @476..477
+          Fallthrough @481..492
+        Case @494..505
+          cases:
+            Binary Gt @499..504
+              Name a @499..500
+              Name b @503..504
+      Select @510..563
+        Comm @520..535
+          comm:
+            Assign Define @525..534
+              lhs:
+                Name v @525..526
+              rhs:
+                Unary Recv @530..534
+                  Name ch @532..534
+        Comm @537..550
+          comm:
+            Send @542..549
+              Name ch @542..544
+              BasicLit Int "1" @548..549
+        Default @552..560
+      Labeled L @564..595
+        Range @568..595
+          x:
+            Name ch @578..580
+          Block @581..595
+            Break L @585..592
+      Go @597..611
+        Call @600..611
+          FuncLit @600..609
+            FuncType @600..606
+            Block @607..609
+      Defer @613..630
+        Call @619..630
+          Selector Unlock @619..628
+            Name mu @619..621
+      Assign Assign @632..644
+        lhs:
+          Name s @632..633
+        rhs:
+          Slice full @636..644
+            Name a @636..637
+            lo:
+              BasicLit Int "1" @638..639
+            hi:
+              BasicLit Int "2" @640..641
+            max:
+              BasicLit Int "3" @642..643
+      Assign Assign @646..654
+        lhs:
+          Name s @646..647
+        rhs:
+          Slice @650..654
+            Name a @650..651
+      Assign Define @656..692
+        lhs:
+          Name g @656..657
+        rhs:
+          CompositeLit @661..692
+            type:
+              Index @661..675
+                Name G @661..662
+                indices:
+                  Name int @663..666
+                  Name string @668..674
+            KeyValue @676..685
+              Name k @676..677
+              CompositeLit @679..685
+                BasicLit Int "1" @680..681
+                BasicLit Int "2" @683..684
+            KeyValue @687..691
+              BasicLit Int "3" @687..688
+              Name v @690..691
+      Assign Assign @694..705
+        lhs:
+          Name x @694..695
+          Name y @697..698
+        rhs:
+          Name y @701..702
+          Name x @704..705
+      Assign Op(Shl) @707..714
+        lhs:
+          Name x @707..708
+        rhs:
+          BasicLit Int "2" @713..714
+      Assign Define @716..725
+        lhs:
+          Name p @716..717
+        rhs:
+          Unary Addr @721..725
+            CompositeLit @722..725
+              type:
+                Name T @722..723
+      Return @727..741
+        Unary Star @734..736
+          Name p @735..736
+        Name nil @738..741

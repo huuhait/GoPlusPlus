@@ -11,8 +11,12 @@ workspace = true
 [dependencies]
 gopp-diag = { path = "../gopp-diag" }
 gopp-span = { path = "../gopp-span" }
+la-arena.workspace = true
+lasso.workspace = true
 logos.workspace = true
+stacker.workspace = true
 unicode-ident.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 proptest.workspace = true

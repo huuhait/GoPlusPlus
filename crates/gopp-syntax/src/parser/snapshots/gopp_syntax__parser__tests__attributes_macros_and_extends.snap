@@ -1,0 +1,125 @@
+---
+source: crates/gopp-syntax/src/parser/tests.rs
+expression: "tree(\"package p\n\n@Derive(JSON, Equal)\ntype Config struct {\n\tID   int    @Required\n\tName string @json.Name(\\\"n\\\") @Required `x:\\\"y\\\"`\n}\n\n@Operator @Right\nfunc (a Vec2) Mul(s float64) Vec2\n\n@Pinned\ntype Card extends Payment, audit.Trail[int] {\n\tNumber string\n}\n\ntype Box[T extends Animal, U any] struct{ v T }\n\ntype Pet interface {\n\textends Animal\n\tClone\n\textends(n int) bool\n}\n\nmacro Swap(a expr, rest ...tokens, t type) {\n\ta, b = b, a\n}\n\nmacro func Equal!(target decl) decl\n\n#Register(Config)\n\nfunc use(extends, base int) {\n\t#Assert(extends > 0, \\\"positive\\\")\n\tx := #pkg.Make(func() { run() })\n\tfor _, &d := range docs {\n\t\td.n++\n\t}\n\tfor &p := range seq {\n\t}\n}\n\")"
+---
+File package=p
+  Attribute Derive() @11..31
+    Name JSON @19..23
+    Name Equal @25..30
+  Type Config @32..124
+    StructType @44..124
+      Field ID @54..75
+        Name int @59..62
+        Attribute Required @66..75
+      Field Name @77..122
+        Name string @82..88
+        Attribute json.Name() @89..104
+          BasicLit String "\"n\"" @100..103
+        Attribute Required @105..114
+        tag:
+          BasicLit String "`x:\"y\"`" @115..122
+  Attribute Operator @126..135
+  Attribute Right @136..142
+  Func Mul @143..176
+    Receiver a
+      Name Vec2 @151..155
+    FuncType @143..176
+      Param s
+        Name float64 @163..170
+      Result
+        Name Vec2 @172..176
+  Attribute Pinned @178..185
+  Type Card @186..248
+    extends:
+      Name Payment @204..211
+      Index @213..229
+        Selector Trail @213..224
+          Name audit @213..218
+        indices:
+          Name int @225..228
+    StructType @230..248
+      Field Number @233..246
+        Name string @240..246
+  Type Box @250..297
+    TypeParam T extends @259..260
+      Name Animal @269..275
+    TypeParam U @277..278
+      Name any @279..282
+    StructType @284..297
+      Field v @292..295
+        Name T @294..295
+  Type Pet @299..365
+    InterfaceType @308..365
+      extends:
+        Name Animal @329..335
+      elem:
+        Name Clone @337..342
+      Method extends @344..351
+        FuncType @344..363
+          Param n
+            Name int @354..357
+          Result
+            Name bool @359..363
+  Macro Swap @367..426
+    MacroParam a expr @378..379
+    MacroParam rest ...tokens @386..390
+    MacroParam t type @402..403
+    Block @410..426
+      Assign Assign @413..424
+        lhs:
+          Name a @413..414
+          Name b @416..417
+        rhs:
+          Name b @420..421
+          Name a @423..424
+  MacroFunc Equal @428..463
+    FuncType fails @428..463
+      Param target
+        Name decl @453..457
+      Result
+        Name decl @459..463
+  MacroCallDecl @465..482
+    MacroCall Register @465..482
+      Name Config @475..481
+  Func use @484..647
+    FuncType @484..511
+      Param extends
+        Name int @507..510
+      Param base
+        Name int @507..510
+    Block @512..647
+      ExprStmt @515..547
+        MacroCall Assert @515..547
+          Binary Gt @523..534
+            Name extends @523..530
+            BasicLit Int "0" @533..534
+          BasicLit String "\"positive\"" @536..546
+      Assign Define @549..581
+        lhs:
+          Name x @549..550
+        rhs:
+          MacroCall pkg.Make @554..581
+            FuncLit @564..580
+              FuncType @564..570
+              Block @571..580
+                ExprStmt @573..578
+                  Call @573..578
+                    Name run @573..576
+      Range define @583..619
+        lhs:
+          Name _ @587..588
+          Unary Addr @590..592
+            Name d @591..592
+        x:
+          Name docs @602..606
+        Block @607..619
+          IncDec ++ @611..616
+            Selector n @611..614
+              Name d @611..612
+      Range define @621..645
+        lhs:
+          Unary Addr @625..627
+            Name p @626..627
+        x:
+          Name seq @637..640
+        Block @641..645

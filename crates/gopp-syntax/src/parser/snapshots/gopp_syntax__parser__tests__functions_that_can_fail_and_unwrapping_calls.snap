@@ -1,0 +1,88 @@
+---
+source: crates/gopp-syntax/src/parser/tests.rs
+expression: "tree(\"package p\n\nfunc load!(path string) []byte {\n\tf := os.Open!(path)\n\treturn io.ReadAll!(f).Trim()\n}\n\nfunc parse[T any]!(s string) T { return conv[T]!(s) }\n\nfunc (r *R) Read!(p []byte) int\n\nvar f = func!(x int) T { return g!(x) }\n\ntype Loader interface {\n\tLoad!(path string) []byte\n\tClose()\n}\n\ntype H func!(int) T\n\")"
+---
+File package=p
+  Func load @11..96
+    FuncType fails @11..41
+      Param path
+        Name string @27..33
+      Result
+        SliceType @35..41
+          Name byte @37..41
+    Block @42..96
+      Assign Define @45..64
+        lhs:
+          Name f @45..46
+        rhs:
+          Call unwrap @50..64
+            Selector Open @50..57
+              Name os @50..52
+            args:
+              Name path @59..63
+      Return @66..94
+        Call @73..94
+          Selector Trim @73..92
+            Call unwrap @73..87
+              Selector ReadAll @73..83
+                Name io @73..75
+              args:
+                Name f @85..86
+  Func parse @98..151
+    TypeParam T @109..110
+      Name any @111..114
+    FuncType fails @98..128
+      Param s
+        Name string @119..125
+      Result
+        Name T @127..128
+    Block @129..151
+      Return @131..149
+        Call unwrap @138..149
+          Index @138..145
+            Name conv @138..142
+            indices:
+              Name T @143..144
+          args:
+            Name s @147..148
+  Func Read @153..184
+    Receiver r
+      Unary Star @161..163
+        Name R @162..163
+    FuncType fails @153..184
+      Param p
+        SliceType @173..179
+          Name byte @175..179
+      Result
+        Name int @181..184
+  Var f @186..225
+    values:
+      FuncLit @194..225
+        FuncType fails @194..208
+          Param x
+            Name int @202..205
+          Result
+            Name T @207..208
+        Block @209..225
+          Return @211..223
+            Call unwrap @218..223
+              Name g @218..219
+              args:
+                Name x @221..222
+  Type Loader @227..288
+    InterfaceType @239..288
+      Method Load @252..256
+        FuncType fails @252..277
+          Param path
+            Name string @263..269
+          Result
+            SliceType @271..277
+              Name byte @273..277
+      Method Close @279..284
+        FuncType @279..286
+  Type H @290..309
+    FuncType fails @297..309
+      Param
+        Name int @303..306
+      Result
+        Name T @308..309
