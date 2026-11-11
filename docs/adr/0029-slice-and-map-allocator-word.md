@@ -2,6 +2,7 @@
 
 - **Status:** accepted (integrated with [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
 - **Date:** 2026-10-30
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** the reference count in the slice backing header and in the map header (decisions 1 and 2 and the diagram) is removed, and `s[i:j]` on a slice or an array is a copy, not a second slice on the same buffer (decisions 1 and 5): the header is `{alloc_cap, allocator}`, a slice or a map has one owner, and `backing` is `nil` for a nil or empty slice and for a `&s[i:j]` view; the four-word `[]T`, the one-word map, and the allocator kept in the header and chosen at creation stand.
 - **Plan reference:** settles P04 D4.5 and spec SLC-1 (`[]T` is 4 words); P01 D1.22; task P04.25; P05 D5.3 and P05.03; related [ADR-0026](0026-no-small-string-optimization.md) (`string` stays 3 words) and [ADR-0027](0027-mimalloc-global-allocator.md) (mimalloc is the global allocator).
 
 ## Context

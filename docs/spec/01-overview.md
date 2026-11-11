@@ -22,7 +22,7 @@ The P01 review (P01.15) is done. During the review, places where the plan was si
 |---|---|
 | `LEX` | [02 lexical](02-lexical.md) |
 | `TYP` | [03 types](03-types.md) |
-| `OWN` | [04 ownership](04-ownership.md) (`OWN-C` categories, `OWN-R` rules 1 to 10 of D1.4, `OWN-P` pointers, `OWN-S` slicing & shared buffers, `OWN-B` borrow checking) |
+| `OWN` | [04 ownership](04-ownership.md) (`OWN-C` categories, `OWN-R` rules 1 to 10 of D1.4, `OWN-P` pointers, `OWN-S` slicing, `OWN-B` borrow checking) |
 | `PAR` | [05 parameters](05-parameters.md) |
 | `EXP` | [06 expressions](06-expressions.md) |
 | `STM` | [07 statements](07-statements.md) |
@@ -54,9 +54,13 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 
 | Area | Go | Go++ | Chapter |
 |---|---|---|---|
-| Memory | tracing GC | deterministic refcounted buffers + single-owner destructors + compile-time borrow engine | 04 |
-| `string`, `[]T`, `map` | GC-backed shared headers | refcounted shared headers ($O(1)$ copy and slice); `x.Clone()` (`clone(x)`) makes an independent copy | 04, 08 |
-| Parameters | all copy | pure Go syntax: shared handles lend at 0 retain/release; single-owner `T` moves; `*T` borrows | 05 |
+| Memory | tracing GC | no GC: every value has one owner and is destroyed deterministically; reference counts only for `string` buffers, `Shared[T]` and `Weak[T]`, channels, function values and interface boxes; compile-time borrow engine | 04 |
+| `string`, `[]T`, `map` | GC-backed shared headers | `string`: immutable counted bytes ($O(1)$ copy and slice). `[]T` and `map[K]V`: one owner, no reference count; `s[i:j]` is a new slice and `&s[i:j]` is a view of part of `s` | 04, 08 |
+| Assignment (`t := s`, `t = s`) | a slice, a map or a struct holding one shares its elements with the source | a copy for every type: nothing done to `t` is seen through `s`. The copy is skipped when the program cannot notice it (`s` is not used again). `x.Clone()` (`clone(x)`) writes the same copy out | 04 |
+| Moving | not in the language | `move(x)` hands the value of `x` over without a copy; reading `x` afterwards is a compile error (`E0451`). A type that cannot be copied is passed on with `move(x)` or reached through `&x` | 04 |
+| Sharing | slices, maps and pointers share | written with a type: a pointer (`&x`; `*[]T` and `*map[K]V` are ordinary pointer types, indexed without a star: `xs[0]`), `Shared[T]`, a channel | 04 |
+| Parameters | all copy; a slice or map argument shares its elements with the caller | pure Go syntax: a parameter is the function's own copy, elements included; no copy is made when the function only reads it. A function that changes the caller's value takes `*T` and the caller writes `&`: `addOne(&nums)` | 05 |
+| Built-ins and library functions that change their argument | take the slice by value: `copy(dst, src)`, `sort.Ints(xs)`, `r.Read(buf)` | take a pointer: `copy(&dst, src)`, `sort.Ints(&xs)`, `r.Read(&buf)`. `append(s, x)` takes `s` by value and returns the result | 05, 08 |
 | `new`, `&T{}` | GC allocation | removed; `NewUnique`, `NewShared`, `NewWeak` | 04 |
 | Errors | `val, err := f()` | same, plus `func f!()` and `call!()` | 09 |
 | Closures | capture by reference | same; escaping closures use shared cells | 11 |
@@ -66,6 +70,8 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | Macros | `go generate` | `#Name(...)`, `@Name`, `macro` | 13 |
 | Constants | `bool`, numbers, `string` only; no user calls | `const` also holds structs, `[N]T` arrays and `Option`s in `.rodata`; `@Const` functions/methods run at compile time in `const` and normally at runtime | 06 |
 | Reuse of a struct | embedding (promotion) | embedding removed in `.gopp`; struct inheritance with `@Extends(P)`, one per parent (no diamonds), with `@Virtual` / `@Abstract` / `@Override` and `base` / `base[P]` | 03 |
+
+Go code changes meaning in two places without a compile error ([ADR-0041](../adr/0041-values-are-copied.md)). A function that changes a slice or map it received by value now changes its own copy (`sort.Ints(nums)` becomes `sort.Ints(&nums)`). Two variables assigned from each other (`t := s`) no longer see each other's changes.
 
 ## 1.5 Delta index
 
@@ -95,16 +101,19 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | D1.22 | allocators in slices and maps | [08](08-slices-and-range.md) |
 | ADR-0032 | shared buffers and compile-time borrow engine | [04](04-ownership.md), [05](05-parameters.md), [08](08-slices-and-range.md) |
 | ADR-0033 | `@Const` functions and composite `const` declarations | [06](06-expressions.md#611-compile-time-evaluation-and-composite-constants-adr-0033), [13](13-macros-surface.md) |
+| ADR-0041 | a value is a copy; `move(x)`; pointers to slices and maps (replaces the shared slice and map buffers of ADR-0032) | [04](04-ownership.md), [05](05-parameters.md), [08](08-slices-and-range.md), [12](12-concurrency.md) |
 
 ## 1.6 Key words used in this spec
 
 - **Owner**: a variable, field, element or temporary that holds a value and drops its resources when it dies.
-- **Move**: transfer a value to a new place without retaining or copying. A moved single-owner local cannot be read before reassignment (`E0451`); a non-local slot extracted with `mem.Take` or `mem.Replace` receives the zero value or replacement.
-- **Borrow**: temporary access to a place (`*T` via `&x`, stack-array slice `arr[i:j]`, `range` loop, arena or lock guard) without taking ownership or touching a reference count.
-- **Shared / value handle (`OWN-C2`)**: a value whose copies share backing storage through a reference count (`string`, `[]T`, `map[K]V`, `Shared[T]`, `Weak[T]`, channels, interfaces, funcs, and aggregates of them).
+- **Copy**: what assignment, argument passing, returning, sending and converting to an interface give the destination: its own value, for every type ([ADR-0041](../adr/0041-values-are-copied.md)). The copy of a `[]T` or `map[K]V` is a new buffer with a copy of every element. A copy the program cannot notice is skipped: the last use of the source, or a parameter that is only read.
+- **Move**: hand a value to a new place without copying it. It is written `move(x)` for a local variable or a parameter; `x` cannot be read before reassignment (`E0451`). A non-local slot extracted with `mem.Take` or `mem.Replace` receives the zero value or replacement.
+- **Borrow**: temporary access to a place (`*T` via `&x`, a view `&s[i:j]` of part of a slice or array, `range` loop, arena or lock guard) without taking ownership or touching a reference count.
+- **Copyable type (`OWN-C2`)**: a value that can be copied, where a copy is more than its bytes (`string`; `[]T`, `map[K]V` and `Unique[T]` whose parts can be copied; `Shared[T]`, `Weak[T]`, channels, interfaces, funcs; a type with `drop()` that defines `Clone()`; and aggregates of them).
+- **Counted handle**: a copyable value whose copies refer to the same storage through a reference count (`string`, `Shared[T]`, `Weak[T]`, channels, interfaces, funcs). A `[]T` or `map[K]V` is not one: it has one owner, and its copy has its own elements.
 - **Trivial type (`OWN-C1`)**: copied bit by bit, no destructor or reference count. It satisfies the `Copy` constraint.
-- **Single-owner type (`OWN-C3`)**: holds a unique resource (`Unique[T]`, a type with `drop()`, `@Pinned`, non-copyable C++ classes, or aggregates containing them). Moves on by-value transfer; borrows with `*T`.
-- **Drop**: run cleanup glue when an initialized value dies (decrementing shared reference counts or running a `drop` method and dropping fields).
+- **Type that cannot be copied (`OWN-C3`)**: a type with `drop()` and no `Clone()`, a `@Pinned` type, a C++ class without a usable copy constructor, or an aggregate containing one. A plain copy is a compile error, also on the last use; write `move(x)` to hand it over or `&x` to borrow it.
+- **Drop**: run cleanup glue when an initialized value dies (releasing counted handles, freeing slice and map buffers, or running a `drop` method and dropping fields).
 
 ## 1.7 Non-goals of v1
 

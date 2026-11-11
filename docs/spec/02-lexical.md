@@ -60,14 +60,14 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 | Kind | Names |
 |---|---|
-| functions | `clone`, `NewUnique`, `NewShared`, `NewWeak` |
+| functions | `clone`, `move`, `NewUnique`, `NewShared`, `NewWeak` |
 | generic types | `Unique[T]`, `Shared[T]`, `Weak[T]`, `Option[T]`, `Local[T]` |
 | constraints | `Copy`, `Clone`, `Send`, `Sync` |
 | std macros | `#Assert`, `#Stringify`, `#File`, `#Line`, `#Embed`, `#Todo`, `#Unreachable`, `#Profile`, `#Setting`, `@Derive` |
 
 - Like Go's predeclared names, these can be redeclared in any scope, package level included (`type Option int` is accepted). The declaration hides the predeclared name in its scope. Do not do it.
 - `Send` and `Sync` are constraints only ([GEN-11](10-generics.md), [CON-12](12-concurrency.md)): bare `Send` or `Sync` in a type position (`var x Send`) or with type arguments is a compile error. `Local[T]` is a predeclared generic type for `func` and `interface` types only (`Local[func()]`, `Local[any]`, [CON-12](12-concurrency.md)), opting out of `Send`/`Sync` for single-goroutine callbacks and interfaces.
-- In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `Local`, `Send`, `Sync`, `Copy`, `Clone`, `clone`, `NewUnique`, `NewShared` and `NewWeak` are ordinary names there (`Option[int]` is "undefined: Option").
+- In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `Local`, `Send`, `Sync`, `Copy`, `Clone`, `clone`, `move`, `NewUnique`, `NewShared` and `NewWeak` are ordinary names there (`Option[int]` is "undefined: Option").
 - In Go mode `base` is an ordinary name too ([TYP-26](03-types.md#35-inheritance-adr-0023)).
 - The macro names live in their own namespace (they are only used after `#` or `@`).
 

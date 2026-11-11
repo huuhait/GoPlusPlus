@@ -25,7 +25,7 @@ func bottomUp(depth int) Unique[Node] {
 }
 
 func (n *Node) check() int {
-	// The fields are borrowed as Option[*Node] (no move), then checked.
+	// The fields are borrowed as Option[*Node] (no copy), then checked.
 	var l, r Option[*Node] = n.Left, n.Right
 	if l == nil || r == nil {
 		return 1

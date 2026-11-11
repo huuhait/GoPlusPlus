@@ -3,6 +3,7 @@
 - **Status:** accepted (integrated with [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
 - **Status note (2026-10-28, [ADR-0023](0023-inheritance.md)):** a type with parents (`@Extends`) is labeled `Send` / `Sync` from all its fields, all parents' fields included.
 - **Date:** 2026-10-28
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** the conditions under which a slice, a map or a boxed value may be passed to `go`, sent on a channel or kept in an interface (decisions 1 to 3: only on a last use with a reference count of 1, otherwise `.Clone()`) are replaced: `go f(x)`, `ch <- x` and a conversion to an interface give the other side a copy, or the value itself with `move(x)` or on its last use, and `*[]T` and `*map[K]V` now exist (decision 4); the `Send` / `Sync` labels, data-carrying mutexes, `sync.Scope`, `Atomic[T]`, the global-variable rule and the lock-order check stand.
 - **Plan reference:** changes P01 D1.13, P12 D12.6 and D12.7; spec rules CON-12 to CON-21, CON-1 to CON-9, UB-3, UB-11, 16.4, OWN-B8, GEN-11, CLO-2; tasks P04.21 and P12.13.
 
 ## Context

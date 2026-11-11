@@ -42,12 +42,12 @@ Rules that keep the pieces apart:
 The generator writes Go++ programs that are valid, terminate, have no undefined behavior, and print everything they compute.
 
 - **Typed from the start.** It picks a type first and then builds an expression of that type, so every program type-checks by construction. Types come from a per-program pool: scalars, strings, slices, maps, arrays, structs, `Option[T]`, pointer kinds, interfaces, func types, generic instances, `@Extends` hierarchies.
-- **An ownership model.** For each variable the generator tracks its category (`OWN-C1`, `OWN-C2`, `OWN-C3`), whether it is live, moved or borrowed, which borrows of it are live, and whether it is a read-only binding. It emits an operation only when the model allows it: no read after a move, no `append` while `&xs[i]` is live, no capture of a writable local by a plain `go`. The model is written from the spec's rule text, rule by rule, and each generator choice names the rule that allows it.
+- **An ownership model** ([ADR-0041](../adr/0041-values-are-copied.md)). For each variable the generator tracks its category (`OWN-C1`, `OWN-C2`, `OWN-C3`), how its type is copied (its bytes, a counted handle, a new buffer for a `[]T` or `map[K]V`, `Clone()`, or not at all), whether it is live, moved by `move(x)` or borrowed, which borrows of it are live (`&x`, a `*[]T` or `*map[K]V`, a `&s[i:j]` view), and whether it is a read-only binding. Every variable has its own value in the model: after `t := s`, or after a call that takes `s` by value, a change to one is never expected in the other; a change through a pointer parameter is expected in the caller's variable. It emits an operation only when the model allows it: no read after `move(x)`, no plain copy of a type that cannot be copied, no `append` while `&xs[i]` or a view `&xs[i:j]` is live, no write to a by-value slice or map parameter that is then lost, no capture of a writable local by a plain `go`. The model is written from the spec's rule text, rule by rule, and each generator choice names the rule that allows it.
 - **Observable behavior.** Every program keeps a running checksum and prints it, with the values it computes, at fixed points. Types with `drop` log their identity when dropped, so drop order and drop count are part of the output. Panics are caught at the top and printed.
 - **Bounded.** Loops have constant bounds, recursion has a depth parameter, allocation sizes are small. A generated program finishes in milliseconds.
 - **No outside world.** No files, network, clock, environment or randomness. Concurrent programs make their output deterministic by construction (results are collected and sorted, or protected by one lock).
-- **Feature knobs.** A config sets the weight of each feature: generics, generic methods, closures and captures, interfaces and type switches, `!` functions and `call!()`, `defer`/`panic`/`recover`, range forms including `&`, `@Operator` methods, `@Extends` with `@Virtual`/`@Override`, composite `const` and `@Const`, arenas, `Mutex[T]`, channels and `sync.Scope`. Campaigns rotate configs so no feature starves.
-- **A Go twin.** In "Go subset" mode the generator uses only what Go and Go++ agree on and writes the same program as `main.go` and `main.gopp`. Real Go is then the reference.
+- **Feature knobs.** A config sets the weight of each feature: copies of slices and maps (assignment, by-value arguments, stores, sends), `move(x)`, pointer parameters (`*[]T`, `*map[K]V`), `&s[i:j]` views, generics, generic methods, closures and captures, interfaces and type switches, `!` functions and `call!()`, `defer`/`panic`/`recover`, range forms including `&`, `@Operator` methods, `@Extends` with `@Virtual`/`@Override`, composite `const` and `@Const`, arenas, `Mutex[T]`, channels and `sync.Scope`. Campaigns rotate configs so no feature starves.
+- **A Go twin.** In "Go subset" mode the generator uses only what Go and Go++ agree on and writes the same program as `main.go` and `main.gopp`. Real Go is then the reference. Go shares the elements of a slice or map between two variables and with a by-value parameter; Go++ copies them. So the twin never changes a slice or map through one variable while another variable or a by-value parameter made from it is still read.
 - **Size classes.** Small programs (tens of lines) for speed and easy reduction; large programs (thousands of lines, many packages) for the build system, export data and the cache.
 
 ## 4. Oracles for valid programs
@@ -69,9 +69,9 @@ A valid generated program is run through the oracles below. Any "no" is a findin
 | Determinism | Are the diagnostics, the GIR text, the C, the `.gopx`, the object and the executable byte-identical across `-j1` and `-jN`, two directories, a cold and a warm cache, and two runs? |
 | Round trips | `fmt(fmt(p)) == fmt(p)`; parse of the printed tree gives the same tree; `.gopx` decode of encode is the same module; `demangle(mangle(x))` is `x`. |
 
-Changes "that must not matter" (the metamorphic set): reformatting; renaming locals; wrapping statements in a block; adding dead code after a `return`; reordering independent declarations; replacing a function with its generic form and an explicit instantiation; inserting `x.Clone()` where a value is lent; splitting a package in two; moving a helper to another package. The plain-versus-generic change is the most valuable: every rule must give the same answer in generic code as in plain code.
+Changes "that must not matter" (the metamorphic set): reformatting; renaming locals; wrapping statements in a block; adding dead code after a `return`; reordering independent declarations; replacing a function with its generic form and an explicit instantiation; writing `x.Clone()` where `x` is copied or passed by value; writing `move(x)` at the last use of a local; splitting a package in two; moving a helper to another package. The plain-versus-generic change is the most valuable: every rule must give the same answer in generic code as in plain code.
 
-The sanitizer and accounting oracles are how ownership bugs show up. A wrong retain, a missed drop on an unwind path or a wrong last-use decision does not change stdout; it leaks, frees twice or reads freed memory.
+The sanitizer and accounting oracles are how ownership bugs show up. A wrong retain, a missed drop on an unwind path or a wrong last-use decision does not change stdout; it leaks, frees twice or reads freed memory. A copy that was skipped when it was needed shows here or in the output: two variables then change together.
 
 ## 5. Oracles for invalid programs
 
@@ -79,10 +79,13 @@ An **injector** takes a valid generated program and makes exactly one illegal ch
 
 | Injector (examples) | Rule | Must be rejected with |
 |---|---|---|
-| read a moved `OWN-C3` local | OWN-R5 | `E0451` |
+| read a local after `move(x)` | OWN-R5 | `E0451` |
 | move out of a field or element | OWN-R3a | `E0253` |
+| copy a value whose type cannot be copied (`t := f` for a file) | OWN-C3 | the copy error |
+| write to a by-value slice or map parameter that is not used afterwards | PAR-1 | the lost-write error |
 | `append` to `xs` while `&xs[i]` is live | OWN-B2 | the borrow error |
-| return `&local` or a stack-array slice | OWN-B3 | the borrow error |
+| assign, grow or move `s` while a view `&s[i:j]` is live | OWN-B2 | the borrow error |
+| return `&local` or a view `&arr[i:j]` of a local array | OWN-B3 | the borrow error |
 | pass two overlapping writable pointers | OWN-B4, OWN-B9 | the borrow error |
 | capture a writable local in `go func(){…}()` and use it after | CON-13 | the concurrency error |
 | send a non-`Send` value on a channel | CON-14 | the concurrency error |

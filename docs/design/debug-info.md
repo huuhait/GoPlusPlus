@@ -32,11 +32,11 @@ Debug information is produced jointly by `crates/gopp-gir` (`Function::Scopes`, 
 |---|---|
 | `bool`, `int8`..`uint64`, `float32`, `float64` | C23 `bool`, `int8_t`..`uint64_t` (`uint8_t` = `unsigned char` so string `ptr` prints text), `float`, `double` |
 | `string` (`24` bytes, [ADR-0026](../adr/0026-no-small-string-optimization.md), [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)) | `struct string { const uint8_t *ptr; uint64_t len; void *backing; }` |
-| `[]T` (`32` bytes, [ADR-0029](../adr/0029-slice-and-map-allocator-word.md), [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)) | `struct slice_<T> { T *ptr; uint64_t len; uint64_t cap; void *backing; }` |
+| `[]T` (`32` bytes, [ADR-0029](../adr/0029-slice-and-map-allocator-word.md), [ADR-0041](../adr/0041-values-are-copied.md)) | `struct slice_<T> { T *ptr; uint64_t len; uint64_t cap; void *backing; }` (`backing` points to `{alloc_cap, alloc}`, or is null for a nil or empty slice and for a `&s[i:j]` view) |
 | `[N]T` | Native C23 array `T[N]` |
 | Named / generic struct (`Pair[int, string]`) | Named C23 `struct` with source field names (`Type::field_name`) and instantiated type arguments (`Type::type_args`) |
 | `Option[T]` | Niche pointer/iface/func directly for pointer-like `T`; `struct { T value; bool set; }` otherwise |
-| `map[K]V` | Pointer to runtime `struct gopp_map` (`refcount`, `count` = `len(m)`, `alloc`, ...) |
+| `map[K]V` | Pointer to runtime `struct gopp_map` (`count` = `len(m)`, `alloc`, ...; no reference count) |
 | `interface` (`gopp_iface`) | `struct gopp_iface { void *itab; void *data; }` (`16` bytes) |
 | `func` value (`gopp_func`) | `struct gopp_func { void *code; void *env; }` (`16` bytes); closures emit as `main_f_func1` with captured variables exposed by source name |
 | Types with parents, `@Extends` (`P04.22`) | Embedded leading parent subobject fields at offset `0` (and tagged secondary bases) |

@@ -9,7 +9,7 @@ import (
 
 type Job struct {
 	ID   int
-	Text string // immutable shared handle (OWN-C2): Send and Sync
+	Text string // immutable bytes, shared by every copy (OWN-C2): Send and Sync
 }
 
 type Result struct {
@@ -18,7 +18,7 @@ type Result struct {
 	Sum  int
 }
 
-// jobs and results are shared handles: passing them lends a handle, not the queue.
+// jobs and results are channel handles: a copy of one refers to the same queue.
 func work(jobs chan Job, results chan Result) {
 	for job := range jobs { // each receive transfers a Job out of the channel
 		sum := 0
@@ -58,12 +58,12 @@ func main() {
 
 	var all []Result
 	for r := range results {
-		all = append(all, r) // r is on its last use: auto-moved into all
+		all = append(all, r) // last use of r: it goes into all without a copy
 	}
-	slices.SortFunc(all, func(a, b Result) int { return cmp.Compare(a.ID, b.ID) })
+	slices.SortFunc(&all, func(a, b Result) int { return cmp.Compare(a.ID, b.ID) })
 
 	total := 0
-	for _, r := range all { // r is lent
+	for _, r := range all { // the body only reads r: no copy
 		fmt.Printf("%d %-8s sum=%d\n", r.ID, r.Text, r.Sum)
 		total += r.Sum
 	}

@@ -27,15 +27,15 @@ func (m *OrderedMap[K, V]) search(k K) (int, bool) {
 }
 
 // Put inserts or replaces (k, v) using a plain Go signature.
-// Works for trivial, shared-handle (string, []string) and single-owner V alike (GEN-3, PAR-1, PAR-5).
+// v is moved in, so V can be any type, also one that cannot be copied (GEN-3, PAR-1, PAR-5).
 func (m *OrderedMap[K, V]) Put(k K, v V) {
-	i, found := m.search(k) // k is lent to search: not consumed
+	i, found := m.search(k) // search only reads k: no copy
 	if found {
-		m.vals[i] = v // the old value is dropped; v transfers in on its last use
+		m.vals[i] = move(v) // the old value is dropped
 		return
 	}
-	m.keys = append(m.keys, k) // k and v transfer into the slices on their last uses
-	m.vals = append(m.vals, v)
+	m.keys = append(m.keys, k) // last use of k: it goes into the slice without a copy
+	m.vals = append(m.vals, move(v))
 	for j := len(m.keys) - 1; j > i; j-- {
 		m.keys[j], m.keys[j-1] = m.keys[j-1], m.keys[j] // two-place swap: moves elements cleanly
 		m.vals[j], m.vals[j-1] = m.vals[j-1], m.vals[j]
@@ -71,7 +71,7 @@ func main() {
 		if p := counts.Get(w); p != nil {
 			*p++ // p is a *int here: checked
 		} else {
-			counts.Put(w, 1) // no .Clone() needed: w is a shared string handle (ADR-0032)
+			counts.Put(w, 1) // Put gets a copy of w: a string copy shares the bytes
 		}
 	}
 	fmt.Println("distinct words:", counts.Len())

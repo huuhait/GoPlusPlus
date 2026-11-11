@@ -3,6 +3,7 @@
 - **Status:** accepted (integrated with [ADR-0018](0018-never-nil-pointers-and-option.md), [ADR-0021](0021-borrow-checking.md), [ADR-0022](0022-race-free-concurrency.md), [ADR-0023](0023-inheritance.md) and [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
 - **Status note (2026-10-29, [ADR-0023](0023-inheritance.md)):** an inherited operator method of an untagged parent `P` runs on that parent part inside the child (ADR-0023 decision 16).
 - **Date:** 2026-10-28 (updated to Rust-style named `@Operator` methods)
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** decision 5's separate passing rule for operands that can be copied is replaced: like any by-value receiver or parameter, such an operand is the method's own copy, which is not made when the method only reads it; in decision 3, `=` is a copy, not a move; the operator table, overload resolution and the other rules stand.
 - **Plan reference:** replaces the non-goal "no user-defined operator overloading" (spec 1.7); spec section 6.10 (EXP-16 to EXP-20, EXP-22, EXP-25 to EXP-30), TYP-27, RNG-6b, GEN-13, `@Operator` / `@Right` / `@Convert` in MAC-8; tasks P03.24 and P04.23.
 
 ## Context

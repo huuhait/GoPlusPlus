@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-11
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** in decision 1, "mutable shared backing" no longer describes `[]T` and `map[K]V`: each has one owner and its own heap buffer; they still cannot be `const`, and every rule here stands.
 - **Plan reference:** spec section 6.11 (`EXP-31` to `EXP-34`), `@Const` in `MAC-8`, `01-overview.md`, `attributes.md`.
 
 ## Context

@@ -28,7 +28,7 @@ Syntax: none.
 
 ## 16.2 Undefined behavior
 
-**UB-1.** *Dangling borrows (`*T`, borrow-carrying structs, and stack-array / single-owner slices).* Using a raw pointer `*T`, a borrow-carrying struct, a stack-array slice `arr[i:j]` (`backing == nil`), or a borrowed sub-slice of a single-owner slice (`[]Unique[T]`, `[]File`) after its owner is dropped, moved, or reallocated is a **compile error** ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). Storing any tracked borrow into a global, `NewUnique`/`NewShared`, a heap container, a channel, an escaping closure, a kept `Send` interface or a `go` statement is a compile error ([OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)), as is returning `&local` or `localArr[i:j]` ([OWN-B3, OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)). (Slicing a heap `string` or `[]T` shares its refcounted `backing` buffer, [OWN-S1, OWN-S2](04-ownership.md#44-slicing-and-shared-buffers-d16-adr-0032), so sub-strings and sub-slices cannot dangle.)
+**UB-1.** *Dangling borrows (`*T`, borrow-carrying structs, and views of slices and arrays).* Using a raw pointer `*T`, a borrow-carrying struct, or a view `&s[i:j]` of a slice or array (a `*[]T` whose slice has `backing == nil`) after its owner is dropped, moved, assigned or grown is a **compile error** ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)). Storing any tracked borrow into a global, `NewUnique`/`NewShared`, a heap container, a channel, an escaping closure, a kept `Send` interface or a `go` statement is a compile error ([OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)), as is returning `&local` or `&localArr[i:j]` ([OWN-B3, OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)). (Slicing a heap `string` shares its refcounted `backing` buffer, and `s[i:j]` on a slice or array without `&` is a new slice with its own elements, [OWN-S1, OWN-S2](04-ownership.md#44-slicing-and-shared-buffers-d16-adr-0032), so sub-strings and sub-slices cannot dangle.)
 
 *Residue (still UB):* a pointer created or kept through `unsafe` or raw memory (UB-7), or through C or C++ code (UB-9, UB-10).
 
@@ -60,22 +60,22 @@ func swapNames(a, b *Node) { old := a.Name; b.Name = "x"; println(old) }
 swapNames(&list[i], &list[j]) // compile error: i may equal j (OWN-B9); use list.Swap(i, j) or Split
 ```
 
-*Residue (still UB):* none in normal code. Unchecked pointer aliasing that can free borrowed storage can only be made in `unsafe` code or in C or C++ code. On a single-goroutine `Shared[T]`, fields are `OWN-C1`/`OWN-C2` (no unprotected `OWN-C3` fields), `*T` pointers omit C `restrict` qualifiers when reachable from `Shared[T]` (and generated C23 compiles with `-fno-strict-aliasing`), and borrowing `&s.Slice[i]` retains a temporary reference to `s` and `s.Slice`'s backing buffer for the borrow's lifetime ([OWN-P8](04-ownership.md#43-pointers-and-heap-allocation-d17), [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)).
+*Residue (still UB):* none in normal code. Unchecked pointer aliasing that can free borrowed storage can only be made in `unsafe` code or in C or C++ code. On a single-goroutine `Shared[T]`, fields are `OWN-C1`/`OWN-C2` (no unprotected `OWN-C3` fields), `*T` pointers omit C `restrict` qualifiers when reachable from `Shared[T]` (and generated C23 compiles with `-fno-strict-aliasing`), and borrowing `&s.Slice[i]` retains a temporary reference to `s` and `s.Slice`'s backing buffer for the borrow's lifetime ([OWN-P8](04-ownership.md#43-pointers-and-heap-allocation-d17), [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). The words about `s.Slice`'s backing buffer still describe the model before [ADR-0041](../adr/0041-values-are-copied.md), which removed the reference count of slice buffers; what replaces them is the open point named at the top of [chapter 4](04-ownership.md).
 
-**UB-2a.** *Using a borrowed range variable after its element was written.* In `for _, d := range docs` over struct or single-owner (`OWN-C3`) elements, `d` is a read-only borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the element. Writing the current element or entry (`docs[i] = Doc{}`) is defined (the old value is dropped, [RNG-3](08-slices-and-range.md)), and reading `d` **after** that write is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)).
+**UB-2a.** *Using a borrowed range variable after its element was written.* In `for _, d := range docs` over elements that cannot be copied, `d` is a read-only borrowed variable ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) that borrows the element. Writing the current element or entry (`docs[i] = Doc{}`) is defined (the old value is dropped, [RNG-3](08-slices-and-range.md)), and reading `d` **after** that write is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)).
 
 ```go
-for i, d := range docs {    // docs is []Doc: d borrows docs[i]
+for i, d := range docs {    // docs is []Doc and Doc cannot be copied: d borrows docs[i]
     docs[i] = Doc{}         // defined: old Doc is dropped
     fmt.Println(d.Title)    // compile error: d is live after its element was overwritten
 }
 ```
 
-`OWN-C1` trivial elements and `OWN-C2` handles (`[]string`) copy or retain their handle ([RNG-1](08-slices-and-range.md)), so `ss[0] = "z"; fmt.Println(s)` on `[]string` is safe and prints the old string, as in Go. An `&` range variable is an alias of the slot ([RNG-1a](08-slices-and-range.md)), so it sees the new value directly, while writing the same element through both `xs[i]` and a live `&e` is a compile error (OWN-B9). After `delete(m, k)` on the current map entry, the map delays freeing the slot until the end of the iteration ([RNG-3](08-slices-and-range.md)).
+Over elements that can be copied, the plain range variable is a copy of the element ([RNG-1](08-slices-and-range.md), [ADR-0041](../adr/0041-values-are-copied.md) rule 12), so `ss[0] = "z"; fmt.Println(s)` on `[]string` is safe and prints the old string, as in Go. An `&` range variable is an alias of the slot ([RNG-1a](08-slices-and-range.md)), so it sees the new value directly, while writing the same element through both `xs[i]` and a live `&e` is a compile error (OWN-B9). After `delete(m, k)` on the current map entry, the map delays freeing the slot until the end of the iteration ([RNG-3](08-slices-and-range.md)).
 
-**UB-2b.** *Shared handle released through an aliased path.* An `OWN-C2` parameter (`string`, `[]T`, `map[K]V`, `error`, `func`, `Shared[T]`) is lent at 0 retain/release when passed from an unaliased local or temporary ([PAR-1](05-parameters.md)). When an `OWN-C2` argument is read from an aliasable place (`s.fail(s.err)`, `u.SetName(u.Name)`, `run(reg, reg.cb)`, `xs[i]`, `m[k]`, `*p`, a global, a captured cell, or a `Shared[T]` field), the caller holds a temporary retain across the call ([PAR-1](05-parameters.md), [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)), so even if the callee overwrites `s.err` or `reg.cb`, the lent parameter stays valid until the call returns.
+**UB-2b.** *Argument changed through an aliased path.* A by-value parameter that the function only reads (`string`, `[]T`, `map[K]V`, `error`, `func`, `Shared[T]`) is passed without a copy (for a counted handle, at 0 retain/release) only when the argument cannot change during the call, as for an unaliased local or a temporary ([PAR-1](05-parameters.md), [ADR-0041](../adr/0041-values-are-copied.md) rule 4). When the argument is read from an aliasable place (`s.fail(s.err)`, `u.SetName(u.Name)`, `run(reg, reg.cb)`, `xs[i]`, `m[k]`, `*p`, a global, a captured cell, or a `Shared[T]` field) that the callee could change, the copy is made: the caller holds a temporary retain of a counted handle (`string`, `error`, `func`, `Shared[T]`) across the call, and a `[]T` or `map[K]V` argument gets its own buffer ([PAR-1](05-parameters.md)). So even if the callee overwrites `s.err` or `reg.cb`, the parameter stays valid until the call returns.
 
-**UB-2c.** *`defer` arguments.* `OWN-C1` and `OWN-C2` (`string`, `[]T`, `map[K]V`, `Shared[T]`, etc.) `defer` arguments evaluate and retain a snapshot at the `defer` statement, matching Go ([PAN-3](09-errors-and-panics.md), [CLO-7](11-closures.md)). `*T` `defer` borrows are checked by [OWN-B2, OWN-B9](04-ownership.md#45-borrow-checking-adr-0021).
+**UB-2c.** *`defer` arguments.* By-value `defer` arguments are evaluated and copied at the `defer` statement ([PAN-3](09-errors-and-panics.md), [CLO-7](11-closures.md)): a counted handle (`string`, `Shared[T]`, etc.) is retained, and a `[]T` or `map[K]V` is copied with its elements, so nothing done to the variable afterwards reaches the deferred call. `*T` `defer` borrows are checked by [OWN-B2, OWN-B9](04-ownership.md#45-borrow-checking-adr-0021).
 
 **UB-2d.** *Interface reassigned while a deep read-only binding borrows its box.* After `switch x := v.(type)` binds a mutable container or single-owner value inside `v`'s box ([TYP-9](03-types.md)), a visible assignment to `v` (or through a pointer to `v`) while `x` is read afterwards is a compile error ([OWN-B2, OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)).
 
@@ -119,7 +119,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
-**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race. In normal code it is a **compile error**: a map is `Sync` only for reading ([CON-12](12-concurrency.md)): no goroutine may write it while it is shared; wrap it in `Mutex[map[K]V]` ([CON-15](12-concurrency.md)). The same holds for the first write to a nil map by two goroutines (a write creates the map, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), and the map is not `Sync`), and for slices and strings shared with a writer. The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse. *Residue (still UB):* the same access from `unsafe` code or from C and C++ threads (UB-3).
+**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race. In normal code it is a **compile error**: a map is `Sync` only for reading ([CON-12](12-concurrency.md)): no goroutine may write it while another goroutine can reach it; wrap it in `Mutex[map[K]V]` ([CON-15](12-concurrency.md)). The same holds for the first write to a nil map by two goroutines (a write creates the map, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), and the map is not `Sync`), and for a slice or string variable that two goroutines can reach while one of them writes it. The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse. *Residue (still UB):* the same access from `unsafe` code or from C and C++ threads (UB-3).
 
 **UB-12.** *Forced unwinding.* `pthread_exit` or thread cancellation through Go++ frames: `recover()` does not stop it, and destructors run only as far as the platform unwinder runs them ([PAN-9](09-errors-and-panics.md)).
 
@@ -141,7 +141,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | Case | Compiler | `gopp vet` | `-asan` | `-race` |
 |---|---|---|---|---|
 | use after move | error | | | |
-| returning `&local` or `localArr[i:j]` (OWN-B3, OWN-B5) | error | | | |
+| returning `&local` or `&localArr[i:j]` (OWN-B3, OWN-B5) | error | | | |
 | `go f(&local)` | error | | | |
 | `defer` borrowing a dying variable | error | | | |
 | pointer/borrow used after its owner changed or died (UB-1, OWN-B2) | error | | residue only (`unsafe`, C) | |
@@ -149,8 +149,8 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | writable argument and a borrow of the same place at one call (UB-2, OWN-B4) | error | | | |
 | two borrows of overlapping places, one of them writable, including through two pointers (UB-2, OWN-B9) | error | | | |
 | sharing an unsynchronized `Shared[T]` across goroutines (CON-19, OWN-P8) | error | | | |
-| `OWN-C2` argument read from an aliasable place (`s.fail(s.err)`, UB-2b, PAR-1) | safe (caller holds temp retain) | | | |
-| `OWN-C2` `defer` argument reassigned after `defer` (UB-2c, PAN-3) | safe (retained snapshot) | | | |
+| by-value argument read from an aliasable place (`s.fail(s.err)`, UB-2b, PAR-1) | safe (the copy is made: a temp retain, or an own buffer for a slice or map) | | | |
+| by-value `defer` argument reassigned or changed after `defer` (UB-2c, PAN-3) | safe (copied at the `defer`) | | | |
 | `v` reassigned while a deep read-only assertion binding borrows its box (UB-2d) | error | | | |
 | ranged slice, map or string changed in the loop body (UB-2e) | error | | | |
 | borrowed range variable used after its element was written (UB-2a) | error | | | |

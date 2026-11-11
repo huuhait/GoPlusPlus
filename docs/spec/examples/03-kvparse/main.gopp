@@ -76,7 +76,7 @@ func main() {
 		fmt.Printf("%d: %s = %s\n", e.Line, e.Key, e.Value)
 	}
 	if v, ok := lookup(entries, "port"); ok {
-		port := strconv.Atoi!(v) // lent string parameter: 0 retains
+		port := strconv.Atoi!(v) // Atoi only reads v: 0 retains
 		fmt.Println("port + 1 =", port+1)
 	}
 	_, err := parse("name=ok\nbroken line\n") // the Go form still works

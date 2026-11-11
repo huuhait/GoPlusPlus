@@ -25,18 +25,18 @@ A struct type has no embedded fields in `.gopp` files ([TYP-25](#35-inheritance-
 Other notes on type syntax:
 
 - Predeclared generic types: `Unique[T]`, `Shared[T]`, `Weak[T]`, `Option[T]` and `Local[T]` ([OWN-P](04-ownership.md#43-pointers-and-heap-allocation-d17), [CON-12](12-concurrency.md), [LEX-7](02-lexical.md#predeclared-identifiers)). `Unique[T]`, `Shared[T]` and `Weak[T]` take the pointee value type `T` directly (writing `*T` inside `[...]` is a compile error with fix-it `Unique[T]` / `Shared[T]` / `Weak[T]`). `Local[T]` takes a `func` or `interface` type `T` (`Local[func()]`, `Local[any]`) for single-goroutine-only callbacks and interfaces.
-- Pointers to slice or map types (`*[]T`, `*map[K]V`, including pointers to defined slice or map types) are compile errors everywhere: `[]T` and `map[K]V` are already reference handles ([OWN-P1](04-ownership.md#43-pointers-and-heap-allocation-d17)).
+- Pointers to slice or map types (`*[]T`, `*map[K]V`, including pointers to defined slice or map types) are ordinary pointer types. Such a pointer is used without `*` for indexing (`xs[0]`, `m[k]`), slicing, `range`, `len`, `cap`, `delete` and `clear`; only the whole value is written with the star (`*xs = append(*xs, 4)`) ([OWN-P1](04-ownership.md#43-pointers-and-heap-allocation-d17), [ADR-0041](../adr/0041-values-are-copied.md)).
 - Types imported from C and C++ headers are plain Go++ types ([chapter 14](14-foreign-surface.md)).
 
-**TYP-1.** *Slicing types.* Slicing a `string` produces `string`; slicing a `[]T` or array `[N]T` produces `[]T` ([OWN-S1, OWN-S2](04-ownership.md#44-slicing-and-shared-buffers-d16-adr-0032)).
+**TYP-1.** *Slicing types.* Slicing a `string` produces `string`; slicing a `[]T` or array `[N]T` produces `[]T`, a new slice with copies of those elements; `&s[i:j]` on a `[]T` or an array produces `*[]T`, a view of those elements of `s` itself ([OWN-S1, OWN-S2](04-ownership.md#44-slicing-and-shared-buffers-d16-adr-0032)).
 
 **TYP-2.** *Assignability additions.* `nil` is assignable only to `error`, `any` (the empty interface), `unsafe.Pointer`, slices, maps, channels and `Option` types, not to a pointer kind, a func or an interface with methods, which are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Besides Go's rules, a value `x` is assignable to type `V` if:
 - `x` is a `Unique[T]` or `Shared[T]` stored in a place and `V` is `*T` or `Option[*T]` ([OWN-P6](04-ownership.md#43-pointers-and-heap-allocation-d17));
 - `x` has type `T` and `V` is `Option[T]`, or `x` is `nil` and `V` is an `Option` ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an `Option[T]` is assignable to `T` only where it is checked ([OWN-P10](04-ownership.md#43-pointers-and-heap-allocation-d17));
-- the assignment follows the ownership rules ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): assigning a trivial (`OWN-C1`) value copies it; assigning a shared/value handle (`OWN-C2`: `string`, `[]T`, `map[K]V`, `Shared[T]`, etc.) shares the handle (auto-moving with 0 retain/release on last use of a local); assigning a single-owner (`OWN-C3`) value moves it.
+- the assignment follows the ownership rules ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): the destination gets its own copy of the value, for every type. Plain data is copied by its bytes; a `string`, `Shared[T]` or other counted handle is copied as the handle; a `[]T` or `map[K]V` is copied with its elements. The copy is skipped on the last use of a local and with `move(x)`. A value that cannot be copied ([OWN-C3](04-ownership.md#41-type-categories-d13)) is moved (`move(x)`, or a temporary); a plain copy of it is a compile error, also on its last use.
 
 ```go
-func parse(s string) {}          // lent string parameter (0 retain/release)
+func parse(s string) {}          // parse only reads s, so no copy is made (0 retain/release)
 v := name[:3]                    // string sharing name's backing buffer in O(1)
 parse(v)                         // ok
 var t string = v                 // ok: shares backing buffer
@@ -52,48 +52,51 @@ Syntax: no change. Interfaces are Go's structural interfaces.
 
 **TYP-5.** *Shared handles.* An interface value is a shared handle. Copying it shares the same dynamic value: an immutable, reference-counted box, or the pointer it holds. The box is immutable all the way down: a map or slice inside it is read-only through the interface (see the binding rules below). So `==`, type switches and copies behave as in Go.
 
-**TYP-6.** *Boxing.* Converting a value into a **kept** interface variable, field or element boxes it (ordinary interfaces are `Send` by default, so the converted value must be `Send`; `Local[I]` accepts single-goroutine non-`Send` values such as unsynchronized `Shared[T]`, [CON-12](12-concurrency.md)):
+**TYP-6.** *Boxing.* Converting a value into a **kept** interface variable, field or element boxes it (ordinary interfaces are `Send` by default, so the converted value must be `Send`; `Local[I]` accepts single-goroutine non-`Send` values such as unsynchronized `Shared[T]`, [CON-12](12-concurrency.md)). The box gets its own copy of the value ([OWN-R3](04-ownership.md#42-ownership-rules-d14), [ADR-0041](../adr/0041-values-are-copied.md)); the copy is skipped when the source is a temporary, on the last use of a local, or with `move(x)`:
 - An `OWN-C1` trivial value up to one word is stored inline ([TYP-8](#32-interfaces-and-runtime-type-information-d112)); larger `OWN-C1` values copy into a box.
-- An immutable `OWN-C2` value (`string`, `Shared[T]`, `Weak[T]`, `chan T`, `func`, or a struct of immutable `OWN-C1`/`OWN-C2` parts) retains its handle inside the box (or moves on last use of a local), so the caller's variable stays usable if read later.
-- A mutable-container `OWN-C2` value (`[]T`, `map[K]V`, or a struct/array/`Option` containing one) moves into the immutable box in $O(1)$ with zero copy when it is unshared on its last use ([OWN-R3d](04-ownership.md#own-r3d): decided at compile time); if the caller still uses the variable afterwards or it is not provably the only handle, converting it into a kept interface is a compile error requiring an explicit `.Clone()` (`var x any = s.Clone()`) so Go++ never performs a hidden deep copy and later writes outside the interface cannot mutate the boxed value.
-- A single-owner `OWN-C3` value (`Unique[T]`, `File`) moves into the box ([OWN-R3](04-ownership.md#42-ownership-rules-d14)).
+- A `string`, `Shared[T]`, `Weak[T]`, `chan T` or `func` value (alone or as a part of a struct) is copied as its handle: the box retains it (no retain on the last use of a local), so the caller's variable stays usable if read later.
+- A `[]T` or `map[K]V` (or a struct, array or `Option` that holds one) is copied into the box with its elements: a new buffer with a copy of every element or entry. When the copy is skipped, the value moves into the box in $O(1)$. Later writes to the source variable never change the boxed value.
+- A value that cannot be copied (a `File`, [OWN-C3](04-ownership.md#41-type-categories-d13)) is moved into the box (`move(f)`, or a temporary); a plain `var x any = f` is a compile error, also on the last use of `f`. A `Unique[T]` is copied like any other value: a new allocation holding a copy of what it points to.
 - Storing a `*T` in a non-escaping local interface (`var q Local[any] = &point`) stores a tracked borrow (no heap box, subject to [OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)).
 
 ```go
-var a any = name      // name (string, immutable OWN-C2) is retained; name stays usable!
+var a any = name      // name (string) is copied as its handle (retained); name stays usable!
 fmt.Println(name)     // ok
 s := []int{1, 2, 3}
-var c any = s.Clone() // explicit Clone required because s is mutated below
+var c any = s         // s is used below, so the box gets its own copy of the elements
 s[0] = 99             // ok: c still holds [1, 2, 3]
-f := openFile!()      // single-owner File (OWN-C3)
-var b any = f         // f moves into the box
+f := openFile!()      // a File cannot be copied (drop, no Clone)
+var b any = move(f)   // f moves into the box
 // fmt.Println(f)     // compile error (E0451): f used after move
 p := &point
 var q Local[any] = p  // stores a local borrow of point: no box, tracked by OWN-B5
 ```
 
-**TYP-7.** *Interface parameters.* An interface parameter (including `...any`) is a shared handle (`OWN-C2`), lent at the call boundary ([PAR-1](05-parameters.md)):
-- Passing an interface value (such as `err`) lends the same box at 0 retain/release; the callee retains it only if kept.
-- Passing a non-interface value does **not** allocate a box at the call when the callee does not keep the parameter: the callee receives a borrowed `(itab, &value)`, so `fmt.Println(name)`, `fmt.Println(slice)` and `fmt.Println(file)` neither allocate nor consume `name`, `slice` or `file`.
-- If the callee keeps the parameter (stores, returns or sends it), an `OWN-C1` or immutable `OWN-C2` value is boxed at that point; a mutable-container `OWN-C2` value (`[]T`, `map[K]V`, or a struct containing one) or a single-owner `OWN-C3` value may be passed to a keeping interface parameter only from a temporary or on the unshared last use of a local ([OWN-R3d](04-ownership.md#own-r3d)) (moving it into the box in $O(1)$), otherwise it is a compile error requiring an explicit `.Clone()` at the call site.
+**TYP-7.** *Interface parameters.* An interface parameter (including `...any`) is the function's own interface value, like every by-value parameter ([PAR-1](05-parameters.md)):
+- Passing an interface value (such as `err`) copies it, which shares the same box ([TYP-5](#32-interfaces-and-runtime-type-information-d112)). When the callee only reads the parameter, the copy is skipped (0 retain/release); the callee retains the box only if kept.
+- Passing a non-interface value does **not** allocate a box at the call when the callee does not keep the parameter: the callee receives a borrowed `(itab, &value)`, so `fmt.Println(name)`, `fmt.Println(slice)` and `fmt.Println(file)` neither allocate, copy nor consume `name`, `slice` or `file`.
+- If the callee keeps the parameter (stores, returns or sends it), the value is boxed at that point by the rules of [TYP-6](#32-interfaces-and-runtime-type-information-d112): the box gets its own copy, and the copy is skipped when the argument is a temporary, the last use of a local, or `move(x)`. A value that cannot be copied (a `File`) is moved into a keeping interface parameter (`move(f)`, or a temporary); a plain `Log(f)` is a compile error, also on the last use of `f`.
 
 ```go
 func Log(v any) { saved = v }         // keeps v
 n := "x"
 Log(n)             // ok: n is boxed inside Log; n stays usable
-f := File{...}     // OWN-C3 (has drop, no Clone)
+xs := []int{1, 2}
+Log(xs)            // ok: the box gets its own copy of xs, because xs is used below
+xs[0] = 9          // ok: saved still holds [1, 2]
+f := File{...}     // cannot be copied (has drop, no Clone)
 fmt.Println(f)     // ok: Println does not keep v, so f is only borrowed
-Log(f)             // ok if this is the last use of f (moves into box); error if f is read again later
+Log(move(f))       // ok: f moves into the box; reading f afterwards is a compile error (E0451)
 ```
 
 **TYP-8.** *Inline values.* Trivial values up to one word (8 bytes: `int`, `float64`, raw pointers) are stored inline in the interface, with no box. Interface values stay 2 words.
 
 **TYP-9.** *Type switches and assertions* use compile-time type descriptors. Because an interface box is shared and immutable ([TYP-5](#32-interfaces-and-runtime-type-information-d112)):
 - When the asserted or switched type is a plain copy (`OWN-C1` without pointers: numbers, booleans, and arrays/structs/`Option`s of them), an immutable `string`, or a handle the box holds directly (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`, `unsafe.Pointer`, `func`, `chan`), `x := v.(T)` and `case T:` yield that value directly (`string` and `Shared[T]` retain their shared handle, so `names = append(names, s)` and `x.Count++` on a `Shared[Config]` work just like Go; `*T` and `Unique[T]` reborrow their target as writable while live per [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)).
-- When the asserted or switched type holds mutable value containers (`[]T`, `map[K]V`, or structs/arrays/`Option`s containing them) or a single-owner `OWN-C3` value (`File`), `x := v.(T)`, `x, ok := v.(T)` and `switch x := v.(type)` bind a **deep read-only variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) into the box with zero copy and zero allocation:
+- When the asserted or switched type holds mutable value containers (`[]T`, `map[K]V`, or structs/arrays/`Option`s containing them) or a value that cannot be copied (`OWN-C3`, such as `File`), `x := v.(T)`, `x, ok := v.(T)` and `switch x := v.(type)` bind a **deep read-only variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) into the box with zero copy and zero allocation:
   - reading fields, indexing, `len`, comparing with `nil`, and ranging over `x` work as in Go;
-  - mutating any part held by value in the box (`x[0] = 1`, `x["b"] = 2`, `delete(x, k)`, `clear(x)`, `d.Tags[0] = "a"`, `&x[i]`, pointer-receiver calls on a value part, or passing a mutable slice/map part to a parameter that could mutate it) is a compile error;
-  - to obtain an independent writable or owned copy, call `x.Clone()` (`m := x.Clone(); m["b"] = 2`), or box a shared/pointer struct wrapper (`var box any = NewShared(Holder{M: myMap})`, since `*[]T` and `*map[K]V` do not exist);
+  - mutating any part held by value in the box (`x[0] = 1`, `x["b"] = 2`, `delete(x, k)`, `clear(x)`, `d.Tags[0] = "a"`, `&x`, `&x[i]`, or pointer-receiver calls on a value part) is a compile error;
+  - to obtain a separate writable copy of a value that can be copied, copy the binding (`m := x` or `m := x.Clone()`, then `m["b"] = 2`); to change one value through an interface, box a `Shared[T]` (`var box any = NewShared(Holder{M: myMap})`);
   - when the asserted operand is a temporary interface value (`cfg := ctx.Value(k).(Config)`) or read from an aliasable place (`Shared[T]` field, pointer target, global), the runtime box is retained until the end of the binding's scope so another alias cannot free it mid-scope;
   - reassigning `v` while a deep read-only binding into `v`'s box is still read later is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021), [UB-2d](16-undefined-behavior.md)).
 
@@ -105,9 +108,9 @@ if s, ok := v.(string); ok {      // immutable string handle: works just like Go
 switch x := v.(type) {
 case []int:
     fmt.Println(len(x), x[0])     // ok: read-only binding into box
-    // x[0] = 9                   // error: boxed slice is read-only; clone first
-    cp := x.Clone()
-    cp[0] = 9                     // ok
+    // x[0] = 9                   // error: boxed slice is read-only; copy it first
+    cp := x.Clone()               // cp := x makes the same copy
+    cp[0] = 9                     // ok: the box still holds the old value
 case int:
     total += x                    // ok: trivial, copied
 }
@@ -121,14 +124,14 @@ case int:
 
 **TYP-12.** Struct layout is **declaration order with C alignment**. It is C-compatible, as C interop requires, so fields are never reordered automatically.
 
-**TYP-13.** Informative sizes on a 64-bit target (the normative source is P04 D4.5, D1.22, [ADR-0029](../adr/0029-slice-and-map-allocator-word.md) and [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)):
+**TYP-13.** Informative sizes on a 64-bit target (the normative source is P04 D4.5, D1.22, [ADR-0029](../adr/0029-slice-and-map-allocator-word.md), [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md) and [ADR-0041](../adr/0041-values-are-copied.md)):
 
 | Type | Words | Content |
 |---|---|---|
 | `int`, `*T`, `Unique[T]`, `Shared[T]`, `Weak[T]` | 1 | `int` is 64-bit on 64-bit targets |
 | `string` | 3 | `{ptr, len, backing}` (`backing == nil` for static literals/empty; heap `backing` holds `{refcount, byte_cap}` plus a trailing NUL byte) |
-| `[]T` | 4 | `{ptr, len, cap, backing}` (`backing == nil` for empty/nil or stack-array slices; heap `backing` holds `{refcount, alloc_cap, allocator}`) |
-| `map[K]V` | 1 | pointer to the runtime object; the header stores `{refcount, allocator, …}` |
+| `[]T` | 4 | `{ptr, len, cap, backing}` (`backing == nil` for a nil or empty slice and for a `&s[i:j]` view; heap `backing` holds `{alloc_cap, allocator}`, with no reference count: a slice has one owner) |
+| `map[K]V` | 1 | pointer to the runtime object; the header stores `{allocator, …}`, with no reference count: a map has one owner |
 | interface | 2 | `{itab*, data}` |
 | func value | 2 | `{code*, env*}` |
 

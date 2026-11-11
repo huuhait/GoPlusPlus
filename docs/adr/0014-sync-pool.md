@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-27
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** `p.Put(b)` no longer moves `b` by a rule of its own on its last use: the argument is a copy, which is not made when `b` is not used again, and a value that cannot be copied is passed as `p.Put(move(b))`; the pool, its cleanup and `Max` stand.
 - **Plan reference:** P13 Q2 (task P13.13); P13 D13.6; P12 D12.3, D12.6 (`@Pinned` sync types).
 
 ## Context

@@ -11,11 +11,11 @@ Start with the [overview](01-overview.md).
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
 | 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names, contextual `base` | D1.2, ADR-0023 |
 | 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, inheritance (`@Extends`) | D1.12, D1.17, ADR-0023, ADR-0034 |
-| 4 | [Ownership](04-ownership.md) | categories, rules 1 to 10, pointers, shared buffers, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032 |
-| 5 | [Parameters](05-parameters.md) | lending, auto-move, receivers, ABI | D1.5, ADR-0032 |
+| 4 | [Ownership](04-ownership.md) | categories, copying and `move`, rules 1 to 10, pointers, slicing, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032, ADR-0041 |
+| 5 | [Parameters](05-parameters.md) | by-value copies, pointer parameters, receivers, ABI | D1.5, ADR-0041 |
 | 6 | [Expressions](06-expressions.md) | `clone`, `mem.Take`, safety defaults, `@Operator` methods, `@Const` & composite `const` | D1.17, ADR-0024, ADR-0032, ADR-0033 |
 | 7 | [Statements](07-statements.md) | assignment, blocks, headers | D1.4, D1.6, ADR-0032 |
-| 8 | [Slices, maps and range](08-slices-and-range.md) | shared slicing, `:0` reset, allocators, range (also over user types) | D1.20, D1.21, D1.22, ADR-0024, ADR-0032 |
+| 8 | [Slices, maps and range](08-slices-and-range.md) | slicing and views, `:0` reset, allocators, range (also over user types) | D1.20, D1.21, D1.22, ADR-0024, ADR-0041 |
 | 9 | [Errors and panics](09-errors-and-panics.md) | `!`, `call!()`, panic, defer, recover | D1.8, D1.9, D1.19 |
 | 10 | [Generics](10-generics.md) | `Copy`, `Clone`, generic methods, operator constraints | D1.10, ADR-0024 |
 | 11 | [Closures](11-closures.md) | shared cells, method values | D1.11 |
@@ -27,7 +27,7 @@ Start with the [overview](01-overview.md).
 
 All `@` attributes on one page: [attributes cheat sheet](../attributes.md).
 
-> **Memory model being rewritten.** [ADR-0041](../adr/0041-values-are-copied.md) (2026-11-11): a value is a copy, moving is `move(x)`, sharing is a pointer or `Shared[T]`. Chapters 3, 4, 5, 7, 8, 10, 11 and 12 still describe shared slices and maps in places.
+The memory model (a value is a copy, `move(x)`, pointers and `Shared[T]`) is [ADR-0041](../adr/0041-values-are-copied.md); its last section lists the points that are still open.
 
 Appendix: [A. Symbol names](appendix-a-symbol-names.md) (how the compiler names functions, methods, generic instances and type tables in object files, and `gopp demangle`; D4.13).
 

@@ -10,10 +10,10 @@ A recursive-descent calculator. The AST lives in an arena, number nodes record t
 - [ERR-2](../../09-errors-and-panics.md): `fail` returns `error` as its last result, so it is a normal function that returns an error value.
 - [OWN-C1, OWN-C2, OWN-B1, OWN-B5](../../04-ownership.md#45-borrow-checking-adr-0021): `Node` (`Kind`, `int64`, `Span` and `Option[*Node]`) has no destructor glue and is borrow-carrying inside `arena`, so `mem.ArenaNew[Node]` bulk-frees all nodes when `arena` resets or drops; `Parser` is a stack borrow-carrying struct holding `src string` and `arena *mem.Arena`.
 - [OWN-S1](../../04-ownership.md#44-slicing-and-shared-buffers-d16-adr-0032): `p.src[p.pos:p.pos+1]` slices `p.src` in $O(1)$ for `%q` with zero heap allocation.
-- [PAR-1](../../05-parameters.md): `src string` is lent at 0 retain/release, so string literals and range strings pass without copies.
+- [PAR-1](../../05-parameters.md): `src string` is a by-value parameter; a string copy shares the immutable bytes, so string literals and range strings pass without copying bytes.
 - [SLC-3](../../08-slices-and-range.md), [OWN-B2](../../04-ownership.md#45-borrow-checking-adr-0021), [UB-5](../../16-undefined-behavior.md): `mem.Arena` frees its chunks automatically on drop (`SLC-3`); `arena.Reset()` reuses chunks per expression and ends borrows of the previous tree (checked in safe code by `OWN-B2`).
 - [PAN-3](../../09-errors-and-panics.md): `defer arena.Free()` evaluates `&arena` at the `defer`, and `arena` lives to the end of `main`; later `arena.Reset()` calls are legal and seen by the deferred call.
-- [RNG-1](../../08-slices-and-range.md): `range exprs` lends each string.
+- [RNG-1](../../08-slices-and-range.md): `range exprs`: the body only reads `src`, so the string element is not copied.
 
 ## Differences from the Go version
 
