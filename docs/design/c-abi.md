@@ -7,7 +7,7 @@ Go++ calls C with the exact C ABI of the target ([ADR-0001](../adr/0001-implemen
 | Piece | Crate | Job |
 |---|---|---|
 | `CTypeRules` | `crates/gopp-gir` | Decides which Go++ types may cross the C ABI, shared by semantic checking (`E0442` invalid, `E0439` unsupported) and the GIR verifier (`V067`). Pure Rust, zero `libclang` dependency. |
-| `CImport` | `crates/gopp-cimport` | Loads `libclang` 23.1.0 on demand (`clang-sys` `1.9.1` with `runtime` feature) for `@ImportC` header parsing (`P07`), and invokes `clang++ -std=c++20 -Xclang -ast-dump=json` plus layout probes when a package imports C++ headers (`P08`). |
+| `CImport` | `crates/gopp-cimport` | Loads `libclang` 23.1.0 on demand (`clang-sys` `1.9.1` with `runtime` feature) to read imported headers (`P07`), and invokes `clang++ -std=c++20 -Xclang -ast-dump=json` plus layout probes when a package imports C++ headers (`P08`). |
 | `C23Emitter` | `crates/gopp-codegen-c` | Emits C-compatible `struct` definitions with compile-time `_Static_assert(sizeof(...) == ... && _Alignof(...) == ...)` guards against `gopp-target`'s `TargetLayout`, plain C prototypes for `CallConv::C` declarations and `@Export("C")` thunks, and `__attribute__((swiftcall))` prototypes for `CallConv::Go` functions. |
 
 ## Which types cross (`gopp_gir::CTypeRules`)
@@ -34,6 +34,8 @@ Three hard bounds keep every recursive type walk fast in both `gopp-gir` and `cl
 `CTypeRules` memoizes only intrinsic properties of each type (field verdict, layout, height, expanded field count — never the depth at which a query started), so verdicts never depend on query order. Walks cut off past `65` levels below the queried root are never memoized. When a type violates multiple rules, diagnostics report depth first, then the first non-C constituent, then expanded field count, then byte size.
 
 ## Layout agreement and C23 emission
+
+A package that imports headers includes them in its generated file and uses their declarations as they are ([ADR-0036](../adr/0036-generated-c-includes-headers.md)). What follows is about the declarations `gopp` writes itself: Go++ types, `@Extern("C")` functions without a header, and `@Export("C")` thunks.
 
 1. **Compile-time layout verification:** For every aggregate that crosses a `CallConv::C` boundary (and every nested struct or array inside it), `gopp-codegen-c` emits `_Static_assert` checks on `sizeof`, `_Alignof`, and `offsetof` against `gopp-target`'s `TargetLayout`. Agreement holds by construction; any discrepancy halts C compilation immediately rather than silently corrupting a call.
 2. **Aliasing-safe return slots:** Aggregate results returned from C calls are assigned into a fresh local temporary in emitted C23 before copying into an aliased destination (`x = c_fn(&x)`), preserving exact C evaluation and aliasing semantics.
