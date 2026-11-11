@@ -17,19 +17,19 @@ Delta D1.18. Syntax: no change.
 
 **INI-2.** *Normal exit.* When `main.main` returns:
 1. `main`'s deferred calls run (LIFO, [PAN-4](09-errors-and-panics.md));
-2. `main`'s locals (including locals kept alive by a `defer`, [PAN-3](09-errors-and-panics.md)) are dropped in reverse order of creation;
+2. `main`'s locals (including locals kept alive by a `defer`, [PAN-3](09-errors-and-panics.md)) are dropped in reverse order of declaration;
 3. the runtime stops all remaining background goroutines (P12 D12.12);
 4. the runtime calls C `exit()`, which runs atexit handlers, flushes stdio and runs C++ static destructors.
 
 A stopped goroutine parks at its next yield point and never resumes; its stack is not unwound and its locals are not dropped.
 
-**INI-3.** *`os.Exit(code)`* skips defers and drops, stops the other goroutines, and calls `exit(code)`.
+**INI-3.** *`os.Exit(n)`*, from any goroutine, ends the process at once with status `n`, as in Go: no deferred call runs and no local or package variable is dropped. The runtime stops the other goroutines and calls C `exit(n)`, which still runs atexit handlers, flushes stdio and runs C++ static destructors (INI-2 step 4).
 
-**INI-4.** *Unrecovered panic.* If a panic unwinds `main.main`, `main`'s deferred calls and local drops run while unwinding `main`, then the trampoline prints the panic, stops the other goroutines, and calls `exit(2)`. An unrecovered panic in another goroutine prints the panic, stops all goroutines without unwinding them, and calls `exit(2)` ([CON-11](12-concurrency.md)).
+**INI-4.** *Unrecovered panic.* If a panic unwinds `main.main`, `main`'s deferred calls and local drops run while unwinding `main`, then the trampoline prints the panic, stops the other goroutines, and calls `exit(2)`. An unrecovered panic in another goroutine prints the panic, stops all goroutines without unwinding them, and calls `exit(2)` ([CON-11](12-concurrency.md)). As in Go, a panic in an `init` function that is not recovered prints the panic and ends the program with status 2.
 
 **INI-5.** *Package-level variables are never destroyed* (as in Go). That avoids C++'s static-destruction-order problems. Buffered writers must be flushed explicitly, as in Go.
 
-**INI-6.** *Order of destruction in `main`.* Deferred calls first (LIFO), then `main`'s locals in reverse creation order, then background goroutines stop, then `exit()`.
+**INI-6.** *Order of destruction in `main`.* Deferred calls first (LIFO), then `main`'s locals in reverse declaration order, then background goroutines stop, then `exit()`.
 
 ## 15.3 Example
 

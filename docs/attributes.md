@@ -50,7 +50,7 @@ A method with no mark is final.
 
 | `@` | On | Does |
 |---|---|---|
-| `@Pinned` | type | cannot be moved or copied after first use ([OWN-R10](spec/04-ownership.md#42-ownership-rules-d14)) |
+| `@Pinned` | type | a value cannot be moved or copied once it is initialized in a place ([OWN-R10](spec/04-ownership.md#42-ownership-rules-d14)) |
 
 **C and C++ interop, low level**
 

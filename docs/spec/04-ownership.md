@@ -110,7 +110,7 @@ func (c *Conn) drop() {
 
 **OWN-R2.** *Destruction order.*
 - Locals are destroyed (or released) at the end of their block, in reverse declaration order. One exception: a block-scoped local that an executed `defer` uses lives until function exit ([PAN-3, PAN-4](09-errors-and-panics.md)).
-- Temporaries are destroyed at the end of the full statement.
+- Temporaries are destroyed at the end of the full statement, in reverse order of creation.
 - In the header of a `for … range`, `if` or `switch`, temporaries live until the end of the whole statement, body included.
 - A value of a type with parents ([TYP-16](03-types.md#35-inheritance-adr-0023)) is destroyed child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in reverse `@Extends` order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse) ([TYP-24](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md)). Destroying a `Unique[Parent]` that holds a `Child` destroys the whole `Child`.
 
@@ -192,7 +192,7 @@ func (f *File) drop() {
 - Moving an imported C++ class runs its C++ move constructor and destroys the moved-from source at scope end.
 
 **OWN-R10.** *Pinned values and RVO.*
-- Types marked `@Pinned` (the `sync` types, including `Mutex[T]`) cannot be moved or copied after first use: a compile error.
+- A value of a type marked `@Pinned` (the `sync` types, including `Mutex[T]`) cannot be moved or copied once it is initialized in a place (a variable, a field, or a heap allocation): a compile error. A function may still return a freshly built one, because the result is built in the caller's place.
 - `return local` constructs the local directly in the caller's result slot when possible so it never moves in memory.
 
 ### Example: the whole model on one screen

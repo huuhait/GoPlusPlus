@@ -102,7 +102,7 @@ go func() { n.Add(1) }()     // ok
 
 **UB-5a.** *Mixed allocators.* Freeing memory with an allocator other than the one that made it: a Go++ (mimalloc) pointer passed to C `free` or `realloc`, a C-owned pointer that a Go++ drop frees (for example a `ffi.CString` buffer after `.Release()`, which is then C's to free), or a C++ `new` object freed with `free`. UB ([ADR-0027](../adr/0027-mimalloc-global-allocator.md) rule 4a). Go++ never adopts memory that C returns, and `ffi.CString(...).Release()` buffers come from C `malloc` for this reason. Not detected by default; the allocator test hook (P05.03) detects it in non-ASan builds. In ASan builds both sides use the sanitizer heap, so the mismatch is invisible there and the code stays wrong.
 
-**UB-6.** *`@NoBounds`.* An out-of-range index in a function (or package) with bounds checks turned off.
+**UB-6.** *`@NoBounds`.* An out-of-range index in a function with bounds checks turned off.
 
 UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding). The owner confirmed in P01.15 that they stay listed as undefined behavior.
 

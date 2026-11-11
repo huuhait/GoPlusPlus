@@ -37,15 +37,17 @@ Operator methods add no expression or token grammar ([6.10](#610-operator-method
 - **Slice to array.** `[N]T(s)` copies `N` elements out of `s`, each by the copy rule of its type ([OWN-R3](04-ownership.md#42-ownership-rules-d14)). For elements that cannot be copied it is a compile error, because a slice may hold more than `N` elements.
 - **Conversions that copy.** `string(bytes)` (`[]byte` → `string`), `[]byte(s)` (`string` → `[]byte`), and numeric conversions allocate or compute a fresh independent value.
 
-**EXP-3.** *Order of evaluation.* As in Go ([Order of evaluation](https://go.dev/ref/spec#Order_of_evaluation)), with one addition: when the copy of an argument is skipped and the place itself is handed over (`p = append(p, …)`, [OWN-R4](04-ownership.md#42-ownership-rules-d14)), that happens **after** all other arguments of the call are evaluated.
+**EXP-3.** *Order of evaluation.* As in Go ([Order of evaluation](https://go.dev/ref/spec#Order_of_evaluation)): operands are evaluated left to right. There are two additions. When the copy of an argument is skipped and the place itself is handed over (`p = append(p, …)`, [OWN-R4](04-ownership.md#42-ownership-rules-d14)), that happens **after** all other arguments of the call are evaluated. `move(x)` takes effect when it is evaluated, so a later read of `x` in the same statement is a use after move (`E0451`): `f(move(x), len(x))` is an error, and `f(len(x), move(x))` is fine.
 
 ```go
 x.items = append(x.items, len(x.items))   // len(x.items) is evaluated before x.items is handed to append
+f(len(xs), move(xs))                      // ok: len(xs) is evaluated before xs is moved
+f(move(xs), len(xs))                      // error (E0451): xs is read after it was moved
 ```
 
 ## 6.3 Operators on non-trivial values
 
-**EXP-4.** Operands of `==`, `<`, `+` and other operators on non-trivial types are only **read**: no copy is made and the operand is not consumed. The same holds when the operator is a user method ([EXP-18](#610-operator-methods-adr-0024)). `a + b` on strings allocates a new string buffer. `s += suffix` reuses `s`'s buffer in place when the buffer is not shared (`refcount == 1` and `(s.ptr - backing.data) + len(s) + len(suffix) <= backing.byte_cap`, updating the trailing NUL byte), or allocates a new buffer when shared or out of capacity.
+**EXP-4.** Operands of `==`, `<`, `+` and other operators on non-trivial types are only **read**: no copy is made and the operand is not consumed. The same holds when the operator is a user method ([EXP-18](#610-operator-methods-adr-0024)). `a + b` on strings allocates a new string buffer. `s += suffix` reuses `s`'s heap buffer in place when the buffer is not shared (`refcount == 1` and `(s.ptr - data) + len(s) + len(suffix) <= byte_cap`, with `refcount`, `byte_cap` and `data` as defined in [SLC-5](08-slices-and-range.md); the trailing NUL byte is updated), or allocates a new buffer when shared or out of capacity.
 
 **EXP-5.** Built-in `min` and `max` on `string` return the smaller or larger `string` handle directly (retaining its shared immutable buffer in $O(1)$ without copying bytes).
 
@@ -60,7 +62,7 @@ These follow Go.
 
 **EXP-6.** *Integer overflow wraps.* See [Integer overflow](https://go.dev/ref/spec#Integer_overflow). `int` is 64-bit on 64-bit targets.
 
-**EXP-7.** *Checks are on.* Bounds checks and nil checks are always on. Nil checks apply to channels, `error` and `any` (empty-interface) values. A nil map is empty and a write creates it, so map writes need no nil check. A write into a temporary map, or into the map that a type assertion yields, is a compile error, so there is no run-time nil-map panic ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Pointers, funcs and interfaces with methods are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)), so their uses need none. The checks can be turned off with `@NoBounds` (per function) or a per-package flag. Integer division by zero panics ([Run-time panics](https://go.dev/ref/spec#Run_time_panics)).
+**EXP-7.** *Checks are on.* Bounds checks and nil checks are always on. Nil checks apply to channels, `error` and `any` (empty-interface) values. A nil map is empty and a write creates it, so map writes need no nil check. A write into a temporary map, or into the map that a type assertion yields, is a compile error, so there is no run-time nil-map panic ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)). Pointers, funcs and interfaces with methods are never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)), so their uses need none. `@NoBounds` on a function turns off the index and slice bounds checks in that function, and nothing else: nil checks, the division-by-zero check and every other check stay on. There is no package-wide switch in version 1. Integer division by zero panics ([Run-time panics](https://go.dev/ref/spec#Run_time_panics)).
 
 **EXP-8.** *Operations Go defines where C leaves behavior undefined.* Go++ lowers them explicitly in C23 (`P04 D4.12` + `-fwrapv`) so every case produces Go's exact result and none of them is UB.
 
@@ -189,6 +191,8 @@ Two `@Operator` methods with the same name and the same parameter types are a du
 - A type with no `@Operator Eq` method keeps the built-in `==` if it has one (comparable structs, [Comparison operators](https://go.dev/ref/spec#Comparison_operators)). A type with `@Operator Eq` uses it in `==`, `!=`, `switch` cases and everywhere else the source writes `==`. Map keys and `comparable` instances still use built-in equality, never the `Eq` method ([GEN-13](10-generics.md#102-rules)). So does built-in `==` on a composite type with no `@Operator Eq` of its own (`[2]V`, a struct with a `V` field, or `Option[V]`).
 - `gopp vet` warns when `Eq` and `Cmp` **disagree in definition** (only one is defined for a right-hand type, or they inspect different field sets) and when a type with `@Operator Eq` is used as a map key.
 
+EXP-21, EXP-23 and EXP-24 are not used.
+
 **EXP-22.** *Indexing (`Index` and `SetIndex`).* `a[i]` and `a[i, j]` on a value whose type has `@Operator Index` (`m[i, j]` parses as an index list; the checker treats it as an instantiation only when `m` is a generic function or type).
 - Read: `a[i, j]` calls `a.Index(i, j)`. The result is a temporary ([EXP-2](#62-new-built-in-functions)), or a `*T` that borrows from the receiver ([OWN-B3](04-ownership.md#45-borrow-checking-adr-0021)).
 - Write: `a[i, j] = v` calls `(&a).SetIndex(i, j, v)`; the last parameter is the assigned value, the preceding parameters are the indexes, and `a` must be addressable and writable.
@@ -290,8 +294,8 @@ Types with runtime identity, a mutable heap buffer, or destructors (`*T`, `Uniqu
 - **Disallowed (compile error at the `@Const` declaration):** reading or writing any package-level `var`, calling non-`@Const` functions/methods or `@Extern` / C / C++ header functions, dynamic interface or `func`-value calls, `NewUnique` / `NewShared` / `NewWeak`, `map`, `chan`, `go`, `select`, `Mutex` / `RWMutex` / `Atomic`, `defer` / `recover`, `unsafe`, or types with `drop`.
 
 **EXP-34.** *Deterministic bounded evaluation.*
-- Compile-time evaluation uses Go++'s exact integer and IEEE-754 semantics ([EXP-6](#64-safety-defaults-d117), [EXP-8](#64-safety-defaults-d117)) with bounded step (fuel) and memory limits.
-- Reaching `panic(…)`, an unhandled `!` failure, division by zero, out-of-bounds indexing/slicing, or exceeding the step/memory limit during compile-time evaluation is a **compile error** at the `const` evaluation site showing the compile-time call stack.
+- Compile-time evaluation uses Go++'s exact integer and IEEE-754 semantics ([EXP-6](#64-safety-defaults-d117), [EXP-8](#64-safety-defaults-d117)) with bounded step (fuel), memory and call-depth limits: one constant expression may use at most 10,000,000 evaluation steps, 64 MiB of memory and a call depth of 1,024.
+- Reaching `panic(…)`, an unhandled `!` failure, division by zero, out-of-bounds indexing/slicing, or going over the step, memory or call-depth limit during compile-time evaluation is a **compile error** at the `const` evaluation site showing the compile-time call stack. An error for a limit names the limit.
 - `@Const` marks and checked bodies travel in export data (`.gopx`), so imported `@Const` functions work identically to same-package ones.
 
 ```go

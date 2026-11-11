@@ -75,7 +75,7 @@ var q Local[any] = p  // stores a local borrow of point: no box, tracked by OWN-
 
 **TYP-7.** *Interface parameters.* An interface parameter (including `...any`) is the function's own interface value, like every by-value parameter ([PAR-1](05-parameters.md)):
 - Passing an interface value (such as `err`) copies it, and so copies the value it holds ([TYP-5](#32-interfaces-and-runtime-type-information-d112)). The copy is skipped when the callee only reads the parameter, on the last use of the argument, and with `move(x)`.
-- Passing a non-interface value does **not** allocate a box at the call when the callee does not keep the parameter: the callee receives a borrowed `(itab, &value)`, so `fmt.Println(name)` and `fmt.Println(slice)` neither allocate, copy nor consume `name` or `slice`.
+- Passing a non-interface value does **not** allocate a box at the call when the callee does not keep the parameter: the callee receives `(itab, &value)`. When the callee only reads the parameter, `&value` is the caller's variable itself, so `fmt.Println(name)` and `fmt.Println(slice)` neither allocate, copy nor consume `name` or `slice`. When the callee may change the parameter without keeping it, `&value` is a copy in the caller's frame.
 - Passing `&x` as the interface (`fmt.Println(&file)`) lends `x` for the length of the call: nothing is boxed or copied, and the function may change `x` through it. This is how a value that cannot be copied (a `File`) is given to an interface parameter that the callee does not keep.
 - If the callee keeps the parameter (stores, returns or sends it), the value is boxed at that point by the rules of [TYP-6](#32-interfaces-and-runtime-type-information-d112): the box gets its own copy, and the copy is skipped when the argument is a temporary, the last use of a local, or `move(x)`. A value that cannot be copied (a `File`) cannot be converted to an interface type ([TYP-6](#32-interfaces-and-runtime-type-information-d112)): `Log(f)` and `Log(move(f))` are compile errors; put it in a `Shared[T]` first (`Log(NewShared(move(f)))`).
 
@@ -137,7 +137,7 @@ case int:
 | interface | 2 | `{itab*, data}` |
 | func value | 2 | `{code*, env*}` |
 
-**TYP-14.** `int` is 64-bit on 64-bit targets. Integer overflow wraps ([EXP-6](06-expressions.md)).
+**TYP-14.** `int` is 64-bit on 64-bit targets. The byte sizes in this spec are for 64-bit targets, and version 1 has only 64-bit targets (`linux/amd64`, `windows/amd64`, [ADR-0037](../adr/0037-v1-targets.md)). Integer overflow wraps ([EXP-6](06-expressions.md)).
 
 ## 3.4 Required fields (D1.4 rule 11)
 
@@ -220,7 +220,7 @@ type Card struct {
 
 **TYP-22.** *Cost and layout.*
 - Parent subobjects are laid out first in `@Extends` order (`P1`, `P2`, …), followed by the child's own fields, with standard C alignment ([TYP-12](#33-layout-d117-d122)).
-- **Primary type table:** if `P1` already has a type table, `P1` sits at offset `0` and its first word is shared as the child's primary type-table pointer (no extra word is added). Otherwise, if the child (or any secondary parent) requires dynamic dispatch or subobject offset recovery, one primary type-table pointer word is stored first at offset `0` before `P1`.
+- **Primary type table:** a type needs a type table when it declares or inherits a `@Virtual` or `@Abstract` method, or has a parent that has a type table. If `P1` has a type table, `P1` sits at offset `0` and its first word is shared as the child's primary type-table pointer (no extra word is added). Otherwise, when a table is needed, one primary type-table pointer word is stored at offset `0`, in front of `P1`.
 - **Secondary parents:** an untagged parent (`Timestamps`, no `@Virtual` or `@Abstract` in its own hierarchy) adds **zero** table words—only its fields. A tagged secondary parent (`Auditable`, `i >= 2`) already begins with its own type-table pointer word inside its subobject, which the child initializes to the `(Child, Pi)` secondary type table.
 - **`offset_to_top`:** every type table carries a signed byte offset `offset_to_top` (`0` for standalone objects and primary bases at offset `0`, `-offset(Pi)` for secondary base subobjects). Virtual overrides on secondary bases adjust the receiver back to `*Child` via a compiler-generated thunk, and `Unique[P]` drop, `Shared[P]` / `Weak[P]` retain and release (finding the refcount header before `top = (byte*)p + p.vptr.offset_to_top`), dynamic `Clone()`, and downcasts all recover the complete object start `top` in one addition, keeping `Unique[T]`, `Shared[T]` and `Weak[T]` at 1 word (8 bytes).
 - Calls through a parent pointer to virtual methods are indirect. Every other call is direct.

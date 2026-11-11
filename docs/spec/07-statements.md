@@ -48,7 +48,7 @@ if f := open!(path); f.Valid() {      // f lives for the whole if / else
 
 **STM-7.** *Send.* `ch <- a` gives the channel its own copy of `a` ([OWN-R3](04-ownership.md#42-ownership-rules-d14), [ADR-0041](../adr/0041-values-are-copied.md)): a `[]T`, a `map[K]V` or a struct that holds one is copied with its elements, so the sender and the receiver never share them. The copy is skipped, and the value itself is sent in $O(1)$, when `a` is a temporary, on the last use of a local, or with `ch <- move(a)`. A value that cannot be copied is moved into the channel (`move(a)`, or a temporary). See [CON-4 and CON-14](12-concurrency.md) for the `Send` rule.
 
-**STM-8.** *IncDec and op-assign* on trivial operands work as in Go. `s += "x"` on a `string` appends in place when `s`'s backing buffer is uniquely referenced (`refcount == 1`) and `(s.ptr - backing.data) + len(s) + len("x") <= backing.byte_cap` (keeping the trailing NUL byte), and allocates a fresh backing buffer when shared or out of capacity.
+**STM-8.** *IncDec and op-assign* on trivial operands work as in Go. `s += "x"` on a `string` appends in place when `s`'s heap buffer is uniquely referenced (`refcount == 1`) and `(s.ptr - data) + len(s) + len("x") <= byte_cap` (keeping the trailing NUL byte; `refcount`, `byte_cap` and `data` are defined in [SLC-5](08-slices-and-range.md)), and allocates a fresh buffer when shared or out of capacity.
 
 **STM-9.** *Expression statements.* A call that returns an owned value and discards it destroys the value at the end of the statement. Writing `_ = f()` does the same: it frees the result at once.
 
