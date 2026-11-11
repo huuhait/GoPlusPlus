@@ -69,7 +69,7 @@ func main() {
 	var counts OrderedMap[string, int] // the zero value is an empty map
 	for _, w := range words {
 		if p := counts.Get(w); p != nil {
-			*p++ // p is a *int here: checked
+			p++ // p is a *int here: checked
 		} else {
 			counts.Put(w, 1) // Put gets a copy of w: a string copy shares the bytes
 		}

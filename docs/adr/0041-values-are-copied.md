@@ -29,7 +29,7 @@ The owner decided to remove the exception rather than refine it, and to do it th
    ```
 5. **A copy that cannot be noticed is not made.** When the source is not used again, the copy is done as a move. When a function only reads a parameter, the argument is passed without copying. A program cannot tell the difference and must not depend on how many copies are made.
 6. **A type that cannot be copied** (a file, a mutex, anything with cleanup and no way to duplicate) makes a plain `t := s` a compile error. The fix-its are `move(s)` and `&s`.
-7. **A pointer to a slice, a map or an array is used without writing `*`** wherever only the pointed-to value fits: indexing (`xs[0]`, `m[k]`), slicing (`xs[i:j]`), `range xs`, `len`, `cap`, `delete` and `clear`. This is what field access and method calls already do for a pointer to a struct. Only the whole value is written with the star: `*xs = append(*xs, 4)`, `*xs = nil`.
+7. **A pointer to a slice, a map or an array is used without writing `*`** wherever only the pointed-to value fits: indexing (`xs[0]`, `m[k]`), slicing (`xs[i:j]`), `range xs`, `len`, `cap`, `delete` and `clear`. This is what field access and method calls already do for a pointer to a struct. The whole value was first written with the star (`*xs = append(*xs, 4)`); [ADR-0043](0043-no-star-to-write-through-a-pointer.md) removed it the same day: `xs = append(xs, 4)`, `xs = nil`, and the same for a pointer to any type.
 
 What a copy is, by type:
 
@@ -70,7 +70,7 @@ These spell the decision out far enough to rewrite the spec. Rules 8 to 14 answe
 
 **Sharing**
 
-7. *Pointers.* `&x` gives a `*T` that is `x`. `*[]T` and `*map[K]V` are ordinary pointer types. A pointer to a slice, map or array is used without `*` for indexing, slicing, `range`, `len`, `cap`, `delete` and `clear`; the whole value is written `*p`. The same holds through `Unique[T]` and `Shared[T]`, as it does for field access. `NewShared(x)` gives shared ownership.
+7. *Pointers.* `&x` gives a `*T` that is `x`. `*[]T` and `*map[K]V` are ordinary pointer types. A pointer to a slice, map or array is used without `*` for indexing, slicing, `range`, `len`, `cap`, `delete` and `clear`, and the whole value is read and written the same way (`p = append(p, v)`, [ADR-0043](0043-no-star-to-write-through-a-pointer.md)). The same holds through `Unique[T]` and `Shared[T]`, as it does for field access. `NewShared(x)` gives shared ownership.
 8. *Part of a slice as the same elements.* `&s[i:j]` (and `&arr[i:j]` on an array) is a `*[]T` that covers elements `i` to `j` of `s` itself. It has no spare capacity (`cap == len`), it is checked like every borrow (it cannot outlive `s`, and `s` cannot be assigned, grown or moved while it is in use), and growing or replacing `*p` never changes `s`. `s[i:j]` without `&` is a value: a new slice with copies of those elements, subject to rule 4. On a `string`, `s[i:j]` shares the immutable bytes as before.
 9. *A function that changes its copy to no effect.* Writing to an element or entry of a by-value slice or map parameter (assignment, `delete`, `clear`, an `append` assigned back to the parameter) when the parameter is not read, returned or passed on afterwards is a compile error: the write is lost. The fix-its are a pointer parameter and returning the value.
 10. *Built-ins and the library take a pointer where they change their argument:* `copy(&dst, src)`, `sort.Ints(&xs)`, `r.Read(&buf)`, `r.Read(&buf[n:])`. `append(s, x)` takes `s` by value and returns the result.

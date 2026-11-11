@@ -107,7 +107,7 @@ var n sync.Atomic[int]
 go func() { n.Add(1) }()     // ok: Atomic is Sync, shared
 
 p := &x
-go func() { *p = 1 }()       // error: a raw pointer to a local (CON-2)
+go func() { p = 1 }()        // error: a raw pointer to a local (CON-2)
 ys := []int{1, 2}
 go sum(ys)                   // ok: last use of ys, so it is moved in; if ys were used below, sum would get a copy
 ```

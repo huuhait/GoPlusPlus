@@ -113,7 +113,7 @@ a, b := Dup("hi"), Dup(5)       // strings and numbers both satisfy Clone
 func (s *Stack[T]) Push(v T) { s.items = append(s.items, move(v)) }
 
 // Copy: a T is copied by copying its bytes.
-func Swap[T Copy](a, b *T) { *a, *b = *b, *a }
+func Swap[T Copy](a, b *T) { a, b = *b, *a }
 
 // Generic method.
 type Set struct{ items []int }

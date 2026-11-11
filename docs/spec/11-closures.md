@@ -131,7 +131,7 @@ for i := 1; i <= 3; i++ {
     wg.Add(1)
     go func() {                                // `go` always escapes: wg and sum live in cells
         defer wg.Done()
-        sum.With(func(p *int) { *p += i })     // i is a Copy value, copied in (CON-13)
+        sum.With(func(p *int) { p += i })      // i is a Copy value, copied in (CON-13)
     }()
 }
 wg.Wait()

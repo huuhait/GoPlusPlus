@@ -16,7 +16,7 @@ b := a                          // the same Node
 
 first := &a.Items[0]
 b.Items = append(b.Items, 4)    // the slice moves to a new buffer; the old one is freed
-*first = 9                      // writes into freed memory
+first = 9                       // writes into freed memory
 ```
 
 The compiler cannot catch it by looking for pointers, because the same thing happens inside a method that received an ordinary `*Node`: nothing there says that the node is shared.
