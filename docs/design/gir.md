@@ -1,0 +1,332 @@
+# GIR: the Go++ mid-level IR
+
+GIR sits between the checked AST (`crates/gopp-sema`) and the Clang-23 C23/C++20 backend (`crates/gopp-codegen-c`, [ADR-0001](../adr/0001-implementation-language.md)). It is shaped like Rust's MIR and Swift's SIL: typed, a control-flow graph of basic blocks, values in *places*, computed by *rvalues*, and **not SSA** (Clang 23 builds SSA from emitted C23 stack locals when optimizing). This document is the contract for the middle-end crates: `crates/gopp-gir`, `crates/gopp-plugin-api`, and `crates/gopp-plugin-host`.
+
+## 1. Where GIR sits
+
+```text
+ gopp_sema::CheckedPackage (AST + sema::Info)
+        |  gopp_gir::lower_package       reads Info, never re-derives
+        v
+  gopp_gir::Module
+        |-- verify_module (V001..V085)
+        |-- MoveCheck + BorrowCheck + ConcurrencyCheck  (mandatory safety gate)
+        |-- -fpass-plugin [PreDropElab]  --> verify_module
+        |-- DropElaboration + gir-inline --> verify_module
+        |-- -fpass-plugin [PostDropElab] --> verify_module
+        v
+  gopp_codegen_c::emit_c23  -->  clang-23 (-std=gnu23 -fuse-ld=lld)
+        |
+        +-- gopp_gir::gopx::{encode,decode}   (postcard + zstd + blake3, section 13; .gopx)
+        +-- gopp_gir::print_module            (text, `gopp build -emit=gir`)
+```
+
+Rules that keep the layers apart:
+
+- **`gopp-gir` has zero Clang, LLD, or FFI dependencies.** Cargo's crate graph enforces the boundary at compile time (`#![forbid(unsafe_code)]` in `gopp-gir`). Only `gopp-codegen-c` knows Clang-23 C23 syntax and driver flags, and only `gopp-cimport` touches `clang-sys`. The compile-time macro interpreter (`P09`) and external `-fpass-plugin` crates run directly on `gopp-gir`.
+- **The builder reads the checker, it does not decide again.** The type of an expression is `Info::type_of`, a constant is `TypeAndValue::val`, and what a name denotes is `Info::uses` / `defs`. Nothing in GIR lowering looks a name up or works out a type. If a feature needs a fact the checker does not record, the fact is added to `Info`, never guessed in GIR.
+- **One way to make a body:** `gopp_gir::FuncBuilder`. It computes the type of every rvalue in one place; `verify_module` checks every type independently.
+
+## 2. Data structures
+
+All nodes inside `crates/gopp-gir` refer to their parts by typed arena **index** (`la_arena::Idx`: `LocalId`, `BlockId`, `FuncId`, `TypeId`, `Spur`), never by raw pointer, so a body can be cloned, substituted, serialized, and compared deterministically. Structural types are interned in `gir::TypeInterner`.
+
+```text
+Module      Types, Name (package path), Files[], Strings[], Funcs[], Globals[]
+Function    Name (symbol), Sig (a Func TypeId), Link, CC, NoUnwind, Inline, Loc
+            Locals[] (0 = return place, 1..N = parameters, then the rest)
+            Blocks[] (0 = entry; empty = a declaration)
+            Scopes[]: the debug scopes, a tree (section 14)
+Local       Kind (Return, Arg, Var, Temp), Ty, Name, Mutable, Owned, Glue, Loc
+            Source (declared by the program), Scope, ArgNo, Origin, Deref
+BasicBlock  Stmts[], Term, Cleanup, Catch, Cold
+Statement   Assign(Dest place, Rvalue) | StorageLive(L) | StorageDead(L) | Nop
+            Boundary: a copy made by GIR inlining (never read from a file)
+            Prologue: entry-block setup emitted before body line numbers
+            DropOld: store replaces a live owned place
+            Scope: the debug scope it is in (section 14)
+Terminator  Goto | Switch | Return | Unreachable | Call | Drop | Assert | Resume
+            Scope, as a statement's
+DebugScope  Block (a `{}` of the source) | Inlined (an inline site: Callee at Loc)
+            Parent (an earlier scope; 0 = the function), Loc, Callee, Origin
+Span        {File+1, Line, Col}: self-contained, needs no SourceManager
+```
+
+Design points:
+
+- **Locals are stack slots, not SSA values.** A `Local` may be assigned many times; GIR needs no $\phi$ nodes.
+- **Temporaries** (`Local::Temp`) hold intermediate results, carrying `StorageLive` / `StorageDead` and `Local::Owned` where lifetime and drop elaboration require them.
+- **`StorageLive` / `StorageDead`** mark the extent of a source variable. The builder maintains a scope stack; leaving a scope by falling through, `return`, `break`, `continue`, or `goto` emits `StorageDead` for the locals of every crossed scope, innermost first (`exit_scopes`). Drop elaboration uses these exact exits (section 7).
+- **Functions are separate objects with mangled symbols as names.** Calls name their callee as an operand (`Constant::Func` for direct calls, or a function-pointer `Place` for indirect calls). `gopp_mangle::symbol_of` (`crates/gopp-mangle`, [appendix A](../spec/appendix-a-symbol-names.md)) decides every symbol name in one place: `_GP...` for Go++ functions, methods, instances, closures, and glue; bare C names for `@Extern("C")` and `@Export("C")` thunks; `main` for the C entry point; and `_gopp_...` for compiler runtime helpers.
+- **`NoUnwind` and `NoReturn`** sit on `Function` (lowered to `__attribute__((nothrow))` and `__attribute__((noreturn, cold))` in C23). A call to a `NoReturn` function may omit its return target (`Target == None`, verified by `V028`).
+- **Calling convention (`CallConv`):** `Go` is the internal convention (`__attribute__((swiftcall))` on `amd64`/`arm64`, C fallback on `riscv64`/`wasm32`, [ADR-0030](../adr/0030-amd64-calling-convention.md), [calling-convention.md](calling-convention.md)); `C` is the target C ABI ([c-abi.md](c-abi.md)). `CallConv` is part of `Func` types (printed `fn "C"(...)` for C), and a function's `CC` equals its signature's (`V075`). A Go++ function reaches C only through a C-ABI thunk (`_GPTC...` or `@Export("C")`), and indirect `fn "C"` calls pass scalars only (`V076` until `P07.08`). Closure code pointers carry `has_env` (`fn env(...)`, `V078`), lowered via `__attribute__((swift_context))` on `amd64`/`arm64`.
+
+## 3. Types
+
+GIR types have fixed target width (`int` is resolved to `i64` on 64-bit targets or `i32` on `wasm32` via `TargetLayout`), carry nominal names only on structs and recursive `Rec` shells, and are cheap to intern, substitute, and serialize.
+
+| Kind | Meaning | Language types it stands for |
+|---|---|---|
+| `Unit` | empty tuple, size 0 | `void` / no result; `struct{}` |
+| `Bool` | 1 byte in memory (`bool` in C23) | `bool` |
+| `Int(bits, signed)` | 8, 16, 32, 64 | all integer kinds; `int`/`uint`/`uintptr` take `TargetLayout::pointer_bits` |
+| `Float(bits)` | 32, 64 | `float32`, `float64` |
+| `String` | `{ptr *u8, len u64, backing *u8}`; fields 0, 1, 2 ([ADR-0026](../adr/0026-no-small-string-optimization.md) + [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md): no SSO; a literal or empty string points to rodata/null with `backing == null`, a heap string points `backing` at its `{refcount, byte_cap}` header with atomic `refcount` and a trailing NUL byte, `TYP-13`, `SLC-5`) | `string` |
+| `Ptr(T)` | single pointer | `*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`; `unsafe.Pointer` is `*u8` |
+| `Slice(T)` | `{ptr *T, len u64, cap u64, backing *u8}`; fields 0..3; 4 words ([ADR-0029](../adr/0029-slice-and-map-allocator-word.md) + [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)). `backing` is null for nil/empty or stack-array slices (`arr[i:j]`) and otherwise points to `{refcount, alloc_cap, alloc}` (section 15) | `[]T` |
+| `Array(T, N)` | `N` elements | `[N]T` |
+| `Tuple(T...)` | C-aligned anonymous struct | multi-value results, `(T, error)`; `complex64`/`complex128` are `Tuple(f, f)` |
+| `Option(T)` | `T` followed by a 1-byte `bool` flag, padded to `T`'s alignment; fields 0 (`T`) and 1 (`bool`) | `Option[T]` when `T` has no pointer/interface/func niche |
+| `Struct(name)` | nominal struct; body set once (supports recursive pointers/slices) | defined structs and generic struct instances (`Type::type_args` carries generic arguments) |
+| `Rec(name)` | self-naming nominal shell whose body may be any non-struct type referencing the `Rec`; canonicalized so identical recursive shapes share one `TypeId` | recursive non-struct definitions: `type S []S`, `type M map[string]M`, `type O Option[*O]`, `type A [2]Option[*A]`, `type L [1]*L` |
+| `Func(P..., R, has_env, cc)` | function pointer type with calling convention (`Go` or `C`) and optional closure environment flag | code pointer of a `func` value; C callback (`fn "C"`) |
+
+**Single mapping point (`lower_type`):** `Lowering::lower_type` is the only function mapping `sema::TypeId` to `gir::TypeId` (memoized per `sema::TypeId`):
+
+| Checker type | GIR representation |
+|---|---|
+| `bool`, integers, floats, `string` (untyped constants resolved to default types) | Direct table entry |
+| `*T` | `Ptr(T)` |
+| Defined type over a non-recursive basic/slice/map type | Underlying GIR type (methods lower to functions) |
+| Defined struct type | `Struct("pkg.Name")` with declaration-order fields and C alignment |
+| Defined non-struct type reaching itself | `Rec("pkg.Name")` |
+| `[N]T`, `[]T` | `Array(T, N)`, `Slice(T)` |
+| `Unique[T]`, `Shared[T]`, `Weak[T]` | `Ptr(T)` (1-word payload pointer `T*`; for `Shared`/`Weak`, `{strong, weak, alloc}` precedes `top = (byte*)p + vptr.offset_to_top`, `TYP-19`, `OWN-P3`, `OWN-P4`) |
+| `map[K]V` | `Ptr(Struct("gopp.map"))` (key/value sizes and glue passed via `gopp.mapinfo`, section 15) |
+| `chan T` | `Ptr(Struct("gopp.chan"))` |
+| `interface` | `Struct("gopp.iface")` = `{itab *u8, data *u8}`; `Option[I]` for a non-nilable interface with methods uses the same type with null `itab` as `nil` |
+| `func` value | `Tuple(Func(env *u8, ...; has_env), *u8)` = `{code, env}` (`16` bytes on 64-bit); `Option[F]` uses the same type with null `code` as `nil` |
+| `Option[P]` (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`), `Option[I]`, `Option[F]` | Niche optimization: identical layout to `P` / `I` / `F` with null as `nil` (`Option` on already-nilable types like `[]T`, `map[K]V`, `chan T`, `any`, `error`, `unsafe.Pointer`, or `Option[U]` is rejected as `E0446`, `OWN-P9`) |
+| `Option[T]` otherwise | `Option(T)` (`{value, set}`; padding and unset payloads never participate in `==` or hashing) |
+| Unsubstituted type parameter | Unreachable in GIR (monomorphized per instance in section 10; internal error `E0440` if encountered) |
+
+Any construct not yet supported in a phase emits `E0439` (`err_gir_unsupported`) once at its span and substitutes a typed zero placeholder (`zero_of_expr`) so downstream statements produce no cascading errors; any missing checker invariant emits internal error `E0440`.
+
+## 4. Places
+
+A `Place` is a `LocalId` plus a `SmallVec` of projections; every projection records its resulting `TypeId`, so querying a place's type is $O(1)$.
+
+| Projection | Meaning |
+|---|---|
+| `Deref` | `*p`; base must be `Ptr(T)` |
+| `Field(N)` | field `N` of `String`, `Slice`, `Tuple`, `Option`, or `Struct` |
+| `Index(L)` | element of `Array` or `Slice`, or `u8` byte of `String`; `L` is an integer `LocalId` (bounds check is an explicit preceding `Assert`) |
+| `ConstIndex(N)` | constant element `N` of `Array` |
+| `Downcast(N)` | variant payload `N` |
+
+A **move path** (section 7) is a place containing only `Field`, `Deref`, and `ConstIndex` steps; runtime-indexed `Index(L)` places are never move paths.
+
+## 5. Operands, constants, and rvalues
+
+- **`Operand = Copy(Place) | Move(Place) | Const(Constant)`**
+  - `Copy` reads a place without invalidating it (emitted for trivial `OWN-C1` values and lent/borrowed reads).
+  - `Move` transfers ownership (emitted for single-owner `OWN-C3` transfers, `mem.Take` / `mem.Replace`, and last-use local `OWN-C2` transfers per [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)).
+- **`Constant`:** `Int` (truncated to bit-width), `Float` (IEEE-754 bits, rounded to `f32` for 32-bit floats), `Bool`, `Str` (index into `Module::Strings`), `Func` (`FuncId`), `Null`, `Zero` (all-zero value of any type), and `Global` (pointer to `Module::Globals[idx]`).
+- **`Rvalue`:** `Use(Operand)`, `AddrOf(Place, Mutability)`, `Binary(BinOp, Operand, Operand)`, `Unary(UnOp, Operand)`, `Cast(CastKind, Operand)`, `Aggregate(AggKind, Vec<Operand>)`, `Len(Place)`.
+
+All GIR operations carry **Go++ semantics** (lowered by `gopp-codegen-c` under `-fwrapv -fno-strict-aliasing -ffp-contract=off`):
+
+- Signed `Div` / `Rem`: `MinInt / -1 == MinInt` and `MinInt % -1 == 0` (emitted via an explicit C23 helper check; non-constant zero divisors are guarded by a preceding `Assert(..., DivByZero)`).
+- `Shl` / `Shr`: shift counts `>= width` yield `0` (or sign-fill for arithmetic `Shr`); signed negative counts are guarded by `Assert(..., NegativeShift)`.
+- `Cast(FloatToInt)`: saturates on NaN (`0`) and out-of-range floats (`MinInt`..`MaxInt`, emitted via saturating C23 inline helpers).
+- `Add`, `Sub`, `Mul`, `Neg`: wrap in two's complement (`-fwrapv`).
+- Composite `==` and hashing (`String`, `Struct`, `Array`, `Complex`, `Option(T)`, `Interface`) lower to deduplicated `LinkOnceODR` glue functions (`add_eq_glue`, `add_hash_glue`).
+
+## 6. Terminators, unwinding, cleanup, and `!`
+
+```text
+Goto(T)                                 Switch(op, [(v, T)...], otherwise)
+Return                                  Unreachable
+Call(callee, args, dest, T, unwind)     Drop(place, T, unwind)
+Assert(cond, expected, kind, T, unwind) Resume
+```
+
+- **Calls and unwinding (`UnwindAction`):**
+  - `Continue`: no local cleanup in this frame; unwind propagates to caller.
+  - `Cleanup(B)`: unwind enters cleanup block `B`, which runs drops/defers and ends in `Resume` (emitted in C23 via `__attribute__((cleanup(...)))` scope guards under `-fexceptions`, or C++20 `try`/`catch (...)` frames when a function uses `defer`/`recover`).
+  - `Terminate`: a panic inside a plain drop cleanup aborts the process.
+  - `Unreachable`: callee is `NoUnwind` (`__attribute__((nothrow))`, including plain `@Extern("C")` functions and all calls under `-panic=abort`).
+- **Cleanup & Catch blocks (`V023`–`V026`):**
+  - Plain `Cleanup` blocks run only on unwind paths, enter only via `Cleanup(B)` edges (`V024`), cannot `Return`, and any calls/drops inside them use `Terminate` or `Unreachable` (`V025`).
+  - `Catch` blocks (`BasicBlock::Catch`, implying `Cleanup`) implement `defer` + `recover()`: they run deferred calls LIFO, query `runtime.recover()`, and branch via `Switch` either back to normal return flow (when recovered) or to `Resume` (when unrecovered).
+- **Fallible `!` propagation (`Info::Bangs`):** `f!(...)` lowers to `Call` followed by `Switch` on `err.itab == null`, branching on failure to a `BasicBlock::Cold` block (`__builtin_expect(..., 0)`):
+  - `Return`: zeroes non-error return fields (`ERR-3`), writes `err`, and returns.
+  - `Panic`: stores `(expr, pos, err)` into the function's shared `bang_panic` cold block, which calls `gopp_panic_must(expr, pos, err)` (`__attribute__((noreturn, cold))`).
+- **Runtime assertions (`Assert`):** Bounds, slice-bounds (`SliceAlen`..`Slice3C`, `SliceConvert`), nil, and division/shift checks carry message arguments (`V065`) and branch on failure to one shared cold panic block per check kind per function (`gopp_panic_<kind>`).
+
+## 7. Moves, drops, and drop elaboration
+
+The GIR builder emits `Move` operands, `StorageLive`/`StorageDead`, and `Statement::DropOld` without inserting `Drop` terminators directly. After `MoveCheck`/`BorrowCheck`/`ConcurrencyCheck` (and `PreDropElab` plugins), `elaborate_drops` lowers ownership cleanups across the CFG:
+
+- **Zero-on-move (no runtime drop flags for zeroable Go++ types, `OWN-R5`):** Owned non-parameter locals are zero-initialized in the entry block; moving a zeroable Go++ value copies its bytes and zeroes the source slot; every generated drop glue skips all-zero values and zeroes the slot on completion. Non-zeroable C++ values (`P08`) invoke their C++ move constructor and destructor.
+- **What `elaborate_drops` rewrites:**
+  1. Zero-initializes owned non-parameter locals in the entry block.
+  2. Turns `StorageDead` of an owned local into `Drop` (innermost scope first, reverse declaration order).
+  3. Turns `Statement::DropOld` (`x = rhs` on a live owned place) into evaluating `rhs` first (so `s = s` and `s = s[1:]` keep `s`'s backing alive), dropping old `x`, then storing.
+  4. Rewrites `Move(place)` into `Copy(place)` followed by zeroing `place`.
+  5. Drops owned parameters (`OWN-C3` value parameters, plus any `OWN-C2` parameter whose body mutates the parameter slot) at every `Return` and unwind path, while eliding known-zero drops within each basic block.
+- **Category-aware transfers ([ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)):**
+  - `OWN-C1` (trivial): bitwise `Copy`, no glue.
+  - `OWN-C2` (shared / value handles: `string`, `[]T`, `map[K]V`, `Shared[T]`, `Weak[T]`, `chan T`, `interface`, `func`, and aggregates of them): **lent** at 0 retain/release for non-keeping parameters (holding a caller temporary retain only when read from an aliasable place, `PAR-1`); **auto-moved** (`Move`, 0 retain/release) on last local read; **retained** (`+1`) when copied while still live (`OWN-C2`). Heap `string` backings, `chan`, plain `func` closures/cells, and `Send`/`Sync` interface boxes use atomic refcounts (with a `refcount == 1` relaxed fast path on final free), while unsynchronized `[]T`, `map[K]V`, and non-`Sync` `Shared[T]` use non-atomic refcounts (`CON-3`).
+  - `OWN-C3` (single-owner: `Unique[T]`, types with `drop()`, or aggregates containing them): **moved** on assignment, return, or consuming parameter (`MoveCheck` enforces `E0451` use-after-move via a hash-consed persistent 64-ary radix trie `PathSets` with $O(\Delta)$ branch joins); **borrowed read-only** for `*T`, pure `@Operator` methods, `@Convert` methods, `Clone() T`, and non-keeping `[]T` parameters (`PAR-5`).
+- **Interface boxes, lent interfaces, closures, swaps, and in-place string append:**
+  - Values exceeding 1 word or carrying ownership (`map`, `Shared`, `Unique`, `drop` types) are heap-boxed in `[refcount, payload]` (`TYP-8`); non-keeping interface arguments lend `(itab | 1, &frame_copy)` with zero allocation (`TYP-7`), and storing a lent interface out (`iface_take`) clones it onto the heap. Keeping a mutable-container `OWN-C2` (`[]T`, `map[K]V`) in an interface moves on unshared (`refcount == 1`) last use and otherwise requires `.Clone()` (`TYP-6`).
+  - Parallel swaps (`a, b, c = ...`) check aliasing via `swap_may_alias`: provably disjoint `OWN-C3` places swap with zero clones; potentially aliased `3+`-way `OWN-C3` swaps require `Clone()` (`E0452`/`E0453`).
+  - `s += x` on a uniquely owned heap string (`backing != null && refcount == 1` with spare `byte_cap`) appends in place with trailing NUL (`STM-8`, $O(\log n)$ allocations).
+
+## 8. Ownership, borrow, and concurrency checks — plus `-fpass-plugin`
+
+`MoveCheck`, `BorrowCheck`, and `ConcurrencyCheck` run per function over the GIR CFG before drop elaboration, using `Info` ownership/borrow modes and cross-package function borrow summaries (`OWN-B3`, `OWN-B9`):
+
+- Every variable access is an explicit `Place` operand or destination; `AddrOf(place, mut)` is the sole borrow-creation rvalue; backward liveness of borrow locals detects conflicting writes/moves/drops in linear time; `go` and `s.Go` closure aggregates expose exact capture modes (`CON-1`–`CON-7`).
+
+### 8.1 Middle-IR Pass Plugins (`-fpass-plugin`)
+
+External GIR optimization, analysis, instrumentation, and equality-saturation (`egglog` `3.0.0`) passes plug into the middle end via Clang-style CLI flags ([ADR-0001](../adr/0001-implementation-language.md)):
+
+- **CLI flags:** `-fpass-plugin=<path.{so,dylib,dll,wasm}>` (repeatable, executed in CLI order) and `-fplugin-arg-<plugin_name>-<key>=<value>`.
+- **Stable ABI (`crates/gopp-plugin-api`):** Exposes `#[repr(C)]` `abi_stable::StableAbi` types (`GirPassPlugin_TO`, `PassStage::{PreDropElab, PostDropElab}`, `PluginMetadata`, `PluginDiagnostic`) and `GOPP_PLUGIN_API_VERSION`. Native shared libraries export an `#[export_root_module]` root module loaded by `crates/gopp-plugin-host` via `abi_stable` (`0.11.3`) + `libloading` (`0.9.0`), verifying ABI layout hashes and API versions at load time. Optional `.wasm` plugins exchange serialized `gopp_gir::Module` payloads via `rmp-serde` (`1.3.1`) inside a deterministic `wasmtime` (`50.0.1`) sandbox with zero host filesystem or network imports.
+- **Mandatory safety firewall:**
+  1. `MoveCheck`, `BorrowCheck`, and `ConcurrencyCheck` **always run before `PreDropElab` plugins**, so an external pass can never erase or hide an ownership, borrow, or concurrency violation.
+  2. `gopp_gir::verify_module` (`V001`–`V085`) **runs immediately after every individual plugin invocation** (`PreDropElab` and `PostDropElab`). Any broken CFG, type, dominance, or cleanup invariant halts compilation with `E0440` (`err_gir_verify`), naming the offending plugin and rule.
+- **Deterministic caching:** `gopp-plugin-host` hashes every loaded plugin binary and its sorted `-fplugin-arg-*` flags with `blake3` (`1.8.7`) into `.gopx` and object cache keys.
+
+## 9. Verifier (`V001`–`V085`)
+
+`gopp_gir::verify_module` runs after `lower_package`, after every `.gopx` decode, after every `-fpass-plugin` pass, after `elaborate_drops` / `inline_trivial`, and at the entry to `gopp-codegen-c`. It trusts no cached types, uses iterative worklists throughout, and runs in $O(|M|)$ time. Errors format as `V027: fn main.f: bb3 #2: duplicate switch case 1`.
+
+| Rule | What is checked |
+|---|---|
+| `V001` | Every function exists and has a unique symbol name. |
+| `V002` | Type shapes: integers `8/16/32/64` bits, floats `32/64`, every referenced `Struct` or `Rec` has a body, no missing parts. |
+| `V003` | No `Struct` or `Rec` contains itself by value (across fields, arrays, tuples, `Option` payloads, and `Rec` bodies; pointers, slices, and strings terminate the cycle check). |
+| `V010` | Function signature is a `Func` type. |
+| `V011` | Local `0` is `Return` of result type; `1..=N` are `Arg`s matching signature parameter types; remaining locals are `Var` or `Temp`; `Local::Source` appears only on `Arg` or `Var`. |
+| `V012` | External declarations (empty `Blocks`) have zero `Locals`. |
+| `V013` | Entry block `bb0` is not `Cleanup` and has no incoming CFG back-edges. |
+| `V014` | `Local::Owned` is set if and only if `Local::Glue` is present; return place `_0` is never `Owned`. |
+| `V020` | Every basic block ends with a `Terminator`. |
+| `V021` | Every normal and unwind target names an existing `BlockId`. |
+| `V022` | Every block is reachable from `bb0`. |
+| `V023` | Normal edges do not cross the cleanup boundary except out of a `Catch` block, and only a `Catch` block may branch into a `Catch` block. |
+| `V024` | An unwind edge targets a `Cleanup` block if and only if the action is `Cleanup(B)` (`Catch` implies `Cleanup`). |
+| `V025` | Plain `Cleanup` blocks never `Return` and only use `Terminate` or `Unreachable` unwind actions; `Resume` appears only in `Cleanup`/`Catch` blocks. |
+| `V026` | `NoUnwind` functions contain no `Resume` or `Continue` actions; direct calls to `NoUnwind` callees have no `Cleanup` edge, and `Unreachable` unwind is used only on direct `NoUnwind` calls (`-panic=abort` marks functions `NoUnwind`). |
+| `V027` | `Switch` case values fit the discriminant width and are distinct. |
+| `V028` | Calls with `Target == None` call a direct `NoReturn` function; `Drop` and `Assert` always have a normal target. |
+| `V030` | Every `Place` names a valid `LocalId`. |
+| `V031` | Place's cached type equals the type derived from its local and projection steps. |
+| `V032` | Projections apply to valid base types (`String` fields `0..2`, `Slice` fields `0..3`; `Index` on `Array`/`Slice`/`String`; `ConstIndex` on `Array`). |
+| `V033` | Each projection step records the exact resulting `TypeId`. |
+| `V034` | `Index` projection local has integer type. |
+| `V035` | `Deref` projection applies only to `Ptr(T)`. |
+| `V036` | `StorageLive` and `StorageDead` reference valid locals. |
+| `V040` | Constants match their `TypeId` (integer bit-width, valid `Strings` index, matching `Func` signature, valid `Globals` index with `Ptr` type). |
+| `V050` | `Assign` rvalue type equals destination `Place` type; `Use` yields operand type. |
+| `V051` | `Unary`: `Neg` on int/float, `Not` on bool, `BitNot` on int; result matches operand. |
+| `V052` | `Binary`: shifts take two ints and yield LHS type; arithmetic/bitwise/comparison operands match and comparisons yield `Bool`. |
+| `V053` | `Cast` source and target types match `CastKind` (including `PtrToPtr` between `*u8` and `Func` pointers for itab slots). |
+| `V054` | `AddrOf(place, mut)` has type `Ptr(place.ty)`. |
+| `V055` | `Aggregate` operands match target fields/elements (`String` = 3 fields, `Slice` = 4 fields). |
+| `V056` | `Len` applies to `String`, `Slice`, or `Array` and yields `u64` (`usize`). |
+| `V057` | `Aggregate` destination has no `Deref` and no operand reads the destination local. |
+| `V060` | `Switch` discriminant is int or `Bool`; `Assert` condition is `Bool`. |
+| `V061` | `Call` callee has `Func` type. |
+| `V062` | `Call` argument count and types match `Func` parameter types. |
+| `V063` | `Call` destination place matches `Func` return type. |
+| `V064` | `Drop` place does not have type `Unit`. |
+| `V065` | `Assert` message `Args` match `AssertKind` (`Bounds`, `SliceAlen`..`Slice3C`, `SliceConvert` carry two integer operands; others carry zero). |
+| `V066` | Aggregate-returning `Call` writes into a non-dereferenced, non-address-taken `Temp` local. |
+| `V067` | `CallConv::C` declarations, thunks, and `fn "C"` types pass and return valid C types (`CTypeRules`, [c-abi.md](c-abi.md)). |
+| `V070` | Every non-empty `Span` references a valid `Module::Files` index. |
+| `V071` | Every `Global` has a unique symbol, non-`Unit` type, and scalar/string/`Zero` initializer. |
+| `V072` | `Global::Parts` static data leaves cover the global's layout depth-first without gaps or extras, while scalar initializer is `Zero`. |
+| `V073` | `Function::Scopes` forms a valid parent-before-child tree (`Inlined` names a defined function; `Origin` blocks lie under `Inlined` and reference callee scopes). |
+| `V074` | Statements, terminators, and locals reference valid scopes; `Local::Origin` and `Local::ArgNo` satisfy inline-copy invariants. |
+| `V075` | `Function::CC` equals `Function::Sig`'s `CallConv`. |
+| `V076` | Indirect calls through `fn "C"` pointers pass and return scalars only. |
+| `V077` | `Statement::Prologue` statements appear contiguously at the start of `bb0`. |
+| `V078` | `Func` types with `has_env` carry `CallConv::Go` and `*u8` as parameter `0`. |
+| `V079` | `@Inline` / `@NoInline` hints appear only on defined functions (`Blocks` non-empty). |
+| `V081` | Drop glue (`Local::Glue` and `Drop` glue) has signature `fn(*u8) -> ()` with `CallConv::Go`. |
+| `V085` | Every non-address-taken `Temp` local is initialized along all CFG paths reaching each read (verified via Lengauer-Tarjan dominator intervals + bounded backward search, 32 steps per block/statement budget). |
+
+## 10. Monomorphization and hierarchy tables
+
+- **On-demand `InstanceWalk` before GIR lowering:** Generic bodies are type-checked once in `gopp-sema`; `InstanceWalk` discovers all reachable function, type, and method instantiations in deterministic FIFO declaration order, applying `sema` type substitutions (`subst`) and re-resolving method selections on concrete types so `lower_package` never sees an uninstantiated type parameter.
+- **Deduplication by mangled symbol:** `Box[byte]` and `Box[uint8]` produce the same mangled symbol (`gopp-mangle`) and share one GIR struct, one type descriptor, and one weak/ODR function definition (`__attribute__((weak))` / `static inline` / COMDAT).
+- **Per-instance checks & complexity limits (`GEN-5`):**
+  - Checks `Option[X]` where substituted `X` is already nilable (`E0446`), `@Required` fields substituted with `Option` (`E0363`), and unguarded dynamic `error` returns (`E0448`), identically in `gopp check` and `gopp build`.
+  - Enforces hard expansion caps (`E0449`): constructed type-argument height `<= 48`, tree size `<= 4096`, `<= max(100_000, source_bytes)` instances per package, and `<= max(4_000_000, 16 * source_bytes)` walked AST nodes.
+- **`extends` hierarchy vtables (`P04.22`):** Types using `extends` with `@Virtual`/`@Abstract` methods (or tagged secondary parents) emit static vtable globals (`Struct("pkg.T.vtable")` at offset `0` — sharing a polymorphic C++ primary base's vptr slot when extending C++, `TYP-28` — plus secondary `(Child, Pi)` tables). Each vtable carries `offset_to_top` (`isize`), complete-object descriptor/drop/clone hooks, parent downcast tables, and virtual method slots (with `recv += offset_to_top` thunks for secondary overrides), keeping `Unique[P]`, `Shared[P]`, and `Weak[P]` single 1-word pointers (`TYP-19`).
+
+## 11. Checker records consumed by GIR lowering
+
+| `gopp_sema::Info` table | How `gopp-gir` uses it |
+|---|---|
+| `types`, `values` | Expression `TypeId`s and compile-time `Constant`s |
+| `defs`, `uses` | `LocalId` resolution, direct `FuncId` callees, builtins |
+| `selections` (`FieldVal`, `MethodVal`, `MethodExpr`, `Base`) | `Field`/`Deref` chains (including `extends` `ParentSteps`), direct/itab method calls, method-value thunks |
+| `instances`, `iface_conversions` | Monomorphization worklist roots and dynamic type descriptor method sets |
+| `bangs` | `!` early-return vs `panic_must` lowering (section 6) |
+| `operators`, `case_operators` | `@Operator` and `@Convert` call lowering (`+`, `==`, `Cmp`, `Index`, `SetIndex`, `*Assign`, `switch` cases) |
+| `hier_parents`, `method_marks` | `extends` subobject layouts and virtual dispatch tables |
+| `var_modes`, `swaps`, `self_moves` | Category-aware `OWN-C1`/`OWN-C2`/`OWN-C3` moves, borrows, and aliasing-safe swaps |
+
+## 12. Text printer (`-emit=gir`)
+
+`gopp build -emit=gir` and `gopp gir dump file.gopx` emit identical, deterministic human-readable GIR text:
+
+```text
+module "command-line-arguments"
+file 0 "hello.gopp"
+
+declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
+
+fn main.main() -> () [go, external] {
+  let _0: ()
+  let _1: string
+  bb0:
+    _1 = const str#0 "hello\0A"  ; hello.gopp:7:2
+    _2 = call const fn @write(const 1: i32, copy _1.0, copy _1.1) -> [return: bb1, unwind: unreachable]
+  bb1:
+    return  ; hello.gopp:8:1
+}
+```
+
+## 13. Binary `.gopx` serialization
+
+`crates/gopp-gir/src/gopx.rs` serializes GIR modules into `.gopx` export/cache containers using **`postcard` (`1.1.3`) + `zstd` (`0.14.3`) + `blake3` (`1.8.7`)** ([ADR-0001](../adr/0001-implementation-language.md)):
+
+```text
+file = magic "GOPX" (4B) | format_version u32 LE | compiler_version str
+     | blake3_digest [u8; 32] | uncompressed_len u64 LE
+     | zstd_frame(postcard(ModuleEnvelope { tables, types, globals, func_decls, func_bodies, index }))
+```
+
+- **Selective per-function decoding:** `index` stores byte offsets for each `func_bodies[i]` entry so cross-package generic instantiation and inlining (`P06`) decode module tables plus a single requested function body without deserializing the rest of the package.
+- **Deterministic & corruption-safe:** Type and symbol IDs are assigned in canonical traversal order (zero hash-iteration order dependence); every decoded index, enum discriminant, and slice bound is validated and passed through `verify_module` (`V001`–`V085`) so truncated or bit-flipped `.gopx` inputs always return a clean error and never panic.
+
+## 14. Debug scopes (`Function::Scopes`)
+
+Every statement and terminator carries a `Span` and a `ScopeId` into `Function::Scopes` (`0` = function root; `N > 0` = `Scopes[N - 1]`, ordered parent-before-child). `DebugScope::Block` represents lexical `{ ... }` blocks; `DebugScope::Inlined` represents trivial-inlined call sites (`V073`, `V074`). Struct field names live in a side table (`field_names`, persisted in `.gopx`) so structural layout identity stays fast while `gopp-codegen-c` emits exact C23 member names for DWARF ([debug-info.md](debug-info.md)).
+
+## 15. Language lowering details
+
+- **Strings, slices, maps, and custom allocators ([ADR-0026](../adr/0026-no-small-string-optimization.md), [ADR-0027](../adr/0027-mimalloc-global-allocator.md), [ADR-0029](../adr/0029-slice-and-map-allocator-word.md), [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)):**
+  - `string` is `{ptr, len, backing}` (`24` bytes on 64-bit); `[]T` is `{ptr, len, cap, backing}` (`32` bytes on 64-bit), where heap/arena `backing` starts with `{refcount, alloc_cap, alloc}` (`alloc == null` selects global `mimalloc`; non-null points to a C-ABI `{alloc, resize, free}` allocator vtable).
+  - Slicing `s[i:j]` shares `backing` in $O(1)$ (`OWN-S1`, `OWN-S2`); stack-array slicing `arr[i:j]` and `unsafe.Slice` set `backing = null` and `cap = len` (borrow-checked so they cannot escape `arr`'s frame without `.Clone()`, `SLC-8`); shrinking `s = s[:k]` drops/zeroes `k..len` in place when `refcount == 1` or detaches into `s`'s allocator when `refcount > 1` (`SLC-9`); `append` grows in place when `backing != null && refcount == 1 && len < cap` and otherwise allocates a fresh buffer in `alloc` (`SLC-5`).
+  - `map[K]V` is a 1-word `gopp_map*` handle (`{refcount, alloc, count, ...}`); `m[k] = v` on an addressable slot initializes `nil` maps in place via `&slot` (`OWN-P9`, `PAR-1`), and `range` tracks active iterators to panic deterministically on concurrent `insert` or `clear` (`RNG-4`).
+- **Evaluation & assignment order (`EXP-3`):** Two-phase evaluation evaluates LHS index/pointer operands and RHS expressions left-to-right into temporaries before executing bounds-checked stores left-to-right, using replay scopes (`derive_dest`, `resolve_dest`) so container growth on an earlier tuple element never leaves a dangling slice/map pointer.
+- **Closures & `func` values (`CLO-1`–`CLO-8`):** `{code, env}` (`16` bytes); iterative escape analysis (`KeepTable` + `may_hold`) keeps non-escaping closure environments on the stack (`Immortal` tag) and allocates heap environments + refcounted capture cells for escaping closures (per-iteration cells on `for` loops, `CLO-8`), rejecting escaping stack/arena/box borrows (`CLO-3a`, `OWN-B5`).
+- **Interfaces & itabs (`TYP-5`–`TYP-9`):** `gopp.iface` = `{itab, data}` (`16` bytes); per-type `_GPTi<type>` descriptors and `_GPTa<type><iface>` static itabs (with runtime cached `get_itab` for interface-to-interface conversions); inline storage for `<= 1`-word `OWN-C1` values and refcounted immutable boxes for everything else.
+- **Stack discipline:** Recursive AST walks use `stacker::maybe_grow` (`0.1.25`), while every GIR pass, type walk, verifier check, `.gopx` codec, and C23 emitter walk is strictly iterative.
+
+## 16. Verification suite
+
+- **Unit, snapshot & property tests (`cargo test --workspace`):**
+  - `insta` (`1.49.0`) snapshots for GIR text (`-emit=gir`) and emitted C23 (`-emit=c`) across ownership, generics, closures, interfaces, `@Operator` methods, and C-ABI thunks.
+  - Positive and negative tests for every verifier rule `V001`–`V085`, `.gopx` deterministic round-tripping and bit-flip fuzzing, and `proptest` (`1.12.0`) pass-equivalence suites (including `-fpass-plugin` hooks).
+  - Step-counting linearity stress tests (`4x` input `<= 4.5x` steps against a quadratic control) across `MoveCheck`, `BorrowCheck`, `InstanceWalk`, `verify_module`, FMA matching, and type emission.
+- **Differential & sanitizer execution (`gopp test-run`, `tests/run/`):**
+  - Scalar, string/slice/map collection, generic, closure, interface, panic, and C-ABI differential suites verified against Go reference goldens across `-opt=0..z` on `amd64` and `arm64` (`qemu-aarch64`), plus AddressSanitizer + LeakSanitizer (`-sanitize=address`) zero-leak verification across all ownership categories.

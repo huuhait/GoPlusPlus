@@ -1,0 +1,96 @@
+package main
+
+import (
+	"cmp"
+	"fmt"
+)
+
+// OrderedMap keeps its keys sorted. It is a sorted slice of keys plus a
+// slice of values at the same positions.
+type OrderedMap[K cmp.Ordered, V any] struct {
+	keys []K
+	vals []V
+}
+
+// search returns the position of k, or where it would be inserted.
+func (m *OrderedMap[K, V]) search(k K) (int, bool) {
+	lo, hi := 0, len(m.keys)
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if cmp.Less(m.keys[mid], k) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(m.keys) && m.keys[lo] == k
+}
+
+// Put inserts or replaces (k, v) using a plain Go signature.
+// Works for trivial, shared-handle (string, []string) and single-owner V alike (GEN-3, PAR-1, PAR-5).
+func (m *OrderedMap[K, V]) Put(k K, v V) {
+	i, found := m.search(k) // k is lent to search: not consumed
+	if found {
+		m.vals[i] = v // the old value is dropped; v transfers in on its last use
+		return
+	}
+	m.keys = append(m.keys, k) // k and v transfer into the slices on their last uses
+	m.vals = append(m.vals, v)
+	for j := len(m.keys) - 1; j > i; j-- {
+		m.keys[j], m.keys[j-1] = m.keys[j-1], m.keys[j] // two-place swap: moves elements cleanly
+		m.vals[j], m.vals[j-1] = m.vals[j-1], m.vals[j]
+	}
+}
+
+// Get returns a raw pointer to the value, or nil if k is absent: pointers are
+// never nil, so "maybe" is an Option. The pointer borrows m until the next
+// mutating call on m (OWN-B3, OWN-B4).
+func (m *OrderedMap[K, V]) Get(k K) Option[*V] {
+	i, found := m.search(k)
+	if !found {
+		return nil
+	}
+	return &m.vals[i]
+}
+
+func (m *OrderedMap[K, V]) Len() int { return len(m.keys) }
+
+// Each visits entries in sorted key order, cloning each value so OrderedMap
+// itself needs no Clone bound on V (GEN-2, GEN-3).
+func Each[K cmp.Ordered, V Clone](m *OrderedMap[K, V], f func(k K, v V)) {
+	for i := range m.keys {
+		f(m.keys[i], m.vals[i].Clone())
+	}
+}
+
+func main() {
+	words := []string{"the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog", "the", "fox"}
+
+	var counts OrderedMap[string, int] // the zero value is an empty map
+	for _, w := range words {
+		if p := counts.Get(w); p != nil {
+			*p++ // p is a *int here: checked
+		} else {
+			counts.Put(w, 1) // no .Clone() needed: w is a shared string handle (ADR-0032)
+		}
+	}
+	fmt.Println("distinct words:", counts.Len())
+	Each(&counts, func(k string, v int) {
+		fmt.Printf("%-6s %d\n", k, v)
+	})
+	if p := counts.Get("fox"); p != nil {
+		fmt.Println("fox =", *p)
+	}
+	if counts.Get("cat") == nil {
+		fmt.Println("cat is absent")
+	}
+
+	var colors OrderedMap[string, []string]
+	colors.Put("pear", []string{"green", "yellow"})
+	colors.Put("apple", []string{"red", "green"})
+	colors.Put("plum", []string{"purple"})
+	colors.Put("apple", []string{"red"}) // replaces the old value
+	Each(&colors, func(k string, v []string) {
+		fmt.Println(k, v)
+	})
+}

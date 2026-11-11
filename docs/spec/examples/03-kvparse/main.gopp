@@ -1,0 +1,84 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
+
+// Entry slices directly into the shared source string buffer (O(1), zero byte copies).
+type Entry struct {
+	Key   string
+	Value string
+	Line  int
+}
+
+func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\r' }
+
+// trim returns a sub-string of s without leading and trailing spaces.
+// Re-slicing a string parameter updates the local header in O(1) (PAR-2).
+func trim(s string) string {
+	for len(s) > 0 && isSpace(s[0]) {
+		s = s[1:]
+	}
+	for len(s) > 0 && isSpace(s[len(s)-1]) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// cut splits s around the first sep in O(1) without copying bytes.
+func cut(s string, sep byte) (before, after string, found bool) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep {
+			return s[:i], s[i+1:], true
+		}
+	}
+	return s, "", false
+}
+
+// parse can fail. Each Entry retains a share of src's backing buffer, so
+// entries remain memory-safe even after src goes out of scope (ADR-0032).
+func parse!(src string) []Entry {
+	var out []Entry
+	line := 0
+	for len(src) > 0 {
+		var text string
+		text, src, _ = cut(src, '\n')
+		line++
+		text = trim(text)
+		if len(text) == 0 || text[0] == '#' {
+			continue
+		}
+		key, value, ok := cut(text, '=')
+		if !ok {
+			return nil, fmt.Errorf("line %d: expected key=value", line) // explicit failure
+		}
+		out = append(out, Entry{Key: trim(key), Value: trim(value), Line: line})
+	}
+	return out
+}
+
+func lookup(entries []Entry, key string) (string, bool) {
+	for i := range entries {
+		if entries[i].Key == key {
+			return entries[i].Value, true
+		}
+	}
+	return "", false
+}
+
+func main() {
+	data := os.ReadFile!("config.txt")
+	src := string(data) // one backing buffer; every Entry shares sub-slices of it
+	entries := parse!(src)
+	for _, e := range entries {
+		fmt.Printf("%d: %s = %s\n", e.Line, e.Key, e.Value)
+	}
+	if v, ok := lookup(entries, "port"); ok {
+		port := strconv.Atoi!(v) // lent string parameter: 0 retains
+		fmt.Println("port + 1 =", port+1)
+	}
+	_, err := parse("name=ok\nbroken line\n") // the Go form still works
+	fmt.Println("error:", err)
+}

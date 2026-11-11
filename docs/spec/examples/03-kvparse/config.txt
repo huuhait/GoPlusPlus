@@ -1,0 +1,6 @@
+# server settings
+host = example.org
+port = 8080
+
+debug=true
+  name =  Go++ demo

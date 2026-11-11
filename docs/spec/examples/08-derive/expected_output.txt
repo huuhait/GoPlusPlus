@@ -1,0 +1,4 @@
+a.Equal(b) = true
+a.Equal(b) = false
+{"Name":"demo","Tags":["a","b"],"Limits":{"cpu":2,"mem":512}}
+tmp, other = 2 1

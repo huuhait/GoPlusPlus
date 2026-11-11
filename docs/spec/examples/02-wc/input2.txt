@@ -1,0 +1,4 @@
+Go++ keeps the look of Go
+without a garbage collector
+
+  extraordinarily   spaced	words

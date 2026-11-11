@@ -1,0 +1,9 @@
+0 alpha    sum=518
+1 beta     sum=412
+2 gamma    sum=515
+3 delta    sum=522
+4 epsilon  sum=762
+5 zeta     sum=436
+6 eta      sum=314
+7 theta    sum=534
+total: 4013

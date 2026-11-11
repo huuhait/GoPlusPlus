@@ -1,0 +1,6 @@
+2: host = example.org
+3: port = 8080
+5: debug = true
+6: name = Go++ demo
+port + 1 = 8081
+error: line 2: expected key=value
