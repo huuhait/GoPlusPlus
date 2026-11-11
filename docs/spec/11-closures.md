@@ -135,7 +135,7 @@ for i := 1; i <= 3; i++ {
     }()
 }
 wg.Wait()
-fmt.Println(sum.Lock().Val)                    // 6
+fmt.Println(sum.Lock())                        // 6: the guard is used as the value
 ```
 Go: same result, but there `sum` is a plain `int` and `mu.Lock()` is a separate call; Go++ does not allow that (a plain captured `sum` written by the goroutines is an error, [CON-13](12-concurrency.md)). The `sync` types are `@Pinned` ([OWN-R10](04-ownership.md#42-ownership-rules-d14)); a cell never moves them, so this is legal. **Different code, same output.**
 
