@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Mutex, PoisonError};
 
+use gopp_testutil::samples;
 use tempfile::TempDir;
 
 /// Held while a script is written and while a process is started. A process
@@ -233,4 +234,77 @@ fn parse_refuses_files_it_cannot_read() {
 
     let none = run(gopp().arg("parse"));
     assert_eq!(none.status.code(), Some(2));
+}
+
+/// The records of `gopp parse -batch`: exit status, standard output,
+/// standard error and path of each file.
+fn batch_records(mut output: &[u8]) -> Vec<(i32, String, String, String)> {
+    let mut records = Vec::new();
+    while !output.is_empty() {
+        let end = output.iter().position(|&byte| byte == b'\n').unwrap();
+        let header = str::from_utf8(&output[..end]).unwrap();
+        let mut fields = header.strip_prefix("gopp-batch ").unwrap().splitn(4, ' ');
+        let mut number = || fields.next().unwrap().parse::<usize>().unwrap();
+        let (exit, stdout_len, stderr_len) = (number(), number(), number());
+        let path = fields.next().unwrap().to_owned();
+        let (stdout, rest) = output[end + 1..].split_at(stdout_len);
+        let (stderr, rest) = rest.split_at(stderr_len);
+        let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+        records.push((exit as i32, text(stdout), text(stderr), path));
+        output = rest;
+    }
+    records
+}
+
+#[test]
+fn parse_batch_gives_each_file_what_parse_gives_it() {
+    let dir = TempDir::new().unwrap();
+    let mut files = samples::files();
+    files.push(write_source(
+        &dir,
+        "bad name.gopp",
+        "package p\n\nfunc f() { g(1 2) }\n",
+    ));
+    files.push(dir.path().join("missing.gopp"));
+    files.push(write_source(&dir, "notes.txt", "x\n"));
+    let list: String = files
+        .iter()
+        .map(|file| format!("{}\n\n", file.display()))
+        .collect();
+    let list = write_source(&dir, "list", &list);
+
+    let stdin = fs::File::open(list).unwrap();
+    let batch = run(gopp().args(["parse", "-batch", "-emit=ast"]).stdin(stdin));
+    assert_eq!(stderr(&batch), "");
+    assert_eq!(batch.status.code(), Some(1));
+    let records = batch_records(&batch.stdout);
+    assert_eq!(records.len(), files.len());
+    for (file, record) in files.iter().zip(records) {
+        let single = run(gopp().args(["parse", "-emit=ast"]).arg(file));
+        let expected = (
+            single.status.code().unwrap(),
+            stdout(&single),
+            stderr(&single),
+            file.display().to_string(),
+        );
+        assert_eq!(record, expected);
+    }
+}
+
+#[test]
+fn parse_batch_of_good_files_succeeds_and_takes_no_file_arguments() {
+    let dir = TempDir::new().unwrap();
+    let good = write_source(&dir, "good.go", "package p\n");
+    let list = write_source(&dir, "list", &format!("{}\n", good.display()));
+    let batch = run(gopp()
+        .args(["parse", "-batch"])
+        .stdin(fs::File::open(&list).unwrap()));
+    assert_eq!(
+        stdout(&batch),
+        format!("gopp-batch 0 0 0 {}\n", good.display())
+    );
+    assert_eq!(batch.status.code(), Some(0));
+
+    let both = run(gopp().args(["parse", "-batch"]).arg(&good));
+    assert_eq!(both.status.code(), Some(2));
 }

@@ -104,3 +104,5 @@ Because C libraries hold opaque internal state (`rand`, `strtok`, `setlocale`, `
 ## Batch CLI mode (`-batch`)
 
 For harnesses that run `gopp parse`, `gopp fmt`, or standalone `gopp build` across hundreds of files (such as the full `-opt` equivalence matrix), `-batch` processes a stream of files or JSONL build specs inside a single `gopp` process using `rayon`, emitting framed `gopp-batch <exit> <stdout_len> <stderr_len> <id>\n` records with automatic per-item fallback if a batch ever times out or traps.
+
+`gopp parse -batch [-emit=ast|json]` is the first such command. It reads file names from standard input, one per line, parses them on all cores, and writes the records in input order: the header line, then `stdout_len` bytes of what `gopp parse <file>` prints to standard output, then `stderr_len` bytes of what it prints to standard error. `<id>` is the file name as given. The exit status of the batch is 1 when any record's is.

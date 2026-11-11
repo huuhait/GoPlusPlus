@@ -32,7 +32,11 @@ enum Command {
         /// Print each file in this form
         #[arg(long, value_enum)]
         emit: Option<Emit>,
-        #[arg(required = true)]
+        /// Read the file names from standard input, one per line, and write one
+        /// framed record per file
+        #[arg(long)]
+        batch: bool,
+        #[arg(required_unless_present = "batch", conflicts_with = "batch")]
         files: Vec<PathBuf>,
     },
 }
@@ -54,7 +58,10 @@ fn run() -> ExitCode {
     match cli.command {
         Command::Version => version(),
         Command::HostToolchain => host_toolchain(),
-        Command::Parse { emit, files } => parse::run(&files, emit),
+        Command::Parse {
+            emit, batch: true, ..
+        } => parse::run_batch(emit),
+        Command::Parse { emit, files, .. } => parse::run(&files, emit),
     }
 }
 
