@@ -1,4 +1,5 @@
-//! A text form of the tree for snapshots and `-emit=ast`.
+//! The tree as text, for snapshots and `-emit=ast`, and as JSON, for
+//! `-emit=json`. Both forms come from one walk and hold the same nodes.
 
 use std::fmt::Write;
 
@@ -12,16 +13,34 @@ const MAX_INDENT: usize = 100;
 
 /// One line per node, children indented, each with its byte range.
 pub fn dump(file: &File, text: &str, names: &ThreadedRodeo) -> String {
+    walk(file, text, names, None)
+}
+
+/// One JSON object per node, on one line: `kind` (the first word of the
+/// node's line in [`dump`]), `text` (the rest of that line, when there is
+/// one), `span` and `children`. A named group of children is an object with
+/// `field` in place of `kind`.
+pub fn dump_json(file: &File, text: &str, names: &ThreadedRodeo) -> String {
+    walk(file, text, names, Some(Vec::new()))
+}
+
+fn walk(file: &File, text: &str, names: &ThreadedRodeo, json: Option<Vec<bool>>) -> String {
     let mut dumper = Dumper {
         file,
         text,
         names,
         out: String::new(),
         depth: 0,
+        json,
     };
     let package = file.package.map_or("?", |ident| names.resolve(&ident.name));
     dumper.line(format_args!("File package={package}"), None);
     dumper.nested(|d| file.decls.iter().for_each(|&decl| d.decl(decl)));
+    if dumper.json.is_some() {
+        dumper.depth = 0;
+        dumper.close_json();
+        dumper.out.push('\n');
+    }
     dumper.out
 }
 
@@ -31,10 +50,22 @@ struct Dumper<'a> {
     names: &'a ThreadedRodeo,
     out: String,
     depth: usize,
+    /// In the JSON form: for each object that is still open, whether it
+    /// has a child yet.
+    json: Option<Vec<bool>>,
 }
 
 impl<'a> Dumper<'a> {
     fn line(&mut self, text: impl std::fmt::Display, span: Option<Span>) {
+        if self.json.is_some() {
+            let label = text.to_string();
+            let (key, name) = match label.strip_suffix(':') {
+                Some(field) if span.is_none() => ("field", field),
+                _ => ("kind", label.as_str()),
+            };
+            self.json_node(key, name, span);
+            return;
+        }
         // Past the deepest indentation a line says how much deeper it is,
         // so that a long chain of nodes does not make the text quadratic.
         let indented = self.depth.min(MAX_INDENT);
@@ -48,6 +79,36 @@ impl<'a> Dumper<'a> {
             let _ = write!(self.out, " @{}..{}", span.lo, span.hi);
         }
         self.out.push('\n');
+    }
+
+    /// Ends every open object at the current depth or deeper.
+    fn close_json(&mut self) {
+        let Some(open) = &mut self.json else { return };
+        while open.len() > self.depth {
+            let end = if open.pop() == Some(true) { "]}" } else { "}" };
+            self.out.push_str(end);
+        }
+    }
+
+    fn json_node(&mut self, key: &str, label: &str, span: Option<Span>) {
+        self.close_json();
+        if let Some(parent) = self.json.as_mut().and_then(|open| open.last_mut()) {
+            let separator = if *parent { "," } else { ",\"children\":[" };
+            self.out.push_str(separator);
+            *parent = true;
+        }
+        let (name, rest) = label.split_once(' ').unwrap_or((label, ""));
+        // Writing to a String cannot fail.
+        let _ = write!(self.out, "{{\"{key}\":{}", json_string(name));
+        if !rest.is_empty() {
+            let _ = write!(self.out, ",\"text\":{}", json_string(rest));
+        }
+        if let Some(span) = span {
+            let _ = write!(self.out, ",\"span\":[{},{}]", span.lo, span.hi);
+        }
+        if let Some(open) = &mut self.json {
+            open.push(false);
+        }
     }
 
     fn nested(&mut self, body: impl FnOnce(&mut Self)) {
@@ -546,4 +607,20 @@ impl<'a> Dumper<'a> {
             }
         }
     }
+}
+
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            // Writing to a String cannot fail.
+            c if c < ' ' => drop(write!(out, "\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

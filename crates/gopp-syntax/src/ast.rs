@@ -9,7 +9,7 @@ use gopp_span::{FileId, Span};
 use la_arena::{Arena, Idx};
 use lasso::Spur;
 
-pub use dump::dump;
+pub use dump::{dump, dump_json};
 
 use crate::token::Comment;
 

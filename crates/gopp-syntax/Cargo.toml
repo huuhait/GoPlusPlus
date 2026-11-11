@@ -21,3 +21,4 @@ unicode-ident.workspace = true
 gopp-testutil = { path = "../gopp-testutil" }
 insta.workspace = true
 proptest.workspace = true
+serde_json.workspace = true

@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use gopp_diag::{Severity, Sink, render_text};
 use gopp_span::{Dialect, SourceFile, SourceMap};
-use gopp_syntax::ast::dump;
+use gopp_syntax::ast::{dump, dump_json};
 use gopp_syntax::parser::parse;
 use lasso::ThreadedRodeo;
 
@@ -38,8 +38,10 @@ pub fn run(files: &[PathBuf], emit: Option<Emit>) -> ExitCode {
             failed |= diagnostic.code.severity() == Severity::Error;
             eprint!("{}", render_text(&diagnostic, &sources, color));
         }
-        if emit == Some(Emit::Ast) {
-            print!("{}", dump(&file, source.text(), &names));
+        match emit {
+            Some(Emit::Ast) => print!("{}", dump(&file, source.text(), &names)),
+            Some(Emit::Json) => print!("{}", dump_json(&file, source.text(), &names)),
+            None => {}
         }
     }
     if failed {

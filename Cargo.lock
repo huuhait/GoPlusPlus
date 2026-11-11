@@ -431,6 +431,7 @@ dependencies = [
  "lasso",
  "logos",
  "proptest",
+ "serde_json",
  "stacker",
  "unicode-ident",
 ]

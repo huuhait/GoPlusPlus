@@ -173,6 +173,14 @@ fn parse_prints_the_tree_on_request() {
     assert!(stdout(&output).starts_with("File package=main\n  Func main @14..36\n"));
     assert!(stdout(&output).contains("Call unwrap"));
     assert_eq!(output.status.code(), Some(0));
+
+    let output = run(gopp().args(["parse", "-emit=json"]).arg(&file).arg(&file));
+    let json = stdout(&output);
+    let start = r#"{"kind":"File","text":"package=main","children":[{"kind":"Func","text":"main","span":[14,36],"#;
+    assert!(json.starts_with(start), "{json}");
+    assert!(json.contains(r#"{"kind":"Call","text":"unwrap","#));
+    assert_eq!(json.lines().count(), 2);
+    assert_eq!(output.status.code(), Some(0));
 }
 
 #[test]

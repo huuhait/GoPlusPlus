@@ -4,7 +4,7 @@ use std::fmt;
 
 use gopp_diag::{Diagnostic, Sink, render_json, render_text};
 use gopp_span::{Dialect, FileId, SourceFile, SourceMap, Span};
-use gopp_syntax::ast::dump;
+use gopp_syntax::ast::{dump, dump_json};
 use gopp_syntax::parser::parse;
 use lasso::ThreadedRodeo;
 
@@ -72,6 +72,7 @@ fn run(data: &[u8], dialect: Dialect) -> Option<Run> {
     let sink = Sink::new(MAX_DIAGNOSTICS);
     let file = parse(id, &source, &names, &sink);
     let dump = dump(&file, source.text(), &names);
+    dump_json(&file, source.text(), &names);
     let diagnostics = sink.finish();
     Some(Run {
         id,

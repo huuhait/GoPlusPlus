@@ -41,6 +41,8 @@ enum Command {
 enum Emit {
     /// The syntax tree, one node per line
     Ast,
+    /// The syntax tree as JSON, one file per line
+    Json,
 }
 
 fn main() -> ExitCode {

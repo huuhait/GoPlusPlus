@@ -8,10 +8,11 @@ use lasso::ThreadedRodeo;
 use proptest::prelude::*;
 
 use super::{parse, parse_counted};
-use crate::ast::dump;
+use crate::ast::{dump, dump_json};
 
 struct Parsed {
     dump: String,
+    json: String,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -32,6 +33,7 @@ fn parse_bytes(bytes: &[u8], dialect: Dialect) -> Parsed {
     let file = parse(id, &source, &names, &sink);
     Parsed {
         dump: dump(&file, source.text(), &names),
+        json: dump_json(&file, source.text(), &names),
         diagnostics: sink.finish(),
     }
 }
@@ -505,6 +507,54 @@ fn long_chains_are_not_nesting() {
         assert_eq!(parsed.diagnostics, [], "{}", &source[..40]);
         assert!(parsed.dump.len() > source.len());
     }
+}
+
+/// The text form that a JSON node and its children stand for.
+fn json_as_text(node: &serde_json::Value, depth: usize, out: &mut String) {
+    let text = |key: &str| node[key].as_str();
+    out.push_str(&"  ".repeat(depth));
+    match text("field") {
+        Some(field) => out.push_str(&format!("{field}:")),
+        None => out.push_str(text("kind").unwrap()),
+    }
+    if let Some(rest) = text("text") {
+        out.push_str(&format!(" {rest}"));
+    }
+    if let Some(span) = node["span"].as_array() {
+        out.push_str(&format!(" @{}..{}", span[0], span[1]));
+    }
+    out.push('\n');
+    for child in node["children"].as_array().into_iter().flatten() {
+        json_as_text(child, depth + 1, out);
+    }
+}
+
+fn assert_json_is_the_tree(parsed: &Parsed) {
+    assert_eq!(parsed.json.lines().count(), 1);
+    let mut text = String::new();
+    json_as_text(&serde_json::from_str(&parsed.json).unwrap(), 0, &mut text);
+    assert_eq!(text, parsed.dump);
+}
+
+#[test]
+fn the_json_tree_has_the_nodes_of_the_text_tree() {
+    for path in samples::files() {
+        let dialect = Dialect::from_path(&path).unwrap();
+        assert_json_is_the_tree(&parse_bytes(&fs::read(&path).unwrap(), dialect));
+    }
+    let escapes = "package p\nvar s = \"q\\\"b\\\\\" + `tab\there` + '\\n'\n@A(\"x\")\nfunc f() { g(1 2) \x01 }\n";
+    for source in ["", "package", escapes] {
+        assert_json_is_the_tree(&parse_gopp(source));
+    }
+}
+
+#[test]
+fn a_long_chain_is_one_json_line() {
+    let json = parse_gopp(&stress::long_chain(20_000)).json;
+    assert!(json.ends_with("}\n"));
+    assert_eq!(json.matches('{').count(), json.matches('}').count());
+    assert_eq!(json.matches('[').count(), json.matches(']').count());
+    assert!(json.matches("\"kind\":\"Binary\"").count() == 19_999);
 }
 
 fn parse_steps(text: &str) -> u64 {
