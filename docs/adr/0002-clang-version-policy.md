@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-11
+- **Status note (2026-11-11, [ADR-0037](0037-v1-targets.md)):** of the cross targets listed in Consequences, only `windows/amd64` is a target of version 1, next to `linux/amd64`; the others are decided after version 1; the pinned versions stand.
 - **Plan reference:** D0.2, D0.3, D0.4, P00.03, [ADR-0001](0001-implementation-language.md)
 
 ## Context

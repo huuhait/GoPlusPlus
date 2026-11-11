@@ -2,7 +2,7 @@
 
 - **Status:** accepted (owner decision)
 - **Date:** 2026-11-11
-- **Plan reference:** P01.16; extends rule 7 of [ADR-0041](0041-values-are-copied.md); changes OWN-P5, OWN-P1, OWN-S2, TYP-2, PAR-1, SLC-8, EXP-18
+- **Plan reference:** P01.16; extends rule 7 of [ADR-0041](0041-values-are-copied.md); changes OWN-P5, OWN-P1, OWN-S2, TYP-2, PAR-1, SLC-8, EXP-17 point 7 and decision 4 of [ADR-0024](0024-operator-overloading.md)
 
 ## Context
 
@@ -34,7 +34,7 @@ The owner decided: the star is not written to change what a pointer points to.
 - A function body reads the same with a by-value parameter and with a pointer parameter. The signature and the `&` at the call say which variable is changed.
 - Code moved from Go changes `*p = v` to `p = v`; the compiler says where. No Go statement changes its meaning: `p = v` with a `T` on the right and `p + 1` on a pointer are type errors in Go.
 - `a, b = b, a` on two pointer parameters swaps the two local pointers, as in Go, and changes nothing for the caller. Swapping the values is `a, b = *b, *a`.
-- An operator on a pointer to a type with `@Operator` methods now reaches the method: `p + q` and `p += v` work for a `*Matrix`. Before, they were errors (EXP-18).
+- An operator on a pointer to a type with `@Operator` methods now reaches the method: `p + q` and `p += v` work for a `*Matrix`. Before, they were errors (EXP-17 point 7).
 - The checker resolves an assignment to a pointer by the type of the right side, before it decides copies and moves.
 
 ## Alternatives

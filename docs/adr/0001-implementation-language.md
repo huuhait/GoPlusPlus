@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-11
+- **Status note (2026-11-11, [ADR-0037](0037-v1-targets.md)):** the "8 supported targets" of Consequences are replaced: version 1 supports `linux/amd64` and `windows/amd64`, and the other six targets are decided after version 1; the compiler language, the C23 backend, the plugin interface and the crate table stand.
 - **Plan reference:** D0.1, P04, P07, P08
 
 ## Context

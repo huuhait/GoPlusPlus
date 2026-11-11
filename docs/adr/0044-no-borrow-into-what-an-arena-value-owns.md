@@ -2,7 +2,7 @@
 
 - **Status:** accepted (owner decision)
 - **Date:** 2026-11-11
-- **Plan reference:** P01.16 point 16; closes open point 1 of [ADR-0041](0041-values-are-copied.md); new rule [OWN-B10](../spec/04-ownership.md#45-borrow-checking-adr-0021); changes OWN-B4, OWN-B9 rule 5, RNG-3a, UB-2; related [ADR-0042](0042-shared-is-read-only.md)
+- **Plan reference:** P01.16 point 16; closes open point 1 of [ADR-0041](0041-values-are-copied.md); new rule [OWN-B10](../spec/04-ownership.md#45-borrow-checking-adr-0021); changes OWN-B4, OWN-B9 rule 5, RNG-3a, UB-2; adds to the rules of [ADR-0021](0021-borrow-checking.md); related [ADR-0042](0042-shared-is-read-only.md)
 
 ## Context
 

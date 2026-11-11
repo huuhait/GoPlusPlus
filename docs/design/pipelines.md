@@ -46,6 +46,8 @@ Each stage records wall and CPU timing in `PipelineTimes` (`-pipeline-times` pri
 
 ## 4. Deterministic `arm64` FMA contraction
 
+`arm64` is not a target of version 1 ([ADR-0037](../adr/0037-v1-targets.md)); this section applies when that target is taken up.
+
 Go's `gc` compiler fuses floating-point `x * y` with a consuming `+` or `-` on `arm64` and never on `amd64`. Go++ matches this rule identically at every `-opt` level:
 
 - **Single fusion point:** `gopp-codegen-c` runs `fuse_fma` on `arm64` targets only, emitting `__builtin_fma` (`double`) and `__builtin_fmaf` (`float`) where `gc`'s SSA rules fuse `FADDD a (FMULD x y) => FMADDD`, while passing `-ffp-contract=off` globally to `clang` so Clang never fuses anything else (including across `Statement::Boundary` or explicit conversions like `float64(x * y) + z`).
@@ -66,7 +68,7 @@ Debug info is enabled by default (`-no-debug` disables it). Because `gopp-codege
 
 ## 6. Opt-matrix verification and extension hooks
 
-- **Optimization equivalence matrix (`tests/run`):** Builds and runs the full differential, collection, panic, FMA, and C-ABI corpora across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on `amd64` and `arm64` (under `qemu-aarch64`), asserting identical stdout, stderr, and exit codes across all levels alongside DWARF verification (`dwarfdump` / `gdb` / `lldb`).
+- **Optimization equivalence matrix (`tests/run`):** Builds and runs the full differential, collection, panic, FMA, and C-ABI corpora across `-opt=0`, `1`, `2`, `3`, `s`, and `z` on `linux/amd64` and `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md)), asserting identical stdout, stderr, and exit codes across all levels alongside DWARF verification (`dwarfdump` / `gdb` / `lldb`).
 - **Profiles ([ADR-0007](../adr/0007-build-profiles.md)):** Profiles populate `PipelineRequest` (`opt`, `debuginfo`, `lto`, `panic`, `sanitize`, `strip`, `cpu`, `pgo`, `link`); build cache keys (`blake3`) hash the effective `PipelineSpec` plus loaded `-fpass-plugin` digests so equivalent profiles share cache entries.
 - **`-trace`:** Emits Chrome Trace JSON spans across front-end, GIR passes, plugin invocations, C23 emission, and Clang `-ftime-trace` subprocess reports.
 - **ThinLTO (`lto = "thin"`):** Passes `-flto=thin -fuse-ld=lld` to `ClangDriver` across Go++ C23 translation units and Clang-compiled `cdep` objects (`P15`).

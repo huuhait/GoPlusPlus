@@ -1,7 +1,8 @@
 # ADR-0006: P01.15 owner decisions that shaped the spec
 
-- **Status:** accepted (updated with [ADR-0018](0018-never-nil-pointers-and-option.md) and [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
+- **Status:** accepted (updated with [ADR-0018](0018-never-nil-pointers-and-option.md), [ADR-0032](0032-shared-buffers-and-borrow-engine.md) and [ADR-0034](0034-extends-attribute.md))
 - **Date:** 2026-10-27
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** in D4 and D19, `x.Clone()` is no longer the only way to get a deep copy: assignment, passing and storing copy every type, `.Clone()` and `clone(x)` remain and do what `=` does, and the constraint `Clone` means "can be copied"; the other decisions stand.
 - **Plan reference:** P01 D1.2, D1.4, D1.5, D1.6, D1.7, D1.8, D1.9, D1.10, D1.11, D1.12, D1.14, D1.15, D1.21. Also P05 D5.4, P07 D7.3 and D7.9, P08 D8.1, D8.3 and D8.6, P10 D10.2, P04 D4.6 (D17), P09 (D22, D23) and P12 D12.5 and D12.7 (D22).
 
 ## Context

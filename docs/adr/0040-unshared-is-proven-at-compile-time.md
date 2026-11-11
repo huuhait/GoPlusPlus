@@ -2,7 +2,7 @@
 
 - **Status:** superseded by [ADR-0041](0041-values-are-copied.md) on the day it was written: slices and maps are no longer shared, so every one of them is the only handle and the rule has nothing left to decide
 - **Date:** 2026-11-11
-- **Plan reference:** P01.16 point 1, P04.19, P04.21; spec [OWN-R3d](../spec/04-ownership.md#own-r3d), TYP-6, TYP-7, STM-7, CON-1, CON-4, CON-12, CON-14; related [ADR-0022](0022-race-free-concurrency.md), [ADR-0032](0032-shared-buffers-and-borrow-engine.md)
+- **Plan reference:** P01.16 point 1, P04.19, P04.21; spec OWN-R3d (removed with this ADR), TYP-6, TYP-7, STM-7, CON-1, CON-4, CON-12, CON-14; related [ADR-0022](0022-race-free-concurrency.md), [ADR-0032](0032-shared-buffers-and-borrow-engine.md)
 
 ## Context
 
@@ -15,7 +15,7 @@ Two answers were possible: prove at compile time that no other handle exists, or
 ## Decision
 
 1. **Whether a value is unshared is decided at compile time.** No reference count is read to decide it. When the compiler cannot show that a local is unshared, the transfer is a compile error, and the fix-it is `.Clone()`.
-2. **The rule is [OWN-R3d](../spec/04-ownership.md#own-r3d).** In short: a local is unshared when its value is fresh (from `make`, a literal, `.Clone()`, an allocating conversion, a channel receive, or a call with a fresh result) and no second handle to it, or to a container inside it, has been made since.
+2. **The rule is OWN-R3d.** In short: a local is unshared when its value is fresh (from `make`, a literal, `.Clone()`, an allocating conversion, a channel receive, or a call with a fresh result) and no second handle to it, or to a container inside it, has been made since.
 3. **Across functions the compiler infers two facts, with no annotation,** and stores them in export data: a result is fresh, and a parameter is taken (the body transfers it as the only handle, so each call must pass a temporary or an unshared last use).
 4. **A call that cannot be seen through has no facts:** through an interface, through a function value, or to an `@Extern` function. Its results are not fresh and its parameters are not taken. A function with a taken parameter therefore cannot be used as a function value, a method value or the implementation of an interface method.
 5. **A debug build asserts that the count is 1** at each such transfer. That check finds mistakes in the compiler's proof; it decides nothing.

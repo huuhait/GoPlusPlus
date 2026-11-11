@@ -2,7 +2,7 @@
 
 - **Status:** accepted (owner decision)
 - **Date:** 2026-11-11
-- **Plan reference:** D16.1, P04.29, P04.33, P16; related [targets-and-linking.md](../design/targets-and-linking.md), [ADR-0002](0002-clang-version-policy.md)
+- **Plan reference:** D16.1, P04.29, P04.33, P16; replaces the eight supported targets of [ADR-0001](0001-implementation-language.md); related [targets-and-linking.md](../design/targets-and-linking.md), [ADR-0002](0002-clang-version-policy.md)
 
 ## Context
 

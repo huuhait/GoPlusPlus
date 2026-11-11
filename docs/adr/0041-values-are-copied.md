@@ -1,6 +1,6 @@
 # ADR-0041: A value is a copy; moving and sharing are written out
 
-- **Status:** accepted (owner decision). Rules 8 to 14 below are proposed by this ADR and used by the spec; the owner may change them.
+- **Status:** accepted (owner decision). Rules 8 to 14 below were worked out with the decision and are used by the spec; the owner decided the points that were open (see the last section) and may still change a rule.
 - **Date:** 2026-11-11
 - **Plan reference:** P01.19; reverses part of [ADR-0003](0003-memory-model-direction.md) (see Context); replaces [ADR-0040](0040-unshared-is-proven-at-compile-time.md) and the shared-buffer part of [ADR-0032](0032-shared-buffers-and-borrow-engine.md); changes OWN-C2, OWN-C3, OWN-R1, OWN-R3, OWN-R3b, OWN-R3d, OWN-P1, OWN-S2, PAR-1, PAR-5, SLC-1, SLC-6 to SLC-9, STM-1, STM-7, TYP-5 to TYP-9, ERR-12, ERR-13, GEN-1 to GEN-3, CLO-7, CON-1, CON-4, CON-12, CON-14, UB-2d
 
@@ -21,14 +21,14 @@ The owner decided to remove the exception rather than refine it, and to do it th
 3. **Sharing is written with a type.** `p := &x` gives a pointer to the same variable (`*p` is `x`); `NewShared(x)` gives shared ownership. `*[]T` and `*map[K]V` are ordinary pointer types.
 4. **A parameter is the function's own copy.** Changing it does not change the caller's variable. A function that changes the caller's value takes a pointer, and the caller writes `&`:
    ```go
-   func addOne(xs []int)  { xs[0]++ }        // changes its copy
+   func addOne(xs []int)  { xs[0]++ }        // would change its own copy: a compile error, the write is lost (rule 9)
    func addOne(xs *[]int) { xs[0]++ }        // changes the caller's slice
 
-   addOne(nums)     // nums is unchanged
+   addOne(nums)     // could never change nums
    addOne(&nums)    // nums changes, and the call shows it
    ```
 5. **A copy that cannot be noticed is not made.** When the source is not used again, the copy is done as a move. When a function only reads a parameter, the argument is passed without copying. A program cannot tell the difference and must not depend on how many copies are made.
-6. **A type that cannot be copied** (a file, a mutex, anything with cleanup and no way to duplicate) makes a plain `t := s` a compile error. The fix-its are `move(s)` and `&s`.
+6. **A type that cannot be copied** (a file, a mutex, anything with cleanup and no way to duplicate) makes a plain `t := s` a compile error. The fix-its are `move(s)` and `&s` (only `&s` for a `@Pinned` value such as a mutex, which cannot be moved once it is in a place).
 7. **A pointer to a slice, a map or an array is used without writing `*`** wherever only the pointed-to value fits: indexing (`xs[0]`, `m[k]`), slicing (`xs[i:j]`), `range xs`, `len`, `cap`, `delete` and `clear`. This is what field access and method calls already do for a pointer to a struct. The whole value was first written with the star (`*xs = append(*xs, 4)`); [ADR-0043](0043-no-star-to-write-through-a-pointer.md) removed it the same day: `xs = append(xs, 4)`, `xs = nil`, and the same for a pointer to any type.
 
 What a copy is, by type:
@@ -44,7 +44,7 @@ What a copy is, by type:
 
 ## Consequences
 
-- One rule for every type. Two names change one thing only when a type says so: a pointer, `Shared[T]`, a channel.
+- One rule for every type. Two names change one thing only when a type says so: a pointer, a `Mutex` in a `Shared[T]`, a channel.
 - **A slice or a map always has exactly one owner.** Their buffers need no reference count. Sending one on a channel, passing it to `go` and storing it in an interface are plain copies or moves, so the "unshared" rule of ADR-0040 and OWN-R3d is no longer needed.
 - Shortening a shared slice, and which elements a shared buffer releases, are no longer questions: there is no shared slice.
 - **The promise "never a hidden deep copy" and "every heap allocation is spelled out" no longer holds** for assignment and argument passing; it is removed from the spec with the rewrite.
@@ -70,9 +70,9 @@ These spell the decision out far enough to rewrite the spec. Rules 8 to 14 answe
 
 **Sharing**
 
-7. *Pointers.* `&x` gives a `*T` that is `x`. `*[]T` and `*map[K]V` are ordinary pointer types. A pointer to a slice, map or array is used without `*` for indexing, slicing, `range`, `len`, `cap`, `delete` and `clear`, and the whole value is read and written the same way (`p = append(p, v)`, [ADR-0043](0043-no-star-to-write-through-a-pointer.md)). The same holds through `Unique[T]` and `Shared[T]`, as it does for field access. `NewShared(x)` gives shared ownership.
+7. *Pointers.* `&x` gives a `*T` that is `x`. `*[]T` and `*map[K]V` are ordinary pointer types. A pointer to a slice, map or array is used without `*` for indexing, slicing, `range`, `len`, `cap`, `delete` and `clear`, and the whole value is read and written the same way (`p = append(p, v)`, [ADR-0043](0043-no-star-to-write-through-a-pointer.md)). The same holds through `Unique[T]`, and for reading through `Shared[T]`, whose value is read-only ([ADR-0042](0042-shared-is-read-only.md)), as it does for field access. `NewShared(x)` gives shared ownership.
 8. *Part of a slice as the same elements.* `&s[i:j]` (and `&arr[i:j]` on an array) is a `*[]T` that covers elements `i` to `j` of `s` itself. It has no spare capacity (`cap == len`), it is checked like every borrow (it cannot outlive `s`, and `s` cannot be assigned, grown or moved while it is in use), and growing or replacing `*p` never changes `s`. `s[i:j]` without `&` is a value: a new slice with copies of those elements, subject to rule 4. On a `string`, `s[i:j]` shares the immutable bytes as before.
-9. *A function that changes its copy to no effect.* Writing to an element or entry of a by-value slice or map parameter (assignment, `delete`, `clear`, an `append` assigned back to the parameter) when the parameter is not read, returned or passed on afterwards is a compile error: the write is lost. The fix-its are a pointer parameter and returning the value.
+9. *A function that changes its copy to no effect.* Writing to an element or entry of a by-value slice or map parameter or receiver (assignment, `delete`, `clear`, an `append` assigned back to the parameter) when the parameter is not read, returned or passed on afterwards is a compile error: the write is lost. The fix-its are a pointer parameter and returning the value.
 10. *Built-ins and the library take a pointer where they change their argument:* `copy(&dst, src)`, `sort.Ints(&xs)`, `r.Read(&buf)`, `r.Read(&buf[n:])`. `append(s, x)` takes `s` by value and returns the result.
 
 **Other forms**

@@ -2,7 +2,7 @@
 
 - **Status:** accepted (integrated with [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
 - **Date:** 2026-10-28
-- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** in decision 8, "`*[]T` and `*map[K]V` do not exist" and the map parameter as a 1-word handle are replaced: both are ordinary pointer types, a map parameter is the function's own copy, and a function that fills the caller's map takes `*map[K]V`; never-nil pointers, `Option[T]`, flow narrowing and the nil rules for slices, maps and channels stand.
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** in decision 8, "`*[]T` and `*map[K]V` do not exist" and the map parameter as a 1-word handle are replaced: both are ordinary pointer types, a map parameter is the function's own copy, and a function that fills the caller's map takes `*map[K]V`; the warning for a known-`nil` map argument is replaced by a compile error for a write to a by-value map parameter that is lost (rule 9); the interface box is no longer immutable, and `E0354` is a write to the copy that an assertion gives (rule 11); never-nil pointers, `Option[T]`, flow narrowing and the nil rules for slices, maps and channels stand.
 - **Plan reference:** P01 D1.3, D1.4, D1.7; spec chapters 3, 4, 6, 8, 9, 10, 11, 12, 14, 16; P03 (P03.15 to P03.19), P04 (P04.08, P04.09), P05, P07, P08, P13.
 
 ## Context

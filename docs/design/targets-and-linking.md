@@ -18,7 +18,7 @@ One table, `TargetSpec` (`crates/gopp-target`), owns all target properties; noth
 | `wasip1/wasm32` | `wasm32-wasip1` | 32-bit, LE, 4B (ILP32) | C fallback | `wasm-ld` | Wasm |
 
 - **Supported in version 1 ([ADR-0037](../adr/0037-v1-targets.md)):** `linux/amd64` and `windows/amd64`. Both pass every test. The other six rows stay in the table so that no code assumes one platform, but they are not tested or promised until they are decided after version 1; a build for one of them says so.
-- **Target selection & deterministic CPU baseline:** `gopp build -target=linux/arm64` (or `GOOS`/`GOARCH` aliases) selects the target; the default is `host`. Unless a profile explicitly sets `cpu` ([ADR-0007](../adr/0007-build-profiles.md)), the CPU baseline is fixed per target (`-march=x86-64` on `amd64`, `-march=armv8-a` on `arm64`, `-march=rv64gc` on `riscv64`), never `-march=native`, so builds are byte-for-byte deterministic across machines.
+- **Target selection & deterministic CPU baseline:** `gopp build -target=windows/amd64` (or `GOOS`/`GOARCH` aliases) selects the target; the default is `host`. Unless a profile explicitly sets `cpu` ([ADR-0007](../adr/0007-build-profiles.md)), the CPU baseline is fixed per target (`-march=x86-64` on `amd64`, `-march=armv8-a` on `arm64`, `-march=rv64gc` on `riscv64`), never `-march=native`, so builds are byte-for-byte deterministic across machines.
 - **Pure-Rust object inspection:** Object files, symbol tables, undefined-symbol allowlists, and embedded `.gopx` sections are inspected in pure Rust via `object` `0.41.0` across ELF, Mach-O, COFF/PE, and Wasm.
 - **Compile-time layout guards:** Every generated C23 translation unit starts with `_Static_assert` checks verifying pointer width, `int64_t` alignment, `gopp_str` size (3 words), `gopp_slice` size (4 words), and `gopp_iface` size (2 words) against `TargetLayout`.
 
@@ -33,20 +33,20 @@ One table, `TargetSpec` (`crates/gopp-target`), owns all target properties; noth
 ### Sysroot and C library discovery
 
 - **Host target:** `probe_host_toolchain` discovers `crt1.o`, `crti.o`, `crtn.o`, `libc`, and the dynamic linker via `clang -print-file-name=...` (supporting both standard FHS distributions such as Debian and store-based NixOS paths).
-- **Cross targets:** `--sysroot=<dir>` / `-crt-dir=<dir>` supplies the target sysroot containing startup objects and `libc` (`libc.so` or `libc.a`), with `-dynamic-linker=<path>` overriding the target table's default FHS loader path when needed. `-emit=c` and `-emit=obj` always succeed for every target even without a target sysroot installed.
+- **Cross targets:** `--sysroot=<dir>` / `-crt-dir=<dir>` supplies the target sysroot containing startup objects and `libc` (`libc.so` or `libc.a`), with `-dynamic-linker=<path>` overriding the target table's default FHS loader path when needed. `-emit=c` and `-emit=obj` succeed for every supported target even without a target sysroot installed.
 - **Pre-link validation:** `check_link_inputs` validates every startup object, library search directory, and loader path before invoking `lld`. Missing sysroot pieces produce a structured `ariadne` diagnostic naming the exact missing file and the `-crt-dir` / `--sysroot` flag (`E0441`), never a raw linker crash.
 
 ## Cross-target verification matrix
 
-For version 1 the second tested target is `windows/amd64`, run on a real Windows machine; the `linux/arm64` column below applies when that target is taken up ([ADR-0037](../adr/0037-v1-targets.md)).
+Version 1 tests two targets ([ADR-0037](../adr/0037-v1-targets.md)). The other targets, and the `qemu-aarch64` setup that the dev shell still carries, are taken up after version 1. There is no CI yet: both columns are run by hand before a change is done.
 
-| Check | `linux/amd64` (host) | Cross targets (`linux/arm64`, `riscv64`, `darwin/*`, `windows/*`, `wasip1/wasm32`) |
+| Check | `linux/amd64` (host) | `windows/amd64` |
 |---|---|---|
-| C23 emission (`-emit=c`) & object generation (`-emit=obj`, inspected via `object` `0.41.0`) | `cargo test` + `insta` snapshots | All 8 targets tested on every host without external sysroots |
-| Linking against stub/cross sysroots | Host sysroot (`tests/run`) | Assembled stub sysroot link tests + `GOPP_AARCH64_SYSROOT` |
-| Native & emulated execution | Native (`gopp test-run` + real binaries) | Local `qemu-aarch64 -L $GOPP_AARCH64_SYSROOT` on `x86_64` dev machines (`pkgs.qemu-user` + `pkgsCross.aarch64-multiplatform.glibc` in `flake.nix`), plus native `arm64` CI runners |
-| FHS portability (non-Nix) | Debian container verification (`GOPP_TEST_DEBIAN_IMAGE`) | CI matrix |
+| C23 emission (`-emit=c`) & object generation (`-emit=obj`, inspected via `object` `0.41.0`) | `cargo test` + `insta` snapshots | The same tests on the Linux host: emitting C and a COFF object needs no Windows sysroot |
+| Linking | Host sysroot (`tests/run`) | On the Windows machine, with `lld-link` and the Microsoft C runtime |
+| Execution | Native (`gopp test-run` + real binaries) | Real executables on the Windows machine; the fast runner is Linux-only ([test-runner.md](test-runner.md)) |
+| FHS portability (non-Nix) | Debian container verification (`GOPP_TEST_DEBIAN_IMAGE`) | Does not apply |
 
 ## Release compiler binary
 
-`cargo build --release -p gopp-cli` produces a single self-contained native `gopp` Rust binary with zero static C++ archive dependencies. At runtime `gopp` locates `clang` `23.1.0` and `lld` `23.1.0` via `GOPP_CLANG` or `which` (`8.0.6`), and loads `libclang` dynamically via `clang-sys` (`1.9.1`) only when compiling a package that uses `@ImportC`.
+`cargo build --release -p gopp-cli` produces a single self-contained native `gopp` Rust binary with zero static C++ archive dependencies. At runtime `gopp` locates `clang` `23.1.0` and `lld` `23.1.0` via `GOPP_CLANG` or `which` (`8.0.6`), and loads `libclang` dynamically via `clang-sys` (`1.9.1`) only when compiling a package that imports a C or C++ header.

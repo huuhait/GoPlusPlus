@@ -4,7 +4,7 @@ Allocation-heavy benchmark (from the Benchmarks Game), with small sizes so the o
 
 ## Spec rules exercised
 
-- [OWN-P2, OWN-P5](../../04-ownership.md): `NewUnique(Node{...})` moves the value in; `Unique[Node]` has the methods of `*Node`, so `n.Left.check()` works.
+- [OWN-P2, OWN-P5](../../04-ownership.md): `NewUnique(Node{...})` moves the value in; `Unique[Node]` has the methods of `*Node`, so `stretch.check()` works.
 - [OWN-P8, OWN-R1, OWN-R2](../../04-ownership.md): a `Unique[Node]` has one owner; the block that holds `stretch` ends, and the whole tree is freed. `long` is dropped when `main` ends.
 - [OWN-R3](../../04-ownership.md), [EXP-10](../../06-expressions.md): `Node{Left: bottomUp(...), ...}` moves the temporaries into the literal.
 - [OWN-P9, OWN-P10, OWN-P6](../../04-ownership.md): pointers are never nil, so a leaf's links are `Option[Unique[Node]]` (`nil` for no child). `check` borrows them as `Option[*Node]`, and after `if l == nil || r == nil { return 1 }` both are `*Node` (ADR-0018).

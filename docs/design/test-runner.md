@@ -5,6 +5,8 @@ Run tests compile a Go++ program, execute it, and compare `stdout`, `stderr`, an
 1. **`gopp test-run` (`batch_compile`):** Compiles many programs in parallel on a `rayon` (`1.12.0`) thread pool inside **one** `gopp` process, emitting GNU C23 and building lightweight shared modules (`.so` / `.dylib` / `.dll` via `clang -shared -fPIC -fuse-ld=lld` at `-opt=0`).
 2. **`gopp test-exec` (`executor_pool`):** A small pool of long-lived worker processes loads each shared module via `libloading` (`0.9.0`: `dlopen` / `dlsym("gopp_entry")` / `dlclose`), captures `stdout`/`stderr`, resets process state when safe, and isolates crashes or `exit()` calls cleanly.
 
+The runner is written for Linux. On `windows/amd64` the run tests use real executables until the runner has a Windows form ([ADR-0037](../adr/0037-v1-targets.md)).
+
 ## Consumers of the runner
 
 | Consumer | How it uses the runner |
@@ -97,7 +99,7 @@ Because C libraries hold opaque internal state (`rand`, `strtok`, `setlocale`, `
 
 - Stack and global addresses differ (`ASLR` / `dlopen` mapping base), so tests match pointer patterns rather than hardcoded addresses.
 - `getpid()` and `argv[0]` belong to `gopp test-exec` when reused.
-- Cross-architecture tests (`linux/arm64` under `qemu-aarch64`) and linker-flag / determinism tests (`deterministic`, `link-flags`, `debian`) always build and execute real standalone binaries (`--real` / `GOPP_FAST_RUN=0`).
+- Tests on `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md)) and linker-flag / determinism tests (`deterministic`, `link-flags`, `debian`) always build and execute real standalone binaries (`--real` / `GOPP_FAST_RUN=0`).
 
 ## Batch CLI mode (`-batch`)
 

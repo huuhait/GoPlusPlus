@@ -54,4 +54,8 @@ Debug information is produced jointly by `crates/gopp-gir` (`Function::Scopes`, 
 ## 4. Verification
 
 - **Unit & stress tests (`crates/gopp-gir`, `crates/gopp-codegen-c`):** Verify `V073`/`V074` scope invariants, `.gopx` round-tripping of `Function::Scopes` and `field_name` tables, query-order independence of DWARF/C23 type emission, `MaxBlockDepth = 64` and `MaxTypeHeight = 48` caps, and linear step counts on 4000-type cycles and diamond ladders.
-- **Scripted debugger & DWARF suite (`tests/debug/`):** Automated `gdb` 17 and `lldb` batch sessions (on `amd64` and `arm64` under `qemu-aarch64`) testing `break f`, `step`, locals/globals of every Go++ type, shadowed scopes, closures, generics, interfaces, operator frames, and `<optimized out>` safety at `-opt=1..z`, plus DWARF structural verification across the full opt matrix.
+- **Scripted debugger & DWARF suite (`tests/debug/`):** Automated `gdb` 17 and `lldb` batch sessions (on `linux/amd64` and `windows/amd64`, [ADR-0037](../adr/0037-v1-targets.md)) testing `break f`, `step`, locals/globals of every Go++ type, shadowed scopes, closures, generics, interfaces, operator frames, and `<optimized out>` safety at `-opt=1..z`, plus DWARF structural verification across the full opt matrix.
+
+## 5. Open points
+
+- **Debug information on `windows/amd64`** is not designed. This document describes DWARF with `gdb` and `lldb`. The Windows target (`x86_64-pc-windows-msvc`) needs a choice between CodeView with a PDB file, which the Windows debuggers read, and DWARF, which only `lldb` reads there; the choice belongs to the work on the Windows target ([ADR-0037](../adr/0037-v1-targets.md)).

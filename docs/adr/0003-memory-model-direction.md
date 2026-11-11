@@ -2,7 +2,7 @@
 
 - **Status:** accepted (refined by [ADR-0021](0021-borrow-checking.md) and [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
 - **Date:** 2026-10-27
-- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** partly reversed. Slices and maps are no longer shared handles: `t := s` copies for every type, moving is `move(x)`, and a parameter is the function's own copy. The alternative rejected below as "C++-style implicit deep copies" is now the rule, by owner decision. The absence of a garbage collector, deterministic destruction, single-owner types and borrow checking stand.
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** partly reversed. Slices and maps are no longer shared handles: `t := s` copies for every type, moving is `move(x)`, and a parameter is the function's own copy. An interface value owns its box, with no reference count, and is copied with the value it holds. `s[i:j]` on a slice or an array is a copy, and the borrowed part is the view `&s[i:j]` (D1.6). "Every heap allocation is spelled out" (D1.7) no longer holds for copies. The alternative rejected below as "C++-style implicit deep copies" is now the rule, by owner decision. The absence of a garbage collector, deterministic destruction, single-owner types and borrow checking stand.
 - **Plan reference:** P01 D1.3 to D1.7, D1.21
 
 ## Context

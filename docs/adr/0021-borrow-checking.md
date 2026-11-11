@@ -4,6 +4,8 @@
 - **Status note (2026-10-29, [ADR-0023](0023-inheritance.md)):** an upcast pointer (`*Child` to `*Parent`, where `Parent` has a type table) is the same borrow, not a new one.
 - **Date:** 2026-10-28
 - **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** the reference-counted buffers of `[]T` and `map[K]V` (Context), `arr[i:j]` and a slice of a single-owner slice as tracked borrows (decision 2), and the temporary retain of a slice or map argument and of a slice inside a `Shared[T]` (decision 6) are replaced: a slice or a map is a value with one owner, `s[i:j]` and `arr[i:j]` are copies, and the tracked borrow of part of a slice is the view `&s[i:j]`, a `*[]T`; flow-based borrow checking with no lifetime annotations and the other borrow rules stand, and they now also cover `*[]T` and `*map[K]V`.
+- **Status note (2026-11-11, [ADR-0042](0042-shared-is-read-only.md)):** in the table of decision 6, a `Shared[T]` is no longer "writable in 1 goroutine": what it holds is read-only through the handle, and a part that changes is in a `Mutex`, `RWMutex` or `Atomic`.
+- **Status note (2026-11-11, [ADR-0044](0044-no-borrow-into-what-an-arena-value-owns.md)):** a rule is added, OWN-B10: through a pointer into an arena, the elements of a slice, the entries of a map, the value of an interface and what a `Unique[T]` or `Shared[T]` field points to cannot be borrowed (decision 2); they are reached by index.
 - **Plan reference:** spec OWN-R8, section 4.5 (OWN-B1 to OWN-B9), UB-1, UB-2, UB-2a to UB-2e, UB-5, UB-8, RNG-3, RNG-3a, CON-2, CLO-7, TYP-9, PAR-6 and chapter 16; task P04.20.
 
 ## Context

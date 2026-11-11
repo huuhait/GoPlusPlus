@@ -82,7 +82,7 @@ type Tree struct{ Sub Option[Unique[Tree]] } // copyable (OWN-C2): a copy copies
 type Log struct{ Out os.File }               // cannot be copied (OWN-C3): move(l) or &l
 ```
 
-*Why (C1 to C5):* one rule covers every type: a value is a copy, so `string`, `[]T`, `map[K]V` and ordinary structs behave like `int`, and two names change one thing only when a type says so (a pointer, `Shared[T]`, a channel). `OWN-C3` keeps strict single ownership for values that have cleanup and no way to duplicate.
+*Why (C1 to C5):* one rule covers every type: a value is a copy, so `string`, `[]T`, `map[K]V` and ordinary structs behave like `int`, and two names change one thing only when a type says so (a pointer, a `Mutex` in a `Shared[T]`, a channel). `OWN-C3` keeps strict single ownership for values that have cleanup and no way to duplicate.
 
 ## 4.2 Ownership rules (D1.4)
 
@@ -184,7 +184,7 @@ func (f *File) drop() {
 }
 ```
 
-**OWN-R8.** *Borrow checking without lifetime annotations.* Raw pointers `*T` (`&x`), slice views (`&s[i:j]`), active `range` loops, arena allocations and mutex guards are checked by flow and liveness ([OWN-B1 to OWN-B9](#45-borrow-checking-adr-0021)). Returning `&local`, resizing a slice while `&xs[i]` is live, passing overlapping `*T` arguments, or sending `&local` to `go` are compile errors. What remains unchecked (`unsafe`, C/C++ raw pointers, `longjmp`) is listed in [chapter 16](16-undefined-behavior.md).
+**OWN-R8.** *Borrow checking without lifetime annotations.* Raw pointers `*T` (`&x`), slice views (`&s[i:j]`), active `range` loops, arena allocations and mutex guards are checked by flow and liveness ([OWN-B1 to OWN-B10](#45-borrow-checking-adr-0021)). Returning `&local`, resizing a slice while `&xs[i]` is live, passing overlapping `*T` arguments, or sending `&local` to `go` are compile errors. What remains unchecked (`unsafe`, C/C++ raw pointers, `longjmp`) is listed in [chapter 16](16-undefined-behavior.md).
 
 **OWN-R9.** *Types with no zero value and C++ classes.*
 - Pointer kinds (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`), `func` types, interface types with methods other than `error`, structs with `@Required` fields, C++ classes without a default constructor, and arrays/structs containing them have **no zero value** ([OWN-P9](#43-pointers-and-heap-allocation-d17)). `Option[T]` always has the zero value `nil`.
@@ -249,7 +249,7 @@ A heap pointer is made with `NewUnique`, `NewShared` or `NewWeak`. Go's `new` is
 
 **OWN-P5.** Field access and method calls **auto-dereference** `*T`, `Unique[T]` and `Shared[T]`. A pointer is used like the variable it points to, without writing `*` ([ADR-0043](../adr/0043-no-star-to-write-through-a-pointer.md)). *Reading:* a `*T` used where only a `T` fits is read as the value it points to: indexing (`xs[0]`, `m[k]`), slicing (`xs[i:j]`), `range xs`, `len`, `cap`, `delete`, `clear`, operators (`n + 1`), an argument for a `T` parameter (`append(xs, 4)`), `var m int = n`, `return n` for a `T` result. *Writing:* assigning a `T` to a `*T` writes the variable it points to: `n = 9`, `n++`, `n += 2`, `xs = append(xs, 4)`, `xs = nil`. *Where a pointer fits, it stays a pointer,* as in Go: `q := p`, an argument for a `*T` parameter, `p == q` on two pointers; and assigning a `*T` to a `*T` points it at the other variable (`n = n.next`). When the right side fits both `T` and `*T`, it re-points. `*p` is still an expression that reads the value (`m := *p`, `a, b = *b, *a`). On the left of an assignment (`*p = v`, `*p += v`, `*p++`) it is a compile error in a `.gopp` file, and the fix-it removes the star; a `.go` file keeps Go's spelling. `Weak[T]` does **not** ([ADR-0017](../adr/0017-weak-no-auto-deref.md)): only `w.Lock()` is available on `Weak[T]`. `Unique[T]` and `Shared[T]` get the methods of `T` and `*T` (`Clone` calls the pointer kind's own `Clone`, [OWN-R6](#42-ownership-rules-d14)).
 
-**OWN-P6.** `Unique[T]` and `Shared[T]` stored in a place convert **implicitly** to `*T` (and `Option[*T]`); `Option[Unique[T]]` and `Option[Shared[T]]` places convert to `Option[*T]`. Converting from a temporary is an error because the temporary would die at the end of the statement.
+**OWN-P6.** `Unique[T]` and `Shared[T]` stored in a place convert **implicitly** to `*T` (and `Option[*T]`); `Option[Unique[T]]` and `Option[Shared[T]]` places convert to `Option[*T]`. Converting from a temporary is an error because the temporary would die at the end of the statement. A pointer made from a `Shared[T]` is read-only, like the handle ([OWN-P8](#43-pointers-and-heap-allocation-d17)).
 
 **OWN-P7.** `make([]T, n)`, `make(map[K]V)` and `make(chan T, n)` work as in Go (with the allocator rules of [SLC-2](08-slices-and-range.md)).
 
@@ -408,6 +408,6 @@ touch(n, n)                          // ok: touch borrows nothing from Items
 
 ## 4.6 Rationale
 
-- **Why copies + borrow engine ([ADR-0041](../adr/0041-values-are-copied.md))?** One rule covers every type: a value is a copy, and two names change one thing only when a type says so (a pointer, `Shared[T]`, a channel). A slice or a map has exactly one owner, so its buffer needs no reference count and is freed deterministically, with no pauses. A copy the program cannot notice (the last use of the source, a parameter that is only read) is skipped at compile time. The cost is accepted: a copy can be large and is not visible in the source, and Go code that changes a slice or map it received by value now changes a copy.
+- **Why copies + borrow engine ([ADR-0041](../adr/0041-values-are-copied.md))?** One rule covers every type: a value is a copy, and two names change one thing only when a type says so (a pointer, a `Mutex` in a `Shared[T]`, a channel). A slice or a map has exactly one owner, so its buffer needs no reference count and is freed deterministically, with no pauses. A copy the program cannot notice (the last use of the source, a parameter that is only read) is skipped at compile time. The cost is accepted: a copy can be large and is not visible in the source, and Go code that changes a slice or map it received by value now changes a copy.
 - **Why keep `Unique[T]`, `Shared[T]` and `Weak[T]`?** Heap pointer ownership stays explicit and self-documenting: `*T` never secretly heap-allocates, `Unique[T]` has zero reference-count overhead and single ownership, `Shared[T]` shares explicitly, and `Weak[T]` breaks parent/child cycles cleanly.
 - **Why check `&` with the borrow engine?** Raw pointers `*T` have no reference count and can point into stack locals or the middle of structs and slices (`&nums[0]`, `&u.Age`), where reference counting cannot protect against reallocation or scope exit. Flow-based borrow checking on `*T` catches dangling pointers and aliasing bugs at compile time with zero lifetime annotations.

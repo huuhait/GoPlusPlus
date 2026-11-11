@@ -2,7 +2,7 @@
 
 - **Status:** accepted (owner decision)
 - **Date:** 2026-11-11
-- **Plan reference:** P01.19 (open point 1 of [ADR-0041](0041-values-are-copied.md)); spec OWN-P8, OWN-B9 rule 5, CON-19, UB-2; replaces the "writable in one goroutine" `Shared[T]` of [ADR-0032](0032-shared-buffers-and-borrow-engine.md)
+- **Plan reference:** P01.19 (open point 1 of [ADR-0041](0041-values-are-copied.md)); spec OWN-P8, OWN-B9 rule 5, CON-19, UB-2; replaces the "writable in one goroutine" `Shared[T]` of [ADR-0032](0032-shared-buffers-and-borrow-engine.md), of decision 6 of [ADR-0021](0021-borrow-checking.md) and of decision 1 of [ADR-0022](0022-race-free-concurrency.md)
 
 ## Context
 

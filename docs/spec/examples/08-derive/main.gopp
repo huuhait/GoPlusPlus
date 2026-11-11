@@ -25,7 +25,7 @@ type Config struct {
 
 func main() {
 	a := Config{Name: "demo", Tags: []string{"a", "b"}, Limits: map[string]int{"cpu": 2, "mem": 512}}
-	b := a.Clone() // deep structural clone: independent Tags slice and Limits map
+	b := a.Clone() // the same copy as `b := a`: b has its own Tags slice and Limits map; .Clone() says the copy is meant
 
 	#Assert(a.Equal(b), "configs should be equal") // panics with the expression text if false
 	fmt.Println(#Stringify(a.Equal(b)), "=", a.Equal(b))

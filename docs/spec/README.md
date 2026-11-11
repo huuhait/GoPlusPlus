@@ -11,7 +11,7 @@ Start with the [overview](01-overview.md).
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
 | 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names, contextual `base` | D1.2, ADR-0023 |
 | 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, inheritance (`@Extends`) | D1.12, D1.17, ADR-0023, ADR-0034 |
-| 4 | [Ownership](04-ownership.md) | categories, copying and `move`, rules 1 to 10, pointers, slicing, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032, ADR-0041 |
+| 4 | [Ownership](04-ownership.md) | categories, copying and `move`, rules 1 to 10, pointers, slicing, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032, ADR-0041, ADR-0042, ADR-0043, ADR-0044 |
 | 5 | [Parameters](05-parameters.md) | by-value copies, pointer parameters, receivers, ABI | D1.5, ADR-0041 |
 | 6 | [Expressions](06-expressions.md) | `clone`, `mem.Take`, safety defaults, `@Operator` methods, `@Const` & composite `const` | D1.17, ADR-0024, ADR-0032, ADR-0033 |
 | 7 | [Statements](07-statements.md) | assignment, blocks, headers | D1.4, D1.6, ADR-0032 |
@@ -27,7 +27,7 @@ Start with the [overview](01-overview.md).
 
 All `@` attributes on one page: [attributes cheat sheet](../attributes.md).
 
-The memory model (a value is a copy, `move(x)`, pointers and `Shared[T]`) is [ADR-0041](../adr/0041-values-are-copied.md); its last section lists the points that are still open.
+The memory model (a value is a copy, `move(x)`, pointers and `Shared[T]`) is [ADR-0041](../adr/0041-values-are-copied.md), with [ADR-0042](../adr/0042-shared-is-read-only.md) (what a `Shared[T]` holds is read-only), [ADR-0043](../adr/0043-no-star-to-write-through-a-pointer.md) (a pointer is used like the variable it points to) and [ADR-0044](../adr/0044-no-borrow-into-what-an-arena-value-owns.md) (pointers into an arena). The open points of ADR-0041 are decided; only the numbers of its two new error codes are not assigned yet.
 
 Appendix: [A. Symbol names](appendix-a-symbol-names.md) (how the compiler names functions, methods, generic instances and type tables in object files, and `gopp demangle`; D4.13).
 

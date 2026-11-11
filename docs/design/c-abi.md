@@ -1,6 +1,6 @@
 # The C ABI layer
 
-Go++ calls C with the exact C ABI of the target ([ADR-0001](../adr/0001-implementation-language.md), [ADR-0002](../adr/0002-clang-version-policy.md)). `crates/gopp-codegen-c` emits native GNU C23 `struct` definitions, `typedef`s, and function prototypes directly and compiles them with `clang` 23.1.0 (`--target=<triple>`), delegating register/stack classification, narrow-integer extension, homogeneous floating-point aggregates (HFAs), and indirect/struct-return conventions directly to Clang 23's target ABI implementation across every supported target (`amd64` SysV/Win64, `arm64` AAPCS64/Darwin/Win64, `riscv64` LP64D, `wasm32` WASI).
+Go++ calls C with the exact C ABI of the target ([ADR-0001](../adr/0001-implementation-language.md), [ADR-0002](../adr/0002-clang-version-policy.md)). `crates/gopp-codegen-c` emits native GNU C23 `struct` definitions, `typedef`s, and function prototypes directly and compiles them with `clang` 23.1.0 (`--target=<triple>`), delegating register/stack classification, narrow-integer extension, homogeneous floating-point aggregates (HFAs), and indirect/struct-return conventions directly to Clang 23's target ABI implementation across every target of the `TargetSpec` table (`amd64` SysV/Win64, `arm64` AAPCS64/Darwin/Win64, `riscv64` LP64D, `wasm32` WASI).
 
 ## Pieces
 
@@ -47,4 +47,4 @@ A package that imports headers includes them in its generated file and uses thei
 ## Verification
 
 - **Unit & property tests (`crates/gopp-gir`, `crates/gopp-codegen-c`):** `CTypeRules` boundary tests (both sides of depth `64`, `4096` fields, `1 GiB`, zero-sized element arrays, query-order independence, and linear step counts on diamond type DAGs), verifier `V067`/`V075`/`V076` tests, and `insta` C23 snapshot tests for `@Extern("C")`, `@Export("C")`, and `_GPTC` thunks.
-- **Differential round-trip tests (`tests/run/cabi-*`):** `proptest` / generator suites compile C callers and callees directly with `clang` 23.1.0 and link them against Go++ packages across scalar, nested-struct, HFA, `Option[*byte]`, 24-parameter register-exhaustion, `@Export("C")`, and callback signatures on `linux/amd64` and `linux/arm64` (native and `qemu-aarch64`), verifying byte-for-byte argument and return identity across `-opt=0`, `-opt=2`, and `-opt=3`.
+- **Differential round-trip tests (`tests/run/cabi-*`):** `proptest` / generator suites compile C callers and callees directly with `clang` 23.1.0 and link them against Go++ packages across scalar, nested-struct, HFA, `Option[*byte]`, 24-parameter register-exhaustion, `@Export("C")`, and callback signatures on `linux/amd64` and `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md)), verifying byte-for-byte argument and return identity across `-opt=0`, `-opt=2`, and `-opt=3`.

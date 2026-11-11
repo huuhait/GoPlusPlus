@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-27
-- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** the "lent parameter" in Consequences is now a plain by-value parameter: the function's own copy, which is not made when the function only reads it; the three decisions stand.
+- **Status note (2026-11-11, [ADR-0041](0041-values-are-copied.md)):** the "lent parameter" in Consequences is now a plain by-value parameter: the function's own copy, which is not made when the function only reads it; in decision 2, an interface assertion binding is no longer a read-only binding: `x := v.(T)` gives `x` a copy (rule 11); otherwise the three decisions stand.
 - **Plan reference:** P07 Q1, Q2, Q3 (task P07.17); P07 D7.4, D7.5; P08 Q2 (merged into P07 Q2).
 
 ## Context

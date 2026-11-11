@@ -2,7 +2,7 @@
 
 Base: Go spec [Run-time panics](https://go.dev/ref/spec#Run_time_panics), [Integer overflow](https://go.dev/ref/spec#Integer_overflow), [Arithmetic operators](https://go.dev/ref/spec#Arithmetic_operators), [Conversions](https://go.dev/ref/spec#Conversions), [Package unsafe](https://go.dev/ref/spec#Package_unsafe), [Size and alignment guarantees](https://go.dev/ref/spec#Size_and_alignment_guarantees).
 
-Go++ has a borrow checker with no lifetime annotations ([OWN-B1 to B9](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021 and its amendment). It turns most "used after it was thrown away" cases into compile errors, and it allows one writable borrow of a place at a time, so hidden aliasing is a compile error too ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). Data races are compile errors in normal code too ([CON-12 to CON-20](12-concurrency.md), ADR-0022). This chapter is the complete list of what the compiler does **not** protect you from, and of the places where the result depends on the implementation. Where a rule below was once fully undefined, it now says what is an error and what small residue is left.
+Go++ has a borrow checker with no lifetime annotations ([OWN-B1 to B10](04-ownership.md#45-borrow-checking-adr-0021), ADR-0021 and its amendment). It turns most "used after it was thrown away" cases into compile errors, and it allows one writable borrow of a place at a time, so hidden aliasing is a compile error too ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). Data races are compile errors in normal code too ([CON-12 to CON-20](12-concurrency.md), ADR-0022). This chapter is the complete list of what the compiler does **not** protect you from, and of the places where the result depends on the implementation. Where a rule below was once fully undefined, it now says what is an error and what small residue is left.
 
 Terms:
 - **Undefined behavior (UB):** the program can do anything. The compiler and the runtime promise nothing.
@@ -102,7 +102,7 @@ go func() { n.Add(1) }()     // ok
 
 **UB-5a.** *Mixed allocators.* Freeing memory with an allocator other than the one that made it: a Go++ (mimalloc) pointer passed to C `free` or `realloc`, a C-owned pointer that a Go++ drop frees (for example a `ffi.CString` buffer after `.Release()`, which is then C's to free), or a C++ `new` object freed with `free`. UB ([ADR-0027](../adr/0027-mimalloc-global-allocator.md) rule 4a). Go++ never adopts memory that C returns, and `ffi.CString(...).Release()` buffers come from C `malloc` for this reason. Not detected by default; the allocator test hook (P05.03) detects it in non-ASan builds. In ASan builds both sides use the sanitizer heap, so the mismatch is invisible there and the code stays wrong.
 
-**UB-6.** *`@NoBounds`.* An out-of-range index in a function with bounds checks turned off.
+**UB-6.** *`@NoBounds`.* An out-of-range index or slice bound in a function with bounds checks turned off.
 
 UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P05, P07, P08 and P12 (arena lifetime, `unsafe`, C lifetimes, C++ objects, runtime objects, forced unwinding). The owner confirmed in P01.15 that they stay listed as undefined behavior.
 
@@ -119,7 +119,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 **UB-10.** *Misuse of C++ objects.* Using a C++ object after a move except in ways its class allows; calling through a dangling reference returned as `*T` (D8.7).
 
-**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race. In normal code it is a **compile error**: a map is `Sync` only for reading ([CON-12](12-concurrency.md)): no goroutine may write it while another goroutine can reach it; wrap it in `Mutex[map[K]V]` ([CON-15](12-concurrency.md)). The same holds for the first write to a nil map by two goroutines (a write creates the map, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), and the map is not `Sync`), and for a slice or string variable that two goroutines can reach while one of them writes it. The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse. *Residue (still UB):* the same access from `unsafe` code or from C and C++ threads (UB-3).
+**UB-11.** *Concurrent use of unsynchronized runtime objects.* A map written while another goroutine reads or ranges over it is a data race. In normal code it is a **compile error**: a map is `Sync` only for reading ([CON-12](12-concurrency.md)): no goroutine may write it while another goroutine can reach it; wrap it in `Mutex[map[K]V]` ([CON-15](12-concurrency.md)). The same holds for the first write to a nil map by two goroutines (a write creates the map, [OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17), and a write needs exclusive access), and for a slice or string variable that two goroutines can reach while one of them writes it. The "map insert during iteration" panic ([RNG-4](08-slices-and-range.md)) is a best-effort check for single-goroutine misuse. *Residue (still UB):* the same access from `unsafe` code or from C and C++ threads (UB-3).
 
 **UB-12.** *Forced unwinding.* `pthread_exit` or thread cancellation through Go++ frames: `recover()` does not stop it, and destructors run only as far as the platform unwinder runs them ([PAN-9](09-errors-and-panics.md)).
 
@@ -148,7 +148,9 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 | borrow stored in a global, a heap container, a channel, an escaping closure or a `go` (OWN-B5) | error | | | |
 | writable argument and a borrow of the same place at one call (UB-2, OWN-B4) | error | | | |
 | two borrows of overlapping places, one of them writable, including through two pointers (UB-2, OWN-B9) | error | | | |
-| sharing an unsynchronized `Shared[T]` across goroutines (CON-19, OWN-P8) | error | | | |
+| sharing a `Shared[T]` whose `T` is not `Sync` across goroutines (CON-19, OWN-P8) | error | | | |
+| changing what a `Shared[T]` holds without a `Mutex`, `RWMutex` or `Atomic` (OWN-P8) | error | | | |
+| a borrow into what a value owns separately, through a pointer into an arena (OWN-B10) | error | | | |
 | by-value argument read from an aliasable place (`s.fail(s.err)`, UB-2b, PAR-1) | safe (the copy is made: a temp retain, an own buffer for a slice or map, or an own copy for an interface value) | | | |
 | by-value `defer` argument reassigned or changed after `defer` (UB-2c, PAN-3) | safe (copied at the `defer`) | | | |
 | `v` reassigned while an assertion binding `x` is read afterwards (UB-2d) | safe (`x` is a copy) | | | |
