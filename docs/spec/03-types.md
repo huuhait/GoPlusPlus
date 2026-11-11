@@ -116,7 +116,7 @@ case int:
 }
 ```
 
-**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are required by `@Required`, [TYP-15](#34-required-fields-d14-rule-11)), emitted once per type (`linkonce_odr`). For a type that uses `extends` the table includes all parent chains: the parents' fields come first in `extends` declaration order, then the child's own ([TYP-22](#35-inheritance-adr-0023)). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
+**TYP-10.** *Field tables.* For every type converted to an interface, the type descriptor also carries a compact field table (field names, offsets, types, struct tags, and which fields are required by `@Required`, [TYP-15](#34-required-fields-d14-rule-11)), emitted once per type (one weak definition that the linker merges). For a type that uses `extends` the table includes all parent chains: the parents' fields come first in `extends` declaration order, then the child's own ([TYP-22](#35-inheritance-adr-0023)). `fmt` and `encoding/json` read it, so printing and JSON work on any type, as in Go.
 
 **TYP-11.** *No `reflect`.* There is no user-facing `reflect` package in v1.
 
