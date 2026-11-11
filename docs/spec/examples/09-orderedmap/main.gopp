@@ -55,11 +55,11 @@ func (m *OrderedMap[K, V]) Get(k K) Option[*V] {
 
 func (m *OrderedMap[K, V]) Len() int { return len(m.keys) }
 
-// Each visits entries in sorted key order, cloning each value so OrderedMap
-// itself needs no Clone bound on V (GEN-2, GEN-3).
+// Each visits entries in sorted key order. It passes a copy of each value, so it
+// has the Clone bound on V; OrderedMap itself needs none (GEN-2, GEN-3).
 func Each[K cmp.Ordered, V Clone](m *OrderedMap[K, V], f func(k K, v V)) {
 	for i := range m.keys {
-		f(m.keys[i], m.vals[i].Clone())
+		f(m.keys[i], m.vals[i]) // by-value arguments: f gets a copy of the key and of the value
 	}
 }
 

@@ -2,6 +2,7 @@
 
 - **Status:** superseded by [ADR-0041](0041-values-are-copied.md) on the day it was written: slices and maps are no longer shared, so every one of them is the only handle and the rule has nothing left to decide
 - **Date:** 2026-11-11
+- **Status note (2026-11-11, [ADR-0045](0045-clone-is-not-called.md)):** where decisions 1 and 2 and Consequences name a fix-it for a copy, a copy is written `b := a`.
 - **Plan reference:** P01.16 point 1, P04.19, P04.21; spec OWN-R3d (removed with this ADR), TYP-6, TYP-7, STM-7, CON-1, CON-4, CON-12, CON-14; related [ADR-0022](0022-race-free-concurrency.md), [ADR-0032](0032-shared-buffers-and-borrow-engine.md)
 
 ## Context

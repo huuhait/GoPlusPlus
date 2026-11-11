@@ -56,7 +56,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 |---|---|---|---|
 | Memory | tracing GC | no GC: every value has one owner and is destroyed deterministically; reference counts only for `string` buffers, `Shared[T]` and `Weak[T]`, channels and function values; compile-time borrow engine | 04 |
 | `string`, `[]T`, `map` | GC-backed shared headers | `string`: immutable counted bytes ($O(1)$ copy and slice). `[]T` and `map[K]V`: one owner, no reference count; `s[i:j]` is a new slice and `&s[i:j]` is a view of part of `s` | 04, 08 |
-| Assignment (`t := s`, `t = s`) | a slice, a map or a struct holding one shares its elements with the source | a copy for every type: nothing done to `t` is seen through `s`. The copy is skipped when the program cannot notice it (`s` is not used again). `x.Clone()` (`clone(x)`) writes the same copy out | 04 |
+| Assignment (`t := s`, `t = s`) | a slice, a map or a struct holding one shares its elements with the source | a copy for every type: nothing done to `t` is seen through `s`. The copy is skipped when the program cannot notice it (`s` is not used again) | 04 |
 | Moving | not in the language | `move(x)` hands the value of `x` over without a copy; reading `x` afterwards is a compile error (`E0451`). A type that cannot be copied is passed on with `move(x)` or reached through `&x` | 04 |
 | Sharing | slices, maps and pointers share | written with a type: a pointer (`&x`; `*[]T` and `*map[K]V` are ordinary pointer types, indexed without a star: `xs[0]`), `Shared[T]`, a channel | 04 |
 | Parameters | all copy; a slice or map argument shares its elements with the caller | pure Go syntax: a parameter is the function's own copy, elements included; no copy is made when the function only reads it. A function that changes the caller's value takes `*T` and the caller writes `&`: `addOne(&nums)` | 05 |
@@ -105,6 +105,7 @@ Go code changes meaning in two places without a compile error ([ADR-0041](../adr
 | ADR-0042 | what a `Shared[T]` holds is read-only; changing it needs a `Mutex` | [04](04-ownership.md), [12](12-concurrency.md) |
 | ADR-0043 | a pointer is used like the variable it points to; `*p = v` is not written | [04](04-ownership.md), [03](03-types.md), [06](06-expressions.md) |
 | ADR-0044 | nothing is borrowed from what an arena value owns | [04](04-ownership.md), [08](08-slices-and-range.md) |
+| ADR-0045 | a copy is written `=`; `Clone` is the copy method of a type with cleanup, a constraint, and the copy of a whole object through a parent pointer | [04](04-ownership.md), [10](10-generics.md) |
 
 ## 1.6 Key words used in this spec
 

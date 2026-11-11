@@ -7,7 +7,7 @@ Uses `@Derive`, `#Assert`, `#Stringify` and a user-defined macro. Run: `go run m
 - [MAC-1, MAC-2](../../13-macros-surface.md): `macro Swap(a expr, b expr) { ... }` is a declarative macro; `#Swap(tmp, other)`, `#Assert(...)` and `#Stringify(...)` are invocations in statement and expression position.
 - [MAC-3, MAC-4, MAC-7](../../13-macros-surface.md): `@Derive(JSON, Equal)` is attached to a type declaration; names start with a capital; `JSON` and `Equal` are looked up in package `derive`.
 - [MAC-6](../../13-macros-surface.md): `#Assert`, `#Stringify` and `@Derive` need no import.
-- [OWN-R6](../../04-ownership.md): `a.Clone()` makes an independent deep structural copy. `b := a` makes the same copy (in Go it would share `Tags` and `Limits`); `.Clone()` says the copy is meant.
+- [OWN-R3, OWN-R6](../../04-ownership.md): `b := a` makes an independent deep structural copy (in Go it would share `Tags` and `Limits`).
 - [OWN-R4](../../04-ownership.md): `b.Tags = append(b.Tags, "z")` grows `b.Tags` in place: the old value is not read again, so no copy is made.
 - [ERR-5, ERR-6](../../09-errors-and-panics.md): `json.Marshal!(a)`; `Marshal` only reads its interface parameter, so `a` is passed without a copy ([TYP-7](../../03-types.md)).
 - [PAR-1](../../05-parameters.md): `Equal` only reads its value receiver and its parameter, so `a` and `b` are passed without a copy.
@@ -15,7 +15,7 @@ Uses `@Derive`, `#Assert`, `#Stringify` and a user-defined macro. Run: `go run m
 ## Differences from the Go version
 
 - Go has no macros. `main.go` writes `Equal` by hand, writes the assertion with `panic`, types the `#Stringify` text as a string literal, and swaps with `a, b = b, a`.
-- `main.go` builds `b` with a second literal (Go++ uses `a.Clone()`).
+- `main.go` builds `b` with a second literal (Go++ writes `b := a`, which in Go would share `Tags` and `Limits`).
 - `encoding/json` needs no derive in either language; `@Derive(JSON)` only adds a faster generated method.
 - Output is identical.
 

@@ -11,9 +11,9 @@ Start with the [overview](01-overview.md).
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
 | 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names, contextual `base` | D1.2, ADR-0023 |
 | 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, inheritance (`@Extends`) | D1.12, D1.17, ADR-0023, ADR-0034 |
-| 4 | [Ownership](04-ownership.md) | categories, copying and `move`, rules 1 to 10, pointers, slicing, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032, ADR-0041, ADR-0042, ADR-0043, ADR-0044 |
+| 4 | [Ownership](04-ownership.md) | categories, copying and `move`, rules 1 to 10, pointers, slicing, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032, ADR-0041, ADR-0042, ADR-0043, ADR-0044, ADR-0045 |
 | 5 | [Parameters](05-parameters.md) | by-value copies, pointer parameters, receivers, ABI | D1.5, ADR-0041 |
-| 6 | [Expressions](06-expressions.md) | `clone`, `mem.Take`, safety defaults, `@Operator` methods, `@Const` & composite `const` | D1.17, ADR-0024, ADR-0032, ADR-0033 |
+| 6 | [Expressions](06-expressions.md) | `move`, `mem.Take`, safety defaults, `@Operator` methods, `@Const` & composite `const` | D1.17, ADR-0024, ADR-0032, ADR-0033 |
 | 7 | [Statements](07-statements.md) | assignment, blocks, headers | D1.4, D1.6, ADR-0032 |
 | 8 | [Slices, maps and range](08-slices-and-range.md) | slicing and views, `:0` reset, allocators, range (also over user types) | D1.20, D1.21, D1.22, ADR-0024, ADR-0041 |
 | 9 | [Errors and panics](09-errors-and-panics.md) | `!`, `call!()`, panic, defer, recover | D1.8, D1.9, D1.19 |

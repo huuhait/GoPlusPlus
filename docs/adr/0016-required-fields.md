@@ -2,6 +2,7 @@
 
 - **Status:** accepted (integrated with [ADR-0018](0018-never-nil-pointers-and-option.md), [ADR-0023](0023-inheritance.md) and [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
 - **Date:** 2026-10-27
+- **Status note (2026-11-11, [ADR-0045](0045-clone-is-not-called.md)):** in decision 9, the comma-ok form is written `v, ok := m[k]`, which gives `v` its own copy.
 - **Plan reference:** P01 D1.4 rules 9 and 11; spec TYP-15, OWN-R9, MAC-8, MAC-12; task P03.15; P09.08, P13.08. Decides P01 Q9.
 
 ## Context

@@ -12,7 +12,7 @@ Syntax: one change, the `&` mark in the range clause ([8.3](#83-range-loops-d121
 
 **SLC-2.** A **nil allocator in the backing or map header means the global allocator**, so zero values stay valid. `make`, `append`, literals and conversions use the global allocator unless told otherwise; the global allocator is mimalloc ([ADR-0027](../adr/0027-mimalloc-global-allocator.md)). In Go++ code an allocator is a `mem.Allocator`, an interface with methods, so it is never nil ([OWN-P9](04-ownership.md#43-pointers-and-heap-allocation-d17)); an allocator parameter or field that may be absent is written `Option[mem.Allocator]`, nil meaning the global allocator.
 
-**SLC-3.** Functions in package `mem` create a slice or map in another allocator, such as a `mem.Arena` (P05 D5.3; `mem.Arena` and `mem.DropArena` free all chunks automatically when their owning scope ends). Because the allocator lives in the `backing` header, **a slice keeps its allocator**: growth (`append`), a copy (`t := s`, `s[i:j]`, `Clone`) and freeing all use the slice's own allocator. Only a slice with `backing == nil` (a nil/empty slice or a view `&s[i:j]` / `&arr[i:j]`) has no allocator of its own, so a copy of it or an `append` to it allocates in the global allocator.
+**SLC-3.** Functions in package `mem` create a slice or map in another allocator, such as a `mem.Arena` (P05 D5.3; `mem.Arena` and `mem.DropArena` free all chunks automatically when their owning scope ends). Because the allocator lives in the `backing` header, **a slice keeps its allocator**: growth (`append`), a copy (`t := s`, `s[i:j]`) and freeing all use the slice's own allocator. Only a slice with `backing == nil` (a nil/empty slice or a view `&s[i:j]` / `&arr[i:j]`) has no allocator of its own, so a copy of it or an `append` to it allocates in the global allocator.
 
 **SLC-4.** A `[]T` parameter has the same 4-word `{ptr, len, cap, backing}` representation. It is the function's own slice ([PAR-1](05-parameters.md)): `s[i] = v` changes the function's copy, not the caller's slice. No copy is made when the function only reads `s` and the argument cannot change during the call. A function that changes the caller's slice takes `*[]T` and is called with `&`.
 
@@ -25,7 +25,7 @@ var arena mem.Arena
 xs := mem.MakeIn[int](&arena, 0, 100)   // illustrative name: P05.03 sets the real ones
 xs = append(xs, 1, 2, 3)                // grows inside the arena
 ys := xs[1:]                            // ys is its own slice of 2 elements; it also lives in the arena
-zs := xs.Clone()                        // the same kind of copy, written out; also in the arena
+zs := xs                                // a copy of the whole slice; also in the arena
 arena.Reset()                           // compile error if xs, ys or zs is used later (OWN-B2, UB-5)
 ```
 
@@ -107,7 +107,7 @@ RangeVar    = [ "&" ] identifier .
 - **`d` is a writable borrow of the element** ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). While `d` is live (used later in the body), a write through the collection to the same element is a compile error: `for i, &e := range xs { xs[i].f = 1; use(e) }`. Write through `e` only, or use the plain form `for i := range xs { xs[i].f = 1 }`.
 - The `&` form covers slices, arrays, map values (`for k, &v := range m { v.Count++ }`), imported C++ containers ([RNG-6](#83-range-loops-d121)) and iterators that yield `*T` ([RNG-6a](#83-range-loops-d121)). The key can't use `&`. Strings, integers and channels have no element to alias, so `&` there is a compile error. So is `for _, &e := range v` where `v` is a deep read-only binding ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)), and the `&` form over a slice or a map reached through a pointer into an arena ([OWN-B10](04-ownership.md#45-borrow-checking-adr-0021)).
 - **Arrays follow [OWN-R3b](04-ownership.md#42-ownership-rules-d14).** `for _, &d := range arr` is allowed when the array is an addressable writable variable, or is reached through a writable pointer or slice. It is a compile error when the array is held **by value** inside a read-only binding (a plain range variable).
-- **Map aliases.** A `defer` (or any later use after the loop) that keeps the `&v` alias of `for k, &v := range m` is a compile error, because later inserts can rehash the map and move the value. Except for map aliases, a `defer` may keep an `&` alias (see below). Fix-it: call it inside the loop (`v.Flush()`), or keep a copy (`c := v.Clone(); defer c.Flush()`).
+- **Map aliases.** A `defer` (or any later use after the loop) that keeps the `&v` alias of `for k, &v := range m` is a compile error, because later inserts can rehash the map and move the value. Except for map aliases, a `defer` may keep an `&` alias (see below). Fix-it: call it inside the loop (`v.Flush()`), or keep a copy (`c := v; defer c.Flush()`).
 - **`&` and `defer`/`go`.** An `&` range variable is an alias of an element, so for [PAN-3](09-errors-and-panics.md) and [CLO-3b](11-closures.md) it counts as a **place** (`xs[i]`), not as an owned loop-body local. `defer f.Close()` evaluates `&xs[i]`: fine if the collection lives until the function returns, a compile error if the collection is a local of the loop body. This holds except for map aliases (above). For a slice, `defer` keeping `&xs[i]` stays legal while `xs` lives until return; a later `append` or assignment to `xs` before return that the compiler can see is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021)); one through another pointer is a compile error too ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)).
 - Taking an element out without copying it (the only way for an element that cannot be copied) uses `mem.Take(&d)` (leaving the zero value in `xs[i]` or `m[k]`, when the type has a zero value) or `mem.Replace(&d, replacement)` ([OWN-R4](04-ownership.md#42-ownership-rules-d14)).
 - It never copies: for an array the `&` form ranges over the live array, not over a copy ([RNG-6](#83-range-loops-d121)).
@@ -121,7 +121,7 @@ for k, &v := range m { v.Count++ }                    // changes the map value i
 for _, &x := range nums { x *= 2 }                    // trivial elements: changes the real items
 for _, &f := range files { keep(mem.Take(&f)) }       // extracts File, leaves zero value in files[i]
 for _, d := range docs { d.Title = "x" }              // error: d is read-only. Fix-it: for _, &d := range docs
-for k, &v := range m { m[k+"!"] = v.Clone() }         // error: inserts into the ranged map (RNG-3)
+for k, &v := range m { m[k+"!"] = v }                 // error: inserts into the ranged map (RNG-3)
 
 type Grid struct{ Cells [4]Doc }
 func local()             { var a [4]Doc; for _, &d := range a { d.N++ } }      // ok: local array
@@ -169,7 +169,7 @@ for k := range m { addKey(m) }     // addKey inserts a new key: panics every tim
 func (l *DocList) All() iter.Seq[*Doc] { … }
 
 for &d := range docs.All() { d.Title = "x" }     // ok: the iterator yields *Doc
-for d := range docs.All() { use(d) }             // d is a *Doc (a writable copy of the pointer); (*d).Clone() copies the Doc
+for d := range docs.All() { use(d) }             // d is a *Doc (a writable copy of the pointer); *d copies the Doc
 
 func (l *DocList) Values() iter.Seq[Doc] { … }
 for d := range docs.Values() { use(d) }          // d is a Doc (RNG-1): no copy while the body only reads it; out = append(out, d) copies it
@@ -195,12 +195,12 @@ func (s Stack) Iter() iter.Seq[int] { … }   // error: Stack already ranges (sl
 
 **RNG-7.** *Temporaries in the header.* The range expression is evaluated once. If it creates temporaries, they live until the end of the whole `for` statement ([OWN-R2](04-ownership.md#42-ownership-rules-d14), [STM-4](07-statements.md)).
 
-**RNG-8.** *No redeclaring a loop variable.* Declaring a variable with the same name as a loop variable inside that loop's body, in the body block or in any block nested in it, is a **compile error**. This covers `u := u`, `u := u.Clone()` and `var u = u`, for the variables of a range clause and of a `for` clause. The parameters of a function literal inside the loop body count too, so `go func(u User){…}(u.Clone())` is an error: rename the parameter. Old Go code that wrote `u := u` (needed before Go 1.22) must rename the copy. Fix-its never reuse the name: `mine := u.Clone()`, or `go fetch(u.Clone())` ([CLO-3a](11-closures.md)).
+**RNG-8.** *No redeclaring a loop variable.* Declaring a variable with the same name as a loop variable inside that loop's body, in the body block or in any block nested in it, is a **compile error**. This covers `u := u` and `var u = u`, for the variables of a range clause and of a `for` clause. The parameters of a function literal inside the loop body count too, so `go func(u User){…}(u)` is an error: rename the parameter. Old Go code that wrote `u := u` (needed before Go 1.22) must rename the copy. Fix-its never reuse the name: `mine := u`, or `go fetch(u)` ([CLO-3a](11-closures.md)).
 
 ```go
 for _, u := range users {
-    u := u.Clone()               // error: u redeclares the loop variable. Use another name
-    mine := u.Clone()            // ok
+    u := u                       // error: u redeclares the loop variable. Use another name
+    mine := u                    // ok
 }
 ```
 

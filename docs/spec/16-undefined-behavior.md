@@ -51,7 +51,7 @@ func worse() {
 
 ```go
 func (u *User) SetFrom(src *string) {
-    u.Name = (*src).Clone()
+    u.Name = *src
     u.Audit = "renamed to " + *src
 }
 u.SetFrom(&u.Name)            // compile error: &u.Name overlaps writable receiver u (OWN-B4, OWN-B9)
@@ -98,7 +98,7 @@ go func() { n.Add(1) }()     // ok
 
 **UB-4.** *`longjmp` across Go++ frames.* A C `longjmp` that jumps over Go++ frames skips destructors and deferred calls. UB ([PAN-9](09-errors-and-panics.md)). Also a C++ exception or a Go++ panic thrown through a frame marked `nounwind` by mistake.
 
-**UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` or `mem.DropArena` while a value allocated in it is still used later is a compile error: a value from an arena borrows the arena ([OWN-B1, B2](04-ownership.md#45-borrow-checking-adr-0021), [SLC-3](08-slices-and-range.md), P05 D5.3). Fix: finish with the value before `Reset`, or copy it out to the normal heap with an explicit copy-out function (illustrative `mem.CloneTo[User](u, mem.Heap)`; `Clone` does not help, a clone stays in the arena, SLC-3). *Residue (still UB):* arena memory reached through `unsafe` or from C.
+**UB-5.** *Allocator lifetime.* Resetting or freeing a `mem.Arena` or `mem.DropArena` while a value allocated in it is still used later is a compile error: a value from an arena borrows the arena ([OWN-B1, B2](04-ownership.md#45-borrow-checking-adr-0021), [SLC-3](08-slices-and-range.md), P05 D5.3). Fix: finish with the value before `Reset`, or copy it out to the normal heap with an explicit copy-out function (illustrative `mem.CloneTo[User](u, mem.Heap)`; a plain copy does not help, it stays in the arena, SLC-3). *Residue (still UB):* arena memory reached through `unsafe` or from C.
 
 **UB-5a.** *Mixed allocators.* Freeing memory with an allocator other than the one that made it: a Go++ (mimalloc) pointer passed to C `free` or `realloc`, a C-owned pointer that a Go++ drop frees (for example a `ffi.CString` buffer after `.Release()`, which is then C's to free), or a C++ `new` object freed with `free`. UB ([ADR-0027](../adr/0027-mimalloc-global-allocator.md) rule 4a). Go++ never adopts memory that C returns, and `ffi.CString(...).Release()` buffers come from C `malloc` for this reason. Not detected by default; the allocator test hook (P05.03) detects it in non-ASan builds. In ASan builds both sides use the sanitizer heap, so the mismatch is invisible there and the code stays wrong.
 
@@ -167,7 +167,7 @@ UB-7 to UB-12 are not listed in D1.17 or D1.4 rule 8. They are collected from P0
 
 ## 16.5 Rationale
 
-- The owner chose (2026-10-28, ADR-0021) a borrow check without lifetime annotations: bounds checks, nil checks, zero values, use-after-move and use-after-change errors, and sanitizers one flag away for the residue. It is conservative, so a `.Clone()` is the usual fix for a false error.
+- The owner chose (2026-10-28, ADR-0021) a borrow check without lifetime annotations: bounds checks, nil checks, zero values, use-after-move and use-after-change errors, and sanitizers one flag away for the residue. It is conservative, so a copy (`y := x`) is the usual fix for a false error.
 - The owner chose (2026-10-28, ADR-0021; ADR-0032) that the compiler reads function bodies to see what a `*T` result borrows (no lifetime syntax), that local/unique `*T` borrows are exclusive, and (2026-11-11, [ADR-0042](../adr/0042-shared-is-read-only.md)) that what a `Shared[T]` holds is read-only through the handle, with every change going through a `Mutex`, `RWMutex` or `Atomic`, in one goroutine as across goroutines. What is left undefined is `unsafe`, C and C++, data races there, and `longjmp` / forced unwinding.
 - Keeping Go's results for overflow, division and shifts means ported code behaves the same, even where C would allow UB.
 - The owner chose (2026-10-28, ADR-0022) that data races are compile errors in normal code, with the automatic labels `Send` and `Sync`, mutexes that hold their data, and scoped goroutines. Defining races would cost every shared access, so the residue (`unsafe`, C and C++ threads) stays UB and `-race` stays one flag away.
