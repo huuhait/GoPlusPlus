@@ -62,6 +62,7 @@ fmt.Println(unsafe.Sizeof(xs))           // 32
 **SLC-13.** *No slicing past the length.* The high index of a slice expression on a slice may not pass its length: `s[:n]` and `s[i:n:k]` with `n > len(s)` are **out of range**, even when `n <= cap(s)`, and for every element type. Only `len(s)` elements exist: slots past the length may have been destroyed by a shrink or never initialized, so a slice grows with `append`, not with `s[:n]`. This differs from Go, where `s[:cap(s)]` is legal.
 - It is a **compile error** when the length and the index are both written in the program: the operand is an array, or a local slice whose value on every path comes from `make` with a constant length or from a composite literal and has not been assigned or appended to since, and the index is a constant (`buf := make([]byte, 3, 10); full := buf[:10]`).
 - Otherwise it is a run-time **panic** ("slice bounds out of range"), as for any index that is only known when the program runs.
+- **An index is checked the same way.** `s[i]` with a constant `i` that is not below the length is a compile error when the length is written in the program by the condition above (`buf := make([]byte, 4); buf[5] = 1`). Go reports this only for arrays and constant strings. Every other index out of range is a run-time panic ("index out of range").
 
 ```go
 s := []string{"a", "b", "c"}
