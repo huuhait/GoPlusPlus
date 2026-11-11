@@ -175,7 +175,17 @@ impl Parser<'_> {
                 };
                 StmtKind::Return(results)
             }
-            T::Semi => StmtKind::Empty,
+            T::Semi => {
+                // The statement is the `;` itself. As in Go's tree, one
+                // that stands for a line end has no width.
+                let mut span = self.here();
+                if !self.text[span.lo as usize..].starts_with(';') {
+                    span.hi = span.lo;
+                }
+                let id = self.alloc_stmt(StmtKind::Empty, lo);
+                self.stmts[id].span = span;
+                return Some(id);
+            }
             _ => return None,
         };
         Some(self.alloc_stmt(kind, lo))
@@ -307,7 +317,10 @@ impl Parser<'_> {
             self.error_at(Code::Expected, colon, message);
             return None;
         };
-        Some(self.alloc_stmt(StmtKind::Labeled { label, stmt }, lo))
+        let id = self.alloc_stmt(StmtKind::Labeled { label, stmt }, lo);
+        // The empty statement before a `}` lies past the `:`.
+        self.stmts[id].span.hi = self.stmts[stmt].span.hi;
+        Some(id)
     }
 
     /// The clauses between `if`, `for` or `switch` and the block.
@@ -522,13 +535,8 @@ impl Parser<'_> {
                     Some(Vec::new())
                 }
             };
-            self.want(T::Colon);
-            let body = self.stmt_list();
-            clauses.push(CaseClause {
-                cases,
-                body,
-                span: self.span_from(lo),
-            });
+            let (body, span) = self.clause_body(lo);
+            clauses.push(CaseClause { cases, body, span });
         }
         self.want(T::RBrace);
         let kind = StmtKind::Switch {
@@ -537,6 +545,18 @@ impl Parser<'_> {
             clauses,
         };
         self.alloc_stmt(kind, lo)
+    }
+
+    /// The `:` and the statements of a clause that started at `lo`. The
+    /// clause ends with its last statement, or with the `:`.
+    fn clause_body(&mut self, lo: u32) -> (Vec<StmtId>, Span) {
+        self.want(T::Colon);
+        let mut span = self.span_from(lo);
+        let body = self.stmt_list();
+        if let Some(&last) = body.last() {
+            span.hi = self.stmts[last].span.hi;
+        }
+        (body, span)
     }
 
     fn select_stmt(&mut self) -> StmtId {
@@ -565,13 +585,8 @@ impl Parser<'_> {
                     None
                 }
             };
-            self.want(T::Colon);
-            let body = self.stmt_list();
-            clauses.push(CommClause {
-                comm,
-                body,
-                span: self.span_from(lo),
-            });
+            let (body, span) = self.clause_body(lo);
+            clauses.push(CommClause { comm, body, span });
         }
         self.want(T::RBrace);
         self.alloc_stmt(StmtKind::Select { clauses }, lo)

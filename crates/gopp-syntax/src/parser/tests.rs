@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, SourceFile, SourceMap};
@@ -80,13 +81,14 @@ fn a_group_without_declarations_parses() {
     assert!(tree("package p\n\nvar ()").starts_with("File "));
 }
 
-fn go_files_under(dir: &Path, files: &mut Vec<PathBuf>) {
+/// The `.go` files under `dir`. `testdata` directories hold files that are
+/// invalid on purpose.
+fn go_files_under(dir: &Path, testdata: bool, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            // `testdata` holds files that are invalid on purpose.
-            if path.file_name().is_some_and(|name| name != "testdata") {
-                go_files_under(&path, files);
+            if testdata || path.file_name().is_some_and(|name| name != "testdata") {
+                go_files_under(&path, testdata, files);
             }
         } else if path.extension().is_some_and(|extension| extension == "go") {
             files.push(path);
@@ -94,18 +96,151 @@ fn go_files_under(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn go_root() -> PathBuf {
+    let output = Command::new("go").args(["env", "GOROOT"]).output().unwrap();
+    let goroot = String::from_utf8(output.stdout).unwrap();
+    Path::new(goroot.trim()).join("src")
+}
+
+/// The program that prints the tree of Go's own parser.
+const GOAST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goast/main.go");
+
+/// FNV-1a, as Go's `hash/fnv` computes it.
+fn fnv64(bytes: &[u8]) -> u64 {
+    let hash = |hash: u64, &byte: &u8| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, hash)
+}
+
+/// The dump without the text of literals: the byte range says the same,
+/// and the other side does not have to spell the text as Rust does.
+fn without_literal_text(dump: &str) -> String {
+    let mut out = String::with_capacity(dump.len());
+    for line in dump.lines() {
+        let literal = line.find("BasicLit ").filter(|&at| {
+            let indent = line[..at].trim_start();
+            indent.is_empty() || indent.starts_with("[+") && indent.ends_with("] ")
+        });
+        match (literal, line.rfind(" @")) {
+            (Some(at), Some(span)) => {
+                let kind_end = at + "BasicLit ".len();
+                let kind = line[kind_end..].split(' ').next().unwrap_or("");
+                out.push_str(&line[..kind_end]);
+                out.push_str(kind);
+                out.push_str(&line[span..]);
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Files whose tree differs from that of Go's parser because the two read
+/// the text differently, and this parser follows Go's compiler:
+/// `[P(*struct{})]` after a type name starts a type parameter list.
+const READ_AS_THE_COMPILER_DOES: &[&str] = &["internal/types/testdata/fixedbugs/issue49482.go"];
+
+/// "Everything not mentioned works as in Go", for syntax: each `.go` file
+/// under GOROOT that both parsers accept has the same tree here as in Go's
+/// `go/parser`, node for node and byte range for byte range. Needs `go` on
+/// `PATH`.
+#[test]
+#[ignore = "long: parses the Go standard library with Go's parser too"]
+fn the_tree_of_a_go_file_is_the_tree_of_go_s_parser() {
+    let mut files = Vec::new();
+    go_files_under(&go_root(), true, &mut files);
+    files.sort();
+    assert!(files.len() > 7000, "only {} files", files.len());
+
+    let mut ours = Vec::new();
+    for path in &files {
+        let parsed = parse_bytes(&fs::read(path).unwrap(), Dialect::Go);
+        if parsed.diagnostics.is_empty() {
+            let hash = fnv64(without_literal_text(&parsed.dump).as_bytes());
+            ours.push((path, format!("{hash:016x}")));
+        }
+    }
+
+    let list: String = ours
+        .iter()
+        .map(|(path, _)| format!("{}\n", path.display()))
+        .collect();
+    let list_path = std::env::temp_dir().join(format!("gopp-goast-{}", std::process::id()));
+    fs::write(&list_path, list).unwrap();
+    let output = Command::new("go")
+        .args(["run", GOAST, "-hash"])
+        .stdin(fs::File::open(&list_path).unwrap())
+        .output()
+        .unwrap();
+    fs::remove_file(&list_path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let theirs = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(theirs.lines().count(), ours.len());
+
+    let known = |path: &Path| {
+        READ_AS_THE_COMPILER_DOES
+            .iter()
+            .any(|known| path.ends_with(known))
+    };
+    let mut compared = 0;
+    let mut differences = Vec::new();
+    for ((path, hash), line) in ours.iter().zip(theirs.lines()) {
+        let (their_hash, their_path) = line.split_once(' ').unwrap();
+        assert_eq!(Path::new(their_path), path.as_path());
+        // Go's parser refuses some files that Go's compiler accepts.
+        if their_hash == "error" || known(path) {
+            continue;
+        }
+        compared += 1;
+        if their_hash != hash {
+            differences.push(path.as_path());
+        }
+    }
+    println!(
+        "{} files, {} parsed here, {compared} compared, {} differ",
+        files.len(),
+        ours.len(),
+        differences.len()
+    );
+    assert!(compared > 7000, "only {compared} files compared");
+
+    let mut report = String::new();
+    for path in differences.iter().take(20) {
+        let parsed = parse_bytes(&fs::read(path).unwrap(), Dialect::Go);
+        let here = without_literal_text(&parsed.dump);
+        let output = Command::new("go")
+            .args(["run", GOAST, "-dump"])
+            .arg(path)
+            .output()
+            .unwrap();
+        let there = String::from_utf8_lossy(&output.stdout).into_owned();
+        let first = here.lines().zip(there.lines()).find(|(a, b)| a != b);
+        let (a, b) = first.unwrap_or(("(one tree is longer)", ""));
+        report.push_str(&format!(
+            "{}\n  here: {}\n  go:   {}\n",
+            path.display(),
+            a.trim(),
+            b.trim()
+        ));
+    }
+    assert!(
+        differences.is_empty(),
+        "{} of {compared} trees differ\n{report}",
+        differences.len()
+    );
+}
+
 /// Everything Go's own parser accepts must parse here too. Needs `go` on
 /// `PATH`, for the location of its standard library.
 #[test]
 #[ignore = "long: parses the whole Go standard library"]
 fn the_go_standard_library_parses_without_a_diagnostic() {
-    let output = std::process::Command::new("go")
-        .args(["env", "GOROOT"])
-        .output()
-        .unwrap();
-    let goroot = String::from_utf8(output.stdout).unwrap();
     let mut files = Vec::new();
-    go_files_under(&Path::new(goroot.trim()).join("src"), &mut files);
+    go_files_under(&go_root(), false, &mut files);
     files.sort();
     assert!(
         files.len() > 5000,
