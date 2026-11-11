@@ -554,3 +554,76 @@ fn threads_that_build_the_same_type_get_the_same_id() {
         assert_eq!(id, build(index as u64 % 8 + 1));
     }
 }
+
+#[test]
+fn values_are_laid_out_as_go_lays_them_out() {
+    let f = Fixture::new();
+    let basic = |basic| f.basic(basic);
+    let strukt = |fields: &[(&str, TypeId)]| {
+        f.types
+            .strukt(fields.iter().map(|&(name, ty)| f.field(name, ty)).collect())
+    };
+    let empty = strukt(&[]);
+    let cases = [
+        (basic(Basic::Bool), (1, 1)),
+        (basic(Basic::Int32), (4, 4)),
+        (basic(Basic::Int), (8, 8)),
+        (basic(Basic::Complex64), (8, 4)),
+        (basic(Basic::Complex128), (16, 8)),
+        (basic(Basic::String), (16, 8)),
+        (f.types.pointer(empty), (8, 8)),
+        (f.types.slice(basic(Basic::Uint8)), (24, 8)),
+        (f.types.any(), (16, 8)),
+        (f.types.array(3, basic(Basic::Uint16)), (6, 2)),
+        (empty, (0, 1)),
+        // Each field starts at a multiple of its alignment, and the size
+        // is a multiple of the largest alignment.
+        (
+            strukt(&[
+                ("a", basic(Basic::Uint8)),
+                ("b", basic(Basic::Int64)),
+                ("c", basic(Basic::Uint16)),
+            ]),
+            (24, 8),
+        ),
+        (
+            strukt(&[("a", basic(Basic::Uint8)), ("b", basic(Basic::Uint16))]),
+            (4, 2),
+        ),
+        // A struct that is not empty does not end in a field of no size.
+        (strukt(&[("a", basic(Basic::Int64)), ("b", empty)]), (16, 8)),
+        (strukt(&[("a", empty), ("b", basic(Basic::Int64))]), (8, 8)),
+    ];
+    for (ty, layout) in cases {
+        assert_eq!(f.types.layout(ty, &f.names), Some(layout), "{}", f.show(ty));
+    }
+    // A field is found by its name, also inside a field that is embedded.
+    let pair = strukt(&[("X", basic(Basic::Uint8)), ("Y", basic(Basic::Int32))]);
+    let (_, declared) = f.declared("Pair", pair);
+    let mut embedded = f.field("Pair", declared);
+    embedded.embedded = true;
+    let outer = f
+        .types
+        .strukt(vec![f.field("Tag", basic(Basic::Uint8)), embedded]);
+    let name = |name: &str| f.names.get_or_intern(name);
+    let package = name("p");
+    assert_eq!(
+        f.types.offset_of(declared, name("Y"), package, &f.names),
+        Some(4)
+    );
+    assert_eq!(
+        f.types.offset_of(outer, name("Pair"), package, &f.names),
+        Some(4)
+    );
+    assert_eq!(
+        f.types.offset_of(outer, name("Y"), package, &f.names),
+        Some(8)
+    );
+    assert_eq!(
+        f.types.offset_of(outer, name("None"), package, &f.names),
+        None
+    );
+    // No layout for what has no fixed one.
+    assert_eq!(f.types.layout(f.types.param(name("T")), &f.names), None);
+    assert_eq!(f.types.layout(basic(Basic::UntypedInt), &f.names), None);
+}

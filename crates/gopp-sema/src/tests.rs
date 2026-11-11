@@ -333,7 +333,8 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     let mut objects: BTreeMap<(String, bool), usize> = BTreeMap::new();
     // How many expressions with a value Go has, and how many of them are
     // compared.
-    let mut expressions = (0usize, 0usize);
+    let mut expressions = (0usize, 0usize, 0usize);
+    let mut untyped_examples: Vec<String> = Vec::new();
     for listed in packages {
         let map = SourceMap::new();
         let sink = Sink::new(100);
@@ -418,12 +419,21 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
             expressions.0 += go.types.len();
             for (&expr, typed) in info.bodies.iter().flat_map(|body| &body.types) {
                 let span = tree.exprs[expr].span;
-                if types.is_untyped(typed.ty) || typed.ty == Types::INVALID {
+                if typed.ty == Types::INVALID {
                     continue;
                 }
                 let Some(theirs) = go.types.get(&(span.lo, span.hi)) else {
                     continue;
                 };
+                // A value of no type here that has one for Go: the place
+                // that gives it its type is not followed yet.
+                if types.is_untyped(typed.ty) && !theirs[0].starts_with("untyped ") {
+                    expressions.2 += 1;
+                    if untyped_examples.len() < 25 {
+                        untyped_examples.push(format!("{}: {}", map.location(span), theirs[0]));
+                    }
+                    continue;
+                }
                 // The first of two results of `m[k]` is recorded by Go as
                 // the pair.
                 let ours = types.canonical(typed.ty, &names);
@@ -509,8 +519,8 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     assert!(names_compared > 500_000, "only {names_compared} names");
     println!("objects by kind and whether their type is worked out: {objects:?}");
     println!(
-        "{} of {} expressions compared",
-        expressions.1, expressions.0
+        "{} of {} expressions compared; {} more have no type here yet, as: {untyped_examples:#?}",
+        expressions.1, expressions.0, expressions.2
     );
     failures.dedup();
     let shown: Vec<&str> = failures.iter().take(40).map(String::as_str).collect();
@@ -1498,4 +1508,75 @@ func walk(points []Point, names map[string]*Point, done chan bool) (total float6
         "v: any",
     ];
     assert_eq!(locals, expected);
+}
+
+#[test]
+fn a_constant_of_no_type_gets_its_type_from_around_it() {
+    let text = "package p
+
+type Celsius float64
+
+func take(n int8, rest ...float32) (uint16, any)
+
+func f(c Celsius, xs []int32, m map[uint8]string, ch chan complex64) (float32, uint16) {
+	var a float32 = 1
+	b := 2
+	d := c + 3
+	e := xs[4] * 5
+	m[6] = \"x\"
+	ch <- 7
+	g, h := take(8, 9, 10)
+	i := []float64{11, 12}
+	j := Celsius(13)
+	k := (14 + 0.5) * c
+	var l any = 15
+	_ = 16.5
+	return 17, 18
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let types = loader.types.get().unwrap();
+    let tree = &checked.files[0];
+    let body = &checked.package.files[0].bodies[2];
+    let mut literals: Vec<(u32, String)> = Vec::new();
+    for (&expr, typed) in &body.types {
+        let node = &tree.exprs[expr];
+        if matches!(node.kind, ExprKind::BasicLit { .. }) {
+            let literal = &text[node.span.lo as usize..node.span.hi as usize];
+            let ty = types.display(typed.ty, &names);
+            literals.push((
+                node.span.lo,
+                format!("{literal}: {ty} = {}", typed.value.exact_string()),
+            ));
+        }
+    }
+    literals.sort();
+    let lines: Vec<&str> = literals.iter().map(|(_, line)| line.as_str()).collect();
+    let expected = [
+        "1: float32 = 1",
+        "2: int = 2",
+        "3: p.Celsius = 3",
+        "4: int = 4",
+        "5: int32 = 5",
+        "6: uint8 = 6",
+        "\"x\": string = \"x\"",
+        "7: complex64 = (7 + 0i)",
+        "8: int8 = 8",
+        "9: float32 = 9",
+        "10: float32 = 10",
+        "11: float64 = 11",
+        "12: float64 = 12",
+        "13: p.Celsius = 13",
+        // Inside a constant expression the parts keep their kind; the
+        // whole takes the type.
+        "14: untyped float = 14",
+        "0.5: untyped float = 1/2",
+        "15: int = 15",
+        "16.5: float64 = 33/2",
+        "17: float32 = 17",
+        "18: uint16 = 18",
+    ];
+    assert_eq!(lines, expected);
 }

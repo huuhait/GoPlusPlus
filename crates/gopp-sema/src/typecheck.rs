@@ -143,6 +143,7 @@ struct Checker<'a> {
     /// The path and the name of the package, as names.
     path: Spur,
     name: Spur,
+    blank: Spur,
     decls: Vec<Option<Decl<'a>>>,
     state: Vec<State>,
     ty: Vec<TypeId>,
@@ -157,6 +158,12 @@ struct Checker<'a> {
     /// While a body is walked: what each expression of it is, so that
     /// none is worked out twice.
     memo: Option<FxHashMap<ExprId, Operand>>,
+    /// While the value of a constant is worked out that another constant
+    /// of its group may repeat: nothing is taken from `memo`.
+    fresh: bool,
+    /// While a body is walked: the types of the results of the function
+    /// that the statements are in, the innermost last.
+    results: Vec<Vec<TypeId>>,
     /// While a body is walked: its groups of constants.
     local_groups: FxHashMap<u32, LocalGroup>,
 }
@@ -191,6 +198,7 @@ pub fn declarations(
         package,
         path: names.get_or_intern(&package.path),
         name: names.get_or_intern(&package.name),
+        blank: names.get_or_intern_static("_"),
         decls: vec![None; count],
         state: vec![State::New; count],
         ty: vec![Types::INVALID; count],
@@ -199,6 +207,8 @@ pub fn declarations(
         reported: FxHashSet::default(),
         locals: FxHashMap::default(),
         memo: None,
+        fresh: false,
+        results: Vec::new(),
         local_groups: FxHashMap::default(),
     };
     for (file, unit) in units.iter().enumerate() {
@@ -914,7 +924,8 @@ impl<'a> Checker<'a> {
     /// What the expression `expr` is: a type, a constant, a value of some
     /// type. Unknown for what is not worked out here yet.
     fn operand(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
-        if let Some(known) = self.memo.as_ref().and_then(|memo| memo.get(&expr)) {
+        let known = self.memo.as_ref().and_then(|memo| memo.get(&expr));
+        if let Some(known) = known.filter(|_| !self.fresh) {
             return known.clone();
         }
         let operand = gopp_syntax::with_stack(|| self.operand_node(cx, expr));
@@ -952,7 +963,7 @@ impl<'a> Checker<'a> {
                 // Its body is walked with the body it is in.
                 if self.memo.is_some() {
                     self.signature_locals(cx, *ty);
-                    self.stmts(cx, &body.stmts);
+                    self.function_body(cx, sig, &body.stmts);
                 }
                 Operand::value(sig)
             }
@@ -967,8 +978,14 @@ impl<'a> Checker<'a> {
                 Operand::value(literal)
             }
             ExprKind::Index { x, indices } => self.index(cx, expr, *x, indices),
-            ExprKind::Slice { x, .. } => {
+            ExprKind::Slice { x, lo, hi, max, .. } => {
                 let x = self.operand(cx, *x);
+                // A bound is an index: an `int` if it has no type.
+                let int = self.types.basic(Basic::Int);
+                for &bound in [lo, hi, max].into_iter().flatten() {
+                    self.operand(cx, bound);
+                    self.convert(cx, bound, int);
+                }
                 if !x.is_value() {
                     return Operand::UNKNOWN;
                 }
@@ -985,7 +1002,10 @@ impl<'a> Checker<'a> {
                 };
                 Operand::value(sliced)
             }
-            ExprKind::Assert { ty, .. } => Operand::value(self.typ(cx, *ty)),
+            ExprKind::Assert { x, ty } => {
+                self.operand(cx, *x);
+                Operand::value(self.typ(cx, *ty))
+            }
             // A type written out: `[]int`, `map[string]T`, `func()`, ...
             ExprKind::ArrayType { .. }
             | ExprKind::SliceType { .. }
@@ -1137,8 +1157,10 @@ impl<'a> Checker<'a> {
                 },
                 _ => elem_type,
             };
+            // The key of an array or a slice is an index.
             if let Some(key) = key.filter(|_| keys_are_values) {
-                self.element(cx, key, key_type);
+                let int = self.types.basic(Basic::Int);
+                self.element(cx, key, Some(key_type.unwrap_or(int)));
             }
             self.element(cx, value, hint);
         }
@@ -1148,6 +1170,9 @@ impl<'a> Checker<'a> {
     fn element(&mut self, cx: &Cx<'a>, expr: ExprId, hint: Option<TypeId>) {
         let ExprKind::CompositeLit { ty: None, elems } = &cx.tree.exprs[expr].kind else {
             self.operand(cx, expr);
+            if let Some(hint) = hint {
+                self.convert(cx, expr, hint);
+            }
             return;
         };
         let Some(hint) = hint else { return };
@@ -1198,6 +1223,19 @@ impl<'a> Checker<'a> {
                 ty: self.typ(cx, expr),
             },
             Mode::Value | Mode::Const(_) => {
+                // An index of no type is an `int`; the key of a map has
+                // the type of its keys.
+                let wanted = match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Map { key, .. } => Some(*key),
+                    Type::Func { .. } => None,
+                    _ => Some(self.types.basic(Basic::Int)),
+                };
+                for &index in indices.iter().filter(|_| wanted.is_some()) {
+                    self.operand(cx, index);
+                    if let Some(wanted) = wanted {
+                        self.convert(cx, index, wanted);
+                    }
+                }
                 let elem = match &*self.types.get(self.types.underlying(x.ty)) {
                     Type::Basic(Basic::String | Basic::UntypedString) => {
                         self.types.basic(Basic::Uint8)
@@ -1229,6 +1267,88 @@ impl<'a> Checker<'a> {
 
     fn is_untyped(&self, ty: TypeId) -> bool {
         self.types.is_untyped(ty)
+    }
+
+    /// The type that a value of the untyped kind `untyped` has where a
+    /// value of the type `to` is wanted. `None` where it keeps its kind.
+    fn target(&self, untyped: TypeId, to: TypeId) -> Option<TypeId> {
+        if untyped == self.types.basic(Basic::UntypedNil) {
+            return None;
+        }
+        match &*self.types.get(self.types.underlying(to)) {
+            Type::Basic(Basic::UntypedNil) => None,
+            Type::Basic(_) => Some(to),
+            // An interface holds a value with a type of its own.
+            Type::Interface { .. } => Some(self.types.default_type(untyped)),
+            // A value is its own option (TYP-2).
+            Type::Option(elem) => self.target(untyped, *elem),
+            _ => None,
+        }
+    }
+
+    /// Gives the expression `expr` the type `to`, if it has no type of its
+    /// own yet: a constant, or a value made of constants of no type. Where
+    /// the value is not a constant, its operands get the type too.
+    fn convert(&mut self, cx: &Cx<'a>, expr: ExprId, to: TypeId) {
+        self.retype(cx, expr, to, true);
+    }
+
+    /// `convert`; with `outermost`, a constant is also held as its type
+    /// holds it. An expression in parentheses or under an operator keeps
+    /// its exact value: only what is used as a value is rounded.
+    fn retype(&mut self, cx: &Cx<'a>, expr: ExprId, to: TypeId, outermost: bool) {
+        let Some(old) = self.memo.as_ref().and_then(|memo| memo.get(&expr)).cloned() else {
+            return;
+        };
+        if !old.is_value() || !self.is_untyped(old.ty) {
+            return;
+        }
+        let Some(ty) = self.target(old.ty, to) else {
+            return;
+        };
+        let constant = matches!(old.mode, Mode::Const(_));
+        match cx.tree.exprs[expr].kind {
+            ExprKind::Paren(x) => self.retype(cx, x, to, false),
+            ExprKind::Unary { x, .. } if !constant => self.retype(cx, x, to, false),
+            ExprKind::Binary { op, x, y } if !constant => match op {
+                // The result of a comparison says nothing of its operands.
+                BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge => {}
+                BinaryOp::Shl | BinaryOp::Shr => self.retype(cx, x, to, false),
+                _ => {
+                    self.retype(cx, x, to, false);
+                    self.retype(cx, y, to, false);
+                }
+            },
+            _ => {}
+        }
+        // A constant is held as its type holds it.
+        let fitted = match &old.mode {
+            Mode::Const(value) if outermost && !self.is_untyped(ty) => self.converted(value, ty),
+            _ => None,
+        };
+        if let Some(entry) = self.memo.as_mut().and_then(|memo| memo.get_mut(&expr)) {
+            entry.ty = ty;
+            if let Some(value) = fitted {
+                entry.mode = Mode::Const(value);
+            }
+        }
+    }
+
+    /// Gives the expression `expr` the default type of its kind, if it has
+    /// no type of its own yet.
+    fn convert_default(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        let known = self.memo.as_ref().and_then(|memo| memo.get(&expr));
+        if let Some(ty) = known
+            .map(|operand| operand.ty)
+            .filter(|&ty| self.is_untyped(ty))
+        {
+            self.convert(cx, expr, self.types.default_type(ty));
+        }
     }
 
     fn is_integer(&self, ty: TypeId) -> bool {
@@ -1334,12 +1454,27 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn binary(&mut self, cx: &Cx<'a>, op: BinaryOp, x: ExprId, y: ExprId) -> Operand {
-        let (x, y) = (self.operand(cx, x), self.operand(cx, y));
+    fn binary(&mut self, cx: &Cx<'a>, op: BinaryOp, left: ExprId, right: ExprId) -> Operand {
+        let (x, y) = (self.operand(cx, left), self.operand(cx, right));
         let comparison = matches!(
             op,
             BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
         );
+        // An operand of no type takes the type of the other; of two such
+        // numbers, the one of the smaller kind takes the larger kind.
+        if !matches!(op, BinaryOp::Shl | BinaryOp::Shr) && x.is_value() && y.is_value() {
+            match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
+                (true, false) => self.convert(cx, left, y.ty),
+                (false, true) => self.convert(cx, right, x.ty),
+                (true, true) => {
+                    if let Some(kind) = self.larger_kind(x.ty, y.ty) {
+                        self.convert(cx, left, kind);
+                        self.convert(cx, right, kind);
+                    }
+                }
+                (false, false) => {}
+            }
+        }
         let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) else {
             if !x.is_value() || !y.is_value() {
                 return Operand::UNKNOWN;
@@ -1436,7 +1571,7 @@ impl<'a> Checker<'a> {
         let callee = self.operand(cx, fun);
         match callee.mode {
             Mode::Type => self.conversion(cx, callee.ty, args),
-            Mode::Builtin(builtin) => self.builtin(cx, builtin, args),
+            Mode::Builtin(builtin) => self.builtin(cx, builtin, args, spread),
             Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
             Mode::Value => {
                 for &arg in args {
@@ -1459,9 +1594,29 @@ impl<'a> Checker<'a> {
                     }
                     None => self.types.underlying(callee.ty),
                 };
-                let Type::Func { results, .. } = &*self.types.get(sig) else {
+                let Type::Func {
+                    params,
+                    results,
+                    variadic,
+                } = &*self.types.get(sig)
+                else {
                     return Operand::UNKNOWN;
                 };
+                // An argument of no type takes the type of its parameter:
+                // the element type for the arguments of `...T`.
+                for (at, &arg) in args.iter().enumerate() {
+                    let in_rest = *variadic && at + 1 >= params.len() && !spread;
+                    let wanted = match (in_rest, params.last()) {
+                        (true, Some(&last)) => match &*self.types.get(last) {
+                            Type::Slice(elem) => Some(*elem),
+                            _ => None,
+                        },
+                        _ => params.get(at).copied(),
+                    };
+                    if let Some(wanted) = wanted {
+                        self.convert(cx, arg, wanted);
+                    }
+                }
                 match &results[..] {
                     [] => Operand {
                         mode: Mode::NoValue,
@@ -1569,6 +1724,14 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         };
         let x = self.operand(cx, arg);
+        // The argument takes the type it is converted to, if that is a
+        // type of constants; an integer made a string keeps its kind.
+        let to_string = self.basic_of(target) == Some(Basic::String) && self.is_integer(x.ty);
+        match self.basic_of(target) {
+            Some(_) if !to_string => self.convert(cx, arg, target),
+            Some(_) => {}
+            None => self.convert_default(cx, arg),
+        }
         let (Mode::Const(value), Some(basic)) = (&x.mode, self.basic_of(target)) else {
             return match x.is_value() {
                 true => Operand::value(target),
@@ -1599,7 +1762,13 @@ impl<'a> Checker<'a> {
         matches!(operand.mode, Mode::Type).then_some(operand.ty)
     }
 
-    fn builtin(&mut self, cx: &Cx<'a>, builtin: Predeclared, args: &[ExprId]) -> Operand {
+    fn builtin(
+        &mut self,
+        cx: &Cx<'a>,
+        builtin: Predeclared,
+        args: &[ExprId],
+        spread: bool,
+    ) -> Operand {
         let no_value = Operand {
             mode: Mode::NoValue,
             ty: Types::INVALID,
@@ -1616,10 +1785,18 @@ impl<'a> Checker<'a> {
                 Some(ty) => Operand::value(self.types.pointer(ty)),
                 None => Operand::UNKNOWN,
             },
-            Predeclared::Make => match self.type_argument(cx, first) {
-                Some(ty) => Operand::value(ty),
-                None => Operand::UNKNOWN,
-            },
+            Predeclared::Make => {
+                // A size is an `int` if it has no type.
+                let int = self.types.basic(Basic::Int);
+                for &size in &args[1..] {
+                    self.operand(cx, size);
+                    self.convert(cx, size, int);
+                }
+                match self.type_argument(cx, first) {
+                    Some(ty) => Operand::value(ty),
+                    None => Operand::UNKNOWN,
+                }
+            }
             Predeclared::Delete
             | Predeclared::Clear
             | Predeclared::Close
@@ -1657,6 +1834,17 @@ impl<'a> Checker<'a> {
             }
             Predeclared::Append => {
                 let x = self.operand(cx, first);
+                // What is appended has the type of the elements.
+                if let Type::Slice(elem) = &*self.types.get(self.types.underlying(x.ty)) {
+                    for &arg in &args[1..] {
+                        self.operand(cx, arg);
+                        // A slice or a string passed with `...` is no
+                        // element.
+                        if !spread {
+                            self.convert(cx, arg, *elem);
+                        }
+                    }
+                }
                 match x.is_value() && !self.is_untyped(x.ty) {
                     true => Operand::value(x.ty),
                     false => Operand::UNKNOWN,
@@ -1712,8 +1900,46 @@ impl<'a> Checker<'a> {
             object.map_or(Operand::UNKNOWN, Operand::value)
         };
         match self.names.resolve(&name) {
-            // A size is a constant, but one that needs the layout.
-            "Sizeof" | "Alignof" | "Offsetof" => self.value_of(Basic::Uintptr),
+            // The size and the alignment of the type of the argument are
+            // constants, unless the type has a type parameter in it.
+            name @ ("Sizeof" | "Alignof") => {
+                let x = self.operand(cx, first);
+                self.convert_default(cx, first);
+                let ty = self.types.default_type(x.ty);
+                let layout = Some(ty).filter(|_| x.is_value());
+                match layout.and_then(|ty| self.types.layout(ty, self.names)) {
+                    Some((size, align)) => {
+                        let bytes = if name == "Sizeof" { size } else { align };
+                        let value = Value::Int64(bytes as i64);
+                        Operand::constant(self.types.basic(Basic::Uintptr), value)
+                    }
+                    None => self.value_of(Basic::Uintptr),
+                }
+            }
+            // `Offsetof(x.f)`: where the field `f` starts in `x`.
+            "Offsetof" => {
+                let mut selector = first;
+                while let ExprKind::Paren(x) = cx.tree.exprs[selector].kind {
+                    selector = x;
+                }
+                self.operand(cx, first);
+                let offset = match cx.tree.exprs[selector].kind {
+                    ExprKind::Selector { x, sel } => {
+                        let base = self.operand(cx, x);
+                        Some(base.ty).filter(|_| base.is_value()).and_then(|ty| {
+                            self.types.offset_of(ty, sel.name, self.path, self.names)
+                        })
+                    }
+                    _ => None,
+                };
+                match offset {
+                    Some(offset) => {
+                        let value = Value::Int64(offset as i64);
+                        Operand::constant(self.types.basic(Basic::Uintptr), value)
+                    }
+                    None => self.value_of(Basic::Uintptr),
+                }
+            }
             "Add" => pointer(self),
             "String" => self.value_of(Basic::String),
             "StringData" => {
@@ -1785,16 +2011,21 @@ impl<'a> Checker<'a> {
                         self.params(&cx, std::slice::from_ref(receiver));
                     }
                     self.signature_locals(&cx, *ty);
-                    self.stmts(&cx, &block.stmts);
+                    let sig = self.typ(&cx, *ty);
+                    self.function_body(&cx, sig, &block.stmts);
                 }
                 DeclKind::Var { ty, values, .. } | DeclKind::Const { ty, values, .. } => {
                     // The value of a constant is worked out with its
                     // declaration; here only variables are walked, for the
                     // function literals in their values.
-                    let _ = ty;
                     if matches!(tree.decl_nodes[decl].kind, DeclKind::Var { .. }) {
+                        let declared = ty.map(|ty| self.typ(&cx, ty));
                         for &value in values {
                             self.operand(&cx, value);
+                            match declared {
+                                Some(declared) => self.convert(&cx, value, declared),
+                                None => self.convert_default(&cx, value),
+                            }
                         }
                     }
                 }
@@ -1830,6 +2061,17 @@ impl<'a> Checker<'a> {
         }
         self.incomplete = false;
         all
+    }
+
+    /// Walks the statements of a function of the type `sig`.
+    fn function_body(&mut self, cx: &Cx<'a>, sig: TypeId, stmts: &[StmtId]) {
+        let results = match &*self.types.get(sig) {
+            Type::Func { results, .. } => results.to_vec(),
+            _ => Vec::new(),
+        };
+        self.results.push(results);
+        self.stmts(cx, stmts);
+        self.results.pop();
     }
 
     /// Declares the type parameters that the receiver `T[P, Q]` names.
@@ -1911,6 +2153,10 @@ impl<'a> Checker<'a> {
                 .get(position)
                 .and_then(|&value| self.result_type(cx, value, 0, 1));
             self.set_local(local, ty);
+            // A value of no type has its default type in the variable.
+            if let Some(&value) = rhs.get(position) {
+                self.convert_default(cx, value);
+            }
         }
         for &extra in rhs.iter().skip(lhs.len()) {
             self.operand(cx, extra);
@@ -1942,12 +2188,22 @@ impl<'a> Checker<'a> {
                 self.operand(cx, *x);
             }
             StmtKind::Send { chan, value } => {
-                self.operand(cx, *chan);
+                let chan = self.operand(cx, *chan);
                 self.operand(cx, *value);
+                if let Type::Chan { elem, .. } = &*self.types.get(self.types.underlying(chan.ty)) {
+                    self.convert(cx, *value, *elem);
+                }
             }
             StmtKind::Return(results) => {
                 for &result in results {
                     self.operand(cx, result);
+                }
+                // A value of no type takes the type of the result.
+                let wanted = self.results.last().cloned().unwrap_or_default();
+                if wanted.len() == results.len() {
+                    for (&result, ty) in results.iter().zip(wanted) {
+                        self.convert(cx, result, ty);
+                    }
                 }
             }
             StmtKind::Decl(decls) => {
@@ -1963,9 +2219,24 @@ impl<'a> Checker<'a> {
                 let locals: Vec<_> = lhs.iter().map(|&x| self.declared_local(cx, x)).collect();
                 self.define_locals(cx, &locals, rhs);
             }
-            StmtKind::Assign { lhs, rhs, .. } => {
-                for &x in lhs.iter().chain(rhs) {
+            StmtKind::Assign { op, lhs, rhs } => {
+                let targets: Vec<Operand> = lhs.iter().map(|&x| self.operand(cx, x)).collect();
+                for &x in rhs {
                     self.operand(cx, x);
+                }
+                // A value of no type takes the type of what it is assigned
+                // to; assigned to `_`, its default type. The count of a
+                // shift keeps its own type.
+                let shift = matches!(op, AssignOp::Op(BinaryOp::Shl | BinaryOp::Shr));
+                if lhs.len() == rhs.len() && !shift {
+                    for ((target, &place), &value) in targets.iter().zip(lhs).zip(rhs) {
+                        let blank = matches!(tree.exprs[place].kind, ExprKind::Name(name) if name == self.blank);
+                        match (target.is_value(), blank) {
+                            (true, _) => self.convert(cx, value, target.ty),
+                            (false, true) => self.convert_default(cx, value),
+                            (false, false) => {}
+                        }
+                    }
                 }
             }
             StmtKind::If {
@@ -2115,6 +2386,7 @@ impl<'a> Checker<'a> {
                         let ty = self.typ(cx, *ty);
                         for &value in values {
                             self.operand(cx, value);
+                            self.convert(cx, value, ty);
                         }
                         for local in locals.into_iter().flatten() {
                             self.locals.insert(local, Operand::value(ty));
@@ -2141,9 +2413,12 @@ impl<'a> Checker<'a> {
                 inner.iota = Some(iota);
                 let declared = ty.map(|ty| self.typ(&inner, ty));
                 for (position, &name) in names.iter().enumerate() {
+                    // A repeated value is worked out anew with its `iota`.
+                    self.fresh = true;
                     let constant = values
                         .get(position)
                         .and_then(|&value| self.constant(&inner, value));
+                    self.fresh = false;
                     let operand = match (constant, declared) {
                         (Some((own, value)), None) => Operand::constant(own, value),
                         (Some((_, value)), Some(ty)) => match self.converted(&value, ty) {

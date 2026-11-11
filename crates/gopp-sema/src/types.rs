@@ -699,6 +699,113 @@ impl Types {
         None
     }
 
+    /// The size and the alignment in bytes of a value of the type, as Go's
+    /// compiler lays it out on a 64-bit machine. `None` for a type whose
+    /// layout is not fixed here: a type parameter, a type of Go++ alone.
+    pub fn layout(&self, ty: TypeId, names: &ThreadedRodeo) -> Option<(u64, u64)> {
+        const WORD: u64 = 8;
+        Some(match &*self.get(self.underlying(ty)) {
+            Type::Basic(basic) => match basic {
+                Basic::Bool | Basic::Int8 | Basic::Uint8 => (1, 1),
+                Basic::Int16 | Basic::Uint16 => (2, 2),
+                Basic::Int32 | Basic::Uint32 | Basic::Float32 => (4, 4),
+                // A complex number is laid out as its two floats.
+                Basic::Complex64 => (8, 4),
+                Basic::Complex128 => (16, 8),
+                Basic::String => (2 * WORD, WORD),
+                basic if basic.is_untyped() => return None,
+                _ => (WORD, WORD),
+            },
+            Type::Pointer(_) | Type::Map { .. } | Type::Chan { .. } | Type::Func { .. } => {
+                (WORD, WORD)
+            }
+            Type::Slice(_) => (3 * WORD, WORD),
+            Type::Interface { .. } => (2 * WORD, WORD),
+            Type::Array { len, elem } => {
+                let (size, align) = self.layout(*elem, names)?;
+                (size.checked_mul(*len)?, align)
+            }
+            Type::Struct(fields) => {
+                // An empty struct named `align64` in a package `atomic`
+                // makes the struct around it 8-byte aligned.
+                let marker = fields.is_empty()
+                    && matches!(&*self.get(ty), Type::Named { id, .. } if self.read(|inner| {
+                        let named = &inner.named[id.0 as usize];
+                        let package = named.package.map(|package| names.resolve(&package));
+                        names.resolve(&named.name) == "align64" && package == Some("atomic")
+                    }));
+                if marker {
+                    return Some((0, WORD));
+                }
+                let (offsets, end, align) = self.field_offsets(fields, names)?;
+                // A struct that is not empty does not end in a field of
+                // no size: a pointer past it would point outside it.
+                let last_is_empty = match (offsets.last(), fields.last()) {
+                    (Some(&offset), Some(_)) => offset == end && end > 0,
+                    _ => false,
+                };
+                let size = if last_is_empty { end + 1 } else { end };
+                (size.next_multiple_of(align), align)
+            }
+            _ => return None,
+        })
+    }
+
+    /// The offset of each field of a struct, the offset after the last
+    /// one, and the alignment of the struct.
+    fn field_offsets(
+        &self,
+        fields: &[Field],
+        names: &ThreadedRodeo,
+    ) -> Option<(Vec<u64>, u64, u64)> {
+        let (mut offsets, mut next, mut max_align) = (Vec::new(), 0u64, 1u64);
+        for field in fields {
+            let (size, align) = self.layout(field.ty, names)?;
+            next = next.next_multiple_of(align);
+            offsets.push(next);
+            next = next.checked_add(size)?;
+            max_align = max_align.max(align);
+        }
+        Some((offsets, next, max_align))
+    }
+
+    /// The offset in bytes of the field `name` in a value of the struct
+    /// type `ty`, through embedded structs that are held by value.
+    pub fn offset_of(
+        &self,
+        ty: TypeId,
+        name: Spur,
+        package: Spur,
+        names: &ThreadedRodeo,
+    ) -> Option<u64> {
+        let exported = names.resolve(&name).starts_with(char::is_uppercase);
+        let mut level = vec![(ty, 0u64)];
+        let mut seen = vec![ty];
+        while !level.is_empty() {
+            let (mut found, mut next) = (Vec::new(), Vec::new());
+            for &(current, base) in &level {
+                let Type::Struct(fields) = &*self.get(self.underlying(current)) else {
+                    continue;
+                };
+                let (offsets, ..) = self.field_offsets(fields, names)?;
+                for (field, offset) in fields.iter().zip(offsets) {
+                    if field.name == name && (exported || field.package == Some(package)) {
+                        found.push(base + offset);
+                    } else if field.embedded && !seen.contains(&field.ty) {
+                        seen.push(field.ty);
+                        next.push((field.ty, base + offset));
+                    }
+                }
+            }
+            match found[..] {
+                [] => level = next,
+                [one] => return Some(one),
+                _ => return None,
+            }
+        }
+        None
+    }
+
     pub fn add_method(&self, named: NamedId, method: DeclaredMethod) {
         self.write(|inner| inner.named[named.0 as usize].methods.push(method));
     }
