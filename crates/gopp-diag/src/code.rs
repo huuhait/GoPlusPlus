@@ -43,7 +43,6 @@ codes! {
     14 LexHexMantissaNeedsP "err_lex_hex_mantissa_needs_p",
     15 LexInvalidDigit "err_lex_invalid_digit",
     16 LexBadSeparator "err_lex_bad_separator",
-    17 LexEscapeUnterminated "err_lex_escape_unterminated",
     18 LexEscapeUnknown "err_lex_escape_unknown",
     19 LexEscapeIllegalChar "err_lex_escape_illegal_char",
     20 LexEscapeBadCodePoint "err_lex_escape_bad_code_point",

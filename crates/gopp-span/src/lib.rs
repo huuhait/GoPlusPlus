@@ -50,10 +50,42 @@ pub struct SourceFile {
     text: String,
     dialect: Dialect,
     line_starts: Vec<u32>,
+    invalid_utf8: Vec<u32>,
+    utf16: bool,
 }
 
 impl SourceFile {
     pub fn new(path: PathBuf, text: String, dialect: Dialect) -> Result<Self, FileTooLarge> {
+        Self::decoded(path, text, dialect, Vec::new(), false)
+    }
+
+    /// Reads a file's bytes as UTF-8. Each invalid sequence becomes one
+    /// U+FFFD in [`text`](Self::text), listed in
+    /// [`invalid_utf8`](Self::invalid_utf8).
+    pub fn from_bytes(path: PathBuf, bytes: &[u8], dialect: Dialect) -> Result<Self, FileTooLarge> {
+        let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
+        let mut text = String::with_capacity(bytes.len());
+        let mut invalid_utf8 = Vec::new();
+        for chunk in bytes.utf8_chunks() {
+            text.push_str(chunk.valid());
+            if !chunk.invalid().is_empty() {
+                if u32::try_from(text.len()).is_err() {
+                    return Err(FileTooLarge { path });
+                }
+                invalid_utf8.push(text.len() as u32);
+                text.push(char::REPLACEMENT_CHARACTER);
+            }
+        }
+        Self::decoded(path, text, dialect, invalid_utf8, utf16)
+    }
+
+    fn decoded(
+        path: PathBuf,
+        text: String,
+        dialect: Dialect,
+        invalid_utf8: Vec<u32>,
+        utf16: bool,
+    ) -> Result<Self, FileTooLarge> {
         if u32::try_from(text.len()).is_err() {
             return Err(FileTooLarge { path });
         }
@@ -68,7 +100,19 @@ impl SourceFile {
             text,
             dialect,
             line_starts,
+            invalid_utf8,
+            utf16,
         })
+    }
+
+    /// Offsets in the text of the U+FFFD that stand for invalid UTF-8, in order.
+    pub fn invalid_utf8(&self) -> &[u32] {
+        &self.invalid_utf8
+    }
+
+    /// Whether the bytes began with a UTF-16 byte order mark.
+    pub fn is_utf16(&self) -> bool {
+        self.utf16
     }
 
     pub fn path(&self) -> &Path {
@@ -171,6 +215,32 @@ mod tests {
     #[test]
     fn end_of_a_file_without_final_newline() {
         assert_eq!(line_col("a\nbc", 4), (2, 3));
+    }
+
+    #[test]
+    fn invalid_utf8_becomes_listed_replacement_characters() {
+        let bytes = b"a\xFFb\xC3(\xE2\x82\xAC\n";
+        let file = SourceFile::from_bytes("main.gopp".into(), bytes, Dialect::Gopp).unwrap();
+        assert_eq!(file.text(), "a\u{FFFD}b\u{FFFD}(\u{20AC}\n");
+        assert_eq!(file.invalid_utf8(), [1, 5]);
+        assert!(!file.is_utf16());
+    }
+
+    #[test]
+    fn valid_utf8_is_kept_as_it_is() {
+        let text = "x := \"\u{FFFD}\"\n";
+        let file = SourceFile::from_bytes("main.gopp".into(), text.as_bytes(), Dialect::Gopp);
+        let file = file.unwrap();
+        assert_eq!(file.text(), text);
+        assert!(file.invalid_utf8().is_empty());
+    }
+
+    #[test]
+    fn a_utf16_byte_order_mark_is_noticed() {
+        for bytes in [b"\xFF\xFEp\0".as_slice(), b"\xFE\xFF\0p"] {
+            let file = SourceFile::from_bytes("main.gopp".into(), bytes, Dialect::Gopp);
+            assert!(file.unwrap().is_utf16());
+        }
     }
 
     #[test]
