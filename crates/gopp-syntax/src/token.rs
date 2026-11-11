@@ -177,6 +177,9 @@ pub enum TokenKind {
     Var,
 
     Eof,
+    /// What the lexer leaves out of the token list: a comment, a line end
+    /// that is no `;`, an illegal character.
+    Skipped,
 }
 
 impl TokenKind {

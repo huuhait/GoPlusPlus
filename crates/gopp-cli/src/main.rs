@@ -1,6 +1,8 @@
 //! The `gopp` command.
 
 mod args;
+mod diff;
+mod fmt;
 mod parse;
 
 use std::env;
@@ -39,6 +41,24 @@ enum Command {
         #[arg(required_unless_present = "batch", conflicts_with = "batch")]
         files: Vec<PathBuf>,
     },
+    /// Print source files in canonical layout
+    Fmt {
+        /// List the files whose layout is not canonical
+        #[arg(short)]
+        l: bool,
+        /// Print the changes as a unified diff
+        #[arg(short)]
+        d: bool,
+        /// Write the result to the file when its layout is not canonical
+        #[arg(short)]
+        w: bool,
+        /// Read standard input as plain Go, not as Go++
+        #[arg(long)]
+        go: bool,
+        /// Files, and directories to format every .go and .gopp file under;
+        /// with none, standard input is formatted to standard output
+        paths: Vec<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -62,6 +82,22 @@ fn run() -> ExitCode {
             emit, batch: true, ..
         } => parse::run_batch(emit),
         Command::Parse { emit, files, .. } => parse::run(&files, emit),
+        Command::Fmt { l, d, w, go, paths } => {
+            let mode = fmt::Mode {
+                list: l,
+                diff: d,
+                write: w,
+            };
+            fmt::run(&paths, mode, go)
+        }
+    }
+}
+
+fn exit_code(failed: bool) -> ExitCode {
+    if failed {
+        ExitCode::from(EXIT_ERRORS)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

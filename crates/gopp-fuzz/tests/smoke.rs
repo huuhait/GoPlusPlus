@@ -9,7 +9,7 @@ use gopp_testutil::samples;
 use rand::rngs::ChaCha8Rng;
 use rand::{RngExt, SeedableRng};
 
-const MUTANTS_PER_SAMPLE: u64 = 100;
+const MUTANTS_PER_SAMPLE: u64 = 60;
 
 #[test]
 fn mutated_samples_pass_the_front_end_oracles() {

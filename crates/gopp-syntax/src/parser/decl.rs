@@ -48,6 +48,7 @@ impl Parser<'_> {
             let lo = self.lo();
             let first = decls.len();
             let mut takes_attributes = true;
+            let mut is_declaration = true;
             match self.kind() {
                 T::Import | T::Const | T::Type | T::Var => {
                     let keyword = self.bump().kind;
@@ -90,6 +91,7 @@ impl Parser<'_> {
                     }
                     self.advance(TOP_LEVEL);
                     takes_attributes = false;
+                    is_declaration = false;
                 }
             }
 
@@ -105,7 +107,9 @@ impl Parser<'_> {
                 }
                 attrs.clear();
             }
-            if decls.len() > first && !self.at(T::Eof) && !self.got(T::Semi) {
+            // A group may be empty, so the number of declarations does not
+            // tell whether one was read.
+            if is_declaration && !self.at(T::Eof) && !self.got(T::Semi) {
                 self.unexpected(Code::Expected, " after top level declaration");
                 self.advance(TOP_LEVEL);
             }

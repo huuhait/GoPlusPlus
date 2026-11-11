@@ -908,3 +908,27 @@ proptest! {
         }
     }
 }
+
+/// What the lexer leaves out costs no stack, however much of it comes in
+/// a row.
+#[test]
+fn a_long_run_of_skipped_text_is_lexed_in_a_loop() {
+    let count = 200_000;
+    let skipped = [
+        "\n".repeat(count),
+        "// c\n".repeat(count),
+        "/* c */ ".repeat(count),
+    ];
+    for run in skipped {
+        let (_, lexed, diagnostics) = lex_bytes(format!("x{run}y").as_bytes(), Dialect::Gopp);
+        assert_eq!(diagnostics, []);
+        let kinds: Vec<TokenKind> = lexed.tokens.iter().map(|token| token.kind).collect();
+        assert!(
+            matches!(kinds[..], [Ident, .., Ident, Semi, Eof]),
+            "{kinds:?}"
+        );
+    }
+    let (_, lexed, diagnostics) = lex_bytes("$".repeat(count).as_bytes(), Dialect::Gopp);
+    assert_eq!(lexed.tokens.len(), 1);
+    assert_eq!(diagnostics.len(), 1001);
+}

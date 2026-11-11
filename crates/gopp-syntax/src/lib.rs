@@ -1,6 +1,7 @@
 //! Lexer, parser, AST, and source printer.
 
 pub mod ast;
+pub mod fmt;
 pub mod lexer;
 pub mod parser;
 pub mod token;

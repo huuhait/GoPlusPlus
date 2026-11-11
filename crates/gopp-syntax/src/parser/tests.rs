@@ -71,6 +71,15 @@ fn hello() {
     insta::assert_snapshot!(tree(source));
 }
 
+#[test]
+fn a_group_without_declarations_parses() {
+    let source = "package p\n\nimport ()\n\nconst ()\n\nvar ()\ntype ()\n\nfunc f() {}\n";
+    let only_function =
+        "File package=p\n  Func f @48..59\n    FuncType @48..56\n    Block @57..59\n";
+    assert_eq!(tree(source), only_function);
+    assert!(tree("package p\n\nvar ()").starts_with("File "));
+}
+
 fn go_files_under(dir: &Path, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();

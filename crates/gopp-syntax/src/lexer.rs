@@ -110,6 +110,11 @@ pub fn lex(file: FileId, source: &SourceFile, sink: &Sink) -> Lexed {
             report_illegal(&mut lexer);
             continue;
         };
+        // Left out here, in this loop: a callback that makes the lexer skip
+        // nests its calls one level deeper for every token skipped in a row.
+        if kind == TokenKind::Skipped {
+            continue;
+        }
         // A comment that ends a line stands for a `;`: an empty token at its start.
         let end = if lexer.slice().starts_with("/*") {
             span.start
@@ -182,7 +187,7 @@ pub(crate) fn word(lexer: &mut Lexer<TokenKind>) -> TokenKind {
 pub(crate) fn non_ascii(lexer: &mut Lexer<TokenKind>) -> Filter<TokenKind> {
     let start = lexer.span().start;
     let Some(c) = lexer.slice().chars().next() else {
-        return Filter::Skip;
+        return Filter::Emit(TokenKind::Skipped);
     };
     if unicode_ident::is_xid_start(c) {
         bump_identifier(lexer);
@@ -193,7 +198,7 @@ pub(crate) fn non_ascii(lexer: &mut Lexer<TokenKind>) -> Filter<TokenKind> {
         || c == char::REPLACEMENT_CHARACTER
             && scan.invalid_utf8.binary_search(&(start as u32)).is_ok();
     if reported_as_bad_byte {
-        return Filter::Skip;
+        return Filter::Emit(TokenKind::Skipped);
     }
     let end = start + c.len_utf8();
     match c {
@@ -207,23 +212,28 @@ pub(crate) fn non_ascii(lexer: &mut Lexer<TokenKind>) -> Filter<TokenKind> {
             scan.error(Code::LexIllegalChar, start, end, message);
         }
     }
-    Filter::Skip
+    Filter::Emit(TokenKind::Skipped)
 }
 
 /// A character no token starts with. NUL was reported with the bad bytes.
-pub(crate) fn illegal(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
+pub(crate) fn illegal(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     if lexer.slice() != "\0" {
         report_illegal(lexer);
     }
-    Filter::Skip
+    TokenKind::Skipped
 }
 
-pub(crate) fn gopp_only(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
+/// `#` or `@`.
+pub(crate) fn gopp_only(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     if lexer.extras.dialect == Dialect::Go {
         report_illegal(lexer);
-        return Filter::Skip;
+        return TokenKind::Skipped;
     }
-    Filter::Emit(())
+    if lexer.slice() == "#" {
+        TokenKind::Hash
+    } else {
+        TokenKind::At
+    }
 }
 
 pub(crate) fn number(lexer: &mut Lexer<TokenKind>) -> TokenKind {
@@ -259,15 +269,15 @@ fn finish_literal(lexer: &mut Lexer<TokenKind>, end: usize, ok: bool) {
     lexer.extras.bad_literal = !ok;
 }
 
-pub(crate) fn newline(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
+pub(crate) fn newline(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     if lexer.extras.insert_semi {
-        Filter::Emit(())
+        TokenKind::Semi
     } else {
-        Filter::Skip
+        TokenKind::Skipped
     }
 }
 
-pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
+pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     let span = lexer.span();
     let directive = lexer.slice().strip_prefix("//gopp:");
     if let Some(directive) = directive {
@@ -294,11 +304,11 @@ pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
         hi: span.end as u32,
         directive: directive.is_some(),
     });
-    Filter::Skip
+    TokenKind::Skipped
 }
 
 /// A comment with a line end in it ends the line, as in Go.
-pub(crate) fn block_comment(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
+pub(crate) fn block_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     let start = lexer.span().start;
     let rest = lexer.remainder();
     let length = match rest.find("*/") {
@@ -319,9 +329,9 @@ pub(crate) fn block_comment(lexer: &mut Lexer<TokenKind>) -> Filter<()> {
         directive: false,
     });
     if ends_line && lexer.extras.insert_semi {
-        Filter::Emit(())
+        TokenKind::Semi
     } else {
-        Filter::Skip
+        TokenKind::Skipped
     }
 }
 

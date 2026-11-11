@@ -4,7 +4,8 @@ use std::fmt;
 
 use gopp_diag::{Diagnostic, Sink, render_json, render_text};
 use gopp_span::{Dialect, FileId, SourceFile, SourceMap, Span};
-use gopp_syntax::ast::{dump, dump_json};
+use gopp_syntax::ast::{dump, dump_json, dump_shape};
+use gopp_syntax::fmt::format;
 use gopp_syntax::parser::parse;
 use lasso::ThreadedRodeo;
 
@@ -52,6 +53,28 @@ fn front_end(data: &[u8], dialect: Dialect) -> Verdict {
     if !run(data, dialect).is_some_and(same) {
         return finding("determinism", "two runs gave different results");
     }
+    check_format(&first, dialect)
+}
+
+/// A file without a diagnostic is formatted: the result must parse to the
+/// same tree, and formatting it again must change nothing.
+fn check_format(first: &Run, dialect: Dialect) -> Verdict {
+    let Some(formatted) = &first.formatted else {
+        return Ok(());
+    };
+    let Some(second) = run(formatted.as_bytes(), dialect) else {
+        return finding("format", "the formatted text is too large");
+    };
+    if let Some(diagnostic) = second.diagnostics.first() {
+        let detail = format!("the formatted text does not parse: {}", diagnostic.message);
+        return finding("format", detail);
+    }
+    if second.shape != first.shape {
+        return finding("format", "the formatted text has another tree");
+    }
+    if second.formatted.as_ref() != Some(formatted) {
+        return finding("format", "formatting twice gives another text");
+    }
     Ok(())
 }
 
@@ -59,6 +82,10 @@ struct Run {
     id: FileId,
     text: String,
     dump: String,
+    /// The tree without what the formatter may change.
+    shape: String,
+    /// The text in canonical layout, if there is no diagnostic.
+    formatted: Option<String>,
     diagnostics: Vec<Diagnostic>,
     map: SourceMap,
 }
@@ -74,10 +101,15 @@ fn run(data: &[u8], dialect: Dialect) -> Option<Run> {
     let dump = dump(&file, source.text(), &names);
     dump_json(&file, source.text(), &names);
     let diagnostics = sink.finish();
+    let formatted = diagnostics
+        .is_empty()
+        .then(|| format(&file, &source, &names));
     Some(Run {
         id,
         text: source.text().to_owned(),
         dump,
+        shape: dump_shape(&file, source.text(), &names),
+        formatted,
         diagnostics,
         map,
     })

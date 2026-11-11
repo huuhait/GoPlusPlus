@@ -1,5 +1,6 @@
 //! The tree as text, for snapshots and `-emit=ast`, and as JSON, for
-//! `-emit=json`. Both forms come from one walk and hold the same nodes.
+//! `-emit=json`. Both forms come from one walk and hold the same nodes. A
+//! third form, the shape, is what the formatter must keep.
 
 use std::fmt::Write;
 
@@ -13,7 +14,15 @@ const MAX_INDENT: usize = 100;
 
 /// One line per node, children indented, each with its byte range.
 pub fn dump(file: &File, text: &str, names: &ThreadedRodeo) -> String {
-    walk(file, text, names, None)
+    walk(file, text, names, None, false)
+}
+
+/// The tree as in [`dump`], without what the formatter may change: byte
+/// ranges, parentheses (the tree groups without them), empty statements,
+/// the order of the imports of a group and an import that is there twice,
+/// and the spelling of number prefixes and import paths.
+pub fn dump_shape(file: &File, text: &str, names: &ThreadedRodeo) -> String {
+    walk(file, text, names, None, true)
 }
 
 /// One JSON object per node, on one line: `kind` (the first word of the
@@ -21,10 +30,16 @@ pub fn dump(file: &File, text: &str, names: &ThreadedRodeo) -> String {
 /// one), `span` and `children`. A named group of children is an object with
 /// `field` in place of `kind`.
 pub fn dump_json(file: &File, text: &str, names: &ThreadedRodeo) -> String {
-    walk(file, text, names, Some(Vec::new()))
+    walk(file, text, names, Some(Vec::new()), false)
 }
 
-fn walk(file: &File, text: &str, names: &ThreadedRodeo, json: Option<Vec<bool>>) -> String {
+fn walk(
+    file: &File,
+    text: &str,
+    names: &ThreadedRodeo,
+    json: Option<Vec<bool>>,
+    shape: bool,
+) -> String {
     let mut dumper = Dumper {
         file,
         text,
@@ -32,10 +47,16 @@ fn walk(file: &File, text: &str, names: &ThreadedRodeo, json: Option<Vec<bool>>)
         out: String::new(),
         depth: 0,
         json,
+        shape,
     };
     let package = file.package.map_or("?", |ident| names.resolve(&ident.name));
     dumper.line(format_args!("File package={package}"), None);
-    dumper.nested(|d| file.decls.iter().for_each(|&decl| d.decl(decl)));
+    let decls = if shape {
+        dumper.sorted_imports()
+    } else {
+        file.decls.clone()
+    };
+    dumper.nested(|d| decls.iter().for_each(|&decl| d.decl(decl)));
     if dumper.json.is_some() {
         dumper.depth = 0;
         dumper.close_json();
@@ -53,10 +74,59 @@ struct Dumper<'a> {
     /// In the JSON form: for each object that is still open, whether it
     /// has a child yet.
     json: Option<Vec<bool>>,
+    shape: bool,
 }
 
 impl<'a> Dumper<'a> {
+    /// The declarations of the file, with the imports of each group in the
+    /// order of their paths and names, each once.
+    fn sorted_imports(&self) -> Vec<DeclId> {
+        let file = self.file;
+        let key = |id: DeclId| match file.decl_nodes[id].kind {
+            DeclKind::Import { name, path } => {
+                let name = name.map_or("", |name| self.name(name));
+                Some((self.literal(file.exprs[path].span, true), name))
+            }
+            _ => None,
+        };
+        let mut decls = Vec::with_capacity(file.decls.len());
+        let mut index = 0;
+        while index < file.decls.len() {
+            let group = file.decl_nodes[file.decls[index]].group;
+            let mut end = index + 1;
+            if group.is_some() && key(file.decls[index]).is_some() {
+                while file
+                    .decls
+                    .get(end)
+                    .is_some_and(|&next| file.decl_nodes[next].group == group)
+                {
+                    end += 1;
+                }
+            }
+            let mut run = file.decls[index..end].to_vec();
+            run.sort_by_cached_key(|&id| key(id));
+            run.dedup_by_key(|id| key(*id));
+            decls.extend(run);
+            index = end;
+        }
+        decls
+    }
+
+    /// The text of a literal; in the shape, as the formatter spells it.
+    fn literal(&self, span: Span, import_path: bool) -> String {
+        let text = self.source(span);
+        if !self.shape {
+            return text.to_owned();
+        }
+        if text.starts_with('`') {
+            let canonical = crate::fmt::canonical_import_path(text).filter(|_| import_path);
+            return canonical.unwrap_or_else(|| text.replace('\r', ""));
+        }
+        crate::fmt::normalized_number(text).unwrap_or_else(|| text.to_owned())
+    }
+
     fn line(&mut self, text: impl std::fmt::Display, span: Option<Span>) {
+        let span = span.filter(|_| !self.shape);
         if self.json.is_some() {
             let label = text.to_string();
             let (key, name) = match label.strip_suffix(':') {
@@ -162,7 +232,12 @@ impl<'a> Dumper<'a> {
     }
 
     fn stmts(&mut self, stmts: &[StmtId]) {
-        stmts.iter().for_each(|&stmt| self.stmt(stmt));
+        let file = self.file;
+        for &stmt in stmts {
+            if !self.shape || !matches!(file.stmts[stmt].kind, StmtKind::Empty) {
+                self.stmt(stmt);
+            }
+        }
     }
 
     fn block(&mut self, block: &Block) {
@@ -212,7 +287,14 @@ impl<'a> Dumper<'a> {
             DeclKind::Import { name, path } => {
                 let name = name.map_or(String::new(), |name| format!(" {}", self.name(name)));
                 self.line(format_args!("Import{name}{group}"), span);
-                self.nested(|d| d.expr(*path));
+                let literal = &file.exprs[*path];
+                match literal.kind {
+                    ExprKind::BasicLit { kind, bad: false } if self.shape => {
+                        let text = self.literal(literal.span, true);
+                        self.nested(|d| d.line(format_args!("BasicLit {kind:?} {text:?}"), None));
+                    }
+                    _ => self.nested(|d| d.expr(*path)),
+                }
             }
             DeclKind::Const { names, ty, values } | DeclKind::Var { names, ty, values } => {
                 let kind = if matches!(decl.kind, DeclKind::Const { .. }) {
@@ -297,7 +379,7 @@ impl<'a> Dumper<'a> {
             }
             ExprKind::BasicLit { kind, bad } => {
                 let bad = if *bad { " bad" } else { "" };
-                let text = self.source(expr.span);
+                let text = self.literal(expr.span, false);
                 self.line(format_args!("BasicLit {kind:?}{bad} {text:?}"), span);
             }
             ExprKind::CompositeLit { ty, elems } => {
@@ -321,6 +403,7 @@ impl<'a> Dumper<'a> {
                     d.block(body);
                 });
             }
+            ExprKind::Paren(x) if self.shape => self.expr(*x),
             ExprKind::Paren(x) => {
                 self.line("Paren", span);
                 self.nested(|d| d.expr(*x));

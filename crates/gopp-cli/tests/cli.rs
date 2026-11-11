@@ -308,3 +308,159 @@ fn parse_batch_of_good_files_succeeds_and_takes_no_file_arguments() {
     let both = run(gopp().args(["parse", "-batch"]).arg(&good));
     assert_eq!(both.status.code(), Some(2));
 }
+
+const UNFORMATTED: &str = "package p\n\nfunc f( ) {x:=load!(1,2)}\n";
+const FORMATTED: &str = "package p\n\nfunc f() { x := load!(1, 2) }\n";
+
+#[test]
+fn fmt_prints_the_canonical_layout() {
+    let dir = TempDir::new().unwrap();
+    let file = write_source(&dir, "main.gopp", UNFORMATTED);
+    let output = run(gopp().arg("fmt").arg(&file));
+    assert_eq!(stdout(&output), FORMATTED);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(fs::read_to_string(&file).unwrap(), UNFORMATTED);
+}
+
+#[test]
+fn fmt_lists_and_rewrites_only_files_that_change() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join("sub")).unwrap();
+    let changed = write_source(&dir, "sub/main.gopp", UNFORMATTED);
+    let same = write_source(&dir, "same.gopp", FORMATTED);
+    let plain_go = write_source(&dir, "sub/a.go", "package p\nvar  macro = 1\n");
+    write_source(&dir, "sub/.hidden.go", "package  p\n");
+    write_source(&dir, "notes.txt", "x  y\n");
+
+    let output = run(gopp().args(["fmt", "-l"]).arg(dir.path()));
+    let listed = format!("{}\n{}\n", plain_go.display(), changed.display());
+    assert_eq!(
+        (stdout(&output), stderr(&output)),
+        (listed.clone(), String::new())
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(fs::read_to_string(&changed).unwrap(), UNFORMATTED);
+
+    let before = fs::metadata(&same).unwrap().modified().unwrap();
+    let output = run(gopp().args(["fmt", "-l", "-w"]).arg(dir.path()));
+    assert_eq!(stdout(&output), listed);
+    assert_eq!(fs::read_to_string(&changed).unwrap(), FORMATTED);
+    assert_eq!(
+        fs::read_to_string(&plain_go).unwrap(),
+        "package p\n\nvar macro = 1\n"
+    );
+    assert_eq!(fs::metadata(&same).unwrap().modified().unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("sub/.hidden.go")).unwrap(),
+        "package  p\n"
+    );
+
+    let output = run(gopp().args(["fmt", "-l"]).arg(dir.path()));
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
+fn fmt_prints_a_diff() {
+    let dir = TempDir::new().unwrap();
+    let file = write_source(&dir, "main.gopp", UNFORMATTED);
+    let output = run(gopp().args(["fmt", "-d"]).arg(&file));
+    let name = file.display();
+    let diff = format!(
+        "diff {name}.orig {name}\n--- {name}.orig\n+++ {name}\n@@ -1,3 +1,3 @@\n package p\n \n\
+         -func f( ) {{x:=load!(1,2)}}\n+func f() {{ x := load!(1, 2) }}\n"
+    );
+    assert_eq!(stdout(&output), diff);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(fs::read_to_string(&file).unwrap(), UNFORMATTED);
+
+    let formatted = write_source(&dir, "done.gopp", FORMATTED);
+    let output = run(gopp().args(["fmt", "-d"]).arg(&formatted));
+    assert_eq!(stdout(&output), "");
+}
+
+fn fmt_stdin(flags: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut command = gopp();
+    command.arg("fmt").args(flags);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped());
+    let mut child = {
+        let _guard = SPAWN.lock().unwrap_or_else(PoisonError::into_inner);
+        command.stderr(Stdio::piped()).spawn().unwrap()
+    };
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(input.as_bytes()).unwrap();
+    drop(stdin);
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn fmt_formats_standard_input_as_gopp_unless_told_it_is_go() {
+    let output = fmt_stdin(&[], UNFORMATTED);
+    assert_eq!(stdout(&output), FORMATTED);
+    assert_eq!(output.status.code(), Some(0));
+
+    let listed = fmt_stdin(&["-l"], UNFORMATTED);
+    assert_eq!(stdout(&listed), "<standard input>\n");
+
+    // `macro` is a name in Go, and `f!(x)` is not Go.
+    let go = fmt_stdin(&["-go"], "package p\nvar  macro = 1\n");
+    assert_eq!(stdout(&go), "package p\n\nvar macro = 1\n");
+    assert_eq!(fmt_stdin(&["-go"], UNFORMATTED).status.code(), Some(1));
+    assert_eq!(
+        fmt_stdin(&[], "package p\nvar  macro = 1\n").status.code(),
+        Some(1)
+    );
+
+    let refused = fmt_stdin(&["-w"], UNFORMATTED);
+    assert_eq!(
+        stderr(&refused),
+        "error: cannot use -w with standard input\n"
+    );
+    assert_eq!(refused.status.code(), Some(1));
+}
+
+#[test]
+fn fmt_leaves_a_file_with_a_syntax_error_alone() {
+    let dir = TempDir::new().unwrap();
+    let source = "package p\n\nfunc f() { g(1 2) }\n";
+    let bad = write_source(&dir, "bad.gopp", source);
+    let good = write_source(&dir, "good.gopp", UNFORMATTED);
+    let parsed = run(gopp().arg("parse").arg(&bad));
+    for flags in [&["-w"][..], &["-l"], &["-d"], &[]] {
+        let output = run(gopp().arg("fmt").args(flags).arg(&bad));
+        assert_eq!(stderr(&output), stderr(&parsed));
+        assert_eq!(stdout(&output), "");
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(fs::read_to_string(&bad).unwrap(), source);
+    }
+    // The files without an error are still formatted.
+    let output = run(gopp().args(["fmt", "-w"]).arg(dir.path()));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(&good).unwrap(), FORMATTED);
+
+    let missing = run(gopp().arg("fmt").arg(dir.path().join("none.gopp")));
+    assert!(
+        stderr(&missing).starts_with("error: "),
+        "{}",
+        stderr(&missing)
+    );
+    assert_eq!(missing.status.code(), Some(1));
+}
+
+#[test]
+fn fmt_finds_every_sample_formatted() {
+    let examples = samples::files()[0]
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let output = run(gopp().args(["fmt", "-l"]).arg(&examples));
+    assert_eq!(
+        (stdout(&output), stderr(&output)),
+        (String::new(), String::new())
+    );
+    assert_eq!(output.status.code(), Some(0));
+}

@@ -12,10 +12,10 @@ use gopp_syntax::parser::parse;
 use lasso::ThreadedRodeo;
 use rayon::prelude::*;
 
-use crate::{EXIT_ERRORS, Emit};
+use crate::{EXIT_ERRORS, Emit, exit_code};
 
 /// As Go's compiler: the errors after the tenth are rarely worth reading.
-const MAX_DIAGNOSTICS: usize = 10;
+pub const MAX_DIAGNOSTICS: usize = 10;
 
 /// What parsing one file printed, and whether it failed.
 struct Parsed {
@@ -72,14 +72,6 @@ pub fn run_batch(emit: Option<Emit>) -> ExitCode {
         }
     }
     exit_code(failed)
-}
-
-fn exit_code(failed: bool) -> ExitCode {
-    if failed {
-        ExitCode::from(EXIT_ERRORS)
-    } else {
-        ExitCode::SUCCESS
-    }
 }
 
 fn parse_file(path: &Path, emit: Option<Emit>, color: bool) -> Parsed {
