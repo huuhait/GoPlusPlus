@@ -47,7 +47,7 @@ func worse() {
 }
 ```
 
-**UB-2.** *Pointer aliasing.* In normal code this is a **compile error**: while a writable borrow (`*T` or `&` range alias) of a place is live, no other borrow of that place or of an overlapping place may be live ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). This covers both visible overlap at one call ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021)) and two pointers that may name the same element.
+**UB-2.** *Pointer aliasing.* In normal code this is a **compile error**: while a writable borrow (`*T` or `&` range alias) of a place is live, no other borrow of that place or of an overlapping place may be live ([OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)). This covers both visible overlap at one call ([OWN-B4](04-ownership.md#45-borrow-checking-adr-0021)) and two pointers that may name the same element. Two pointers into one arena may be the same value; nothing can be borrowed through them from storage the value owns separately ([OWN-B10](04-ownership.md#45-borrow-checking-adr-0021)), so neither can free what the other points into.
 
 ```go
 func (u *User) SetFrom(src *string) {

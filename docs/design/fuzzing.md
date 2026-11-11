@@ -88,6 +88,7 @@ An **injector** takes a valid generated program and makes exactly one illegal ch
 | assign, grow or move `s` while a view `&s[i:j]` is live | OWN-B2 | the borrow error |
 | return `&local` or a view `&arr[i:j]` of a local array | OWN-B3 | the borrow error |
 | pass two overlapping writable pointers | OWN-B4, OWN-B9 | the borrow error |
+| take `&a.Items[i]`, a view or an `&` range variable through a pointer into an arena | OWN-B10 | the borrow error |
 | capture a writable local in `go func(){…}()` and use it after | CON-13 | the concurrency error |
 | send a non-`Send` value on a channel | CON-14 | the concurrency error |
 | leave a `@Required` field out of a literal | TYP-15 | the required-field error |

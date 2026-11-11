@@ -340,7 +340,7 @@ println(*p)
 - Only a function returning a raw pointer `*T`, `Option[*T]`, or a borrow-carrying struct/array returns a borrow. The compiler computes which pointer-capable parameters/receiver (such as `arena *mem.Arena` or `p *Parser`) the returned borrow may point into (stored in export data; conservative union for interface/indirect/C calls). Returning `&local` or a borrow into a local variable/array is always a compile error.
 
 **OWN-B4.** *Aliasing at a call.*
-- Two writable `*T` arguments (or a `*T` receiver and a `*T` argument) that may point to overlapping places are a compile error (`swap(&list[i], &list[j])` — use `list.Swap(i, j)` or `Split`), except when both point into the same `mem.Arena` / `mem.DropArena` graph (`OWN-B9` rule 5).
+- Two writable `*T` arguments (or a `*T` receiver and a `*T` argument) that may point to overlapping places are a compile error (`swap(&list[i], &list[j])` — use `list.Swap(i, j)` or `Split`), except when both point into the same `mem.Arena` / `mem.DropArena` graph: two arena pointers may be the same value, and [OWN-B10](#45-borrow-checking-adr-0021) limits what is done through them.
 - Passing `&x` alongside an `OWN-C2` read from `x` (`u.SetName(u.Name)`) is **allowed and safe**: `u` may change during the call, so the argument is copied before the call (for a `string`, the copy is a retain of its bytes) and reassigning `u.Name` inside `SetName` cannot free `n` mid-call ([OWN-R3](#42-ownership-rules-d14), [PAR-1](05-parameters.md)). Passing `&x` alongside a tracked borrow into `x` (`both(&u, &u.Age)`) is a compile error ([OWN-B9](#45-borrow-checking-adr-0021)).
 
 **OWN-B5.** *Where tracked borrows may live.* A raw `*T`, slice view `&s[i:j]`, or borrow-carrying struct/array (`Parser{arena *mem.Arena}`, `Node{Left, Right Option[*Node]}`) may live only in stack local variables, parameters, function results (checked by `OWN-B3`), `Local[I]` interfaces, and allocations inside the same `mem.Arena` / `mem.DropArena` (freed automatically when the parent scope or arena drops/resets). Storing a tracked borrow in `NewUnique`, `NewShared`, a heap slice or map, a channel, a package global, an escaping closure, a kept `Send` interface, or passing `&local` to `go` is a compile error: use `Unique[T]`, `Shared[T]` or `Weak[T]` for heap-owned graphs (or `sync.Scope` for scoped goroutines, [CON-16](12-concurrency.md)).
@@ -359,7 +359,7 @@ println(*p)
 2. **Disjointness.** Different local variables, different struct fields, different constant indexes (`&list[0]` and `&list[1]`), and the two views that `list.Split(k)` returns are provably disjoint. Variable indexes `list[i]` and `list[j]` overlap; use `list.Swap(i, j)` or `Split`.
 3. **Reborrowing.** `q := p` on a writable `*T` reborrows `p`: `p` cannot be used while `q` is live (`q := p; use(q); use(p)` is fine because `q` is dead before `use(p)`).
 4. **No raw `*T` in heap-owned `Unique`/`Shared` data.** Heap-owned structs and collections hold `Unique[T]`, `Shared[T]` or `Weak[T]`, never raw `*T` (`OWN-B5`); borrow-carrying structs live only on the stack or inside a `mem.Arena` whose lifetime bounds every node at once.
-5. **`Shared[T]` and arena graphs** ([OWN-P8](#43-pointers-and-heap-allocation-d17), [CON-19](12-concurrency.md), [ADR-0042](../adr/0042-shared-is-read-only.md)): what a `Shared[T]` holds is read-only through the handle, so no handle can replace or free something that another handle points into; a part that changes sits in a `Mutex`, `RWMutex` or `Atomic` and is reached through a guard. `*T` pointers omit C `restrict` qualifiers when `T` may sit inside `Shared[T]` or a borrow-carrying arena struct, and C23 output compiles with `-fno-strict-aliasing`.
+5. **`Shared[T]` and arena graphs** ([OWN-P8](#43-pointers-and-heap-allocation-d17), [CON-19](12-concurrency.md), [ADR-0042](../adr/0042-shared-is-read-only.md)): what a `Shared[T]` holds is read-only through the handle, so no handle can replace or free something that another handle points into; a part that changes sits in a `Mutex`, `RWMutex` or `Atomic` and is reached through a guard. Pointers into an arena stay writable and follow [OWN-B10](#45-borrow-checking-adr-0021). `*T` pointers omit C `restrict` qualifiers when `T` may sit inside `Shared[T]` or a borrow-carrying arena struct, and C23 output compiles with `-fno-strict-aliasing`.
 6. **`Unique[T]` grants exclusive writable access** through its single owner.
 
 ```go
@@ -378,6 +378,32 @@ fmt.Println(s.Count)                        // ok: everyone can read a shared va
 // s.Count++                                // compile error: a shared value is changed through a Mutex (OWN-P8)
 mu := NewShared(sync.NewMutex(Config{}))    // in one goroutine or several: the part that changes is in a Mutex
 go func() { mu.With(func(c *Config) { c.Count++ }) }()
+```
+
+**OWN-B10.** *Pointers into an arena* ([ADR-0044](../adr/0044-no-borrow-into-what-an-arena-value-owns.md)). Two pointers into one arena may point to the same value, and the compiler does not tell them apart ([OWN-B4](#45-borrow-checking-adr-0021)). So nothing may be kept that another such pointer could free.
+- **An arena pointer** is a `*T` that comes from an arena allocation (`mem.ArenaNew`), that was read from a field, an element or an `Option` reached through a pointer (`n.Left`), that was made from an arena pointer (`q := p`, `&p.f`), or that a call returned when its borrow summary ([OWN-B3](#45-borrow-checking-adr-0021)) says the result may come from an arena or from an arena pointer.
+- **No borrow into what the value owns separately.** Through an arena pointer `a`, the elements of a slice, the entries of a map, the value an interface holds, and what a `Unique[T]` or `Shared[T]` field points to cannot be borrowed. These are compile errors: `&a.Items[i]`, a view `&a.Items[i:j]`, `for _, &x := range a.Items`, `&a.U.f` through a `Unique` field, and a method call that takes the address of such a part (`a.Items[i].Bump()` with a pointer receiver, a method call on an interface field `a.W.Write(b)`). The fix-it is to use the index each time, or to copy the part out, change it and store it back.
+- **What stays allowed.** Reading and writing by index or key (`x := a.Items[i]`, `a.Items[i] = v`, `a.Items[i].Count++`, `a.M[k] = v`), replacing or growing the whole part (`a.Items = append(a.Items, v)`), `len`, `cap`, and passing the part by value. The index is applied at the moment of the read or the write, after the other operands of the statement are evaluated, so nothing is kept across a call. A plain `for _, x := range a.Items` loops over its own copy of the slice or map when the body could change it (it makes a call or writes through a pointer), and over the slice or map itself otherwise. A pointer to a field of the value (`&a.Count`, `&a.Items`) is allowed and is an arena pointer: an arena never frees or moves one value before it frees them all ([OWN-B2](#45-borrow-checking-adr-0021)).
+- **At a call.** For each pointer parameter and receiver the compiler infers, and stores in export data, whether the function borrows into what the pointee owns separately (by one of the forms above, or by passing the pointer on to such a parameter). Passing an arena pointer to such a parameter is a compile error at the call. A call that cannot see the body (through an interface or a function value) counts as borrowing through every pointer argument and receiver. Inside a function, a pointer parameter is not an arena pointer by itself; what is read through it is.
+- **A type that owns nothing separately is not restricted.** When `T` has no slice, map, interface, `Unique[T]` or `Shared[T]` in its fields, directly or inside a struct, array or `Option` field, there is nothing to borrow into, and none of this applies to a `*T` (`Node{Kind Kind; L, R Option[*Node]}`). A `string` field is a counted handle and does not count.
+
+```go
+type Node struct {
+    Items []Item
+    Next  Option[*Node]
+}
+
+func touch(a, b *Node) {             // a and b may be the same Node
+    a.Items[0] = Item{}              // ok: by index
+    b.Items = append(b.Items, Item{})
+    a.Items[0].Count++               // ok: reaches the element where it is now
+}
+
+n := mem.ArenaNew[Node](&arena)      // n is an arena pointer
+// p := &n.Items[0]                  // compile error: use n.Items[0]
+// for _, &x := range n.Items { }    // compile error: use for i := range n.Items
+// n.Items[0].Bump()                 // compile error for a pointer receiver
+touch(n, n)                          // ok: touch borrows nothing from Items
 ```
 
 ## 4.6 Rationale
