@@ -1226,7 +1226,7 @@ func Map[T, U any](xs []T, f func(T) U) []U
         "Third: untyped float = 1/3",
         "Twice: p.Celsius (float64) = 200",
         "Typed: int8 = 127",
-        "ints: p.List[int] (struct{head *p.List[E]; item E})",
+        "ints: p.List[int] (struct{head *p.List[int]; item int})",
         "table: map[string][]p.Node",
     ];
     assert_eq!(lines, expected);
@@ -1275,4 +1275,76 @@ type Namer interface{ Name() string }
     // The methods of `Reader` have pointer receivers.
     assert!(!types.implements(file, reader, &names));
     assert!(types.implements(pointer, reader, &names));
+}
+
+#[test]
+fn a_variable_without_a_type_has_the_type_of_its_value() {
+    let text = "package p
+
+type Point struct{ X, Y int }
+
+func (p Point) Scale(k int) Point
+func NewPoint() (Point, error)
+func Pair[K comparable, V any](k K, v V) map[K]V
+func First[E any](xs []E) E
+
+var origin = Point{}
+var ptr = &origin
+var xs = []Point{origin}
+var first = xs[0].X
+var scaled = origin.Scale(2)
+var viaPointer = ptr.Scale
+var p2, err = NewPoint()
+var table = Pair(\"a\", 1.5)
+var v, ok = table[\"a\"]
+var head = First(xs)
+var n = len(xs) + 1
+var big = 1 << 40
+var name = \"go\" + \"pp\"
+var less = first < n
+var fn = func(a int) string { return \"\" }
+var arr = [...]string{2: \"c\", \"d\"}
+var size = len(arr)
+var raw = []byte(name)
+var opt Option[int]
+var maybe = opt
+var ch = make(chan Point, 1)
+var got = <-ch
+var more = append(xs, origin)
+";
+    let (lines, messages) = declared("a.gopp", text);
+    assert_eq!(messages, [] as [&str; 0]);
+    let vars: Vec<&str> = lines
+        .iter()
+        .map(String::as_str)
+        .filter(|line| line.starts_with(char::is_lowercase))
+        .collect();
+    let expected = [
+        "arr: [4]string",
+        "big: int",
+        "ch: chan p.Point",
+        "err: error (interface{Error() string})",
+        "first: int",
+        "fn: func(int) string",
+        "got: p.Point (struct{X int; Y int})",
+        "head: p.Point (struct{X int; Y int})",
+        "less: bool",
+        "maybe: Option[int]",
+        "more: []p.Point",
+        "n: int",
+        "name: string",
+        "ok: bool",
+        "opt: Option[int]",
+        "origin: p.Point (struct{X int; Y int})",
+        "p2: p.Point (struct{X int; Y int})",
+        "ptr: *p.Point",
+        "raw: []uint8",
+        "scaled: p.Point (struct{X int; Y int})",
+        "size: int",
+        "table: map[string]float64",
+        "v: float64",
+        "viaPointer: func(int) p.Point",
+        "xs: []p.Point",
+    ];
+    assert_eq!(vars, expected);
 }

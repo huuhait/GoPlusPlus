@@ -17,7 +17,7 @@ use crate::literal::unquote;
 use crate::object::{Body, LocalId, ObjId, ObjKind, Ref};
 use crate::package::Package;
 use crate::resolve::Unit;
-use crate::types::{ChanDir, DeclaredMethod, Field, Method, Term, Type, TypeId, Types};
+use crate::types::{ChanDir, DeclaredMethod, Field, Member, Method, Term, Type, TypeId, Types};
 use crate::universe::{Predeclared, PredeclaredKind};
 
 /// Where an expression stands: its file, what its names denote, and the
@@ -42,6 +42,9 @@ enum Form<'a> {
     },
     Var {
         ty: Option<ExprId>,
+        /// The expression that gives the variable its value, which of the
+        /// results of that expression it gets, and of how many.
+        value: Option<(ExprId, usize, usize)>,
     },
     Type {
         alias: bool,
@@ -81,10 +84,54 @@ enum State {
     Done,
 }
 
-/// A constant operand: its type, which may be untyped, and its value.
+/// What an expression is.
+#[derive(Clone, Debug, PartialEq)]
+enum Mode {
+    /// Not worked out here yet, or in error.
+    Unknown,
+    /// A call of a function without a result.
+    NoValue,
+    /// A predeclared function, which is no value.
+    Builtin(Predeclared),
+    /// A function of package unsafe, by its name.
+    Unsafe(Spur),
+    Type,
+    Const(Value),
+    Value,
+}
+
+/// An expression: what it is and its type, which may be untyped.
+#[derive(Clone, Debug)]
 struct Operand {
+    mode: Mode,
     ty: TypeId,
-    value: Value,
+}
+
+impl Operand {
+    const UNKNOWN: Self = Self {
+        mode: Mode::Unknown,
+        ty: Types::INVALID,
+    };
+
+    fn value(ty: TypeId) -> Self {
+        let mode = match ty {
+            Types::INVALID => Mode::Unknown,
+            _ => Mode::Value,
+        };
+        Self { mode, ty }
+    }
+
+    fn constant(ty: TypeId, value: Value) -> Self {
+        Self {
+            mode: Mode::Const(value),
+            ty,
+        }
+    }
+
+    /// Whether the expression has a value: a constant or not.
+    fn is_value(&self) -> bool {
+        matches!(self.mode, Mode::Value | Mode::Const(_))
+    }
 }
 
 struct Checker<'a> {
@@ -130,11 +177,12 @@ pub fn declarations(
     for (file, unit) in units.iter().enumerate() {
         checker.collect(file, *unit);
     }
-    for object in 0..count {
-        checker.resolve(object);
-    }
+    // The methods first: the type of a variable may be the result of one.
     for (file, unit) in units.iter().enumerate() {
         checker.methods(file, *unit);
+    }
+    for object in 0..count {
+        checker.resolve(object);
     }
     let Checker { ty, value, .. } = checker;
     for ((object, ty), value) in package.objects.iter_mut().zip(ty).zip(value) {
@@ -199,9 +247,14 @@ impl<'a> Checker<'a> {
                         declare(name, body, Form::Const { ty, value, iota });
                     }
                 }
-                DeclKind::Var { names, ty, .. } => {
-                    for &name in names {
-                        declare(name, body, Form::Var { ty: *ty });
+                DeclKind::Var { names, ty, values } => {
+                    for (position, &name) in names.iter().enumerate() {
+                        // `a, b = f()` gives each one result of the call.
+                        let value = match values.len() {
+                            1 => Some((values[0], position, names.len())),
+                            _ => values.get(position).map(|&value| (value, 0, 1)),
+                        };
+                        declare(name, body, Form::Var { ty: *ty, value });
                     }
                 }
                 DeclKind::Type {
@@ -247,12 +300,15 @@ impl<'a> Checker<'a> {
     }
 
     /// Gives each type parameter of a declaration a type.
-    fn declare_params(&self, cx: &mut Cx<'a>, type_params: &[TypeParam]) {
-        for param in type_params {
+    fn declare_params(&self, cx: &mut Cx<'a>, type_params: &[TypeParam]) -> Vec<TypeId> {
+        let declare = |param: &TypeParam| {
+            let ty = self.types.param(param.name.name);
             if let Some(&local) = cx.body.defs.get(&param.name.span.lo) {
-                cx.params.insert(local, self.types.param(param.name.name));
+                cx.params.insert(local, ty);
             }
-        }
+            ty
+        };
+        type_params.iter().map(declare).collect()
     }
 
     /// Works out the object, unless that is done or under way.
@@ -283,24 +339,33 @@ impl<'a> Checker<'a> {
             Form::Const { ty, value, iota } => {
                 let cx = self.cx(&decl, Some(iota));
                 let declared = ty.map(|ty| self.typ(&cx, ty));
-                let Some(operand) = value.and_then(|value| self.constant(&cx, value)) else {
+                let Some((own, value)) = value.and_then(|value| self.constant(&cx, value)) else {
                     self.incomplete = true;
                     return false;
                 };
                 let (ty, value) = match declared {
-                    None => (operand.ty, Some(operand.value)),
-                    Some(ty) => (ty, self.converted(&operand.value, ty)),
+                    None => (own, Some(value)),
+                    Some(ty) => (ty, self.converted(&value, ty)),
                 };
                 match value {
                     Some(value) => (self.ty[object], self.value[object]) = (ty, value),
                     None => self.incomplete = true,
                 }
             }
-            // The type of a variable without one is the type of its value.
-            Form::Var { ty: None } => self.incomplete = true,
-            Form::Var { ty: Some(ty) } => {
+            Form::Var { ty: Some(ty), .. } => {
                 let cx = self.cx(&decl, None);
                 self.ty[object] = self.typ(&cx, ty);
+            }
+            // The type of a variable without one is the type of its value.
+            Form::Var { ty: None, value } => {
+                let cx = self.cx(&decl, None);
+                let ty = value.and_then(|(value, position, count)| {
+                    self.result_type(&cx, value, position, count)
+                });
+                match ty {
+                    Some(ty) => self.ty[object] = self.types.default_type(ty),
+                    None => self.incomplete = true,
+                }
             }
             Form::Type {
                 alias,
@@ -308,7 +373,7 @@ impl<'a> Checker<'a> {
                 ty,
             } => {
                 let mut cx = self.cx(&decl, None);
-                self.declare_params(&mut cx, type_params);
+                let params = self.declare_params(&mut cx, type_params);
                 if alias {
                     self.ty[object] = self.typ(&cx, ty);
                     return false;
@@ -319,6 +384,7 @@ impl<'a> Checker<'a> {
                     .types
                     .declare(self.package.objects[object].name, self.name);
                 self.ty[object] = self.types.named(named, &[]);
+                self.types.set_type_params(named, params);
                 let underlying = self.typ(&cx, ty);
                 if !self.incomplete {
                     self.types.set_underlying(named, underlying);
@@ -327,11 +393,56 @@ impl<'a> Checker<'a> {
             }
             Form::Func { type_params, ty } => {
                 let mut cx = self.cx(&decl, None);
-                self.declare_params(&mut cx, type_params);
+                let params = self.declare_params(&mut cx, type_params);
                 self.ty[object] = self.typ(&cx, ty);
+                if !params.is_empty() {
+                    self.types.set_generic_func(self.ty[object], params);
+                }
             }
         }
         false
+    }
+
+    /// The type of one result of the expression `expr`, which gives
+    /// `count` variables their values and the one at `position` this.
+    fn result_type(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        position: usize,
+        count: usize,
+    ) -> Option<TypeId> {
+        let operand = self.operand(cx, expr);
+        if !operand.is_value() || operand.ty == self.types.basic(Basic::UntypedNil) {
+            return None;
+        }
+        let results = match &*self.types.get(operand.ty) {
+            Type::Tuple(types) => types.to_vec(),
+            _ => vec![operand.ty],
+        };
+        if results.len() == count {
+            return results.get(position).copied();
+        }
+        // `v, ok = m[k]`, `v, ok = x.(T)`, `v, ok = <-ch`.
+        let mut inner = expr;
+        while let ExprKind::Paren(x) = cx.tree.exprs[inner].kind {
+            inner = x;
+        }
+        let comma_ok = match &cx.tree.exprs[inner].kind {
+            ExprKind::Assert { .. } => true,
+            ExprKind::Unary { op, .. } => *op == UnaryOp::Recv,
+            ExprKind::Index { x, .. } => {
+                let indexed = self.operand(cx, *x);
+                let under = self.types.get(self.types.underlying(indexed.ty));
+                matches!(&*under, Type::Map { .. })
+            }
+            _ => false,
+        };
+        match (comma_ok && count == 2 && results.len() == 1, position) {
+            (true, 0) => Some(results[0]),
+            (true, _) => Some(self.types.basic(Basic::Bool)),
+            _ => None,
+        }
     }
 
     /// The type of the object `object` of this package.
@@ -354,6 +465,8 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let body = &self.package.files[file].bodies[index];
+            // What was incomplete in the method before is not in this one.
+            self.incomplete = false;
             let decl = Decl {
                 unit,
                 body,
@@ -367,6 +480,7 @@ impl<'a> Checker<'a> {
             // a pointer, and the type parameters that the brackets name.
             let mut base = receiver.ty;
             let mut pointer_receiver = false;
+            let mut receiver_params = Vec::new();
             loop {
                 match &tree.exprs[base].kind {
                     ExprKind::Paren(x) => base = *x,
@@ -380,10 +494,13 @@ impl<'a> Checker<'a> {
                     ExprKind::Index { x, indices } => {
                         for index in indices {
                             let span = tree.exprs[*index].span;
-                            if let (ExprKind::Name(name), Some(&local)) =
-                                (&tree.exprs[*index].kind, body.defs.get(&span.lo))
-                            {
-                                cx.params.insert(local, self.types.param(*name));
+                            let ExprKind::Name(name) = tree.exprs[*index].kind else {
+                                continue;
+                            };
+                            let param = self.types.param(name);
+                            receiver_params.push(param);
+                            if let Some(&local) = body.defs.get(&span.lo) {
+                                cx.params.insert(local, param);
                             }
                         }
                         base = *x;
@@ -408,6 +525,7 @@ impl<'a> Checker<'a> {
                 DeclaredMethod {
                     method,
                     pointer_receiver,
+                    receiver_params,
                 },
             );
         }
@@ -523,7 +641,7 @@ impl<'a> Checker<'a> {
                 elem,
             } => {
                 let elem = self.typ(cx, *elem);
-                let len = self.constant(cx, *len).map(|len| len.value.to_int());
+                let len = self.constant(cx, *len).map(|(_, len)| len.to_int());
                 match len.as_ref().and_then(Value::as_i64).map(u64::try_from) {
                     Some(Ok(len)) => self.types.array(len, elem),
                     _ => {
@@ -701,7 +819,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    // ---- constants
+    // ---- expressions
 
     fn basic_of(&self, ty: TypeId) -> Option<Basic> {
         match &*self.types.get(self.types.underlying(ty)) {
@@ -710,11 +828,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn untyped(&self, basic: Basic, value: Value) -> Option<Operand> {
-        Some(Operand {
-            ty: self.types.basic(basic),
-            value,
-        })
+    fn untyped(&self, basic: Basic, value: Value) -> Operand {
+        Operand::constant(self.types.basic(basic), value)
+    }
+
+    fn value_of(&self, basic: Basic) -> Operand {
+        Operand::value(self.types.basic(basic))
     }
 
     /// `value` as a constant of the type `ty` holds it; `None` if the type
@@ -725,12 +844,25 @@ impl<'a> Checker<'a> {
 
     /// The value of a constant expression; `None` for what is not constant
     /// or not worked out here yet.
-    fn constant(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<Operand> {
-        gopp_syntax::with_stack(|| self.constant_node(cx, expr))
+    fn constant(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<(TypeId, Value)> {
+        match self.operand(cx, expr) {
+            Operand {
+                mode: Mode::Const(value),
+                ty,
+            } => Some((ty, value)),
+            _ => None,
+        }
     }
 
-    fn constant_node(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<Operand> {
-        let node = &cx.tree.exprs[expr];
+    /// What the expression `expr` is: a type, a constant, a value of some
+    /// type. Unknown for what is not worked out here yet.
+    fn operand(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
+        gopp_syntax::with_stack(|| self.operand_node(cx, expr))
+    }
+
+    fn operand_node(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
+        let tree = cx.tree;
+        let node = &tree.exprs[expr];
         match &node.kind {
             ExprKind::BasicLit { kind, bad: false } => {
                 let text = &cx.text[node.span.lo as usize..node.span.hi as usize];
@@ -743,42 +875,218 @@ impl<'a> Checker<'a> {
                 };
                 self.untyped(basic, Value::from_literal(text, *kind))
             }
-            ExprKind::Paren(x) => self.constant(cx, *x),
-            ExprKind::Name(_) | ExprKind::Selector { .. } => match *cx.body.uses.get(&expr)? {
-                Ref::Universe(Predeclared::True) => {
-                    self.untyped(Basic::UntypedBool, Value::Bool(true))
-                }
-                Ref::Universe(Predeclared::False) => {
-                    self.untyped(Basic::UntypedBool, Value::Bool(false))
-                }
-                Ref::Universe(Predeclared::Iota) => {
-                    self.untyped(Basic::UntypedInt, Value::Int64(cx.iota?))
-                }
-                Ref::Object(object)
-                    if matches!(self.package.object(object).kind, ObjKind::Const) =>
-                {
-                    let ty = self.object_type(object);
-                    let value = self.value[object.0 as usize].clone();
-                    (value != Value::Unknown).then_some(Operand { ty, value })
-                }
-                Ref::Member { import, member } => {
-                    let ObjKind::Import { package, .. } = &self.package.object(import).kind else {
-                        return None;
-                    };
-                    let object = package.object(member);
-                    let known =
-                        matches!(object.kind, ObjKind::Const) && object.value != Value::Unknown;
-                    known.then(|| Operand {
-                        ty: object.ty,
-                        value: object.value.clone(),
-                    })
-                }
-                _ => None,
-            },
+            ExprKind::Paren(x) => self.operand(cx, *x),
+            ExprKind::Name(_) => self.name(cx, expr),
+            ExprKind::Selector { x, sel } => self.selector(cx, expr, *x, *sel),
             ExprKind::Unary { op, x } => self.unary(cx, *op, *x),
             ExprKind::Binary { op, x, y } => self.binary(cx, *op, *x, *y),
             ExprKind::Call { fun, args, .. } => self.call(cx, *fun, args),
-            _ => None,
+            ExprKind::FuncLit { ty, .. } => Operand::value(self.typ(cx, *ty)),
+            ExprKind::CompositeLit {
+                ty: Some(ty),
+                elems,
+            } => Operand::value(self.literal_type(cx, *ty, elems)),
+            ExprKind::Index { x, indices } => self.index(cx, expr, *x, indices),
+            ExprKind::Slice { x, .. } => {
+                let x = self.operand(cx, *x);
+                if !x.is_value() {
+                    return Operand::UNKNOWN;
+                }
+                let sliced = match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Basic(Basic::String) => x.ty,
+                    Type::Basic(Basic::UntypedString) => self.types.basic(Basic::String),
+                    Type::Slice(_) => x.ty,
+                    Type::Array { elem, .. } => self.types.slice(*elem),
+                    Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
+                        Type::Array { elem, .. } => self.types.slice(*elem),
+                        _ => return Operand::UNKNOWN,
+                    },
+                    _ => return Operand::UNKNOWN,
+                };
+                Operand::value(sliced)
+            }
+            ExprKind::Assert { ty, .. } => Operand::value(self.typ(cx, *ty)),
+            // A type written out: `[]int`, `map[string]T`, `func()`, ...
+            ExprKind::ArrayType { .. }
+            | ExprKind::SliceType { .. }
+            | ExprKind::MapType { .. }
+            | ExprKind::ChanType { .. }
+            | ExprKind::FuncType { .. }
+            | ExprKind::StructType { .. }
+            | ExprKind::InterfaceType { .. } => Operand {
+                mode: Mode::Type,
+                ty: self.typ(cx, expr),
+            },
+            _ => Operand::UNKNOWN,
+        }
+    }
+
+    fn name(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
+        let Some(&denotes) = cx.body.uses.get(&expr) else {
+            return Operand::UNKNOWN;
+        };
+        match denotes {
+            Ref::Universe(Predeclared::True) => self.untyped(Basic::UntypedBool, Value::Bool(true)),
+            Ref::Universe(Predeclared::False) => {
+                self.untyped(Basic::UntypedBool, Value::Bool(false))
+            }
+            Ref::Universe(Predeclared::Iota) => match cx.iota {
+                Some(iota) => self.untyped(Basic::UntypedInt, Value::Int64(iota)),
+                None => Operand::UNKNOWN,
+            },
+            Ref::Universe(Predeclared::Nil) => Operand {
+                mode: Mode::Value,
+                ty: self.types.basic(Basic::UntypedNil),
+            },
+            Ref::Universe(name) => match name.kind() {
+                PredeclaredKind::Func => Operand {
+                    mode: Mode::Builtin(name),
+                    ty: Types::INVALID,
+                },
+                _ => match self.named_type(cx, expr) {
+                    Some(ty) => Operand {
+                        mode: Mode::Type,
+                        ty,
+                    },
+                    None => Operand::UNKNOWN,
+                },
+            },
+            Ref::Object(object) => {
+                let ty = self.object_type(object);
+                let kind = &self.package.object(object).kind;
+                self.object_operand(kind, ty, self.value[object.0 as usize].clone())
+            }
+            // A local of the function literal that the expression is in.
+            Ref::Local(local) => match cx.params.get(&local) {
+                Some(&ty) => Operand {
+                    mode: Mode::Type,
+                    ty,
+                },
+                None => Operand::UNKNOWN,
+            },
+            Ref::Member { .. } => Operand::UNKNOWN,
+        }
+    }
+
+    /// An object of the kind `kind` as an operand.
+    fn object_operand(&self, kind: &ObjKind, ty: TypeId, value: Value) -> Operand {
+        if ty == Types::INVALID {
+            return Operand::UNKNOWN;
+        }
+        match kind {
+            ObjKind::Const if value != Value::Unknown => Operand::constant(ty, value),
+            ObjKind::Type => Operand {
+                mode: Mode::Type,
+                ty,
+            },
+            ObjKind::Var | ObjKind::Func => Operand::value(ty),
+            _ => Operand::UNKNOWN,
+        }
+    }
+
+    /// `x.sel`: a name of an imported package, a field, a method.
+    fn selector(&mut self, cx: &Cx<'a>, expr: ExprId, x: ExprId, sel: Ident) -> Operand {
+        if let Some(&Ref::Member { import, member }) = cx.body.uses.get(&expr) {
+            let ObjKind::Import { package, .. } = &self.package.object(import).kind else {
+                return Operand::UNKNOWN;
+            };
+            let object = package.object(member);
+            // Package unsafe is built into the compiler: its functions take
+            // any type.
+            if package.path == "unsafe" && matches!(object.kind, ObjKind::Func) {
+                return Operand {
+                    mode: Mode::Unsafe(object.name),
+                    ty: Types::INVALID,
+                };
+            }
+            return self.object_operand(&object.kind, object.ty, object.value.clone());
+        }
+        let x = self.operand(cx, x);
+        let found = self.types.member(x.ty, sel.name, self.path, self.names);
+        match (&x.mode, found) {
+            (Mode::Value, Some(Member::Field { ty })) => Operand::value(ty),
+            (Mode::Value, Some(Member::Method { sig, .. })) => Operand::value(sig),
+            // `T.m`: a function that takes the receiver first.
+            (Mode::Type, Some(Member::Method { sig, .. })) => {
+                let Type::Func {
+                    params,
+                    results,
+                    variadic,
+                } = &*self.types.get(sig)
+                else {
+                    return Operand::UNKNOWN;
+                };
+                let params: Vec<TypeId> = std::iter::once(x.ty)
+                    .chain(params.iter().copied())
+                    .collect();
+                Operand::value(self.types.func(&params, results, *variadic))
+            }
+            _ => Operand::UNKNOWN,
+        }
+    }
+
+    /// The type of the composite literal `ty{elems}`. `[...]T{…}` has as
+    /// many elements as the literal says.
+    fn literal_type(&mut self, cx: &Cx<'a>, ty: ExprId, elems: &[ExprId]) -> TypeId {
+        let ExprKind::ArrayType { len: None, elem } = cx.tree.exprs[ty].kind else {
+            return self.typ(cx, ty);
+        };
+        let elem = self.typ(cx, elem);
+        // An element with a key sits at that index; one without, after
+        // the element before it.
+        let (mut next, mut len) = (0u64, 0u64);
+        for &element in elems {
+            if let ExprKind::KeyValue { key, .. } = cx.tree.exprs[element].kind {
+                let index = self.constant(cx, key).map(|(_, value)| value.to_int());
+                match index.as_ref().and_then(Value::as_i64).map(u64::try_from) {
+                    Some(Ok(index)) => next = index,
+                    _ => {
+                        self.incomplete = true;
+                        return Types::INVALID;
+                    }
+                }
+            }
+            next += 1;
+            len = len.max(next);
+        }
+        self.types.array(len, elem)
+    }
+
+    fn index(&mut self, cx: &Cx<'a>, expr: ExprId, x: ExprId, indices: &[ExprId]) -> Operand {
+        let x = self.operand(cx, x);
+        match x.mode {
+            // A generic type with its arguments.
+            Mode::Type => Operand {
+                mode: Mode::Type,
+                ty: self.typ(cx, expr),
+            },
+            Mode::Value | Mode::Const(_) => {
+                let elem = match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Basic(Basic::String | Basic::UntypedString) => {
+                        self.types.basic(Basic::Uint8)
+                    }
+                    Type::Slice(elem) | Type::Array { elem, .. } => *elem,
+                    Type::Map { value, .. } => *value,
+                    Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
+                        Type::Array { elem, .. } => *elem,
+                        _ => return Operand::UNKNOWN,
+                    },
+                    // A generic function with its type arguments.
+                    Type::Func { .. } => {
+                        let Some(params) = self.types.generic_func(x.ty) else {
+                            return Operand::UNKNOWN;
+                        };
+                        let args: Vec<TypeId> = indices.iter().map(|&i| self.typ(cx, i)).collect();
+                        if args.len() != params.len() {
+                            return Operand::UNKNOWN;
+                        }
+                        self.types.substitute(x.ty, &params, &args)
+                    }
+                    _ => return Operand::UNKNOWN,
+                };
+                Operand::value(elem)
+            }
+            _ => Operand::UNKNOWN,
         }
     }
 
@@ -808,36 +1116,68 @@ impl<'a> Checker<'a> {
     }
 
     /// A typed result is held as its type holds it; one that does not fit
-    /// is no value.
-    fn fitted(&self, ty: TypeId, value: Value) -> Option<Operand> {
+    /// is not known.
+    fn fitted(&self, ty: TypeId, value: Value) -> Operand {
         let value = match self.is_untyped(ty) {
-            true => value,
-            false => self.converted(&value, ty)?,
+            true => Some(value),
+            false => self.converted(&value, ty),
         };
-        (value != Value::Unknown).then_some(Operand { ty, value })
+        match value {
+            Some(value) if value != Value::Unknown => Operand::constant(ty, value),
+            _ => Operand::UNKNOWN,
+        }
     }
 
-    fn unary(&mut self, cx: &Cx<'a>, op: UnaryOp, x: ExprId) -> Option<Operand> {
-        let x = self.constant(cx, x)?;
-        let basic = self.basic_of(x.ty)?;
-        let (op, bits) = match op {
-            UnaryOp::Plus => (constant::UnaryOp::Plus, 0),
-            UnaryOp::Neg => (constant::UnaryOp::Neg, 0),
-            UnaryOp::Not => (constant::UnaryOp::Not, 0),
-            // The complement of an unsigned number stays in its size.
-            UnaryOp::Xor => {
-                let bits = match basic {
-                    Basic::Uint8 => 8,
-                    Basic::Uint16 => 16,
-                    Basic::Uint32 => 32,
-                    Basic::Uint | Basic::Uint64 | Basic::Uintptr => 64,
-                    _ => 0,
-                };
-                (constant::UnaryOp::Complement, bits)
+    fn unary(&mut self, cx: &Cx<'a>, op: UnaryOp, x: ExprId) -> Operand {
+        let operand = self.operand(cx, x);
+        match (op, &operand.mode) {
+            // `*T` is a type, `*p` what the pointer points to.
+            (UnaryOp::Star, Mode::Type) => Operand {
+                mode: Mode::Type,
+                ty: self.types.pointer(operand.ty),
+            },
+            (UnaryOp::Star, Mode::Value) => {
+                match &*self.types.get(self.types.underlying(operand.ty)) {
+                    Type::Pointer(elem) => Operand::value(*elem),
+                    _ => Operand::UNKNOWN,
+                }
             }
-            _ => return None,
-        };
-        self.fitted(x.ty, x.value.unary(op, bits))
+            (UnaryOp::Addr, Mode::Value) => Operand::value(self.types.pointer(operand.ty)),
+            (UnaryOp::Recv, Mode::Value) => {
+                match &*self.types.get(self.types.underlying(operand.ty)) {
+                    Type::Chan { elem, .. } => Operand::value(*elem),
+                    _ => Operand::UNKNOWN,
+                }
+            }
+            (UnaryOp::Plus | UnaryOp::Neg | UnaryOp::Not | UnaryOp::Xor, Mode::Value) => {
+                Operand::value(operand.ty)
+            }
+            (_, Mode::Const(value)) => {
+                let Some(basic) = self.basic_of(operand.ty) else {
+                    return Operand::UNKNOWN;
+                };
+                let (op, bits) = match op {
+                    UnaryOp::Plus => (constant::UnaryOp::Plus, 0),
+                    UnaryOp::Neg => (constant::UnaryOp::Neg, 0),
+                    UnaryOp::Not => (constant::UnaryOp::Not, 0),
+                    // The complement of an unsigned number stays in its
+                    // size.
+                    UnaryOp::Xor => {
+                        let bits = match basic {
+                            Basic::Uint8 => 8,
+                            Basic::Uint16 => 16,
+                            Basic::Uint32 => 32,
+                            Basic::Uint | Basic::Uint64 | Basic::Uintptr => 64,
+                            _ => 0,
+                        };
+                        (constant::UnaryOp::Complement, bits)
+                    }
+                    _ => return Operand::UNKNOWN,
+                };
+                self.fitted(operand.ty, value.unary(op, bits))
+            }
+            _ => Operand::UNKNOWN,
+        }
     }
 
     /// The kind of the result for two untyped numbers: the later of
@@ -857,36 +1197,71 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn binary(&mut self, cx: &Cx<'a>, op: BinaryOp, x: ExprId, y: ExprId) -> Option<Operand> {
-        let (mut x, mut y) = (self.constant(cx, x)?, self.constant(cx, y)?);
+    fn binary(&mut self, cx: &Cx<'a>, op: BinaryOp, x: ExprId, y: ExprId) -> Operand {
+        let (x, y) = (self.operand(cx, x), self.operand(cx, y));
+        let comparison = matches!(
+            op,
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+        );
+        let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) else {
+            if !x.is_value() || !y.is_value() {
+                return Operand::UNKNOWN;
+            }
+            // A comparison of values is a boolean of no type yet; the
+            // other results have the type of the operand that has one.
+            return match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
+                _ if comparison => self.value_of(Basic::UntypedBool),
+                // A shift has the type of what is shifted; with a constant
+                // of no type there, the type comes from around it.
+                _ if matches!(op, BinaryOp::Shl | BinaryOp::Shr) => match self.is_untyped(x.ty) {
+                    true => Operand::UNKNOWN,
+                    false => Operand::value(x.ty),
+                },
+                (false, _) => Operand::value(x.ty),
+                (true, false) => Operand::value(y.ty),
+                (true, true) => match self.larger_kind(x.ty, y.ty) {
+                    Some(ty) => Operand::value(ty),
+                    None => Operand::UNKNOWN,
+                },
+            };
+        };
         if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
             // The count fits an unsigned integer and is small; a float
             // that is an integer shifts as one.
-            let count = u32::try_from(y.value.to_int().as_i64()?).ok()?;
-            let shifted = x.value.to_int();
-            if count > 1023 - 1 + 52 || shifted.kind() != Kind::Int {
-                return None;
-            }
+            let count = b
+                .to_int()
+                .as_i64()
+                .and_then(|count| u32::try_from(count).ok());
+            let shifted = a.to_int();
             let ty = match self.is_integer(x.ty) {
                 true => x.ty,
                 false if self.is_untyped(x.ty) => self.types.basic(Basic::UntypedInt),
-                false => return None,
+                false => return Operand::UNKNOWN,
             };
-            return self.fitted(ty, shifted.shift(op == BinaryOp::Shl, count));
+            return match count {
+                Some(count) if count <= 1023 - 1 + 52 && shifted.kind() == Kind::Int => {
+                    self.fitted(ty, shifted.shift(op == BinaryOp::Shl, count))
+                }
+                _ => Operand::UNKNOWN,
+            };
         }
         // An untyped operand takes the type of the other; two typed ones
         // have the same type.
+        let (mut a, mut b) = (a.clone(), b.clone());
         let ty = match (self.is_untyped(x.ty), self.is_untyped(y.ty)) {
-            (true, true) => self.larger_kind(x.ty, y.ty)?,
-            (true, false) => {
-                x.value = self.converted(&x.value, y.ty)?;
+            (true, true) => self.larger_kind(x.ty, y.ty),
+            (true, false) => self.converted(&a, y.ty).map(|fit| {
+                a = fit;
                 y.ty
-            }
-            (false, true) => {
-                y.value = self.converted(&y.value, x.ty)?;
+            }),
+            (false, true) => self.converted(&b, x.ty).map(|fit| {
+                b = fit;
                 x.ty
-            }
-            (false, false) => (x.ty == y.ty).then_some(x.ty)?,
+            }),
+            (false, false) => (x.ty == y.ty).then_some(x.ty),
+        };
+        let Some(ty) = ty else {
+            return Operand::UNKNOWN;
         };
         let compare = match op {
             BinaryOp::Eq => Some(CompareOp::Eq),
@@ -898,8 +1273,7 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         if let Some(compare) = compare {
-            let holds = Value::Bool(x.value.compare(compare, &y.value));
-            return self.untyped(Basic::UntypedBool, holds);
+            return self.untyped(Basic::UntypedBool, Value::Bool(a.compare(compare, &b)));
         }
         let op = match op {
             BinaryOp::OrOr => constant::BinaryOp::LogicalOr,
@@ -915,63 +1289,282 @@ impl<'a> Checker<'a> {
             BinaryOp::Or => constant::BinaryOp::Or,
             BinaryOp::Xor => constant::BinaryOp::Xor,
             BinaryOp::AndNot => constant::BinaryOp::AndNot,
-            _ => return None,
+            _ => return Operand::UNKNOWN,
         };
-        self.fitted(ty, x.value.binary(op, &y.value))
+        self.fitted(ty, a.binary(op, &b))
     }
 
-    /// A conversion of a constant, or a built-in function of constants.
-    fn call(&mut self, cx: &Cx<'a>, fun: ExprId, args: &[ExprId]) -> Option<Operand> {
-        let tree = cx.tree;
-        let mut callee = fun;
-        while let ExprKind::Paren(x) = tree.exprs[callee].kind {
-            callee = x;
-        }
-        let &[arg] = args else { return None };
-        let builtin = match cx.body.uses.get(&callee) {
-            Some(Ref::Universe(name)) if name.kind() == PredeclaredKind::Func => Some(*name),
-            _ => None,
-        };
-        if let Some(builtin) = builtin {
-            let x = self.constant(cx, arg)?;
-            return match (builtin, &x.value) {
-                // The length of a constant string is a constant of type int.
-                (Predeclared::Len, Value::Str(text)) => Some(Operand {
-                    ty: self.types.basic(Basic::Int),
-                    value: Value::Int64(text.bytes().len() as i64),
-                }),
-                (Predeclared::Real | Predeclared::Imag, _) if self.is_untyped(x.ty) => {
-                    let complex = x.value.to_complex();
-                    let part = match builtin {
-                        Predeclared::Real => complex.real(),
-                        _ => complex.imag(),
-                    };
-                    self.untyped(Basic::UntypedFloat, part)
-                        .filter(|x| x.value != Value::Unknown)
+    /// A call: of a function, a conversion, or a built-in function.
+    fn call(&mut self, cx: &Cx<'a>, fun: ExprId, args: &[ExprId]) -> Operand {
+        let callee = self.operand(cx, fun);
+        match callee.mode {
+            Mode::Type => self.conversion(cx, callee.ty, args),
+            Mode::Builtin(builtin) => self.builtin(cx, builtin, args),
+            Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
+            Mode::Value => {
+                // The type arguments of a generic function are found from
+                // the arguments of the call.
+                let sig = match self.types.generic_func(callee.ty) {
+                    Some(params) => match self.inferred(cx, callee.ty, &params, args) {
+                        Some(sig) => sig,
+                        None => return Operand::UNKNOWN,
+                    },
+                    None => self.types.underlying(callee.ty),
+                };
+                let Type::Func { results, .. } = &*self.types.get(sig) else {
+                    return Operand::UNKNOWN;
+                };
+                match &results[..] {
+                    [] => Operand {
+                        mode: Mode::NoValue,
+                        ty: Types::INVALID,
+                    },
+                    [one] => Operand::value(*one),
+                    many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
                 }
-                _ => None,
-            };
+            }
+            _ => Operand::UNKNOWN,
         }
-        // `T(x)` for a type `T` of constants.
-        let named = matches!(
-            tree.exprs[callee].kind,
-            ExprKind::Name(_) | ExprKind::Selector { .. }
-        );
-        let target = named.then(|| self.named_type(cx, callee)).flatten()?;
-        let basic = self.basic_of(target)?;
-        let x = self.constant(cx, arg)?;
-        if let Some(value) = representable(&x.value, basic) {
-            return (value != Value::Unknown).then_some(Operand { ty: target, value });
+    }
+
+    /// The type of the generic function `sig` for the call with `args`:
+    /// each type parameter is what the arguments make it. `None` if an
+    /// argument does not fit or a parameter stays open.
+    fn inferred(
+        &mut self,
+        cx: &Cx<'a>,
+        sig: TypeId,
+        params: &[TypeId],
+        args: &[ExprId],
+    ) -> Option<TypeId> {
+        let Type::Func {
+            params: wanted,
+            variadic,
+            ..
+        } = &*self.types.get(sig)
+        else {
+            return None;
+        };
+        // The type that the parameter list has for the argument at `at`.
+        let wanted_at = |at: usize| match (*variadic, at + 1 >= wanted.len()) {
+            (true, true) => match &*self.types.get(*wanted.last()?) {
+                Type::Slice(elem) => Some(*elem),
+                _ => None,
+            },
+            _ => wanted.get(at).copied(),
+        };
+        let mut bound = vec![None; params.len()];
+        let mut untyped = Vec::new();
+        for (at, &arg) in args.iter().enumerate() {
+            let (operand, wanted) = (self.operand(cx, arg), wanted_at(at)?);
+            if !operand.is_value() {
+                return None;
+            }
+            match self.is_untyped(operand.ty) {
+                true => untyped.push((wanted, operand.ty)),
+                false if !self.types.unify(wanted, operand.ty, params, &mut bound) => return None,
+                false => {}
+            }
+        }
+        // A constant of no type gives a parameter its default type, if no
+        // other argument said what the parameter is.
+        for (wanted, ty) in untyped {
+            let at = params.iter().position(|&param| param == wanted);
+            if let Some(at) = at.filter(|&at| bound[at].is_none()) {
+                bound[at] = Some(self.types.default_type(ty));
+            }
+        }
+        let bound: Vec<TypeId> = bound.into_iter().collect::<Option<_>>()?;
+        Some(self.types.substitute(sig, params, &bound))
+    }
+
+    /// `T(x)`: a constant where `T` is a type of constants and holds `x`.
+    fn conversion(&mut self, cx: &Cx<'a>, target: TypeId, args: &[ExprId]) -> Operand {
+        let &[arg] = args else {
+            return Operand::UNKNOWN;
+        };
+        let x = self.operand(cx, arg);
+        let (Mode::Const(value), Some(basic)) = (&x.mode, self.basic_of(target)) else {
+            return match x.is_value() {
+                true => Operand::value(target),
+                false => Operand::UNKNOWN,
+            };
+        };
+        if let Some(value) = representable(value, basic) {
+            return match value {
+                Value::Unknown => Operand::UNKNOWN,
+                value => Operand::constant(target, value),
+            };
         }
         // An integer converts to the string of that character.
         if basic == Basic::String && self.is_integer(x.ty) {
-            let code = x.value.as_i64().and_then(|code| u32::try_from(code).ok());
+            let code = value.as_i64().and_then(|code| u32::try_from(code).ok());
             let c = code
                 .and_then(char::from_u32)
                 .unwrap_or(char::REPLACEMENT_CHARACTER);
             let value = Value::string(c.encode_utf8(&mut [0; 4]).as_bytes());
-            return Some(Operand { ty: target, value });
+            return Operand::constant(target, value);
         }
-        None
+        Operand::UNKNOWN
+    }
+
+    /// The type of `expr` as an argument that is a type: of `make`, `new`.
+    fn type_argument(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<TypeId> {
+        let operand = self.operand(cx, expr);
+        matches!(operand.mode, Mode::Type).then_some(operand.ty)
+    }
+
+    fn builtin(&mut self, cx: &Cx<'a>, builtin: Predeclared, args: &[ExprId]) -> Operand {
+        let no_value = Operand {
+            mode: Mode::NoValue,
+            ty: Types::INVALID,
+        };
+        let Some(&first) = args.first() else {
+            return match builtin {
+                Predeclared::Recover => Operand::value(self.types.any()),
+                Predeclared::Print | Predeclared::Println => no_value,
+                _ => Operand::UNKNOWN,
+            };
+        };
+        match builtin {
+            Predeclared::New => match self.type_argument(cx, first) {
+                Some(ty) => Operand::value(self.types.pointer(ty)),
+                None => Operand::UNKNOWN,
+            },
+            Predeclared::Make => match self.type_argument(cx, first) {
+                Some(ty) => Operand::value(ty),
+                None => Operand::UNKNOWN,
+            },
+            Predeclared::Delete
+            | Predeclared::Clear
+            | Predeclared::Close
+            | Predeclared::Panic
+            | Predeclared::Print
+            | Predeclared::Println => no_value,
+            Predeclared::CopyFunc => self.value_of(Basic::Int),
+            Predeclared::Len | Predeclared::Cap => {
+                let x = self.operand(cx, first);
+                match &x.mode {
+                    // The length of a constant string is a constant of
+                    // type int.
+                    Mode::Const(Value::Str(text)) if builtin == Predeclared::Len => {
+                        let len = Value::Int64(text.bytes().len() as i64);
+                        Operand::constant(self.types.basic(Basic::Int), len)
+                    }
+                    // The length of an array is constant if nothing is
+                    // called or received to get the array.
+                    Mode::Value if self.is_static(cx, first) => {
+                        let array = match &*self.types.get(self.types.underlying(x.ty)) {
+                            Type::Pointer(elem) => self.types.underlying(*elem),
+                            _ => self.types.underlying(x.ty),
+                        };
+                        match &*self.types.get(array) {
+                            Type::Array { len, .. } => {
+                                let len = Value::Int64(*len as i64);
+                                Operand::constant(self.types.basic(Basic::Int), len)
+                            }
+                            _ => self.value_of(Basic::Int),
+                        }
+                    }
+                    Mode::Value | Mode::Const(_) => self.value_of(Basic::Int),
+                    _ => Operand::UNKNOWN,
+                }
+            }
+            Predeclared::Append => {
+                let x = self.operand(cx, first);
+                match x.is_value() && !self.is_untyped(x.ty) {
+                    true => Operand::value(x.ty),
+                    false => Operand::UNKNOWN,
+                }
+            }
+            Predeclared::Real | Predeclared::Imag => {
+                let x = self.operand(cx, first);
+                let part = match self.basic_of(x.ty) {
+                    Some(Basic::Complex64) => Basic::Float32,
+                    Some(Basic::Complex128) => Basic::Float64,
+                    Some(basic) if basic.is_untyped() => Basic::UntypedFloat,
+                    _ => return Operand::UNKNOWN,
+                };
+                match &x.mode {
+                    Mode::Const(value) if part == Basic::UntypedFloat => {
+                        let complex = value.to_complex();
+                        let value = match builtin {
+                            Predeclared::Real => complex.real(),
+                            _ => complex.imag(),
+                        };
+                        self.fitted(self.types.basic(part), value)
+                    }
+                    Mode::Value => self.value_of(part),
+                    _ => Operand::UNKNOWN,
+                }
+            }
+            _ => Operand::UNKNOWN,
+        }
+    }
+
+    /// Whether `expr` is evaluated without a call and without a receive
+    /// from a channel.
+    fn is_static(&self, cx: &Cx<'a>, expr: ExprId) -> bool {
+        match &cx.tree.exprs[expr].kind {
+            ExprKind::Name(_) | ExprKind::BasicLit { .. } => true,
+            ExprKind::Paren(x) | ExprKind::Selector { x, .. } => self.is_static(cx, *x),
+            ExprKind::Unary { op, x } => *op != UnaryOp::Recv && self.is_static(cx, *x),
+            ExprKind::Index { x, indices } => {
+                self.is_static(cx, *x) && indices.iter().all(|&index| self.is_static(cx, index))
+            }
+            ExprKind::CompositeLit { elems, .. } => elems.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// A function of package unsafe, which takes a value of any type.
+    fn unsafe_call(&mut self, cx: &Cx<'a>, name: Spur, args: &[ExprId]) -> Operand {
+        let Some(&first) = args.first() else {
+            return Operand::UNKNOWN;
+        };
+        let pointer = |this: &Self| {
+            let object = this.package_unsafe_pointer(cx);
+            object.map_or(Operand::UNKNOWN, Operand::value)
+        };
+        match self.names.resolve(&name) {
+            // A size is a constant, but one that needs the layout.
+            "Sizeof" | "Alignof" | "Offsetof" => self.value_of(Basic::Uintptr),
+            "Add" => pointer(self),
+            "String" => self.value_of(Basic::String),
+            "StringData" => {
+                let byte = self.types.basic(Basic::Uint8);
+                Operand::value(self.types.pointer(byte))
+            }
+            "Slice" => {
+                let x = self.operand(cx, first);
+                match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Pointer(elem) if x.is_value() => Operand::value(self.types.slice(*elem)),
+                    _ => Operand::UNKNOWN,
+                }
+            }
+            "SliceData" => {
+                let x = self.operand(cx, first);
+                match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Slice(elem) if x.is_value() => Operand::value(self.types.pointer(*elem)),
+                    _ => Operand::UNKNOWN,
+                }
+            }
+            _ => Operand::UNKNOWN,
+        }
+    }
+
+    /// The type `unsafe.Pointer`, found in a package that imports unsafe.
+    fn package_unsafe_pointer(&self, _cx: &Cx<'a>) -> Option<TypeId> {
+        let pointer = self.names.get("Pointer")?;
+        self.package
+            .objects
+            .iter()
+            .find_map(|object| match &object.kind {
+                ObjKind::Import { package, .. } if package.path == "unsafe" => {
+                    let &member = package.scope.get(&pointer)?;
+                    Some(package.object(member).ty)
+                }
+                _ => None,
+            })
     }
 }

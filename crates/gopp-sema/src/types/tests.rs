@@ -375,6 +375,7 @@ fn a_type_implements_an_interface_whose_methods_it_has() {
             DeclaredMethod {
                 method,
                 pointer_receiver,
+                receiver_params: Vec::new(),
             },
         );
     };

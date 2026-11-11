@@ -134,6 +134,22 @@ pub struct DeclaredMethod {
     pub method: Method,
     /// Whether the receiver is a pointer.
     pub pointer_receiver: bool,
+    /// The type parameters that the receiver names, `P` in
+    /// `func (l *List[P]) Len() int`: the signature is written with them.
+    pub receiver_params: Vec<TypeId>,
+}
+
+/// What a selector `x.name` reaches in the type of `x`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Member {
+    Field {
+        ty: TypeId,
+    },
+    Method {
+        /// A [`Type::Func`], without the receiver.
+        sig: TypeId,
+        pointer_receiver: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -143,6 +159,8 @@ struct Named {
     package: Option<Spur>,
     /// Set once the declaration is checked.
     underlying: Option<TypeId>,
+    /// The type parameters of a generic type.
+    params: Vec<TypeId>,
     methods: Vec<DeclaredMethod>,
 }
 
@@ -152,6 +170,11 @@ struct Inner {
     ids: FxHashMap<Arc<Type>, TypeId>,
     named: Vec<Named>,
     params: Vec<Spur>,
+    /// The underlying type of each generic type with arguments that was
+    /// asked for.
+    instances: FxHashMap<TypeId, TypeId>,
+    /// The type parameters of each generic function, by its type.
+    generic_funcs: FxHashMap<TypeId, Vec<TypeId>>,
 }
 
 impl Inner {
@@ -237,6 +260,7 @@ impl Types {
             name: names.get_or_intern_static("error"),
             package: None,
             underlying: Some(underlying),
+            params: Vec::new(),
             methods: Vec::new(),
         });
         let error = inner.intern(Type::Named {
@@ -373,6 +397,7 @@ impl Types {
                 name,
                 package: Some(package),
                 underlying: None,
+                params: Vec::new(),
                 methods: Vec::new(),
             });
             NamedId(inner.named.len() as u32 - 1)
@@ -383,6 +408,258 @@ impl Types {
         // The underlying type of a declared type is never a declared type.
         let underlying = self.underlying(underlying);
         self.write(|inner| inner.named[named.0 as usize].underlying = Some(underlying));
+    }
+
+    /// Says that the function type `sig` is that of a generic function
+    /// with the type parameters `params`.
+    pub fn set_generic_func(&self, sig: TypeId, params: Vec<TypeId>) {
+        self.write(|inner| inner.generic_funcs.insert(sig, params));
+    }
+
+    /// The type parameters of a generic function of the type `sig`.
+    pub fn generic_func(&self, sig: TypeId) -> Option<Vec<TypeId>> {
+        self.read(|inner| inner.generic_funcs.get(&sig).cloned())
+    }
+
+    /// Finds what the type parameters `params` must be for `pattern`,
+    /// which is written with them, to be the type `actual`. `bound` holds
+    /// what is found, one place for each parameter. False if the two do
+    /// not fit, or a parameter would have to be two types.
+    pub fn unify(
+        &self,
+        pattern: TypeId,
+        actual: TypeId,
+        params: &[TypeId],
+        bound: &mut [Option<TypeId>],
+    ) -> bool {
+        if let Some(at) = params.iter().position(|&param| param == pattern) {
+            return match bound[at] {
+                Some(known) => known == actual,
+                None => {
+                    bound[at] = Some(actual);
+                    true
+                }
+            };
+        }
+        if pattern == actual {
+            return true;
+        }
+        match (&*self.get(pattern), &*self.get(actual)) {
+            (Type::Pointer(a), Type::Pointer(b))
+            | (Type::Slice(a), Type::Slice(b))
+            | (Type::Unique(a), Type::Unique(b))
+            | (Type::Shared(a), Type::Shared(b))
+            | (Type::Weak(a), Type::Weak(b))
+            | (Type::Option(a), Type::Option(b))
+            | (Type::Local(a), Type::Local(b))
+            | (Type::Chan { elem: a, .. }, Type::Chan { elem: b, .. }) => {
+                self.unify(*a, *b, params, bound)
+            }
+            (Type::Array { len: m, elem: a }, Type::Array { len: n, elem: b }) => {
+                m == n && self.unify(*a, *b, params, bound)
+            }
+            (Type::Map { key: k, value: v }, Type::Map { key: l, value: w }) => {
+                self.unify(*k, *l, params, bound) && self.unify(*v, *w, params, bound)
+            }
+            (
+                Type::Func {
+                    params: p,
+                    results: r,
+                    variadic: v,
+                },
+                Type::Func {
+                    params: q,
+                    results: s,
+                    variadic: w,
+                },
+            ) => {
+                v == w && self.unify_all(p, q, params, bound) && self.unify_all(r, s, params, bound)
+            }
+            (Type::Named { id: a, args: x }, Type::Named { id: b, args: y }) => {
+                a == b && self.unify_all(x, y, params, bound)
+            }
+            // A declared type fits a pattern that is none through what it
+            // was declared as: `[]E` takes a `type List []int`.
+            (pattern_type, Type::Named { .. }) if !matches!(pattern_type, Type::Named { .. }) => {
+                self.unify(pattern, self.underlying(actual), params, bound)
+            }
+            _ => false,
+        }
+    }
+
+    fn unify_all(
+        &self,
+        patterns: &[TypeId],
+        actuals: &[TypeId],
+        params: &[TypeId],
+        bound: &mut [Option<TypeId>],
+    ) -> bool {
+        patterns.len() == actuals.len()
+            && patterns
+                .iter()
+                .zip(actuals)
+                .all(|(&a, &b)| self.unify(a, b, params, bound))
+    }
+
+    /// Says that `named` is generic, with the type parameters `params`.
+    pub fn set_type_params(&self, named: NamedId, params: Vec<TypeId>) {
+        self.write(|inner| inner.named[named.0 as usize].params = params);
+    }
+
+    /// `ty` with each type parameter of `from` replaced by the type at the
+    /// same place of `to`.
+    pub fn substitute(&self, ty: TypeId, from: &[TypeId], to: &[TypeId]) -> TypeId {
+        if from.is_empty() {
+            return ty;
+        }
+        let sub = |ty: TypeId| self.substitute(ty, from, to);
+        let list =
+            |types: &[TypeId]| -> Box<[TypeId]> { types.iter().map(|&ty| sub(ty)).collect() };
+        let replaced = match &*self.get(ty) {
+            Type::Param(_) => {
+                let at = from.iter().position(|&param| param == ty);
+                return at.and_then(|at| to.get(at).copied()).unwrap_or(ty);
+            }
+            Type::Invalid | Type::Basic(_) | Type::Marker(_) => return ty,
+            Type::Pointer(elem) => Type::Pointer(sub(*elem)),
+            Type::Unique(elem) => Type::Unique(sub(*elem)),
+            Type::Shared(elem) => Type::Shared(sub(*elem)),
+            Type::Weak(elem) => Type::Weak(sub(*elem)),
+            Type::Option(elem) => Type::Option(sub(*elem)),
+            Type::Local(elem) => Type::Local(sub(*elem)),
+            Type::Slice(elem) => Type::Slice(sub(*elem)),
+            Type::Array { len, elem } => Type::Array {
+                len: *len,
+                elem: sub(*elem),
+            },
+            Type::Map { key, value } => Type::Map {
+                key: sub(*key),
+                value: sub(*value),
+            },
+            Type::Chan { dir, elem } => Type::Chan {
+                dir: *dir,
+                elem: sub(*elem),
+            },
+            Type::Tuple(types) => Type::Tuple(list(types)),
+            Type::Func {
+                params,
+                results,
+                variadic,
+            } => Type::Func {
+                params: list(params),
+                results: list(results),
+                variadic: *variadic,
+            },
+            Type::Struct(fields) => {
+                let field = |field: &Field| Field {
+                    ty: sub(field.ty),
+                    ..field.clone()
+                };
+                Type::Struct(fields.iter().map(field).collect())
+            }
+            Type::Interface { methods, embedded } => {
+                let method = |method: &Method| Method {
+                    sig: sub(method.sig),
+                    ..method.clone()
+                };
+                Type::Interface {
+                    methods: methods.iter().map(method).collect(),
+                    embedded: list(embedded),
+                }
+            }
+            Type::Union(terms) => {
+                let term = |term: &Term| Term {
+                    ty: sub(term.ty),
+                    ..*term
+                };
+                Type::Union(terms.iter().map(term).collect())
+            }
+            Type::Named { id, args } => Type::Named {
+                id: *id,
+                args: list(args),
+            },
+        };
+        self.intern(replaced)
+    }
+
+    /// What `name` reaches in a value of the type `ty`: a field or a
+    /// method of the type, or one reached through embedded fields, the
+    /// shallowest first. `None` if there is none, or two at one depth.
+    /// `package` is the path of the package that asks: a name that is not
+    /// exported is found only in its own package.
+    pub fn member(
+        &self,
+        ty: TypeId,
+        name: Spur,
+        package: Spur,
+        names: &ThreadedRodeo,
+    ) -> Option<Member> {
+        let exported = names.resolve(&name).starts_with(char::is_uppercase);
+        let matches = |other: Spur, owner: Option<Spur>| {
+            other == name && (exported || owner == Some(package))
+        };
+        // Through one pointer, the members of what it points to.
+        let start = match &*self.get(self.underlying(ty)) {
+            Type::Pointer(elem) if !self.is_interface(*elem) => *elem,
+            _ => ty,
+        };
+        let mut seen = vec![start];
+        let mut level = vec![start];
+        while !level.is_empty() {
+            let mut found = Vec::new();
+            let mut next = Vec::new();
+            for &current in &level {
+                if let Type::Named { id, args } = &*self.get(current) {
+                    let declared = self.read(|inner| {
+                        let mut methods = inner.named[id.0 as usize].methods.iter();
+                        methods
+                            .find(|m| matches(m.method.name, m.method.package))
+                            .cloned()
+                    });
+                    if let Some(method) = declared {
+                        found.push(Member::Method {
+                            sig: self.substitute(method.method.sig, &method.receiver_params, args),
+                            pointer_receiver: method.pointer_receiver,
+                        });
+                        continue;
+                    }
+                }
+                match &*self.get(self.underlying(current)) {
+                    Type::Struct(fields) => {
+                        for field in fields.iter() {
+                            if matches(field.name, field.package) {
+                                found.push(Member::Field { ty: field.ty });
+                            } else if field.embedded {
+                                let inner = match &*self.get(field.ty) {
+                                    Type::Pointer(elem) => *elem,
+                                    _ => field.ty,
+                                };
+                                if !seen.contains(&inner) {
+                                    seen.push(inner);
+                                    next.push(inner);
+                                }
+                            }
+                        }
+                    }
+                    Type::Interface { .. } => {
+                        let methods = self.interface_methods(current, names).unwrap_or_default();
+                        if let Some(method) = methods.iter().find(|m| matches(m.name, m.package)) {
+                            found.push(Member::Method {
+                                sig: method.sig,
+                                pointer_receiver: false,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match found[..] {
+                [] => level = next,
+                [one] => return Some(one),
+                _ => return None,
+            }
+        }
+        None
     }
 
     pub fn add_method(&self, named: NamedId, method: DeclaredMethod) {
@@ -412,13 +689,30 @@ impl Types {
     /// as, of any other type itself. Invalid while the declaration of a
     /// declared type is not checked yet.
     pub fn underlying(&self, id: TypeId) -> TypeId {
-        match &*self.get(id) {
-            Type::Named { id: named, .. } => {
-                let underlying = self.read(|inner| inner.named[named.0 as usize].underlying);
-                underlying.unwrap_or(Self::INVALID)
-            }
-            _ => id,
+        let Type::Named { id: named, args } = &*self.get(id) else {
+            return id;
+        };
+        let (underlying, params, known) = self.read(|inner| {
+            let named = &inner.named[named.0 as usize];
+            (
+                named.underlying,
+                named.params.clone(),
+                inner.instances.get(&id).copied(),
+            )
+        });
+        let Some(underlying) = underlying else {
+            return Self::INVALID;
+        };
+        if args.is_empty() || params.len() != args.len() {
+            return underlying;
         }
+        // A generic type with arguments: what it was declared as, with the
+        // arguments in the place of its parameters.
+        known.unwrap_or_else(|| {
+            let instance = self.substitute(underlying, &params, args);
+            self.write(|inner| inner.instances.insert(id, instance));
+            instance
+        })
     }
 
     pub fn is_untyped(&self, id: TypeId) -> bool {
