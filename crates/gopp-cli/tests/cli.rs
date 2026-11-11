@@ -4,11 +4,22 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Mutex, PoisonError};
 
 use tempfile::TempDir;
 
+/// Held while a script is written and while a process is started. A process
+/// started while another thread has a script open for writing inherits that
+/// handle for a moment, and executing the script then fails as "text file busy".
+static SPAWN: Mutex<()> = Mutex::new(());
+
 fn gopp() -> Command {
     Command::new(env!("CARGO_BIN_EXE_gopp"))
+}
+
+fn run(command: &mut Command) -> Output {
+    let _guard = SPAWN.lock().unwrap_or_else(PoisonError::into_inner);
+    command.output().unwrap()
 }
 
 fn stdout(output: &Output) -> String {
@@ -21,6 +32,7 @@ fn stderr(output: &Output) -> String {
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
+    let _guard = SPAWN.lock().unwrap_or_else(PoisonError::into_inner);
     fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     path
@@ -47,16 +59,12 @@ fn fake_toolchain(dir: &TempDir, clang_version: &str, lld_version: &str) -> Path
 }
 
 fn host_toolchain(clang: &Path) -> Output {
-    gopp()
-        .arg("host-toolchain")
-        .env("GOPP_CLANG", clang)
-        .output()
-        .unwrap()
+    run(gopp().arg("host-toolchain").env("GOPP_CLANG", clang))
 }
 
 #[test]
 fn version_names_the_compiler_and_the_pinned_clang() {
-    let output = gopp().arg("version").output().unwrap();
+    let output = run(gopp().arg("version"));
     assert_eq!(
         stdout(&output),
         format!("gopp version {} (clang 23)\n", env!("CARGO_PKG_VERSION"))
@@ -66,13 +74,13 @@ fn version_names_the_compiler_and_the_pinned_clang() {
 
 #[test]
 fn unknown_command_is_a_usage_error() {
-    let output = gopp().arg("no-such-command").output().unwrap();
+    let output = run(gopp().arg("no-such-command"));
     assert_eq!(output.status.code(), Some(2));
 }
 
 #[test]
 fn long_flags_take_one_dash() {
-    let output = gopp().arg("-help").output().unwrap();
+    let output = run(gopp().arg("-help"));
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout(&output).contains("host-toolchain"));
 }
@@ -154,18 +162,14 @@ fn parse_prints_the_tree_on_request() {
         "main.gopp",
         "package main\n\nfunc main() { run!() }\n",
     );
-    let quiet = gopp().arg("parse").arg(&file).output().unwrap();
+    let quiet = run(gopp().arg("parse").arg(&file));
     assert_eq!(
         (stdout(&quiet), stderr(&quiet)),
         (String::new(), String::new())
     );
     assert_eq!(quiet.status.code(), Some(0));
 
-    let output = gopp()
-        .args(["parse", "-emit=ast"])
-        .arg(&file)
-        .output()
-        .unwrap();
+    let output = run(gopp().args(["parse", "-emit=ast"]).arg(&file));
     assert!(stdout(&output).starts_with("File package=main\n  Func main @14..36\n"));
     assert!(stdout(&output).contains("Call unwrap"));
     assert_eq!(output.status.code(), Some(0));
@@ -176,7 +180,7 @@ fn parse_reports_syntax_errors_and_fails() {
     let dir = TempDir::new().unwrap();
     let good = write_source(&dir, "good.go", "package p\n");
     let bad = write_source(&dir, "bad.gopp", "package p\n\nfunc f() { g(1 2) }\n");
-    let output = gopp().arg("parse").arg(&good).arg(&bad).output().unwrap();
+    let output = run(gopp().arg("parse").arg(&good).arg(&bad));
     let header = format!(
         "{}:3:16: error[E0028]: syntax error: unexpected literal 2 in argument list; possibly \
          missing comma or )\n",
@@ -195,7 +199,7 @@ fn parse_stops_reporting_after_ten_errors() {
         "bad.gopp",
         &format!("package p\n{}", "func f() { g(1 2) }\n".repeat(30)),
     );
-    let output = gopp().arg("parse").arg(&bad).output().unwrap();
+    let output = run(gopp().arg("parse").arg(&bad));
     assert_eq!(stderr(&output).matches("error[E0028]").count(), 10);
     assert_eq!(
         stderr(&output)
@@ -209,16 +213,16 @@ fn parse_stops_reporting_after_ten_errors() {
 fn parse_refuses_files_it_cannot_read() {
     let dir = TempDir::new().unwrap();
     let other = write_source(&dir, "main.c", "int main;\n");
-    let output = gopp().arg("parse").arg(&other).output().unwrap();
+    let output = run(gopp().arg("parse").arg(&other));
     assert!(stderr(&output).ends_with("main.c: not a .gopp or .go file\n"));
     assert_eq!(output.status.code(), Some(1));
 
     let missing = dir.path().join("missing.gopp");
-    let output = gopp().arg("parse").arg(&missing).output().unwrap();
+    let output = run(gopp().arg("parse").arg(&missing));
     assert!(stderr(&output).starts_with("error: "));
     assert!(stderr(&output).contains("missing.gopp: "));
     assert_eq!(output.status.code(), Some(1));
 
-    let none = gopp().arg("parse").output().unwrap();
+    let none = run(gopp().arg("parse"));
     assert_eq!(none.status.code(), Some(2));
 }
