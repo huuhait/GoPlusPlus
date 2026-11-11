@@ -7,14 +7,15 @@
 //! left invalid, which fits everywhere and is no error.
 
 use gopp_diag::{Code, Diagnostic, Sink};
+use gopp_span::Span;
 use gopp_syntax::ast::{self, *};
 use lasso::{Spur, ThreadedRodeo};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::basic::{Basic, representable};
 use crate::constant::{self, CompareOp, Kind, Value};
 use crate::literal::unquote;
-use crate::object::{Body, LocalId, ObjId, ObjKind, Ref};
+use crate::object::{Body, ExprType, LocalId, ObjId, ObjKind, Ref};
 use crate::package::Package;
 use crate::resolve::Unit;
 use crate::types::{ChanDir, DeclaredMethod, Field, Member, Method, Term, Type, TypeId, Types};
@@ -149,6 +150,28 @@ struct Checker<'a> {
     /// Whether the declaration being worked out needed something that
     /// this module does not work out yet.
     incomplete: bool,
+    /// Where an error was reported, so that none is reported twice.
+    reported: FxHashSet<Span>,
+    /// While a body is walked: what each local of it is.
+    locals: FxHashMap<LocalId, Operand>,
+    /// While a body is walked: what each expression of it is, so that
+    /// none is worked out twice.
+    memo: Option<FxHashMap<ExprId, Operand>>,
+    /// While a body is walked: its groups of constants.
+    local_groups: FxHashMap<u32, LocalGroup>,
+}
+
+/// What was found in one body: the type of each expression with a value,
+/// and the type of each local.
+type BodyTypes = (FxHashMap<ExprId, ExprType>, Vec<(LocalId, TypeId)>);
+
+/// A group of constants inside a function: the index of its next constant,
+/// and the type and values that a constant without a value repeats.
+#[derive(Default)]
+struct LocalGroup {
+    next: i64,
+    ty: Option<ExprId>,
+    values: Vec<ExprId>,
 }
 
 /// Works out the type of every package-level object of `package` and the
@@ -173,6 +196,10 @@ pub fn declarations(
         ty: vec![Types::INVALID; count],
         value: vec![Value::Unknown; count],
         incomplete: false,
+        reported: FxHashSet::default(),
+        locals: FxHashMap::default(),
+        memo: None,
+        local_groups: FxHashMap::default(),
     };
     for (file, unit) in units.iter().enumerate() {
         checker.collect(file, *unit);
@@ -184,10 +211,23 @@ pub fn declarations(
     for object in 0..count {
         checker.resolve(object);
     }
+    let types_of_files: Vec<_> = units
+        .iter()
+        .enumerate()
+        .map(|(file, unit)| checker.bodies(file, *unit))
+        .collect();
     let Checker { ty, value, .. } = checker;
     for ((object, ty), value) in package.objects.iter_mut().zip(ty).zip(value) {
         object.ty = ty;
         object.value = value;
+    }
+    for (file, types_of_bodies) in package.files.iter_mut().zip(types_of_files) {
+        for (body, (exprs, locals)) in file.bodies.iter_mut().zip(types_of_bodies) {
+            body.types = exprs;
+            for (LocalId(local), ty) in locals {
+                body.locals[local as usize].ty = ty;
+            }
+        }
     }
 }
 
@@ -299,16 +339,26 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Gives each type parameter of a declaration a type.
-    fn declare_params(&self, cx: &mut Cx<'a>, type_params: &[TypeParam]) -> Vec<TypeId> {
-        let declare = |param: &TypeParam| {
+    /// Gives each type parameter of a declaration a type, then each its
+    /// constraint, which may name the others.
+    fn declare_params(&mut self, cx: &mut Cx<'a>, type_params: &[TypeParam]) -> Vec<TypeId> {
+        let mut params = Vec::new();
+        for param in type_params {
             let ty = self.types.param(param.name.name);
             if let Some(&local) = cx.body.defs.get(&param.name.span.lo) {
                 cx.params.insert(local, ty);
             }
-            ty
-        };
-        type_params.iter().map(declare).collect()
+            params.push(ty);
+        }
+        // A constraint that is not worked out leaves the declaration as
+        // well known as it was.
+        let incomplete = self.incomplete;
+        for (param, &ty) in type_params.iter().zip(&params) {
+            let constraint = self.typ(cx, param.bound);
+            self.types.set_constraint(ty, constraint);
+        }
+        self.incomplete = incomplete;
+        params
     }
 
     /// Works out the object, unless that is done or under way.
@@ -595,7 +645,10 @@ impl<'a> Checker<'a> {
                 let object = package.object(member);
                 matches!(object.kind, ObjKind::Type).then_some(object.ty)
             }
-            Ref::Local(local) => cx.params.get(&local).copied(),
+            Ref::Local(local) => cx.params.get(&local).copied().or_else(|| {
+                let declared = self.locals.get(&local)?;
+                (declared.mode == Mode::Type).then_some(declared.ty)
+            }),
             _ => None,
         }
     }
@@ -617,9 +670,13 @@ impl<'a> Checker<'a> {
                 // not be loaded denotes nothing that is known.
                 if matches!(node.kind, ExprKind::Name(_)) && cx.body.uses.contains_key(&expr) {
                     let text = &cx.text[node.span.lo as usize..node.span.hi as usize];
-                    let message = format!("{text} is not a type");
-                    self.sink
-                        .push(Diagnostic::new(Code::NotAType, node.span, message));
+                    // A signature is read once for its declaration and
+                    // once for its body.
+                    if self.reported.insert(node.span) {
+                        let message = format!("{text} is not a type");
+                        let diagnostic = Diagnostic::new(Code::NotAType, node.span, message);
+                        self.sink.push(diagnostic);
+                    }
                 }
                 self.incomplete = true;
                 Types::INVALID
@@ -857,7 +914,14 @@ impl<'a> Checker<'a> {
     /// What the expression `expr` is: a type, a constant, a value of some
     /// type. Unknown for what is not worked out here yet.
     fn operand(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
-        gopp_syntax::with_stack(|| self.operand_node(cx, expr))
+        if let Some(known) = self.memo.as_ref().and_then(|memo| memo.get(&expr)) {
+            return known.clone();
+        }
+        let operand = gopp_syntax::with_stack(|| self.operand_node(cx, expr));
+        if let Some(memo) = &mut self.memo {
+            memo.insert(expr, operand.clone());
+        }
+        operand
     }
 
     fn operand_node(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
@@ -880,12 +944,28 @@ impl<'a> Checker<'a> {
             ExprKind::Selector { x, sel } => self.selector(cx, expr, *x, *sel),
             ExprKind::Unary { op, x } => self.unary(cx, *op, *x),
             ExprKind::Binary { op, x, y } => self.binary(cx, *op, *x, *y),
-            ExprKind::Call { fun, args, .. } => self.call(cx, *fun, args),
-            ExprKind::FuncLit { ty, .. } => Operand::value(self.typ(cx, *ty)),
+            ExprKind::Call {
+                fun, args, spread, ..
+            } => self.call(cx, *fun, args, *spread),
+            ExprKind::FuncLit { ty, body } => {
+                let sig = self.typ(cx, *ty);
+                // Its body is walked with the body it is in.
+                if self.memo.is_some() {
+                    self.signature_locals(cx, *ty);
+                    self.stmts(cx, &body.stmts);
+                }
+                Operand::value(sig)
+            }
             ExprKind::CompositeLit {
                 ty: Some(ty),
                 elems,
-            } => Operand::value(self.literal_type(cx, *ty, elems)),
+            } => {
+                let literal = self.literal_type(cx, *ty, elems);
+                if self.memo.is_some() {
+                    self.elements(cx, literal, elems);
+                }
+                Operand::value(literal)
+            }
             ExprKind::Index { x, indices } => self.index(cx, expr, *x, indices),
             ExprKind::Slice { x, .. } => {
                 let x = self.operand(cx, *x);
@@ -962,7 +1042,7 @@ impl<'a> Checker<'a> {
                     mode: Mode::Type,
                     ty,
                 },
-                None => Operand::UNKNOWN,
+                None => self.locals.get(&local).cloned().unwrap_or(Operand::UNKNOWN),
             },
             Ref::Member { .. } => Operand::UNKNOWN,
         }
@@ -1022,6 +1102,63 @@ impl<'a> Checker<'a> {
                 Operand::value(self.types.func(&params, results, *variadic))
             }
             _ => Operand::UNKNOWN,
+        }
+    }
+
+    /// Types the elements of a composite literal of the type `literal`.
+    /// An element written without its type, `{1, 2}`, has the type that
+    /// the literal gives its elements.
+    fn elements(&mut self, cx: &Cx<'a>, literal: TypeId, elems: &[ExprId]) {
+        let tree = cx.tree;
+        let under = self.types.get(self.types.underlying(literal));
+        // Whether keys are values, their type if they have one, and the
+        // type of the elements.
+        let (keys_are_values, key_type, elem_type) = match &*under {
+            Type::Slice(elem) | Type::Array { elem, .. } => (true, None, Some(*elem)),
+            Type::Map { key, value } => (true, Some(*key), Some(*value)),
+            _ => (false, None, None),
+        };
+        for (position, &element) in elems.iter().enumerate() {
+            let (key, value) = match tree.exprs[element].kind {
+                ExprKind::KeyValue { key, value } => (Some(key), value),
+                _ => (None, element),
+            };
+            // The type of the element: that of the field for a struct.
+            let hint = match (&*under, key) {
+                (Type::Struct(fields), None) => fields.get(position).map(|field| field.ty),
+                (Type::Struct(_), Some(key)) => match tree.exprs[key].kind {
+                    ExprKind::Name(name) => {
+                        match self.types.member(literal, name, self.path, self.names) {
+                            Some(Member::Field { ty }) => Some(ty),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => elem_type,
+            };
+            if let Some(key) = key.filter(|_| keys_are_values) {
+                self.element(cx, key, key_type);
+            }
+            self.element(cx, value, hint);
+        }
+    }
+
+    /// One element, or key, of a composite literal.
+    fn element(&mut self, cx: &Cx<'a>, expr: ExprId, hint: Option<TypeId>) {
+        let ExprKind::CompositeLit { ty: None, elems } = &cx.tree.exprs[expr].kind else {
+            self.operand(cx, expr);
+            return;
+        };
+        let Some(hint) = hint else { return };
+        // `{…}` for a pointer type is `&T{…}`.
+        let literal = match &*self.types.get(self.types.underlying(hint)) {
+            Type::Pointer(elem) => *elem,
+            _ => hint,
+        };
+        self.elements(cx, literal, elems);
+        if let Some(memo) = &mut self.memo {
+            memo.insert(expr, Operand::value(hint));
         }
     }
 
@@ -1295,20 +1432,31 @@ impl<'a> Checker<'a> {
     }
 
     /// A call: of a function, a conversion, or a built-in function.
-    fn call(&mut self, cx: &Cx<'a>, fun: ExprId, args: &[ExprId]) -> Operand {
+    fn call(&mut self, cx: &Cx<'a>, fun: ExprId, args: &[ExprId], spread: bool) -> Operand {
         let callee = self.operand(cx, fun);
         match callee.mode {
             Mode::Type => self.conversion(cx, callee.ty, args),
             Mode::Builtin(builtin) => self.builtin(cx, builtin, args),
             Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
             Mode::Value => {
+                for &arg in args {
+                    self.operand(cx, arg);
+                }
                 // The type arguments of a generic function are found from
                 // the arguments of the call.
                 let sig = match self.types.generic_func(callee.ty) {
-                    Some(params) => match self.inferred(cx, callee.ty, &params, args) {
-                        Some(sig) => sig,
-                        None => return Operand::UNKNOWN,
-                    },
+                    Some(params) => {
+                        // In this call the function has the type that its
+                        // type arguments give it.
+                        let sig = self.inferred(cx, callee.ty, &params, args, spread);
+                        if let Some(memo) = &mut self.memo {
+                            memo.insert(fun, sig.map_or(Operand::UNKNOWN, Operand::value));
+                        }
+                        match sig {
+                            Some(sig) => sig,
+                            None => return Operand::UNKNOWN,
+                        }
+                    }
                     None => self.types.underlying(callee.ty),
                 };
                 let Type::Func { results, .. } = &*self.types.get(sig) else {
@@ -1336,6 +1484,7 @@ impl<'a> Checker<'a> {
         sig: TypeId,
         params: &[TypeId],
         args: &[ExprId],
+        spread: bool,
     ) -> Option<TypeId> {
         let Type::Func {
             params: wanted,
@@ -1345,25 +1494,61 @@ impl<'a> Checker<'a> {
         else {
             return None;
         };
-        // The type that the parameter list has for the argument at `at`.
-        let wanted_at = |at: usize| match (*variadic, at + 1 >= wanted.len()) {
-            (true, true) => match &*self.types.get(*wanted.last()?) {
-                Type::Slice(elem) => Some(*elem),
-                _ => None,
-            },
-            _ => wanted.get(at).copied(),
-        };
-        let mut bound = vec![None; params.len()];
-        let mut untyped = Vec::new();
-        for (at, &arg) in args.iter().enumerate() {
-            let (operand, wanted) = (self.operand(cx, arg), wanted_at(at)?);
+        // The types of the arguments: a call with several results is all
+        // the arguments at once.
+        let mut given: Vec<TypeId> = Vec::new();
+        for &arg in args {
+            let operand = self.operand(cx, arg);
             if !operand.is_value() {
                 return None;
             }
-            match self.is_untyped(operand.ty) {
-                true => untyped.push((wanted, operand.ty)),
-                false if !self.types.unify(wanted, operand.ty, params, &mut bound) => return None,
+            match &*self.types.get(operand.ty) {
+                Type::Tuple(results) if args.len() == 1 => given.extend(results.iter()),
+                _ => given.push(operand.ty),
+            }
+        }
+        // The type that the parameter list has for the argument at `at`:
+        // the element type for the arguments of `...T`, unless the call
+        // passes a slice with `...`.
+        let wanted_at = |at: usize| {
+            let in_rest = *variadic && at + 1 >= wanted.len();
+            match (in_rest && !(spread && at + 1 == given.len()), wanted.last()) {
+                (true, Some(&last)) => match &*self.types.get(last) {
+                    Type::Slice(elem) => Some(*elem),
+                    _ => None,
+                },
+                _ => wanted.get(at.min(wanted.len().saturating_sub(1))).copied(),
+            }
+        };
+        let nil = self.types.basic(Basic::UntypedNil);
+        let mut bound = vec![None; params.len()];
+        let mut untyped = Vec::new();
+        for (at, &ty) in given.iter().enumerate() {
+            let wanted = wanted_at(at)?;
+            // `nil` and a generic function say nothing by themselves.
+            if ty == nil || self.types.generic_func(ty).is_some() {
+                continue;
+            }
+            match self.is_untyped(ty) {
+                true => untyped.push((wanted, ty)),
+                false if !self.types.unify(wanted, ty, params, &mut bound) => return None,
                 false => {}
+            }
+        }
+        // A parameter whose constraint allows one type says what the type
+        // parameters in that type are: `S ~[]E` with `S` known gives `E`.
+        for _ in 0..params.len() {
+            for (at, &param) in params.iter().enumerate() {
+                let (Some(known), Some(core)) = (bound[at], self.types.core_type(param)) else {
+                    continue;
+                };
+                let known = match core.tilde {
+                    true => self.types.underlying(known),
+                    false => known,
+                };
+                if !self.types.unify(core.ty, known, params, &mut bound) {
+                    return None;
+                }
             }
         }
         // A constant of no type gives a parameter its default type, if no
@@ -1566,5 +1751,445 @@ impl<'a> Checker<'a> {
                 }
                 _ => None,
             })
+    }
+
+    // ---- function bodies
+
+    /// Types every expression of the bodies of the file, statement by
+    /// statement, so that each local variable has its type where it is
+    /// used.
+    fn bodies(&mut self, file: usize, unit: Unit<'a>) -> Vec<BodyTypes> {
+        let tree = unit.file;
+        let mut all = Vec::new();
+        for (index, &decl) in tree.decls.iter().enumerate() {
+            let body = &self.package.files[file].bodies[index];
+            let form = Form::Var {
+                ty: None,
+                value: None,
+            };
+            let mut cx = self.cx(&Decl { unit, body, form }, None);
+            self.locals.clear();
+            self.local_groups.clear();
+            self.memo = Some(FxHashMap::default());
+            match &tree.decl_nodes[decl].kind {
+                DeclKind::Func {
+                    receiver,
+                    type_params,
+                    ty,
+                    body: Some(block),
+                    ..
+                } => {
+                    self.declare_params(&mut cx, type_params);
+                    if let Some(receiver) = receiver {
+                        self.receiver_params(&mut cx, receiver.ty);
+                        self.params(&cx, std::slice::from_ref(receiver));
+                    }
+                    self.signature_locals(&cx, *ty);
+                    self.stmts(&cx, &block.stmts);
+                }
+                DeclKind::Var { ty, values, .. } | DeclKind::Const { ty, values, .. } => {
+                    // The value of a constant is worked out with its
+                    // declaration; here only variables are walked, for the
+                    // function literals in their values.
+                    let _ = ty;
+                    if matches!(tree.decl_nodes[decl].kind, DeclKind::Var { .. }) {
+                        for &value in values {
+                            self.operand(&cx, value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            let typed = |(expr, operand): (ExprId, Operand)| {
+                // A generic function that is not called has the type that
+                // what it is assigned to gives it, which is not followed
+                // yet.
+                if self.types.generic_func(operand.ty).is_some() {
+                    return None;
+                }
+                let value = match operand.mode {
+                    Mode::Const(value) => value,
+                    Mode::Value => Value::Unknown,
+                    _ => return None,
+                };
+                Some((
+                    expr,
+                    ExprType {
+                        ty: operand.ty,
+                        value,
+                    },
+                ))
+            };
+            let memo = self.memo.take().unwrap_or_default();
+            let exprs = memo.into_iter().filter_map(typed).collect();
+            let locals = self
+                .locals
+                .drain()
+                .map(|(local, operand)| (local, operand.ty));
+            all.push((exprs, locals.collect()));
+        }
+        self.incomplete = false;
+        all
+    }
+
+    /// Declares the type parameters that the receiver `T[P, Q]` names.
+    fn receiver_params(&mut self, cx: &mut Cx<'a>, mut base: ExprId) {
+        let tree = cx.tree;
+        loop {
+            match &tree.exprs[base].kind {
+                ExprKind::Paren(x)
+                | ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => base = *x,
+                ExprKind::Index { indices, .. } => {
+                    for index in indices {
+                        let span = tree.exprs[*index].span;
+                        if let (ExprKind::Name(name), Some(&local)) =
+                            (&tree.exprs[*index].kind, cx.body.defs.get(&span.lo))
+                        {
+                            cx.params.insert(local, self.types.param(*name));
+                        }
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// Gives each named parameter of the list its type.
+    fn params(&mut self, cx: &Cx<'a>, params: &[Param]) {
+        for param in params {
+            let ty = self.typ(cx, param.ty);
+            let local = param.name.and_then(|name| cx.body.defs.get(&name.span.lo));
+            if let Some(&local) = local {
+                self.locals.insert(local, Operand::value(ty));
+            }
+        }
+    }
+
+    /// Gives the parameters and the named results of the function type
+    /// `ty` their types.
+    fn signature_locals(&mut self, cx: &Cx<'a>, ty: ExprId) {
+        if let ExprKind::FuncType {
+            params, results, ..
+        } = &cx.tree.exprs[ty].kind
+        {
+            self.params(cx, params);
+            self.params(cx, results);
+        }
+    }
+
+    /// The local that the identifier at `expr` declares, if it declares
+    /// one.
+    fn declared_local(&self, cx: &Cx<'a>, expr: ExprId) -> Option<LocalId> {
+        cx.body.defs.get(&cx.tree.exprs[expr].span.lo).copied()
+    }
+
+    fn set_local(&mut self, local: Option<LocalId>, ty: Option<TypeId>) {
+        if let Some(local) = local {
+            let operand = ty.map_or(Operand::UNKNOWN, |ty| {
+                Operand::value(self.types.default_type(ty))
+            });
+            self.locals.insert(local, operand);
+        }
+    }
+
+    /// `lhs := rhs`, or `var lhs = rhs`: each new variable gets the type
+    /// of its value.
+    fn define_locals(&mut self, cx: &Cx<'a>, lhs: &[Option<LocalId>], rhs: &[ExprId]) {
+        if rhs.len() == 1 && lhs.len() > 1 {
+            for (position, &local) in lhs.iter().enumerate() {
+                let ty = self.result_type(cx, rhs[0], position, lhs.len());
+                self.set_local(local, ty);
+            }
+            return;
+        }
+        for (position, &local) in lhs.iter().enumerate() {
+            let ty = rhs
+                .get(position)
+                .and_then(|&value| self.result_type(cx, value, 0, 1));
+            self.set_local(local, ty);
+        }
+        for &extra in rhs.iter().skip(lhs.len()) {
+            self.operand(cx, extra);
+        }
+    }
+
+    fn stmts(&mut self, cx: &Cx<'a>, stmts: &[StmtId]) {
+        for &stmt in stmts {
+            gopp_syntax::with_stack(|| self.stmt(cx, stmt));
+        }
+    }
+
+    fn opt_stmt(&mut self, cx: &Cx<'a>, stmt: Option<StmtId>) {
+        if let Some(stmt) = stmt {
+            self.stmt(cx, stmt);
+        }
+    }
+
+    fn stmt(&mut self, cx: &Cx<'a>, id: StmtId) {
+        let tree = cx.tree;
+        match &tree.stmts[id].kind {
+            StmtKind::Bad | StmtKind::Empty | StmtKind::Branch { .. } => {}
+            StmtKind::Labeled { stmt, .. } => self.stmt(cx, *stmt),
+            StmtKind::Block(block) => self.stmts(cx, &block.stmts),
+            StmtKind::Expr(x)
+            | StmtKind::IncDec { x, .. }
+            | StmtKind::Go(x)
+            | StmtKind::Defer(x) => {
+                self.operand(cx, *x);
+            }
+            StmtKind::Send { chan, value } => {
+                self.operand(cx, *chan);
+                self.operand(cx, *value);
+            }
+            StmtKind::Return(results) => {
+                for &result in results {
+                    self.operand(cx, result);
+                }
+            }
+            StmtKind::Decl(decls) => {
+                for &decl in decls {
+                    self.local_decl(cx, decl);
+                }
+            }
+            StmtKind::Assign {
+                op: AssignOp::Define,
+                lhs,
+                rhs,
+            } => {
+                let locals: Vec<_> = lhs.iter().map(|&x| self.declared_local(cx, x)).collect();
+                self.define_locals(cx, &locals, rhs);
+            }
+            StmtKind::Assign { lhs, rhs, .. } => {
+                for &x in lhs.iter().chain(rhs) {
+                    self.operand(cx, x);
+                }
+            }
+            StmtKind::If {
+                init,
+                cond,
+                then,
+                otherwise,
+            } => {
+                self.opt_stmt(cx, *init);
+                self.operand(cx, *cond);
+                self.stmts(cx, &then.stmts);
+                self.opt_stmt(cx, *otherwise);
+            }
+            StmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                self.opt_stmt(cx, *init);
+                if let Some(cond) = cond {
+                    self.operand(cx, *cond);
+                }
+                self.opt_stmt(cx, *post);
+                self.stmts(cx, &body.stmts);
+            }
+            StmtKind::Range {
+                lhs,
+                define,
+                x,
+                body,
+            } => {
+                let ranged = self.operand(cx, *x);
+                let (key, value) = self.range_types(&ranged);
+                for (position, &target) in lhs.iter().enumerate() {
+                    if !*define {
+                        self.operand(cx, target);
+                        continue;
+                    }
+                    // `&v` declares `v` as another name of the element.
+                    let named = match tree.exprs[target].kind {
+                        ExprKind::Unary {
+                            op: UnaryOp::Addr,
+                            x,
+                        } => x,
+                        _ => target,
+                    };
+                    let ty = if position == 0 { key } else { value };
+                    let local = self.declared_local(cx, named);
+                    self.set_local(local, ty);
+                }
+                self.stmts(cx, &body.stmts);
+            }
+            StmtKind::Switch { init, tag, clauses } => {
+                self.opt_stmt(cx, *init);
+                let guard = tag.map(|tag| &tree.exprs[tag].kind);
+                let switched = match guard {
+                    Some(&ExprKind::TypeSwitchGuard { x, .. }) => Some(self.operand(cx, x)),
+                    _ => {
+                        if let Some(tag) = tag {
+                            self.operand(cx, *tag);
+                        }
+                        None
+                    }
+                };
+                let vars = cx.body.switch_vars.get(&id);
+                for (index, clause) in clauses.iter().enumerate() {
+                    let cases = clause.cases.as_deref().unwrap_or(&[]);
+                    let mut case_types = Vec::new();
+                    for &case in cases {
+                        match switched {
+                            Some(_) => case_types.push(self.operand(cx, case)),
+                            None => {
+                                self.operand(cx, case);
+                            }
+                        }
+                    }
+                    // The variable of a type switch has the type of the
+                    // case when the clause has one type, else the type of
+                    // what is switched on.
+                    if let (Some(switched), Some(&local)) =
+                        (&switched, vars.and_then(|vars| vars.get(index)))
+                    {
+                        let ty = match &case_types[..] {
+                            [one] if one.mode == Mode::Type => one.ty,
+                            _ => switched.ty,
+                        };
+                        self.locals.insert(local, Operand::value(ty));
+                    }
+                    self.stmts(cx, &clause.body);
+                }
+            }
+            StmtKind::Select { clauses } => {
+                for clause in clauses {
+                    self.opt_stmt(cx, clause.comm);
+                    self.stmts(cx, &clause.body);
+                }
+            }
+        }
+    }
+
+    /// The types of the two variables of `for k, v := range x`.
+    fn range_types(&self, x: &Operand) -> (Option<TypeId>, Option<TypeId>) {
+        if !x.is_value() {
+            return (None, None);
+        }
+        let int = Some(self.types.basic(Basic::Int));
+        match &*self.types.get(self.types.underlying(x.ty)) {
+            Type::Basic(Basic::String | Basic::UntypedString) => {
+                (int, Some(self.types.basic(Basic::Int32)))
+            }
+            // `range 10` counts with the type of the number.
+            Type::Basic(basic) if self.is_integer(x.ty) => match basic.is_untyped() {
+                true => (int, None),
+                false => (Some(x.ty), None),
+            },
+            Type::Slice(elem) | Type::Array { elem, .. } => (int, Some(*elem)),
+            Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
+                Type::Array { elem, .. } => (int, Some(*elem)),
+                _ => (None, None),
+            },
+            Type::Map { key, value } => (Some(*key), Some(*value)),
+            Type::Chan { elem, .. } => (Some(*elem), None),
+            // An iterator: `func(yield func(K, V) bool)`.
+            Type::Func { params, .. } => match params.first().map(|&yield_| self.types.get(yield_))
+            {
+                Some(yield_) => match &*yield_ {
+                    Type::Func { params, .. } => (params.first().copied(), params.get(1).copied()),
+                    _ => (None, None),
+                },
+                None => (None, None),
+            },
+            _ => (None, None),
+        }
+    }
+
+    /// A `const`, `var` or `type` statement inside a function.
+    fn local_decl(&mut self, cx: &Cx<'a>, decl: DeclId) {
+        let tree = cx.tree;
+        let node = &tree.decl_nodes[decl];
+        let local = |name: Ident| cx.body.defs.get(&name.span.lo).copied();
+        match &node.kind {
+            DeclKind::Var { names, ty, values } => {
+                let locals: Vec<_> = names.iter().map(|&name| local(name)).collect();
+                match ty {
+                    Some(ty) => {
+                        let ty = self.typ(cx, *ty);
+                        for &value in values {
+                            self.operand(cx, value);
+                        }
+                        for local in locals.into_iter().flatten() {
+                            self.locals.insert(local, Operand::value(ty));
+                        }
+                    }
+                    None => self.define_locals(cx, &locals, values),
+                }
+            }
+            DeclKind::Const { names, ty, values } => {
+                // A constant without a value repeats the one above it in
+                // its group, with the next `iota`.
+                let (mut ty, mut values, mut iota) = (*ty, values.clone(), 0);
+                if let Some(group) = node.group {
+                    let last = self.local_groups.entry(group).or_default();
+                    if values.is_empty() {
+                        (ty, values) = (last.ty, last.values.clone());
+                    } else {
+                        (last.ty, last.values) = (ty, values.clone());
+                    }
+                    iota = last.next;
+                    last.next += 1;
+                }
+                let mut inner = cx.clone();
+                inner.iota = Some(iota);
+                let declared = ty.map(|ty| self.typ(&inner, ty));
+                for (position, &name) in names.iter().enumerate() {
+                    let constant = values
+                        .get(position)
+                        .and_then(|&value| self.constant(&inner, value));
+                    let operand = match (constant, declared) {
+                        (Some((own, value)), None) => Operand::constant(own, value),
+                        (Some((_, value)), Some(ty)) => match self.converted(&value, ty) {
+                            Some(value) => Operand::constant(ty, value),
+                            None => Operand::UNKNOWN,
+                        },
+                        (None, _) => Operand::UNKNOWN,
+                    };
+                    if let Some(local) = local(name) {
+                        self.locals.insert(local, operand);
+                    }
+                }
+            }
+            DeclKind::Type {
+                name,
+                alias,
+                ty,
+                type_params,
+            } => {
+                let Some(local) = local(*name) else {
+                    return;
+                };
+                if *alias || !type_params.is_empty() {
+                    let ty = self.typ(cx, *ty);
+                    let mode = match type_params.is_empty() {
+                        true => Mode::Type,
+                        false => Mode::Unknown,
+                    };
+                    self.locals.insert(local, Operand { mode, ty });
+                    return;
+                }
+                // The type exists before what it is declared as is known,
+                // so that it can name itself.
+                let named = self.types.declare(name.name, self.name);
+                let declared = self.types.named(named, &[]);
+                self.locals.insert(
+                    local,
+                    Operand {
+                        mode: Mode::Type,
+                        ty: declared,
+                    },
+                );
+                let underlying = self.typ(cx, *ty);
+                self.types.set_underlying(named, underlying);
+            }
+            _ => {}
+        }
     }
 }

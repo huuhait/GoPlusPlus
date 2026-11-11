@@ -59,6 +59,9 @@ pub struct Local {
     pub span: Span,
     /// Whether the value of a variable is read anywhere.
     pub used: bool,
+    /// The type of a variable, constant or type; invalid while it is not
+    /// known.
+    pub ty: TypeId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +104,16 @@ pub struct Body {
     pub defs: FxHashMap<u32, LocalId>,
     /// For a type switch with a variable, its variable in each clause.
     pub switch_vars: FxHashMap<StmtId, Vec<LocalId>>,
+    /// The type of each expression that has a value, where it is worked
+    /// out, and its value if it is a constant.
+    pub types: FxHashMap<ExprId, ExprType>,
+}
+
+/// The type of an expression; and its value, if it is a constant.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExprType {
+    pub ty: TypeId,
+    pub value: Value,
 }
 
 /// What was found in one file of a package.

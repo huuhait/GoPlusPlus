@@ -126,6 +126,9 @@ struct Names {
     uses: BTreeMap<u32, String>,
     /// Names that are keys of composite literals.
     keys: BTreeMap<u32, String>,
+    /// For the byte range of an expression with a value: its type in the
+    /// one spelling for identical types, then its value if it is constant.
+    types: HashMap<(u32, u32), Vec<String>>,
 }
 
 /// The names of each file of `package`, in the notation of
@@ -199,6 +202,18 @@ fn names_of(package: &Package, files: &[File], names: &ThreadedRodeo) -> Vec<Nam
     found
 }
 
+/// The value of a constant in full: the bytes of a string, so that no rule
+/// of quoting matters.
+fn exact(value: &crate::constant::Value) -> String {
+    match value {
+        crate::constant::Value::Str(text) => {
+            let hex: String = text.bytes().iter().map(|b| format!("{b:02x}")).collect();
+            format!("bytes {hex}")
+        }
+        value => value.exact_string(),
+    }
+}
+
 /// The packages of Go's standard library that are checked so far, found
 /// through the import map of the package that imports them.
 struct StdLoader<'a> {
@@ -233,6 +248,16 @@ struct Listed {
 fn listed_packages(output: &str) -> Vec<Listed> {
     let mut packages: Vec<Listed> = Vec::new();
     for line in output.lines() {
+        if let Some(typed) = line.strip_prefix("typ\t") {
+            let mut fields = typed.split('\t');
+            let mut number = || fields.next().unwrap().parse().unwrap();
+            let range = (number(), number());
+            let names = &mut packages.last_mut().unwrap().files.last_mut().unwrap().1;
+            names
+                .types
+                .insert(range, fields.map(str::to_owned).collect());
+            continue;
+        }
         if let Some(object) = line.strip_prefix("obj\t") {
             let fields = object.split('\t').map(str::to_owned).collect();
             packages.last_mut().unwrap().objects.push(fields);
@@ -306,6 +331,9 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     let (mut files_compared, mut names_compared, mut initializers_compared) = (0, 0, 0);
     let (mut packages_compared, mut same_order) = (0, 0);
     let mut objects: BTreeMap<(String, bool), usize> = BTreeMap::new();
+    // How many expressions with a value Go has, and how many of them are
+    // compared.
+    let mut expressions = (0usize, 0usize);
     for listed in packages {
         let map = SourceMap::new();
         let sink = Sink::new(100);
@@ -370,13 +398,7 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
             }
             let mut ours = vec![types.canonical(ty, &names)];
             if kind == "const" {
-                ours.push(match &object.value {
-                    crate::constant::Value::Str(text) => {
-                        let hex: String = text.bytes().iter().map(|b| format!("{b:02x}")).collect();
-                        format!("bytes {hex}")
-                    }
-                    value => value.exact_string(),
-                });
+                ours.push(exact(&object.value));
             }
             if ours[..] != fields[2..] {
                 let theirs = fields[2..].join(" = ");
@@ -384,6 +406,45 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
                     "{path}.{name}: {} here, for go {theirs}",
                     ours.join(" = ")
                 ));
+            }
+        }
+        // The type of each expression, where it is worked out here and has
+        // a type of its own already: a constant of no type gets its type
+        // from what is around it, which is not followed yet.
+        for ((info, tree), (file_path, go)) in package.files.iter().zip(&files).zip(&listed.files) {
+            if listed.builtin {
+                break;
+            }
+            expressions.0 += go.types.len();
+            for (&expr, typed) in info.bodies.iter().flat_map(|body| &body.types) {
+                let span = tree.exprs[expr].span;
+                if types.is_untyped(typed.ty) || typed.ty == Types::INVALID {
+                    continue;
+                }
+                let Some(theirs) = go.types.get(&(span.lo, span.hi)) else {
+                    continue;
+                };
+                // The first of two results of `m[k]` is recorded by Go as
+                // the pair.
+                let ours = types.canonical(typed.ty, &names);
+                if theirs[0].starts_with('(') && !ours.starts_with('(') {
+                    continue;
+                }
+                // A part of the type is not worked out yet.
+                if ours.contains("invalid type") {
+                    continue;
+                }
+                expressions.1 += 1;
+                let value = typed.value != crate::constant::Value::Unknown;
+                let same_value = !value || theirs.get(1) == Some(&exact(&typed.value));
+                if ours != theirs[0] || !same_value {
+                    let place = map.location(span);
+                    let (ours_value, theirs) = (exact(&typed.value), theirs.join(" = "));
+                    let _ = file_path;
+                    failures.push(format!(
+                        "{place}: {ours} = {ours_value} here, for go {theirs}"
+                    ));
+                }
             }
         }
         checked.insert(listed.path, Arc::new(package));
@@ -447,6 +508,10 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     );
     assert!(names_compared > 500_000, "only {names_compared} names");
     println!("objects by kind and whether their type is worked out: {objects:?}");
+    println!(
+        "{} of {} expressions compared",
+        expressions.1, expressions.0
+    );
     failures.dedup();
     let shown: Vec<&str> = failures.iter().take(40).map(String::as_str).collect();
     assert!(
@@ -1347,4 +1412,90 @@ var more = append(xs, origin)
         "xs: []p.Point",
     ];
     assert_eq!(vars, expected);
+}
+
+#[test]
+fn locals_have_the_types_of_their_values() {
+    let text = "package p
+
+type Point struct{ X, Y int }
+
+func (p Point) Dist!(q Point) float64
+
+func walk(points []Point, names map[string]*Point, done chan bool) (total float64, err error) {
+	origin := Point{}
+	for i, &p := range points {
+		d, failed := p.Dist(origin)
+		if failed != nil {
+			return 0, failed
+		}
+		total += d * float64(i)
+	}
+	for name, at := range names {
+		first := name[0]
+		x := at.X
+		_, _ = first, x
+	}
+	ok := <-done
+	found, has := names[\"a\"]
+	const limit = 10
+	var grid [limit][2]Point
+	row := grid[1]
+	add := func(a, b int) int { sum := a + b; return sum }
+	switch v := any(row).(type) {
+	case [2]Point:
+		_ = v
+	case string, int:
+		_ = v
+	}
+	_, _, _, _ = ok, found, has, add
+	return total, nil
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let types = loader.types.get().unwrap();
+    let body = &checked.package.files[0].bodies[2];
+    let locals: Vec<String> = body
+        .locals
+        .iter()
+        .map(|local| {
+            format!(
+                "{}: {}",
+                names.resolve(&local.name),
+                types.display(local.ty, &names)
+            )
+        })
+        .collect();
+    let expected = [
+        "points: []p.Point",
+        "names: map[string]*p.Point",
+        "done: chan bool",
+        "total: float64",
+        "err: error",
+        "origin: p.Point",
+        "i: int",
+        "p: p.Point",
+        "d: float64",
+        "failed: error",
+        "name: string",
+        "at: *p.Point",
+        "first: uint8",
+        "x: int",
+        "ok: bool",
+        "found: *p.Point",
+        "has: bool",
+        "limit: untyped int",
+        "grid: [10][2]p.Point",
+        "row: [2]p.Point",
+        "a: int",
+        "b: int",
+        "sum: int",
+        "add: func(int, int) int",
+        "v: [2]p.Point",
+        "v: any",
+    ];
+    assert_eq!(locals, expected);
 }

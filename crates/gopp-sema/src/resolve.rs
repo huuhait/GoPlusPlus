@@ -473,6 +473,7 @@ impl<'a> Resolver<'a> {
             kind,
             span: ident.span,
             used: false,
+            ty: Types::INVALID,
         });
         id
     }

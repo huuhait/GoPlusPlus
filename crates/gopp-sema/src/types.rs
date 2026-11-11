@@ -169,7 +169,8 @@ struct Inner {
     types: Vec<Arc<Type>>,
     ids: FxHashMap<Arc<Type>, TypeId>,
     named: Vec<Named>,
-    params: Vec<Spur>,
+    /// The name of each type parameter, and its constraint once known.
+    params: Vec<(Spur, Option<TypeId>)>,
     /// The underlying type of each generic type with arguments that was
     /// asked for.
     instances: FxHashMap<TypeId, TypeId>,
@@ -408,6 +409,42 @@ impl Types {
         // The underlying type of a declared type is never a declared type.
         let underlying = self.underlying(underlying);
         self.write(|inner| inner.named[named.0 as usize].underlying = Some(underlying));
+    }
+
+    /// Gives the type parameter `param` its constraint.
+    pub fn set_constraint(&self, param: TypeId, constraint: TypeId) {
+        if let Type::Param(id) = &*self.get(param) {
+            self.write(|inner| inner.params[id.0 as usize].1 = Some(constraint));
+        }
+    }
+
+    /// The one type that the constraint of the type parameter `param`
+    /// allows, or with `~` the one underlying type: `[]E` for `S ~[]E`.
+    /// `None` if the constraint allows more, or says nothing of the kind.
+    pub fn core_type(&self, param: TypeId) -> Option<Term> {
+        let Type::Param(id) = &*self.get(param) else {
+            return None;
+        };
+        let constraint = self.read(|inner| inner.params[id.0 as usize].1)?;
+        let mut term = self.underlying(constraint);
+        // `interface{ ~[]E }` says what `~[]E` says.
+        if let Type::Interface { methods, embedded } = &*self.get(term) {
+            match (&methods[..], &embedded[..]) {
+                ([], [one]) => term = *one,
+                _ => return None,
+            }
+        }
+        match &*self.get(term) {
+            Type::Union(terms) => match &terms[..] {
+                [one] => Some(*one),
+                _ => None,
+            },
+            Type::Interface { .. } | Type::Marker(_) => None,
+            _ => Some(Term {
+                tilde: false,
+                ty: term,
+            }),
+        }
     }
 
     /// Says that the function type `sig` is that of a generic function
@@ -677,7 +714,7 @@ impl Types {
     /// A new type parameter.
     pub fn param(&self, name: Spur) -> TypeId {
         let id = self.write(|inner| {
-            inner.params.push(name);
+            inner.params.push((name, None));
             ParamId(inner.params.len() as u32 - 1)
         });
         self.intern(Type::Param(id))
@@ -1071,7 +1108,7 @@ impl Types {
                 format!("{package}{}{args}", names.resolve(&name))
             }
             Type::Param(param) => {
-                let name = self.read(|inner| inner.params[param.0 as usize]);
+                let name = self.read(|inner| inner.params[param.0 as usize].0);
                 names.resolve(&name).to_owned()
             }
         }

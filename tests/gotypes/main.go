@@ -12,6 +12,11 @@
 //	use <offset> obj <file index> <offset>      declared in this package
 //	use <offset> universe <name>
 //	use <offset> ext <import path> <name>       declared in another package
+//	typ <TAB> start <TAB> end <TAB> type [<TAB> value]
+//	                                            each expression that has a
+//	                                            value, by its byte range: its
+//	                                            type, and its value if it is a
+//	                                            constant
 //	init <name>,<name>                          after the files: the variables
 //	                                            that one value initializes, in
 //	                                            the order of initialization
@@ -117,8 +122,9 @@ func main() {
 			}),
 		}
 		info := &types.Info{
-			Defs: map[*ast.Ident]types.Object{},
-			Uses: map[*ast.Ident]types.Object{},
+			Defs:  map[*ast.Ident]types.Object{},
+			Uses:  map[*ast.Ident]types.Object{},
+			Types: map[ast.Expr]types.TypeAndValue{},
 		}
 		pkg, err := config.Check(p.ImportPath, fset, files, info)
 		check(err)
@@ -128,6 +134,15 @@ func main() {
 			fmt.Fprintf(out, "file %s\n", filepath.Join(p.Dir, p.GoFiles[i]))
 			offset := func(pos token.Pos) int { return fset.Position(pos).Offset }
 			ast.Inspect(file, func(n ast.Node) bool {
+				if expr, ok := n.(ast.Expr); ok {
+					if tv := info.Types[expr]; tv.IsValue() && !tv.IsNil() {
+						fmt.Fprintf(out, "typ\t%d\t%d\t%s", offset(expr.Pos()), offset(expr.End()), canon(tv.Type))
+						if tv.Value != nil {
+							fmt.Fprintf(out, "\t%s", exact(tv.Value))
+						}
+						fmt.Fprintln(out)
+					}
+				}
 				ident, ok := n.(*ast.Ident)
 				if !ok {
 					return true
@@ -159,12 +174,7 @@ func main() {
 		for _, name := range pkg.Scope().Names() {
 			switch obj := pkg.Scope().Lookup(name).(type) {
 			case *types.Const:
-				// The bytes of a string, so that no rule of quoting matters.
-				value := obj.Val().ExactString()
-				if obj.Val().Kind() == constant.String {
-					value = fmt.Sprintf("bytes %x", constant.StringVal(obj.Val()))
-				}
-				fmt.Fprintf(out, "obj\t%s\tconst\t%s\t%s\n", name, canon(obj.Type()), value)
+				fmt.Fprintf(out, "obj\t%s\tconst\t%s\t%s\n", name, canon(obj.Type()), exact(obj.Val()))
 			case *types.TypeName:
 				if obj.IsAlias() {
 					fmt.Fprintf(out, "obj\t%s\talias\t%s\n", name, canon(obj.Type()))
@@ -194,6 +204,15 @@ func scoped(obj types.Object) bool {
 		return obj.Name() != "init"
 	}
 	return true
+}
+
+// exact writes the value of a constant in full: the bytes of a string, so
+// that no rule of quoting matters.
+func exact(value constant.Value) string {
+	if value.Kind() == constant.String {
+		return fmt.Sprintf("bytes %x", constant.StringVal(value))
+	}
+	return value.ExactString()
 }
 
 // canon writes a type in the one spelling of gopp for identical types.
@@ -272,6 +291,8 @@ func canon(t types.Type) string {
 			return "any"
 		}
 		return "interface{" + strings.Join(parts, "; ") + "}"
+	case *types.Tuple:
+		return "(" + list(t.Len(), func(i int) types.Type { return t.At(i).Type() }) + ")"
 	case *types.Union:
 		terms := make([]string, t.Len())
 		for i := range terms {

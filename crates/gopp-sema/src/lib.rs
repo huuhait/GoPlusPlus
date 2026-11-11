@@ -15,7 +15,9 @@ mod universe;
 mod tests;
 
 pub use decls::Initializer;
-pub use object::{Body, FileInfo, Local, LocalId, LocalKind, ObjId, ObjKind, Object, Ref};
+pub use object::{
+    Body, ExprType, FileInfo, Local, LocalId, LocalKind, ObjId, ObjKind, Object, Ref,
+};
 pub use package::{Package, PackageLoader};
 pub use resolve::{Unit, check};
 pub use universe::{Predeclared, PredeclaredKind};
