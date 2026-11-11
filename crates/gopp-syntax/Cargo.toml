@@ -18,5 +18,6 @@ stacker.workspace = true
 unicode-ident.workspace = true
 
 [dev-dependencies]
+gopp-testutil = { path = "../gopp-testutil" }
 insta.workspace = true
 proptest.workspace = true

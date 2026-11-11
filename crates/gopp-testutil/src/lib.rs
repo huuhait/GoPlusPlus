@@ -2,4 +2,5 @@
 
 pub mod linear;
 pub mod process;
+pub mod samples;
 pub mod stress;

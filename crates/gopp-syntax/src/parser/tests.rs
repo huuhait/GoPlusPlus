@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, SourceFile, SourceMap};
+use gopp_testutil::{linear, samples, stress};
 use lasso::ThreadedRodeo;
 use proptest::prelude::*;
 
-use super::parse;
+use super::{parse, parse_counted};
 use crate::ast::dump;
 
 struct Parsed {
@@ -46,24 +47,9 @@ fn tree(text: &str) -> String {
     parsed.dump
 }
 
-fn sample_files() -> Vec<PathBuf> {
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/spec/examples");
-    let mut files = Vec::new();
-    for entry in fs::read_dir(examples).unwrap() {
-        let dir = entry.unwrap().path();
-        if dir.is_dir() {
-            let sources = fs::read_dir(dir).unwrap().map(|file| file.unwrap().path());
-            files.extend(sources.filter(|path| Dialect::from_path(path).is_some()));
-        }
-    }
-    files.sort();
-    assert!(files.len() >= 20, "only {} sample files found", files.len());
-    files
-}
-
 #[test]
 fn every_sample_parses_without_a_diagnostic() {
-    for path in sample_files() {
+    for path in samples::files() {
         let dialect = Dialect::from_path(&path).unwrap();
         let parsed = parse_bytes(&fs::read(&path).unwrap(), dialect);
         let messages: Vec<_> = parsed
@@ -521,9 +507,35 @@ fn long_chains_are_not_nesting() {
     }
 }
 
+fn parse_steps(text: &str) -> u64 {
+    let map = SourceMap::new();
+    let id = map.add(SourceFile::new("test.gopp".into(), text.to_owned(), Dialect::Gopp).unwrap());
+    parse_counted(id, &map.file(id), &ThreadedRodeo::new(), &Sink::new(10)).1
+}
+
+#[test]
+fn token_looks_grow_with_the_input_not_faster() {
+    let broken_lines = |count: usize| format!("package p\n{}", "var = ) x := [ }\n".repeat(count));
+    let broken_body = |count: usize| {
+        let body = "x := ) + ; if { for ] case 1: } else\n".repeat(count);
+        format!("package p\nfunc f() {{\n{body}}}\n")
+    };
+    let unclosed = |count: usize| format!("package p\nvar x = f({}\n", "g(1, ".repeat(count));
+    let sizes = [1_000, 2_000, 4_000, 8_000];
+    linear::assert_near_linear(&sizes, |n| parse_steps(&stress::wide_block(n)));
+    linear::assert_near_linear(&sizes, |n| parse_steps(&stress::long_chain(n)));
+    linear::assert_near_linear(&sizes, |n| parse_steps(&stress::diamonds(n)));
+    linear::assert_near_linear(&[100, 200, 400, 800], |n| {
+        parse_steps(&stress::deep_expr(n))
+    });
+    linear::assert_near_linear(&sizes, |n| parse_steps(&broken_lines(n)));
+    linear::assert_near_linear(&sizes, |n| parse_steps(&broken_body(n)));
+    linear::assert_near_linear(&[100, 200, 400, 800], |n| parse_steps(&unclosed(n)));
+}
+
 /// Parses the prefixes of every sample whose length is a multiple of `stride`.
 fn parse_sample_prefixes(stride: usize) {
-    for path in sample_files() {
+    for path in samples::files() {
         let dialect = Dialect::from_path(&path).unwrap();
         let bytes = fs::read(&path).unwrap();
         for end in (0..bytes.len()).step_by(stride) {

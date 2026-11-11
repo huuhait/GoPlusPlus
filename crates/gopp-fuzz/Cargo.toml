@@ -8,3 +8,13 @@ publish = false
 
 [lints]
 workspace = true
+
+[dependencies]
+gopp-diag = { path = "../gopp-diag" }
+gopp-span = { path = "../gopp-span" }
+gopp-syntax = { path = "../gopp-syntax" }
+lasso.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+gopp-testutil = { path = "../gopp-testutil" }

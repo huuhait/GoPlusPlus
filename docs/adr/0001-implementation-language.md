@@ -82,6 +82,7 @@ needs directly from generated C source:
 | C23 number formatting | `itoa` / `ryu` | `1.0.19` / `1.0.23` | Zero-allocation integer and exact floating-point literal formatting |
 | CLI & driver | `clap` / `which` / `tempfile` | `4.6.7` / `8.0.6` / `3.27.0` | CLI driver flags, `clang-23`/`lld` discovery, and atomic temporary `.c`/`.o` files |
 | Testing & benches | `insta` / `proptest` / `divan` | `1.49.0` / `1.12.0` / `0.1.21` | Snapshot tests for AST/GIR/C23, property-based pass equivalence, and throughput benchmarks |
+| Fuzzing (development only) | `rand` (feature `chacha`) | `0.10.3` | Seeded ChaCha8 generator for the mutators and the program generator of `gopp-fuzz` |
 
 Ecosystem crates for optional Wasm plugins, external plugin repositories, and Phase-3 IDE support:
 - **Sandboxed `.wasm` `-fpass-plugin` host:** `wasmtime = "50.0.1"`, `rmp-serde = "1.3.1"`.

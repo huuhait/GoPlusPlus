@@ -20,7 +20,8 @@ The first two classes are the reason the fuzzer exists. A compiler whose safety 
 
 | Piece | Crate / place | Job |
 |---|---|---|
-| Targets | `tests/fuzz/` | one function per target: bytes in, verdict out |
+| Targets | `gopp-fuzz::target` | one function per target: bytes in, verdict out |
+| Engine entry points | `tests/fuzz/` | the `cargo-fuzz` project: one small file per target that calls the target function |
 | Mutators | `gopp-fuzz::mutate` | byte, token and syntax-tree mutation of existing programs |
 | Generator | `gopp-fuzz::gen` | builds valid programs from a seed, with a model of ownership |
 | Injectors | `gopp-fuzz::inject` | turn a valid program into an invalid one with a known expected error |
@@ -33,7 +34,7 @@ Rules that keep the pieces apart:
 
 - **A target is a plain function over bytes.** `fn(&[u8]) -> Verdict` with no global state. Any engine can drive it: a coverage-guided engine, `proptest`, or a loop over seeds. No target depends on one engine.
 - **The coverage-guided engine is libFuzzer through `cargo-fuzz`**, run with `-s none` so that it builds on the pinned stable compiler ([ADR-0039](../adr/0039-fuzz-engine.md)). Its entry point only calls the target function.
-- **A program is a seed.** The generator turns `(seed, config)` into the same program on every machine (`rand_chacha`). A finding is reproduced from the seed, the config and the compiler revision; the program text is stored too, so a generator change never loses a finding.
+- **A program is a seed.** The generator turns `(seed, config)` into the same program on every machine (the ChaCha8 generator of `rand`). A finding is reproduced from the seed, the config and the compiler revision; the program text is stored too, so a generator change never loses a finding.
 - **The generator does not call the checker.** It has its own small model of the rules (section 3). When the model and the checker disagree, one of them is wrong, and both are worth looking at.
 - **`gopp-fuzz` is a development tool.** It is not part of the `gopp` binary. Fuzzing of user programs (`gopp test -fuzz`) is a separate feature.
 
@@ -60,7 +61,7 @@ A valid generated program is run through the oracles below. Any "no" is a findin
 | Stage health | Did every stage finish with no panic, no `E0439`/`E0440`, `verify_module` clean after every pass, and emitted C that compiles with `-Wall -Werror` under the mandatory flags? |
 | Go differential | In Go subset mode, is stdout, stderr and the exit code the same as Go's? |
 | Opt matrix | Is the output identical at `-opt=0`, `1`, `2`, `3`, `s` and `z`? |
-| Targets | Is the output identical on `linux/amd64` and on `linux/arm64` under `qemu-aarch64`? |
+| Targets | Is the output identical on `linux/amd64` and on `windows/amd64` ([ADR-0037](../adr/0037-v1-targets.md))? |
 | Backend modes | Is the output identical when the package is emitted as `.c` and as `.cpp`? Through the fast runner and as a real binary? With `-panic=abort` where no `recover` is used? |
 | Interpreter | For a `@Const` function, does compile-time evaluation give the same value as the compiled function? |
 | Sanitizers | Does the program run clean under ASan + LSan, UBSan and TSan? |
@@ -148,6 +149,15 @@ Severity order: accepts invalid code, then miscompile, then crash, then rejects 
 
 The smoke run counts steps and compares results; it never measures wall time.
 
+The coverage-guided engine is started by hand, from the repository root, with the spec samples as extra seeds:
+
+```sh
+nix develop -c cargo fuzz run --fuzz-dir tests/fuzz -s none parse_gopp \
+    tests/fuzz/corpus/parse_gopp docs/spec/examples -- -max_total_time=600 -max_len=8192
+```
+
+The targets today are `parse_gopp` and `parse_go`. The corpus and the crash files (`tests/fuzz/corpus/`, `tests/fuzz/artifacts/`) are not in version control; a crash becomes a finding (section 8).
+
 ## 11. Open points
 
-- **Go as a reference** needs the pinned Go in the dev shell.
+None. The Go reference is the Go of the dev shell (`flake.nix`).

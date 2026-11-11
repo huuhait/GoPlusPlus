@@ -9,6 +9,8 @@ mod expr;
 mod stmt;
 mod types;
 
+use std::cell::Cell;
+
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, FileId, SourceFile, Span};
 use la_arena::Arena;
@@ -22,6 +24,16 @@ use crate::token::{Token, TokenKind};
 const MAX_DEPTH: u32 = 1024;
 
 pub fn parse(id: FileId, source: &SourceFile, names: &ThreadedRodeo, sink: &Sink) -> File {
+    parse_counted(id, source, names, sink).0
+}
+
+/// The tree and the number of times the parser looked at a token.
+fn parse_counted(
+    id: FileId,
+    source: &SourceFile,
+    names: &ThreadedRodeo,
+    sink: &Sink,
+) -> (File, u64) {
     let lexed = lexer::lex(id, source, sink);
     let mut parser = Parser {
         id,
@@ -40,9 +52,10 @@ pub fn parse(id: FileId, source: &SourceFile, names: &ThreadedRodeo, sink: &Sink
         func_depth: 0,
         last_error_line: 0,
         groups: 0,
+        steps: Cell::new(0),
     };
     let (package, decls) = parser.file();
-    File {
+    let file = File {
         id,
         package,
         decls,
@@ -50,7 +63,8 @@ pub fn parse(id: FileId, source: &SourceFile, names: &ThreadedRodeo, sink: &Sink
         exprs: parser.exprs,
         stmts: parser.stmts,
         decl_nodes: parser.decls,
-    }
+    };
+    (file, parser.steps.get())
 }
 
 struct Parser<'a> {
@@ -73,10 +87,13 @@ struct Parser<'a> {
     /// Line of the last reported error, 0 before the first.
     last_error_line: u32,
     groups: u32,
+    /// Token looks so far: the measure of work in the scaling tests.
+    steps: Cell<u64>,
 }
 
 impl Parser<'_> {
     fn kind(&self) -> TokenKind {
+        self.steps.set(self.steps.get() + 1);
         self.tokens[self.pos].kind
     }
 
@@ -86,6 +103,7 @@ impl Parser<'_> {
 
     /// The kind of the token `n` after the current one.
     fn peek(&self, n: usize) -> TokenKind {
+        self.steps.set(self.steps.get() + 1);
         let index = (self.pos + n).min(self.tokens.len() - 1);
         self.tokens[index].kind
     }

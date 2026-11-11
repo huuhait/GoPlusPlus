@@ -1,0 +1,31 @@
+[package]
+name = "gopp-fuzz-targets"
+description = "libFuzzer entry points for the byte-level fuzz targets"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Outside the main workspace: libFuzzer entry points need `unsafe` and a
+# build with coverage instrumentation.
+[workspace]
+
+[dependencies]
+gopp-fuzz = { path = "../../crates/gopp-fuzz" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "parse_gopp"
+path = "fuzz_targets/parse_gopp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_go"
+path = "fuzz_targets/parse_go.rs"
+test = false
+doc = false
+bench = false
