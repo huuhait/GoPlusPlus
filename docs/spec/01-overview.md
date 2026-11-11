@@ -47,7 +47,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - Control flow: [If](https://go.dev/ref/spec#If_statements), [Switch](https://go.dev/ref/spec#Switch_statements), [For](https://go.dev/ref/spec#For_statements), [Select](https://go.dev/ref/spec#Select_statements), [Labeled statements](https://go.dev/ref/spec#Labeled_statements), [Goto](https://go.dev/ref/spec#Goto_statements), [Terminating statements](https://go.dev/ref/spec#Terminating_statements).
 - Generics syntax: [Type parameter declarations](https://go.dev/ref/spec#Type_parameter_declarations), [Type constraints](https://go.dev/ref/spec#Type_constraints), [Instantiations](https://go.dev/ref/spec#Instantiations), [Type inference](https://go.dev/ref/spec#Type_inference).
 - `init` functions: [Package initialization](https://go.dev/ref/spec#Package_initialization).
-- Outside the language spec, also as in Go: build constraints (spelled `//gopp:build`, see [chapter 14](14-foreign-surface.md)) and the testing convention `TestXxx(t *testing.T)`.
+- Outside the language spec, also as in Go: the testing convention `TestXxx(t *testing.T)` and the system names at the end of a file name (`open_linux.gopp`). A build condition in the source is the attribute `@Build(linux)`, not Go's `//go:build` comment ([FOR-11](14-foreign-surface.md)).
 - The memory model is [Go's](https://go.dev/ref/mem) (happens-before). See [chapter 12](12-concurrency.md).
 
 ## 1.4 Go vs Go++ at a glance

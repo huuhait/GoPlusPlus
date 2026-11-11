@@ -20,7 +20,7 @@ operator_or_punct = /* Go tokens */ | "#" | "@" .               /* Go++ LEX-3 */
 ## B.2 Source files
 
 ```
-SourceFile    = PackageClause ";" { ImportDecl ";" } { TopLevelDecl ";" } .
+SourceFile    = { Attribute [ ";" ] } PackageClause ";" { ImportDecl ";" } { TopLevelDecl ";" } .   /* Go++ FOR-11: `@Build` only */
 PackageClause = "package" PackageName .
 PackageName   = identifier .
 
@@ -30,7 +30,7 @@ ImportPath    = string_lit .          /* a package path, a header in a module, o
 
 TopLevelDecl   = Declaration | FunctionDecl | MethodDecl
                | MacroDecl | ProcMacroDecl | MacroInvocation | AttributedDecl .     /* Go++ 13.1 */
-AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl ) .   /* Go++ 13.1 */
+AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl | ImportDecl ) .   /* Go++ 13.1; on an import: `@Build` only */
 Declaration    = ConstDecl | TypeDecl | VarDecl .
 ```
 

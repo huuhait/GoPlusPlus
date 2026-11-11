@@ -3,233 +3,9 @@
 //! `// +build` lines of a file in step with its `//go:build` line.
 
 use super::tabwriter::ESCAPE;
+use crate::constraint::{Expr, parse_line};
 
 const FORMFEED: u8 = 0x0C;
-/// Constraints with more terms than this are left as they are.
-const MAX_TERMS: usize = 1000;
-const MAX_PLUS_TERMS: usize = 100;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Expr {
-    Tag(String),
-    Not(Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
-}
-
-impl Expr {
-    fn text(&self) -> String {
-        let wrapped = |x: &Expr, wrap: bool| {
-            if wrap {
-                format!("({})", x.text())
-            } else {
-                x.text()
-            }
-        };
-        match self {
-            Self::Tag(tag) => tag.clone(),
-            Self::Not(x) => {
-                let wrap = matches!(**x, Self::And(..) | Self::Or(..));
-                format!("!{}", wrapped(x, wrap))
-            }
-            Self::And(x, y) => {
-                let or = |x: &Expr| matches!(x, Self::Or(..));
-                format!("{} && {}", wrapped(x, or(x)), wrapped(y, or(y)))
-            }
-            Self::Or(x, y) => {
-                let and = |x: &Expr| matches!(x, Self::And(..));
-                format!("{} || {}", wrapped(x, and(x)), wrapped(y, and(y)))
-            }
-        }
-    }
-}
-
-/// The constraint of a `//go:build` line.
-fn go_build_text(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("//go:build")?;
-    if line.contains('\n') {
-        return None;
-    }
-    let rest = rest.trim_end();
-    let trimmed = rest.trim_start();
-    (trimmed.len() != rest.len() || rest.is_empty()).then_some(trimmed)
-}
-
-/// The constraint of a `// +build` line.
-fn plus_build_text(line: &str) -> Option<&str> {
-    if line.contains('\n') {
-        return None;
-    }
-    let rest = line.strip_prefix("//")?.trim().strip_prefix("+build")?;
-    let trimmed = rest.trim_start();
-    (trimmed.len() != rest.len() || rest.is_empty()).then_some(trimmed)
-}
-
-pub(super) fn is_go_build(line: &str) -> bool {
-    go_build_text(line).is_some()
-}
-
-pub(super) fn is_plus_build(line: &str) -> bool {
-    plus_build_text(line).is_some()
-}
-
-fn is_tag_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '.'
-}
-
-struct Parser<'a> {
-    rest: &'a str,
-    token: &'a str,
-    is_tag: bool,
-    terms: usize,
-}
-
-impl<'a> Parser<'a> {
-    fn lex(&mut self) -> Option<()> {
-        self.is_tag = false;
-        self.rest = self.rest.trim_start_matches([' ', '\t']);
-        let Some(first) = self.rest.chars().next() else {
-            self.token = "";
-            return Some(());
-        };
-        let length = match first {
-            '(' | ')' | '!' => 1,
-            '&' | '|' => {
-                if !self.rest[1..].starts_with(first) {
-                    return None;
-                }
-                2
-            }
-            _ => {
-                let end = self.rest.find(|c| !is_tag_char(c));
-                let length = end.unwrap_or(self.rest.len());
-                if length == 0 {
-                    return None;
-                }
-                self.is_tag = true;
-                length
-            }
-        };
-        (self.token, self.rest) = self.rest.split_at(length);
-        Some(())
-    }
-
-    fn or(&mut self) -> Option<Expr> {
-        let mut x = self.and()?;
-        while self.token == "||" {
-            x = Expr::Or(Box::new(x), Box::new(self.and()?));
-        }
-        Some(x)
-    }
-
-    fn and(&mut self) -> Option<Expr> {
-        let mut x = self.not()?;
-        while self.token == "&&" {
-            x = Expr::And(Box::new(x), Box::new(self.not()?));
-        }
-        Some(x)
-    }
-
-    fn not(&mut self) -> Option<Expr> {
-        self.terms += 1;
-        if self.terms > MAX_TERMS {
-            return None;
-        }
-        self.lex()?;
-        if self.token == "!" {
-            self.lex()?;
-            if self.token == "!" {
-                return None;
-            }
-            return Some(Expr::Not(Box::new(self.atom()?)));
-        }
-        self.atom()
-    }
-
-    fn atom(&mut self) -> Option<Expr> {
-        if self.token == "(" {
-            let x = self.or()?;
-            if self.token != ")" {
-                return None;
-            }
-            self.lex()?;
-            return Some(x);
-        }
-        if !self.is_tag {
-            return None;
-        }
-        let tag = self.token.to_owned();
-        self.lex()?;
-        Some(Expr::Tag(tag))
-    }
-}
-
-fn parse_go_build(text: &str) -> Option<Expr> {
-    let mut parser = Parser {
-        rest: text,
-        token: "",
-        is_tag: false,
-        terms: 0,
-    };
-    let x = parser.or()?;
-    parser.token.is_empty().then_some(x)
-}
-
-fn parse_plus_build(text: &str) -> Option<Expr> {
-    let ignore = || Expr::Tag("ignore".to_owned());
-    let mut terms = 0;
-    let mut x: Option<Expr> = None;
-    for clause in text.split_whitespace() {
-        let mut y: Option<Expr> = None;
-        for literal in clause.split(',') {
-            let z = if literal.starts_with("!!") || literal == "!" {
-                ignore()
-            } else {
-                let (negated, tag) = match literal.strip_prefix('!') {
-                    Some(tag) => (true, tag),
-                    None => (false, literal),
-                };
-                let valid = !tag.is_empty() && tag.chars().all(is_tag_char);
-                let z = if valid {
-                    Expr::Tag(tag.to_owned())
-                } else {
-                    ignore()
-                };
-                if negated { Expr::Not(Box::new(z)) } else { z }
-            };
-            y = Some(match y {
-                None => z,
-                Some(y) => {
-                    terms += 1;
-                    if terms > MAX_PLUS_TERMS {
-                        return None;
-                    }
-                    Expr::And(Box::new(y), Box::new(z))
-                }
-            });
-        }
-        let y = y?;
-        x = Some(match x {
-            None => y,
-            Some(x) => {
-                terms += 1;
-                if terms > MAX_PLUS_TERMS {
-                    return None;
-                }
-                Expr::Or(Box::new(x), Box::new(y))
-            }
-        });
-    }
-    Some(x.unwrap_or_else(ignore))
-}
-
-/// The constraint of a `//go:build` or `// +build` line.
-fn parse(line: &str) -> Option<Expr> {
-    if let Some(text) = go_build_text(line) {
-        return parse_go_build(text);
-    }
-    parse_plus_build(plus_build_text(line)?)
-}
 
 /// `x` with every negation moved down to a tag.
 fn push_not(x: &Expr, negate: bool) -> Expr {
@@ -377,7 +153,7 @@ pub(super) fn fix_lines(output: &mut Vec<u8>, go_build: &[usize], plus_build: &[
         [] => {
             let parsed = plus_build
                 .iter()
-                .map(|&start| parse(&comment_text_at(output, start)));
+                .map(|&start| parse_line(&comment_text_at(output, start)));
             let parsed: Option<Vec<Expr>> = parsed.collect();
             let all = |list: Vec<Expr>| {
                 list.into_iter()
@@ -385,7 +161,7 @@ pub(super) fn fix_lines(output: &mut Vec<u8>, go_build: &[usize], plus_build: &[
             };
             parsed.and_then(all)
         }
-        [only] => parse(&comment_text_at(output, *only)),
+        [only] => parse_line(&comment_text_at(output, *only)),
         _ => None,
     };
 
@@ -438,9 +214,10 @@ pub(super) fn fix_lines(output: &mut Vec<u8>, go_build: &[usize], plus_build: &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constraint::{self, is_go_build, is_plus_build};
 
     fn canonical(line: &str) -> Option<String> {
-        parse(line).map(|x| x.text())
+        parse_line(line).map(|x| x.text())
     }
 
     #[test]
@@ -474,7 +251,7 @@ mod tests {
 
     #[test]
     fn plus_build_lines_say_the_same_as_the_constraint() {
-        let lines = |text: &str| plus_build_lines(&parse_go_build(text).unwrap());
+        let lines = |text: &str| plus_build_lines(&constraint::parse(text).unwrap());
         assert_eq!(
             lines("(linux && !cgo) || darwin").unwrap(),
             ["// +build linux,!cgo darwin"]

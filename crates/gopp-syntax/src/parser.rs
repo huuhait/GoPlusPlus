@@ -54,9 +54,10 @@ fn parse_counted(
         groups: 0,
         steps: Cell::new(0),
     };
-    let (package, decls) = parser.file();
+    let (attrs, package, decls) = parser.file();
     let file = File {
         id,
+        attrs,
         package,
         decls,
         comments: lexed.comments,

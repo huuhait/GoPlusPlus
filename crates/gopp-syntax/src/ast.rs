@@ -20,6 +20,8 @@ pub type DeclId = Idx<Decl>;
 #[derive(Debug)]
 pub struct File {
     pub id: FileId,
+    /// The attributes above the package clause: `@Build`.
+    pub attrs: Vec<Attribute>,
     pub package: Option<Ident>,
     /// Top-level declarations in source order, imports included.
     pub decls: Vec<DeclId>,

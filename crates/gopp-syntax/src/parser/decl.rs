@@ -5,6 +5,7 @@ use gopp_span::Span;
 
 use super::Parser;
 use crate::ast::*;
+use crate::constraint::{condition, is_build};
 use crate::token::TokenKind as T;
 use crate::with_stack;
 
@@ -25,7 +26,18 @@ const MACRO_KINDS: &[&str] = &[
 ];
 
 impl Parser<'_> {
-    pub(super) fn file(&mut self) -> (Option<Ident>, Vec<DeclId>) {
+    pub(super) fn file(&mut self) -> (Vec<Attribute>, Option<Ident>, Vec<DeclId>) {
+        let mut file_attrs = Vec::new();
+        while self.at(T::At) {
+            let attr = self.attribute();
+            self.got(T::Semi);
+            if !is_build(&attr, self.text) {
+                let message = "only @Build may stand above the package clause";
+                self.error_at(Code::Expected, attr.span, message);
+            }
+            file_attrs.push(attr);
+        }
+        self.check_build(&file_attrs);
         let package = if self.got(T::Package) {
             let name = self.ident();
             self.want(T::Semi);
@@ -53,9 +65,12 @@ impl Parser<'_> {
                 T::Import | T::Const | T::Type | T::Var => {
                     let keyword = self.bump().kind;
                     decls.extend(self.decl_group(keyword, lo));
-                    if keyword == T::Import && !attrs.is_empty() {
-                        let message = "attributes are not allowed on imports";
-                        self.error_at(Code::AttrOnImport, attrs[0].span, message);
+                    let other = attrs.iter().find(|attr| !is_build(attr, self.text));
+                    if keyword == T::Import
+                        && let Some(other) = other
+                    {
+                        let message = "the only attribute of an import is @Build";
+                        self.error_at(Code::AttrOnImport, other.span, message);
                         attrs.clear();
                     }
                 }
@@ -97,6 +112,7 @@ impl Parser<'_> {
 
             if !attrs.is_empty() {
                 if takes_attributes && decls.len() > first {
+                    self.check_build(&attrs);
                     for &decl in &decls[first..] {
                         self.decls[decl].attrs = attrs.clone();
                     }
@@ -121,7 +137,29 @@ impl Parser<'_> {
             let message = "an attribute must be followed by a const, var, type or func declaration";
             self.error_at(Code::Expected, attribute.span, message);
         }
-        (package, decls)
+        (file_attrs, package, decls)
+    }
+
+    /// `@Build` is checked while parsing, before any other attribute means
+    /// something: it decides what the rest of the compiler gets to see.
+    fn check_build(&mut self, attrs: &[Attribute]) {
+        let mut seen = false;
+        for attr in attrs.iter().filter(|attr| is_build(attr, self.text)) {
+            if seen {
+                let message = "@Build is written once; join the conditions with &&";
+                self.error_at(Code::BadBuildConstraint, attr.span, message);
+            }
+            seen = true;
+            let not_a_condition = match attr.args.as_deref() {
+                Some(&[x]) => condition(&self.exprs, x, &mut |_| true).err(),
+                _ => Some(attr.span),
+            };
+            if let Some(span) = not_a_condition {
+                let message = "a build condition is made of names, &&, || and !, as in \
+                               @Build(linux && !arm64)";
+                self.error_at(Code::BadBuildConstraint, span, message);
+            }
+        }
     }
 
     fn alloc_decl(&mut self, kind: DeclKind, lo: u32, group: Option<u32>) -> DeclId {

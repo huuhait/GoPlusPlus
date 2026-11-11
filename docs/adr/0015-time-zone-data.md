@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-27
+- **Status note (2026-11-11, [ADR-0046](0046-build-attribute.md)):** `notzdata` is a tag that the standard library declares in its `gopp.mod`; its files test it with `@Build(notzdata)`.
 - **Plan reference:** P13 Q3 (task P13.13); new P13 D13.8; task P13.07.
 
 ## Context

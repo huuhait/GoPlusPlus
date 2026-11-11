@@ -51,6 +51,7 @@ fn walk(
     };
     let package = file.package.map_or("?", |ident| names.resolve(&ident.name));
     dumper.line(format_args!("File package={package}"), None);
+    dumper.nested(|d| d.attrs(&file.attrs));
     let decls = if shape {
         dumper.sorted_imports()
     } else {

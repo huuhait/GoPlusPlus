@@ -36,6 +36,7 @@ const DICTIONARY: &[&str] = &[
     "move(",
     "@A",
     "@Extends(T)",
+    "@Build(linux && !x)",
     "#[",
     "$x:expr",
     "f!(",

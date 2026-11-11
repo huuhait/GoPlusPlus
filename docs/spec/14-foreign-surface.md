@@ -65,7 +65,17 @@ HeaderExt        = ".h" | ".hh" | ".hpp" | ".hxx" .
 - `cflags …` (extra C/C++ compiler flags);
 - `ldflags …` (extra linker flags). The `ldflags` of all modules in the build are combined for the final link, in module order (the main module last).
 
-C/C++ dependencies (`cdep`) keep taking their flags from their own CMake target (P11). A `cdep` is always a CMake project: a library that has none is used through a `CMakeLists.txt` its user writes, in a local directory or in a repository of their own, and `replace` may point the `cdep` path there ([ADR-0038](../adr/0038-cdeps-cmake-only.md)). A library already installed on the machine is not a `cdep`: import its header with `<…>` and name it in `ldflags`. The only directive comment left in source files is `//gopp:build`, which works exactly like Go's `//go:build`: it goes above the `package` clause ([LEX-11](02-lexical.md)). It is a comment to the lexer; the build tool reads it. Its terms are OS, architecture and build tags, and also the name of the main module's active build profile: `//gopp:build debug` keeps a file out of every other profile (P06 D6.12). A profile name may not equal an OS, architecture or tag word.
+C/C++ dependencies (`cdep`) keep taking their flags from their own CMake target (P11). A `cdep` is always a CMake project: a library that has none is used through a `CMakeLists.txt` its user writes, in a local directory or in a repository of their own, and `replace` may point the `cdep` path there ([ADR-0038](../adr/0038-cdeps-cmake-only.md)). A library already installed on the machine is not a `cdep`: import its header with `<…>` and name it in `ldflags`. No directive comment is left in source files ([LEX-11](02-lexical.md)); which files and declarations a build takes is said with the attribute `@Build` ([FOR-11](#142-rules)).
+
+**FOR-11.** *Build conditions* ([ADR-0046](../adr/0046-build-attribute.md)). `@Build(condition)` says when a file or a declaration is part of the build.
+- **The condition** is made of words, `&&`, `||`, `!` and parentheses: `@Build(linux && !arm64)`.
+- **Above the `package` clause** it is for the whole file. **On a top-level declaration** (a function, a method, a type, a variable, a constant or an import) it is for that declaration; on a group (`var ( … )`, `import ( … )`) it is for every declaration of the group. It does not stand on a struct field, a statement or a macro declaration, and a file or a declaration has at most one.
+- **What a condition leaves out is parsed and nothing more.** It must be correct syntax. Its names are not looked up, it is not type-checked, and an import that is left out is not loaded. Two declarations may have the same name when their conditions never hold together.
+- **A word** is the name of an operating system (`linux`, `windows`, …) or of an architecture (`amd64`, `arm64`, …), `unix`, the name of a build profile of the main module (`@Build(debug)` holds only in the profile `debug`, P06 D6.12), or a tag that the module of the file declares in its `gopp.mod` (`tags fast`; `-tags=fast` turns it on). Any other word is a compile error. A profile name may not equal an OS, architecture or tag word.
+- **The file name counts too, as in Go.** A file whose name ends in `_linux`, `_amd64` or `_linux_amd64` before the extension is for that system only. `_test` marks a test file.
+- **A `.go` file** uses Go's form: a `//go:build` line (or `// +build` lines) in its header, read as Go reads them; a word nobody knows does not hold and is no error.
+- **In a `.gopp` file, Go's `//go:build` comment above the `package` clause is a compile error** that shows the attribute to write.
+- `@If` ([MAC-15](13-macros-surface.md)) is different: its declaration is still type-checked. Code that cannot compile on another system needs `@Build`.
 
 ## 14.3 Examples
 
@@ -82,7 +92,7 @@ cxxstd c++20
 The source file:
 
 ```go
-//gopp:build linux
+@Build(linux)
 
 package main
 
@@ -111,6 +121,27 @@ func main() {
 ```
 
 Compared with Go (cgo): there is no comment preamble, no `import "C"`, no `C.CString` and no `C.free`. Calls have no per-call cost.
+
+One function that differs per system, with the header it needs ([FOR-11](#142-rules)):
+
+```go
+package mem
+
+@Build(windows)
+import "<windows.h>"
+
+@Build(windows)
+func pageSize() int {
+    var info windows.SYSTEM_INFO
+    windows.GetSystemInfo(&info)
+    return int(info.dwPageSize)
+}
+
+@Build(!windows)
+func pageSize() int { return 4096 }
+```
+
+`@Build(linx)` is a compile error: `linx` is not a known word.
 
 ## 14.4 Rationale
 

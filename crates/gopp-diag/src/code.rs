@@ -89,6 +89,7 @@ codes! {
     73 NoteGoppModLine "note_gopp_mod_line",
     79 StmtOutsideFunc "err_stmt_outside_func",
     82 ExpectedLbraceAfter "err_expected_lbrace_after",
+    108 BadBuildConstraint "err_load_bad_build_constraint",
     156 ReceiverCount "err_receiver_count",
     157 ReceiverMissing "err_receiver_missing",
     377 StructEmbedding "err_struct_embedding",

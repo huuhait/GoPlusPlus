@@ -79,7 +79,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 
 ### Directive comments
 
-**LEX-11.** A line comment that starts with `//gopp:` is a directive. The only directive is `//gopp:build`. To the lexer it is an ordinary comment. Besides OS, architecture and tags, a `//gopp:build` term can be the name of a build profile (`//gopp:build debug`, [FOR-10](14-foreign-surface.md)). See [14](14-foreign-surface.md). (The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md).) A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error. The error carries a note with the `gopp.mod` line to add (`cflags …`); it has no fix-it, because a fix-it cannot move text into another file and deleting the line would lose the flags.
+**LEX-11.** A `.gopp` file has no directive comments. Which files and declarations a build takes is said with the attribute `@Build` ([FOR-11](14-foreign-surface.md)); Go's `//go:build` comment above the `package` clause of a `.gopp` file is a compile error that shows the attribute to write. A `.go` file keeps Go's `//go:build` line. The C/C++ settings `cxxstd`, `cflags` and `ldflags` are directives of `gopp.mod`, not of source files; see [FOR-10](14-foreign-surface.md). A leftover `//gopp:cflags`, `//gopp:cxxstd` or `//gopp:ldflags` in a source file is a compile error. The error carries a note with the `gopp.mod` line to add (`cflags …`); it has no fix-it, because a fix-it cannot move text into another file and deleting the line would lose the flags.
 
 ### Contextual words
 

@@ -285,6 +285,21 @@ fn header_imports_keep_their_order() {
 }
 
 #[test]
+fn a_build_condition_stands_above_what_it_is_for() {
+    let source = "// Licence.\n@Build( linux&&!arm64 )\n// Package p.\npackage p\n\
+                  @Build(windows) import \"<windows.h>\"\n@Build(linux)\n\nimport (\n\"b\"\n\"a\"\n)\n\
+                  @Build(linux||(unix&&debug))\nfunc f(){}\n";
+    let expected = "// Licence.\n@Build(linux && !arm64)\n\n// Package p.\npackage p\n\n\
+                    @Build(windows)\nimport \"<windows.h>\"\n@Build(linux)\nimport (\n\t\"a\"\n\t\"b\"\n)\n\n\
+                    @Build(linux || (unix && debug))\nfunc f() {}\n";
+    assert_eq!(gopp(source), expected);
+    assert_eq!(gopp(expected), expected);
+    let short = "@Build(linux)\n\npackage p\n";
+    assert_eq!(gopp("@Build(linux)\npackage p\n"), short);
+    assert_eq!(gopp("@Build(linux)\n\n\n\npackage p\n"), short);
+}
+
+#[test]
 fn groups_without_declarations_are_kept() {
     let source = "package p\n\nimport()\nconst (\n)\n\nvar ()\nfunc f(){\nvar()\n}\n";
     let expected = "package p\n\nimport ()\n\nconst ()\n\nvar ()\n\nfunc f() {\n\tvar ()\n}\n";

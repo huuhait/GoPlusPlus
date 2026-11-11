@@ -14,13 +14,11 @@ pub struct Token {
     pub bad: bool,
 }
 
-/// A comment's byte range, delimiters included. `directive` marks a line
-/// comment that starts with `//gopp:`.
+/// A comment's byte range, delimiters included.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Comment {
     pub lo: u32,
     pub hi: u32,
-    pub directive: bool,
 }
 
 #[derive(Logos, Clone, Copy, Debug, PartialEq, Eq, Hash)]

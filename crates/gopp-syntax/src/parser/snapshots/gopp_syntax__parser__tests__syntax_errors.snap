@@ -73,7 +73,7 @@ expression: report
 "package p\nfunc f() { @Inline x := 1 }\n"
     E0066 2:12 attributes are not allowed on statements
 "package p\n@Inline\nimport \"a\"\n"
-    E0067 2:1 attributes are not allowed on imports
+    E0067 2:1 the only attribute of an import is @Build
 "package p\n@inline\nfunc f()\n"
     E0064 2:2 macro name inline must start with a capital letter
 "package p\nmacro swap(a expr, b thing) {}\n"
@@ -109,3 +109,22 @@ expression: report
     E0025 3:6 syntax error: unexpected ... in the arguments of a macro
 "package p\n@A\nvar ()\n@B\nconst (\n\tc = 1\n)\n"
     E0025 2:1 an attribute before an empty group has no declaration
+"@Inline\npackage p\n"
+    E0025 1:1 only @Build may stand above the package clause
+"@Build\npackage p\n"
+    E0108 1:1 a build condition is made of names, &&, || and !, as in @Build(linux && !arm64)
+"package p\n@Build(linux, amd64)\nfunc f()\n@Build()\nfunc g()\n"
+    E0108 2:1 a build condition is made of names, &&, || and !, as in @Build(linux && !arm64)
+    E0108 4:1 a build condition is made of names, &&, || and !, as in @Build(linux && !arm64)
+"package p\n@Build(linux == 1)\nvar a int\n@Build(os.Linux)\nvar b int\n@Build(\"linux\")\nvar c int\n"
+    E0108 2:8 a build condition is made of names, &&, || and !, as in @Build(linux && !arm64)
+    E0108 4:8 a build condition is made of names, &&, || and !, as in @Build(linux && !arm64)
+    E0108 6:8 a build condition is made of names, &&, || and !, as in @Build(linux && !arm64)
+"package p\n@Build(linux)\n@Build(amd64)\nfunc f()\n"
+    E0108 3:1 @Build is written once; join the conditions with &&
+"package p\ntype T struct {\n\tx int @Build(linux)\n}\n"
+    E0108 3:8 @Build is for a file or a top level declaration, not for a field
+"package p\n@Build(linux)\n@Inline\nimport \"a\"\n"
+    E0067 3:1 the only attribute of an import is @Build
+"package p\nfunc f() {\n\t@Build(linux)\n\tx := 1\n}\n"
+    E0066 3:2 attributes are not allowed on statements

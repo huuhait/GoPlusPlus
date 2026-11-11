@@ -23,7 +23,7 @@ The owner asked for Cargo-style profiles on 2026-10-27.
 3. **CLI.** `gopp build` uses `debug`; `-release` or `-profile=NAME` picks another; `-opt=2` and the other eight setting flags override once. `-race`, `-asan`, `-ubsan` and `-msan` stay as shorthands for `-sanitize`; `-panic=abort` is the `-panic=` override.
 4. **Semantics.** A profile never changes what a program means. The one exception is `panic abort` (`recover()` returns nil). Sanitizers only watch for undefined behavior.
 5. **CMake.** The profile reaches every cdep through gopp's toolchain file (`GOPP_PROFILE`, `CMAKE_BUILD_TYPE`, flags, LTO, `BUILD_SHARED_LIBS`). The profile is in the cdep cache key. A cdep block can pin `opt` and `debuginfo`.
-6. **Compile-time access.** `#Profile()`, `#Setting("name")` and `@If(cond)` (all compile-time constants, MAC-14), plus profile names as `//gopp:build` terms. Dead code stays type-checked.
+6. **Compile-time access.** `#Profile()`, `#Setting("name")` and `@If(cond)` (all compile-time constants, MAC-14), plus profile names as words of a `@Build` condition ([ADR-0046](0046-build-attribute.md)). Dead code stays type-checked.
 7. **Layout.** `./target/<profile>/` holds the binary, `tests/` and `cdeps/` (CMake build trees). `-target-dir` and `GOPPTARGETDIR` change it. `gopp new` adds `target/` to `.gitignore`. The content-addressed cache stays global in `~/.cache/gopp`, shared by all projects and worktrees; `target/` is never an input.
 
 ## Consequences

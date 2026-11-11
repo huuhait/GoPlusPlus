@@ -5,6 +5,7 @@ use gopp_span::Span;
 
 use super::Parser;
 use crate::ast::*;
+use crate::constraint::is_build;
 use crate::token::TokenKind as T;
 use crate::with_stack;
 
@@ -586,7 +587,12 @@ impl Parser<'_> {
         }
         let mut attrs = Vec::new();
         while self.gopp && self.at(T::At) {
-            attrs.push(self.attribute());
+            let attr = self.attribute();
+            if is_build(&attr, self.text) {
+                let message = "@Build is for a file or a top level declaration, not for a field";
+                self.error_at(Code::BadBuildConstraint, attr.span, message);
+            }
+            attrs.push(attr);
         }
         let tag = self.literal();
         Some(Field {

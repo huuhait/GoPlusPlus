@@ -21,7 +21,7 @@ Attribute       = "@" MacroRef [ "(" [ MacroArgs ] ")" ] .
 MacroArgs       = ExpressionList .               /* a `block` argument is a func literal, see MAC-13 */
 
 TopLevelDecl   = /* Go alternatives */ | MacroDecl | ProcMacroDecl | MacroInvocation | AttributedDecl .
-AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl ) .
+AttributedDecl = Attribute { [ ";" ] Attribute } [ ";" ] ( Declaration | FunctionDecl | MethodDecl | ImportDecl ) .   /* on an import: `@Build` only */
 FieldAttributes = Attribute { Attribute } .             /* used by FieldDecl, defined in 3.1 (03-types.md) */
 Operand        = /* Go alternatives */ | MacroInvocation .
 ```
@@ -40,7 +40,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-2.** *Invocation.* `#Name(args)` can be used in expression, statement or declaration position. `#File()` with no arguments is written with empty parentheses. The arguments are a list of expressions; `...` after the last one (`#M(xs...)`) is a parse error, in an attribute too. It cannot be used where a type goes: `var x #Bits(12)` is a parse error in v0 (P09 Q3, ADR-0011).
 
-**MAC-3.** *Attachment.* `@Name` or `@Name(args)` on top of a declaration (a type, func, method, var or const) attaches a macro or attribute to it. Before a group (`const ( … )`) it attaches to every declaration of the group; before an empty group (`var ()`) it is a parse error. An attribute after a struct field's type is different: it is data read by the enclosing type's attached macro ([MAC-12](#132-rules)), not a separately expanded macro. An attached macro receives its arguments in parentheses plus the declaration it sits on, and returns new code. It may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
+**MAC-3.** *Attachment.* `@Name` or `@Name(args)` on top of a declaration (a type, func, method, var or const) attaches a macro or attribute to it. Only `@Build` ([FOR-11](14-foreign-surface.md)) also stands on an import and above the `package` clause. Before a group (`const ( … )`) it attaches to every declaration of the group; before an empty group (`var ()`) it is a parse error. An attribute after a struct field's type is different: it is data read by the enclosing type's attached macro ([MAC-12](#132-rules)), not a separately expanded macro. An attached macro receives its arguments in parentheses plus the declaration it sits on, and returns new code. It may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
 
 **MAC-4.** *Names.* Every macro and attribute name starts with a capital letter (`#Assert`, `@Derive`, `@Extern`), built-in or user-defined.
 
@@ -79,7 +79,7 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-10.** *`!` never means "macro".* This keeps `!` unambiguous as Must ([LEX-4](02-lexical.md)).
 
-**MAC-11.** *Not a conditional-compilation tool and no new syntax.* Macros only use the `#` and `@` forms (P09 D9.9). Use `//gopp:build` to keep code from being parsed at all. `#Profile`, `#Setting` and `@If` ([MAC-15](#132-rules)) do not hide code: it is still type-checked.
+**MAC-11.** *Not a conditional-compilation tool and no new syntax.* Macros only use the `#` and `@` forms (P09 D9.9). Use the built-in attribute `@Build` ([FOR-11](14-foreign-surface.md)) to keep code from being checked at all. `#Profile`, `#Setting` and `@If` ([MAC-15](#132-rules)) do not hide code: it is still type-checked.
 
 **MAC-12.** *Attributes on struct fields.* Attributes are allowed on struct fields in v0. They are written **after the field's type**, before any Go struct tag. Top-level attributes stay on the line before the declaration.
 - ``Name string @JSON("name") `db:"name"` ``: the attribute `@JSON("name")` first, then the tag.

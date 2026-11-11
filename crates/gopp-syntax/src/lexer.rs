@@ -10,6 +10,7 @@ use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, FileId, SourceFile, Span};
 use logos::{Filter, Lexer, Logos};
 
+use crate::constraint::go_build_text;
 use crate::token::{Comment, Token, TokenKind};
 
 /// The tokens of a file, ending with [`TokenKind::Eof`], and its comments in
@@ -27,6 +28,9 @@ pub struct Scan {
     invalid_utf8: Vec<u32>,
     /// Go's rule: the last token on a line decides whether the line end is a `;`.
     insert_semi: bool,
+    /// Whether a token was read: the comments before the first one are the
+    /// header of the file.
+    past_header: bool,
     bad_literal: bool,
     comments: Vec<Comment>,
     diagnostics: Vec<Diagnostic>,
@@ -94,6 +98,7 @@ pub fn lex(file: FileId, source: &SourceFile, sink: &Sink) -> Lexed {
         dialect: source.dialect(),
         invalid_utf8: source.invalid_utf8().to_vec(),
         insert_semi: false,
+        past_header: false,
         bad_literal: false,
         comments: Vec::new(),
         diagnostics: Vec::new(),
@@ -128,6 +133,7 @@ pub fn lex(file: FileId, source: &SourceFile, sink: &Sink) -> Lexed {
             bad: mem::take(&mut lexer.extras.bad_literal),
         });
         lexer.extras.insert_semi = kind.ends_statement();
+        lexer.extras.past_header = true;
     }
     if lexer.extras.insert_semi {
         tokens.push(Token {
@@ -278,17 +284,28 @@ pub(crate) fn newline(lexer: &mut Lexer<TokenKind>) -> TokenKind {
 }
 
 pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
-    let span = lexer.span();
-    let directive = lexer.slice().strip_prefix("//gopp:");
-    if let Some(directive) = directive {
+    let comment = lexer.slice();
+    let scan = &lexer.extras;
+    let span = Span {
+        file: scan.file,
+        lo: lexer.span().start as u32,
+        hi: lexer.span().end as u32,
+    };
+    // In a `.gopp` file Go's build line would be a comment like any other,
+    // and the file would be built for every system.
+    if scan.dialect == Dialect::Gopp
+        && !scan.past_header
+        && let Some(condition) = go_build_text(comment)
+    {
+        let message = format!(
+            "the build condition of a .gopp file is an attribute: write `@Build({condition})`"
+        );
+        let diagnostic = Diagnostic::new(Code::BadBuildConstraint, span, message);
+        lexer.extras.diagnostics.push(diagnostic);
+    }
+    if let Some(directive) = comment.strip_prefix("//gopp:") {
         let name = directive.split_whitespace().next().unwrap_or("");
         if matches!(name, "cflags" | "cxxstd" | "ldflags") {
-            let file = lexer.extras.file;
-            let span = Span {
-                file,
-                lo: span.start as u32,
-                hi: span.end as u32,
-            };
             let message = format!("//gopp:{name} is not a directive of source files");
             let note = format!("add the line `{}` to gopp.mod", directive.trim_end());
             let diagnostic = Diagnostic::new(Code::GoppDirectiveInSource, span, message).with_note(
@@ -300,9 +317,8 @@ pub(crate) fn line_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
         }
     }
     lexer.extras.comments.push(Comment {
-        lo: span.start as u32,
-        hi: span.end as u32,
-        directive: directive.is_some(),
+        lo: span.lo,
+        hi: span.hi,
     });
     TokenKind::Skipped
 }
@@ -326,7 +342,6 @@ pub(crate) fn block_comment(lexer: &mut Lexer<TokenKind>) -> TokenKind {
     lexer.extras.comments.push(Comment {
         lo: start as u32,
         hi: lexer.span().end as u32,
-        directive: false,
     });
     if ends_line && lexer.extras.insert_semi {
         TokenKind::Semi

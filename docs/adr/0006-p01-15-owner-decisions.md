@@ -77,8 +77,9 @@ runtime variables (`#Assert(x > 0, "bad")`, MAC-14).
 
 ### D24: C/C++ settings live in `gopp.mod`
 Module-wide directives `cxxstd c++20`, `cflags …` and `ldflags …` live in
-`gopp.mod`, set once per project like Go's `go.mod`. `//gopp:build` stays in
-source files, like Go's `//go:build` (FOR-9, FOR-10).
+`gopp.mod`, set once per project like Go's `go.mod`. The build condition stays
+in source files: the attribute `@Build(...)` (FOR-10, FOR-11,
+[ADR-0046](0046-build-attribute.md)).
 
 ### D25: returning a pointer into a local is a compile error
 Returning `&local` or any borrow into storage that dies at function return is a

@@ -350,6 +350,14 @@ fn syntax_errors() {
         "package p\nfunc f() { x.[1] }\n",
         "package p\nfunc f() { #M(1, xs...) }\n@A(xs...)\nfunc g()\n",
         "package p\n@A\nvar ()\n@B\nconst (\n\tc = 1\n)\n",
+        "@Inline\npackage p\n",
+        "@Build\npackage p\n",
+        "package p\n@Build(linux, amd64)\nfunc f()\n@Build()\nfunc g()\n",
+        "package p\n@Build(linux == 1)\nvar a int\n@Build(os.Linux)\nvar b int\n@Build(\"linux\")\nvar c int\n",
+        "package p\n@Build(linux)\n@Build(amd64)\nfunc f()\n",
+        "package p\ntype T struct {\n\tx int @Build(linux)\n}\n",
+        "package p\n@Build(linux)\n@Inline\nimport \"a\"\n",
+        "package p\nfunc f() {\n\t@Build(linux)\n\tx := 1\n}\n",
     ];
     let mut report = String::new();
     for case in cases {
@@ -387,8 +395,17 @@ fn extends_is_not_a_keyword() {
 fn an_attribute_does_not_end_the_imports() {
     assert_eq!(
         errors_in("package p\n@Inline\nimport \"a\"\n"),
-        ["E0067 2:1 attributes are not allowed on imports"]
+        ["E0067 2:1 the only attribute of an import is @Build"]
     );
+}
+
+#[test]
+fn build_conditions() {
+    insta::assert_snapshot!(tree(
+        "@Build(linux && !arm64)\n\npackage p\n\n@Build(windows)\nimport \"<windows.h>\"\n\n\
+         @Build(linux || (unix && debug))\nfunc f() {}\n\n\
+         @Build(!windows)\n@Inline\nvar (\n\ta = 1\n\tb = 2\n)\n"
+    ));
 }
 
 fn parse_go(text: &str) -> Parsed {

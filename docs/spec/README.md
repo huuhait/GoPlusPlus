@@ -21,7 +21,7 @@ Start with the [overview](01-overview.md).
 | 11 | [Closures](11-closures.md) | shared cells, method values | D1.11 |
 | 12 | [Concurrency](12-concurrency.md) | `go`, channels, `select`, races | D1.13, ADR-0022 |
 | 13 | [Macro and attribute surface](13-macros-surface.md) | `macro`, `#`, `@`, built-in attributes | D1.14 |
-| 14 | [Foreign import surface](14-foreign-surface.md) | header imports, `gopp.mod` C/C++ settings, `//gopp:build` | D1.15 |
+| 14 | [Foreign import surface](14-foreign-surface.md) | header imports, `gopp.mod` C/C++ settings, `@Build` | D1.15 |
 | 15 | [Program init and exit](15-program-init.md) | start and exit order | D1.18 |
 | 16 | [Undefined behavior](16-undefined-behavior.md) | UB and implementation-defined list | D1.4 r8, D1.17 |
 

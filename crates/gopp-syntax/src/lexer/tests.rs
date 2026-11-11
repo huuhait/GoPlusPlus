@@ -274,25 +274,48 @@ fn comments_end_a_line_only_with_a_line_end_in_them() {
 }
 
 #[test]
-fn comments_are_kept_in_order_and_directives_are_marked() {
-    let text = "//gopp:build linux\n// plain\nx /* block */ y //gopp:x\n/* //gopp:no */";
+fn comments_are_kept_in_order() {
+    let text = "// first\nx /* block */ y //gopp:x\n/* // no */";
     let (source, lexed, diagnostics) = lex_bytes(text.as_bytes(), Dialect::Gopp);
     assert_eq!(diagnostics, []);
     let comments: Vec<_> = lexed
         .comments
         .iter()
-        .map(|c| (&source.text()[c.lo as usize..c.hi as usize], c.directive))
+        .map(|c| &source.text()[c.lo as usize..c.hi as usize])
         .collect();
     assert_eq!(
         comments,
-        [
-            ("//gopp:build linux", true),
-            ("// plain", false),
-            ("/* block */", false),
-            ("//gopp:x", true),
-            ("/* //gopp:no */", false),
-        ]
+        ["// first", "/* block */", "//gopp:x", "/* // no */"]
     );
+}
+
+#[test]
+fn a_build_comment_above_the_package_clause_of_a_gopp_file_is_an_error() {
+    let messages = |text: &str, dialect| {
+        let (_, _, diagnostics) = lex_bytes(text.as_bytes(), dialect);
+        let message = |d: &Diagnostic| {
+            assert_eq!(d.code, Code::BadBuildConstraint);
+            (d.span.lo, d.message.clone())
+        };
+        diagnostics.iter().map(message).collect::<Vec<_>>()
+    };
+    let told = |condition: &str| {
+        format!("the build condition of a .gopp file is an attribute: write `@Build({condition})`")
+    };
+    assert_eq!(
+        messages(
+            "// c\n//go:build linux && !arm64\n\npackage p\n",
+            Dialect::Gopp
+        ),
+        [(5, told("linux && !arm64"))]
+    );
+    for fine in [
+        "package p\n//go:build linux\n",
+        "// go:build linux\n//go:builder\n/* //go:build linux */\npackage p\n",
+    ] {
+        assert_eq!(messages(fine, Dialect::Gopp), [], "{fine}");
+    }
+    assert_eq!(messages("//go:build linux\npackage p\n", Dialect::Go), []);
 }
 
 #[test]
@@ -314,10 +337,7 @@ fn compiler_flag_directives_belong_in_gopp_mod() {
             format!("add the line `{name} -O2 -DX` to gopp.mod")
         );
     }
-    assert_eq!(
-        kinds("//gopp:build linux\n//gopp:cflagsx\n// gopp:cflags\n"),
-        []
-    );
+    assert_eq!(kinds("//gopp:cflagsx\n// gopp:cflags\n"), []);
 }
 
 #[test]

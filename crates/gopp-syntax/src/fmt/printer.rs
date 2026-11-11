@@ -702,9 +702,9 @@ impl<'a> Printer<'a> {
             self.indent = 0;
         }
         if text.starts_with("//") {
-            if super::build::is_go_build(text) {
+            if crate::constraint::is_go_build(text) {
                 self.go_build.push(self.output.len());
-            } else if super::build::is_plus_build(text) {
+            } else if crate::constraint::is_plus_build(text) {
                 self.plus_build.push(self.output.len());
             }
             self.write_string(pos, text.trim_end(), true);

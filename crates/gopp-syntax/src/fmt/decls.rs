@@ -336,6 +336,15 @@ impl<'a> Printer<'a> {
 
     pub(super) fn file(&mut self) {
         let cx = self.cx;
+        for attr in &cx.file.attrs {
+            self.attribute(attr);
+            self.ws(Ws::Newline);
+        }
+        // A blank line sets them apart from the package clause and its
+        // comment.
+        if !cx.file.attrs.is_empty() {
+            self.ws(Ws::Newline);
+        }
         if let Some(package) = cx.file.package {
             let keyword = cx.token_at(package.span.lo).saturating_sub(1);
             self.set_pos(cx.lo(keyword));

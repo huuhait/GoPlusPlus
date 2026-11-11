@@ -1,0 +1,38 @@
+---
+source: crates/gopp-syntax/src/parser/tests.rs
+expression: "tree(\"@Build(linux && !arm64)\\n\\npackage p\\n\\n@Build(windows)\\nimport \\\"<windows.h>\\\"\\n\\n\\\n         @Build(linux || (unix && debug))\\nfunc f() {}\\n\\n\\\n         @Build(!windows)\\n@Inline\\nvar (\\n\\ta = 1\\n\\tb = 2\\n)\\n\")"
+---
+File package=p
+  Attribute Build() @0..23
+    Binary AndAnd @7..22
+      Name linux @7..12
+      Unary Not @16..22
+        Name arm64 @17..22
+  Attribute Build() @36..51
+    Name windows @43..50
+  Import @52..72
+    BasicLit String "\"<windows.h>\"" @59..72
+  Attribute Build() @74..106
+    Binary OrOr @81..105
+      Name linux @81..86
+      Paren @90..105
+        Binary AndAnd @91..104
+          Name unix @91..95
+          Name debug @99..104
+  Func f @107..118
+    FuncType @107..115
+    Block @116..118
+  Attribute Build() @120..136
+    Unary Not @127..135
+      Name windows @128..135
+  Attribute Inline @137..144
+  Var a group=1 @152..157
+    values:
+      BasicLit Int "1" @156..157
+  Attribute Build() @120..136
+    Unary Not @127..135
+      Name windows @128..135
+  Attribute Inline @137..144
+  Var b group=1 @159..164
+    values:
+      BasicLit Int "2" @163..164
