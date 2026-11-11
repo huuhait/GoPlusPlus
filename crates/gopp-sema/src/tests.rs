@@ -1031,11 +1031,172 @@ fn a_type_may_not_hold_a_value_of_itself() {
         ),
         ("type L[E any] struct{ next *L[E]; v E }\ntype B *B", &[]),
         ("type A struct{ b *B }\ntype B struct{ a A }", &[]),
+        (
+            "type B struct{ a *A }\ntype A B\nvar x A\nvar p *A = x.a",
+            &[],
+        ),
+        (
+            "type T T",
+            &["a.gopp:2:6: invalid recursive type: T refers to itself"],
+        ),
+        (
+            "type I interface{ I }",
+            &["a.gopp:2:6: invalid recursive type: I refers to itself"],
+        ),
+        // A generic type is reported where it is given its arguments.
+        (
+            "type T[P any] struct{ f T[P] }",
+            &["a.gopp:2:25: invalid recursive type: T refers to itself"],
+        ),
+        (
+            "type T[P any] [2]T[*P]",
+            &["a.gopp:2:18: invalid recursive type: T refers to itself"],
+        ),
+        (
+            "type N[P any] M[P]\ntype M[P any] N[P]",
+            &[
+                "a.gopp:2:15: invalid recursive type M",
+                "    a.gopp:2:15: M refers to N",
+                "    a.gopp:2:15: N refers to M",
+            ],
+        ),
+        (
+            "type Pair[P any] struct{ a, b P }\ntype T struct{ p Pair[*T] }",
+            &[],
+        ),
+        (
+            "type Pair[P any] struct{ a, b P }\ntype T struct{ p Pair[T] }",
+            &[
+                "a.gopp:3:6: invalid recursive type T",
+                "    a.gopp:3:6: T refers to Pair",
+                "    a.gopp:3:18: Pair refers to T",
+            ],
+        ),
+        (
+            "func f() {\n\ttype T struct{ t T }\n}",
+            &["a.gopp:3:7: invalid recursive type: T refers to itself"],
+        ),
+        // A type and a value that need each other.
+        (
+            "type T [len(a)]int\nvar a T",
+            &[
+                "a.gopp:2:6: invalid recursive type T",
+                "    a.gopp:2:6: T refers to a",
+                "    a.gopp:3:5: a refers to T",
+            ],
+        ),
     ];
     for (body, expected) in cases {
         let text = format!("package p\n{body}\n");
         assert_eq!(messages("a.gopp", &text), *expected, "{body}");
     }
+}
+
+#[test]
+fn a_long_chain_of_generic_types_is_checked() {
+    // Wall time is not measured here; this only has to end. As in Go's
+    // type checker, a type that is written with a type parameter is looked
+    // into again in each place.
+    let chain: String = (0..500)
+        .map(|i| format!("type G{i}[P any] struct{{ g G{}[P] }}\n", i + 1))
+        .collect();
+    let text = format!("package p\n{chain}type G500[P any] struct{{ p P }}\n");
+    assert_eq!(messages("a.go", &text), [] as [&str; 0]);
+}
+
+#[test]
+fn only_a_function_is_named_init_or_main() {
+    let names = ThreadedRodeo::new();
+    let text = "package main\nimport init \"example.com/lib\"\ntype main struct{}\n\
+                var init int\nfunc main() {}\n";
+    let found = check_texts("main", &[("a.go", text)], &with_lib(&names), &names).messages;
+    assert_eq!(
+        found,
+        [
+            "a.go:2:8: cannot import package as init - init must be a func",
+            "a.go:3:6: cannot declare main - must be func",
+            "a.go:4:5: cannot declare init - must be func",
+        ]
+    );
+}
+
+#[test]
+fn an_import_path_of_a_go_file_has_go_s_characters() {
+    let found = messages("a.go", "package p\nimport _ \"a!b\"\n");
+    assert_eq!(
+        found,
+        ["a.go:2:10: invalid import path (invalid character U+0021 '!')"]
+    );
+    // A `.gopp` file imports headers too.
+    let found = messages("a.gopp", "package p\nimport _ \"<vector>\"\n");
+    assert_eq!(
+        found,
+        ["a.gopp:2:10: could not import <vector> (package not found)"]
+    );
+}
+
+#[test]
+fn a_statement_in_error_is_reported_once() {
+    let cases: &[(&str, &[&str])] = &[
+        // Nothing of a select clause that does not communicate is looked at.
+        (
+            "func f() {\n\tselect {\n\tcase x:\n\t\ty := 1\n\t}\n}",
+            &["a.go:4:7: select case must be send or receive (possibly with assignment)"],
+        ),
+        (
+            "func f(c chan int) {\n\tselect {\n\tcase v := <-c:\n\t\t_ = v\n\tcase c <- 1:\n\t}\n}",
+            &[],
+        ),
+        (
+            "func f() {\n\tfor i := 0; i < 3; j := 1 {\n\t}\n}",
+            &["a.go:3:21: syntax error: cannot declare in post statement of for loop"],
+        ),
+        // What cannot be ranged over gives its variable no type.
+        ("func f() {\n\tfor x := range 1.5 {\n\t}\n}", &[]),
+        (
+            "func f(s []int) {\n\tfor _, x := range s {\n\t}\n}",
+            &["a.go:3:9: declared and not used: x"],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{body}\n");
+        assert_eq!(messages("a.go", &text), *expected, "{body}");
+    }
+}
+
+#[test]
+fn a_name_as_the_length_of_an_array_is_a_constant() {
+    let text = "package p\nvar v int\nconst c = 2\nvar (\n\ta [n]int\n\tb [v]int\n\td [c]int\n)\n";
+    assert_eq!(
+        messages("a.go", text),
+        [
+            "a.go:5:5: undefined array length n or missing type constraint",
+            "a.go:6:5: invalid array length v",
+        ]
+    );
+}
+
+#[test]
+fn a_name_of_a_package_that_differs_in_its_capitals_is_suggested() {
+    let names = ThreadedRodeo::new();
+    let text = "package p\nimport \"example.com/lib\"\nvar _ = lib.EXPORTED\nvar _ = lib.Other\n";
+    let found = check_texts("p", &[("a.go", text)], &with_lib(&names), &names).messages;
+    assert_eq!(
+        found,
+        [
+            "a.go:3:13: undefined: lib.EXPORTED (but have Exported)",
+            "a.go:4:13: undefined: lib.Other",
+        ]
+    );
+}
+
+#[test]
+fn the_signature_of_a_function_is_not_needed_at_the_start() {
+    // `r` in the signature is an error of its own; `x` in the length of
+    // the result is no need of `g`.
+    let text = "package p\nvar r = newReader()\nfunc newReader() r\n\
+                func g() [len(x)]int\nvar x = [2]int{}\nvar y = g\n";
+    assert_eq!(messages("a.go", text), ["a.go:3:18: r is not a type"]);
 }
 
 /// The variables that each step of the start of the program sets.
@@ -1305,6 +1466,24 @@ func Map[T, U any](xs []T, f func(T) U) []U
         "table: map[string][]p.Node",
     ];
     assert_eq!(lines, expected);
+}
+
+#[test]
+fn the_size_of_a_type_that_holds_itself_is_not_asked_forever() {
+    let text = "package p\nimport \"unsafe\"\ntype T struct{ T }\nvar t T\n\
+                const size = unsafe.Sizeof(t)\nvar same = t == t\n";
+    let names = ThreadedRodeo::new();
+    let mut loader = Loader::default();
+    let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
+    let stub = check_texts("unsafe", &[("unsafe.go", stub)], &loader, &names);
+    loader
+        .packages
+        .insert("unsafe".to_owned(), Arc::new(stub.package));
+    let found = check_texts("p", &[("a.go", text)], &loader, &names).messages;
+    assert_eq!(
+        found,
+        ["a.go:3:6: invalid recursive type: T refers to itself"]
+    );
 }
 
 #[test]
@@ -1579,4 +1758,182 @@ func f(c Celsius, xs []int32, m map[uint8]string, ch chan complex64) (float32, u
         "18: uint16 = 18",
     ];
     assert_eq!(lines, expected);
+}
+
+/// The packages of Go's standard library, as built for this machine without
+/// cgo, checked here. Needs `go` on `PATH`.
+fn standard_library(names: &ThreadedRodeo, types: &Types) -> HashMap<String, Arc<Package>> {
+    let format = "{{.ImportPath}}\t{{.Dir}}\t{{join .GoFiles \",\"}}\t\
+                  {{range $from, $to := .ImportMap}}{{$from}}={{$to}},{{end}}";
+    let output = Command::new("go")
+        .args(["list", "-deps", "-f", format, "std"])
+        .env("CGO_ENABLED", "0")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut checked: HashMap<String, Arc<Package>> = HashMap::new();
+    for line in std::str::from_utf8(&output.stdout).unwrap().lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let (path, dir) = (fields[0], PathBuf::from(fields[1]));
+        let import_map = fields[3]
+            .split_terminator(',')
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(from, to)| (from.to_owned(), to.to_owned()))
+            .collect();
+        let map = SourceMap::new();
+        let sink = Sink::new(100);
+        let mut sources = Vec::new();
+        let mut files = Vec::new();
+        for name in fields[2].split_terminator(',') {
+            let file = dir.join(name);
+            let bytes = fs::read(&file).unwrap();
+            let id = map.add(SourceFile::from_bytes(file, &bytes, Dialect::Go).unwrap());
+            let source = map.file(id);
+            files.push(parse(id, &source, names, &sink));
+            sources.push(source);
+        }
+        let units: Vec<Unit> = files
+            .iter()
+            .zip(&sources)
+            .map(|(file, source)| Unit { file, source })
+            .collect();
+        let loader = StdLoader {
+            checked: &checked,
+            import_map,
+        };
+        let package = check(path, &units, &loader, names, types, &sink);
+        checked.insert(path.to_owned(), Arc::new(package));
+    }
+    checked
+}
+
+/// The program that compares reported errors with the errors that Go's test
+/// files expect.
+const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerrors/main.go");
+
+/// How many of the errors that the test files of Go's type checker expect
+/// are reported here, at the least. It only grows.
+const EXPECTED_ERRORS_REPORTED: usize = 325;
+
+/// The test files of Go's type checker say where Go reports which error.
+/// Nothing is reported here that they do not expect; what they expect and
+/// is not reported yet is counted. Needs `go` on `PATH`.
+#[test]
+#[ignore = "long: checks Go's standard library and the test files of Go's type checker"]
+fn errors_are_reported_where_go_s_test_files_expect_them() {
+    let names = ThreadedRodeo::new();
+    let types = Types::new(&names);
+    let loader = Loader {
+        packages: standard_library(&names, &types),
+        ..Loader::default()
+    };
+    let goroot = Command::new("go").args(["env", "GOROOT"]).output().unwrap();
+    let goroot = String::from_utf8(goroot.stdout).unwrap();
+    let testdata = PathBuf::from(goroot.trim()).join("src/internal/types/testdata");
+
+    let sorted = |dir: &std::path::Path| {
+        let mut entries: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        entries.sort();
+        entries
+    };
+    let mut input = String::new();
+    let mut packages = 0;
+    for dir in ["check", "examples", "fixedbugs", "spec"] {
+        for entry in sorted(&testdata.join(dir)) {
+            // A directory is one package.
+            let paths = match entry.is_dir() {
+                true => sorted(&entry),
+                false => vec![entry.clone()],
+            };
+            let texts: Vec<Vec<u8>> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+            // The first line may set what the file is checked with: an
+            // older version of Go, or a switch that is off by default.
+            let first = texts[0].split(|&byte| byte == b'\n').next().unwrap();
+            let flags = String::from_utf8_lossy(first);
+            let flags = flags.strip_prefix("//").map_or("", str::trim);
+            let other_language = ["-lang=", "-gotypesalias=0", "-goexperiment", "-fakeImportC"]
+                .iter()
+                .any(|flag| flags.starts_with('-') && flags.contains(flag));
+            if other_language {
+                continue;
+            }
+            packages += 1;
+            let map = SourceMap::new();
+            let sink = Sink::new(10_000);
+            let mut sources = Vec::new();
+            let mut files = Vec::new();
+            for (path, text) in paths.iter().zip(&texts) {
+                input += &format!("file\t{}\n", path.display());
+                let id = map.add(SourceFile::from_bytes(path.clone(), text, Dialect::Go).unwrap());
+                let source = map.file(id);
+                files.push(parse(id, &source, &names, &sink));
+                sources.push(source);
+            }
+            let units: Vec<Unit> = files
+                .iter()
+                .zip(&sources)
+                .map(|(file, source)| Unit { file, source })
+                .collect();
+            let name = entry.file_stem().unwrap().to_str().unwrap();
+            check(name, &units, &loader, &names, &types, &sink);
+            for diagnostic in sink.finish() {
+                // `assert` and `trace` only exist in Go's own test run.
+                if ["undefined: assert", "undefined: trace"].contains(&&*diagnostic.message) {
+                    continue;
+                }
+                let source = map.file(diagnostic.span.file);
+                let place = source.line_col(diagnostic.span.lo);
+                input += &format!(
+                    "err\t{}\t{}\t{}\t{}\n",
+                    source.path().display(),
+                    place.line,
+                    place.column,
+                    diagnostic.message.replace('\n', " ")
+                );
+            }
+        }
+    }
+
+    let mut compare = Command::new("go")
+        .args(["run", GOERRORS])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The program reads all of its input before it prints.
+    std::io::Write::write_all(&mut compare.stdin.take().unwrap(), input.as_bytes()).unwrap();
+    let output = compare.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let report = String::from_utf8(output.stdout).unwrap();
+    let (mut ok, mut missing) = (0, 0);
+    let mut wrong = Vec::new();
+    for line in report.lines() {
+        match line.split_once(' ').unwrap() {
+            ("ok", count) => ok = count.parse().unwrap(),
+            ("missing", _) => missing += 1,
+            _ => wrong.push(line),
+        }
+    }
+    if let Ok(path) = std::env::var("GOPP_ERRORS_REPORT") {
+        fs::write(path, &report).unwrap();
+    }
+    println!("{packages} packages: {ok} expected errors reported, {missing} not yet");
+    let shown: Vec<&str> = wrong.iter().take(40).copied().collect();
+    assert!(
+        wrong.is_empty(),
+        "{} errors that Go does not report there\n{}",
+        wrong.len(),
+        shown.join("\n")
+    );
+    assert!(
+        ok >= EXPECTED_ERRORS_REPORTED,
+        "only {ok} expected errors reported"
+    );
 }

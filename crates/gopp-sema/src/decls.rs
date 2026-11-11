@@ -1,8 +1,7 @@
-//! The order among the declarations of a package, and the cycles that are
-//! errors: a type that contains itself, a declaration that needs itself,
-//! variables whose initial values need each other.
+//! The order in which the variables of a package are initialized, and the
+//! cycles among their initial values, which are errors.
 //!
-//! All of it is read from what the names denote; no type is computed.
+//! What a declaration needs is what its checked expressions use as values.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -13,10 +12,9 @@ use gopp_syntax::ast::*;
 use lasso::ThreadedRodeo;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::object::{Body, ObjId, ObjKind, Ref};
+use crate::object::{ObjId, ObjKind};
 use crate::package::Package;
 use crate::resolve::Unit;
-use crate::universe::Predeclared;
 
 /// One step of the start of a program: the variables on the left get the
 /// value on the right.
@@ -31,15 +29,11 @@ pub struct Initializer {
 /// What a declaration refers to.
 #[derive(Default)]
 struct Node {
-    /// The objects that its type and its value name, functions aside for
-    /// a function; for a function, what its body names.
+    /// The constants, variables and functions that it uses as values; for
+    /// a function, those that its body uses.
     refs: Vec<usize>,
-    /// For a type: the types that it holds by value, so that a value of
-    /// it would hold a value of them.
-    held: Vec<usize>,
     /// The value that initializes a variable, with its file.
     value: Option<(u32, ExprId)>,
-    is_alias: bool,
 }
 
 /// The strongly connected components of a graph, each after all that it
@@ -135,19 +129,25 @@ struct Orderer<'a> {
 }
 
 /// Finds the cycles among the package-level declarations of `package` and
-/// the order in which its variables are initialized.
+/// the order in which its variables are initialized. `needs` has, for each
+/// object, the objects that its declaration uses as values.
 pub fn order(
     package: &Package,
     units: &[Unit<'_>],
+    needs: &[Vec<usize>],
     names: &ThreadedRodeo,
     sink: &Sink,
 ) -> Vec<Initializer> {
     let by_span = package.objects.iter().enumerate();
+    let node = |refs: &Vec<usize>| Node {
+        refs: refs.clone(),
+        ..Node::default()
+    };
     let mut orderer = Orderer {
         package,
         names,
         sink,
-        nodes: package.objects.iter().map(|_| Node::default()).collect(),
+        nodes: needs.iter().map(node).collect(),
         by_span: by_span
             .map(|(index, object)| (object.span, index))
             .collect(),
@@ -155,7 +155,6 @@ pub fn order(
     for (file, unit) in units.iter().enumerate() {
         orderer.collect(file, unit);
     }
-    orderer.recursive_types();
     orderer.init_order()
 }
 
@@ -180,33 +179,10 @@ impl Orderer<'_> {
 
     fn collect(&mut self, file: usize, unit: &Unit<'_>) {
         let tree = unit.file;
-        let bodies = &self.package.files[file].bodies;
-        // The values that a constant without one repeats, per group.
-        let mut repeated: Option<(Option<u32>, &[ExprId], usize)> = None;
-        for (index, &decl) in tree.decls.iter().enumerate() {
-            let node = &tree.decl_nodes[decl];
-            let refs = Refs::new(tree, &bodies[index]);
-            match &node.kind {
-                DeclKind::Const { names, ty, values } | DeclKind::Var { names, ty, values } => {
-                    let is_const = matches!(node.kind, DeclKind::Const { .. });
-                    let mut values = values.as_slice();
-                    // The names in a repeated value were resolved with the
-                    // declaration that wrote it.
-                    let mut value_refs = Refs::new(tree, &bodies[index]);
-                    if is_const {
-                        match repeated {
-                            Some((group, last, origin))
-                                if values.is_empty() && group == node.group =>
-                            {
-                                values = last;
-                                value_refs = Refs::new(tree, &bodies[origin]);
-                            }
-                            _ => repeated = Some((node.group, values, index)),
-                        }
-                    }
-                    let typed: Vec<usize> = ty.map_or(Vec::new(), |ty| refs.within(tree, ty));
+        for &decl in &tree.decls {
+            match &tree.decl_nodes[decl].kind {
+                DeclKind::Var { names, values, .. } => {
                     for (position, &name) in names.iter().enumerate() {
-                        self.only_a_func(name);
                         let Some(object) = self.declared(name) else {
                             continue;
                         };
@@ -215,30 +191,8 @@ impl Orderer<'_> {
                             1 => values.first(),
                             _ => values.get(position),
                         };
-                        let mut all = typed.clone();
-                        if let Some(&value) = value {
-                            all.extend(value_refs.within(tree, value));
-                        }
-                        let node = &mut self.nodes[object];
-                        node.refs = all;
-                        if !is_const {
-                            node.value = value.map(|&value| (file as u32, value));
-                        }
+                        self.nodes[object].value = value.map(|&value| (file as u32, value));
                     }
-                }
-                DeclKind::Type {
-                    name, alias, ty, ..
-                } => {
-                    self.only_a_func(*name);
-                    let Some(object) = self.declared(*name) else {
-                        continue;
-                    };
-                    let mut held = Vec::new();
-                    refs.held(tree, *ty, true, &mut held);
-                    let node = &mut self.nodes[object];
-                    node.is_alias = *alias;
-                    node.refs = refs.within(tree, *ty);
-                    node.held = held;
                 }
                 DeclKind::Func {
                     is_macro: false,
@@ -247,12 +201,7 @@ impl Orderer<'_> {
                     type_params,
                     ty,
                     body,
-                } => {
-                    self.entry_point(tree, *name, type_params, *ty, body.is_some());
-                    if let Some(object) = self.declared(*name) {
-                        self.nodes[object].refs = refs.all();
-                    }
-                }
+                } => self.entry_point(tree, *name, type_params, *ty, body.is_some()),
                 _ => {}
             }
         }
@@ -262,14 +211,6 @@ impl Orderer<'_> {
     fn is_entry_point(&self, name: Ident) -> bool {
         let text = self.names.resolve(&name.name);
         text == "init" || text == "main" && self.package.name == "main"
-    }
-
-    fn only_a_func(&self, name: Ident) {
-        if self.is_entry_point(name) {
-            let text = self.names.resolve(&name.name);
-            let message = format!("cannot declare {text} - must be func");
-            self.error(Code::InitSignature, name.span, message);
-        }
     }
 
     /// `init` and `main` take nothing and return nothing.
@@ -327,42 +268,6 @@ impl Orderer<'_> {
             self.package.objects[object].kind,
             ObjKind::Const | ObjKind::Var
         )
-    }
-
-    /// A type may not hold a value of itself, and aliases may not name
-    /// each other in a circle.
-    fn recursive_types(&self) {
-        let count = self.nodes.len();
-        let held = |node: usize| self.nodes[node].held.clone();
-        let aliases = |node: usize| {
-            let named = self.nodes[node].refs.iter().copied();
-            let is_alias = |&to: &usize| self.nodes[to].is_alias;
-            match self.nodes[node].is_alias {
-                true => named.filter(is_alias).collect(),
-                false => Vec::new(),
-            }
-        };
-        let mut reported = FxHashSet::default();
-        for component in components(count, held)
-            .into_iter()
-            .chain(components(count, aliases))
-        {
-            let start = component[0];
-            let by_value = cycle_through(start, &component, held);
-            let cycle = match by_value.is_empty() {
-                true => cycle_through(start, &component, aliases),
-                false => by_value,
-            };
-            if !cycle.is_empty() && reported.insert(start) {
-                let what = ["invalid recursive type", "invalid recursive type"];
-                self.report_cycle(
-                    &cycle,
-                    Code::InvalidRecursiveType,
-                    Code::InvalidRecursiveTypeSelf,
-                    what,
-                );
-            }
-        }
     }
 
     /// Go's order of initialization: again and again the first variable in
@@ -474,78 +379,5 @@ impl Orderer<'_> {
             }
         }
         order
-    }
-}
-
-/// The package-level objects that one top-level declaration names, by the
-/// place of the name.
-struct Refs<'a> {
-    body: &'a Body,
-    /// The start of each name that denotes an object of the package, and
-    /// the object, in the order of the source.
-    sorted: Vec<(u32, usize)>,
-}
-
-impl<'a> Refs<'a> {
-    fn new(tree: &File, body: &'a Body) -> Self {
-        let object = |(&expr, denotes): (&ExprId, &Ref)| match *denotes {
-            Ref::Object(ObjId(object)) => Some((tree.exprs[expr].span.lo, object as usize)),
-            _ => None,
-        };
-        // A key of a composite literal may be a field; whether it names an
-        // object is known only with the type of the literal.
-        let mut sorted: Vec<(u32, usize)> = body.uses.iter().filter_map(object).collect();
-        sorted.sort_unstable();
-        Self { body, sorted }
-    }
-
-    fn all(&self) -> Vec<usize> {
-        self.sorted.iter().map(|&(_, object)| object).collect()
-    }
-
-    /// The objects named inside the expression `expr`.
-    fn within(&self, tree: &File, expr: ExprId) -> Vec<usize> {
-        let span = tree.exprs[expr].span;
-        let from = self.sorted.partition_point(|&(lo, _)| lo < span.lo);
-        let named = self.sorted[from..]
-            .iter()
-            .take_while(|&&(lo, _)| lo < span.hi);
-        named.map(|&(_, object)| object).collect()
-    }
-
-    /// The types that a value of the type `expr` holds a value of. Behind
-    /// a pointer, in a slice, a map, a channel, a func or an interface,
-    /// nothing is held.
-    fn held(&self, tree: &File, expr: ExprId, by_value: bool, out: &mut Vec<usize>) {
-        if !by_value {
-            return;
-        }
-        match &tree.exprs[expr].kind {
-            ExprKind::Name(_) => {
-                if let Some(&Ref::Object(ObjId(object))) = self.body.uses.get(&expr) {
-                    out.push(object as usize);
-                }
-            }
-            ExprKind::Paren(x) => self.held(tree, *x, true, out),
-            ExprKind::ArrayType { elem, .. } => self.held(tree, *elem, true, out),
-            ExprKind::StructType { fields } => {
-                for field in fields {
-                    self.held(tree, field.ty, true, out);
-                }
-            }
-            ExprKind::Index { x, indices } => match self.body.uses.get(x) {
-                // An option holds its value in place.
-                Some(Ref::Universe(Predeclared::Option)) => {
-                    for &index in indices {
-                        self.held(tree, index, true, out);
-                    }
-                }
-                Some(Ref::Universe(_)) => {}
-                // A generic type: what it holds of its arguments is known
-                // only when it is instantiated.
-                _ => self.held(tree, *x, true, out),
-            },
-            _ => {}
-        }
     }
 }

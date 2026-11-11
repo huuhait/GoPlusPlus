@@ -23,7 +23,7 @@ use crate::object::{Body, FileInfo, Local, LocalId, LocalKind, ObjId, ObjKind, O
 use crate::package::{Package, PackageLoader};
 use crate::typecheck;
 use crate::types::Types;
-use crate::universe::Universe;
+use crate::universe::{PredeclaredKind, Universe};
 
 /// One file of the package to check.
 #[derive(Clone, Copy)]
@@ -110,8 +110,20 @@ pub(crate) fn check_counted(
             sink.push(diagnostic);
         }
     }
-    package.init_order = decls::order(&package, units, names, sink);
-    typecheck::declarations(&mut package, units, types, names, sink);
+    let needs = typecheck::declarations(&mut package, units, types, names, sink);
+    package.init_order = decls::order(&package, units, &needs, names, sink);
+    // After the types: a variable that got no type is not also unused.
+    for local in package
+        .files
+        .iter()
+        .flat_map(|file| &file.bodies)
+        .flat_map(|body| &body.locals)
+    {
+        if local.kind == LocalKind::Var && !local.used {
+            let message = format!("declared and not used: {}", names.resolve(&local.name));
+            sink.push(Diagnostic::new(Code::DeclaredNotUsed, local.span, message));
+        }
+    }
     (package, steps)
 }
 
@@ -223,6 +235,16 @@ impl Collector<'_> {
             return;
         }
         let is_macro = matches!(kind, ObjKind::Macro);
+        // `init`, and `main` in package main, are functions and nothing
+        // else: what else has the name is not declared.
+        let text = self.names.resolve(&name.name);
+        let entry_point = text == "init" || text == "main" && self.package.name == "main";
+        if entry_point && matches!(kind, ObjKind::Const | ObjKind::Var | ObjKind::Type) {
+            let message = format!("cannot declare {text} - must be func");
+            let diagnostic = Diagnostic::new(Code::InitSignature, name.span, message);
+            self.sink.push(diagnostic);
+            return;
+        }
         let scope = if is_macro {
             &self.package.macros
         } else {
@@ -263,6 +285,27 @@ impl Collector<'_> {
             self.sink.push(diagnostic);
             return;
         };
+        // Go's rule for a path; a `.gopp` file also imports headers, as
+        // `"<vector>"`.
+        const ILLEGAL: &str = "!\"#$%&'()*,:;<=>?[\\]^{|}`\u{FFFD}";
+        let illegal = |c: char| c.is_control() || c.is_whitespace() || ILLEGAL.contains(c);
+        let go = unit.source.dialect() == Dialect::Go;
+        if let Some(c) = import_path.chars().find(|&c| go && illegal(c)) {
+            let shown = match c.is_control() {
+                true => format!("U+{:04X}", c as u32),
+                false => format!("U+{:04X} '{c}'", c as u32),
+            };
+            let message = format!("invalid import path (invalid character {shown})");
+            let diagnostic = Diagnostic::new(Code::BadImportPath, literal.span, message);
+            self.sink.push(diagnostic);
+            return;
+        }
+        if let Some(name) = name.filter(|name| self.names.resolve(&name.name) == "init") {
+            let message = "cannot import package as init - init must be a func";
+            let diagnostic = Diagnostic::new(Code::InitSignature, name.span, message);
+            self.sink.push(diagnostic);
+            return;
+        }
         let imported = self.loader.load(&import_path).unwrap_or_else(|reason| {
             let message = format!("could not import {import_path} ({reason})");
             let diagnostic = Diagnostic::new(Code::ImportUnresolved, literal.span, message);
@@ -400,7 +443,6 @@ impl Context<'_> {
             steps: 0,
         };
         resolver.top_level(unit.file.decls[decl]);
-        resolver.report_unused();
         Resolved {
             body: resolver.body,
             used_imports: resolver.used_imports,
@@ -571,6 +613,36 @@ impl<'a> Resolver<'a> {
     }
 
     /// The import that `name` denotes, if no local hides it.
+    /// A name as the length of an array: `[N]T` with a name that is no
+    /// constant is likely a type parameter that lost its constraint.
+    fn array_length(&mut self, id: ExprId, name: Spur) {
+        if self.lenient {
+            return self.name(id, name, true);
+        }
+        let span = self.file.exprs[id].span;
+        let text = self.name_text(name);
+        let Some(denotes) = self.lookup(name, true) else {
+            let message = format!("undefined array length {text} or missing type constraint");
+            return self.error(Code::InvalidArrayLength, span, message);
+        };
+        self.body.uses.insert(id, denotes);
+        let constant = match denotes {
+            Ref::Universe(name) => name.kind() == PredeclaredKind::Const,
+            Ref::Object(object) => matches!(self.cx.package.object(object).kind, ObjKind::Const),
+            Ref::Member { import, member } => match &self.cx.package.object(import).kind {
+                ObjKind::Import { package, .. } => {
+                    matches!(package.object(member).kind, ObjKind::Const)
+                }
+                _ => false,
+            },
+            Ref::Local(local) => self.body.locals[local.0 as usize].kind == LocalKind::Const,
+        };
+        if !constant {
+            let message = format!("invalid array length {text}");
+            self.error(Code::InvalidArrayLength, span, message);
+        }
+    }
+
     fn import_named(&mut self, name: Spur) -> Option<ObjId> {
         self.steps += 1;
         if self.visible.contains_key(&name) {
@@ -582,16 +654,6 @@ impl<'a> Resolver<'a> {
                 Some(import)
             }
             _ => None,
-        }
-    }
-
-    fn report_unused(&mut self) {
-        for local in &self.body.locals {
-            if local.kind == LocalKind::Var && !local.used {
-                let message = format!("declared and not used: {}", self.name_text(local.name));
-                let diagnostic = Diagnostic::new(Code::DeclaredNotUsed, local.span, message);
-                self.diagnostics.push(diagnostic);
-            }
         }
     }
 
@@ -865,7 +927,12 @@ impl<'a> Resolver<'a> {
                 self.macro_args(args);
             }
             ExprKind::ArrayType { len, elem } => {
-                self.opt_expr(*len);
+                match len.map(|len| (len, &file.exprs[len].kind)) {
+                    Some((len, &ExprKind::Name(name))) if name != self.cx.blank => {
+                        self.array_length(len, name);
+                    }
+                    _ => self.opt_expr(*len),
+                }
                 self.expr(*elem);
             }
             ExprKind::StructType { fields } => {
@@ -933,7 +1000,18 @@ impl<'a> Resolver<'a> {
             }
             None => {
                 let written = &self.text[file.exprs[x].span.lo as usize..sel.span.hi as usize];
-                let message = format!("undefined: {written}");
+                // A name that differs only in its capitals is the likely one.
+                let near = package.objects.iter().find_map(|object| {
+                    let name = self.cx.names.resolve(&object.name);
+                    let near = is_exported(name)
+                        && name.to_lowercase() == member.to_lowercase()
+                        && package.scope.contains_key(&object.name);
+                    near.then_some(name)
+                });
+                let message = match near {
+                    Some(near) => format!("undefined: {written} (but have {near})"),
+                    None => format!("undefined: {written}"),
+                };
                 self.error(Code::Undefined, sel.span, message);
             }
         }
@@ -1029,7 +1107,19 @@ impl<'a> Resolver<'a> {
                 self.open();
                 self.opt_stmt(*init);
                 self.opt_expr(*cond);
-                self.opt_stmt(*post);
+                // A post statement that declares is an error of its own:
+                // its variables are not also unused.
+                match post.map(|post| &file.stmts[post].kind) {
+                    Some(StmtKind::Assign {
+                        op: AssignOp::Define,
+                        lhs,
+                        rhs,
+                    }) => {
+                        self.exprs(rhs);
+                        self.define(lhs, true);
+                    }
+                    _ => self.opt_stmt(*post),
+                }
                 self.block(body);
                 self.close();
             }
@@ -1072,6 +1162,13 @@ impl<'a> Resolver<'a> {
             }
             StmtKind::Select { clauses } => {
                 for clause in clauses {
+                    if let Some(comm) = clause.comm.filter(|&comm| !self.communicates(comm)) {
+                        // Nothing of the clause is looked at.
+                        let message =
+                            "select case must be send or receive (possibly with assignment)";
+                        self.error(Code::SelectCaseInvalid, file.stmts[comm].span, message);
+                        continue;
+                    }
                     self.open();
                     self.opt_stmt(clause.comm);
                     self.stmts(&clause.body);
@@ -1079,6 +1176,29 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+    }
+
+    /// Whether the statement sends, or receives: `<-ch`, `v = <-ch`,
+    /// `v, ok := <-ch`.
+    fn communicates(&self, comm: StmtId) -> bool {
+        let file = self.file;
+        let received = match &file.stmts[comm].kind {
+            StmtKind::Send { .. } => return true,
+            StmtKind::Expr(x) => *x,
+            StmtKind::Assign { rhs, .. } if rhs.len() == 1 => rhs[0],
+            _ => return false,
+        };
+        let mut inner = received;
+        while let ExprKind::Paren(x) = file.exprs[inner].kind {
+            inner = x;
+        }
+        matches!(
+            file.exprs[inner].kind,
+            ExprKind::Unary {
+                op: UnaryOp::Recv,
+                ..
+            }
+        )
     }
 
     /// The clauses of a type switch. Its variable is declared anew in each

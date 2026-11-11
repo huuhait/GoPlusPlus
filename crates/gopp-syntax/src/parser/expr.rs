@@ -286,6 +286,7 @@ impl Parser<'_> {
             }
             lo = indices.first().copied();
         }
+        let first_colon = self.here();
         if !self.got(T::Colon) {
             self.expected("comma, : or ]");
             self.advance(&[T::Comma, T::Colon, T::RBrack]);
@@ -299,12 +300,13 @@ impl Parser<'_> {
             full = true;
             if hi.is_none() {
                 let message = "middle index required in 3-index slice";
-                self.error_at(Code::Slice3MiddleIndex, self.here(), message);
+                self.error_at(Code::Slice3MiddleIndex, first_colon, message);
             }
+            let second_colon = self.here();
             self.bump();
             if self.at(T::RBrack) {
                 let message = "final index required in 3-index slice";
-                self.error_at(Code::Slice3FinalIndex, self.here(), message);
+                self.error_at(Code::Slice3FinalIndex, second_colon, message);
             } else {
                 max = Some(self.expr());
             }

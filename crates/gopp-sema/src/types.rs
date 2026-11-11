@@ -157,8 +157,13 @@ struct Named {
     name: Spur,
     /// The name of the declaring package; `None` for a predeclared type.
     package: Option<Spur>,
-    /// Set once the declaration is checked.
+    /// Known once it was asked for.
     underlying: Option<TypeId>,
+    /// The type that the declaration wrote, which may be a declared type.
+    /// Set once the declaration is checked.
+    declared_as: Option<TypeId>,
+    /// The declaration is in error.
+    invalid: bool,
     /// The type parameters of a generic type.
     params: Vec<TypeId>,
     methods: Vec<DeclaredMethod>,
@@ -261,6 +266,8 @@ impl Types {
             name: names.get_or_intern_static("error"),
             package: None,
             underlying: Some(underlying),
+            declared_as: Some(underlying),
+            invalid: false,
             params: Vec::new(),
             methods: Vec::new(),
         });
@@ -398,6 +405,8 @@ impl Types {
                 name,
                 package: Some(package),
                 underlying: None,
+                declared_as: None,
+                invalid: false,
                 params: Vec::new(),
                 methods: Vec::new(),
             });
@@ -405,10 +414,33 @@ impl Types {
         })
     }
 
-    pub fn set_underlying(&self, named: NamedId, underlying: TypeId) {
-        // The underlying type of a declared type is never a declared type.
-        let underlying = self.underlying(underlying);
-        self.write(|inner| inner.named[named.0 as usize].underlying = Some(underlying));
+    /// Says what the declaration of `named` wrote.
+    pub fn set_underlying(&self, named: NamedId, declared_as: TypeId) {
+        self.write(|inner| inner.named[named.0 as usize].declared_as = Some(declared_as));
+    }
+
+    /// The type that the declaration of `named` wrote, with the type
+    /// parameters of a generic type in it.
+    pub fn declared_as(&self, named: NamedId) -> Option<TypeId> {
+        self.read(|inner| inner.named[named.0 as usize].declared_as)
+    }
+
+    pub fn type_params(&self, named: NamedId) -> Vec<TypeId> {
+        self.read(|inner| inner.named[named.0 as usize].params.clone())
+    }
+
+    pub fn name_of(&self, named: NamedId) -> Spur {
+        self.read(|inner| inner.named[named.0 as usize].name)
+    }
+
+    /// Makes the declared type invalid: its declaration is in error, and
+    /// nothing more is said about what is made of it.
+    pub fn is_invalid(&self, named: NamedId) -> bool {
+        self.read(|inner| inner.named[named.0 as usize].invalid)
+    }
+
+    pub fn invalidate(&self, named: NamedId) {
+        self.write(|inner| inner.named[named.0 as usize].invalid = true);
     }
 
     /// Gives the type parameter `param` its constraint.
@@ -545,6 +577,34 @@ impl Types {
 
     /// `ty` with each type parameter of `from` replaced by the type at the
     /// same place of `to`.
+    /// Whether a type parameter is written in the type.
+    pub fn has_param(&self, ty: TypeId) -> bool {
+        let any = |types: &[TypeId]| types.iter().any(|&ty| self.has_param(ty));
+        match &*self.get(ty) {
+            Type::Param(_) => true,
+            Type::Invalid | Type::Basic(_) | Type::Marker(_) => false,
+            Type::Pointer(elem)
+            | Type::Unique(elem)
+            | Type::Shared(elem)
+            | Type::Weak(elem)
+            | Type::Option(elem)
+            | Type::Local(elem)
+            | Type::Slice(elem)
+            | Type::Array { elem, .. }
+            | Type::Chan { elem, .. } => self.has_param(*elem),
+            Type::Map { key, value } => self.has_param(*key) || self.has_param(*value),
+            Type::Tuple(types) | Type::Named { args: types, .. } => any(types),
+            Type::Func {
+                params, results, ..
+            } => any(params) || any(results),
+            Type::Struct(fields) => fields.iter().any(|field| self.has_param(field.ty)),
+            Type::Interface { methods, embedded } => {
+                methods.iter().any(|method| self.has_param(method.sig)) || any(embedded)
+            }
+            Type::Union(terms) => terms.iter().any(|term| self.has_param(term.ty)),
+        }
+    }
+
     pub fn substitute(&self, ty: TypeId, from: &[TypeId], to: &[TypeId]) -> TypeId {
         if from.is_empty() {
             return ty;
@@ -703,6 +763,35 @@ impl Types {
     /// compiler lays it out on a 64-bit machine. `None` for a type whose
     /// layout is not fixed here: a type parameter, a type of Go++ alone.
     pub fn layout(&self, ty: TypeId, names: &ThreadedRodeo) -> Option<(u64, u64)> {
+        self.layout_in(ty, names, &mut Vec::new())
+    }
+
+    /// `layout` inside the declared types `nest`: a type that holds a
+    /// value of itself, which is an error, has no layout.
+    fn layout_in(
+        &self,
+        ty: TypeId,
+        names: &ThreadedRodeo,
+        nest: &mut Vec<TypeId>,
+    ) -> Option<(u64, u64)> {
+        if !matches!(&*self.get(ty), Type::Named { .. }) {
+            return self.layout_of(ty, names, nest);
+        }
+        if nest.contains(&ty) {
+            return None;
+        }
+        nest.push(ty);
+        let layout = self.layout_of(ty, names, nest);
+        nest.pop();
+        layout
+    }
+
+    fn layout_of(
+        &self,
+        ty: TypeId,
+        names: &ThreadedRodeo,
+        nest: &mut Vec<TypeId>,
+    ) -> Option<(u64, u64)> {
         const WORD: u64 = 8;
         Some(match &*self.get(self.underlying(ty)) {
             Type::Basic(basic) => match basic {
@@ -722,7 +811,7 @@ impl Types {
             Type::Slice(_) => (3 * WORD, WORD),
             Type::Interface { .. } => (2 * WORD, WORD),
             Type::Array { len, elem } => {
-                let (size, align) = self.layout(*elem, names)?;
+                let (size, align) = self.layout_in(*elem, names, nest)?;
                 (size.checked_mul(*len)?, align)
             }
             Type::Struct(fields) => {
@@ -737,7 +826,7 @@ impl Types {
                 if marker {
                     return Some((0, WORD));
                 }
-                let (offsets, end, align) = self.field_offsets(fields, names)?;
+                let (offsets, end, align) = self.field_offsets(fields, names, nest)?;
                 // A struct that is not empty does not end in a field of
                 // no size: a pointer past it would point outside it.
                 let last_is_empty = match (offsets.last(), fields.last()) {
@@ -757,10 +846,11 @@ impl Types {
         &self,
         fields: &[Field],
         names: &ThreadedRodeo,
+        nest: &mut Vec<TypeId>,
     ) -> Option<(Vec<u64>, u64, u64)> {
         let (mut offsets, mut next, mut max_align) = (Vec::new(), 0u64, 1u64);
         for field in fields {
-            let (size, align) = self.layout(field.ty, names)?;
+            let (size, align) = self.layout_in(field.ty, names, nest)?;
             next = next.next_multiple_of(align);
             offsets.push(next);
             next = next.checked_add(size)?;
@@ -787,7 +877,7 @@ impl Types {
                 let Type::Struct(fields) = &*self.get(self.underlying(current)) else {
                     continue;
                 };
-                let (offsets, ..) = self.field_offsets(fields, names)?;
+                let (offsets, ..) = self.field_offsets(fields, names, &mut vec![current])?;
                 for (field, offset) in fields.iter().zip(offsets) {
                     if field.name == name && (exported || field.package == Some(package)) {
                         found.push(base + offset);
@@ -833,30 +923,59 @@ impl Types {
     /// as, of any other type itself. Invalid while the declaration of a
     /// declared type is not checked yet.
     pub fn underlying(&self, id: TypeId) -> TypeId {
-        let Type::Named { id: named, args } = &*self.get(id) else {
-            return id;
+        // The underlying type of a declared type is never a declared
+        // type: it is that of what the type is declared as. `chain` is the
+        // declared types that lead there, each declared as the next.
+        let mut chain: Vec<(NamedId, TypeId, bool)> = Vec::new();
+        let mut current = id;
+        let underlying = loop {
+            let Type::Named { id: named, args } = &*self.get(current) else {
+                break current;
+            };
+            let (invalid, origin, declared_as, params, instance) = self.read(|inner| {
+                let named = &inner.named[named.0 as usize];
+                (
+                    named.invalid,
+                    named.underlying,
+                    named.declared_as,
+                    named.params.clone(),
+                    inner.instances.get(&current).copied(),
+                )
+            });
+            // A generic type with arguments is what it was declared as,
+            // with the arguments in the place of its parameters.
+            let generic = !args.is_empty() && params.len() == args.len();
+            let known = match generic {
+                true => instance,
+                false => origin,
+            };
+            // A type that is declared as itself, through others, has no
+            // underlying type.
+            let again = chain.iter().any(|&(seen, ..)| seen == *named);
+            match (known, declared_as) {
+                _ if invalid => break Self::INVALID,
+                (Some(known), _) => break known,
+                (None, Some(declared_as)) if !again => {
+                    chain.push((*named, current, generic));
+                    current = match generic {
+                        true => self.substitute(declared_as, &params, args),
+                        false => declared_as,
+                    };
+                }
+                _ => break Self::INVALID,
+            }
         };
-        let (underlying, params, known) = self.read(|inner| {
-            let named = &inner.named[named.0 as usize];
-            (
-                named.underlying,
-                named.params.clone(),
-                inner.instances.get(&id).copied(),
-            )
-        });
-        let Some(underlying) = underlying else {
-            return Self::INVALID;
-        };
-        if args.is_empty() || params.len() != args.len() {
-            return underlying;
+        if underlying != Self::INVALID && !chain.is_empty() {
+            self.write(|inner| {
+                for (named, ty, generic) in chain {
+                    match generic {
+                        true => drop(inner.instances.insert(ty, underlying)),
+                        false => inner.named[named.0 as usize].underlying = Some(underlying),
+                    }
+                }
+            });
         }
-        // A generic type with arguments: what it was declared as, with the
-        // arguments in the place of its parameters.
-        known.unwrap_or_else(|| {
-            let instance = self.substitute(underlying, &params, args);
-            self.write(|inner| inner.instances.insert(id, instance));
-            instance
-        })
+        underlying
     }
 
     pub fn is_untyped(&self, id: TypeId) -> bool {
@@ -922,6 +1041,25 @@ impl Types {
 
     /// Whether values of the type can be compared with `==`.
     pub fn comparable(&self, id: TypeId) -> bool {
+        self.comparable_in(id, &mut Vec::new())
+    }
+
+    /// `comparable` inside the declared types `nest`: a type that holds a
+    /// value of itself, which is an error, says nothing against it.
+    fn comparable_in(&self, id: TypeId, nest: &mut Vec<TypeId>) -> bool {
+        if !matches!(&*self.get(id), Type::Named { .. }) {
+            return self.comparable_of(id, nest);
+        }
+        if nest.contains(&id) {
+            return true;
+        }
+        nest.push(id);
+        let comparable = self.comparable_of(id, nest);
+        nest.pop();
+        comparable
+    }
+
+    fn comparable_of(&self, id: TypeId, nest: &mut Vec<TypeId>) -> bool {
         match &*self.get(self.underlying(id)) {
             Type::Basic(basic) => *basic != Basic::UntypedNil,
             // Pointers of every kind compare by address.
@@ -933,9 +1071,11 @@ impl Types {
             | Type::Interface { .. }
             | Type::Invalid => true,
             Type::Option(elem) | Type::Local(elem) | Type::Array { elem, .. } => {
-                self.comparable(*elem)
+                self.comparable_in(*elem, nest)
             }
-            Type::Struct(fields) => fields.iter().all(|field| self.comparable(field.ty)),
+            Type::Struct(fields) => fields
+                .iter()
+                .all(|field| self.comparable_in(field.ty, nest)),
             _ => false,
         }
     }

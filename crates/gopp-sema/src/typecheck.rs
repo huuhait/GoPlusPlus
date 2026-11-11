@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::basic::{Basic, representable};
 use crate::constant::{self, CompareOp, Kind, Value};
 use crate::literal::unquote;
-use crate::object::{Body, ExprType, LocalId, ObjId, ObjKind, Ref};
+use crate::object::{Body, ExprType, LocalId, LocalKind, ObjId, ObjKind, Ref};
 use crate::package::Package;
 use crate::resolve::Unit;
 use crate::types::{ChanDir, DeclaredMethod, Field, Member, Method, Term, Type, TypeId, Types};
@@ -166,11 +166,41 @@ struct Checker<'a> {
     results: Vec<Vec<TypeId>>,
     /// While a body is walked: its groups of constants.
     local_groups: FxHashMap<u32, LocalGroup>,
+    /// While a body is walked: the variables that got no type from an
+    /// error that is reported, which are not also unused.
+    excused: Vec<LocalId>,
+    /// The object that each declaring identifier declares.
+    by_span: FxHashMap<Span, usize>,
+    /// The constants and variables whose declaration is worked out: what
+    /// is used as a value there, they need.
+    current: Vec<usize>,
+    /// For each object, the constants, variables and functions of the
+    /// package that it needs, in the order of their first use.
+    needs: Vec<Vec<usize>>,
+    needed: FxHashSet<(usize, usize)>,
+    /// The objects that are being worked out, the innermost last.
+    under_way: Vec<usize>,
+    /// The types that an invalid cycle goes through: they stay invalid.
+    broken: Vec<bool>,
+    /// While the constraints of type parameters are worked out.
+    in_type_params: bool,
+    /// The declared types and the generic types with arguments that are
+    /// still to be checked for holding a value of themselves, in the order
+    /// in which they were met.
+    to_validate: Vec<TypeId>,
+    /// Where each of them was written.
+    written_at: FxHashMap<TypeId, Span>,
+    /// The types that are known to hold no value of themselves.
+    valid: FxHashSet<TypeId>,
 }
 
 /// What was found in one body: the type of each expression with a value,
-/// and the type of each local.
-type BodyTypes = (FxHashMap<ExprId, ExprType>, Vec<(LocalId, TypeId)>);
+/// the type of each local, and the variables that are not also unused.
+type BodyTypes = (
+    FxHashMap<ExprId, ExprType>,
+    Vec<(LocalId, TypeId)>,
+    Vec<LocalId>,
+);
 
 /// A group of constants inside a function: the index of its next constant,
 /// and the type and values that a constant without a value repeats.
@@ -182,15 +212,21 @@ struct LocalGroup {
 }
 
 /// Works out the type of every package-level object of `package` and the
-/// value of every constant, and declares the methods of its types.
+/// value of every constant, and declares the methods of its types. For
+/// each object, the constants, variables and functions of the package that
+/// its declaration uses as values.
 pub fn declarations(
     package: &mut Package,
     units: &[Unit<'_>],
     types: &Types,
     names: &ThreadedRodeo,
     sink: &Sink,
-) {
+) -> Vec<Vec<usize>> {
     let count = package.objects.len();
+    let by_span = package.objects.iter().enumerate();
+    let by_span = by_span
+        .map(|(index, object)| (object.span, index))
+        .collect();
     let mut checker = Checker {
         names,
         types,
@@ -210,52 +246,77 @@ pub fn declarations(
         fresh: false,
         results: Vec::new(),
         local_groups: FxHashMap::default(),
+        excused: Vec::new(),
+        by_span,
+        current: Vec::new(),
+        needs: vec![Vec::new(); count],
+        needed: FxHashSet::default(),
+        under_way: Vec::new(),
+        broken: vec![false; count],
+        in_type_params: false,
+        to_validate: Vec::new(),
+        written_at: FxHashMap::default(),
+        valid: FxHashSet::default(),
     };
     for (file, unit) in units.iter().enumerate() {
         checker.collect(file, *unit);
     }
-    // The methods first: the type of a variable may be the result of one.
+    // Go's order: the declared types, then the aliases, then the rest. The
+    // methods come before the rest: the type of a variable may be the
+    // result of one.
+    let is_type = |checker: &Checker, object: usize, is_alias: bool| matches!(checker.decls[object], Some(Decl { form: Form::Type { alias, .. }, .. }) if alias == is_alias);
+    for is_alias in [false, true] {
+        for object in 0..count {
+            if is_type(&checker, object, is_alias) {
+                checker.resolve(object, false);
+            }
+        }
+    }
     for (file, unit) in units.iter().enumerate() {
         checker.methods(file, *unit);
     }
     for object in 0..count {
-        checker.resolve(object);
+        checker.resolve(object, false);
     }
+    checker.validate();
     let types_of_files: Vec<_> = units
         .iter()
         .enumerate()
         .map(|(file, unit)| checker.bodies(file, *unit))
         .collect();
-    let Checker { ty, value, .. } = checker;
+    let Checker {
+        ty, value, needs, ..
+    } = checker;
     for ((object, ty), value) in package.objects.iter_mut().zip(ty).zip(value) {
         object.ty = ty;
         object.value = value;
     }
     for (file, types_of_bodies) in package.files.iter_mut().zip(types_of_files) {
-        for (body, (exprs, locals)) in file.bodies.iter_mut().zip(types_of_bodies) {
+        for (body, (exprs, locals, excused)) in file.bodies.iter_mut().zip(types_of_bodies) {
             body.types = exprs;
             for (LocalId(local), ty) in locals {
                 body.locals[local as usize].ty = ty;
             }
+            for LocalId(local) in excused {
+                body.locals[local as usize].used = true;
+            }
         }
     }
+    needs
 }
 
 fn is_exported(name: &str) -> bool {
     name.starts_with(char::is_uppercase)
 }
 
+fn is_value_kind(kind: &ObjKind) -> bool {
+    matches!(kind, ObjKind::Const | ObjKind::Var)
+}
+
 impl<'a> Checker<'a> {
     fn collect(&mut self, file: usize, unit: Unit<'a>) {
         let tree = unit.file;
         let bodies = &self.package.files[file].bodies;
-        let by_span: FxHashMap<_, _> = self
-            .package
-            .objects
-            .iter()
-            .enumerate()
-            .map(|(index, object)| (object.span, index))
-            .collect();
         // The constant that a later one of its group repeats, and how many
         // constants each group has so far.
         let mut repeated: Option<Repeated<'a>> = None;
@@ -264,7 +325,7 @@ impl<'a> Checker<'a> {
             let node = &tree.decl_nodes[decl];
             let mut body = &bodies[index];
             let mut declare = |name: Ident, body: &'a Body, form: Form<'a>| {
-                if let Some(&object) = by_span.get(&name.span) {
+                if let Some(&object) = self.by_span.get(&name.span) {
                     self.decls[object] = Some(Decl { unit, body, form });
                 }
             };
@@ -363,23 +424,47 @@ impl<'a> Checker<'a> {
         // A constraint that is not worked out leaves the declaration as
         // well known as it was.
         let incomplete = self.incomplete;
+        let outer = std::mem::replace(&mut self.in_type_params, true);
         for (param, &ty) in type_params.iter().zip(&params) {
             let constraint = self.typ(cx, param.bound);
             self.types.set_constraint(ty, constraint);
         }
+        self.in_type_params = outer;
         self.incomplete = incomplete;
         params
     }
 
-    /// Works out the object, unless that is done or under way.
-    fn resolve(&mut self, object: usize) {
-        if self.state[object] != State::New {
-            return;
+    /// Works out the object, unless that is done. An object that is
+    /// under way needs itself: `as_type` says that it is named as a type.
+    fn resolve(&mut self, object: usize, as_type: bool) {
+        match self.state[object] {
+            State::Done => return,
+            State::Busy => return self.cycle(object, as_type),
+            State::New => {}
         }
         self.state[object] = State::Busy;
+        self.under_way.push(object);
+        // Only what the declaration of a constant or a variable uses is
+        // needed when the program starts.
+        let is_value = matches!(
+            self.package.objects[object].kind,
+            ObjKind::Const | ObjKind::Var
+        );
+        let current = match is_value {
+            true => vec![object],
+            false => Vec::new(),
+        };
+        let current = std::mem::replace(&mut self.current, current);
+        let in_type_params = std::mem::replace(&mut self.in_type_params, false);
         let outer = std::mem::replace(&mut self.incomplete, false);
         let defines_type = self.define(object);
         let incomplete = std::mem::replace(&mut self.incomplete, outer);
+        self.in_type_params = in_type_params;
+        self.current = current;
+        self.under_way.pop();
+        if self.broken[object] {
+            self.ty[object] = Types::INVALID;
+        }
         // A declared type can be named before all of it is known; what
         // else is not fully known is not known at all.
         if incomplete && !defines_type {
@@ -388,6 +473,306 @@ impl<'a> Checker<'a> {
             self.incomplete = true;
         }
         self.state[object] = State::Done;
+    }
+
+    /// The object `object`, which is being worked out, is needed for
+    /// itself. That is an error unless the cycle is one of declared types
+    /// alone, or one of constants and variables alone, which is reported
+    /// with the order of initialization.
+    fn cycle(&mut self, object: usize, as_type: bool) {
+        let objects = &self.package.objects;
+        let checked = match objects[object].kind {
+            ObjKind::Const | ObjKind::Var => self.ty[object] == Types::INVALID,
+            ObjKind::Type => as_type,
+            _ => false,
+        };
+        let Some(start) = self.under_way.iter().rposition(|&member| member == object) else {
+            return;
+        };
+        if !checked {
+            return;
+        }
+        let cycle = &self.under_way[start..];
+        let (mut values, mut defined, mut through_params) = (0, 0, false);
+        for &member in cycle {
+            match (
+                &objects[member].kind,
+                self.decls[member].map(|decl| decl.form),
+            ) {
+                (ObjKind::Const | ObjKind::Var, _) => values += 1,
+                (
+                    ObjKind::Type,
+                    Some(Form::Type {
+                        alias, type_params, ..
+                    }),
+                ) => {
+                    // A generic type may not be needed for its own type
+                    // parameters.
+                    if self.in_type_params && !type_params.is_empty() {
+                        through_params = true;
+                        break;
+                    }
+                    defined += usize::from(!alias);
+                }
+                _ => {}
+            }
+        }
+        let valid = values == cycle.len() || values == 0 && defined > 0;
+        if valid && !through_params {
+            return;
+        }
+        // Reported at the member that comes first in the source.
+        let first = (0..cycle.len())
+            .min_by_key(|&at| (objects[cycle[at]].span.file, objects[cycle[at]].span.lo))
+            .unwrap_or(0);
+        let name = |member: usize| self.names.resolve(&objects[member].name);
+        let at = cycle[first];
+        let is_type = matches!(objects[at].kind, ObjKind::Type);
+        let diagnostic = match (cycle.len(), is_type) {
+            (1, true) => {
+                let message = format!("invalid recursive type: {} refers to itself", name(at));
+                Diagnostic::new(Code::InvalidRecursiveTypeSelf, objects[at].span, message)
+            }
+            (1, false) => {
+                let message = format!(
+                    "invalid cycle in declaration: {} refers to itself",
+                    name(at)
+                );
+                Diagnostic::new(Code::InvalidCycle, objects[at].span, message)
+            }
+            (len, _) => {
+                let (code, message) = match is_type {
+                    true => (
+                        Code::InvalidRecursiveType,
+                        format!("invalid recursive type {}", name(at)),
+                    ),
+                    false => (
+                        Code::InvalidCycle,
+                        format!("invalid cycle in declaration of {}", name(at)),
+                    ),
+                };
+                let mut diagnostic = Diagnostic::new(code, objects[at].span, message);
+                for step in 0..len {
+                    let (from, to) = (cycle[(first + step) % len], cycle[(first + step + 1) % len]);
+                    let note = format!("{} refers to {}", name(from), name(to));
+                    diagnostic =
+                        diagnostic.with_note(Code::NoteRefersTo, Some(objects[from].span), note);
+                }
+                diagnostic
+            }
+        };
+        if self.reported.insert(objects[at].span) {
+            self.sink.push(diagnostic);
+        }
+        if is_value_kind(&objects[object].kind) {
+            return;
+        }
+        self.broken[object] = true;
+        self.ty[object] = Types::INVALID;
+    }
+
+    /// A declared type, or a generic type with arguments, was written at
+    /// `span`: it is checked later for holding a value of itself.
+    fn written(&mut self, ty: TypeId, span: Span) {
+        if self.written_at.insert(ty, span).is_none() {
+            self.to_validate.push(ty);
+        }
+    }
+
+    /// Reports each type met so far that is declared as itself or holds a
+    /// value of itself.
+    fn validate(&mut self) {
+        let mut next = 0;
+        while let Some(&ty) = self.to_validate.get(next) {
+            self.declared_as_itself(ty);
+            self.holds_itself_not(ty, &mut Vec::new(), &mut Vec::new());
+            next += 1;
+        }
+        self.to_validate.clear();
+    }
+
+    /// Where a generic type with arguments was written: one that came
+    /// from the declaration of another, `from`, where that one was.
+    fn place(&mut self, ty: TypeId, from: TypeId) {
+        let is_instance =
+            matches!(&*self.types.get(ty), Type::Named { args, .. } if !args.is_empty());
+        if let (true, Some(&span)) = (is_instance, self.written_at.get(&from)) {
+            self.written_at.entry(ty).or_insert(span);
+        }
+    }
+
+    /// `type A B` with `type B A`: a declared type that is declared as
+    /// itself, through others, is no type.
+    fn declared_as_itself(&mut self, start: TypeId) {
+        // A generic type may give itself other arguments at every step.
+        const STEPS: usize = 64;
+        let mut chain: Vec<TypeId> = Vec::new();
+        let mut current = start;
+        let cycle = loop {
+            let Type::Named { id, args } = &*self.types.get(current) else {
+                return;
+            };
+            if let Some(at) = chain.iter().position(|&seen| seen == current) {
+                break chain.split_off(at);
+            }
+            if chain.len() == STEPS {
+                break vec![start];
+            }
+            chain.push(current);
+            let Some(declared_as) = self.types.declared_as(*id) else {
+                return;
+            };
+            let params = self.types.type_params(*id);
+            let next = match args.len() == params.len() {
+                true => self.types.substitute(declared_as, &params, args),
+                false => declared_as,
+            };
+            self.place(next, current);
+            current = next;
+        };
+        if cycle.iter().any(|ty| self.is_invalid(*ty)) {
+            return;
+        }
+        // Reported at the member that comes first in the source.
+        let position = |ty: &TypeId| self.written_at.get(ty).map(|span| (span.file, span.lo));
+        let first = (0..cycle.len()).min_by_key(|&at| position(&cycle[at]));
+        let mut rotated = cycle.clone();
+        rotated.rotate_left(first.unwrap_or(0));
+        self.report_type_cycle(&rotated);
+        for ty in cycle {
+            if let Type::Named { id, .. } = &*self.types.get(ty) {
+                self.types.invalidate(*id);
+            }
+        }
+    }
+
+    fn is_invalid(&self, ty: TypeId) -> bool {
+        matches!(&*self.types.get(ty), Type::Named { id, .. } if self.types.is_invalid(*id))
+    }
+
+    /// Whether no value of the type `ty` holds a value of a type of
+    /// `nest`, the declared types that the walk is inside of, nor of
+    /// itself. `path` is all declared types that the walk went through.
+    /// This is `validType` of Go's type checker.
+    fn holds_itself_not(
+        &mut self,
+        ty: TypeId,
+        nest: &mut Vec<TypeId>,
+        path: &mut Vec<TypeId>,
+    ) -> bool {
+        gopp_syntax::with_stack(|| self.holds_itself_not_here(ty, nest, path))
+    }
+
+    fn holds_itself_not_here(
+        &mut self,
+        ty: TypeId,
+        nest: &mut Vec<TypeId>,
+        path: &mut Vec<TypeId>,
+    ) -> bool {
+        match &*self.types.get(ty) {
+            Type::Array { elem, .. } | Type::Option(elem) => {
+                self.holds_itself_not(*elem, nest, path)
+            }
+            Type::Struct(fields) => fields
+                .iter()
+                .all(|field| self.holds_itself_not(field.ty, nest, path)),
+            Type::Union(terms) => terms
+                .iter()
+                .all(|term| self.holds_itself_not(term.ty, nest, path)),
+            Type::Interface { embedded, .. } => embedded
+                .iter()
+                .all(|&embedded| self.holds_itself_not(embedded, nest, path)),
+            Type::Named { id, .. } => {
+                if self.types.underlying(ty) == Types::INVALID {
+                    return false;
+                }
+                if nest.contains(&ty) {
+                    self.types.invalidate(*id);
+                    let start = path.iter().position(|&on_path| on_path == ty);
+                    self.report_type_cycle(&path[start.unwrap_or(0)..]);
+                    return false;
+                }
+                if self.valid.contains(&ty) {
+                    return true;
+                }
+                let Some(declared_as) = self.types.declared_as(*id) else {
+                    return false;
+                };
+                if let Some(&around) = nest.last() {
+                    self.place(ty, around);
+                }
+                nest.push(ty);
+                path.push(ty);
+                let valid = self.holds_itself_not(declared_as, nest, path);
+                nest.pop();
+                path.pop();
+                // What a type holds is the same wherever it is met, unless
+                // it is written with a type parameter, which stands for
+                // another type in each place.
+                if valid && !self.types.has_param(ty) {
+                    self.valid.insert(ty);
+                }
+                valid
+            }
+            // Inside a generic type with arguments, a type parameter
+            // stands for its argument, which was written outside that type.
+            Type::Param(_) => {
+                let Some(&inside) = nest.last() else {
+                    return true;
+                };
+                let Type::Named { id, args } = &*self.types.get(inside) else {
+                    return true;
+                };
+                let params = self.types.type_params(*id);
+                let position = params.iter().position(|&param| param == ty);
+                let Some(&arg) = position.and_then(|position| args.get(position)) else {
+                    return true;
+                };
+                nest.pop();
+                let valid = self.holds_itself_not(arg, nest, path);
+                nest.push(inside);
+                valid
+            }
+            _ => true,
+        }
+    }
+
+    /// `cycle` is types of this package, each of which holds a value of
+    /// the next, and the last of the first.
+    fn report_type_cycle(&mut self, cycle: &[TypeId]) {
+        let described = |ty: &TypeId| {
+            let Type::Named { id, args } = &*self.types.get(*ty) else {
+                return None;
+            };
+            // A generic type that got its arguments from another one was
+            // written where it was declared.
+            let origin = self.types.named(*id, &[]);
+            let span = self.written_at.get(ty).filter(|_| !args.is_empty());
+            let span = span.or_else(|| self.written_at.get(&origin))?;
+            Some((self.names.resolve(&self.types.name_of(*id)), *span))
+        };
+        let Some(members) = cycle.iter().map(described).collect::<Option<Vec<_>>>() else {
+            return;
+        };
+        let Some(&(name, span)) = members.first() else {
+            return;
+        };
+        if !self.reported.insert(span) {
+            return;
+        }
+        if members.len() == 1 {
+            let message = format!("invalid recursive type: {name} refers to itself");
+            let diagnostic = Diagnostic::new(Code::InvalidRecursiveTypeSelf, span, message);
+            return self.sink.push(diagnostic);
+        }
+        let message = format!("invalid recursive type {name}");
+        let mut diagnostic = Diagnostic::new(Code::InvalidRecursiveType, span, message);
+        for (step, &(from, at)) in members.iter().enumerate() {
+            let (to, _) = members[(step + 1) % members.len()];
+            let note = format!("{from} refers to {to}");
+            diagnostic = diagnostic.with_note(Code::NoteRefersTo, Some(at), note);
+        }
+        self.sink.push(diagnostic);
     }
 
     /// Works out one declaration; whether it declares a new type.
@@ -444,6 +829,7 @@ impl<'a> Checker<'a> {
                     .types
                     .declare(self.package.objects[object].name, self.name);
                 self.ty[object] = self.types.named(named, &[]);
+                self.written(self.ty[object], self.package.objects[object].span);
                 self.types.set_type_params(named, params);
                 let underlying = self.typ(&cx, ty);
                 if !self.incomplete {
@@ -505,10 +891,25 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The type of the object `object` of this package.
-    fn object_type(&mut self, object: ObjId) -> TypeId {
-        self.resolve(object.0 as usize);
+    /// The type of the object `object` of this package, which is named
+    /// as a type or as a value.
+    fn object_type(&mut self, object: ObjId, as_type: bool) -> TypeId {
+        self.resolve(object.0 as usize, as_type);
         self.ty[object.0 as usize]
+    }
+
+    /// What is being declared needs the object `object` for its value.
+    fn need(&mut self, object: usize) {
+        let kind = &self.package.objects[object].kind;
+        if !matches!(kind, ObjKind::Const | ObjKind::Var | ObjKind::Func) {
+            return;
+        }
+        for at in 0..self.current.len() {
+            let from = self.current[at];
+            if self.needed.insert((from, object)) {
+                self.needs[from].push(object);
+            }
+        }
     }
 
     /// Declares the methods of the file for their types.
@@ -571,7 +972,8 @@ impl<'a> Checker<'a> {
             let Some(&Ref::Object(object)) = body.uses.get(&base) else {
                 continue;
             };
-            let Type::Named { id: named, .. } = &*self.types.get(self.object_type(object)) else {
+            let Type::Named { id: named, .. } = &*self.types.get(self.object_type(object, true))
+            else {
                 continue;
             };
             let sig = self.typ(&cx, *ty);
@@ -646,7 +1048,7 @@ impl<'a> Checker<'a> {
                 Some(self.predeclared(name))
             }
             Ref::Object(object) if matches!(self.package.object(object).kind, ObjKind::Type) => {
-                Some(self.object_type(object))
+                Some(self.object_type(object, true))
             }
             Ref::Member { import, member } => {
                 let ObjKind::Import { package, .. } = &self.package.object(import).kind else {
@@ -656,8 +1058,15 @@ impl<'a> Checker<'a> {
                 matches!(object.kind, ObjKind::Type).then_some(object.ty)
             }
             Ref::Local(local) => cx.params.get(&local).copied().or_else(|| {
-                let declared = self.locals.get(&local)?;
-                (declared.mode == Mode::Type).then_some(declared.ty)
+                match self.locals.get(&local) {
+                    Some(declared) => (declared.mode == Mode::Type).then_some(declared.ty),
+                    // An alias that names itself in its own declaration.
+                    None => {
+                        let kind = cx.body.locals[local.0 as usize].kind;
+                        self.incomplete = true;
+                        (kind == LocalKind::Type).then_some(Types::INVALID)
+                    }
+                }
             }),
             _ => None,
         }
@@ -878,7 +1287,11 @@ impl<'a> Checker<'a> {
         }
         let generic = self.typ(cx, x);
         match &*self.types.get(generic) {
-            Type::Named { id, args: none } if none.is_empty() => self.types.named(*id, &args),
+            Type::Named { id, args: none } if none.is_empty() => {
+                let instance = self.types.named(*id, &args);
+                self.written(instance, cx.tree.exprs[x].span);
+                instance
+            }
             _ => {
                 self.incomplete = true;
                 Types::INVALID
@@ -1052,7 +1465,8 @@ impl<'a> Checker<'a> {
                 },
             },
             Ref::Object(object) => {
-                let ty = self.object_type(object);
+                self.need(object.0 as usize);
+                let ty = self.object_type(object, false);
                 let kind = &self.package.object(object).kind;
                 self.object_operand(kind, ty, self.value[object.0 as usize].clone())
             }
@@ -1997,14 +2411,20 @@ impl<'a> Checker<'a> {
             self.locals.clear();
             self.local_groups.clear();
             self.memo = Some(FxHashMap::default());
+            self.current.clear();
             match &tree.decl_nodes[decl].kind {
                 DeclKind::Func {
                     receiver,
+                    name,
                     type_params,
                     ty,
                     body: Some(block),
                     ..
                 } => {
+                    // What the body uses, the function needs; a method
+                    // and `init` are no objects.
+                    let function = self.by_span.get(&name.span).filter(|_| receiver.is_none());
+                    self.current.extend(function);
                     self.declare_params(&mut cx, type_params);
                     if let Some(receiver) = receiver {
                         self.receiver_params(&mut cx, receiver.ty);
@@ -2014,18 +2434,25 @@ impl<'a> Checker<'a> {
                     let sig = self.typ(&cx, *ty);
                     self.function_body(&cx, sig, &block.stmts);
                 }
-                DeclKind::Var { ty, values, .. } | DeclKind::Const { ty, values, .. } => {
-                    // The value of a constant is worked out with its
-                    // declaration; here only variables are walked, for the
-                    // function literals in their values.
-                    if matches!(tree.decl_nodes[decl].kind, DeclKind::Var { .. }) {
-                        let declared = ty.map(|ty| self.typ(&cx, ty));
-                        for &value in values {
-                            self.operand(&cx, value);
-                            match declared {
-                                Some(declared) => self.convert(&cx, value, declared),
-                                None => self.convert_default(&cx, value),
-                            }
+                // The value of a constant is worked out with its
+                // declaration; variables are walked here too, for the
+                // function literals in their values.
+                DeclKind::Var { names, ty, values } => {
+                    let declared = ty.map(|ty| self.typ(&cx, ty));
+                    for (position, &value) in values.iter().enumerate() {
+                        // `a, b = f()` gives both the one value.
+                        let declared_here = match values.len() {
+                            1 => &names[..],
+                            _ => names.get(position..=position).unwrap_or(&[]),
+                        };
+                        self.current = declared_here
+                            .iter()
+                            .filter_map(|name| self.by_span.get(&name.span).copied())
+                            .collect();
+                        self.operand(&cx, value);
+                        match declared {
+                            Some(declared) => self.convert(&cx, value, declared),
+                            None => self.convert_default(&cx, value),
                         }
                     }
                 }
@@ -2053,11 +2480,12 @@ impl<'a> Checker<'a> {
             };
             let memo = self.memo.take().unwrap_or_default();
             let exprs = memo.into_iter().filter_map(typed).collect();
+            self.validate();
             let locals = self
                 .locals
                 .drain()
                 .map(|(local, operand)| (local, operand.ty));
-            all.push((exprs, locals.collect()));
+            all.push((exprs, locals.collect(), std::mem::take(&mut self.excused)));
         }
         self.incomplete = false;
         all
@@ -2287,6 +2715,9 @@ impl<'a> Checker<'a> {
                     let ty = if position == 0 { key } else { value };
                     let local = self.declared_local(cx, named);
                     self.set_local(local, ty);
+                    // What cannot be ranged over gives its variables no
+                    // type.
+                    self.excused.extend(local.filter(|_| ty.is_none()));
                 }
                 self.stmts(cx, &body.stmts);
             }
@@ -2454,6 +2885,7 @@ impl<'a> Checker<'a> {
                 // so that it can name itself.
                 let named = self.types.declare(name.name, self.name);
                 let declared = self.types.named(named, &[]);
+                self.written(declared, name.span);
                 self.locals.insert(
                     local,
                     Operand {

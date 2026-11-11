@@ -33,9 +33,9 @@ expression: report
 "package p\nfunc f() { for i := 0; i < 3; j := 1 { } }\n"
     E0025 2:31 syntax error: cannot declare in post statement of for loop
 "package p\nfunc f() { x = a[1::3] }\n"
-    E0046 2:20 middle index required in 3-index slice
+    E0046 2:19 middle index required in 3-index slice
 "package p\nfunc f() { x = a[1:2:] }\n"
-    E0047 2:22 final index required in 3-index slice
+    E0047 2:21 final index required in 3-index slice
 "package p\nfunc f() { x = a[] }\n"
     E0026 2:18 syntax error: unexpected ], expected operand
 "package p\nfunc f() { go (g()) }\n"
@@ -66,7 +66,7 @@ expression: report
     E0377 2:17 struct embedding is not part of Go++: use `@Extends` to inherit from a struct, or give the field a name
 "package p\nfunc () m() {}\nfunc (a, b T) n() {}\n"
     E0157 2:6 method has no receiver
-    E0156 3:6 method has multiple receivers
+    E0156 3:10 method has multiple receivers
 "package p\nfunc f() { for _, &d = range xs {}\nfor &i, v := range xs {} }\n"
     E0058 2:19 an alias variable (&) in a range clause needs :=
     E0059 3:5 the key or index of a range clause cannot be an alias variable (&)

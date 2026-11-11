@@ -49,13 +49,16 @@ impl Parser<'_> {
 
         let mut decls = Vec::new();
         let mut attrs: Vec<Attribute> = Vec::new();
-        let mut past_imports = false;
+        // Said once for the imports that follow each other.
+        let mut after_import = true;
         while !self.at(T::Eof) {
-            if self.at(T::Import) && past_imports {
+            if self.at(T::Import) && !after_import {
                 let message = "imports must appear before other declarations";
                 self.syntax_error(Code::ImportAfterDecl, message);
             }
-            past_imports |= !matches!(self.kind(), T::Import | T::At);
+            if !self.at(T::At) {
+                after_import = self.at(T::Import);
+            }
 
             let lo = self.lo();
             let first = decls.len();
@@ -426,10 +429,13 @@ impl Parser<'_> {
             let at = self.here();
             self.bump();
             let receivers = self.param_list(T::RParen);
-            match receivers.len() {
-                0 => self.error_at(Code::ReceiverMissing, at, "method has no receiver"),
-                1 => {}
-                _ => self.error_at(Code::ReceiverCount, at, "method has multiple receivers"),
+            match receivers.last() {
+                None => self.error_at(Code::ReceiverMissing, at, "method has no receiver"),
+                Some(last) if receivers.len() > 1 => {
+                    let at = last.name.map_or(self.exprs[last.ty].span, |name| name.span);
+                    self.error_at(Code::ReceiverCount, at, "method has multiple receivers");
+                }
+                Some(_) => {}
             }
             receiver = receivers.into_iter().next();
         }
