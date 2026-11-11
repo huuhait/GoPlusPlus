@@ -18,9 +18,9 @@ Go++ already has `const` declarations (both package-level and function-local) an
    - `const` declarations (at package scope and inside functions) accept any **constant-capable type**:
      - `bool`, numeric types (`int`..`complex128`), `string` (typed or untyped, as in Go);
      - fixed-size arrays `[N]T` whose element type `T` is constant-capable;
-     - structs (including untagged `extends` structs without `drop`) whose fields are all constant-capable;
+     - structs (including untagged structs with parents and without `drop`) whose fields are all constant-capable;
      - `Option[T]` whose payload type `T` is constant-capable (`nil` or a constant `T`).
-   - Types with runtime identity, mutable shared backing, or destructors (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`, `[]T`, `map[K]V`, `chan T`, `func(...)`, `interface`, `unsafe.Pointer`, `@Pinned`, types with `drop`, tagged `extends` types, imported C++ classes) cannot be `const`.
+   - Types with runtime identity, mutable shared backing, or destructors (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`, `[]T`, `map[K]V`, `chan T`, `func(...)`, `interface`, `unsafe.Pointer`, `@Pinned`, types with `drop`, tagged types of a hierarchy, imported C++ classes) cannot be `const`.
    - Every `const` value is **immutable and non-addressable**: `Origin.X = 1`, `CRCTable[0] = 1`, `&Origin`, and `&CRCTable[0]` are compile errors.
    - Field access (`Origin.X`), array/string indexing (`CRCTable[i]`), `len`, `cap`, `Option.IsNil()` / `Option.Get()`, and `@Const` value-receiver methods/operators work directly on composite constants (pointer-receiver methods/operators require an addressable `var`); when all operands are constant expressions, the result is itself a constant expression.
    - Materialized composite constants live in read-only static storage (`.rodata`), deduplicated across the binary, with zero `init()` startup code and zero data races (`Sync`).

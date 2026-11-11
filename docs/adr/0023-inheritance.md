@@ -1,7 +1,8 @@
-# ADR-0023: Inheritance with `extends`; Go struct embedding removed
+# ADR-0023: Inheritance with `@Extends`; Go struct embedding removed
 
 - **Status:** accepted (integrated with [ADR-0016](0016-required-fields.md), [ADR-0021](0021-borrow-checking.md), [ADR-0022](0022-race-free-concurrency.md) and [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
-- **Date:** 2026-10-28 (updated for multi-parent `extends` without diamonds)
+- **Date:** 2026-10-28 (updated for several parents without diamonds; syntax updated 2026-11-11)
+- **Status note (2026-11-11, [ADR-0034](0034-extends-attribute.md)):** parents are named with the attribute `@Extends(Parent)`, one per parent. This text is written in that syntax. The earlier keyword forms and why they were dropped are in ADR-0034.
 - **Plan reference:** replaces the non-goal "no class inheritance" (spec 1.7); spec section 3.5 (TYP-16 to TYP-26, TYP-28), TYP-10, TYP-15, 6.9 (EXP-13 to EXP-15), OWN-R2, OWN-R3, OWN-R6, GEN-2, GEN-12, MAC-8, LEX-2 and the grammar in chapters 2, 3, 10 and 13; tasks P03.22, P04.22, P08.16.
 
 ## Context
@@ -18,18 +19,18 @@ func (c *Card) Fee() int64 { return c.Amount * 3 / 100 }
 // Card{...}.Total() calls Payment.Fee, not Card.Fee
 ```
 
-Real types also frequently combine an OOP base with reusable stateful struct capabilities (`type Card extends Payment, Auditable, Timestamps`). Interfaces or traits cannot hold fields, while C++'s unrestricted multiple inheritance suffers from diamond inheritance (`virtual public` base classes) and silent name collisions.
+Real types also frequently combine an OOP base with reusable stateful struct capabilities (a `Card` with the parents `Payment`, `Auditable` and `Timestamps`). Interfaces or traits cannot hold fields, while C++'s unrestricted multiple inheritance suffers from diamond inheritance (`virtual public` base classes) and silent name collisions.
 
-Go++ therefore provides explicit struct inheritance with `extends P1, P2, …`, explicit method marks (`@Virtual`, `@Abstract`, `@Override`), disambiguated `base` / `base[Parent]` calls, **no diamond inheritance**, and `offset_to_top` type tables that keep `Unique[T]`, `Shared[T]` and `Weak[T]` at a single pointer word (8 bytes). Go struct embedding is removed from `.gopp` files so there is one clear way to inherit struct fields and methods.
+Go++ therefore provides explicit struct inheritance with `@Extends(P)`, one attribute per parent, explicit method marks (`@Virtual`, `@Abstract`, `@Override`), disambiguated `base` / `base[Parent]` calls, **no diamond inheritance**, and `offset_to_top` type tables that keep `Unique[T]`, `Shared[T]` and `Weak[T]` at a single pointer word (8 bytes). Go struct embedding is removed from `.gopp` files so there is one clear way to inherit struct fields and methods.
 
 ## Decision
 
-1. **Syntax (TYP-16).** `type Child extends P1, P2, … { fields }`.
-   - Each parent in the comma-separated list must be a struct type (possibly generic: `type B[T any] extends A[T], Log[T] { … }`), except that at most **one** C++ class may appear in **first** position (`TYP-28`, decision 14). A child of a child is fine.
-   - **No cycles, no duplicate parents, no diamonds.** Listing the same parent twice (`extends A, A`), two instantiations of the same generic parent (`extends Box[int], Box[string]`), a parent that is already an ancestor of another listed parent (`extends Payment, Card`), or two parents that share any common ancestor (`B extends Entity` and `C extends Entity` with `D extends B, C`) is a compile error. Every ancestor appears at most once in a type's hierarchy.
-   - `extends` is a contextual keyword: it is special only after the type name (and optional type parameters) in a type declaration, and in generic constraints (`GEN-12`). It is not reserved, so `extends` stays usable as an identifier.
-   - `type X Y` where `Y` is an `extends` type, a tagged type or an abstract type is an error: write `type X extends Y {}`.
-   - `extends` on a non-struct type, an interface or a pointer is an error.
+1. **Syntax (TYP-16, [ADR-0034](0034-extends-attribute.md)).** A type names each parent with the attribute `@Extends(Parent)` before `type Child struct { fields }`, one attribute per parent. The order of the attributes is the order of the parents `P1`, `P2`, ….
+   - Each parent must be a struct type (possibly generic: `@Extends(A[T]) @Extends(Log[T]) type B[T any] struct { … }`), except that at most **one** C++ class may be a parent, as the **first** `@Extends` (`TYP-28`, decision 14). A child of a child is fine.
+   - **No cycles, no duplicate parents, no diamonds.** Naming the same parent twice, two instantiations of the same generic parent (`Box[int]` and `Box[string]`), a parent that is already an ancestor of another parent (`Payment` and `Card`), or two parents that share any common ancestor (`B` and `C` with the parent `Entity`, as parents of `D`) is a compile error. Every ancestor appears at most once in a type's hierarchy.
+   - `extends` is not a keyword; it is an ordinary identifier.
+   - `type X Y` where `Y` has parents, is a tagged type or is an abstract type is an error: write `@Extends(Y)` before `type X struct{}`.
+   - A parent that is a non-struct type, an interface or a pointer is an error.
 
 2. **What the child gets and clash rules (TYP-17).** The child has all parents' fields and methods.
    - A composite literal must use field names (a positional literal is an error). It may set ancestor fields directly (`Card{Amount: 100, By: "alice", CreatedAt: now, Number: "4242"}`) or through a parent part (`Card{Payment: Payment{Amount: 100}, Timestamps: Timestamps{CreatedAt: now}, Number: "4242"}`). Setting the same field both ways is an error.
@@ -53,14 +54,14 @@ Go++ therefore provides explicit struct inheritance with `extends P1, P2, …`, 
 4. **Abstract types (TYP-19).** A type with an `@Abstract` method that is not overridden on its path (or a type marked `@Abstract`) is **abstract**.
    - It has no standalone values: `var x T`, `T{…}`, `make([]T, n)`, `NewUnique(T{…})`, `Option[T]`, or holding `T` by value in a variable, field, slice/map/array/channel element, parameter or result is a compile error. The one exception is a parent part inside a child's composite literal (`Card{Payment: Payment{…}}`).
    - It is usable through pointers (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`) to a concrete child.
-   - A child that leaves an `@Abstract` method unimplemented is an error unless the child is itself marked `@Abstract` (`@Abstract type Bird extends Animal {}`).
+   - A child that leaves an `@Abstract` method unimplemented is an error unless the child is itself marked `@Abstract` (`@Abstract @Extends(Animal) type Bird struct{}`).
 
 5. **`base.M(…)` and `base[Parent].M(…)` (TYP-20).**
    - Inside a method of a child type, `base.M(…)` calls the direct parent's `M` statically (and `base.f` accesses its field `f`) when **exactly one** direct parent has `M` (or `f`). If more than one direct parent defines `M`, unqualified `base.M(…)` is an ambiguity compile error naming the parents.
-   - `base[Parent].M(…)` (and `base[Parent].f`), where `Parent` names one of the child's direct parents from its `extends` list (for example `base[Payment].Validate()`, `base[Box[T]].Reset()`), selects that direct parent statically.
+   - `base[Parent].M(…)` (and `base[Parent].f`), where `Parent` names one of the child's direct parents, as written in its `@Extends` attributes (for example `base[Payment].Validate()`, `base[Box[T]].Reset()`), selects that direct parent statically.
    - Calling `base.M(…)` or `base[Parent].M(…)` when `M` is `@Abstract` in that parent is an error (no body).
    - Neither `base` nor `base[Parent]` is a standalone value (`x := base` and `&base[Payment]` are errors).
-   - `base` is contextual: special only inside methods (and closures within methods) of an `extends` type. Declaring a local, parameter, result or receiver named `base` there is an error with a rename hint; elsewhere `base` is an ordinary identifier.
+   - `base` is contextual: special only inside methods (and closures within methods) of a type with parents. Declaring a local, parameter, result or receiver named `base` there is an error with a rename hint; elsewhere `base` is an ordinary identifier.
 
 6. **Upcast and downcast (TYP-21, EXP-13 to EXP-15).**
    - When an ancestor `P` has a type table (decisions 7 and 16), `*Child` converts implicitly to `*P` (a constant compile-time byte-offset adjustment: `0` for `P1`, `+offset(P)` for secondary parents), and the 8-byte owning pointer kinds convert too: `Unique[Child]` to `Unique[P]`, `Shared[Child]` to `Shared[P]`, and `Weak[Child]` to `Weak[P]`.
@@ -69,7 +70,7 @@ Go++ therefore provides explicit struct inheritance with `extends P1, P2, …`, 
    - Value slicing is a compile error (`var a Parent = child`, copying `*p` of a tagged type, or copying `c.Parent`).
 
 7. **Cost and layout (TYP-22).**
-   - Parent subobjects are laid out first, in `extends` declaration order (`P1`, `P2`, …), followed by the child's own fields, with standard C alignment (`TYP-12`).
+   - Parent subobjects are laid out first, in `@Extends` order (`P1`, `P2`, …), followed by the child's own fields, with standard C alignment (`TYP-12`).
    - **Primary table word:** if `P1` already has a type table, `P1` sits at offset `0` and its first word is shared as the child's primary type-table pointer (no extra word added). If the child (or a secondary parent) needs a primary type table and `P1` has none, one primary type-table word is stored at offset `0` before `P1`.
    - **Secondary parents:** an untagged parent (`Timestamps`, no `@Virtual` or `@Abstract` in its own hierarchy) adds **zero** table words—only its fields. A tagged secondary parent (`Auditable`, `i >= 2`) already begins with its own type-table pointer word inside its subobject; the child initializes that word to the `(Child, Pi)` secondary type table.
    - **`offset_to_top` keeps smart pointers 8 bytes:** every type table carries a signed byte offset `offset_to_top` (`0` for standalone objects and primary bases, `-offset(Pi)` for secondary base subobjects), matching the C++ Itanium ABI:
@@ -79,24 +80,26 @@ Go++ therefore provides explicit struct inheritance with `extends P1, P2, …`, 
 8. **Interfaces (TYP-23).** A child satisfies every interface its combined method set satisfies. Calls through an interface dispatch to the child's overrides (and adjust the receiver offset for inherited parent methods).
 
 9. **Safety interplay (TYP-24).**
-   - *Ownership and drop order (OWN-R2):* destruction runs child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in **reverse** `extends` declaration order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse).
+   - *Ownership and drop order (OWN-R2):* destruction runs child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in **reverse** `@Extends` order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse).
    - *Clone (OWN-R6, decision 16):* auto-`Clone` covers all parent and child fields. Through `*P` or `Unique[P]` of any tagged ancestor `P`, `p.Clone()` recovers `top` via `offset_to_top`, allocates a `Unique` copy of the **entire** dynamic object, and returns `Unique[P]` pointing at its `P` subobject.
    - *Borrow checking (ADR-0021):* any upcast pointer (`*Child` to `*P1` or `*P2`) is the same borrow of the same owner.
    - *Send / Sync (ADR-0022):* a child is labeled from all its fields, all parents' fields included.
-   - *Generics (GEN-12):* `[T extends P]` and multiple bounds `interface{ extends Payment; extends Auditable; Clone }` work cleanly.
+   - *Generics (GEN-12):* an interface with `@Extends(P)` is a constraint, and several `@Extends` on it require all the parents.
 
-10. **Go mode (TYP-26).** `.go` files are unchanged (`extends`, `base` and the marks are not special there, and Go struct embedding works as in Go).
+10. **Go mode (TYP-26).** `.go` files are unchanged (they have no attributes, so no `@Extends` and no marks; `base` is not special there, and Go struct embedding works as in Go).
 
-11. **Field tables (TYP-10).** The field table of an `extends` type lists each parent chain's fields in `extends` declaration order (`P1`, then `P2`, …), followed by the child's own fields.
+11. **Field tables (TYP-10).** The field table of a type with parents lists each parent chain's fields in `@Extends` order (`P1`, then `P2`, …), followed by the child's own fields.
 
-12. **Go struct embedding is removed in `.gopp` files (TYP-25).** An anonymous struct field (`struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error, with a fix-it suggesting `extends` for inherited structs or a named field for plain composition (`Lock Mutex[State]`, `Log Logger`). Interface embedding (`interface{ io.Reader; io.Writer }`) stays.
+12. **Go struct embedding is removed in `.gopp` files (TYP-25).** An anonymous struct field (`struct{ Animal; … }`, `struct{ *Animal }`, `struct{ sync.Mutex }`) is a compile error, with a fix-it suggesting `@Extends` for inherited structs or a named field for plain composition (`Lock Mutex[State]`, `Log Logger`). Interface embedding (`interface{ io.Reader; io.Writer }`) stays.
 
 13. **Error codes** are pinned in `codes.lock` as implemented (`E0375`–`E0400`, plus new codes assigned at implementation for diamond hierarchies and ambiguous `base.M()`).
 
 14. **Extending a C++ class (TYP-28; task P08.16).**
     ```go
     import "<QtWidgets>"
-    type MyButton extends QtWidgets.QPushButton, Timestamps { clicks int }
+    @Extends(QtWidgets.QPushButton)
+    @Extends(Timestamps)
+    type MyButton struct { clicks int }
 
     @Override
     func (b *MyButton) mousePressEvent(e *QtWidgets.QMouseEvent) {
@@ -105,21 +108,29 @@ Go++ therefore provides explicit struct inheritance with `extends P1, P2, …`, 
         base[QtWidgets.QPushButton].mousePressEvent(e)
     }
     ```
-    - A Go++ struct may include at most **one** C++ class in `extends`, and it must be the **first** parent (`P1`), followed by any number of Go++ struct parents (`P2, P3, …`).
+    - A Go++ struct may have at most **one** C++ class as a parent, and it must be the **first** `@Extends` (`P1`), followed by any number of Go++ struct parents (`P2, P3, …`).
     - Keeping the C++ base first places the C++ subobject (and its C++ vtable) at offset `0`; Go++ secondary parents and the child's own fields follow after the C++ part.
     - `@Override` replaces C++ `virtual` methods (pure virtual counts as `@Abstract`; C++ `final` or non-virtual cannot be overridden). `base.M()` or `base[CppBase].M()` calls the C++ base implementation statically.
     - Drop order drops the child's `drop`, the child's fields in reverse, Go++ parents `Pn .. P2` in reverse, and finally runs `P1`'s C++ destructor.
 
-15. **Generic constraint `T extends Parent` (GEN-12).**
+15. **Generic constraint with a parent (GEN-12).**
     ```go
-    func Feed[T extends Animal](a *T) { a.Eat(); a.Speak() }
-    func AuditPay[T interface{ extends Payment; extends Auditable }](x *T) {
+    @Extends(Animal)
+    type AnimalKind interface{}
+
+    func Feed[T AnimalKind](a *T) { a.Eat(); a.Speak() }
+
+    @Extends(Payment)
+    @Extends(Auditable)
+    type AuditedPayment interface{}
+
+    func AuditPay[T AuditedPayment](x *T) {
         x.Audit()
         _ = x.Total()
     }
     ```
-    - `[T extends P]` is short for `[T interface{ extends P }]`. Multiple parent requirements are written as multiple `extends` elements inside a constraint interface (`interface{ extends Payment; extends Auditable }`).
-    - Because duplicate generic parent origins (`extends Box[int], Box[string]`) and diamonds are disallowed, type argument inference in `func Feed[T extends Box[U], U any](a *T)` always finds at most one `Box[…]` ancestor on `T`.
+    - An interface declared with `@Extends(P)` is a constraint: a type satisfies it when it is `P` or has `P` as an ancestor. Several `@Extends` on the interface require all the parents. The constraint has a name; there is no short form inside a type parameter list.
+    - Because duplicate generic parent origins (`Box[int]` and `Box[string]`) and diamonds are disallowed, type argument inference in `func Feed[T BoxKind[U], U any](a *T)`, with `@Extends(Box[U]) type BoxKind[U any] interface{}`, always finds at most one `Box[…]` ancestor on `T`.
 
 16. **`Clone` always copies the whole real value, 1:1.**
     - Untagged parents have no upcast (`*Child` to `*Config` is an error); inherited methods of an untagged parent borrow or copy only that parent part as declared by their signature.
@@ -146,7 +157,10 @@ func (a *Auditable) Audit() string { return "by " + a.Actor }
 type Timestamps struct { CreatedAt int64 }                      // untagged: 0 table overhead
 func (t *Timestamps) Age(now int64) int64 { return now - t.CreatedAt }
 
-type Card extends Payment, Auditable, Timestamps {
+@Extends(Payment)
+@Extends(Auditable)
+@Extends(Timestamps)
+type Card struct {
     Number string
 }
 
@@ -186,27 +200,59 @@ func main() {
 
 ```go
 type Entity struct { ID string }
-type B1 extends Entity {}
-type B2 extends Entity {}
-type Diamond extends B1, B2 {}                    // error: diamond inheritance (Entity reached twice)
-type Dup extends Timestamps, Timestamps {}        // error: duplicate parent Timestamps
-type TwoGen extends Box[int], Box[string] {}      // error: multiple instances of generic parent Box
 
-type Clash1 extends Payment, structWithAmount {}  // error: field Amount clashes across parents
-type X extends int {}                             // error: parent must be a struct type
-type X extends *Payment {}                        // error: a pointer cannot be a parent
-type X extends io.Reader {}                       // error: an interface cannot be a parent
-type BadCpp extends Timestamps, QPushButton {}    // error: C++ parent must come first
+@Extends(Entity)
+type B1 struct{}
+
+@Extends(Entity)
+type B2 struct{}
+
+@Extends(B1)
+@Extends(B2)
+type Diamond struct{}             // error: diamond inheritance (Entity reached twice)
+
+@Extends(Timestamps)
+@Extends(Timestamps)
+type Dup struct{}                 // error: duplicate parent Timestamps
+
+@Extends(Box[int])
+@Extends(Box[string])
+type TwoGen struct{}              // error: multiple instances of generic parent Box
+
+@Extends(Payment)
+@Extends(structWithAmount)
+type Clash1 struct{}              // error: field Amount clashes across parents
+
+@Extends(int)
+type X1 struct{}                  // error: parent must be a struct type
+
+@Extends(*Payment)
+type X2 struct{}                  // error: a pointer cannot be a parent
+
+@Extends(io.Reader)
+type X3 struct{}                  // error: an interface cannot be a parent
+
+@Extends(Timestamps)
+@Extends(QPushButton)
+type BadCpp struct{}              // error: C++ parent must come first
+
+@Extends(Payment, Auditable)
+type Two struct{}                 // error: one parent per @Extends
+
+@Extends(Payment)
+type Alias = Card                 // error: @Extends goes on a struct or interface type declaration
 
 // If both P1 and P2 declare @Virtual Validate() error:
-type BadCard extends P1, P2 {}                    // error: must @Override Validate() to resolve clash
+@Extends(P1)
+@Extends(P2)
+type BadCard struct{}             // error: must @Override Validate() to resolve clash
 // Inside @Override Validate() on a child of P1, P2:
 // base.Validate()                                // error: ambiguous base call; write base[P1].Validate() or base[P2].Validate()
 ```
 
 ## Alternatives Rejected
 
-- **Single parent only (`extends P` with one parent):** too restrictive in practice when combining an OOP parent (`Payment` or C++ `QPushButton`) with reusable stateful capabilities (`Auditable`, `Timestamps`).
-- **Unrestricted C++ diamond inheritance (`virtual public` bases):** adds hidden virtual-base offset tables, constructor initialization anomalies, and duplicated base subobjects when `virtual` is forgotten. Banning diamonds at compile time gives multi-struct `extends` with none of C++'s traps.
+- **Single parent only:** too restrictive in practice when combining an OOP parent (`Payment` or C++ `QPushButton`) with reusable stateful capabilities (`Auditable`, `Timestamps`).
+- **Unrestricted C++ diamond inheritance (`virtual public` bases):** adds hidden virtual-base offset tables, constructor initialization anomalies, and duplicated base subobjects when `virtual` is forgotten. Banning diamonds at compile time gives several struct parents with none of C++'s traps.
 - **16-byte fat smart pointers for secondary bases:** unnecessary because `offset_to_top` in every type table lets 8-byte `Unique[P]`, `Shared[P]` and `Weak[P]` locate the allocation start and refcount header in a single addition.
 - **Interfaces with default methods only (Java / C# / Rust traits):** cannot carry fields (`CreatedAt`, `Actor`), forcing boilerplate field duplication across structs.

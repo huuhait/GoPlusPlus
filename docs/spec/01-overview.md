@@ -43,7 +43,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - Source representation: [Source code representation](https://go.dev/ref/spec#Source_code_representation), [Comments](https://go.dev/ref/spec#Comments), [Semicolons](https://go.dev/ref/spec#Semicolons), [Identifiers](https://go.dev/ref/spec#Identifiers).
 - Packages: [Source file organization](https://go.dev/ref/spec#Source_file_organization), [Package clause](https://go.dev/ref/spec#Package_clause), [Import declarations](https://go.dev/ref/spec#Import_declarations), [Exported identifiers](https://go.dev/ref/spec#Exported_identifiers) (visibility by capital letter).
 - Declarations: [Constant declarations](https://go.dev/ref/spec#Constant_declarations) (extended to structs, fixed arrays, `Option`, and `@Const` calls in [6.11](06-expressions.md#611-compile-time-evaluation-and-composite-constants-adr-0033)), [Iota](https://go.dev/ref/spec#Iota), [Type declarations](https://go.dev/ref/spec#Type_declarations), [Variable declarations](https://go.dev/ref/spec#Variable_declarations), [Short variable declarations](https://go.dev/ref/spec#Short_variable_declarations), [Blocks](https://go.dev/ref/spec#Blocks), [Declarations and scope](https://go.dev/ref/spec#Declarations_and_scope).
-- Types and methods: [Struct types](https://go.dev/ref/spec#Struct_types) (without embedded fields, [TYP-25](03-types.md#35-inheritance-adr-0023); `extends` adds inheritance), [Interface types](https://go.dev/ref/spec#Interface_types) (structural), [Method declarations](https://go.dev/ref/spec#Method_declarations), [Method sets](https://go.dev/ref/spec#Method_sets).
+- Types and methods: [Struct types](https://go.dev/ref/spec#Struct_types) (without embedded fields, [TYP-25](03-types.md#35-inheritance-adr-0023); the attribute `@Extends` adds inheritance), [Interface types](https://go.dev/ref/spec#Interface_types) (structural), [Method declarations](https://go.dev/ref/spec#Method_declarations), [Method sets](https://go.dev/ref/spec#Method_sets).
 - Control flow: [If](https://go.dev/ref/spec#If_statements), [Switch](https://go.dev/ref/spec#Switch_statements), [For](https://go.dev/ref/spec#For_statements), [Select](https://go.dev/ref/spec#Select_statements), [Labeled statements](https://go.dev/ref/spec#Labeled_statements), [Goto](https://go.dev/ref/spec#Goto_statements), [Terminating statements](https://go.dev/ref/spec#Terminating_statements).
 - Generics syntax: [Type parameter declarations](https://go.dev/ref/spec#Type_parameter_declarations), [Type constraints](https://go.dev/ref/spec#Type_constraints), [Instantiations](https://go.dev/ref/spec#Instantiations), [Type inference](https://go.dev/ref/spec#Type_inference).
 - `init` functions: [Package initialization](https://go.dev/ref/spec#Package_initialization).
@@ -65,7 +65,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 | C interop | cgo | header imports `"<stdio.h>"` | 14 |
 | Macros | `go generate` | `#Name(...)`, `@Name`, `macro` | 13 |
 | Constants | `bool`, numbers, `string` only; no user calls | `const` also holds structs, `[N]T` arrays and `Option`s in `.rodata`; `@Const` functions/methods run at compile time in `const` and normally at runtime | 06 |
-| Reuse of a struct | embedding (promotion) | embedding removed in `.gopp`; struct inheritance `extends P1, P2, …` (no diamonds), with `@Virtual` / `@Abstract` / `@Override` and `base` / `base[P]` | 03 |
+| Reuse of a struct | embedding (promotion) | embedding removed in `.gopp`; struct inheritance with `@Extends(P)`, one per parent (no diamonds), with `@Virtual` / `@Abstract` / `@Override` and `base` / `base[P]` | 03 |
 
 ## 1.5 Delta index
 
@@ -111,7 +111,7 @@ These parts of the Go spec are unchanged unless a chapter says otherwise:
 - Source compatibility with Go code that relies on GC.
 - Rust-style lifetime annotations. Go++ checks borrows by flow and liveness without annotations ([4.5](04-ownership.md#45-borrow-checking-adr-0021)); what is left undefined is in [chapter 16](16-undefined-behavior.md).
 - A user-facing `reflect` package.
-- Exceptions as an error mechanism, and diamond inheritance (`virtual` base classes). (Inheritance without diamonds via `extends`, [TYP-16](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md), and Rust-style named `@Operator` methods, [EXP-16](06-expressions.md#610-operator-methods-adr-0024), [ADR-0024](../adr/0024-operator-overloading.md), are in v1. Unsafe and control-flow operators stay non-overloadable: `=`, `.`, `&x`, `,`, implicit conversions, `&&`/`||`, `<-`, `*x`, `()`, `++`/`--`, [EXP-29](06-expressions.md#610-operator-methods-adr-0024).)
+- Exceptions as an error mechanism, and diamond inheritance (`virtual` base classes). (Inheritance without diamonds via `@Extends`, [TYP-16](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md), and Rust-style named `@Operator` methods, [EXP-16](06-expressions.md#610-operator-methods-adr-0024), [ADR-0024](../adr/0024-operator-overloading.md), are in v1. Unsafe and control-flow operators stay non-overloadable: `=`, `.`, `&x`, `,`, implicit conversions, `&&`/`||`, `<-`, `*x`, `()`, `++`/`--`, [EXP-29](06-expressions.md#610-operator-methods-adr-0024).)
 
 ## 1.8 Samples
 

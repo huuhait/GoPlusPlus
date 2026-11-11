@@ -39,7 +39,7 @@ Debug information is produced jointly by `crates/gopp-gir` (`Function::Scopes`, 
 | `map[K]V` | Pointer to runtime `struct gopp_map` (`refcount`, `count` = `len(m)`, `alloc`, ...) |
 | `interface` (`gopp_iface`) | `struct gopp_iface { void *itab; void *data; }` (`16` bytes) |
 | `func` value (`gopp_func`) | `struct gopp_func { void *code; void *env; }` (`16` bytes); closures emit as `main_f_func1` with captured variables exposed by source name |
-| `extends` (`P04.22`) | Embedded leading parent subobject fields at offset `0` (and tagged secondary bases) |
+| Types with parents, `@Extends` (`P04.22`) | Embedded leading parent subobject fields at offset `0` (and tagged secondary bases) |
 
 ### Deterministic type names, cycles, and height bounds
 

@@ -10,7 +10,7 @@ Base: Go spec [Lexical elements](https://go.dev/ref/spec#Lexical_elements), [Tok
 
 ### Keywords
 
-**LEX-2.** One new keyword is reserved: `macro`. Two more words are *contextual*: `extends` and `base` ([LEX-12](#lex-12)); `extends` is special in a type declaration, in a type parameter list and as a constraint element. They are not reserved, so they stay usable as names.
+**LEX-2.** One new keyword is reserved: `macro`. One more word is *contextual*: `base` ([LEX-12](#lex-12)). It is not reserved, so it stays usable as a name. Inheritance has no keyword: it is written with the attribute `@Extends` ([TYP-16](03-types.md#35-inheritance-adr-0023)).
 
 ```
 keyword = /* the 25 Go keywords */ | "macro" .
@@ -68,7 +68,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 - Like Go's predeclared names, these can be redeclared in any scope, package level included (`type Option int` is accepted). The declaration hides the predeclared name in its scope. Do not do it.
 - `Send` and `Sync` are constraints only ([GEN-11](10-generics.md), [CON-12](12-concurrency.md)): bare `Send` or `Sync` in a type position (`var x Send`) or with type arguments is a compile error. `Local[T]` is a predeclared generic type for `func` and `interface` types only (`Local[func()]`, `Local[any]`, [CON-12](12-concurrency.md)), opting out of `Send`/`Sync` for single-goroutine callbacks and interfaces.
 - In Go mode (`.go` files) none of the Go++ predeclared names exist: `Option`, `Unique`, `Shared`, `Weak`, `Local`, `Send`, `Sync`, `Copy`, `Clone`, `clone`, `NewUnique`, `NewShared` and `NewWeak` are ordinary names there (`Option[int]` is "undefined: Option").
-- In Go mode `extends` and `base` are ordinary names too ([TYP-26](03-types.md#35-inheritance-adr-0023)).
+- In Go mode `base` is an ordinary name too ([TYP-26](03-types.md#35-inheritance-adr-0023)).
 - The macro names live in their own namespace (they are only used after `#` or `@`).
 
 **LEX-8.** Go's `new` is not predeclared. Using it is a compile error "undefined: new" with a fix-it that suggests `NewUnique(T{})` or `NewShared(T{})`.
@@ -84,9 +84,9 @@ Old uses stay: unary `!x` and the operator `!=`.
 ### Contextual words
 
 <a id="lex-12"></a>
-**LEX-12.** *`extends` and `base` are contextual.* Each is special only in the places below. Everywhere else it is an ordinary identifier.
-- `extends` is special only in three places: (1) a type declaration, after the type name and its optional type parameters: `type Card extends Payment, Auditable { … }` ([TYP-16](03-types.md#35-inheritance-adr-0023)); (2) a type parameter list, after a type parameter name: `[T extends Animal]` ([GEN-12](10-generics.md#102-rules)); (3) as an element of a constraint interface, at the start of the element: `interface{ extends Animal; Clone }` (GEN-12). In (2) and (3) it must be followed by a type. Everywhere else it is an ordinary identifier (`extends := 1`, `func extends()`, a field named `extends`).
-- `base` is special only inside the methods of a type declared with `extends`, where `base.M(…)` or `base[Parent].M(…)` calls a direct parent's method ([TYP-20](03-types.md#35-inheritance-adr-0023)). A local, parameter, result or receiver named `base` is an error there, with a rename hint. In any other function, method or scope `base` is an ordinary identifier.
+**LEX-12.** *`base` is contextual.* `base` is special only inside the methods of a type that has parents (`@Extends`, [TYP-16](03-types.md#35-inheritance-adr-0023)), where `base.M(…)` or `base[Parent].M(…)` calls a direct parent's method ([TYP-20](03-types.md#35-inheritance-adr-0023)). A local, parameter, result or receiver named `base` is an error there, with a rename hint. In any other function, method or scope `base` is an ordinary identifier.
+
+`extends` is not a keyword of any kind. A parent is named by the attribute `@Extends(Parent)` ([ADR-0034](../adr/0034-extends-attribute.md)), so `extends` is an ordinary identifier everywhere (`extends := 1`, `func extends()`, a field or a method named `extends`).
 
 
 ## 2.2 Examples
@@ -120,16 +120,15 @@ Each changed production is defined in exactly one place. [Appendix B](appendix-b
 | Production | Defined in |
 |---|---|
 | `FunctionDecl`, `MethodDecl`, `FunctionLit`, `FunctionType`, `MethodElem`, `PrimaryExpr "!" Arguments` (the `!` forms and generic methods) | [9.1](09-errors-and-panics.md#91-functions-that-can-fail-d18) |
-| `TypeParamDecl` and `InterfaceElem` (the `extends` constraint form) | [10.1](10-generics.md#101-syntax) |
 | `RangeClause`, `RangeVars`, `RangeVar` (`&`) | [8.3](08-slices-and-range.md#83-range-loops-d121) |
 | `FieldAttributes` | [13.1](13-macros-surface.md) |
-| `Type`, `TypeLit`, `ExtendsDecl`, `FieldDecl` (no embedded fields) | [3.1](03-types.md) |
+| `Type`, `TypeLit`, `FieldDecl` (no embedded fields) | [3.1](03-types.md) |
 | `MacroDecl`, `ProcMacroDecl`, `MacroInvocation`, `Attribute`, `TopLevelDecl`, `Operand` | [13.1](13-macros-surface.md) |
 | `ImportPath` forms | [14.1](14-foreign-surface.md) |
 
 ## 2.4 Rationale
 
-- Only one keyword is reserved (`macro`). `extends` and `base` are contextual so they stay usable as names and old Go code keeps compiling. `Unique`, `Shared`, `Weak`, `Option` and `Local` are predeclared generic types, not keywords.
+- Only one keyword is reserved (`macro`). `base` is contextual so it stays usable as a name and old Go code keeps compiling. Inheritance is an attribute (`@Extends`), not a keyword, so it needs no new word and no grammar of its own ([ADR-0034](../adr/0034-extends-attribute.md)). `Unique`, `Shared`, `Weak`, `Option` and `Local` are predeclared generic types, not keywords.
 - `#` and `@` were free in Go, so no old code changes meaning.
 - `!` stays near the function name where the reader looks first. An earlier draft used `call()!` and needed a special semicolon rule and a `!=` caveat (`f()!==y`). It was rejected.
 - `NewUnique`, `NewShared` and `NewWeak` use Go's `NewXxx` constructor casing ([ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)), matching `sync.NewMutex` while starting with a capital letter so they stand out from Go's lowercase built-ins.

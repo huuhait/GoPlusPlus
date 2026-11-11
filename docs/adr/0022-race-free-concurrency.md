@@ -1,7 +1,7 @@
 # ADR-0022: Race-free concurrency in normal code
 
 - **Status:** accepted (integrated with [ADR-0032](0032-shared-buffers-and-borrow-engine.md))
-- **Status note (2026-10-28, [ADR-0023](0023-inheritance.md)):** a type that uses `extends` is labeled `Send` / `Sync` from all its fields, all parents' fields included.
+- **Status note (2026-10-28, [ADR-0023](0023-inheritance.md)):** a type with parents (`@Extends`) is labeled `Send` / `Sync` from all its fields, all parents' fields included.
 - **Date:** 2026-10-28
 - **Plan reference:** changes P01 D1.13, P12 D12.6 and D12.7; spec rules CON-12 to CON-21, CON-1 to CON-9, UB-3, UB-11, 16.4, OWN-B8, GEN-11, CLO-2; tasks P04.21 and P12.13.
 

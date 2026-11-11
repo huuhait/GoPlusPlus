@@ -21,10 +21,11 @@ type User struct {
 |---|---|---|
 | `@Required` | struct field | must be set in every literal; the struct has no zero value (compile error on `Option[T]` and never-nil pointer/func/interface fields) |
 
-**Inheritance with `extends`** ([ADR-0023](adr/0023-inheritance.md))
+**Inheritance** ([ADR-0023](adr/0023-inheritance.md), [ADR-0034](adr/0034-extends-attribute.md))
 
 | `@` | On | Does |
 |---|---|---|
+| `@Extends(Parent)` | struct or interface type declaration | names one parent; write one per parent, in order. Struct: inherits fields and methods. Interface: a constraint for types with that ancestor |
 | `@Virtual` | pointer method | a child may replace it with `@Override` |
 | `@Abstract` | pointer method, or type | method: no body, every child must replace it; type: may leave abstract methods open |
 | `@Override` | pointer method | replaces one or more parents' `@Virtual` / `@Abstract` methods; required for that |

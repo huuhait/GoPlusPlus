@@ -258,7 +258,7 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 - **Per-instance checks & complexity limits (`GEN-5`):**
   - Checks `Option[X]` where substituted `X` is already nilable (`E0446`), `@Required` fields substituted with `Option` (`E0363`), and unguarded dynamic `error` returns (`E0448`), identically in `gopp check` and `gopp build`.
   - Enforces hard expansion caps (`E0449`): constructed type-argument height `<= 48`, tree size `<= 4096`, `<= max(100_000, source_bytes)` instances per package, and `<= max(4_000_000, 16 * source_bytes)` walked AST nodes.
-- **`extends` hierarchy vtables (`P04.22`):** Types using `extends` with `@Virtual`/`@Abstract` methods (or tagged secondary parents) emit static vtable globals (`Struct("pkg.T.vtable")` at offset `0` — sharing a polymorphic C++ primary base's vptr slot when extending C++, `TYP-28` — plus secondary `(Child, Pi)` tables). Each vtable carries `offset_to_top` (`isize`), complete-object descriptor/drop/clone hooks, parent downcast tables, and virtual method slots (with `recv += offset_to_top` thunks for secondary overrides), keeping `Unique[P]`, `Shared[P]`, and `Weak[P]` single 1-word pointers (`TYP-19`).
+- **Hierarchy vtables (`P04.22`):** Types with parents (`@Extends`) and `@Virtual`/`@Abstract` methods (or tagged secondary parents) emit static vtable globals (`Struct("pkg.T.vtable")` at offset `0` — sharing a polymorphic C++ primary base's vptr slot when extending C++, `TYP-28` — plus secondary `(Child, Pi)` tables). Each vtable carries `offset_to_top` (`isize`), complete-object descriptor/drop/clone hooks, parent downcast tables, and virtual method slots (with `recv += offset_to_top` thunks for secondary overrides), keeping `Unique[P]`, `Shared[P]`, and `Weak[P]` single 1-word pointers (`TYP-19`).
 
 ## 11. Checker records consumed by GIR lowering
 
@@ -266,11 +266,11 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 |---|---|
 | `types`, `values` | Expression `TypeId`s and compile-time `Constant`s |
 | `defs`, `uses` | `LocalId` resolution, direct `FuncId` callees, builtins |
-| `selections` (`FieldVal`, `MethodVal`, `MethodExpr`, `Base`) | `Field`/`Deref` chains (including `extends` `ParentSteps`), direct/itab method calls, method-value thunks |
+| `selections` (`FieldVal`, `MethodVal`, `MethodExpr`, `Base`) | `Field`/`Deref` chains (including the `ParentSteps` of inherited members), direct/itab method calls, method-value thunks |
 | `instances`, `iface_conversions` | Monomorphization worklist roots and dynamic type descriptor method sets |
 | `bangs` | `!` early-return vs `panic_must` lowering (section 6) |
 | `operators`, `case_operators` | `@Operator` and `@Convert` call lowering (`+`, `==`, `Cmp`, `Index`, `SetIndex`, `*Assign`, `switch` cases) |
-| `hier_parents`, `method_marks` | `extends` subobject layouts and virtual dispatch tables |
+| `hier_parents`, `method_marks` | parent subobject layouts and virtual dispatch tables |
 | `var_modes`, `swaps`, `self_moves` | Category-aware `OWN-C1`/`OWN-C2`/`OWN-C3` moves, borrows, and aliasing-safe swaps |
 
 ## 12. Text printer (`-emit=gir`)

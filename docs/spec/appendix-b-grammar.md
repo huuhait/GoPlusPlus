@@ -15,7 +15,7 @@ keyword           = /* the 25 Go keywords */ | "macro" .        /* Go++ LEX-2 */
 operator_or_punct = /* Go tokens */ | "#" | "@" .               /* Go++ LEX-3 */
 ```
 
-`extends` and `base` are identifiers. `extends` is read as a keyword only where a production below writes `"extends"` ([LEX-12](02-lexical.md#lex-12)).
+`extends` and `base` are identifiers. Neither appears in a production: inheritance is the attribute `@Extends` ([TYP-16](03-types.md#35-inheritance-adr-0023)), and `base` gets its meaning from the checker ([LEX-12](02-lexical.md#lex-12)).
 
 ## B.2 Source files
 
@@ -45,15 +45,14 @@ IdentifierList = identifier { "," identifier } .
 ExpressionList = Expression { "," Expression } .
 
 TypeDecl    = "type" ( TypeSpec | "(" { TypeSpec ";" } ")" ) .
-TypeSpec    = AliasDecl | TypeDef | ExtendsDecl .                                    /* Go++ 3.1 */
+TypeSpec    = AliasDecl | TypeDef .
 AliasDecl   = identifier [ TypeParameters ] "=" Type .
 TypeDef     = identifier [ TypeParameters ] Type .
-ExtendsDecl = identifier [ TypeParameters ] "extends" TypeList StructBody .          /* Go++ TYP-16 */
 TypeList    = Type { "," Type } .
 
 TypeParameters = "[" TypeParamList [ "," ] "]" .
 TypeParamList  = TypeParamDecl { "," TypeParamDecl } .
-TypeParamDecl  = IdentifierList ( TypeConstraint | "extends" Type ) .                /* Go++ GEN-12 */
+TypeParamDecl  = IdentifierList TypeConstraint .
 TypeConstraint = TypeElem .
 
 FunctionDecl = "func" FunctionName [ TypeParameters ] [ "!" ] Signature [ FunctionBody ] .          /* Go++ ERR-1 */
@@ -89,8 +88,7 @@ MapType     = "map" "[" KeyType "]" ElementType .
 KeyType     = Type .
 ChannelType = ( "chan" | "chan" "<-" | "<-" "chan" ) ElementType .
 
-StructType      = "struct" StructBody .
-StructBody      = "{" { FieldDecl ";" } "}" .
+StructType      = "struct" "{" { FieldDecl ";" } "}" .
 FieldDecl       = IdentifierList Type [ FieldAttributes ] [ Tag ] .                  /* Go++ 3.1: no EmbeddedField, TYP-25 */
 FieldAttributes = Attribute { Attribute } .                                         /* Go++ MAC-12 */
 Tag             = string_lit .
@@ -99,7 +97,7 @@ EmbeddedField   = [ "*" ] TypeName [ TypeArgs ] .                               
 FunctionType = "func" [ "!" ] Signature .                                           /* Go++ ERR-2 */
 
 InterfaceType  = "interface" "{" { InterfaceElem ";" } "}" .
-InterfaceElem  = MethodElem | TypeElem | "extends" Type .                           /* Go++ GEN-12 */
+InterfaceElem  = MethodElem | TypeElem .
 MethodElem     = MethodName [ "!" ] Signature .                                     /* Go++ ERR-2 */
 TypeElem       = TypeTerm { "|" TypeTerm } .
 TypeTerm       = Type | UnderlyingType .
@@ -240,7 +238,7 @@ The fragment kinds are identifiers to the lexer; they are names only in a `Macro
 ## B.8 What the parser decides beyond the productions
 
 1. **`!` after an operand** ([LEX-5](02-lexical.md)). After a `PrimaryExpr`, a `!` followed by `(` is the unwrapping mark of `PrimaryExpr "!" Arguments`. A unary `!` can only start an operand, so the two never compete. `!=` is one token.
-2. **Contextual `extends`** ([LEX-12](02-lexical.md#lex-12)). In a `TypeSpec`, after the name and optional type parameters, the identifier `extends` followed by a type starts an `ExtendsDecl`. In a `TypeParamDecl`, after the identifier list, `extends` followed by a type is the constraint form. In an interface body, `extends` at the start of an element and followed by a type is `"extends" Type`; followed by `(` it is a method named `extends`. Everywhere else it is an identifier.
+2. **No `extends` keyword** ([LEX-12](02-lexical.md#lex-12)). A parent is named by the attribute `@Extends(Parent)` before a type declaration ([TYP-16](03-types.md#35-inheritance-adr-0023)). The parser reads it like any attribute: the argument is an expression, and the checker reads it as a type.
 3. **Semicolons after attributes** ([LEX-6](02-lexical.md)). An attribute line ends in an identifier or `)`, so the lexer inserts a `;` after it. `AttributedDecl` accepts that one `;` after each attribute.
 4. **Where attributes go** ([13.1](13-macros-surface.md)). Before a top-level declaration, and in a struct field after the field's type and before its tag. An attribute before a statement or before an import is an error.
 5. **Macro invocations** ([MAC-2](13-macros-surface.md#132-rules)). `#Name(args)` is an operand, so in statement position it is an `ExpressionStmt`, and at top level it is a declaration. Where a type is expected, `#` is a parse error.

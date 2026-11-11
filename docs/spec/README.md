@@ -9,8 +9,8 @@ Start with the [overview](01-overview.md).
 | # | Chapter | Covers | Plan decisions |
 |---|---|---|---|
 | 1 | [Overview](01-overview.md) | how to read, rule IDs, delta index | D1.1 |
-| 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names, contextual `extends` / `base` | D1.2, ADR-0023 |
-| 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, inheritance (`extends`) | D1.12, D1.17, ADR-0023 |
+| 2 | [Lexical elements](02-lexical.md) | keywords, `#`, `@`, `!`, predeclared names, contextual `base` | D1.2, ADR-0023 |
+| 3 | [Types](03-types.md) | type syntax, interfaces, layout, required fields, inheritance (`@Extends`) | D1.12, D1.17, ADR-0023, ADR-0034 |
 | 4 | [Ownership](04-ownership.md) | categories, rules 1 to 10, pointers, shared buffers, borrow engine | D1.3, D1.4, D1.6, D1.7, ADR-0032 |
 | 5 | [Parameters](05-parameters.md) | lending, auto-move, receivers, ABI | D1.5, ADR-0032 |
 | 6 | [Expressions](06-expressions.md) | `clone`, `mem.Take`, safety defaults, `@Operator` methods, `@Const` & composite `const` | D1.17, ADR-0024, ADR-0032, ADR-0033 |

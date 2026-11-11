@@ -13,7 +13,7 @@ On 2026-10-27 the owner chose a built-in field attribute, `@Required`, over new 
 ## Decision
 
 1. **`@Required` is a built-in attribute on struct fields** (MAC-8), written after the field's type like any field attribute (MAC-12): `ID int @Required`. The compiler handles it; it is not a macro.
-2. **Every composite literal of the struct must set each required field,** by name or by position (a positional literal sets every field anyway). `User{Email: "x"}` is a compile error that names the missing fields. `@Required` is only allowed on struct fields (inherited by child types under `extends`, TYP-17); anywhere else it is an error.
+2. **Every composite literal of the struct must set each required field,** by name or by position (a positional literal sets every field anyway). `User{Email: "x"}` is a compile error that names the missing fields. `@Required` is only allowed on struct fields (inherited by child types, TYP-17); anywhere else it is an error.
 3. **A struct with a required field has no zero value.** It joins the types with no zero value (OWN-R9). Every place where Go would materialize a zero value is a compile error:
    - `var u User` with no initializer, and `var zero T` in generic code instantiated with `User`;
    - `make([]User, n)`, unless `n` is the constant `0` (`make([]User, 0, 100)` reserves room and creates no `User`);

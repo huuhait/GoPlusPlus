@@ -100,7 +100,7 @@ func (c *Conn) drop() {
 - Locals are destroyed (or released) at the end of their block, in reverse declaration order. One exception: a block-scoped local that an executed `defer` uses lives until function exit ([PAN-3, PAN-4](09-errors-and-panics.md)).
 - Temporaries are destroyed at the end of the full statement.
 - In the header of a `for … range`, `if` or `switch`, temporaries live until the end of the whole statement, body included.
-- A value of a type that uses `extends` is destroyed child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in reverse `extends` declaration order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse) ([TYP-24](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md)). Destroying a `Unique[Parent]` that holds a `Child` destroys the whole `Child`.
+- A value of a type with parents ([TYP-16](03-types.md#35-inheritance-adr-0023)) is destroyed child first: the child's `drop` method (if any), then the child's own fields in reverse declaration order, then the parent subobjects in reverse `@Extends` order (`Pn` down to `P1`, each running its `drop`, its fields in reverse, and its own parents in reverse) ([TYP-24](03-types.md#35-inheritance-adr-0023), [ADR-0023](../adr/0023-inheritance.md)). Destroying a `Unique[Parent]` that holds a `Child` destroys the whole `Child`.
 
 **OWN-R3.** *Last-use auto-move and sharing.*
 - **For `OWN-C2` values (`string`, `[]T`, `map[K]V`, `Shared[T]`, ordinary structs):**
@@ -109,7 +109,7 @@ func (c *Conn) drop() {
 - **For `OWN-C3` single-owner values (`Unique[T]`, `drop` types):**
   - A by-value transfer of a local (`b := a`, `x.f = a`, passing `a` to a `T` parameter, `return a`, `ch <- a`, `T{F: a}`, `xs = append(xs, a)`) **moves** `a`.
   - Any later read of `a` before `a` is reassigned is a compile error (`E0451`, use after move). Fix-its: `a.Clone()` (if cloneable), pass `&a` to a `*T` parameter to borrow, or use `Shared[T]`.
-- *Types with `extends`.* A child and its parent parts are one value. Taking only a parent part out of a child (`var p Payment = card`) is value slicing and is a compile error ([TYP-21](03-types.md#35-inheritance-adr-0023)). Moving a `Unique[Child]` into a `Unique[Parent]` place is an upcast and moves the pointer ([EXP-13](06-expressions.md#69-upcasts-and-downcasts-adr-0023)).
+- *Types with parents.* A child and its parent parts are one value. Taking only a parent part out of a child (`var p Payment = card`) is value slicing and is a compile error ([TYP-21](03-types.md#35-inheritance-adr-0023)). Moving a `Unique[Child]` into a `Unique[Parent]` place is an upcast and moves the pointer ([EXP-13](06-expressions.md#69-upcasts-and-downcasts-adr-0023)).
 
 ```go
 // OWN-C2 (string, slice, ordinary struct): works like Go
@@ -151,8 +151,8 @@ Two bindings view an existing value without copying a struct slot:
 - Every cloneable type has `Clone() T` (and short form `clone(x)`): built-in scalars, `string` (copies bytes into a fresh buffer, or returns empty), `[]T` (allocates a fresh backing array in the slice's allocator and clones each element), `map[K]V` (allocates a fresh map in the map's allocator and clones keys and values), `Unique[T]` (allocates a new `Unique[T]` holding `(*u).Clone()`), `Shared[T]` / `Weak[T]` / `chan` / `interface` / `func` (retains the handle), and structs/arrays whose fields are all cloneable.
 - Because `b := a` on `[]T` and `map[K]V` shares elements like Go, `b := a.Clone()` is how you ask for a separate, independent backing collection.
 - A type with a `drop` method is **not** cloneable unless it defines `Clone() T` by hand (with a value receiver `func (h Handle) Clone() Handle`, whose receiver is borrowed read-only without consuming `h`). This prevents accidental duplication of OS handles.
-- *Types with `extends`.* Auto-`Clone` of a child clones all parent and child fields. For any ancestor `P` with a type table ([TYP-22](03-types.md#35-inheritance-adr-0023)), `p.Clone()` on `*P` or `Unique[P]` returns a `Unique[P]` holding a full copy of the dynamic type ([ADR-0023](../adr/0023-inheritance.md) decision 16).
-- On a raw `*T` where `T` is an untagged type with a value-receiver `Clone() T`, `p.Clone()` is a compile error for ambiguity (for a tagged `extends` type `P`, `p.Clone()` dynamically clones into `Unique[P]` per the rule above): write `(*p).Clone()` to clone `T`, or `q := p` to copy/reborrow the pointer. `gopp vet` warns on redundant `.Clone()` calls on `Shared[T]` and `Weak[T]`.
+- *Types with parents.* Auto-`Clone` of a child clones all parent and child fields. For any ancestor `P` with a type table ([TYP-22](03-types.md#35-inheritance-adr-0023)), `p.Clone()` on `*P` or `Unique[P]` returns a `Unique[P]` holding a full copy of the dynamic type ([ADR-0023](../adr/0023-inheritance.md) decision 16).
+- On a raw `*T` where `T` is an untagged type with a value-receiver `Clone() T`, `p.Clone()` is a compile error for ambiguity (for a tagged parent type `P`, `p.Clone()` dynamically clones into `Unique[P]` per the rule above): write `(*p).Clone()` to clone `T`, or `q := p` to copy/reborrow the pointer. `gopp vet` warns on redundant `.Clone()` calls on `Shared[T]` and `Weak[T]`.
 
 **OWN-R7.** *Destructors are a method named `drop`* with a pointer receiver: `func (f *File) drop()`. It cannot be called directly (like `init`), and must accept the zero value safely.
 

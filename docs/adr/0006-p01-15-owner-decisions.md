@@ -85,7 +85,7 @@ compile error ([ADR-0021](0021-borrow-checking.md), OWN-B2, OWN-B3).
 
 ## Consequences
 
-- Only `macro` is a reserved new keyword; `extends` and `base` are contextual.
+- Only `macro` is a reserved new keyword; `base` is contextual. (Inheritance is the attribute `@Extends`, [ADR-0034](0034-extends-attribute.md).)
 - Map iteration panics deterministically on any unseen new-key insert or `clear` while an iterator is active.
 - `gopp.mod` owns `cxxstd`, `cflags` and `ldflags`.
 - Deferring in a loop preserves Go's exact function-exit lifetime semantics.
