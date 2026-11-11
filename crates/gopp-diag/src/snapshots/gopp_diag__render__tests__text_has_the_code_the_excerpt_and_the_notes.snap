@@ -1,0 +1,16 @@
+---
+source: crates/gopp-diag/src/render.rs
+expression: "render_text(&diagnostic, &sources, false)"
+---
+main.gopp:3:1: error[E0072]: //gopp:cflags is not a source directive
+   ╭─[ main.gopp:3:1 ]
+   │
+ 3 │ //gopp:cflags -O2
+   │ ────────┬────────  
+   │         ╰────────── here
+ 4 │ var π = 1 $ 2
+   │           ┬  
+   │           ╰── a note with a place
+   │ 
+   │ Note: add `cflags -O2` to gopp.mod
+───╯
