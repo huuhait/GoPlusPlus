@@ -80,7 +80,7 @@ followed by the error's trace. `MustError` is not predeclared ([LEX-9](02-lexica
 ```go
 func load!(path string) []byte {    // can fail: callers get ([]byte, error)
     f := os.Open!(path)             // on error, load returns it
-    return io.ReadAll!(f)
+    return io.ReadAll!(&f)
 }
 
 func count!(path string) int {
@@ -126,16 +126,16 @@ Compared with Go:
 // Go                                   // Go++
 func load(p string) ([]byte, error) {   func load!(p string) []byte {
     f, err := os.Open(p)                    f := os.Open!(p)
-    if err != nil { return nil, err }       return io.ReadAll!(f)
+    if err != nil { return nil, err }       return io.ReadAll!(&f)
     return io.ReadAll(f)                }
 }
 ```
 
 ## 9.3 Errors work like Go (D1.19)
 
-**ERR-12.** *Errors are shared values.* `error` is an interface, so it is a shared handle ([OWN-C2](04-ownership.md#41-type-categories-d13), [TYP-5](03-types.md)). `return ErrNotFound` shares the same error. `err == io.EOF`, `errors.Is`, `%w` and type switches work as in Go.
+**ERR-12.** *Errors are interface values.* `error` is an interface, so an `error` value is copied like every interface value: a copy holds a copy of the value ([OWN-C2](04-ownership.md#41-type-categories-d13), [TYP-5](03-types.md), [ADR-0041](../adr/0041-values-are-copied.md) rule 11). An `error` made by `errors.New` holds a handle to one immutable error object, so copies of it are cheap and compare equal: `return ErrNotFound` returns an error that is equal to `ErrNotFound`. `err == nil`, `err == io.EOF`, `errors.Is`, `%w` and type switches work as in Go.
 
-**ERR-13.** *Static errors.* Package-level errors from `errors.New` are static: never freed, never counted. Other error values are reference-counted.
+**ERR-13.** *Static errors.* Package-level errors from `errors.New` are static: never freed, never counted. An error that `errors.New` makes at run time holds a counted handle to its error object. Every other error value owns the value it holds: its box has one owner and no reference count ([TYP-5](03-types.md)).
 
 **ERR-14.** *The `!` trace* is stored per goroutine, keyed by the error's identity, **outside** the error. It never changes `==`, type switches or `Error()`. It is printed by a `!` panic and by `%+v`. After an error crosses goroutines, its trace is best effort.
 
@@ -235,7 +235,7 @@ func safe() (err error) {
 
 - **`!` returns errors inside failable functions.** A `!` call is one mark that means "propagate, or crash if there is nobody to propagate to". It is the same code as a hand-written `if err != nil`.
 - **Libraries return errors.** This is why `!` does not always panic.
-- **Errors keep Go semantics** by being shared handles, so existing error idioms keep working.
+- **Errors keep Go semantics:** an error from `errors.New` is a handle to one immutable error object, so its copies compare equal and existing error idioms keep working ([ERR-12](#93-errors-work-like-go-d119)).
 - **Traces outside the error** keep `==` and type switches exact.
 - **Function-scoped `defer`** is Go's rule, also in a loop. The loop variable's lifetime is extended until the deferred call has run, so code that is valid Go keeps its meaning.
 - **Rejected:** postfix `call()!` (needed a special semicolon rule and a `!=` lexing caveat); a `!` that always panics (pushed libraries toward crashing); a `try` keyword or a `#Try(...)` macro (`!` already returns errors in failable functions).

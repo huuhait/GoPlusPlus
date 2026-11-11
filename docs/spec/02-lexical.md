@@ -92,7 +92,7 @@ Old uses stay: unary `!x` and the operator `!=`.
 ```go
 func load!(path string) []byte {      // `!` after the name: can fail
     f := os.Open!(path)               // `!` after the callee: unwrap
-    return io.ReadAll!(f)
+    return io.ReadAll!(&f)            // a File cannot be copied: ReadAll gets it for the call
 }
 
 @Pinned                               // `@` then a capital name

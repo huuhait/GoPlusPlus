@@ -61,7 +61,8 @@ Every type is in exactly one of three categories ([ADR-0041](../adr/0041-values-
 - **Structs, arrays and `Option`s** whose parts can all be copied: each part is copied by its own rule.
 - **`Unique[T]`** when `T` can be copied: a copy is a new allocation holding a copy of what it points to.
 - **A type with a `drop` method that defines `Clone() T`:** a copy is a call of that method ([OWN-R6](#42-ownership-rules-d14)). A C++ class that is not trivial and has a usable copy constructor is copied by that constructor.
-- **`Shared[T]`, `Weak[T]`, `chan T`, `func` values and interface values** are the types whose job is sharing: a copy is another reference-counted handle to the same thing (for an interface value, the same immutable box).
+- **`Shared[T]`, `Weak[T]`, `chan T` and `func` values** are the types whose job is sharing: a copy is another reference-counted handle to the same thing.
+- **An interface value** (including `error`) has a box of its own with one owner and no reference count: a copy is a new box holding a copy of the value, by the rule of that value's type; a value of up to one word is stored inline ([TYP-5](03-types.md), [ADR-0041](../adr/0041-values-are-copied.md) rule 11). An interface value holds only a value that can be copied ([TYP-6](03-types.md)).
 - **Copies that are not made.** A copy the program cannot notice is skipped: on the last use of the source, and for a parameter that the function only reads ([OWN-R3](#42-ownership-rules-d14), [PAR-1](05-parameters.md)). When the owner of a slice or map ends, its elements are destroyed and its buffer is freed. When the last handle to a counted value is released, the value is destroyed and freed immediately.
 
 **OWN-C3.** *Cannot be copied.* A type with a `drop` method and no `Clone() T` (such as `os.File`), a `@Pinned` type, a C++ class without a usable copy constructor, and any type that holds a part that cannot be copied have **one owner and no copy** ([ADR-0041](../adr/0041-values-are-copied.md)). A plain copy of such a value (`b := a`, `x.f = a`, `T{F: a}`, `ch <- a`, passing `a` to a by-value parameter) is a compile error, also when it is the last use of `a`; the fix-its are `move(a)` and `&a`. `move(a)` hands the value over; any later read of `a` is a compile error (`E0451`, use after move) until `a` is assigned again ([OWN-R3](#42-ownership-rules-d14)). Returning a local and using a temporary (a call result, a literal) need no `move`. Borrowing uses `*T` (`&x`, or implicit conversion of `Unique[T]` to `*T` per [OWN-P6](#43-pointers-and-heap-allocation-d17)).
@@ -70,7 +71,7 @@ Every type is in exactly one of three categories ([ADR-0041](../adr/0041-values-
 - any field or element that cannot be copied (`OWN-C3`) makes the composite `OWN-C3`;
 - otherwise, any copyable (`OWN-C2`) field or element (or being a `string`, `[]T`, `map[K]V`, `Unique`, `chan`, `interface`, `func`, `Shared` or `Weak` itself) makes it `OWN-C2`;
 - otherwise it is trivial (`OWN-C1`).
-A `@Pinned` attribute always makes a type `OWN-C3`. A `drop` method makes a type `OWN-C3`, unless the type defines `Clone() T`, which makes it `OWN-C2`. `Shared[T]`, `Weak[T]`, `chan T`, `func` values and interface values are `OWN-C2` whatever they refer to. `Option[*T]` is trivial, `Option[string]`, `Option[User]` (with `User` holding strings/slices) and `Option[Unique[User]]` are `OWN-C2`, and `Option[os.File]` is `OWN-C3`.
+A `@Pinned` attribute always makes a type `OWN-C3`. A `drop` method makes a type `OWN-C3`, unless the type defines `Clone() T`, which makes it `OWN-C2`. `Shared[T]`, `Weak[T]`, `chan T` and `func` values are `OWN-C2` whatever they refer to, and an interface value is always `OWN-C2`: it holds only a value that can be copied ([TYP-6](03-types.md)). `Option[*T]` is trivial, `Option[string]`, `Option[User]` (with `User` holding strings/slices) and `Option[Unique[User]]` are `OWN-C2`, and `Option[os.File]` is `OWN-C3`.
 
 **OWN-C5.** *Type parameters.* Inside a generic body, an unconstrained type parameter `T` may be instantiated with any category (`OWN-C1`, `OWN-C2` or `OWN-C3`), so the body is checked conservatively as potentially `OWN-C3` unless constrained by `Copy` or `Clone` ([GEN-1, GEN-2, GEN-3](10-generics.md)). After monomorphization each instance uses the real category of its type argument.
 
@@ -92,7 +93,8 @@ Syntax: no new keywords. `move(x)` is a predeclared function ([OWN-R3](#42-owner
   1. its `drop` method runs, if any;
   2. then its non-trivial fields are destroyed, in **reverse declaration order**.
 - Destroying a `[]T` or a `map[K]V` destroys its elements or entries (for a slice, exactly its `len` elements) and frees its buffer. There is no reference count to read: the slice or map has one owner.
-- Destroying a counted value (`string`, `Shared[T]`, `Weak[T]`, `chan T`, an interface value, a `func` value) releases its reference; when the last strong reference is released, what it refers to is destroyed and its heap block is freed immediately.
+- Destroying an interface value destroys the value it holds and frees its box. The box has one owner and no reference count ([TYP-5](03-types.md)).
+- Destroying a counted value (`string`, `Shared[T]`, `Weak[T]`, `chan T`, a `func` value) releases its reference; when the last strong reference is released, what it refers to is destroyed and its heap block is freed immediately.
 
 ```go
 type Conn struct {
@@ -103,7 +105,7 @@ type Conn struct {
 func (c *Conn) drop() {
     if c.fdPlusOne != 0 { println("closing", c.fdPlusOne-1) } // runs first
 }
-// then c.log is released, then c.buf is freed (reverse declaration order)
+// then c.log is destroyed, then c.buf is freed (reverse declaration order)
 ```
 
 **OWN-R2.** *Destruction order.*
@@ -148,10 +150,10 @@ f = openLog()            // assigned again: usable
   - Taking the value out of a non-local place with `f := w.Out` is a compile error (`E0253`): the value cannot be copied, and moving silently out of a struct field or slice element would leave an unexpected zero/empty slot behind. Fix-its: `&w.Out` (to borrow), `mem.Take(&w.Out)` (to take and leave the zero value, when the type has one), or `mem.Replace(&w.Out, next)` (for any type, including `@Required` / never-nil fields).
   - Swapping places in one parallel assignment (`xs[i], xs[j] = xs[j], xs[i]`, `c.A, c.B = c.B, c.A`) is allowed for every movable type, including `OWN-C3` types with no zero value: all index and pointer operands and their bounds checks are evaluated before any bytes move.
 
-**OWN-R3b.** *Read-only bindings (interface assertions and plain range variables).*
-Two bindings are read-only names for an existing value:
+**OWN-R3b.** *Read-only bindings (plain range variables; assertion bindings are now copies).*
+A plain `range` variable is a read-only name for an existing value. An assertion binding was one and is now a copy:
 1. **Plain `range` variables over structs/arrays (`for _, d := range docs`):** for `OWN-C1` and `OWN-C2` elements, `d` is a read-only copy of the element, and the copy is not made when the body only reads `d` (top-level assignments `d.Title = "x"` and `&d` are compile errors so `d.Title = "x"` never silently mutates a discarded copy as in Go; fix-it `for _, &d := range docs { d.Title = "x" }`, [RNG-1, RNG-1a](08-slices-and-range.md)). Passing `d` or `d.Title` to functions and storing `out = append(out, d)` work as in Go. Writing to an element of a slice or map field (`d.Tags[0] = "x"`) is a write to `d` and is the same compile error. For `OWN-C3` elements, `d` is a read-only view of the element (`&d` in `for _, &d := range xs` gives writable access).
-2. **Type-assertion and type-switch bindings (`s, ok := v.(T)`, `switch x := v.(type)`):** an interface box is shared and immutable ([TYP-5, TYP-9](03-types.md)), so data held **by value** inside the box (including slices and maps inside the boxed value) is read-only through the binding; write `m := x` (or `m := x.Clone()`) to change a copy of your own, or box a `Shared[Mutex[T]]` to change a value every holder sees.
+2. **Type-assertion and type-switch bindings (`s, ok := v.(T)`, `switch x := v.(type)`)** are no longer read-only bindings ([ADR-0041](../adr/0041-values-are-copied.md) rule 11): the binding is an ordinary variable that holds a copy of the value, and the copy is not made when the binding is only read ([TYP-5, TYP-9](03-types.md)). Changing it does not change the interface value; box a `Shared[Mutex[T]]` to change a value every holder sees.
 
 **OWN-R3c.** *Locals captured by closures or `defer`.* A closure uses the captured variable itself, as if through `&x` ([CLO-1, CLO-3a](11-closures.md)). Moving a local (`move(x)`) while a closure or pending `defer` still refers to it is a compile error ([CLO-7, CLO-9](11-closures.md), [PAN-3](09-errors-and-panics.md)). `defer` arguments are evaluated at the `defer` statement and are copies like any other argument ([OWN-R3](#42-ownership-rules-d14)).
 
@@ -166,7 +168,7 @@ Two bindings are read-only names for an existing value:
 
 **OWN-R6.** *Explicit copies: `x.Clone()`.*
 - `x.Clone()` (short form `clone(x)`) does what `=` does ([OWN-R3](#42-ownership-rules-d14)). It is the way to write "this copy is meant" ([ADR-0041](../adr/0041-values-are-copied.md)). The constraint `Clone` means "can be copied"; `Copy` means "is copied by copying its bytes" ([GEN-1](10-generics.md)).
-- Every type that can be copied (`OWN-C1`, `OWN-C2`) has `Clone() T`: built-in scalars, `string` (the same immutable bytes), `[]T` (allocates a fresh backing array in the slice's allocator and clones each element), `map[K]V` (allocates a fresh map in the map's allocator and clones keys and values), `Unique[T]` (allocates a new `Unique[T]` holding `(*u).Clone()`), `Shared[T]` / `Weak[T]` / `chan` / `interface` / `func` (retains the handle), and structs/arrays whose fields are all cloneable.
+- Every type that can be copied (`OWN-C1`, `OWN-C2`) has `Clone() T`: built-in scalars, `string` (the same immutable bytes), `[]T` (allocates a fresh backing array in the slice's allocator and clones each element), `map[K]V` (allocates a fresh map in the map's allocator and clones keys and values), `Unique[T]` (allocates a new `Unique[T]` holding `(*u).Clone()`), `Shared[T]` / `Weak[T]` / `chan` / `func` (retains the handle), an interface value (a box of its own holding a clone of the value, [TYP-5](03-types.md)), and structs/arrays whose fields are all cloneable.
 - A type with a `drop` method can be copied **only** if it defines `Clone() T` by hand (with a value receiver `func (h Handle) Clone() Handle`, whose receiver is borrowed read-only without consuming `h`); `b := a` then calls that method. Without it the type cannot be copied (`OWN-C3`). This prevents accidental duplication of OS handles. A copy may be skipped ([OWN-R3](#42-ownership-rules-d14)), so a `Clone` method must not have effects a program relies on.
 - *Types with parents.* Auto-`Clone` of a child clones all parent and child fields. For any ancestor `P` with a type table ([TYP-22](03-types.md#35-inheritance-adr-0023)), `p.Clone()` on `*P` or `Unique[P]` returns a `Unique[P]` holding a full copy of the dynamic type ([ADR-0023](../adr/0023-inheritance.md) decision 16).
 - On a raw `*T` where `T` is an untagged type with a value-receiver `Clone() T`, `p.Clone()` is a compile error for ambiguity (for a tagged parent type `P`, `p.Clone()` dynamically clones into `Unique[P]` per the rule above): write `(*p).Clone()` to clone `T`, or `q := p` to copy/reborrow the pointer. `gopp vet` warns on redundant `.Clone()` calls on `Shared[T]` and `Weak[T]`.
@@ -258,7 +260,7 @@ A heap pointer is made with `NewUnique`, `NewShared` or `NewWeak`. Go's `new` is
 
 **OWN-P9.** *Never nil, and `Option[T]`* ([ADR-0018](../adr/0018-never-nil-pointers-and-option.md)).
 - `*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`, `func` types, and interface types with at least one method (except `error`) are **never nil** and have no zero value.
-- `error`, `any` (empty interfaces), `unsafe.Pointer`, slices, maps and channels keep Go's `nil`. Writing to a nil map held in an addressable local variable, struct field, slice element or map entry (`var m map[string]int; m["a"] = 1`) creates the map in place; a `map[K]V` parameter is the function's own copy ([PAR-1](05-parameters.md)), so writing to a map parameter, nil or not, changes only the callee's parameter; the write is a compile error when the parameter is not read, returned or passed on afterwards ([ADR-0041](../adr/0041-values-are-copied.md) rule 9). To fill the caller's map, take a `*map[K]V`. Writing to a temporary map (`f()["a"] = 1`) or a map inside an interface box is a compile error (`E0353` / `E0354`), so Go++ has no run-time nil-map panic.
+- `error`, `any` (empty interfaces), `unsafe.Pointer`, slices, maps and channels keep Go's `nil`. Writing to a nil map held in an addressable local variable, struct field, slice element or map entry (`var m map[string]int; m["a"] = 1`) creates the map in place; a `map[K]V` parameter is the function's own copy ([PAR-1](05-parameters.md)), so writing to a map parameter, nil or not, changes only the callee's parameter; the write is a compile error when the parameter is not read, returned or passed on afterwards ([ADR-0041](../adr/0041-values-are-copied.md) rule 9). To fill the caller's map, take a `*map[K]V`. Writing to a temporary map (`f()["a"] = 1`), or to the map that a type assertion yields (`v.(map[string]int)["a"] = 1`: the assertion gives a copy, [TYP-9](03-types.md)), is a compile error (`E0353` / `E0354`), so Go++ has no run-time nil-map panic.
 - `Option[T]` provides `nil` for any type `T` that is not already nilable (`Option[*User]` has the exact 1-word layout of a nullable C pointer; writing `Option[T]` when `T` is already nilable—`[]U`, `map[K]V`, `chan U`, `any`, `error`, `unsafe.Pointer`, or `Option[U]`—is a compile error `E0446`). `Option[T]` has two methods: `IsNil() bool` and `Get() (T, bool)`.
 
 **OWN-P10.** *Flow narrowing on `Option[T]`, `(T, error)` and comma-ok.*
@@ -372,8 +374,9 @@ use(q)
 use(p)                                      // ok: q is not used later
 
 s := NewShared(Config{})
-s.Count++                                   // ok in 1 goroutine
-mu := NewShared(sync.NewMutex(Config{}))    // across goroutines: wrap mutable state in Mutex
+fmt.Println(s.Count)                        // ok: everyone can read a shared value
+// s.Count++                                // compile error: a shared value is changed through a Mutex (OWN-P8)
+mu := NewShared(sync.NewMutex(Config{}))    // in one goroutine or several: the part that changes is in a Mutex
 go func() { mu.With(func(c *Config) { c.Count++ }) }()
 ```
 

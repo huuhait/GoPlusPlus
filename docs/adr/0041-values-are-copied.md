@@ -2,7 +2,7 @@
 
 - **Status:** accepted (owner decision). Rules 8 to 14 below are proposed by this ADR and used by the spec; the owner may change them.
 - **Date:** 2026-11-11
-- **Plan reference:** P01.19; reverses part of [ADR-0003](0003-memory-model-direction.md) (see Context); replaces [ADR-0040](0040-unshared-is-proven-at-compile-time.md) and the shared-buffer part of [ADR-0032](0032-shared-buffers-and-borrow-engine.md); changes OWN-C2, OWN-R3, OWN-R3d, OWN-P1, OWN-S2, PAR-1, SLC-6 to SLC-9, STM-7, TYP-6, TYP-7, CON-1, CON-4, CON-14
+- **Plan reference:** P01.19; reverses part of [ADR-0003](0003-memory-model-direction.md) (see Context); replaces [ADR-0040](0040-unshared-is-proven-at-compile-time.md) and the shared-buffer part of [ADR-0032](0032-shared-buffers-and-borrow-engine.md); changes OWN-C2, OWN-C3, OWN-R1, OWN-R3, OWN-R3b, OWN-R3d, OWN-P1, OWN-S2, PAR-1, PAR-5, SLC-1, SLC-6 to SLC-9, STM-1, STM-7, TYP-5 to TYP-9, ERR-12, ERR-13, GEN-1 to GEN-3, CLO-7, CON-1, CON-4, CON-12, CON-14, UB-2d
 
 ## Context
 
@@ -39,6 +39,7 @@ What a copy is, by type:
 | `string` | the same bytes; they never change, so sharing them cannot be seen |
 | `[]T`, `map[K]V` | a new buffer with a copy of every element |
 | struct, array | each field or element by its own rule |
+| interface value | its own box with a copy of the value it holds |
 | `*T`, `Shared[T]`, `Weak[T]`, `chan T`, function values | the handle; what it refers to is shared, which is what these types are for |
 
 ## Consequences
@@ -58,8 +59,8 @@ These spell the decision out far enough to rewrite the spec. Rules 8 to 14 answe
 **Copying**
 
 1. *Where a copy happens.* Initialization and assignment (`t := s`, `t = s`), storing into a field, an element or a map entry, passing an argument to a by-value parameter or receiver, returning, sending on a channel, passing to `go`, and converting to an interface each give the destination its own value.
-2. *What a copy is.* Plain data: the bytes. `string`: the same immutable bytes, counted. `[]T` and `map[K]V`: a new buffer and a copy of every element or entry, by these same rules. Structs, arrays and `Option`: each part by its own rule. `*T`, `Shared[T]`, `Weak[T]`, `chan T` and function values: the handle. An interface value: the same box, which is immutable and counted. `Unique[T]`: a new allocation holding a copy of what it points to. A C++ class with a usable copy constructor: that constructor. A copy of a slice or map lives in the allocator of its source; its capacity is at least its length and otherwise not specified.
-3. *Which types can be copied.* A type with a `drop` method can be copied only if it defines `Clone() T`; the copy is then that method, also when the type holds a part that could not be copied by itself. `@Pinned` types, C++ classes without a usable copy constructor, and any type that holds a part that cannot be copied cannot be copied. A plain copy of such a value is a compile error; the fix-its are `move(x)` and `&x`. Returning a local or a by-value parameter, and using a temporary (a call result, a literal), need no `move`. This holds on the last use too: for a value that cannot be copied, the hand-over is always written.
+2. *What a copy is.* Plain data: the bytes. `string`: the same immutable bytes, counted. `[]T` and `map[K]V`: a new buffer and a copy of every element or entry, by these same rules. Structs, arrays and `Option`: each part by its own rule. `*T`, `Shared[T]`, `Weak[T]`, `chan T` and function values: the handle. An interface value: a box of its own holding a copy of the value (owner decision: `b := a` is a copy for interfaces too). `Unique[T]`: a new allocation holding a copy of what it points to. A C++ class with a usable copy constructor: that constructor. A copy of a slice or map lives in the allocator of its source; its capacity is at least its length and otherwise not specified.
+3. *Which types can be copied.* A type with a `drop` method can be copied only if it defines `Clone() T`; the copy is then that method, also when the type holds a part that could not be copied by itself. `@Pinned` types, C++ classes without a usable copy constructor, and any type that holds a part that cannot be copied cannot be copied. A plain copy of such a value is a compile error; the fix-its are `move(x)` and `&x`. Returning a local or a by-value parameter, and using a temporary (a call result, a literal), need no `move`. This holds on the last use too: for a value that cannot be copied, the hand-over is always written. Only a value that can be copied can be converted to an interface type, so an interface value can always be copied; a value that cannot (a file) is put in a `Shared[T]` first, or passed as `&x` for the length of a call.
 4. *Copies that are not made.* The compiler skips a copy when the program cannot tell: the source is a local that is not read again (its last use), so the value is handed over; or the function only reads a by-value parameter and the argument cannot change during the call, so the argument is passed as it is. `s = append(s, x)`, `s = s[i:j]` and `m[k] = append(m[k], v)` therefore work in place; they copy nothing, so they are also allowed on a slice whose elements cannot be copied. A user-defined `Clone` may be skipped the same way, so it must not have effects a program relies on.
 5. *`.Clone()` and `clone(x)`* remain. They do what `=` does and are the way to write "this copy is meant". The constraint `Clone` means "can be copied"; `Copy` means "is copied by copying its bytes".
 
@@ -76,22 +77,23 @@ These spell the decision out far enough to rewrite the spec. Rules 8 to 14 answe
 
 **Other forms**
 
-11. *Closures* keep Go's rule: a closure uses the variable itself, as if through `&x`. The capture rules of chapter 11 stand; where they spoke of sharing or retaining a slice or map, the closure simply refers to the variable.
+11. *Interface values own what they hold.* The box has one owner and no reference count; a value of up to one word is stored inline as before. A method called through the interface works on that value and may change it; this includes a method with a pointer receiver, which gets the address of the interface's own value. `x := v.(T)` and a type switch give `x` a copy of the value (rule 4 applies, so reading costs nothing). A function that does not keep an interface parameter still receives it without boxing, and `&x` passed as an interface for a call lets the function change `x`. An interface value crosses to another goroutine like any value: a copy, or itself with `move(x)` or on its last use; the value put in an ordinary interface must be `Send`, as before.
+11a. *Closures* keep Go's rule: a closure uses the variable itself, as if through `&x`. The capture rules of chapter 11 stand; where they spoke of sharing or retaining a slice or map, the closure simply refers to the variable.
 12. *`range`.* The plain variable is a copy of the element, not made when the body only reads it. For elements that cannot be copied the plain variable is a read-only view, as before. `for _, &x := range xs` is the element itself.
 13. *Slice and map layout.* A `[]T` stays four words, `{ptr, len, cap, backing}`. `backing` points to a header `{alloc_cap, allocator}` at the start of the buffer; it is `nil` for a nil or empty slice and for a `&s[i:j]` view. There is no reference count: the one owner frees the buffer and releases exactly the elements `ptr` to `ptr + len`. Elements cut off by `s = s[i:j]` are released at that statement. A `map[K]V` stays one word, a pointer to a header without a reference count.
 14. *Goroutines and channels.* `go f(x)` and `ch <- x` give the other side a copy, or the value itself with `move(x)` or on its last use. Two goroutines share data only through a type made for it (`Shared[T]` with a `sync` type, a channel, a `sync.Scope` borrow). A slice or map of `Send` elements is `Send`.
 
-Reference counts remain for string buffers, `Shared[T]` and `Weak[T]`, interface boxes, function values and channels. The words "retain" and "release" apply only to those.
+Reference counts remain for string buffers, `Shared[T]` and `Weak[T]`, function values and channels. An interface box has one owner and no count. The words "retain" and "release" apply only to those.
 
 ## Open points
 
 Found while rewriting the documents. The spec keeps its earlier text on each until it is decided.
 
 1. ~~A pointer to an element of a slice that lives inside a `Shared[T]`~~: decided on 2026-11-11, [ADR-0042](0042-shared-is-read-only.md). What a `Shared[T]` holds is read-only through the handle; a part that changes is in a `Mutex`. A slice reached through an arena alias is still open (OWN-B4).
-2. **An interface value in two goroutines.** A copy of an interface value is the same box (rule 2). If the boxed type is not `Sync`, a sender that keeps its variable would share the box with the receiver. The chapters keep the earlier restriction in new words: such a value crosses only as a temporary, on its last use or with `move(x)` (CON-1, CON-4, CON-12, CON-14).
+2. ~~An interface value in two goroutines~~: decided on 2026-11-11 by the owner. Copying an interface value copies what it holds (rules 2 and 11), so two goroutines never hold the same box.
 3. **Who makes the copy at a call.** Whether a function only reads a parameter is a fact about its body, but the calling convention is fixed by the signature, and a call through an interface or a function value sees no body. One function body has to serve both. What "only reads" covers (re-slicing the parameter, storing it, returning it) and whether it is the same analysis as "does not keep" for interface parameters (TYP-7) is part of this (PAR-1, `calling-convention.md`, `gir.md`).
 4. **Where the slice record of a view lives.** `&s[i:j]` is a `*[]T`, so it points at a four-word record somewhere. If code appends through it, that record owns a new buffer, and something must free it.
-5. **Assertion bindings.** `x := v.([]int)` stays a read-only binding for now (TYP-9, OWN-R3b); by rule 1 it could be a copy.
+5. ~~Assertion bindings~~: decided with point 2. `x := v.(T)` gives `x` a copy of the value (rule 11).
 6. **Library shapes that depended on the old model:** what `Split` returns (two views), `Mutex[T].With` for a slice or map `T`, and a `[]E` satisfying a `SetIndex` constraint by value (CON-15, CON-16, GEN-13).
 7. **`move(x)` in two corners:** its order among the other arguments of a call (`f(move(x), len(x))`), and a `select` send case that is not chosen (EXP-3, CON-5).
 8. **Error codes** for a plain copy of a value that cannot be copied and for a write to a copy that is lost (rule 9). Both are "a compile error" until the checker assigns them.

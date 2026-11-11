@@ -50,13 +50,13 @@ var t string = v                 // ok: shares backing buffer
 
 Syntax: no change. Interfaces are Go's structural interfaces.
 
-**TYP-5.** *Shared handles.* An interface value is a shared handle. Copying it shares the same dynamic value: an immutable, reference-counted box, or the pointer it holds. The box is immutable all the way down: a map or slice inside it is read-only through the interface (see the binding rules below). So `==`, type switches and copies behave as in Go.
+**TYP-5.** *Interface values own what they hold* ([ADR-0041](../adr/0041-values-are-copied.md) rule 11). An interface value has a box of its own that holds a copy of the value put into it. The box has one owner and no reference count; a value of up to one word is stored inline ([TYP-8](#32-interfaces-and-runtime-type-information-d112)). Copying an interface value (`b := a`, storing, passing, sending) copies the value it holds, by the rule of that value's type ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): a `string` or a `Shared[T]` as its handle, a `[]T` or a `map[K]V` with its elements, a `*T` as the pointer. After `b := a`, nothing done to `b` is seen through `a`. The copy is skipped when the program cannot tell, as for every value: on the last use of the source, with `move(x)`, and for a parameter that the function only reads. A method called through the interface works on the interface's own value and may change it. Only a value that can be copied can be converted to an interface type ([TYP-6](#32-interfaces-and-runtime-type-information-d112)), so an interface value can always be copied. `==` and type switches work as in Go. This includes methods with a pointer receiver: the interface owns the value, so it can pass its address, and a struct value satisfies an interface through such methods without being boxed as a pointer.
 
 **TYP-6.** *Boxing.* Converting a value into a **kept** interface variable, field or element boxes it (ordinary interfaces are `Send` by default, so the converted value must be `Send`; `Local[I]` accepts single-goroutine non-`Send` values such as unsynchronized `Shared[T]`, [CON-12](12-concurrency.md)). The box gets its own copy of the value ([OWN-R3](04-ownership.md#42-ownership-rules-d14), [ADR-0041](../adr/0041-values-are-copied.md)); the copy is skipped when the source is a temporary, on the last use of a local, or with `move(x)`:
 - An `OWN-C1` trivial value up to one word is stored inline ([TYP-8](#32-interfaces-and-runtime-type-information-d112)); larger `OWN-C1` values copy into a box.
 - A `string`, `Shared[T]`, `Weak[T]`, `chan T` or `func` value (alone or as a part of a struct) is copied as its handle: the box retains it (no retain on the last use of a local), so the caller's variable stays usable if read later.
 - A `[]T` or `map[K]V` (or a struct, array or `Option` that holds one) is copied into the box with its elements: a new buffer with a copy of every element or entry. When the copy is skipped, the value moves into the box in $O(1)$. Later writes to the source variable never change the boxed value.
-- A value that cannot be copied (a `File`, [OWN-C3](04-ownership.md#41-type-categories-d13)) is moved into the box (`move(f)`, or a temporary); a plain `var x any = f` is a compile error, also on the last use of `f`. A `Unique[T]` is copied like any other value: a new allocation holding a copy of what it points to.
+- A value that cannot be copied (a `File`, [OWN-C3](04-ownership.md#41-type-categories-d13)) cannot be converted to an interface type ([ADR-0041](../adr/0041-values-are-copied.md) rule 3): `var x any = f` is a compile error, and so is `var x any = move(f)`. The fix-its are to put the value in a `Shared[T]` first (`var x any = NewShared(move(f))`), or to pass `&f` as the interface for the length of a call ([TYP-7](#32-interfaces-and-runtime-type-information-d112)). A `Unique[T]` is copied like any other value: a new allocation holding a copy of what it points to.
 - Storing a `*T` in a non-escaping local interface (`var q Local[any] = &point`) stores a tracked borrow (no heap box, subject to [OWN-B5](04-ownership.md#45-borrow-checking-adr-0021)).
 
 ```go
@@ -66,16 +66,18 @@ s := []int{1, 2, 3}
 var c any = s         // s is used below, so the box gets its own copy of the elements
 s[0] = 99             // ok: c still holds [1, 2, 3]
 f := openFile!()      // a File cannot be copied (drop, no Clone)
-var b any = move(f)   // f moves into the box
-// fmt.Println(f)     // compile error (E0451): f used after move
+// var b any = f      // compile error: a File cannot be converted to an interface, also with move(f)
+var b any = NewShared(move(f))   // ok: the box holds a Shared[File]
+// f.Write(data)      // compile error (E0451): f used after move
 p := &point
 var q Local[any] = p  // stores a local borrow of point: no box, tracked by OWN-B5
 ```
 
 **TYP-7.** *Interface parameters.* An interface parameter (including `...any`) is the function's own interface value, like every by-value parameter ([PAR-1](05-parameters.md)):
-- Passing an interface value (such as `err`) copies it, which shares the same box ([TYP-5](#32-interfaces-and-runtime-type-information-d112)). When the callee only reads the parameter, the copy is skipped (0 retain/release); the callee retains the box only if kept.
-- Passing a non-interface value does **not** allocate a box at the call when the callee does not keep the parameter: the callee receives a borrowed `(itab, &value)`, so `fmt.Println(name)`, `fmt.Println(slice)` and `fmt.Println(file)` neither allocate, copy nor consume `name`, `slice` or `file`.
-- If the callee keeps the parameter (stores, returns or sends it), the value is boxed at that point by the rules of [TYP-6](#32-interfaces-and-runtime-type-information-d112): the box gets its own copy, and the copy is skipped when the argument is a temporary, the last use of a local, or `move(x)`. A value that cannot be copied (a `File`) is moved into a keeping interface parameter (`move(f)`, or a temporary); a plain `Log(f)` is a compile error, also on the last use of `f`.
+- Passing an interface value (such as `err`) copies it, and so copies the value it holds ([TYP-5](#32-interfaces-and-runtime-type-information-d112)). The copy is skipped when the callee only reads the parameter, on the last use of the argument, and with `move(x)`.
+- Passing a non-interface value does **not** allocate a box at the call when the callee does not keep the parameter: the callee receives a borrowed `(itab, &value)`, so `fmt.Println(name)` and `fmt.Println(slice)` neither allocate, copy nor consume `name` or `slice`.
+- Passing `&x` as the interface (`fmt.Println(&file)`) lends `x` for the length of the call: nothing is boxed or copied, and the function may change `x` through it. This is how a value that cannot be copied (a `File`) is given to an interface parameter that the callee does not keep.
+- If the callee keeps the parameter (stores, returns or sends it), the value is boxed at that point by the rules of [TYP-6](#32-interfaces-and-runtime-type-information-d112): the box gets its own copy, and the copy is skipped when the argument is a temporary, the last use of a local, or `move(x)`. A value that cannot be copied (a `File`) cannot be converted to an interface type ([TYP-6](#32-interfaces-and-runtime-type-information-d112)): `Log(f)` and `Log(move(f))` are compile errors; put it in a `Shared[T]` first (`Log(NewShared(move(f)))`).
 
 ```go
 func Log(v any) { saved = v }         // keeps v
@@ -85,32 +87,32 @@ xs := []int{1, 2}
 Log(xs)            // ok: the box gets its own copy of xs, because xs is used below
 xs[0] = 9          // ok: saved still holds [1, 2]
 f := File{...}     // cannot be copied (has drop, no Clone)
-fmt.Println(f)     // ok: Println does not keep v, so f is only borrowed
-Log(move(f))       // ok: f moves into the box; reading f afterwards is a compile error (E0451)
+// fmt.Println(f)  // compile error: a File cannot be converted to an interface
+fmt.Println(&f)    // ok: Println does not keep v, so f is only borrowed for the call
+// Log(move(f))    // compile error: a File cannot be converted to an interface
+Log(NewShared(move(f)))   // ok: the box holds a Shared[File]; reading f afterwards is a compile error (E0451)
 ```
 
 **TYP-8.** *Inline values.* Trivial values up to one word (8 bytes: `int`, `float64`, raw pointers) are stored inline in the interface, with no box. Interface values stay 2 words.
 
-**TYP-9.** *Type switches and assertions* use compile-time type descriptors. Because an interface box is shared and immutable ([TYP-5](#32-interfaces-and-runtime-type-information-d112)):
-- When the asserted or switched type is a plain copy (`OWN-C1` without pointers: numbers, booleans, and arrays/structs/`Option`s of them), an immutable `string`, or a handle the box holds directly (`*T`, `Unique[T]`, `Shared[T]`, `Weak[T]`, `unsafe.Pointer`, `func`, `chan`), `x := v.(T)` and `case T:` yield that value directly (`string` and `Shared[T]` retain their shared handle, so `names = append(names, s)` and `x.Count++` on a `Shared[Config]` work just like Go; `*T` and `Unique[T]` reborrow their target as writable while live per [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021)).
-- When the asserted or switched type holds mutable value containers (`[]T`, `map[K]V`, or structs/arrays/`Option`s containing them) or a value that cannot be copied (`OWN-C3`, such as `File`), `x := v.(T)`, `x, ok := v.(T)` and `switch x := v.(type)` bind a **deep read-only variable** ([OWN-R3b](04-ownership.md#42-ownership-rules-d14)) into the box with zero copy and zero allocation:
-  - reading fields, indexing, `len`, comparing with `nil`, and ranging over `x` work as in Go;
-  - mutating any part held by value in the box (`x[0] = 1`, `x["b"] = 2`, `delete(x, k)`, `clear(x)`, `d.Tags[0] = "a"`, `&x`, `&x[i]`, or pointer-receiver calls on a value part) is a compile error;
-  - to obtain a separate writable copy of a value that can be copied, copy the binding (`m := x` or `m := x.Clone()`, then `m["b"] = 2`); to change one value through an interface, box a `Shared[Mutex[T]]` (`var box any = NewShared(sync.NewMutex(Holder{M: myMap}))`, [OWN-P8](04-ownership.md#43-pointers-and-heap-allocation-d17));
-  - when the asserted operand is a temporary interface value (`cfg := ctx.Value(k).(Config)`) or read from an aliasable place (`Shared[T]` field, pointer target, global), the runtime box is retained until the end of the binding's scope so another alias cannot free it mid-scope;
-  - reassigning `v` while a deep read-only binding into `v`'s box is still read later is a compile error ([OWN-B2](04-ownership.md#45-borrow-checking-adr-0021), [UB-2d](16-undefined-behavior.md)).
+**TYP-9.** *Type switches and assertions* use compile-time type descriptors. `x := v.(T)`, `x, ok := v.(T)` and `switch x := v.(type)` give `x` a copy of the value that `v` holds ([TYP-5](#32-interfaces-and-runtime-type-information-d112), [ADR-0041](../adr/0041-values-are-copied.md) rule 11): Asserting to a type that cannot be copied (`v.(os.File)`) is a compile error: no interface value holds one.
+- `x` is an ordinary variable. It can be changed (`x[0] = 1`, `x["b"] = 2`, `delete(x, k)`, `clear(x)`, `x.Tags[0] = "a"`, `&x`, a pointer-receiver call), and changing it does not change `v`.
+- The copy is made by the rule of the type ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): a plain value copies its bytes; a `string`, `Shared[T]`, `Weak[T]`, `chan` or `func` is copied as its handle (so `names = append(names, s)` retains the bytes of the string); a `[]T` or `map[K]V` gets a new buffer; a `Unique[T]` gets a new allocation; a `*T` is copied as the pointer and reborrows its target while live per [OWN-B9](04-ownership.md#45-borrow-checking-adr-0021). What a `Shared[T]` holds stays read-only through the handle: `x.Count++` on a `Shared[Config]` is a compile error, and a value that changes is in a `Mutex` (`Shared[Mutex[Config]]`, [OWN-P8](04-ownership.md#43-pointers-and-heap-allocation-d17), [ADR-0042](../adr/0042-shared-is-read-only.md)).
+- The copy is skipped when the program cannot tell ([OWN-R3](04-ownership.md#42-ownership-rules-d14)): when `x` is only read, when `v` is a temporary (`cfg := ctx.Value(k).(Config)`), and on the last use of `v`. So reading fields, indexing, `len`, comparing with `nil` and ranging over `x` cost no copy and no allocation. When `v` is assigned while `x` is still used, `x` keeps the value it was given ([UB-2d](16-undefined-behavior.md)).
+- To change the value that `v` itself holds, call a method through the interface ([TYP-5](#32-interfaces-and-runtime-type-information-d112)) or assign the changed copy back (`v = x`). To change one value that every holder sees, hold a `Shared[Mutex[T]]` in the interface (`var box any = NewShared(sync.NewMutex(Holder{M: myMap}))`, [OWN-P8](04-ownership.md#43-pointers-and-heap-allocation-d17)).
+- This replaces the earlier deep read-only binding into the box ([ADR-0041](../adr/0041-values-are-copied.md) rule 11).
 
 ```go
-if s, ok := v.(string); ok {      // immutable string handle: works just like Go
+if s, ok := v.(string); ok {      // a string is copied as its handle: works just like Go
     fmt.Println(len(s))
-    names = append(names, s)      // ok: retains shared immutable string buffer
+    names = append(names, s)      // ok: retains the bytes of the string
 }
 switch x := v.(type) {
 case []int:
-    fmt.Println(len(x), x[0])     // ok: read-only binding into box
-    // x[0] = 9                   // error: boxed slice is read-only; copy it first
-    cp := x.Clone()               // cp := x makes the same copy
-    cp[0] = 9                     // ok: the box still holds the old value
+    fmt.Println(len(x), x[0])     // ok: x is only read, so no copy is made
+case map[string]int:
+    x["b"] = 2                    // ok: x is a copy of its own; v still holds the old map
+    fmt.Println(len(x))
 case int:
     total += x                    // ok: trivial, copied
 }
@@ -316,7 +318,7 @@ The full example, its output and the list of errors are in [ADR-0023](../adr/002
 
 ## 3.6 Rationale
 
-- **Shared handles for interfaces** keep Go's `err == io.EOF`, `errors.Is`, `%w` and type switches working with no GC.
+- **Interface values that own what they hold** ([ADR-0041](../adr/0041-values-are-copied.md)) keep the one rule that `b := a` is a copy. Go's `err == io.EOF`, `errors.Is`, `%w` and type switches keep working with no GC ([ERR-12](09-errors-and-panics.md)).
 - **Borrowed interface parameters** make `fmt.Println(name)` free and non-consuming. Boxing happens only when a callee really keeps the value.
 - **Several parents without diamonds instead of struct embedding** ([ADR-0023](../adr/0023-inheritance.md)): a struct can combine an OOP base and stateful struct mixins (`@Extends(Payment)`, `@Extends(Auditable)`, `@Extends(Timestamps)` before `type Card struct`), parent methods see child `@Override`s, diamond inheritance is rejected at compile time, untagged parents add zero words, and `offset_to_top` in type tables keeps `Unique[T]`, `Shared[T]` and `Weak[T]` at 8 bytes. Embedding would be a second, non-polymorphic way to reuse structs, so it is removed from `.gopp` files.
 - **Rust-style named `@Operator` methods** ([ADR-0024](../adr/0024-operator-overloading.md)): normal Go identifier names (`Add`, `Sub`, `Mul`, `Eq`, `Cmp`, `Index`, `SetIndex`, `Iter`) keep method declarations and interface constraints clean, allow calling `a.Add(b)` directly as well as `a + b`, and avoid accidental overloading of unrelated `.Add(...)` methods unless marked `@Operator`.
