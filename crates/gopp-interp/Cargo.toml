@@ -1,0 +1,9 @@
+[package]
+name = "gopp-interp"
+description = "Compile-time GIR interpreter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

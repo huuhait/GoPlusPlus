@@ -1,0 +1,10 @@
+[package]
+name = "gopp-plugin-host"
+description = "Loads and runs GIR pass plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"

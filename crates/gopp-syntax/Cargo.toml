@@ -1,0 +1,9 @@
+[package]
+name = "gopp-syntax"
+description = "Lexer, parser, AST, and source printer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

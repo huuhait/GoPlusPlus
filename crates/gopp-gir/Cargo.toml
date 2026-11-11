@@ -1,0 +1,9 @@
+[package]
+name = "gopp-gir"
+description = "GIR: the typed mid-level IR, its builder, verifier, and safety passes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

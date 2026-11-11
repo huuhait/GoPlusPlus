@@ -1,0 +1,13 @@
+[package]
+name = "gopp-testutil"
+description = "Test helpers shared by the workspace crates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

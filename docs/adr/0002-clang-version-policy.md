@@ -21,7 +21,7 @@ Pinned versions in `nixpkgs` (`nixos-26.05`):
 
 | Tool | Version | Role |
 |---|---|---|
-| `rustc` / `cargo` | `1.93.0` (Edition 2024) | Compiles the `gopp` Rust workspace |
+| `rustc` / `cargo` | `1.95.0` (Edition 2024) | Compiles the `gopp` Rust workspace |
 | `clang` / `clang++` | `23.1.0` | Compiles emitted GNU C23 (`.c`) and C++20 (`.cpp`), dumps C++ ASTs (`P08`) |
 | `lld` (`ld.lld`, `ld64.lld`, `lld-link`, `wasm-ld`) | `23.1.0` | Cross-links ELF, Mach-O, COFF/PE, and Wasm targets (`-fuse-ld=lld`) |
 | `libclang` | `23.1.0` | Loaded at runtime by `gopp-cimport` for C header import (`P07`) |

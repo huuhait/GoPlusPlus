@@ -1,2 +1,4 @@
 .claude
 plans/
+/target/
+.scratch/

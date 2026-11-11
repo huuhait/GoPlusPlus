@@ -1,0 +1,9 @@
+[package]
+name = "gopp-mangle"
+description = "Symbol name mangling and demangling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

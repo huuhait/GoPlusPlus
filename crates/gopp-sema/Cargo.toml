@@ -1,0 +1,9 @@
+[package]
+name = "gopp-sema"
+description = "Name resolution, type checking, constants, generics, and flow typing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

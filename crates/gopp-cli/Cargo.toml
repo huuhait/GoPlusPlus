@@ -1,0 +1,25 @@
+[package]
+name = "gopp-cli"
+description = "The gopp command"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "gopp"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+gopp-codegen-c = { path = "../gopp-codegen-c" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# `unsafe` is allowed module by module, so the workspace `forbid` cannot apply.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
