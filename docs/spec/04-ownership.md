@@ -138,6 +138,41 @@ Two bindings view an existing value without copying a struct slot:
 
 **OWN-R3c.** *Single-owner locals captured by closures or `defer`.* For an `OWN-C3` local (`File`, `Unique[T]`), moving the local while a closure or pending `defer` still refers to it is a compile error ([CLO-7, CLO-9](11-closures.md), [PAN-3](09-errors-and-panics.md)). For `OWN-C2` locals (`string`, `[]T`, `map[K]V`, ordinary structs), closures share variables via cells ([CLO-2](11-closures.md)) and `defer` arguments retain/snapshot the handle evaluated at the `defer` statement, matching Go.
 
+<a id="own-r3d"></a>
+**OWN-R3d.** *Unshared: the only handle.* Three transfers hand a mutable container to a holder that must be the only one: storing it in a kept interface ([TYP-6, TYP-7](03-types.md#32-interfaces-and-runtime-type-information-d112)), sending it on a channel ([STM-7](07-statements.md), [CON-14](12-concurrency.md)) and passing it to `go` ([CON-1](12-concurrency.md)). A mutable container is a `[]T`, a `map[K]V`, a plain interface that is not `Sync`, or a struct, array or `Option` that holds one. The operand of such a transfer must be a temporary, or a local on its **last use** ([OWN-R3](#42-ownership-rules-d14)) that is **unshared**. Both are decided at compile time. No reference count is read to decide them: when the compiler cannot show that a local is unshared, the transfer is a compile error whose fix-it is `.Clone()` ([ADR-0040](../adr/0040-unshared-is-proven-at-compile-time.md)).
+- *Unshared.* A local or parameter is unshared at a point when both of these hold on every path that reaches the point:
+  1. **Its value is fresh.** It was produced by `make`; by a composite literal; by `.Clone()` or `clone`; by a conversion that allocates (`[]byte(s)`); by `append(x, …)` on the last use of an unshared `x`; by a receive from a channel; by a call whose result is fresh (below); or the variable is a parameter that the function takes (below). A zero value is fresh.
+  2. **No second handle was made since.** Since then the variable was not copied into another variable, field, element, map entry, package variable, result or closure while it is read again later (a retaining copy, [OWN-R3](#42-ownership-rules-d14)); no slice expression of it was stored or kept; it was not passed to a parameter that keeps it; and no handle to a container inside it was copied out and kept.
+- *All the way down.* A value that holds mutable containers is fresh only if each of them was a temporary or was moved in on the unshared last use of its own variable. Storing a container that is not unshared into the variable (as an element, a field, a map entry or through `append`) makes the variable shared.
+- *What does not share.* Lending the variable to a parameter that does not keep it ([PAR-1](05-parameters.md)); reading and writing elements, fields and entries of trivial or immutable type; `len`, `cap` and `range`; a slice expression that is only a lent argument.
+- *Once shared,* a variable is unshared again only after it is assigned a fresh value.
+- *Across functions.* The compiler infers two facts for every function, with no annotation, and keeps them in the package's export data like the borrow summaries of [OWN-B3](#45-borrow-checking-adr-0021):
+  - **a fresh result:** every `return` gives that result a temporary or an unshared local on its last use;
+  - **a taken parameter:** the body transfers the parameter where an unshared value is needed, without sharing it first. Inside the function a taken parameter is fresh. A call that passes an argument to a taken parameter is itself such a transfer: the argument must be a temporary or an unshared local on its last use.
+- *Calls that cannot be seen through.* A call through an interface or a function value, and a call of an `@Extern` function, has no facts: its results are not fresh and its parameters are not taken. So a function with a taken parameter cannot be used as a function value, as a method value or as the implementation of an interface method. That use is a compile error; the fix-it is to clone inside the function.
+- *Run time.* The reference count of an unshared value is 1 at the transfer. A debug build asserts it; no build decides anything by it. The in-place paths of `append`, `s += x` and `s = s[:k]` ([SLC-9](08-slices-and-range.md), [STM-8](07-statements.md)) still read the count: they choose between two ways of doing the same thing, never between accepting and rejecting a program.
+
+```go
+ys := []int{1, 2}
+go sum(ys)                       // ok: fresh, no other handle, last use
+
+func send(xs []int, ch chan []int) {
+    ch <- xs                     // ok: xs becomes a taken parameter of send
+}
+zs := make([]int, 8)
+send(zs, ch)                     // ok: zs is unshared on its last use
+keep := make([]int, 8)
+send(keep, ch)                   // error: keep is read below; fix-it: send(keep.Clone(), ch)
+fmt.Println(keep)
+
+a := cfg.items                   // a handle read from a field: cfg.items holds the buffer too
+go work(a)                       // error: a is not unshared; fix-it: go work(a.Clone())
+
+type Sink interface{ Put(xs []int) }
+func (q *Queue) Put(xs []int) { q.ch <- xs }   // xs is taken, so *Queue cannot be used as a Sink;
+                                               // fix-it: q.ch <- xs.Clone()
+```
+
 **OWN-R4.** *In-place updates, `mem.Take` and `mem.Replace`.*
 - `p = append(p, …)`, `buf = strconv.AppendInt(buf, n, 10)` and `m[k] = append(m[k], v)` update the destination in place. When the slice's backing buffer has `refcount == 1` and spare capacity, `append` writes directly in place with zero allocation.
 - `mem.Take(&place)` returns the current value of `place` and writes the zero value of `T` into `place` (compile error if `T` has no zero value, [OWN-R9](#42-ownership-rules-d14)).
