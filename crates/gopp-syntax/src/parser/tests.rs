@@ -348,6 +348,8 @@ fn syntax_errors() {
         "package p\nvar x := 1\n",
         "package p\ntype T\n",
         "package p\nfunc f() { x.[1] }\n",
+        "package p\nfunc f() { #M(1, xs...) }\n@A(xs...)\nfunc g()\n",
+        "package p\n@A\nvar ()\n@B\nconst (\n\tc = 1\n)\n",
     ];
     let mut report = String::new();
     for case in cases {

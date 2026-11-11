@@ -142,11 +142,6 @@ impl<'a> Printer<'a> {
 
     pub(super) fn gen_decl(&mut self, decl: &GenDecl, attrs: &[Attribute]) {
         let cx = self.cx;
-        for &(lo, hi) in &decl.orphans {
-            self.set_pos(lo);
-            self.literal(T::String, cx.source(lo, hi));
-            self.ws(Ws::Newline);
-        }
         for attr in attrs {
             self.attribute_line(attr);
         }
@@ -306,12 +301,7 @@ impl<'a> Printer<'a> {
                     (decl.span.lo, decl.span.hi, decl.attrs.as_slice(), kind)
                 }
             };
-            let orphan = match item {
-                Item::Gen(decl) => decl.orphans.first().map(|&(lo, _)| lo),
-                Item::Other(_) => None,
-            };
-            let start = attrs.first().map(|attr| attr.span.lo).or(orphan);
-            let start = start.unwrap_or(pos);
+            let start = attrs.first().map_or(pos, |attr| attr.span.lo);
 
             // A blank line goes between declarations of different kinds
             // and before a documented one. A function over several lines

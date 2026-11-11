@@ -395,7 +395,7 @@ impl Parser<'_> {
         let path = self.macro_ref();
         let args = self.at(TokenKind::LParen).then(|| {
             self.bump();
-            self.arguments().0
+            self.macro_arguments()
         });
         Attribute {
             path,

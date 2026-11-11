@@ -38,9 +38,9 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 
 **MAC-1.** *Definitions.* `macro Name(p kind, …) { … }` defines a **declarative** macro. `macro func Name(…) …` defines a **procedural** macro, written in Go++. A procedural macro that can fail is declared `macro func Name!(…)` (P09 D9.11).
 
-**MAC-2.** *Invocation.* `#Name(args)` can be used in expression, statement or declaration position. `#File()` with no arguments is written with empty parentheses. It cannot be used where a type goes: `var x #Bits(12)` is a parse error in v0 (P09 Q3, ADR-0011).
+**MAC-2.** *Invocation.* `#Name(args)` can be used in expression, statement or declaration position. `#File()` with no arguments is written with empty parentheses. The arguments are a list of expressions; `...` after the last one (`#M(xs...)`) is a parse error, in an attribute too. It cannot be used where a type goes: `var x #Bits(12)` is a parse error in v0 (P09 Q3, ADR-0011).
 
-**MAC-3.** *Attachment.* `@Name` or `@Name(args)` on top of a declaration (a type, func, method, var or const) attaches a macro or attribute to it. An attribute after a struct field's type is different: it is data read by the enclosing type's attached macro ([MAC-12](#132-rules)), not a separately expanded macro. An attached macro receives its arguments in parentheses plus the declaration it sits on, and returns new code. It may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
+**MAC-3.** *Attachment.* `@Name` or `@Name(args)` on top of a declaration (a type, func, method, var or const) attaches a macro or attribute to it. Before a group (`const ( … )`) it attaches to every declaration of the group; before an empty group (`var ()`) it is a parse error. An attribute after a struct field's type is different: it is data read by the enclosing type's attached macro ([MAC-12](#132-rules)), not a separately expanded macro. An attached macro receives its arguments in parentheses plus the declaration it sits on, and returns new code. It may add declarations. It never changes or removes the one it is attached to (P09 D9.1).
 
 **MAC-4.** *Names.* Every macro and attribute name starts with a capital letter (`#Assert`, `@Derive`, `@Extern`), built-in or user-defined.
 

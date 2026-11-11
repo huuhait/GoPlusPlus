@@ -286,8 +286,8 @@ fn header_imports_keep_their_order() {
 
 #[test]
 fn groups_without_declarations_are_kept() {
-    let source = "package p\n\nimport()\nconst (\n)\n\n@A\nvar ()\nfunc f(){\nvar()\n}\n";
-    let expected = "package p\n\nimport ()\n\nconst ()\n\n@A\nvar ()\n\nfunc f() {\n\tvar ()\n}\n";
+    let source = "package p\n\nimport()\nconst (\n)\n\nvar ()\nfunc f(){\nvar()\n}\n";
+    let expected = "package p\n\nimport ()\n\nconst ()\n\nvar ()\n\nfunc f() {\n\tvar ()\n}\n";
     assert_eq!(gopp(source), expected);
     assert_eq!(gopp(expected), expected);
 }

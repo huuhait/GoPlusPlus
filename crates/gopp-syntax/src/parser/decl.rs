@@ -96,10 +96,13 @@ impl Parser<'_> {
             }
 
             if !attrs.is_empty() {
-                if takes_attributes {
+                if takes_attributes && decls.len() > first {
                     for &decl in &decls[first..] {
                         self.decls[decl].attrs = attrs.clone();
                     }
+                } else if takes_attributes {
+                    let message = "an attribute before an empty group has no declaration";
+                    self.error_at(Code::Expected, attrs[0].span, message);
                 } else {
                     let message = "an attribute must be followed by a const, var, type or func \
                                    declaration";

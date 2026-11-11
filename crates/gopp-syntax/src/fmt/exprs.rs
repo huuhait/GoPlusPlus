@@ -1002,21 +1002,7 @@ impl<'a> Printer<'a> {
         let depth = if args.len() > 1 { 2 } else { 1 };
         self.set_pos(lparen);
         self.tok(T::LParen);
-        // The tree does not say whether the last argument is spread.
-        let last = args.last().map(|&last| cx.token_at(self.expr_end(last)));
-        match last.filter(|&last| cx.kind(last) == T::Ellipsis) {
-            Some(ellipsis) => {
-                let ellipsis = cx.lo(ellipsis);
-                self.expr_list(Some(lparen), args, depth, 0, Some(ellipsis));
-                self.set_pos(ellipsis);
-                self.tok(T::Ellipsis);
-                if cx.line(ellipsis) < cx.line(rparen) {
-                    self.tok(T::Comma);
-                    self.ws(Ws::Formfeed);
-                }
-            }
-            None => self.expr_list(Some(lparen), args, depth, COMMA_TERM, Some(rparen)),
-        }
+        self.expr_list(Some(lparen), args, depth, COMMA_TERM, Some(rparen));
         self.set_pos(rparen);
         self.tok(T::RParen);
     }

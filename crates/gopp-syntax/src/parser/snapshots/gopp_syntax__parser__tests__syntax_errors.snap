@@ -104,3 +104,8 @@ expression: report
     E0025 2:7 syntax error: unexpected newline in type declaration
 "package p\nfunc f() { x.[1] }\n"
     E0026 2:14 syntax error: unexpected [, expected name or (
+"package p\nfunc f() { #M(1, xs...) }\n@A(xs...)\nfunc g()\n"
+    E0025 2:20 syntax error: unexpected ... in the arguments of a macro
+    E0025 3:6 syntax error: unexpected ... in the arguments of a macro
+"package p\n@A\nvar ()\n@B\nconst (\n\tc = 1\n)\n"
+    E0025 2:1 an attribute before an empty group has no declaration

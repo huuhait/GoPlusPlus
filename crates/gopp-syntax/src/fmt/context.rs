@@ -38,9 +38,6 @@ pub(super) struct GenDecl {
     /// Where `(` and `)` are, for a group.
     pub parens: Option<(u32, u32)>,
     pub specs: Vec<Spec>,
-    /// Attributes before a group without specifications, which the tree
-    /// does not have: their source text.
-    pub orphans: Vec<(u32, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -366,7 +363,6 @@ impl<'a> Cx<'a> {
                 pos,
                 parens,
                 specs: specs.collect(),
-                orphans: Vec::new(),
             }));
             index = last;
         }
@@ -377,7 +373,6 @@ impl<'a> Cx<'a> {
     /// The groups without specifications among the tokens `from..to`,
     /// which lie between two declarations of the tree.
     fn empty_groups(&self, from: usize, to: usize, items: &mut Vec<Item>) {
-        let mut orphans = Vec::new();
         let mut index = from;
         while index < to {
             let keyword = self.kind(index);
@@ -390,31 +385,8 @@ impl<'a> Cx<'a> {
                         pos: self.lo(index),
                         parens: Some((self.lo(index + 1), self.lo(index + 2))),
                         specs: Vec::new(),
-                        orphans: std::mem::take(&mut orphans),
                     }));
                     index += 3;
-                }
-                T::At => {
-                    let start = index;
-                    index += 2;
-                    if self.kind(index) == T::Dot {
-                        index += 2;
-                    }
-                    if self.kind(index) == T::LParen {
-                        let mut depth = 0;
-                        while index < to {
-                            match self.kind(index) {
-                                T::LParen => depth += 1,
-                                T::RParen => depth -= 1,
-                                _ => {}
-                            }
-                            index += 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                    }
-                    orphans.push((self.lo(start), self.tokens[index - 1].hi));
                 }
                 _ => index += 1,
             }
@@ -443,7 +415,6 @@ impl<'a> Cx<'a> {
             pos: stmt.span.lo,
             parens: grouped.then(|| (self.lo(first + 1), stmt.span.hi - 1)),
             specs: specs.collect(),
-            orphans: Vec::new(),
         }
     }
 }

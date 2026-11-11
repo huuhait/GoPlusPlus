@@ -1,6 +1,7 @@
 //! Expressions.
 
 use gopp_diag::Code;
+use gopp_span::Span;
 
 use super::Parser;
 use crate::ast::*;
@@ -169,7 +170,7 @@ impl Parser<'_> {
         let kind = ExprKind::Call {
             fun,
             args,
-            spread,
+            spread: spread.is_some(),
             unwrap,
         };
         self.alloc_expr(kind, self.expr_lo(fun))
@@ -233,7 +234,7 @@ impl Parser<'_> {
         self.bump();
         let path = self.macro_ref();
         let args = if self.got(T::LParen) {
-            self.arguments().0
+            self.macro_arguments()
         } else {
             self.expected("(");
             Vec::new()
@@ -241,19 +242,30 @@ impl Parser<'_> {
         self.alloc_expr(ExprKind::MacroCall { path, args }, lo)
     }
 
-    /// Call arguments after the `(`, and whether the last one is spread
-    /// with `...`.
-    pub(super) fn arguments(&mut self) -> (Vec<ExprId>, bool) {
+    /// Call arguments after the `(`, and the `...` that spreads the last one.
+    fn arguments(&mut self) -> (Vec<ExprId>, Option<Span>) {
         let mut args = Vec::new();
-        let mut spread = false;
+        let mut spread = None;
         self.expr_level += 1;
         self.list("argument list", T::Comma, T::RParen, |p| {
             args.push(p.expr());
-            spread = p.got(T::Ellipsis);
-            spread
+            let here = p.here();
+            spread = p.got(T::Ellipsis).then_some(here);
+            spread.is_some()
         });
         self.expr_level -= 1;
         (args, spread)
+    }
+
+    /// The arguments of a macro call or an attribute after the `(`: a list
+    /// of expressions, none of them spread.
+    pub(super) fn macro_arguments(&mut self) -> Vec<ExprId> {
+        let (args, spread) = self.arguments();
+        if let Some(span) = spread {
+            let message = "syntax error: unexpected ... in the arguments of a macro";
+            self.error_at(Code::Expected, span, message);
+        }
+        args
     }
 
     /// `x[i]`, `x[A, B]` or a slice expression, at the `[`.
