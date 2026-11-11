@@ -6,6 +6,7 @@ mod literal;
 mod object;
 mod package;
 mod resolve;
+pub mod types;
 mod universe;
 
 #[cfg(test)]
