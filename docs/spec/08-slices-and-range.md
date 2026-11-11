@@ -1,5 +1,7 @@
 # 8. Slices, maps and range
 
+> **Being rewritten.** [ADR-0041](../adr/0041-values-are-copied.md) (2026-11-11) replaces the shared-handle model of slices and maps: a value is a copy, moving is `move(x)`, sharing is a pointer or `Shared[T]`. Rules below that speak of shared slices or maps, reference counts on their buffers, or "unshared" describe the earlier model.
+
 Base: Go spec [Slice types](https://go.dev/ref/spec#Slice_types), [Map types](https://go.dev/ref/spec#Map_types), [Slice expressions](https://go.dev/ref/spec#Slice_expressions), [Appending to and copying slices](https://go.dev/ref/spec#Appending_and_copying_slices), [Making slices, maps and channels](https://go.dev/ref/spec#Making_slices_maps_and_channels), [Length and capacity](https://go.dev/ref/spec#Length_and_capacity), [Deletion of map elements](https://go.dev/ref/spec#Deletion_of_map_elements), [Clear](https://go.dev/ref/spec#Clear), [For statements with range clause](https://go.dev/ref/spec#For_range).
 
 Deltas covered: D1.20 (slicing and `:0` reset), D1.21 (range loops), D1.22 (allocators), D1.6, and [ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md).

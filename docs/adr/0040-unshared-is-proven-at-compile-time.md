@@ -1,6 +1,6 @@
 # ADR-0040: "Unshared" is proven at compile time
 
-- **Status:** accepted (owner decision)
+- **Status:** superseded by [ADR-0041](0041-values-are-copied.md) on the day it was written: slices and maps are no longer shared, so every one of them is the only handle and the rule has nothing left to decide
 - **Date:** 2026-11-11
 - **Plan reference:** P01.16 point 1, P04.19, P04.21; spec [OWN-R3d](../spec/04-ownership.md#own-r3d), TYP-6, TYP-7, STM-7, CON-1, CON-4, CON-12, CON-14; related [ADR-0022](0022-race-free-concurrency.md), [ADR-0032](0032-shared-buffers-and-borrow-engine.md)
 

@@ -27,6 +27,8 @@ Start with the [overview](01-overview.md).
 
 All `@` attributes on one page: [attributes cheat sheet](../attributes.md).
 
+> **Memory model being rewritten.** [ADR-0041](../adr/0041-values-are-copied.md) (2026-11-11): a value is a copy, moving is `move(x)`, sharing is a pointer or `Shared[T]`. Chapters 3, 4, 5, 7, 8, 10, 11 and 12 still describe shared slices and maps in places.
+
 Appendix: [A. Symbol names](appendix-a-symbol-names.md) (how the compiler names functions, methods, generic instances and type tables in object files, and `gopp demangle`; D4.13).
 
 Appendix: [B. Grammar](appendix-b-grammar.md) (the whole syntax in one EBNF: Go's grammar with the Go++ productions written in).

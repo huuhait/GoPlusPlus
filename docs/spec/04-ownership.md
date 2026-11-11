@@ -1,5 +1,7 @@
 # 4. Ownership
 
+> **Being rewritten.** [ADR-0041](../adr/0041-values-are-copied.md) (2026-11-11) replaces the shared-handle model of slices and maps: a value is a copy, moving is `move(x)`, sharing is a pointer or `Shared[T]`. Rules below that speak of shared slices or maps, reference counts on their buffers, or "unshared" describe the earlier model.
+
 Base: Go spec [Variables](https://go.dev/ref/spec#Variables), [The zero value](https://go.dev/ref/spec#The_zero_value), [Assignability](https://go.dev/ref/spec#Assignability), [Assignment statements](https://go.dev/ref/spec#Assignment_statements), [Pointer types](https://go.dev/ref/spec#Pointer_types), [Address operators](https://go.dev/ref/spec#Address_operators), [Allocation](https://go.dev/ref/spec#Allocation), [Making slices, maps and channels](https://go.dev/ref/spec#Making_slices_maps_and_channels).
 
 This is the core of Go++ ([ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)). Go++ has **no garbage collector**:

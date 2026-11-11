@@ -1,5 +1,7 @@
 # 5. Parameters and receivers
 
+> **Being rewritten.** [ADR-0041](../adr/0041-values-are-copied.md) (2026-11-11) replaces the shared-handle model of slices and maps: a value is a copy, moving is `move(x)`, sharing is a pointer or `Shared[T]`. Rules below that speak of shared slices or maps, reference counts on their buffers, or "unshared" describe the earlier model.
+
 Base: Go spec [Function types](https://go.dev/ref/spec#Function_types), [Function declarations](https://go.dev/ref/spec#Function_declarations), [Method declarations](https://go.dev/ref/spec#Method_declarations), [Calls](https://go.dev/ref/spec#Calls), [Passing arguments to ... parameters](https://go.dev/ref/spec#Passing_arguments_to_..._parameters), [Address operators](https://go.dev/ref/spec#Address_operators).
 
 Delta D1.5 ([ADR-0032](../adr/0032-shared-buffers-and-borrow-engine.md)): **100% Go parameter syntax — trivial types copy, shared/value handles lend without retaining, `*T` mutates in place, single-owner values move.**
