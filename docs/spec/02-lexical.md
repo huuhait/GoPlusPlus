@@ -115,7 +115,7 @@ x := new(int)     // error: undefined: new (use NewUnique(0))
 
 ## 2.3 Where the grammar is defined
 
-Each changed production is defined in exactly one place:
+Each changed production is defined in exactly one place. [Appendix B](appendix-b-grammar.md) repeats them inside the whole grammar:
 
 | Production | Defined in |
 |---|---|
