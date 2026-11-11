@@ -29,6 +29,7 @@
                 pkgs.cargo
                 pkgs.clippy
                 pkgs.rustfmt
+                pkgs.cargo-fuzz
                 llvm.clang
                 llvm.lld
                 pkgs.lldb

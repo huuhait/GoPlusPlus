@@ -32,6 +32,7 @@ The first two classes are the reason the fuzzer exists. A compiler whose safety 
 Rules that keep the pieces apart:
 
 - **A target is a plain function over bytes.** `fn(&[u8]) -> Verdict` with no global state. Any engine can drive it: a coverage-guided engine, `proptest`, or a loop over seeds. No target depends on one engine.
+- **The coverage-guided engine is libFuzzer through `cargo-fuzz`**, run with `-s none` so that it builds on the pinned stable compiler ([ADR-0039](../adr/0039-fuzz-engine.md)). Its entry point only calls the target function.
 - **A program is a seed.** The generator turns `(seed, config)` into the same program on every machine (`rand_chacha`). A finding is reproduced from the seed, the config and the compiler revision; the program text is stored too, so a generator change never loses a finding.
 - **The generator does not call the checker.** It has its own small model of the rules (section 3). When the model and the checker disagree, one of them is wrong, and both are worth looking at.
 - **`gopp-fuzz` is a development tool.** It is not part of the `gopp` binary. Fuzzing of user programs (`gopp test -fuzz`) is a separate feature.
@@ -146,5 +147,4 @@ The smoke run counts steps and compares results; it never measures wall time.
 
 ## 11. Open points
 
-- **Engine.** The coverage-guided engine for the byte-level targets must run on the pinned stable toolchain. Candidates are AFL++, honggfuzz and LibAFL; libFuzzer through `cargo-fuzz` needs a nightly compiler. The choice is made by trying them in the Nix shell and is recorded in an ADR with the crate versions.
 - **Go as a reference** needs the pinned Go in the dev shell.
