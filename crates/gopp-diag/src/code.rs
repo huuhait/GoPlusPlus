@@ -180,6 +180,7 @@ codes! {
     217 DuplicateTypeCase "err_duplicate_type_case",
     218 SwitchTagNotComparable "err_switch_tag_not_comparable",
     219 SelectCaseInvalid "err_select_case_invalid",
+    220 RangeCannot "err_range_cannot",
     221 GoDeferNeedsCall "err_go_defer_needs_call",
     222 IncDecNonNumeric "err_inc_dec_non_numeric",
     223 BuiltinNotEnoughArguments "err_builtin_not_enough_args",
@@ -222,6 +223,7 @@ codes! {
     474 NonBooleanCondition "err_non_boolean_condition",
     475 MultipleDefaults "err_multiple_defaults",
     476 NotePreviousCase "note_previous_case",
+    477 RangeVariables "err_range_variables",
 }
 
 impl Code {

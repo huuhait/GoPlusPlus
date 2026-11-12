@@ -479,3 +479,4 @@ E0473 err_type_too_large
 E0474 err_non_boolean_condition
 E0475 err_multiple_defaults
 E0476 note_previous_case
+E0477 err_range_variables

@@ -162,7 +162,7 @@ impl<'a> Checker<'a> {
         })
     }
 
-    fn is_boolean(&self, ty: TypeId) -> bool {
+    pub(super) fn is_boolean(&self, ty: TypeId) -> bool {
         matches!(self.basic_of(ty), Some(Basic::Bool | Basic::UntypedBool))
     }
 

@@ -1252,8 +1252,12 @@ fn a_statement_in_error_is_reported_once() {
             "func f() {\n\tfor i := 0; i < 3; j := 1 {\n\t}\n}",
             &["a.go:3:21: syntax error: cannot declare in post statement of for loop"],
         ),
-        // What cannot be ranged over gives its variable no type.
-        ("func f() {\n\tfor x := range 1.5 {\n\t}\n}", &[]),
+        // What cannot be ranged over gives its variable no type: the
+        // variable is not also unused.
+        (
+            "func f() {\n\tfor x := range 1.5 {\n\t}\n}",
+            &["a.go:3:17: cannot range over 1.5 (untyped float constant)"],
+        ),
         (
             "func f(s []int) {\n\tfor _, x := range s {\n\t}\n}",
             &["a.go:3:9: declared and not used: x"],
@@ -3201,6 +3205,158 @@ func f(x int, s string, b bool, c chan int, i interface{}, fn func(), sl []int, 
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn range_clauses_are_checked_as_go_checks_them() {
+    let text = r#"package p
+
+type MyBool bool
+
+func seq0(yield func() bool)                {}
+func seq1(yield func(int) bool)             {}
+func seq2(yield func(int, string) bool)     {}
+func seq3(yield func(int, int, int) bool)   {}
+func bad1(yield func(int))                  {}
+func bad2(yield func(int) MyBool)           {}
+func bad3(a, b int)                         {}
+func bad4(yield func(int) bool) int         { return 0 }
+func bad5(x int)                            {}
+
+func f(a [3]int, p *[3]int, s []string, m map[string]bool, c chan int, send chan<- int, recv <-chan int, str string, x int, fl float64, t struct{}) {
+	for range a {
+	}
+	for i := range a {
+		_ = i
+	}
+	for i, v := range p {
+		_, _ = i, v
+	}
+	for i, v := range s {
+		var _ int = i
+		var _ string = v
+	}
+	for k, v := range m {
+		var _ string = k
+		var _ bool = v
+	}
+	for v := range c {
+		var _ int = v
+	}
+	for v, w := range c {
+		_, _ = v, w
+	}
+	for range send {
+	}
+	for v := range recv {
+		_ = v
+	}
+	for i, r := range str {
+		var _ int = i
+		var _ rune = r
+	}
+	for i := range x {
+		var _ int = i
+	}
+	for i, j := range x {
+		_, _ = i, j
+	}
+	for i := range 10 {
+		var _ int = i
+	}
+	for range 1.5 {
+	}
+	for range fl {
+	}
+	for range t {
+	}
+	for i, j, k := range s {
+		_, _, _ = i, j, k
+	}
+	for range 1 << 100 {
+	}
+	for i := range 'a' {
+		var _ rune = i
+	}
+	for x := range seq0 {
+		_ = x
+	}
+	for range seq0 {
+	}
+	for x := range seq1 {
+		var _ int = x
+	}
+	for x, y := range seq1 {
+		_, _ = x, y
+	}
+	for x, y := range seq2 {
+		var _ int = x
+		var _ string = y
+	}
+	for range seq3 {
+	}
+	for range bad1 {
+	}
+	for range bad2 {
+	}
+	for range bad3 {
+	}
+	for range bad4 {
+	}
+	for range bad5 {
+	}
+	var (
+		i   int
+		str2 string
+		f64 float64
+		u8  uint8
+	)
+	for i = range s {
+	}
+	for str2 = range s {
+	}
+	for i, i = range s {
+	}
+	for i, str2 = range s {
+	}
+	for f64 = range 10 {
+	}
+	for u8 = range 300 {
+	}
+	for u8 = range 10 {
+	}
+	for i = range fl {
+	}
+	for 1 = range s {
+	}
+	_, _, _, _ = i, str2, f64, u8
+}
+"#;
+    let expected = [
+        "a.go:35:9: range over c (variable of type chan int) permits only one iteration variable",
+        "a.go:38:12: cannot range over send (variable of type chan<- int): receive from send-only channel chan<- int",
+        "a.go:50:9: range over x (variable of type int) permits only one iteration variable",
+        "a.go:56:12: cannot range over 1.5 (untyped float constant)",
+        "a.go:58:12: cannot range over fl (variable of type float64)",
+        "a.go:60:12: cannot range over t (variable of type struct{})",
+        "a.go:62:12: expected at most 2 expressions",
+        "a.go:65:12: cannot use 1 << 100 (untyped int constant 1267650600228229401496703205376) as int value in range clause (overflows)",
+        "a.go:70:6: range over seq0 (value of type func(func() bool)) permits no iteration variables",
+        "a.go:78:9: range over seq1 (value of type func(func(int) bool)) permits only one iteration variable",
+        "a.go:85:12: cannot range over seq3 (value of type func(func(int, int, int) bool)): func must be func(yield func(...) bool): yield func has too many parameters",
+        "a.go:87:12: cannot range over bad1 (value of type func(func(int))): func must be func(yield func(...) bool): yield func does not return bool",
+        "a.go:89:12: cannot range over bad2 (value of type func(func(int) MyBool)): func must be func(yield func(...) bool): yield func returns user-defined boolean, not bool",
+        "a.go:91:12: cannot range over bad3 (value of type func(int, int)): func must be func(yield func(...) bool): wrong argument count",
+        "a.go:93:12: cannot range over bad4 (value of type func(func(int) bool) int): func must be func(yield func(...) bool): unexpected results",
+        "a.go:95:12: cannot range over bad5 (value of type func(int)): func must be func(yield func(...) bool): argument is not func",
+        "a.go:105:6: cannot use str2 (value of type int) as string value in assignment",
+        "a.go:107:9: cannot use i (value of type string) as int value in assignment",
+        "a.go:111:6: cannot use iteration variable of type float64",
+        "a.go:113:17: cannot use 300 (untyped int constant) as uint8 value in range clause (overflows)",
+        "a.go:117:16: cannot range over fl (variable of type float64)",
+        "a.go:119:6: cannot assign to 1 (neither addressable nor a map index expression)",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -3819,7 +3975,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1893;
+const EXPECTED_ERRORS_REPORTED: usize = 1956;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

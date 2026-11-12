@@ -166,6 +166,178 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// What `range` over a value of the type gives at each step: the
+    /// types of the first and of the second variable, where there is
+    /// one. `Ok(None)` if that is not decided here, `Err` with the cause,
+    /// if there is a special one, when the type cannot be ranged over.
+    #[allow(clippy::type_complexity)]
+    fn range_key_value(
+        &self,
+        cx: &Cx<'a>,
+        ty: TypeId,
+    ) -> Result<Option<(Option<TypeId>, Option<TypeId>)>, String> {
+        let int = Some(self.types.basic(Basic::Int));
+        let mut under = self.types.underlying(ty);
+        let is_param = matches!(&*self.types.get(under), Type::Param(_));
+        if under == Types::INVALID || is_param || self.may_overload(cx, ty) {
+            return Ok(None);
+        }
+        // A pointer to an array is ranged over as the array.
+        if let Type::Pointer(elem) = &*self.types.get(under)
+            && matches!(
+                &*self.types.get(self.types.underlying(*elem)),
+                Type::Array { .. }
+            )
+        {
+            under = self.types.underlying(*elem);
+        }
+        let iterator = "func must be func(yield func(...) bool)";
+        Ok(Some(match &*self.types.get(under) {
+            Type::Basic(_) if self.is_string(ty) => (int, Some(self.types.basic(Basic::Int32))),
+            Type::Basic(_) if self.is_integer(ty) => (Some(ty), None),
+            Type::Array { elem, .. } | Type::Slice(elem) => (int, Some(*elem)),
+            Type::Map { key, value } => (Some(*key), Some(*value)),
+            Type::Chan {
+                dir: ChanDir::Send, ..
+            } => {
+                return Err(format!(
+                    "receive from send-only channel {}",
+                    self.type_string(ty)
+                ));
+            }
+            Type::Chan { elem, .. } => (Some(*elem), None),
+            // An iterator calls `yield` with what each step gives.
+            Type::Func {
+                params, results, ..
+            } => {
+                let [yield_] = &params[..] else {
+                    return Err(format!("{iterator}: wrong argument count"));
+                };
+                if !results.is_empty() {
+                    return Err(format!("{iterator}: unexpected results"));
+                }
+                let yield_ = self.types.get(self.types.underlying(*yield_));
+                let (params, results) = match &*yield_ {
+                    Type::Func {
+                        params, results, ..
+                    } => (params, results),
+                    // What a type parameter stands for is not followed.
+                    Type::Param(_) => return Ok(None),
+                    _ => return Err(format!("{iterator}: argument is not func")),
+                };
+                if params.len() > 2 {
+                    return Err(format!("{iterator}: yield func has too many parameters"));
+                }
+                let bool = self.types.basic(Basic::Bool);
+                match &results[..] {
+                    [result] if *result == bool => {}
+                    [result] if self.is_boolean(*result) => {
+                        return Err(format!(
+                            "{iterator}: yield func returns user-defined boolean, not bool"
+                        ));
+                    }
+                    _ => return Err(format!("{iterator}: yield func does not return bool")),
+                }
+                (params.first().copied(), params.get(1).copied())
+            }
+            _ => return Err(String::new()),
+        }))
+    }
+
+    /// `for lhs := range x` or `for lhs = range x`: what the variables
+    /// are, and that there are no more of them than `x` gives.
+    pub(super) fn range_clause(&mut self, cx: &Cx<'a>, lhs: &[ExprId], define: bool, of: ExprId) {
+        let tree = cx.tree;
+        let x = self.value(cx, of);
+        let x = self.read(cx, x);
+        let span = |expr: ExprId| tree.exprs[expr].span;
+        let mut given = None;
+        if x.mode != Mode::Unknown {
+            let shown = self.describe(cx, of, &x);
+            match self.range_key_value(cx, x.ty) {
+                Err(cause) => {
+                    let cause = match cause.is_empty() {
+                        true => cause,
+                        false => format!(": {cause}"),
+                    };
+                    let message = format!("cannot range over {shown}{cause}");
+                    self.error(Code::RangeCannot, span(of), message);
+                }
+                Ok(None) => {}
+                Ok(Some((key, value))) => {
+                    // More than two are refused as Go's parser refuses
+                    // them, whatever is ranged over.
+                    let too_many = match (key, value, lhs) {
+                        (_, _, [.., last]) if lhs.len() > 2 => {
+                            let message = "expected at most 2 expressions".to_owned();
+                            self.error(Code::RangeVariables, span(*last), message);
+                            None
+                        }
+                        (None, _, [first, ..]) => Some((*first, "no iteration variables")),
+                        (_, None, [_, second, ..]) => {
+                            Some((*second, "only one iteration variable"))
+                        }
+                        _ => None,
+                    };
+                    if let Some((at, what)) = too_many {
+                        let message = format!("range over {shown} permits {what}");
+                        self.error(Code::RangeVariables, span(at), message);
+                    }
+                    given = Some([key, value]);
+                }
+            }
+        }
+        // A number is counted with the type that it has as a value.
+        let counts = x.mode != Mode::Unknown && given.is_some() && self.is_integer(x.ty);
+        for (position, &target) in lhs.iter().enumerate() {
+            let ty = given.and_then(|given| given.get(position).copied().flatten());
+            if !define {
+                let Some(ty) = ty else {
+                    self.operand(cx, target);
+                    continue;
+                };
+                let Some(to) = self.lhs_var(cx, target).filter(|&to| to != Types::INVALID) else {
+                    continue;
+                };
+                if !counts {
+                    self.assignment(cx, target, Operand::value(ty), Some(to), "assignment");
+                    continue;
+                }
+                let counted = self.assignment(cx, of, x.clone(), Some(to), "range clause");
+                if counted.mode != Mode::Unknown && !self.is_integer(counted.ty) {
+                    let message = format!(
+                        "cannot use iteration variable of type {}",
+                        self.type_string(counted.ty)
+                    );
+                    self.error(Code::RangeCannot, span(target), message);
+                }
+                continue;
+            }
+            // `&v` declares `v` as another name of the element.
+            let named = match tree.exprs[target].kind {
+                ExprKind::Unary {
+                    op: UnaryOp::Addr,
+                    x,
+                } => x,
+                _ => target,
+            };
+            let local = self.declared_local(cx, named);
+            let ty = match (ty, counts) {
+                (Some(_), true) => {
+                    let counted = self.assignment(cx, of, x.clone(), None, "range clause");
+                    Some(counted.ty).filter(|_| counted.mode != Mode::Unknown)
+                }
+                (ty, _) => ty,
+            };
+            self.set_local(local, ty);
+            // What cannot be ranged over gives its variables no type.
+            self.excused.extend(local.filter(|_| ty.is_none()));
+        }
+        if lhs.is_empty() && counts {
+            self.assignment(cx, of, x, None, "range clause");
+        }
+    }
+
     /// A `switch` or a `select` has one `default` at the most. A clause
     /// is given as whether it is a `default`, and where it is.
     pub(super) fn defaults(&mut self, cx: &Cx<'a>, clauses: impl Iterator<Item = (bool, Span)>) {

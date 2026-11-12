@@ -3005,29 +3005,7 @@ impl<'a> Checker<'a> {
                 x,
                 body,
             } => {
-                let ranged = self.operand(cx, *x);
-                let ranged = self.read(cx, ranged);
-                let (key, value) = self.range_types(&ranged);
-                for (position, &target) in lhs.iter().enumerate() {
-                    if !*define {
-                        self.operand(cx, target);
-                        continue;
-                    }
-                    // `&v` declares `v` as another name of the element.
-                    let named = match tree.exprs[target].kind {
-                        ExprKind::Unary {
-                            op: UnaryOp::Addr,
-                            x,
-                        } => x,
-                        _ => target,
-                    };
-                    let ty = if position == 0 { key } else { value };
-                    let local = self.declared_local(cx, named);
-                    self.set_local(local, ty);
-                    // What cannot be ranged over gives its variables no
-                    // type.
-                    self.excused.extend(local.filter(|_| ty.is_none()));
-                }
+                self.range_clause(cx, lhs, *define, *x);
                 self.stmts(cx, &body.stmts);
             }
             StmtKind::Switch { init, tag, clauses } => {
@@ -3098,41 +3076,6 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         }
         self.operand(cx, case)
-    }
-
-    /// The types of the two variables of `for k, v := range x`.
-    fn range_types(&self, x: &Operand) -> (Option<TypeId>, Option<TypeId>) {
-        if !x.is_value() {
-            return (None, None);
-        }
-        let int = Some(self.types.basic(Basic::Int));
-        match &*self.types.get(self.types.underlying(x.ty)) {
-            Type::Basic(Basic::String | Basic::UntypedString) => {
-                (int, Some(self.types.basic(Basic::Int32)))
-            }
-            // `range 10` counts with the type of the number.
-            Type::Basic(basic) if self.is_integer(x.ty) => match basic.is_untyped() {
-                true => (Some(self.types.default_type(x.ty)), None),
-                false => (Some(x.ty), None),
-            },
-            Type::Slice(elem) | Type::Array { elem, .. } => (int, Some(*elem)),
-            Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
-                Type::Array { elem, .. } => (int, Some(*elem)),
-                _ => (None, None),
-            },
-            Type::Map { key, value } => (Some(*key), Some(*value)),
-            Type::Chan { elem, .. } => (Some(*elem), None),
-            // An iterator: `func(yield func(K, V) bool)`.
-            Type::Func { params, .. } => match params.first().map(|&yield_| self.types.get(yield_))
-            {
-                Some(yield_) => match &*yield_ {
-                    Type::Func { params, .. } => (params.first().copied(), params.get(1).copied()),
-                    _ => (None, None),
-                },
-                None => (None, None),
-            },
-            _ => (None, None),
-        }
     }
 
     /// A `const`, `var` or `type` statement inside a function.
