@@ -25,7 +25,7 @@ pub fn files() -> Vec<PathBuf> {
     files
 }
 
-fn entries(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn entries(dir: &Path) -> Vec<PathBuf> {
     let read = |result: io::Result<fs::DirEntry>| match result {
         Ok(entry) => entry.path(),
         Err(error) => panic!("{}: {error}", dir.display()),

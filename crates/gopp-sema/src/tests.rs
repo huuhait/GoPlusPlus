@@ -815,6 +815,7 @@ fn an_import_belongs_to_its_file_and_a_declaration_to_the_package() {
     assert_eq!(checked.messages, ["b.go:3:9: undefined: lib"]);
 }
 
+// rule: LEX-7, LEX-8
 #[test]
 fn the_universe_of_a_gopp_file_is_not_that_of_a_go_file() {
     let body = "var a Option[int]\nvar b = NewUnique(1)\nfunc f[T Send](x Shared[T]) { move(x) }\n";
@@ -2345,6 +2346,7 @@ fn tildes_literals_indexes_and_map_keys_are_checked_as_go_checks_them() {
     );
 }
 
+// rule: OWN-R3, OWN-P2, OWN-P3, OWN-P4
 #[test]
 fn values_are_moved_and_put_on_the_heap_by_the_built_in_functions_of_gopp() {
     let text = "package p
@@ -2498,6 +2500,7 @@ func main() {
 }
 "#;
 
+// rule: TYP-2, OWN-P5, OWN-P6, OWN-P9
 #[test]
 fn a_place_of_a_gopp_file_takes_what_the_rules_of_gopp_say() {
     assert_eq!(messages("good.gopp", GOOD_GOPP), [] as [&str; 0]);
@@ -2659,6 +2662,7 @@ fn a_place_of_a_gopp_file_takes_what_the_rules_of_gopp_say() {
     }
 }
 
+// rule: ERR-3
 #[test]
 fn a_function_that_can_fail_returns_its_results_or_one_value_more() {
     let text = "package p

@@ -33,6 +33,16 @@ Appendix: [A. Symbol names](appendix-a-symbol-names.md) (how the compiler names 
 
 Appendix: [B. Grammar](appendix-b-grammar.md) (the whole syntax in one EBNF: Go's grammar with the Go++ productions written in).
 
+## Which rules have a test
+
+A test names the rules it checks on a comment line of its own, `// rule: OWN-R3a`; several IDs are separated by commas. A name on such a line that is no rule of this specification fails the test suite. The rules that no test names yet are listed by:
+
+```
+nix develop -c cargo test -p gopp-testutil rules_without_a_test -- --ignored --nocapture
+```
+
+The list may only become shorter: the same test fails when a rule loses its last test.
+
 ## Samples (D1.16)
 
 Each sample has `main.gopp`, a Go counterpart `main.go`, `expected_output.txt` and a README with the spec rules it uses.
