@@ -3,6 +3,14 @@
 
 use super::*;
 
+/// What a call expression is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Called {
+    Conversion,
+    Computation,
+    Function,
+}
+
 impl<'a> Checker<'a> {
     /// The arguments `args` of the call `call` of `fun`, which has the
     /// parameters `params`: as many as the parameters, and each a value
@@ -120,6 +128,30 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// What the call of `fun` is, once it is typed: a conversion, a
+    /// built-in function that only computes a value, or a call that does
+    /// something.
+    pub(super) fn called(&self, fun: ExprId) -> Called {
+        let callee = self.memo.as_ref().and_then(|memo| memo.get(&fun));
+        match callee.map(|callee| &callee.mode) {
+            Some(Mode::Type) => Called::Conversion,
+            Some(Mode::Unsafe(_)) => Called::Computation,
+            Some(Mode::Builtin(
+                Predeclared::Append
+                | Predeclared::Cap
+                | Predeclared::ComplexFunc
+                | Predeclared::Imag
+                | Predeclared::Len
+                | Predeclared::Make
+                | Predeclared::Max
+                | Predeclared::Min
+                | Predeclared::New
+                | Predeclared::Real,
+            )) => Called::Computation,
+            _ => Called::Function,
+        }
+    }
+
     /// The expression `expr` stands as a statement: it is a call or a
     /// receive, or its value is not used.
     pub(super) fn expr_stmt(&mut self, cx: &Cx<'a>, expr: ExprId) {
@@ -129,27 +161,7 @@ impl<'a> Checker<'a> {
             inner = x;
         }
         let is_statement = match &cx.tree.exprs[inner].kind {
-            ExprKind::Call { fun, .. } => {
-                let callee = self.memo.as_ref().and_then(|memo| memo.get(fun));
-                match callee.map(|callee| &callee.mode) {
-                    // A conversion, and a built-in that only computes.
-                    Some(Mode::Type | Mode::Unsafe(_)) => false,
-                    Some(Mode::Builtin(builtin)) => !matches!(
-                        builtin,
-                        Predeclared::Append
-                            | Predeclared::Cap
-                            | Predeclared::ComplexFunc
-                            | Predeclared::Imag
-                            | Predeclared::Len
-                            | Predeclared::Make
-                            | Predeclared::Max
-                            | Predeclared::Min
-                            | Predeclared::New
-                            | Predeclared::Real
-                    ),
-                    _ => true,
-                }
-            }
+            ExprKind::Call { fun, .. } => self.called(*fun) == Called::Function,
             ExprKind::Unary {
                 op: UnaryOp::Recv, ..
             }

@@ -533,6 +533,11 @@ impl<'a> Checker<'a> {
         Operand::UNKNOWN
     }
 
+    /// Whether all types that `ty` may be are booleans.
+    pub(super) fn all_boolean(&self, ty: TypeId) -> bool {
+        self.open(ty) || self.is_boolean(ty)
+    }
+
     /// Whether all types that `ty` may be are numbers.
     pub(super) fn all_numeric(&self, ty: TypeId) -> bool {
         self.open(ty) || self.is_numeric(ty)
@@ -926,6 +931,76 @@ impl<'a> Checker<'a> {
             .assignable(x.ty, value, to, Dialect::Go, self.names)
     }
 
+    /// What forbids to compare `x` with `y` by `op`: whether it is the
+    /// second operand that the error is about, the cause, and the code.
+    /// `Err` if an operator method may decide instead.
+    pub(super) fn uncomparable(
+        &self,
+        cx: &Cx<'a>,
+        op: BinaryOp,
+        x: &Operand,
+        y: &Operand,
+    ) -> Result<Option<(bool, String, Code)>, ()> {
+        let ordered =
+            |this: &Self, ty: TypeId| this.open(ty) || this.is_numeric(ty) || this.is_string(ty);
+        let comparable = |this: &Self, ty: TypeId| this.open(ty) || this.types.comparable(ty);
+        // The operand that the error is about, and what is wrong with it.
+        let wrong: Option<(bool, String, Code)> = {
+            let mismatched = self.unfit(cx, x, y.ty, false) && self.unfit(cx, y, x.ty, false);
+            if mismatched {
+                let cause = format!(
+                    "mismatched types {} and {}",
+                    self.type_string(x.ty),
+                    self.type_string(y.ty)
+                );
+                Some((true, cause, Code::MismatchedTypes))
+            } else if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+                if self.is_nil(x) || self.is_nil(y) {
+                    let other = if self.is_nil(x) { y.ty } else { x.ty };
+                    let has_nil = self.open(other) || self.has_nil(other);
+                    (!has_nil).then(|| (true, String::new(), Code::CannotCompare))
+                } else if !comparable(self, x.ty) {
+                    Some((false, self.incomparable_cause(x.ty), Code::CannotCompare))
+                } else if !comparable(self, y.ty) {
+                    Some((true, self.incomparable_cause(y.ty), Code::CannotCompare))
+                } else {
+                    None
+                }
+            } else if !ordered(self, x.ty) {
+                Some((false, String::new(), Code::OperatorNotDefined))
+            } else if !ordered(self, y.ty) {
+                Some((true, String::new(), Code::OperatorNotDefined))
+            } else {
+                None
+            }
+        };
+        let Some((mut second, mut cause, code)) = wrong else {
+            return Ok(None);
+        };
+        if self.may_overload(cx, x.ty) || self.may_overload(cx, y.ty) {
+            return Err(());
+        }
+        let is_param = |ty: TypeId| matches!(&*self.types.get(ty), Type::Param(_));
+        if cause.is_empty() && (is_param(x.ty) || is_param(y.ty)) {
+            second = !is_param(x.ty);
+            let operand = if second { y } else { x };
+            cause = format!(
+                "type parameter {} cannot use operator {}",
+                self.type_string(operand.ty),
+                binary_text(op)
+            );
+        }
+        if cause.is_empty() {
+            let operand = if second { y } else { x };
+            let what = match self.composite_kind(operand.ty) {
+                "" => self.type_string(operand.ty),
+                kind => kind.to_owned(),
+            };
+            cause = format!("operator {} not defined on {what}", binary_text(op));
+        }
+        Ok(Some((second, cause, code)))
+    }
+
     fn comparison(
         &mut self,
         cx: &Cx<'a>,
@@ -936,75 +1011,20 @@ impl<'a> Checker<'a> {
         if x.ty == Types::INVALID || y.ty == Types::INVALID {
             return Operand::UNKNOWN;
         }
-        let ordered =
-            |this: &Self, ty: TypeId| this.open(ty) || this.is_numeric(ty) || this.is_string(ty);
-        let comparable = |this: &Self, ty: TypeId| this.open(ty) || this.types.comparable(ty);
-        // The operand that the error is about, and what is wrong with it.
-        let wrong: Option<(ExprId, &Operand, String, Code)> = {
-            let mismatched = self.unfit(cx, &x, y.ty, false) && self.unfit(cx, &y, x.ty, false);
-            if mismatched {
-                let cause = format!(
-                    "mismatched types {} and {}",
-                    self.type_string(x.ty),
-                    self.type_string(y.ty)
+        match self.uncomparable(cx, op, &x, &y) {
+            Ok(None) => {}
+            Err(()) => return Operand::UNKNOWN,
+            Ok(Some((second, cause, code))) => {
+                let message = format!(
+                    "invalid operation: {} {} {} ({cause})",
+                    self.expr_string(cx, left),
+                    binary_text(op),
+                    self.expr_string(cx, right)
                 );
-                Some((right, &y, cause, Code::MismatchedTypes))
-            } else if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
-                if self.is_nil(&x) || self.is_nil(&y) {
-                    let other = if self.is_nil(&x) { y.ty } else { x.ty };
-                    let has_nil = self.open(other) || self.has_nil(other);
-                    (!has_nil).then(|| (right, &y, String::new(), Code::CannotCompare))
-                } else if !comparable(self, x.ty) {
-                    Some((left, &x, self.incomparable_cause(x.ty), Code::CannotCompare))
-                } else if !comparable(self, y.ty) {
-                    Some((
-                        right,
-                        &y,
-                        self.incomparable_cause(y.ty),
-                        Code::CannotCompare,
-                    ))
-                } else {
-                    None
-                }
-            } else if !ordered(self, x.ty) {
-                Some((left, &x, String::new(), Code::OperatorNotDefined))
-            } else if !ordered(self, y.ty) {
-                Some((right, &y, String::new(), Code::OperatorNotDefined))
-            } else {
-                None
+                let at = if second { right } else { left };
+                self.error(code, self.span(cx, at), message);
+                return Operand::UNKNOWN;
             }
-        };
-        if wrong.is_some() && (self.may_overload(cx, x.ty) || self.may_overload(cx, y.ty)) {
-            return Operand::UNKNOWN;
-        }
-        if let Some((mut at, mut operand, mut cause, code)) = wrong {
-            let is_param = |ty: TypeId| matches!(&*self.types.get(ty), Type::Param(_));
-            if cause.is_empty() && (is_param(x.ty) || is_param(y.ty)) {
-                (at, operand) = match is_param(x.ty) {
-                    true => (left, &x),
-                    false => (right, &y),
-                };
-                cause = format!(
-                    "type parameter {} cannot use operator {}",
-                    self.type_string(operand.ty),
-                    binary_text(op)
-                );
-            }
-            if cause.is_empty() {
-                let what = match self.composite_kind(operand.ty) {
-                    "" => self.type_string(operand.ty),
-                    kind => kind.to_owned(),
-                };
-                cause = format!("operator {} not defined on {what}", binary_text(op));
-            }
-            let message = format!(
-                "invalid operation: {} {} {} ({cause})",
-                self.expr_string(cx, left),
-                binary_text(op),
-                self.expr_string(cx, right)
-            );
-            self.error(code, self.span(cx, at), message);
-            return Operand::UNKNOWN;
         }
         if let (Mode::Const(a), Mode::Const(b)) = (&x.mode, &y.mode) {
             if *a == Value::Unknown || *b == Value::Unknown {

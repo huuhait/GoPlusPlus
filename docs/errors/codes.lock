@@ -476,3 +476,6 @@ E0470 note_own_fix_no_star
 E0471 err_own_copy_to_copy
 E0472 note_own_fix_address
 E0473 err_type_too_large
+E0474 err_non_boolean_condition
+E0475 err_multiple_defaults
+E0476 note_previous_case

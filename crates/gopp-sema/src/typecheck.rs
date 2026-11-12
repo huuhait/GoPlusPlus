@@ -15,6 +15,7 @@ mod index;
 mod literal;
 mod ops;
 mod own;
+mod stmt;
 
 use gopp_diag::{Code, Diagnostic, Sink};
 use gopp_span::{Dialect, Span};
@@ -40,6 +41,7 @@ use assign::Init;
 struct Cx<'a> {
     tree: &'a File,
     body: &'a Body,
+    source: &'a gopp_span::SourceFile,
     text: &'a str,
     dialect: Dialect,
     /// The index of the constant in its group, inside a constant
@@ -496,6 +498,7 @@ impl<'a> Checker<'a> {
         Cx {
             tree: decl.unit.file,
             body: decl.body,
+            source: decl.unit.source,
             text: decl.unit.source.text(),
             dialect: decl.unit.source.dialect(),
             iota,
@@ -2852,9 +2855,8 @@ impl<'a> Checker<'a> {
             StmtKind::Labeled { stmt, .. } => self.stmt(cx, *stmt),
             StmtKind::Block(block) => self.stmts(cx, &block.stmts),
             StmtKind::Expr(x) => self.expr_stmt(cx, *x),
-            StmtKind::Go(x) | StmtKind::Defer(x) => {
-                self.operand(cx, *x);
-            }
+            StmtKind::Go(x) => self.suspended(cx, "go", *x),
+            StmtKind::Defer(x) => self.suspended(cx, "defer", *x),
             StmtKind::IncDec { x, inc } => {
                 let operand = self.value(cx, *x);
                 let operand = self.read(cx, operand);
@@ -2980,7 +2982,7 @@ impl<'a> Checker<'a> {
                 otherwise,
             } => {
                 self.opt_stmt(cx, *init);
-                self.operand(cx, *cond);
+                self.condition(cx, *cond, "if");
                 self.stmts(cx, &then.stmts);
                 self.opt_stmt(cx, *otherwise);
             }
@@ -2992,7 +2994,7 @@ impl<'a> Checker<'a> {
             } => {
                 self.opt_stmt(cx, *init);
                 if let Some(cond) = cond {
-                    self.operand(cx, *cond);
+                    self.condition(cx, *cond, "for");
                 }
                 self.opt_stmt(cx, *post);
                 self.stmts(cx, &body.stmts);
@@ -3036,23 +3038,27 @@ impl<'a> Checker<'a> {
                         self.asserted(cx, x, "", "type switch")
                             .unwrap_or(Operand::UNKNOWN),
                     ),
-                    _ => {
-                        if let Some(tag) = tag {
-                            self.operand(cx, *tag);
-                        }
-                        None
-                    }
+                    _ => None,
                 };
+                let tagged = match switched {
+                    Some(_) => Operand::UNKNOWN,
+                    None => self.switch_tag(cx, *tag),
+                };
+                self.defaults(cx, clauses.iter().map(|c| (c.cases.is_none(), c.span)));
+                let mut values = FxHashMap::default();
+                let mut types = FxHashMap::default();
                 let vars = cx.body.switch_vars.get(&id);
                 for (index, clause) in clauses.iter().enumerate() {
                     let cases = clause.cases.as_deref().unwrap_or(&[]);
                     let mut case_types = Vec::new();
                     for &case in cases {
                         match switched {
-                            Some(_) => case_types.push(self.type_or_nil(cx, case)),
-                            None => {
-                                self.operand(cx, case);
+                            Some(_) => {
+                                let case_type = self.type_or_nil(cx, case);
+                                self.case_type(cx, case, &case_type, &mut types);
+                                case_types.push(case_type);
                             }
+                            None => self.case_value(cx, &tagged, *tag, case, &mut values),
                         }
                     }
                     // The variable of a type switch has the type of the
@@ -3072,6 +3078,7 @@ impl<'a> Checker<'a> {
                 }
             }
             StmtKind::Select { clauses } => {
+                self.defaults(cx, clauses.iter().map(|c| (c.comm.is_none(), c.span)));
                 for clause in clauses {
                     self.opt_stmt(cx, clause.comm);
                     self.stmts(cx, &clause.body);

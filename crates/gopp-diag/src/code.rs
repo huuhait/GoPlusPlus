@@ -176,7 +176,11 @@ codes! {
     212 MissingInitExpr "err_missing_init_expr",
     213 ExtraInitExpr "err_extra_init_expr",
     214 MissingReturn "err_missing_return",
+    216 DuplicateCase "err_duplicate_case",
+    217 DuplicateTypeCase "err_duplicate_type_case",
+    218 SwitchTagNotComparable "err_switch_tag_not_comparable",
     219 SelectCaseInvalid "err_select_case_invalid",
+    221 GoDeferNeedsCall "err_go_defer_needs_call",
     222 IncDecNonNumeric "err_inc_dec_non_numeric",
     223 BuiltinNotEnoughArguments "err_builtin_not_enough_args",
     224 BuiltinTooManyArguments "err_builtin_too_many_args",
@@ -215,6 +219,9 @@ codes! {
     471 OwnCopyToCopy "err_own_copy_to_copy",
     472 NoteOwnFixAddress "note_own_fix_address",
     473 TypeTooLarge "err_type_too_large",
+    474 NonBooleanCondition "err_non_boolean_condition",
+    475 MultipleDefaults "err_multiple_defaults",
+    476 NotePreviousCase "note_previous_case",
 }
 
 impl Code {

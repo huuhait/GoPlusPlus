@@ -3060,6 +3060,147 @@ fn a_function_with_results_ends_in_a_statement_that_does_not_go_on() {
     assert_eq!(messages("a.gopp", text), ["a.gopp:5:1: missing return"]);
 }
 
+#[test]
+fn conditions_go_defer_and_switch_cases_are_checked_as_go_checks_them() {
+    let text = r#"package p
+
+type T struct{ f func() }
+type B byte
+
+func h() int   { return 0 }
+func nop()     {}
+
+func f(x int, s string, b bool, c chan int, i interface{}, fn func(), sl []int, t T, bb B) {
+	if x {
+	}
+	if s {
+	}
+	for x {
+	}
+	for ; s; {
+	}
+	if b {
+	}
+	go 1
+	go len(sl)
+	go int(x)
+	go h()
+	go nop()
+	defer 1
+	defer len(sl)
+	defer int(x)
+	defer recover()
+	defer panic(1)
+	switch x {
+	case 1:
+	case 1:
+	case (1):
+	case 5, 1:
+	case "a":
+	case s:
+	case 2.0:
+	case 2:
+	case x:
+	case x:
+	default:
+	default:
+	}
+	switch s {
+	case "foo":
+	case "foo":
+	case 1:
+	}
+	switch i {
+	case 1:
+	case 1:
+	case 1.0:
+	case byte(1):
+	case B(1):
+	case byte(1):
+	case nil:
+	case sl:
+	}
+	switch fn {
+	case nil:
+	}
+	switch sl {
+	}
+	switch t {
+	}
+	switch {
+	case true:
+	case true:
+	case x > 1:
+	case 1:
+	}
+	switch nil {
+	}
+	switch nop() {
+	}
+	switch x := 1.5; x {
+	case 1.5:
+	case 1.5:
+	}
+	switch i.(type) {
+	case int:
+	case int:
+	case nil:
+	case nil:
+	case string, int:
+	}
+	select {
+	default:
+	default:
+	}
+}
+"#;
+    let expected = [
+        "a.go:10:5: non-boolean condition in if statement",
+        "a.go:12:5: non-boolean condition in if statement",
+        "a.go:14:6: non-boolean condition in for statement",
+        "a.go:16:8: non-boolean condition in for statement",
+        "a.go:20:6: expression in go must be function call",
+        "a.go:21:5: go discards result of len(sl) (value of type int)",
+        "a.go:22:5: go requires function call, not conversion int(x) (value of type int)",
+        "a.go:25:9: expression in defer must be function call",
+        "a.go:26:8: defer discards result of len(sl) (value of type int)",
+        "a.go:27:8: defer requires function call, not conversion int(x) (value of type int)",
+        "a.go:32:7: duplicate case 1 (constant of type int) in expression switch",
+        "    a.go:31:7: previous case",
+        "a.go:33:7: duplicate case (1) (constant 1 of type int) in expression switch",
+        "    a.go:31:7: previous case",
+        "a.go:34:10: duplicate case 1 (constant of type int) in expression switch",
+        "    a.go:31:7: previous case",
+        "a.go:35:7: cannot convert \"a\" (untyped string constant) to type int",
+        "a.go:36:7: invalid case s in switch on x (mismatched types string and int)",
+        "a.go:38:7: duplicate case 2 (constant of type int) in expression switch",
+        "    a.go:37:7: previous case",
+        "a.go:42:2: multiple defaults (first at a.go:41:2)",
+        "a.go:46:7: duplicate case \"foo\" (constant of type string) in expression switch",
+        "    a.go:45:7: previous case",
+        "a.go:47:7: cannot convert 1 (untyped int constant) to type string",
+        "a.go:51:7: duplicate case 1 (constant of type int) in expression switch",
+        "    a.go:50:7: previous case",
+        "a.go:55:7: duplicate case byte(1) (constant 1 of type uint8) in expression switch",
+        "    a.go:53:7: previous case",
+        "a.go:57:7: invalid case sl in switch on i (slice can only be compared to nil)",
+        "a.go:64:9: cannot switch on t (variable of struct type T) (T is not comparable)",
+        "a.go:70:7: cannot convert 1 (untyped int constant) to type bool",
+        "a.go:72:9: use of untyped nil in switch expression",
+        "a.go:74:9: nop() (no value) used as value",
+        "a.go:78:7: duplicate case 1.5 (constant of type float64) in expression switch",
+        "    a.go:77:7: previous case",
+        "a.go:82:7: duplicate case int in type switch",
+        "    a.go:81:7: previous case",
+        "a.go:84:7: duplicate case nil in type switch",
+        "    a.go:83:7: previous case",
+        "a.go:85:15: duplicate case int in type switch",
+        "    a.go:81:7: previous case",
+        "a.go:89:2: multiple defaults (first at a.go:88:2)",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -3678,7 +3819,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1841;
+const EXPECTED_ERRORS_REPORTED: usize = 1893;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
