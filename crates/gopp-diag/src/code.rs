@@ -138,6 +138,18 @@ codes! {
     186 SliceOfString "err_slice_3_string",
     187 SliceIndicesInverted "err_slice_indices_inverted",
     188 IndexOutOfBounds "err_index_out_of_bounds",
+    189 LiteralTooFew "err_literal_too_few",
+    190 LiteralTooMany "err_literal_too_many",
+    191 LiteralMixture "err_literal_mixture",
+    192 LiteralDuplicateField "err_literal_duplicate_field",
+    193 LiteralMissingKey "err_literal_missing_key",
+    194 LiteralDuplicateKey "err_literal_duplicate_key",
+    195 LiteralDuplicateIndex "err_literal_duplicate_index",
+    196 LiteralIndexNotConstant "err_literal_index_not_constant",
+    197 LiteralUnexportedField "err_literal_unexported_field",
+    198 LiteralInvalidFieldName "err_literal_invalid_field_name",
+    199 LiteralArrayTooLong "err_literal_array_too_long",
+    200 LiteralMissingType "err_literal_missing_type",
     205 AddressOfUnaddressable "err_address_of_unaddressable",
     206 CannotAssign "err_cannot_assign",
     207 CannotAssignTo "err_cannot_assign_to",
@@ -163,6 +175,8 @@ codes! {
     456 NoteWant "note_want",
     457 UnusedExpression "err_unused_expression",
     458 InvalidIndex "err_invalid_index",
+    459 LiteralUnknownField "err_literal_unknown_field",
+    460 LiteralInvalidType "err_literal_invalid_type",
 }
 
 impl Code {

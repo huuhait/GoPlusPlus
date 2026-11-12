@@ -11,6 +11,7 @@ mod builtins;
 mod call;
 mod conversion;
 mod index;
+mod literal;
 mod ops;
 
 use gopp_diag::{Code, Diagnostic, Sink};
@@ -1543,20 +1544,7 @@ impl<'a> Checker<'a> {
                 }
                 Operand::value(sig)
             }
-            ExprKind::CompositeLit {
-                ty: Some(ty),
-                elems,
-            } => {
-                let literal = self.literal_type(cx, *ty, elems);
-                if self.memo.is_some() {
-                    self.elements(cx, literal, elems);
-                }
-                // Nothing more is said about a type that is in error.
-                match self.types.underlying(literal) {
-                    Types::INVALID => Operand::UNKNOWN,
-                    _ => Operand::value(literal),
-                }
-            }
+            ExprKind::CompositeLit { ty, elems } => self.composite(cx, expr, *ty, elems, None),
             ExprKind::Index { x, indices } => self.index(cx, expr, *x, indices),
             ExprKind::Slice {
                 x,
@@ -1591,7 +1579,9 @@ impl<'a> Checker<'a> {
     }
 
     fn name(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
-        let Some(&denotes) = cx.body.uses.get(&expr) else {
+        // What a key of a composite literal denotes was found apart.
+        let denotes = cx.body.uses.get(&expr).or_else(|| cx.body.keys.get(&expr));
+        let Some(&denotes) = denotes else {
             return Operand::UNKNOWN;
         };
         match denotes {
@@ -1722,68 +1712,6 @@ impl<'a> Checker<'a> {
                 Operand::value(self.types.func(&params, results, *variadic))
             }
             _ => Operand::UNKNOWN,
-        }
-    }
-
-    /// Types the elements of a composite literal of the type `literal`.
-    /// An element written without its type, `{1, 2}`, has the type that
-    /// the literal gives its elements.
-    fn elements(&mut self, cx: &Cx<'a>, literal: TypeId, elems: &[ExprId]) {
-        let tree = cx.tree;
-        let under = self.types.get(self.types.underlying(literal));
-        // Whether keys are values, their type if they have one, and the
-        // type of the elements.
-        let (keys_are_values, key_type, elem_type) = match &*under {
-            Type::Slice(elem) | Type::Array { elem, .. } => (true, None, Some(*elem)),
-            Type::Map { key, value } => (true, Some(*key), Some(*value)),
-            _ => (false, None, None),
-        };
-        for (position, &element) in elems.iter().enumerate() {
-            let (key, value) = match tree.exprs[element].kind {
-                ExprKind::KeyValue { key, value } => (Some(key), value),
-                _ => (None, element),
-            };
-            // The type of the element: that of the field for a struct.
-            let hint = match (&*under, key) {
-                (Type::Struct(fields), None) => fields.get(position).map(|field| field.ty),
-                (Type::Struct(_), Some(key)) => match tree.exprs[key].kind {
-                    ExprKind::Name(name) => {
-                        match self.types.member(literal, name, self.path, self.names) {
-                            Some(Member::Field { ty, .. }) => Some(ty),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                },
-                _ => elem_type,
-            };
-            // The key of an array or a slice is an index.
-            if let Some(key) = key.filter(|_| keys_are_values) {
-                let int = self.types.basic(Basic::Int);
-                self.element(cx, key, Some(key_type.unwrap_or(int)));
-            }
-            self.element(cx, value, hint);
-        }
-    }
-
-    /// One element, or key, of a composite literal.
-    fn element(&mut self, cx: &Cx<'a>, expr: ExprId, hint: Option<TypeId>) {
-        let ExprKind::CompositeLit { ty: None, elems } = &cx.tree.exprs[expr].kind else {
-            self.operand(cx, expr);
-            if let Some(hint) = hint {
-                self.convert(cx, expr, hint);
-            }
-            return;
-        };
-        let Some(hint) = hint else { return };
-        // `{…}` for a pointer type is `&T{…}`.
-        let literal = match &*self.types.get(self.types.underlying(hint)) {
-            Type::Pointer(elem) => *elem,
-            _ => hint,
-        };
-        self.elements(cx, literal, elems);
-        if let Some(memo) = &mut self.memo {
-            memo.insert(expr, Operand::value(hint));
         }
     }
 

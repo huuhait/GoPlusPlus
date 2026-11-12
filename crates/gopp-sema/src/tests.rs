@@ -1762,6 +1762,83 @@ fn built_in_functions_are_checked_as_go_checks_them() {
     }
 }
 
+#[test]
+fn composite_literals_are_checked_as_go_checks_them() {
+    let declared = "type P struct{ x, y int }\nvar a int\nvar b string\nconst k = 1\n";
+    let cases: &[(&str, &[&str])] = &[
+        ("P{1}", &["7:9: too few values in struct literal of type P"]),
+        (
+            "P{1, 2, 3}",
+            &["7:14: too many values in struct literal of type P"],
+        ),
+        (
+            "P{x: 1, 2}",
+            &["7:14: mixture of field:value and value elements in struct literal"],
+        ),
+        (
+            "P{z: 1}",
+            &["7:8: unknown field z in struct literal of type P"],
+        ),
+        (
+            "P{X: 1}",
+            &["7:8: unknown field X in struct literal of type P, but does have x"],
+        ),
+        (
+            "P{x: 1, x: 2}",
+            &["7:14: duplicate field name x in struct literal"],
+        ),
+        (
+            "P{x: b}",
+            &["7:11: cannot use b (variable of type string) as int value in struct literal"],
+        ),
+        (
+            "[]int{0: 1, 0: 2}",
+            &["7:18: duplicate index 0 in array or slice literal"],
+        ),
+        (
+            "[2]int{1, 2, 3}",
+            &["7:19: index 2 is out of bounds (>= 2)"],
+        ),
+        ("[]int{a: 1}", &["7:12: index a must be integer constant"]),
+        (
+            "[]int{b}",
+            &[
+                "7:12: cannot use b (variable of type string) as int value in array or slice literal",
+            ],
+        ),
+        (
+            "map[string]int{\"a\": 1, \"a\": 2}",
+            &["7:29: duplicate key \"a\" in map literal"],
+        ),
+        ("map[string]int{1}", &["7:21: missing key in map literal"]),
+        (
+            "map[string]int{a: 1}",
+            &["7:21: cannot use a (variable of type int) as string value in map literal"],
+        ),
+        ("map[string]int{nokey: 1}", &["7:21: undefined: nokey"]),
+        ("int{}", &["7:6: invalid composite literal type int"]),
+        // What is right next to each of them.
+        (
+            "[]any{P{}, P{1, 2}, P{y: 2}, []P{{1, 2}, {x: 1}}, []*P{{1, 2}}}",
+            &[],
+        ),
+        ("map[P]string{{1, 2}: \"a\", {3, 4}: \"b\"}", &[]),
+        (
+            "[]any{[...]int{5: 1, 2}, map[string]int{b: a, \"k\": 2}, []int{k: 1, 2}}",
+            &[],
+        ),
+    ];
+    for (literal, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t_ = {literal}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{literal}");
+    }
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2380,7 +2457,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1430;
+const EXPECTED_ERRORS_REPORTED: usize = 1512;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

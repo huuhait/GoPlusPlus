@@ -109,7 +109,7 @@ impl<'a> Checker<'a> {
     /// assignment may write through a pointer, a value is its own option,
     /// a function that can fail returns its error by itself. There, only
     /// the type of a value of no type is settled here.
-    fn own_rules(&self, cx: &Cx<'a>) -> bool {
+    pub(super) fn own_rules(&self, cx: &Cx<'a>) -> bool {
         cx.dialect == Dialect::Gopp
     }
 
