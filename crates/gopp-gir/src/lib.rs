@@ -4,11 +4,13 @@ mod builder;
 mod ir;
 mod print;
 mod types;
+mod verify;
 
 pub use builder::{BuildError, FuncBuilder};
 pub use ir::*;
 pub use print::print_module;
 pub use types::{FuncType, RecId, StructId, Type, TypeError, TypeId, TypeInterner};
+pub use verify::{VerifyError, verify_module};
 
 #[cfg(test)]
 mod tests;

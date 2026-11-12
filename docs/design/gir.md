@@ -194,7 +194,7 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 
 ## 9. Verifier (`V001`–`V085`)
 
-`gopp_gir::verify_module` runs after `lower_package`, after every `.gopx` decode, after every `-fpass-plugin` pass, after `elaborate_drops` / `inline_trivial`, and at the entry to `gopp-codegen-c`. It trusts no cached types, uses iterative worklists throughout, and runs in $O(|M|)$ time. Errors format as `V027: fn main.f: bb3 #2: duplicate switch case 1`.
+`gopp_gir::verify_module` runs after `lower_package`, after every `.gopx` decode, after every `-fpass-plugin` pass, after `elaborate_drops` / `inline_trivial`, and at the entry to `gopp-codegen-c`. It trusts no cached types, uses iterative worklists throughout, and runs in $O(|M|)$ time. Functions are checked in parallel; errors are reported in function order for any thread count. Errors format as `V027: fn main.f: bb3 #2: duplicate switch case 1`.
 
 | Rule | What is checked |
 |---|---|
@@ -250,7 +250,7 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 | `V078` | `Func` types with `has_env` carry `CallConv::Go` and `*u8` as parameter `0`. |
 | `V079` | `@Inline` / `@NoInline` hints appear only on defined functions (`Blocks` non-empty). |
 | `V081` | Drop glue (`Local::Glue` and `Drop` glue) has signature `fn(*u8) -> ()` with `CallConv::Go`. |
-| `V085` | Every non-address-taken `Temp` local is initialized along all CFG paths reaching each read (verified via Lengauer-Tarjan dominator intervals + bounded backward search, 32 steps per block/statement budget). |
+| `V085` | Every non-address-taken `Temp` local is initialized along all CFG paths reaching each read (verified via Lengauer-Tarjan dominator intervals + a backward search bounded to 32 CFG edges per read; a chain of single-predecessor blocks costs no edge, and a call initializes its destination only on its return edge). |
 
 ## 10. Monomorphization and hierarchy tables
 

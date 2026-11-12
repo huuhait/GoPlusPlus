@@ -641,6 +641,10 @@ impl<'m> FuncBuilder<'m> {
 
     /// The function in its module: every block has its end.
     pub fn finish(mut self) -> Result<FuncId, BuildError> {
+        // A declaration has no locals: its signature says all.
+        if self.blocks.is_empty() {
+            self.func.locals = Arena::new();
+        }
         for (at, block) in self.blocks.into_iter().enumerate() {
             let Some(term) = block.term else {
                 return Err(BuildError::Unterminated(at as u32));

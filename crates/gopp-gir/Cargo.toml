@@ -11,6 +11,10 @@ workspace = true
 [dependencies]
 gopp-target = { path = "../gopp-target" }
 la-arena.workspace = true
+rayon.workspace = true
 rustc-hash.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+gopp-testutil = { path = "../gopp-testutil" }

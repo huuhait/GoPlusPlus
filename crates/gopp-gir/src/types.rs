@@ -128,6 +128,11 @@ impl TypeInterner {
         id
     }
 
+    /// Every type, in the order in which they were made.
+    pub fn ids(&self) -> impl Iterator<Item = TypeId> + use<> {
+        (0..self.types.len() as u32).map(TypeId)
+    }
+
     pub fn get(&self, id: TypeId) -> &Type {
         &self.types[id.0 as usize]
     }

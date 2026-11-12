@@ -422,7 +422,9 @@ name = "gopp-gir"
 version = "0.1.0"
 dependencies = [
  "gopp-target",
+ "gopp-testutil",
  "la-arena",
+ "rayon",
  "rustc-hash",
  "smallvec",
  "thiserror",
