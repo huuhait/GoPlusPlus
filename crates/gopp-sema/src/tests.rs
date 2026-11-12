@@ -997,7 +997,36 @@ fn steps_grow_with_the_input_not_faster() {
             .collect();
         format!("package p\nvar g int\n{all}")
     };
+    // Each block jumps out to a label that is declared after all of them.
+    let jumps_out = |depth: usize| {
+        format!(
+            "package p\nfunc f() {{\n{}{}\nEnd:\n}}\n",
+            "{ goto End; ".repeat(depth),
+            "}".repeat(depth)
+        )
+    };
+    // Jumps that wait for their label while other labels are declared.
+    let waiting_jumps = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("\tgoto End\nL{i}:\n\tgoto L{i}\n"))
+            .collect();
+        format!("package p\nfunc f() {{\n{all}End:\n}}\n")
+    };
+    // Each loop has a label; its body leaves it and goes on with the
+    // outermost one.
+    let labeled_loops = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("L{i}: for {{ if x {{ break L{i} }}; if x {{ continue L0 }}; "))
+            .collect();
+        format!(
+            "package p\nfunc f(x bool) {{\n{open}{}\n}}\n",
+            "}".repeat(depth)
+        )
+    };
     linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(nested(n)));
+    linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(jumps_out(n)));
+    linear::assert_near_linear(&sizes, |n| steps(waiting_jumps(n)));
+    linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(labeled_loops(n)));
     linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
     linear::assert_near_linear(&[100, 200, 400, 800], |n| steps(closures(n)));
     linear::assert_near_linear(&sizes, |n| steps(declarations(n)));
@@ -2846,6 +2875,109 @@ func g(dst, src []int, p *[]int, b []byte, s string) {
     );
 }
 
+/// The second function is what is right next to each error of the first.
+#[test]
+fn labels_and_jumps_are_checked_as_go_checks_them() {
+    let text = r#"package p
+
+func f(x bool) {
+	break
+	continue
+	fallthrough
+	goto Missing
+	goto Inner
+	{
+	Inner:
+	}
+Unused:
+Twice:
+Twice:
+	goto Twice
+	goto Over
+	v := 1
+	_ = v
+Over:
+	if x {
+		goto Out
+	}
+Out:
+Plain:
+	x = !x
+	for {
+		break Plain
+		continue Plain
+	}
+Sw:
+	switch {
+	case x:
+		break Sw
+		continue Sw
+		fallthrough
+	default:
+		fallthrough
+	}
+	switch any(x).(type) {
+	case bool:
+		fallthrough
+	}
+	_ = func() {
+		goto Out
+	}
+}
+
+func g(x bool, c chan int) {
+Loop:
+	for i := 0; i < 3; i++ {
+		for range 3 {
+			if x {
+				continue Loop
+			}
+			break Loop
+		}
+		switch {
+		case x:
+			break
+		}
+		continue
+	}
+Sel:
+	select {
+	case <-c:
+		break Sel
+	}
+	goto Back
+Back:
+	goto Back
+}
+"#;
+    let expected = [
+        "a.go:4:2: break not in for, switch, or select statement",
+        "a.go:5:2: continue not in for statement",
+        "a.go:6:2: fallthrough statement out of place",
+        "a.go:7:7: label Missing not declared",
+        "a.go:8:7: goto Inner jumps into block",
+        "a.go:12:1: label Unused declared and not used",
+        "a.go:14:1: label Twice already declared",
+        "    a.go:13:1: other declaration of Twice",
+        "a.go:16:7: goto Over jumps over variable declaration at line 17",
+        "a.go:24:1: label Plain declared and not used",
+        "a.go:27:9: invalid break label Plain",
+        "a.go:28:12: invalid continue label Plain",
+        "a.go:34:12: invalid continue label Sw",
+        "a.go:37:3: cannot fallthrough final case in switch",
+        "a.go:41:3: cannot fallthrough in type switch",
+        "a.go:44:8: label Out not declared",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+    // The same rules hold in a `.gopp` file.
+    let found = messages("a.gopp", text);
+    let expected: Vec<String> = expected
+        .iter()
+        .map(|message| message.replace("a.go:", "a.gopp:"))
+        .collect();
+    assert_eq!(found, expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -3464,7 +3596,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1724;
+const EXPECTED_ERRORS_REPORTED: usize = 1824;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

@@ -7,6 +7,7 @@
 //! left invalid, which fits everywhere and is no error.
 
 mod assign;
+mod branches;
 mod builtins;
 mod call;
 mod conversion;
@@ -217,6 +218,8 @@ struct Checker<'a> {
     excused: Vec<LocalId>,
     /// While a body is walked: what each of its selectors reaches.
     selections: FxHashMap<ExprId, Selection>,
+    /// The steps that the checks of labels and jumps took.
+    steps: u64,
     /// The object that each declaring identifier declares.
     by_span: FxHashMap<Span, usize>,
     /// The constants and variables whose declaration is worked out: what
@@ -274,7 +277,7 @@ pub fn declarations(
     types: &Types,
     names: &ThreadedRodeo,
     sink: &Sink,
-) -> Vec<Vec<usize>> {
+) -> (Vec<Vec<usize>>, u64) {
     let count = package.objects.len();
     let by_span = package.objects.iter().enumerate();
     let by_span = by_span
@@ -304,6 +307,7 @@ pub fn declarations(
         local_groups: FxHashMap::default(),
         excused: Vec::new(),
         selections: FxHashMap::default(),
+        steps: 0,
         by_span,
         current: Vec::new(),
         needs: vec![Vec::new(); count],
@@ -347,7 +351,11 @@ pub fn declarations(
         .map(|(file, unit)| checker.bodies(file, *unit))
         .collect();
     let Checker {
-        ty, value, needs, ..
+        ty,
+        value,
+        needs,
+        steps,
+        ..
     } = checker;
     for ((object, ty), value) in package.objects.iter_mut().zip(ty).zip(value) {
         object.ty = ty;
@@ -367,7 +375,7 @@ pub fn declarations(
             }
         }
     }
-    needs
+    (needs, steps)
 }
 
 fn is_exported(name: &str) -> bool {
@@ -2702,6 +2710,7 @@ impl<'a> Checker<'a> {
         self.results.push(results);
         self.stmts(cx, stmts);
         self.results.pop();
+        self.branches(cx, stmts);
     }
 
     /// `return results` in a function with the results `wanted`. A
