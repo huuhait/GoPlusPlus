@@ -115,6 +115,7 @@ codes! {
     160 CannotConvert "err_cannot_convert",
     163 ValueTruncated "err_value_truncated",
     164 ValueOverflows "err_value_overflows",
+    165 GenericWithoutInstantiation "err_generic_without_instantiation",
     166 OperatorNotDefined "err_operator_not_defined",
     167 MismatchedTypes "err_mismatched_types",
     168 CannotCompare "err_cannot_compare",
@@ -131,6 +132,12 @@ codes! {
     180 TooManyArguments "err_too_many_arguments",
     181 NotEnoughReturnValues "err_not_enough_arguments_return",
     182 TooManyReturnValues "err_too_many_arguments_return",
+    183 CannotIndex "err_cannot_index",
+    184 CannotSlice "err_cannot_slice",
+    185 CannotSliceUnaddressable "err_cannot_slice_unaddressable",
+    186 SliceOfString "err_slice_3_string",
+    187 SliceIndicesInverted "err_slice_indices_inverted",
+    188 IndexOutOfBounds "err_index_out_of_bounds",
     205 AddressOfUnaddressable "err_address_of_unaddressable",
     206 CannotAssign "err_cannot_assign",
     207 CannotAssignTo "err_cannot_assign_to",
@@ -139,6 +146,8 @@ codes! {
     212 MissingInitExpr "err_missing_init_expr",
     213 ExtraInitExpr "err_extra_init_expr",
     219 SelectCaseInvalid "err_select_case_invalid",
+    227 CannotUseEllipsis "err_cannot_use_ellipsis",
+    233 NotAGenericType "err_not_a_generic_type",
     236 InvalidConstantType "err_invalid_constant_type",
     237 MethodExprPointerReceiver "err_method_expr_ptr_recv",
     300 NoteOwnNewRemoved "note_own_new_removed",
@@ -148,6 +157,8 @@ codes! {
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",
     456 NoteWant "note_want",
+    457 UnusedExpression "err_unused_expression",
+    458 InvalidIndex "err_invalid_index",
 }
 
 impl Code {

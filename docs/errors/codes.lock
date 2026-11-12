@@ -459,3 +459,5 @@ E0453 err_inst_implicit_clone
 E0454 note_refers_to
 E0455 note_have
 E0456 note_want
+E0457 err_unused_expression
+E0458 err_invalid_index

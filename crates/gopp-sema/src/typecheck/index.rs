@@ -1,0 +1,240 @@
+//! Index and slice expressions, after `go/types` (index.go).
+
+use super::*;
+
+impl<'a> Checker<'a> {
+    /// Whether the operand `x` of `expr` is an index: an integer, and as
+    /// a constant not negative and no larger than an `int`. `what` names
+    /// it in the messages.
+    fn valid_index(&mut self, cx: &Cx<'a>, expr: ExprId, x: &mut Operand, what: &str) -> bool {
+        let int = self.types.basic(Basic::Int);
+        if x.mode == Mode::Unknown || !self.convert_untyped(cx, expr, x, int, true) {
+            return false;
+        }
+        let span = cx.tree.exprs[expr].span;
+        let wrong = if !self.all_integer(x.ty) {
+            "must be integer"
+        } else {
+            match &x.mode {
+                Mode::Const(value) if value.sign() < 0 => "must not be negative",
+                Mode::Const(value) if representable(value, Basic::Int).is_none() => "overflows int",
+                _ => return true,
+            }
+        };
+        let message = format!(
+            "invalid argument: {what} {} {wrong}",
+            self.describe(cx, expr, x)
+        );
+        self.error(Code::InvalidIndex, span, message);
+        false
+    }
+
+    /// The index `expr` into what has `length` elements, if that is
+    /// known: its value if it is a constant.
+    fn index_value(&mut self, cx: &Cx<'a>, expr: ExprId, length: Option<u64>) -> Option<u64> {
+        let mut x = self.value(cx, expr);
+        if !self.valid_index(cx, expr, &mut x, "index") {
+            return None;
+        }
+        let Mode::Const(value) = &x.mode else {
+            return None;
+        };
+        let value = u64::try_from(value.as_i64()?).ok()?;
+        if let Some(length) = length.filter(|&length| value >= length) {
+            let message = format!("invalid argument: index {value} out of bounds [0:{length}]");
+            self.error(Code::IndexOutOfBounds, cx.tree.exprs[expr].span, message);
+            return None;
+        }
+        Some(value)
+    }
+
+    /// The number of bytes of a constant string.
+    fn constant_length(&self, x: &Operand) -> Option<u64> {
+        match &x.mode {
+            Mode::Const(Value::Str(text)) => Some(text.bytes().len() as u64),
+            _ => None,
+        }
+    }
+
+    pub(super) fn index(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        of: ExprId,
+        indices: &[ExprId],
+    ) -> Operand {
+        let x = self.operand(cx, of);
+        if x.mode == Mode::Type {
+            // A generic type with its arguments.
+            return Operand {
+                mode: Mode::Type,
+                ty: self.typ(cx, expr),
+            };
+        }
+        if !x.is_value() {
+            for &index in indices {
+                self.operand(cx, index);
+            }
+            return Operand::UNKNOWN;
+        }
+        let under = self.types.get(self.types.underlying(x.ty));
+        let (length, element) = match &*under {
+            // A generic function with its type arguments.
+            Type::Func { .. } => {
+                let Some(params) = self.types.generic_func(x.ty) else {
+                    return Operand::UNKNOWN;
+                };
+                let args: Vec<TypeId> = indices.iter().map(|&i| self.typ(cx, i)).collect();
+                if args.len() != params.len() {
+                    return Operand::UNKNOWN;
+                }
+                return Operand::value(self.types.substitute(x.ty, &params, &args));
+            }
+            Type::Basic(Basic::String | Basic::UntypedString) => {
+                let byte = self.types.basic(Basic::Uint8);
+                (self.constant_length(&x), Operand::value(byte))
+            }
+            // An element of a slice is a variable, one of an array if the
+            // array is, one of a map can only be assigned to.
+            Type::Array { len, elem } => match x.mode {
+                Mode::Variable => (Some(*len), Operand::variable(*elem)),
+                _ => (Some(*len), Operand::value(*elem)),
+            },
+            Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
+                Type::Array { len, elem } => (Some(*len), Operand::variable(*elem)),
+                _ => return self.cannot_index(cx, of, &x, indices),
+            },
+            Type::Slice(elem) => (None, Operand::variable(*elem)),
+            Type::Map { key, value } => {
+                let [index] = indices else {
+                    return Operand::UNKNOWN;
+                };
+                self.assign(cx, *index, Some(*key), "map index");
+                return match *value {
+                    Types::INVALID => Operand::UNKNOWN,
+                    ty => Operand {
+                        mode: Mode::MapIndex,
+                        ty,
+                    },
+                };
+            }
+            _ => return self.cannot_index(cx, of, &x, indices),
+        };
+        let [index] = indices else {
+            return Operand::UNKNOWN;
+        };
+        self.index_value(cx, *index, length);
+        element
+    }
+
+    fn cannot_index(
+        &mut self,
+        cx: &Cx<'a>,
+        of: ExprId,
+        x: &Operand,
+        indices: &[ExprId],
+    ) -> Operand {
+        for &index in indices {
+            self.operand(cx, index);
+        }
+        // What a type parameter or a type in error can do is not said.
+        let under = self.types.underlying(x.ty);
+        if under != Types::INVALID && !self.types.has_param(x.ty) {
+            let message = format!("cannot index {}", self.describe(cx, of, x));
+            self.error(Code::CannotIndex, cx.tree.exprs[of].span, message);
+        }
+        Operand::UNKNOWN
+    }
+
+    pub(super) fn slice(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        of: ExprId,
+        bounds: [Option<ExprId>; 3],
+        full: bool,
+    ) -> Operand {
+        let x = self.value(cx, of);
+        let span = cx.tree.exprs[of].span;
+        let open = self.types.underlying(x.ty) == Types::INVALID || self.types.has_param(x.ty);
+        if x.mode == Mode::Unknown || open {
+            for bound in bounds.into_iter().flatten() {
+                self.operand(cx, bound);
+            }
+            return Operand::UNKNOWN;
+        }
+        let under = self.types.get(self.types.underlying(x.ty));
+        let array_in = |pointer: TypeId| match &*self.types.get(self.types.underlying(pointer)) {
+            Type::Array { len, elem } => Some((*len, *elem)),
+            _ => None,
+        };
+        let (length, sliced) = match &*under {
+            Type::Basic(basic @ (Basic::String | Basic::UntypedString)) => {
+                if full {
+                    let at =
+                        bounds[2].map_or(cx.tree.exprs[expr].span, |max| cx.tree.exprs[max].span);
+                    let message = "invalid operation: 3-index slice of string".to_owned();
+                    self.error(Code::SliceOfString, at, message);
+                    return Operand::UNKNOWN;
+                }
+                let ty = match basic {
+                    Basic::UntypedString => self.types.basic(Basic::String),
+                    _ => x.ty,
+                };
+                (self.constant_length(&x), ty)
+            }
+            Type::Array { len, elem } => {
+                if x.mode != Mode::Variable {
+                    let message = format!(
+                        "cannot slice unaddressable value {}",
+                        self.describe(cx, of, &x)
+                    );
+                    self.error(Code::CannotSliceUnaddressable, span, message);
+                    return Operand::UNKNOWN;
+                }
+                (Some(*len), self.types.slice(*elem))
+            }
+            Type::Slice(_) => (None, x.ty),
+            other => match other {
+                Type::Pointer(array) => array_in(*array),
+                _ => None,
+            }
+            .map(|(len, elem)| (Some(len), self.types.slice(elem)))
+            .unwrap_or_else(|| {
+                let message = format!("cannot slice {}", self.describe(cx, of, &x));
+                self.error(Code::CannotSlice, span, message);
+                (None, Types::INVALID)
+            }),
+        };
+        if sliced == Types::INVALID {
+            return Operand::UNKNOWN;
+        }
+        // The values of the bounds that are known: what is left out is 0
+        // at the start and the length at the end.
+        let mut known: [Option<u64>; 3] = [Some(0), length, length];
+        for (at, bound) in bounds.into_iter().enumerate() {
+            if let Some(bound) = bound {
+                known[at] = self.index_value(cx, bound, length.map(|length| length + 1));
+            }
+        }
+        'order: for (at, low) in known.into_iter().enumerate() {
+            let Some(low) = low.filter(|&low| low > 0) else {
+                continue;
+            };
+            for later in at + 1..3 {
+                if let (Some(high), Some(bound)) = (known[later], bounds[later])
+                    && high < low
+                {
+                    let message = format!("invalid slice indices: {high} < {low}");
+                    self.error(
+                        Code::SliceIndicesInverted,
+                        cx.tree.exprs[bound].span,
+                        message,
+                    );
+                    break 'order;
+                }
+            }
+        }
+        Operand::value(sliced)
+    }
+}

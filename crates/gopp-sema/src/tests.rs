@@ -1486,6 +1486,121 @@ fn assignments_are_checked_as_go_checks_them() {
     assert_eq!(messages("a.gopp", text), [] as [&str; 0]);
 }
 
+#[test]
+fn calls_and_indexes_are_checked_as_go_checks_them() {
+    let declared = "var (\n\ta int\n\tb string\n\ts []int\n\tarr [4]int\n\tm map[string]int\n\t\
+                    p *[4]int\n)\nfunc f(x int, y string)\nfunc v(xs ...int)\n\
+                    func two() (int, string)\ntype G[P any] struct{ p P }\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "f(1)",
+            &[
+                "15:5: not enough arguments in call to f",
+                "    have (number)",
+                "    want (int, string)",
+            ],
+        ),
+        (
+            "f(1, \"a\", 2)",
+            &[
+                "15:12: too many arguments in call to f",
+                "    have (number, string, number)",
+                "    want (int, string)",
+            ],
+        ),
+        (
+            "f(b, a)",
+            &[
+                "15:4: cannot use b (variable of type string) as int value in argument to f",
+                "15:7: cannot use a (variable of type int) as string value in argument to f",
+            ],
+        ),
+        (
+            "v(1, s...)",
+            &[
+                "15:7: too many arguments in call to v",
+                "    have (number, []int...)",
+                "    want (...int)",
+            ],
+        ),
+        (
+            "v(b)",
+            &["15:4: cannot use b (variable of type string) as int value in argument to v"],
+        ),
+        (
+            "f(s...)",
+            &["15:5: cannot use ... in call to non-variadic f"],
+        ),
+        ("a", &["15:2: a (variable of type int) is not used"]),
+        ("int(a)", &["15:2: int(a) (value of type int) is not used"]),
+        ("len", &["15:2: len (built-in) must be called"]),
+        (
+            "_ = s[1.5]",
+            &["15:8: 1.5 (untyped float constant) truncated to int"],
+        ),
+        (
+            "_ = s[b]",
+            &["15:8: invalid argument: index b (variable of type string) must be integer"],
+        ),
+        (
+            "_ = s[-1]",
+            &["15:8: invalid argument: index -1 (constant of type int) must not be negative"],
+        ),
+        (
+            "_ = arr[4]",
+            &["15:10: invalid argument: index 4 out of bounds [0:4]"],
+        ),
+        ("_ = a[0]", &["15:6: cannot index a (variable of type int)"]),
+        (
+            "_ = m[1]",
+            &["15:8: cannot use 1 (untyped int constant) as string value in map index"],
+        ),
+        ("_ = arr[3:2]", &["15:12: invalid slice indices: 2 < 3"]),
+        (
+            "_ = arr[:5]",
+            &["15:11: invalid argument: index 5 out of bounds [0:5]"],
+        ),
+        (
+            "_ = b[1:2:3]",
+            &["15:12: invalid operation: 3-index slice of string"],
+        ),
+        (
+            "_ = [2]int{}[:]",
+            &["15:6: cannot slice unaddressable value [2]int{} (value of type [2]int)"],
+        ),
+        ("_ = a[:]", &["15:6: cannot slice a (variable of type int)"]),
+        (
+            "var g G\n\t_ = g",
+            &["15:8: cannot use generic type G[P any] without instantiation"],
+        ),
+        ("var g a[int]\n\t_ = g", &["15:8: a is not a type"]),
+        (
+            "var g map[int]int[string]\n\t_ = g",
+            &["15:16: invalid operation: int[string] (int is not a generic type)"],
+        ),
+        // What is right next to each of them.
+        (
+            "f(a, b)\n\tf(two())\n\tv()\n\tv(1, 2)\n\tv(s...)\n\tpanic(0)\n\t<-make(chan int)",
+            &[],
+        ),
+        (
+            "_ = s[a] + arr[3] + p[3] + m[\"k\"] + int(b[0]) + s[1<<2]",
+            &[],
+        ),
+        ("_, _, _, _ = b[1:], arr[1:2:3], p[:4], s[a:]", &[]),
+        ("var g G[int]\n\t_ = g", &[]),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2104,7 +2219,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1069;
+const EXPECTED_ERRORS_REPORTED: usize = 1224;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

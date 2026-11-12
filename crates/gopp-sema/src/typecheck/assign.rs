@@ -127,7 +127,7 @@ impl<'a> Checker<'a> {
 
     /// `(int, string)`: types as a message about a count lists them. A
     /// number of no type is a number, whatever its kind.
-    fn types_summary(&self, types: &[TypeId], variadic: bool, spread: bool) -> String {
+    pub(super) fn types_summary(&self, types: &[TypeId], variadic: bool, spread: bool) -> String {
         let mut shown = Vec::new();
         for (at, &ty) in types.iter().enumerate() {
             let last = at + 1 == types.len();

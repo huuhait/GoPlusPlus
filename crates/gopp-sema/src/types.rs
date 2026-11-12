@@ -480,6 +480,14 @@ impl Types {
         self.write(|inner| inner.named[named.0 as usize].invalid = true);
     }
 
+    /// The constraint of the type parameter `param`, once it is known.
+    pub fn constraint(&self, param: TypeId) -> Option<TypeId> {
+        match &*self.get(param) {
+            Type::Param(id) => self.read(|inner| inner.params[id.0 as usize].1),
+            _ => None,
+        }
+    }
+
     /// Gives the type parameter `param` its constraint.
     pub fn set_constraint(&self, param: TypeId, constraint: TypeId) {
         if let Type::Param(id) = &*self.get(param) {

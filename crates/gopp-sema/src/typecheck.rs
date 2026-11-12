@@ -7,7 +7,9 @@
 //! left invalid, which fits everywhere and is no error.
 
 mod assign;
+mod call;
 mod conversion;
+mod index;
 mod ops;
 
 use gopp_diag::{Code, Diagnostic, Sink};
@@ -1133,9 +1135,47 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The type that the expression `expr` writes.
+    /// The type that the expression `expr` writes. A generic type is
+    /// written with its type arguments.
     fn typ(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
+        let ty = self.generic_or_type(cx, expr);
+        if !self.is_generic_type(ty) {
+            return ty;
+        }
+        let message = format!(
+            "cannot use generic type {} without instantiation",
+            self.generic_string(ty)
+        );
+        let span = cx.tree.exprs[expr].span;
+        self.error(Code::GenericWithoutInstantiation, span, message);
+        self.incomplete = true;
+        Types::INVALID
+    }
+
+    /// The operand `x` of `expr` where a generic type needs its type
+    /// arguments: it is no operand without them.
+    fn instantiated(&mut self, cx: &Cx<'a>, expr: ExprId, x: Operand) -> Operand {
+        if x.mode != Mode::Type || !self.is_generic_type(x.ty) {
+            return x;
+        }
+        let message = format!(
+            "cannot use generic type {} without instantiation",
+            self.expr_string(cx, expr)
+        );
+        let span = cx.tree.exprs[expr].span;
+        self.error(Code::GenericWithoutInstantiation, span, message);
+        Operand::UNKNOWN
+    }
+
+    /// `typ`, where a generic type may stand without its type arguments.
+    fn generic_or_type(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
         gopp_syntax::with_stack(|| self.typ_node(cx, expr))
+    }
+
+    /// Whether the type is a generic type without its type arguments.
+    fn is_generic_type(&self, ty: TypeId) -> bool {
+        matches!(&*self.types.get(ty), Type::Named { id, args }
+            if args.is_empty() && !self.types.type_params(*id).is_empty())
     }
 
     fn typ_node(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
@@ -1273,7 +1313,7 @@ impl<'a> Checker<'a> {
                 self.terms(cx, expr, &mut terms);
                 self.types.intern(Type::Union(terms.into()))
             }
-            ExprKind::Index { x, indices } => self.instance(cx, *x, indices),
+            ExprKind::Index { x, indices } => self.instance(cx, expr, *x, indices),
             _ => {
                 self.incomplete = true;
                 Types::INVALID
@@ -1323,8 +1363,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `x[indices]` in a type position: a generic type with its arguments.
-    fn instance(&mut self, cx: &Cx<'a>, x: ExprId, indices: &[ExprId]) -> TypeId {
-        let args: Vec<TypeId> = indices.iter().map(|&index| self.typ(cx, index)).collect();
+    fn instance(&mut self, cx: &Cx<'a>, expr: ExprId, x: ExprId, indices: &[ExprId]) -> TypeId {
         let make: Option<fn(TypeId) -> Type> = match cx.body.uses.get(&x) {
             Some(Ref::Universe(Predeclared::Unique)) => Some(Type::Unique),
             Some(Ref::Universe(Predeclared::Shared)) => Some(Type::Shared),
@@ -1333,28 +1372,81 @@ impl<'a> Checker<'a> {
             Some(Ref::Universe(Predeclared::Option)) => Some(Type::Option),
             _ => None,
         };
-        if let (Some(make), &[arg]) = (make, &args[..]) {
-            let made = match make(arg) {
-                Type::Option(_) => Ok(self.types.option(arg)),
-                _ => self.types.handle(make, arg),
+        let arguments = |this: &mut Self| -> Vec<TypeId> {
+            indices.iter().map(|&index| this.typ(cx, index)).collect()
+        };
+        if let Some(make) = make {
+            let made = match arguments(self)[..] {
+                [arg] => match make(arg) {
+                    Type::Option(_) => Some(self.types.option(arg)),
+                    _ => self.types.handle(make, arg).ok(),
+                },
+                _ => None,
             };
-            return made.unwrap_or_else(|_| {
+            return made.unwrap_or_else(|| {
                 self.incomplete = true;
                 Types::INVALID
             });
         }
-        let generic = self.typ(cx, x);
-        match &*self.types.get(generic) {
-            Type::Named { id, args: none } if none.is_empty() => {
-                let instance = self.types.named(*id, &args);
-                self.written(instance, cx.tree.exprs[x].span);
-                instance
-            }
-            _ => {
-                self.incomplete = true;
-                Types::INVALID
+        // An alias with type parameters of its own is not followed yet.
+        let generic_alias = match cx.body.uses.get(&x) {
+            Some(Ref::Object(object)) => matches!(
+                self.decls[object.0 as usize].map(|decl| decl.form),
+                Some(Form::Type { alias: true, type_params, .. }) if !type_params.is_empty()
+            ),
+            _ => false,
+        };
+        if generic_alias {
+            self.incomplete = true;
+            return Types::INVALID;
+        }
+        // The arguments of what is no generic type are not looked at.
+        let generic = self.generic_or_type(cx, x);
+        if let Type::Named { id, .. } = &*self.types.get(generic)
+            && self.is_generic_type(generic)
+        {
+            let instance = self.types.named(*id, &arguments(self));
+            self.written(instance, cx.tree.exprs[x].span);
+            return instance;
+        }
+        if generic != Types::INVALID {
+            let message = format!(
+                "invalid operation: {} ({} is not a generic type)",
+                self.expr_string(cx, expr),
+                self.type_string(generic)
+            );
+            self.error(Code::NotAGenericType, cx.tree.exprs[expr].span, message);
+        }
+        self.incomplete = true;
+        Types::INVALID
+    }
+
+    /// A generic type as a message shows it without type arguments:
+    /// `T[P any]`.
+    fn generic_string(&self, ty: TypeId) -> String {
+        let Type::Named { id, .. } = &*self.types.get(ty) else {
+            return self.type_string(ty);
+        };
+        let params = self.types.type_params(*id);
+        let mut list = String::new();
+        for (at, &param) in params.iter().enumerate() {
+            // Parameters with one constraint are written together.
+            let constraint = self.types.constraint(param);
+            let next = params.get(at + 1).map(|&next| self.types.constraint(next));
+            list += &self.type_string(param);
+            match (next == Some(constraint), constraint) {
+                (true, _) => list += ", ",
+                (false, Some(constraint)) => {
+                    list += " ";
+                    list += &self.type_string(constraint);
+                    if at + 1 < params.len() {
+                        list += ", ";
+                    }
+                }
+                (false, None) => {}
             }
         }
+        format!("{}[{list}]", self.type_string(ty))
     }
 
     // ---- expressions
@@ -1421,7 +1513,10 @@ impl<'a> Checker<'a> {
                 };
                 self.untyped(basic, Value::from_literal(text, *kind))
             }
-            ExprKind::Paren(x) => self.operand(cx, *x),
+            ExprKind::Paren(x) => {
+                let inner = self.operand(cx, *x);
+                self.instantiated(cx, *x, inner)
+            }
             ExprKind::Name(_) => self.name(cx, expr),
             ExprKind::Selector { x, sel } => self.selector(cx, expr, *x, *sel),
             ExprKind::Unary { op, x } => self.unary(cx, expr, *op, *x),
@@ -1462,30 +1557,13 @@ impl<'a> Checker<'a> {
                 }
             }
             ExprKind::Index { x, indices } => self.index(cx, expr, *x, indices),
-            ExprKind::Slice { x, lo, hi, max, .. } => {
-                let x = self.operand(cx, *x);
-                // A bound is an index: an `int` if it has no type.
-                let int = self.types.basic(Basic::Int);
-                for &bound in [lo, hi, max].into_iter().flatten() {
-                    self.operand(cx, bound);
-                    self.convert(cx, bound, int);
-                }
-                if !x.is_value() {
-                    return Operand::UNKNOWN;
-                }
-                let sliced = match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Basic(Basic::String) => x.ty,
-                    Type::Basic(Basic::UntypedString) => self.types.basic(Basic::String),
-                    Type::Slice(_) => x.ty,
-                    Type::Array { elem, .. } => self.types.slice(*elem),
-                    Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
-                        Type::Array { elem, .. } => self.types.slice(*elem),
-                        _ => return Operand::UNKNOWN,
-                    },
-                    _ => return Operand::UNKNOWN,
-                };
-                Operand::value(sliced)
-            }
+            ExprKind::Slice {
+                x,
+                lo,
+                hi,
+                max,
+                full,
+            } => self.slice(cx, expr, *x, [*lo, *hi, *max], *full),
             ExprKind::Assert { x, ty } => {
                 self.operand(cx, *x);
                 match self.typ(cx, *ty) {
@@ -1593,7 +1671,12 @@ impl<'a> Checker<'a> {
             }
             return self.object_operand(&object.kind, object.ty, object.value.clone());
         }
-        let x = self.operand(cx, x);
+        let base = x;
+        let x = self.operand(cx, base);
+        let x = self.instantiated(cx, base, x);
+        if x.mode == Mode::Unknown {
+            return Operand::UNKNOWN;
+        }
         let found = self.types.member(x.ty, sel.name, self.path, self.names);
         match (&x.mode, found) {
             // A field of a variable, or one behind a pointer, is a
@@ -1730,74 +1813,6 @@ impl<'a> Checker<'a> {
         self.types.array(len, elem)
     }
 
-    fn index(&mut self, cx: &Cx<'a>, expr: ExprId, x: ExprId, indices: &[ExprId]) -> Operand {
-        let x = self.operand(cx, x);
-        match x.mode {
-            // A generic type with its arguments.
-            Mode::Type => Operand {
-                mode: Mode::Type,
-                ty: self.typ(cx, expr),
-            },
-            _ if x.is_value() => {
-                // An index of no type is an `int`; the key of a map has
-                // the type of its keys.
-                let wanted = match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Map { key, .. } => Some(*key),
-                    Type::Func { .. } => None,
-                    _ => Some(self.types.basic(Basic::Int)),
-                };
-                for &index in indices.iter().filter(|_| wanted.is_some()) {
-                    self.operand(cx, index);
-                    if let Some(wanted) = wanted {
-                        self.convert(cx, index, wanted);
-                    }
-                }
-                let elem = match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Basic(Basic::String | Basic::UntypedString) => {
-                        self.types.basic(Basic::Uint8)
-                    }
-                    // An element of a slice is a variable, one of an
-                    // array if the array is, one of a map can only be
-                    // assigned to.
-                    Type::Slice(elem) => return Operand::variable(*elem),
-                    Type::Array { elem, .. } => {
-                        return match x.mode {
-                            Mode::Variable => Operand::variable(*elem),
-                            _ => Operand::value(*elem),
-                        };
-                    }
-                    Type::Map { value, .. } => {
-                        return match *value {
-                            Types::INVALID => Operand::UNKNOWN,
-                            ty => Operand {
-                                mode: Mode::MapIndex,
-                                ty,
-                            },
-                        };
-                    }
-                    Type::Pointer(array) => match &*self.types.get(self.types.underlying(*array)) {
-                        Type::Array { elem, .. } => return Operand::variable(*elem),
-                        _ => return Operand::UNKNOWN,
-                    },
-                    // A generic function with its type arguments.
-                    Type::Func { .. } => {
-                        let Some(params) = self.types.generic_func(x.ty) else {
-                            return Operand::UNKNOWN;
-                        };
-                        let args: Vec<TypeId> = indices.iter().map(|&i| self.typ(cx, i)).collect();
-                        if args.len() != params.len() {
-                            return Operand::UNKNOWN;
-                        }
-                        self.types.substitute(x.ty, &params, &args)
-                    }
-                    _ => return Operand::UNKNOWN,
-                };
-                Operand::value(elem)
-            }
-            _ => Operand::UNKNOWN,
-        }
-    }
-
     fn is_untyped(&self, ty: TypeId) -> bool {
         self.types.is_untyped(ty)
     }
@@ -1896,9 +1911,7 @@ impl<'a> Checker<'a> {
             }
             _ if callee.is_value() => {
                 self.called_or_received = true;
-                for &arg in args {
-                    self.operand(cx, arg);
-                }
+                let generic = self.types.generic_func(callee.ty).is_some();
                 // The type arguments of a generic function are found from
                 // the arguments of the call.
                 let sig = match self.types.generic_func(callee.ty) {
@@ -1924,20 +1937,26 @@ impl<'a> Checker<'a> {
                 else {
                     return Operand::UNKNOWN;
                 };
-                // An argument of no type takes the type of its parameter:
-                // the element type for the arguments of `...T`.
-                for (at, &arg) in args.iter().enumerate() {
-                    let in_rest = *variadic && at + 1 >= params.len() && !spread;
-                    let wanted = match (in_rest, params.last()) {
-                        (true, Some(&last)) => match &*self.types.get(last) {
-                            Type::Slice(elem) => Some(*elem),
-                            _ => None,
-                        },
-                        _ => params.get(at).copied(),
-                    };
-                    if let Some(wanted) = wanted {
-                        self.convert(cx, arg, wanted);
+                match generic {
+                    // What the type arguments make of the parameters is
+                    // not checked against the arguments yet: only a value
+                    // of no type takes the type of its parameter.
+                    true => {
+                        for (at, &arg) in args.iter().enumerate() {
+                            let in_rest = *variadic && at + 1 >= params.len() && !spread;
+                            let wanted = match (in_rest, params.last()) {
+                                (true, Some(&last)) => match &*self.types.get(last) {
+                                    Type::Slice(elem) => Some(*elem),
+                                    _ => None,
+                                },
+                                _ => params.get(at).copied(),
+                            };
+                            if let Some(wanted) = wanted {
+                                self.convert(cx, arg, wanted);
+                            }
+                        }
                     }
+                    false => self.arguments(cx, expr, fun, (params, *variadic), args, spread),
                 }
                 match &results[..] {
                     [] => Operand {
@@ -2494,10 +2513,8 @@ impl<'a> Checker<'a> {
             StmtKind::Bad | StmtKind::Empty | StmtKind::Branch { .. } => {}
             StmtKind::Labeled { stmt, .. } => self.stmt(cx, *stmt),
             StmtKind::Block(block) => self.stmts(cx, &block.stmts),
-            StmtKind::Expr(x)
-            | StmtKind::IncDec { x, .. }
-            | StmtKind::Go(x)
-            | StmtKind::Defer(x) => {
+            StmtKind::Expr(x) => self.expr_stmt(cx, *x),
+            StmtKind::IncDec { x, .. } | StmtKind::Go(x) | StmtKind::Defer(x) => {
                 self.operand(cx, *x);
             }
             StmtKind::Send { chan, value } => {

@@ -517,7 +517,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether all types that `ty` may be are integers.
-    fn all_integer(&self, ty: TypeId) -> bool {
+    pub(super) fn all_integer(&self, ty: TypeId) -> bool {
         self.open(ty) || self.is_integer(ty)
     }
 
@@ -550,7 +550,10 @@ impl<'a> Checker<'a> {
     ) -> Operand {
         // `*T` is a type, `*p` what the pointer points to.
         let x = match op {
-            UnaryOp::Star => self.operand(cx, inner),
+            UnaryOp::Star => {
+                let x = self.operand(cx, inner);
+                self.instantiated(cx, inner, x)
+            }
             _ => self.value(cx, inner),
         };
         if x.mode == Mode::Unknown {
