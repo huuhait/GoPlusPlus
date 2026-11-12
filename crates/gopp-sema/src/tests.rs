@@ -9,8 +9,9 @@ use gopp_span::{Dialect, SourceFile, SourceMap};
 use gopp_syntax::ast::{ExprId, ExprKind, File};
 use gopp_syntax::parser::parse;
 use gopp_testutil::{linear, samples, stress};
-use lasso::ThreadedRodeo;
+use lasso::{Spur, ThreadedRodeo};
 
+use crate::constant::Value;
 use crate::resolve::check_counted;
 use crate::types::Types;
 use crate::{LocalKind, ObjKind, Package, PackageLoader, Ref, Transfer, Unit, check};
@@ -23,6 +24,8 @@ struct Loader {
     fake_rest: bool,
     /// The types of all packages checked with this loader.
     types: std::sync::OnceLock<Types>,
+    /// What runs the `@Const` functions, in the tests that have one.
+    evaluator: Option<Box<dyn crate::ConstEvaluator>>,
 }
 
 impl PackageLoader for Loader {
@@ -32,6 +35,10 @@ impl PackageLoader for Loader {
             None if self.fake_rest => Ok(Arc::new(Package::fake(path))),
             None => Err("package not found".to_owned()),
         }
+    }
+
+    fn evaluator(&self) -> Option<&dyn crate::ConstEvaluator> {
+        self.evaluator.as_deref()
     }
 }
 
@@ -9999,6 +10006,492 @@ fn the_steps_of_operators_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(types(n)));
     linear::assert_near_linear(&sizes, |n| steps(uses(n)));
     linear::assert_near_linear(&sizes, |n| steps(instances(n)));
+}
+
+/// The constants of the package: `name type = value`, in the order of
+/// their declarations.
+fn constants(checked: &Checked, loader: &Loader, names: &ThreadedRodeo) -> Vec<String> {
+    let types = loader.types.get().unwrap();
+    let consts = checked.package.objects.iter();
+    consts
+        .filter(|object| matches!(object.kind, ObjKind::Const))
+        .map(|object| {
+            let ty = types.display_in(object.ty, names, names.get_or_intern("p"));
+            format!("{} {ty} = {}", names.resolve(&object.name), object.value)
+        })
+        .collect()
+}
+
+// rule: EXP-31
+#[test]
+fn a_constant_is_made_of_constants() {
+    let text = "package p
+
+type Vec2 struct{ X, Y float64 }
+type Line struct {
+	From, To Vec2
+	Name     string
+}
+type Pair struct{ a, b int }
+
+const Origin = Vec2{0, 0}
+const Unit = Vec2{X: 1, Y: 1}
+const Half Vec2 = Vec2{Y: 0.5}
+const Diag = Line{Origin, Unit, \"diag\"}
+const X = Unit.X
+const Name = Diag.Name
+const ToY = Diag.To.Y
+const Primes = [4]int{2, 3, 5, 7}
+const Sparse = [...]int8{3: 1, 2, 0: 9}
+const Third = Primes[2]
+const Count = len(Primes) + len(Sparse)
+const Letter = \"abc\"[1]
+const None Option[int] = nil
+const Some Option[int] = 3
+const Pairs = [2]Pair{{1, 2}, {b: 4}}
+const Last = Pairs[1].b
+const Inner = struct{ n [2]bool }{[2]bool{true}}
+
+var sized [Third + Last]int
+
+func use(i int) float64 {
+	const local = Vec2{2, 3}
+	var grid [len(Pairs)][Primes[0]]int
+	_ = grid
+	return local.X + X + float64(Third) + float64(Letter) + ToY + float64(Primes[i])
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let expected = [
+        "Origin Vec2 = {0, 0}",
+        "Unit Vec2 = {1, 1}",
+        "Half Vec2 = {0, 0.5}",
+        "Diag Line = {{0, 0}, {1, 1}, \"diag\"}",
+        "X float64 = 1",
+        "Name string = \"diag\"",
+        "ToY float64 = 1",
+        "Primes [4]int = {2, 3, 5, 7}",
+        "Sparse [5]int8 = {9, 0, 0, 1, 2}",
+        "Third int = 5",
+        "Count int = 9",
+        "Letter byte = 98",
+        "None Option[int] = nil",
+        "Some Option[int] = 3",
+        "Pairs [2]Pair = {{1, 2}, {0, 4}}",
+        "Last int = 4",
+        "Inner struct{n [2]bool} = {{true, false}}",
+    ];
+    assert_eq!(constants(&checked, &loader, &names), expected);
+
+    // The types that a constant does not have, and what a constant is
+    // not: assigned, or the owner of an address.
+    let bad = "package p
+
+type Vec2 struct{ X, Y float64 }
+type Buf struct{ n int }
+
+func (b *Buf) drop() {}
+
+@Pinned
+type Pin struct{ n int }
+
+type Root struct{ n int }
+
+@Virtual
+func (r *Root) M() {}
+
+const A [2]*int = [2]*int{}
+const B []int = nil
+const C map[string]int = nil
+const D Buf = Buf{}
+const E Pin = Pin{}
+const F Root = Root{}
+const G struct{ f func() } = struct{ f func() }{}
+const H any = 1
+const I Option[Unique[int]] = nil
+const J = []int{1}
+var v = 3.5
+const K = Vec2{v, 0}
+const L Vec2 = nil
+
+const Origin = Vec2{0, 0}
+const Primes = [4]int{2, 3, 5, 7}
+
+func use() {
+	Origin.X = 1
+	Primes[0] = 1
+	p := &Origin
+	q := &Primes[0]
+	_, _ = p, q
+	_ = Primes[4]
+}
+";
+    let expected = [
+        "a.gopp:16:9: invalid constant type [2]*int: a *int names a value of the running program",
+        "a.gopp:17:9: invalid constant type []int: the buffer of a []int is made by the running \
+         program",
+        "a.gopp:18:9: invalid constant type map[string]int: the buffer of a map[string]int is made \
+         by the running program",
+        "a.gopp:19:9: invalid constant type Buf: Buf has a drop method",
+        "a.gopp:20:9: invalid constant type Pin: Pin is @Pinned",
+        "a.gopp:21:9: invalid constant type Root: Root has a type table",
+        "a.gopp:22:9: invalid constant type struct{f func()}: func() is a func type",
+        "a.gopp:23:9: invalid constant type any: any is an interface type",
+        "a.gopp:24:9: invalid constant type Option[Unique[int]]: a Unique[int] names a value of \
+         the running program",
+        "a.gopp:25:11: []int{…} (value of type []int) is not constant",
+        "a.gopp:27:11: Vec2{…} (value of struct type Vec2) is not constant",
+        "a.gopp:28:16: nil is not constant",
+        "a.gopp:34:2: cannot assign to Origin.X (neither addressable nor a map index expression)",
+        "a.gopp:35:2: cannot assign to Primes[0] (neither addressable nor a map index expression)",
+        "a.gopp:36:8: invalid operation: cannot take address of Origin (constant {0, 0} of struct \
+         type Vec2)",
+        "a.gopp:37:8: invalid operation: cannot take address of Primes[0] (constant 2 of type int)",
+        "a.gopp:39:13: invalid argument: index 4 out of bounds [0:4]",
+    ];
+    assert_eq!(messages("a.gopp", bad), expected);
+
+    // A Go file has the constants of Go.
+    let go = "package p\ntype V struct{ x int }\nconst A = V{1}\nconst B [2]int = [2]int{}\n";
+    let expected = [
+        "a.go:3:11: V{…} (value of struct type V) is not constant",
+        "a.go:4:9: invalid constant type [2]int",
+    ];
+    assert_eq!(messages("a.go", go), expected);
+}
+
+/// Runs the functions `double`, `Twice`, `table` and `fail`, and the
+/// method `Add` of a struct of two numbers, as a `@Const` evaluator would.
+struct Evaluator {
+    double: Spur,
+    twice: Spur,
+    table: Spur,
+    fail: Spur,
+    add: Spur,
+}
+
+impl crate::ConstEvaluator for Evaluator {
+    fn call(&self, call: &crate::ConstCall<'_>) -> Result<Value, crate::ConstFailure> {
+        use crate::constant::{BinaryOp, Composite};
+        let composite = |parts: Composite| Value::Composite(Arc::new(parts));
+        let name = call.name;
+        if name == self.double || name == self.twice {
+            return Ok(call.args[0].binary(BinaryOp::Add, &call.args[0]));
+        }
+        if name == self.table {
+            let squares = (0..4).map(|i| Value::Int64(i * i)).collect();
+            return Ok(composite(Composite::Array(squares)));
+        }
+        if name == self.add {
+            let fields = |value: &Value| match value {
+                Value::Composite(parts) => match &**parts {
+                    Composite::Struct(fields) => fields.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let (a, b) = (fields(&call.args[0]), fields(&call.args[1]));
+            let sums = a.iter().zip(&b).map(|(a, b)| a.binary(BinaryOp::Add, b));
+            return Ok(composite(Composite::Struct(sums.collect())));
+        }
+        assert_eq!(name, self.fail);
+        Err(crate::ConstFailure {
+            message: "panic: no value".to_owned(),
+            stack: vec!["fail".to_owned(), "outer".to_owned()],
+        })
+    }
+}
+
+// rule: EXP-32
+// rule: EXP-34
+#[test]
+fn a_const_function_is_called_in_a_constant_expression() {
+    let text = "package p
+
+import \"lib\"
+
+type Vec2 struct{ X, Y int }
+
+@Const @Operator
+func (a Vec2) Add(b Vec2) Vec2 { return Vec2{a.X + b.X, a.Y + b.Y} }
+
+@Const
+func double(n int) int { return n + n }
+
+@Const
+func table() [4]int { return [4]int{0, 1, 4, 9} }
+
+const Four = double(2)
+const Eight = double(Four)
+const Squares = table()
+const Nine = Squares[3]
+const Sum = Vec2{1, 2} + Vec2{10, 20}
+const SumX = Sum.X
+const Far = lib.Twice(4)
+
+var sized [Eight + Nine + SumX]int
+var direct [double(2)]int
+
+func use(n int) int {
+	const local = double(21)
+	return double(n) + local
+}
+";
+    let lib = "package lib\n\n@Const\nfunc Twice(n int) int { return 2 * n }\n\
+               func Plain() int { return 1 }\n";
+    let names = ThreadedRodeo::new();
+    let mut loader = with_packages(&names, &[("lib", lib)]);
+    // Without what runs them, the calls are constants of their types.
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let expected = [
+        "Four int = unknown",
+        "Eight int = unknown",
+        "Squares [4]int = unknown",
+        "Nine int = unknown",
+        "Sum Vec2 = unknown",
+        "SumX int = unknown",
+        "Far int = unknown",
+    ];
+    assert_eq!(constants(&checked, &loader, &names), expected);
+
+    loader.evaluator = Some(Box::new(Evaluator {
+        double: names.get_or_intern("double"),
+        twice: names.get_or_intern("Twice"),
+        table: names.get_or_intern("table"),
+        fail: names.get_or_intern("fail"),
+        add: names.get_or_intern("Add"),
+    }));
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let expected = [
+        "Four int = 4",
+        "Eight int = 8",
+        "Squares [4]int = {0, 1, 4, 9}",
+        "Nine int = 9",
+        "Sum Vec2 = {11, 22}",
+        "SumX int = 11",
+        "Far int = 8",
+    ];
+    assert_eq!(constants(&checked, &loader, &names), expected);
+
+    let bad = "package p
+
+import \"lib\"
+
+type Vec2 struct{ X, Y int }
+
+@Operator
+func (a Vec2) Add(b Vec2) Vec2 { return a }
+
+func (a Vec2) Len() int { return a.X }
+
+@Const
+func fail(n int) int { panic(\"no value\") }
+
+@Const
+func slice() []int { return []int{1} }
+
+func plain() int { return 1 }
+
+var v = 2
+
+const A = plain()
+const B = lib.Plain()
+const C = Vec2{1, 2} + Vec2{3, 4}
+const D = Vec2{1, 2}.Len()
+const E = fail(1)
+const F = fail(v)
+const G = slice()
+const H = func() int { return 1 }()
+var sized [plain()]int
+";
+    let checked = check_texts("p", &[("a.gopp", bad)], &loader, &names);
+    let expected = [
+        "a.gopp:22:11: cannot call non-@Const function plain in constant expression",
+        "a.gopp:23:11: cannot call non-@Const function lib.Plain in constant expression",
+        "a.gopp:24:11: cannot call non-@Const method Vec2.Add in constant expression",
+        "a.gopp:25:11: cannot call non-@Const function Vec2{…}.Len in constant expression",
+        "a.gopp:26:11: constant expression fails: panic: no value",
+        "    in fail",
+        "    in outer",
+        "a.gopp:27:11: fail(v) (value of type int) is not constant",
+        "a.gopp:28:11: invalid constant type []int: the buffer of a []int is made by the running \
+         program",
+        "a.gopp:29:11: cannot call non-@Const function (func() int literal) in constant expression",
+        "a.gopp:30:12: cannot call non-@Const function plain in constant expression",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+// rule: EXP-33
+#[test]
+fn the_body_of_a_const_function_does_what_a_constant_expression_may() {
+    let declared = "package p
+
+import \"unsafe\"
+
+type Buf struct{ n int }
+
+func (b *Buf) drop() {}
+
+type Shape interface{ Area() int }
+
+var counter int
+
+func plain(x int) int { return x }
+
+@Const
+func pure(x int) int { return x + 1 }
+
+type V struct{ x int }
+
+@Operator
+func (a V) Add(b V) V { return a }
+
+@Const @Operator
+func (a V) Sub(b V) V { return a }
+
+func (a V) Plain() int { return a.x }
+
+@Const
+func (a V) Pure() int { return a.x }
+
+const Limit = 4
+";
+    let bad = "
+@Const
+func bad(s Shape, f func() int, v V, ch chan int) int {
+	counter++
+	x := counter + plain(1) + pure(2)
+	x += s.Area() + f() + v.Plain() + v.Pure()
+	w := v + v - v
+	m := map[string]int{}
+	go pure(1)
+	defer pure(1)
+	select {}
+	p := NewUnique(V{})
+	var b Buf
+	_ = unsafe.Sizeof(x)
+	_ = recover()
+	println(x)
+	_, _, _, _ = w, m, p, b
+	return x
+}
+
+@Const
+func (v V) Count() int { return counter }
+";
+    let names = ThreadedRodeo::new();
+    let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
+    let loader = with_packages(&names, &[("unsafe", stub)]);
+    let text = format!("{declared}{bad}");
+    let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
+    let expected = [
+        "a.gopp:34:41: invalid @Const function bad: it uses a channel",
+        "a.gopp:35:2: invalid @Const function bad: it uses the variable counter",
+        "a.gopp:36:7: invalid @Const function bad: it uses the variable counter",
+        "a.gopp:36:17: invalid @Const function bad: it calls plain, which is not @Const",
+        "a.gopp:37:7: invalid @Const function bad: it calls a method of an interface",
+        "a.gopp:37:18: invalid @Const function bad: it calls a func value",
+        "a.gopp:37:24: invalid @Const function bad: it calls v.Plain, which is not @Const",
+        "a.gopp:38:7: invalid @Const function bad: it uses the operator method V.Add, which is not \
+         @Const",
+        "a.gopp:39:7: invalid @Const function bad: it uses a map",
+        "a.gopp:40:2: invalid @Const function bad: it has a go statement",
+        "a.gopp:41:2: invalid @Const function bad: it has a defer statement",
+        "a.gopp:42:2: invalid @Const function bad: it has a select statement",
+        "a.gopp:43:7: invalid @Const function bad: it calls NewUnique",
+        "a.gopp:44:8: invalid @Const function bad: it uses Buf, which has a drop method",
+        "a.gopp:45:6: invalid @Const function bad: it uses package unsafe",
+        "a.gopp:46:6: invalid @Const function bad: it calls recover",
+        "a.gopp:47:2: invalid @Const function bad: it calls println",
+        "a.gopp:53:33: invalid @Const function Count: it uses the variable counter",
+    ];
+    assert_eq!(checked.messages, expected);
+
+    let good = "
+@Const
+func good(n int, v V) [Limit]int {
+	var t [Limit]int
+	for i := range t {
+		t[i] = pure(i)*n + Limit
+	}
+	q := &t
+	q[0] = v.Pure() + (v - v).x
+	xs := make([]int, 3)
+	xs = append(xs, len(xs), cap(xs), min(1, 2))
+	clear(xs)
+	var o Option[int] = 3
+	if held, ok := o.Get(); ok && !o.IsNil() {
+		t[1] += held
+	}
+	switch {
+	case n > 3:
+		return good(n-1, v)
+	case n < 0:
+		panic(\"negative\")
+	}
+	return t
+}
+
+@Const
+func generic[T interface {
+	Add(T) T
+	Copy
+}](a T) T {
+	return a + a.Add(a)
+}
+
+func free() int { return counter + plain(1) }
+";
+    let text = format!("{declared}{good}").replace("import \"unsafe\"\n", "");
+    assert_eq!(messages("a.gopp", &text), [] as [&str; 0]);
+}
+
+#[test]
+fn the_steps_of_constants_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    // Many types, each with a constant made of the one before, a field
+    // of it, and a `@Const` function that reads it.
+    let chain = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                let inner = match i {
+                    0 => "int".to_owned(),
+                    _ => format!("T{}", i - 1),
+                };
+                let value = match i {
+                    0 => "1".to_owned(),
+                    _ => format!("C{}", i - 1),
+                };
+                format!(
+                    "type T{i} struct{{ n int; in {inner} }}\nconst C{i} = T{i}{{{i}, {value}}}\n\
+                     const N{i} = C{i}.n\n\n@Const\nfunc f{i}(k int) int {{ return k + N{i} + \
+                     C{i}.n }}\n"
+                )
+            })
+            .collect();
+        format!("package p\n{all}")
+    };
+    // One array constant and many constants that are elements of it.
+    let elements = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("const E{i} = Table[{}]\n", i % 8))
+            .collect();
+        format!("package p\nconst Table = [8]int{{1, 2, 3, 4, 5, 6, 7, 8}}\n{all}")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    linear::assert_near_linear(&sizes, |n| steps(elements(n)));
 }
 
 // rule: OWN-R3a

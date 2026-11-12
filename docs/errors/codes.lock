@@ -501,3 +501,6 @@ E0495 err_iface_not_send
 E0496 err_extends_diamond
 E0497 err_base_ambiguous
 E0498 note_op_fix
+E0499 err_const_impure
+E0500 err_const_call
+E0501 err_const_eval

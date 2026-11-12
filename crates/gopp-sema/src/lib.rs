@@ -2,6 +2,7 @@
 
 pub mod basic;
 pub mod constant;
+mod consteval;
 mod decls;
 mod exprstring;
 mod literal;
@@ -15,10 +16,11 @@ mod universe;
 #[cfg(test)]
 mod tests;
 
+pub use consteval::{ConstCall, ConstEvaluator, ConstFailure};
 pub use decls::Initializer;
 pub use object::{
     Bang, Body, Capture, CaptureUse, ExprType, FileInfo, Instance, Local, LocalId, LocalKind,
-    MethodValue, ObjId, ObjKind, Object, Ref, Selection, SelectionKind, Transfer,
+    MethodValue, ObjId, ObjKind, Object, OperatorUse, Ref, Selection, SelectionKind, Transfer,
 };
 pub use package::{Package, PackageLoader};
 pub use resolve::{Unit, check};

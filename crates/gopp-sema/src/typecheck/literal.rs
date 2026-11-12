@@ -37,8 +37,9 @@ impl<'a> Checker<'a> {
                 (Types::INVALID, Types::INVALID, false)
             }
         };
-        // The elements are looked at when the body is walked.
-        if self.memo.is_none() {
+        // The elements are looked at when the body is walked; those of a
+        // constant, with the constant.
+        if self.memo.is_none() && !self.in_const {
             return match self.types.underlying(literal) {
                 invalid if invalid == Types::INVALID => Operand::UNKNOWN,
                 _ => Operand::value(literal),
@@ -92,15 +93,18 @@ impl<'a> Checker<'a> {
             }
         }
         // Nothing more is said about a type that is in error.
-        match self.types.underlying(literal) {
-            invalid if invalid == Types::INVALID => Operand::UNKNOWN,
-            _ => Operand::value(literal),
+        if self.types.underlying(literal) == Types::INVALID {
+            return Operand::UNKNOWN;
+        }
+        match self.literal_constant(cx, literal, elems) {
+            Some(value) => Operand::constant(literal, value),
+            None => Operand::value(literal),
         }
     }
 
     /// The element `expr` of a literal that gives its elements the type
     /// `hint`: written without a type, `{…}`, it has that type.
-    fn element(&mut self, cx: &Cx<'a>, expr: ExprId, hint: Option<TypeId>) -> Operand {
+    pub(super) fn element(&mut self, cx: &Cx<'a>, expr: ExprId, hint: Option<TypeId>) -> Operand {
         let ExprKind::CompositeLit { ty: None, elems } = &cx.tree.exprs[expr].kind else {
             return self.value(cx, expr);
         };

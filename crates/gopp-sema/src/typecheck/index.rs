@@ -162,8 +162,15 @@ impl<'a> Checker<'a> {
         let Some(index) = self.single_index(cx, indices) else {
             return Operand::UNKNOWN;
         };
-        self.index_value(cx, index, length);
-        element
+        let at = self.index_value(cx, index, length);
+        // An element of a constant at a constant index is a constant
+        // (EXP-31).
+        match (&x.mode, at) {
+            (Mode::Const(held), Some(at)) if self.own_rules(cx) => {
+                Operand::constant(element.ty, self.constant_element(held, at))
+            }
+            _ => element,
+        }
     }
 
     /// `m[key]` for a map with the key type `key` and the value type

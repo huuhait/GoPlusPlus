@@ -547,6 +547,9 @@ struct Inner {
     held: FxHashSet<TypeId>,
     /// For a type that was asked: the part of it without a zero value.
     no_zero: FxHashMap<TypeId, Option<(TypeId, NoZero)>>,
+    /// For a type that was asked, what keeps it from being the type of
+    /// a constant.
+    not_constant: FxHashMap<TypeId, Option<(TypeId, NotConstant)>>,
 }
 
 /// A declared alias and how its type arguments are written.
@@ -2805,6 +2808,7 @@ fn basic_name(basic: Basic) -> &'static str {
 }
 
 mod category;
+mod constant;
 mod hierarchy;
 mod label;
 mod methodset;
@@ -2814,6 +2818,7 @@ mod typeset;
 mod zero;
 
 pub use category::{Category, CopyRule, NotCopied};
+pub use constant::NotConstant;
 pub use hierarchy::PARENT;
 pub use label::{Labels, Unlabeled};
 pub use methodset::MethodSet;

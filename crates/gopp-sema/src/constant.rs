@@ -55,6 +55,18 @@ pub enum Kind {
     Int,
     Float,
     Complex,
+    Composite,
+}
+
+/// A constant that is made of others (EXP-31).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Composite {
+    /// The values of the fields of a struct, in their order.
+    Struct(Vec<Value>),
+    /// The values of the elements of an array.
+    Array(Vec<Value>),
+    /// An option that is nil. One that is set is the value it holds.
+    Nil,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +82,7 @@ pub enum Value {
     Float(Float),
     /// The real and the imaginary part: each an integer or a float.
     Complex(Box<Value>, Box<Value>),
+    Composite(Arc<Composite>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,6 +497,7 @@ impl Value {
             Self::Int64(_) | Self::Int(_) => Kind::Int,
             Self::Rat(_) | Self::Float(_) => Kind::Float,
             Self::Complex(..) => Kind::Complex,
+            Self::Composite(_) => Kind::Composite,
         }
     }
 
@@ -706,7 +720,7 @@ impl Value {
     fn rank(&self) -> u8 {
         match self {
             Self::Unknown => 0,
-            Self::Bool(_) | Self::Str(_) => 1,
+            Self::Bool(_) | Self::Str(_) | Self::Composite(_) => 1,
             Self::Int64(_) => 2,
             Self::Int(_) => 3,
             Self::Rat(_) => 4,
@@ -1013,6 +1027,27 @@ impl fmt::Display for Value {
             Self::Rat(x) => f.write_str(&float_string(&rat_to_float(x))),
             Self::Float(x) => f.write_str(&float_string(x)),
             Self::Complex(re, im) => write!(f, "({re} + {im}i)"),
+            Self::Composite(parts) => {
+                let list = |f: &mut fmt::Formatter<'_>, values: &[Value]| {
+                    // A long constant is cut short.
+                    const MAX_PARTS: usize = 8;
+                    f.write_str("{")?;
+                    for (at, value) in values.iter().take(MAX_PARTS).enumerate() {
+                        let comma = if at == 0 { "" } else { ", " };
+                        write!(f, "{comma}{value}")?;
+                    }
+                    let more = if values.len() > MAX_PARTS {
+                        ", ..."
+                    } else {
+                        ""
+                    };
+                    write!(f, "{more}}}")
+                };
+                match &**parts {
+                    Composite::Struct(values) | Composite::Array(values) => list(f, values),
+                    Composite::Nil => f.write_str("nil"),
+                }
+            }
         }
     }
 }

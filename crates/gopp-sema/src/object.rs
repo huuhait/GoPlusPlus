@@ -9,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::constant::Value;
 use crate::package::Package;
-use crate::types::TypeId;
+use crate::types::{Marks, TypeId};
 use crate::universe::Predeclared;
 
 /// A package-level object or an import: an index into [`Package::objects`].
@@ -31,6 +31,8 @@ pub struct Object {
     pub ty: TypeId,
     /// The value of a constant; unknown for anything else.
     pub value: Value,
+    /// The built-in attributes of a function.
+    pub marks: Marks,
 }
 
 #[derive(Debug)]

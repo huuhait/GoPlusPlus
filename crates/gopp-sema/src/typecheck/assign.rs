@@ -688,7 +688,10 @@ impl<'a> Checker<'a> {
         declared: Option<TypeId>,
         expr: ExprId,
     ) -> Operand {
+        let own = self.own_rules(cx);
+        let outer = std::mem::replace(&mut self.in_const, own);
         let x = self.value(cx, expr);
+        self.in_const = outer;
         // A constant that is declared with a type has that type whatever
         // its value is; a value in error is not known.
         let unknown = match declared {
@@ -697,6 +700,15 @@ impl<'a> Checker<'a> {
         };
         if x.mode == Mode::Unknown || declared == Some(Types::INVALID) {
             return unknown;
+        }
+        // An option that is nil is a constant (EXP-31).
+        if let Some(ty) = declared
+            && self.own_rules(cx)
+            && x.ty == self.types.basic(Basic::UntypedNil)
+            && matches!(&*self.types.get(self.types.underlying(ty)), Type::Option(_))
+        {
+            let nil = crate::constant::Composite::Nil;
+            return Operand::constant(ty, Value::Composite(std::sync::Arc::new(nil)));
         }
         if !matches!(x.mode, Mode::Const(_)) {
             let message = format!("{} is not constant", self.describe(cx, expr, &x));
@@ -710,6 +722,10 @@ impl<'a> Checker<'a> {
         let Mode::Const(value) = assigned.mode else {
             return unknown;
         };
+        // A constant that is made of others is held as it is.
+        if self.basic_of(ty).is_none() && self.own_rules(cx) {
+            return Operand::constant(ty, value);
+        }
         match self.converted(&value, ty) {
             Some(value) => Operand::constant(ty, value),
             None => unknown,
@@ -722,6 +738,13 @@ impl<'a> Checker<'a> {
         let under = self.types.underlying(ty);
         if ty == Types::INVALID || matches!(&*self.types.get(under), Type::Basic(_)) {
             return ty;
+        }
+        // In a `.gopp` file a constant may be made of others (EXP-31).
+        if under != Types::INVALID && self.own_rules(cx) {
+            return match self.not_constant_type(cx, expr, ty) {
+                true => Types::INVALID,
+                false => ty,
+            };
         }
         if under != Types::INVALID && !self.types.has_param(ty) {
             let message = format!("invalid constant type {}", self.type_string(ty));

@@ -1779,6 +1779,29 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Call the method with arguments of the parameter types of one of them.",
             "f := v.Mul      // error: which Mul?\nw := v.Mul(2.0) // ok",
         ),
+        ConstImpure => (
+            "A @Const function may run while the program is compiled, so its body does only \
+             what a constant expression may do. It cannot use a package variable, call a \
+             function that is not @Const, call through an interface or a func value, start a \
+             goroutine, defer, use a map, a channel, package unsafe or a type with a drop \
+             method, or make a value on the heap with NewUnique or NewShared.",
+            "Remove that from the body, mark the function it calls @Const, or remove @Const \
+             from this function.",
+            "var seed = 7\n\n@Const\nfunc hash(n int) int { return n ^ seed } // error: uses the variable seed",
+        ),
+        ConstCall => (
+            "A constant expression calls only functions and methods that are marked @Const: \
+             they are run while the program is compiled.",
+            "Mark the function @Const, or declare a variable in place of the constant.",
+            "func size() int { return 4 }\nconst N = size() // error\n\n@Const\nfunc width() int { return 4 }\nconst W = width() // ok",
+        ),
+        ConstEval => (
+            "A @Const function was run for a constant and gave no value: it panicked, divided \
+             by zero, indexed out of range, or passed a limit of steps, memory or call depth. \
+             The notes name the functions that were running.",
+            "Correct the function or its arguments so that the call gives a value.",
+            "@Const\nfunc inverse(n int) int { return 100 / n }\nconst Bad = inverse(0) // error: division by zero",
+        ),
         _ => return None,
     };
     Some(Explanation {

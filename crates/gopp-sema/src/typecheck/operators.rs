@@ -131,7 +131,7 @@ pub(super) struct Marked<'m> {
 }
 
 impl<'a> Checker<'a> {
-    fn func_parts(&self, sig: TypeId) -> (Vec<TypeId>, Vec<TypeId>, bool) {
+    pub(super) fn func_parts(&self, sig: TypeId) -> (Vec<TypeId>, Vec<TypeId>, bool) {
         match &*self.types.get(sig) {
             Type::Func {
                 params,
@@ -413,7 +413,7 @@ impl<'a> Checker<'a> {
                 return Operand::UNKNOWN;
             }
         };
-        let used = self.operator_used(cx, &method, &operands, false);
+        let used = self.operator_used(cx, at, &method, &operands, false);
         self.operators.insert(call, used);
         Operand::value(method.sig)
     }
@@ -616,11 +616,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The method `method` stands for the expression `expr`: its
+    /// The method `method` stands for an expression at `at`: its
     /// operands `args` get the types of its parameters.
     fn operator_used(
         &mut self,
         cx: &Cx<'a>,
+        at: Span,
         method: &Operator,
         args: &[(ExprId, Operand)],
         swapped: bool,
@@ -634,6 +635,14 @@ impl<'a> Checker<'a> {
             Type::Named { id, .. } => Some(*id),
             _ => None,
         };
+        if declared.is_some() && !method.marks.has(Marks::CONST) {
+            let what = format!(
+                "uses the operator method {}.{}, which is not @Const",
+                self.type_string(method.holder),
+                self.names.resolve(&method.name)
+            );
+            self.impure(at, &what);
+        }
         // What is being declared needs the method.
         let node = declared
             .and_then(|id| self.operator_spans.get(&(id, method.at)))
@@ -782,7 +791,7 @@ impl<'a> Checker<'a> {
             false => (left, (right, y.clone())),
             true => (right, (left, x.clone())),
         };
-        let used = self.operator_used(cx, &method, &[arg], swapped);
+        let used = self.operator_used(cx, at, &method, &[arg], swapped);
         // The other operand has its type for good.
         let own = if swapped { y } else { x };
         self.update_expr_type(cx, receiver, own.ty, true);
@@ -808,15 +817,22 @@ impl<'a> Checker<'a> {
                 self.op_assigns.insert(left, used)
             }
         };
-        match op {
+        let result = match op {
             BinaryOp::Eq
             | BinaryOp::Ne
             | BinaryOp::Lt
             | BinaryOp::Le
             | BinaryOp::Gt
-            | BinaryOp::Ge => Overload::Chosen(self.value_of(Basic::UntypedBool)),
-            _ => Overload::Chosen(Operand::value(results[0])),
-        }
+            | BinaryOp::Ge => self.value_of(Basic::UntypedBool),
+            _ => Operand::value(results[0]),
+        };
+        // The receiver is the first operand of the method.
+        let operands = match swapped {
+            false => [x, y],
+            true => [y, x],
+        };
+        let at = (whole.unwrap_or(left), at);
+        Overload::Chosen(self.constant_operator(cx, at, &method, &operands, result))
     }
 
     /// The value `case` of a clause of a switch on `tag` is compared
@@ -842,7 +858,7 @@ impl<'a> Checker<'a> {
                     false => (case, v.clone()),
                     true => (tag, x.clone()),
                 };
-                let used = self.operator_used(cx, &method, &[arg], swapped);
+                let used = self.operator_used(cx, at, &method, &[arg], swapped);
                 self.case_operators.insert(case, used);
                 true
             }
@@ -931,7 +947,7 @@ impl<'a> Checker<'a> {
             self.error(Code::OpNotAddressable, at, message);
             return Some(Operand::UNKNOWN);
         }
-        let used = self.operator_used(cx, &method, &args, false);
+        let used = self.operator_used(cx, at, &method, &args, false);
         let (params, results, _) = self.func_parts(method.sig);
         Some(match store {
             true => {
@@ -964,7 +980,7 @@ impl<'a> Checker<'a> {
             self.error(Code::OpNotAddressable, self.span(cx, of), message);
             return Operand::UNKNOWN;
         }
-        let used = self.operator_used(cx, method, &[], false);
+        let used = self.operator_used(cx, self.span(cx, of), method, &[], false);
         self.operators.insert(of, used);
         let (_, results, _) = self.func_parts(method.sig);
         Operand::value(results[0])
@@ -1066,7 +1082,7 @@ impl<'a> Checker<'a> {
             self.error_with_fix(Code::OpCompoundOverlap, at, message, fix);
             return Overload::Refused;
         }
-        let used = self.operator_used(cx, &method, &[(right, y.clone())], false);
+        let used = self.operator_used(cx, at, &method, &[(right, y.clone())], false);
         self.op_assigns.insert(left, used);
         Overload::Chosen(Operand::value(x.ty))
     }
@@ -1136,10 +1152,12 @@ impl<'a> Checker<'a> {
         let Some(method) = methods.first() else {
             return Overload::Builtin;
         };
-        let used = self.operator_used(cx, method, &[], false);
+        let used = self.operator_used(cx, self.span(cx, expr), method, &[], false);
         self.operators.insert(expr, used);
         let (_, results, _) = self.func_parts(method.sig);
-        Overload::Chosen(Operand::value(results[0]))
+        let result = Operand::value(results[0]);
+        let at = (expr, self.span(cx, expr));
+        Overload::Chosen(self.constant_operator(cx, at, method, &[x], result))
     }
 }
 

@@ -110,6 +110,7 @@ fn shown(value: &Value) -> String {
         Kind::Int => "Int",
         Kind::Float => "Float",
         Kind::Complex => "Complex",
+        Kind::Composite => "Composite",
     };
     let mut out = format!("{kind} {} | {value}", value.exact_string());
     if matches!(value.kind(), Kind::Int | Kind::Float) {

@@ -12,6 +12,7 @@ mod branches;
 mod builtins;
 mod call;
 mod constraints;
+mod consts;
 mod conversion;
 mod flow;
 mod implements;
@@ -257,6 +258,14 @@ struct Checker<'a> {
     callee: Option<ExprId>,
     /// While the signature of a method is worked out.
     in_method_sig: bool,
+    /// What runs the `@Const` functions, if the driver gave one.
+    evaluator: Option<&'a dyn crate::consteval::ConstEvaluator>,
+    /// While the value of a constant is worked out.
+    in_const: bool,
+    /// The `@Const` function whose signature and body are being checked.
+    const_fn: Option<Spur>,
+    /// The built-in attributes of each function of the package.
+    func_marks: Vec<crate::types::Marks>,
     /// The `@Operator` methods of each type as they were declared, and
     /// the types that its `@Convert` methods convert to.
     operator_decls: FxHashMap<crate::types::NamedId, Vec<operators::OperatorDecl>>,
@@ -446,6 +455,7 @@ pub fn declarations(
     types: &Types,
     names: &ThreadedRodeo,
     sink: &Sink,
+    evaluator: Option<&dyn crate::consteval::ConstEvaluator>,
 ) -> (Vec<Vec<usize>>, Vec<Ident>, u64) {
     let count = package.objects.len();
     let by_span = package.objects.iter().enumerate();
@@ -488,6 +498,10 @@ pub fn declarations(
         method_values: FxHashMap::default(),
         callee: None,
         in_method_sig: false,
+        evaluator,
+        in_const: false,
+        const_fn: None,
+        func_marks: vec![crate::types::Marks::default(); count],
         operator_decls: FxHashMap::default(),
         convert_decls: FxHashMap::default(),
         operator_spans: FxHashMap::default(),
@@ -582,11 +596,19 @@ pub fn declarations(
         needs,
         methods_declared,
         steps,
+        func_marks,
         ..
     } = checker;
-    for ((object, ty), value) in package.objects.iter_mut().zip(ty).zip(value) {
+    for (((object, ty), value), marks) in package
+        .objects
+        .iter_mut()
+        .zip(ty)
+        .zip(value)
+        .zip(func_marks)
+    {
         object.ty = ty;
         object.value = value;
+        object.marks = marks;
     }
     for (file, types_of_bodies) in package.files.iter_mut().zip(types_of_files) {
         for (body, found) in file.bodies.iter_mut().zip(types_of_bodies) {
@@ -730,6 +752,15 @@ impl<'a> Checker<'a> {
                         ty: *ty,
                     };
                     declare(*name, body, form);
+                    let own = node.attrs.iter().filter(|attr| attr.path.package.is_none());
+                    let marks = own
+                        .filter_map(|attr| {
+                            crate::types::Marks::of(self.names.resolve(&attr.path.name.name))
+                        })
+                        .fold(crate::types::Marks::default(), crate::types::Marks::with);
+                    if let Some(&object) = self.by_span.get(&name.span) {
+                        self.func_marks[object] = marks;
+                    }
                 }
                 _ => {}
             }
@@ -1527,6 +1558,7 @@ impl<'a> Checker<'a> {
     /// written with its type arguments.
     fn typ(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
         let ty = self.generic_or_type(cx, expr);
+        self.pure_type(cx, expr, ty);
         if !self.is_generic_type(ty) {
             return ty;
         }
@@ -2015,10 +2047,19 @@ impl<'a> Checker<'a> {
                     _ => return None,
                 }
             }
-            _ => self.value(cx, expr),
+            // The length of an array is a constant expression (EXP-32).
+            _ => {
+                let own = self.own_rules(cx);
+                let outer = std::mem::replace(&mut self.in_const, own);
+                let x = self.value(cx, expr);
+                self.in_const = outer;
+                x
+            }
         };
         let what = match &x.mode {
             Mode::Unknown => return None,
+            // What a `@Const` function gives is known where it is run.
+            Mode::Const(Value::Unknown) if self.own_rules(cx) => return None,
             Mode::Const(value) => {
                 let integer = self.is_integer(x.ty);
                 if integer || self.is_untyped(x.ty) {
@@ -2258,6 +2299,10 @@ impl<'a> Checker<'a> {
                 self.need(object.0 as usize);
                 let ty = self.object_type(object, false);
                 let kind = &self.package.object(object).kind;
+                if matches!(kind, ObjKind::Var) {
+                    let written = self.expr_string(cx, expr);
+                    self.impure(self.span(cx, expr), &format!("uses the variable {written}"));
+                }
                 self.object_operand(kind, ty, self.value[object.0 as usize].clone())
             }
             // A local of the function literal that the expression is in.
@@ -2305,11 +2350,18 @@ impl<'a> Checker<'a> {
             let object = package.object(member);
             // Package unsafe is built into the compiler: its functions take
             // any type.
+            if package.path == "unsafe" {
+                self.impure(self.span(cx, expr), "uses package unsafe");
+            }
             if package.path == "unsafe" && matches!(object.kind, ObjKind::Func) {
                 return Operand {
                     mode: Mode::Unsafe(object.name),
                     ty: Types::INVALID,
                 };
+            }
+            if matches!(object.kind, ObjKind::Var) {
+                let written = self.expr_string(cx, expr);
+                self.impure(self.span(cx, expr), &format!("uses the variable {written}"));
             }
             return self.object_operand(&object.kind, object.ty, object.value.clone());
         }
@@ -2354,6 +2406,12 @@ impl<'a> Checker<'a> {
         let found = self
             .types
             .lookup(x.ty, sel.name, self.path, self.names, false);
+        let folded = match (&x.mode, &found) {
+            (Mode::Const(held), Ok(found)) if self.own_rules(cx) && !found.indirect => {
+                Some(self.constant_field(held, &found.path))
+            }
+            _ => None,
+        };
         let found = match found {
             Ok(found) => {
                 let kind = match (&x.mode, &found.member) {
@@ -2393,6 +2451,10 @@ impl<'a> Checker<'a> {
         match (&x.mode, found) {
             // A field of a variable, or one behind a pointer, is a
             // variable.
+            // A field of a constant is a constant (EXP-31).
+            (Mode::Const(_), Some(Member::Field { ty, .. })) if folded.is_some() => {
+                Operand::constant(ty, folded.unwrap_or(Value::Unknown))
+            }
             (mode, Some(Member::Field { ty, indirect })) if x.is_value() => {
                 match *mode == Mode::Variable || indirect {
                     true => Operand::variable(ty),
@@ -2710,6 +2772,9 @@ impl<'a> Checker<'a> {
             }
             Mode::Type => self.conversion(cx, expr, callee.ty, args),
             Mode::Builtin(_) | Mode::Unsafe(_) => {
+                if let Mode::Builtin(builtin) = callee.mode {
+                    self.pure_builtin(cx, fun, builtin);
+                }
                 let called = match callee.mode {
                     Mode::Builtin(builtin) => self.builtin(cx, expr, fun, builtin, args, spread),
                     Mode::Unsafe(name) => self.unsafe_call(cx, expr, name, args, spread),
@@ -2790,7 +2855,11 @@ impl<'a> Checker<'a> {
                     many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
                 };
                 self.taken(cx, (expr, args), fun, &called);
-                called
+                self.pure_call(cx, fun);
+                match self.in_const && self.own_rules(cx) {
+                    true => self.constant_call(cx, expr, fun, args, called),
+                    false => called,
+                }
             }
             _ => Operand::UNKNOWN,
         }
@@ -3101,11 +3170,17 @@ impl<'a> Checker<'a> {
                         }
                         self.base_declared(&cx);
                     }
+                    // The body of a `@Const` function is held to what a
+                    // constant expression may do (EXP-33).
+                    let marks = self.marks(&cx, &tree.decl_nodes[decl].attrs);
+                    let is_const = self.own_rules(&cx) && marks.has(crate::types::Marks::CONST);
+                    self.const_fn = is_const.then_some(name.name);
                     self.in_method_sig = receiver.is_some();
                     self.signature_locals(&cx, *ty);
                     let sig = self.typ(&cx, *ty);
                     self.in_method_sig = false;
                     self.function_body(&cx, *ty, sig, block);
+                    self.const_fn = None;
                     self.receiver_of = None;
                 }
                 // The value of a constant is worked out with its
@@ -3427,8 +3502,14 @@ impl<'a> Checker<'a> {
             }
             StmtKind::Block(block) => self.stmts(cx, &block.stmts),
             StmtKind::Expr(x) => self.expr_stmt(cx, *x),
-            StmtKind::Go(x) => self.suspended(cx, "go", *x),
-            StmtKind::Defer(x) => self.suspended(cx, "defer", *x),
+            StmtKind::Go(x) => {
+                self.impure(tree.stmts[id].span, "has a go statement");
+                self.suspended(cx, "go", *x);
+            }
+            StmtKind::Defer(x) => {
+                self.impure(tree.stmts[id].span, "has a defer statement");
+                self.suspended(cx, "defer", *x);
+            }
             StmtKind::IncDec { x, inc } => {
                 let operand = self.value(cx, *x);
                 let operand = self.read(cx, operand);
@@ -3688,6 +3769,7 @@ impl<'a> Checker<'a> {
                 }
             }
             StmtKind::Select { clauses } => {
+                self.impure(tree.stmts[id].span, "has a select statement");
                 self.defaults(cx, clauses.iter().map(|c| (c.comm.is_none(), c.span)));
                 for clause in clauses {
                     self.opt_stmt(cx, clause.comm);

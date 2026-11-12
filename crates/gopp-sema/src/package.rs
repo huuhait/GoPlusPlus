@@ -5,6 +5,7 @@ use std::sync::Arc;
 use lasso::Spur;
 use rustc_hash::FxHashMap;
 
+use crate::consteval::ConstEvaluator;
 use crate::decls::Initializer;
 use crate::object::{FileInfo, ObjId, Object};
 
@@ -65,6 +66,12 @@ pub trait PackageLoader: Sync {
     /// The package that `path` names in an import of the package being
     /// checked, or why there is none.
     fn load(&self, path: &str) -> Result<Arc<Package>, String>;
+
+    /// What runs the `@Const` functions; without it the value of a call
+    /// in a constant expression is not known to the checker.
+    fn evaluator(&self) -> Option<&dyn ConstEvaluator> {
+        None
+    }
 }
 
 #[cfg(test)]

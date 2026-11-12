@@ -347,6 +347,9 @@ codes! {
     496 ExtendsDiamond "err_extends_diamond",
     497 BaseAmbiguous "err_base_ambiguous",
     498 NoteOpFix "note_op_fix",
+    499 ConstImpure "err_const_impure",
+    500 ConstCall "err_const_call",
+    501 ConstEval "err_const_eval",
 }
 
 impl Code {

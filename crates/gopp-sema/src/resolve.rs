@@ -22,7 +22,7 @@ use crate::literal::unquote;
 use crate::object::{Body, FileInfo, Local, LocalId, LocalKind, ObjId, ObjKind, Object, Ref};
 use crate::package::{Package, PackageLoader};
 use crate::typecheck;
-use crate::types::Types;
+use crate::types::{Marks, Types};
 use crate::universe::{PredeclaredKind, Universe};
 
 /// One file of the package to check.
@@ -110,7 +110,9 @@ pub(crate) fn check_counted(
             sink.push(diagnostic);
         }
     }
-    let (needs, methods, taken) = typecheck::declarations(&mut package, units, types, names, sink);
+    let evaluator = loader.evaluator();
+    let (needs, methods, taken) =
+        typecheck::declarations(&mut package, units, types, names, sink, evaluator);
     steps += taken;
     package.init_order = decls::order(&package, units, &needs, &methods, names, sink);
     // After the types: a variable that got no type is not also unused.
@@ -221,6 +223,7 @@ impl Collector<'_> {
             span,
             ty: Types::INVALID,
             value: Value::Unknown,
+            marks: Marks::default(),
         });
         id
     }
