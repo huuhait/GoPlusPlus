@@ -213,11 +213,13 @@ impl<'a> Checker<'a> {
                     .all(|term| self.types.strictly_comparable(term.ty)),
                 None => wanted.comparable,
             };
-            let fits = match is_param {
+            // Asked only of a constraint that compares: the walk is as
+            // long as the type is large.
+            let fits = || match is_param {
                 true => self.types.strictly_comparable(v),
                 false => self.types.comparable(v),
             };
-            match compares && !fits {
+            match compares && !fits() {
                 true => cause(format!("{shown} does not satisfy comparable")),
                 false => None,
             }
@@ -301,6 +303,37 @@ impl<'a> Checker<'a> {
         ))
     }
 
+    /// Why the type argument `arg` lacks a label that the constraint
+    /// `bound` names: `Send`, `Sync` (GEN-11).
+    fn unlabeled(&self, arg: TypeId, bound: TypeId) -> Option<String> {
+        use crate::types::Unlabeled;
+        let set = self.types.type_set(bound)?;
+        if self.open(arg) || self.types.is_constraint(arg) {
+            return None;
+        }
+        for (label, asked) in [(Marker::Send, "Send"), (Marker::Sync, "Sync")] {
+            if !set.markers.contains(&label) {
+                continue;
+            }
+            let Some((part, why)) = self.types.unlabeled(arg, label) else {
+                continue;
+            };
+            let held = self.type_string(part);
+            let why = match why {
+                Unlabeled::Borrow => format!("a {held} borrows what it points to"),
+                Unlabeled::Local => format!("a {held} stays with one goroutine"),
+                Unlabeled::SharedUnsync => format!("what a {held} holds is not Sync"),
+                Unlabeled::Interface => format!("{held} does not embed Sync"),
+                Unlabeled::Param => format!("{held} is not constrained by {asked}"),
+            };
+            return Some(format!(
+                "{} does not satisfy {asked} ({why})",
+                self.type_string(arg)
+            ));
+        }
+        None
+    }
+
     /// Why the type `part` is not copied by its bytes, or not at all if
     /// `at_all`, as a message says it.
     pub(super) fn not_copied_text(
@@ -349,7 +382,9 @@ impl<'a> Checker<'a> {
                 .types
                 .substitute(constraint, &instance.params, &instance.args);
             let unsatisfied = self.unsatisfied(arg, bound).or_else(|| {
-                let text = self.not_copied(param, arg, bound)?;
+                let text = self
+                    .not_copied(param, arg, bound)
+                    .or_else(|| self.unlabeled(arg, bound))?;
                 Some(Cause {
                     text,
                     have_want: None,

@@ -492,6 +492,8 @@ struct Inner {
     /// How a value of each type that was asked for it is copied; with
     /// `true`, whether it holds what is ended with it.
     categories: FxHashMap<(TypeId, bool), Category>,
+    /// For a type that was asked: whether it is `Send` and `Sync`.
+    labels: FxHashMap<TypeId, Labels>,
     /// The type parameters that a declaration writes `Option[P]` for.
     optional: FxHashSet<TypeId>,
     /// For a type that was asked: the part of it without a zero value.
@@ -2560,6 +2562,7 @@ fn basic_name(basic: Basic) -> &'static str {
 }
 
 mod category;
+mod label;
 mod methodset;
 #[cfg(test)]
 mod tests;
@@ -2567,6 +2570,7 @@ mod typeset;
 mod zero;
 
 pub use category::{Category, CopyRule, NotCopied};
+pub use label::{Labels, Unlabeled};
 pub use methodset::MethodSet;
 pub use typeset::{NoCommon, TypeSet};
 pub use zero::NoZero;

@@ -8120,6 +8120,282 @@ Again:
     assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
+/// The labels of each variable of a package, by its name: `x: Send Sync`.
+fn labels_of(text: &str) -> Vec<String> {
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    // The variables only name their types.
+    let unset = |message: &&String| {
+        !(message.contains(" without a value: ") || message.starts_with("    give "))
+    };
+    let said: Vec<&String> = checked.messages.iter().filter(unset).collect();
+    assert_eq!(said, [] as [&String; 0]);
+    let types = loader.types.get().unwrap();
+    let variables = checked.package.objects.iter();
+    variables
+        .filter(|object| matches!(object.kind, ObjKind::Var))
+        .map(|object| {
+            let labels = types.labels(object.ty);
+            let send = if labels.send { " Send" } else { "" };
+            let sync = if labels.sync { " Sync" } else { "" };
+            format!("{}:{send}{sync}", names.resolve(&object.name))
+        })
+        .collect()
+}
+
+// rule: CON-12, CON-19
+#[test]
+fn a_type_is_given_to_another_goroutine_or_shared_as_its_parts_allow() {
+    let text = "package p
+
+type Point struct{ X, Y int }
+type Doc struct {
+	Title string
+	Tags  []string
+}
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Tree struct {
+	kids []Tree
+	name string
+}
+type Ring struct {
+	next Option[Unique[Ring]]
+	back *Ring
+}
+type Reader interface{ Read() int }
+type Safe interface {
+	Sync
+	Read() int
+}
+type Holder struct {
+	r Reader
+	n int
+}
+type Box[T any] struct{ v T }
+
+var (
+	number  int
+	text    string
+	point   Point
+	doc     Doc
+	file    File
+	array   [4]Doc
+	slice   []Point
+	table   map[string]Doc
+	channel chan *Point
+	fn      func(*Point)
+	pointer *Point
+	unique  Unique[Doc]
+	shared  Shared[Doc]
+	weak    Weak[Doc]
+	option  Option[Doc]
+	tree    Tree
+	ring    Ring
+
+	reader   Reader
+	safe     Safe
+	anything any
+	failure  error
+	holder   Holder
+	local    Local[func()]
+	localAny Local[any]
+
+	sharedReader Shared[Reader]
+	sharedSafe   Shared[Safe]
+	sharedRing   Shared[Ring]
+	uniqueRing   Unique[Ring]
+	pointers     []*Point
+	byPointer    map[string]*Point
+	optPointer   Option[*Point]
+	boxInt       Box[int]
+	boxPointer   Box[*int]
+	boxReader    Box[Reader]
+)
+";
+    let expected = [
+        "number: Send Sync",
+        "text: Send Sync",
+        "point: Send Sync",
+        "doc: Send Sync",
+        "file: Send Sync",
+        "array: Send Sync",
+        "slice: Send Sync",
+        "table: Send Sync",
+        "channel: Send Sync",
+        "fn: Send Sync",
+        "pointer:",
+        "unique: Send Sync",
+        "shared: Send Sync",
+        "weak: Send Sync",
+        "option: Send Sync",
+        "tree: Send Sync",
+        "ring:",
+        "reader: Send",
+        "safe: Send Sync",
+        "anything: Send",
+        "failure: Send Sync",
+        "holder: Send",
+        "local:",
+        "localAny:",
+        "sharedReader:",
+        "sharedSafe: Send Sync",
+        "sharedRing:",
+        "uniqueRing:",
+        "pointers:",
+        "byPointer:",
+        "optPointer:",
+        "boxInt: Send Sync",
+        "boxPointer:",
+        "boxReader: Send",
+    ];
+    assert_eq!(labels_of(text), expected);
+}
+
+// rule: GEN-11
+#[test]
+fn a_type_argument_has_the_labels_that_the_constraint_names() {
+    let text = "package p
+
+type Node struct{ v int }
+type Tree struct {
+	kids []Tree
+	name string
+}
+type Ring struct {
+	next Option[Unique[Ring]]
+	back *Ring
+}
+type I interface{ M() }
+type Safe interface {
+	Sync
+	M()
+}
+type Plain struct{ n Node }
+
+func (p Plain) M() {}
+
+func spawn[T Send](x T)   {}
+func share[T Sync](x T)   {}
+func both[T interface{ Send; Clone }](x T) {}
+func pass[U any](u U)     { spawn(move(u)) }
+func sent[U Send](u U)    { spawn(move(u)) }
+func listed[U ~int | ~string](u U) { spawn(u); share(u) }
+
+var a Local[int]
+var d Unique[*int]
+
+func conv(f func(), lf Local[func()], i I, li Local[I], p Plain) {
+	lf = f
+	lf = func() {}
+	li = i
+	li = p
+	lf()
+	li.M()
+	f = lf
+	i = li
+}
+
+func labels(n Node, pn *Node, t Tree, r Ring, s Shared[Node], sp Shared[Ring], w Weak[Tree], i I, sf Safe, e error, x any, lf Local[func()], ch chan *Node, m map[string][]int, mp map[string]*Node, u Unique[Node], o Option[Tree], f func()) {
+	spawn(n)
+	spawn(t)
+	spawn(s)
+	spawn(w)
+	spawn(i)
+	spawn(e)
+	spawn(x)
+	spawn(ch)
+	spawn(m)
+	spawn(u)
+	spawn(o)
+	spawn(f)
+	share(n)
+	share(t)
+	share(s)
+	share(sf)
+	share(e)
+	share(m)
+	share(f)
+	both(n)
+
+	spawn(pn)
+	spawn(r)
+	spawn(sp)
+	spawn(lf)
+	spawn(mp)
+	share(i)
+	share(x)
+	share(pn)
+	share(lf)
+	spawn[*int](nil)
+}
+";
+    let expected = [
+        "a.gopp:24:29: U does not satisfy Send (U is not constrained by Send)",
+        "a.gopp:28:7: invalid type Local[int]: Local is written for a func or an interface type, \
+         and int is neither",
+        "a.gopp:29:7: invalid type Unique[*int]: a *int borrows, and what borrows is not kept on \
+         the heap",
+        "a.gopp:38:6: cannot use lf (variable of type Local[func()]) as func() value in assignment",
+        "a.gopp:39:6: cannot use li (variable of type Local[I]) as I value in assignment: Local[I] \
+         does not implement I (missing method M)",
+        "a.gopp:64:2: *Node does not satisfy Send (a *Node borrows what it points to)",
+        "a.gopp:65:2: Ring does not satisfy Send (a *Ring borrows what it points to)",
+        "a.gopp:66:2: Shared[Ring] does not satisfy Send (what a Shared[Ring] holds is not Sync)",
+        "a.gopp:67:2: Local[func()] does not satisfy Send (a Local[func()] stays with one \
+         goroutine)",
+        "a.gopp:68:2: map[string]*Node does not satisfy Send (a *Node borrows what it points to)",
+        "a.gopp:69:2: I does not satisfy Sync (I does not embed Sync)",
+        "a.gopp:70:2: any does not satisfy Sync (any does not embed Sync)",
+        "a.gopp:71:2: *Node does not satisfy Sync (a *Node borrows what it points to)",
+        "a.gopp:72:2: Local[func()] does not satisfy Sync (a Local[func()] stays with one \
+         goroutine)",
+        "a.gopp:73:8: *int does not satisfy Send (a *int borrows what it points to)",
+        "a.gopp:73:14: cannot use nil as *int value in argument to spawn[*int]",
+        "    a *int is never nil: use Option[*int]",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+#[test]
+fn the_steps_of_labels_grow_with_the_types_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let header = "package p\nfunc spawn[T Send](x Option[T]) {}\n";
+    // Each type holds the one before it, and each is asked, the last
+    // first.
+    let chain = |count: usize| {
+        let types: String = (1..count)
+            .map(|i| format!("type T{i} struct{{ a T{}; b [2]T{} }}\n", i - 1, i - 1))
+            .collect();
+        let asked: String = (0..count)
+            .rev()
+            .map(|i| format!("\tspawn[T{i}](nil)\n"))
+            .collect();
+        format!("{header}type T0 struct{{ n int }}\n{types}func f() {{\n{asked}}}\n")
+    };
+    // Types that hold each other in a ring, each asked.
+    let ring = |count: usize| {
+        let types: String = (0..count)
+            .map(|i| format!("type T{i} struct{{ next []T{}; n int }}\n", (i + 1) % count))
+            .collect();
+        let asked: String = (0..count)
+            .map(|i| format!("\tspawn[T{i}](nil)\n"))
+            .collect();
+        format!("{header}{types}func f() {{\n{asked}}}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    linear::assert_near_linear(&sizes, |n| steps(ring(n)));
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {

@@ -1549,6 +1549,15 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Make the channel before it is closed.",
             "var ch chan int\nclose(ch)            // error\nch = make(chan int)\nclose(ch)            // ok",
         ),
+        InvalidHandleType => (
+            "A predeclared generic type is written for a type it does not take. `Local[T]` \
+             ties a func or an interface value to one goroutine, so `T` is a func or an \
+             interface type. `Unique`, `Shared` and `Weak` keep a value on the heap, and a \
+             pointer only borrows: it is not kept there.",
+            "Use `Local` with a func or an interface type; keep the value itself on the heap, \
+             not a pointer to it.",
+            "var a Local[int]     // error\nvar b Local[func()]  // ok\nvar c Unique[*Node]  // error\nvar d Unique[Node]   // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

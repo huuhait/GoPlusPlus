@@ -40,6 +40,11 @@ impl<'a> Checker<'a> {
             x = match &*self.types.get(self.types.underlying(x.ty)) {
                 Type::Pointer(elem) | Type::Unique(elem) => Operand::variable(*elem),
                 Type::Shared(elem) => Operand::value(*elem),
+                // What is tied to one goroutine is used like any other.
+                Type::Local(elem) => Operand {
+                    mode: x.mode,
+                    ty: *elem,
+                },
                 _ => break,
             };
         }
@@ -79,7 +84,9 @@ impl<'a> Checker<'a> {
         let mut current = to;
         loop {
             current = match &*self.types.get(self.types.underlying(current)) {
-                Type::Option(elem) => *elem,
+                // A func or an interface value may be tied to one
+                // goroutine, never the other way (CON-12).
+                Type::Option(elem) | Type::Local(elem) => *elem,
                 Type::Pointer(elem) if writes && out.len() == 1 => *elem,
                 _ => return out,
             };
@@ -224,6 +231,30 @@ impl<'a> Checker<'a> {
             let fix = (Code::NoteOwnFixOption, fix.to_owned());
             self.error_with_fix(Code::NoZeroValue, span, message, fix);
         }
+    }
+
+    /// `expr` writes a predeclared generic type for the type `arg`, which
+    /// it does not take.
+    pub(super) fn bad_handle(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        arg: TypeId,
+        bad: crate::types::BadArgument,
+    ) {
+        use crate::types::BadArgument;
+        let written = self.expr_string(cx, expr);
+        let shown = self.type_string(arg);
+        let why = match bad {
+            BadArgument::LocalOfValue => {
+                format!("Local is written for a func or an interface type, and {shown} is neither")
+            }
+            BadArgument::PointerOnHeap => {
+                format!("a {shown} borrows, and what borrows is not kept on the heap")
+            }
+        };
+        let message = format!("invalid type {written}: {why}");
+        self.error(Code::InvalidHandleType, cx.tree.exprs[expr].span, message);
     }
 
     /// Whether the type has nil of its own, so that an option of it says

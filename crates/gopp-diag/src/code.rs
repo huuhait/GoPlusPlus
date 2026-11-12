@@ -307,6 +307,7 @@ codes! {
     489 AttrArgs "err_attr_args",
     492 OwnSharedWrite "err_own_shared_write",
     493 ValueUnchecked "err_value_unchecked",
+    494 InvalidHandleType "err_invalid_handle_type",
 }
 
 impl Code {

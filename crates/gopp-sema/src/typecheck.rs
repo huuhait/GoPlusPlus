@@ -1758,7 +1758,13 @@ impl<'a> Checker<'a> {
                         self.options.push((arg, at, self.memo.is_some()));
                         Some(self.types.option(arg))
                     }
-                    _ => self.types.handle(make, arg).ok(),
+                    _ => match self.types.handle(make, arg) {
+                        Ok(made) => Some(made),
+                        Err(bad) => {
+                            self.bad_handle(cx, expr, arg, bad);
+                            None
+                        }
+                    },
                 },
                 _ => None,
             };
@@ -2566,7 +2572,9 @@ impl<'a> Checker<'a> {
         // In a `.gopp` file a function is called through a pointer; an
         // option that is known to be set is the function already.
         let callee = match &*self.types.get(self.types.underlying(callee.ty)) {
-            Type::Pointer(_) | Type::Unique(_) | Type::Shared(_) => self.read(cx, callee),
+            Type::Pointer(_) | Type::Unique(_) | Type::Shared(_) | Type::Local(_) => {
+                self.read(cx, callee)
+            }
             _ => callee,
         };
         match callee.mode {
