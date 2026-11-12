@@ -56,10 +56,10 @@ Operand        = /* Go alternatives */ | MacroInvocation .
 |---|---|---|---|
 | `@Extern("C")` | function | the function is defined in C | P07 |
 | `@Export("C")` | function | emit a C-ABI symbol | P07 |
-| `@Inline`, `@NoInline` | function | inlining hint; a function with both is an error (`err_inline_marks_conflict`, E0450) | P04 |
+| `@Inline`, `@NoInline` | function or method with a body | inlining hint; a function with both is an error (`err_inline_marks_conflict`, E0450) | P04 |
 | `@Packed` | struct type | no padding | P07 |
-| `@Align(N)` | type | minimum alignment `N` | P07 |
-| `@NoBounds` | function | turn bounds checks off ([EXP-7](06-expressions.md)) | P05 D5.8 |
+| `@Align(N)` | type | minimum alignment `N`: a constant power of two from 1 to 65536 | P07 |
+| `@NoBounds` | function or method with a body | turn bounds checks off ([EXP-7](06-expressions.md)) | P05 D5.8 |
 | `@Pinned` | type | a value cannot be moved or copied once it is initialized in a place ([OWN-R10](04-ownership.md#42-ownership-rules-d14)) | this spec |
 | `@Required` | struct field | the field must be set in every literal; the struct has no zero value; compile error on `Option[T]` ([TYP-15](03-types.md)) | ADR-0016 |
 | `@Extends(Parent)` | declaration of one struct or interface type | names one parent; one attribute per parent, in parent order. On a struct: the type inherits from `Parent`. On an interface: the interface is a constraint for types that have `Parent` as an ancestor ([TYP-16](03-types.md#35-inheritance-adr-0023), [GEN-12](10-generics.md#102-rules)) | ADR-0023, ADR-0034 |

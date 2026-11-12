@@ -24,13 +24,14 @@ impl<'a> Checker<'a> {
     pub(super) fn methods(&mut self, file: usize, unit: Unit<'a>, with_signatures: bool) {
         let tree = unit.file;
         for (index, &decl) in tree.decls.iter().enumerate() {
+            let node = &tree.decl_nodes[decl];
             let DeclKind::Func {
                 receiver: Some(receiver),
                 name,
                 type_params,
                 ty,
                 ..
-            } = &tree.decl_nodes[decl].kind
+            } = &node.kind
             else {
                 continue;
             };
@@ -106,6 +107,7 @@ impl<'a> Checker<'a> {
                 named,
                 DeclaredMethod {
                     method,
+                    marks: self.marks(&cx, &node.attrs),
                     pointer_receiver,
                     receiver_params,
                 },

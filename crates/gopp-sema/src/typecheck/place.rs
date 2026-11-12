@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::object::{Capture, CaptureUse, MethodValue, Transfer};
-use crate::types::{Category, NotCopied};
+use crate::types::{Category, Marks, NotCopied};
 
 /// Where the value of an expression lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -485,12 +485,27 @@ impl<'a> Checker<'a> {
         if self.is_param(holder) || called && self.types.is_interface(holder) {
             return;
         }
-        let read_in_place = called
-            && (self.names.resolve(&name) == "Clone"
-                || self.types.category(holder) == Category::NoCopy);
+        // The copy method, an operator and a conversion read the receiver
+        // where it is (PAR-5).
+        let read_in_place =
+            called && (self.names.resolve(&name) == "Clone" || self.reads_operands(cx, expr));
         if !read_in_place {
             self.given(cx, base, x, holder, Given::Stored);
         }
+    }
+
+    /// Whether the selector `expr` reaches an operator method or a
+    /// conversion method, which read their operands where they are.
+    pub(super) fn reads_operands(&self, cx: &Cx<'a>, expr: ExprId) -> bool {
+        let ExprKind::Selector { sel, .. } = cx.tree.exprs[expr].kind else {
+            return false;
+        };
+        let Some(selection) = self.selections.get(&expr) else {
+            return false;
+        };
+        let package = self.package_of(sel.name);
+        let marks = self.types.method_marks(selection.holder, sel.name, package);
+        marks.has(Marks::OPERATOR) || marks.has(Marks::CONVERT)
     }
 
     /// `x[lo:hi]` as the new value of `x` is the part of `x` itself: the

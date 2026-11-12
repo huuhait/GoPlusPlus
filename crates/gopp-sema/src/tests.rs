@@ -6728,6 +6728,356 @@ fn the_steps_of_captures_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
 }
 
+// rule: MAC-8, MAC-12, MAC-14
+#[test]
+fn a_built_in_attribute_is_written_where_it_goes_with_what_it_takes() {
+    // For each attribute: a use that is taken, and uses that are refused
+    // with what is said of each, at the attribute.
+    let header = "package p\n\ntype T struct{ n int }\n\nconst Size = 64\n\nvar limit = 3\n\n";
+    let rows: [(&str, &[(&str, &str)]); 19] = [
+        (
+            "type U struct {\n\tID int @Required\n}",
+            &[
+                (
+                    "@Required\nvar x int",
+                    "cannot use @Required on a variable: it is written on a field of a struct",
+                ),
+                (
+                    "type U struct {\n\tID int @Required(1)\n}",
+                    "@Required takes no arguments",
+                ),
+            ],
+        ),
+        (
+            "@Extends(T)\ntype U struct{}",
+            &[
+                (
+                    "@Extends(T)\nfunc f() {}",
+                    "cannot use @Extends on a function: it is written on a struct type or an interface type",
+                ),
+                (
+                    "@Extends(T, T)\ntype U struct{}",
+                    "@Extends takes one parent",
+                ),
+                ("@Extends\ntype U struct{}", "@Extends takes one parent"),
+            ],
+        ),
+        (
+            "@Virtual\nfunc (t *T) M() {}",
+            &[
+                (
+                    "@Virtual\nfunc (t T) M() {}",
+                    "cannot use @Virtual on a method: the method needs a pointer receiver",
+                ),
+                (
+                    "@Virtual\nfunc f() {}",
+                    "cannot use @Virtual on a function: it is written on a method",
+                ),
+            ],
+        ),
+        (
+            "@Abstract\nfunc (t *T) M()\n\n@Abstract\ntype U struct{}",
+            &[
+                (
+                    "@Abstract\nvar x int",
+                    "cannot use @Abstract on a variable: it is written on a method or a type",
+                ),
+                (
+                    "@Abstract\nfunc (t T) M()",
+                    "cannot use @Abstract on a method: the method needs a pointer receiver",
+                ),
+            ],
+        ),
+        (
+            "@Override\nfunc (t *T) M() {}",
+            &[(
+                "@Override()\nfunc (t *T) M() {}",
+                "@Override takes no arguments",
+            )],
+        ),
+        (
+            "@Operator\nfunc (t T) Add(u T) T { return t }\n\n@Operator\nfunc (t *T) AddAssign(u T) {}",
+            &[
+                (
+                    "@Operator\nfunc (t T) Plus(u T) T { return t }",
+                    "cannot use @Operator on a method: Plus is no operator method",
+                ),
+                (
+                    "@Operator\nfunc Add(t, u T) T { return t }",
+                    "cannot use @Operator on a function: it is written on a method",
+                ),
+            ],
+        ),
+        (
+            "@Operator\n@Right\nfunc (t T) Mul(n int) T { return t }",
+            &[
+                (
+                    "@Right\nfunc (t T) Mul(n int) T { return t }",
+                    "cannot use @Right on a method: the method is no @Operator method",
+                ),
+                (
+                    "@Operator\n@Right\nfunc (t T) Neg() T { return t }",
+                    "cannot use @Right on a method: Neg takes no operand on its left",
+                ),
+            ],
+        ),
+        (
+            "@Convert\nfunc (t T) Int() int { return t.n }",
+            &[
+                (
+                    "@Convert\nfunc (t *T) Int() int { return t.n }",
+                    "cannot use @Convert on a method: the method needs a value receiver, no parameters and one result",
+                ),
+                (
+                    "@Convert\nfunc (t T) Int(n int) int { return n }",
+                    "cannot use @Convert on a method: the method needs a value receiver, no parameters and one result",
+                ),
+                (
+                    "@Convert\nfunc Int(t T) int { return t.n }",
+                    "cannot use @Convert on a function: it is written on a method",
+                ),
+            ],
+        ),
+        (
+            "@Const\nfunc square(n int) int { return n * n }\n\n@Const\nfunc (t T) N() int { return t.n }",
+            &[
+                (
+                    "@Const\nconst c = 1",
+                    "cannot use @Const on a constant: it is written on a function or a method",
+                ),
+                (
+                    "@Const\n@Virtual\nfunc (t *T) M() {}",
+                    "cannot use @Const on a method: the function is marked @Virtual",
+                ),
+                (
+                    "@Const\n@Extern(\"C\")\nfunc f()",
+                    "cannot use @Const on a function: the function is marked @Extern",
+                ),
+            ],
+        ),
+        (
+            "@Pinned\ntype Lock struct{ state int }",
+            &[
+                (
+                    "@Pinned\nfunc f() {}",
+                    "cannot use @Pinned on a function: it is written on a type",
+                ),
+                (
+                    "type U struct {\n\tn int @Pinned\n}",
+                    "cannot use @Pinned on a field: it is written on a type",
+                ),
+                (
+                    "@Pinned\ntype A = T",
+                    "cannot use @Pinned on an alias: it is written on a type",
+                ),
+            ],
+        ),
+        (
+            "@Extern(\"C\")\nfunc puts(s *byte) int",
+            &[
+                (
+                    "@Extern(\"C\")\nfunc f() {}",
+                    "cannot use @Extern on a function: a function that is defined in C has no body",
+                ),
+                (
+                    "@Extern(\"C\")\nfunc f[P any](p *P)",
+                    "cannot use @Extern on a function: a function that is defined in C has no type parameters",
+                ),
+                ("@Extern(\"D\")\nfunc f()", "@Extern takes the string \"C\""),
+                ("@Extern\nfunc f()", "@Extern takes the string \"C\""),
+                (
+                    "@Extern(\"C\")\nfunc (t *T) M()",
+                    "cannot use @Extern on a method: it is written on a function",
+                ),
+            ],
+        ),
+        (
+            "@Export(\"C\")\nfunc add(a, b int32) int32 { return a + b }",
+            &[
+                (
+                    "@Export(\"C\")\nfunc f()",
+                    "cannot use @Export on a function: a function that C calls has a body",
+                ),
+                (
+                    "@Export(\"C\")\nfunc f[P any](p *P) {}",
+                    "cannot use @Export on a function: a function that C calls has no type parameters",
+                ),
+                (
+                    "@Export(\"C\", 1)\nfunc f() {}",
+                    "@Export takes the string \"C\"",
+                ),
+                (
+                    "@Export(\"C\")\nvar x int",
+                    "cannot use @Export on a variable: it is written on a function",
+                ),
+            ],
+        ),
+        (
+            "@Unwind\nfunc callback(n int32) {}",
+            &[(
+                "@Unwind\ntype U int",
+                "cannot use @Unwind on a type: it is written on a function",
+            )],
+        ),
+        (
+            "@Packed\ntype U struct{ a byte; b int }",
+            &[
+                (
+                    "@Packed\ntype U int",
+                    "cannot use @Packed on a type: it is written on a struct type",
+                ),
+                ("@Packed(1)\ntype U struct{}", "@Packed takes no arguments"),
+            ],
+        ),
+        (
+            "@Align(Size)\ntype U struct{ a byte }\n\n@Align(8)\ntype V int",
+            &[
+                (
+                    "@Align(3)\ntype U int",
+                    "@Align takes a constant power of two from 1 to 65536",
+                ),
+                (
+                    "@Align(limit)\ntype U int",
+                    "@Align takes a constant power of two from 1 to 65536",
+                ),
+                (
+                    "@Align(131072)\ntype U int",
+                    "@Align takes a constant power of two from 1 to 65536",
+                ),
+                (
+                    "@Align\ntype U int",
+                    "@Align takes a constant power of two from 1 to 65536",
+                ),
+                (
+                    "@Align(8)\nvar x int",
+                    "cannot use @Align on a variable: it is written on a type",
+                ),
+            ],
+        ),
+        (
+            "@Inline\nfunc f() {}\n\n@NoInline\nfunc (t T) M() {}",
+            &[
+                (
+                    "@Inline\n@NoInline\nfunc f() {}",
+                    "cannot use @NoInline on a function: the function is marked @Inline too",
+                ),
+                (
+                    "@Inline\nfunc f()",
+                    "cannot use @Inline on a function: the function has no body",
+                ),
+                ("@Inline(1)\nfunc f() {}", "@Inline takes no arguments"),
+                (
+                    "@NoInline\ntype U int",
+                    "cannot use @NoInline on a type: it is written on a function or a method",
+                ),
+            ],
+        ),
+        (
+            "@NoBounds\nfunc first(xs []int) int { return xs[0] }",
+            &[(
+                "@NoBounds\nvar x int",
+                "cannot use @NoBounds on a variable: it is written on a function or a method",
+            )],
+        ),
+        (
+            "@If(Size == 64)\nfunc f() {}\n\n@If(true)\ntype U int\n\n@If(false)\nvar x = 1\n\n@If(Size > 1)\nconst c = 1\n\n@If(true)\nfunc (t T) M() {}",
+            &[
+                ("@If(limit == 3)\nfunc f() {}", "@If takes a constant bool"),
+                ("@If(1)\nfunc f() {}", "@If takes a constant bool"),
+                ("@If\nfunc f() {}", "@If takes a constant bool"),
+                (
+                    "type U struct {\n\tn int @If(true)\n}",
+                    "cannot use @If on a field: it is written on a declaration",
+                ),
+            ],
+        ),
+        // What is not built in is a macro's: its arguments are known at
+        // compile time.
+        (
+            "@Derive(JSON, Equal)\n@Retry(Size, \"x\", -1)\ntype U struct {\n\tName string @JSON(\"name\") @Max(Size)\n}",
+            &[
+                (
+                    "@Retry(limit)\nfunc f() {}",
+                    "cannot use limit in @Retry: the arguments of an attribute are known at compile time, and limit is a variable",
+                ),
+                (
+                    "type U struct {\n\tn int @Max(limit + 1)\n}",
+                    "cannot use limit in @Max: the arguments of an attribute are known at compile time, and limit is a variable",
+                ),
+            ],
+        ),
+    ];
+    let line = header.lines().count() + 1;
+    for (taken, refused) in rows {
+        let text = format!("{header}{taken}\n");
+        assert_eq!(messages("a.gopp", &text), [] as [&str; 0], "{taken}");
+        for (source, said) in refused {
+            let text = format!("{header}{source}\n");
+            let found = messages("a.gopp", &text);
+            assert_eq!(found.len(), 1, "{source}: {found:?}");
+            let (place, message) = found[0].split_once(": ").unwrap();
+            assert_eq!(message, *said, "{source}");
+            // At the attribute, which is written first or on a field.
+            let at: usize = place.split(':').nth(1).unwrap().parse().unwrap();
+            assert!(at == line || at == line + 1, "{source}: {place}");
+        }
+    }
+}
+
+// rule: PAR-5
+#[test]
+fn a_receiver_that_is_not_copied_is_given_unless_the_method_only_reads_it() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+@Operator
+func (f File) Eq(g File) bool { return f.fd == g.fd }
+
+@Convert
+func (f File) Int() int { return f.fd }
+
+func (f File) Fd() int   { return f.fd }
+func (f *File) Sync()    {}
+func open() File         { return File{} }
+func same(a, b File) bool { return false }
+
+func use(f, g File, files []File) {
+	_ = f.Eq(g)
+	_ = files[0].Eq(files[1])
+	_ = f.Int()
+	f.Sync()
+	_ = open().Fd()
+	_ = move(g).Fd()
+
+	_ = f.Fd()
+	_ = files[0].Fd()
+	_ = f.Eq(func() File { return files[0] }())
+	_ = same(f, f)
+}
+";
+    let expected = [
+        "a.gopp:26:6: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+        "a.gopp:27:6: cannot copy files[0] (variable of struct type File) out of its place: File \
+         has a drop method and no Clone() File",
+        "    use &files[0], mem.Take(&files[0]) or mem.Replace(&files[0], v)",
+        "a.gopp:28:32: cannot copy files[0] (variable of struct type File) out of its place: File \
+         has a drop method and no Clone() File",
+        "    use &files[0], mem.Take(&files[0]) or mem.Replace(&files[0], v)",
+        "a.gopp:29:11: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+        "a.gopp:29:14: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {

@@ -368,6 +368,7 @@ fn a_type_implements_an_interface_whose_methods_it_has() {
             named,
             DeclaredMethod {
                 method,
+                marks: Marks::default(),
                 pointer_receiver,
                 receiver_params: Vec::new(),
             },

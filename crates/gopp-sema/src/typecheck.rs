@@ -7,6 +7,7 @@
 //! left invalid, which fits everywhere and is no error.
 
 mod assign;
+mod attrs;
 mod branches;
 mod builtins;
 mod call;
@@ -249,6 +250,10 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
+    /// While the arguments of a call are assigned: the call is that of
+    /// an operator or a conversion method, which reads its operands where
+    /// they are (PAR-5).
+    operands_read: bool,
     /// While the value of an assignment to one place is walked: the
     /// place, as it is written.
     target: Option<String>,
@@ -418,6 +423,7 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
+        operands_read: false,
         target: None,
         swapping: false,
         iface_conversions: FxHashMap::default(),
@@ -1575,6 +1581,7 @@ impl<'a> Checker<'a> {
                     let literal = field.tag.map(|tag| tree.exprs[tag].span);
                     let tag = literal
                         .and_then(|span| unquote(&cx.text[span.lo as usize..span.hi as usize]));
+                    self.field_attributes(cx, &field.attrs);
                     let required = field.attrs.iter().any(|attr| {
                         let name = attr.path.name.span;
                         &cx.text[name.lo as usize..name.hi as usize] == "Required"
@@ -2450,6 +2457,21 @@ impl<'a> Checker<'a> {
         args: &[ExprId],
         spread: bool,
     ) -> Operand {
+        // The calls in the arguments have operands of their own.
+        let outer = std::mem::replace(&mut self.operands_read, false);
+        let called = self.call_checked(cx, expr, fun, args, spread);
+        self.operands_read = outer;
+        called
+    }
+
+    fn call_checked(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        fun: ExprId,
+        args: &[ExprId],
+        spread: bool,
+    ) -> Operand {
         // A method that is called is no method value.
         let mut called = self.unparen(cx, fun);
         if let ExprKind::Index { x, .. } = cx.tree.exprs[called].kind {
@@ -2487,6 +2509,7 @@ impl<'a> Checker<'a> {
             }
             _ if callee.is_value() => {
                 self.called_or_received = true;
+                self.operands_read = self.reads_operands(cx, called);
                 // What is called is a function; of a type parameter, the
                 // function type that all its types share.
                 let shared = self.common_under(callee.ty, |this, of| match of {
@@ -2815,6 +2838,9 @@ impl<'a> Checker<'a> {
             self.shifted.clear();
             self.memo = Some(FxHashMap::default());
             self.current.clear();
+            if self.own_rules(&cx) {
+                self.decl_attributes(&cx, &tree.decl_nodes[decl]);
+            }
             match &tree.decl_nodes[decl].kind {
                 DeclKind::Func {
                     receiver,

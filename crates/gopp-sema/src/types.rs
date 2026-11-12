@@ -311,11 +311,55 @@ impl Type {
 #[derive(Clone, Debug)]
 pub struct DeclaredMethod {
     pub method: Method,
+    /// The built-in attributes on the declaration.
+    pub marks: Marks,
     /// Whether the receiver is a pointer.
     pub pointer_receiver: bool,
     /// The type parameters that the receiver names, `P` in
     /// `func (l *List[P]) Len() int`: the signature is written with them.
     pub receiver_params: Vec<TypeId>,
+}
+
+/// The built-in attributes that a method is declared with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks(u16);
+
+impl Marks {
+    pub const VIRTUAL: Self = Self(1);
+    pub const ABSTRACT: Self = Self(1 << 1);
+    pub const OVERRIDE: Self = Self(1 << 2);
+    pub const OPERATOR: Self = Self(1 << 3);
+    pub const RIGHT: Self = Self(1 << 4);
+    pub const CONVERT: Self = Self(1 << 5);
+    pub const CONST: Self = Self(1 << 6);
+    pub const INLINE: Self = Self(1 << 7);
+    pub const NO_INLINE: Self = Self(1 << 8);
+    pub const NO_BOUNDS: Self = Self(1 << 9);
+
+    /// The mark of the attribute `@name`, if a method may have it.
+    pub fn of(name: &str) -> Option<Self> {
+        Some(match name {
+            "Virtual" => Self::VIRTUAL,
+            "Abstract" => Self::ABSTRACT,
+            "Override" => Self::OVERRIDE,
+            "Operator" => Self::OPERATOR,
+            "Right" => Self::RIGHT,
+            "Convert" => Self::CONVERT,
+            "Const" => Self::CONST,
+            "Inline" => Self::INLINE,
+            "NoInline" => Self::NO_INLINE,
+            "NoBounds" => Self::NO_BOUNDS,
+            _ => return None,
+        })
+    }
+
+    pub fn has(self, mark: Self) -> bool {
+        self.0 & mark.0 != 0
+    }
+
+    pub fn with(self, mark: Self) -> Self {
+        Self(self.0 | mark.0)
+    }
 }
 
 /// What a selector reaches, with the name it has in the type.
@@ -1647,6 +1691,19 @@ impl Types {
                 }
             }
         });
+    }
+
+    /// The marks of the method `name` that the declared type `holder`
+    /// declares; none for any other type or name.
+    pub fn method_marks(&self, holder: TypeId, name: Spur, package: Option<Spur>) -> Marks {
+        let Type::Named { id, .. } = &*self.get(holder) else {
+            return Marks::default();
+        };
+        self.read(|inner| {
+            let named = &inner.named[id.0 as usize];
+            let at = named.method_index.get(&(name, package));
+            at.map_or(Marks::default(), |&at| named.methods[at as usize].marks)
+        })
     }
 
     /// The declared type `named` with the type arguments `args`.

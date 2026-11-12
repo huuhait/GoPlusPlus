@@ -141,7 +141,9 @@ impl<'a> Checker<'a> {
         if let Some(to) = to {
             self.note_interface(cx, expr, &x, to, writes);
         }
+        let read = self.operands_read && context.starts_with("argument to ");
         if own
+            && !read
             && matches!(x.mode, Mode::Variable | Mode::MapIndex)
             && let Some(how) = Self::gives(context)
         {

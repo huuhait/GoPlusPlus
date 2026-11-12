@@ -490,3 +490,5 @@ E0484 err_cannot_call
 E0485 err_bang_no_zero_result
 E0486 note_fix_bang
 E0487 err_own_copy_local
+E0488 err_attr_placement
+E0489 err_attr_args

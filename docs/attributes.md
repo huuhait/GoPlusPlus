@@ -60,9 +60,9 @@ A method with no mark is final.
 | `@Export("C")` | function | emit a C-ABI symbol so C can call it |
 | `@Unwind` | callback | a panic may unwind through its C callers |
 | `@Packed` | struct type | no padding between fields |
-| `@Align(N)` | type | at least `N`-byte alignment |
-| `@Inline`, `@NoInline` | function | inlining hint |
-| `@NoBounds` | function | bounds checks off (fast, unsafe) |
+| `@Align(N)` | type | at least `N`-byte alignment; `N` is a constant power of two from 1 to 65536 |
+| `@Inline`, `@NoInline` | function or method | inlining hint; both on one function is an error |
+| `@NoBounds` | function or method | bounds checks off (fast, unsafe) |
 
 **Build switch**
 
