@@ -748,6 +748,32 @@ outer:
 }
 
 #[test]
+fn a_range_variable_with_an_address_names_the_element() {
+    insta::assert_snapshot!(gir("package main
+
+func twice(nums []int, grid [2]int, rows [][]int, hits map[string]int) int {
+	for _, &n := range nums {
+		n *= 2
+	}
+	for i, &cell := range grid {
+		cell = i
+	}
+	for _, &row := range rows {
+		row = append(row, len(row))
+	}
+	for key, &hit := range hits {
+		hit += len(key)
+	}
+	return grid[1]
+}
+
+func runes(text string, points []rune) ([]rune, string) {
+	return []rune(text), string(points)
+}
+"));
+}
+
+#[test]
 fn a_map_whose_keys_or_values_need_a_function_is_not_supported_yet() {
     let (_, messages) = lowered_with(
         &[(
@@ -1053,6 +1079,19 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
                 .replace("ys", &format!("y{at}")))
             .collect();
         steps_of(&function(&format!("\tvar xs []int\n{grown}")))
+    });
+    // Loops whose variable is the element itself, over a slice and a
+    // map.
+    assert_near_linear(&sizes, |n| {
+        let loops: String = (0..n)
+            .map(|at| match at % 2 {
+                0 => format!("\tfor _, &a{at} := range xs {{\n\t\ta{at} += x\n\t}}\n"),
+                _ => format!("\tfor _, &a{at} := range m {{\n\t\ta{at}++\n\t}}\n"),
+            })
+            .collect();
+        steps_of(&function(&format!(
+            "\txs := []int{{x}}\n\tm := map[int]int{{1: x}}\n{loops}"
+        )))
     });
     // Range loops over maps in range loops over maps, each of which a
     // `break` leaves.

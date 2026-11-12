@@ -145,6 +145,18 @@ impl FuncCx<'_, '_> {
         self.put(dest, value)
     }
 
+    /// `&v` in a range clause: for one pass of the loop `v` is another
+    /// name of the element, which is not copied (RNG-1a).
+    pub fn set_range_alias(&mut self, named: ExprId, element: Place) -> Built {
+        let named = &self.tree.exprs[Shared::unparen(self.tree, named)];
+        let Some(&local) = self.body.defs.get(&named.span.lo) else {
+            return Ok(());
+        };
+        let var = self.declare_alias(local, self.b.place_ty(&element))?;
+        let address = Rvalue::AddrOf(element, crate::Mutability::Mut);
+        self.b.assign(Place::local(var), address)
+    }
+
     /// What `left` takes its value for. With `later`, more is evaluated
     /// before the store.
     fn dest(&mut self, left: ExprId, define: bool, later: bool) -> Built<Dest> {

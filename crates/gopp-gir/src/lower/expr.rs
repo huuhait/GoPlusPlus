@@ -390,7 +390,12 @@ impl FuncCx<'_, '_> {
             ExprKind::Name(_) => match self.body.uses.get(&expr) {
                 Some(Ref::Local(local)) => {
                     let var = self.var(*local)?;
-                    let place = Place::local(var);
+                    let mut place = Place::local(var);
+                    // Another name of an element is what its pointer
+                    // leads to.
+                    if self.aliases.contains(&var) {
+                        place = self.b.deref(&place)?;
+                    }
                     // An option that is known to be set is read as what
                     // it holds.
                     let holds = matches!(self.kind(self.b.place_ty(&place)), Type::Option(_));
@@ -1410,9 +1415,20 @@ impl FuncCx<'_, '_> {
             return Ok(Rvalue::Use(given));
         }
         let byte = self.b.types().int(8, false);
+        let rune = self.b.types().int(32, true);
         let cast = match (self.kind(from), self.kind(to)) {
-            (Type::String, Type::Slice(of)) if of == byte => return self.bytes_of(to, given),
-            (Type::Slice(of), Type::String) if of == byte => return self.text_of(to, given),
+            (Type::String, Type::Slice(of)) if of == byte => {
+                return self.slice_of_text("_gopp_bytes_from_string", to, given);
+            }
+            (Type::String, Type::Slice(of)) if of == rune => {
+                return self.slice_of_text("_gopp_runes_from_string", to, given);
+            }
+            (Type::Slice(of), Type::String) if of == byte => {
+                return self.text_of_slice("_gopp_string_from_bytes", to, given);
+            }
+            (Type::Slice(of), Type::String) if of == rune => {
+                return self.text_of_slice("_gopp_string_from_runes", to, given);
+            }
             // `string(r)`: the text of one code point.
             (Type::Int { signed, .. }, Type::String) => {
                 let wide = self.b.types().int(64, true);

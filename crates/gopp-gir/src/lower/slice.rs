@@ -350,21 +350,22 @@ impl FuncCx<'_, '_> {
         ))
     }
 
-    /// `[]byte(text)`.
-    pub fn bytes_of(&mut self, ty: TypeId, text: Operand) -> Built<Rvalue> {
+    /// `[]byte(text)` and `[]rune(text)`: the function `name` of the
+    /// runtime fills the slice.
+    pub fn slice_of_text(&mut self, name: &str, ty: TypeId, text: Operand) -> Built<Rvalue> {
         let out = self.slot_of(Rvalue::Use(self.zero(ty)))?;
         let params = [self.bytes_ty(), self.b.operand_ty(&text)];
         let args = vec![self.record(out.clone())?, text];
-        self.runtime_call("_gopp_bytes_from_string", &params, args)?;
+        self.runtime_call(name, &params, args)?;
         Ok(Rvalue::Use(Operand::Copy(out)))
     }
 
-    /// `string(bytes)`.
-    pub fn text_of(&mut self, ty: TypeId, bytes: Operand) -> Built<Rvalue> {
-        let from = self.slot_of(Rvalue::Use(bytes))?;
+    /// `string(bytes)` and `string(runes)`, likewise.
+    pub fn text_of_slice(&mut self, name: &str, ty: TypeId, slice: Operand) -> Built<Rvalue> {
+        let from = self.slot_of(Rvalue::Use(slice))?;
         let params = [self.bytes_ty()];
         let args = vec![self.record(from)?];
-        let text = self.runtime("_gopp_string_from_bytes", &params, ty, args)?;
+        let text = self.runtime(name, &params, ty, args)?;
         Ok(Rvalue::Use(text))
     }
 

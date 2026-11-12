@@ -1,0 +1,54 @@
+package main
+
+type doc struct {
+	title string
+	count int
+}
+
+// `&v` in a range clause names the element itself: what the body does
+// to `v` is done to the slice, the array or the map.
+func main() {
+	nums := []int{1, 2, 3}
+	for _, &n := range nums {
+		n *= 2
+	}
+	println(nums[0], nums[1], nums[2])
+
+	docs := []doc{{"a", 1}, {"b", 2}}
+	for i, &d := range docs {
+		d.count += i + 10
+		d.title += "!"
+	}
+	println(docs[0].title, docs[0].count, docs[1].title, docs[1].count)
+
+	var grid [3]int
+	for i, &cell := range grid {
+		cell = i * i
+	}
+	println(grid[0], grid[1], grid[2])
+	p := &grid
+	for _, &cell := range p {
+		cell++
+	}
+	println(grid[0], grid[1], grid[2])
+
+	rows := [][]int{{1}, {2, 3}}
+	total := 0
+	for _, &row := range rows {
+		row = append(row, 9)
+		total += len(row)
+	}
+	println(total, len(rows[0]), len(rows[1]), rows[1][2])
+
+	hits := map[string]doc{"x": {"x", 1}, "y": {"y", 2}}
+	for _, &d := range hits {
+		d.count *= 10
+	}
+	println(hits["x"].count, hits["y"].count)
+	for key, &d := range hits {
+		if key == "x" {
+			d = doc{"new", 7}
+		}
+	}
+	println(hits["x"].title, hits["x"].count, hits["y"].title)
+}

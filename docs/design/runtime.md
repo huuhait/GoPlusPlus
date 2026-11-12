@@ -9,8 +9,8 @@ Every Go++ program is linked with a runtime ([ADR-0035](../adr/0035-runtime-in-c
 | `runtime/rt.c` | `_gopp_rt_init`, which the generated `main` calls first, `_gopp_rt_exit`, where every program that does not return from `main` ends, and `_gopp_rt_funcs`, which takes the names of the functions of a unit |
 | `runtime/print.c` | `_gopp_print_<kind>`: the built-in `print` and `println` |
 | `runtime/panic.c` | `_gopp_panic_<kind>`: where a failed bounds, slice, nil, division or shift check of generated code ends, and `_gopp_panic_must` |
-| `runtime/string.c` | what the compiler calls for strings: `_gopp_string_concat`, `_gopp_string_eq`, `_gopp_string_compare`, `_gopp_string_from_rune`, `_gopp_string_decode`, `_gopp_string_from_bytes`; and `_gopp_alloc`, which is `malloc` until the allocator of `P05.03` |
-| `runtime/slice.c` | what the compiler calls for slices: `_gopp_slice_make`, `_gopp_slice_grow`, `_gopp_slice_append`, `_gopp_slice_copy`, `_gopp_slice_copy_into`, `_gopp_slice_clear`, `_gopp_bytes_from_string` |
+| `runtime/string.c` | what the compiler calls for strings: `_gopp_string_concat`, `_gopp_string_eq`, `_gopp_string_compare`, `_gopp_string_from_rune`, `_gopp_string_decode`, `_gopp_string_from_bytes`, `_gopp_string_from_runes`; and `_gopp_alloc`, which is `malloc` until the allocator of `P05.03` |
+| `runtime/slice.c` | what the compiler calls for slices: `_gopp_slice_make`, `_gopp_slice_grow`, `_gopp_slice_append`, `_gopp_slice_copy`, `_gopp_slice_copy_into`, `_gopp_slice_clear`, `_gopp_bytes_from_string`, `_gopp_runes_from_string` |
 | `runtime/map.c` | what the compiler calls for maps: `_gopp_map_make`, `_gopp_map_len`, `_gopp_map_read`, `_gopp_map_set`, `_gopp_map_delete`, `_gopp_map_clear`, `_gopp_map_copy`, and the three functions of a range loop, `_gopp_map_iter_start`, `_gopp_map_iter_next`, `_gopp_map_iter_end` |
 | `runtime/os_linux.c`, `runtime/os_windows.c` | what the runtime asks of the system: writing to the standard error stream and walking the stack. A target gets the one of its system |
 | `runtime/internal.h` | what these files share |
@@ -60,7 +60,7 @@ Every function takes a slice by the address of its four words, as a `void *`, be
 - `_gopp_slice_append(slice, from, size, no_pointers)` is `append(s, t...)`; `from` is a slice or a string and may be the elements of the slice itself.
 - `_gopp_slice_copy(slice, size)` makes the slice a copy of itself in a buffer of its own: the copy that a new owner gets.
 - `_gopp_slice_copy_into(to, from, size)` is the built-in `copy`, and `_gopp_slice_clear` the built-in `clear`.
-- `_gopp_bytes_from_string` and `_gopp_string_from_bytes` are the two conversions; each copies the bytes.
+- `_gopp_bytes_from_string` and `_gopp_string_from_bytes` are the two conversions of `[]byte`; each copies the bytes. `_gopp_runes_from_string` and `_gopp_string_from_runes` are those of `[]rune`: bytes that are no UTF-8 give U+FFFD, one for each byte, and a number that is no code point is written as U+FFFD, as in Go. The slice of a conversion has room for its elements and no more; Go's has more, and how much depends on where the slice ends up.
 
 No buffer is freed when its owner ends yet (`P04.09`).
 
@@ -75,7 +75,7 @@ Generated code has no type of the runtime for each map type. Every function take
 - `_gopp_map_set(place, shape, key)` gives the address of the value of the key, which generated code then writes. A new key gets a zero value first. It takes the address of the place that holds the map, because a write to a nil map makes the map there (OWN-P9): no program ends with Go's `assignment to entry in nil map`.
 - `_gopp_map_delete`, `_gopp_map_clear` and `_gopp_map_len` are the built-ins.
 - `_gopp_map_copy(map, shape)` gives a map of its own with the same entries: the copy that a new owner gets.
-- A range loop keeps three words in its frame. `_gopp_map_iter_start` picks a slot that no program can tell beforehand and counts the loop in the header; `_gopp_map_iter_next` copies the next entry out; `_gopp_map_iter_end` is called on every way out of the loop. While a loop is counted, a new key and `clear` end the program with `panic: map insert during iteration` or `panic: map clear during iteration` (RNG-4); writing a key that is there and `delete` are allowed.
+- A range loop keeps three words in its frame. `_gopp_map_iter_start` picks a slot that no program can tell beforehand and counts the loop in the header; `_gopp_map_iter_next` copies the next key out and gives the address of its value in the map, or null after the last entry; `_gopp_map_iter_end` is called on every way out of the loop. While a loop is counted, a new key and `clear` end the program with `panic: map insert during iteration` or `panic: map clear during iteration` (RNG-4); writing a key that is there and `delete` are allowed.
 
 No table is freed when its owner ends yet (`P04.09`), and a panic that leaves a loop does not end its count until cleanup blocks are lowered (`P04.15`).
 

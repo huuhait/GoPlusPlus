@@ -83,6 +83,9 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The place on the right of `s = append(s, ...)` and of
     /// `s = s[i:j]`: its slice is used where it is, and not copied.
     pub reused: Option<ExprId>,
+    /// The variables `&v` of range clauses: each holds the address of
+    /// the element that it names.
+    pub aliases: FxHashSet<LocalId>,
 }
 
 /// Adds the function of the job to the module, or reports why not.
@@ -148,6 +151,7 @@ pub(super) fn lower_function<'a>(
             effects: FxHashMap::default(),
             reported: FxHashSet::default(),
             reused: None,
+            aliases: FxHashSet::default(),
         };
         cx.function(receiver.as_ref(), *ty, block)?;
         cx.b.drop_unreached();
@@ -337,6 +341,20 @@ impl FuncCx<'_, '_> {
     pub fn declare(&mut self, local: CheckedLocalId) -> Built<LocalId> {
         let declared = &self.body.locals[local.0 as usize];
         let ty = self.lower(declared.ty, declared.span);
+        self.declare_as(local, ty)
+    }
+
+    /// A new variable for the local that is another name of a place of
+    /// the type `of`: it holds the address of the place.
+    pub fn declare_alias(&mut self, local: CheckedLocalId, of: TypeId) -> Built<LocalId> {
+        let ty = self.b.types().ptr(of);
+        let var = self.declare_as(local, ty)?;
+        self.aliases.insert(var);
+        Ok(var)
+    }
+
+    fn declare_as(&mut self, local: CheckedLocalId, ty: TypeId) -> Built<LocalId> {
+        let declared = &self.body.locals[local.0 as usize];
         // The body of the function is the scope of the function; any
         // other block gets a scope with its first variable.
         let loc = self.loc(declared.span);

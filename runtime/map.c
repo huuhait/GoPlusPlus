@@ -382,9 +382,9 @@ void _gopp_map_iter_end(void *iter) {
   }
 }
 
-// The next entry: its key and its value are copied out. False after the
-// last one.
-bool _gopp_map_iter_next(void *iter, const void *shape, void *key, void *value) {
+// The next entry: its key is copied out, and the result is where its
+// value is in the map. Null after the last one.
+void *_gopp_map_iter_next(void *iter, const void *shape, void *key) {
   const gopp_mapinfo *info = shape;
   gopp_map_iter *walk = iter;
   const gopp_map *map = walk->map;
@@ -395,10 +395,9 @@ bool _gopp_map_iter_next(void *iter, const void *shape, void *key, void *value) 
     if (control & 0x80) {
       continue;
     }
-    const uint8_t *slot = map->slots + index * info->slot_size;
+    uint8_t *slot = map->slots + index * info->slot_size;
     __builtin_memcpy(key, slot, info->key_size);
-    __builtin_memcpy(value, slot + info->value_offset, info->value_size);
-    return true;
+    return slot + info->value_offset;
   }
-  return false;
+  return 0;
 }

@@ -86,33 +86,62 @@ gopp_string _gopp_string_from_bytes(const void *bytes) {
 
 enum { GOPP_RUNE_ERROR = 0xfffd };
 
-// `string(r)`: the UTF-8 of the code point, or of U+FFFD for a number
-// that is none.
-gopp_string _gopp_string_from_rune(int64_t rune) {
+// Writes the UTF-8 of the code point, or of U+FFFD for a number that is
+// none, and says how many bytes it is.
+static uint64_t encoded(uint8_t to[4], int64_t rune) {
   if (rune < 0 || rune > 0x10ffff || (rune >= 0xd800 && rune <= 0xdfff)) {
     rune = GOPP_RUNE_ERROR;
   }
   uint32_t point = (uint32_t)rune;
-  uint64_t len = point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
+  if (point < 0x80) {
+    to[0] = (uint8_t)point;
+    return 1;
+  }
+  if (point < 0x800) {
+    to[0] = (uint8_t)(0xc0 | point >> 6);
+    to[1] = (uint8_t)(0x80 | (point & 0x3f));
+    return 2;
+  }
+  if (point < 0x10000) {
+    to[0] = (uint8_t)(0xe0 | point >> 12);
+    to[1] = (uint8_t)(0x80 | (point >> 6 & 0x3f));
+    to[2] = (uint8_t)(0x80 | (point & 0x3f));
+    return 3;
+  }
+  to[0] = (uint8_t)(0xf0 | point >> 18);
+  to[1] = (uint8_t)(0x80 | (point >> 12 & 0x3f));
+  to[2] = (uint8_t)(0x80 | (point >> 6 & 0x3f));
+  to[3] = (uint8_t)(0x80 | (point & 0x3f));
+  return 4;
+}
+
+// `string(r)`.
+gopp_string _gopp_string_from_rune(int64_t rune) {
+  uint8_t bytes[4];
+  uint64_t len = encoded(bytes, rune);
   gopp_string text = fresh(len);
-  switch (len) {
-  case 1:
-    text.ptr[0] = (uint8_t)point;
-    break;
-  case 2:
-    text.ptr[0] = (uint8_t)(0xc0 | point >> 6);
-    text.ptr[1] = (uint8_t)(0x80 | (point & 0x3f));
-    break;
-  case 3:
-    text.ptr[0] = (uint8_t)(0xe0 | point >> 12);
-    text.ptr[1] = (uint8_t)(0x80 | (point >> 6 & 0x3f));
-    text.ptr[2] = (uint8_t)(0x80 | (point & 0x3f));
-    break;
-  default:
-    text.ptr[0] = (uint8_t)(0xf0 | point >> 18);
-    text.ptr[1] = (uint8_t)(0x80 | (point >> 12 & 0x3f));
-    text.ptr[2] = (uint8_t)(0x80 | (point >> 6 & 0x3f));
-    text.ptr[3] = (uint8_t)(0x80 | (point & 0x3f));
+  __builtin_memcpy(text.ptr, bytes, len);
+  return text;
+}
+
+// `string(runes)`: the UTF-8 of every code point of the slice.
+gopp_string _gopp_string_from_runes(const void *runes) {
+  const gopp_slice *of = runes;
+  const int32_t *points = of->ptr;
+  uint8_t bytes[4];
+  uint64_t len = 0;
+  for (uint64_t at = 0; at < of->len; at++) {
+    len += encoded(bytes, points[at]);
+  }
+  if (len == 0) {
+    return (gopp_string){0, 0, 0};
+  }
+  gopp_string text = fresh(len);
+  uint8_t *to = text.ptr;
+  for (uint64_t at = 0; at < of->len; at++) {
+    uint64_t width = encoded(bytes, points[at]);
+    __builtin_memcpy(to, bytes, width);
+    to += width;
   }
   return text;
 }

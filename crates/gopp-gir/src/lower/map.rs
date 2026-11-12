@@ -11,7 +11,9 @@ use lasso::Spur;
 use super::Shared;
 use super::expr::PlaceMode;
 use super::func::{Built, FuncCx, Target};
-use crate::{AggKind, CastKind, Mutability, Operand, Place, Rvalue, Type, TypeId, TypeInterner};
+use crate::{
+    AggKind, BinOp, CastKind, Mutability, Operand, Place, Rvalue, Type, TypeId, TypeInterner,
+};
 
 /// The keys and the values of a map type, and what the runtime is told
 /// of them: the size of a key, the size of a value, where the value is
@@ -328,8 +330,9 @@ impl FuncCx<'_, '_> {
     }
 
     /// `for key, value := range m`. The runtime walks the map from a
-    /// slot of its choice and gives each pass a copy of an entry; the
-    /// scope of the loop tells it that the walk is over.
+    /// slot of its choice; each pass gets a copy of a key, and a copy of
+    /// its value or, with `&`, the value where the map has it. The
+    /// scope of the loop tells the runtime that the walk is over.
     pub fn range_map(
         &mut self,
         label: Option<Spur>,
@@ -355,17 +358,22 @@ impl FuncCx<'_, '_> {
         self.runtime_call("_gopp_map_iter_start", &params, vec![walk.clone(), map])?;
         self.walked(walk.clone());
         let key = Place::local(self.b.temp(of.key));
-        let value = Place::local(self.b.temp(of.value));
         let shape = self.shape(&of)?;
-        let entry = [self.record(key.clone())?, self.record(value.clone())?];
+        let key_at = self.record(key.clone())?;
         let [head, inside, exit] = [(); 3].map(|()| self.b.new_block());
         self.b.goto(head)?;
         self.b.switch_to(head);
-        let [key_at, value_at] = entry;
-        let args = vec![walk, shape, key_at, value_at];
-        let more = self.runtime("_gopp_map_iter_next", &[bytes; 4], TypeInterner::BOOL, args)?;
+        let args = vec![walk, shape, key_at];
+        let at = self.runtime("_gopp_map_iter_next", &[bytes; 3], bytes, args)?;
+        let more = Rvalue::Binary(BinOp::Ne, at.clone(), self.zero(bytes));
+        let more = slot(self.b.assign_temp(more)?);
         self.b.switch(more, vec![(0, exit)], inside)?;
         self.b.switch_to(inside);
+        let to = self.b.types().ptr(of.value);
+        let at = self
+            .b
+            .assign_temp(Rvalue::Cast(CastKind::PtrToPtr, at, to))?;
+        let value = self.b.deref(&Place::local(at))?;
         let target = Target {
             label,
             breaks: exit,
@@ -374,8 +382,13 @@ impl FuncCx<'_, '_> {
             next: None,
         };
         self.open_scope();
-        for (&left, from) in lhs.iter().zip([key, value]) {
-            self.set_range_var(left, define, Operand::Copy(from))?;
+        if let Some(&left) = lhs.first() {
+            self.set_range_var(left, define, Operand::Copy(key))?;
+        }
+        match lhs.get(1).map(|&left| (left, self.aliased(left))) {
+            Some((_, Some(named))) => self.set_range_alias(named, value)?,
+            Some((left, None)) => self.set_range_var(left, define, Operand::Copy(value))?,
+            None => {}
         }
         self.targets.push(target);
         self.block(body)?;

@@ -237,19 +237,16 @@ impl FuncCx<'_, '_> {
         body: &Block,
     ) -> Built {
         let inner = |this: &Self, left: ExprId| Shared::unparen(this.tree, left);
-        let alias = |&left: &ExprId| {
-            let kind = &self.tree.exprs[inner(self, left)].kind;
-            let address = UnaryOp::Addr;
-            matches!(kind, ExprKind::Unary { op, .. } if *op == address)
-        };
-        if lhs.iter().any(alias) {
-            self.unsupported(span, "a range variable that is the element itself");
+        let (key, value) = (lhs.first().copied(), lhs.get(1).copied());
+        // A key has no `&` form; the checker said so.
+        if key.is_some_and(|key| self.aliased(key).is_some()) {
+            self.unsupported(span, "a range key that is the key itself");
             return Ok(());
         }
         if self.holds_map(x) {
             return self.range_map(label, span, lhs, define, x, body);
         }
-        let (key, value) = (lhs.first().copied(), lhs.get(1).copied());
+        let alias = value.and_then(|value| self.aliased(value));
         let named = value.is_some_and(|value| {
             let kind = &self.tree.exprs[inner(self, value)].kind;
             !matches!(kind, ExprKind::Name(name) if *name == self.shared.blank)
@@ -285,7 +282,7 @@ impl FuncCx<'_, '_> {
             Type::Array(_, len) => {
                 let limit = self.b.const_int(word, len)?;
                 let source = match named {
-                    true => Walked::Elements(self.ranged_array(x, span)?),
+                    true => Walked::Elements(self.ranged_array(x, span, alias.is_some())?),
                     false => Walked::Count,
                 };
                 (source, limit, word)
@@ -299,7 +296,7 @@ impl FuncCx<'_, '_> {
             // The elements of the slice as it is when the loop starts:
             // the body may write them, and may not grow the slice.
             Type::Slice(of) => {
-                if named && !self.flat(of) {
+                if named && alias.is_none() && !self.flat(of) {
                     self.unsupported(span, "a copy of elements that hold a slice");
                     return self.close_scope(span);
                 }
@@ -355,8 +352,12 @@ impl FuncCx<'_, '_> {
         if let Some(key) = key {
             self.set_range_var(key, define, slot(counter))?;
         }
-        if let (Some(value), Some(element)) = (value, element) {
-            self.set_range_var(value, define, element)?;
+        match (value, alias, element) {
+            (_, Some(named), Some(Operand::Copy(element))) => {
+                self.set_range_alias(named, element)?;
+            }
+            (Some(value), None, Some(element)) => self.set_range_var(value, define, element)?,
+            _ => {}
         }
         self.targets.push(target);
         self.block(body)?;
@@ -371,17 +372,29 @@ impl FuncCx<'_, '_> {
         self.close_scope(span)
     }
 
+    /// The name inside `&v` of a range clause.
+    pub fn aliased(&self, left: ExprId) -> Option<ExprId> {
+        match self.tree.exprs[Shared::unparen(self.tree, left)].kind {
+            ExprKind::Unary {
+                op: UnaryOp::Addr,
+                x,
+            } => Some(x),
+            _ => None,
+        }
+    }
+
     /// The array whose elements a range loop reads. An array whose
     /// elements are copied by their bytes is copied first, as in Go: the
-    /// loop does not see what its body writes. Any other, and one behind
-    /// a pointer, is walked where it is (RNG-6).
-    fn ranged_array(&mut self, x: ExprId, span: SourceSpan) -> Built<Place> {
+    /// loop does not see what its body writes. Any other, one behind a
+    /// pointer, and one whose elements the loop names with `&` (`live`),
+    /// is walked where it is (RNG-6).
+    fn ranged_array(&mut self, x: ExprId, span: SourceSpan, live: bool) -> Built<Place> {
         let mut mode = PlaceMode::default();
         let place = self.place(x, &mut mode)?;
         let pointer = matches!(self.kind(self.b.place_ty(&place)), Type::Ptr(_));
         let checked = self.body.types.get(&x).map(|typed| typed.ty);
         let trivial = checked.is_some_and(|ty| self.shared.types.category(ty) == Category::Trivial);
-        match (pointer, trivial) {
+        match (pointer, trivial && !live) {
             (true, _) => self.deref(place, span, &mut mode),
             (false, true) => {
                 let copy = self.b.assign_temp(Rvalue::Use(Operand::Copy(place)))?;

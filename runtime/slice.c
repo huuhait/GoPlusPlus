@@ -202,3 +202,19 @@ void _gopp_bytes_from_string(void *slice, gopp_string text) {
   }
   *(gopp_slice *)slice = bytes;
 }
+
+// `[]rune(text)`: the code points of the string, as `range` gives them.
+void _gopp_runes_from_string(void *slice, gopp_string text) {
+  uint64_t count = 0;
+  for (uint64_t at = 0; at < text.len; at += _gopp_string_decode(text, at) >> 32) {
+    count++;
+  }
+  gopp_slice runes = fresh(count, count, sizeof(int32_t));
+  int32_t *points = runes.ptr;
+  for (uint64_t at = 0; at < text.len;) {
+    uint64_t packed = _gopp_string_decode(text, at);
+    *points++ = (int32_t)(uint32_t)packed;
+    at += packed >> 32;
+  }
+  *(gopp_slice *)slice = runes;
+}
