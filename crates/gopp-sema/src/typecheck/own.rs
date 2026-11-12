@@ -118,6 +118,46 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The temporary `x` of `expr` is given to a place of the type `to`:
+    /// a `Unique` or a `Shared` that ends with its statement lends no
+    /// pointer (OWN-P6).
+    pub(super) fn lent_from_temporary(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: &Operand,
+        to: std::option::Option<TypeId>,
+    ) {
+        let is_handle = matches!(
+            &*self.types.get(self.types.underlying(x.ty)),
+            Type::Unique(_) | Type::Shared(_)
+        );
+        let Some((from, _)) = to
+            .filter(|_| is_handle)
+            .and_then(|to| self.fit_own(x, to, false))
+        else {
+            return;
+        };
+        let lends = matches!(
+            &*self.types.get(self.types.underlying(from)),
+            Type::Pointer(_)
+        );
+        if !lends || from == x.ty {
+            return;
+        }
+        let message = format!(
+            "cannot use {} as {} value: the {} is a temporary that ends with the statement",
+            self.expr_string(cx, expr),
+            self.type_string(from),
+            self.type_string(x.ty)
+        );
+        let fix = (
+            Code::NoteOwnFixAddress,
+            "store it in a variable first".to_owned(),
+        );
+        self.error_with_fix(Code::OwnRefIntoTemp, cx.tree.exprs[expr].span, message, fix);
+    }
+
     /// Whether a value of the type may be without a zero value: the type
     /// has none, holds a part that has none, or is a type parameter that
     /// may stand for such a type (OWN-R9).
@@ -509,7 +549,22 @@ impl<'a> Checker<'a> {
             Some(x) => self.unfit_own(x, to, false),
         };
         match through {
-            true => drop(self.writes_through.insert(place)),
+            true => {
+                self.writes_through.insert(place);
+                let pointer = self.unparen(cx, place);
+                let local = match cx.body.uses.get(&pointer) {
+                    Some(&Ref::Local(local)) => Some(local),
+                    _ => None,
+                };
+                if local.is_some_and(|local| self.read_only.contains(&local)) {
+                    let message = format!(
+                        "cannot assign to what {} points to: what a Shared holds is only read",
+                        self.expr_string(cx, pointer)
+                    );
+                    let span = cx.tree.exprs[pointer].span;
+                    self.error(Code::OwnSharedWrite, span, message);
+                }
+            }
             // The pointer itself is assigned.
             false => self.repointed(cx, place),
         }

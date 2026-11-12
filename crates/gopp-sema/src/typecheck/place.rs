@@ -176,6 +176,108 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether the place `expr` is in what a `Shared` holds, which is only
+    /// read through the handle and through a pointer taken into it
+    /// (OWN-P8).
+    pub(super) fn held_shared(&mut self, cx: &Cx<'a>, mut expr: ExprId) -> bool {
+        loop {
+            self.steps += 1;
+            let of = match cx.tree.exprs[expr].kind {
+                ExprKind::Paren(x) => {
+                    expr = x;
+                    continue;
+                }
+                ExprKind::Selector { x, .. }
+                | ExprKind::Index { x, .. }
+                | ExprKind::Slice { x, .. } => x,
+                ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    x,
+                } => x,
+                _ => return false,
+            };
+            let Some(mut ty) = self.walked_type(of) else {
+                return false;
+            };
+            // What an option holds is reached like the option.
+            while let Type::Option(elem) = &*self.types.get(self.types.underlying(ty)) {
+                ty = *elem;
+            }
+            match &*self.types.get(self.types.underlying(ty)) {
+                Type::Shared(_) => return true,
+                Type::Pointer(_) => {
+                    let pointer = self.variable(cx, self.unparen(cx, of));
+                    return pointer.is_some_and(|local| self.read_only.contains(&local));
+                }
+                _ => expr = of,
+            }
+        }
+    }
+
+    /// Whether the value of `expr` is a pointer into what a `Shared`
+    /// holds: the address of such a place, the `Shared` itself where a
+    /// pointer is wanted, or a variable that is such a pointer.
+    fn points_into_shared(&mut self, cx: &Cx<'a>, expr: ExprId) -> bool {
+        let expr = self.unparen(cx, expr);
+        match cx.tree.exprs[expr].kind {
+            ExprKind::Unary {
+                op: UnaryOp::Addr,
+                x,
+            } => self.held_shared(cx, x),
+            ExprKind::Name(_) => {
+                let local = self.variable(cx, expr);
+                let is_shared = self.walked_type(expr).is_some_and(|ty| {
+                    matches!(&*self.types.get(self.types.underlying(ty)), Type::Shared(_))
+                });
+                is_shared || local.is_some_and(|local| self.read_only.contains(&local))
+            }
+            _ => self.walked_type(expr).is_some_and(|ty| {
+                matches!(&*self.types.get(self.types.underlying(ty)), Type::Shared(_))
+            }),
+        }
+    }
+
+    /// The variables `locals` are declared with the values `values`: a
+    /// pointer that gets a pointer into what a `Shared` holds only reads.
+    pub(super) fn only_read(
+        &mut self,
+        cx: &Cx<'a>,
+        locals: &[std::option::Option<LocalId>],
+        values: &[ExprId],
+    ) {
+        if !self.own_rules(cx) || locals.len() != values.len() {
+            return;
+        }
+        for (local, &value) in locals.iter().zip(values) {
+            if let Some(local) = *local
+                && self.points_into_shared(cx, value)
+            {
+                self.read_only.insert(local);
+            }
+        }
+    }
+
+    /// The place `expr` is changed, as `doing` says: not what a `Shared`
+    /// holds. Whether something was said.
+    pub(super) fn shared_changed(&mut self, cx: &Cx<'a>, expr: ExprId, doing: &str) -> bool {
+        if !self.own_rules(cx) || self.memo.is_none() || !self.held_shared(cx, expr) {
+            return false;
+        }
+        let message = format!(
+            "cannot {doing} {}: what a Shared holds is only read through it",
+            self.expr_string(cx, expr)
+        );
+        let fix = "put what changes in a Mutex or an Atomic, or own the value with a Unique";
+        let span = cx.tree.exprs[expr].span;
+        self.error_with_fix(
+            Code::OwnSharedWrite,
+            span,
+            message,
+            (Code::NoteOwnFixOption, fix.to_owned()),
+        );
+        true
+    }
+
     /// The function literals that are being walked and do not declare the
     /// variable do `how` to it.
     pub(super) fn capture(&mut self, cx: &Cx<'a>, local: LocalId, how: CaptureUse) {
@@ -669,6 +771,28 @@ impl<'a> Checker<'a> {
             return;
         }
         self.required_taken(cx, name, args);
+        if let Some(&first) = args.first() {
+            let first = self.unparen(cx, first);
+            let place = match cx.tree.exprs[first].kind {
+                ExprKind::Unary {
+                    op: UnaryOp::Addr,
+                    x,
+                } => Some(x),
+                _ => None,
+            };
+            let through = place.is_none() && self.points_into_shared(cx, first);
+            if place.is_some_and(|place| self.shared_changed(cx, place, "take")) {
+                return;
+            }
+            if through {
+                let message = format!(
+                    "cannot take what {} points to: what a Shared holds is only read",
+                    self.expr_string(cx, first)
+                );
+                self.error(Code::OwnSharedWrite, cx.tree.exprs[first].span, message);
+                return;
+            }
+        }
         let ty = result.ty;
         let text = self.expr_string(cx, call);
         let span = cx.tree.exprs[call].span;

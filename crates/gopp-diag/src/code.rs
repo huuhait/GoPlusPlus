@@ -228,6 +228,7 @@ codes! {
     270 DuplicateMethodIface "err_duplicate_method_iface",
     272 OwnDropSignature "err_own_drop_signature",
     273 OwnDropCalled "err_own_drop_called",
+    279 OwnRefIntoTemp "err_own_ref_into_temp",
     280 OwnRangeVarWrite "err_own_range_var_write",
     281 OwnRangeAliasInvalid "err_own_range_alias_invalid",
     284 OwnRangeAliasFunc "err_own_range_alias_func",
@@ -299,6 +300,7 @@ codes! {
     487 OwnCopyLocal "err_own_copy_local",
     488 AttrPlacement "err_attr_placement",
     489 AttrArgs "err_attr_args",
+    492 OwnSharedWrite "err_own_shared_write",
 }
 
 impl Code {

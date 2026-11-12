@@ -1497,6 +1497,19 @@ pub fn explain(code: Code) -> Option<Explanation> {
              that is never nil, another such field, or a local variable.",
             "j.Done = pick()             // error: the result may be nil\nch := pick()\nj.Done = ch                 // ok where ch is known to be set",
         ),
+        OwnRefIntoTemp => (
+            "A `Unique[T]` or a `Shared[T]` that is a temporary is used as a `*T`. The \
+             temporary ends with its statement, and the pointer would point at nothing.",
+            "Store the value in a variable first.",
+            "var p *Node = open() // error: open returns a Unique[Node]\nu := open()\nvar p *Node = u      // ok",
+        ),
+        OwnSharedWrite => (
+            "What a `Shared[T]` holds is changed through the handle. Several handles are the \
+             same value, so it is only read through them, and so is a pointer taken into it.",
+            "Put the part that changes in a `Mutex` or an `Atomic`, or own the value with a \
+             `Unique[T]`.",
+            "func rename(s Shared[Node]) {\n\ts.Name = \"x\" // error\n\t_ = s.Name   // ok\n}",
+        ),
         _ => return None,
     };
     Some(Explanation {

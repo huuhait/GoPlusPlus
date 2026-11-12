@@ -149,7 +149,10 @@ impl<'a> Checker<'a> {
                     let ty = read.map_or(x.ty, |(from, _)| from);
                     self.given(cx, expr, &x, ty, how);
                 }
-                Mode::Value => self.slice_given(cx, expr, &x, how),
+                Mode::Value => {
+                    self.slice_given(cx, expr, &x, how);
+                    self.lent_from_temporary(cx, expr, &x, to);
+                }
                 _ => {}
             }
         }
@@ -421,6 +424,9 @@ impl<'a> Checker<'a> {
                 let fix = format!("use {}", self.expr_string(cx, pointer));
                 let fix = (Code::NoteOwnFixNoStar, fix);
                 self.error_with_fix(Code::OwnStarOnLeft, span, message, fix);
+                return Some(Types::INVALID);
+            }
+            if self.shared_changed(cx, lhs, "assign to") {
                 return Some(Types::INVALID);
             }
             if self.read(cx, x.clone()).ty != x.ty {

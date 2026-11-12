@@ -325,6 +325,9 @@ struct Checker<'a> {
     /// where the attribute is: what it may be on is checked once every
     /// type is known.
     required_fields: Vec<(TypeId, Span)>,
+    /// While a body is walked: the pointer variables that point into what
+    /// a `Shared` holds, which is only read through them.
+    read_only: FxHashSet<LocalId>,
     /// While a body is walked: the places `&x.f` where `f` is a field
     /// that is never nil, until what takes the address is known.
     required_addresses: Vec<ExprId>,
@@ -435,6 +438,7 @@ pub fn declarations(
         lookup_target: None,
         required_fields: Vec::new(),
         required_addresses: Vec::new(),
+        read_only: FxHashSet::default(),
         operands: place::Operands::Kept,
         target: None,
         swapping: false,
@@ -2377,7 +2381,16 @@ impl<'a> Checker<'a> {
             }
         };
         let message = format!("{of}.{name} undefined ({reason})");
-        self.error(Code::UndefinedFieldOrMethod, sel.span, message);
+        // What a `Weak` points to may be gone (ADR-0017).
+        let is_weak = matches!(&*self.types.get(self.types.underlying(x.ty)), Type::Weak(_));
+        match is_weak {
+            true => {
+                let fix = format!("use {of}.Lock(), which gives an Option of a Shared");
+                let fix = (Code::NoteOwnFixOption, fix);
+                self.error_with_fix(Code::UndefinedFieldOrMethod, sel.span, message, fix);
+            }
+            false => self.error(Code::UndefinedFieldOrMethod, sel.span, message),
+        }
     }
 
     /// The type of the composite literal `ty{elems}`. `[...]T{…}` has as
@@ -2859,6 +2872,7 @@ impl<'a> Checker<'a> {
             let mut cx = self.cx(&Decl { unit, body, form }, None);
             self.locals.clear();
             self.bindings.clear();
+            self.read_only.clear();
             self.local_groups.clear();
             self.shifted.clear();
             self.memo = Some(FxHashMap::default());
@@ -3289,6 +3303,7 @@ impl<'a> Checker<'a> {
                     places.push(assigned.then_some(declared.ty));
                 }
                 let types = self.init_vars(cx, &places, rhs, Init::Variables);
+                self.only_read(cx, &locals, rhs);
                 for (local, ty) in locals.into_iter().zip(types) {
                     if let Some(local) = local {
                         self.locals.insert(local, Operand::variable(ty));
@@ -3446,6 +3461,7 @@ impl<'a> Checker<'a> {
                 let declared = ty.map(|ty| self.var_type(cx, ty));
                 self.arity(cx, names, values, None);
                 let types = self.var_decl(cx, names, declared, values);
+                self.only_read(cx, &locals, values);
                 for (local, ty) in locals.into_iter().zip(types) {
                     if let Some(local) = local {
                         self.locals.insert(local, Operand::variable(ty));

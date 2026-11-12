@@ -7459,6 +7459,145 @@ fn the_steps_of_zero_values_grow_with_the_types_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(wide(n)));
 }
 
+// rule: OWN-P5, OWN-P6, OWN-P8
+#[test]
+fn a_pointer_is_used_like_its_value_and_a_shared_value_is_only_read() {
+    let names = ThreadedRodeo::new();
+    let mem = "package mem\nfunc Take[T any](p *T) T\nfunc Replace[T any](p *T, v T) T\n";
+    let loader = with_packages(&names, &[("mem", mem)]);
+    let text = "package p
+
+import \"mem\"
+
+type Node struct {
+	Name string
+	Kids []int
+	Tags map[string]int
+	Next Option[*Node]
+	N    int
+}
+
+func (n Node) Label() string { return n.Name }
+func (n *Node) Rename(s string) { n.Name = s }
+
+func open() Unique[Node]   { return NewUnique(Node{}) }
+func share() Shared[Node]  { return NewShared(Node{}) }
+func visit(n *Node)        {}
+func maybe(n Option[*Node]) {}
+func addOne(xs *[]int)     { xs[0]++ }
+
+func pointers(p *Node, n *int, xs *[]int, m *map[string]int, q *Node) int {
+	_ = p.Name
+	_ = p.Label()
+	p.Rename(\"x\")
+	_ = xs[0]
+	_ = xs[1:]
+	_ = len(xs) + cap(xs) + len(m)
+	for _, x := range xs {
+		_ = x
+	}
+	delete(m, \"a\")
+	clear(m)
+	_ = n + 1
+	var v int = n
+	n = 9
+	n++
+	n += 2
+	xs = append(xs, 4)
+	xs = nil
+	r := p
+	p = q
+	_ = p == q
+	v = *n
+	_, _ = r, v
+	return n
+}
+
+func uniques(u Unique[Node], o Option[Unique[Node]]) {
+	_ = u.Name
+	u.Name = \"x\"
+	u.Kids[0] = 1
+	u.Rename(\"y\")
+	_ = u.Label()
+	visit(u)
+	maybe(u)
+	maybe(o)
+	var p *Node = u
+	var q Option[*Node] = u
+	_, _ = p, q
+	visit(open())
+	var bad *Node = open()
+	_ = bad
+}
+
+func shareds(s Shared[Node], w Weak[Node], o Option[Shared[Node]]) {
+	_ = s.Name
+	_ = s.Kids[0]
+	_ = len(s.Kids)
+	_ = s.Label()
+	for _, k := range s.Kids {
+		_ = k
+	}
+	kids := s.Kids
+	visit(s)
+	maybe(o)
+	_ = kids
+
+	s.Name = \"x\"
+	s.Kids[0] = 1
+	s.N++
+	s.N += 1
+	s.Kids = append(s.Kids, 1)
+	delete(s.Tags, \"a\")
+	clear(s.Kids)
+	_ = mem.Take(&s.Name)
+	_ = mem.Replace(&s.N, 2)
+	p := &s.Name
+	p = \"x\"
+	addOne(&s.Kids)
+
+	_ = w.Name
+	w.Rename(\"x\")
+	if t := w.Lock(); t != nil {
+		_ = t.Name
+	}
+}
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:61:8: cannot use open() as *Node value: the Unique[Node] is a temporary that ends \
+         with the statement",
+        "    store it in a variable first",
+        "a.gopp:62:18: cannot use open() as *Node value: the Unique[Node] is a temporary that ends \
+         with the statement",
+        "    store it in a variable first",
+        "a.gopp:79:2: cannot assign to s.Name: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:80:2: cannot assign to s.Kids[0]: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:81:2: cannot assign to s.N: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:82:2: cannot assign to s.N: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:83:2: cannot assign to s.Kids: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:84:9: cannot delete from s.Tags: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:85:8: cannot clear s.Kids: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:86:16: cannot take s.Name: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:87:19: cannot take s.N: what a Shared holds is only read through it",
+        "    put what changes in a Mutex or an Atomic, or own the value with a Unique",
+        "a.gopp:89:2: cannot assign to what p points to: what a Shared holds is only read",
+        "a.gopp:92:8: w.Name undefined (type Weak[Node] has no field or method Name)",
+        "    use w.Lock(), which gives an Option of a Shared",
+        "a.gopp:93:4: w.Rename undefined (type Weak[Node] has no field or method Rename)",
+        "    use w.Lock(), which gives an Option of a Shared",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {
