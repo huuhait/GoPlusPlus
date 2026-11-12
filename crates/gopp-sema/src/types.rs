@@ -573,13 +573,21 @@ fn deep<R>(step: impl FnOnce() -> R) -> R {
 }
 
 /// How a type is written out.
-#[derive(Clone, Copy, Default)]
-struct Spelling {
+#[derive(Clone, Copy)]
+struct Spelling<'a> {
     /// One spelling for all identical types.
     canonical: bool,
     /// The name of the package whose types are written without it.
     within: Option<Spur>,
+    /// How many more types are written out before the rest is left out.
+    left: &'a Cell<u32>,
 }
+
+/// The types that the text of one type names at most. A type that calls
+/// of generic functions build may hold another one twice, which holds a
+/// third one twice, and so on: written out it is as long as two to the
+/// number of such types, and no message is read that far.
+const WRITTEN_AT_MOST: u32 = 4096;
 
 /// The layouts that one question about a layout has found: a type that
 /// stands in several places is laid out once.
@@ -2192,26 +2200,37 @@ impl Types {
 
     /// The type as a program writes it.
     pub fn display(&self, id: TypeId, names: &ThreadedRodeo) -> String {
-        self.show(id, names, Spelling::default())
+        self.written(id, names, None)
+    }
+
+    fn written(&self, id: TypeId, names: &ThreadedRodeo, within: Option<Spur>) -> String {
+        let left = Cell::new(WRITTEN_AT_MOST);
+        let spelling = Spelling {
+            canonical: false,
+            within,
+            left: &left,
+        };
+        let text = self.show(id, names, spelling);
+        let steps = u64::from(WRITTEN_AT_MOST - left.get());
+        self.steps.fetch_add(steps, Ordering::Relaxed);
+        text
     }
 
     /// The type as a message of the package named `package` shows it: the
     /// types of that package are written without it.
     pub fn display_in(&self, id: TypeId, names: &ThreadedRodeo, package: Spur) -> String {
-        let spelling = Spelling {
-            within: Some(package),
-            ..Spelling::default()
-        };
-        self.show(id, names, spelling)
+        self.written(id, names, Some(package))
     }
 
     /// The type in one spelling for all identical types: an interface is
     /// written with all its methods, in the order of their names, then its
     /// type terms.
     pub fn canonical(&self, id: TypeId, names: &ThreadedRodeo) -> String {
+        // Compared with what Go writes: all of it.
         let spelling = Spelling {
             canonical: true,
-            ..Spelling::default()
+            within: None,
+            left: &Cell::new(u32::MAX),
         };
         self.show(id, names, spelling)
     }
@@ -2260,7 +2279,13 @@ impl Types {
     }
 
     fn show(&self, id: TypeId, names: &ThreadedRodeo, spelling: Spelling) -> String {
-        deep(|| self.show_here(id, names, spelling))
+        match spelling.left.get() {
+            0 => "…".to_owned(),
+            left => {
+                spelling.left.set(left - 1);
+                deep(|| self.show_here(id, names, spelling))
+            }
+        }
     }
 
     fn show_here(&self, id: TypeId, names: &ThreadedRodeo, spelling: Spelling) -> String {

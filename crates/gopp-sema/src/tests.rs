@@ -5445,6 +5445,40 @@ type Self[P any] = *Self[P]
     );
 }
 
+/// Calls of a generic function build a type that holds another one twice
+/// at every level, with no alias to name it by.
+#[test]
+fn a_type_built_by_generic_calls_is_written_out_in_part() {
+    let build = |count: usize, last: &str| {
+        let calls: String = (1..=count)
+            .map(|i| format!("\ta{i} := dup(a{})\n", i - 1))
+            .collect();
+        format!(
+            "package p\nfunc dup[T any](x T) struct{{ a, b T }} {{ return struct{{ a, b T }}{{x, x}} }}\n\
+             func _() {{\n\ta0 := 1\n{calls}\t_ = a{count} == a{count}\n{last}}}\n"
+        )
+    };
+    let check = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        let steps = checked.steps + loader.types.get().unwrap().steps();
+        (checked.messages, steps)
+    };
+    let (messages, steps) = check(build(200, ""));
+    assert_eq!(messages, [] as [&str; 0]);
+    assert!(steps < 20_000_000, "{steps} steps");
+    let (messages, _) = check(build(40, "\tvar _ int = a40\n"));
+    let [message] = &messages[..] else {
+        panic!("{} messages", messages.len());
+    };
+    assert!(
+        message
+            .starts_with("a.go:46:14: cannot use a40 (variable of type struct{a struct{a struct{a")
+    );
+    assert!(message.ends_with("b …}; b …}) as int value in variable declaration"));
+    assert!(message.len() < 100_000, "{} bytes", message.len());
+}
+
 #[test]
 fn a_message_names_a_type_by_the_alias_it_was_written_with() {
     let text = "package p
