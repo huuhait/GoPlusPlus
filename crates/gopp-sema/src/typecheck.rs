@@ -31,7 +31,7 @@ use crate::basic::{Basic, representable};
 use crate::constant::{self, CompareOp, Kind, Value};
 use crate::literal::unquote;
 use crate::object::{
-    Body, ExprType, LocalId, LocalKind, ObjId, ObjKind, Ref, Selection, SelectionKind,
+    Bang, Body, ExprType, LocalId, LocalKind, ObjId, ObjKind, Ref, Selection, SelectionKind,
 };
 use crate::package::Package;
 use crate::resolve::Unit;
@@ -204,12 +204,14 @@ struct Checker<'a> {
     /// While the value of a constant is worked out that another constant
     /// of its group may repeat: nothing is taken from `memo`.
     fresh: bool,
-    /// While a body is walked: the types of the results of the function
-    /// that the statements are in, the innermost last.
-    /// With whether the results have names: `return` alone returns them;
-    /// and whether the function can fail: its last result is the error
-    /// that `!` adds.
-    results: Vec<Option<(Vec<TypeId>, bool, bool)>>,
+    /// While a body is walked: the results of the function that the
+    /// statements are in, the innermost last; none for a signature that
+    /// is in error.
+    results: Vec<Option<Results>>,
+    /// The call of the `go` or `defer` statement that is being checked,
+    /// and whether it is that of `go`.
+    suspended: Option<(ExprId, bool)>,
+    bangs: FxHashMap<ExprId, Bang>,
     /// Whether a function was called or a channel received from since the
     /// flag was last cleared: the length of an array is a constant only
     /// if neither happens to get the array.
@@ -301,6 +303,20 @@ struct Checker<'a> {
     valid: FxHashSet<TypeId>,
 }
 
+/// The results of a function.
+#[derive(Clone)]
+struct Results {
+    types: Vec<TypeId>,
+    /// The results have names: `return` alone returns them.
+    named: bool,
+    /// Declared with `!`: the last result is the error that `!` adds.
+    fails: bool,
+    /// For a function of a `.gopp` file that ends in `error` without
+    /// `!`: the first result that may have no zero value, which the
+    /// function cannot leave unset.
+    unset: Option<TypeId>,
+}
+
 /// What was found in one body.
 struct BodyTypes {
     exprs: FxHashMap<ExprId, ExprType>,
@@ -311,6 +327,7 @@ struct BodyTypes {
     writes_through: FxHashSet<ExprId>,
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     instances: FxHashMap<ExprId, crate::object::Instance>,
+    bangs: FxHashMap<ExprId, Bang>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -357,6 +374,8 @@ pub fn declarations(
         memo: None,
         fresh: false,
         results: Vec::new(),
+        suspended: None,
+        bangs: FxHashMap::default(),
         called_or_received: false,
         error_at: None,
         local_groups: FxHashMap::default(),
@@ -442,6 +461,7 @@ pub fn declarations(
             body.writes_through = found.writes_through;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
+            body.bangs = found.bangs;
             for (LocalId(local), ty) in found.locals {
                 body.locals[local as usize].ty = ty;
             }
@@ -1424,11 +1444,18 @@ impl<'a> Checker<'a> {
                         .map(|param| self.var_type(cx, param.ty))
                         .collect()
                 };
-                let (params, results) = (list(params), list(results));
-                match fails {
-                    true => self.types.failing_func(&params, &results, variadic),
-                    false => self.types.func(&params, &results, variadic),
+                let (params, types) = (list(params), list(results));
+                if !*fails {
+                    return self.types.func(&params, &types, variadic);
                 }
+                if let Some(last) = results.last()
+                    && types.last() == Some(&self.types.error())
+                {
+                    let message = "! already adds the error; remove it".to_owned();
+                    let span = tree.exprs[last.ty].span;
+                    self.error(Code::FailsReturnsError, span, message);
+                }
+                self.types.failing_func(&params, &types, variadic)
             }
             // `...T` as the type of the last parameter: a slice.
             ExprKind::DotsType { elem } => {
@@ -1819,7 +1846,7 @@ impl<'a> Checker<'a> {
             } => {
                 let called = self.call(cx, expr, *fun, args, *spread);
                 match unwrap {
-                    true => self.unwrapped(called),
+                    true => self.unwrapped(cx, expr, *fun, called),
                     false => called,
                 }
             }
@@ -2002,6 +2029,9 @@ impl<'a> Checker<'a> {
             );
             self.error(Code::BuiltinNotCalled, sel.span, message);
             return Operand::UNKNOWN;
+        }
+        if x.mode == Mode::NoValue {
+            return self.no_value(cx, base, &x);
         }
         // In a `.gopp` file a field or a method is reached through every
         // kind of pointer.
@@ -2283,24 +2313,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The result of `f!(x)`: the results of `f(x)` without the error.
-    fn unwrapped(&self, called: Operand) -> Operand {
-        let Type::Tuple(results) = &*self.types.get(called.ty) else {
-            return match called.ty == self.types.error() {
-                true => Operand {
-                    mode: Mode::NoValue,
-                    ty: Types::INVALID,
-                },
-                false => called,
-            };
-        };
-        match &results[..] {
-            [rest @ .., last] if *last == self.types.error() => match rest {
-                [one] => Operand::value(*one),
-                many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
-            },
-            _ => called,
-        }
+    /// A call without a result stands where something is called or
+    /// selected from.
+    fn no_value(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand) -> Operand {
+        let message = format!("{} used as value or type", self.describe(cx, expr, x));
+        self.error(Code::NoValue, cx.tree.exprs[expr].span, message);
+        Operand::UNKNOWN
     }
 
     /// A call: of a function, a conversion, or a built-in function.
@@ -2315,6 +2333,12 @@ impl<'a> Checker<'a> {
         let callee = self.operand(cx, fun);
         let callee = self.instantiated(cx, fun, callee);
         match callee.mode {
+            Mode::NoValue => {
+                for &arg in args {
+                    self.operand(cx, arg);
+                }
+                self.no_value(cx, fun, &callee)
+            }
             Mode::Type => self.conversion(cx, expr, callee.ty, args),
             Mode::Builtin(_) | Mode::Unsafe(_) => {
                 let called = match callee.mode {
@@ -2755,6 +2779,7 @@ impl<'a> Checker<'a> {
                 writes_through: std::mem::take(&mut self.writes_through),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
+                bangs: std::mem::take(&mut self.bangs),
             });
         }
         self.incomplete = false;
@@ -2772,14 +2797,30 @@ impl<'a> Checker<'a> {
         };
         // The results of a signature that is in error are not known.
         let results = match &*self.types.get(sig) {
-            Type::Func { results, .. } => Some((results.to_vec(), named, fails)),
+            Type::Func { results, .. } => {
+                let unset = match &results[..] {
+                    [rest @ .., last]
+                        if !fails && *last == self.types.error() && self.own_rules(cx) =>
+                    {
+                        self.steps += rest.len() as u64;
+                        rest.iter().copied().find(|&ty| self.may_lack_zero(ty))
+                    }
+                    _ => None,
+                };
+                Some(Results {
+                    types: results.to_vec(),
+                    named,
+                    fails,
+                    unset,
+                })
+            }
             _ => None,
         };
         // A function with results ends in a statement that does not go
         // on; the error that `!` adds is no result of its own.
         let returns = results
             .as_ref()
-            .is_some_and(|(results, ..)| results.len() > usize::from(fails));
+            .is_some_and(|results| results.types.len() > usize::from(fails));
         self.results.push(results);
         self.stmts(cx, &body.stmts);
         self.results.pop();
@@ -2789,14 +2830,8 @@ impl<'a> Checker<'a> {
     /// `return results` in a function with the results `wanted`. A
     /// function that can fail returns its results and no error, or one
     /// value more, which is the error (ERR-3).
-    fn returned(
-        &mut self,
-        cx: &Cx<'a>,
-        whole: Span,
-        wanted: &[TypeId],
-        fails: bool,
-        results: &[ExprId],
-    ) {
+    fn returned(&mut self, cx: &Cx<'a>, whole: Span, wanted: &Results, results: &[ExprId]) {
+        let types = &wanted.types;
         let given = match results {
             [one] => match self.operand(cx, *one) {
                 Operand {
@@ -2813,26 +2848,40 @@ impl<'a> Checker<'a> {
         let places =
             |types: &[TypeId]| -> Vec<Option<TypeId>> { types.iter().copied().map(Some).collect() };
         let whole = Init::Return(whole);
-        if !fails || given != wanted.len() - 1 && results.len() != wanted.len() {
-            self.init_vars(cx, &places(wanted), results, whole);
+        let listed = results.len() == types.len();
+        if wanted.fails && !listed && given == types.len() - 1 {
+            self.init_vars(cx, &places(&types[..given]), results, whole);
             return;
         }
-        if given == wanted.len() - 1 {
-            self.init_vars(cx, &places(&wanted[..given]), results, whole);
+        if !listed || !wanted.fails && wanted.unset.is_none() {
+            self.init_vars(cx, &places(types), results, whole);
             return;
         }
-        // A failing return writes `nil` for a result that has no zero
-        // value: that result is left unset.
-        for (at, (&result, &ty)) in results.iter().zip(wanted).enumerate() {
-            let mut name = result;
+        let is_nil = |expr: ExprId| {
+            let mut name = expr;
             while let ExprKind::Paren(inner) = cx.tree.exprs[name].kind {
                 name = inner;
             }
-            let nil = cx.body.uses.get(&name) == Some(&Ref::Universe(Predeclared::Nil));
-            let unset = at + 1 < wanted.len() && (self.never_nil(ty) || self.types.has_param(ty));
-            match nil && unset {
-                true => drop(self.operand(cx, result)),
-                false => drop(self.init_var(cx, result, None, Some(ty), "return statement")),
+            cx.body.uses.get(&name) == Some(&Ref::Universe(Predeclared::Nil))
+        };
+        let fails = wanted.fails || results.last().is_some_and(|&error| !is_nil(error));
+        for (at, (&result, &ty)) in results.iter().zip(types).enumerate() {
+            let unset = fails && at + 1 < types.len() && is_nil(result);
+            // A failing return writes `nil` for a result that has no zero
+            // value: that result is left unset.
+            if unset && wanted.fails && self.may_lack_zero(ty) {
+                self.operand(cx, result);
+            } else if unset && !wanted.fails && self.never_nil(ty) {
+                self.operand(cx, result);
+                let shown = self.type_string(ty);
+                let message = format!("cannot use nil as {shown} value in return statement");
+                let fix = format!(
+                    "a {shown} is never nil: declare the function with ! or return Option[{shown}]"
+                );
+                let span = cx.tree.exprs[result].span;
+                self.error_with_fix(Code::FailReturnNil, span, message, (Code::NoteFixBang, fix));
+            } else {
+                self.init_var(cx, result, None, Some(ty), "return statement");
             }
         }
     }
@@ -2961,8 +3010,8 @@ impl<'a> Checker<'a> {
             }
             StmtKind::Return(results) => match self.results.last().cloned().flatten() {
                 // `return` alone returns the results that have names.
-                Some((wanted, named, fails)) if !(results.is_empty() && named) => {
-                    self.returned(cx, tree.stmts[id].span, &wanted, fails, results);
+                Some(wanted) if !(results.is_empty() && wanted.named) => {
+                    self.returned(cx, tree.stmts[id].span, &wanted, results);
                 }
                 // The results are returned by their names, which still
                 // denote them at the statement.

@@ -118,6 +118,12 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether a result of the type may be without a zero value: it has
+    /// none, or it is a type parameter that may stand for such a type.
+    pub(super) fn may_lack_zero(&self, ty: TypeId) -> bool {
+        !self.all_types(ty, |this, ty| !this.never_nil(ty))
+    }
+
     /// The type that a value of no type has in a place of the type `to`.
     pub(super) fn own_target(&self, to: TypeId, writes: bool) -> TypeId {
         self.takes(to, writes).last().copied().unwrap_or(to)

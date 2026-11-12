@@ -86,6 +86,7 @@ codes! {
     66 AttrOnStmt "err_attr_on_stmt",
     67 AttrOnImport "err_attr_on_import",
     68 AddrOfCompositeLit "err_addr_of_complit",
+    69 FailsReturnsError "err_fails_returns_error",
     70 LoopVarRedeclared "err_loop_var_redeclared",
     71 NoteLoopVarDeclaredHere "note_loop_var_declared_here",
     72 GoppDirectiveInSource "err_gopp_directive_in_source",
@@ -225,9 +226,12 @@ codes! {
     284 OwnRangeAliasFunc "err_own_range_alias_func",
     298 OwnWeakArg "err_own_weak_arg",
     300 NoteOwnNewRemoved "note_own_new_removed",
+    302 BangNoErrorResult "err_bang_no_error_result",
+    303 BangOnConversion "err_bang_on_conversion",
     312 UnusedImport "err_unused_import",
     313 UnusedImportAs "err_unused_import_as",
     341 MoveNonlocal "err_move_nonlocal",
+    343 FailReturnNil "err_fail_return_nil",
     347 NilNeverNil "err_nil_never_nil",
     377 StructEmbedding "err_struct_embedding",
     454 NoteRefersTo "note_refers_to",
@@ -260,6 +264,8 @@ codes! {
     482 CannotInfer "err_cannot_infer",
     483 NoteDeclaredHere "note_declared_here",
     484 CannotCall "err_cannot_call",
+    485 BangNoZeroResult "err_bang_no_zero_result",
+    486 NoteFixBang "note_fix_bang",
 }
 
 impl Code {

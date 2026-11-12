@@ -2758,6 +2758,278 @@ func wrong!() int             { return \"a\" }
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+/// Packages that stand for those of the standard library that the
+/// examples of the specification import.
+fn with_packages(names: &ThreadedRodeo, packages: &[(&str, &str)]) -> Loader {
+    let mut loader = Loader::default();
+    for &(path, text) in packages {
+        let file = format!("{path}.gopp");
+        let checked = check_texts(path, &[(&file, text)], &loader, names);
+        assert_eq!(checked.messages, [] as [&str; 0], "{path}");
+        loader
+            .packages
+            .insert(path.to_owned(), Arc::new(checked.package));
+    }
+    loader
+}
+
+// rule: ERR-1, ERR-2, ERR-5, ERR-6, ERR-11a
+#[test]
+fn a_call_with_a_bang_returns_the_error_or_panics_as_its_function_says() {
+    let names = ThreadedRodeo::new();
+    let loader = with_packages(
+        &names,
+        &[
+            (
+                "os",
+                "package os\ntype File struct{}\nfunc Open!(path string) File { return File{} }\nfunc (f File) Close!() {}\n",
+            ),
+            (
+                "io",
+                "package io\nimport \"os\"\nfunc ReadAll!(f *os.File) []byte { return nil }\n",
+            ),
+            (
+                "strconv",
+                "package strconv\nfunc Itoa(n int) string { return \"\" }\n",
+            ),
+            ("fmt", "package fmt\nfunc Println(args ...any) {}\n"),
+            ("log", "package log\nfunc Fatal(args ...any) {}\n"),
+        ],
+    );
+    let text = "package main
+
+import (
+	\"fmt\"
+	\"io\"
+	\"log\"
+	\"os\"
+	\"strconv\"
+)
+
+func load!(path string) []byte {
+	f := os.Open!(path)
+	return io.ReadAll!(&f)
+}
+
+func count!(path string) int {
+	data := load!(path)
+	return len(data)
+}
+
+func main() {
+	a := load!(\"a.txt\")
+	fmt.Println(len(a))
+
+	b, err := load(\"b.txt\")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(b))
+}
+
+type Conn struct{}
+
+func (c *Conn) Send!(msg string) int { return len(msg) }
+
+type Loader interface{ Load!(path string) []byte }
+
+func parse[T any]!(s string) T { return nil, fail() }
+
+func fail() error               { return nil }
+func cleanup!()                 {}
+func step!()                    {}
+func worker!()                  {}
+func pair!() (int, string)      { return 1, \"\" }
+func goform() (int, error)      { return 1, nil }
+func plain(n int, s string) int { return n }
+
+func more(p string, l Loader, c *Conn) {
+	f := func!(n int) string { return strconv.Itoa(n) }
+	var _ func(int) (string, error) = f
+	var h func!() int = goform
+	g := parse[int]!(\"42\")
+	os.Open!(p).Close!()
+	n, s := pair!()
+	_ = plain(pair!())
+	_, _, _, _ = g, n, s, h!() + c.Send!(string(l.Load!(p)))
+}
+
+func run!() {
+	defer cleanup!()
+	step!()
+	go worker!()
+	func() { step!() }()
+	return
+}
+
+func opens() (int, error) {
+	go worker!()
+	defer cleanup!()
+	step!()
+	f := func!() { step!() }
+	return 0, f()
+}
+
+func panics() {
+	defer cleanup!()
+	defer func() { step!() }()
+}
+
+var loaded = load!(\"c.txt\")
+func constrained[T ~int | ~string](x T) (T, error) { step!(); return x, nil }
+";
+    let checked = check_texts("main", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let tree = &checked.files[0];
+    let bodies = checked.package.files[0].bodies.iter();
+    let mut found: Vec<(u32, String)> = bodies
+        .flat_map(|body| &body.bangs)
+        .map(|(&expr, bang)| {
+            let span = tree.exprs[expr].span;
+            let line = text[..span.lo as usize].matches('\n').count() + 1;
+            let written = &text[span.lo as usize..span.hi as usize];
+            (span.hi, format!("{line}: {written}: {bang:?}"))
+        })
+        .collect();
+    found.sort();
+    let found: Vec<String> = found.into_iter().map(|(_, shown)| shown).collect();
+    let expected = [
+        "12: os.Open!(path): Return",
+        "13: io.ReadAll!(&f): Return",
+        "17: load!(path): Return",
+        "22: load!(\"a.txt\"): Panic",
+        "52: parse[int]!(\"42\"): Panic",
+        "53: os.Open!(p): Panic",
+        "53: os.Open!(p).Close!(): Panic",
+        "54: pair!(): Panic",
+        "55: pair!(): Panic",
+        "56: h!(): Panic",
+        "56: l.Load!(p): Panic",
+        "56: c.Send!(string(l.Load!(p))): Panic",
+        "60: cleanup!(): SetError",
+        "61: step!(): Return",
+        "62: worker!(): Panic",
+        "63: step!(): Panic",
+        "68: worker!(): Panic",
+        "69: cleanup!(): SetError",
+        "70: step!(): Return",
+        "71: step!(): Return",
+        "76: cleanup!(): Panic",
+        "77: step!(): Panic",
+        "80: load!(\"c.txt\"): Panic",
+        "81: step!(): Return",
+    ];
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn the_steps_of_calls_with_a_bang_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    let header = "package p\nfunc step!() {}\nfunc value!() int { return 1 }\n";
+    // Many calls in a function with many results.
+    let wide = |count: usize| {
+        let results = "int, ".repeat(count);
+        let calls = "step!()\n".repeat(count);
+        let values = "0, ".repeat(count);
+        format!("{header}func f() ({results}error) {{\n{calls}return {values}nil\n}}\n")
+    };
+    let siblings = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("func f{i}!() int {{ defer step!(); return value!() + {i} }}\n"))
+            .collect();
+        format!("{header}{all}")
+    };
+    // A function literal inside a function literal, each with its own
+    // answer.
+    let nested = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| match i % 2 {
+                0 => "func!() { step!()\n",
+                _ => "func() { step!()\n",
+            })
+            .collect();
+        format!("{header}func f() {{\n{open}{}\n}}\n", "}()\n".repeat(depth))
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
+}
+
+// rule: ERR-3, ERR-4, ERR-5, ERR-6, ERR-15
+#[test]
+fn a_bang_is_refused_where_no_error_is_returned_or_a_result_would_be_unset() {
+    let text = "package p
+
+type Node struct{ v int }
+type Loader interface{ Load!(path string) error }
+type Run func!() error
+
+func fail() error       { return nil }
+func step!()            {}
+func node!() *Node      { return nil, fail() }
+func number() int       { return 1 }
+
+func check!() error                { return nil }
+func both!() (int, error)          { return 0, nil }
+func named!() (n int, err error)   { return }
+func (n *Node) m!() (int, error)   { return 0, nil }
+var lit = func!() error { return nil }
+
+func values(n int) {
+	number!()
+	_ = int!(n)
+	_ = len!(\"x\")
+	_ = step!()
+	step!()!()
+}
+
+func goform() (*Node, error) {
+	_ = node!()
+	defer step!()
+	go step!()
+	f := func!() *Node { return node!() }
+	return f()
+}
+func generic[T any](x T) (T, error) { step!(); return x, nil }
+func zeroed() (int, []int, error)   { step!(); return 0, nil, nil }
+func failing() (*Node, error)       { return nil, fail() }
+func absent() (*Node, error)        { return nil, nil }
+func bare!() *Node                  { return nil }
+";
+    let expected = [
+        "a.gopp:4:43: ! already adds the error; remove it",
+        "a.gopp:5:18: ! already adds the error; remove it",
+        "a.gopp:12:15: ! already adds the error; remove it",
+        "a.gopp:13:20: ! already adds the error; remove it",
+        "a.gopp:14:27: ! already adds the error; remove it",
+        "a.gopp:15:27: ! already adds the error; remove it",
+        "a.gopp:16:19: ! already adds the error; remove it",
+        "a.gopp:19:2: invalid operation: number!() (the call returns no error)",
+        "a.gopp:20:6: invalid operation: int!(n) (a conversion returns no error)",
+        "a.gopp:21:6: invalid operation: len!(\"x\") (the call returns no error)",
+        "a.gopp:22:6: step!() (no value) used as value",
+        "a.gopp:23:2: step!() (no value) used as value or type",
+        "a.gopp:27:6: invalid operation: node!() (on an error the function returns no *Node value)",
+        "    declare the function with ! or handle the error and return a value",
+        "a.gopp:33:39: invalid operation: step!() (on an error the function returns no T value)",
+        "    declare the function with ! or handle the error and return a value",
+        "a.gopp:35:46: cannot use nil as *Node value in return statement",
+        "    a *Node is never nil: declare the function with ! or return Option[*Node]",
+        "a.gopp:36:46: cannot use nil as *Node value in return statement",
+        "    a *Node is never nil: use Option[*Node]",
+        "a.gopp:37:46: cannot use nil as *Node value in return statement",
+        "    a *Node is never nil: use Option[*Node]",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 #[test]
 fn a_selector_records_what_it_reaches_and_the_way_to_it() {
     let text = "package p

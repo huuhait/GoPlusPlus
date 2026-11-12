@@ -86,9 +86,15 @@ impl Writer<'_> {
                 out.push(')');
             }
             ExprKind::Call {
-                fun, args, spread, ..
+                fun,
+                args,
+                spread,
+                unwrap,
             } => {
                 self.expr(out, *fun);
+                if *unwrap {
+                    out.push('!');
+                }
                 out.push('(');
                 self.list(out, args);
                 if *spread {

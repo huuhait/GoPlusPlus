@@ -12,6 +12,78 @@ pub(super) enum Called {
 }
 
 impl<'a> Checker<'a> {
+    /// The result of `f!(x)`: the results of `f(x)` without the error
+    /// (ERR-5). The innermost function around the call decides what the
+    /// call does with an error (ERR-6, ERR-11a).
+    pub(super) fn unwrapped(
+        &mut self,
+        cx: &Cx<'a>,
+        call: ExprId,
+        fun: ExprId,
+        called: Operand,
+    ) -> Operand {
+        if called.mode == Mode::Unknown {
+            return called;
+        }
+        self.steps += 1;
+        let span = cx.tree.exprs[call].span;
+        if self.called(fun) == Called::Conversion {
+            let shown = self.expr_string(cx, call);
+            let message = format!("invalid operation: {shown} (a conversion returns no error)");
+            self.error(Code::BangOnConversion, span, message);
+            return Operand::UNKNOWN;
+        }
+        let error = self.types.error();
+        let unwrapped = match &*self.types.get(called.ty) {
+            Type::Tuple(results) if called.mode == Mode::Value => match &results[..] {
+                [one, last] if *last == error => Some(Operand::value(*one)),
+                [rest @ .., last] if *last == error => {
+                    Some(Operand::value(self.types.intern(Type::Tuple(rest.into()))))
+                }
+                _ => None,
+            },
+            _ if called.mode == Mode::Value && called.ty == error => Some(Operand {
+                mode: Mode::NoValue,
+                ty: Types::INVALID,
+            }),
+            _ => None,
+        };
+        let Some(unwrapped) = unwrapped else {
+            let shown = self.expr_string(cx, call);
+            let message = format!("invalid operation: {shown} (the call returns no error)");
+            self.error(Code::BangNoErrorResult, span, message);
+            return Operand::UNKNOWN;
+        };
+        let function = self.results.last().and_then(Option::as_ref);
+        let can_fail =
+            function.is_some_and(|results| results.fails || results.types.last() == Some(&error));
+        let unset = function.and_then(|results| results.unset);
+        let bang = match self.suspended {
+            Some((suspended, go)) if suspended == call => match can_fail && !go {
+                true => Bang::SetError,
+                false => Bang::Panic,
+            },
+            _ if can_fail => Bang::Return,
+            _ => Bang::Panic,
+        };
+        if let (Bang::Return, Some(unset)) = (bang, unset) {
+            let message = format!(
+                "invalid operation: {} (on an error the function returns no {} value)",
+                self.expr_string(cx, call),
+                self.type_string(unset)
+            );
+            let fix = "declare the function with ! or handle the error and return a value";
+            let fix = (Code::NoteFixBang, fix.to_owned());
+            self.error_with_fix(Code::BangNoZeroResult, span, message, fix);
+        }
+        // Only where the call stands, not where an object that another
+        // body names is worked out.
+        if self.memo.is_some() {
+            self.bangs.insert(call, bang);
+        }
+        unwrapped
+    }
+
     /// The arguments `args` of the call `call` of `fun`, which has the
     /// parameters `params`: as many as the parameters, and each a value
     /// that its parameter takes.

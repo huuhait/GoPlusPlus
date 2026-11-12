@@ -17,8 +17,8 @@ mod tests;
 
 pub use decls::Initializer;
 pub use object::{
-    Body, ExprType, FileInfo, Instance, Local, LocalId, LocalKind, ObjId, ObjKind, Object, Ref,
-    Selection, SelectionKind,
+    Bang, Body, ExprType, FileInfo, Instance, Local, LocalId, LocalKind, ObjId, ObjKind, Object,
+    Ref, Selection, SelectionKind,
 };
 pub use package::{Package, PackageLoader};
 pub use resolve::{Unit, check};

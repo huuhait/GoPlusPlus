@@ -487,3 +487,5 @@ E0481 err_type_arg_unsatisfied
 E0482 err_cannot_infer
 E0483 note_declared_here
 E0484 err_cannot_call
+E0485 err_bang_no_zero_result
+E0486 note_fix_bang

@@ -125,10 +125,26 @@ pub struct Body {
     /// of a function type. In a generic body they may be written with its
     /// type parameters.
     pub instances: FxHashMap<ExprId, Instance>,
+    /// For a call `f!(x)`, what it does with an error.
+    pub bangs: FxHashMap<ExprId, Bang>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.
     pub hidden_results: FxHashMap<StmtId, Vec<(LocalId, LocalId)>>,
+}
+
+/// What a call `f!(x)` does when `f` returns an error. The innermost
+/// function around the call decides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bang {
+    /// The function can fail: it returns the error.
+    Return,
+    /// The function cannot fail, or the call is that of a `go` statement
+    /// or of a `defer` statement in such a function: it panics.
+    Panic,
+    /// The call of a `defer` statement in a function that can fail: the
+    /// error becomes that of the function unless it has one.
+    SetError,
 }
 
 /// A generic function or type as one use names it: its type arguments,

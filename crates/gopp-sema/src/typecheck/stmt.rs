@@ -21,7 +21,9 @@ impl<'a> Checker<'a> {
 
     /// `go f(x)` and `defer f(x)`: a call that does something.
     pub(super) fn suspended(&mut self, cx: &Cx<'a>, keyword: &str, call: ExprId) {
+        let outer = self.suspended.replace((call, keyword == "go"));
         let x = self.operand(cx, call);
+        self.suspended = outer;
         let span = cx.tree.exprs[call].span;
         let fun = match &cx.tree.exprs[call].kind {
             ExprKind::Call { fun, .. } => *fun,
