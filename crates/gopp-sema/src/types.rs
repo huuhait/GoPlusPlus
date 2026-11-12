@@ -309,6 +309,13 @@ impl Inner {
     }
 }
 
+/// Runs a step of a walk over a type on a stack that grows on demand: a
+/// type may be nested, or hold declared types that hold others, deeper
+/// than a stack of a fixed size takes.
+fn deep<R>(step: impl FnOnce() -> R) -> R {
+    gopp_syntax::with_stack(step)
+}
+
 /// How a type is written out.
 #[derive(Clone, Copy, Default)]
 struct Spelling {
@@ -736,7 +743,7 @@ impl Types {
             && node
                 .parts()
                 .into_iter()
-                .any(|part| self.mentions_in(part, params, seen))
+                .any(|part| deep(|| self.mentions_in(part, params, seen)))
     }
 
     /// The types that the type is written with, each once for each place:
@@ -803,9 +810,7 @@ impl Types {
         if !generic && !self.has_param(ty) {
             return ty;
         }
-        let sub = |ty: TypeId| {
-            gopp_syntax::with_stack(|| self.substitute_counted(ty, from, to, steps, done))
-        };
+        let sub = |ty: TypeId| deep(|| self.substitute_counted(ty, from, to, steps, done));
         let list =
             |types: &[TypeId]| -> Box<[TypeId]> { types.iter().map(|&ty| sub(ty)).collect() };
         let replaced = match &*node {
@@ -1148,6 +1153,15 @@ impl Types {
         names: &ThreadedRodeo,
         layouts: &mut Layouts,
     ) -> Result<(u64, u64), NoLayout> {
+        deep(|| self.layout_here(ty, names, layouts))
+    }
+
+    fn layout_here(
+        &self,
+        ty: TypeId,
+        names: &ThreadedRodeo,
+        layouts: &mut Layouts,
+    ) -> Result<(u64, u64), NoLayout> {
         let node = self.get(ty);
         // What has no value of another type inside is not worth keeping.
         if !matches!(
@@ -1447,9 +1461,16 @@ impl Types {
         tags: bool,
         pairs: &mut FxHashSet<(TypeId, TypeId)>,
     ) -> bool {
-        if a == b {
-            return true;
-        }
+        a == b || deep(|| self.identical_here(a, b, tags, pairs))
+    }
+
+    fn identical_here(
+        &self,
+        a: TypeId,
+        b: TypeId,
+        tags: bool,
+        pairs: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> bool {
         let (x, y) = (self.get(a), self.get(b));
         // What has no parts is identical only to itself.
         let differs = match (&*x, &*y) {
@@ -1556,6 +1577,15 @@ impl Types {
     /// places is asked once, and so is one that holds a value of itself,
     /// which is an error.
     fn comparable_in(
+        &self,
+        id: TypeId,
+        strict: bool,
+        seen: &mut FxHashSet<(TypeId, bool)>,
+    ) -> bool {
+        deep(|| self.comparable_here(id, strict, seen))
+    }
+
+    fn comparable_here(
         &self,
         id: TypeId,
         strict: bool,
@@ -1681,7 +1711,7 @@ impl Types {
                 missing = Some((method.clone(), lacks));
             }
         });
-        missing.filter(|_| has.is_some() || !self.embeds_invalid(id, &mut Vec::new()))
+        missing.filter(|_| has.is_some() || !self.embeds_invalid(id, &mut FxHashSet::default()))
     }
 
     /// What an interface with the methods `has` lacks of `method`.
@@ -1750,7 +1780,7 @@ impl Types {
     /// Whether a struct of the type `id`, or one that it points to, has
     /// an embedded field whose type is in error, itself or through its
     /// embedded fields: what such a field would give is not known.
-    fn embeds_invalid(&self, id: TypeId, seen: &mut Vec<TypeId>) -> bool {
+    fn embeds_invalid(&self, id: TypeId, seen: &mut FxHashSet<TypeId>) -> bool {
         let mut under = self.underlying(id);
         if let Type::Pointer(elem) = &*self.get(under) {
             under = self.underlying(*elem);
@@ -1758,12 +1788,12 @@ impl Types {
         let Type::Struct(fields) = &*self.get(under) else {
             return false;
         };
-        if seen.contains(&under) {
+        if !seen.insert(under) {
             return false;
         }
-        seen.push(under);
         fields.iter().filter(|field| field.embedded).any(|field| {
-            self.underlying(field.ty) == Self::INVALID || self.embeds_invalid(field.ty, seen)
+            self.underlying(field.ty) == Self::INVALID
+                || deep(|| self.embeds_invalid(field.ty, seen))
         })
     }
 
@@ -1938,6 +1968,10 @@ impl Types {
     }
 
     fn show(&self, id: TypeId, names: &ThreadedRodeo, spelling: Spelling) -> String {
+        deep(|| self.show_here(id, names, spelling))
+    }
+
+    fn show_here(&self, id: TypeId, names: &ThreadedRodeo, spelling: Spelling) -> String {
         let show = |id: TypeId| self.show(id, names, spelling);
         let list = |ids: &[TypeId]| {
             ids.iter()

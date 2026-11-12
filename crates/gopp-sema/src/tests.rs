@@ -5447,6 +5447,93 @@ type Self[P any] = *Self[P]
     );
 }
 
+/// Types that are nested, or hold declared types that hold others, a
+/// thousand levels deep, with what a program does with a type. `first`
+/// declares `S0` and `next` the type `S<i>` from `S<i-1>`.
+fn deep_types(depth: usize, first: &str, next: &dyn Fn(usize) -> String, last: &str) -> String {
+    let all: String = (1..=depth).map(next).collect();
+    format!(
+        "package p\nimport \"unsafe\"\n{first}\n{all}type T = S{depth}{last}\n\
+         var v, w T\nvar _ = unsafe.Sizeof(v)\nvar _ any = v\nvar _ = any(v).(T)\n\
+         func id[P any](x P) P {{ return x }}\nvar _ = id(v)\n\
+         func _() {{ var u T = v; _ = u; _ = []T{{v}}; _ = &v; _ = func(x T) T {{ return x }}(w) }}\n\
+         type W struct{{ T }}\nvar _ = W{{}}\n\
+         var _ int = v\nvar _ interface{{ none() }} = v\nvar _ = v.nothing\n"
+    )
+}
+
+/// The walks over a type do not need a stack as deep as the type.
+#[test]
+fn a_deep_type_does_not_overflow_the_stack() {
+    const DEPTH: usize = 600;
+    let compared = "var _ = v == w\nvar _ = map[T]int{}\nfunc cmp[P comparable](x P) {}\n\
+                    func _() { cmp(v) }\n";
+    let shapes: Vec<String> = vec![
+        deep_types(
+            DEPTH,
+            "type S0 struct{ x int }",
+            &|i| format!("type S{i} struct{{ s S{} }}\n", i - 1),
+            "",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type S0 = int",
+            &|i| format!("type S{i} = struct{{ s S{} }}\n", i - 1),
+            "",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type S0 = int",
+            &|i| format!("type S{i} = [1]S{}\n", i - 1),
+            "",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type S0 = int",
+            &|i| format!("type S{i} = *S{}\n", i - 1),
+            "",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type S0 interface{ m0() }",
+            &|i| format!("type S{i} interface{{ S{}; m{i}() }}\n", i - 1),
+            "",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type Box[P any] struct{ x P }\ntype S0 = int",
+            &|i| format!("type S{i} = Box[S{}]\n", i - 1),
+            "",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type S0[P any] = [1]P",
+            &|i| format!("type S{i}[P any] = struct{{ s S{}[P] }}\n", i - 1),
+            "[int]",
+        ) + compared,
+        deep_types(
+            DEPTH,
+            "type S0 struct{ x int }\nfunc (S0) m() {}",
+            &|i| format!("type S{i} struct{{ S{} }}\n", i - 1),
+            "",
+        ) + compared
+            + "var _ = v.x\nfunc _() { v.m() }\n",
+    ];
+    // On a stack that a walk as deep as the types would overflow.
+    let checking = std::thread::Builder::new().stack_size(192 * 1024);
+    let checked = checking.spawn(move || {
+        for text in shapes {
+            let names = ThreadedRodeo::new();
+            let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
+            let loader = with_packages(&names, &[("unsafe", stub)]);
+            let checked = check_texts("p", &[("a.go", &text)], &loader, &names);
+            let messages = checked.messages.len();
+            assert!((2..=4).contains(&messages), "{:?}", checked.messages);
+        }
+    });
+    checked.unwrap().join().unwrap();
+}
+
 /// A type that holds the one before it twice is as large as two to the
 /// number of such types when it is written out, and is walked once.
 #[test]
