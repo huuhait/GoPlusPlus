@@ -482,3 +482,4 @@ E0476 note_previous_case
 E0477 err_range_variables
 E0478 note_inner_declaration
 E0479 note_missing_method
+E0480 err_union_too_many_terms

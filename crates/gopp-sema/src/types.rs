@@ -247,9 +247,8 @@ struct Inner {
     /// The underlying type of each generic type with arguments that was
     /// asked for.
     instances: FxHashMap<TypeId, TypeId>,
-    /// For each interface type that was asked for them: its methods, or
-    /// what makes it a constraint.
-    members: FxHashMap<TypeId, Result<MethodSet, Constraint>>,
+    /// The type set of each interface type that was asked for it.
+    type_sets: FxHashMap<TypeId, TypeSet>,
 }
 
 impl Inner {
@@ -1332,96 +1331,6 @@ impl Types {
         Some(all)
     }
 
-    /// The methods of an interface with those of the interfaces it
-    /// embeds, by name; of two methods of one name, the one that the
-    /// interface writes itself. `None` as for `interface_methods`.
-    pub fn method_set(&self, id: TypeId) -> Option<MethodSet> {
-        self.members(id)?.ok()
-    }
-
-    /// What makes the interface `id` a constraint, which only a type
-    /// parameter can be held to; `None` if it is none.
-    pub fn constraint_kind(&self, id: TypeId) -> Option<Constraint> {
-        match self.is_interface(id) {
-            true => self.members(id)?.err(),
-            false => None,
-        }
-    }
-
-    /// The methods of the interface `id`, or what makes it a constraint.
-    /// `None` while a declared type that it embeds is not checked yet.
-    fn members(&self, id: TypeId) -> Option<Result<MethodSet, Constraint>> {
-        let start = self.underlying(id);
-        // What is known of a type: of an interface, what was built for
-        // it; any other type is a type term.
-        let known = |ty: TypeId| match &*self.get(ty) {
-            Type::Interface { .. } => self.read(|inner| inner.members.get(&ty).cloned()),
-            Type::Marker(Marker::Comparable) => Some(Err(Constraint::Comparable)),
-            Type::Marker(_) => Some(Err(Constraint::Marker)),
-            _ => Some(Err(Constraint::Terms)),
-        };
-        if let Some(members) = known(start) {
-            return Some(members);
-        }
-        // The interfaces whose sets are being built, each after those it
-        // embeds: a chain of embedded interfaces is as long as a program
-        // makes it.
-        let mut work = vec![(start, false)];
-        let mut entered: FxHashSet<TypeId> = [start].into_iter().collect();
-        let mut unknown: FxHashSet<TypeId> = FxHashSet::default();
-        let mut steps = 0;
-        while let Some((current, embedded_done)) = work.pop() {
-            let ty = self.get(current);
-            let Type::Interface { methods, embedded } = &*ty else {
-                continue;
-            };
-            let inner: Vec<TypeId> = embedded.iter().map(|&ty| self.underlying(ty)).collect();
-            if !embedded_done {
-                work.push((current, true));
-                for &ty in &inner {
-                    if known(ty).is_none() && entered.insert(ty) {
-                        work.push((ty, false));
-                    }
-                }
-                continue;
-            }
-            let mut members = Ok(MethodSet::default());
-            for method in methods.iter() {
-                members = members.map(|set| set.with(method.clone(), &mut |_, _| {}, &mut steps));
-            }
-            // A declared type that is not checked yet says nothing: the
-            // set is built again when it is asked for again.
-            let mut complete = true;
-            for &ty in &inner {
-                members = match (members, known(ty)) {
-                    (members, _) if ty == Self::INVALID || unknown.contains(&ty) => {
-                        complete = false;
-                        members
-                    }
-                    (Ok(set), Some(Ok(embedded))) => {
-                        Ok(set.union(&embedded, &mut |_, _| {}, &mut steps))
-                    }
-                    (Ok(_), Some(Err(constraint))) => Err(constraint),
-                    (Err(constraint), Some(Err(other))) => Err(constraint.max(other)),
-                    // An interface that embeds itself is an error.
-                    (members, _) => members,
-                };
-            }
-            match complete {
-                true => drop(self.write(|inner| inner.members.insert(current, members))),
-                false => drop(unknown.insert(current)),
-            }
-        }
-        self.steps.fetch_add(steps, Ordering::Relaxed);
-        known(start)
-    }
-
-    /// Whether the type is an interface that only a type parameter can be
-    /// held to, or one that embeds a type that is not checked yet.
-    pub fn is_constraint(&self, id: TypeId) -> bool {
-        self.is_interface(id) && self.method_set(id).is_none()
-    }
-
     /// Whether two types are identical.
     pub fn identical(&self, a: TypeId, b: TypeId) -> bool {
         self.identical_in(a, b, true, &mut Vec::new())
@@ -1522,25 +1431,32 @@ impl Types {
 
     /// Whether values of the type can be compared with `==`.
     pub fn comparable(&self, id: TypeId) -> bool {
-        self.comparable_in(id, &mut Vec::new())
+        self.comparable_in(id, false, &mut Vec::new())
     }
 
-    /// `comparable` inside the declared types `nest`: a type that holds a
-    /// value of itself, which is an error, says nothing against it.
-    fn comparable_in(&self, id: TypeId, nest: &mut Vec<TypeId>) -> bool {
+    /// Whether values of the type compare without a panic: no interface
+    /// is among its parts.
+    pub fn strictly_comparable(&self, id: TypeId) -> bool {
+        self.comparable_in(id, true, &mut Vec::new())
+    }
+
+    /// `comparable`, or `strictly_comparable` if `strict`, inside the
+    /// declared types `nest`: a type that holds a value of itself, which
+    /// is an error, says nothing against it.
+    fn comparable_in(&self, id: TypeId, strict: bool, nest: &mut Vec<TypeId>) -> bool {
         if !matches!(&*self.get(id), Type::Named { .. }) {
-            return self.comparable_of(id, nest);
+            return self.comparable_of(id, strict, nest);
         }
         if nest.contains(&id) {
             return true;
         }
         nest.push(id);
-        let comparable = self.comparable_of(id, nest);
+        let comparable = self.comparable_of(id, strict, nest);
         nest.pop();
         comparable
     }
 
-    fn comparable_of(&self, id: TypeId, nest: &mut Vec<TypeId>) -> bool {
+    fn comparable_of(&self, id: TypeId, strict: bool, nest: &mut Vec<TypeId>) -> bool {
         match &*self.get(self.underlying(id)) {
             Type::Basic(basic) => *basic != Basic::UntypedNil,
             // Pointers of every kind compare by address.
@@ -1549,14 +1465,22 @@ impl Types {
             | Type::Shared(_)
             | Type::Weak(_)
             | Type::Chan { .. }
-            | Type::Interface { .. }
             | Type::Invalid => true,
+            Type::Interface { .. } => !strict,
+            // A type parameter compares if every type that it may be
+            // does.
+            Type::Param(_) => self.param_set(id).is_some_and(|set| match &set.terms {
+                Some(terms) => terms
+                    .iter()
+                    .all(|term| self.comparable_in(term.ty, true, nest)),
+                None => set.comparable,
+            }),
             Type::Option(elem) | Type::Local(elem) | Type::Array { elem, .. } => {
-                self.comparable_in(*elem, nest)
+                self.comparable_in(*elem, strict, nest)
             }
             Type::Struct(fields) => fields
                 .iter()
-                .all(|field| self.comparable_in(field.ty, nest)),
+                .all(|field| self.comparable_in(field.ty, strict, nest)),
             _ => false,
         }
     }
@@ -2031,5 +1955,7 @@ fn basic_name(basic: Basic) -> &'static str {
 mod methodset;
 #[cfg(test)]
 mod tests;
+mod typeset;
 
 pub use methodset::MethodSet;
+pub use typeset::TypeSet;

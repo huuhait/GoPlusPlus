@@ -3762,6 +3762,18 @@ fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
     // An interface shares the methods of the interfaces that it embeds:
     // the work for a chain of them grows with its length.
     linear::assert_near_linear(&sizes, |n| steps(embedded_interfaces(n)));
+    // So does a chain of constraints, each with the terms of the one
+    // before it and a method of its own.
+    let embedded_constraints = |depth: usize| {
+        let all: String = (1..depth)
+            .map(|i| format!("type C{i} interface {{ C{}; m{i}() }}\n", i - 1))
+            .collect();
+        format!(
+            "package p\ntype C0 interface {{ ~int | ~string }}\n{all}func f[P C{}]() {{}}\n",
+            depth - 1
+        )
+    };
+    linear::assert_near_linear(&sizes, |n| steps(embedded_constraints(n)));
 }
 
 #[test]
@@ -4134,6 +4146,170 @@ func g[P I2, Q comparable](p P) {}
         "a.go:49:13: cannot use type I2 outside a type constraint: interface contains type constraints",
     ];
     assert_eq!(messages("a.go", text), expected);
+}
+
+#[test]
+fn the_terms_of_a_union_are_checked_as_go_checks_them() {
+    let text = "package p
+
+type MyInt int
+type M interface{ m() }
+type C interface{ comparable }
+type E interface{ ~int | ~string }
+
+type (
+	_ interface{ ~int | ~string }
+	_ interface{ ~MyInt }
+	_ interface{ ~M }
+	_ interface{ int | M }
+	_ interface{ int | comparable }
+	_ interface{ int | C }
+	_ interface{ int | E }
+	_ interface{ int | int }
+	_ interface{ int | ~int }
+	_ interface{ ~int | MyInt }
+	_ interface{ ~int | ~int | string }
+	_ interface{ MyInt | int }
+	_ interface{ ~comparable }
+	_ interface{ ~any }
+)
+
+func _[P any, Q P]()                           {}
+func _[P any, Q interface{ P }]()              {}
+func _[P any, Q interface{ ~P }]()             {}
+func _[P any, Q interface{ int | P }]()        {}
+func _[P any, Q interface{ int | ~P }]()       {}
+func _[P any, Q ~P]()                          {}
+func _[P any, Q int | P]()                     {}
+func _[P interface{ int | string }, Q ~int]()  {}
+func _[P ~MyInt]()                             {}
+";
+    let expected = [
+        "a.go:10:15: invalid use of ~ (underlying type of MyInt is int)",
+        "a.go:11:15: invalid use of ~ (M is an interface)",
+        "a.go:12:21: cannot use p.M in union (p.M contains methods)",
+        "a.go:13:21: cannot use comparable in union",
+        "a.go:14:21: cannot use p.C in union (p.C embeds comparable)",
+        "a.go:16:21: overlapping terms int and int",
+        "a.go:17:21: overlapping terms ~int and int",
+        "a.go:18:22: overlapping terms p.MyInt and ~int",
+        "a.go:19:22: overlapping terms ~int and ~int",
+        "a.go:21:15: invalid use of ~ (comparable is an interface)",
+        "a.go:22:15: invalid use of ~ (any is an interface)",
+        "a.go:25:17: cannot use a type parameter as constraint",
+        "a.go:26:28: term cannot be a type parameter",
+        "a.go:27:29: type in term ~P cannot be a type parameter",
+        "a.go:28:34: term cannot be a type parameter",
+        "a.go:29:35: type in term ~P cannot be a type parameter",
+        "a.go:30:18: type in term ~P cannot be a type parameter",
+        "a.go:31:23: term cannot be a type parameter",
+        "a.go:33:10: invalid use of ~ (underlying type of MyInt is int)",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+// rule: GEN-1, GEN-2, GEN-11
+#[test]
+fn a_predeclared_constraint_of_gopp_is_embedded_and_is_no_term_of_a_union() {
+    let text = "package p
+
+type A interface{ int | Copy }
+type B interface{ Clone | Send }
+type C interface{ ~Sync }
+type D interface {
+	Copy
+	Send
+	m()
+}
+
+func f[T Copy, U interface{ Clone; Send }, V D]() {}
+";
+    let expected = [
+        "a.gopp:3:25: cannot use Copy in union",
+        "a.gopp:4:19: cannot use Clone in union",
+        "a.gopp:4:27: cannot use Send in union",
+        "a.gopp:5:19: invalid use of ~ (Sync is an interface)",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+/// The type set of each constraint of the text: its terms, `comparable`
+/// and the names of its methods.
+#[test]
+fn a_constraint_allows_the_types_that_all_its_elements_allow() {
+    let text = "package p
+
+type MyInt int
+type Number interface{ ~int | ~float64 }
+type Text interface{ ~string | []byte }
+type Signed interface {
+	Number
+	~int | ~int8 | MyInt
+}
+type Keyed interface {
+	comparable
+	~int | ~string | []byte | func()
+}
+type Named interface {
+	Number
+	String() string
+}
+type Either interface{ Number | Text }
+type Nothing interface {
+	int
+	string
+}
+type Cmp interface{ comparable }
+type Plain interface{ String() string }
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let types = loader.types.get().unwrap();
+    let shown = |name: &str| {
+        let object = checked.package.scope[&names.get(name).unwrap()];
+        let set = types.type_set(checked.package.object(object).ty).unwrap();
+        let terms = set.terms.as_ref().map(|terms| {
+            let term = |term: &crate::types::Term| {
+                let tilde = if term.tilde { "~" } else { "" };
+                format!("{tilde}{}", types.display(term.ty, &names))
+            };
+            terms.iter().map(term).collect::<Vec<_>>().join(" | ")
+        });
+        let mut methods = Vec::new();
+        set.methods
+            .for_each(&mut |method| methods.push(names.resolve(&method.name).to_owned()));
+        (terms, set.comparable, methods, set.is_empty())
+    };
+    let terms = |list: &str| Some(list.to_owned());
+    assert_eq!(
+        shown("Number"),
+        (terms("~int | ~float64"), false, vec![], false)
+    );
+    // What both elements allow: `MyInt` is in `~int`, `~int8` in neither.
+    assert_eq!(shown("Signed"), (terms("~int"), false, vec![], false));
+    // Of the terms, those whose values compare.
+    assert_eq!(
+        shown("Keyed"),
+        (terms("~int | ~string"), false, vec![], false)
+    );
+    let string = vec!["String".to_owned()];
+    assert_eq!(
+        shown("Named"),
+        (terms("~int | ~float64"), false, string.clone(), false)
+    );
+    assert_eq!(
+        shown("Either"),
+        (
+            terms("~int | ~float64 | ~string | []uint8"),
+            false,
+            vec![],
+            false
+        )
+    );
+    assert_eq!(shown("Nothing"), (terms(""), false, vec![], true));
+    assert_eq!(shown("Cmp"), (None, true, vec![], false));
+    assert_eq!(shown("Plain"), (None, false, string, false));
 }
 
 // rule: RNG-8
@@ -5063,7 +5239,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2142;
+const EXPECTED_ERRORS_REPORTED: usize = 2191;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

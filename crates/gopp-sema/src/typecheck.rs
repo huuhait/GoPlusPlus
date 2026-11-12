@@ -10,6 +10,7 @@ mod assign;
 mod branches;
 mod builtins;
 mod call;
+mod constraints;
 mod conversion;
 mod implements;
 mod index;
@@ -238,6 +239,9 @@ struct Checker<'a> {
     /// The interface types that were written for variables, with where:
     /// that none is a constraint is checked once every type is known.
     var_types: Vec<(TypeId, Span)>,
+    /// The terms of each union that was written, each with where: what
+    /// may be a term is checked once every type is known.
+    unions: Vec<Vec<(Term, Span)>>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -342,6 +346,7 @@ pub fn declarations(
         interfaces: Vec::new(),
         embedded_fields: Vec::new(),
         var_types: Vec::new(),
+        unions: Vec::new(),
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -561,7 +566,13 @@ impl<'a> Checker<'a> {
         let incomplete = self.incomplete;
         let outer = std::mem::replace(&mut self.in_type_params, true);
         for (param, &ty) in type_params.iter().zip(&params) {
-            let constraint = self.typ(cx, param.bound);
+            let mut constraint = self.typ(cx, param.bound);
+            if matches!(&*self.types.get(constraint), Type::Param(_)) {
+                let message = "cannot use a type parameter as constraint".to_owned();
+                let span = cx.tree.exprs[param.bound].span;
+                self.error(Code::TypeParamBoundNotInterface, span, message);
+                constraint = self.types.any();
+            }
             self.types.set_constraint(ty, constraint);
         }
         self.in_type_params = outer;
@@ -734,6 +745,9 @@ impl<'a> Checker<'a> {
         }
         for (ty, span) in std::mem::take(&mut self.var_types) {
             self.no_constraint(ty, span);
+        }
+        for terms in std::mem::take(&mut self.unions) {
+            self.union_terms(&terms);
         }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided
@@ -1400,6 +1414,7 @@ impl<'a> Checker<'a> {
                         }
                         InterfaceElem::Type(ty) => {
                             let inner = self.typ(cx, *ty);
+                            let inner = self.no_param_term(cx, *ty, inner, None);
                             written.push((Err(inner), tree.exprs[*ty].span));
                             embedded.push(inner);
                         }
@@ -1419,7 +1434,9 @@ impl<'a> Checker<'a> {
             } => {
                 let mut terms = Vec::new();
                 self.terms(cx, expr, &mut terms);
-                self.types.intern(Type::Union(terms.into()))
+                let union: Vec<Term> = terms.iter().map(|&(term, _)| term).collect();
+                self.unions.push(terms);
+                self.types.intern(Type::Union(union.into()))
             }
             ExprKind::Index { x, indices } => self.instance(cx, expr, *x, indices),
             ExprKind::Bad | ExprKind::MacroCall { .. } => {
@@ -1432,30 +1449,6 @@ impl<'a> Checker<'a> {
                 self.operand(cx, expr);
                 self.incomplete = true;
                 Types::INVALID
-            }
-        }
-    }
-
-    fn terms(&mut self, cx: &Cx<'a>, expr: ExprId, terms: &mut Vec<Term>) {
-        match cx.tree.exprs[expr].kind {
-            ExprKind::Binary {
-                op: BinaryOp::Or,
-                x,
-                y,
-            } => {
-                self.terms(cx, x, terms);
-                self.terms(cx, y, terms);
-            }
-            ExprKind::Unary {
-                op: UnaryOp::Tilde,
-                x,
-            } => {
-                let ty = self.typ(cx, x);
-                terms.push(Term { tilde: true, ty });
-            }
-            _ => {
-                let ty = self.typ(cx, expr);
-                terms.push(Term { tilde: false, ty });
             }
         }
     }

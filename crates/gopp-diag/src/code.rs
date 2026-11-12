@@ -209,6 +209,13 @@ codes! {
     241 CannotUseConstraintOutside "err_cannot_use_constraint_outside",
     242 InterfaceContainsTypeConstraints "err_interface_contains_type_constraints",
     243 InterfaceIsComparable "err_interface_is_comparable",
+    244 UnionWithInterface "err_union_with_interface",
+    245 UnionComparable "err_union_comparable",
+    246 UnionTypeParam "err_union_type_param",
+    247 UnionOverlapping "err_union_overlapping",
+    248 UnionTildeUnderlying "err_union_tilde_underlying",
+    249 UnionTildeInterface "err_union_tilde_interface",
+    250 TypeParamBoundNotInterface "err_type_param_bound_not_interface",
     251 InvalidReceiverTypeParams "err_invalid_receiver_type_params",
     266 OwnMoveNotPlace "err_own_move_not_place",
     270 DuplicateMethodIface "err_duplicate_method_iface",
@@ -246,6 +253,7 @@ codes! {
     477 RangeVariables "err_range_variables",
     478 NoteInnerDeclaration "note_inner_declaration",
     479 NoteMissingMethod "note_missing_method",
+    480 UnionTooManyTerms "err_union_too_many_terms",
 }
 
 impl Code {
