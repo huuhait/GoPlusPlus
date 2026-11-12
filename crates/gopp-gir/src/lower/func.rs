@@ -59,7 +59,7 @@ pub(super) struct Target {
 
 pub(super) struct FuncCx<'a, 'm> {
     pub shared: &'a Shared<'a>,
-    pub memo: &'m mut Memo,
+    pub memo: &'m mut Memo<'a>,
     pub b: FuncBuilder<'m>,
     pub tree: &'a File,
     pub source: &'a SourceFile,
@@ -80,7 +80,12 @@ pub(super) struct FuncCx<'a, 'm> {
 }
 
 /// Adds the function of the job to the module, or reports why not.
-pub(super) fn lower_function(shared: &Shared<'_>, module: &mut Module, memo: &mut Memo, job: &Job) {
+pub(super) fn lower_function<'a>(
+    shared: &'a Shared<'a>,
+    module: &mut Module,
+    memo: &mut Memo<'a>,
+    job: &Job,
+) {
     let (tree, source) = shared.files[job.file as usize];
     let DeclKind::Func {
         receiver,
@@ -92,6 +97,12 @@ pub(super) fn lower_function(shared: &Shared<'_>, module: &mut Module, memo: &mu
     else {
         return;
     };
+    if job.symbol.is_empty() {
+        let message = "the function has no symbol".to_owned();
+        let diagnostic = Diagnostic::new(Code::GirVerify, name.span, message);
+        memo.diagnostics.push(diagnostic);
+        return;
+    }
     if let ExprKind::FuncType { fails: true, .. } = tree.exprs[*ty].kind {
         let message = "not supported yet: a function that can fail".to_owned();
         let diagnostic = Diagnostic::new(Code::GirUnsupported, name.span, message);

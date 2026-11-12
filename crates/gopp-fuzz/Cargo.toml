@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 gopp-diag = { path = "../gopp-diag" }
+gopp-mangle = { path = "../gopp-mangle" }
 gopp-span = { path = "../gopp-span" }
 gopp-syntax = { path = "../gopp-syntax" }
 lasso.workspace = true

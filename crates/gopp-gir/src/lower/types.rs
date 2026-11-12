@@ -4,10 +4,12 @@
 use gopp_sema::basic::Basic;
 use gopp_sema::types::{Type as CheckedType, TypeId as CheckedTypeId};
 
+use gopp_mangle::{Entity, symbol_of};
+
 use super::{Memo, Shared};
 use crate::{CallConv, FuncType, Type, TypeId, TypeInterner};
 
-impl Memo {
+impl Memo<'_> {
     /// The type of GIR that stands for `ty`, or what about it is not
     /// supported yet.
     pub fn lower_type(
@@ -182,7 +184,7 @@ impl Memo {
                 let bytes = Self::bytes(types);
                 Self::runtime(types, "gopp.iface", &[("itab", bytes), ("data", bytes)])
             }
-            CheckedType::Named { id, args } => {
+            CheckedType::Named { .. } => {
                 let under = checked.underlying(ty);
                 if !matches!(&*checked.get(under), CheckedType::Struct(_)) {
                     // What the type is declared as; a type that is met
@@ -198,22 +200,10 @@ impl Memo {
                 if checked.extends(ty) {
                     return Err("a type with parents");
                 }
-                // The name that the package gave it, or the name that
-                // it is written with elsewhere; the type arguments as
-                // they are in GIR.
-                let written = checked.display(ty, shared.names);
-                let mut name = match shared.named.get(id) {
-                    Some(name) => name.clone(),
-                    None => written.split('[').next().unwrap_or(&written).to_owned(),
-                };
-                if !args.is_empty() {
-                    let mut shown = Vec::with_capacity(args.len());
-                    for &arg in args.iter() {
-                        let arg = self.lower_type(shared, types, arg)?;
-                        shown.push(types.display(arg));
-                    }
-                    name = format!("{name}[{}]", shown.join(", "));
-                }
+                // The symbol of its descriptor: one for the type in
+                // every package, and no other type has it.
+                let name = symbol_of(&mut self.namer, Entity::TypeInfo(ty))
+                    .map_err(|_| "a type that has no symbol")?;
                 self.strukt(shared, types, ty, under, &name)?
             }
             CheckedType::Param(_) => return Err("a type parameter"),

@@ -37,6 +37,29 @@ pub fn parse_go(data: &[u8]) -> Verdict {
     front_end(data, Dialect::Go)
 }
 
+/// How much of a symbol is written out as Go++ text.
+const MAX_READABLE: usize = 4096;
+
+/// Reads `data` as a symbol name: it is refused, or it is the one name
+/// of what it names.
+pub fn symbol_name(data: &[u8]) -> Verdict {
+    let mut context = gopp_mangle::Context::new();
+    let Ok(entity) = gopp_mangle::parse(&mut context, data) else {
+        return Ok(());
+    };
+    if context.symbol(entity).as_bytes() != data {
+        return finding("symbol", "what the name names has another name");
+    }
+    let readable = context.readable(entity, MAX_READABLE);
+    if readable.len() > MAX_READABLE {
+        return finding("symbol", "the readable name is longer than asked");
+    }
+    if gopp_mangle::demangle(data, MAX_READABLE).ok() != Some(readable) {
+        return finding("determinism", "two runs gave different results");
+    }
+    Ok(())
+}
+
 fn front_end(data: &[u8], dialect: Dialect) -> Verdict {
     let Some(first) = run(data, dialect) else {
         return Ok(());
@@ -181,6 +204,14 @@ mod tests {
         assert_eq!(parse_gopp(b"package p\nfunc ( { ] \xff \0 'x"), Ok(()));
         assert_eq!(parse_go(b"package p\n@A\nfunc f() {}\n"), Ok(()));
         assert_eq!(parse_gopp(b""), Ok(()));
+    }
+
+    #[test]
+    fn a_symbol_and_what_is_none_pass() {
+        assert_eq!(symbol_name(b"_GPTo6op_AddN4mainE4Vec2LB12_E"), Ok(()));
+        assert_eq!(symbol_name(b"_GPTo6op_AddN4mainE4Vec2LB13_E"), Ok(()));
+        assert_eq!(symbol_name(b"\xff_GP\0"), Ok(()));
+        assert_eq!(symbol_name(b""), Ok(()));
     }
 
     #[test]

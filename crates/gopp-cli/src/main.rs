@@ -3,6 +3,7 @@
 mod args;
 mod build;
 mod check;
+mod demangle;
 mod diff;
 mod fmt;
 mod parse;
@@ -93,6 +94,16 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Print Go++ symbols as Go++ text
+    Demangle {
+        /// Cut each name after this many bytes: a type that occurs often
+        /// in a symbol is written out each time
+        #[arg(long, default_value_t = gopp_mangle::MAX_OUTPUT)]
+        max_output: usize,
+        /// The symbols; with none, standard input is copied with every
+        /// symbol in it replaced
+        names: Vec<String>,
+    },
     /// Say what an error code means, how to fix it, and show an example
     Explain {
         /// List every code
@@ -169,6 +180,7 @@ fn run() -> ExitCode {
             output: o,
             paths,
         }),
+        Command::Demangle { max_output, names } => demangle::run(&names, max_output),
         Command::Explain { list: true, .. } => {
             print!("{}", gopp_diag::listed());
             ExitCode::SUCCESS

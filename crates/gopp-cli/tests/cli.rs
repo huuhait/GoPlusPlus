@@ -731,6 +731,42 @@ func main() {
 ";
 
 #[test]
+fn demangle_reads_symbols_as_go_plus_plus() {
+    let names = ["_GPF4mainE3Foo", "_GPTo7opr_DivN4mainE4Vec2LdE"];
+    let output = run(gopp().arg("demangle").args(names));
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), "main.Foo\nmain.Vec2.Div(float64) @Right\n");
+    // What is no symbol is said with where it stops being one; the
+    // others are still printed.
+    let output = run(gopp().args(["demangle", "_GPF4mainE03Foo", "printf", "_GPJ4mainE"]));
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "main.init\n");
+    assert_eq!(
+        stderr(&output),
+        "error: _GPF4mainE03Foo: a number has a leading zero at offset 10\n\
+         error: printf: no Go++ symbol: it does not start with _GP at offset 0\n"
+    );
+    let output = run(gopp().args(["demangle", "-max-output=6", "_GPF4mainE3Foo"]));
+    assert_eq!(stdout(&output), "main.F\n");
+}
+
+#[test]
+fn demangle_filters_standard_input() {
+    let dir = TempDir::new().unwrap();
+    let trace = dir.path().join("trace");
+    let text = "#0 0x401000 in _GPM3LenN4mainE4Vec2 (v=...)\n#1 _GPF4mainE4main+0x1c\n#2 _Z3foov\n";
+    fs::write(&trace, text).unwrap();
+    let output = run(gopp()
+        .arg("demangle")
+        .stdin(fs::File::open(&trace).unwrap()));
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        "#0 0x401000 in main.Vec2.Len (v=...)\n#1 main.main+0x1c\n#2 _Z3foov\n"
+    );
+}
+
+#[test]
 fn build_prints_the_module_and_the_unit_of_c() {
     let dir = TempDir::new().unwrap();
     let file = write_source(&dir, "sums.gopp", SUMS);
@@ -741,11 +777,11 @@ fn build_prints_the_module_and_the_unit_of_c() {
         stdout(&output)
     };
     let gir = built(&["-emit=gir"]);
-    assert!(gir.contains("fn command-line-arguments.add(_1: i64, _2: i64) -> i64"));
-    assert!(gir.contains("global var @command-line-arguments.total: i64"));
+    assert!(gir.contains("fn _GPF28command$2d$line$2d$argumentsE3add(_1: i64, _2: i64) -> i64"));
+    assert!(gir.contains("global var @_GPR28command$2d$line$2d$argumentsE5total: i64"));
     for target in ["linux/amd64", "windows/amd64"] {
         let unit = built(&["-emit=c", &format!("-target={target}")]);
-        assert!(unit.contains("__asm__(\"command-line-arguments.add\")"));
+        assert!(unit.contains("__asm__(\"_GPF28command$2d$line$2d$argumentsE3add\")"));
         assert!(unit.contains("int main(int argc, char **argv) {"));
         assert_eq!(unit, built(&["-emit=c"]));
     }
@@ -830,7 +866,7 @@ fn build_makes_an_object_for_each_target_and_links_for_its_own() {
     let coff = made(&["-emit=obj", "-target=windows/amd64"], "sums.obj");
     assert_eq!(&coff[..2], [0x64, 0x86]);
     let assembly = made(&["-emit=asm", "-target=linux/amd64"], "sums.s");
-    assert!(String::from_utf8_lossy(&assembly).contains("command-line-arguments.add"));
+    assert!(String::from_utf8_lossy(&assembly).contains("_GPF28command$2d$line$2d$argumentsE3add"));
     let (own, other, program) = match cfg!(target_os = "linux") {
         true => ("linux/amd64", "windows/amd64", "sums"),
         false => ("windows/amd64", "linux/amd64", "sums.exe"),

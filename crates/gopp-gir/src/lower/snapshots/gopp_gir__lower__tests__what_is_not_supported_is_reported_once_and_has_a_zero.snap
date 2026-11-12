@@ -13,7 +13,7 @@ a.gopp:17:32: not supported yet: this operator on these values
 module "main"
 file 0 "a.gopp"
 
-fn main.f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, external] {
+fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, external] {
   let _0: (i64, string)
   let _1: []i64 "xs"
   let _2: gopp.iface "s"

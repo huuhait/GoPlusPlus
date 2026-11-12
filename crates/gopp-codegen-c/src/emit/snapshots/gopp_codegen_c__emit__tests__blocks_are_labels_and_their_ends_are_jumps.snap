@@ -10,8 +10,8 @@ typedef int64_t (*T3)(int64_t, bool); /* fn(i64, bool) -> i64 */
 typedef void (*T4)(void); /* fn() -> () */
 
 
-int64_t gopp_f0(int64_t _1, bool _2) __asm__("main.pick");
-void gopp_f1(void) __asm__("main.main");
+int64_t gopp_f0(int64_t _1, bool _2) __asm__("_GPF4mainE4pick");
+void gopp_f1(void) __asm__("_GPF4mainE4main");
 
 int64_t gopp_f0(int64_t _1, bool _2) {
   [[maybe_unused]] int64_t _0;

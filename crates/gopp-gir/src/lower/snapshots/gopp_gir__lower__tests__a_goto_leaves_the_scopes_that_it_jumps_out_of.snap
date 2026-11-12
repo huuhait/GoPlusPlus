@@ -5,7 +5,7 @@ expression: "gir(\"package main\n\nfunc jumps(n int) int {\n\ti := 0\nagain:\n\t
 module "main"
 file 0 "a.gopp"
 
-fn main.jumps(_1: i64) -> i64 [go, external] {
+fn _GPF4mainE5jumps(_1: i64) -> i64 [go, external] {
   scope 1: block in 0  ; a.gopp:8:3
   scope 2: block in 0  ; a.gopp:13:3
   let _0: i64

@@ -89,8 +89,8 @@ GIR types have fixed target width (`int` is resolved to `i64` on 64-bit targets 
 | `bool`, integers, floats, `string` (untyped constants resolved to default types) | Direct table entry |
 | `*T` | `Ptr(T)` |
 | Defined type over a non-recursive basic/slice/map type | Underlying GIR type (methods lower to functions) |
-| Defined struct type | `Struct("pkg.Name")` with declaration-order fields and C alignment |
-| Defined non-struct type reaching itself | `Rec("pkg.Name")` |
+| Defined struct type | `Struct` named by the symbol of its type descriptor (`_GPTiN4mainE5Point`), with declaration-order fields and C alignment |
+| Defined non-struct type reaching itself | `Rec`, named as a defined struct is |
 | `[N]T`, `[]T` | `Array(T, N)`, `Slice(T)` |
 | `Unique[T]`, `Shared[T]`, `Weak[T]` | `Ptr(T)` (1-word payload pointer `T*`; for `Shared`/`Weak`, `{strong, weak, alloc}` precedes `top = (byte*)p + vptr.offset_to_top`, `TYP-19`, `OWN-P3`, `OWN-P4`) |
 | `map[K]V` | `Ptr(Struct("gopp.map"))` (key/value sizes and glue passed via `gopp.mapinfo`, section 15) |
@@ -101,7 +101,7 @@ GIR types have fixed target width (`int` is resolved to `i64` on 64-bit targets 
 | `Option[T]` otherwise | `Option(T)` (`{value, set}`; padding and unset payloads never participate in `==` or hashing) |
 | Unsubstituted type parameter | Unreachable in GIR (monomorphized per instance in section 10; internal error `E0440` if encountered) |
 
-**Struct names.** A struct is found by its name, in a run and in the merge: `pkg.Name` for a type of the package, `func.Name.N` for the `N`th type that the function `func` declares (from 1, in source order), `Name[A, B]` for an instance with its arguments as GIR writes them, and `struct{a T; b U}` with the lowered field types for a struct without a name. A defined non-struct type that reaches itself is reported as `E0439` until `Rec` lowering lands with the collections (`P04.13`).
+**Struct names.** A struct is found by its name, in a run and in the merge. A declared struct has the symbol of its type descriptor ([appendix A](../spec/appendix-a-symbol-names.md)): `_GPTiN4mainE5Point` for `main.Point`, `_GPTig0_1TF4mainE1f` for the first type `T` that the function `main.f` declares, `_GPTiIN4mainE3BoxiE` for `main.Box[int]`. That name is the same in every package and no other type has it; `gopp build -emit=gir | gopp demangle` reads it as `typeinfo for main.Point`. A struct without a name is `struct{a T; b U}` with the lowered field types. A defined non-struct type that reaches itself is reported as `E0439` until `Rec` lowering lands with the collections (`P04.13`).
 
 Any construct not yet supported in a phase emits `E0439` (`err_gir_unsupported`) once at its span and substitutes a typed zero placeholder (`zero_of_expr`) so downstream statements produce no cascading errors; any missing checker invariant emits internal error `E0440`.
 

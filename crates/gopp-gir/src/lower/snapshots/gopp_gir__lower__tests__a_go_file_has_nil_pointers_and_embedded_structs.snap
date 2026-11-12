@@ -5,39 +5,39 @@ expression: print_module(&lowered.module)
 module "main"
 file 0 "a.go"
 
-fn main.Point.get(_1: main.Point) -> i64 [go, external] {
+fn _GPM3getN4mainE5Point(_1: _GPTiN4mainE5Point) -> i64 [go, external] {
   let _0: i64
-  let _1: main.Point "p"
+  let _1: _GPTiN4mainE5Point "p"
   bb0:
     _0 = copy _1.0  ; a.go:5:28
     return  ; a.go:5:28
 }
 
-fn main.Point.set(_1: *main.Point, _2: i64) -> () [go, external] {
+fn _GPM3setN4mainE5Point(_1: *_GPTiN4mainE5Point, _2: i64) -> () [go, external] {
   let _0: ()
-  let _1: *main.Point "p"
+  let _1: *_GPTiN4mainE5Point "p"
   let _2: i64 "x"
   let _3: bool
   bb0:
-    _3 = ne(copy _1, const null: *main.Point)  ; a.go:7:30
+    _3 = ne(copy _1, const null: *_GPTiN4mainE5Point)  ; a.go:7:30
     assert(copy _3 == true, Nil) -> [success: bb1, unwind: continue]  ; a.go:7:30
   bb1:
     (*_1).0 = copy _2  ; a.go:7:30
     return  ; a.go:7:38
 }
 
-fn main.read(_1: *main.Point, _2: *i64, _3: main.Line, _4: *main.Line) -> i64 [go, external] {
+fn _GPF4mainE4read(_1: *_GPTiN4mainE5Point, _2: *i64, _3: _GPTiN4mainE4Line, _4: *_GPTiN4mainE4Line) -> i64 [go, external] {
   let _0: i64
-  let _1: *main.Point "p"
+  let _1: *_GPTiN4mainE5Point "p"
   let _2: *i64 "q"
-  let _3: main.Line "l"
-  let _4: *main.Line "m"
+  let _3: _GPTiN4mainE4Line "l"
+  let _4: *_GPTiN4mainE4Line "m"
   let _5: bool
   let _6: bool
-  let _7: *main.Point
+  let _7: *_GPTiN4mainE5Point
   let _8: ()
   let _9: bool
-  let _10: *main.Point
+  let _10: *_GPTiN4mainE5Point
   let _11: bool
   let _12: i64
   let _13: bool
@@ -46,7 +46,7 @@ fn main.read(_1: *main.Point, _2: *i64, _3: main.Line, _4: *main.Line) -> i64 [g
   let _16: ()
   let _17: bool
   bb0:
-    _5 = ne(copy _1, const null: *main.Point)  ; a.go:15:7
+    _5 = ne(copy _1, const null: *_GPTiN4mainE5Point)  ; a.go:15:7
     assert(copy _5 == true, Nil) -> [success: bb1, unwind: continue]  ; a.go:15:7
   bb1:
     _6 = ne(copy _2, const null: *i64)  ; a.go:15:2
@@ -54,24 +54,24 @@ fn main.read(_1: *main.Point, _2: *i64, _3: main.Line, _4: *main.Line) -> i64 [g
   bb2:
     (*_2) = copy (*_1).0  ; a.go:15:2
     _7 = &mut _3.0  ; a.go:16:2
-    _8 = call const fn @main.Point.set(copy _7, copy _3.0.0) -> [return: bb3, unwind: continue]  ; a.go:16:2
+    _8 = call const fn @_GPM3setN4mainE5Point(copy _7, copy _3.0.0) -> [return: bb3, unwind: continue]  ; a.go:16:2
   bb3:
-    _9 = ne(copy _4, const null: *main.Line)  ; a.go:17:2
+    _9 = ne(copy _4, const null: *_GPTiN4mainE4Line)  ; a.go:17:2
     assert(copy _9 == true, Nil) -> [success: bb4, unwind: continue]  ; a.go:17:2
   bb4:
     _10 = &mut (*_4).0  ; a.go:17:2
-    _11 = ne(copy _4, const null: *main.Line)  ; a.go:17:8
+    _11 = ne(copy _4, const null: *_GPTiN4mainE4Line)  ; a.go:17:8
     assert(copy _11 == true, Nil) -> [success: bb5, unwind: continue]  ; a.go:17:8
   bb5:
-    _12 = call const fn @main.Point.get(copy (*_4).0) -> [return: bb6, unwind: continue]  ; a.go:17:8
+    _12 = call const fn @_GPM3getN4mainE5Point(copy (*_4).0) -> [return: bb6, unwind: continue]  ; a.go:17:8
   bb6:
-    _13 = ne(copy _3.1, const null: *main.Point)  ; a.go:17:18
+    _13 = ne(copy _3.1, const null: *_GPTiN4mainE5Point)  ; a.go:17:18
     assert(copy _13 == true, Nil) -> [success: bb7, unwind: continue]  ; a.go:17:18
   bb7:
-    _14 = call const fn @main.Point.get(copy (*_3.1)) -> [return: bb8, unwind: continue]  ; a.go:17:18
+    _14 = call const fn @_GPM3getN4mainE5Point(copy (*_3.1)) -> [return: bb8, unwind: continue]  ; a.go:17:18
   bb8:
     _15 = add(copy _12, copy _14)  ; a.go:17:2
-    _16 = call const fn @main.Point.set(copy _10, copy _15) -> [return: bb9, unwind: continue]  ; a.go:17:2
+    _16 = call const fn @_GPM3setN4mainE5Point(copy _10, copy _15) -> [return: bb9, unwind: continue]  ; a.go:17:2
   bb9:
     _17 = ne(copy _2, const null: *i64)  ; a.go:18:9
     assert(copy _17 == true, Nil) -> [success: bb10, unwind: continue]  ; a.go:18:9

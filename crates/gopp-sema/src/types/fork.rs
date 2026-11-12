@@ -220,6 +220,8 @@ impl Types {
             inner.named.push(Named {
                 name: record.name,
                 package: record.package,
+                path: record.path,
+                local: record.local,
                 underlying: None,
                 declared_as: None,
                 invalid: record.invalid,

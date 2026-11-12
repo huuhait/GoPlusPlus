@@ -16,6 +16,7 @@ mod types;
 mod tests;
 
 use gopp_diag::{Code, Diagnostic, Sink};
+use gopp_mangle::{Entity, Locals, Namer, symbol_of};
 use gopp_sema::types::{NamedId, Type as CheckedType, TypeId as CheckedTypeId, Types};
 use gopp_sema::{Body, LocalKind, ObjId, ObjKind, Package, Ref};
 use gopp_span::SourceFile;
@@ -116,6 +117,8 @@ pub(crate) struct Job {
     /// Which of the declarations of the file, and of its bodies.
     at: usize,
     decl: DeclId,
+    named: JobName,
+    /// Empty while it is not known, and for what has none.
     symbol: String,
     /// The type of the function as the checker has it, the receiver
     /// first.
@@ -123,6 +126,16 @@ pub(crate) struct Job {
     sig: CheckedTypeId,
     /// How many bytes of source it is.
     source: usize,
+}
+
+/// What a function with a body is, for its symbol.
+#[derive(Clone, Copy)]
+enum JobName {
+    Object(ObjId),
+    /// A method of the declared type.
+    Method(CheckedTypeId, Spur),
+    /// An `init` function, and its number once the files are counted.
+    Init(u64),
 }
 
 /// A method of a type of the package.
@@ -147,18 +160,18 @@ pub(crate) struct Shared<'a> {
     pub blank: Spur,
     jobs: Vec<Job>,
     pub methods: FxHashMap<(NamedId, Spur), Method>,
-    /// The name of each type that the package declares: at its top, or
-    /// in a function, where it has the number of its declaration among
-    /// those of the function.
-    pub named: FxHashMap<NamedId, String>,
+    /// For each type that a function declares: which job, and which of
+    /// the types of its name there, from 0.
+    locals: FxHashMap<NamedId, (usize, u64)>,
 }
 
-/// A function that is called, as the source names it.
+/// A function that is called or a variable that is used, as the source
+/// names it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CalleeKey {
-    /// A function of the package.
+    /// A function or a variable of the package.
     Object(ObjId),
-    /// A function of an imported package: the import and the object.
+    /// One of an imported package: the import and the object.
     Member(ObjId, ObjId),
     /// A method of the type.
     Method(CheckedTypeId, Spur),
@@ -184,14 +197,17 @@ pub(crate) struct Part {
 
 /// What a run keeps beside its module: what it has lowered and declared
 /// already.
-#[derive(Default)]
-pub(crate) struct Memo {
+pub(crate) struct Memo<'a> {
+    /// What makes the symbols, and the names of the declared structs.
+    pub namer: Namer<'a>,
     pub types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
     /// The types that are being lowered: one that is met again holds
     /// itself.
     pub open: Vec<CheckedTypeId>,
     pub funcs: FxHashMap<String, crate::FuncId>,
     pub globals: FxHashMap<String, GlobalId>,
+    /// The global of each variable that the run has named.
+    pub global_keys: FxHashMap<CalleeKey, GlobalId>,
     /// The type of GIR for each type that an expression or a variable
     /// has: the empty type for a constant without a type.
     pub expr_types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
@@ -205,7 +221,24 @@ pub(crate) struct Memo {
     pub steps: u64,
 }
 
-impl Memo {
+impl<'a> Memo<'a> {
+    fn new(shared: &'a Shared<'_>, locals: &'a Locals<'a>) -> Self {
+        Self {
+            namer: Namer::new(shared.types, shared.names).with_locals(locals),
+            types: FxHashMap::default(),
+            open: Vec::new(),
+            funcs: FxHashMap::default(),
+            globals: FxHashMap::default(),
+            global_keys: FxHashMap::default(),
+            expr_types: FxHashMap::default(),
+            callees: FxHashMap::default(),
+            names: FxHashMap::default(),
+            fields: FxHashMap::default(),
+            diagnostics: Vec::new(),
+            steps: 0,
+        }
+    }
+
     /// The text of the name, asked of the table of names once.
     pub fn name(&mut self, shared: &Shared<'_>, name: Spur) -> &str {
         self.names
@@ -226,61 +259,79 @@ impl<'a> Shared<'a> {
             blank: checked.names.get_or_intern_static("_"),
             jobs: Vec::new(),
             methods: FxHashMap::default(),
-            named: FxHashMap::default(),
+            locals: FxHashMap::default(),
         };
-        for object in &shared.package.objects {
-            if let (ObjKind::Type, CheckedType::Named { id, .. }) =
-                (&object.kind, &*shared.types.get(object.ty))
-            {
-                let name = shared.names.resolve(&object.name);
-                shared
-                    .named
-                    .insert(*id, format!("{}.{name}", shared.package.path));
-            }
-        }
         // The `init` functions count in the order of the names of their
         // files, then of the source.
-        let mut inits: Vec<(u32, usize)> = Vec::new();
+        let mut inits: Vec<usize> = Vec::new();
         let files = shared.files;
         for (file, (tree, _)) in files.iter().enumerate() {
             for (at, &decl) in tree.decls.iter().enumerate() {
                 if let Some(job) = shared.job(file as u32, at, decl) {
-                    if job.symbol.is_empty() {
-                        inits.push((file as u32, at));
+                    if matches!(job.named, JobName::Init(_)) {
+                        inits.push(shared.jobs.len());
                     }
                     shared.jobs.push(job);
                 }
             }
         }
-        inits.sort_by_key(|&(file, at)| (files[file as usize].1.path(), at));
-        for (number, (file, at)) in inits.into_iter().enumerate() {
-            let mut found = shared.jobs.iter_mut();
-            if let Some(job) = found.find(|job| (job.file, job.at) == (file, at)) {
-                job.symbol = format!("{}.init.{number}", checked.package.path);
-            }
+        let place = |job: &Job| (files[job.file as usize].1.path(), job.at);
+        inits.sort_by_key(|&at| place(&shared.jobs[at]));
+        for (number, at) in inits.into_iter().enumerate() {
+            shared.jobs[at].named = JobName::Init(number as u64);
         }
-        let mut named = std::mem::take(&mut shared.named);
-        for job in &shared.jobs {
+        let mut namer = Namer::new(shared.types, shared.names);
+        let symbols: Vec<String> = (shared.jobs.iter())
+            .map(|job| symbol_of(&mut namer, shared.entity(job.named)).unwrap_or_default())
+            .collect();
+        for (at, symbol) in symbols.into_iter().enumerate() {
+            let job = &mut shared.jobs[at];
+            job.symbol = symbol;
+            if let (JobName::Method(named, name), Some(receiver)) = (job.named, job.receiver)
+                && let CheckedType::Named { id, .. } = &*shared.types.get(named)
+            {
+                let method = Method {
+                    symbol: job.symbol.clone(),
+                    receiver,
+                    sig: job.sig,
+                };
+                shared.methods.insert((*id, name), method);
+            }
             let body = &shared.package.files[job.file as usize].bodies[job.at];
-            let mut number = 0;
+            let mut count: FxHashMap<Spur, u64> = FxHashMap::default();
             for local in &body.locals {
                 if let (LocalKind::Type, CheckedType::Named { id, .. }) =
                     (local.kind, &*shared.types.get(local.ty))
                 {
-                    number += 1;
-                    let name = shared.names.resolve(&local.name);
-                    named.insert(*id, format!("{}.{name}.{number}", job.symbol));
+                    let ordinal = count.entry(local.name).or_default();
+                    shared.locals.insert(*id, (at, *ordinal));
+                    *ordinal += 1;
                 }
             }
         }
-        shared.named = named;
         shared
     }
 
+    /// What the function of a job is, for its symbol.
+    fn entity(&self, named: JobName) -> Entity<'a> {
+        match named {
+            JobName::Object(object) => Entity::Object(self.package, object),
+            JobName::Method(receiver, name) => Entity::Method { receiver, name },
+            JobName::Init(number) => Entity::InitFunc(self.package, number),
+        }
+    }
+
+    /// The function that declares the type, and which of the types of
+    /// its name there the type is.
+    fn local(&self, named: NamedId) -> Option<(Entity<'a>, u64)> {
+        let &(job, ordinal) = self.locals.get(&named)?;
+        Some((self.entity(self.jobs[job].named), ordinal))
+    }
+
     /// The function that the declaration makes, if it has a body that
-    /// is lowered as it is: no type parameters, a name. An `init`
-    /// function has no symbol yet.
-    fn job(&mut self, file: u32, at: usize, decl: DeclId) -> Option<Job> {
+    /// is lowered as it is: no type parameters, a name. Its symbol is
+    /// made when the `init` functions are counted.
+    fn job(&self, file: u32, at: usize, decl: DeclId) -> Option<Job> {
         let (package, types, names) = (self.package, self.types, self.names);
         let (tree, _) = self.files[file as usize];
         let node = &tree.decl_nodes[decl];
@@ -300,24 +351,26 @@ impl<'a> Shared<'a> {
             return None;
         }
         let source = (node.span.hi - node.span.lo) as usize;
-        let path = &package.path;
-        let job = |symbol: String, receiver, sig| Job {
+        let job = |named: JobName, receiver, sig| Job {
             file,
             at,
             decl,
-            symbol,
+            named,
+            symbol: String::new(),
             receiver,
             sig,
             source,
         };
         let Some(receiver) = receiver else {
             if text == "init" {
-                return Some(job(String::new(), None, types.func(&[], &[], false)));
+                let sig = types.func(&[], &[], false);
+                return Some(job(JobName::Init(0), None, sig));
             }
-            let object = package.object(*package.scope.get(&name.name)?);
+            let id = *package.scope.get(&name.name)?;
+            let object = package.object(id);
             return match object.kind {
                 ObjKind::Func if object.span == name.span => {
-                    Some(job(format!("{path}.{text}"), None, object.ty))
+                    Some(job(JobName::Object(id), None, object.ty))
                 }
                 _ => None,
             };
@@ -335,19 +388,11 @@ impl<'a> Shared<'a> {
         let gopp_sema::types::Member::Method { sig, .. } = found.ok()?.member else {
             return None;
         };
-        let type_name = names.resolve(&types.name_of(*id));
-        let symbol = format!("{path}.{type_name}.{text}");
         let receiver = match pointer {
             true => types.pointer(named),
             false => named,
         };
-        let method = Method {
-            symbol: symbol.clone(),
-            receiver,
-            sig,
-        };
-        self.methods.insert((*id, name.name), method);
-        Some(job(symbol, Some(receiver), sig))
+        Some(job(JobName::Method(named, name.name), Some(receiver), sig))
     }
 
     /// The declared type that a receiver names, and whether the
@@ -376,24 +421,24 @@ impl<'a> Shared<'a> {
         }
     }
 
-    /// The symbol of a variable of the package.
-    pub fn global_symbol(&self, package: &Package, object: ObjId) -> String {
-        let name = self.names.resolve(&package.object(object).name);
-        format!("{}.{name}", package.path)
-    }
-
     /// The variables of the package, in a module that is merged first.
     fn globals(&self) -> Part {
         let mut module = self.module();
-        let mut memo = Memo::default();
+        let locals = |named: NamedId| self.local(named);
+        let mut memo = Memo::new(self, &locals);
         for (at, object) in self.package.objects.iter().enumerate() {
-            if !matches!(object.kind, ObjKind::Var) || object.name == self.blank {
+            if !matches!(object.kind, ObjKind::Var) {
                 continue;
             }
+            // A variable named `_` has no symbol, and no place.
+            let entity = Entity::Object(self.package, ObjId(at as u32));
+            let Ok(name) = symbol_of(&mut memo.namer, entity) else {
+                continue;
+            };
             let lowered = memo.lower_type(self, &mut module.types, object.ty);
             if let Some(ty) = lowered.ok().filter(|&ty| ty != crate::TypeInterner::UNIT) {
                 module.globals.alloc(Global {
-                    name: self.global_symbol(self.package, ObjId(at as u32)),
+                    name,
                     ty,
                     link: Linkage::External,
                     mutable: true,
@@ -423,7 +468,8 @@ impl<'a> Shared<'a> {
     /// The functions of the run, in a module of their own.
     fn run(&self, jobs: &[Job]) -> Part {
         let mut module = self.module();
-        let mut memo = Memo::default();
+        let locals = |named: NamedId| self.local(named);
+        let mut memo = Memo::new(self, &locals);
         for job in jobs {
             func::lower_function(self, &mut module, &mut memo, job);
         }

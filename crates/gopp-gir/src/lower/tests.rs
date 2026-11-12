@@ -613,7 +613,7 @@ fn the_module_does_not_depend_on_the_number_of_threads() {
     };
     let alone = made_by(1, usize::MAX);
     assert_eq!(alone.1.len(), 60, "{:#?}", alone.1);
-    assert!(alone.0.contains("main.f59.Local.1"));
+    assert!(alone.0.contains("_GPTig0_5LocalF4mainE3f59"));
     for threads in [2, 5, 16] {
         let together = made_by(threads, 256);
         assert!(together == alone, "{threads} threads");
@@ -637,11 +637,11 @@ func g() float64 {
 }
 ");
     assert!(
-        text.contains("let _1: struct{t main.f.T.1} \"s\""),
+        text.contains("let _1: struct{t _GPTig0_1TF4mainE1f} \"s\""),
         "{text}"
     );
     assert!(
-        text.contains("let _1: struct{t main.g.T.1} \"s\""),
+        text.contains("let _1: struct{t _GPTig0_1TF4mainE1g} \"s\""),
         "{text}"
     );
 }

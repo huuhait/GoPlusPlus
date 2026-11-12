@@ -5,27 +5,27 @@ expression: "gir(\"package main\n\ntype Node struct {\n\tvalue int\n\tnext  *Nod
 module "main"
 file 0 "a.gopp"
 
-fn main.next() -> i64 [go, external] {
+fn _GPF4mainE4next() -> i64 [go, external] {
   let _0: i64
   bb0:
     _0 = const 1: i64  ; a.gopp:8:19
     return  ; a.gopp:8:19
 }
 
-fn main.assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *main.Node, _6: *main.Node) -> i64 [go, external] {
+fn _GPF4mainE7assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *_GPTiN4mainE4Node, _6: *_GPTiN4mainE4Node) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: i64 "b"
   let _3: i64 "i"
   let _4: [4]i64 "arr"
-  let _5: *main.Node "n"
-  let _6: *main.Node "m"
+  let _5: *_GPTiN4mainE4Node "n"
+  let _6: *_GPTiN4mainE4Node "m"
   let _7: i64
   let _8: i64
   let _9: u64
   let _10: bool
-  let _11: *main.Node
-  let _12: *main.Node
+  let _11: *_GPTiN4mainE4Node
+  let _12: *_GPTiN4mainE4Node
   let _13: i64
   let _14: u64
   let _15: i64
@@ -56,10 +56,10 @@ fn main.assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *main.Node, _6: *main
     _12 = copy _6  ; a.gopp:13:2
     (*_11).0 = const 3: i64  ; a.gopp:13:2
     _5 = copy _12  ; a.gopp:13:2
-    _13 = call const fn @main.next() -> [return: bb2, unwind: continue]  ; a.gopp:14:6
+    _13 = call const fn @_GPF4mainE4next() -> [return: bb2, unwind: continue]  ; a.gopp:14:6
   bb2:
     _14 = int_to_int(copy _13) as u64  ; a.gopp:14:2
-    _15 = call const fn @main.next() -> [return: bb3, unwind: continue]  ; a.gopp:14:16
+    _15 = call const fn @_GPF4mainE4next() -> [return: bb3, unwind: continue]  ; a.gopp:14:16
   bb3:
     _16 = lt(copy _14, const 4: u64)  ; a.gopp:14:2
     assert(copy _16 == true, Bounds(copy _14, const 4: u64)) -> [success: bb4, unwind: continue]  ; a.gopp:14:2
@@ -70,11 +70,11 @@ fn main.assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *main.Node, _6: *main
     assert(copy _18 == true, Bounds(copy _17, const 4: u64)) -> [success: bb5, unwind: continue]  ; a.gopp:15:2
   bb5:
     _19 = copy _4[_17]  ; a.gopp:15:2
-    _20 = call const fn @main.next() -> [return: bb6, unwind: continue]  ; a.gopp:15:12
+    _20 = call const fn @_GPF4mainE4next() -> [return: bb6, unwind: continue]  ; a.gopp:15:12
   bb6:
     _4[_17] = add(copy _19, copy _20)  ; a.gopp:15:2
     _21 = copy _2  ; a.gopp:16:2
-    _22 = call const fn @main.next() -> [return: bb7, unwind: continue]  ; a.gopp:16:12
+    _22 = call const fn @_GPF4mainE4next() -> [return: bb7, unwind: continue]  ; a.gopp:16:12
   bb7:
     _1 = copy _21  ; a.gopp:16:2
     _23 = int_to_int(copy _3) as u64  ; a.gopp:17:2

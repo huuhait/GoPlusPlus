@@ -14,6 +14,7 @@ clap.workspace = true
 gopp-codegen-c = { path = "../gopp-codegen-c" }
 gopp-diag = { path = "../gopp-diag" }
 gopp-gir = { path = "../gopp-gir" }
+gopp-mangle = { path = "../gopp-mangle" }
 gopp-sema = { path = "../gopp-sema" }
 gopp-span = { path = "../gopp-span" }
 gopp-syntax = { path = "../gopp-syntax" }

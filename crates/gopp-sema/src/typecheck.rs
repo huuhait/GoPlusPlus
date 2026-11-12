@@ -1591,6 +1591,7 @@ impl<'a> Checker<'a> {
                 let named = self
                     .types
                     .declare(self.package.objects[object].name, self.name);
+                self.types.set_home(named, self.path, false);
                 self.declared.insert(named);
                 self.ty[object] = self.types.named(named, &[]);
                 self.written(self.ty[object], self.package.objects[object].span);
@@ -4223,6 +4224,7 @@ impl<'a> Checker<'a> {
                 // The type exists before what it is declared as is known,
                 // so that it can name itself.
                 let named = self.types.declare(name.name, self.name);
+                self.types.set_home(named, self.path, true);
                 self.types.set_type_params(named, params);
                 let around = std::mem::take(&mut self.around);
                 self.mono_local(named, name.span, &around);

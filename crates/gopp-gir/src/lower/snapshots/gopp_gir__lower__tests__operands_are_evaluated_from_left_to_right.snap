@@ -5,23 +5,23 @@ expression: "gir(\"package main\n\ntype Counter struct {\n\tn int\n}\n\nvar tota
 module "main"
 file 0 "a.gopp"
 
-global var @main.total: i64 [external]
+global var @_GPR4mainE5total: i64 [external]
 
-fn main.bump() -> i64 [go, external] {
+fn _GPF4mainE4bump() -> i64 [go, external] {
   let _0: i64
   let _1: *i64
   let _2: *i64
   bb0:
-    _1 = const global @main.total  ; a.gopp:10:2
+    _1 = const global @_GPR4mainE5total  ; a.gopp:10:2
     (*_1) = add(copy (*_1), const 1: i64)  ; a.gopp:10:2
-    _2 = const global @main.total  ; a.gopp:11:2
+    _2 = const global @_GPR4mainE5total  ; a.gopp:11:2
     _0 = copy (*_2)  ; a.gopp:11:2
     return  ; a.gopp:11:2
 }
 
-fn main.Counter.add(_1: main.Counter, _2: i64, _3: i64) -> i64 [go, external] {
+fn _GPM3addN4mainE7Counter(_1: _GPTiN4mainE7Counter, _2: i64, _3: i64) -> i64 [go, external] {
   let _0: i64
-  let _1: main.Counter "c"
+  let _1: _GPTiN4mainE7Counter "c"
   let _2: i64 "a"
   let _3: i64 "b"
   let _4: i64
@@ -31,7 +31,7 @@ fn main.Counter.add(_1: main.Counter, _2: i64, _3: i64) -> i64 [go, external] {
     return  ; a.gopp:14:38
 }
 
-fn main.three(_1: i64, _2: i64, _3: i64) -> i64 [go, external] {
+fn _GPF4mainE5three(_1: i64, _2: i64, _3: i64) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: i64 "b"
@@ -43,9 +43,9 @@ fn main.three(_1: i64, _2: i64, _3: i64) -> i64 [go, external] {
     return  ; a.gopp:16:31
 }
 
-fn main.order(_1: main.Counter, _2: i64, _3: *i64) -> i64 [go, external] {
+fn _GPF4mainE5order(_1: _GPTiN4mainE7Counter, _2: i64, _3: *i64) -> i64 [go, external] {
   let _0: i64
-  let _1: main.Counter "c"
+  let _1: _GPTiN4mainE7Counter "c"
   let _2: i64 "x"
   let _3: *i64 "p"
   let _4: i64
@@ -63,11 +63,11 @@ fn main.order(_1: main.Counter, _2: i64, _3: *i64) -> i64 [go, external] {
   let _16: i64
   let _17: i64
   let _18: i64 "e"
-  let _19: main.Counter
+  let _19: _GPTiN4mainE7Counter
   let _20: i64
   let _21: i64
   let _22: i64 "f"
-  let _23: main.Counter
+  let _23: _GPTiN4mainE7Counter
   let _24: *i64
   let _25: i64
   let _26: i64
@@ -85,50 +85,50 @@ fn main.order(_1: main.Counter, _2: i64, _3: *i64) -> i64 [go, external] {
   let _38: i64
   bb0:
     _4 = copy _2  ; a.gopp:19:2
-    _5 = call const fn @main.bump() -> [return: bb1, unwind: continue]  ; a.gopp:19:11
+    _5 = call const fn @_GPF4mainE4bump() -> [return: bb1, unwind: continue]  ; a.gopp:19:11
   bb1:
     storage_live(_6)  ; a.gopp:19:2
     _6 = add(copy _4, copy _5)  ; a.gopp:19:2
-    _7 = call const fn @main.bump() -> [return: bb2, unwind: continue]  ; a.gopp:20:7
+    _7 = call const fn @_GPF4mainE4bump() -> [return: bb2, unwind: continue]  ; a.gopp:20:7
   bb2:
     storage_live(_8)  ; a.gopp:20:2
     _8 = add(copy _7, copy _2)  ; a.gopp:20:2
-    _9 = const global @main.total  ; a.gopp:21:2
+    _9 = const global @_GPR4mainE5total  ; a.gopp:21:2
     _10 = copy (*_9)  ; a.gopp:21:2
-    _11 = call const fn @main.bump() -> [return: bb3, unwind: continue]  ; a.gopp:21:15
+    _11 = call const fn @_GPF4mainE4bump() -> [return: bb3, unwind: continue]  ; a.gopp:21:15
   bb3:
     _12 = add(copy _10, copy _11)  ; a.gopp:21:2
-    _13 = const global @main.total  ; a.gopp:21:2
+    _13 = const global @_GPR4mainE5total  ; a.gopp:21:2
     storage_live(_14)  ; a.gopp:21:2
     _14 = add(copy _12, copy (*_13))  ; a.gopp:21:2
     _15 = copy _2  ; a.gopp:22:2
-    _16 = call const fn @main.bump() -> [return: bb4, unwind: continue]  ; a.gopp:22:16
+    _16 = call const fn @_GPF4mainE4bump() -> [return: bb4, unwind: continue]  ; a.gopp:22:16
   bb4:
-    _17 = call const fn @main.three(copy _15, copy _16, copy (*_3)) -> [return: bb5, unwind: continue]  ; a.gopp:22:7
+    _17 = call const fn @_GPF4mainE5three(copy _15, copy _16, copy (*_3)) -> [return: bb5, unwind: continue]  ; a.gopp:22:7
   bb5:
     storage_live(_18)  ; a.gopp:22:2
     _18 = copy _17  ; a.gopp:22:2
     _19 = copy _1  ; a.gopp:23:2
-    _20 = call const fn @main.bump() -> [return: bb6, unwind: continue]  ; a.gopp:23:13
+    _20 = call const fn @_GPF4mainE4bump() -> [return: bb6, unwind: continue]  ; a.gopp:23:13
   bb6:
-    _21 = call const fn @main.Counter.add(copy _19, copy _20, copy _1.0) -> [return: bb7, unwind: continue]  ; a.gopp:23:7
+    _21 = call const fn @_GPM3addN4mainE7Counter(copy _19, copy _20, copy _1.0) -> [return: bb7, unwind: continue]  ; a.gopp:23:7
   bb7:
     storage_live(_22)  ; a.gopp:23:2
     _22 = copy _21  ; a.gopp:23:2
-    _23 = main.Counter {copy _2}  ; a.gopp:24:2
-    _24 = const global @main.total  ; a.gopp:24:2
+    _23 = _GPTiN4mainE7Counter {copy _2}  ; a.gopp:24:2
+    _24 = const global @_GPR4mainE5total  ; a.gopp:24:2
     _25 = copy (*_24)  ; a.gopp:24:2
-    _26 = call const fn @main.bump() -> [return: bb8, unwind: continue]  ; a.gopp:24:29
+    _26 = call const fn @_GPF4mainE4bump() -> [return: bb8, unwind: continue]  ; a.gopp:24:29
   bb8:
-    _27 = call const fn @main.Counter.add(copy _23, copy _25, copy _26) -> [return: bb9, unwind: continue]  ; a.gopp:24:7
+    _27 = call const fn @_GPM3addN4mainE7Counter(copy _23, copy _25, copy _26) -> [return: bb9, unwind: continue]  ; a.gopp:24:7
   bb9:
     storage_live(_28)  ; a.gopp:24:2
     _28 = copy _27  ; a.gopp:24:2
-    _29 = const global @main.total  ; a.gopp:25:2
+    _29 = const global @_GPR4mainE5total  ; a.gopp:25:2
     _30 = copy (*_29)  ; a.gopp:25:2
-    _31 = call const fn @main.bump() -> [return: bb10, unwind: continue]  ; a.gopp:25:21
+    _31 = call const fn @_GPF4mainE4bump() -> [return: bb10, unwind: continue]  ; a.gopp:25:21
   bb10:
-    _32 = const global @main.total  ; a.gopp:25:2
+    _32 = const global @_GPR4mainE5total  ; a.gopp:25:2
     storage_live(_33)  ; a.gopp:25:2
     _33 = array i64 {copy _30, copy _31, copy (*_32)}  ; a.gopp:25:2
     _34 = add(copy _6, copy _8)  ; a.gopp:26:2

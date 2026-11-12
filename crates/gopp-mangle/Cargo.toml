@@ -7,3 +7,16 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+gopp-sema = { path = "../gopp-sema" }
+lasso.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+gopp-diag = { path = "../gopp-diag" }
+gopp-span = { path = "../gopp-span" }
+gopp-syntax = { path = "../gopp-syntax" }
+gopp-testutil = { path = "../gopp-testutil" }
+rand.workspace = true
+rayon.workspace = true

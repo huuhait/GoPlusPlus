@@ -5,24 +5,24 @@ expression: "gir(\"package main\n\ntype Point struct {\n\tx, y int\n}\n\ntype Li
 module "main"
 file 0 "a.gopp"
 
-fn main.Point.sum(_1: main.Point) -> i64 [go, external] {
+fn _GPM3sumN4mainE5Point(_1: _GPTiN4mainE5Point) -> i64 [go, external] {
   let _0: i64
-  let _1: main.Point "p"
+  let _1: _GPTiN4mainE5Point "p"
   bb0:
     _0 = add(copy _1.0, copy _1.1)  ; a.gopp:12:28
     return  ; a.gopp:12:28
 }
 
-fn main.Point.move(_1: *main.Point, _2: i64) -> () [go, external] {
+fn _GPM4moveN4mainE5Point(_1: *_GPTiN4mainE5Point, _2: i64) -> () [go, external] {
   let _0: ()
-  let _1: *main.Point "p"
+  let _1: *_GPTiN4mainE5Point "p"
   let _2: i64 "dx"
   bb0:
     (*_1).0 = add(copy (*_1).0, copy _2)  ; a.gopp:14:32
     return  ; a.gopp:14:42
 }
 
-fn main.pair(_1: i64) -> (i64, bool) [go, external] {
+fn _GPF4mainE4pair(_1: i64) -> (i64, bool) [go, external] {
   let _0: (i64, bool)
   let _1: i64 "a"
   let _2: bool
@@ -32,7 +32,7 @@ fn main.pair(_1: i64) -> (i64, bool) [go, external] {
     return  ; a.gopp:16:32
 }
 
-fn main.named(_1: i64) -> (i64, bool) [go, external] {
+fn _GPF4mainE5named(_1: i64) -> (i64, bool) [go, external] {
   let _0: (i64, bool)
   let _1: i64 "a"
   let _2: i64 "n"
@@ -62,7 +62,7 @@ fn main.named(_1: i64) -> (i64, bool) [go, external] {
     return  ; a.gopp:23:2
 }
 
-fn main.swapped(_1: i64) -> (i64, i64) [go, external] {
+fn _GPF4mainE7swapped(_1: i64) -> (i64, i64) [go, external] {
   let _0: (i64, i64)
   let _1: i64 "a"
   let _2: i64 "n"
@@ -90,7 +90,7 @@ fn main.swapped(_1: i64) -> (i64, i64) [go, external] {
     return  ; a.gopp:28:2
 }
 
-fn main.take(_1: i64, _2: bool) -> i64 [go, external] {
+fn _GPF4mainE4take(_1: i64, _2: bool) -> i64 [go, external] {
   let _0: i64
   let _1: i64 "a"
   let _2: bool "ok"
@@ -99,10 +99,10 @@ fn main.take(_1: i64, _2: bool) -> i64 [go, external] {
     return  ; a.gopp:31:33
 }
 
-fn main.calls(_1: main.Line, _2: *main.Point, _3: *i64) -> i64 [go, external] {
+fn _GPF4mainE5calls(_1: _GPTiN4mainE4Line, _2: *_GPTiN4mainE5Point, _3: *i64) -> i64 [go, external] {
   let _0: i64
-  let _1: main.Line "l"
-  let _2: *main.Point "q"
+  let _1: _GPTiN4mainE4Line "l"
+  let _2: *_GPTiN4mainE5Point "q"
   let _3: *i64 "n"
   let _4: (i64, bool)
   let _5: i64 "a"
@@ -113,10 +113,10 @@ fn main.calls(_1: main.Line, _2: *main.Point, _3: *i64) -> i64 [go, external] {
   let _10: (i64, bool)
   let _11: i64
   let _12: i64 "d"
-  let _13: main.Point "p"
-  let _14: *main.Point
+  let _13: _GPTiN4mainE5Point "p"
+  let _14: *_GPTiN4mainE5Point
   let _15: ()
-  let _16: *main.Point
+  let _16: *_GPTiN4mainE5Point
   let _17: i64
   let _18: ()
   let _19: i64
@@ -124,60 +124,60 @@ fn main.calls(_1: main.Line, _2: *main.Point, _3: *i64) -> i64 [go, external] {
   let _21: i64
   let _22: i64
   let _23: i64 "e"
-  let _24: *main.Point
+  let _24: *_GPTiN4mainE5Point
   let _25: ()
   let _26: i64
   let _27: (i64, bool)
   let _28: i64
   bb0:
-    _4 = call const fn @main.pair(const 1: i64) -> [return: bb1, unwind: continue]  ; a.gopp:34:11
+    _4 = call const fn @_GPF4mainE4pair(const 1: i64) -> [return: bb1, unwind: continue]  ; a.gopp:34:11
   bb1:
     storage_live(_5)  ; a.gopp:34:2
     _5 = copy _4.0  ; a.gopp:34:2
     storage_live(_6)  ; a.gopp:34:2
     _6 = copy _4.1  ; a.gopp:34:2
-    _7 = call const fn @main.named(copy _5) -> [return: bb2, unwind: continue]  ; a.gopp:35:13
+    _7 = call const fn @_GPF4mainE5named(copy _5) -> [return: bb2, unwind: continue]  ; a.gopp:35:13
   bb2:
     storage_live(_8)  ; a.gopp:35:2
     _8 = copy _7.0  ; a.gopp:35:2
     storage_live(_9)  ; a.gopp:35:2
     _9 = copy _7.1  ; a.gopp:35:2
-    _10 = call const fn @main.pair(copy _8) -> [return: bb3, unwind: continue]  ; a.gopp:37:12
+    _10 = call const fn @_GPF4mainE4pair(copy _8) -> [return: bb3, unwind: continue]  ; a.gopp:37:12
   bb3:
-    _11 = call const fn @main.take(copy _10.0, copy _10.1) -> [return: bb4, unwind: continue]  ; a.gopp:37:7
+    _11 = call const fn @_GPF4mainE4take(copy _10.0, copy _10.1) -> [return: bb4, unwind: continue]  ; a.gopp:37:7
   bb4:
     storage_live(_12)  ; a.gopp:37:2
     _12 = copy _11  ; a.gopp:37:2
     storage_live(_13)  ; a.gopp:38:2
-    _13 = main.Point {copy _5, copy _12}  ; a.gopp:38:2
+    _13 = _GPTiN4mainE5Point {copy _5, copy _12}  ; a.gopp:38:2
     _14 = &mut _13  ; a.gopp:39:2
-    _15 = call const fn @main.Point.move(copy _14, const 1: i64) -> [return: bb5, unwind: continue]  ; a.gopp:39:2
+    _15 = call const fn @_GPM4moveN4mainE5Point(copy _14, const 1: i64) -> [return: bb5, unwind: continue]  ; a.gopp:39:2
   bb5:
     _16 = copy _2  ; a.gopp:40:2
-    _17 = call const fn @main.Point.sum(copy _13) -> [return: bb6, unwind: continue]  ; a.gopp:40:9
+    _17 = call const fn @_GPM3sumN4mainE5Point(copy _13) -> [return: bb6, unwind: continue]  ; a.gopp:40:9
   bb6:
-    _18 = call const fn @main.Point.move(copy _16, copy _17) -> [return: bb7, unwind: continue]  ; a.gopp:40:2
+    _18 = call const fn @_GPM4moveN4mainE5Point(copy _16, copy _17) -> [return: bb7, unwind: continue]  ; a.gopp:40:2
   bb7:
-    _19 = call const fn @main.Point.sum(copy (*_2)) -> [return: bb8, unwind: continue]  ; a.gopp:41:7
+    _19 = call const fn @_GPM3sumN4mainE5Point(copy (*_2)) -> [return: bb8, unwind: continue]  ; a.gopp:41:7
   bb8:
-    _20 = call const fn @main.Point.sum(copy _1.0) -> [return: bb9, unwind: continue]  ; a.gopp:41:17
+    _20 = call const fn @_GPM3sumN4mainE5Point(copy _1.0) -> [return: bb9, unwind: continue]  ; a.gopp:41:17
   bb9:
     _21 = add(copy _19, copy _20)  ; a.gopp:41:2
-    _22 = call const fn @main.Point.sum(copy (*_1.1)) -> [return: bb10, unwind: continue]  ; a.gopp:41:32
+    _22 = call const fn @_GPM3sumN4mainE5Point(copy (*_1.1)) -> [return: bb10, unwind: continue]  ; a.gopp:41:32
   bb10:
     storage_live(_23)  ; a.gopp:41:2
     _23 = add(copy _21, copy _22)  ; a.gopp:41:2
     _24 = &mut _1.0  ; a.gopp:42:2
-    _25 = call const fn @main.Point.move(copy _24, copy (*_1.1).0) -> [return: bb11, unwind: continue]  ; a.gopp:42:2
+    _25 = call const fn @_GPM4moveN4mainE5Point(copy _24, copy (*_1.1).0) -> [return: bb11, unwind: continue]  ; a.gopp:42:2
   bb11:
-    _26 = call const fn @main.take(copy (*_3), copy _6) -> [return: bb12, unwind: continue]  ; a.gopp:43:6
+    _26 = call const fn @_GPF4mainE4take(copy (*_3), copy _6) -> [return: bb12, unwind: continue]  ; a.gopp:43:6
   bb12:
     _23 = add(copy _26, copy (*_3))  ; a.gopp:43:2
     switch copy _6 [0: bb16, otherwise: bb13]  ; a.gopp:44:5
   bb13:
-    _27 = call const fn @main.named(copy _23) -> [return: bb14, unwind: continue]  ; a.gopp:45:15
+    _27 = call const fn @_GPF4mainE5named(copy _23) -> [return: bb14, unwind: continue]  ; a.gopp:45:15
   bb14:
-    _28 = call const fn @main.take(copy _27.0, copy _27.1) -> [return: bb15, unwind: continue]  ; a.gopp:45:10
+    _28 = call const fn @_GPF4mainE4take(copy _27.0, copy _27.1) -> [return: bb15, unwind: continue]  ; a.gopp:45:10
   bb15:
     _0 = copy _28  ; a.gopp:45:3
     storage_dead(_23)  ; a.gopp:45:3

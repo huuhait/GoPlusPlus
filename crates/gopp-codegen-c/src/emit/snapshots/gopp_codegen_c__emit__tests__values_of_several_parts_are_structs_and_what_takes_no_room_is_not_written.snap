@@ -6,16 +6,16 @@ expression: "unit(\"a.gopp\", VALUES)"
 _Static_assert(sizeof(void *) == 8, "the width of a pointer");
 _Static_assert(_Alignof(int64_t) == 8, "the alignment of int64");
 
-typedef struct T3 T3; /* main.Point */
-typedef struct T5 T5; /* (i64, main.Point) */
-typedef struct T8 T8; /* main.Box */
+typedef struct T3 T3; /* _GPTiN4mainE5Point */
+typedef struct T5 T5; /* (i64, _GPTiN4mainE5Point) */
+typedef struct T8 T8; /* _GPTiN4mainE3Box */
 typedef struct T10 T10; /* string */
 typedef struct T11 T11; /* [3]i8 */
 typedef struct T17 T17; /* [2]f32 */
 typedef struct T18 T18; /* [2][2]f32 */
-typedef T5 (*T6)(T3); /* fn(main.Point) -> (i64, main.Point) */
-typedef void (*T12)(T8 *, int8_t, int64_t); /* fn(*main.Box, i8, i64) -> main.Nothing */
-typedef T8 (*T19)(T8 *, T18); /* fn(*main.Box, [2][2]f32) -> main.Box */
+typedef T5 (*T6)(T3); /* fn(_GPTiN4mainE5Point) -> (i64, _GPTiN4mainE5Point) */
+typedef void (*T12)(T8 *, int8_t, int64_t); /* fn(*_GPTiN4mainE3Box, i8, i64) -> _GPTiN4mainE7Nothing */
+typedef T8 (*T19)(T8 *, T18); /* fn(*_GPTiN4mainE3Box, [2][2]f32) -> _GPTiN4mainE3Box */
 typedef void (*T21)(void); /* fn() -> () */
 struct T3 {
   int64_t f0;
@@ -54,14 +54,14 @@ _Static_assert(sizeof(T17) == 8 && _Alignof(T17) == 4, "the layout of T17");
 _Static_assert(sizeof(T18) == 16 && _Alignof(T18) == 4, "the layout of T18");
 
 static const char gopp_s0[] = "box\012";
-int64_t gopp_g0 __asm__("main.total");
-T3 gopp_g1 __asm__("main.origin");
+int64_t gopp_g0 __asm__("_GPR4mainE5total");
+T3 gopp_g1 __asm__("_GPR4mainE6origin");
 
-T5 gopp_f0(T3 _1) __asm__("main.pair");
-void gopp_f1(T8 * _1, int8_t _2, int64_t _3) __asm__("main.Box.grow");
-T8 gopp_f2(T8 * _1, T18 _2) __asm__("main.build");
-void gopp_f3(void) __asm__("main.init.0");
-void gopp_f4(void) __asm__("main.main");
+T5 gopp_f0(T3 _1) __asm__("_GPF4mainE4pair");
+void gopp_f1(T8 * _1, int8_t _2, int64_t _3) __asm__("_GPM4growN4mainE3Box");
+T8 gopp_f2(T8 * _1, T18 _2) __asm__("_GPF4mainE5build");
+void gopp_f3(void) __asm__("_GPK4mainE0_");
+void gopp_f4(void) __asm__("_GPF4mainE4main");
 
 T5 gopp_f0(T3 _1) {
   [[maybe_unused]] T5 _0;

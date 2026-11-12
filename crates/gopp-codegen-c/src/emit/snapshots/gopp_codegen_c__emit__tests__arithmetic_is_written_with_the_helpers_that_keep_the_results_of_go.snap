@@ -26,9 +26,9 @@ _Static_assert(sizeof(T7) == 16 && _Alignof(T7) == 8, "the layout of T7");
 _Static_assert(sizeof(T12) == 32 && _Alignof(T12) == 8, "the layout of T12");
 
 
-int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) __asm__("main.ints");
-T7 gopp_f1(double _1, double _2, float _3) __asm__("main.floats");
-T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) __asm__("main.converts");
+int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) __asm__("_GPF4mainE4ints");
+T7 gopp_f1(double _1, double _2, float _3) __asm__("_GPF4mainE6floats");
+T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) __asm__("_GPF4mainE8converts");
 
 int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) {
   [[maybe_unused]] int64_t _0;

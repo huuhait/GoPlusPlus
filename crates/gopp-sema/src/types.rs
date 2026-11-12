@@ -461,11 +461,32 @@ pub enum Member {
     },
 }
 
+/// Where a declared type is declared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Home {
+    pub name: Spur,
+    /// The name of the declaring package; `None` for a predeclared type.
+    pub package: Option<Spur>,
+    /// Its import path; `None` for a predeclared type, and for one whose
+    /// package has no path.
+    pub path: Option<Spur>,
+    /// Declared inside a function.
+    pub local: bool,
+    /// It has type parameters.
+    pub generic: bool,
+    /// Its declaration is in error.
+    pub invalid: bool,
+}
+
 #[derive(Clone, Debug)]
 struct Named {
     name: Spur,
     /// The name of the declaring package; `None` for a predeclared type.
     package: Option<Spur>,
+    /// The import path of the declaring package, once it is said.
+    path: Option<Spur>,
+    /// Declared inside a function.
+    local: bool,
     /// Known once it was asked for.
     underlying: Option<TypeId>,
     /// The type that the declaration wrote, which may be a declared type.
@@ -796,6 +817,8 @@ impl Types {
         inner.named.push(Named {
             name: names.get_or_intern_static("error"),
             package: None,
+            path: None,
+            local: false,
             underlying: Some(underlying),
             declared_as: Some(underlying),
             invalid: false,
@@ -824,6 +847,8 @@ impl Types {
             inner.named.push(Named {
                 name: names.get_or_intern_static(name),
                 package: None,
+                path: None,
+                local: false,
                 underlying: None,
                 declared_as: Some(target),
                 invalid: false,
@@ -1045,6 +1070,8 @@ impl Types {
             inner.named.push(Named {
                 name,
                 package: Some(package),
+                path: None,
+                local: false,
                 underlying: None,
                 declared_as: None,
                 invalid: false,
@@ -1061,6 +1088,30 @@ impl Types {
                 alias: None,
             });
             NamedId(inner.named.len() as u32 - 1)
+        })
+    }
+
+    /// Says where `named` is declared: the import path of its package,
+    /// and whether inside a function.
+    pub fn set_home(&self, named: NamedId, path: Spur, local: bool) {
+        self.write(|inner| {
+            let named = &mut inner.named[named.0 as usize];
+            (named.path, named.local) = (Some(path), local);
+        });
+    }
+
+    /// Where `named` is declared.
+    pub fn home(&self, named: NamedId) -> Home {
+        self.read(|inner| {
+            let named = &inner.named[named.0 as usize];
+            Home {
+                name: named.name,
+                package: named.package,
+                path: named.path,
+                local: named.local,
+                generic: !named.params.is_empty(),
+                invalid: named.invalid,
+            }
         })
     }
 
@@ -1770,6 +1821,26 @@ impl Types {
     /// its name.
     pub fn add_operator(&self, named: NamedId, method: DeclaredMethod) {
         self.write(|inner| inner.named[named.0 as usize].operators.push(method));
+    }
+
+    /// The methods that the declared type declares itself, in the order
+    /// of the declarations, without its `@Operator` methods.
+    pub fn declared_methods(&self, named: NamedId) -> Vec<DeclaredMethod> {
+        let operator = |method: &DeclaredMethod| method.marks.has(Marks::OPERATOR);
+        self.read(|inner| {
+            let methods = inner.named[named.0 as usize].methods.iter();
+            methods
+                .filter(|method| !operator(method))
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// The `@Operator` methods that the declared type declares itself,
+    /// in the order of the declarations, written with the type
+    /// parameters that each receiver names.
+    pub fn declared_operators(&self, named: NamedId) -> Vec<DeclaredMethod> {
+        self.read(|inner| inner.named[named.0 as usize].operators.clone())
     }
 
     /// The `@Operator` methods of the name that a value of the declared

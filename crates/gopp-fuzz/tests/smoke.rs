@@ -36,3 +36,42 @@ fn mutated_samples_pass_the_front_end_oracles() {
         }
     }
 }
+
+/// The seeds of the symbol target, with a byte changed, added or
+/// dropped, and pieces of two put together.
+#[test]
+fn mutated_symbols_pass_the_symbol_oracles() {
+    let seeds = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fuzz/seeds/symbol_name"
+    );
+    let mut files: Vec<_> = fs::read_dir(seeds)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    files.sort();
+    let symbols: Vec<Vec<u8>> = files.iter().map(|path| fs::read(path).unwrap()).collect();
+    assert!(symbols.len() >= 27);
+    let mut rng = ChaCha8Rng::seed_from_u64(1);
+    for symbol in &symbols {
+        // Each seed is a symbol.
+        assert!(gopp_mangle::demangle(symbol, 4096).is_ok());
+        assert_eq!(target::symbol_name(symbol), Ok(()));
+        for round in 0..400 {
+            let mut input = symbol.clone();
+            let at = rng.random_range(0..input.len());
+            match round % 4 {
+                0 => input[at] = rng.random_range(b'0'..=b'z'),
+                1 => input.insert(at, rng.random_range(b'0'..=b'z')),
+                2 => drop(input.remove(at)),
+                _ => {
+                    let donor = &symbols[rng.random_range(0..symbols.len())];
+                    let from = rng.random_range(0..donor.len());
+                    input.splice(at.., donor[from..].iter().copied());
+                }
+            }
+            let name = String::from_utf8_lossy(&input).into_owned();
+            assert_eq!(target::symbol_name(&input), Ok(()), "{name}");
+        }
+    }
+}

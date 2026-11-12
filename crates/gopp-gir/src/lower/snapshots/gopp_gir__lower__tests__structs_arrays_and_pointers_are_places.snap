@@ -5,11 +5,11 @@ expression: "gir(\"package main\n\ntype Point struct {\n\tx, y int\n}\n\ntype Bo
 module "main"
 file 0 "a.gopp"
 
-fn main.literals(_1: i64, _2: *main.Box) -> main.Box [go, external] {
-  let _0: main.Box
+fn _GPF4mainE8literals(_1: i64, _2: *_GPTiN4mainE3Box) -> _GPTiN4mainE3Box [go, external] {
+  let _0: _GPTiN4mainE3Box
   let _1: i64 "a"
-  let _2: *main.Box "next"
-  let _3: main.Point "p"
+  let _2: *_GPTiN4mainE3Box "next"
+  let _3: _GPTiN4mainE5Point "p"
   let _4: [3]i64 "sizes"
   let _5: [2]i64
   let _6: [2]i64
@@ -18,7 +18,7 @@ fn main.literals(_1: i64, _2: *main.Box) -> main.Box [go, external] {
   let _9: [100]i8
   bb0:
     storage_live(_3)  ; a.gopp:14:2
-    _3 = main.Point {const zero: i64, copy _1}  ; a.gopp:14:2
+    _3 = _GPTiN4mainE5Point {const zero: i64, copy _1}  ; a.gopp:14:2
     storage_live(_4)  ; a.gopp:15:2
     _4 = array i64 {const 1: i64, const zero: i64, copy _1}  ; a.gopp:15:2
     _5 = array i64 {const 1: i64, copy _1}  ; a.gopp:16:2
@@ -31,7 +31,7 @@ fn main.literals(_1: i64, _2: *main.Box) -> main.Box [go, external] {
     _9[5] = const 1: i8  ; a.gopp:19:2
     _9[6] = const 2: i8  ; a.gopp:19:2
     _8 = copy _9  ; a.gopp:19:2
-    _0 = main.Box {copy _3, copy _4, copy _2}  ; a.gopp:21:2
+    _0 = _GPTiN4mainE3Box {copy _3, copy _4, copy _2}  ; a.gopp:21:2
     storage_dead(_8)  ; a.gopp:21:2
     storage_dead(_7)  ; a.gopp:21:2
     storage_dead(_4)  ; a.gopp:21:2
@@ -39,16 +39,16 @@ fn main.literals(_1: i64, _2: *main.Box) -> main.Box [go, external] {
     return  ; a.gopp:21:2
 }
 
-fn main.places(_1: *main.Box, _2: i64, _3: *[4][2]f64) -> f64 [go, external] {
+fn _GPF4mainE6places(_1: *_GPTiN4mainE3Box, _2: i64, _3: *[4][2]f64) -> f64 [go, external] {
   let _0: f64
-  let _1: *main.Box "b"
+  let _1: *_GPTiN4mainE3Box "b"
   let _2: i64 "i"
   let _3: *[4][2]f64 "grid"
   let _4: u64
   let _5: bool
-  let _6: *main.Point "p"
-  let _7: main.Point
-  let _8: main.Point
+  let _6: *_GPTiN4mainE5Point "p"
+  let _7: _GPTiN4mainE5Point
+  let _8: _GPTiN4mainE5Point
   let _9: u64
   let _10: bool
   let _11: *i64 "q"
@@ -65,9 +65,9 @@ fn main.places(_1: *main.Box, _2: i64, _3: *[4][2]f64) -> f64 [go, external] {
     (*(*_1).2).1[2] = copy _2  ; a.gopp:26:2
     storage_live(_6)  ; a.gopp:27:2
     _6 = &mut (*_1).0  ; a.gopp:27:2
-    _7 = main.Point {const 1: i64, const 2: i64}  ; a.gopp:28:2
+    _7 = _GPTiN4mainE5Point {const 1: i64, const 2: i64}  ; a.gopp:28:2
     (*_6) = copy _7  ; a.gopp:28:2
-    _8 = main.Point {copy (*_6).1, copy (*_6).0}  ; a.gopp:29:2
+    _8 = _GPTiN4mainE5Point {copy (*_6).1, copy (*_6).0}  ; a.gopp:29:2
     (*_6) = copy _8  ; a.gopp:29:2
     (*_6).1 = add(copy (*_6).1, const 1: i64)  ; a.gopp:30:2
     _9 = int_to_int(copy _2) as u64  ; a.gopp:31:2

@@ -6,40 +6,40 @@ module "main"
 file 0 "b.gopp"
 file 1 "a.gopp"
 
-global var @main.second: f64 [external]
+global var @_GPR4mainE6second: f64 [external]
 
-global var @main.first: i64 [external]
+global var @_GPR4mainE5first: i64 [external]
 
-fn main.init.1() -> () [go, external] {
+fn _GPK4mainE1_() -> () [go, external] {
   let _0: ()
   let _1: *f64
   bb0:
-    _1 = const global @main.second  ; b.gopp:5:15
+    _1 = const global @_GPR4mainE6second  ; b.gopp:5:15
     (*_1) = const 0x4000000000000000: f64  ; b.gopp:5:15
     return  ; b.gopp:5:26
 }
 
-fn main.init.2() -> () [go, external] {
+fn _GPK4mainE2_() -> () [go, external] {
   let _0: ()
   let _1: *i64
   bb0:
-    _1 = const global @main.first  ; b.gopp:7:15
+    _1 = const global @_GPR4mainE5first  ; b.gopp:7:15
     (*_1) = add(copy (*_1), const 1: i64)  ; b.gopp:7:15
     return  ; b.gopp:7:23
 }
 
-fn main.init.0() -> () [go, external] {
+fn _GPK4mainE0_() -> () [go, external] {
   let _0: ()
   let _1: *i64
   let _2: *f64
   bb0:
-    _1 = const global @main.first  ; a.gopp:5:15
-    _2 = const global @main.second  ; a.gopp:5:15
+    _1 = const global @_GPR4mainE5first  ; a.gopp:5:15
+    _2 = const global @_GPR4mainE6second  ; a.gopp:5:15
     (*_1) = float_to_int(copy (*_2)) as i64  ; a.gopp:5:15
     return  ; a.gopp:5:35
 }
 
-fn main.main() -> () [go, external] {
+fn _GPF4mainE4main() -> () [go, external] {
   let _0: ()
   bb0:
     return  ; a.gopp:7:14

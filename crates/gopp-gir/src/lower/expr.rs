@@ -1,6 +1,7 @@
 //! Expressions: values, places, calls, and the checks that Go's
 //! semantics ask for (gir.md §5).
 
+use gopp_mangle::{Entity, symbol_of};
 use gopp_sema::constant::Value;
 use gopp_sema::types::{PARENT, Type as CheckedType};
 use gopp_sema::{LocalKind, ObjKind, Package, Predeclared, PredeclaredKind, Ref, SelectionKind};
@@ -352,7 +353,8 @@ impl FuncCx<'_, '_> {
                 Some(Ref::Object(object)) => {
                     let package = self.shared.package;
                     if let ObjKind::Var = package.object(*object).kind {
-                        return self.global(package, *object, span);
+                        let key = CalleeKey::Object(*object);
+                        return self.global(key, package, *object, span);
                     }
                 }
                 _ => {}
@@ -368,7 +370,8 @@ impl FuncCx<'_, '_> {
                     && let Some((package, object)) = self.member(*import, *member)
                     && let ObjKind::Var = object.kind
                 {
-                    return self.global(package, *member, span);
+                    let key = CalleeKey::Member(*import, *member);
+                    return self.global(key, package, *member, span);
                 }
             }
             ExprKind::Index { x, indices } => {
@@ -401,21 +404,51 @@ impl FuncCx<'_, '_> {
     }
 
     /// The variable of a package as a place: what the pointer to it
-    /// leads to.
+    /// leads to. `key` is how the source names it.
     fn global(
         &mut self,
+        key: CalleeKey,
         package: &Package,
         object: gopp_sema::ObjId,
         span: SourceSpan,
     ) -> Built<Place> {
-        let symbol = self.shared.global_symbol(package, object);
         let ty = self.lower(package.object(object).ty, span);
-        if ty == TypeInterner::UNIT {
+        let known = match self.memo.global_keys.get(&key) {
+            Some(&id) => Some(id),
+            None => self.declare_global(key, package, object, ty, span),
+        };
+        let Some(id) = known else {
             // A variable without a value, or of a type that is not
             // supported, which was reported: no global stands for it.
             let nothing = self.b.assign_temp(Rvalue::Use(self.zero(ty)))?;
             return Ok(Place::local(nothing));
+        };
+        let kind = ConstantKind::Global(id);
+        let ty = self.b.types().ptr(ty);
+        let address = Operand::Const(Constant { kind, ty });
+        let pointer = self.b.assign_temp(Rvalue::Use(address))?;
+        self.b.deref(&Place::local(pointer))
+    }
+
+    /// The global of the variable in the module of the run, declared
+    /// there if it is not yet; none for a variable without a value.
+    fn declare_global(
+        &mut self,
+        key: CalleeKey,
+        package: &Package,
+        object: gopp_sema::ObjId,
+        ty: TypeId,
+        span: SourceSpan,
+    ) -> Option<crate::GlobalId> {
+        if ty == TypeInterner::UNIT {
+            return None;
         }
+        let entity = Entity::Object(package, object);
+        let Ok(symbol) = symbol_of(&mut self.memo.namer, entity) else {
+            self.unsupported(span, "a variable without a symbol");
+            return None;
+        };
+        // Two imports of one package name the same variables.
         let id = match self.memo.globals.get(&symbol) {
             Some(&id) => id,
             None => {
@@ -430,11 +463,8 @@ impl FuncCx<'_, '_> {
                 id
             }
         };
-        let kind = ConstantKind::Global(id);
-        let ty = self.b.types().ptr(ty);
-        let address = Operand::Const(Constant { kind, ty });
-        let pointer = self.b.assign_temp(Rvalue::Use(address))?;
-        self.b.deref(&Place::local(pointer))
+        self.memo.global_keys.insert(key, id);
+        Some(id)
     }
 
     /// What the pointer in `place` leads to. In a Go file a pointer may
@@ -933,19 +963,21 @@ impl FuncCx<'_, '_> {
             return Ok(known.clone());
         }
         let shared = self.shared;
-        let function = |package: &Package, object: &gopp_sema::Object| match object.kind {
-            ObjKind::Func => {
-                let name = shared.names.resolve(&object.name);
-                Some((format!("{}.{name}", package.path), None, object.ty))
-            }
-            _ => None,
+        let namer = &mut self.memo.namer;
+        let mut function = |package: &Package, id: gopp_sema::ObjId| {
+            let object = package.objects.get(id.0 as usize)?;
+            let symbol = match object.kind {
+                ObjKind::Func => symbol_of(namer, Entity::Object(package, id)).ok()?,
+                _ => return None,
+            };
+            Some((symbol, None, object.ty))
         };
         let found = match key {
-            CalleeKey::Object(object) => function(shared.package, shared.package.object(object)),
-            CalleeKey::Member(import, member) => {
-                let member = self.member(import, member);
-                member.and_then(|(package, object)| function(package, object))
-            }
+            CalleeKey::Object(object) => function(shared.package, object),
+            CalleeKey::Member(import, member) => match &shared.package.object(import).kind {
+                ObjKind::Import { package, .. } => function(package, member),
+                _ => None,
+            },
             CalleeKey::Method(holder, name) => match &*shared.types.get(holder) {
                 CheckedType::Named { id, .. } => shared
                     .methods

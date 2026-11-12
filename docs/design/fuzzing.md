@@ -157,7 +157,7 @@ nix develop -c cargo fuzz run --fuzz-dir tests/fuzz -s none parse_gopp \
     tests/fuzz/corpus/parse_gopp docs/spec/examples -- -max_total_time=600 -max_len=8192
 ```
 
-The targets today are `parse_gopp` and `parse_go`. The corpus and the crash files (`tests/fuzz/corpus/`, `tests/fuzz/artifacts/`) are not in version control; a crash becomes a finding (section 8).
+The targets today are `parse_gopp`, `parse_go` and `symbol_name` (a text is refused, or it is the one name of what it names). The seeds of `symbol_name` are the names of [appendix A.7](../spec/appendix-a-symbol-names.md), in `tests/fuzz/seeds/symbol_name`; give that folder in the place of `docs/spec/examples`. The corpus and the crash files (`tests/fuzz/corpus/`, `tests/fuzz/artifacts/`) are not in version control; a crash becomes a finding (section 8).
 
 ## 11. Open points
 

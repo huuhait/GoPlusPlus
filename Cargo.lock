@@ -377,6 +377,7 @@ dependencies = [
  "gopp-codegen-c",
  "gopp-diag",
  "gopp-gir",
+ "gopp-mangle",
  "gopp-sema",
  "gopp-span",
  "gopp-syntax",
@@ -393,6 +394,7 @@ version = "0.1.0"
 dependencies = [
  "gopp-diag",
  "gopp-gir",
+ "gopp-mangle",
  "gopp-sema",
  "gopp-span",
  "gopp-syntax",
@@ -423,6 +425,7 @@ name = "gopp-fuzz"
 version = "0.1.0"
 dependencies = [
  "gopp-diag",
+ "gopp-mangle",
  "gopp-span",
  "gopp-syntax",
  "gopp-testutil",
@@ -435,6 +438,7 @@ name = "gopp-gir"
 version = "0.1.0"
 dependencies = [
  "gopp-diag",
+ "gopp-mangle",
  "gopp-sema",
  "gopp-span",
  "gopp-syntax",
@@ -457,6 +461,17 @@ version = "0.1.0"
 [[package]]
 name = "gopp-mangle"
 version = "0.1.0"
+dependencies = [
+ "gopp-diag",
+ "gopp-sema",
+ "gopp-span",
+ "gopp-syntax",
+ "gopp-testutil",
+ "lasso",
+ "rand",
+ "rayon",
+ "rustc-hash",
+]
 
 [[package]]
 name = "gopp-plugin-api"

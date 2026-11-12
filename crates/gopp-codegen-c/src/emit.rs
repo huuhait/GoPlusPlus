@@ -209,12 +209,12 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
         let found = funcs.iter().position(|func| func.name() == name);
         found.filter(|&at| !funcs[at].is_declaration())
     };
-    let Some(main) = defined(&format!("{package}.main")) else {
+    let Some(main) = defined(&gopp_mangle::func_symbol(package, "main")) else {
         return;
     };
     out.push_str("\nint main(int argc, char **argv) {\n  (void)argc;\n  (void)argv;\n");
     let mut number = 0;
-    while let Some(init) = defined(&format!("{package}.init.{number}")) {
+    while let Some(init) = defined(&gopp_mangle::init_symbol(package, number)) {
         let _ = writeln!(out, "  {}();", func_name(init));
         number += 1;
     }
