@@ -14,6 +14,7 @@ mod constraints;
 mod conversion;
 mod implements;
 mod index;
+mod infer;
 mod literal;
 mod methods;
 mod ops;
@@ -242,6 +243,14 @@ struct Checker<'a> {
     /// The terms of each union that was written, each with where: what
     /// may be a term is checked once every type is known.
     unions: Vec<Vec<(Term, Span)>>,
+    /// The generic types and functions with type arguments that were
+    /// written.
+    instances: Vec<constraints::Instance>,
+    /// Where each type parameter is declared.
+    param_spans: FxHashMap<TypeId, Span>,
+    /// The type arguments of each generic function that is written with
+    /// only the first of them, `f[int]`, each with where it is written.
+    partial: FxHashMap<ExprId, Vec<(TypeId, Span)>>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -347,6 +356,9 @@ pub fn declarations(
         embedded_fields: Vec::new(),
         var_types: Vec::new(),
         unions: Vec::new(),
+        instances: Vec::new(),
+        param_spans: FxHashMap::default(),
+        partial: FxHashMap::default(),
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -559,6 +571,7 @@ impl<'a> Checker<'a> {
             if let Some(&local) = cx.body.defs.get(&param.name.span.lo) {
                 cx.params.insert(local, ty);
             }
+            self.param_spans.insert(ty, param.name.span);
             params.push(ty);
         }
         // A constraint that is not worked out leaves the declaration as
@@ -748,6 +761,9 @@ impl<'a> Checker<'a> {
         }
         for terms in std::mem::take(&mut self.unions) {
             self.union_terms(&terms);
+        }
+        for instance in std::mem::take(&mut self.instances) {
+            self.verify(&instance);
         }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided
@@ -1517,8 +1533,34 @@ impl<'a> Checker<'a> {
         if let Type::Named { id, .. } = &*self.types.get(generic)
             && self.is_generic_type(generic)
         {
-            let instance = self.types.named(*id, &arguments(self));
+            let args = arguments(self);
+            let params = self.types.type_params(*id);
+            let at = cx.tree.exprs[expr].span;
+            if args.len() != params.len() {
+                let message = format!(
+                    "{} type arguments for type {}: have {}, want {}",
+                    if args.len() < params.len() {
+                        "not enough"
+                    } else {
+                        "too many"
+                    },
+                    self.names.resolve(&self.types.name_of(*id)),
+                    args.len(),
+                    params.len()
+                );
+                self.error(Code::GotNTypeArgs, at, message);
+                self.incomplete = true;
+                return Types::INVALID;
+            }
+            let instance = self.types.named(*id, &args);
             self.written(instance, cx.tree.exprs[x].span);
+            let spans = indices.iter().map(|&index| cx.tree.exprs[index].span);
+            self.instances.push(constraints::Instance {
+                params,
+                args,
+                spans: spans.collect(),
+                at,
+            });
             return instance;
         }
         if generic != Types::INVALID {
@@ -2145,7 +2187,7 @@ impl<'a> Checker<'a> {
 
     /// The kind of the result for two untyped numbers: the later of
     /// integer, rune, float, complex.
-    fn larger_kind(&self, x: TypeId, y: TypeId) -> Option<TypeId> {
+    pub(super) fn larger_kind(&self, x: TypeId, y: TypeId) -> Option<TypeId> {
         let rank = |ty| match self.basic_of(ty) {
             Some(Basic::UntypedInt) => Some(0),
             Some(Basic::UntypedRune) => Some(1),
@@ -2203,14 +2245,19 @@ impl<'a> Checker<'a> {
             }
             _ if callee.is_value() => {
                 self.called_or_received = true;
-                let generic = self.types.generic_func(callee.ty).is_some();
-                // The type arguments of a generic function are found from
-                // the arguments of the call.
+                let plain = self.types.underlying(callee.ty);
                 let sig = match self.types.generic_func(callee.ty) {
+                    // The type arguments that the call does not write
+                    // are found from its arguments; in this call the
+                    // function has the type that they give it.
                     Some(params) => {
-                        // In this call the function has the type that its
-                        // type arguments give it.
-                        let sig = self.inferred(cx, callee.ty, &params, args, spread);
+                        let written = self.partial.get(&fun).cloned().unwrap_or_default();
+                        let generic = infer::Generic {
+                            sig: plain,
+                            params,
+                            written,
+                        };
+                        let sig = self.call_arguments(cx, expr, fun, plain, args, spread, generic);
                         if let Some(memo) = &mut self.memo {
                             memo.insert(fun, sig.map_or(Operand::UNKNOWN, Operand::value));
                         }
@@ -2219,38 +2266,19 @@ impl<'a> Checker<'a> {
                             None => return Operand::UNKNOWN,
                         }
                     }
-                    None => self.types.underlying(callee.ty),
+                    None => {
+                        if let Type::Func {
+                            params, variadic, ..
+                        } = &*self.types.get(plain)
+                        {
+                            self.arguments(cx, expr, fun, (params, *variadic), args, spread);
+                        }
+                        plain
+                    }
                 };
-                let Type::Func {
-                    params,
-                    results,
-                    variadic,
-                    ..
-                } = &*self.types.get(sig)
-                else {
+                let Type::Func { results, .. } = &*self.types.get(sig) else {
                     return Operand::UNKNOWN;
                 };
-                match generic {
-                    // What the type arguments make of the parameters is
-                    // not checked against the arguments yet: only a value
-                    // of no type takes the type of its parameter.
-                    true => {
-                        for (at, &arg) in args.iter().enumerate() {
-                            let in_rest = *variadic && at + 1 >= params.len() && !spread;
-                            let wanted = match (in_rest, params.last()) {
-                                (true, Some(&last)) => match &*self.types.get(last) {
-                                    Type::Slice(elem) => Some(*elem),
-                                    _ => None,
-                                },
-                                _ => params.get(at).copied(),
-                            };
-                            if let Some(wanted) = wanted {
-                                self.convert(cx, arg, wanted);
-                            }
-                        }
-                    }
-                    false => self.arguments(cx, expr, fun, (params, *variadic), args, spread),
-                }
                 match &results[..] {
                     [] => Operand {
                         mode: Mode::NoValue,
@@ -2262,104 +2290,6 @@ impl<'a> Checker<'a> {
             }
             _ => Operand::UNKNOWN,
         }
-    }
-
-    /// The type of the generic function `sig` for the call with `args`:
-    /// each type parameter is what the arguments make it. `None` if an
-    /// argument does not fit or a parameter stays open.
-    fn inferred(
-        &mut self,
-        cx: &Cx<'a>,
-        sig: TypeId,
-        params: &[TypeId],
-        args: &[ExprId],
-        spread: bool,
-    ) -> Option<TypeId> {
-        let Type::Func {
-            params: wanted,
-            variadic,
-            ..
-        } = &*self.types.get(sig)
-        else {
-            return None;
-        };
-        // The types of the arguments: a call with several results is all
-        // the arguments at once.
-        let mut given: Vec<TypeId> = Vec::new();
-        for &arg in args {
-            let operand = self.operand(cx, arg);
-            if !operand.is_value() {
-                return None;
-            }
-            match &*self.types.get(operand.ty) {
-                Type::Tuple(results) if args.len() == 1 => given.extend(results.iter()),
-                _ => given.push(operand.ty),
-            }
-        }
-        // The type that the parameter list has for the argument at `at`:
-        // the element type for the arguments of `...T`, unless the call
-        // passes a slice with `...`.
-        let wanted_at = |at: usize| {
-            let in_rest = *variadic && at + 1 >= wanted.len();
-            match (in_rest && !(spread && at + 1 == given.len()), wanted.last()) {
-                (true, Some(&last)) => match &*self.types.get(last) {
-                    Type::Slice(elem) => Some(*elem),
-                    _ => None,
-                },
-                _ => wanted.get(at.min(wanted.len().saturating_sub(1))).copied(),
-            }
-        };
-        let nil = self.types.basic(Basic::UntypedNil);
-        let mut bound = vec![None; params.len()];
-        let mut untyped = Vec::new();
-        for (at, &ty) in given.iter().enumerate() {
-            let wanted = wanted_at(at)?;
-            // `nil` and a generic function say nothing by themselves.
-            if ty == nil || self.types.generic_func(ty).is_some() {
-                continue;
-            }
-            match self.is_untyped(ty) {
-                true => untyped.push((wanted, ty)),
-                false if !self.types.unify(wanted, ty, params, &mut bound) => return None,
-                false => {}
-            }
-        }
-        // A parameter whose constraint allows one type says what the type
-        // parameters in that type are: `S ~[]E` with `S` known gives `E`.
-        for _ in 0..params.len() {
-            for (at, &param) in params.iter().enumerate() {
-                let (Some(known), Some(core)) = (bound[at], self.types.core_type(param)) else {
-                    continue;
-                };
-                let known = match core.tilde {
-                    true => self.types.underlying(known),
-                    false => known,
-                };
-                if !self.types.unify(core.ty, known, params, &mut bound) {
-                    return None;
-                }
-            }
-        }
-        // A constant of no type gives a parameter its default type, if no
-        // other argument said what the parameter is.
-        // Of several, the one of the latest kind: `f(1, 2.5)` is a float.
-        let mut kinds: Vec<Option<TypeId>> = vec![None; params.len()];
-        for (wanted, ty) in untyped {
-            let at = params.iter().position(|&param| param == wanted);
-            if let Some(at) = at.filter(|&at| bound[at].is_none()) {
-                kinds[at] = match kinds[at] {
-                    Some(kind) => Some(self.larger_kind(kind, ty)?),
-                    None => Some(ty),
-                };
-            }
-        }
-        for (slot, kind) in bound.iter_mut().zip(kinds) {
-            if let Some(kind) = kind {
-                *slot = Some(self.types.default_type(kind));
-            }
-        }
-        let bound: Vec<TypeId> = bound.into_iter().collect::<Option<_>>()?;
-        Some(self.types.substitute(sig, params, &bound))
     }
 
     /// A function of package unsafe, which takes a value of any type.

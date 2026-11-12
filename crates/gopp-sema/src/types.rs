@@ -604,35 +604,6 @@ impl Types {
         }
     }
 
-    /// The one type that the constraint of the type parameter `param`
-    /// allows, or with `~` the one underlying type: `[]E` for `S ~[]E`.
-    /// `None` if the constraint allows more, or says nothing of the kind.
-    pub fn core_type(&self, param: TypeId) -> Option<Term> {
-        let Type::Param(id) = &*self.get(param) else {
-            return None;
-        };
-        let constraint = self.read(|inner| inner.params[id.0 as usize].1)?;
-        let mut term = self.underlying(constraint);
-        // `interface{ ~[]E }` says what `~[]E` says.
-        if let Type::Interface { methods, embedded } = &*self.get(term) {
-            match (&methods[..], &embedded[..]) {
-                ([], [one]) => term = *one,
-                _ => return None,
-            }
-        }
-        match &*self.get(term) {
-            Type::Union(terms) => match &terms[..] {
-                [one] => Some(*one),
-                _ => None,
-            },
-            Type::Interface { .. } | Type::Marker(_) => None,
-            _ => Some(Term {
-                tilde: false,
-                ty: term,
-            }),
-        }
-    }
-
     /// The type of a generic function with the type parameters
     /// `type_params` and the parameters and results of `sig`.
     pub fn generic_func_type(&self, sig: TypeId, type_params: &[TypeId]) -> TypeId {
@@ -660,88 +631,6 @@ impl Types {
         }
     }
 
-    /// Finds what the type parameters `params` must be for `pattern`,
-    /// which is written with them, to be the type `actual`. `bound` holds
-    /// what is found, one place for each parameter. False if the two do
-    /// not fit, or a parameter would have to be two types.
-    pub fn unify(
-        &self,
-        pattern: TypeId,
-        actual: TypeId,
-        params: &[TypeId],
-        bound: &mut [Option<TypeId>],
-    ) -> bool {
-        if let Some(at) = params.iter().position(|&param| param == pattern) {
-            return match bound[at] {
-                Some(known) => known == actual,
-                None => {
-                    bound[at] = Some(actual);
-                    true
-                }
-            };
-        }
-        if pattern == actual {
-            return true;
-        }
-        match (&*self.get(pattern), &*self.get(actual)) {
-            (Type::Pointer(a), Type::Pointer(b))
-            | (Type::Slice(a), Type::Slice(b))
-            | (Type::Unique(a), Type::Unique(b))
-            | (Type::Shared(a), Type::Shared(b))
-            | (Type::Weak(a), Type::Weak(b))
-            | (Type::Option(a), Type::Option(b))
-            | (Type::Local(a), Type::Local(b))
-            | (Type::Chan { elem: a, .. }, Type::Chan { elem: b, .. }) => {
-                self.unify(*a, *b, params, bound)
-            }
-            (Type::Array { len: m, elem: a }, Type::Array { len: n, elem: b }) => {
-                m == n && self.unify(*a, *b, params, bound)
-            }
-            (Type::Map { key: k, value: v }, Type::Map { key: l, value: w }) => {
-                self.unify(*k, *l, params, bound) && self.unify(*v, *w, params, bound)
-            }
-            (
-                Type::Func {
-                    params: p,
-                    results: r,
-                    variadic: v,
-                    ..
-                },
-                Type::Func {
-                    params: q,
-                    results: s,
-                    variadic: w,
-                    ..
-                },
-            ) => {
-                v == w && self.unify_all(p, q, params, bound) && self.unify_all(r, s, params, bound)
-            }
-            (Type::Named { id: a, args: x }, Type::Named { id: b, args: y }) => {
-                a == b && self.unify_all(x, y, params, bound)
-            }
-            // A declared type fits a pattern that is none through what it
-            // was declared as: `[]E` takes a `type List []int`.
-            (pattern_type, Type::Named { .. }) if !matches!(pattern_type, Type::Named { .. }) => {
-                self.unify(pattern, self.underlying(actual), params, bound)
-            }
-            _ => false,
-        }
-    }
-
-    fn unify_all(
-        &self,
-        patterns: &[TypeId],
-        actuals: &[TypeId],
-        params: &[TypeId],
-        bound: &mut [Option<TypeId>],
-    ) -> bool {
-        patterns.len() == actuals.len()
-            && patterns
-                .iter()
-                .zip(actuals)
-                .all(|(&a, &b)| self.unify(a, b, params, bound))
-    }
-
     /// Says that `named` is generic, with the type parameters `params`.
     pub fn set_type_params(&self, named: NamedId, params: Vec<TypeId>) {
         self.write(|inner| inner.named[named.0 as usize].params = params);
@@ -751,10 +640,30 @@ impl Types {
     /// same place of `to`.
     /// Whether a type parameter is written in the type.
     pub fn has_param(&self, ty: TypeId) -> bool {
-        let any = |types: &[TypeId]| types.iter().any(|&ty| self.has_param(ty));
+        self.any_param(ty, &|_| true)
+    }
+
+    /// Whether the type is written with one of the type parameters
+    /// `params`.
+    pub fn mentions(&self, ty: TypeId, params: &[TypeId]) -> bool {
+        self.any_param(ty, &|param| params.contains(&param))
+    }
+
+    fn any_param(&self, ty: TypeId, wanted: &dyn Fn(TypeId) -> bool) -> bool {
         match &*self.get(ty) {
-            Type::Param(_) => true,
-            Type::Invalid | Type::Basic(_) | Type::Marker(_) => false,
+            Type::Param(_) => wanted(ty),
+            _ => self
+                .parts(ty)
+                .into_iter()
+                .any(|part| self.any_param(part, wanted)),
+        }
+    }
+
+    /// The types that the type is written with, each once for each place:
+    /// the type arguments of a declared type, not what it is declared as.
+    pub fn parts(&self, ty: TypeId) -> Vec<TypeId> {
+        match &*self.get(ty) {
+            Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => Vec::new(),
             Type::Pointer(elem)
             | Type::Unique(elem)
             | Type::Shared(elem)
@@ -763,17 +672,44 @@ impl Types {
             | Type::Local(elem)
             | Type::Slice(elem)
             | Type::Array { elem, .. }
-            | Type::Chan { elem, .. } => self.has_param(*elem),
-            Type::Map { key, value } => self.has_param(*key) || self.has_param(*value),
-            Type::Tuple(types) | Type::Named { args: types, .. } => any(types),
+            | Type::Chan { elem, .. } => vec![*elem],
+            Type::Map { key, value } => vec![*key, *value],
+            Type::Tuple(types) | Type::Named { args: types, .. } => types.to_vec(),
             Type::Func {
                 params, results, ..
-            } => any(params) || any(results),
-            Type::Struct(fields) => fields.iter().any(|field| self.has_param(field.ty)),
+            } => params.iter().chain(results.iter()).copied().collect(),
+            Type::Struct(fields) => fields.iter().map(|field| field.ty).collect(),
             Type::Interface { methods, embedded } => {
-                methods.iter().any(|method| self.has_param(method.sig)) || any(embedded)
+                let sigs = methods.iter().map(|method| method.sig);
+                sigs.chain(embedded.iter().copied()).collect()
             }
-            Type::Union(terms) => terms.iter().any(|term| self.has_param(term.ty)),
+            Type::Union(terms) => terms.iter().map(|term| term.ty).collect(),
+        }
+    }
+
+    /// The name of a type parameter.
+    pub fn param_name(&self, param: TypeId) -> Option<Spur> {
+        match &*self.get(param) {
+            Type::Param(id) => Some(self.read(|inner| inner.params[id.0 as usize].0)),
+            _ => None,
+        }
+    }
+
+    /// The type of the method of the name that values of the type `ty`
+    /// have; `package` is that of a name that is not exported.
+    pub fn method_type(
+        &self,
+        ty: TypeId,
+        name: Spur,
+        package: Option<Spur>,
+        names: &ThreadedRodeo,
+    ) -> Option<TypeId> {
+        match self.find(ty, (name, package), names, false).ok()?.member {
+            Member::Method {
+                sig,
+                pointer_receiver: false,
+            } => Some(sig),
+            _ => None,
         }
     }
 
@@ -1514,19 +1450,34 @@ impl Types {
         self.lacks(id, &self.method_set(iface)?, names)
     }
 
-    fn lacks(
+    /// `missing_method` for the methods `wanted`. A type parameter has
+    /// the methods of its constraint.
+    pub fn lacks(
         &self,
         id: TypeId,
         wanted: &MethodSet,
         names: &ThreadedRodeo,
     ) -> Option<(Method, Lacks)> {
+        self.lacks_with(id, wanted, names, &mut |a, b| self.identical(a, b))
+    }
+
+    /// `lacks`, where `same` says whether the type of a method that the
+    /// type has is the type that is wanted.
+    pub fn lacks_with(
+        &self,
+        id: TypeId,
+        wanted: &MethodSet,
+        names: &ThreadedRodeo,
+        same: &mut dyn FnMut(TypeId, TypeId) -> bool,
+    ) -> Option<(Method, Lacks)> {
         if wanted.is_empty() {
             return None;
         }
         self.steps.fetch_add(wanted.len() as u64, Ordering::Relaxed);
-        let has = match self.is_interface(id) {
-            true => Some(self.method_set(id)?),
-            false => None,
+        let has = match &*self.get(id) {
+            Type::Param(_) => Some(self.param_set(id)?.methods),
+            _ if self.is_interface(id) => Some(self.method_set(id)?),
+            _ => None,
         };
         // Of the methods that are lacking, the first by its name.
         let mut missing: Option<(Method, Lacks)> = None;
@@ -1536,8 +1487,8 @@ impl Types {
         };
         wanted.for_each(&mut |method| {
             let lacks = match &has {
-                Some(has) => self.interface_lacks(has, method),
-                None => self.type_lacks(id, method, names),
+                Some(has) => self.interface_lacks(has, method, same),
+                None => self.type_lacks(id, method, names, same),
             };
             if let Some(lacks) = lacks
                 && missing
@@ -1551,17 +1502,28 @@ impl Types {
     }
 
     /// What an interface with the methods `has` lacks of `method`.
-    fn interface_lacks(&self, has: &MethodSet, method: &Method) -> Option<Lacks> {
+    fn interface_lacks(
+        &self,
+        has: &MethodSet,
+        method: &Method,
+        same: &mut dyn FnMut(TypeId, TypeId) -> bool,
+    ) -> Option<Lacks> {
         match has.get((method.name, method.package)) {
             None => Some(Lacks::Method),
-            Some(found) if self.identical(found.sig, method.sig) => None,
+            Some(found) if same(found.sig, method.sig) => None,
             Some(found) => Some(Lacks::Type(found.clone())),
         }
     }
 
     /// What values of the type `id`, which is no interface, lack of
     /// `method`.
-    fn type_lacks(&self, id: TypeId, method: &Method, names: &ThreadedRodeo) -> Option<Lacks> {
+    fn type_lacks(
+        &self,
+        id: TypeId,
+        method: &Method,
+        names: &ThreadedRodeo,
+        same: &mut dyn FnMut(TypeId, TypeId) -> bool,
+    ) -> Option<Lacks> {
         let key = (method.name, method.package);
         let lacks = match self.find(id, key, names, false) {
             Err(NotFound::Ambiguous) => Lacks::OneMember,
@@ -1588,9 +1550,7 @@ impl Types {
                 } => Lacks::ValueReceiver,
                 // The signature of a method is not known while the
                 // types of its package are worked out.
-                Member::Method { sig, .. }
-                    if sig == Self::INVALID || self.identical(sig, method.sig) =>
-                {
+                Member::Method { sig, .. } if sig == Self::INVALID || same(sig, method.sig) => {
                     return None;
                 }
                 Member::Method { sig, .. } => Lacks::Type(Method {
@@ -1958,4 +1918,4 @@ mod tests;
 mod typeset;
 
 pub use methodset::MethodSet;
-pub use typeset::TypeSet;
+pub use typeset::{NoCommon, TypeSet};

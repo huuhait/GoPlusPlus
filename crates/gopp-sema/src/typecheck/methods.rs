@@ -9,6 +9,8 @@ use crate::types::NamedId;
 struct Receiver {
     /// Written with a star.
     pointer: bool,
+    /// `T[P]`: the receiver without its star.
+    named: ExprId,
     /// `T`, or what is written in its place.
     base: ExprId,
     /// What the brackets name.
@@ -128,12 +130,14 @@ impl<'a> Checker<'a> {
         {
             (base, pointer) = (unparen(*x), true);
         }
+        let named = base;
         let mut indices = Vec::new();
-        if let ExprKind::Index { x, indices: named } = &tree.exprs[base].kind {
-            (base, indices) = (*x, named.clone());
+        if let ExprKind::Index { x, indices: listed } = &tree.exprs[base].kind {
+            (base, indices) = (*x, listed.clone());
         }
         Receiver {
             pointer,
+            named,
             base,
             indices,
         }
@@ -165,6 +169,7 @@ impl<'a> Checker<'a> {
                 }
             };
             let param = self.types.param(name);
+            self.param_spans.insert(param, span);
             params.push(param);
             if let Some(&local) = cx.body.defs.get(&span.lo) {
                 cx.params.insert(local, param);
@@ -213,6 +218,10 @@ impl<'a> Checker<'a> {
                      {declared}",
                     if named == 1 { "" } else { "s" }
                 );
+                // The number of type arguments is wrong for this reason
+                // alone.
+                let whole = cx.tree.exprs[parts.named].span;
+                self.reported.insert((whole, Code::GotNTypeArgs));
                 return self.error(Code::InvalidReceiverTypeParams, base_span, message);
             }
         }

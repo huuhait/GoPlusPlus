@@ -4312,6 +4312,282 @@ type Plain interface{ String() string }
     assert_eq!(shown("Plain"), (None, false, string, false));
 }
 
+#[test]
+fn type_arguments_satisfy_their_constraints_as_go_checks_it() {
+    let text = "package p
+
+type MyInt int
+type Num interface{ ~int | ~float64 }
+type Exact interface{ int | float64 }
+type Str interface{ String() string }
+type NumStr interface {
+	Num
+	String() string
+}
+type Nothing interface {
+	int
+	string
+}
+type T struct{}
+
+func (T) String() string { return \"\" }
+
+type S struct{ f func() }
+
+type G[P Num] struct{}
+type H[P Exact, Q comparable] struct{}
+type K[P Str] struct{}
+type L[P NumStr] struct{}
+type E[P Nothing] struct{}
+type M[K comparable, V any] struct{}
+type C[P interface{ m() P }] struct{}
+
+type R struct{}
+
+func (R) m() R { return R{} }
+
+var (
+	_ G[int]
+	_ G[MyInt]
+	_ G[string]
+	_ H[MyInt, int]
+	_ H[int, []int]
+	_ H[int, S]
+	_ H[int, any]
+	_ K[T]
+	_ K[int]
+	_ L[MyInt]
+	_ E[int]
+	_ M[func(), int]
+	_ M[int]
+	_ M[int, int, int]
+	_ G[Num]
+	_ C[R]
+	_ C[T]
+)
+
+func f[P Num](P)          {}
+func g[P Num, Q Str]()    {}
+func h[P comparable](P)   {}
+func k[P Num, Q Exact](p P, q Q) {
+	var _ G[P]
+	var _ G[Q]
+	var _ H[P, P]
+	var _ H[Q, Q]
+	var _ K[P]
+	f(p)
+	f(q)
+	h(p)
+}
+
+func use() {
+	f(1)
+	f(\"s\")
+	f[string](\"s\")
+	g[int, T]()
+	g[int, int]()
+	g[int, int, int]()
+	h([]int{})
+	h(1)
+	_ = f[MyInt]
+}
+";
+    let expected = [
+        "a.go:36:6: string does not satisfy Num (string missing in ~int | ~float64)",
+        "a.go:37:6: MyInt does not satisfy Exact (possibly missing ~ for int in Exact)",
+        "a.go:38:11: []int does not satisfy comparable",
+        "a.go:39:11: S does not satisfy comparable",
+        "a.go:42:6: int does not satisfy Str (missing method String)",
+        "a.go:43:6: MyInt does not satisfy NumStr (missing method String)",
+        "a.go:44:6: cannot satisfy Nothing (empty type set)",
+        "a.go:45:6: func() does not satisfy comparable",
+        "a.go:46:4: not enough type arguments for type M: have 1, want 2",
+        "a.go:47:4: too many type arguments for type M: have 3, want 2",
+        "a.go:48:6: cannot use type Num outside a type constraint: interface contains type constraints",
+        "a.go:50:6: T does not satisfy interface{m() T} (missing method m)",
+        "a.go:59:10: P does not satisfy Exact",
+        "a.go:61:10: P does not satisfy Str (missing method String)",
+        "a.go:69:2: string does not satisfy Num (string missing in ~int | ~float64)",
+        "a.go:70:4: string does not satisfy Num (string missing in ~int | ~float64)",
+        "a.go:72:9: int does not satisfy Str (missing method String)",
+        "a.go:73:14: got 3 type arguments but want 2",
+        "a.go:74:2: []int does not satisfy comparable",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+#[test]
+fn type_arguments_are_inferred_as_go_infers_them() {
+    let text = "package p
+
+type MyInt int
+type List []int
+
+func f1[P any](P, P)                         {}
+func f2[S ~[]E, E any](S) E                  { var e E; return e }
+func f3[K comparable, V any](map[K]V) []K    { return nil }
+func f4[P, Q any](P) Q                       { var q Q; return q }
+func f5[P any](...P)                         {}
+func f6[P any](func(P), P)                   {}
+func f7[P interface{ m() Q }, Q any](P) Q    { var q Q; return q }
+func f8[P *Q, Q any](P)                      {}
+func f9[P interface{ ~int | ~string }](P, P) {}
+
+type T struct{}
+
+func (T) m() string { return \"\" }
+
+func use(i int, s string, l List, m map[string]int, mi MyInt, c chan int, r <-chan int) {
+	f1(i, i)
+	f1(i, s)
+	f1(1, 2.5)
+	f1(1, \"a\")
+	f1(i, 1)
+	f1(1.5, i)
+	f1(nil, nil)
+	f1(mi, i)
+	f1(i, mi)
+	_ = f2(l)
+	_ = f2([]string{})
+	_ = f2(i)
+	var _ int = f2(l)
+	var _ string = f2(l)
+	_ = f3(m)
+	_ = f3(l)
+	f4(i)
+	_ = f4[int, string](i)
+	_ = f4[int](i)
+	_ = f4[string](i)
+	f5(1, 2, 3)
+	f5(i, s)
+	f5[int]()
+	f5()
+	f5(l...)
+	f6(func(int) {}, i)
+	f6(func(int) {}, s)
+	var _ string = f7(T{})
+	f7(i)
+	f8(&i)
+	f8(i)
+	f9(i, i)
+	f9(1, 2)
+	f9(1.5, 2)
+	f1(c, r)
+	f1(r, c)
+	f1[int](s, s)
+}
+
+func rec[P any](p P, n int) {
+	rec(p, n)
+	rec(n, n)
+	rec[int](n, n)
+	rec(&p, n)
+}
+";
+    // Go says where a type parameter is declared inside the message.
+    let expected = [
+        "a.go:22:8: in call to f1, type string of s does not match inferred type int for P",
+        "a.go:24:8: in call to f1, mismatched types untyped int and untyped string (cannot infer P)",
+        "a.go:26:5: cannot use 1.5 (untyped float constant) as int value in argument to f1 (truncated)",
+        "a.go:27:2: in call to f1, cannot infer P",
+        "    a.go:6:9: P declared here",
+        "a.go:28:9: cannot use i (variable of type int) as MyInt value in argument to f1",
+        "a.go:29:5: cannot use i (variable of type int) as MyInt value in argument to f1",
+        "a.go:32:6: in call to f2, S (type int) does not satisfy ~[]E",
+        "a.go:34:17: cannot use f2(l) (value of type int) as string value in variable declaration",
+        "a.go:36:9: in call to f3, type List of l does not match map[K]V (cannot infer K and V)",
+        "a.go:37:2: in call to f4, cannot infer Q",
+        "    a.go:9:12: Q declared here",
+        "a.go:39:6: in call to f4[int], cannot infer Q",
+        "    a.go:9:12: Q declared here",
+        "a.go:40:6: in call to f4[string], cannot infer Q",
+        "    a.go:9:12: Q declared here",
+        "a.go:42:8: in call to f5, type string of s does not match inferred type int for P",
+        "a.go:44:2: in call to f5, cannot infer P",
+        "    a.go:10:9: P declared here",
+        "a.go:47:19: in call to f6, type string of s does not match inferred type int for P",
+        "a.go:49:2: in call to f7, P (type int) does not satisfy interface{m() Q} (missing method m)",
+        "a.go:51:2: in call to f8, P (type int) does not satisfy *Q",
+        "a.go:54:2: float64 does not satisfy interface{~int | ~string} (float64 missing in ~int | ~string)",
+        "a.go:57:10: cannot use s (variable of type string) as int value in argument to f1[int]",
+        "a.go:57:13: cannot use s (variable of type string) as int value in argument to f1[int]",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+// rule: OWN-P5
+#[test]
+fn a_pointer_argument_is_read_as_what_it_points_to_where_its_type_does_not_fit() {
+    let text = "package p
+
+type List []int
+
+func first[S ~[]E, E any](s S) E { return s[0] }
+func same[P any](a, b P)         {}
+func keep[P any](p P) P          { return p }
+
+func use(l List, pl *List, ps *[]string, n int, pn *int) {
+	var a int = first(l)
+	var b int = first(pl)
+	var c string = first(ps)
+	var d *int = keep(pn)
+	same(n, pn)
+	same(pn, pn)
+	_, _, _, _ = a, b, c, d
+	first(n)
+	first(pn)
+}
+";
+    let expected = [
+        "a.gopp:17:2: in call to first, S (type int) does not satisfy ~[]E",
+        "a.gopp:18:2: in call to first, S (type *int) does not satisfy ~[]E",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+/// The work of finding type arguments grows with the calls and with the
+/// size of the types, not faster. For one function it grows with the
+/// square of the number of its type parameters where each is found from
+/// the one after it, as in Go.
+#[test]
+fn the_steps_of_inference_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let header = "package p\nfunc first[S ~[]E, E any](s S) E { return s[0] }\n\
+                  func pair[K comparable, V any](k K, v V) map[K]V { return nil }\n";
+    // Calls next to each other.
+    let calls = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!("var a{i} = first([]int{{{i}}})\nvar b{i} = pair({i}, a{i})\n"))
+            .collect();
+        format!("{header}{all}")
+    };
+    // A call inside a call inside a call.
+    let nested = |depth: usize| {
+        format!(
+            "{header}var a = {}1{}\n",
+            "first([]int{".repeat(depth),
+            "})".repeat(depth)
+        )
+    };
+    // A function with many type parameters, each found from its argument.
+    let many_params = |count: usize| {
+        let params: String = (0..count).map(|i| format!("P{i}, ")).collect();
+        let list: String = (0..count).map(|i| format!("p{i} P{i}, ")).collect();
+        let args: String = (0..count).map(|i| format!("{i}, ")).collect();
+        format!("package p\nfunc f[{params}Q any]({list}q Q) {{}}\nfunc g() {{ f({args}1) }}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(calls(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
+    linear::assert_near_linear(&sizes, |n| steps(many_params(n)));
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -5239,7 +5515,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2191;
+const EXPECTED_ERRORS_REPORTED: usize = 2360;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
@@ -5355,6 +5631,9 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
         "fixedbugs/issue69955.go:36:6: a (variable of struct type S) is not constant",
         "fixedbugs/issue69955.go:37:6: b (variable of type int) is not constant",
         "fixedbugs/issue69955.go:38:6: c (variable of int type N) is not constant",
+        "fixedbugs/issue59740.go:24:25: in call to cons, type func(T, List[T]) T of nil[T]",
+        "fixedbugs/issue60933.go:34:10: in call to g, type interface{Write([]uint8) (int, error)}",
+        "fixedbugs/issue60933.go:35:12: in call to g, type *os.File of file does not match",
     ];
     let (mut ok, mut missing) = (0, 0);
     let mut wrong = Vec::new();

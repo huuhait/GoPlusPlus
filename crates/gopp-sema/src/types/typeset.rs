@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 
 use rustc_hash::FxHashSet;
 
-use super::{Constraint, Marker, MethodSet, Term, Type, TypeId, Types};
+use super::{ChanDir, Constraint, Marker, MethodSet, Term, Type, TypeId, Types};
 
 /// What a constraint asks of a type.
 #[derive(Clone, Debug, Default)]
@@ -44,6 +44,19 @@ impl TypeSet {
     }
 }
 
+/// Why the types that a type parameter may be have no underlying type in
+/// common. The types are two of those that it may be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoCommon {
+    /// Its constraint has no type terms.
+    NoSpecificType,
+    DifferentUnderlying(TypeId, TypeId),
+    /// Two channel types with different element types.
+    DifferentElements(TypeId, TypeId),
+    /// A channel to send on and one to receive from.
+    ConflictingDirections(TypeId, TypeId),
+}
+
 /// What is known of the set of an interface while sets are built.
 enum Dep {
     Set(TypeSet),
@@ -70,6 +83,18 @@ impl Types {
             true => self.identical(term.ty, self.underlying(ty)),
             false => self.identical(term.ty, ty),
         }
+    }
+
+    /// Whether every type of the terms `a` is in the terms `b`; `None` is
+    /// every type.
+    pub fn subset(&self, a: &Option<Vec<Term>>, b: &Option<Vec<Term>>) -> bool {
+        let (Some(a), Some(b)) = (a, b) else {
+            return b.is_none();
+        };
+        a.iter().all(|&x| {
+            b.iter()
+                .any(|&y| !self.disjoint(x, y) && (!x.tilde || y.tilde))
+        })
     }
 
     /// The terms without those that another term holds.
@@ -277,6 +302,75 @@ impl Types {
             Dep::Set(set) => Some(set),
             Dep::Unknown | Dep::Entered => None,
         }
+    }
+
+    /// The types that a value of the type `ty` may have, each with its
+    /// underlying type: the type itself, or for a type parameter the
+    /// types of its terms. `None` for a type parameter without terms, or
+    /// whose constraint is not known.
+    pub fn specific_types(&self, ty: TypeId) -> Option<Vec<(TypeId, TypeId)>> {
+        if !matches!(&*self.get(ty), Type::Param(_)) {
+            return Some(vec![(ty, self.underlying(ty))]);
+        }
+        let terms = self.param_set(ty)?.terms?;
+        let with_under = |term: &Term| (term.ty, self.underlying(term.ty));
+        Some(terms.iter().map(with_under).collect())
+    }
+
+    /// The underlying type that all the types that a value of the type
+    /// `ty` may have share. Channel types share one if their elements
+    /// are of one type and no two directions exclude each other: the
+    /// channel with a direction is it then.
+    pub fn common_under(&self, ty: TypeId) -> Result<TypeId, NoCommon> {
+        let types = self.specific_types(ty).ok_or(NoCommon::NoSpecificType)?;
+        let mut common: Option<(TypeId, TypeId)> = None;
+        for (ty, under) in types {
+            let Some((first, shared)) = common else {
+                common = Some((ty, under));
+                continue;
+            };
+            if let (
+                Type::Chan { dir, elem },
+                Type::Chan {
+                    dir: other_dir,
+                    elem: other,
+                },
+            ) = (&*self.get(shared), &*self.get(under))
+            {
+                if !self.identical(*elem, *other) {
+                    return Err(NoCommon::DifferentElements(first, ty));
+                }
+                if dir == other_dir {
+                    continue;
+                }
+                match (dir, other_dir) {
+                    (ChanDir::Both, _) => common = Some((ty, under)),
+                    (_, ChanDir::Both) => {}
+                    _ => return Err(NoCommon::ConflictingDirections(first, ty)),
+                }
+                continue;
+            }
+            if !self.identical(shared, under) {
+                return Err(NoCommon::DifferentUnderlying(first, ty));
+            }
+        }
+        common
+            .map(|(_, under)| under)
+            .ok_or(NoCommon::NoSpecificType)
+    }
+
+    /// What says the most about the types that the type parameter `param`
+    /// may be: its one term, or with `~` the underlying type that all its
+    /// terms share (`[]E` for `S ~[]E`). The flag says that it is the one
+    /// term. `None` if the terms share nothing, or there are none.
+    pub fn core_term(&self, param: TypeId) -> Option<(Term, bool)> {
+        let terms = self.param_set(param)?.terms?;
+        if let [one] = terms[..] {
+            return Some((one, true));
+        }
+        let tilde = terms.iter().any(|term| term.tilde);
+        let ty = self.common_under(param).ok()?;
+        Some((Term { tilde, ty }, false))
     }
 
     /// The type set of the type parameter `param`; `None` also while its

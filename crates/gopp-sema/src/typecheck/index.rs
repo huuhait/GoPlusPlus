@@ -98,10 +98,36 @@ impl<'a> Checker<'a> {
                     return Operand::UNKNOWN;
                 };
                 let args: Vec<TypeId> = indices.iter().map(|&i| self.var_type(cx, i)).collect();
-                if args.len() != params.len() || args.contains(&Types::INVALID) {
+                if args.len() > params.len() {
+                    let message = format!(
+                        "got {} type arguments but want {}",
+                        args.len(),
+                        params.len()
+                    );
+                    let last = cx.tree.exprs[indices[args.len() - 1]].span;
+                    self.error(Code::GotNTypeArgsFunc, last, message);
                     return Operand::UNKNOWN;
                 }
-                return Operand::value(self.types.substitute(x.ty, &params, &args));
+                if args.contains(&Types::INVALID) {
+                    return Operand::UNKNOWN;
+                }
+                // With the first type arguments only, the function is
+                // still generic: a call finds the others.
+                if args.len() < params.len() {
+                    let spans = indices.iter().map(|&index| cx.tree.exprs[index].span);
+                    self.partial
+                        .insert(expr, args.into_iter().zip(spans).collect());
+                    return x;
+                }
+                let instance = self.types.substitute(x.ty, &params, &args);
+                let spans = indices.iter().map(|&index| cx.tree.exprs[index].span);
+                self.instances.push(super::constraints::Instance {
+                    params,
+                    args,
+                    spans: spans.collect(),
+                    at: cx.tree.exprs[expr].span,
+                });
+                return Operand::value(instance);
             }
             Type::Basic(Basic::String | Basic::UntypedString) => {
                 let byte = self.types.basic(Basic::Uint8);

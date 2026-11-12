@@ -24,6 +24,51 @@ impl<'a> Checker<'a> {
         args: &[ExprId],
         spread: bool,
     ) {
+        self.given_arguments(cx, call, fun, (params, variadic), args, spread, None);
+    }
+
+    /// `arguments` for a call of the generic function `generic` of the
+    /// type `sig`: the type that the function has in this call. `None` if
+    /// its type arguments are not found.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn call_arguments(
+        &mut self,
+        cx: &Cx<'a>,
+        call: ExprId,
+        fun: ExprId,
+        sig: TypeId,
+        args: &[ExprId],
+        spread: bool,
+        generic: super::infer::Generic,
+    ) -> Option<TypeId> {
+        let Type::Func {
+            params, variadic, ..
+        } = &*self.types.get(sig)
+        else {
+            return None;
+        };
+        self.given_arguments(
+            cx,
+            call,
+            fun,
+            (params, *variadic),
+            args,
+            spread,
+            Some(generic),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn given_arguments(
+        &mut self,
+        cx: &Cx<'a>,
+        call: ExprId,
+        fun: ExprId,
+        (params, variadic): (&[TypeId], bool),
+        args: &[ExprId],
+        spread: bool,
+        generic: Option<super::infer::Generic>,
+    ) -> Option<TypeId> {
         // `f(g())` passes all results of `g`.
         let mut given: Vec<(ExprId, Operand)> = Vec::new();
         match args {
@@ -42,6 +87,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        let fun_expr = fun;
         let fun = self.expr_string(cx, fun);
         let span = cx.tree.exprs[call].span;
         let after_args = args
@@ -68,12 +114,13 @@ impl<'a> Checker<'a> {
                         "cannot use ... with {count}-valued {}",
                         self.expr_string(cx, args[0])
                     );
-                    return self.error(Code::CannotUseEllipsis, token("..."), message);
+                    self.error(Code::CannotUseEllipsis, token("..."), message);
+                    return None;
                 }
             } else if count + 1 >= wanted {
                 rest = match params.last().map(|&last| self.types.get(last)).as_deref() {
                     Some(Type::Slice(elem)) => Some(*elem),
-                    _ => return,
+                    _ => return None,
                 };
                 wanted = count;
             } else {
@@ -81,12 +128,13 @@ impl<'a> Checker<'a> {
             }
         } else if spread {
             let message = format!("cannot use ... in call to non-variadic {fun}");
-            return self.error(Code::CannotUseEllipsis, token("..."), message);
+            self.error(Code::CannotUseEllipsis, token("..."), message);
+            return None;
         }
         if count != wanted {
             // An argument that is in error may stand for any number.
             if args.len() == 1 && given.iter().any(|(_, x)| x.mode == Mode::Unknown) {
-                return;
+                return None;
             }
             let (code, qualifier, at) = match count > wanted {
                 true => (
@@ -112,20 +160,48 @@ impl<'a> Checker<'a> {
             if self.reported.insert((at, code)) {
                 self.sink.push(diagnostic);
             }
-            return;
+            return None;
+        }
+        // The type that each argument is given to.
+        let mut to: Vec<TypeId> = (0..count)
+            .map(|at| match (rest, at + 1 >= params.len()) {
+                (Some(elem), true) => elem,
+                _ => params[at],
+            })
+            .collect();
+        // The type arguments of a generic function are found from the
+        // arguments, and say what the parameters are in this call.
+        let mut instance = None;
+        if let Some(generic) = generic {
+            // A generic function as an argument is not followed yet:
+            // nothing is said where the type arguments are not found.
+            let quiet = given
+                .iter()
+                .any(|(_, x)| self.types.generic_func(x.ty).is_some());
+            let found = self.instantiated_for(cx, (span, fun_expr), generic, &to, &given, quiet)?;
+            let Type::Func { params: now, .. } = &*self.types.get(found) else {
+                return None;
+            };
+            for (at, to) in to.iter_mut().enumerate() {
+                *to = match (rest, at + 1 >= now.len(), now.last()) {
+                    (Some(_), true, Some(&last)) => match &*self.types.get(last) {
+                        Type::Slice(elem) => *elem,
+                        _ => return None,
+                    },
+                    _ => now[at],
+                };
+            }
+            instance = Some(found);
         }
         let context = format!("argument to {fun}");
         let several = given.len() > args.len();
-        for (at, (arg, x)) in given.into_iter().enumerate() {
-            let to = match (rest, at + 1 >= params.len()) {
-                (Some(elem), true) => elem,
-                _ => params[at],
-            };
+        for ((arg, x), to) in given.into_iter().zip(to) {
             match several {
                 true => drop(self.init_var(cx, arg, Some(x), Some(to), &context)),
                 false => drop(self.assignment(cx, arg, x, Some(to), &context)),
             }
         }
+        instance
     }
 
     /// What the call of `fun` is, once it is typed: a conversion, a

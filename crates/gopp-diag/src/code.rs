@@ -206,6 +206,8 @@ codes! {
     236 InvalidConstantType "err_invalid_constant_type",
     237 MethodExprPointerReceiver "err_method_expr_ptr_recv",
     238 AmbiguousSelector "err_ambiguous_selector",
+    239 GotNTypeArgs "err_got_n_type_args",
+    240 GotNTypeArgsFunc "err_got_n_type_args_func",
     241 CannotUseConstraintOutside "err_cannot_use_constraint_outside",
     242 InterfaceContainsTypeConstraints "err_interface_contains_type_constraints",
     243 InterfaceIsComparable "err_interface_is_comparable",
@@ -254,6 +256,9 @@ codes! {
     478 NoteInnerDeclaration "note_inner_declaration",
     479 NoteMissingMethod "note_missing_method",
     480 UnionTooManyTerms "err_union_too_many_terms",
+    481 TypeArgUnsatisfied "err_type_arg_unsatisfied",
+    482 CannotInfer "err_cannot_infer",
+    483 NoteDeclaredHere "note_declared_here",
 }
 
 impl Code {

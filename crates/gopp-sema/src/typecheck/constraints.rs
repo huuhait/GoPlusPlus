@@ -1,8 +1,20 @@
 //! Constraints: what may be a term of a union, after `go/types`
 //! (union.go), with Go's messages.
 
+use super::implements::Cause;
 use super::*;
 use crate::types::Marker;
+
+/// A generic type or function with type arguments, which are held to the
+/// constraints once every type is known.
+pub(super) struct Instance {
+    pub params: Vec<TypeId>,
+    pub args: Vec<TypeId>,
+    /// Where each type argument that is written is.
+    pub spans: Vec<Span>,
+    /// Where the instance is, for a type argument that is not written.
+    pub at: Span,
+}
 
 /// A union has no more terms than this, as in Go.
 const MAX_TERMS: usize = 100;
@@ -130,6 +142,148 @@ impl<'a> Checker<'a> {
                 (Code::UnionOverlapping, message)
             };
             self.error(code, span, message);
+        }
+    }
+
+    /// Whether a part of what a union or an interface is written with is
+    /// the type `ty`, in its type set or not.
+    fn mentions(&self, constraint: TypeId, ty: TypeId) -> bool {
+        match &*self.types.get(constraint) {
+            Type::Interface { embedded, .. } => {
+                embedded.iter().any(|&elem| self.mentions(elem, ty))
+            }
+            Type::Union(terms) => terms.iter().any(|term| self.mentions(term.ty, ty)),
+            _ => self.types.identical(constraint, ty),
+        }
+    }
+
+    /// Why the type `v` does not satisfy the constraint `bound`. `None`
+    /// if it does, and where that is not decided here: a type in error,
+    /// a constraint of Go++.
+    pub(super) fn unsatisfied(&self, v: TypeId, bound: TypeId) -> Option<Cause> {
+        let invalid = |ty: TypeId| self.types.underlying(ty) == Types::INVALID;
+        let pointee_invalid = matches!(
+            &*self.types.get(self.types.underlying(v)),
+            Type::Pointer(elem) if invalid(*elem)
+        );
+        if invalid(v) || invalid(bound) || pointee_invalid {
+            return None;
+        }
+        let wanted = self.types.type_set(bound)?;
+        let (shown, constraint) = (self.type_string(v), self.type_string(bound));
+        let cause = |text: String| {
+            Some(Cause {
+                text,
+                have_want: None,
+            })
+        };
+        // Any type satisfies a constraint that asks nothing.
+        if wanted.constraint().is_none() && wanted.methods.is_empty() {
+            return None;
+        }
+        // What is known of `v` if it stands for other types: a type
+        // parameter, or an interface.
+        let is_param = matches!(&*self.types.get(v), Type::Param(_));
+        let own = match is_param {
+            true => Some(self.types.param_set(v)?),
+            false if self.types.is_interface(v) => Some(self.types.type_set(v)?),
+            false => None,
+        };
+        if own.as_ref().is_some_and(|own| own.is_empty()) {
+            return None;
+        }
+        if wanted.is_empty() {
+            return cause(format!("cannot satisfy {constraint} (empty type set)"));
+        }
+        let lacks = match self.types.extends(v) {
+            true => None,
+            false => self.types.lacks(v, &wanted.methods, self.names),
+        };
+        if let Some((method, lacks)) = lacks {
+            let mut why = self.lacks_cause(v, &method, lacks);
+            why.text = format!("{shown} does not satisfy {constraint} {}", why.text);
+            return Some(why);
+        }
+        // The values of a type compare if they may panic doing so, but
+        // those of a type parameter only if they never do.
+        let incomparable = || {
+            let compares = match &wanted.terms {
+                Some(terms) => terms
+                    .iter()
+                    .all(|term| self.types.strictly_comparable(term.ty)),
+                None => wanted.comparable,
+            };
+            let fits = match is_param {
+                true => self.types.strictly_comparable(v),
+                false => self.types.comparable(v),
+            };
+            match compares && !fits {
+                true => cause(format!("{shown} does not satisfy comparable")),
+                false => None,
+            }
+        };
+        let Some(terms) = &wanted.terms else {
+            return incomparable();
+        };
+        if let Some(own) = own {
+            return match self.types.subset(&own.terms, &wanted.terms) {
+                true => incomparable(),
+                false => cause(format!("{shown} does not satisfy {constraint}")),
+            };
+        }
+        if terms.iter().any(|&term| self.types.in_term(term, v)) {
+            return incomparable();
+        }
+        // A term that would hold the type if it were written with `~`.
+        let nearly = terms.iter().find(|term| {
+            let with_tilde = Term {
+                tilde: true,
+                ..**term
+            };
+            let is_underlying = self.types.underlying(term.ty) == term.ty;
+            !term.tilde && is_underlying && self.types.in_term(with_tilde, v)
+        });
+        let detail = match nearly {
+            Some(term) => format!(
+                "possibly missing ~ for {} in {constraint}",
+                self.type_string(term.ty)
+            ),
+            None if self.mentions(self.types.underlying(bound), v) => format!(
+                "{constraint} mentions {shown}, but {shown} is not in the type set of \
+                 {constraint}"
+            ),
+            None => {
+                let listed: Vec<String> = terms.iter().map(|&t| self.term_string(t)).collect();
+                format!("{shown} missing in {}", listed.join(" | "))
+            }
+        };
+        cause(format!("{shown} does not satisfy {constraint} ({detail})"))
+    }
+
+    /// Holds the type arguments of an instance to the constraints of the
+    /// type parameters: the first that does not satisfy its constraint is
+    /// reported.
+    pub(super) fn verify(&mut self, instance: &Instance) {
+        for (at, (&param, &arg)) in instance.params.iter().zip(&instance.args).enumerate() {
+            let Some(constraint) = self.types.constraint(param) else {
+                continue;
+            };
+            let bound = self
+                .types
+                .substitute(constraint, &instance.params, &instance.args);
+            if let Some(cause) = self.unsatisfied(arg, bound) {
+                let span = instance.spans.get(at).copied().unwrap_or(instance.at);
+                let mut diagnostic = Diagnostic::new(Code::TypeArgUnsatisfied, span, cause.text);
+                if let Some((have, want)) = cause.have_want {
+                    diagnostic = diagnostic
+                        .with_note(Code::NoteHave, None, format!("have {have}"))
+                        .with_note(Code::NoteWant, None, format!("want {want}"));
+                }
+                if self.reported.insert((span, Code::TypeArgUnsatisfied)) {
+                    self.sink.push(diagnostic);
+                }
+                return;
+            }
         }
     }
 }

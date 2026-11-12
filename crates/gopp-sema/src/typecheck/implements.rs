@@ -47,6 +47,12 @@ impl<'a> Checker<'a> {
     /// `iface`.
     pub(super) fn lacking_cause(&self, v: TypeId, iface: TypeId) -> Option<Cause> {
         let (method, lacks) = self.lacking(v, iface)?;
+        Some(self.lacks_cause(v, &method, lacks))
+    }
+
+    /// `(missing method m)`: that the type `v` lacks `method`, and what it
+    /// has in its place.
+    pub(super) fn lacks_cause(&self, v: TypeId, method: &Method, lacks: Lacks) -> Cause {
         let name = self.names.resolve(&method.name);
         let shown = self.type_string(v);
         let mut have_want = None;
@@ -60,17 +66,17 @@ impl<'a> Checker<'a> {
             Lacks::ValueReceiver => format!("(method {name} has pointer receiver)"),
             Lacks::NoField => format!("({shown}.{name} is a field, not a method)"),
             Lacks::Name(has) => {
-                have_want = Some((self.method_string(&has), self.method_string(&method)));
+                have_want = Some((self.method_string(&has), self.method_string(method)));
                 format!("(missing method {name})")
             }
             Lacks::Type(has) => {
-                let (have, want) = (self.method_string(&has), self.method_string(&method));
+                let (have, want) = (self.method_string(&has), self.method_string(method));
                 // Two types of one name say nothing next to each other.
                 have_want = (have != want).then_some((have, want));
                 format!("(wrong type for method {name})")
             }
         };
-        Some(Cause { text, have_want })
+        Cause { text, have_want }
     }
 
     /// Why the operand `x`, which fits no place of the type `to`, does
@@ -215,6 +221,27 @@ impl<'a> Checker<'a> {
             self.type_string(ty)
         );
         self.error(code, span, message);
+    }
+
+    /// Reports `message` with the cause, which is in parentheses, after
+    /// it.
+    pub(super) fn error_with_cause_after(
+        &mut self,
+        code: Code,
+        span: Span,
+        message: String,
+        cause: Cause,
+    ) {
+        if !self.reported.insert((span, code)) {
+            return;
+        }
+        let mut diagnostic = Diagnostic::new(code, span, format!("{message} {}", cause.text));
+        if let Some((have, want)) = cause.have_want {
+            diagnostic = diagnostic
+                .with_note(Code::NoteHave, None, format!("have {have}"))
+                .with_note(Code::NoteWant, None, format!("want {want}"));
+        }
+        self.sink.push(diagnostic);
     }
 
     /// Reports `message`, with the cause after it.
