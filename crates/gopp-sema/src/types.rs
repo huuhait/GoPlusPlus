@@ -238,6 +238,14 @@ struct Spelling {
     within: Option<Spur>,
 }
 
+/// Why a type has no size here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoLayout {
+    /// A type parameter, a type of Go++ alone, a type in error.
+    Unknown,
+    TooLarge,
+}
+
 /// Why a predeclared generic type cannot take a type argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BadArgument {
@@ -951,7 +959,12 @@ impl Types {
     /// compiler lays it out on a 64-bit machine. `None` for a type whose
     /// layout is not fixed here: a type parameter, a type of Go++ alone.
     pub fn layout(&self, ty: TypeId, names: &ThreadedRodeo) -> Option<(u64, u64)> {
-        self.layout_in(ty, names, &mut Vec::new())
+        self.layout_in(ty, names, &mut Vec::new()).ok()
+    }
+
+    /// Whether a value of the type has more bytes than an `int64` counts.
+    pub fn too_large(&self, ty: TypeId, names: &ThreadedRodeo) -> bool {
+        self.layout_in(ty, names, &mut Vec::new()) == Err(NoLayout::TooLarge)
     }
 
     /// `layout` inside the declared types `nest`: a type that holds a
@@ -961,12 +974,12 @@ impl Types {
         ty: TypeId,
         names: &ThreadedRodeo,
         nest: &mut Vec<TypeId>,
-    ) -> Option<(u64, u64)> {
+    ) -> Result<(u64, u64), NoLayout> {
         if !matches!(&*self.get(ty), Type::Named { .. }) {
             return self.layout_of(ty, names, nest);
         }
         if nest.contains(&ty) {
-            return None;
+            return Err(NoLayout::Unknown);
         }
         nest.push(ty);
         let layout = self.layout_of(ty, names, nest);
@@ -979,9 +992,13 @@ impl Types {
         ty: TypeId,
         names: &ThreadedRodeo,
         nest: &mut Vec<TypeId>,
-    ) -> Option<(u64, u64)> {
+    ) -> Result<(u64, u64), NoLayout> {
         const WORD: u64 = 8;
-        Some(match &*self.get(self.underlying(ty)) {
+        let sized = |size: Option<u64>| match size {
+            Some(size) if size <= i64::MAX as u64 => Ok(size),
+            _ => Err(NoLayout::TooLarge),
+        };
+        Ok(match &*self.get(self.underlying(ty)) {
             Type::Basic(basic) => match basic {
                 Basic::Bool | Basic::Int8 | Basic::Uint8 => (1, 1),
                 Basic::Int16 | Basic::Uint16 => (2, 2),
@@ -990,7 +1007,7 @@ impl Types {
                 Basic::Complex64 => (8, 4),
                 Basic::Complex128 => (16, 8),
                 Basic::String => (2 * WORD, WORD),
-                basic if basic.is_untyped() => return None,
+                basic if basic.is_untyped() => return Err(NoLayout::Unknown),
                 _ => (WORD, WORD),
             },
             Type::Pointer(_) | Type::Map { .. } | Type::Chan { .. } | Type::Func { .. } => {
@@ -1000,7 +1017,7 @@ impl Types {
             Type::Interface { .. } => (2 * WORD, WORD),
             Type::Array { len, elem } => {
                 let (size, align) = self.layout_in(*elem, names, nest)?;
-                (size.checked_mul(*len)?, align)
+                (sized(size.checked_mul(*len))?, align)
             }
             Type::Struct(fields) => {
                 // An empty struct named `align64` in a package `atomic`
@@ -1012,7 +1029,7 @@ impl Types {
                         names.resolve(&named.name) == "align64" && package == Some("atomic")
                     }));
                 if marker {
-                    return Some((0, WORD));
+                    return Ok((0, WORD));
                 }
                 let (offsets, end, align) = self.field_offsets(fields, names, nest)?;
                 // A struct that is not empty does not end in a field of
@@ -1022,9 +1039,9 @@ impl Types {
                     _ => false,
                 };
                 let size = if last_is_empty { end + 1 } else { end };
-                (size.next_multiple_of(align), align)
+                (sized(size.checked_next_multiple_of(align))?, align)
             }
-            _ => return None,
+            _ => return Err(NoLayout::Unknown),
         })
     }
 
@@ -1035,16 +1052,20 @@ impl Types {
         fields: &[Field],
         names: &ThreadedRodeo,
         nest: &mut Vec<TypeId>,
-    ) -> Option<(Vec<u64>, u64, u64)> {
+    ) -> Result<(Vec<u64>, u64, u64), NoLayout> {
         let (mut offsets, mut next, mut max_align) = (Vec::new(), 0u64, 1u64);
+        let sized = |size: Option<u64>| match size {
+            Some(size) if size <= i64::MAX as u64 => Ok(size),
+            _ => Err(NoLayout::TooLarge),
+        };
         for field in fields {
             let (size, align) = self.layout_in(field.ty, names, nest)?;
-            next = next.next_multiple_of(align);
+            next = sized(next.checked_next_multiple_of(align))?;
             offsets.push(next);
-            next = next.checked_add(size)?;
+            next = sized(next.checked_add(size))?;
             max_align = max_align.max(align);
         }
-        Some((offsets, next, max_align))
+        Ok((offsets, next, max_align))
     }
 
     /// The offset in bytes of the field `name` in a value of the struct
@@ -1065,7 +1086,7 @@ impl Types {
                 let Type::Struct(fields) = &*self.get(self.underlying(current)) else {
                     continue;
                 };
-                let (offsets, ..) = self.field_offsets(fields, names, &mut vec![current])?;
+                let (offsets, ..) = self.field_offsets(fields, names, &mut vec![current]).ok()?;
                 for (field, offset) in fields.iter().zip(offsets) {
                     if field.name == name && (exported || field.package == Some(package)) {
                         found.push(base + offset);

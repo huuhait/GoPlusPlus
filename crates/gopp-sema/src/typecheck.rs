@@ -2370,7 +2370,10 @@ impl<'a> Checker<'a> {
                     // The size of a type parameter is known when the
                     // function is used; a type in error has none.
                     None if self.types.has_param(x.ty) => self.value_of(Basic::Uintptr),
-                    None => Operand::UNKNOWN,
+                    None => {
+                        self.too_large(cx, at, &x);
+                        Operand::UNKNOWN
+                    }
                 }
             }
             "Offsetof" => self.offset_of(cx, args[0]),
@@ -2428,6 +2431,17 @@ impl<'a> Checker<'a> {
             }
             _ => Operand::UNKNOWN,
         }
+    }
+
+    /// Reports the operand if its type has more bytes than can be
+    /// counted.
+    fn too_large(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand) -> bool {
+        let too_large = self.types.too_large(x.ty, self.names);
+        if too_large {
+            let message = format!("{} is too large", self.describe(cx, expr, x));
+            self.error(Code::TypeTooLarge, cx.tree.exprs[expr].span, message);
+        }
+        too_large
     }
 
     /// The argument of a function of package unsafe is not of the kind
@@ -2497,6 +2511,7 @@ impl<'a> Checker<'a> {
                         let value = Value::Int64(offset as i64);
                         Operand::constant(self.types.basic(Basic::Uintptr), value)
                     }
+                    None if self.too_large(cx, x, &base) => Operand::UNKNOWN,
                     None => self.value_of(Basic::Uintptr),
                 };
             }

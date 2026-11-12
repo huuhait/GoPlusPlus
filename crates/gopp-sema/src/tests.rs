@@ -2175,6 +2175,13 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
         messages("a.go", "package p\ntype T T.x\n"),
         ["a.go:2:6: invalid recursive type: T refers to itself"]
     );
+    // A size that an `int64` does not count, next to one that it does.
+    let text = "package p\nimport \"unsafe\"\ntype E [1 << 30]complex128\nvar a [1 << 30]E\n\
+                var _ = unsafe.Sizeof(a)\nvar b [1 << 20]E\nvar _ = unsafe.Sizeof(b)\n";
+    assert_eq!(
+        check_texts("p", &[("a.go", text)], &loader, &names).messages,
+        ["a.go:5:23: a (variable of type [1073741824]E) is too large"]
+    );
 }
 
 #[test]
@@ -3453,7 +3460,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1720;
+const EXPECTED_ERRORS_REPORTED: usize = 1724;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

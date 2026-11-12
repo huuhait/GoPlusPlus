@@ -201,6 +201,7 @@ codes! {
     470 NoteOwnFixNoStar "note_own_fix_no_star",
     471 OwnCopyToCopy "err_own_copy_to_copy",
     472 NoteOwnFixAddress "note_own_fix_address",
+    473 TypeTooLarge "err_type_too_large",
 }
 
 impl Code {
