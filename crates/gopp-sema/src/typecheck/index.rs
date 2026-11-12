@@ -4,9 +4,16 @@ use super::*;
 
 impl<'a> Checker<'a> {
     /// Whether the operand `x` of `expr` is an index: an integer, and as
-    /// a constant not negative and no larger than an `int`. `what` names
-    /// it in the messages.
-    fn valid_index(&mut self, cx: &Cx<'a>, expr: ExprId, x: &mut Operand, what: &str) -> bool {
+    /// a constant not negative, unless `negative` allows it, and no larger
+    /// than an `int`. `what` names it in the messages.
+    pub(super) fn valid_index(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: &mut Operand,
+        what: &str,
+        negative: bool,
+    ) -> bool {
         let int = self.types.basic(Basic::Int);
         if x.mode == Mode::Unknown || !self.convert_untyped(cx, expr, x, int, true) {
             return false;
@@ -16,7 +23,7 @@ impl<'a> Checker<'a> {
             "must be integer"
         } else {
             match &x.mode {
-                Mode::Const(value) if value.sign() < 0 => "must not be negative",
+                Mode::Const(value) if !negative && value.sign() < 0 => "must not be negative",
                 Mode::Const(value) if representable(value, Basic::Int).is_none() => "overflows int",
                 _ => return true,
             }
@@ -38,7 +45,7 @@ impl<'a> Checker<'a> {
         length: Option<u64>,
     ) -> Option<u64> {
         let mut x = self.value(cx, expr);
-        if !self.valid_index(cx, expr, &mut x, "index") {
+        if !self.valid_index(cx, expr, &mut x, "index", false) {
             return None;
         }
         let Mode::Const(value) = &x.mode else {

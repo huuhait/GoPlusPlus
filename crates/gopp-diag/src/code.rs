@@ -151,6 +151,7 @@ codes! {
     198 LiteralInvalidFieldName "err_literal_invalid_field_name",
     199 LiteralArrayTooLong "err_literal_array_too_long",
     200 LiteralMissingType "err_literal_missing_type",
+    201 NotAnInterface "err_type_assertion_non_interface",
     204 DerefNonPointer "err_deref_non_pointer",
     205 AddressOfUnaddressable "err_address_of_unaddressable",
     206 CannotAssign "err_cannot_assign",
@@ -166,6 +167,7 @@ codes! {
     227 CannotUseEllipsis "err_cannot_use_ellipsis",
     230 InvalidUseOfDots "err_invalid_use_of_dots",
     233 NotAGenericType "err_not_a_generic_type",
+    235 IotaOutsideConst "err_iota_outside_const",
     236 InvalidConstantType "err_invalid_constant_type",
     237 MethodExprPointerReceiver "err_method_expr_ptr_recv",
     238 AmbiguousSelector "err_ambiguous_selector",
@@ -181,7 +183,6 @@ codes! {
     459 LiteralUnknownField "err_literal_unknown_field",
     460 LiteralInvalidType "err_literal_invalid_type",
     461 ChannelDirection "err_channel_direction",
-    462 NotAnInterface "err_not_an_interface",
     463 AssertedTypeParam "err_asserted_type_param",
 }
 

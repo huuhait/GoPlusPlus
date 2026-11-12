@@ -1146,6 +1146,40 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The selector `x.sel` stands where a type is written and is none.
+    fn selector_is_no_type(&mut self, cx: &Cx<'a>, expr: ExprId, x: ExprId, sel: Ident) {
+        // A member of a package that is something else.
+        if matches!(cx.body.uses.get(&expr), Some(Ref::Member { .. })) {
+            let member = self.operand(cx, expr);
+            if member.mode != Mode::Unknown {
+                let message = format!("{} is not a type", self.describe(cx, expr, &member));
+                self.error(Code::NotAType, cx.tree.exprs[expr].span, message);
+            }
+            return;
+        }
+        let base = self.operand(cx, x);
+        let base = self.instantiated(cx, x, base);
+        if base.mode == Mode::Unknown {
+            return;
+        }
+        // `type T T.x`: the type is declared as a part of itself.
+        let declared = self.under_way.last().copied().filter(|&object| {
+            let form = self.decls[object].map(|decl| decl.form);
+            base.mode == Mode::Type
+                && self.ty[object] == base.ty
+                && matches!(form, Some(Form::Type { ty, .. }) if ty == expr)
+        });
+        if let Some(object) = declared {
+            let object = &self.package.objects[object];
+            let name = self.names.resolve(&object.name);
+            let message = format!("invalid recursive type: {name} refers to itself");
+            self.error(Code::InvalidRecursiveTypeSelf, object.span, message);
+            return;
+        }
+        let message = format!("{} is not a type", self.expr_string(cx, expr));
+        self.error(Code::NotAType, sel.span, message);
+    }
+
     /// The type that the expression `expr` writes. A generic type is
     /// written with its type arguments.
     fn typ(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
@@ -1206,6 +1240,9 @@ impl<'a> Checker<'a> {
                     let message = format!("{text} is not a type");
                     self.error(Code::NotAType, node.span, message);
                 }
+                if let ExprKind::Selector { x, sel } = node.kind {
+                    self.selector_is_no_type(cx, expr, x, sel);
+                }
                 self.incomplete = true;
                 Types::INVALID
             }
@@ -1234,6 +1271,21 @@ impl<'a> Checker<'a> {
                         Types::INVALID
                     }
                 }
+            }
+            // `[...]T` takes its length from the elements of a literal.
+            ExprKind::ArrayType { len: None, elem } => {
+                self.typ(cx, *elem);
+                let text = &cx.text[node.span.lo as usize..node.span.hi as usize];
+                let lo = node.span.lo + text.find("...").unwrap_or(0) as u32;
+                let dots = Span {
+                    lo,
+                    hi: lo + 3,
+                    ..node.span
+                };
+                let message = "invalid use of [...] array (outside a composite literal)";
+                self.error(Code::InvalidUseOfDots, dots, message.to_owned());
+                self.incomplete = true;
+                Types::INVALID
             }
             ExprKind::MapType { key, value } => {
                 let (key, value) = (self.typ(cx, *key), self.typ(cx, *value));
@@ -1325,7 +1377,14 @@ impl<'a> Checker<'a> {
                 self.types.intern(Type::Union(terms.into()))
             }
             ExprKind::Index { x, indices } => self.instance(cx, expr, *x, indices),
+            ExprKind::Bad | ExprKind::MacroCall { .. } => {
+                self.incomplete = true;
+                Types::INVALID
+            }
             _ => {
+                let message = format!("{} is not a type", self.expr_string(cx, expr));
+                self.error(Code::NotAType, node.span, message);
+                self.operand(cx, expr);
                 self.incomplete = true;
                 Types::INVALID
             }
@@ -1626,7 +1685,11 @@ impl<'a> Checker<'a> {
             }
             Ref::Universe(Predeclared::Iota) => match cx.iota {
                 Some(iota) => self.untyped(Basic::UntypedInt, Value::Int64(iota)),
-                None => Operand::UNKNOWN,
+                None => {
+                    let message = "cannot use iota outside constant declaration".to_owned();
+                    self.error(Code::IotaOutsideConst, cx.tree.exprs[expr].span, message);
+                    Operand::UNKNOWN
+                }
             },
             Ref::Universe(Predeclared::Nil) => Operand {
                 mode: Mode::Value,
@@ -2155,81 +2218,190 @@ impl<'a> Checker<'a> {
         };
         // `Offsetof` takes a selector, which is looked at as it is written.
         let as_written = text == "Offsetof";
-        let checked =
-            self.builtin_arguments(cx, call, text, (count, false), args, (spread, as_written));
-        let (Some(_), Some(&first)) = (checked, args.first()) else {
+        let Some(given) =
+            self.builtin_arguments(cx, call, text, (count, false), args, (spread, as_written))
+        else {
             return Operand::UNKNOWN;
         };
-        let pointer = |this: &Self| {
-            let object = this.package_unsafe_pointer();
-            object.map_or(Operand::UNKNOWN, Operand::value)
-        };
-        match self.names.resolve(&name) {
+        let context = format!("argument to unsafe.{text}");
+        let byte_pointer = self.types.pointer(self.types.basic(Basic::Uint8));
+        match text {
             // The size and the alignment of the type of the argument are
             // constants, unless the type has a type parameter in it.
-            name @ ("Sizeof" | "Alignof") => {
-                let x = self.operand(cx, first);
-                self.convert_default(cx, first);
-                let ty = self.types.default_type(x.ty);
-                let layout = Some(ty).filter(|_| x.is_value());
-                match layout.and_then(|ty| self.types.layout(ty, self.names)) {
+            "Sizeof" | "Alignof" => {
+                let (at, x) = given[0].clone();
+                let x = self.assignment(cx, at, x, None, &context);
+                if x.mode == Mode::Unknown {
+                    return Operand::UNKNOWN;
+                }
+                match self.types.layout(x.ty, self.names) {
                     Some((size, align)) => {
-                        let bytes = if name == "Sizeof" { size } else { align };
+                        let bytes = if text == "Sizeof" { size } else { align };
                         let value = Value::Int64(bytes as i64);
                         Operand::constant(self.types.basic(Basic::Uintptr), value)
                     }
                     // The size of a type parameter is known when the
                     // function is used; a type in error has none.
-                    None if self.types.has_param(ty) => self.value_of(Basic::Uintptr),
+                    None if self.types.has_param(x.ty) => self.value_of(Basic::Uintptr),
                     None => Operand::UNKNOWN,
                 }
             }
-            // `Offsetof(x.f)`: where the field `f` starts in `x`.
-            "Offsetof" => {
-                let mut selector = first;
-                while let ExprKind::Paren(x) = cx.tree.exprs[selector].kind {
-                    selector = x;
-                }
-                self.operand(cx, first);
-                let offset = match cx.tree.exprs[selector].kind {
-                    ExprKind::Selector { x, sel } => {
-                        let base = self.operand(cx, x);
-                        Some(base.ty).filter(|_| base.is_value()).and_then(|ty| {
-                            self.types.offset_of(ty, sel.name, self.path, self.names)
-                        })
-                    }
-                    _ => None,
+            "Offsetof" => self.offset_of(cx, args[0]),
+            "Add" => {
+                let Some(pointer) = self.package_unsafe_pointer() else {
+                    return Operand::UNKNOWN;
                 };
-                match offset {
+                let (at, x) = given[0].clone();
+                if self.assignment(cx, at, x, Some(pointer), &context).mode == Mode::Unknown {
+                    return Operand::UNKNOWN;
+                }
+                match self.length(cx, &given[1], true) {
+                    true => Operand::value(pointer),
+                    false => Operand::UNKNOWN,
+                }
+            }
+            "String" => {
+                let (at, x) = given[0].clone();
+                if self
+                    .assignment(cx, at, x, Some(byte_pointer), &context)
+                    .mode
+                    == Mode::Unknown
+                {
+                    return Operand::UNKNOWN;
+                }
+                match self.length(cx, &given[1], false) {
+                    true => self.value_of(Basic::String),
+                    false => Operand::UNKNOWN,
+                }
+            }
+            "StringData" => {
+                let (at, x) = given[0].clone();
+                let string = self.types.basic(Basic::String);
+                match self.assignment(cx, at, x, Some(string), &context).mode {
+                    Mode::Unknown => Operand::UNKNOWN,
+                    _ => Operand::value(byte_pointer),
+                }
+            }
+            "Slice" => {
+                let (at, x) = &given[0];
+                match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Pointer(elem) => match self.length(cx, &given[1], false) {
+                        true => Operand::value(self.types.slice(*elem)),
+                        false => Operand::UNKNOWN,
+                    },
+                    _ => self.not_a(cx, *at, x, "pointer"),
+                }
+            }
+            "SliceData" => {
+                let (at, x) = &given[0];
+                match &*self.types.get(self.types.underlying(x.ty)) {
+                    Type::Slice(elem) => Operand::value(self.types.pointer(*elem)),
+                    _ => self.not_a(cx, *at, x, "slice"),
+                }
+            }
+            _ => Operand::UNKNOWN,
+        }
+    }
+
+    /// The argument of a function of package unsafe is not of the kind
+    /// that the function takes.
+    fn not_a(&mut self, cx: &Cx<'a>, expr: ExprId, x: &Operand, kind: &str) -> Operand {
+        if !self.types.has_param(x.ty) {
+            let message = format!(
+                "invalid argument: {} is not a {kind}",
+                self.describe(cx, expr, x)
+            );
+            self.error(
+                Code::BuiltinInvalidArgument,
+                cx.tree.exprs[expr].span,
+                message,
+            );
+        }
+        Operand::UNKNOWN
+    }
+
+    /// Whether the argument is a length: an integer, and as a constant
+    /// one that an `int` holds.
+    fn length(&mut self, cx: &Cx<'a>, (at, x): &(ExprId, Operand), negative: bool) -> bool {
+        self.valid_index(cx, *at, &mut x.clone(), "length", negative)
+    }
+
+    /// `unsafe.Offsetof(x.f)`: where the field `f` starts in `x`.
+    fn offset_of(&mut self, cx: &Cx<'a>, arg: ExprId) -> Operand {
+        let mut selector = arg;
+        while let ExprKind::Paren(x) = cx.tree.exprs[selector].kind {
+            selector = x;
+        }
+        let span = cx.tree.exprs[arg].span;
+        let ExprKind::Selector { x, sel } = cx.tree.exprs[selector].kind else {
+            let message = format!(
+                "invalid argument: {} is not a selector expression",
+                self.expr_string(cx, arg)
+            );
+            self.error(Code::BuiltinInvalidArgument, span, message);
+            self.operand(cx, arg);
+            return Operand::UNKNOWN;
+        };
+        let base = self.value(cx, x);
+        if base.mode == Mode::Unknown || self.types.underlying(base.ty) == Types::INVALID {
+            return Operand::UNKNOWN;
+        }
+        // The field may be that of a struct behind a pointer.
+        let mut ty = base.ty;
+        if let Type::Pointer(elem) = &*self.types.get(self.types.underlying(ty))
+            && matches!(
+                &*self.types.get(self.types.underlying(*elem)),
+                Type::Struct(_)
+            )
+        {
+            ty = *elem;
+        }
+        let name = self.names.resolve(&sel.name);
+        let found = self
+            .types
+            .lookup(ty, sel.name, self.path, self.names, false);
+        let (at, message) = match found.map(|found| found.member) {
+            Ok(Member::Field {
+                indirect: false, ..
+            }) => {
+                self.operand(cx, arg);
+                return match self.types.offset_of(ty, sel.name, self.path, self.names) {
                     Some(offset) => {
                         let value = Value::Int64(offset as i64);
                         Operand::constant(self.types.basic(Basic::Uintptr), value)
                     }
                     None => self.value_of(Basic::Uintptr),
-                }
+                };
             }
-            "Add" => pointer(self),
-            "String" => self.value_of(Basic::String),
-            "StringData" => {
-                let byte = self.types.basic(Basic::Uint8);
-                Operand::value(self.types.pointer(byte))
-            }
-            "Slice" => {
-                let x = self.operand(cx, first);
-                match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Pointer(elem) if x.is_value() => Operand::value(self.types.slice(*elem)),
-                    _ => Operand::UNKNOWN,
-                }
-            }
-            "SliceData" => {
-                let x = self.operand(cx, first);
-                match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Slice(elem) if x.is_value() => Operand::value(self.types.pointer(*elem)),
-                    _ => Operand::UNKNOWN,
-                }
-            }
-            _ => Operand::UNKNOWN,
-        }
+            Ok(Member::Field { indirect: true, .. }) => (
+                x,
+                format!(
+                    "invalid argument: field {name} is embedded via a pointer in {}",
+                    self.type_string(ty)
+                ),
+            ),
+            Ok(Member::Method { .. }) => (
+                arg,
+                format!(
+                    "invalid argument: {} is a method value",
+                    self.expr_string(cx, arg)
+                ),
+            ),
+            Err(_) if self.types.has_param(ty) => return self.value_of(Basic::Uintptr),
+            Err(_) => (
+                x,
+                format!(
+                    "invalid argument: {} has no single field {name}",
+                    self.type_string(ty)
+                ),
+            ),
+        };
+        self.error(
+            Code::BuiltinInvalidArgument,
+            cx.tree.exprs[at].span,
+            message,
+        );
+        Operand::UNKNOWN
     }
 
     /// The type `unsafe.Pointer`, found in a package that imports unsafe.
@@ -2628,7 +2800,7 @@ impl<'a> Checker<'a> {
                     let mut case_types = Vec::new();
                     for &case in cases {
                         match switched {
-                            Some(_) => case_types.push(self.operand(cx, case)),
+                            Some(_) => case_types.push(self.type_or_nil(cx, case)),
                             None => {
                                 self.operand(cx, case);
                             }
@@ -2642,6 +2814,7 @@ impl<'a> Checker<'a> {
                     {
                         let ty = match &case_types[..] {
                             [one] if one.mode == Mode::Type => one.ty,
+                            [one] if one.mode == Mode::Unknown => Types::INVALID,
                             _ => switched.ty,
                         };
                         self.locals.insert(local, Operand::variable(ty));
@@ -2656,6 +2829,19 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+    }
+
+    /// A case of a type switch: a type, or the predeclared `nil`.
+    fn type_or_nil(&mut self, cx: &Cx<'a>, case: ExprId) -> Operand {
+        let mut name = case;
+        while let ExprKind::Paren(x) = cx.tree.exprs[name].kind {
+            name = x;
+        }
+        let nil = cx.body.uses.get(&name) == Some(&Ref::Universe(Predeclared::Nil));
+        if !nil && self.typ(cx, case) == Types::INVALID {
+            return Operand::UNKNOWN;
+        }
+        self.operand(cx, case)
     }
 
     /// The types of the two variables of `for k, v := range x`.

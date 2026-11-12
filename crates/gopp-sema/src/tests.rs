@@ -1999,6 +1999,132 @@ fn a_function_is_not_generic_for_what_another_one_is() {
     );
 }
 
+#[test]
+fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
+    let names = ThreadedRodeo::new();
+    let mut loader = Loader::default();
+    let stub = "package unsafe\ntype ArbitraryType int\ntype IntegerType int\n\
+                type Pointer *ArbitraryType\nfunc Sizeof(x ArbitraryType) uintptr\n\
+                func Offsetof(x ArbitraryType) uintptr\nfunc Alignof(x ArbitraryType) uintptr\n\
+                func Add(ptr Pointer, len IntegerType) Pointer\n\
+                func Slice(ptr *ArbitraryType, len IntegerType) []ArbitraryType\n\
+                func SliceData(slice []ArbitraryType) *ArbitraryType\n\
+                func String(ptr *byte, len IntegerType) string\nfunc StringData(str string) *byte\n";
+    let stub = check_texts("unsafe", &[("unsafe.go", stub)], &loader, &names);
+    loader
+        .packages
+        .insert("unsafe".to_owned(), Arc::new(stub.package));
+    let declared = "import \"unsafe\"\ntype S struct {\n\tf int\n\t*E\n}\ntype E struct{ g int }\n\
+                    func (S) m() {}\nvar (\n\ts  S\n\tx  int\n\tb  byte\n\tsl []int\n\
+                    \tp  unsafe.Pointer\n)\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "_ = unsafe.Sizeof(nil)",
+            &["17:20: use of untyped nil in argument to unsafe.Sizeof"],
+        ),
+        (
+            "unsafe.Sizeof(x)",
+            &["17:2: unsafe.Sizeof(x) (constant 8 of type uintptr) is not used"],
+        ),
+        (
+            "_ = unsafe.Offsetof(x)",
+            &["17:22: invalid argument: x is not a selector expression"],
+        ),
+        (
+            "_ = unsafe.Offsetof(s.g)",
+            &["17:22: invalid argument: field g is embedded via a pointer in S"],
+        ),
+        (
+            "_ = unsafe.Offsetof(s.m)",
+            &["17:22: invalid argument: s.m is a method value"],
+        ),
+        (
+            "_ = unsafe.Offsetof(s.h)",
+            &["17:22: invalid argument: S has no single field h"],
+        ),
+        (
+            "_ = unsafe.Slice(1, 2)",
+            &["17:19: invalid argument: 1 (untyped int constant) is not a pointer"],
+        ),
+        (
+            "_ = unsafe.Slice(&x, -1)",
+            &["17:23: invalid argument: length -1 (constant of type int) must not be negative"],
+        ),
+        (
+            "_ = unsafe.SliceData(0)",
+            &["17:23: invalid argument: 0 (untyped int constant) is not a slice"],
+        ),
+        (
+            "_ = unsafe.String(1, 2)",
+            &[
+                "17:20: cannot use 1 (untyped int constant) as *uint8 value in argument to \
+                 unsafe.String",
+            ],
+        ),
+        (
+            "_ = unsafe.StringData(0)",
+            &[
+                "17:24: cannot use 0 (untyped int constant) as string value in argument to \
+                 unsafe.StringData",
+            ],
+        ),
+        (
+            "_ = unsafe.Add(x, 1)",
+            &[
+                "17:17: cannot use x (variable of type int) as unsafe.Pointer value in argument \
+                 to unsafe.Add",
+            ],
+        ),
+        (
+            "_ = iota",
+            &["17:6: cannot use iota outside constant declaration"],
+        ),
+        ("_ = new(1)", &["17:10: 1 is not a type"]),
+        ("_ = make(x)", &["17:11: x is not a type"]),
+        (
+            "_ = [...]int(sl)",
+            &["17:7: invalid use of [...] array (outside a composite literal)"],
+        ),
+        (
+            "var _ unsafe.Sizeof",
+            &["17:8: unsafe.Sizeof (built-in) is not a type"],
+        ),
+        ("var _ s.f", &["17:10: s.f is not a type"]),
+        (
+            "switch any(x).(type) {\n\tcase 1:\n\tcase x:\n\t}",
+            &["18:7: 1 is not a type", "19:7: x is not a type"],
+        ),
+        // What is right next to each of them.
+        (
+            "_ = unsafe.Sizeof(x) + unsafe.Alignof(s) + unsafe.Offsetof(s.f)",
+            &[],
+        ),
+        (
+            "_ = unsafe.Slice(&x, 1)\n\t_ = unsafe.SliceData(sl)\n\t_ = unsafe.String(&b, 1)\n\
+             \t_ = unsafe.StringData(\"a\")\n\t_ = unsafe.Add(p, -1)",
+            &[],
+        ),
+        ("_ = [...]int{1, 2}\n\tconst c = iota", &[]),
+        (
+            "switch any(x).(type) {\n\tcase nil, int:\n\tcase (S):\n\t}",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let found = check_texts("p", &[("a.go", &text)], &loader, &names).messages;
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+    assert_eq!(
+        messages("a.go", "package p\ntype T T.x\n"),
+        ["a.go:2:6: invalid recursive type: T refers to itself"]
+    );
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2617,7 +2743,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1612;
+const EXPECTED_ERRORS_REPORTED: usize = 1674;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

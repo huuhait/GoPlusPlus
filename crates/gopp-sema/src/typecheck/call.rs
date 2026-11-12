@@ -133,11 +133,7 @@ impl<'a> Checker<'a> {
                 let callee = self.memo.as_ref().and_then(|memo| memo.get(fun));
                 match callee.map(|callee| &callee.mode) {
                     // A conversion, and a built-in that only computes.
-                    // What the functions of package unsafe ask of their
-                    // arguments is not checked yet, and a call that is in
-                    // error is not also unused.
-                    Some(Mode::Type) => false,
-                    Some(Mode::Unsafe(_)) => true,
+                    Some(Mode::Type | Mode::Unsafe(_)) => false,
                     Some(Mode::Builtin(builtin)) => !matches!(
                         builtin,
                         Predeclared::Append
