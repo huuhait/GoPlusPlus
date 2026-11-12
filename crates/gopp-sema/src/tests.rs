@@ -8887,8 +8887,8 @@ fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it()
         "func F[T, U, V any]() { F[U, V, T](); F[V, T, U]() }",
         "type Ring[A, B, C any] struct { L *Ring[B, C, A]; R *Ring[C, A, B] }",
         "func F[T any]() { type U[T any] [unsafe.Sizeof(F[*T])]byte }",
-        "func F[T any]() { type U[T any] [unsafe.Sizeof(F[*T])]byte; type _ U[int] }",
-        "type U[T any] [unsafe.Sizeof(F[*T])]byte; func F[T any]() { type _ U[T] }",
+        "func F[T any]() { type U[T any] [unsafe.Sizeof(F[*T])]byte; var _ U[int] }",
+        "type U[T any] [unsafe.Sizeof(F[*T])]byte; func F[T any]() { var _ U[U[int]] }",
         "func F[T any]() { type A = int; F[A]() }",
     ];
     for good in goods {
@@ -8907,9 +8907,13 @@ fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it()
         "func F[T any]() { F[struct{ t T }]() }",
         "func F[T any]() { F[interface{ t() T }]() }",
         "type U[_ any] int; func F[T any]() { F[U[T]]() }",
+        "func F[T any]() { type U int; F[U]() }",
+        "func F[T any]() { type U int; F[*U]() }",
         "type U[T any] int; func (U[T]) m() { var _ U[*T] }",
         "type U[T any] int; func (*U[T]) m() { var _ U[*T] }",
+        "type U[T1 any] [unsafe.Sizeof(F[*T1])]byte; func F[T2 any]() { var _ U[T2] }",
         "func F[A, B, C, D, E any]() { F[B, C, D, E, *A]() }",
+        "type U[_ any] int; const X = unsafe.Sizeof(func() { type A[T any] U[A[*T]] })",
         "func F[T any]() { type A = *T; F[A]() }",
     ];
     for bad in bads {
@@ -8984,6 +8988,75 @@ func f(x T[int], y A[int], k Kid[int]) {
         "    a.gopp:3:8: P instantiated as []P",
     ];
     assert_eq!(messages("a.gopp", text), expected);
+
+    // A type that is declared inside a generic function is another type
+    // for each instance of the function: it stands for the type
+    // parameters around it, those of a receiver and of a function
+    // around a function literal too.
+    let text = "package p
+func F[T any]() {
+	type U int
+	F[*U]()
+}
+";
+    let expected = [
+        "a.go:2:8: instantiation cycle:",
+        "    a.go:4:4: T instantiated as *U",
+        "    a.go:3:7: U implicitly parameterized by T",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+    let text = "package p
+type G[P any] struct{}
+
+func (g G[P]) M() {
+	f := func() {
+		type L struct{ p P }
+		var _ G[L]
+	}
+	f()
+}
+";
+    let expected = [
+        "a.go:2:8: instantiation cycle:",
+        "    a.go:7:11: P instantiated as L",
+        "    a.go:6:8: L implicitly parameterized by P",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+    let expected: Vec<String> = expected
+        .iter()
+        .map(|line| line.replace("a.go", "a.gopp"))
+        .collect();
+    assert_eq!(messages("a.gopp", text), expected);
+    let text = "package p
+func H[A, B any]() {
+	type L struct{}
+	H[B, L]()
+}
+";
+    let expected = [
+        "a.go:2:8: instantiation cycle:",
+        "    a.go:4:4: A instantiated as B",
+        "    a.go:4:7: B instantiated as L",
+        "    a.go:3:7: L implicitly parameterized by A",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+    // A local type that goes nowhere else, and one of a function without
+    // type parameters, make no cycle.
+    let text = "package p
+type Box[T any] struct{ v T }
+
+func F[T any](x T) {
+	type L struct{ x T }
+	var _ Box[L]
+	var _ []L
+}
+
+func plain() {
+	type L struct{}
+	var _ Box[Box[L]]
+}
+";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 
     // A package with another error is not told of its cycle.
     let text = "package p\nfunc f[T any]() { f[*T]() }\nvar x int = \"\"\n";
@@ -9095,10 +9168,23 @@ fn the_steps_of_instantiation_cycles_grow_with_the_input_not_faster() {
             .collect();
         format!("package p\n{all}")
     };
+    // Functions with a local type each, given on to the next function.
+    let locals = |count: usize| {
+        let function = |i: usize| match i + 1 == count {
+            true => format!("func l{i}[T any]() {{}}\n"),
+            false => format!(
+                "func l{i}[T any]() {{ type L struct{{ x T }}; l{}[[]L]() }}\n",
+                i + 1
+            ),
+        };
+        let all: String = (0..count).map(function).collect();
+        format!("package p\n{all}")
+    };
     let sizes = [250, 500, 1_000, 2_000];
     linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
     linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
     linear::assert_near_linear(&sizes, |n| steps(rings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(locals(n)));
 }
 
 /// The methods that stand for operators in the first file, in the order

@@ -281,6 +281,9 @@ struct Checker<'a> {
     /// The type parameters of the package and what each is instantiated
     /// as.
     mono: mono::Mono,
+    /// The type parameters of the function whose body is being checked,
+    /// those that its receiver names too.
+    around: Vec<TypeId>,
     /// While the body of a method is walked: the type of its receiver.
     receiver_of: Option<TypeId>,
     /// While a part of a literal that is a parent is worked out: a
@@ -511,6 +514,7 @@ pub fn declarations(
         index_stores: FxHashMap::default(),
         case_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
+        around: Vec::new(),
         receiver_of: None,
         parent_part: false,
         iface_args: FxHashSet::default(),
@@ -3155,6 +3159,7 @@ impl<'a> Checker<'a> {
                     self.receiver_of = None;
                     if let Some(receiver) = receiver {
                         let named = self.receiver_params(&mut cx, receiver.ty);
+                        self.around.extend(&named);
                         self.params(&cx, std::slice::from_ref(receiver));
                         self.receiver_of = self.receiver_named(unit, receiver.ty);
                         if let Some(Type::Named { id, .. }) =
@@ -3175,12 +3180,14 @@ impl<'a> Checker<'a> {
                     let marks = self.marks(&cx, &tree.decl_nodes[decl].attrs);
                     let is_const = self.own_rules(&cx) && marks.has(crate::types::Marks::CONST);
                     self.const_fn = is_const.then_some(name.name);
+                    self.around.extend(&own);
                     self.in_method_sig = receiver.is_some();
                     self.signature_locals(&cx, *ty);
                     let sig = self.typ(&cx, *ty);
                     self.in_method_sig = false;
                     self.function_body(&cx, *ty, sig, block);
                     self.const_fn = None;
+                    self.around.clear();
                     self.receiver_of = None;
                 }
                 // The value of a constant is worked out with its
@@ -3224,6 +3231,25 @@ impl<'a> Checker<'a> {
                         }
                     };
                     self.arity(&cx, names, values, Some(repeated));
+                    // A function literal in the value of a constant has a
+                    // body, which declares what the value does not use.
+                    if !cx.body.locals.is_empty() {
+                        for name in names {
+                            let object = self.by_span.get(&name.span).copied();
+                            let Some(decl) = object.and_then(|object| self.decls[object]) else {
+                                continue;
+                            };
+                            if let Form::Const {
+                                value: Some(value),
+                                iota,
+                                ..
+                            } = decl.form
+                            {
+                                let within = self.cx(&decl, Some(iota));
+                                self.operand(&within, value);
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -3879,6 +3905,9 @@ impl<'a> Checker<'a> {
                 // so that it can name itself.
                 let named = self.types.declare(name.name, self.name);
                 self.types.set_type_params(named, params);
+                let around = std::mem::take(&mut self.around);
+                self.mono_local(named, name.span, &around);
+                self.around = around;
                 let declared = self.types.named(named, &[]);
                 self.written(declared, name.span);
                 self.locals.insert(

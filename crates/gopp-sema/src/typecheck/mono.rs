@@ -11,7 +11,11 @@ struct Vertex {
     weight: i32,
     pre: usize,
     len: usize,
-    param: TypeId,
+    /// The type parameter, or the type that is declared in a generic
+    /// function.
+    of: TypeId,
+    /// For such a type, where its name is.
+    local: std::option::Option<(crate::types::NamedId, Span)>,
 }
 
 struct Edge {
@@ -25,7 +29,10 @@ struct Edge {
 /// The type parameters of the package, with an edge for each type
 /// argument that is written with one: from the parameter in the argument
 /// to the parameter that gets the argument, of weight 1 if the argument
-/// is more than the parameter itself.
+/// is more than the parameter itself. A type that is declared inside a
+/// generic function is another type for each instance of the function:
+/// it is a vertex too, with an edge of weight 1 from every type parameter
+/// around it.
 #[derive(Default)]
 pub(super) struct Mono {
     vertices: Vec<Vertex>,
@@ -38,6 +45,11 @@ pub(super) struct Mono {
     /// By the name of a method with type parameters of its own: what it
     /// names the type parameters of its receiver, and its own.
     methods: FxHashMap<Span, (Vec<TypeId>, Vec<TypeId>)>,
+    /// The types that are declared where type parameters are in scope,
+    /// each with where its name is and those type parameters; and the
+    /// vertex of each that a type argument was written with.
+    locals: FxHashMap<crate::types::NamedId, (Span, Vec<TypeId>)>,
+    local_index: FxHashMap<crate::types::NamedId, usize>,
     /// The vertices of the cycle that was found, the last one first.
     found: Vec<usize>,
 }
@@ -84,6 +96,49 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The type `named`, whose name is at `name`, is declared inside a
+    /// function with the type parameters `around`.
+    pub(super) fn mono_local(
+        &mut self,
+        named: crate::types::NamedId,
+        name: Span,
+        around: &[TypeId],
+    ) {
+        if !around.is_empty() {
+            self.mono.locals.insert(named, (name, around.to_vec()));
+        }
+    }
+
+    /// The vertex of a type that is declared inside a generic function,
+    /// with its edges from the type parameters around it.
+    fn mono_local_vertex(&mut self, named: crate::types::NamedId) -> std::option::Option<usize> {
+        if let Some(&at) = self.mono.local_index.get(&named) {
+            return Some(at);
+        }
+        let (name, around) = self.mono.locals.get(&named).cloned()?;
+        let at = self.mono.vertices.len();
+        self.mono.vertices.push(Vertex {
+            weight: 0,
+            pre: 0,
+            len: 0,
+            of: self.types.named(named, &[]),
+            local: Some((named, name)),
+        });
+        self.mono.local_index.insert(named, at);
+        for param in around {
+            if let Some(src) = self.mono_vertex(param) {
+                self.mono.edges.push(Edge {
+                    dst: at,
+                    src,
+                    weight: 1,
+                    span: name,
+                    typ: param,
+                });
+            }
+        }
+        Some(at)
+    }
+
     fn mono_vertex(&mut self, param: TypeId) -> std::option::Option<usize> {
         let param = self.types.param_origin(param);
         let param = self.mono.canon.get(&param).copied().unwrap_or(param);
@@ -99,7 +154,8 @@ impl<'a> Checker<'a> {
             weight: 0,
             pre: 0,
             len: 0,
-            param,
+            of: param,
+            local: None,
         });
         self.mono.index.insert(param, at);
         Some(at)
@@ -148,7 +204,25 @@ impl<'a> Checker<'a> {
                             });
                         }
                     }
-                    other => other.each_part(&mut |part| rest.push(part)),
+                    other => {
+                        // A type of a generic function stands for the
+                        // type parameters around it.
+                        let local = match other {
+                            Type::Named { id, .. } => self.mono_local_vertex(*id),
+                            _ => None,
+                        };
+                        if let Some(src) = local {
+                            let weight = i32::from(next != arg);
+                            self.mono.edges.push(Edge {
+                                dst,
+                                src,
+                                weight,
+                                span,
+                                typ: arg,
+                            });
+                        }
+                        other.each_part(&mut |part| rest.push(part));
+                    }
                 }
             }
         }
@@ -225,7 +299,9 @@ impl<'a> Checker<'a> {
         // Every type on a cycle is marked, not only those on the cycle
         // that is reported.
         for (vertex, &of) in self.mono.vertices.iter().zip(&group) {
-            if let (true, Some(&named)) = (cyclic[of], self.mono.owners.get(&vertex.param)) {
+            let owner = self.mono.owners.get(&vertex.of).copied();
+            let named = owner.or(vertex.local.map(|(named, _)| named));
+            if let (true, Some(named)) = (cyclic[of], named) {
                 self.types.set_expanding(named);
             }
         }
@@ -289,18 +365,26 @@ impl<'a> Checker<'a> {
         }
         // With the instantiations of the bodies, as Go searches.
         self.mono_search();
-        let first = self.mono.vertices[self.mono.found[0]].param;
-        let Some(&span) = self.param_spans.get(&first) else {
+        let first = &self.mono.vertices[self.mono.found[0]];
+        let at = match first.local {
+            Some((_, name)) => Some(name),
+            None => self.param_spans.get(&first.of).copied(),
+        };
+        let Some(span) = at else {
             return;
         };
         let mut diagnostic =
             Diagnostic::new(Code::InstantiationCycle, span, "instantiation cycle:");
         for &on in &self.mono.found {
             let edge = &self.mono.edges[self.mono.vertices[on].pre];
-            let param = self.mono.vertices[edge.dst].param;
+            let onto = &self.mono.vertices[edge.dst];
+            let how = match onto.local {
+                Some(_) => "implicitly parameterized by",
+                None => "instantiated as",
+            };
             let note = format!(
-                "{} instantiated as {}",
-                self.type_string(param),
+                "{} {how} {}",
+                self.type_string(onto.of),
                 self.type_string(edge.typ)
             );
             diagnostic = diagnostic.with_note(Code::NoteRefersTo, Some(edge.span), note);
