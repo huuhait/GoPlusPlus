@@ -1,6 +1,7 @@
 //! The `gopp` command.
 
 mod args;
+mod check;
 mod diff;
 mod fmt;
 mod parse;
@@ -59,6 +60,19 @@ enum Command {
         /// with none, standard input is formatted to standard output
         paths: Vec<PathBuf>,
     },
+    /// Check packages and report what is wrong with them
+    Check {
+        /// Print each diagnostic as one line of JSON on standard output
+        #[arg(long)]
+        json: bool,
+        /// Print what was found
+        #[arg(long, value_enum)]
+        emit: Option<EmitChecked>,
+        /// Directories, each a package, and files, which are one package
+        /// together
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
     /// Say what an error code means, how to fix it, and show an example
     Explain {
         /// List every code
@@ -76,6 +90,12 @@ enum Emit {
     Ast,
     /// The syntax tree as JSON, one file per line
     Json,
+}
+
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum EmitChecked {
+    /// The tables of the checker, one entry per line
+    Info,
 }
 
 fn main() -> ExitCode {
@@ -99,6 +119,7 @@ fn run() -> ExitCode {
             };
             fmt::run(&paths, mode, go)
         }
+        Command::Check { json, emit, paths } => check::run(&paths, json, emit.is_some()),
         Command::Explain { list: true, .. } => {
             print!("{}", gopp_diag::listed());
             ExitCode::SUCCESS

@@ -516,3 +516,188 @@ fn fmt_finds_every_sample_formatted() {
     );
     assert_eq!(output.status.code(), Some(0));
 }
+
+/// A package in a directory of its own.
+fn write_package(dir: &TempDir, name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let package = dir.path().join(name);
+    fs::create_dir(&package).unwrap();
+    for (file, text) in files {
+        fs::write(package.join(file), text).unwrap();
+    }
+    package
+}
+
+#[test]
+fn check_reports_what_is_wrong_as_text_or_json() {
+    let dir = TempDir::new().unwrap();
+    let good = write_source(
+        &dir,
+        "good.gopp",
+        "package p\n\nfunc f() int { return 1 }\n",
+    );
+    let output = run(gopp().arg("check").arg(&good));
+    assert_eq!(
+        (stdout(&output), stderr(&output)),
+        (String::new(), String::new())
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let bad = write_source(
+        &dir,
+        "bad.gopp",
+        "package p\n\nfunc f() int { return \"one\" }\n",
+    );
+    let output = run(gopp().arg("check").arg(&bad));
+    let header = format!(
+        "{}:3:23: error[E0206]: cannot use \"one\" (untyped string constant) as int value in \
+         return statement\n",
+        bad.display()
+    );
+    assert!(stderr(&output).starts_with(&header), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = run(gopp().args(["check", "-json"]).arg(&bad));
+    let json = stdout(&output);
+    assert_eq!(json.lines().count(), 1, "{json}");
+    assert!(
+        json.starts_with('{') && json.contains(r#""code":"E0206""#),
+        "{json}"
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(1));
+
+    let missing = dir.path().join("none.gopp");
+    let output = run(gopp().arg("check").arg(&missing));
+    assert!(
+        stderr(&output).starts_with("error: "),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn check_takes_a_directory_as_one_package_and_prints_what_it_found() {
+    let dir = TempDir::new().unwrap();
+    let files = [
+        (
+            "a.gopp",
+            "package shapes\n\nimport \"example.com/units\"\n\ntype Vec struct{ X, Y int }\n\n@Operator\nfunc (a Vec) Add(b Vec) Vec { return Vec{a.X + b.X, a.Y + b.Y} }\n\nconst Origin = Vec{0, 0}\n\nvar scale = units.Scale\n",
+        ),
+        (
+            "b.gopp",
+            "package shapes\n\nfunc Sum(a, b Vec) int {\n\tc := a + b\n\treturn c.X + Origin.Y\n}\n",
+        ),
+        (
+            "a_test.go",
+            "package shapes\n\nfunc broken() { undefined() }\n",
+        ),
+    ];
+    let package = write_package(&dir, "shapes", &files);
+    let output = run(gopp().args(["check", "-emit=info"]).arg(&package));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+    let found = stdout(&output).replace(&package.display().to_string(), "shapes");
+    let found = found.replace('\\', "/");
+    let expected = "package shapes (shapes)
+type Vec shapes.Vec
+const Origin shapes.Vec = {0, 0}
+var scale invalid type
+func Sum func(shapes.Vec, shapes.Vec) int
+file shapes/a.gopp
+  8:38 Vec{a.X + b.X, a.Y + b.Y}: type shapes.Vec
+  8:42 a: type shapes.Vec
+  8:42 a.X: selection Field of shapes.Vec in shapes.Vec by [0]
+  8:42 a.X: type int
+  8:42 a.X + b.X: type int
+  8:48 b: type shapes.Vec
+  8:48 b.X: selection Field of shapes.Vec in shapes.Vec by [0]
+  8:48 b.X: type int
+  8:53 a: type shapes.Vec
+  8:53 a.Y: selection Field of shapes.Vec in shapes.Vec by [1]
+  8:53 a.Y: type int
+  8:53 a.Y + b.Y: type int
+  8:59 b: type shapes.Vec
+  8:59 b.Y: selection Field of shapes.Vec in shapes.Vec by [1]
+  8:59 b.Y: type int
+file shapes/b.gopp
+  4:7 a: type shapes.Vec
+  4:7 a + b: operator shapes.Vec.Add func(shapes.Vec) shapes.Vec
+  4:7 a + b: type shapes.Vec
+  4:11 b: type shapes.Vec
+  5:9 c: type shapes.Vec
+  5:9 c.X: selection Field of shapes.Vec in shapes.Vec by [0]
+  5:9 c.X: type int
+  5:9 c.X + Origin.Y: type int
+  5:15 Origin: type shapes.Vec = {0, 0}
+  5:15 Origin.Y: selection Field of shapes.Vec in shapes.Vec by [1]
+  5:15 Origin.Y: type int = 0
+";
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn check_prints_the_same_with_one_thread_and_with_many() {
+    let dir = TempDir::new().unwrap();
+    let mut packages = Vec::new();
+    for at in 0..24 {
+        let text = format!(
+            "package p{at}\n\ntype T{at} struct{{ n int }}\n\n@Operator\nfunc (a T{at}) Add(b T{at}) \
+             T{at} {{ return a }}\n\nfunc use(a T{at}, xs []int) int {{\n\tb := a + a\n\tvar wrong \
+             string = {at}\n\tfor _, x := range xs {{\n\t\tb.n += x\n\t}}\n\treturn b.n + missing{at}\n}}\n"
+        );
+        packages.push(write_package(
+            &dir,
+            &format!("p{at}"),
+            &[("main.gopp", &text)],
+        ));
+    }
+    let checked = |threads: &str, json: bool| {
+        let mut command = gopp();
+        command.arg("check").arg("-emit=info");
+        if json {
+            command.arg("-json");
+        }
+        let output = run(command.args(&packages).env("RAYON_NUM_THREADS", threads));
+        assert_eq!(output.status.code(), Some(1));
+        (stdout(&output), stderr(&output))
+    };
+    for json in [false, true] {
+        let one = checked("1", json);
+        assert!(
+            one.0.contains("package p23") && one.0.contains("operator"),
+            "{}",
+            one.0
+        );
+        for threads in ["2", "8", "32"] {
+            assert_eq!(checked(threads, json), one, "{threads} threads");
+        }
+    }
+}
+
+/// The samples that need no header and no macro, each in Go and in Go++.
+#[test]
+#[ignore = "long: checks the packages of Go's standard library that the samples import"]
+fn check_accepts_the_samples_with_go_s_standard_library() {
+    let wanted = ["01-", "02-", "03-", "04-", "05-", "09-", "10-"];
+    let files: Vec<PathBuf> = samples::files()
+        .into_iter()
+        .filter(|path| {
+            let name = path.to_string_lossy();
+            wanted.iter().any(|sample| name.contains(sample))
+        })
+        .collect();
+    assert_eq!(files.len(), 14);
+    let checked = |file: &PathBuf, threads: &str| {
+        let mut command = gopp();
+        command.args(["check", "-emit=info"]).arg(file);
+        let output = run(command.env("RAYON_NUM_THREADS", threads));
+        assert_eq!(stderr(&output), "", "{}", file.display());
+        assert_eq!(output.status.code(), Some(0));
+        stdout(&output)
+    };
+    for file in &files {
+        assert_eq!(checked(file, "1"), checked(file, "8"), "{}", file.display());
+    }
+}

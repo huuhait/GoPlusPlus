@@ -263,6 +263,8 @@ External GIR optimization, analysis, instrumentation, and equality-saturation (`
 
 ## 11. Checker records consumed by GIR lowering
 
+The tables are kept for each top-level declaration (`gopp_sema::Body`, in `Package::files[i].bodies[j]`), keyed by the expression. `gopp_sema::info_text` prints them one entry per line in source order (`gopp check -emit=info`); the text is the same for any number of threads.
+
 | `gopp_sema::Info` table | How `gopp-gir` uses it |
 |---|---|
 | `types`, `values` | Expression `TypeId`s and compile-time `Constant`s |

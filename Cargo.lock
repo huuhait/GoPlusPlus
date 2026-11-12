@@ -376,6 +376,7 @@ dependencies = [
  "clap",
  "gopp-codegen-c",
  "gopp-diag",
+ "gopp-sema",
  "gopp-span",
  "gopp-syntax",
  "gopp-testutil",

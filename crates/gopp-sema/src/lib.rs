@@ -6,6 +6,7 @@ mod consteval;
 mod decls;
 mod exprstring;
 mod foreign;
+mod info;
 mod literal;
 mod object;
 mod package;
@@ -20,6 +21,7 @@ mod tests;
 pub use consteval::{ConstCall, ConstEvaluator, ConstFailure};
 pub use decls::Initializer;
 pub use foreign::{ForeignMember, ForeignPackage, TemplateArg};
+pub use info::info_text;
 pub use object::{
     Bang, Body, Capture, CaptureUse, ExprType, FileInfo, ForeignUse, Instance, Local, LocalId,
     LocalKind, MethodValue, ObjId, ObjKind, Object, OperatorUse, Ref, Selection, SelectionKind,
