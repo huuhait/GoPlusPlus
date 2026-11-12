@@ -187,22 +187,23 @@ impl<'a> Checker<'a> {
         params
     }
 
-    /// How the generic alias with type arguments is written that the
-    /// type `ty` stands for, through other aliases and a pointer.
-    pub(super) fn alias_instance(&self, cx: &Cx<'a>, ty: ExprId) -> Option<String> {
-        let parts = Self::receiver_parts(cx.tree, ty);
-        if self
-            .alias_instances
-            .contains(&cx.tree.exprs[parts.named].span)
-        {
-            return Some(self.expr_string(cx, parts.named));
-        }
-        match cx.body.uses.get(&parts.named) {
-            Some(Ref::Object(object)) => self.through_instance.get(&(object.0 as usize)).cloned(),
-            _ => None,
+    /// The generic alias with type arguments that the type `ty` is
+    /// written as, through other aliases and a pointer.
+    fn alias_instance(&self, mut ty: TypeId) -> Option<TypeId> {
+        let mut pointer = false;
+        loop {
+            match (self.types.alias_of(ty), self.types.alias_target(ty)) {
+                (Some((_, args)), _) if !args.is_empty() => return Some(ty),
+                (_, Some(target)) => ty = target,
+                _ => match &*self.types.get(ty) {
+                    Type::Pointer(elem) if !pointer => (ty, pointer) = (*elem, true),
+                    _ => return None,
+                },
+            }
         }
     }
 
+    /// The type of this package that the receiver names, through aliases
     /// and at most one pointer, and whether the receiver is a pointer. A
     /// method belongs to that type also where its receiver is in error.
     fn receiver_base(&mut self, cx: &Cx<'a>, receiver: &Receiver) -> Option<(NamedId, bool)> {
@@ -233,14 +234,14 @@ impl<'a> Checker<'a> {
             Some(&Ref::Object(object)) => Some((object, self.object_type(object, true))),
             _ => None,
         };
-        if let Some((object, ty)) = base {
-            let instance = self.through_instance.get(&(object.0 as usize));
+        if let Some((_, ty)) = base {
             let message = match &*self.types.get(ty) {
-                Type::Named { id, .. } if self.types.aliased(*id).is_some() => Some(format!(
+                Type::Named { id, .. } if self.types.is_alias(*id) => Some(format!(
                     "cannot define new methods on generic alias type {}",
                     self.generic_string(ty)
                 )),
-                _ => instance.map(|instance| {
+                _ => self.alias_instance(ty).map(|instance| {
+                    let instance = self.type_string(instance);
                     format!("cannot define new methods on instantiated type {instance}")
                 }),
             };
@@ -268,26 +269,34 @@ impl<'a> Checker<'a> {
                 return self.error(Code::InvalidReceiverTypeParams, base_span, message);
             }
         }
-        let whole = self.typ(cx, receiver);
+        // A message names the base type behind its aliases.
+        let written = self.typ(cx, receiver);
+        let whole = self.types.unalias(written);
         let base = match &*self.types.get(whole) {
-            Type::Pointer(elem) => *elem,
+            Type::Pointer(elem) => self.types.unalias(*elem),
             _ => whole,
         };
         if self.types.underlying(base) == Types::INVALID {
             return;
         }
         let shown = self.type_string(base);
+        // A type of another package is named as the receiver names it.
+        let as_named = match &*self.types.get(whole) {
+            Type::Pointer(elem) => *elem,
+            _ => written,
+        };
+        let as_named = self.type_string(as_named);
         let (code, message) = match &*self.types.get(base) {
             Type::Named { args, .. } if named == 0 && !args.is_empty() => {
                 let message = format!("cannot define new methods on instantiated type {shown}");
                 (Code::InvalidReceiver, message)
             }
             Type::Named { id, .. } if !self.declared.contains(id) => {
-                let message = format!("cannot define new methods on non-local type {shown}");
+                let message = format!("cannot define new methods on non-local type {as_named}");
                 (Code::ReceiverMethodPkg, message)
             }
             Type::Basic(_) => {
-                let message = format!("cannot define new methods on non-local type {shown}");
+                let message = format!("cannot define new methods on non-local type {as_named}");
                 (Code::ReceiverMethodPkg, message)
             }
             Type::Named { .. } => {
@@ -300,7 +309,7 @@ impl<'a> Checker<'a> {
                 (Code::InvalidReceiver, message)
             }
             _ => {
-                let message = format!("invalid receiver type {}", self.type_string(whole));
+                let message = format!("invalid receiver type {}", self.type_string(written));
                 (Code::InvalidReceiver, message)
             }
         };

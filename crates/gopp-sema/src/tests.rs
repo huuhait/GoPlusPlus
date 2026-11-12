@@ -1758,7 +1758,7 @@ fn built_in_functions_are_checked_as_go_checks_them() {
             "copy(s, b)",
             &[
                 "15:7: invalid copy: arguments s (variable of type []int) and b (variable of type \
-               string) have different element types int and uint8",
+               string) have different element types int and byte",
             ],
         ),
         (
@@ -2159,7 +2159,7 @@ fn what_stands_for_a_type_or_an_unsafe_argument_is_checked_as_go_checks_it() {
         (
             "_ = unsafe.String(1, 2)",
             &[
-                "17:20: cannot use 1 (untyped int constant) as *uint8 value in argument to \
+                "17:20: cannot use 1 (untyped int constant) as *byte value in argument to \
                  unsafe.String",
             ],
         ),
@@ -3160,7 +3160,7 @@ func g(dst, src []int, p *[]int, b []byte, s string) {
         "    use &dst",
         "a.gopp:28:11: invalid copy: the destination mk() (value of type []int) is passed as a copy",
         "a.gopp:29:11: invalid copy: arguments &dst (variable of type []int) and s (variable of \
-         type string) have different element types int and uint8",
+         type string) have different element types int and byte",
     ];
     assert_eq!(messages("a.gopp", text), expected);
     // In a Go file `copy` takes the slice, and `&s[i:j]` has no address.
@@ -3458,7 +3458,7 @@ func f(x int, s string, b bool, c chan int, i interface{}, fn func(), sl []int, 
         "a.go:47:7: cannot convert 1 (untyped int constant) to type string",
         "a.go:51:7: duplicate case 1 (constant of type int) in expression switch",
         "    a.go:50:7: previous case",
-        "a.go:55:7: duplicate case byte(1) (constant 1 of type uint8) in expression switch",
+        "a.go:55:7: duplicate case byte(1) (constant 1 of type byte) in expression switch",
         "    a.go:53:7: previous case",
         "a.go:57:7: invalid case sl in switch on i (slice can only be compared to nil)",
         "a.go:64:9: cannot switch on t (variable of struct type T) (T is not comparable)",
@@ -3720,16 +3720,16 @@ func take(c C) {}
         "    have (int)",
         "    want (int, int)",
         "a.go:38:16: cannot use t (variable of type int) as bool value in variable declaration",
-        "a.go:41:19: cannot use t (variable of type any) as float32 value in variable declaration: need type assertion",
-        "a.go:44:19: cannot use t (variable of type any) as float32 value in variable declaration: need type assertion",
-        "a.go:55:14: cannot use e (variable of type any) as int value in variable declaration: need type assertion",
+        "a.go:41:19: cannot use t (variable of type interface{}) as float32 value in variable declaration: need type assertion",
+        "a.go:44:19: cannot use t (variable of type interface{}) as float32 value in variable declaration: need type assertion",
+        "a.go:55:14: cannot use e (variable of type interface{}) as int value in variable declaration: need type assertion",
         "a.go:56:12: cannot use i (variable of interface type I) as C value in variable declaration: need type assertion",
         "a.go:57:13: cannot use i (variable of interface type I) as *C value in variable declaration: need type assertion",
         "a.go:58:17: cannot use i (variable of interface type I) as string value in variable declaration",
-        "a.go:59:10: cannot convert e (variable of type any) to type int: need type assertion",
+        "a.go:59:10: cannot convert e (variable of type interface{}) to type int: need type assertion",
         "a.go:60:8: cannot convert i (variable of interface type I) to type C: need type assertion",
         "a.go:61:6: cannot use i (variable of interface type I) as C value in assignment: need type assertion",
-        "a.go:67:7: cannot use e (variable of type any) as C value in argument to take: need type assertion",
+        "a.go:67:7: cannot use e (variable of type interface{}) as C value in argument to take: need type assertion",
         "a.go:68:7: cannot use i (variable of interface type I) as C value in argument to take: need type assertion",
     ];
     assert_eq!(messages("a.go", text), expected);
@@ -4156,8 +4156,6 @@ type U10 interface {
 	m() int32
 }
 ";
-    // Go names an alias where it is written (`Ai`, `A10`); the type that
-    // it stands for is named here.
     let expected = [
         "a.go:8:11: method T1.m already declared",
         "    a.go:7:11: other declaration of method m",
@@ -4178,10 +4176,10 @@ type U10 interface {
         "a.go:43:7: cannot define new methods on non-local type error",
         "a.go:44:8: cannot define new methods on non-local type error",
         "a.go:45:9: invalid receiver type any",
-        "a.go:53:7: cannot define new methods on non-local type int",
+        "a.go:53:7: cannot define new methods on non-local type Ai",
         "a.go:55:11: method T0.m1 already declared",
         "    a.go:54:11: other declaration of method m1",
-        "a.go:58:7: invalid receiver type **T0",
+        "a.go:58:7: invalid receiver type A10",
         "a.go:70:7: cannot define new methods on instantiated type G[int]",
         "a.go:71:8: cannot define new methods on instantiated type G[int]",
         "a.go:72:7: receiver declares 2 type parameters, but receiver base type declares 1",
@@ -4577,7 +4575,7 @@ type Plain interface{ String() string }
     assert_eq!(
         shown("Either"),
         (
-            terms("~int | ~float64 | ~string | []uint8"),
+            terms("~int | ~float64 | ~string | []byte"),
             false,
             vec![],
             false
@@ -5171,7 +5169,7 @@ func ranges[B Bytes, S Seq, N ~int | ~int64, I ~int, C chan int | <-chan int, D 
         "a.go:26:6: cannot slice o (variable of type O constrained by Other): []int and []string have different underlying types",
         "a.go:27:6: cannot slice a (variable of type A constrained by any): no specific type in A",
         "a.go:28:6: cannot slice x (variable of type X constrained by Mixed): []int and map[int]int have different underlying types",
-        "a.go:33:12: cannot range over b (variable of type B constrained by Bytes): string and []uint8 have different underlying types",
+        "a.go:33:12: cannot range over b (variable of type B constrained by Bytes): string and []byte have different underlying types",
         "a.go:35:20: cannot range over s (variable of type S constrained by Seq): []int and [4]int have different underlying types",
         "a.go:38:12: cannot range over n (variable of type N constrained by ~int | ~int64): int and int64 have different underlying types",
         "a.go:46:12: cannot range over d (variable of type D constrained by chan<- int): receive from send-only channel chan<- int",
@@ -5319,13 +5317,13 @@ func built[S ~[]int, M ~map[string]int, C ~chan int, R ~<-chan int, B ~string | 
         "a.go:35:10: invalid argument: n (variable of type N constrained by ~int) for built-in len",
         "a.go:36:10: invalid argument: a (variable of type A constrained by any) for built-in len",
         "a.go:37:10: invalid argument: m (variable of type M constrained by ~map[string]int) for built-in cap",
-        "a.go:38:10: invalid argument: b (variable of type B constrained by ~string | ~[]uint8) for built-in cap",
-        "a.go:42:8: invalid argument: cannot clear b (variable of type B constrained by ~string | ~[]uint8): argument must be (or constrained by) map or slice",
+        "a.go:38:10: invalid argument: b (variable of type B constrained by ~string | ~[]byte) for built-in cap",
+        "a.go:42:8: invalid argument: cannot clear b (variable of type B constrained by ~string | ~[]byte): argument must be (or constrained by) map or slice",
         "a.go:43:8: invalid argument: cannot clear a (variable of type A constrained by any): argument must be (or constrained by) map or slice",
         "a.go:45:8: invalid operation: cannot close receive-only channel r (variable of type R constrained by ~<-chan int)",
         "a.go:46:8: invalid operation: cannot close non-channel s (variable of type S constrained by ~[]int)",
         "a.go:47:8: invalid operation: cannot close non-channel a (variable of type A constrained by any)",
-        "a.go:51:14: invalid copy: argument must be a slice; have b (variable of type B constrained by ~string | ~[]uint8)",
+        "a.go:51:14: invalid copy: argument must be a slice; have b (variable of type B constrained by ~string | ~[]byte)",
         "a.go:52:11: invalid copy: argument must be a slice; have a (variable of type A constrained by any)",
         "a.go:54:12: cannot use 1 (untyped int constant) as string value in argument to delete",
         "a.go:55:9: invalid argument: x (variable of type X constrained by []int | map[int]int) is not a map",
@@ -5433,7 +5431,7 @@ type Self[P any] = *Self[P]
             "a.go:43:7: too many type arguments for type List: have 2, want 1",
             "a.go:44:7: not enough type arguments for type Table: have 1, want 2",
             "a.go:45:18: string does not satisfy ~int (string missing in ~int)",
-            "a.go:46:21: cannot use \"x\" (untyped string constant) as int value in variable \
+            "a.go:46:21: cannot use \"x\" (untyped string constant) as Int[string] value in variable \
              declaration",
             "a.go:47:16: cannot use first(a) (value of type int) as string value in variable \
              declaration",
@@ -5445,6 +5443,69 @@ type Self[P any] = *Self[P]
             "a.go:55:6: invalid recursive type: Self refers to itself",
         ]
     );
+}
+
+#[test]
+fn a_message_names_a_type_by_the_alias_it_was_written_with() {
+    let text = "package p
+
+func f[P any](x P) P { return x }
+
+type T0 struct{}
+type A10 = **T0
+type Ai = int
+type Pair = struct{ a, b Ai }
+
+func (A10) m1() {}
+func (Ai) m2()  {}
+
+func _(p Pair) {
+	type A = int
+	var a A
+	b := f(a)
+	_ = b + \"foo\"
+	var e interface{}
+	var t any
+	var _ float32 = e
+	var _ float32 = t
+	var by byte
+	var _ string = by
+	var u8 uint8
+	var _ string = u8
+	var _ string = \"x\"[0]
+	for _, r := range \"x\" {
+		var _ string = r
+	}
+	x := 'x'
+	var _ string = x
+	var bs []byte
+	var _ string = bs
+	var _ int = p
+	_ = p.c
+	var _ Ai = \"x\"
+	var _ []byte = []uint8{}
+	var _ struct{ a, b int } = p
+}
+";
+    let expected = [
+        "a.go:10:7: invalid receiver type A10",
+        "a.go:11:7: cannot define new methods on non-local type Ai",
+        "a.go:17:6: invalid operation: b + \"foo\" (mismatched types A and untyped string)",
+        "a.go:20:18: cannot use e (variable of type interface{}) as float32 value in variable \
+         declaration: need type assertion",
+        "a.go:21:18: cannot use t (variable of interface type any) as float32 value in variable \
+         declaration: need type assertion",
+        "a.go:23:17: cannot use by (variable of type byte) as string value in variable declaration",
+        "a.go:25:17: cannot use u8 (variable of type uint8) as string value in variable declaration",
+        "a.go:26:17: cannot use \"x\"[0] (value of type byte) as string value in variable declaration",
+        "a.go:28:18: cannot use r (variable of type rune) as string value in variable declaration",
+        "a.go:31:17: cannot use x (variable of type rune) as string value in variable declaration",
+        "a.go:33:17: cannot use bs (variable of type []byte) as string value in variable declaration",
+        "a.go:34:14: cannot use p (variable of struct type Pair) as int value in variable declaration",
+        "a.go:35:8: p.c undefined (type Pair has no field or method c)",
+        "a.go:36:13: cannot use \"x\" (untyped string constant) as Ai value in variable declaration",
+    ];
+    assert_eq!(messages("a.go", text), expected);
 }
 
 /// Types that are nested, or hold declared types that hold others, a
@@ -5493,6 +5554,13 @@ fn a_deep_type_does_not_overflow_the_stack() {
             &|i| format!("type S{i} = *S{}\n", i - 1),
             "",
         ) + compared,
+        // Each of these holds the one before it twice.
+        deep_types(
+            DEPTH,
+            "type S0 = int",
+            &|i| format!("type S{i} = func(S{}) S{}\n", i - 1, i - 1),
+            "",
+        ),
         deep_types(
             DEPTH,
             "type S0 interface{ m0() }",
@@ -5534,6 +5602,27 @@ fn a_deep_type_does_not_overflow_the_stack() {
     checked.unwrap().join().unwrap();
 }
 
+#[test]
+fn type_parameters_that_are_found_from_each_other_are_not_found() {
+    // Each of the two would be replaced by a type with the other in it
+    // without end.
+    let text = "package p
+func f[P, Q interface{ func(Q) P }]() {}
+func g[P interface{ *Q }, Q interface{ func(P) }]() {}
+func _() {
+	f()
+	g()
+}
+";
+    let expected = [
+        "a.go:5:2: in call to f, cannot infer P",
+        "    a.go:2:8: P declared here",
+        "a.go:6:2: in call to g, cannot infer P",
+        "    a.go:3:8: P declared here",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 /// A type that holds the one before it twice is as large as two to the
 /// number of such types when it is written out, and is walked once.
 #[test]
@@ -5558,7 +5647,11 @@ fn a_type_that_stands_in_many_places_is_walked_once() {
         format!(
             "{types}var v, w A{count}\nvar _ = v == w\nvar _ = map[A{count}]int{{}}\n\
              var _ = unsafe.Sizeof(v)\nvar _ = any(v).(A{count})\n\
-             type T struct{{ A{count} }}\nvar _ = T{{}}.a.b\nvar _ = [2]A{count}{{v, w}}\n"
+             type T struct{{ A{count} }}\nvar _ = T{{}}.a.b\nvar _ = [2]A{count}{{v, w}}\n\
+             func f[P any](x struct{{ a, b P }}) {{}}\nfunc g[P comparable](x P) {{}}\n\
+             func _() {{ f(v); g(v) }}\n\
+             var _ = struct{{ a, b A{} `x:\"y\"` }}(v)\n",
+            count - 1
         )
     };
     let generic_types = |count: usize| {
@@ -5585,13 +5678,19 @@ fn a_type_that_stands_in_many_places_is_walked_once() {
     linear::assert_near_linear(&sizes, |n| steps(generic_types(n)));
     // A generic alias is written out again for each alias that holds
     // it: the square of the number of aliases, not two to that number.
-    let steps = steps(generic_aliases(160));
-    assert!(steps < 100_000, "{steps} steps");
+    let most = steps(generic_aliases(160));
+    assert!(most < 100_000, "{most} steps");
+    // A type argument is found through such aliases, as deep as
+    // unification goes.
+    let call = "func f[P any](x C40[P]) C38[P] { return x.a.b }\nvar _ C38[int] = f(c)\n";
+    let found = steps(generic_aliases(40) + call);
+    assert!(found < 100_000, "{found} steps");
 }
 
-/// An alias with type arguments is written out as what it stands for, so
-/// an alias that holds the one before it is as large as all before it
-/// together; the chains here name the one before and add nothing.
+/// What a generic alias stands for is written out with the type arguments
+/// of each use, so a chain of aliases that each hold the one before costs
+/// the square of its length; the chains here name the one before and add
+/// nothing.
 #[test]
 fn the_steps_of_generic_aliases_grow_with_the_input_not_faster() {
     let steps = |text: String| {
@@ -6399,7 +6498,7 @@ func Map[T, U any](xs []T, f func(T) U) []U
     let expected = [
         "Big: untyped int = 4",
         "Boiling: p.Celsius (float64) = 100",
-        "Bytes: []uint8",
+        "Bytes: p.Bytes",
         "Celsius: p.Celsius (float64)",
         "GB: untyped int = 1073741824",
         "KB: untyped int = 1024",
@@ -6412,7 +6511,7 @@ func Map[T, U any](xs []T, f func(T) U) []U
         "Node: p.Node (struct{Name string \"json:\\\"name\\\"\"; next Option[*p.Node]; owner \
          Shared[p.Node]; Size int @Required})",
         "Open: func(string, ...int) (Unique[p.Node], error)",
-        "Reader: p.Reader (interface{Close(); Read(*[]uint8) (int, error)})",
+        "Reader: p.Reader (interface{Close(); Read(*[]byte) (int, error)})",
         "Size: int = 5",
         "Third: untyped float = 1/3",
         "Twice: p.Celsius (float64) = 200",
@@ -6547,7 +6646,7 @@ var more = append(xs, origin)
         "origin: p.Point (struct{X int; Y int})",
         "p2: p.Point (struct{X int; Y int})",
         "ptr: *p.Point",
-        "raw: []uint8",
+        "raw: []byte",
         "scaled: p.Point (struct{X int; Y int})",
         "size: int",
         "table: map[string]float64",
@@ -6626,7 +6725,7 @@ func walk(points []Point, names map[string]*Point, done chan bool) (total float6
         "failed: error",
         "name: string",
         "at: *p.Point",
-        "first: uint8",
+        "first: byte",
         "x: int",
         "ok: bool",
         "found: *p.Point",
@@ -6772,7 +6871,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2645;
+const EXPECTED_ERRORS_REPORTED: usize = 2649;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
@@ -6877,19 +6976,15 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
     let output = compare.wait_with_output().unwrap();
     assert!(output.status.success());
     let report = String::from_utf8(output.stdout).unwrap();
-    // An alias is written here as the type it stands for, and a function
-    // type without the names of its parameters.
+    // A function type is written here without the names of its
+    // parameters.
     let known = [
-        "fixedbugs/issue67628.go:16:6: invalid operation: b + \"foo\" (mismatched types int",
         "fixedbugs/issue46583.go:24:7: cannot use T1.m (value of type func(T1, int))",
         "fixedbugs/issue46583.go:25:7: cannot use T2.m (value of type func(T2, int))",
         "fixedbugs/issue46583.go:26:7: cannot use T3.m (value of type func(T3, int))",
         "fixedbugs/issue46583.go:27:7: cannot use T4.m (value of type func(T4, int))",
-        "fixedbugs/issue69955.go:36:6: a (variable of struct type S) is not constant",
-        "fixedbugs/issue69955.go:37:6: b (variable of type int) is not constant",
-        "fixedbugs/issue69955.go:38:6: c (variable of int type N) is not constant",
         "fixedbugs/issue59740.go:24:25: in call to cons, type func(T, List[T]) T of nil[T]",
-        "fixedbugs/issue60933.go:34:10: in call to g, type interface{Write([]uint8) (int, error)}",
+        "fixedbugs/issue60933.go:34:10: in call to g, type interface{Write([]byte) (int, error)}",
         "fixedbugs/issue60933.go:35:12: in call to g, type *os.File of file does not match",
         // A type parameter that is named like the type next to it is not
         // told apart by where it is declared.

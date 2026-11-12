@@ -147,7 +147,7 @@ impl Operand {
 
     fn value(ty: TypeId) -> Self {
         let mode = match ty {
-            Types::INVALID => Mode::Unknown,
+            invalid if invalid == Types::INVALID => Mode::Unknown,
             _ => Mode::Value,
         };
         Self { mode, ty }
@@ -162,7 +162,7 @@ impl Operand {
 
     fn variable(ty: TypeId) -> Self {
         let mode = match ty {
-            Types::INVALID => Mode::Unknown,
+            invalid if invalid == Types::INVALID => Mode::Unknown,
             _ => Mode::Variable,
         };
         Self { mode, ty }
@@ -231,11 +231,6 @@ struct Checker<'a> {
     writes_through: FxHashSet<ExprId>,
     /// While a body is walked: the expressions whose values are put into
     /// an interface, each with its type and the interface type.
-    /// Where a generic alias is written with its type arguments.
-    alias_instances: FxHashSet<Span>,
-    /// The aliases that stand for a generic alias with type arguments,
-    /// through others and a pointer, and how that one is written.
-    through_instance: FxHashMap<usize, String>,
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     /// The methods and the embedded types of each interface type that was
     /// written, with where they are written: the names of its methods are
@@ -386,8 +381,6 @@ pub fn declarations(
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
         iface_conversions: FxHashMap::default(),
-        alias_instances: FxHashSet::default(),
-        through_instance: FxHashMap::default(),
         interfaces: Vec::new(),
         embedded_fields: Vec::new(),
         var_types: Vec::new(),
@@ -1122,15 +1115,12 @@ impl<'a> Checker<'a> {
                 let params = self.declare_params(&mut cx, type_params);
                 if alias {
                     let aliased = self.typ(&cx, ty);
-                    self.ty[object] = aliased;
-                    if params.is_empty() {
-                        if let Some(instance) = self.alias_instance(&cx, ty) {
-                            self.through_instance.insert(object, instance);
-                        }
-                    } else if !self.incomplete {
-                        let name = self.package.objects[object].name;
-                        self.ty[object] = self.generic_alias(name, params, aliased);
-                    }
+                    let name = self.package.objects[object].name;
+                    // What is not fully known is not known at all.
+                    self.ty[object] = match self.incomplete {
+                        true => aliased,
+                        false => self.alias(name, params, aliased),
+                    };
                     return false;
                 }
                 // The type exists before what it is declared as is known,
@@ -1161,12 +1151,21 @@ impl<'a> Checker<'a> {
         false
     }
 
-    /// The generic alias `name` of `aliased`, without type arguments.
-    fn generic_alias(&mut self, name: Spur, params: Vec<TypeId>, aliased: TypeId) -> TypeId {
+    /// The alias `name` of `aliased`: the same type, written by the name
+    /// of the alias; a generic alias without its type arguments if it
+    /// has the type parameters `params`.
+    fn alias(&mut self, name: Spur, params: Vec<TypeId>, aliased: TypeId) -> TypeId {
+        if aliased == Types::INVALID {
+            return aliased;
+        }
         let named = self.types.declare(name, self.name);
+        let generic = !params.is_empty();
         self.types.set_type_params(named, params);
         self.types.set_alias(named, aliased);
-        self.types.named(named, &[])
+        match generic {
+            true => self.types.named(named, &[]),
+            false => self.types.alias(named, &[]).unwrap_or(aliased),
+        }
     }
 
     /// `count` variables their values and the one at `position` this.
@@ -1247,6 +1246,8 @@ impl<'a> Checker<'a> {
         use crate::types::Marker;
         let basic = match name {
             Predeclared::Any => return self.types.any(),
+            Predeclared::Byte => return self.types.byte(),
+            Predeclared::Rune => return self.types.rune(),
             Predeclared::Error => return self.types.error(),
             Predeclared::Comparable => return self.types.intern(Type::Marker(Marker::Comparable)),
             Predeclared::Copy => return self.types.intern(Type::Marker(Marker::Copy)),
@@ -1254,7 +1255,7 @@ impl<'a> Checker<'a> {
             Predeclared::Send => return self.types.intern(Type::Marker(Marker::Send)),
             Predeclared::Sync => return self.types.intern(Type::Marker(Marker::Sync)),
             Predeclared::Bool => Basic::Bool,
-            Predeclared::Byte | Predeclared::Uint8 => Basic::Uint8,
+            Predeclared::Uint8 => Basic::Uint8,
             Predeclared::Complex64 => Basic::Complex64,
             Predeclared::Complex128 => Basic::Complex128,
             Predeclared::Float32 => Basic::Float32,
@@ -1262,7 +1263,7 @@ impl<'a> Checker<'a> {
             Predeclared::Int => Basic::Int,
             Predeclared::Int8 => Basic::Int8,
             Predeclared::Int16 => Basic::Int16,
-            Predeclared::Int32 | Predeclared::Rune => Basic::Int32,
+            Predeclared::Int32 => Basic::Int32,
             Predeclared::Int64 => Basic::Int64,
             Predeclared::String => Basic::String,
             Predeclared::Uint => Basic::Uint,
@@ -1680,11 +1681,8 @@ impl<'a> Checker<'a> {
                 return Types::INVALID;
             }
             // An alias with type arguments is what it stands for.
-            let instance = match self.types.aliased(*id) {
-                Some(aliased) => {
-                    self.alias_instances.insert(at);
-                    self.types.substitute(aliased, &params, &args)
-                }
+            let instance = match self.types.alias(*id, &args) {
+                Some(alias) => alias,
                 None => {
                     let instance = self.types.named(*id, &args);
                     self.written(instance, cx.tree.exprs[x].span);
@@ -1926,7 +1924,7 @@ impl<'a> Checker<'a> {
                     return Operand::UNKNOWN;
                 };
                 match self.var_type(cx, *ty) {
-                    Types::INVALID => Operand::UNKNOWN,
+                    invalid if invalid == Types::INVALID => Operand::UNKNOWN,
                     ty => {
                         self.assertable(cx, expr, (*x, &from), ty, false);
                         Operand {
@@ -2495,7 +2493,7 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         };
         let context = format!("argument to unsafe.{text}");
-        let byte_pointer = self.types.pointer(self.types.basic(Basic::Uint8));
+        let byte_pointer = self.types.pointer(self.types.byte());
         match text {
             // The size and the alignment of the type of the argument are
             // constants, unless the type has a type parameter in it.
@@ -3344,10 +3342,8 @@ impl<'a> Checker<'a> {
                 }
                 self.constrain(cx, type_params, &params);
                 if *alias {
-                    let mut ty = self.typ(cx, *ty);
-                    if !params.is_empty() {
-                        ty = self.generic_alias(name.name, params, ty);
-                    }
+                    let aliased = self.typ(cx, *ty);
+                    let ty = self.alias(name.name, params, aliased);
                     let mode = Mode::Type;
                     self.locals.insert(this, Operand { mode, ty });
                     return;

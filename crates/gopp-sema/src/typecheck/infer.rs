@@ -10,7 +10,7 @@ use crate::types::MethodSet;
 const DEPTH_LIMIT: u32 = 50;
 
 /// How alike two types must be to unify.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Alike {
     /// As for an assignment: a declared type and what it is declared as
     /// unify at the top; inside them the types are identical.
@@ -75,6 +75,10 @@ struct Unifier<'t> {
     place: Vec<usize>,
     found: Vec<Option<TypeId>>,
     depth: u32,
+    /// The pairs of types, neither of them a type parameter that is
+    /// looked for, that unified, with how alike they had to be: a type
+    /// that stands in several places is unified once.
+    unified: FxHashSet<(TypeId, TypeId, Alike)>,
     /// How many pairs of types were looked at.
     steps: u64,
 }
@@ -93,6 +97,7 @@ impl<'t> Unifier<'t> {
             place: (0..params.len()).collect(),
             found: vec![None; params.len()],
             depth: 0,
+            unified: FxHashSet::default(),
             steps: 0,
         }
     }
@@ -168,12 +173,18 @@ impl<'t> Unifier<'t> {
         if x == y {
             return true;
         }
+        if self.unified.contains(&(x, y, alike)) {
+            return true;
+        }
         if self.depth == DEPTH_LIMIT {
             return false;
         }
         self.depth += 1;
         let unified = self.nify_unequal(x, y, alike, pairs);
         self.depth -= 1;
+        if unified && self.index(x).is_none() && self.index(y).is_none() {
+            self.unified.insert((x, y, alike));
+        }
         unified
     }
 
@@ -785,8 +796,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `walk` is the types on the way to `ty` and the types that are
-    /// walked through: none of those comes back to itself.
+    /// `walk` is the types on the way to `ty`, and the types from which
+    /// no way leads back to a type on the way to them: those are not
+    /// walked again. Says whether `ty` is such a type.
     fn find_cycles(
         &self,
         ty: TypeId,
@@ -794,35 +806,39 @@ impl<'a> Checker<'a> {
         found: &mut [Option<TypeId>],
         walk: &mut (FxHashSet<TypeId>, FxHashSet<TypeId>),
         depth: u32,
-    ) {
+    ) -> bool {
         // Only a type parameter leads back to a type parameter.
         if !self.types.has_param(ty) || walk.1.contains(&ty) {
-            return;
+            return true;
         }
         let index = params.iter().position(|&param| param == ty);
         if !walk.0.insert(ty) {
             if let Some(index) = index {
                 found[index] = None;
             }
-            return;
+            return false;
         }
         // A type deeper than unification goes says nothing more.
-        if depth < DEPTH_LIMIT {
+        let mut clear = depth < DEPTH_LIMIT;
+        if clear {
             match index {
                 Some(index) => {
                     if let Some(known) = found[index] {
-                        self.find_cycles(known, params, found, walk, depth + 1);
+                        clear = self.find_cycles(known, params, found, walk, depth + 1);
                     }
                 }
                 None => {
                     for part in self.types.parts(ty) {
-                        self.find_cycles(part, params, found, walk, depth + 1);
+                        clear &= self.find_cycles(part, params, found, walk, depth + 1);
                     }
                 }
             }
         }
         walk.0.remove(&ty);
-        walk.1.insert(ty);
+        if clear {
+            walk.1.insert(ty);
+        }
+        clear
     }
 
     /// A generic function that is used as a value: it has the type

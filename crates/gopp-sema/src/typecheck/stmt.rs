@@ -211,7 +211,7 @@ impl<'a> Checker<'a> {
         }
         let iterator = "func must be func(yield func(...) bool)";
         Ok(Some(match &*self.types.get(under) {
-            Type::Basic(_) if self.is_string(under) => (int, Some(self.types.basic(Basic::Int32))),
+            Type::Basic(_) if self.is_string(under) => (int, Some(self.types.rune())),
             Type::Basic(_) if self.is_integer(under) => (Some(ty), None),
             Type::Array { elem, .. } | Type::Slice(elem) => (int, Some(*elem)),
             Type::Map { key, value } => (Some(*key), Some(*value)),

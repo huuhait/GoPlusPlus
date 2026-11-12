@@ -20,8 +20,64 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::basic::{Basic, representable};
 use crate::constant::Value;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TypeId(u32);
+/// A type. Two are equal if they are identical types: how the program
+/// wrote a type, through which aliases, is kept beside it for the text of
+/// a message and is no part of a comparison.
+#[derive(Clone, Copy, Debug)]
+pub struct TypeId {
+    /// The type without aliases.
+    canon: u32,
+    /// The type as it was written: a type whose parts are as they were
+    /// written, or an alias, which has the bit `ALIAS`.
+    written: u32,
+}
+
+const ALIAS: u32 = 1 << 31;
+
+impl TypeId {
+    const fn plain(index: u32) -> Self {
+        TypeId {
+            canon: index,
+            written: index,
+        }
+    }
+
+    /// The type without the aliases it was written with.
+    fn canonical(self) -> Self {
+        Self::plain(self.canon)
+    }
+
+    /// The type and how it was written.
+    fn spelled(self) -> (u32, u32) {
+        (self.canon, self.written)
+    }
+}
+
+impl PartialEq for TypeId {
+    fn eq(&self, other: &Self) -> bool {
+        self.canon == other.canon
+    }
+}
+
+impl Eq for TypeId {}
+
+impl std::hash::Hash for TypeId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.canon.hash(state);
+    }
+}
+
+impl PartialOrd for TypeId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TypeId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.canon.cmp(&other.canon)
+    }
+}
 
 /// A declared type: an index into the table of the interner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -136,8 +192,14 @@ impl Type {
     /// The types that the type is written with, each once for each place:
     /// the type arguments of a declared type, not what it is declared as.
     fn parts(&self) -> Vec<TypeId> {
+        let mut parts = Vec::new();
+        self.each_part(&mut |part| parts.push(part));
+        parts
+    }
+
+    fn each_part(&self, each: &mut impl FnMut(TypeId)) {
         match self {
-            Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => Vec::new(),
+            Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => {}
             Type::Pointer(elem)
             | Type::Unique(elem)
             | Type::Shared(elem)
@@ -146,18 +208,101 @@ impl Type {
             | Type::Local(elem)
             | Type::Slice(elem)
             | Type::Array { elem, .. }
-            | Type::Chan { elem, .. } => vec![*elem],
-            Type::Map { key, value } => vec![*key, *value],
-            Type::Tuple(types) | Type::Named { args: types, .. } => types.to_vec(),
+            | Type::Chan { elem, .. } => each(*elem),
+            Type::Map { key, value } => {
+                each(*key);
+                each(*value);
+            }
+            Type::Tuple(types) | Type::Named { args: types, .. } => {
+                types.iter().copied().for_each(each);
+            }
             Type::Func {
                 params, results, ..
-            } => params.iter().chain(results.iter()).copied().collect(),
-            Type::Struct(fields) => fields.iter().map(|field| field.ty).collect(),
+            } => params.iter().chain(results.iter()).copied().for_each(each),
+            Type::Struct(fields) => fields.iter().for_each(|field| each(field.ty)),
             Type::Interface { methods, embedded } => {
-                let sigs = methods.iter().map(|method| method.sig);
-                sigs.chain(embedded.iter().copied()).collect()
+                methods.iter().for_each(|method| each(method.sig));
+                embedded.iter().copied().for_each(each);
             }
-            Type::Union(terms) => terms.iter().map(|term| term.ty).collect(),
+            Type::Union(terms) => terms.iter().for_each(|term| each(term.ty)),
+        }
+    }
+
+    /// The type with each of its parts replaced by what `part` makes of
+    /// it.
+    fn map_parts(&self, part: &mut impl FnMut(TypeId) -> TypeId) -> Type {
+        let mut list =
+            |types: &[TypeId]| -> Box<[TypeId]> { types.iter().map(|&ty| part(ty)).collect() };
+        match self {
+            Type::Param(_) | Type::Invalid | Type::Basic(_) | Type::Marker(_) => self.clone(),
+            Type::Pointer(elem) => Type::Pointer(part(*elem)),
+            Type::Unique(elem) => Type::Unique(part(*elem)),
+            Type::Shared(elem) => Type::Shared(part(*elem)),
+            Type::Weak(elem) => Type::Weak(part(*elem)),
+            Type::Option(elem) => Type::Option(part(*elem)),
+            Type::Local(elem) => Type::Local(part(*elem)),
+            Type::Slice(elem) => Type::Slice(part(*elem)),
+            Type::Array { len, elem } => Type::Array {
+                len: *len,
+                elem: part(*elem),
+            },
+            Type::Map { key, value } => {
+                let key = part(*key);
+                Type::Map {
+                    key,
+                    value: part(*value),
+                }
+            }
+            Type::Chan { dir, elem } => Type::Chan {
+                dir: *dir,
+                elem: part(*elem),
+            },
+            Type::Tuple(types) => Type::Tuple(list(types)),
+            Type::Func {
+                type_params,
+                params,
+                results,
+                variadic,
+            } => {
+                let params = list(params);
+                Type::Func {
+                    type_params: type_params.clone(),
+                    params,
+                    results: list(results),
+                    variadic: *variadic,
+                }
+            }
+            Type::Struct(fields) => {
+                let field = |field: &Field| Field {
+                    ty: part(field.ty),
+                    ..field.clone()
+                };
+                Type::Struct(fields.iter().map(field).collect())
+            }
+            Type::Interface { methods, embedded } => {
+                let methods = methods
+                    .iter()
+                    .map(|method| Method {
+                        sig: part(method.sig),
+                        ..method.clone()
+                    })
+                    .collect();
+                Type::Interface {
+                    methods,
+                    embedded: embedded.iter().map(|&ty| part(ty)).collect(),
+                }
+            }
+            Type::Union(terms) => {
+                let term = |term: &Term| Term {
+                    ty: part(term.ty),
+                    ..*term
+                };
+                Type::Union(terms.iter().map(term).collect())
+            }
+            Type::Named { id, args } => Type::Named {
+                id: *id,
+                args: list(args),
+            },
         }
     }
 }
@@ -269,16 +414,23 @@ struct Named {
     method_index: FxHashMap<(Spur, Option<Spur>), u32>,
     /// Declared with `@Extends`: it has parents.
     extends: bool,
-    /// A generic alias: with its type arguments it is what it was
-    /// declared as, and no type of its own.
-    alias: bool,
+    /// For an alias: the type that it stands for, behind the aliases
+    /// that it names in turn, written with its type parameters if it is
+    /// generic.
+    alias: Option<TypeId>,
 }
 
 #[derive(Debug, Default)]
 struct Inner {
     types: Vec<Arc<Type>>,
-    ids: FxHashMap<Arc<Type>, TypeId>,
-    /// For each type, whether a type parameter is written in it.
+    /// For each type of `types`, the type without aliases in its parts.
+    canon: Vec<u32>,
+    /// By the type without aliases, the ways it is written.
+    ids: FxHashMap<Arc<Type>, Spellings>,
+    aliases: Vec<Alias>,
+    alias_ids: FxHashMap<AliasKey, u32>,
+    /// For each type of `types`, whether a type parameter is written in
+    /// it.
     has_param: Vec<bool>,
     named: Vec<Named>,
     /// The name of each type parameter, and its constraint once known.
@@ -290,22 +442,126 @@ struct Inner {
     type_sets: FxHashMap<TypeId, TypeSet>,
 }
 
+/// A declared alias and how its type arguments are written.
+type AliasKey = (NamedId, Box<[(u32, u32)]>);
+
+/// One type as it is written without aliases, and as it is written with
+/// them in its parts.
+#[derive(Debug)]
+struct Spellings {
+    canonical: u32,
+    written: Vec<u32>,
+}
+
+/// An alias as a program names it: `A`, or `A[int]` for a generic one.
+#[derive(Debug)]
+struct Alias {
+    named: NamedId,
+    args: Box<[TypeId]>,
+    /// The type that the alias stands for, behind the aliases that it
+    /// names in turn, as it is written.
+    target: TypeId,
+}
+
 impl Inner {
+    /// The type `ty` if it was made before, as it is written.
+    fn find(&self, ty: &Type) -> Option<TypeId> {
+        let spellings = self.ids.get(ty)?;
+        let mut aliased = false;
+        ty.each_part(&mut |part| aliased |= part.written != part.canon);
+        if !aliased {
+            return Some(TypeId::plain(spellings.canonical));
+        }
+        let parts = ty.parts();
+        let same = |&&written: &&u32| {
+            let other = self.types[written as usize].parts();
+            other
+                .iter()
+                .zip(&parts)
+                .all(|(a, b)| a.written == b.written)
+        };
+        spellings.written.iter().find(same).map(|&written| TypeId {
+            canon: spellings.canonical,
+            written,
+        })
+    }
+
     fn intern(&mut self, ty: Type) -> TypeId {
-        if let Some(&id) = self.ids.get(&ty) {
+        if let Some(id) = self.find(&ty) {
             return id;
         }
-        let id = TypeId(self.types.len() as u32);
-        let has_param = matches!(ty, Type::Param(_))
-            || ty
-                .parts()
-                .iter()
-                .any(|part| self.has_param[part.0 as usize]);
+        let mut aliased = false;
+        ty.each_part(&mut |part| aliased |= part.written != part.canon);
+        let canon = match aliased {
+            true => Some(self.intern(ty.map_parts(&mut TypeId::canonical)).canon),
+            false => None,
+        };
+        let index = self.types.len() as u32;
+        let mut has_param = matches!(ty, Type::Param(_));
+        ty.each_part(&mut |part| has_param |= self.has_param[part.canon as usize]);
         self.has_param.push(has_param);
+        self.canon.push(canon.unwrap_or(index));
         let ty = Arc::new(ty);
         self.types.push(Arc::clone(&ty));
-        self.ids.insert(ty, id);
-        id
+        match canon {
+            Some(canon) => {
+                // The type without aliases was made above.
+                if let Some(spellings) = self.ids.get_mut(&ty) {
+                    spellings.written.push(index);
+                }
+                TypeId {
+                    canon,
+                    written: index,
+                }
+            }
+            None => {
+                let spellings = Spellings {
+                    canonical: index,
+                    written: Vec::new(),
+                };
+                self.ids.insert(ty, spellings);
+                TypeId::plain(index)
+            }
+        }
+    }
+
+    /// The alias `named` with the type arguments `args`, if it was made.
+    fn find_alias(&self, named: NamedId, args: &[TypeId]) -> Option<TypeId> {
+        let key = (named, args.iter().map(|arg| arg.spelled()).collect());
+        let &index = self.alias_ids.get(&key)?;
+        Some(TypeId {
+            canon: self.aliases[index as usize].target.canon,
+            written: ALIAS | index,
+        })
+    }
+
+    /// The alias `named` with the type arguments `args`, which stands
+    /// for `target`, a type that is not written as an alias.
+    fn alias(&mut self, named: NamedId, args: &[TypeId], target: TypeId) -> TypeId {
+        let key = (named, args.iter().map(|arg| arg.spelled()).collect());
+        let next = self.aliases.len() as u32;
+        let index = *self.alias_ids.entry(key).or_insert(next);
+        if index == next {
+            self.aliases.push(Alias {
+                named,
+                args: args.into(),
+                target,
+            });
+        }
+        TypeId {
+            canon: self.aliases[index as usize].target.canon,
+            written: ALIAS | index,
+        }
+    }
+
+    /// The alias that the type is written as.
+    fn alias_of(&self, id: TypeId) -> Option<&Alias> {
+        (id.written & ALIAS != 0).then(|| &self.aliases[(id.written ^ ALIAS) as usize])
+    }
+
+    /// The type as it is written behind the aliases that name it.
+    fn unalias(&self, id: TypeId) -> TypeId {
+        self.alias_of(id).map_or(id, |alias| alias.target)
     }
 }
 
@@ -382,6 +638,10 @@ pub(crate) const BASICS: [Basic; 24] = [
 pub struct Types {
     inner: RwLock<Inner>,
     error: TypeId,
+    /// The predeclared aliases `byte`, `rune` and `any`.
+    byte: TypeId,
+    rune: TypeId,
+    any: TypeId,
     /// The work of looking up members, counted for the tests of speed.
     steps: AtomicU64,
 }
@@ -395,7 +655,7 @@ impl Types {
             inner.intern(Type::Basic(basic));
         }
         // type error interface { Error() string }
-        let string = TypeId(1 + Basic::String as u32);
+        let string = TypeId::plain(1 + Basic::String as u32);
         let sig = inner.intern(Type::Func {
             type_params: Box::new([]),
             params: Box::new([]),
@@ -421,15 +681,41 @@ impl Types {
             methods: Vec::new(),
             method_index: FxHashMap::default(),
             extends: false,
-            alias: false,
+            alias: None,
         });
         let error = inner.intern(Type::Named {
             id: NamedId(0),
             args: Box::new([]),
         });
+        let empty = inner.intern(Type::Interface {
+            methods: Box::new([]),
+            embedded: Box::new([]),
+        });
+        let mut predeclared = |name: &'static str, target: TypeId| {
+            let named = NamedId(inner.named.len() as u32);
+            inner.named.push(Named {
+                name: names.get_or_intern_static(name),
+                package: None,
+                underlying: None,
+                declared_as: Some(target),
+                invalid: false,
+                params: Vec::new(),
+                methods: Vec::new(),
+                method_index: FxHashMap::default(),
+                extends: false,
+                alias: Some(target),
+            });
+            inner.alias(named, &[], target)
+        };
+        let byte = predeclared("byte", TypeId::plain(1 + Basic::Uint8 as u32));
+        let rune = predeclared("rune", TypeId::plain(1 + Basic::Int32 as u32));
+        let any = predeclared("any", empty);
         Self {
             inner: RwLock::new(inner),
             error,
+            byte,
+            rune,
+            any,
             steps: AtomicU64::new(0),
         }
     }
@@ -449,20 +735,73 @@ impl Types {
 
     pub fn intern(&self, ty: Type) -> TypeId {
         // Most types asked for exist already.
-        if let Some(id) = self.read(|inner| inner.ids.get(&ty).copied()) {
+        if let Some(id) = self.read(|inner| inner.find(&ty)) {
             return id;
         }
         self.write(|inner| inner.intern(ty))
     }
 
+    /// What the type is, behind the aliases it is written with; its parts
+    /// are as they were written.
     pub fn get(&self, id: TypeId) -> Arc<Type> {
-        self.read(|inner| Arc::clone(&inner.types[id.0 as usize]))
+        self.read(|inner| Arc::clone(&inner.types[inner.unalias(id).written as usize]))
     }
 
-    pub const INVALID: TypeId = TypeId(0);
+    pub const INVALID: TypeId = TypeId::plain(0);
 
     pub fn basic(&self, basic: Basic) -> TypeId {
-        TypeId(1 + basic as u32)
+        TypeId::plain(1 + basic as u32)
+    }
+
+    /// The alias `named` with the type arguments `args`, none unless it
+    /// is generic: the type that the alias stands for, written by the
+    /// name of the alias. `None` if the alias is not declared yet.
+    pub fn alias(&self, named: NamedId, args: &[TypeId]) -> Option<TypeId> {
+        if let Some(known) = self.read(|inner| inner.find_alias(named, args)) {
+            return Some(known);
+        }
+        let (target, params) = self.read(|inner| {
+            let named = &inner.named[named.0 as usize];
+            (named.alias, named.params.clone())
+        });
+        // A type parameter may be replaced by a type that is written as
+        // an alias.
+        let target = self.unalias(self.substitute(target?, &params, args));
+        Some(self.write(|inner| inner.alias(named, args, target)))
+    }
+
+    /// The type as it is written behind the alias that names it, and
+    /// behind the aliases that this one names.
+    pub fn unalias(&self, id: TypeId) -> TypeId {
+        self.read(|inner| inner.unalias(id))
+    }
+
+    /// What the alias that the type is written as was declared as, with
+    /// its type arguments in the place of its type parameters: this may
+    /// be written as another alias.
+    pub fn alias_target(&self, id: TypeId) -> Option<TypeId> {
+        let (declared, params, args) = self.read(|inner| {
+            let alias = inner.alias_of(id)?;
+            let named = &inner.named[alias.named.0 as usize];
+            Some((named.declared_as, named.params.clone(), alias.args.to_vec()))
+        })?;
+        Some(self.substitute(declared?, &params, &args))
+    }
+
+    /// Whether the type is written by the name of an alias that a
+    /// program declares, or by `any`: `byte` and `rune` are names of
+    /// basic types.
+    pub fn named_by_alias(&self, id: TypeId) -> bool {
+        let predeclared = [self.byte, self.rune];
+        id.written & ALIAS != 0 && predeclared.iter().all(|other| other.written != id.written)
+    }
+
+    /// The alias that the type is written as, with its type arguments.
+    pub fn alias_of(&self, id: TypeId) -> Option<(NamedId, Vec<TypeId>)> {
+        self.read(|inner| {
+            let alias = inner.alias_of(id)?;
+            Some((alias.named, alias.args.to_vec()))
+        })
     }
 
     /// The predeclared type `error`.
@@ -470,12 +809,19 @@ impl Types {
         self.error
     }
 
-    /// `interface{}`, which `any` names.
+    /// The predeclared alias `any` of `interface{}`.
     pub fn any(&self) -> TypeId {
-        self.intern(Type::Interface {
-            methods: Box::new([]),
-            embedded: Box::new([]),
-        })
+        self.any
+    }
+
+    /// The predeclared alias `byte` of `uint8`.
+    pub fn byte(&self) -> TypeId {
+        self.byte
+    }
+
+    /// The predeclared alias `rune` of `int32`.
+    pub fn rune(&self) -> TypeId {
+        self.rune
     }
 
     pub fn pointer(&self, elem: TypeId) -> TypeId {
@@ -570,7 +916,7 @@ impl Types {
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 extends: false,
-                alias: false,
+                alias: None,
             });
             NamedId(inner.named.len() as u32 - 1)
         })
@@ -581,22 +927,19 @@ impl Types {
         self.write(|inner| inner.named[named.0 as usize].declared_as = Some(declared_as));
     }
 
-    /// Says that `named` is a generic alias of `aliased`.
+    /// Says that `named` is an alias, declared as `aliased`.
     pub fn set_alias(&self, named: NamedId, aliased: TypeId) {
         self.write(|inner| {
+            let target = inner.unalias(aliased);
             let named = &mut inner.named[named.0 as usize];
-            named.alias = true;
+            named.alias = Some(target);
             named.declared_as = Some(aliased);
         });
     }
 
-    /// What the generic alias `named` stands for, with its type
-    /// parameters in it.
-    pub fn aliased(&self, named: NamedId) -> Option<TypeId> {
-        self.read(|inner| {
-            let named = &inner.named[named.0 as usize];
-            named.declared_as.filter(|_| named.alias)
-        })
+    /// Whether `named` is an alias.
+    pub fn is_alias(&self, named: NamedId) -> bool {
+        self.read(|inner| inner.named[named.0 as usize].alias.is_some())
     }
 
     /// The type that the declaration of `named` wrote, with the type
@@ -721,7 +1064,7 @@ impl Types {
     /// same place of `to`.
     /// Whether a type parameter is written in the type.
     pub fn has_param(&self, ty: TypeId) -> bool {
-        self.read(|inner| inner.has_param[ty.0 as usize])
+        self.read(|inner| inner.has_param[ty.canon as usize])
     }
 
     /// Whether the type is written with one of the type parameters
@@ -788,21 +1131,22 @@ impl Types {
         replaced
     }
 
-    /// `done` is what was replaced already: a type that is met again, as
-    /// one that stands in several places of an alias is, is not walked
-    /// again.
+    /// `done` is what was replaced already, by how it is written: a type
+    /// that is met again, as one that stands in several places of an
+    /// alias is, is not walked again.
     fn substitute_counted(
         &self,
         ty: TypeId,
         from: &[TypeId],
         to: &[TypeId],
         steps: &Cell<u64>,
-        done: &RefCell<FxHashMap<TypeId, TypeId>>,
+        done: &RefCell<FxHashMap<(u32, u32), TypeId>>,
     ) -> TypeId {
         steps.set(steps.get() + 1);
-        if let Some(&replaced) = done.borrow().get(&ty) {
+        if let Some(&replaced) = done.borrow().get(&ty.spelled()) {
             return replaced;
         }
+        let mut sub = |ty: TypeId| deep(|| self.substitute_counted(ty, from, to, steps, done));
         let node = self.get(ty);
         // A generic function becomes a plain one also where its type
         // parameters are written nowhere in it.
@@ -810,84 +1154,30 @@ impl Types {
         if !generic && !self.has_param(ty) {
             return ty;
         }
-        let sub = |ty: TypeId| deep(|| self.substitute_counted(ty, from, to, steps, done));
-        let list =
-            |types: &[TypeId]| -> Box<[TypeId]> { types.iter().map(|&ty| sub(ty)).collect() };
-        let replaced = match &*node {
-            Type::Param(_) => {
+        let replaced = match (self.alias_of(ty), &*node) {
+            // An alias stays an alias, with its type arguments replaced.
+            (Some((named, args)), _) => {
+                let args: Vec<TypeId> = args.into_iter().map(&mut sub).collect();
+                deep(|| self.alias(named, &args)).unwrap_or(ty)
+            }
+            (None, Type::Param(_)) => {
                 let at = from.iter().position(|&param| param == ty);
                 return at.and_then(|at| to.get(at).copied()).unwrap_or(ty);
             }
-            Type::Invalid | Type::Basic(_) | Type::Marker(_) => return ty,
-            Type::Pointer(elem) => Type::Pointer(sub(*elem)),
-            Type::Unique(elem) => Type::Unique(sub(*elem)),
-            Type::Shared(elem) => Type::Shared(sub(*elem)),
-            Type::Weak(elem) => Type::Weak(sub(*elem)),
-            Type::Option(elem) => Type::Option(sub(*elem)),
-            Type::Local(elem) => Type::Local(sub(*elem)),
-            Type::Slice(elem) => Type::Slice(sub(*elem)),
-            Type::Array { len, elem } => Type::Array {
-                len: *len,
-                elem: sub(*elem),
-            },
-            Type::Map { key, value } => Type::Map {
-                key: sub(*key),
-                value: sub(*value),
-            },
-            Type::Chan { dir, elem } => Type::Chan {
-                dir: *dir,
-                elem: sub(*elem),
-            },
-            Type::Tuple(types) => Type::Tuple(list(types)),
             // With its type arguments a function is generic no more.
             // A generic function keeps the type parameters that are not
             // replaced.
-            Type::Func {
-                type_params,
-                params,
-                results,
-                variadic,
-            } => Type::Func {
-                type_params: type_params
-                    .iter()
-                    .copied()
-                    .filter(|param| !from.contains(param))
-                    .collect(),
-                params: list(params),
-                results: list(results),
-                variadic: *variadic,
-            },
-            Type::Struct(fields) => {
-                let field = |field: &Field| Field {
-                    ty: sub(field.ty),
-                    ..field.clone()
-                };
-                Type::Struct(fields.iter().map(field).collect())
-            }
-            Type::Interface { methods, embedded } => {
-                let method = |method: &Method| Method {
-                    sig: sub(method.sig),
-                    ..method.clone()
-                };
-                Type::Interface {
-                    methods: methods.iter().map(method).collect(),
-                    embedded: list(embedded),
+            (None, Type::Func { .. }) => {
+                let mut replaced = node.map_parts(&mut sub);
+                if let Type::Func { type_params, .. } = &mut replaced {
+                    let kept = type_params.iter().copied();
+                    *type_params = kept.filter(|param| !from.contains(param)).collect();
                 }
+                self.intern(replaced)
             }
-            Type::Union(terms) => {
-                let term = |term: &Term| Term {
-                    ty: sub(term.ty),
-                    ..*term
-                };
-                Type::Union(terms.iter().map(term).collect())
-            }
-            Type::Named { id, args } => Type::Named {
-                id: *id,
-                args: list(args),
-            },
+            (None, node) => self.intern(node.map_parts(&mut sub)),
         };
-        let replaced = self.intern(replaced);
-        done.borrow_mut().insert(ty, replaced);
+        done.borrow_mut().insert(ty.spelled(), replaced);
         replaced
     }
 
@@ -1891,7 +2181,9 @@ impl Types {
     /// type is asked for.
     pub fn default_type(&self, id: TypeId) -> TypeId {
         match &*self.get(id) {
-            Type::Basic(basic) => self.basic(basic.default_type()),
+            Type::Basic(Basic::UntypedRune) => self.rune,
+            Type::Basic(basic) if basic.is_untyped() => self.basic(basic.default_type()),
+            // A type that has a name keeps it.
             _ => id,
         }
     }
@@ -1979,6 +2271,30 @@ impl Types {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        // A declared type or an alias by its name, with the name of its
+        // package and its type arguments.
+        let by_name = |named: NamedId, args: &[TypeId]| {
+            let (name, package) = self.read(|inner| {
+                let named = &inner.named[named.0 as usize];
+                (named.name, named.package)
+            });
+            let package = package.filter(|&package| spelling.within != Some(package));
+            let package = package.map_or(String::new(), |p| format!("{}.", names.resolve(&p)));
+            let args = if args.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", list(args))
+            };
+            format!("{package}{}{args}", names.resolve(&name))
+        };
+        // The one spelling for identical types names no alias.
+        let id = match spelling.canonical {
+            true => id.canonical(),
+            false => id,
+        };
+        if let Some((named, args)) = self.alias_of(id) {
+            return by_name(named, &args);
+        }
         match &*self.get(id) {
             Type::Invalid => "invalid type".to_owned(),
             Type::Basic(basic) => basic_name(*basic).to_owned(),
@@ -2016,7 +2332,10 @@ impl Types {
             }
             Type::Interface { methods, embedded } => {
                 if methods.is_empty() && embedded.is_empty() {
-                    return "any".to_owned();
+                    return match spelling.canonical {
+                        true => "any".to_owned(),
+                        false => "interface{}".to_owned(),
+                    };
                 }
                 if spelling.canonical {
                     let (methods, terms) = self.interface_parts(id, names, spelling);
@@ -2043,20 +2362,7 @@ impl Types {
             }
             Type::Marker(Marker::Comparable) => "comparable".to_owned(),
             Type::Marker(marker) => format!("{marker:?}"),
-            Type::Named { id: named, args } => {
-                let (name, package) = self.read(|inner| {
-                    let named = &inner.named[named.0 as usize];
-                    (named.name, named.package)
-                });
-                let package = package.filter(|&package| spelling.within != Some(package));
-                let package = package.map_or(String::new(), |p| format!("{}.", names.resolve(&p)));
-                let args = if args.is_empty() {
-                    String::new()
-                } else {
-                    format!("[{}]", list(args))
-                };
-                format!("{package}{}{args}", names.resolve(&name))
-            }
+            Type::Named { id: named, args } => by_name(*named, args),
             Type::Param(param) => {
                 let name = self.read(|inner| inner.params[param.0 as usize].0);
                 names.resolve(&name).to_owned()

@@ -228,7 +228,7 @@ impl<'a> Checker<'a> {
                 if self.unsettled(x.ty) {
                     return Operand::value(x.ty);
                 }
-                let byte = self.types.basic(Basic::Uint8);
+                let byte = self.types.byte();
                 // `append(bytes, "text"...)`.
                 let text = given.get(1).filter(|_| spread && given.len() == 2);
                 // The text may be of a type parameter whose types are
@@ -389,7 +389,7 @@ impl<'a> Checker<'a> {
                 if self.unsettled(x.ty) || self.unsettled(y.ty) {
                     return Operand::value(int);
                 }
-                let byte = self.types.basic(Basic::Uint8);
+                let byte = self.types.byte();
                 // Bytes are copied from a string too: into what a slice
                 // of bytes takes, from a type whose types are strings and
                 // slices of bytes.
@@ -486,7 +486,7 @@ impl<'a> Checker<'a> {
             },
             (Max | Min, Some(_)) => self.min_or_max(cx, builtin == Max, given),
             (New, _) => match self.var_type(cx, args[0]) {
-                Types::INVALID => Operand::UNKNOWN,
+                invalid if invalid == Types::INVALID => Operand::UNKNOWN,
                 ty => Operand::value(self.types.pointer(ty)),
             },
             (Panic, Some((at, x))) => {

@@ -40,7 +40,7 @@ impl<'a> Checker<'a> {
         // The elements are looked at when the body is walked.
         if self.memo.is_none() {
             return match self.types.underlying(literal) {
-                Types::INVALID => Operand::UNKNOWN,
+                invalid if invalid == Types::INVALID => Operand::UNKNOWN,
                 _ => Operand::value(literal),
             };
         }
@@ -90,7 +90,7 @@ impl<'a> Checker<'a> {
         }
         // Nothing more is said about a type that is in error.
         match self.types.underlying(literal) {
-            Types::INVALID => Operand::UNKNOWN,
+            invalid if invalid == Types::INVALID => Operand::UNKNOWN,
             _ => Operand::value(literal),
         }
     }

@@ -103,13 +103,18 @@ impl<'a> Checker<'a> {
         }
         if has_value && !untyped {
             match x.ty {
-                Types::INVALID => out += " with invalid type",
+                invalid if invalid == Types::INVALID => out += " with invalid type",
                 ty => {
-                    // A declared type is said with what it is.
+                    // A declared type and an alias are said with what
+                    // they are.
                     let mut what = String::new();
-                    if let Type::Named { .. } = &*self.types.get(ty) {
+                    let named = matches!(&*self.types.get(ty), Type::Named { .. });
+                    if named || self.types.named_by_alias(ty) && !self.is_param(ty) {
                         what = match self.composite_kind(ty) {
-                            "" => self.type_string(self.types.underlying(ty)),
+                            "" => {
+                                let under = self.types.underlying(ty);
+                                self.type_string(self.types.unalias(under))
+                            }
                             kind => kind.to_owned(),
                         };
                         what.push(' ');
@@ -693,7 +698,8 @@ impl<'a> Checker<'a> {
                 self.called_or_received = true;
                 let at = self.span(cx, inner);
                 return match self.chan_elem(cx, (inner, at), &x, true) {
-                    Some(Types::INVALID) | None => Operand::UNKNOWN,
+                    None => Operand::UNKNOWN,
+                    Some(elem) if elem == Types::INVALID => Operand::UNKNOWN,
                     Some(elem) => Operand {
                         mode: Mode::CommaOk,
                         ty: elem,

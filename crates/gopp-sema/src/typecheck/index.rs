@@ -131,7 +131,7 @@ impl<'a> Checker<'a> {
                 return Operand::value(instance);
             }
             Type::Basic(Basic::String | Basic::UntypedString) => {
-                let byte = self.types.basic(Basic::Uint8);
+                let byte = self.types.byte();
                 (self.constant_length(&x), Operand::value(byte))
             }
             // An element of a slice is a variable, one of an array if the
@@ -176,7 +176,7 @@ impl<'a> Checker<'a> {
         };
         self.assign(cx, index, Some(key), "map index");
         match value {
-            Types::INVALID => Operand::UNKNOWN,
+            invalid if invalid == Types::INVALID => Operand::UNKNOWN,
             ty => Operand {
                 mode: Mode::MapIndex,
                 ty,
@@ -190,7 +190,7 @@ impl<'a> Checker<'a> {
     /// the element.
     fn indexed_param(&self, x: &Operand) -> Option<(Option<TypeId>, Option<u64>, Operand)> {
         let types = self.types.specific_types(x.ty)?;
-        let byte = self.types.basic(Basic::Uint8);
+        let byte = self.types.byte();
         let mut variable = true;
         let mut shared: Option<(Option<TypeId>, Option<u64>, TypeId)> = None;
         for (_, under) in types {
@@ -244,10 +244,7 @@ impl<'a> Checker<'a> {
     /// all the types that it may be share, a string counting as a slice
     /// of bytes. With a string among them, that is the string type.
     fn sliced_param(&mut self, cx: &Cx<'a>, of: ExprId, x: &Operand) -> Option<TypeId> {
-        let (string, byte) = (
-            self.types.basic(Basic::String),
-            self.types.basic(Basic::Uint8),
-        );
+        let (string, byte) = (self.types.basic(Basic::String), self.types.byte());
         let bytes = self.types.slice(byte);
         let cause = match self.types.specific_types(x.ty) {
             None => Some(format!("no specific type in {}", self.type_string(x.ty))),

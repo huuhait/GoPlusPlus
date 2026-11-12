@@ -439,7 +439,7 @@ impl<'a> Checker<'a> {
         if lhs.len() == rhs.len() && !is_call {
             for (&place, &value) in lhs.iter().zip(rhs) {
                 match self.lhs_var(cx, place) {
-                    Some(Types::INVALID) => {
+                    Some(invalid) if invalid == Types::INVALID => {
                         self.operand(cx, value);
                     }
                     None => {
