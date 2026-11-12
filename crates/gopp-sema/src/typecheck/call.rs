@@ -130,11 +130,29 @@ impl<'a> Checker<'a> {
         }
         let is_statement = match &cx.tree.exprs[inner].kind {
             ExprKind::Call { fun, .. } => {
-                // A conversion only computes. So do some built-ins, but
-                // whether their arguments are right is not checked yet,
-                // and a call that is in error is not also unused.
                 let callee = self.memo.as_ref().and_then(|memo| memo.get(fun));
-                !matches!(callee.map(|callee| &callee.mode), Some(Mode::Type))
+                match callee.map(|callee| &callee.mode) {
+                    // A conversion, and a built-in that only computes.
+                    // What the functions of package unsafe ask of their
+                    // arguments is not checked yet, and a call that is in
+                    // error is not also unused.
+                    Some(Mode::Type) => false,
+                    Some(Mode::Unsafe(_)) => true,
+                    Some(Mode::Builtin(builtin)) => !matches!(
+                        builtin,
+                        Predeclared::Append
+                            | Predeclared::Cap
+                            | Predeclared::ComplexFunc
+                            | Predeclared::Imag
+                            | Predeclared::Len
+                            | Predeclared::Make
+                            | Predeclared::Max
+                            | Predeclared::Min
+                            | Predeclared::New
+                            | Predeclared::Real
+                    ),
+                    _ => true,
+                }
             }
             ExprKind::Unary {
                 op: UnaryOp::Recv, ..

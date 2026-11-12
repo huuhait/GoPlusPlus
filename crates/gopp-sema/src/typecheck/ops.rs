@@ -132,7 +132,7 @@ impl<'a> Checker<'a> {
         ty == Types::INVALID || self.types.has_param(ty)
     }
 
-    fn is_numeric(&self, ty: TypeId) -> bool {
+    pub(super) fn is_numeric(&self, ty: TypeId) -> bool {
         self.basic_of(ty).is_some_and(|basic| {
             !matches!(
                 basic,
@@ -149,7 +149,7 @@ impl<'a> Checker<'a> {
         matches!(self.basic_of(ty), Some(Basic::Bool | Basic::UntypedBool))
     }
 
-    fn is_string(&self, ty: TypeId) -> bool {
+    pub(super) fn is_string(&self, ty: TypeId) -> bool {
         matches!(
             self.basic_of(ty),
             Some(Basic::String | Basic::UntypedString)
@@ -648,7 +648,7 @@ impl<'a> Checker<'a> {
     }
 
     /// An untyped operand takes the type of the other, where that can be.
-    fn match_types(
+    pub(super) fn match_types(
         &mut self,
         cx: &Cx<'a>,
         (left, x): (ExprId, &mut Operand),

@@ -31,7 +31,12 @@ impl<'a> Checker<'a> {
 
     /// The index `expr` into what has `length` elements, if that is
     /// known: its value if it is a constant.
-    fn index_value(&mut self, cx: &Cx<'a>, expr: ExprId, length: Option<u64>) -> Option<u64> {
+    pub(super) fn index_value(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        length: Option<u64>,
+    ) -> Option<u64> {
         let mut x = self.value(cx, expr);
         if !self.valid_index(cx, expr, &mut x, "index") {
             return None;

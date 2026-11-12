@@ -109,7 +109,10 @@ impl Writer<'_> {
             }
             ExprKind::ArrayType { len, elem } => {
                 out.push('[');
-                self.optional(out, *len);
+                match len {
+                    Some(len) => self.expr(out, *len),
+                    None => out.push_str("..."),
+                }
                 out.push(']');
                 self.expr(out, *elem);
             }

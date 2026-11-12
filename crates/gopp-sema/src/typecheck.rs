@@ -7,6 +7,7 @@
 //! left invalid, which fits everywhere and is no error.
 
 mod assign;
+mod builtins;
 mod call;
 mod conversion;
 mod index;
@@ -1902,8 +1903,8 @@ impl<'a> Checker<'a> {
             Mode::Type => self.conversion(cx, expr, callee.ty, args),
             Mode::Builtin(_) | Mode::Unsafe(_) => {
                 let called = match callee.mode {
-                    Mode::Builtin(builtin) => self.builtin(cx, builtin, args, spread),
-                    Mode::Unsafe(name) => self.unsafe_call(cx, name, args),
+                    Mode::Builtin(builtin) => self.builtin(cx, expr, fun, builtin, args, spread),
+                    Mode::Unsafe(name) => self.unsafe_call(cx, expr, name, args, spread),
                     _ => Operand::UNKNOWN,
                 };
                 self.called_or_received |= !matches!(called.mode, Mode::Const(_) | Mode::Unknown);
@@ -2069,142 +2070,25 @@ impl<'a> Checker<'a> {
         Some(self.types.substitute(sig, params, &bound))
     }
 
-    /// The type of `expr` as an argument that is a type: of `make`, `new`.
-    fn type_argument(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<TypeId> {
-        let operand = self.operand(cx, expr);
-        matches!(operand.mode, Mode::Type).then_some(operand.ty)
-    }
-
-    fn builtin(
+    /// A function of package unsafe, which takes a value of any type.
+    fn unsafe_call(
         &mut self,
         cx: &Cx<'a>,
-        builtin: Predeclared,
+        call: ExprId,
+        name: Spur,
         args: &[ExprId],
         spread: bool,
     ) -> Operand {
-        let no_value = Operand {
-            mode: Mode::NoValue,
-            ty: Types::INVALID,
+        let text = self.names.resolve(&name);
+        let count = match text {
+            "Add" | "Slice" | "String" => 2,
+            _ => 1,
         };
-        let Some(&first) = args.first() else {
-            return match builtin {
-                Predeclared::Recover => Operand::value(self.types.any()),
-                Predeclared::Print | Predeclared::Println => no_value,
-                _ => Operand::UNKNOWN,
-            };
-        };
-        match builtin {
-            Predeclared::New => match self.type_argument(cx, first) {
-                Some(ty) => Operand::value(self.types.pointer(ty)),
-                None => Operand::UNKNOWN,
-            },
-            Predeclared::Make => {
-                // A size is an `int` if it has no type.
-                let int = self.types.basic(Basic::Int);
-                for &size in &args[1..] {
-                    self.operand(cx, size);
-                    self.convert(cx, size, int);
-                }
-                match self.type_argument(cx, first) {
-                    Some(ty) => Operand::value(ty),
-                    None => Operand::UNKNOWN,
-                }
-            }
-            Predeclared::Delete
-            | Predeclared::Clear
-            | Predeclared::Close
-            | Predeclared::Panic
-            | Predeclared::Print
-            | Predeclared::Println => no_value,
-            Predeclared::CopyFunc => self.value_of(Basic::Int),
-            Predeclared::Len | Predeclared::Cap => {
-                let outer = std::mem::replace(&mut self.called_or_received, false);
-                let x = self.operand(cx, first);
-                let is_static = !std::mem::replace(&mut self.called_or_received, outer);
-                if self.types.underlying(x.ty) == Types::INVALID {
-                    return Operand::UNKNOWN;
-                }
-                match &x.mode {
-                    // The length of a constant string is a constant of
-                    // type int.
-                    Mode::Const(Value::Str(text)) if builtin == Predeclared::Len => {
-                        let len = Value::Int64(text.bytes().len() as i64);
-                        Operand::constant(self.types.basic(Basic::Int), len)
-                    }
-                    Mode::Const(_) => self.value_of(Basic::Int),
-                    // The length of an array is constant if nothing is
-                    // called or received to get the array.
-                    _ if x.is_value() && is_static => {
-                        let array = match &*self.types.get(self.types.underlying(x.ty)) {
-                            Type::Pointer(elem) => self.types.underlying(*elem),
-                            _ => self.types.underlying(x.ty),
-                        };
-                        match &*self.types.get(array) {
-                            Type::Array { len, .. } => {
-                                let len = Value::Int64(*len as i64);
-                                Operand::constant(self.types.basic(Basic::Int), len)
-                            }
-                            _ => self.value_of(Basic::Int),
-                        }
-                    }
-                    _ if x.is_value() => self.value_of(Basic::Int),
-                    _ => Operand::UNKNOWN,
-                }
-            }
-            Predeclared::Append => {
-                let mut x = self.operand(cx, first);
-                // `append(f())` appends the other results of `f` to its
-                // first one.
-                if let (Type::Tuple(results), [_]) = (&*self.types.get(x.ty), args) {
-                    x = results
-                        .first()
-                        .map_or(Operand::UNKNOWN, |&ty| Operand::value(ty));
-                }
-                // What is appended has the type of the elements.
-                if let Type::Slice(elem) = &*self.types.get(self.types.underlying(x.ty)) {
-                    for &arg in &args[1..] {
-                        self.operand(cx, arg);
-                        // A slice or a string passed with `...` is no
-                        // element.
-                        if !spread {
-                            self.convert(cx, arg, *elem);
-                        }
-                    }
-                }
-                match x.is_value() && !self.is_untyped(x.ty) {
-                    true => Operand::value(x.ty),
-                    false => Operand::UNKNOWN,
-                }
-            }
-            Predeclared::Real | Predeclared::Imag => {
-                let x = self.operand(cx, first);
-                let part = match self.basic_of(x.ty) {
-                    Some(Basic::Complex64) => Basic::Float32,
-                    Some(Basic::Complex128) => Basic::Float64,
-                    Some(basic) if basic.is_untyped() => Basic::UntypedFloat,
-                    _ => return Operand::UNKNOWN,
-                };
-                match &x.mode {
-                    Mode::Const(value) if part == Basic::UntypedFloat => {
-                        let complex = value.to_complex();
-                        let value = match builtin {
-                            Predeclared::Real => complex.real(),
-                            _ => complex.imag(),
-                        };
-                        self.fitted(self.types.basic(part), value)
-                    }
-                    Mode::Const(_) => Operand::UNKNOWN,
-                    _ if x.is_value() => self.value_of(part),
-                    _ => Operand::UNKNOWN,
-                }
-            }
-            _ => Operand::UNKNOWN,
-        }
-    }
-
-    /// A function of package unsafe, which takes a value of any type.
-    fn unsafe_call(&mut self, cx: &Cx<'a>, name: Spur, args: &[ExprId]) -> Operand {
-        let Some(&first) = args.first() else {
+        // `Offsetof` takes a selector, which is looked at as it is written.
+        let as_written = text == "Offsetof";
+        let checked =
+            self.builtin_arguments(cx, call, text, (count, false), args, (spread, as_written));
+        let (Some(_), Some(&first)) = (checked, args.first()) else {
             return Operand::UNKNOWN;
         };
         let pointer = |this: &Self| {

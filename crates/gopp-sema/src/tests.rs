@@ -1601,6 +1601,167 @@ fn calls_and_indexes_are_checked_as_go_checks_them() {
     }
 }
 
+#[test]
+fn built_in_functions_are_checked_as_go_checks_them() {
+    let declared = "var (\n\ta int\n\tb string\n\ts []int\n\tbs []byte\n\tarr [4]int\n\t\
+                    m map[string]int\n\tc chan int\n\tr <-chan int\n\tf float64\n\tz complex128\n)\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "_ = len()",
+            &["15:10: invalid operation: not enough arguments for len() (expected 1, found 0)"],
+        ),
+        (
+            "_ = len(s, s)",
+            &["15:14: invalid operation: too many arguments for len(s, s) (expected 1, found 2)"],
+        ),
+        (
+            "_ = len(s...)",
+            &["15:11: invalid operation: invalid use of ... with built-in len"],
+        ),
+        (
+            "_ = len(a)",
+            &["15:10: invalid argument: a (variable of type int) for built-in len"],
+        ),
+        (
+            "_ = cap(m)",
+            &["15:10: invalid argument: m (variable of type map[string]int) for built-in cap"],
+        ),
+        (
+            "_ = append(a, 1)",
+            &["15:13: invalid append: argument must be a slice; have a (variable of type int)"],
+        ),
+        (
+            "_ = append(s, b)",
+            &["15:16: cannot use b (variable of type string) as int value in argument to append"],
+        ),
+        (
+            "clear(a)",
+            &[
+                "15:8: invalid argument: cannot clear a (variable of type int): argument must be (or \
+               constrained by) map or slice",
+            ],
+        ),
+        (
+            "close(a)",
+            &["15:8: invalid operation: cannot close non-channel a (variable of type int)"],
+        ),
+        (
+            "close(r)",
+            &[
+                "15:8: invalid operation: cannot close receive-only channel r (variable of type \
+               <-chan int)",
+            ],
+        ),
+        (
+            "copy(s, b)",
+            &[
+                "15:7: invalid copy: arguments s (variable of type []int) and b (variable of type \
+               string) have different element types int and uint8",
+            ],
+        ),
+        (
+            "copy(a, s)",
+            &["15:7: invalid copy: argument must be a slice; have a (variable of type int)"],
+        ),
+        (
+            "delete(s, 1)",
+            &["15:9: invalid argument: s (variable of type []int) is not a map"],
+        ),
+        (
+            "delete(m, 1)",
+            &["15:12: cannot use 1 (untyped int constant) as string value in argument to delete"],
+        ),
+        (
+            "_ = make(int)",
+            &["15:11: invalid argument: cannot make int: type must be slice, map, or channel"],
+        ),
+        (
+            "_ = make([]int)",
+            &["15:6: invalid operation: make([]int) expects 2 or 3 arguments; found 1"],
+        ),
+        (
+            "_ = make([]int, -1)",
+            &["15:18: invalid argument: index -1 (constant of type int) must not be negative"],
+        ),
+        (
+            "_ = make([]int, 3, 2)",
+            &["15:18: invalid argument: length and capacity swapped"],
+        ),
+        ("_ = new(a)", &["15:10: a is not a type"]),
+        (
+            "_ = min(a, f)",
+            &[
+                "15:13: invalid argument: mismatched types int (previous argument) and float64 \
+               (type of f)",
+            ],
+        ),
+        (
+            "_ = max(a, true)",
+            &["15:13: invalid argument: true (untyped bool constant) cannot be ordered"],
+        ),
+        (
+            "_ = complex(a, a)",
+            &["15:14: invalid argument: arguments have type int, expected floating-point"],
+        ),
+        (
+            "_ = complex(f, float32(1))",
+            &[
+                "15:14: invalid operation: complex(f, float32(1)) (mismatched types float64 and \
+               float32)",
+            ],
+        ),
+        (
+            "_ = real(f)",
+            &["15:11: invalid argument: argument has type float64, expected complex type"],
+        ),
+        (
+            "x := panic(0)\n\t_ = x",
+            &["15:7: panic(0) (no value) used as value"],
+        ),
+        ("len(s)", &["15:2: len(s) (value of type int) is not used"]),
+        (
+            "println(nil)",
+            &["15:10: use of untyped nil in argument to built-in println"],
+        ),
+        // What is right next to each of them.
+        (
+            "_ = len(s) + len(b) + len(arr) + len(m) + len(c) + cap(s) + cap(arr) + cap(c)",
+            &[],
+        ),
+        (
+            "s = append(s, 1, 2)\n\ts = append(s, s...)\n\tbs = append(bs, b...)\n\t\
+             _ = copy(s, s) + copy(bs, b)",
+            &[],
+        ),
+        (
+            "clear(m)\n\tclear(s)\n\tclose(c)\n\tdelete(m, b)\n\tpanic(b)\n\tprint(a, b)",
+            &[],
+        ),
+        (
+            "_, _, _ = make([]int, 2, 3), make(map[string]int), make(chan int, a)\n\t_ = new(int)",
+            &[],
+        ),
+        (
+            "const k = min(1, 2.5) + max(3, 4)\n\t_ = min(a, 2) + max(a)\n\t_ = min(b, \"x\")",
+            &[],
+        ),
+        (
+            "_ = complex(f, 1) + complex(1, 2) + z\n\t_ = real(z) + imag(z) + f\n\t\
+             const i = real(2i) + imag(3)",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2219,7 +2380,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1224;
+const EXPECTED_ERRORS_REPORTED: usize = 1430;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
