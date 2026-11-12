@@ -420,6 +420,13 @@ dependencies = [
 [[package]]
 name = "gopp-gir"
 version = "0.1.0"
+dependencies = [
+ "gopp-target",
+ "la-arena",
+ "rustc-hash",
+ "smallvec",
+ "thiserror",
+]
 
 [[package]]
 name = "gopp-interp"

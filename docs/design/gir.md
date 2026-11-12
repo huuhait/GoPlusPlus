@@ -289,9 +289,10 @@ declare fn write(_1: i32, _2: *u8, _3: u64) -> i64 [c, external, nounwind]
 fn main.main() -> () [go, external] {
   let _0: ()
   let _1: string
+  let _2: i64
   bb0:
     _1 = const str#0 "hello\0A"  ; hello.gopp:7:2
-    _2 = call const fn @write(const 1: i32, copy _1.0, copy _1.1) -> [return: bb1, unwind: unreachable]
+    _2 = call const fn @write(const 1: i32, copy _1.0, copy _1.1) -> [return: bb1, unwind: unreachable]  ; hello.gopp:7:2
   bb1:
     return  ; hello.gopp:8:1
 }

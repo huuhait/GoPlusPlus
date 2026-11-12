@@ -7,3 +7,10 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+gopp-target = { path = "../gopp-target" }
+la-arena.workspace = true
+rustc-hash.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
