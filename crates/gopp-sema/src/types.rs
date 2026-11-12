@@ -414,6 +414,11 @@ struct Named {
     method_index: FxHashMap<(Spur, Option<Spur>), u32>,
     /// Declared with `@Extends`: it has parents.
     extends: bool,
+    /// Declared with `@Pinned`: a value stays where it is and is not
+    /// copied.
+    pinned: bool,
+    /// Has a `drop` method, which ends a value of the type.
+    drops: bool,
     /// For an alias: the type that it stands for, behind the aliases
     /// that it names in turn, written with its type parameters if it is
     /// generic.
@@ -440,6 +445,9 @@ struct Inner {
     instances: FxHashMap<TypeId, TypeId>,
     /// The type set of each interface type that was asked for it.
     type_sets: FxHashMap<TypeId, TypeSet>,
+    /// How a value of each type that was asked for it is copied; with
+    /// `true`, whether it holds what is ended with it.
+    categories: FxHashMap<(TypeId, bool), Category>,
 }
 
 /// A declared alias and how its type arguments are written.
@@ -650,6 +658,8 @@ pub struct Types {
     byte: TypeId,
     rune: TypeId,
     any: TypeId,
+    /// The name of the copy method.
+    clone_name: Spur,
     /// The work of looking up members, counted for the tests of speed.
     steps: AtomicU64,
 }
@@ -689,6 +699,8 @@ impl Types {
             methods: Vec::new(),
             method_index: FxHashMap::default(),
             extends: false,
+            pinned: false,
+            drops: false,
             alias: None,
         });
         let error = inner.intern(Type::Named {
@@ -711,6 +723,8 @@ impl Types {
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 extends: false,
+                pinned: false,
+                drops: false,
                 alias: Some(target),
             });
             inner.alias(named, &[], target)
@@ -724,6 +738,7 @@ impl Types {
             byte,
             rune,
             any,
+            clone_name: names.get_or_intern_static("Clone"),
             steps: AtomicU64::new(0),
         }
     }
@@ -924,6 +939,8 @@ impl Types {
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 extends: false,
+                pinned: false,
+                drops: false,
                 alias: None,
             });
             NamedId(inner.named.len() as u32 - 1)
@@ -1006,6 +1023,16 @@ impl Types {
     /// Says that `named` is declared with `@Extends`.
     pub fn set_extends(&self, named: NamedId) {
         self.write(|inner| inner.named[named.0 as usize].extends = true);
+    }
+
+    /// Says that `named` is declared with `@Pinned`.
+    pub fn set_pinned(&self, named: NamedId) {
+        self.write(|inner| inner.named[named.0 as usize].pinned = true);
+    }
+
+    /// Says that `named` has a `drop` method.
+    pub fn set_drops(&self, named: NamedId) {
+        self.write(|inner| inner.named[named.0 as usize].drops = true);
     }
 
     /// Whether the type is a declared type with parents: it also has
@@ -2461,10 +2488,12 @@ fn basic_name(basic: Basic) -> &'static str {
     }
 }
 
+mod category;
 mod methodset;
 #[cfg(test)]
 mod tests;
 mod typeset;
 
+pub use category::{Category, CopyRule, NotCopied};
 pub use methodset::MethodSet;
 pub use typeset::{NoCommon, TypeSet};

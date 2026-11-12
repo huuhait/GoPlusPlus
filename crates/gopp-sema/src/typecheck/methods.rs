@@ -86,6 +86,17 @@ impl<'a> Checker<'a> {
                 }
                 false => Types::INVALID,
             };
+            // The method that ends a value: `func (t *T) drop()` (OWN-R7).
+            if self.own_rules(&cx) && self.names.resolve(&name.name) == "drop" {
+                self.types.set_drops(named);
+                let plain = matches!(&*self.types.get(sig), Type::Func { type_params, params, results, .. }
+                    if type_params.is_empty() && params.is_empty() && results.is_empty());
+                if with_signatures && !(plain && pointer_receiver) {
+                    let message = "invalid drop method: it has a pointer receiver, no parameters \
+                                   and no results";
+                    self.error(Code::OwnDropSignature, name.span, message.to_owned());
+                }
+            }
             let method = Method {
                 name: name.name,
                 package,

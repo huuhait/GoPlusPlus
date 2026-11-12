@@ -5445,6 +5445,357 @@ type Self[P any] = *Self[P]
     );
 }
 
+/// The category of each variable of a package, by its name.
+fn categories(text: &str) -> Vec<String> {
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let types = loader.types.get().unwrap();
+    let variables = checked.package.objects.iter();
+    variables
+        .filter(|object| matches!(object.kind, ObjKind::Var))
+        .map(|object| {
+            let name = names.resolve(&object.name);
+            let owned = match types.holds_owned(object.ty) {
+                true => ", owned",
+                false => "",
+            };
+            let copy = types.copy_rule(object.ty);
+            let copy = copy.map_or(String::new(), |rule| format!(", {rule:?}"));
+            format!("{name}: {:?}{copy}{owned}", types.category(object.ty))
+        })
+        .collect()
+}
+
+// rule: OWN-C1, OWN-C2, OWN-C3, OWN-C4, OWN-R7
+#[test]
+fn a_type_is_copied_by_its_bytes_by_its_own_rule_or_not_at_all() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Handle struct{ fd int }
+
+func (h *Handle) drop()        {}
+func (h Handle) Clone() Handle { return Handle{fd: h.fd} }
+
+type Other struct{ fd int }
+
+func (o *Other) drop()         {}
+func (o *Other) Clone() *Other { return o }
+
+@Pinned
+type Mutex struct{ state int }
+
+type Point struct{ X, Y int }
+type Doc struct{ Title string }
+type Node struct {
+	next *Node
+	kids []Node
+}
+type Tree struct {
+	kids  []Tree
+	files map[string]File
+}
+type Box[T any] struct{ v T }
+type Reader interface{ Read() int }
+type Bytes = []byte
+
+var (
+	b     bool
+	n     int
+	f64   float64
+	p     *File
+	arr   [3]Point
+	pt    Point
+	opt   Option[*File]
+	s     string
+	doc   Doc
+	ints  []int
+	m     map[string]int
+	u     Unique[Doc]
+	sh    Shared[File]
+	w     Weak[File]
+	ch    chan File
+	fn    func(File)
+	r     Reader
+	e     error
+	a     any
+	os    Option[string]
+	node  Node
+	bytes Bytes
+	bi    Box[int]
+	bs    Box[string]
+	file  File
+	h     Handle
+	other Other
+	mu    Mutex
+	files []File
+	fm    map[int]File
+	uf    Unique[File]
+	of    Option[File]
+	af    [2]File
+	sf    struct{ f File }
+	bf    Box[File]
+	tree  Tree
+)
+";
+    let expected = [
+        "b: Trivial, Bytes",
+        "n: Trivial, Bytes",
+        "f64: Trivial, Bytes",
+        "p: Trivial, Bytes",
+        "arr: Trivial, Bytes",
+        "pt: Trivial, Bytes",
+        "opt: Trivial, Bytes",
+        "s: Copyable, SameBytes, owned",
+        "doc: Copyable, Parts, owned",
+        "ints: Copyable, Elements, owned",
+        "m: Copyable, Elements, owned",
+        "u: Copyable, Pointee, owned",
+        "sh: Copyable, Handle, owned",
+        "w: Copyable, Handle, owned",
+        "ch: Copyable, Handle, owned",
+        "fn: Copyable, Handle, owned",
+        "r: Copyable, Boxed, owned",
+        "e: Copyable, Boxed, owned",
+        "a: Copyable, Boxed, owned",
+        "os: Copyable, Parts, owned",
+        "node: Copyable, Parts, owned",
+        "bytes: Copyable, Elements, owned",
+        "bi: Trivial, Bytes",
+        "bs: Copyable, Parts, owned",
+        "file: NoCopy, owned",
+        "h: Copyable, Method, owned",
+        "other: NoCopy, owned",
+        "mu: NoCopy",
+        "files: NoCopy, owned",
+        "fm: NoCopy, owned",
+        "uf: NoCopy, owned",
+        "of: NoCopy, owned",
+        "af: NoCopy, owned",
+        "sf: NoCopy, owned",
+        "bf: NoCopy, owned",
+        "tree: NoCopy, owned",
+    ];
+    assert_eq!(categories(text), expected);
+}
+
+#[test]
+fn types_that_hold_each_other_are_copied_alike() {
+    // `A`, `B` and `C` hold each other through slices and a map, and one
+    // of them holds a file; `Plain` holds itself and nothing else.
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type A struct{ bs []B }
+type B struct {
+	cs map[string]C
+	n  int
+}
+type C struct {
+	as []A
+	f  Unique[File]
+}
+type Plain struct{ more []Plain }
+type Outer struct {
+	a A
+	p Plain
+}
+
+var (
+	b     B
+	a     A
+	c     C
+	plain Plain
+	outer Outer
+	as    []A
+)
+";
+    let expected = [
+        "b: NoCopy, owned",
+        "a: NoCopy, owned",
+        "c: NoCopy, owned",
+        "plain: Copyable, Parts, owned",
+        "outer: NoCopy, owned",
+        "as: NoCopy, owned",
+    ];
+    assert_eq!(categories(text), expected);
+}
+
+#[test]
+fn the_steps_of_categories_grow_with_the_types_not_faster() {
+    let steps = |text: String| {
+        let names = ThreadedRodeo::new();
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &names);
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        let types = loader.types.get().unwrap();
+        let before = types.steps();
+        for object in &checked.package.objects {
+            types.category(object.ty);
+        }
+        types.steps() - before
+    };
+    let declared = |count: usize, first: &str, next: &dyn Fn(usize) -> String| {
+        let all: String = (1..count).map(next).collect();
+        format!("package p\n{first}\n{all}")
+    };
+    // Each type holds the one before it, once and twice.
+    let chain = |count: usize| {
+        declared(count, "type T0 struct{ s string }", &|i| {
+            format!(
+                "type T{i} struct {{ t T{}; n int }}\nvar v{i} T{i}\n",
+                i - 1
+            )
+        })
+    };
+    let diamonds = |count: usize| {
+        declared(count, "type T0 struct{ s string }", &|i| {
+            format!(
+                "type T{i} struct {{ a, b T{}; c []T{} }}\nvar v{i} T{i}\n",
+                i - 1,
+                i - 1
+            )
+        })
+    };
+    // One type with many fields.
+    let wide = |count: usize| {
+        let types: String = (0..count)
+            .map(|i| format!("type F{i} struct{{ n int }}\n"))
+            .collect();
+        let fields: String = (0..count).map(|i| format!("f{i} F{i}; ")).collect();
+        format!("package p\n{types}type W struct {{ {fields} }}\nvar w W\n")
+    };
+    // Each type holds the next one through a slice, and the last the
+    // first.
+    let ring = |count: usize| {
+        declared(
+            count,
+            &format!("type T0 struct{{ next []T{} }}", count - 1),
+            &|i| format!("type T{i} struct {{ next []T{} }}\nvar v{i} T{i}\n", i - 1),
+        )
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
+    linear::assert_near_linear(&sizes, |n| steps(diamonds(n)));
+    linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+    linear::assert_near_linear(&sizes, |n| steps(ring(n)));
+}
+
+// rule: OWN-C5, OWN-R7, GEN-1, GEN-2
+#[test]
+fn a_type_argument_is_copied_as_the_constraint_asks() {
+    let names = ThreadedRodeo::new();
+    let lib = "package lib
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Count int
+
+func (c *Count) drop() {}
+
+func Dup[T ~int](x T) (T, T)      { return x, x }
+func Both[T Copy](x T) (T, T)     { return x, x }
+func Again[T Clone](x T) (T, T)   { return x, x }
+";
+    let loader = with_packages(&names, &[("lib", lib)]);
+    let text = "package p
+
+import \"lib\"
+
+type Handle struct{ fd int }
+
+func (h *Handle) drop()        {}
+func (h Handle) Clone() Handle { return Handle{fd: h.fd} }
+
+@Pinned
+type Mutex struct{ state int }
+
+type N int
+
+func (n *N) drop() {}
+
+type M int
+type Doc struct{ Title string }
+type Point struct{ X, Y int }
+type Bad struct{ x int }
+
+func (b Bad) drop() {}
+
+type Pair[T Clone] struct{ a, b T }
+
+func text[T ~string | ~int](x T) {}
+func exact[T N | int](x T)       {}
+func free[T any](x T)            {}
+func plain[U any](u U)           { lib.Both(u) }
+func listed[U ~int](u U)         { lib.Both(u); lib.Dup(u) }
+func copied[U Clone](u U)        { lib.Again(u); lib.Both(u) }
+func mixed[U interface{ Clone; ~int | ~string }](u U) { lib.Again(u) }
+
+func use(f lib.File, h Handle, m Mutex, n N, d Doc, p Point, s []lib.File, k M, c lib.Count) {
+	lib.Dup(k)
+	lib.Both(p)
+	lib.Both(&f)
+	lib.Again(d)
+	lib.Again(h)
+	lib.Again([]Doc{})
+	text(\"x\")
+	exact(n)
+	free(f)
+	var _ Pair[Doc]
+
+	lib.Dup(n)
+	lib.Dup(c)
+	lib.Both(d)
+	lib.Both(h)
+	lib.Both([]int{})
+	lib.Again(f)
+	lib.Again(m)
+	lib.Again(s)
+	text(n)
+	var _ Pair[lib.File]
+	h.drop()
+	_ = d.Clone()
+	_ = h.Clone()
+}
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:22:14: invalid drop method: it has a pointer receiver, no parameters and no results",
+        "a.gopp:29:36: U does not satisfy Copy (U is not constrained by Copy)",
+        "a.gopp:31:50: U does not satisfy Copy (U is not constrained by Copy)",
+        "a.gopp:46:2: N does not satisfy Copy, which the type set of T (~int) implies: N has a drop \
+         method",
+        "a.gopp:47:2: lib.Count does not satisfy Copy, which the type set of T (~int) implies: \
+         lib.Count has a drop method",
+        "a.gopp:48:2: Doc does not satisfy Copy (a copy of string is more than its bytes)",
+        "a.gopp:49:2: Handle does not satisfy Copy (Handle has a drop method)",
+        "a.gopp:50:2: []int does not satisfy Copy (a copy of []int is more than its bytes)",
+        "a.gopp:51:2: lib.File does not satisfy Clone (lib.File has a drop method and no Clone() \
+         lib.File)",
+        "a.gopp:52:2: Mutex does not satisfy Clone (Mutex is @Pinned)",
+        "a.gopp:53:2: []lib.File does not satisfy Clone (lib.File has a drop method and no Clone() \
+         lib.File)",
+        "a.gopp:54:2: N does not satisfy Clone, which the type set of T (~string | ~int) implies: N \
+         has a drop method and no Clone() N",
+        "a.gopp:55:13: lib.File does not satisfy Clone (lib.File has a drop method and no Clone() \
+         lib.File)",
+        "a.gopp:56:4: cannot use h.drop: drop runs when a value ends, and is not called",
+        // Only a type that declares the copy method has it.
+        "a.gopp:57:8: d.Clone undefined (type Doc has no field or method Clone)",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
 /// Calls of a generic function build a type that holds another one twice
 /// at every level, with no alias to name it by.
 #[test]

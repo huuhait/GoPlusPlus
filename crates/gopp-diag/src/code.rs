@@ -222,6 +222,8 @@ codes! {
     251 InvalidReceiverTypeParams "err_invalid_receiver_type_params",
     266 OwnMoveNotPlace "err_own_move_not_place",
     270 DuplicateMethodIface "err_duplicate_method_iface",
+    272 OwnDropSignature "err_own_drop_signature",
+    273 OwnDropCalled "err_own_drop_called",
     281 OwnRangeAliasInvalid "err_own_range_alias_invalid",
     284 OwnRangeAliasFunc "err_own_range_alias_func",
     298 OwnWeakArg "err_own_weak_arg",

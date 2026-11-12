@@ -75,6 +75,8 @@ enum Form<'a> {
         ty: ExprId,
         /// Declared with `@Extends`.
         extends: bool,
+        /// Declared with `@Pinned`.
+        pinned: bool,
     },
     Func {
         type_params: &'a [TypeParam],
@@ -553,15 +555,18 @@ impl<'a> Checker<'a> {
                     alias,
                     ty,
                 } => {
-                    let extends = node.attrs.iter().any(|attr| {
-                        attr.path.package.is_none()
-                            && self.names.resolve(&attr.path.name.name) == "Extends"
-                    });
+                    let marked = |with: &str| {
+                        node.attrs.iter().any(|attr| {
+                            attr.path.package.is_none()
+                                && self.names.resolve(&attr.path.name.name) == with
+                        })
+                    };
                     let form = Form::Type {
                         alias: *alias,
                         type_params,
                         ty: *ty,
-                        extends,
+                        extends: marked("Extends"),
+                        pinned: marked("Pinned"),
                     };
                     declare(*name, body, form);
                 }
@@ -1110,6 +1115,7 @@ impl<'a> Checker<'a> {
                 type_params,
                 ty,
                 extends,
+                pinned,
             } => {
                 let mut cx = self.cx(&decl, None);
                 let params = self.declare_params(&mut cx, type_params);
@@ -1134,6 +1140,9 @@ impl<'a> Checker<'a> {
                 self.types.set_type_params(named, params);
                 if extends {
                     self.types.set_extends(named);
+                }
+                if pinned {
+                    self.types.set_pinned(named);
                 }
                 let underlying = self.typ(&cx, ty);
                 if !self.incomplete {
@@ -2104,6 +2113,16 @@ impl<'a> Checker<'a> {
                     (_, Member::Field { .. }) => Some(SelectionKind::Field),
                     (_, Member::Method { .. }) => Some(SelectionKind::Method),
                 };
+                // The method that ends a value runs by itself (OWN-R7).
+                let method = matches!(found.member, Member::Method { .. });
+                if method && self.own_rules(cx) && self.names.resolve(&sel.name) == "drop" {
+                    let message = format!(
+                        "cannot use {}: drop runs when a value ends, and is not called",
+                        self.expr_string(cx, expr)
+                    );
+                    self.error(Code::OwnDropCalled, sel.span, message);
+                    return Operand::UNKNOWN;
+                }
                 self.need_method(&found);
                 if let (Some(kind), true) = (kind, self.memo.is_some()) {
                     let selection = Selection {

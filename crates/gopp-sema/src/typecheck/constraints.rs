@@ -260,6 +260,53 @@ impl<'a> Checker<'a> {
         cause(format!("{shown} does not satisfy {constraint} ({detail})"))
     }
 
+    /// Why the type argument `arg` of the type parameter `param` is not
+    /// copied as the constraint `bound` asks: by its bytes for `Copy`,
+    /// at all for `Clone`. A constraint that lists only types that are
+    /// copied one of these ways asks it too, of the declared types that
+    /// a term `~T` holds (GEN-1, GEN-2).
+    fn not_copied(&self, param: TypeId, arg: TypeId, bound: TypeId) -> Option<String> {
+        use crate::types::{Category, NotCopied};
+        let set = self.types.type_set(bound)?;
+        let wanted = self.types.constraint_category(&set);
+        // A constraint is no type argument, which was said. A type
+        // parameter that no type satisfies stands for none that is copied
+        // otherwise.
+        let said = self.open(arg) || self.types.is_constraint(arg);
+        let none = self.types.param_set(arg).is_some_and(|set| set.is_empty());
+        if said || none || self.types.category(arg) <= wanted {
+            return None;
+        }
+        let at_all = wanted == Category::Copyable;
+        let (part, why) = self.types.not_copied(arg, at_all)?;
+        let (shown, part) = (self.type_string(arg), self.type_string(part));
+        let asked = match at_all {
+            true => "Clone",
+            false => "Copy",
+        };
+        let why = match why {
+            NotCopied::Drop if at_all => format!("{part} has a drop method and no Clone() {part}"),
+            NotCopied::Drop | NotCopied::CopyMethod => format!("{part} has a drop method"),
+            NotCopied::Pinned => format!("{part} is @Pinned"),
+            NotCopied::Param => format!("{part} is not constrained by {asked}"),
+            NotCopied::OwnRule => format!("a copy of {part} is more than its bytes"),
+        };
+        let written = match at_all {
+            true => set.markers.contains(&Marker::Clone),
+            false => set.markers.contains(&Marker::Copy),
+        };
+        // Asked by the types that the constraint lists.
+        let terms: Vec<String> = match (&set.terms, written) {
+            (Some(terms), false) => terms.iter().map(|&term| self.term_string(term)).collect(),
+            _ => return Some(format!("{shown} does not satisfy {asked} ({why})")),
+        };
+        Some(format!(
+            "{shown} does not satisfy {asked}, which the type set of {} ({}) implies: {why}",
+            self.type_string(param),
+            terms.join(" | ")
+        ))
+    }
+
     /// Holds the type arguments of an instance to the constraints of the
     /// type parameters: the first that does not satisfy its constraint is
     /// reported.
@@ -271,7 +318,14 @@ impl<'a> Checker<'a> {
             let bound = self
                 .types
                 .substitute(constraint, &instance.params, &instance.args);
-            if let Some(cause) = self.unsatisfied(arg, bound) {
+            let unsatisfied = self.unsatisfied(arg, bound).or_else(|| {
+                let text = self.not_copied(param, arg, bound)?;
+                Some(Cause {
+                    text,
+                    have_want: None,
+                })
+            });
+            if let Some(cause) = unsatisfied {
                 let span = instance.spans.get(at).copied().unwrap_or(instance.at);
                 let mut diagnostic = Diagnostic::new(Code::TypeArgUnsatisfied, span, cause.text);
                 if let Some((have, want)) = cause.have_want {
