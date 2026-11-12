@@ -592,10 +592,13 @@ impl<'a> Checker<'a> {
         match op {
             UnaryOp::Star => {
                 return match x.mode {
-                    Mode::Type => Operand {
-                        mode: Mode::Type,
-                        ty: self.types.pointer(x.ty),
-                    },
+                    Mode::Type => {
+                        self.var_types.push((x.ty, cx.tree.exprs[inner].span));
+                        Operand {
+                            mode: Mode::Type,
+                            ty: self.types.pointer(x.ty),
+                        }
+                    }
                     _ if x.is_value() => match &*self.types.get(self.types.underlying(x.ty)) {
                         Type::Pointer(elem) => Operand::variable(*elem),
                         Type::Unique(_) | Type::Shared(_) | Type::Option(_)

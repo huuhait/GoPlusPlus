@@ -178,6 +178,18 @@ pub enum Lacks {
     NoField,
 }
 
+/// What makes an interface a constraint. Of two, the later one says
+/// more.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Constraint {
+    /// It embeds `Copy`, `Clone`, `Send` or `Sync`.
+    Marker,
+    /// It embeds `comparable`.
+    Comparable,
+    /// It has type terms.
+    Terms,
+}
+
 /// Why a selector reaches nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotFound {
@@ -235,9 +247,9 @@ struct Inner {
     /// The underlying type of each generic type with arguments that was
     /// asked for.
     instances: FxHashMap<TypeId, TypeId>,
-    /// The methods of each interface type that was asked for them; none
-    /// for a constraint.
-    method_sets: FxHashMap<TypeId, Option<MethodSet>>,
+    /// For each interface type that was asked for them: its methods, or
+    /// what makes it a constraint.
+    members: FxHashMap<TypeId, Result<MethodSet, Constraint>>,
 }
 
 impl Inner {
@@ -1324,15 +1336,32 @@ impl Types {
     /// embeds, by name; of two methods of one name, the one that the
     /// interface writes itself. `None` as for `interface_methods`.
     pub fn method_set(&self, id: TypeId) -> Option<MethodSet> {
+        self.members(id)?.ok()
+    }
+
+    /// What makes the interface `id` a constraint, which only a type
+    /// parameter can be held to; `None` if it is none.
+    pub fn constraint_kind(&self, id: TypeId) -> Option<Constraint> {
+        match self.is_interface(id) {
+            true => self.members(id)?.err(),
+            false => None,
+        }
+    }
+
+    /// The methods of the interface `id`, or what makes it a constraint.
+    /// `None` while a declared type that it embeds is not checked yet.
+    fn members(&self, id: TypeId) -> Option<Result<MethodSet, Constraint>> {
         let start = self.underlying(id);
-        // What is known of a type: its set if it is an interface whose
-        // set was built, no set if it is no interface.
+        // What is known of a type: of an interface, what was built for
+        // it; any other type is a type term.
         let known = |ty: TypeId| match &*self.get(ty) {
-            Type::Interface { .. } => self.read(|inner| inner.method_sets.get(&ty).cloned()),
-            _ => Some(None),
+            Type::Interface { .. } => self.read(|inner| inner.members.get(&ty).cloned()),
+            Type::Marker(Marker::Comparable) => Some(Err(Constraint::Comparable)),
+            Type::Marker(_) => Some(Err(Constraint::Marker)),
+            _ => Some(Err(Constraint::Terms)),
         };
-        if let Some(set) = known(start) {
-            return set;
+        if let Some(members) = known(start) {
+            return Some(members);
         }
         // The interfaces whose sets are being built, each after those it
         // embeds: a chain of embedded interfaces is as long as a program
@@ -1356,37 +1385,39 @@ impl Types {
                 }
                 continue;
             }
-            let mut set = Some(MethodSet::default());
+            let mut members = Ok(MethodSet::default());
             for method in methods.iter() {
-                set = set.map(|set| set.with(method.clone(), &mut |_, _| {}, &mut steps));
+                members = members.map(|set| set.with(method.clone(), &mut |_, _| {}, &mut steps));
             }
             // A declared type that is not checked yet says nothing: the
             // set is built again when it is asked for again.
             let mut complete = true;
             for &ty in &inner {
-                match known(ty) {
-                    _ if ty == Self::INVALID || unknown.contains(&ty) => {
-                        (set, complete) = (None, false);
+                members = match (members, known(ty)) {
+                    (members, _) if ty == Self::INVALID || unknown.contains(&ty) => {
+                        complete = false;
+                        members
                     }
-                    Some(Some(embedded)) => {
-                        set = set.map(|set| set.union(&embedded, &mut |_, _| {}, &mut steps));
+                    (Ok(set), Some(Ok(embedded))) => {
+                        Ok(set.union(&embedded, &mut |_, _| {}, &mut steps))
                     }
-                    Some(None) => set = None,
-                    // An interface that embeds itself, which is an error.
-                    None => {}
-                }
+                    (Ok(_), Some(Err(constraint))) => Err(constraint),
+                    (Err(constraint), Some(Err(other))) => Err(constraint.max(other)),
+                    // An interface that embeds itself is an error.
+                    (members, _) => members,
+                };
             }
             match complete {
-                true => drop(self.write(|inner| inner.method_sets.insert(current, set))),
+                true => drop(self.write(|inner| inner.members.insert(current, members))),
                 false => drop(unknown.insert(current)),
             }
         }
         self.steps.fetch_add(steps, Ordering::Relaxed);
-        known(start).flatten()
+        known(start)
     }
 
     /// Whether the type is an interface that only a type parameter can be
-    /// held to: one with type terms, its own or embedded.
+    /// held to, or one that embeds a type that is not checked yet.
     pub fn is_constraint(&self, id: TypeId) -> bool {
         self.is_interface(id) && self.method_set(id).is_none()
     }

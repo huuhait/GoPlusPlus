@@ -235,6 +235,9 @@ struct Checker<'a> {
     /// The type of each embedded field that was written, with where: what
     /// may be embedded is checked once every type is known.
     embedded_fields: Vec<(TypeId, Span)>,
+    /// The interface types that were written for variables, with where:
+    /// that none is a constraint is checked once every type is known.
+    var_types: Vec<(TypeId, Span)>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -333,6 +336,7 @@ pub fn declarations(
         iface_conversions: FxHashMap::default(),
         interfaces: Vec::new(),
         embedded_fields: Vec::new(),
+        var_types: Vec::new(),
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -720,6 +724,9 @@ impl<'a> Checker<'a> {
         for (ty, span) in std::mem::take(&mut self.embedded_fields) {
             self.embedded_field(ty, span);
         }
+        for (ty, span) in std::mem::take(&mut self.var_types) {
+            self.no_constraint(ty, span);
+        }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided
             // here yet.
@@ -944,7 +951,7 @@ impl<'a> Checker<'a> {
             }
             Form::Var { ty: Some(ty), .. } => {
                 let cx = self.cx(&decl, None);
-                self.ty[object] = self.typ(&cx, ty);
+                self.ty[object] = self.var_type(&cx, ty);
             }
             // The type of a variable without one is the type of its value.
             Form::Var { ty: None, value } => {
@@ -1187,6 +1194,16 @@ impl<'a> Checker<'a> {
         Types::INVALID
     }
 
+    /// The type that `expr` writes for a variable, a parameter, a field or
+    /// an element, which is no constraint.
+    pub(super) fn var_type(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
+        let ty = self.typ(cx, expr);
+        if self.types.is_interface(ty) || matches!(&*self.types.get(ty), Type::Marker(_)) {
+            self.var_types.push((ty, cx.tree.exprs[expr].span));
+        }
+        ty
+    }
+
     /// The operand `x` of `expr` where a generic type needs its type
     /// arguments: it is no operand without them.
     fn instantiated(&mut self, cx: &Cx<'a>, expr: ExprId, x: Operand) -> Operand {
@@ -1241,18 +1258,18 @@ impl<'a> Checker<'a> {
                 op: UnaryOp::Star,
                 x,
             } => {
-                let elem = self.typ(cx, *x);
+                let elem = self.var_type(cx, *x);
                 self.types.pointer(elem)
             }
             ExprKind::SliceType { elem } => {
-                let elem = self.typ(cx, *elem);
+                let elem = self.var_type(cx, *elem);
                 self.types.slice(elem)
             }
             ExprKind::ArrayType {
                 len: Some(len),
                 elem,
             } => {
-                let elem = self.typ(cx, *elem);
+                let elem = self.var_type(cx, *elem);
                 match self.array_length(cx, *len) {
                     Some(len) => self.types.array(len, elem),
                     None => {
@@ -1263,7 +1280,7 @@ impl<'a> Checker<'a> {
             }
             // `[...]T` takes its length from the elements of a literal.
             ExprKind::ArrayType { len: None, elem } => {
-                self.typ(cx, *elem);
+                self.var_type(cx, *elem);
                 let text = &cx.text[node.span.lo as usize..node.span.hi as usize];
                 let lo = node.span.lo + text.find("...").unwrap_or(0) as u32;
                 let dots = Span {
@@ -1278,12 +1295,12 @@ impl<'a> Checker<'a> {
             }
             ExprKind::MapType { key, value } => {
                 let key_span = tree.exprs[*key].span;
-                let (key, value) = (self.typ(cx, *key), self.typ(cx, *value));
+                let (key, value) = (self.var_type(cx, *key), self.var_type(cx, *value));
                 self.map_keys.push((key, key_span));
                 self.types.map(key, value)
             }
             ExprKind::ChanType { dir, elem } => {
-                let elem = self.typ(cx, *elem);
+                let elem = self.var_type(cx, *elem);
                 let dir = match dir {
                     ast::ChanDir::Both => ChanDir::Both,
                     ast::ChanDir::Send => ChanDir::Send,
@@ -1300,7 +1317,10 @@ impl<'a> Checker<'a> {
                     matches!(tree.exprs[last.ty].kind, ExprKind::DotsType { .. })
                 });
                 let mut list = |params: &[Param]| -> Vec<TypeId> {
-                    params.iter().map(|param| self.typ(cx, param.ty)).collect()
+                    params
+                        .iter()
+                        .map(|param| self.var_type(cx, param.ty))
+                        .collect()
                 };
                 let (params, results) = (list(params), list(results));
                 match fails {
@@ -1310,14 +1330,14 @@ impl<'a> Checker<'a> {
             }
             // `...T` as the type of the last parameter: a slice.
             ExprKind::DotsType { elem } => {
-                let elem = self.typ(cx, *elem);
+                let elem = self.var_type(cx, *elem);
                 self.types.slice(elem)
             }
             ExprKind::StructType { fields } => {
                 let mut all = Vec::new();
                 let mut declared = FxHashMap::default();
                 for field in fields {
-                    let ty = self.typ(cx, field.ty);
+                    let ty = self.var_type(cx, field.ty);
                     let literal = field.tag.map(|tag| tree.exprs[tag].span);
                     let tag = literal
                         .and_then(|span| unquote(&cx.text[span.lo as usize..span.hi as usize]));
@@ -1457,7 +1477,10 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let arguments = |this: &mut Self| -> Vec<TypeId> {
-            indices.iter().map(|&index| this.typ(cx, index)).collect()
+            indices
+                .iter()
+                .map(|&index| this.var_type(cx, index))
+                .collect()
         };
         if let Some(make) = make {
             let made = match arguments(self)[..] {
@@ -1698,7 +1721,7 @@ impl<'a> Checker<'a> {
                 let Some(from) = asserted else {
                     return Operand::UNKNOWN;
                 };
-                match self.typ(cx, *ty) {
+                match self.var_type(cx, *ty) {
                     Types::INVALID => Operand::UNKNOWN,
                     ty => {
                         self.assertable(cx, expr, (*x, &from), ty, false);
@@ -2055,7 +2078,7 @@ impl<'a> Checker<'a> {
         let ExprKind::ArrayType { len: None, elem } = cx.tree.exprs[ty].kind else {
             return self.typ(cx, ty);
         };
-        let elem = self.typ(cx, elem);
+        let elem = self.var_type(cx, elem);
         // An element with a key sits at that index; one without, after
         // the element before it.
         let (mut next, mut len) = (0u64, 0u64);
@@ -2614,7 +2637,7 @@ impl<'a> Checker<'a> {
                 // declaration; variables are walked here too, for the
                 // function literals in their values.
                 DeclKind::Var { names, ty, values } => {
-                    let declared = ty.map(|ty| self.typ(&cx, ty));
+                    let declared = ty.map(|ty| self.var_type(&cx, ty));
                     self.arity(&cx, names, values, None);
                     let objects = |this: &Self, names: &[Ident]| -> Vec<usize> {
                         let object = |name: &Ident| this.by_span.get(&name.span).copied();
@@ -3091,7 +3114,7 @@ impl<'a> Checker<'a> {
             name = x;
         }
         let nil = cx.body.uses.get(&name) == Some(&Ref::Universe(Predeclared::Nil));
-        if !nil && self.typ(cx, case) == Types::INVALID {
+        if !nil && self.var_type(cx, case) == Types::INVALID {
             return Operand::UNKNOWN;
         }
         self.operand(cx, case)
@@ -3105,7 +3128,7 @@ impl<'a> Checker<'a> {
         match &node.kind {
             DeclKind::Var { names, ty, values } => {
                 let locals: Vec<_> = names.iter().map(|&name| local(name)).collect();
-                let declared = ty.map(|ty| self.typ(cx, ty));
+                let declared = ty.map(|ty| self.var_type(cx, ty));
                 self.arity(cx, names, values, None);
                 let types = self.var_decl(cx, names.len(), declared, values);
                 for (local, ty) in locals.into_iter().zip(types) {

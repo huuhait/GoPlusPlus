@@ -188,6 +188,35 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A variable, a parameter, a field or an element has no constraint
+    /// as its type.
+    pub(super) fn no_constraint(&mut self, ty: TypeId, span: Span) {
+        use crate::types::{Constraint, Marker};
+        let constraint = match &*self.types.get(ty) {
+            Type::Marker(Marker::Comparable) => Some(Constraint::Comparable),
+            Type::Marker(_) => Some(Constraint::Marker),
+            _ => self.types.constraint_kind(ty),
+        };
+        let (code, why) = match constraint {
+            Some(Constraint::Comparable) => (
+                Code::InterfaceIsComparable,
+                "interface is (or embeds) comparable",
+            ),
+            Some(Constraint::Terms) => (
+                Code::InterfaceContainsTypeConstraints,
+                "interface contains type constraints",
+            ),
+            // What the other predeclared constraints allow is decided
+            // with type parameters.
+            Some(Constraint::Marker) | None => return,
+        };
+        let message = format!(
+            "cannot use type {} outside a type constraint: {why}",
+            self.type_string(ty)
+        );
+        self.error(code, span, message);
+    }
+
     /// Reports `message`, with the cause after it.
     pub(super) fn error_with_cause(
         &mut self,

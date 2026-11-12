@@ -47,6 +47,17 @@ impl<'a> Checker<'a> {
         if self.types.has_param(target) || self.types.has_param(x.ty) {
             return Operand::value(target);
         }
+        use crate::types::Constraint;
+        if let Some(Constraint::Comparable | Constraint::Terms) = self.types.constraint_kind(target)
+        {
+            let message = format!(
+                "cannot use interface {shown} in conversion (contains specific type constraints \
+                 or is comparable)"
+            );
+            let span = cx.tree.exprs[call].span;
+            self.error(Code::CannotUseConstraintOutside, span, message);
+            return Operand::UNKNOWN;
+        }
         let span = cx.tree.exprs[arg].span;
         let basic = self.basic_of(target);
         let converted = match (&x.mode, basic) {

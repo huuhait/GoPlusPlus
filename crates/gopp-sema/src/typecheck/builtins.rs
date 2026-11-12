@@ -371,7 +371,7 @@ impl<'a> Checker<'a> {
                 }
             },
             (Max | Min, Some(_)) => self.min_or_max(cx, builtin == Max, given),
-            (New, _) => match self.typ(cx, args[0]) {
+            (New, _) => match self.var_type(cx, args[0]) {
                 Types::INVALID => Operand::UNKNOWN,
                 ty => Operand::value(self.types.pointer(ty)),
             },
@@ -576,7 +576,7 @@ impl<'a> Checker<'a> {
 
     /// `make(T, sizes...)`.
     fn make(&mut self, cx: &Cx<'a>, call: ExprId, args: &[ExprId]) -> Operand {
-        let ty = self.typ(cx, args[0]);
+        let ty = self.var_type(cx, args[0]);
         let sizes = &args[1..];
         let least = match &*self.types.get(self.types.underlying(ty)) {
             Type::Slice(_) => 2,

@@ -4049,6 +4049,96 @@ type S2 struct {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+#[test]
+fn a_constraint_is_no_type_of_a_variable_as_go_checks_it() {
+    let text = "package p
+
+type I1 interface{ comparable }
+type I2 interface{ ~int | ~string }
+type I3 interface {
+	I1
+	I2
+}
+type M interface{ m() }
+type G[P any] struct{}
+
+func f1[P any]() {}
+
+var (
+	_ I1
+	_ I2
+	_ I3
+	_ comparable
+	_ []I1
+	_ [10]I2
+	_ *I3
+	_ map[I1]I2
+	_ chan I3
+	_ func(I1)
+	_ func() I2
+	_ M
+	_ G[I2]
+	_ = f1[I2]
+	_ = [...]I3{}
+	_ = (*interface{ int })(nil)
+	_ = I1(1)
+	_ = I2(2)
+	_ = M(nil)
+)
+
+type S struct {
+	I2
+	f I1
+	*I3
+}
+
+func f(x any, p I2) I1 {
+	_ = x.(I3)
+	switch x.(type) {
+	case I2:
+	}
+	var _ I3
+	_ = new(I1)
+	_ = make([]I2, 1)
+	return nil
+}
+
+func g[P I2, Q comparable](p P) {}
+";
+    let expected = [
+        "a.go:15:4: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:16:4: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:17:4: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:18:4: cannot use type comparable outside a type constraint: interface is (or embeds) comparable",
+        "a.go:19:6: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:20:8: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:21:5: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:22:8: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:22:11: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:23:9: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:24:9: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:25:11: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:27:6: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:28:9: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:29:11: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:30:8: cannot use type interface{int} outside a type constraint: interface contains type constraints",
+        "a.go:31:6: cannot use interface I1 in conversion (contains specific type constraints or is comparable)",
+        "a.go:32:6: cannot use interface I2 in conversion (contains specific type constraints or is comparable)",
+        "a.go:37:2: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:38:4: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:39:2: embedded field type cannot be a pointer to an interface",
+        "a.go:39:3: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:42:17: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:42:21: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:43:9: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:45:7: cannot use type I2 outside a type constraint: interface contains type constraints",
+        "a.go:47:8: cannot use type I3 outside a type constraint: interface contains type constraints",
+        "a.go:48:10: cannot use type I1 outside a type constraint: interface is (or embeds) comparable",
+        "a.go:49:13: cannot use type I2 outside a type constraint: interface contains type constraints",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -4938,7 +5028,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2072;
+const EXPECTED_ERRORS_REPORTED: usize = 2111;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
