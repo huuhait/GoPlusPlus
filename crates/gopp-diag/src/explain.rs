@@ -1447,6 +1447,56 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Call a function, or remove the parentheses.",
             "n := 5\nn() // error: cannot call non-function n",
         ),
+        NoZeroLookup => (
+            "An entry of a map may be missing and a channel may be closed. Go gives the zero \
+             value then, and this type has none.",
+            "Read with the second value and test it: `v, ok := m[k]`, `v, ok := <-ch`.",
+            "u := users[\"bob\"]     // error: User has no zero value\nu, ok := users[\"bob\"] // ok: u is used where ok is true",
+        ),
+        RequiredMissing => (
+            "A struct literal leaves out a field that must be set: the field is `@Required`, or \
+             its type has no zero value.",
+            "Set every field that the message names.",
+            "type User struct {\n\tID   int @Required\n\tNote string\n}\nu := User{Note: \"x\"} // error: missing ID\nu := User{ID: 1}     // ok",
+        ),
+        RequiredPointer => (
+            "`@Required` is written on a field whose type is never nil already: a pointer, a \
+             `Unique`, a `Shared`, a `Weak`, a func, or an interface with methods. Such a field \
+             must be set in every literal anyway.",
+            "Remove `@Required`.",
+            "type Node struct {\n\tNext *Node @Required // error\n\tPrev *Node           // ok: must be set all the same\n}",
+        ),
+        OptionAndRequired => (
+            "`@Required` is written on an `Option` field. `Option[T]` says that the value may \
+             be missing, and `@Required` says that it may not.",
+            "Write `T @Required`, or `Option[T]` without the attribute.",
+            "type User struct {\n\tNick Option[string] @Required // error\n\tName string @Required         // ok\n}",
+        ),
+        RequiredNilStore => (
+            "`nil` is stored in a `@Required` field of a map, channel, `error` or `any` type. \
+             Such a field is never nil.",
+            "Store a value, or declare the field as an `Option`.",
+            "type Job struct {\n\tDone chan bool @Required\n}\nj.Done = nil                // error\nj.Done = make(chan bool, 1) // ok",
+        ),
+        RequiredMove => (
+            "`mem.Take` would leave nil in a `@Required` field of a map, channel, `error` or \
+             `any` type, which is never nil.",
+            "Use `mem.Replace(&place, v)` with a value that is set.",
+            "old := mem.Take(&j.Done)                        // error\nold := mem.Replace(&j.Done, make(chan bool, 1)) // ok",
+        ),
+        RequiredAddr => (
+            "The address of a `@Required` field of a map, channel, `error` or `any` type is \
+             taken. Through the pointer nil could be stored in a field that is never nil.",
+            "Read the field, or replace its value with `mem.Replace(&place, v)`.",
+            "p := &j.Done                                    // error\nold := mem.Replace(&j.Done, make(chan bool, 1)) // ok",
+        ),
+        RequiredMaybeNil => (
+            "A value that may be nil is stored in a `@Required` field of a map, channel, \
+             `error` or `any` type, which is never nil.",
+            "Store a value that is known to be set: a literal, `make(...)`, a value of a type \
+             that is never nil, another such field, or a local variable.",
+            "j.Done = pick()             // error: the result may be nil\nch := pick()\nj.Done = ch                 // ok where ch is known to be set",
+        ),
         _ => return None,
     };
     Some(Explanation {

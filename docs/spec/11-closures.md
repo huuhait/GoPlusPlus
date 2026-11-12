@@ -87,11 +87,11 @@ Flow typing does not reach into a closure body: a captured `Option` or checked r
 ### Example 1: a returned single-goroutine pair shares a counter
 
 ```go
-func counter() (inc Local[func() int], get Local[func() int]) {
+func counter() (Local[func() int], Local[func() int]) {
     n := 0                            // shared unsynchronized cell on 1 goroutine -> Local[func() int]
-    inc = func() int { n++; return n }
-    get = func() int { return n }
-    return
+    inc := Local[func() int](func() int { n++; return n })
+    get := Local[func() int](func() int { return n })
+    return inc, get                   // a func has no zero value, so the results have no names (ADR-0016)
 }
 inc, get := counter()
 inc(); inc()

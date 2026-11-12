@@ -492,6 +492,8 @@ struct Inner {
     /// How a value of each type that was asked for it is copied; with
     /// `true`, whether it holds what is ended with it.
     categories: FxHashMap<(TypeId, bool), Category>,
+    /// For a type that was asked: the part of it without a zero value.
+    no_zero: FxHashMap<TypeId, Option<(TypeId, NoZero)>>,
 }
 
 /// A declared alias and how its type arguments are written.
@@ -2550,7 +2552,9 @@ mod methodset;
 #[cfg(test)]
 mod tests;
 mod typeset;
+mod zero;
 
 pub use category::{Category, CopyRule, NotCopied};
 pub use methodset::MethodSet;
 pub use typeset::{NoCommon, TypeSet};
+pub use zero::NoZero;

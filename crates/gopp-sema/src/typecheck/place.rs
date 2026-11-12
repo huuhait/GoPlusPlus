@@ -646,7 +646,13 @@ impl<'a> Checker<'a> {
     /// `mem.Take(&place)` leaves the zero value of the type in the place,
     /// which the type must have, and neither it nor `mem.Replace` moves a
     /// value that stays where it is (OWN-R4, OWN-R10).
-    pub(super) fn taken(&mut self, cx: &Cx<'a>, call: ExprId, fun: ExprId, result: &Operand) {
+    pub(super) fn taken(
+        &mut self,
+        cx: &Cx<'a>,
+        (call, args): (ExprId, &[ExprId]),
+        fun: ExprId,
+        result: &Operand,
+    ) {
         // `mem.Take[T]` names the function too.
         let mut fun = self.unparen(cx, fun);
         if let ExprKind::Index { x, .. } = cx.tree.exprs[fun].kind {
@@ -662,6 +668,7 @@ impl<'a> Checker<'a> {
         if package.path != "mem" || !matches!(name, "Take" | "Replace") || !result.is_value() {
             return;
         }
+        self.required_taken(cx, name, args);
         let ty = result.ty;
         let text = self.expr_string(cx, call);
         let span = cx.tree.exprs[call].span;

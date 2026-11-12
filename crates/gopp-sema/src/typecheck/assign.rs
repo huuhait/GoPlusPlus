@@ -401,7 +401,9 @@ impl<'a> Checker<'a> {
         if matches!(cx.tree.exprs[inner].kind, ExprKind::Name(name) if name == self.blank) {
             return None;
         }
+        let outer = self.lookup_target.replace(inner);
         let x = self.value(cx, lhs);
+        self.lookup_target = outer;
         if x.mode == Mode::Unknown || x.ty == Types::INVALID {
             return Some(Types::INVALID);
         }
@@ -480,9 +482,11 @@ impl<'a> Checker<'a> {
                     }
                     Some(to) => {
                         let x = self.value(cx, value);
-                        self.assigned_to = Some(self.expr_string(cx, place));
+                        let text = self.expr_string(cx, place);
+                        self.assigned_to = Some(text.clone());
                         let assigned = self.assignment(cx, value, x, Some(to), "assignment");
                         self.note_write(cx, place, to, Some(&assigned));
+                        self.field_stored(cx, place, &text, to, (value, &assigned));
                     }
                 }
             }
@@ -513,6 +517,8 @@ impl<'a> Checker<'a> {
             let to = self.lhs_var(cx, place);
             if let Some(to) = to {
                 self.note_write(cx, place, to, Some(&value));
+                let text = self.expr_string(cx, place);
+                self.field_stored(cx, place, &text, to, (rhs[0], &value));
             }
             if let Some(to) = to
                 && value.mode != Mode::Unknown
@@ -570,7 +576,12 @@ impl<'a> Checker<'a> {
         let count = names.len();
         let or_declared = |ty: TypeId| declared.unwrap_or(ty);
         match values {
-            [] => vec![or_declared(Types::INVALID); count],
+            [] => {
+                if let Some(declared) = declared {
+                    self.declared_unset(cx, names, declared);
+                }
+                vec![or_declared(Types::INVALID); count]
+            }
             // `var a, b = f()`.
             [_] if count > 1 => {
                 let places = vec![declared; count];

@@ -62,9 +62,10 @@ impl<'a> Checker<'a> {
         match &*under {
             Type::Struct(fields) => self.struct_elements(cx, expr, base, fields, elems, strict),
             Type::Array { len, elem } => {
-                self.indexed_elements(cx, elems, *elem, Some(*len).filter(|_| !grows), strict);
+                let length = Some(*len).filter(|_| !grows);
+                self.indexed_elements(cx, (expr, elems), *elem, length, strict);
             }
-            Type::Slice(elem) => self.indexed_elements(cx, elems, *elem, None, strict),
+            Type::Slice(elem) => self.indexed_elements(cx, (expr, elems), *elem, None, strict),
             Type::Map { key, value } => self.map_elements(cx, elems, (*key, *value), strict),
             _ => {
                 for &element in elems {
@@ -133,6 +134,9 @@ impl<'a> Checker<'a> {
             .first()
             .is_some_and(|&first| matches!(tree.exprs[first].kind, ExprKind::KeyValue { .. }));
         if !keyed {
+            if elems.is_empty() {
+                self.fields_missing(cx, expr, base, fields, &vec![false; fields.len()]);
+            }
             for (position, &element) in elems.iter().enumerate() {
                 let span = tree.exprs[element].span;
                 if let ExprKind::KeyValue { value, .. } = tree.exprs[element].kind {
@@ -161,7 +165,11 @@ impl<'a> Checker<'a> {
                     self.error(Code::LiteralUnexportedField, span, message);
                     continue;
                 }
-                self.assign_element(cx, element, field.ty, "struct literal");
+                let x = self.assign_element(cx, element, field.ty, "struct literal");
+                if field.required {
+                    let place = self.names.resolve(&field.name);
+                    self.stored_set(cx, place, field.ty, (element, &x));
+                }
             }
             if !elems.is_empty() && elems.len() < fields.len() && strict {
                 let span = tree.exprs[expr].span;
@@ -240,12 +248,16 @@ impl<'a> Checker<'a> {
                 self.error(Code::LiteralUnknownField, tree.exprs[key].span, message);
                 continue;
             };
-            self.assign_element(cx, value, fields[at].ty, "struct literal");
+            let x = self.assign_element(cx, value, fields[at].ty, "struct literal");
+            if fields[at].required {
+                self.stored_set(cx, text, fields[at].ty, (value, &x));
+            }
             if std::mem::replace(&mut seen[at], true) && strict {
                 let message = format!("duplicate field name {text} in struct literal");
                 self.error(Code::LiteralDuplicateField, span, message);
             }
         }
+        self.fields_missing(cx, expr, base, fields, &seen);
     }
 
     /// The elements of an array or slice literal: each at the index after
@@ -253,7 +265,7 @@ impl<'a> Checker<'a> {
     fn indexed_elements(
         &mut self,
         cx: &Cx<'a>,
-        elems: &[ExprId],
+        (expr, elems): (ExprId, &[ExprId]),
         elem: TypeId,
         length: Option<u64>,
         strict: bool,
@@ -261,6 +273,7 @@ impl<'a> Checker<'a> {
         let tree = cx.tree;
         let mut seen = FxHashSet::default();
         let mut index = 0u64;
+        let mut end = 0u64;
         for &element in elems {
             let span = tree.exprs[element].span;
             let mut value = element;
@@ -304,7 +317,19 @@ impl<'a> Checker<'a> {
                 self.error(Code::LiteralDuplicateIndex, span, message);
             }
             index += 1;
+            end = end.max(index);
             self.assign_element(cx, value, elem, "array or slice literal");
+        }
+        // An element that the literal leaves out is a zero value.
+        if (seen.len() as u64) < length.unwrap_or(end) {
+            let doing = "cannot leave out elements of the literal";
+            self.zero_needed(
+                cx,
+                tree.exprs[expr].span,
+                elem,
+                doing,
+                "write every element",
+            );
         }
     }
 

@@ -561,7 +561,10 @@ impl<'a> Checker<'a> {
                 self.error(Code::MultiValueInSingle, self.span(cx, expr), message);
                 return Operand::UNKNOWN;
             }
-            _ => return x,
+            _ => {
+                self.read_alone(cx, expr, &x);
+                return x;
+            }
         };
         let message = format!("{} {what}", self.describe(cx, expr, &x));
         self.error(code, self.span(cx, expr), message);
@@ -691,6 +694,7 @@ impl<'a> Checker<'a> {
                 }
                 self.changed(cx, inner, place::Change::Addressed);
                 self.addressed(cx, inner);
+                self.address_of_required(cx, expr, inner);
                 return Operand::value(self.types.pointer(x.ty));
             }
             UnaryOp::Recv => {

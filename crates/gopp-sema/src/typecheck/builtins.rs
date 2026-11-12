@@ -332,6 +332,13 @@ impl<'a> Checker<'a> {
                 }
                 self.changed(cx, at, place::Change::Emptied("clear"));
                 self.wrote(cx, at);
+                // A slice keeps its length, with zero values in it.
+                if let Type::Slice(elem) = &*self.types.get(self.types.underlying(x.ty)) {
+                    let text = self.expr_string(cx, at);
+                    let doing = format!("cannot clear {text}");
+                    let fix = format!("use {text} = {text}[:0], which drops the elements");
+                    self.zero_needed(cx, cx.tree.exprs[at].span, *elem, &doing, &fix);
+                }
                 no_value
             }
             (Close, Some((at, x))) => {
@@ -802,6 +809,16 @@ impl<'a> Checker<'a> {
                 cx.tree.exprs[args[1]].span,
                 message,
             );
+        }
+        // A slice with a length holds zero values.
+        if let (Type::Slice(elem), Some(&length)) =
+            (&*self.types.get(self.types.underlying(ty)), sizes.first())
+            && self.index_value(cx, length, None) != Some(0)
+        {
+            let shown = self.type_string(ty);
+            let doing = format!("cannot make a {shown} with a length");
+            let fix = format!("use make({shown}, 0, n) and append the elements");
+            self.zero_needed(cx, cx.tree.exprs[call].span, *elem, &doing, &fix);
         }
         Operand::value(ty)
     }

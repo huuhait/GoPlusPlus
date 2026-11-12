@@ -250,6 +250,9 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
+    /// The place that is assigned to, while it is worked out: an entry of
+    /// a map is not read there.
+    lookup_target: Option<ExprId>,
     /// While the arguments of a call are assigned: what the function
     /// that is called does with them.
     operands: place::Operands,
@@ -318,6 +321,13 @@ struct Checker<'a> {
     /// still to be checked for holding a value of themselves, in the order
     /// in which they were met.
     to_validate: Vec<TypeId>,
+    /// The type of each field that was written with `@Required`, with
+    /// where the attribute is: what it may be on is checked once every
+    /// type is known.
+    required_fields: Vec<(TypeId, Span)>,
+    /// While a body is walked: the places `&x.f` where `f` is a field
+    /// that is never nil, until what takes the address is known.
+    required_addresses: Vec<ExprId>,
     /// The key type of each map type that was written, and where: whether
     /// it can be compared is known once every type is.
     map_keys: Vec<(TypeId, Span)>,
@@ -422,6 +432,9 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
+        lookup_target: None,
+        required_fields: Vec::new(),
+        required_addresses: Vec::new(),
         operands: place::Operands::Kept,
         target: None,
         swapping: false,
@@ -869,6 +882,9 @@ impl<'a> Checker<'a> {
         }
         for instance in std::mem::take(&mut self.instances) {
             self.verify(&instance);
+        }
+        for (ty, span) in std::mem::take(&mut self.required_fields) {
+            self.required_field(ty, span);
         }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided
@@ -1581,6 +1597,12 @@ impl<'a> Checker<'a> {
                     let tag = literal
                         .and_then(|span| unquote(&cx.text[span.lo as usize..span.hi as usize]));
                     self.field_attributes(cx, &field.attrs);
+                    let marked = field.attrs.iter().find(|attr| {
+                        let name = attr.path.name.span;
+                        &cx.text[name.lo as usize..name.hi as usize] == "Required"
+                    });
+                    self.required_fields
+                        .extend(marked.map(|attr| (ty, attr.span)));
                     let required = field.attrs.iter().any(|attr| {
                         let name = attr.path.name.span;
                         &cx.text[name.lo as usize..name.hi as usize] == "Required"
@@ -2137,6 +2159,7 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown {
             return Operand::UNKNOWN;
         }
+        self.read_alone(cx, base, &x);
         if matches!(x.mode, Mode::Builtin(_)) {
             let message = format!(
                 "invalid use of {} in selector expression",
@@ -2577,7 +2600,7 @@ impl<'a> Checker<'a> {
                     [one] => Operand::value(*one),
                     many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
                 };
-                self.taken(cx, expr, fun, &called);
+                self.taken(cx, (expr, args), fun, &called);
                 called
             }
             _ => Operand::UNKNOWN,
@@ -2874,6 +2897,9 @@ impl<'a> Checker<'a> {
                 DeclKind::Var { names, ty, values } => {
                     let declared = ty.map(|ty| self.var_type(&cx, ty));
                     self.arity(&cx, names, values, None);
+                    if let (Some(declared), true) = (declared, values.is_empty()) {
+                        self.declared_unset(&cx, names, declared);
+                    }
                     let objects = |this: &Self, names: &[Ident]| -> Vec<usize> {
                         let object = |name: &Ident| this.by_span.get(&name.span).copied();
                         names.iter().filter_map(object).collect()
@@ -2931,6 +2957,7 @@ impl<'a> Checker<'a> {
                     },
                 ))
             };
+            self.addresses_of_required(&cx);
             let memo = self.memo.take().unwrap_or_default();
             let exprs = memo.into_iter().filter_map(typed).collect();
             self.validate();
@@ -3104,6 +3131,25 @@ impl<'a> Checker<'a> {
         {
             self.params(cx, params);
             self.params(cx, results);
+            // A result with a name starts as the zero value of its type.
+            for result in results {
+                let Some(name) = result.name.filter(|name| name.name != self.blank) else {
+                    continue;
+                };
+                let local = cx.body.defs.get(&name.span.lo);
+                let Some(ty) = local.and_then(|local| self.locals.get(local)).map(|x| x.ty) else {
+                    continue;
+                };
+                let text = self.names.resolve(&name.name);
+                let doing = format!("cannot name the result {text}");
+                self.zero_needed(
+                    cx,
+                    name.span,
+                    ty,
+                    &doing,
+                    "declare the result without a name",
+                );
+            }
         }
     }
 

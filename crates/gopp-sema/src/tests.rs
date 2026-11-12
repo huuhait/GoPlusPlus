@@ -1130,7 +1130,7 @@ fn a_type_may_not_hold_a_value_of_itself() {
         ("type L[E any] struct{ next *L[E]; v E }\ntype B *B", &[]),
         ("type A struct{ b *B }\ntype B struct{ a A }", &[]),
         (
-            "type B struct{ a *A }\ntype A B\nvar x A\nvar p *A = x.a",
+            "type B struct{ a *A }\ntype A B\nfunc f(x A) *A { return x.a }",
             &[],
         ),
         (
@@ -5526,7 +5526,13 @@ fn categories(text: &str) -> Vec<String> {
     let names = ThreadedRodeo::new();
     let loader = Loader::default();
     let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
-    assert_eq!(checked.messages, [] as [&str; 0]);
+    // The variables only name their types: that some have no zero value
+    // is said, and is not what is asked here.
+    let unset = |message: &&String| {
+        !(message.contains(" without a value: ") || message.starts_with("    give "))
+    };
+    let said: Vec<&String> = checked.messages.iter().filter(unset).collect();
+    assert_eq!(said, [] as [&String; 0]);
     let types = loader.types.get().unwrap();
     let variables = checked.package.objects.iter();
     variables
@@ -6157,7 +6163,7 @@ func good(docs []Doc, nums []int, grid [][]int, ptrs []*Doc, ch chan Doc, byName
 	for i, d := range docs {
 		show(d)
 		out = append(out, d)
-		d = Doc{Title: d.Title}
+		d = docs[i]
 		d.Next.Title = \"x\"
 		i++
 	}
@@ -6513,11 +6519,11 @@ type Namer interface{ Bye() string }
 func sortFunc(xs *[]int, less func(a, b int) int) {}
 func show(args ...any)                           {}
 
-func counter() (inc func() int, get func() int) {
+func counter() (func() int, func() int) {
 	n := 0
-	inc = func() int { n++; return n }
-	get = func() int { return n }
-	return
+	inc := func() int { n++; return n }
+	get := func() int { return n }
+	return inc, get
 }
 
 func loops(xs []int) {
@@ -6600,8 +6606,8 @@ func uses(xs []int, g Greeter, p, q *Greeter, m map[string]int) (err error) {
     let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
     assert_eq!(checked.messages, [] as [&str; 0]);
     let expected = [
-        "15:8: n write",
-        "16:8: n read",
+        "15:9: n write",
+        "16:9: n read",
         "23:19: i read",
         "26:16: total write",
         "31:7: x write",
@@ -7163,6 +7169,296 @@ func generic[T any](xs []T, ys []T) []T {
     assert_eq!(transfers(&checked), expected);
 }
 
+// rule: TYP-15, OWN-R9
+#[test]
+fn a_type_without_a_zero_value_is_never_left_unset() {
+    let text = "package p
+
+type User struct {
+	ID    int    @Required
+	Email string
+}
+
+type Team struct {
+	Owner User
+	Name  string
+}
+
+type Node struct {
+	Next Option[*Node]
+	Up   *Node
+}
+
+type Box[T any] struct{ v T }
+
+type Handler interface{ Serve() }
+
+type Bad struct {
+	Nick Option[string] @Required
+	Next *Node          @Required
+	Run  func()         @Required
+	H    Handler        @Required
+	Err  error          @Required
+	Tags []string       @Required
+	U    User           @Required
+}
+
+var u User
+var ok int
+var boxed Box[User]
+var plain Box[int]
+var arr [0]User
+
+func good(m map[string]User, ch chan User, users []User) {
+	a := User{ID: 1}
+	b := User{1, \"x\"}
+	t := Team{Owner: a}
+	xs := make([]User, 0, 10)
+	ys := []User{a, b}
+	zs := [2]User{a, b}
+	var o Option[User]
+	var err error
+	v, found := m[\"a\"]
+	w, open := <-ch
+	m[\"b\"] = a
+	delete(m, \"a\")
+	clear(m)
+	users = users[:0]
+	for x := range ch {
+		_ = x
+	}
+	_, _, _, _, _, _, _, _, _, _ = t, xs, ys, zs, o, err, v, found, w, open
+}
+
+func bad(m map[string]User, ch chan User, users []User, n int) (named User) {
+	var a User
+	var t Team
+	var arr [3]User
+	var f func()
+	var h Handler
+	var p *Node
+	b := User{Email: \"x\"}
+	c := User{}
+	d := Team{Name: \"x\"}
+	e := Node{}
+	xs := make([]User, n)
+	ys := []User{2: b}
+	zs := [3]User{b}
+	v := m[\"a\"]
+	w := <-ch
+	_ = m[\"a\"].Email
+	clear(users)
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _ = a, t, arr, f, h, p, c, d, e, xs, ys, zs, v, w
+	return b
+}
+
+func generic[T any, N ~int | ~string](n int) {
+	var zero T
+	var num N
+	xs := make([]T, n)
+	ys := make([]N, n)
+	_, _, _, _ = zero, num, xs, ys
+}
+";
+    let expected = [
+        "a.gopp:23:22: cannot use @Required on a field of type Option[string]: an option may be \
+         nil",
+        "    use string @Required, or Option[string]",
+        "a.gopp:24:22: cannot use @Required on a field of type *Node: a *Node is never nil, so the \
+         field is set in every literal already",
+        "a.gopp:25:22: cannot use @Required on a field of type func(): a func() is never nil, so \
+         the field is set in every literal already",
+        "a.gopp:26:22: cannot use @Required on a field of type Handler: a Handler is never nil, so \
+         the field is set in every literal already",
+        "a.gopp:32:5: cannot declare u without a value: User has no zero value (the field ID of \
+         User is @Required)",
+        "    give u a value, or declare it as Option[User]",
+        "a.gopp:34:5: cannot declare boxed without a value: Box[User] has no zero value (the field \
+         ID of User is @Required)",
+        "    give boxed a value, or declare it as Option[Box[User]]",
+        "a.gopp:59:65: cannot name the result named: User has no zero value (the field ID of User \
+         is @Required)",
+        "    declare the result without a name",
+        "a.gopp:60:6: cannot declare a without a value: User has no zero value (the field ID of \
+         User is @Required)",
+        "    give a a value, or declare it as Option[User]",
+        "a.gopp:61:6: cannot declare t without a value: Team has no zero value (the field ID of \
+         User is @Required)",
+        "    give t a value, or declare it as Option[Team]",
+        "a.gopp:62:6: cannot declare arr without a value: [3]User has no zero value (the field ID \
+         of User is @Required)",
+        "    give arr a value, or declare it as Option[[3]User]",
+        "a.gopp:63:6: cannot declare f without a value: func() has no zero value (a func() is \
+         never nil)",
+        "    give f a value, or declare it as Option[func()]",
+        "a.gopp:64:6: cannot declare h without a value: Handler has no zero value (a Handler is \
+         never nil)",
+        "    give h a value, or declare it as Option[Handler]",
+        "a.gopp:65:6: cannot declare p without a value: *Node has no zero value (a *Node is never \
+         nil)",
+        "    give p a value, or declare it as Option[*Node]",
+        "a.gopp:66:7: missing ID (@Required) in struct literal of type User",
+        "a.gopp:67:7: missing ID (@Required) in struct literal of type User",
+        "a.gopp:68:7: missing Owner (User has no zero value) in struct literal of type Team",
+        "a.gopp:69:7: missing Up (*Node has no zero value) in struct literal of type Node",
+        "a.gopp:70:8: cannot make a []User with a length: User has no zero value (the field ID of \
+         User is @Required)",
+        "    use make([]User, 0, n) and append the elements",
+        "a.gopp:71:8: cannot leave out elements of the literal: User has no zero value (the field \
+         ID of User is @Required)",
+        "    write every element",
+        "a.gopp:72:8: cannot leave out elements of the literal: User has no zero value (the field \
+         ID of User is @Required)",
+        "    write every element",
+        "a.gopp:73:7: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
+         value (the field ID of User is @Required)",
+        "    use v, ok := m[\"a\"]",
+        "a.gopp:74:7: cannot read <-ch alone: the channel may be closed, and User has no zero \
+         value (the field ID of User is @Required)",
+        "    use v, ok := <-ch",
+        "a.gopp:75:6: cannot read m[\"a\"] alone: the entry may be missing, and User has no zero \
+         value (the field ID of User is @Required)",
+        "    use v, ok := m[\"a\"]",
+        "a.gopp:76:8: cannot clear users: User has no zero value (the field ID of User is \
+         @Required)",
+        "    use users = users[:0], which drops the elements",
+        "a.gopp:82:6: cannot declare zero without a value: T may be a type with no zero value",
+        "    give zero a value, or declare it as Option[T]",
+        "a.gopp:84:8: cannot make a []T with a length: T may be a type with no zero value",
+        "    use make([]T, 0, n) and append the elements",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // A Go file has Go's zero values.
+    let text = "package p\ntype T struct{ p *T; f func() }\nvar x T\nfunc f(m map[int]T) (r T) { var y [2]T; _ = y; return m[0] }\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+// rule: TYP-15
+#[test]
+fn a_required_field_that_could_be_nil_is_never_nil() {
+    let names = ThreadedRodeo::new();
+    let mem = "package mem\nfunc Take[T any](p *T) T\nfunc Replace[T any](p *T, v T) T\n";
+    let loader = with_packages(&names, &[("mem", mem)]);
+    let text = "package p
+
+import \"mem\"
+
+type Fail struct{}
+
+func (f Fail) Error() string { return \"\" }
+
+type Job struct {
+	ID    int            @Required
+	Done  chan bool      @Required
+	Seen  map[string]int @Required
+	Err   error          @Required
+	Extra any            @Required
+	Tags  []string       @Required
+	Later chan bool
+}
+
+func pick() chan bool { return nil }
+
+func good(j *Job, other Job, ch chan bool) Job {
+	j.Done = make(chan bool, 1)
+	j.Seen = map[string]int{}
+	j.Err = Fail{}
+	j.Extra = 1
+	j.Done = other.Done
+	j.Done = ch
+	j.Tags = nil
+	j.Later = nil
+	j.Later = pick()
+	old := mem.Replace(&j.Done, make(chan bool))
+	later := mem.Take(&j.Later)
+	_, _ = old, later
+	return Job{ID: 1, Done: ch, Seen: map[string]int{}, Err: Fail{}, Extra: \"x\", Tags: nil}
+}
+
+func bad(j *Job, other Job) {
+	j.Done = nil
+	j.Done = pick()
+	j.Done = other.Later
+	j.Err = nil
+	p := &j.Done
+	a := mem.Take(&j.Seen)
+	b := mem.Replace(&j.Done, pick())
+	c := Job{ID: 1, Done: nil, Seen: map[string]int{}, Err: Fail{}, Extra: 1, Tags: nil}
+	_, _, _, _ = p, a, b, c
+}
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:38:11: cannot store nil in j.Done: the field is @Required",
+        "    store a value, or declare the field as Option[chan bool]",
+        "a.gopp:39:11: cannot store pick() in j.Done: the field is @Required, and the value may be \
+         nil",
+        "    put it in a variable and test that against nil first",
+        "a.gopp:40:11: cannot store other.Later in j.Done: the field is @Required, and the value \
+         may be nil",
+        "    put it in a variable and test that against nil first",
+        "a.gopp:41:10: cannot store nil in j.Err: the field is @Required",
+        "    store a value, or declare the field as Option[error]",
+        "a.gopp:42:7: cannot take the address &j.Done: the field is @Required, so it is never nil",
+        "    use mem.Replace to give it another value",
+        "a.gopp:43:16: cannot take j.Seen: the field is @Required, so it is never nil",
+        "    use mem.Replace(&j.Seen, v)",
+        "a.gopp:44:28: cannot store pick() in j.Done: the field is @Required, and the value may be \
+         nil",
+        "    put it in a variable and test that against nil first",
+        "a.gopp:45:24: cannot store nil in Done: the field is @Required",
+        "    store a value, or declare the field as Option[chan bool]",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+#[test]
+fn the_steps_of_zero_values_grow_with_the_types_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    // Each type holds the one before it, and each is asked: from the
+    // first to the last, and from the last to the first.
+    let chain = |count: usize, down: bool| {
+        let types: String = (1..count)
+            .map(|i| format!("type T{i} struct{{ a T{}; n int }}\n", i - 1))
+            .collect();
+        let order: Vec<usize> = match down {
+            true => (0..count).rev().collect(),
+            false => (0..count).collect(),
+        };
+        let asked: String = order
+            .iter()
+            .map(|i| format!("\t_ = make([]T{i}, 1)\n"))
+            .collect();
+        format!("package p\ntype T0 struct{{ n int }}\n{types}func f() {{\n{asked}}}\n")
+    };
+    // Each type holds the one before it twice.
+    let diamonds = |count: usize| {
+        let types: String = (1..count)
+            .map(|i| format!("type T{i} struct{{ a, b T{}; c [2]T{} }}\n", i - 1, i - 1))
+            .collect();
+        format!(
+            "package p\ntype T0 struct{{ n int }}\n{types}var x T{}\n",
+            count - 1
+        )
+    };
+    // One struct with many fields, asked many times.
+    let wide = |count: usize| {
+        let fields: String = (0..count).map(|i| format!("\tf{i} int\n")).collect();
+        let asked = "\t_ = make([]T, 1)\n".repeat(count);
+        format!("package p\ntype T struct {{\n{fields}}}\nfunc f() {{\n{asked}}}\n")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, false)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n, true)));
+    linear::assert_near_linear(&sizes, |n| steps(diamonds(n)));
+    linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {
@@ -7194,7 +7490,8 @@ fn the_steps_of_places_grow_with_the_input_not_faster() {
         format!(
             "{header}{types}type T{depth} struct{{ f Doc }}\n\
              func f(v T0, vs []T0) Doc {{\n\tv{path}.f.Title = \"x\"\n\tfor _, &e := range vs {{ \
-             e{path}.f.Tags[0] = \"x\" }}\n\tshow(v{path}.f)\n\treturn T0{{}}{path}.f\n}}\n"
+             e{path}.f.Tags[0] = \"x\" }}\n\tshow(v{path}.f)\n\treturn built(){path}.f\n}}\n\
+             func built() T0 {{ panic(0) }}\n"
         )
     };
     // One assignment that exchanges many places.
@@ -7584,8 +7881,7 @@ func use(s Set, l List[int]) {
 }
 
 func (s Set) Parse[T any]!(text string) T {
-	var zero T
-	return zero
+	panic(text)
 }
 
 func parse!(s Set) int {
@@ -8296,7 +8592,7 @@ type Reader interface {
 }
 
 type List[E any] struct {
-	head *List[E]
+	head Option[*List[E]]
 	item E
 }
 
@@ -8318,7 +8614,7 @@ func Map[T, U any](xs []T, f func(T) U) []U
         "GB: untyped int = 1073741824",
         "KB: untyped int = 1024",
         "Less: untyped bool = true",
-        "List: p.List (struct{head *p.List[E]; item E})",
+        "List: p.List (struct{head Option[*p.List[E]]; item E})",
         "MB: untyped int = 1048576",
         "Map: func([]T, func(T) U) []U",
         "Mask: uint8 = 240",
@@ -8331,7 +8627,7 @@ func Map[T, U any](xs []T, f func(T) U) []U
         "Third: untyped float = 1/3",
         "Twice: p.Celsius (float64) = 200",
         "Typed: int8 = 127",
-        "ints: p.List[int] (struct{head *p.List[int]; item int})",
+        "ints: p.List[int] (struct{head Option[*p.List[int]]; item int})",
         "table: map[string][]p.Node",
     ];
     assert_eq!(lines, expected);
