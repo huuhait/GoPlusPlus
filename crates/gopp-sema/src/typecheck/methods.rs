@@ -345,6 +345,55 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A field of a struct type has a name of its own; `declared` has the
+    /// fields before it.
+    pub(super) fn field_once(
+        &mut self,
+        declared: &mut FxHashMap<Spur, Span>,
+        name: Spur,
+        span: Span,
+    ) {
+        if name == self.blank {
+            return;
+        }
+        let Some(&other) = declared.get(&name) else {
+            declared.insert(name, span);
+            return;
+        };
+        if self.reported.insert((span, Code::Redeclared)) {
+            let name = self.names.resolve(&name);
+            let diagnostic = Diagnostic::new(Code::Redeclared, span, format!("{name} redeclared"));
+            let note = format!("other declaration of {name}");
+            self.sink
+                .push(diagnostic.with_note(Code::NoteOtherDeclaration, Some(other), note));
+        }
+    }
+
+    /// An embedded field is of a declared type that is no pointer, or of
+    /// a pointer to one that is no interface.
+    pub(super) fn embedded_field(&mut self, ty: TypeId, span: Span) {
+        let (base, pointer) = match &*self.types.get(ty) {
+            Type::Pointer(elem) => (*elem, true),
+            _ => (ty, false),
+        };
+        let is_param = matches!(&*self.types.get(base), Type::Param(_));
+        let (code, what) = match &*self.types.get(self.types.underlying(base)) {
+            _ if is_param => (
+                Code::EmbeddedFieldTypeParam,
+                "a (pointer to a) type parameter",
+            ),
+            _ if self.types.is_unsafe_pointer(base, self.names) => {
+                (Code::EmbeddedFieldUnsafePointer, "unsafe.Pointer")
+            }
+            Type::Pointer(_) => (Code::EmbeddedFieldPointer, "a pointer"),
+            Type::Interface { .. } if pointer => {
+                (Code::EmbeddedFieldPointerIface, "a pointer to an interface")
+            }
+            _ => return,
+        };
+        self.error(code, span, format!("embedded field type cannot be {what}"));
+    }
+
     /// Where the struct type that `ty` writes declares its field `name`.
     fn field_span(&self, tree: &File, ty: ExprId, name: Spur) -> Option<Span> {
         let ExprKind::StructType { fields } = &tree.exprs[ty].kind else {

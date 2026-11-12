@@ -232,6 +232,9 @@ struct Checker<'a> {
     /// written, with where they are written: the names of its methods are
     /// checked once every type is known.
     interfaces: Vec<Vec<(Result<Method, TypeId>, Span)>>,
+    /// The type of each embedded field that was written, with where: what
+    /// may be embedded is checked once every type is known.
+    embedded_fields: Vec<(TypeId, Span)>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -329,6 +332,7 @@ pub fn declarations(
         writes_through: FxHashSet::default(),
         iface_conversions: FxHashMap::default(),
         interfaces: Vec::new(),
+        embedded_fields: Vec::new(),
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -712,6 +716,9 @@ impl<'a> Checker<'a> {
         self.to_validate.clear();
         for written in std::mem::take(&mut self.interfaces) {
             self.interface_methods(&written);
+        }
+        for (ty, span) in std::mem::take(&mut self.embedded_fields) {
+            self.embedded_field(ty, span);
         }
         for (key, span) in std::mem::take(&mut self.map_keys) {
             // What a type parameter can be compared with is not decided
@@ -1308,6 +1315,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::StructType { fields } => {
                 let mut all = Vec::new();
+                let mut declared = FxHashMap::default();
                 for field in fields {
                     let ty = self.typ(cx, field.ty);
                     let literal = field.tag.map(|tag| tree.exprs[tag].span);
@@ -1318,15 +1326,20 @@ impl<'a> Checker<'a> {
                         &cx.text[name.lo as usize..name.hi as usize] == "Required"
                     });
                     let embedded = field.names.is_empty();
-                    let names: Vec<Spur> = match embedded {
-                        true => self
-                            .embedded(tree, field.ty)
-                            .map(|e| e.0)
-                            .into_iter()
+                    let names: Vec<(Spur, Span)> = match embedded {
+                        true => self.embedded(tree, field.ty).into_iter().collect(),
+                        false => field
+                            .names
+                            .iter()
+                            .map(|name| (name.name, name.span))
                             .collect(),
-                        false => field.names.iter().map(|name| name.name).collect(),
                     };
-                    for name in names {
+                    // A `.gopp` file has no embedded fields at all.
+                    if embedded && cx.dialect == Dialect::Go {
+                        self.embedded_fields.push((ty, tree.exprs[field.ty].span));
+                    }
+                    for (name, span) in names {
+                        self.field_once(&mut declared, name, span);
                         all.push(Field {
                             name,
                             package: self.package_of(name),
@@ -1941,6 +1954,16 @@ impl<'a> Checker<'a> {
                     .chain(params.iter().copied())
                     .collect();
                 Operand::value(self.types.func(&params, results, *variadic))
+            }
+            (Mode::Type, Some(Member::Field { .. })) => {
+                let name = self.names.resolve(&sel.name);
+                let message = format!(
+                    "{}.{name} undefined (type {} has no method {name})",
+                    self.expr_string(cx, base),
+                    self.type_string(x.ty)
+                );
+                self.error(Code::UndefinedFieldOrMethod, sel.span, message);
+                Operand::UNKNOWN
             }
             _ => Operand::UNKNOWN,
         }

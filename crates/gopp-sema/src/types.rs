@@ -911,14 +911,22 @@ impl Types {
             _ => (ty, false),
         };
         let fields_only = through_pointer && matches!(&*self.get(ty), Type::Named { .. });
-        let mut seen = vec![start];
-        let mut level = vec![(start, through_pointer, Vec::new())];
+        // The types at one depth of embedding: each with whether a
+        // pointer was followed to it, the way to it, and whether it is
+        // embedded more than once at that depth.
+        let mut level = vec![(start, through_pointer, Vec::new(), false)];
+        let mut seen: FxHashSet<TypeId> = [start].into_iter().collect();
         while !level.is_empty() {
             let mut found = Vec::new();
-            let mut next = Vec::new();
-            for (current, indirect, path) in &level {
+            let mut next: Vec<(TypeId, bool, Vec<u32>, bool)> = Vec::new();
+            let mut next_at: FxHashMap<TypeId, usize> = FxHashMap::default();
+            // What is found in a type that is embedded twice is found
+            // twice.
+            let mut twice = false;
+            for (current, indirect, path, multiple) in &level {
                 let (current, indirect) = (*current, *indirect);
                 *steps += 1;
+                let before = found.len();
                 let owner = match &*self.get(current) {
                     Type::Named { id, .. } => self.read(|inner| inner.named[id.0 as usize].package),
                     _ => None,
@@ -948,6 +956,7 @@ impl Types {
                             path: path.clone(),
                             indirect,
                         });
+                        twice |= *multiple;
                         continue;
                     }
                 }
@@ -978,9 +987,13 @@ impl Types {
                                     Type::Pointer(elem) => (*elem, true),
                                     _ => (field.ty, false),
                                 };
-                                if !seen.contains(&inner) {
-                                    seen.push(inner);
-                                    next.push((inner, indirect || pointer, through()));
+                                // A type that is met at a smaller depth
+                                // hides itself here.
+                                if let Some(&at) = next_at.get(&inner) {
+                                    next[at].3 = true;
+                                } else if seen.insert(inner) {
+                                    next_at.insert(inner, next.len());
+                                    next.push((inner, indirect || pointer, through(), *multiple));
                                 }
                             }
                         }
@@ -1016,13 +1029,14 @@ impl Types {
                     }
                     _ => {}
                 }
+                twice |= *multiple && found.len() > before;
             }
             let one = match found.len() {
                 0 => {
                     level = next;
                     continue;
                 }
-                1 => found.pop(),
+                1 if !twice => found.pop(),
                 _ => return Err(NotFound::Ambiguous),
             };
             return match one {

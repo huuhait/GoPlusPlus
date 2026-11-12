@@ -3917,6 +3917,138 @@ type U10 interface {
     assert_eq!(messages("a.go", text), expected);
 }
 
+// rule: TYP-25
+#[test]
+fn embedded_fields_and_the_names_of_fields_are_checked_as_go_checks_them() {
+    let text = "package p
+
+type T1 struct{ X int }
+type T2 struct{ T1 }
+type T3 struct{ T1 }
+type T4 struct {
+	T2
+	T3
+}
+type U3 struct{ T2 }
+type U4 struct{ T2 }
+type U5 struct {
+	U3
+	U4
+}
+type V struct {
+	T1
+	T2
+}
+type W struct {
+	*T2
+	T3
+	Y int
+}
+
+func (T1) m() {}
+
+type I interface{ m() }
+
+func f(t T4, u U5, v V, w W) {
+	_ = v.X
+	_ = w.Y
+	_ = t.T2.X
+	v.m()
+	var _ I = v
+	_ = t.X
+	_ = u.X
+	_ = w.X
+	_ = t.T1
+	_ = u.T2
+	t.m()
+	_ = T4.m
+	var _ I = t
+}
+
+type T struct {
+	x int
+	y func()
+}
+
+func (*T) n() {}
+
+func g() {
+	_ = (*T).n
+	_ = T.a
+	_ = T.x
+	_ = T.n
+	_ = T.y
+	_ = (*T).y
+}
+
+type I1 interface{}
+type I2 interface{}
+type P1 *int
+type P2 *int
+type L[P any] struct{}
+
+type S1 struct {
+	I1
+	*T
+	*I2
+	*error
+	P1
+	*P2
+}
+
+type S2 struct {
+	int8
+	*int16
+	L[int]
+	a, b int
+	_    int
+	_    int
+
+	int8
+	*int16
+	L[int]
+	a string
+}
+";
+    let expected = [
+        "a.go:36:8: ambiguous selector t.X",
+        "a.go:37:8: ambiguous selector u.X",
+        "a.go:38:8: ambiguous selector w.X",
+        "a.go:39:8: ambiguous selector t.T1",
+        "a.go:40:8: ambiguous selector u.T2",
+        "a.go:41:4: ambiguous selector t.m",
+        "a.go:42:9: ambiguous selector T4.m",
+        "a.go:43:12: cannot use t (variable of struct type T4) as I value in variable declaration: T4 does not implement I (ambiguous selector T4.m)",
+        "a.go:55:8: T.a undefined (type T has no field or method a)",
+        "a.go:56:8: T.x undefined (type T has no method x)",
+        "a.go:57:8: invalid method expression T.n (needs pointer receiver (*T).n)",
+        "a.go:58:8: T.y undefined (type T has no method y)",
+        "a.go:59:11: (*T).y undefined (type *T has no method y)",
+        "a.go:71:2: embedded field type cannot be a pointer to an interface",
+        "a.go:72:2: embedded field type cannot be a pointer to an interface",
+        "a.go:73:2: embedded field type cannot be a pointer",
+        "a.go:74:2: embedded field type cannot be a pointer",
+        "a.go:85:2: int8 redeclared",
+        "    a.go:78:2: other declaration of int8",
+        "a.go:86:3: int16 redeclared",
+        "    a.go:79:3: other declaration of int16",
+        "a.go:87:2: L redeclared",
+        "    a.go:80:2: other declaration of L",
+        "a.go:88:2: a redeclared",
+        "    a.go:81:2: other declaration of a",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+    // A `.gopp` file refuses the embedded field itself.
+    let text = "package p\ntype I interface{}\ntype S struct {\n\t*I\n\ta int\n\ta string\n}\n";
+    let expected = [
+        "a.gopp:4:2: struct embedding is not part of Go++: use `@Extends` to inherit from a \
+         struct, or give the field a name",
+        "a.gopp:6:2: a redeclared",
+        "    a.gopp:5:2: other declaration of a",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -4806,7 +4938,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2047;
+const EXPECTED_ERRORS_REPORTED: usize = 2072;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
