@@ -47,6 +47,20 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// An error with what to write in its place.
+    pub(super) fn error_with_fix(
+        &mut self,
+        code: Code,
+        span: Span,
+        message: String,
+        (fix, instead): (Code, String),
+    ) {
+        if self.reported.insert((span, code)) {
+            let diagnostic = Diagnostic::new(code, span, message);
+            self.sink.push(diagnostic.with_note(fix, None, instead));
+        }
+    }
+
     fn span(&self, cx: &Cx<'a>, expr: ExprId) -> Span {
         cx.tree.exprs[expr].span
     }
@@ -600,6 +614,18 @@ impl<'a> Checker<'a> {
                 }
                 let is_literal =
                     matches!(cx.tree.exprs[literal].kind, ExprKind::CompositeLit { .. });
+                // A value on the heap has an owner: one, or several.
+                if is_literal && self.own_rules(cx) {
+                    let written = self.expr_string(cx, literal);
+                    let message = format!("cannot take the address of {written}");
+                    let fix = format!("use NewUnique({written}) or NewShared({written})");
+                    self.error_with_fix(
+                        Code::AddrOfCompositeLit,
+                        self.span(cx, expr),
+                        message,
+                        (Code::NoteOwnFixHeapPointer, fix),
+                    );
+                }
                 if !is_literal && x.mode != Mode::Variable {
                     let message = format!(
                         "invalid operation: cannot take address of {}",

@@ -468,3 +468,5 @@ E0462 err_not_an_interface
 E0463 err_asserted_type_param
 E0464 err_malformed_constant
 E0465 err_tilde_outside_constraint
+E0466 note_own_fix_heap_pointer
+E0467 note_own_fix_take

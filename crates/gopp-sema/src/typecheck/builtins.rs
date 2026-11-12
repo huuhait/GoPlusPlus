@@ -9,6 +9,7 @@ fn arity(builtin: Predeclared) -> Option<(usize, bool)> {
     Some(match builtin {
         Append | Make | Max | Min => (1, true),
         Cap | Clear | Close | Imag | Len | New | Panic | Real => (1, false),
+        Move | NewUnique | NewShared | NewWeak => (1, false),
         ComplexFunc | CopyFunc | Delete => (2, false),
         Print | Println => (0, true),
         Recover => (0, false),
@@ -317,6 +318,24 @@ impl<'a> Checker<'a> {
             }
             (Imag | Real, Some((at, x))) => self.real_or_imag(cx, builtin == Real, at, x),
             (Make, _) => self.make(cx, call, args),
+            (Move, Some((at, x))) => self.moved(cx, at, x),
+            (NewUnique, Some((at, x))) => self.on_heap(cx, name, Type::Unique, at, x),
+            (NewShared, Some((at, x))) => self.on_heap(cx, name, Type::Shared, at, x),
+            (NewWeak, Some((at, x))) => match &*self.types.get(self.types.underlying(x.ty)) {
+                Type::Shared(elem) => {
+                    let weak = self.types.handle(Type::Weak, *elem);
+                    weak.map_or(Operand::UNKNOWN, Operand::value)
+                }
+                _ if self.unsettled(x.ty) => Operand::UNKNOWN,
+                _ => {
+                    let message = format!(
+                        "invalid argument: {} is not a Shared[T]",
+                        self.describe(cx, at, &x)
+                    );
+                    self.error(Code::OwnWeakArg, cx.tree.exprs[at].span, message);
+                    Operand::UNKNOWN
+                }
+            },
             (Max | Min, Some(_)) => self.min_or_max(cx, builtin == Max, given),
             (New, _) => match self.typ(cx, args[0]) {
                 Types::INVALID => Operand::UNKNOWN,
@@ -463,6 +482,62 @@ impl<'a> Checker<'a> {
             }
             _ => Operand::value(ty),
         }
+    }
+
+    /// `NewUnique(v)` and `NewShared(v)`: the value `v` on the heap.
+    fn on_heap(
+        &mut self,
+        cx: &Cx<'a>,
+        name: &str,
+        make: fn(TypeId) -> Type,
+        at: ExprId,
+        x: Operand,
+    ) -> Operand {
+        let context = format!("argument to {name}");
+        let x = self.assignment(cx, at, x, None, &context);
+        if x.mode == Mode::Unknown {
+            return Operand::UNKNOWN;
+        }
+        if x.ty == self.types.basic(Basic::UntypedNil) {
+            let message = format!("use of untyped nil in {context}");
+            self.error(Code::UseOfUntypedNil, cx.tree.exprs[at].span, message);
+            return Operand::UNKNOWN;
+        }
+        // A pointer that borrows does not live on the heap, which is said
+        // where borrows are checked.
+        let handle = self.types.handle(make, x.ty);
+        handle.map_or(Operand::UNKNOWN, Operand::value)
+    }
+
+    /// `move(x)`: the value of the local variable or parameter `x`.
+    fn moved(&mut self, cx: &Cx<'a>, at: ExprId, x: Operand) -> Operand {
+        let mut name = at;
+        while let ExprKind::Paren(inner) = cx.tree.exprs[name].kind {
+            name = inner;
+        }
+        let denotes = match cx.tree.exprs[name].kind {
+            ExprKind::Name(_) => cx.body.uses.get(&name),
+            _ => None,
+        };
+        let code = match (denotes, &x.mode) {
+            (Some(Ref::Local(_)), Mode::Variable) => return Operand::value(x.ty),
+            (Some(_), Mode::Variable) => Code::MoveNonlocal,
+            _ => Code::OwnMoveNotPlace,
+        };
+        let message = format!(
+            "cannot move {}: move takes a local variable or a parameter",
+            self.describe(cx, at, &x)
+        );
+        let span = cx.tree.exprs[at].span;
+        // The value of another place is taken out of it.
+        match x.mode {
+            Mode::Variable => {
+                let fix = format!("use mem.Take(&{})", self.expr_string(cx, at));
+                self.error_with_fix(code, span, message, (Code::NoteOwnFixTake, fix));
+            }
+            _ => self.error(code, span, message),
+        }
+        Operand::UNKNOWN
     }
 
     /// `make(T, sizes...)`.

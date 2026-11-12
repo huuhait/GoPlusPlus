@@ -2286,6 +2286,80 @@ fn tildes_literals_indexes_and_map_keys_are_checked_as_go_checks_them() {
     );
 }
 
+#[test]
+fn values_are_moved_and_put_on_the_heap_by_the_built_in_functions_of_gopp() {
+    let text = "package p
+
+type User struct{ Name string }
+
+var global User
+
+func f(p User, q *User) {
+	a := move(p)
+	b := move((q))
+	u := NewUnique(User{Name: \"b\"})
+	s := NewShared(a)
+	w := NewWeak(s)
+	n := NewUnique(1)
+	_, _, _, _ = b, u, w, n
+}
+
+func g(p User, u Unique[User]) {
+	_ = move(global)
+	_ = move(p.Name)
+	_ = move(User{})
+	_ = NewWeak(u)
+	_ = NewUnique(nil)
+	_ = &User{Name: \"a\"}
+	_ = &p
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:18:11: cannot move global (variable of struct type User): move takes a local \
+         variable or a parameter",
+        "    use mem.Take(&global)",
+        "a.gopp:19:11: cannot move p.Name (variable of type string): move takes a local variable \
+         or a parameter",
+        "    use mem.Take(&p.Name)",
+        "a.gopp:20:11: cannot move User{} (value of struct type User): move takes a local \
+         variable or a parameter",
+        "a.gopp:21:14: invalid argument: u (variable of type Unique[User]) is not a Shared[T]",
+        "a.gopp:22:16: use of untyped nil in argument to NewUnique",
+        "a.gopp:23:6: cannot take the address of User{…}",
+        "    use NewUnique(User{…}) or NewShared(User{…})",
+    ];
+    assert_eq!(checked.messages, expected);
+    let types = loader.types.get().unwrap();
+    let locals: Vec<String> = checked.package.files[0].bodies[2]
+        .locals
+        .iter()
+        .map(|local| {
+            format!(
+                "{}: {}",
+                names.resolve(&local.name),
+                types.display(local.ty, &names)
+            )
+        })
+        .collect();
+    let expected = [
+        "p: p.User",
+        "q: *p.User",
+        "a: p.User",
+        "b: *p.User",
+        "u: Unique[p.User]",
+        "s: Shared[p.User]",
+        "w: Weak[p.User]",
+        "n: Unique[int]",
+    ];
+    assert_eq!(locals, expected);
+    // In a Go file `&T{…}` is what it is in Go.
+    let text = "package p\ntype T struct{}\nvar _ = &T{}\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();

@@ -85,6 +85,7 @@ codes! {
     65 UnknownMacroKind "err_unknown_macro_kind",
     66 AttrOnStmt "err_attr_on_stmt",
     67 AttrOnImport "err_attr_on_import",
+    68 AddrOfCompositeLit "err_addr_of_complit",
     72 GoppDirectiveInSource "err_gopp_directive_in_source",
     73 NoteGoppModLine "note_gopp_mod_line",
     79 StmtOutsideFunc "err_stmt_outside_func",
@@ -174,9 +175,12 @@ codes! {
     236 InvalidConstantType "err_invalid_constant_type",
     237 MethodExprPointerReceiver "err_method_expr_ptr_recv",
     238 AmbiguousSelector "err_ambiguous_selector",
+    266 OwnMoveNotPlace "err_own_move_not_place",
+    298 OwnWeakArg "err_own_weak_arg",
     300 NoteOwnNewRemoved "note_own_new_removed",
     312 UnusedImport "err_unused_import",
     313 UnusedImportAs "err_unused_import_as",
+    341 MoveNonlocal "err_move_nonlocal",
     377 StructEmbedding "err_struct_embedding",
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",
@@ -189,6 +193,8 @@ codes! {
     463 AssertedTypeParam "err_asserted_type_param",
     464 MalformedConstant "err_malformed_constant",
     465 TildeOutsideConstraint "err_tilde_outside_constraint",
+    466 NoteOwnFixHeapPointer "note_own_fix_heap_pointer",
+    467 NoteOwnFixTake "note_own_fix_take",
 }
 
 impl Code {
