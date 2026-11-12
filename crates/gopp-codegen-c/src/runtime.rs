@@ -48,7 +48,7 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
 
 /// Every function of the runtime that generated code may call: the
 /// header declares them, and the runtime defines them.
-pub const FUNCS: [RuntimeFunc; 37] = [
+pub const FUNCS: [RuntimeFunc; 47] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
     returns("_gopp_rt_funcs", "gopp_func_table *table"),
@@ -102,6 +102,39 @@ pub const FUNCS: [RuntimeFunc; 37] = [
         "const void *to, const void *from, uint64_t size",
     ),
     returns("_gopp_slice_clear", "const void *slice, uint64_t size"),
+    gives(
+        "void *",
+        "_gopp_map_make",
+        "const void *shape, int64_t hint",
+    ),
+    gives("uint64_t", "_gopp_map_len", "const void *map"),
+    gives(
+        "bool",
+        "_gopp_map_read",
+        "const void *map, const void *shape, const void *key, void *value",
+    ),
+    gives(
+        "void *",
+        "_gopp_map_set",
+        "void *place_of_map, const void *shape, const void *key",
+    ),
+    returns(
+        "_gopp_map_delete",
+        "void *map, const void *shape, const void *key",
+    ),
+    returns("_gopp_map_clear", "void *map, const void *shape"),
+    gives(
+        "void *",
+        "_gopp_map_copy",
+        "const void *map, const void *shape",
+    ),
+    returns("_gopp_map_iter_start", "void *iter, void *map"),
+    gives(
+        "bool",
+        "_gopp_map_iter_next",
+        "void *iter, const void *shape, void *key, void *value",
+    ),
+    returns("_gopp_map_iter_end", "void *iter"),
     ends(
         "_gopp_panic_bounds",
         "uint64_t index, uint64_t length, bool is_signed",
@@ -240,7 +273,7 @@ const INTERNAL: Source = ("internal.h", include_str!("../../../runtime/internal.
 
 /// The sources of the runtime for a system: every target has all but
 /// the last.
-fn sources(os: Os) -> [Source; 6] {
+fn sources(os: Os) -> [Source; 7] {
     let of_system = match os {
         Os::Windows => (
             "os_windows.c",
@@ -254,6 +287,7 @@ fn sources(os: Os) -> [Source; 6] {
         ("panic.c", include_str!("../../../runtime/panic.c")),
         ("string.c", include_str!("../../../runtime/string.c")),
         ("slice.c", include_str!("../../../runtime/slice.c")),
+        ("map.c", include_str!("../../../runtime/map.c")),
         of_system,
     ]
 }

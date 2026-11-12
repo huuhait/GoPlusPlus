@@ -24,6 +24,10 @@ void _gopp_write_uint(uint64_t value);
 void _gopp_write_int(int64_t value);
 void _gopp_write_hex(uint64_t value);
 
+// Ends the program as a panic with the message does: the message, the
+// Go++ functions of the stack, and status 2.
+[[noreturn]] void _gopp_fail(const char *message);
+
 // Room for `size` bytes, which is never null: a program that gets none
 // ends.
 void *_gopp_alloc(uint64_t size);

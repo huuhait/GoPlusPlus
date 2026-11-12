@@ -11,6 +11,7 @@ Every Go++ program is linked with a runtime ([ADR-0035](../adr/0035-runtime-in-c
 | `runtime/panic.c` | `_gopp_panic_<kind>`: where a failed bounds, slice, nil, division or shift check of generated code ends, and `_gopp_panic_must` |
 | `runtime/string.c` | what the compiler calls for strings: `_gopp_string_concat`, `_gopp_string_eq`, `_gopp_string_compare`, `_gopp_string_from_rune`, `_gopp_string_decode`, `_gopp_string_from_bytes`; and `_gopp_alloc`, which is `malloc` until the allocator of `P05.03` |
 | `runtime/slice.c` | what the compiler calls for slices: `_gopp_slice_make`, `_gopp_slice_grow`, `_gopp_slice_append`, `_gopp_slice_copy`, `_gopp_slice_copy_into`, `_gopp_slice_clear`, `_gopp_bytes_from_string` |
+| `runtime/map.c` | what the compiler calls for maps: `_gopp_map_make`, `_gopp_map_len`, `_gopp_map_read`, `_gopp_map_set`, `_gopp_map_delete`, `_gopp_map_clear`, `_gopp_map_copy`, and the three functions of a range loop, `_gopp_map_iter_start`, `_gopp_map_iter_next`, `_gopp_map_iter_end` |
 | `runtime/os_linux.c`, `runtime/os_windows.c` | what the runtime asks of the system: writing to the standard error stream and walking the stack. A target gets the one of its system |
 | `runtime/internal.h` | what these files share |
 | `gopp_rt.h` | generated, never written by hand (below) |
@@ -62,6 +63,21 @@ Every function takes a slice by the address of its four words, as a `void *`, be
 - `_gopp_bytes_from_string` and `_gopp_string_from_bytes` are the two conversions; each copies the bytes.
 
 No buffer is freed when its owner ends yet (`P04.09`).
+
+## Maps
+
+A map is one pointer to a header `{allocator, count, iterators, seed, …}`; a nil map is a null pointer and is empty. The table has groups of eight slots. Each group has one word of eight control bytes, one for each slot: empty, deleted, or seven bits of the hash of the key that is there, so one comparison of words finds the slots that may hold a key. A key is looked for in the group that its hash names and then in the groups after it at growing steps, until a group with an empty slot. An eighth of the slots stays empty; a table that is full grows to twice its size, or is laid out anew at its size when half of it is slots of deleted keys.
+
+Generated code has no type of the runtime for each map type. Every function takes a record of five numbers by its address (`gopp_mapinfo`: the size of a key, the size of a value, where the value is in a slot, the size of a slot, and how keys are hashed and compared), and keys and values by their addresses. Keys are compared by their bytes (integers, booleans, pointers, and structs and arrays of them without padding), as strings, or as floats, where the two zeros are one key and what is no number is never found again. Any other key type, and a value that holds a slice or a map, needs the glue of `P04.09` and is `E0439` until then. Every map has a seed of its own for its hashes.
+
+- `_gopp_map_make(shape, hint)` is `make` and a literal; a hint that is negative or too large is no hint, as in Go.
+- `_gopp_map_read(map, shape, key, value)` writes the value of the key, or a zero, and says whether the key is there: `m[k]` and `v, ok := m[k]`.
+- `_gopp_map_set(place, shape, key)` gives the address of the value of the key, which generated code then writes. A new key gets a zero value first. It takes the address of the place that holds the map, because a write to a nil map makes the map there (OWN-P9): no program ends with Go's `assignment to entry in nil map`.
+- `_gopp_map_delete`, `_gopp_map_clear` and `_gopp_map_len` are the built-ins.
+- `_gopp_map_copy(map, shape)` gives a map of its own with the same entries: the copy that a new owner gets.
+- A range loop keeps three words in its frame. `_gopp_map_iter_start` picks a slot that no program can tell beforehand and counts the loop in the header; `_gopp_map_iter_next` copies the next entry out; `_gopp_map_iter_end` is called on every way out of the loop. While a loop is counted, a new key and `clear` end the program with `panic: map insert during iteration` or `panic: map clear during iteration` (RNG-4); writing a key that is there and `delete` are allowed.
+
+No table is freed when its owner ends yet (`P04.09`), and a panic that leaves a loop does not end its count until cleanup blocks are lowered (`P04.15`).
 
 ## `print` and `println`
 

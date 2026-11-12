@@ -1,0 +1,80 @@
+package main
+
+// A map has one owner: a new owner gets a map of its own, a function
+// changes the map of its caller through a pointer, and a write to a nil
+// map makes the map where it is held.
+
+type counter struct {
+	hits map[string]int
+	total int
+}
+
+var names map[int]string
+
+func add(m map[string]int, key string) int {
+	m[key] = 100
+	return len(m)
+}
+
+func fill(m *map[string]int, key string) {
+	m[key] = 7
+	m[key]++
+}
+
+func find(m *map[string]int, wanted int) string {
+	for key, value := range m {
+		if value == wanted {
+			return key
+		}
+	}
+	return "none"
+}
+
+func main() {
+	var first map[string]int
+	first["a"] = 1
+	println(len(first), first["a"], first == nil)
+
+	second := first
+	second["b"] = 2
+	println(len(first), len(second))
+
+	println(add(first, "z"), len(first))
+	fill(&first, "p")
+	println(len(first), first["p"], find(&first, 8), find(&first, 99))
+
+	var c counter
+	c.hits["x"]++
+	c.hits["x"]++
+	c.total += c.hits["x"]
+	println(c.total, len(c.hits))
+
+	names[3] = "three"
+	names[4] = "four"
+	println(len(names), names[3], names[4])
+
+	nested := 0
+outer:
+	for a := range first {
+		for b := range second {
+			if a == b {
+				nested++
+				continue outer
+			}
+		}
+		nested += 10
+	}
+	println(nested)
+	first["after"] = 1
+	second["after"] = 1
+	println(len(first), len(second))
+
+	for key := range first {
+		first[key] = 0
+	}
+	println(first["a"], first["p"])
+	for key := range first {
+		delete(first, key)
+	}
+	println(len(first))
+}

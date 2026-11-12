@@ -1,0 +1,8 @@
+0
+panic: map clear during iteration
+
+goroutine 1 [running]:
+main.empty()
+	+0x?
+main.main()
+	+0x?

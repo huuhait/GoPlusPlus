@@ -31,6 +31,9 @@ pub(super) fn deeper<T>(walk: impl FnOnce() -> T) -> T {
 #[derive(Default)]
 pub(super) struct Scope {
     vars: Vec<LocalId>,
+    /// The walks of the range loops over maps that the block has: what
+    /// the runtime keeps of each, by its address.
+    walks: Vec<Operand>,
     /// Whether the block has a debug scope: it gets one with its first
     /// variable.
     debug: bool,
@@ -304,16 +307,29 @@ impl FuncCx<'_, '_> {
     }
 
     /// The variables of the scopes from `depth` on are dead, the
-    /// innermost and the last declared first. The scopes stay open:
-    /// this is a way out of them, not their end.
+    /// innermost and the last declared first, and their walks of maps
+    /// are over. The scopes stay open: this is a way out of them, not
+    /// their end.
     pub fn exit_scopes(&mut self, depth: usize) -> Built {
         for scope in (depth..self.scopes.len()).rev() {
+            for at in (0..self.scopes[scope].walks.len()).rev() {
+                let walk = self.scopes[scope].walks[at].clone();
+                let params = [self.bytes_ty()];
+                self.runtime_call("_gopp_map_iter_end", &params, vec![walk])?;
+            }
             for at in (0..self.scopes[scope].vars.len()).rev() {
                 let var = self.scopes[scope].vars[at];
                 self.b.storage_dead(var)?;
             }
         }
         Ok(())
+    }
+
+    /// The innermost scope walks a map from here on.
+    pub fn walked(&mut self, walk: Operand) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.walks.push(walk);
+        }
     }
 
     /// A new variable of the innermost scope for the local that the

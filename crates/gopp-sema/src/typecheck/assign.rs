@@ -159,18 +159,18 @@ impl<'a> Checker<'a> {
             let how = self.gives(context).filter(|_| own);
             self.note_interface(cx, expr, &x, to, writes, how)
         });
-        if own
-            && !refused
-            && let Some(how) = self.gives(context)
-        {
+        // A Go file gives its values the same way: a new owner gets a
+        // copy (ADR-0041).
+        if !refused && let Some(how) = self.gives(context) {
             match x.mode {
                 Mode::Variable | Mode::MapIndex => {
                     // The value is of the type that the operand is read as.
-                    let read = to.and_then(|to| self.fit_own(&x, to, writes));
+                    let read = to.filter(|_| own);
+                    let read = read.and_then(|to| self.fit_own(&x, to, writes));
                     let ty = read.map_or(x.ty, |(from, _)| from);
                     self.given(cx, expr, &x, ty, how);
                 }
-                Mode::Value => {
+                Mode::Value if own => {
                     self.slice_given(cx, expr, &x, how);
                     self.lent_from_temporary(cx, expr, &x, to);
                 }

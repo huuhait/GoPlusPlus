@@ -125,7 +125,9 @@ impl Memo<'_> {
             }
             CheckedType::Map { .. } => {
                 let header = Self::runtime(types, "gopp.map", &[]);
-                types.ptr(header)
+                let map = types.ptr(header);
+                self.map = Some(map);
+                map
             }
             CheckedType::Chan { .. } => {
                 let header = Self::runtime(types, "gopp.chan", &[]);

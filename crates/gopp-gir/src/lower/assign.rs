@@ -9,6 +9,7 @@ use gopp_syntax::ast::{AssignOp, BinaryOp, ExprId, ExprKind};
 use super::Shared;
 use super::expr::{Check, PlaceMode};
 use super::func::{Built, FuncCx};
+use super::map::MapOf;
 use crate::{CastKind, Constant, ConstantKind, Operand, Place, Rvalue, Type, TypeId};
 
 /// What one expression on the left of an assignment takes a value for.
@@ -18,6 +19,8 @@ enum Dest {
     /// A variable that the statement declares.
     New(CheckedLocalId, TypeId),
     Place(Place, Vec<Check>),
+    /// `m[k]`: the place that holds the map, and the key by its address.
+    Entry(Place, Vec<Check>, MapOf, Operand),
 }
 
 impl FuncCx<'_, '_> {
@@ -47,6 +50,7 @@ impl FuncCx<'_, '_> {
                 Dest::Blank => None,
                 Dest::New(_, ty) => Some(*ty),
                 Dest::Place(place, _) => Some(self.b.place_ty(place)),
+                Dest::Entry(_, _, of, _) => Some(of.value),
             })
             .collect();
         let mut values = self.values(rhs, &wanted)?;
@@ -67,21 +71,30 @@ impl FuncCx<'_, '_> {
         }
         self.reused = None;
         for (dest, value) in dests.into_iter().zip(values) {
-            match dest {
-                Dest::Blank => {}
-                Dest::New(local, _) => {
-                    let var = self.declare(local)?;
-                    self.store(Place::local(var), value)?;
-                }
-                Dest::Place(place, checks) => {
-                    for check in checks {
-                        self.checked(check)?;
-                    }
-                    self.store(place, value)?;
-                }
-            }
+            self.put(dest, value)?;
         }
         Ok(())
+    }
+
+    /// The store of one value, with the checks of its place.
+    fn put(&mut self, dest: Dest, value: Rvalue) -> Built {
+        let place = match dest {
+            Dest::Blank => return Ok(()),
+            Dest::New(local, _) => Place::local(self.declare(local)?),
+            Dest::Place(place, checks) => {
+                for check in checks {
+                    self.checked(check)?;
+                }
+                place
+            }
+            Dest::Entry(map, checks, of, key) => {
+                for check in checks {
+                    self.checked(check)?;
+                }
+                self.map_entry(map, &of, key)?
+            }
+        };
+        self.store(place, value)
     }
 
     /// The expression inside `right` that names the place `left` again
@@ -117,6 +130,7 @@ impl FuncCx<'_, '_> {
             Dest::Blank => return Ok(()),
             Dest::New(_, ty) => *ty,
             Dest::Place(place, _) => self.b.place_ty(place),
+            Dest::Entry(_, _, of, _) => of.value,
         };
         // The loop counts in a type of its own.
         let have = self.b.operand_ty(&value);
@@ -128,19 +142,7 @@ impl FuncCx<'_, '_> {
             true => Rvalue::Cast(CastKind::IntToInt, value, wanted),
             false => Rvalue::Use(value),
         };
-        match dest {
-            Dest::Blank => Ok(()),
-            Dest::New(local, _) => {
-                let var = self.declare(local)?;
-                self.store(Place::local(var), value)
-            }
-            Dest::Place(place, checks) => {
-                for check in checks {
-                    self.checked(check)?;
-                }
-                self.store(place, value)
-            }
-        }
+        self.put(dest, value)
     }
 
     /// What `left` takes its value for. With `later`, more is evaluated
@@ -166,6 +168,14 @@ impl FuncCx<'_, '_> {
             later: Some(Vec::new()),
             held: later,
         };
+        if let Some((map, index)) = self.map_index(inner) {
+            let Some(of) = self.map_of(map) else {
+                return Ok(Dest::Blank);
+            };
+            let map = self.map_place(map, &mut mode)?;
+            let key = self.key_at(index, &of)?;
+            return Ok(Dest::Entry(map, mode.later.unwrap_or_default(), of, key));
+        }
         let mut place = self.place(left, &mut mode)?;
         // A pointer that is assigned what it points to is written
         // through.
@@ -189,6 +199,21 @@ impl FuncCx<'_, '_> {
             later: None,
             held: later,
         };
+        // An entry of a map is read, and then written where the map has
+        // it after the value is worked out.
+        if let Some((map, index)) = self.map_index(inner) {
+            let Some(of) = self.map_of(map) else {
+                return Ok(());
+            };
+            let map = self.map_place(map, &mut mode)?;
+            let key = self.key_at(index, &of)?;
+            let now = self.stable(Operand::Copy(map.clone()))?;
+            let [first, _] = self.map_get(now, &of, key.clone())?;
+            let (second, nonzero) = self.second(op, y, of.value)?;
+            let value = self.arith(span, op, first, second, nonzero)?;
+            let entry = self.map_entry(map, &of, key)?;
+            return self.b.assign(entry, value);
+        }
         let mut place = self.place(x, &mut mode)?;
         if self.body.writes_through.contains(&inner) {
             place = self.deref(place, span, &mut mode)?;
@@ -198,7 +223,15 @@ impl FuncCx<'_, '_> {
         if later {
             first = self.stable(first)?;
         }
-        let (second, nonzero) = match y {
+        let (second, nonzero) = self.second(op, y, ty)?;
+        let value = self.arith(span, op, first, second, nonzero)?;
+        self.b.assign(place, value)
+    }
+
+    /// The right operand of `x op= y` for an `x` of the type `ty`, and
+    /// whether it is known not to be zero; one for `x++` and `x--`.
+    fn second(&mut self, op: BinaryOp, y: Option<ExprId>, ty: TypeId) -> Built<(Operand, bool)> {
+        Ok(match y {
             Some(y) => {
                 // The count of a shift has a type of its own.
                 let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
@@ -226,9 +259,7 @@ impl FuncCx<'_, '_> {
                 };
                 (Operand::Const(Constant { kind: one, ty }), true)
             }
-        };
-        let value = self.arith(span, op, first, second, nonzero)?;
-        self.b.assign(place, value)
+        })
     }
 
     pub fn inc_dec(&mut self, x: ExprId, inc: bool) -> Built {

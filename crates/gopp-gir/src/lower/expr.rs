@@ -199,6 +199,24 @@ impl FuncCx<'_, '_> {
         let [call] = exprs else {
             return Ok(Vec::new());
         };
+        // `v, ok := m[k]`.
+        if let (Some((map, index)), [_, _]) = (self.map_index(*call), wanted) {
+            let span = self.tree.exprs[*call].span;
+            let read = self.map_read(map, index)?;
+            let mut values = Vec::with_capacity(2);
+            for (at, &wanted) in wanted.iter().enumerate() {
+                let part = read.as_ref().map(|read| read[at].clone());
+                values.push(match (part, wanted) {
+                    (Some(part), None) => Rvalue::Use(part),
+                    (Some(part), Some(ty)) if self.b.operand_ty(&part) == ty => Rvalue::Use(part),
+                    (Some(_), Some(ty)) => {
+                        self.placeholder(span, ty, "a value whose type is not known")
+                    }
+                    (None, ty) => Rvalue::Use(self.zero(ty.unwrap_or(TypeInterner::UNIT))),
+                });
+            }
+            return Ok(values);
+        }
         let whole = self.operand(*call)?;
         let whole = self.stable(whole)?;
         // Several values at once are the results of a call; a value of
@@ -257,6 +275,12 @@ impl FuncCx<'_, '_> {
             ExprKind::Name(_) => self.name(expr, ty),
             ExprKind::Selector { .. } => self.selector(expr, ty),
             ExprKind::Index { .. } => {
+                if let Some((map, index)) = self.map_index(expr) {
+                    return Ok(Rvalue::Use(match self.map_read(map, index)? {
+                        Some([value, _]) => value,
+                        None => self.zero(ty),
+                    }));
+                }
                 let place = self.place(expr, &mut PlaceMode::default())?;
                 Ok(Rvalue::Use(Operand::Copy(place)))
             }
@@ -399,8 +423,11 @@ impl FuncCx<'_, '_> {
                     return self.global(key, package, *member, span);
                 }
             }
+            // An entry of a map is no place: it is read into a slot.
             ExprKind::Index { x, indices } => {
-                if let ([index], false) = (&indices[..], self.indexed_by_method(expr)) {
+                if let ([index], false) = (&indices[..], self.indexed_by_method(expr))
+                    && !self.holds_map(*x)
+                {
                     return self.element(expr, *x, *index, mode);
                 }
             }
@@ -633,7 +660,7 @@ impl FuncCx<'_, '_> {
                 Length::Of(self.b.assign_temp(Rvalue::Len(base.clone()))?)
             }
             _ => {
-                self.unsupported(span, "an index of a map");
+                self.unsupported(span, "an index of a value of this type");
                 let ty = self.ty_of(expr);
                 return Ok(Place::local(
                     self.b.assign_temp(Rvalue::Use(self.zero(ty)))?,
@@ -1008,7 +1035,7 @@ impl FuncCx<'_, '_> {
         if !self.body.types.contains_key(&callee) {
             let converts = self.body.types.contains_key(&expr);
             return match (self.builtin_of(callee), &args[..]) {
-                (Some(called), _) => self.builtin(span, ty, called, args, *spread),
+                (Some(called), _) => self.builtin(expr, ty, called, args, *spread),
                 (None, [value]) if converts => self.convert(span, *value, ty),
                 _ => Ok(self.placeholder(span, ty, "a call of what is not known")),
             };
@@ -1174,15 +1201,30 @@ impl FuncCx<'_, '_> {
 
     fn builtin(
         &mut self,
-        span: SourceSpan,
+        expr: ExprId,
         ty: TypeId,
         called: Predeclared,
         args: &[ExprId],
         spread: bool,
     ) -> Built<Rvalue> {
+        let span = self.tree.exprs[expr].span;
         match (called, args, self.kind(ty)) {
             (Predeclared::Make, [_, sizes @ ..], Type::Slice(of)) => {
                 return self.make_slice(ty, of, sizes);
+            }
+            (Predeclared::Make, [_, sizes @ ..], _) if self.is_map(ty) => {
+                return self.make_map(expr, ty, sizes);
+            }
+            (Predeclared::Delete, [map, key], _) if self.holds_map(*map) => {
+                self.map_delete(*map, *key)?;
+                return Ok(Rvalue::Use(self.zero(ty)));
+            }
+            (Predeclared::Clear, [map], _) if self.holds_map(*map) => {
+                self.clear_map(*map)?;
+                return Ok(Rvalue::Use(self.zero(ty)));
+            }
+            (Predeclared::Len, [map], _) if self.holds_map(*map) => {
+                return self.map_len(ty, *map);
             }
             (Predeclared::Append, _, Type::Slice(_)) => {
                 return self.append(span, ty, args, spread);
@@ -1505,6 +1547,7 @@ impl FuncCx<'_, '_> {
                 let set = set.iter().map(|&(at, _)| at).zip(values).collect();
                 self.slice_literal(ty, of, count, set)
             }
+            Type::Ptr(_) if self.is_map(ty) => self.map_literal(expr, ty, elems),
             _ => Ok(self.placeholder(span, ty, "this literal")),
         }
     }
@@ -1537,7 +1580,11 @@ impl FuncCx<'_, '_> {
     }
 
     /// One value for each expression, evaluated from left to right.
-    fn values_each(&mut self, exprs: &[ExprId], wanted: &[Option<TypeId>]) -> Built<Vec<Operand>> {
+    pub fn values_each(
+        &mut self,
+        exprs: &[ExprId],
+        wanted: &[Option<TypeId>],
+    ) -> Built<Vec<Operand>> {
         let mut later = false;
         let mut effects_after = vec![false; exprs.len()];
         for at in (0..exprs.len()).rev() {

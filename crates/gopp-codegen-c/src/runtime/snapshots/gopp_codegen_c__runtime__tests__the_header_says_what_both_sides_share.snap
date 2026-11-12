@@ -80,6 +80,16 @@ void _gopp_slice_append(void *slice, const void *from, uint64_t size, bool no_po
 void _gopp_slice_copy(void *slice, uint64_t size);
 uint64_t _gopp_slice_copy_into(const void *to, const void *from, uint64_t size);
 void _gopp_slice_clear(const void *slice, uint64_t size);
+void * _gopp_map_make(const void *shape, int64_t hint);
+uint64_t _gopp_map_len(const void *map);
+bool _gopp_map_read(const void *map, const void *shape, const void *key, void *value);
+void * _gopp_map_set(void *place_of_map, const void *shape, const void *key);
+void _gopp_map_delete(void *map, const void *shape, const void *key);
+void _gopp_map_clear(void *map, const void *shape);
+void * _gopp_map_copy(const void *map, const void *shape);
+void _gopp_map_iter_start(void *iter, void *map);
+bool _gopp_map_iter_next(void *iter, const void *shape, void *key, void *value);
+void _gopp_map_iter_end(void *iter);
 [[noreturn]] void _gopp_panic_bounds(uint64_t index, uint64_t length, bool is_signed);
 [[noreturn]] void _gopp_panic_slice_alen(uint64_t index, uint64_t length, bool is_signed);
 [[noreturn]] void _gopp_panic_slice_acap(uint64_t index, uint64_t capacity, bool is_signed);

@@ -23,6 +23,12 @@ static void frame(uintptr_t start, uintptr_t at) {
   _gopp_rt_exit(2);
 }
 
+[[noreturn]] void _gopp_fail(const char *message) {
+  _gopp_write_text("panic: ");
+  _gopp_write_text(message);
+  die();
+}
+
 [[noreturn]] static void runtime_error(const char *message) {
   _gopp_write_text("panic: runtime error: ");
   _gopp_write_text(message);

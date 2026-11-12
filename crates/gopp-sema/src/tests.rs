@@ -6142,6 +6142,55 @@ func use(h *Holder, xs []int, d Doc, fs []File, f File, n int, name string) (Doc
     assert_eq!(transfers(&checked), expected);
 }
 
+// rule: OWN-R3
+#[test]
+fn a_go_file_copies_what_it_gives_and_has_none_of_the_other_rules() {
+    let text = "package p
+
+type Table struct {
+	rows  []int
+	names map[string]int
+}
+
+func fill(rows []int, names map[string]int) {}
+
+func use(t Table, n int, text string) ([]int, map[string]int) {
+	rows := t.rows
+	names := t.names
+	var other map[string]int
+	other = names
+	fill(rows, names)
+	fill(t.rows[1:], map[string]int{})
+	count := n
+	same := text
+	_, _ = count, same
+	p := &rows
+	q := p
+	_ = q
+	_ = len(rows) + len(other)
+	return rows, t.names
+}
+";
+    let checked = check_texts(
+        "p",
+        &[("a.go", text)],
+        &Loader::default(),
+        &ThreadedRodeo::new(),
+    );
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let expected = [
+        "11:10 t.rows: copy",
+        "12:11 t.names: copy",
+        "14:10 names: copy",
+        "15:7 rows: copy",
+        "15:13 names: copy",
+        "18:10 text: copy",
+        "24:9 rows: copy",
+        "24:15 t.names: copy",
+    ];
+    assert_eq!(transfers(&checked), expected);
+}
+
 // rule: OWN-R3b, RNG-1
 #[test]
 fn a_plain_range_variable_is_read_and_its_parts_are_not_changed() {

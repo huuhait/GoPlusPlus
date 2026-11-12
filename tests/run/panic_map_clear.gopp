@@ -1,0 +1,19 @@
+// exit: 2
+package main
+
+func empty(m *map[int]int) {
+	clear(m)
+}
+
+func main() {
+	m := map[int]int{1: 1}
+	for key := range m {
+		delete(m, key)
+	}
+	println(len(m))
+	m[2] = 2
+	for range m {
+		empty(&m)
+	}
+	println("not reached")
+}

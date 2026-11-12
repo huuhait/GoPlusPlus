@@ -8,6 +8,7 @@
 mod assign;
 mod expr;
 mod func;
+mod map;
 mod merge;
 mod slice;
 mod stmt;
@@ -202,6 +203,10 @@ pub(crate) struct Memo<'a> {
     /// What makes the symbols, and the names of the declared structs.
     pub namer: Namer<'a>,
     pub types: FxHashMap<CheckedTypeId, Result<TypeId, &'static str>>,
+    /// The type that every map has, once a map type is lowered.
+    pub map: Option<TypeId>,
+    /// What is known of each map type that the run has used.
+    pub maps: FxHashMap<CheckedTypeId, Result<map::MapOf, &'static str>>,
     /// The types that are being lowered: one that is met again holds
     /// itself.
     pub open: Vec<CheckedTypeId>,
@@ -227,6 +232,8 @@ impl<'a> Memo<'a> {
         Self {
             namer: Namer::new(shared.types, shared.names).with_locals(locals),
             types: FxHashMap::default(),
+            map: None,
+            maps: FxHashMap::default(),
             open: Vec::new(),
             funcs: FxHashMap::default(),
             globals: FxHashMap::default(),

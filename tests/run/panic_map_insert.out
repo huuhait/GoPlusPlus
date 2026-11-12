@@ -1,0 +1,8 @@
+2 0
+panic: map insert during iteration
+
+goroutine 1 [running]:
+main.grow()
+	+0x?
+main.main()
+	+0x?

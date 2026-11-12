@@ -677,9 +677,123 @@ func copies(t Table, grid [][]int) int {
     assert_eq!(
         messages,
         [
-            "a.gopp:6:7: not supported yet: a copy of a value that holds a slice in another value",
-            "a.gopp:7:11: not supported yet: a copy of a value that holds a slice in another value",
+            "a.gopp:6:7: not supported yet: a copy of a value that holds a slice or a map in another value",
+            "a.gopp:7:11: not supported yet: a copy of a value that holds a slice or a map in another value",
             "a.gopp:8:10: not supported yet: a copy of elements that hold a slice",
+        ]
+    );
+}
+
+#[test]
+fn a_map_is_kept_by_the_runtime_and_copied_for_a_new_owner() {
+    insta::assert_snapshot!(gir("package main
+
+type point struct{ x, y int32 }
+
+func made(n int) map[string]int {
+	ages := make(map[string]int, n)
+	ages[\"ann\"] = n
+	ages[\"ann\"] += 2
+	ages[\"bob\"]++
+	age, ok := ages[\"cat\"]
+	if ok {
+		delete(ages, \"cat\")
+	}
+	return map[string]int{\"one\": age, \"all\": len(ages)}
+}
+
+func owner(m map[point]float64, p *map[point]float64) float64 {
+	n := m
+	n[point{1, 2}] = p[point{3, 4}]
+	p[point{5, 6}] = 1.5
+	clear(n)
+	if m == nil {
+		return 0
+	}
+	return n[point{}]
+}
+"));
+}
+
+#[test]
+fn a_range_over_a_map_ends_its_walk_on_every_way_out() {
+    insta::assert_snapshot!(gir("package main
+
+func find(m map[int]string, wanted string) int {
+	for key, value := range m {
+		if value == wanted {
+			return key
+		}
+		if key < 0 {
+			break
+		}
+	}
+	return -1
+}
+
+func pairs(a *map[int]bool, b *map[int]bool) int {
+	both := 0
+outer:
+	for x := range a {
+		for y := range b {
+			if x == y {
+				both++
+				continue outer
+			}
+		}
+	}
+	return both
+}
+"));
+}
+
+#[test]
+fn a_map_whose_keys_or_values_need_a_function_is_not_supported_yet() {
+    let (_, messages) = lowered_with(
+        &[(
+            "a.gopp",
+            "package main
+
+type padded struct {
+	small int8
+	wide  int64
+}
+
+type named struct {
+	name string
+	at   int
+}
+
+type packed struct {
+	a, b int32
+	c    [2]*int
+	d    bool
+	e    [7]uint8
+}
+
+func maps() int {
+	a := map[padded]int{}
+	b := map[named]int{}
+	c := map[[2]float64]int{}
+	d := map[int][]int{}
+	e := map[int]map[int]int{}
+	f := map[packed]named{}
+	return len(a) + len(b) + len(c) + len(d) + len(e) + len(f)
+}
+",
+        )],
+        usize::MAX,
+    );
+    let keys = "not supported yet: a map whose keys are compared by a function";
+    let values = "not supported yet: a map whose values hold a slice or a map";
+    assert_eq!(
+        messages,
+        [
+            format!("a.gopp:21:7: {keys}"),
+            format!("a.gopp:22:7: {keys}"),
+            format!("a.gopp:23:7: {keys}"),
+            format!("a.gopp:24:7: {values}"),
+            format!("a.gopp:25:7: {values}"),
         ]
     );
 }
@@ -915,7 +1029,7 @@ fn the_steps_grow_with_the_source() {
 }
 
 #[test]
-fn the_steps_grow_with_ranges_slices_and_strings() {
+fn the_steps_grow_with_ranges_slices_maps_and_strings() {
     let sizes = [100, 200, 400, 800];
     // Range loops in range loops, over a number, an array and a string.
     assert_near_linear(&sizes, |n| {
@@ -939,6 +1053,27 @@ fn the_steps_grow_with_ranges_slices_and_strings() {
                 .replace("ys", &format!("y{at}")))
             .collect();
         steps_of(&function(&format!("\tvar xs []int\n{grown}")))
+    });
+    // Range loops over maps in range loops over maps, each of which a
+    // `break` leaves.
+    assert_near_linear(&sizes, |n| {
+        let open: String = (0..n)
+            .map(|at| format!("\tfor a{at}, b{at} := range m {{\n\t\tif a{at} > b{at} {{\n\t\t\tbreak\n\t\t}}\n"))
+            .collect();
+        steps_of(&function(&format!(
+            "\tm := map[int]int{{1: x}}\n{open}{}",
+            "\t}\n".repeat(n)
+        )))
+    });
+    // Entries of a map that are written, read and deleted one after the
+    // other.
+    assert_near_linear(&sizes, |n| {
+        let used: String = (0..n)
+            .map(|at| format!("\tm[x] = {at}\n\tm[{at}] += x\n\tv{at}, ok{at} := m[x]\n\tif ok{at} {{\n\t\tdelete(m, v{at})\n\t}}\n"))
+            .collect();
+        steps_of(&function(&format!(
+            "\tm := map[int]int{{1: x}}\n{used}\tx = len(m)\n"
+        )))
     });
     // Strings that are joined, cut and compared in one expression.
     assert_near_linear(&sizes, |n| {

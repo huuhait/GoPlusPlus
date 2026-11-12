@@ -32,14 +32,15 @@ fn slot(local: LocalId) -> Operand {
 
 impl FuncCx<'_, '_> {
     /// Whether a value of the type is copied by its bytes for now: no
-    /// slice is in it, behind no pointer. A string is: its bytes are
-    /// shared, and no count is kept yet.
+    /// slice and no map is in it, behind no pointer. A string is: its
+    /// bytes are shared, and no count is kept yet.
     pub fn flat(&mut self, ty: TypeId) -> bool {
         let mut rest = vec![ty];
         while let Some(ty) = rest.pop() {
             self.memo.steps += 1;
             match self.kind(ty) {
                 Type::Slice(_) => return false,
+                Type::Ptr(_) if self.is_map(ty) => return false,
                 Type::Array(of, _) | Type::Option(of) => rest.push(of),
                 Type::Tuple(parts) => rest.extend(parts.iter()),
                 Type::Struct(id) => {
@@ -81,8 +82,8 @@ impl FuncCx<'_, '_> {
         Ok([self.b.const_int(word, size)?, self.b.const_bool(plain)])
     }
 
-    /// The address of the slice in the place, as the runtime takes it.
-    fn record(&mut self, place: Place) -> Built<Operand> {
+    /// The address of the place, as the runtime takes it.
+    pub fn record(&mut self, place: Place) -> Built<Operand> {
         let address = self.b.assign_temp(Rvalue::AddrOf(place, Mutability::Mut))?;
         let byte = self.b.types().int(8, false);
         let bytes = self.b.types().ptr(byte);
@@ -90,13 +91,13 @@ impl FuncCx<'_, '_> {
         Ok(slot(self.b.assign_temp(cast)?))
     }
 
-    fn bytes_ty(&mut self) -> TypeId {
+    pub fn bytes_ty(&mut self) -> TypeId {
         let byte = self.b.types().int(8, false);
         self.b.types().ptr(byte)
     }
 
     /// The value in a slot of its own, whose address can be taken.
-    fn slot_of(&mut self, value: Rvalue) -> Built<Place> {
+    pub fn slot_of(&mut self, value: Rvalue) -> Built<Place> {
         Ok(Place::local(self.b.assign_temp(value)?))
     }
 
@@ -140,7 +141,8 @@ impl FuncCx<'_, '_> {
 
     /// The value of the expression for its new owner. A place whose
     /// value the checker says is copied gets the copy of its type:
-    /// nothing for a string, a new buffer for a slice.
+    /// nothing for a string, a new buffer for a slice, a new table for a
+    /// map.
     pub fn given(&mut self, expr: ExprId, ty: TypeId, value: Rvalue) -> Built<Rvalue> {
         let inner = Shared::unparen(self.tree, expr);
         let copied = self.body.var_modes.get(&inner) == Some(&Transfer::Copy);
@@ -157,10 +159,11 @@ impl FuncCx<'_, '_> {
                 self.runtime_call("_gopp_slice_copy", &params, vec![record, size])?;
                 Ok(Rvalue::Use(Operand::Copy(copy)))
             }
+            Type::Ptr(_) if self.is_map(ty) => self.map_copy(expr, ty, value),
             _ => {
                 self.unsupported(
                     span,
-                    "a copy of a value that holds a slice in another value",
+                    "a copy of a value that holds a slice or a map in another value",
                 );
                 Ok(value)
             }
@@ -168,7 +171,7 @@ impl FuncCx<'_, '_> {
     }
 
     /// An integer of any type as an `int64`, for the runtime.
-    fn as_int64(&mut self, expr: ExprId) -> Built<Operand> {
+    pub fn as_int64(&mut self, expr: ExprId) -> Built<Operand> {
         let wide = self.b.types().int(64, true);
         let given = self.operand(expr)?;
         let from = self.b.operand_ty(&given);

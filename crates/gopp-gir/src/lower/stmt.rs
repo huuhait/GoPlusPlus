@@ -223,7 +223,8 @@ impl FuncCx<'_, '_> {
         self.close_scope(span)
     }
 
-    /// `for key, value := range x` over a number, an array or a string.
+    /// `for key, value := range x` over a number, an array, a slice, a
+    /// string or a map.
     /// What is walked is worked out once, before the first pass; each
     /// pass has its own variables.
     fn range_stmt(
@@ -244,6 +245,9 @@ impl FuncCx<'_, '_> {
         if lhs.iter().any(alias) {
             self.unsupported(span, "a range variable that is the element itself");
             return Ok(());
+        }
+        if self.holds_map(x) {
+            return self.range_map(label, span, lhs, define, x, body);
         }
         let (key, value) = (lhs.first().copied(), lhs.get(1).copied());
         let named = value.is_some_and(|value| {
@@ -308,7 +312,7 @@ impl FuncCx<'_, '_> {
                 (Walked::Elements(whole), slot(len), word)
             }
             _ => {
-                self.unsupported(span, "a range over a map, a channel or a function");
+                self.unsupported(span, "a range over a channel or a function");
                 return self.close_scope(span);
             }
         };
