@@ -306,7 +306,6 @@ impl<'a> Checker<'a> {
     /// Why the type argument `arg` lacks a label that the constraint
     /// `bound` names: `Send`, `Sync` (GEN-11).
     fn unlabeled(&self, arg: TypeId, bound: TypeId) -> Option<String> {
-        use crate::types::Unlabeled;
         let set = self.types.type_set(bound)?;
         if self.open(arg) || self.types.is_constraint(arg) {
             return None;
@@ -318,20 +317,31 @@ impl<'a> Checker<'a> {
             let Some((part, why)) = self.types.unlabeled(arg, label) else {
                 continue;
             };
-            let held = self.type_string(part);
-            let why = match why {
-                Unlabeled::Borrow => format!("a {held} borrows what it points to"),
-                Unlabeled::Local => format!("a {held} stays with one goroutine"),
-                Unlabeled::SharedUnsync => format!("what a {held} holds is not Sync"),
-                Unlabeled::Interface => format!("{held} does not embed Sync"),
-                Unlabeled::Param => format!("{held} is not constrained by {asked}"),
-            };
+            let why = self.unlabeled_text(part, why, asked);
             return Some(format!(
                 "{} does not satisfy {asked} ({why})",
                 self.type_string(arg)
             ));
         }
         None
+    }
+
+    /// Why the type `part` lacks the label `asked`, as a message says it.
+    pub(super) fn unlabeled_text(
+        &self,
+        part: TypeId,
+        why: crate::types::Unlabeled,
+        asked: &str,
+    ) -> String {
+        use crate::types::Unlabeled;
+        let held = self.type_string(part);
+        match why {
+            Unlabeled::Borrow => format!("a {held} borrows what it points to"),
+            Unlabeled::Local => format!("a {held} stays with one goroutine"),
+            Unlabeled::SharedUnsync => format!("what a {held} holds is not Sync"),
+            Unlabeled::Interface => format!("{held} does not embed Sync"),
+            Unlabeled::Param => format!("{held} is not constrained by {asked}"),
+        }
     }
 
     /// Why the type `part` is not copied by its bytes, or not at all if

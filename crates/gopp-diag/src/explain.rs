@@ -1558,6 +1558,23 @@ pub fn explain(code: Code) -> Option<Explanation> {
              not a pointer to it.",
             "var a Local[int]     // error\nvar b Local[func()]  // ok\nvar c Unique[*Node]  // error\nvar d Unique[Node]   // ok",
         ),
+        OwnBoxNeedsOwnership => (
+            "An interface value holds a copy of what is put into it, so a value of a type \
+             that cannot be copied is not converted to an interface type, also not with \
+             `move`. For the same reason no interface value holds one, and it is not asserted.",
+            "Put the value in a `Shared[T]`, or pass `&x` to an interface parameter for the \
+             length of the call.",
+            "f := open()\nvar a any = f                  // error: a File cannot be copied\nvar b any = NewShared(move(f)) // ok\nfmt.Println(&g)                // ok: g is lent for the call",
+        ),
+        IfaceNotSend => (
+            "A value is kept in an interface variable, field, element or result, and its \
+             type may not be given to another goroutine. An ordinary interface value may be \
+             sent anywhere, so what it holds is `Send`; an interface that embeds `Sync`, such \
+             as `error`, holds what is `Sync` too. A raw pointer is neither.",
+            "Keep it in a `Local[I]`, which stays with one goroutine, or hold a `Shared[T]`; an \
+             error type is converted by value.",
+            "var r Reader = &buf        // error: a *Buffer borrows what it points to\nvar r Local[Reader] = &buf // ok\nreturn 0, &errBad          // error\nreturn 0, errBad           // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

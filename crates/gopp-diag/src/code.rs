@@ -221,6 +221,7 @@ codes! {
     250 TypeParamBoundNotInterface "err_type_param_bound_not_interface",
     251 InvalidReceiverTypeParams "err_invalid_receiver_type_params",
     253 OwnR3aNeedsOwnership "err_own_r3a_needs_ownership",
+    254 OwnBoxNeedsOwnership "err_own_box_needs_ownership",
     256 NoteOwnFixMove "note_own_fix_move",
     258 NoteOwnFixAlias "note_own_fix_alias",
     262 OwnBorrowedAddress "err_own_borrowed_address",
@@ -308,6 +309,7 @@ codes! {
     492 OwnSharedWrite "err_own_shared_write",
     493 ValueUnchecked "err_value_unchecked",
     494 InvalidHandleType "err_invalid_handle_type",
+    495 IfaceNotSend "err_iface_not_send",
 }
 
 impl Code {

@@ -131,6 +131,10 @@ pub struct Body {
     /// owner, how. A place of a type that is copied by its bytes has no
     /// entry, nor has a temporary, which is given as it is.
     pub var_modes: FxHashMap<ExprId, Transfer>,
+    /// The expressions of `iface_conversions` that are arguments of a
+    /// call: the value is boxed, and must be `Send`, only if the function
+    /// keeps the parameter, which is known with its body.
+    pub iface_args: FxHashSet<ExprId>,
     /// The names of option variables that are read as the value that the
     /// option holds, because the option is known to be set there.
     pub narrowed: FxHashSet<ExprId>,

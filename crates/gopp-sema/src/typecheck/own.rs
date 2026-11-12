@@ -589,17 +589,43 @@ impl<'a> Checker<'a> {
         if may_be_nil && !keeps_nil {
             read.truncate(1);
         }
+        // A `Unique` and a `Shared` have the methods of what they hold
+        // (OWN-P5): in an interface it is the handle that is held.
+        let is_handle = matches!(
+            &*self.types.get(self.types.underlying(x.ty)),
+            Type::Unique(_) | Type::Shared(_)
+        );
+        let handle = x.ty;
         read.iter().find_map(|&from| {
             let x = Operand {
                 mode: x.mode.clone(),
                 ty: from,
             };
-            let taken = takes.iter().find(|&&to| !self.not_assignable(&x, to));
+            let taken = takes
+                .iter()
+                .find(|&&to| !self.not_assignable(&x, to) || self.owned_by_interface(from, to));
             taken
                 .copied()
                 .or(self.types.extends(from).then_some(to))
-                .map(|to| (from, to))
+                .map(|to| match is_handle && self.types.is_interface(to) {
+                    true => (handle, to),
+                    false => (from, to),
+                })
         })
+    }
+
+    /// Whether a value of the type `from` is held by the interface `to`
+    /// through its methods with a pointer receiver: the interface owns
+    /// the value, so it has an address to give them (TYP-5).
+    pub(super) fn owned_by_interface(&self, from: TypeId, to: TypeId) -> bool {
+        let plain = !matches!(
+            &*self.types.get(self.types.underlying(from)),
+            Type::Pointer(_) | Type::Interface { .. } | Type::Invalid
+        ) && !self.is_untyped(from)
+            && !self.is_param(from);
+        plain
+            && self.types.is_interface(to)
+            && !self.not_assignable(&Operand::value(self.types.pointer(from)), to)
     }
 
     /// Whether the operand `x` surely fits no place of the type `to` in a

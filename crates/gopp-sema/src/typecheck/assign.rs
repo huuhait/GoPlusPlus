@@ -140,10 +140,15 @@ impl<'a> Checker<'a> {
             self.error_with_cause(Code::CannotAssign, span, message, cause);
             return Operand::UNKNOWN;
         }
-        if let Some(to) = to {
-            self.note_interface(cx, expr, &x, to, writes);
-        }
-        if own && let Some(how) = self.gives(context) {
+        // What an interface does not take is said once.
+        let refused = to.is_some_and(|to| {
+            let how = self.gives(context).filter(|_| own);
+            self.note_interface(cx, expr, &x, to, writes, how)
+        });
+        if own
+            && !refused
+            && let Some(how) = self.gives(context)
+        {
             match x.mode {
                 Mode::Variable | Mode::MapIndex => {
                     // The value is of the type that the operand is read as.

@@ -132,6 +132,23 @@ impl<'a> Checker<'a> {
         if !x.is_value() || self.types.is_interface(ty) {
             return;
         }
+        // No interface value holds what cannot be copied (TYP-9).
+        if self.own_rules(cx)
+            && let Some((part, why)) = self.types.not_copied(ty, true)
+            && !self.open(part)
+        {
+            let message = format!(
+                "impossible type {}: no interface value holds a {}: {}",
+                if case { "switch case" } else { "assertion" },
+                self.type_string(ty),
+                self.not_copied_text(part, why, true)
+            );
+            let span = cx.tree.exprs[at].span;
+            return self.error(Code::OwnBoxNeedsOwnership, span, message);
+        }
+        if self.own_rules(cx) && self.owned_by_interface(ty, x.ty) {
+            return;
+        }
         let Some(cause) = self.lacking_cause(ty, x.ty) else {
             return;
         };
@@ -169,7 +186,8 @@ impl<'a> Checker<'a> {
 
     /// Notes that the value `x` of `expr`, which fits a place of the type
     /// `to`, is put into an interface there. `writes` says that the place
-    /// is on the left of `=`.
+    /// is on the left of `=`, `how` how the value is given. Whether the
+    /// interface does not take the value, which is reported.
     pub(super) fn note_interface(
         &mut self,
         cx: &Cx<'a>,
@@ -177,10 +195,12 @@ impl<'a> Checker<'a> {
         x: &Operand,
         to: TypeId,
         writes: bool,
-    ) {
+        how: Option<super::place::Given>,
+    ) -> bool {
         if self.memo.is_none() || !x.is_value() || self.is_untyped(x.ty) {
-            return;
+            return false;
         }
+        let place = to;
         let fit = match self.own_rules(cx) {
             true => self.fit_own(x, to, writes),
             false => Some((x.ty, to)),
@@ -198,7 +218,94 @@ impl<'a> Checker<'a> {
             && !self.open(from)
         {
             self.iface_conversions.insert(expr, (from, to));
+            return self.own_rules(cx) && self.boxed(cx, (expr, x), (from, to), place, how);
         }
+        false
+    }
+
+    /// The value `x` of `expr`, read as the type `from`, is put into a
+    /// value of the interface type `iface`, in a place of the type
+    /// `place`. The interface holds a copy, so the type is one that is
+    /// copied (TYP-6); and what is kept in an interface may be given to
+    /// another goroutine, unless the place is a `Local` (CON-12). Whether
+    /// an argument is kept, the function that takes it says.
+    pub(super) fn boxed(
+        &mut self,
+        cx: &Cx<'a>,
+        (expr, x): (ExprId, &Operand),
+        (from, iface): (TypeId, TypeId),
+        place: TypeId,
+        how: Option<super::place::Given>,
+    ) -> bool {
+        use super::place::Given;
+        use crate::types::Marker;
+        let span = cx.tree.exprs[expr].span;
+        let shown = self.describe(cx, expr, x);
+        let to = self.type_string(iface);
+        if let Some((part, why)) = self.types.not_copied(from, true)
+            && !self.open(part)
+        {
+            let message = format!(
+                "cannot convert {shown} to {to}: an interface value holds a copy, and {}",
+                self.not_copied_text(part, why, true)
+            );
+            let text = self.expr_string(cx, expr);
+            let fix = match x.mode {
+                Mode::Variable => {
+                    format!("put it in a Shared, or pass &{text} for the length of a call")
+                }
+                _ => format!("put it in a Shared: NewShared({text})"),
+            };
+            let fix = (Code::NoteOwnFixAddress, fix);
+            self.error_with_fix(Code::OwnBoxNeedsOwnership, span, message, fix);
+            return true;
+        }
+        match how {
+            Some(Given::Passed) => {
+                self.iface_args.insert(expr);
+                return false;
+            }
+            Some(_) => {}
+            None => return false,
+        }
+        let mut local = place;
+        let is_local = loop {
+            local = match &*self.types.get(self.types.underlying(local)) {
+                Type::Local(_) => break true,
+                Type::Option(elem) => *elem,
+                _ => break false,
+            };
+        };
+        if is_local {
+            return false;
+        }
+        let labels = [
+            (Marker::Send, "Send", true),
+            (Marker::Sync, "Sync", self.types.labels(iface).sync),
+        ];
+        for (label, asked, needed) in labels {
+            let Some((part, why)) = self.types.unlabeled(from, label).filter(|_| needed) else {
+                continue;
+            };
+            if self.open(part) {
+                return false;
+            }
+            let goes = match label {
+                Marker::Send => "may be given to another goroutine",
+                _ => "may be shared between goroutines",
+            };
+            let message = format!(
+                "cannot keep {shown} in a value of type {to}: an interface value {goes}, and {}",
+                self.unlabeled_text(part, why, asked)
+            );
+            let fix = (
+                Code::NoteOwnFixOption,
+                format!("keep it in a Local[{to}], or hold a Shared"),
+            );
+            self.error_with_fix(Code::IfaceNotSend, span, message, fix);
+            return true;
+        }
+        false
     }
 
     /// A variable, a parameter, a field or an element has no constraint

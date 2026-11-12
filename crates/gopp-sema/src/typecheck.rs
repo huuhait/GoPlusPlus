@@ -251,6 +251,9 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
+    /// While a body is walked: the conversions to an interface that are
+    /// arguments.
+    iface_args: FxHashSet<ExprId>,
     /// While a body is walked: what is known of its variables.
     flow: flow::Flow,
     /// The name that is read as the variable it is, whatever is known of
@@ -388,6 +391,7 @@ struct BodyTypes {
     captures: FxHashMap<ExprId, Vec<crate::object::Capture>>,
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     narrowed: FxHashSet<ExprId>,
+    iface_args: FxHashSet<ExprId>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -450,6 +454,7 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
+        iface_args: FxHashSet::default(),
         flow: flow::Flow::default(),
         unnarrowed: None,
         narrowed: FxHashSet::default(),
@@ -543,6 +548,7 @@ pub fn declarations(
             body.captures = found.captures;
             body.method_values = found.method_values;
             body.narrowed = found.narrowed;
+            body.iface_args = found.iface_args;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
@@ -3044,6 +3050,7 @@ impl<'a> Checker<'a> {
                 captures: self.captured_by_literal(),
                 method_values: std::mem::take(&mut self.method_values),
                 narrowed: std::mem::take(&mut self.narrowed),
+                iface_args: std::mem::take(&mut self.iface_args),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
                 bangs: std::mem::take(&mut self.bangs),

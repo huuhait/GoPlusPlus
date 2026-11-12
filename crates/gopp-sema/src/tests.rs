@@ -3959,8 +3959,8 @@ func use(i I) {}
 
 func f(t T, p P, n N, pt *T, pp *P, pn *N, u Unique[P], s Shared[P], o Option[I]) {
 	var a I = t
-	var b I = pt
-	var c I = pp
+	var b Local[I] = pt
+	var c Local[I] = pp
 	var d I = u
 	var e I = s
 	use(u)
@@ -3978,8 +3978,6 @@ func f(t T, p P, n N, pt *T, pp *P, pn *N, u Unique[P], s Shared[P], o Option[I]
 }
 ";
     let expected = [
-        "a.gopp:27:12: cannot use p (variable of struct type P) as I value in variable \
-         declaration: P does not implement I (method m has pointer receiver)",
         "a.gopp:28:12: cannot use n (variable of struct type N) as I value in variable \
          declaration: N does not implement I (missing method m)",
         "a.gopp:29:12: cannot use pn (variable of type *N) as I value in variable declaration: \
@@ -8396,6 +8394,150 @@ fn the_steps_of_labels_grow_with_the_types_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(ring(n)));
 }
 
+// rule: TYP-5, TYP-6, TYP-7, TYP-9
+#[test]
+fn an_interface_value_holds_a_copy_that_may_go_to_another_goroutine() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop() {}
+
+type Point struct{ X, Y int }
+type Reader interface{ Read() int }
+type Buffer struct{ data []byte }
+
+func (b *Buffer) Read() int { return len(b.data) }
+
+type Fail struct{ msg string }
+
+func (f Fail) Error() string { return f.msg }
+
+type Soft struct{ n *int }
+
+func (s *Soft) Error() string { return \"\" }
+
+var saved any
+
+func println(args ...any) {}
+func log(v any)          { saved = v }
+func open() File         { return File{} }
+
+func good(name string, xs []int, f File, pt Point, buf Buffer, v any) (any, error) {
+	var a any = name
+	var c any = xs
+	var b any = NewShared(move(f))
+	var q Local[any] = &pt
+	var r Local[Reader] = &buf
+	var e error = Fail{msg: \"x\"}
+	println(name, xs, &f, &pt, pt)
+	log(name)
+	if s, ok := v.(string); ok {
+		_ = len(s)
+	}
+	switch x := v.(type) {
+	case []int:
+		x[0] = 1
+	case map[string]int:
+		x[\"b\"] = 2
+	case *Point:
+		_ = x
+	}
+	_, _, _, _, _, _ = a, b, c, q, r, e
+	return pt, Fail{}
+}
+
+func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []File) (any, error, Reader) {
+	var a any = f
+	var b any = move(f)
+	var c any = open()
+	println(f)
+	log(move(f))
+	var d any = files
+	var p any = &pt
+	var r Reader = &buf
+	var l any = lf
+	saved = &pt
+	_ = v.(File)
+	switch v.(type) {
+	case File:
+	case []File:
+	}
+	_, _, _, _, _, _, _ = a, b, c, d, p, r, l
+	return &pt, &s, &buf
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    let expected = [
+        "a.gopp:52:14: cannot convert f (variable of struct type File) to any: an interface value \
+         holds a copy, and File has a drop method and no Clone() File",
+        "    put it in a Shared, or pass &f for the length of a call",
+        "a.gopp:53:14: cannot convert move(f) (value of struct type File) to any: an interface \
+         value holds a copy, and File has a drop method and no Clone() File",
+        "    put it in a Shared: NewShared(move(f))",
+        "a.gopp:54:14: cannot convert open() (value of struct type File) to any: an interface \
+         value holds a copy, and File has a drop method and no Clone() File",
+        "    put it in a Shared: NewShared(open())",
+        "a.gopp:55:10: cannot convert f (variable of struct type File) to any: an interface value \
+         holds a copy, and File has a drop method and no Clone() File",
+        "    put it in a Shared, or pass &f for the length of a call",
+        "a.gopp:56:6: cannot convert move(f) (value of struct type File) to any: an interface \
+         value holds a copy, and File has a drop method and no Clone() File",
+        "    put it in a Shared: NewShared(move(f))",
+        "a.gopp:57:14: cannot convert files (variable of type []File) to any: an interface value \
+         holds a copy, and File has a drop method and no Clone() File",
+        "    put it in a Shared, or pass &files for the length of a call",
+        "a.gopp:58:14: cannot keep &pt (value of type *Point) in a value of type any: an interface \
+         value may be given to another goroutine, and a *Point borrows what it points to",
+        "    keep it in a Local[any], or hold a Shared",
+        "a.gopp:59:17: cannot keep &buf (value of type *Buffer) in a value of type Reader: an \
+         interface value may be given to another goroutine, and a *Buffer borrows what it points \
+         to",
+        "    keep it in a Local[Reader], or hold a Shared",
+        "a.gopp:60:14: cannot keep lf (variable of type Local[func()]) in a value of type any: an \
+         interface value may be given to another goroutine, and a Local[func()] stays with one \
+         goroutine",
+        "    keep it in a Local[any], or hold a Shared",
+        "a.gopp:61:10: cannot keep &pt (value of type *Point) in a value of type any: an interface \
+         value may be given to another goroutine, and a *Point borrows what it points to",
+        "    keep it in a Local[any], or hold a Shared",
+        "a.gopp:62:6: impossible type assertion: no interface value holds a File: File has a drop \
+         method and no Clone() File",
+        "a.gopp:64:7: impossible type switch case: no interface value holds a File: File has a \
+         drop method and no Clone() File",
+        "a.gopp:65:7: impossible type switch case: no interface value holds a []File: File has a \
+         drop method and no Clone() File",
+        "a.gopp:68:9: cannot keep &pt (value of type *Point) in a value of type any: an interface \
+         value may be given to another goroutine, and a *Point borrows what it points to",
+        "    keep it in a Local[any], or hold a Shared",
+        "a.gopp:68:14: cannot keep &s (value of type *Soft) in a value of type error: an interface \
+         value may be given to another goroutine, and a *Soft borrows what it points to",
+        "    keep it in a Local[error], or hold a Shared",
+        "a.gopp:68:18: cannot keep &buf (value of type *Buffer) in a value of type Reader: an \
+         interface value may be given to another goroutine, and a *Buffer borrows what it points \
+         to",
+        "    keep it in a Local[Reader], or hold a Shared",
+    ];
+    assert_eq!(checked.messages, expected);
+    // The conversions that are arguments, by their lines: whether each is
+    // boxed, the function that takes it says.
+    let file = &checked.files[0];
+    let mut lines: Vec<u32> = Vec::new();
+    for body in &checked.package.files[0].bodies {
+        for &expr in &body.iface_args {
+            let span = file.exprs[expr].span;
+            lines.push(checked.map.file(span.file).line_col(span.lo).line);
+        }
+    }
+    lines.sort_unstable();
+    assert_eq!(lines, [34, 34, 34, 34, 34, 35]);
+    // A Go file keeps Go's interfaces.
+    let text =
+        "package p\ntype T struct{}\nfunc (t *T) drop() {}\nvar x any = &T{}\nvar y any = T{}\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {
@@ -9239,25 +9381,25 @@ type P struct{}
 func (p *P) m() {}
 
 func f(t T, pt *T, pp *P, u Unique[P], s Shared[T], o Option[I]) {
-	var a I = t
+	var a Local[I] = t
 	a = pt
 	a = pp
 	a = u
 	a = s
 	o = t
-	o = a
 	o = o
 	_ = a
 }
 ";
-    // A pointer stays a pointer where that fits; a handle lends what it
-    // owns.
+    // A pointer stays a pointer where that fits, and is kept only by an
+    // interface value that stays with one goroutine; a handle is held as
+    // the handle.
     let expected = [
         "13: t: T to I",
         "14: pt: *T to I",
         "15: pp: *P to I",
-        "16: u: *P to I",
-        "17: s: *T to I",
+        "16: u: Unique[P] to I",
+        "17: s: Shared[T] to I",
         "18: t: T to I",
     ];
     assert_eq!(iface_conversions("a.gopp", text), expected);
