@@ -321,6 +321,10 @@ struct Checker<'a> {
     /// still to be checked for holding a value of themselves, in the order
     /// in which they were met.
     to_validate: Vec<TypeId>,
+    /// What each `Option[T]` that was written is an option of, with where
+    /// and whether in a body: that the type has no nil of its own is
+    /// checked once every type is known.
+    options: Vec<(TypeId, Span, bool)>,
     /// The type of each field that was written with `@Required`, with
     /// where the attribute is: what it may be on is checked once every
     /// type is known.
@@ -437,6 +441,7 @@ pub fn declarations(
         callee: None,
         lookup_target: None,
         required_fields: Vec::new(),
+        options: Vec::new(),
         required_addresses: Vec::new(),
         read_only: FxHashSet::default(),
         operands: place::Operands::Kept,
@@ -883,6 +888,9 @@ impl<'a> Checker<'a> {
         }
         for terms in std::mem::take(&mut self.unions) {
             self.union_terms(&terms);
+        }
+        for (of, span, in_body) in std::mem::take(&mut self.options) {
+            self.option_of(of, span, in_body);
         }
         for instance in std::mem::take(&mut self.instances) {
             self.verify(&instance);
@@ -1730,7 +1738,11 @@ impl<'a> Checker<'a> {
         if let Some(make) = make {
             let made = match arguments(self)[..] {
                 [arg] => match make(arg) {
-                    Type::Option(_) => Some(self.types.option(arg)),
+                    Type::Option(_) => {
+                        let at = cx.tree.exprs[expr].span;
+                        self.options.push((arg, at, self.memo.is_some()));
+                        Some(self.types.option(arg))
+                    }
                     _ => self.types.handle(make, arg).ok(),
                 },
                 _ => None,

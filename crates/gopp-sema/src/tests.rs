@@ -7598,6 +7598,149 @@ func shareds(s Shared[Node], w Weak[Node], o Option[Shared[Node]]) {
     assert_eq!(checked.messages, expected);
 }
 
+// rule: TYP-3, OWN-P9
+#[test]
+fn an_option_is_nil_or_a_value_of_a_type_that_has_no_nil() {
+    let names = ThreadedRodeo::new();
+    let lib = "package lib\ntype Held[T any] struct{ v Option[T] }\nfunc Wrap[T any](v T) Option[T] { return v }\n";
+    let loader = with_packages(&names, &[("lib", lib)]);
+    let text = "package p
+
+import \"lib\"
+
+type User struct{ Name string }
+type Bag struct{ s []int }
+type Key struct {
+	Nick Option[string]
+	N    int
+}
+type Maybe Option[int]
+type Shape interface{ Area() float64 }
+type Fail struct{}
+
+func (f Fail) Error() string { return \"\" }
+
+type Box[T any] struct{ v Option[T] }
+
+func wrap[T any](v T) Option[T] { return v }
+
+func good(u User, p *User, f func(), s Shape) {
+	var a Option[int]
+	var b Option[int] = 5
+	var c Option[*User] = p
+	var d Option[User] = u
+	var e Option[func()] = f
+	var g Option[Shape] = s
+	a = nil
+	a = 7
+	b = a
+	_ = a == nil
+	_ = nil != a
+	_ = a == b
+	_ = a == 5
+	_ = 5 != a
+	_ = c == p
+	_ = a.IsNil()
+	v, ok := a.Get()
+	w, ok2 := c.Get()
+	var k map[Option[string]]int
+	var keys map[Key]int
+	var bag Option[Bag]
+	_ = bag == nil
+	var m Maybe = 3
+	_ = m == nil
+	var x any = a
+	var y any = d
+	var box Box[int]
+	_ = wrap(1)
+	_, _, _, _, _, _, _, _, _, _, _, _, _ = v, ok, w, ok2, k, keys, x, y, box, d, e, g, c
+}
+
+func bad(a Option[int], t Option[string], bag, bag2 Option[Bag], u User) {
+	_ = lib.Wrap(1)
+	_ = lib.Wrap(u.Name == \"\")
+	_ = lib.Wrap(map[string]int{})
+	var held lib.Held[chan int]
+	_ = held
+	_ = a == \"x\"
+	_ = a == t
+	_ = bag == bag2
+	_ = a < 5
+	_ = a + 1
+	var n int = a
+	var s string = a
+	var e error = a
+	_ = u.IsNil()
+	_ = a.Missing()
+	var o1 Option[[]int]
+	var o2 Option[map[string]int]
+	var o3 Option[chan int]
+	var o4 Option[any]
+	var o5 Option[error]
+	var o6 Option[Option[int]]
+	var o7 Option[Maybe]
+	var b1 Box[[]int]
+	_ = wrap([]int{})
+	_, _, _, _, _, _, _, _, _, _, _ = n, s, e, o1, o2, o3, o4, o5, o6, o7, b1
+}
+
+func generic[T any, N ~int | ~string](v T, n N) {
+	var o Option[T] = move(v)
+	var p Option[N] = n
+	_ = o == nil
+	_ = p == n
+	_, _ = o, p
+}
+
+type Circle struct{ r float64 }
+
+func (c Circle) Area() float64 { return c.r }
+
+func ifaces(f Option[Fail], c Option[Circle], a Option[int]) {
+	var e error = f
+	var x any = c
+	var s Option[Shape] = c
+	_ = e == nil
+	_, _, _ = e, x, s
+}
+";
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    let expected = [
+        "a.gopp:56:6: cannot use map[string]int for T: an Option of it is written, and \
+         map[string]int has nil already",
+        "a.gopp:57:20: cannot use chan int for T: an Option of it is written, and chan int has nil \
+         already",
+        "a.gopp:59:11: invalid operation: a == \"x\" (mismatched types int and untyped string)",
+        "a.gopp:60:11: invalid operation: a == t (mismatched types Option[int] and Option[string])",
+        "a.gopp:61:6: invalid operation: bag == bag2 (operator == not defined on Option[Bag])",
+        "a.gopp:65:17: cannot use a (variable of type Option[int]) as string value in variable \
+         declaration",
+        "a.gopp:66:16: cannot use a (variable of type Option[int]) as error value in variable \
+         declaration: Option[int] does not implement error (missing method Error)",
+        "a.gopp:67:8: u.IsNil undefined (type User has no field or method IsNil)",
+        "a.gopp:68:8: a.Missing undefined (type int has no field or method Missing)",
+        "a.gopp:69:9: invalid type Option[[]int]: []int has nil already",
+        "    use []int",
+        "a.gopp:70:9: invalid type Option[map[string]int]: map[string]int has nil already",
+        "    use map[string]int",
+        "a.gopp:71:9: invalid type Option[chan int]: chan int has nil already",
+        "    use chan int",
+        "a.gopp:72:9: invalid type Option[any]: any has nil already",
+        "    use any",
+        "a.gopp:73:9: invalid type Option[error]: error has nil already",
+        "    use error",
+        "a.gopp:74:9: invalid type Option[Option[int]]: Option[int] has nil already",
+        "    use Option[int]",
+        "a.gopp:75:9: invalid type Option[Maybe]: Maybe has nil already",
+        "    use Maybe",
+        "a.gopp:76:13: cannot use []int for T: an Option of it is written, and []int has nil \
+         already",
+        "a.gopp:77:6: cannot use []int for T: an Option of it is written, and []int has nil \
+         already",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {

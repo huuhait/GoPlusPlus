@@ -1510,6 +1510,14 @@ pub fn explain(code: Code) -> Option<Explanation> {
              `Unique[T]`.",
             "func rename(s Shared[Node]) {\n\ts.Name = \"x\" // error\n\t_ = s.Name   // ok\n}",
         ),
+        InstOption => (
+            "`Option[T]` is written for a type that has `nil` already: a slice, a map, a \
+             channel, `error`, `any`, `unsafe.Pointer`, or another `Option`. It is also \
+             reported where such a type is the type argument of a generic type or function \
+             that writes `Option[T]` for its type parameter.",
+            "Use the type itself: its `nil` already says that nothing is there.",
+            "var a Option[[]int] // error\nvar a []int         // ok: nil when empty",
+        ),
         _ => return None,
     };
     Some(Explanation {

@@ -209,6 +209,30 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Whether the type has nil of its own, so that an option of it says
+    /// nothing more (OWN-P9).
+    pub(super) fn has_own_nil(&self, ty: TypeId) -> bool {
+        self.types.underlying(ty) != Types::INVALID
+            && !self.is_param(ty)
+            && (self.types.has_nil(ty, Dialect::Gopp)
+                || self.types.is_unsafe_pointer(ty, self.names))
+    }
+
+    /// `Option[of]` is written at `span`. A declaration that writes it
+    /// for its type parameter asks every type argument to have no nil,
+    /// which is held where the arguments are given.
+    pub(super) fn option_of(&mut self, of: TypeId, span: Span, in_body: bool) {
+        if self.is_param(of) && !in_body {
+            self.types.set_optional(of);
+        }
+        if self.has_own_nil(of) {
+            let shown = self.type_string(of);
+            let message = format!("invalid type Option[{shown}]: {shown} has nil already");
+            let fix = (Code::NoteOwnFixOption, format!("use {shown}"));
+            self.error_with_fix(Code::InstOption, span, message, fix);
+        }
+    }
+
     /// `@Required` at `span` is on a field of the type `ty`: not on an
     /// option, which may be missing, nor on a type that is never nil
     /// (ADR-0016 decision 8).

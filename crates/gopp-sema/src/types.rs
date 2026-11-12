@@ -492,6 +492,8 @@ struct Inner {
     /// How a value of each type that was asked for it is copied; with
     /// `true`, whether it holds what is ended with it.
     categories: FxHashMap<(TypeId, bool), Category>,
+    /// The type parameters that a declaration writes `Option[P]` for.
+    optional: FxHashSet<TypeId>,
     /// For a type that was asked: the part of it without a zero value.
     no_zero: FxHashMap<TypeId, Option<(TypeId, NoZero)>>,
 }
@@ -1693,6 +1695,16 @@ impl Types {
                 }
             }
         });
+    }
+
+    /// Notes that a declaration writes `Option[param]` for its type
+    /// parameter `param`, so no type argument for it has nil.
+    pub fn set_optional(&self, param: TypeId) {
+        self.write(|inner| inner.optional.insert(param));
+    }
+
+    pub fn is_optional(&self, param: TypeId) -> bool {
+        self.read(|inner| inner.optional.contains(&param))
     }
 
     /// The marks of the method `name` that the declared type `holder`

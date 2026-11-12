@@ -264,6 +264,7 @@ codes! {
     409 RightMisuse "err_right_misuse",
     442 GirExternBad "err_gir_extern_bad",
     445 GirExportBad "err_gir_export_bad",
+    446 InstOption "err_inst_option",
     450 InlineMarksConflict "err_inline_marks_conflict",
     454 NoteRefersTo "note_refers_to",
     455 NoteHave "note_have",

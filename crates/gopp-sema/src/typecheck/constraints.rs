@@ -329,6 +329,19 @@ impl<'a> Checker<'a> {
     /// reported.
     pub(super) fn verify(&mut self, instance: &Instance) {
         for (at, (&param, &arg)) in instance.params.iter().zip(&instance.args).enumerate() {
+            // The generic type or function writes `Option[P]` for this
+            // parameter.
+            if self.types.is_optional(param) && self.has_own_nil(arg) {
+                let span = instance.spans.get(at).copied().unwrap_or(instance.at);
+                let shown = self.type_string(arg);
+                let message = format!(
+                    "cannot use {shown} for {}: an Option of it is written, and {shown} has nil \
+                     already",
+                    self.type_string(param)
+                );
+                self.error(Code::InstOption, span, message);
+                return;
+            }
             let Some(constraint) = self.types.constraint(param) else {
                 continue;
             };
