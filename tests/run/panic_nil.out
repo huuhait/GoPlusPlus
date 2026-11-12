@@ -1,0 +1,8 @@
+2
+panic: runtime error: invalid memory address or nil pointer dereference
+
+goroutine 1 [running]:
+main.last()
+	+0x?
+main.main()
+	+0x?

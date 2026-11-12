@@ -17,13 +17,24 @@ use gopp_gir::{Function, Linkage, Module, Type, TypeError, TypeId, verify_module
 use gopp_target::{Layout, TargetLayout};
 use rayon::prelude::*;
 
+/// The function of C that starts the program of a unit: it runs the
+/// `init` functions of the package and then its `main`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entry {
+    /// None: the unit is no program.
+    None,
+    /// `int main(int, char **)`, for an executable.
+    Main,
+    /// `int gopp_entry(void)`, for a shared module that the test runner
+    /// loads.
+    Module,
+}
+
 /// What a unit is written for.
 #[derive(Clone, Copy, Debug)]
 pub struct EmitOptions {
     pub layout: TargetLayout,
-    /// Whether the unit gets `int main(int, char **)`, which runs the
-    /// `init` functions of the package and then its `main`.
-    pub entry: bool,
+    pub entry: Entry,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -209,8 +220,8 @@ pub(crate) fn emit_counted(
         steps += taken;
         out.push_str(&text);
     }
-    if options.entry {
-        entry(&cx, &funcs, &mut out);
+    if options.entry != Entry::None {
+        entry(&cx, &funcs, options.entry, &mut out);
     }
     Ok((out, steps))
 }
@@ -227,11 +238,11 @@ pub(crate) fn linkage(link: Linkage) -> &'static str {
 /// How long the name of a function in a trace may be.
 const MAX_TRACE_NAME: usize = 256;
 
-/// `main` of C: the runtime is told that the program starts and what
-/// its functions are called in a trace, then the `init` functions of
-/// the package run in their order, then its `main`. A package without
-/// a `main` gets none.
-fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
+/// The start of the program: the runtime is told that the program
+/// starts and what its functions are called in a trace, then the `init`
+/// functions of the package run in their order, then its `main`. A
+/// package without a `main` gets none.
+fn entry(cx: &Cx<'_>, funcs: &[&Function], kind: Entry, out: &mut String) {
     let package = &cx.module.name;
     let defined = |name: &str| {
         let found = funcs.iter().position(|func| func.name() == name);
@@ -258,10 +269,11 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
         out,
         "}};\nstatic gopp_func_table gopp_table = {{gopp_funcs, {count}, 0}};"
     );
-    out.push_str(
-        "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n  \
-         _gopp_rt_funcs(&gopp_table);\n",
-    );
+    out.push_str(match kind {
+        Entry::Module => "\nint gopp_entry(void) {\n  _gopp_rt_init(0, 0);\n",
+        _ => "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n",
+    });
+    out.push_str("  _gopp_rt_funcs(&gopp_table);\n");
     let mut number = 0;
     while let Some(init) = defined(&gopp_mangle::init_symbol(package, number)) {
         let _ = writeln!(out, "  {}();", cx.func_name(init));

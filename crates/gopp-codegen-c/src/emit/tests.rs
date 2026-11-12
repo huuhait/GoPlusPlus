@@ -12,7 +12,7 @@ use lasso::ThreadedRodeo;
 
 use rayon::prelude::*;
 
-use super::{EmitError, EmitOptions, emit_c23, emit_counted};
+use super::{EmitError, EmitOptions, Entry, emit_c23, emit_counted};
 use crate::driver::{ClangDriver, DriverError, OptLevel, Output};
 use crate::runtime::Form;
 use crate::toolchain::HostToolchain;
@@ -60,7 +60,7 @@ fn module(name: &str, text: &str) -> Module {
     module
 }
 
-fn options(entry: bool) -> EmitOptions {
+fn options(entry: Entry) -> EmitOptions {
     EmitOptions {
         layout: TargetSpec::named("linux/amd64").unwrap().layout(),
         entry,
@@ -69,8 +69,8 @@ fn options(entry: bool) -> EmitOptions {
 
 /// The unit of the program without what every unit starts with.
 fn unit(name: &str, text: &str) -> String {
-    let unit = emit_c23(&module(name, text), &options(true)).unwrap();
-    let mut start = crate::runtime::header(options(true).layout);
+    let unit = emit_c23(&module(name, text), &options(Entry::Main)).unwrap();
+    let mut start = crate::runtime::header(options(Entry::Main).layout);
     start.push_str(super::PRELUDE);
     super::number::helpers(&mut start);
     unit.strip_prefix(&start).unwrap().to_owned()
@@ -176,8 +176,33 @@ func main() {}
 
 #[test]
 fn every_unit_starts_with_the_same_helpers() {
-    let whole = emit_c23(&module("a.gopp", "package main\n"), &options(true)).unwrap();
+    let whole = emit_c23(&module("a.gopp", "package main\n"), &options(Entry::Main)).unwrap();
     insta::assert_snapshot!(whole);
+}
+
+#[test]
+fn a_unit_starts_its_program_as_it_is_built_for() {
+    let module = module("a.gopp", CONTROL);
+    let unit = |entry: Entry| emit_c23(&module, &options(entry)).unwrap();
+    let (main, entered) = (
+        "\nint main(int argc, char **argv) {",
+        "\nint gopp_entry(void) {",
+    );
+    let (program, loaded, library) = (unit(Entry::Main), unit(Entry::Module), unit(Entry::None));
+    assert!(program.contains(main) && !program.contains(entered));
+    assert!(loaded.contains(&format!(
+        "{entered}\n  _gopp_rt_init(0, 0);\n  _gopp_rt_funcs("
+    )));
+    assert!(!loaded.contains(main));
+    // What is no program has no start and no table of names.
+    assert!(!library.contains(main) && !library.contains(entered));
+    assert!(!library.contains("gopp_funcs"));
+    assert_eq!(
+        program
+            .replace(main, entered)
+            .replace("(argc, argv)", "(0, 0)"),
+        loaded
+    );
 }
 
 #[test]
@@ -232,7 +257,7 @@ fn a_module_that_breaks_a_rule_and_a_cleanup_block_are_refused() {
     f.resume().unwrap();
     f.finish().unwrap();
     assert_eq!(verify_module(&module), Ok(()));
-    let refused = emit_c23(&module, &options(false)).unwrap_err();
+    let refused = emit_c23(&module, &options(Entry::None)).unwrap_err();
     assert_eq!(
         refused.to_string(),
         "not supported yet in p.f: a cleanup block"
@@ -245,7 +270,7 @@ fn a_module_that_breaks_a_rule_and_a_cleanup_block_are_refused() {
     g.switch_to(entry);
     g.resume().unwrap();
     g.finish().unwrap();
-    let refused = emit_c23(&module, &options(false)).unwrap_err();
+    let refused = emit_c23(&module, &options(Entry::None)).unwrap_err();
     assert!(matches!(refused, EmitError::Verify(_)), "{refused}");
 }
 
@@ -279,7 +304,7 @@ fn every_unit_compiles_without_a_warning_for_both_targets_and_twice_the_same() {
         })
         .collect();
     cases.par_iter().for_each(|&(program, target, opt)| {
-        let unit = emit_c23(&module("a.gopp", program), &options(true)).unwrap();
+        let unit = emit_c23(&module("a.gopp", program), &options(Entry::Main)).unwrap();
         let driver = strict(&toolchain, target, opt);
         let mut objects = Vec::new();
         for _ in 0..2 {
@@ -520,7 +545,7 @@ fn a_program_computes_what_go_says_at_every_level() {
         .collect();
     let cache = tempfile::tempdir().unwrap();
     cases.par_iter().for_each(|&(program, status, said, opt)| {
-        let unit = emit_c23(&module("a.gopp", program), &options(true)).unwrap();
+        let unit = emit_c23(&module("a.gopp", program), &options(Entry::Main)).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let program_file = dir.path().join("program");
         let driver = strict(&toolchain, "linux/amd64", opt);
@@ -564,7 +589,7 @@ fn a_link_for_another_target_says_what_it_lacks() {
     let dir = tempfile::tempdir().unwrap();
     let unit = emit_c23(
         &module("a.gopp", "package main\n\nfunc main() {}\n"),
-        &options(true),
+        &options(Entry::Main),
     )
     .unwrap();
     let refused = strict(&toolchain, other, OptLevel::O0)
@@ -593,7 +618,7 @@ fn the_unit_does_not_depend_on_the_number_of_threads() {
             .num_threads(threads)
             .build()
             .unwrap();
-        pool.install(|| emit_counted(&module, &options(true)).unwrap())
+        pool.install(|| emit_counted(&module, &options(Entry::Main)).unwrap())
     };
     let alone = written_by(1);
     for threads in [2, 5, 16] {
@@ -605,7 +630,7 @@ fn the_unit_does_not_depend_on_the_number_of_threads() {
 fn the_steps_grow_with_the_module() {
     use gopp_testutil::linear::assert_near_linear;
     let steps = |text: &str| {
-        emit_counted(&module("a.gopp", text), &options(true))
+        emit_counted(&module("a.gopp", text), &options(Entry::Main))
             .unwrap()
             .1
     };

@@ -1,0 +1,8 @@
+4
+panic: runtime error: index out of range [4] with length 4
+
+goroutine 1 [running]:
+main.at()
+	+0x?
+main.main()
+	+0x?

@@ -10,6 +10,9 @@ void _gopp_rt_init(int argc, char **argv) {
   // Nothing reads the arguments yet.
   (void)argc;
   (void)argv;
+  // A process may run one program after another: the tables of the one
+  // before are gone with its code.
+  tables = 0;
   _gopp_os_init();
 }
 

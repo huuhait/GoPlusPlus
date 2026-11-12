@@ -21,7 +21,15 @@ gopp-syntax = { path = "../gopp-syntax" }
 gopp-target = { path = "../gopp-target" }
 lasso.workspace = true
 rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
+
+# The fast test runner is written for Linux.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+libloading.workspace = true
+object.workspace = true
 
 [dev-dependencies]
 gopp-testutil = { path = "../gopp-testutil" }

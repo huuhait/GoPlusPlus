@@ -1,0 +1,8 @@
+3
+panic: runtime error: integer divide by zero
+
+goroutine 1 [running]:
+main.ratio()
+	+0x?
+main.main()
+	+0x?

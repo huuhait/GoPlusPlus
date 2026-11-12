@@ -17,6 +17,8 @@ pub enum Output {
     Object,
     Assembly,
     Executable,
+    /// A shared object that a process loads while it runs.
+    Module,
 }
 
 /// How much Clang optimizes. A program means the same at every level.
@@ -185,8 +187,8 @@ impl ClangDriver<'_> {
         Ok(())
     }
 
-    /// Compiles the unit of C `unit` to `output`; an executable is
-    /// linked with `link_with` too. `dir` is a directory of its own for
+    /// Compiles the unit of C `unit` to `output`; an executable and a
+    /// module are linked with `link_with` too. `dir` is a directory of its own for
     /// the unit.
     pub fn build(
         &self,
@@ -214,9 +216,14 @@ impl ClangDriver<'_> {
                 self.check_link_inputs()?;
                 command.args(self.link_flags());
             }
+            Output::Module => {
+                self.check_link_inputs()?;
+                command.args(["-fPIC", "-shared"]);
+                command.args(self.link_flags());
+            }
         }
         command.arg("unit.c");
-        if kind == Output::Executable {
+        if matches!(kind, Output::Executable | Output::Module) {
             command.args(link_with);
         }
         command.arg("-o").arg(&output);

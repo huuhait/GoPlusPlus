@@ -1,0 +1,11 @@
+package main
+
+func third(x float64) float64 { return x / 3 }
+
+// A float that an integer type cannot hold becomes the nearest value
+// that it can, and what is no number becomes 0.
+func main() {
+	println(uint8(third(900)), int64(third(1e30)), int32(third(-1e30)))
+	println(int8(third(-900)), uint64(third(-3)), int(third(0)/third(0)))
+	println(int16(third(98301)), int16(third(98304)), uint32(third(1e10)))
+}

@@ -1,0 +1,9 @@
+// exit: 2
+package main
+
+func ratio(a, b int) int { return a / b }
+
+func main() {
+	println(ratio(9, 3))
+	println(ratio(9, 0))
+}

@@ -7,6 +7,7 @@ mod demangle;
 mod diff;
 mod fmt;
 mod parse;
+mod runner;
 
 use std::env;
 use std::panic;
@@ -94,6 +95,62 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Build many programs side by side, run each, and print how each
+    /// ended as one line of JSON
+    TestRun {
+        /// A file of jobs, one line of JSON each; `-` is standard input
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Write the results to this file, not to standard output
+        #[arg(short)]
+        o: Option<PathBuf>,
+        /// How many programs are built at a time; the default is one
+        /// for each core
+        #[arg(short)]
+        j: Option<usize>,
+        /// How many programs run at a time; the default is one for
+        /// each core
+        #[arg(long)]
+        executors: Option<usize>,
+        /// How long a program may run, in milliseconds
+        #[arg(long, default_value_t = 60_000)]
+        timeout_ms: u64,
+        /// How many bytes a program may write to each of its streams
+        #[arg(long, default_value_t = 256 << 20)]
+        max_output: u64,
+        /// Keep what is built and what the programs wrote in this
+        /// directory
+        #[arg(long)]
+        work_dir: Option<PathBuf>,
+        /// Put what goes to standard error into standard output, in
+        /// the order in which it is written
+        #[arg(long)]
+        merge_output: bool,
+        /// Print the counts and the times of the run to standard error
+        #[arg(long)]
+        summary: bool,
+        /// Build each program as an executable of its own; the
+        /// environment variable GOPP_FAST_RUN=0 says the same
+        #[arg(long)]
+        real: bool,
+        #[arg(long, hide = true)]
+        executor: Option<PathBuf>,
+        #[arg(long, hide = true, default_value_t = 10_000)]
+        startup_timeout_ms: u64,
+        #[arg(long, hide = true)]
+        schedule: Option<String>,
+        /// Programs: a file or a directory each
+        paths: Vec<PathBuf>,
+    },
+    /// The process that runs the programs of `test-run`
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    TestExec {
+        #[arg(long)]
+        runtime: PathBuf,
+        #[arg(long)]
+        max_output: u64,
+    },
     /// Print Go++ symbols as Go++ text
     Demangle {
         /// Cut each name after this many bytes: a type that occurs often
@@ -180,6 +237,42 @@ fn run() -> ExitCode {
             output: o,
             paths,
         }),
+        Command::TestRun {
+            manifest,
+            o,
+            j,
+            executors,
+            timeout_ms,
+            max_output,
+            work_dir,
+            merge_output,
+            summary,
+            real,
+            executor,
+            startup_timeout_ms,
+            schedule,
+            paths,
+        } => runner::run(&runner::Options {
+            paths,
+            manifest,
+            output: o,
+            jobs: j,
+            executors,
+            timeout_ms,
+            max_output,
+            work_dir,
+            merge_output,
+            summary,
+            real,
+            executor,
+            startup_timeout_ms,
+            schedule,
+        }),
+        #[cfg(target_os = "linux")]
+        Command::TestExec {
+            runtime,
+            max_output,
+        } => runner::exec::run(&runtime, max_output),
         Command::Demangle { max_output, names } => demangle::run(&names, max_output),
         Command::Explain { list: true, .. } => {
             print!("{}", gopp_diag::listed());

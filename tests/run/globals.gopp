@@ -1,0 +1,27 @@
+package main
+
+var count int
+var scale float64
+
+type Meter struct{ ticks int }
+
+func (m Meter) twice() int { return m.ticks * 2 }
+
+func bump(by int) int {
+	count += by
+	return count
+}
+
+func init() {
+	count = 40
+	scale = 0.5
+}
+
+func init() { count += 2 }
+
+func main() {
+	m := Meter{ticks: bump(0)}
+	println("count", count, m.twice(), bump(8), scale)
+	print("no newline", "\n")
+	println()
+}
