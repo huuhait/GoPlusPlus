@@ -3915,6 +3915,118 @@ func f(n *int, m *int, xs *[]int, l *List, o *List, v int, pair func() (int, *in
     assert_eq!(written, expected);
 }
 
+/// Where each file puts a value into an interface without a conversion
+/// being written: `line: expression: its type to the interface type`.
+fn iface_conversions(name: &str, text: &str) -> Vec<String> {
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[(name, text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let types = loader.types.get().unwrap();
+    let tree = &checked.files[0];
+    let bodies = checked.package.files[0].bodies.iter();
+    let mut found: Vec<(u32, String)> = bodies
+        .flat_map(|body| &body.iface_conversions)
+        .map(|(&expr, &(from, to))| {
+            let span = tree.exprs[expr].span;
+            let line = text[..span.lo as usize].matches('\n').count() + 1;
+            let written = &text[span.lo as usize..span.hi as usize];
+            let show = |ty| types.display_in(ty, &names, names.get_or_intern("p"));
+            let shown = format!("{line}: {written}: {} to {}", show(from), show(to));
+            (span.lo, shown)
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, shown)| shown).collect()
+}
+
+#[test]
+fn a_body_records_where_a_value_is_put_into_an_interface() {
+    let text = "package p
+
+type I interface{ m() }
+type T struct{}
+
+func (T) m() {}
+
+var global I = T{}
+
+func use(i I, rest ...any) {}
+
+func f(t T, p *T, i I, c chan I, m map[any]I) I {
+	var a I = t
+	a = p
+	a = i
+	a = nil
+	use(t, 1, \"s\", i, nil)
+	c <- t
+	m[2.5] = p
+	_ = []I{t, i}
+	_ = struct{ i I }{t}
+	_ = I(t)
+	for _, a = range []T{} {
+	}
+	_ = a
+	return t
+}
+";
+    let expected = [
+        "8: T{}: T to I",
+        "13: t: T to I",
+        "14: p: *T to I",
+        "17: t: T to I",
+        "17: 1: int to any",
+        "17: \"s\": string to any",
+        "18: t: T to I",
+        "19: 2.5: float64 to any",
+        "19: p: *T to I",
+        "20: t: T to I",
+        "21: t: T to I",
+        "23: a: T to I",
+        "26: t: T to I",
+    ];
+    assert_eq!(iface_conversions("a.go", text), expected);
+}
+
+// rule: OWN-P5, OWN-P6
+#[test]
+fn a_gopp_body_records_what_of_a_pointer_or_a_handle_is_put_into_an_interface() {
+    let text = "package p
+
+type I interface{ m() }
+type T struct{}
+
+func (T) m() {}
+
+type P struct{}
+
+func (p *P) m() {}
+
+func f(t T, pt *T, pp *P, u Unique[P], s Shared[T], o Option[I]) {
+	var a I = t
+	a = pt
+	a = pp
+	a = u
+	a = s
+	o = t
+	o = a
+	o = o
+	_ = a
+}
+";
+    // A pointer stays a pointer where that fits; a handle lends what it
+    // owns.
+    let expected = [
+        "13: t: T to I",
+        "14: pt: *T to I",
+        "15: pp: *P to I",
+        "16: u: *P to I",
+        "17: s: *T to I",
+        "18: t: T to I",
+    ];
+    assert_eq!(iface_conversions("a.gopp", text), expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();

@@ -123,19 +123,35 @@ impl<'a> Checker<'a> {
         self.takes(to, writes).last().copied().unwrap_or(to)
     }
 
-    /// Whether the operand `x` surely fits no place of the type `to` in a
-    /// `.gopp` file.
-    pub(super) fn unfit_own(&self, x: &Operand, to: TypeId, writes: bool) -> bool {
+    /// How the operand `x` fits a place of the type `to` in a `.gopp`
+    /// file: the type it is read as, and the type that takes it. A
+    /// pointer stays a pointer where that fits.
+    pub(super) fn fit_own(
+        &self,
+        x: &Operand,
+        to: TypeId,
+        writes: bool,
+    ) -> Option<(TypeId, TypeId)> {
         let mut read = Vec::new();
         self.read_as(x.ty, &mut read);
         let takes = self.takes(to, writes);
-        !read.iter().any(|&from| {
+        read.iter().find_map(|&from| {
             let x = Operand {
                 mode: x.mode.clone(),
                 ty: from,
             };
-            self.types.extends(from) || takes.iter().any(|&to| !self.not_assignable(&x, to))
+            let taken = takes.iter().find(|&&to| !self.not_assignable(&x, to));
+            taken
+                .copied()
+                .or(self.types.extends(from).then_some(to))
+                .map(|to| (from, to))
         })
+    }
+
+    /// Whether the operand `x` surely fits no place of the type `to` in a
+    /// `.gopp` file.
+    pub(super) fn unfit_own(&self, x: &Operand, to: TypeId, writes: bool) -> bool {
+        self.fit_own(x, to, writes).is_none()
     }
 
     /// Notes whether the assignment of `x` to the place `place` of the

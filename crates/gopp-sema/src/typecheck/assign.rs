@@ -118,6 +118,9 @@ impl<'a> Checker<'a> {
             self.error_with_cause(Code::CannotAssign, span, message, cause);
             return Operand::UNKNOWN;
         }
+        if let Some(to) = to {
+            self.note_interface(cx, expr, &x, to, writes);
+        }
         x
     }
 

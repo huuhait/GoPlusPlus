@@ -114,6 +114,11 @@ pub struct Body {
     /// what a pointer points to. An assignment to a pointer that is not
     /// here points it at something else.
     pub writes_through: FxHashSet<ExprId>,
+    /// The expressions whose values are put into an interface without a
+    /// conversion being written: for each, the type that the value has
+    /// there and the interface type. In a `.gopp` file the first may be
+    /// what a pointer points to, or a pointer to what a handle owns.
+    pub iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.

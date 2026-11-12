@@ -154,6 +154,40 @@ impl<'a> Checker<'a> {
         self.sink.push(diagnostic);
     }
 
+    /// Notes that the value `x` of `expr`, which fits a place of the type
+    /// `to`, is put into an interface there. `writes` says that the place
+    /// is on the left of `=`.
+    pub(super) fn note_interface(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        x: &Operand,
+        to: TypeId,
+        writes: bool,
+    ) {
+        if self.memo.is_none() || !x.is_value() || self.is_untyped(x.ty) {
+            return;
+        }
+        let fit = match self.own_rules(cx) {
+            true => self.fit_own(x, to, writes),
+            false => Some((x.ty, to)),
+        };
+        // An option of an interface holds the interface.
+        let held = |mut ty: TypeId| {
+            while let Type::Option(elem) = &*self.types.get(self.types.underlying(ty)) {
+                ty = *elem;
+            }
+            ty
+        };
+        if let Some((from, to)) = fit.map(|(from, to)| (held(from), held(to)))
+            && self.types.is_interface(to)
+            && !self.types.is_interface(from)
+            && !self.open(from)
+        {
+            self.iface_conversions.insert(expr, (from, to));
+        }
+    }
+
     /// Reports `message`, with the cause after it.
     pub(super) fn error_with_cause(
         &mut self,

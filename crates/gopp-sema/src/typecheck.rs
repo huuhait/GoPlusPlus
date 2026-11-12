@@ -224,6 +224,9 @@ struct Checker<'a> {
     /// While a body is walked: the left sides of its assignments that
     /// write what a pointer points to.
     writes_through: FxHashSet<ExprId>,
+    /// While a body is walked: the expressions whose values are put into
+    /// an interface, each with its type and the interface type.
+    iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The object that each declaring identifier declares.
@@ -254,17 +257,16 @@ struct Checker<'a> {
     valid: FxHashSet<TypeId>,
 }
 
-/// What was found in one body: the type of each expression with a value,
-/// the type of each local, the variables that are not also unused, what
-/// each selector reaches, and the assignments that write through a
-/// pointer.
-type BodyTypes = (
-    FxHashMap<ExprId, ExprType>,
-    Vec<(LocalId, TypeId)>,
-    Vec<LocalId>,
-    FxHashMap<ExprId, Selection>,
-    FxHashSet<ExprId>,
-);
+/// What was found in one body.
+struct BodyTypes {
+    exprs: FxHashMap<ExprId, ExprType>,
+    locals: Vec<(LocalId, TypeId)>,
+    /// The variables that are not also unused.
+    excused: Vec<LocalId>,
+    selections: FxHashMap<ExprId, Selection>,
+    writes_through: FxHashSet<ExprId>,
+    iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
+}
 
 /// A group of constants inside a function: the index of its next constant,
 /// and the type and values that a constant without a value repeats.
@@ -316,6 +318,7 @@ pub fn declarations(
         excused: Vec::new(),
         selections: FxHashMap::default(),
         writes_through: FxHashSet::default(),
+        iface_conversions: FxHashMap::default(),
         steps: 0,
         by_span,
         current: Vec::new(),
@@ -371,16 +374,15 @@ pub fn declarations(
         object.value = value;
     }
     for (file, types_of_bodies) in package.files.iter_mut().zip(types_of_files) {
-        for (body, (exprs, locals, excused, selections, writes_through)) in
-            file.bodies.iter_mut().zip(types_of_bodies)
-        {
-            body.types = exprs;
-            body.selections = selections;
-            body.writes_through = writes_through;
-            for (LocalId(local), ty) in locals {
+        for (body, found) in file.bodies.iter_mut().zip(types_of_bodies) {
+            body.types = found.exprs;
+            body.selections = found.selections;
+            body.writes_through = found.writes_through;
+            body.iface_conversions = found.iface_conversions;
+            for (LocalId(local), ty) in found.locals {
                 body.locals[local as usize].ty = ty;
             }
-            for LocalId(local) in excused {
+            for LocalId(local) in found.excused {
                 body.locals[local as usize].used = true;
             }
         }
@@ -2710,13 +2712,14 @@ impl<'a> Checker<'a> {
                 .locals
                 .drain()
                 .map(|(local, operand)| (local, operand.ty));
-            all.push((
+            all.push(BodyTypes {
                 exprs,
-                locals.collect(),
-                std::mem::take(&mut self.excused),
-                std::mem::take(&mut self.selections),
-                std::mem::take(&mut self.writes_through),
-            ));
+                locals: locals.collect(),
+                excused: std::mem::take(&mut self.excused),
+                selections: std::mem::take(&mut self.selections),
+                writes_through: std::mem::take(&mut self.writes_through),
+                iface_conversions: std::mem::take(&mut self.iface_conversions),
+            });
         }
         self.incomplete = false;
         all
