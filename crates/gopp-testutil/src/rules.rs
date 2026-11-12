@@ -127,7 +127,7 @@ mod tests {
 
     /// The rules of this repository's specification without a test may
     /// only become fewer.
-    const UNTESTED_AT_MOST: usize = 234;
+    const UNTESTED_AT_MOST: usize = 233;
 
     /// `OWN-R3a` after `OWN-R3` and before `OWN-R10`: the letters, the
     /// number and what follows it.

@@ -443,6 +443,9 @@ impl<'a> Checker<'a> {
             self.changed(cx, lhs, place::Change::Assigned);
             self.wrote(cx, lhs);
             self.flow_written(cx, lhs);
+            if let ExprKind::Index { x: held, .. } = cx.tree.exprs[inner].kind {
+                self.lost_entry(cx, lhs, held);
+            }
             return Some(x.ty);
         }
         if let ExprKind::Selector { x: of, .. } = cx.tree.exprs[inner].kind
@@ -499,6 +502,7 @@ impl<'a> Checker<'a> {
                         let assigned = self.assignment(cx, value, x, Some(to), "assignment");
                         self.note_write(cx, place, to, Some(&assigned));
                         self.field_stored(cx, place, &text, to, (value, &assigned));
+                        self.flow_assigned_nil(cx, place, value);
                     }
                 }
             }
@@ -598,6 +602,7 @@ impl<'a> Checker<'a> {
             [] => {
                 if let Some(declared) = declared {
                     self.declared_unset(cx, names, declared);
+                    self.flow_declared_nil(cx, names);
                 }
                 vec![or_declared(Types::INVALID); count]
             }
@@ -617,6 +622,9 @@ impl<'a> Checker<'a> {
                             self.assigned_to = Some(name.to_owned());
                             let ty = self.init_var(cx, value, None, declared, context).ty;
                             self.assigned_to = None;
+                            if self.is_nil_name(cx, value) {
+                                self.flow_declared_nil(cx, &names[position..=position]);
+                            }
                             ty
                         }
                         None => Types::INVALID,

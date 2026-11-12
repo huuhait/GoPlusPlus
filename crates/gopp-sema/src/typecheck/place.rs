@@ -293,6 +293,7 @@ impl<'a> Checker<'a> {
             self.steps += 1;
             // A literal may run at any time: what it writes is not known
             // to hold anything where it is declared.
+            self.flow_captured(local);
             if how > CaptureUse::Read {
                 self.flow_unstable(local);
             }

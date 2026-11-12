@@ -894,7 +894,7 @@ fn names_denote_the_marked_declarations() {
     let text = "package p
 
 type Node/*=Node*/ struct {
-	next *Node/*@Node*/
+	next Option[*Node/*@Node*/]
 }
 
 type List/*=List*/[E/*=E*/ Clone] struct {
@@ -7969,6 +7969,155 @@ fn the_steps_of_what_is_known_grow_with_the_input_not_faster() {
     // The parser takes no deeper nesting.
     linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
     linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(loops(n)));
+}
+
+// rule: CON-6a
+#[test]
+fn nil_is_no_value_of_what_is_never_nil_and_a_lost_write_is_refused() {
+    let text = "package p
+
+type Node struct{ v int }
+type Shape interface{ Area() float64 }
+
+func get() map[string]int       { return nil }
+func lists() map[string][]int   { return nil }
+func made() chan int            { return nil }
+
+func good(p *Node, o Option[*Node], e error, x any, m map[string]int, xs []int, ch chan int, s Shape, os Option[Shape]) {
+	_ = o == nil
+	_ = e == nil
+	_ = x != nil
+	_ = m == nil
+	_ = xs == nil
+	_ = ch == nil
+	_ = os == nil
+	o = nil
+	e = nil
+	x = nil
+	m = nil
+	var local map[string]int
+	local[\"a\"] = 1
+	m[\"a\"] = 1
+	c := made()
+	close(c)
+	close(ch)
+	var later chan int
+	later = make(chan int)
+	close(later)
+	if v, ok := x.(map[string]int); ok {
+		v[\"a\"] = 1
+	}
+	_ = get()[\"a\"]
+	_, _ = p, s
+}
+
+func bad(p *Node, u Unique[Node], sh Shared[Node], w Weak[Node], f func(), s Shape, x any) {
+	_ = p == nil
+	_ = nil != u
+	_ = sh == nil
+	_ = w == nil
+	_ = s == nil
+	p = nil
+	u = nil
+	sh = nil
+	w = nil
+	s = nil
+	var q *Node = nil
+	get()[\"a\"] = 1
+	get()[\"a\"]++
+	lists()[\"a\"] = append(lists()[\"a\"], 1)
+	delete(get(), \"a\")
+	x.(map[string]int)[\"a\"] = 1
+	var ch chan int
+	close(ch)
+	var nilch chan int = nil
+	close(nilch)
+	_ = q
+}
+
+func closes(param chan int, pick bool) (named chan int) {
+	var a chan int
+	if pick {
+		a = make(chan int)
+	}
+	close(a)
+	var b chan int
+	if b != nil {
+		close(b)
+	}
+	var c chan int
+	for i := 0; i < 2; i++ {
+		close(c)
+		c = make(chan int)
+	}
+	var d chan int
+	_ = func() { d = make(chan int) }
+	close(d)
+	var e chan int
+Again:
+	close(e)
+	if pick {
+		goto Again
+	}
+	close(param)
+	close(named)
+
+	var f chan int
+	defer close(f)
+	g := make(chan int)
+	g = nil
+	close(g)
+	return nil
+}
+";
+    let expected = [
+        "a.gopp:39:6: invalid operation: p == nil (a *Node is never nil: use Option[*Node])",
+        "a.gopp:40:13: invalid operation: nil != u (a Unique[Node] is never nil: use \
+         Option[Unique[Node]])",
+        "a.gopp:41:6: invalid operation: sh == nil (a Shared[Node] is never nil: use \
+         Option[Shared[Node]])",
+        "a.gopp:42:6: invalid operation: w == nil (a Weak[Node] is never nil: use \
+         Option[Weak[Node]])",
+        "a.gopp:43:6: invalid operation: s == nil (a Shape is never nil: use Option[Shape])",
+        "a.gopp:44:6: cannot use nil as *Node value in assignment",
+        "    a *Node is never nil: use Option[*Node]",
+        "a.gopp:45:6: cannot use nil as Unique[Node] value in assignment",
+        "    a Unique[Node] is never nil: use Option[Unique[Node]]",
+        "a.gopp:46:7: cannot use nil as Shared[Node] value in assignment",
+        "    a Shared[Node] is never nil: use Option[Shared[Node]]",
+        "a.gopp:47:6: cannot use nil as Weak[Node] value in assignment",
+        "    a Weak[Node] is never nil: use Option[Weak[Node]]",
+        "a.gopp:48:6: cannot use nil as Shape value in assignment",
+        "    a Shape is never nil: use Option[Shape]",
+        "a.gopp:49:16: cannot use nil as *Node value in variable declaration",
+        "    a *Node is never nil: use Option[*Node]",
+        "a.gopp:50:2: cannot change get()[\"a\"]: no variable holds the map, and the change would \
+         be lost",
+        "    put it in a variable first",
+        "a.gopp:51:2: cannot change get()[\"a\"]: no variable holds the map, and the change would \
+         be lost",
+        "    put it in a variable first",
+        "a.gopp:52:2: cannot change lists()[\"a\"]: no variable holds the map, and the change \
+         would be lost",
+        "    put it in a variable first",
+        "a.gopp:53:9: cannot change get(): no variable holds the map, and the change would be lost",
+        "    put it in a variable first",
+        "a.gopp:54:2: cannot change x.(map[string]int)[\"a\"]: the assertion gives a copy, and the \
+         change would be lost",
+        "    put it in a variable first",
+        "a.gopp:56:8: cannot close ch: ch is nil on every way here",
+        "    make the channel first: ch = make(...)",
+        "a.gopp:58:8: cannot close nilch: nilch is nil on every way here",
+        "    make the channel first: nilch = make(...)",
+        "a.gopp:90:14: cannot close f: f is nil on every way here",
+        "    make the channel first: f = make(...)",
+        "a.gopp:93:8: cannot close g: g is nil on every way here",
+        "    make the channel first: g = make(...)",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // In a Go file nil is Go's.
+    let text = "package p\nfunc g() map[string]int { return nil }\nfunc f(p *int, s interface{ M() }) { _ = p == nil; _ = s == nil; p = nil; g()[\"a\"] = 1; var ch chan int; close(ch) }\n";
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
 }
 
 // rule: OWN-R3a

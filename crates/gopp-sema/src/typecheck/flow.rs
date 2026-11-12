@@ -49,6 +49,8 @@ pub(super) struct Flow {
     /// The variables that a function literal writes or takes the address
     /// of: it may run at any time, so nothing is known of them.
     unstable: FxHashSet<LocalId>,
+    /// The variables that a function literal uses at all.
+    captured: FxHashSet<LocalId>,
     /// The variables that are set only where another one says so: the
     /// value of `v, ok := m[k]` where `ok` is true, of `v, err := f()`
     /// where `err` is nil.
@@ -117,6 +119,113 @@ impl<'a> Checker<'a> {
 
     pub(super) fn flow_unstable(&mut self, local: LocalId) {
         self.flow.unstable.insert(local);
+    }
+
+    pub(super) fn flow_captured(&mut self, local: LocalId) {
+        self.flow.captured.insert(local);
+    }
+
+    /// The local variables `names` are declared without a value: each is
+    /// nil, if its type has nil.
+    pub(super) fn flow_declared_nil(&mut self, cx: &Cx<'a>, names: &[Ident]) {
+        for name in names {
+            if let Some(&local) = cx.body.defs.get(&name.span.lo) {
+                self.flow_add(&[(local, Known::Nil, name.span.lo)]);
+            }
+        }
+    }
+
+    /// `place = value`: a variable that is assigned `nil` is nil.
+    pub(super) fn flow_assigned_nil(&mut self, cx: &Cx<'a>, place: ExprId, value: ExprId) {
+        if let (Some(local), true) = (self.flow_local(cx, place), self.is_nil_name(cx, value)) {
+            self.flow_add(&[(local, Known::Nil, cx.tree.exprs[value].span.lo)]);
+        }
+    }
+
+    /// `close(ch)` at `at`: not of a variable of the function that is nil
+    /// on every way here (CON-6a). Nothing is said in a loop that started
+    /// after the variable was last known, where a later turn may differ,
+    /// nor of a variable that a function literal uses.
+    pub(super) fn close_of_nil(&mut self, cx: &Cx<'a>, at: ExprId) {
+        if !self.own_rules(cx) || self.memo.is_none() {
+            return;
+        }
+        let Some(local) = self.flow_local(cx, at) else {
+            return;
+        };
+        let is_variable = cx.body.locals[local.0 as usize].kind == LocalKind::Var;
+        let Some(&fact) = self.flow.facts.get(&(local, Known::Nil)) else {
+            return;
+        };
+        let version = self.flow.versions.get(&local).copied().unwrap_or(0);
+        let in_loop = self
+            .flow
+            .loops
+            .iter()
+            .any(|around| around.span.lo > fact.at);
+        let tested = self
+            .flow
+            .facts
+            .get(&(local, Known::Set))
+            .is_some_and(|set| set.version == version && set.epoch == self.flow.epoch);
+        if !is_variable
+            || fact.version != version
+            || fact.epoch != self.flow.epoch
+            || in_loop
+            || tested
+            || self.flow.captured.contains(&local)
+        {
+            return;
+        }
+        let text = self.expr_string(cx, at);
+        let message = format!("cannot close {text}: {text} is nil on every way here");
+        let fix = (
+            Code::NoteOwnFixOption,
+            format!("make the channel first: {text} = make(...)"),
+        );
+        self.error_with_fix(Code::CloseNilChan, cx.tree.exprs[at].span, message, fix);
+    }
+
+    /// An element is written in what `held` is, at `place`: not in a map
+    /// that no variable holds, nor in the copy that a type assertion
+    /// gives, where the write would be lost (ADR-0018).
+    pub(super) fn lost_entry(&mut self, cx: &Cx<'a>, place: ExprId, held: ExprId) {
+        if !self.own_rules(cx) || self.memo.is_none() {
+            return;
+        }
+        let held = self.unparen(cx, held);
+        let Some(ty) = self
+            .memo
+            .as_ref()
+            .and_then(|memo| memo.get(&held))
+            .map(|x| x.ty)
+        else {
+            return;
+        };
+        let (is_map, is_slice) = match &*self.types.get(self.types.underlying(ty)) {
+            Type::Map { .. } => (true, false),
+            Type::Slice(_) => (false, true),
+            _ => return,
+        };
+        let asserted = matches!(cx.tree.exprs[held].kind, ExprKind::Assert { .. });
+        let temporary = is_map && self.place_of(cx, held) == place::Place::Temporary;
+        let text = self.expr_string(cx, place);
+        let span = cx.tree.exprs[place].span;
+        let fix = (
+            Code::NoteOwnFixOption,
+            "put it in a variable first".to_owned(),
+        );
+        if asserted && (is_map || is_slice) {
+            let message = format!(
+                "cannot change {text}: the assertion gives a copy, and the change would be lost"
+            );
+            self.error_with_fix(Code::BoxWrite, span, message, fix);
+        } else if temporary {
+            let message = format!(
+                "cannot change {text}: no variable holds the map, and the change would be lost"
+            );
+            self.error_with_fix(Code::MapTempWrite, span, message, fix);
+        }
     }
 
     pub(super) fn flow_guard(&mut self, value: LocalId, by: LocalId, known: Known) {
@@ -282,7 +391,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn is_nil_name(&self, cx: &Cx<'a>, expr: ExprId) -> bool {
+    pub(super) fn is_nil_name(&self, cx: &Cx<'a>, expr: ExprId) -> bool {
         let expr = self.unparen(cx, expr);
         matches!(
             cx.body.uses.get(&expr),

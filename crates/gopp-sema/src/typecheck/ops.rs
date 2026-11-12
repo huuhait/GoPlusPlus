@@ -1169,7 +1169,21 @@ impl<'a> Checker<'a> {
         // The operand that the error is about, and what is wrong with it.
         let wrong: Option<(bool, String, Code)> = {
             let mismatched = self.unfit(cx, x, y.ty, false) && self.unfit(cx, y, x.ty, false);
-            if mismatched {
+            // In a `.gopp` file a pointer of any kind, a func and an
+            // interface with methods are never nil (OWN-P9).
+            let with_nil = matches!(op, BinaryOp::Eq | BinaryOp::Ne)
+                && self.own_rules(cx)
+                && (self.is_nil(x) != self.is_nil(y));
+            let other = if self.is_nil(x) { y.ty } else { x.ty };
+            let is_struct = matches!(
+                &*self.types.get(self.types.underlying(other)),
+                Type::Struct(_)
+            );
+            if with_nil && self.never_nil(other) && !is_struct {
+                let shown = self.type_string(other);
+                let cause = format!("a {shown} is never nil: use Option[{shown}]");
+                Some((self.is_nil(x), cause, Code::NilNeverNil))
+            } else if mismatched {
                 let cause = format!(
                     "mismatched types {} and {}",
                     self.type_string(x.ty),

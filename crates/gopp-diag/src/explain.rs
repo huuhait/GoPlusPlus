@@ -1530,6 +1530,25 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Leave when the lookup or the call failed, and use the value after that.",
             "u, ok := users[name]\nshow(u)   // error: u is set only where ok is true\nif !ok {\n\treturn\n}\nshow(u)   // ok",
         ),
+        MapTempWrite => (
+            "An entry is written in a map that no variable holds: the result of a call. The \
+             map ends with the statement, and the entry with it.",
+            "Store the map in a variable first.",
+            "load()[\"a\"] = 1 // error\nm := load()\nm[\"a\"] = 1      // ok",
+        ),
+        BoxWrite => (
+            "An element is written in the map or slice that a type assertion gives. The \
+             assertion gives a copy of what the interface holds, so the write would be lost.",
+            "Put the asserted value in a variable, change that, and store it back if the \
+             interface should hold the change.",
+            "v.(map[string]int)[\"a\"] = 1 // error\nm := v.(map[string]int)\nm[\"a\"] = 1\nv = m                        // ok",
+        ),
+        CloseNilChan => (
+            "`close` is called on a channel variable that is nil on every way to the call. \
+             Closing a nil channel panics.",
+            "Make the channel before it is closed.",
+            "var ch chan int\nclose(ch)            // error\nch = make(chan int)\nclose(ch)            // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

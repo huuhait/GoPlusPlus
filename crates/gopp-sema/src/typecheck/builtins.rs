@@ -361,7 +361,10 @@ impl<'a> Checker<'a> {
                 let wrong = match (wrong, types.is_empty()) {
                     (Some(wrong), _) => wrong,
                     (None, true) => "non-channel",
-                    (None, false) => return no_value,
+                    (None, false) => {
+                        self.close_of_nil(cx, at);
+                        return no_value;
+                    }
                 };
                 let message = format!(
                     "invalid operation: cannot close {wrong} {}",
@@ -469,6 +472,7 @@ impl<'a> Checker<'a> {
                 self.changed(cx, at, place::Change::Emptied("delete"));
                 self.wrote(cx, at);
                 self.shared_changed(cx, at, "delete from");
+                self.lost_entry(cx, at, at);
                 let (key_at, key_value) = given[1].clone();
                 let assigned =
                     self.assignment(cx, key_at, key_value, Some(key), "argument to delete");
