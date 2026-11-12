@@ -123,18 +123,23 @@ struct Orderer<'a> {
     package: &'a Package,
     names: &'a ThreadedRodeo,
     sink: &'a Sink,
+    /// The objects of the package, then its methods.
     nodes: Vec<Node>,
+    /// The names of the methods, in the order of their nodes.
+    methods: &'a [Ident],
     /// The object that each declaring identifier declares.
     by_span: FxHashMap<Span, usize>,
 }
 
 /// Finds the cycles among the package-level declarations of `package` and
 /// the order in which its variables are initialized. `needs` has, for each
-/// object, the objects that its declaration uses as values.
+/// object and then for each of `methods`, the objects and the methods that
+/// its declaration uses as values.
 pub fn order(
     package: &Package,
     units: &[Unit<'_>],
     needs: &[Vec<usize>],
+    methods: &[Ident],
     names: &ThreadedRodeo,
     sink: &Sink,
 ) -> Vec<Initializer> {
@@ -148,6 +153,7 @@ pub fn order(
         names,
         sink,
         nodes: needs.iter().map(node).collect(),
+        methods,
         by_span: by_span
             .map(|(index, object)| (object.span, index))
             .collect(),
@@ -159,12 +165,24 @@ pub fn order(
 }
 
 impl Orderer<'_> {
-    fn name(&self, object: usize) -> &str {
-        self.names.resolve(&self.package.objects[object].name)
+    /// The method that is the node `node`, if it is one.
+    fn method(&self, node: usize) -> Option<Ident> {
+        let at = node.checked_sub(self.package.objects.len())?;
+        self.methods.get(at).copied()
     }
 
-    fn span(&self, object: usize) -> Span {
-        self.package.objects[object].span
+    fn name(&self, node: usize) -> &str {
+        match self.method(node) {
+            Some(method) => self.names.resolve(&method.name),
+            None => self.names.resolve(&self.package.objects[node].name),
+        }
+    }
+
+    fn span(&self, node: usize) -> Span {
+        match self.method(node) {
+            Some(method) => method.span,
+            None => self.package.objects[node].span,
+        }
     }
 
     fn error(&self, code: Code, span: Span, message: impl Into<String>) {
@@ -263,11 +281,9 @@ impl Orderer<'_> {
         self.sink.push(diagnostic);
     }
 
-    fn is_value(&self, object: usize) -> bool {
-        matches!(
-            self.package.objects[object].kind,
-            ObjKind::Const | ObjKind::Var
-        )
+    fn is_value(&self, node: usize) -> bool {
+        let kind = self.package.objects.get(node).map(|object| &object.kind);
+        matches!(kind, Some(ObjKind::Const | ObjKind::Var))
     }
 
     /// Go's order of initialization: again and again the first variable in
@@ -275,8 +291,10 @@ impl Orderer<'_> {
     /// What a variable needs includes what the functions it names need.
     /// Constants come first.
     fn init_order(&self) -> Vec<Initializer> {
-        let relevant = |object: usize| {
-            self.is_value(object) || matches!(self.package.objects[object].kind, ObjKind::Func)
+        // A method is what a function is.
+        let relevant = |node: usize| match self.package.objects.get(node) {
+            Some(object) => self.is_value(node) || matches!(object.kind, ObjKind::Func),
+            None => true,
         };
         let refs = |node: usize| {
             let named = self.nodes[node].refs.iter().copied();

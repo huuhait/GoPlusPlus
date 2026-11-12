@@ -110,9 +110,9 @@ pub(crate) fn check_counted(
             sink.push(diagnostic);
         }
     }
-    let (needs, taken) = typecheck::declarations(&mut package, units, types, names, sink);
+    let (needs, methods, taken) = typecheck::declarations(&mut package, units, types, names, sink);
     steps += taken;
-    package.init_order = decls::order(&package, units, &needs, names, sink);
+    package.init_order = decls::order(&package, units, &needs, &methods, names, sink);
     // After the types: a variable that got no type is not also unused.
     for local in package
         .files

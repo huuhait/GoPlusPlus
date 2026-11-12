@@ -66,6 +66,11 @@ impl<'a> Checker<'a> {
                 }
                 continue;
             }
+            if !with_signatures {
+                self.method_nodes.insert(name.span, self.needs.len());
+                self.needs.push(Vec::new());
+                self.methods_declared.push(*name);
+            }
             let sig = match with_signatures {
                 true => self.typ(&cx, *ty),
                 false => Types::INVALID,
@@ -248,6 +253,21 @@ impl<'a> Checker<'a> {
             }
         };
         self.error(code, base_span, message);
+    }
+
+    /// What is being declared needs the method that a selector reaches,
+    /// if it is a method of a type of this package.
+    pub(super) fn need_method(&mut self, found: &crate::types::Found) {
+        let (Member::Method { .. }, Type::Named { id, .. }) =
+            (&found.member, &*self.types.get(found.holder))
+        else {
+            return;
+        };
+        let key = (*id, found.name, self.package_of(found.name));
+        let node = self.method_names.get(&key);
+        if let Some(&node) = node.and_then(|span| self.method_nodes.get(span)) {
+            self.need(node);
+        }
     }
 
     /// A field and a method of a struct type have different names.

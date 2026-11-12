@@ -244,6 +244,11 @@ struct Checker<'a> {
     declared: FxHashSet<crate::types::NamedId>,
     /// Where each method of a type of this package is declared.
     method_names: FxHashMap<(crate::types::NamedId, Spur, Option<Spur>), Span>,
+    /// The methods of this package, each by where its name is declared:
+    /// a method is what needs what its body uses, after the objects.
+    method_nodes: FxHashMap<Span, usize>,
+    /// The name of each method that is a node, in the order of the nodes.
+    methods_declared: Vec<Ident>,
     /// The object that each declaring identifier declares.
     by_span: FxHashMap<Span, usize>,
     /// The constants and variables whose declaration is worked out: what
@@ -302,7 +307,7 @@ pub fn declarations(
     types: &Types,
     names: &ThreadedRodeo,
     sink: &Sink,
-) -> (Vec<Vec<usize>>, u64) {
+) -> (Vec<Vec<usize>>, Vec<Ident>, u64) {
     let count = package.objects.len();
     let by_span = package.objects.iter().enumerate();
     let by_span = by_span
@@ -340,6 +345,8 @@ pub fn declarations(
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
+        method_nodes: FxHashMap::default(),
+        methods_declared: Vec::new(),
         by_span,
         current: Vec::new(),
         needs: vec![Vec::new(); count],
@@ -387,6 +394,7 @@ pub fn declarations(
         ty,
         value,
         needs,
+        methods_declared,
         steps,
         ..
     } = checker;
@@ -408,7 +416,7 @@ pub fn declarations(
             }
         }
     }
-    (needs, steps)
+    (needs, methods_declared, steps)
 }
 
 fn is_exported(name: &str) -> bool {
@@ -1053,10 +1061,14 @@ impl<'a> Checker<'a> {
         self.ty[object.0 as usize]
     }
 
-    /// What is being declared needs the object `object` for its value.
-    fn need(&mut self, object: usize) {
-        let kind = &self.package.objects[object].kind;
-        if !matches!(kind, ObjKind::Const | ObjKind::Var | ObjKind::Func) {
+    /// What is being declared needs the object `object`, or the method
+    /// that is the node `object`, for its value.
+    pub(super) fn need(&mut self, object: usize) {
+        let kind = self.package.objects.get(object).map(|object| &object.kind);
+        if !matches!(
+            kind,
+            None | Some(ObjKind::Const | ObjKind::Var | ObjKind::Func)
+        ) {
             return;
         }
         for at in 0..self.current.len() {
@@ -1899,6 +1911,7 @@ impl<'a> Checker<'a> {
                     (_, Member::Field { .. }) => Some(SelectionKind::Field),
                     (_, Member::Method { .. }) => Some(SelectionKind::Method),
                 };
+                self.need_method(&found);
                 if let (Some(kind), true) = (kind, self.memo.is_some()) {
                     let selection = Selection {
                         kind,
@@ -2620,9 +2633,12 @@ impl<'a> Checker<'a> {
                     body: Some(block),
                     ..
                 } => {
-                    // What the body uses, the function needs; a method
-                    // and `init` are no objects.
-                    let function = self.by_span.get(&name.span).filter(|_| receiver.is_none());
+                    // What the body uses, the function or the method
+                    // needs; `init` is no object.
+                    let function = match receiver {
+                        Some(_) => self.method_nodes.get(&name.span),
+                        None => self.by_span.get(&name.span),
+                    };
                     self.current.extend(function);
                     self.declare_params(&mut cx, type_params);
                     if let Some(receiver) = receiver {

@@ -559,10 +559,7 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
         "{files_compared} files, {names_compared} names, {initializers_compared} initial values; \
          {same_order} of {packages_compared} packages in Go's order of initialization"
     );
-    assert!(
-        same_order * 100 >= packages_compared * 95,
-        "the order differs too often"
-    );
+    assert_eq!(same_order, packages_compared, "the order differs");
     assert!(names_compared > 500_000, "only {names_compared} names");
     println!("objects by kind and whether their type is worked out: {objects:?}");
     println!("{} of {} selections compared", selections.1, selections.0);
@@ -4463,6 +4460,27 @@ fn variables_are_initialized_after_what_they_need() {
             "const k = 2\nvar a = k\nvar f = func() int { return b }\nvar b = 1",
             &["a", "b", "f"],
         ),
+        // What a method needs, what names the method needs: called, as a
+        // value, as a function of its receiver, through an embedded field.
+        (
+            "type T struct{}\nfunc (T) m() int { return b }\nvar a = T{}.m()\nvar b = 1",
+            &["b", "a"],
+        ),
+        (
+            "type T struct{}\nfunc (*T) m() int { return b }\nvar a = (*T).m\nvar b = 1",
+            &["b", "a"],
+        ),
+        (
+            "type T struct{}\nfunc (T) m() int { return b }\ntype E struct{ T }\n\
+             var a = E{}.m\nvar b = 1",
+            &["b", "a"],
+        ),
+        // Which method a call through an interface runs is not known.
+        (
+            "type I interface{ m() int }\ntype T struct{}\nfunc (T) m() int { return b }\n\
+             var i I = T{}\nvar a = i.m()\nvar b = 1",
+            &["i", "a", "b"],
+        ),
     ];
     for (body, expected) in cases {
         let (order, messages) = init_order(&format!("package p\n{body}\n"));
@@ -4507,6 +4525,23 @@ fn variables_that_need_each_other_are_an_error() {
         (
             "const (\n\ta = c + iota\n\tb\n\tc\n)",
             &["a.go:5:2: initialization cycle: c refers to itself"],
+        ),
+        (
+            "type T struct{}\nfunc (T) m() int { return x }\nvar x = T{}.m()",
+            &[
+                "a.go:4:5: initialization cycle for x",
+                "    a.go:4:5: x refers to m",
+                "    a.go:3:10: m refers to x",
+            ],
+        ),
+        (
+            "type T struct{}\nfunc (T) m() { _ = y }\nvar x = T.m\nvar y = x",
+            &[
+                "a.go:4:5: initialization cycle for x",
+                "    a.go:4:5: x refers to m",
+                "    a.go:3:10: m refers to y",
+                "    a.go:5:5: y refers to x",
+            ],
         ),
     ];
     for (body, expected) in cases {
@@ -5028,7 +5063,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2111;
+const EXPECTED_ERRORS_REPORTED: usize = 2142;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
