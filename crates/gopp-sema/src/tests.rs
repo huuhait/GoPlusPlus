@@ -4950,6 +4950,126 @@ func f[P C, Q M, R any, T S](p P, q Q, r R, t T, pp *P, pq *Q) {
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn conversions_and_built_in_functions_take_type_parameters_as_go_checks_it() {
+    let text = "package p
+
+type Int interface{ ~int | ~int64 }
+type Num interface{ ~int | ~float64 }
+type Text interface{ ~string | ~[]byte }
+type MyStr string
+
+func conv[I Int, N Num, T Text, S ~string, P ~*int, A any](i I, n N, t T, s S, p P, a A, x int, str string) {
+	_ = I(n)
+	_ = N(i)
+	_ = float64(i)
+	_ = int(n)
+	_ = S(i)
+	_ = string(t)
+	_ = T(str)
+	_ = []byte(t)
+	_ = I(1)
+	_ = N(1.5)
+	_ = S(\"x\")
+	_ = I(1.5)
+	_ = I(\"x\")
+	_ = A(1)
+	_ = I(s)
+	_ = S(n)
+	_ = P(x)
+	_ = (*string)(p)
+	_ = int(s)
+	_ = MyStr(s)
+	_ = I(a)
+	_ = A(i)
+}
+
+func built[S ~[]int, M ~map[string]int, C ~chan int, R ~<-chan int, B ~string | ~[]byte, X []int | map[int]int, Y map[int]int | map[string]int, N ~int, F ~float64, K ~complex128, A any](s S, m M, c C, r R, b B, x X, y Y, n N, f F, k K, a A) {
+	_ = len(s) + len(m) + len(c) + len(b) + cap(s) + cap(c)
+	_ = len(n)
+	_ = len(a)
+	_ = cap(m)
+	_ = cap(b)
+	clear(s)
+	clear(m)
+	clear(x)
+	clear(b)
+	clear(a)
+	close(c)
+	close(r)
+	close(s)
+	close(a)
+	_ = copy(s, s)
+	_ = copy(s, []int{})
+	_ = copy([]byte{}, b)
+	_ = copy(s, b)
+	_ = copy(a, s)
+	delete(m, \"k\")
+	delete(m, 1)
+	delete(x, 1)
+	delete(y, 1)
+	delete(s, 1)
+	_ = make(S, 1)
+	_ = make(M)
+	_ = make(C, 2)
+	_ = make(S)
+	_ = make(X, 1)
+	_ = make(N)
+	_ = make(A)
+	_ = min(n, n)
+	_ = max(n, 1)
+	_ = min(f, 2.5)
+	_ = min(n, 2.5)
+	_ = max(k, k)
+	_ = min(n, f)
+	_ = min(a, a)
+	_ = real(k)
+	_ = complex(f, f)
+	_ = real(n)
+}
+";
+    let expected = [
+        "a.go:18:8: cannot convert 1.5 (untyped float value) to type N: cannot convert 1.5 (untyped float constant) to type int (in N)",
+        "a.go:20:8: cannot convert 1.5 (untyped float value) to type I: cannot convert 1.5 (untyped float constant) to type int (in I)",
+        "a.go:21:8: cannot convert \"x\" (untyped string value) to type I: cannot convert \"x\" (untyped string constant) to type int (in I)",
+        "a.go:22:8: cannot convert 1 (untyped int value) to type A: A does not contain specific types",
+        "a.go:23:8: cannot convert s (variable of type S constrained by ~string) to type I: cannot convert string (in S) to type int (in I)",
+        "a.go:24:8: cannot convert n (variable of type N constrained by Num) to type S: cannot convert float64 (in N) to type string (in S)",
+        "a.go:25:8: cannot convert x (variable of type int) to type P: cannot convert int to type *int (in P)",
+        "a.go:26:16: cannot convert p (variable of type P constrained by ~*int) to type *string: cannot convert *int (in P) to type *string",
+        "a.go:27:10: cannot convert s (variable of type S constrained by ~string) to type int: cannot convert string (in S) to type int",
+        "a.go:29:8: cannot convert a (variable of type A constrained by any) to type I",
+        "a.go:30:8: cannot convert i (variable of type I constrained by Int) to type A",
+        "a.go:35:10: invalid argument: n (variable of type N constrained by ~int) for built-in len",
+        "a.go:36:10: invalid argument: a (variable of type A constrained by any) for built-in len",
+        "a.go:37:10: invalid argument: m (variable of type M constrained by ~map[string]int) for built-in cap",
+        "a.go:38:10: invalid argument: b (variable of type B constrained by ~string | ~[]uint8) for built-in cap",
+        "a.go:42:8: invalid argument: cannot clear b (variable of type B constrained by ~string | ~[]uint8): argument must be (or constrained by) map or slice",
+        "a.go:43:8: invalid argument: cannot clear a (variable of type A constrained by any): argument must be (or constrained by) map or slice",
+        "a.go:45:8: invalid operation: cannot close receive-only channel r (variable of type R constrained by ~<-chan int)",
+        "a.go:46:8: invalid operation: cannot close non-channel s (variable of type S constrained by ~[]int)",
+        "a.go:47:8: invalid operation: cannot close non-channel a (variable of type A constrained by any)",
+        "a.go:51:14: invalid copy: argument must be a slice; have b (variable of type B constrained by ~string | ~[]uint8)",
+        "a.go:52:11: invalid copy: argument must be a slice; have a (variable of type A constrained by any)",
+        "a.go:54:12: cannot use 1 (untyped int constant) as string value in argument to delete",
+        "a.go:55:9: invalid argument: x (variable of type X constrained by []int | map[int]int) is not a map",
+        "a.go:56:9: invalid argument: maps of y (variable of type Y constrained by map[int]int | map[string]int) must have identical key types",
+        "a.go:57:9: invalid argument: s (variable of type S constrained by ~[]int) is not a map",
+        "a.go:61:6: invalid operation: make(S) expects 2 or 3 arguments; found 1",
+        "a.go:62:11: invalid argument: cannot make X: []int and map[int]int have different underlying types",
+        "a.go:63:11: invalid argument: cannot make N: type must be slice, map, or channel",
+        "a.go:64:11: invalid argument: cannot make A: no specific type",
+        "a.go:68:13: cannot convert 2.5 (untyped float constant) to type N",
+        "a.go:69:10: invalid argument: k (variable of type K constrained by ~complex128) cannot be ordered",
+        "a.go:70:13: invalid argument: mismatched types N (previous argument) and F (type of f)",
+        "a.go:71:10: invalid argument: a (variable of type A constrained by any) cannot be ordered",
+        "a.go:72:11: k (variable of type K constrained by ~complex128) not supported as argument to built-in real for go1.18 (see go.dev/issue/50937)",
+        "a.go:73:14: f (variable of type F constrained by ~float64) not supported as argument to built-in complex for go1.18 (see go.dev/issue/50937)",
+        "a.go:74:11: invalid argument: argument has type N, expected complex type",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -5877,7 +5997,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2530;
+const EXPECTED_ERRORS_REPORTED: usize = 2621;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

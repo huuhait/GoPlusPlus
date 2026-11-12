@@ -43,8 +43,7 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown || generic || self.types.underlying(target) == Types::INVALID {
             return Operand::UNKNOWN;
         }
-        // What a type parameter takes is known when the function is used.
-        if self.types.has_param(target) || self.types.has_param(x.ty) {
+        if self.open(target) || self.open(x.ty) {
             return Operand::value(target);
         }
         use crate::types::Constraint;
@@ -60,7 +59,15 @@ impl<'a> Checker<'a> {
         }
         let span = cx.tree.exprs[arg].span;
         let basic = self.basic_of(target);
+        let mut cause = None;
         let converted = match (&x.mode, basic) {
+            // A constant converts to a type parameter if it converts to
+            // every type that the parameter may be; the result is no
+            // constant.
+            (Mode::Const(value), _) if self.is_param(target) => {
+                cause = self.constant_to_param(cx, arg, &x, value, target);
+                cause.is_none().then(|| Operand::value(target))
+            }
             (Mode::Const(value), Some(basic)) => {
                 let integer = self.is_integer(x.ty);
                 match representable(value, basic) {
@@ -84,14 +91,28 @@ impl<'a> Checker<'a> {
                     None => None,
                 }
             }
-            _ => self.convertible(&x, target).then(|| Operand::value(target)),
+            _ => self
+                .convertible(&x, target, &mut cause)
+                .then(|| Operand::value(target)),
         };
         let Some(converted) = converted else {
+            // What is converted to a type parameter is no constant, as Go
+            // says it.
+            let described = match self.is_param(target) && matches!(x.mode, Mode::Const(_)) {
+                true => Operand::value(x.ty),
+                false => x.clone(),
+            };
             let message = format!(
                 "cannot convert {} to type {shown}",
-                self.describe(cx, arg, &x)
+                self.describe(cx, arg, &described)
             );
-            let cause = self.unfit_cause(&x, target);
+            let cause = match cause {
+                Some(text) => Some(super::implements::Cause {
+                    text,
+                    have_want: None,
+                }),
+                None => self.unfit_cause(&x, target),
+            };
             self.error_with_cause(Code::CannotConvert, span, message, cause);
             return Operand::UNKNOWN;
         };
@@ -114,12 +135,103 @@ impl<'a> Checker<'a> {
         converted
     }
 
+    /// Why the constant `value` of `x` does not convert to the type
+    /// parameter `target`: `None` if it converts to every type that the
+    /// parameter may be.
+    fn constant_to_param(
+        &self,
+        cx: &Cx<'a>,
+        arg: ExprId,
+        x: &Operand,
+        value: &Value,
+        target: TypeId,
+    ) -> Option<String> {
+        let shown = self.type_string(target);
+        let Some(types) = self.types.specific_types(target) else {
+            return Some(format!("{shown} does not contain specific types"));
+        };
+        let (integer, string) = (self.is_integer(x.ty), self.is_string(x.ty));
+        types.iter().find_map(|&(_, under)| {
+            let bytes_or_runes = matches!(&*self.types.get(under), Type::Slice(elem)
+                if matches!(self.basic_of(*elem), Some(Basic::Uint8 | Basic::Int32)));
+            let basic = self.basic_of(under);
+            let converts = string && bytes_or_runes
+                || basic.is_some_and(|basic| representable(value, basic).is_some())
+                || integer && basic == Some(Basic::String);
+            if converts {
+                return None;
+            }
+            let of = self.type_string(under);
+            Some(match integer && self.is_integer(under) {
+                true => format!("constant {value} overflows {of} (in {shown})"),
+                false => format!(
+                    "cannot convert {} to type {of} (in {shown})",
+                    self.describe(cx, arg, x)
+                ),
+            })
+        })
+    }
+
     /// Whether the value `x`, which is no constant of a type of constants,
-    /// converts to the type `to`. What an interface or a type parameter
-    /// takes is not decided here yet.
-    fn convertible(&self, x: &Operand, to: TypeId) -> bool {
+    /// converts to the type `to`. `cause` gets what there is to say where
+    /// a type parameter does not.
+    fn convertible(&self, x: &Operand, to: TypeId, cause: &mut Option<String>) -> bool {
         if !self.not_assignable(x, to) {
             return true;
+        }
+        // A type parameter converts if every type that it may be does.
+        let from_types = self
+            .types
+            .specific_types(x.ty)
+            .filter(|_| self.is_param(x.ty));
+        let to_types = self.types.specific_types(to).filter(|_| self.is_param(to));
+        if self.is_param(x.ty) || self.is_param(to) {
+            let (from, target) = (self.type_string(x.ty), self.type_string(to));
+            let as_type = |ty: TypeId| Operand {
+                mode: x.mode.clone(),
+                ty,
+            };
+            let refuse = |text: String, cause: &mut Option<String>| {
+                // What is said of a type inside comes after.
+                *cause = Some(match cause.take() {
+                    Some(inner) => format!("{text}\n\t{inner}"),
+                    None => text,
+                });
+                false
+            };
+            return match (from_types, to_types) {
+                (Some(from_types), Some(to_types)) => from_types.iter().all(|&(v, _)| {
+                    to_types.iter().all(|&(t, _)| {
+                        self.convertible(&as_type(v), t, cause) || {
+                            let (v, t) = (self.type_string(v), self.type_string(t));
+                            let text =
+                                format!("cannot convert {v} (in {from}) to type {t} (in {target})");
+                            refuse(text, cause)
+                        }
+                    })
+                }),
+                (Some(from_types), None) if !self.is_param(to) => {
+                    from_types.iter().all(|&(v, _)| {
+                        self.convertible(&as_type(v), to, cause) || {
+                            let v = self.type_string(v);
+                            refuse(
+                                format!("cannot convert {v} (in {from}) to type {target}"),
+                                cause,
+                            )
+                        }
+                    })
+                }
+                (None, Some(to_types)) if !self.is_param(x.ty) => to_types.iter().all(|&(t, _)| {
+                    self.convertible(x, t, cause) || {
+                        let t = self.type_string(t);
+                        refuse(
+                            format!("cannot convert {from} to type {t} (in {target})"),
+                            cause,
+                        )
+                    }
+                }),
+                _ => false,
+            };
         }
         let (from_under, to_under) = (self.types.underlying(x.ty), self.types.underlying(to));
         let (from, target) = (self.types.get(from_under), self.types.get(to_under));

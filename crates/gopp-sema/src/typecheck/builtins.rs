@@ -97,24 +97,79 @@ impl<'a> Checker<'a> {
         None
     }
 
-    /// The element type of the slice type of `x`.
+    /// The element type of the slice type of `x`: of a type parameter,
+    /// the one element type of the slice types that it may be.
     fn slice_elem(&self, cx: &Cx<'a>, expr: ExprId, x: &Operand) -> Result<TypeId, String> {
-        match &*self.types.get(self.types.underlying(x.ty)) {
-            Type::Slice(elem) => Ok(*elem),
-            _ if x.ty == self.types.basic(Basic::UntypedNil) => {
-                Err("argument must be a slice; have untyped nil".to_owned())
-            }
-            _ => Err(format!(
+        let no_slice = || match x.ty == self.types.basic(Basic::UntypedNil) {
+            true => "argument must be a slice; have untyped nil".to_owned(),
+            false => format!(
                 "argument must be a slice; have {}",
                 self.describe(cx, expr, x)
-            )),
+            ),
+        };
+        let types = self.types.specific_types(x.ty).ok_or_else(no_slice)?;
+        let mut shared = None;
+        for (_, under) in types {
+            let Type::Slice(elem) = &*self.types.get(under) else {
+                return Err(no_slice());
+            };
+            match shared {
+                None => shared = Some(*elem),
+                Some(first) if self.types.identical(first, *elem) => {}
+                Some(first) => {
+                    return Err(format!(
+                        "mismatched slice element types {} and {} in {}",
+                        self.type_string(first),
+                        self.type_string(*elem),
+                        self.describe(cx, expr, x)
+                    ));
+                }
+            }
         }
+        shared.ok_or_else(no_slice)
     }
 
-    /// Whether what holds for the type is not known here: it is written
-    /// with a type parameter, or it is in error.
+    /// Whether what holds for the type is not known here.
     fn unsettled(&self, ty: TypeId) -> bool {
-        self.types.underlying(ty) == Types::INVALID || self.types.has_param(ty)
+        self.open(ty)
+    }
+
+    /// Whether `x` is of a type parameter whose types all fit the built-in
+    /// function `name`, by `fits`: the function takes no such argument,
+    /// which is reported.
+    fn unsupported_param(
+        &mut self,
+        cx: &Cx<'a>,
+        at: ExprId,
+        x: &Operand,
+        name: &str,
+        fits: fn(&Self, TypeId) -> bool,
+    ) -> bool {
+        let unsupported = self.is_param(x.ty) && self.all_types(x.ty, fits);
+        if unsupported {
+            let message = format!(
+                "{} not supported as argument to built-in {name} for go1.18 (see \
+                 go.dev/issue/50937)",
+                self.describe(cx, at, x)
+            );
+            self.error(
+                Code::BuiltinInvalidArgument,
+                cx.tree.exprs[at].span,
+                message,
+            );
+        }
+        unsupported
+    }
+
+    /// Whether `holds` for the underlying type of the type; for a type
+    /// parameter, of every type that it may be, of which its constraint
+    /// names one at least.
+    fn under_is(&self, ty: TypeId, holds: impl Fn(&Type) -> bool) -> bool {
+        self.types.specific_types(ty).is_some_and(|types| {
+            types
+                .iter()
+                .all(|&(_, under)| holds(&self.types.get(under)))
+        })
     }
 
     fn invalid_argument(&mut self, cx: &Cx<'a>, expr: ExprId, message: String) -> Operand {
@@ -234,10 +289,28 @@ impl<'a> Checker<'a> {
                         Operand::value(int)
                     }
                     (Type::Map { .. }, _) if is_len => Operand::value(int),
-                    _ if self.unsettled(x.ty) => match under {
-                        Types::INVALID => Operand::UNKNOWN,
-                        _ => Operand::value(int),
-                    },
+                    _ if under == Types::INVALID => Operand::UNKNOWN,
+                    _ if self.unsettled(x.ty) => Operand::value(int),
+                    // Every type that a type parameter may be has a
+                    // length.
+                    (Type::Param(_), _)
+                        if self.under_is(x.ty, |under| {
+                            let sized = |ty: &Type| match ty {
+                                Type::Basic(Basic::String) | Type::Map { .. } => is_len,
+                                Type::Array { .. } | Type::Slice(_) | Type::Chan { .. } => true,
+                                _ => false,
+                            };
+                            match under {
+                                Type::Pointer(elem) => {
+                                    let array = self.types.get(self.types.underlying(*elem));
+                                    matches!(&*array, Type::Array { .. })
+                                }
+                                other => sized(other),
+                            }
+                        }) =>
+                    {
+                        Operand::value(int)
+                    }
                     _ => {
                         let message = format!(
                             "invalid argument: {} for built-in {name}",
@@ -248,8 +321,8 @@ impl<'a> Checker<'a> {
                 }
             }
             (Clear, Some((at, x))) => {
-                let under = self.types.get(self.types.underlying(x.ty));
-                if !matches!(&*under, Type::Map { .. } | Type::Slice(_)) && !self.unsettled(x.ty) {
+                let clears = |under: &Type| matches!(under, Type::Map { .. } | Type::Slice(_));
+                if !self.unsettled(x.ty) && !self.under_is(x.ty, clears) {
                     let message = format!(
                         "invalid argument: cannot clear {}: argument must be (or constrained by) \
                          map or slice",
@@ -260,13 +333,25 @@ impl<'a> Checker<'a> {
                 no_value
             }
             (Close, Some((at, x))) => {
-                let wrong = match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Chan {
-                        dir: ChanDir::Recv, ..
-                    } => "receive-only channel",
-                    Type::Chan { .. } => return no_value,
-                    _ if self.unsettled(x.ty) => return no_value,
-                    _ => "non-channel",
+                if self.unsettled(x.ty) {
+                    return no_value;
+                }
+                // Of the types that a type parameter may be, the first
+                // that is not closed says what is wrong.
+                let types = self.types.specific_types(x.ty).unwrap_or_default();
+                let wrong = types
+                    .iter()
+                    .find_map(|&(_, under)| match &*self.types.get(under) {
+                        Type::Chan {
+                            dir: ChanDir::Recv, ..
+                        } => Some("receive-only channel"),
+                        Type::Chan { .. } => None,
+                        _ => Some("non-channel"),
+                    });
+                let wrong = match (wrong, types.is_empty()) {
+                    (Some(wrong), _) => wrong,
+                    (None, true) => "non-channel",
+                    (None, false) => return no_value,
                 };
                 let message = format!(
                     "invalid operation: cannot close {wrong} {}",
@@ -305,12 +390,15 @@ impl<'a> Checker<'a> {
                     return Operand::value(int);
                 }
                 let byte = self.types.basic(Basic::Uint8);
-                let bytes = |ty: TypeId| {
-                    matches!(&*self.types.get(self.types.underlying(ty)),
-                    Type::Slice(elem) if self.basic_of(*elem) == Some(Basic::Uint8))
+                // Bytes are copied from a string too: into what a slice
+                // of bytes takes, from a type whose types are strings and
+                // slices of bytes.
+                let text = |under: &Type| match under {
+                    Type::Slice(elem) => self.types.identical(*elem, byte),
+                    Type::Basic(basic) => matches!(basic, Basic::String | Basic::UntypedString),
+                    _ => false,
                 };
-                // Bytes are copied from a string too.
-                if bytes(x.ty) && (bytes(y.ty) || self.is_string(y.ty)) {
+                if !self.not_assignable(&x, self.types.slice(byte)) && self.under_is(y.ty, text) {
                     return Operand::value(int);
                 }
                 let to_elem = match self.slice_elem(cx, at, &x) {
@@ -321,7 +409,7 @@ impl<'a> Checker<'a> {
                 };
                 let from_elem = match self.slice_elem(cx, from, &y) {
                     Ok(elem) => elem,
-                    Err(_) if self.is_string(y.ty) => byte,
+                    Err(_) if self.all_types(y.ty, Self::is_string) => byte,
                     Err(why) => {
                         return self.invalid_argument(cx, from, format!("invalid copy: {why}"));
                     }
@@ -339,14 +427,32 @@ impl<'a> Checker<'a> {
                 Operand::value(int)
             }
             (Delete, Some((at, x))) => {
-                let key = match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Map { key, .. } => *key,
-                    _ if self.unsettled(x.ty) => return no_value,
+                if self.unsettled(x.ty) {
+                    return no_value;
+                }
+                // Every type that a type parameter may be is a map, all
+                // with one key type.
+                let types = self.types.specific_types(x.ty).unwrap_or_default();
+                let keys: std::option::Option<Vec<TypeId>> = types
+                    .iter()
+                    .map(|&(_, under)| match &*self.types.get(under) {
+                        Type::Map { key, .. } => Some(*key),
+                        _ => None,
+                    })
+                    .collect();
+                let shown = self.describe(cx, at, &x);
+                let key = match keys.as_deref() {
+                    Some([key, rest @ ..]) => {
+                        if !rest.iter().all(|&other| self.types.identical(*key, other)) {
+                            let message = format!(
+                                "invalid argument: maps of {shown} must have identical key types"
+                            );
+                            return self.invalid_argument(cx, at, message);
+                        }
+                        *key
+                    }
                     _ => {
-                        let message = format!(
-                            "invalid argument: {} is not a map",
-                            self.describe(cx, at, &x)
-                        );
+                        let message = format!("invalid argument: {shown} is not a map");
                         return self.invalid_argument(cx, at, message);
                     }
                 };
@@ -461,6 +567,15 @@ impl<'a> Checker<'a> {
             );
             return self.invalid_argument(cx, re_at, message);
         }
+        let float = |this: &Self, ty: TypeId| {
+            matches!(
+                this.basic_of(ty),
+                Some(Basic::Float32 | Basic::Float64 | Basic::UntypedFloat)
+            )
+        };
+        if self.unsupported_param(cx, re_at, &re, "complex", float) {
+            return Operand::UNKNOWN;
+        }
         let result = match self.basic_of(re.ty) {
             Some(Basic::Float32) => Basic::Complex64,
             Some(Basic::Float64) => Basic::Complex128,
@@ -487,6 +602,10 @@ impl<'a> Checker<'a> {
     /// `real(z)` and `imag(z)`.
     fn real_or_imag(&mut self, cx: &Cx<'a>, real: bool, at: ExprId, mut x: Operand) -> Operand {
         if self.unsettled(x.ty) {
+            return Operand::UNKNOWN;
+        }
+        let name = if real { "real" } else { "imag" };
+        if self.unsupported_param(cx, at, &x, name, Self::is_complex) {
             return Operand::UNKNOWN;
         }
         if self.is_untyped(x.ty) {
@@ -586,21 +705,33 @@ impl<'a> Checker<'a> {
     fn make(&mut self, cx: &Cx<'a>, call: ExprId, args: &[ExprId]) -> Operand {
         let ty = self.var_type(cx, args[0]);
         let sizes = &args[1..];
-        let least = match &*self.types.get(self.types.underlying(ty)) {
-            Type::Slice(_) => 2,
-            Type::Map { .. } | Type::Chan { .. } => 1,
-            _ => {
+        if self.unsettled(ty) {
+            for &size in sizes {
+                self.operand(cx, size);
+            }
+            return Operand::value(ty);
+        }
+        // What is made is what all the types of a type parameter share.
+        let made = self.common_under(ty, |this, of| match of {
+            Some((_, under)) => match &*this.types.get(under) {
+                Type::Slice(_) | Type::Map { .. } | Type::Chan { .. } => None,
+                _ => Some("type must be slice, map, or channel".to_owned()),
+            },
+            None => Some("no specific type".to_owned()),
+        });
+        let least = match made.as_ref().map(|&made| self.types.get(made)).as_deref() {
+            Ok(Type::Slice(_)) => 2,
+            Ok(_) => 1,
+            Err(_) => {
                 for &size in sizes {
                     self.operand(cx, size);
                 }
-                if !self.unsettled(ty) {
-                    let message = format!(
-                        "invalid argument: cannot make {}: type must be slice, map, or channel",
-                        self.expr_string(cx, args[0])
-                    );
-                    return self.invalid_argument(cx, args[0], message);
-                }
-                return Operand::value(ty);
+                let message = format!(
+                    "invalid argument: cannot make {}: {}",
+                    self.expr_string(cx, args[0]),
+                    made.err().unwrap_or_default()
+                );
+                return self.invalid_argument(cx, args[0], message);
             }
         };
         if args.len() < least || least + 1 < args.len() {
@@ -647,7 +778,10 @@ impl<'a> Checker<'a> {
         let mut best: Option<(ExprId, Operand)> = None;
         for (at, mut a) in given {
             exprs.push(at);
-            if !(self.is_numeric(a.ty) || self.is_string(a.ty)) {
+            let ordered = |this: &Self, ty: TypeId| {
+                this.is_numeric(ty) && !this.is_complex(ty) || this.is_string(ty)
+            };
+            if !self.all_types(a.ty, ordered) {
                 let message = format!(
                     "invalid argument: {} cannot be ordered",
                     self.describe(cx, at, &a)

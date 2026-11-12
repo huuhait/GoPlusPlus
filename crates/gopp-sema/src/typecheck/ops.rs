@@ -194,7 +194,7 @@ impl<'a> Checker<'a> {
         )
     }
 
-    fn is_complex(&self, ty: TypeId) -> bool {
+    pub(super) fn is_complex(&self, ty: TypeId) -> bool {
         use Basic::*;
         matches!(
             self.basic_of(ty),
