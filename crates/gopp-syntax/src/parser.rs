@@ -251,6 +251,12 @@ impl Parser<'_> {
         self.sink.push(Diagnostic::new(code, span, message));
     }
 
+    /// Reports what is no syntax error: each is said, as in Go, also two
+    /// on one line.
+    fn error_plain(&mut self, code: Code, span: Span, message: impl Into<String>) {
+        self.sink.push(Diagnostic::new(code, span, message));
+    }
+
     /// `syntax error: <message>` at the current token.
     fn syntax_error(&mut self, code: Code, message: &str) {
         self.error_at(code, self.here(), format!("syntax error: {message}"));

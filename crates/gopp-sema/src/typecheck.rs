@@ -726,6 +726,17 @@ pub fn declarations(
 }
 
 impl<'a> Checker<'a> {
+    /// The type `declared` that `expr` writes for a type declaration: no
+    /// type parameter, as in Go.
+    fn no_param_declared(&mut self, cx: &Cx<'a>, expr: ExprId, declared: TypeId) -> TypeId {
+        if !matches!(&*self.types.get(declared), Type::Param(_)) {
+            return declared;
+        }
+        let message = "cannot use a type parameter as RHS in type declaration".to_owned();
+        self.error(Code::TypeParamRhs, cx.tree.exprs[expr].span, message);
+        Types::INVALID
+    }
+
     /// Reports the diagnostic: at once, or with those of the declaration
     /// that is being checked.
     fn emit(&mut self, diagnostic: Diagnostic) {
@@ -1266,6 +1277,16 @@ impl<'a> Checker<'a> {
                 let message = format!("invalid map key type {}", self.type_string(key));
                 self.error(Code::InvalidMapKey, span, message);
             }
+            // A type parameter is a key if its constraint says that its
+            // values compare.
+            let is_param = matches!(&*self.types.get(key), Type::Param(_));
+            if is_param && !self.types.comparable(key) {
+                let message = format!(
+                    "invalid map key type {} (missing comparable constraint)",
+                    self.type_string(key)
+                );
+                self.error(Code::InvalidMapKey, span, message);
+            }
         }
     }
 
@@ -1582,6 +1603,7 @@ impl<'a> Checker<'a> {
                     self.types.set_pinned(named);
                 }
                 let underlying = self.typ(&cx, ty);
+                let underlying = self.no_param_declared(&cx, ty, underlying);
                 if !self.incomplete {
                     self.types.set_underlying(named, underlying);
                 }
@@ -3476,6 +3498,29 @@ impl<'a> Checker<'a> {
                 self.around.clear();
                 self.receiver_of = None;
             }
+            // A function without a body: one with type parameters needs
+            // one, and one without a name has its signature checked
+            // nowhere else.
+            DeclKind::Func {
+                receiver: None,
+                name,
+                type_params,
+                ty,
+                body: None,
+                ..
+            } => {
+                // In a Go++ file the packages that the compiler provides
+                // are declared so.
+                if !type_params.is_empty() && cx.dialect == Dialect::Go {
+                    let message = "generic function is missing function body".to_owned();
+                    self.error(Code::GenericNoBody, name.span, message);
+                }
+                if !self.by_span.contains_key(&name.span) {
+                    self.declare_params(&mut cx, type_params);
+                    self.signature_locals(&cx, *ty);
+                    self.typ(&cx, *ty);
+                }
+            }
             // The value of a constant is worked out with its
             // declaration; variables are walked here too, for the
             // function literals in their values.
@@ -4156,9 +4201,8 @@ impl<'a> Checker<'a> {
                 ty,
                 type_params,
             } => {
-                let Some(this) = local(*name) else {
-                    return;
-                };
+                // A type that is named `_` is checked like any other.
+                let this = local(*name);
                 let params = self.new_params(type_params);
                 for (param, &ty) in type_params.iter().zip(&params) {
                     if let Some(param) = local(param.name) {
@@ -4170,8 +4214,10 @@ impl<'a> Checker<'a> {
                 if *alias {
                     let aliased = self.typ(cx, *ty);
                     let ty = self.alias(name.name, params, aliased);
-                    let mode = Mode::Type;
-                    self.locals.insert(this, Operand { mode, ty });
+                    if let Some(this) = this {
+                        let mode = Mode::Type;
+                        self.locals.insert(this, Operand { mode, ty });
+                    }
                     return;
                 }
                 // The type exists before what it is declared as is known,
@@ -4183,14 +4229,12 @@ impl<'a> Checker<'a> {
                 self.around = around;
                 let declared = self.types.named(named, &[]);
                 self.written(declared, name.span);
-                self.locals.insert(
-                    this,
-                    Operand {
-                        mode: Mode::Type,
-                        ty: declared,
-                    },
-                );
+                if let Some(this) = this {
+                    let mode = Mode::Type;
+                    self.locals.insert(this, Operand { mode, ty: declared });
+                }
                 let underlying = self.typ(cx, *ty);
+                let underlying = self.no_param_declared(cx, *ty, underlying);
                 self.types.set_underlying(named, underlying);
             }
             _ => {}

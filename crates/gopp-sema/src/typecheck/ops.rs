@@ -663,6 +663,15 @@ impl<'a> Checker<'a> {
                             Operand::UNKNOWN
                         }
                     },
+                    // A predeclared function is no value.
+                    Mode::Builtin(_) => {
+                        let message = format!(
+                            "invalid operation: cannot indirect {}",
+                            self.describe(cx, inner, &x)
+                        );
+                        self.error(Code::DerefNonPointer, self.span(cx, inner), message);
+                        Operand::UNKNOWN
+                    }
                     _ => Operand::UNKNOWN,
                 };
             }
@@ -1261,7 +1270,9 @@ impl<'a> Checker<'a> {
                 if self.is_nil(x) || self.is_nil(y) {
                     let second = self.is_nil(x);
                     let other = if second { y.ty } else { x.ty };
-                    let has_nil = self.open(other) || self.has_nil(other);
+                    // `nil` is compared with what has it, not with `nil`.
+                    let both = self.is_nil(x) && self.is_nil(y);
+                    let has_nil = !both && (self.open(other) || self.has_nil(other));
                     if func(self, other) {
                         let shown = self.type_string(other);
                         let cause = format!("a {shown} is never nil: use Option[{shown}]");

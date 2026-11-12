@@ -8878,6 +8878,14 @@ fn with_unsafe(file: &str, declarations: &str) -> Vec<String> {
     check_texts("x", &[(file, &text)], &loader, &names).messages
 }
 
+/// What is said about the file, which may import package unsafe.
+fn with_unsafe_text(file: &str, text: &str) -> Vec<String> {
+    let names = ThreadedRodeo::new();
+    let stub = "package unsafe\ntype Pointer *int\nfunc Sizeof(x any) uintptr\n";
+    let loader = with_packages(&names, &[("unsafe", stub)]);
+    check_texts("p", &[(file, text)], &loader, &names).messages
+}
+
 // rule: GEN-5
 #[test]
 fn a_generic_that_would_need_instances_without_end_is_refused_as_go_refuses_it() {
@@ -10995,6 +11003,97 @@ fn the_bodies_of_a_package_are_checked_side_by_side_with_the_same_result() {
     }
 }
 
+#[test]
+fn what_go_refuses_in_these_places_is_refused() {
+    let text = "package p
+
+import \"unsafe\"
+
+const (
+	_, _ = 1, 2
+	_, _
+	_
+)
+
+type RHS[P any] P
+
+type (
+	Sized [len(Sized{})]int
+	Keyed map[[len(Keyed{1: 2})]int]int
+	Self  struct{ f *[unsafe.Sizeof(Self{})]int }
+)
+
+type I interface{ ~int }
+type C interface{ comparable }
+
+func _(I)
+func _() I
+func _(_ comparable, _ C)
+func _[P any]()
+func external(x int) int
+
+func _[T any](map[T]int) {}
+func keys[T comparable](m map[T]int) {}
+
+func local[P any]() {
+	type (
+		_[Q any] interface{ Q }
+		_        interface{ int | ~P }
+		_        struct{ ok int }
+	)
+	const _ P = 1
+}
+
+func uses(a []int) {
+	_ = nil == nil
+	_ = nil != nil
+	_ = uses[0]
+	_ = len[0]
+	_ = *len
+	var f func() []int
+	_ = f[0]
+	_ = f()[0]
+	_ = a[::]
+}
+
+func dup[P int | float64 | complex128]() {
+	_ = map[P]int{1: 1, 1.0: 2, 1 + 0i: 3, 2: 4}
+}
+";
+    let found = with_unsafe_text("a.go", text);
+    let expected = [
+        "a.go:8:2: extra init expr at the declaration that is repeated",
+        "a.go:11:17: cannot use a type parameter as RHS in type declaration",
+        "a.go:14:13: invalid recursive type",
+        "a.go:15:17: invalid recursive type",
+        "a.go:16:34: invalid recursive type",
+        "a.go:22:8: cannot use type I outside a type constraint: interface contains type \
+         constraints",
+        "a.go:23:10: cannot use type I outside a type constraint: interface contains type \
+         constraints",
+        "a.go:24:10: cannot use type comparable outside a type constraint: interface is (or \
+         embeds) comparable",
+        "a.go:24:24: cannot use type C outside a type constraint: interface is (or embeds) \
+         comparable",
+        "a.go:25:6: generic function is missing function body",
+        "a.go:28:19: invalid map key type T (missing comparable constraint)",
+        "a.go:33:23: term cannot be a type parameter",
+        "a.go:34:30: type in term ~P cannot be a type parameter",
+        "a.go:37:10: invalid constant type P",
+        "a.go:41:13: invalid operation: nil == nil (operator == not defined on untyped nil)",
+        "a.go:42:13: invalid operation: nil != nil (operator != not defined on untyped nil)",
+        "a.go:43:6: cannot index uses (value of type func([]int))",
+        "a.go:44:6: cannot index len (built-in)",
+        "a.go:45:7: invalid operation: cannot indirect len (built-in)",
+        "a.go:47:6: cannot index f (variable of type func() []int)",
+        "a.go:49:8: middle index required in 3-index slice",
+        "a.go:49:9: final index required in 3-index slice",
+        "a.go:53:22: duplicate key 1 in map literal",
+        "a.go:53:30: duplicate key (1 + 0i) in map literal",
+    ];
+    assert_eq!(found, expected);
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {
@@ -12521,7 +12620,114 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2652;
+const EXPECTED_ERRORS_REPORTED: usize = 2694;
+
+/// The errors that Go's test files expect and that are not reported
+/// here, each where Go expects it, by why. One that is reported is taken
+/// out of the list; no other is missing.
+const NOT_REPORTED: &[(&str, &[&str])] = &[
+    (
+        "the functions assert and trace exist only in the tests of Go's type checker",
+        &[
+            "check/builtins0.go:1031:9",
+            "check/builtins0.go:1032:13",
+            "check/builtins0.go:1033:9",
+            "check/builtins0.go:1034:9",
+            "check/builtins0.go:1036:2",
+            "check/builtins0.go:1040:10",
+            "check/builtins0.go:1046:9",
+            "check/builtins0.go:1047:9",
+            "check/builtins0.go:1048:9",
+            "check/builtins0.go:1059:9",
+        ],
+    ),
+    (
+        "the error is reported, with a function type written without the names of its \
+         parameters",
+        &[
+            "fixedbugs/issue46583.go:25:7",
+            "fixedbugs/issue46583.go:27:7",
+            "fixedbugs/issue59740.go:24:25",
+            "fixedbugs/issue60933.go:34:10",
+            "fixedbugs/issue60933.go:35:12",
+        ],
+    ),
+    (
+        "the error is reported, without where the type parameter that is named like a type is \
+         declared",
+        &[
+            "fixedbugs/issue58611.go:13:6",
+            "fixedbugs/issue58611.go:25:15",
+            "fixedbugs/issue58611.go:26:9",
+            "fixedbugs/issue58611.go:26:61",
+        ],
+    ),
+    (
+        "Go's parser says it; this parser reads the form otherwise",
+        &[
+            "check/blank.go:5:9",
+            "check/expr3.go:191:13",
+            "examples/types.go:117:10",
+            "fixedbugs/issue43087.go:27:2",
+            "fixedbugs/issue43124.go:7:13",
+            "fixedbugs/issue43124.go:15:8",
+            "fixedbugs/issue48082.go:7:8",
+        ],
+    ),
+    (
+        "it follows another error of the declaration, which is reported; nothing more is said \
+         of what is in error",
+        &[
+            "check/cycles2.go:68:14",
+            "check/cycles4.go:118:24",
+            "check/cycles5a.go:189:11",
+            "fixedbugs/issue39634.go:30:61",
+            "fixedbugs/issue39634.go:46:11",
+            "fixedbugs/issue39634.go:46:73",
+            "fixedbugs/issue39634.go:46:137",
+            "fixedbugs/issue39634.go:46:195",
+            "fixedbugs/issue39634.go:46:259",
+            "fixedbugs/issue39634.go:73:25",
+            "fixedbugs/issue39634.go:73:25",
+            "fixedbugs/issue39634.go:94:14",
+            "fixedbugs/issue52915.go:23:11",
+            "fixedbugs/issue59890.go:7:12",
+            "fixedbugs/issue59890.go:13:16",
+            "fixedbugs/issue65344.go:10:14",
+        ],
+    ),
+    (
+        "not checked yet",
+        &[
+            // A constant that needs itself through a function literal.
+            "check/constdecl.go:96:7",
+            // A negative index in a literal of an array without a length.
+            "check/expr3.go:261:17",
+            // A call that gives too few values to another call.
+            "check/expr3.go:508:38",
+            "check/typeinference.go:15:6",
+            "check/typeinference.go:26:6",
+            "check/typeinference.go:27:6",
+            // More than 100 terms through the unions that a union embeds.
+            "check/unions.go:61:9",
+            "check/unions.go:65:9",
+            "examples/methods.go:42:37",
+            // A product of constants that is too large.
+            "fixedbugs/issue20583.go:13:17",
+            "fixedbugs/issue46461a.go:21:6",
+            "fixedbugs/issue48582.go:20:2",
+            "fixedbugs/issue48582.go:28:3",
+            "fixedbugs/issue48951.go:20:31",
+            "fixedbugs/issue50929.go:20:4",
+            "fixedbugs/issue50929.go:58:9",
+            "fixedbugs/issue50929.go:63:7",
+            "fixedbugs/issue51232.go:27:9",
+            // An integer literal of more than 512 bits.
+            "fixedbugs/issue54280.go:7:11",
+            "spec/range.go:168:12",
+        ],
+    ),
+];
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and
@@ -12642,12 +12848,19 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
         "fixedbugs/issue58611.go:25:15: cannot use keys (variable of type []string) as []string",
         "fixedbugs/issue58611.go:26:61: cannot use keys (variable of type []string) as []string",
     ];
-    let (mut ok, mut missing) = (0, 0);
+    let mut ok = 0;
+    let mut missing = Vec::new();
     let mut wrong = Vec::new();
     for line in report.lines() {
         match line.split_once(' ').unwrap() {
             ("ok", count) => ok = count.parse().unwrap(),
-            ("missing", _) => missing += 1,
+            ("missing", expected) => {
+                let place = expected.split(": ERROR").next().unwrap_or(expected);
+                let place = place
+                    .split_once("testdata/")
+                    .map_or(place, |(_, rest)| rest);
+                missing.push(place.to_owned());
+            }
             _ if known.iter().any(|known| line.contains(known)) => {}
             _ => wrong.push(line),
         }
@@ -12655,7 +12868,10 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
     if let Ok(path) = std::env::var("GOPP_ERRORS_REPORT") {
         fs::write(path, &report).unwrap();
     }
-    println!("{packages} packages: {ok} expected errors reported, {missing} not yet");
+    println!(
+        "{packages} packages: {ok} expected errors reported, {} not yet",
+        missing.len()
+    );
     let shown: Vec<&str> = wrong.iter().take(40).copied().collect();
     assert!(
         wrong.is_empty(),
@@ -12667,4 +12883,12 @@ fn errors_are_reported_where_go_s_test_files_expect_them() {
         ok >= EXPECTED_ERRORS_REPORTED,
         "only {ok} expected errors reported"
     );
+    // Every error that is not reported is known, with why.
+    let mut explained: Vec<&str> = NOT_REPORTED
+        .iter()
+        .flat_map(|(_, places)| places.iter().copied())
+        .collect();
+    explained.sort_unstable();
+    missing.sort_unstable();
+    assert_eq!(missing, explained);
 }

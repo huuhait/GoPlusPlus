@@ -90,6 +90,11 @@ impl<'a> Checker<'a> {
             for &index in indices {
                 self.operand(cx, index);
             }
+            // A predeclared function is no value.
+            if matches!(x.mode, Mode::Builtin(_)) {
+                let message = format!("cannot index {}", self.describe(cx, of, &x));
+                self.error(Code::CannotIndex, cx.tree.exprs[of].span, message);
+            }
             return Operand::UNKNOWN;
         }
         let x = self.read(cx, x);
@@ -101,7 +106,7 @@ impl<'a> Checker<'a> {
             // A generic function with its type arguments.
             Type::Func { .. } => {
                 let Some(params) = self.types.generic_func(x.ty) else {
-                    return Operand::UNKNOWN;
+                    return self.cannot_index(cx, of, &x, indices);
                 };
                 let args: Vec<TypeId> = indices.iter().map(|&i| self.pointee_type(cx, i)).collect();
                 if args.len() > params.len() {

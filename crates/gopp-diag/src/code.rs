@@ -352,6 +352,8 @@ codes! {
     501 ConstEval "err_const_eval",
     502 ForeignTemplate "err_foreign_template",
     503 ForeignReadOnly "err_foreign_read_only",
+    504 TypeParamRhs "err_type_param_rhs",
+    505 GenericNoBody "err_generic_no_body",
 }
 
 impl Code {

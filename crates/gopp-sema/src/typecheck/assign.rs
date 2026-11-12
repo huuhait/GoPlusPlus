@@ -619,6 +619,12 @@ impl<'a> Checker<'a> {
         if let Some(&extra) = values.get(names.len()) {
             let message = format!("extra init expr {}", self.expr_string(cx, extra));
             self.error(Code::ExtraInitExpr, cx.tree.exprs[extra].span, message);
+        } else if let (true, Some(first)) =
+            (values.is_empty() && names.len() < count, names.first())
+        {
+            // The values that the constants repeat are more than they.
+            let message = "extra init expr at the declaration that is repeated".to_owned();
+            self.error(Code::ExtraInitExpr, first.span, message);
         } else if names.len() > count
             && (is_const || count != 1)
             && let Some(name) = names.get(count)
@@ -746,7 +752,8 @@ impl<'a> Checker<'a> {
                 false => ty,
             };
         }
-        if under != Types::INVALID && !self.types.has_param(ty) {
+        let is_param = matches!(&*self.types.get(ty), Type::Param(_));
+        if under != Types::INVALID && (is_param || !self.types.has_param(ty)) {
             let message = format!("invalid constant type {}", self.type_string(ty));
             self.error(Code::InvalidConstantType, cx.tree.exprs[expr].span, message);
         }

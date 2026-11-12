@@ -1818,6 +1818,19 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Pass a copy, or hold the value in a Unique or a variable that this code owns.",
             "stdio.fill(&shared.level, 1) // error\nlevel := shared.level\nstdio.fill(&level, 1)        // ok",
         ),
+        TypeParamRhs => (
+            "A type declaration declares its type as one of its own type parameters. The new \
+             type would be whatever the argument is, which no declaration can say.",
+            "Declare the type as something made with the type parameter, or use an alias.",
+            "type T[P any] P          // error\ntype T[P any] struct{ v P } // ok",
+        ),
+        GenericNoBody => (
+            "A function with type parameters has no body. A function without a body is \
+             defined outside the language, and such a function cannot be made for each type \
+             argument.",
+            "Give the function a body, or remove its type parameters.",
+            "func f[T any](x T)       // error\nfunc f[T any](x T) {}    // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

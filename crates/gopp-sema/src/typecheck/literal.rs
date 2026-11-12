@@ -37,6 +37,23 @@ impl<'a> Checker<'a> {
                 (Types::INVALID, Types::INVALID, false)
             }
         };
+        // A literal of a type whose declaration is under way needs the
+        // type for itself, as in the length of an array of its own (as
+        // Go: said at the literal).
+        let under_way = |this: &Self| {
+            let declared = this.under_way.iter();
+            declared
+                .map(|&object| this.ty[object])
+                .any(|ty| ty != Types::INVALID && this.types.identical(ty, base))
+        };
+        if self.types.underlying(base) == Types::INVALID
+            && matches!(&*self.types.get(base), Type::Named { .. })
+            && under_way(self)
+        {
+            let message = "invalid recursive type".to_owned();
+            self.error(Code::InvalidRecursiveType, span, message);
+            return Operand::UNKNOWN;
+        }
         // The elements are looked at when the body is walked; those of a
         // constant, with the constant.
         if self.memo.is_none() && !self.in_const {
@@ -397,7 +414,13 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if let Mode::Const(constant) = &x.mode {
-                let identity = (constant.exact_string(), any_key.then_some(x.ty));
+                // A complex number without an imaginary part is the
+                // number that is its real part.
+                let exact = match constant {
+                    Value::Complex(real, imag) if imag.sign() == 0 => real.exact_string(),
+                    constant => constant.exact_string(),
+                };
+                let identity = (exact, any_key.then_some(x.ty));
                 if !seen.insert(identity) {
                     if strict {
                         let message = format!("duplicate key {constant} in map literal");

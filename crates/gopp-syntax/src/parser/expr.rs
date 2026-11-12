@@ -300,13 +300,13 @@ impl Parser<'_> {
             full = true;
             if hi.is_none() {
                 let message = "middle index required in 3-index slice";
-                self.error_at(Code::Slice3MiddleIndex, first_colon, message);
+                self.error_plain(Code::Slice3MiddleIndex, first_colon, message);
             }
             let second_colon = self.here();
             self.bump();
             if self.at(T::RBrack) {
                 let message = "final index required in 3-index slice";
-                self.error_at(Code::Slice3FinalIndex, second_colon, message);
+                self.error_plain(Code::Slice3FinalIndex, second_colon, message);
             } else {
                 max = Some(self.expr());
             }
