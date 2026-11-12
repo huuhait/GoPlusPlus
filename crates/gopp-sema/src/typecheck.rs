@@ -314,8 +314,12 @@ pub fn declarations(
             }
         }
     }
-    for (file, unit) in units.iter().enumerate() {
-        checker.methods(file, *unit);
+    // Every method has its name before any has its signature, which may
+    // name another method.
+    for with_signatures in [false, true] {
+        for (file, unit) in units.iter().enumerate() {
+            checker.methods(file, *unit, with_signatures);
+        }
     }
     for object in 0..count {
         checker.resolve(object, false);
@@ -978,7 +982,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Declares the methods of the file for their types.
-    fn methods(&mut self, file: usize, unit: Unit<'a>) {
+    fn methods(&mut self, file: usize, unit: Unit<'a>, with_signatures: bool) {
         let tree = unit.file;
         for (index, &decl) in tree.decls.iter().enumerate() {
             let DeclKind::Func {
@@ -1037,11 +1041,18 @@ impl<'a> Checker<'a> {
             let Some(&Ref::Object(object)) = body.uses.get(&base) else {
                 continue;
             };
-            let Type::Named { id: named, .. } = &*self.types.get(self.object_type(object, true))
-            else {
+            // The base type may be named through an alias of a pointer.
+            let mut receiver_type = self.object_type(object, true);
+            if let Type::Pointer(elem) = &*self.types.get(receiver_type) {
+                (receiver_type, pointer_receiver) = (*elem, true);
+            }
+            let Type::Named { id: named, .. } = &*self.types.get(receiver_type) else {
                 continue;
             };
-            let sig = self.typ(&cx, *ty);
+            let sig = match with_signatures {
+                true => self.typ(&cx, *ty),
+                false => Types::INVALID,
+            };
             let method = Method {
                 name: name.name,
                 package: self.package_of(name.name),
@@ -1668,7 +1679,16 @@ impl<'a> Checker<'a> {
         if x.mode == Mode::Unknown {
             return Operand::UNKNOWN;
         }
-        let found = self.types.member(x.ty, sel.name, self.path, self.names);
+        let found = self
+            .types
+            .lookup(x.ty, sel.name, self.path, self.names, false);
+        let found = match found {
+            Ok(found) => Some(found.member),
+            Err(why) => {
+                self.no_member(cx, base, &x, sel, why);
+                None
+            }
+        };
         match (&x.mode, found) {
             // A field of a variable, or one behind a pointer, is a
             // variable.
@@ -1678,7 +1698,26 @@ impl<'a> Checker<'a> {
                     false => Operand::value(ty),
                 }
             }
-            (_, Some(Member::Method { sig, .. })) if x.is_value() => Operand::value(sig),
+            (
+                mode,
+                Some(Member::Method {
+                    sig,
+                    pointer_receiver,
+                }),
+            ) if x.is_value() => {
+                // A method that needs the address of its receiver is
+                // called on what has one.
+                if pointer_receiver && *mode != Mode::Variable && !self.own_rules(cx) {
+                    let message = format!(
+                        "cannot call pointer method {} on {}",
+                        self.names.resolve(&sel.name),
+                        self.type_string(x.ty)
+                    );
+                    self.error(Code::MethodExprPointerReceiver, sel.span, message);
+                    return Operand::UNKNOWN;
+                }
+                Operand::value(sig)
+            }
             // `T.m`: a function that takes the receiver first.
             (
                 Mode::Type,
@@ -1713,6 +1752,82 @@ impl<'a> Checker<'a> {
             }
             _ => Operand::UNKNOWN,
         }
+    }
+
+    /// `x.sel` reaches nothing in the type of `x`: says why, unless the
+    /// type is in error, is written with a type parameter, or has members
+    /// that the rules of a `.gopp` file give it.
+    fn no_member(
+        &mut self,
+        cx: &Cx<'a>,
+        base: ExprId,
+        x: &Operand,
+        sel: Ident,
+        why: crate::types::NotFound,
+    ) {
+        let known = x.is_value() || x.mode == Mode::Type;
+        let invalid = |ty: TypeId| self.types.underlying(ty) == Types::INVALID;
+        let pointee_invalid = matches!(
+            &*self.types.get(self.types.underlying(x.ty)),
+            Type::Pointer(elem) if invalid(*elem)
+        );
+        let unsettled = invalid(x.ty) || pointee_invalid || self.types.has_param(x.ty);
+        if !known || unsettled || self.own_rules(cx) {
+            return;
+        }
+        let (of, name) = (self.expr_string(cx, base), self.names.resolve(&sel.name));
+        if why == crate::types::NotFound::Ambiguous {
+            let message = format!("ambiguous selector {of}.{name}");
+            return self.error(Code::AmbiguousSelector, sel.span, message);
+        }
+        let shown = self.type_string(x.ty);
+        let pointer_to_interface = matches!(
+            &*self.types.get(self.types.underlying(x.ty)),
+            Type::Pointer(elem) if self.types.is_interface(*elem)
+        );
+        // A member whose name differs in its capitals only is the likely
+        // one.
+        let near = self
+            .types
+            .lookup(x.ty, sel.name, self.path, self.names, true);
+        let reason = match near {
+            _ if pointer_to_interface => {
+                format!("type {shown} is pointer to interface, not interface")
+            }
+            Err(_) => format!("type {shown} has no field or method {name}"),
+            Ok(near) => {
+                let what = match near.member {
+                    Member::Field { .. } => "field",
+                    Member::Method { .. } => "method",
+                };
+                let alt = self.names.resolve(&near.name);
+                let exported = |name: &str| name.starts_with(char::is_uppercase);
+                let same_tail = name.chars().skip(1).eq(alt.chars().skip(1));
+                // A member of a type of this package is named as it is;
+                // of another package, only what is exported can be meant.
+                let here = near.owner.is_none_or(|owner| owner == self.name);
+                if here && name != alt || exported(name) && exported(alt) {
+                    format!(
+                        "type {shown} has no field or method {name}, but does have {what} {alt}"
+                    )
+                } else if exported(name) && same_tail {
+                    format!(
+                        "type {shown} has no field or method {name}, but does have unexported \
+                         {what} {alt}"
+                    )
+                } else if exported(alt) && same_tail {
+                    format!(
+                        "type {shown} has no field or method {name}, but does have {what} {alt}"
+                    )
+                } else if name == alt {
+                    format!("cannot refer to unexported {what} {alt}")
+                } else {
+                    format!("type {shown} has no field or method {name}")
+                }
+            }
+        };
+        let message = format!("{of}.{name} undefined ({reason})");
+        self.error(Code::UndefinedFieldOrMethod, sel.span, message);
     }
 
     /// The type of the composite literal `ty{elems}`. `[...]T{…}` has as
@@ -2330,14 +2445,20 @@ impl<'a> Checker<'a> {
                 self.operand(cx, *x);
             }
             StmtKind::Send { chan, value } => {
-                let chan = self.value(cx, *chan);
-                match &*self.types.get(self.types.underlying(chan.ty)) {
-                    Type::Chan { elem, .. } => {
-                        self.assign(cx, *value, Some(*elem), "send");
-                    }
-                    _ => {
-                        self.operand(cx, *value);
-                    }
+                let to = *chan;
+                let chan = self.value(cx, to);
+                // An error is at the arrow.
+                let after = tree.exprs[to].span.hi;
+                let rest = &cx.text[after as usize..tree.exprs[*value].span.lo as usize];
+                let arrow = after + rest.find("<-").unwrap_or(0) as u32;
+                let arrow = Span {
+                    lo: arrow,
+                    hi: arrow + 2,
+                    ..tree.exprs[to].span
+                };
+                match self.chan_elem(cx, (to, arrow), &chan, false) {
+                    Some(elem) => drop(self.assign(cx, *value, Some(elem), "send")),
+                    None => drop(self.operand(cx, *value)),
                 }
             }
             StmtKind::Return(results) => match self.results.last().cloned().flatten() {

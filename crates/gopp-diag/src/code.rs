@@ -128,6 +128,7 @@ codes! {
     175 NoValue "err_no_value",
     176 MultiValueInSingle "err_multi_value_in_single",
     177 BuiltinNotCalled "err_builtin_not_used_as_value",
+    178 UndefinedFieldOrMethod "err_undefined_field_or_method",
     179 NotEnoughArguments "err_not_enough_arguments",
     180 TooManyArguments "err_too_many_arguments",
     181 NotEnoughReturnValues "err_not_enough_arguments_return",
@@ -150,6 +151,7 @@ codes! {
     198 LiteralInvalidFieldName "err_literal_invalid_field_name",
     199 LiteralArrayTooLong "err_literal_array_too_long",
     200 LiteralMissingType "err_literal_missing_type",
+    204 DerefNonPointer "err_deref_non_pointer",
     205 AddressOfUnaddressable "err_address_of_unaddressable",
     206 CannotAssign "err_cannot_assign",
     207 CannotAssignTo "err_cannot_assign_to",
@@ -166,6 +168,7 @@ codes! {
     233 NotAGenericType "err_not_a_generic_type",
     236 InvalidConstantType "err_invalid_constant_type",
     237 MethodExprPointerReceiver "err_method_expr_ptr_recv",
+    238 AmbiguousSelector "err_ambiguous_selector",
     300 NoteOwnNewRemoved "note_own_new_removed",
     312 UnusedImport "err_unused_import",
     313 UnusedImportAs "err_unused_import_as",
@@ -177,6 +180,7 @@ codes! {
     458 InvalidIndex "err_invalid_index",
     459 LiteralUnknownField "err_literal_unknown_field",
     460 LiteralInvalidType "err_literal_invalid_type",
+    461 ChannelDirection "err_channel_direction",
 }
 
 impl Code {

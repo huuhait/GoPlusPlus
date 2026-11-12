@@ -1839,6 +1839,102 @@ fn composite_literals_are_checked_as_go_checks_them() {
     }
 }
 
+#[test]
+fn selectors_and_channels_are_checked_as_go_checks_them() {
+    let declared = "type S struct {\n\tx  int\n\tUp int\n}\nfunc (S) val()  {}\nfunc (*S) ptr() {}\n\
+                    type E1 struct{ f int }\ntype E2 struct{ f int }\ntype B struct {\n\tE1\n\tE2\n}\n\
+                    var (\n\ts    S\n\tb    B\n\tp    *S\n\ta    int\n\tsend chan<- int\n\t\
+                    recv <-chan int\n\tm    map[string]S\n)\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "_ = s.y",
+            &["24:8: s.y undefined (type S has no field or method y)"],
+        ),
+        (
+            "_ = s.X",
+            &["24:8: s.X undefined (type S has no field or method X, but does have field x)"],
+        ),
+        (
+            "_ = s.up",
+            &["24:8: s.up undefined (type S has no field or method up, but does have field Up)"],
+        ),
+        (
+            "_ = s.Val",
+            &[
+                "24:8: s.Val undefined (type S has no field or method Val, but does have method val)",
+            ],
+        ),
+        ("_ = b.f", &["24:8: ambiguous selector b.f"]),
+        (
+            "_ = a.x",
+            &["24:8: a.x undefined (type int has no field or method x)"],
+        ),
+        ("S{}.ptr()", &["24:6: cannot call pointer method ptr on S"]),
+        (
+            "m[\"k\"].ptr()",
+            &["24:9: cannot call pointer method ptr on S"],
+        ),
+        (
+            "_ = *a",
+            &["24:7: invalid operation: cannot indirect a (variable of type int)"],
+        ),
+        (
+            "_ = <-a",
+            &[
+                "24:8: invalid operation: cannot receive from non-channel int a (variable of type \
+               int)",
+            ],
+        ),
+        (
+            "_ = <-send",
+            &[
+                "24:8: invalid operation: cannot receive from send-only channel chan<- int send \
+               (variable of type chan<- int)",
+            ],
+        ),
+        (
+            "recv <- 1",
+            &[
+                "24:7: invalid operation: cannot send to receive-only channel <-chan int recv \
+               (variable of type <-chan int)",
+            ],
+        ),
+        // What is right next to each of them.
+        (
+            "s.val()\n\ts.ptr()\n\tp.val()\n\tp.ptr()\n\t(&s).ptr()\n\tS{}.val()",
+            &[],
+        ),
+        ("_ = s.x + s.Up + b.E1.f + b.E2.f + p.x + *&a", &[]),
+        (
+            "_ = <-recv\n\tsend <- 1\n\tf, g := S.val, (*S).ptr\n\t_, _ = f, g",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+    // A method may be named in the signature of one that is declared
+    // before it, and the receiver may be an alias of a pointer type.
+    let text = "package p\nimport \"unsafe\"\ntype T struct{}\ntype P = *T\n\
+                func (T) a([unsafe.Sizeof(T.b)]int) {}\nfunc (T) b()                       {}\n\
+                func (P) c()                       {}\nfunc _() { (&T{}).c() }\n";
+    let names = ThreadedRodeo::new();
+    let mut loader = Loader::default();
+    let stub = "package unsafe\nfunc Sizeof(x any) uintptr\n";
+    let stub = check_texts("unsafe", &[("unsafe.go", stub)], &loader, &names);
+    loader
+        .packages
+        .insert("unsafe".to_owned(), Arc::new(stub.package));
+    let found = check_texts("p", &[("a.go", text)], &loader, &names).messages;
+    assert_eq!(found, [] as [&str; 0]);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2457,7 +2553,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1512;
+const EXPECTED_ERRORS_REPORTED: usize = 1593;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

@@ -139,6 +139,24 @@ pub struct DeclaredMethod {
     pub receiver_params: Vec<TypeId>,
 }
 
+/// What a selector reaches, with the name it has in the type.
+#[derive(Clone, Copy, Debug)]
+pub struct Found {
+    pub member: Member,
+    pub name: Spur,
+    /// The name of the package of the declared type that has the member;
+    /// `None` for a member of a type that is not declared.
+    pub owner: Option<Spur>,
+}
+
+/// Why a selector reaches nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotFound {
+    Missing,
+    /// Two members of the name at one depth.
+    Ambiguous,
+}
+
 /// What a selector `x.name` reaches in the type of `x`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Member {
@@ -736,21 +754,44 @@ impl Types {
         package: Spur,
         names: &ThreadedRodeo,
     ) -> Option<Member> {
-        let exported = names.resolve(&name).starts_with(char::is_uppercase);
-        let matches = |other: Spur, owner: Option<Spur>| {
-            other == name && (exported || owner == Some(package))
+        let found = self.lookup(ty, name, package, names, false);
+        found.ok().map(|found| found.member)
+    }
+
+    /// `member`, with the name that was found and why nothing was. With
+    /// `any_case`, a name that differs in its capitals is found too,
+    /// whatever its package: the one that was likely meant.
+    pub fn lookup(
+        &self,
+        ty: TypeId,
+        name: Spur,
+        package: Spur,
+        names: &ThreadedRodeo,
+        any_case: bool,
+    ) -> Result<Found, NotFound> {
+        let text = names.resolve(&name);
+        let exported = text.starts_with(char::is_uppercase);
+        let matches = |other: Spur, owner: Option<Spur>| match any_case {
+            true => names.resolve(&other).to_lowercase() == text.to_lowercase(),
+            false => other == name && (exported || owner == Some(package)),
         };
-        // Through one pointer, the members of what it points to.
+        // Through one pointer, the members of what it points to. A
+        // declared pointer type has the fields, but no methods.
         let (start, through_pointer) = match &*self.get(self.underlying(ty)) {
             Type::Pointer(elem) if !self.is_interface(*elem) => (*elem, true),
             _ => (ty, false),
         };
+        let fields_only = through_pointer && matches!(&*self.get(ty), Type::Named { .. });
         let mut seen = vec![start];
         let mut level = vec![(start, through_pointer)];
         while !level.is_empty() {
             let mut found = Vec::new();
             let mut next = Vec::new();
             for &(current, indirect) in &level {
+                let owner = match &*self.get(current) {
+                    Type::Named { id, .. } => self.read(|inner| inner.named[id.0 as usize].package),
+                    _ => None,
+                };
                 if let Type::Named { id, args } = &*self.get(current) {
                     let declared = self.read(|inner| {
                         let mut methods = inner.named[id.0 as usize].methods.iter();
@@ -759,9 +800,14 @@ impl Types {
                             .cloned()
                     });
                     if let Some(method) = declared {
-                        found.push(Member::Method {
+                        let member = Member::Method {
                             sig: self.substitute(method.method.sig, &method.receiver_params, args),
                             pointer_receiver: method.pointer_receiver && !indirect,
+                        };
+                        found.push(Found {
+                            member,
+                            name: method.method.name,
+                            owner,
                         });
                         continue;
                     }
@@ -770,9 +816,14 @@ impl Types {
                     Type::Struct(fields) => {
                         for field in fields.iter() {
                             if matches(field.name, field.package) {
-                                found.push(Member::Field {
+                                let member = Member::Field {
                                     ty: field.ty,
                                     indirect,
+                                };
+                                found.push(Found {
+                                    member,
+                                    name: field.name,
+                                    owner,
                                 });
                             } else if field.embedded {
                                 let (inner, pointer) = match &*self.get(field.ty) {
@@ -789,9 +840,14 @@ impl Types {
                     Type::Interface { .. } => {
                         let methods = self.interface_methods(current, names).unwrap_or_default();
                         if let Some(method) = methods.iter().find(|m| matches(m.name, m.package)) {
-                            found.push(Member::Method {
+                            let member = Member::Method {
                                 sig: method.sig,
                                 pointer_receiver: false,
+                            };
+                            found.push(Found {
+                                member,
+                                name: method.name,
+                                owner,
                             });
                         }
                     }
@@ -800,11 +856,14 @@ impl Types {
             }
             match found[..] {
                 [] => level = next,
-                [one] => return Some(one),
-                _ => return None,
+                [one] if fields_only && matches!(one.member, Member::Method { .. }) => {
+                    return Err(NotFound::Missing);
+                }
+                [one] => return Ok(one),
+                _ => return Err(NotFound::Ambiguous),
             }
         }
-        None
+        Err(NotFound::Missing)
     }
 
     /// The size and the alignment in bytes of a value of the type, as Go's
@@ -944,8 +1003,20 @@ impl Types {
         None
     }
 
+    /// Declares a method of `named`, or says what the method that was
+    /// declared with the name is.
     pub fn add_method(&self, named: NamedId, method: DeclaredMethod) {
-        self.write(|inner| inner.named[named.0 as usize].methods.push(method));
+        self.write(|inner| {
+            let methods = &mut inner.named[named.0 as usize].methods;
+            let same = |known: &&mut DeclaredMethod| {
+                known.method.name == method.method.name
+                    && known.method.package == method.method.package
+            };
+            match methods.iter_mut().find(same) {
+                Some(known) => *known = method,
+                None => methods.push(method),
+            }
+        });
     }
 
     /// The declared type `named` with the type arguments `args`.

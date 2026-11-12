@@ -463,3 +463,4 @@ E0457 err_unused_expression
 E0458 err_invalid_index
 E0459 err_literal_unknown_field
 E0460 err_literal_invalid_type
+E0461 err_channel_direction

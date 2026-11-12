@@ -129,7 +129,7 @@ impl<'a> Checker<'a> {
     /// Whether what holds for the type is not known here: it is written
     /// with a type parameter, or a part of it is in error.
     fn open(&self, ty: TypeId) -> bool {
-        ty == Types::INVALID || self.types.has_param(ty)
+        self.types.underlying(ty) == Types::INVALID || self.types.has_param(ty)
     }
 
     pub(super) fn is_numeric(&self, ty: TypeId) -> bool {
@@ -568,7 +568,16 @@ impl<'a> Checker<'a> {
                     },
                     _ if x.is_value() => match &*self.types.get(self.types.underlying(x.ty)) {
                         Type::Pointer(elem) => Operand::variable(*elem),
-                        _ => Operand::UNKNOWN,
+                        _ => {
+                            if !self.open(x.ty) && !self.own_rules(cx) {
+                                let message = format!(
+                                    "invalid operation: cannot indirect {}",
+                                    self.describe(cx, inner, &x)
+                                );
+                                self.error(Code::DerefNonPointer, self.span(cx, inner), message);
+                            }
+                            Operand::UNKNOWN
+                        }
                     },
                     _ => Operand::UNKNOWN,
                 };
@@ -598,12 +607,13 @@ impl<'a> Checker<'a> {
                     return Operand::UNKNOWN;
                 }
                 self.called_or_received = true;
-                return match &*self.types.get(self.types.underlying(x.ty)) {
-                    Type::Chan { elem, .. } => Operand {
+                let at = self.span(cx, inner);
+                return match self.chan_elem(cx, (inner, at), &x, true) {
+                    Some(Types::INVALID) | None => Operand::UNKNOWN,
+                    Some(elem) => Operand {
                         mode: Mode::CommaOk,
-                        ty: *elem,
+                        ty: elem,
                     },
-                    _ => Operand::UNKNOWN,
                 };
             }
             UnaryOp::Tilde => return Operand::UNKNOWN,
@@ -645,6 +655,37 @@ impl<'a> Checker<'a> {
         let mut result = Operand::constant(x.ty, value.unary(op, bits));
         self.overflow(cx, expr, &mut result);
         result
+    }
+
+    /// The element type of the channel `x`, which is received from or sent
+    /// to: a channel that goes that way.
+    pub(super) fn chan_elem(
+        &mut self,
+        cx: &Cx<'a>,
+        (expr, at): (ExprId, Span),
+        x: &Operand,
+        receive: bool,
+    ) -> Option<TypeId> {
+        let wrong = match &*self.types.get(self.types.underlying(x.ty)) {
+            Type::Chan {
+                dir: ChanDir::Send, ..
+            } if receive => "send-only channel",
+            Type::Chan {
+                dir: ChanDir::Recv, ..
+            } if !receive => "receive-only channel",
+            Type::Chan { elem, .. } => return Some(*elem),
+            _ => "non-channel",
+        };
+        if !self.open(x.ty) && x.is_value() {
+            let message = format!(
+                "invalid operation: cannot {} {wrong} {} {}",
+                if receive { "receive from" } else { "send to" },
+                self.type_string(x.ty),
+                self.describe(cx, expr, x)
+            );
+            self.error(Code::ChannelDirection, at, message);
+        }
+        None
     }
 
     /// An untyped operand takes the type of the other, where that can be.
