@@ -9,6 +9,7 @@
 //! A function that can fail (`func!(int) T`) has no type of its own: it is
 //! `func(int) (T, error)`.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use gopp_span::Dialect;
@@ -159,6 +160,24 @@ pub struct Found {
     pub indirect: bool,
 }
 
+/// What a type lacks of an interface that it does not implement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lacks {
+    Method,
+    /// It has this method, whose name differs in its capitals.
+    Name(Method),
+    /// Its method of the name belongs to another package.
+    Exported,
+    /// Its method of the name, which has another type.
+    Type(Method),
+    /// Two members of the name at one depth.
+    OneMember,
+    /// Its method needs the address of its receiver.
+    ValueReceiver,
+    /// The name is a field.
+    NoField,
+}
+
 /// Why a selector reaches nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotFound {
@@ -200,6 +219,8 @@ struct Named {
     /// The type parameters of a generic type.
     params: Vec<TypeId>,
     methods: Vec<DeclaredMethod>,
+    /// Where each method is in `methods`, by its name and its package.
+    method_index: FxHashMap<(Spur, Option<Spur>), u32>,
     /// Declared with `@Extends`: it has parents.
     extends: bool,
 }
@@ -286,6 +307,8 @@ pub(crate) const BASICS: [Basic; 24] = [
 pub struct Types {
     inner: RwLock<Inner>,
     error: TypeId,
+    /// The work of looking up members, counted for the tests of speed.
+    steps: AtomicU64,
 }
 
 impl Types {
@@ -321,6 +344,7 @@ impl Types {
             invalid: false,
             params: Vec::new(),
             methods: Vec::new(),
+            method_index: FxHashMap::default(),
             extends: false,
         });
         let error = inner.intern(Type::Named {
@@ -330,7 +354,13 @@ impl Types {
         Self {
             inner: RwLock::new(inner),
             error,
+            steps: AtomicU64::new(0),
         }
+    }
+
+    /// How much work looking up members took so far.
+    pub fn steps(&self) -> u64 {
+        self.steps.load(Ordering::Relaxed)
     }
 
     fn read<R>(&self, f: impl FnOnce(&Inner) -> R) -> R {
@@ -462,6 +492,7 @@ impl Types {
                 invalid: false,
                 params: Vec::new(),
                 methods: Vec::new(),
+                method_index: FxHashMap::default(),
                 extends: false,
             });
             NamedId(inner.named.len() as u32 - 1)
@@ -836,11 +867,39 @@ impl Types {
         names: &ThreadedRodeo,
         any_case: bool,
     ) -> Result<Found, NotFound> {
-        let text = names.resolve(&name);
-        let exported = text.starts_with(char::is_uppercase);
+        let exported = names.resolve(&name).starts_with(char::is_uppercase);
+        let key = (name, (!exported).then_some(package));
+        self.find(ty, key, names, any_case)
+    }
+
+    /// `lookup` of a name with the package it belongs to, which is none
+    /// for an exported name.
+    fn find(
+        &self,
+        ty: TypeId,
+        key: (Spur, Option<Spur>),
+        names: &ThreadedRodeo,
+        any_case: bool,
+    ) -> Result<Found, NotFound> {
+        let mut steps = 0;
+        let found = self.find_counted(ty, key, names, any_case, &mut steps);
+        self.steps.fetch_add(steps, Ordering::Relaxed);
+        found
+    }
+
+    /// `find`; `steps` counts each type and each field that is looked at.
+    fn find_counted(
+        &self,
+        ty: TypeId,
+        key: (Spur, Option<Spur>),
+        names: &ThreadedRodeo,
+        any_case: bool,
+        steps: &mut u64,
+    ) -> Result<Found, NotFound> {
+        let text = names.resolve(&key.0);
         let matches = |other: Spur, owner: Option<Spur>| match any_case {
             true => names.resolve(&other).to_lowercase() == text.to_lowercase(),
-            false => other == name && (exported || owner == Some(package)),
+            false => (other, owner) == key,
         };
         // Through one pointer, the members of what it points to. A
         // declared pointer type has the fields, but no methods.
@@ -856,16 +915,22 @@ impl Types {
             let mut next = Vec::new();
             for (current, indirect, path) in &level {
                 let (current, indirect) = (*current, *indirect);
+                *steps += 1;
                 let owner = match &*self.get(current) {
                     Type::Named { id, .. } => self.read(|inner| inner.named[id.0 as usize].package),
                     _ => None,
                 };
                 if let Type::Named { id, args } = &*self.get(current) {
                     let declared = self.read(|inner| {
-                        let mut methods = inner.named[id.0 as usize].methods.iter();
-                        methods
-                            .find(|m| matches(m.method.name, m.method.package))
-                            .cloned()
+                        let named = &inner.named[id.0 as usize];
+                        let at = match any_case {
+                            true => named
+                                .methods
+                                .iter()
+                                .position(|m| matches(m.method.name, m.method.package)),
+                            false => named.method_index.get(&key).map(|&at| at as usize),
+                        };
+                        at.map(|at| named.methods[at].clone())
                     });
                     if let Some(method) = declared {
                         let member = Member::Method {
@@ -885,6 +950,7 @@ impl Types {
                 }
                 match &*self.get(self.underlying(current)) {
                     Type::Struct(fields) => {
+                        *steps += fields.len() as u64;
                         for (index, field) in fields.iter().enumerate() {
                             let through = || {
                                 let mut path = path.clone();
@@ -1109,14 +1175,14 @@ impl Types {
     /// declared with the name is.
     pub fn add_method(&self, named: NamedId, method: DeclaredMethod) {
         self.write(|inner| {
-            let methods = &mut inner.named[named.0 as usize].methods;
-            let same = |known: &&mut DeclaredMethod| {
-                known.method.name == method.method.name
-                    && known.method.package == method.method.package
-            };
-            match methods.iter_mut().find(same) {
-                Some(known) => *known = method,
-                None => methods.push(method),
+            let named = &mut inner.named[named.0 as usize];
+            let key = (method.method.name, method.method.package);
+            match named.method_index.get(&key) {
+                Some(&known) => named.methods[known as usize] = method,
+                None => {
+                    named.method_index.insert(key, named.methods.len() as u32);
+                    named.methods.push(method);
+                }
             }
         });
     }
@@ -1242,6 +1308,26 @@ impl Types {
         Some(all)
     }
 
+    /// Whether the type is an interface that only a type parameter can be
+    /// held to: one with type terms, its own or embedded.
+    pub fn is_constraint(&self, id: TypeId) -> bool {
+        let mut seen = vec![self.underlying(id)];
+        let mut next = 0;
+        while let Some(&current) = seen.get(next) {
+            next += 1;
+            let Type::Interface { embedded, .. } = &*self.get(current) else {
+                return next > 1;
+            };
+            for &inner in embedded.iter() {
+                let inner = self.underlying(inner);
+                if !seen.contains(&inner) {
+                    seen.push(inner);
+                }
+            }
+        }
+        false
+    }
+
     /// Whether two types are identical.
     pub fn identical(&self, a: TypeId, b: TypeId, names: &ThreadedRodeo) -> bool {
         self.identical_with(a, b, names, true)
@@ -1254,27 +1340,50 @@ impl Types {
     }
 
     fn identical_with(&self, a: TypeId, b: TypeId, names: &ThreadedRodeo, tags: bool) -> bool {
+        self.identical_in(a, b, names, tags, &mut Vec::new())
+    }
+
+    /// `identical_with` inside the pairs of interfaces `pairs` that are
+    /// being compared: an interface may reach itself through the types of
+    /// its methods, and a pair that is met again is identical if nothing
+    /// else differs.
+    fn identical_in(
+        &self,
+        a: TypeId,
+        b: TypeId,
+        names: &ThreadedRodeo,
+        tags: bool,
+        pairs: &mut Vec<(TypeId, TypeId)>,
+    ) -> bool {
         if a == b {
             return true;
         }
         // Only interfaces have more than one spelling: two types with
         // different ids are identical if they differ in interfaces alone.
-        let same = |a: TypeId, b: TypeId| self.identical_with(a, b, names, tags);
-        let all = |a: &[TypeId], b: &[TypeId]| {
+        let mut same = |a: TypeId, b: TypeId| self.identical_in(a, b, names, tags, pairs);
+        let mut all = |a: &[TypeId], b: &[TypeId]| {
             a.len() == b.len() && a.iter().zip(b).all(|(&a, &b)| same(a, b))
         };
         match (&*self.get(a), &*self.get(b)) {
             (Type::Interface { .. }, Type::Interface { .. }) => {
-                let (Some(a), Some(b)) = (
+                let (Some(x), Some(y)) = (
                     self.interface_methods(a, names),
                     self.interface_methods(b, names),
                 ) else {
                     return false;
                 };
-                let same_method = |(a, b): (&Method, &Method)| {
-                    a.name == b.name && a.package == b.package && same(a.sig, b.sig)
-                };
-                a.len() == b.len() && a.iter().zip(&b).all(same_method)
+                if pairs.contains(&(a, b)) || pairs.contains(&(b, a)) {
+                    return true;
+                }
+                pairs.push((a, b));
+                let identical = x.len() == y.len()
+                    && x.iter().zip(&y).all(|(x, y)| {
+                        x.name == y.name
+                            && x.package == y.package
+                            && self.identical_in(x.sig, y.sig, names, tags, pairs)
+                    });
+                pairs.pop();
+                identical
             }
             (Type::Pointer(a), Type::Pointer(b))
             | (Type::Unique(a), Type::Unique(b))
@@ -1308,15 +1417,15 @@ impl Types {
                 },
             ) => t == u && v == w && all(p, q) && all(r, s),
             (Type::Struct(a), Type::Struct(b)) => {
-                let same_field = |(a, b): (&Field, &Field)| {
-                    a.name == b.name
-                        && a.package == b.package
-                        && a.embedded == b.embedded
-                        && (a.tag == b.tag || !tags)
-                        && a.required == b.required
-                        && same(a.ty, b.ty)
-                };
-                a.len() == b.len() && a.iter().zip(b.iter()).all(same_field)
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(a, b)| {
+                        a.name == b.name
+                            && a.package == b.package
+                            && a.embedded == b.embedded
+                            && (a.tag == b.tag || !tags)
+                            && a.required == b.required
+                            && same(a.ty, b.ty)
+                    })
             }
             (Type::Named { id: a, args: x }, Type::Named { id: b, args: y }) => a == b && all(x, y),
             _ => false,
@@ -1379,38 +1488,112 @@ impl Types {
         }
     }
 
-    /// The methods that values of the type `id` have: those of an
-    /// interface, or those declared for a declared type. A pointer to a
-    /// declared type has them all, the type itself only those with a value
-    /// receiver.
-    fn method_set(&self, id: TypeId, names: &ThreadedRodeo) -> Vec<Method> {
-        if let Some(methods) = self.interface_methods(id, names) {
-            return methods;
+    /// The first method of the interface `iface`, in the order of the
+    /// names, that values of the type `id` lack, and what they have in its
+    /// place. `None` if they have every method, and where that is not
+    /// known: `iface` is a constraint, or a type embedded in `id` is in
+    /// error.
+    pub fn missing_method(
+        &self,
+        id: TypeId,
+        iface: TypeId,
+        names: &ThreadedRodeo,
+    ) -> Option<(Method, Lacks)> {
+        self.lacks(id, &self.interface_methods(iface, names)?, names)
+    }
+
+    fn lacks(
+        &self,
+        id: TypeId,
+        wanted: &[Method],
+        names: &ThreadedRodeo,
+    ) -> Option<(Method, Lacks)> {
+        if wanted.is_empty() {
+            return None;
         }
-        let (named, through_pointer) = match &*self.get(id) {
-            Type::Pointer(elem) => (*elem, true),
-            _ => (id, false),
+        self.steps.fetch_add(wanted.len() as u64, Ordering::Relaxed);
+        if self.is_interface(id) {
+            let has = self.interface_methods(id, names)?;
+            let has: FxHashMap<_, _> = has.iter().map(|m| ((m.name, m.package), m)).collect();
+            return wanted.iter().find_map(|method| {
+                let lacks = match has.get(&(method.name, method.package)) {
+                    None => Lacks::Method,
+                    Some(found) if self.identical(found.sig, method.sig, names) => return None,
+                    Some(&found) => Lacks::Type(found.clone()),
+                };
+                Some((method.clone(), lacks))
+            });
+        }
+        let missing = wanted.iter().find_map(|method| {
+            let key = (method.name, method.package);
+            let lacks = match self.find(id, key, names, false) {
+                Err(NotFound::Ambiguous) => Lacks::OneMember,
+                Err(NotFound::Missing) => match self.find(id, key, names, true) {
+                    Ok(Found {
+                        member: Member::Method { sig, .. },
+                        name,
+                        ..
+                    }) => match name == method.name {
+                        true => Lacks::Exported,
+                        false => Lacks::Name(Method {
+                            name,
+                            package: None,
+                            sig,
+                        }),
+                    },
+                    _ => Lacks::Method,
+                },
+                Ok(found) => match found.member {
+                    Member::Field { .. } => Lacks::NoField,
+                    Member::Method {
+                        pointer_receiver: true,
+                        ..
+                    } => Lacks::ValueReceiver,
+                    // The signature of a method is not known while the
+                    // types of its package are worked out.
+                    Member::Method { sig, .. }
+                        if sig == Self::INVALID || self.identical(sig, method.sig, names) =>
+                    {
+                        return None;
+                    }
+                    Member::Method { sig, .. } => Lacks::Type(Method {
+                        name: method.name,
+                        package: method.package,
+                        sig,
+                    }),
+                },
+            };
+            Some((method.clone(), lacks))
+        });
+        missing.filter(|_| !self.embeds_invalid(id, &mut Vec::new()))
+    }
+
+    /// Whether a struct of the type `id`, or one that it points to, has
+    /// an embedded field whose type is in error, itself or through its
+    /// embedded fields: what such a field would give is not known.
+    fn embeds_invalid(&self, id: TypeId, seen: &mut Vec<TypeId>) -> bool {
+        let mut under = self.underlying(id);
+        if let Type::Pointer(elem) = &*self.get(under) {
+            under = self.underlying(*elem);
+        }
+        let Type::Struct(fields) = &*self.get(under) else {
+            return false;
         };
-        let Type::Named { id: named, .. } = &*self.get(named) else {
-            return Vec::new();
-        };
-        self.read(|inner| {
-            let declared = inner.named[named.0 as usize].methods.iter();
-            let usable = declared.filter(|m| through_pointer || !m.pointer_receiver);
-            usable.map(|m| m.method.clone()).collect()
+        if seen.contains(&under) {
+            return false;
+        }
+        seen.push(under);
+        fields.iter().filter(|field| field.embedded).any(|field| {
+            self.underlying(field.ty) == Self::INVALID || self.embeds_invalid(field.ty, seen)
         })
     }
 
     /// Whether the type `id` has every method of the interface `iface`.
     pub fn implements(&self, id: TypeId, iface: TypeId, names: &ThreadedRodeo) -> bool {
-        let Some(wanted) = self.interface_methods(iface, names) else {
-            return false;
-        };
-        if wanted.is_empty() {
-            return true;
+        match self.interface_methods(iface, names) {
+            Some(wanted) => self.lacks(id, &wanted, names).is_none(),
+            None => false,
         }
-        let has = self.method_set(id, names);
-        wanted.iter().all(|method| has.contains(method))
     }
 
     /// Whether a value of the type `from` may be assigned to a place of

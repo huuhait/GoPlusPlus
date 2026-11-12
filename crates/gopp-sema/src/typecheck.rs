@@ -11,6 +11,7 @@ mod branches;
 mod builtins;
 mod call;
 mod conversion;
+mod implements;
 mod index;
 mod literal;
 mod ops;
@@ -1735,18 +1736,19 @@ impl<'a> Checker<'a> {
                 full,
             } => self.slice(cx, expr, *x, [*lo, *hi, *max], *full),
             ExprKind::Assert { x, ty } => {
-                if self
-                    .asserted(cx, *x, "invalid operation: ", "type assertion")
-                    .is_none()
-                {
+                let asserted = self.asserted(cx, *x, "invalid operation: ", "type assertion");
+                let Some(from) = asserted else {
                     return Operand::UNKNOWN;
-                }
+                };
                 match self.typ(cx, *ty) {
                     Types::INVALID => Operand::UNKNOWN,
-                    ty => Operand {
-                        mode: Mode::CommaOk,
-                        ty,
-                    },
+                    ty => {
+                        self.assertable(cx, expr, (*x, &from), ty, false);
+                        Operand {
+                            mode: Mode::CommaOk,
+                            ty,
+                        }
+                    }
                 }
             }
             // A type written out: `[]int`, `map[string]T`, `func()`, ...
@@ -3060,10 +3062,10 @@ impl<'a> Checker<'a> {
                 self.opt_stmt(cx, *init);
                 let guard = tag.map(|tag| &tree.exprs[tag].kind);
                 let switched = match guard {
-                    Some(&ExprKind::TypeSwitchGuard { x, .. }) => Some(
-                        self.asserted(cx, x, "", "type switch")
-                            .unwrap_or(Operand::UNKNOWN),
-                    ),
+                    Some(&ExprKind::TypeSwitchGuard { x, .. }) => {
+                        let switched = self.asserted(cx, x, "", "type switch");
+                        Some((x, switched.unwrap_or(Operand::UNKNOWN)))
+                    }
                     _ => None,
                 };
                 let tagged = match switched {
@@ -3078,10 +3080,10 @@ impl<'a> Checker<'a> {
                     let cases = clause.cases.as_deref().unwrap_or(&[]);
                     let mut case_types = Vec::new();
                     for &case in cases {
-                        match switched {
-                            Some(_) => {
+                        match &switched {
+                            Some((of, switched)) => {
                                 let case_type = self.type_or_nil(cx, case);
-                                self.case_type(cx, case, &case_type, &mut types);
+                                self.case_type(cx, case, &case_type, (*of, switched), &mut types);
                                 case_types.push(case_type);
                             }
                             None => self.case_value(cx, &tagged, *tag, case, &mut values),
@@ -3090,7 +3092,7 @@ impl<'a> Checker<'a> {
                     // The variable of a type switch has the type of the
                     // case when the clause has one type, else the type of
                     // what is switched on.
-                    if let (Some(switched), Some(&local)) =
+                    if let (Some((_, switched)), Some(&local)) =
                         (&switched, vars.and_then(|vars| vars.get(index)))
                     {
                         let ty = match &case_types[..] {

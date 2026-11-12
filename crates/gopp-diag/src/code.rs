@@ -169,6 +169,7 @@ codes! {
     199 LiteralArrayTooLong "err_literal_array_too_long",
     200 LiteralMissingType "err_literal_missing_type",
     201 NotAnInterface "err_type_assertion_non_interface",
+    202 TypeAssertionImpossible "err_type_assertion_impossible",
     203 TypeSwitchOutside "err_type_switch_outside",
     204 DerefNonPointer "err_deref_non_pointer",
     205 AddressOfUnaddressable "err_address_of_unaddressable",
@@ -231,6 +232,7 @@ codes! {
     476 NotePreviousCase "note_previous_case",
     477 RangeVariables "err_range_variables",
     478 NoteInnerDeclaration "note_inner_declaration",
+    479 NoteMissingMethod "note_missing_method",
 }
 
 impl Code {

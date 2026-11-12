@@ -109,19 +109,13 @@ impl<'a> Checker<'a> {
         if let Some(to) = to
             && self.unfit(cx, &x, to, writes)
         {
-            let asserted =
-                self.types.is_interface(x.ty) && self.types.implements(to, x.ty, self.names);
             let message = format!(
-                "cannot use {} as {} value in {context}{}",
+                "cannot use {} as {} value in {context}",
                 self.describe(cx, expr, &x),
-                self.type_string(to),
-                if asserted {
-                    ": need type assertion"
-                } else {
-                    ""
-                }
+                self.type_string(to)
             );
-            self.error(Code::CannotAssign, span, message);
+            let cause = self.unfit_cause(&x, to);
+            self.error_with_cause(Code::CannotAssign, span, message, cause);
             return Operand::UNKNOWN;
         }
         x

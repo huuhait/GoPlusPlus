@@ -134,12 +134,13 @@ impl<'a> Checker<'a> {
     }
 
     /// The type `case` of a clause of a type switch, or `nil`, stands
-    /// once.
+    /// once, and what is switched on can have the type.
     pub(super) fn case_type(
         &mut self,
         cx: &Cx<'a>,
         case: ExprId,
         x: &Operand,
+        switched: (ExprId, &Operand),
         seen: &mut FxHashMap<Option<TypeId>, Span>,
     ) {
         let ty = match x.mode {
@@ -150,6 +151,9 @@ impl<'a> Checker<'a> {
         let span = cx.tree.exprs[case].span;
         let Some(&previous) = seen.get(&ty) else {
             seen.insert(ty, span);
+            if let Some(ty) = ty {
+                self.assertable(cx, case, switched, ty, true);
+            }
             return;
         };
         let shown = ty.map_or("nil".to_owned(), |ty| self.type_string(ty));

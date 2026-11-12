@@ -101,7 +101,9 @@ func matchesText(want comment, message string) bool {
 	unquoted, err := strconv.Unquote(strings.TrimSpace(pattern))
 	check(err)
 	if substr {
-		return strings.Contains(message, unquoted)
+		// What belongs to a message of gopp is one tab deep, whatever it
+		// belongs to.
+		return strings.Contains(message, strings.ReplaceAll(unquoted, "\n\t\t", "\n\t"))
 	}
 	return regexp.MustCompile(unquoted).MatchString(message)
 }

@@ -3462,6 +3462,300 @@ func take(c C) {}
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn what_implements_an_interface_is_checked_as_go_checks_it() {
+    let text = "package p
+
+type I interface{ m() }
+type J interface {
+	m()
+	n(int) string
+}
+type T struct{}
+
+func (T) m() {}
+
+type P struct{}
+
+func (*P) m()           {}
+func (*P) n(int) string { return \"\" }
+
+type W struct{}
+
+func (W) m()     {}
+func (W) n() int { return 0 }
+
+type C struct{}
+
+func (C) M() {}
+
+type F struct{ m int }
+
+type E struct{ T }
+type A struct {
+	T
+	W
+}
+
+func f(i I, j J, e any) {
+	var _ I = T{}
+	var _ I = &T{}
+	var _ I = &P{}
+	var _ J = &P{}
+	var _ I = E{}
+	var _ I = j
+	var _ any = F{}
+	var _ J = T{}
+	var _ I = P{}
+	var _ J = W{}
+	var _ I = C{}
+	var _ I = F{}
+	var _ I = A{}
+	var _ I = 1
+	var _ J = i
+	var _ *I = T{}
+	var _ I = &i
+	var _ T = i
+	var _ P = i
+	_ = i.(T)
+	_ = i.(*P)
+	_ = e.(C)
+	_ = i.(J)
+	_ = i.(P)
+	_ = j.(W)
+	_ = i.(C)
+	_ = I(P{})
+	_ = J(i)
+	_ = T(i)
+	switch i.(type) {
+	case T, P, *P, C:
+	case W, F:
+	case nil, J:
+	}
+	i = P{}
+	g(P{})
+	_ = []I{P{}, T{}}
+	_ = i == P{}
+	_ = i == T{}
+	_ = i == j
+}
+
+func g(I) I { return P{} }
+";
+    let expected = [
+        "a.go:42:12: cannot use T{} (value of struct type T) as J value in variable declaration: T does not implement J (missing method n)",
+        "a.go:43:12: cannot use P{} (value of struct type P) as I value in variable declaration: P does not implement I (method m has pointer receiver)",
+        "a.go:44:12: cannot use W{} (value of struct type W) as J value in variable declaration: W does not implement J (wrong type for method n)",
+        "    have n() int",
+        "    want n(int) string",
+        "a.go:45:12: cannot use C{} (value of struct type C) as I value in variable declaration: C does not implement I (missing method m)",
+        "    have M()",
+        "    want m()",
+        "a.go:46:12: cannot use F{} (value of struct type F) as I value in variable declaration: F does not implement I (F.m is a field, not a method)",
+        "a.go:47:12: cannot use A{} (value of struct type A) as I value in variable declaration: A does not implement I (ambiguous selector A.m)",
+        "a.go:48:12: cannot use 1 (constant of type int) as I value in variable declaration: int does not implement I (missing method m)",
+        "a.go:49:12: cannot use i (variable of interface type I) as J value in variable declaration: I does not implement J (missing method n)",
+        "a.go:50:13: cannot use T{} (value of struct type T) as *I value in variable declaration: T does not implement *I (type *I is pointer to interface, not interface)",
+        "a.go:51:12: cannot use &i (value of type *I) as I value in variable declaration: *I does not implement I (type *I is pointer to interface, not interface)",
+        "a.go:52:12: cannot use i (variable of interface type I) as T value in variable declaration: need type assertion",
+        "a.go:53:12: cannot use i (variable of interface type I) as P value in variable declaration",
+        "a.go:58:6: impossible type assertion: i.(P)",
+        "    P does not implement I (method m has pointer receiver)",
+        "a.go:59:6: impossible type assertion: j.(W)",
+        "    W does not implement J (wrong type for method n)",
+        "    have n() int",
+        "    want n(int) string",
+        "a.go:60:6: impossible type assertion: i.(C)",
+        "    C does not implement I (missing method m)",
+        "    have M()",
+        "    want m()",
+        "a.go:61:8: cannot convert P{} (value of struct type P) to type I: P does not implement I (method m has pointer receiver)",
+        "a.go:62:8: cannot convert i (variable of interface type I) to type J: I does not implement J (missing method n)",
+        "a.go:63:8: cannot convert i (variable of interface type I) to type T: need type assertion",
+        "a.go:65:10: impossible type switch case: P",
+        "    i (variable of interface type I) cannot have dynamic type P (method m has pointer receiver)",
+        "a.go:65:17: impossible type switch case: C",
+        "    i (variable of interface type I) cannot have dynamic type C (missing method m)",
+        "    have M()",
+        "    want m()",
+        "a.go:66:10: impossible type switch case: F",
+        "    i (variable of interface type I) cannot have dynamic type F (F.m is a field, not a method)",
+        "a.go:69:6: cannot use P{} (value of struct type P) as I value in assignment: P does not implement I (method m has pointer receiver)",
+        "a.go:70:4: cannot use P{} (value of struct type P) as I value in argument to g: P does not implement I (method m has pointer receiver)",
+        "a.go:71:10: cannot use P{} (value of struct type P) as I value in array or slice literal: P does not implement I (method m has pointer receiver)",
+        "a.go:72:11: invalid operation: i == P{} (mismatched types I and P)",
+        "a.go:77:22: cannot use P{} (value of struct type P) as I value in return statement: P does not implement I (method m has pointer receiver)",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+// rule: OWN-P5
+#[test]
+fn a_pointer_and_a_handle_implement_what_their_methods_say_in_a_gopp_file() {
+    let text = "package p
+
+type I interface{ m() }
+type T struct{}
+
+func (T) m() {}
+
+type P struct{}
+
+func (p *P) m() {}
+
+type N struct{}
+
+func use(i I) {}
+
+func f(t T, p P, n N, pt *T, pp *P, pn *N, u Unique[P], s Shared[P], o Option[I]) {
+	var a I = t
+	var b I = pt
+	var c I = pp
+	var d I = u
+	var e I = s
+	use(u)
+	o = t
+	_, _, _, _, _ = a, b, c, d, e
+	_ = a.(T)
+	_ = a.(*P)
+	var g I = p
+	var h I = n
+	var k I = pn
+	use(n)
+	o = n
+	_, _, _ = g, h, k
+	_ = a.(N)
+}
+";
+    let expected = [
+        "a.gopp:27:12: cannot use p (variable of struct type P) as I value in variable \
+         declaration: P does not implement I (method m has pointer receiver)",
+        "a.gopp:28:12: cannot use n (variable of struct type N) as I value in variable \
+         declaration: N does not implement I (missing method m)",
+        "a.gopp:29:12: cannot use pn (variable of type *N) as I value in variable declaration: \
+         *N does not implement I (missing method m)",
+        "a.gopp:30:6: cannot use n (variable of struct type N) as I value in argument to use: N \
+         does not implement I (missing method m)",
+        "a.gopp:31:6: cannot use n (variable of struct type N) as Option[I] value in assignment: \
+         N does not implement I (missing method m)",
+        "a.gopp:33:6: impossible type assertion: a.(N)",
+        "    N does not implement I (missing method m)",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+/// Interfaces whose methods give interfaces that embed them are compared
+/// without end unless a pair that is met again counts as identical.
+#[test]
+fn interfaces_that_reach_themselves_through_their_methods_are_compared() {
+    let text = "package p
+
+type A interface {
+	a() interface{ AB }
+}
+
+type B interface {
+	b() interface{ AB }
+}
+
+type AB interface {
+	a() interface {
+		A
+		B
+	}
+	b() interface {
+		A
+		B
+	}
+}
+
+var x AB
+var y interface {
+	A
+	B
+}
+
+var _ = x == y
+var _ A = x
+var _ AB = y
+
+type C interface {
+	a() interface{ C }
+	c()
+}
+
+var _ C = x
+";
+    let expected = [
+        "a.go:37:11: cannot use x (variable of interface type AB) as C value in variable \
+         declaration: AB does not implement C (wrong type for method a)",
+        "    have a() interface{A; B}",
+        "    want a() interface{C}",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+/// The work of deciding what implements an interface grows with the
+/// types, their methods and the depth of embedding, not faster.
+#[test]
+fn the_steps_of_looking_up_methods_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.go", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        loader.types.get().unwrap().steps()
+    };
+    // Types next to each other, each put into an interface of its own.
+    let siblings = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                format!(
+                    "type T{i} struct{{}}\nfunc (T{i}) m{i}() {{}}\nfunc (T{i}) n() {{}}\n\
+                     var _ interface {{ m{i}(); n() }} = T{i}{{}}\n"
+                )
+            })
+            .collect();
+        format!("package p\n{all}")
+    };
+    // One type with many methods, put into an interface that has them all.
+    let many_methods = |count: usize| {
+        let methods: String = (0..count)
+            .map(|i| format!("func (T) m{i}() {{}}\n"))
+            .collect();
+        let wanted: String = (0..count).map(|i| format!("\tm{i}()\n")).collect();
+        format!(
+            "package p\ntype T struct{{}}\n{methods}type I interface {{\n{wanted}}}\nvar _ I = T{{}}\n"
+        )
+    };
+    // A type that has its method from a type embedded in a type embedded
+    // in a type, and so on.
+    let nested = |depth: usize| {
+        let all: String = (1..depth)
+            .map(|i| format!("type T{i} struct {{ T{} }}\n", i - 1))
+            .collect();
+        format!(
+            "package p\ntype T0 struct{{}}\nfunc (T0) m() {{}}\n{all}\
+             var _ interface {{ m() }} = T{}{{}}\n",
+            depth - 1
+        )
+    };
+    // An interface that embeds an interface that embeds an interface.
+    let embedded_interfaces = |depth: usize| {
+        let all: String = (1..depth)
+            .map(|i| format!("type I{i} interface {{ I{}; m{i}() }}\n", i - 1))
+            .collect();
+        format!(
+            "package p\ntype I0 interface {{ m0() }}\n{all}var x I{}\nvar _ I0 = x\n",
+            depth - 1
+        )
+    };
+    let sizes = [500, 1_000, 2_000, 4_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(many_methods(n)));
+    linear::assert_near_linear(&sizes, |n| steps(nested(n)));
+    linear::assert_near_linear(&sizes, |n| steps(embedded_interfaces(n)));
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -4239,7 +4533,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1968;
+const EXPECTED_ERRORS_REPORTED: usize = 1999;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

@@ -98,7 +98,7 @@ impl<'a> Checker<'a> {
                     return Operand::UNKNOWN;
                 };
                 let args: Vec<TypeId> = indices.iter().map(|&i| self.typ(cx, i)).collect();
-                if args.len() != params.len() {
+                if args.len() != params.len() || args.contains(&Types::INVALID) {
                     return Operand::UNKNOWN;
                 }
                 return Operand::value(self.types.substitute(x.ty, &params, &args));
