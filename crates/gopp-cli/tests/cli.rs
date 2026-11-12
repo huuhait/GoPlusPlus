@@ -92,6 +92,23 @@ fn version_names_the_compiler_and_the_pinned_clang() {
 }
 
 #[test]
+fn targets_lists_what_gopp_builds_for() {
+    let output = run(gopp().arg("targets"));
+    let listed = stdout(&output);
+    let lines: Vec<&str> = listed.lines().collect();
+    assert_eq!(lines.len(), 9, "{listed}");
+    assert!(lines[0].starts_with("TARGET") && lines[0].ends_with("VERSION 1"));
+    let supported: Vec<&str> = lines
+        .iter()
+        .filter(|line| line.ends_with("  supported"))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert_eq!(supported, ["linux/amd64", "windows/amd64"]);
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
 fn unknown_command_is_a_usage_error() {
     let output = run(gopp().arg("no-such-command"));
     assert_eq!(output.status.code(), Some(2));

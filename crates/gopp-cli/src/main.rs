@@ -30,6 +30,8 @@ enum Command {
     Version,
     /// Locate the host Clang and LLD and check their version
     HostToolchain,
+    /// List the targets that gopp knows, and those that it builds for
+    Targets,
     /// Parse source files and report their syntax errors
     Parse {
         /// Print each file in this form
@@ -107,6 +109,10 @@ fn run() -> ExitCode {
     match cli.command {
         Command::Version => version(),
         Command::HostToolchain => host_toolchain(),
+        Command::Targets => {
+            print!("{}", gopp_target::TargetSpec::table());
+            ExitCode::SUCCESS
+        }
         Command::Parse {
             emit, batch: true, ..
         } => parse::run_batch(emit),

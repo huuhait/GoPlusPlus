@@ -7,3 +7,7 @@ rust-version.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+target-lexicon.workspace = true
+thiserror.workspace = true
