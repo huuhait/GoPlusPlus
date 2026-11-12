@@ -75,8 +75,8 @@ pub(crate) fn float_literal(bits: u64, single: bool) -> String {
     let magnitude = match exponent {
         _ if exponent == largest => {
             return match single {
-                true => format!("gopp_f32({:#x}u)", bits & 0xffff_ffff),
-                false => format!("gopp_f64({bits:#x}ull)"),
+                true => format!("gopp_float32({:#x}u)", bits & 0xffff_ffff),
+                false => format!("gopp_float64({bits:#x}ull)"),
             };
         }
         0 if fraction == 0 => format!("0x0p+0{suffix}"),
@@ -178,11 +178,11 @@ mod tests {
         assert_eq!(double(0.1), "0x1.999999999999ap-4");
         assert_eq!(double(f64::MIN_POSITIVE / 2.0), "0x0.8000000000000p-1022");
         assert_eq!(double(f64::MAX), "0x1.fffffffffffffp+1023");
-        assert_eq!(double(f64::INFINITY), "gopp_f64(0x7ff0000000000000ull)");
-        assert_eq!(double(f64::NAN), "gopp_f64(0x7ff8000000000000ull)");
+        assert_eq!(double(f64::INFINITY), "gopp_float64(0x7ff0000000000000ull)");
+        assert_eq!(double(f64::NAN), "gopp_float64(0x7ff8000000000000ull)");
         assert_eq!(single(1.5), "0x1.800000p+0f");
         assert_eq!(single(-2.0), "(-0x1.000000p+1f)");
         assert_eq!(single(f32::MIN_POSITIVE / 2.0), "0x0.800000p-126f");
-        assert_eq!(single(f32::NEG_INFINITY), "gopp_f32(0xff800000u)");
+        assert_eq!(single(f32::NEG_INFINITY), "gopp_float32(0xff800000u)");
     }
 }

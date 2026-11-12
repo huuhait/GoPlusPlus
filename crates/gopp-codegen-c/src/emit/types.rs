@@ -164,9 +164,15 @@ pub(super) fn definitions(cx: &Cx<'_>, out: &mut String, steps: &mut u64) -> Res
             true => "void".to_owned(),
             false => params.join(", "),
         };
+        // The environment is the first parameter, which is a pointer.
+        let (call, env) = match (cx.go_call(func), func.has_env) {
+            (true, true) => ("GOPP_CALL ", "GOPP_ENV "),
+            (true, false) => ("GOPP_CALL ", ""),
+            (false, _) => ("", ""),
+        };
         let _ = writeln!(
             out,
-            "typedef {} (*{})({params}); /* {} */",
+            "typedef {call}{} (*{})({env}{params}); /* {} */",
             cx.spelled(func.ret),
             cx.spelled(ty),
             comment(cx, ty)

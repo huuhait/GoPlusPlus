@@ -1,0 +1,50 @@
+package main
+
+// A view that a `return` makes is built in the frame of the caller: it
+// names the elements of the slice that the function was given, and it
+// lives after the function has returned.
+
+type buffer struct {
+	data []int
+	pos  int
+}
+
+func tail(xs *[]int) *[]int {
+	return &xs[1:]
+}
+
+func (b *buffer) rest() *[]int {
+	return &b.data[b.pos:]
+}
+
+func twice(xs *[]int) *[]int {
+	return tail(tail(xs))
+}
+
+func both(xs *[]int, n int) (*[]int, int, *[]int) {
+	return &xs[:n], n, &xs[n:]
+}
+
+func same(xs *[]int) *[]int {
+	return xs
+}
+
+func main() {
+	nums := []int{1, 2, 3, 4, 5}
+	t := tail(&nums)
+	t[0] = 20
+	println(len(t), nums[1])
+	b := buffer{nums, 3}
+	r := b.rest()
+	r[1] = 50
+	println(len(r), b.data[4], nums[4])
+	u := twice(&nums)
+	u[0] = 30
+	println(len(u), nums[2])
+	lo, n, hi := both(&nums, 2)
+	lo[0] = 10
+	hi[0] += 1
+	println(len(lo), n, len(hi), nums[0], nums[2])
+	s := same(&nums)
+	println(len(s))
+}

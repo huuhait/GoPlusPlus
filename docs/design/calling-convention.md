@@ -40,8 +40,8 @@ After GIR lowering, `check_calls` verifies that every direct call matches its ca
 
 On `amd64` and `arm64`, `gopp-codegen-c` annotates Go++ functions and function-pointer typedefs with `__attribute__((swiftcall))`, and closure / method-value code pointers with `__attribute__((swift_context)) void *_gopp_env`:
 
-- **`amd64`:** Returns up to **4 integer scalars** (`rax`, `rdx`, `rcx`, `r8`) and **4 float scalars** (`xmm0`–`xmm3`) in registers; passes `__attribute__((swift_context))` in `r13`; preserves SysV/Win64 callee-saved registers across unwinding frames.
-- **`arm64`:** Returns up to **8 integer scalars** (`x0`–`x7`) and **8 float scalars** (`v0`–`v7`) in registers; passes `__attribute__((swift_context))` in `x20`; preserves AAPCS64 callee-saved registers across unwinding frames.
+- **`amd64`:** Returns up to **4 scalars** in registers, integers and floats counted together: integers in `rax`, `rdx`, `rcx`, `r8`, floats in `xmm0`–`xmm3`. A struct of up to 4 scalars is passed in registers too, a larger one by its address. Passes `__attribute__((swift_context))` in `r13`; preserves SysV/Win64 callee-saved registers across unwinding frames.
+- **`arm64`:** The same 4 scalars (`x0`–`x3`, `v0`–`v3`): Clang 23 gives `swiftcall` no more on `arm64` than on `amd64`. Passes `__attribute__((swift_context))` in `x20`; preserves AAPCS64 callee-saved registers across unwinding frames.
 - **`riscv64` / `wasm32`:** `TargetSpec::supports_swiftcall()` is `false`; `gopp-codegen-c` omits `swiftcall`/`swift_context` and passes `_gopp_env` as ordinary parameter `0`, using Clang 23's native target C ABI seamlessly.
 
 | Value | Kind | C23 representation |
@@ -49,11 +49,21 @@ On `amd64` and `arm64`, `gopp-codegen-c` annotates Go++ functions and function-p
 | `()` or zero-scalar aggregate | Ignore | `void` (result) / omitted |
 | Scalar (`bool`, integer, float, pointer, C `fn`) | Scalar | Native C23 scalar (`bool`, `int8_t`..`uint64_t`, `float`, `double`, `T*`) |
 | Aggregate of `<= 4` scalars (`string` = 3 words, `[]T` = 4 words, `gopp_iface` = 2 words, `gopp_func` = 2 words, `[1]T` flattened) | Direct | Flat scalar struct / scalar parameters in declaration order |
-| Aggregate of `> 4` scalars | Indirect | `const T *` pointer to caller-owned argument slot |
-| Multi-value / aggregate result fitting target register budget (`<= 4` int + `<= 4` fp on `amd64`; `<= 8` + `<= 8` on `arm64`) | Direct | Value-returned C23 `struct` under `__attribute__((swiftcall))` |
-| Result exceeding target register budget (e.g. `(string, error)` = 5 words or `([]T, error)` = 6 words on `amd64`; stays in registers on `arm64`) | Indirect | Hidden first output pointer (`ret_t *_gopp_ret`) into caller temporary (`V066`) |
+| Aggregate of `> 4` scalars | Indirect | The unit passes the `struct` as a value; Clang passes the address of a copy that the caller makes |
+| Multi-value / aggregate result of `<= 4` scalars, integers and floats together, on `amd64` and `arm64` | Direct | Value-returned C23 `struct` under `__attribute__((swiftcall))` |
+| Result of more than 4 scalars (e.g. `(string, error)` = 5 words or `([]T, error)` = 6 words) | Indirect | The unit returns the `struct` as a value; Clang passes the hidden pointer to a temporary of the caller (`V066`) |
 
-Because `(int, error)` is 3 integer words (`int64_t` + 2-word `gopp_iface`), it returns purely in registers on both `amd64` (`rax`, `rdx`, `rcx`) and `arm64` (`x0`, `x1`, `x2`), and `f!()` branches on the `itab` register directly without touching stack memory. On `arm64`, `(string, error)` (5 words) and `([]T, error)` (6 words) also stay completely in registers (`x0`–`x5`).
+Because `(int, error)` is 3 integer words (`int64_t` + 2-word `gopp_iface`), it returns purely in registers on both `amd64` (`rax`, `rdx`, `rcx`) and `arm64` (`x0`, `x1`, `x2`), and `f!()` branches on the `itab` register directly without touching stack memory.
+
+**Values of 3, 5, 6 or 7 bytes.** Clang 23 passes a struct by `swiftcall` in whole words and stores the last word whole, also where the struct ends before it: a `struct { int16_t a[3]; }` is stored as 8 bytes into 6. At `-O0` that writes past the value, and above it the value is lost. It is so for every value whose size leaves 3, 5, 6 or 7 bytes after its whole words (`[3]int16`, `[3]uint8`, `struct{ r, g, b uint8 }`, `[5]bool`), as a parameter and as a result, and for no other (400 generated shapes, by hand). So a function whose signature has such a parameter or result is not given `GOPP_CALL`: it is called as a function of C, on every target alike, and its environment is an ordinary first parameter. The emitter decides this from the function type alone (`Cx::go_call`), so a declaration, a definition and a function-pointer type always agree. A value of such a size inside a larger parameter or result is fine.
+
+## What is built today
+
+- **Emitted:** `GOPP_CALL` on the prototype, the definition and the function-pointer `typedef` of every Go++ function, and `GOPP_ENV` on the environment of a `has_env` function type. A unit defines both for its target: `__attribute__((swiftcall))` and `__attribute__((swift_context))` where `TargetSpec::swiftcall` says so, nothing elsewhere. Functions of the runtime and the entry of a program are functions of C.
+- **Left to Clang:** which aggregates go in registers and which by address, and the hidden pointer for a large result. The unit always passes and returns the struct as a value.
+- **Places for views (`PAR-9`):** `Memo::signature` adds one parameter after the declared ones for each result of type `*[]T`. A call passes the address of a zero record of its own frame; `return &x[i:j]` writes the record there and returns that address; a call written directly in a `return` passes the places of its own function on (`FuncCx::outer`).
+- **Copies:** every copy that the checker marks is made by the caller before the call. Passing an argument as it is to a parameter that the function only reads needs the facts of `P04.19`; the thunks for calls that cannot see the body come with interfaces and function values (`P04.06`, `P04.07`).
+- **Tests:** `tests/codegen/*.gopp` say what the assembly of a function has for a target (`// asm <target> <function>: <text>; <text>; ! <text>`), checked at `-O2` for `linux/amd64`, `windows/amd64` and `linux/arm64`; a generated program of 64 functions with 24 parameters and one to eight results each checks at `-O0` to `-O3` and `-Oz` that every result is the value that was passed (`emit/tests/calls.rs`), and the same program prints the same under Go; `tests/run/calls.go` and `tests/run/views.gopp` run through the test runner.
 
 ## C-ABI thunks
 
@@ -70,7 +80,7 @@ A C-ABI thunk is a `CallConv::C` function emitted by `gopp-codegen-c` whose body
 | Interface itab calls (`P04.06`) | Itab slots hold `CallConv::Go` function pointers built with `pass_of`; `_GPTI...` thunks receive `data` first and forward according to `pass_of_recv`. |
 | Closures & func values (`P04.07`) | `gopp_func` is `{code, env}`; `code` is `__attribute__((swiftcall))` taking `__attribute__((swift_context)) void *_gopp_env` (`r13`/`x20`). `@Extern("C")` functions used as Go++ `func` values get a `_GPTE...` Go-convention adapter that calls C. |
 | Monomorphized generics (`P04.08`) | `pass_of` and `pass_of_recv` run on substituted instance types (`T = string` -> 3 scalars, `T = int` -> 1 scalar, `T = map[string]int` -> 1 pointer, `T = Unique[Node]` -> 1 pointer; each is the callee's own copy unless the copy is skipped; a `T` that cannot be copied is moved in). |
-| Fallible `!` calls (`P04.10`) | `(T, error)` returns directly in `swiftcall` registers when `<= 4` words on `amd64` (`<= 8` on `arm64`); `!` tests `res.err.itab != NULL` directly. |
+| Fallible `!` calls (`P04.10`) | `(T, error)` returns directly in `swiftcall` registers when `<= 4` words; `!` tests `res.err.itab != NULL` directly. |
 | Drops & unwinding (`P04.09`, `P04.26`) | Callee drops `OWN-C3` value parameters (and any `OWN-C2` parameter it owns) via `__attribute__((cleanup(...)))` / GIR `Drop` paths; `swiftcall` preserves standard C callee-saved unwind registers. |
 | Goroutine entry (`P12`) | `go f(...)` spawns via a thin C-callable runtime entry wrapper `void (*)(void *)` invoking the `swiftcall` target. |
 

@@ -794,9 +794,20 @@ impl FuncCx<'_, '_> {
                 if let ExprKind::CompositeLit { .. } = self.tree.exprs[inner].kind {
                     return Ok(self.placeholder(span, ty, "the address of a literal"));
                 }
-                // `&x[lo:hi]`: the same elements.
+                // `&x[lo:hi]`: the same elements. Written directly in a
+                // `return`, its record is built in the place of the
+                // caller.
                 if let ExprKind::Slice { x, lo, hi, max, .. } = self.tree.exprs[inner].kind {
-                    return self.slice_part(inner, ty, x, [lo, hi, max], Part::View);
+                    let view = self.slice_part(inner, ty, x, [lo, hi, max], Part::View)?;
+                    let outer = self.outer.remove(&expr);
+                    return match (outer.as_deref(), view) {
+                        (Some(&[outer]), Rvalue::AddrOf(record, _)) => {
+                            let place = self.b.deref(&Place::local(outer))?;
+                            self.b.assign(place, Rvalue::Use(Operand::Copy(record)))?;
+                            Ok(Rvalue::Use(Operand::Copy(Place::local(outer))))
+                        }
+                        (_, view) => Ok(view),
+                    };
                 }
                 let place = self.place(x, &mut PlaceMode::default())?;
                 Ok(Rvalue::AddrOf(place, Mutability::Mut))
@@ -1090,12 +1101,29 @@ impl FuncCx<'_, '_> {
             }
             given.push(value);
         }
-        let wanted: Vec<_> = called.params[given.len()..]
+        let declared = called.params.len() - called.views;
+        let wanted: Vec<_> = called.params[given.len()..declared]
             .iter()
             .map(|&param| Some(param))
             .collect();
         for value in self.values(args, &wanted)? {
             given.push(self.operand_of(value)?);
+        }
+        // A place for each view that a result may be: one of this
+        // frame, or the place that the caller of this function gave.
+        let outer = self.outer.remove(&expr);
+        let outer = outer.filter(|places| places.len() == called.views);
+        for (at, &param) in called.params[declared..].iter().enumerate() {
+            let place = match &outer {
+                Some(places) => places[at],
+                None => {
+                    let record = self.pointee(param);
+                    let record = self.slot_of(Rvalue::Use(self.zero(record)))?;
+                    self.b
+                        .assign_temp(Rvalue::AddrOf(record, Mutability::Mut))?
+                }
+            };
+            given.push(Operand::Copy(Place::local(place)));
         }
         let result = self.b.temp(called.ret);
         let next = self.b.new_block();
@@ -1150,6 +1178,10 @@ impl FuncCx<'_, '_> {
                 _ => None,
             },
         };
+        let declared = |receiver: Option<_>, checked| match &*shared.types.get(checked) {
+            CheckedType::Func { params, .. } => params.len() + usize::from(receiver.is_some()),
+            _ => 0,
+        };
         let called = match found {
             None => Err("a call of this function"),
             Some((_, _, checked))
@@ -1168,6 +1200,7 @@ impl FuncCx<'_, '_> {
                     Ok((sig, Type::Func(func))) => Ok(Callee {
                         func: self.function_named(&symbol, sig)?,
                         sig,
+                        views: func.params.len() - declared(receiver, checked),
                         params: func.params.iter().copied().collect(),
                         ret: func.ret,
                     }),

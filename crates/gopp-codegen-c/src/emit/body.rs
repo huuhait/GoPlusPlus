@@ -59,6 +59,10 @@ pub(super) fn prototype(
         Inline::Never => line.push_str("__attribute__((noinline)) "),
     }
     line.push_str(linkage(func.link()));
+    let go_call = cx.go_call(sig);
+    if go_call {
+        line.push_str("GOPP_CALL ");
+    }
     let _ = write!(line, "{} {}(", cx.spelled(sig.ret), cx.func_name(at));
     let mut first = true;
     for (number, &param) in sig.params.iter().enumerate() {
@@ -67,6 +71,9 @@ pub(super) fn prototype(
         }
         if !std::mem::replace(&mut first, false) {
             line.push_str(", ");
+        }
+        if go_call && sig.has_env && number == 0 {
+            line.push_str("GOPP_ENV ");
         }
         let _ = write!(line, "{} _{}", cx.spelled(param), number + 1);
     }

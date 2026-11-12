@@ -5,9 +5,9 @@ expression: "unit(\"a.gopp\", ARITHMETIC)"
 
 typedef struct T7 T7; /* (f64, bool) */
 typedef struct T12 T12; /* (i8, f32, u64, i64, u16) */
-typedef int64_t (*T5)(int64_t, int64_t, uint8_t, uint64_t, int64_t); /* fn(i64, i64, u8, u64, i64) -> i64 */
-typedef T7 (*T9)(double, double, float); /* fn(f64, f64, f32) -> (f64, bool) */
-typedef T12 (*T14)(int64_t, uint8_t, double, float, int64_t *); /* fn(i64, u8, f64, f32, *i64) -> (i8, f32, u64, i64, u16) */
+typedef GOPP_CALL int64_t (*T5)(int64_t, int64_t, uint8_t, uint64_t, int64_t); /* fn(i64, i64, u8, u64, i64) -> i64 */
+typedef GOPP_CALL T7 (*T9)(double, double, float); /* fn(f64, f64, f32) -> (f64, bool) */
+typedef GOPP_CALL T12 (*T14)(int64_t, uint8_t, double, float, int64_t *); /* fn(i64, u8, f64, f32, *i64) -> (i8, f32, u64, i64, u16) */
 struct T7 {
   double f0;
   bool f1;
@@ -23,11 +23,11 @@ _Static_assert(sizeof(T7) == 16 && _Alignof(T7) == 8, "the layout of T7");
 _Static_assert(sizeof(T12) == 32 && _Alignof(T12) == 8, "the layout of T12");
 
 
-int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) __asm__("_GPF4mainE4ints");
-T7 gopp_f1(double _1, double _2, float _3) __asm__("_GPF4mainE6floats");
-T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) __asm__("_GPF4mainE8converts");
+GOPP_CALL int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) __asm__("_GPF4mainE4ints");
+GOPP_CALL T7 gopp_f1(double _1, double _2, float _3) __asm__("_GPF4mainE6floats");
+GOPP_CALL T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) __asm__("_GPF4mainE8converts");
 
-int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) {
+GOPP_CALL int64_t gopp_f0(int64_t _1, int64_t _2, uint8_t _3, uint64_t _4, int64_t _5) {
   [[maybe_unused]] int64_t _0;
   [[maybe_unused]] int64_t _6;
   [[maybe_unused]] int64_t _7;
@@ -76,7 +76,7 @@ bb2:
   return _0;
 }
 
-T7 gopp_f1(double _1, double _2, float _3) {
+GOPP_CALL T7 gopp_f1(double _1, double _2, float _3) {
   [[maybe_unused]] T7 _0;
   [[maybe_unused]] double _4;
   [[maybe_unused]] double _5;
@@ -109,7 +109,7 @@ bb4:
   return _0;
 }
 
-T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) {
+GOPP_CALL T12 gopp_f2(int64_t _1, uint8_t _2, double _3, float _4, int64_t * _5) {
   [[maybe_unused]] T12 _0;
   [[maybe_unused]] int8_t _6;
   [[maybe_unused]] float _7;

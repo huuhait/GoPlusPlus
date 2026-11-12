@@ -3,14 +3,14 @@ source: crates/gopp-codegen-c/src/emit/tests.rs
 expression: "unit(\"a.gopp\", CONTROL)"
 ---
 
-typedef int64_t (*T3)(int64_t, bool); /* fn(i64, bool) -> i64 */
-typedef void (*T4)(void); /* fn() -> () */
+typedef GOPP_CALL int64_t (*T3)(int64_t, bool); /* fn(i64, bool) -> i64 */
+typedef GOPP_CALL void (*T4)(void); /* fn() -> () */
 
 
-int64_t gopp_f0(int64_t _1, bool _2) __asm__("_GPF4mainE4pick");
-void gopp_f1(void) __asm__("_GPF4mainE4main");
+GOPP_CALL int64_t gopp_f0(int64_t _1, bool _2) __asm__("_GPF4mainE4pick");
+GOPP_CALL void gopp_f1(void) __asm__("_GPF4mainE4main");
 
-int64_t gopp_f0(int64_t _1, bool _2) {
+GOPP_CALL int64_t gopp_f0(int64_t _1, bool _2) {
   [[maybe_unused]] int64_t _0;
   [[maybe_unused]] int64_t _3;
   [[maybe_unused]] bool _4;
@@ -74,7 +74,7 @@ bb13:
   return _0;
 }
 
-void gopp_f1(void) {
+GOPP_CALL void gopp_f1(void) {
   [[maybe_unused]] int64_t _1;
   _1 = gopp_f0(3ll, true);
   goto bb1;

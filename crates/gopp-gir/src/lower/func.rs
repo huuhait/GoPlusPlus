@@ -86,6 +86,13 @@ pub(super) struct FuncCx<'a, 'm> {
     /// The variables `&v` of range clauses: each holds the address of
     /// the element that it names.
     pub aliases: FxHashSet<LocalId>,
+    /// For each result, the place of the caller for the record of a
+    /// view, if the result points to a slice.
+    pub views: Vec<Option<LocalId>>,
+    /// The places of the caller that go to what is written directly in
+    /// the `return` that is lowered: a view, which is built there, or a
+    /// call, which passes them on (SLC-8).
+    pub outer: FxHashMap<ExprId, Vec<LocalId>>,
 }
 
 /// Adds the function of the job to the module, or reports why not.
@@ -152,6 +159,8 @@ pub(super) fn lower_function<'a>(
             reported: FxHashSet::default(),
             reused: None,
             aliases: FxHashSet::default(),
+            views: Vec::new(),
+            outer: FxHashMap::default(),
         };
         cx.function(receiver.as_ref(), *ty, block)?;
         cx.b.drop_unreached();
@@ -200,6 +209,20 @@ impl FuncCx<'_, '_> {
                 None => None,
             };
             self.results.push(var);
+        }
+        let whole = self.b.place_ty(&Place::local(self.b.result()));
+        let parts = match self.kind(whole) {
+            Type::Tuple(parts) if results.len() > 1 => parts.to_vec(),
+            _ if results.is_empty() => Vec::new(),
+            _ => vec![whole],
+        };
+        let mut next = (usize::from(receiver.is_some()) + params.len()) as u32;
+        for part in parts {
+            let view = super::types::is_view(self.b.types(), part).then(|| {
+                next += 1;
+                self.b.param(next - 1)
+            });
+            self.views.push(view);
         }
         self.stmts(&block.stmts)?;
         // The end of the body: a function with results never comes

@@ -9,6 +9,12 @@ use gopp_mangle::{Entity, symbol_of};
 use super::{Memo, Shared};
 use crate::{CallConv, FuncType, Type, TypeId, TypeInterner};
 
+/// Whether a result of the type has a place in the frame of the caller:
+/// it points to a slice.
+pub(super) fn is_view(types: &TypeInterner, ty: TypeId) -> bool {
+    matches!(types.get(ty), Type::Ptr(to) if matches!(types.get(*to), Type::Slice(_)))
+}
+
 impl Memo<'_> {
     /// The type of GIR that stands for `ty`, or what about it is not
     /// supported yet.
@@ -274,16 +280,19 @@ impl Memo<'_> {
         for &param in receiver.iter().chain(params.iter()) {
             lowered.push(self.lower_type(shared, types, param)?);
         }
-        let ret = match &results[..] {
+        let mut parts = Vec::with_capacity(results.len());
+        for &part in results.iter() {
+            parts.push(self.lower_type(shared, types, part)?);
+        }
+        // A result that points to a slice may be a view that the
+        // function makes: the record of the view has a place in the
+        // frame of the caller, which is passed after the parameters
+        // (PAR-9).
+        lowered.extend(parts.iter().copied().filter(|&part| is_view(types, part)));
+        let ret = match &parts[..] {
             [] => TypeInterner::UNIT,
-            [one] => self.lower_type(shared, types, *one)?,
-            many => {
-                let mut parts = Vec::with_capacity(many.len());
-                for &part in many {
-                    parts.push(self.lower_type(shared, types, part)?);
-                }
-                types.tuple(&parts)
-            }
+            [one] => *one,
+            many => types.tuple(many),
         };
         Ok(types.intern(Type::Func(FuncType {
             params: lowered.into(),

@@ -585,7 +585,24 @@ impl FuncCx<'_, '_> {
             }
         } else {
             let wanted: Vec<_> = parts.iter().map(|&part| Some(part)).collect();
+            // What is written directly in the `return` gets the places
+            // of the caller: each value that of its result, one call
+            // for all results all of them.
+            let places = self.views.iter().copied();
+            match values {
+                [call] if self.views.len() > 1 => {
+                    let call = Shared::unparen(self.tree, *call);
+                    self.outer.insert(call, places.flatten().collect());
+                }
+                _ => {
+                    for (&value, place) in values.iter().zip(places) {
+                        let value = Shared::unparen(self.tree, value);
+                        self.outer.extend(place.map(|place| (value, vec![place])));
+                    }
+                }
+            }
             given = self.values(values, &wanted)?;
+            self.outer.clear();
             // The variables of the results have the values too: what
             // runs after the `return` reads them.
             if named.iter().any(Option::is_some) {

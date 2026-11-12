@@ -186,6 +186,9 @@ pub(crate) struct Callee {
     pub func: crate::FuncId,
     pub sig: TypeId,
     pub params: std::rc::Rc<[TypeId]>,
+    /// How many of the last parameters are places for views that the
+    /// results may be.
+    pub views: usize,
     pub ret: TypeId,
 }
 

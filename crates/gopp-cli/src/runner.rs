@@ -185,6 +185,7 @@ impl Run<'_> {
                 true => Entry::Main,
                 false => Entry::Module,
             },
+            swiftcall: target.swiftcall,
         };
         emit_c23(&package.module, &options)
             .map_err(|error| format!("error[{}]: {error}\n", Code::Codegen))

@@ -106,13 +106,16 @@ void _gopp_map_iter_end(void *iter);
 [[noreturn]] void _gopp_panic_shift(void);
 [[noreturn]] void _gopp_panic_must(gopp_string expr, gopp_string position, gopp_string message);
 
+#define GOPP_CALL __attribute__((swiftcall))
+#define GOPP_ENV __attribute__((swift_context))
+
 [[maybe_unused]] static char gopp_empty;
 
-[[maybe_unused]] static inline float gopp_f32(uint32_t bits) {
+[[maybe_unused]] static inline float gopp_float32(uint32_t bits) {
   union { uint32_t bits; float value; } of = {.bits = bits};
   return of.value;
 }
-[[maybe_unused]] static inline double gopp_f64(uint64_t bits) {
+[[maybe_unused]] static inline double gopp_float64(uint64_t bits) {
   union { uint64_t bits; double value; } of = {.bits = bits};
   return of.value;
 }

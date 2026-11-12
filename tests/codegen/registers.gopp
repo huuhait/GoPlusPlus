@@ -1,0 +1,56 @@
+// A result of up to four words comes back in registers, a larger one
+// through the pointer that Clang passes; a struct of up to four words is
+// passed in registers, a larger one by its address.
+//
+// asm linux/amd64 three: movq %rdi, %rax; %rdx; %rcx
+// asm linux/amd64 four: movq %rdi, %rax; %rdx; %rcx; %r8
+// asm linux/amd64 five: (%rax); 32(%rax)
+// asm linux/amd64 mixed: %rax; %xmm1; %dl
+// asm linux/amd64 text: movq %rdi, %rax; %rdx; %rcx; %r8
+// asm linux/amd64 takeQuad: (%rdi,%rcx)
+// asm linux/amd64 takeWide: 32(%rdi)
+// asm windows/amd64 three: movq %rcx, %rax; %rdx
+// asm windows/amd64 four: movq %rcx, %rax; %r8
+// asm windows/amd64 five: 32(%rcx)
+// asm windows/amd64 takeQuad: (%rcx,%r9)
+// asm windows/amd64 takeWide: 32(%rcx)
+// asm linux/arm64 four: x1; x2; x3; ! x8
+// asm linux/arm64 five: [x8]
+// asm linux/arm64 mixed: d1; w1
+// asm linux/arm64 takeQuad: x3; ! [x0
+// asm linux/arm64 takeWide: [x0, #32]
+package main
+
+type quad struct{ a, b, c, d int }
+
+type wide struct{ a, b, c, d, e int }
+
+func three(x int) (int, int, int) {
+	return x, x + 1, x + 2
+}
+
+func four(x int) (int, int, int, int) {
+	return x, x + 1, x + 2, x + 3
+}
+
+func five(x int) (int, int, int, int, int) {
+	return x, x + 1, x + 2, x + 3, x + 4
+}
+
+func mixed(x int, f float64) (int, float64, float64, bool) {
+	return x, f, f + 1, x > 0
+}
+
+func text(s string, n int) (string, int) {
+	return s, n
+}
+
+func takeQuad(q quad) int {
+	return q.a + q.d
+}
+
+func takeWide(w wide) int {
+	return w.a + w.e
+}
+
+func main() {}

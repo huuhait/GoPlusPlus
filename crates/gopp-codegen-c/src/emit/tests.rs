@@ -12,6 +12,8 @@ use lasso::ThreadedRodeo;
 
 use rayon::prelude::*;
 
+mod calls;
+
 use super::{EmitError, EmitOptions, Entry, emit_c23, emit_counted};
 use crate::driver::{ClangDriver, DriverError, OptLevel, Output};
 use crate::runtime::Form;
@@ -61,9 +63,11 @@ fn module(name: &str, text: &str) -> Module {
 }
 
 fn options(entry: Entry) -> EmitOptions {
+    let target = TargetSpec::named("linux/amd64").unwrap();
     EmitOptions {
-        layout: TargetSpec::named("linux/amd64").unwrap().layout(),
+        layout: target.layout(),
         entry,
+        swiftcall: target.swiftcall,
     }
 }
 
@@ -71,6 +75,7 @@ fn options(entry: Entry) -> EmitOptions {
 fn unit(name: &str, text: &str) -> String {
     let unit = emit_c23(&module(name, text), &options(Entry::Main)).unwrap();
     let mut start = crate::runtime::header(options(Entry::Main).layout);
+    start.push_str(super::convention(true));
     start.push_str(super::PRELUDE);
     super::number::helpers(&mut start);
     unit.strip_prefix(&start).unwrap().to_owned()

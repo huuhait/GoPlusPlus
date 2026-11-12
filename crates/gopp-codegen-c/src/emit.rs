@@ -13,7 +13,9 @@ mod tests;
 
 use std::fmt::Write;
 
-use gopp_gir::{Function, Linkage, Module, Type, TypeError, TypeId, verify_module};
+use gopp_gir::{
+    CallConv, FuncType, Function, Linkage, Module, Type, TypeError, TypeId, verify_module,
+};
 use gopp_target::{Layout, TargetLayout};
 use rayon::prelude::*;
 
@@ -35,6 +37,9 @@ pub enum Entry {
 pub struct EmitOptions {
     pub layout: TargetLayout,
     pub entry: Entry,
+    /// Whether Clang has `swiftcall` for the target: the convention of
+    /// the Go++ functions then (ADR-0030).
+    pub swiftcall: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +95,17 @@ impl Cx<'_> {
 
     pub fn kind(&self, ty: TypeId) -> &Type {
         self.module.types.get(ty)
+    }
+
+    /// Whether a function of the type is called by `GOPP_CALL`. A Go++
+    /// function is, unless a parameter or its result has 3, 5, 6 or 7
+    /// bytes after its whole words: Clang 23 passes such a value by
+    /// `swiftcall` in whole words and writes the last of them past the
+    /// end of the value. Such a function is called as a function of C,
+    /// for every target alike.
+    pub fn go_call(&self, func: &FuncType) -> bool {
+        let whole = |&ty: &TypeId| !matches!(self.layout(ty).size % 8, 3 | 5 | 6 | 7);
+        func.cc == CallConv::Go && func.params.iter().chain([&func.ret]).all(whole)
     }
 
     /// The name that the function of the number has in the unit: the
@@ -168,6 +184,7 @@ pub(crate) fn emit_counted(
         funcs: func_names(module)?,
     };
     let mut out = crate::runtime::header(options.layout);
+    out.push_str(convention(options.swiftcall));
     out.push_str(PRELUDE);
     number::helpers(&mut out);
     types::definitions(&cx, &mut out, &mut steps)?;
@@ -282,16 +299,30 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], kind: Entry, out: &mut String) {
     let _ = writeln!(out, "  {}();\n  return 0;\n}}", cx.func_name(main));
 }
 
+/// How a Go++ function is called, and how it gets the environment of a
+/// closure: by Clang's `swiftcall`, which returns four words in
+/// registers and has a register for the environment, or as a function
+/// of C where the target has no `swiftcall`.
+pub(crate) fn convention(swiftcall: bool) -> &'static str {
+    match swiftcall {
+        true => {
+            "\n#define GOPP_CALL __attribute__((swiftcall))\n\
+             #define GOPP_ENV __attribute__((swift_context))\n"
+        }
+        false => "\n#define GOPP_CALL\n#define GOPP_ENV\n",
+    }
+}
+
 /// What a unit has after the header of the runtime and before its own
 /// helpers.
 const PRELUDE: &str = "
 [[maybe_unused]] static char gopp_empty;
 
-[[maybe_unused]] static inline float gopp_f32(uint32_t bits) {
+[[maybe_unused]] static inline float gopp_float32(uint32_t bits) {
   union { uint32_t bits; float value; } of = {.bits = bits};
   return of.value;
 }
-[[maybe_unused]] static inline double gopp_f64(uint64_t bits) {
+[[maybe_unused]] static inline double gopp_float64(uint64_t bits) {
   union { uint64_t bits; double value; } of = {.bits = bits};
   return of.value;
 }

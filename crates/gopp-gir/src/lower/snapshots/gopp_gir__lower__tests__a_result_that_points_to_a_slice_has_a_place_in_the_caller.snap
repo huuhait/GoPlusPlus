@@ -1,0 +1,145 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\nfunc tail(xs *[]int) *[]int {\n\treturn &xs[1:]\n}\n\nfunc twice(xs *[]int) *[]int {\n\treturn tail(tail(xs))\n}\n\nfunc both(xs *[]int, n int) (*[]int, int, *[]int) {\n\tif n < 0 {\n\t\treturn xs, 0, tail(xs)\n\t}\n\treturn &xs[:n], n, &xs[n:]\n}\n\nfunc all(xs *[]int) (*[]int, int, *[]int) {\n\treturn both(xs, len(xs))\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn _GPF4mainE4tail(_1: *[]i64, _2: *[]i64) -> *[]i64 [go, external] {
+  let _0: *[]i64
+  let _1: *[]i64 "xs"
+  let _3: []i64
+  let _4: u64
+  let _5: u64
+  let _6: i64
+  let _7: u64
+  let _8: bool
+  let _9: bool
+  let _10: *i64
+  let _11: u64
+  let _12: []i64
+  bb0:
+    _3 = copy (*_1)  ; a.gopp:4:2
+    _4 = len(_3)  ; a.gopp:4:2
+    _5 = copy _3.2  ; a.gopp:4:2
+    _6 = const 1: i64  ; a.gopp:4:2
+    _7 = int_to_int(copy _6) as u64  ; a.gopp:4:2
+    _8 = le(copy _4, copy _4)  ; a.gopp:4:10
+    assert(copy _8 == true, SliceAlen(copy _4, copy _4)) -> [success: bb1, unwind: continue]  ; a.gopp:4:10
+  bb1:
+    _9 = le(copy _7, copy _4)  ; a.gopp:4:10
+    assert(copy _9 == true, SliceB(copy _6, copy _4)) -> [success: bb2, unwind: continue]  ; a.gopp:4:10
+  bb2:
+    _10 = &mut _3[_7]  ; a.gopp:4:2
+    _11 = sub(copy _4, copy _7)  ; a.gopp:4:2
+    _12 = []i64 {copy _10, copy _11, copy _11, const zero: *u8}  ; a.gopp:4:2
+    (*_2) = copy _12  ; a.gopp:4:2
+    _0 = copy _2  ; a.gopp:4:2
+    return  ; a.gopp:4:2
+}
+
+fn _GPF4mainE5twice(_1: *[]i64, _2: *[]i64) -> *[]i64 [go, external] {
+  let _0: *[]i64
+  let _1: *[]i64 "xs"
+  let _3: []i64
+  let _4: *[]i64
+  let _5: *[]i64
+  let _6: *[]i64
+  bb0:
+    _3 = const zero: []i64  ; a.gopp:8:2
+    _4 = &mut _3  ; a.gopp:8:2
+    _5 = call const fn @_GPF4mainE4tail(copy _1, copy _4) -> [return: bb1, unwind: continue]  ; a.gopp:8:14
+  bb1:
+    _6 = call const fn @_GPF4mainE4tail(copy _5, copy _2) -> [return: bb2, unwind: continue]  ; a.gopp:8:9
+  bb2:
+    _0 = copy _6  ; a.gopp:8:2
+    return  ; a.gopp:8:2
+}
+
+fn _GPF4mainE4both(_1: *[]i64, _2: i64, _3: *[]i64, _4: *[]i64) -> (*[]i64, i64, *[]i64) [go, external] {
+  let _0: (*[]i64, i64, *[]i64)
+  let _1: *[]i64 "xs"
+  let _2: i64 "n"
+  let _5: bool
+  let _6: *[]i64
+  let _7: *[]i64
+  let _8: []i64
+  let _9: u64
+  let _10: u64
+  let _11: u64
+  let _12: i64
+  let _13: u64
+  let _14: bool
+  let _15: bool
+  let _16: *i64
+  let _17: u64
+  let _18: []i64
+  let _19: []i64
+  let _20: u64
+  let _21: u64
+  let _22: i64
+  let _23: u64
+  let _24: bool
+  let _25: bool
+  let _26: *i64
+  let _27: u64
+  let _28: []i64
+  bb0:
+    _5 = lt(copy _2, const 0: i64)  ; a.gopp:12:5
+    switch copy _5 [0: bb3, otherwise: bb1]  ; a.gopp:12:5
+  bb1:
+    _6 = copy _1  ; a.gopp:13:3
+    _7 = call const fn @_GPF4mainE4tail(copy _1, copy _4) -> [return: bb2, unwind: continue]  ; a.gopp:13:17
+  bb2:
+    _0 = tuple {copy _6, const 0: i64, copy _7}  ; a.gopp:13:3
+    return  ; a.gopp:13:3
+  bb3:
+    _8 = copy (*_1)  ; a.gopp:15:2
+    _9 = len(_8)  ; a.gopp:15:2
+    _10 = copy _8.2  ; a.gopp:15:2
+    _11 = const zero: u64  ; a.gopp:15:2
+    _12 = copy _2  ; a.gopp:15:2
+    _13 = int_to_int(copy _12) as u64  ; a.gopp:15:2
+    _14 = le(copy _13, copy _9)  ; a.gopp:15:10
+    assert(copy _14 == true, SliceAlen(copy _12, copy _9)) -> [success: bb4, unwind: continue]  ; a.gopp:15:10
+  bb4:
+    _15 = le(copy _11, copy _13)  ; a.gopp:15:10
+    assert(copy _15 == true, SliceB(copy _11, copy _13)) -> [success: bb5, unwind: continue]  ; a.gopp:15:10
+  bb5:
+    _16 = &mut _8[_11]  ; a.gopp:15:2
+    _17 = sub(copy _13, copy _11)  ; a.gopp:15:2
+    _18 = []i64 {copy _16, copy _17, copy _17, const zero: *u8}  ; a.gopp:15:2
+    (*_3) = copy _18  ; a.gopp:15:2
+    _19 = copy (*_1)  ; a.gopp:15:2
+    _20 = len(_19)  ; a.gopp:15:2
+    _21 = copy _19.2  ; a.gopp:15:2
+    _22 = copy _2  ; a.gopp:15:2
+    _23 = int_to_int(copy _22) as u64  ; a.gopp:15:2
+    _24 = le(copy _20, copy _20)  ; a.gopp:15:22
+    assert(copy _24 == true, SliceAlen(copy _20, copy _20)) -> [success: bb6, unwind: continue]  ; a.gopp:15:22
+  bb6:
+    _25 = le(copy _23, copy _20)  ; a.gopp:15:22
+    assert(copy _25 == true, SliceB(copy _22, copy _20)) -> [success: bb7, unwind: continue]  ; a.gopp:15:22
+  bb7:
+    _26 = &mut _19[_23]  ; a.gopp:15:2
+    _27 = sub(copy _20, copy _23)  ; a.gopp:15:2
+    _28 = []i64 {copy _26, copy _27, copy _27, const zero: *u8}  ; a.gopp:15:2
+    (*_4) = copy _28  ; a.gopp:15:2
+    _0 = tuple {copy _3, copy _2, copy _4}  ; a.gopp:15:2
+    return  ; a.gopp:15:2
+}
+
+fn _GPF4mainE3all(_1: *[]i64, _2: *[]i64, _3: *[]i64) -> (*[]i64, i64, *[]i64) [go, external] {
+  let _0: (*[]i64, i64, *[]i64)
+  let _1: *[]i64 "xs"
+  let _4: u64
+  let _5: i64
+  let _6: (*[]i64, i64, *[]i64)
+  bb0:
+    _4 = len((*_1))  ; a.gopp:19:2
+    _5 = int_to_int(copy _4) as i64  ; a.gopp:19:2
+    _6 = call const fn @_GPF4mainE4both(copy _1, copy _5, copy _2, copy _3) -> [return: bb1, unwind: continue]  ; a.gopp:19:9
+  bb1:
+    _0 = tuple {copy _6.0, copy _6.1, copy _6.2}  ; a.gopp:19:2
+    return  ; a.gopp:19:2
+}

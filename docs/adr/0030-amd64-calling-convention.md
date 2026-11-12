@@ -21,14 +21,12 @@ Clang 23 provides `__attribute__((swiftcall))` and
 ## Decision
 
 1. **Go++-to-Go++ functions use `__attribute__((swiftcall))` on `amd64` and `arm64`.**
-   - **`amd64`:** returns up to **4 integer scalars** (`rax, rdx, rcx, r8`) and
-     **4 float scalars** (`xmm0`–`xmm3`) in registers. `(int, error)` (3 words)
-     and any `(T, error)` where `T` is at most 2 words return entirely in
-     registers; larger results such as `(string, error)` (5 words) or
-     `([]T, error)` (6 words) pass via Clang's hidden return pointer.
-   - **`arm64`:** returns up to **8 integer scalars** (`x0`–`x7`) and **8 float
-     scalars** (`v0`–`v7`) in registers, keeping `(int, error)`, `(string, error)`
-     (5 words), and `([]T, error)` (6 words) in registers.
+   - **`amd64` and `arm64`:** a result of up to **4 scalars**, integers and
+     floats counted together, comes back in registers (`rax, rdx, rcx, r8` and
+     `xmm0`–`xmm3`; `x0`–`x3` and `v0`–`v3`). `(int, error)` (3 words) and any
+     `(T, error)` where `T` is at most 2 words return entirely in registers;
+     larger results such as `(string, error)` (5 words) or `([]T, error)`
+     (6 words) pass via Clang's hidden return pointer, on both.
    - **Targets without `swiftcall` support in Clang** (`linux/riscv64`,
      `wasip1/wasm32`) emit standard target C prototypes uniformly across all
      Go++ functions (`TargetLayout::supports_swiftcall == false`).
@@ -46,6 +44,17 @@ Clang 23 provides `__attribute__((swiftcall))` and
    - `@Extern("C")` declarations, `@Export("C")` thunks, C callbacks (`fn "C"`),
      and the program entry point `int main(void)` omit `swiftcall` and use the
      exact platform C ABI (`docs/design/c-abi.md`).
+
+## Corrections (2026-11-12, measured with Clang 23.1.0)
+
+- This ADR first said that `arm64` returns up to 8 integer and 8 float scalars
+  in registers, and `amd64` 4 of each. Clang's `swiftcall` returns 4 scalars in
+  all on both; the decision above now says so.
+- Clang passes a struct whose size leaves 3, 5, 6 or 7 bytes after its whole
+  words (`struct { int16_t a[3]; }`) by `swiftcall` wrongly: it stores a whole
+  word past the end of the value. A Go++ function with such a parameter or
+  result is therefore emitted without `swiftcall`, as a function of C
+  (`docs/design/calling-convention.md`).
 
 ## Consequences
 

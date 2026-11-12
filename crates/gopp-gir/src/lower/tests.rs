@@ -774,6 +774,31 @@ func runes(text string, points []rune) ([]rune, string) {
 }
 
 #[test]
+fn a_result_that_points_to_a_slice_has_a_place_in_the_caller() {
+    insta::assert_snapshot!(gir("package main
+
+func tail(xs *[]int) *[]int {
+	return &xs[1:]
+}
+
+func twice(xs *[]int) *[]int {
+	return tail(tail(xs))
+}
+
+func both(xs *[]int, n int) (*[]int, int, *[]int) {
+	if n < 0 {
+		return xs, 0, tail(xs)
+	}
+	return &xs[:n], n, &xs[n:]
+}
+
+func all(xs *[]int) (*[]int, int, *[]int) {
+	return both(xs, len(xs))
+}
+"));
+}
+
+#[test]
 fn a_map_whose_keys_or_values_need_a_function_is_not_supported_yet() {
     let (_, messages) = lowered_with(
         &[(
@@ -1079,6 +1104,23 @@ fn the_steps_grow_with_ranges_slices_maps_and_strings() {
                 .replace("ys", &format!("y{at}")))
             .collect();
         steps_of(&function(&format!("\tvar xs []int\n{grown}")))
+    });
+    // Functions that pass the place of a view on to the next, and make
+    // views in it.
+    assert_near_linear(&sizes, |n| {
+        let chain: String = (1..n)
+            .map(|at| {
+                format!(
+                    "func v{at}(xs *[]int, n int) (*[]int, *[]int) {{\n\tif n > {at} {{\n\t\t\
+                     return v{}(xs, n)\n\t}}\n\treturn &xs[:n], &xs[n:]\n}}\n\n",
+                    at - 1
+                )
+            })
+            .collect();
+        steps_of(&format!(
+            "package main\n\nfunc v0(xs *[]int, n int) (*[]int, *[]int) {{\n\t\
+             return xs, &xs[n:]\n}}\n\n{chain}"
+        ))
     });
     // Loops whose variable is the element itself, over a slice and a
     // map.

@@ -186,6 +186,7 @@ pub fn run(options: &Options) -> ExitCode {
             true => Entry::Main,
             false => Entry::None,
         },
+        swiftcall: target.swiftcall,
     };
     let unit = match emit_c23(&module, &emit) {
         Ok(unit) => unit,
