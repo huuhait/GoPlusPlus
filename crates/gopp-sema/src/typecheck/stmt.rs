@@ -314,12 +314,12 @@ impl<'a> Checker<'a> {
                 continue;
             }
             // `&v` declares `v` as another name of the element.
-            let named = match tree.exprs[target].kind {
+            let (named, alias) = match tree.exprs[target].kind {
                 ExprKind::Unary {
                     op: UnaryOp::Addr,
                     x,
-                } => x,
-                _ => target,
+                } => (x, true),
+                _ => (target, false),
             };
             let local = self.declared_local(cx, named);
             let ty = match (ty, counts) {
@@ -329,6 +329,10 @@ impl<'a> Checker<'a> {
                 }
                 (ty, _) => ty,
             };
+            let ty = match (ty, alias) {
+                (Some(ty), true) => self.aliased(cx, of, &x, target, ty),
+                (ty, _) => ty,
+            };
             self.set_local(local, ty);
             // What cannot be ranged over gives its variables no type.
             self.excused.extend(local.filter(|_| ty.is_none()));
@@ -336,6 +340,42 @@ impl<'a> Checker<'a> {
         if lhs.is_empty() && counts {
             self.assignment(cx, of, x, None, "range clause");
         }
+    }
+
+    /// The type of the variable `&v` of a range clause over `x`, which
+    /// gives a value of the type `given` at each step: `v` is an element
+    /// of a slice, an array or a map, or what a pointer that an iterator
+    /// yields points to. What is counted, read or received is no place.
+    fn aliased(
+        &mut self,
+        cx: &Cx<'a>,
+        of: ExprId,
+        x: &Operand,
+        target: ExprId,
+        given: TypeId,
+    ) -> Option<TypeId> {
+        let span = cx.tree.exprs[target].span;
+        let shown = self.describe(cx, of, x);
+        let mut under = self.types.underlying(x.ty);
+        if let Type::Pointer(elem) = &*self.types.get(under) {
+            under = self.types.underlying(*elem);
+        }
+        let (code, message) = match &*self.types.get(under) {
+            Type::Array { .. } | Type::Slice(_) | Type::Map { .. } => return Some(given),
+            Type::Func { .. } => match &*self.types.get(self.types.underlying(given)) {
+                Type::Pointer(elem) => return Some(*elem),
+                _ => (
+                    Code::OwnRangeAliasFunc,
+                    format!("invalid & in range clause: {shown} does not yield pointers"),
+                ),
+            },
+            _ => (
+                Code::OwnRangeAliasInvalid,
+                format!("invalid & in range clause: {shown} has no elements to alias"),
+            ),
+        };
+        self.error(code, span, message);
+        None
     }
 
     /// A `switch` or a `select` has one `default` at the most. A clause

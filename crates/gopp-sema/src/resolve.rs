@@ -440,6 +440,7 @@ impl Context<'_> {
             next_scope: 0,
             seen: FxHashSet::default(),
             results: Vec::new(),
+            loop_vars: FxHashMap::default(),
             lenient: false,
             used_imports: FxHashSet::default(),
             diagnostics: Vec::new(),
@@ -474,6 +475,9 @@ struct Resolver<'a> {
     /// The results with a name of each function that is being resolved,
     /// the innermost last.
     results: Vec<Vec<(Spur, LocalId)>>,
+    /// In a `.gopp` file: the variables of the loops whose bodies are
+    /// being resolved, each with where it is declared.
+    loop_vars: FxHashMap<Spur, Vec<Span>>,
     /// Inside the arguments of a macro or an attribute, where a name may be
     /// a word of the macro's own: an unknown name is no error there.
     lenient: bool,
@@ -551,10 +555,47 @@ impl<'a> Resolver<'a> {
                 .push(redeclared(text, ident.span, Some(other)));
             return None;
         }
+        // A variable of a loop keeps its name to itself in the body of
+        // the loop.
+        let is_variable = !matches!(kind, LocalKind::Const | LocalKind::Type);
+        let loop_var = self.loop_vars.get(&ident.name).and_then(|at| at.last());
+        if let (true, Some(&declared)) = (is_variable, loop_var) {
+            let text = self.name_text(ident.name);
+            let message = format!("{text} redeclares a loop variable: use another name");
+            let diagnostic = Diagnostic::new(Code::LoopVarRedeclared, ident.span, message)
+                .with_note(
+                    Code::NoteLoopVarDeclaredHere,
+                    Some(declared),
+                    format!("loop variable {text} declared here"),
+                );
+            self.diagnostics.push(diagnostic);
+        }
         let local = self.local(ident, kind);
         self.body.defs.insert(ident.span.lo, local);
         self.bind(ident.name, local);
         Some(local)
+    }
+
+    /// The body of a loop whose variables are among the locals
+    /// `declared`: those that are in scope now.
+    fn loop_body(&mut self, declared: std::ops::Range<usize>, body: &Block) {
+        let mut own: Vec<(Spur, Span)> = Vec::new();
+        for index in declared.filter(|_| self.dialect == Dialect::Gopp) {
+            let local = &self.body.locals[index];
+            let in_scope = self.visible.get(&local.name).map(|binding| binding.local);
+            if in_scope == Some(LocalId(index as u32)) {
+                own.push((local.name, local.span));
+            }
+        }
+        for &(name, span) in &own {
+            self.loop_vars.entry(name).or_default().push(span);
+        }
+        self.block(body);
+        for (name, _) in own {
+            if let Some(declared) = self.loop_vars.get_mut(&name) {
+                declared.pop();
+            }
+        }
     }
 
     /// Declares a constant or a variable. If its value is in error, the
@@ -1134,7 +1175,9 @@ impl<'a> Resolver<'a> {
                 body,
             } => {
                 self.open();
+                let before = self.body.locals.len();
                 self.opt_stmt(*init);
+                let declared = self.body.locals.len();
                 self.opt_expr(*cond);
                 // A post statement that declares is an error of its own:
                 // its variables are not also unused.
@@ -1149,7 +1192,7 @@ impl<'a> Resolver<'a> {
                     }
                     _ => self.opt_stmt(*post),
                 }
-                self.block(body);
+                self.loop_body(before..declared, body);
                 self.close();
             }
             StmtKind::Range {
@@ -1161,6 +1204,7 @@ impl<'a> Resolver<'a> {
                 self.open();
                 // The range expression does not see the loop variables.
                 self.expr(*x);
+                let before = self.body.locals.len();
                 for &target in lhs {
                     if *define {
                         self.loop_var(target);
@@ -1183,7 +1227,7 @@ impl<'a> Resolver<'a> {
                     let message = "no new variables on left side of :=";
                     self.error(Code::DefineNoNewVars, span, message);
                 }
-                self.block(body);
+                self.loop_body(before..self.body.locals.len(), body);
                 self.close();
             }
             StmtKind::Switch { init, tag, clauses } => {

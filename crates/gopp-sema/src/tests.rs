@@ -3462,6 +3462,114 @@ func take(c C) {}
     assert_eq!(messages("a.go", text), expected);
 }
 
+// rule: RNG-8
+#[test]
+fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
+    let text = "package p
+
+func use(int) {}
+
+func f(xs []int, m map[string]int) {
+	for i, x := range xs {
+		x := x
+		{
+			var i = i
+			use(i)
+		}
+		go func(x int) { use(x) }(x)
+	}
+	for i := 0; i < 3; i++ {
+		for i := range xs {
+			use(i)
+		}
+	}
+	for k, v := range m {
+		use(v)
+		mine := k
+		const v = 1
+		_ = mine
+	}
+	i, x := 1, 2
+	use(i + x)
+}
+";
+    let expected = [
+        "a.gopp:7:3: x redeclares a loop variable: use another name",
+        "    a.gopp:6:9: loop variable x declared here",
+        "a.gopp:9:8: i redeclares a loop variable: use another name",
+        "    a.gopp:6:6: loop variable i declared here",
+        "a.gopp:12:11: x redeclares a loop variable: use another name",
+        "    a.gopp:6:9: loop variable x declared here",
+        "a.gopp:15:7: i redeclares a loop variable: use another name",
+        "    a.gopp:14:6: loop variable i declared here",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // Go lets a name be declared again.
+    assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+// rule: RNG-1a, RNG-6a
+#[test]
+fn an_alias_variable_of_a_range_clause_names_an_element() {
+    let text = r#"package p
+
+type Doc struct{ N int }
+
+func all(yield func(*Doc) bool)          {}
+func vals(yield func(Doc) bool)          {}
+func pairs(yield func(int, *Doc) bool)   {}
+func plain(yield func(int, Doc) bool)    {}
+
+func f(xs []Doc, arr [3]Doc, m map[string]Doc, s string, c chan Doc, p *[]Doc) {
+	for _, &d := range xs {
+		d.N++
+	}
+	for _, &d := range arr {
+		d.N++
+	}
+	for _, &d := range m {
+		d.N++
+	}
+	for _, &d := range p {
+		d.N++
+	}
+	for &d := range all {
+		d.N++
+	}
+	for _, &d := range pairs {
+		d.N++
+	}
+	for _, &r := range s {
+		_ = r
+	}
+	for &v := range c {
+		_ = v
+	}
+	for &i := range 10 {
+		_ = i
+	}
+	for &d := range vals {
+		_ = d
+	}
+	for _, &d := range plain {
+		_ = d
+	}
+}
+"#;
+    let expected = [
+        "a.gopp:29:9: invalid & in range clause: s (variable of type string) has no elements to \
+         alias",
+        "a.gopp:32:6: invalid & in range clause: c (variable of type chan Doc) has no elements to \
+         alias",
+        "a.gopp:35:6: invalid & in range clause: 10 (untyped int constant) has no elements to alias",
+        "a.gopp:38:6: invalid & in range clause: vals (value of type func(func(Doc) bool)) does \
+         not yield pointers",
+        "a.gopp:41:9: invalid & in range clause: plain (value of type func(func(int, Doc) bool)) \
+         does not yield pointers",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
