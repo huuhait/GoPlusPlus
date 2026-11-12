@@ -446,7 +446,7 @@ impl<'a> Checker<'a> {
     /// arguments `args`, each given to a parameter of the type in
     /// `wanted`: the type arguments that the call does not write are
     /// found from the arguments and from the constraints. `None`, with
-    /// the reason reported unless `quiet`, if they are not found.
+    /// the reason reported, if they are not found.
     pub(super) fn instantiated_for(
         &mut self,
         cx: &Cx<'a>,
@@ -454,7 +454,6 @@ impl<'a> Checker<'a> {
         mut generic: Generic,
         wanted: &[TypeId],
         args: &[(ExprId, Operand)],
-        quiet: bool,
     ) -> Option<TypeId> {
         let mut wanted = wanted.to_vec();
         let mentioned = |this: &Self, ty: TypeId| this.types.mentions(ty, &generic.params);
@@ -467,6 +466,23 @@ impl<'a> Checker<'a> {
                 *ty = self.types.substitute(*ty, &old, &generic.params);
             }
         }
+        // A generic function among the arguments is found together with
+        // the function that is called: its type parameters, as new ones,
+        // are looked for too.
+        let own = generic.params.len();
+        let mut args = args.to_vec();
+        for (_, x) in &mut args {
+            if let Some(params) = self.types.generic_func(x.ty) {
+                let argument = self.renamed(Generic {
+                    sig: self.types.underlying(x.ty),
+                    params,
+                    written: Vec::new(),
+                });
+                x.ty = argument.sig;
+                generic.params.extend(argument.params);
+            }
+        }
+        let args = &args[..];
         let within = format!("in call to {}, ", self.expr_string(cx, fun));
         let at = (call, &within[..]);
         // In a `.gopp` file a pointer stays a pointer where that fits;
@@ -481,11 +497,11 @@ impl<'a> Checker<'a> {
             true => self
                 .infer(cx, at, &generic, &wanted, args, how(true, false))
                 .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(true, true)))
-                .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(quiet, false))),
-            false => self.infer(cx, at, &generic, &wanted, args, how(quiet, false)),
+                .or_else(|| self.infer(cx, at, &generic, &wanted, args, how(false, false))),
+            false => self.infer(cx, at, &generic, &wanted, args, how(false, false)),
         }?;
         let instance = self.types.substitute(generic.sig, &generic.params, &found);
-        self.note_instance(fun, &found, instance);
+        self.note_instance(fun, &found[..own], instance);
         self.instances.push(Instance {
             params: generic.params,
             args: found,
@@ -535,10 +551,9 @@ impl<'a> Checker<'a> {
         let mut untyped = Vec::new();
         for (at, (arg, x)) in args.iter().enumerate() {
             let parameter = wanted[at];
-            let generic_argument = self.types.generic_func(x.ty).is_some();
             let parameterized =
                 self.types.mentions(parameter, params) || self.types.mentions(x.ty, params);
-            if !parameterized || generic_argument {
+            if !parameterized {
                 continue;
             }
             if self.is_untyped(x.ty) {

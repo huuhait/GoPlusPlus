@@ -5246,6 +5246,43 @@ func plain(n int, s struct{ x int }) {
     assert_eq!(messages("a.go", text), expected);
 }
 
+#[test]
+fn a_generic_function_as_an_argument_is_inferred_with_the_function_that_is_called() {
+    let text = "package p
+
+func apply[P, Q any](f func(P) Q, p P) Q    { return f(p) }
+func ident[T any](t T) T                    { return t }
+func both[P any](f func(P) P, g func(P) P)  {}
+func text[P any](f func(P) string) P        { var p P; return p }
+func show[T any](t T) string                { return \"\" }
+func number(int) string                     { return \"\" }
+
+func _() {
+	var _ int = apply(ident, 1)
+	var _ string = apply(show, 1.5)
+	var _ int = text(number)
+	both(ident[int], ident)
+	both(ident, ident[string])
+	var _ string = apply(ident, 1)
+	both(ident, ident)
+	both(ident[int], ident[string])
+	_ = apply(ident, nil)
+	_ = text(show)
+}
+";
+    let expected = [
+        "a.go:16:17: cannot use apply(ident, 1) (value of type int) as string value in variable declaration",
+        "a.go:17:2: in call to both, cannot infer P",
+        "    a.go:5:11: P declared here",
+        "a.go:18:19: in call to both, type func(string) string of ident[string] does not match inferred type func(int) int for func(P) P",
+        "a.go:19:6: in call to apply, cannot infer P",
+        "    a.go:3:12: P declared here",
+        "a.go:20:6: in call to text, cannot infer P",
+        "    a.go:6:11: P declared here",
+    ];
+    assert_eq!(messages("a.go", text), expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {
@@ -6173,7 +6210,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 2631;
+const EXPECTED_ERRORS_REPORTED: usize = 2632;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

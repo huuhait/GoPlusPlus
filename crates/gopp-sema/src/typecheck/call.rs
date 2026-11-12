@@ -173,12 +173,7 @@ impl<'a> Checker<'a> {
         // arguments, and say what the parameters are in this call.
         let mut instance = None;
         if let Some(generic) = generic {
-            // A generic function as an argument is not followed yet:
-            // nothing is said where the type arguments are not found.
-            let quiet = given
-                .iter()
-                .any(|(_, x)| self.types.generic_func(x.ty).is_some());
-            let found = self.instantiated_for(cx, (span, fun_expr), generic, &to, &given, quiet)?;
+            let found = self.instantiated_for(cx, (span, fun_expr), generic, &to, &given)?;
             let Type::Func { params: now, .. } = &*self.types.get(found) else {
                 return None;
             };
