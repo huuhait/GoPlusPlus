@@ -1,0 +1,103 @@
+---
+source: crates/gopp-gir/src/lower/tests.rs
+expression: "gir(\"package main\n\nfunc next(n int) int { return n + 1 }\n\nfunc show(small int8, big uint64, ratio float32, ok bool, name string) {\n\tprint(small, big, ratio)\n\tprintln(name, ok, next(1), 2.5, 'x', next(2))\n\tprintln()\n}\n\")"
+---
+module "main"
+file 0 "a.gopp"
+
+fn _GPF4mainE4next(_1: i64) -> i64 [go, external] {
+  let _0: i64
+  let _1: i64 "n"
+  bb0:
+    _0 = add(copy _1, const 1: i64)  ; a.gopp:3:24
+    return  ; a.gopp:3:24
+}
+
+fn _GPF4mainE4show(_1: i8, _2: u64, _3: f32, _4: bool, _5: string) -> () [go, external] {
+  let _0: ()
+  let _1: i8 "small"
+  let _2: u64 "big"
+  let _3: f32 "ratio"
+  let _4: bool "ok"
+  let _5: string "name"
+  let _6: i64
+  let _7: ()
+  let _8: ()
+  let _9: f64
+  let _10: ()
+  let _11: string
+  let _12: bool
+  let _13: i64
+  let _14: i64
+  let _15: ()
+  let _16: ()
+  let _17: ()
+  let _18: ()
+  let _19: ()
+  let _20: ()
+  let _21: ()
+  let _22: ()
+  let _23: i64
+  let _24: ()
+  let _25: ()
+  let _26: ()
+  let _27: ()
+  let _28: ()
+  bb0:
+    _6 = int_to_int(copy _1) as i64  ; a.gopp:6:2
+    _7 = call const fn @_gopp_print_int(copy _6) -> [return: bb1, unwind: continue]  ; a.gopp:6:2
+  bb1:
+    _8 = call const fn @_gopp_print_uint(copy _2) -> [return: bb2, unwind: continue]  ; a.gopp:6:2
+  bb2:
+    _9 = float_to_float(copy _3) as f64  ; a.gopp:6:2
+    _10 = call const fn @_gopp_print_float(copy _9) -> [return: bb3, unwind: continue]  ; a.gopp:6:2
+  bb3:
+    _11 = copy _5  ; a.gopp:7:2
+    _12 = copy _4  ; a.gopp:7:2
+    _13 = call const fn @_GPF4mainE4next(const 1: i64) -> [return: bb4, unwind: continue]  ; a.gopp:7:20
+  bb4:
+    _14 = call const fn @_GPF4mainE4next(const 2: i64) -> [return: bb5, unwind: continue]  ; a.gopp:7:39
+  bb5:
+    _15 = call const fn @_gopp_print_string(copy _11) -> [return: bb6, unwind: continue]  ; a.gopp:7:2
+  bb6:
+    _16 = call const fn @_gopp_print_space() -> [return: bb7, unwind: continue]  ; a.gopp:7:2
+  bb7:
+    _17 = call const fn @_gopp_print_bool(copy _12) -> [return: bb8, unwind: continue]  ; a.gopp:7:2
+  bb8:
+    _18 = call const fn @_gopp_print_space() -> [return: bb9, unwind: continue]  ; a.gopp:7:2
+  bb9:
+    _19 = call const fn @_gopp_print_int(copy _13) -> [return: bb10, unwind: continue]  ; a.gopp:7:2
+  bb10:
+    _20 = call const fn @_gopp_print_space() -> [return: bb11, unwind: continue]  ; a.gopp:7:2
+  bb11:
+    _21 = call const fn @_gopp_print_float(const 0x4004000000000000: f64) -> [return: bb12, unwind: continue]  ; a.gopp:7:2
+  bb12:
+    _22 = call const fn @_gopp_print_space() -> [return: bb13, unwind: continue]  ; a.gopp:7:2
+  bb13:
+    _23 = int_to_int(const 120: i32) as i64  ; a.gopp:7:2
+    _24 = call const fn @_gopp_print_int(copy _23) -> [return: bb14, unwind: continue]  ; a.gopp:7:2
+  bb14:
+    _25 = call const fn @_gopp_print_space() -> [return: bb15, unwind: continue]  ; a.gopp:7:2
+  bb15:
+    _26 = call const fn @_gopp_print_int(copy _14) -> [return: bb16, unwind: continue]  ; a.gopp:7:2
+  bb16:
+    _27 = call const fn @_gopp_print_newline() -> [return: bb17, unwind: continue]  ; a.gopp:7:2
+  bb17:
+    _28 = call const fn @_gopp_print_newline() -> [return: bb18, unwind: continue]  ; a.gopp:8:2
+  bb18:
+    return  ; a.gopp:9:1
+}
+
+declare fn _gopp_print_int(_1: i64) -> () [c, external]
+
+declare fn _gopp_print_uint(_1: u64) -> () [c, external]
+
+declare fn _gopp_print_float(_1: f64) -> () [c, external]
+
+declare fn _gopp_print_string(_1: string) -> () [c, external]
+
+declare fn _gopp_print_space() -> () [c, external]
+
+declare fn _gopp_print_bool(_1: bool) -> () [c, external]
+
+declare fn _gopp_print_newline() -> () [c, external]

@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gopp_target::{HEADERS, ObjectFormat, Part, TargetLayout};
+use gopp_target::{HEADERS, ObjectFormat, Os, Part, TargetLayout};
 
 use crate::driver::{ClangDriver, DriverError};
 
@@ -38,33 +38,86 @@ const fn ends(name: &'static str, params: &'static str) -> RuntimeFunc {
     }
 }
 
-/// Every function of the runtime: the header declares them, and the
-/// runtime defines them. None has a result yet.
-pub const FUNCS: [RuntimeFunc; 14] = [
+/// Every function of the runtime that generated code may call: the
+/// header declares them, and the runtime defines them. None has a
+/// result yet.
+pub const FUNCS: [RuntimeFunc; 24] = [
     returns("_gopp_rt_init", "int argc, char **argv"),
     ends("_gopp_rt_exit", "int code"),
-    ends("_gopp_panic_bounds", "uint64_t index, uint64_t length"),
-    ends("_gopp_panic_slice_alen", "uint64_t index, uint64_t length"),
+    returns("_gopp_rt_funcs", "gopp_func_table *table"),
+    returns("_gopp_print_bool", "bool value"),
+    returns("_gopp_print_int", "int64_t value"),
+    returns("_gopp_print_uint", "uint64_t value"),
+    returns("_gopp_print_float", "double value"),
+    returns("_gopp_print_string", "gopp_string value"),
+    returns("_gopp_print_pointer", "uint8_t *value"),
+    returns("_gopp_print_space", "void"),
+    returns("_gopp_print_newline", "void"),
+    ends(
+        "_gopp_panic_bounds",
+        "uint64_t index, uint64_t length, bool is_signed",
+    ),
+    ends(
+        "_gopp_panic_slice_alen",
+        "uint64_t index, uint64_t length, bool is_signed",
+    ),
     ends(
         "_gopp_panic_slice_acap",
-        "uint64_t index, uint64_t capacity",
+        "uint64_t index, uint64_t capacity, bool is_signed",
     ),
-    ends("_gopp_panic_slice_b", "uint64_t low, uint64_t high"),
-    ends("_gopp_panic_slice3_alen", "uint64_t index, uint64_t length"),
+    ends(
+        "_gopp_panic_slice_b",
+        "uint64_t low, uint64_t high, bool is_signed",
+    ),
+    ends(
+        "_gopp_panic_slice3_alen",
+        "uint64_t index, uint64_t length, bool is_signed",
+    ),
     ends(
         "_gopp_panic_slice3_acap",
-        "uint64_t index, uint64_t capacity",
+        "uint64_t index, uint64_t capacity, bool is_signed",
     ),
-    ends("_gopp_panic_slice3_b", "uint64_t high, uint64_t max"),
-    ends("_gopp_panic_slice3_c", "uint64_t low, uint64_t high"),
+    ends(
+        "_gopp_panic_slice3_b",
+        "uint64_t high, uint64_t max, bool is_signed",
+    ),
+    ends(
+        "_gopp_panic_slice3_c",
+        "uint64_t low, uint64_t high, bool is_signed",
+    ),
     ends(
         "_gopp_panic_slice_convert",
-        "uint64_t length, uint64_t wanted",
+        "uint64_t wanted, uint64_t length, bool is_signed",
     ),
     ends("_gopp_panic_nil", "void"),
     ends("_gopp_panic_divide", "void"),
     ends("_gopp_panic_shift", "void"),
+    ends(
+        "_gopp_panic_must",
+        "gopp_string expr, gopp_string position, gopp_string message",
+    ),
 ];
+
+/// Whether generated code may call a function of the name.
+pub fn is_func(name: &str) -> bool {
+    FUNCS.iter().any(|func| func.name == name)
+}
+
+/// The names of the Go++ functions of a unit, which a trace reads: a
+/// unit has one table, and the start of the program gives it to the
+/// runtime.
+const TABLES: &str = "
+typedef struct gopp_func_name {
+  void *pc;
+  const char *name;
+} gopp_func_name;
+
+typedef struct gopp_func_table {
+  const gopp_func_name *funcs;
+  uint64_t count;
+  struct gopp_func_table *next;
+} gopp_func_table;
+";
 
 /// The names of the types that C has for the scalars, without a header
 /// of the C library: Clang knows them for every target.
@@ -116,6 +169,7 @@ pub fn header(layout: TargetLayout) -> String {
             );
         }
     }
+    out.push_str(TABLES);
     out.push('\n');
     for func in &FUNCS {
         let noreturn = match func.noreturn {
@@ -129,11 +183,28 @@ pub fn header(layout: TargetLayout) -> String {
 
 const HEADER_NAME: &str = "gopp_rt.h";
 
-/// The sources of the runtime, which `gopp` carries.
-const SOURCES: [(&str, &str); 2] = [
-    ("rt.c", include_str!("../../../runtime/rt.c")),
-    ("panic.c", include_str!("../../../runtime/panic.c")),
-];
+/// A file of the runtime with its text, which `gopp` carries.
+type Source = (&'static str, &'static str);
+
+const INTERNAL: Source = ("internal.h", include_str!("../../../runtime/internal.h"));
+
+/// The sources of the runtime for a system: every target has the first
+/// three.
+fn sources(os: Os) -> [Source; 4] {
+    let of_system = match os {
+        Os::Windows => (
+            "os_windows.c",
+            include_str!("../../../runtime/os_windows.c"),
+        ),
+        _ => ("os_linux.c", include_str!("../../../runtime/os_linux.c")),
+    };
+    [
+        ("rt.c", include_str!("../../../runtime/rt.c")),
+        ("print.c", include_str!("../../../runtime/print.c")),
+        ("panic.c", include_str!("../../../runtime/panic.c")),
+        of_system,
+    ]
+}
 
 /// What the runtime is built as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,19 +233,20 @@ pub fn build(driver: &ClangDriver, form: Form, cache: &Path) -> Result<Vec<PathB
         driver.check_link_inputs()?;
     }
     let header = header(driver.target.layout());
+    let sources = sources(driver.target.os);
     let made: Vec<String> = match form {
-        Form::Objects => (SOURCES.iter())
+        Form::Objects => (sources.iter())
             .map(|(name, _)| Path::new(name).with_extension("o").display().to_string())
             .collect(),
         Form::Shared => vec![SHARED_NAME.to_owned()],
     };
-    let dir = kept(cache, &key(&driver, form, &header), |dir| {
+    let dir = kept(cache, &key(&driver, form, &header, &sources), |dir| {
         let write = |name: &str, text: &str| {
             let path = dir.join(name);
             fs::write(&path, text).map_err(|source| DriverError::Write { path, source })
         };
         write(HEADER_NAME, &header)?;
-        for (name, text) in SOURCES {
+        for (name, text) in sources.iter().chain([&INTERNAL]) {
             write(name, text)?;
         }
         let mut command = driver.clang(dir);
@@ -188,14 +260,14 @@ pub fn build(driver: &ClangDriver, form: Form, cache: &Path) -> Result<Vec<PathB
                 command.args(["-o", SHARED_NAME]);
             }
         }
-        command.args(SOURCES.iter().map(|(name, _)| name));
+        command.args(sources.iter().map(|(name, _)| name));
         driver.run(command).map(drop)
     })?;
     Ok(made.iter().map(|name| dir.join(name)).collect())
 }
 
 /// Everything that the files of a build are a function of.
-fn key(driver: &ClangDriver, form: Form, header: &str) -> String {
+fn key(driver: &ClangDriver, form: Form, header: &str, sources: &[Source]) -> String {
     let clang = &driver.toolchain.clang;
     let mut key = format!("{form:?}\n{} {}\n", clang.path.display(), clang.version);
     // The directory of a build is no part of what it makes.
@@ -203,7 +275,7 @@ fn key(driver: &ClangDriver, form: Form, header: &str) -> String {
         let _ = writeln!(key, "{flag}");
     }
     let _ = writeln!(key, "--- {HEADER_NAME}\n{header}");
-    for (name, text) in SOURCES {
+    for (name, text) in sources.iter().chain([&INTERNAL]) {
         let _ = writeln!(key, "--- {name}\n{text}");
     }
     key

@@ -22,71 +22,79 @@ fn _GPF4mainE7assigns(_1: i64, _2: i64, _3: i64, _4: [4]i64, _5: *_GPTiN4mainE4N
   let _6: *_GPTiN4mainE4Node "m"
   let _7: i64
   let _8: i64
-  let _9: u64
-  let _10: bool
-  let _11: *_GPTiN4mainE4Node
+  let _9: i64
+  let _10: u64
+  let _11: bool
   let _12: *_GPTiN4mainE4Node
-  let _13: i64
-  let _14: u64
+  let _13: *_GPTiN4mainE4Node
+  let _14: i64
   let _15: i64
-  let _16: bool
-  let _17: u64
+  let _16: u64
+  let _17: i64
   let _18: bool
   let _19: i64
-  let _20: i64
-  let _21: i64
+  let _20: u64
+  let _21: bool
   let _22: i64
-  let _23: u64
-  let _24: bool
+  let _23: i64
+  let _24: i64
   let _25: i64
-  let _26: i64 "x"
-  let _27: i64
+  let _26: i64
+  let _27: u64
+  let _28: bool
+  let _29: i64
+  let _30: i64 "x"
+  let _31: i64
   bb0:
     _7 = copy _2  ; a.gopp:11:2
     _8 = copy _1  ; a.gopp:11:2
     _1 = copy _7  ; a.gopp:11:2
     _2 = copy _8  ; a.gopp:11:2
-    _9 = int_to_int(copy _3) as u64  ; a.gopp:12:2
-    _10 = lt(copy _9, const 4: u64)  ; a.gopp:12:2
-    assert(copy _10 == true, Bounds(copy _9, const 4: u64)) -> [success: bb1, unwind: continue]  ; a.gopp:12:2
+    _9 = copy _3  ; a.gopp:12:2
+    _10 = int_to_int(copy _9) as u64  ; a.gopp:12:2
+    _11 = lt(copy _10, const 4: u64)  ; a.gopp:12:2
+    assert(copy _11 == true, Bounds(copy _9, const 4: u64)) -> [success: bb1, unwind: continue]  ; a.gopp:12:2
   bb1:
-    _4[_9] = const 7: i64  ; a.gopp:12:2
+    _4[_10] = const 7: i64  ; a.gopp:12:2
     _3 = const 2: i64  ; a.gopp:12:2
-    _11 = copy _5  ; a.gopp:13:2
-    _12 = copy _6  ; a.gopp:13:2
-    (*_11).0 = const 3: i64  ; a.gopp:13:2
-    _5 = copy _12  ; a.gopp:13:2
-    _13 = call const fn @_GPF4mainE4next() -> [return: bb2, unwind: continue]  ; a.gopp:14:6
+    _12 = copy _5  ; a.gopp:13:2
+    _13 = copy _6  ; a.gopp:13:2
+    (*_12).0 = const 3: i64  ; a.gopp:13:2
+    _5 = copy _13  ; a.gopp:13:2
+    _14 = call const fn @_GPF4mainE4next() -> [return: bb2, unwind: continue]  ; a.gopp:14:6
   bb2:
-    _14 = int_to_int(copy _13) as u64  ; a.gopp:14:2
-    _15 = call const fn @_GPF4mainE4next() -> [return: bb3, unwind: continue]  ; a.gopp:14:16
+    _15 = copy _14  ; a.gopp:14:2
+    _16 = int_to_int(copy _15) as u64  ; a.gopp:14:2
+    _17 = call const fn @_GPF4mainE4next() -> [return: bb3, unwind: continue]  ; a.gopp:14:16
   bb3:
-    _16 = lt(copy _14, const 4: u64)  ; a.gopp:14:2
-    assert(copy _16 == true, Bounds(copy _14, const 4: u64)) -> [success: bb4, unwind: continue]  ; a.gopp:14:2
+    _18 = lt(copy _16, const 4: u64)  ; a.gopp:14:2
+    assert(copy _18 == true, Bounds(copy _15, const 4: u64)) -> [success: bb4, unwind: continue]  ; a.gopp:14:2
   bb4:
-    _4[_14] = copy _15  ; a.gopp:14:2
-    _17 = int_to_int(copy _3) as u64  ; a.gopp:15:2
-    _18 = lt(copy _17, const 4: u64)  ; a.gopp:15:2
-    assert(copy _18 == true, Bounds(copy _17, const 4: u64)) -> [success: bb5, unwind: continue]  ; a.gopp:15:2
+    _4[_16] = copy _17  ; a.gopp:14:2
+    _19 = copy _3  ; a.gopp:15:2
+    _20 = int_to_int(copy _19) as u64  ; a.gopp:15:2
+    _21 = lt(copy _20, const 4: u64)  ; a.gopp:15:2
+    assert(copy _21 == true, Bounds(copy _19, const 4: u64)) -> [success: bb5, unwind: continue]  ; a.gopp:15:2
   bb5:
-    _19 = copy _4[_17]  ; a.gopp:15:2
-    _20 = call const fn @_GPF4mainE4next() -> [return: bb6, unwind: continue]  ; a.gopp:15:12
+    _22 = copy _4[_20]  ; a.gopp:15:2
+    _23 = call const fn @_GPF4mainE4next() -> [return: bb6, unwind: continue]  ; a.gopp:15:12
   bb6:
-    _4[_17] = add(copy _19, copy _20)  ; a.gopp:15:2
-    _21 = copy _2  ; a.gopp:16:2
-    _22 = call const fn @_GPF4mainE4next() -> [return: bb7, unwind: continue]  ; a.gopp:16:12
+    _4[_20] = add(copy _22, copy _23)  ; a.gopp:15:2
+    _24 = copy _2  ; a.gopp:16:2
+    _25 = call const fn @_GPF4mainE4next() -> [return: bb7, unwind: continue]  ; a.gopp:16:12
   bb7:
-    _1 = copy _21  ; a.gopp:16:2
-    _23 = int_to_int(copy _3) as u64  ; a.gopp:17:2
-    _24 = lt(copy _23, const 4: u64)  ; a.gopp:17:10
-    assert(copy _24 == true, Bounds(copy _23, const 4: u64)) -> [success: bb8, unwind: continue]  ; a.gopp:17:10
+    _1 = copy _24  ; a.gopp:16:2
+    _26 = copy _3  ; a.gopp:17:2
+    _27 = int_to_int(copy _26) as u64  ; a.gopp:17:2
+    _28 = lt(copy _27, const 4: u64)  ; a.gopp:17:10
+    assert(copy _28 == true, Bounds(copy _26, const 4: u64)) -> [success: bb8, unwind: continue]  ; a.gopp:17:10
   bb8:
-    _25 = copy _4[_23]  ; a.gopp:17:2
-    storage_live(_26)  ; a.gopp:17:2
-    _26 = copy _25  ; a.gopp:17:2
+    _29 = copy _4[_27]  ; a.gopp:17:2
+    storage_live(_30)  ; a.gopp:17:2
+    _30 = copy _29  ; a.gopp:17:2
     _3 = const 0: i64  ; a.gopp:17:2
-    _27 = add(copy _26, copy _3)  ; a.gopp:18:2
-    _0 = add(copy _27, copy _1)  ; a.gopp:18:2
-    storage_dead(_26)  ; a.gopp:18:2
+    _31 = add(copy _30, copy _3)  ; a.gopp:18:2
+    _0 = add(copy _31, copy _1)  ; a.gopp:18:2
+    storage_dead(_30)  ; a.gopp:18:2
     return  ; a.gopp:18:2
 }

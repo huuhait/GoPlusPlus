@@ -12,7 +12,7 @@ use gopp_gir::{
 use gopp_target::{Header, SLICE, STRING};
 
 use super::number::{float_literal, int_literal, int_tag};
-use super::{Cx, EmitError, func_name, global_name, linkage, quoted};
+use super::{Cx, EmitError, global_name, linkage, quoted};
 
 type Written<T = ()> = Result<T, EmitError>;
 
@@ -59,7 +59,7 @@ pub(super) fn prototype(
         Inline::Never => line.push_str("__attribute__((noinline)) "),
     }
     line.push_str(linkage(func.link()));
-    let _ = write!(line, "{} {}(", cx.spelled(sig.ret), func_name(at));
+    let _ = write!(line, "{} {}(", cx.spelled(sig.ret), cx.func_name(at));
     let mut first = true;
     for (number, &param) in sig.params.iter().enumerate() {
         if cx.empty(param) {
@@ -211,7 +211,10 @@ impl Writer<'_, '_> {
                     .map_or(0, |text| text.len());
                 format!("(({}){{(uint8_t *)gopp_s{at}, {len}, 0}})", cx.spelled(ty))
             }
-            (ConstantKind::Func(func), _) => func_name(func.into_raw().into_u32() as usize),
+            (ConstantKind::Func(func), _) => {
+                let at = func.into_raw().into_u32() as usize;
+                self.cx.func_name(at).to_owned()
+            }
             (ConstantKind::Global(global), _) => {
                 let at = global.into_raw().into_u32() as usize;
                 match cx.empty_global(at) {
@@ -471,6 +474,12 @@ impl Writer<'_, '_> {
                 let mut said = Vec::with_capacity(args.len());
                 for arg in args {
                     said.push(format!("(uint64_t){}", self.operand(arg)?));
+                }
+                // The message of Go has a negative index as it is.
+                if let Some(first) = args.first() {
+                    let ty = self.operand_ty(first);
+                    let signed = matches!(self.cx.kind(ty), Type::Int { signed: true, .. });
+                    said.push(signed.to_string());
                 }
                 let _ = writeln!(
                     self.out,

@@ -11,9 +11,9 @@ use gopp_syntax::ast::{BinaryOp, ExprId, ExprKind, UnaryOp};
 use super::func::{Built, FuncCx, deeper};
 use super::{Callee, CalleeKey, Memo, Shared};
 use crate::{
-    AggKind, AssertKind, BinOp, CastKind, Constant, ConstantKind, Global, Linkage, LocalId,
-    LocalKind as SlotKind, Mutability, Operand, Place, ProjectionKind, Rvalue, Type, TypeId,
-    TypeInterner, UnOp, UnwindAction,
+    AggKind, AssertKind, BinOp, CallConv, CastKind, Constant, ConstantKind, FuncType, Global,
+    Linkage, LocalId, LocalKind as SlotKind, Mutability, Operand, Place, ProjectionKind, Rvalue,
+    Type, TypeId, TypeInterner, UnOp, UnwindAction,
 };
 
 /// A literal of an array with more elements is written one element
@@ -22,8 +22,9 @@ const ARRAY_AT_ONCE: u64 = 64;
 
 /// A check that a place needs before it is used.
 pub(super) enum Check {
-    /// The index is below the length.
-    Bounds(LocalId, u64, SourceSpan),
+    /// The index is below the length. The second slot has the index
+    /// with the sign that the program gave it, for the message.
+    Bounds(LocalId, LocalId, u64, SourceSpan),
     /// The pointer is not nil.
     Nil(Operand, SourceSpan),
 }
@@ -495,12 +496,13 @@ impl FuncCx<'_, '_> {
 
     pub fn checked(&mut self, check: Check) -> Built {
         match check {
-            Check::Bounds(index, len, span) => {
+            Check::Bounds(index, written, len, span) => {
                 let word = Memo::word(self.shared, self.b.types(), false);
                 let len = self.b.const_int(word, len)?;
                 let index = Operand::Copy(Place::local(index));
-                let within = Rvalue::Binary(BinOp::Lt, index.clone(), len.clone());
-                self.assert(span, within, AssertKind::Bounds, vec![index, len])
+                let written = Operand::Copy(Place::local(written));
+                let within = Rvalue::Binary(BinOp::Lt, index, len.clone());
+                self.assert(span, within, AssertKind::Bounds, vec![written, len])
             }
             Check::Nil(pointer, span) => {
                 let ty = self.b.operand_ty(&pointer);
@@ -607,18 +609,24 @@ impl FuncCx<'_, '_> {
         let word = Memo::word(self.shared, self.b.types(), false);
         let given = self.operand(index)?;
         let from = self.b.operand_ty(&given);
-        let at = match (from == word, self.kind(from)) {
-            (true, _) => self.b.assign_temp(Rvalue::Use(given))?,
+        let (at, written) = match (from == word, self.kind(from)) {
+            (true, _) => {
+                let at = self.b.assign_temp(Rvalue::Use(given))?;
+                (at, at)
+            }
             (false, Type::Int { .. }) => {
-                self.b
-                    .assign_temp(Rvalue::Cast(CastKind::IntToInt, given, word))?
+                let written = self.b.assign_temp(Rvalue::Use(given))?;
+                let as_given = Operand::Copy(Place::local(written));
+                let cast = Rvalue::Cast(CastKind::IntToInt, as_given, word);
+                (self.b.assign_temp(cast)?, written)
             }
             _ => {
                 self.unsupported(span, "an index that is no integer");
-                self.b.assign_temp(Rvalue::Use(self.zero(word)))?
+                let at = self.b.assign_temp(Rvalue::Use(self.zero(word)))?;
+                (at, at)
             }
         };
-        self.check(Check::Bounds(at, len, span), mode)?;
+        self.check(Check::Bounds(at, written, len, span), mode)?;
         self.b.index(&base, at)
     }
 
@@ -1063,8 +1071,93 @@ impl FuncCx<'_, '_> {
                 });
             }
         }
+        if let Predeclared::Print | Predeclared::Println = called {
+            self.print(called == Predeclared::Println, args)?;
+            return Ok(Rvalue::Use(self.zero(ty)));
+        }
         let what = format!("the built-in function {}", called.name());
         Ok(self.placeholder(span, ty, &what))
+    }
+
+    /// `print` and `println`: the values are worked out, and then each
+    /// is given to the function of the runtime that writes its kind;
+    /// `println` has a space between two and a newline at the end.
+    fn print(&mut self, line: bool, args: &[ExprId]) -> Built {
+        let wanted = vec![None; args.len()];
+        let mut values = Vec::with_capacity(args.len());
+        for value in self.values(args, &wanted)? {
+            values.push(self.operand_of(value)?);
+        }
+        for (at, (value, &arg)) in values.into_iter().zip(args).enumerate() {
+            if line && at > 0 {
+                self.runtime_call("_gopp_print_space", &[], Vec::new())?;
+            }
+            let from = self.b.operand_ty(&value);
+            let types = self.b.types();
+            let (name, param, cast) = match types.get(from).clone() {
+                Type::Bool => ("_gopp_print_bool", from, None),
+                Type::Int { signed: true, .. } => {
+                    let wide = types.int(64, true);
+                    ("_gopp_print_int", wide, Some(CastKind::IntToInt))
+                }
+                Type::Int { signed: false, .. } => {
+                    let wide = types.int(64, false);
+                    ("_gopp_print_uint", wide, Some(CastKind::IntToInt))
+                }
+                Type::Float { .. } => {
+                    let wide = types.float(64);
+                    ("_gopp_print_float", wide, Some(CastKind::FloatToFloat))
+                }
+                Type::String => ("_gopp_print_string", from, None),
+                Type::Ptr(_) => {
+                    let byte = types.int(8, false);
+                    let bytes = types.ptr(byte);
+                    ("_gopp_print_pointer", bytes, Some(CastKind::PtrToPtr))
+                }
+                _ => {
+                    let what = "`print` of a value of this type";
+                    self.unsupported(self.tree.exprs[arg].span, what);
+                    continue;
+                }
+            };
+            let given = match cast.filter(|_| from != param) {
+                Some(kind) => {
+                    let cast = Rvalue::Cast(kind, value, param);
+                    Operand::Copy(Place::local(self.b.assign_temp(cast)?))
+                }
+                None => value,
+            };
+            self.runtime_call(name, &[param], vec![given])?;
+        }
+        if line {
+            self.runtime_call("_gopp_print_newline", &[], Vec::new())?;
+        }
+        Ok(())
+    }
+
+    /// A call of the function `name` of the runtime, which gives
+    /// nothing back.
+    fn runtime_call(&mut self, name: &str, params: &[TypeId], args: Vec<Operand>) -> Built {
+        let sig = self.b.types().intern(Type::Func(FuncType {
+            params: params.into(),
+            ret: TypeInterner::UNIT,
+            has_env: false,
+            cc: CallConv::C,
+        }));
+        let func = self.function_named(name, sig)?;
+        let kind = ConstantKind::Func(func);
+        let callee = Operand::Const(Constant { kind, ty: sig });
+        let result = self.b.temp(TypeInterner::UNIT);
+        let next = self.b.new_block();
+        self.b.call(
+            callee,
+            args,
+            Place::local(result),
+            Some(next),
+            UnwindAction::Continue,
+        )?;
+        self.b.switch_to(next);
+        Ok(())
     }
 
     /// `T(value)` for a type of GIR `to`.

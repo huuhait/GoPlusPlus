@@ -45,20 +45,41 @@ _Static_assert(sizeof(gopp_iface) == 16 && _Alignof(gopp_iface) == 8, "the layou
 _Static_assert(__builtin_offsetof(gopp_iface, itab) == 0, "gopp_iface.itab");
 _Static_assert(__builtin_offsetof(gopp_iface, data) == 8, "gopp_iface.data");
 
+typedef struct gopp_func_name {
+  void *pc;
+  const char *name;
+} gopp_func_name;
+
+typedef struct gopp_func_table {
+  const gopp_func_name *funcs;
+  uint64_t count;
+  struct gopp_func_table *next;
+} gopp_func_table;
+
 void _gopp_rt_init(int argc, char **argv);
 [[noreturn]] void _gopp_rt_exit(int code);
-[[noreturn]] void _gopp_panic_bounds(uint64_t index, uint64_t length);
-[[noreturn]] void _gopp_panic_slice_alen(uint64_t index, uint64_t length);
-[[noreturn]] void _gopp_panic_slice_acap(uint64_t index, uint64_t capacity);
-[[noreturn]] void _gopp_panic_slice_b(uint64_t low, uint64_t high);
-[[noreturn]] void _gopp_panic_slice3_alen(uint64_t index, uint64_t length);
-[[noreturn]] void _gopp_panic_slice3_acap(uint64_t index, uint64_t capacity);
-[[noreturn]] void _gopp_panic_slice3_b(uint64_t high, uint64_t max);
-[[noreturn]] void _gopp_panic_slice3_c(uint64_t low, uint64_t high);
-[[noreturn]] void _gopp_panic_slice_convert(uint64_t length, uint64_t wanted);
+void _gopp_rt_funcs(gopp_func_table *table);
+void _gopp_print_bool(bool value);
+void _gopp_print_int(int64_t value);
+void _gopp_print_uint(uint64_t value);
+void _gopp_print_float(double value);
+void _gopp_print_string(gopp_string value);
+void _gopp_print_pointer(uint8_t *value);
+void _gopp_print_space(void);
+void _gopp_print_newline(void);
+[[noreturn]] void _gopp_panic_bounds(uint64_t index, uint64_t length, bool is_signed);
+[[noreturn]] void _gopp_panic_slice_alen(uint64_t index, uint64_t length, bool is_signed);
+[[noreturn]] void _gopp_panic_slice_acap(uint64_t index, uint64_t capacity, bool is_signed);
+[[noreturn]] void _gopp_panic_slice_b(uint64_t low, uint64_t high, bool is_signed);
+[[noreturn]] void _gopp_panic_slice3_alen(uint64_t index, uint64_t length, bool is_signed);
+[[noreturn]] void _gopp_panic_slice3_acap(uint64_t index, uint64_t capacity, bool is_signed);
+[[noreturn]] void _gopp_panic_slice3_b(uint64_t high, uint64_t max, bool is_signed);
+[[noreturn]] void _gopp_panic_slice3_c(uint64_t low, uint64_t high, bool is_signed);
+[[noreturn]] void _gopp_panic_slice_convert(uint64_t wanted, uint64_t length, bool is_signed);
 [[noreturn]] void _gopp_panic_nil(void);
 [[noreturn]] void _gopp_panic_divide(void);
 [[noreturn]] void _gopp_panic_shift(void);
+[[noreturn]] void _gopp_panic_must(gopp_string expr, gopp_string position, gopp_string message);
 
 [[maybe_unused]] static char gopp_empty;
 

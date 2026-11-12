@@ -784,11 +784,11 @@ fn build_prints_the_module_and_the_unit_of_c() {
         stdout(&output)
     };
     let gir = built(&["-emit=gir"]);
-    assert!(gir.contains("fn _GPF28command$2d$line$2d$argumentsE3add(_1: i64, _2: i64) -> i64"));
-    assert!(gir.contains("global var @_GPR28command$2d$line$2d$argumentsE5total: i64"));
+    assert!(gir.contains("fn _GPF4mainE3add(_1: i64, _2: i64) -> i64"));
+    assert!(gir.contains("global var @_GPR4mainE5total: i64"));
     for target in ["linux/amd64", "windows/amd64"] {
         let unit = built(&["-emit=c", &format!("-target={target}")]);
-        assert!(unit.contains("__asm__(\"_GPF28command$2d$line$2d$argumentsE3add\")"));
+        assert!(unit.contains("__asm__(\"_GPF4mainE3add\")"));
         assert!(unit.contains("int main(int argc, char **argv) {"));
         assert_eq!(unit, built(&["-emit=c"]));
     }
@@ -873,7 +873,7 @@ fn build_makes_an_object_for_each_target_and_links_for_its_own() {
     let coff = made(&["-emit=obj", "-target=windows/amd64"], "sums.obj");
     assert_eq!(&coff[..2], [0x64, 0x86]);
     let assembly = made(&["-emit=asm", "-target=linux/amd64"], "sums.s");
-    assert!(String::from_utf8_lossy(&assembly).contains("_GPF28command$2d$line$2d$argumentsE3add"));
+    assert!(String::from_utf8_lossy(&assembly).contains("_GPF4mainE3add"));
     let (own, other, program) = match cfg!(target_os = "linux") {
         true => ("linux/amd64", "windows/amd64", "sums"),
         false => ("windows/amd64", "linux/amd64", "sums.exe"),
@@ -885,6 +885,222 @@ fn build_makes_an_object_for_each_target_and_links_for_its_own() {
         made(&[&format!("-target={own}")], program);
         let ran = run(&mut Command::new(dir.path().join(program)));
         assert_eq!(ran.status.code(), Some(0));
+    }
+}
+
+/// `run`, but only the start of the process is held against the
+/// others, so that several run at a time.
+fn run_beside(command: &mut Command) -> Output {
+    use std::process::Stdio;
+
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = {
+        let _guard = SPAWN.lock().unwrap_or_else(PoisonError::into_inner);
+        command.spawn().unwrap()
+    };
+    child.wait_with_output().unwrap()
+}
+
+/// Builds the program of one file and runs it: what it wrote to the
+/// standard error stream, and its status.
+fn built_and_run(dir: &TempDir, name: &str, text: &str) -> (String, Option<i32>) {
+    let file = write_source(dir, name, text);
+    let program = dir.path().join(format!("{name}.bin"));
+    let built = run_beside(gopp().arg("build").arg("-o").arg(&program).arg(&file));
+    assert_eq!(stderr(&built), "", "{name}");
+    assert_eq!(built.status.code(), Some(0), "{name}");
+    let ran = run_beside(&mut Command::new(&program));
+    assert_eq!(stdout(&ran), "", "{name}");
+    (stderr(&ran), ran.status.code())
+}
+
+/// What a program writes before the trace of a failure.
+fn before_the_trace(written: &str) -> &str {
+    let end = written.find("\ngoroutine ").unwrap_or(written.len());
+    &written[..end]
+}
+
+/// Programs of Go that lower today, each with what it writes before
+/// the trace of a failure and the status that it ends with. A long
+/// test compares them with what Go itself makes of them.
+const RUNS: [(&str, &str, i32); 8] = [
+    (
+        "package main
+
+type point struct{ x, y int }
+
+func half(x float64) float64 { return x / 2 }
+
+func main() {
+	var p *int
+	var q *point
+	n := 42
+	var small int8 = -128
+	var big uint64 = 18446744073709551615
+	var ratio float32 = 0.1
+	print(\"a\", 1, true, \"\\n\")
+	println(\"x\", n, small, big, half(3), ratio, false)
+	println(1.5, -0.0, 1e100, 123456789.0, 5e-324, 'a', 1<<62)
+	println(p, q == nil, \"tail\")
+	println()
+	println(-9223372036854775808, 0.1+0.2, float32(16777217), -half(0))
+	println(half(1e308)*4, -half(1e308)*4, half(1e308)*4-half(1e308)*4)
+}
+",
+        "a1true
+x 42 -128 18446744073709551615 +1.500000e+000 +1.000000e-001 false
++1.500000e+000 +0.000000e+000 +1.000000e+100 +1.234568e+008 +4.940656e-324 97 4611686018427387904
+0x0 true tail
+
+-9223372036854775808 +3.000000e-001 +1.677722e+007 -0.000000e+000
++Inf -Inf NaN
+",
+        0,
+    ),
+    (
+        "package main
+
+func at(i int) int {
+	var cells [3]int
+	return cells[i]
+}
+
+func main() {
+	println(\"before\")
+	println(at(5))
+}
+",
+        "before\npanic: runtime error: index out of range [5] with length 3\n",
+        2,
+    ),
+    (
+        "package main
+
+func back(i int8) int8 { return i - 3 }
+
+func main() {
+	var cells [3]int
+	cells[back(1)] = 1
+}
+",
+        "panic: runtime error: index out of range [-2]\n",
+        2,
+    ),
+    (
+        "package main
+
+func far(i uint64) uint64 { return i - 1 }
+
+func main() {
+	var cells [3]int
+	cells[far(0)] = 1
+}
+",
+        "panic: runtime error: index out of range [18446744073709551615] with length 3\n",
+        2,
+    ),
+    (
+        "package main
+
+func zero() int { return 0 }
+
+func main() { println(7 / zero()) }
+",
+        "panic: runtime error: integer divide by zero\n",
+        2,
+    ),
+    (
+        "package main
+
+func zero() int { return 0 }
+
+func main() { println(7 % zero()) }
+",
+        "panic: runtime error: integer divide by zero\n",
+        2,
+    ),
+    (
+        "package main
+
+func count() int { return -1 }
+
+func main() { println(1 << count()) }
+",
+        "panic: runtime error: negative shift amount\n",
+        2,
+    ),
+    (
+        "package main
+
+func none() *int { return nil }
+
+func main() { println(*none()) }
+",
+        "panic: runtime error: invalid memory address or nil pointer dereference\n",
+        2,
+    ),
+];
+
+#[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "links and runs programs for linux/amd64"
+)]
+fn a_program_prints_and_fails_as_go_says() {
+    let dir = TempDir::new().unwrap();
+    let all: Vec<(String, Option<i32>)> = std::thread::scope(|scope| {
+        let runs = RUNS.iter().enumerate();
+        let started: Vec<_> = runs
+            .map(|(at, (text, ..))| {
+                let dir = &dir;
+                scope.spawn(move || built_and_run(dir, &format!("run{at}.go"), text))
+            })
+            .collect();
+        let joined = started.into_iter().map(|run| run.join().unwrap());
+        joined.collect()
+    });
+    for ((text, said, status), (written, ended)) in RUNS.iter().zip(&all) {
+        assert_eq!(before_the_trace(written), *said, "{text}");
+        assert_eq!(*ended, Some(*status), "{text}");
+    }
+    // The trace has the functions of Go++ on the stack, the innermost
+    // first, and none of the runtime.
+    let written = &all[1].0;
+    let lines: Vec<&str> = written.lines().skip(3).collect();
+    let offset = |line: &str| line.starts_with("\t+0x") && line.len() > 4;
+    assert_eq!(lines[0], "goroutine 1 [running]:");
+    assert_eq!(
+        (lines[1], lines[3]),
+        ("main.at()", "main.main()"),
+        "{written}"
+    );
+    assert!(offset(lines[2]) && offset(lines[4]), "{written}");
+    assert_eq!(lines.len(), 5, "{written}");
+}
+
+#[test]
+#[ignore = "long: builds and runs the same programs with Go"]
+fn go_prints_and_fails_as_the_table_says() {
+    let dir = TempDir::new().unwrap();
+    for (at, (text, said, status)) in RUNS.iter().enumerate() {
+        let file = write_source(&dir, &format!("run{at}.go"), text);
+        let program = dir.path().join(format!("go{at}"));
+        let mut go = Command::new("go");
+        go.args(["build", "-o"]).arg(&program).arg(&file);
+        go.env("GOCACHE", dir.path().join("gocache"));
+        go.env("GOFLAGS", "-mod=mod").env("GO111MODULE", "off");
+        let built = run(&mut go);
+        assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+        let ran = run(&mut Command::new(&program));
+        // Go says which signal a nil pointer raised, on a line of its
+        // own; Go++ checks the pointer and has no signal.
+        let written: String = stderr(&ran)
+            .split_inclusive('\n')
+            .filter(|line| !line.starts_with("[signal "))
+            .collect();
+        assert_eq!(before_the_trace(&written), *said, "{text}");
+        assert_eq!(ran.status.code(), Some(*status), "{text}");
     }
 }
 

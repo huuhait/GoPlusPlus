@@ -58,6 +58,8 @@ pub(crate) struct Cx<'m> {
     spelled: Vec<String>,
     /// The types of the globals, by their numbers.
     globals: Vec<TypeId>,
+    /// The name that each function has in the unit.
+    funcs: Vec<String>,
 }
 
 impl Cx<'_> {
@@ -79,15 +81,37 @@ impl Cx<'_> {
         self.module.types.get(ty)
     }
 
+    /// The name that the function of the number has in the unit: the
+    /// symbol is its label. A function of the runtime has its own name,
+    /// which the header declares.
+    pub fn func_name(&self, at: usize) -> &str {
+        &self.funcs[at]
+    }
+
     /// Whether the global of the number takes no room.
     pub fn empty_global(&self, at: usize) -> bool {
         self.globals.get(at).is_some_and(|&ty| self.empty(ty))
     }
 }
 
-/// The name that a function has in the unit; the symbol is its label.
-pub(crate) fn func_name(at: usize) -> String {
-    format!("gopp_f{at}")
+/// What the name of every function of the runtime starts with.
+const RUNTIME_PREFIX: &str = "_gopp_";
+
+/// The name of each function in the unit. A module that names a
+/// function of the runtime that the runtime does not have is refused.
+fn func_names(module: &Module) -> Result<Vec<String>, EmitError> {
+    let named = |(at, func): (usize, &Function)| {
+        let name = func.name();
+        match func.is_declaration() && name.starts_with(RUNTIME_PREFIX) {
+            true if crate::runtime::is_func(name) => Ok(name.to_owned()),
+            true => Err(EmitError::Unsupported {
+                func: Some(name.to_owned()),
+                what: "a function that the runtime does not have",
+            }),
+            false => Ok(format!("gopp_f{at}")),
+        }
+    };
+    module.funcs.values().enumerate().map(named).collect()
 }
 
 pub(crate) fn global_name(at: usize) -> String {
@@ -130,6 +154,7 @@ pub(crate) fn emit_counted(
         layouts,
         spelled,
         globals: module.globals.values().map(|global| global.ty).collect(),
+        funcs: func_names(module)?,
     };
     let mut out = crate::runtime::header(options.layout);
     out.push_str(PRELUDE);
@@ -164,6 +189,9 @@ pub(crate) fn emit_counted(
     let funcs: Vec<&Function> = module.funcs.values().collect();
     for (at, func) in funcs.iter().enumerate() {
         steps += 1;
+        if cx.func_name(at).starts_with(RUNTIME_PREFIX) {
+            continue;
+        }
         let _ = writeln!(out, "{};", body::prototype(&cx, at, func, true)?);
     }
     // Each function is written on its own; the unit has them in their
@@ -196,9 +224,13 @@ pub(crate) fn linkage(link: Linkage) -> &'static str {
     }
 }
 
-/// `main` of C: the runtime is told that the program starts, then the
-/// `init` functions of the package run in their order, then its `main`.
-/// A package without a `main` gets none.
+/// How long the name of a function in a trace may be.
+const MAX_TRACE_NAME: usize = 256;
+
+/// `main` of C: the runtime is told that the program starts and what
+/// its functions are called in a trace, then the `init` functions of
+/// the package run in their order, then its `main`. A package without
+/// a `main` gets none.
 fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
     let package = &cx.module.name;
     let defined = |name: &str| {
@@ -208,13 +240,34 @@ fn entry(cx: &Cx<'_>, funcs: &[&Function], out: &mut String) {
     let Some(main) = defined(&gopp_mangle::func_symbol(package, "main")) else {
         return;
     };
-    out.push_str("\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n");
+    out.push_str("\nstatic const gopp_func_name gopp_funcs[] = {\n");
+    let mut count = 0;
+    for (at, func) in funcs.iter().enumerate() {
+        if func.is_declaration() {
+            continue;
+        }
+        // A function is called what its symbol reads as.
+        let symbol = func.name().as_bytes();
+        let readable = gopp_mangle::demangle(symbol, MAX_TRACE_NAME);
+        let name = readable.unwrap_or_else(|_| func.name().to_owned());
+        let name = quoted(name.as_bytes());
+        let _ = writeln!(out, "  {{(void *){}, \"{name}\"}},", cx.func_name(at));
+        count += 1;
+    }
+    let _ = writeln!(
+        out,
+        "}};\nstatic gopp_func_table gopp_table = {{gopp_funcs, {count}, 0}};"
+    );
+    out.push_str(
+        "\nint main(int argc, char **argv) {\n  _gopp_rt_init(argc, argv);\n  \
+         _gopp_rt_funcs(&gopp_table);\n",
+    );
     let mut number = 0;
     while let Some(init) = defined(&gopp_mangle::init_symbol(package, number)) {
-        let _ = writeln!(out, "  {}();", func_name(init));
+        let _ = writeln!(out, "  {}();", cx.func_name(init));
         number += 1;
     }
-    let _ = writeln!(out, "  {}();\n  return 0;\n}}", func_name(main));
+    let _ = writeln!(out, "  {}();\n  return 0;\n}}", cx.func_name(main));
 }
 
 /// What a unit has after the header of the runtime and before its own

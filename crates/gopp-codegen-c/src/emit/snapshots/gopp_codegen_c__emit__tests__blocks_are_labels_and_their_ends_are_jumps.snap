@@ -82,8 +82,15 @@ bb1:
   return;
 }
 
+static const gopp_func_name gopp_funcs[] = {
+  {(void *)gopp_f0, "main.pick"},
+  {(void *)gopp_f1, "main.main"},
+};
+static gopp_func_table gopp_table = {gopp_funcs, 2, 0};
+
 int main(int argc, char **argv) {
   _gopp_rt_init(argc, argv);
+  _gopp_rt_funcs(&gopp_table);
   gopp_f1();
   return 0;
 }

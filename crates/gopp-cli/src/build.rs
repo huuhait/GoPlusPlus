@@ -90,7 +90,17 @@ pub fn run(options: &Options) -> ExitCode {
         .iter()
         .map(|(file, source)| Unit { file, source })
         .collect();
-    let package = check(&parsed.path, &units, &loader, &names, &types, &sink);
+    // The package `main` has that path in its symbols, wherever its
+    // files are, as in Go.
+    let named_main = units.iter().any(|unit| {
+        let name = unit.file.package;
+        name.is_some_and(|name| names.resolve(&name.name) == "main")
+    });
+    let path = match named_main {
+        true => "main",
+        false => &parsed.path,
+    };
+    let package = check(path, &units, &loader, &names, &types, &sink);
     if reported(sink.finish(), &sources) {
         return ExitCode::from(EXIT_ERRORS);
     }

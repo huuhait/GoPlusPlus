@@ -154,8 +154,8 @@ Assert(cond, expected, kind, T, unwind) Resume
   - `Catch` blocks (`BasicBlock::Catch`, implying `Cleanup`) implement `defer` + `recover()`: they run deferred calls LIFO, query `runtime.recover()`, and branch via `Switch` either back to normal return flow (when recovered) or to `Resume` (when unrecovered).
 - **Fallible `!` propagation (`Info::Bangs`):** `f!(...)` lowers to `Call` followed by `Switch` on `err.itab == null`, branching on failure to a `BasicBlock::Cold` block (`__builtin_expect(..., 0)`):
   - `Return`: zeroes non-error return fields (`ERR-3`), writes `err`, and returns.
-  - `Panic`: stores `(expr, pos, err)` into the function's shared `bang_panic` cold block, which calls `gopp_panic_must(expr, pos, err)` (`__attribute__((noreturn, cold))`).
-- **Runtime assertions (`Assert`):** Bounds, slice-bounds (`SliceAlen`..`Slice3C`, `SliceConvert`), nil, and division/shift checks carry message arguments (`V065`) and branch on failure to one shared cold panic block per check kind per function (`gopp_panic_<kind>`).
+  - `Panic`: stores `(expr, pos, err)` into the function's shared `bang_panic` cold block, which calls `_gopp_panic_must(expr, pos, message)` with the message of the error (`__attribute__((noreturn, cold))`).
+- **Runtime assertions (`Assert`):** Bounds, slice-bounds (`SliceAlen`..`Slice3C`, `SliceConvert`), nil, and division/shift checks carry message arguments (`V065`) and branch on failure to one shared cold panic block per check kind per function (`_gopp_panic_<kind>`). The first message argument of a bounds check is the index as the program wrote it, with its sign; the emitter also passes whether it is signed, so that a negative index reads as Go writes it ([runtime.md](runtime.md)).
 
 ## 7. Moves, drops, and drop elaboration
 

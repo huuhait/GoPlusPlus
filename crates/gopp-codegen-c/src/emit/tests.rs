@@ -465,23 +465,61 @@ fn a_program_computes_what_go_says_at_every_level() {
     let fails = |body: &str| {
         format!("package main\n\nfunc zero() int {{ return 0 }}\n\nfunc main() {{\n{body}\n}}\n")
     };
+    // A program, the status that it ends with, and what it says first.
+    let failed = "panic: runtime error: ";
     let programs = [
-        (CHECKS.to_owned(), 0),
-        (fails("\tvar a [3]int\n\ta[zero()+3] = 1"), 2),
-        (fails("\tvar a [3]int\n\t_ = a[zero()-1]"), 2),
-        (fails("\t_ = 1 / zero()"), 2),
-        (fails("\t_ = 1 % zero()"), 2),
-        (fails("\t_ = 1 << (zero() - 1)"), 2),
-        (fails("\t_ = 1.5 / float64(zero())"), 0),
+        (CHECKS.to_owned(), 0, String::new()),
+        (
+            fails("\tvar a [3]int\n\ta[zero()+3] = 1"),
+            2,
+            format!("{failed}index out of range [3] with length 3"),
+        ),
+        (
+            fails("\tvar a [3]int\n\t_ = a[zero()-1]"),
+            2,
+            format!("{failed}index out of range [-1]"),
+        ),
+        (
+            fails("\tvar a [3]int\n\t_ = a[uint8(zero()+200)]"),
+            2,
+            format!("{failed}index out of range [200] with length 3"),
+        ),
+        (
+            fails("\tvar a [3]int\n\t_ = a[^uint64(zero())]"),
+            2,
+            format!("{failed}index out of range [18446744073709551615] with length 3"),
+        ),
+        (
+            fails("\t_ = 1 / zero()"),
+            2,
+            format!("{failed}integer divide by zero"),
+        ),
+        (
+            fails("\t_ = 1 % zero()"),
+            2,
+            format!("{failed}integer divide by zero"),
+        ),
+        (
+            fails("\t_ = 1 << (zero() - 1)"),
+            2,
+            format!("{failed}negative shift amount"),
+        ),
+        (fails("\t_ = 1.5 / float64(zero())"), 0, String::new()),
+        (
+            fails("\tprintln(\"x\", zero() - 7, 2.5, zero() == 0)\n\tprint(1, \"\\n\")"),
+            0,
+            "x -7 +2.500000e+000 true".to_owned(),
+        ),
     ];
-    let cases: Vec<(&str, i32, OptLevel)> = programs
+    let cases: Vec<(&str, i32, &str, OptLevel)> = programs
         .iter()
-        .flat_map(|(program, status)| {
-            [OptLevel::O0, OptLevel::O2, OptLevel::Oz].map(|opt| (&**program, *status, opt))
+        .flat_map(|(program, status, said)| {
+            [OptLevel::O0, OptLevel::O2, OptLevel::Oz]
+                .map(|opt| (&**program, *status, &**said, opt))
         })
         .collect();
     let cache = tempfile::tempdir().unwrap();
-    cases.par_iter().for_each(|&(program, status, opt)| {
+    cases.par_iter().for_each(|&(program, status, said, opt)| {
         let unit = emit_c23(&module("a.gopp", program), &options(true)).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let program_file = dir.path().join("program");
@@ -496,8 +534,19 @@ fn a_program_computes_what_go_says_at_every_level() {
                 &runtime,
             )
             .unwrap_or_else(|error| panic!("{error}"));
-        let ran = std::process::Command::new(&program_file).status().unwrap();
-        assert_eq!(ran.code(), Some(status), "{opt:?}:\n{program}");
+        let ran = std::process::Command::new(&program_file).output().unwrap();
+        assert_eq!(ran.status.code(), Some(status), "{opt:?}:\n{program}");
+        let written = String::from_utf8_lossy(&ran.stderr);
+        let first = written.lines().next().unwrap_or_default();
+        assert_eq!(first, said, "{opt:?}:\n{program}");
+        // A failure has a trace, which names the function that failed
+        // unless its code was put into another.
+        let traced = written.contains("\n\ngoroutine 1 [running]:\n");
+        assert_eq!(traced, status == 2, "{written}");
+        if opt == OptLevel::O0 {
+            let named = written.contains("\nmain.main()\n\t+0x");
+            assert_eq!(named, status == 2, "{written}");
+        }
     });
 }
 

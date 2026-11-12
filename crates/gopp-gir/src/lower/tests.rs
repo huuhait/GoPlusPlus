@@ -538,6 +538,53 @@ func read(p *Point, q *int, l Line, m *Line) int {
 }
 
 #[test]
+fn print_gives_each_value_to_the_runtime_after_all_are_worked_out() {
+    insta::assert_snapshot!(gir("package main
+
+func next(n int) int { return n + 1 }
+
+func show(small int8, big uint64, ratio float32, ok bool, name string) {
+	print(small, big, ratio)
+	println(name, ok, next(1), 2.5, 'x', next(2))
+	println()
+}
+"));
+}
+
+#[test]
+fn a_pointer_of_a_go_file_is_printed_as_its_address() {
+    let (lowered, messages) = lowered_with(
+        &[(
+            "a.go",
+            "package main\n\nfunc show(p *int, q *[4]bool) { println(p, q) }\n",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(messages, [] as [&str; 0]);
+    let text = print_module(&lowered.module);
+    assert_eq!(
+        text.matches("call const fn @_gopp_print_pointer(").count(),
+        2,
+        "{text}"
+    );
+    // What has no kind that `print` writes is said, and the rest is
+    // printed.
+    let (lowered, messages) = lowered_with(
+        &[(
+            "a.go",
+            "package main\n\nfunc show(pair [2]int) { println(1, pair, 2) }\n",
+        )],
+        usize::MAX,
+    );
+    assert_eq!(
+        messages,
+        ["a.go:3:37: not supported yet: `print` of a value of this type"]
+    );
+    let text = print_module(&lowered.module);
+    assert_eq!(text.matches("@_gopp_print_int(").count(), 2, "{text}");
+}
+
+#[test]
 fn what_is_not_supported_is_reported_once_and_has_a_zero() {
     let text = "package main
 
@@ -588,7 +635,8 @@ func f{at}(n int, p Pair) (int, string) {{
 	for i := 0; i < n; i++ {{
 		total += both.p.a * i
 	}}
-	println(total)
+	println(total, \"f{at}\")
+	defer println(total)
 	return total + p.b, \"f{at}\"
 }}
 ",
@@ -715,7 +763,7 @@ fn the_steps_grow_with_the_source() {
         steps_of(&function(&labels))
     });
     assert_near_linear(&[50, 100, 200, 400], |n| {
-        steps_of(&many_functions(n).replace("\tprintln(total)\n", ""))
+        steps_of(&many_functions(n).replace("\tdefer println(total)\n", ""))
     });
 }
 

@@ -62,20 +62,22 @@ T5 gopp_f0(T3 _1) {
 }
 
 void gopp_f1(T8 * _1, int8_t _2, int64_t _3) {
-  [[maybe_unused]] uint64_t _4;
-  [[maybe_unused]] bool _5;
-  [[maybe_unused]] T3 * _6;
-  [[maybe_unused]] int64_t * _7;
-  _4 = ((uint64_t)_3);
-  _5 = (_4 < 3ull);
-  if (__builtin_expect(!_5, 0)) _gopp_panic_bounds((uint64_t)_4, (uint64_t)3ull);
+  [[maybe_unused]] int64_t _4;
+  [[maybe_unused]] uint64_t _5;
+  [[maybe_unused]] bool _6;
+  [[maybe_unused]] T3 * _7;
+  [[maybe_unused]] int64_t * _8;
+  _4 = _3;
+  _5 = ((uint64_t)_4);
+  _6 = (_5 < 3ull);
+  if (__builtin_expect(!_6, 0)) _gopp_panic_bounds((uint64_t)_4, (uint64_t)3ull, true);
   goto bb1;
 bb1:
-  (*_1).f1.a[_4] = ((int8_t)((*_1).f1.a[_4] + _2));
-  _6 = (&gopp_g1);
-  (*_1).f0 = (*_6);
-  _7 = (&gopp_g0);
-  (*_7) = ((int64_t)((*_7) + 1ll));
+  (*_1).f1.a[_5] = ((int8_t)((*_1).f1.a[_5] + _2));
+  _7 = (&gopp_g1);
+  (*_1).f0 = (*_7);
+  _8 = (&gopp_g0);
+  (*_8) = ((int64_t)((*_8) + 1ll));
   return;
 }
 
@@ -126,8 +128,18 @@ void gopp_f4(void) {
   return;
 }
 
+static const gopp_func_name gopp_funcs[] = {
+  {(void *)gopp_f0, "main.pair"},
+  {(void *)gopp_f1, "main.Box.grow"},
+  {(void *)gopp_f2, "main.build"},
+  {(void *)gopp_f3, "main.init.0"},
+  {(void *)gopp_f4, "main.main"},
+};
+static gopp_func_table gopp_table = {gopp_funcs, 5, 0};
+
 int main(int argc, char **argv) {
   _gopp_rt_init(argc, argv);
+  _gopp_rt_funcs(&gopp_table);
   gopp_f3();
   gopp_f4();
   return 0;

@@ -4,7 +4,6 @@ expression: "format!(\"{}\\n{}\", messages.join(\"\\n\"), print_module(&lowered.
 ---
 a.gopp:7:2: not supported yet: a range loop
 a.gopp:10:7: not supported yet: a function literal
-a.gopp:11:2: not supported yet: the built-in function println
 a.gopp:14:10: not supported yet: a call of this function
 a.gopp:16:2: not supported yet: a defer statement
 a.gopp:17:9: not supported yet: a call of this function
@@ -20,31 +19,41 @@ fn _GPF4mainE1f(_1: []i64, _2: gopp.iface, _3: string) -> (i64, string) [go, ext
   let _3: string "name"
   let _4: i64 "sum"
   let _5: (fn env(*u8) -> i64, *u8) "g"
-  let _6: gopp.iface "any"
-  let _7: f64 "area"
-  let _8: u64
-  let _9: i64
-  let _10: i64
+  let _6: ()
+  let _7: ()
+  let _8: gopp.iface "any"
+  let _9: f64 "area"
+  let _10: u64
   let _11: i64
   let _12: i64
+  let _13: i64
+  let _14: i64
   bb0:
     storage_live(_4)  ; a.gopp:6:2
     _4 = const 0: i64  ; a.gopp:6:2
     storage_live(_5)  ; a.gopp:10:2
     _5 = const zero: (fn env(*u8) -> i64, *u8)  ; a.gopp:10:2
-    storage_live(_6)  ; a.gopp:12:2
-    _6 = copy _2  ; a.gopp:12:2
-    storage_live(_7)  ; a.gopp:14:2
-    _7 = add(const zero: f64, const 0x3ff0000000000000: f64)  ; a.gopp:14:2
-    _8 = len(_1)  ; a.gopp:17:2
-    _9 = int_to_int(copy _8) as i64  ; a.gopp:17:2
-    _10 = add(const zero: i64, copy _9)  ; a.gopp:17:2
-    _11 = const zero: i64  ; a.gopp:17:2
-    _12 = add(copy _10, copy _11)  ; a.gopp:17:2
-    _0 = tuple {copy _12, const zero: string}  ; a.gopp:17:2
-    storage_dead(_7)  ; a.gopp:17:2
-    storage_dead(_6)  ; a.gopp:17:2
+    _6 = call const fn @_gopp_print_int(copy _4) -> [return: bb1, unwind: continue]  ; a.gopp:11:2
+  bb1:
+    _7 = call const fn @_gopp_print_newline() -> [return: bb2, unwind: continue]  ; a.gopp:11:2
+  bb2:
+    storage_live(_8)  ; a.gopp:12:2
+    _8 = copy _2  ; a.gopp:12:2
+    storage_live(_9)  ; a.gopp:14:2
+    _9 = add(const zero: f64, const 0x3ff0000000000000: f64)  ; a.gopp:14:2
+    _10 = len(_1)  ; a.gopp:17:2
+    _11 = int_to_int(copy _10) as i64  ; a.gopp:17:2
+    _12 = add(const zero: i64, copy _11)  ; a.gopp:17:2
+    _13 = const zero: i64  ; a.gopp:17:2
+    _14 = add(copy _12, copy _13)  ; a.gopp:17:2
+    _0 = tuple {copy _14, const zero: string}  ; a.gopp:17:2
+    storage_dead(_9)  ; a.gopp:17:2
+    storage_dead(_8)  ; a.gopp:17:2
     storage_dead(_5)  ; a.gopp:17:2
     storage_dead(_4)  ; a.gopp:17:2
     return  ; a.gopp:17:2
 }
+
+declare fn _gopp_print_int(_1: i64) -> () [c, external]
+
+declare fn _gopp_print_newline() -> () [c, external]
