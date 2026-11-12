@@ -83,6 +83,17 @@ impl Types {
                     }
                     _ => deep(|| self.no_zero_in(under, names, steps)),
                 };
+                // The parents are parts of the value.
+                let is_struct = matches!(&*self.get(under), Type::Struct(_));
+                let found = found.or_else(|| {
+                    let parents = if is_struct {
+                        self.parents(ty)
+                    } else {
+                        Vec::new()
+                    };
+                    let mut parents = parents.into_iter();
+                    parents.find_map(|parent| deep(|| self.no_zero_in(parent, names, steps)))
+                });
                 found.map(|(part, why)| match part == under {
                     true => (ty, why),
                     false => (part, why),

@@ -442,6 +442,7 @@ impl Context<'_> {
             results: Vec::new(),
             loop_vars: FxHashMap::default(),
             lenient: false,
+            in_method: false,
             used_imports: FxHashSet::default(),
             diagnostics: Vec::new(),
             steps: 0,
@@ -481,6 +482,8 @@ struct Resolver<'a> {
     /// Inside the arguments of a macro or an attribute, where a name may be
     /// a word of the macro's own: an unknown name is no error there.
     lenient: bool,
+    /// Inside a method, where `base` names the parents of its type.
+    in_method: bool,
     used_imports: FxHashSet<ObjId>,
     diagnostics: Vec<Diagnostic>,
     steps: u64,
@@ -650,6 +653,11 @@ impl<'a> Resolver<'a> {
             return;
         }
         let text = self.name_text(name);
+        // In a method of a `.gopp` file `base` names the parents of the
+        // type, if it has any, which its declaration says.
+        if text == "base" && self.in_method && self.dialect == Dialect::Gopp {
+            return;
+        }
         let mut diagnostic = Diagnostic::new(Code::Undefined, span, format!("undefined: {text}"));
         if text == "new" && self.dialect == Dialect::Gopp {
             let note = "Go++ has no new: write NewUnique(T{}) for one owner or NewShared(T{}) \
@@ -709,7 +717,11 @@ impl<'a> Resolver<'a> {
     fn top_level(&mut self, id: DeclId) {
         let file = self.file;
         let decl = &file.decl_nodes[id];
-        self.attrs(&decl.attrs);
+        // The attributes of a type are resolved with its type
+        // parameters: `@Extends(A[T])` names them.
+        if !matches!(decl.kind, DeclKind::Type { .. }) {
+            self.attrs(&decl.attrs);
+        }
         match &decl.kind {
             DeclKind::Const { ty, values, .. } | DeclKind::Var { ty, values, .. } => {
                 self.opt_expr(*ty);
@@ -717,7 +729,7 @@ impl<'a> Resolver<'a> {
             }
             DeclKind::Type {
                 type_params, ty, ..
-            } => self.type_decl(type_params, *ty),
+            } => self.type_decl(&decl.attrs, type_params, *ty),
             DeclKind::Func {
                 receiver,
                 type_params,
@@ -733,9 +745,10 @@ impl<'a> Resolver<'a> {
     }
 
     /// The type parameters and the type of a type declaration.
-    fn type_decl(&mut self, type_params: &[TypeParam], ty: ExprId) {
+    fn type_decl(&mut self, attrs: &[Attribute], type_params: &[TypeParam], ty: ExprId) {
         self.open();
         self.type_params(type_params);
+        self.attrs(attrs);
         self.expr(ty);
         self.close();
     }
@@ -766,6 +779,8 @@ impl<'a> Resolver<'a> {
         body: Option<&Block>,
     ) {
         let file = self.file;
+        let around = self.in_method;
+        self.in_method |= receiver.is_some();
         self.open();
         if let Some(receiver) = receiver {
             self.receiver_type(receiver.ty);
@@ -807,6 +822,7 @@ impl<'a> Resolver<'a> {
         }
         self.results.pop();
         self.close();
+        self.in_method = around;
     }
 
     /// The type of a receiver: in `T[P, Q]` the names in brackets declare
@@ -875,7 +891,7 @@ impl<'a> Resolver<'a> {
                 ..
             } => {
                 self.declare(*name, LocalKind::Type);
-                self.type_decl(type_params, *ty);
+                self.type_decl(&[], type_params, *ty);
             }
             _ => {}
         }

@@ -458,6 +458,10 @@ struct Named {
     method_index: FxHashMap<(Spur, Option<Spur>), u32>,
     /// Declared with `@Extends`: it has parents.
     extends: bool,
+    /// The parents, in the order of the `@Extends` attributes.
+    parents: Vec<TypeId>,
+    /// Declared with `@Abstract`.
+    abstract_marked: bool,
     /// Declared with `@Pinned`: a value stays where it is and is not
     /// copied.
     pinned: bool,
@@ -492,10 +496,17 @@ struct Inner {
     /// How a value of each type that was asked for it is copied; with
     /// `true`, whether it holds what is ended with it.
     categories: FxHashMap<(TypeId, bool), Category>,
+    /// For a type that was asked: whether it has a type table, and
+    /// whether it is abstract.
+    tables: FxHashMap<TypeId, bool>,
+    abstracts: FxHashMap<TypeId, bool>,
+    open_abstracts: FxHashMap<TypeId, Arc<Vec<(TypeId, Method)>>>,
     /// For a type that was asked: whether it is `Send` and `Sync`.
     labels: FxHashMap<TypeId, Labels>,
     /// The type parameters that a declaration writes `Option[P]` for.
     optional: FxHashSet<TypeId>,
+    /// The type parameters that a declaration holds a value of.
+    held: FxHashSet<TypeId>,
     /// For a type that was asked: the part of it without a zero value.
     no_zero: FxHashMap<TypeId, Option<(TypeId, NoZero)>>,
 }
@@ -749,6 +760,8 @@ impl Types {
             methods: Vec::new(),
             method_index: FxHashMap::default(),
             extends: false,
+            parents: Vec::new(),
+            abstract_marked: false,
             pinned: false,
             drops: false,
             alias: None,
@@ -773,6 +786,8 @@ impl Types {
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 extends: false,
+                parents: Vec::new(),
+                abstract_marked: false,
                 pinned: false,
                 drops: false,
                 alias: Some(target),
@@ -989,6 +1004,8 @@ impl Types {
                 methods: Vec::new(),
                 method_index: FxHashMap::default(),
                 extends: false,
+                parents: Vec::new(),
+                abstract_marked: false,
                 pinned: false,
                 drops: false,
                 alias: None,
@@ -1413,6 +1430,18 @@ impl Types {
                         continue;
                     }
                 }
+                // What a type does not declare, its parents may: each is
+                // looked at like an embedded type, one level down.
+                for (index, parent) in self.parents(current).into_iter().enumerate() {
+                    let mut path = path.clone();
+                    path.push(hierarchy::PARENT | index as u32);
+                    if let Some(&at) = next_at.get(&parent) {
+                        next[at].3 = true;
+                    } else if seen.insert(parent) {
+                        next_at.insert(parent, next.len());
+                        next.push((parent, indirect, path, *multiple));
+                    }
+                }
                 match &*self.get(self.underlying(current)) {
                     Type::Struct(fields) => {
                         *steps += fields.len() as u64;
@@ -1703,6 +1732,16 @@ impl Types {
     /// parameter `param`, so no type argument for it has nil.
     pub fn set_optional(&self, param: TypeId) {
         self.write(|inner| inner.optional.insert(param));
+    }
+
+    /// Notes that a declaration holds a value of its type parameter
+    /// `param`, so no type argument for it is abstract.
+    pub fn set_held(&self, param: TypeId) {
+        self.write(|inner| inner.held.insert(param));
+    }
+
+    pub fn is_held(&self, param: TypeId) -> bool {
+        self.read(|inner| inner.held.contains(&param))
     }
 
     pub fn is_optional(&self, param: TypeId) -> bool {
@@ -2562,6 +2601,7 @@ fn basic_name(basic: Basic) -> &'static str {
 }
 
 mod category;
+mod hierarchy;
 mod label;
 mod methodset;
 #[cfg(test)]
@@ -2570,6 +2610,7 @@ mod typeset;
 mod zero;
 
 pub use category::{Category, CopyRule, NotCopied};
+pub use hierarchy::PARENT;
 pub use label::{Labels, Unlabeled};
 pub use methodset::MethodSet;
 pub use typeset::{NoCommon, TypeSet};

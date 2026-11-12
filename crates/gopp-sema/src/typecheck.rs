@@ -17,6 +17,7 @@ mod flow;
 mod implements;
 mod index;
 mod infer;
+mod inherit;
 mod literal;
 mod methods;
 mod ops;
@@ -80,6 +81,7 @@ enum Form<'a> {
         extends: bool,
         /// Declared with `@Pinned`.
         pinned: bool,
+        attrs: &'a [Attribute],
     },
     Func {
         type_params: &'a [TypeParam],
@@ -251,6 +253,11 @@ struct Checker<'a> {
     method_values: FxHashMap<ExprId, crate::object::MethodValue>,
     /// The expression that is being called, while it is worked out.
     callee: Option<ExprId>,
+    /// While the body of a method is walked: the type of its receiver.
+    receiver_of: Option<TypeId>,
+    /// While a part of a literal that is a parent is worked out: a
+    /// literal of an abstract type is that part of a child, not a value.
+    parent_part: bool,
     /// While a body is walked: the conversions to an interface that are
     /// arguments.
     iface_args: FxHashSet<ExprId>,
@@ -348,6 +355,9 @@ struct Checker<'a> {
     /// While a body is walked: the places `&x.f` where `f` is a field
     /// that is never nil, until what takes the address is known.
     required_addresses: Vec<ExprId>,
+    /// The types that were written where a value is held, with where and
+    /// whether in a body.
+    value_types: Vec<(TypeId, Span, bool)>,
     /// The key type of each map type that was written, and where: whether
     /// it can be compared is known once every type is.
     map_keys: Vec<(TypeId, Span)>,
@@ -454,12 +464,15 @@ pub fn declarations(
         captures: FxHashMap::default(),
         method_values: FxHashMap::default(),
         callee: None,
+        receiver_of: None,
+        parent_part: false,
         iface_args: FxHashSet::default(),
         flow: flow::Flow::default(),
         unnarrowed: None,
         narrowed: FxHashSet::default(),
         lookup_target: None,
         required_fields: Vec::new(),
+        value_types: Vec::new(),
         options: Vec::new(),
         required_addresses: Vec::new(),
         read_only: FxHashSet::default(),
@@ -519,6 +532,7 @@ pub fn declarations(
         checker.resolve(object, false);
     }
     checker.fields_and_methods();
+    checker.hierarchies(units);
     checker.validate();
     let types_of_files: Vec<_> = units
         .iter()
@@ -658,6 +672,7 @@ impl<'a> Checker<'a> {
                         ty: *ty,
                         extends: marked("Extends"),
                         pinned: marked("Pinned"),
+                        attrs: &node.attrs,
                     };
                     declare(*name, body, form);
                 }
@@ -906,6 +921,9 @@ impl<'a> Checker<'a> {
         }
         for (ty, span) in std::mem::take(&mut self.var_types) {
             self.no_constraint(ty, span);
+        }
+        for (ty, span, in_body) in std::mem::take(&mut self.value_types) {
+            self.held_abstract(ty, span, in_body);
         }
         for terms in std::mem::take(&mut self.unions) {
             self.union_terms(&terms);
@@ -1213,6 +1231,7 @@ impl<'a> Checker<'a> {
                 ty,
                 extends,
                 pinned,
+                attrs,
             } => {
                 let mut cx = self.cx(&decl, None);
                 let params = self.declare_params(&mut cx, type_params);
@@ -1245,6 +1264,7 @@ impl<'a> Checker<'a> {
                 if !self.incomplete {
                     self.types.set_underlying(named, underlying);
                 }
+                self.inherit(&cx, named, attrs);
                 return true;
             }
             Form::Func { type_params, ty } => {
@@ -1482,6 +1502,27 @@ impl<'a> Checker<'a> {
         if self.types.is_interface(ty) || matches!(&*self.types.get(ty), Type::Marker(_)) {
             self.var_types.push((ty, cx.tree.exprs[expr].span));
         }
+        // In a `.gopp` file a value is of no abstract type, and a type
+        // parameter that a declaration holds by value takes none.
+        if cx.dialect == Dialect::Gopp && !matches!(&*self.types.get(ty), Type::Basic(_)) {
+            self.value_types
+                .push((ty, cx.tree.exprs[expr].span, self.memo.is_some()));
+        }
+        ty
+    }
+
+    /// The type that `expr` writes where no value of it is held by what
+    /// is written around it: what a pointer points to, and a type
+    /// argument, which is held as the generic type says.
+    pub(super) fn pointee_type(&mut self, cx: &Cx<'a>, expr: ExprId) -> TypeId {
+        let mark = self.value_types.len();
+        let ty = self.var_type(cx, expr);
+        let span = cx.tree.exprs[expr].span;
+        if self.value_types.last().is_some_and(|last| last.1 == span)
+            && mark < self.value_types.len()
+        {
+            self.value_types.pop();
+        }
         ty
     }
 
@@ -1539,7 +1580,7 @@ impl<'a> Checker<'a> {
                 op: UnaryOp::Star,
                 x,
             } => {
-                let elem = self.var_type(cx, *x);
+                let elem = self.pointee_type(cx, *x);
                 self.types.pointer(elem)
             }
             ExprKind::SliceType { elem } => {
@@ -1750,10 +1791,19 @@ impl<'a> Checker<'a> {
             Some(Ref::Universe(Predeclared::Option)) => Some(Type::Option),
             _ => None,
         };
+        // A type argument is held as the generic type holds its type
+        // parameter, which the instance is asked.
+        let holds = matches!(
+            cx.body.uses.get(&x),
+            Some(Ref::Universe(Predeclared::Option))
+        );
         let arguments = |this: &mut Self| -> Vec<TypeId> {
             indices
                 .iter()
-                .map(|&index| this.var_type(cx, index))
+                .map(|&index| match holds {
+                    true => this.var_type(cx, index),
+                    false => this.pointee_type(cx, index),
+                })
                 .collect()
         };
         if let Some(make) = make {
@@ -2096,8 +2146,22 @@ impl<'a> Checker<'a> {
             let message = format!("{prefix}cannot use {what} on type parameter value {shown}");
             (Code::AssertedTypeParam, message)
         } else if !self.types.is_interface(x.ty) {
-            let message = format!("{prefix}{shown} is not an interface");
-            (Code::NotAnInterface, message)
+            // A pointer to a type with a type table says what it points
+            // to (EXP-15).
+            match self.pointee_with_table(cx, &x) {
+                Some(true) => return Some(x),
+                Some(false) => {
+                    let message = format!(
+                        "{prefix}{shown} is asserted, and the type it points to has no type \
+                         table: nothing says what it points to"
+                    );
+                    (Code::DowncastNoTable, message)
+                }
+                None => {
+                    let message = format!("{prefix}{shown} is not an interface");
+                    (Code::NotAnInterface, message)
+                }
+            }
         } else {
             return Some(x);
         };
@@ -2109,6 +2173,7 @@ impl<'a> Checker<'a> {
         // What a key of a composite literal denotes was found apart.
         let denotes = cx.body.uses.get(&expr).or_else(|| cx.body.keys.get(&expr));
         let Some(&denotes) = denotes else {
+            self.base_alone(cx, expr);
             return Operand::UNKNOWN;
         };
         match denotes {
@@ -2199,6 +2264,9 @@ impl<'a> Checker<'a> {
                 };
             }
             return self.object_operand(&object.kind, object.ty, object.value.clone());
+        }
+        if let Some(found) = self.base_member(cx, expr, x, sel) {
+            return found;
         }
         let base = x;
         // `o.IsNil()` and `o.Get()` ask the option, whatever is known.
@@ -2368,9 +2436,7 @@ impl<'a> Checker<'a> {
             &*self.types.get(self.types.underlying(x.ty)),
             Type::Pointer(elem) if invalid(*elem)
         );
-        // What a type with parents has is decided with its parents.
-        let unsettled =
-            invalid(x.ty) || pointee_invalid || self.open(x.ty) || self.types.extends(x.ty);
+        let unsettled = invalid(x.ty) || pointee_invalid || self.open(x.ty);
         if !known || unsettled {
             return;
         }
@@ -2956,13 +3022,17 @@ impl<'a> Checker<'a> {
                     };
                     self.current.extend(function);
                     self.declare_params(&mut cx, type_params);
+                    self.receiver_of = None;
                     if let Some(receiver) = receiver {
                         self.receiver_params(&mut cx, receiver.ty);
                         self.params(&cx, std::slice::from_ref(receiver));
+                        self.receiver_of = self.receiver_named(unit, receiver.ty);
+                        self.base_declared(&cx);
                     }
                     self.signature_locals(&cx, *ty);
                     let sig = self.typ(&cx, *ty);
                     self.function_body(&cx, *ty, sig, block);
+                    self.receiver_of = None;
                 }
                 // The value of a constant is worked out with its
                 // declaration; variables are walked here too, for the

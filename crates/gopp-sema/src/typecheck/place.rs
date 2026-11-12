@@ -517,13 +517,37 @@ impl<'a> Checker<'a> {
         if !self.own_rules(cx) || self.memo.is_none() || !is_place {
             return;
         }
+        let expr = self.unparen(cx, expr);
+        let direct = x.ty == ty;
+        // What a pointer to a type with a type table points to may be a
+        // child: a copy would be of the parent part only (EXP-15).
+        let pointee = !direct
+            || matches!(
+                cx.tree.exprs[expr].kind,
+                ExprKind::Unary {
+                    op: UnaryOp::Star,
+                    ..
+                }
+            );
+        if pointee && self.types.has_table(ty) {
+            let message = format!(
+                "cannot copy what {} points to: it may be a child of {}, and only the parent \
+                 part would be copied",
+                self.expr_string(cx, expr),
+                self.type_string(ty)
+            );
+            let fix = (
+                Code::NoteOwnFixAddress,
+                "use the pointer, or copy the whole object with Clone()".to_owned(),
+            );
+            let span = cx.tree.exprs[expr].span;
+            return self.error_with_fix(Code::PartialValue, span, message, fix);
+        }
         let category = self.types.category(ty);
         if category == Category::Trivial {
             return;
         }
-        let expr = self.unparen(cx, expr);
         // What a pointer or a handle is read as is where it points.
-        let direct = x.ty == ty;
         let place = match direct {
             true => self.place_of(cx, expr),
             false => Place::Elsewhere,

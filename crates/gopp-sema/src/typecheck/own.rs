@@ -604,13 +604,17 @@ impl<'a> Checker<'a> {
             let taken = takes
                 .iter()
                 .find(|&&to| !self.not_assignable(&x, to) || self.owned_by_interface(from, to));
-            taken
-                .copied()
-                .or(self.types.extends(from).then_some(to))
-                .map(|to| match is_handle && self.types.is_interface(to) {
+            let upcast = || {
+                takes
+                    .iter()
+                    .find(|&&to| self.upcast(from, to) == Some(true))
+            };
+            taken.or_else(upcast).copied().map(|to| {
+                match is_handle && self.types.is_interface(to) {
                     true => (handle, to),
                     false => (from, to),
-                })
+                }
+            })
         })
     }
 

@@ -498,3 +498,5 @@ E0492 err_own_shared_write
 E0493 err_value_unchecked
 E0494 err_invalid_handle_type
 E0495 err_iface_not_send
+E0496 err_extends_diamond
+E0497 err_base_ambiguous

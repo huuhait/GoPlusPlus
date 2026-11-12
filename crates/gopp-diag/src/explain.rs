@@ -1575,6 +1575,121 @@ pub fn explain(code: Code) -> Option<Explanation> {
              error type is converted by value.",
             "var r Reader = &buf        // error: a *Buffer borrows what it points to\nvar r Local[Reader] = &buf // ok\nreturn 0, &errBad          // error\nreturn 0, errBad           // ok",
         ),
+        ExtendsParentKind => (
+            "A parent named by `@Extends` is not a struct type. A type inherits fields and methods from structs only.",
+            "Name a struct type, or use a named field for anything else.",
+            "@Extends(int)\ntype A struct{}     // error\n\n@Extends(Payment)\ntype Card struct{}  // ok",
+        ),
+        ExtendsCycle => (
+            "A type is its own ancestor: its parents lead back to it.",
+            "Remove one of the `@Extends` on the circle.",
+            "@Extends(B)\ntype A struct{}\n\n@Extends(A)\ntype B struct{} // error",
+        ),
+        AbstractBody => (
+            "A method marked `@Abstract` has a body. An abstract method only says what a child must provide.",
+            "Remove the body, or mark the method `@Virtual` to give a version that children may replace.",
+            "@Abstract\nfunc (s *Shape) Area() float64 { return 0 } // error\n\n@Abstract\nfunc (s *Shape) Area() float64               // ok",
+        ),
+        OverrideMissing => (
+            "A method has the name of a method that its type inherits, and is not marked `@Override`. Replacing a method is always said.",
+            "Mark the method `@Override`, or give it another name.",
+            "@Virtual\nfunc (a *Animal) Speak() string { return \"\" }\n\nfunc (d *Dog) Speak() string { return \"woof\" } // error: mark it @Override",
+        ),
+        OverrideNothing => (
+            "A method is marked `@Override`, and no ancestor of its type has a method of that name. Often the name is misspelled.",
+            "Fix the name, or remove `@Override`.",
+            "@Override\nfunc (d *Dog) Speek() string { return \"woof\" } // error: no ancestor has Speek",
+        ),
+        OverrideFinal => (
+            "A method replaces an inherited method that is final: it is not marked `@Virtual` or `@Abstract`.",
+            "Mark the method of the parent `@Virtual`, or give the new method another name.",
+            "func (a *Animal) Name() string { return a.name } // final\n\n@Override\nfunc (d *Dog) Name() string { return \"dog\" }     // error",
+        ),
+        OverrideSignature => (
+            "A method marked `@Override` does not have the signature of the method it replaces: the parameters, the results and `!` are the same.",
+            "Give the method the signature of the one in the parent.",
+            "@Virtual\nfunc (a *Animal) Eat(food string) {}\n\n@Override\nfunc (d *Dog) Eat(grams int) {} // error",
+        ),
+        ExtendsNameClash => (
+            "A name is declared twice in one hierarchy: a field of the child has the name of an inherited member, or two parents have a member of one name that the child cannot replace with one `@Override` method.",
+            "Rename one of them; for methods that may be replaced and have one signature, declare one `@Override` method in the child.",
+            "@Extends(Payment)\ntype Card struct {\n\tAmount int // error: Payment has Amount\n}",
+        ),
+        AbstractUnimplemented => (
+            "A type inherits an `@Abstract` method and has no version of it, and it is not marked `@Abstract` itself.",
+            "Declare the method with `@Override`, or mark the type `@Abstract`.",
+            "@Abstract\nfunc (s *Shape) Area() float64\n\n@Extends(Shape)\ntype Circle struct{} // error: Circle does not override Area",
+        ),
+        AbstractInstance => (
+            "A value of an abstract type is made or held. An abstract type has no values of its own: it is used through a pointer to a child. A type argument is refused the same way where the generic type or function holds a value of it.",
+            "Hold a pointer or a `Unique` of the type, and make values of a child.",
+            "var s Shape           // error\nvar p *Shape = &circle // ok\nvar b Box[Shape]      // error if Box holds a T",
+        ),
+        ExtendsLiteralPositional => (
+            "A composite literal of a type with parents lists values without field names. With inherited fields the order would be hard to read.",
+            "Name the fields.",
+            "c := Card{100, \"4242\"}                 // error\nc := Card{Amount: 100, Number: \"4242\"} // ok",
+        ),
+        ExtendsLiteralTwice => (
+            "A composite literal sets a field twice: by its name and through the part of a parent, or the same name or part twice.",
+            "Set each field once.",
+            "c := Card{Amount: 1, Payment: Payment{Amount: 2}} // error",
+        ),
+        BaseReserved => (
+            "A variable, a parameter or a result is named `base` in a method of a type with parents, where `base` names the parents.",
+            "Use another name.",
+            "func (c *Card) Fee(base int) int { return base } // error: rename the parameter",
+        ),
+        BaseAbstract => (
+            "`base.M()` calls the method of a parent as it is declared there, and that method is `@Abstract`: it has no body.",
+            "Call the method on the receiver, which runs the version of the real type.",
+            "@Override\nfunc (c *Circle) Area() float64 { return base.Area() } // error: Shape.Area is @Abstract",
+        ),
+        BaseValue => (
+            "`base` is used as a value. It only selects a member of a parent.",
+            "Write `base.M()` or `base.field`; for a pointer to the parent part use the receiver.",
+            "p := base      // error\nn := base.Fee() // ok",
+        ),
+        PartialValue => (
+            "A value of a child is used as a value of its parent, or a place that may hold a child is copied as its parent. Only the parent part would be copied.",
+            "Use a pointer to the parent; copy the whole object with `p.Clone()`.",
+            "var p Payment = card  // error: value slicing\nvar q *Payment = &card // ok",
+        ),
+        UpcastUntagged => (
+            "A pointer to a child is used as a pointer to a parent that has no type table: no method of the parent is `@Virtual` or `@Abstract`. Nothing would say what the pointer really points to.",
+            "Add a `@Virtual` method to the parent, or keep the pointer to the child.",
+            "var s *Stamps = &card // error: Stamps has no type table",
+        ),
+        DowncastNoTable => (
+            "A pointer is asserted to point to a child, and the type it points to has no type table, so there is no dynamic type to test.",
+            "Add a `@Virtual` method to the parent, or keep the pointer to the child.",
+            "c := s.(*Card) // error if s is a *Stamps and Stamps has no @Virtual method",
+        ),
+        DowncastImpossible => (
+            "A pointer is asserted to be of a type that is no pointer to a child of what it points to.",
+            "Assert a pointer to a child: `p.(*Child)`.",
+            "d := p.(*Stamps) // error: Stamps is no child of Payment",
+        ),
+        ExtendsConstraint => (
+            "An interface declared with `@Extends` is used as the type of a value. It is a constraint: it says that a type argument has the parents.",
+            "Use it as the constraint of a type parameter, and a pointer to the parent for values.",
+            "@Extends(Animal)\ntype AnimalKind interface{}\n\nvar a AnimalKind              // error\nfunc Feed[T AnimalKind](a *T) // ok",
+        ),
+        DefinedFromHierarchy => (
+            "`type X Y` is written for a `Y` that has parents or methods that may be replaced. The new type would copy the declaration and lose the hierarchy.",
+            "Inherit from it: `@Extends(Y)` before `type X struct{}`.",
+            "type Visa Card      // error\n\n@Extends(Card)\ntype Visa struct{} // ok",
+        ),
+        ExtendsDiamond => (
+            "A type has the same ancestor twice: a parent named twice, two instances of one generic parent, or two parents that share an ancestor.",
+            "Keep one way to each ancestor.",
+            "@Extends(Payment)\n@Extends(Card) // error: Card has the parent Payment already\ntype Gold struct{}",
+        ),
+        BaseAmbiguous => (
+            "`base.M` is written where several parents have `M`, or `base[P]` names a type that is no direct parent.",
+            "Name the parent: `base[Parent].M()`.",
+            "return base.Describe()          // error if two parents have Describe\nreturn base[Payment].Describe() // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {

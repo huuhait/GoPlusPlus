@@ -227,7 +227,13 @@ impl Types {
         let (depth, opened) = (walk.inside.len(), walk.open.len());
         walk.inside.push(ty);
         walk.depth.insert(ty, depth);
-        let (category, outermost) = deep(|| self.category_in(self.underlying(ty), walk));
+        let (mut category, mut outermost) = deep(|| self.category_in(self.underlying(ty), walk));
+        // The parents are parts of the value.
+        for parent in self.parents(ty) {
+            let (of_parent, held) = deep(|| self.category_in(parent, walk));
+            category = category.max(of_parent);
+            outermost = outermost.min(held);
+        }
         walk.inside.pop();
         walk.depth.remove(&ty);
         if outermost < depth {

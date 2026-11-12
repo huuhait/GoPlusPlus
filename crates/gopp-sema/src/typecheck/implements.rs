@@ -20,16 +20,13 @@ impl<'a> Checker<'a> {
 
     /// The method of the interface `iface` that values of the type `v`
     /// lack. `None` also where that is not decided here: a type in error
-    /// or written with a type parameter, a constraint, a type with
-    /// parents.
+    /// or written with a type parameter, a constraint.
     pub(super) fn lacking(&self, v: TypeId, iface: TypeId) -> Option<(Method, Lacks)> {
         let pointee = match &*self.types.get(self.types.underlying(v)) {
             Type::Pointer(elem) => *elem,
             _ => v,
         };
-        let undecided = [v, pointee, iface].iter().any(|&ty| self.open(ty))
-            || self.types.extends(v)
-            || self.types.extends(pointee);
+        let undecided = [v, pointee, iface].iter().any(|&ty| self.open(ty));
         match undecided {
             true => None,
             false => self.types.missing_method(v, iface, self.names),
@@ -129,6 +126,9 @@ impl<'a> Checker<'a> {
         ty: TypeId,
         case: bool,
     ) {
+        if x.is_value() && !self.types.is_interface(x.ty) {
+            return self.downcast(cx, at, x, ty);
+        }
         if !x.is_value() || self.types.is_interface(ty) {
             return;
         }

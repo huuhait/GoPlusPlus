@@ -44,9 +44,8 @@ impl<'a> Checker<'a> {
                 _ => Operand::value(literal),
             };
         }
-        // In a `.gopp` file a struct with parents has more than its own
-        // fields.
-        let strict = !self.types.extends(base);
+        let strict = true;
+        self.literal_of_abstract(cx, expr, base);
         // The literal of a type parameter is of what all its types share.
         let shared = match self.is_param(base) && !self.open(base) {
             true => self.types.common_under(base).ok(),
@@ -60,6 +59,9 @@ impl<'a> Checker<'a> {
             )
         });
         match &*under {
+            Type::Struct(_) if self.own_rules(cx) && !self.types.parents(base).is_empty() => {
+                self.inherited_literal(cx, expr, base, elems);
+            }
             Type::Struct(fields) => self.struct_elements(cx, expr, base, fields, elems, strict),
             Type::Array { len, elem } => {
                 let length = Some(*len).filter(|_| !grows);
@@ -113,7 +115,13 @@ impl<'a> Checker<'a> {
     }
 
     /// The element `expr`, assigned to a place of the type `to`.
-    fn assign_element(&mut self, cx: &Cx<'a>, expr: ExprId, to: TypeId, context: &str) -> Operand {
+    pub(super) fn assign_element(
+        &mut self,
+        cx: &Cx<'a>,
+        expr: ExprId,
+        to: TypeId,
+        context: &str,
+    ) -> Operand {
         let x = self.element(cx, expr, Some(to));
         self.assignment(cx, expr, x, Some(to), context)
     }

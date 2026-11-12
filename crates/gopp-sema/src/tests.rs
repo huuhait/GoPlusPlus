@@ -447,6 +447,8 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
                     crate::SelectionKind::Field => "field",
                     crate::SelectionKind::Method => "method",
                     crate::SelectionKind::MethodExpr => "methodexpr",
+                    crate::SelectionKind::BaseField => "basefield",
+                    crate::SelectionKind::BaseMethod => "basemethod",
                 };
                 let mut way: Vec<&str> = theirs[1].split(',').collect();
                 if !is_field {
@@ -3204,14 +3206,14 @@ fn copy_writes_through_a_pointer_and_a_type_with_parents_is_left_alone() {
 
 type Payment struct{ Amount int }
 
+@Virtual
 func (p *Payment) Total() int { return p.Amount }
 
 @Extends(Payment)
 type Card struct{ Number string }
 
 func pay(p *Payment) {}
-
-func mk() []int { return nil }
+func mk() []int      { return nil }
 
 func f(c Card, u Unique[Card]) {
 	_ = c.Amount + c.Total()
@@ -6793,7 +6795,7 @@ fn a_built_in_attribute_is_written_where_it_goes_with_what_it_takes() {
             ],
         ),
         (
-            "@Abstract\nfunc (t *T) M()\n\n@Abstract\ntype U struct{}",
+            "@Abstract\nfunc (t *T) M()\n\n@Abstract\n@Extends(T)\ntype U struct{}",
             &[
                 (
                     "@Abstract\nvar x int",
@@ -6806,10 +6808,10 @@ fn a_built_in_attribute_is_written_where_it_goes_with_what_it_takes() {
             ],
         ),
         (
-            "@Override\nfunc (t *T) M() {}",
+            "type V struct{}\n\n@Virtual\nfunc (v *V) M() {}\n\n@Extends(V)\ntype W struct{}\n\n@Override\nfunc (w *W) M() {}",
             &[(
-                "@Override()\nfunc (t *T) M() {}",
-                "@Override takes no arguments",
+                "@Override\nfunc (t *T) M() {}",
+                "T.M is marked @Override, and no ancestor of T has a method M",
             )],
         ),
         (
@@ -8536,6 +8538,327 @@ func bad(f File, pt Point, buf Buffer, v any, s Soft, lf Local[func()], files []
     let text =
         "package p\ntype T struct{}\nfunc (t *T) drop() {}\nvar x any = &T{}\nvar y any = T{}\n";
     assert_eq!(messages("a.go", text), [] as [&str; 0]);
+}
+
+// rule: TYP-16, TYP-17, TYP-18, TYP-19, TYP-20, TYP-21, EXP-13, EXP-15, GEN-12
+#[test]
+fn a_type_has_what_its_parents_have_and_replaces_what_they_let_it() {
+    let text = "package p
+
+type Payment struct {
+	Amount int @Required
+}
+
+@Virtual
+func (p *Payment) Fee() int { return 1 }
+
+@Abstract
+func (p *Payment) Name() string
+
+func (p *Payment) Total() int { return p.Amount + p.Fee() }
+
+type Stamps struct{ Created int }
+
+func (s *Stamps) Touch() { s.Created++ }
+
+@Extends(Payment)
+@Extends(Stamps)
+type Card struct {
+	Number string
+}
+
+@Override
+func (c *Card) Fee() int { return base.Fee() + base[Payment].Fee() + base.Created }
+
+@Override
+func (c *Card) Name() string { return \"card\" }
+
+type Namer interface{ Name() string }
+
+func good() {
+	c := Card{Amount: 100, Created: 1, Number: \"4242\"}
+	d := Card{Payment: Payment{Amount: 1}, Number: \"1\"}
+	c.Touch()
+	c.Amount = 3
+	_ = c.Total() + c.Created + len(c.Number) + d.Amount
+	var p *Payment = &c
+	var n Local[Namer] = &c
+	u := NewUnique(Card{Amount: 2})
+	var up Unique[Payment] = move(u)
+	q, ok := p.(*Card)
+	switch x := p.(type) {
+	case *Card:
+		_ = x.Number
+	}
+	if ok {
+		_ = q
+	}
+	_, _, _ = n, up, p
+}
+
+func bad(c Card, p *Payment) {
+	_ = Card{1, 2, \"x\"}
+	_ = Card{Number: \"x\"}
+	_ = Card{Amount: 1, Payment: Payment{Amount: 2}}
+	_ = Card{Amount: 1, Amount: 2}
+	_ = Card{Amount: 1, Missing: 2}
+	var v Payment = c
+	var s *Stamps = &c
+	var x Payment
+	_ = Payment{Amount: 1}
+	var xs []Payment
+	_ = p.(*Stamps)
+	st := &c.Created
+	_ = st.(*int)
+	_, _, _, _ = v, s, x, xs
+}
+
+type Box[T any] struct{ v T }
+type Ptr[T any] struct{ p *T }
+
+func feed[T any](p *T) {}
+func keep[T any](v T)  {}
+
+func generic(c *Card) {
+	var a Ptr[Payment]
+	feed[Payment](c)
+	var b Box[Payment]
+	keep[Payment](*c)
+	_, _ = a, b
+}
+
+type Entity[T any] struct{ ID T }
+
+@Virtual
+func (e *Entity[T]) Key() T { return e.ID }
+
+type Log[T any] struct{ lines []T }
+
+@Extends(Entity[T])
+@Extends(Log[T])
+type Store[T any] struct{ Name string }
+
+@Override
+func (s *Store[T]) Key() T { return base.Key() }
+
+@Extends(Payment)
+type Paid interface{}
+
+func fee[T Paid](p *T) int {
+	var q *Payment = p
+	return p.Fee() + p.Amount + q.Amount
+}
+
+@Extends(Payment)
+@Abstract
+type Wire struct{}
+
+func more(s *Store[string], c *Card, st *Stamps, w *Wire) {
+	_ = s.ID + s.Name + s.Key()
+	_ = len(s.lines)
+	var e *Entity[string] = s
+	_ = fee(c) + fee[Card](c)
+	_ = fee(st)
+	var bad Paid
+	_ = *e
+	copied := *c
+	_, _, _ = e, bad, copied
+}
+
+func (p Payment) ByValue() {}
+
+func (c *Card) Alone() {
+	x := base
+	_ = x
+}
+
+func (s *Stamps) None() int { return base.Created }
+";
+    let expected = [
+        "a.gopp:55:11: a literal of Card names its fields: the type has parents",
+        "a.gopp:56:6: missing Amount (@Required) in struct literal of type Card",
+        "a.gopp:57:22: Payment is set twice in the literal of Card",
+        "a.gopp:58:22: Amount is set twice in the literal of Card",
+        "a.gopp:59:22: unknown field Missing in struct literal of type Card",
+        "a.gopp:60:8: cannot hold a value of Payment: the type is abstract; hold a pointer to a \
+         child",
+        "a.gopp:60:18: cannot use c (variable of struct type Card) as Payment value: a Card is \
+         more than its parent Payment",
+        "    use a pointer",
+        "a.gopp:61:18: cannot use &c (value of type *Card) as *Stamps value: Stamps has no type \
+         table, so nothing says what a *Stamps points to",
+        "    add a @Virtual method to Stamps, or use the pointer to the child",
+        "a.gopp:62:6: cannot declare x without a value: Payment has no zero value (the field \
+         Amount of Payment is @Required)",
+        "    give x a value, or declare it as Option[Payment]",
+        "a.gopp:62:8: cannot hold a value of Payment: the type is abstract; hold a pointer to a \
+         child",
+        "a.gopp:63:6: cannot make a value of Payment: the type is abstract",
+        "a.gopp:64:11: cannot hold a value of Payment: the type is abstract; hold a pointer to a \
+         child",
+        "a.gopp:65:6: impossible type assertion: *Stamps is no pointer to Payment or to a child of \
+         it",
+        "a.gopp:67:6: invalid operation: st (variable of type *int) is not an interface",
+        "a.gopp:78:6: cannot declare a without a value: Ptr[Payment] has no zero value (a *Payment \
+         is never nil)",
+        "    give a a value, or declare it as Option[Ptr[Payment]]",
+        "a.gopp:80:6: cannot declare b without a value: Box[Payment] has no zero value (the field \
+         Amount of Payment is @Required)",
+        "    give b a value, or declare it as Option[Box[Payment]]",
+        "a.gopp:80:12: cannot use Payment for T: a value of it is held, and Payment is abstract",
+        "a.gopp:81:7: cannot use Payment for T: a value of it is held, and Payment is abstract",
+        "a.gopp:81:16: cannot use *c (variable of struct type Card) as Payment value: a Card is \
+         more than its parent Payment",
+        "    use a pointer",
+        "a.gopp:116:6: Stamps does not satisfy Paid (Stamps does not extend Payment)",
+        "a.gopp:117:10: cannot use Paid as the type of a value: an interface with @Extends is a \
+         constraint",
+        "a.gopp:119:12: cannot copy what *c points to: it may be a child of Card, and only the \
+         parent part would be copied",
+        "    use the pointer, or copy the whole object with Clone()",
+        "a.gopp:123:18: cannot declare ByValue on a value of Payment: the type is abstract and has \
+         no values",
+        "a.gopp:126:7: base is no value: it selects a member of a parent, as in base.M()",
+        "a.gopp:130:38: undefined: base (Stamps has no parents)",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+}
+
+// rule: TYP-16, TYP-18, TYP-19
+#[test]
+fn a_hierarchy_has_each_ancestor_once_and_says_what_it_replaces() {
+    let header = "package p\n\ntype A struct{ n int }\n\n@Virtual\nfunc (a *A) V() {}\nfunc (a *A) F() {}\n\n@Abstract\nfunc (a *A) Open()\n\ntype M struct{ m int }\n\nfunc (m *M) F() {}\n\n";
+    let cases: [(&str, &[&str]); 16] = [
+        (
+            "@Extends(int)\ntype B struct{}",
+            &["invalid parent int: a parent is a struct type"],
+        ),
+        (
+            "type I interface{}\n\n@Extends(I)\ntype B struct{}",
+            &["invalid parent I: a parent is a struct type"],
+        ),
+        (
+            "@Extends(C)\n@Abstract\ntype B struct{}\n\n@Extends(B)\n@Abstract\ntype C struct{}",
+            &[
+                "invalid parents: B is its own ancestor",
+                "invalid parents: C is its own ancestor",
+            ],
+        ),
+        (
+            "@Extends(M)\n@Extends(M)\ntype B struct{}",
+            &["invalid parents of B: M is an ancestor twice"],
+        ),
+        (
+            "@Extends(M)\ntype B struct{}\n\n@Extends(B)\n@Extends(M)\ntype C struct{}",
+            &["invalid parents of C: M is an ancestor twice"],
+        ),
+        (
+            "@Extends(A)\n@Abstract\ntype B struct{}\n\ntype C B",
+            &[
+                "cannot define C from B: B has parents or methods that may be replaced",
+                "    write @Extends(B) before type C struct{}",
+            ],
+        ),
+        (
+            "@Abstract\ntype B struct{}",
+            &["cannot use @Abstract on B: it is written on a type with parents, or on a method"],
+        ),
+        (
+            "@Extends(M)\ntype B struct{ m int }",
+            &["field m of B has the name of a member of its ancestor M"],
+        ),
+        (
+            "@Extends(A)\n@Extends(M)\n@Abstract\ntype B struct{}",
+            &["the parents A and M of B both have a member F"],
+        ),
+        (
+            "@Extends(A)\ntype B struct{}",
+            &[
+                "B does not override the @Abstract method Open of A",
+                "    declare the method with @Override, or mark the type @Abstract",
+            ],
+        ),
+        (
+            "@Extends(A)\n@Abstract\ntype B struct{}\n\nfunc (b *B) V() {}",
+            &["B.V replaces A.V: mark it @Override"],
+        ),
+        (
+            "@Extends(A)\n@Abstract\ntype B struct{}\n\n@Override\nfunc (b *B) F() {}",
+            &["cannot replace A.F: it is final, because it is not marked @Virtual"],
+        ),
+        (
+            "@Extends(A)\n@Abstract\ntype B struct{}\n\n@Override\nfunc (b *B) W() {}",
+            &["B.W is marked @Override, and no ancestor of B has a method W"],
+        ),
+        (
+            "@Extends(A)\n@Abstract\ntype B struct{}\n\n@Override\nfunc (b *B) V(n int) {}",
+            &[
+                "B.V does not have the signature of A.V",
+                "    have func(int)",
+                "    want func()",
+            ],
+        ),
+        (
+            "@Abstract\nfunc (m *M) Body() {}",
+            &["the @Abstract method Body has a body: a child gives it one"],
+        ),
+        // What is right: a child of a child, an override of an override,
+        // and an abstract method that a grandchild provides.
+        (
+            "@Extends(A)\n@Abstract\ntype B struct{}\n\n@Override\nfunc (b *B) V() {}\n\n@Extends(B)\ntype C struct{}\n\n@Override\nfunc (c *C) V() {}\n\n@Override\nfunc (c *C) Open() {}\n\nvar c = C{n: 1}\nvar p *A = &c",
+            &[],
+        ),
+    ];
+    for (source, expected) in cases {
+        let text = format!("{header}{source}\n");
+        let found: Vec<String> = messages("a.gopp", &text)
+            .into_iter()
+            .map(|message| match message.split_once(": ") {
+                Some((place, rest)) if place.starts_with("a.gopp:") => rest.to_owned(),
+                _ => message,
+            })
+            .collect();
+        assert_eq!(found, *expected, "{source}");
+    }
+}
+
+#[test]
+fn the_steps_of_hierarchies_grow_with_the_types_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let header =
+        "package p\ntype Root struct{ n int }\n\n@Virtual\nfunc (r *Root) M() int { return r.n }\n";
+    // Many children of one parent, each with a method that replaces the
+    // parent's, a literal and an upcast.
+    let siblings = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| format!(
+                "@Extends(Root)\ntype C{i} struct{{ f{i} int }}\n\n@Override\nfunc (c *C{i}) M() int {{ return base.M() + c.f{i} + c.n }}\n\
+                 func use{i}() int {{ c := C{i}{{n: 1, f{i}: 2}}; var r *Root = &c; return r.M() }}\n"
+            ))
+            .collect();
+        format!("{header}{all}")
+    };
+    // Each type is a child of the one before it and replaces its method.
+    let chain = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                let parent = match i {
+                    0 => "Root".to_owned(),
+                    _ => format!("C{}", i - 1),
+                };
+                format!("@Extends({parent})\ntype C{i} struct{{}}\n\n@Override\nfunc (c *C{i}) M() int {{ return base.M() + 1 }}\n")
+            })
+            .collect();
+        format!("{header}{all}")
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(chain(n)));
 }
 
 // rule: OWN-R3a

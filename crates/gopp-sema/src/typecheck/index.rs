@@ -97,7 +97,7 @@ impl<'a> Checker<'a> {
                 let Some(params) = self.types.generic_func(x.ty) else {
                     return Operand::UNKNOWN;
                 };
-                let args: Vec<TypeId> = indices.iter().map(|&i| self.var_type(cx, i)).collect();
+                let args: Vec<TypeId> = indices.iter().map(|&i| self.pointee_type(cx, i)).collect();
                 if args.len() > params.len() {
                     let message = format!(
                         "got {} type arguments but want {}",

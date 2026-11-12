@@ -235,7 +235,8 @@ pub struct Selection {
     /// type embedded in it.
     pub holder: TypeId,
     /// The index of each embedded field on the way to the holder and,
-    /// for a field, its own index last.
+    /// for a field, its own index last. A step to a parent is the index
+    /// of the parent with the bit `types::PARENT`.
     pub path: Vec<u32>,
     /// Whether a pointer is followed on the way.
     pub indirect: bool,
@@ -249,6 +250,11 @@ pub enum SelectionKind {
     Method,
     /// `T.m`: a method as a function that takes its receiver first.
     MethodExpr,
+    /// `base.f`, `base[P].f`: a field of a parent part of the receiver.
+    BaseField,
+    /// `base.m`, `base[P].m`: the method of a parent, called as it is
+    /// declared there, whatever replaces it.
+    BaseMethod,
 }
 
 /// The type of an expression; and its value, if it is a constant.

@@ -129,6 +129,9 @@ impl<'a> Checker<'a> {
         if let Some(to) = to
             && self.unfit(cx, &x, to, writes)
         {
+            if own && self.hierarchy_unfit(cx, expr, &x, to) {
+                return Operand::UNKNOWN;
+            }
             let message = format!(
                 "cannot use {} as {} value in {context}",
                 self.describe(cx, expr, &x),

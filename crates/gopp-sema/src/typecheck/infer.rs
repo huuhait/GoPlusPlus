@@ -666,8 +666,7 @@ impl<'a> Checker<'a> {
                 let methods = constraint
                     .and_then(|constraint| self.types.type_set(constraint))
                     .map(|set| set.methods);
-                let undecided =
-                    self.types.underlying(known) == Types::INVALID || self.types.extends(known);
+                let undecided = self.types.underlying(known) == Types::INVALID;
                 let Some(methods) = methods.filter(|_| !undecided) else {
                     continue;
                 };

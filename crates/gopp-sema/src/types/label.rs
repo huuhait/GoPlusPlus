@@ -139,9 +139,15 @@ impl Types {
                 walk.inside.insert(ty, depth);
                 let under = self.underlying(ty);
                 let (of, held) = deep(|| self.labels_in(under, walk));
-                walk.inside.remove(&ty);
                 labels = of;
                 outermost = held;
+                // The parents are parts of the value.
+                for parent in self.parents(ty) {
+                    let (of, held) = deep(|| self.labels_in(parent, walk));
+                    labels = labels.and(of);
+                    outermost = outermost.min(held);
+                }
+                walk.inside.remove(&ty);
             }
             _ => {
                 for part in parts {

@@ -177,6 +177,16 @@ impl<'a> Checker<'a> {
                 have_want: None,
             })
         };
+        // A constraint with `@Extends` asks for its parents among the
+        // ancestors of the type (GEN-12).
+        for parent in self.types.parents(bound) {
+            if self.types.ancestor_path(v, parent).is_none() {
+                return cause(format!(
+                    "{shown} does not satisfy {constraint} ({shown} does not extend {})",
+                    self.type_string(parent)
+                ));
+            }
+        }
         // Any type satisfies a constraint that asks nothing.
         if wanted.constraint().is_none() && wanted.methods.is_empty() {
             return None;
@@ -195,10 +205,7 @@ impl<'a> Checker<'a> {
         if wanted.is_empty() {
             return cause(format!("cannot satisfy {constraint} (empty type set)"));
         }
-        let lacks = match self.types.extends(v) {
-            true => None,
-            false => self.types.lacks(v, &wanted.methods, self.names),
-        };
+        let lacks = self.types.lacks(v, &wanted.methods, self.names);
         if let Some((method, lacks)) = lacks {
             let mut why = self.lacks_cause(v, &method, lacks);
             why.text = format!("{shown} does not satisfy {constraint} {}", why.text);
@@ -372,6 +379,18 @@ impl<'a> Checker<'a> {
     /// reported.
     pub(super) fn verify(&mut self, instance: &Instance) {
         for (at, (&param, &arg)) in instance.params.iter().zip(&instance.args).enumerate() {
+            // The generic type or function holds a value of this
+            // parameter, and an abstract type has none (TYP-19).
+            if self.types.is_held(param) && self.types.is_abstract(arg, self.names) {
+                let span = instance.spans.get(at).copied().unwrap_or(instance.at);
+                let shown = self.type_string(arg);
+                let message = format!(
+                    "cannot use {shown} for {}: a value of it is held, and {shown} is abstract",
+                    self.type_string(param)
+                );
+                self.error(Code::AbstractInstance, span, message);
+                return;
+            }
             // The generic type or function writes `Option[P]` for this
             // parameter.
             if self.types.is_optional(param) && self.has_own_nil(arg) {
