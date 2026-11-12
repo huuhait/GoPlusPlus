@@ -5070,6 +5070,133 @@ func built[S ~[]int, M ~map[string]int, C ~chan int, R ~<-chan int, B ~string | 
     assert_eq!(messages("a.go", text), expected);
 }
 
+// rule: GEN-6, GEN-7, GEN-8, GEN-9, GEN-10
+#[test]
+fn a_method_may_have_type_parameters_of_its_own() {
+    let text = "package p
+
+type Set struct{ items []int }
+
+func (s Set) Map[U any](f func(int) U) []U {
+	var out []U
+	for _, x := range s.items {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+func (s Set) Sum[N ~int | ~float64](zero N) N { return zero }
+
+type List[T any] struct{ items []T }
+
+func (l List[T]) Conv[U any](f func(T) U) List[U] { return List[U]{} }
+
+type Mapper interface{ Map(f func(int) string) []string }
+
+func use(s Set, l List[int]) {
+	a := s.Map(func(x int) string { return \"\" })
+	b := s.Map[bool](func(x int) bool { return true })
+	var _ []string = a
+	var _ []bool = b
+	var _ float64 = s.Sum(1.5)
+	_ = s.Sum(\"x\")
+	_ = s.Sum[string](\"x\")
+	c := l.Conv(func(x int) string { return \"\" })
+	var _ List[string] = c
+	var _ Mapper = s
+	_ = s.Map
+}
+
+func (s Set) Parse[T any]!(text string) T {
+	var zero T
+	return zero
+}
+
+func parse!(s Set) int {
+	n := s.Parse[int]!(\"5\")
+	return n
+}
+";
+    let expected = [
+        "a.gopp:27:6: string does not satisfy ~int | ~float64 (string missing in ~int | ~float64)",
+        "a.gopp:28:12: string does not satisfy ~int | ~float64 (string missing in ~int | \
+         ~float64)",
+        "a.gopp:31:17: cannot use s (variable of struct type Set) as Mapper value in variable \
+         declaration: Set does not implement Mapper (method Map has type parameters)",
+        "a.gopp:32:6: cannot use generic function s.Map without instantiation",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // A `.go` file has no generic methods.
+    let text = "package p\ntype S struct{}\nfunc (S) m[P any](P) {}\n";
+    let expected = ["a.go:3:11: syntax error: method must have no type parameters"];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+#[test]
+fn a_body_records_the_generic_functions_and_types_that_it_names() {
+    let text = "package p
+
+type List[T any] struct{ items []T }
+
+func (l List[T]) Conv[U any](f func(T) U) List[U] { return List[U]{} }
+
+func first[S ~[]E, E any](s S) E { return s[0] }
+func pair[K comparable, V any](k K, v V) map[K]V { return nil }
+
+var table List[string]
+
+func use(l List[int], xs []float64) {
+	_ = first(xs)
+	_ = pair[string](\"a\", 1)
+	_ = pair[int, bool]
+	var f func([]int) int = first
+	_ = f
+	_ = l.Conv(func(x int) string { return \"\" })
+}
+
+func generic[P any](p []P) P { return first(p) }
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.go", text)], &loader, &names);
+    let types = loader.types.get().unwrap();
+    let tree = &checked.files[0];
+    let bodies = checked.package.files[0].bodies.iter();
+    let mut found: Vec<(u32, String)> = bodies
+        .flat_map(|body| &body.instances)
+        .map(|(&expr, instance)| {
+            let span = tree.exprs[expr].span;
+            let line = text[..span.lo as usize].matches('\n').count() + 1;
+            let written = &text[span.lo as usize..span.hi as usize];
+            let show =
+                |ty: &crate::types::TypeId| types.display_in(*ty, &names, names.get_or_intern("p"));
+            let args: Vec<String> = instance.args.iter().map(show).collect();
+            let shown = format!(
+                "{line}: {written}: [{}] {}",
+                args.join(", "),
+                show(&instance.ty)
+            );
+            (span.lo, shown)
+        })
+        .collect();
+    found.sort();
+    let found: Vec<String> = found.into_iter().map(|(_, shown)| shown).collect();
+    let expected = [
+        "5: List[T]: [T] List[T]",
+        "5: List[U]: [U] List[U]",
+        "5: List[U]: [U] List[U]",
+        "10: List[string]: [string] List[string]",
+        "12: List[int]: [int] List[int]",
+        "13: first: [[]float64, float64] func([]float64) float64",
+        "14: pair[string]: [string, int] func(string, int) map[string]int",
+        "15: pair[int, bool]: [int, bool] func(int, bool) map[int]bool",
+        "16: first: [[]int, int] func([]int) int",
+        "18: l.Conv: [string] func(func(int) string) List[string]",
+        "21: first: [[]P, P] func([]P) P",
+    ];
+    assert_eq!(found, expected);
+}
+
 // rule: RNG-8
 #[test]
 fn a_loop_variable_is_not_redeclared_in_the_body_of_its_loop() {

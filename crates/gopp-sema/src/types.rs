@@ -174,6 +174,9 @@ pub enum Lacks {
     OneMember,
     /// Its method needs the address of its receiver.
     ValueReceiver,
+    /// Its method has type parameters of its own, which no method of an
+    /// interface has.
+    Generic,
     /// The name is a field.
     NoField,
 }
@@ -708,7 +711,7 @@ impl Types {
             Member::Method {
                 sig,
                 pointer_receiver: false,
-            } => Some(sig),
+            } if self.generic_func(sig).is_none() => Some(sig),
             _ => None,
         }
     }
@@ -747,13 +750,19 @@ impl Types {
             },
             Type::Tuple(types) => Type::Tuple(list(types)),
             // With its type arguments a function is generic no more.
+            // A generic function keeps the type parameters that are not
+            // replaced.
             Type::Func {
+                type_params,
                 params,
                 results,
                 variadic,
-                ..
             } => Type::Func {
-                type_params: Box::new([]),
+                type_params: type_params
+                    .iter()
+                    .copied()
+                    .filter(|param| !from.contains(param))
+                    .collect(),
                 params: list(params),
                 results: list(results),
                 variadic: *variadic,
@@ -820,6 +829,30 @@ impl Types {
         let exported = names.resolve(&name).starts_with(char::is_uppercase);
         let key = (name, (!exported).then_some(package));
         self.find(ty, key, names, any_case)
+    }
+
+    /// The type of the method `method` of a generic type for the type
+    /// arguments `args`. A method with type parameters of its own gets
+    /// new ones there, whose constraints are written with the type
+    /// arguments too.
+    fn method_of_instance(&self, method: &DeclaredMethod, args: &[TypeId]) -> TypeId {
+        let sig = method.method.sig;
+        let own = self.generic_func(sig).unwrap_or_default();
+        if own.is_empty() || method.receiver_params.is_empty() {
+            return self.substitute(sig, &method.receiver_params, args);
+        }
+        let fresh: Vec<TypeId> = own
+            .iter()
+            .filter_map(|&param| self.param_name(param).map(|name| self.param(name)))
+            .collect();
+        let from: Vec<TypeId> = method.receiver_params.iter().chain(&own).copied().collect();
+        let to: Vec<TypeId> = args.iter().chain(&fresh).copied().collect();
+        for (&param, &new) in own.iter().zip(&fresh) {
+            if let Some(constraint) = self.constraint(param) {
+                self.set_constraint(new, self.substitute(constraint, &from, &to));
+            }
+        }
+        self.generic_func_type(self.substitute(sig, &from, &to), &fresh)
     }
 
     /// `lookup` of a name with the package it belongs to, which is none
@@ -898,7 +931,7 @@ impl Types {
                     });
                     if let Some(method) = declared {
                         let member = Member::Method {
-                            sig: self.substitute(method.method.sig, &method.receiver_params, args),
+                            sig: self.method_of_instance(&method, args),
                             pointer_receiver: method.pointer_receiver && !indirect,
                         };
                         found.push(Found {
@@ -1562,6 +1595,7 @@ impl Types {
                     pointer_receiver: true,
                     ..
                 } => Lacks::ValueReceiver,
+                Member::Method { sig, .. } if self.generic_func(sig).is_some() => Lacks::Generic,
                 // The signature of a method is not known while the
                 // types of its package are worked out.
                 Member::Method { sig, .. } if sig == Self::INVALID || same(sig, method.sig) => {

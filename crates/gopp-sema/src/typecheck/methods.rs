@@ -27,6 +27,7 @@ impl<'a> Checker<'a> {
             let DeclKind::Func {
                 receiver: Some(receiver),
                 name,
+                type_params,
                 ty,
                 ..
             } = &tree.decl_nodes[decl].kind
@@ -73,8 +74,16 @@ impl<'a> Checker<'a> {
                 self.needs.push(Vec::new());
                 self.methods_declared.push(*name);
             }
+            // A method may have type parameters of its own.
             let sig = match with_signatures {
-                true => self.typ(&cx, *ty),
+                true => {
+                    let own = self.declare_params(&mut cx, type_params);
+                    let sig = self.typ(&cx, *ty);
+                    match own.is_empty() {
+                        true => sig,
+                        false => self.types.generic_func_type(sig, &own),
+                    }
+                }
                 false => Types::INVALID,
             };
             let method = Method {

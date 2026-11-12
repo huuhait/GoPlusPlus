@@ -119,10 +119,24 @@ pub struct Body {
     /// there and the interface type. In a `.gopp` file the first may be
     /// what a pointer points to, or a pointer to what a handle owns.
     pub iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
+    /// For an expression that names a generic function or type with type
+    /// arguments, written or inferred, what they are: `f` in `f(x)`,
+    /// `f[int]`, `List[int]`, a generic function that is given to a place
+    /// of a function type. In a generic body they may be written with its
+    /// type parameters.
+    pub instances: FxHashMap<ExprId, Instance>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.
     pub hidden_results: FxHashMap<StmtId, Vec<(LocalId, LocalId)>>,
+}
+
+/// A generic function or type as one use names it: its type arguments,
+/// written or inferred, and the type that they make it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Instance {
+    pub args: Vec<TypeId>,
+    pub ty: TypeId,
 }
 
 /// What a selector `x.sel` reaches, and the way to it.

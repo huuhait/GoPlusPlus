@@ -64,6 +64,7 @@ impl<'a> Checker<'a> {
             Lacks::Exported => format!("(unexported method {name})"),
             Lacks::OneMember => format!("(ambiguous selector {shown}.{name})"),
             Lacks::ValueReceiver => format!("(method {name} has pointer receiver)"),
+            Lacks::Generic => format!("(method {name} has type parameters)"),
             Lacks::NoField => format!("({shown}.{name} is a field, not a method)"),
             Lacks::Name(has) => {
                 have_want = Some((self.method_string(&has), self.method_string(method)));

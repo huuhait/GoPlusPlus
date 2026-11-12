@@ -121,6 +121,7 @@ impl<'a> Checker<'a> {
                 }
                 let instance = self.types.substitute(x.ty, &params, &args);
                 let spans = indices.iter().map(|&index| cx.tree.exprs[index].span);
+                self.note_instance(expr, &args, instance);
                 self.instances.push(super::constraints::Instance {
                     params,
                     args,

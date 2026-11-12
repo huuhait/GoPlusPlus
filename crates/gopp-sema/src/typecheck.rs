@@ -254,6 +254,9 @@ struct Checker<'a> {
     /// What the value that is assigned next is given to, as a message
     /// names it.
     assigned_to: Option<String>,
+    /// While a body is walked: the generic functions and types that it
+    /// names, each with its type arguments.
+    instantiated: FxHashMap<ExprId, crate::object::Instance>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The declared types of this package.
@@ -302,6 +305,7 @@ struct BodyTypes {
     selections: FxHashMap<ExprId, Selection>,
     writes_through: FxHashSet<ExprId>,
     iface_conversions: FxHashMap<ExprId, (TypeId, TypeId)>,
+    instances: FxHashMap<ExprId, crate::object::Instance>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -363,6 +367,7 @@ pub fn declarations(
         param_spans: FxHashMap::default(),
         partial: FxHashMap::default(),
         assigned_to: None,
+        instantiated: FxHashMap::default(),
         steps: 0,
         declared: FxHashSet::default(),
         method_names: FxHashMap::default(),
@@ -429,6 +434,7 @@ pub fn declarations(
             body.selections = found.selections;
             body.writes_through = found.writes_through;
             body.iface_conversions = found.iface_conversions;
+            body.instances = found.instances;
             for (LocalId(local), ty) in found.locals {
                 body.locals[local as usize].ty = ty;
             }
@@ -568,7 +574,11 @@ impl<'a> Checker<'a> {
 
     /// Gives each type parameter of a declaration a type, then each its
     /// constraint, which may name the others.
-    fn declare_params(&mut self, cx: &mut Cx<'a>, type_params: &[TypeParam]) -> Vec<TypeId> {
+    pub(super) fn declare_params(
+        &mut self,
+        cx: &mut Cx<'a>,
+        type_params: &[TypeParam],
+    ) -> Vec<TypeId> {
         let mut params = Vec::new();
         for param in type_params {
             let ty = self.types.param(param.name.name);
@@ -1562,6 +1572,7 @@ impl<'a> Checker<'a> {
             }
             let instance = self.types.named(*id, &args);
             self.written(instance, cx.tree.exprs[x].span);
+            self.note_instance(expr, &args, instance);
             let spans = indices.iter().map(|&index| cx.tree.exprs[index].span);
             self.instances.push(constraints::Instance {
                 params,
@@ -2679,6 +2690,7 @@ impl<'a> Checker<'a> {
                 selections: std::mem::take(&mut self.selections),
                 writes_through: std::mem::take(&mut self.writes_through),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
+                instances: std::mem::take(&mut self.instantiated),
             });
         }
         self.incomplete = false;

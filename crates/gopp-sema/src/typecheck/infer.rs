@@ -485,6 +485,7 @@ impl<'a> Checker<'a> {
             false => self.infer(cx, at, &generic, &wanted, args, how(quiet, false)),
         }?;
         let instance = self.types.substitute(generic.sig, &generic.params, &found);
+        self.note_instance(fun, &found, instance);
         self.instances.push(Instance {
             params: generic.params,
             args: found,
@@ -747,6 +748,18 @@ impl<'a> Checker<'a> {
         self.sink.push(diagnostic);
     }
 
+    /// Notes that `expr` names a generic function or type with the type
+    /// arguments `args`, which make it the type `ty`.
+    pub(super) fn note_instance(&mut self, expr: ExprId, args: &[TypeId], ty: TypeId) {
+        if self.memo.is_some() {
+            let instance = crate::object::Instance {
+                args: args.to_vec(),
+                ty,
+            };
+            self.instantiated.insert(expr, instance);
+        }
+    }
+
     /// Forgets what was found for a type parameter if it is written with
     /// the type parameter itself, through what was found for others:
     /// replacing it would never end.
@@ -843,6 +856,7 @@ impl<'a> Checker<'a> {
             return Operand::UNKNOWN;
         };
         let instance = self.types.substitute(generic.sig, &generic.params, &found);
+        self.note_instance(expr, &found, instance);
         self.instances.push(Instance {
             params: generic.params,
             args: found,
