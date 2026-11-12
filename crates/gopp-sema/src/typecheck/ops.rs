@@ -690,6 +690,7 @@ impl<'a> Checker<'a> {
                     return Operand::UNKNOWN;
                 }
                 self.changed(cx, inner, place::Change::Addressed);
+                self.addressed(cx, inner);
                 return Operand::value(self.types.pointer(x.ty));
             }
             UnaryOp::Recv => {
@@ -1153,14 +1154,31 @@ impl<'a> Checker<'a> {
                 );
                 Some((true, cause, Code::MismatchedTypes))
             } else if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+                // In a `.gopp` file a func is never nil, so it is compared
+                // to nothing.
+                let func = |this: &Self, ty: TypeId| {
+                    let under = this.types.get(this.types.underlying(ty));
+                    this.own_rules(cx) && matches!(&*under, Type::Func { .. })
+                };
+                let cause = |this: &Self, ty: TypeId| match func(this, ty) {
+                    true => "func values cannot be compared".to_owned(),
+                    false => this.incomparable_cause(ty),
+                };
                 if self.is_nil(x) || self.is_nil(y) {
-                    let other = if self.is_nil(x) { y.ty } else { x.ty };
+                    let second = self.is_nil(x);
+                    let other = if second { y.ty } else { x.ty };
                     let has_nil = self.open(other) || self.has_nil(other);
-                    (!has_nil).then(|| (true, String::new(), Code::CannotCompare))
+                    if func(self, other) {
+                        let shown = self.type_string(other);
+                        let cause = format!("a {shown} is never nil: use Option[{shown}]");
+                        Some((second, cause, Code::NilNeverNil))
+                    } else {
+                        (!has_nil).then(|| (true, String::new(), Code::CannotCompare))
+                    }
                 } else if !comparable(self, x.ty) {
-                    Some((false, self.incomparable_cause(x.ty), Code::CannotCompare))
+                    Some((false, cause(self, x.ty), Code::CannotCompare))
                 } else if !comparable(self, y.ty) {
-                    Some((true, self.incomparable_cause(y.ty), Code::CannotCompare))
+                    Some((true, cause(self, y.ty), Code::CannotCompare))
                 } else {
                     None
                 }

@@ -320,7 +320,9 @@ impl<'a> Checker<'a> {
                     continue;
                 };
                 if !counts {
-                    self.assignment(cx, target, Operand::value(ty), Some(to), "assignment");
+                    let assigned =
+                        self.assignment(cx, target, Operand::value(ty), Some(to), "assignment");
+                    self.note_write(cx, target, to, Some(&assigned));
                     if holds && self.own_rules(cx) {
                         self.range_copies(cx, of, &x, target, ty);
                     }
@@ -353,7 +355,10 @@ impl<'a> Checker<'a> {
                 (ty, _) => ty,
             };
             let ty = match (ty, alias) {
-                (Some(ty), true) => self.aliased(cx, of, &x, target, ty),
+                (Some(ty), true) => {
+                    self.addressed(cx, of);
+                    self.aliased(cx, of, &x, target, ty)
+                }
                 (ty, _) => ty,
             };
             self.set_local(local, ty);

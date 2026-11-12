@@ -331,6 +331,7 @@ impl<'a> Checker<'a> {
                     return self.invalid_argument(cx, at, message);
                 }
                 self.changed(cx, at, place::Change::Emptied("clear"));
+                self.wrote(cx, at);
                 no_value
             }
             (Close, Some((at, x))) => {
@@ -458,6 +459,7 @@ impl<'a> Checker<'a> {
                     }
                 };
                 self.changed(cx, at, place::Change::Emptied("delete"));
+                self.wrote(cx, at);
                 let (key_at, key_value) = given[1].clone();
                 let assigned =
                     self.assignment(cx, key_at, key_value, Some(key), "argument to delete");

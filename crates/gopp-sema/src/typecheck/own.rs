@@ -184,8 +184,10 @@ impl<'a> Checker<'a> {
             Some(x) if x.ty == self.types.basic(Basic::UntypedNil) => !self.takes_nil(to, false),
             Some(x) => self.unfit_own(x, to, false),
         };
-        if through {
-            self.writes_through.insert(place);
+        match through {
+            true => drop(self.writes_through.insert(place)),
+            // The pointer itself is assigned.
+            false => self.repointed(cx, place),
         }
     }
 

@@ -2777,6 +2777,40 @@ fn with_packages(names: &ThreadedRodeo, packages: &[(&str, &str)]) -> Loader {
     loader
 }
 
+/// What the function literals of the first file capture, and its method
+/// values: `line:col: x read, y write`, `line:col x.m: value`.
+fn closures(checked: &Checked, names: &ThreadedRodeo) -> Vec<String> {
+    let file = &checked.files[0];
+    let mut all = Vec::new();
+    for body in &checked.package.files[0].bodies {
+        let at = |expr: ExprId| {
+            let span = file.exprs[expr].span;
+            let source = checked.map.file(span.file);
+            let at = source.line_col(span.lo);
+            let text = source.text()[span.lo as usize..span.hi as usize].to_owned();
+            (span.lo, format!("{}:{}", at.line, at.column), text)
+        };
+        for (&literal, captures) in &body.captures {
+            let captured: Vec<String> = captures
+                .iter()
+                .map(|capture| {
+                    let name = names.resolve(&body.locals[capture.local.0 as usize].name);
+                    format!("{name} {}", format!("{:?}", capture.how).to_lowercase())
+                })
+                .collect();
+            let (offset, place, _) = at(literal);
+            all.push((offset, format!("{place}: {}", captured.join(", "))));
+        }
+        for (&selector, holds) in &body.method_values {
+            let (offset, place, text) = at(selector);
+            let holds = format!("{holds:?}").to_lowercase();
+            all.push((offset, format!("{place} {text}: {holds}")));
+        }
+    }
+    all.sort();
+    all.into_iter().map(|(_, line)| line).collect()
+}
+
 /// How the places of the first file give their values, in the order in
 /// which they are written: `line:col place: copy`, with `over` for a
 /// place that is assigned over; then the places that swaps assign to.
@@ -5838,7 +5872,7 @@ func use(f lib.File, h Handle, m Mutex, n N, d Doc, p Point, s []lib.File, k M, 
     assert_eq!(checked.messages, expected);
 }
 
-// rule: OWN-R3, OWN-R3a, OWN-R10, PAR-5
+// rule: OWN-R3, OWN-R3a, OWN-R10, PAR-5, CLO-9
 #[test]
 fn a_value_that_is_not_copied_is_moved_or_stays_in_its_place() {
     let text = "package p
@@ -6462,6 +6496,236 @@ fn a_value_of_a_type_parameter_is_given_as_one_of_a_type_like_it() {
     assert_eq!(refused("type X int", ""), none);
     assert_eq!(refused("", "Copy"), none);
     assert_eq!(refused("", "~int | ~uint8"), none);
+}
+
+// rule: CLO-5, CLO-5a
+#[test]
+fn a_function_literal_says_which_variables_it_uses_and_how() {
+    let text = "package p
+
+type Greeter struct{ Name string }
+
+func (g *Greeter) Hello() string { return \"hi \" + g.Name }
+func (g Greeter) Bye() string    { return \"bye \" + g.Name }
+
+type Namer interface{ Bye() string }
+
+func sortFunc(xs *[]int, less func(a, b int) int) {}
+func show(args ...any)                           {}
+
+func counter() (inc func() int, get func() int) {
+	n := 0
+	inc = func() int { n++; return n }
+	get = func() int { return n }
+	return
+}
+
+func loops(xs []int) {
+	var fs []func() int
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	total := 0
+	sortFunc(&xs, func(a, b int) int {
+		total++
+		return a - b
+	})
+	for _, &x := range xs {
+		_ = func() { x++ }
+	}
+	_ = func() {
+		for _, &x := range xs {
+			x++
+		}
+		total, fs := 1, fs
+		_, _ = total, fs
+	}
+}
+
+func methods(g Greeter, p *Greeter, n Namer) {
+	h := g.Hello
+	g.Name = \"bob\"
+	show(h(), g.Bye(), (g.Hello)())
+	a, b, c, d := g.Bye, p.Hello, p.Bye, n.Bye
+	e := Greeter{}.Bye
+	f := Greeter.Bye
+	show(a, b, c, d, e, f)
+	_ = func() { show(g.Hello, g.Bye, p.Hello) }
+}
+
+func recursion() {
+	var fib Option[func(int) int]
+	fib = func(n int) int {
+		f, ok := fib.Get()
+		if n < 2 || !ok {
+			return n
+		}
+		return f(n-1) + f(n-2)
+	}
+	if fib != nil {
+		show(fib(10))
+	}
+}
+
+func uses(xs []int, g Greeter, p, q *Greeter, m map[string]int) (err error) {
+	const limit = 3
+	type Count int
+	total := 0
+	defer func() {
+		if err != nil {
+			err = nil
+		}
+	}()
+	x := 1
+	defer show(x)
+	_ = func(a int) int {
+		total += a
+		local := a
+		_ = func() {
+			xs[0] = local
+			g.Name = \"x\"
+			p.Name = \"y\"
+			p = g
+			q = &g
+			delete(m, \"a\")
+			_ = &total
+			_ = len(xs) + x + limit + int(Count(1))
+		}
+		return a
+	}
+	return nil
+}
+";
+    let names = ThreadedRodeo::new();
+    let checked = check_texts("p", &[("a.gopp", text)], &Loader::default(), &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let expected = [
+        "15:8: n write",
+        "16:8: n read",
+        "23:19: i read",
+        "26:16: total write",
+        "31:7: x write",
+        "33:6: xs address, fs read",
+        "43:7 g.Hello: address",
+        "46:16 g.Bye: value",
+        "46:23 p.Hello: value",
+        "46:32 p.Bye: value",
+        "46:39 n.Bye: value",
+        "47:7 Greeter{}.Bye: value",
+        "50:6: g address, p read",
+        "50:20 g.Hello: address",
+        "50:29 g.Bye: value",
+        "50:36 p.Hello: value",
+        "55:8: fib read",
+        "71:8: err write",
+        "78:6: xs write, g address, p read, q write, m write, total address, x read",
+        "81:7: xs write, g address, p read, q write, m write, total address, x read, local read",
+    ];
+    assert_eq!(closures(&checked, &names), expected);
+    // A Go file has the same captures.
+    let text = "package p\nfunc f(p *int) { n := 0; _ = func() { n++; p = &n; *p = 1 } }\n";
+    let checked = check_texts("p", &[("a.go", text)], &Loader::default(), &names);
+    assert_eq!(closures(&checked, &names), ["2:30: p write, n address"]);
+}
+
+// rule: CLO-5a
+#[test]
+fn a_func_is_never_nil_and_a_method_value_holds_a_receiver_that_is_copied() {
+    let text = "package p
+
+type File struct{ fd int }
+
+func (f *File) drop()  {}
+func (f File) Fd() int { return f.fd }
+func (f *File) Close() {}
+func open() File       { return File{} }
+
+type Server struct{ OnStop Option[func()] }
+
+func funcs(s *Server, f, g func(), p *func()) {
+	var b Option[func()]
+	_ = b == nil
+	b = f
+	b = nil
+	if h := s.OnStop; h != nil {
+		h()
+	}
+	b()
+	p()
+	s.OnStop()
+
+	_ = f == nil
+	_ = nil != f
+	_ = f == g
+	f = nil
+	s()
+}
+
+func values(f File) {
+	a := f.Close
+	b := open().Fd
+	c := move(f).Fd
+	d := f.Fd
+	_, _, _, _ = a, b, c, d
+}
+";
+    let expected = [
+        "a.gopp:24:6: invalid operation: f == nil (a func() is never nil: use Option[func()])",
+        "a.gopp:25:13: invalid operation: nil != f (a func() is never nil: use Option[func()])",
+        "a.gopp:26:6: invalid operation: f == g (func values cannot be compared)",
+        "a.gopp:27:6: cannot use nil as func() value in assignment",
+        "    a func() is never nil: use Option[func()]",
+        "a.gopp:28:2: invalid operation: cannot call s (variable of struct type Server): Server is \
+         not a function",
+        "a.gopp:35:7: cannot copy f (variable of struct type File): File has a drop method and no \
+         Clone() File",
+        "    use move(f) to give the value, or &f to lend it",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // In a Go file a func is compared to nil.
+    let text = "package p\nfunc f(g, h func()) { _ = g == nil; _ = g == h }\n";
+    let expected = ["a.go:2:41: invalid operation: g == h (func can only be compared to nil)"];
+    assert_eq!(messages("a.go", text), expected);
+}
+
+#[test]
+fn the_steps_of_captures_grow_with_the_input_not_faster() {
+    let steps = |text: String| {
+        let loader = Loader::default();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps
+    };
+    // Many literals that use one variable many times, and many variables
+    // that one literal uses.
+    let siblings = |count: usize| {
+        let literals: String = (0..count)
+            .map(|i| format!("\t_ = func() {{ n += {i}; n++; _ = &n }}\n"))
+            .collect();
+        format!("package p\nfunc f(n int) {{\n{literals}}}\n")
+    };
+    let wide = |count: usize| {
+        let declared: String = (0..count).map(|i| format!("\tv{i} := {i}\n")).collect();
+        let used: String = (0..count).map(|i| format!("\t\tv{i}++\n")).collect();
+        format!("package p\nfunc f() {{\n{declared}\t_ = func() {{\n{used}\t}}\n}}\n")
+    };
+    // A literal in a literal: each uses a variable of the one around it,
+    // and the innermost uses the outermost variable many times.
+    let nested = |depth: usize| {
+        let open: String = (0..depth)
+            .map(|i| format!("v{} := v{i}\n_ = func() {{\n_ = v{}\n", i + 1, i + 1))
+            .collect();
+        let uses = "v0++\n".repeat(depth);
+        format!(
+            "package p\nfunc f(v0 int) {{\n{open}{uses}{}}}\n",
+            "}\n".repeat(depth)
+        )
+    };
+    let sizes = [250, 500, 1_000, 2_000];
+    linear::assert_near_linear(&sizes, |n| steps(siblings(n)));
+    linear::assert_near_linear(&sizes, |n| steps(wide(n)));
+    // The parser takes no deeper nesting.
+    linear::assert_near_linear(&[50, 100, 200, 400], |n| steps(nested(n)));
 }
 
 // rule: OWN-R3a

@@ -419,11 +419,13 @@ impl<'a> Checker<'a> {
                 return Some(Types::INVALID);
             }
             if self.read(cx, x.clone()).ty != x.ty {
+                self.wrote(cx, lhs);
                 return Some(x.ty);
             }
         }
         if matches!(x.mode, Mode::Variable | Mode::MapIndex) {
             self.changed(cx, lhs, place::Change::Assigned);
+            self.wrote(cx, lhs);
             return Some(x.ty);
         }
         if let ExprKind::Selector { x: of, .. } = cx.tree.exprs[inner].kind

@@ -3,7 +3,7 @@
 //! that is read (OWN-R3b).
 
 use super::*;
-use crate::object::Transfer;
+use crate::object::{Capture, CaptureUse, MethodValue, Transfer};
 use crate::types::{Category, NotCopied};
 
 /// Where the value of an expression lives.
@@ -76,7 +76,7 @@ impl<'a> Checker<'a> {
         let declared = cx.body.locals[local.0 as usize].span;
         self.literals
             .last()
-            .is_some_and(|literal| declared.lo < literal.lo || literal.hi < declared.hi)
+            .is_some_and(|(_, literal)| declared.lo < literal.lo || literal.hi < declared.hi)
     }
 
     /// The local variable that the name `expr` denotes.
@@ -135,10 +135,10 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The plain range variable that a change of the place `expr`
-    /// changes: the place is the variable or a part of it, which is said
-    /// too. A part that a pointer points to is none.
-    fn bound(&mut self, cx: &Cx<'a>, mut expr: ExprId) -> Option<(LocalId, bool)> {
+    /// The variable that a change of the place `expr` changes: the place
+    /// is the variable or a part of it, which is said too. A part that a
+    /// pointer points to is none.
+    fn root(&mut self, cx: &Cx<'a>, mut expr: ExprId) -> Option<(LocalId, bool)> {
         let mut part = false;
         loop {
             self.steps += 1;
@@ -147,14 +147,7 @@ impl<'a> Checker<'a> {
                     expr = x;
                     continue;
                 }
-                ExprKind::Name(_) => {
-                    let local = self.variable(cx, expr)?;
-                    let copied = matches!(
-                        self.bindings.get(&local),
-                        Some(Binding::Element | Binding::Key)
-                    );
-                    return copied.then_some((local, part));
-                }
+                ExprKind::Name(_) => return Some((self.variable(cx, expr)?, part)),
                 ExprKind::Selector { x, .. }
                 | ExprKind::Index { x, .. }
                 | ExprKind::Slice { x, .. } => x,
@@ -166,6 +159,96 @@ impl<'a> Checker<'a> {
             part = true;
             expr = of;
         }
+    }
+
+    /// The function literals that are being walked and do not declare the
+    /// variable do `how` to it.
+    pub(super) fn capture(&mut self, cx: &Cx<'a>, local: LocalId, how: CaptureUse) {
+        if self.literals.is_empty() || self.memo.is_none() {
+            return;
+        }
+        let declared = cx.body.locals[local.0 as usize].span;
+        for at in (0..self.literals.len()).rev() {
+            let (literal, span) = self.literals[at];
+            if span.lo <= declared.lo && declared.hi <= span.hi {
+                return;
+            }
+            self.steps += 1;
+            // If the literal does as much already, so do those around it.
+            match self.captures.insert((literal, local), how) {
+                Some(known) if known >= how => {
+                    self.captures.insert((literal, local), known);
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The name `expr` is used: a variable that it denotes is read.
+    pub(super) fn read_variable(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        if let (false, Some(local)) = (self.literals.is_empty(), self.variable(cx, expr)) {
+            self.capture(cx, local, CaptureUse::Read);
+        }
+    }
+
+    /// The captures of the body that was walked, by their literals.
+    pub(super) fn captured_by_literal(&mut self) -> FxHashMap<ExprId, Vec<Capture>> {
+        let mut all: FxHashMap<ExprId, Vec<Capture>> = FxHashMap::default();
+        for ((literal, local), how) in self.captures.drain() {
+            all.entry(literal).or_default().push(Capture { local, how });
+        }
+        for captures in all.values_mut() {
+            captures.sort_by_key(|capture| capture.local);
+        }
+        all
+    }
+
+    /// The place `expr` is assigned to: its variable is written, unless
+    /// the place is a pointer, which may be written through.
+    pub(super) fn wrote(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        if self.literals.is_empty() {
+            return;
+        }
+        let Some((local, part)) = self.root(cx, expr) else {
+            return;
+        };
+        let ty = self.locals.get(&local).map_or(Types::INVALID, |x| x.ty);
+        let is_pointer = matches!(
+            &*self.types.get(self.types.underlying(ty)),
+            Type::Pointer(_)
+        );
+        if part || !is_pointer || !self.own_rules(cx) {
+            self.capture(cx, local, CaptureUse::Write);
+        }
+    }
+
+    /// The pointer variable `expr` is pointed at something else.
+    pub(super) fn repointed(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        if let (false, Some((local, false))) = (self.literals.is_empty(), self.root(cx, expr)) {
+            self.capture(cx, local, CaptureUse::Write);
+        }
+    }
+
+    /// The address of the place `expr` is taken.
+    pub(super) fn addressed(&mut self, cx: &Cx<'a>, expr: ExprId) {
+        if self.literals.is_empty() {
+            return;
+        }
+        if let Some((local, _)) = self.root(cx, expr) {
+            self.capture(cx, local, CaptureUse::Address);
+        }
+    }
+
+    /// The plain range variable that a change of the place `expr`
+    /// changes, and whether the place is a part of it.
+    fn bound(&mut self, cx: &Cx<'a>, expr: ExprId) -> Option<(LocalId, bool)> {
+        let (local, part) = self.root(cx, expr)?;
+        let copied = matches!(
+            self.bindings.get(&local),
+            Some(Binding::Element | Binding::Key)
+        );
+        copied.then_some((local, part))
     }
 
     /// The place `expr` is changed: a variable of a plain range clause is
@@ -361,11 +444,13 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The receiver `base` of the method that the selector `expr` reaches
-    /// is given to the method: a value receiver gets a copy (PAR-1). The
-    /// copy method reads its receiver where it is, and what a receiver
-    /// that is not copied does with the value, its method says.
-    pub(super) fn receiver_given(
+    /// The selector `expr` reaches a method of the value `x` of `base`. A
+    /// value receiver gets a copy of `x` (PAR-1, CLO-5a); the copy method
+    /// reads its receiver where it is, and what a called method does with
+    /// a receiver that is not copied, the method says. A pointer receiver
+    /// gets the address of a variable. A method that is not called is a
+    /// value that holds its receiver.
+    pub(super) fn method_selected(
         &mut self,
         cx: &Cx<'a>,
         (expr, name): (ExprId, Spur),
@@ -373,17 +458,39 @@ impl<'a> Checker<'a> {
         x: &Operand,
         pointer_receiver: bool,
     ) {
-        if pointer_receiver || !self.own_rules(cx) || self.names.resolve(&name) == "Clone" {
+        let called = self.callee == Some(expr);
+        // A pointer is the receiver itself.
+        let is_variable = x.mode == Mode::Variable
+            && self
+                .walked_type(base)
+                .is_some_and(|ty| !self.reaches_out(ty));
+        let bound = pointer_receiver && is_variable;
+        if bound {
+            self.addressed(cx, base);
+        }
+        if !called && self.memo.is_some() {
+            let holds = match bound {
+                true => MethodValue::Address,
+                false => MethodValue::Value,
+            };
+            self.method_values.insert(expr, holds);
+        }
+        if pointer_receiver || !self.own_rules(cx) {
             return;
         }
         let Some(holder) = self.selections.get(&expr).map(|selection| selection.holder) else {
             return;
         };
-        let stands_for = self.types.is_interface(holder) || self.is_param(holder);
-        if stands_for || self.types.category(holder) == Category::NoCopy {
+        // A method of an interface is called on the value where it is.
+        if self.is_param(holder) || called && self.types.is_interface(holder) {
             return;
         }
-        self.given(cx, base, x, holder, Given::Stored);
+        let read_in_place = called
+            && (self.names.resolve(&name) == "Clone"
+                || self.types.category(holder) == Category::NoCopy);
+        if !read_in_place {
+            self.given(cx, base, x, holder, Given::Stored);
+        }
     }
 
     /// `x[lo:hi]` as the new value of `x` is the part of `x` itself: the

@@ -241,7 +241,14 @@ struct Checker<'a> {
     /// are.
     bindings: FxHashMap<LocalId, place::Binding>,
     /// The function literals that are being walked, the innermost last.
-    literals: Vec<Span>,
+    literals: Vec<(ExprId, Span)>,
+    /// While a body is walked: the most that each function literal does
+    /// to each variable it captures.
+    captures: FxHashMap<(ExprId, LocalId), crate::object::CaptureUse>,
+    /// While a body is walked: its method values.
+    method_values: FxHashMap<ExprId, crate::object::MethodValue>,
+    /// The expression that is being called, while it is worked out.
+    callee: Option<ExprId>,
     /// While the value of an assignment to one place is walked: the
     /// place, as it is written.
     target: Option<String>,
@@ -347,6 +354,8 @@ struct BodyTypes {
     var_modes: FxHashMap<ExprId, crate::object::Transfer>,
     swaps: FxHashSet<ExprId>,
     self_moves: FxHashSet<ExprId>,
+    captures: FxHashMap<ExprId, Vec<crate::object::Capture>>,
+    method_values: FxHashMap<ExprId, crate::object::MethodValue>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -406,6 +415,9 @@ pub fn declarations(
         self_moves: FxHashSet::default(),
         bindings: FxHashMap::default(),
         literals: Vec::new(),
+        captures: FxHashMap::default(),
+        method_values: FxHashMap::default(),
+        callee: None,
         target: None,
         swapping: false,
         iface_conversions: FxHashMap::default(),
@@ -487,6 +499,8 @@ pub fn declarations(
             body.var_modes = found.var_modes;
             body.swaps = found.swaps;
             body.self_moves = found.self_moves;
+            body.captures = found.captures;
+            body.method_values = found.method_values;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
@@ -1943,7 +1957,7 @@ impl<'a> Checker<'a> {
                 // Its body is walked with the body it is in.
                 if self.memo.is_some() {
                     self.signature_locals(cx, *ty);
-                    self.literals.push(cx.tree.exprs[expr].span);
+                    self.literals.push((expr, cx.tree.exprs[expr].span));
                     let target = self.target.take();
                     self.function_body(cx, *ty, sig, body);
                     self.target = target;
@@ -2068,7 +2082,10 @@ impl<'a> Checker<'a> {
                     mode: Mode::Type,
                     ty,
                 },
-                None => self.locals.get(&local).cloned().unwrap_or(Operand::UNKNOWN),
+                None => {
+                    self.read_variable(cx, expr);
+                    self.locals.get(&local).cloned().unwrap_or(Operand::UNKNOWN)
+                }
             },
             Ref::Member { .. } => Operand::UNKNOWN,
         }
@@ -2201,7 +2218,7 @@ impl<'a> Checker<'a> {
                     self.error(Code::MethodExprPointerReceiver, sel.span, message);
                     return Operand::UNKNOWN;
                 }
-                self.receiver_given(cx, (expr, sel.name), base, &x, pointer_receiver);
+                self.method_selected(cx, (expr, sel.name), base, &x, pointer_receiver);
                 Operand::value(sig)
             }
             // `T.m`: a function that takes the receiver first.
@@ -2433,8 +2450,24 @@ impl<'a> Checker<'a> {
         args: &[ExprId],
         spread: bool,
     ) -> Operand {
+        // A method that is called is no method value.
+        let mut called = self.unparen(cx, fun);
+        if let ExprKind::Index { x, .. } = cx.tree.exprs[called].kind {
+            called = self.unparen(cx, x);
+        }
+        let outer = self.callee.replace(called);
         let callee = self.operand(cx, fun);
+        self.callee = outer;
+        self.method_values.remove(&called);
         let callee = self.instantiated(cx, fun, callee);
+        // In a `.gopp` file a function is called through an option, which
+        // is taken as checked, and through a pointer.
+        let callee = match &*self.types.get(self.types.underlying(callee.ty)) {
+            Type::Option(_) | Type::Pointer(_) | Type::Unique(_) | Type::Shared(_) => {
+                self.read(cx, callee)
+            }
+            _ => callee,
+        };
         match callee.mode {
             Mode::NoValue => {
                 for &arg in args {
@@ -2886,6 +2919,8 @@ impl<'a> Checker<'a> {
                 var_modes: std::mem::take(&mut self.var_modes),
                 swaps: std::mem::take(&mut self.swaps),
                 self_moves: std::mem::take(&mut self.self_moves),
+                captures: self.captured_by_literal(),
+                method_values: std::mem::take(&mut self.method_values),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
                 bangs: std::mem::take(&mut self.bangs),
@@ -3176,6 +3211,7 @@ impl<'a> Checker<'a> {
                         let message = format!("cannot assign to {}", self.expr_string(cx, place));
                         self.error(Code::CannotAssignTo, tree.exprs[place].span, message);
                     }
+                    self.wrote(cx, place);
                     places.push(assigned.then_some(declared.ty));
                 }
                 let types = self.init_vars(cx, &places, rhs, Init::Variables);

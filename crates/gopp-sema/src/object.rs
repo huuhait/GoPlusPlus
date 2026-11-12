@@ -131,6 +131,13 @@ pub struct Body {
     /// owner, how. A place of a type that is copied by its bytes has no
     /// entry, nor has a temporary, which is given as it is.
     pub var_modes: FxHashMap<ExprId, Transfer>,
+    /// For a function literal, the variables of the functions around it
+    /// that it uses, in the order of their declarations, each with the
+    /// most that the literal or a literal inside it does to it.
+    pub captures: FxHashMap<ExprId, Vec<Capture>>,
+    /// The selectors `x.m` that are values, not called: what each holds of
+    /// its receiver.
+    pub method_values: FxHashMap<ExprId, MethodValue>,
     /// The places on the left of the assignments that only exchange the
     /// values of their places: each gets a value that was moved out of
     /// another, and its own was moved out too.
@@ -157,6 +164,36 @@ pub enum Transfer {
     /// The value itself: the operand of `move`, a returned variable that
     /// cannot be copied, a place of a swap.
     Move,
+}
+
+/// A variable that a function literal uses and does not declare.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capture {
+    pub local: LocalId,
+    pub how: CaptureUse,
+}
+
+/// The most that a function literal does to a variable it captures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CaptureUse {
+    Read,
+    /// The variable or a part of it is assigned, counted, deleted from or
+    /// cleared.
+    Write,
+    /// The address of the variable or of a part of it is taken: `&x`, a
+    /// method with a pointer receiver, `&v` of a range clause over it.
+    Address,
+}
+
+/// What a method value `x.m` holds of `x` (CLO-5, CLO-5a).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MethodValue {
+    /// The value that `x` has when the method value is made: a copy for a
+    /// value receiver, the pointer or the interface value otherwise.
+    Value,
+    /// The address of the variable `x`, for a pointer receiver: the
+    /// method sees what `x` is when it is called.
+    Address,
 }
 
 /// What a call `f!(x)` does when `f` returns an error. The innermost
