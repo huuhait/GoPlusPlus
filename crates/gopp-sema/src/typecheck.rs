@@ -15,6 +15,7 @@ mod constraints;
 mod consts;
 mod conversion;
 mod flow;
+mod foreign;
 mod implements;
 mod index;
 mod infer;
@@ -284,6 +285,12 @@ struct Checker<'a> {
     /// The type parameters of the function whose body is being checked,
     /// those that its receiver names too.
     around: Vec<TypeId>,
+    /// What each header says of each name that was asked.
+    foreign_members: FxHashMap<(ObjId, Spur), Option<crate::foreign::ForeignMember>>,
+    /// For an expression that names a function of a header: which of its
+    /// parameters it does not write through.
+    foreign_flags: FxHashMap<ExprId, Vec<bool>>,
+    foreign_uses: FxHashMap<ExprId, crate::object::ForeignUse>,
     /// While the body of a method is walked: the type of its receiver.
     receiver_of: Option<TypeId>,
     /// While a part of a literal that is a parent is worked out: a
@@ -437,6 +444,7 @@ struct BodyTypes {
     op_assigns: FxHashMap<ExprId, crate::object::OperatorUse>,
     index_stores: FxHashMap<ExprId, crate::object::OperatorUse>,
     case_operators: FxHashMap<ExprId, crate::object::OperatorUse>,
+    foreign_uses: FxHashMap<ExprId, crate::object::ForeignUse>,
 }
 
 /// A group of constants inside a function: the index of its next constant,
@@ -515,6 +523,9 @@ pub fn declarations(
         case_operators: FxHashMap::default(),
         mono: mono::Mono::default(),
         around: Vec::new(),
+        foreign_members: FxHashMap::default(),
+        foreign_flags: FxHashMap::default(),
+        foreign_uses: FxHashMap::default(),
         receiver_of: None,
         parent_part: false,
         iface_args: FxHashSet::default(),
@@ -630,6 +641,7 @@ pub fn declarations(
             body.op_assigns = found.op_assigns;
             body.index_stores = found.index_stores;
             body.case_operators = found.case_operators;
+            body.foreign_uses = found.foreign_uses;
             body.iface_conversions = found.iface_conversions;
             body.instances = found.instances;
             body.bangs = found.bangs;
@@ -1638,6 +1650,10 @@ impl<'a> Checker<'a> {
         let node = &tree.exprs[expr];
         match &node.kind {
             ExprKind::Name(_) | ExprKind::Selector { .. } => {
+                if let Some(ty) = self.foreign_type(cx, expr, expr, &[]) {
+                    self.incomplete |= ty == Types::INVALID;
+                    return ty;
+                }
                 if let Some(ty) = self.named_type(cx, expr) {
                     return ty;
                 }
@@ -1829,7 +1845,13 @@ impl<'a> Checker<'a> {
                 self.unions.push(terms);
                 self.types.intern(Type::Union(union.into()))
             }
-            ExprKind::Index { x, indices } => self.instance(cx, expr, *x, indices),
+            ExprKind::Index { x, indices } => match self.foreign_type(cx, expr, *x, indices) {
+                Some(ty) => {
+                    self.incomplete |= ty == Types::INVALID;
+                    ty
+                }
+                None => self.instance(cx, expr, *x, indices),
+            },
             ExprKind::Bad | ExprKind::MacroCall { .. } => {
                 self.incomplete = true;
                 Types::INVALID
@@ -2347,6 +2369,9 @@ impl<'a> Checker<'a> {
 
     /// `x.sel`: a name of an imported package, a field, a method.
     fn selector(&mut self, cx: &Cx<'a>, expr: ExprId, x: ExprId, sel: Ident) -> Operand {
+        if let Some(found) = self.foreign_selector(cx, expr) {
+            return found;
+        }
         if let Some(&Ref::Member { import, member }) = cx.body.uses.get(&expr) {
             let ObjKind::Import { package, .. } = &self.package.object(import).kind else {
                 return Operand::UNKNOWN;
@@ -2751,7 +2776,12 @@ impl<'a> Checker<'a> {
             called = self.unparen(cx, x);
         }
         let outer = self.callee.replace(called);
-        let callee = self.operand(cx, fun);
+        // A template of a header is the instance that the arguments
+        // call.
+        let callee = match self.foreign_callee(cx, fun, args) {
+            Some(instance) => instance,
+            None => self.operand(cx, fun),
+        };
         self.callee = outer;
         self.method_values.remove(&called);
         let callee = match self.own_rules(cx) {
@@ -2859,6 +2889,7 @@ impl<'a> Checker<'a> {
                     many => Operand::value(self.types.intern(Type::Tuple(many.into()))),
                 };
                 self.taken(cx, (expr, args), fun, &called);
+                self.foreign_arguments(cx, fun, args);
                 self.pure_call(cx, fun);
                 match self.in_const && self.own_rules(cx) {
                     true => self.constant_call(cx, expr, fun, args, called),
@@ -3300,6 +3331,7 @@ impl<'a> Checker<'a> {
                 op_assigns: std::mem::take(&mut self.op_assigns),
                 index_stores: std::mem::take(&mut self.index_stores),
                 case_operators: std::mem::take(&mut self.case_operators),
+                foreign_uses: std::mem::take(&mut self.foreign_uses),
                 iface_conversions: std::mem::take(&mut self.iface_conversions),
                 instances: std::mem::take(&mut self.instantiated),
                 bangs: std::mem::take(&mut self.bangs),

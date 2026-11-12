@@ -1052,7 +1052,8 @@ impl<'a> Resolver<'a> {
         let ObjKind::Import { package, .. } = &self.cx.package.object(import).kind else {
             return;
         };
-        if package.fake || self.lenient {
+        // What a header declares is asked when the name is checked.
+        if package.fake || self.lenient || package.foreign.is_some() {
             return;
         }
         let member = self.name_text(sel.name);

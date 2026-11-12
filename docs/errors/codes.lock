@@ -504,3 +504,5 @@ E0498 note_op_fix
 E0499 err_const_impure
 E0500 err_const_call
 E0501 err_const_eval
+E0502 err_foreign_template
+E0503 err_foreign_read_only

@@ -217,7 +217,7 @@ impl<'a> Checker<'a> {
     /// Whether the value of `expr` is a pointer into what a `Shared`
     /// holds: the address of such a place, the `Shared` itself where a
     /// pointer is wanted, or a variable that is such a pointer.
-    fn points_into_shared(&mut self, cx: &Cx<'a>, expr: ExprId) -> bool {
+    pub(super) fn points_into_shared(&mut self, cx: &Cx<'a>, expr: ExprId) -> bool {
         let expr = self.unparen(cx, expr);
         match cx.tree.exprs[expr].kind {
             ExprKind::Unary {

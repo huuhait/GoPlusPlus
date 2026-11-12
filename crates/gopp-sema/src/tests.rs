@@ -10580,6 +10580,305 @@ fn the_steps_of_constants_grow_with_the_input_not_faster() {
     linear::assert_near_linear(&sizes, |n| steps(elements(n)));
 }
 
+/// A header as what reads headers would give it: a few C functions,
+/// variables, a constant and types, and C++ templates.
+#[derive(Debug, Default)]
+struct Header {
+    file: std::sync::OnceLock<crate::types::TypeId>,
+    /// How often each hook was asked.
+    asked: std::sync::atomic::AtomicU64,
+}
+
+impl crate::ForeignPackage for Header {
+    fn member(
+        &self,
+        name: &str,
+        types: &Types,
+        names: &ThreadedRodeo,
+    ) -> Option<crate::ForeignMember> {
+        use crate::ForeignMember::*;
+        use crate::basic::Basic;
+        self.asked
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let int32 = types.basic(Basic::Int32);
+        // What reads the header says what a `const char*` is in Go++.
+        let chars = types.basic(Basic::String);
+        let numbers = types.pointer(int32);
+        Some(match name {
+            "puts" => Func {
+                sig: types.func(&[chars], &[int32], false),
+                read_only: vec![true],
+            },
+            "sum" => Func {
+                sig: types.func(&[numbers, int32], &[int32], false),
+                read_only: vec![true, false],
+            },
+            "fill" => Func {
+                sig: types.func(&[numbers, int32], &[], false),
+                read_only: vec![false, false],
+            },
+            "parse" => Func {
+                sig: types.func(&[chars], &[int32], false),
+                read_only: vec![true],
+            },
+            "errno" => Var {
+                ty: int32,
+                read_only: false,
+            },
+            "version" => Var {
+                ty: int32,
+                read_only: true,
+            },
+            "BUFSIZ" => Const {
+                ty: int32,
+                value: Value::Int64(8192),
+            },
+            "type_" => Type(int32),
+            "FILE" => Type(*self.file.get_or_init(|| {
+                let (name, package) = (names.get_or_intern("FILE"), names.get_or_intern("stdio"));
+                let named = types.declare(name, package);
+                types.set_underlying(named, int32);
+                types.named(named, &[])
+            })),
+            "max" | "get" | "vector" | "pi_v" => Template,
+            _ => return None,
+        })
+    }
+
+    fn instance(
+        &self,
+        name: &str,
+        explicit: &[crate::TemplateArg],
+        args: Option<&[crate::types::TypeId]>,
+        types: &Types,
+        _: &ThreadedRodeo,
+    ) -> Result<crate::ForeignMember, String> {
+        use crate::ForeignMember::*;
+        use crate::TemplateArg;
+        use crate::basic::Basic;
+        self.asked
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let int32 = types.basic(Basic::Int32);
+        let first = |what: &str| match explicit.first() {
+            Some(TemplateArg::Type(ty)) => Ok(*ty),
+            Some(TemplateArg::Const(..)) => Err(format!("{what} takes a type")),
+            None => Err(format!("{what} needs a template argument")),
+        };
+        match name {
+            // `template<class T> T max(T, T)`.
+            "max" => {
+                // A constant without a type takes the type of the others.
+                let untyped = |ty: &&crate::types::TypeId| types.default_type(**ty) != **ty;
+                let given = args.unwrap_or_default();
+                let typed: Vec<_> = given.iter().filter(|ty| !untyped(ty)).copied().collect();
+                let of = match (explicit.first(), typed.first(), given.first()) {
+                    (Some(_), ..) => first("max")?,
+                    (None, Some(&ty), _) => ty,
+                    (None, None, Some(&ty)) => types.default_type(ty),
+                    (None, None, None) => return Err("no argument gives T".to_owned()),
+                };
+                if typed.iter().any(|&ty| !types.identical(ty, of)) {
+                    return Err("the arguments give T two types".to_owned());
+                }
+                Ok(Func {
+                    sig: types.func(&[of, of], &[of], false),
+                    read_only: vec![false, false],
+                })
+            }
+            // `template<size_t I> int32_t get(int32_t)`.
+            "get" => match explicit.first() {
+                Some(TemplateArg::Const(value, _)) if value.sign() >= 0 => Ok(Func {
+                    sig: types.func(&[int32], &[int32], false),
+                    read_only: vec![false],
+                }),
+                Some(TemplateArg::Const(value, _)) => {
+                    Err(format!("{value} is no value of the template parameter I"))
+                }
+                _ => Err("get needs the template argument I".to_owned()),
+            },
+            "vector" => Ok(Type(types.slice(first("vector")?))),
+            "pi_v" => Ok(Var {
+                ty: first("pi_v")?,
+                read_only: true,
+            }),
+            // `template<class T> T parse(const char*)`, next to the plain
+            // function of that name.
+            "parse" => Ok(Func {
+                sig: types.func(&[types.basic(Basic::String)], &[first("parse")?], false),
+                read_only: vec![true],
+            }),
+            _ => Err("it is no template".to_owned()),
+        }
+    }
+}
+
+/// A loader with the headers `<stdio.h>` and `<algorithm>`, both read by
+/// one `Header`.
+fn with_headers() -> (Loader, Arc<Header>) {
+    let header = Arc::new(Header::default());
+    let mut loader = Loader::default();
+    for path in ["<stdio.h>", "<algorithm>"] {
+        let package = Package::header(path, Arc::clone(&header) as Arc<dyn crate::ForeignPackage>);
+        loader.packages.insert(path.to_owned(), Arc::new(package));
+    }
+    (loader, header)
+}
+
+// rule: FOR-3
+#[test]
+fn a_header_is_a_package_whose_names_are_asked() {
+    let text = "package p
+
+import (
+	\"<algorithm>\"
+	\"<stdio.h>\"
+)
+
+type Config struct{ level int32 }
+
+func use(s Shared[Config], xs *[4]int32, n int32, file *stdio.FILE) int32 {
+	stdio.puts(\"hi\")
+	var buf [stdio.BUFSIZ]byte
+	var kind stdio.type_ = 1
+	stdio.errno = 0
+	total := stdio.sum(&xs[0], 4) + stdio.errno + stdio.version + stdio.sum(&s.level, 1)
+	stdio.fill(&xs[0], 4)
+	a := algorithm.max(n, 2)
+	b := algorithm.max[int32](1, 2)
+	c := algorithm.get[1](n)
+	var v algorithm.vector[int32]
+	pi := algorithm.pi_v[float32]
+	d := algorithm.parse(\"1\") + int32(algorithm.parse[float64](\"2\"))
+	_, _, _, _ = buf, kind, file, pi
+	return total + a + b + c + d + int32(len(v)) + stdio.puts(\"again\")
+}
+";
+    let names = ThreadedRodeo::new();
+    let (loader, header) = with_headers();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    // What an expression names in a header is kept for the lowering.
+    let types = loader.types.get().unwrap();
+    let tree = &checked.files[0];
+    let bodies = checked.package.files[0].bodies.iter();
+    let mut uses: Vec<(u32, String)> = bodies
+        .flat_map(|body| &body.foreign_uses)
+        .map(|(&expr, used)| {
+            let span = tree.exprs[expr].span;
+            let line = text[..span.lo as usize].matches('\n').count() + 1;
+            let explicit = match used.explicit.len() {
+                0 => String::new(),
+                count => format!(" [{count}]"),
+            };
+            let shown = format!(
+                "{line}: {}{explicit}: {}",
+                names.resolve(&used.name),
+                types.display(used.ty, &names)
+            );
+            (span.lo, shown)
+        })
+        .collect();
+    uses.sort();
+    let uses: Vec<String> = uses.into_iter().map(|(_, shown)| shown).collect();
+    let expected = [
+        "11: puts: func(string) int32",
+        "14: errno: int32",
+        "15: sum: func(*int32, int32) int32",
+        "15: errno: int32",
+        "15: version: int32",
+        "15: sum: func(*int32, int32) int32",
+        "16: fill: func(*int32, int32)",
+        "17: max: func(int32, int32) int32",
+        "18: max [1]: func(int32, int32) int32",
+        "19: get [1]: func(int32) int32",
+        "21: pi_v [1]: float32",
+        "22: parse: func(string) int32",
+        "22: parse [1]: func(string) float64",
+        "24: puts: func(string) int32",
+    ];
+    assert_eq!(uses, expected);
+    // Each name of a header is asked once, and each instance where it
+    // is written.
+    let asked = header.asked.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(asked, 13 + 6);
+
+    let bad = "package p
+
+import (
+	\"<algorithm>\"
+	\"<stdio.h>\"
+)
+
+type Config struct{ level int32 }
+
+func use(s Shared[Config], n int32) {
+	stdio.nope()
+	var x stdio.Nope
+	stdio.version = 2
+	_ = algorithm.max
+	f := algorithm.max[int32]
+	_ = algorithm.get[-1](n)
+	_ = algorithm.get[n](n)
+	_ = algorithm.max(n, \"x\")
+	var w algorithm.vector
+	var y algorithm.max[int32]
+	var z stdio.BUFSIZ
+	_ = stdio.puts[int32](\"x\")
+	stdio.fill(&s.level, 1)
+	_ = stdio.BUFSIZ[0]
+	_, _, _, _, _ = x, f, w, y, z
+}
+";
+    let (loader, _) = with_headers();
+    let checked = check_texts("p", &[("a.gopp", bad)], &loader, &names);
+    let expected = [
+        "a.gopp:11:8: undefined: stdio.nope",
+        "a.gopp:12:14: undefined: stdio.Nope",
+        "a.gopp:13:2: cannot assign to stdio.version (neither addressable nor a map index \
+         expression)",
+        "a.gopp:14:6: cannot use algorithm.max without its template arguments: it is a template",
+        "a.gopp:15:7: cannot use algorithm.max[int32] as a value: an instance of a function \
+         template is only called",
+        "    call it in a function literal",
+        "a.gopp:16:6: cannot call algorithm.get[-1]: -1 is no value of the template parameter I",
+        "a.gopp:17:20: invalid template argument n (variable of type int32): it is no type and no \
+         constant",
+        "a.gopp:18:23: cannot use \"x\" (untyped string constant) as int32 value in argument to \
+         algorithm.max",
+        "a.gopp:19:8: cannot use algorithm.vector without its template arguments",
+        "a.gopp:20:8: algorithm.max[int32] is not a type",
+        "a.gopp:21:8: stdio.BUFSIZ is not a type",
+        "a.gopp:22:6: cannot call stdio.puts[int32]: it is no template",
+        "a.gopp:23:13: cannot give &s.level to stdio.fill: the function may write through it, and \
+         what a Shared holds is only read",
+        "a.gopp:24:6: cannot index stdio.BUFSIZ (constant 8192 of type int32)",
+    ];
+    assert_eq!(checked.messages, expected);
+}
+
+#[test]
+fn the_steps_of_header_names_grow_with_the_uses_not_faster() {
+    let steps = |text: String| {
+        let (loader, _) = with_headers();
+        let checked = check_texts("p", &[("a.gopp", &text)], &loader, &ThreadedRodeo::new());
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        checked.steps + loader.types.get().unwrap().steps()
+    };
+    let uses = |count: usize| {
+        let all: String = (0..count)
+            .map(|i| {
+                format!(
+                    "func f{i}(n int32) int32 {{\n\tvar v algorithm.vector[int32]\n\
+                     \treturn algorithm.max(n, {i}) + algorithm.get[{i}](n) + stdio.puts(\"x\") + \
+                     int32(len(v)) + stdio.BUFSIZ\n}}\n"
+                )
+            })
+            .collect();
+        format!("package p\n\nimport (\n\t\"<algorithm>\"\n\t\"<stdio.h>\"\n)\n\n{all}")
+    };
+    linear::assert_near_linear(&[250, 500, 1_000, 2_000], |n| steps(uses(n)));
+}
+
 // rule: OWN-R3a
 #[test]
 fn the_steps_of_places_grow_with_the_input_not_faster() {

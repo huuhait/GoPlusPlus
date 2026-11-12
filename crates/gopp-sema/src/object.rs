@@ -169,6 +169,10 @@ pub struct Body {
     /// The values of the cases of an expression switch that are compared
     /// with the tag by an `@Operator` `Eq` method, each with the method.
     pub case_operators: FxHashMap<ExprId, OperatorUse>,
+    /// The expressions that name what a C or C++ header declares, each
+    /// with what it names: `stdio.puts`, `algorithm.max[int32]`, the
+    /// function of a call that finds its template arguments.
+    pub foreign_uses: FxHashMap<ExprId, ForeignUse>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.
@@ -205,6 +209,19 @@ pub enum CaptureUse {
     /// The address of the variable or of a part of it is taken: `&x`, a
     /// method with a pointer receiver, `&v` of a range clause over it.
     Address,
+}
+
+/// What an expression names in a C or C++ header.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForeignUse {
+    /// The import that names the header.
+    pub import: ObjId,
+    pub name: Spur,
+    /// The template arguments that are written, for a template.
+    pub explicit: Vec<crate::foreign::TemplateArg>,
+    /// The type of what is named: of a function, of the instance that is
+    /// called.
+    pub ty: TypeId,
 }
 
 /// The method that stands for an operator in one place (EXP-17).

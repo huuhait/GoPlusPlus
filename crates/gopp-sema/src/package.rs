@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::consteval::ConstEvaluator;
 use crate::decls::Initializer;
+use crate::foreign::ForeignPackage;
 use crate::object::{FileInfo, ObjId, Object};
 
 #[derive(Debug, Default)]
@@ -26,6 +27,8 @@ pub struct Package {
     /// Stands in for a package that could not be loaded. Every name is
     /// taken to exist in it, so that one failed import is one error.
     pub fake: bool,
+    /// For a C or C++ header: what says what each of its names is.
+    pub foreign: Option<Arc<dyn ForeignPackage>>,
 }
 
 impl Package {
@@ -35,6 +38,16 @@ impl Package {
             path: path.to_owned(),
             name: name_from_path(path).to_owned(),
             fake: true,
+            ..Self::default()
+        }
+    }
+
+    /// The header at `path` as a package, whose names `foreign` knows.
+    pub fn header(path: &str, foreign: Arc<dyn ForeignPackage>) -> Self {
+        Self {
+            path: path.to_owned(),
+            name: name_from_path(path).to_owned(),
+            foreign: Some(foreign),
             ..Self::default()
         }
     }

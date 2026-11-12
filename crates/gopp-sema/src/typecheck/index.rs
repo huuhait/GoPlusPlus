@@ -75,6 +75,9 @@ impl<'a> Checker<'a> {
         of: ExprId,
         indices: &[ExprId],
     ) -> Operand {
+        if let Some(instance) = self.foreign_index(cx, expr, of, indices) {
+            return instance;
+        }
         let x = self.operand(cx, of);
         if x.mode == Mode::Type {
             // A generic type with its arguments.

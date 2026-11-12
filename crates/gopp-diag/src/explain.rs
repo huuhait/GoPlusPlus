@@ -1802,6 +1802,22 @@ pub fn explain(code: Code) -> Option<Explanation> {
             "Correct the function or its arguments so that the call gives a value.",
             "@Const\nfunc inverse(n int) int { return 100 / n }\nconst Bad = inverse(0) // error: division by zero",
         ),
+        ForeignTemplate => (
+            "A C++ template is used in a way that gives no instance. A template needs its \
+             arguments: those written in brackets, which are types and constants, and for a \
+             function those that the call gives. An instance of a function template is only \
+             called, and brackets after a function that is no template mean nothing.",
+            "Write the template arguments that the call cannot give, as in f[T](x), and call a \
+             function template where it is named.",
+            "x := tuple.get[0](t)            // ok\nf := algorithm.max[int32]       // error: not called\ny := algorithm.max(n, \"x\")      // error: no T fits both",
+        ),
+        ForeignReadOnly => (
+            "A function of a C or C++ header may write through a pointer parameter that is not \
+             declared const. What a Shared holds is only read, so a pointer into it is not \
+             given to such a parameter.",
+            "Pass a copy, or hold the value in a Unique or a variable that this code owns.",
+            "stdio.fill(&shared.level, 1) // error\nlevel := shared.level\nstdio.fill(&level, 1)        // ok",
+        ),
         _ => return None,
     };
     Some(Explanation {
