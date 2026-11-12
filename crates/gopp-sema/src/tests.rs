@@ -2223,6 +2223,69 @@ fn statements_that_compute_and_assign_are_checked_as_go_checks_them() {
     }
 }
 
+#[test]
+fn tildes_literals_indexes_and_map_keys_are_checked_as_go_checks_them() {
+    let declared = "type F func()\ntype K struct{ f []int }\ntype M map[M]int\nvar (\n\ti  int\n\
+                    \tf  float64\n\tm  map[int]int\n\ta  [3]int\n)\n";
+    let key = "4:12: invalid map key type M";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "_ = ~i",
+            &[
+                "12:6: cannot use ~ outside of interface or type constraint (use ^ for bitwise \
+                 complement)",
+            ],
+        ),
+        (
+            "_ = ~f",
+            &["12:6: cannot use ~ outside of interface or type constraint"],
+        ),
+        (
+            "_ = 6e886451608 / 2",
+            &["12:6: malformed constant: 6e886451608"],
+        ),
+        (
+            "_ = m[i, i]",
+            &["12:11: invalid operation: more than one index"],
+        ),
+        (
+            "_ = a[i, i]",
+            &["12:11: invalid operation: more than one index"],
+        ),
+        (
+            "var _ map[[]int]int",
+            &["12:12: invalid map key type []int"],
+        ),
+        ("var _ map[F]int", &["12:12: invalid map key type F"]),
+        ("var _ map[K]int", &["12:12: invalid map key type K"]),
+        (
+            "_ = make(map[[2]F]int)",
+            &["12:15: invalid map key type [2]F"],
+        ),
+        // What is right next to each of them.
+        ("_ = ^i\n\t_ = 6e8 / 2\n\t_ = m[i] + a[i]", &[]),
+        (
+            "var _ map[*K]int\n\tvar _ map[[2]string]int\n\tvar _ map[any]int\n\
+             \tvar _ map[struct{ a, b int }]int",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _() {{\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .filter(|&message| message != key)
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+    assert_eq!(
+        messages("a.go", "package p\ntype M map[M]int\n"),
+        ["a.go:2:12: invalid map key type M"]
+    );
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2841,7 +2904,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1693;
+const EXPECTED_ERRORS_REPORTED: usize = 1720;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

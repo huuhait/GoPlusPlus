@@ -227,6 +227,9 @@ struct Checker<'a> {
     /// still to be checked for holding a value of themselves, in the order
     /// in which they were met.
     to_validate: Vec<TypeId>,
+    /// The key type of each map type that was written, and where: whether
+    /// it can be compared is known once every type is.
+    map_keys: Vec<(TypeId, Span)>,
     /// Where each of them was written.
     written_at: FxHashMap<TypeId, Span>,
     /// The types that are known to hold no value of themselves.
@@ -297,6 +300,7 @@ pub fn declarations(
         broken: vec![false; count],
         in_type_params: false,
         to_validate: Vec::new(),
+        map_keys: Vec::new(),
         written_at: FxHashMap::default(),
         valid: FxHashSet::default(),
     };
@@ -652,6 +656,16 @@ impl<'a> Checker<'a> {
             next += 1;
         }
         self.to_validate.clear();
+        for (key, span) in std::mem::take(&mut self.map_keys) {
+            // What a type parameter can be compared with is not decided
+            // here yet.
+            let unsettled =
+                self.types.underlying(key) == Types::INVALID || self.types.has_param(key);
+            if !unsettled && !self.types.comparable(key) {
+                let message = format!("invalid map key type {}", self.type_string(key));
+                self.error(Code::InvalidMapKey, span, message);
+            }
+        }
     }
 
     /// Where a generic type with arguments was written: one that came
@@ -1285,7 +1299,9 @@ impl<'a> Checker<'a> {
                 Types::INVALID
             }
             ExprKind::MapType { key, value } => {
+                let key_span = tree.exprs[*key].span;
                 let (key, value) = (self.typ(cx, *key), self.typ(cx, *value));
+                self.map_keys.push((key, key_span));
                 self.types.map(key, value)
             }
             ExprKind::ChanType { dir, elem } => {
@@ -1574,10 +1590,18 @@ impl<'a> Checker<'a> {
                     ),
                 }
             }
-            _ => format!(
-                "array length {} must be constant",
-                self.describe(cx, expr, &x)
-            ),
+            _ => {
+                let message = format!(
+                    "array length {} must be constant",
+                    self.describe(cx, expr, &x)
+                );
+                self.error(
+                    Code::ArrayLengthNotConstant,
+                    cx.tree.exprs[expr].span,
+                    message,
+                );
+                return None;
+            }
         };
         self.error(Code::InvalidArrayLength, cx.tree.exprs[expr].span, what);
         None
@@ -1622,7 +1646,13 @@ impl<'a> Checker<'a> {
                     LitKind::Rune => Basic::UntypedRune,
                     LitKind::String => Basic::UntypedString,
                 };
-                self.untyped(basic, Value::from_literal(text, *kind))
+                let value = Value::from_literal(text, *kind);
+                if value == Value::Unknown {
+                    let message = format!("malformed constant: {text}");
+                    self.error(Code::MalformedConstant, node.span, message);
+                    return Operand::UNKNOWN;
+                }
+                self.untyped(basic, value)
             }
             ExprKind::Paren(x) => {
                 let inner = self.operand(cx, *x);

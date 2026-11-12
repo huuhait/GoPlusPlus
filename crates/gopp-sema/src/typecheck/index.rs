@@ -118,10 +118,10 @@ impl<'a> Checker<'a> {
             },
             Type::Slice(elem) => (None, Operand::variable(*elem)),
             Type::Map { key, value } => {
-                let [index] = indices else {
+                let Some(index) = self.single_index(cx, indices) else {
                     return Operand::UNKNOWN;
                 };
-                self.assign(cx, *index, Some(*key), "map index");
+                self.assign(cx, index, Some(*key), "map index");
                 return match *value {
                     Types::INVALID => Operand::UNKNOWN,
                     ty => Operand {
@@ -132,11 +132,20 @@ impl<'a> Checker<'a> {
             }
             _ => return self.cannot_index(cx, of, &x, indices),
         };
-        let [index] = indices else {
+        let Some(index) = self.single_index(cx, indices) else {
             return Operand::UNKNOWN;
         };
-        self.index_value(cx, *index, length);
+        self.index_value(cx, index, length);
         element
+    }
+
+    /// The first of the indices, which is the only one that counts.
+    fn single_index(&mut self, cx: &Cx<'a>, indices: &[ExprId]) -> Option<ExprId> {
+        if let Some(&second) = indices.get(1) {
+            let message = "invalid operation: more than one index".to_owned();
+            self.error(Code::InvalidIndex, cx.tree.exprs[second].span, message);
+        }
+        indices.first().copied()
     }
 
     fn cannot_index(

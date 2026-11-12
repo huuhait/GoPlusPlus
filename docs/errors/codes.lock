@@ -466,3 +466,5 @@ E0460 err_literal_invalid_type
 E0461 err_channel_direction
 E0462 err_not_an_interface
 E0463 err_asserted_type_param
+E0464 err_malformed_constant
+E0465 err_tilde_outside_constraint

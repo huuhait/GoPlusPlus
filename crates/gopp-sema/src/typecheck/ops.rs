@@ -624,12 +624,31 @@ impl<'a> Checker<'a> {
                     },
                 };
             }
-            UnaryOp::Tilde => return Operand::UNKNOWN,
-            UnaryOp::Plus | UnaryOp::Neg | UnaryOp::Not | UnaryOp::Xor => {}
+            UnaryOp::Tilde | UnaryOp::Plus | UnaryOp::Neg | UnaryOp::Not | UnaryOp::Xor => {}
         }
         if !x.is_value() {
             return Operand::UNKNOWN;
         }
+        // `~` belongs to constraints; on an integer, `^` was meant.
+        let op = match op {
+            UnaryOp::Tilde => {
+                let integer = self.all_integer(x.ty);
+                let message = format!(
+                    "cannot use ~ outside of interface or type constraint{}",
+                    if integer {
+                        " (use ^ for bitwise complement)"
+                    } else {
+                        ""
+                    }
+                );
+                self.error(Code::TildeOutsideConstraint, self.span(cx, expr), message);
+                if !integer {
+                    return Operand::UNKNOWN;
+                }
+                UnaryOp::Xor
+            }
+            op => op,
+        };
         let holds: fn(&Self, TypeId) -> bool = match op {
             UnaryOp::Xor => Self::is_integer,
             UnaryOp::Not => Self::is_boolean,

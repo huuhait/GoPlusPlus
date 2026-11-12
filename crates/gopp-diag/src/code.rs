@@ -109,6 +109,8 @@ codes! {
     142 InitCycle "err_init_cycle",
     143 InitCycleSelf "err_init_cycle_self",
     144 InvalidArrayLength "err_invalid_array_length",
+    145 ArrayLengthNotConstant "err_array_length_not_constant",
+    148 InvalidMapKey "err_invalid_map_key",
     156 ReceiverCount "err_receiver_count",
     157 ReceiverMissing "err_receiver_missing",
     159 UseOfUntypedNil "err_use_of_untyped_nil",
@@ -185,6 +187,8 @@ codes! {
     460 LiteralInvalidType "err_literal_invalid_type",
     461 ChannelDirection "err_channel_direction",
     463 AssertedTypeParam "err_asserted_type_param",
+    464 MalformedConstant "err_malformed_constant",
+    465 TildeOutsideConstraint "err_tilde_outside_constraint",
 }
 
 impl Code {
