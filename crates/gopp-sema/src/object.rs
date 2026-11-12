@@ -107,6 +107,35 @@ pub struct Body {
     /// The type of each expression that has a value, where it is worked
     /// out, and its value if it is a constant.
     pub types: FxHashMap<ExprId, ExprType>,
+    /// For a selector `x.sel` that is no name of a package, what it
+    /// reaches.
+    pub selections: FxHashMap<ExprId, Selection>,
+}
+
+/// What a selector `x.sel` reaches, and the way to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selection {
+    pub kind: SelectionKind,
+    /// The type of `x`.
+    pub recv: TypeId,
+    /// The type that has the member: that of `x`, what it points to, or a
+    /// type embedded in it.
+    pub holder: TypeId,
+    /// The index of each embedded field on the way to the holder and,
+    /// for a field, its own index last.
+    pub path: Vec<u32>,
+    /// Whether a pointer is followed on the way.
+    pub indirect: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionKind {
+    /// `x.f`: a field of a value.
+    Field,
+    /// `x.m`: a method of a value.
+    Method,
+    /// `T.m`: a method as a function that takes its receiver first.
+    MethodExpr,
 }
 
 /// The type of an expression; and its value, if it is a constant.

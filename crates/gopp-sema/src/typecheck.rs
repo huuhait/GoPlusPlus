@@ -24,7 +24,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::basic::{Basic, representable};
 use crate::constant::{self, CompareOp, Kind, Value};
 use crate::literal::unquote;
-use crate::object::{Body, ExprType, LocalId, LocalKind, ObjId, ObjKind, Ref};
+use crate::object::{
+    Body, ExprType, LocalId, LocalKind, ObjId, ObjKind, Ref, Selection, SelectionKind,
+};
 use crate::package::Package;
 use crate::resolve::Unit;
 use crate::types::{ChanDir, DeclaredMethod, Field, Member, Method, Term, Type, TypeId, Types};
@@ -64,6 +66,8 @@ enum Form<'a> {
         alias: bool,
         type_params: &'a [TypeParam],
         ty: ExprId,
+        /// Declared with `@Extends`.
+        extends: bool,
     },
     Func {
         type_params: &'a [TypeParam],
@@ -211,6 +215,8 @@ struct Checker<'a> {
     /// While a body is walked: the variables that got no type from an
     /// error that is reported, which are not also unused.
     excused: Vec<LocalId>,
+    /// While a body is walked: what each of its selectors reaches.
+    selections: FxHashMap<ExprId, Selection>,
     /// The object that each declaring identifier declares.
     by_span: FxHashMap<Span, usize>,
     /// The constants and variables whose declaration is worked out: what
@@ -240,11 +246,13 @@ struct Checker<'a> {
 }
 
 /// What was found in one body: the type of each expression with a value,
-/// the type of each local, and the variables that are not also unused.
+/// the type of each local, the variables that are not also unused, and
+/// what each selector reaches.
 type BodyTypes = (
     FxHashMap<ExprId, ExprType>,
     Vec<(LocalId, TypeId)>,
     Vec<LocalId>,
+    FxHashMap<ExprId, Selection>,
 );
 
 /// A group of constants inside a function: the index of its next constant,
@@ -295,6 +303,7 @@ pub fn declarations(
         error_at: None,
         local_groups: FxHashMap::default(),
         excused: Vec::new(),
+        selections: FxHashMap::default(),
         by_span,
         current: Vec::new(),
         needs: vec![Vec::new(); count],
@@ -345,8 +354,11 @@ pub fn declarations(
         object.value = value;
     }
     for (file, types_of_bodies) in package.files.iter_mut().zip(types_of_files) {
-        for (body, (exprs, locals, excused)) in file.bodies.iter_mut().zip(types_of_bodies) {
+        for (body, (exprs, locals, excused, selections)) in
+            file.bodies.iter_mut().zip(types_of_bodies)
+        {
             body.types = exprs;
+            body.selections = selections;
             for (LocalId(local), ty) in locals {
                 body.locals[local as usize].ty = ty;
             }
@@ -441,10 +453,15 @@ impl<'a> Checker<'a> {
                     alias,
                     ty,
                 } => {
+                    let extends = node.attrs.iter().any(|attr| {
+                        attr.path.package.is_none()
+                            && self.names.resolve(&attr.path.name.name) == "Extends"
+                    });
                     let form = Form::Type {
                         alias: *alias,
                         type_params,
                         ty: *ty,
+                        extends,
                     };
                     declare(*name, body, form);
                 }
@@ -900,6 +917,7 @@ impl<'a> Checker<'a> {
                 alias,
                 type_params,
                 ty,
+                extends,
             } => {
                 let mut cx = self.cx(&decl, None);
                 let params = self.declare_params(&mut cx, type_params);
@@ -915,6 +933,9 @@ impl<'a> Checker<'a> {
                 self.ty[object] = self.types.named(named, &[]);
                 self.written(self.ty[object], self.package.objects[object].span);
                 self.types.set_type_params(named, params);
+                if extends {
+                    self.types.set_extends(named);
+                }
                 let underlying = self.typ(&cx, ty);
                 if !self.incomplete {
                     self.types.set_underlying(named, underlying);
@@ -1848,12 +1869,31 @@ impl<'a> Checker<'a> {
         {
             return method;
         }
+        let recv = x.ty;
         let x = self.read(cx, x);
         let found = self
             .types
             .lookup(x.ty, sel.name, self.path, self.names, false);
         let found = match found {
-            Ok(found) => Some(found.member),
+            Ok(found) => {
+                let kind = match (&x.mode, &found.member) {
+                    (Mode::Type, Member::Method { .. }) => Some(SelectionKind::MethodExpr),
+                    (Mode::Type, Member::Field { .. }) => None,
+                    (_, Member::Field { .. }) => Some(SelectionKind::Field),
+                    (_, Member::Method { .. }) => Some(SelectionKind::Method),
+                };
+                if let (Some(kind), true) = (kind, self.memo.is_some()) {
+                    let selection = Selection {
+                        kind,
+                        recv,
+                        holder: found.holder,
+                        path: found.path,
+                        indirect: found.indirect || x.ty != recv,
+                    };
+                    self.selections.insert(expr, selection);
+                }
+                Some(found.member)
+            }
             Err(why) => {
                 self.no_member(cx, base, &x, sel, why);
                 None
@@ -1942,7 +1982,11 @@ impl<'a> Checker<'a> {
             &*self.types.get(self.types.underlying(x.ty)),
             Type::Pointer(elem) if invalid(*elem)
         );
-        let unsettled = invalid(x.ty) || pointee_invalid || self.types.has_param(x.ty);
+        // What a type with parents has is decided with its parents.
+        let unsettled = invalid(x.ty)
+            || pointee_invalid
+            || self.types.has_param(x.ty)
+            || self.types.extends(x.ty);
         if !known || unsettled {
             return;
         }
@@ -2615,7 +2659,12 @@ impl<'a> Checker<'a> {
                 .locals
                 .drain()
                 .map(|(local, operand)| (local, operand.ty));
-            all.push((exprs, locals.collect(), std::mem::take(&mut self.excused)));
+            all.push((
+                exprs,
+                locals.collect(),
+                std::mem::take(&mut self.excused),
+                std::mem::take(&mut self.selections),
+            ));
         }
         self.incomplete = false;
         all

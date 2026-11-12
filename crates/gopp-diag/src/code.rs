@@ -199,6 +199,8 @@ codes! {
     468 NoteOwnFixOption "note_own_fix_option",
     469 OwnStarOnLeft "err_own_star_on_left",
     470 NoteOwnFixNoStar "note_own_fix_no_star",
+    471 OwnCopyToCopy "err_own_copy_to_copy",
+    472 NoteOwnFixAddress "note_own_fix_address",
 }
 
 impl Code {

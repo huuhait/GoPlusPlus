@@ -634,7 +634,10 @@ impl<'a> Checker<'a> {
                         (Code::NoteOwnFixHeapPointer, fix),
                     );
                 }
-                if !is_literal && x.mode != Mode::Variable {
+                // `&s[i:j]` in a `.gopp` file is those elements of `s`.
+                let is_view = self.own_rules(cx)
+                    && matches!(cx.tree.exprs[literal].kind, ExprKind::Slice { .. });
+                if !is_literal && !is_view && x.mode != Mode::Variable {
                     let message = format!(
                         "invalid operation: cannot take address of {}",
                         self.describe(cx, inner, &x)

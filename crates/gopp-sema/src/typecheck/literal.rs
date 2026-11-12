@@ -39,7 +39,7 @@ impl<'a> Checker<'a> {
         }
         // In a `.gopp` file a struct with parents has more than its own
         // fields.
-        let strict = !(self.own_rules(cx) && self.has_parents(base));
+        let strict = !self.types.extends(base);
         let under = self.types.get(self.types.underlying(base));
         let grows = ty.is_some_and(|ty| {
             matches!(

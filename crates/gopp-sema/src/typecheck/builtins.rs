@@ -269,6 +269,30 @@ impl<'a> Checker<'a> {
             (ComplexFunc, Some((at, x))) => self.complex(cx, call, (at, x), given[1].clone()),
             (CopyFunc, Some((at, x))) => {
                 let (from, y) = given[1].clone();
+                // In a `.gopp` file a slice is a value: what is written
+                // is reached through a pointer.
+                let by_value = self.own_rules(cx)
+                    && matches!(
+                        &*self.types.get(self.types.underlying(x.ty)),
+                        Type::Slice(_)
+                    );
+                if by_value {
+                    let message = format!(
+                        "invalid copy: the destination {} is passed as a copy",
+                        self.describe(cx, at, &x)
+                    );
+                    let span = cx.tree.exprs[at].span;
+                    match x.mode {
+                        Mode::Variable => {
+                            let fix = format!("use &{}", self.expr_string(cx, at));
+                            let fix = (Code::NoteOwnFixAddress, fix);
+                            self.error_with_fix(Code::OwnCopyToCopy, span, message, fix);
+                        }
+                        _ => self.error(Code::OwnCopyToCopy, span, message),
+                    }
+                    return Operand::UNKNOWN;
+                }
+                let (x, y) = (self.read(cx, x), self.read(cx, y));
                 if self.unsettled(x.ty) || self.unsettled(y.ty) {
                     return Operand::value(int);
                 }

@@ -129,6 +129,9 @@ struct Names {
     /// For the byte range of an expression with a value: its type in the
     /// one spelling for identical types, then its value if it is constant.
     types: HashMap<(u32, u32), Vec<String>>,
+    /// For the byte range of a selector: the kind of what it reaches, the
+    /// indices on the way to it, and whether a pointer is followed.
+    selections: HashMap<(u32, u32), Vec<String>>,
 }
 
 /// The names of each file of `package`, in the notation of
@@ -258,6 +261,16 @@ fn listed_packages(output: &str) -> Vec<Listed> {
                 .insert(range, fields.map(str::to_owned).collect());
             continue;
         }
+        if let Some(selected) = line.strip_prefix("sel\t") {
+            let mut fields = selected.split('\t');
+            let mut number = || fields.next().unwrap().parse().unwrap();
+            let range = (number(), number());
+            let names = &mut packages.last_mut().unwrap().files.last_mut().unwrap().1;
+            names
+                .selections
+                .insert(range, fields.map(str::to_owned).collect());
+            continue;
+        }
         if let Some(object) = line.strip_prefix("obj\t") {
             let fields = object.split('\t').map(str::to_owned).collect();
             packages.last_mut().unwrap().objects.push(fields);
@@ -334,6 +347,7 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     // How many expressions with a value Go has, and how many of them are
     // compared.
     let mut expressions = (0usize, 0usize, 0usize);
+    let mut selections = (0usize, 0usize);
     let mut untyped_examples: Vec<String> = Vec::new();
     for listed in packages {
         let map = SourceMap::new();
@@ -415,6 +429,39 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
         for ((info, tree), (file_path, go)) in package.files.iter().zip(&files).zip(&listed.files) {
             if listed.builtin {
                 break;
+            }
+            // What each selector reaches. Go counts the methods of a type
+            // and says of a method only sometimes whether a pointer is
+            // followed, so a method is compared by the way to its type.
+            selections.0 += go.selections.len();
+            for (&expr, selection) in info.bodies.iter().flat_map(|body| &body.selections) {
+                let span = tree.exprs[expr].span;
+                let place = map.location(span);
+                let Some(theirs) = go.selections.get(&(span.lo, span.hi)) else {
+                    failures.push(format!("{place}: a selection here, for go none"));
+                    continue;
+                };
+                selections.1 += 1;
+                let is_field = selection.kind == crate::SelectionKind::Field;
+                let kind = match selection.kind {
+                    crate::SelectionKind::Field => "field",
+                    crate::SelectionKind::Method => "method",
+                    crate::SelectionKind::MethodExpr => "methodexpr",
+                };
+                let mut way: Vec<&str> = theirs[1].split(',').collect();
+                if !is_field {
+                    way.pop();
+                }
+                let path: Vec<String> = selection.path.iter().map(u32::to_string).collect();
+                let same = kind == theirs[0]
+                    && path == way
+                    && (!is_field || selection.indirect.to_string() == theirs[2]);
+                if !same {
+                    failures.push(format!(
+                        "{place}: {kind} {path:?} {} here, for go {theirs:?}",
+                        selection.indirect
+                    ));
+                }
             }
             expressions.0 += go.types.len();
             for (&expr, typed) in info.bodies.iter().flat_map(|body| &body.types) {
@@ -518,6 +565,11 @@ fn names_of_the_go_standard_library_denote_what_go_s_checker_says() {
     );
     assert!(names_compared > 500_000, "only {names_compared} names");
     println!("objects by kind and whether their type is worked out: {objects:?}");
+    println!("{} of {} selections compared", selections.1, selections.0);
+    assert!(
+        selections.1 * 100 >= selections.0 * 99,
+        "too few selections are worked out"
+    );
     println!(
         "{} of {} expressions compared; {} more have no type here yet, as: {untyped_examples:#?}",
         expressions.1, expressions.0, expressions.2
@@ -2644,6 +2696,143 @@ func wrong!() int             { return \"a\" }
         "a.gopp:27:40: cannot use \"a\" (untyped string constant) as int value in return statement",
     ];
     assert_eq!(messages("a.gopp", text), expected);
+}
+
+#[test]
+fn a_selector_records_what_it_reaches_and_the_way_to_it() {
+    let text = "package p
+
+type Inner struct{ a, b int }
+
+func (Inner) val()  {}
+func (*Inner) ptr() {}
+
+type Outer struct {
+	x  int
+	in Inner
+}
+
+func f(o Outer, p *Outer, u Unique[Outer], opt Option[int]) {
+	_ = o.x
+	_ = p.x
+	_ = u.in.b
+	o.in.val()
+	p.in.ptr()
+	_ = Inner.val
+	_ = opt.IsNil()
+}
+";
+    // In a Go file a member is reached through embedded fields.
+    let embedded = "package p
+type Inner struct{ a, b int }
+func (*Inner) ptr() {}
+type Outer struct {
+	x int
+	*Inner
+}
+func f(o Outer) {
+	_ = o.b
+	o.ptr()
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let selections = |file: &str, text: &str, body: usize| -> Vec<String> {
+        let checked = check_texts("p", &[(file, text)], &loader, &names);
+        assert_eq!(checked.messages, [] as [&str; 0]);
+        let types = loader.types.get().unwrap();
+        let tree = &checked.files[0];
+        let mut found: Vec<(u32, String)> = checked.package.files[0].bodies[body]
+            .selections
+            .iter()
+            .map(|(&expr, selection)| {
+                let span = tree.exprs[expr].span;
+                let shown = format!(
+                    "{} {:?} from {} in {} by {:?}{}",
+                    &text[span.lo as usize..span.hi as usize],
+                    selection.kind,
+                    types.display(selection.recv, &names),
+                    types.display(selection.holder, &names),
+                    selection.path,
+                    if selection.indirect {
+                        " through a pointer"
+                    } else {
+                        ""
+                    }
+                );
+                (span.lo, shown)
+            })
+            .collect();
+        found.sort();
+        found.into_iter().map(|(_, shown)| shown).collect()
+    };
+    let expected = [
+        "o.x Field from p.Outer in p.Outer by [0]",
+        "p.x Field from *p.Outer in p.Outer by [0] through a pointer",
+        "u.in Field from Unique[p.Outer] in p.Outer by [1] through a pointer",
+        "u.in.b Field from p.Inner in p.Inner by [1]",
+        "o.in Field from p.Outer in p.Outer by [1]",
+        "o.in.val Method from p.Inner in p.Inner by []",
+        "p.in Field from *p.Outer in p.Outer by [1] through a pointer",
+        "p.in.ptr Method from p.Inner in p.Inner by []",
+        "Inner.val MethodExpr from p.Inner in p.Inner by []",
+    ];
+    assert_eq!(selections("a.gopp", text, 4), expected);
+    let expected = [
+        "o.b Field from p.Outer in p.Inner by [1, 1] through a pointer",
+        "o.ptr Method from p.Outer in p.Inner by [1] through a pointer",
+    ];
+    assert_eq!(selections("a.go", embedded, 3), expected);
+}
+
+#[test]
+fn copy_writes_through_a_pointer_and_a_type_with_parents_is_left_alone() {
+    let text = "package p
+
+type Payment struct{ Amount int }
+
+func (p *Payment) Total() int { return p.Amount }
+
+@Extends(Payment)
+type Card struct{ Number string }
+
+func pay(p *Payment) {}
+
+func mk() []int { return nil }
+
+func f(c Card, u Unique[Card]) {
+	_ = c.Amount + c.Total()
+	pay(&c)
+	var up Unique[Payment] = u
+	k := Card{Number: \"1\", Amount: 2}
+	_, _ = up, k
+}
+
+func g(dst, src []int, p *[]int, b []byte, s string) {
+	_ = copy(&dst, src)
+	_ = copy(p, src)
+	_ = copy(&b, s)
+	_ = copy(&dst[1:], src)
+	_ = copy(dst, src)
+	_ = copy(mk(), src)
+	_ = copy(&dst, s)
+}
+";
+    let expected = [
+        "a.gopp:27:11: invalid copy: the destination dst (variable of type []int) is passed as a \
+         copy",
+        "    use &dst",
+        "a.gopp:28:11: invalid copy: the destination mk() (value of type []int) is passed as a copy",
+        "a.gopp:29:11: invalid copy: arguments &dst (variable of type []int) and s (variable of \
+         type string) have different element types int and uint8",
+    ];
+    assert_eq!(messages("a.gopp", text), expected);
+    // In a Go file `copy` takes the slice, and `&s[i:j]` has no address.
+    let text = "package p\nfunc f(dst, src []int) {\n\t_ = copy(dst, src)\n\t_ = &dst[1:]\n}\n";
+    assert_eq!(
+        messages("a.go", text),
+        ["a.go:4:7: invalid operation: cannot take address of dst[1:] (value of type []int)"]
+    );
 }
 
 /// The variables that each step of the start of the program sets.

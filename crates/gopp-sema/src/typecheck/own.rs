@@ -91,15 +91,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Whether a struct of the type has parents: it is also a value of
-    /// their types, which is decided with the methods.
-    pub(super) fn has_parents(&self, ty: TypeId) -> bool {
-        match &*self.types.get(self.types.underlying(ty)) {
-            Type::Struct(fields) => fields.iter().any(|field| field.embedded),
-            _ => false,
-        }
-    }
-
     /// Whether `nil` is a value of a place of the type `to`.
     pub(super) fn takes_nil(&self, to: TypeId, writes: bool) -> bool {
         self.takes(to, writes).into_iter().any(|to| {
@@ -143,7 +134,7 @@ impl<'a> Checker<'a> {
                 mode: x.mode.clone(),
                 ty: from,
             };
-            self.has_parents(from) || takes.iter().any(|&to| !self.not_assignable(&x, to))
+            self.types.extends(from) || takes.iter().any(|&to| !self.not_assignable(&x, to))
         })
     }
 

@@ -473,3 +473,5 @@ E0467 note_own_fix_take
 E0468 note_own_fix_option
 E0469 err_own_star_on_left
 E0470 note_own_fix_no_star
+E0471 err_own_copy_to_copy
+E0472 note_own_fix_address

@@ -142,13 +142,21 @@ pub struct DeclaredMethod {
 }
 
 /// What a selector reaches, with the name it has in the type.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Found {
     pub member: Member,
     pub name: Spur,
     /// The name of the package of the declared type that has the member;
     /// `None` for a member of a type that is not declared.
     pub owner: Option<Spur>,
+    /// The type that has the member: the one that was asked, what it
+    /// points to, or a type embedded in it.
+    pub holder: TypeId,
+    /// The index of each embedded field on the way to the holder and,
+    /// for a field, its own index last.
+    pub path: Vec<u32>,
+    /// Whether a pointer is followed on the way.
+    pub indirect: bool,
 }
 
 /// Why a selector reaches nothing.
@@ -192,6 +200,8 @@ struct Named {
     /// The type parameters of a generic type.
     params: Vec<TypeId>,
     methods: Vec<DeclaredMethod>,
+    /// Declared with `@Extends`: it has parents.
+    extends: bool,
 }
 
 #[derive(Debug, Default)]
@@ -303,6 +313,7 @@ impl Types {
             invalid: false,
             params: Vec::new(),
             methods: Vec::new(),
+            extends: false,
         });
         let error = inner.intern(Type::Named {
             id: NamedId(0),
@@ -443,6 +454,7 @@ impl Types {
                 invalid: false,
                 params: Vec::new(),
                 methods: Vec::new(),
+                extends: false,
             });
             NamedId(inner.named.len() as u32 - 1)
         })
@@ -504,6 +516,20 @@ impl Types {
 
     pub fn is_invalid(&self, named: NamedId) -> bool {
         self.read(|inner| inner.named[named.0 as usize].invalid)
+    }
+
+    /// Says that `named` is declared with `@Extends`.
+    pub fn set_extends(&self, named: NamedId) {
+        self.write(|inner| inner.named[named.0 as usize].extends = true);
+    }
+
+    /// Whether the type is a declared type with parents: it also has
+    /// their members and is a value of their types.
+    pub fn extends(&self, ty: TypeId) -> bool {
+        match &*self.get(ty) {
+            Type::Named { id, .. } => self.read(|inner| inner.named[id.0 as usize].extends),
+            _ => false,
+        }
     }
 
     pub fn invalidate(&self, named: NamedId) {
@@ -816,11 +842,12 @@ impl Types {
         };
         let fields_only = through_pointer && matches!(&*self.get(ty), Type::Named { .. });
         let mut seen = vec![start];
-        let mut level = vec![(start, through_pointer)];
+        let mut level = vec![(start, through_pointer, Vec::new())];
         while !level.is_empty() {
             let mut found = Vec::new();
             let mut next = Vec::new();
-            for &(current, indirect) in &level {
+            for (current, indirect, path) in &level {
+                let (current, indirect) = (*current, *indirect);
                 let owner = match &*self.get(current) {
                     Type::Named { id, .. } => self.read(|inner| inner.named[id.0 as usize].package),
                     _ => None,
@@ -841,13 +868,21 @@ impl Types {
                             member,
                             name: method.method.name,
                             owner,
+                            holder: current,
+                            path: path.clone(),
+                            indirect,
                         });
                         continue;
                     }
                 }
                 match &*self.get(self.underlying(current)) {
                     Type::Struct(fields) => {
-                        for field in fields.iter() {
+                        for (index, field) in fields.iter().enumerate() {
+                            let through = || {
+                                let mut path = path.clone();
+                                path.push(index as u32);
+                                path
+                            };
                             if matches(field.name, field.package) {
                                 let member = Member::Field {
                                     ty: field.ty,
@@ -857,6 +892,9 @@ impl Types {
                                     member,
                                     name: field.name,
                                     owner,
+                                    holder: current,
+                                    path: through(),
+                                    indirect,
                                 });
                             } else if field.embedded {
                                 let (inner, pointer) = match &*self.get(field.ty) {
@@ -865,7 +903,7 @@ impl Types {
                                 };
                                 if !seen.contains(&inner) {
                                     seen.push(inner);
-                                    next.push((inner, indirect || pointer));
+                                    next.push((inner, indirect || pointer, through()));
                                 }
                             }
                         }
@@ -881,20 +919,30 @@ impl Types {
                                 member,
                                 name: method.name,
                                 owner,
+                                holder: current,
+                                path: path.clone(),
+                                indirect,
                             });
                         }
                     }
                     _ => {}
                 }
             }
-            match found[..] {
-                [] => level = next,
-                [one] if fields_only && matches!(one.member, Member::Method { .. }) => {
-                    return Err(NotFound::Missing);
+            let one = match found.len() {
+                0 => {
+                    level = next;
+                    continue;
                 }
-                [one] => return Ok(one),
+                1 => found.pop(),
                 _ => return Err(NotFound::Ambiguous),
-            }
+            };
+            return match one {
+                Some(one) if fields_only && matches!(one.member, Member::Method { .. }) => {
+                    Err(NotFound::Missing)
+                }
+                Some(one) => Ok(one),
+                None => Err(NotFound::Missing),
+            };
         }
         Err(NotFound::Missing)
     }

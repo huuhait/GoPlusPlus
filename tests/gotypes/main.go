@@ -17,6 +17,14 @@
 //	                                            value, by its byte range: its
 //	                                            type, and its value if it is a
 //	                                            constant
+//	sel <TAB> start <TAB> end <TAB> kind <TAB> indices <TAB> indirect
+//	                                            each selector that reaches a
+//	                                            field or a method: field,
+//	                                            method or methodexpr, the
+//	                                            index of each embedded field
+//	                                            on the way and of the member
+//	                                            last, and whether a pointer
+//	                                            is followed
 //	init <name>,<name>                          after the files: the variables
 //	                                            that one value initializes, in
 //	                                            the order of initialization
@@ -125,6 +133,7 @@ func main() {
 			Defs:  map[*ast.Ident]types.Object{},
 			Uses:  map[*ast.Ident]types.Object{},
 			Types: map[ast.Expr]types.TypeAndValue{},
+			Selections: map[*ast.SelectorExpr]*types.Selection{},
 		}
 		pkg, err := config.Check(p.ImportPath, fset, files, info)
 		check(err)
@@ -141,6 +150,19 @@ func main() {
 							fmt.Fprintf(out, "\t%s", exact(tv.Value))
 						}
 						fmt.Fprintln(out)
+					}
+				}
+				if selector, ok := n.(*ast.SelectorExpr); ok {
+					if selection := info.Selections[selector]; selection != nil {
+						kind := map[types.SelectionKind]string{
+							types.FieldVal: "field", types.MethodVal: "method", types.MethodExpr: "methodexpr",
+						}[selection.Kind()]
+						var indices []string
+						for _, index := range selection.Index() {
+							indices = append(indices, strconv.Itoa(index))
+						}
+						fmt.Fprintf(out, "sel\t%d\t%d\t%s\t%s\t%t\n", offset(selector.Pos()), offset(selector.End()),
+							kind, strings.Join(indices, ","), selection.Indirect())
 					}
 				}
 				ident, ok := n.(*ast.Ident)
