@@ -464,3 +464,5 @@ E0458 err_invalid_index
 E0459 err_literal_unknown_field
 E0460 err_literal_invalid_type
 E0461 err_channel_direction
+E0462 err_not_an_interface
+E0463 err_asserted_type_param

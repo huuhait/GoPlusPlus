@@ -181,6 +181,8 @@ codes! {
     459 LiteralUnknownField "err_literal_unknown_field",
     460 LiteralInvalidType "err_literal_invalid_type",
     461 ChannelDirection "err_channel_direction",
+    462 NotAnInterface "err_not_an_interface",
+    463 AssertedTypeParam "err_asserted_type_param",
 }
 
 impl Code {

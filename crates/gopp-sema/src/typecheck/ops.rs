@@ -101,6 +101,9 @@ impl<'a> Checker<'a> {
                         what.push(' ');
                     }
                     out += &format!(" of {what}type {}", self.type_string(ty));
+                    if let Some(constraint) = self.types.constraint(ty) {
+                        out += &format!(" constrained by {}", self.type_string(constraint));
+                    }
                 }
             }
         }

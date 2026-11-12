@@ -105,6 +105,8 @@ pub enum Type {
     /// Several values at once: the results of a call.
     Tuple(Box<[TypeId]>),
     Func {
+        /// The type parameters of a generic function.
+        type_params: Box<[TypeId]>,
         params: Box<[TypeId]>,
         results: Box<[TypeId]>,
         /// The last parameter is `...T`, held as `[]T`.
@@ -202,8 +204,6 @@ struct Inner {
     /// The underlying type of each generic type with arguments that was
     /// asked for.
     instances: FxHashMap<TypeId, TypeId>,
-    /// The type parameters of each generic function, by its type.
-    generic_funcs: FxHashMap<TypeId, Vec<TypeId>>,
 }
 
 impl Inner {
@@ -281,6 +281,7 @@ impl Types {
         // type error interface { Error() string }
         let string = TypeId(1 + Basic::String as u32);
         let sig = inner.intern(Type::Func {
+            type_params: Box::new([]),
             params: Box::new([]),
             results: Box::new([string]),
             variadic: false,
@@ -378,6 +379,7 @@ impl Types {
 
     pub fn func(&self, params: &[TypeId], results: &[TypeId], variadic: bool) -> TypeId {
         self.intern(Type::Func {
+            type_params: Box::new([]),
             params: params.into(),
             results: results.into(),
             variadic,
@@ -542,15 +544,31 @@ impl Types {
         }
     }
 
-    /// Says that the function type `sig` is that of a generic function
-    /// with the type parameters `params`.
-    pub fn set_generic_func(&self, sig: TypeId, params: Vec<TypeId>) {
-        self.write(|inner| inner.generic_funcs.insert(sig, params));
+    /// The type of a generic function with the type parameters
+    /// `type_params` and the parameters and results of `sig`.
+    pub fn generic_func_type(&self, sig: TypeId, type_params: &[TypeId]) -> TypeId {
+        match &*self.get(sig) {
+            Type::Func {
+                params,
+                results,
+                variadic,
+                ..
+            } => self.intern(Type::Func {
+                type_params: type_params.into(),
+                params: params.clone(),
+                results: results.clone(),
+                variadic: *variadic,
+            }),
+            _ => sig,
+        }
     }
 
     /// The type parameters of a generic function of the type `sig`.
     pub fn generic_func(&self, sig: TypeId) -> Option<Vec<TypeId>> {
-        self.read(|inner| inner.generic_funcs.get(&sig).cloned())
+        match &*self.get(sig) {
+            Type::Func { type_params, .. } if !type_params.is_empty() => Some(type_params.to_vec()),
+            _ => None,
+        }
     }
 
     /// Finds what the type parameters `params` must be for `pattern`,
@@ -598,11 +616,13 @@ impl Types {
                     params: p,
                     results: r,
                     variadic: v,
+                    ..
                 },
                 Type::Func {
                     params: q,
                     results: s,
                     variadic: w,
+                    ..
                 },
             ) => {
                 v == w && self.unify_all(p, q, params, bound) && self.unify_all(r, s, params, bound)
@@ -701,11 +721,14 @@ impl Types {
                 elem: sub(*elem),
             },
             Type::Tuple(types) => Type::Tuple(list(types)),
+            // With its type arguments a function is generic no more.
             Type::Func {
                 params,
                 results,
                 variadic,
+                ..
             } => Type::Func {
+                type_params: Box::new([]),
                 params: list(params),
                 results: list(results),
                 variadic: *variadic,
@@ -1193,16 +1216,18 @@ impl Types {
             (Type::Tuple(a), Type::Tuple(b)) => all(a, b),
             (
                 Type::Func {
+                    type_params: t,
                     params: p,
                     results: r,
                     variadic: v,
                 },
                 Type::Func {
+                    type_params: u,
                     params: q,
                     results: s,
                     variadic: w,
                 },
-            ) => v == w && all(p, q) && all(r, s),
+            ) => t == u && v == w && all(p, q) && all(r, s),
             (Type::Struct(a), Type::Struct(b)) => {
                 let same_field = |(a, b): (&Field, &Field)| {
                     a.name == b.name
@@ -1571,6 +1596,7 @@ impl Types {
             params,
             results,
             variadic,
+            ..
         } = &*self.get(id)
         else {
             return String::new();

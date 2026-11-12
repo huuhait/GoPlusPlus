@@ -1935,6 +1935,70 @@ fn selectors_and_channels_are_checked_as_go_checks_them() {
     assert_eq!(found, [] as [&str; 0]);
 }
 
+#[test]
+fn what_is_asserted_or_switched_on_is_an_interface_value() {
+    let declared = "type I interface{ m() }\nvar (\n\ta int\n\ti I\n\te any\n)\n";
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "_ = a.(int)",
+            &["9:6: invalid operation: a (variable of type int) is not an interface"],
+        ),
+        (
+            "switch a.(type) {\n\t}",
+            &["9:9: a (variable of type int) is not an interface"],
+        ),
+        (
+            "_ = p.(int)",
+            &[
+                "9:6: invalid operation: cannot use type assertion on type parameter value p \
+                 (variable of type P constrained by any)",
+            ],
+        ),
+        (
+            "switch p.(type) {\n\t}",
+            &[
+                "9:9: cannot use type switch on type parameter value p (variable of type P \
+                 constrained by any)",
+            ],
+        ),
+        // What is right next to each of them.
+        (
+            "_ = i.(I)\n\t_, _ = e.(int)\n\t_ = any(a).(int)\n\t_ = any(p).(P)",
+            &[],
+        ),
+        (
+            "switch i.(type) {\n\t}\n\tswitch v := e.(type) {\n\tcase int:\n\t\t_ = v\n\t}",
+            &[],
+        ),
+    ];
+    for (body, expected) in cases {
+        let text = format!("package p\n{declared}func _[P any](p P) {{\n\t{body}\n}}\n");
+        let found = messages("a.go", &text);
+        let found: Vec<&str> = found
+            .iter()
+            .map(|message| message.strip_prefix("a.go:").unwrap_or(message))
+            .collect();
+        assert_eq!(found, *expected, "{body}");
+    }
+}
+
+/// A generic function and a plain one may have the same parameters and
+/// results; only the first is generic.
+#[test]
+fn a_function_is_not_generic_for_what_another_one_is() {
+    let text = "package p\nfunc g[T any]() {}\nfunc f()        {}\nfunc _() {\n\t_ = f()\n\tf(1)\n\
+                \tg[int]()\n\tf()\n}\n";
+    assert_eq!(
+        messages("a.go", text),
+        [
+            "a.go:5:6: f() (no value) used as value",
+            "a.go:6:4: too many arguments in call to f",
+            "    have (number)",
+            "    want ()",
+        ]
+    );
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
@@ -2553,7 +2617,7 @@ const GOERRORS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/goerror
 
 /// How many of the errors that the test files of Go's type checker expect
 /// are reported here, at the least. It only grows.
-const EXPECTED_ERRORS_REPORTED: usize = 1593;
+const EXPECTED_ERRORS_REPORTED: usize = 1612;
 
 /// The test files of Go's type checker say where Go reports which error.
 /// Nothing is reported here that they do not expect; what they expect and

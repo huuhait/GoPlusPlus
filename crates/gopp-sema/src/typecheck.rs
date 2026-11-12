@@ -909,10 +909,8 @@ impl<'a> Checker<'a> {
             Form::Func { type_params, ty } => {
                 let mut cx = self.cx(&decl, None);
                 let params = self.declare_params(&mut cx, type_params);
-                self.ty[object] = self.typ(&cx, ty);
-                if !params.is_empty() {
-                    self.types.set_generic_func(self.ty[object], params);
-                }
+                let sig = self.typ(&cx, ty);
+                self.ty[object] = self.types.generic_func_type(sig, &params);
             }
         }
         false
@@ -1565,7 +1563,12 @@ impl<'a> Checker<'a> {
                 full,
             } => self.slice(cx, expr, *x, [*lo, *hi, *max], *full),
             ExprKind::Assert { x, ty } => {
-                self.operand(cx, *x);
+                if self
+                    .asserted(cx, *x, "invalid operation: ", "type assertion")
+                    .is_none()
+                {
+                    return Operand::UNKNOWN;
+                }
                 match self.typ(cx, *ty) {
                     Types::INVALID => Operand::UNKNOWN,
                     ty => Operand {
@@ -1587,6 +1590,27 @@ impl<'a> Checker<'a> {
             },
             _ => Operand::UNKNOWN,
         }
+    }
+
+    /// What a type assertion or a type switch looks into, which is a
+    /// value of an interface type: `None` if it is known to be none.
+    fn asserted(&mut self, cx: &Cx<'a>, expr: ExprId, prefix: &str, what: &str) -> Option<Operand> {
+        let x = self.value(cx, expr);
+        if x.mode == Mode::Unknown || self.types.underlying(x.ty) == Types::INVALID {
+            return Some(Operand::UNKNOWN);
+        }
+        let shown = self.describe(cx, expr, &x);
+        let (code, message) = if matches!(&*self.types.get(x.ty), Type::Param(_)) {
+            let message = format!("{prefix}cannot use {what} on type parameter value {shown}");
+            (Code::AssertedTypeParam, message)
+        } else if !self.types.is_interface(x.ty) {
+            let message = format!("{prefix}{shown} is not an interface");
+            (Code::NotAnInterface, message)
+        } else {
+            return Some(x);
+        };
+        self.error(code, cx.tree.exprs[expr].span, message);
+        None
     }
 
     fn name(&mut self, cx: &Cx<'a>, expr: ExprId) -> Operand {
@@ -1741,6 +1765,7 @@ impl<'a> Checker<'a> {
                     params,
                     results,
                     variadic,
+                    ..
                 } = &*self.types.get(sig)
                 else {
                     return Operand::UNKNOWN;
@@ -1977,6 +2002,7 @@ impl<'a> Checker<'a> {
                     params,
                     results,
                     variadic,
+                    ..
                 } = &*self.types.get(sig)
                 else {
                     return Operand::UNKNOWN;
@@ -2585,7 +2611,10 @@ impl<'a> Checker<'a> {
                 self.opt_stmt(cx, *init);
                 let guard = tag.map(|tag| &tree.exprs[tag].kind);
                 let switched = match guard {
-                    Some(&ExprKind::TypeSwitchGuard { x, .. }) => Some(self.operand(cx, x)),
+                    Some(&ExprKind::TypeSwitchGuard { x, .. }) => Some(
+                        self.asserted(cx, x, "", "type switch")
+                            .unwrap_or(Operand::UNKNOWN),
+                    ),
                     _ => {
                         if let Some(tag) = tag {
                             self.operand(cx, *tag);
