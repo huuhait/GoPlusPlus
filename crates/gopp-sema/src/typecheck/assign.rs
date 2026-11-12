@@ -428,8 +428,9 @@ impl<'a> Checker<'a> {
                     None => {
                         self.assign(cx, value, None, "assignment to _ identifier");
                     }
-                    to => {
-                        self.assign(cx, value, to, "assignment");
+                    Some(to) => {
+                        let assigned = self.assign(cx, value, Some(to), "assignment");
+                        self.note_write(cx, place, to, Some(&assigned));
                     }
                 }
             }
@@ -456,7 +457,11 @@ impl<'a> Checker<'a> {
             return;
         }
         for (&place, value) in lhs.iter().zip(values) {
-            if let Some(to) = self.lhs_var(cx, place)
+            let to = self.lhs_var(cx, place);
+            if let Some(to) = to {
+                self.note_write(cx, place, to, Some(&value));
+            }
+            if let Some(to) = to
                 && value.mode != Mode::Unknown
                 && self.unfit(cx, &value, to, true)
             {

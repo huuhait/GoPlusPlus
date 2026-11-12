@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gopp_span::Span;
 use gopp_syntax::ast::{ExprId, StmtId};
 use lasso::Spur;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::constant::Value;
 use crate::package::Package;
@@ -110,6 +110,10 @@ pub struct Body {
     /// For a selector `x.sel` that is no name of a package, what it
     /// reaches.
     pub selections: FxHashMap<ExprId, Selection>,
+    /// In a `.gopp` file: the left sides of the assignments that write
+    /// what a pointer points to. An assignment to a pointer that is not
+    /// here points it at something else.
+    pub writes_through: FxHashSet<ExprId>,
     /// For a `return` without values in a function whose results have
     /// names: each result whose name denotes something else there, with
     /// what it denotes.

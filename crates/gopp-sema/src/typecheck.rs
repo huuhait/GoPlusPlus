@@ -220,6 +220,9 @@ struct Checker<'a> {
     excused: Vec<LocalId>,
     /// While a body is walked: what each of its selectors reaches.
     selections: FxHashMap<ExprId, Selection>,
+    /// While a body is walked: the left sides of its assignments that
+    /// write what a pointer points to.
+    writes_through: FxHashSet<ExprId>,
     /// The steps that the checks of labels and jumps took.
     steps: u64,
     /// The object that each declaring identifier declares.
@@ -251,13 +254,15 @@ struct Checker<'a> {
 }
 
 /// What was found in one body: the type of each expression with a value,
-/// the type of each local, the variables that are not also unused, and
-/// what each selector reaches.
+/// the type of each local, the variables that are not also unused, what
+/// each selector reaches, and the assignments that write through a
+/// pointer.
 type BodyTypes = (
     FxHashMap<ExprId, ExprType>,
     Vec<(LocalId, TypeId)>,
     Vec<LocalId>,
     FxHashMap<ExprId, Selection>,
+    FxHashSet<ExprId>,
 );
 
 /// A group of constants inside a function: the index of its next constant,
@@ -309,6 +314,7 @@ pub fn declarations(
         local_groups: FxHashMap::default(),
         excused: Vec::new(),
         selections: FxHashMap::default(),
+        writes_through: FxHashSet::default(),
         steps: 0,
         by_span,
         current: Vec::new(),
@@ -364,11 +370,12 @@ pub fn declarations(
         object.value = value;
     }
     for (file, types_of_bodies) in package.files.iter_mut().zip(types_of_files) {
-        for (body, (exprs, locals, excused, selections)) in
+        for (body, (exprs, locals, excused, selections, writes_through)) in
             file.bodies.iter_mut().zip(types_of_bodies)
         {
             body.types = exprs;
             body.selections = selections;
+            body.writes_through = writes_through;
             for (LocalId(local), ty) in locals {
                 body.locals[local as usize].ty = ty;
             }
@@ -2706,6 +2713,7 @@ impl<'a> Checker<'a> {
                 locals.collect(),
                 std::mem::take(&mut self.excused),
                 std::mem::take(&mut self.selections),
+                std::mem::take(&mut self.writes_through),
             ));
         }
         self.incomplete = false;
@@ -2880,7 +2888,9 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 if self.all_numeric(operand.ty) {
-                    self.lhs_var(cx, *x);
+                    if let Some(to) = self.lhs_var(cx, *x) {
+                        self.note_write(cx, *x, to, None);
+                    }
                     return;
                 }
                 let message = format!(
@@ -2987,8 +2997,10 @@ impl<'a> Checker<'a> {
                 lhs,
                 rhs,
             } if lhs.len() == 1 && rhs.len() == 1 => {
-                if self.binary(cx, None, *op, lhs[0], rhs[0]).mode != Mode::Unknown {
-                    self.lhs_var(cx, lhs[0]);
+                if self.binary(cx, None, *op, lhs[0], rhs[0]).mode != Mode::Unknown
+                    && let Some(to) = self.lhs_var(cx, lhs[0])
+                {
+                    self.note_write(cx, lhs[0], to, None);
                 }
             }
             StmtKind::Assign { op, lhs, rhs } => {

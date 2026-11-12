@@ -125,7 +125,7 @@ impl<'a> Checker<'a> {
 
     /// Whether the operand `x` surely fits no place of the type `to` in a
     /// `.gopp` file.
-    fn unfit_own(&self, x: &Operand, to: TypeId, writes: bool) -> bool {
+    pub(super) fn unfit_own(&self, x: &Operand, to: TypeId, writes: bool) -> bool {
         let mut read = Vec::new();
         self.read_as(x.ty, &mut read);
         let takes = self.takes(to, writes);
@@ -136,6 +136,35 @@ impl<'a> Checker<'a> {
             };
             self.types.extends(from) || takes.iter().any(|&to| !self.not_assignable(&x, to))
         })
+    }
+
+    /// Notes whether the assignment of `x` to the place `place` of the
+    /// type `to` writes what a pointer points to: `x` does not fit the
+    /// pointer itself. Without `x`, the place is counted or computed with,
+    /// which is done to what it points to.
+    pub(super) fn note_write(
+        &mut self,
+        cx: &Cx<'a>,
+        place: ExprId,
+        to: TypeId,
+        x: Option<&Operand>,
+    ) {
+        let is_pointer = matches!(
+            &*self.types.get(self.types.underlying(to)),
+            Type::Pointer(_)
+        ) && !self.types.is_unsafe_pointer(to, self.names);
+        if !self.own_rules(cx) || !is_pointer || self.memo.is_none() {
+            return;
+        }
+        let through = match x {
+            None => true,
+            Some(x) if x.mode == Mode::Unknown => false,
+            Some(x) if x.ty == self.types.basic(Basic::UntypedNil) => !self.takes_nil(to, false),
+            Some(x) => self.unfit_own(x, to, false),
+        };
+        if through {
+            self.writes_through.insert(place);
+        }
     }
 
     /// Whether the operand `x` surely fits no place of the type `to`;

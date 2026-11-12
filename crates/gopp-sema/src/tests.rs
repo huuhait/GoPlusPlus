@@ -3570,6 +3570,57 @@ func f(xs []Doc, arr [3]Doc, m map[string]Doc, s string, c chan Doc, p *[]Doc) {
     assert_eq!(messages("a.gopp", text), expected);
 }
 
+// rule: OWN-P5
+#[test]
+fn an_assignment_to_a_pointer_writes_through_it_or_points_it_elsewhere() {
+    let text = "package p
+
+type List struct {
+	next *List
+	v    int
+}
+
+func f(n *int, m *int, xs *[]int, l *List, o *List, v int, pair func() (int, *int)) {
+	n = 9
+	n = v
+	n++
+	n += 2
+	xs = append(xs, 4)
+	xs = nil
+	l.v = 1
+	n = m
+	l = o
+	l = l.next
+	v = 3
+	v, n = pair()
+	n, m = m, n
+	n, v = 1, 2
+}
+";
+    let names = ThreadedRodeo::new();
+    let loader = Loader::default();
+    let checked = check_texts("p", &[("a.gopp", text)], &loader, &names);
+    assert_eq!(checked.messages, [] as [&str; 0]);
+    let tree = &checked.files[0];
+    let mut written: Vec<(u32, u32)> = checked.package.files[0].bodies[1]
+        .writes_through
+        .iter()
+        .map(|&place| (tree.exprs[place].span.lo, tree.exprs[place].span.hi))
+        .collect();
+    written.sort_unstable();
+    let line = |&(lo, hi): &(u32, u32)| {
+        let before = &text[..lo as usize];
+        let line = before.matches('\n').count() + 1;
+        format!("{line}: {}", &text[lo as usize..hi as usize])
+    };
+    let written: Vec<String> = written.iter().map(line).collect();
+    // The other assignments to a pointer point it at something else.
+    let expected = [
+        "9: n", "10: n", "11: n", "12: n", "13: xs", "14: xs", "22: n",
+    ];
+    assert_eq!(written, expected);
+}
+
 /// The variables that each step of the start of the program sets.
 fn init_order(text: &str) -> (Vec<String>, Vec<String>) {
     let names = ThreadedRodeo::new();
